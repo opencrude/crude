@@ -399,9 +399,33 @@ func initBackend(cfg Config) backend.Executor {
 }
 
 func configToSettings(cfg Config) tui.Settings {
+	providerID := cfg.ProviderID
+	if providerID == "" {
+		providerID = "openrouter"
+	}
+
 	providerURL := cfg.ProviderURL
+	apiKey := cfg.ProviderAPIKey
+	model := cfg.Model
+	embedModel := cfg.EmbedModel
+
+	if pc, ok := cfg.ProviderConfigs[providerID]; ok {
+		if pc.ProviderURL != "" {
+			providerURL = pc.ProviderURL
+		}
+		if pc.APIKey != "" {
+			apiKey = pc.APIKey
+		}
+		if pc.Model != "" {
+			model = pc.Model
+		}
+		if pc.EmbedModel != "" {
+			embedModel = pc.EmbedModel
+		}
+	}
+
 	if providerURL == "" {
-		p := provider.GetPreset(cfg.ProviderID)
+		p := provider.GetPreset(providerID)
 		if p == nil {
 			p = provider.GetPreset("openrouter")
 		}
@@ -409,12 +433,12 @@ func configToSettings(cfg Config) tui.Settings {
 	}
 
 	return tui.Settings{
-		APIKey:         cfg.APIKey,
-		Model:          cfg.Model,
-		EmbedModel:     cfg.EmbedModel,
-		ProviderID:     cfg.ProviderID,
+		APIKey:         apiKey,
+		Model:          model,
+		EmbedModel:     embedModel,
+		ProviderID:     providerID,
 		ProviderURL:    providerURL,
-		ProviderAPIKey: cfg.ProviderAPIKey,
+		ProviderAPIKey: apiKey,
 		Backend:        cfg.Backend,
 		SSHHost:        cfg.SSH.Host,
 		SSHPort:        fmt.Sprintf("%d", cfg.SSH.Port),
@@ -425,16 +449,26 @@ func configToSettings(cfg Config) tui.Settings {
 }
 
 func settingsToConfig(s tui.Settings, base Config) Config {
-	port := base.SSH.Port
-	if s.SSHPort != "" {
-		var p int
-		fmt.Sscanf(s.SSHPort, "%d", &p)
-		if p > 0 {
-			port = p
+	sshConf := base.SSH
+	if s.Backend == "ssh" {
+		port := base.SSH.Port
+		if s.SSHPort != "" {
+			var p int
+			fmt.Sscanf(s.SSHPort, "%d", &p)
+			if p > 0 {
+				port = p
+			}
 		}
-	}
-	if port == 0 {
-		port = 22
+		if port == 0 {
+			port = 22
+		}
+		sshConf = SSHConf{
+			Host:     s.SSHHost,
+			Port:     port,
+			User:     s.SSHUser,
+			Password: s.SSHPassword,
+			KeyFile:  s.SSHKeyFile,
+		}
 	}
 
 	providerID := s.ProviderID
@@ -450,21 +484,27 @@ func settingsToConfig(s tui.Settings, base Config) Config {
 		apiKey = s.ProviderAPIKey
 	}
 
+	providerConfigs := base.ProviderConfigs
+	if providerConfigs == nil {
+		providerConfigs = make(map[string]ProviderConfig)
+	}
+	providerConfigs[providerID] = ProviderConfig{
+		APIKey:      apiKey,
+		Model:       s.Model,
+		EmbedModel:  s.EmbedModel,
+		ProviderURL: s.ProviderURL,
+	}
+
 	return Config{
-		APIKey:         apiKey,
-		Model:          s.Model,
-		EmbedModel:     s.EmbedModel,
-		ProviderID:     providerID,
-		ProviderURL:    s.ProviderURL,
-		ProviderAPIKey: apiKey,
-		Backend:        s.Backend,
-		SSH: SSHConf{
-			Host:     s.SSHHost,
-			Port:     port,
-			User:     s.SSHUser,
-			Password: s.SSHPassword,
-			KeyFile:  s.SSHKeyFile,
-		},
+		APIKey:          apiKey,
+		Model:           s.Model,
+		EmbedModel:      s.EmbedModel,
+		ProviderID:      providerID,
+		ProviderURL:     s.ProviderURL,
+		ProviderAPIKey:  apiKey,
+		Backend:         s.Backend,
+		SSH:             sshConf,
+		ProviderConfigs: providerConfigs,
 		APIBaseURL:      base.APIBaseURL,
 		APIAuthHeader:   base.APIAuthHeader,
 		APIAuthValue:    base.APIAuthValue,
