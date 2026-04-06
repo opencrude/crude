@@ -408,8 +408,13 @@ func (p inlineSettings) updateProviderSelect(msg tea.KeyMsg) (inlineSettings, te
 // updateEditing handles text input for a specific field
 func (p inlineSettings) updateEditing(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool, bool) {
 	switch msg.Type {
-	case tea.KeyEsc, tea.KeyEnter:
+	case tea.KeyEsc:
 		p.editingField = false
+		return p, nil, false, false
+	case tea.KeyEnter:
+		p.editingField = false
+		p.focused++
+		p.clampFocus()
 		return p, nil, false, false
 	case tea.KeyTab, tea.KeyShiftTab:
 		p.editingField = false
@@ -472,6 +477,16 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 			p.focused = 0
 		}
 	case tea.KeyEnter:
+		if p.focusedBtn > 0 {
+			if p.focusedBtn == 1 {
+				return p, nil, true, false
+			}
+			if p.focusedBtn == 2 {
+				return p, nil, false, true
+			}
+			p.focusedBtn = 0
+			return p, nil, false, false
+		}
 		switch p.focused {
 		case sfProvider:
 			p.isProviderSelect = true
@@ -543,12 +558,6 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 				}
 				p.editingField = true
 			}
-		}
-		if p.focusedBtn > 0 {
-			if p.focusedBtn == 1 {
-				return p, nil, true, true
-			}
-			p.focusedBtn = 0
 		}
 	case tea.KeyLeft, tea.KeyRight:
 		if p.focusedBtn > 0 {
@@ -917,17 +926,19 @@ func (p *inlineSettings) View() string {
 	}
 
 	b.WriteString("\n")
-	saveStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-	cancelStyle := lipgloss.NewStyle().Foreground(colorMuted)
 	if p.focusedBtn == 1 {
+		saveStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 		b.WriteString(saveStyle.Render("❯ [ Save ]"))
 	} else {
+		saveStyle := lipgloss.NewStyle().Foreground(colorMuted)
 		b.WriteString(saveStyle.Render("  [ Save ]"))
 	}
 	b.WriteString("   ")
 	if p.focusedBtn == 2 {
+		cancelStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 		b.WriteString(cancelStyle.Render("❯ [ Cancel ]"))
 	} else {
+		cancelStyle := lipgloss.NewStyle().Foreground(colorMuted)
 		b.WriteString(cancelStyle.Render("  [ Cancel ]"))
 	}
 	b.WriteString("\n")

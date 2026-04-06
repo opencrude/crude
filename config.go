@@ -16,6 +16,13 @@ type SSHConf struct {
 	KeyFile  string `json:"key_file,omitempty"`
 }
 
+type ProviderConfig struct {
+	APIKey      string `json:"api_key,omitempty"`
+	Model       string `json:"model,omitempty"`
+	EmbedModel  string `json:"embed_model,omitempty"`
+	ProviderURL string `json:"provider_url,omitempty"`
+}
+
 type Config struct {
 	APIKey     string  `json:"api_key"`
 	Model      string  `json:"model"`
@@ -26,6 +33,8 @@ type Config struct {
 	ProviderID     string `json:"provider_id,omitempty"`
 	ProviderURL    string `json:"provider_url,omitempty"`
 	ProviderAPIKey string `json:"provider_api_key,omitempty"`
+
+	ProviderConfigs map[string]ProviderConfig `json:"provider_configs,omitempty"`
 
 	APIBaseURL      string `json:"api_base_url,omitempty"`
 	APIAuthHeader   string `json:"api_auth_header,omitempty"`

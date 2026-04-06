@@ -467,7 +467,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.settingsActive {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
-			updated, cmd, saved, _ := m.inlineForm.Update(msg)
+			updated, cmd, saved, cancelled := m.inlineForm.Update(msg)
 			m.inlineForm = updated
 			if saved {
 				s := m.inlineForm.toSettings()
@@ -476,6 +476,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.onSaveSettings != nil {
 					go m.onSaveSettings(s)
 				}
+				m.messages = append(m.messages, ChatMessage{
+					Role:    RoleAssistant,
+					Content: formatSettingsSummary(s),
+					Time:    time.Now(),
+				})
+				m.chatOffset = 0
+			}
+			if cancelled {
+				s := m.inlineForm.toSettings()
+				m.settingsActive = false
+				m.messages = append(m.messages, ChatMessage{
+					Role:    RoleAssistant,
+					Content: formatSettingsSummary(s),
+					Time:    time.Now(),
+				})
+				m.chatOffset = 0
 			}
 			return m, cmd
 		case ModelsListMsg:
@@ -1372,23 +1388,41 @@ func truncateLine(s string, max int) string {
 func (m *Model) IsQuitting() bool { return m.quit }
 
 func formatSettingsSummary(s Settings) string {
-	lines := []string{"Current Settings:"}
-	if s.ProviderID != "" {
-		lines = append(lines, fmt.Sprintf("  provider: %s", s.ProviderID))
+	var b strings.Builder
+	b.WriteString("```\n")
+	b.WriteString("settings\n")
+	b.WriteString(fmt.Sprintf("  provider      %s\n", valueOr(s.ProviderID, "-")))
+	b.WriteString(fmt.Sprintf("  base url      %s\n", valueOr(s.ProviderURL, "-")))
+	b.WriteString(fmt.Sprintf("  api key       %s\n", maskOr(s.APIKey, "-")))
+	b.WriteString(fmt.Sprintf("  model         %s\n", valueOr(s.Model, "-")))
+	b.WriteString(fmt.Sprintf("  embed model   %s\n", valueOr(s.EmbedModel, "-")))
+	b.WriteString(fmt.Sprintf("  backend       %s\n", valueOr(s.Backend, "-")))
+	if s.Backend == "ssh" {
+		b.WriteString("\n  ssh\n")
+		b.WriteString(fmt.Sprintf("  host          %s\n", valueOr(s.SSHHost, "-")))
+		b.WriteString(fmt.Sprintf("  port          %s\n", valueOr(s.SSHPort, "-")))
+		b.WriteString(fmt.Sprintf("  user          %s\n", valueOr(s.SSHUser, "-")))
+		b.WriteString(fmt.Sprintf("  password      %s\n", maskOr(s.SSHPassword, "-")))
+		b.WriteString(fmt.Sprintf("  key file      %s\n", valueOr(s.SSHKeyFile, "-")))
 	}
-	if s.Model != "" {
-		lines = append(lines, fmt.Sprintf("  model: %s", s.Model))
+	b.WriteString("```")
+	return b.String()
+}
+
+func valueOr(s, fallback string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fallback
 	}
-	if s.EmbedModel != "" {
-		lines = append(lines, fmt.Sprintf("  embed model: %s", s.EmbedModel))
+	return s
+}
+
+func maskOr(s, fallback string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fallback
 	}
-	if s.Backend != "" {
-		lines = append(lines, fmt.Sprintf("  backend: %s", s.Backend))
-	}
-	if s.SSHHost != "" {
-		lines = append(lines, fmt.Sprintf("  ssh: %s@%s", s.SSHUser, s.SSHHost))
-	}
-	return strings.Join(lines, "\n")
+	return strings.Repeat("•", len(s))
 }
 
 // formatTokens formats a token count into a compact human-readable string.
