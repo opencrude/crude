@@ -303,16 +303,14 @@ func (m *Model) renderAllMessages() []string {
 				asstLines[0] = label + asstLines[0]
 			}
 
-			// Streaming cursor at the end of the last content line (before timestamp padding)
-			if m.streaming && isLastMsg {
-				cursor := lipgloss.NewStyle().Foreground(colorAccent).Render("▌")
-				asstLines[len(asstLines)-1] += cursor
-			}
-
 			// Remaining lines: just indented, no background
 
-			// Add timestamps
+			// Add timestamps (skip last line when streaming so cursor stays at content end)
+			skipLastForStream := m.streaming && isLastMsg
 			for i, line := range asstLines {
+				if skipLastForStream && i == len(asstLines)-1 {
+					continue
+				}
 				var timePart string
 				if i == 0 {
 					timePart = dim.Render(timeLine1)
@@ -337,6 +335,17 @@ func (m *Model) renderAllMessages() []string {
 					sp = 0
 				}
 				all = append(all, strings.Repeat(" ", sp)+dim.Render(timeLine2))
+			}
+
+			// Streaming cursor right after the last content token
+			if m.streaming && isLastMsg && len(asstLines) > 0 {
+				cursor := lipgloss.NewStyle().Foreground(colorAccent).Render("▌")
+				// Cursor goes on the last content line, not on the appended date line
+				cursorIdx := len(all) - 1
+				if len(asstLines) == 1 && len(all) >= 2 {
+					cursorIdx = len(all) - 2
+				}
+				all[cursorIdx] += cursor
 			}
 
 		case RoleThinking:
