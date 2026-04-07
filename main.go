@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -9,12 +10,14 @@ import (
 	"strings"
 	"sync"
 
+	"crude/agent"
 	"crude/backend"
 	"crude/embed"
 	"crude/provider"
 	"crude/rag"
 	"crude/safety"
 	"crude/statemachine"
+	"crude/tools"
 	"crude/tui"
 )
 
@@ -68,12 +71,13 @@ Helpers: sum(arr), mean(arr), round(value, decimals).
 Be concise, exact, and direct. Never guess paths, file contents, or calculation results — always verify first.`
 
 var (
-	sessionMsgs          []APIMessage
+	sessionMsgs          []agent.APIMessage
 	sessionMsgsMu        sync.Mutex
 	pendingBlock         bool
 	pendingBlockMu       sync.Mutex
 	lastBlockingResponse string
 	lastBlockingMu       sync.Mutex
+	activeBackend        backend.Executor
 )
 
 func main() {
@@ -137,9 +141,7 @@ func main() {
 	rollbackHandler := safety.NewRollbackHandler(activeBackend)
 
 	// ── Agent ────────────────────────────────────────────────
-	agent := NewAgent(activeProvider, cfg.Model)
-	agent.AuditLogger = auditLogger
-	agent.RollbackHandler = rollbackHandler
+	ag := newAgent(activeProvider, cfg.Model, activeBackend, auditLogger, rollbackHandler)
 
 	// ── RAG engine ───────────────────────────────────────────
 	ragCacheDir := filepath.Join(home, ".crude", "rag")
@@ -211,9 +213,7 @@ func main() {
 		activeProvider = provider.FromPreset(cfg.ProviderID, cfg.ProviderAPIKey, cfg.ProviderURL)
 		activeBackend = initBackend(cfg)
 
-		agent = NewAgent(activeProvider, cfg.Model)
-		agent.AuditLogger = auditLogger
-		agent.RollbackHandler = safety.NewRollbackHandler(activeBackend)
+		ag = newAgent(activeProvider, cfg.Model, activeBackend, auditLogger, safety.NewRollbackHandler(activeBackend))
 		embedClient = embed.NewClient(cfg.APIKey, cfg.EmbedModel, activeProvider.BaseURL)
 		ragEngine = rag.New(embedClient, ragCacheDir)
 		if err := loadKnowledgeBase(ragEngine, knowledgeDir); err != nil {
@@ -270,11 +270,11 @@ func main() {
 			}
 
 			sessionMsgsMu.Lock()
-			sessionMsgs = append(sessionMsgs, APIMessage{
+			sessionMsgs = append(sessionMsgs, agent.APIMessage{
 				Role:    "user",
 				Content: userText,
 			})
-			msgsCopy := make([]APIMessage, len(sessionMsgs))
+			msgsCopy := make([]agent.APIMessage, len(sessionMsgs))
 			copy(msgsCopy, sessionMsgs)
 			sessionMsgsMu.Unlock()
 
@@ -283,7 +283,7 @@ func main() {
 			ragEngine.ResetObservations()
 
 			var finalContent string
-			agent.Run(msgsCopy, prompt, func(evt AgentEvent) {
+			ag.Run(msgsCopy, prompt, func(evt agent.AgentEvent) {
 				tuiInst.SendAgentEvent(evt.Type, evt.Data)
 				if evt.Type == "blocking" {
 					pendingBlockMu.Lock()
@@ -314,7 +314,7 @@ func main() {
 
 			if finalContent != "" {
 				sessionMsgsMu.Lock()
-				sessionMsgs = append(sessionMsgs, APIMessage{
+				sessionMsgs = append(sessionMsgs, agent.APIMessage{
 					Role:    "assistant",
 					Content: finalContent,
 				})
@@ -324,6 +324,28 @@ func main() {
 	}()
 
 	tuiInst.Wait()
+}
+
+func newAgent(p *provider.Provider, model string, exec backend.Executor, auditLogger *safety.AuditLogger, rollbackHandler *safety.RollbackHandler) *agent.Agent {
+	a := agent.NewAgent(p, model)
+	a.AuditLogger = auditLogger
+	a.RollbackHandler = rollbackHandler
+	a.ToolFn = func(tool string, params map[string]any) (string, error) {
+		tc := tools.ToolCall{
+			ID:   fmt.Sprintf("dag-%s", tool),
+			Type: "function",
+			Function: tools.FunctionCall{
+				Name:      tool,
+				Arguments: mustJSON(params),
+			},
+		}
+		result := tools.Execute(tc, exec)
+		if strings.HasPrefix(result, "Error:") {
+			return result, fmt.Errorf("%s", result)
+		}
+		return result, nil
+	}
+	return a
 }
 
 func loadKnowledgeBase(ragEngine *rag.Engine, dir string) error {
@@ -514,4 +536,16 @@ func settingsToConfig(s tui.Settings, base Config) Config {
 		CustomDeleteCmd: base.CustomDeleteCmd,
 		CustomListCmd:   base.CustomListCmd,
 	}
+}
+
+func logAgent(format string, args ...any) {
+	log.Printf("[agent] "+format, args...)
+}
+
+func mustJSON(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }
