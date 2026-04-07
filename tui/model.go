@@ -32,7 +32,10 @@ type Model struct {
 	tokenCompletion int
 
 	// Scroll: 0 = bottom, >0 = scrolled up by N lines
-	chatOffset int
+	chatOffset     int
+	userScrolled   bool      // true when user manually scrolls up during streaming
+	scrollVelocity float64   // accumulated scroll momentum
+	lastScrollTime time.Time // for velocity-based acceleration
 
 	// Display
 	width  int
@@ -84,6 +87,7 @@ func NewModel(modelName string, inputCh chan<- string, initial Settings, onSave 
 		inlineForm:     newInlineSettings(initial),
 		onSaveSettings: onSave,
 		fetchModelsFn:  fetchFn,
+		historyIdx:     -1,
 	}
 }
 

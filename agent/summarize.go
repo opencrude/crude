@@ -27,6 +27,8 @@ CRITICAL — format your response in proper Markdown:
 
 	content, _, err := a.completeStream(summaryMsgs, nil, func(token string) {
 		emit(AgentEvent{Type: "stream_token", Data: token})
+	}, func(text string) {
+		emit(AgentEvent{Type: "thinking", Data: text})
 	})
 	if err != nil {
 		return summaryText
@@ -49,6 +51,8 @@ func (a *Agent) directReply(sessionMessages []APIMessage, systemPrompt string, e
 
 	content, _, err := a.completeStream(replyMsgs, nil, func(token string) {
 		emit(AgentEvent{Type: "stream_token", Data: token})
+	}, func(text string) {
+		emit(AgentEvent{Type: "thinking", Data: text})
 	})
 	if err != nil {
 		logAgent("direct reply failed: %v", err)
