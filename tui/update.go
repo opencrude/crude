@@ -21,8 +21,10 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 
 	switch cmd {
 	case "/settings":
+		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
 	case "/provider":
+		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
 		m.inlineForm.focused = sfProvider
 		m.inlineForm.isProviderSelect = true
@@ -34,6 +36,7 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "/model":
+		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
 		m.inlineForm.focused = sfModel
 		if m.inlineForm.providerID == "ollama" || m.inlineForm.providerID == "custom" {
@@ -59,6 +62,7 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 			m.inlineForm.updateModelFilter()
 		}
 	case "/embed-model":
+		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
 		m.inlineForm.focused = sfEmbedModel
 		if m.inlineForm.providerID == "ollama" || m.inlineForm.providerID == "custom" {
@@ -85,10 +89,12 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 			m.inlineForm.updateEmbedModelFilter()
 		}
 	case "/api-key":
+		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
 		m.inlineForm.focused = sfAPIKey
 		m.inlineForm.editingField = true
 	case "/backend":
+		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
 		m.inlineForm.focused = sfBackend
 		m.inlineForm.toggleBackend()
@@ -150,8 +156,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inlineForm.isProviderSelect = false
 				return m, nil
 			}
-			m.settingsActive = false
+			m.inlineForm.restoreSnapshot()
 			s := m.inlineForm.toSettings()
+			m.settingsActive = false
 			m.lastSettings = s
 			summary := formatSettingsSummary(s)
 			m.messages = append(m.messages, ChatMessage{Role: RoleAssistant, Content: summary, Time: time.Now()})
@@ -190,6 +197,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chatOffset = 0
 			}
 			if cancelled {
+				m.inlineForm.restoreSnapshot()
 				s := m.inlineForm.toSettings()
 				m.settingsActive = false
 				m.messages = append(m.messages, ChatMessage{
@@ -269,6 +277,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 
 		case tea.KeyCtrlS:
+			m.inlineForm.saveSnapshot()
 			m.settingsActive = true
 			m.messages = append(m.messages, ChatMessage{Role: RoleUser, Content: "/settings", Time: time.Now()})
 			m.chatOffset = 0
@@ -629,6 +638,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── External messages ──────────────────────────────────────
 	case openSettingsMsg:
+		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
 		// Fetch is lazy — no auto-fetch here.
 

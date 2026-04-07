@@ -36,7 +36,9 @@ type inlineSettings struct {
 	backend      string
 	providerID   string
 	editingField bool
+	editCursor   int
 	focusedBtn   int
+	snapshot     *inlineSettings // original values saved when settings opened
 
 	// Model selection state
 	isModelSelect   bool
@@ -146,6 +148,31 @@ func (p *inlineSettings) toggleBackend() {
 	p.clampFocus()
 }
 
+func (p *inlineSettings) startEditing(idx int) {
+	p.editingField = true
+	p.editCursor = len(p.fields[idx].value)
+}
+
+func (p *inlineSettings) saveSnapshot() {
+	cp := *p
+	p.snapshot = &cp
+}
+
+func (p *inlineSettings) restoreSnapshot() {
+	if p.snapshot != nil {
+		p.fields = p.snapshot.fields
+		p.backend = p.snapshot.backend
+		p.providerID = p.snapshot.providerID
+		p.focused = p.snapshot.focused
+		p.focusedBtn = p.snapshot.focusedBtn
+		p.isModelSelect = p.snapshot.isModelSelect
+		p.isEmbedModelSelect = p.snapshot.isEmbedModelSelect
+		p.isProviderSelect = p.snapshot.isProviderSelect
+		p.editingField = false
+		p.editCursor = 0
+	}
+}
+
 func (p inlineSettings) Update(msg tea.Msg) (inlineSettings, tea.Cmd, bool, bool) {
 	switch msg := msg.(type) {
 	case ModelsListMsg:
@@ -203,16 +230,36 @@ func (p inlineSettings) updateEditing(msg tea.KeyMsg) (inlineSettings, tea.Cmd, 
 	case tea.KeyTab, tea.KeyShiftTab:
 		p.editingField = false
 		return p.updateNav(msg)
-	case tea.KeyBackspace, tea.KeyDelete:
+	case tea.KeyBackspace:
 		f := &p.fields[p.focused]
-		if len(f.value) > 0 {
-			f.value = f.value[:len(f.value)-1]
+		if p.editCursor > 0 && len(f.value) > 0 {
+			f.value = append(f.value[:p.editCursor-1], f.value[p.editCursor:]...)
+			p.editCursor--
 		}
+	case tea.KeyDelete:
+		f := &p.fields[p.focused]
+		if p.editCursor < len(f.value) {
+			f.value = append(f.value[:p.editCursor], f.value[p.editCursor+1:]...)
+		}
+	case tea.KeyLeft:
+		if p.editCursor > 0 {
+			p.editCursor--
+		}
+	case tea.KeyRight:
+		f := &p.fields[p.focused]
+		if p.editCursor < len(f.value) {
+			p.editCursor++
+		}
+	case tea.KeyHome:
+		p.editCursor = 0
+	case tea.KeyEnd:
+		p.editCursor = len(p.fields[p.focused].value)
 	default:
 		for _, r := range msg.Runes {
 			if unicode.IsPrint(r) {
 				f := &p.fields[p.focused]
-				f.value = append(f.value, r)
+				f.value = append(f.value[:p.editCursor], append([]rune{r}, f.value[p.editCursor:]...)...)
+				p.editCursor++
 			}
 		}
 	}
@@ -222,8 +269,10 @@ func (p inlineSettings) updateEditing(msg tea.KeyMsg) (inlineSettings, tea.Cmd, 
 // updateNav handles up/down navigation and entering edit mode
 func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool, bool) {
 	switch msg.Type {
-	case tea.KeyCtrlS, tea.KeyEsc:
-		return p, nil, true, true
+	case tea.KeyCtrlS:
+		return p, nil, true, false
+	case tea.KeyEsc:
+		return p, nil, false, true
 	case tea.KeyUp, tea.KeyShiftTab:
 		if p.focusedBtn == 2 {
 			if msg.Type == tea.KeyShiftTab {
@@ -286,12 +335,12 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 			p.toggleBackend()
 		case sfModel:
 			if p.providerID == "ollama" || p.providerID == "custom" {
-				p.editingField = true
+				p.startEditing(sfModel)
 				msgText := fmt.Sprintf("Type model name manually for %s.", p.providerID)
 				return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 			}
 			if string(p.fields[sfAPIKey].value) == "" && p.providerID != "openrouter" {
-				p.editingField = true
+				p.startEditing(sfModel)
 				msgText := fmt.Sprintf("No API key provided for %s. Type model name manually.", p.providerID)
 				return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 			}
@@ -311,12 +360,12 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 			p.updateModelFilter()
 		case sfEmbedModel:
 			if p.providerID == "ollama" || p.providerID == "custom" {
-				p.editingField = true
+				p.startEditing(sfEmbedModel)
 				msgText := fmt.Sprintf("Type embedding model name manually for %s.", p.providerID)
 				return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 			}
 			if string(p.fields[sfAPIKey].value) == "" && p.providerID != "openrouter" {
-				p.editingField = true
+				p.startEditing(sfEmbedModel)
 				msgText := fmt.Sprintf("No API key provided for %s. Type embedding model name manually.", p.providerID)
 				return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 			}
@@ -340,7 +389,7 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 				if p.fields[p.focused].masked {
 					p.fields[p.focused].value = nil
 				}
-				p.editingField = true
+				p.startEditing(p.focused)
 			}
 		}
 	case tea.KeyLeft, tea.KeyRight:
@@ -391,12 +440,12 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 				p.toggleBackend()
 			case sfModel:
 				if p.providerID == "ollama" || p.providerID == "custom" {
-					p.editingField = true
+					p.startEditing(sfModel)
 					msgText := fmt.Sprintf("Type model name manually for %s.", p.providerID)
 					return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 				}
 				if string(p.fields[sfAPIKey].value) == "" && p.providerID != "openrouter" {
-					p.editingField = true
+					p.startEditing(sfModel)
 					msgText := fmt.Sprintf("No API key provided for %s. Type model name manually.", p.providerID)
 					return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 				}
@@ -415,12 +464,12 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 				p.updateModelFilter()
 			case sfEmbedModel:
 				if p.providerID == "ollama" || p.providerID == "custom" {
-					p.editingField = true
+					p.startEditing(sfEmbedModel)
 					msgText := fmt.Sprintf("Type embedding model name manually for %s.", p.providerID)
 					return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 				}
 				if string(p.fields[sfAPIKey].value) == "" && p.providerID != "openrouter" {
-					p.editingField = true
+					p.startEditing(sfEmbedModel)
 					msgText := fmt.Sprintf("No API key provided for %s. Type embedding model name manually.", p.providerID)
 					return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 				}
@@ -443,7 +492,7 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 				if p.fields[p.focused].masked {
 					p.fields[p.focused].value = nil
 				}
-				p.editingField = true
+				p.startEditing(p.focused)
 				for _, r := range msg.Runes {
 					if unicode.IsPrint(r) {
 						p.fields[p.focused].value = append(p.fields[p.focused].value, r)
