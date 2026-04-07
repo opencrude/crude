@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -115,7 +116,7 @@ func (a *Agent) Run(
 
 	if isChitchat(lastUserMsg) {
 		emit(AgentEvent{Type: "phase", Data: "replying"})
-		reply := a.directReply(sessionMessages, systemPrompt)
+		reply := a.directReply(sessionMessages, systemPrompt, emit)
 		if reply != "" {
 			emit(AgentEvent{Type: "done", Data: reply})
 			return
@@ -162,13 +163,13 @@ func (a *Agent) Run(
 	}
 
 	// ── Phase 4: SUMMARY ─────────────────────────────────────────
-	summary := a.summarize(sessionMessages, execDAG, systemPrompt)
+	summary := a.summarize(sessionMessages, execDAG, systemPrompt, emit)
 	emit(AgentEvent{Type: "done", Data: summary})
 }
 
 // directReply handles chitchat/greetings without grounding or planning.
 // It asks the LLM for a brief conversational response.
-func (a *Agent) directReply(sessionMessages []APIMessage, systemPrompt string) string {
+func (a *Agent) directReply(sessionMessages []APIMessage, systemPrompt string, emit func(AgentEvent)) string {
 	replyMsgs := make([]APIMessage, 0, len(sessionMessages)+2)
 	replyMsgs = append(replyMsgs, APIMessage{
 		Role:    "system",
@@ -176,12 +177,14 @@ func (a *Agent) directReply(sessionMessages []APIMessage, systemPrompt string) s
 	})
 	replyMsgs = append(replyMsgs, sessionMessages...)
 
-	resp, err := a.complete(replyMsgs, nil)
+	content, _, err := a.completeStream(replyMsgs, nil, func(token string) {
+		emit(AgentEvent{Type: "stream_token", Data: token})
+	})
 	if err != nil {
 		logAgent("direct reply failed: %v", err)
 		return ""
 	}
-	return resp.Message.Content
+	return content
 }
 
 // ground runs the grounding phase using structured text generation (no function calling).
@@ -602,7 +605,7 @@ func (a *Agent) execute(
 }
 
 // summarize asks the LLM to produce a final answer based on execution results.
-func (a *Agent) summarize(sessionMessages []APIMessage, execDAG *dag.DAG, systemPrompt string) string {
+func (a *Agent) summarize(sessionMessages []APIMessage, execDAG *dag.DAG, systemPrompt string, emit func(AgentEvent)) string {
 	summaryText := execDAG.Summary()
 	if summaryText == "" {
 		summaryText = "Execution complete. No operations were performed."
@@ -622,12 +625,14 @@ CRITICAL — format your response in proper Markdown:
 - Use bold for emphasis on key findings
 - NEVER dump raw text without formatting — always use appropriate markdown decorations`})
 
-	resp, err := a.complete(summaryMsgs, nil)
+	content, _, err := a.completeStream(summaryMsgs, nil, func(token string) {
+		emit(AgentEvent{Type: "stream_token", Data: token})
+	})
 	if err != nil {
 		return summaryText
 	}
-	if resp.Message.Content != "" {
-		return resp.Message.Content
+	if content != "" {
+		return content
 	}
 	return summaryText
 }
@@ -738,6 +743,117 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 	}
 
 	return nil, &apiCallError{Message: "API request retries exhausted", RetriesExhausted: true}
+}
+
+// completeStream sends a streaming request to the API and calls emit for each token chunk.
+// Returns the full accumulated content, finish reason, and any error.
+func (a *Agent) completeStream(
+	msgs []APIMessage,
+	tools []ToolDef,
+	emit func(token string),
+) (string, string, error) {
+	req := ChatRequest{
+		Model:    a.Model,
+		Messages: msgs,
+		Tools:    tools,
+		Stream:   true,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return "", "", fmt.Errorf("marshal request: %w", err)
+	}
+
+	logAgent("calling %s model=%s (streaming) msgs=%d tools=%d", a.Provider.Name, a.Model, len(msgs), len(tools))
+	client := &http.Client{Timeout: 300 * time.Second}
+
+	for attempt := 1; attempt <= maxAPIAttempts; attempt++ {
+		httpReq, err := http.NewRequest("POST", a.Provider.ChatEndpoint(), bytes.NewReader(body))
+		if err != nil {
+			return "", "", fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set(a.Provider.AuthHeader, a.Provider.AuthValue())
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			if attempt < maxAPIAttempts {
+				bo := retryBackoff(attempt)
+				logAgent("stream request failed attempt=%d/%d err=%v retrying in %s", attempt, maxAPIAttempts, err, bo)
+				time.Sleep(bo)
+				continue
+			}
+			return "", "", &apiCallError{
+				Message:          fmt.Sprintf("Stream request failed after %d attempts: %v", maxAPIAttempts, err),
+				RetriesExhausted: true,
+			}
+		}
+
+		if resp.StatusCode != 200 {
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			snippet := truncate(string(respBody), 240)
+			if isRetryable(resp.StatusCode) && attempt < maxAPIAttempts {
+				bo := retryBackoff(attempt)
+				logAgent("retryable status=%d attempt=%d/%d retrying in %s body=%s",
+					resp.StatusCode, attempt, maxAPIAttempts, bo, snippet)
+				time.Sleep(bo)
+				continue
+			}
+			return "", "", fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, snippet)
+		}
+
+		var content strings.Builder
+		finishReason := ""
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 1024*64), 1024*64)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+			if data == "[DONE]" {
+				break
+			}
+
+			var chunk ChatResponse
+			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				continue
+			}
+			if len(chunk.Choices) == 0 {
+				continue
+			}
+
+			choice := chunk.Choices[0]
+			if choice.FinishReason != "" {
+				finishReason = choice.FinishReason
+			}
+
+			delta := choice.Delta.Content
+			if delta != "" {
+				content.WriteString(delta)
+				emit(delta)
+			}
+		}
+		resp.Body.Close()
+
+		if err := scanner.Err(); err != nil {
+			if attempt < maxAPIAttempts {
+				bo := retryBackoff(attempt)
+				logAgent("stream scan failed attempt=%d/%d err=%v retrying in %s", attempt, maxAPIAttempts, err, bo)
+				time.Sleep(bo)
+				continue
+			}
+			return "", "", fmt.Errorf("stream read error: %w", err)
+		}
+
+		logAgent("stream response finish=%s content_len=%d", finishReason, content.Len())
+		return content.String(), finishReason, nil
+	}
+
+	return "", "", &apiCallError{Message: "Stream request retries exhausted", RetriesExhausted: true}
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
