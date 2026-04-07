@@ -29,6 +29,7 @@ type Model struct {
 	thinking  bool
 	blocking  bool // waiting for user to resolve a blocking node
 	spinFrame int
+	streaming bool // true while receiving stream tokens
 
 	// Status line — compact activity indicator shown during agent work
 	statusLine      string
@@ -689,6 +690,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		default:
 			if !m.thinking || m.blocking {
+				s := msg.String()
+				if strings.HasPrefix(s, "<") && strings.HasSuffix(s, "M") {
+					return m, nil
+				}
+				if strings.HasPrefix(s, "\x1b[<") && strings.HasSuffix(s, "M") {
+					return m, nil
+				}
 				// If browsing history and user types, update prefix and reset position
 				if m.historyIdx != -1 {
 					m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
@@ -753,9 +761,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 			}
 
+		case "stream_token":
+			if token, ok := evt.Data.(string); ok && token != "" {
+				m.streaming = true
+				if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
+					m.messages[len(m.messages)-1].Content += token
+				} else {
+					m.messages = append(m.messages, ChatMessage{
+						Role:    RoleAssistant,
+						Content: token,
+						Time:    time.Now(),
+					})
+				}
+				m.chatOffset = 0
+			}
+
 		case "done":
 			m.thinking = false
 			m.blocking = false
+			m.streaming = false
 			m.statusLine = ""
 			m.chatOffset = 0
 			for i := range m.messages {
@@ -764,11 +788,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if content, ok := evt.Data.(string); ok && content != "" {
-				m.messages = append(m.messages, ChatMessage{
-					Role:    RoleAssistant,
-					Content: content,
-					Time:    time.Now(),
-				})
+				if m.streaming && len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
+					// Streaming already populated the last message — ensure it has the full content
+					m.messages[len(m.messages)-1].Content = content
+				} else {
+					m.messages = append(m.messages, ChatMessage{
+						Role:    RoleAssistant,
+						Content: content,
+						Time:    time.Now(),
+					})
+				}
 			}
 
 		case "tool_call":
@@ -1050,6 +1079,8 @@ func (m *Model) chatView() string {
 	if m.lastError != "" {
 		errLeft = pad + lipgloss.NewStyle().Foreground(colorError).Render(
 			truncateLine(m.lastError, m.width/2))
+	} else if m.streaming {
+		errLeft = pad + streamAnimation(m.spinFrame, m.statusPhase)
 	} else if m.thinking {
 		errLeft = pad + workAnimation(m.spinFrame, m.statusPhase)
 	}
@@ -1126,7 +1157,8 @@ func (m *Model) renderAllMessages() []string {
 		innerW = 20
 	}
 
-	for _, msg := range m.messages {
+	for msgIdx, msg := range m.messages {
+		isLastMsg := msgIdx == len(m.messages)-1
 		timeLine1, timeLine2 := formatTimeLabel(msg.Time)
 		timeW := max(len(timeLine1), len(timeLine2))
 
@@ -1226,6 +1258,12 @@ func (m *Model) renderAllMessages() []string {
 					sp = 0
 				}
 				all = append(all, strings.Repeat(" ", sp)+dim.Render(timeLine2))
+			}
+
+			// Streaming cursor at the end of the last line
+			if m.streaming && isLastMsg {
+				cursor := lipgloss.NewStyle().Foreground(colorAccent).Render("▌")
+				all[len(all)-1] += cursor
 			}
 
 		case RoleThinking:
@@ -1553,4 +1591,27 @@ func workAnimation(frame int, phase string) string {
 	return spinStyle.Render(spinnerFrames[frame%len(spinnerFrames)]+" ") +
 		lipgloss.NewStyle().Foreground(colorMainText).Render(phaseLabel) +
 		lipgloss.NewStyle().Foreground(colorMuted).Render(dots)
+}
+
+// streamAnimation returns a streaming indicator for the status bar.
+func streamAnimation(frame int, phase string) string {
+	phaseLabel := phase
+	switch phase {
+	case "replying":
+		phaseLabel = "replying"
+	case "executing":
+		phaseLabel = "streaming response"
+	default:
+		phaseLabel = "streaming"
+	}
+
+	spinStyle := lipgloss.NewStyle().Foreground(spinnerColorPlanning)
+	cursor := "▌"
+	if frame%2 == 0 {
+		cursor = "▌"
+	} else {
+		cursor = " "
+	}
+	return spinStyle.Render("●"+cursor+" ") +
+		lipgloss.NewStyle().Foreground(colorMainText).Render(phaseLabel)
 }
