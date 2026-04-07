@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode"
@@ -379,18 +380,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyPgUp:
 			m.chatOffset += m.chatAreaHeight()
+			m.userScrolled = true
 
 		case tea.KeyPgDown:
 			m.chatOffset -= m.chatAreaHeight()
 			if m.chatOffset < 0 {
 				m.chatOffset = 0
 			}
+			if m.chatOffset == 0 {
+				m.userScrolled = false
+			}
 
 		case tea.KeyHome:
 			m.chatOffset = 1 << 30
+			m.userScrolled = true
 
 		case tea.KeyEnd:
 			m.chatOffset = 0
+			m.userScrolled = false
 
 		default:
 			if !m.thinking || m.blocking {
@@ -425,13 +432,43 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress {
+			inputStartLine := m.chatAreaHeight() + 4
+			inInputArea := msg.Y >= inputStartLine && !m.thinking
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
-				m.chatOffset++
+				if inInputArea && len(m.history) > 0 {
+					m.browseHistoryUp()
+					return m, nil
+				}
+				now := time.Now()
+				elapsed := now.Sub(m.lastScrollTime).Seconds()
+				if elapsed < 0.1 {
+					m.scrollVelocity = math.Min(m.scrollVelocity+0.5, 5)
+				} else {
+					m.scrollVelocity = 1
+				}
+				m.lastScrollTime = now
+				m.chatOffset += int(m.scrollVelocity)
+				m.userScrolled = true
 			case tea.MouseButtonWheelDown:
-				m.chatOffset--
+				if inInputArea && len(m.history) > 0 {
+					m.browseHistoryDown()
+					return m, nil
+				}
+				now := time.Now()
+				elapsed := now.Sub(m.lastScrollTime).Seconds()
+				if elapsed < 0.1 {
+					m.scrollVelocity = math.Min(m.scrollVelocity+0.5, 5)
+				} else {
+					m.scrollVelocity = 1
+				}
+				m.lastScrollTime = now
+				m.chatOffset -= int(m.scrollVelocity)
 				if m.chatOffset < 0 {
 					m.chatOffset = 0
+				}
+				if m.chatOffset == 0 {
+					m.userScrolled = false
 				}
 			}
 		}
@@ -457,12 +494,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "thinking":
 			if s, ok := evt.Data.(string); ok && s != "" {
 				m.statusLine = truncateLine(s, 80)
-				m.messages = append(m.messages, ChatMessage{
-					Role:           RoleThinking,
-					Content:        s,
-					Time:           time.Now(),
-					ThinkingActive: true,
-				})
+				if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleThinking {
+					m.messages[len(m.messages)-1].Content += s
+				} else {
+					for i := range m.messages {
+						if m.messages[i].ThinkingActive {
+							m.messages[i].ThinkingActive = false
+						}
+					}
+					m.messages = append(m.messages, ChatMessage{
+						Role:           RoleThinking,
+						Content:        s,
+						Time:           time.Now(),
+						ThinkingActive: true,
+					})
+				}
 			}
 
 		case "stream_token":
@@ -477,7 +523,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Time:    time.Now(),
 					})
 				}
-				m.chatOffset = 0
+				if !m.userScrolled {
+					m.chatOffset = 0
+				}
 			}
 
 		case "done":
@@ -485,6 +533,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.blocking = false
 			m.streaming = false
 			m.statusLine = ""
+			m.userScrolled = false
 			m.chatOffset = 0
 			for i := range m.messages {
 				if m.messages[i].ThinkingActive {

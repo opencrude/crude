@@ -64,7 +64,7 @@ func Start(modelName string, initial Settings, presets []ProviderPreset, history
 	model := NewModel(modelName, inputCh, initial, onSave, fetchFn)
 	model.SetProviderPresets(t.ProviderPresets)
 	model.SetHistory(history)
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	t.model = model
 	t.Program = program
 

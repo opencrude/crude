@@ -52,8 +52,9 @@ type ChatResponse struct {
 		Message      APIMessage `json:"message"`
 		FinishReason string     `json:"finish_reason"`
 		Delta        struct {
-			Content   string     `json:"content"`
-			ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+			Content          string     `json:"content"`
+			ReasoningContent string     `json:"reasoning_content"`
+			ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 	} `json:"choices"`
 	Usage *struct {

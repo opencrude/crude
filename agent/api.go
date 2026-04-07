@@ -133,6 +133,7 @@ func (a *Agent) completeStream(
 	msgs []APIMessage,
 	tools []ToolDef,
 	emit func(token string),
+	emitThinking func(text string),
 ) (string, string, error) {
 	req := ChatRequest{
 		Model:    a.Model,
@@ -211,6 +212,12 @@ func (a *Agent) completeStream(
 			choice := chunk.Choices[0]
 			if choice.FinishReason != "" {
 				finishReason = choice.FinishReason
+			}
+
+			reasoning := choice.Delta.ReasoningContent
+			if reasoning != "" && emitThinking != nil {
+				content.WriteString(reasoning)
+				emitThinking(reasoning)
 			}
 
 			delta := choice.Delta.Content
