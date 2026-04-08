@@ -630,7 +630,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.selMouseY = msg.Y
 
-			inScrollZone := msg.Y <= chatTop+selScrollZone-1 || msg.Y >= chatBottom-selScrollZone+1
+			inScrollZone := msg.Y <= chatTop-1 || msg.Y >= chatBottom+1
 			if inScrollZone && !m.selAutoScroll {
 				m.selAutoScroll = true
 				return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
@@ -917,27 +917,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			chatBottom := chatTop + chatH - 1
 			mouseY := m.selMouseY
 
-			if mouseY <= chatTop+selScrollZone-1 {
+			if mouseY <= chatTop-1 {
 				m.chatOffset++
 				m.userScrolled = true
-				allIdx, ok := m.mouseToAllLine(chatTop + selScrollZone)
+				allIdx, ok := m.mouseToAllLine(chatTop)
 				if ok {
 					m.selEndLine = allIdx
 				}
-			} else if mouseY >= chatBottom-selScrollZone+1 {
+			} else if mouseY >= chatBottom+1 {
 				if m.chatOffset > 0 {
 					m.chatOffset--
 					if m.chatOffset == 0 {
 						m.userScrolled = false
 					}
 				}
-				allIdx, ok := m.mouseToAllLine(chatBottom - selScrollZone)
+				allIdx, ok := m.mouseToAllLine(chatBottom)
 				if ok {
 					m.selEndLine = allIdx
 				}
 			}
 
-			if mouseY <= chatTop+selScrollZone-1 || mouseY >= chatBottom-selScrollZone+1 {
+			if mouseY <= chatTop-1 || mouseY >= chatBottom+1 {
 				return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
 					return selectionTickMsg(t)
 				})
