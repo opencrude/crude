@@ -128,6 +128,24 @@ func (m *Model) chatView() string {
 		var inputContent string
 		if m.thinking && !m.blocking {
 			inputContent = pad + dim.Italic(true).Render("▶ waiting for response...")
+		} else if m.inputSelecting {
+			lines := m.inputLines()
+			for i, il := range lines {
+				prefix := "  "
+				if i == 0 {
+					prefix = "> "
+				}
+				lineStr := string(il)
+				rendered := pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+lineStr)
+				startCol, endCol := m.inputSelVisibleRange(i)
+				if startCol >= 0 && endCol > startCol {
+					rendered = applySelectionReverse(rendered, startCol, endCol)
+				}
+				inputContent += rendered
+				if i < len(lines)-1 {
+					inputContent += "\n"
+				}
+			}
 		} else {
 			lines := m.inputLines()
 			curLine, curCol := m.cursorLineCol()
@@ -407,7 +425,7 @@ func (m *Model) renderAllMessages() []string {
 
 		case RoleThinking:
 			lines := wrapText(msg.Content, contentWidth)
-			borderPrefix := dim.Render("  │ ")
+			borderPrefix := dim.Render("│ ")
 			for i, line := range lines {
 				if i == 0 {
 					if msg.ThinkingActive {
@@ -443,13 +461,13 @@ func (m *Model) renderAllMessages() []string {
 
 			var line string
 			if isCalling {
-				line = dim.Render("  │ ") + spinStyle.Render(spinnerFrames[m.spinFrame]+" ") + nameStyle.Render(label)
+				line = dim.Render("│ ") + spinStyle.Render(spinnerFrames[m.spinFrame]+" ") + nameStyle.Render(label)
 			} else if msg.ToolStatus == "success" {
-				line = dim.Render("  │ ") + spinStyle.Render("● ") + nameStyle.Render(label)
+				line = dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(label)
 			} else if msg.ToolStatus == "error" {
-				line = dim.Render("  │ ") + spinStyle.Render("● ") + nameStyle.Render(label)
+				line = dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(label)
 			} else {
-				line = dim.Render("  │ ") + spinStyle.Render("○ ") + nameStyle.Render(label)
+				line = dim.Render("│ ") + spinStyle.Render("○ ") + nameStyle.Render(label)
 			}
 
 			all = append(all, line)

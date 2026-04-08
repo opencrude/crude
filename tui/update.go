@@ -317,6 +317,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selAutoScroll = false
 			return m, nil
 		}
+		if m.inputSelecting {
+			m.inputSelecting = false
+			return m, nil
+		}
 
 		switch msg.Type {
 
@@ -605,53 +609,97 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selMouseY = msg.Y
 					m.selAutoScroll = false
 				}
-			} else if m.selecting {
+			} else if pos, ok := m.mouseToInputPos(msg.X, msg.Y); ok {
+				m.inputSelecting = true
+				m.inputSelAnchor = pos
+				m.inputSelEnd = pos
+			} else {
+				if m.selecting {
+					m.selecting = false
+					m.selAutoScroll = false
+				}
+				if m.inputSelecting {
+					m.inputSelecting = false
+				}
+			}
+
+		case msg.Action == tea.MouseActionMotion && (m.selecting || m.inputSelecting):
+			if m.selecting {
+				allIdx, ok := m.mouseToAllLine(msg.Y)
+				if ok {
+					m.selEndLine = allIdx
+					m.selEndCol = max(0, msg.X-padLR)
+				} else if msg.Y < chatTop && len(m.cachedAllLines) > 0 {
+					first, _ := m.chatAreaContentBounds()
+					if first >= 0 {
+						m.selEndLine = first
+						m.selEndCol = 0
+					}
+				} else if msg.Y > chatBottom && len(m.cachedAllLines) > 0 {
+					_, last := m.chatAreaContentBounds()
+					if last >= 0 {
+						m.selEndLine = last
+						m.selEndCol = 1 << 30
+					}
+				}
+				m.selMouseY = msg.Y
+
+				inScrollZone := msg.Y <= chatTop-1 || msg.Y >= chatBottom+1
+				if inScrollZone && !m.selAutoScroll {
+					m.selAutoScroll = true
+					return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
+						return selectionTickMsg(t)
+					})
+				} else if !inScrollZone {
+					m.selAutoScroll = false
+				}
+			}
+			if m.inputSelecting {
+				pos, ok := m.mouseToInputPos(msg.X, msg.Y)
+				if ok {
+					m.inputSelEnd = pos
+				} else {
+					firstY := m.inputFirstLineY()
+					if msg.Y < firstY {
+						m.inputSelEnd = 0
+					} else {
+						m.inputSelEnd = len(m.inputBuf)
+					}
+				}
+			}
+
+		case msg.Action == tea.MouseActionRelease && (m.selecting || m.inputSelecting):
+			var cmd tea.Cmd
+			if m.selecting {
 				m.selecting = false
 				m.selAutoScroll = false
-			}
-
-		case msg.Action == tea.MouseActionMotion && m.selecting:
-			allIdx, ok := m.mouseToAllLine(msg.Y)
-			if ok {
-				m.selEndLine = allIdx
-				m.selEndCol = max(0, msg.X-padLR)
-			} else if msg.Y < chatTop && len(m.cachedAllLines) > 0 {
-				first, _ := m.chatAreaContentBounds()
-				if first >= 0 {
-					m.selEndLine = first
-					m.selEndCol = 0
-				}
-			} else if msg.Y > chatBottom && len(m.cachedAllLines) > 0 {
-				_, last := m.chatAreaContentBounds()
-				if last >= 0 {
-					m.selEndLine = last
-					m.selEndCol = 1 << 30
+				sLine, sCol, eLine, eCol := m.selectionRange()
+				if sLine != eLine || sCol != eCol {
+					allLines := m.renderAllMessages()
+					text := extractSelectedText(allLines, sLine, sCol, eLine, eCol)
+					text = strings.TrimRight(text, " \t")
+					text = strings.TrimRight(text, "\n")
+					if text != "" {
+						cmd = copyToClipboardCmd(text)
+					}
 				}
 			}
-			m.selMouseY = msg.Y
-
-			inScrollZone := msg.Y <= chatTop-1 || msg.Y >= chatBottom+1
-			if inScrollZone && !m.selAutoScroll {
-				m.selAutoScroll = true
-				return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
-					return selectionTickMsg(t)
-				})
-			} else if !inScrollZone {
-				m.selAutoScroll = false
-			}
-
-		case msg.Action == tea.MouseActionRelease && m.selecting:
-			m.selecting = false
-			m.selAutoScroll = false
-			sLine, sCol, eLine, eCol := m.selectionRange()
-			if sLine != eLine || sCol != eCol {
-				allLines := m.renderAllMessages()
-				text := extractSelectedText(allLines, sLine, sCol, eLine, eCol)
-				text = strings.TrimRight(text, " \t")
-				text = strings.TrimRight(text, "\n")
-				if text != "" {
-					return m, copyToClipboardCmd(text)
+			if m.inputSelecting {
+				m.inputSelecting = false
+				selStart, selEnd := m.inputSelectionRange()
+				if selStart != selEnd && selStart < len(m.inputBuf) {
+					end := selEnd
+					if end > len(m.inputBuf) {
+						end = len(m.inputBuf)
+					}
+					text := string(m.inputBuf[selStart:end])
+					if text != "" && cmd == nil {
+						cmd = copyToClipboardCmd(text)
+					}
 				}
+			}
+			if cmd != nil {
+				return m, cmd
 			}
 
 		case msg.Action == tea.MouseActionPress:
