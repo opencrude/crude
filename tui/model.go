@@ -78,6 +78,22 @@ type Model struct {
 	// Hint bar
 	showHint bool
 
+	// Text selection in chat area
+	selecting     bool
+	selAnchorLine int
+	selAnchorCol  int
+	selEndLine    int
+	selEndCol     int
+	selMouseY     int
+	selAutoScroll bool
+
+	// Cached rendered lines (set during View, used by selection)
+	cachedAllLines []string
+
+	// Info message (gray, shown in status area)
+	infoMsg     string
+	infoMsgTime time.Time
+
 	quit bool
 }
 

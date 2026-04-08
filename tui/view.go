@@ -62,6 +62,7 @@ func (m *Model) chatView() string {
 	// ── Chat area ─────────────────────────────────────────────
 	chatH := m.chatAreaHeight()
 	allLines := m.renderAllMessages()
+	m.cachedAllLines = allLines
 
 	total := len(allLines)
 	maxOffset := total - chatH
@@ -84,6 +85,26 @@ func (m *Model) chatView() string {
 		endIdx = total
 	}
 	visible := allLines[startIdx:endIdx]
+
+	if m.selecting {
+		sLine, sCol, eLine, eCol := m.selectionRange()
+		for i := range visible {
+			allIdx := startIdx + i
+			if allIdx < sLine || allIdx > eLine {
+				continue
+			}
+			lineStartCol := 0
+			lineEndCol := 1 << 30
+			if allIdx == sLine {
+				lineStartCol = sCol
+			}
+			if allIdx == eLine {
+				lineEndCol = eCol
+			}
+			visible[i] = applySelectionReverse(visible[i], lineStartCol, lineEndCol)
+		}
+	}
+
 	// Pad empty lines at the TOP of chat area so messages stay anchored to bottom
 	emptyTop := chatH - len(visible)
 	for i := 0; i < emptyTop; i++ {
@@ -167,7 +188,10 @@ func (m *Model) chatView() string {
 
 	// ── Status bar: errors left, status right ─────────────
 	var errLeft string
-	if m.lastError != "" {
+	if m.infoMsg != "" {
+		errLeft = pad + lipgloss.NewStyle().Foreground(colorMuted).Render(
+			truncateLine(m.infoMsg, m.width/2))
+	} else if m.lastError != "" {
 		errLeft = pad + lipgloss.NewStyle().Foreground(colorError).Render(
 			truncateLine(m.lastError, m.width/2))
 	} else if m.streaming {

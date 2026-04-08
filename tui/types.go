@@ -95,3 +95,12 @@ type EmbedModelsListMsg []ModelEntry
 
 // EmbedModelsErrorMsg reports an embedding model fetch failure.
 type EmbedModelsErrorMsg string
+
+// selectionTickMsg is sent by the auto-scroll timer during text selection.
+type selectionTickMsg time.Time
+
+// clipboardCopiedMsg confirms clipboard copy succeeded.
+type clipboardCopiedMsg struct{}
+
+// clipboardErrorMsg reports a clipboard copy failure.
+type clipboardErrorMsg string
