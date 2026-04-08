@@ -8,7 +8,7 @@ import (
 )
 
 // View returns the inline settings string for the chat area
-func (p *inlineSettings) View() string {
+func (p *inlineSettings) View(spinFrame int) string {
 	dim := lipgloss.NewStyle().Foreground(colorMuted)
 	var b strings.Builder
 
@@ -18,7 +18,7 @@ func (p *inlineSettings) View() string {
 		for i, preset := range p.providerPresets {
 			indicator := "  "
 			if i == p.providerListIdx {
-				indicator = lipgloss.NewStyle().Foreground(colorAccent).Render("> ")
+				indicator = lipgloss.NewStyle().Foreground(colorAccent).Render("❯ ")
 			}
 			name := lipgloss.NewStyle().Foreground(colorMainText).Render(fmt.Sprintf("%-16s", preset.Name))
 			help := dim.Render(preset.HelpText)
@@ -49,7 +49,7 @@ func (p *inlineSettings) View() string {
 		} else {
 			searchPrompt := accentStyle.Render("  / ")
 			searchText := lipgloss.NewStyle().Foreground(colorMainText).Render(p.modelSearch)
-			cursor := dim.Render("▌")
+			cursor := blockCursor(spinFrame, colorAccent)
 			b.WriteString(searchPrompt + searchText + cursor + "\n")
 		}
 
@@ -132,7 +132,7 @@ func (p *inlineSettings) View() string {
 		} else {
 			searchPrompt := accentStyle.Render("  / ")
 			searchText := lipgloss.NewStyle().Foreground(colorMainText).Render(p.embedModelSearch)
-			cursor := dim.Render("▌")
+			cursor := blockCursor(spinFrame, colorAccent)
 			b.WriteString(searchPrompt + searchText + cursor + "\n")
 		}
 
@@ -252,7 +252,7 @@ func (p *inlineSettings) View() string {
 						lipgloss.NewStyle().Reverse(true).Render(underCursor) +
 						lipgloss.NewStyle().Foreground(colorMainText).Render(right)
 				} else {
-					valueStyled = lipgloss.NewStyle().Foreground(colorMainText).Render(d) + dim.Render("_")
+					valueStyled = lipgloss.NewStyle().Foreground(colorMainText).Render(d) + blockCursor(spinFrame, colorAccent)
 				}
 			} else {
 				valueStyled = lipgloss.NewStyle().Foreground(colorFg).Render(d)
@@ -261,7 +261,7 @@ func (p *inlineSettings) View() string {
 
 		indicator := "  "
 		if focused {
-			indicator = lipgloss.NewStyle().Foreground(colorAccent).Render("> ")
+			indicator = lipgloss.NewStyle().Foreground(colorAccent).Render("❯ ")
 		}
 		b.WriteString(indicator + labelStyled + " " + valueStyled + "\n")
 	}
