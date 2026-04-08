@@ -239,15 +239,21 @@ func (p *inlineSettings) View() string {
 				d = "-"
 			}
 			if focused && p.editingField {
-				display := d
+				runes := []rune(d)
 				cur := p.editCursor
-				if cur > len([]rune(display)) {
-					cur = len([]rune(display))
+				if cur > len(runes) {
+					cur = len(runes)
 				}
-				runes := []rune(display)
-				left := string(runes[:cur])
-				right := string(runes[cur:])
-				valueStyled = lipgloss.NewStyle().Foreground(colorMainText).Render(left) + dim.Render("_") + lipgloss.NewStyle().Foreground(colorMainText).Render(right)
+				if cur < len(runes) {
+					left := string(runes[:cur])
+					underCursor := string(runes[cur : cur+1])
+					right := string(runes[cur+1:])
+					valueStyled = lipgloss.NewStyle().Foreground(colorMainText).Render(left) +
+						lipgloss.NewStyle().Reverse(true).Render(underCursor) +
+						lipgloss.NewStyle().Foreground(colorMainText).Render(right)
+				} else {
+					valueStyled = lipgloss.NewStyle().Foreground(colorMainText).Render(d) + dim.Render("_")
+				}
 			} else {
 				valueStyled = lipgloss.NewStyle().Foreground(colorFg).Render(d)
 			}
