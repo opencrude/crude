@@ -31,7 +31,7 @@ var global *TUI
 // Start initialises and starts the TUI, returning the handle and a channel
 // that emits the user's submitted messages.
 // initial is the current settings to pre-populate the settings panel.
-func Start(modelName string, initial Settings, presets []ProviderPreset, history []string) (*TUI, error) {
+func Start(modelName string, username string, initial Settings, presets []ProviderPreset, history []string) (*TUI, error) {
 	inputCh := make(chan string, 8)
 
 	t := &TUI{
@@ -61,7 +61,7 @@ func Start(modelName string, initial Settings, presets []ProviderPreset, history
 		}
 	}
 
-	model := NewModel(modelName, inputCh, initial, onSave, fetchFn)
+	model := NewModel(modelName, username, inputCh, initial, onSave, fetchFn)
 	model.SetProviderPresets(t.ProviderPresets)
 	model.SetHistory(history)
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion())

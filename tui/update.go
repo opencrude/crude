@@ -540,6 +540,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "done":
 			m.thinking = false
 			m.blocking = false
+			wasStreaming := m.streaming
 			m.streaming = false
 			m.statusLine = ""
 			m.userScrolled = false
@@ -550,8 +551,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if content, ok := evt.Data.(string); ok && content != "" {
-				if m.streaming && len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
-					// Streaming already populated the last message — ensure it has the full content
+				if wasStreaming && len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
 					m.messages[len(m.messages)-1].Content = content
 				} else {
 					m.messages = append(m.messages, ChatMessage{

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -158,6 +159,7 @@ func main() {
 	sessionID := "cli-session"
 
 	// ── TUI ──────────────────────────────────────────────────
+	username := resolveUsername()
 	initial := configToSettings(cfg)
 
 	// Build provider presets for TUI selector.
@@ -171,7 +173,7 @@ func main() {
 		})
 	}
 
-	tuiInst, err := tui.Start(cfg.Model, initial, providerPresets, loadHistory())
+	tuiInst, err := tui.Start(cfg.Model, username, initial, providerPresets, loadHistory())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		os.Exit(1)
@@ -540,6 +542,19 @@ func settingsToConfig(s tui.Settings, base Config) Config {
 
 func logAgent(format string, args ...any) {
 	log.Printf("[agent] "+format, args...)
+}
+
+func resolveUsername() string {
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	if name := os.Getenv("USER"); name != "" {
+		return name
+	}
+	if name := os.Getenv("LOGNAME"); name != "" {
+		return name
+	}
+	return "user"
 }
 
 func mustJSON(v any) string {

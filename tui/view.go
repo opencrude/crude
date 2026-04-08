@@ -240,36 +240,48 @@ func (m *Model) renderAllMessages() []string {
 
 		switch msg.Role {
 		case RoleUser:
-			// ❯ prompt with gray background
-			userStyle := lipgloss.NewStyle().
-				Foreground(colorMainText).
-				Background(lipgloss.Color("#2a2a3a"))
-			lines := wrapText(msg.Content, contentWidth)
-			for i, line := range lines {
-				prefix := "  "
-				if i == 0 {
-					prefix = "❯ "
-				}
-				styled := userStyle.Render(prefix + line)
-				if i == 0 {
-					// Right-align time on first line
-					sp := innerW - lipgloss.Width(styled) - timeW
-					if sp < 1 {
-						sp = 1
-					}
-					all = append(all, styled+strings.Repeat(" ", sp)+dim.Render(timeLine1))
-				} else if i == 1 {
-					sp := innerW - lipgloss.Width(styled) - timeW
-					if sp < 1 {
-						sp = 1
-					}
-					all = append(all, styled+strings.Repeat(" ", sp)+dim.Render(timeLine2))
-				} else {
-					all = append(all, styled)
+			var rendered string
+			isMarkdown := false
+			md := m.makeMdRenderer()
+			if md != nil {
+				r, err := md.Render(msg.Content)
+				if err == nil {
+					rendered = strings.TrimRight(r, "\n")
+					isMarkdown = true
 				}
 			}
-			// If only one line, still show timeLine2
-			if len(lines) == 1 {
+			var userLines []string
+			if !isMarkdown {
+				userLines = wrapText(msg.Content, contentWidth)
+			} else {
+				userLines = strings.Split(rendered, "\n")
+			}
+
+			labelStyle := lipgloss.NewStyle().Foreground(colorMainText).Bold(true).Background(lipgloss.Color("#2a2a3a"))
+			if len(userLines) > 0 {
+				label := labelStyle.Render("❯ " + m.username + " ")
+				userLines[0] = label + userLines[0]
+			}
+
+			for i, line := range userLines {
+				var timePart string
+				if i == 0 {
+					timePart = dim.Render(timeLine1)
+				} else if i == 1 {
+					timePart = dim.Render(timeLine2)
+				}
+				if timePart != "" {
+					lineW := lipgloss.Width(line)
+					sp := innerW - lineW - timeW
+					if sp < 1 {
+						sp = 1
+					}
+					userLines[i] = line + strings.Repeat(" ", sp) + timePart
+				}
+			}
+
+			all = append(all, userLines...)
+			if len(userLines) == 1 {
 				sp := innerW - timeW
 				if sp < 0 {
 					sp = 0
@@ -299,7 +311,7 @@ func (m *Model) renderAllMessages() []string {
 			// First line: background label + content
 			labelStyle := lipgloss.NewStyle().Foreground(colorAccent2).Bold(true).Background(lipgloss.Color("#2a2a3a"))
 			if len(asstLines) > 0 {
-				label := labelStyle.Render("❯ assistant ")
+				label := labelStyle.Render("❯ Crude " + m.modelName + " ")
 				asstLines[0] = label + asstLines[0]
 			}
 

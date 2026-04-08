@@ -13,6 +13,7 @@ import (
 type Model struct {
 	// Config
 	modelName string
+	username  string
 
 	// Chat state
 	messages  []ChatMessage
@@ -77,9 +78,10 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model.
-func NewModel(modelName string, inputCh chan<- string, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string) tea.Cmd) *Model {
+func NewModel(modelName string, username string, inputCh chan<- string, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string) tea.Cmd) *Model {
 	return &Model{
 		modelName:      modelName,
+		username:       username,
 		inputCh:        inputCh,
 		startTime:      time.Now(),
 		width:          80,
