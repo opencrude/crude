@@ -87,6 +87,11 @@ type Model struct {
 	selMouseY     int
 	selAutoScroll bool
 
+	// Text selection in input area
+	inputSelecting bool
+	inputSelAnchor int
+	inputSelEnd    int
+
 	// Cached rendered lines (set during View, used by selection)
 	cachedAllLines []string
 
