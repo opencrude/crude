@@ -164,6 +164,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.lastError != "" && time.Since(m.errorTime) > 8*time.Second {
 			m.lastError = ""
 		}
+		if m.infoMsg != "" && time.Since(m.infoMsgTime) > 5*time.Second {
+			m.infoMsg = ""
+		}
 		return m, tickCmd()
 	}
 
@@ -308,6 +311,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Keyboard ──────────────────────────────────────────────
 	case tea.KeyMsg:
 		m.showHint = false
+
+		if m.selecting {
+			m.selecting = false
+			m.selAutoScroll = false
+			return m, nil
+		}
 
 		switch msg.Type {
 
@@ -577,9 +586,75 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress {
-			inputStartLine := m.chatAreaHeight() + 4
-			inInputArea := msg.Y >= inputStartLine && !m.thinking
+		chatH := m.chatAreaHeight()
+		chatTop := 3
+		chatBottom := chatTop + chatH - 1
+		inputStartLine := chatH + 4
+		inInputArea := msg.Y >= inputStartLine && !m.thinking
+
+		switch {
+		case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+			if msg.Y >= chatTop && msg.Y <= chatBottom && !m.settingsActive {
+				allIdx, ok := m.mouseToAllLine(msg.Y)
+				if ok {
+					m.selecting = true
+					m.selAnchorLine = allIdx
+					m.selAnchorCol = max(0, msg.X-padLR)
+					m.selEndLine = allIdx
+					m.selEndCol = max(0, msg.X-padLR)
+					m.selMouseY = msg.Y
+					m.selAutoScroll = false
+				}
+			} else if m.selecting {
+				m.selecting = false
+				m.selAutoScroll = false
+			}
+
+		case msg.Action == tea.MouseActionMotion && m.selecting:
+			allIdx, ok := m.mouseToAllLine(msg.Y)
+			if ok {
+				m.selEndLine = allIdx
+				m.selEndCol = max(0, msg.X-padLR)
+			} else if msg.Y < chatTop && len(m.cachedAllLines) > 0 {
+				first, _ := m.chatAreaContentBounds()
+				if first >= 0 {
+					m.selEndLine = first
+					m.selEndCol = 0
+				}
+			} else if msg.Y > chatBottom && len(m.cachedAllLines) > 0 {
+				_, last := m.chatAreaContentBounds()
+				if last >= 0 {
+					m.selEndLine = last
+					m.selEndCol = 1 << 30
+				}
+			}
+			m.selMouseY = msg.Y
+
+			inScrollZone := msg.Y <= chatTop+selScrollZone-1 || msg.Y >= chatBottom-selScrollZone+1
+			if inScrollZone && !m.selAutoScroll {
+				m.selAutoScroll = true
+				return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
+					return selectionTickMsg(t)
+				})
+			} else if !inScrollZone {
+				m.selAutoScroll = false
+			}
+
+		case msg.Action == tea.MouseActionRelease && m.selecting:
+			m.selecting = false
+			m.selAutoScroll = false
+			sLine, sCol, eLine, eCol := m.selectionRange()
+			if sLine != eLine || sCol != eCol {
+				allLines := m.renderAllMessages()
+				text := extractSelectedText(allLines, sLine, sCol, eLine, eCol)
+				text = strings.TrimRight(text, " \t")
+				text = strings.TrimRight(text, "\n")
+				if text != "" {
+					return m, copyToClipboardCmd(text)
+				}
+			}
+
+		case msg.Action == tea.MouseActionPress:
 			switch msg.Button {
 			case tea.MouseButtonWheelUp:
 				if inInputArea && len(m.history) > 0 {
@@ -832,6 +907,49 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// reserved
 
 	case errorMsg:
+		m.lastError = string(msg)
+		m.errorTime = time.Now()
+
+	case selectionTickMsg:
+		if m.selecting && m.selAutoScroll {
+			chatH := m.chatAreaHeight()
+			chatTop := 3
+			chatBottom := chatTop + chatH - 1
+			mouseY := m.selMouseY
+
+			if mouseY <= chatTop+selScrollZone-1 {
+				m.chatOffset++
+				m.userScrolled = true
+				allIdx, ok := m.mouseToAllLine(chatTop + selScrollZone)
+				if ok {
+					m.selEndLine = allIdx
+				}
+			} else if mouseY >= chatBottom-selScrollZone+1 {
+				if m.chatOffset > 0 {
+					m.chatOffset--
+					if m.chatOffset == 0 {
+						m.userScrolled = false
+					}
+				}
+				allIdx, ok := m.mouseToAllLine(chatBottom - selScrollZone)
+				if ok {
+					m.selEndLine = allIdx
+				}
+			}
+
+			if mouseY <= chatTop+selScrollZone-1 || mouseY >= chatBottom-selScrollZone+1 {
+				return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
+					return selectionTickMsg(t)
+				})
+			}
+			m.selAutoScroll = false
+		}
+
+	case clipboardCopiedMsg:
+		m.infoMsg = "copied to clipboard"
+		m.infoMsgTime = time.Now()
+
+	case clipboardErrorMsg:
 		m.lastError = string(msg)
 		m.errorTime = time.Now()
 	}
