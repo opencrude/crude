@@ -2,6 +2,7 @@ package tui
 
 import (
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -74,6 +75,9 @@ type Model struct {
 	historyDraft  string   // preserves input when entering history
 	historyPrefix string   // for prefix-filtered navigation (bash-style)
 
+	// Hint bar
+	showHint bool
+
 	quit bool
 }
 
@@ -90,6 +94,7 @@ func NewModel(modelName string, username string, inputCh chan<- string, initial 
 		onSaveSettings: onSave,
 		fetchModelsFn:  fetchFn,
 		historyIdx:     -1,
+		showHint:       true,
 	}
 }
 
@@ -157,6 +162,80 @@ func strPtr(s string) *string {
 func (m *Model) setInput(s string) {
 	m.inputBuf = []rune(s)
 	m.cursorPos = len(m.inputBuf)
+}
+
+// inputLines splits the input buffer into lines (without newline characters).
+func (m *Model) inputLines() [][]rune {
+	var lines [][]rune
+	var current []rune
+	for _, r := range m.inputBuf {
+		if r == '\n' {
+			lines = append(lines, current)
+			current = nil
+		} else {
+			current = append(current, r)
+		}
+	}
+	lines = append(lines, current)
+	return lines
+}
+
+// cursorLineCol returns the line index and column of the cursor position.
+func (m *Model) cursorLineCol() (line, col int) {
+	for i := 0; i < m.cursorPos && i < len(m.inputBuf); i++ {
+		if m.inputBuf[i] == '\n' {
+			line++
+			col = 0
+		} else {
+			col++
+		}
+	}
+	return
+}
+
+// cursorLineStart returns the absolute position of the start of the current line.
+func (m *Model) cursorLineStart() int {
+	for i := m.cursorPos - 1; i >= 0; i-- {
+		if m.inputBuf[i] == '\n' {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// cursorLineEnd returns the absolute position of the end of the current line
+// (just after the last character, before any newline).
+func (m *Model) cursorLineEnd() int {
+	for i := m.cursorPos; i < len(m.inputBuf); i++ {
+		if m.inputBuf[i] == '\n' {
+			return i
+		}
+	}
+	return len(m.inputBuf)
+}
+
+// cursorPrevWord returns the position of the previous word boundary.
+func (m *Model) cursorPrevWord() int {
+	pos := m.cursorPos
+	for pos > 0 && unicode.IsSpace(m.inputBuf[pos-1]) {
+		pos--
+	}
+	for pos > 0 && !unicode.IsSpace(m.inputBuf[pos-1]) {
+		pos--
+	}
+	return pos
+}
+
+// cursorNextWord returns the position of the next word boundary.
+func (m *Model) cursorNextWord() int {
+	pos := m.cursorPos
+	for pos < len(m.inputBuf) && !unicode.IsSpace(m.inputBuf[pos]) {
+		pos++
+	}
+	for pos < len(m.inputBuf) && unicode.IsSpace(m.inputBuf[pos]) {
+		pos++
+	}
+	return pos
 }
 
 func (m *Model) Init() tea.Cmd {

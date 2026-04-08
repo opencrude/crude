@@ -118,6 +118,39 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+// submitInput processes the current input buffer as a submitted message.
+func (m *Model) submitInput() (tea.Model, tea.Cmd) {
+	if (!m.thinking || m.blocking) && len(m.inputBuf) > 0 {
+		text := strings.TrimSpace(string(m.inputBuf))
+		m.inputBuf = nil
+		m.cursorPos = 0
+		m.slashActive = false
+		m.resetHistory()
+		if text != "" {
+			if strings.HasPrefix(text, "/") {
+				return m.executeSlashCommand(text)
+			}
+			m.appendHistory(text)
+			if OnHistorySave != nil {
+				OnHistorySave(m.history)
+			}
+			m.messages = append(m.messages, ChatMessage{
+				Role:    RoleUser,
+				Content: text,
+				Time:    time.Now(),
+			})
+			m.thinking = true
+			m.chatOffset = 0
+			ch := m.inputCh
+			return m, func() tea.Msg {
+				ch <- text
+				return nil
+			}
+		}
+	}
+	return m, nil
+}
+
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Always handle resize and tick regardless of mode.
 	switch msg := msg.(type) {
@@ -274,6 +307,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Keyboard ──────────────────────────────────────────────
 	case tea.KeyMsg:
+		m.showHint = false
+
 		switch msg.Type {
 
 		case tea.KeyCtrlS:
@@ -284,10 +319,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyEnter:
-			// Shift+Enter inserts a newline for multi-line input.
 			if msg.Alt {
-				m.inputBuf = append(m.inputBuf, '\n')
-				m.cursorPos = len(m.inputBuf)
+				m.inputBuf = append(m.inputBuf[:m.cursorPos], append([]rune{'\n'}, m.inputBuf[m.cursorPos:]...)...)
+				m.cursorPos++
 				return m, nil
 			}
 			if m.slashActive && len(m.slashFiltered) > 0 {
@@ -301,34 +335,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if (!m.thinking || m.blocking) && len(m.inputBuf) > 0 {
-				text := strings.TrimSpace(string(m.inputBuf))
-				m.inputBuf = nil
-				m.cursorPos = 0
-				m.slashActive = false
-				m.resetHistory()
-				if text != "" {
-					if strings.HasPrefix(text, "/") {
-						return m.executeSlashCommand(text)
-					}
-					m.appendHistory(text)
-					if OnHistorySave != nil {
-						OnHistorySave(m.history)
-					}
-					m.messages = append(m.messages, ChatMessage{
-						Role:    RoleUser,
-						Content: text,
-						Time:    time.Now(),
-					})
-					m.thinking = true
-					m.chatOffset = 0
-					ch := m.inputCh
-					return m, func() tea.Msg {
-						ch <- text
-						return nil
-					}
-				}
-			}
+			return m.submitInput()
 
 		case tea.KeyTab:
 			if m.slashActive && len(m.slashFiltered) > 0 {
@@ -341,15 +348,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyBackspace, tea.KeyDelete:
 			if (!m.thinking || m.blocking) && len(m.inputBuf) > 0 {
-				// If browsing history and user edits, update prefix
 				if m.historyIdx != -1 {
 					m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
 					m.historyDraft = string(m.inputBuf)
 					m.historyIdx = -1
 				}
-				m.inputBuf = m.inputBuf[:len(m.inputBuf)-1]
-				if m.cursorPos > len(m.inputBuf) {
-					m.cursorPos = len(m.inputBuf)
+				if msg.Type == tea.KeyBackspace {
+					if m.cursorPos > 0 {
+						m.inputBuf = append(m.inputBuf[:m.cursorPos-1], m.inputBuf[m.cursorPos:]...)
+						m.cursorPos--
+					}
+				} else {
+					if m.cursorPos < len(m.inputBuf) {
+						m.inputBuf = append(m.inputBuf[:m.cursorPos], m.inputBuf[m.cursorPos+1:]...)
+					}
 				}
 				inputStr := string(m.inputBuf)
 				if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") {
@@ -369,9 +381,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			// Prompt history navigation
 			if !m.thinking || m.blocking {
-				m.browseHistoryUp()
+				lines := m.inputLines()
+				curLine, curCol := m.cursorLineCol()
+				if curLine > 0 {
+					prevLineLen := len(lines[curLine-1])
+					newCol := curCol
+					if newCol > prevLineLen {
+						newCol = prevLineLen
+					}
+					m.cursorPos = 0
+					for i := 0; i < curLine-1; i++ {
+						m.cursorPos += len(lines[i]) + 1
+					}
+					m.cursorPos += newCol
+				} else {
+					m.browseHistoryUp()
+				}
 			}
 
 		case tea.KeyDown:
@@ -382,9 +408,128 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			// Prompt history navigation
 			if !m.thinking || m.blocking {
-				m.browseHistoryDown()
+				lines := m.inputLines()
+				curLine, curCol := m.cursorLineCol()
+				if curLine < len(lines)-1 {
+					nextLineLen := len(lines[curLine+1])
+					newCol := curCol
+					if newCol > nextLineLen {
+						newCol = nextLineLen
+					}
+					m.cursorPos = 0
+					for i := 0; i <= curLine; i++ {
+						m.cursorPos += len(lines[i]) + 1
+					}
+					m.cursorPos += newCol
+				} else {
+					m.browseHistoryDown()
+				}
+			}
+
+		case tea.KeyLeft:
+			if !m.thinking || m.blocking {
+				if m.cursorPos > 0 {
+					m.cursorPos--
+				}
+			}
+
+		case tea.KeyRight:
+			if !m.thinking || m.blocking {
+				if m.cursorPos < len(m.inputBuf) {
+					m.cursorPos++
+				}
+			}
+
+		case tea.KeyCtrlLeft:
+			if !m.thinking || m.blocking {
+				m.cursorPos = m.cursorPrevWord()
+			}
+
+		case tea.KeyCtrlRight:
+			if !m.thinking || m.blocking {
+				m.cursorPos = m.cursorNextWord()
+			}
+
+		case tea.KeyHome:
+			if !m.thinking || m.blocking {
+				m.cursorPos = m.cursorLineStart()
+			} else {
+				m.chatOffset = 1 << 30
+				m.userScrolled = true
+			}
+
+		case tea.KeyEnd:
+			if !m.thinking || m.blocking {
+				m.cursorPos = m.cursorLineEnd()
+			} else {
+				m.chatOffset = 0
+				m.userScrolled = false
+			}
+
+		case tea.KeyCtrlHome:
+			if !m.thinking || m.blocking {
+				m.cursorPos = 0
+			} else {
+				m.chatOffset = 1 << 30
+				m.userScrolled = true
+			}
+
+		case tea.KeyCtrlEnd:
+			if !m.thinking || m.blocking {
+				m.cursorPos = len(m.inputBuf)
+			} else {
+				m.chatOffset = 0
+				m.userScrolled = false
+			}
+
+		case tea.KeyCtrlA:
+			if !m.thinking || m.blocking {
+				m.cursorPos = m.cursorLineStart()
+			}
+
+		case tea.KeyCtrlE:
+			if !m.thinking || m.blocking {
+				m.cursorPos = m.cursorLineEnd()
+			}
+
+		case tea.KeyCtrlU:
+			if !m.thinking || m.blocking {
+				start := m.cursorLineStart()
+				if start < m.cursorPos {
+					if m.historyIdx != -1 {
+						m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
+						m.historyDraft = string(m.inputBuf)
+						m.historyIdx = -1
+					}
+					m.inputBuf = append(m.inputBuf[:start], m.inputBuf[m.cursorPos:]...)
+					m.cursorPos = start
+				}
+			}
+
+		case tea.KeyCtrlK:
+			if !m.thinking || m.blocking {
+				end := m.cursorLineEnd()
+				if end > m.cursorPos {
+					if m.historyIdx != -1 {
+						m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
+						m.historyDraft = string(m.inputBuf)
+						m.historyIdx = -1
+					}
+					m.inputBuf = append(m.inputBuf[:m.cursorPos], m.inputBuf[end:]...)
+				}
+			}
+
+		case tea.KeyCtrlW:
+			if (!m.thinking || m.blocking) && m.cursorPos > 0 {
+				if m.historyIdx != -1 {
+					m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
+					m.historyDraft = string(m.inputBuf)
+					m.historyIdx = -1
+				}
+				pos := m.cursorPrevWord()
+				m.inputBuf = append(m.inputBuf[:pos], m.inputBuf[m.cursorPos:]...)
+				m.cursorPos = pos
 			}
 
 		case tea.KeyPgUp:
@@ -399,14 +544,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.chatOffset == 0 {
 				m.userScrolled = false
 			}
-
-		case tea.KeyHome:
-			m.chatOffset = 1 << 30
-			m.userScrolled = true
-
-		case tea.KeyEnd:
-			m.chatOffset = 0
-			m.userScrolled = false
 
 		default:
 			if !m.thinking || m.blocking {
@@ -425,8 +562,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				for _, r := range msg.Runes {
 					if unicode.IsPrint(r) {
-						m.inputBuf = append(m.inputBuf, r)
-						m.cursorPos = len(m.inputBuf)
+						m.inputBuf = append(m.inputBuf[:m.cursorPos], append([]rune{r}, m.inputBuf[m.cursorPos:]...)...)
+						m.cursorPos++
 					}
 				}
 				inputStr := string(m.inputBuf)

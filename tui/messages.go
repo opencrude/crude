@@ -217,10 +217,8 @@ func streamAnimation(frame int, phase string) string {
 	}
 
 	spinStyle := lipgloss.NewStyle().Foreground(spinnerColorPlanning)
-	cursor := "▌"
-	if frame%2 == 0 {
-		cursor = "▌"
-	} else {
+	cursor := "█"
+	if frame%2 != 0 {
 		cursor = " "
 	}
 	return spinStyle.Render("●"+cursor+" ") +

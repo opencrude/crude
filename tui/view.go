@@ -101,20 +101,38 @@ func (m *Model) chatView() string {
 		msg1 := pad + dim.Render("[ interactive settings active · arrows/tab: navigate · enter: edit · ctrl+s: save · esc: return ]")
 		addFull(msg1)
 	} else {
+		if m.showHint && !m.thinking && len(m.inputBuf) == 0 {
+			addFull(pad + dim.Render("[ enter: send · alt+enter: new line · ↑↓: history · ctrl+s: settings · esc: exit ]"))
+		}
 		var inputContent string
 		if m.thinking && !m.blocking {
-			inputContent = pad + dim.Italic(true).Render("> waiting for response...")
+			inputContent = pad + dim.Italic(true).Render("▶ waiting for response...")
 		} else {
-			inputLines := strings.Split(string(m.inputBuf), "\n")
-			for i, il := range inputLines {
+			lines := m.inputLines()
+			curLine, curCol := m.cursorLineCol()
+			for i, il := range lines {
 				prefix := "  "
 				if i == 0 {
 					prefix = "> "
 				}
-				if i == len(inputLines)-1 {
-					inputContent += pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+il) + dim.Render("_")
+				lineStr := string(il)
+				if i == curLine {
+					left := string(il[:curCol])
+					right := string(il[curCol:])
+					var cursorAndRight string
+					if curCol < len(il) {
+						underCursor := string(il[curCol : curCol+1])
+						rest := string(il[curCol+1:])
+						cursorAndRight = lipgloss.NewStyle().Reverse(true).Render(underCursor) + lipgloss.NewStyle().Foreground(colorMainText).Render(rest)
+					} else {
+						cursorAndRight = blockCursor(m.spinFrame, colorAccent) + lipgloss.NewStyle().Foreground(colorMainText).Render(right)
+					}
+					inputContent += pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+left) + cursorAndRight
 				} else {
-					inputContent += pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+il) + "\n"
+					inputContent += pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+lineStr)
+				}
+				if i < len(lines)-1 {
+					inputContent += "\n"
 				}
 			}
 		}
@@ -209,7 +227,11 @@ func (m *Model) chatAreaHeight() int {
 			slashLines = 9
 		}
 	}
-	reserved := 2 + 1 + inputLineCount + slashLines + 1 + 1 + 1
+	hintLines := 0
+	if m.showHint && !m.thinking && len(m.inputBuf) == 0 {
+		hintLines = 1
+	}
+	reserved := 2 + 1 + hintLines + inputLineCount + slashLines + 1 + 1 + 1
 	h := m.height - reserved
 	if h < 1 {
 		h = 1
@@ -351,13 +373,12 @@ func (m *Model) renderAllMessages() []string {
 
 			// Streaming cursor right after the last content token
 			if m.streaming && isLastMsg && len(asstLines) > 0 {
-				cursor := lipgloss.NewStyle().Foreground(colorAccent).Render("▌")
-				// Cursor goes on the last content line, not on the appended date line
+				cursor := blockCursor(m.spinFrame, colorAccent)
 				cursorIdx := len(all) - 1
 				if len(asstLines) == 1 && len(all) >= 2 {
 					cursorIdx = len(all) - 2
 				}
-				all[cursorIdx] += cursor
+				all[cursorIdx] = strings.TrimRight(all[cursorIdx], " ") + cursor
 			}
 
 		case RoleThinking:
@@ -443,7 +464,7 @@ func (m *Model) renderAllMessages() []string {
 
 	// If settings is active, render the form at the bottom of messages.
 	if m.settingsActive {
-		for _, sl := range strings.Split(m.inlineForm.View(), "\n") {
+		for _, sl := range strings.Split(m.inlineForm.View(m.spinFrame), "\n") {
 			all = append(all, sl)
 		}
 	}

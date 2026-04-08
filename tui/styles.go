@@ -54,6 +54,13 @@ var (
 	sepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#30363d")) // GitHub-style separator
 )
 
+func blockCursor(frame int, color lipgloss.Color) string {
+	if frame%2 == 0 {
+		return lipgloss.NewStyle().Foreground(color).Render("█")
+	}
+	return " "
+}
+
 // Spinner frames — blinking circle (Claude Code style).
 // ◉ = filled (active), ○ = empty (blink off).
 var spinnerFrames = []string{"◉", "○"}

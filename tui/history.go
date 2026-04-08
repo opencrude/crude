@@ -4,17 +4,17 @@ import "strings"
 
 const maxHistorySize = 500
 
-// browseHistoryUp navigates to older prompts (like ↑ in bash/zsh).
-// Supports prefix filtering: if input is non-empty, only cycles through
-// entries matching the current prefix.
 func (m *Model) browseHistoryUp() {
 	if len(m.history) == 0 {
 		return
 	}
 	if m.historyIdx == -1 {
-		// First time entering history — save draft and capture prefix
 		m.historyDraft = string(m.inputBuf)
-		m.historyPrefix = strings.TrimSpace(m.historyDraft)
+		if strings.Contains(m.historyDraft, "\n") {
+			m.historyPrefix = ""
+		} else {
+			m.historyPrefix = strings.TrimSpace(m.historyDraft)
+		}
 		m.historyIdx = m.findHistoryIndex(-1)
 		if m.historyIdx == -1 {
 			return
