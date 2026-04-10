@@ -280,7 +280,7 @@ func (m *Model) chatAreaContentBounds() (firstLine, lastLine int) {
 
 func (m *Model) inputFirstLineY() int {
 	y := m.chatAreaHeight() + 4
-	if !m.settingsActive && m.showHint && !m.thinking && len(m.inputBuf) == 0 {
+	if !m.settingsActive && !m.confirmForm.active && m.showHint && !m.thinking && len(m.inputBuf) == 0 {
 		y++
 	}
 	return y
@@ -290,7 +290,7 @@ func (m *Model) mouseToInputPos(mouseX, mouseY int) (runeIdx int, ok bool) {
 	if m.thinking && !m.blocking {
 		return -1, false
 	}
-	if m.settingsActive {
+	if m.settingsActive || m.confirmForm.active {
 		return -1, false
 	}
 

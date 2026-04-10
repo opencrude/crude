@@ -60,6 +60,10 @@ type Model struct {
 	onSaveSettings func(Settings)
 	fetchModelsFn  func(providerID, baseURL, apiKey string) tea.Cmd
 
+	// Confirmation form
+	confirmForm     confirmForm
+	OnConfirmResult func(ConfirmResult)
+
 	// Slash command state
 	slashActive   bool
 	slashIdx      int
@@ -112,6 +116,7 @@ func NewModel(modelName string, username string, inputCh chan<- string, initial 
 		width:          80,
 		height:         24,
 		inlineForm:     newInlineSettings(initial),
+		confirmForm:    newConfirmForm(),
 		onSaveSettings: onSave,
 		fetchModelsFn:  fetchFn,
 		historyIdx:     -1,
