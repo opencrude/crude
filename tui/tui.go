@@ -19,6 +19,9 @@ type TUI struct {
 	// OnSettingsSave is called when the user saves settings from the inline form.
 	OnSettingsSave func(Settings)
 
+	// OnConfirmResult is called when the user responds to a confirmation prompt.
+	OnConfirmResult func(ConfirmResult)
+
 	// FetchModelsFn is called to fetch available models from the provider.
 	FetchModelsFn func(providerID, baseURL, apiKey string) ([]ModelEntry, error)
 
@@ -64,6 +67,11 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	model := NewModel(modelName, username, inputCh, initial, onSave, fetchFn)
 	model.SetProviderPresets(t.ProviderPresets)
 	model.SetHistory(history)
+	model.OnConfirmResult = func(result ConfirmResult) {
+		if t.OnConfirmResult != nil {
+			t.OnConfirmResult(result)
+		}
+	}
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	t.model = model
 	t.Program = program

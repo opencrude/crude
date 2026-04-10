@@ -14,6 +14,7 @@ import (
 
 	"crude/agent"
 	"crude/backend"
+	"crude/dag"
 	"crude/embed"
 	"crude/logging"
 	"crude/provider"
@@ -97,6 +98,7 @@ var (
 	activeBackend        backend.Executor
 	interactionLog       *logging.InteractionLogger
 	sessionStartTime     time.Time
+	permStore            *safety.PermissionStore
 )
 
 func main() {
@@ -158,6 +160,7 @@ func main() {
 		log.Printf("[safety] audit logger error: %v", err)
 	}
 	rollbackHandler := safety.NewRollbackHandler(activeBackend)
+	permStore = safety.NewPermissionStore()
 
 	// Interaction Logger
 	logDir := filepath.Join(home, ".crude", "logs")
@@ -279,6 +282,19 @@ func main() {
 	// Blocking flow
 	blockResolveCh := make(chan string, 1)
 
+	tuiInst.OnConfirmResult = func(result tui.ConfirmResult) {
+		switch result.Choice {
+		case tui.ConfirmAllow:
+			blockResolveCh <- "allow"
+		case tui.ConfirmAlways:
+			blockResolveCh <- "always"
+		case tui.ConfirmDeny:
+			blockResolveCh <- "deny"
+		default:
+			blockResolveCh <- "deny"
+		}
+	}
+
 	// Main agent loop
 	go func() {
 		defer func() {
@@ -320,12 +336,33 @@ func main() {
 
 			var finalContent string
 			ag.Run(msgsCopy, prompt, func(evt agent.AgentEvent) {
-				tuiInst.SendAgentEvent(evt.Type, evt.Data)
 				if evt.Type == "blocking" {
+					data, _ := evt.Data.(map[string]string)
+					if data != nil {
+						op := dag.CRUDEOp(data["operation"])
+						tool := data["tool"]
+						target := data["target"]
+						if permStore.IsAlwaysAllowed(op, tool, target) {
+							blockResolveCh <- "allow"
+							return
+						}
+					}
 					pendingBlockMu.Lock()
 					pendingBlock = true
 					pendingBlockMu.Unlock()
+					tuiInst.SendAgentEvent(evt.Type, evt.Data)
+					return
 				}
+				if evt.Type == "confirmation_always" {
+					if data, ok := evt.Data.(map[string]string); ok {
+						op := dag.CRUDEOp(data["operation"])
+						tool := data["tool"]
+						target := data["target"]
+						permStore.GrantAlways(op, tool, target)
+					}
+					return
+				}
+				tuiInst.SendAgentEvent(evt.Type, evt.Data)
 				if evt.Type == "done" {
 					if s, ok := evt.Data.(string); ok {
 						finalContent = s
@@ -334,13 +371,10 @@ func main() {
 			}, ragEngine, blockResolveCh, sm, sessionID)
 
 			logAgent("agent.Run completed, finalContent: %q", finalContent)
-			// Reset blocking state — the blocking node has been resolved.
 			pendingBlockMu.Lock()
 			pendingBlock = false
 			pendingBlockMu.Unlock()
 
-			// If a blocking node captured a response but no done content was emitted,
-			// use the blocking response as the assistant's reply.
 			lastBlockingMu.Lock()
 			if lastBlockingResponse != "" && finalContent == "" {
 				finalContent = lastBlockingResponse

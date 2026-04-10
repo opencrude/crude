@@ -143,8 +143,12 @@ func (m *Model) submitInput() (tea.Model, tea.Cmd) {
 			m.chatOffset = 0
 			ch := m.inputCh
 			return m, func() tea.Msg {
-				ch <- text
-				return nil
+				select {
+				case ch <- text:
+					return nil
+				default:
+					return errorMsg("input channel blocked - please try again")
+				}
 			}
 		}
 	}
@@ -300,6 +304,37 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case openSettingsMsg:
 			// No longer triggers a fetch; fetching is lazy (user opens model selector).
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// Confirmation form mode — handle button navigation and selection.
+	if m.confirmForm.active {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			updated, result, done := m.confirmForm.Update(msg)
+			m.confirmForm = updated
+			if done {
+				m.blocking = false
+				m.thinking = true
+				if m.OnConfirmResult != nil {
+					go m.OnConfirmResult(result)
+				}
+				resultMsg := "✓ Allowed"
+				switch result.Choice {
+				case ConfirmAlways:
+					resultMsg = "✓ Always allowed (session)"
+				case ConfirmDeny:
+					resultMsg = "✗ Denied"
+				}
+				m.messages = append(m.messages, ChatMessage{
+					Role:    RoleAssistant,
+					Content: resultMsg,
+					Time:    time.Now(),
+				})
+				m.chatOffset = 0
+			}
 			return m, nil
 		}
 		return m, nil
@@ -855,8 +890,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "blocking":
-			// Agent needs user input to continue — re-enable the input box.
-			question := fmt.Sprintf("%v", evt.Data)
+			data, _ := evt.Data.(map[string]string)
+			if data == nil {
+				question := fmt.Sprintf("%v", evt.Data)
+				data = map[string]string{"question": question}
+			}
+			question := data["question"]
+			operation := data["operation"]
+			tool := data["tool"]
+			target := data["target"]
 			m.thinking = false
 			m.blocking = true
 			m.statusLine = ""
@@ -865,11 +907,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.messages[i].ThinkingActive = false
 				}
 			}
-			m.messages = append(m.messages, ChatMessage{
-				Role:    RoleAssistant,
-				Content: "⚠  " + question,
-				Time:    time.Now(),
-			})
+			if operation != "" {
+				m.confirmForm.Reset(question, operation, tool, target)
+				m.messages = append(m.messages, ChatMessage{
+					Role:    RoleAssistant,
+					Content: "⚠  " + question,
+					Time:    time.Now(),
+				})
+			} else {
+				m.messages = append(m.messages, ChatMessage{
+					Role:    RoleAssistant,
+					Content: "⚠  " + question,
+					Time:    time.Now(),
+				})
+			}
+
+		case "blocking_complete":
+			m.blocking = false
+			m.confirmForm.Dismiss()
 
 		case "error":
 			m.thinking = false

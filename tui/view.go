@@ -121,6 +121,9 @@ func (m *Model) chatView() string {
 	if m.settingsActive {
 		msg1 := pad + dim.Render("[ interactive settings active · arrows/tab: navigate · enter: edit · ctrl+s: save · esc: return ]")
 		addFull(msg1)
+	} else if m.confirmForm.active {
+		msg1 := pad + dim.Render("[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]")
+		addFull(msg1)
 	} else {
 		if m.showHint && !m.thinking && len(m.inputBuf) == 0 {
 			addFull(pad + dim.Render("[ enter: send · alt+enter: new line · ↑↓: history · ctrl+s: settings · esc: exit ]"))
@@ -225,7 +228,10 @@ func (m *Model) chatView() string {
 	}
 
 	var statusRight string
-	if m.blocking {
+	if m.confirmForm.active {
+		awaitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
+		statusRight = awaitStyle.Render("⚠ confirming")
+	} else if m.blocking {
 		awaitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
 		statusRight = awaitStyle.Render("⚠ awaiting input")
 	} else if m.thinking {
@@ -254,6 +260,13 @@ func (m *Model) chatView() string {
 // dynamically accounting for multi-line input.
 func (m *Model) chatAreaHeight() int {
 	if m.settingsActive {
+		h := m.height - 7
+		if h < 1 {
+			h = 1
+		}
+		return h
+	}
+	if m.confirmForm.active {
 		h := m.height - 7
 		if h < 1 {
 			h = 1
@@ -508,6 +521,12 @@ func (m *Model) renderAllMessages() []string {
 	if m.settingsActive {
 		for _, sl := range strings.Split(m.inlineForm.View(m.spinFrame), "\n") {
 			all = append(all, sl)
+		}
+	}
+
+	if m.confirmForm.active {
+		for _, cl := range strings.Split(m.confirmForm.View(m.spinFrame), "\n") {
+			all = append(all, cl)
 		}
 	}
 

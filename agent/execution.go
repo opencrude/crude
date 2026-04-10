@@ -3,7 +3,6 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"crude/dag"
 	"crude/statemachine"
@@ -69,12 +68,39 @@ func (a *Agent) execute(
 			emit(AgentEvent{Type: "thinking", Data: "[node error: " + errMsg + "]"})
 		case "node_skipped":
 			reason := fmt.Sprintf("%v", e.Data)
-			emit(AgentEvent{Type: "thinking", Data: "[node skipped: " + reason + "]"})
+			if reason == "user rejected confirmation" {
+				emit(AgentEvent{Type: "thinking", Data: fmt.Sprintf(
+					"[user denied %s on %s — do not retry this operation, inform the user and suggest alternatives]",
+					e.Node.Operation, e.Node.Description)})
+			} else {
+				emit(AgentEvent{Type: "thinking", Data: "[node skipped: " + reason + "]"})
+			}
 		case "blocking":
-			question := fmt.Sprintf("%v", e.Data)
-			emit(AgentEvent{Type: "blocking", Data: question})
+			if data, ok := e.Data.(map[string]string); ok {
+				emit(AgentEvent{Type: "blocking", Data: data})
+			} else {
+				question := fmt.Sprintf("%v", e.Data)
+				emit(AgentEvent{Type: "blocking", Data: map[string]string{
+					"question": question,
+				}})
+			}
+		case "confirmation_always":
+			target := ""
+			if p, ok := e.Node.Parameters["path"]; ok {
+				target = fmt.Sprintf("%v", p)
+			} else if p, ok := e.Node.Parameters["destination"]; ok {
+				target = fmt.Sprintf("%v", p)
+			} else if p, ok := e.Node.Parameters["source"]; ok {
+				target = fmt.Sprintf("%v", p)
+			}
+			emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
+				"operation": string(e.Node.Operation),
+				"tool":      e.Node.Tool,
+				"target":    target,
+			}})
+		case "blocking_complete":
+			emit(AgentEvent{Type: "blocking_complete", Data: e.Data})
 		case "complete":
-			// handled below
 		}
 	}
 
@@ -89,15 +115,35 @@ func (a *Agent) execute(
 	if a.RollbackHandler != nil {
 		executor.SetRollbackFunc(a.RollbackHandler.Rollback)
 	}
-	executor.SetConfirmFunc(func(node *dag.Node) (bool, error) {
-		// Emit blocking event with confirmation question.
-		question := fmt.Sprintf("Confirm %s: %s? (yes/no)", node.Operation, node.Description)
-		emit(AgentEvent{Type: "blocking", Data: question})
+	executor.SetConfirmFunc(func(node *dag.Node) (bool, bool, error) {
+		target := ""
+		if p, ok := node.Parameters["path"]; ok {
+			target = fmt.Sprintf("%v", p)
+		} else if p, ok := node.Parameters["destination"]; ok {
+			target = fmt.Sprintf("%v", p)
+		} else if p, ok := node.Parameters["source"]; ok {
+			target = fmt.Sprintf("%v", p)
+		}
+		question := fmt.Sprintf("Allow %s: %s?", node.Operation, node.Description)
+		data := map[string]string{
+			"question":  question,
+			"operation": string(node.Operation),
+			"tool":      node.Tool,
+			"target":    target,
+		}
+		emit(AgentEvent{Type: "blocking", Data: data})
 		answer, ok := <-blockResolveCh
 		if !ok {
-			return false, fmt.Errorf("confirmation channel closed")
+			return false, false, fmt.Errorf("confirmation channel closed")
 		}
-		return strings.TrimSpace(strings.ToLower(answer)) == "yes", nil
+		switch answer {
+		case "always":
+			return true, true, nil
+		case "allow":
+			return true, false, nil
+		default:
+			return false, false, nil
+		}
 	})
 	if a.AuditLogger != nil {
 		executor.SetAuditFunc(a.AuditLogger.Record)

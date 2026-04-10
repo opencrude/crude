@@ -16,8 +16,9 @@ type ToolFunc func(tool string, params map[string]any) (string, error)
 type RollbackFunc func(node *Node) error
 
 // ConfirmFunc is called when a destructive operation needs user confirmation.
-// Returns true to proceed, false to skip.
-type ConfirmFunc func(node *Node) (bool, error)
+// Returns true to proceed, false to skip, and "always" if the user wants to
+// remember the decision for the session.
+type ConfirmFunc func(node *Node) (proceed bool, always bool, err error)
 
 // AuditFunc is called after each node execution to record the audit trail.
 type AuditFunc func(entry AuditEntry)
@@ -183,7 +184,7 @@ func (e *Executor) runNode(n *Node) {
 		if e.logger2 != nil {
 			e.logger2.LogSafetyConfirmation(n.ID, n.Tool, true)
 		}
-		proceed, err := e.confirmFn(n)
+		proceed, always, err := e.confirmFn(n)
 		if err != nil {
 			e.failNode(n, fmt.Errorf("confirmation error: %w", err))
 			return
@@ -193,10 +194,14 @@ func (e *Executor) runNode(n *Node) {
 				e.logger2.LogSafetyConfirmationResult(n.ID, false)
 			}
 			e.skipNode(n, "user rejected confirmation")
+			e.emit(Event{Type: "blocking_complete", Node: n, Data: "denied"})
 			return
 		}
 		if e.logger2 != nil {
 			e.logger2.LogSafetyConfirmationResult(n.ID, true)
+		}
+		if always {
+			e.emit(Event{Type: "confirmation_always", Node: n, Data: nil})
 		}
 	}
 
