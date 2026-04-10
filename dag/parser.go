@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"crude/internal/jsonrepair"
+	"crude/jsonrepair"
 )
 
 // Parse converts a JSON string (from LLM output) into a validated DAG.

@@ -228,7 +228,7 @@ func main() {
 			durationMs := time.Since(sessionStartTime).Milliseconds()
 			interactionLog.LogSessionEnd(durationMs)
 			interactionLog.Close()
-			fmt.Fprintf(os.Stderr, "\n📋 Interaction log: %s\n", interactionLog.Path())
+			fmt.Fprintf(os.Stderr, "[Interaction] logging to %s\n", interactionLog.Path())
 		}
 		os.Exit(0)
 	}
