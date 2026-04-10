@@ -15,7 +15,7 @@ import (
 	"crude/statemachine"
 )
 
-// ──────────────────────────── API types ────────────────────────────
+// API types
 
 // APIMessage is a single message in the OpenRouter chat format.
 type APIMessage struct {
@@ -80,7 +80,7 @@ type ChatResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// ──────────────────────────── Agent event ────────────────────────────
+// Agent event
 
 // AgentEvent is emitted by Agent.Run during a conversation turn.
 // Type is one of: "phase", "thinking", "tool_call", "tool_result", "done", "error", "usage", "blocking", "stream_token".
@@ -89,7 +89,7 @@ type AgentEvent struct {
 	Data any
 }
 
-// ──────────────────────────── Agent ────────────────────────────
+// Agent
 
 const (
 	maxIterations    = 30
@@ -130,7 +130,7 @@ func (a *Agent) Run(
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
 ) {
-	// ── Check for chitchat — skip grounding/planning entirely ──
+	// Check for chitchat
 	lastUserMsg := ""
 	for i := len(sessionMessages) - 1; i >= 0; i-- {
 		if sessionMessages[i].Role == "user" {
@@ -155,7 +155,7 @@ func (a *Agent) Run(
 		// Fallback to full pipeline if direct reply fails.
 	}
 
-	// ── Phase 1: GROUNDING (no function calling) ─────────────────
+	// Phase 1: GROUNDING
 	groundingStart := time.Now()
 	if a.Logger != nil {
 		a.Logger.LogPhaseStart("grounding", map[string]any{"session_id": sessionID})
@@ -166,7 +166,7 @@ func (a *Agent) Run(
 		a.Logger.LogPhaseEnd("grounding", time.Since(groundingStart).Milliseconds())
 	}
 
-	// ── Phase 2: PLANNING ────────────────────────────────────────
+	// Phase 2: PLANNING
 	planningStart := time.Now()
 	if a.Logger != nil {
 		a.Logger.LogPhaseStart("planning", map[string]any{"session_id": sessionID})
@@ -180,7 +180,7 @@ func (a *Agent) Run(
 		a.Logger.LogPhaseEnd("planning", time.Since(planningStart).Milliseconds())
 	}
 
-	// ── Phase 3: EXECUTION ───────────────────────────────────────
+	// Phase 3: EXECUTION
 	execStart := time.Now()
 	if a.Logger != nil {
 		a.Logger.LogPhaseStart("executing", map[string]any{"session_id": sessionID, "dag_nodes": len(execDAG.Nodes)})
@@ -191,7 +191,7 @@ func (a *Agent) Run(
 		a.Logger.LogPhaseEnd("executing", time.Since(execStart).Milliseconds())
 	}
 
-	// ── Check for blocking node response ─────────────────────────
+	// Check for blocking node response
 	var blockingResponse string
 	for _, n := range execDAG.Nodes {
 		if n.Tool == "blocking" && n.Status == dag.Successful && n.Result != "" {
@@ -205,7 +205,7 @@ func (a *Agent) Run(
 		return
 	}
 
-	// ── Check for reply node — skip summarize, emit directly ─────
+	// Check for reply node
 	for _, n := range execDAG.Nodes {
 		if n.Tool == "reply" && n.Status == dag.Successful && n.Result != "" {
 			emit(AgentEvent{Type: "done", Data: n.Result})
@@ -213,7 +213,7 @@ func (a *Agent) Run(
 		}
 	}
 
-	// ── Phase 4: SUMMARY ─────────────────────────────────────────
+	// Phase 4: SUMMARY
 	summaryStart := time.Now()
 	if a.Logger != nil {
 		a.Logger.LogPhaseStart("summarizing", map[string]any{"session_id": sessionID})
@@ -225,7 +225,7 @@ func (a *Agent) Run(
 	emit(AgentEvent{Type: "done", Data: summary})
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
+// Helpers
 
 // isChitchat returns true if the message is a simple greeting or casual remark
 // that doesn't require system grounding or tool execution.

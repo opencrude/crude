@@ -46,7 +46,7 @@ func (m *Model) chatView() string {
 	// top padding
 	add("")
 
-	// ── Header ────────────────────────────────────────────────
+	// Header
 	uptime := time.Since(m.startTime).Truncate(time.Second)
 	left := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("crude") +
 		" " + dim.Render(truncateLine(m.modelName, innerW/3))
@@ -59,7 +59,7 @@ func (m *Model) chatView() string {
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
 	addFull(sepStyle.Render(strings.Repeat("─", m.width)))
 
-	// ── Chat area ─────────────────────────────────────────────
+	// Chat area
 	chatH := m.chatAreaHeight()
 	allLines := m.renderAllMessages()
 	m.cachedAllLines = allLines
@@ -114,7 +114,7 @@ func (m *Model) chatView() string {
 		add(l)
 	}
 
-	// ── Input area (full width) ──────────────────────────────
+	// Input area
 	sepStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
 	addFull(sepStyle.Render(strings.Repeat("─", m.width)))
 
@@ -204,7 +204,7 @@ func (m *Model) chatView() string {
 	// Bottom border below input
 	addFull(sepStyle.Render(strings.Repeat("─", m.width)))
 
-	// ── Status bar: errors left, status right ─────────────
+	// Status bar
 	var errLeft string
 	if m.infoMsg != "" {
 		errLeft = pad + lipgloss.NewStyle().Foreground(colorMuted).Render(

@@ -34,7 +34,7 @@ func (p *inlineSettings) View(spinFrame int) string {
 		errorStyle := lipgloss.NewStyle().Foreground(colorError)
 		highlightStyle := lipgloss.NewStyle().Foreground(colorMainText).Background(lipgloss.Color("#1e2a3a"))
 
-		// ── Header line ──────────────────────────────────────────
+		// Header line
 		b.WriteString(accentStyle.Bold(true).Render("  model select"))
 		if p.fetchingModels {
 			b.WriteString(dim.Render("  fetching models..."))
@@ -43,7 +43,7 @@ func (p *inlineSettings) View(spinFrame int) string {
 		}
 		b.WriteString("\n")
 
-		// ── Search bar ───────────────────────────────────────────
+		// Search bar
 		if p.fetchError != "" {
 			b.WriteString(errorStyle.Render("  ✗ "+p.fetchError) + "\n")
 		} else {
@@ -55,7 +55,7 @@ func (p *inlineSettings) View(spinFrame int) string {
 
 		b.WriteString(dim.Render("  "+strings.Repeat("─", 54)) + "\n")
 
-		// ── Model list with scrolling ─────────────────────────────
+		// Model list
 		if p.fetchingModels {
 			b.WriteString(dim.Render("  waiting for models...") + "\n")
 		} else if len(p.filteredModels) == 0 {

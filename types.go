@@ -2,7 +2,7 @@ package main
 
 import "encoding/json"
 
-// ──────────────────────────── API types ────────────────────────────
+// API types
 
 // APIMessage is a single message in the OpenRouter chat format.
 type APIMessage struct {
@@ -67,7 +67,7 @@ type ChatResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// ──────────────────────────── Agent event ────────────────────────────
+// Agent event
 
 // AgentEvent is emitted by Agent.Run during a conversation turn.
 // Type is one of: "phase", "thinking", "tool_call", "tool_result", "done", "error", "usage".

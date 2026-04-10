@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	maxChunkSize  = 1000
-	chunkOverlap  = 200
-	batchSize     = 20
+	maxChunkSize = 1000
+	chunkOverlap = 200
+	batchSize    = 20
 )
 
 // Chunk is a piece of text with its embedding vector.
@@ -29,10 +29,10 @@ type Chunk struct {
 type Engine struct {
 	client       *embed.Client
 	mu           sync.RWMutex
-	persisted    []Chunk            // embedded from AddDocuments (cached on disk)
-	observations []Chunk            // ephemeral per-turn observations
+	persisted    []Chunk // embedded from AddDocuments (cached on disk)
+	observations []Chunk // ephemeral per-turn observations
 	cacheDir     string
-	hashes       map[string]string  // title → SHA256(title::content)
+	hashes       map[string]string // title → SHA256(title::content)
 }
 
 // New creates a RAG engine backed by the given embedding client.
@@ -188,7 +188,7 @@ func (e *Engine) ResetObservations() {
 	e.mu.Unlock()
 }
 
-// ── Cache helpers ─────────────────────────────────────────────────────────────
+// Cache helpers
 
 type cacheMetadata struct {
 	DocumentHashes map[string]string `json:"document_hashes"`
@@ -255,7 +255,7 @@ func (e *Engine) saveCache() {
 	}
 }
 
-// ── Chunking ──────────────────────────────────────────────────────────────────
+// Chunking
 
 // chunkText splits content into overlapping chunks of at most maxChunkSize chars.
 // Each chunk is prefixed with its title, matching the C# ChunkText logic.
