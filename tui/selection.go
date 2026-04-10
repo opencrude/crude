@@ -1,11 +1,11 @@
 package tui
 
 import (
-	"os/exec"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"crude/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 )
@@ -177,29 +177,10 @@ func extractSelectedText(allLines []string, startLine, startCol, endLine, endCol
 
 func copyToClipboardCmd(text string) tea.Cmd {
 	return func() tea.Msg {
-		readers := strings.NewReader(text)
-
-		type tool struct {
-			name string
-			args []string
+		if err := clipboard.WriteText(text); err != nil {
+			return clipboardErrorMsg("failed to copy: " + err.Error())
 		}
-		tools := []tool{
-			{"xclip", []string{"-selection", "clipboard"}},
-			{"wl-copy", nil},
-			{"pbcopy", nil},
-			{"termux-clipboard-set", nil},
-		}
-
-		for _, t := range tools {
-			cmd := exec.Command(t.name, t.args...)
-			cmd.Stdin = readers
-			if err := cmd.Run(); err == nil {
-				return clipboardCopiedMsg{}
-			}
-			readers.Reset(text)
-		}
-
-		return clipboardErrorMsg("no clipboard tool found (install xclip, wl-copy, or pbcopy)")
+		return clipboardCopiedMsg{}
 	}
 }
 

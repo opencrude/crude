@@ -136,7 +136,7 @@ func (m *Model) chatView() string {
 			for i, il := range lines {
 				prefix := "  "
 				if i == 0 {
-					prefix = "> "
+					prefix = "❯ "
 				}
 				lineStr := string(il)
 				rendered := pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+lineStr)
@@ -155,7 +155,7 @@ func (m *Model) chatView() string {
 			for i, il := range lines {
 				prefix := "  "
 				if i == 0 {
-					prefix = "> "
+					prefix = "❯ "
 				}
 				lineStr := string(il)
 				if i == curLine {
