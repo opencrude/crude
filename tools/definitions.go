@@ -211,7 +211,8 @@ var AgentTools = []ToolDef{
 			Name: "web_search",
 			Description: "Search the web for current information (Read primitive). " +
 				"Use when you need up-to-date facts, recent events, or information not in local files. " +
-				"Returns titles, URLs, and snippets from DuckDuckGo.",
+				"Queries multiple search engines concurrently (Brave, DuckDuckGo, Startpage) and deduplicates results. " +
+				"Automatically falls back to working engines if some are unavailable.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -244,6 +245,7 @@ var AgentTools = []ToolDef{
 			Name: "web_fetch",
 			Description: "Fetch a URL and extract its text content (Read primitive). " +
 				"Use to read documentation pages, articles, or any web resource. " +
+				"Handles redirects, extracts main content from HTML, and supports plain text/JSON. " +
 				"Returns title and extracted text content.",
 			Parameters: json.RawMessage(`{
 				"type":"object",

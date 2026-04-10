@@ -37,6 +37,9 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	if a.Logger != nil {
+		a.Logger.LogLLMRequest(a.Provider.Name, a.Model, len(msgs), len(tools))
+	}
 	logAgent("calling %s model=%s msgs=%d tools=%d", a.Provider.Name, a.Model, len(msgs), len(tools))
 	client := &http.Client{Timeout: 120 * time.Second}
 
@@ -57,6 +60,9 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 				logAgent("request failed attempt=%d/%d err=%v retrying in %s", attempt, maxAPIAttempts, err, bo)
 				time.Sleep(bo)
 				continue
+			}
+			if a.Logger != nil {
+				a.Logger.LogLLMError(a.Provider.Name, a.Model, err, time.Since(apiStart).Milliseconds())
 			}
 			return nil, &apiCallError{
 				Message:          fmt.Sprintf("API request failed after %d attempts: %v", maxAPIAttempts, err),
@@ -80,6 +86,9 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 				continue
 			}
 			if isRetryable(resp.StatusCode) {
+				if a.Logger != nil {
+					a.Logger.LogLLMError(a.Provider.Name, a.Model, fmt.Errorf("status %d: %s", resp.StatusCode, snippet), time.Since(apiStart).Milliseconds())
+				}
 				return nil, &apiCallError{
 					Message:          fmt.Sprintf("OpenRouter %d after %d attempts: %s", resp.StatusCode, maxAPIAttempts, snippet),
 					RetriesExhausted: true,
@@ -93,6 +102,9 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 			return nil, fmt.Errorf("unmarshal response: %w", err)
 		}
 		if chatResp.Error != nil {
+			if a.Logger != nil {
+				a.Logger.LogLLMError(a.Provider.Name, a.Model, fmt.Errorf("API error: %s", chatResp.Error.Message), time.Since(apiStart).Milliseconds())
+			}
 			return nil, fmt.Errorf("API error: %s", chatResp.Error.Message)
 		}
 		if len(chatResp.Choices) == 0 {
@@ -100,6 +112,17 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		}
 
 		choice := chatResp.Choices[0]
+		apiDur := time.Since(apiStart).Milliseconds()
+		if a.Logger != nil {
+			var usage *struct{ PromptTokens, CompletionTokens int }
+			if chatResp.Usage != nil {
+				usage = &struct{ PromptTokens, CompletionTokens int }{
+					PromptTokens:     chatResp.Usage.PromptTokens,
+					CompletionTokens: chatResp.Usage.CompletionTokens,
+				}
+			}
+			a.Logger.LogLLMResponse(a.Provider.Name, a.Model, choice.FinishReason, usage, apiDur)
+		}
 		logAgent("response  status=%d took=%s finish=%s tools=%d content=%s",
 			resp.StatusCode, time.Since(apiStart).Round(time.Millisecond),
 			choice.FinishReason, len(choice.Message.ToolCalls),
@@ -146,6 +169,10 @@ func (a *Agent) completeStream(
 		return "", "", fmt.Errorf("marshal request: %w", err)
 	}
 
+	streamStart := time.Now()
+	if a.Logger != nil {
+		a.Logger.LogLLMStreamStart(a.Provider.Name, a.Model, len(msgs), len(tools))
+	}
 	logAgent("calling %s model=%s (streaming) msgs=%d tools=%d", a.Provider.Name, a.Model, len(msgs), len(tools))
 	client := &http.Client{Timeout: 300 * time.Second}
 
@@ -166,6 +193,9 @@ func (a *Agent) completeStream(
 				time.Sleep(bo)
 				continue
 			}
+			if a.Logger != nil {
+				a.Logger.LogLLMError(a.Provider.Name, a.Model, err, time.Since(streamStart).Milliseconds())
+			}
 			return "", "", &apiCallError{
 				Message:          fmt.Sprintf("Stream request failed after %d attempts: %v", maxAPIAttempts, err),
 				RetriesExhausted: true,
@@ -182,6 +212,9 @@ func (a *Agent) completeStream(
 					resp.StatusCode, attempt, maxAPIAttempts, bo, snippet)
 				time.Sleep(bo)
 				continue
+			}
+			if a.Logger != nil {
+				a.Logger.LogLLMError(a.Provider.Name, a.Model, fmt.Errorf("status %d: %s", resp.StatusCode, snippet), time.Since(streamStart).Milliseconds())
 			}
 			return "", "", fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, snippet)
 		}
@@ -235,9 +268,16 @@ func (a *Agent) completeStream(
 				time.Sleep(bo)
 				continue
 			}
+			if a.Logger != nil {
+				a.Logger.LogLLMError(a.Provider.Name, a.Model, fmt.Errorf("stream read error: %w", err), time.Since(streamStart).Milliseconds())
+			}
 			return "", "", fmt.Errorf("stream read error: %w", err)
 		}
 
+		streamDur := time.Since(streamStart).Milliseconds()
+		if a.Logger != nil {
+			a.Logger.LogLLMStreamEnd(finishReason, content.Len(), streamDur)
+		}
 		logAgent("stream response finish=%s content_len=%d", finishReason, content.Len())
 		return content.String(), finishReason, nil
 	}

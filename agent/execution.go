@@ -80,6 +80,11 @@ func (a *Agent) execute(
 
 	executor := dag.New(execDAG, a.ToolFn, eventFn, blockResolveCh)
 
+	// Wire interaction logger for detailed node logging.
+	if a.Logger != nil {
+		executor.SetInteractionLogger(a.Logger)
+	}
+
 	// Wire safety components.
 	if a.RollbackHandler != nil {
 		executor.SetRollbackFunc(a.RollbackHandler.Rollback)
