@@ -100,7 +100,7 @@ var (
 )
 
 func main() {
-	// ── Flags ────────────────────────────────────────────────
+	// Flags
 	apiKeyFlag := flag.String("key", "", "API key (or set CRUDE_API_KEY)")
 	modelFlag := flag.String("model", "", "Model to use")
 	providerFlag := flag.String("provider", "", "Provider ID (openrouter, openai, anthropic, etc.)")
@@ -112,7 +112,7 @@ func main() {
 	log.SetOutput(os.Stderr)
 	log.SetFlags(0)
 
-	// ── Config ───────────────────────────────────────────────
+	// Config
 	cfg := loadConfig()
 
 	if *apiKeyFlag != "" {
@@ -144,13 +144,13 @@ func main() {
 		prompt = *sysPromptFlag
 	}
 
-	// ── Provider ─────────────────────────────────────────────
+	// Provider
 	activeProvider := provider.FromPreset(cfg.ProviderID, cfg.ProviderAPIKey, cfg.ProviderURL)
 
-	// ── Backend ──────────────────────────────────────────────
+	// Backend
 	activeBackend = initBackend(cfg)
 
-	// ── Safety ───────────────────────────────────────────────
+	// Safety
 	home, _ := os.UserHomeDir()
 	auditDir := filepath.Join(home, ".crude", "audit")
 	auditLogger, err := safety.NewAuditLogger(auditDir)
@@ -159,7 +159,7 @@ func main() {
 	}
 	rollbackHandler := safety.NewRollbackHandler(activeBackend)
 
-	// ── Interaction Logger ──────────────────────────────────
+	// Interaction Logger
 	logDir := filepath.Join(home, ".crude", "logs")
 	interactionLog, err = logging.NewInteractionLogger(logDir)
 	if err != nil {
@@ -169,10 +169,10 @@ func main() {
 		sessionStartTime = time.Now()
 	}
 
-	// ── Agent ────────────────────────────────────────────────
+	// Agent
 	ag := newAgent(activeProvider, cfg.Model, activeBackend, auditLogger, rollbackHandler, interactionLog)
 
-	// ── RAG engine ───────────────────────────────────────────
+	// RAG engine
 	ragCacheDir := filepath.Join(home, ".crude", "rag")
 	embedClient := embed.NewClient(cfg.APIKey, cfg.EmbedModel, activeProvider.BaseURL)
 	ragEngine := rag.New(embedClient, ragCacheDir)
@@ -182,11 +182,11 @@ func main() {
 		log.Printf("[rag] knowledge base load error: %v", err)
 	}
 
-	// ── State machine ────────────────────────────────────────
+	// State machine
 	sm := statemachine.NewConversationStateMachine(nil)
 	sessionID := "cli-session"
 
-	// ── TUI ──────────────────────────────────────────────────
+	// TUI
 	username := resolveUsername()
 	initial := configToSettings(cfg)
 
@@ -276,10 +276,10 @@ func main() {
 		tuiInst.OpenSettings()
 	}
 
-	// ── Blocking flow ─────────────────────────────────────────
+	// Blocking flow
 	blockResolveCh := make(chan string, 1)
 
-	// ── Main agent loop ──────────────────────────────────────
+	// Main agent loop
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

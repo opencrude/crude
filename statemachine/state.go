@@ -200,9 +200,7 @@ func (s *ConversationState) TransferSlotsToGoal(source, target *Goal) {
 	}
 }
 
-// ──────────────────────────────────────────────
 // GoalContext
-// ──────────────────────────────────────────────
 
 // GoalContext is passed to plugins during goal step execution.
 // It provides convenient accessors over the underlying Goal and ConversationState.

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 )
 
-// ──────────────────────────── Types ────────────────────────────
+// Types
 
 // ToolCall is a function invocation requested by the model.
 type ToolCall struct {
@@ -32,7 +32,7 @@ type ToolFuncDef struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
-// ──────────────────────────── Tool Definitions ────────────────────────────
+// Tool Definitions
 
 // AgentTools lists the tools exposed to the model every conversation turn.
 var AgentTools = []ToolDef{

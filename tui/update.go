@@ -170,7 +170,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 	}
 
-	// ── Global cancel: Esc and Ctrl+C ────────────────────────
+	// Global cancel
 	if msg, ok := msg.(tea.KeyMsg); ok && (msg.Type == tea.KeyCtrlC || msg.Type == tea.KeyEsc) {
 		// Cancel hierarchy: editing → model select → provider select → settings → double-press quit
 		if m.settingsActive {
@@ -308,7 +308,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Normal chat mode.
 	switch msg := msg.(type) {
 
-	// ── Keyboard ──────────────────────────────────────────────
+	// Keyboard
 	case tea.KeyMsg:
 		m.showHint = false
 
@@ -741,7 +741,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-	// ── Agent events ──────────────────────────────────────────
+	// Agent events
 	case agentMsg:
 		evt := AgentEventMsg(msg)
 		switch evt.Type {
@@ -896,7 +896,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	// ── External messages ──────────────────────────────────────
+	// External messages
 	case openSettingsMsg:
 		m.inlineForm.saveSnapshot()
 		m.settingsActive = true

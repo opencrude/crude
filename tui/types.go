@@ -56,9 +56,7 @@ type ModelEntry struct {
 	Name string
 }
 
-// ──────────────────────────
 // Internal Bubble Tea messages
-// ──────────────────────────
 
 type tickMsg time.Time
 type statusMsg string
