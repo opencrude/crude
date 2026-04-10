@@ -64,6 +64,9 @@ type Model struct {
 	confirmForm     confirmForm
 	OnConfirmResult func(ConfirmResult)
 
+	// Undo / file change commands
+	OnUndoCmd func(cmd string)
+
 	// Slash command state
 	slashActive   bool
 	slashIdx      int

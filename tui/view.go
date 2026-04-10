@@ -11,9 +11,6 @@ import (
 
 const padLR = 2
 
-// activeBackendLabel is set by main to display the current backend in the footer.
-var activeBackendLabel = "local"
-
 func (m *Model) View() string {
 	return m.chatView()
 }
@@ -239,7 +236,7 @@ func (m *Model) chatView() string {
 	} else {
 		statusRight = dim.Render("ready")
 	}
-	statusRight = dim.Render(activeBackendLabel) + " " + statusRight + usageStr
+	statusRight = statusRight + usageStr
 
 	statusW := m.width - lipgloss.Width(errLeft) - lipgloss.Width(statusRight) - padLR
 	if statusW < 1 {

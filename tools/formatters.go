@@ -4,20 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	"crude/backend"
+	"crude/fileio"
 )
 
-// formatReadFile formats file content with line numbers, applying offset/limit.
 func formatReadFile(path, content string, offset, limit int) string {
 	lines := strings.Split(content, "\n")
 	total := len(lines)
 
-	// Handle empty file edge case.
 	if total == 1 && lines[0] == "" {
 		return fmt.Sprintf("%s — (empty file)", path)
 	}
 
-	// Normalise offset (1-based → 0-based index).
 	startIdx := 0
 	if offset > 1 {
 		startIdx = offset - 1
@@ -45,8 +42,7 @@ func formatReadFile(path, content string, offset, limit int) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// formatDirEntries formats a list of DirEntry values into a readable table.
-func formatDirEntries(path string, entries []backend.DirEntry) string {
+func formatDirEntries(path string, entries []fileio.DirEntry) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s — %d entries:\n", path, len(entries))
 	for _, e := range entries {
@@ -65,8 +61,7 @@ func formatDirEntries(path string, entries []backend.DirEntry) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// listDirectoryRecursive performs a recursive listing via glob.
-func listDirectoryRecursive(path string, exec backend.Executor) string {
+func listDirectoryRecursive(path string, exec fileio.Executer) string {
 	matches, err := exec.GlobFiles(path, "**")
 	if err != nil {
 		return "Error: " + err.Error()

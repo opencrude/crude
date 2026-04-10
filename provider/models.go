@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"encoding/json"
@@ -8,17 +8,13 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"crude/provider"
 )
 
-// ModelInfo holds the essential info for a model from a provider.
 type ModelInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-// modelsResponse is the JSON shape returned by /models.
 type modelsResponse struct {
 	Data []struct {
 		ID   string `json:"id"`
@@ -26,8 +22,7 @@ type modelsResponse struct {
 	} `json:"data"`
 }
 
-// FetchModels queries the provider for available models.
-func FetchModels(p *provider.Provider) ([]ModelInfo, error) {
+func FetchModels(p *Provider) ([]ModelInfo, error) {
 	if p == nil {
 		return nil, fmt.Errorf("provider is nil")
 	}

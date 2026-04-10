@@ -22,6 +22,9 @@ type TUI struct {
 	// OnConfirmResult is called when the user responds to a confirmation prompt.
 	OnConfirmResult func(ConfirmResult)
 
+	// OnUndoCmd is called when the user invokes an undo slash command.
+	OnUndoCmd func(cmd string)
+
 	// FetchModelsFn is called to fetch available models from the provider.
 	FetchModelsFn func(providerID, baseURL, apiKey string) ([]ModelEntry, error)
 
@@ -70,6 +73,11 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	model.OnConfirmResult = func(result ConfirmResult) {
 		if t.OnConfirmResult != nil {
 			t.OnConfirmResult(result)
+		}
+	}
+	model.OnUndoCmd = func(cmd string) {
+		if t.OnUndoCmd != nil {
+			t.OnUndoCmd(cmd)
 		}
 	}
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion())
@@ -132,11 +140,6 @@ func (t *TUI) UpdateModelName(name string) {
 // OpenSettings opens the settings overlay programmatically.
 func (t *TUI) OpenSettings() {
 	t.Program.Send(openSettingsMsg{})
-}
-
-// SetBackendLabel updates the backend label shown in the footer.
-func SetBackendLabel(label string) {
-	activeBackendLabel = label
 }
 
 // GetGlobal returns the global TUI instance (set by the most recent Start call).

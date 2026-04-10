@@ -21,7 +21,10 @@ var availableCmds = []slashCmd{
 	{name: "/model", label: "model", desc: "Select model"},
 	{name: "/embed-model", label: "embed model", desc: "Select embedding model"},
 	{name: "/api-key", label: "api key", desc: "Set API key"},
-	{name: "/backend", label: "backend", desc: "Toggle local / ssh"},
+	{name: "/undo", label: "undo", desc: "Undo last file operation"},
+	{name: "/undo-n", label: "undo N", desc: "Undo last N file operations"},
+	{name: "/undo-all", label: "undo all", desc: "Undo all file operations this session"},
+	{name: "/changes", label: "changes", desc: "Show files changed this session"},
 	{name: "/help", label: "help", desc: "Show available commands"},
 }
 
@@ -45,15 +48,6 @@ func formatSettingsSummary(s Settings) string {
 	b.WriteString(fmt.Sprintf("  api key       %s\n", maskOr(s.APIKey, "-")))
 	b.WriteString(fmt.Sprintf("  model         %s\n", valueOr(s.Model, "-")))
 	b.WriteString(fmt.Sprintf("  embed model   %s\n", valueOr(s.EmbedModel, "-")))
-	b.WriteString(fmt.Sprintf("  backend       %s\n", valueOr(s.Backend, "-")))
-	if s.Backend == "ssh" {
-		b.WriteString("\n  ssh\n")
-		b.WriteString(fmt.Sprintf("  host          %s\n", valueOr(s.SSHHost, "-")))
-		b.WriteString(fmt.Sprintf("  port          %s\n", valueOr(s.SSHPort, "-")))
-		b.WriteString(fmt.Sprintf("  user          %s\n", valueOr(s.SSHUser, "-")))
-		b.WriteString(fmt.Sprintf("  password      %s\n", maskOr(s.SSHPassword, "-")))
-		b.WriteString(fmt.Sprintf("  key file      %s\n", valueOr(s.SSHKeyFile, "-")))
-	}
 	b.WriteString("```")
 	return b.String()
 }

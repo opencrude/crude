@@ -1,0 +1,515 @@
+package fileio
+
+import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"time"
+)
+
+const (
+	compressThreshold      = 4096
+	rawPrefix         byte = 0x00
+	gzipPrefix        byte = 0x01
+)
+
+type OpType string
+
+const (
+	OpWrite  OpType = "write"
+	OpCreate OpType = "create"
+	OpDelete OpType = "delete"
+	OpMove   OpType = "move"
+	OpCopy   OpType = "copy"
+)
+
+type JournalEntry struct {
+	OpID      string `json:"op_id"`
+	SessionID string `json:"session_id"`
+	MsgID     string `json:"msg_id"`
+	Path      string `json:"path"`
+	DestPath  string `json:"dest_path,omitempty"`
+	Timestamp int64  `json:"ts"`
+	Op        OpType `json:"op"`
+	OldGzip   []byte `json:"old,omitempty"`
+	OldPerm   uint32 `json:"perm"`
+	ChecksumO string `json:"cs_old"`
+	ChecksumN string `json:"cs_new"`
+	Undone    bool   `json:"undone,omitempty"`
+}
+
+type Journal struct {
+	sessionID string
+	path      string
+	f         *os.File
+	entries   []JournalEntry
+}
+
+func OpenJournal(sessionID string) (*Journal, error) {
+	dir, err := journalDir()
+	if err != nil {
+		return nil, fmt.Errorf("journal: data dir: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("journal: mkdir: %w", err)
+	}
+
+	path := filepath.Join(dir, sessionID+".jsonl")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("journal: open %s: %w", path, err)
+	}
+
+	j := &Journal{sessionID: sessionID, path: path, f: f}
+
+	if err := j.loadEntries(); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("journal: load entries: %w", err)
+	}
+	return j, nil
+}
+
+func (j *Journal) Close() error {
+	if j.f == nil {
+		return nil
+	}
+	if err := j.f.Sync(); err != nil {
+		j.f.Close()
+		return err
+	}
+	err := j.f.Close()
+	j.f = nil
+	return err
+}
+
+func (j *Journal) record(e JournalEntry) error {
+	data, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("journal: marshal: %w", err)
+	}
+	data = append(data, '\n')
+	if _, err := j.f.Write(data); err != nil {
+		return fmt.Errorf("journal: write: %w", err)
+	}
+	if err := j.f.Sync(); err != nil {
+		return fmt.Errorf("journal: sync: %w", err)
+	}
+	j.entries = append(j.entries, e)
+	return nil
+}
+
+func (j *Journal) markUndone(opID string) error {
+	if _, err := j.f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
+	var newEntries []string
+	dec := json.NewDecoder(j.f)
+	for {
+		var e JournalEntry
+		if err := dec.Decode(&e); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+		if e.OpID == opID {
+			e.Undone = true
+		}
+		data, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		newEntries = append(newEntries, string(data))
+	}
+
+	if err := j.f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := j.f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	for _, entry := range newEntries {
+		if _, err := j.f.WriteString(entry + "\n"); err != nil {
+			return err
+		}
+	}
+	if err := j.f.Sync(); err != nil {
+		return err
+	}
+	_, err := j.f.Seek(0, io.SeekEnd)
+	return err
+}
+
+func (j *Journal) loadEntries() error {
+	if _, err := j.f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	j.entries = nil
+	dec := json.NewDecoder(j.f)
+	for {
+		var e JournalEntry
+		if err := dec.Decode(&e); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+		if !e.Undone {
+			j.entries = append(j.entries, e)
+		}
+	}
+	_, err := j.f.Seek(0, io.SeekEnd)
+	return err
+}
+
+func (j *Journal) UndoLast() error {
+	if len(j.entries) == 0 {
+		return fmt.Errorf("nothing to undo")
+	}
+	last := j.entries[len(j.entries)-1]
+	if err := revertEntry(last); err != nil {
+		return err
+	}
+	if err := j.markUndone(last.OpID); err != nil {
+		return fmt.Errorf("undo succeeded but journal update failed: %w", err)
+	}
+	j.entries = j.entries[:len(j.entries)-1]
+	return nil
+}
+
+func (j *Journal) UndoMessage(msgID string) error {
+	var matching []JournalEntry
+	for _, e := range j.entries {
+		if e.MsgID == msgID {
+			matching = append(matching, e)
+		}
+	}
+	if len(matching) == 0 {
+		return fmt.Errorf("no operations found for message %q", msgID)
+	}
+	reverseEntries(matching)
+
+	var undone []string
+	for _, e := range matching {
+		if err := revertEntry(e); err != nil {
+			if len(undone) > 0 {
+				return fmt.Errorf("partial undo: reverted %d of %d ops for message %q, then failed: %w", len(undone), len(matching), msgID, err)
+			}
+			return fmt.Errorf("undo message %q: %w", msgID, err)
+		}
+		if err := j.markUndone(e.OpID); err != nil {
+			return fmt.Errorf("undo succeeded but journal update failed for op %s: %w", e.OpID, err)
+		}
+		undone = append(undone, e.OpID)
+	}
+
+	j.entries = filterEntries(j.entries, func(e JournalEntry) bool {
+		return e.MsgID != msgID
+	})
+	return nil
+}
+
+func (j *Journal) UndoSession() error {
+	if len(j.entries) == 0 {
+		return fmt.Errorf("session has no recorded operations")
+	}
+	all := make([]JournalEntry, len(j.entries))
+	copy(all, j.entries)
+	reverseEntries(all)
+
+	var undone []string
+	for _, e := range all {
+		if err := revertEntry(e); err != nil {
+			return fmt.Errorf("partial undo: reverted %d of %d ops, then failed: %w", len(undone), len(all), err)
+		}
+		if err := j.markUndone(e.OpID); err != nil {
+			return fmt.Errorf("undo succeeded but journal update failed for op %s: %w", e.OpID, err)
+		}
+		undone = append(undone, e.OpID)
+	}
+	j.entries = j.entries[:0]
+	return nil
+}
+
+func (j *Journal) UndoN(n int) error {
+	if n <= 0 {
+		return fmt.Errorf("n must be positive")
+	}
+	if n > len(j.entries) {
+		n = len(j.entries)
+	}
+	tail := make([]JournalEntry, n)
+	copy(tail, j.entries[len(j.entries)-n:])
+	reverseEntries(tail)
+
+	var undone []string
+	for _, e := range tail {
+		if err := revertEntry(e); err != nil {
+			return fmt.Errorf("partial undo: reverted %d of %d ops, then failed: %w", len(undone), n, err)
+		}
+		if err := j.markUndone(e.OpID); err != nil {
+			return fmt.Errorf("undo succeeded but journal update failed for op %s: %w", e.OpID, err)
+		}
+		undone = append(undone, e.OpID)
+	}
+	j.entries = j.entries[:len(j.entries)-n]
+	return nil
+}
+
+func revertEntry(e JournalEntry) error {
+	switch e.Op {
+	case OpCreate:
+		cur, _, err := readFile(e.Path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("read for checksum: %w", err)
+		}
+		if err == nil {
+			if cs := checksum(cur); cs != e.ChecksumN {
+				return fmt.Errorf(
+					"file %s has been modified since CRUDE created it (expected %s, got %s); not deleting — resolve manually",
+					e.Path, e.ChecksumN[:8], cs[:8],
+				)
+			}
+		}
+		return os.Remove(e.Path)
+
+	case OpWrite, OpDelete:
+		old, err := decompressOldContent(e.OldGzip)
+		if err != nil {
+			return fmt.Errorf("decompress old content: %w", err)
+		}
+		cur, _, err := readFile(e.Path)
+		if err == nil {
+			if cs := checksum(cur); cs != e.ChecksumN {
+				fmt.Fprintf(os.Stderr,
+					"[crude/fileio] warning: %s was modified externally after op %s; restoring old content anyway\n",
+					e.Path, e.OpID,
+				)
+			}
+		}
+		return writeAtomic(e.Path, old, os.FileMode(e.OldPerm))
+
+	case OpMove:
+		if e.DestPath == "" {
+			return fmt.Errorf("move undo: missing destination path in journal entry %s", e.OpID)
+		}
+		return os.Rename(e.DestPath, e.Path)
+
+	case OpCopy:
+		if e.DestPath == "" {
+			return fmt.Errorf("copy undo: missing destination path in journal entry %s", e.OpID)
+		}
+		cur, _, err := readFile(e.DestPath)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("read for checksum: %w", err)
+		}
+		if err == nil {
+			if cs := checksum(cur); cs != e.ChecksumN {
+				return fmt.Errorf(
+					"copied file %s has been modified since CRUDE created it (expected %s, got %s); not deleting — resolve manually",
+					e.DestPath, e.ChecksumN[:8], cs[:8],
+				)
+			}
+		}
+		return os.Remove(e.DestPath)
+	}
+	return fmt.Errorf("unknown op type %q", e.Op)
+}
+
+func buildWriteEntry(sessionID, msgID, opID, path string, oldContent, newContent []byte, perm os.FileMode) (JournalEntry, error) {
+	gz, err := compressContent(oldContent)
+	if err != nil {
+		return JournalEntry{}, err
+	}
+	return JournalEntry{
+		OpID:      opID,
+		SessionID: sessionID,
+		MsgID:     msgID,
+		Path:      path,
+		Timestamp: time.Now().UnixNano(),
+		Op:        OpWrite,
+		OldGzip:   gz,
+		OldPerm:   uint32(perm),
+		ChecksumO: checksum(oldContent),
+		ChecksumN: checksum(newContent),
+	}, nil
+}
+
+func buildCreateEntry(sessionID, msgID, opID, path string, newContent []byte) JournalEntry {
+	return JournalEntry{
+		OpID:      opID,
+		SessionID: sessionID,
+		MsgID:     msgID,
+		Path:      path,
+		Timestamp: time.Now().UnixNano(),
+		Op:        OpCreate,
+		ChecksumN: checksum(newContent),
+	}
+}
+
+func buildDeleteEntry(sessionID, msgID, opID, path string, oldContent []byte, perm os.FileMode) (JournalEntry, error) {
+	gz, err := compressContent(oldContent)
+	if err != nil {
+		return JournalEntry{}, err
+	}
+	return JournalEntry{
+		OpID:      opID,
+		SessionID: sessionID,
+		MsgID:     msgID,
+		Path:      path,
+		Timestamp: time.Now().UnixNano(),
+		Op:        OpDelete,
+		OldGzip:   gz,
+		OldPerm:   uint32(perm),
+		ChecksumO: checksum(oldContent),
+		ChecksumN: "",
+	}, nil
+}
+
+func buildMoveEntry(sessionID, msgID, opID, srcPath, dstPath string, oldContent []byte, perm os.FileMode) (JournalEntry, error) {
+	gz, err := compressContent(oldContent)
+	if err != nil {
+		return JournalEntry{}, err
+	}
+	return JournalEntry{
+		OpID:      opID,
+		SessionID: sessionID,
+		MsgID:     msgID,
+		Path:      srcPath,
+		DestPath:  dstPath,
+		Timestamp: time.Now().UnixNano(),
+		Op:        OpMove,
+		OldGzip:   gz,
+		OldPerm:   uint32(perm),
+		ChecksumO: checksum(oldContent),
+	}, nil
+}
+
+func buildCopyEntry(sessionID, msgID, opID, dstPath string, newContent []byte) JournalEntry {
+	return JournalEntry{
+		OpID:      opID,
+		SessionID: sessionID,
+		MsgID:     msgID,
+		Path:      dstPath,
+		Timestamp: time.Now().UnixNano(),
+		Op:        OpCopy,
+		ChecksumN: checksum(newContent),
+	}
+}
+
+func compressContent(data []byte) ([]byte, error) {
+	if len(data) < compressThreshold {
+		out := make([]byte, len(data)+1)
+		out[0] = rawPrefix
+		copy(out[1:], data)
+		return out, nil
+	}
+	var buf bytes.Buffer
+	buf.WriteByte(gzipPrefix)
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(data); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func decompressOldContent(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	switch data[0] {
+	case rawPrefix:
+		return data[1:], nil
+	case gzipPrefix:
+		r, err := gzip.NewReader(bytes.NewReader(data[1:]))
+		if err != nil {
+			return nil, err
+		}
+		defer r.Close()
+		return io.ReadAll(r)
+	default:
+		if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+			r, err := gzip.NewReader(bytes.NewReader(data))
+			if err != nil {
+				return nil, err
+			}
+			defer r.Close()
+			return io.ReadAll(r)
+		}
+		return data, nil
+	}
+}
+
+func checksum(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+func journalDir() (string, error) {
+	switch runtime.GOOS {
+	case "linux":
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			return filepath.Join(xdg, "crude", "sessions"), nil
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".local", "share", "crude", "sessions"), nil
+
+	case "darwin":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, "Library", "Application Support", "crude", "sessions"), nil
+
+	case "windows":
+		if appdata := os.Getenv("APPDATA"); appdata != "" {
+			return filepath.Join(appdata, "crude", "sessions"), nil
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, "AppData", "Roaming", "crude", "sessions"), nil
+
+	default:
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".crude", "sessions"), nil
+	}
+}
+
+func reverseEntries(s []JournalEntry) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+}
+
+func filterEntries(s []JournalEntry, pred func(JournalEntry) bool) []JournalEntry {
+	var out []JournalEntry
+	for _, e := range s {
+		if pred(e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}

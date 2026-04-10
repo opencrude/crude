@@ -3,15 +3,17 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
-	"crude/backend"
+	"crude/fileio"
 	"crude/js"
 	"crude/search"
 )
 
-// Execute dispatches a tool call to the given backend executor and returns the result string.
-func Execute(tc ToolCall, exec backend.Executor) string {
+func Execute(tc ToolCall, exec fileio.Executer, ed *fileio.Editor) string {
 	switch tc.Function.Name {
 
 	case "execute_command":
@@ -23,7 +25,7 @@ func Execute(tc ToolCall, exec backend.Executor) string {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			return "Error: invalid arguments: " + err.Error()
 		}
-		opts := backend.ExecOptions{CWD: args.CWD, TimeoutSeconds: args.Timeout}
+		opts := fileio.ExecOptions{CWD: args.CWD, TimeoutSeconds: args.Timeout}
 		out, err := exec.Execute(args.Command, opts)
 		if err != nil {
 			if out != "" {
@@ -38,18 +40,39 @@ func Execute(tc ToolCall, exec backend.Executor) string {
 
 	case "read_file":
 		var args struct {
-			Path   string `json:"path"`
-			Offset int    `json:"offset"`
-			Limit  int    `json:"limit"`
+			Path    string `json:"path"`
+			Offset  int    `json:"offset"`
+			Limit   int    `json:"limit"`
+			Encoded bool   `json:"encoded"`
 		}
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			return "Error: invalid arguments: " + err.Error()
 		}
-		content, err := exec.ReadFile(args.Path)
+		if ed != nil {
+			if args.Encoded {
+				content, err := ed.Read(args.Path)
+				if err != nil {
+					if _, ok := err.(*fileio.BinaryFileError); ok {
+						return fmt.Sprintf("Error: %v", err)
+					}
+					return "Error: " + err.Error()
+				}
+				return formatReadFile(args.Path, content, args.Offset, args.Limit)
+			}
+			content, err := ed.ReadRaw(args.Path)
+			if err != nil {
+				if _, ok := err.(*fileio.BinaryFileError); ok {
+					return fmt.Sprintf("Error: %v", err)
+				}
+				return "Error: " + err.Error()
+			}
+			return formatReadFile(args.Path, content, args.Offset, args.Limit)
+		}
+		data, err := os.ReadFile(args.Path)
 		if err != nil {
 			return "Error: " + err.Error()
 		}
-		return formatReadFile(args.Path, content, args.Offset, args.Limit)
+		return formatReadFile(args.Path, string(data), args.Offset, args.Limit)
 
 	case "write_file":
 		var args struct {
@@ -59,7 +82,20 @@ func Execute(tc ToolCall, exec backend.Executor) string {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			return "Error: invalid arguments: " + err.Error()
 		}
-		if err := exec.WriteFile(args.Path, args.Content); err != nil {
+		if ed != nil {
+			if err := ed.Write(args.Path, args.Content); err != nil {
+				if _, ok := err.(*fileio.BinaryFileError); ok {
+					return fmt.Sprintf("Error: %v", err)
+				}
+				return "Error: " + err.Error()
+			}
+			lines := strings.Count(args.Content, "\n") + 1
+			return fmt.Sprintf("Written %d lines to %s", lines, args.Path)
+		}
+		if err := os.MkdirAll(filepath.Dir(args.Path), 0755); err != nil {
+			return "Error: " + err.Error()
+		}
+		if err := os.WriteFile(args.Path, []byte(args.Content), 0644); err != nil {
 			return "Error: " + err.Error()
 		}
 		lines := strings.Count(args.Content, "\n") + 1
@@ -74,14 +110,33 @@ func Execute(tc ToolCall, exec backend.Executor) string {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			return "Error: invalid arguments: " + err.Error()
 		}
-		n, err := exec.EditFile(args.Path, args.OldString, args.NewString)
+		if ed != nil {
+			ops := []fileio.SearchReplace{{Search: args.OldString, Replace: args.NewString}}
+			if err := ed.Patch(args.Path, ops); err != nil {
+				if _, ok := err.(*fileio.BinaryFileError); ok {
+					return fmt.Sprintf("Error: %v", err)
+				}
+				return fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)
+			}
+			return fmt.Sprintf("Replaced 1 occurrence in %s", args.Path)
+		}
+		data, err := os.ReadFile(args.Path)
 		if err != nil {
 			return fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)
 		}
-		if n == 1 {
+		orig := string(data)
+		count := strings.Count(orig, args.OldString)
+		if count == 0 {
+			return fmt.Sprintf("Error: old_string not found in %s\nHint: use read_file to verify the exact content before retrying.", args.Path)
+		}
+		replaced := strings.ReplaceAll(orig, args.OldString, args.NewString)
+		if err := os.WriteFile(args.Path, []byte(replaced), 0644); err != nil {
+			return "Error: " + err.Error()
+		}
+		if count == 1 {
 			return fmt.Sprintf("Replaced 1 occurrence in %s", args.Path)
 		}
-		return fmt.Sprintf("Replaced %d occurrences in %s", n, args.Path)
+		return fmt.Sprintf("Replaced %d occurrences in %s", count, args.Path)
 
 	case "delete_file":
 		var args struct {
@@ -90,7 +145,13 @@ func Execute(tc ToolCall, exec backend.Executor) string {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			return "Error: invalid arguments: " + err.Error()
 		}
-		if err := exec.DeleteFile(args.Path); err != nil {
+		if ed != nil {
+			if err := ed.Delete(args.Path); err != nil {
+				return "Error: " + err.Error()
+			}
+			return "Deleted: " + args.Path
+		}
+		if err := os.Remove(args.Path); err != nil {
 			return "Error: " + err.Error()
 		}
 		return "Deleted: " + args.Path
@@ -103,7 +164,16 @@ func Execute(tc ToolCall, exec backend.Executor) string {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			return "Error: invalid arguments: " + err.Error()
 		}
-		if err := exec.MoveFile(args.Source, args.Destination); err != nil {
+		if ed != nil {
+			if err := ed.Move(args.Source, args.Destination); err != nil {
+				return "Error: " + err.Error()
+			}
+			return fmt.Sprintf("Moved %s → %s", args.Source, args.Destination)
+		}
+		if err := os.MkdirAll(filepath.Dir(args.Destination), 0755); err != nil {
+			return "Error: " + err.Error()
+		}
+		if err := os.Rename(args.Source, args.Destination); err != nil {
 			return "Error: " + err.Error()
 		}
 		return fmt.Sprintf("Moved %s → %s", args.Source, args.Destination)
@@ -116,7 +186,26 @@ func Execute(tc ToolCall, exec backend.Executor) string {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			return "Error: invalid arguments: " + err.Error()
 		}
-		if err := exec.CopyFile(args.Source, args.Destination); err != nil {
+		if ed != nil {
+			if err := ed.Copy(args.Source, args.Destination); err != nil {
+				return "Error: " + err.Error()
+			}
+			return fmt.Sprintf("Copied %s → %s", args.Source, args.Destination)
+		}
+		in, err := os.Open(args.Source)
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		defer in.Close()
+		if err := os.MkdirAll(filepath.Dir(args.Destination), 0755); err != nil {
+			return "Error: " + err.Error()
+		}
+		out, err := os.Create(args.Destination)
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		defer out.Close()
+		if _, err := io.Copy(out, in); err != nil {
 			return "Error: " + err.Error()
 		}
 		return fmt.Sprintf("Copied %s → %s", args.Source, args.Destination)

@@ -21,18 +21,6 @@ func (a *Agent) execute(
 		sm.CreateGoal(sessionID, "execute_dag", "DAG execution", statemachine.PriorityNormal, false)
 	}
 
-	// Pre-check: capture rollback data for mutating operations.
-	if a.RollbackHandler != nil {
-		for _, n := range execDAG.Nodes {
-			if n.Operation.IsDestructive() {
-				if err := a.RollbackHandler.CapturePreState(n); err != nil {
-					logAgent("rollback capture failed for %s: %v", n.ID, err)
-				}
-			}
-		}
-	}
-
-	// Pre-check: mark nodes needing confirmation.
 	for _, n := range execDAG.Nodes {
 		if a.Policy.NeedsConfirmation(n.Operation) {
 			n.RequiresConfirmation = true
@@ -111,10 +99,6 @@ func (a *Agent) execute(
 		executor.SetInteractionLogger(a.Logger)
 	}
 
-	// Wire safety components.
-	if a.RollbackHandler != nil {
-		executor.SetRollbackFunc(a.RollbackHandler.Rollback)
-	}
 	executor.SetConfirmFunc(func(node *dag.Node) (bool, bool, error) {
 		target := ""
 		if p, ok := node.Parameters["path"]; ok {

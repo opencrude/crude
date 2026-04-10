@@ -10,18 +10,12 @@ import (
 
 // fields for inline settings
 const (
-	sfProvider    = 0
-	sfBaseURL     = 1
-	sfAPIKey      = 2
-	sfModel       = 3
-	sfEmbedModel  = 4
-	sfBackend     = 5
-	sfSSHHost     = 6
-	sfSSHPort     = 7
-	sfSSHUser     = 8
-	sfSSHPassword = 9
-	sfSSHKeyFile  = 10
-	sfCount       = 11
+	sfProvider   = 0
+	sfBaseURL    = 1
+	sfAPIKey     = 2
+	sfModel      = 3
+	sfEmbedModel = 4
+	sfCount      = 5
 )
 
 type sfEntry struct {
@@ -33,7 +27,6 @@ type sfEntry struct {
 type inlineSettings struct {
 	fields       [sfCount]sfEntry
 	focused      int
-	backend      string
 	providerID   string
 	editingField bool
 	editCursor   int
@@ -76,11 +69,7 @@ type ProviderPreset struct {
 
 func newInlineSettings(s Settings) inlineSettings {
 	p := inlineSettings{
-		backend:    s.Backend,
 		providerID: s.ProviderID,
-	}
-	if p.backend == "" {
-		p.backend = "local"
 	}
 	if p.providerID == "" {
 		p.providerID = "openrouter"
@@ -94,12 +83,6 @@ func newInlineSettings(s Settings) inlineSettings {
 	set(sfAPIKey, "api key", s.APIKey, false)
 	set(sfModel, "model", s.Model, false)
 	set(sfEmbedModel, "embed model", s.EmbedModel, false)
-	set(sfBackend, "backend", s.Backend, false)
-	set(sfSSHHost, "host", s.SSHHost, false)
-	set(sfSSHPort, "port", s.SSHPort, false)
-	set(sfSSHUser, "user", s.SSHUser, false)
-	set(sfSSHPassword, "password", s.SSHPassword, false)
-	set(sfSSHKeyFile, "key file", s.SSHKeyFile, false)
 
 	return p
 }
@@ -113,20 +96,11 @@ func (p *inlineSettings) toSettings() Settings {
 		APIKey:         str(sfAPIKey),
 		Model:          str(sfModel),
 		EmbedModel:     str(sfEmbedModel),
-		Backend:        p.backend,
-		SSHHost:        str(sfSSHHost),
-		SSHPort:        str(sfSSHPort),
-		SSHUser:        str(sfSSHUser),
-		SSHPassword:    str(sfSSHPassword),
-		SSHKeyFile:     str(sfSSHKeyFile),
 	}
 }
 
 func (p *inlineSettings) activeFieldCount() int {
-	if p.backend == "ssh" {
-		return sfCount
-	}
-	return sfBackend + 1
+	return sfCount
 }
 
 func (p *inlineSettings) clampFocus() {
@@ -137,15 +111,6 @@ func (p *inlineSettings) clampFocus() {
 	if p.focused < 0 {
 		p.focused = 0
 	}
-}
-
-func (p *inlineSettings) toggleBackend() {
-	if p.backend == "local" {
-		p.backend = "ssh"
-	} else {
-		p.backend = "local"
-	}
-	p.clampFocus()
 }
 
 func (p *inlineSettings) startEditing(idx int) {
@@ -161,7 +126,6 @@ func (p *inlineSettings) saveSnapshot() {
 func (p *inlineSettings) restoreSnapshot() {
 	if p.snapshot != nil {
 		p.fields = p.snapshot.fields
-		p.backend = p.snapshot.backend
 		p.providerID = p.snapshot.providerID
 		p.focused = p.snapshot.focused
 		p.focusedBtn = p.snapshot.focusedBtn
@@ -323,7 +287,6 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 		switch p.focused {
 		case sfProvider:
 			p.isProviderSelect = true
-			// Initialize cursor to current provider
 			p.providerListIdx = 0
 			for i, preset := range p.providerPresets {
 				if preset.ID == p.providerID {
@@ -331,8 +294,6 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 					break
 				}
 			}
-		case sfBackend:
-			p.toggleBackend()
 		case sfModel:
 			if p.providerID == "ollama" || p.providerID == "custom" {
 				p.startEditing(sfModel)
@@ -399,8 +360,6 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 			} else if p.focusedBtn == 2 && msg.Type == tea.KeyLeft {
 				p.focusedBtn = 1
 			}
-		} else if p.focused == sfBackend {
-			p.toggleBackend()
 		}
 	default:
 		s := msg.String()
@@ -434,10 +393,7 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 				}
 			}
 		case "e":
-			// vim shortcut to edit
 			switch p.focused {
-			case sfBackend:
-				p.toggleBackend()
 			case sfModel:
 				if p.providerID == "ollama" || p.providerID == "custom" {
 					p.startEditing(sfModel)
