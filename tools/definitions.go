@@ -60,13 +60,17 @@ var AgentTools = []ToolDef{
 			Name: "read_file",
 			Description: "Read the contents of a file (Read primitive). " +
 				"Use offset and limit to read a specific range of lines in large files. " +
-				"Output includes line numbers. Always read a file before editing it.",
+				"Output includes line numbers. Always read a file before editing it. " +
+				"Set encoded=true for hashline format with line anchors (e.g. '1:a3b7| code') — " +
+				"useful for anchor-based edits that save tokens on large files. " +
+				"Binary files are detected and rejected with a helpful error message.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"path":{"type":"string","description":"Path to the file"},
 					"offset":{"type":"integer","description":"First line to return (1-based, optional; default: 1)"},
-					"limit":{"type":"integer","description":"Maximum number of lines to return (optional; default: all)"}
+					"limit":{"type":"integer","description":"Maximum number of lines to return (optional; default: all)"},
+					"encoded":{"type":"boolean","description":"Return hashline-encoded format with line:hash anchors (optional; default: false)"}
 				},
 				"required":["path"]
 			}`),
@@ -78,7 +82,9 @@ var AgentTools = []ToolDef{
 			Name: "write_file",
 			Description: "Create or completely overwrite a file (Create/Update primitive). " +
 				"Parent directories are created automatically. " +
-				"Prefer edit_file for targeted changes to existing files — only use write_file for new files or full rewrites.",
+				"Prefer edit_file for targeted changes to existing files — only use write_file for new files or full rewrites. " +
+				"Operations are journalled and revertable with /undo. " +
+				"Binary files and symlinks are rejected for safety.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -96,7 +102,10 @@ var AgentTools = []ToolDef{
 			Description: "Replace an exact string inside a file (Update primitive). " +
 				"old_string must match the file content exactly (including whitespace and indentation). " +
 				"Use read_file first to verify the exact text. " +
-				"All occurrences of old_string are replaced. Returns an error if old_string is not found.",
+				"If old_string is not found exactly, a whitespace-normalised fallback match is attempted automatically. " +
+				"Ambiguous matches (found in multiple locations) are rejected — add more surrounding lines to make the match unique. " +
+				"Operations are journalled and revertable with /undo. " +
+				"Binary files and symlinks are rejected for safety.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -111,8 +120,10 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name:        "delete_file",
-			Description: "Delete a file (Delete primitive). This is irreversible — verify the path with read_file or list_directory before calling.",
+			Name: "delete_file",
+			Description: "Delete a file (Delete primitive). Verify the path with read_file or list_directory before calling. " +
+				"Operations are journalled and revertable with /undo. " +
+				"Symlinks are rejected for safety.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -125,8 +136,10 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name:        "move_file",
-			Description: "Move or rename a file (Update primitive). Parent directories of the destination are created automatically.",
+			Name: "move_file",
+			Description: "Move or rename a file (Update primitive). Parent directories of the destination are created automatically. " +
+				"Operations are journalled and revertable with /undo. " +
+				"Symlinks are rejected for safety.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -140,8 +153,10 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name:        "copy_file",
-			Description: "Copy a file to a new location (Create primitive). Parent directories of the destination are created automatically.",
+			Name: "copy_file",
+			Description: "Copy a file to a new location (Create primitive). Parent directories of the destination are created automatically. " +
+				"Operations are journalled and revertable with /undo. " +
+				"Symlinks are rejected for safety.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{

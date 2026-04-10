@@ -42,12 +42,6 @@ type Settings struct {
 	ProviderID     string
 	ProviderURL    string
 	ProviderAPIKey string
-	Backend        string // "local" or "ssh"
-	SSHHost        string
-	SSHPort        string
-	SSHUser        string
-	SSHPassword    string
-	SSHKeyFile     string
 }
 
 // ModelEntry represents a model available on OpenRouter.
@@ -102,3 +96,9 @@ type clipboardCopiedMsg struct{}
 
 // clipboardErrorMsg reports a clipboard copy failure.
 type clipboardErrorMsg string
+
+// UndoResultMsg carries the result of an undo operation back to the TUI.
+type UndoResultMsg struct {
+	Desc  string
+	Error string
+}

@@ -99,13 +99,12 @@ const (
 
 // Agent calls an LLM provider with a three-phase loop: Ground → Plan → Execute.
 type Agent struct {
-	Provider        *provider.Provider
-	Model           string
-	Policy          safety.Policy
-	AuditLogger     *safety.AuditLogger
-	RollbackHandler *safety.RollbackHandler
-	ToolFn          func(tool string, params map[string]any) (string, error)
-	Logger          *logging.InteractionLogger
+	Provider    *provider.Provider
+	Model       string
+	Policy      safety.Policy
+	AuditLogger *safety.AuditLogger
+	ToolFn      func(tool string, params map[string]any) (string, error)
+	Logger      *logging.InteractionLogger
 }
 
 // NewAgent creates an Agent.

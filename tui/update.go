@@ -93,17 +93,16 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.settingsActive = true
 		m.inlineForm.focused = sfAPIKey
 		m.inlineForm.editingField = true
-	case "/backend":
-		m.inlineForm.saveSnapshot()
-		m.settingsActive = true
-		m.inlineForm.focused = sfBackend
-		m.inlineForm.toggleBackend()
 	case "/help":
 		helpText := "Available commands:\n"
 		for _, c := range availableCmds {
 			helpText += fmt.Sprintf("  %-16s %s\n", c.name, c.desc)
 		}
 		m.messages = append(m.messages, ChatMessage{Role: RoleAssistant, Content: helpText, Time: time.Now()})
+	case "/undo", "/undo-n", "/undo-all", "/changes":
+		if m.OnUndoCmd != nil {
+			go m.OnUndoCmd(text)
+		}
 	default:
 		m.lastError = fmt.Sprintf("Unknown command: %s (try /help)", cmd)
 		m.errorTime = time.Now()
@@ -1055,6 +1054,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clipboardErrorMsg:
 		m.lastError = string(msg)
 		m.errorTime = time.Now()
+
+	case UndoResultMsg:
+		if msg.Error != "" {
+			m.lastError = msg.Error
+			m.errorTime = time.Now()
+		}
+		if msg.Desc != "" {
+			m.messages = append(m.messages, ChatMessage{
+				Role:    RoleAssistant,
+				Content: msg.Desc,
+				Time:    time.Now(),
+			})
+			m.chatOffset = 0
+		}
 	}
 
 	return m, nil

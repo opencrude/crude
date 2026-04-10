@@ -198,14 +198,6 @@ func (p *inlineSettings) View(spinFrame int) string {
 	b.WriteString(lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("settings") + "\n")
 
 	for idx := 0; idx < sfCount; idx++ {
-		isSSH := idx >= sfSSHHost
-		if isSSH && p.backend != "ssh" {
-			continue
-		}
-		if idx == sfSSHHost {
-			b.WriteString("\n" + dim.Render("  ssh") + "\n")
-		}
-
 		f := p.fields[idx]
 		focused := idx == p.focused && p.focusedBtn == 0
 
@@ -218,17 +210,7 @@ func (p *inlineSettings) View(spinFrame int) string {
 		}
 
 		var valueStyled string
-		if idx == sfBackend {
-			var localStr, sshStr string
-			if p.backend == "local" {
-				localStr = lipgloss.NewStyle().Foreground(colorMainText).Render("local")
-				sshStr = dim.Render("ssh")
-			} else {
-				localStr = dim.Render("local")
-				sshStr = lipgloss.NewStyle().Foreground(colorMainText).Render("ssh")
-			}
-			valueStyled = localStr + dim.Render(" / ") + sshStr
-		} else {
+		{
 			var d string
 			if f.masked && len(f.value) > 0 {
 				d = strings.Repeat("*", len(f.value))
