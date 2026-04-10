@@ -173,7 +173,8 @@ var AgentTools = []ToolDef{
 			Name: "list_directory",
 			Description: "List the contents of a directory with metadata (Read primitive). " +
 				"Returns type, size, modification time, and permissions for each entry. " +
-				"Use to explore the filesystem and check file sizes before reading.",
+				"Use to explore the filesystem and check file sizes before reading. " +
+				"An empty directory returns a message confirming it is empty — this is a success, not an error.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{

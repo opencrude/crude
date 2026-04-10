@@ -25,6 +25,14 @@ func Repair(s string) string {
 		}
 	}
 
+	repaired = EscapeRawNewlinesInStrings(s)
+	if repaired != "" {
+		var test any
+		if json.Unmarshal([]byte(repaired), &test) == nil {
+			return repaired
+		}
+	}
+
 	return ""
 }
 
@@ -88,6 +96,55 @@ func fixUnescapedChars(s string) string {
 	s = strings.ReplaceAll(s, "\x00ESC", `\`)
 
 	return s
+}
+
+// escapeRawNewlinesInStrings finds raw newlines and tabs inside JSON string values
+// and escapes them as \n and \t. This handles the common LLM mistake of including
+// multi-line code in a JSON string value without proper escaping.
+func EscapeRawNewlinesInStrings(s string) string {
+	var b strings.Builder
+	inString := false
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if escaped {
+			b.WriteByte(c)
+			escaped = false
+			continue
+		}
+
+		if c == '\\' && inString {
+			b.WriteByte(c)
+			escaped = true
+			continue
+		}
+
+		if c == '"' {
+			inString = !inString
+			b.WriteByte(c)
+			continue
+		}
+
+		if inString {
+			switch c {
+			case '\n':
+				b.WriteString(`\n`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\t':
+				b.WriteString(`\t`)
+			default:
+				b.WriteByte(c)
+			}
+			continue
+		}
+
+		b.WriteByte(c)
+	}
+
+	return b.String()
 }
 
 func StripFences(s string) string {

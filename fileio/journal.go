@@ -269,7 +269,7 @@ func revertEntry(e JournalEntry) error {
 	switch e.Op {
 	case OpCreate:
 		cur, _, err := readFile(e.Path)
-		if err != nil && !os.IsNotExist(err) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("read for checksum: %w", err)
 		}
 		if err == nil {
@@ -309,7 +309,7 @@ func revertEntry(e JournalEntry) error {
 			return fmt.Errorf("copy undo: missing destination path in journal entry %s", e.OpID)
 		}
 		cur, _, err := readFile(e.DestPath)
-		if err != nil && !os.IsNotExist(err) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("read for checksum: %w", err)
 		}
 		if err == nil {

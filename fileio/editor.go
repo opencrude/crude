@@ -3,6 +3,7 @@ package fileio
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,7 +99,7 @@ func (e *Editor) Write(path string, content string) error {
 
 	existing, fi, statErr := readFile(abs)
 	if statErr != nil {
-		if !os.IsNotExist(statErr) {
+		if !errors.Is(statErr, os.ErrNotExist) {
 			return fmt.Errorf("write %s: pre-read: %w", path, statErr)
 		}
 		if err := validateParentDir(abs); err != nil {

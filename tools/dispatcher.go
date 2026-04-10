@@ -226,7 +226,7 @@ func Execute(tc ToolCall, exec fileio.Executer, ed *fileio.Editor) string {
 			return "Error: " + err.Error()
 		}
 		if len(entries) == 0 {
-			return fmt.Sprintf("%s — (empty directory)", args.Path)
+			return fmt.Sprintf("Directory %s is empty (no files or subdirectories). This is a successful result, not an error — the directory exists but contains nothing.", args.Path)
 		}
 		return formatDirEntries(args.Path, entries)
 
