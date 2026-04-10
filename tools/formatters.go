@@ -67,7 +67,7 @@ func listDirectoryRecursive(path string, exec fileio.Executer) string {
 		return "Error: " + err.Error()
 	}
 	if len(matches) == 0 {
-		return fmt.Sprintf("%s — (empty)", path)
+		return fmt.Sprintf("%s — empty directory (no files found recursively)", path)
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s — %d entries (recursive):\n", path, len(matches))

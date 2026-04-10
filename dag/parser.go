@@ -22,15 +22,36 @@ func Parse(jsonStr string) (*DAG, error) {
 	if err := json.Unmarshal([]byte(jsonStr), &wrapper); err == nil && len(wrapper.Nodes) > 0 {
 		nodes = wrapper.Nodes
 	} else if err := json.Unmarshal([]byte(jsonStr), &nodes); err != nil {
+		// First try: strip fences and fix backslash escaping
 		repaired := jsonrepair.Repair(jsonStr)
 		if repaired != "" {
 			if err2 := json.Unmarshal([]byte(repaired), &wrapper); err2 == nil && len(wrapper.Nodes) > 0 {
 				nodes = wrapper.Nodes
 			} else if err2 := json.Unmarshal([]byte(repaired), &nodes); err2 != nil {
-				return nil, fmt.Errorf("dag: parse: %w", err)
+				// Second try: escape raw newlines/tabs inside JSON strings
+				escaped := jsonrepair.EscapeRawNewlinesInStrings(jsonStr)
+				if escaped != "" {
+					if err3 := json.Unmarshal([]byte(escaped), &wrapper); err3 == nil && len(wrapper.Nodes) > 0 {
+						nodes = wrapper.Nodes
+					} else if err3 := json.Unmarshal([]byte(escaped), &nodes); err3 != nil {
+						return nil, fmt.Errorf("dag: parse: %w", err)
+					}
+				} else {
+					return nil, fmt.Errorf("dag: parse: %w", err)
+				}
 			}
 		} else {
-			return nil, fmt.Errorf("dag: parse: %w", err)
+			// Repair returned empty — try newline escaping directly
+			escaped := jsonrepair.EscapeRawNewlinesInStrings(jsonStr)
+			if escaped != "" {
+				if err2 := json.Unmarshal([]byte(escaped), &wrapper); err2 == nil && len(wrapper.Nodes) > 0 {
+					nodes = wrapper.Nodes
+				} else if err2 := json.Unmarshal([]byte(escaped), &nodes); err2 != nil {
+					return nil, fmt.Errorf("dag: parse: %w", err)
+				}
+			} else {
+				return nil, fmt.Errorf("dag: parse: %w", err)
+			}
 		}
 	}
 
