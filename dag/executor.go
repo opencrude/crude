@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"crude/logging"
 )
 
 // ToolFunc is called by the executor to run a tool node.
@@ -30,6 +32,7 @@ type Executor struct {
 	emit       func(Event)
 	blockCh    <-chan string
 	logger     *log.Logger
+	logger2    *logging.InteractionLogger
 }
 
 // New creates an Executor.
@@ -59,6 +62,9 @@ func (e *Executor) SetAuditFunc(fn AuditFunc) { e.auditFn = fn }
 
 // SetLogger sets the logger.
 func (e *Executor) SetLogger(l *log.Logger) { e.logger = l }
+
+// SetInteractionLogger sets the interaction logger for detailed node logging.
+func (e *Executor) SetInteractionLogger(l *logging.InteractionLogger) { e.logger2 = l }
 
 // Run executes the DAG. Independent branches run concurrently.
 // Returns when all nodes are terminal.
@@ -138,6 +144,9 @@ func (e *Executor) runNode(n *Node) {
 	n.Status = Executing
 	n.Started = time.Now().UTC()
 	e.emit(Event{Type: "node_start", Node: n})
+	if e.logger2 != nil {
+		e.logger2.LogDAGNodeStart(n.ID, n.Tool, string(n.Operation), n.Parameters)
+	}
 
 	if n.Tool == "" {
 		e.skipNode(n, "no tool specified")
@@ -163,23 +172,37 @@ func (e *Executor) runNode(n *Node) {
 		n.Finished = time.Now().UTC()
 		e.emit(Event{Type: "node_done", Node: n, Data: content})
 		e.auditNode(n)
+		if e.logger2 != nil {
+			e.logger2.LogDAGNodeComplete(n.ID, n.Tool, "successful", n.Duration().Milliseconds())
+		}
 		return
 	}
 
 	// Handle confirmation gate for destructive operations.
 	if e.confirmFn != nil && n.Operation.IsDestructive() {
+		if e.logger2 != nil {
+			e.logger2.LogSafetyConfirmation(n.ID, n.Tool, true)
+		}
 		proceed, err := e.confirmFn(n)
 		if err != nil {
 			e.failNode(n, fmt.Errorf("confirmation error: %w", err))
 			return
 		}
 		if !proceed {
+			if e.logger2 != nil {
+				e.logger2.LogSafetyConfirmationResult(n.ID, false)
+			}
 			e.skipNode(n, "user rejected confirmation")
 			return
 		}
+		if e.logger2 != nil {
+			e.logger2.LogSafetyConfirmationResult(n.ID, true)
+		}
 	}
 
+	nodeStart := time.Now()
 	result, err := e.toolFn(n.Tool, n.Parameters)
+	nodeDur := time.Since(nodeStart).Milliseconds()
 	if err != nil {
 		e.failNode(n, err)
 		return
@@ -190,6 +213,9 @@ func (e *Executor) runNode(n *Node) {
 	n.Finished = time.Now().UTC()
 	e.emit(Event{Type: "node_done", Node: n, Data: result})
 	e.auditNode(n)
+	if e.logger2 != nil {
+		e.logger2.LogDAGNodeComplete(n.ID, n.Tool, "successful", nodeDur)
+	}
 }
 
 func (e *Executor) runBlockingNode(n *Node) {
@@ -198,17 +224,26 @@ func (e *Executor) runBlockingNode(n *Node) {
 		q = n.Description
 	}
 	e.emit(Event{Type: "blocking", Node: n, Data: q})
+	if e.logger2 != nil {
+		e.logger2.LogDAGBlocking(n.ID, q)
+	}
 
 	resolution, ok := <-e.blockCh
 	if !ok {
 		e.failNode(n, fmt.Errorf("block channel closed"))
 		return
 	}
+	if e.logger2 != nil {
+		e.logger2.LogDAGResume(n.ID)
+	}
 	n.Result = resolution
 	n.Status = Successful
 	n.Finished = time.Now().UTC()
 	e.emit(Event{Type: "node_done", Node: n, Data: resolution})
 	e.auditNode(n)
+	if e.logger2 != nil {
+		e.logger2.LogDAGNodeComplete(n.ID, n.Tool, "successful", n.Duration().Milliseconds())
+	}
 }
 
 func (e *Executor) failNode(n *Node, err error) {
@@ -217,6 +252,9 @@ func (e *Executor) failNode(n *Node, err error) {
 	n.Finished = time.Now().UTC()
 	e.emit(Event{Type: "node_error", Node: n, Data: err.Error()})
 	e.auditNode(n)
+	if e.logger2 != nil {
+		e.logger2.LogDAGNodeError(n.ID, n.Tool, err, n.Duration().Milliseconds())
+	}
 }
 
 func (e *Executor) skipNode(n *Node, reason string) {
@@ -225,6 +263,9 @@ func (e *Executor) skipNode(n *Node, reason string) {
 	n.Finished = time.Now().UTC()
 	e.emit(Event{Type: "node_skipped", Node: n, Data: reason})
 	e.auditNode(n)
+	if e.logger2 != nil {
+		e.logger2.LogDAGNodeComplete(n.ID, n.Tool, "skipped", n.Duration().Milliseconds())
+	}
 }
 
 func (e *Executor) auditNode(n *Node) {

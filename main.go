@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"crude/agent"
 	"crude/backend"
 	"crude/embed"
+	"crude/logging"
 	"crude/provider"
 	"crude/rag"
 	"crude/safety"
@@ -62,14 +64,28 @@ Every action maps to exactly one primitive:
 | Find academic papers            | arxiv_search                 |
 | Calculate or process data       | run_javascript               |
 
-## Calculations — NEVER GUESS
-When you need to compute anything (math, unit conversion, statistics, data transformation),
-use run_javascript instead of estimating. Example:
+## Date and Time — ABSOLUTELY NO ASSUMPTIONS
+You do NOT know the current date, time, day of week, or timezone. You have NO internal clock.
+DO NOT under any circumstances:
+- State or imply what day it is (e.g., "today is Thursday", "it's April 9th")
+- Calculate relative dates from an assumed "now" (e.g., "3 days from now", "next Monday")
+- Reference seasons, holidays, or time-dependent events unless the user explicitly gave you that date
+- Assume how long ago something happened or when it will happen
+If you need the current date/time, you MUST use execute_command({command: "date"}) to get it.
+If you need to calculate dates, times, or durations, you MUST use run_javascript with the actual system time as input.
+The only time you may reference a date or time is when the user has explicitly stated it in their message.
+Violating this rule means you are fabricating information — this is a critical hallucination vector.
+
+## Calculations — NEVER DO MENTAL MATH
+You are TERRIBLE at math. Do NOT calculate anything in your head — no addition, subtraction, multiplication,
+percentages, time differences, unit conversions, or any arithmetic whatsoever. You WILL get it wrong.
+Every mental calculation you attempt is a hallucination risk. Instead, ALWAYS use run_javascript:
   run_javascript({code: "Math.sqrt(144) * 2.54"})
-Available: full ES5+, Math, JSON, Array methods, console.log.
+  run_javascript({code: "new Date('2025-01-15').getTime() - new Date('2025-01-10').getTime()"})
+Available: full ES5+, Math, JSON, Array methods, Date, console.log.
 Helpers: sum(arr), mean(arr), round(value, decimals).
 
-Be concise, exact, and direct. Never guess paths, file contents, or calculation results — always verify first.`
+Be concise, exact, and direct. Never guess paths, file contents, dates, times, or calculation results — always verify first.`
 
 var (
 	sessionMsgs          []agent.APIMessage
@@ -79,6 +95,8 @@ var (
 	lastBlockingResponse string
 	lastBlockingMu       sync.Mutex
 	activeBackend        backend.Executor
+	interactionLog       *logging.InteractionLogger
+	sessionStartTime     time.Time
 )
 
 func main() {
@@ -141,8 +159,18 @@ func main() {
 	}
 	rollbackHandler := safety.NewRollbackHandler(activeBackend)
 
+	// ── Interaction Logger ──────────────────────────────────
+	logDir := filepath.Join(home, ".crude", "logs")
+	interactionLog, err = logging.NewInteractionLogger(logDir)
+	if err != nil {
+		log.Printf("[logging] interaction logger error: %v", err)
+	} else {
+		interactionLog.LogSessionStart("1.0")
+		sessionStartTime = time.Now()
+	}
+
 	// ── Agent ────────────────────────────────────────────────
-	ag := newAgent(activeProvider, cfg.Model, activeBackend, auditLogger, rollbackHandler)
+	ag := newAgent(activeProvider, cfg.Model, activeBackend, auditLogger, rollbackHandler, interactionLog)
 
 	// ── RAG engine ───────────────────────────────────────────
 	ragCacheDir := filepath.Join(home, ".crude", "rag")
@@ -186,7 +214,7 @@ func main() {
 	}
 
 	// Redirect logs to file so they don't bleed into TUI alt screen.
-	logDir := filepath.Join(home, ".crude")
+	logDir = filepath.Join(home, ".crude")
 	os.MkdirAll(logDir, 0o755)
 	if logFile, err := os.OpenFile(filepath.Join(logDir, "crude.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 		log.SetOutput(logFile)
@@ -195,6 +223,12 @@ func main() {
 	tuiInst.OnQuit = func() {
 		if auditLogger != nil {
 			auditLogger.Close()
+		}
+		if interactionLog != nil {
+			durationMs := time.Since(sessionStartTime).Milliseconds()
+			interactionLog.LogSessionEnd(durationMs)
+			interactionLog.Close()
+			fmt.Fprintf(os.Stderr, "\n📋 Interaction log: %s\n", interactionLog.Path())
 		}
 		os.Exit(0)
 	}
@@ -215,7 +249,7 @@ func main() {
 		activeProvider = provider.FromPreset(cfg.ProviderID, cfg.ProviderAPIKey, cfg.ProviderURL)
 		activeBackend = initBackend(cfg)
 
-		ag = newAgent(activeProvider, cfg.Model, activeBackend, auditLogger, safety.NewRollbackHandler(activeBackend))
+		ag = newAgent(activeProvider, cfg.Model, activeBackend, auditLogger, safety.NewRollbackHandler(activeBackend), interactionLog)
 		embedClient = embed.NewClient(cfg.APIKey, cfg.EmbedModel, activeProvider.BaseURL)
 		ragEngine = rag.New(embedClient, ragCacheDir)
 		if err := loadKnowledgeBase(ragEngine, knowledgeDir); err != nil {
@@ -328,10 +362,11 @@ func main() {
 	tuiInst.Wait()
 }
 
-func newAgent(p *provider.Provider, model string, exec backend.Executor, auditLogger *safety.AuditLogger, rollbackHandler *safety.RollbackHandler) *agent.Agent {
+func newAgent(p *provider.Provider, model string, exec backend.Executor, auditLogger *safety.AuditLogger, rollbackHandler *safety.RollbackHandler, interactionLog *logging.InteractionLogger) *agent.Agent {
 	a := agent.NewAgent(p, model)
 	a.AuditLogger = auditLogger
 	a.RollbackHandler = rollbackHandler
+	a.Logger = interactionLog
 	a.ToolFn = func(tool string, params map[string]any) (string, error) {
 		tc := tools.ToolCall{
 			ID:   fmt.Sprintf("dag-%s", tool),

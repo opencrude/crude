@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"crude/dag"
+	"crude/logging"
 	"crude/provider"
 	"crude/rag"
 	"crude/safety"
@@ -104,6 +105,7 @@ type Agent struct {
 	AuditLogger     *safety.AuditLogger
 	RollbackHandler *safety.RollbackHandler
 	ToolFn          func(tool string, params map[string]any) (string, error)
+	Logger          *logging.InteractionLogger
 }
 
 // NewAgent creates an Agent.
@@ -138,29 +140,56 @@ func (a *Agent) Run(
 	}
 
 	if isChitchat(lastUserMsg) {
+		if a.Logger != nil {
+			a.Logger.LogPhaseStart("chitchat", map[string]any{"session_id": sessionID})
+		}
 		emit(AgentEvent{Type: "phase", Data: "replying"})
 		reply := a.directReply(sessionMessages, systemPrompt, emit)
 		if reply != "" {
 			emit(AgentEvent{Type: "done", Data: reply})
+			if a.Logger != nil {
+				a.Logger.LogPhaseEnd("chitchat", 0)
+			}
 			return
 		}
 		// Fallback to full pipeline if direct reply fails.
 	}
 
 	// ── Phase 1: GROUNDING (no function calling) ─────────────────
+	groundingStart := time.Now()
+	if a.Logger != nil {
+		a.Logger.LogPhaseStart("grounding", map[string]any{"session_id": sessionID})
+	}
 	emit(AgentEvent{Type: "phase", Data: "grounding"})
 	observations := a.ground(sessionMessages, systemPrompt, emit, ragEngine)
+	if a.Logger != nil {
+		a.Logger.LogPhaseEnd("grounding", time.Since(groundingStart).Milliseconds())
+	}
 
 	// ── Phase 2: PLANNING ────────────────────────────────────────
+	planningStart := time.Now()
+	if a.Logger != nil {
+		a.Logger.LogPhaseStart("planning", map[string]any{"session_id": sessionID})
+	}
 	emit(AgentEvent{Type: "phase", Data: "planning"})
 	execDAG := a.plan(sessionMessages, systemPrompt, observations, emit, ragEngine)
 	if execDAG == nil {
 		return
 	}
+	if a.Logger != nil {
+		a.Logger.LogPhaseEnd("planning", time.Since(planningStart).Milliseconds())
+	}
 
 	// ── Phase 3: EXECUTION ───────────────────────────────────────
+	execStart := time.Now()
+	if a.Logger != nil {
+		a.Logger.LogPhaseStart("executing", map[string]any{"session_id": sessionID, "dag_nodes": len(execDAG.Nodes)})
+	}
 	emit(AgentEvent{Type: "phase", Data: "executing"})
 	a.execute(execDAG, emit, blockResolveCh, sm, sessionID)
+	if a.Logger != nil {
+		a.Logger.LogPhaseEnd("executing", time.Since(execStart).Milliseconds())
+	}
 
 	// ── Check for blocking node response ─────────────────────────
 	var blockingResponse string
@@ -185,7 +214,14 @@ func (a *Agent) Run(
 	}
 
 	// ── Phase 4: SUMMARY ─────────────────────────────────────────
+	summaryStart := time.Now()
+	if a.Logger != nil {
+		a.Logger.LogPhaseStart("summarizing", map[string]any{"session_id": sessionID})
+	}
 	summary := a.summarize(sessionMessages, execDAG, systemPrompt, emit)
+	if a.Logger != nil {
+		a.Logger.LogPhaseEnd("summarizing", time.Since(summaryStart).Milliseconds())
+	}
 	emit(AgentEvent{Type: "done", Data: summary})
 }
 

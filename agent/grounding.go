@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"crude/rag"
 )
@@ -115,10 +116,20 @@ Output ONLY the JSON, no markdown fences.`
 				"args": mustJSON(op.Parameters),
 			}})
 
+			if a.Logger != nil {
+				a.Logger.LogToolCall(op.Tool, op.Parameters)
+			}
+
 			argsJSON, _ := json.Marshal(op.Parameters)
+			toolStart := time.Now()
 			result, err := a.ToolFn(op.Tool, op.Parameters)
+			toolDur := time.Since(toolStart).Milliseconds()
 			if err != nil {
 				result = fmt.Sprintf("Error: %v", err)
+			}
+
+			if a.Logger != nil {
+				a.Logger.LogToolResult(op.Tool, result, toolDur, err)
 			}
 
 			emit(AgentEvent{Type: "tool_result", Data: map[string]string{
