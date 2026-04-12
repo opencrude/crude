@@ -11,7 +11,11 @@ import (
 	"time"
 )
 
-// apiCallError is returned when the API call fails after all retries.
+type usageInfo struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
 type apiCallError struct {
 	Message          string
 	RetriesExhausted bool
@@ -19,7 +23,6 @@ type apiCallError struct {
 
 func (e *apiCallError) Error() string { return e.Message }
 
-// complete sends one request to OpenRouter and returns the first choice.
 func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 	Message      APIMessage
 	FinishReason string
@@ -37,10 +40,16 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	if a.Logger != nil {
-		a.Logger.LogLLMRequest(a.Provider.Name, a.Model, len(msgs), len(tools))
+	msgLog := make([]map[string]any, len(msgs))
+	for i, m := range msgs {
+		msgLog[i] = map[string]any{"role": m.Role, "content": m.Content}
 	}
-	logAgent("calling %s model=%s msgs=%d tools=%d", a.Provider.Name, a.Model, len(msgs), len(tools))
+	toolDefs := make([]map[string]any, len(tools))
+	for i, t := range tools {
+		toolDefs[i] = map[string]any{"name": t.Function.Name}
+	}
+	a.logger.Info("llm.prompt", "model", a.Provider.Name, "msg_count", len(msgs), "tool_count", len(toolDefs))
+
 	client := &http.Client{Timeout: 120 * time.Second}
 
 	for attempt := 1; attempt <= maxAPIAttempts; attempt++ {
@@ -57,13 +66,11 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		if err != nil {
 			if attempt < maxAPIAttempts {
 				bo := retryBackoff(attempt)
-				logAgent("request failed attempt=%d/%d err=%v retrying in %s", attempt, maxAPIAttempts, err, bo)
+				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
 				time.Sleep(bo)
 				continue
 			}
-			if a.Logger != nil {
-				a.Logger.LogLLMError(a.Provider.Name, a.Model, err, time.Since(apiStart).Milliseconds())
-			}
+			a.logger.Error("llm.error", "model", a.Provider.Name, "error", err.Error(), "latency_ms", time.Since(apiStart).Milliseconds())
 			return nil, &apiCallError{
 				Message:          fmt.Sprintf("API request failed after %d attempts: %v", maxAPIAttempts, err),
 				RetriesExhausted: true,
@@ -77,18 +84,18 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		}
 
 		if resp.StatusCode != 200 {
-			snippet := truncate(string(respBody), 240)
+			snippet := string(respBody)
+			if len(snippet) > 240 {
+				snippet = snippet[:240]
+			}
 			if isRetryable(resp.StatusCode) && attempt < maxAPIAttempts {
 				bo := retryBackoff(attempt)
-				logAgent("retryable status=%d attempt=%d/%d retrying in %s body=%s",
-					resp.StatusCode, attempt, maxAPIAttempts, bo, snippet)
+				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				time.Sleep(bo)
 				continue
 			}
 			if isRetryable(resp.StatusCode) {
-				if a.Logger != nil {
-					a.Logger.LogLLMError(a.Provider.Name, a.Model, fmt.Errorf("status %d: %s", resp.StatusCode, snippet), time.Since(apiStart).Milliseconds())
-				}
+				a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(apiStart).Milliseconds())
 				return nil, &apiCallError{
 					Message:          fmt.Sprintf("OpenRouter %d after %d attempts: %s", resp.StatusCode, maxAPIAttempts, snippet),
 					RetriesExhausted: true,
@@ -102,9 +109,7 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 			return nil, fmt.Errorf("unmarshal response: %w", err)
 		}
 		if chatResp.Error != nil {
-			if a.Logger != nil {
-				a.Logger.LogLLMError(a.Provider.Name, a.Model, fmt.Errorf("API error: %s", chatResp.Error.Message), time.Since(apiStart).Milliseconds())
-			}
+			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("API error: %s", chatResp.Error.Message).Error(), "latency_ms", time.Since(apiStart).Milliseconds())
 			return nil, fmt.Errorf("API error: %s", chatResp.Error.Message)
 		}
 		if len(chatResp.Choices) == 0 {
@@ -113,24 +118,24 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 
 		choice := chatResp.Choices[0]
 		apiDur := time.Since(apiStart).Milliseconds()
-		if a.Logger != nil {
-			var usage *struct{ PromptTokens, CompletionTokens int }
-			if chatResp.Usage != nil {
-				usage = &struct{ PromptTokens, CompletionTokens int }{
-					PromptTokens:     chatResp.Usage.PromptTokens,
-					CompletionTokens: chatResp.Usage.CompletionTokens,
-				}
-			}
-			a.Logger.LogLLMResponse(a.Provider.Name, a.Model, choice.FinishReason, usage, apiDur)
-		}
-		logAgent("response  status=%d took=%s finish=%s tools=%d content=%s",
-			resp.StatusCode, time.Since(apiStart).Round(time.Millisecond),
-			choice.FinishReason, len(choice.Message.ToolCalls),
-			truncate(choice.Message.Content, 80))
-
-		var usage *struct{ PromptTokens, CompletionTokens int }
+		var usage *usageInfo
 		if chatResp.Usage != nil {
-			usage = &struct{ PromptTokens, CompletionTokens int }{
+			usage = &usageInfo{
+				PromptTokens:     chatResp.Usage.PromptTokens,
+				CompletionTokens: chatResp.Usage.CompletionTokens,
+			}
+		}
+		usageAttrs := []any{}
+		if usage != nil {
+			usageAttrs = append(usageAttrs, "prompt_tokens", usage.PromptTokens, "completion_tokens", usage.CompletionTokens)
+		}
+		respArgs := []any{"model", a.Provider.Name, "content", choice.Message.Content, "latency_ms", apiDur}
+		respArgs = append(respArgs, usageAttrs...)
+		a.logger.Info("llm.response", respArgs...)
+
+		var resultUsage *struct{ PromptTokens, CompletionTokens int }
+		if chatResp.Usage != nil {
+			resultUsage = &struct{ PromptTokens, CompletionTokens int }{
 				PromptTokens:     chatResp.Usage.PromptTokens,
 				CompletionTokens: chatResp.Usage.CompletionTokens,
 			}
@@ -143,15 +148,13 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		}{
 			Message:      choice.Message,
 			FinishReason: choice.FinishReason,
-			Usage:        usage,
+			Usage:        resultUsage,
 		}, nil
 	}
 
 	return nil, &apiCallError{Message: "API request retries exhausted", RetriesExhausted: true}
 }
 
-// completeStream sends a streaming request to the API and calls emit for each token chunk.
-// Returns the full accumulated content, finish reason, and any error.
 func (a *Agent) completeStream(
 	msgs []APIMessage,
 	tools []ToolDef,
@@ -170,10 +173,15 @@ func (a *Agent) completeStream(
 	}
 
 	streamStart := time.Now()
-	if a.Logger != nil {
-		a.Logger.LogLLMStreamStart(a.Provider.Name, a.Model, len(msgs), len(tools))
+	msgLog := make([]map[string]any, len(msgs))
+	for i, m := range msgs {
+		msgLog[i] = map[string]any{"role": m.Role, "content": m.Content}
 	}
-	logAgent("calling %s model=%s (streaming) msgs=%d tools=%d", a.Provider.Name, a.Model, len(msgs), len(tools))
+	toolDefs := make([]map[string]any, len(tools))
+	for i, t := range tools {
+		toolDefs[i] = map[string]any{"name": t.Function.Name}
+	}
+	a.logger.Info("llm.prompt", "model", a.Provider.Name, "msg_count", len(msgs), "tool_count", len(toolDefs))
 	client := &http.Client{Timeout: 300 * time.Second}
 
 	for attempt := 1; attempt <= maxAPIAttempts; attempt++ {
@@ -189,13 +197,11 @@ func (a *Agent) completeStream(
 		if err != nil {
 			if attempt < maxAPIAttempts {
 				bo := retryBackoff(attempt)
-				logAgent("stream request failed attempt=%d/%d err=%v retrying in %s", attempt, maxAPIAttempts, err, bo)
+				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
 				time.Sleep(bo)
 				continue
 			}
-			if a.Logger != nil {
-				a.Logger.LogLLMError(a.Provider.Name, a.Model, err, time.Since(streamStart).Milliseconds())
-			}
+			a.logger.Error("llm.error", "model", a.Provider.Name, "error", err.Error(), "latency_ms", time.Since(streamStart).Milliseconds())
 			return "", "", &apiCallError{
 				Message:          fmt.Sprintf("Stream request failed after %d attempts: %v", maxAPIAttempts, err),
 				RetriesExhausted: true,
@@ -205,17 +211,17 @@ func (a *Agent) completeStream(
 		if resp.StatusCode != 200 {
 			respBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			snippet := truncate(string(respBody), 240)
+			snippet := string(respBody)
+			if len(snippet) > 240 {
+				snippet = snippet[:240]
+			}
 			if isRetryable(resp.StatusCode) && attempt < maxAPIAttempts {
 				bo := retryBackoff(attempt)
-				logAgent("retryable status=%d attempt=%d/%d retrying in %s body=%s",
-					resp.StatusCode, attempt, maxAPIAttempts, bo, snippet)
+				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				time.Sleep(bo)
 				continue
 			}
-			if a.Logger != nil {
-				a.Logger.LogLLMError(a.Provider.Name, a.Model, fmt.Errorf("status %d: %s", resp.StatusCode, snippet), time.Since(streamStart).Milliseconds())
-			}
+			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
 			return "", "", fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, snippet)
 		}
 
@@ -264,31 +270,24 @@ func (a *Agent) completeStream(
 		if err := scanner.Err(); err != nil {
 			if attempt < maxAPIAttempts {
 				bo := retryBackoff(attempt)
-				logAgent("stream scan failed attempt=%d/%d err=%v retrying in %s", attempt, maxAPIAttempts, err, bo)
+				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("stream scan error: %w", err).Error())
 				time.Sleep(bo)
 				continue
 			}
-			if a.Logger != nil {
-				a.Logger.LogLLMError(a.Provider.Name, a.Model, fmt.Errorf("stream read error: %w", err), time.Since(streamStart).Milliseconds())
-			}
+			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("stream read error: %w", err).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
 			return "", "", fmt.Errorf("stream read error: %w", err)
 		}
 
 		streamDur := time.Since(streamStart).Milliseconds()
-		if a.Logger != nil {
-			a.Logger.LogLLMStreamEnd(finishReason, content.Len(), streamDur)
-		}
-		logAgent("stream response finish=%s content_len=%d", finishReason, content.Len())
+		a.logger.Info("llm.response", "model", a.Provider.Name, "content", content.String(), "latency_ms", streamDur)
 		return content.String(), finishReason, nil
 	}
 
 	return "", "", &apiCallError{Message: "Stream request retries exhausted", RetriesExhausted: true}
 }
 
-// emitError emits a user-friendly error event.
 func (a *Agent) emitError(emit func(AgentEvent), err error) {
 	errMsg := err.Error()
-	// Clean up API errors — extract short readable message
 	if strings.Contains(errMsg, "429") {
 		errMsg = "Rate limited — please wait a moment and try again"
 	} else if strings.Contains(errMsg, "OpenRouter 5") {

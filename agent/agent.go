@@ -2,13 +2,11 @@ package agent
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"crude/dag"
-	"crude/logging"
+	"crude/logger"
 	"crude/provider"
 	"crude/rag"
 	"crude/safety"
@@ -99,16 +97,15 @@ const (
 
 // Agent calls an LLM provider with a three-phase loop: Ground → Plan → Execute.
 type Agent struct {
-	Provider    *provider.Provider
-	Model       string
-	Policy      safety.Policy
-	AuditLogger *safety.AuditLogger
-	ToolFn      func(tool string, params map[string]any) (string, error)
-	Logger      *logging.InteractionLogger
+	Provider *provider.Provider
+	Model    string
+	Policy   safety.Policy
+	ToolFn   func(tool string, params map[string]any) (string, error)
+	logger   *logger.Logger
 }
 
 // NewAgent creates an Agent.
-func NewAgent(p *provider.Provider, model string) *Agent {
+func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 	if model == "" {
 		model = "google/gemini-2.0-flash-exp:free"
 	}
@@ -116,6 +113,7 @@ func NewAgent(p *provider.Provider, model string) *Agent {
 		Provider: p,
 		Model:    model,
 		Policy:   safety.DefaultPolicy(),
+		logger:   lg,
 	}
 }
 
@@ -129,66 +127,26 @@ func (a *Agent) Run(
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
 ) {
-	// Check for chitchat
-	lastUserMsg := ""
-	for i := len(sessionMessages) - 1; i >= 0; i-- {
-		if sessionMessages[i].Role == "user" {
-			lastUserMsg = sessionMessages[i].Content
-			break
-		}
-	}
-
-	if isChitchat(lastUserMsg) {
-		if a.Logger != nil {
-			a.Logger.LogPhaseStart("chitchat", map[string]any{"session_id": sessionID})
-		}
-		emit(AgentEvent{Type: "phase", Data: "replying"})
-		reply := a.directReply(sessionMessages, systemPrompt, emit)
-		if reply != "" {
-			emit(AgentEvent{Type: "done", Data: reply})
-			if a.Logger != nil {
-				a.Logger.LogPhaseEnd("chitchat", 0)
-			}
-			return
-		}
-		// Fallback to full pipeline if direct reply fails.
-	}
-
-	// Phase 1: GROUNDING
 	groundingStart := time.Now()
-	if a.Logger != nil {
-		a.Logger.LogPhaseStart("grounding", map[string]any{"session_id": sessionID})
-	}
+	a.logger.Info("phase.start", "phase", "grounding", "session_id", sessionID)
 	emit(AgentEvent{Type: "phase", Data: "grounding"})
 	observations := a.ground(sessionMessages, systemPrompt, emit, ragEngine)
-	if a.Logger != nil {
-		a.Logger.LogPhaseEnd("grounding", time.Since(groundingStart).Milliseconds())
-	}
+	a.logger.Info("phase.end", "phase", "grounding", "duration_ms", time.Since(groundingStart).Milliseconds())
 
-	// Phase 2: PLANNING
 	planningStart := time.Now()
-	if a.Logger != nil {
-		a.Logger.LogPhaseStart("planning", map[string]any{"session_id": sessionID})
-	}
+	a.logger.Info("phase.start", "phase", "planning", "session_id", sessionID)
 	emit(AgentEvent{Type: "phase", Data: "planning"})
 	execDAG := a.plan(sessionMessages, systemPrompt, observations, emit, ragEngine)
 	if execDAG == nil {
 		return
 	}
-	if a.Logger != nil {
-		a.Logger.LogPhaseEnd("planning", time.Since(planningStart).Milliseconds())
-	}
+	a.logger.Info("phase.end", "phase", "planning", "duration_ms", time.Since(planningStart).Milliseconds())
 
-	// Phase 3: EXECUTION
 	execStart := time.Now()
-	if a.Logger != nil {
-		a.Logger.LogPhaseStart("executing", map[string]any{"session_id": sessionID, "dag_nodes": len(execDAG.Nodes)})
-	}
+	a.logger.Info("phase.start", "phase", "executing", "session_id", sessionID, "dag_nodes", len(execDAG.Nodes))
 	emit(AgentEvent{Type: "phase", Data: "executing"})
 	a.execute(execDAG, emit, blockResolveCh, sm, sessionID)
-	if a.Logger != nil {
-		a.Logger.LogPhaseEnd("executing", time.Since(execStart).Milliseconds())
-	}
+	a.logger.Info("phase.end", "phase", "executing", "duration_ms", time.Since(execStart).Milliseconds())
 
 	// Check for blocking node response
 	var blockingResponse string
@@ -212,50 +170,14 @@ func (a *Agent) Run(
 		}
 	}
 
-	// Phase 4: SUMMARY
 	summaryStart := time.Now()
-	if a.Logger != nil {
-		a.Logger.LogPhaseStart("summarizing", map[string]any{"session_id": sessionID})
-	}
+	a.logger.Info("phase.start", "phase", "summarizing", "session_id", sessionID)
 	summary := a.summarize(sessionMessages, execDAG, systemPrompt, emit)
-	if a.Logger != nil {
-		a.Logger.LogPhaseEnd("summarizing", time.Since(summaryStart).Milliseconds())
-	}
+	a.logger.Info("phase.end", "phase", "summarizing", "duration_ms", time.Since(summaryStart).Milliseconds())
 	emit(AgentEvent{Type: "done", Data: summary})
 }
 
 // Helpers
-
-// isChitchat returns true if the message is a simple greeting or casual remark
-// that doesn't require system grounding or tool execution.
-func isChitchat(msg string) bool {
-	lower := strings.ToLower(strings.TrimSpace(msg))
-	if len(lower) == 0 {
-		return false
-	}
-	// Exact short matches
-	if len(lower) <= 4 {
-		switch lower {
-		case "hi", "hey", "yo", "sup", "ok", "ty", "yes", "no", "nope", "yep", "bye", "cya":
-			return true
-		}
-	}
-	for _, prefix := range chitchatPrefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// chitchatPrefixes are greeting/casual message prefixes that don't need grounding.
-var chitchatPrefixes = []string{
-	"hello", "hi ", "hey", "greetings", "good morning", "good afternoon",
-	"good evening", "howdy", "sup", "yo ", "what's up", "whats up",
-	"how are you", "how r u", "hru", "thanks", "thank you", "ty ",
-	"ok", "okay", "sure", "yes", "no ", "nope", "yep", "yeah",
-	"bye", "goodbye", "see you", "cya", "later",
-}
 
 func isRetryable(code int) bool {
 	return code == http.StatusTooManyRequests || code >= 500
@@ -266,15 +188,4 @@ func retryBackoff(attempt int) time.Duration {
 		return time.Second
 	}
 	return time.Duration(1<<(attempt-1)) * time.Second
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…[truncated]"
-}
-
-func logAgent(format string, args ...any) {
-	log.Printf("[agent] "+format, args...)
 }

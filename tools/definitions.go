@@ -13,7 +13,8 @@ type ToolCall struct {
 	Function FunctionCall `json:"function"`
 }
 
-// FunctionCall holds the name and JSON-encoded arguments of a tool call.
+// FunctionCall holds the name and XML-encoded arguments of a tool call.
+// Arguments are XML with CDATA support for safe embedding of code and special characters.
 type FunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`

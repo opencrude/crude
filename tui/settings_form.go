@@ -57,6 +57,9 @@ type inlineSettings struct {
 	isProviderSelect bool
 	providerListIdx  int
 	providerPresets  []ProviderPreset
+
+	// Callback to get saved provider config
+	getProviderConfigFn func(providerID string) ProviderConfig
 }
 
 // ProviderPreset is a pre-configured provider for the TUI selector.
@@ -67,9 +70,10 @@ type ProviderPreset struct {
 	BaseURL  string
 }
 
-func newInlineSettings(s Settings) inlineSettings {
+func newInlineSettings(s Settings, getProviderConfigFn func(providerID string) ProviderConfig) inlineSettings {
 	p := inlineSettings{
-		providerID: s.ProviderID,
+		providerID:          s.ProviderID,
+		getProviderConfigFn: getProviderConfigFn,
 	}
 	if p.providerID == "" {
 		p.providerID = "openrouter"

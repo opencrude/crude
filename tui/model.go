@@ -55,10 +55,11 @@ type Model struct {
 	inputCh chan<- string
 
 	// Inline settings
-	settingsActive bool
-	inlineForm     inlineSettings
-	onSaveSettings func(Settings)
-	fetchModelsFn  func(providerID, baseURL, apiKey string) tea.Cmd
+	settingsActive      bool
+	inlineForm          inlineSettings
+	onSaveSettings      func(Settings)
+	fetchModelsFn       func(providerID, baseURL, apiKey string) tea.Cmd
+	getProviderConfigFn func(providerID string) ProviderConfig
 
 	// Confirmation form
 	confirmForm     confirmForm
@@ -110,20 +111,21 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model.
-func NewModel(modelName string, username string, inputCh chan<- string, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string) tea.Cmd) *Model {
+func NewModel(modelName string, username string, inputCh chan<- string, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(providerID string) ProviderConfig) *Model {
 	return &Model{
-		modelName:      modelName,
-		username:       username,
-		inputCh:        inputCh,
-		startTime:      time.Now(),
-		width:          80,
-		height:         24,
-		inlineForm:     newInlineSettings(initial),
-		confirmForm:    newConfirmForm(),
-		onSaveSettings: onSave,
-		fetchModelsFn:  fetchFn,
-		historyIdx:     -1,
-		showHint:       true,
+		modelName:           modelName,
+		username:            username,
+		inputCh:             inputCh,
+		startTime:           time.Now(),
+		width:               80,
+		height:              24,
+		inlineForm:          newInlineSettings(initial, getProviderConfigFn),
+		confirmForm:         newConfirmForm(),
+		onSaveSettings:      onSave,
+		fetchModelsFn:       fetchFn,
+		getProviderConfigFn: getProviderConfigFn,
+		historyIdx:          -1,
+		showHint:            true,
 	}
 }
 

@@ -1,65 +1,48 @@
 package dag
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"crude/jsonrepair"
+	"crude/xmlcodec"
 )
 
-// Parse converts a JSON string (from LLM output) into a validated DAG.
-// Accepts {"nodes": [...]} or [...] top-level format; strips markdown fences.
-func Parse(jsonStr string) (*DAG, error) {
-	jsonStr = jsonrepair.StripFences(jsonStr)
+// Parse converts an XML string (from LLM output) into a validated DAG.
+// Accepts <plan><node .../></plan> format; strips markdown fences.
+func Parse(xmlStr string) (*DAG, error) {
+	xmlStr = xmlcodec.StripXMLFences(xmlStr)
 
-	var nodes []*Node
-
-	type nodesWrapper struct {
-		Nodes []*Node `json:"nodes"`
-	}
-	var wrapper nodesWrapper
-	if err := json.Unmarshal([]byte(jsonStr), &wrapper); err == nil && len(wrapper.Nodes) > 0 {
-		nodes = wrapper.Nodes
-	} else if err := json.Unmarshal([]byte(jsonStr), &nodes); err != nil {
-		// First try: strip fences and fix backslash escaping
-		repaired := jsonrepair.Repair(jsonStr)
-		if repaired != "" {
-			if err2 := json.Unmarshal([]byte(repaired), &wrapper); err2 == nil && len(wrapper.Nodes) > 0 {
-				nodes = wrapper.Nodes
-			} else if err2 := json.Unmarshal([]byte(repaired), &nodes); err2 != nil {
-				// Second try: escape raw newlines/tabs inside JSON strings
-				escaped := jsonrepair.EscapeRawNewlinesInStrings(jsonStr)
-				if escaped != "" {
-					if err3 := json.Unmarshal([]byte(escaped), &wrapper); err3 == nil && len(wrapper.Nodes) > 0 {
-						nodes = wrapper.Nodes
-					} else if err3 := json.Unmarshal([]byte(escaped), &nodes); err3 != nil {
-						return nil, fmt.Errorf("dag: parse: %w", err)
-					}
-				} else {
-					return nil, fmt.Errorf("dag: parse: %w", err)
-				}
-			}
-		} else {
-			// Repair returned empty — try newline escaping directly
-			escaped := jsonrepair.EscapeRawNewlinesInStrings(jsonStr)
-			if escaped != "" {
-				if err2 := json.Unmarshal([]byte(escaped), &wrapper); err2 == nil && len(wrapper.Nodes) > 0 {
-					nodes = wrapper.Nodes
-				} else if err2 := json.Unmarshal([]byte(escaped), &nodes); err2 != nil {
-					return nil, fmt.Errorf("dag: parse: %w", err)
-				}
-			} else {
-				return nil, fmt.Errorf("dag: parse: %w", err)
-			}
-		}
+	plan, parseErr := xmlcodec.ParsePlan(xmlStr)
+	if parseErr != nil {
+		return nil, fmt.Errorf("dag: parse: %w", parseErr)
 	}
 
-	if len(nodes) == 0 {
+	if len(plan.Nodes) == 0 {
 		return &DAG{
 			Nodes:      make(map[string]*Node),
 			Dependents: make(map[string][]string),
 		}, nil
+	}
+
+	nodes := make([]*Node, 0, len(plan.Nodes))
+	for _, xn := range plan.Nodes {
+		n := &Node{
+			ID:          xn.ID,
+			Operation:   CRUDEOp(xn.Operation),
+			Description: xn.Description,
+			Tool:        xn.Tool,
+			DependsOn:   xn.ParseDependsOn(),
+			Parameters:  make(map[string]any),
+		}
+		// Convert XML parameters to map[string]any.
+		for _, p := range xn.Parameters.Params {
+			n.Parameters[p.Name] = string(p.Value)
+		}
+		// Handle block_question attribute.
+		if xn.Question != "" {
+			n.BlockQuestion = xn.Question
+		}
+		nodes = append(nodes, n)
 	}
 
 	d := &DAG{
@@ -182,10 +165,6 @@ func (d *DAG) Summary() string {
 	for _, n := range d.Nodes {
 		switch n.Status {
 		case Successful:
-			// result := n.Result
-			// if len(result) > 200 {
-			// 	result = result[:200] + "…"
-			// }
 			fmt.Fprintf(&sb, "✓ %s (%s): %s\n", n.ID, n.Tool, n.Result)
 		case Err:
 			errMsg := ""

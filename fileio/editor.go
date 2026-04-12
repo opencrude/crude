@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
+
+	"crude/logger"
 )
 
 type Editor struct {
@@ -14,9 +17,10 @@ type Editor struct {
 	msgID     string
 	journal   *Journal
 	policy    *pathPolicy
+	logger    *logger.Logger
 }
 
-func NewEditor(sessionID string) (*Editor, error) {
+func NewEditorWithLogger(sessionID string, lg *logger.Logger) (*Editor, error) {
 	j, err := OpenJournal(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("editor: open journal: %w", err)
@@ -25,6 +29,7 @@ func NewEditor(sessionID string) (*Editor, error) {
 		sessionID: sessionID,
 		journal:   j,
 		policy:    defaultPathPolicy(),
+		logger:    lg,
 	}, nil
 }
 
@@ -48,6 +53,7 @@ func (e *Editor) WithMessage(msgID string) *Editor {
 		msgID:     msgID,
 		journal:   e.journal,
 		policy:    e.policy,
+		logger:    e.logger,
 	}
 }
 
@@ -60,13 +66,18 @@ func (e *Editor) Read(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
+	start := time.Now()
 	data, _, err := readFileSecure(abs, e.policy)
+	dur := time.Since(start).Milliseconds()
 	if err != nil {
+		e.logger.Error("fileio.read", "path", path, "latency_ms", dur, "error", err.Error())
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	if isBinary(data) {
+		e.logger.Info("fileio.read", "path", path, "latency_ms", dur)
 		return "", &BinaryFileError{Path: abs, Size: int64(len(data))}
 	}
+	e.logger.Info("fileio.read", "path", path, "latency_ms", dur)
 	return EncodeHashlines(string(data)), nil
 }
 
@@ -109,7 +120,11 @@ func (e *Editor) Write(path string, content string) error {
 		if err := e.journal.record(entry); err != nil {
 			return fmt.Errorf("write %s: journal: %w", path, err)
 		}
-		return writeAtomic(abs, newBytes, 0644)
+		start := time.Now()
+		writeErr := writeAtomic(abs, newBytes, 0644)
+		dur := time.Since(start).Milliseconds()
+		e.logger.Info("fileio.create", "path", abs, "latency_ms", dur)
+		return writeErr
 	}
 
 	if isBinary(existing) {
@@ -123,7 +138,11 @@ func (e *Editor) Write(path string, content string) error {
 	if err := e.journal.record(entry); err != nil {
 		return fmt.Errorf("write %s: journal: %w", path, err)
 	}
-	return writeAtomic(abs, newBytes, fi.Mode().Perm())
+	start := time.Now()
+	writeErr := writeAtomic(abs, newBytes, fi.Mode().Perm())
+	dur := time.Since(start).Milliseconds()
+	e.logger.Info("fileio.write", "path", abs, "latency_ms", dur)
+	return writeErr
 }
 
 func (e *Editor) Patch(path string, ops []SearchReplace) error {
@@ -212,7 +231,11 @@ func (e *Editor) Delete(path string) error {
 	if err := e.journal.record(entry); err != nil {
 		return fmt.Errorf("delete %s: journal: %w", path, err)
 	}
-	return os.Remove(abs)
+	start := time.Now()
+	removeErr := os.Remove(abs)
+	dur := time.Since(start).Milliseconds()
+	e.logger.Error("fileio.delete", "path", abs, "latency_ms", dur, "error", removeErr.Error())
+	return removeErr
 }
 
 func (e *Editor) Move(src, dst string) error {
@@ -248,7 +271,11 @@ func (e *Editor) Move(src, dst string) error {
 	if err := e.journal.record(entry); err != nil {
 		return fmt.Errorf("move %s → %s: journal: %w", src, dst, err)
 	}
-	return os.Rename(srcAbs, dstAbs)
+	start := time.Now()
+	renameErr := os.Rename(srcAbs, dstAbs)
+	dur := time.Since(start).Milliseconds()
+	e.logger.Error("fileio.rename", "path", srcAbs+" → "+dstAbs, "latency_ms", dur, "error", renameErr.Error())
+	return renameErr
 }
 
 func (e *Editor) Copy(src, dst string) error {

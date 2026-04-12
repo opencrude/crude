@@ -1,14 +1,13 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
+	"strings"
 
 	"crude/dag"
 	"crude/statemachine"
 )
 
-// execute runs the DAG with safety integration.
 func (a *Agent) execute(
 	execDAG *dag.DAG,
 	emit func(AgentEvent),
@@ -16,7 +15,6 @@ func (a *Agent) execute(
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
 ) {
-	// Register goal in state machine.
 	if sm != nil {
 		sm.CreateGoal(sessionID, "execute_dag", "DAG execution", statemachine.PriorityNormal, false)
 	}
@@ -35,11 +33,11 @@ func (a *Agent) execute(
 	eventFn := func(e dag.Event) {
 		switch e.Type {
 		case "node_start":
-			argsJSON, _ := json.Marshal(e.Node.Parameters)
+			argsXML := formatParamsXML(e.Node.Parameters)
 			emit(AgentEvent{Type: "tool_call", Data: map[string]string{
 				"id":   e.Node.ID,
 				"name": e.Node.Tool,
-				"args": string(argsJSON),
+				"args": argsXML,
 			}})
 		case "node_done":
 			result := ""
@@ -92,12 +90,7 @@ func (a *Agent) execute(
 		}
 	}
 
-	executor := dag.New(execDAG, a.ToolFn, eventFn, blockResolveCh)
-
-	// Wire interaction logger for detailed node logging.
-	if a.Logger != nil {
-		executor.SetInteractionLogger(a.Logger)
-	}
+	executor := dag.New(execDAG, a.ToolFn, eventFn, blockResolveCh, a.logger)
 
 	executor.SetConfirmFunc(func(node *dag.Node) (bool, bool, error) {
 		target := ""
@@ -129,12 +122,9 @@ func (a *Agent) execute(
 			return false, false, nil
 		}
 	})
-	if a.AuditLogger != nil {
-		executor.SetAuditFunc(a.AuditLogger.Record)
-	}
 
 	if runErr := executor.Run(); runErr != nil {
-		logAgent("DAG execution error: %v", runErr)
+		a.logger.Error("dag.node_error", "node", "execution", "error", runErr.Error(), "latency_ms", 0)
 	}
 
 	if sm != nil {
@@ -151,4 +141,21 @@ func (a *Agent) execute(
 			sm.CompleteCurrentGoal(sessionID, nil)
 		}
 	}
+}
+
+func formatParamsXML(m map[string]any) string {
+	var sb strings.Builder
+	sb.WriteString("{")
+	first := true
+	for k, v := range m {
+		if !first {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(k)
+		sb.WriteString(": ")
+		sb.WriteString(fmt.Sprintf("%v", v))
+		first = false
+	}
+	sb.WriteString("}")
+	return sb.String()
 }

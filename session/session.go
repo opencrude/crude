@@ -1,9 +1,7 @@
 package session
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -15,7 +13,7 @@ import (
 	"crude/dag"
 	"crude/embed"
 	"crude/fileio"
-	"crude/logging"
+	"crude/logger"
 	"crude/provider"
 	"crude/rag"
 	"crude/safety"
@@ -25,13 +23,8 @@ import (
 )
 
 type Config struct {
-	APIKey          string
-	Model           string
-	EmbedModel      string
-	ProviderID      string
-	ProviderURL     string
-	ProviderAPIKey  string
-	ProviderConfigs map[string]ProviderConfig
+	ActiveProvider string
+	Providers      map[string]ProviderConfig
 }
 
 type ProviderConfig struct {
@@ -45,14 +38,13 @@ type Session struct {
 	cfg *Config
 	mu  sync.Mutex
 
-	provider    *provider.Provider
-	exec        fileio.Executer
-	editor      *fileio.Editor
-	auditLogger *safety.AuditLogger
-	logger      *logging.InteractionLogger
-	permStore   *safety.PermissionStore
-	ragEngine   *rag.Engine
-	sm          *statemachine.ConversationStateMachine
+	provider  *provider.Provider
+	exec      fileio.Executer
+	editor    *fileio.Editor
+	logger    *logger.Logger
+	permStore *safety.PermissionStore
+	ragEngine *rag.Engine
+	sm        *statemachine.ConversationStateMachine
 
 	msgs          []agent.APIMessage
 	msgsMu        sync.Mutex
@@ -70,58 +62,54 @@ type Session struct {
 }
 
 func New(cfg *Config, homeDir string) (*Session, error) {
-	p := provider.FromPreset(cfg.ProviderID, cfg.ProviderAPIKey, cfg.ProviderURL)
+	activeCfg := cfg.GetActiveProviderConfig()
+	p := provider.FromPreset(cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
 	exec := fileio.NewLocalExec()
 
-	var auditLogger *safety.AuditLogger
-	auditDir := filepath.Join(homeDir, ".crude", "audit")
-	if al, err := safety.NewAuditLogger(auditDir); err != nil {
-		log.Printf("[safety] audit logger error: %v", err)
-	} else {
-		auditLogger = al
+	sessionDir := filepath.Join(homeDir, ".crude", "sessions")
+	sessionID := fmt.Sprintf("session-%s", time.Now().Format("20060102-150405"))
+	lg, err := logger.New(logger.Config{
+		SessionDir: sessionDir,
+		SessionID:  sessionID,
+		Console:    false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("logger: %w", err)
+	}
+	lg.Info("session.start", "version", "1.0")
+	lg.Info("session.config", "provider", cfg.ActiveProvider, "model", activeCfg.Model, "embed_model", activeCfg.EmbedModel)
+
+	ragCacheDir := filepath.Join(homeDir, ".crude", "rag")
+	embedClient := embed.NewClient(activeCfg.APIKey, activeCfg.EmbedModel, p.BaseURL)
+	ragEngine := rag.New(embedClient, ragCacheDir)
+
+	knowledgeDir := filepath.Join(homeDir, ".crude", "knowledge")
+	if err := loadKnowledgeBase(ragEngine, knowledgeDir, lg); err != nil {
+		lg.Info("agent.reflection", "content", fmt.Sprintf("knowledge base load error: %v", err))
 	}
 
 	permStore := safety.NewPermissionStore()
 
 	fileioSessionID := fileio.GenerateSessionID()
 	var editor *fileio.Editor
-	if ed, err := fileio.NewEditor(fileioSessionID); err != nil {
-		log.Printf("[fileio] editor init error: %v", err)
+	if ed, edErr := fileio.NewEditorWithLogger(fileioSessionID, lg); edErr != nil {
+		lg.Info("agent.reflection", "content", fmt.Sprintf("editor init error: %v", edErr))
 	} else {
 		editor = ed
 	}
 
-	logDir := filepath.Join(homeDir, ".crude", "logs")
-	var interactionLog *logging.InteractionLogger
-	if il, err := logging.NewInteractionLogger(logDir); err != nil {
-		log.Printf("[logging] interaction logger error: %v", err)
-	} else {
-		il.LogSessionStart("1.0")
-		interactionLog = il
-	}
-
-	ragCacheDir := filepath.Join(homeDir, ".crude", "rag")
-	embedClient := embed.NewClient(cfg.APIKey, cfg.EmbedModel, p.BaseURL)
-	ragEngine := rag.New(embedClient, ragCacheDir)
-
-	knowledgeDir := filepath.Join(homeDir, ".crude", "knowledge")
-	if err := loadKnowledgeBase(ragEngine, knowledgeDir); err != nil {
-		log.Printf("[rag] knowledge base load error: %v", err)
-	}
-
-	sm := statemachine.NewConversationStateMachine(nil)
+	sm := statemachine.NewConversationStateMachine(lg)
 
 	return &Session{
 		cfg:          cfg,
 		provider:     p,
 		exec:         exec,
 		editor:       editor,
-		auditLogger:  auditLogger,
-		logger:       interactionLog,
+		logger:       lg,
 		permStore:    permStore,
 		ragEngine:    ragEngine,
 		sm:           sm,
-		sessionID:    "cli-session",
+		sessionID:    sessionID,
 		sessionStart: time.Now(),
 		ragCacheDir:  ragCacheDir,
 		knowledgeDir: knowledgeDir,
@@ -132,29 +120,52 @@ func (s *Session) Close() {
 	if s.editor != nil {
 		s.editor.Close()
 	}
-	if s.auditLogger != nil {
-		s.auditLogger.Close()
+	s.logger.Info("session.end", "duration_ms", 0)
+	s.logger.Close()
+}
+
+func (c *Config) GetActiveProviderConfig() ProviderConfig {
+	if c.Providers == nil {
+		return ProviderConfig{}
 	}
-	if s.logger != nil {
-		durationMs := time.Since(s.sessionStart).Milliseconds()
-		s.logger.LogSessionEnd(durationMs)
-		s.logger.Close()
+	if cfg, ok := c.Providers[c.ActiveProvider]; ok {
+		return cfg
 	}
+	return ProviderConfig{}
+}
+
+func (c *Config) SetActiveProviderConfig(providerID string, cfg ProviderConfig) {
+	if c.Providers == nil {
+		c.Providers = make(map[string]ProviderConfig)
+	}
+	c.Providers[providerID] = cfg
+}
+
+func (c *Config) EffectiveProviderID() string {
+	if c.ActiveProvider != "" {
+		return c.ActiveProvider
+	}
+	return "openrouter"
+}
+
+func (s *Session) LogPath() string {
+	return s.logger.Path()
 }
 
 func (s *Session) Editor() *fileio.Editor { return s.editor }
 
+func (s *Session) Config() *Config { return s.cfg }
+
 func (s *Session) newAgent() *agent.Agent {
-	a := agent.NewAgent(s.provider, s.cfg.Model)
-	a.AuditLogger = s.auditLogger
-	a.Logger = s.logger
+	activeCfg := s.cfg.GetActiveProviderConfig()
+	a := agent.NewAgent(s.provider, activeCfg.Model, s.logger)
 	a.ToolFn = func(tool string, params map[string]any) (string, error) {
 		tc := tools.ToolCall{
 			ID:   fmt.Sprintf("dag-%s", tool),
 			Type: "function",
 			Function: tools.FunctionCall{
 				Name:      tool,
-				Arguments: mustJSON(params),
+				Arguments: mustXMLArgs(params),
 			},
 		}
 		result := tools.Execute(tc, s.exec, s.editor)
@@ -224,16 +235,17 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 	defer s.mu.Unlock()
 
 	newCfg := settingsToConfig(tuiSettings, s.cfg)
-	if newCfg.APIKey == "" {
+	activeCfg := newCfg.GetActiveProviderConfig()
+	if activeCfg.APIKey == "" {
 		return fmt.Errorf("API key cannot be empty — settings not saved")
 	}
 
 	s.cfg = newCfg
-	s.provider = provider.FromPreset(s.cfg.ProviderID, s.cfg.ProviderAPIKey, s.cfg.ProviderURL)
-	embedClient := embed.NewClient(s.cfg.APIKey, s.cfg.EmbedModel, s.provider.BaseURL)
+	s.provider = provider.FromPreset(s.cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
+	embedClient := embed.NewClient(activeCfg.APIKey, activeCfg.EmbedModel, s.provider.BaseURL)
 	s.ragEngine = rag.New(embedClient, s.ragCacheDir)
-	if err := loadKnowledgeBase(s.ragEngine, s.knowledgeDir); err != nil {
-		log.Printf("[rag] knowledge base reload error: %v", err)
+	if err := loadKnowledgeBase(s.ragEngine, s.knowledgeDir, s.logger); err != nil {
+		s.logger.Info("agent.reflection", "content", fmt.Sprintf("knowledge base reload error: %v", err))
 	}
 	return nil
 }
@@ -254,13 +266,15 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.M
 func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[agent] panic recovered: %v", r)
+			s.logger.Error("agent.panic", "recovered", fmt.Sprintf("%v", r))
+			s.logger.Error("session.error", "error", fmt.Sprintf("panic: %v", r))
 			tuiInst.SendAgentEvent("error", fmt.Sprintf("Internal error: %v", r))
 		}
 	}()
 
 	for userText := range tuiInst.InputCh {
-		if s.cfg.APIKey == "" {
+		activeCfg := s.cfg.GetActiveProviderConfig()
+		if activeCfg.APIKey == "" {
 			tuiInst.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
 			continue
 		}
@@ -277,20 +291,22 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			continue
 		}
 
+		s.msgCounterMu.Lock()
+		s.msgCounter++
+		currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
+		s.msgCounterMu.Unlock()
+
 		s.msgsMu.Lock()
 		s.msgs = append(s.msgs, agent.APIMessage{Role: "user", Content: userText})
 		msgsCopy := make([]agent.APIMessage, len(s.msgs))
 		copy(msgsCopy, s.msgs)
 		s.msgsMu.Unlock()
+		s.logger.Info("conv.user_msg", "content", userText, "msg_id", currentMsgID)
 
-		log.Printf("[agent] starting agent loop for user input: %q", userText)
+		s.logger.Info("agent.loop_start", "content", userText, "iteration", 0)
 		s.sm.CreateGoal(s.sessionID, "respond", userText, statemachine.PriorityNormal, false)
 		s.ragEngine.ResetObservations()
 
-		s.msgCounterMu.Lock()
-		s.msgCounter++
-		currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
-		s.msgCounterMu.Unlock()
 		if s.editor != nil {
 			s.editor = s.editor.WithMessage(currentMsgID)
 		}
@@ -334,7 +350,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 		}, s.ragEngine, blockResolveCh, s.sm, s.sessionID)
 
-		log.Printf("[agent] agent.Run completed, finalContent: %q", finalContent)
+		s.logger.Info("agent.loop_end", "content", finalContent, "iteration", 1)
 		s.blockMu.Lock()
 		s.pendingBlock = false
 		s.blockMu.Unlock()
@@ -350,15 +366,16 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			s.msgsMu.Lock()
 			s.msgs = append(s.msgs, agent.APIMessage{Role: "assistant", Content: finalContent})
 			s.msgsMu.Unlock()
+			s.logger.Info("conv.assistant_msg", "content", finalContent, "msg_id", currentMsgID)
 		}
 	}
 }
 
 func (s *Session) ModelName() string {
-	return s.cfg.Model
+	return s.cfg.GetActiveProviderConfig().Model
 }
 
-func loadKnowledgeBase(ragEngine *rag.Engine, dir string) error {
+func loadKnowledgeBase(ragEngine *rag.Engine, dir string, lg *logger.Logger) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -379,7 +396,7 @@ func loadKnowledgeBase(ragEngine *rag.Engine, dir string) error {
 		}
 		content, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			log.Printf("[rag] skip %s: %v", name, err)
+			lg.Error("fileio.read", "path", name, "latency_ms", 0, "error", err.Error())
 			continue
 		}
 		docs[name] = string(content)
@@ -388,34 +405,23 @@ func loadKnowledgeBase(ragEngine *rag.Engine, dir string) error {
 	if len(docs) == 0 {
 		return nil
 	}
-	log.Printf("[rag] loading %d knowledge base document(s)", len(docs))
+	lg.Info("agent.reflection", "content", fmt.Sprintf("loading %d knowledge base document(s)", len(docs)))
 	return ragEngine.AddDocuments(docs)
 }
 
 func ConfigToSettings(cfg *Config) tui.Settings {
-	providerID := cfg.ProviderID
-	if providerID == "" {
-		providerID = "openrouter"
-	}
+	providerID := cfg.EffectiveProviderID()
 
-	providerURL := cfg.ProviderURL
-	apiKey := cfg.ProviderAPIKey
-	model := cfg.Model
-	embedModel := cfg.EmbedModel
+	providerURL := ""
+	apiKey := ""
+	model := ""
+	embedModel := ""
 
-	if pc, ok := cfg.ProviderConfigs[providerID]; ok {
-		if pc.ProviderURL != "" {
-			providerURL = pc.ProviderURL
-		}
-		if pc.APIKey != "" {
-			apiKey = pc.APIKey
-		}
-		if pc.Model != "" {
-			model = pc.Model
-		}
-		if pc.EmbedModel != "" {
-			embedModel = pc.EmbedModel
-		}
+	if pc, ok := cfg.Providers[providerID]; ok {
+		providerURL = pc.ProviderURL
+		apiKey = pc.APIKey
+		model = pc.Model
+		embedModel = pc.EmbedModel
 	}
 
 	if providerURL == "" {
@@ -439,10 +445,7 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 func settingsToConfig(s tui.Settings, base *Config) *Config {
 	providerID := s.ProviderID
 	if providerID == "" {
-		providerID = base.ProviderID
-	}
-	if providerID == "" {
-		providerID = "openrouter"
+		providerID = base.EffectiveProviderID()
 	}
 
 	apiKey := s.APIKey
@@ -450,11 +453,11 @@ func settingsToConfig(s tui.Settings, base *Config) *Config {
 		apiKey = s.ProviderAPIKey
 	}
 
-	providerConfigs := base.ProviderConfigs
-	if providerConfigs == nil {
-		providerConfigs = make(map[string]ProviderConfig)
+	providers := base.Providers
+	if providers == nil {
+		providers = make(map[string]ProviderConfig)
 	}
-	providerConfigs[providerID] = ProviderConfig{
+	providers[providerID] = ProviderConfig{
 		APIKey:      apiKey,
 		Model:       s.Model,
 		EmbedModel:  s.EmbedModel,
@@ -462,13 +465,8 @@ func settingsToConfig(s tui.Settings, base *Config) *Config {
 	}
 
 	return &Config{
-		APIKey:          apiKey,
-		Model:           s.Model,
-		EmbedModel:      s.EmbedModel,
-		ProviderID:      providerID,
-		ProviderURL:     s.ProviderURL,
-		ProviderAPIKey:  apiKey,
-		ProviderConfigs: providerConfigs,
+		ActiveProvider: providerID,
+		Providers:      providers,
 	}
 }
 
@@ -485,10 +483,18 @@ func ResolveUsername() string {
 	return "user"
 }
 
-func mustJSON(v any) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return "{}"
+func mustXMLArgs(m map[string]any) string {
+	var sb strings.Builder
+	sb.WriteString("<args>")
+	for k, v := range m {
+		sb.WriteString(`<param name="`)
+		sb.WriteString(k)
+		sb.WriteString(`">`)
+		sb.WriteString("<![CDATA[")
+		sb.WriteString(fmt.Sprintf("%v", v))
+		sb.WriteString("]]>")
+		sb.WriteString("</param>")
 	}
-	return string(data)
+	sb.WriteString("</args>")
+	return sb.String()
 }
