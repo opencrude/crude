@@ -38,25 +38,3 @@ CRITICAL — format your response in proper Markdown:
 	}
 	return summaryText
 }
-
-// directReply handles chitchat/greetings without grounding or planning.
-// It asks the LLM for a brief conversational response.
-func (a *Agent) directReply(sessionMessages []APIMessage, systemPrompt string, emit func(AgentEvent)) string {
-	replyMsgs := make([]APIMessage, 0, len(sessionMessages)+2)
-	replyMsgs = append(replyMsgs, APIMessage{
-		Role:    "system",
-		Content: systemPrompt + "\n\nRespond to the user's message conversationally. Be brief and friendly. Do NOT use tools or perform system operations.\n\nFormat your response in Markdown: use code blocks with language tags for any code, inline code for paths/commands, and proper formatting.",
-	})
-	replyMsgs = append(replyMsgs, sessionMessages...)
-
-	content, _, err := a.completeStream(replyMsgs, nil, func(token string) {
-		emit(AgentEvent{Type: "stream_token", Data: token})
-	}, func(text string) {
-		emit(AgentEvent{Type: "thinking", Data: text})
-	})
-	if err != nil {
-		logAgent("direct reply failed: %v", err)
-		return ""
-	}
-	return content
-}

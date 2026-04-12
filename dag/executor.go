@@ -2,28 +2,20 @@ package dag
 
 import (
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
-	"crude/logging"
+	"crude/logger"
 )
 
-// ToolFunc is called by the executor to run a tool node.
 type ToolFunc func(tool string, params map[string]any) (string, error)
 
-// RollbackFunc is called to undo a completed operation.
 type RollbackFunc func(node *Node) error
 
-// ConfirmFunc is called when a destructive operation needs user confirmation.
-// Returns true to proceed, false to skip, and "always" if the user wants to
-// remember the decision for the session.
 type ConfirmFunc func(node *Node) (proceed bool, always bool, err error)
 
-// AuditFunc is called after each node execution to record the audit trail.
 type AuditFunc func(entry AuditEntry)
 
-// Executor runs a DAG, dispatching nodes concurrently where independent.
 type Executor struct {
 	dag        *DAG
 	toolFn     ToolFunc
@@ -32,49 +24,36 @@ type Executor struct {
 	auditFn    AuditFunc
 	emit       func(Event)
 	blockCh    <-chan string
-	logger     *log.Logger
-	logger2    *logging.InteractionLogger
+	logger     *logger.Logger
 }
 
-// New creates an Executor.
 func New(
 	dag *DAG,
 	toolFn ToolFunc,
 	emit func(Event),
 	blockCh <-chan string,
+	lg *logger.Logger,
 ) *Executor {
 	return &Executor{
 		dag:     dag,
 		toolFn:  toolFn,
 		emit:    emit,
 		blockCh: blockCh,
-		logger:  log.Default(),
+		logger:  lg,
 	}
 }
 
-// SetRollbackFunc sets the rollback function for undo support.
 func (e *Executor) SetRollbackFunc(fn RollbackFunc) { e.rollbackFn = fn }
 
-// SetConfirmFunc sets the confirmation gate function.
 func (e *Executor) SetConfirmFunc(fn ConfirmFunc) { e.confirmFn = fn }
 
-// SetAuditFunc sets the audit trail function.
 func (e *Executor) SetAuditFunc(fn AuditFunc) { e.auditFn = fn }
 
-// SetLogger sets the logger.
-func (e *Executor) SetLogger(l *log.Logger) { e.logger = l }
-
-// SetInteractionLogger sets the interaction logger for detailed node logging.
-func (e *Executor) SetInteractionLogger(l *logging.InteractionLogger) { e.logger2 = l }
-
-// Run executes the DAG. Independent branches run concurrently.
-// Returns when all nodes are terminal.
 func (e *Executor) Run() error {
 	mu := &sync.Mutex{}
 	ready := make(chan *Node, len(e.dag.Nodes))
 	var wg sync.WaitGroup
 
-	// inDeg tracks how many unfinished dependencies each node has.
 	inDeg := make(map[string]int, len(e.dag.Nodes))
 	for _, n := range e.dag.Nodes {
 		inDeg[n.ID] = len(n.DependsOn)
@@ -95,7 +74,6 @@ func (e *Executor) Run() error {
 		}
 	}
 
-	// Seed initial ready nodes (no dependencies).
 	for _, n := range e.dag.Nodes {
 		if inDeg[n.ID] == 0 {
 			wg.Add(1)
@@ -103,7 +81,6 @@ func (e *Executor) Run() error {
 		}
 	}
 
-	// Drain ready channel with goroutines.
 	done := make(chan struct{})
 	go func() {
 		for n := range ready {
@@ -125,14 +102,12 @@ func (e *Executor) Run() error {
 	close(ready)
 	<-done
 
-	// Rollback on failure if rollback function is set.
 	if e.rollbackFn != nil {
 		e.rollbackFailed()
 	}
 
 	e.emit(Event{Type: "complete"})
 
-	// Return first error if any.
 	for _, n := range e.dag.Nodes {
 		if n.Status == Err && n.RunErr != nil {
 			return n.RunErr
@@ -145,27 +120,18 @@ func (e *Executor) runNode(n *Node) {
 	n.Status = Executing
 	n.Started = time.Now().UTC()
 	e.emit(Event{Type: "node_start", Node: n})
-	if e.logger2 != nil {
-		e.logger2.LogDAGNodeStart(n.ID, n.Tool, string(n.Operation), n.Parameters)
-	}
+	e.logger.Info("dag.node_start", "node", n.ID, "tool", n.Tool, "op", string(n.Operation))
 
 	if n.Tool == "" {
 		e.skipNode(n, "no tool specified")
 		return
 	}
 
-	if n.Tool == "" {
-		e.skipNode(n, "no tool specified")
-		return
-	}
-
-	// Handle blocking nodes (require user input).
 	if n.Tool == "blocking" {
 		e.runBlockingNode(n)
 		return
 	}
 
-	// Handle reply nodes (no tool execution needed).
 	if n.Tool == "reply" {
 		content, _ := n.Parameters["content"].(string)
 		n.Result = content
@@ -173,33 +139,24 @@ func (e *Executor) runNode(n *Node) {
 		n.Finished = time.Now().UTC()
 		e.emit(Event{Type: "node_done", Node: n, Data: content})
 		e.auditNode(n)
-		if e.logger2 != nil {
-			e.logger2.LogDAGNodeComplete(n.ID, n.Tool, "successful", n.Duration().Milliseconds())
-		}
+		e.logger.Info("dag.node_complete", "node", n.ID, "tool", n.Tool, "content", content, "latency_ms", n.Duration().Milliseconds())
 		return
 	}
 
-	// Handle confirmation gate for destructive operations.
 	if e.confirmFn != nil && n.Operation.IsDestructive() {
-		if e.logger2 != nil {
-			e.logger2.LogSafetyConfirmation(n.ID, n.Tool, true)
-		}
+		e.logger.Info("safety.confirm_req", "node", n.ID, "tool", n.Tool, "destructive", true)
 		proceed, always, err := e.confirmFn(n)
 		if err != nil {
 			e.failNode(n, fmt.Errorf("confirmation error: %w", err))
 			return
 		}
 		if !proceed {
-			if e.logger2 != nil {
-				e.logger2.LogSafetyConfirmationResult(n.ID, false)
-			}
+			e.logger.Info("safety.confirm_result", "node", n.ID, "tool", n.Tool, "granted", false)
 			e.skipNode(n, "user rejected confirmation")
 			e.emit(Event{Type: "blocking_complete", Node: n, Data: "denied"})
 			return
 		}
-		if e.logger2 != nil {
-			e.logger2.LogSafetyConfirmationResult(n.ID, true)
-		}
+		e.logger.Info("safety.confirm_result", "node", n.ID, "tool", n.Tool, "granted", true)
 		if always {
 			e.emit(Event{Type: "confirmation_always", Node: n, Data: nil})
 		}
@@ -218,9 +175,7 @@ func (e *Executor) runNode(n *Node) {
 	n.Finished = time.Now().UTC()
 	e.emit(Event{Type: "node_done", Node: n, Data: result})
 	e.auditNode(n)
-	if e.logger2 != nil {
-		e.logger2.LogDAGNodeComplete(n.ID, n.Tool, "successful", nodeDur)
-	}
+	e.logger.Info("dag.node_complete", "node", n.ID, "tool", n.Tool, "content", result, "latency_ms", nodeDur)
 }
 
 func (e *Executor) runBlockingNode(n *Node) {
@@ -229,26 +184,20 @@ func (e *Executor) runBlockingNode(n *Node) {
 		q = n.Description
 	}
 	e.emit(Event{Type: "blocking", Node: n, Data: q})
-	if e.logger2 != nil {
-		e.logger2.LogDAGBlocking(n.ID, q)
-	}
+	e.logger.Info("dag.blocking", "node", n.ID, "question", q)
 
 	resolution, ok := <-e.blockCh
 	if !ok {
 		e.failNode(n, fmt.Errorf("block channel closed"))
 		return
 	}
-	if e.logger2 != nil {
-		e.logger2.LogDAGResume(n.ID)
-	}
+	e.logger.Info("dag.resume", "node", n.ID, "response", resolution)
 	n.Result = resolution
 	n.Status = Successful
 	n.Finished = time.Now().UTC()
 	e.emit(Event{Type: "node_done", Node: n, Data: resolution})
 	e.auditNode(n)
-	if e.logger2 != nil {
-		e.logger2.LogDAGNodeComplete(n.ID, n.Tool, "successful", n.Duration().Milliseconds())
-	}
+	e.logger.Info("dag.node_complete", "node", n.ID, "tool", n.Tool, "content", "", "latency_ms", n.Duration().Milliseconds())
 }
 
 func (e *Executor) failNode(n *Node, err error) {
@@ -257,9 +206,7 @@ func (e *Executor) failNode(n *Node, err error) {
 	n.Finished = time.Now().UTC()
 	e.emit(Event{Type: "node_error", Node: n, Data: err.Error()})
 	e.auditNode(n)
-	if e.logger2 != nil {
-		e.logger2.LogDAGNodeError(n.ID, n.Tool, err, n.Duration().Milliseconds())
-	}
+	e.logger.Error("dag.node_error", "node", n.ID, "error", err.Error(), "latency_ms", n.Duration().Milliseconds())
 }
 
 func (e *Executor) skipNode(n *Node, reason string) {
@@ -268,9 +215,7 @@ func (e *Executor) skipNode(n *Node, reason string) {
 	n.Finished = time.Now().UTC()
 	e.emit(Event{Type: "node_skipped", Node: n, Data: reason})
 	e.auditNode(n)
-	if e.logger2 != nil {
-		e.logger2.LogDAGNodeComplete(n.ID, n.Tool, "skipped", n.Duration().Milliseconds())
-	}
+	e.logger.Info("dag.node_skipped", "node", n.ID, "tool", n.Tool, "reason", reason)
 }
 
 func (e *Executor) auditNode(n *Node) {
@@ -295,8 +240,6 @@ func (e *Executor) auditNode(n *Node) {
 	e.auditFn(entry)
 }
 
-// rollbackFailed rolls back successful nodes in reverse topological order
-// when any node in the DAG has failed.
 func (e *Executor) rollbackFailed() {
 	hasFailure := false
 	for _, n := range e.dag.Nodes {
@@ -311,20 +254,21 @@ func (e *Executor) rollbackFailed() {
 
 	order, err := e.dag.TopologicalOrder()
 	if err != nil {
-		e.logger.Printf("[dag] rollback: cannot determine order: %v", err)
+		e.logger.Warn("dag.rollback_error", "reason", "cannot determine order", "error", err.Error())
 		return
 	}
 
-	// Rollback in reverse order (leaves first).
 	for i := len(order) - 1; i >= 0; i-- {
 		n := order[i]
 		if n.Status != Successful || n.RollbackData == nil {
 			continue
 		}
+		e.logger.Warn("safety.rollback", "node", n.ID, "tool", n.Tool, "reason", "executing rollback")
 		if err := e.rollbackFn(n); err != nil {
-			e.logger.Printf("[dag] rollback %s failed: %v", n.ID, err)
+			e.logger.Warn("dag.rollback_error", "reason", fmt.Sprintf("rollback %s failed", n.ID), "error", err.Error())
 		} else {
-			e.logger.Printf("[dag] rolled back %s", n.ID)
+			e.logger.Info("dag.rollback_complete", "node", n.ID)
+			e.logger.Info("safety.rollback_node", "node", n.ID, "status", "rollback_complete")
 		}
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -13,23 +13,23 @@ import (
 	"crude/tui"
 )
 
-const defaultModel = "google/gemini-2.0-flash-exp:free"
-const defaultEmbedModel = "openai/text-embedding-3-small"
+const defaultModel = ""
+const defaultEmbedModel = ""
 
 type fileConfig struct {
-	APIKey          string                            `json:"api_key"`
-	Model           string                            `json:"model"`
-	EmbedModel      string                            `json:"embed_model"`
-	ProviderID      string                            `json:"provider_id,omitempty"`
-	ProviderURL     string                            `json:"provider_url,omitempty"`
-	ProviderAPIKey  string                            `json:"provider_api_key,omitempty"`
-	ProviderConfigs map[string]session.ProviderConfig `json:"provider_configs,omitempty"`
+	ActiveProvider string                            `json:"active_provider"`
+	Providers      map[string]session.ProviderConfig `json:"providers"`
 }
 
 func defaultFileConfig() fileConfig {
 	return fileConfig{
-		Model:      defaultModel,
-		EmbedModel: defaultEmbedModel,
+		ActiveProvider: "openrouter",
+		Providers: map[string]session.ProviderConfig{
+			"openrouter": {
+				Model:      defaultModel,
+				EmbedModel: defaultEmbedModel,
+			},
+		},
 	}
 }
 
@@ -57,12 +57,6 @@ func loadFileConfig() fileConfig {
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg
-	}
-	if cfg.Model == "" {
-		cfg.Model = defaultModel
-	}
-	if cfg.EmbedModel == "" {
-		cfg.EmbedModel = defaultEmbedModel
 	}
 	return cfg
 }
@@ -103,33 +97,15 @@ func saveHistory(history []string) error {
 
 func fileConfigToSession(fc fileConfig) *session.Config {
 	return &session.Config{
-		APIKey:          fc.APIKey,
-		Model:           fc.Model,
-		EmbedModel:      fc.EmbedModel,
-		ProviderID:      fc.ProviderID,
-		ProviderURL:     fc.ProviderURL,
-		ProviderAPIKey:  fc.ProviderAPIKey,
-		ProviderConfigs: fc.ProviderConfigs,
+		ActiveProvider: fc.ActiveProvider,
+		Providers:      fc.Providers,
 	}
 }
 
 func sessionToFileConfig(sc *session.Config) fileConfig {
-	var pc map[string]session.ProviderConfig
-	if sc.ProviderConfigs != nil {
-		pcfgs := make(map[string]session.ProviderConfig, len(sc.ProviderConfigs))
-		for k, v := range sc.ProviderConfigs {
-			pcfgs[k] = v
-		}
-		pc = pcfgs
-	}
 	return fileConfig{
-		APIKey:          sc.APIKey,
-		Model:           sc.Model,
-		EmbedModel:      sc.EmbedModel,
-		ProviderID:      sc.ProviderID,
-		ProviderURL:     sc.ProviderURL,
-		ProviderAPIKey:  sc.ProviderAPIKey,
-		ProviderConfigs: pc,
+		ActiveProvider: sc.ActiveProvider,
+		Providers:      sc.Providers,
 	}
 }
 
@@ -141,31 +117,38 @@ func main() {
 	settingsFlag := flag.Bool("settings", false, "Open settings on startup")
 	flag.Parse()
 
-	log.SetOutput(os.Stderr)
-	log.SetFlags(0)
-
 	fc := loadFileConfig()
 
-	if *apiKeyFlag != "" {
-		fc.APIKey = *apiKeyFlag
-		fc.ProviderAPIKey = *apiKeyFlag
+	if fc.Providers == nil {
+		fc.Providers = make(map[string]session.ProviderConfig)
 	}
-	if fc.APIKey == "" {
-		fc.APIKey = os.Getenv("CRUDE_API_KEY")
-		if fc.APIKey == "" {
-			fc.APIKey = os.Getenv("OPENROUTER_API_KEY")
-		}
-		fc.ProviderAPIKey = fc.APIKey
+
+	providerID := fc.ActiveProvider
+	if providerID == "" {
+		providerID = "openrouter"
+		fc.ActiveProvider = providerID
 	}
+
 	if *providerFlag != "" {
-		fc.ProviderID = *providerFlag
+		providerID = *providerFlag
+		fc.ActiveProvider = providerID
 	}
-	if fc.ProviderID == "" {
-		fc.ProviderID = "openrouter"
+
+	pc := fc.Providers[providerID]
+	if pc.APIKey == "" {
+		if *apiKeyFlag != "" {
+			pc.APIKey = *apiKeyFlag
+		} else {
+			pc.APIKey = os.Getenv("CRUDE_API_KEY")
+			if pc.APIKey == "" {
+				pc.APIKey = os.Getenv("OPENROUTER_API_KEY")
+			}
+		}
 	}
 	if *modelFlag != "" {
-		fc.Model = *modelFlag
+		pc.Model = *modelFlag
 	}
+	fc.Providers[providerID] = pc
 
 	_ = sysPromptFlag
 
@@ -191,27 +174,38 @@ func main() {
 		})
 	}
 
-	tuiInst, err := tui.Start(sessCfg.Model, username, initial, providerPresets, loadHistory())
+	tuiInst, err := tui.Start(sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, loadHistory())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		os.Exit(1)
 	}
 
-	tui.OnHistorySave = func(history []string) {
-		if err := saveHistory(history); err != nil {
-			log.Printf("[history] save error: %v", err)
+	tuiInst.GetProviderConfigFn = func(providerID string) tui.ProviderConfig {
+		if cfg, ok := sess.Config().Providers[providerID]; ok {
+			return tui.ProviderConfig{
+				APIKey:      cfg.APIKey,
+				Model:       cfg.Model,
+				EmbedModel:  cfg.EmbedModel,
+				ProviderURL: cfg.ProviderURL,
+			}
 		}
+		return tui.ProviderConfig{}
 	}
 
-	logDir := filepath.Join(home, ".crude")
-	os.MkdirAll(logDir, 0o755)
-	if logFile, err := os.OpenFile(filepath.Join(logDir, "crude.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
-		log.SetOutput(logFile)
+	tui.OnHistorySave = func(history []string) {
+		if err := saveHistory(history); err != nil {
+			slog.Error("history.save", "error", err.Error())
+		}
 	}
 
 	tuiInst.OnQuit = func() {
 		sess.Close()
-		os.Exit(0)
+	}
+
+	tuiInst.OnExitMessage = func() {
+		if path := sess.LogPath(); path != "" {
+			fmt.Fprintf(os.Stderr, "\n✓ Session log saved to: %s\n", path)
+		}
 	}
 
 	tuiInst.OnSettingsSave = func(s tui.Settings) {
@@ -219,7 +213,7 @@ func main() {
 			tuiInst.SetError(err.Error())
 			return
 		}
-		newFC := sessionToFileConfig(sessCfg)
+		newFC := sessionToFileConfig(sess.Config())
 		if err := saveFileConfig(newFC); err != nil {
 			tuiInst.SetError("Failed to save config: " + err.Error())
 		}
@@ -235,7 +229,7 @@ func main() {
 		tuiInst.Program.Send(result)
 	}
 
-	if *settingsFlag || fc.APIKey == "" {
+	if *settingsFlag || fc.Providers[fc.ActiveProvider].APIKey == "" {
 		tuiInst.OpenSettings()
 	}
 

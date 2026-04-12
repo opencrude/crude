@@ -16,6 +16,9 @@ type TUI struct {
 	// OnQuit is called when the user exits the TUI.
 	OnQuit func()
 
+	// OnExitMessage is called after the terminal is fully restored, for final output.
+	OnExitMessage func()
+
 	// OnSettingsSave is called when the user saves settings from the inline form.
 	OnSettingsSave func(Settings)
 
@@ -28,8 +31,20 @@ type TUI struct {
 	// FetchModelsFn is called to fetch available models from the provider.
 	FetchModelsFn func(providerID, baseURL, apiKey string) ([]ModelEntry, error)
 
+	// GetProviderConfigFn is called to get saved config for a provider.
+	// Returns a struct with APIKey, Model, EmbedModel, ProviderURL fields.
+	GetProviderConfigFn func(providerID string) ProviderConfig
+
 	// ProviderPresets is the list of available provider presets.
 	ProviderPresets []ProviderPreset
+}
+
+// ProviderConfig holds configuration for a specific provider.
+type ProviderConfig struct {
+	APIKey      string
+	Model       string
+	EmbedModel  string
+	ProviderURL string
 }
 
 var global *TUI
@@ -67,7 +82,14 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		}
 	}
 
-	model := NewModel(modelName, username, inputCh, initial, onSave, fetchFn)
+	getProviderCfgFn := func(providerID string) ProviderConfig {
+		if t.GetProviderConfigFn != nil {
+			return t.GetProviderConfigFn(providerID)
+		}
+		return ProviderConfig{}
+	}
+
+	model := NewModel(modelName, username, inputCh, initial, onSave, fetchFn, getProviderCfgFn)
 	model.SetProviderPresets(t.ProviderPresets)
 	model.SetHistory(history)
 	model.OnConfirmResult = func(result ConfirmResult) {
@@ -88,13 +110,16 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		if _, err := program.Run(); err != nil {
 			fmt.Printf("TUI error: %v\n", err)
 		}
+		if t.OnQuit != nil {
+			t.OnQuit()
+		}
+		if t.OnExitMessage != nil {
+			t.OnExitMessage()
+		}
 		select {
 		case <-t.doneCh:
 		default:
 			close(t.doneCh)
-		}
-		if t.OnQuit != nil {
-			t.OnQuit()
 		}
 	}()
 

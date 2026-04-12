@@ -1,10 +1,10 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	"crude/xmlcodec"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -80,55 +80,55 @@ func formatTokens(n int) string {
 	}
 }
 
-// summarizeToolArgs extracts a compact, user-friendly summary from tool args JSON.
-func summarizeToolArgs(tool, argsJSON string) string {
-	var m map[string]any
-	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
-		return truncateLine(argsJSON, 60)
+// summarizeToolArgs extracts a compact, user-friendly summary from tool args XML.
+func summarizeToolArgs(tool, argsXML string) string {
+	m, err := xmlcodec.ParseParams(argsXML)
+	if err != nil {
+		return truncateLine(argsXML, 60)
 	}
 
 	switch tool {
 	case "read_file", "write_file", "delete_file":
-		if p, ok := m["path"].(string); ok {
+		if p, ok := m["path"]; ok {
 			return p
 		}
 	case "edit_file":
-		p, _ := m["path"].(string)
+		p, _ := m["path"]
 		return p
 	case "list_directory":
-		if p, ok := m["path"].(string); ok {
+		if p, ok := m["path"]; ok {
 			return p
 		}
 		return "."
 	case "glob_files":
-		if p, ok := m["pattern"].(string); ok {
+		if p, ok := m["pattern"]; ok {
 			return p
 		}
 	case "grep_files":
-		pat, _ := m["pattern"].(string)
-		path, _ := m["path"].(string)
+		pat, _ := m["pattern"]
+		path, _ := m["path"]
 		if path != "" {
 			return fmt.Sprintf("%s in %s", pat, path)
 		}
 		return pat
 	case "execute_command":
-		if cmd, ok := m["command"].(string); ok {
+		if cmd, ok := m["command"]; ok {
 			return truncateLine(cmd, 60)
 		}
 	case "web_search":
-		if q, ok := m["query"].(string); ok {
+		if q, ok := m["query"]; ok {
 			return truncateLine(q, 60)
 		}
 	case "web_fetch":
-		if u, ok := m["url"].(string); ok {
+		if u, ok := m["url"]; ok {
 			return truncateLine(u, 60)
 		}
 	case "arxiv_search":
-		if q, ok := m["query"].(string); ok {
+		if q, ok := m["query"]; ok {
 			return truncateLine(q, 60)
 		}
 	case "run_javascript":
-		if code, ok := m["code"].(string); ok {
+		if code, ok := m["code"]; ok {
 			lines := strings.Split(code, "\n")
 			if len(lines) > 1 {
 				return truncateLine(lines[0], 60)
@@ -141,9 +141,7 @@ func summarizeToolArgs(tool, argsJSON string) string {
 
 	// Fallback: show first string value found
 	for _, v := range m {
-		if s, ok := v.(string); ok {
-			return truncateLine(s, 60)
-		}
+		return truncateLine(v, 60)
 	}
 	return ""
 }
@@ -202,8 +200,6 @@ func workAnimation(frame int, phase string) string {
 func streamAnimation(frame int, phase string) string {
 	phaseLabel := phase
 	switch phase {
-	case "replying":
-		phaseLabel = "replying"
 	case "executing":
 		phaseLabel = "streaming response"
 	default:

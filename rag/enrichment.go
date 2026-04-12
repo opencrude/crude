@@ -1,9 +1,10 @@
 package rag
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
+
+	"crude/xmlcodec"
 )
 
 // Enricher iteratively enriches context by discovering related terms.
@@ -90,8 +91,8 @@ func (e *Enricher) discoverNewTerms(query, context string, knownTerms map[string
 	}
 
 	prompt := fmt.Sprintf(`You are a technical term analyzer. Given the user's goal and accumulated context, identify any technical terms or system names that require further investigation.
-Return ONLY a JSON array of new terms: ["term1", "term2"]
-If no new terms are needed, return: []
+Return XML only: <terms><term>term1</term><term>term2</term></terms>
+If no new terms are needed, return: <terms/>
 
 User goal: %s
 Accumulated context: %s
@@ -106,17 +107,8 @@ Already known terms (do not repeat): %s`,
 		return nil, err
 	}
 
-	// Extract JSON array from response.
-	raw = strings.TrimSpace(raw)
-	start := strings.Index(raw, "[")
-	end := strings.LastIndex(raw, "]")
-	if start < 0 || end <= start {
-		return nil, nil
-	}
-	raw = raw[start : end+1]
-
-	var terms []string
-	if err := json.Unmarshal([]byte(raw), &terms); err != nil {
+	terms, parseErr := xmlcodec.ParseTerms(raw)
+	if parseErr != nil {
 		return nil, nil
 	}
 

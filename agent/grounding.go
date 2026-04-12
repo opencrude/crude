@@ -1,28 +1,22 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"crude/rag"
+	"crude/xmlcodec"
 )
 
 // groundingOp is a single read operation requested by the LLM during grounding.
 type groundingOp struct {
-	Tool       string         `json:"tool"`
-	Parameters map[string]any `json:"parameters"`
-}
-
-// groundingResponse is what the LLM outputs during the grounding phase.
-type groundingResponse struct {
-	Thinking     string        `json:"thinking"`
-	Observations []groundingOp `json:"observations"`
+	Tool       string
+	Parameters map[string]string
 }
 
 // ground runs the grounding phase using structured text generation (no function calling).
-// The LLM outputs a JSON array of read operations; the system executes them and feeds results back.
+// The LLM outputs XML for read operations; the system executes them and feeds results back.
 func (a *Agent) ground(
 	sessionMessages []APIMessage,
 	systemPrompt string,
@@ -32,15 +26,18 @@ func (a *Agent) ground(
 	groundingPrompt := systemPrompt + `
 
 === GROUNDING PHASE ===
-You are gathering information relevant to the user's request. Output ONLY valid JSON.
-
-CRITICAL — JSON must be perfectly valid:
-- All string values MUST escape: quotes as \", backslashes as \\, newlines as \n
-- NEVER include raw newlines, unescaped quotes, or backslashes inside string values
-- Output ONLY the JSON object, no markdown fences, no prose
+You are gathering information relevant to the user's request. Output ONLY valid XML.
 
 Format:
-{"thinking": "your reasoning", "observations": [{"tool": "tool_name", "parameters": {"key": "value"}}]}
+<grounding>
+  <thinking>your reasoning</thinking>
+  <observation>
+    <tool>tool_name</tool>
+    <parameters>
+      <param name="key">value</param>
+    </parameters>
+  </observation>
+</grounding>
 
 Allowed tools: read_file, list_directory, glob_files, grep_files, execute_command (non-mutating), web_search, web_fetch, arxiv_search, run_javascript.
 
@@ -52,8 +49,8 @@ Path resolution rules:
 
 IMPORTANT: Only gather observations that are DIRECTLY relevant to the user's request. Do NOT probe unrelated systems or services.
 For greetings, chitchat, or questions that don't require system information, respond with:
-{"thinking": "ready to plan", "observations": []}
-Output ONLY the JSON, no markdown fences.`
+<grounding><thinking>ready to plan</thinking></grounding>
+Output ONLY the XML, no markdown fences.`
 
 	msgs := make([]APIMessage, 0, len(sessionMessages)+1)
 	msgs = append(msgs, APIMessage{Role: "system", Content: groundingPrompt})
@@ -75,25 +72,24 @@ Output ONLY the JSON, no markdown fences.`
 			}})
 		}
 
-		// Parse grounding response.
-		jsonStr := stripJSONFences(content)
-		var gResp groundingResponse
-		if err := json.Unmarshal([]byte(jsonStr), &gResp); err != nil {
+		// Parse grounding XML.
+		gResp, parseErr := xmlcodec.ParseGrounding(content)
+		if parseErr != nil {
 			// Try plain text GROUNDING_COMPLETE.
 			if strings.Contains(content, "GROUNDING_COMPLETE") {
 				break
 			}
 			trimmed := strings.TrimSpace(content)
-			if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
-				// LLM produced conversational text, not JSON — skip to planning
+			if !strings.HasPrefix(trimmed, "<") {
+				// LLM produced conversational text, not XML — skip to planning
 				break
 			}
 			emit(AgentEvent{Type: "thinking", Data: "Retrying grounding..."})
-			msgs = append(msgs, APIMessage{Role: "user", Content: "Output valid JSON only. No markdown fences."})
+			msgs = append(msgs, APIMessage{Role: "user", Content: "Output valid XML only. No markdown fences."})
 			continue
 		}
 
-		// Emit clean thinking text (not raw JSON).
+		// Emit clean thinking text.
 		if gResp.Thinking != "" {
 			emit(AgentEvent{Type: "thinking", Data: gResp.Thinking})
 		}
@@ -111,25 +107,28 @@ Output ONLY the JSON, no markdown fences.`
 				continue
 			}
 
+			paramsMap := op.Parameters.ToMap()
 			emit(AgentEvent{Type: "tool_call", Data: map[string]string{
 				"name": op.Tool,
-				"args": mustJSON(op.Parameters),
+				"args": mustXMLArgs(paramsMap),
 			}})
 
-			if a.Logger != nil {
-				a.Logger.LogToolCall(op.Tool, op.Parameters)
+			paramAny := make(map[string]any)
+			for k, v := range paramsMap {
+				paramAny[k] = v
 			}
-
-			argsJSON, _ := json.Marshal(op.Parameters)
+			a.logger.Info("tool.call", "tool", op.Tool, "params", fmt.Sprintf("%v", paramAny))
 			toolStart := time.Now()
-			result, err := a.ToolFn(op.Tool, op.Parameters)
+			result, err := a.ToolFn(op.Tool, paramAny)
 			toolDur := time.Since(toolStart).Milliseconds()
 			if err != nil {
 				result = fmt.Sprintf("Error: %v", err)
 			}
 
-			if a.Logger != nil {
-				a.Logger.LogToolResult(op.Tool, result, toolDur, err)
+			if err != nil {
+				a.logger.Error("tool.error", "tool", op.Tool, "error", err.Error(), "latency_ms", toolDur)
+			} else {
+				a.logger.Info("tool.result", "tool", op.Tool, "latency_ms", toolDur, "content", result)
 			}
 
 			emit(AgentEvent{Type: "tool_result", Data: map[string]string{
@@ -138,11 +137,11 @@ Output ONLY the JSON, no markdown fences.`
 			}})
 
 			if ragEngine != nil {
-				obsTitle := op.Tool + ":" + extractPathFromArgs(string(argsJSON))
+				obsTitle := op.Tool + ":" + extractPathFromParams(paramsMap)
 				_ = ragEngine.AddObservation(obsTitle, result)
 			}
 
-			resultParts = append(resultParts, fmt.Sprintf("### %s(%s)\n%s", op.Tool, mustJSON(op.Parameters), result))
+			resultParts = append(resultParts, fmt.Sprintf("### %s(%s)\n%s", op.Tool, mustXMLArgs(paramsMap), result))
 		}
 
 		// Feed results back for next iteration.
@@ -174,42 +173,29 @@ func isReadOnlyTool(tool string) bool {
 	}
 }
 
-// stripJSONFences removes markdown code fences from a string.
-func stripJSONFences(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		lines := strings.SplitN(s, "\n", 2)
-		if len(lines) == 2 {
-			s = lines[1]
+// mustXMLArgs converts a map of parameters to a compact XML string for display/logging.
+func mustXMLArgs(m map[string]string) string {
+	var sb strings.Builder
+	sb.WriteString("{")
+	first := true
+	for k, v := range m {
+		if !first {
+			sb.WriteString(", ")
 		}
-		if idx := strings.LastIndex(s, "```"); idx >= 0 {
-			s = s[:idx]
-		}
-		s = strings.TrimSpace(s)
+		sb.WriteString(k)
+		sb.WriteString(": ")
+		sb.WriteString(v)
+		first = false
 	}
-	return s
+	sb.WriteString("}")
+	return sb.String()
 }
 
-// mustJSON marshals a value to JSON, returning "{}" on failure.
-func mustJSON(v any) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return "{}"
-	}
-	return string(data)
-}
-
-// extractPathFromArgs extracts a path-like value from JSON-encoded tool arguments.
-func extractPathFromArgs(argsJSON string) string {
-	var m map[string]any
-	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
-		return ""
-	}
+// extractPathFromParams extracts a path-like value from tool parameters.
+func extractPathFromParams(args map[string]string) string {
 	for _, key := range []string{"path", "pattern", "command", "source"} {
-		if v, ok := m[key]; ok {
-			if s, ok := v.(string); ok {
-				return s
-			}
+		if v, ok := args[key]; ok {
+			return v
 		}
 	}
 	return ""

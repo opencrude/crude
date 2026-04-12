@@ -15,6 +15,22 @@ const (
 	BlockPendingSubGoal
 )
 
+func (t BlockingConditionType) String() string {
+	names := []string{
+		"auth_required",
+		"missing_parameter",
+		"confirmation_needed",
+		"rate_limit_exceeded",
+		"external_api_error",
+		"ambiguous_input",
+		"pending_sub_goal",
+	}
+	if int(t) < len(names) {
+		return names[t]
+	}
+	return "unknown"
+}
+
 // BlockingCondition represents why a goal is currently blocked.
 type BlockingCondition struct {
 	ID           string

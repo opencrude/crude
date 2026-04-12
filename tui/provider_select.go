@@ -13,22 +13,36 @@ func (p inlineSettings) updateProviderSelect(msg tea.KeyMsg) (inlineSettings, te
 		if p.providerListIdx >= 0 && p.providerListIdx < len(p.providerPresets) {
 			selected := p.providerPresets[p.providerListIdx]
 			if selected.ID != p.providerID {
-				// Provider changed — clear stale model data and reset model field
+				// Provider changed — load saved provider config if it exists
+				if p.getProviderConfigFn != nil {
+					savedCfg := p.getProviderConfigFn(selected.ID)
+					p.fields[sfAPIKey].value = []rune(savedCfg.APIKey)
+					p.fields[sfModel].value = []rune(savedCfg.Model)
+					p.fields[sfEmbedModel].value = []rune(savedCfg.EmbedModel)
+					if savedCfg.ProviderURL != "" {
+						p.fields[sfBaseURL].value = []rune(savedCfg.ProviderURL)
+					} else {
+						p.fields[sfBaseURL].value = []rune(selected.BaseURL)
+					}
+				} else {
+					// No callback, just use preset defaults
+					p.fields[sfBaseURL].value = []rune(selected.BaseURL)
+					p.fields[sfModel].value = nil
+					p.fields[sfEmbedModel].value = nil
+				}
+				// Clear model selection state since provider changed
 				p.availableModels = nil
 				p.filteredModels = nil
 				p.fetchError = ""
 				p.fetchingModels = false
-				p.fields[sfModel].value = nil
 
 				p.availableEmbedModels = nil
 				p.filteredEmbedModels = nil
 				p.fetchEmbedError = ""
 				p.fetchingEmbedModels = false
-				p.fields[sfEmbedModel].value = nil
 			}
 			p.providerID = selected.ID
 			p.fields[sfProvider].value = []rune(selected.ID)
-			p.fields[sfBaseURL].value = []rune(selected.BaseURL)
 		}
 		p.isProviderSelect = false
 		return p, nil, false, false
