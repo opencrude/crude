@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"strings"
 
 	"crude/dag"
 	"crude/rag"
@@ -90,6 +89,7 @@ Rules:
 - The graph must be a valid DAG (no cycles)
 - Use concrete values from observations — never guess
 - If the user's message requires no file/command/web operations, use the "reply" tool
+- For chitchat, questions and greeting messages, plan should be directly using the reply tool with you message to user
 - Only use "blocking" when you genuinely need the user to answer a question
 - When using the "reply" tool, format the content parameter with markdown: use code blocks with language tags for code, inline code for paths/commands, bullet lists for items
 - Output ONLY the XML, no prose, no markdown fences`
@@ -117,32 +117,12 @@ Rules:
 
 		execDAG, parseErr := dag.Parse(planXML)
 		if parseErr == nil {
-			a.logger.Info("agent.plan", "content", planXML, "nodes", len(execDAG.Nodes))
+			a.logger.Info("agent.plan.parse", "status", "success", "nodes", len(execDAG.Nodes))
 			return execDAG
 		}
 
-		a.logger.Info("agent.plan", "content", fmt.Sprintf("parse failed: %v", parseErr), "retry", retry)
-
-		trimmed := strings.TrimSpace(planXML)
-		isXML := strings.HasPrefix(trimmed, "<") || strings.HasPrefix(trimmed, "```")
-		if !isXML {
-			replyNode := &dag.Node{
-				ID:          "reply",
-				Operation:   dag.OpRead,
-				Description: "conversational response",
-				Tool:        "reply",
-				Parameters:  map[string]any{"content": trimmed},
-				DependsOn:   []string{},
-			}
-			a.logger.Info("agent.decision", "reason", "wrapped conversational text in reply node", "action", "create_reply_node", "confidence", 1.0)
-			return &dag.DAG{
-				Nodes:      map[string]*dag.Node{"reply": replyNode},
-				Dependents: map[string][]string{},
-			}
-		}
-
 		if retry < maxPlanRetries {
-			a.logger.Info("agent.plan", "content", fmt.Sprintf("retrying with error feedback: %v", parseErr), "retry", retry)
+			a.logger.Info("agent.plan.retry", "content", fmt.Sprintf("retrying with error feedback: %v", parseErr), "retry", retry)
 			planMsgs = append(planMsgs, APIMessage{Role: "assistant", Content: planXML})
 			planMsgs = append(planMsgs, APIMessage{Role: "user", Content: fmt.Sprintf(
 				"Your XML is invalid: %v\n\nFix the XML errors and output ONLY the corrected XML. Remember: use <![CDATA[...]]> for code and multi-line content. No markdown fences, no prose.",
@@ -150,6 +130,8 @@ Rules:
 			)})
 			continue
 		}
+
+		a.logger.Info("agent.plan.parse", "status", "failed", "reason", fmt.Sprintf("parse failed: %v", parseErr), "giving up after retry", retry)
 
 		emit(AgentEvent{Type: "error", Data: fmt.Sprintf("Planning produced invalid DAG after %d retries: %v", maxPlanRetries+1, parseErr)})
 		return nil
