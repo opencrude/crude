@@ -177,38 +177,6 @@ func (e *Editor) Patch(path string, ops []SearchReplace) error {
 	return writeAtomic(abs, newBytes, fi.Mode().Perm())
 }
 
-func (e *Editor) AnchorPatch(path string, edits []AnchorEdit) error {
-	if len(edits) == 0 {
-		return nil
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("anchor patch %s: %w", path, err)
-	}
-
-	oldBytes, fi, err := readFileForEdit(abs, e.policy)
-	if err != nil {
-		return fmt.Errorf("anchor patch %s: %w", path, err)
-	}
-
-	newContent, err := ApplyAnchorEdits(string(oldBytes), edits)
-	if err != nil {
-		return fmt.Errorf("anchor patch %s: %w", path, err)
-	}
-
-	newBytes := []byte(newContent)
-	opID := newOpID()
-
-	entry, err := buildWriteEntry(e.sessionID, e.msgID, opID, abs, oldBytes, newBytes, fi.Mode().Perm())
-	if err != nil {
-		return fmt.Errorf("anchor patch %s: build journal entry: %w", path, err)
-	}
-	if err := e.journal.record(entry); err != nil {
-		return fmt.Errorf("anchor patch %s: journal: %w", path, err)
-	}
-	return writeAtomic(abs, newBytes, fi.Mode().Perm())
-}
-
 func (e *Editor) Delete(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
