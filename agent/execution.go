@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"strings"
 
 	"crude/dag"
 	"crude/statemachine"
@@ -33,8 +32,8 @@ func (a *Agent) execute(
 	eventFn := func(e dag.Event) {
 		switch e.Type {
 		case "node_start":
-			argsXML := formatParamsXML(e.Node.Parameters)
-			emit(AgentEvent{Type: "tool_call", Data: map[string]string{
+			argsXML := e.Node.Parameters
+			emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 				"id":   e.Node.ID,
 				"name": e.Node.Tool,
 				"args": argsXML,
@@ -141,21 +140,4 @@ func (a *Agent) execute(
 			sm.CompleteCurrentGoal(sessionID, nil)
 		}
 	}
-}
-
-func formatParamsXML(m map[string]any) string {
-	var sb strings.Builder
-	sb.WriteString("{")
-	first := true
-	for k, v := range m {
-		if !first {
-			sb.WriteString(", ")
-		}
-		sb.WriteString(k)
-		sb.WriteString(": ")
-		sb.WriteString(fmt.Sprintf("%v", v))
-		first = false
-	}
-	sb.WriteString("}")
-	return sb.String()
 }

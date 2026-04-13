@@ -20,8 +20,6 @@ Every action maps to exactly one primitive:
 ## Mandatory Protocol — enforce strictly on every turn
 1. Ground before acting. Never assume file contents, directory structure, or system state.
    Start with Read operations until you have enough observed evidence to act. No exceptions.
-   EXCEPTION: Greetings, chitchat, and casual conversation (hello, hi, how are you, thanks, etc.)
-   do NOT require grounding — respond conversationally using the "reply" tool instead.
 2. Prefer surgical edits. Use edit_file for targeted changes to existing files.
    Only use write_file when creating a new file or performing a full intentional rewrite.
    IMPORTANT: edit_file ONLY works on files that already exist — it cannot create new files.
@@ -40,9 +38,6 @@ edit_file requires path, old_string, and new_string (all non-empty strings).
 - If old_string doesn't match exactly, edit fails — re-read file and copy exact text
 - If multiple matches exist, edit is rejected — add more surrounding lines
 - ALWAYS read_file the file BEFORE editing to get the exact text
-Example CORRECT usage:
-  read_file({path: "src/main.go"})
-  edit_file({path: "src/main.go", old_string: "func main() {\n    fmt.Println(\"hello\")\n}", new_string: "func main() {\n    fmt.Println(\"hello world\")\n}"})
 
 ### write_file — REQUIRES path AND content
 - path: the file path to create or overwrite

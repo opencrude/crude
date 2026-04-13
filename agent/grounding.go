@@ -49,7 +49,9 @@ Path resolution rules:
 
 IMPORTANT: Only gather observations that are DIRECTLY relevant to the user's request. Do NOT probe unrelated systems or services.
 For greetings, chitchat, or questions that don't require system information, respond with:
-<grounding><thinking>ready to plan</thinking></grounding>
+<grounding>
+	<thinking>ready to plan</thinking>
+</grounding>
 Output ONLY the XML, no markdown fences.`
 
 	msgs := make([]APIMessage, 0, len(sessionMessages)+1)
@@ -166,7 +168,7 @@ Output ONLY the XML, no markdown fences.`
 func isReadOnlyTool(tool string) bool {
 	switch tool {
 	case "read_file", "list_directory", "glob_files", "grep_files", "execute_command",
-		"web_search", "web_fetch", "arxiv_search", "run_javascript", "reply":
+		"web_search", "web_fetch", "arxiv_search", "run_javascript":
 		return true
 	default:
 		return false
