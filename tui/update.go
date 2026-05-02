@@ -61,38 +61,50 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 			}
 			m.inlineForm.updateModelFilter()
 		}
-	case "/embed-model":
+	case "/oracle-model":
 		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
-		m.inlineForm.focused = sfEmbedModel
+		m.inlineForm.focused = sfOracleModel
 		if m.inlineForm.providerID == "ollama" || m.inlineForm.providerID == "custom" {
 			m.inlineForm.editingField = true
-			m.lastError = fmt.Sprintf("Type embedding model name manually for %s.", m.inlineForm.providerID)
+			m.lastError = fmt.Sprintf("Type oracle model name manually for %s.", m.inlineForm.providerID)
 			m.errorTime = time.Now()
 		} else if string(m.inlineForm.fields[sfAPIKey].value) == "" && m.inlineForm.providerID != "openrouter" {
 			m.inlineForm.editingField = true
-			m.lastError = fmt.Sprintf("No API key provided for %s. Type embedding model name manually.", m.inlineForm.providerID)
+			m.lastError = fmt.Sprintf("No API key provided for %s. Type oracle model name manually.", m.inlineForm.providerID)
 			m.errorTime = time.Now()
 		} else {
-			m.inlineForm.isEmbedModelSelect = true
-			if len(m.inlineForm.availableEmbedModels) == 0 && !m.inlineForm.fetchingEmbedModels {
-				m.inlineForm.fetchEmbedError = ""
-				m.inlineForm.fetchingEmbedModels = true
+			m.inlineForm.isOracleModelSelect = true
+			if len(m.inlineForm.availableOracleModels) == 0 && !m.inlineForm.fetchingOracleModels {
+				m.inlineForm.fetchOracleError = ""
+				m.inlineForm.fetchingOracleModels = true
 				current := fetchModelsMsg{
 					ProviderID: m.inlineForm.providerID,
 					BaseURL:    string(m.inlineForm.fields[sfBaseURL].value),
 					APIKey:     string(m.inlineForm.fields[sfAPIKey].value),
-					IsEmbed:    true,
 				}
 				return m, func() tea.Msg { return current }
 			}
-			m.inlineForm.updateEmbedModelFilter()
+			m.inlineForm.updateOracleModelFilter()
 		}
 	case "/api-key":
 		m.inlineForm.saveSnapshot()
 		m.settingsActive = true
 		m.inlineForm.focused = sfAPIKey
 		m.inlineForm.editingField = true
+	case "/effort":
+		current := m.lastSettings.ThinkingEffort
+		if current == "" {
+			current = "auto"
+		}
+		next := cycleEffort(current, 1)
+		m.lastSettings.ThinkingEffort = next
+		m.inlineForm.fields[sfThinkingEffort].value = []rune(next)
+		if m.onSaveSettings != nil {
+			go m.onSaveSettings(m.lastSettings)
+		}
+		effortMsg := fmt.Sprintf("Thinking effort: %s", next)
+		m.messages = append(m.messages, ChatMessage{Role: RoleAssistant, Content: effortMsg, Time: time.Now()})
 	case "/help":
 		helpText := "Available commands:\n"
 		for _, c := range availableCmds {
@@ -186,9 +198,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inlineForm.modelSearch = ""
 				return m, nil
 			}
-			if m.inlineForm.isEmbedModelSelect {
-				m.inlineForm.isEmbedModelSelect = false
-				m.inlineForm.embedModelSearch = ""
+			if m.inlineForm.isOracleModelSelect {
+				m.inlineForm.isOracleModelSelect = false
+				m.inlineForm.oracleModelSearch = ""
 				return m, nil
 			}
 			if m.inlineForm.isProviderSelect {
@@ -258,14 +270,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastError = string(msg)
 			m.errorTime = time.Now()
 			return m, nil
-		case EmbedModelsListMsg:
-			m.inlineForm.fetchingEmbedModels = false
-			m.inlineForm.availableEmbedModels = []ModelEntry(msg)
-			m.inlineForm.updateEmbedModelFilter()
+		case OracleModelsListMsg:
+			m.inlineForm.fetchingOracleModels = false
+			m.inlineForm.availableOracleModels = []ModelEntry(msg)
+			m.inlineForm.updateOracleModelFilter()
 			return m, nil
-		case EmbedModelsErrorMsg:
-			m.inlineForm.fetchingEmbedModels = false
-			m.inlineForm.fetchEmbedError = "Fetch failed (see bottom left). Press enter to type manually."
+		case OracleModelsErrorMsg:
+			m.inlineForm.fetchingOracleModels = false
+			m.inlineForm.fetchOracleError = "Fetch failed (see bottom left). Press enter to type manually."
 			m.lastError = string(msg)
 			m.errorTime = time.Now()
 			return m, nil
@@ -276,9 +288,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case fetchModelsMsg:
 			if m.fetchModelsFn != nil {
 				info := msg
-				if info.IsEmbed {
-					m.inlineForm.fetchingEmbedModels = true
-					m.inlineForm.fetchEmbedError = ""
+				isOracle := m.inlineForm.isOracleModelSelect && m.inlineForm.fetchingOracleModels
+				if isOracle {
+					m.inlineForm.fetchingOracleModels = true
+					m.inlineForm.fetchOracleError = ""
 				} else {
 					m.inlineForm.fetchingModels = true
 					m.inlineForm.fetchError = ""
@@ -289,12 +302,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return nil
 					}
 					res := cmd()
-					if info.IsEmbed {
+					if isOracle {
 						switch r := res.(type) {
 						case ModelsListMsg:
-							return EmbedModelsListMsg(r)
+							return OracleModelsListMsg(r)
 						case ModelsErrorMsg:
-							return EmbedModelsErrorMsg(r)
+							return OracleModelsErrorMsg(r)
 						}
 					}
 					return res
@@ -877,12 +890,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tool_result":
 			if d, ok := evt.Data.(map[string]string); ok {
 				name := d["name"]
+				result := d["result"]
 				m.statusLine = name
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					msg := &m.messages[i]
 					if msg.Role == RoleTool && msg.ToolName == name && msg.ToolStatus == "calling" {
 						msg.ToolStatus = "success"
-						msg.Content = msg.ToolName + " " + msg.ToolArgs
+						if result != "" {
+							msg.Content = result
+						} else {
+							msg.Content = msg.ToolName + " " + msg.ToolArgs
+						}
 						break
 					}
 				}
@@ -959,9 +977,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fetchModelsMsg:
 		if m.fetchModelsFn != nil {
 			info := msg
-			if info.IsEmbed {
-				m.inlineForm.fetchingEmbedModels = true
-				m.inlineForm.fetchEmbedError = ""
+			isOracle := m.inlineForm.isOracleModelSelect && m.inlineForm.fetchingOracleModels
+			if isOracle {
+				m.inlineForm.fetchingOracleModels = true
+				m.inlineForm.fetchOracleError = ""
 			} else {
 				m.inlineForm.fetchingModels = true
 				m.inlineForm.fetchError = ""
@@ -972,12 +991,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return nil
 				}
 				res := cmd()
-				if info.IsEmbed {
+				if isOracle {
 					switch r := res.(type) {
 					case ModelsListMsg:
-						return EmbedModelsListMsg(r)
+						return OracleModelsListMsg(r)
 					case ModelsErrorMsg:
-						return EmbedModelsErrorMsg(r)
+						return OracleModelsErrorMsg(r)
 					}
 				}
 				return res
@@ -993,14 +1012,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.inlineForm.fetchingModels = false
 		m.inlineForm.fetchError = string(msg)
 
-	case EmbedModelsListMsg:
-		m.inlineForm.fetchingEmbedModels = false
-		m.inlineForm.availableEmbedModels = []ModelEntry(msg)
-		m.inlineForm.updateEmbedModelFilter()
+	case OracleModelsListMsg:
+		m.inlineForm.fetchingOracleModels = false
+		m.inlineForm.availableOracleModels = []ModelEntry(msg)
+		m.inlineForm.updateOracleModelFilter()
 
-	case EmbedModelsErrorMsg:
-		m.inlineForm.fetchingEmbedModels = false
-		m.inlineForm.fetchEmbedError = string(msg)
+	case OracleModelsErrorMsg:
+		m.inlineForm.fetchingOracleModels = false
+		m.inlineForm.fetchOracleError = string(msg)
 
 	case updateModelMsg:
 		m.modelName = string(msg)

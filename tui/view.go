@@ -184,19 +184,38 @@ func (m *Model) chatView() string {
 			accentStyle := lipgloss.NewStyle().Foreground(colorAccent)
 			highlightStyle := lipgloss.NewStyle().Foreground(colorMainText).Background(lipgloss.Color("#1e2a3a"))
 
-			for i, c := range m.slashFiltered {
-				if i >= 8 {
-					addFull(pad + dim.Render(fmt.Sprintf("  ... and %d more", len(m.slashFiltered)-8)))
-					break
+			const slashPageSize = 8
+			total := len(m.slashFiltered)
+			if total > 0 {
+				// Keep selected item in view
+				if m.slashIdx < m.slashListOffset {
+					m.slashListOffset = m.slashIdx
 				}
-				selected := i == m.slashIdx
-				var line string
-				if selected {
-					line = accentStyle.Render(" ❯ ") + highlightStyle.Render(fmt.Sprintf("%-16s", c.label)) + " " + dim.Render(c.desc)
-				} else {
-					line = dim.Render("   ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-16s", c.label)) + " " + dim.Render(c.desc)
+				if m.slashIdx >= m.slashListOffset+slashPageSize {
+					m.slashListOffset = m.slashIdx - slashPageSize + 1
 				}
-				addFull(pad + line)
+				if m.slashListOffset < 0 {
+					m.slashListOffset = 0
+				}
+
+				end := m.slashListOffset + slashPageSize
+				if end > total {
+					end = total
+				}
+				for i := m.slashListOffset; i < end; i++ {
+					c := m.slashFiltered[i]
+					selected := i == m.slashIdx
+					var line string
+					if selected {
+						line = accentStyle.Render(" ❯ ") + highlightStyle.Render(fmt.Sprintf("%-16s", c.label)) + " " + dim.Render(c.desc)
+					} else {
+						line = dim.Render("   ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-16s", c.label)) + " " + dim.Render(c.desc)
+					}
+					addFull(pad + line)
+				}
+				if end < total {
+					addFull(pad + dim.Render(fmt.Sprintf("  ... and %d more", total-end)))
+				}
 			}
 		}
 	}
@@ -212,10 +231,10 @@ func (m *Model) chatView() string {
 	} else if m.lastError != "" {
 		errLeft = pad + lipgloss.NewStyle().Foreground(colorError).Render(
 			truncateLine(m.lastError, m.width/2))
-	} else if m.streaming {
-		errLeft = pad + streamAnimation(m.spinFrame, m.statusPhase)
+	} else if m.thinking && m.streaming {
+			errLeft = pad + streamAnimation(m.spinFrame, m.statusPhase)
 	} else if m.thinking {
-		errLeft = pad + workAnimation(m.spinFrame, m.statusPhase)
+			errLeft = pad + workAnimation(m.spinFrame, m.statusPhase)
 	}
 
 	// Token usage display
@@ -430,21 +449,22 @@ func (m *Model) renderAllMessages() []string {
 				if len(asstLines) == 1 && len(all) >= 2 {
 					cursorIdx = len(all) - 2
 				}
-				all[cursorIdx] = strings.TrimRight(all[cursorIdx], " ") + cursor
+				all[cursorIdx] = all[cursorIdx] + cursor
 			}
 
 		case RoleThinking:
 			lines := wrapText(msg.Content, contentWidth)
-			borderPrefix := dim.Render("│ ")
+			borderPrefix := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render("│ ")
+			thinkingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Italic(true)
 			for i, line := range lines {
 				if i == 0 {
 					if msg.ThinkingActive {
-						all = append(all, borderPrefix+dim.Render(spinnerFrames[m.spinFrame]+" ")+dim.Italic(true).Render(line))
+						all = append(all, borderPrefix+lipgloss.NewStyle().Foreground(colorAccent).Render(spinnerFrames[m.spinFrame]+" ")+thinkingStyle.Render(line))
 					} else {
-						all = append(all, borderPrefix+dim.Render("● ")+dim.Italic(true).Render(line))
+						all = append(all, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("● ")+thinkingStyle.Render(line))
 					}
 				} else {
-					all = append(all, borderPrefix+"  "+dim.Italic(true).Render(line))
+					all = append(all, borderPrefix+"  "+thinkingStyle.Render(line))
 				}
 			}
 
@@ -481,6 +501,29 @@ func (m *Model) renderAllMessages() []string {
 			}
 
 			all = append(all, line)
+
+			// Render tool output when tool succeeded
+			if msg.ToolStatus == "success" && msg.Content != "" {
+				resultContent := msg.Content
+				// Strip the label if it matches the tool name + args
+				fullLabel := pascalCaseTool(msg.ToolName) + " " + msg.ToolArgs
+				resultContent = strings.TrimPrefix(strings.TrimSpace(resultContent), fullLabel)
+				resultContent = strings.TrimSpace(resultContent)
+				if resultContent != "" {
+					// Render diff blocks with colored +/-
+					if isDiffContent(resultContent) {
+						all = append(all, "")
+						rendered := renderDiffContent(resultContent, contentWidth-6)
+						for _, dl := range strings.Split(rendered, "\n") {
+							all = append(all, dim.Render("│ ")+dl)
+						}
+					} else {
+						for _, rl := range strings.Split(resultContent, "\n") {
+							all = append(all, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(strings.TrimLeft(rl, " ")))
+						}
+					}
+				}
+			}
 
 		case RoleError:
 			lines := wrapText(msg.Content, contentWidth)
@@ -590,4 +633,80 @@ func truncateLine(s string, max int) string {
 		return s
 	}
 	return runewidth.Truncate(s, max, "…")
+}
+
+// isDiffContent detects whether text contains a unified diff.
+func isDiffContent(text string) bool {
+	text = strings.TrimSpace(text)
+	if strings.Contains(text, "```diff") {
+		return true
+	}
+	hasMinus := false
+	hasPlus := false
+	hasHunk := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "--- ") {
+			hasMinus = true
+		}
+		if strings.HasPrefix(line, "+++ ") {
+			hasPlus = true
+		}
+		if strings.HasPrefix(line, "@@") {
+			hasHunk = true
+		}
+	}
+	return (hasMinus && hasPlus) || hasHunk
+}
+
+func renderDiffContent(text string, maxWidth int) string {
+	// Strip markdown fences and collect lines.
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "```diff" || trimmed == "```" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+
+	// GitHub-dark inspired styles with block backgrounds.
+	fileStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#a0a8b7")).
+		Background(lipgloss.Color("#1e2235")).
+		Width(maxWidth)
+	hunkStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#768390")).
+		Background(lipgloss.Color("#0d1117")).
+		Width(maxWidth)
+	ctxStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#8b949e")).
+		Background(lipgloss.Color("#0d1117")).
+		Width(maxWidth)
+	addStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#7ee787")).
+		Background(lipgloss.Color("#1c2a20")).
+		Width(maxWidth)
+	delStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#ff7b72")).
+		Background(lipgloss.Color("#2a1d1e")).
+		Width(maxWidth)
+
+	var sb strings.Builder
+	for _, line := range lines {
+		display := truncateLine(line, maxWidth)
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			sb.WriteString(fileStyle.Render(display))
+		case strings.HasPrefix(line, "@@"):
+			sb.WriteString(hunkStyle.Render(display))
+		case strings.HasPrefix(line, "+"):
+			sb.WriteString(addStyle.Render(display))
+		case strings.HasPrefix(line, "-"):
+			sb.WriteString(delStyle.Render(display))
+		default:
+			sb.WriteString(ctxStyle.Render(display))
+		}
+		sb.WriteByte('\n')
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }

@@ -32,7 +32,7 @@ type TUI struct {
 	FetchModelsFn func(providerID, baseURL, apiKey string) ([]ModelEntry, error)
 
 	// GetProviderConfigFn is called to get saved config for a provider.
-	// Returns a struct with APIKey, Model, EmbedModel, ProviderURL fields.
+	// Returns a struct with APIKey, Model, ProviderURL fields.
 	GetProviderConfigFn func(providerID string) ProviderConfig
 
 	// ProviderPresets is the list of available provider presets.
@@ -41,10 +41,11 @@ type TUI struct {
 
 // ProviderConfig holds configuration for a specific provider.
 type ProviderConfig struct {
-	APIKey      string
-	Model       string
-	EmbedModel  string
-	ProviderURL string
+	APIKey         string
+	Model          string
+	OracleModel    string
+	ProviderURL    string
+	ThinkingEffort string
 }
 
 var global *TUI

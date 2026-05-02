@@ -1,8 +1,24 @@
 package safety
 
-import "crude/dag"
+type CRUDEOp string
 
-// Capability represents a permission to perform a CRUDE operation.
+const (
+	OpCreate  CRUDEOp = "Create"
+	OpRead    CRUDEOp = "Read"
+	OpUpdate  CRUDEOp = "Update"
+	OpDelete  CRUDEOp = "Delete"
+	OpExecute CRUDEOp = "Execute"
+)
+
+func (op CRUDEOp) IsDestructive() bool {
+	switch op {
+	case OpCreate, OpUpdate, OpDelete, OpExecute:
+		return true
+	default:
+		return false
+	}
+}
+
 type Capability int
 
 const (
@@ -30,39 +46,29 @@ func (c Capability) String() string {
 	}
 }
 
-// CapabilityFromOp maps a CRUDE operation to its required capability.
-func CapabilityFromOp(op dag.CRUDEOp) Capability {
+func CapabilityFromOp(op CRUDEOp) Capability {
 	switch op {
-	case dag.OpCreate:
+	case OpCreate:
 		return CanCreate
-	case dag.OpRead:
+	case OpRead:
 		return CanRead
-	case dag.OpUpdate:
+	case OpUpdate:
 		return CanUpdate
-	case dag.OpDelete:
+	case OpDelete:
 		return CanDelete
-	case dag.OpExecute:
+	case OpExecute:
 		return CanExecute
 	default:
 		return CanRead
 	}
 }
 
-// Policy defines what operations are permitted and which require confirmation.
 type Policy struct {
-	// AllowedCapabilities is the set of operations this backend can perform.
-	// If empty, all operations are allowed.
 	AllowedCapabilities map[Capability]bool
-
-	// RequireConfirmation lists operations that need user confirmation before executing.
 	RequireConfirmation map[Capability]bool
-
-	// AllowRollback enables undo support for mutating operations.
-	AllowRollback bool
+	AllowRollback       bool
 }
 
-// DefaultPolicy returns a policy that allows all operations,
-// requires confirmation for Delete, and enables rollback.
 func DefaultPolicy() Policy {
 	return Policy{
 		AllowedCapabilities: map[Capability]bool{
@@ -79,7 +85,6 @@ func DefaultPolicy() Policy {
 	}
 }
 
-// ReadOnlyPolicy returns a policy that only allows Read operations.
 func ReadOnlyPolicy() Policy {
 	return Policy{
 		AllowedCapabilities: map[Capability]bool{
@@ -90,15 +95,13 @@ func ReadOnlyPolicy() Policy {
 	}
 }
 
-// IsAllowed returns true if the given operation is permitted by this policy.
-func (p Policy) IsAllowed(op dag.CRUDEOp) bool {
+func (p Policy) IsAllowed(op CRUDEOp) bool {
 	if len(p.AllowedCapabilities) == 0 {
 		return true
 	}
 	return p.AllowedCapabilities[CapabilityFromOp(op)]
 }
 
-// NeedsConfirmation returns true if the given operation requires user confirmation.
-func (p Policy) NeedsConfirmation(op dag.CRUDEOp) bool {
+func (p Policy) NeedsConfirmation(op CRUDEOp) bool {
 	return p.RequireConfirmation[CapabilityFromOp(op)]
 }

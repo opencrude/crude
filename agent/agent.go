@@ -2,20 +2,18 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
-	"crude/dag"
 	"crude/logger"
 	"crude/provider"
-	"crude/rag"
 	"crude/safety"
 	"crude/statemachine"
+	"crude/tools"
 )
 
-// API types
-
-// APIMessage is a single message in the OpenRouter chat format.
 type APIMessage struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
@@ -23,41 +21,37 @@ type APIMessage struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
-// ToolCall is a function invocation requested by the model.
 type ToolCall struct {
+	Index    int          `json:"index"`
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
 }
 
-// FunctionCall holds the name and JSON-encoded arguments of a tool call.
 type FunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-// ToolDef describes a tool available to the model.
 type ToolDef struct {
 	Type     string      `json:"type"`
 	Function ToolFuncDef `json:"function"`
 }
 
-// ToolFuncDef is the function schema within a tool definition.
 type ToolFuncDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
-// ChatRequest is the request body for the OpenRouter completions endpoint.
 type ChatRequest struct {
-	Model    string       `json:"model"`
-	Messages []APIMessage `json:"messages"`
-	Tools    []ToolDef    `json:"tools,omitempty"`
-	Stream   bool         `json:"stream"`
+	Model      string       `json:"model"`
+	Messages   []APIMessage `json:"messages"`
+	Tools      []ToolDef    `json:"tools,omitempty"`
+	ToolChoice any          `json:"tool_choice,omitempty"`
+	Stream     bool         `json:"stream"`
 }
 
-// ChatResponse is the response body from the OpenRouter completions endpoint.
 type ChatResponse struct {
 	Choices []struct {
 		Message      APIMessage `json:"message"`
@@ -78,33 +72,46 @@ type ChatResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// Agent event
-
-// AgentEvent is emitted by Agent.Run during a conversation turn.
-// Type is one of: "phase", "thinking", "tool_call", "tool_result", "done", "error", "usage", "blocking", "stream_token".
 type AgentEvent struct {
 	Type string
 	Data any
 }
 
-// Agent
-
 const (
-	maxIterations    = 30
-	maxGroundingIter = 10
-	maxAPIAttempts   = 3
+	maxSteps       = 50
+	maxAPIAttempts = 3
 )
 
-// Agent calls an LLM provider with a three-phase loop: Ground → Plan → Execute.
 type Agent struct {
-	Provider *provider.Provider
-	Model    string
-	Policy   safety.Policy
-	ToolFn   func(tool string, params map[string]any) (string, error)
-	logger   *logger.Logger
+	Provider       *provider.Provider
+	Model          string
+	Policy         safety.Policy
+	ToolFn         func(tool string, params map[string]any) (string, error)
+	logger         *logger.Logger
+	ExtraBody      map[string]any // provider-specific request fields (e.g. thinking params)
+	OracleProvider *provider.Provider
+	OracleModel    string
 }
 
-// NewAgent creates an Agent.
+// marshalRequest marshals a ChatRequest, merging any ExtraBody fields into the top-level JSON.
+func (a *Agent) marshalRequest(req ChatRequest) ([]byte, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(a.ExtraBody) == 0 {
+		return body, nil
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(body, &merged); err != nil {
+		return nil, err
+	}
+	for k, v := range a.ExtraBody {
+		merged[k] = v
+	}
+	return json.Marshal(merged)
+}
+
 func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 	if model == "" {
 		model = "google/gemini-2.0-flash-exp:free"
@@ -112,72 +119,142 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 	return &Agent{
 		Provider: p,
 		Model:    model,
-		Policy:   safety.DefaultPolicy(),
+		ToolFn:   func(tool string, params map[string]any) (string, error) { return "", nil },
 		logger:   lg,
 	}
 }
 
-// Run executes the three-phase agentic loop.
 func (a *Agent) Run(
 	sessionMessages []APIMessage,
 	systemPrompt string,
 	emit func(AgentEvent),
-	ragEngine *rag.Engine,
 	blockResolveCh <-chan string,
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
 ) {
-	groundingStart := time.Now()
-	a.logger.Info("phase.start", "phase", "grounding", "session_id", sessionID)
-	emit(AgentEvent{Type: "phase", Data: "grounding"})
-	observations := a.ground(sessionMessages, systemPrompt, emit, ragEngine)
-	a.logger.Info("phase.end", "phase", "grounding", "duration_ms", time.Since(groundingStart).Milliseconds())
+	allTools := allToolDefs()
+	userText := extractUserMessage(sessionMessages)
 
-	planningStart := time.Now()
-	a.logger.Info("phase.start", "phase", "planning", "session_id", sessionID)
-	emit(AgentEvent{Type: "phase", Data: "planning"})
-	execDAG := a.plan(sessionMessages, systemPrompt, observations, emit, ragEngine)
-	if execDAG == nil {
-		return
-	}
-	a.logger.Info("phase.end", "phase", "planning", "duration_ms", time.Since(planningStart).Milliseconds())
-
-	execStart := time.Now()
-	a.logger.Info("phase.start", "phase", "executing", "session_id", sessionID, "dag_nodes", len(execDAG.Nodes))
-	emit(AgentEvent{Type: "phase", Data: "executing"})
-	a.execute(execDAG, emit, blockResolveCh, sm, sessionID)
-	a.logger.Info("phase.end", "phase", "executing", "duration_ms", time.Since(execStart).Milliseconds())
-
-	// Check for blocking node response
-	var blockingResponse string
-	for _, n := range execDAG.Nodes {
-		if n.Tool == "blocking" && n.Status == dag.Successful && n.Result != "" {
-			blockingResponse = n.Result
-			break
-		}
+	lastReply := ""
+	msgs := []APIMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userText},
 	}
 
-	if blockingResponse != "" {
-		emit(AgentEvent{Type: "done", Data: blockingResponse})
-		return
-	}
+	for step := 0; step < maxSteps; step++ {
+		var accumulatedText string
+		var toolCalls []ToolCall
 
-	// Check for reply node
-	for _, n := range execDAG.Nodes {
-		if n.Tool == "reply" && n.Status == dag.Successful && n.Result != "" {
-			emit(AgentEvent{Type: "done", Data: n.Result})
+		content, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.completeStream(msgs, allTools,
+			func(token string) {
+				emit(AgentEvent{Type: "stream_token", Data: token})
+			},
+			func(text string) {
+				emit(AgentEvent{Type: "thinking", Data: text})
+			},
+		)
+		if err != nil {
+			a.emitError(emit, err)
 			return
 		}
+
+		if promptTokens > 0 || completionTokens > 0 {
+			emit(AgentEvent{Type: "usage", Data: map[string]int{
+				"prompt":     promptTokens,
+				"completion": completionTokens,
+			}})
+		}
+
+		accumulatedText = content
+		toolCalls = streamToolCalls
+
+		a.logger.Info("llm.step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason)
+
+		if accumulatedText == "" {
+			accumulatedText = lastReply
+		}
+
+		if len(toolCalls) == 0 {
+			if accumulatedText != "" {
+				emit(AgentEvent{Type: "done", Data: accumulatedText})
+			} else {
+				emit(AgentEvent{Type: "done", Data: "Done."})
+			}
+			return
+		}
+
+		// Build the assistant message for the history
+		assistantMsg := APIMessage{Role: "assistant", Content: accumulatedText, ToolCalls: toolCalls}
+		msgs = append(msgs, assistantMsg)
+
+		type execResult struct {
+			id     string
+			result string
+		}
+		resultCh := make(chan execResult, len(toolCalls))
+
+		for _, tc := range toolCalls {
+			go func(tc ToolCall) {
+				var params map[string]any
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
+					resultCh <- execResult{tc.ID, "Error: invalid arguments: " + err.Error()}
+					return
+				}
+
+				if tc.Function.Name == "reply" {
+					content := getStr(params, "content")
+					lastReply = content
+					resultCh <- execResult{tc.ID, content}
+					return
+				}
+
+				emit(AgentEvent{Type: "tool_call", Data: map[string]string{
+					"name": tc.Function.Name,
+					"args": fmt.Sprintf("%v", params),
+				}})
+
+				a.logger.Info("tool.call", "tool", tc.Function.Name, "params", fmt.Sprintf("%v", params))
+				toolStart := time.Now()
+				result, _ := a.ToolFn(tc.Function.Name, params)
+				toolDur := time.Since(toolStart).Milliseconds()
+
+				if strings.HasPrefix(result, "Error:") {
+					a.logger.Error("tool.error", "tool", tc.Function.Name, "error", result, "latency_ms", toolDur)
+				} else {
+					a.logger.Info("tool.result", "tool", tc.Function.Name, "latency_ms", toolDur, "content", result)
+				}
+
+				emit(AgentEvent{Type: "tool_result", Data: map[string]string{
+					"name":   tc.Function.Name,
+					"result": result,
+				}})
+
+				resultCh <- execResult{tc.ID, result}
+			}(tc)
+		}
+
+		for i := 0; i < len(toolCalls); i++ {
+			r := <-resultCh
+			msgs = append(msgs, APIMessage{
+				Role:       "tool",
+				ToolCallID: r.id,
+				Content:    r.result,
+			})
+		}
 	}
 
-	summaryStart := time.Now()
-	a.logger.Info("phase.start", "phase", "summarizing", "session_id", sessionID)
-	summary := a.summarize(sessionMessages, execDAG, systemPrompt, emit)
-	a.logger.Info("phase.end", "phase", "summarizing", "duration_ms", time.Since(summaryStart).Milliseconds())
-	emit(AgentEvent{Type: "done", Data: summary})
+	emit(AgentEvent{Type: "done", Data: "Reached maximum " + fmt.Sprint(maxSteps) + " steps. Task may be incomplete."})
 }
 
-// Helpers
+func getStr(params map[string]any, key string) string {
+	if v, ok := params[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
+}
 
 func isRetryable(code int) bool {
 	return code == http.StatusTooManyRequests || code >= 500
@@ -188,4 +265,28 @@ func retryBackoff(attempt int) time.Duration {
 		return time.Second
 	}
 	return time.Duration(1<<(attempt-1)) * time.Second
+}
+
+func extractUserMessage(msgs []APIMessage) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Content
+		}
+	}
+	return ""
+}
+
+func allToolDefs() []ToolDef {
+	result := make([]ToolDef, len(tools.AgentTools))
+	for i, td := range tools.AgentTools {
+		result[i] = ToolDef{
+			Type: td.Type,
+			Function: ToolFuncDef{
+				Name:        td.Function.Name,
+				Description: td.Function.Description,
+				Parameters:  td.Function.Parameters,
+			},
+		}
+	}
+	return result
 }
