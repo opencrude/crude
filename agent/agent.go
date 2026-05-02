@@ -15,10 +15,11 @@ import (
 )
 
 type APIMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content,omitempty"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 
 type ToolCall struct {
@@ -145,7 +146,7 @@ func (a *Agent) Run(
 		var accumulatedText string
 		var toolCalls []ToolCall
 
-		content, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.completeStream(msgs, allTools,
+		content, reasoningContent, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.completeStream(msgs, allTools,
 			func(token string) {
 				emit(AgentEvent{Type: "stream_token", Data: token})
 			},
@@ -184,7 +185,7 @@ func (a *Agent) Run(
 		}
 
 		// Build the assistant message for the history
-		assistantMsg := APIMessage{Role: "assistant", Content: accumulatedText, ToolCalls: toolCalls}
+		assistantMsg := APIMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, ToolCalls: toolCalls}
 		msgs = append(msgs, assistantMsg)
 
 		type execResult struct {

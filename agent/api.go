@@ -160,7 +160,7 @@ func (a *Agent) completeStream(
 	tools []ToolDef,
 	emit func(token string),
 	emitThinking func(text string),
-) (content string, finishReason string, toolCalls []ToolCall, promptTokens int, completionTokens int, err error) {
+) (content string, reasoningContent string, finishReason string, toolCalls []ToolCall, promptTokens int, completionTokens int, err error) {
 	req := ChatRequest{
 		Model:    a.Model,
 		Messages: msgs,
@@ -169,7 +169,7 @@ func (a *Agent) completeStream(
 	}
 	body, err := a.marshalRequest(req)
 	if err != nil {
-		return "", "", nil, 0, 0, fmt.Errorf("marshal request: %w", err)
+		return "", "", "", nil, 0, 0, fmt.Errorf("marshal request: %w", err)
 	}
 
 	streamStart := time.Now()
@@ -187,7 +187,7 @@ func (a *Agent) completeStream(
 	for attempt := 1; attempt <= maxAPIAttempts; attempt++ {
 		httpReq, err := http.NewRequest("POST", a.Provider.ChatEndpoint(), bytes.NewReader(body))
 		if err != nil {
-			return "", "", nil, 0, 0, fmt.Errorf("create request: %w", err)
+			return "", "", "", nil, 0, 0, fmt.Errorf("create request: %w", err)
 		}
 		httpReq.Header.Set(a.Provider.AuthHeader, a.Provider.AuthValue())
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -202,7 +202,7 @@ func (a *Agent) completeStream(
 				continue
 			}
 			a.logger.Error("llm.error", "model", a.Provider.Name, "error", err.Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", nil, 0, 0, &apiCallError{
+			return "", "", "", nil, 0, 0, &apiCallError{
 				Message:          fmt.Sprintf("Stream request failed after %d attempts: %v", maxAPIAttempts, err),
 				RetriesExhausted: true,
 			}
@@ -222,10 +222,11 @@ func (a *Agent) completeStream(
 				continue
 			}
 			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", nil, 0, 0, fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, snippet)
+			return "", "", "", nil, 0, 0, fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, snippet)
 		}
 
 		var content strings.Builder
+		var reasoningBuilder strings.Builder
 		finishReason := ""
 		promptTokens := 0
 		completionTokens := 0
@@ -263,8 +264,11 @@ func (a *Agent) completeStream(
 			}
 
 			reasoning := choice.Delta.ReasoningContent
-			if reasoning != "" && emitThinking != nil {
-				emitThinking(reasoning)
+			if reasoning != "" {
+				reasoningBuilder.WriteString(reasoning)
+				if emitThinking != nil {
+					emitThinking(reasoning)
+				}
 			}
 
 			delta := choice.Delta.Content
@@ -301,7 +305,7 @@ func (a *Agent) completeStream(
 				continue
 			}
 			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("stream read error: %w", err).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", nil, 0, 0, fmt.Errorf("stream read error: %w", err)
+			return "", "", "", nil, 0, 0, fmt.Errorf("stream read error: %w", err)
 		}
 
 		// Collect accumulated tool calls (sorted by index)
@@ -322,10 +326,10 @@ func (a *Agent) completeStream(
 
 		streamDur := time.Since(streamStart).Milliseconds()
 		a.logger.Info("llm.response", "model", a.Provider.Name, "content", content.String(), "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "latency_ms", streamDur)
-		return content.String(), finishReason, resultToolCalls, promptTokens, completionTokens, nil
+		return content.String(), reasoningBuilder.String(), finishReason, resultToolCalls, promptTokens, completionTokens, nil
 	}
 
-	return "", "", nil, 0, 0, &apiCallError{Message: "Stream request retries exhausted", RetriesExhausted: true}
+	return "", "", "", nil, 0, 0, &apiCallError{Message: "Stream request retries exhausted", RetriesExhausted: true}
 }
 
 func (a *Agent) emitError(emit func(AgentEvent), err error) {
