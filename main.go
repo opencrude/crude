@@ -14,7 +14,6 @@ import (
 )
 
 const defaultModel = ""
-const defaultEmbedModel = ""
 
 type fileConfig struct {
 	ActiveProvider string                            `json:"active_provider"`
@@ -26,8 +25,7 @@ func defaultFileConfig() fileConfig {
 		ActiveProvider: "openrouter",
 		Providers: map[string]session.ProviderConfig{
 			"openrouter": {
-				Model:      defaultModel,
-				EmbedModel: defaultEmbedModel,
+				Model: defaultModel,
 			},
 		},
 	}
@@ -183,10 +181,11 @@ func main() {
 	tuiInst.GetProviderConfigFn = func(providerID string) tui.ProviderConfig {
 		if cfg, ok := sess.Config().Providers[providerID]; ok {
 			return tui.ProviderConfig{
-				APIKey:      cfg.APIKey,
-				Model:       cfg.Model,
-				EmbedModel:  cfg.EmbedModel,
-				ProviderURL: cfg.ProviderURL,
+				APIKey:         cfg.APIKey,
+				Model:          cfg.Model,
+				OracleModel:    cfg.OracleModel,
+				ProviderURL:    cfg.ProviderURL,
+				ThinkingEffort: cfg.ThinkingEffort,
 			}
 		}
 		return tui.ProviderConfig{}
@@ -203,7 +202,7 @@ func main() {
 	}
 
 	tuiInst.OnExitMessage = func() {
-		if path := sess.LogPath(); path != "" {
+		if path := sess.LogPath(); path != "" && sess.HasMessages() {
 			fmt.Fprintf(os.Stderr, "\n✓ Session log saved to: %s\n", path)
 		}
 	}

@@ -69,10 +69,11 @@ type Model struct {
 	OnUndoCmd func(cmd string)
 
 	// Slash command state
-	slashActive   bool
-	slashIdx      int
-	slashFilter   string
-	slashFiltered []slashCmd
+	slashActive      bool
+	slashIdx         int
+	slashListOffset  int
+	slashFilter      string
+	slashFiltered    []slashCmd
 
 	// Settings state
 	lastSettings Settings
@@ -124,6 +125,7 @@ func NewModel(modelName string, username string, inputCh chan<- string, initial 
 		onSaveSettings:      onSave,
 		fetchModelsFn:       fetchFn,
 		getProviderConfigFn: getProviderConfigFn,
+		lastSettings:        initial,
 		historyIdx:          -1,
 		showHint:            true,
 	}

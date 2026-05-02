@@ -1,7 +1,6 @@
 package safety
 
 import (
-	"crude/dag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +17,7 @@ const (
 type PermissionKey struct {
 	Scope PermissionScope
 	Tool  string
-	Op    dag.CRUDEOp
+	Op    CRUDEOp
 	Dir   string
 }
 
@@ -36,7 +35,7 @@ func NewPermissionStore() *PermissionStore {
 	}
 }
 
-func (s *PermissionStore) IsAlwaysAllowed(op dag.CRUDEOp, tool string, targetPath string) bool {
+func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -60,7 +59,7 @@ func (s *PermissionStore) IsAlwaysAllowed(op dag.CRUDEOp, tool string, targetPat
 	return false
 }
 
-func (s *PermissionStore) GrantAlways(op dag.CRUDEOp, tool string, targetPath string) {
+func (s *PermissionStore) GrantAlways(op CRUDEOp, tool string, targetPath string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -10,13 +10,37 @@ import (
 
 // fields for inline settings
 const (
-	sfProvider   = 0
-	sfBaseURL    = 1
-	sfAPIKey     = 2
-	sfModel      = 3
-	sfEmbedModel = 4
-	sfCount      = 5
+	sfProvider       = 0
+	sfBaseURL        = 1
+	sfAPIKey         = 2
+	sfModel          = 3
+	sfOracleModel    = 4
+	sfThinkingEffort = 5
+	sfCount          = 6
 )
+
+var thinkingEfforts = []string{"auto", "low", "medium", "high"}
+
+func effortIndex(effort string) int {
+	for i, v := range thinkingEfforts {
+		if v == effort {
+			return i
+		}
+	}
+	return 0 // auto
+}
+
+func cycleEffort(current string, delta int) string {
+	idx := effortIndex(current)
+	idx += delta
+	if idx < 0 {
+		idx = len(thinkingEfforts) - 1
+	}
+	if idx >= len(thinkingEfforts) {
+		idx = 0
+	}
+	return thinkingEfforts[idx]
+}
 
 type sfEntry struct {
 	label  string
@@ -43,15 +67,15 @@ type inlineSettings struct {
 	fetchingModels  bool
 	fetchError      string
 
-	// Embed model selection state
-	isEmbedModelSelect   bool
-	embedModelSearch     string
-	availableEmbedModels []ModelEntry
-	filteredEmbedModels  []ModelEntry
-	embedModelListIdx    int
-	embedModelListOffset int
-	fetchingEmbedModels  bool
-	fetchEmbedError      string
+	// Oracle model selection state
+	isOracleModelSelect   bool
+	oracleModelSearch     string
+	availableOracleModels []ModelEntry
+	filteredOracleModels  []ModelEntry
+	oracleModelListIdx    int
+	oracleModelListOffset int
+	fetchingOracleModels  bool
+	fetchOracleError      string
 
 	// Provider selection state
 	isProviderSelect bool
@@ -86,7 +110,8 @@ func newInlineSettings(s Settings, getProviderConfigFn func(providerID string) P
 	set(sfBaseURL, "base url", s.ProviderURL, false)
 	set(sfAPIKey, "api key", s.APIKey, false)
 	set(sfModel, "model", s.Model, false)
-	set(sfEmbedModel, "embed model", s.EmbedModel, false)
+	set(sfOracleModel, "oracle model", s.OracleModel, false)
+	set(sfThinkingEffort, "thinking", s.ThinkingEffort, false)
 
 	return p
 }
@@ -99,7 +124,8 @@ func (p *inlineSettings) toSettings() Settings {
 		ProviderAPIKey: str(sfAPIKey),
 		APIKey:         str(sfAPIKey),
 		Model:          str(sfModel),
-		EmbedModel:     str(sfEmbedModel),
+		OracleModel:    str(sfOracleModel),
+		ThinkingEffort: str(sfThinkingEffort),
 	}
 }
 
@@ -134,7 +160,7 @@ func (p *inlineSettings) restoreSnapshot() {
 		p.focused = p.snapshot.focused
 		p.focusedBtn = p.snapshot.focusedBtn
 		p.isModelSelect = p.snapshot.isModelSelect
-		p.isEmbedModelSelect = p.snapshot.isEmbedModelSelect
+		p.isOracleModelSelect = p.snapshot.isOracleModelSelect
 		p.isProviderSelect = p.snapshot.isProviderSelect
 		p.editingField = false
 		p.editCursor = 0
@@ -154,23 +180,23 @@ func (p inlineSettings) Update(msg tea.Msg) (inlineSettings, tea.Cmd, bool, bool
 		p.fetchError = string(msg)
 		return p, nil, false, false
 
-	case EmbedModelsListMsg:
-		p.fetchingEmbedModels = false
-		p.availableEmbedModels = []ModelEntry(msg)
-		p.updateEmbedModelFilter()
+	case OracleModelsListMsg:
+		p.fetchingOracleModels = false
+		p.availableOracleModels = []ModelEntry(msg)
+		p.updateOracleModelFilter()
 		return p, nil, false, false
 
-	case EmbedModelsErrorMsg:
-		p.fetchingEmbedModels = false
-		p.fetchEmbedError = string(msg)
+	case OracleModelsErrorMsg:
+		p.fetchingOracleModels = false
+		p.fetchOracleError = string(msg)
 		return p, nil, false, false
 
 	case tea.KeyMsg:
 		if p.isModelSelect {
 			return p.updateModelSelect(msg)
 		}
-		if p.isEmbedModelSelect {
-			return p.updateEmbedModelSelect(msg)
+		if p.isOracleModelSelect {
+			return p.updateOracleModelSelect(msg)
 		}
 		if p.isProviderSelect {
 			return p.updateProviderSelect(msg)
@@ -298,6 +324,8 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 					break
 				}
 			}
+		case sfThinkingEffort:
+			p.focusedBtn = 1
 		case sfModel:
 			if p.providerID == "ollama" || p.providerID == "custom" {
 				p.startEditing(sfModel)
@@ -323,31 +351,30 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 				return p, func() tea.Msg { return current }, false, false
 			}
 			p.updateModelFilter()
-		case sfEmbedModel:
+		case sfOracleModel:
 			if p.providerID == "ollama" || p.providerID == "custom" {
-				p.startEditing(sfEmbedModel)
-				msgText := fmt.Sprintf("Type embedding model name manually for %s.", p.providerID)
+				p.startEditing(sfOracleModel)
+				msgText := fmt.Sprintf("Type oracle model name manually for %s.", p.providerID)
 				return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 			}
 			if string(p.fields[sfAPIKey].value) == "" && p.providerID != "openrouter" {
-				p.startEditing(sfEmbedModel)
-				msgText := fmt.Sprintf("No API key provided for %s. Type embedding model name manually.", p.providerID)
+				p.startEditing(sfOracleModel)
+				msgText := fmt.Sprintf("No API key provided for %s. Type oracle model name manually.", p.providerID)
 				return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 			}
 
-			p.isEmbedModelSelect = true
-			if len(p.availableEmbedModels) == 0 && !p.fetchingEmbedModels {
-				p.fetchEmbedError = ""
-				p.fetchingEmbedModels = true
+			p.isOracleModelSelect = true
+			if len(p.availableOracleModels) == 0 && !p.fetchingOracleModels {
+				p.fetchOracleError = ""
+				p.fetchingOracleModels = true
 				current := fetchModelsMsg{
 					ProviderID: p.providerID,
 					BaseURL:    strings.TrimSpace(string(p.fields[sfBaseURL].value)),
 					APIKey:     strings.TrimSpace(string(p.fields[sfAPIKey].value)),
-					IsEmbed:    true,
 				}
 				return p, func() tea.Msg { return current }, false, false
 			}
-			p.updateEmbedModelFilter()
+			p.updateOracleModelFilter()
 		default:
 			if p.focusedBtn == 0 {
 				// Clear masked fields before entering edit so user types fresh value
@@ -364,6 +391,12 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 			} else if p.focusedBtn == 2 && msg.Type == tea.KeyLeft {
 				p.focusedBtn = 1
 			}
+		} else if p.focused == sfThinkingEffort {
+			delta := 1
+			if msg.Type == tea.KeyLeft {
+				delta = -1
+			}
+			p.fields[sfThinkingEffort].value = []rune(cycleEffort(string(p.fields[sfThinkingEffort].value), delta))
 		}
 	default:
 		s := msg.String()
@@ -422,31 +455,30 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 					return p, func() tea.Msg { return current }, false, false
 				}
 				p.updateModelFilter()
-			case sfEmbedModel:
+			case sfOracleModel:
 				if p.providerID == "ollama" || p.providerID == "custom" {
-					p.startEditing(sfEmbedModel)
-					msgText := fmt.Sprintf("Type embedding model name manually for %s.", p.providerID)
+					p.startEditing(sfOracleModel)
+					msgText := fmt.Sprintf("Type oracle model name manually for %s.", p.providerID)
 					return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 				}
 				if string(p.fields[sfAPIKey].value) == "" && p.providerID != "openrouter" {
-					p.startEditing(sfEmbedModel)
-					msgText := fmt.Sprintf("No API key provided for %s. Type embedding model name manually.", p.providerID)
+					p.startEditing(sfOracleModel)
+					msgText := fmt.Sprintf("No API key provided for %s. Type oracle model name manually.", p.providerID)
 					return p, func() tea.Msg { return errorMsg(msgText) }, false, false
 				}
 
-				p.isEmbedModelSelect = true
-				if len(p.availableEmbedModels) == 0 && !p.fetchingEmbedModels {
-					p.fetchEmbedError = ""
-					p.fetchingEmbedModels = true
+				p.isOracleModelSelect = true
+				if len(p.availableOracleModels) == 0 && !p.fetchingOracleModels {
+					p.fetchOracleError = ""
+					p.fetchingOracleModels = true
 					current := fetchModelsMsg{
 						ProviderID: p.providerID,
 						BaseURL:    strings.TrimSpace(string(p.fields[sfBaseURL].value)),
 						APIKey:     strings.TrimSpace(string(p.fields[sfAPIKey].value)),
-						IsEmbed:    true,
 					}
 					return p, func() tea.Msg { return current }, false, false
 				}
-				p.updateEmbedModelFilter()
+				p.updateOracleModelFilter()
 			default:
 				// Clear masked fields before entering edit so user types fresh value
 				if p.fields[p.focused].masked {

@@ -4,22 +4,6 @@ import (
 	"encoding/json"
 )
 
-// Types
-
-// ToolCall is a function invocation requested by the model.
-type ToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function FunctionCall `json:"function"`
-}
-
-// FunctionCall holds the name and XML-encoded arguments of a tool call.
-// Arguments are XML with CDATA support for safe embedding of code and special characters.
-type FunctionCall struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
 // ToolDef describes a tool available to the model.
 type ToolDef struct {
 	Type     string      `json:"type"`
@@ -207,102 +191,63 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name: "grep_files",
-			Description: "Search file contents using a regular expression (Read primitive). " +
-				"Returns matching lines with file path and line number. " +
-				"Use to locate specific code, config values, or patterns before editing.",
+			Name: "consult_oracle",
+			Description: "Consult the oracle model for high-stakes architectural, algorithmic, or structural decisions. " +
+				"Use when: (1) choosing between multiple architectural approaches, (2) solving non-trivial algorithmic problems, " +
+				"(3) deciding module boundaries, data flow, or folder structure, (4) making decisions with significant downstream impact, " +
+				"(5) you are uncertain which approach is best. The oracle has stronger reasoning but no tool access — it produces pure analysis, not actions. " +
+				"Provide maximal relevant context so the oracle can make an informed decision.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"pattern":{"type":"string","description":"Regular expression to search for"},
-					"path":{"type":"string","description":"File or directory to search (optional; default: current directory)"},
-					"recursive":{"type":"boolean","description":"Recurse into subdirectories (optional; default: true)"}
+					"task":{"type":"string","description":"The high-level goal or problem statement"},
+					"context":{"type":"string","description":"Relevant codebase context: file structure, key code excerpts, dependencies, constraints"},
+					"decision_point":{"type":"string","description":"The specific decision or question you need resolved"},
+					"constraints":{"type":"string","description":"Hard constraints that any solution must respect"}
 				},
-				"required":["pattern"]
+				"required":["task","decision_point"]
 			}`),
 		},
 	},
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name: "web_search",
-			Description: "Search the web for current information (Read primitive). " +
-				"Use when you need up-to-date facts, recent events, or information not in local files. " +
-				"Queries multiple search engines concurrently (Brave, DuckDuckGo, Startpage) and deduplicates results. " +
-				"Automatically falls back to working engines if some are unavailable.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"query":{"type":"string","description":"Search query"}
-				},
-				"required":["query"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "arxiv_search",
-			Description: "Search arXiv for academic papers (Read primitive). " +
-				"Use when you need research papers, scientific references, or peer-reviewed sources. " +
-				"Returns titles, authors, abstracts, and PDF links.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"query":{"type":"string","description":"Search query for arXiv papers"},
-					"max_results":{"type":"integer","description":"Maximum results to return (default 5, max 10)"}
-				},
-				"required":["query"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "web_fetch",
-			Description: "Fetch a URL and extract its text content (Read primitive). " +
-				"Use to read documentation pages, articles, or any web resource. " +
-				"Handles redirects, extracts main content from HTML, and supports plain text/JSON. " +
-				"Returns title and extracted text content.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"url":{"type":"string","description":"URL to fetch"},
-					"max_chars":{"type":"integer","description":"Maximum characters to return (default: unlimited)"}
-				},
-				"required":["url"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "run_javascript",
-			Description: "Execute JavaScript code for calculations, data processing, or logic (Execute primitive). " +
-				"Use instead of guessing math results. The last expression value is returned. " +
-				"Available: full ES5+, Math, JSON, console.log, Array methods. " +
-				"Extra helpers: sum(arr), mean(arr), round(v, decimals). " +
-				"Timeout: 10s. Use for: unit conversions, statistical calculations, data transformations, regex testing.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"code":{"type":"string","description":"JavaScript code to execute. Last expression is the return value."}
-				},
-				"required":["code"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name:        "reply",
-			Description: "Send a conversational reply to the user (Read primitive). Use for greetings, chitchat, clarifications, or when no system operations are needed.",
+			Name: "reply",
+			Description: "Send a conversational reply to the user. Use for greetings, chitchat, clarifications, or when no system operations are needed. Also use after completing a plan to present results.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"content":{"type":"string","description":"The conversational response to show the user"}
 				},
 				"required":["content"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "plan",
+			Description: "Create and execute a multi-step plan of operations. Use this when the task requires multiple coordinated steps (e.g., read a file, then edit it, then verify). For simple single-step tasks, call the tool directly instead.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"steps":{
+						"type":"array",
+						"description":"Ordered list of plan steps to execute",
+						"items":{
+							"type":"object",
+							"properties":{
+								"id":{"type":"string","description":"Unique step identifier (e.g. step1, step2)"},
+								"tool":{"type":"string","description":"Tool to call for this step"},
+								"description":{"type":"string","description":"Brief description of what this step does"},
+								"params":{"type":"object","description":"Tool parameters as key-value pairs"},
+								"depends_on":{"type":"array","items":{"type":"string"},"description":"IDs of steps that must complete before this one starts"}
+							},
+							"required":["id","tool","description","params"]
+						}
+					}
+				},
+				"required":["steps"]
 			}`),
 		},
 	},

@@ -35,7 +35,7 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		Tools:    tools,
 		Stream:   false,
 	}
-	body, err := json.Marshal(req)
+	body, err := a.marshalRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -160,16 +160,16 @@ func (a *Agent) completeStream(
 	tools []ToolDef,
 	emit func(token string),
 	emitThinking func(text string),
-) (string, string, error) {
+) (content string, finishReason string, toolCalls []ToolCall, promptTokens int, completionTokens int, err error) {
 	req := ChatRequest{
 		Model:    a.Model,
 		Messages: msgs,
 		Tools:    tools,
 		Stream:   true,
 	}
-	body, err := json.Marshal(req)
+	body, err := a.marshalRequest(req)
 	if err != nil {
-		return "", "", fmt.Errorf("marshal request: %w", err)
+		return "", "", nil, 0, 0, fmt.Errorf("marshal request: %w", err)
 	}
 
 	streamStart := time.Now()
@@ -187,7 +187,7 @@ func (a *Agent) completeStream(
 	for attempt := 1; attempt <= maxAPIAttempts; attempt++ {
 		httpReq, err := http.NewRequest("POST", a.Provider.ChatEndpoint(), bytes.NewReader(body))
 		if err != nil {
-			return "", "", fmt.Errorf("create request: %w", err)
+			return "", "", nil, 0, 0, fmt.Errorf("create request: %w", err)
 		}
 		httpReq.Header.Set(a.Provider.AuthHeader, a.Provider.AuthValue())
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -202,7 +202,7 @@ func (a *Agent) completeStream(
 				continue
 			}
 			a.logger.Error("llm.error", "model", a.Provider.Name, "error", err.Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", &apiCallError{
+			return "", "", nil, 0, 0, &apiCallError{
 				Message:          fmt.Sprintf("Stream request failed after %d attempts: %v", maxAPIAttempts, err),
 				RetriesExhausted: true,
 			}
@@ -222,11 +222,14 @@ func (a *Agent) completeStream(
 				continue
 			}
 			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, snippet)
+			return "", "", nil, 0, 0, fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, snippet)
 		}
 
 		var content strings.Builder
 		finishReason := ""
+		promptTokens := 0
+		completionTokens := 0
+		toolCallsByIndex := make(map[int]*ToolCall)
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1024*64), 1024*64)
 
@@ -253,9 +256,14 @@ func (a *Agent) completeStream(
 				finishReason = choice.FinishReason
 			}
 
+			// Track usage from streaming chunks
+			if chunk.Usage != nil {
+				promptTokens = chunk.Usage.PromptTokens
+				completionTokens = chunk.Usage.CompletionTokens
+			}
+
 			reasoning := choice.Delta.ReasoningContent
 			if reasoning != "" && emitThinking != nil {
-				content.WriteString(reasoning)
 				emitThinking(reasoning)
 			}
 
@@ -263,6 +271,24 @@ func (a *Agent) completeStream(
 			if delta != "" {
 				content.WriteString(delta)
 				emit(delta)
+			}
+
+			// Accumulate tool calls from delta
+			for _, tc := range choice.Delta.ToolCalls {
+				existing, ok := toolCallsByIndex[tc.Index]
+				if !ok {
+					toolCallsByIndex[tc.Index] = &ToolCall{
+						Index: tc.Index,
+						ID:    tc.ID,
+						Type:  tc.Type,
+						Function: FunctionCall{
+							Name:      tc.Function.Name,
+							Arguments: tc.Function.Arguments,
+						},
+					}
+				} else {
+					existing.Function.Arguments += tc.Function.Arguments
+				}
 			}
 		}
 		resp.Body.Close()
@@ -275,15 +301,31 @@ func (a *Agent) completeStream(
 				continue
 			}
 			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("stream read error: %w", err).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", fmt.Errorf("stream read error: %w", err)
+			return "", "", nil, 0, 0, fmt.Errorf("stream read error: %w", err)
+		}
+
+		// Collect accumulated tool calls (sorted by index)
+		var resultToolCalls []ToolCall
+		if len(toolCallsByIndex) > 0 {
+			maxIdx := 0
+			for idx := range toolCallsByIndex {
+				if idx > maxIdx {
+					maxIdx = idx
+				}
+			}
+			for i := 0; i <= maxIdx; i++ {
+				if tc, ok := toolCallsByIndex[i]; ok && tc.ID != "" {
+					resultToolCalls = append(resultToolCalls, *tc)
+				}
+			}
 		}
 
 		streamDur := time.Since(streamStart).Milliseconds()
-		a.logger.Info("llm.response", "model", a.Provider.Name, "content", content.String(), "latency_ms", streamDur)
-		return content.String(), finishReason, nil
+		a.logger.Info("llm.response", "model", a.Provider.Name, "content", content.String(), "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "latency_ms", streamDur)
+		return content.String(), finishReason, resultToolCalls, promptTokens, completionTokens, nil
 	}
 
-	return "", "", &apiCallError{Message: "Stream request retries exhausted", RetriesExhausted: true}
+	return "", "", nil, 0, 0, &apiCallError{Message: "Stream request retries exhausted", RetriesExhausted: true}
 }
 
 func (a *Agent) emitError(emit func(AgentEvent), err error) {

@@ -97,92 +97,94 @@ func (p *inlineSettings) clampModelOffset(pageSize int) {
 	}
 }
 
-func (p inlineSettings) updateEmbedModelSelect(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool, bool) {
+func (p inlineSettings) updateOracleModelSelect(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool, bool) {
 	const pageSize = 12
 	switch msg.Type {
 	case tea.KeyEsc:
-		p.isEmbedModelSelect = false
-		p.embedModelSearch = ""
+		p.isOracleModelSelect = false
+		p.oracleModelSearch = ""
 		return p, nil, false, false
 	case tea.KeyEnter:
-		if !p.fetchingEmbedModels && len(p.filteredEmbedModels) > 0 && p.embedModelListIdx >= 0 && p.embedModelListIdx < len(p.filteredEmbedModels) {
-			p.fields[sfEmbedModel].value = []rune(p.filteredEmbedModels[p.embedModelListIdx].ID)
-		} else if p.embedModelSearch != "" {
-			p.fields[sfEmbedModel].value = []rune(p.embedModelSearch)
+		if !p.fetchingOracleModels && len(p.filteredOracleModels) > 0 && p.oracleModelListIdx >= 0 && p.oracleModelListIdx < len(p.filteredOracleModels) {
+			p.fields[sfOracleModel].value = []rune(p.filteredOracleModels[p.oracleModelListIdx].ID)
+		} else if p.oracleModelSearch != "" {
+			p.fields[sfOracleModel].value = []rune(p.oracleModelSearch)
 		}
-		p.isEmbedModelSelect = false
-		p.embedModelSearch = ""
+		p.isOracleModelSelect = false
+		p.oracleModelSearch = ""
 		return p, nil, false, false
 	case tea.KeyUp:
-		if len(p.filteredEmbedModels) > 0 {
-			p.embedModelListIdx--
-			if p.embedModelListIdx < 0 {
-				p.embedModelListIdx = len(p.filteredEmbedModels) - 1
+		if len(p.filteredOracleModels) > 0 {
+			p.oracleModelListIdx--
+			if p.oracleModelListIdx < 0 {
+				p.oracleModelListIdx = len(p.filteredOracleModels) - 1
 			}
-			p.clampEmbedModelOffset(pageSize)
+			p.clampOracleModelOffset(pageSize)
 		}
 		return p, nil, false, false
 	case tea.KeyDown:
-		if len(p.filteredEmbedModels) > 0 {
-			p.embedModelListIdx++
-			if p.embedModelListIdx >= len(p.filteredEmbedModels) {
-				p.embedModelListIdx = 0
+		if len(p.filteredOracleModels) > 0 {
+			p.oracleModelListIdx++
+			if p.oracleModelListIdx >= len(p.filteredOracleModels) {
+				p.oracleModelListIdx = 0
 			}
-			p.clampEmbedModelOffset(pageSize)
+			p.clampOracleModelOffset(pageSize)
 		}
 		return p, nil, false, false
 	case tea.KeyPgUp:
-		p.embedModelListIdx -= pageSize
-		if p.embedModelListIdx < 0 {
-			p.embedModelListIdx = 0
+		p.oracleModelListIdx -= pageSize
+		if p.oracleModelListIdx < 0 {
+			p.oracleModelListIdx = 0
 		}
-		p.clampEmbedModelOffset(pageSize)
+		p.clampOracleModelOffset(pageSize)
 		return p, nil, false, false
 	case tea.KeyPgDown:
-		p.embedModelListIdx += pageSize
-		if p.embedModelListIdx >= len(p.filteredEmbedModels) {
-			p.embedModelListIdx = len(p.filteredEmbedModels) - 1
+		p.oracleModelListIdx += pageSize
+		if p.oracleModelListIdx >= len(p.filteredOracleModels) {
+			p.oracleModelListIdx = len(p.filteredOracleModels) - 1
 		}
-		p.clampEmbedModelOffset(pageSize)
+		p.clampOracleModelOffset(pageSize)
 		return p, nil, false, false
 	case tea.KeyBackspace, tea.KeyDelete:
-		if len(p.embedModelSearch) > 0 {
-			runes := []rune(p.embedModelSearch)
-			p.embedModelSearch = string(runes[:len(runes)-1])
-			p.updateEmbedModelFilter()
+		if len(p.oracleModelSearch) > 0 {
+			runes := []rune(p.oracleModelSearch)
+			p.oracleModelSearch = string(runes[:len(runes)-1])
+			p.updateOracleModelFilter()
 		}
 		return p, nil, false, false
 	default:
 		for _, r := range msg.Runes {
 			if unicode.IsPrint(r) {
-				p.embedModelSearch += string(r)
-				p.updateEmbedModelFilter()
+				p.oracleModelSearch += string(r)
+				p.updateOracleModelFilter()
 			}
 		}
 	}
 	return p, nil, false, false
 }
 
-func (p *inlineSettings) updateEmbedModelFilter() {
-	p.filteredEmbedModels = nil
-	p.embedModelListIdx = 0
-	p.embedModelListOffset = 0
-	s := strings.ToLower(p.embedModelSearch)
-	for _, m := range p.availableEmbedModels {
+func (p *inlineSettings) updateOracleModelFilter() {
+	p.filteredOracleModels = nil
+	p.oracleModelListIdx = 0
+	p.oracleModelListOffset = 0
+	s := strings.ToLower(p.oracleModelSearch)
+	for _, m := range p.availableOracleModels {
 		if strings.Contains(strings.ToLower(m.ID), s) || strings.Contains(strings.ToLower(m.Name), s) {
-			p.filteredEmbedModels = append(p.filteredEmbedModels, m)
+			p.filteredOracleModels = append(p.filteredOracleModels, m)
 		}
 	}
 }
 
-func (p *inlineSettings) clampEmbedModelOffset(pageSize int) {
-	if p.embedModelListIdx < p.embedModelListOffset {
-		p.embedModelListOffset = p.embedModelListIdx
+func (p *inlineSettings) clampOracleModelOffset(pageSize int) {
+	if p.oracleModelListIdx < p.oracleModelListOffset {
+		p.oracleModelListOffset = p.oracleModelListIdx
 	}
-	if p.embedModelListIdx >= p.embedModelListOffset+pageSize {
-		p.embedModelListOffset = p.embedModelListIdx - pageSize + 1
+	if p.oracleModelListIdx >= p.oracleModelListOffset+pageSize {
+		p.oracleModelListOffset = p.oracleModelListIdx - pageSize + 1
 	}
-	if p.embedModelListOffset < 0 {
-		p.embedModelListOffset = 0
+	if p.oracleModelListOffset < 0 {
+		p.oracleModelListOffset = 0
 	}
 }
+
+

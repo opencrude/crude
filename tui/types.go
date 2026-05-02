@@ -38,10 +38,11 @@ type AgentEventMsg struct {
 type Settings struct {
 	APIKey         string
 	Model          string
-	EmbedModel     string
+	OracleModel    string
 	ProviderID     string
 	ProviderURL    string
 	ProviderAPIKey string
+	ThinkingEffort string
 }
 
 // ModelEntry represents a model available on OpenRouter.
@@ -67,7 +68,6 @@ type fetchModelsMsg struct {
 	ProviderID string
 	BaseURL    string
 	APIKey     string
-	IsEmbed    bool
 }
 
 // saveSettingsMsg carries new settings back from the inline form.
@@ -82,11 +82,11 @@ type ModelsListMsg []ModelEntry
 // ModelsErrorMsg reports a model fetch failure.
 type ModelsErrorMsg string
 
-// EmbedModelsListMsg delivers fetched embedding models.
-type EmbedModelsListMsg []ModelEntry
+// OracleModelsListMsg delivers fetched oracle models.
+type OracleModelsListMsg []ModelEntry
 
-// EmbedModelsErrorMsg reports an embedding model fetch failure.
-type EmbedModelsErrorMsg string
+// OracleModelsErrorMsg reports an oracle model fetch failure.
+type OracleModelsErrorMsg string
 
 // selectionTickMsg is sent by the auto-scroll timer during text selection.
 type selectionTickMsg time.Time

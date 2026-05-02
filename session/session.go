@@ -10,12 +10,9 @@ import (
 	"time"
 
 	"crude/agent"
-	"crude/dag"
-	"crude/embed"
 	"crude/fileio"
 	"crude/logger"
 	"crude/provider"
-	"crude/rag"
 	"crude/safety"
 	"crude/statemachine"
 	"crude/tools"
@@ -28,10 +25,11 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	APIKey      string `json:"api_key,omitempty"`
-	Model       string `json:"model,omitempty"`
-	EmbedModel  string `json:"embed_model,omitempty"`
-	ProviderURL string `json:"provider_url,omitempty"`
+	APIKey         string `json:"api_key,omitempty"`
+	Model          string `json:"model,omitempty"`
+	OracleModel    string `json:"oracle_model,omitempty"`
+	ProviderURL    string `json:"provider_url,omitempty"`
+	ThinkingEffort string `json:"thinking_effort,omitempty"`
 }
 
 type Session struct {
@@ -43,7 +41,6 @@ type Session struct {
 	editor    *fileio.Editor
 	logger    *logger.Logger
 	permStore *safety.PermissionStore
-	ragEngine *rag.Engine
 	sm        *statemachine.ConversationStateMachine
 
 	msgs          []agent.APIMessage
@@ -57,7 +54,6 @@ type Session struct {
 
 	sessionID    string
 	sessionStart time.Time
-	ragCacheDir  string
 	knowledgeDir string
 }
 
@@ -77,16 +73,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		return nil, fmt.Errorf("logger: %w", err)
 	}
 	lg.Info("session.start", "version", "1.0")
-	lg.Info("session.config", "provider", cfg.ActiveProvider, "model", activeCfg.Model, "embed_model", activeCfg.EmbedModel)
-
-	ragCacheDir := filepath.Join(homeDir, ".crude", "rag")
-	embedClient := embed.NewClient(activeCfg.APIKey, activeCfg.EmbedModel, p.BaseURL)
-	ragEngine := rag.New(embedClient, ragCacheDir)
-
-	knowledgeDir := filepath.Join(homeDir, ".crude", "knowledge")
-	if err := loadKnowledgeBase(ragEngine, knowledgeDir, lg); err != nil {
-		lg.Info("agent.reflection", "content", fmt.Sprintf("knowledge base load error: %v", err))
-	}
+	lg.Info("session.config", "provider", cfg.ActiveProvider, "model", activeCfg.Model)
 
 	permStore := safety.NewPermissionStore()
 
@@ -107,21 +94,28 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		editor:       editor,
 		logger:       lg,
 		permStore:    permStore,
-		ragEngine:    ragEngine,
 		sm:           sm,
 		sessionID:    sessionID,
 		sessionStart: time.Now(),
-		ragCacheDir:  ragCacheDir,
-		knowledgeDir: knowledgeDir,
 	}, nil
+}
+
+func (s *Session) HasMessages() bool {
+	s.msgCounterMu.Lock()
+	defer s.msgCounterMu.Unlock()
+	return s.msgCounter > 0
 }
 
 func (s *Session) Close() {
 	if s.editor != nil {
 		s.editor.Close()
 	}
+	hasMsgs := s.HasMessages()
 	s.logger.Info("session.end", "duration_ms", 0)
 	s.logger.Close()
+	if !hasMsgs {
+		os.Remove(s.logger.Path())
+	}
 }
 
 func (c *Config) GetActiveProviderConfig() ProviderConfig {
@@ -156,24 +150,95 @@ func (s *Session) Editor() *fileio.Editor { return s.editor }
 
 func (s *Session) Config() *Config { return s.cfg }
 
+// thinkingBudget maps effort levels to token budgets.
+func thinkingBudget(effort string) int {
+	switch effort {
+	case "low":
+		return 1000
+	case "medium":
+		return 2000
+	case "high":
+		return 4000
+	default:
+		return 2000
+	}
+}
+
+// thinkingParamsForProvider returns provider-specific request fields that enable
+// reasoning/thinking content in streaming responses.
+func thinkingParamsForProvider(providerID, effort string) map[string]any {
+	if effort == "" || effort == "auto" {
+		effort = "medium"
+	}
+	budget := thinkingBudget(effort)
+
+	switch providerID {
+	case "openrouter":
+		return map[string]any{
+			"include_reasoning": true,
+		}
+	case "openai":
+		return map[string]any{
+			"reasoning_effort": effort,
+		}
+	case "anthropic":
+		return map[string]any{
+			"thinking": map[string]any{"type": "enabled", "budget_tokens": budget},
+		}
+	case "google":
+		return map[string]any{
+			"thinking_config": map[string]any{
+				"thinking_budget":  budget,
+				"include_thoughts": true,
+			},
+		}
+	case "deepseek":
+		// DeepSeek returns reasoning automatically; no extra param needed.
+		return nil
+	case "groq":
+		return map[string]any{
+			"reasoning_format": "raw",
+		}
+	default:
+		return nil
+	}
+}
+
 func (s *Session) newAgent() *agent.Agent {
 	activeCfg := s.cfg.GetActiveProviderConfig()
 	a := agent.NewAgent(s.provider, activeCfg.Model, s.logger)
+
+	oracleModel := activeCfg.OracleModel
+	oracleProvider := s.provider
+	if oracleModel == "" {
+		oracleModel = activeCfg.Model // fallback to worker model
+	}
+	a.OracleProvider = oracleProvider
+	a.OracleModel = oracleModel
+
 	a.ToolFn = func(tool string, params map[string]any) (string, error) {
-		tc := tools.ToolCall{
-			ID:   fmt.Sprintf("dag-%s", tool),
-			Type: "function",
-			Function: tools.FunctionCall{
-				Name:      tool,
-				Arguments: mustXMLArgs(params),
-			},
+		if tool == "consult_oracle" {
+			s.logger.Info("oracle.consult", "task", params["task"], "decision_point", params["decision_point"])
+			query := agent.OracleQuery{
+				Task:          getStrParam(params, "task"),
+				Context:       getStrParam(params, "context"),
+				DecisionPoint: getStrParam(params, "decision_point"),
+				Constraints:   getStrParam(params, "constraints"),
+			}
+			resp, err := agent.ConsultOracle(oracleProvider, oracleModel, query)
+			if err != nil {
+				s.logger.Error("oracle.error", "error", err.Error())
+				return "", fmt.Errorf("oracle consultation failed: %w", err)
+			}
+			return agent.FormatOracleResponse(resp), nil
 		}
-		result := tools.Execute(tc, s.exec, s.editor)
+		result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor)
 		if strings.HasPrefix(result, "Error:") {
 			return result, fmt.Errorf("%s", result)
 		}
 		return result, nil
 	}
+	a.ExtraBody = thinkingParamsForProvider(s.provider.ID, activeCfg.ThinkingEffort)
 	return a
 }
 
@@ -242,11 +307,6 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 
 	s.cfg = newCfg
 	s.provider = provider.FromPreset(s.cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
-	embedClient := embed.NewClient(activeCfg.APIKey, activeCfg.EmbedModel, s.provider.BaseURL)
-	s.ragEngine = rag.New(embedClient, s.ragCacheDir)
-	if err := loadKnowledgeBase(s.ragEngine, s.knowledgeDir, s.logger); err != nil {
-		s.logger.Info("agent.reflection", "content", fmt.Sprintf("knowledge base reload error: %v", err))
-	}
 	return nil
 }
 
@@ -305,7 +365,6 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 
 		s.logger.Info("agent.loop_start", "content", userText, "iteration", 0)
 		s.sm.CreateGoal(s.sessionID, "respond", userText, statemachine.PriorityNormal, false)
-		s.ragEngine.ResetObservations()
 
 		if s.editor != nil {
 			s.editor = s.editor.WithMessage(currentMsgID)
@@ -319,7 +378,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			if evt.Type == "blocking" {
 				data, _ := evt.Data.(map[string]string)
 				if data != nil {
-					op := dag.CRUDEOp(data["operation"])
+					op := safety.CRUDEOp(data["operation"])
 					tool := data["tool"]
 					target := data["target"]
 					if s.permStore.IsAlwaysAllowed(op, tool, target) {
@@ -335,7 +394,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 			if evt.Type == "confirmation_always" {
 				if data, ok := evt.Data.(map[string]string); ok {
-					op := dag.CRUDEOp(data["operation"])
+					op := safety.CRUDEOp(data["operation"])
 					tool := data["tool"]
 					target := data["target"]
 					s.permStore.GrantAlways(op, tool, target)
@@ -348,7 +407,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					finalContent = content
 				}
 			}
-		}, s.ragEngine, blockResolveCh, s.sm, s.sessionID)
+		}, blockResolveCh, s.sm, s.sessionID)
 
 		s.logger.Info("agent.loop_end", "content", finalContent, "iteration", 1)
 		s.blockMu.Lock()
@@ -375,53 +434,21 @@ func (s *Session) ModelName() string {
 	return s.cfg.GetActiveProviderConfig().Model
 }
 
-func loadKnowledgeBase(ragEngine *rag.Engine, dir string, lg *logger.Logger) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	docs := make(map[string]string)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		ext := strings.ToLower(filepath.Ext(name))
-		if ext != ".txt" && ext != ".md" {
-			continue
-		}
-		content, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			lg.Error("fileio.read", "path", name, "latency_ms", 0, "error", err.Error())
-			continue
-		}
-		docs[name] = string(content)
-	}
-
-	if len(docs) == 0 {
-		return nil
-	}
-	lg.Info("agent.reflection", "content", fmt.Sprintf("loading %d knowledge base document(s)", len(docs)))
-	return ragEngine.AddDocuments(docs)
-}
-
 func ConfigToSettings(cfg *Config) tui.Settings {
 	providerID := cfg.EffectiveProviderID()
 
 	providerURL := ""
 	apiKey := ""
 	model := ""
-	embedModel := ""
+	oracleModel := ""
+	thinkingEffort := ""
 
 	if pc, ok := cfg.Providers[providerID]; ok {
 		providerURL = pc.ProviderURL
 		apiKey = pc.APIKey
 		model = pc.Model
-		embedModel = pc.EmbedModel
+		oracleModel = pc.OracleModel
+		thinkingEffort = pc.ThinkingEffort
 	}
 
 	if providerURL == "" {
@@ -435,10 +462,11 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 	return tui.Settings{
 		APIKey:         apiKey,
 		Model:          model,
-		EmbedModel:     embedModel,
+		OracleModel:    oracleModel,
 		ProviderID:     providerID,
 		ProviderURL:    providerURL,
 		ProviderAPIKey: apiKey,
+		ThinkingEffort: thinkingEffort,
 	}
 }
 
@@ -458,16 +486,27 @@ func settingsToConfig(s tui.Settings, base *Config) *Config {
 		providers = make(map[string]ProviderConfig)
 	}
 	providers[providerID] = ProviderConfig{
-		APIKey:      apiKey,
-		Model:       s.Model,
-		EmbedModel:  s.EmbedModel,
-		ProviderURL: s.ProviderURL,
+		APIKey:         apiKey,
+		Model:          s.Model,
+		OracleModel:    s.OracleModel,
+		ProviderURL:    s.ProviderURL,
+		ThinkingEffort: s.ThinkingEffort,
 	}
 
 	return &Config{
 		ActiveProvider: providerID,
 		Providers:      providers,
 	}
+}
+
+func getStrParam(params map[string]any, key string) string {
+	if v, ok := params[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
 }
 
 func ResolveUsername() string {
@@ -483,18 +522,4 @@ func ResolveUsername() string {
 	return "user"
 }
 
-func mustXMLArgs(m map[string]any) string {
-	var sb strings.Builder
-	sb.WriteString("<args>")
-	for k, v := range m {
-		sb.WriteString(`<param name="`)
-		sb.WriteString(k)
-		sb.WriteString(`">`)
-		sb.WriteString("<![CDATA[")
-		sb.WriteString(fmt.Sprintf("%v", v))
-		sb.WriteString("]]>")
-		sb.WriteString("</param>")
-	}
-	sb.WriteString("</args>")
-	return sb.String()
-}
+

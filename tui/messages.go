@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"crude/xmlcodec"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -19,8 +18,9 @@ var availableCmds = []slashCmd{
 	{name: "/settings", label: "settings", desc: "Open general settings"},
 	{name: "/provider", label: "provider", desc: "Select provider"},
 	{name: "/model", label: "model", desc: "Select model"},
-	{name: "/embed-model", label: "embed model", desc: "Select embedding model"},
+	{name: "/oracle-model", label: "oracle model", desc: "Select oracle (reasoning) model"},
 	{name: "/api-key", label: "api key", desc: "Set API key"},
+	{name: "/effort", label: "effort", desc: "Cycle thinking effort (auto/low/medium/high)"},
 	{name: "/undo", label: "undo", desc: "Undo last file operation"},
 	{name: "/undo-n", label: "undo N", desc: "Undo last N file operations"},
 	{name: "/undo-all", label: "undo all", desc: "Undo all file operations this session"},
@@ -31,6 +31,7 @@ var availableCmds = []slashCmd{
 func (m *Model) updateSlashFilter() {
 	m.slashFiltered = nil
 	m.slashIdx = 0
+	m.slashListOffset = 0
 	s := strings.ToLower(m.slashFilter)
 	for _, c := range availableCmds {
 		if strings.HasPrefix(c.name, s) || strings.Contains(strings.ToLower(c.desc), s) {
@@ -47,7 +48,8 @@ func formatSettingsSummary(s Settings) string {
 	b.WriteString(fmt.Sprintf("  base url      %s\n", valueOr(s.ProviderURL, "-")))
 	b.WriteString(fmt.Sprintf("  api key       %s\n", maskOr(s.APIKey, "-")))
 	b.WriteString(fmt.Sprintf("  model         %s\n", valueOr(s.Model, "-")))
-	b.WriteString(fmt.Sprintf("  embed model   %s\n", valueOr(s.EmbedModel, "-")))
+	b.WriteString(fmt.Sprintf("  oracle model  %s\n", valueOr(s.OracleModel, "-")))
+	b.WriteString(fmt.Sprintf("  thinking      %s\n", valueOr(s.ThinkingEffort, "auto")))
 	b.WriteString("```")
 	return b.String()
 }
@@ -80,68 +82,57 @@ func formatTokens(n int) string {
 	}
 }
 
-// summarizeToolArgs extracts a compact, user-friendly summary from tool args XML.
-func summarizeToolArgs(tool, argsXML string) string {
-	m, err := xmlcodec.ParseParams(argsXML)
-	if err != nil {
-		return truncateLine(argsXML, 60)
+// summarizeToolArgs extracts a compact, user-friendly summary from tool args.
+func summarizeToolArgs(tool, argsStr string) string {
+	path := extractArg(argsStr, "path")
+	if path != "" {
+		return path
 	}
-
-	switch tool {
-	case "read_file", "write_file", "delete_file":
-		if p, ok := m["path"]; ok {
-			return p
-		}
-	case "edit_file":
-		p, _ := m["path"]
-		return p
-	case "list_directory":
-		if p, ok := m["path"]; ok {
-			return p
-		}
-		return "."
-	case "glob_files":
-		if p, ok := m["pattern"]; ok {
-			return p
-		}
-	case "grep_files":
-		pat, _ := m["pattern"]
-		path, _ := m["path"]
-		if path != "" {
-			return fmt.Sprintf("%s in %s", pat, path)
-		}
-		return pat
-	case "execute_command":
-		if cmd, ok := m["command"]; ok {
-			return truncateLine(cmd, 60)
-		}
-	case "web_search":
-		if q, ok := m["query"]; ok {
-			return truncateLine(q, 60)
-		}
-	case "web_fetch":
-		if u, ok := m["url"]; ok {
-			return truncateLine(u, 60)
-		}
-	case "arxiv_search":
-		if q, ok := m["query"]; ok {
-			return truncateLine(q, 60)
-		}
-	case "run_javascript":
-		if code, ok := m["code"]; ok {
-			lines := strings.Split(code, "\n")
-			if len(lines) > 1 {
-				return truncateLine(lines[0], 60)
-			}
-			return truncateLine(code, 60)
-		}
-	case "reply", "blocking":
-		return ""
+	if pattern := extractArg(argsStr, "pattern"); pattern != "" {
+		return pattern
 	}
+	if command := extractArg(argsStr, "command"); command != "" {
+		return truncateLine(command, 50)
+	}
+	if content := extractArg(argsStr, "content"); content != "" {
+		return truncateLine(content, 50) + " (content)"
+	}
+	if query := extractArg(argsStr, "query"); query != "" {
+		return truncateLine(query, 50)
+	}
+	if url := extractArg(argsStr, "url"); url != "" {
+		return truncateLine(url, 50)
+	}
+	if source := extractArg(argsStr, "source"); source != "" {
+		dest := extractArg(argsStr, "destination")
+		if dest != "" {
+			return fmt.Sprintf("%s → %s", source, dest)
+		}
+		return source
+	}
+	if code := extractArg(argsStr, "code"); code != "" {
+		return truncateLine(code, 50)
+	}
+	return truncateLine(argsStr, 60)
+}
 
-	// Fallback: show first string value found
-	for _, v := range m {
-		return truncateLine(v, 60)
+func extractArg(str, key string) string {
+	// Try Go map syntax: map[path:main.go] or {path: main.go}
+	prefixes := []string{key + ":", key + ": "}
+	for _, prefix := range prefixes {
+		idx := strings.Index(str, prefix)
+		if idx == -1 {
+			continue
+		}
+		start := idx + len(prefix)
+		if start >= len(str) {
+			return ""
+		}
+		end := strings.IndexAny(str[start:], " ,}]")
+		if end == -1 {
+			return strings.TrimSpace(str[start:])
+		}
+		return strings.TrimSpace(str[start : start+end])
 	}
 	return ""
 }

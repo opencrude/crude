@@ -18,7 +18,7 @@ func (p inlineSettings) updateProviderSelect(msg tea.KeyMsg) (inlineSettings, te
 					savedCfg := p.getProviderConfigFn(selected.ID)
 					p.fields[sfAPIKey].value = []rune(savedCfg.APIKey)
 					p.fields[sfModel].value = []rune(savedCfg.Model)
-					p.fields[sfEmbedModel].value = []rune(savedCfg.EmbedModel)
+					p.fields[sfOracleModel].value = []rune(savedCfg.OracleModel)
 					if savedCfg.ProviderURL != "" {
 						p.fields[sfBaseURL].value = []rune(savedCfg.ProviderURL)
 					} else {
@@ -28,18 +28,12 @@ func (p inlineSettings) updateProviderSelect(msg tea.KeyMsg) (inlineSettings, te
 					// No callback, just use preset defaults
 					p.fields[sfBaseURL].value = []rune(selected.BaseURL)
 					p.fields[sfModel].value = nil
-					p.fields[sfEmbedModel].value = nil
 				}
 				// Clear model selection state since provider changed
 				p.availableModels = nil
 				p.filteredModels = nil
 				p.fetchError = ""
 				p.fetchingModels = false
-
-				p.availableEmbedModels = nil
-				p.filteredEmbedModels = nil
-				p.fetchEmbedError = ""
-				p.fetchingEmbedModels = false
 			}
 			p.providerID = selected.ID
 			p.fields[sfProvider].value = []rune(selected.ID)

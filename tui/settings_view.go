@@ -113,47 +113,47 @@ func (p *inlineSettings) View(spinFrame int) string {
 		return b.String()
 	}
 
-	if p.isEmbedModelSelect {
+	if p.isOracleModelSelect {
 		const pageSize = 12
 		accentStyle := lipgloss.NewStyle().Foreground(colorAccent)
 		errorStyle := lipgloss.NewStyle().Foreground(colorError)
 		highlightStyle := lipgloss.NewStyle().Foreground(colorMainText).Background(lipgloss.Color("#1e2a3a"))
 
-		b.WriteString(accentStyle.Bold(true).Render("  embed model select"))
-		if p.fetchingEmbedModels {
+		b.WriteString(accentStyle.Bold(true).Render("  oracle model select"))
+		if p.fetchingOracleModels {
 			b.WriteString(dim.Render("  fetching models..."))
-		} else if len(p.availableEmbedModels) > 0 {
-			b.WriteString(dim.Render(fmt.Sprintf("  %d/%d", len(p.filteredEmbedModels), len(p.availableEmbedModels))))
+		} else if len(p.availableOracleModels) > 0 {
+			b.WriteString(dim.Render(fmt.Sprintf("  %d/%d", len(p.filteredOracleModels), len(p.availableOracleModels))))
 		}
 		b.WriteString("\n")
 
-		if p.fetchEmbedError != "" {
-			b.WriteString(errorStyle.Render("  ✗ "+p.fetchEmbedError) + "\n")
+		if p.fetchOracleError != "" {
+			b.WriteString(errorStyle.Render("  ✗ "+p.fetchOracleError) + "\n")
 		} else {
 			searchPrompt := accentStyle.Render("  / ")
-			searchText := lipgloss.NewStyle().Foreground(colorMainText).Render(p.embedModelSearch)
+			searchText := lipgloss.NewStyle().Foreground(colorMainText).Render(p.oracleModelSearch)
 			cursor := blockCursor(spinFrame, colorAccent)
 			b.WriteString(searchPrompt + searchText + cursor + "\n")
 		}
 
 		b.WriteString(dim.Render("  "+strings.Repeat("─", 54)) + "\n")
 
-		if p.fetchingEmbedModels {
+		if p.fetchingOracleModels {
 			b.WriteString(dim.Render("  waiting for models...") + "\n")
-		} else if len(p.filteredEmbedModels) == 0 {
-			if p.embedModelSearch != "" {
+		} else if len(p.filteredOracleModels) == 0 {
+			if p.oracleModelSearch != "" {
 				b.WriteString(dim.Render("  no matches — press enter to use typed value") + "\n")
 			} else {
 				b.WriteString(dim.Render("  no models available") + "\n")
 			}
 		} else {
-			end := p.embedModelListOffset + pageSize
-			if end > len(p.filteredEmbedModels) {
-				end = len(p.filteredEmbedModels)
+			end := p.oracleModelListOffset + pageSize
+			if end > len(p.filteredOracleModels) {
+				end = len(p.filteredOracleModels)
 			}
-			for i := p.embedModelListOffset; i < end; i++ {
-				m := p.filteredEmbedModels[i]
-				selected := i == p.embedModelListIdx
+			for i := p.oracleModelListOffset; i < end; i++ {
+				m := p.filteredOracleModels[i]
+				selected := i == p.oracleModelListIdx
 
 				idStr := m.ID
 				if len([]rune(idStr)) > 44 {
@@ -172,25 +172,25 @@ func (p *inlineSettings) View(spinFrame int) string {
 
 		b.WriteString(dim.Render("  "+strings.Repeat("─", 54)) + "\n")
 		footer := "  ↑↓ navigate · enter select · esc cancel"
-		if !p.fetchingEmbedModels && len(p.filteredEmbedModels) > 0 {
-			end := p.embedModelListOffset + pageSize
-			if end > len(p.filteredEmbedModels) {
-				end = len(p.filteredEmbedModels)
+		if !p.fetchingOracleModels && len(p.filteredOracleModels) > 0 {
+			end := p.oracleModelListOffset + pageSize
+			if end > len(p.filteredOracleModels) {
+				end = len(p.filteredOracleModels)
 			}
-			if p.embedModelListOffset > 0 || end < len(p.filteredEmbedModels) {
-				scrollHint := fmt.Sprintf("  %d–%d of %d", p.embedModelListOffset+1, end, len(p.filteredEmbedModels))
-				if p.embedModelListOffset > 0 {
+			if p.oracleModelListOffset > 0 || end < len(p.filteredOracleModels) {
+				scrollHint := fmt.Sprintf("  %d–%d of %d", p.oracleModelListOffset+1, end, len(p.filteredOracleModels))
+				if p.oracleModelListOffset > 0 {
 					scrollHint += " · ↑pgup"
 				}
-				if end < len(p.filteredEmbedModels) {
+				if end < len(p.filteredOracleModels) {
 					scrollHint += " · ↓pgdn"
 				}
 				footer = scrollHint + " · enter select · esc cancel"
 			}
 		}
 		b.WriteString(dim.Render(footer) + "\n")
-		if p.fetchingEmbedModels && p.embedModelSearch != "" {
-			b.WriteString(dim.Render("  enter will use: ") + lipgloss.NewStyle().Foreground(colorMainText).Render(p.embedModelSearch) + "\n")
+		if p.fetchingOracleModels && p.oracleModelSearch != "" {
+			b.WriteString(dim.Render("  enter will use: ") + lipgloss.NewStyle().Foreground(colorMainText).Render(p.oracleModelSearch) + "\n")
 		}
 		return b.String()
 	}
@@ -245,7 +245,13 @@ func (p *inlineSettings) View(spinFrame int) string {
 		if focused {
 			indicator = lipgloss.NewStyle().Foreground(colorAccent).Render("❯ ")
 		}
-		b.WriteString(indicator + labelStyled + " " + valueStyled + "\n")
+		if idx == sfThinkingEffort && focused {
+			leftArrow := lipgloss.NewStyle().Foreground(colorMuted).Render("← ")
+			rightArrow := lipgloss.NewStyle().Foreground(colorMuted).Render(" →")
+			b.WriteString(indicator + labelStyled + " " + leftArrow + valueStyled + rightArrow + "\n")
+		} else {
+			b.WriteString(indicator + labelStyled + " " + valueStyled + "\n")
+		}
 	}
 
 	b.WriteString("\n")
