@@ -13,6 +13,9 @@ type TUI struct {
 	InputCh <-chan string
 	doneCh  chan struct{}
 
+	// CancelCh is sent to when the user cancels the current agent operation.
+	CancelCh chan struct{}
+
 	// OnQuit is called when the user exits the TUI.
 	OnQuit func()
 
@@ -55,9 +58,11 @@ var global *TUI
 // initial is the current settings to pre-populate the settings panel.
 func Start(modelName string, username string, initial Settings, presets []ProviderPreset, history []string) (*TUI, error) {
 	inputCh := make(chan string, 8)
+	cancelCh := make(chan struct{}, 1)
 
 	t := &TUI{
 		InputCh:         inputCh,
+		CancelCh:        cancelCh,
 		doneCh:          make(chan struct{}),
 		ProviderPresets: presets,
 	}
@@ -90,7 +95,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return ProviderConfig{}
 	}
 
-	model := NewModel(modelName, username, inputCh, initial, onSave, fetchFn, getProviderCfgFn)
+	model := NewModel(modelName, username, inputCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn)
 	model.SetProviderPresets(t.ProviderPresets)
 	model.SetHistory(history)
 	model.OnConfirmResult = func(result ConfirmResult) {

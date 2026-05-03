@@ -46,6 +46,7 @@ type Model struct {
 	// Timing
 	startTime      time.Time
 	lastCancelTime time.Time
+	lastVisualCol  int // preserved visual column for vertical navigation in wrapped input
 
 	// Error bar
 	lastError string
@@ -53,6 +54,9 @@ type Model struct {
 
 	// Input channel — written via Cmd so it's safe.
 	inputCh chan<- string
+
+	// Cancel channel — signalled when user cancels the current agent operation.
+	cancelCh chan<- struct{}
 
 	// Inline settings
 	settingsActive      bool
@@ -112,12 +116,14 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model.
-func NewModel(modelName string, username string, inputCh chan<- string, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(providerID string) ProviderConfig) *Model {
+func NewModel(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(providerID string) ProviderConfig) *Model {
 	return &Model{
 		modelName:           modelName,
 		username:            username,
 		inputCh:             inputCh,
+		cancelCh:            cancelCh,
 		startTime:           time.Now(),
+		lastVisualCol:       -1,
 		width:               80,
 		height:              24,
 		inlineForm:          newInlineSettings(initial, getProviderConfigFn),

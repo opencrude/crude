@@ -130,50 +130,132 @@ func (m *Model) chatView() string {
 			inputContent = pad + dim.Italic(true).Render("▶ waiting for response...")
 		} else if m.inputSelecting {
 			lines := m.inputLines()
-			for i, il := range lines {
-				prefix := "  "
-				if i == 0 {
-					prefix = "❯ "
+			textW := m.inputTextWidth()
+			selStart, selEnd := m.inputSelectionRange()
+			var inputLines []string
+
+			bufPos := 0
+			for li, logLine := range lines {
+				logStr := string(logLine)
+				segments := hardWrap(logStr, textW)
+
+				for _, seg := range segments {
+					prefix := "❯ "
+					if li > 0 || bufPos > 0 {
+						prefix = "  "
+					}
+					segRunes := []rune(seg)
+					segStart := bufPos
+					segEnd := bufPos + len(segRunes)
+
+					rendered := pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+seg)
+					if selStart < segEnd && selEnd > segStart {
+						localStart := selStart - segStart
+						if localStart < 0 {
+							localStart = 0
+						}
+						localEnd := selEnd - segStart
+						if localEnd > len(segRunes) {
+							localEnd = len(segRunes)
+						}
+						if localEnd > localStart {
+							startCol := padLR + 2
+							for j := 0; j < localStart; j++ {
+								startCol += runewidth.RuneWidth(segRunes[j])
+							}
+							endCol := startCol
+							for j := localStart; j < localEnd; j++ {
+								endCol += runewidth.RuneWidth(segRunes[j])
+							}
+							rendered = applySelectionReverse(rendered, startCol, endCol)
+						}
+					}
+					inputLines = append(inputLines, rendered)
 				}
-				lineStr := string(il)
-				rendered := pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+lineStr)
-				startCol, endCol := m.inputSelVisibleRange(i)
-				if startCol >= 0 && endCol > startCol {
-					rendered = applySelectionReverse(rendered, startCol, endCol)
-				}
-				inputContent += rendered
-				if i < len(lines)-1 {
-					inputContent += "\n"
+
+				bufPos += len(logLine)
+				if li < len(lines)-1 {
+					bufPos++ // account for \n between logical lines
 				}
 			}
+
+			inputContent = strings.Join(inputLines, "\n")
 		} else {
 			lines := m.inputLines()
 			curLine, curCol := m.cursorLineCol()
-			for i, il := range lines {
-				prefix := "  "
-				if i == 0 {
-					prefix = "❯ "
-				}
-				lineStr := string(il)
-				if i == curLine {
-					left := string(il[:curCol])
-					right := string(il[curCol:])
-					var cursorAndRight string
-					if curCol < len(il) {
-						underCursor := string(il[curCol : curCol+1])
-						rest := string(il[curCol+1:])
-						cursorAndRight = lipgloss.NewStyle().Reverse(true).Render(underCursor) + lipgloss.NewStyle().Foreground(colorMainText).Render(rest)
-					} else {
-						cursorAndRight = blockCursor(m.spinFrame, colorAccent) + lipgloss.NewStyle().Foreground(colorMainText).Render(right)
+			textW := m.inputTextWidth()
+
+			cursorLineWidth := 0
+			if curLine < len(lines) {
+				cursorLineWidth = runewidth.StringWidth(string(lines[curLine][:curCol]))
+			}
+
+			var inputLines []string
+
+			for li, logLine := range lines {
+				logStr := string(logLine)
+				segments := hardWrap(logStr, textW)
+
+				cursorSeg := -1
+				cursorSegOffset := 0
+				if li == curLine {
+					accumW := 0
+					for si, seg := range segments {
+						segW := runewidth.StringWidth(seg)
+						if cursorLineWidth <= accumW+segW {
+							cursorSeg = si
+							cursorSegOffset = cursorLineWidth - accumW
+							if cursorSegOffset < 0 {
+								cursorSegOffset = 0
+							}
+							break
+						}
+						accumW += segW
 					}
-					inputContent += pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+left) + cursorAndRight
-				} else {
-					inputContent += pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+lineStr)
+					if cursorSeg == -1 && len(segments) > 0 {
+						cursorSeg = len(segments) - 1
+						cursorSegOffset = runewidth.StringWidth(segments[len(segments)-1])
+					}
 				}
-				if i < len(lines)-1 {
-					inputContent += "\n"
+
+				for si, seg := range segments {
+					prefix := "❯ "
+					if li > 0 || si > 0 {
+						prefix = "  "
+					}
+
+					var line string
+					if li == curLine && si == cursorSeg {
+						leftW := 0
+						splitIdx := 0
+						segRunes := []rune(seg)
+						for splitIdx < len(segRunes) && leftW < cursorSegOffset {
+							leftW += runewidth.RuneWidth(segRunes[splitIdx])
+							if leftW > cursorSegOffset {
+								break
+							}
+							splitIdx++
+						}
+						leftSeg := string(segRunes[:splitIdx])
+						rightSeg := string(segRunes[splitIdx:])
+
+						var cursorAndRight string
+						if splitIdx < len(segRunes) {
+							underCursor := string(segRunes[splitIdx : splitIdx+1])
+							rest := string(segRunes[splitIdx+1:])
+							cursorAndRight = lipgloss.NewStyle().Reverse(true).Render(underCursor) + lipgloss.NewStyle().Foreground(colorMainText).Render(rest)
+						} else {
+							cursorAndRight = blockCursor(m.spinFrame, colorAccent) + lipgloss.NewStyle().Foreground(colorMainText).Render(rightSeg)
+						}
+						line = pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+leftSeg) + cursorAndRight
+					} else {
+						line = pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+seg)
+					}
+					inputLines = append(inputLines, line)
 				}
 			}
+
+			inputContent = strings.Join(inputLines, "\n")
 		}
 		for _, il := range strings.Split(inputContent, "\n") {
 			addFull(il)
@@ -289,7 +371,7 @@ func (m *Model) chatAreaHeight() int {
 		}
 		return h
 	}
-	inputLineCount := 1 + strings.Count(string(m.inputBuf), "\n")
+	inputLineCount := m.visualLineCount()
 	slashLines := 0
 	inputStr := string(m.inputBuf)
 	if m.slashActive && !m.thinking && !strings.Contains(inputStr, "\n") {
@@ -626,6 +708,154 @@ func wrapText(text string, width int) []string {
 		result = []string{""}
 	}
 	return result
+}
+
+// inputTextWidth returns the available display width for input text.
+func (m *Model) inputTextWidth() int {
+	w := m.width - padLR - 2
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+// hardWrap breaks a string into segments each fitting within maxWidth display cells.
+func hardWrap(s string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{s}
+	}
+	var result []string
+	var cur strings.Builder
+	curW := 0
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if curW+rw > maxWidth && curW > 0 {
+			result = append(result, cur.String())
+			cur.Reset()
+			curW = 0
+		}
+		cur.WriteRune(r)
+		curW += rw
+	}
+	if cur.Len() > 0 || len(result) == 0 {
+		result = append(result, cur.String())
+	}
+	return result
+}
+
+// visualLineCount returns the number of visual display lines the input buffer occupies.
+func (m *Model) visualLineCount() int {
+	maxW := m.inputTextWidth()
+	count := 0
+	for _, l := range m.inputLines() {
+		segments := hardWrap(string(l), maxW)
+		count += len(segments)
+	}
+	if count < 1 {
+		count = 1
+	}
+	return count
+}
+
+type visualCursorInfo struct {
+	logicalLine  int
+	logicalCol   int
+	visualLine   int
+	visualCol    int
+	segmentIdx   int
+	segmentStart int
+}
+
+// cursorVisualInfo returns the visual position of the cursor.
+func (m *Model) cursorVisualInfo() visualCursorInfo {
+	lines := m.inputLines()
+	curLine, curCol := m.cursorLineCol()
+	textW := m.inputTextWidth()
+
+	info := visualCursorInfo{
+		logicalLine: curLine,
+		logicalCol:  curCol,
+	}
+
+	visLine := 0
+	for li := 0; li < curLine; li++ {
+		segments := hardWrap(string(lines[li]), textW)
+		visLine += len(segments)
+	}
+
+	segments := hardWrap(string(lines[curLine]), textW)
+	runeOffset := 0
+	segIdx := 0
+	for segIdx < len(segments) {
+		segRunes := []rune(segments[segIdx])
+		if runeOffset+len(segRunes) > curCol {
+			break
+		}
+		runeOffset += len(segRunes)
+		segIdx++
+	}
+	if segIdx >= len(segments) {
+		segIdx = len(segments) - 1
+		if segIdx >= 0 {
+			runeOffset = curCol - len([]rune(segments[segIdx]))
+			if runeOffset < 0 {
+				runeOffset = 0
+			}
+		}
+	}
+
+	info.visualLine = visLine + segIdx
+	info.segmentIdx = segIdx
+	info.segmentStart = runeOffset
+
+	info.visualCol = padLR + 2
+	for i := runeOffset; i < curCol && i < len(lines[curLine]); i++ {
+		info.visualCol += runewidth.RuneWidth(lines[curLine][i])
+	}
+
+	return info
+}
+
+// cursorPosFromVisual returns the inputBuf index closest to the given visual position.
+func (m *Model) cursorPosFromVisual(targetVisLine, targetVisCol int) int {
+	lines := m.inputLines()
+	textW := m.inputTextWidth()
+
+	visCount := 0
+	for li, logLine := range lines {
+		segments := hardWrap(string(logLine), textW)
+		for si, seg := range segments {
+			if visCount == targetVisLine {
+				segRunes := []rune(seg)
+				targetTextCol := targetVisCol - padLR - 2
+				if targetTextCol < 0 {
+					targetTextCol = 0
+				}
+
+				segRuneIdx := 0
+				colW := 0
+				for segRuneIdx < len(segRunes) && colW < targetTextCol {
+					colW += runewidth.RuneWidth(segRunes[segRuneIdx])
+					if colW > targetTextCol {
+						break
+					}
+					segRuneIdx++
+				}
+
+				pos := 0
+				for i := 0; i < li; i++ {
+					pos += len(lines[i]) + 1
+				}
+				for j := 0; j < si; j++ {
+					pos += len([]rune(segments[j]))
+				}
+				pos += segRuneIdx
+				return pos
+			}
+			visCount++
+		}
+	}
+	return len(m.inputBuf)
 }
 
 func truncateLine(s string, max int) string {
