@@ -187,7 +187,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Global cancel
 	if msg, ok := msg.(tea.KeyMsg); ok && (msg.Type == tea.KeyCtrlC || msg.Type == tea.KeyEsc) {
-		// Cancel hierarchy: editing → model select → provider select → settings → double-press quit
+		// Cancel hierarchy: editing → model select → provider select → settings → agent → double-press quit
 		if m.settingsActive {
 			if m.inlineForm.editingField {
 				m.inlineForm.editingField = false
@@ -214,6 +214,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			summary := formatSettingsSummary(s)
 			m.messages = append(m.messages, ChatMessage{Role: RoleAssistant, Content: summary, Time: time.Now()})
 			m.chatOffset = 0
+			return m, nil
+		}
+		// Agent is thinking — cancel the current operation
+		if m.thinking {
+			select {
+			case m.cancelCh <- struct{}{}:
+			default:
+			}
+			m.lastError = "cancelling…"
+			m.errorTime = time.Now()
 			return m, nil
 		}
 		// Nothing to cancel — double-press to quit
@@ -408,6 +418,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyBackspace, tea.KeyDelete:
 			if (!m.thinking || m.blocking) && len(m.inputBuf) > 0 {
+				m.lastVisualCol = -1
 				if m.historyIdx != -1 {
 					m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
 					m.historyDraft = string(m.inputBuf)
@@ -442,19 +453,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if !m.thinking || m.blocking {
-				lines := m.inputLines()
-				curLine, curCol := m.cursorLineCol()
-				if curLine > 0 {
-					prevLineLen := len(lines[curLine-1])
-					newCol := curCol
-					if newCol > prevLineLen {
-						newCol = prevLineLen
-					}
-					m.cursorPos = 0
-					for i := 0; i < curLine-1; i++ {
-						m.cursorPos += len(lines[i]) + 1
-					}
-					m.cursorPos += newCol
+				if m.cursorPos == 0 {
+					m.browseHistoryUp()
+					return m, nil
+				}
+				info := m.cursorVisualInfo()
+				if info.visualLine > 0 {
+					m.lastVisualCol = info.visualCol
+					m.cursorPos = m.cursorPosFromVisual(info.visualLine-1, m.lastVisualCol)
 				} else {
 					m.browseHistoryUp()
 				}
@@ -469,19 +475,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if !m.thinking || m.blocking {
-				lines := m.inputLines()
-				curLine, curCol := m.cursorLineCol()
-				if curLine < len(lines)-1 {
-					nextLineLen := len(lines[curLine+1])
-					newCol := curCol
-					if newCol > nextLineLen {
-						newCol = nextLineLen
-					}
-					m.cursorPos = 0
-					for i := 0; i <= curLine; i++ {
-						m.cursorPos += len(lines[i]) + 1
-					}
-					m.cursorPos += newCol
+				totalVis := m.visualLineCount()
+				info := m.cursorVisualInfo()
+				if info.visualLine < totalVis-1 {
+					m.lastVisualCol = info.visualCol
+					m.cursorPos = m.cursorPosFromVisual(info.visualLine+1, m.lastVisualCol)
 				} else {
 					m.browseHistoryDown()
 				}
@@ -492,6 +490,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cursorPos > 0 {
 					m.cursorPos--
 				}
+				m.lastVisualCol = -1
 			}
 
 		case tea.KeyRight:
@@ -499,21 +498,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cursorPos < len(m.inputBuf) {
 					m.cursorPos++
 				}
+				m.lastVisualCol = -1
 			}
 
 		case tea.KeyCtrlLeft:
 			if !m.thinking || m.blocking {
 				m.cursorPos = m.cursorPrevWord()
+				m.lastVisualCol = -1
 			}
 
 		case tea.KeyCtrlRight:
 			if !m.thinking || m.blocking {
 				m.cursorPos = m.cursorNextWord()
+				m.lastVisualCol = -1
 			}
 
 		case tea.KeyHome:
 			if !m.thinking || m.blocking {
 				m.cursorPos = m.cursorLineStart()
+				m.lastVisualCol = -1
 			} else {
 				m.chatOffset = 1 << 30
 				m.userScrolled = true
@@ -522,6 +525,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnd:
 			if !m.thinking || m.blocking {
 				m.cursorPos = m.cursorLineEnd()
+				m.lastVisualCol = -1
 			} else {
 				m.chatOffset = 0
 				m.userScrolled = false
@@ -530,6 +534,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlHome:
 			if !m.thinking || m.blocking {
 				m.cursorPos = 0
+				m.lastVisualCol = -1
 			} else {
 				m.chatOffset = 1 << 30
 				m.userScrolled = true
@@ -538,6 +543,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlEnd:
 			if !m.thinking || m.blocking {
 				m.cursorPos = len(m.inputBuf)
+				m.lastVisualCol = -1
 			} else {
 				m.chatOffset = 0
 				m.userScrolled = false
@@ -607,6 +613,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		default:
 			if !m.thinking || m.blocking {
+				m.lastVisualCol = -1
 				s := msg.String()
 				if strings.HasPrefix(s, "<") && strings.HasSuffix(s, "M") {
 					return m, nil

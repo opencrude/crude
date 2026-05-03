@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,6 +19,7 @@ type APIMessage struct {
 	Role             string     `json:"role"`
 	Content          string     `json:"content,omitempty"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	Reasoning        string     `json:"reasoning,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
@@ -60,6 +62,7 @@ type ChatResponse struct {
 		Delta        struct {
 			Content          string     `json:"content"`
 			ReasoningContent string     `json:"reasoning_content"`
+			Reasoning        string     `json:"reasoning"`
 			ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 	} `json:"choices"`
@@ -126,6 +129,7 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 }
 
 func (a *Agent) Run(
+	ctx context.Context,
 	sessionMessages []APIMessage,
 	systemPrompt string,
 	emit func(AgentEvent),
@@ -143,10 +147,15 @@ func (a *Agent) Run(
 	}
 
 	for step := 0; step < maxSteps; step++ {
+		if ctx.Err() != nil {
+			emit(AgentEvent{Type: "done", Data: "Cancelled."})
+			return
+		}
+
 		var accumulatedText string
 		var toolCalls []ToolCall
 
-		content, reasoningContent, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.completeStream(msgs, allTools,
+		content, reasoningContent, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.completeStream(ctx, msgs, allTools,
 			func(token string) {
 				emit(AgentEvent{Type: "stream_token", Data: token})
 			},
@@ -185,7 +194,7 @@ func (a *Agent) Run(
 		}
 
 		// Build the assistant message for the history
-		assistantMsg := APIMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, ToolCalls: toolCalls}
+		assistantMsg := APIMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, Reasoning: reasoningContent, ToolCalls: toolCalls}
 		msgs = append(msgs, assistantMsg)
 
 		type execResult struct {
@@ -235,12 +244,17 @@ func (a *Agent) Run(
 		}
 
 		for i := 0; i < len(toolCalls); i++ {
-			r := <-resultCh
-			msgs = append(msgs, APIMessage{
-				Role:       "tool",
-				ToolCallID: r.id,
-				Content:    r.result,
-			})
+			select {
+			case r := <-resultCh:
+				msgs = append(msgs, APIMessage{
+					Role:       "tool",
+					ToolCallID: r.id,
+					Content:    r.result,
+				})
+			case <-ctx.Done():
+				emit(AgentEvent{Type: "done", Data: "Cancelled."})
+				return
+			}
 		}
 	}
 

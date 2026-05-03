@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -156,6 +157,7 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 }
 
 func (a *Agent) completeStream(
+	ctx context.Context,
 	msgs []APIMessage,
 	tools []ToolDef,
 	emit func(token string),
@@ -235,6 +237,9 @@ func (a *Agent) completeStream(
 		scanner.Buffer(make([]byte, 0, 1024*64), 1024*64)
 
 		for scanner.Scan() {
+			if ctx.Err() != nil {
+				break
+			}
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
 				continue
@@ -263,11 +268,14 @@ func (a *Agent) completeStream(
 				completionTokens = chunk.Usage.CompletionTokens
 			}
 
-			reasoning := choice.Delta.ReasoningContent
-			if reasoning != "" {
-				reasoningBuilder.WriteString(reasoning)
+			reasoningText := choice.Delta.ReasoningContent
+			if reasoningText == "" {
+				reasoningText = choice.Delta.Reasoning
+			}
+			if reasoningText != "" {
+				reasoningBuilder.WriteString(reasoningText)
 				if emitThinking != nil {
-					emitThinking(reasoning)
+					emitThinking(reasoningText)
 				}
 			}
 

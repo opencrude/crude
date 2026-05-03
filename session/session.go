@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/user"
@@ -332,7 +333,15 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		}
 	}()
 
+	cancelCh := tuiInst.CancelCh
+
 	for userText := range tuiInst.InputCh {
+		// Drain any stale cancel signal from a previous iteration
+		select {
+		case <-cancelCh:
+		default:
+		}
+
 		activeCfg := s.cfg.GetActiveProviderConfig()
 		if activeCfg.APIKey == "" {
 			tuiInst.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
@@ -374,7 +383,16 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		var finalContent string
 		prompt := agent.SystemPrompt
 
-		ag.Run(msgsCopy, prompt, func(evt agent.AgentEvent) {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			select {
+			case <-cancelCh:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+
+		ag.Run(ctx, msgsCopy, prompt, func(evt agent.AgentEvent) {
 			if evt.Type == "blocking" {
 				data, _ := evt.Data.(map[string]string)
 				if data != nil {
@@ -408,6 +426,8 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				}
 			}
 		}, blockResolveCh, s.sm, s.sessionID)
+
+		cancel()
 
 		s.logger.Info("agent.loop_end", "content", finalContent, "iteration", 1)
 		s.blockMu.Lock()
