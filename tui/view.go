@@ -439,8 +439,8 @@ func (m *Model) renderAllMessages() []string {
 		// Use pre-rendered cache for unchanged messages
 		if msg.cachedLines != nil {
 			all = append(all, msg.cachedLines...)
-			// Apply blinking cursor on cached messages that need it
-			if msg.cursorLine >= 0 && msg.cursorLine < len(msg.cachedLines) {
+			if msg.cursorLine >= 0 && msg.cursorLine < len(msg.cachedLines) &&
+				(m.streaming && msgIdx == len(m.messages)-1 || msg.ThinkingActive) {
 				cursor := blockCursor(m.spinFrame, colorAccent)
 				all[len(all)-len(msg.cachedLines)+msg.cursorLine] += cursor
 			}
@@ -528,15 +528,12 @@ func (m *Model) renderAllMessages() []string {
 				asstLines[0] = label + asstLines[0]
 			}
 
-			skipLastForStream := m.streaming && isLastMsg
 			for i, line := range asstLines {
-				if skipLastForStream && i == len(asstLines)-1 {
-					continue
-				}
+				isCursorLine := m.streaming && isLastMsg && i == len(asstLines)-1
 				var timePart string
-				if i == 0 {
+				if i == 0 && !isCursorLine {
 					timePart = dim.Render(timeLine1)
-				} else if i == 1 {
+				} else if i == 1 && !isCursorLine {
 					timePart = dim.Render(timeLine2)
 				}
 				if timePart != "" {
@@ -550,7 +547,7 @@ func (m *Model) renderAllMessages() []string {
 			}
 
 			msgLines = append(msgLines, asstLines...)
-			if len(asstLines) == 1 {
+			if len(asstLines) == 1 && !(m.streaming && isLastMsg) {
 				sp := innerW - timeW
 				if sp < 0 {
 					sp = 0
@@ -560,9 +557,6 @@ func (m *Model) renderAllMessages() []string {
 
 			if m.streaming && isLastMsg && len(asstLines) > 0 {
 				cursorLine = len(msgLines) - 1
-				if len(asstLines) == 1 && len(msgLines) >= 2 {
-					cursorLine = len(msgLines) - 2
-				}
 			}
 
 		case RoleThinking:
@@ -579,6 +573,9 @@ func (m *Model) renderAllMessages() []string {
 				} else {
 					msgLines = append(msgLines, borderPrefix+"  "+thinkingStyle.Render(line))
 				}
+			}
+			if msg.ThinkingActive && len(msgLines) > 0 {
+				cursorLine = len(msgLines) - 1
 			}
 		case RoleTool:
 			isCalling := msg.ToolStatus == "calling"
@@ -620,7 +617,13 @@ func (m *Model) renderAllMessages() []string {
 				resultContent = strings.TrimPrefix(strings.TrimSpace(resultContent), fullLabel)
 				resultContent = strings.TrimSpace(resultContent)
 				if resultContent != "" {
-					if isDiffContent(resultContent) {
+					if isPlanTool(msg.ToolName) {
+						msgLines = append(msgLines, "")
+						planBox := renderPlanBox(resultContent, contentWidth-4)
+						for _, pl := range strings.Split(planBox, "\n") {
+							msgLines = append(msgLines, dim.Render("│ ")+pl)
+						}
+					} else if isDiffContent(resultContent) {
 						msgLines = append(msgLines, "")
 						rendered := renderDiffContent(resultContent, contentWidth-6)
 						for _, dl := range strings.Split(rendered, "\n") {
@@ -925,6 +928,65 @@ func isDiffContent(text string) bool {
 		}
 	}
 	return (hasMinus && hasPlus) || hasHunk
+}
+
+// isPlanTool returns true for state machine management tools that return plan status.
+func isPlanTool(name string) bool {
+	switch name {
+	case "plan", "mark_step_complete", "mark_step_failed", "report_blocker", "resolve_blocker", "list_goal_status":
+		return true
+	default:
+		return false
+	}
+}
+
+// renderPlanBox renders the plan status text in a styled rounded box with
+// color-coded step markers: ✓ (green), → (blue), ☐ (muted), ✗ (red), ! (amber).
+func renderPlanBox(text string, maxWidth int) string {
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+
+	var styledLines []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			styledLines = append(styledLines, "")
+			continue
+		}
+
+		var styled string
+		switch {
+		case strings.HasPrefix(trimmed, "✓"):
+			styled = lipgloss.NewStyle().Foreground(colorSuccess).Render(line)
+		case strings.HasPrefix(trimmed, "→"):
+			styled = lipgloss.NewStyle().Foreground(colorAccent2).Render(line)
+		case strings.HasPrefix(trimmed, "✗"):
+			styled = lipgloss.NewStyle().Foreground(colorError).Render(line)
+		case strings.HasPrefix(trimmed, "!"):
+			styled = lipgloss.NewStyle().Foreground(colorWarning).Render(line)
+		case strings.HasPrefix(trimmed, "☐"):
+			styled = lipgloss.NewStyle().Foreground(colorMuted).Render(line)
+		case strings.HasPrefix(trimmed, "Plan:") || strings.HasPrefix(trimmed, "Goal:"):
+			styled = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(line)
+		case strings.HasPrefix(trimmed, "Suspended:"):
+			styled = lipgloss.NewStyle().Foreground(colorWarning).Render(line)
+		default:
+			styled = lipgloss.NewStyle().Foreground(colorMuted).Render(line)
+		}
+		styledLines = append(styledLines, styled)
+	}
+
+	content := strings.Join(styledLines, "\n")
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		Padding(0, 1).
+		Width(maxWidth)
+
+	return box.Render(content)
 }
 
 func renderDiffContent(text string, maxWidth int) string {
