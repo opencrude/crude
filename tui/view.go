@@ -440,7 +440,7 @@ func (m *Model) renderAllMessages() []string {
 		if msg.cachedLines != nil {
 			all = append(all, msg.cachedLines...)
 			if msg.cursorLine >= 0 && msg.cursorLine < len(msg.cachedLines) &&
-				(m.streaming && msgIdx == len(m.messages)-1 || msg.ThinkingActive) {
+				msgIdx == len(m.messages)-1 && (m.streaming || msg.ThinkingActive) {
 				cursor := blockCursor(m.spinFrame, colorAccent)
 				all[len(all)-len(msg.cachedLines)+msg.cursorLine] += cursor
 			}
@@ -543,6 +543,8 @@ func (m *Model) renderAllMessages() []string {
 						sp = 1
 					}
 					asstLines[i] = line + strings.Repeat(" ", sp) + timePart
+				} else if isCursorLine {
+					asstLines[i] = strings.TrimRight(line, " ")
 				}
 			}
 
@@ -574,7 +576,7 @@ func (m *Model) renderAllMessages() []string {
 					msgLines = append(msgLines, borderPrefix+"  "+thinkingStyle.Render(line))
 				}
 			}
-			if msg.ThinkingActive && len(msgLines) > 0 {
+			if msg.ThinkingActive && isLastMsg && len(msgLines) > 0 {
 				cursorLine = len(msgLines) - 1
 			}
 		case RoleTool:

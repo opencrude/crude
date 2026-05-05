@@ -227,6 +227,39 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
+			Name: "web_search",
+			Description: "Search the web using Brave Search API. " +
+				"Returns titles, URLs, and snippets for web pages matching the query. " +
+				"Use for finding current information, documentation, or general web content.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"query":{"type":"string","description":"Search query for web search"}
+				},
+				"required":["query"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "web_fetch",
+			Description: "Fetch and extract readable content from a URL. " +
+				"Returns the main text content of a web page, stripped of HTML markup. " +
+				"Use to read documentation, articles, or any web page content.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"url":{"type":"string","description":"URL to fetch content from"},
+					"max_chars":{"type":"integer","description":"Maximum characters to return (optional; 0 = no limit)"}
+				},
+				"required":["url"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
 			Name: "consult_oracle",
 			Description: "Consult the oracle model for high-stakes architectural, algorithmic, or structural decisions. " +
 				"Use when: (1) choosing between multiple architectural approaches, (2) solving non-trivial algorithmic problems, " +
@@ -242,6 +275,22 @@ var AgentTools = []ToolDef{
 					"constraints":{"type":"string","description":"Hard constraints that any solution must respect"}
 				},
 				"required":["task","decision_point"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "run_javascript",
+			Description: "Execute JavaScript code and return the result. " +
+				"Use for calculations, data transformations, or any logic that benefits from JavaScript's capabilities. " +
+				"You are TERRIBLE at math — use this tool for any calculations.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"code":{"type":"string","description":"JavaScript code to execute"}
+				},
+				"required":["code"]
 			}`),
 		},
 	},
