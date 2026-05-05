@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -70,6 +71,9 @@ type ChatResponse struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
@@ -82,8 +86,7 @@ type AgentEvent struct {
 }
 
 const (
-	maxSteps       = 50
-	maxAPIAttempts = 3
+	maxSteps = 50
 )
 
 type Agent struct {
@@ -95,6 +98,7 @@ type Agent struct {
 	ExtraBody      map[string]any // provider-specific request fields (e.g. thinking params)
 	OracleProvider *provider.Provider
 	OracleModel    string
+	Ctx            context.Context // set externally before Run() for tool cancellation
 }
 
 // marshalRequest marshals a ChatRequest, merging any ExtraBody fields into the top-level JSON.
@@ -138,12 +142,15 @@ func (a *Agent) Run(
 	sessionID string,
 ) {
 	allTools := allToolDefs()
-	userText := extractUserMessage(sessionMessages)
 
 	lastReply := ""
 	msgs := []APIMessage{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userText},
+	}
+	for _, m := range sessionMessages {
+		if m.Role != "system" {
+			msgs = append(msgs, m)
+		}
 	}
 
 	for step := 0; step < maxSteps; step++ {
@@ -155,7 +162,7 @@ func (a *Agent) Run(
 		var accumulatedText string
 		var toolCalls []ToolCall
 
-		content, reasoningContent, finishReason, streamToolCalls, promptTokens, completionTokens, err := a.completeStream(ctx, msgs, allTools,
+		content, reasoningContent, finishReason, streamToolCalls, promptTokens, completionTokens, promptTokensCached, err := a.completeStream(ctx, msgs, allTools,
 			func(token string) {
 				emit(AgentEvent{Type: "stream_token", Data: token})
 			},
@@ -170,8 +177,9 @@ func (a *Agent) Run(
 
 		if promptTokens > 0 || completionTokens > 0 {
 			emit(AgentEvent{Type: "usage", Data: map[string]int{
-				"prompt":     promptTokens,
-				"completion": completionTokens,
+				"prompt":          promptTokens,
+				"completion":      completionTokens,
+				"prompt_cached":   promptTokensCached,
 			}})
 		}
 
@@ -277,18 +285,11 @@ func isRetryable(code int) bool {
 
 func retryBackoff(attempt int) time.Duration {
 	if attempt <= 1 {
-		return time.Second
+		return time.Duration(500+rand.Intn(1500)) * time.Millisecond
 	}
-	return time.Duration(1<<(attempt-1)) * time.Second
-}
-
-func extractUserMessage(msgs []APIMessage) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" {
-			return msgs[i].Content
-		}
-	}
-	return ""
+	base := time.Duration(1<<min(attempt-1, 6)) * time.Second
+	jitter := time.Duration(rand.Intn(int(base))) / 4
+	return base + jitter
 }
 
 func allToolDefs() []ToolDef {

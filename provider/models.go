@@ -11,14 +11,16 @@ import (
 )
 
 type ModelInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Pricing map[string]string `json:"pricing,omitempty"` // "prompt"/"completion" -> USD per 1M tokens (OpenRouter)
 }
 
 type modelsResponse struct {
 	Data []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID      string            `json:"id"`
+		Name    string            `json:"name"`
+		Pricing map[string]string `json:"pricing,omitempty"`
 	} `json:"data"`
 }
 
@@ -65,7 +67,12 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 
 	models := make([]ModelInfo, 0, len(result.Data))
 	for _, m := range result.Data {
-		models = append(models, ModelInfo{ID: m.ID, Name: m.Name})
+		info := ModelInfo{ID: m.ID, Name: m.Name}
+		if len(m.Pricing) > 0 {
+			info.Pricing = m.Pricing
+			ParseModelPricing(m.ID, m.Pricing)
+		}
+		models = append(models, info)
 	}
 
 	sort.Slice(models, func(i, j int) bool {

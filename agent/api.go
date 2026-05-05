@@ -13,8 +13,9 @@ import (
 )
 
 type usageInfo struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
+	PromptTokens       int `json:"prompt_tokens"`
+	CompletionTokens   int `json:"completion_tokens"`
+	PromptTokensCached int `json:"prompt_tokens_cached"`
 }
 
 type apiCallError struct {
@@ -24,10 +25,10 @@ type apiCallError struct {
 
 func (e *apiCallError) Error() string { return e.Message }
 
-func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
+func (a *Agent) complete(ctx context.Context, msgs []APIMessage, tools []ToolDef) (*struct {
 	Message      APIMessage
 	FinishReason string
-	Usage        *struct{ PromptTokens, CompletionTokens int }
+	Usage        *usageInfo
 }, error,
 ) {
 	req := ChatRequest{
@@ -53,10 +54,16 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 
 	client := &http.Client{Timeout: 120 * time.Second}
 
-	for attempt := 1; attempt <= maxAPIAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return nil, &apiCallError{Message: fmt.Sprintf("API request cancelled: %v", ctx.Err())}
+		default:
+		}
+
 		apiStart := time.Now()
 
-		httpReq, err := http.NewRequest("POST", a.Provider.ChatEndpoint(), bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", a.Provider.ChatEndpoint(), bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
 		}
@@ -65,17 +72,14 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			if attempt < maxAPIAttempts {
-				bo := retryBackoff(attempt)
-				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
-				time.Sleep(bo)
-				continue
+			bo := retryBackoff(attempt)
+			a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
+			select {
+			case <-time.After(bo):
+			case <-ctx.Done():
+				return nil, &apiCallError{Message: fmt.Sprintf("API request cancelled during retry: %v", ctx.Err())}
 			}
-			a.logger.Error("llm.error", "model", a.Provider.Name, "error", err.Error(), "latency_ms", time.Since(apiStart).Milliseconds())
-			return nil, &apiCallError{
-				Message:          fmt.Sprintf("API request failed after %d attempts: %v", maxAPIAttempts, err),
-				RetriesExhausted: true,
-			}
+			continue
 		}
 
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -89,20 +93,17 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 			if len(snippet) > 240 {
 				snippet = snippet[:240]
 			}
-			if isRetryable(resp.StatusCode) && attempt < maxAPIAttempts {
+			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
 				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
-				time.Sleep(bo)
+				select {
+				case <-time.After(bo):
+				case <-ctx.Done():
+					return nil, &apiCallError{Message: fmt.Sprintf("API request cancelled during retry: %v", ctx.Err())}
+				}
 				continue
 			}
-			if isRetryable(resp.StatusCode) {
-				a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(apiStart).Milliseconds())
-				return nil, &apiCallError{
-					Message:          fmt.Sprintf("OpenRouter %d after %d attempts: %s", resp.StatusCode, maxAPIAttempts, snippet),
-					RetriesExhausted: true,
-				}
-			}
-			return nil, fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, string(respBody))
+			return nil, fmt.Errorf("API %d: %s", resp.StatusCode, string(respBody))
 		}
 
 		var chatResp ChatResponse
@@ -121,9 +122,14 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		apiDur := time.Since(apiStart).Milliseconds()
 		var usage *usageInfo
 		if chatResp.Usage != nil {
+			cachedTokens := 0
+			if chatResp.Usage.PromptTokensDetails != nil {
+				cachedTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+			}
 			usage = &usageInfo{
-				PromptTokens:     chatResp.Usage.PromptTokens,
-				CompletionTokens: chatResp.Usage.CompletionTokens,
+				PromptTokens:       chatResp.Usage.PromptTokens,
+				CompletionTokens:   chatResp.Usage.CompletionTokens,
+				PromptTokensCached: cachedTokens,
 			}
 		}
 		usageAttrs := []any{}
@@ -134,26 +140,16 @@ func (a *Agent) complete(msgs []APIMessage, tools []ToolDef) (*struct {
 		respArgs = append(respArgs, usageAttrs...)
 		a.logger.Info("llm.response", respArgs...)
 
-		var resultUsage *struct{ PromptTokens, CompletionTokens int }
-		if chatResp.Usage != nil {
-			resultUsage = &struct{ PromptTokens, CompletionTokens int }{
-				PromptTokens:     chatResp.Usage.PromptTokens,
-				CompletionTokens: chatResp.Usage.CompletionTokens,
-			}
-		}
-
 		return &struct {
 			Message      APIMessage
 			FinishReason string
-			Usage        *struct{ PromptTokens, CompletionTokens int }
+			Usage        *usageInfo
 		}{
 			Message:      choice.Message,
 			FinishReason: choice.FinishReason,
-			Usage:        resultUsage,
+			Usage:        usage,
 		}, nil
 	}
-
-	return nil, &apiCallError{Message: "API request retries exhausted", RetriesExhausted: true}
 }
 
 func (a *Agent) completeStream(
@@ -162,7 +158,7 @@ func (a *Agent) completeStream(
 	tools []ToolDef,
 	emit func(token string),
 	emitThinking func(text string),
-) (content string, reasoningContent string, finishReason string, toolCalls []ToolCall, promptTokens int, completionTokens int, err error) {
+) (content string, reasoningContent string, finishReason string, toolCalls []ToolCall, promptTokens int, completionTokens int, promptTokensCached int, err error) {
 	req := ChatRequest{
 		Model:    a.Model,
 		Messages: msgs,
@@ -171,7 +167,7 @@ func (a *Agent) completeStream(
 	}
 	body, err := a.marshalRequest(req)
 	if err != nil {
-		return "", "", "", nil, 0, 0, fmt.Errorf("marshal request: %w", err)
+		return "", "", "", nil, 0, 0, 0, fmt.Errorf("marshal request: %w", err)
 	}
 
 	streamStart := time.Now()
@@ -186,10 +182,16 @@ func (a *Agent) completeStream(
 	a.logger.Info("llm.prompt", "model", a.Provider.Name, "msg_count", len(msgs), "tool_count", len(toolDefs))
 	client := &http.Client{Timeout: 300 * time.Second}
 
-	for attempt := 1; attempt <= maxAPIAttempts; attempt++ {
-		httpReq, err := http.NewRequest("POST", a.Provider.ChatEndpoint(), bytes.NewReader(body))
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled: %v", ctx.Err())}
+		default:
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", a.Provider.ChatEndpoint(), bytes.NewReader(body))
 		if err != nil {
-			return "", "", "", nil, 0, 0, fmt.Errorf("create request: %w", err)
+			return "", "", "", nil, 0, 0, 0, fmt.Errorf("create request: %w", err)
 		}
 		httpReq.Header.Set(a.Provider.AuthHeader, a.Provider.AuthValue())
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -197,17 +199,14 @@ func (a *Agent) completeStream(
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			if attempt < maxAPIAttempts {
-				bo := retryBackoff(attempt)
-				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
-				time.Sleep(bo)
-				continue
+			bo := retryBackoff(attempt)
+			a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
+			select {
+			case <-time.After(bo):
+			case <-ctx.Done():
+				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled during retry: %v", ctx.Err())}
 			}
-			a.logger.Error("llm.error", "model", a.Provider.Name, "error", err.Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", "", nil, 0, 0, &apiCallError{
-				Message:          fmt.Sprintf("Stream request failed after %d attempts: %v", maxAPIAttempts, err),
-				RetriesExhausted: true,
-			}
+			continue
 		}
 
 		if resp.StatusCode != 200 {
@@ -217,14 +216,18 @@ func (a *Agent) completeStream(
 			if len(snippet) > 240 {
 				snippet = snippet[:240]
 			}
-			if isRetryable(resp.StatusCode) && attempt < maxAPIAttempts {
+			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
 				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
-				time.Sleep(bo)
+				select {
+				case <-time.After(bo):
+				case <-ctx.Done():
+					return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled during retry: %v", ctx.Err())}
+				}
 				continue
 			}
 			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", "", nil, 0, 0, fmt.Errorf("OpenRouter %d: %s", resp.StatusCode, snippet)
+			return "", "", "", nil, 0, 0, 0, fmt.Errorf("API %d: %s", resp.StatusCode, snippet)
 		}
 
 		var content strings.Builder
@@ -232,6 +235,7 @@ func (a *Agent) completeStream(
 		finishReason := ""
 		promptTokens := 0
 		completionTokens := 0
+		promptTokensCached := 0
 		toolCallsByIndex := make(map[int]*ToolCall)
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1024*64), 1024*64)
@@ -266,6 +270,9 @@ func (a *Agent) completeStream(
 			if chunk.Usage != nil {
 				promptTokens = chunk.Usage.PromptTokens
 				completionTokens = chunk.Usage.CompletionTokens
+				if chunk.Usage.PromptTokensDetails != nil {
+					promptTokensCached = chunk.Usage.PromptTokensDetails.CachedTokens
+				}
 			}
 
 			reasoningText := choice.Delta.ReasoningContent
@@ -306,14 +313,14 @@ func (a *Agent) completeStream(
 		resp.Body.Close()
 
 		if err := scanner.Err(); err != nil {
-			if attempt < maxAPIAttempts {
-				bo := retryBackoff(attempt)
-				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("stream scan error: %w", err).Error())
-				time.Sleep(bo)
-				continue
+			bo := retryBackoff(attempt)
+			a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("stream scan error: %w", err).Error())
+			select {
+			case <-time.After(bo):
+			case <-ctx.Done():
+				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled during retry: %v", ctx.Err())}
 			}
-			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("stream read error: %w", err).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", "", nil, 0, 0, fmt.Errorf("stream read error: %w", err)
+			continue
 		}
 
 		// Collect accumulated tool calls (sorted by index)
@@ -333,11 +340,9 @@ func (a *Agent) completeStream(
 		}
 
 		streamDur := time.Since(streamStart).Milliseconds()
-		a.logger.Info("llm.response", "model", a.Provider.Name, "content", content.String(), "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "latency_ms", streamDur)
-		return content.String(), reasoningBuilder.String(), finishReason, resultToolCalls, promptTokens, completionTokens, nil
+		a.logger.Info("llm.response", "model", a.Provider.Name, "content", content.String(), "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "prompt_tokens_cached", promptTokensCached, "latency_ms", streamDur)
+		return content.String(), reasoningBuilder.String(), finishReason, resultToolCalls, promptTokens, completionTokens, promptTokensCached, nil
 	}
-
-	return "", "", "", nil, 0, 0, &apiCallError{Message: "Stream request retries exhausted", RetriesExhausted: true}
 }
 
 func (a *Agent) emitError(emit func(AgentEvent), err error) {

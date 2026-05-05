@@ -226,7 +226,7 @@ func (s *Session) newAgent() *agent.Agent {
 				DecisionPoint: getStrParam(params, "decision_point"),
 				Constraints:   getStrParam(params, "constraints"),
 			}
-			resp, err := agent.ConsultOracle(oracleProvider, oracleModel, query)
+			resp, err := agent.ConsultOracle(a.Ctx, oracleProvider, oracleModel, query)
 			if err != nil {
 				s.logger.Error("oracle.error", "error", err.Error())
 				return "", fmt.Errorf("oracle consultation failed: %w", err)
@@ -384,6 +384,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		prompt := agent.SystemPrompt
 
 		ctx, cancel := context.WithCancel(context.Background())
+		ag.Ctx = ctx
 		go func() {
 			select {
 			case <-cancelCh:
