@@ -886,8 +886,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.messages {
 				if m.messages[i].ThinkingActive {
 					m.messages[i].ThinkingActive = false
-					m.messages[i].cachedLines = nil
 				}
+				m.messages[i].cachedLines = nil
+				m.messages[i].cursorLine = -1
 			}
 			if content, ok := evt.Data.(string); ok && content != "" {
 				if wasStreaming && len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
@@ -956,8 +957,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.messages {
 				if m.messages[i].ThinkingActive {
 					m.messages[i].ThinkingActive = false
-					m.messages[i].cachedLines = nil
 				}
+				m.messages[i].cachedLines = nil
+				m.messages[i].cursorLine = -1
 			}
 			if operation != "" {
 				m.confirmForm.Reset(question, operation, tool, target)
@@ -985,8 +987,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.messages {
 				if m.messages[i].ThinkingActive {
 					m.messages[i].ThinkingActive = false
-					m.messages[i].cachedLines = nil
 				}
+				m.messages[i].cachedLines = nil
+				m.messages[i].cursorLine = -1
 			}
 			errMsg := fmt.Sprintf("%v", evt.Data)
 			m.lastError = errMsg

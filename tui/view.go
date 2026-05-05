@@ -580,10 +580,6 @@ func (m *Model) renderAllMessages() []string {
 					msgLines = append(msgLines, borderPrefix+"  "+thinkingStyle.Render(line))
 				}
 			}
-			if msg.ThinkingActive && len(msgLines) > 0 {
-				cursorLine = len(msgLines) - 1
-			}
-
 		case RoleTool:
 			isCalling := msg.ToolStatus == "calling"
 
@@ -642,10 +638,6 @@ func (m *Model) renderAllMessages() []string {
 					}
 				}
 			}
-			if isCalling && len(msgLines) > 0 {
-				cursorLine = len(msgLines) - 1
-			}
-
 		case RoleError:
 			lines := wrapText(msg.Content, contentWidth)
 			for i, line := range lines {
