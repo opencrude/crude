@@ -9,7 +9,7 @@ func (m *Model) browseHistoryUp() {
 		return
 	}
 	if m.historyIdx == -1 {
-		m.historyDraft = string(m.inputBuf)
+		m.historyDraft = m.inputText()
 		if strings.Contains(m.historyDraft, "\n") {
 			m.historyPrefix = ""
 		} else {

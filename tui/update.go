@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"crude/provider"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -14,8 +15,7 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 	parts := strings.Fields(text)
 	cmd := parts[0]
 
-	m.inputBuf = nil
-	m.cursorPos = 0
+	m.clearInput()
 	m.messages = append(m.messages, ChatMessage{Role: RoleUser, Content: text, Time: time.Now()})
 	m.chatOffset = 0
 
@@ -131,10 +131,9 @@ func tickCmd() tea.Cmd {
 
 // submitInput processes the current input buffer as a submitted message.
 func (m *Model) submitInput() (tea.Model, tea.Cmd) {
-	if (!m.thinking || m.blocking) && len(m.inputBuf) > 0 {
-		text := strings.TrimSpace(string(m.inputBuf))
-		m.inputBuf = nil
-		m.cursorPos = 0
+	if (!m.thinking || m.blocking) && m.inputLen() > 0 {
+		text := strings.TrimSpace(m.inputText())
+		m.clearInput()
 		m.slashActive = false
 		m.resetHistory()
 		if text != "" {
@@ -247,6 +246,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s := m.inlineForm.toSettings()
 				m.settingsActive = false
 				m.modelName = s.Model
+				for i := range m.messages {
+					m.messages[i].cachedLines = nil
+				}
 				if m.onSaveSettings != nil {
 					go m.onSaveSettings(s)
 				}
@@ -390,16 +392,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyEnter:
 			if msg.Alt {
-				m.inputBuf = append(m.inputBuf[:m.cursorPos], append([]rune{'\n'}, m.inputBuf[m.cursorPos:]...)...)
-				m.cursorPos++
+				m.splitLineAt(m.cursorLine, m.cursorCol)
+				m.cursorLine++
+				m.cursorCol = 0
 				return m, nil
 			}
 			if m.slashActive && len(m.slashFiltered) > 0 {
 				selected := m.slashFiltered[m.slashIdx]
 				m.slashActive = false
-				m.inputBuf = []rune(selected.name + " ")
-				m.cursorPos = len(m.inputBuf)
-				text := strings.TrimSpace(string(m.inputBuf))
+				m.setInput(selected.name + " ")
+				text := strings.TrimSpace(m.inputText())
 				if text != "" && strings.HasPrefix(text, "/") {
 					return m.executeSlashCommand(text)
 				}
@@ -410,31 +412,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyTab:
 			if m.slashActive && len(m.slashFiltered) > 0 {
 				selected := m.slashFiltered[m.slashIdx]
-				m.inputBuf = []rune(selected.name + " ")
-				m.cursorPos = len(m.inputBuf)
+				m.setInput(selected.name + " ")
 				m.slashActive = false
 				return m, nil
 			}
 
 		case tea.KeyBackspace, tea.KeyDelete:
-			if (!m.thinking || m.blocking) && len(m.inputBuf) > 0 {
+			if (!m.thinking || m.blocking) && m.inputLen() > 0 {
+				m.lastInputTime = time.Now()
 				m.lastVisualCol = -1
 				if m.historyIdx != -1 {
-					m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
-					m.historyDraft = string(m.inputBuf)
+					m.historyPrefix = strings.TrimSpace(m.inputText())
+					m.historyDraft = m.inputText()
 					m.historyIdx = -1
 				}
 				if msg.Type == tea.KeyBackspace {
-					if m.cursorPos > 0 {
-						m.inputBuf = append(m.inputBuf[:m.cursorPos-1], m.inputBuf[m.cursorPos:]...)
-						m.cursorPos--
+					cf := m.cursorFlat()
+					if cf > 0 {
+						m.deleteRuneAt(cf)
+						m.setCursorFlat(cf - 1)
 					}
 				} else {
-					if m.cursorPos < len(m.inputBuf) {
-						m.inputBuf = append(m.inputBuf[:m.cursorPos], m.inputBuf[m.cursorPos+1:]...)
+					cf := m.cursorFlat()
+					if cf < m.inputLen() {
+						m.deleteForwardAt(cf)
 					}
 				}
-				inputStr := string(m.inputBuf)
+				inputStr := m.inputText()
 				if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") {
 					m.slashFilter = inputStr
 					m.updateSlashFilter()
@@ -453,14 +457,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if !m.thinking || m.blocking {
-				if m.cursorPos == 0 {
+				if m.cursorLine == 0 && m.cursorCol == 0 {
 					m.browseHistoryUp()
 					return m, nil
 				}
 				info := m.cursorVisualInfo()
 				if info.visualLine > 0 {
 					m.lastVisualCol = info.visualCol
-					m.cursorPos = m.cursorPosFromVisual(info.visualLine-1, m.lastVisualCol)
+					m.setCursorFlat(m.cursorPosFromVisual(info.visualLine-1, m.lastVisualCol))
 				} else {
 					m.browseHistoryUp()
 				}
@@ -479,7 +483,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				info := m.cursorVisualInfo()
 				if info.visualLine < totalVis-1 {
 					m.lastVisualCol = info.visualCol
-					m.cursorPos = m.cursorPosFromVisual(info.visualLine+1, m.lastVisualCol)
+					m.setCursorFlat(m.cursorPosFromVisual(info.visualLine+1, m.lastVisualCol))
 				} else {
 					m.browseHistoryDown()
 				}
@@ -487,35 +491,42 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyLeft:
 			if !m.thinking || m.blocking {
-				if m.cursorPos > 0 {
-					m.cursorPos--
+				if m.cursorCol > 0 {
+					m.cursorCol--
+				} else if m.cursorLine > 0 {
+					m.cursorLine--
+					m.cursorCol = len(m.inputBuf[m.cursorLine])
 				}
 				m.lastVisualCol = -1
 			}
 
 		case tea.KeyRight:
 			if !m.thinking || m.blocking {
-				if m.cursorPos < len(m.inputBuf) {
-					m.cursorPos++
+				lineLen := len(m.inputBuf[m.cursorLine])
+				if m.cursorCol < lineLen {
+					m.cursorCol++
+				} else if m.cursorLine < len(m.inputBuf)-1 {
+					m.cursorLine++
+					m.cursorCol = 0
 				}
 				m.lastVisualCol = -1
 			}
 
 		case tea.KeyCtrlLeft:
 			if !m.thinking || m.blocking {
-				m.cursorPos = m.cursorPrevWord()
+				m.setCursorFlat(m.cursorPrevWord())
 				m.lastVisualCol = -1
 			}
 
 		case tea.KeyCtrlRight:
 			if !m.thinking || m.blocking {
-				m.cursorPos = m.cursorNextWord()
+				m.setCursorFlat(m.cursorNextWord())
 				m.lastVisualCol = -1
 			}
 
 		case tea.KeyHome:
 			if !m.thinking || m.blocking {
-				m.cursorPos = m.cursorLineStart()
+				m.cursorCol = 0
 				m.lastVisualCol = -1
 			} else {
 				m.chatOffset = 1 << 30
@@ -524,7 +535,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyEnd:
 			if !m.thinking || m.blocking {
-				m.cursorPos = m.cursorLineEnd()
+				m.cursorCol = len(m.inputBuf[m.cursorLine])
 				m.lastVisualCol = -1
 			} else {
 				m.chatOffset = 0
@@ -533,7 +544,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyCtrlHome:
 			if !m.thinking || m.blocking {
-				m.cursorPos = 0
+				m.cursorLine, m.cursorCol = 0, 0
 				m.lastVisualCol = -1
 			} else {
 				m.chatOffset = 1 << 30
@@ -542,7 +553,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyCtrlEnd:
 			if !m.thinking || m.blocking {
-				m.cursorPos = len(m.inputBuf)
+				m.cursorLine = len(m.inputBuf) - 1
+				if m.cursorLine < 0 {
+					m.cursorLine = 0
+				}
+				m.cursorCol = len(m.inputBuf[m.cursorLine])
 				m.lastVisualCol = -1
 			} else {
 				m.chatOffset = 0
@@ -551,51 +566,53 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyCtrlA:
 			if !m.thinking || m.blocking {
-				m.cursorPos = m.cursorLineStart()
+				m.cursorCol = 0
 			}
 
 		case tea.KeyCtrlE:
 			if !m.thinking || m.blocking {
-				m.cursorPos = m.cursorLineEnd()
+				m.cursorCol = len(m.inputBuf[m.cursorLine])
 			}
 
 		case tea.KeyCtrlU:
 			if !m.thinking || m.blocking {
 				start := m.cursorLineStart()
-				if start < m.cursorPos {
+				cf := m.cursorFlat()
+				if start < cf {
 					if m.historyIdx != -1 {
-						m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
-						m.historyDraft = string(m.inputBuf)
+						m.historyPrefix = strings.TrimSpace(m.inputText())
+						m.historyDraft = m.inputText()
 						m.historyIdx = -1
 					}
-					m.inputBuf = append(m.inputBuf[:start], m.inputBuf[m.cursorPos:]...)
-					m.cursorPos = start
+					m.deleteRange(start, cf)
+					m.setCursorFlat(start)
 				}
 			}
 
 		case tea.KeyCtrlK:
 			if !m.thinking || m.blocking {
 				end := m.cursorLineEnd()
-				if end > m.cursorPos {
+				cf := m.cursorFlat()
+				if end > cf {
 					if m.historyIdx != -1 {
-						m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
-						m.historyDraft = string(m.inputBuf)
+						m.historyPrefix = strings.TrimSpace(m.inputText())
+						m.historyDraft = m.inputText()
 						m.historyIdx = -1
 					}
-					m.inputBuf = append(m.inputBuf[:m.cursorPos], m.inputBuf[end:]...)
+					m.deleteRange(cf, end)
 				}
 			}
 
 		case tea.KeyCtrlW:
-			if (!m.thinking || m.blocking) && m.cursorPos > 0 {
+			if (!m.thinking || m.blocking) && m.cursorFlat() > 0 {
 				if m.historyIdx != -1 {
-					m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
-					m.historyDraft = string(m.inputBuf)
+					m.historyPrefix = strings.TrimSpace(m.inputText())
+					m.historyDraft = m.inputText()
 					m.historyIdx = -1
 				}
 				pos := m.cursorPrevWord()
-				m.inputBuf = append(m.inputBuf[:pos], m.inputBuf[m.cursorPos:]...)
-				m.cursorPos = pos
+				m.deleteRange(pos, m.cursorFlat())
+				m.setCursorFlat(pos)
 			}
 
 		case tea.KeyPgUp:
@@ -621,19 +638,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if strings.HasPrefix(s, "\x1b[<") && strings.HasSuffix(s, "M") {
 					return m, nil
 				}
-				// If browsing history and user types, update prefix and reset position
 				if m.historyIdx != -1 {
-					m.historyPrefix = strings.TrimSpace(string(m.inputBuf))
-					m.historyDraft = string(m.inputBuf)
+					m.historyPrefix = strings.TrimSpace(m.inputText())
+					m.historyDraft = m.inputText()
 					m.historyIdx = -1
 				}
+				hasPrintable := false
 				for _, r := range msg.Runes {
 					if unicode.IsPrint(r) {
-						m.inputBuf = append(m.inputBuf[:m.cursorPos], append([]rune{r}, m.inputBuf[m.cursorPos:]...)...)
-						m.cursorPos++
+						hasPrintable = true
+						m.insertRuneAt(m.cursorFlat(), r)
+						m.cursorCol++
 					}
 				}
-				inputStr := string(m.inputBuf)
+				if hasPrintable {
+					m.lastInputTime = time.Now()
+				}
+				inputStr := m.inputText()
 				if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") {
 					m.slashFilter = inputStr
 					m.updateSlashFilter()
@@ -717,7 +738,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if msg.Y < firstY {
 						m.inputSelEnd = 0
 					} else {
-						m.inputSelEnd = len(m.inputBuf)
+						m.inputSelEnd = m.inputLen()
 					}
 				}
 			}
@@ -741,12 +762,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.inputSelecting {
 				m.inputSelecting = false
 				selStart, selEnd := m.inputSelectionRange()
-				if selStart != selEnd && selStart < len(m.inputBuf) {
+				if selStart != selEnd && selStart < m.inputLen() {
 					end := selEnd
-					if end > len(m.inputBuf) {
-						end = len(m.inputBuf)
+					if end > m.inputLen() {
+						end = m.inputLen()
 					}
-					text := string(m.inputBuf[selStart:end])
+					text := string(m.subRunes(selStart, end))
 					if text != "" && cmd == nil {
 						cmd = copyToClipboardCmd(text)
 					}
@@ -819,10 +840,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusLine = truncateLine(s, 80)
 				if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleThinking {
 					m.messages[len(m.messages)-1].Content += s
+					m.messages[len(m.messages)-1].cachedLines = nil
 				} else {
 					for i := range m.messages {
 						if m.messages[i].ThinkingActive {
 							m.messages[i].ThinkingActive = false
+							m.messages[i].cachedLines = nil
 						}
 					}
 					m.messages = append(m.messages, ChatMessage{
@@ -839,6 +862,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.streaming = true
 				if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
 					m.messages[len(m.messages)-1].Content += token
+					m.messages[len(m.messages)-1].cachedLines = nil
 				} else {
 					m.messages = append(m.messages, ChatMessage{
 						Role:    RoleAssistant,
@@ -862,11 +886,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.messages {
 				if m.messages[i].ThinkingActive {
 					m.messages[i].ThinkingActive = false
+					m.messages[i].cachedLines = nil
 				}
 			}
 			if content, ok := evt.Data.(string); ok && content != "" {
 				if wasStreaming && len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
 					m.messages[len(m.messages)-1].Content = content
+					m.messages[len(m.messages)-1].cachedLines = nil
 				} else {
 					m.messages = append(m.messages, ChatMessage{
 						Role:    RoleAssistant,
@@ -903,6 +929,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					msg := &m.messages[i]
 					if msg.Role == RoleTool && msg.ToolName == name && msg.ToolStatus == "calling" {
 						msg.ToolStatus = "success"
+						msg.cachedLines = nil
 						if result != "" {
 							msg.Content = result
 						} else {
@@ -929,6 +956,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.messages {
 				if m.messages[i].ThinkingActive {
 					m.messages[i].ThinkingActive = false
+					m.messages[i].cachedLines = nil
 				}
 			}
 			if operation != "" {
@@ -957,6 +985,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.messages {
 				if m.messages[i].ThinkingActive {
 					m.messages[i].ThinkingActive = false
+					m.messages[i].cachedLines = nil
 				}
 			}
 			errMsg := fmt.Sprintf("%v", evt.Data)
@@ -972,6 +1001,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if d, ok := evt.Data.(map[string]int); ok {
 				m.tokenPrompt += d["prompt"]
 				m.tokenCompletion += d["completion"]
+				m.tokenCached += d["prompt_cached"]
+				m.sessionCost += provider.LookupPrice(m.modelName).CalculateCost(
+					d["prompt"], d["completion"], d["prompt_cached"],
+				)
 			}
 		}
 

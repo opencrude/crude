@@ -261,7 +261,7 @@ func (m *Model) chatAreaContentBounds() (firstLine, lastLine int) {
 
 func (m *Model) inputFirstLineY() int {
 	y := m.chatAreaHeight() + 4
-	if !m.settingsActive && !m.confirmForm.active && m.showHint && !m.thinking && len(m.inputBuf) == 0 {
+	if !m.settingsActive && !m.confirmForm.active && m.showHint && !m.thinking && m.inputLen() == 0 {
 		y++
 	}
 	return y

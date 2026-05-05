@@ -82,6 +82,22 @@ func formatTokens(n int) string {
 	}
 }
 
+// formatCost formats a USD cost into a compact string.
+func formatCost(cost float64) string {
+	switch {
+	case cost >= 1.0:
+		return fmt.Sprintf("$%.2f", cost)
+	case cost >= 0.01:
+		return fmt.Sprintf("$%.4f", cost)
+	case cost >= 0.0001:
+		return fmt.Sprintf("$%.5f", cost)
+	case cost > 0:
+		return fmt.Sprintf("$%.6f", cost)
+	default:
+		return ""
+	}
+}
+
 // summarizeToolArgs extracts a compact, user-friendly summary from tool args.
 func summarizeToolArgs(tool, argsStr string) string {
 	path := extractArg(argsStr, "path")

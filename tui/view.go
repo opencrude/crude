@@ -122,7 +122,7 @@ func (m *Model) chatView() string {
 		msg1 := pad + dim.Render("[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]")
 		addFull(msg1)
 	} else {
-		if m.showHint && !m.thinking && len(m.inputBuf) == 0 {
+		if m.showHint && !m.thinking && m.inputLen() == 0 {
 			addFull(pad + dim.Render("[ enter: send · alt+enter: new line · ↑↓: history · ctrl+s: settings · esc: exit ]"))
 		}
 		var inputContent string
@@ -245,7 +245,11 @@ func (m *Model) chatView() string {
 							rest := string(segRunes[splitIdx+1:])
 							cursorAndRight = lipgloss.NewStyle().Reverse(true).Render(underCursor) + lipgloss.NewStyle().Foreground(colorMainText).Render(rest)
 						} else {
-							cursorAndRight = blockCursor(m.spinFrame, colorAccent) + lipgloss.NewStyle().Foreground(colorMainText).Render(rightSeg)
+							cursor := "█"
+							if time.Since(m.lastInputTime) > 800*time.Millisecond {
+								cursor = blockCursor(m.spinFrame, colorAccent)
+							}
+							cursorAndRight = lipgloss.NewStyle().Foreground(colorAccent).Render(cursor) + lipgloss.NewStyle().Foreground(colorMainText).Render(rightSeg)
 						}
 						line = pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+leftSeg) + cursorAndRight
 					} else {
@@ -261,7 +265,7 @@ func (m *Model) chatView() string {
 			addFull(il)
 		}
 
-		inputStr := string(m.inputBuf)
+		inputStr := m.inputText()
 		if m.slashActive && !m.thinking && !strings.Contains(inputStr, "\n") {
 			accentStyle := lipgloss.NewStyle().Foreground(colorAccent)
 			highlightStyle := lipgloss.NewStyle().Foreground(colorMainText).Background(lipgloss.Color("#1e2a3a"))
@@ -322,7 +326,19 @@ func (m *Model) chatView() string {
 	// Token usage display
 	var usageStr string
 	if m.tokenPrompt > 0 || m.tokenCompletion > 0 {
-		usageStr = dim.Render(fmt.Sprintf(" %s in / %s out", formatTokens(m.tokenPrompt), formatTokens(m.tokenCompletion)))
+		newTokens := m.tokenPrompt - m.tokenCached
+		if m.tokenCached > 0 {
+			usageStr = dim.Render(fmt.Sprintf(" %s(%s+%s)in / %s out",
+				formatTokens(newTokens+m.tokenCached),
+				formatTokens(newTokens), formatTokens(m.tokenCached),
+				formatTokens(m.tokenCompletion)))
+		} else {
+			usageStr = dim.Render(fmt.Sprintf(" %s in / %s out",
+				formatTokens(m.tokenPrompt), formatTokens(m.tokenCompletion)))
+		}
+	}
+	if m.sessionCost > 0 {
+		usageStr += dim.Render(" " + formatCost(m.sessionCost))
 	}
 
 	var statusRight string
@@ -373,7 +389,7 @@ func (m *Model) chatAreaHeight() int {
 	}
 	inputLineCount := m.visualLineCount()
 	slashLines := 0
-	inputStr := string(m.inputBuf)
+	inputStr := m.inputText()
 	if m.slashActive && !m.thinking && !strings.Contains(inputStr, "\n") {
 		slashLines = len(m.slashFiltered)
 		if slashLines > 8 {
@@ -381,7 +397,7 @@ func (m *Model) chatAreaHeight() int {
 		}
 	}
 	hintLines := 0
-	if m.showHint && !m.thinking && len(m.inputBuf) == 0 {
+	if m.showHint && !m.thinking && m.inputLen() == 0 {
 		hintLines = 1
 	}
 	reserved := 2 + 1 + hintLines + inputLineCount + slashLines + 1 + 1 + 1
@@ -394,9 +410,18 @@ func (m *Model) chatAreaHeight() int {
 
 // renderAllMessages converts all ChatMessages into display lines.
 func (m *Model) renderAllMessages() []string {
+	// Invalidate all caches on terminal width change
+	if m.width != m.cachedWidth {
+		m.cachedWidth = m.width
+		for i := range m.messages {
+			m.messages[i].cachedLines = nil
+		}
+		m.mdRenderer = nil
+	}
+
 	var all []string
 	dim := lipgloss.NewStyle().Foreground(colorMuted)
-	contentWidth := m.width - padLR*2 - 16 // leave room for timestamp
+	contentWidth := m.width - padLR*2 - 16
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
@@ -405,13 +430,28 @@ func (m *Model) renderAllMessages() []string {
 		innerW = 20
 	}
 
-	for msgIdx, msg := range m.messages {
+	for msgIdx := range m.messages {
+		msg := &m.messages[msgIdx]
 		isLastMsg := msgIdx == len(m.messages)-1
+
+		all = append(all, "")
+
+		// Use pre-rendered cache for unchanged messages
+		if msg.cachedLines != nil {
+			all = append(all, msg.cachedLines...)
+			// Apply blinking cursor on cached messages that need it
+			if msg.cursorLine >= 0 && msg.cursorLine < len(msg.cachedLines) {
+				cursor := blockCursor(m.spinFrame, colorAccent)
+				all[len(all)-len(msg.cachedLines)+msg.cursorLine] += cursor
+			}
+			continue
+		}
+
 		timeLine1, timeLine2 := formatTimeLabel(msg.Time)
 		timeW := max(len(timeLine1), len(timeLine2))
 
-		// Breathing room between messages
-		all = append(all, "")
+		var msgLines []string
+		cursorLine := -1 // line in msgLines to append blinking cursor (applied after cache)
 
 		switch msg.Role {
 		case RoleUser:
@@ -455,17 +495,16 @@ func (m *Model) renderAllMessages() []string {
 				}
 			}
 
-			all = append(all, userLines...)
+			msgLines = append(msgLines, userLines...)
 			if len(userLines) == 1 {
 				sp := innerW - timeW
 				if sp < 0 {
 					sp = 0
 				}
-				all = append(all, strings.Repeat(" ", sp)+dim.Render(timeLine2))
+				msgLines = append(msgLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 			}
 
 		case RoleAssistant:
-			// Try rendering as Markdown
 			var rendered string
 			isMarkdown := false
 			md := m.makeMdRenderer()
@@ -483,16 +522,12 @@ func (m *Model) renderAllMessages() []string {
 				asstLines = strings.Split(rendered, "\n")
 			}
 
-			// First line: background label + content
 			labelStyle := lipgloss.NewStyle().Foreground(colorAccent2).Bold(true).Background(lipgloss.Color("#2a2a3a"))
 			if len(asstLines) > 0 {
 				label := labelStyle.Render("❯ Crude " + m.modelName + " ")
 				asstLines[0] = label + asstLines[0]
 			}
 
-			// Remaining lines: just indented, no background
-
-			// Add timestamps (skip last line when streaming so cursor stays at content end)
 			skipLastForStream := m.streaming && isLastMsg
 			for i, line := range asstLines {
 				if skipLastForStream && i == len(asstLines)-1 {
@@ -514,24 +549,20 @@ func (m *Model) renderAllMessages() []string {
 				}
 			}
 
-			all = append(all, asstLines...)
-			// If only one line, show date on the next line
+			msgLines = append(msgLines, asstLines...)
 			if len(asstLines) == 1 {
 				sp := innerW - timeW
 				if sp < 0 {
 					sp = 0
 				}
-				all = append(all, strings.Repeat(" ", sp)+dim.Render(timeLine2))
+				msgLines = append(msgLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 			}
 
-			// Streaming cursor right after the last content token
 			if m.streaming && isLastMsg && len(asstLines) > 0 {
-				cursor := blockCursor(m.spinFrame, colorAccent)
-				cursorIdx := len(all) - 1
-				if len(asstLines) == 1 && len(all) >= 2 {
-					cursorIdx = len(all) - 2
+				cursorLine = len(msgLines) - 1
+				if len(asstLines) == 1 && len(msgLines) >= 2 {
+					cursorLine = len(msgLines) - 2
 				}
-				all[cursorIdx] = all[cursorIdx] + cursor
 			}
 
 		case RoleThinking:
@@ -541,13 +572,16 @@ func (m *Model) renderAllMessages() []string {
 			for i, line := range lines {
 				if i == 0 {
 					if msg.ThinkingActive {
-						all = append(all, borderPrefix+lipgloss.NewStyle().Foreground(colorAccent).Render(spinnerFrames[m.spinFrame]+" ")+thinkingStyle.Render(line))
+						msgLines = append(msgLines, borderPrefix+lipgloss.NewStyle().Foreground(colorAccent).Render(spinnerFrames[m.spinFrame]+" ")+thinkingStyle.Render(line))
 					} else {
-						all = append(all, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("● ")+thinkingStyle.Render(line))
+						msgLines = append(msgLines, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("● ")+thinkingStyle.Render(line))
 					}
 				} else {
-					all = append(all, borderPrefix+"  "+thinkingStyle.Render(line))
+					msgLines = append(msgLines, borderPrefix+"  "+thinkingStyle.Render(line))
 				}
+			}
+			if msg.ThinkingActive && len(msgLines) > 0 {
+				cursorLine = len(msgLines) - 1
 			}
 
 		case RoleTool:
@@ -582,29 +616,34 @@ func (m *Model) renderAllMessages() []string {
 				line = dim.Render("│ ") + spinStyle.Render("○ ") + nameStyle.Render(label)
 			}
 
-			all = append(all, line)
+			msgLines = append(msgLines, line)
 
-			// Render tool output when tool succeeded
 			if msg.ToolStatus == "success" && msg.Content != "" {
 				resultContent := msg.Content
-				// Strip the label if it matches the tool name + args
 				fullLabel := pascalCaseTool(msg.ToolName) + " " + msg.ToolArgs
 				resultContent = strings.TrimPrefix(strings.TrimSpace(resultContent), fullLabel)
 				resultContent = strings.TrimSpace(resultContent)
 				if resultContent != "" {
-					// Render diff blocks with colored +/-
 					if isDiffContent(resultContent) {
-						all = append(all, "")
+						msgLines = append(msgLines, "")
 						rendered := renderDiffContent(resultContent, contentWidth-6)
 						for _, dl := range strings.Split(rendered, "\n") {
-							all = append(all, dim.Render("│ ")+dl)
+							msgLines = append(msgLines, dim.Render("│ ")+dl)
 						}
+					} else if msg.ToolName == "read_file" && strings.Contains(resultContent, "\n") {
+						// Show only the summary line for file reads, not the full content
+						firstLine, _, _ := strings.Cut(resultContent, "\n")
+						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(firstLine))
+						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render("… full content returned to agent"))
 					} else {
 						for _, rl := range strings.Split(resultContent, "\n") {
-							all = append(all, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(strings.TrimLeft(rl, " ")))
+							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(strings.TrimLeft(rl, " ")))
 						}
 					}
 				}
+			}
+			if isCalling && len(msgLines) > 0 {
+				cursorLine = len(msgLines) - 1
 			}
 
 		case RoleError:
@@ -618,15 +657,15 @@ func (m *Model) renderAllMessages() []string {
 					if sp < 1 {
 						sp = 1
 					}
-					all = append(all, styled+strings.Repeat(" ", sp)+dim.Render(timeLine1))
+					msgLines = append(msgLines, styled+strings.Repeat(" ", sp)+dim.Render(timeLine1))
 				} else if i == 1 {
 					sp := innerW - lipgloss.Width(styled) - timeW
 					if sp < 1 {
 						sp = 1
 					}
-					all = append(all, styled+strings.Repeat(" ", sp)+dim.Render(timeLine2))
+					msgLines = append(msgLines, styled+strings.Repeat(" ", sp)+dim.Render(timeLine2))
 				} else {
-					all = append(all, styled)
+					msgLines = append(msgLines, styled)
 				}
 			}
 			if len(lines) == 1 {
@@ -634,12 +673,20 @@ func (m *Model) renderAllMessages() []string {
 				if sp < 0 {
 					sp = 0
 				}
-				all = append(all, strings.Repeat(" ", sp)+dim.Render(timeLine2))
+				msgLines = append(msgLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 			}
+		}
+
+		msg.cachedLines = msgLines
+		msg.cursorLine = cursorLine
+		prevLen := len(all)
+		all = append(all, msgLines...)
+		if cursorLine >= 0 && cursorLine < len(msgLines) {
+			cursor := blockCursor(m.spinFrame, colorAccent)
+			all[prevLen+cursorLine] = all[prevLen+cursorLine] + cursor
 		}
 	}
 
-	// If settings is active, render the form at the bottom of messages.
 	if m.settingsActive {
 		for _, sl := range strings.Split(m.inlineForm.View(m.spinFrame), "\n") {
 			all = append(all, sl)
@@ -712,7 +759,7 @@ func wrapText(text string, width int) []string {
 
 // inputTextWidth returns the available display width for input text.
 func (m *Model) inputTextWidth() int {
-	w := m.width - padLR - 2
+	w := m.width - padLR*2 - 2
 	if w < 1 {
 		w = 1
 	}
@@ -855,7 +902,7 @@ func (m *Model) cursorPosFromVisual(targetVisLine, targetVisCol int) int {
 			visCount++
 		}
 	}
-	return len(m.inputBuf)
+	return m.inputLen()
 }
 
 func truncateLine(s string, max int) string {

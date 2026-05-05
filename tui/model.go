@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"time"
 	"unicode"
 
@@ -17,9 +18,10 @@ type Model struct {
 	username  string
 
 	// Chat state
-	messages  []ChatMessage
-	inputBuf  []rune
-	cursorPos int
+	messages   []ChatMessage
+	inputBuf   [][]rune
+	cursorLine int
+	cursorCol  int
 
 	// Agent state
 	thinking  bool
@@ -32,6 +34,8 @@ type Model struct {
 	statusPhase     string
 	tokenPrompt     int
 	tokenCompletion int
+	tokenCached     int
+	sessionCost     float64
 
 	// Scroll: 0 = bottom, >0 = scrolled up by N lines
 	chatOffset     int
@@ -46,6 +50,7 @@ type Model struct {
 	// Timing
 	startTime      time.Time
 	lastCancelTime time.Time
+	lastInputTime  time.Time // last user input key press, for cursor solid-while-typing
 	lastVisualCol  int // preserved visual column for vertical navigation in wrapped input
 
 	// Error bar
@@ -81,6 +86,11 @@ type Model struct {
 
 	// Settings state
 	lastSettings Settings
+
+	// Cached glamour renderer (recreated on width change)
+	mdRenderer    *glamour.TermRenderer
+	rendererWidth int
+	cachedWidth   int
 
 	// Prompt history
 	history       []string // deduplicated, newest last
@@ -122,6 +132,7 @@ func NewModel(modelName string, username string, inputCh chan<- string, cancelCh
 		username:            username,
 		inputCh:             inputCh,
 		cancelCh:            cancelCh,
+		inputBuf:            [][]rune{{}},
 		startTime:           time.Now(),
 		lastVisualCol:       -1,
 		width:               80,
@@ -137,11 +148,14 @@ func NewModel(modelName string, username string, inputCh chan<- string, cancelCh
 	}
 }
 
-// Md renderer — created dynamically per render with correct width.
+// Md renderer — cached and reused; recreated only on width change.
 func (m *Model) makeMdRenderer() *glamour.TermRenderer {
 	w := m.width - padLR*2 - 16
 	if w < 20 {
 		w = 20
+	}
+	if m.mdRenderer != nil && m.rendererWidth == w {
+		return m.mdRenderer
 	}
 	style := styles.DarkStyleConfig
 	style.Document.Margin = uintPtr(0)
@@ -182,11 +196,16 @@ func (m *Model) makeMdRenderer() *glamour.TermRenderer {
 	style.List.Margin = uintPtr(0)
 	style.Table.Margin = uintPtr(0)
 
-	r, _ := glamour.NewTermRenderer(
+	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(style),
 		glamour.WithWordWrap(w),
 	)
-	return r
+	if err == nil {
+		m.mdRenderer = r
+		m.rendererWidth = w
+		return r
+	}
+	return nil
 }
 
 func uintPtr(u uint) *uint {
@@ -197,69 +216,138 @@ func strPtr(s string) *string {
 	return &s
 }
 
-// setInput sets the input buffer from a string and places cursor at end.
-func (m *Model) setInput(s string) {
-	m.inputBuf = []rune(s)
-	m.cursorPos = len(m.inputBuf)
+// inputText returns the full input as a flattened string with \n separators.
+func (m *Model) inputText() string {
+	var parts []string
+	for _, line := range m.inputBuf {
+		parts = append(parts, string(line))
+	}
+	return strings.Join(parts, "\n")
 }
 
-// inputLines splits the input buffer into lines (without newline characters).
-func (m *Model) inputLines() [][]rune {
-	var lines [][]rune
-	var current []rune
-	for _, r := range m.inputBuf {
-		if r == '\n' {
-			lines = append(lines, current)
-			current = nil
-		} else {
-			current = append(current, r)
-		}
+// inputLen returns the number of runes in the virtual flat buffer (including \n separators).
+func (m *Model) inputLen() int {
+	n := 0
+	for _, line := range m.inputBuf {
+		n += len(line)
 	}
-	lines = append(lines, current)
-	return lines
+	if len(m.inputBuf) > 0 {
+		n += len(m.inputBuf) - 1
+	}
+	return n
+}
+
+// setInput sets the input buffer from a string and places cursor at end.
+func (m *Model) setInput(s string) {
+	lines := strings.Split(s, "\n")
+	m.inputBuf = make([][]rune, len(lines))
+	for i, l := range lines {
+		m.inputBuf[i] = []rune(l)
+	}
+	m.cursorLine = len(m.inputBuf) - 1
+	if m.cursorLine < 0 {
+		m.cursorLine = 0
+		m.inputBuf = [][]rune{{}}
+	}
+	m.cursorCol = len(m.inputBuf[m.cursorLine])
+}
+
+// clearInput resets the input buffer.
+func (m *Model) clearInput() {
+	m.inputBuf = [][]rune{{}}
+	m.cursorLine = 0
+	m.cursorCol = 0
+}
+
+// inputLines returns the lines of the input buffer.
+func (m *Model) inputLines() [][]rune {
+	if len(m.inputBuf) == 0 {
+		return [][]rune{{}}
+	}
+	return m.inputBuf
 }
 
 // cursorLineCol returns the line index and column of the cursor position.
 func (m *Model) cursorLineCol() (line, col int) {
-	for i := 0; i < m.cursorPos && i < len(m.inputBuf); i++ {
-		if m.inputBuf[i] == '\n' {
-			line++
-			col = 0
-		} else {
-			col++
-		}
-	}
-	return
+	return m.cursorLine, m.cursorCol
 }
 
-// cursorLineStart returns the absolute position of the start of the current line.
+// flatToLineCol converts a flat buffer position to (line, col).
+func (m *Model) flatToLineCol(pos int) (line, col int) {
+	if pos <= 0 {
+		return 0, 0
+	}
+	remaining := pos
+	for li, lineRunes := range m.inputBuf {
+		if remaining <= len(lineRunes) {
+			return li, remaining
+		}
+		remaining -= len(lineRunes) + 1
+	}
+	if len(m.inputBuf) == 0 {
+		return 0, 0
+	}
+	last := len(m.inputBuf) - 1
+	return last, len(m.inputBuf[last])
+}
+
+// lineColToFlat converts (line, col) to a flat buffer position.
+func (m *Model) lineColToFlat(line, col int) int {
+	if line < 0 {
+		line = 0
+	}
+	if line >= len(m.inputBuf) {
+		line = len(m.inputBuf) - 1
+	}
+	pos := 0
+	for i := 0; i < line; i++ {
+		pos += len(m.inputBuf[i]) + 1
+	}
+	if col > len(m.inputBuf[line]) {
+		col = len(m.inputBuf[line])
+	}
+	return pos + col
+}
+
+// cursorFlat returns the flat position of the cursor.
+func (m *Model) cursorFlat() int {
+	return m.lineColToFlat(m.cursorLine, m.cursorCol)
+}
+
+// setCursorFlat sets cursorLine/cursorCol from a flat position.
+func (m *Model) setCursorFlat(pos int) {
+	m.cursorLine, m.cursorCol = m.flatToLineCol(pos)
+}
+
+// cursorLineStart returns the flat position of the start of the current line.
 func (m *Model) cursorLineStart() int {
-	for i := m.cursorPos - 1; i >= 0; i-- {
-		if m.inputBuf[i] == '\n' {
-			return i + 1
-		}
-	}
-	return 0
+	return m.lineColToFlat(m.cursorLine, 0)
 }
 
-// cursorLineEnd returns the absolute position of the end of the current line
+// cursorLineEnd returns the flat position of the end of the current line
 // (just after the last character, before any newline).
 func (m *Model) cursorLineEnd() int {
-	for i := m.cursorPos; i < len(m.inputBuf); i++ {
-		if m.inputBuf[i] == '\n' {
-			return i
-		}
-	}
-	return len(m.inputBuf)
+	return m.lineColToFlat(m.cursorLine, len(m.inputBuf[m.cursorLine]))
 }
 
 // cursorPrevWord returns the position of the previous word boundary.
 func (m *Model) cursorPrevWord() int {
-	pos := m.cursorPos
-	for pos > 0 && unicode.IsSpace(m.inputBuf[pos-1]) {
+	line, col := m.cursorLine, m.cursorCol
+	if col == 0 {
+		if line == 0 {
+			return 0
+		}
+		line--
+		col = len(m.inputBuf[line])
+	}
+	pos := m.lineColToFlat(line, col)
+	lineRunes := m.inputBuf[line]
+	for col > 0 && unicode.IsSpace(lineRunes[col-1]) {
+		col--
 		pos--
 	}
-	for pos > 0 && !unicode.IsSpace(m.inputBuf[pos-1]) {
+	for col > 0 && !unicode.IsSpace(lineRunes[col-1]) {
+		col--
 		pos--
 	}
 	return pos
@@ -267,14 +355,152 @@ func (m *Model) cursorPrevWord() int {
 
 // cursorNextWord returns the position of the next word boundary.
 func (m *Model) cursorNextWord() int {
-	pos := m.cursorPos
-	for pos < len(m.inputBuf) && !unicode.IsSpace(m.inputBuf[pos]) {
+	line, col := m.cursorLine, m.cursorCol
+	lineLen := len(m.inputBuf[line])
+	flatEnd := m.lineColToFlat(len(m.inputBuf)-1, len(m.inputBuf[len(m.inputBuf)-1]))
+	pos := m.lineColToFlat(line, col)
+	lineRunes := m.inputBuf[line]
+	for col < lineLen && !unicode.IsSpace(lineRunes[col]) {
+		col++
 		pos++
 	}
-	for pos < len(m.inputBuf) && unicode.IsSpace(m.inputBuf[pos]) {
+	for col < lineLen && unicode.IsSpace(lineRunes[col]) {
+		col++
 		pos++
+	}
+	if pos > flatEnd {
+		pos = flatEnd
 	}
 	return pos
+}
+
+// splitLineAt splits the line at the cursor position into two lines.
+func (m *Model) splitLineAt(line, col int) {
+	if line < 0 || line >= len(m.inputBuf) {
+		return
+	}
+	runes := m.inputBuf[line]
+	left := make([]rune, col)
+	copy(left, runes[:col])
+	right := make([]rune, len(runes)-col)
+	copy(right, runes[col:])
+
+	newLines := make([][]rune, len(m.inputBuf)+1)
+	copy(newLines, m.inputBuf[:line])
+	newLines[line] = left
+	newLines[line+1] = right
+	copy(newLines[line+2:], m.inputBuf[line+1:])
+	m.inputBuf = newLines
+}
+
+// insertRuneAt inserts a rune at the given flat position.
+func (m *Model) insertRuneAt(pos int, r rune) {
+	if len(m.inputBuf) == 0 {
+		m.inputBuf = [][]rune{{r}}
+		return
+	}
+	line, col := m.flatToLineCol(pos)
+	if line >= len(m.inputBuf) {
+		line = len(m.inputBuf) - 1
+	}
+	newLine := make([]rune, len(m.inputBuf[line])+1)
+	copy(newLine, m.inputBuf[line][:col])
+	newLine[col] = r
+	copy(newLine[col+1:], m.inputBuf[line][col:])
+	m.inputBuf[line] = newLine
+}
+
+// deleteRuneAt removes the rune BEFORE the given flat position (backspace).
+func (m *Model) deleteRuneAt(pos int) {
+	if pos <= 0 {
+		return
+	}
+	line, col := m.flatToLineCol(pos)
+	if col > 0 {
+		newLine := make([]rune, len(m.inputBuf[line])-1)
+		copy(newLine, m.inputBuf[line][:col-1])
+		copy(newLine[col-1:], m.inputBuf[line][col:])
+		m.inputBuf[line] = newLine
+	} else if line > 0 {
+		prevLen := len(m.inputBuf[line-1])
+		merged := make([]rune, prevLen+len(m.inputBuf[line]))
+		copy(merged, m.inputBuf[line-1])
+		copy(merged[prevLen:], m.inputBuf[line])
+		m.inputBuf = append(m.inputBuf[:line-1], m.inputBuf[line:]...)
+		m.inputBuf[line-1] = merged
+	}
+}
+
+// deleteForwardAt removes the rune AT the given flat position (delete key).
+func (m *Model) deleteForwardAt(pos int) {
+	line, col := m.flatToLineCol(pos)
+	if line >= len(m.inputBuf) {
+		return
+	}
+	lineLen := len(m.inputBuf[line])
+	if col < lineLen {
+		newLine := make([]rune, lineLen-1)
+		copy(newLine, m.inputBuf[line][:col])
+		copy(newLine[col:], m.inputBuf[line][col+1:])
+		m.inputBuf[line] = newLine
+	} else if line+1 < len(m.inputBuf) {
+		merged := make([]rune, lineLen+len(m.inputBuf[line+1]))
+		copy(merged, m.inputBuf[line])
+		copy(merged[lineLen:], m.inputBuf[line+1])
+		m.inputBuf = append(m.inputBuf[:line], m.inputBuf[line+1:]...)
+		m.inputBuf[line] = merged
+	}
+}
+
+// deleteRange removes runes from start to end (flat positions).
+func (m *Model) deleteRange(start, end int) {
+	if start >= end {
+		return
+	}
+	startLine, startCol := m.flatToLineCol(start)
+	endLine, endCol := m.flatToLineCol(end)
+
+	if startLine == endLine {
+		newLine := make([]rune, len(m.inputBuf[startLine])-(endCol-startCol))
+		copy(newLine, m.inputBuf[startLine][:startCol])
+		copy(newLine[startCol:], m.inputBuf[startLine][endCol:])
+		m.inputBuf[startLine] = newLine
+		return
+	}
+
+	var result [][]rune
+	result = append(result, m.inputBuf[:startLine]...)
+	merged := make([]rune, startCol+len(m.inputBuf[endLine])-endCol)
+	copy(merged, m.inputBuf[startLine][:startCol])
+	copy(merged[startCol:], m.inputBuf[endLine][endCol:])
+	result = append(result, merged)
+	result = append(result, m.inputBuf[endLine+1:]...)
+	m.inputBuf = result
+}
+
+// subRunes returns the rune slice for a flat range [start, end).
+func (m *Model) subRunes(start, end int) []rune {
+	if start >= end {
+		return nil
+	}
+	startLine, startCol := m.flatToLineCol(start)
+	endLine, endCol := m.flatToLineCol(end)
+
+	if startLine == endLine {
+		r := make([]rune, endCol-startCol)
+		copy(r, m.inputBuf[startLine][startCol:endCol])
+		return r
+	}
+
+	var result []rune
+	result = append(result, m.inputBuf[startLine][startCol:]...)
+	for li := startLine + 1; li < endLine; li++ {
+		result = append(result, '\n')
+		result = append(result, m.inputBuf[li]...)
+	}
+	result = append(result, '\n')
+	result = append(result, m.inputBuf[endLine][:endCol]...)
+	return result
 }
 
 func (m *Model) Init() tea.Cmd {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,7 +89,7 @@ CONSTRAINTS: %s`,
 	}
 }
 
-func ConsultOracle(p *provider.Provider, model string, query OracleQuery) (OracleResponse, error) {
+func ConsultOracle(ctx context.Context, p *provider.Provider, model string, query OracleQuery) (OracleResponse, error) {
 	msgs := buildOracleMessages(query)
 
 	req := ChatRequest{
@@ -103,23 +104,28 @@ func ConsultOracle(p *provider.Provider, model string, query OracleQuery) (Oracl
 
 	client := &http.Client{Timeout: 180 * time.Second}
 
-	var lastErr error
-	for attempt := 1; attempt <= maxAPIAttempts; attempt++ {
-		httpReq, err := http.NewRequest("POST", p.ChatEndpoint(), bytes.NewReader(body))
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return OracleResponse{}, fmt.Errorf("oracle request cancelled: %w", ctx.Err())
+		default:
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.ChatEndpoint(), bytes.NewReader(body))
 		if err != nil {
-			lastErr = fmt.Errorf("create oracle request: %w", err)
-			continue
+			return OracleResponse{}, fmt.Errorf("create oracle request: %w", err)
 		}
 		httpReq.Header.Set(p.AuthHeader, p.AuthValue())
 		httpReq.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			if attempt < maxAPIAttempts {
-				time.Sleep(retryBackoff(attempt))
-				continue
+			select {
+			case <-time.After(retryBackoff(attempt)):
+			case <-ctx.Done():
+				return OracleResponse{}, fmt.Errorf("oracle request cancelled during retry: %w", ctx.Err())
 			}
-			return OracleResponse{}, fmt.Errorf("oracle API request failed: %w", err)
+			continue
 		}
 
 		respBody, readErr := io.ReadAll(resp.Body)
@@ -129,8 +135,12 @@ func ConsultOracle(p *provider.Provider, model string, query OracleQuery) (Oracl
 		}
 
 		if resp.StatusCode != 200 {
-			if isRetryable(resp.StatusCode) && attempt < maxAPIAttempts {
-				time.Sleep(retryBackoff(attempt))
+			if isRetryable(resp.StatusCode) {
+				select {
+				case <-time.After(retryBackoff(attempt)):
+				case <-ctx.Done():
+					return OracleResponse{}, fmt.Errorf("oracle request cancelled during retry: %w", ctx.Err())
+				}
 				continue
 			}
 			return OracleResponse{}, fmt.Errorf("oracle API %d: %s", resp.StatusCode, string(respBody))
@@ -150,11 +160,6 @@ func ConsultOracle(p *provider.Provider, model string, query OracleQuery) (Oracl
 		content := chatResp.Choices[0].Message.Content
 		return parseOracleResponse(content), nil
 	}
-
-	if lastErr != nil {
-		return OracleResponse{}, lastErr
-	}
-	return OracleResponse{}, fmt.Errorf("oracle request retries exhausted")
 }
 
 func FormatOracleResponse(resp OracleResponse) string {

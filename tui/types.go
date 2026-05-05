@@ -25,6 +25,10 @@ type ChatMessage struct {
 
 	// Thinking metadata
 	ThinkingActive bool // true while agent is still thinking, false when done
+
+	// Render cache
+	cachedLines []string // rendered ANSI lines, nil = needs re-render
+	cursorLine  int      // line index within cachedLines for blinking cursor, -1 = none
 }
 
 // AgentEventMsg carries an agent lifecycle event to the TUI.
