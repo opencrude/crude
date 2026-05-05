@@ -153,10 +153,37 @@ func (a *Agent) Run(
 		}
 	}
 
+	// Helper: build a system message from current SM state, or return nil if idle
+	buildSMStatusMsg := func() *APIMessage {
+		if sm == nil || sessionID == "" {
+			return nil
+		}
+		status := BuildStateMachineStatus(sm, sessionID)
+		if status == "" {
+			return nil
+		}
+		return &APIMessage{Role: "system", Content: status}
+	}
+
 	for step := 0; step < maxSteps; step++ {
 		if ctx.Err() != nil {
 			emit(AgentEvent{Type: "done", Data: "Cancelled."})
 			return
+		}
+
+		// Inject SM status as a system message before each LLM call
+		if smStatus := buildSMStatusMsg(); smStatus != nil {
+			replaced := false
+			for i := len(msgs) - 1; i >= 0; i-- {
+				if msgs[i].Role == "system" && containsPrefix(msgs[i].Content, "## Current State") {
+					msgs[i] = *smStatus
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				msgs = append(msgs, *smStatus)
+			}
 		}
 
 		var accumulatedText string
@@ -305,4 +332,159 @@ func allToolDefs() []ToolDef {
 		}
 	}
 	return result
+}
+
+func containsPrefix(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	return s[:len(prefix)] == prefix
+}
+
+// BuildStateMachineStatus returns a formatted block describing the current
+// state machine status for both LLM context and TUI display. Uses clean
+// Unicode symbols for step status: ✓ completed, → active, ☐ pending, ✗ failed.
+// Reads persistent step statuses from ContextData so completed steps are
+// visible even after the state machine pops them from the sub-goal stack.
+func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionID string) string {
+	if sm == nil {
+		return ""
+	}
+
+	state := sm.GetState(sessionID)
+	if state == nil {
+		return ""
+	}
+
+	focus := sm.GetFocusGoal(sessionID)
+	if focus == nil && len(state.ThreadRoots) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	if focus != nil {
+		statusLabel := goalStatusLabel(focus.Status)
+		isPlan := strings.HasPrefix(focus.Intent, "plan:")
+
+		if isPlan {
+			objective := strings.TrimPrefix(focus.Intent, "plan: ")
+			sb.WriteString(fmt.Sprintf("Plan: %s (%s)\n", objective, statusLabel))
+
+			// Read persistent step statuses
+			rawStatuses, _ := state.GetFromContext("plan_step_statuses")
+			rawLabels, _ := state.GetFromContext("plan_step_labels")
+			stepStatuses, _ := rawStatuses.(map[string]string)
+			stepLabels, _ := rawLabels.(map[string]string)
+
+			if stepStatuses != nil {
+				total := 0
+				completed := 0
+				// Determine display order from stored steps
+				rawSteps, _ := state.GetFromContext("plan_steps")
+				if steps, ok := rawSteps.([]map[string]any); ok {
+					total = len(steps)
+					for _, step := range steps {
+						id, _ := step["id"].(string)
+						desc := stepLabels[id]
+						status := stepStatuses[id]
+						marker := persistentStepMarker(status)
+						if status == "completed" {
+							completed++
+						}
+						line := fmt.Sprintf("  %s %s: %s", marker, id, desc)
+						sb.WriteString(line + "\n")
+					}
+				} else {
+					// Fallback: iterate map
+					for id, status := range stepStatuses {
+						marker := persistentStepMarker(status)
+						desc := stepLabels[id]
+						line := fmt.Sprintf("  %s %s: %s", marker, id, desc)
+						if status == "completed" {
+							completed++
+						}
+						total++
+						sb.WriteString(line + "\n")
+					}
+				}
+
+				// Summary line
+				var summaryParts []string
+				summaryParts = append(summaryParts, fmt.Sprintf("%d/%d steps", completed, total))
+				if focus.CurrentBlocker != nil {
+					summaryParts = append(summaryParts, fmt.Sprintf("blocker: %s", focus.CurrentBlocker.Message))
+				}
+				if len(summaryParts) > 0 {
+					sb.WriteString(fmt.Sprintf("  %s\n", strings.Join(summaryParts, "  |  ")))
+				}
+			}
+		} else {
+			sb.WriteString(fmt.Sprintf("Goal: %s (%s)\n", focus.Intent, statusLabel))
+			if focus.OriginalQuery != "" {
+				sb.WriteString(fmt.Sprintf("  request: %s\n", focus.OriginalQuery))
+			}
+			if focus.CurrentBlocker != nil {
+				sb.WriteString(fmt.Sprintf("  blocker [%s]: %s\n", focus.CurrentBlocker.Type.String(), focus.CurrentBlocker.Message))
+			}
+		}
+	}
+
+	// Suspended goals (other roots not in focus)
+	suspended := sm.GetSuspendedGoals(sessionID)
+	if len(suspended) > 0 {
+		sb.WriteString("Suspended:\n")
+		for _, g := range suspended {
+			sb.WriteString(fmt.Sprintf("  %s (%s)\n", g.Intent, goalStatusLabel(g.Status)))
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+func persistentStepMarker(status string) string {
+	switch status {
+	case "completed":
+		return "✓"
+	case "active":
+		return "→"
+	case "blocked":
+		return "!"
+	case "failed":
+		return "✗"
+	default:
+		return "☐"
+	}
+}
+
+func stepStatusMarker(s statemachine.GoalStatus) string {
+	switch s {
+	case statemachine.GoalCompleted:
+		return "✓"
+	case statemachine.GoalActive:
+		return "→"
+	case statemachine.GoalBlocked:
+		return "!"
+	case statemachine.GoalFailed:
+		return "✗"
+	default:
+		return "☐"
+	}
+}
+
+func goalStatusLabel(s statemachine.GoalStatus) string {
+	switch s {
+	case statemachine.GoalPending:
+		return "pending"
+	case statemachine.GoalActive:
+		return "active"
+	case statemachine.GoalBlocked:
+		return "blocked"
+	case statemachine.GoalCompleted:
+		return "completed"
+	case statemachine.GoalFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
 }

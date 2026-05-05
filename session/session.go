@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/user"
@@ -218,7 +219,8 @@ func (s *Session) newAgent() *agent.Agent {
 	a.OracleModel = oracleModel
 
 	a.ToolFn = func(tool string, params map[string]any) (string, error) {
-		if tool == "consult_oracle" {
+		switch tool {
+		case "consult_oracle":
 			s.logger.Info("oracle.consult", "task", params["task"], "decision_point", params["decision_point"])
 			query := agent.OracleQuery{
 				Task:          getStrParam(params, "task"),
@@ -232,12 +234,206 @@ func (s *Session) newAgent() *agent.Agent {
 				return "", fmt.Errorf("oracle consultation failed: %w", err)
 			}
 			return agent.FormatOracleResponse(resp), nil
+
+		case "plan":
+			objective := getStrParam(params, "objective")
+			if objective == "" {
+				objective = "multi-step plan"
+			}
+
+			rawSteps, ok := params["steps"]
+			if !ok {
+				return "", fmt.Errorf("plan: missing 'steps' parameter")
+			}
+			stepsJSON, err := json.Marshal(rawSteps)
+			if err != nil {
+				return "", fmt.Errorf("plan: failed to marshal steps: %w", err)
+			}
+			var steps []map[string]any
+			if err := json.Unmarshal(stepsJSON, &steps); err != nil {
+				return "", fmt.Errorf("plan: invalid steps format: %w", err)
+			}
+
+			goal := s.sm.CreateGoal(s.sessionID, "plan: "+objective, objective, statemachine.PriorityNormal, false)
+			state := s.sm.GetOrCreateState(s.sessionID)
+
+			// Track step statuses persistently in context so they survive sub-goal popping
+			stepStatuses := make(map[string]string)
+			stepLabels := make(map[string]string)
+			for i, step := range steps {
+				id, _ := step["id"].(string)
+				desc, _ := step["description"].(string)
+				stepLabels[id] = desc
+				if i == 0 {
+					stepStatuses[id] = "active"
+				} else {
+					stepStatuses[id] = "pending"
+				}
+			}
+			state.AddToContext("plan_steps", steps)
+			state.AddToContext("plan_step_statuses", stepStatuses)
+			state.AddToContext("plan_step_labels", stepLabels)
+			state.AddToContext("plan_goal_id", goal.ID)
+
+			// Push each step as a pending sub-goal for state machine tracking
+			for _, step := range steps {
+				id, _ := step["id"].(string)
+				desc, _ := step["description"].(string)
+				sg := statemachine.NewGoal(fmt.Sprintf("%s: %s", id, desc), desc, statemachine.PriorityNormal, false)
+				sg.Status = statemachine.GoalPending
+				goal.SubGoalStack = append(goal.SubGoalStack, sg)
+			}
+			if len(goal.SubGoalStack) > 0 {
+				goal.SubGoalStack[0].Status = statemachine.GoalActive
+			}
+
+			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
+			return status, nil
+
+		case "mark_step_complete":
+			stepID := getStrParam(params, "step_id")
+			if stepID == "" {
+				return "", fmt.Errorf("mark_step_complete: missing 'step_id'")
+			}
+			s.sm.CompleteCurrentGoal(s.sessionID, map[string]any{
+				"step_id": stepID,
+				"result":  getStrParam(params, "result"),
+			})
+			// Update persistent step status
+			state := s.sm.GetOrCreateState(s.sessionID)
+			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := statuses.(map[string]string); ok {
+					m[stepID] = "completed"
+					state.AddToContext("plan_step_statuses", m)
+				}
+			}
+			// Activate next pending sub-goal
+			focus := s.sm.GetFocusGoal(s.sessionID)
+			if focus != nil {
+				activated := false
+				for _, sg := range focus.SubGoalStack {
+					if sg.Status == statemachine.GoalPending {
+						sg.Status = statemachine.GoalActive
+						activated = true
+						break
+					}
+				}
+				// All sub-goals done — complete the plan root goal
+				if !activated && len(focus.SubGoalStack) == 0 {
+					s.sm.CompleteCurrentGoal(s.sessionID, map[string]any{"status": "plan_complete"})
+				}
+			}
+			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
+			if status != "" {
+				return status, nil
+			}
+			return fmt.Sprintf("Step %q marked as complete.", stepID), nil
+
+		case "mark_step_failed":
+			stepID := getStrParam(params, "step_id")
+			reason := getStrParam(params, "reason")
+			if stepID == "" {
+				return "", fmt.Errorf("mark_step_failed: missing 'step_id'")
+			}
+			if reason == "" {
+				reason = "unknown error"
+			}
+			s.sm.FailCurrentGoal(s.sessionID, reason)
+			state := s.sm.GetOrCreateState(s.sessionID)
+			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := statuses.(map[string]string); ok {
+					m[stepID] = "failed"
+					state.AddToContext("plan_step_statuses", m)
+				}
+			}
+			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
+			if status != "" {
+				return status, nil
+			}
+			return fmt.Sprintf("Step %q marked as failed: %s", stepID, reason), nil
+
+		case "report_blocker":
+			blockerType := getStrParam(params, "blocker_type")
+			message := getStrParam(params, "message")
+			if message == "" {
+				return "", fmt.Errorf("report_blocker: missing 'message'")
+			}
+			var bt statemachine.BlockingConditionType
+			switch blockerType {
+			case "missing_info":
+				bt = statemachine.BlockMissingParameter
+			case "confirmation_needed":
+				bt = statemachine.BlockConfirmationNeeded
+			case "api_error":
+				bt = statemachine.BlockExternalAPIError
+			case "ambiguous":
+				bt = statemachine.BlockAmbiguousInput
+			case "auth_required":
+				bt = statemachine.BlockAuthRequired
+			default:
+				bt = statemachine.BlockConfirmationNeeded
+			}
+			blocker := &statemachine.BlockingCondition{
+				Type:    bt,
+				Message: message,
+			}
+			s.sm.PauseWithBlocker(s.sessionID, blocker)
+			// Mark the active step as blocked in persistent status
+			state := s.sm.GetOrCreateState(s.sessionID)
+			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := statuses.(map[string]string); ok {
+					for id, st := range m {
+						if st == "active" {
+							m[id] = "blocked"
+							break
+						}
+					}
+					state.AddToContext("plan_step_statuses", m)
+				}
+			}
+			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
+			if status != "" {
+				return status, nil
+			}
+			return fmt.Sprintf("Blocker reported: [%s] %s", blockerType, message), nil
+
+		case "resolve_blocker":
+			resolved := s.sm.TryResolveBlocker(s.sessionID, getStrParam(params, "message"))
+			if resolved {
+				state := s.sm.GetOrCreateState(s.sessionID)
+				if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
+					if m, ok := statuses.(map[string]string); ok {
+						for id, st := range m {
+							if st == "blocked" {
+								m[id] = "active"
+								break
+							}
+						}
+						state.AddToContext("plan_step_statuses", m)
+					}
+				}
+				status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
+				if status != "" {
+					return status, nil
+				}
+				return "Blocker resolved. Plan execution can resume.", nil
+			}
+			return "No active blocker to resolve.", nil
+
+		case "list_goal_status":
+			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
+			if status == "" {
+				return "No active goals or plans.", nil
+			}
+			return status, nil
+
+		default:
+			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor)
+			if strings.HasPrefix(result, "Error:") {
+				return result, fmt.Errorf("%s", result)
+			}
+			return result, nil
 		}
-		result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor)
-		if strings.HasPrefix(result, "Error:") {
-			return result, fmt.Errorf("%s", result)
-		}
-		return result, nil
 	}
 	a.ExtraBody = thinkingParamsForProvider(s.provider.ID, activeCfg.ThinkingEffort)
 	return a
@@ -381,7 +577,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 
 		ag := s.newAgent()
 		var finalContent string
-		prompt := agent.SystemPrompt
+		prompt := agent.BuildSystemPrompt()
 
 		ctx, cancel := context.WithCancel(context.Background())
 		ag.Ctx = ctx
