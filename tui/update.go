@@ -111,6 +111,17 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 			helpText += fmt.Sprintf("  %-16s %s\n", c.name, c.desc)
 		}
 		m.messages = append(m.messages, ChatMessage{Role: RoleAssistant, Content: helpText, Time: time.Now()})
+	case "/yolo":
+		if m.yolo {
+			m.yolo = false
+			m.messages = append(m.messages, ChatMessage{Role: RoleAssistant, Content: "⚠ YOLO mode disabled. Safety checks restored.", Time: time.Now()})
+			m.chatOffset = 0
+			if m.OnYoloCmd != nil {
+				go m.OnYoloCmd(false)
+			}
+		} else {
+			m.yoloForm.Reset()
+		}
 	case "/undo", "/undo-n", "/undo-all", "/changes":
 		if m.OnUndoCmd != nil {
 			go m.OnUndoCmd(text)
@@ -174,12 +185,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		m.spinFrame = (m.spinFrame + 1) % len(spinnerFrames)
+		m.spinFrame++
 		if m.lastError != "" && time.Since(m.errorTime) > 8*time.Second {
 			m.lastError = ""
 		}
 		if m.infoMsg != "" && time.Since(m.infoMsgTime) > 5*time.Second {
 			m.infoMsg = ""
+		}
+		for i := range m.messages {
+			if m.messages[i].Role == RoleTool && (m.messages[i].ToolStatus == "streaming" || m.messages[i].ToolStatus == "calling") {
+				m.messages[i].cachedLines = nil
+			}
 		}
 		return m, tickCmd()
 	}
@@ -328,6 +344,29 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case openSettingsMsg:
 			// No longer triggers a fetch; fetching is lazy (user opens model selector).
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// Yolo form mode.
+	if m.yoloForm.active {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			updated, enabled, done := m.yoloForm.Update(msg)
+			m.yoloForm = updated
+			if done {
+				m.yolo = enabled
+				if enabled {
+					m.messages = append(m.messages, ChatMessage{Role: RoleAssistant, Content: "⚠ YOLO mode ACTIVE — all safety checks disabled. Use /yolo again to restore.", Time: time.Now()})
+				} else {
+					m.messages = append(m.messages, ChatMessage{Role: RoleAssistant, Content: "YOLO mode cancelled. Safety checks remain active.", Time: time.Now()})
+				}
+				m.chatOffset = 0
+				if m.OnYoloCmd != nil {
+					go m.OnYoloCmd(enabled)
+				}
+			}
 			return m, nil
 		}
 		return m, nil
@@ -889,6 +928,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.messages[i].cachedLines = nil
 				}
 			}
+			var cleaned []ChatMessage
+			for _, msg := range m.messages {
+				if msg.ToolStatus == "streaming" {
+					continue
+				}
+				cleaned = append(cleaned, msg)
+			}
+			m.messages = cleaned
 			if content, ok := evt.Data.(string); ok && content != "" {
 				if wasStreaming && len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
 					m.messages[len(m.messages)-1].Content = content
@@ -903,33 +950,236 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "tool_call_streaming":
+			if d, ok := evt.Data.(map[string]any); ok {
+				name, _ := d["name"].(string)
+				if name == "" || name == "stop" || name == "reply" {
+					break
+				}
+
+				path, _ := d["path"].(string)
+				command, _ := d["command"].(string)
+				urlStr, _ := d["url"].(string)
+				query, _ := d["query"].(string)
+				source, _ := d["source"].(string)
+				dest, _ := d["destination"].(string)
+				pattern, _ := d["pattern"].(string)
+
+				contentLines, _ := d["content_lines"].(int)
+				oldLines, _ := d["old_lines"].(int)
+				newLines, _ := d["new_lines"].(int)
+				offset, _ := d["offset"].(int)
+				limit, _ := d["limit"].(int)
+
+				var args string
+				if a, ok := d["args"].(string); ok {
+					args = a
+				}
+				estTokens := len(args) / 4
+
+				target := path
+				if target == "" && command != "" {
+					target = command
+				}
+				if target == "" && source != "" && dest != "" {
+					target = source + " → " + dest
+				} else if target == "" && source != "" {
+					target = source
+				}
+				if target == "" && urlStr != "" {
+					target = urlStr
+				}
+				if target == "" && query != "" {
+					target = query
+				}
+				if target == "" && pattern != "" {
+					target = pattern
+				}
+				if name == "read_file" && target != "" {
+					if offset > 0 && limit > 0 {
+						target = fmt.Sprintf("%s line %d-%d", target, offset, offset+limit-1)
+					} else if offset > 0 {
+						target = fmt.Sprintf("%s line %d+", target, offset)
+					} else if limit > 0 {
+						target = fmt.Sprintf("%s (first %d lines)", target, limit)
+					}
+				}
+
+				hasAction := target != ""
+				previewPhase := ToolPreviewPreparing
+				if hasAction {
+					previewPhase = ToolPreviewStreaming
+				}
+
+				found := false
+				for i := len(m.messages) - 1; i >= 0; i-- {
+					msg := &m.messages[i]
+					if msg.Role == RoleTool && msg.ToolName == name && msg.ToolStatus == "streaming" {
+						msg.ToolPreviewPhase = previewPhase
+						if hasAction {
+							msg.ToolProgressLabel = target
+						}
+						if estTokens > 0 {
+							msg.ToolEstTokens = estTokens
+						}
+						if contentLines > 0 {
+							msg.ToolLivedAdded = contentLines
+						}
+						if oldLines > 0 {
+							msg.ToolLivedRemoved = oldLines
+						}
+						if newLines > 0 {
+							msg.ToolLivedAdded = newLines
+						}
+						msg.ToolProgressPhase = "streaming"
+						msg.ToolProgressMessage = ""
+						msg.cachedLines = nil
+						found = true
+						break
+					}
+				}
+
+				if !found {
+					idx := len(m.messages)
+					msg := ChatMessage{
+						Role:              RoleTool,
+						Time:              time.Now(),
+						ToolName:          name,
+						ToolArgs:          "",
+						ToolStatus:        "streaming",
+						ToolIndex:         idx,
+						ToolProgressPhase: "streaming",
+						ToolPreviewPhase:  previewPhase,
+						ToolProgressLabel: target,
+						ToolEstTokens:     estTokens,
+						ToolLivedAdded:    contentLines,
+						ToolLivedRemoved:  oldLines,
+						ToolStartTime:     time.Now(),
+					}
+					if newLines > 0 {
+						msg.ToolLivedAdded = newLines
+					}
+					if target != "" {
+						msg.ToolProgressLabel = target
+					}
+					m.messages = append(m.messages, msg)
+				}
+			}
+
 		case "tool_call":
 			if d, ok := evt.Data.(map[string]string); ok {
 				name := d["name"]
 				args := d["args"]
+				if name == "" || name == "stop" || name == "reply" {
+					break
+				}
 				argsCompact := summarizeToolArgs(name, args)
+				estTokens := len(args) / 4
 				m.statusLine = toolLabel(name, argsCompact)
-				idx := len(m.messages)
-				m.messages = append(m.messages, ChatMessage{
-					Role:       RoleTool,
-					Content:    toolLabel(name, argsCompact),
-					Time:       time.Now(),
-					ToolName:   name,
-					ToolArgs:   argsCompact,
-					ToolStatus: "calling",
-					ToolIndex:  idx,
-				})
+
+				found := false
+				for i := len(m.messages) - 1; i >= 0; i-- {
+					msg := &m.messages[i]
+					if msg.Role == RoleTool && msg.ToolName == name && msg.ToolStatus == "streaming" {
+						msg.ToolStatus = "calling"
+						msg.ToolArgs = argsCompact
+						msg.Content = toolLabel(name, argsCompact)
+						msg.ToolPreviewPhase = ToolPreviewStreaming
+						if estTokens > msg.ToolEstTokens {
+							msg.ToolEstTokens = estTokens
+						}
+						if msg.ToolProgressLabel == "" {
+							msg.ToolProgressLabel = argsCompact
+						}
+						msg.ToolProgressPhase = ""
+						msg.ToolProgressMessage = ""
+						msg.cachedLines = nil
+						found = true
+						break
+					}
+				}
+
+				if !found {
+					idx := len(m.messages)
+					m.messages = append(m.messages, ChatMessage{
+						Role:              RoleTool,
+						Content:           toolLabel(name, argsCompact),
+						Time:              time.Now(),
+						ToolName:          name,
+						ToolArgs:          argsCompact,
+						ToolStatus:        "calling",
+						ToolIndex:         idx,
+						ToolPreviewPhase:  ToolPreviewStreaming,
+						ToolProgressLabel: argsCompact,
+						ToolEstTokens:     estTokens,
+						ToolStartTime:     time.Now(),
+					})
+				}
+			}
+
+		case "tool_progress":
+			if d, ok := evt.Data.(map[string]any); ok {
+				name, _ := d["name"].(string)
+				if name == "" || name == "stop" || name == "reply" {
+					break
+				}
+				phase, _ := d["phase"].(string)
+				message, _ := d["message"].(string)
+				path, _ := d["path"].(string)
+
+				linesAdded, _ := d["lines_added"].(int)
+				linesRemoved, _ := d["lines_removed"].(int)
+
+				for i := len(m.messages) - 1; i >= 0; i-- {
+					msg := &m.messages[i]
+					if msg.Role == RoleTool && msg.ToolName == name &&
+						(msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
+						msg.ToolProgressPhase = phase
+						msg.ToolProgressMessage = message
+						if path != "" {
+							msg.ToolProgressLabel = path
+						}
+						if linesAdded > 0 {
+							msg.ToolLivedAdded = linesAdded
+						}
+						if linesRemoved > 0 {
+							msg.ToolLivedRemoved = linesRemoved
+						}
+						msg.cachedLines = nil
+						if phase == "done" {
+							m.statusLine = name
+						} else if phase != "" && message != "" {
+							m.statusLine = message
+						}
+						break
+					}
+				}
 			}
 
 		case "tool_result":
 			if d, ok := evt.Data.(map[string]string); ok {
 				name := d["name"]
+				if name == "" || name == "stop" || name == "reply" {
+					break
+				}
 				result := d["result"]
+				errorFlag := d["error"]
 				m.statusLine = name
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					msg := &m.messages[i]
-					if msg.Role == RoleTool && msg.ToolName == name && msg.ToolStatus == "calling" {
-						msg.ToolStatus = "success"
+					if msg.Role == RoleTool && msg.ToolName == name &&
+						(msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
+						if errorFlag == "true" {
+							msg.ToolStatus = "error"
+						} else {
+							msg.ToolStatus = "success"
+						}
+						msg.ToolPreviewPhase = ToolPreviewDone
+						msg.ToolProgressPhase = ""
+						msg.ToolProgressMessage = ""
+						if !msg.ToolStartTime.IsZero() {
+							msg.ToolDuration = time.Since(msg.ToolStartTime)
+						}
 						msg.cachedLines = nil
 						if result != "" {
 							msg.Content = result
@@ -951,6 +1201,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			operation := data["operation"]
 			tool := data["tool"]
 			target := data["target"]
+			risk := data["risk"]
+			reason := data["reason"]
+			suggestion := data["suggestion"]
 			m.thinking = false
 			m.blocking = true
 			m.statusLine = ""
@@ -960,20 +1213,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.messages[i].cachedLines = nil
 				}
 			}
-			if operation != "" {
-				m.confirmForm.Reset(question, operation, tool, target)
-				m.messages = append(m.messages, ChatMessage{
-					Role:    RoleAssistant,
-					Content: "⚠  " + question,
-					Time:    time.Now(),
-				})
+			if risk != "" {
+				m.confirmForm.ResetWithDetails(question, operation, tool, target, risk, reason, suggestion)
 			} else {
-				m.messages = append(m.messages, ChatMessage{
-					Role:    RoleAssistant,
-					Content: "⚠  " + question,
-					Time:    time.Now(),
-				})
+				m.confirmForm.Reset(question, operation, tool, target)
 			}
+			m.messages = append(m.messages, ChatMessage{
+				Role:    RoleAssistant,
+				Content: "⚠  " + question,
+				Time:    time.Now(),
+			})
 
 		case "blocking_complete":
 			m.blocking = false
@@ -1000,12 +1249,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "usage":
 			if d, ok := evt.Data.(map[string]int); ok {
-				m.tokenPrompt += d["prompt"]
-				m.tokenCompletion += d["completion"]
 				m.tokenCached += d["prompt_cached"]
+				m.tokenCompletion += d["completion"]
+				m.tokenPrompt += d["prompt"] - d["prompt_cached"]
 				m.sessionCost += provider.LookupPrice(m.modelName).CalculateCost(
 					d["prompt"], d["completion"], d["prompt_cached"],
 				)
+				if cw := d["context_window"]; cw > 0 {
+					if m.contextWindow == 0 {
+						m.contextWindow = cw
+					}
+					m.contextUsed = d["prompt"]
+				}
 			}
 		}
 

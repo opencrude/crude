@@ -27,11 +27,13 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	APIKey         string `json:"api_key,omitempty"`
-	Model          string `json:"model,omitempty"`
-	OracleModel    string `json:"oracle_model,omitempty"`
-	ProviderURL    string `json:"provider_url,omitempty"`
-	ThinkingEffort string `json:"thinking_effort,omitempty"`
+	APIKey                   string `json:"api_key,omitempty"`
+	Model                    string `json:"model,omitempty"`
+	ModelContextWindow       int    `json:"model_context_window,omitempty"`
+	OracleModel              string `json:"oracle_model,omitempty"`
+	OracleModelContextWindow int    `json:"oracle_model_context_window,omitempty"`
+	ProviderURL              string `json:"provider_url,omitempty"`
+	ThinkingEffort           string `json:"thinking_effort,omitempty"`
 }
 
 type Session struct {
@@ -45,7 +47,7 @@ type Session struct {
 	permStore *safety.PermissionStore
 	sm        *statemachine.ConversationStateMachine
 
-	msgs          []agent.APIMessage
+	msgs          []provider.ChatMessage
 	msgsMu        sync.Mutex
 	pendingBlock  bool
 	blockMu       sync.Mutex
@@ -57,11 +59,20 @@ type Session struct {
 	sessionID    string
 	sessionStart time.Time
 	knowledgeDir string
+	yolo         bool
 }
 
 func New(cfg *Config, homeDir string) (*Session, error) {
 	activeCfg := cfg.GetActiveProviderConfig()
 	p := provider.FromPreset(cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
+	p.Model = activeCfg.Model
+	p.SetThinkingEffort(activeCfg.ThinkingEffort)
+	if activeCfg.ModelContextWindow > 0 {
+		provider.SetModelContext(activeCfg.Model, activeCfg.ModelContextWindow)
+	}
+	if activeCfg.OracleModelContextWindow > 0 {
+		provider.SetModelContext(activeCfg.OracleModel, activeCfg.OracleModelContextWindow)
+	}
 	exec := fileio.NewLocalExec()
 
 	sessionDir := filepath.Join(homeDir, ".crude", "sessions")
@@ -152,71 +163,23 @@ func (s *Session) Editor() *fileio.Editor { return s.editor }
 
 func (s *Session) Config() *Config { return s.cfg }
 
-// thinkingBudget maps effort levels to token budgets.
-func thinkingBudget(effort string) int {
-	switch effort {
-	case "low":
-		return 1000
-	case "medium":
-		return 2000
-	case "high":
-		return 4000
-	default:
-		return 2000
-	}
-}
-
-// thinkingParamsForProvider returns provider-specific request fields that enable
-// reasoning/thinking content in streaming responses.
-func thinkingParamsForProvider(providerID, effort string) map[string]any {
-	if effort == "" || effort == "auto" {
-		effort = "medium"
-	}
-	budget := thinkingBudget(effort)
-
-	switch providerID {
-	case "openrouter":
-		return map[string]any{
-			"include_reasoning": true,
-		}
-	case "openai":
-		return map[string]any{
-			"reasoning_effort": effort,
-		}
-	case "anthropic":
-		return map[string]any{
-			"thinking": map[string]any{"type": "enabled", "budget_tokens": budget},
-		}
-	case "google":
-		return map[string]any{
-			"thinking_config": map[string]any{
-				"thinking_budget":  budget,
-				"include_thoughts": true,
-			},
-		}
-	case "deepseek":
-		// DeepSeek returns reasoning automatically; no extra param needed.
-		return nil
-	case "groq":
-		return map[string]any{
-			"reasoning_format": "raw",
-		}
-	default:
-		return nil
-	}
-}
-
 func (s *Session) newAgent() *agent.Agent {
 	activeCfg := s.cfg.GetActiveProviderConfig()
-	a := agent.NewAgent(s.provider, activeCfg.Model, s.logger)
+
+	p := s.provider
+	p.Model = activeCfg.Model
+	p.SetThinkingEffort(activeCfg.ThinkingEffort)
+
+	a := agent.NewAgent(p, activeCfg.Model, s.logger)
 
 	oracleModel := activeCfg.OracleModel
 	oracleProvider := s.provider
 	if oracleModel == "" {
-		oracleModel = activeCfg.Model // fallback to worker model
+		oracleModel = activeCfg.Model
 	}
 	a.OracleProvider = oracleProvider
 	a.OracleModel = oracleModel
+	a.Yolo = s.yolo
 
 	a.ToolFn = func(tool string, params map[string]any) (string, error) {
 		switch tool {
@@ -257,7 +220,6 @@ func (s *Session) newAgent() *agent.Agent {
 			goal := s.sm.CreateGoal(s.sessionID, "plan: "+objective, objective, statemachine.PriorityNormal, false)
 			state := s.sm.GetOrCreateState(s.sessionID)
 
-			// Track step statuses persistently in context so they survive sub-goal popping
 			stepStatuses := make(map[string]string)
 			stepLabels := make(map[string]string)
 			for i, step := range steps {
@@ -275,18 +237,6 @@ func (s *Session) newAgent() *agent.Agent {
 			state.AddToContext("plan_step_labels", stepLabels)
 			state.AddToContext("plan_goal_id", goal.ID)
 
-			// Push each step as a pending sub-goal for state machine tracking
-			for _, step := range steps {
-				id, _ := step["id"].(string)
-				desc, _ := step["description"].(string)
-				sg := statemachine.NewGoal(fmt.Sprintf("%s: %s", id, desc), desc, statemachine.PriorityNormal, false)
-				sg.Status = statemachine.GoalPending
-				goal.SubGoalStack = append(goal.SubGoalStack, sg)
-			}
-			if len(goal.SubGoalStack) > 0 {
-				goal.SubGoalStack[0].Status = statemachine.GoalActive
-			}
-
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			return status, nil
 
@@ -295,34 +245,47 @@ func (s *Session) newAgent() *agent.Agent {
 			if stepID == "" {
 				return "", fmt.Errorf("mark_step_complete: missing 'step_id'")
 			}
-			s.sm.CompleteCurrentGoal(s.sessionID, map[string]any{
-				"step_id": stepID,
-				"result":  getStrParam(params, "result"),
-			})
-			// Update persistent step status
 			state := s.sm.GetOrCreateState(s.sessionID)
-			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
-				if m, ok := statuses.(map[string]string); ok {
+
+			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := raw.(map[string]string); ok {
 					m[stepID] = "completed"
 					state.AddToContext("plan_step_statuses", m)
 				}
 			}
-			// Activate next pending sub-goal
-			focus := s.sm.GetFocusGoal(s.sessionID)
-			if focus != nil {
-				activated := false
-				for _, sg := range focus.SubGoalStack {
-					if sg.Status == statemachine.GoalPending {
-						sg.Status = statemachine.GoalActive
-						activated = true
-						break
+
+			if raw, ok := state.GetFromContext("plan_steps"); ok {
+				if steps, ok := raw.([]map[string]any); ok {
+					if rawStatuses, ok2 := state.GetFromContext("plan_step_statuses"); ok2 {
+						if m, ok2 := rawStatuses.(map[string]string); ok2 {
+							for _, step := range steps {
+								id, _ := step["id"].(string)
+								if m[id] == "pending" {
+									m[id] = "active"
+									break
+								}
+							}
+							state.AddToContext("plan_step_statuses", m)
+						}
 					}
 				}
-				// All sub-goals done — complete the plan root goal
-				if !activated && len(focus.SubGoalStack) == 0 {
-					s.sm.CompleteCurrentGoal(s.sessionID, map[string]any{"status": "plan_complete"})
+			}
+
+			allDone := true
+			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := raw.(map[string]string); ok {
+					for _, st := range m {
+						if st != "completed" && st != "failed" {
+							allDone = false
+							break
+						}
+					}
 				}
 			}
+			if allDone {
+				s.sm.CompleteCurrentGoal(s.sessionID, map[string]any{"status": "plan_complete"})
+			}
+
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
 				return status, nil
@@ -338,14 +301,14 @@ func (s *Session) newAgent() *agent.Agent {
 			if reason == "" {
 				reason = "unknown error"
 			}
-			s.sm.FailCurrentGoal(s.sessionID, reason)
 			state := s.sm.GetOrCreateState(s.sessionID)
-			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
-				if m, ok := statuses.(map[string]string); ok {
+			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := raw.(map[string]string); ok {
 					m[stepID] = "failed"
 					state.AddToContext("plan_step_statuses", m)
 				}
 			}
+			s.sm.FailCurrentGoal(s.sessionID, reason)
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
 				return status, nil
@@ -378,7 +341,6 @@ func (s *Session) newAgent() *agent.Agent {
 				Message: message,
 			}
 			s.sm.PauseWithBlocker(s.sessionID, blocker)
-			// Mark the active step as blocked in persistent status
 			state := s.sm.GetOrCreateState(s.sessionID)
 			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := statuses.(map[string]string); ok {
@@ -428,15 +390,31 @@ func (s *Session) newAgent() *agent.Agent {
 			return status, nil
 
 		default:
-			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor)
+			if tool == "execute_command" && !s.yolo {
+				cmd := getStrParam(params, "command")
+				sr := safety.CheckCommandSafety(cmd)
+				if sr.Risk.IsAlwaysBlocked() {
+					errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
+					s.logger.Warn("safety.blocked", "command", cmd, "reason", sr.Reason)
+					return errMsg, fmt.Errorf("%s", errMsg)
+				}
+				if sr.Risk.NeedsConfirmation() {
+					s.logger.Info("safety.risky", "command", cmd, "risk", sr.Risk.String())
+				}
+			}
+			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo)
 			if strings.HasPrefix(result, "Error:") {
 				return result, fmt.Errorf("%s", result)
 			}
 			return result, nil
 		}
 	}
-	a.ExtraBody = thinkingParamsForProvider(s.provider.ID, activeCfg.ThinkingEffort)
 	return a
+}
+
+func (s *Session) SetYolo(enabled bool) {
+	s.yolo = enabled
+	s.logger.Info("safety.yolo", "enabled", enabled)
 }
 
 func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
@@ -504,6 +482,14 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 
 	s.cfg = newCfg
 	s.provider = provider.FromPreset(s.cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
+	s.provider.Model = activeCfg.Model
+	s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
+	if activeCfg.ModelContextWindow > 0 {
+		provider.SetModelContext(activeCfg.Model, activeCfg.ModelContextWindow)
+	}
+	if activeCfg.OracleModelContextWindow > 0 {
+		provider.SetModelContext(activeCfg.OracleModel, activeCfg.OracleModelContextWindow)
+	}
 	return nil
 }
 
@@ -515,7 +501,11 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.M
 	}
 	entries := make([]tui.ModelEntry, len(models))
 	for i, m := range models {
-		entries[i] = tui.ModelEntry{ID: m.ID, Name: m.Name}
+		entries[i] = tui.ModelEntry{
+			ID:            m.ID,
+			Name:          m.Name,
+			ContextWindow: m.ContextWindow,
+		}
 	}
 	return entries, nil
 }
@@ -532,7 +522,6 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 	cancelCh := tuiInst.CancelCh
 
 	for userText := range tuiInst.InputCh {
-		// Drain any stale cancel signal from a previous iteration
 		select {
 		case <-cancelCh:
 		default:
@@ -562,18 +551,21 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		s.msgCounterMu.Unlock()
 
 		s.msgsMu.Lock()
-		s.msgs = append(s.msgs, agent.APIMessage{Role: "user", Content: userText})
-		msgsCopy := make([]agent.APIMessage, len(s.msgs))
+		s.msgs = append(s.msgs, provider.ChatMessage{Role: "user", Content: userText})
+		msgsCopy := make([]provider.ChatMessage, len(s.msgs))
 		copy(msgsCopy, s.msgs)
 		s.msgsMu.Unlock()
 		s.logger.Info("conv.user_msg", "content", userText, "msg_id", currentMsgID)
 
 		s.logger.Info("agent.loop_start", "content", userText, "iteration", 0)
-		s.sm.CreateGoal(s.sessionID, "respond", userText, statemachine.PriorityNormal, false)
 
 		if s.editor != nil {
 			s.editor = s.editor.WithMessage(currentMsgID)
 		}
+
+		// Update provider model & thinking effort before each run (settings may have changed)
+		s.provider.Model = activeCfg.Model
+		s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
 
 		ag := s.newAgent()
 		var finalContent string
@@ -601,6 +593,22 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 						return
 					}
 				}
+				if data != nil && data["risk"] != "" {
+					riskStr := data["risk"]
+					for _, r := range []safety.CommandRisk{
+						safety.RiskDestructive, safety.RiskNetwork,
+						safety.RiskProjectWrite, safety.RiskUnknown,
+					} {
+						if r.String() == riskStr {
+							sr := &safety.CommandSafetyResult{Risk: r, BaseCommand: data["tool"]}
+							if s.permStore.IsCommandAllowed(sr) {
+								blockResolveCh <- "always"
+								return
+							}
+							break
+						}
+					}
+				}
 				s.blockMu.Lock()
 				s.pendingBlock = true
 				s.blockMu.Unlock()
@@ -609,10 +617,16 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 			if evt.Type == "confirmation_always" {
 				if data, ok := evt.Data.(map[string]string); ok {
-					op := safety.CRUDEOp(data["operation"])
-					tool := data["tool"]
-					target := data["target"]
-					s.permStore.GrantAlways(op, tool, target)
+					riskStr := data["operation"]
+					for _, r := range []safety.CommandRisk{
+						safety.RiskDestructive, safety.RiskNetwork,
+						safety.RiskProjectWrite, safety.RiskUnknown,
+					} {
+						if r.String() == riskStr {
+							s.permStore.GrantCommandRisk(r)
+							break
+						}
+					}
 				}
 				return
 			}
@@ -640,7 +654,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 
 		if finalContent != "" {
 			s.msgsMu.Lock()
-			s.msgs = append(s.msgs, agent.APIMessage{Role: "assistant", Content: finalContent})
+			s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", Content: finalContent})
 			s.msgsMu.Unlock()
 			s.logger.Info("conv.assistant_msg", "content", finalContent, "msg_id", currentMsgID)
 		}
@@ -676,14 +690,23 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 		providerURL = p.BaseURL
 	}
 
+	ctxWindow := 0
+	oracleCtxWindow := 0
+	if pc, ok := cfg.Providers[providerID]; ok {
+		ctxWindow = pc.ModelContextWindow
+		oracleCtxWindow = pc.OracleModelContextWindow
+	}
+
 	return tui.Settings{
-		APIKey:         apiKey,
-		Model:          model,
-		OracleModel:    oracleModel,
-		ProviderID:     providerID,
-		ProviderURL:    providerURL,
-		ProviderAPIKey: apiKey,
-		ThinkingEffort: thinkingEffort,
+		APIKey:                   apiKey,
+		Model:                    model,
+		ModelContextWindow:       ctxWindow,
+		OracleModel:              oracleModel,
+		OracleModelContextWindow: oracleCtxWindow,
+		ProviderID:               providerID,
+		ProviderURL:              providerURL,
+		ProviderAPIKey:           apiKey,
+		ThinkingEffort:           thinkingEffort,
 	}
 }
 
@@ -703,11 +726,13 @@ func settingsToConfig(s tui.Settings, base *Config) *Config {
 		providers = make(map[string]ProviderConfig)
 	}
 	providers[providerID] = ProviderConfig{
-		APIKey:         apiKey,
-		Model:          s.Model,
-		OracleModel:    s.OracleModel,
-		ProviderURL:    s.ProviderURL,
-		ThinkingEffort: s.ThinkingEffort,
+		APIKey:                   apiKey,
+		Model:                    s.Model,
+		ModelContextWindow:       s.ModelContextWindow,
+		OracleModel:              s.OracleModel,
+		OracleModelContextWindow: s.OracleModelContextWindow,
+		ProviderURL:              s.ProviderURL,
+		ThinkingEffort:           s.ThinkingEffort,
 	}
 
 	return &Config{
@@ -738,5 +763,3 @@ func ResolveUsername() string {
 	}
 	return "user"
 }
-
-

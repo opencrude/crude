@@ -83,6 +83,44 @@ func (s *PermissionStore) NeedsOutsideCwdConfirmation(targetPath string) bool {
 	return targetPath != "" && s.isOutsideWorkDir(targetPath)
 }
 
+// IsCommandAllowed checks if a command safety result's risk level has been pre-approved.
+func (s *PermissionStore) IsCommandAllowed(sr *CommandSafetyResult) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := PermissionKey{
+		Scope: ScopeDestructiveOp,
+		Tool:  "execute_command",
+		Op:    OpExecute,
+	}
+	if s.allowed[key] {
+		return true
+	}
+
+	if sr.Risk >= RiskDestructive {
+		riskKey := PermissionKey{
+			Scope: "risk_level",
+			Tool:  "execute_command",
+			Dir:   sr.Risk.String(),
+		}
+		return s.allowed[riskKey]
+	}
+	return false
+}
+
+// GrantCommandRisk allows a specific risk level for execute_command.
+func (s *PermissionStore) GrantCommandRisk(risk CommandRisk) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	riskKey := PermissionKey{
+		Scope: "risk_level",
+		Tool:  "execute_command",
+		Dir:   risk.String(),
+	}
+	s.allowed[riskKey] = true
+}
+
 func (s *PermissionStore) isOutsideWorkDir(targetPath string) bool {
 	absPath, err := filepath.Abs(targetPath)
 	if err != nil {

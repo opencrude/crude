@@ -36,6 +36,8 @@ type Model struct {
 	tokenCompletion int
 	tokenCached     int
 	sessionCost     float64
+	contextWindow   int  // model's max context window in tokens
+	contextUsed     int  // total prompt tokens used in current conversation
 
 	// Scroll: 0 = bottom, >0 = scrolled up by N lines
 	chatOffset     int
@@ -73,6 +75,11 @@ type Model struct {
 	// Confirmation form
 	confirmForm     confirmForm
 	OnConfirmResult func(ConfirmResult)
+
+	// Yolo mode
+	yolo      bool
+	yoloForm  yoloForm
+	OnYoloCmd func(bool)
 
 	// Undo / file change commands
 	OnUndoCmd func(cmd string)
@@ -139,6 +146,7 @@ func NewModel(modelName string, username string, inputCh chan<- string, cancelCh
 		height:              24,
 		inlineForm:          newInlineSettings(initial, getProviderConfigFn),
 		confirmForm:         newConfirmForm(),
+		yoloForm:            newYoloForm(),
 		onSaveSettings:      onSave,
 		fetchModelsFn:       fetchFn,
 		getProviderConfigFn: getProviderConfigFn,

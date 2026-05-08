@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"crude/clipboard"
@@ -11,6 +12,41 @@ import (
 )
 
 var selScrollInterval = 60 * time.Millisecond
+
+func trimRightAnsiSpaces(s string) string {
+	lastNonSpaceEnd := 0
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' {
+			j := i + 1
+			if j < len(s) && s[j] == '[' {
+				j++
+				for j < len(s) {
+					if s[j] >= 0x40 && s[j] <= 0x7e {
+						j++
+						break
+					}
+					j++
+				}
+			} else if j < len(s) && s[j] >= 0x40 && s[j] <= 0x5f {
+				j++
+			} else {
+				j++
+			}
+			i = j
+		} else {
+			rn, size := utf8.DecodeRuneInString(s[i:])
+			if !unicode.IsSpace(rn) {
+				lastNonSpaceEnd = i + size
+			}
+			i += size
+		}
+	}
+	if lastNonSpaceEnd == 0 {
+		return ""
+	}
+	return s[:lastNonSpaceEnd] + "\x1b[0m"
+}
 
 func stripAnsi(s string) string {
 	var buf strings.Builder

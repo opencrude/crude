@@ -264,7 +264,7 @@ var AgentTools = []ToolDef{
 			Description: "Consult the oracle model for high-stakes architectural, algorithmic, or structural decisions. " +
 				"Use when: (1) choosing between multiple architectural approaches, (2) solving non-trivial algorithmic problems, " +
 				"(3) deciding module boundaries, data flow, or folder structure, (4) making decisions with significant downstream impact, " +
-				"(5) you are uncertain which approach is best. The oracle has stronger reasoning but no tool access — it produces pure analysis, not actions. " +
+				"(5) you are confused or uncertain which approach is best. The oracle has stronger reasoning but no tool access — it produces pure analysis, not actions. " +
 				"Provide maximal relevant context so the oracle can make an informed decision.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
@@ -297,12 +297,26 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name: "reply",
-			Description: "Send a conversational reply to the user. Use for greetings, chitchat, clarifications, or when no system operations are needed. Also use after completing a plan to present results.",
+			Name:        "stop",
+			Description: "End the agentic loop and deliver your final message to the user. Call this when you have completed the task, answered the question, or need to hand control back to the user. This is the ONLY way to reliably end the conversation turn — always end with stop().",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"content":{"type":"string","description":"The conversational response to show the user"}
+					"message":{"type":"string","description":"Your final message to the user. Summarize what you did, what you found, or your answer to their question."}
+				},
+				"required":["message"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "reply",
+			Description: "Send an intermediate message to the user WITHOUT ending the loop. Use for progress updates, partial results, or questions that need a response before continuing work. The loop continues after this — call stop() when truly done.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"content":{"type":"string","description":"The intermediate message to show the user"}
 				},
 				"required":["content"]
 			}`),

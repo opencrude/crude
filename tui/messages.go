@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -25,6 +26,7 @@ var availableCmds = []slashCmd{
 	{name: "/undo-n", label: "undo N", desc: "Undo last N file operations"},
 	{name: "/undo-all", label: "undo all", desc: "Undo all file operations this session"},
 	{name: "/changes", label: "changes", desc: "Show files changed this session"},
+	{name: "/yolo", label: "yolo", desc: "Disable ALL safety checks (DANGEROUS)"},
 	{name: "/help", label: "help", desc: "Show available commands"},
 }
 
@@ -126,6 +128,9 @@ func summarizeToolArgs(tool, argsStr string) string {
 		}
 		return source
 	}
+	if tool == "plan" || tool == "list_goal_status" {
+		return pascalCaseTool(tool)
+	}
 	if code := extractArg(argsStr, "code"); code != "" {
 		return truncateLine(code, 50)
 	}
@@ -172,48 +177,273 @@ func pascalCaseTool(name string) string {
 	return strings.Join(parts, " ")
 }
 
-// workAnimation returns a fun animated string for the status bar when agent is working.
 func workAnimation(frame int, phase string) string {
-	phaseLabel := phase
+	moon := spinnerPhases[frame%len(spinnerPhases)]
+
+	var label string
+	var color lipgloss.Color
 	switch phase {
 	case "grounding":
-		phaseLabel = "gathering context"
+		label = "gathering context"
+		color = spinnerColorGrounding
 	case "planning":
-		phaseLabel = "planning"
+		label = "planning"
+		color = spinnerColorPlanning
 	case "executing":
-		phaseLabel = "executing"
+		label = "executing"
+		color = spinnerColorExecuting
 	default:
-		phaseLabel = "thinking"
+		label = "thinking"
+		color = spinnerColorDefault
 	}
 
-	spinColor := spinnerColorDefault
-	switch phase {
-	case "grounding":
-		spinColor = spinnerColorGrounding
-	case "planning":
-		spinColor = spinnerColorPlanning
-	case "executing":
-		spinColor = spinnerColorExecuting
-	}
-
-	spinStyle := lipgloss.NewStyle().Foreground(spinColor)
-	dots := strings.Repeat(".", frame%4)
-	return spinStyle.Render(spinnerFrames[frame%len(spinnerFrames)]+" ") +
-		lipgloss.NewStyle().Foreground(colorMainText).Render(phaseLabel) +
-		lipgloss.NewStyle().Foreground(colorMuted).Render(dots)
+	return lipgloss.NewStyle().Foreground(color).Render(moon+" ") +
+		lipgloss.NewStyle().Foreground(colorMainText).Render(label)
 }
 
-// streamAnimation returns a streaming indicator for the status bar.
 func streamAnimation(frame int, phase string) string {
-	phaseLabel := phase
-	switch phase {
-	case "executing":
-		phaseLabel = "streaming response"
-	default:
-		phaseLabel = "streaming"
+	moon := spinnerPhases[frame%len(spinnerPhases)]
+	return lipgloss.NewStyle().Foreground(spinnerColorPlanning).Render(moon + " streaming")
+}
+
+func formatToolDuration(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	secs := d.Seconds()
+	if secs < 1.0 {
+		return fmt.Sprintf("%.1fs", secs)
+	}
+	if secs < 60 {
+		return fmt.Sprintf("%ds", int(secs))
+	}
+	mins := int(secs) / 60
+	remainingSecs := int(secs) % 60
+	return fmt.Sprintf("%dmin %dseconds", mins, remainingSecs)
+}
+
+func buildToolTitle(msg *ChatMessage) string {
+	target := msg.ToolProgressLabel
+	if target == "" {
+		target = msg.ToolArgs
 	}
 
-	spinStyle := lipgloss.NewStyle().Foreground(spinnerColorPlanning)
-	return spinStyle.Render("● ") +
-		lipgloss.NewStyle().Foreground(colorMainText).Render(phaseLabel)
+	switch msg.ToolPreviewPhase {
+	case ToolPreviewPreparing:
+		return "Preparing " + pascalCaseTool(msg.ToolName)
+	case ToolPreviewStreaming:
+		return buildStreamingLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens)
+	case ToolPreviewDone:
+		dur := formatToolDuration(msg.ToolDuration)
+		if msg.ToolStatus == "error" {
+			label := pascalCaseTool(msg.ToolName)
+			if target != "" {
+				label += " " + target
+			}
+			label += " failed"
+			if dur != "" {
+				label += " " + dur
+			}
+			return label
+		}
+		return buildDoneLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens, dur)
+	default:
+		if msg.ToolStatus == "success" || msg.ToolStatus == "error" {
+			dur := formatToolDuration(msg.ToolDuration)
+			return buildDoneLabel(msg.ToolName, target, 0, 0, 0, dur)
+		}
+		if target != "" {
+			return pascalCaseTool(msg.ToolName) + " " + target
+		}
+		return pascalCaseTool(msg.ToolName)
+	}
+}
+
+func buildStreamingLabel(tool, target string, added, removed, tokens int) string {
+	switch tool {
+	case "write_file":
+		if target != "" {
+			return fmt.Sprintf("Writing %s +%d ↓%d", target, added, tokens)
+		}
+		return fmt.Sprintf("Writing ↓%d", tokens)
+	case "edit_file":
+		if target != "" {
+			return fmt.Sprintf("Editing %s -%d +%d ↓%d", target, removed, added, tokens)
+		}
+		return fmt.Sprintf("Editing -%d +%d ↓%d", removed, added, tokens)
+	case "read_file":
+		return fmt.Sprintf("Reading %s", target)
+	case "execute_command":
+		if target != "" {
+			return fmt.Sprintf("Running %s", truncateLine(target, 50))
+		}
+		return "Running command"
+	case "delete_file":
+		return fmt.Sprintf("Deleting %s", target)
+	case "move_file":
+		return fmt.Sprintf("Moving %s", target)
+	case "copy_file":
+		return fmt.Sprintf("Copying %s", target)
+	case "web_search":
+		if target != "" {
+			return fmt.Sprintf("Searching \"%s\"", truncateLine(target, 40))
+		}
+		return "Searching web"
+	case "web_fetch":
+		if target != "" {
+			return fmt.Sprintf("Fetching %s", truncateLine(target, 50))
+		}
+		return "Fetching URL"
+	case "grep_files":
+		if target != "" {
+			return fmt.Sprintf("Grepping %s", truncateLine(target, 50))
+		}
+		return "Grepping files"
+	case "glob_files":
+		return fmt.Sprintf("Globbing %s", target)
+	case "list_directory":
+		return fmt.Sprintf("Listing %s", target)
+	case "run_javascript":
+		return "Running JavaScript"
+	case "arxiv_search":
+		if target != "" {
+			return fmt.Sprintf("Searching ArXiv \"%s\"", truncateLine(target, 40))
+		}
+		return "Searching ArXiv"
+	case "consult_oracle":
+		return "Consulting oracle"
+	default:
+		if target != "" {
+			return fmt.Sprintf("Running %s %s", pascalCaseTool(tool), target)
+		}
+		return fmt.Sprintf("Running %s", pascalCaseTool(tool))
+	}
+}
+
+func buildDoneLabel(tool, target string, added, removed, tokens int, duration string) string {
+	switch tool {
+	case "write_file":
+		label := "Wrote"
+		if target != "" {
+			label += " " + target
+		}
+		label += fmt.Sprintf(" +%d", added)
+		if tokens > 0 {
+			label += fmt.Sprintf(" ↓%d", tokens)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "edit_file":
+		label := "Edited"
+		if target != "" {
+			label += " " + target
+		}
+		label += fmt.Sprintf(" -%d +%d", removed, added)
+		if tokens > 0 {
+			label += fmt.Sprintf(" ↓%d", tokens)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "read_file":
+		return fmt.Sprintf("Read %s", target)
+	case "execute_command":
+		return fmt.Sprintf("Ran %s %s", truncateLine(target, 50), duration)
+	case "delete_file":
+		label := "Deleted " + target
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "move_file":
+		label := "Moved " + target
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "copy_file":
+		label := "Copied " + target
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "web_search":
+		label := "Searched"
+		if target != "" {
+			label += fmt.Sprintf(" \"%s\"", truncateLine(target, 40))
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "web_fetch":
+		label := "Fetched"
+		if target != "" {
+			label += " " + truncateLine(target, 50)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "grep_files":
+		label := "Grepped"
+		if target != "" {
+			label += " " + truncateLine(target, 50)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "glob_files":
+		label := "Globbed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "list_directory":
+		label := "Listed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "run_javascript":
+		label := "Ran JavaScript"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "arxiv_search":
+		label := "ArXiv"
+		if target != "" {
+			label += fmt.Sprintf(" \"%s\"", truncateLine(target, 40))
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "consult_oracle":
+		label := "Consulted oracle"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	default:
+		label := pascalCaseTool(tool)
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
 }

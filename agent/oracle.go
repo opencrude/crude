@@ -70,7 +70,7 @@ What other approaches you considered and WHY you rejected them. This builds audi
 - When the decision impacts multiple subsystems, analyze coupling explicitly
 - If the task has significant ambiguity, surface it in reasoning rather than guessing`
 
-func buildOracleMessages(query OracleQuery) []APIMessage {
+func buildOracleMessages(query OracleQuery) []provider.ChatMessage {
 	userContent := fmt.Sprintf(`TASK: %s
 
 CONTEXT: %s
@@ -83,7 +83,7 @@ CONSTRAINTS: %s`,
 		query.DecisionPoint,
 		query.Constraints)
 
-	return []APIMessage{
+	return []provider.ChatMessage{
 		{Role: "system", Content: OracleSystemPrompt},
 		{Role: "user", Content: userContent},
 	}
@@ -92,17 +92,35 @@ CONSTRAINTS: %s`,
 func ConsultOracle(ctx context.Context, p *provider.Provider, model string, query OracleQuery) (OracleResponse, error) {
 	msgs := buildOracleMessages(query)
 
-	req := ChatRequest{
+	req := provider.ChatRequest{
 		Model:    model,
 		Messages: msgs,
 		Stream:   false,
 	}
-	body, err := json.Marshal(req)
+
+	std := p.Standard()
+
+	body, err := std.EncodeRequest(&req)
 	if err != nil {
 		return OracleResponse{}, fmt.Errorf("marshal oracle request: %w", err)
 	}
 
+	if extra := p.BuildExtraBody(); len(extra) > 0 {
+		var merged map[string]any
+		if err := json.Unmarshal(body, &merged); err != nil {
+			return OracleResponse{}, fmt.Errorf("merge oracle extras: %w", err)
+		}
+		for k, v := range extra {
+			merged[k] = v
+		}
+		body, err = json.Marshal(merged)
+		if err != nil {
+			return OracleResponse{}, fmt.Errorf("marshal merged oracle: %w", err)
+		}
+	}
+
 	client := &http.Client{Timeout: 180 * time.Second}
+	endpoint := p.ChatEndpoint()
 
 	for attempt := 1; ; attempt++ {
 		select {
@@ -111,11 +129,12 @@ func ConsultOracle(ctx context.Context, p *provider.Provider, model string, quer
 		default:
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.ChatEndpoint(), bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 		if err != nil {
 			return OracleResponse{}, fmt.Errorf("create oracle request: %w", err)
 		}
-		httpReq.Header.Set(p.AuthHeader, p.AuthValue())
+		hdr, val := p.Auth()
+		httpReq.Header.Set(hdr, val)
 		httpReq.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(httpReq)
@@ -146,9 +165,9 @@ func ConsultOracle(ctx context.Context, p *provider.Provider, model string, quer
 			return OracleResponse{}, fmt.Errorf("oracle API %d: %s", resp.StatusCode, string(respBody))
 		}
 
-		var chatResp ChatResponse
-		if err := json.Unmarshal(respBody, &chatResp); err != nil {
-			return OracleResponse{}, fmt.Errorf("unmarshal oracle response: %w", err)
+		chatResp, err := std.DecodeResponse(respBody)
+		if err != nil {
+			return OracleResponse{}, fmt.Errorf("decode oracle response: %w", err)
 		}
 		if chatResp.Error != nil {
 			return OracleResponse{}, fmt.Errorf("oracle API error: %s", chatResp.Error.Message)
@@ -208,7 +227,6 @@ func extractTag(content, tag string) string {
 		return ""
 	}
 	s := content[start:end]
-	// strip leading/trailing whitespace lines
 	return trimLines(s)
 }
 
@@ -223,11 +241,9 @@ func indexOf(s, sub string) int {
 }
 
 func trimLines(s string) string {
-	// Strip leading newlines
 	for len(s) > 0 && s[0] == '\n' {
 		s = s[1:]
 	}
-	// Strip trailing newlines
 	for len(s) > 0 && s[len(s)-1] == '\n' {
 		s = s[:len(s)-1]
 	}

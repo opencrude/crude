@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,17 +10,10 @@ import (
 )
 
 type ModelInfo struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Pricing map[string]string `json:"pricing,omitempty"` // "prompt"/"completion" -> USD per 1M tokens (OpenRouter)
-}
-
-type modelsResponse struct {
-	Data []struct {
-		ID      string            `json:"id"`
-		Name    string            `json:"name"`
-		Pricing map[string]string `json:"pricing,omitempty"`
-	} `json:"data"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	ContextWindow int               `json:"context_window"`
+	Pricing       map[string]string `json:"pricing,omitempty"`
 }
 
 func FetchModels(p *Provider) ([]ModelInfo, error) {
@@ -29,15 +21,19 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 		return nil, fmt.Errorf("provider is nil")
 	}
 
+	endpoint := p.ModelsEndpoint()
+	if endpoint == "" {
+		return nil, fmt.Errorf("model listing not supported by %s standard", p.StandardID())
+	}
+
 	client := &http.Client{Timeout: 15 * time.Second}
 
-	req, err := http.NewRequest("GET", p.ModelsEndpoint(), nil)
+	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	if p.APIKey != "" {
-		req.Header.Set(p.AuthHeader, p.AuthValue())
-	}
+	header, value := p.Auth()
+	req.Header.Set(header, value)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -47,32 +43,22 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 
 	if resp.StatusCode != 200 {
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
-			return nil, fmt.Errorf("Invalid API key for %s", p.Name)
+			return nil, fmt.Errorf("invalid API key for %s", p.Name)
 		}
 		if resp.StatusCode == 404 {
-			return nil, fmt.Errorf("Models endpoint not supported by %s", p.Name)
+			return nil, fmt.Errorf("models endpoint not supported by %s", p.Name)
 		}
-		return nil, fmt.Errorf("%s returned %d (see logs)", p.Name, resp.StatusCode)
+		return nil, fmt.Errorf("%s returned %d", p.Name, resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to read response")
+		return nil, fmt.Errorf("failed to read response")
 	}
 
-	var result modelsResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("Failed to parse models. Ensure %s is compatible", p.Name)
-	}
-
-	models := make([]ModelInfo, 0, len(result.Data))
-	for _, m := range result.Data {
-		info := ModelInfo{ID: m.ID, Name: m.Name}
-		if len(m.Pricing) > 0 {
-			info.Pricing = m.Pricing
-			ParseModelPricing(m.ID, m.Pricing)
-		}
-		models = append(models, info)
+	models, err := p.standard.DecodeModels(body)
+	if err != nil {
+		return nil, fmt.Errorf("parse models: %w", err)
 	}
 
 	sort.Slice(models, func(i, j int) bool {

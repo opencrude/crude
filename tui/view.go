@@ -48,6 +48,10 @@ func (m *Model) chatView() string {
 	left := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("crude") +
 		" " + dim.Render(truncateLine(m.modelName, innerW/3))
 	right := dim.Render(uptime.String())
+	if m.yolo {
+		yoloStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0000")).Bold(true)
+		right = yoloStyle.Render("⚠ YOLO") + " " + right
+	}
 	spacer := innerW - lipgloss.Width(left) - lipgloss.Width(right)
 	if spacer < 0 {
 		spacer = 0
@@ -317,49 +321,48 @@ func (m *Model) chatView() string {
 	} else if m.lastError != "" {
 		errLeft = pad + lipgloss.NewStyle().Foreground(colorError).Render(
 			truncateLine(m.lastError, m.width/2))
+	} else if m.confirmForm.active {
+		awaitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
+		errLeft = pad + awaitStyle.Render("⚠ confirming")
+	} else if m.blocking {
+		awaitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
+		errLeft = pad + awaitStyle.Render("⚠ awaiting input")
 	} else if m.thinking && m.streaming {
-			errLeft = pad + streamAnimation(m.spinFrame, m.statusPhase)
+		errLeft = pad + streamAnimation(m.spinFrame, m.statusPhase)
 	} else if m.thinking {
-			errLeft = pad + workAnimation(m.spinFrame, m.statusPhase)
+		errLeft = pad + workAnimation(m.spinFrame, m.statusPhase)
+	} else {
+		errLeft = pad
 	}
 
 	// Token usage display
 	var usageStr string
 	if m.tokenPrompt > 0 || m.tokenCompletion > 0 {
-		newTokens := m.tokenPrompt - m.tokenCached
-		if m.tokenCached > 0 {
-			usageStr = dim.Render(fmt.Sprintf(" %s(%s+%s)in / %s out",
-				formatTokens(newTokens+m.tokenCached),
-				formatTokens(newTokens), formatTokens(m.tokenCached),
-				formatTokens(m.tokenCompletion)))
-		} else {
-			usageStr = dim.Render(fmt.Sprintf(" %s in / %s out",
-				formatTokens(m.tokenPrompt), formatTokens(m.tokenCompletion)))
+		ctxStr := ""
+		if m.contextWindow > 0 && m.contextUsed > 0 {
+			pct := int(float64(m.contextUsed) / float64(m.contextWindow) * 100)
+			ctxStr = fmt.Sprintf(" %d%%", pct)
 		}
-	}
-	if m.sessionCost > 0 {
-		usageStr += dim.Render(" " + formatCost(m.sessionCost))
-	}
-
-	var statusRight string
-	if m.confirmForm.active {
-		awaitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
-		statusRight = awaitStyle.Render("⚠ confirming")
-	} else if m.blocking {
-		awaitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
-		statusRight = awaitStyle.Render("⚠ awaiting input")
-	} else if m.thinking {
-		statusRight = dim.Render(m.statusPhase)
+		if m.tokenCached > 0 {
+			usageStr = dim.Render(fmt.Sprintf(" ↑%s·%s ↓%s%s",
+				formatTokens(m.tokenPrompt), formatTokens(m.tokenCached),
+				formatTokens(m.tokenCompletion), ctxStr))
+		} else {
+			usageStr = dim.Render(fmt.Sprintf(" ↑%s ↓%s%s",
+				formatTokens(m.tokenPrompt), formatTokens(m.tokenCompletion), ctxStr))
+		}
+		if m.sessionCost > 0 {
+			usageStr += dim.Render(" " + formatCost(m.sessionCost))
+		}
 	} else {
-		statusRight = dim.Render("ready")
+		usageStr = dim.Render("ready")
 	}
-	statusRight = statusRight + usageStr
 
-	statusW := m.width - lipgloss.Width(errLeft) - lipgloss.Width(statusRight) - padLR
+	statusW := m.width - lipgloss.Width(errLeft) - lipgloss.Width(usageStr) - padLR
 	if statusW < 1 {
 		statusW = 1
 	}
-	statusBar := errLeft + strings.Repeat(" ", statusW) + statusRight + pad
+	statusBar := errLeft + strings.Repeat(" ", statusW) + usageStr + pad
 
 	for len(lines) < m.height-2 {
 		addFull("")
@@ -543,9 +546,9 @@ func (m *Model) renderAllMessages() []string {
 						sp = 1
 					}
 					asstLines[i] = line + strings.Repeat(" ", sp) + timePart
-				} else if isCursorLine {
-					asstLines[i] = strings.TrimRight(line, " ")
-				}
+			} else if isCursorLine {
+				asstLines[i] = trimRightAnsiSpaces(line)
+			}
 			}
 
 			msgLines = append(msgLines, asstLines...)
@@ -566,12 +569,24 @@ func (m *Model) renderAllMessages() []string {
 			borderPrefix := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render("│ ")
 			thinkingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Italic(true)
 			for i, line := range lines {
-				if i == 0 {
-					if msg.ThinkingActive {
-						msgLines = append(msgLines, borderPrefix+lipgloss.NewStyle().Foreground(colorAccent).Render(spinnerFrames[m.spinFrame]+" ")+thinkingStyle.Render(line))
-					} else {
-						msgLines = append(msgLines, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("● ")+thinkingStyle.Render(line))
+		if i == 0 {
+				if msg.ThinkingActive {
+					alpha := (m.spinFrame % 4) + 1
+					var dotColor string
+					switch alpha {
+					case 4:
+						dotColor = "#f0883e"
+					case 3:
+						dotColor = "#d0681e"
+					case 2:
+						dotColor = "#b85010"
+					default:
+						dotColor = "#d0681e"
 					}
+					msgLines = append(msgLines, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Render("● ")+thinkingStyle.Render(line))
+				} else {
+					msgLines = append(msgLines, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("● ")+thinkingStyle.Render(line))
+				}
 				} else {
 					msgLines = append(msgLines, borderPrefix+"  "+thinkingStyle.Render(line))
 				}
@@ -580,7 +595,7 @@ func (m *Model) renderAllMessages() []string {
 				cursorLine = len(msgLines) - 1
 			}
 		case RoleTool:
-			isCalling := msg.ToolStatus == "calling"
+			isActive := msg.ToolStatus == "streaming" || msg.ToolStatus == "calling"
 
 			spinColor := spinnerColorDefault
 			if m.statusPhase == "grounding" {
@@ -597,21 +612,29 @@ func (m *Model) renderAllMessages() []string {
 			}
 
 			spinStyle := lipgloss.NewStyle().Foreground(spinColor)
-			label := pascalCaseTool(msg.ToolName) + " " + msg.ToolArgs
 			nameStyle := lipgloss.NewStyle().Foreground(colorMuted)
+			title := buildToolTitle(msg)
 
-			var line string
-			if isCalling {
-				line = dim.Render("│ ") + spinStyle.Render(spinnerFrames[m.spinFrame]+" ") + nameStyle.Render(label)
+			if isActive {
+				var dot string
+				if m.spinFrame%2 == 0 {
+					dot = "● "
+				} else {
+					dot = "○ "
+				}
+				line := dim.Render("│ ") + spinStyle.Render(dot) + nameStyle.Render(title)
+				msgLines = append(msgLines, line)
+			} else if msg.ToolStatus == "success" && msg.ToolName == "plan" {
 			} else if msg.ToolStatus == "success" {
-				line = dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(label)
+				line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title)
+				msgLines = append(msgLines, line)
 			} else if msg.ToolStatus == "error" {
-				line = dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(label)
+				line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title)
+				msgLines = append(msgLines, line)
 			} else {
-				line = dim.Render("│ ") + spinStyle.Render("○ ") + nameStyle.Render(label)
+				line := dim.Render("│ ") + spinStyle.Render("○ ") + nameStyle.Render(title)
+				msgLines = append(msgLines, line)
 			}
-
-			msgLines = append(msgLines, line)
 
 			if msg.ToolStatus == "success" && msg.Content != "" {
 				resultContent := msg.Content
@@ -620,25 +643,69 @@ func (m *Model) renderAllMessages() []string {
 				resultContent = strings.TrimSpace(resultContent)
 				if resultContent != "" {
 					if isPlanTool(msg.ToolName) {
-						msgLines = append(msgLines, "")
 						planBox := renderPlanBox(resultContent, contentWidth-4)
 						for _, pl := range strings.Split(planBox, "\n") {
 							msgLines = append(msgLines, dim.Render("│ ")+pl)
 						}
-					} else if isDiffContent(resultContent) {
-						msgLines = append(msgLines, "")
-						rendered := renderDiffContent(resultContent, contentWidth-6)
-						for _, dl := range strings.Split(rendered, "\n") {
-							msgLines = append(msgLines, dim.Render("│ ")+dl)
+					} else if msg.ToolName == "read_file" {
+						path := msg.ToolArgs
+						if path == "" {
+							path = msg.ToolProgressLabel
 						}
-					} else if msg.ToolName == "read_file" && strings.Contains(resultContent, "\n") {
-						// Show only the summary line for file reads, not the full content
-						firstLine, _, _ := strings.Cut(resultContent, "\n")
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(firstLine))
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render("… full content returned to agent"))
+						if path == "" {
+							path = "file"
+						}
+						if strings.Contains(resultContent, "— (empty file)") {
+							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render("(empty file)"))
+						} else if strings.HasPrefix(resultContent, "Error:") {
+							firstLine := strings.SplitN(resultContent, "\n", 2)[0]
+							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(firstLine))
+						} else {
+							contentLines := len(strings.Split(resultContent, "\n"))
+							if strings.HasPrefix(resultContent, "Lines") {
+								contentLines--
+							}
+							if contentLines < 1 {
+								contentLines = 1
+							}
+							suffix := "s"
+							if contentLines == 1 {
+								suffix = ""
+							}
+							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("Read %d line%s from %s", contentLines, suffix, path)))
+							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render("… full content returned to agent"))
+						}
+					} else if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || isDiffContent(resultContent) {
+						resultLines := m.renderCompactDiff(msg.ToolName, resultContent)
+						maxRes := m.terminalResultHeight()
+						for i, rl := range resultLines {
+							if i >= maxRes-1 {
+								remaining := len(resultLines) - i
+								msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("+%d more lines", remaining)))
+								break
+							}
+							msgLines = append(msgLines, dim.Render("│ ")+rl)
+						}
 					} else {
+						toolLineWidth := m.width - padLR*2 - 6
+						if toolLineWidth < 20 {
+							toolLineWidth = 20
+						}
+						var wrappedLines []string
 						for _, rl := range strings.Split(resultContent, "\n") {
-							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(strings.TrimLeft(rl, " ")))
+							trimmed := strings.TrimLeft(rl, " ")
+							for _, seg := range hardWrap(trimmed, toolLineWidth) {
+								wrappedLines = append(wrappedLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(seg))
+							}
+						}
+						maxRes := m.terminalResultHeight()
+						for i, wl := range wrappedLines {
+							if i >= maxRes-1 {
+								remaining := len(wrappedLines) - i
+								msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("+%d more lines", remaining)))
+								break
+							}
+							msgLines = append(msgLines, wl)
 						}
 					}
 				}
@@ -692,6 +759,12 @@ func (m *Model) renderAllMessages() []string {
 
 	if m.confirmForm.active {
 		for _, cl := range strings.Split(m.confirmForm.View(m.spinFrame), "\n") {
+			all = append(all, cl)
+		}
+	}
+
+	if m.yoloForm.active {
+		for _, cl := range strings.Split(m.yoloForm.View(), "\n") {
 			all = append(all, cl)
 		}
 	}
@@ -983,8 +1056,6 @@ func renderPlanBox(text string, maxWidth int) string {
 	content := strings.Join(styledLines, "\n")
 
 	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
 		Padding(0, 1).
 		Width(maxWidth)
 
@@ -992,7 +1063,6 @@ func renderPlanBox(text string, maxWidth int) string {
 }
 
 func renderDiffContent(text string, maxWidth int) string {
-	// Strip markdown fences and collect lines.
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -1002,44 +1072,132 @@ func renderDiffContent(text string, maxWidth int) string {
 		lines = append(lines, line)
 	}
 
-	// GitHub-dark inspired styles with block backgrounds.
 	fileStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#a0a8b7")).
-		Background(lipgloss.Color("#1e2235")).
-		Width(maxWidth)
+		Background(lipgloss.Color("#1e2235"))
 	hunkStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#768390")).
-		Background(lipgloss.Color("#0d1117")).
-		Width(maxWidth)
+		Background(lipgloss.Color("#0d1117"))
 	ctxStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#8b949e")).
-		Background(lipgloss.Color("#0d1117")).
-		Width(maxWidth)
+		Background(lipgloss.Color("#0d1117"))
 	addStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#7ee787")).
-		Background(lipgloss.Color("#1c2a20")).
-		Width(maxWidth)
+		Background(lipgloss.Color("#1c2a20"))
 	delStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#ff7b72")).
-		Background(lipgloss.Color("#2a1d1e")).
-		Width(maxWidth)
+		Background(lipgloss.Color("#2a1d1e"))
 
 	var sb strings.Builder
 	for _, line := range lines {
-		display := truncateLine(line, maxWidth)
-		switch {
-		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
-			sb.WriteString(fileStyle.Render(display))
-		case strings.HasPrefix(line, "@@"):
-			sb.WriteString(hunkStyle.Render(display))
-		case strings.HasPrefix(line, "+"):
-			sb.WriteString(addStyle.Render(display))
-		case strings.HasPrefix(line, "-"):
-			sb.WriteString(delStyle.Render(display))
-		default:
-			sb.WriteString(ctxStyle.Render(display))
+		if runewidth.StringWidth(line) <= maxWidth {
+			renderDiffLine(&sb, line, fileStyle, hunkStyle, ctxStyle, addStyle, delStyle)
+			sb.WriteByte('\n')
+			continue
 		}
-		sb.WriteByte('\n')
+
+		var prefix string
+		content := line
+		switch {
+		case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
+			prefix = line[:4]
+			content = line[4:]
+		case len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' '):
+			prefix = line[:1]
+			content = line[1:]
+		}
+
+		pw := runewidth.StringWidth(prefix)
+		wrapW := maxWidth - pw
+		if wrapW < 4 {
+			wrapW = 4
+		}
+		segs := hardWrap(strings.TrimLeft(content, " "), wrapW)
+		for i, seg := range segs {
+			if i == 0 {
+				renderDiffLine(&sb, prefix+seg, fileStyle, hunkStyle, ctxStyle, addStyle, delStyle)
+			} else {
+				renderDiffLine(&sb, strings.Repeat(" ", pw)+seg, fileStyle, hunkStyle, ctxStyle, addStyle, delStyle)
+			}
+			sb.WriteByte('\n')
+		}
 	}
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func renderDiffLine(sb *strings.Builder, line string, fileStyle, hunkStyle, ctxStyle, addStyle, delStyle lipgloss.Style) {
+	switch {
+	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+		sb.WriteString(fileStyle.Render(line))
+	case strings.HasPrefix(line, "@@"):
+		sb.WriteString(hunkStyle.Render(line))
+	case strings.HasPrefix(line, "+"):
+		sb.WriteString(addStyle.Render(line))
+	case strings.HasPrefix(line, "-"):
+		sb.WriteString(delStyle.Render(line))
+	default:
+		sb.WriteString(ctxStyle.Render(line))
+	}
+}
+
+func (m *Model) terminalResultHeight() int {
+	h := m.height / 3
+	if h < 4 {
+		h = 4
+	}
+	return h
+}
+
+func extractDiffBlock(content string) string {
+	start := strings.Index(content, "```diff")
+	if start < 0 {
+		return ""
+	}
+	start += len("```diff\n")
+	end := strings.Index(content[start:], "```")
+	if end < 0 {
+		return ""
+	}
+	return content[start : start+end]
+}
+
+func (m *Model) renderCompactDiff(toolName, content string) []string {
+	dim := lipgloss.NewStyle().Foreground(colorMuted)
+	addStyle := lipgloss.NewStyle().Foreground(colorSuccess)
+	delStyle := lipgloss.NewStyle().Foreground(colorError)
+
+	diffContent := extractDiffBlock(content)
+	if diffContent == "" {
+		firstLine := strings.SplitN(content, "\n", 2)[0]
+		return []string{dim.Render("  " + firstLine)}
+	}
+
+	var addedCount, removedCount int
+	var diffLines []string
+
+	for _, line := range strings.Split(diffContent, "\n") {
+		trimmed := strings.TrimRight(line, "\r")
+		switch {
+		case strings.HasPrefix(trimmed, "+++") || strings.HasPrefix(trimmed, "---"):
+			continue
+		case strings.HasPrefix(trimmed, "@@"):
+			continue
+		case strings.HasPrefix(trimmed, "+"):
+			addedCount++
+			diffLines = append(diffLines, addStyle.Render("  + "+trimmed[1:]))
+		case strings.HasPrefix(trimmed, "-"):
+			removedCount++
+			diffLines = append(diffLines, delStyle.Render("  ─ "+trimmed[1:]))
+		}
+	}
+
+	if len(diffLines) == 0 {
+		firstLine := strings.SplitN(content, "\n", 2)[0]
+		return []string{dim.Render("  " + firstLine)}
+	}
+
+	var result []string
+	result = append(result, dim.Render(fmt.Sprintf("  -%d/+%d lines", removedCount, addedCount)))
+	result = append(result, diffLines...)
+	return result
 }

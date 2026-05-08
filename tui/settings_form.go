@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// fields for inline settings
 const (
 	sfProvider       = 0
 	sfBaseURL        = 1
@@ -27,7 +26,7 @@ func effortIndex(effort string) int {
 			return i
 		}
 	}
-	return 0 // auto
+	return 0
 }
 
 func cycleEffort(current string, delta int) string {
@@ -55,19 +54,20 @@ type inlineSettings struct {
 	editingField bool
 	editCursor   int
 	focusedBtn   int
-	snapshot     *inlineSettings // original values saved when settings opened
+	snapshot     *inlineSettings
 
-	// Model selection state
+	modelContextWindow       int
+	oracleModelContextWindow int
+
 	isModelSelect   bool
 	modelSearch     string
 	availableModels []ModelEntry
 	filteredModels  []ModelEntry
 	modelListIdx    int
-	modelListOffset int // scroll offset for visible window
+	modelListOffset int
 	fetchingModels  bool
 	fetchError      string
 
-	// Oracle model selection state
 	isOracleModelSelect   bool
 	oracleModelSearch     string
 	availableOracleModels []ModelEntry
@@ -77,16 +77,13 @@ type inlineSettings struct {
 	fetchingOracleModels  bool
 	fetchOracleError      string
 
-	// Provider selection state
 	isProviderSelect bool
 	providerListIdx  int
 	providerPresets  []ProviderPreset
 
-	// Callback to get saved provider config
 	getProviderConfigFn func(providerID string) ProviderConfig
 }
 
-// ProviderPreset is a pre-configured provider for the TUI selector.
 type ProviderPreset struct {
 	ID       string
 	Name     string
@@ -98,6 +95,7 @@ func newInlineSettings(s Settings, getProviderConfigFn func(providerID string) P
 	p := inlineSettings{
 		providerID:          s.ProviderID,
 		getProviderConfigFn: getProviderConfigFn,
+		modelContextWindow:   s.ModelContextWindow,
 	}
 	if p.providerID == "" {
 		p.providerID = "openrouter"
@@ -119,13 +117,15 @@ func newInlineSettings(s Settings, getProviderConfigFn func(providerID string) P
 func (p *inlineSettings) toSettings() Settings {
 	str := func(idx int) string { return strings.TrimSpace(string(p.fields[idx].value)) }
 	return Settings{
-		ProviderID:     p.providerID,
-		ProviderURL:    str(sfBaseURL),
-		ProviderAPIKey: str(sfAPIKey),
-		APIKey:         str(sfAPIKey),
-		Model:          str(sfModel),
-		OracleModel:    str(sfOracleModel),
-		ThinkingEffort: str(sfThinkingEffort),
+		ProviderID:         p.providerID,
+		ProviderURL:        str(sfBaseURL),
+		ProviderAPIKey:     str(sfAPIKey),
+		APIKey:             str(sfAPIKey),
+		Model:              str(sfModel),
+		ModelContextWindow: p.modelContextWindow,
+		OracleModel:        str(sfOracleModel),
+		OracleModelContextWindow: p.oracleModelContextWindow,
+		ThinkingEffort:     str(sfThinkingEffort),
 	}
 }
 
@@ -159,6 +159,8 @@ func (p *inlineSettings) restoreSnapshot() {
 		p.providerID = p.snapshot.providerID
 		p.focused = p.snapshot.focused
 		p.focusedBtn = p.snapshot.focusedBtn
+		p.modelContextWindow = p.snapshot.modelContextWindow
+		p.oracleModelContextWindow = p.snapshot.oracleModelContextWindow
 		p.isModelSelect = p.snapshot.isModelSelect
 		p.isOracleModelSelect = p.snapshot.isOracleModelSelect
 		p.isProviderSelect = p.snapshot.isProviderSelect
@@ -210,7 +212,6 @@ func (p inlineSettings) Update(msg tea.Msg) (inlineSettings, tea.Cmd, bool, bool
 	return p, nil, false, false
 }
 
-// updateEditing handles text input for a specific field
 func (p inlineSettings) updateEditing(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool, bool) {
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -260,7 +261,6 @@ func (p inlineSettings) updateEditing(msg tea.KeyMsg) (inlineSettings, tea.Cmd, 
 	return p, nil, false, false
 }
 
-// updateNav handles up/down navigation and entering edit mode
 func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool, bool) {
 	switch msg.Type {
 	case tea.KeyCtrlS:
@@ -340,7 +340,6 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 
 			p.isModelSelect = true
 			if len(p.availableModels) == 0 && !p.fetchingModels {
-				// Clear any stale error and trigger a fresh fetch
 				p.fetchError = ""
 				p.fetchingModels = true
 				current := fetchModelsMsg{
@@ -377,7 +376,6 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 			p.updateOracleModelFilter()
 		default:
 			if p.focusedBtn == 0 {
-				// Clear masked fields before entering edit so user types fresh value
 				if p.fields[p.focused].masked {
 					p.fields[p.focused].value = nil
 				}
@@ -480,7 +478,6 @@ func (p inlineSettings) updateNav(msg tea.KeyMsg) (inlineSettings, tea.Cmd, bool
 				}
 				p.updateOracleModelFilter()
 			default:
-				// Clear masked fields before entering edit so user types fresh value
 				if p.fields[p.focused].masked {
 					p.fields[p.focused].value = nil
 				}

@@ -61,11 +61,7 @@ func blockCursor(frame int, color lipgloss.Color) string {
 	return " "
 }
 
-// Spinner frames — blinking circle (Claude Code style).
-// ◉ = filled (active), ○ = empty (blink off).
-var spinnerFrames = []string{"◉", "○"}
-
-// Phase colors — used to color the spinner per phase.
+// Phase colors — used per phase for status text.
 var (
 	spinnerColorGrounding = lipgloss.Color("#f0883e") // orange
 	spinnerColorPlanning  = lipgloss.Color("#a5d6ff") // blue
@@ -73,4 +69,6 @@ var (
 	spinnerColorDefault   = lipgloss.Color("#8b949e") // muted gray
 	spinnerColorDone      = lipgloss.Color("#7ee787") // green
 	spinnerColorError     = lipgloss.Color("#ff7b72") // red
+
+	spinnerPhases = []string{"●", "○"}
 )

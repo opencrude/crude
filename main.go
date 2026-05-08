@@ -223,6 +223,10 @@ func main() {
 		return sess.HandleFetchModels(providerID, baseURL, apiKey)
 	}
 
+	tuiInst.OnYoloCmd = func(enabled bool) {
+		sess.SetYolo(enabled)
+	}
+
 	tuiInst.OnUndoCmd = func(cmd string) {
 		result := sess.HandleUndo(cmd)
 		tuiInst.Program.Send(result)

@@ -2,6 +2,13 @@ package tui
 
 import "time"
 
+const (
+	ToolPreviewPreparing = "preparing"
+	ToolPreviewStreaming = "streaming"
+	ToolPreviewDone      = "done"
+	ToolPreviewError     = "error"
+)
+
 // ChatRole constants for ChatMessage.
 const (
 	RoleUser      = "user"
@@ -20,8 +27,21 @@ type ChatMessage struct {
 	// Tool metadata for RoleTool messages
 	ToolName   string
 	ToolArgs   string
-	ToolStatus string // "calling", "success", "error", "skipped"
+	ToolStatus string // "streaming", "calling", "success", "error", "skipped"
 	ToolIndex  int    // index in messages slice for in-place updates
+
+	// Tool progress for live updates during streaming/execution
+	ToolProgressPhase   string
+	ToolProgressMessage string
+	ToolProgressLabel   string // display target (path, command, url, etc.)
+
+	// Live streaming preview fields
+	ToolPreviewPhase string // "", "preparing", "streaming", "done", "error"
+	ToolEstTokens    int    // estimated tokens for this tool call (updated live)
+	ToolLivedAdded   int    // live added lines (write_file, edit_file)
+	ToolLivedRemoved int    // live removed lines (edit_file)
+	ToolStartTime    time.Time
+	ToolDuration     time.Duration
 
 	// Thinking metadata
 	ThinkingActive bool // true while agent is still thinking, false when done
@@ -32,7 +52,7 @@ type ChatMessage struct {
 }
 
 // AgentEventMsg carries an agent lifecycle event to the TUI.
-// Type is one of: "phase", "thinking", "tool_call", "tool_result", "done", "error", "usage".
+// Type is one of: "phase", "thinking", "stream_token", "tool_call_streaming", "tool_call", "tool_progress", "tool_result", "done", "error", "usage".
 type AgentEventMsg struct {
 	Type string
 	Data any
@@ -40,19 +60,22 @@ type AgentEventMsg struct {
 
 // Settings holds all user-configurable options, passed between TUI and main.
 type Settings struct {
-	APIKey         string
-	Model          string
-	OracleModel    string
-	ProviderID     string
-	ProviderURL    string
-	ProviderAPIKey string
-	ThinkingEffort string
+	APIKey                   string
+	Model                    string
+	ModelContextWindow       int
+	OracleModel              string
+	OracleModelContextWindow int
+	ProviderID               string
+	ProviderURL              string
+	ProviderAPIKey           string
+	ThinkingEffort           string
 }
 
-// ModelEntry represents a model available on OpenRouter.
+// ModelEntry represents a model available on a provider.
 type ModelEntry struct {
-	ID   string
-	Name string
+	ID            string
+	Name          string
+	ContextWindow int
 }
 
 // Internal Bubble Tea messages
