@@ -73,13 +73,6 @@ func Run(code string) (string, error) {
 		return float64(int(v*p+0.5)) / p
 	})
 
-	// Wrap code to capture the last expression value.
-	wrappedCode := fmt.Sprintf(`
-		(function() {
-			%s
-		})()
-	`, code)
-
 	// Run with timeout via channel.
 	type result struct {
 		value goja.Value
@@ -92,7 +85,7 @@ func Run(code string) (string, error) {
 				ch <- result{nil, fmt.Errorf("js: panic: %v", r)}
 			}
 		}()
-		val, err := vm.RunString(wrappedCode)
+		val, err := vm.RunString(code)
 		ch <- result{val, err}
 	}()
 

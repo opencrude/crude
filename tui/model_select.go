@@ -16,9 +16,12 @@ func (p inlineSettings) updateModelSelect(msg tea.KeyMsg) (inlineSettings, tea.C
 		return p, nil, false, false
 	case tea.KeyEnter:
 		if !p.fetchingModels && len(p.filteredModels) > 0 && p.modelListIdx >= 0 && p.modelListIdx < len(p.filteredModels) {
-			p.fields[sfModel].value = []rune(p.filteredModels[p.modelListIdx].ID)
+			selected := p.filteredModels[p.modelListIdx]
+			p.fields[sfModel].value = []rune(selected.ID)
+			p.modelContextWindow = selected.ContextWindow
 		} else if p.modelSearch != "" {
 			p.fields[sfModel].value = []rune(p.modelSearch)
+			p.modelContextWindow = 0
 		}
 		p.isModelSelect = false
 		p.modelSearch = ""
@@ -106,9 +109,12 @@ func (p inlineSettings) updateOracleModelSelect(msg tea.KeyMsg) (inlineSettings,
 		return p, nil, false, false
 	case tea.KeyEnter:
 		if !p.fetchingOracleModels && len(p.filteredOracleModels) > 0 && p.oracleModelListIdx >= 0 && p.oracleModelListIdx < len(p.filteredOracleModels) {
-			p.fields[sfOracleModel].value = []rune(p.filteredOracleModels[p.oracleModelListIdx].ID)
+			selected := p.filteredOracleModels[p.oracleModelListIdx]
+			p.fields[sfOracleModel].value = []rune(selected.ID)
+			p.oracleModelContextWindow = selected.ContextWindow
 		} else if p.oracleModelSearch != "" {
 			p.fields[sfOracleModel].value = []rune(p.oracleModelSearch)
+			p.oracleModelContextWindow = 0
 		}
 		p.isOracleModelSelect = false
 		p.oracleModelSearch = ""

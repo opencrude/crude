@@ -74,15 +74,20 @@ func (p *inlineSettings) View(spinFrame int) string {
 				selected := i == p.modelListIdx
 
 				idStr := m.ID
-				if len([]rune(idStr)) > 44 {
-					idStr = string([]rune(idStr)[:41]) + "…"
+				if len([]rune(idStr)) > 36 {
+					idStr = string([]rune(idStr)[:33]) + "…"
+				}
+
+				ctxStr := ""
+				if m.ContextWindow > 0 {
+					ctxStr = dim.Render(fmt.Sprintf(" %s", formatTokens(m.ContextWindow)))
 				}
 
 				var line string
 				if selected {
-					line = accentStyle.Render(" ❯ ") + highlightStyle.Render(fmt.Sprintf("%-44s", idStr))
+					line = accentStyle.Render(" ❯ ") + highlightStyle.Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
 				} else {
-					line = dim.Render("   ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-44s", idStr))
+					line = dim.Render("   ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
 				}
 				b.WriteString(line + "\n")
 			}
@@ -156,15 +161,20 @@ func (p *inlineSettings) View(spinFrame int) string {
 				selected := i == p.oracleModelListIdx
 
 				idStr := m.ID
-				if len([]rune(idStr)) > 44 {
-					idStr = string([]rune(idStr)[:41]) + "…"
+				if len([]rune(idStr)) > 36 {
+					idStr = string([]rune(idStr)[:33]) + "…"
+				}
+
+				ctxStr := ""
+				if m.ContextWindow > 0 {
+					ctxStr = dim.Render(fmt.Sprintf(" %s", formatTokens(m.ContextWindow)))
 				}
 
 				var line string
 				if selected {
-					line = accentStyle.Render(" ❯ ") + highlightStyle.Render(fmt.Sprintf("%-44s", idStr))
+					line = accentStyle.Render(" ❯ ") + highlightStyle.Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
 				} else {
-					line = dim.Render("   ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-44s", idStr))
+					line = dim.Render("   ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
 				}
 				b.WriteString(line + "\n")
 			}

@@ -28,6 +28,9 @@ type TUI struct {
 	// OnConfirmResult is called when the user responds to a confirmation prompt.
 	OnConfirmResult func(ConfirmResult)
 
+	// OnYoloCmd is called when yolo mode is toggled (true = enabled, false = disabled).
+	OnYoloCmd func(enabled bool)
+
 	// OnUndoCmd is called when the user invokes an undo slash command.
 	OnUndoCmd func(cmd string)
 
@@ -101,6 +104,11 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	model.OnConfirmResult = func(result ConfirmResult) {
 		if t.OnConfirmResult != nil {
 			t.OnConfirmResult(result)
+		}
+	}
+	model.OnYoloCmd = func(enabled bool) {
+		if t.OnYoloCmd != nil {
+			t.OnYoloCmd(enabled)
 		}
 	}
 	model.OnUndoCmd = func(cmd string) {

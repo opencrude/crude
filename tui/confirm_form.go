@@ -20,6 +20,9 @@ type confirmForm struct {
 	operation string
 	tool      string
 	target    string
+	risk      string
+	reason    string
+	suggestion string
 	focused   int
 }
 
@@ -46,6 +49,21 @@ func (c *confirmForm) Reset(question, operation, tool, target string) {
 	c.operation = operation
 	c.tool = tool
 	c.target = target
+	c.risk = ""
+	c.reason = ""
+	c.suggestion = ""
+	c.focused = btnAllow
+}
+
+func (c *confirmForm) ResetWithDetails(question, operation, tool, target, risk, reason, suggestion string) {
+	c.active = true
+	c.question = question
+	c.operation = operation
+	c.tool = tool
+	c.target = target
+	c.risk = risk
+	c.reason = reason
+	c.suggestion = suggestion
 	c.focused = btnAllow
 }
 
@@ -77,66 +95,40 @@ func (c confirmForm) Update(msg tea.Msg) (confirmForm, ConfirmResult, bool) {
 			c.focused--
 		}
 	case tea.KeyEnter:
-		choice := ConfirmAllow
-		switch c.focused {
-		case btnAllow:
-			choice = ConfirmAllow
-		case btnAlways:
-			choice = ConfirmAlways
-		case btnDeny:
-			choice = ConfirmDeny
-		}
-		result := ConfirmResult{
-			Choice:    choice,
-			Operation: c.operation,
-			Tool:      c.tool,
-			Target:    c.target,
-		}
-		c.active = false
-		return c, result, true
+		return c.commit()
 	case tea.KeyEsc:
-		result := ConfirmResult{
-			Choice:    ConfirmDeny,
-			Operation: c.operation,
-			Tool:      c.tool,
-			Target:    c.target,
-		}
 		c.active = false
-		return c, result, true
+		return c, ConfirmResult{Choice: ConfirmDeny, Operation: c.operation, Tool: c.tool, Target: c.target}, true
 	default:
 		s := keyMsg.String()
 		switch s {
 		case "y":
-			result := ConfirmResult{
-				Choice:    ConfirmAllow,
-				Operation: c.operation,
-				Tool:      c.tool,
-				Target:    c.target,
-			}
-			c.active = false
-			return c, result, true
+			c.focused = btnAllow
+			return c.commit()
 		case "a":
-			result := ConfirmResult{
-				Choice:    ConfirmAlways,
-				Operation: c.operation,
-				Tool:      c.tool,
-				Target:    c.target,
-			}
-			c.active = false
-			return c, result, true
+			c.focused = btnAlways
+			return c.commit()
 		case "n":
-			result := ConfirmResult{
-				Choice:    ConfirmDeny,
-				Operation: c.operation,
-				Tool:      c.tool,
-				Target:    c.target,
-			}
-			c.active = false
-			return c, result, true
+			c.focused = btnDeny
+			return c.commit()
 		}
 	}
 
 	return c, ConfirmResult{}, false
+}
+
+func (c confirmForm) commit() (confirmForm, ConfirmResult, bool) {
+	c.active = false
+	choice := ConfirmAllow
+	switch c.focused {
+	case btnAllow:
+		choice = ConfirmAllow
+	case btnAlways:
+		choice = ConfirmAlways
+	case btnDeny:
+		choice = ConfirmDeny
+	}
+	return c, ConfirmResult{Choice: choice, Operation: c.operation, Tool: c.tool, Target: c.target}, true
 }
 
 func (c confirmForm) View(spinFrame int) string {
@@ -147,7 +139,6 @@ func (c confirmForm) View(spinFrame int) string {
 	var b strings.Builder
 	dim := lipgloss.NewStyle().Foreground(colorMuted)
 	warnStyle := lipgloss.NewStyle().Foreground(colorWarning).Bold(true)
-	accentStyle := lipgloss.NewStyle().Foreground(colorAccent)
 	boxStyle := lipgloss.NewStyle().
 		Foreground(colorMainText).
 		Background(lipgloss.Color("#1a1a2e")).
@@ -157,6 +148,34 @@ func (c confirmForm) View(spinFrame int) string {
 	b.WriteString("\n")
 	b.WriteString(dim.Render(strings.Repeat("─", 54)))
 	b.WriteString("\n")
+
+	if c.risk != "" {
+		riskColor := colorWarning
+		riskLabel := "medium"
+		switch c.risk {
+		case "blocked":
+			riskColor = lipgloss.Color("#ff0000")
+			riskLabel = "BLOCKED"
+		case "destructive":
+			riskColor = colorWarning
+			riskLabel = "DANGEROUS"
+		case "network":
+			riskColor = colorAccent
+			riskLabel = "network"
+		case "project-write":
+			riskColor = lipgloss.Color("#d4a017")
+			riskLabel = "write"
+		case "unknown":
+			riskColor = colorMuted
+			riskLabel = "unknown"
+		default:
+			riskColor = colorMuted
+			riskLabel = c.risk
+		}
+		riskStyle := lipgloss.NewStyle().Foreground(riskColor).Bold(true)
+		b.WriteString(dim.Render("  risk:      ") + riskStyle.Render(strings.ToUpper(riskLabel)))
+		b.WriteString("\n")
+	}
 
 	if c.operation != "" {
 		opStyle := lipgloss.NewStyle().Foreground(colorAccent2)
@@ -169,7 +188,24 @@ func (c confirmForm) View(spinFrame int) string {
 	}
 	if c.target != "" {
 		targetStyle := lipgloss.NewStyle().Foreground(colorWarning)
-		b.WriteString(dim.Render("  target:    ") + targetStyle.Render(c.target))
+		targetDisplay := c.target
+		if len(targetDisplay) > 80 {
+			targetDisplay = targetDisplay[:77] + "..."
+		}
+		b.WriteString(dim.Render("  target:    ") + targetStyle.Render(targetDisplay))
+		b.WriteString("\n")
+	}
+
+	if c.reason != "" {
+		reasonStyle := lipgloss.NewStyle().Foreground(colorMainText).Italic(true)
+		b.WriteString("\n")
+		b.WriteString(dim.Render("  reason: ") + reasonStyle.Render(c.reason))
+		b.WriteString("\n")
+	}
+
+	if c.suggestion != "" {
+		suggStyle := lipgloss.NewStyle().Foreground(colorAccent).Italic(true)
+		b.WriteString(dim.Render("  tip: ") + suggStyle.Render(c.suggestion))
 		b.WriteString("\n")
 	}
 
@@ -203,3 +239,5 @@ func (c confirmForm) View(spinFrame int) string {
 
 	return b.String()
 }
+
+var accentStyle = lipgloss.NewStyle().Foreground(colorAccent)

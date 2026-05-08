@@ -11,6 +11,7 @@ import (
 	"crude/diff"
 	"crude/fileio"
 	"crude/js"
+	"crude/safety"
 	"crude/search"
 )
 
@@ -62,15 +63,23 @@ func getBoolArgAny(args map[string]any, key string, defaultVal bool) bool {
 	return defaultVal
 }
 
-func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor) string {
+func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool) string {
 	switch tool {
 
 	case "execute_command":
+		cmd := getStrArg(params, "command", "")
+		if !yolo {
+			safetyResult := safety.CheckCommandSafety(cmd)
+			if safetyResult.Risk.IsAlwaysBlocked() {
+				return fmt.Sprintf("Error: [BLOCKED] %s\nSuggestion: %s",
+					safetyResult.Reason, safetyResult.Suggestion)
+			}
+		}
 		opts := fileio.ExecOptions{
 			CWD:            getStrArg(params, "cwd", ""),
 			TimeoutSeconds: getIntArgAny(params, "timeout_seconds", 0),
 		}
-		out, err := exec.Execute(getStrArg(params, "command", ""), opts)
+		out, err := exec.Execute(cmd, opts)
 		if err != nil {
 			if out != "" {
 				return fmt.Sprintf("Command failed: %v\n\n%s", err, out)
@@ -313,6 +322,9 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			return "JavaScript error: " + err.Error()
 		}
 		return result
+
+	case "stop":
+		return getStrArg(params, "message", "")
 
 	case "reply":
 		return getStrArg(params, "content", "")

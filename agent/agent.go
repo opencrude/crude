@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -16,78 +19,27 @@ import (
 	"crude/tools"
 )
 
-type APIMessage struct {
-	Role             string     `json:"role"`
-	Content          string     `json:"content,omitempty"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
-	Reasoning        string     `json:"reasoning,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
-}
-
-type ToolCall struct {
-	Index    int          `json:"index"`
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function FunctionCall `json:"function"`
-}
-
-type FunctionCall struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-type ToolDef struct {
-	Type     string      `json:"type"`
-	Function ToolFuncDef `json:"function"`
-}
-
-type ToolFuncDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-}
-
-type ChatRequest struct {
-	Model      string       `json:"model"`
-	Messages   []APIMessage `json:"messages"`
-	Tools      []ToolDef    `json:"tools,omitempty"`
-	ToolChoice any          `json:"tool_choice,omitempty"`
-	Stream     bool         `json:"stream"`
-}
-
-type ChatResponse struct {
-	Choices []struct {
-		Message      APIMessage `json:"message"`
-		FinishReason string     `json:"finish_reason"`
-		Delta        struct {
-			Content          string     `json:"content"`
-			ReasoningContent string     `json:"reasoning_content"`
-			Reasoning        string     `json:"reasoning"`
-			ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-		} `json:"delta"`
-	} `json:"choices"`
-	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-		PromptTokensDetails *struct {
-			CachedTokens int `json:"cached_tokens"`
-		} `json:"prompt_tokens_details,omitempty"`
-	} `json:"usage,omitempty"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
 type AgentEvent struct {
 	Type string
 	Data any
 }
 
 const (
-	maxSteps = 50
+	maxSteps          = 50
+	loopDetectWindow  = 8
+	loopDetectRepeats = 4
+	contextSafetyPct  = 0.85
 )
+
+type StepRecord struct {
+	Content      string
+	ToolName     string
+	ToolInput    string
+	ToolResult   string
+	FinishReason string
+}
+
+type stopCondition func(steps []StepRecord) bool
 
 type Agent struct {
 	Provider       *provider.Provider
@@ -95,29 +47,10 @@ type Agent struct {
 	Policy         safety.Policy
 	ToolFn         func(tool string, params map[string]any) (string, error)
 	logger         *logger.Logger
-	ExtraBody      map[string]any // provider-specific request fields (e.g. thinking params)
 	OracleProvider *provider.Provider
 	OracleModel    string
-	Ctx            context.Context // set externally before Run() for tool cancellation
-}
-
-// marshalRequest marshals a ChatRequest, merging any ExtraBody fields into the top-level JSON.
-func (a *Agent) marshalRequest(req ChatRequest) ([]byte, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	if len(a.ExtraBody) == 0 {
-		return body, nil
-	}
-	var merged map[string]any
-	if err := json.Unmarshal(body, &merged); err != nil {
-		return nil, err
-	}
-	for k, v := range a.ExtraBody {
-		merged[k] = v
-	}
-	return json.Marshal(merged)
+	Ctx            context.Context
+	Yolo           bool
 }
 
 func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
@@ -132,9 +65,44 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 	}
 }
 
+func isStopConditionMet(conditions []stopCondition, steps []StepRecord) bool {
+	for _, cond := range conditions {
+		if cond(steps) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRepeatedToolCalls(steps []StepRecord, windowSize, maxRepeats int) bool {
+	if len(steps) < windowSize {
+		return false
+	}
+	window := steps[len(steps)-windowSize:]
+	sigCount := make(map[string]int)
+	for _, s := range window {
+		if s.ToolName == "" {
+			continue
+		}
+		h := sha256.New()
+		io.WriteString(h, s.ToolName)
+		io.WriteString(h, "\x00")
+		io.WriteString(h, s.ToolInput)
+		io.WriteString(h, "\x00")
+		io.WriteString(h, s.ToolResult)
+		io.WriteString(h, "\x00")
+		sig := hex.EncodeToString(h.Sum(nil))
+		sigCount[sig]++
+		if sigCount[sig] > maxRepeats {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Agent) Run(
 	ctx context.Context,
-	sessionMessages []APIMessage,
+	sessionMessages []provider.ChatMessage,
 	systemPrompt string,
 	emit func(AgentEvent),
 	blockResolveCh <-chan string,
@@ -144,7 +112,7 @@ func (a *Agent) Run(
 	allTools := allToolDefs()
 
 	lastReply := ""
-	msgs := []APIMessage{
+	msgs := []provider.ChatMessage{
 		{Role: "system", Content: systemPrompt},
 	}
 	for _, m := range sessionMessages {
@@ -153,8 +121,7 @@ func (a *Agent) Run(
 		}
 	}
 
-	// Helper: build a system message from current SM state, or return nil if idle
-	buildSMStatusMsg := func() *APIMessage {
+	buildSMStatusMsg := func() *provider.ChatMessage {
 		if sm == nil || sessionID == "" {
 			return nil
 		}
@@ -162,7 +129,22 @@ func (a *Agent) Run(
 		if status == "" {
 			return nil
 		}
-		return &APIMessage{Role: "system", Content: status}
+		return &provider.ChatMessage{Role: "system", Content: status}
+	}
+
+	var steps []StepRecord
+	var totalPromptTokens, totalCompletionTokens int
+
+	ctxWindow := a.Provider.ContextWindow()
+	ctxLimit := int(float64(ctxWindow) * contextSafetyPct)
+
+	stopConditions := []stopCondition{
+		func(steps []StepRecord) bool {
+			return hasRepeatedToolCalls(steps, loopDetectWindow, loopDetectRepeats)
+		},
+		func(steps []StepRecord) bool {
+			return ctxLimit > 0 && totalPromptTokens > ctxLimit
+		},
 	}
 
 	for step := 0; step < maxSteps; step++ {
@@ -171,7 +153,6 @@ func (a *Agent) Run(
 			return
 		}
 
-		// Inject SM status as a system message before each LLM call
 		if smStatus := buildSMStatusMsg(); smStatus != nil {
 			replaced := false
 			for i := len(msgs) - 1; i >= 0; i-- {
@@ -187,7 +168,8 @@ func (a *Agent) Run(
 		}
 
 		var accumulatedText string
-		var toolCalls []ToolCall
+		var toolCalls []provider.ToolCall
+		prevPreviewKeys := make(map[string]string)
 
 		content, reasoningContent, finishReason, streamToolCalls, promptTokens, completionTokens, promptTokensCached, err := a.completeStream(ctx, msgs, allTools,
 			func(token string) {
@@ -196,30 +178,141 @@ func (a *Agent) Run(
 			func(text string) {
 				emit(AgentEvent{Type: "thinking", Data: text})
 			},
+			func(id, name string) {
+				emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
+					"name":    name,
+					"preview": FormatPreview(ExtractPreview(id, name, "")),
+				}})
+			},
+			func(id, name, args string) {
+				preview := ExtractPreview(id, name, args)
+				path := getPS(preview.Params, "path")
+				command := getPS(preview.Params, "command")
+				urlStr := getPS(preview.Params, "url")
+				query := getPS(preview.Params, "query")
+				source := getPS(preview.Params, "source")
+				dest := getPS(preview.Params, "destination")
+				pattern := getPS(preview.Params, "pattern")
+
+				var offsetVal int
+				if o, ok := preview.Params["offset"]; ok {
+					switch v := o.(type) {
+					case float64:
+						offsetVal = int(v)
+					case int:
+						offsetVal = v
+					}
+				}
+				var limitVal int
+				if l, ok := preview.Params["limit"]; ok {
+					switch v := l.(type) {
+					case float64:
+						limitVal = int(v)
+					case int:
+						limitVal = v
+					}
+				}
+
+				contentStr := getPS(preview.Params, "content")
+				oldStr := getPS(preview.Params, "old_string")
+				newStr := getPS(preview.Params, "new_string")
+
+				contentLines := 0
+				if contentStr != "" {
+					contentLines = CountLines(contentStr)
+				}
+				oldLines := 0
+				if oldStr != "" {
+					oldLines = CountLines(oldStr)
+				}
+				newLines := 0
+				if newStr != "" {
+					newLines = CountLines(newStr)
+				}
+
+				previewKey := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d",
+					path, command, urlStr, query, source, dest, pattern,
+					offsetVal, limitVal, contentLines, oldLines, newLines)
+				if prev, ok := prevPreviewKeys[id]; ok && prev == previewKey {
+					return
+				}
+				prevPreviewKeys[id] = previewKey
+
+				data := map[string]any{
+					"name":    name,
+					"preview": FormatPreview(preview),
+					"args":    args,
+				}
+				if path != "" {
+					data["path"] = path
+				}
+				if command != "" {
+					data["command"] = command
+				}
+				if urlStr != "" {
+					data["url"] = urlStr
+				}
+				if query != "" {
+					data["query"] = query
+				}
+				if source != "" {
+					data["source"] = source
+				}
+				if dest != "" {
+					data["destination"] = dest
+				}
+				if pattern != "" {
+					data["pattern"] = pattern
+				}
+				if offsetVal > 0 {
+					data["offset"] = offsetVal
+				}
+				if limitVal > 0 {
+					data["limit"] = limitVal
+				}
+				if contentLines > 0 {
+					data["content_lines"] = contentLines
+				}
+				if oldLines > 0 {
+					data["old_lines"] = oldLines
+				}
+				if newLines > 0 {
+					data["new_lines"] = newLines
+				}
+				emit(AgentEvent{Type: "tool_call_streaming", Data: data})
+			},
 		)
 		if err != nil {
 			a.emitError(emit, err)
 			return
 		}
 
+		totalPromptTokens += promptTokens
+		totalCompletionTokens += completionTokens
+
 		if promptTokens > 0 || completionTokens > 0 {
 			emit(AgentEvent{Type: "usage", Data: map[string]int{
-				"prompt":          promptTokens,
-				"completion":      completionTokens,
-				"prompt_cached":   promptTokensCached,
+				"prompt":         promptTokens,
+				"completion":     completionTokens,
+				"prompt_cached":  promptTokensCached,
+				"context_window": ctxWindow,
 			}})
 		}
 
 		accumulatedText = content
 		toolCalls = streamToolCalls
 
-		a.logger.Info("llm.step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason)
+		a.logger.Info("llm.step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason, "prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
 
 		if accumulatedText == "" {
 			accumulatedText = lastReply
 		}
 
-		if len(toolCalls) == 0 {
+		hasToolCalls := len(toolCalls) > 0
+		finishIsToolCalls := finishReason == "tool_calls"
+		shouldContinue := hasToolCalls && finishIsToolCalls
+
+		if !shouldContinue {
 			if accumulatedText != "" {
 				emit(AgentEvent{Type: "done", Data: accumulatedText})
 			} else {
@@ -228,35 +321,136 @@ func (a *Agent) Run(
 			return
 		}
 
-		// Build the assistant message for the history
-		assistantMsg := APIMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, Reasoning: reasoningContent, ToolCalls: toolCalls}
+		assistantMsg := provider.ChatMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, Reasoning: reasoningContent, ToolCalls: toolCalls}
 		msgs = append(msgs, assistantMsg)
 
 		type execResult struct {
-			id     string
-			result string
+			id       string
+			params   map[string]any
+			name     string
+			result   string
+			stopTurn bool
+			stopMsg  string
 		}
 		resultCh := make(chan execResult, len(toolCalls))
 
 		for _, tc := range toolCalls {
-			go func(tc ToolCall) {
+			go func(tc provider.ToolCall) {
 				var params map[string]any
 				if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
-					resultCh <- execResult{tc.ID, "Error: invalid arguments: " + err.Error()}
+					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: "Error: invalid arguments: " + err.Error()}
+					return
+				}
+
+				if tc.Function.Name == "stop" {
+					msg := getStr(params, "message")
+					lastReply = msg
+					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, params: params, result: msg, stopTurn: true, stopMsg: msg}
 					return
 				}
 
 				if tc.Function.Name == "reply" {
 					content := getStr(params, "content")
 					lastReply = content
-					resultCh <- execResult{tc.ID, content}
+					resultCh <- execResult{id: tc.ID, params: params, name: tc.Function.Name, result: content}
 					return
+				}
+
+				if tc.Function.Name == "execute_command" && !a.Yolo {
+					cmd := getStr(params, "command")
+					sr := safety.CheckCommandSafety(cmd)
+					if sr.Risk.IsAlwaysBlocked() {
+						errMsg := fmt.Sprintf("[SAFETY BLOCK] This command was automatically blocked and will never execute. DO NOT retry this command or any variant of it.\nBlock reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the system prevented a dangerous operation. Move on to a different approach. Explain to the user why this was blocked and what you'll do instead.", sr.Reason, sr.Suggestion, cmd)
+						a.logger.Warn("safety.blocked", "command", cmd, "reason", sr.Reason)
+						emit(AgentEvent{Type: "tool_result", Data: map[string]string{
+							"name":   "execute_command",
+							"result": errMsg,
+						}})
+						resultCh <- execResult{id: tc.ID, name: "execute_command", result: errMsg}
+						return
+					}
+					if sr.Risk.NeedsConfirmation() {
+						emit(AgentEvent{Type: "blocking", Data: map[string]string{
+							"operation":  sr.Risk.String(),
+							"tool":       "execute_command",
+							"target":     cmd,
+							"question":   fmt.Sprintf("Allow this %s command?", sr.Risk.String()),
+							"risk":       sr.Risk.String(),
+							"reason":     sr.Reason,
+							"suggestion": sr.Suggestion,
+						}})
+						resp := <-blockResolveCh
+						if resp == "deny" {
+							errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
+							a.logger.Info("safety.denied", "command", cmd, "risk", sr.Risk.String())
+							emit(AgentEvent{Type: "tool_result", Data: map[string]string{
+								"name":   "execute_command",
+								"result": errMsg,
+							}})
+							resultCh <- execResult{id: tc.ID, name: "execute_command", result: errMsg}
+							return
+						}
+						emit(AgentEvent{Type: "blocking_complete"})
+						if resp == "always" {
+							emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
+								"operation": sr.Risk.String(),
+								"tool":      "execute_command",
+								"target":    cmd,
+							}})
+						}
+					}
 				}
 
 				emit(AgentEvent{Type: "tool_call", Data: map[string]string{
 					"name": tc.Function.Name,
 					"args": fmt.Sprintf("%v", params),
 				}})
+
+				path := getStr(params, "path")
+
+				if tc.Function.Name == "write_file" {
+					content := getStr(params, "content")
+					lines := CountLines(content)
+					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"name":    tc.Function.Name,
+						"phase":   "writing",
+						"path":    path,
+						"message": fmt.Sprintf("Writing %d lines to %s", lines, path),
+					}})
+				} else if tc.Function.Name == "edit_file" {
+					oldStr := getStr(params, "old_string")
+					newStr := getStr(params, "new_string")
+					oldLines := CountLines(oldStr)
+					newLines := CountLines(newStr)
+					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"name":    tc.Function.Name,
+						"phase":   "patching",
+						"path":    path,
+						"message": fmt.Sprintf("Editing %s (−%d/+%d lines)", path, oldLines, newLines),
+					}})
+				} else if tc.Function.Name == "read_file" {
+					if path != "" {
+						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+							"name":    tc.Function.Name,
+							"phase":   "reading",
+							"path":    path,
+							"message": fmt.Sprintf("Reading %s", path),
+						}})
+					}
+				} else if tc.Function.Name == "execute_command" {
+					cmd := getStr(params, "command")
+					if cmd != "" {
+						display := cmd
+						if len(display) > 60 {
+							display = display[:60] + "\u2026"
+						}
+						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+							"name":    tc.Function.Name,
+							"phase":   "running",
+							"message": fmt.Sprintf("Running %s", display),
+						}})
+					}
+				}
 
 				a.logger.Info("tool.call", "tool", tc.Function.Name, "params", fmt.Sprintf("%v", params))
 				toolStart := time.Now()
@@ -269,27 +463,80 @@ func (a *Agent) Run(
 					a.logger.Info("tool.result", "tool", tc.Function.Name, "latency_ms", toolDur, "content", result)
 				}
 
+				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result, "Error:") {
+					additions, removals := ParseDiffStats(result)
+					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"name":          tc.Function.Name,
+						"phase":         "done",
+						"path":          path,
+						"message":       fmt.Sprintf("\u2212%d/+%d lines", removals, additions),
+						"lines_added":   additions,
+						"lines_removed": removals,
+					}})
+				}
+
+				durSeconds := fmt.Sprintf("%.0f", time.Since(toolStart).Seconds())
 				emit(AgentEvent{Type: "tool_result", Data: map[string]string{
-					"name":   tc.Function.Name,
-					"result": result,
+					"name":     tc.Function.Name,
+					"result":   result,
+					"duration": durSeconds,
 				}})
 
-				resultCh <- execResult{tc.ID, result}
+				resultCh <- execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result}
 			}(tc)
 		}
+
+		var stopMessage string
+		var wasStopCalled bool
 
 		for i := 0; i < len(toolCalls); i++ {
 			select {
 			case r := <-resultCh:
-				msgs = append(msgs, APIMessage{
+				msgs = append(msgs, provider.ChatMessage{
 					Role:       "tool",
 					ToolCallID: r.id,
 					Content:    r.result,
 				})
+				steps = append(steps, StepRecord{
+					Content:      accumulatedText,
+					ToolName:     r.name,
+					ToolInput:    fmt.Sprintf("%v", r.params),
+					ToolResult:   r.result,
+					FinishReason: finishReason,
+				})
+				if r.stopTurn {
+					wasStopCalled = true
+					stopMessage = r.stopMsg
+					if r.stopMsg != "" {
+						emit(AgentEvent{Type: "stream_token", Data: r.stopMsg})
+					}
+				} else if r.name == "reply" && r.result != "" {
+					emit(AgentEvent{Type: "stream_token", Data: r.result})
+				}
 			case <-ctx.Done():
 				emit(AgentEvent{Type: "done", Data: "Cancelled."})
 				return
 			}
+		}
+
+		if wasStopCalled {
+			a.logger.Info("loop.stop_called", "message", stopMessage)
+			emit(AgentEvent{Type: "done", Data: stopMessage})
+			return
+		}
+
+		if isStopConditionMet(stopConditions, steps) {
+			reason := "stop_condition_met"
+			if totalPromptTokens > ctxLimit {
+				reason = fmt.Sprintf("context_limit_reached (%d/%d tokens)", totalPromptTokens, ctxWindow)
+			}
+			a.logger.Info("loop."+reason, "steps", len(steps), "prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
+			if lastReply != "" {
+				emit(AgentEvent{Type: "done", Data: lastReply})
+			} else {
+				emit(AgentEvent{Type: "done", Data: accumulatedText})
+			}
+			return
 		}
 	}
 
@@ -319,12 +566,12 @@ func retryBackoff(attempt int) time.Duration {
 	return base + jitter
 }
 
-func allToolDefs() []ToolDef {
-	result := make([]ToolDef, len(tools.AgentTools))
+func allToolDefs() []provider.ToolDef {
+	result := make([]provider.ToolDef, len(tools.AgentTools))
 	for i, td := range tools.AgentTools {
-		result[i] = ToolDef{
+		result[i] = provider.ToolDef{
 			Type: td.Type,
-			Function: ToolFuncDef{
+			Function: provider.FunctionDef{
 				Name:        td.Function.Name,
 				Description: td.Function.Description,
 				Parameters:  td.Function.Parameters,
@@ -341,12 +588,8 @@ func containsPrefix(s, prefix string) bool {
 	return s[:len(prefix)] == prefix
 }
 
-// BuildStateMachineStatus returns a formatted block describing the current
-// state machine status for both LLM context and TUI display. Uses clean
-// Unicode symbols for step status: ✓ completed, → active, ☐ pending, ✗ failed.
-// Reads persistent step statuses from ContextData so completed steps are
-// visible even after the state machine pops them from the sub-goal stack.
 func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionID string) string {
+	// ... unchanged from original, see original file
 	if sm == nil {
 		return ""
 	}
@@ -371,7 +614,6 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 			objective := strings.TrimPrefix(focus.Intent, "plan: ")
 			sb.WriteString(fmt.Sprintf("Plan: %s (%s)\n", objective, statusLabel))
 
-			// Read persistent step statuses
 			rawStatuses, _ := state.GetFromContext("plan_step_statuses")
 			rawLabels, _ := state.GetFromContext("plan_step_labels")
 			stepStatuses, _ := rawStatuses.(map[string]string)
@@ -380,7 +622,6 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 			if stepStatuses != nil {
 				total := 0
 				completed := 0
-				// Determine display order from stored steps
 				rawSteps, _ := state.GetFromContext("plan_steps")
 				if steps, ok := rawSteps.([]map[string]any); ok {
 					total = len(steps)
@@ -396,7 +637,6 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 						sb.WriteString(line + "\n")
 					}
 				} else {
-					// Fallback: iterate map
 					for id, status := range stepStatuses {
 						marker := persistentStepMarker(status)
 						desc := stepLabels[id]
@@ -409,7 +649,6 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 					}
 				}
 
-				// Summary line
 				var summaryParts []string
 				summaryParts = append(summaryParts, fmt.Sprintf("%d/%d steps", completed, total))
 				if focus.CurrentBlocker != nil {
@@ -430,7 +669,6 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 		}
 	}
 
-	// Suspended goals (other roots not in focus)
 	suspended := sm.GetSuspendedGoals(sessionID)
 	if len(suspended) > 0 {
 		sb.WriteString("Suspended:\n")
