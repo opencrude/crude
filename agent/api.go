@@ -307,9 +307,21 @@ func (a *Agent) completeStream(
 						onToolCallDelta(tc.ID, tc.Function.Name, tc.Function.Arguments)
 					}
 			} else {
+				if tc.ID != "" && existing.ID == "" {
+					existing.ID = tc.ID
+				}
+				if tc.Type != "" && existing.Type == "" {
+					existing.Type = tc.Type
+				}
+				if tc.Function.Name != "" && existing.Function.Name == "" {
+					existing.Function.Name = tc.Function.Name
+					if onToolCallStart != nil {
+						onToolCallStart(existing.ID, existing.Function.Name)
+					}
+				}
 				existing.Function.Arguments += tc.Function.Arguments
 				if onToolCallDelta != nil && existing.Function.Name != "" {
-					onToolCallDelta(tc.ID, existing.Function.Name, existing.Function.Arguments)
+					onToolCallDelta(existing.ID, existing.Function.Name, existing.Function.Arguments)
 				}
 			}
 			}
@@ -336,7 +348,7 @@ func (a *Agent) completeStream(
 				}
 			}
 			for i := 0; i <= maxIdx; i++ {
-				if tc, ok := toolCallsByIndex[i]; ok && tc.ID != "" {
+				if tc, ok := toolCallsByIndex[i]; ok && tc.Function.Name != "" {
 					resultToolCalls = append(resultToolCalls, *tc)
 				}
 			}

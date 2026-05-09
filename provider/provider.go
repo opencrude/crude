@@ -171,6 +171,20 @@ var Presets = []Preset{
 		StandardID: "openai",
 	},
 	{
+		ID:         "opencode-zen",
+		Name:       "OpenCode Zen",
+		BaseURL:    "https://opencode.ai/zen/v1",
+		HelpText:   "Curated models by OpenCode team. opencode.ai/zen",
+		StandardID: "openai",
+	},
+	{
+		ID:         "opencode-go",
+		Name:       "OpenCode Go",
+		BaseURL:    "https://opencode.ai/zen/go/v1",
+		HelpText:   "Low-cost subscription for open coding models. $5/mo first month, $10/mo after. opencode.ai/go",
+		StandardID: "openai",
+	},
+	{
 		ID:         "custom",
 		Name:       "Custom",
 		BaseURL:    "",

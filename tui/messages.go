@@ -21,7 +21,7 @@ var availableCmds = []slashCmd{
 	{name: "/model", label: "model", desc: "Select model"},
 	{name: "/oracle-model", label: "oracle model", desc: "Select oracle (reasoning) model"},
 	{name: "/api-key", label: "api key", desc: "Set API key"},
-	{name: "/effort", label: "effort", desc: "Cycle thinking effort (auto/low/medium/high)"},
+	{name: "/effort", label: "effort", desc: "Cycle thinking effort (none/low/medium/high/xhigh)"},
 	{name: "/undo", label: "undo", desc: "Undo last file operation"},
 	{name: "/undo-n", label: "undo N", desc: "Undo last N file operations"},
 	{name: "/undo-all", label: "undo all", desc: "Undo all file operations this session"},
@@ -51,7 +51,7 @@ func formatSettingsSummary(s Settings) string {
 	b.WriteString(fmt.Sprintf("  api key       %s\n", maskOr(s.APIKey, "-")))
 	b.WriteString(fmt.Sprintf("  model         %s\n", valueOr(s.Model, "-")))
 	b.WriteString(fmt.Sprintf("  oracle model  %s\n", valueOr(s.OracleModel, "-")))
-	b.WriteString(fmt.Sprintf("  thinking      %s\n", valueOr(s.ThinkingEffort, "auto")))
+	b.WriteString(fmt.Sprintf("  thinking      %s\n", valueOr(s.ThinkingEffort, "none")))
 	b.WriteString("```")
 	return b.String()
 }

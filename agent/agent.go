@@ -108,7 +108,7 @@ func (a *Agent) Run(
 	blockResolveCh <-chan string,
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
-) {
+) []provider.ChatMessage {
 	allTools := allToolDefs()
 
 	lastReply := ""
@@ -150,7 +150,7 @@ func (a *Agent) Run(
 	for step := 0; step < maxSteps; step++ {
 		if ctx.Err() != nil {
 			emit(AgentEvent{Type: "done", Data: "Cancelled."})
-			return
+			return msgs
 		}
 
 		if smStatus := buildSMStatusMsg(); smStatus != nil {
@@ -180,6 +180,7 @@ func (a *Agent) Run(
 			},
 			func(id, name string) {
 				emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
+					"tool_id": id,
 					"name":    name,
 					"preview": FormatPreview(ExtractPreview(id, name, "")),
 				}})
@@ -216,6 +217,9 @@ func (a *Agent) Run(
 				contentStr := getPS(preview.Params, "content")
 				oldStr := getPS(preview.Params, "old_string")
 				newStr := getPS(preview.Params, "new_string")
+				if newStr == "" {
+					newStr = getPS(preview.Params, "new_text")
+				}
 
 				contentLines := 0
 				if contentStr != "" {
@@ -239,6 +243,7 @@ func (a *Agent) Run(
 				prevPreviewKeys[id] = previewKey
 
 				data := map[string]any{
+					"tool_id": id,
 					"name":    name,
 					"preview": FormatPreview(preview),
 					"args":    args,
@@ -284,7 +289,7 @@ func (a *Agent) Run(
 		)
 		if err != nil {
 			a.emitError(emit, err)
-			return
+			return msgs
 		}
 
 		totalPromptTokens += promptTokens
@@ -309,8 +314,13 @@ func (a *Agent) Run(
 		}
 
 		hasToolCalls := len(toolCalls) > 0
-		finishIsToolCalls := finishReason == "tool_calls"
-		shouldContinue := hasToolCalls && finishIsToolCalls
+		shouldContinue := hasToolCalls
+
+		assistantMsg := provider.ChatMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, Reasoning: reasoningContent}
+		if hasToolCalls {
+			assistantMsg.ToolCalls = toolCalls
+		}
+		msgs = append(msgs, assistantMsg)
 
 		if !shouldContinue {
 			if accumulatedText != "" {
@@ -318,11 +328,8 @@ func (a *Agent) Run(
 			} else {
 				emit(AgentEvent{Type: "done", Data: "Done."})
 			}
-			return
+			return msgs
 		}
-
-		assistantMsg := provider.ChatMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, Reasoning: reasoningContent, ToolCalls: toolCalls}
-		msgs = append(msgs, assistantMsg)
 
 		type execResult struct {
 			id       string
@@ -338,7 +345,18 @@ func (a *Agent) Run(
 			go func(tc provider.ToolCall) {
 				var params map[string]any
 				if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
-					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: "Error: invalid arguments: " + err.Error()}
+					errResult := "Error: invalid arguments: " + err.Error()
+					emit(AgentEvent{Type: "tool_call", Data: map[string]any{
+						"tool_id": tc.ID,
+						"name":    tc.Function.Name,
+						"args":    tc.Function.Arguments,
+					}})
+					emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+						"tool_id": tc.ID,
+						"name":    tc.Function.Name,
+						"result":  errResult,
+					}})
+					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: errResult}
 					return
 				}
 
@@ -356,15 +374,16 @@ func (a *Agent) Run(
 					return
 				}
 
-				if tc.Function.Name == "execute_command" && !a.Yolo {
+if tc.Function.Name == "execute_command" && !a.Yolo {
 					cmd := getStr(params, "command")
 					sr := safety.CheckCommandSafety(cmd)
 					if sr.Risk.IsAlwaysBlocked() {
 						errMsg := fmt.Sprintf("[SAFETY BLOCK] This command was automatically blocked and will never execute. DO NOT retry this command or any variant of it.\nBlock reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the system prevented a dangerous operation. Move on to a different approach. Explain to the user why this was blocked and what you'll do instead.", sr.Reason, sr.Suggestion, cmd)
 						a.logger.Warn("safety.blocked", "command", cmd, "reason", sr.Reason)
-						emit(AgentEvent{Type: "tool_result", Data: map[string]string{
-							"name":   "execute_command",
-							"result": errMsg,
+						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+							"tool_id": tc.ID,
+							"name":    "execute_command",
+							"result":  errMsg,
 						}})
 						resultCh <- execResult{id: tc.ID, name: "execute_command", result: errMsg}
 						return
@@ -383,9 +402,10 @@ func (a *Agent) Run(
 						if resp == "deny" {
 							errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
 							a.logger.Info("safety.denied", "command", cmd, "risk", sr.Risk.String())
-							emit(AgentEvent{Type: "tool_result", Data: map[string]string{
-								"name":   "execute_command",
-								"result": errMsg,
+							emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+								"tool_id": tc.ID,
+								"name":    "execute_command",
+								"result":  errMsg,
 							}})
 							resultCh <- execResult{id: tc.ID, name: "execute_command", result: errMsg}
 							return
@@ -401,9 +421,80 @@ func (a *Agent) Run(
 					}
 				}
 
-				emit(AgentEvent{Type: "tool_call", Data: map[string]string{
-					"name": tc.Function.Name,
-					"args": fmt.Sprintf("%v", params),
+				// File mutation tools — require user confirmation before executing
+				fileCheck := false
+				fileOp := ""
+				fileTarget := ""
+				filePath := ""
+				switch tc.Function.Name {
+				case "write_file":
+					fileCheck = true
+					fileOp = "Create"
+					filePath = getStr(params, "path")
+					fileTarget = filePath
+				case "edit_file", "delete_lines", "replace_lines":
+					fileCheck = true
+					fileOp = "Update"
+					filePath = getStr(params, "path")
+					fileTarget = filePath
+				case "delete_file":
+					fileCheck = true
+					fileOp = "Delete"
+					filePath = getStr(params, "path")
+					fileTarget = filePath
+				case "move_file":
+					fileCheck = true
+					fileOp = "Update"
+					src := getStr(params, "source")
+					dst := getStr(params, "destination")
+					filePath = dst
+					fileTarget = src + " → " + dst
+				case "copy_file":
+					fileCheck = true
+					fileOp = "Create"
+					src := getStr(params, "source")
+					dst := getStr(params, "destination")
+					filePath = dst
+					fileTarget = src + " → " + dst
+				}
+
+				if fileCheck && !a.Yolo {
+					question := fmt.Sprintf("Allow this %s operation on %s?", fileOp, fileTarget)
+					emit(AgentEvent{Type: "blocking", Data: map[string]string{
+						"operation":  fileOp,
+						"tool":       tc.Function.Name,
+						"target":     fileTarget,
+						"question":   question,
+						"risk":       "write",
+						"reason":     fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name),
+						"suggestion": "",
+					}})
+					resp := <-blockResolveCh
+					if resp == "deny" {
+						errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
+						a.logger.Info("safety.denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
+						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+							"tool_id": tc.ID,
+							"name":    tc.Function.Name,
+							"result":  errMsg,
+						}})
+						resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: errMsg}
+						return
+					}
+					emit(AgentEvent{Type: "blocking_complete"})
+					if resp == "always" {
+						emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
+							"operation": fileOp,
+							"tool":      tc.Function.Name,
+							"target":    filePath,
+						}})
+					}
+				}
+
+				emit(AgentEvent{Type: "tool_call", Data: map[string]any{
+					"tool_id": tc.ID,
+					"name":    tc.Function.Name,
+					"args":     fmt.Sprintf("%v", params),
 				}})
 
 				path := getStr(params, "path")
@@ -412,6 +503,7 @@ func (a *Agent) Run(
 					content := getStr(params, "content")
 					lines := CountLines(content)
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"tool_id": tc.ID,
 						"name":    tc.Function.Name,
 						"phase":   "writing",
 						"path":    path,
@@ -423,14 +515,34 @@ func (a *Agent) Run(
 					oldLines := CountLines(oldStr)
 					newLines := CountLines(newStr)
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"tool_id": tc.ID,
 						"name":    tc.Function.Name,
 						"phase":   "patching",
 						"path":    path,
 						"message": fmt.Sprintf("Editing %s (−%d/+%d lines)", path, oldLines, newLines),
 					}})
+				} else if tc.Function.Name == "delete_lines" {
+					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"tool_id": tc.ID,
+						"name":    tc.Function.Name,
+						"phase":   "patching",
+						"path":    path,
+						"message": fmt.Sprintf("Deleting lines in %s", path),
+					}})
+				} else if tc.Function.Name == "replace_lines" {
+					newText := getStr(params, "new_text")
+					newLines := CountLines(newText)
+					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"tool_id": tc.ID,
+						"name":    tc.Function.Name,
+						"phase":   "patching",
+						"path":    path,
+						"message": fmt.Sprintf("Replacing lines in %s (+%d lines)", path, newLines),
+					}})
 				} else if tc.Function.Name == "read_file" {
 					if path != "" {
 						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+							"tool_id": tc.ID,
 							"name":    tc.Function.Name,
 							"phase":   "reading",
 							"path":    path,
@@ -445,6 +557,7 @@ func (a *Agent) Run(
 							display = display[:60] + "\u2026"
 						}
 						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+							"tool_id": tc.ID,
 							"name":    tc.Function.Name,
 							"phase":   "running",
 							"message": fmt.Sprintf("Running %s", display),
@@ -463,9 +576,10 @@ func (a *Agent) Run(
 					a.logger.Info("tool.result", "tool", tc.Function.Name, "latency_ms", toolDur, "content", result)
 				}
 
-				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result, "Error:") {
+				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" || tc.Function.Name == "delete_lines" || tc.Function.Name == "replace_lines") && !strings.HasPrefix(result, "Error:") {
 					additions, removals := ParseDiffStats(result)
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"tool_id":       tc.ID,
 						"name":          tc.Function.Name,
 						"phase":         "done",
 						"path":          path,
@@ -476,7 +590,8 @@ func (a *Agent) Run(
 				}
 
 				durSeconds := fmt.Sprintf("%.0f", time.Since(toolStart).Seconds())
-				emit(AgentEvent{Type: "tool_result", Data: map[string]string{
+				emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+					"tool_id":  tc.ID,
 					"name":     tc.Function.Name,
 					"result":   result,
 					"duration": durSeconds,
@@ -515,14 +630,14 @@ func (a *Agent) Run(
 				}
 			case <-ctx.Done():
 				emit(AgentEvent{Type: "done", Data: "Cancelled."})
-				return
+				return msgs
 			}
 		}
 
 		if wasStopCalled {
 			a.logger.Info("loop.stop_called", "message", stopMessage)
 			emit(AgentEvent{Type: "done", Data: stopMessage})
-			return
+			return msgs
 		}
 
 		if isStopConditionMet(stopConditions, steps) {
@@ -536,11 +651,12 @@ func (a *Agent) Run(
 			} else {
 				emit(AgentEvent{Type: "done", Data: accumulatedText})
 			}
-			return
+			return msgs
 		}
 	}
 
 	emit(AgentEvent{Type: "done", Data: "Reached maximum " + fmt.Sprint(maxSteps) + " steps. Task may be incomplete."})
+	return msgs
 }
 
 func getStr(params map[string]any, key string) string {

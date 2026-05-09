@@ -145,6 +145,64 @@ func (e *Editor) Write(path string, content string) error {
 	return writeErr
 }
 
+func (e *Editor) DeleteLines(path, prefix, suffix string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("delete_lines %s: %w", path, err)
+	}
+
+	oldBytes, fi, err := readFileForEdit(abs, e.policy)
+	if err != nil {
+		return fmt.Errorf("delete_lines %s: %w", path, err)
+	}
+
+	newContent, err := DeleteLines(string(oldBytes), prefix, suffix)
+	if err != nil {
+		return fmt.Errorf("delete_lines %s: %w", path, err)
+	}
+
+	newBytes := []byte(newContent)
+	opID := newOpID()
+
+	entry, err := buildWriteEntry(e.sessionID, e.msgID, opID, abs, oldBytes, newBytes, fi.Mode().Perm())
+	if err != nil {
+		return fmt.Errorf("delete_lines %s: build journal entry: %w", path, err)
+	}
+	if err := e.journal.record(entry); err != nil {
+		return fmt.Errorf("delete_lines %s: journal: %w", path, err)
+	}
+	return writeAtomic(abs, newBytes, fi.Mode().Perm())
+}
+
+func (e *Editor) ReplaceLines(path, prefix, suffix, newText string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("replace_lines %s: %w", path, err)
+	}
+
+	oldBytes, fi, err := readFileForEdit(abs, e.policy)
+	if err != nil {
+		return fmt.Errorf("replace_lines %s: %w", path, err)
+	}
+
+	newContent, err := ReplaceLines(string(oldBytes), prefix, suffix, newText)
+	if err != nil {
+		return fmt.Errorf("replace_lines %s: %w", path, err)
+	}
+
+	newBytes := []byte(newContent)
+	opID := newOpID()
+
+	entry, err := buildWriteEntry(e.sessionID, e.msgID, opID, abs, oldBytes, newBytes, fi.Mode().Perm())
+	if err != nil {
+		return fmt.Errorf("replace_lines %s: build journal entry: %w", path, err)
+	}
+	if err := e.journal.record(entry); err != nil {
+		return fmt.Errorf("replace_lines %s: journal: %w", path, err)
+	}
+	return writeAtomic(abs, newBytes, fi.Mode().Perm())
+}
+
 func (e *Editor) Patch(path string, ops []SearchReplace) error {
 	if len(ops) == 0 {
 		return nil

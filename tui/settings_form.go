@@ -18,7 +18,7 @@ const (
 	sfCount          = 6
 )
 
-var thinkingEfforts = []string{"auto", "low", "medium", "high"}
+var thinkingEfforts = []string{"none", "low", "medium", "high", "xhigh"}
 
 func effortIndex(effort string) int {
 	for i, v := range thinkingEfforts {

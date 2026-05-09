@@ -581,7 +581,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 		}()
 
-		ag.Run(ctx, msgsCopy, prompt, func(evt agent.AgentEvent) {
+		agentMsgs := ag.Run(ctx, msgsCopy, prompt, func(evt agent.AgentEvent) {
 			if evt.Type == "blocking" {
 				data, _ := evt.Data.(map[string]string)
 				if data != nil {
@@ -615,16 +615,26 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				tuiInst.SendAgentEvent(evt.Type, evt.Data)
 				return
 			}
-			if evt.Type == "confirmation_always" {
+if evt.Type == "confirmation_always" {
 				if data, ok := evt.Data.(map[string]string); ok {
-					riskStr := data["operation"]
-					for _, r := range []safety.CommandRisk{
-						safety.RiskDestructive, safety.RiskNetwork,
-						safety.RiskProjectWrite, safety.RiskUnknown,
-					} {
-						if r.String() == riskStr {
-							s.permStore.GrantCommandRisk(r)
-							break
+					opStr := data["operation"]
+					tool := data["tool"]
+					target := data["target"]
+
+					// File tool operations: store path-tree permission
+					switch tool {
+					case "write_file", "edit_file", "delete_file", "move_file", "copy_file", "delete_lines", "replace_lines":
+						s.permStore.GrantAlways(safety.CRUDEOp(opStr), tool, target)
+					default:
+						// Command risk handling (existing)
+						for _, r := range []safety.CommandRisk{
+							safety.RiskDestructive, safety.RiskNetwork,
+							safety.RiskProjectWrite, safety.RiskUnknown,
+						} {
+							if r.String() == opStr {
+								s.permStore.GrantCommandRisk(r)
+								break
+							}
 						}
 					}
 				}
@@ -652,10 +662,24 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		s.lastBlockResp = ""
 		s.blockRespMu.Unlock()
 
-		if finalContent != "" {
-			s.msgsMu.Lock()
+		s.msgsMu.Lock()
+		var persisted []provider.ChatMessage
+		for _, m := range agentMsgs {
+			if m.Role == "system" {
+				continue
+			}
+			persisted = append(persisted, m)
+		}
+		persisted = sanitizeMessages(persisted)
+		ctxWindow := provider.LookupContextWindow(activeCfg.Model)
+		persisted = truncateMessages(persisted, ctxWindow)
+		if len(persisted) > 0 {
+			s.msgs = persisted
+		} else if finalContent != "" {
 			s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", Content: finalContent})
-			s.msgsMu.Unlock()
+		}
+		s.msgsMu.Unlock()
+		if finalContent != "" {
 			s.logger.Info("conv.assistant_msg", "content", finalContent, "msg_id", currentMsgID)
 		}
 	}
@@ -749,6 +773,59 @@ func getStrParam(params map[string]any, key string) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return ""
+}
+
+func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
+	for {
+		if len(msgs) == 0 {
+			break
+		}
+		last := msgs[len(msgs)-1]
+		if last.Role == "assistant" && len(last.ToolCalls) > 0 {
+			expectedIDs := make(map[string]bool)
+			for _, tc := range last.ToolCalls {
+				expectedIDs[tc.ID] = true
+			}
+			i := len(msgs) - 1
+			for i+1 < len(msgs) && msgs[i+1].Role == "tool" {
+				delete(expectedIDs, msgs[i+1].ToolCallID)
+				i++
+			}
+			if len(expectedIDs) > 0 {
+				msgs = msgs[:len(msgs)-1]
+				continue
+			}
+		}
+		if last.Role == "tool" {
+			msgs = msgs[:len(msgs)-1]
+			continue
+		}
+		break
+	}
+	return msgs
+}
+
+func truncateMessages(msgs []provider.ChatMessage, ctxWindow int) []provider.ChatMessage {
+	if ctxWindow <= 0 || len(msgs) <= 2 {
+		return msgs
+	}
+	charBudget := int(float64(ctxWindow)*0.75) * 4
+	used := 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		c := len(msgs[i].Content)
+		for _, tc := range msgs[i].ToolCalls {
+			c += len(tc.Function.Arguments)
+		}
+		if used+c > charBudget && i > 0 {
+			summary := provider.ChatMessage{
+				Role:    "user",
+				Content: fmt.Sprintf("[Earlier conversation truncated — %d messages omitted]", i),
+			}
+			return append([]provider.ChatMessage{summary}, msgs[i+1:]...)
+		}
+		used += c
+	}
+	return msgs
 }
 
 func ResolveUsername() string {

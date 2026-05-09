@@ -181,6 +181,71 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		}
 		return formatEditResult(path, count, orig, replaced)
 
+	case "delete_lines":
+		path := getStrArg(params, "path", "")
+		prefix := getStrArg(params, "prefix", "")
+		suffix := getStrArg(params, "suffix", "")
+		orig := ""
+		if ed != nil {
+			origData, _ := ed.ReadRaw(path)
+			orig = origData
+			if err := ed.DeleteLines(path, prefix, suffix); err != nil {
+				if _, ok := err.(*fileio.BinaryFileError); ok {
+					return fmt.Sprintf("Error: %v", err)
+				}
+				return fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content at the line boundaries before retrying.", err)
+			}
+			newData, _ := os.ReadFile(path)
+			replaced := string(newData)
+			return formatEditResult(path, 1, orig, replaced)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)
+		}
+		orig = string(data)
+		newContent, err := fileio.DeleteLines(orig, prefix, suffix)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
+			return "Error: " + err.Error()
+		}
+		return formatEditResult(path, 1, orig, newContent)
+
+	case "replace_lines":
+		path := getStrArg(params, "path", "")
+		prefix := getStrArg(params, "prefix", "")
+		suffix := getStrArg(params, "suffix", "")
+		newText := getStrArg(params, "new_text", "")
+		orig := ""
+		if ed != nil {
+			origData, _ := ed.ReadRaw(path)
+			orig = origData
+			if err := ed.ReplaceLines(path, prefix, suffix, newText); err != nil {
+				if _, ok := err.(*fileio.BinaryFileError); ok {
+					return fmt.Sprintf("Error: %v", err)
+				}
+				return fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content at the line boundaries before retrying.", err)
+			}
+			newData, _ := os.ReadFile(path)
+			replaced := string(newData)
+			return formatEditResult(path, 1, orig, replaced)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)
+		}
+		orig = string(data)
+		newContent, err := fileio.ReplaceLines(orig, prefix, suffix, newText)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
+			return "Error: " + err.Error()
+		}
+		return formatEditResult(path, 1, orig, newContent)
+
 	case "delete_file":
 		path := getStrArg(params, "path", "")
 		if ed != nil {
