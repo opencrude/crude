@@ -15,7 +15,7 @@ import (
 	"crude/search"
 )
 
-func getStrArg(args map[string]any, key string, defaultVal string) string {
+func GetStrArg(args map[string]any, key string, defaultVal string) string {
 	if v, ok := args[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -25,7 +25,7 @@ func getStrArg(args map[string]any, key string, defaultVal string) string {
 	return defaultVal
 }
 
-func getIntArgAny(args map[string]any, key string, defaultVal int) int {
+func GetIntArgAny(args map[string]any, key string, defaultVal int) int {
 	if v, ok := args[key]; ok {
 		switch val := v.(type) {
 		case float64:
@@ -46,7 +46,7 @@ func getIntArgAny(args map[string]any, key string, defaultVal int) int {
 	return defaultVal
 }
 
-func getBoolArgAny(args map[string]any, key string, defaultVal bool) bool {
+func GetBoolArgAny(args map[string]any, key string, defaultVal bool) bool {
 	if v, ok := args[key]; ok {
 		switch val := v.(type) {
 		case bool:
@@ -63,11 +63,29 @@ func getBoolArgAny(args map[string]any, key string, defaultVal bool) bool {
 	return defaultVal
 }
 
+func GetFloatArgAny(args map[string]any, key string, defaultVal float64) float64 {
+	if v, ok := args[key]; ok {
+		switch val := v.(type) {
+		case float64:
+			return val
+		case int:
+			return float64(val)
+		case string:
+			n, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
+			if err != nil {
+				return defaultVal
+			}
+			return n
+		}
+	}
+	return defaultVal
+}
+
 func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool) string {
 	switch tool {
 
 	case "execute_command":
-		cmd := getStrArg(params, "command", "")
+		cmd := GetStrArg(params, "command", "")
 		if !yolo {
 			safetyResult := safety.CheckCommandSafety(cmd)
 			if safetyResult.Risk.IsAlwaysBlocked() {
@@ -75,9 +93,13 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 					safetyResult.Reason, safetyResult.Suggestion)
 			}
 		}
+		timeout := GetIntArgAny(params, "timeout_seconds", -1)
+		if timeout < 0 {
+			timeout = 60
+		}
 		opts := fileio.ExecOptions{
-			CWD:            getStrArg(params, "cwd", ""),
-			TimeoutSeconds: getIntArgAny(params, "timeout_seconds", 0),
+			CWD:            GetStrArg(params, "cwd", ""),
+			TimeoutSeconds: timeout,
 		}
 		out, err := exec.Execute(cmd, opts)
 		if err != nil {
@@ -93,35 +115,35 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 
 	case "read_file":
 		if ed != nil {
-			encoded := getBoolArgAny(params, "encoded", false)
+			encoded := GetBoolArgAny(params, "encoded", false)
 			if encoded {
-				content, err := ed.Read(getStrArg(params, "path", ""))
+				content, err := ed.Read(GetStrArg(params, "path", ""))
 				if err != nil {
 					if _, ok := err.(*fileio.BinaryFileError); ok {
 						return fmt.Sprintf("Error: %v", err)
 					}
 					return "Error: " + err.Error()
 				}
-				return formatReadFile(getStrArg(params, "path", ""), content, getIntArgAny(params, "offset", 0), getIntArgAny(params, "limit", 0))
+				return formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
 			}
-			content, err := ed.ReadRaw(getStrArg(params, "path", ""))
+			content, err := ed.ReadRaw(GetStrArg(params, "path", ""))
 			if err != nil {
 				if _, ok := err.(*fileio.BinaryFileError); ok {
 					return fmt.Sprintf("Error: %v", err)
 				}
 				return "Error: " + err.Error()
 			}
-			return formatReadFile(getStrArg(params, "path", ""), content, getIntArgAny(params, "offset", 0), getIntArgAny(params, "limit", 0))
+			return formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
 		}
-		data, err := os.ReadFile(getStrArg(params, "path", ""))
+		data, err := os.ReadFile(GetStrArg(params, "path", ""))
 		if err != nil {
 			return "Error: " + err.Error()
 		}
-		return formatReadFile(getStrArg(params, "path", ""), string(data), getIntArgAny(params, "offset", 0), getIntArgAny(params, "limit", 0))
+		return formatReadFile(GetStrArg(params, "path", ""), string(data), GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
 
 	case "write_file":
-		content := getStrArg(params, "content", "")
-		path := getStrArg(params, "path", "")
+		content := GetStrArg(params, "content", "")
+		path := GetStrArg(params, "path", "")
 		oldContent := ""
 		existing, err := os.ReadFile(path)
 		if err == nil {
@@ -147,9 +169,9 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return formatWriteResult(path, lines, oldContent, content)
 
 	case "edit_file":
-		path := getStrArg(params, "path", "")
-		oldString := getStrArg(params, "old_string", "")
-		newString := getStrArg(params, "new_string", "")
+		path := GetStrArg(params, "path", "")
+		oldString := GetStrArg(params, "old_string", "")
+		newString := GetStrArg(params, "new_string", "")
 		orig := ""
 		if ed != nil {
 			origData, _ := ed.ReadRaw(path)
@@ -182,9 +204,9 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return formatEditResult(path, count, orig, replaced)
 
 	case "delete_lines":
-		path := getStrArg(params, "path", "")
-		prefix := getStrArg(params, "prefix", "")
-		suffix := getStrArg(params, "suffix", "")
+		path := GetStrArg(params, "path", "")
+		prefix := GetStrArg(params, "prefix", "")
+		suffix := GetStrArg(params, "suffix", "")
 		orig := ""
 		if ed != nil {
 			origData, _ := ed.ReadRaw(path)
@@ -214,10 +236,10 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return formatEditResult(path, 1, orig, newContent)
 
 	case "replace_lines":
-		path := getStrArg(params, "path", "")
-		prefix := getStrArg(params, "prefix", "")
-		suffix := getStrArg(params, "suffix", "")
-		newText := getStrArg(params, "new_text", "")
+		path := GetStrArg(params, "path", "")
+		prefix := GetStrArg(params, "prefix", "")
+		suffix := GetStrArg(params, "suffix", "")
+		newText := GetStrArg(params, "new_text", "")
 		orig := ""
 		if ed != nil {
 			origData, _ := ed.ReadRaw(path)
@@ -247,7 +269,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return formatEditResult(path, 1, orig, newContent)
 
 	case "delete_file":
-		path := getStrArg(params, "path", "")
+		path := GetStrArg(params, "path", "")
 		if ed != nil {
 			if err := ed.Delete(path); err != nil {
 				return "Error: " + err.Error()
@@ -260,8 +282,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return "Deleted: " + path
 
 	case "move_file":
-		source := getStrArg(params, "source", "")
-		dest := getStrArg(params, "destination", "")
+		source := GetStrArg(params, "source", "")
+		dest := GetStrArg(params, "destination", "")
 		if ed != nil {
 			if err := ed.Move(source, dest); err != nil {
 				return "Error: " + err.Error()
@@ -277,8 +299,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return fmt.Sprintf("Moved %s → %s", source, dest)
 
 	case "copy_file":
-		source := getStrArg(params, "source", "")
-		dest := getStrArg(params, "destination", "")
+		source := GetStrArg(params, "source", "")
+		dest := GetStrArg(params, "destination", "")
 		if ed != nil {
 			if err := ed.Copy(source, dest); err != nil {
 				return "Error: " + err.Error()
@@ -304,8 +326,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return fmt.Sprintf("Copied %s → %s", source, dest)
 
 	case "list_directory":
-		path := getStrArg(params, "path", "")
-		recursive := getBoolArgAny(params, "recursive", false)
+		path := GetStrArg(params, "path", "")
+		recursive := GetBoolArgAny(params, "recursive", false)
 		if recursive {
 			return listDirectoryRecursive(path, exec)
 		}
@@ -319,8 +341,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return formatDirEntries(path, entries)
 
 	case "glob_files":
-		pattern := getStrArg(params, "pattern", "")
-		baseDir := getStrArg(params, "base_dir", ".")
+		pattern := GetStrArg(params, "pattern", "")
+		baseDir := GetStrArg(params, "base_dir", ".")
 		matches, err := exec.GlobFiles(baseDir, pattern)
 		if err != nil {
 			return "Error: " + err.Error()
@@ -337,9 +359,9 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return strings.TrimRight(sb.String(), "\n")
 
 	case "grep_files":
-		pattern := getStrArg(params, "pattern", "")
-		searchPath := getStrArg(params, "path", ".")
-		recursive := getBoolArgAny(params, "recursive", true)
+		pattern := GetStrArg(params, "pattern", "")
+		searchPath := GetStrArg(params, "path", ".")
+		recursive := GetBoolArgAny(params, "recursive", true)
 		matches, err := exec.GrepFiles(pattern, searchPath, recursive)
 		if err != nil {
 			return "Error: " + err.Error()
@@ -355,33 +377,33 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return strings.TrimRight(sb.String(), "\n")
 
 	case "web_search":
-		result, err := search.WebSearch(getStrArg(params, "query", ""), 6)
+		result, err := search.WebSearch(GetStrArg(params, "query", ""), 6)
 		if err != nil {
 			return "Search error: " + err.Error()
 		}
 		return result
 
 	case "arxiv_search":
-		maxResults := getIntArgAny(params, "max_results", 5)
+		maxResults := GetIntArgAny(params, "max_results", 5)
 		if maxResults <= 0 || maxResults > 10 {
 			maxResults = 5
 		}
-		result, err := search.ArxivSearch(getStrArg(params, "query", ""), maxResults)
+		result, err := search.ArxivSearch(GetStrArg(params, "query", ""), maxResults)
 		if err != nil {
 			return "ArXiv search error: " + err.Error()
 		}
 		return result
 
 	case "web_fetch":
-		maxChars := getIntArgAny(params, "max_chars", 0)
-		result, err := search.WebFetch(getStrArg(params, "url", ""), maxChars)
+		maxChars := GetIntArgAny(params, "max_chars", 0)
+		result, err := search.WebFetch(GetStrArg(params, "url", ""), maxChars)
 		if err != nil {
 			return "Fetch error: " + err.Error()
 		}
 		return result
 
 	case "run_javascript":
-		code := getStrArg(params, "code", "")
+		code := GetStrArg(params, "code", "")
 		result, err := js.Run(code)
 		if err != nil {
 			return "JavaScript error: " + err.Error()
@@ -389,10 +411,10 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return result
 
 	case "stop":
-		return getStrArg(params, "message", "")
+		return GetStrArg(params, "message", "")
 
 	case "reply":
-		return getStrArg(params, "content", "")
+		return GetStrArg(params, "content", "")
 
 	default:
 		return "Error: unknown tool: " + tool

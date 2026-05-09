@@ -260,7 +260,11 @@ func (e *Editor) Delete(path string) error {
 	start := time.Now()
 	removeErr := os.Remove(abs)
 	dur := time.Since(start).Milliseconds()
-	e.logger.Error("fileio.delete", "path", abs, "latency_ms", dur, "error", removeErr.Error())
+	var errStr string
+	if removeErr != nil {
+		errStr = removeErr.Error()
+	}
+	e.logger.Error("fileio.delete", "path", abs, "latency_ms", dur, "error", errStr)
 	return removeErr
 }
 
@@ -300,7 +304,11 @@ func (e *Editor) Move(src, dst string) error {
 	start := time.Now()
 	renameErr := os.Rename(srcAbs, dstAbs)
 	dur := time.Since(start).Milliseconds()
-	e.logger.Error("fileio.rename", "path", srcAbs+" → "+dstAbs, "latency_ms", dur, "error", renameErr.Error())
+	var renameErrStr string
+	if renameErr != nil {
+		renameErrStr = renameErr.Error()
+	}
+	e.logger.Error("fileio.rename", "path", srcAbs+" → "+dstAbs, "latency_ms", dur, "error", renameErrStr)
 	return renameErr
 }
 

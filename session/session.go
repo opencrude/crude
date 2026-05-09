@@ -46,6 +46,7 @@ type Session struct {
 	logger    *logger.Logger
 	permStore *safety.PermissionStore
 	sm        *statemachine.ConversationStateMachine
+	asyncMgr  *fileio.AsyncCommandManager
 
 	msgs          []provider.ChatMessage
 	msgsMu        sync.Mutex
@@ -108,6 +109,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		logger:       lg,
 		permStore:    permStore,
 		sm:           sm,
+		asyncMgr:     fileio.NewAsyncCommandManager(),
 		sessionID:    sessionID,
 		sessionStart: time.Now(),
 	}, nil
@@ -180,6 +182,7 @@ func (s *Session) newAgent() *agent.Agent {
 	a.OracleProvider = oracleProvider
 	a.OracleModel = oracleModel
 	a.Yolo = s.yolo
+	a.AsyncMgr = s.asyncMgr
 
 	a.ToolFn = func(tool string, params map[string]any) (string, error) {
 		switch tool {
@@ -389,6 +392,72 @@ func (s *Session) newAgent() *agent.Agent {
 			}
 			return status, nil
 
+		case "async_execute_command":
+			command := getStrParam(params, "command")
+			handle := getStrParam(params, "handle")
+			if command == "" {
+				return "", fmt.Errorf("async_execute_command: missing 'command'")
+			}
+			if handle == "" {
+				return "", fmt.Errorf("async_execute_command: missing 'handle'")
+			}
+			cwd := getStrParam(params, "cwd")
+			timeout := tools.GetIntArgAny(params, "timeout_seconds", 0)
+			info, err := s.asyncMgr.Start(handle, command, cwd, timeout)
+			if err != nil {
+				return "", fmt.Errorf("async_execute_command: %w", err)
+			}
+			return fmt.Sprintf("Started async command [%s]: PID %d, status=%s, command=%q", handle, info.PID, info.Status, command), nil
+
+		case "check_async_command":
+			handle := getStrParam(params, "handle")
+			if handle == "" {
+				return "", fmt.Errorf("check_async_command: missing 'handle'")
+			}
+			info, ok := s.asyncMgr.Check(handle)
+			if !ok {
+				return fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handle), nil
+			}
+			status := fmt.Sprintf("Handle: %s\nPID: %d\nStatus: %s\nExit code: %d", info.Handle, info.PID, info.Status, info.ExitCode)
+			if info.Error != "" {
+				status += "\nError: " + info.Error
+			}
+			return status, nil
+
+		case "kill_async_command":
+			handle := getStrParam(params, "handle")
+			if handle == "" {
+				return "", fmt.Errorf("kill_async_command: missing 'handle'")
+			}
+			if err := s.asyncMgr.Kill(handle); err != nil {
+				return "", fmt.Errorf("kill_async_command: %w", err)
+			}
+			return fmt.Sprintf("Async command [%s] killed.", handle), nil
+
+		case "read_async_output":
+			handle := getStrParam(params, "handle")
+			if handle == "" {
+				return "", fmt.Errorf("read_async_output: missing 'handle'")
+			}
+			sinceByte := tools.GetIntArgAny(params, "since_byte", 0)
+			out, nextByte, err := s.asyncMgr.ReadOutput(handle, sinceByte)
+			if err != nil {
+				return "", fmt.Errorf("read_async_output: %w", err)
+			}
+			if out == "" {
+				return fmt.Sprintf("[%s] next_byte=%d (no new output since byte %d)", handle, nextByte, sinceByte), nil
+			}
+			return fmt.Sprintf("[%s output from byte %d]\n%s\n[next_byte=%d]", handle, sinceByte, out, nextByte), nil
+
+		case "wait":
+			seconds := tools.GetFloatArgAny(params, "seconds", 0)
+			if seconds <= 0 {
+				return "", fmt.Errorf("wait: seconds must be > 0")
+			}
+			s.logger.Info("tool.wait", "seconds", seconds)
+			time.Sleep(time.Duration(seconds * float64(time.Second)))
+			return fmt.Sprintf("Waited %.1f seconds.", seconds), nil
+
 		default:
 			if tool == "execute_command" && !s.yolo {
 				cmd := getStrParam(params, "command")
@@ -520,6 +589,27 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 	}()
 
 	cancelCh := tuiInst.CancelCh
+
+	// Start polling async command status for TUI status bar
+	asyncPollingStop := make(chan struct{})
+	defer close(asyncPollingStop)
+	go func() {
+		tick := time.NewTicker(1 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				cmds := s.asyncMgr.List()
+				if len(cmds) > 0 {
+					tuiInst.SendAgentEvent("async_command_status", cmds)
+				} else {
+					tuiInst.SendAgentEvent("async_command_status", []fileio.AsyncCmdInfo{})
+				}
+			case <-asyncPollingStop:
+				return
+			}
+		}
+	}()
 
 	for userText := range tuiInst.InputCh {
 		select {
@@ -781,6 +871,29 @@ func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
 			break
 		}
 		last := msgs[len(msgs)-1]
+		if last.Role == "tool" {
+			if len(msgs) >= 2 && msgs[len(msgs)-2].Role == "assistant" {
+				prev := msgs[len(msgs)-2]
+				if len(prev.ToolCalls) > 0 && allCommTools(prev.ToolCalls) {
+					content := prev.Content
+					for i := len(msgs) - 1; i >= 0 && msgs[i].Role == "tool"; i-- {
+						if content == "" && msgs[i].Content != "" {
+							content = msgs[i].Content
+						}
+					}
+					for len(msgs) > 0 && msgs[len(msgs)-1].Role == "tool" {
+						msgs = msgs[:len(msgs)-1]
+					}
+					msgs[len(msgs)-1].ToolCalls = nil
+					if content != "" {
+						msgs[len(msgs)-1].Content = content
+					}
+					break
+				}
+			}
+			msgs = msgs[:len(msgs)-1]
+			continue
+		}
 		if last.Role == "assistant" && len(last.ToolCalls) > 0 {
 			expectedIDs := make(map[string]bool)
 			for _, tc := range last.ToolCalls {
@@ -796,13 +909,18 @@ func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
 				continue
 			}
 		}
-		if last.Role == "tool" {
-			msgs = msgs[:len(msgs)-1]
-			continue
-		}
 		break
 	}
 	return msgs
+}
+
+func allCommTools(toolCalls []provider.ToolCall) bool {
+	for _, tc := range toolCalls {
+		if tc.Function.Name != "stop" && tc.Function.Name != "reply" {
+			return false
+		}
+	}
+	return true
 }
 
 func truncateMessages(msgs []provider.ChatMessage, ctxWindow int) []provider.ChatMessage {
