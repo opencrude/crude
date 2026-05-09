@@ -25,15 +25,17 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name: "execute_command",
-			Description: "Execute a shell command (Execute primitive). " +
-				"Use for running scripts, checking system state, managing services, or any shell operation. " +
-				"Set cwd to run in a specific directory. Set timeout_seconds for long-running commands.",
+			Description: "Execute a shell command SYNCHRONOUSLY (blocks until completion). " +
+				"The agent loop PAUSES while this runs. Returns stdout+stderr. " +
+				"Default timeout is 60 seconds — commands are auto-killed if they exceed this. " +
+				"Set timeout_seconds=0 for unlimited. For background / long-running work, use async_execute_command instead. " +
+				"Set cwd to run in a specific directory.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"command":{"type":"string","description":"Shell command to run"},
+					"command":{"type":"string","description":"Shell command to run synchronously"},
 					"cwd":{"type":"string","description":"Working directory for the command (optional)"},
-					"timeout_seconds":{"type":"integer","description":"Abort after this many seconds; 0 = no limit (optional)"}
+					"timeout_seconds":{"type":"integer","description":"Abort after this many seconds; default=60, 0=no limit (optional)"}
 				},
 				"required":["command"]
 			}`),
@@ -473,6 +475,98 @@ var AgentTools = []ToolDef{
 				"type":"object",
 				"properties":{},
 				"required":[]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "async_execute_command",
+			Description: "Start a shell command in the BACKGROUND. Does NOT block the agent loop. " +
+				"Assign a unique 'handle' name to track this command. " +
+				"Use check_async_command to poll status, read_async_output to read partial output, kill_async_command to stop it. " +
+				"Best for: dev servers, watchers, long builds, any command you want to run while doing other work. " +
+				"Each handle must be unique — kill or wait for completion before reusing. " +
+				"RELIABILITY: chain a visible completion signal like '&& echo DONE' or '&& echo SUCCESS' " +
+				"so you can verify completion by reading output rather than relying on exit codes alone. " +
+				"Also use '|| echo FAILED' to catch errors in output.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"command":{"type":"string","description":"Shell command to run in background"},
+					"handle":{"type":"string","description":"Unique name to track this command (e.g. 'dev_server', 'build')"},
+					"cwd":{"type":"string","description":"Working directory for the command (optional)"},
+					"timeout_seconds":{"type":"integer","description":"Auto-kill after this many seconds; default=0=no limit (optional)"}
+				},
+				"required":["command","handle"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "check_async_command",
+			Description: "Check the status of a background command started via async_execute_command. " +
+				"Returns: handle, PID, status (running/completed/failed/killed), exit code, and error if any. " +
+				"Use this to poll whether a command finished before acting on its output.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"handle":{"type":"string","description":"Handle of the async command to check"}
+				},
+				"required":["handle"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "kill_async_command",
+			Description: "Kill a running background command by its handle. " +
+				"Use when a dev server needs restarting, a build is taking too long, or a watcher should stop. " +
+				"After killing, call check_async_command to confirm status, then the handle can be reused.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"handle":{"type":"string","description":"Handle of the async command to kill"}
+				},
+				"required":["handle"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "read_async_output",
+			Description: "Read accumulated stdout+stderr from a running or completed background command. " +
+				"Track `since_byte` to read incrementally (returns new output since that offset). " +
+				"The returned `next_byte` value is the new cursor — pass it on the next call to get only fresh output. " +
+				"Start with since_byte=0 on first call.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"handle":{"type":"string","description":"Handle of the async command to read output from"},
+					"since_byte":{"type":"integer","description":"Byte offset to read from; 0 for all output, or use previous next_byte for incremental (optional)"}
+				},
+				"required":["handle"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "wait",
+			Description: "Pause execution for a specified number of seconds. " +
+				"The agent loop BLOCKS during this time — no other work happens. " +
+				"Use for: rate-limiting API calls, waiting for async commands to finish (pair with check_async_command), " +
+				"or introducing deliberate delays between operations. " +
+				"Prefer async_execute_command + check_async_command over wait-based polling when possible.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"seconds":{"type":"number","description":"Number of seconds to wait (supports decimal for sub-second waits)"}
+				},
+				"required":["seconds"]
 			}`),
 		},
 	},

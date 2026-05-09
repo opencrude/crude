@@ -119,7 +119,21 @@ func BuildSystemPrompt() string {
 	if shell == "" {
 		shell = "unknown"
 	}
-	osInfo := fmt.Sprintf("linux/%s", runtime.GOARCH)
+	osInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+
+	platformGuidance := ""
+	if runtime.GOOS == "windows" {
+		platformGuidance = `
+### Windows Command Execution
+- All commands run through cmd /C — cmd.exe syntax works directly
+- For PowerShell, prefix with powershell -Command "..."
+- curl.exe is the real curl binary — prefer it over PowerShell's Invoke-WebRequest
+- Use && echo SUCCESS to chain a visible completion signal after your command
+- Use || echo FAILED to catch errors explicitly
+- Paths are case-insensitive, use backslashes or forward slashes
+- .exe extension is optional for executables
+- type = Unix cat, dir = Unix ls, find = Unix find, where = Unix which`
+	}
 
 	return fmt.Sprintf(`%s
 
@@ -127,12 +141,13 @@ func BuildSystemPrompt() string {
 - OS: %s
 - Arch: %s
 - Shell: %s
-- Working Directory: %s`,
+- Working Directory: %s%s`,
 		SystemPromptBase,
 		osInfo,
 		runtime.GOARCH,
 		shell,
 		getCWD(),
+		platformGuidance,
 	)
 }
 

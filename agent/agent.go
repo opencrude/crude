@@ -17,6 +17,8 @@ import (
 	"crude/safety"
 	"crude/statemachine"
 	"crude/tools"
+
+	"crude/fileio"
 )
 
 type AgentEvent struct {
@@ -51,6 +53,7 @@ type Agent struct {
 	OracleModel    string
 	Ctx            context.Context
 	Yolo           bool
+	AsyncMgr       *fileio.AsyncCommandManager
 }
 
 func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
@@ -125,11 +128,19 @@ func (a *Agent) Run(
 		if sm == nil || sessionID == "" {
 			return nil
 		}
-		status := BuildStateMachineStatus(sm, sessionID)
-		if status == "" {
+		parts := make([]string, 0, 2)
+		if status := BuildStateMachineStatus(sm, sessionID); status != "" {
+			parts = append(parts, status)
+		}
+		if a.AsyncMgr != nil {
+			if asyncStatus := BuildAsyncCommandStatus(a.AsyncMgr); asyncStatus != "" {
+				parts = append(parts, asyncStatus)
+			}
+		}
+		if len(parts) == 0 {
 			return nil
 		}
-		return &provider.ChatMessage{Role: "system", Content: status}
+		return &provider.ChatMessage{Role: "system", Content: strings.Join(parts, "\n\n")}
 	}
 
 	var steps []StepRecord
@@ -374,7 +385,7 @@ func (a *Agent) Run(
 					return
 				}
 
-if tc.Function.Name == "execute_command" && !a.Yolo {
+				if tc.Function.Name == "execute_command" && !a.Yolo {
 					cmd := getStr(params, "command")
 					sr := safety.CheckCommandSafety(cmd)
 					if sr.Risk.IsAlwaysBlocked() {
@@ -841,4 +852,52 @@ func goalStatusLabel(s statemachine.GoalStatus) string {
 	default:
 		return "unknown"
 	}
+}
+
+func BuildAsyncCommandStatus(mgr *fileio.AsyncCommandManager) string {
+	commands := mgr.List()
+	if len(commands) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("## Async Commands\n")
+	shown := 0
+	for _, c := range commands {
+		if c.Status != fileio.AsyncRunning && time.Since(c.EndedAt) > 60*time.Second {
+			continue
+		}
+		shown++
+		marker := "?"
+		switch c.Status {
+		case fileio.AsyncRunning:
+			marker = "→"
+		case fileio.AsyncCompleted:
+			marker = "✓"
+		case fileio.AsyncFailed:
+			marker = "✗"
+		case fileio.AsyncKilled:
+			marker = "!"
+		}
+		var dur string
+		if c.Status == fileio.AsyncRunning {
+			dur = time.Since(c.StartedAt).Round(time.Second).String()
+		} else {
+			dur = c.EndedAt.Sub(c.StartedAt).Round(time.Second).String()
+		}
+		sb.WriteString(fmt.Sprintf("  %s [%s]: %s (PID %d, %s)", marker, c.Handle, c.Status, c.PID, dur))
+		if c.Status == fileio.AsyncFailed && c.Error != "" {
+			sb.WriteString(" — " + c.Error)
+		}
+		sb.WriteString("\n")
+		if tail := mgr.OutputTail(c.Handle, 250); tail != "" {
+			lines := strings.Split(strings.TrimRight(tail, "\n"), "\n")
+			for _, line := range lines {
+				sb.WriteString("    | " + line + "\n")
+			}
+		}
+	}
+	if shown == 0 {
+		return ""
+	}
+	return strings.TrimSpace(sb.String())
 }

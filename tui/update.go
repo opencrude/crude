@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"crude/fileio"
 	"crude/provider"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -1276,6 +1277,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Content: errMsg,
 				Time:    time.Now(),
 			})
+
+		case "async_command_status":
+			if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
+				m.asyncCommands = cmds
+			}
 
 		case "usage":
 			if d, ok := evt.Data.(map[string]int); ok {

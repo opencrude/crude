@@ -5,6 +5,7 @@ import (
 	"time"
 	"unicode"
 
+	"crude/fileio"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
@@ -128,6 +129,9 @@ type Model struct {
 	// Info message (gray, shown in status area)
 	infoMsg     string
 	infoMsgTime time.Time
+
+	// Async commands status bar
+	asyncCommands []fileio.AsyncCmdInfo
 
 	quit bool
 }

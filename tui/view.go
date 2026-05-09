@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"crude/fileio"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 )
@@ -112,6 +113,16 @@ func (m *Model) chatView() string {
 		add("")
 	}
 	for _, l := range visible {
+		add(l)
+	}
+
+	// Async command status bar
+	asyncLines := m.renderAsyncBar()
+	if len(asyncLines) > 0 {
+		add("")
+		addFull(dim.Render(strings.Repeat("─", m.width)))
+	}
+	for _, l := range asyncLines {
 		add(l)
 	}
 
@@ -403,7 +414,8 @@ func (m *Model) chatAreaHeight() int {
 	if m.showHint && !m.thinking && m.inputLen() == 0 {
 		hintLines = 1
 	}
-	reserved := 2 + 1 + hintLines + inputLineCount + slashLines + 1 + 1 + 1
+	asyncLines := m.asyncBarHeight()
+	reserved := 2 + 1 + hintLines + inputLineCount + slashLines + asyncLines + 1 + 1 + 1
 	h := m.height - reserved
 	if h < 1 {
 		h = 1
@@ -1200,4 +1212,76 @@ func (m *Model) renderCompactDiff(toolName, content string) []string {
 	result = append(result, dim.Render(fmt.Sprintf("  -%d/+%d lines", removedCount, addedCount)))
 	result = append(result, diffLines...)
 	return result
+}
+
+func (m *Model) asyncBarHeight() int {
+	visible := m.asyncBarVisible()
+	n := len(visible)
+	if n == 0 {
+		return 0
+	}
+	return 2 + n
+}
+
+func (m *Model) asyncBarVisible() []fileio.AsyncCmdInfo {
+	var visible []fileio.AsyncCmdInfo
+	for _, c := range m.asyncCommands {
+		if c.Status != fileio.AsyncRunning && time.Since(c.EndedAt) > 15*time.Second {
+			continue
+		}
+		visible = append(visible, c)
+	}
+	return visible
+}
+
+func (m *Model) renderAsyncBar() []string {
+	visible := m.asyncBarVisible()
+	if len(visible) == 0 {
+		return nil
+	}
+	dim := lipgloss.NewStyle().Foreground(colorMuted)
+	var lines []string
+
+	for _, c := range visible {
+		var dot string
+		var dotColor lipgloss.Color
+		switch c.Status {
+		case fileio.AsyncRunning:
+			if m.spinFrame%2 == 0 {
+				dot = "●"
+			} else {
+				dot = "○"
+			}
+			dotColor = colorAccent2
+		case fileio.AsyncCompleted:
+			dot = "✓"
+			dotColor = colorSuccess
+		case fileio.AsyncFailed:
+			dot = "✗"
+			dotColor = colorError
+		case fileio.AsyncKilled:
+			dot = "!"
+			dotColor = colorWarning
+		default:
+			dot = "?"
+			dotColor = colorMuted
+		}
+		cmd := c.Command
+		if len(cmd) > 40 {
+			cmd = cmd[:37] + "…"
+		}
+		var durStr string
+		if c.Status == fileio.AsyncRunning {
+			durStr = time.Since(c.StartedAt).Truncate(time.Second).String()
+		} else {
+			durStr = c.EndedAt.Sub(c.StartedAt).Truncate(time.Second).String()
+		}
+		statusLine := dim.Render("│ ") +
+			lipgloss.NewStyle().Foreground(dotColor).Render(dot+" ") +
+			lipgloss.NewStyle().Foreground(colorAccent2).Render("["+c.Handle+"]") + " " +
+			dim.Render(cmd) + "  " +
+			dim.Render(durStr)
+		lines = append(lines, statusLine)
+	}
+	return lines
 }
