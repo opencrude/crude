@@ -85,10 +85,11 @@ var AgentTools = []ToolDef{
 		Function: ToolFuncDef{
 			Name: "edit_file",
 			Description: "Replace an exact string inside a file (Update primitive). " +
-				"old_string must match the file content exactly (including whitespace and indentation). " +
+				"Copy FULL lines from read_file output for old_string — start each line from the very beginning including ALL leading whitespace/indentation. " +
 				"Use read_file first to verify the exact text. " +
 				"If old_string is not found exactly, a whitespace-normalised fallback match is attempted automatically. " +
 				"Ambiguous matches (found in multiple locations) are rejected — add more surrounding lines to make the match unique. " +
+				"NEVER start old_string from the middle of a line — always include the full line from column 0. " +
 				"Operations are journalled and revertable with /undo. " +
 				"Binary files and symlinks are rejected for safety.",
 			Parameters: json.RawMessage(`{
@@ -99,6 +100,49 @@ var AgentTools = []ToolDef{
 					"new_string":{"type":"string","description":"Text to replace it with"}
 				},
 				"required":["path","old_string","new_string"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "delete_lines",
+			Description: "Delete all content between two anchor blocks in a file (Delete primitive). " +
+				"prefix and suffix are FULL lines you copy from read_file output — they must start at the beginning of a line, including all leading whitespace. " +
+				"Everything strictly between the end of prefix and the start of suffix is removed. The prefix and suffix lines themselves are KEPT. " +
+				"Unlike edit_file, you do NOT need to know the exact text being deleted — only the lines before and after it. " +
+				"Use when you want to remove a block of code without specifying its exact content. " +
+				"Operations are journalled and revertable with /undo.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"path":{"type":"string","description":"Path to the file to edit"},
+					"prefix":{"type":"string","description":"FULL line(s) BEFORE the deletion region — copy exact text from read_file output including indentation"},
+					"suffix":{"type":"string","description":"FULL line(s) AFTER the deletion region — copy exact text from read_file output including indentation"}
+				},
+				"required":["path","prefix","suffix"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "replace_lines",
+			Description: "Replace all content between two anchor blocks with new text (Update primitive). " +
+				"prefix and suffix are FULL lines you copy from read_file output — they must start at the beginning of a line, including all leading whitespace. " +
+				"Everything strictly between the end of prefix and the start of suffix is REPLACED with new_text. The prefix and suffix lines themselves are KEPT. " +
+				"Unlike edit_file, you do NOT need to know the exact text being replaced — only the surrounding lines. " +
+				"Use when you want to replace a block of code but don't know (or don't want to specify) its exact content. " +
+				"Operations are journalled and revertable with /undo.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"path":{"type":"string","description":"Path to the file to edit"},
+					"prefix":{"type":"string","description":"FULL line(s) BEFORE the replacement region — copy exact text from read_file output including indentation"},
+					"suffix":{"type":"string","description":"FULL line(s) AFTER the replacement region — copy exact text from read_file output including indentation"},
+					"new_text":{"type":"string","description":"New content to insert between prefix and suffix (replaces everything currently between them)"}
+				},
+				"required":["path","prefix","suffix"]
 			}`),
 		},
 	},

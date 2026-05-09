@@ -301,6 +301,22 @@ func FormatPreview(p ToolCallPreview) string {
 		}
 		return fmt.Sprintf("%s \u2026", name)
 
+	case "delete_lines":
+		if path != "" {
+			return fmt.Sprintf("%s %s (\u2212\u2217 lines)", name, path)
+		}
+		return fmt.Sprintf("%s \u2026", name)
+
+	case "replace_lines":
+		if path != "" {
+			newText := getPS(p.Params, "new_text")
+			if newText != "" {
+				return fmt.Sprintf("%s %s (+%d lines)", name, path, CountLines(newText))
+			}
+			return fmt.Sprintf("%s %s \u2026", name, path)
+		}
+		return fmt.Sprintf("%s \u2026", name)
+
 	case "read_file":
 		if path != "" {
 			return fmt.Sprintf("%s %s", name, path)

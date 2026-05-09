@@ -12,6 +12,7 @@ type PermissionScope string
 const (
 	ScopeDestructiveOp PermissionScope = "destructive_op"
 	ScopeOutsideCwd    PermissionScope = "outside_cwd"
+	ScopePathTree      PermissionScope = "path_tree"
 )
 
 type PermissionKey struct {
@@ -39,11 +40,13 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// 1. Check global destructive op permission (for commands)
 	key := PermissionKey{Scope: ScopeDestructiveOp, Tool: tool, Op: op}
 	if s.allowed[key] {
 		return true
 	}
 
+	// 2. Check outside CWD permission
 	if targetPath != "" && s.isOutsideWorkDir(targetPath) {
 		absPath, err := filepath.Abs(targetPath)
 		if err != nil {
@@ -56,6 +59,21 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 		}
 	}
 
+	// 3. Check path tree permission (for file operations — "allow for this directory and all children")
+	if targetPath != "" {
+		absPath, err := filepath.Abs(targetPath)
+		if err == nil {
+			for pk := range s.allowed {
+				if pk.Scope == ScopePathTree && pk.Tool == tool && pk.Op == op {
+					// Check if the target path is within the allowed directory tree
+					if strings.HasPrefix(absPath, pk.Dir+string(os.PathSeparator)) || absPath == pk.Dir {
+						return true
+					}
+				}
+			}
+		}
+	}
+
 	return false
 }
 
@@ -63,17 +81,33 @@ func (s *PermissionStore) GrantAlways(op CRUDEOp, tool string, targetPath string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := PermissionKey{Scope: ScopeDestructiveOp, Tool: tool, Op: op}
-	s.allowed[key] = true
+	// For commands: store global destructive op permission (existing behavior)
+	if tool == "execute_command" {
+		key := PermissionKey{Scope: ScopeDestructiveOp, Tool: tool, Op: op}
+		s.allowed[key] = true
 
-	if targetPath != "" && s.isOutsideWorkDir(targetPath) {
+		if targetPath != "" && s.isOutsideWorkDir(targetPath) {
+			absPath, err := filepath.Abs(targetPath)
+			if err != nil {
+				absPath = targetPath
+			}
+			dir := filepath.Dir(absPath)
+			outsideKey := PermissionKey{Scope: ScopeOutsideCwd, Op: op, Tool: tool, Dir: dir}
+			s.allowed[outsideKey] = true
+		}
+		return
+	}
+
+	// For file tools: store path-tree permission scoped to the target's parent directory.
+	// All files under this directory tree will be auto-allowed for this tool+op.
+	if targetPath != "" {
 		absPath, err := filepath.Abs(targetPath)
 		if err != nil {
 			absPath = targetPath
 		}
 		dir := filepath.Dir(absPath)
-		outsideKey := PermissionKey{Scope: ScopeOutsideCwd, Op: op, Tool: tool, Dir: dir}
-		s.allowed[outsideKey] = true
+		treeKey := PermissionKey{Scope: ScopePathTree, Op: op, Tool: tool, Dir: dir}
+		s.allowed[treeKey] = true
 	}
 }
 

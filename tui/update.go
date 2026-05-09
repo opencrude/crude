@@ -95,7 +95,7 @@ func (m *Model) executeSlashCommand(text string) (tea.Model, tea.Cmd) {
 	case "/effort":
 		current := m.lastSettings.ThinkingEffort
 		if current == "" {
-			current = "auto"
+			current = "none"
 		}
 		next := cycleEffort(current, 1)
 		m.lastSettings.ThinkingEffort = next
@@ -952,6 +952,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "tool_call_streaming":
 			if d, ok := evt.Data.(map[string]any); ok {
+				toolID, _ := d["tool_id"].(string)
 				name, _ := d["name"].(string)
 				if name == "" || name == "stop" || name == "reply" {
 					break
@@ -1014,7 +1015,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				found := false
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					msg := &m.messages[i]
-					if msg.Role == RoleTool && msg.ToolName == name && msg.ToolStatus == "streaming" {
+					if msg.Role == RoleTool && msg.ToolID == toolID && msg.ToolName == name && msg.ToolStatus == "streaming" {
 						msg.ToolPreviewPhase = previewPhase
 						if hasAction {
 							msg.ToolProgressLabel = target
@@ -1045,6 +1046,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Role:              RoleTool,
 						Time:              time.Now(),
 						ToolName:          name,
+						ToolID:            toolID,
 						ToolArgs:          "",
 						ToolStatus:        "streaming",
 						ToolIndex:         idx,
@@ -1067,9 +1069,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "tool_call":
-			if d, ok := evt.Data.(map[string]string); ok {
-				name := d["name"]
-				args := d["args"]
+			if d, ok := evt.Data.(map[string]any); ok {
+				toolID, _ := d["tool_id"].(string)
+				name, _ := d["name"].(string)
+				args, _ := d["args"].(string)
 				if name == "" || name == "stop" || name == "reply" {
 					break
 				}
@@ -1080,7 +1083,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				found := false
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					msg := &m.messages[i]
-					if msg.Role == RoleTool && msg.ToolName == name && msg.ToolStatus == "streaming" {
+					if msg.Role == RoleTool && msg.ToolID == toolID && msg.ToolName == name &&
+						(msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
 						msg.ToolStatus = "calling"
 						msg.ToolArgs = argsCompact
 						msg.Content = toolLabel(name, argsCompact)
@@ -1106,6 +1110,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Content:           toolLabel(name, argsCompact),
 						Time:              time.Now(),
 						ToolName:          name,
+						ToolID:            toolID,
 						ToolArgs:          argsCompact,
 						ToolStatus:        "calling",
 						ToolIndex:         idx,
@@ -1119,6 +1124,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "tool_progress":
 			if d, ok := evt.Data.(map[string]any); ok {
+				toolID, _ := d["tool_id"].(string)
 				name, _ := d["name"].(string)
 				if name == "" || name == "stop" || name == "reply" {
 					break
@@ -1132,8 +1138,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					msg := &m.messages[i]
-					if msg.Role == RoleTool && msg.ToolName == name &&
-						(msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
+					if msg.Role != RoleTool {
+						continue
+					}
+					if msg.ToolStatus != "calling" && msg.ToolStatus != "streaming" {
+						continue
+					}
+					matched := false
+					if toolID != "" && msg.ToolID == toolID && msg.ToolName == name {
+						matched = true
+					} else if toolID == "" && msg.ToolName == name {
+						matched = true
+					}
+					if matched {
 						msg.ToolProgressPhase = phase
 						msg.ToolProgressMessage = message
 						if path != "" {
@@ -1157,37 +1174,50 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "tool_result":
-			if d, ok := evt.Data.(map[string]string); ok {
-				name := d["name"]
+			if d, ok := evt.Data.(map[string]any); ok {
+				toolID, _ := d["tool_id"].(string)
+				name, _ := d["name"].(string)
 				if name == "" || name == "stop" || name == "reply" {
 					break
 				}
-				result := d["result"]
-				errorFlag := d["error"]
+				result, _ := d["result"].(string)
+				errorFlag, _ := d["error"].(string)
 				m.statusLine = name
 				for i := len(m.messages) - 1; i >= 0; i-- {
 					msg := &m.messages[i]
-					if msg.Role == RoleTool && msg.ToolName == name &&
-						(msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
-						if errorFlag == "true" {
-							msg.ToolStatus = "error"
-						} else {
-							msg.ToolStatus = "success"
-						}
-						msg.ToolPreviewPhase = ToolPreviewDone
-						msg.ToolProgressPhase = ""
-						msg.ToolProgressMessage = ""
-						if !msg.ToolStartTime.IsZero() {
-							msg.ToolDuration = time.Since(msg.ToolStartTime)
-						}
-						msg.cachedLines = nil
-						if result != "" {
-							msg.Content = result
-						} else {
-							msg.Content = msg.ToolName + " " + msg.ToolArgs
-						}
-						break
+					if msg.Role != RoleTool {
+						continue
 					}
+					if msg.ToolStatus != "calling" && msg.ToolStatus != "streaming" {
+						continue
+					}
+					matched := false
+					if toolID != "" && msg.ToolID == toolID && msg.ToolName == name {
+						matched = true
+					} else if toolID == "" && msg.ToolName == name {
+						matched = true
+					}
+					if !matched {
+						continue
+					}
+					if errorFlag == "true" {
+						msg.ToolStatus = "error"
+					} else {
+						msg.ToolStatus = "success"
+					}
+					msg.ToolPreviewPhase = ToolPreviewDone
+					msg.ToolProgressPhase = ""
+					msg.ToolProgressMessage = ""
+					if !msg.ToolStartTime.IsZero() {
+						msg.ToolDuration = time.Since(msg.ToolStartTime)
+					}
+					msg.cachedLines = nil
+					if result != "" {
+						msg.Content = result
+					} else {
+						msg.Content = msg.ToolName + " " + msg.ToolArgs
+					}
+					break
 				}
 			}
 

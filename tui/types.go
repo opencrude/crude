@@ -27,6 +27,7 @@ type ChatMessage struct {
 	// Tool metadata for RoleTool messages
 	ToolName   string
 	ToolArgs   string
+	ToolID     string // unique ID from LLM for correlating streaming events
 	ToolStatus string // "streaming", "calling", "success", "error", "skipped"
 	ToolIndex  int    // index in messages slice for in-place updates
 
