@@ -418,7 +418,8 @@ func (s *Session) newAgent() *agent.Agent {
 			if !ok {
 				return fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handle), nil
 			}
-			status := fmt.Sprintf("Handle: %s\nPID: %d\nStatus: %s\nExit code: %d", info.Handle, info.PID, info.Status, info.ExitCode)
+			dur := info.Duration.Truncate(time.Second).String()
+			status := fmt.Sprintf("Handle: %s\nPID: %d\nStatus: %s\nExit code: %d\nDuration: %s", info.Handle, info.PID, info.Status, info.ExitCode, dur)
 			if info.Error != "" {
 				status += "\nError: " + info.Error
 			}
@@ -734,6 +735,10 @@ if evt.Type == "confirmation_always" {
 			if evt.Type == "done" {
 				if content, ok := evt.Data.(string); ok {
 					finalContent = content
+				} else if m, ok := evt.Data.(map[string]any); ok {
+					if c, ok := m["content"].(string); ok {
+						finalContent = c
+					}
 				}
 			}
 		}, blockResolveCh, s.sm, s.sessionID)
@@ -916,7 +921,7 @@ func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
 
 func allCommTools(toolCalls []provider.ToolCall) bool {
 	for _, tc := range toolCalls {
-		if tc.Function.Name != "stop" && tc.Function.Name != "reply" {
+		if tc.Function.Name != "reply" {
 			return false
 		}
 	}

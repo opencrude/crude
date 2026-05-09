@@ -3,12 +3,17 @@ package provider
 import "encoding/json"
 
 type ChatMessage struct {
-	Role             string     `json:"role"`
-	Content          string     `json:"content,omitempty"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
-	Reasoning        string     `json:"reasoning,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	Role             string          `json:"role"`
+	Content          string          `json:"content,omitempty"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	Reasoning        string          `json:"reasoning,omitempty"`
+	ToolCalls        []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
+	CacheControl     *CacheControl  `json:"cache_control,omitempty"`
+}
+
+type CacheControl struct {
+	Type string `json:"type"`
 }
 
 type ToolCall struct {
@@ -56,8 +61,9 @@ type ChatResponse struct {
 }
 
 type ToolDef struct {
-	Type     string       `json:"type"`
-	Function FunctionDef  `json:"function"`
+	Type        string       `json:"type"`
+	Function    FunctionDef  `json:"function"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
 type FunctionDef struct {

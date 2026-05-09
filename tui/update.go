@@ -918,6 +918,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "done":
 			m.thinking = false
 			m.blocking = false
+			m.retryMsg = ""
+			m.retryMsgTime = time.Time{}
 			wasStreaming := m.streaming
 			m.streaming = false
 			m.statusLine = ""
@@ -937,11 +939,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cleaned = append(cleaned, msg)
 			}
 			m.messages = cleaned
-			if content, ok := evt.Data.(string); ok && content != "" {
+
+			// Extract content and reason from event data.
+			// Supports both new format (map) and legacy format (string).
+			var content, reason string
+			switch d := evt.Data.(type) {
+			case string:
+				content = d
+				reason = ""
+			case map[string]any:
+				content, _ = d["content"].(string)
+				reason, _ = d["reason"].(string)
+			}
+
+			// For abnormal termination (context limit, max steps, cancelled),
+			// show the reason in the bottom-left error bar.
+			if reason == "completed" {
+				m.infoMsg = "✓ done"
+				m.infoMsgTime = time.Now()
+			} else if reason != "" {
+				m.lastError = "\u26a0 " + reason
+				m.errorTime = time.Now()
+			}
+
+			if content != "" {
 				if wasStreaming && len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleAssistant {
-					m.messages[len(m.messages)-1].Content = content
-					m.messages[len(m.messages)-1].cachedLines = nil
-					m.messages[len(m.messages)-1].cursorLine = -1
+					if m.messages[len(m.messages)-1].Content == "" {
+						m.messages[len(m.messages)-1].Content = content
+						m.messages[len(m.messages)-1].cachedLines = nil
+						m.messages[len(m.messages)-1].cursorLine = -1
+					}
 				} else {
 					m.messages = append(m.messages, ChatMessage{
 						Role:    RoleAssistant,
@@ -955,7 +982,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if d, ok := evt.Data.(map[string]any); ok {
 				toolID, _ := d["tool_id"].(string)
 				name, _ := d["name"].(string)
-				if name == "" || name == "stop" || name == "reply" {
+				if name == "" || name == "reply" {
 					break
 				}
 
@@ -1070,11 +1097,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "tool_call":
+			m.retryMsg = ""
+			m.retryMsgTime = time.Time{}
 			if d, ok := evt.Data.(map[string]any); ok {
 				toolID, _ := d["tool_id"].(string)
 				name, _ := d["name"].(string)
 				args, _ := d["args"].(string)
-				if name == "" || name == "stop" || name == "reply" {
+				if name == "" || name == "reply" {
 					break
 				}
 				argsCompact := summarizeToolArgs(name, args)
@@ -1127,7 +1156,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if d, ok := evt.Data.(map[string]any); ok {
 				toolID, _ := d["tool_id"].(string)
 				name, _ := d["name"].(string)
-				if name == "" || name == "stop" || name == "reply" {
+				if name == "" || name == "reply" {
 					break
 				}
 				phase, _ := d["phase"].(string)
@@ -1178,7 +1207,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if d, ok := evt.Data.(map[string]any); ok {
 				toolID, _ := d["tool_id"].(string)
 				name, _ := d["name"].(string)
-				if name == "" || name == "stop" || name == "reply" {
+				if name == "" || name == "reply" {
 					break
 				}
 				result, _ := d["result"].(string)
@@ -1262,6 +1291,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "error":
 			m.thinking = false
 			m.blocking = false
+			m.retryMsg = ""
+			m.retryMsgTime = time.Time{}
 			m.statusLine = ""
 			for i := range m.messages {
 				if m.messages[i].ThinkingActive {
@@ -1281,6 +1312,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "async_command_status":
 			if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
 				m.asyncCommands = cmds
+			}
+
+		case "retry":
+			if d, ok := evt.Data.(map[string]any); ok {
+				var attempt int
+				switch a := d["attempt"].(type) {
+				case float64:
+					attempt = int(a)
+				case int:
+					attempt = a
+				}
+				backoff, _ := d["backoff"].(float64)
+				m.retryMsg = fmt.Sprintf("\u26a0 retrying in %.0fs... (attempt %d)", backoff, attempt)
+				m.retryMsgTime = time.Now()
 			}
 
 		case "usage":

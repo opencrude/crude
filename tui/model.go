@@ -60,6 +60,11 @@ type Model struct {
 	lastError string
 	errorTime time.Time
 
+	// Retry notification — shown in orange in bottom-left when the provider
+	// is rate-limiting or busy and we're retrying behind the scenes.
+	retryMsg     string
+	retryMsgTime time.Time
+
 	// Input channel — written via Cmd so it's safe.
 	inputCh chan<- string
 
