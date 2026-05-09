@@ -327,8 +327,11 @@ func (m *Model) chatView() string {
 	// Status bar
 	var errLeft string
 	if m.infoMsg != "" {
-		errLeft = pad + lipgloss.NewStyle().Foreground(colorMuted).Render(
+		errLeft = pad + lipgloss.NewStyle().Foreground(colorSuccess).Render(
 			truncateLine(m.infoMsg, m.width/2))
+	} else if m.retryMsg != "" && time.Since(m.retryMsgTime) < 30*time.Second {
+		errLeft = pad + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render(
+			truncateLine(m.retryMsg, m.width/2))
 	} else if m.lastError != "" {
 		errLeft = pad + lipgloss.NewStyle().Foreground(colorError).Render(
 			truncateLine(m.lastError, m.width/2))
@@ -1271,11 +1274,7 @@ func (m *Model) renderAsyncBar() []string {
 			cmd = cmd[:37] + "…"
 		}
 		var durStr string
-		if c.Status == fileio.AsyncRunning {
-			durStr = time.Since(c.StartedAt).Truncate(time.Second).String()
-		} else {
-			durStr = c.EndedAt.Sub(c.StartedAt).Truncate(time.Second).String()
-		}
+		durStr = c.Duration.Truncate(time.Second).String()
 		statusLine := dim.Render("│ ") +
 			lipgloss.NewStyle().Foreground(dotColor).Render(dot+" ") +
 			lipgloss.NewStyle().Foreground(colorAccent2).Render("["+c.Handle+"]") + " " +

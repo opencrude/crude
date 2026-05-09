@@ -116,7 +116,7 @@ func (a *Agent) Run(
 
 	lastReply := ""
 	msgs := []provider.ChatMessage{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: systemPrompt, CacheControl: &provider.CacheControl{Type: "ephemeral"}},
 	}
 	for _, m := range sessionMessages {
 		if m.Role != "system" {
@@ -140,11 +140,12 @@ func (a *Agent) Run(
 		if len(parts) == 0 {
 			return nil
 		}
-		return &provider.ChatMessage{Role: "system", Content: strings.Join(parts, "\n\n")}
+		return &provider.ChatMessage{Role: "system", Content: strings.Join(parts, "\n\n"), CacheControl: &provider.CacheControl{Type: "ephemeral"}}
 	}
 
 	var steps []StepRecord
 	var totalPromptTokens, totalCompletionTokens int
+	var lastPromptTokens int
 
 	ctxWindow := a.Provider.ContextWindow()
 	ctxLimit := int(float64(ctxWindow) * contextSafetyPct)
@@ -153,8 +154,13 @@ func (a *Agent) Run(
 		func(steps []StepRecord) bool {
 			return hasRepeatedToolCalls(steps, loopDetectWindow, loopDetectRepeats)
 		},
+		// Context overflow: prompt_tokens in the API response is the actual
+		// size of the context sent this turn, NOT a delta. We must compare
+		// the per-turn value against ctxLimit — comparing a cumulative sum
+		// would falsely terminate the agent once the total spent across all
+		// turns exceeds the limit, even if each individual turn fits easily.
 		func(steps []StepRecord) bool {
-			return ctxLimit > 0 && totalPromptTokens > ctxLimit
+			return ctxLimit > 0 && lastPromptTokens > ctxLimit
 		},
 	}
 
@@ -297,6 +303,15 @@ func (a *Agent) Run(
 				}
 				emit(AgentEvent{Type: "tool_call_streaming", Data: data})
 			},
+			func(attempt int, backoffSeconds float64) {
+				if attempt <= 3 {
+					return
+				}
+				emit(AgentEvent{Type: "retry", Data: map[string]any{
+					"attempt":   attempt,
+					"backoff":   backoffSeconds,
+				}})
+			},
 		)
 		if err != nil {
 			a.emitError(emit, err)
@@ -305,6 +320,7 @@ func (a *Agent) Run(
 
 		totalPromptTokens += promptTokens
 		totalCompletionTokens += completionTokens
+		lastPromptTokens = promptTokens
 
 		if promptTokens > 0 || completionTokens > 0 {
 			emit(AgentEvent{Type: "usage", Data: map[string]int{
@@ -325,7 +341,6 @@ func (a *Agent) Run(
 		}
 
 		hasToolCalls := len(toolCalls) > 0
-		shouldContinue := hasToolCalls
 
 		assistantMsg := provider.ChatMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, Reasoning: reasoningContent}
 		if hasToolCalls {
@@ -333,22 +348,27 @@ func (a *Agent) Run(
 		}
 		msgs = append(msgs, assistantMsg)
 
-		if !shouldContinue {
+		// LOOP TERMINATION (primary): When the LLM responds with text and NO tool calls,
+		// the agentic loop ends naturally. The streamed text becomes the final message.
+		// This is the standard termination mechanism — no "stop" tool is needed.
+		// The LLM simply stops calling tools and its text response is delivered to the user.
+		if !hasToolCalls {
 			if accumulatedText != "" {
-				emit(AgentEvent{Type: "done", Data: accumulatedText})
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": accumulatedText, "reason": "completed"}})
 			} else {
-				emit(AgentEvent{Type: "done", Data: "Done."})
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Done.", "reason": "completed"}})
 			}
 			return msgs
 		}
 
+		// Execute tool calls in parallel, collect results.
+		// "reply" is a special tool: it emits intermediate messages to the user
+		// but does NOT terminate the loop — the agent keeps working.
 		type execResult struct {
-			id       string
-			params   map[string]any
-			name     string
-			result   string
-			stopTurn bool
-			stopMsg  string
+			id     string
+			params map[string]any
+			name   string
+			result string
 		}
 		resultCh := make(chan execResult, len(toolCalls))
 
@@ -368,13 +388,6 @@ func (a *Agent) Run(
 						"result":  errResult,
 					}})
 					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: errResult}
-					return
-				}
-
-				if tc.Function.Name == "stop" {
-					msg := getStr(params, "message")
-					lastReply = msg
-					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, params: params, result: msg, stopTurn: true, stopMsg: msg}
 					return
 				}
 
@@ -612,9 +625,7 @@ func (a *Agent) Run(
 			}(tc)
 		}
 
-		var stopMessage string
-		var wasStopCalled bool
-
+		var lastToolResultIdx int
 		for i := 0; i < len(toolCalls); i++ {
 			select {
 			case r := <-resultCh:
@@ -623,6 +634,7 @@ func (a *Agent) Run(
 					ToolCallID: r.id,
 					Content:    r.result,
 				})
+				lastToolResultIdx = len(msgs) - 1
 				steps = append(steps, StepRecord{
 					Content:      accumulatedText,
 					ToolName:     r.name,
@@ -630,43 +642,40 @@ func (a *Agent) Run(
 					ToolResult:   r.result,
 					FinishReason: finishReason,
 				})
-				if r.stopTurn {
-					wasStopCalled = true
-					stopMessage = r.stopMsg
-					if r.stopMsg != "" {
-						emit(AgentEvent{Type: "stream_token", Data: r.stopMsg})
-					}
-				} else if r.name == "reply" && r.result != "" {
+				if r.name == "reply" && r.result != "" {
 					emit(AgentEvent{Type: "stream_token", Data: r.result})
 				}
 			case <-ctx.Done():
-				emit(AgentEvent{Type: "done", Data: "Cancelled."})
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 				return msgs
 			}
 		}
 
-		if wasStopCalled {
-			a.logger.Info("loop.stop_called", "message", stopMessage)
-			emit(AgentEvent{Type: "done", Data: stopMessage})
-			return msgs
+		// Mark the last tool result as a cache breakpoint so the entire
+		// conversation prefix up to this point is eligible for caching
+		// on the next API call.
+		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
+			msgs[lastToolResultIdx].CacheControl = &provider.CacheControl{Type: "ephemeral"}
 		}
 
+		// LOOP TERMINATION (safety): Stop conditions catch infinite loops
+		// (repeated identical tool calls) and context window overflow.
 		if isStopConditionMet(stopConditions, steps) {
 			reason := "stop_condition_met"
-			if totalPromptTokens > ctxLimit {
-				reason = fmt.Sprintf("context_limit_reached (%d/%d tokens)", totalPromptTokens, ctxWindow)
+			if lastPromptTokens > ctxLimit {
+				reason = fmt.Sprintf("context_limit_reached (%d/%d tokens)", lastPromptTokens, ctxWindow)
 			}
-			a.logger.Info("loop."+reason, "steps", len(steps), "prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
+			a.logger.Info("loop."+reason, "steps", len(steps), "prompt_tokens", lastPromptTokens, "total_prompt_tokens_spent", totalPromptTokens, "ctx_window", ctxWindow)
 			if lastReply != "" {
-				emit(AgentEvent{Type: "done", Data: lastReply})
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": lastReply, "reason": reason}})
 			} else {
-				emit(AgentEvent{Type: "done", Data: accumulatedText})
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": accumulatedText, "reason": reason}})
 			}
 			return msgs
 		}
 	}
 
-	emit(AgentEvent{Type: "done", Data: "Reached maximum " + fmt.Sprint(maxSteps) + " steps. Task may be incomplete."})
+	emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Reached maximum " + fmt.Sprint(maxSteps) + " steps. Task may be incomplete.", "reason": "max_steps_reached"}})
 	return msgs
 }
 
@@ -694,15 +703,17 @@ func retryBackoff(attempt int) time.Duration {
 }
 
 func allToolDefs() []provider.ToolDef {
+	ephemeral := &provider.CacheControl{Type: "ephemeral"}
 	result := make([]provider.ToolDef, len(tools.AgentTools))
 	for i, td := range tools.AgentTools {
 		result[i] = provider.ToolDef{
-			Type: td.Type,
-			Function: provider.FunctionDef{
+			Type:         td.Type,
+			Function:     provider.FunctionDef{
 				Name:        td.Function.Name,
 				Description: td.Function.Description,
 				Parameters:  td.Function.Parameters,
 			},
+			CacheControl: ephemeral,
 		}
 	}
 	return result
@@ -879,11 +890,7 @@ func BuildAsyncCommandStatus(mgr *fileio.AsyncCommandManager) string {
 			marker = "!"
 		}
 		var dur string
-		if c.Status == fileio.AsyncRunning {
-			dur = time.Since(c.StartedAt).Round(time.Second).String()
-		} else {
-			dur = c.EndedAt.Sub(c.StartedAt).Round(time.Second).String()
-		}
+		dur = c.Duration.Round(time.Second).String()
 		sb.WriteString(fmt.Sprintf("  %s [%s]: %s (PID %d, %s)", marker, c.Handle, c.Status, c.PID, dur))
 		if c.Status == fileio.AsyncFailed && c.Error != "" {
 			sb.WriteString(" — " + c.Error)

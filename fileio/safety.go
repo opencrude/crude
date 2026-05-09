@@ -9,7 +9,7 @@ import (
 
 const binaryProbeSize = 512
 
-func isBinary(data []byte) bool {
+func IsBinary(data []byte) bool {
 	probe := data
 	if len(probe) > binaryProbeSize {
 		probe = probe[:binaryProbeSize]

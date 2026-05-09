@@ -39,8 +39,8 @@ type GrepMatch struct {
 type Executer interface {
 	Execute(cmd string, opts ExecOptions) (string, error)
 	ListDir(path string) ([]DirEntry, error)
-	GlobFiles(baseDir, pattern string) ([]string, error)
-	GrepFiles(pattern, baseDir string, recursive bool) ([]GrepMatch, error)
+	GlobFiles(baseDir, pattern string, includeHidden bool) ([]string, error)
+	GrepFiles(pattern, baseDir string, recursive, includeHidden bool) ([]GrepMatch, error)
 }
 
 type LocalExec struct{}
@@ -98,7 +98,61 @@ func (l *LocalExec) ListDir(path string) ([]DirEntry, error) {
 	return result, nil
 }
 
-func (l *LocalExec) GlobFiles(baseDir, pattern string) ([]string, error) {
+// maxGrepLineLen caps how much of a single matching line is returned.
+// Minified bundles/source-maps can have megabyte-long lines.
+const maxGrepLineLen = 500
+
+// maxGrepResults caps total matches to avoid flooding context.
+const maxGrepResults = 500
+
+// skipDirs are directories we never recurse into during glob/grep.
+var skipDirs = map[string]bool{
+	".git":          true,
+	"node_modules":  true,
+	"vendor":        true,
+	"__pycache__":   true,
+	".venv":         true,
+	"venv":          true,
+	"dist":          true,
+	"build":         true,
+	".next":         true,
+	"out":           true,
+	"target":        true,
+	".pytest_cache": true,
+	".mypy_cache":   true,
+	".tox":          true,
+	".egg-info":     true,
+	".idea":         true,
+	".vs":           true,
+}
+
+// allowedHiddenDirs are hidden directories that ARE useful to search.
+var allowedHiddenDirs = map[string]bool{
+	".cursor": true,
+	".claude": true,
+	".vscode": true,
+	".github": true,
+	".kilo":   true,
+}
+
+func shouldSkipDir(name string, includeHidden bool) bool {
+	if skipDirs[name] {
+		return true
+	}
+	if !includeHidden && len(name) > 0 && name[0] == '.' && !allowedHiddenDirs[name] {
+		return true
+	}
+	return false
+}
+
+func truncateLine(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
+}
+
+func (l *LocalExec) GlobFiles(baseDir, pattern string, includeHidden bool) ([]string, error) {
 	if baseDir == "" {
 		baseDir = "."
 	}
@@ -119,6 +173,11 @@ func (l *LocalExec) GlobFiles(baseDir, pattern string) ([]string, error) {
 		if rel == "." {
 			return nil
 		}
+		// Never skip the root directory itself — if the user points
+		// directly at e.g. node_modules, they mean to search it.
+		if d.IsDir() && path != absBase && shouldSkipDir(d.Name(), includeHidden) {
+			return fs.SkipDir
+		}
 		if matchGlobPattern(pattern, filepath.ToSlash(rel)) {
 			matches = append(matches, filepath.ToSlash(path))
 		}
@@ -127,7 +186,7 @@ func (l *LocalExec) GlobFiles(baseDir, pattern string) ([]string, error) {
 	return matches, err
 }
 
-func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive bool) ([]GrepMatch, error) {
+func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden bool) ([]GrepMatch, error) {
 	if baseDir == "" {
 		baseDir = "."
 	}
@@ -151,9 +210,16 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive bool) ([]GrepMa
 			if !recursive && path != absBase {
 				return fs.SkipDir
 			}
+			// Never skip the root directory itself.
+			if path != absBase && shouldSkipDir(d.Name(), includeHidden) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if !d.Type().IsRegular() {
+			return nil
+		}
+		if len(results) >= maxGrepResults {
 			return nil
 		}
 
@@ -173,6 +239,9 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive bool) ([]GrepMa
 		}
 
 		scanner := bufio.NewScanner(f)
+		const maxScanTokenSize = 1024 * 1024 // 1MB
+		buf := make([]byte, maxScanTokenSize)
+		scanner.Buffer(buf, maxScanTokenSize)
 		lineNum := 0
 		for scanner.Scan() {
 			lineNum++
@@ -181,8 +250,11 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive bool) ([]GrepMa
 				results = append(results, GrepMatch{
 					Path:    filepath.ToSlash(path),
 					LineNum: lineNum,
-					Line:    line,
+					Line:    truncateLine(line, maxGrepLineLen),
 				})
+				if len(results) >= maxGrepResults {
+					break
+				}
 			}
 		}
 		return nil
@@ -191,7 +263,7 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive bool) ([]GrepMa
 	if err := filepath.WalkDir(absBase, walkFn); err != nil {
 		return nil, err
 	}
-	return results, nil
+	return results, err
 }
 
 func matchGlobPattern(pattern, relPath string) bool {

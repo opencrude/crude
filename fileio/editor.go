@@ -73,7 +73,7 @@ func (e *Editor) Read(path string) (string, error) {
 		e.logger.Error("fileio.read", "path", path, "latency_ms", dur, "error", err.Error())
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	if isBinary(data) {
+	if IsBinary(data) {
 		e.logger.Info("fileio.read", "path", path, "latency_ms", dur)
 		return "", &BinaryFileError{Path: abs, Size: int64(len(data))}
 	}
@@ -90,7 +90,7 @@ func (e *Editor) ReadRaw(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read raw %s: %w", path, err)
 	}
-	if isBinary(data) {
+	if IsBinary(data) {
 		return "", &BinaryFileError{Path: abs, Size: int64(len(data))}
 	}
 	return string(data), nil
@@ -127,7 +127,7 @@ func (e *Editor) Write(path string, content string) error {
 		return writeErr
 	}
 
-	if isBinary(existing) {
+	if IsBinary(existing) {
 		return &BinaryFileError{Path: abs, Size: fi.Size()}
 	}
 

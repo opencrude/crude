@@ -26,6 +26,7 @@ type AsyncCmdInfo struct {
 	Status    AsyncStatus
 	StartedAt time.Time
 	EndedAt   time.Time
+	Duration  time.Duration // computed at copy time by List/Check
 	ExitCode  int
 	Error     string
 }
@@ -134,6 +135,7 @@ func (m *AsyncCommandManager) Check(handle string) (*AsyncCmdInfo, bool) {
 	state.mu.Lock()
 	info := state.info
 	state.mu.Unlock()
+	info.computeDuration()
 	return &info, true
 }
 
@@ -194,9 +196,18 @@ func (m *AsyncCommandManager) List() []AsyncCmdInfo {
 		state.mu.Lock()
 		info := state.info
 		state.mu.Unlock()
+		info.computeDuration()
 		list = append(list, info)
 	}
 	return list
+}
+
+func (info *AsyncCmdInfo) computeDuration() {
+	if info.Status == AsyncRunning {
+		info.Duration = time.Since(info.StartedAt)
+	} else {
+		info.Duration = info.EndedAt.Sub(info.StartedAt)
+	}
 }
 
 func (m *AsyncCommandManager) Cleanup(handle string) {

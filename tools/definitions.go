@@ -223,12 +223,14 @@ var AgentTools = []ToolDef{
 			Description: "Find files matching a glob pattern (Read primitive). " +
 				"Supports * (any chars in one segment), ** (any path depth), and ? (single char). " +
 				"Examples: '**/*.go', 'src/**/*.ts', '*.json'. " +
-				"Use to discover files before reading or editing them.",
+				"By default hidden directories and common dependency/build folders are excluded from recursion. " +
+				"Use include_hidden=true to search hidden directories too, or set base_dir to a specific folder (e.g. 'node_modules') to search it directly.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"pattern":{"type":"string","description":"Glob pattern (e.g. '**/*.go')"},
-					"base_dir":{"type":"string","description":"Directory to search in (optional; default: current directory)"}
+					"base_dir":{"type":"string","description":"Directory to search in (optional; default: current directory)"},
+					"include_hidden":{"type":"boolean","description":"Recurse into hidden directories (names starting with '.') in addition to normal directories (optional; default: false)"}
 				},
 				"required":["pattern"]
 			}`),
@@ -241,13 +243,16 @@ var AgentTools = []ToolDef{
 			Description: "Search file contents using regular expressions (Read primitive). " +
 				"Returns matching lines with file paths and line numbers. " +
 				"Use to find usages of functions, variables, imports, or patterns across the codebase. " +
-				"Supports full regex syntax. Searches recursively by default.",
+				"Supports full regex syntax. Searches recursively by default. " +
+				"By default hidden directories and common dependency/build folders are excluded from recursion. " +
+				"Use include_hidden=true to search hidden directories too, or set path to a specific folder (e.g. 'node_modules') to search it directly.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"pattern":{"type":"string","description":"Regex pattern to search for (e.g. 'func\\\\s+\\\\w+')"},
+					"pattern":{"type":"string","description":"Regex pattern to search for (e.g. 'func\\s+\\w+')"},
 					"path":{"type":"string","description":"Directory or file to search in (optional; default: current directory)"},
-					"recursive":{"type":"boolean","description":"Search subdirectories recursively (optional; default: true)"}
+					"recursive":{"type":"boolean","description":"Search subdirectories recursively (optional; default: true)"},
+					"include_hidden":{"type":"boolean","description":"Recurse into hidden directories (names starting with '.') in addition to normal directories (optional; default: false)"}
 				},
 				"required":["pattern"]
 			}`),
@@ -340,25 +345,11 @@ var AgentTools = []ToolDef{
 			}`),
 		},
 	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name:        "stop",
-			Description: "End the agentic loop and deliver your final message to the user. Call this when you have completed the task, answered the question, or need to hand control back to the user. This is the ONLY way to reliably end the conversation turn — always end with stop().",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"message":{"type":"string","description":"Your final message to the user. Summarize what you did, what you found, or your answer to their question."}
-				},
-				"required":["message"]
-			}`),
-		},
-	},
-	{
+{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "reply",
-			Description: "Send an intermediate message to the user WITHOUT ending the loop. Use for progress updates, partial results, or questions that need a response before continuing work. The loop continues after this — call stop() when truly done.",
+			Description: "Send an intermediate message to the user WITHOUT ending the loop. Use for progress updates, partial results, or questions that need a response before continuing work. The loop continues after this — simply respond with text and no tool calls when you are truly done.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{

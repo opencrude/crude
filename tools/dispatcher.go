@@ -135,11 +135,15 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			}
 			return formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
 		}
-		data, err := os.ReadFile(GetStrArg(params, "path", ""))
+		path := GetStrArg(params, "path", "")
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return "Error: " + err.Error()
 		}
-		return formatReadFile(GetStrArg(params, "path", ""), string(data), GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
+		if fileio.IsBinary(data) {
+			return fmt.Sprintf("Error: binary file detected: %s (%d bytes) — cannot read binary files, use execute_command instead", path, len(data))
+		}
+		return formatReadFile(path, string(data), GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
 
 	case "write_file":
 		content := GetStrArg(params, "content", "")
@@ -185,8 +189,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			}
 			newData, _ := os.ReadFile(path)
 			replaced := string(newData)
-			count := strings.Count(replaced, newString)
-			return formatEditResult(path, count, orig, replaced)
+			return formatEditResult(path, 1, orig, replaced)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -343,7 +346,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 	case "glob_files":
 		pattern := GetStrArg(params, "pattern", "")
 		baseDir := GetStrArg(params, "base_dir", ".")
-		matches, err := exec.GlobFiles(baseDir, pattern)
+		includeHidden := GetBoolArgAny(params, "include_hidden", false)
+		matches, err := exec.GlobFiles(baseDir, pattern, includeHidden)
 		if err != nil {
 			return "Error: " + err.Error()
 		}
@@ -362,7 +366,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		pattern := GetStrArg(params, "pattern", "")
 		searchPath := GetStrArg(params, "path", ".")
 		recursive := GetBoolArgAny(params, "recursive", true)
-		matches, err := exec.GrepFiles(pattern, searchPath, recursive)
+		includeHidden := GetBoolArgAny(params, "include_hidden", false)
+		matches, err := exec.GrepFiles(pattern, searchPath, recursive, includeHidden)
 		if err != nil {
 			return "Error: " + err.Error()
 		}
@@ -409,9 +414,6 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			return "JavaScript error: " + err.Error()
 		}
 		return result
-
-	case "stop":
-		return GetStrArg(params, "message", "")
 
 	case "reply":
 		return GetStrArg(params, "content", "")

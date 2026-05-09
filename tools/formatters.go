@@ -62,7 +62,7 @@ func formatDirEntries(path string, entries []fileio.DirEntry) string {
 }
 
 func listDirectoryRecursive(path string, exec fileio.Executer) string {
-	matches, err := exec.GlobFiles(path, "**")
+	matches, err := exec.GlobFiles(path, "**", false)
 	if err != nil {
 		return "Error: " + err.Error()
 	}

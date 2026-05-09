@@ -143,6 +143,7 @@ func (a *Agent) completeStream(
 	emitThinking func(text string),
 	onToolCallStart func(id, name string),
 	onToolCallDelta func(id, name, accumulatedArgs string),
+	onRetry func(attempt int, backoffSeconds float64),
 ) (content string, reasoningContent string, finishReason string, toolCalls []provider.ToolCall, promptTokens int, completionTokens int, promptTokensCached int, err error) {
 	req := provider.ChatRequest{
 		Model:    a.Model,
@@ -198,6 +199,9 @@ func (a *Agent) completeStream(
 		if err != nil {
 			bo := retryBackoff(attempt)
 			a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
+			if onRetry != nil {
+				onRetry(attempt, bo.Seconds())
+			}
 			select {
 			case <-time.After(bo):
 			case <-ctx.Done():
@@ -216,6 +220,9 @@ func (a *Agent) completeStream(
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
 				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
+				if onRetry != nil {
+					onRetry(attempt, bo.Seconds())
+				}
 				select {
 				case <-time.After(bo):
 				case <-ctx.Done():
@@ -331,6 +338,9 @@ func (a *Agent) completeStream(
 		if err := scanner.Err(); err != nil {
 			bo := retryBackoff(attempt)
 			a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("stream scan error: %w", err).Error())
+			if onRetry != nil {
+				onRetry(attempt, bo.Seconds())
+			}
 			select {
 			case <-time.After(bo):
 			case <-ctx.Done():

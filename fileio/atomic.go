@@ -104,7 +104,7 @@ func readFileForEdit(absPath string, policy *pathPolicy) ([]byte, os.FileInfo, e
 		return nil, nil, err
 	}
 
-	if isBinary(data) {
+	if IsBinary(data) {
 		return nil, nil, &BinaryFileError{Path: absPath, Size: fi.Size()}
 	}
 
