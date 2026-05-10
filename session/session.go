@@ -250,25 +250,29 @@ func (s *Session) newAgent() *agent.Agent {
 			}
 			state := s.sm.GetOrCreateState(s.sessionID)
 
+			wasActive := false
 			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := raw.(map[string]string); ok {
+					wasActive = m[stepID] == "active"
 					m[stepID] = "completed"
 					state.AddToContext("plan_step_statuses", m)
 				}
 			}
 
-			if raw, ok := state.GetFromContext("plan_steps"); ok {
-				if steps, ok := raw.([]map[string]any); ok {
-					if rawStatuses, ok2 := state.GetFromContext("plan_step_statuses"); ok2 {
-						if m, ok2 := rawStatuses.(map[string]string); ok2 {
-							for _, step := range steps {
-								id, _ := step["id"].(string)
-								if m[id] == "pending" {
-									m[id] = "active"
-									break
+			if wasActive {
+				if raw, ok := state.GetFromContext("plan_steps"); ok {
+					if steps, ok := raw.([]map[string]any); ok {
+						if rawStatuses, ok2 := state.GetFromContext("plan_step_statuses"); ok2 {
+							if m, ok2 := rawStatuses.(map[string]string); ok2 {
+								for _, step := range steps {
+									id, _ := step["id"].(string)
+									if m[id] == "pending" {
+										m[id] = "active"
+										break
+									}
 								}
+								state.AddToContext("plan_step_statuses", m)
 							}
-							state.AddToContext("plan_step_statuses", m)
 						}
 					}
 				}
@@ -368,10 +372,19 @@ func (s *Session) newAgent() *agent.Agent {
 				state := s.sm.GetOrCreateState(s.sessionID)
 				if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
 					if m, ok := statuses.(map[string]string); ok {
-						for id, st := range m {
-							if st == "blocked" {
-								m[id] = "active"
+						hasActive := false
+						for _, st := range m {
+							if st == "active" {
+								hasActive = true
 								break
+							}
+						}
+						if !hasActive {
+							for id, st := range m {
+								if st == "blocked" {
+									m[id] = "active"
+									break
+								}
 							}
 						}
 						state.AddToContext("plan_step_statuses", m)
