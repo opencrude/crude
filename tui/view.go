@@ -1111,6 +1111,16 @@ func findSegmentStart(logLine []rune, textW int, segmentIdx int) int {
 		}
 	}
 
+	// Skip leading spaces for the target segment, just as wordWrap does
+	// at the top of each continuation iteration. Without this, consumed
+	// break-spaces are included in the segment start offset, causing
+	// cursorVisualInfo to miscalculate the visual column and
+	// cursorPosFromVisual to land on the wrong buffer position.
+	if segmentIdx > 0 {
+		for i < n && runes[i] == ' ' {
+			i++
+		}
+	}
 	return i
 }
 

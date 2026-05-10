@@ -66,8 +66,7 @@ func applySingleOp(content string, op SearchReplace) (string, error) {
 	if hits := findMatches(contentLines, trimmedSearchLines, func(a, b string) bool {
 		return strings.TrimSpace(a) == strings.TrimSpace(b)
 	}); len(hits) == 1 {
-		absCtx := hasAbsoluteSearchIndent(contentLines, trimmedSearchLines, hits[0])
-		reIndented := reindent(contentLines[hits[0]], trimmedSearchLines[0], replaceLines, absCtx)
+		reIndented := reindentBlock(contentLines, trimmedSearchLines, hits[0], replaceLines)
 		return splice(contentLines, hits[0], len(trimmedSearchLines), reIndented), nil
 	} else if len(hits) > 1 {
 		return "", multiMatchErr(hits, "after whitespace normalisation", op.Search)
@@ -85,8 +84,7 @@ func applySingleOp(content string, op SearchReplace) (string, error) {
 		if hits := findMatches(contentLines, fullSearchLines, func(a, b string) bool {
 			return strings.TrimSpace(a) == strings.TrimSpace(b)
 		}); len(hits) == 1 {
-			absCtx := hasAbsoluteSearchIndent(contentLines, fullSearchLines, hits[0])
-			reIndented := reindent(contentLines[hits[0]], fullSearchLines[0], replaceLines, absCtx)
+			reIndented := reindentBlock(contentLines, fullSearchLines, hits[0], replaceLines)
 			return splice(contentLines, hits[0], len(fullSearchLines), reIndented), nil
 		} else if len(hits) > 1 {
 			return "", multiMatchErr(hits, "after whitespace normalisation (untrimmed)", op.Search)
@@ -105,8 +103,7 @@ func applySingleOp(content string, op SearchReplace) (string, error) {
 				return strings.Join(contentLines, "\n"), nil
 			}
 		}
-		absCtx := hasAbsoluteSearchIndent(contentLines, trimmedSearchLines, start)
-		reIndented := reindent(contentLines[start], trimmedSearchLines[0], replaceLines, absCtx)
+		reIndented := reindentBlock(contentLines, trimmedSearchLines, start, replaceLines)
 		return splice(contentLines, start, len(trimmedSearchLines), reIndented), nil
 	} else if len(subHits) > 1 {
 		return "", multiMatchErr(subHits, "by substring", op.Search)
@@ -228,19 +225,29 @@ func substringReplaceInLine(contentLine, searchLine string, replaceLines []strin
 
 // reindent adjusts replacement indentation based on the relationship between
 // the matched content line's indent and the original search line's indent.
-// absCtx indicates that some continuation search lines share the same leading
-// whitespace as their corresponding content lines (absolute indentation mode).
-// When absCtx is true and the first replacement line starts at column 0,
-// only column-0 replacement lines get the matched indent added; lines that
-// already carry indentation are left as-is.
-func reindent(matchedLine, searchLine string, replaceLines []string, absCtx bool) []string {
+// reindentBlock adjusts replacement indentation by comparing each search line's
+// leading whitespace against the corresponding content line's leading whitespace.
+//
+// When the model provides a search pattern starting mid-block (si == ""), some
+// continuation lines may already carry absolute file indentation while others are
+// at column 0 (relative). The per-line approach uses the content line's actual
+// leading WS (cws) as the target indent for each position where we have that info.
+// Lines where the search and content share the same leading WS (sws == cws) are
+// "absolute" — the model already placed them at the correct file depth.
+// Lines where sws != cws (search at col 0, content indented) are "relative" —
+// the model placed them at column 0 and they need the content's indent applied.
+func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLines []string) []string {
 	if len(replaceLines) == 0 {
 		return replaceLines
 	}
-	mi, si := leadingWS(matchedLine), leadingWS(searchLine)
+	mi := leadingWS(contentLines[matchStart])
+	si := leadingWS(searchLines[0])
+
+	// If the first line's indent matches, the whole block is likely already correct.
 	if mi == si {
 		return replaceLines
 	}
+
 	ri0 := leadingWS(replaceLines[0])
 
 	// Replacement already absolutely indented to matched level → pass through.
@@ -248,62 +255,84 @@ func reindent(matchedLine, searchLine string, replaceLines []string, absCtx bool
 		return replaceLines
 	}
 
-	// Replacement indented to search level → upgrade whole block.
-	if ri0 == si {
-		// When si == "" (search starts at column 0) and absCtx is true,
-		// continuation lines in the replacement already carry absolute file
-		// indentation. Only add mi to column-0 lines, not to all lines.
-		if si == "" && absCtx {
-			return addIndentToBaseline(replaceLines, mi)
-		}
-		return upgradeIndent(replaceLines, si, mi)
-	}
-
-	// Replacement starts unindented at top level → add matched indent everywhere,
-	// unless absCtx tells us continuation lines already have absolute indentation.
-	if ri0 == "" {
-		if absCtx {
-			return addIndentToBaseline(replaceLines, mi)
-		}
-		return addIndent(replaceLines, mi)
-	}
-
-	// Replacement has its own indentation intent we don't understand → leave as-is.
-	return replaceLines
-}
-
-// addIndentToBaseline adds indent only to replacement lines that have no leading
-// whitespace (the column-0 baseline). Lines that already carry indentation are
-// left untouched — they represent absolute file positions, not relative offsets.
-func addIndentToBaseline(lines []string, indent string) []string {
-	out := make([]string, len(lines))
-	for i, l := range lines {
-		if l == "" {
-			out[i] = ""
-		} else if leadingWS(l) == "" {
-			out[i] = indent + l
-		} else {
-			out[i] = l
-		}
-	}
-	return out
-}
-
-// hasAbsoluteSearchIndent returns true when any continuation search line (i>0)
-// has the same leading whitespace as the corresponding content line. This
-// indicates that the search pattern embeds absolute file indentation rather
-// than relative indentation from column 0.
-func hasAbsoluteSearchIndent(contentLines, searchLines []string, matchStart int) bool {
-	for i := 1; i < len(searchLines); i++ {
+	// Check if the search pattern mixes indentation levels — some lines at
+	// column 0 (relative) and others matching the file's actual indentation
+	// (absolute). Detected when any continuation search line has the same WS
+	// as its content counterpart.
+	mixedIndent := false
+	for i := 1; i < len(searchLines) && matchStart+i < len(contentLines); i++ {
 		sws := leadingWS(searchLines[i])
-		if sws != "" && matchStart+i < len(contentLines) {
+		cws := leadingWS(contentLines[matchStart+i])
+		if sws == cws {
+			mixedIndent = true
+			break
+		}
+	}
+
+	if !mixedIndent {
+		// No mixed indent — use the original block-wide logic.
+		if ri0 == si {
+			return upgradeIndent(replaceLines, si, mi)
+		}
+		if ri0 == "" {
+			return addIndent(replaceLines, mi)
+		}
+		return replaceLines
+	}
+
+	// Mixed indent: use per-line logic with content WS as the target.
+	// For each replacement line where we have content info, the content line's
+	// leading WS tells us the desired indent level at that position.
+	out := make([]string, len(replaceLines))
+	for i, rl := range replaceLines {
+		if rl == "" {
+			out[i] = ""
+			continue
+		}
+		rlws := leadingWS(rl)
+		if i < len(searchLines) && matchStart+i < len(contentLines) {
+			sws := leadingWS(searchLines[i])
 			cws := leadingWS(contentLines[matchStart+i])
 			if sws == cws {
-				return true
+				// Absolute line: search WS matches file WS.
+				// The model intended this line to be at cws depth.
+				if rlws == cws {
+					// Already at the right depth → keep as-is.
+					out[i] = rl
+				} else if rlws == "" {
+					// Model wrote at column 0 but file expects cws → add cws.
+					out[i] = cws + rl
+				} else if strings.HasPrefix(rlws, si) && si != "" {
+					// Model wrote relative to si → upgrade from si to cws.
+					out[i] = cws + rl[len(si):]
+				} else {
+					// Unknown intent — trust the model's indent.
+					out[i] = rl
+				}
+			} else {
+				// Relative line: search is at col 0, content is at cws.
+				// The replacement should be placed at cws depth.
+				if rlws == "" {
+					out[i] = cws + rl
+				} else if strings.HasPrefix(rlws, si) && si != "" {
+					out[i] = cws + rl[len(si):]
+				} else if rlws == cws {
+					out[i] = rl
+				} else {
+					// Unknown intent — shift entire indent by delta.
+					out[i] = cws + rl
+				}
+			}
+		} else {
+			// No content info for this line — fall back to block-level logic.
+			if rlws == "" {
+				out[i] = mi + rl
+			} else {
+				out[i] = rl
 			}
 		}
 	}
-	return false
+	return out
 }
 
 func upgradeIndent(lines []string, from, to string) []string {

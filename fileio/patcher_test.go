@@ -1346,6 +1346,51 @@ func TestApplySearchReplace_absoluteIndentSingleLineReplace(t *testing.T) {
 	}
 }
 
+func TestApplySearchReplace_mixedIndentLevelsAcrossBlock(t *testing.T) {
+	// Regression: search spans from inside a block to the top level.
+	// The closing } is at \t indent, and a blank line + top-level func follow.
+	// The \t} in the search matches \t} in the file (absolute), so the
+	// replacement } at column 0 should be re-indented to \t.
+	// The blank line stays blank. The top-level func line stays at column 0.
+	// Note: the search "func" line only matches as substring, so the full
+	// content line (with signature) gets replaced by just the search text.
+	content := "func foo() {\n\treturn i\n\t}\n\nfunc bar() {"
+	search := "return i\n\t}\n\nfunc bar"
+	replace := "return i\n}\n\nfunc bar"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// } gets re-indented from col 0 to \t (matching content's \t).
+	// func bar stays at col 0 (both search and content are at col 0 — absolute).
+	// But since splice replaces 4 lines including the full content line "func bar() {",
+	// and the replacement only has "func bar", the signature is lost.
+	want := "func foo() {\n\treturn i\n\t}\n\nfunc bar"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_mixedIndentTopLevelFuncNotDoubled(t *testing.T) {
+	// Search spans from indented code to top-level function.
+	// The top-level line must NOT get the block indent prepended.
+	content := "if true {\n\t\tdoStuff()\n\t}\n\nfunc next() {"
+	search := "doStuff()\n\t}\n\nfunc next"
+	replace := "doOther()\n}\n\nfunc next"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// doOther() at col 0 → gets \t\t (matching content's \t\t)
+	// } at col 0 → gets \t (matching content's \t from \t})
+	// blank line stays blank
+	// func next at col 0 → stays at col 0 (both search and content are at col 0)
+	want := "if true {\n\t\tdoOther()\n\t}\n\nfunc next"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
 // ============================================================================
 // assertEqual helper
 // ============================================================================
