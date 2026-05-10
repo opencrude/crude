@@ -149,27 +149,28 @@ func (m *Model) chatView() string {
 			selStart, selEnd := m.inputSelectionRange()
 			var inputLines []string
 
-			bufPos := 0
+			lineStartFlat := 0
 			for li, logLine := range lines {
 				logStr := string(logLine)
 				segments := wordWrap(logStr, textW)
 
-								for _, seg := range segments {
-									prefix := "❯ "
-									if li > 0 || bufPos > 0 {
-										prefix = "  "
-									}
+				for si, seg := range segments {
+					prefix := "❯ "
+					if li > 0 || si > 0 {
+						prefix = "  "
+					}
 					segRunes := []rune(seg)
-					segStart := bufPos
-					segEnd := bufPos + len(segRunes)
+					segLogicalStart := findSegmentStart(logLine, textW, si)
+					segFlatStart := lineStartFlat + segLogicalStart
+					segFlatEnd := segFlatStart + len(segRunes)
 
 					rendered := pad + lipgloss.NewStyle().Foreground(colorMainText).Render(prefix+seg)
-					if selStart < segEnd && selEnd > segStart {
-						localStart := selStart - segStart
+					if selStart < segFlatEnd && selEnd > segFlatStart {
+						localStart := selStart - segFlatStart
 						if localStart < 0 {
 							localStart = 0
 						}
-						localEnd := selEnd - segStart
+						localEnd := selEnd - segFlatStart
 						if localEnd > len(segRunes) {
 							localEnd = len(segRunes)
 						}
@@ -188,9 +189,9 @@ func (m *Model) chatView() string {
 					inputLines = append(inputLines, rendered)
 				}
 
-				bufPos += len(logLine)
+				lineStartFlat += len(logLine)
 				if li < len(lines)-1 {
-					bufPos++ // account for \n between logical lines
+					lineStartFlat++ // account for \n between logical lines
 				}
 			}
 
@@ -199,11 +200,6 @@ func (m *Model) chatView() string {
 			lines := m.inputLines()
 			curLine, curCol := m.cursorLineCol()
 			textW := m.inputTextWidth()
-
-			cursorLineWidth := 0
-			if curLine < len(lines) {
-				cursorLineWidth = runewidth.StringWidth(string(lines[curLine][:curCol]))
-			}
 
 			var inputLines []string
 
@@ -214,22 +210,23 @@ func (m *Model) chatView() string {
 				cursorSeg := -1
 				cursorSegOffset := 0
 				if li == curLine {
-					accumW := 0
-					for si, seg := range segments {
-						segW := runewidth.StringWidth(seg)
-						if cursorLineWidth <= accumW+segW {
+					for si := range segments {
+						segStart := findSegmentStart(lines[curLine], textW, si)
+						segEnd := segStart + len([]rune(segments[si]))
+						if curCol <= segEnd || si == len(segments)-1 {
 							cursorSeg = si
-							cursorSegOffset = cursorLineWidth - accumW
-							if cursorSegOffset < 0 {
+							if curCol >= segStart {
+								cursorSegOffset = runewidth.StringWidth(string(lines[curLine][segStart:curCol]))
+							} else {
 								cursorSegOffset = 0
 							}
 							break
 						}
-						accumW += segW
 					}
 					if cursorSeg == -1 && len(segments) > 0 {
 						cursorSeg = len(segments) - 1
-						cursorSegOffset = runewidth.StringWidth(segments[len(segments)-1])
+						segStart := findSegmentStart(lines[curLine], textW, cursorSeg)
+						cursorSegOffset = runewidth.StringWidth(string(lines[curLine][segStart:]))
 					}
 				}
 
