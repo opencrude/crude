@@ -321,7 +321,7 @@ func (m *Model) mouseToInputPos(mouseX, mouseY int) (runeIdx int, ok bool) {
 	lines := m.inputLines()
 	visIdx := 0
 	for li, logLine := range lines {
-		segments := hardWrap(string(logLine), textW)
+		segments := wordWrap(string(logLine), textW)
 		for si, seg := range segments {
 			if visIdx == relY {
 				col := mouseX - padLR - 2
@@ -337,21 +337,17 @@ func (m *Model) mouseToInputPos(mouseX, mouseY int) (runeIdx int, ok bool) {
 				for i := 0; i < li; i++ {
 					pos += len(lines[i]) + 1
 				}
-				runesBefore := 0
-				for j := 0; j < si; j++ {
-					runesBefore += len([]rune(segments[j]))
-				}
-				colInRunes := 0
+				segRuneIdx := 0
 				colW := 0
 				segRunes := []rune(seg)
-				for colInRunes < len(segRunes) && colW < col {
-					colW += runewidth.RuneWidth(segRunes[colInRunes])
+				for segRuneIdx < len(segRunes) && colW < col {
+					colW += runewidth.RuneWidth(segRunes[segRuneIdx])
 					if colW > col {
 						break
 					}
-					colInRunes++
+					segRuneIdx++
 				}
-				pos += runesBefore + colInRunes
+				pos += findSegmentStart(logLine, textW, si) + segRuneIdx
 				return pos, true
 			}
 			visIdx++
