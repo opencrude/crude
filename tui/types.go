@@ -61,15 +61,21 @@ type AgentEventMsg struct {
 
 // Settings holds all user-configurable options, passed between TUI and main.
 type Settings struct {
-	APIKey                   string
-	Model                    string
-	ModelContextWindow       int
+	APIKey             string
+	Model              string
+	ModelContextWindow int
+	MainInputPrice     float64
+	MainOutputPrice    float64
+	MainCacheReadPrice float64
 	OracleModel              string
 	OracleModelContextWindow int
-	ProviderID               string
-	ProviderURL              string
-	ProviderAPIKey           string
-	ThinkingEffort           string
+	OracleInputPrice         float64
+	OracleOutputPrice        float64
+	OracleCacheReadPrice     float64
+	ProviderID         string
+	ProviderURL        string
+	ProviderAPIKey     string
+	ThinkingEffort     string
 }
 
 // ModelEntry represents a model available on a provider.
@@ -77,6 +83,9 @@ type ModelEntry struct {
 	ID            string
 	Name          string
 	ContextWindow int
+	InputPrice    float64 // per token, from models.dev
+	OutputPrice   float64 // per token, from models.dev
+	CacheReadPrice float64 // per token, from models.dev
 }
 
 // Internal Bubble Tea messages

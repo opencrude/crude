@@ -79,14 +79,16 @@ func WebSearch(query string, maxResults int) (string, error) {
 
 // WebPage is extracted page content.
 type WebPage struct {
-	URL     string
-	Title   string
-	Content string
+	URL        string
+	Title      string
+	Content    string
+	TotalChars int
 }
 
 // WebFetch fetches a URL and extracts its text content with smart extraction
-// and robust error handling.
-func WebFetch(rawURL string, maxChars int) (string, error) {
+// and robust error handling. offset is 1-based character position (0 = start).
+// limit is max chars to return (0 = all).
+func WebFetch(rawURL string, offset, limit int) (string, error) {
 	if rawURL == "" {
 		return "", fmt.Errorf("fetch: empty URL")
 	}
@@ -95,7 +97,7 @@ func WebFetch(rawURL string, maxChars int) (string, error) {
 		rawURL = "https://" + rawURL
 	}
 
-	result, err := fetchWebContent(rawURL, maxChars)
+	result, err := fetchWebContent(rawURL, offset, limit)
 	if err != nil {
 		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
 			return "", fmt.Errorf("fetch: request timed out for %s — the site may be slow or blocking automated requests. Try again or try a different URL", rawURL)
@@ -113,16 +115,28 @@ func WebFetch(rawURL string, maxChars int) (string, error) {
 		return fmt.Sprintf("No content could be extracted from %s\n\nThe page may be:\n- A JavaScript-rendered single-page app (try a different URL)\n- Empty or requiring authentication\n- A binary file (PDF, image, etc.)", rawURL), nil
 	}
 
+	totalChars := result.TotalChars
+
 	var sb strings.Builder
 	if result.Title != "" {
 		sb.WriteString(fmt.Sprintf("Title: %s\n", result.Title))
 	}
-	sb.WriteString(fmt.Sprintf("URL: %s\n\n", result.URL))
+	sb.WriteString(fmt.Sprintf("URL: %s\n", result.URL))
+
+	if (offset > 1 || limit > 0) && totalChars > 0 {
+		endPos := offset + len([]rune(result.Content)) - 1
+		if limit > 0 && offset+limit-1 < endPos {
+			endPos = offset + limit - 1
+		}
+		sb.WriteString(fmt.Sprintf("Characters %d–%d of %s (%d total):\n\n", offset, endPos, result.URL, totalChars))
+	} else {
+		sb.WriteString(fmt.Sprintf("Total characters: %d\n\n", totalChars))
+	}
 	sb.WriteString(result.Content)
 	return sb.String(), nil
 }
 
-func fetchWebContent(fetchURL string, maxChars int) (*WebPage, error) {
+func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
 	req, err := http.NewRequest("GET", fetchURL, nil)
 	if err != nil {
 		return nil, err
@@ -157,13 +171,13 @@ func fetchWebContent(fetchURL string, maxChars int) (*WebPage, error) {
 				return nil, err
 			}
 			content := string(body)
-			if maxChars > 0 && len(content) > maxChars {
-				content = content[:maxChars] + "\n\n[content truncated]"
-			}
+			totalChars := len([]rune(content))
+			content = sliceContent(content, offset, limit)
 			return &WebPage{
-				URL:     finalURL,
-				Title:   "",
-				Content: content,
+				URL:        finalURL,
+				Title:      "",
+				Content:    content,
+				TotalChars: totalChars,
 			}, nil
 		}
 		return nil, fmt.Errorf("unsupported content type %q — this appears to be a binary file (PDF, image, etc.). Try accessing the URL directly in a browser", contentType)
@@ -205,13 +219,38 @@ func fetchWebContent(fetchURL string, maxChars int) (*WebPage, error) {
 
 	rawContent = strings.Join(strings.Fields(rawContent), " ")
 
-	if maxChars > 0 && len(rawContent) > maxChars {
-		rawContent = rawContent[:maxChars] + "\n\n[content truncated — specify higher max_chars or read in sections]"
-	}
+	totalChars := len([]rune(rawContent))
+	rawContent = sliceContent(rawContent, offset, limit)
 
 	return &WebPage{
-		URL:     finalURL,
-		Title:   title,
-		Content: rawContent,
+		URL:        finalURL,
+		Title:      title,
+		Content:    rawContent,
+		TotalChars: totalChars,
 	}, nil
+}
+
+// sliceContent extracts a character range from content.
+// offset is 1-based (0 or 1 = start). limit is max chars, 0 = all.
+func sliceContent(content string, offset, limit int) string {
+	runes := []rune(content)
+	total := len(runes)
+
+	start := 0
+	if offset > 1 {
+		start = offset - 1
+	}
+	if start >= total {
+		return ""
+	}
+
+	if limit <= 0 {
+		return string(runes[start:])
+	}
+
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	return string(runes[start:end])
 }

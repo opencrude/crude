@@ -27,13 +27,23 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	APIKey                   string `json:"api_key,omitempty"`
-	Model                    string `json:"model,omitempty"`
-	ModelContextWindow       int    `json:"model_context_window,omitempty"`
-	OracleModel              string `json:"oracle_model,omitempty"`
+	APIKey         string `json:"api_key,omitempty"`
+	Model          string `json:"model,omitempty"`
+	ProviderURL    string `json:"provider_url,omitempty"`
+	ThinkingEffort string `json:"thinking_effort,omitempty"`
+
+	// Main model metadata
+	ModelContextWindow  int     `json:"model_context_window,omitempty"`
+	MainInputPrice      float64 `json:"main_input_price,omitempty"`
+	MainOutputPrice     float64 `json:"main_output_price,omitempty"`
+	MainCacheReadPrice  float64 `json:"main_cache_read_price,omitempty"`
+
+	// Oracle model metadata
+	OracleModel              string  `json:"oracle_model,omitempty"`
 	OracleModelContextWindow int    `json:"oracle_model_context_window,omitempty"`
-	ProviderURL              string `json:"provider_url,omitempty"`
-	ThinkingEffort           string `json:"thinking_effort,omitempty"`
+	OracleInputPrice         float64 `json:"oracle_input_price,omitempty"`
+	OracleOutputPrice        float64 `json:"oracle_output_price,omitempty"`
+	OracleCacheReadPrice     float64 `json:"oracle_cache_read_price,omitempty"`
 }
 
 type Session struct {
@@ -71,8 +81,22 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	if activeCfg.ModelContextWindow > 0 {
 		provider.SetModelContext(activeCfg.Model, activeCfg.ModelContextWindow)
 	}
+	if activeCfg.MainInputPrice > 0 {
+		provider.SetModelPrice(activeCfg.Model, provider.ModelPrice{
+			InputPricePerToken:       activeCfg.MainInputPrice,
+			OutputPricePerToken:      activeCfg.MainOutputPrice,
+			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
+		})
+	}
 	if activeCfg.OracleModelContextWindow > 0 {
 		provider.SetModelContext(activeCfg.OracleModel, activeCfg.OracleModelContextWindow)
+	}
+	if activeCfg.OracleInputPrice > 0 {
+		provider.SetModelPrice(activeCfg.OracleModel, provider.ModelPrice{
+			InputPricePerToken:       activeCfg.OracleInputPrice,
+			OutputPricePerToken:      activeCfg.OracleOutputPrice,
+			InputCachedPricePerToken: activeCfg.OracleCacheReadPrice,
+		})
 	}
 	exec := fileio.NewLocalExec()
 
@@ -194,7 +218,7 @@ func (s *Session) newAgent() *agent.Agent {
 				DecisionPoint: getStrParam(params, "decision_point"),
 				Constraints:   getStrParam(params, "constraints"),
 			}
-			resp, err := agent.ConsultOracle(a.Ctx, oracleProvider, oracleModel, query)
+			resp, err := agent.ConsultOracle(a.Ctx, oracleProvider, oracleModel, query, a.Emit)
 			if err != nil {
 				s.logger.Error("oracle.error", "error", err.Error())
 				return "", fmt.Errorf("oracle consultation failed: %w", err)
@@ -570,8 +594,22 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 	if activeCfg.ModelContextWindow > 0 {
 		provider.SetModelContext(activeCfg.Model, activeCfg.ModelContextWindow)
 	}
+	if activeCfg.MainInputPrice > 0 {
+		provider.SetModelPrice(activeCfg.Model, provider.ModelPrice{
+			InputPricePerToken:       activeCfg.MainInputPrice,
+			OutputPricePerToken:      activeCfg.MainOutputPrice,
+			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
+		})
+	}
 	if activeCfg.OracleModelContextWindow > 0 {
 		provider.SetModelContext(activeCfg.OracleModel, activeCfg.OracleModelContextWindow)
+	}
+	if activeCfg.OracleInputPrice > 0 {
+		provider.SetModelPrice(activeCfg.OracleModel, provider.ModelPrice{
+			InputPricePerToken:       activeCfg.OracleInputPrice,
+			OutputPricePerToken:      activeCfg.OracleOutputPrice,
+			InputCachedPricePerToken: activeCfg.OracleCacheReadPrice,
+		})
 	}
 	return nil
 }
@@ -582,13 +620,28 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.M
 	if err != nil {
 		return nil, err
 	}
+
+	// Enrich with models.dev data (context window + pricing).
+	metas, mdErr := provider.FetchModelsDevAll()
+
 	entries := make([]tui.ModelEntry, len(models))
 	for i, m := range models {
-		entries[i] = tui.ModelEntry{
+		entry := tui.ModelEntry{
 			ID:            m.ID,
 			Name:          m.Name,
 			ContextWindow: m.ContextWindow,
 		}
+		if mdErr == nil {
+			if meta := provider.LookupModelMeta(m.ID, metas); meta != nil {
+				if entry.ContextWindow == 0 {
+					entry.ContextWindow = meta.ContextWindow
+				}
+				entry.InputPrice = meta.InputPrice
+				entry.OutputPrice = meta.OutputPrice
+				entry.CacheReadPrice = meta.CacheReadPrice
+			}
+		}
+		entries[i] = entry
 	}
 	return entries, nil
 }
@@ -685,7 +738,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 		}()
 
-		agentMsgs := ag.Run(ctx, msgsCopy, prompt, func(evt agent.AgentEvent) {
+		oracleEmit := func(evt agent.AgentEvent) {
 			if evt.Type == "blocking" {
 				data, _ := evt.Data.(map[string]string)
 				if data != nil {
@@ -719,7 +772,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				tuiInst.SendAgentEvent(evt.Type, evt.Data)
 				return
 			}
-if evt.Type == "confirmation_always" {
+			if evt.Type == "confirmation_always" {
 				if data, ok := evt.Data.(map[string]string); ok {
 					opStr := data["operation"]
 					tool := data["tool"]
@@ -754,7 +807,9 @@ if evt.Type == "confirmation_always" {
 					}
 				}
 			}
-		}, blockResolveCh, s.sm, s.sessionID)
+		}
+		ag.Emit = oracleEmit
+		agentMsgs := ag.Run(ctx, msgsCopy, prompt, oracleEmit, blockResolveCh, s.sm, s.sessionID)
 
 		cancel()
 
@@ -824,17 +879,35 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 
 	ctxWindow := 0
 	oracleCtxWindow := 0
+	mainInputPrice := 0.0
+	mainOutputPrice := 0.0
+	mainCacheReadPrice := 0.0
+	oracleInputPrice := 0.0
+	oracleOutputPrice := 0.0
+	oracleCacheReadPrice := 0.0
 	if pc, ok := cfg.Providers[providerID]; ok {
 		ctxWindow = pc.ModelContextWindow
 		oracleCtxWindow = pc.OracleModelContextWindow
+		mainInputPrice = pc.MainInputPrice
+		mainOutputPrice = pc.MainOutputPrice
+		mainCacheReadPrice = pc.MainCacheReadPrice
+		oracleInputPrice = pc.OracleInputPrice
+		oracleOutputPrice = pc.OracleOutputPrice
+		oracleCacheReadPrice = pc.OracleCacheReadPrice
 	}
 
 	return tui.Settings{
 		APIKey:                   apiKey,
 		Model:                    model,
 		ModelContextWindow:       ctxWindow,
+		MainInputPrice:           mainInputPrice,
+		MainOutputPrice:          mainOutputPrice,
+		MainCacheReadPrice:       mainCacheReadPrice,
 		OracleModel:              oracleModel,
 		OracleModelContextWindow: oracleCtxWindow,
+		OracleInputPrice:         oracleInputPrice,
+		OracleOutputPrice:        oracleOutputPrice,
+		OracleCacheReadPrice:     oracleCacheReadPrice,
 		ProviderID:               providerID,
 		ProviderURL:              providerURL,
 		ProviderAPIKey:           apiKey,
@@ -861,8 +934,14 @@ func settingsToConfig(s tui.Settings, base *Config) *Config {
 		APIKey:                   apiKey,
 		Model:                    s.Model,
 		ModelContextWindow:       s.ModelContextWindow,
+		MainInputPrice:           s.MainInputPrice,
+		MainOutputPrice:          s.MainOutputPrice,
+		MainCacheReadPrice:       s.MainCacheReadPrice,
 		OracleModel:              s.OracleModel,
 		OracleModelContextWindow: s.OracleModelContextWindow,
+		OracleInputPrice:         s.OracleInputPrice,
+		OracleOutputPrice:        s.OracleOutputPrice,
+		OracleCacheReadPrice:     s.OracleCacheReadPrice,
 		ProviderURL:              s.ProviderURL,
 		ThinkingEffort:           s.ThinkingEffort,
 	}

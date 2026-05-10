@@ -297,12 +297,15 @@ var AgentTools = []ToolDef{
 			Name: "web_fetch",
 			Description: "Fetch and extract readable content from a URL. " +
 				"Returns the main text content of a web page, stripped of HTML markup. " +
+				"Use offset and limit to read a specific range of characters (like read_file). " +
+				"First fetch gives the total content length — use offset/limit for subsequent pagination. " +
 				"Use to read documentation, articles, or any web page content.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"url":{"type":"string","description":"URL to fetch content from"},
-					"max_chars":{"type":"integer","description":"Maximum characters to return (optional; 0 = no limit)"}
+					"offset":{"type":"integer","description":"Starting character position (1-based, optional; default: 1)"},
+					"limit":{"type":"integer","description":"Maximum characters to return (optional; default: 0 = all)"}
 				},
 				"required":["url"]
 			}`),

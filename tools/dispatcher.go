@@ -400,8 +400,9 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		return result
 
 	case "web_fetch":
-		maxChars := GetIntArgAny(params, "max_chars", 0)
-		result, err := search.WebFetch(GetStrArg(params, "url", ""), maxChars)
+		offset := GetIntArgAny(params, "offset", 0)
+		limit := GetIntArgAny(params, "limit", 0)
+		result, err := search.WebFetch(GetStrArg(params, "url", ""), offset, limit)
 		if err != nil {
 			return "Fetch error: " + err.Error()
 		}
