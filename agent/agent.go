@@ -51,6 +51,7 @@ type Agent struct {
 	logger         *logger.Logger
 	OracleProvider *provider.Provider
 	OracleModel    string
+	Emit           func(AgentEvent) // for forwarding streaming events from tools (e.g. oracle reasoning)
 	Ctx            context.Context
 	Yolo           bool
 	AsyncMgr       *fileio.AsyncCommandManager

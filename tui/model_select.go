@@ -19,9 +19,15 @@ func (p inlineSettings) updateModelSelect(msg tea.KeyMsg) (inlineSettings, tea.C
 			selected := p.filteredModels[p.modelListIdx]
 			p.fields[sfModel].value = []rune(selected.ID)
 			p.modelContextWindow = selected.ContextWindow
+			p.modelInputPrice = selected.InputPrice
+			p.modelOutputPrice = selected.OutputPrice
+			p.modelCacheReadPrice = selected.CacheReadPrice
 		} else if p.modelSearch != "" {
 			p.fields[sfModel].value = []rune(p.modelSearch)
 			p.modelContextWindow = 0
+			p.modelInputPrice = 0
+			p.modelOutputPrice = 0
+			p.modelCacheReadPrice = 0
 		}
 		p.isModelSelect = false
 		p.modelSearch = ""
@@ -112,9 +118,15 @@ func (p inlineSettings) updateOracleModelSelect(msg tea.KeyMsg) (inlineSettings,
 			selected := p.filteredOracleModels[p.oracleModelListIdx]
 			p.fields[sfOracleModel].value = []rune(selected.ID)
 			p.oracleModelContextWindow = selected.ContextWindow
+			p.oracleInputPrice = selected.InputPrice
+			p.oracleOutputPrice = selected.OutputPrice
+			p.oracleCacheReadPrice = selected.CacheReadPrice
 		} else if p.oracleModelSearch != "" {
 			p.fields[sfOracleModel].value = []rune(p.oracleModelSearch)
 			p.oracleModelContextWindow = 0
+			p.oracleInputPrice = 0
+			p.oracleOutputPrice = 0
+			p.oracleCacheReadPrice = 0
 		}
 		p.isOracleModelSelect = false
 		p.oracleModelSearch = ""

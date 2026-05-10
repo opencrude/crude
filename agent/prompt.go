@@ -129,7 +129,16 @@ Key rules for anchors:
 Prefer edit_file when you know the exact text to change. Use delete_lines/replace_lines only when:
 - You need to remove a large block and don't know its exact content
 - You know the boundary lines but the interior is too large or complex to copy
-- edit_file fails with "not found" and you want an alternative approach`
+- edit_file fails with "not found" and you want an alternative approach
+
+## Web Fetching (web_fetch)
+- **web_fetch(url, offset?, limit?)** — Fetches and extracts readable content from a URL.
+- Use like read_file: the first fetch returns total character count. For long pages, use **offset** (1-based, default: 1) and **limit** (max chars, default: 0=all) to paginate.
+- Example flow:
+  1. web_fetch(url="https://example.com") — returns full content with "Total characters: N"
+  2. web_fetch(url="...", offset=1, limit=5000) — first 5000 chars
+  3. web_fetch(url="...", offset=5001, limit=5000) — next 5000 chars
+- Output shows a header like "Characters X–Y of URL (N total):" when offset/limit are used, so you always know the full content size.`
 
 func BuildSystemPrompt() string {
 	shell := os.Getenv("SHELL")

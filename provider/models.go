@@ -9,13 +9,16 @@ import (
 	"time"
 )
 
+// ModelInfo is a minimal model descriptor returned by the Models API.
 type ModelInfo struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	ContextWindow int               `json:"context_window"`
-	Pricing       map[string]string `json:"pricing,omitempty"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	ContextWindow int    `json:"context_window"`
 }
 
+// FetchModels retrieves the model list from a provider's /models endpoint.
+// No pricing or context metadata is fetched here — that happens in the
+// session layer via HandleFetchModels (which also consults models.dev).
 func FetchModels(p *Provider) ([]ModelInfo, error) {
 	if p == nil {
 		return nil, fmt.Errorf("provider is nil")
@@ -59,30 +62,6 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 	models, err := p.standard.DecodeModels(body)
 	if err != nil {
 		return nil, fmt.Errorf("parse models: %w", err)
-	}
-
-	// If any model is missing a context window (common for providers
-	// whose /models endpoint doesn't include context_length), fall
-	// back to models.dev — an open-source metadata database.
-	missingCtx := false
-	for _, m := range models {
-		if m.ContextWindow == 0 {
-			missingCtx = true
-			break
-		}
-	}
-
-	if missingCtx {
-		if mdCtx, mdErr := FetchModelsDevContext(p.ID); mdErr == nil {
-			for i, m := range models {
-				if m.ContextWindow == 0 {
-					if ctx, ok := mdCtx[strings.ToLower(m.ID)]; ok {
-						models[i].ContextWindow = ctx
-						SetModelContext(m.ID, ctx)
-					}
-				}
-			}
-		}
 	}
 
 	sort.Slice(models, func(i, j int) bool {

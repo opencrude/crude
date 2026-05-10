@@ -6,12 +6,19 @@ import (
 	"sync"
 )
 
+// ModelPrice holds per-token pricing for a single model, used for manual
+// cost calculation via CalculateCost. Prices are populated from models.dev
+// (or another canonical source) and cached in the config file.
 type ModelPrice struct {
 	InputPricePerToken       float64
 	OutputPricePerToken      float64
 	InputCachedPricePerToken float64
 }
 
+// CalculateCost computes the cost of a request given token counts.
+// cachedTokens are tokens that were served from a prompt cache (read at
+// InputCachedPricePerToken). The remainder (promptTokens - cachedTokens)
+// is charged at the full InputPricePerToken.
 func (p ModelPrice) CalculateCost(promptTokens, completionTokens, cachedTokens int) float64 {
 	newPromptTokens := promptTokens - cachedTokens
 	if newPromptTokens < 0 {
@@ -26,62 +33,87 @@ func (p ModelPrice) CalculateCost(promptTokens, completionTokens, cachedTokens i
 	return inputCost + outputCost
 }
 
+// ModelMeta is the serialisable form of a model's metadata, used to persist
+// pricing and context-window information to the config file.
+type ModelMeta struct {
+	ContextWindow  int     `json:"context_window"`
+	InputPrice     float64 `json:"input_price"`      // USD per token
+	OutputPrice    float64 `json:"output_price"`      // USD per token
+	CacheReadPrice float64 `json:"cache_read_price"` // USD per token
+}
+
+// ToModelPrice converts ModelMeta to ModelPrice for cost calculation.
+func (m ModelMeta) ToModelPrice() ModelPrice {
+	return ModelPrice{
+		InputPricePerToken:       m.InputPrice,
+		OutputPricePerToken:      m.OutputPrice,
+		InputCachedPricePerToken: m.CacheReadPrice,
+	}
+}
+
+// FromModelPrice converts a ModelPrice back to ModelMeta, supplementing
+// it with a context window.
+func FromModelPrice(price ModelPrice, contextWindow int) ModelMeta {
+	return ModelMeta{
+		ContextWindow:  contextWindow,
+		InputPrice:     price.InputPricePerToken,
+		OutputPrice:    price.OutputPricePerToken,
+		CacheReadPrice: price.InputCachedPricePerToken,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic pricing map — populated at runtime from models.dev (or OpenRouter
+// API when available) and persisted to the config file.
+// ---------------------------------------------------------------------------
+
 var (
 	dynamicPrices   = make(map[string]ModelPrice)
 	dynamicPricesMu sync.RWMutex
 )
 
+// SetModelPrice stores a price entry for a model ID (case-insensitive).
 func SetModelPrice(modelID string, price ModelPrice) {
 	dynamicPricesMu.Lock()
 	dynamicPrices[strings.ToLower(modelID)] = price
 	dynamicPricesMu.Unlock()
 }
 
-var modelPrices = []struct {
-	pattern string
-	price   ModelPrice
-}{
-	{"gpt-4o", ModelPrice{2.50 / 1e6, 10.00 / 1e6, 1.25 / 1e6}},
-	{"gpt-4o-mini", ModelPrice{0.15 / 1e6, 0.60 / 1e6, 0.075 / 1e6}},
-	{"gpt-4-turbo", ModelPrice{10.00 / 1e6, 30.00 / 1e6, 0}},
-	{"gpt-4", ModelPrice{30.00 / 1e6, 60.00 / 1e6, 0}},
-	{"gpt-3.5-turbo", ModelPrice{0.50 / 1e6, 1.50 / 1e6, 0}},
-	{"o1", ModelPrice{15.00 / 1e6, 60.00 / 1e6, 7.50 / 1e6}},
-	{"o3-mini", ModelPrice{1.10 / 1e6, 4.40 / 1e6, 0.55 / 1e6}},
-
-	{"claude-3.5-sonnet", ModelPrice{3.00 / 1e6, 15.00 / 1e6, 0.30 / 1e6}},
-	{"claude-3-opus", ModelPrice{15.00 / 1e6, 75.00 / 1e6, 1.50 / 1e6}},
-	{"claude-3-haiku", ModelPrice{0.25 / 1e6, 1.25 / 1e6, 0.03 / 1e6}},
-	{"claude-3-sonnet", ModelPrice{3.00 / 1e6, 15.00 / 1e6, 0.30 / 1e6}},
-	{"claude-sonnet-4", ModelPrice{3.00 / 1e6, 15.00 / 1e6, 0.30 / 1e6}},
-
-	{"gemini-2.0-flash", ModelPrice{0.10 / 1e6, 0.40 / 1e6, 0.025 / 1e6}},
-	{"gemini-2.0-pro", ModelPrice{2.00 / 1e6, 8.00 / 1e6, 0.50 / 1e6}},
-	{"gemini-1.5-flash", ModelPrice{0.075 / 1e6, 0.30 / 1e6, 0.01875 / 1e6}},
-	{"gemini-1.5-pro", ModelPrice{3.50 / 1e6, 10.50 / 1e6, 0.875 / 1e6}},
-	{"gemini-2.5-pro", ModelPrice{1.25 / 1e6, 10.00 / 1e6, 0.3125 / 1e6}},
-
-	{"deepseek-chat", ModelPrice{0.27 / 1e6, 1.10 / 1e6, 0.07 / 1e6}},
-	{"deepseek-reasoner", ModelPrice{0.55 / 1e6, 2.19 / 1e6, 0.14 / 1e6}},
-	{"deepseek-v3", ModelPrice{0.27 / 1e6, 1.10 / 1e6, 0.07 / 1e6}},
-
-	{"mistral-large", ModelPrice{2.00 / 1e6, 6.00 / 1e6, 0}},
-	{"mistral-small", ModelPrice{0.20 / 1e6, 0.60 / 1e6, 0}},
-	{"codestral", ModelPrice{1.00 / 1e6, 3.00 / 1e6, 0}},
-
-	{"llama-3.3-70b", ModelPrice{0.59 / 1e6, 0.79 / 1e6, 0}},
-	{"llama-3.1-8b", ModelPrice{0.05 / 1e6, 0.05 / 1e6, 0}},
-	{"llama-3.2-3b", ModelPrice{0.03 / 1e6, 0.06 / 1e6, 0}},
-	{"llama-3.2-1b", ModelPrice{0.02 / 1e6, 0.04 / 1e6, 0}},
-
-	{"qwen-2.5-72b", ModelPrice{0.90 / 1e6, 0.90 / 1e6, 0}},
-	{"qwen-2.5-coder-32b", ModelPrice{0.90 / 1e6, 0.90 / 1e6, 0}},
-	{"qwen-max", ModelPrice{2.00 / 1e6, 6.00 / 1e6, 0}},
-
-	{"groq", ModelPrice{0, 0, 0}},
-
-	{"free", ModelPrice{0, 0, 0}},
+// SetModelMeta stores both pricing and context window from a ModelMeta value.
+func SetModelMeta(modelID string, meta ModelMeta) {
+	dynamicPricesMu.Lock()
+	dynamicPrices[strings.ToLower(modelID)] = meta.ToModelPrice()
+	dynamicPricesMu.Unlock()
+	if meta.ContextWindow > 0 {
+		SetModelContext(modelID, meta.ContextWindow)
+	}
 }
+
+// LoadModelMetas bulk-loads a map of model metadata (e.g. from config).
+// Existing entries for the same model IDs are overwritten.
+func LoadModelMetas(metas map[string]ModelMeta) {
+	for id, meta := range metas {
+		SetModelMeta(id, meta)
+	}
+}
+
+// GetAllModelMetas returns a snapshot of every cached model metadata,
+// suitable for serialisation to the config file.
+func GetAllModelMetas() map[string]ModelMeta {
+	dynamicPricesMu.RLock()
+	defer dynamicPricesMu.RUnlock()
+
+	result := make(map[string]ModelMeta, len(dynamicPrices))
+	for id, price := range dynamicPrices {
+		ctx := LookupContextWindow(id)
+		result[id] = FromModelPrice(price, ctx)
+	}
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// Known free-model suffixes.
+// ---------------------------------------------------------------------------
 
 var knownFreePrefixes = []string{
 	":free",
@@ -89,9 +121,44 @@ var knownFreePrefixes = []string{
 	"/free",
 }
 
+// stripProviderPrefix removes the leading "provider/" prefix from a model ID.
+// Example: "openai/gpt-4o" → "gpt-4o", "gpt-4o" → "gpt-4o".
+func stripProviderPrefix(modelID string) string {
+	if idx := strings.Index(modelID, "/"); idx > 0 && idx < len(modelID)-1 {
+		return modelID[idx+1:]
+	}
+	return modelID
+}
+
+// StripProviderPrefix is the exported version of stripProviderPrefix.
+func StripProviderPrefix(modelID string) string {
+	return stripProviderPrefix(modelID)
+}
+
+// LookupModelMeta looks up a model ID (which may have a provider/ prefix) in
+// a models.dev result map and returns the ModelMeta if found.  Returns nil
+// when the model is not present.
+func LookupModelMeta(modelID string, metas map[string]ModelMeta) *ModelMeta {
+	lower := strings.ToLower(modelID)
+	if meta, ok := metas[lower]; ok {
+		return &meta
+	}
+	if stripped := stripProviderPrefix(lower); stripped != lower {
+		if meta, ok := metas[stripped]; ok {
+			return &meta
+		}
+	}
+	return nil
+}
+
+// LookupPrice finds the best-known price for a model.  It first tries an
+// exact match against the dynamic price map, then tries stripping any
+// "provider/" prefix to match against the base model name.  Models whose
+// IDs contain a known free suffix always return zero pricing.
 func LookupPrice(model string) ModelPrice {
 	lower := strings.ToLower(model)
 
+	// Exact match.
 	dynamicPricesMu.RLock()
 	if p, ok := dynamicPrices[lower]; ok {
 		dynamicPricesMu.RUnlock()
@@ -99,21 +166,30 @@ func LookupPrice(model string) ModelPrice {
 	}
 	dynamicPricesMu.RUnlock()
 
-	for _, entry := range modelPrices {
-		if strings.Contains(lower, entry.pattern) {
-			return entry.price
+	// Try without the provider prefix (e.g. "openai/gpt-4o" → "gpt-4o").
+	if stripped := stripProviderPrefix(lower); stripped != lower {
+		dynamicPricesMu.RLock()
+		if p, ok := dynamicPrices[stripped]; ok {
+			dynamicPricesMu.RUnlock()
+			return p
 		}
+		dynamicPricesMu.RUnlock()
 	}
 
+	// Free variant suffixes.
 	for _, prefix := range knownFreePrefixes {
 		if strings.Contains(lower, prefix) {
 			return ModelPrice{0, 0, 0}
 		}
 	}
 
-	return ModelPrice{1.00 / 1e6, 3.00 / 1e6, 0}
+	return ModelPrice{0, 0, 0}
 }
 
+// ParseModelPricing parses pricing from the OpenRouter Models API format
+// (map[string]string where values are already in USD per token).  This is
+// kept for future OpenRouter-specific integrations; the primary pricing
+// source is now models.dev.
 func ParseModelPricing(modelID string, pricing map[string]string) {
 	if pricing == nil {
 		return
@@ -132,7 +208,7 @@ func ParseModelPricing(modelID string, pricing map[string]string) {
 		return
 	}
 	SetModelPrice(modelID, ModelPrice{
-		InputPricePerToken:  promptPrice / 1e6,
-		OutputPricePerToken: completionPrice / 1e6,
+		InputPricePerToken:  promptPrice, // already per token
+		OutputPricePerToken: completionPrice,
 	})
 }

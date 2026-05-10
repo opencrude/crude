@@ -122,7 +122,7 @@ func (p *inlineSettings) View(spinFrame int) string {
 		errorStyle := lipgloss.NewStyle().Foreground(colorError)
 		highlightStyle := lipgloss.NewStyle().Foreground(colorMainText).Background(lipgloss.Color("#1e2a3a"))
 
-		b.WriteString(accentStyle.Bold(true).Render("  oracle model select"))
+		b.WriteString("\n" + accentStyle.Bold(true).Render("oracle model select"))
 		if p.fetchingOracleModels {
 			b.WriteString(dim.Render("  fetching models..."))
 		} else if len(p.availableOracleModels) > 0 {

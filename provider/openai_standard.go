@@ -51,10 +51,8 @@ func (s *OpenAIStandard) DecodeStreamChunk(data string) (*ChatResponse, error) {
 func (s *OpenAIStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
 	var result struct {
 		Data []struct {
-			ID             string            `json:"id"`
-			Name           string            `json:"name"`
-			ContextLength  int               `json:"context_length"`
-			Pricing        map[string]string `json:"pricing,omitempty"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -63,19 +61,10 @@ func (s *OpenAIStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
 
 	models := make([]ModelInfo, 0, len(result.Data))
 	for _, m := range result.Data {
-		info := ModelInfo{
-			ID:            m.ID,
-			Name:          m.Name,
-			ContextWindow: m.ContextLength,
-			Pricing:       m.Pricing,
-		}
-		if len(m.Pricing) > 0 {
-			ParseModelPricing(m.ID, m.Pricing)
-		}
-		if m.ContextLength > 0 {
-			SetModelContext(m.ID, m.ContextLength)
-		}
-		models = append(models, info)
+		models = append(models, ModelInfo{
+			ID:   m.ID,
+			Name: m.Name,
+		})
 	}
 	return models, nil
 }

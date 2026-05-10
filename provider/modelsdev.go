@@ -21,22 +21,32 @@ type mdProvider struct {
 
 // mdModel mirrors a single model entry in models.dev.
 type mdModel struct {
-	Name  string   `json:"name,omitempty"`
-	Limit *mdLimit `json:"limit,omitempty"`
+	Cost  mdCost  `json:"cost,omitempty"`
+	Limit mdLimit `json:"limit,omitempty"`
 }
 
-// mdLimit mirrors the limit sub-section of a model entry.
+// mdCost mirrors the pricing sub-section of a model entry.
+// Prices in models.dev are in USD per million tokens.
+type mdCost struct {
+	Input     float64 `json:"input,omitempty"`
+	Output    float64 `json:"output,omitempty"`
+	CacheRead float64 `json:"cache_read,omitempty"`
+}
+
+// mdLimit mirrors the limits sub-section of a model entry.
 type mdLimit struct {
 	Context int `json:"context"`
 }
 
-// FetchModelsDevContext downloads the full models.dev dataset and returns a
-// flat map of lowercased model ID → context window (tokens). When the same
-// model ID appears under multiple providers (e.g. upstream + mirror/wrapper),
-// entries from the specified priorityProviders (provider IDs such as
-// "opencode", "opencode-go") always take priority. Among equal-tier
-// providers the largest context window wins.
-func FetchModelsDevContext(priorityProviders ...string) (map[string]int, error) {
+// FetchModelsDevAll downloads the full models.dev dataset and returns a flat
+// map of lowercased model ID → ModelMeta (context window + per-token pricing).
+//
+// When the same model ID appears under multiple providers, the cheapest input
+// price wins and the largest context window is retained.
+//
+// Prices from models.dev are per million tokens; they are converted to
+// per-token values before being returned.
+func FetchModelsDevAll() (map[string]ModelMeta, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(modelsDevURL)
 	if err != nil {
@@ -58,39 +68,58 @@ func FetchModelsDevContext(priorityProviders ...string) (map[string]int, error) 
 		return nil, fmt.Errorf("parse models.dev: %w", err)
 	}
 
-	// Build a flat map keyed by lowercased model ID.
-	result := make(map[string]int)
-	isPriorityEntry := make(map[string]bool)
+	result := make(map[string]ModelMeta)
 
-	// Build a fast lookup for priority provider IDs.
-	prioritySet := make(map[string]struct{}, len(priorityProviders))
-	for _, pp := range priorityProviders {
-		prioritySet[pp] = struct{}{}
-	}
-
-	for provID, prov := range data {
+	for _, prov := range data {
 		for modelID, entry := range prov.Models {
-			if entry.Limit == nil || entry.Limit.Context <= 0 {
-				continue
-			}
-
 			lower := strings.ToLower(modelID)
-			_, isPriority := prioritySet[provID]
 
-			if existing, ok := result[lower]; !ok {
-				// First time seeing this model — accept.
-				result[lower] = entry.Limit.Context
-				isPriorityEntry[lower] = isPriority
-			} else if isPriority {
-				// Priority entries always replace non-priority entries.
-				result[lower] = entry.Limit.Context
-				isPriorityEntry[lower] = true
-			} else if entry.Limit.Context > existing && !isPriorityEntry[lower] {
-				// Larger context wins among same-tier (non-priority) providers.
-				result[lower] = entry.Limit.Context
+			// Convert per-million-token → per-token.
+			inPerToken := entry.Cost.Input / 1e6
+			outPerToken := entry.Cost.Output / 1e6
+			cachePerToken := entry.Cost.CacheRead / 1e6
+			ctx := entry.Limit.Context
+
+			if existing, ok := result[lower]; ok {
+				// Cheapest input price wins.
+				if existing.InputPrice == 0 || (inPerToken > 0 && inPerToken < existing.InputPrice) {
+					existing.InputPrice = inPerToken
+					existing.OutputPrice = outPerToken
+					existing.CacheReadPrice = cachePerToken
+				}
+				// Largest context window wins.
+				if ctx > existing.ContextWindow {
+					existing.ContextWindow = ctx
+				}
+				result[lower] = existing
+			} else if inPerToken > 0 || ctx > 0 {
+				result[lower] = ModelMeta{
+					ContextWindow:  ctx,
+					InputPrice:     inPerToken,
+					OutputPrice:    outPerToken,
+					CacheReadPrice: cachePerToken,
+				}
 			}
 		}
 	}
 
+	return result, nil
+}
+
+// FetchModelsDevContext downloads the full models.dev dataset and returns a
+// flat map of lowercased model ID → context window (tokens). This is a
+// backwards-compatible wrapper around FetchModelsDevAll kept for callers
+// that only need context.
+func FetchModelsDevContext(priorityProviders ...string) (map[string]int, error) {
+	all, err := FetchModelsDevAll()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int, len(all))
+	for id, meta := range all {
+		if meta.ContextWindow > 0 {
+			result[id] = meta.ContextWindow
+		}
+	}
 	return result, nil
 }

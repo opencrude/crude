@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"crude/provider"
@@ -89,13 +91,13 @@ CONSTRAINTS: %s`,
 	}
 }
 
-func ConsultOracle(ctx context.Context, p *provider.Provider, model string, query OracleQuery) (OracleResponse, error) {
+func ConsultOracle(ctx context.Context, p *provider.Provider, model string, query OracleQuery, emit func(AgentEvent)) (OracleResponse, error) {
 	msgs := buildOracleMessages(query)
 
 	req := provider.ChatRequest{
 		Model:    model,
 		Messages: msgs,
-		Stream:   false,
+		Stream:   true,
 	}
 
 	std := p.Standard()
@@ -136,6 +138,7 @@ func ConsultOracle(ctx context.Context, p *provider.Provider, model string, quer
 		hdr, val := p.Auth()
 		httpReq.Header.Set(hdr, val)
 		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
@@ -147,13 +150,9 @@ func ConsultOracle(ctx context.Context, p *provider.Provider, model string, quer
 			continue
 		}
 
-		respBody, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			return OracleResponse{}, fmt.Errorf("read oracle response: %w", readErr)
-		}
-
 		if resp.StatusCode != 200 {
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
 			if isRetryable(resp.StatusCode) {
 				select {
 				case <-time.After(retryBackoff(attempt)):
@@ -165,18 +164,68 @@ func ConsultOracle(ctx context.Context, p *provider.Provider, model string, quer
 			return OracleResponse{}, fmt.Errorf("oracle API %d: %s", resp.StatusCode, string(respBody))
 		}
 
-		chatResp, err := std.DecodeResponse(respBody)
-		if err != nil {
-			return OracleResponse{}, fmt.Errorf("decode oracle response: %w", err)
+		var contentBuf strings.Builder
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 1024*64), 1024*64)
+
+		for scanner.Scan() {
+			if ctx.Err() != nil {
+				break
+			}
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			data := strings.TrimPrefix(line, "data: ")
+
+			chunk, err := std.DecodeStreamChunk(data)
+			if err != nil {
+				continue
+			}
+			if chunk == nil {
+				// Stream complete ("[DONE]")
+				break
+			}
+			if len(chunk.Choices) == 0 {
+				continue
+			}
+
+			choice := chunk.Choices[0]
+
+			// Emit reasoning content (chain-of-thought) in real-time
+			reasoningText := choice.Delta.ReasoningContent
+			if reasoningText == "" {
+				reasoningText = choice.Delta.Reasoning
+			}
+			if reasoningText != "" && emit != nil {
+				emit(AgentEvent{Type: "thinking", Data: reasoningText})
+			}
+
+			// Emit content tokens in real-time
+			delta := choice.Delta.Content
+			if delta != "" {
+				contentBuf.WriteString(delta)
+				if emit != nil {
+					emit(AgentEvent{Type: "thinking", Data: delta})
+				}
+			}
 		}
-		if chatResp.Error != nil {
-			return OracleResponse{}, fmt.Errorf("oracle API error: %s", chatResp.Error.Message)
+		resp.Body.Close()
+
+		if err := scanner.Err(); err != nil {
+			select {
+			case <-time.After(retryBackoff(attempt)):
+			case <-ctx.Done():
+				return OracleResponse{}, fmt.Errorf("oracle request cancelled during retry: %w", ctx.Err())
+			}
+			continue
 		}
-		if len(chatResp.Choices) == 0 {
+
+		content := contentBuf.String()
+		if content == "" {
 			return OracleResponse{}, fmt.Errorf("empty oracle response")
 		}
 
-		content := chatResp.Choices[0].Message.Content
 		return parseOracleResponse(content), nil
 	}
 }

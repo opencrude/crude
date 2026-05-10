@@ -57,7 +57,13 @@ type inlineSettings struct {
 	snapshot     *inlineSettings
 
 	modelContextWindow       int
+	modelInputPrice         float64
+	modelOutputPrice        float64
+	modelCacheReadPrice     float64
 	oracleModelContextWindow int
+	oracleInputPrice        float64
+	oracleOutputPrice       float64
+	oracleCacheReadPrice    float64
 
 	isModelSelect   bool
 	modelSearch     string
@@ -96,6 +102,13 @@ func newInlineSettings(s Settings, getProviderConfigFn func(providerID string) P
 		providerID:          s.ProviderID,
 		getProviderConfigFn: getProviderConfigFn,
 		modelContextWindow:   s.ModelContextWindow,
+		modelInputPrice:      s.MainInputPrice,
+		modelOutputPrice:     s.MainOutputPrice,
+		modelCacheReadPrice:  s.MainCacheReadPrice,
+		oracleModelContextWindow: s.OracleModelContextWindow,
+		oracleInputPrice:        s.OracleInputPrice,
+		oracleOutputPrice:       s.OracleOutputPrice,
+		oracleCacheReadPrice:    s.OracleCacheReadPrice,
 	}
 	if p.providerID == "" {
 		p.providerID = "openrouter"
@@ -123,8 +136,14 @@ func (p *inlineSettings) toSettings() Settings {
 		APIKey:             str(sfAPIKey),
 		Model:              str(sfModel),
 		ModelContextWindow: p.modelContextWindow,
+		MainInputPrice:     p.modelInputPrice,
+		MainOutputPrice:    p.modelOutputPrice,
+		MainCacheReadPrice: p.modelCacheReadPrice,
 		OracleModel:        str(sfOracleModel),
 		OracleModelContextWindow: p.oracleModelContextWindow,
+		OracleInputPrice:        p.oracleInputPrice,
+		OracleOutputPrice:       p.oracleOutputPrice,
+		OracleCacheReadPrice:    p.oracleCacheReadPrice,
 		ThinkingEffort:     str(sfThinkingEffort),
 	}
 }
@@ -160,7 +179,13 @@ func (p *inlineSettings) restoreSnapshot() {
 		p.focused = p.snapshot.focused
 		p.focusedBtn = p.snapshot.focusedBtn
 		p.modelContextWindow = p.snapshot.modelContextWindow
+		p.modelInputPrice = p.snapshot.modelInputPrice
+		p.modelOutputPrice = p.snapshot.modelOutputPrice
+		p.modelCacheReadPrice = p.snapshot.modelCacheReadPrice
 		p.oracleModelContextWindow = p.snapshot.oracleModelContextWindow
+		p.oracleInputPrice = p.snapshot.oracleInputPrice
+		p.oracleOutputPrice = p.snapshot.oracleOutputPrice
+		p.oracleCacheReadPrice = p.snapshot.oracleCacheReadPrice
 		p.isModelSelect = p.snapshot.isModelSelect
 		p.isOracleModelSelect = p.snapshot.isOracleModelSelect
 		p.isProviderSelect = p.snapshot.isProviderSelect
