@@ -312,10 +312,14 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name: "consult_oracle",
-			Description: "Consult the oracle model for high-stakes architectural, algorithmic, or structural decisions. " +
+			Description: "Consult the oracle model for problems that require deep reasoning. " +
 				"Use when: (1) choosing between multiple architectural approaches, (2) solving non-trivial algorithmic problems, " +
 				"(3) deciding module boundaries, data flow, or folder structure, (4) making decisions with significant downstream impact, " +
-				"(5) you are confused or uncertain which approach is best. The oracle has stronger reasoning but no tool access — it produces pure analysis, not actions. " +
+				"(5) you are confused or uncertain which approach is best, " +
+				"(6) debugging hard bugs where the root cause is non-obvious after reading the code, " +
+				"(7) implementation correctness for multi-function interactions like word-wrap + cursor mapping, coordinate transforms, or position arithmetic. " +
+				"The oracle has stronger reasoning but no tool access — it produces pure analysis, not actions. " +
+				"Craft a detailed prompt with the relevant code, data flow, observed vs expected behavior, and exact question. " +
 				"Provide maximal relevant context so the oracle can make an informed decision.",
 			Parameters: json.RawMessage(`{
 				"type":"object",

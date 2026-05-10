@@ -152,13 +152,13 @@ func (m *Model) chatView() string {
 			bufPos := 0
 			for li, logLine := range lines {
 				logStr := string(logLine)
-				segments := hardWrap(logStr, textW)
+				segments := wordWrap(logStr, textW)
 
-				for _, seg := range segments {
-					prefix := "❯ "
-					if li > 0 || bufPos > 0 {
-						prefix = "  "
-					}
+								for _, seg := range segments {
+									prefix := "❯ "
+									if li > 0 || bufPos > 0 {
+										prefix = "  "
+									}
 					segRunes := []rune(seg)
 					segStart := bufPos
 					segEnd := bufPos + len(segRunes)
@@ -209,7 +209,7 @@ func (m *Model) chatView() string {
 
 			for li, logLine := range lines {
 				logStr := string(logLine)
-				segments := hardWrap(logStr, textW)
+				segments := wordWrap(logStr, textW)
 
 				cursorSeg := -1
 				cursorSegOffset := 0
@@ -852,6 +852,7 @@ func (m *Model) inputTextWidth() int {
 }
 
 // hardWrap breaks a string into segments each fitting within maxWidth display cells.
+// Breaks are character-level — words may be split mid-word.
 func hardWrap(s string, maxWidth int) []string {
 	if maxWidth <= 0 {
 		return []string{s}
@@ -875,12 +876,80 @@ func hardWrap(s string, maxWidth int) []string {
 	return result
 }
 
+// wordWrap breaks text into lines at word boundaries, each fitting within maxWidth display cells.
+// If a single word (contiguous non-space runes) exceeds maxWidth, it falls back to character-level
+// breaking for that word. Unlike hardWrap, this never splits a word in the middle unless the word
+// is wider than the available width.
+func wordWrap(s string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{s}
+	}
+	runes := []rune(s)
+	n := len(runes)
+	if n == 0 {
+		return []string{""}
+	}
+
+	var result []string
+	i := 0
+	for i < n {
+		// Skip leading spaces on continuation lines (after a word-boundary break, the space
+		// on which we broke is already consumed, but after a hard break it may be present).
+		if len(result) > 0 {
+			for i < n && runes[i] == ' ' {
+				i++
+			}
+			if i >= n {
+				break
+			}
+		}
+
+		// If the entire remaining text fits, take it.
+		if runewidth.StringWidth(string(runes[i:])) <= maxWidth {
+			result = append(result, string(runes[i:]))
+			break
+		}
+
+		// Scan forward to find where we should break.
+		lineEnd := i + 1
+		lastSpace := -1
+		w := runewidth.RuneWidth(runes[i])
+
+		for j := i + 1; j < n; j++ {
+			rw := runewidth.RuneWidth(runes[j])
+			if w+rw > maxWidth {
+				break
+			}
+			w += rw
+			lineEnd = j + 1
+			if runes[j] == ' ' {
+				lastSpace = j
+			}
+		}
+
+		if lastSpace >= i {
+			// Break at word boundary — exclude the trailing space.
+			result = append(result, string(runes[i:lastSpace]))
+			i = lastSpace + 1 // skip the space
+		} else {
+			// No word boundary found within width — fall back to hard break.
+			result = append(result, string(runes[i:lineEnd]))
+			i = lineEnd
+		}
+	}
+
+	if len(result) == 0 {
+		return []string{""}
+	}
+	return result
+}
+
 // visualLineCount returns the number of visual display lines the input buffer occupies.
 func (m *Model) visualLineCount() int {
 	maxW := m.inputTextWidth()
 	count := 0
 	for _, l := range m.inputLines() {
-		segments := hardWrap(string(l), maxW)
+		segments := wordWrap(string(l), maxW)
 		count += len(segments)
 	}
 	if count < 1 {
@@ -911,37 +980,35 @@ func (m *Model) cursorVisualInfo() visualCursorInfo {
 
 	visLine := 0
 	for li := 0; li < curLine; li++ {
-		segments := hardWrap(string(lines[li]), textW)
+		segments := wordWrap(string(lines[li]), textW)
 		visLine += len(segments)
 	}
 
-	segments := hardWrap(string(lines[curLine]), textW)
-	runeOffset := 0
+	segments := wordWrap(string(lines[curLine]), textW)
+
+	// Find which word-wrap segment contains curCol, using findSegmentStart to
+	// correctly account for spaces consumed as word-break points.
 	segIdx := 0
+	segStart := 0
 	for segIdx < len(segments) {
-		segRunes := []rune(segments[segIdx])
-		if runeOffset+len(segRunes) > curCol {
+		segStart = findSegmentStart(lines[curLine], textW, segIdx)
+		segEnd := segStart + len([]rune(segments[segIdx]))
+		if segEnd > curCol {
 			break
 		}
-		runeOffset += len(segRunes)
 		segIdx++
 	}
 	if segIdx >= len(segments) {
 		segIdx = len(segments) - 1
-		if segIdx >= 0 {
-			runeOffset = curCol - len([]rune(segments[segIdx]))
-			if runeOffset < 0 {
-				runeOffset = 0
-			}
-		}
+		segStart = findSegmentStart(lines[curLine], textW, segIdx)
 	}
 
 	info.visualLine = visLine + segIdx
 	info.segmentIdx = segIdx
-	info.segmentStart = runeOffset
+	info.segmentStart = segStart
 
 	info.visualCol = padLR + 2
-	for i := runeOffset; i < curCol && i < len(lines[curLine]); i++ {
+	for i := segStart; i < curCol && i < len(lines[curLine]); i++ {
 		info.visualCol += runewidth.RuneWidth(lines[curLine][i])
 	}
 
@@ -955,7 +1022,7 @@ func (m *Model) cursorPosFromVisual(targetVisLine, targetVisCol int) int {
 
 	visCount := 0
 	for li, logLine := range lines {
-		segments := hardWrap(string(logLine), textW)
+		segments := wordWrap(string(logLine), textW)
 		for si, seg := range segments {
 			if visCount == targetVisLine {
 				segRunes := []rune(seg)
@@ -978,16 +1045,73 @@ func (m *Model) cursorPosFromVisual(targetVisLine, targetVisCol int) int {
 				for i := 0; i < li; i++ {
 					pos += len(lines[i]) + 1
 				}
-				for j := 0; j < si; j++ {
-					pos += len([]rune(segments[j]))
-				}
-				pos += segRuneIdx
+				pos += findSegmentStart(logLine, textW, si) + segRuneIdx
 				return pos
 			}
 			visCount++
 		}
 	}
 	return m.inputLen()
+}
+
+// findSegmentStart returns the rune index in the original logical line where
+// the word-wrapped segment at segmentIdx begins. It replicates wordWrap's state
+// machine so that spaces consumed as word-break points are correctly accounted for.
+func findSegmentStart(logLine []rune, textW int, segmentIdx int) int {
+	if segmentIdx <= 0 {
+		return 0
+	}
+	s := string(logLine)
+	runes := []rune(s)
+	n := len(runes)
+
+	i := 0
+	currentSeg := 0
+	for currentSeg < segmentIdx && i < n {
+		// skip leading spaces on continuation lines
+		if currentSeg > 0 {
+			for i < n && runes[i] == ' ' {
+				i++
+			}
+			if i >= n {
+				break
+			}
+		}
+
+		// If the remaining text fits, we finish the current segment and stop.
+		if runewidth.StringWidth(string(runes[i:])) <= textW {
+			currentSeg++
+			break
+		}
+
+		// Scan forward to find the break point.
+		lineEnd := i + 1
+		lastSpace := -1
+		w := runewidth.RuneWidth(runes[i])
+
+		for j := i + 1; j < n; j++ {
+			rw := runewidth.RuneWidth(runes[j])
+			if w+rw > textW {
+				break
+			}
+			w += rw
+			lineEnd = j + 1
+			if runes[j] == ' ' {
+				lastSpace = j
+			}
+		}
+
+		currentSeg++
+
+		if lastSpace >= i {
+			// word-boundary break: skip the trailing space
+			i = lastSpace + 1
+		} else {
+			i = lineEnd
+		}
+	}
+
+	return i
 }
 
 func truncateLine(s string, max int) string {

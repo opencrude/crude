@@ -1280,6 +1280,73 @@ func TestPython_replaceLines_addImport(t *testing.T) {
 }
 
 // ============================================================================
+// Absolute indentation re-indentation (the mid-block edit bug)
+// ============================================================================
+
+func TestApplySearchReplace_absoluteIndentTabBlock(t *testing.T) {
+	// Regression test: model provides old_string starting at column 0 (mid-block)
+	// but continuation lines have absolute file indentation. The reindent function
+	// must NOT double the indentation on those continuation lines.
+	content := "func foo() {\n\t\t\t\tsegments := hardWrap(logStr, textW)\n\n\t\t\t\tfor _, seg := range segments {\n\t\t\t\t\tprefix := \"❯ \"\n\t\t\t\t}"
+	search := "segments := hardWrap(logStr, textW)\n\n\t\t\t\tfor _, seg := range segments {\n\t\t\t\t\tprefix := \"❯ \"\n\t\t\t\t}"
+	replace := "segments := wordWrap(logStr, textW)\n\n\t\t\t\tfor _, seg := range segments {\n\t\t\t\t\tprefix := \"❯ \"\n\t\t\t\t}"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "func foo() {\n\t\t\t\tsegments := wordWrap(logStr, textW)\n\n\t\t\t\tfor _, seg := range segments {\n\t\t\t\t\tprefix := \"❯ \"\n\t\t\t\t}"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_absoluteIndentSpaceBlock(t *testing.T) {
+	// Same bug with spaces instead of tabs.
+	content := "def foo():\n    x = process(a)\n\n    for i in items:\n        print(i)"
+	search := "x = process(a)\n\n    for i in items:\n        print(i)"
+	replace := "x = process(b)\n\n    for i in items:\n        print(i)"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "def foo():\n    x = process(b)\n\n    for i in items:\n        print(i)"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_relativeIndentStillWorks(t *testing.T) {
+	// Ensure that relative indentation (where model provides continuation lines
+	// with only relative depth) still gets upgraded correctly.
+	content := "def compute():\n    total = 0\n    for i in [1,2,3]:\n        total += i\n    return total\n\nprint(compute())\n"
+	search := "total = 0\nfor i in [1,2,3]:\n    total += i"
+	replace := "total = 100\nfor i in [1,2,3]:\n    total += i"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "def compute():\n    total = 100\n    for i in [1,2,3]:\n        total += i\n    return total\n\nprint(compute())\n"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_absoluteIndentSingleLineReplace(t *testing.T) {
+	// Single-line WS-normalized replacement at column 0 should still get mi added.
+	content := "func foo() {\n\t\t\t\tresult := compute()\n\t\t}"
+	search := "result := compute()"
+	replace := "result := process()"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "func foo() {\n\t\t\t\tresult := process()\n\t\t}"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// ============================================================================
 // assertEqual helper
 // ============================================================================
 

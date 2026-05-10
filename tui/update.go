@@ -1330,9 +1330,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "usage":
 			if d, ok := evt.Data.(map[string]int); ok {
-				m.tokenCached += d["prompt_cached"]
-				m.tokenCompletion += d["completion"]
-				m.tokenPrompt += d["prompt"] - d["prompt_cached"]
+				m.tokenCached = d["prompt_cached"]
+				m.tokenCompletion = d["completion"]
+				m.tokenPrompt = d["prompt"]
 				m.sessionCost += provider.LookupPrice(m.modelName).CalculateCost(
 					d["prompt"], d["completion"], d["prompt_cached"],
 				)

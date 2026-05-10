@@ -66,7 +66,8 @@ func applySingleOp(content string, op SearchReplace) (string, error) {
 	if hits := findMatches(contentLines, trimmedSearchLines, func(a, b string) bool {
 		return strings.TrimSpace(a) == strings.TrimSpace(b)
 	}); len(hits) == 1 {
-		reIndented := reindent(contentLines[hits[0]], trimmedSearchLines[0], replaceLines)
+		absCtx := hasAbsoluteSearchIndent(contentLines, trimmedSearchLines, hits[0])
+		reIndented := reindent(contentLines[hits[0]], trimmedSearchLines[0], replaceLines, absCtx)
 		return splice(contentLines, hits[0], len(trimmedSearchLines), reIndented), nil
 	} else if len(hits) > 1 {
 		return "", multiMatchErr(hits, "after whitespace normalisation", op.Search)
@@ -84,7 +85,8 @@ func applySingleOp(content string, op SearchReplace) (string, error) {
 		if hits := findMatches(contentLines, fullSearchLines, func(a, b string) bool {
 			return strings.TrimSpace(a) == strings.TrimSpace(b)
 		}); len(hits) == 1 {
-			reIndented := reindent(contentLines[hits[0]], fullSearchLines[0], replaceLines)
+			absCtx := hasAbsoluteSearchIndent(contentLines, fullSearchLines, hits[0])
+			reIndented := reindent(contentLines[hits[0]], fullSearchLines[0], replaceLines, absCtx)
 			return splice(contentLines, hits[0], len(fullSearchLines), reIndented), nil
 		} else if len(hits) > 1 {
 			return "", multiMatchErr(hits, "after whitespace normalisation (untrimmed)", op.Search)
@@ -103,7 +105,8 @@ func applySingleOp(content string, op SearchReplace) (string, error) {
 				return strings.Join(contentLines, "\n"), nil
 			}
 		}
-		reIndented := reindent(contentLines[start], trimmedSearchLines[0], replaceLines)
+		absCtx := hasAbsoluteSearchIndent(contentLines, trimmedSearchLines, start)
+		reIndented := reindent(contentLines[start], trimmedSearchLines[0], replaceLines, absCtx)
 		return splice(contentLines, start, len(trimmedSearchLines), reIndented), nil
 	} else if len(subHits) > 1 {
 		return "", multiMatchErr(subHits, "by substring", op.Search)
@@ -225,7 +228,12 @@ func substringReplaceInLine(contentLine, searchLine string, replaceLines []strin
 
 // reindent adjusts replacement indentation based on the relationship between
 // the matched content line's indent and the original search line's indent.
-func reindent(matchedLine, searchLine string, replaceLines []string) []string {
+// absCtx indicates that some continuation search lines share the same leading
+// whitespace as their corresponding content lines (absolute indentation mode).
+// When absCtx is true and the first replacement line starts at column 0,
+// only column-0 replacement lines get the matched indent added; lines that
+// already carry indentation are left as-is.
+func reindent(matchedLine, searchLine string, replaceLines []string, absCtx bool) []string {
 	if len(replaceLines) == 0 {
 		return replaceLines
 	}
@@ -242,16 +250,60 @@ func reindent(matchedLine, searchLine string, replaceLines []string) []string {
 
 	// Replacement indented to search level → upgrade whole block.
 	if ri0 == si {
+		// When si == "" (search starts at column 0) and absCtx is true,
+		// continuation lines in the replacement already carry absolute file
+		// indentation. Only add mi to column-0 lines, not to all lines.
+		if si == "" && absCtx {
+			return addIndentToBaseline(replaceLines, mi)
+		}
 		return upgradeIndent(replaceLines, si, mi)
 	}
 
-	// Replacement starts unindented at top level → add matched indent everywhere.
+	// Replacement starts unindented at top level → add matched indent everywhere,
+	// unless absCtx tells us continuation lines already have absolute indentation.
 	if ri0 == "" {
+		if absCtx {
+			return addIndentToBaseline(replaceLines, mi)
+		}
 		return addIndent(replaceLines, mi)
 	}
 
 	// Replacement has its own indentation intent we don't understand → leave as-is.
 	return replaceLines
+}
+
+// addIndentToBaseline adds indent only to replacement lines that have no leading
+// whitespace (the column-0 baseline). Lines that already carry indentation are
+// left untouched — they represent absolute file positions, not relative offsets.
+func addIndentToBaseline(lines []string, indent string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		if l == "" {
+			out[i] = ""
+		} else if leadingWS(l) == "" {
+			out[i] = indent + l
+		} else {
+			out[i] = l
+		}
+	}
+	return out
+}
+
+// hasAbsoluteSearchIndent returns true when any continuation search line (i>0)
+// has the same leading whitespace as the corresponding content line. This
+// indicates that the search pattern embeds absolute file indentation rather
+// than relative indentation from column 0.
+func hasAbsoluteSearchIndent(contentLines, searchLines []string, matchStart int) bool {
+	for i := 1; i < len(searchLines); i++ {
+		sws := leadingWS(searchLines[i])
+		if sws != "" && matchStart+i < len(contentLines) {
+			cws := leadingWS(contentLines[matchStart+i])
+			if sws == cws {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func upgradeIndent(lines []string, from, to string) []string {
