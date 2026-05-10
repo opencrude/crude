@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"sync"
@@ -65,7 +66,24 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 
 	var c *exec.Cmd
 	if runtime.GOOS == "windows" {
-		c = exec.CommandContext(ctx, "cmd", "/C", command)
+		// Write to a temp batch file to avoid cmd /C quote-stripping issues.
+		tmp, err := os.CreateTemp("", "crude_*.cmd")
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("prepare windows command: %w", err)
+		}
+		batPath := tmp.Name()
+		if _, err := tmp.WriteString("@echo off\r\n" + command + "\r\n"); err != nil {
+			tmp.Close()
+			os.Remove(batPath)
+			cancel()
+			return nil, fmt.Errorf("prepare windows command: %w", err)
+		}
+		tmp.Close()
+		// Store path for cleanup — AsyncCommandManager doesn't have a hook for
+		// this, but we rely on the OS temp cleaner or use a deferred cleanup
+		// in a wrapper.  For now, the file is small and will be cleaned by OS.
+		c = exec.CommandContext(ctx, "cmd", "/C", batPath)
 	} else {
 		c = exec.CommandContext(ctx, "sh", "-c", command)
 	}

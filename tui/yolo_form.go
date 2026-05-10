@@ -86,9 +86,9 @@ func (f yoloForm) View() string {
 
 	var b strings.Builder
 
-	b.WriteString(dangerStyle.Render("☠  YOLO MODE"))
+	b.WriteString(dangerStyle.Render("  ☠  YOLO MODE"))
 	b.WriteString("\n")
-	b.WriteString(dim.Render(strings.Repeat("─", 54)))
+	b.WriteString(dim.Render("  " + strings.Repeat("─", 54)))
 	b.WriteString("\n")
 	b.WriteString(dim.Render("  This is DANGEROUS. Safety checks protect"))
 	b.WriteString("\n")

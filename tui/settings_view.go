@@ -13,8 +13,7 @@ func (p *inlineSettings) View(spinFrame int) string {
 	var b strings.Builder
 
 	if p.isProviderSelect {
-		b.WriteString(lipgloss.NewStyle().Foreground(colorAccent).Render("provider select"))
-		b.WriteString("\n")
+		b.WriteString("\n" + lipgloss.NewStyle().Foreground(colorAccent).Render("provider select") + "\n")
 		for i, preset := range p.providerPresets {
 			indicator := "  "
 			if i == p.providerListIdx {
@@ -24,7 +23,6 @@ func (p *inlineSettings) View(spinFrame int) string {
 			help := dim.Render(preset.HelpText)
 			b.WriteString(indicator + name + " " + help + "\n")
 		}
-		b.WriteString("\n" + dim.Render("arrows navigate / enter select / esc or backspace cancel") + "\n")
 		return b.String()
 	}
 
@@ -205,7 +203,7 @@ func (p *inlineSettings) View(spinFrame int) string {
 		return b.String()
 	}
 
-	b.WriteString(lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("settings") + "\n")
+	b.WriteString("\n" + lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("Settings") + "\n")
 
 	for idx := 0; idx < sfCount; idx++ {
 		f := p.fields[idx]

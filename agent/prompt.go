@@ -140,16 +140,24 @@ func BuildSystemPrompt() string {
 
 	platformGuidance := ""
 	if runtime.GOOS == "windows" {
-		platformGuidance = `
-### Windows Command Execution
-- All commands run through cmd /C — cmd.exe syntax works directly
-- For PowerShell, prefix with powershell -Command "..."
-- curl.exe is the real curl binary — prefer it over PowerShell's Invoke-WebRequest
-- Use && echo SUCCESS to chain a visible completion signal after your command
-- Use || echo FAILED to catch errors explicitly
-- Paths are case-insensitive, use backslashes or forward slashes
-- .exe extension is optional for executables
-- type = Unix cat, dir = Unix ls, find = Unix find, where = Unix which`
+		platformGuidance = "\n" +
+			"### Windows Command Execution\n" +
+			"- All commands run through cmd.exe — cmd.exe syntax works directly\n" +
+			"- For PowerShell, prefix with powershell -Command \"...\"\n" +
+			"- curl.exe is the real curl binary — prefer it over PowerShell's Invoke-WebRequest\n" +
+			"- Use && echo SUCCESS to chain a visible completion signal after your command\n" +
+			"- Use || echo FAILED to catch errors explicitly\n" +
+			"- Paths are case-insensitive, use backslashes or forward slashes\n" +
+			"- .exe extension is optional for executables\n" +
+			"- type = Unix cat, dir = Unix ls, find = Unix find, where = Unix which\n" +
+			"\n" +
+			"### Windows Pitfalls — AVOID these\n" +
+			"- Do NOT use Unix-only tools: head, tail, grep, awk, sed, cat, ls, tr, cut, sort, uniq, xargs, find, wc, tee, diff, comm. These do not exist on Windows.\n" +
+			"- Do NOT pipe to echo — echo does NOT read stdin on Windows. Piping to echo silently discards your data.\n" +
+			"- Do NOT put unnecessary quotes around URLs for curl: curl.exe -s https://example.com works; curl.exe -s \"https://example.com\" can cause issues.\n" +
+			"- Do NOT use complex pipes with Unix tools. Instead: run curl alone and capture output, or redirect to a file and use read_file.\n" +
+			"- curl.exe format strings like -w \"%%{http_code}\" use double-percent when inside batch context.\n" +
+			"- python -c works, but single quotes inside the code string are safest: python -c \"print('hello')\"\n"
 	}
 
 	return fmt.Sprintf(`%s

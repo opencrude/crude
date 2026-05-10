@@ -16,6 +16,33 @@ import (
 	"time"
 )
 
+// windowsCommandWarning checks for common patterns that fail on Windows and
+// returns a warning string that should be prepended to the command output.
+func windowsCommandWarning(cmd string) string {
+	lower := strings.ToLower(cmd)
+	var warnings []string
+
+	// Unix-only tools that don't exist on Windows.
+	unixTools := []string{"head", "tail", "grep", "awk", "sed", "cat", "ls", "tr", "cut", "sort", "uniq", "xargs", "find", "wc", "tee", "diff", "comm"}
+	for _, tool := range unixTools {
+		// Look for the tool as a pipe target or at the start of the command.
+		if strings.Contains(lower, "| "+tool) || strings.Contains(lower, "|"+tool) ||
+			strings.HasPrefix(lower, tool+" ") || strings.HasPrefix(lower, tool+"\t") {
+			warnings = append(warnings, fmt.Sprintf("'%s' is a Unix-only tool and does not exist on Windows", tool))
+		}
+	}
+
+	// echo on Windows does not read stdin — piping to it silently discards data.
+	if strings.Contains(lower, "| echo") || strings.Contains(lower, "|echo") {
+		warnings = append(warnings, "piping to 'echo' will not work on Windows — echo does not read stdin")
+	}
+
+	if len(warnings) == 0 {
+		return ""
+	}
+	return "[WINDOWS WARNING] " + strings.Join(warnings, "; ") + "\n\n"
+}
+
 type ExecOptions struct {
 	CWD            string
 	TimeoutSeconds int
@@ -57,8 +84,27 @@ func (l *LocalExec) Execute(cmd string, opts ExecOptions) (string, error) {
 		defer cancel()
 	}
 
+	var warning string
 	if runtime.GOOS == "windows" {
-		c = exec.CommandContext(ctx, "cmd", "/C", cmd)
+		warning = windowsCommandWarning(cmd)
+		// On Windows we write the command to a temporary .cmd batch file and
+		// execute that instead of passing the string directly to cmd /C.
+		// This avoids cmd's first-and-last-quote-stripping behaviour which
+		// mangles arguments that contain quotes (e.g. curl URLs, python -c
+		// code strings, curl -w format specifiers).
+		tmp, err := os.CreateTemp("", "crude_*.cmd")
+		if err != nil {
+			return "", fmt.Errorf("prepare windows command: %w", err)
+		}
+		batPath := tmp.Name()
+		if _, err := tmp.WriteString("@echo off\r\n" + cmd + "\r\n"); err != nil {
+			tmp.Close()
+			os.Remove(batPath)
+			return "", fmt.Errorf("prepare windows command: %w", err)
+		}
+		tmp.Close()
+		defer os.Remove(batPath)
+		c = exec.CommandContext(ctx, "cmd", "/C", batPath)
 	} else {
 		c = exec.CommandContext(ctx, "sh", "-c", cmd)
 	}
@@ -71,7 +117,11 @@ func (l *LocalExec) Execute(cmd string, opts ExecOptions) (string, error) {
 	c.Stdout = &buf
 	c.Stderr = &buf
 	err := c.Run()
-	return buf.String(), err
+	out := buf.String()
+	if warning != "" {
+		out = warning + out
+	}
+	return out, err
 }
 
 func (l *LocalExec) ListDir(path string) ([]DirEntry, error) {
