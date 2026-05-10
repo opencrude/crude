@@ -33,7 +33,7 @@ func (p *inlineSettings) View(spinFrame int) string {
 		highlightStyle := lipgloss.NewStyle().Foreground(colorMainText).Background(lipgloss.Color("#1e2a3a"))
 
 		// Header line
-		b.WriteString(accentStyle.Bold(true).Render("  model select"))
+		b.WriteString("\n" + accentStyle.Bold(true).Render("model select"))
 		if p.fetchingModels {
 			b.WriteString(dim.Render("  fetching models..."))
 		} else if len(p.availableModels) > 0 {
@@ -45,13 +45,13 @@ func (p *inlineSettings) View(spinFrame int) string {
 		if p.fetchError != "" {
 			b.WriteString(errorStyle.Render("  ✗ "+p.fetchError) + "\n")
 		} else {
-			searchPrompt := accentStyle.Render("  / ")
+			searchPrompt := accentStyle.Render("/ ")
 			searchText := lipgloss.NewStyle().Foreground(colorMainText).Render(p.modelSearch)
 			cursor := blockCursor(spinFrame, colorAccent)
 			b.WriteString(searchPrompt + searchText + cursor + "\n")
 		}
 
-		b.WriteString(dim.Render("  "+strings.Repeat("─", 54)) + "\n")
+		b.WriteString(dim.Render(strings.Repeat("─", 54)) + "\n")
 
 		// Model list
 		if p.fetchingModels {
@@ -83,23 +83,23 @@ func (p *inlineSettings) View(spinFrame int) string {
 
 				var line string
 				if selected {
-					line = accentStyle.Render(" ❯ ") + highlightStyle.Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
+					line = accentStyle.Render("❯ ") + highlightStyle.Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
 				} else {
-					line = dim.Render("   ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
+					line = dim.Render("  ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
 				}
 				b.WriteString(line + "\n")
 			}
 		}
 
-		b.WriteString(dim.Render("  "+strings.Repeat("─", 54)) + "\n")
-		footer := "  ↑↓ navigate · enter select · esc cancel"
+		b.WriteString(dim.Render(strings.Repeat("─", 54)) + "\n")
+		footer := "↑↓ navigate · enter select · esc cancel"
 		if !p.fetchingModels && len(p.filteredModels) > 0 {
 			end := p.modelListOffset + pageSize
 			if end > len(p.filteredModels) {
 				end = len(p.filteredModels)
 			}
 			if p.modelListOffset > 0 || end < len(p.filteredModels) {
-				scrollHint := fmt.Sprintf("  %d–%d of %d", p.modelListOffset+1, end, len(p.filteredModels))
+				scrollHint := fmt.Sprintf("%d–%d of %d", p.modelListOffset+1, end, len(p.filteredModels))
 				if p.modelListOffset > 0 {
 					scrollHint += " · ↑pgup"
 				}
@@ -133,13 +133,13 @@ func (p *inlineSettings) View(spinFrame int) string {
 		if p.fetchOracleError != "" {
 			b.WriteString(errorStyle.Render("  ✗ "+p.fetchOracleError) + "\n")
 		} else {
-			searchPrompt := accentStyle.Render("  / ")
+			searchPrompt := accentStyle.Render("/ ")
 			searchText := lipgloss.NewStyle().Foreground(colorMainText).Render(p.oracleModelSearch)
 			cursor := blockCursor(spinFrame, colorAccent)
 			b.WriteString(searchPrompt + searchText + cursor + "\n")
 		}
 
-		b.WriteString(dim.Render("  "+strings.Repeat("─", 54)) + "\n")
+		b.WriteString(dim.Render(strings.Repeat("─", 54)) + "\n")
 
 		if p.fetchingOracleModels {
 			b.WriteString(dim.Render("  waiting for models...") + "\n")
@@ -170,23 +170,23 @@ func (p *inlineSettings) View(spinFrame int) string {
 
 				var line string
 				if selected {
-					line = accentStyle.Render(" ❯ ") + highlightStyle.Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
+					line = accentStyle.Render("❯ ") + highlightStyle.Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
 				} else {
-					line = dim.Render("   ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
+					line = dim.Render("  ") + lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-36s", idStr)) + ctxStr
 				}
 				b.WriteString(line + "\n")
 			}
 		}
 
-		b.WriteString(dim.Render("  "+strings.Repeat("─", 54)) + "\n")
-		footer := "  ↑↓ navigate · enter select · esc cancel"
+		b.WriteString(dim.Render(strings.Repeat("─", 54)) + "\n")
+		footer := "↑↓ navigate · enter select · esc cancel"
 		if !p.fetchingOracleModels && len(p.filteredOracleModels) > 0 {
 			end := p.oracleModelListOffset + pageSize
 			if end > len(p.filteredOracleModels) {
 				end = len(p.filteredOracleModels)
 			}
 			if p.oracleModelListOffset > 0 || end < len(p.filteredOracleModels) {
-				scrollHint := fmt.Sprintf("  %d–%d of %d", p.oracleModelListOffset+1, end, len(p.filteredOracleModels))
+				scrollHint := fmt.Sprintf("%d–%d of %d", p.oracleModelListOffset+1, end, len(p.filteredOracleModels))
 				if p.oracleModelListOffset > 0 {
 					scrollHint += " · ↑pgup"
 				}
