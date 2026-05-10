@@ -685,7 +685,11 @@ func (m *Model) renderAllMessages() []string {
 								suffix = ""
 							}
 							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("Read %d line%s from %s", contentLines, suffix, path)))
-							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render("… full content returned to agent"))
+							if strings.HasPrefix(resultContent, "Lines") {
+								msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render("… partial content returned to agent"))
+							} else {
+								msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(colorMuted).Render("… full content returned to agent"))
+							}
 						}
 					} else if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || isDiffContent(resultContent) {
 						resultLines := m.renderCompactDiff(msg.ToolName, resultContent)

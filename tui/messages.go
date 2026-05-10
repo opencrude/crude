@@ -131,6 +131,21 @@ func summarizeToolArgs(tool, argsStr string) string {
 	if tool == "plan" || tool == "list_goal_status" {
 		return pascalCaseTool(tool)
 	}
+	if tool == "mark_step_complete" || tool == "mark_step_failed" {
+		if stepID := extractArg(argsStr, "step_id"); stepID != "" {
+			return stepID
+		}
+		return pascalCaseTool(tool)
+	}
+	if tool == "report_blocker" {
+		if msg := extractArg(argsStr, "message"); msg != "" {
+			return truncateLine(msg, 50)
+		}
+		return pascalCaseTool(tool)
+	}
+	if tool == "resolve_blocker" {
+		return pascalCaseTool(tool)
+	}
 	if code := extractArg(argsStr, "code"); code != "" {
 		return truncateLine(code, 50)
 	}
@@ -312,6 +327,22 @@ func buildStreamingLabel(tool, target string, added, removed, tokens int) string
 		return "Searching ArXiv"
 	case "consult_oracle":
 		return "Consulting oracle"
+	case "plan", "list_goal_status":
+		return fmt.Sprintf("Running %s", pascalCaseTool(tool))
+	case "mark_step_complete":
+		if target != "" {
+			return fmt.Sprintf("Completing %s", target)
+		}
+		return "Completing step"
+	case "mark_step_failed":
+		if target != "" {
+			return fmt.Sprintf("Failing %s", target)
+		}
+		return "Failing step"
+	case "report_blocker":
+		return "Reporting blocker"
+	case "resolve_blocker":
+		return "Resolving blocker"
 	default:
 		if target != "" {
 			return fmt.Sprintf("Running %s %s", pascalCaseTool(tool), target)
@@ -432,6 +463,41 @@ func buildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		return label
 	case "consult_oracle":
 		label := "Consulted oracle"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "plan", "list_goal_status":
+		return pascalCaseTool(tool)
+	case "mark_step_complete":
+		label := "Completed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "mark_step_failed":
+		label := "Failed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "report_blocker":
+		label := "Blocked"
+		if target != "" {
+			label += ": " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "resolve_blocker":
+		label := "Resolved blocker"
 		if duration != "" {
 			label += " " + duration
 		}

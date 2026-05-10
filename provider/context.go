@@ -74,7 +74,7 @@ var contextHints = []struct {
 	{"z-ai/glm", 131072},
 
 	// Default fallback for known families
-	{"", 128000},
+	{"", 1048576},
 }
 
 func LookupContextWindow(modelID string) int {
@@ -95,5 +95,5 @@ func LookupContextWindow(modelID string) int {
 			return entry.window
 		}
 	}
-	return 128000
+	return 1048576
 }

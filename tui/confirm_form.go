@@ -144,9 +144,9 @@ func (c confirmForm) View(spinFrame int) string {
 		Background(lipgloss.Color("#1a1a2e")).
 		Padding(0, 1)
 
-	b.WriteString(warnStyle.Render("⚠  confirmation required"))
+	b.WriteString(warnStyle.Render("  ⚠  confirmation required"))
 	b.WriteString("\n")
-	b.WriteString(dim.Render(strings.Repeat("─", 54)))
+	b.WriteString(dim.Render("  " + strings.Repeat("─", 54)))
 	b.WriteString("\n")
 
 	if c.risk != "" {
