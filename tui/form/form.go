@@ -1,4 +1,4 @@
-package widget
+package form
 
 import (
 	"fmt"
@@ -6,6 +6,9 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"crude/tui/components"
+	"crude/tui/theme"
 )
 
 type Field struct {
@@ -23,7 +26,7 @@ const (
 )
 
 type Form struct {
-	theme       *Theme
+	theme       *theme.Theme
 	fields      []Field
 	focused     int
 	editing     bool
@@ -32,7 +35,7 @@ type Form struct {
 	snapshot    *Form
 }
 
-func NewForm(t *Theme, fields ...Field) Form {
+func NewForm(t *theme.Theme, fields ...Field) Form {
 	return Form{theme: t, fields: fields}
 }
 
@@ -46,9 +49,14 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 		return m.updateEditing(keyMsg)
 	}
 
+	lastField := len(m.fields) - 1
+
 	switch keyMsg.Type {
 	case tea.KeyEnter:
 		if m.focusedBtn == 0 {
+			if m.fields[m.focused].Masked {
+				m.fields[m.focused].Value = nil
+			}
 			m.editing = true
 			m.editCursor = len(m.fields[m.focused].Value)
 		} else if m.focusedBtn == 1 {
@@ -61,15 +69,57 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 			return m, nil, FormActionCancel
 		}
 		m.focusedBtn = 2
-	case tea.KeyUp, tea.KeyShiftTab:
-		m.focusedBtn--
-		if m.focusedBtn < 0 {
-			m.focusedBtn = 2
-		}
-	case tea.KeyDown, tea.KeyTab:
-		m.focusedBtn++
-		if m.focusedBtn > 2 {
+	case tea.KeyUp:
+		if m.focusedBtn == 2 {
+			m.focusedBtn = 1
+		} else if m.focusedBtn == 1 {
 			m.focusedBtn = 0
+			m.focused = lastField
+		} else {
+			if m.focused == 0 {
+				m.focusedBtn = 2
+			} else {
+				m.focused--
+			}
+		}
+	case tea.KeyDown:
+		if m.focusedBtn == 0 {
+			if m.focused >= lastField {
+				m.focusedBtn = 1
+			} else {
+				m.focused++
+			}
+		} else if m.focusedBtn == 1 {
+			m.focusedBtn = 2
+		} else if m.focusedBtn == 2 {
+			m.focusedBtn = 0
+			m.focused = 0
+		}
+	case tea.KeyTab:
+		if m.focusedBtn == 0 {
+			if m.focused >= lastField {
+				m.focusedBtn = 1
+			} else {
+				m.focused++
+			}
+		} else if m.focusedBtn == 1 {
+			m.focusedBtn = 2
+		} else if m.focusedBtn == 2 {
+			m.focusedBtn = 0
+			m.focused = 0
+		}
+	case tea.KeyShiftTab:
+		if m.focusedBtn == 2 {
+			m.focusedBtn = 1
+		} else if m.focusedBtn == 1 {
+			m.focusedBtn = 0
+			m.focused = lastField
+		} else {
+			if m.focused == 0 {
+				m.focusedBtn = 2
+			} else {
+				m.focused--
+			}
 		}
 	}
 
@@ -130,6 +180,11 @@ func (m Form) View(spinFrame int) string {
 
 	dim := m.theme.Styles.DimLabel
 	highlight := m.theme.Styles.Highlight
+	accent := m.theme.Styles.InputPrompt
+
+	// Title
+	b.WriteString(accent.Bold(true).Render("  Settings"))
+	b.WriteString("\n\n")
 
 	for i, f := range m.fields {
 		val := string(f.Value)
@@ -138,20 +193,34 @@ func (m Form) View(spinFrame int) string {
 		}
 		display := val
 		if display == "" {
-			display = dim.Render("<empty>")
+			display = dim.Render("-")
 		}
 
 		if m.focusedBtn == 0 && m.focused == i {
 			if m.editing {
-				cursor := BlockCursor(spinFrame, m.theme.Colors.Accent)
+				cursor := components.BlockCursor(spinFrame, m.theme.Colors.Accent)
 				before := string(f.Value[:m.editCursor])
 				after := string(f.Value[m.editCursor:])
 				b.WriteString(highlight.Render(fmt.Sprintf("  ❯ %s: %s%s%s", f.Label, before, cursor, after)))
 			} else {
-				b.WriteString(highlight.Render(fmt.Sprintf("  ❯ %s: %s", f.Label, display)))
+				// Show ← → arrows for thinking effort
+				if i == 5 {
+					arrowL := dim.Render(" ← ")
+					arrowR := dim.Render(" → ")
+					b.WriteString(highlight.Render(fmt.Sprintf("  ❯ %s: %s%s%s", f.Label, arrowL, display, arrowR)))
+				} else {
+					b.WriteString(highlight.Render(fmt.Sprintf("  ❯ %s: %s", f.Label, display)))
+				}
 			}
 		} else {
-			b.WriteString(fmt.Sprintf("    %s: %s", f.Label, display))
+			// Show ← → arrows for thinking effort when focused
+			if i == 5 {
+				arrowL := dim.Render(" ← ")
+				arrowR := dim.Render(" → ")
+				b.WriteString(fmt.Sprintf("    %s: %s%s%s", f.Label, arrowL, display, arrowR))
+			} else {
+				b.WriteString(fmt.Sprintf("    %s: %s", f.Label, display))
+			}
 		}
 		b.WriteString("\n")
 	}
@@ -204,6 +273,10 @@ func (m *Form) RestoreSnapshot() {
 	}
 }
 
+func (m Form) IsEditing() bool {
+	return m.editing
+}
+
 func (m Form) FocusedField() int {
 	if m.focusedBtn == 0 {
 		return m.focused
@@ -224,10 +297,25 @@ func (m Form) FieldValue(idx int) string {
 	return ""
 }
 
+func (m *Form) SetFocusedBtn(idx int) {
+	if idx >= 0 && idx <= 2 {
+		m.focusedBtn = idx
+	}
+}
+
 func (m *Form) FocusField(idx int) {
 	if idx >= 0 && idx < len(m.fields) {
 		m.focused = idx
 		m.focusedBtn = 0
 		m.editing = false
+	}
+}
+
+func (m *Form) StartEditing(idx int) {
+	if idx >= 0 && idx < len(m.fields) {
+		m.focused = idx
+		m.focusedBtn = 0
+		m.editing = true
+		m.editCursor = len(m.fields[idx].Value)
 	}
 }

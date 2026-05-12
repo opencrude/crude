@@ -1,219 +1,39 @@
-package chat
+package widgets
 
 import (
 	"fmt"
 	"strings"
 	"time"
 
-	ttypes "crude/tui/types"
-	"crude/tui/widget"
+	"crude/tui/rendering"
+	"crude/tui/theme"
+	"crude/tui/types"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 )
 
-func RenderAllMessages(messages []ChatMessage, theme *widget.Theme, width int, spinFrame int, mdRenderer *glamour.TermRenderer, modelName string, streaming bool, height int, username string) []string {
-	var all []string
-
-	padLR := theme.Spacing.PadLR
-	contentWidth := width - padLR*2 - 16
-	if contentWidth < 10 {
-		contentWidth = 10
-	}
-	innerW := width - padLR*2
-	if innerW < 20 {
-		innerW = 20
-	}
-
-	for msgIdx := range messages {
-		msg := messages[msgIdx]
-		isLastMsg := msgIdx == len(messages)-1
-
-		all = append(all, "")
-
-		timeLine1, timeLine2 := FormatTimeLabel(msg.Time)
-		timeW := widget.Max(len(timeLine1), len(timeLine2))
-
-		var msgLines []string
-		cursorLine := -1
-
-		switch msg.Role {
-		case RoleUser:
-			msgLines = RenderUserMessage(msg, theme, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, username)
-		case RoleAssistant:
-			msgLines = RenderAssistantMessage(msg, theme, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, modelName, streaming, isLastMsg)
-			if streaming && isLastMsg && len(msgLines) > 0 {
-				cursorLine = len(msgLines) - 1
-			}
-		case RoleThinking:
-			msgLines = RenderThinkingMessage(msg, theme, contentWidth, innerW, spinFrame)
-			if msg.ThinkingActive && isLastMsg && len(msgLines) > 0 {
-				cursorLine = len(msgLines) - 1
-			}
-		case RoleTool:
-			msgLines = RenderToolMessage(msg, theme, contentWidth, innerW, width, spinFrame, height)
-		case RoleError:
-			msgLines = RenderErrorMessage(msg, theme, contentWidth, innerW, timeLine1, timeLine2, timeW)
-		}
-
-		prevLen := len(all)
-		all = append(all, msgLines...)
-		if cursorLine >= 0 && cursorLine < len(msgLines) {
-			cursor := blockCursor(spinFrame, theme.Colors.Accent)
-			all[prevLen+cursorLine] = all[prevLen+cursorLine] + cursor
-		}
-	}
-
-	return all
-}
-
-func blockCursor(frame int, color lipgloss.Color) string {
-	if frame%2 == 0 {
-		return lipgloss.NewStyle().Foreground(color).Render("█")
-	}
-	return " "
-}
-
-func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, bool) {
-	if mdRenderer == nil {
-		return "", false
-	}
-	r, err := mdRenderer.Render(content)
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimRight(r, "\n"), true
-}
-
-func RenderUserMessage(msg ChatMessage, theme *widget.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int, mdRenderer *glamour.TermRenderer, username string) []string {
-	var userLines []string
-
-	rendered, isMarkdown := renderMarkdown(msg.Content, mdRenderer)
-	if !isMarkdown {
-		userLines = widget.WrapText(msg.Content, contentWidth)
-	} else {
-		userLines = strings.Split(rendered, "\n")
-	}
-
-	dim := lipgloss.NewStyle().Foreground(theme.Colors.Muted)
-	labelStyle := theme.Styles.UserLabel
-	if len(userLines) > 0 {
-		label := labelStyle.Render("❯ " + username + " ")
-		userLines[0] = label + userLines[0]
-	}
-
-	for i, line := range userLines {
-		var timePart string
-		if i == 0 {
-			timePart = dim.Render(timeLine1)
-		} else if i == 1 {
-			timePart = dim.Render(timeLine2)
-		}
-		if timePart != "" {
-			lineW := lipgloss.Width(line)
-			sp := innerW - lineW - timeW
-			if sp < 1 {
-				sp = 1
-			}
-			userLines[i] = line + strings.Repeat(" ", sp) + timePart
-		}
-	}
-
-	if len(userLines) == 1 {
-		sp := innerW - timeW
-		if sp < 0 {
-			sp = 0
-		}
-		userLines = append(userLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
-	}
-
-	return userLines
-}
-
-func RenderAssistantMessage(msg ChatMessage, theme *widget.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int, mdRenderer *glamour.TermRenderer, modelName string, streaming bool, isLastMsg bool) []string {
-	var asstLines []string
-
-	rendered, isMarkdown := renderMarkdown(msg.Content, mdRenderer)
-	if !isMarkdown {
-		asstLines = widget.WrapText(msg.Content, contentWidth)
-	} else {
-		asstLines = strings.Split(rendered, "\n")
-	}
-
-	dim := lipgloss.NewStyle().Foreground(theme.Colors.Muted)
-	labelStyle := theme.Styles.AsstLabel
-	if len(asstLines) > 0 {
-		label := labelStyle.Render("❯ Crude " + modelName + " ")
-		asstLines[0] = label + asstLines[0]
-	}
-
-	for i, line := range asstLines {
-		isCursorLine := streaming && isLastMsg && i == len(asstLines)-1
-		var timePart string
-		if i == 0 && !isCursorLine {
-			timePart = dim.Render(timeLine1)
-		} else if i == 1 && !isCursorLine {
-			timePart = dim.Render(timeLine2)
-		}
-		if timePart != "" {
-			lineW := lipgloss.Width(line)
-			sp := innerW - lineW - timeW
-			if sp < 1 {
-				sp = 1
-			}
-			asstLines[i] = line + strings.Repeat(" ", sp) + timePart
-		} else if isCursorLine {
-			asstLines[i] = widget.TrimRightAnsiSpaces(line)
-		}
-	}
-
-	if len(asstLines) == 1 && !(streaming && isLastMsg) {
-		sp := innerW - timeW
-		if sp < 0 {
-			sp = 0
-		}
-		asstLines = append(asstLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
-	}
-
-	return asstLines
-}
-
-func RenderThinkingMessage(msg ChatMessage, theme *widget.Theme, contentWidth, innerW int, spinFrame int) []string {
-	lines := widget.WrapText(msg.Content, contentWidth)
-	borderPrefix := lipgloss.NewStyle().Foreground(theme.Colors.Border).Render("│ ")
-	thinkingStyle := theme.Styles.ThinkingLine
-
-	var result []string
-	for i, line := range lines {
-		if i == 0 {
-			if msg.ThinkingActive {
-				alpha := (spinFrame % 4) + 1
-				dotColors := []string{"#f0883e", "#d0681e", "#b85010", "#d0681e"}
-				dotColor := dotColors[alpha%len(dotColors)]
-				result = append(result, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Render("● ")+thinkingStyle.Render(line))
-			} else {
-				result = append(result, borderPrefix+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render("● ")+thinkingStyle.Render(line))
-			}
-		} else {
-			result = append(result, borderPrefix+"  "+thinkingStyle.Render(line))
-		}
-	}
-	return result
-}
-
-func RenderToolMessage(msg ChatMessage, theme *widget.Theme, contentWidth, innerW, width, spinFrame, height int) []string {
-	dim := lipgloss.NewStyle().Foreground(theme.Colors.Muted)
+func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string) []string {
+	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 	isActive := msg.ToolStatus == "streaming" || msg.ToolStatus == "calling"
 
-	spinColor := theme.Colors.Spinner.Default
-	if msg.ToolStatus == "success" {
-		spinColor = theme.Colors.Spinner.Done
+	spinColor := th.Colors.Spinner.Default
+	if isActive {
+		switch phase {
+		case "grounding":
+			spinColor = th.Colors.Spinner.Grounding
+		case "planning":
+			spinColor = th.Colors.Spinner.Planning
+		case "executing":
+			spinColor = th.Colors.Spinner.Executing
+		}
+	} else if msg.ToolStatus == "success" {
+		spinColor = th.Colors.Spinner.Done
 	} else if msg.ToolStatus == "error" {
-		spinColor = theme.Colors.Spinner.Error
+		spinColor = th.Colors.Spinner.Error
 	}
 	spinStyle := lipgloss.NewStyle().Foreground(spinColor)
-	nameStyle := lipgloss.NewStyle().Foreground(theme.Colors.Muted)
+	nameStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 	title := buildToolTitle(msg)
 
 	var msgLines []string
@@ -246,7 +66,7 @@ func RenderToolMessage(msg ChatMessage, theme *widget.Theme, contentWidth, inner
 		resultContent = strings.TrimSpace(resultContent)
 		if resultContent != "" {
 			if IsPlanTool(msg.ToolName) {
-				planBox := renderPlanBox(resultContent, contentWidth-4, theme)
+				planBox := renderPlanBox(resultContent, contentWidth-4, th)
 				for _, pl := range strings.Split(planBox, "\n") {
 					msgLines = append(msgLines, dim.Render("│ ")+pl)
 				}
@@ -259,10 +79,10 @@ func RenderToolMessage(msg ChatMessage, theme *widget.Theme, contentWidth, inner
 					path = "file"
 				}
 				if strings.Contains(resultContent, "— (empty file)") {
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render("(empty file)"))
+					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("(empty file)"))
 				} else if strings.HasPrefix(resultContent, "Error:") {
 					firstLine := strings.SplitN(resultContent, "\n", 2)[0]
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render(firstLine))
+					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(firstLine))
 				} else {
 					contentLines := len(strings.Split(resultContent, "\n"))
 					if strings.HasPrefix(resultContent, "Lines") {
@@ -275,41 +95,41 @@ func RenderToolMessage(msg ChatMessage, theme *widget.Theme, contentWidth, inner
 					if contentLines == 1 {
 						suffix = ""
 					}
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render(fmt.Sprintf("Read %d line%s from %s", contentLines, suffix, path)))
+					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("Read %d line%s from %s", contentLines, suffix, path)))
 					if strings.HasPrefix(resultContent, "Lines") {
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render("… partial content returned to agent"))
+						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("… partial content returned to agent"))
 					} else {
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render("… full content returned to agent"))
+						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("… full content returned to agent"))
 					}
 				}
-			} else if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || IsDiffContent(resultContent) {
-				resultLines := renderCompactDiff(msg.ToolName, resultContent, theme)
+			} else if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || isDiffContent(resultContent) {
+				resultLines := renderCompactDiff(msg.ToolName, resultContent, th)
 				maxRes := terminalResultHeight(height)
 				for i, rl := range resultLines {
 					if i >= maxRes-1 {
 						remaining := len(resultLines) - i
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
+						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
 						break
 					}
 					msgLines = append(msgLines, dim.Render("│ ")+rl)
 				}
 			} else {
-				toolLineWidth := width - theme.Spacing.PadLR*2 - 6
+				toolLineWidth := width - th.Spacing.PadLR*2 - 6
 				if toolLineWidth < 20 {
 					toolLineWidth = 20
 				}
 				var wrappedLines []string
 				for _, rl := range strings.Split(resultContent, "\n") {
 					trimmed := strings.TrimLeft(rl, " ")
-					for _, seg := range widget.HardWrap(trimmed, toolLineWidth) {
-						wrappedLines = append(wrappedLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render(seg))
+					for _, seg := range rendering.HardWrap(trimmed, toolLineWidth) {
+						wrappedLines = append(wrappedLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(seg))
 					}
 				}
 				maxRes := terminalResultHeight(height)
 				for i, wl := range wrappedLines {
 					if i >= maxRes-1 {
 						remaining := len(wrappedLines) - i
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
+						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
 						break
 					}
 					msgLines = append(msgLines, wl)
@@ -321,41 +141,7 @@ func RenderToolMessage(msg ChatMessage, theme *widget.Theme, contentWidth, inner
 	return msgLines
 }
 
-func RenderErrorMessage(msg ChatMessage, theme *widget.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int) []string {
-	lines := widget.WrapText(msg.Content, contentWidth)
-	dim := lipgloss.NewStyle().Foreground(theme.Colors.Muted)
-
-	for i, line := range lines {
-		styled := theme.Styles.ErrorText.Render("  " + line)
-		if i == 0 {
-			label := theme.Styles.ErrorText.Render("error")
-			styled = label + " " + theme.Styles.ErrorText.Render(line)
-			sp := innerW - lipgloss.Width(styled) - timeW
-			if sp < 1 {
-				sp = 1
-			}
-			lines[i] = styled + strings.Repeat(" ", sp) + dim.Render(timeLine1)
-		} else if i == 1 {
-			sp := innerW - lipgloss.Width(styled) - timeW
-			if sp < 1 {
-				sp = 1
-			}
-			lines[i] = styled + strings.Repeat(" ", sp) + dim.Render(timeLine2)
-		} else {
-			lines[i] = styled
-		}
-	}
-	if len(lines) == 1 {
-		sp := innerW - timeW
-		if sp < 0 {
-			sp = 0
-		}
-		lines = append(lines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
-	}
-	return lines
-}
-
-func renderPlanBox(text string, maxWidth int, theme *widget.Theme) string {
+func renderPlanBox(text string, maxWidth int, th *theme.Theme) string {
 	lines := strings.Split(text, "\n")
 	if len(lines) == 0 {
 		return ""
@@ -372,21 +158,21 @@ func renderPlanBox(text string, maxWidth int, theme *widget.Theme) string {
 		var styled string
 		switch {
 		case strings.HasPrefix(trimmed, "✓"):
-			styled = lipgloss.NewStyle().Foreground(theme.Colors.Success).Render(line)
+			styled = lipgloss.NewStyle().Foreground(th.Colors.Success).Render(line)
 		case strings.HasPrefix(trimmed, "→"):
-			styled = lipgloss.NewStyle().Foreground(theme.Colors.Accent2).Render(line)
+			styled = lipgloss.NewStyle().Foreground(th.Colors.Accent2).Render(line)
 		case strings.HasPrefix(trimmed, "✗"):
-			styled = lipgloss.NewStyle().Foreground(theme.Colors.Error).Render(line)
+			styled = lipgloss.NewStyle().Foreground(th.Colors.Error).Render(line)
 		case strings.HasPrefix(trimmed, "!"):
-			styled = lipgloss.NewStyle().Foreground(theme.Colors.Warning).Render(line)
+			styled = lipgloss.NewStyle().Foreground(th.Colors.Warning).Render(line)
 		case strings.HasPrefix(trimmed, "☐"):
-			styled = lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render(line)
+			styled = lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(line)
 		case strings.HasPrefix(trimmed, "Plan:") || strings.HasPrefix(trimmed, "Goal:"):
-			styled = lipgloss.NewStyle().Foreground(theme.Colors.Accent).Bold(true).Render(line)
+			styled = lipgloss.NewStyle().Foreground(th.Colors.Accent).Bold(true).Render(line)
 		case strings.HasPrefix(trimmed, "Suspended:"):
-			styled = lipgloss.NewStyle().Foreground(theme.Colors.Warning).Render(line)
+			styled = lipgloss.NewStyle().Foreground(th.Colors.Warning).Render(line)
 		default:
-			styled = lipgloss.NewStyle().Foreground(theme.Colors.Muted).Render(line)
+			styled = lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(line)
 		}
 		styledLines = append(styledLines, styled)
 	}
@@ -400,10 +186,10 @@ func renderPlanBox(text string, maxWidth int, theme *widget.Theme) string {
 	return box.Render(content)
 }
 
-func renderCompactDiff(toolName, content string, theme *widget.Theme) []string {
-	dim := lipgloss.NewStyle().Foreground(theme.Colors.Muted)
-	addStyle := lipgloss.NewStyle().Foreground(theme.Colors.Success)
-	delStyle := lipgloss.NewStyle().Foreground(theme.Colors.Error)
+func renderCompactDiff(toolName, content string, th *theme.Theme) []string {
+	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
+	addStyle := lipgloss.NewStyle().Foreground(th.Colors.Success)
+	delStyle := lipgloss.NewStyle().Foreground(th.Colors.Error)
 
 	diffContent := extractDiffBlock(content)
 	if diffContent == "" {
@@ -454,28 +240,6 @@ func extractDiffBlock(content string) string {
 	return content[start : start+end]
 }
 
-func IsDiffContent(text string) bool {
-	text = strings.TrimSpace(text)
-	if strings.Contains(text, "```diff") {
-		return true
-	}
-	hasMinus := false
-	hasPlus := false
-	hasHunk := false
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "--- ") {
-			hasMinus = true
-		}
-		if strings.HasPrefix(line, "+++ ") {
-			hasPlus = true
-		}
-		if strings.HasPrefix(line, "@@") {
-			hasHunk = true
-		}
-	}
-	return (hasMinus && hasPlus) || hasHunk
-}
-
 func IsPlanTool(name string) bool {
 	switch name {
 	case "plan", "mark_step_complete", "mark_step_failed", "report_blocker", "resolve_blocker", "list_goal_status":
@@ -493,32 +257,18 @@ func terminalResultHeight(height int) int {
 	return h
 }
 
-func FormatTimeLabel(t time.Time) (string, string) {
-	line1 := t.Format("15:04")
-	now := time.Now()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	if t.After(todayStart) {
-		return line1, "today"
-	}
-	yesterdayStart := todayStart.Add(-24 * time.Hour)
-	if t.After(yesterdayStart) {
-		return line1, "yesterday"
-	}
-	return line1, t.Format("01/02")
-}
-
-func buildToolTitle(msg ChatMessage) string {
+func buildToolTitle(msg types.ChatMessage) string {
 	target := msg.ToolProgressLabel
 	if target == "" {
 		target = msg.ToolArgs
 	}
 
 	switch msg.ToolPreviewPhase {
-	case ttypes.ToolPreviewPreparing:
+	case types.ToolPreviewPreparing:
 		return "Preparing " + pascalCaseTool(msg.ToolName)
-	case ttypes.ToolPreviewStreaming:
+	case types.ToolPreviewStreaming:
 		return buildStreamingLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens)
-	case ttypes.ToolPreviewDone:
+	case types.ToolPreviewDone:
 		dur := formatToolDuration(msg.ToolDuration)
 		if msg.ToolStatus == "error" {
 			label := pascalCaseTool(msg.ToolName)
@@ -815,4 +565,9 @@ func truncateLine(s string, max int) string {
 		return s
 	}
 	return runewidth.Truncate(s, max, "…")
+}
+
+func isDiffContent(content string) bool {
+	return strings.Contains(content, "```diff") ||
+		(strings.Contains(content, "\n--- ") && strings.Contains(content, "\n+++ "))
 }

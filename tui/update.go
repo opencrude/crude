@@ -6,124 +6,12 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"crude/fileio"
-	"crude/tui/chat"
 	"crude/tui/input"
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
-	"crude/tui/widget"
 )
-
-var OnHistorySave func([]string)
-
-type mode int
-
-const (
-	modeChat mode = iota
-	modeSettings
-	modeConfirm
-	modeYolo
-)
-
-type App struct {
-	theme  *widget.Theme
-	mode   mode
-	width  int
-	height int
-
-	chat      chat.Model
-	input     input.Model
-	statusbar *StatusBar
-	settings  settings.Model
-	confirm   ConfirmDialog
-	yoloDlg   YoloDialog
-
-	thinking  bool
-	blocking  bool
-	streaming bool
-	yolo      bool
-
-	inputCh  chan<- string
-	cancelCh chan<- struct{}
-
-	OnQuit, OnExitMessage               func()
-	OnSettingsSave                      func(Settings)
-	OnConfirmResult                     func(ConfirmResult)
-	OnYoloCmd                           func(bool)
-	OnUndoCmd                           func(string)
-	FetchModelsFn                       func(string, string, string) ([]ModelEntry, error)
-	GetProviderConfigFn                 func(string) ProviderConfig
-	ProviderPresets                     []ProviderPreset
-
-	quit           bool
-	lastCancelTime time.Time
-	modelName      string
-	username       string
-	startTime      time.Time
-
-	spinFrame int
-	history   []string
-
-	tokenPrompt, tokenCompletion, tokenCached         int
-	sessionCost                                       float64
-	contextWindow, contextUsed                        int
-
-	lastSettings Settings
-}
-
-func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(providerID string) ProviderConfig) *App {
-	cm := chat.NewModel(appTheme)
-	im := input.NewModel(appTheme)
-	sb := NewStatusBar(appTheme)
-
-	sm := settings.NewModel(appTheme, initial, nil, getProviderConfigFn, fetchFn)
-
-	cd := NewConfirmDialog(appTheme)
-	yd := NewYoloDialog(appTheme)
-
-	return &App{
-		theme:               appTheme,
-		chat:                cm,
-		input:               im,
-		statusbar:           sb,
-		settings:            sm,
-		confirm:             cd,
-		yoloDlg:             yd,
-		inputCh:             inputCh,
-		cancelCh:            cancelCh,
-		modelName:           modelName,
-		username:            username,
-		startTime:           time.Now(),
-		lastCancelTime:      time.Now(),
-		lastSettings:        initial,
-	}
-}
-
-func (m *App) SetProviderPresets(presets []ProviderPreset) {
-	m.ProviderPresets = presets
-	m.settings.SetPresets(presets)
-}
-
-func (m *App) SetHistory(history []string) {
-	m.history = history
-	m.input.SetHistory(history)
-}
-
-func (m *App) History() []string {
-	return m.history
-}
-
-func (m *App) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), tea.EnterAltScreen)
-}
-
-func tickCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
-		return ttypes.TickMsg(t)
-	})
-}
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -140,12 +28,16 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ttypes.TickMsg:
 		m.spinFrame++
 		m.statusbar.SetSpinFrame(m.spinFrame)
+		m.input.SetSpinFrame(m.spinFrame)
 		m.statusbar.ClearExpired()
 		m.chat.InvalidateCache()
 		return m, tickCmd()
 
 	case tea.KeyMsg:
-		if msg.Type == tea.KeyCtrlC || msg.Type == tea.KeyEsc {
+		if msg.Type == tea.KeyCtrlC {
+			return m, m.handleCancel(msg)
+		}
+		if msg.Type == tea.KeyEsc && m.mode != modeSettings {
 			return m, m.handleCancel(msg)
 		}
 	}
@@ -165,8 +57,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.OnSettingsSave != nil {
 				m.OnSettingsSave(s)
 			}
-			m.chat.AppendMessage(chat.ChatMessage{
-				Role:    chat.RoleAssistant,
+			m.chat.AppendMessage(ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
 				Content: formatSettingsSummary(s),
 				Time:    time.Now(),
 			})
@@ -174,9 +66,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat.InvalidateCache()
 		case settings.CancelEvent:
 			m.settings.RestoreSnapshot()
-			s := m.lastSettings
-			m.chat.AppendMessage(chat.ChatMessage{
-				Role:    chat.RoleAssistant,
+			s := m.settings.ToSettings()
+			m.chat.AppendMessage(ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
 				Content: formatSettingsSummary(s),
 				Time:    time.Now(),
 			})
@@ -197,13 +89,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			resultMsg := "✓ Allowed"
 			switch result.Choice {
-			case ConfirmAlways:
+			case ttypes.ConfirmAlways:
 				resultMsg = "✓ Always allowed (session)"
-			case ConfirmDeny:
+			case ttypes.ConfirmDeny:
 				resultMsg = "✗ Denied"
 			}
-			m.chat.AppendMessage(chat.ChatMessage{
-				Role:    chat.RoleAssistant,
+			m.chat.AppendMessage(ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
 				Content: resultMsg,
 				Time:    time.Now(),
 			})
@@ -218,14 +110,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusbar.SetConfirming(false)
 			m.yolo = enabled
 			if enabled {
-				m.chat.AppendMessage(chat.ChatMessage{
-					Role:    chat.RoleAssistant,
+				m.chat.AppendMessage(ttypes.ChatMessage{
+					Role:    ttypes.RoleAssistant,
 					Content: "⚠ YOLO mode ACTIVE — all safety checks disabled. Use /yolo again to restore.",
 					Time:    time.Now(),
 				})
 			} else {
-				m.chat.AppendMessage(chat.ChatMessage{
-					Role:    chat.RoleAssistant,
+				m.chat.AppendMessage(ttypes.ChatMessage{
+					Role:    ttypes.RoleAssistant,
 					Content: "YOLO mode cancelled. Safety checks remain active.",
 					Time:    time.Now(),
 				})
@@ -289,8 +181,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusbar.SetError(msg.Error)
 		}
 		if msg.Desc != "" {
-			m.chat.AppendMessage(chat.ChatMessage{
-				Role:    chat.RoleAssistant,
+			m.chat.AppendMessage(ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
 				Content: msg.Desc,
 				Time:    time.Now(),
 			})
@@ -301,8 +193,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) submitInput(text string) tea.Cmd {
-	m.chat.AppendMessage(chat.ChatMessage{
-		Role:    chat.RoleUser,
+	m.chat.AppendMessage(ttypes.ChatMessage{
+		Role:    ttypes.RoleUser,
 		Content: text,
 		Time:    time.Now(),
 	})
@@ -315,6 +207,7 @@ func (m *App) submitInput(text string) tea.Cmd {
 	}
 	m.thinking = true
 	m.streaming = false
+	m.statusbar.SetThinking(true, false, false)
 	m.chat.ScrollToBottom()
 	ch := m.inputCh
 	return func() tea.Msg {
@@ -334,8 +227,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	}
 
 	cmdName := parts[0]
-	m.chat.AppendMessage(chat.ChatMessage{
-		Role:    chat.RoleUser,
+	m.chat.AppendMessage(ttypes.ChatMessage{
+		Role:    ttypes.RoleUser,
 		Content: cmd,
 		Time:    time.Now(),
 	})
@@ -371,23 +264,28 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		}
 		idx = (idx + 1) % len(efforts)
 		m.lastSettings.ThinkingEffort = efforts[idx]
+		m.settings.SetFieldValue(5, efforts[idx])
 		if m.OnSettingsSave != nil {
 			go m.OnSettingsSave(m.lastSettings)
 		}
-		m.chat.AppendMessage(chat.ChatMessage{
-			Role:    chat.RoleAssistant,
+		m.chat.AppendMessage(ttypes.ChatMessage{
+			Role:    ttypes.RoleAssistant,
 			Content: fmt.Sprintf("Thinking effort: %s", efforts[idx]),
 			Time:    time.Now(),
 		})
 	case "/help":
 		var b strings.Builder
-		b.WriteString("Available commands:\n  /settings     Open general settings\n  /provider     Select provider\n  /model        Select model\n  /oracle-model Select oracle model\n  /api-key      Set API key\n  /effort       Cycle thinking effort\n  /undo         Undo last file operation\n  /undo-n       Undo last N operations\n  /undo-all     Undo all operations\n  /changes      Show changed files\n  /yolo         Toggle YOLO mode\n  /help         Show this help")
-		m.chat.AppendMessage(chat.ChatMessage{Role: chat.RoleAssistant, Content: b.String(), Time: time.Now()})
+		b.WriteString("Available commands:\n")
+		for _, c := range input.AvailableCmds() {
+			b.WriteString(fmt.Sprintf("  %-16s %s\n", "/"+c.Label, c.Desc))
+		}
+		m.chat.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 	case "/yolo":
 		if m.yolo {
 			m.yolo = false
-			m.chat.AppendMessage(chat.ChatMessage{
-				Role:    chat.RoleAssistant,
+			m.chat.ScrollToBottom()
+			m.chat.AppendMessage(ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
 				Content: "⚠ YOLO mode disabled. Safety checks restored.",
 				Time:    time.Now(),
 			})
@@ -413,11 +311,12 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 	now := time.Now()
 
 	if m.mode == modeSettings {
-		m.mode = modeChat
 		m.settings.RestoreSnapshot()
-		m.chat.AppendMessage(chat.ChatMessage{
-			Role:    chat.RoleAssistant,
-			Content: formatSettingsSummary(m.lastSettings),
+		s := m.settings.ToSettings()
+		m.mode = modeChat
+		m.chat.AppendMessage(ttypes.ChatMessage{
+			Role:    ttypes.RoleAssistant,
+			Content: formatSettingsSummary(s),
 			Time:    time.Now(),
 		})
 		return nil
@@ -434,7 +333,7 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		m.blocking = false
 		m.mode = modeChat
 		if m.OnConfirmResult != nil {
-			m.OnConfirmResult(ConfirmResult{Choice: ConfirmDeny})
+			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
 		return nil
 	}
@@ -445,6 +344,13 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		default:
 		}
 		m.statusbar.SetInfo("cancelling...")
+		return nil
+	}
+
+	inputText := strings.TrimSpace(m.input.Value())
+	if inputText != "" {
+		m.input.ClearInput()
+		m.input.DismissHint()
 		return nil
 	}
 
@@ -462,19 +368,32 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	case "phase":
 		if phase, ok := evt.Data.(string); ok {
 			m.statusbar.SetPhase(phase)
-			m.statusbar.statusLine = phase
+			var statusLine string
+			switch phase {
+			case "grounding":
+				statusLine = "Gathering context"
+			case "planning":
+				statusLine = "Planning"
+			case "executing":
+				statusLine = "Executing"
+			default:
+				statusLine = phase
+			}
+			m.statusbar.SetStatusLine(statusLine)
 		}
 
 	case "thinking":
 		if s, ok := evt.Data.(string); ok && s != "" {
 			m.chat.AppendThinking(s)
 			m.thinking = true
+			m.statusbar.SetThinking(true, false, false)
 		}
 
 	case "stream_token":
 		if s, ok := evt.Data.(string); ok && s != "" {
 			m.chat.AppendToken(s)
 			m.streaming = true
+			m.statusbar.SetThinking(true, true, false)
 		}
 
 	case "tool_call_streaming":
@@ -537,6 +456,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		}
 
 	case "tool_call":
+		m.statusbar.ClearRetry()
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
 			name, _ := data["name"].(string)
@@ -545,7 +465,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			}
 			args, _ := data["args"].(string)
 			argsCompact := summarizeToolArgs(name, args)
-			m.statusbar.statusLine = toolLabel(name, argsCompact)
+			m.statusbar.SetStatusLine(toolLabel(name, argsCompact))
 			m.chat.UpdateToolCall(toolID, name, argsCompact)
 		}
 
@@ -562,21 +482,11 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			linesAdded, _ := data["lines_added"].(float64)
 			linesRemoved, _ := data["lines_removed"].(float64)
 
-			if path != "" {
-				data["target"] = path
-			}
-			if linesAdded > 0 {
-				data["content_lines_int"] = int(linesAdded)
-			}
-			if linesRemoved > 0 {
-				data["old_lines_int"] = int(linesRemoved)
-			}
-
-			m.chat.UpdateToolProgress(toolID, name, phase, message)
+			m.chat.UpdateToolProgress(toolID, name, phase, message, path, int(linesAdded), int(linesRemoved))
 			if phase == "done" {
-				m.statusbar.statusLine = name
+				m.statusbar.SetStatusLine(name)
 			} else if phase != "" && message != "" {
-				m.statusbar.statusLine = message
+				m.statusbar.SetStatusLine(message)
 			}
 		}
 
@@ -590,7 +500,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			result, _ := data["result"].(string)
 			errFlag, _ := data["error"].(string)
 			isError := errFlag == "true"
-			m.statusbar.statusLine = name
+			m.statusbar.SetStatusLine(name)
 			m.chat.UpdateToolResult(toolID, name, result, isError)
 		}
 
@@ -616,14 +526,16 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		suggestion := data["suggestion"]
 		m.thinking = false
 		m.blocking = true
+		m.statusbar.SetStatusLine("")
+		m.statusbar.SetThinking(false, false, true)
 		m.chat.MarkAllThinkingDone()
 		if risk != "" {
 			m.confirm.ResetWithDetails(question, operation, tool, target, risk, reason, suggestion)
 		} else {
 			m.confirm.Reset(question, operation, tool, target)
 		}
-		m.chat.AppendMessage(chat.ChatMessage{
-			Role:    chat.RoleAssistant,
+		m.chat.AppendMessage(ttypes.ChatMessage{
+			Role:    ttypes.RoleAssistant,
 			Content: "⚠  " + question,
 			Time:    time.Now(),
 		})
@@ -633,13 +545,17 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		m.blocking = false
 		m.confirm.Dismiss()
 		m.statusbar.SetConfirming(false)
+		m.statusbar.SetThinking(false, false, false)
 		m.mode = modeChat
 
 	case "done":
+		wasStreaming := m.streaming
 		m.chat.MarkAllThinkingDone()
 		m.chat.ClearStreamingTools()
 		m.thinking = false
 		m.streaming = false
+		m.statusbar.SetStatusLine("")
+		m.statusbar.SetThinking(false, false, false)
 
 		var content, reason string
 		switch d := evt.Data.(type) {
@@ -656,12 +572,28 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.statusbar.SetError("⚠ " + reason)
 		}
 
+		for _, msg := range m.chat.Messages() {
+			msg.CachedLines = nil
+		}
+
 		if content != "" {
-			m.chat.AppendMessage(chat.ChatMessage{
-				Role:    chat.RoleAssistant,
-				Content: content,
-				Time:    time.Now(),
-			})
+			msgs := m.chat.Messages()
+			merged := false
+			if wasStreaming && len(msgs) > 0 {
+				last := msgs[len(msgs)-1]
+				if last.Role == ttypes.RoleAssistant && last.Content == "" {
+					last.Content = content
+					last.CursorLine = -1
+					merged = true
+				}
+			}
+			if !merged {
+				m.chat.AppendMessage(ttypes.ChatMessage{
+					Role:    ttypes.RoleAssistant,
+					Content: content,
+					Time:    time.Now(),
+				})
+			}
 		}
 		m.chat.ScrollToBottom()
 
@@ -669,10 +601,14 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		m.chat.MarkAllThinkingDone()
 		m.chat.ClearStreamingTools()
 		errMsg := fmt.Sprintf("%v", evt.Data)
-		m.chat.AppendMessage(chat.ChatMessage{Role: chat.RoleError, Content: errMsg, Time: time.Now()})
+		m.chat.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
 		m.statusbar.SetError(errMsg)
 		m.thinking = false
 		m.streaming = false
+		m.blocking = false
+		m.statusbar.SetThinking(false, false, false)
+		m.statusbar.ClearRetry()
+		m.statusbar.SetStatusLine("")
 		m.chat.ScrollToBottom()
 
 	case "usage":
@@ -684,9 +620,9 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			cost, _ := d["cost"].(float64)
 			ctxWindow, _ := d["context_window"].(float64)
 			ctxUsed, _ := d["context_used"].(float64)
-			m.tokenPrompt += int(prompt)
+			m.tokenPrompt = int(prompt)
 			m.tokenCompletion += int(completion)
-			m.tokenCached += int(cached)
+			m.tokenCached = int(cached)
 			m.sessionCost += cost
 			if int(ctxWindow) > 0 {
 				m.contextWindow = int(ctxWindow)
@@ -694,9 +630,9 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			}
 			m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed)
 		case map[string]int:
-			m.tokenCached += d["prompt_cached"]
+			m.tokenCached = d["prompt_cached"]
 			m.tokenCompletion += d["completion"]
-			m.tokenPrompt += d["prompt"]
+			m.tokenPrompt = d["prompt"]
 			if cw := d["context_window"]; cw > 0 {
 				m.contextWindow = cw
 				m.contextUsed = d["prompt"]
@@ -727,138 +663,4 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	}
 
 	return nil
-}
-
-func (m *App) View() string {
-	if m.width == 0 || m.height == 0 {
-		return ""
-	}
-
-	pad := strings.Repeat(" ", appTheme.Spacing.PadLR)
-	innerW := m.width - appTheme.Spacing.PadLR*2
-	if innerW < 20 {
-		innerW = 20
-	}
-
-	lines := make([]string, 0, m.height)
-	add := func(s string) {
-		if len(lines) < m.height {
-			lines = append(lines, pad+s)
-		}
-	}
-	addFull := func(s string) {
-		if len(lines) < m.height {
-			lines = append(lines, s)
-		}
-	}
-
-	dim := lipgloss.NewStyle().Foreground(appTheme.Colors.Muted)
-
-	add("")
-
-	uptime := time.Since(m.startTime).Truncate(time.Second)
-	left := appTheme.Styles.Header.Render("crude") +
-		" " + dim.Render(widget.TruncateLine(m.modelName, innerW/3))
-
-	var middle string
-	if m.yolo {
-		yoloStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0000")).Bold(true)
-		middle = " " + yoloStyle.Render("⚠ YOLO")
-	}
-
-	var rightStr string
-	if middle != "" {
-		rightStr = middle + " " + dim.Render(uptime.String())
-	} else {
-		rightStr = dim.Render(uptime.String())
-	}
-	spacer := innerW - lipgloss.Width(left) - lipgloss.Width(rightStr)
-	if spacer < 0 {
-		spacer = 0
-	}
-	add(left + strings.Repeat(" ", spacer) + rightStr)
-	addFull(appTheme.Styles.Separator.Render(strings.Repeat("─", m.width)))
-
-	chatH := m.chatAreaHeight()
-	chatLines := m.renderChatArea()
-	total := len(chatLines)
-
-	chatOffset := m.chat.ChatOffset()
-	if chatOffset > total-chatH {
-		chatOffset = total - chatH
-	}
-	if chatOffset < 0 {
-		chatOffset = 0
-	}
-
-	endIdx := total - chatOffset
-	startIdx := endIdx - chatH
-	if startIdx < 0 {
-		startIdx = 0
-	}
-	if endIdx > total {
-		endIdx = total
-	}
-	visible := chatLines[startIdx:endIdx]
-
-	emptyTop := chatH - len(visible)
-	for i := 0; i < emptyTop; i++ {
-		add("")
-	}
-	for _, line := range visible {
-		addFull(line)
-	}
-
-	asyncLines := m.statusbar.RenderAsyncBar()
-	if len(asyncLines) > 0 {
-		add("")
-		addFull(dim.Render(strings.Repeat("─", m.width)))
-	}
-	for _, al := range asyncLines {
-		addFull(al)
-	}
-
-	inputView := m.input.View(m.width, m.height, m.mode == modeSettings, m.mode == modeConfirm)
-
-	addFull(appTheme.Styles.Separator.Render(strings.Repeat("─", m.width)))
-
-	if m.mode == modeSettings {
-		addFull("  " + dim.Render("[ interactive settings active · arrows/tab: navigate · enter: edit · ctrl+s: save · esc: return ]"))
-	} else if m.mode == modeConfirm {
-		addFull("  " + dim.Render("[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"))
-	} else {
-		for _, il := range strings.Split(inputView, "\n") {
-			addFull(il)
-		}
-	}
-
-	addFull(appTheme.Styles.Separator.Render(strings.Repeat("─", m.width)))
-
-	statusView := m.statusbar.View()
-	addFull(statusView)
-
-	add("")
-
-	return strings.Join(lines, "\n")
-}
-
-func (m *App) chatAreaHeight() int {
-	if m.mode == modeSettings || m.mode == modeConfirm || m.mode == modeYolo {
-		h := m.height - 7
-		if h < 1 {
-			h = 1
-		}
-		return h
-	}
-	inputLineCount := m.input.Height()
-	reserved := 2 + 1 + inputLineCount + 1 + 1 + 1
-	h := m.height - reserved
-	if h < 1 {
-		h = 1
-	}
-	return h
-}
-
-func (m *App) renderChatArea() []string {
-	return chat.RenderAllMessages(m.chat.Messages(), appTheme, m.width, m.spinFrame, m.chat.MdRenderer(), m.modelName, m.streaming, m.height, m.username)
 }

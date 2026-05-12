@@ -1,12 +1,10 @@
-package widget
+package rendering
 
 import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"crude/clipboard"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -207,15 +205,3 @@ func ExtractSelectedText(allLines []string, startLine, startCol, endLine, endCol
 	}
 	return buf.String()
 }
-
-func CopyToClipboardCmd(text string) tea.Cmd {
-	return func() tea.Msg {
-		if err := clipboard.WriteText(text); err != nil {
-			return clipboardErrorMsg("failed to copy: " + err.Error())
-		}
-		return clipboardCopiedMsg{}
-	}
-}
-
-type clipboardErrorMsg string
-type clipboardCopiedMsg struct{}
