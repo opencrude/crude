@@ -57,23 +57,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.OnSettingsSave != nil {
 				m.OnSettingsSave(s)
 			}
-			m.chat.AppendMessage(ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: formatSettingsSummary(s),
-				Time:    time.Now(),
-			})
-			m.mode = modeChat
-			m.chat.InvalidateCache()
-		case settings.CancelEvent:
+		m.setMode(modeChat)
+		m.chat.InvalidateCache()
+	case settings.CancelEvent:
 			m.settings.RestoreSnapshot()
-			s := m.settings.ToSettings()
-			m.chat.AppendMessage(ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: formatSettingsSummary(s),
-				Time:    time.Now(),
-			})
-			m.mode = modeChat
-			m.chat.InvalidateCache()
+		m.setMode(modeChat)
+		m.chat.InvalidateCache()
 		}
 
 	case modeConfirm:
@@ -99,7 +88,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Content: resultMsg,
 				Time:    time.Now(),
 			})
-			m.mode = modeChat
+			m.setMode(modeChat)
 		}
 
 	case modeYolo:
@@ -125,7 +114,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.OnYoloCmd != nil {
 				m.OnYoloCmd(enabled)
 			}
-			m.mode = modeChat
+			m.setMode(modeChat)
 		}
 
 	case modeChat:
@@ -141,7 +130,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.executeSlashCommand(e.Command))
 		case input.SettingsOpenEvent:
 			m.settings.SaveSnapshot()
-			m.mode = modeSettings
+			m.setMode(modeSettings)
 		}
 
 		updatedChat, chatCmd := m.chat.Update(msg)
@@ -163,7 +152,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.SetModelName(string(msg))
 	case ttypes.OpenSettingsMsg:
 		m.settings.SaveSnapshot()
-		m.mode = modeSettings
+		m.setMode(modeSettings)
 	case ttypes.ModelsListMsg:
 		m.settings.SetModels([]ttypes.ModelEntry(msg), false)
 	case ttypes.OracleModelsListMsg:
@@ -227,31 +216,26 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	}
 
 	cmdName := parts[0]
-	m.chat.AppendMessage(ttypes.ChatMessage{
-		Role:    ttypes.RoleUser,
-		Content: cmd,
-		Time:    time.Now(),
-	})
 
 	switch cmdName {
 	case "/settings":
 		m.settings.SaveSnapshot()
-		m.mode = modeSettings
+		m.setMode(modeSettings)
 	case "/provider":
 		m.settings.SaveSnapshot()
-		m.mode = modeSettings
+		m.setMode(modeSettings)
 		m.settings.FocusField(0)
 	case "/model":
 		m.settings.SaveSnapshot()
-		m.mode = modeSettings
+		m.setMode(modeSettings)
 		m.settings.FocusField(3)
 	case "/oracle-model":
 		m.settings.SaveSnapshot()
-		m.mode = modeSettings
+		m.setMode(modeSettings)
 		m.settings.FocusField(4)
 	case "/api-key":
 		m.settings.SaveSnapshot()
-		m.mode = modeSettings
+		m.setMode(modeSettings)
 		m.settings.FocusField(2)
 	case "/effort":
 		efforts := []string{"none", "low", "medium", "high", "xhigh"}
@@ -268,11 +252,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		if m.OnSettingsSave != nil {
 			go m.OnSettingsSave(m.lastSettings)
 		}
-		m.chat.AppendMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
-			Content: fmt.Sprintf("Thinking effort: %s", efforts[idx]),
-			Time:    time.Now(),
-		})
+		m.statusbar.SetInfo(fmt.Sprintf("Thinking effort: %s", efforts[idx]))
 	case "/help":
 		var b strings.Builder
 		b.WriteString("Available commands:\n")
@@ -284,17 +264,13 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		if m.yolo {
 			m.yolo = false
 			m.chat.ScrollToBottom()
-			m.chat.AppendMessage(ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: "⚠ YOLO mode disabled. Safety checks restored.",
-				Time:    time.Now(),
-			})
+			m.statusbar.SetInfo("YOLO mode disabled. Safety checks restored.")
 			if m.OnYoloCmd != nil {
 				go m.OnYoloCmd(false)
 			}
 		} else {
 			m.yoloDlg.Reset()
-			m.mode = modeYolo
+			m.setMode(modeYolo)
 		}
 	case "/undo", "/undo-n", "/undo-all", "/changes":
 		if m.OnUndoCmd != nil {
@@ -312,26 +288,20 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 
 	if m.mode == modeSettings {
 		m.settings.RestoreSnapshot()
-		s := m.settings.ToSettings()
-		m.mode = modeChat
-		m.chat.AppendMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
-			Content: formatSettingsSummary(s),
-			Time:    time.Now(),
-		})
+		m.setMode(modeChat)
 		return nil
 	}
 
 	if m.mode == modeYolo {
 		m.yoloDlg.Dismiss()
-		m.mode = modeChat
+		m.setMode(modeChat)
 		return nil
 	}
 
 	if m.mode == modeConfirm {
 		m.confirm.Dismiss()
 		m.blocking = false
-		m.mode = modeChat
+		m.setMode(modeChat)
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
@@ -539,14 +509,14 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			Content: "⚠  " + question,
 			Time:    time.Now(),
 		})
-		m.mode = modeConfirm
+		m.setMode(modeConfirm)
 
 	case "blocking_complete":
 		m.blocking = false
 		m.confirm.Dismiss()
 		m.statusbar.SetConfirming(false)
 		m.statusbar.SetThinking(false, false, false)
-		m.mode = modeChat
+		m.setMode(modeChat)
 
 	case "done":
 		wasStreaming := m.streaming

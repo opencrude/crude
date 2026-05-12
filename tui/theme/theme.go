@@ -114,15 +114,12 @@ func DefaultDark() *Theme {
 		Body: lipgloss.NewStyle().
 			Foreground(c.Fg),
 		Button: lipgloss.NewStyle().
-			Foreground(c.Fg).
-			Padding(0, 1),
+			Foreground(c.Fg),
 		ButtonFocus: lipgloss.NewStyle().
 			Foreground(c.Fg).
-			Background(c.Border).
-			Padding(0, 1),
+			Background(c.Border),
 		ButtonDim: lipgloss.NewStyle().
-			Foreground(c.Muted).
-			Padding(0, 1),
+			Foreground(c.Muted),
 		DialogBg: lipgloss.NewStyle().
 			Background(lipgloss.Color("#1a1a2e")).
 			Padding(1, 2),

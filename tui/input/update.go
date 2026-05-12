@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"crude/tui/components"
 )
 
 func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
@@ -41,15 +43,11 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 			if strings.HasPrefix(text, "/") {
 				m.appendHistory(text)
 				m.slashActive = false
-				m.slashFilter = ""
-				m.slashFiltered = nil
 				return m, nil, SlashCommandEvent{Command: text}
 			}
 			m.appendHistory(text)
 			m.input.Clear()
 			m.slashActive = false
-			m.slashFilter = ""
-			m.slashFiltered = nil
 			m.histIdx = -1
 			m.histDraft = ""
 			m.histPrefix = ""
@@ -104,12 +102,9 @@ func (m *Model) syncSlashState() {
 	inputStr := m.input.Value()
 	if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") && !strings.Contains(inputStr, "\n") {
 		m.slashActive = true
-		m.slashFilter = strings.TrimPrefix(inputStr, "/")
-		m.updateSlashFilter()
+		m.slashList.SetFilter(strings.TrimPrefix(inputStr, "/"))
 	} else {
 		m.slashActive = false
-		m.slashFilter = ""
-		m.slashFiltered = nil
 	}
 }
 
@@ -122,65 +117,42 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 	switch keyMsg.Type {
 	case tea.KeyEsc:
 		m.slashActive = false
-		m.slashFilter = ""
-		m.slashFiltered = nil
 		return m, nil, nil
 
 	case tea.KeyTab:
-		if len(m.slashFiltered) > 0 && m.slashIdx >= 0 && m.slashIdx < len(m.slashFiltered) {
-			cmd := m.slashFiltered[m.slashIdx]
-			m.input.SetValue("/" + cmd.Name + " ")
-			m.slashActive = false
-			m.slashFilter = ""
-			m.slashFiltered = nil
-			return m, nil, nil
+		if item, ok := m.slashList.Selected(); ok {
+			m.input.SetValue("/" + item.ID + " ")
 		}
 		m.slashActive = false
-		m.slashFilter = ""
-		m.slashFiltered = nil
 		return m, nil, nil
 
 	case tea.KeyEnter:
-		if len(m.slashFiltered) > 0 && m.slashIdx >= 0 && m.slashIdx < len(m.slashFiltered) {
-			cmd := m.slashFiltered[m.slashIdx]
-			m.input.SetValue("/" + cmd.Name + " ")
-			m.slashActive = false
-			m.slashFilter = ""
-			m.slashFiltered = nil
-			return m, nil, SlashCommandEvent{Command: "/" + cmd.Name}
+		m.slashList, _ = m.slashList.Update(msg)
+		if m.slashList.Action() == components.ListActionSelect {
+			if item, ok := m.slashList.Selected(); ok {
+				m.input.SetValue("/" + item.ID + " ")
+				m.slashActive = false
+				return m, nil, SlashCommandEvent{Command: "/" + item.ID}
+			}
 		}
 		text := strings.TrimSpace(m.input.Value())
 		if text != "" && strings.HasPrefix(text, "/") {
 			m.appendHistory(text)
 			m.slashActive = false
-			m.slashFilter = ""
-			m.slashFiltered = nil
 			return m, nil, SlashCommandEvent{Command: text}
 		}
 		m.slashActive = false
-		m.slashFilter = ""
-		m.slashFiltered = nil
 		return m, nil, nil
 
 	case tea.KeyUp:
-		if len(m.slashFiltered) > 0 {
-			m.slashIdx--
-			if m.slashIdx < 0 {
-				m.slashIdx = len(m.slashFiltered) - 1
-			}
-			m.clampSlashOffset()
-		}
-		return m, nil, nil
+		var cmd tea.Cmd
+		m.slashList, cmd = m.slashList.Update(msg)
+		return m, cmd, nil
 
 	case tea.KeyDown:
-		if len(m.slashFiltered) > 0 {
-			m.slashIdx++
-			if m.slashIdx >= len(m.slashFiltered) {
-				m.slashIdx = 0
-			}
-			m.clampSlashOffset()
-		}
-		return m, nil, nil
+		var cmd tea.Cmd
+		m.slashList, cmd = m.slashList.Update(msg)
+		return m, cmd, nil
 
 	case tea.KeyBackspace, tea.KeyDelete:
 		var cmd tea.Cmd
@@ -188,11 +160,8 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		inputStr := m.input.Value()
 		if inputStr == "" || !strings.HasPrefix(inputStr, "/") || strings.Contains(inputStr, " ") || strings.Contains(inputStr, "\n") {
 			m.slashActive = false
-			m.slashFilter = ""
-			m.slashFiltered = nil
 		} else {
-			m.slashFilter = strings.TrimPrefix(inputStr, "/")
-			m.updateSlashFilter()
+			m.slashList.SetFilter(strings.TrimPrefix(inputStr, "/"))
 		}
 		return m, cmd, nil
 
@@ -201,38 +170,11 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		m.input, cmd = m.input.Update(msg, false)
 		inputStr := m.input.Value()
 		if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") && !strings.Contains(inputStr, "\n") {
-			m.slashFilter = strings.TrimPrefix(inputStr, "/")
-			m.updateSlashFilter()
+			m.slashList.SetFilter(strings.TrimPrefix(inputStr, "/"))
 		} else {
 			m.slashActive = false
-			m.slashFilter = ""
-			m.slashFiltered = nil
 		}
 		return m, cmd, nil
-	}
-}
-
-func (m *Model) updateSlashFilter() {
-	m.slashFiltered = nil
-	m.slashIdx = 0
-	m.slashOffset = 0
-	s := strings.ToLower(m.slashFilter)
-	for _, c := range availableCmds {
-		if strings.HasPrefix(c.Name, s) || strings.Contains(strings.ToLower(c.Desc), s) {
-			m.slashFiltered = append(m.slashFiltered, c)
-		}
-	}
-}
-
-func (m *Model) clampSlashOffset() {
-	if m.slashIdx < m.slashOffset {
-		m.slashOffset = m.slashIdx
-	}
-	if m.slashIdx >= m.slashOffset+slashPageSize {
-		m.slashOffset = m.slashIdx - slashPageSize + 1
-	}
-	if m.slashOffset < 0 {
-		m.slashOffset = 0
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"crude/tui/widgets"
 )
 
+const noPadMarker = "\x00"
+
 func (m *App) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
@@ -23,20 +25,13 @@ func (m *App) View() string {
 
 	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
 
-	isSpecialMode := m.mode == modeSettings || m.mode == modeConfirm || m.mode == modeYolo
+	isSpecialMode := m.formHint != ""
 
 	var inputView string
 	var inputLineCount int
 	if isSpecialMode {
 		inputLineCount = 1
-		switch m.mode {
-		case modeSettings:
-			inputView = "  " + dim.Render("[ interactive settings active · arrows/tab: navigate · enter: edit · ctrl+s: save · esc: return ]")
-		case modeConfirm:
-			inputView = "  " + dim.Render("[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]")
-		case modeYolo:
-			inputView = "  " + dim.Render("[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]")
-		}
+		inputView = "  " + dim.Render(m.formHint)
 	} else {
 		inputView = m.input.View(m.width, m.height, false, false, m.spinFrame)
 		inputLineCount = len(strings.Split(inputView, "\n"))
@@ -105,7 +100,11 @@ func (m *App) View() string {
 		lines = append(lines, "")
 	}
 	for _, line := range visible {
-		lines = append(lines, pad+line)
+		if strings.HasPrefix(line, noPadMarker) {
+			lines = append(lines, strings.TrimPrefix(line, noPadMarker))
+		} else {
+			lines = append(lines, pad+line)
+		}
 	}
 
 	if asyncLineCount > 0 {
@@ -146,17 +145,17 @@ func (m *App) renderChatArea() []string {
 	if m.mode == modeSettings {
 		settingsView := m.settings.View(m.spinFrame)
 		for _, sl := range strings.Split(settingsView, "\n") {
-			all = append(all, sl)
+			all = append(all, noPadMarker+sl)
 		}
 	} else if m.mode == modeConfirm {
 		confirmView := m.confirm.View(m.spinFrame)
 		for _, cl := range strings.Split(confirmView, "\n") {
-			all = append(all, cl)
+			all = append(all, noPadMarker+cl)
 		}
 	} else if m.mode == modeYolo {
 		yoloView := m.yoloDlg.View()
 		for _, yl := range strings.Split(yoloView, "\n") {
-			all = append(all, yl)
+			all = append(all, noPadMarker+yl)
 		}
 	}
 

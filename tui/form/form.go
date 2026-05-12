@@ -3,19 +3,13 @@ package form
 import (
 	"fmt"
 	"strings"
-	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"crude/tui/components"
 	"crude/tui/theme"
 )
-
-type Field struct {
-	Label  string
-	Value  []rune
-	Masked bool
-}
 
 type FormAction int
 
@@ -23,20 +17,60 @@ const (
 	FormActionNone FormAction = iota
 	FormActionSave
 	FormActionCancel
+	FormActionBack
+	FormActionExpand
 )
 
-type Form struct {
-	theme       *theme.Theme
-	fields      []Field
-	focused     int
-	editing     bool
-	editCursor  int
-	focusedBtn  int
-	snapshot    *Form
+type Button struct {
+	Label string
+	Key   string
 }
 
-func NewForm(t *theme.Theme, fields ...Field) Form {
-	return Form{theme: t, fields: fields}
+type Form struct {
+	theme *theme.Theme
+
+	title string
+	hint  string
+
+	items []FormItem
+
+	buttons    []Button
+	hasButtons bool
+	focusedBtn int
+
+	focused   int
+	focusZone int
+	expanded  int
+
+	snapshot *formSnapshot
+}
+
+type formSnapshot struct {
+	items []FormItem
+}
+
+func NewForm(t *theme.Theme, title, hint string, items ...FormItem) Form {
+	return Form{
+		theme:    t,
+		title:    title,
+		hint:     hint,
+		items:    items,
+		focused:  0,
+		expanded: -1,
+	}
+}
+
+func NewFormWithButtons(t *theme.Theme, title, hint string, buttons []Button, items ...FormItem) Form {
+	return Form{
+		theme:      t,
+		title:      title,
+		hint:       hint,
+		items:      items,
+		buttons:    buttons,
+		hasButtons: true,
+		focused:    0,
+		expanded:   -1,
+	}
 }
 
 func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
@@ -45,80 +79,70 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 		return m, nil, FormActionNone
 	}
 
-	if m.editing {
-		return m.updateEditing(keyMsg)
+	if keyMsg.Type == tea.KeyCtrlC {
+		if m.expanded >= 0 {
+			m.expanded = -1
+			return m, nil, FormActionNone
+		}
+		return m, nil, FormActionBack
 	}
 
-	lastField := len(m.fields) - 1
+	if m.expanded >= 0 {
+		return m.updateExpanded(keyMsg)
+	}
+
+	if m.hasButtons && m.focusZone == 1 {
+		return m.updateButtons(keyMsg)
+	}
+
+	item := m.items[m.focused]
+	updated, cmd, action, handled := item.HandleKey(keyMsg)
+	m.items[m.focused] = updated
+
+	if action == FormItemActionExpand {
+		if si, ok := m.items[m.focused].(*SelectItem); ok {
+			if len(si.Options()) > 0 || si.IsLoading() {
+				m.expanded = m.focused
+			}
+		}
+		return m, cmd, FormActionExpand
+	}
+
+	if handled {
+		return m, cmd, FormActionNone
+	}
 
 	switch keyMsg.Type {
-	case tea.KeyEnter:
-		if m.focusedBtn == 0 {
-			if m.fields[m.focused].Masked {
-				m.fields[m.focused].Value = nil
-			}
-			m.editing = true
-			m.editCursor = len(m.fields[m.focused].Value)
-		} else if m.focusedBtn == 1 {
-			return m, nil, FormActionSave
-		} else if m.focusedBtn == 2 {
-			return m, nil, FormActionCancel
-		}
 	case tea.KeyEsc:
-		if m.focusedBtn == 2 || m.focusedBtn == 1 {
-			return m, nil, FormActionCancel
-		}
-		m.focusedBtn = 2
+		return m, nil, FormActionBack
 	case tea.KeyUp:
-		if m.focusedBtn == 2 {
-			m.focusedBtn = 1
-		} else if m.focusedBtn == 1 {
-			m.focusedBtn = 0
-			m.focused = lastField
-		} else {
-			if m.focused == 0 {
-				m.focusedBtn = 2
-			} else {
-				m.focused--
-			}
+		if m.focused > 0 {
+			m.focused--
+		} else if m.hasButtons {
+			m.focusZone = 1
+			m.focusedBtn = len(m.buttons) - 1
 		}
 	case tea.KeyDown:
-		if m.focusedBtn == 0 {
-			if m.focused >= lastField {
-				m.focusedBtn = 1
-			} else {
-				m.focused++
-			}
-		} else if m.focusedBtn == 1 {
-			m.focusedBtn = 2
-		} else if m.focusedBtn == 2 {
+		if m.focused < len(m.items)-1 {
+			m.focused++
+		} else if m.hasButtons {
+			m.focusZone = 1
 			m.focusedBtn = 0
-			m.focused = 0
 		}
 	case tea.KeyTab:
-		if m.focusedBtn == 0 {
-			if m.focused >= lastField {
-				m.focusedBtn = 1
-			} else {
-				m.focused++
-			}
-		} else if m.focusedBtn == 1 {
-			m.focusedBtn = 2
-		} else if m.focusedBtn == 2 {
+		if m.hasButtons {
+			m.focusZone = 1
 			m.focusedBtn = 0
-			m.focused = 0
 		}
 	case tea.KeyShiftTab:
-		if m.focusedBtn == 2 {
-			m.focusedBtn = 1
-		} else if m.focusedBtn == 1 {
-			m.focusedBtn = 0
-			m.focused = lastField
+		if m.hasButtons {
+			m.focusZone = 1
+			m.focusedBtn = len(m.buttons) - 1
 		} else {
-			if m.focused == 0 {
-				m.focusedBtn = 2
-			} else {
+			if m.focused > 0 {
 				m.focused--
+			} else {
+				m.focused = len(m.items) - 1
 			}
 		}
 	}
@@ -126,48 +150,68 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 	return m, nil, FormActionNone
 }
 
-func (m Form) updateEditing(msg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
-	field := &m.fields[m.focused]
-
-	switch msg.Type {
-	case tea.KeyEnter, tea.KeyEsc:
-		m.editing = false
-	case tea.KeyBackspace:
-		if m.editCursor > 0 {
-			newVal := make([]rune, len(field.Value)-1)
-			copy(newVal, field.Value[:m.editCursor-1])
-			copy(newVal[m.editCursor-1:], field.Value[m.editCursor:])
-			field.Value = newVal
-			m.editCursor--
+func (m Form) updateExpanded(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
+	switch keyMsg.Type {
+	case tea.KeyEsc:
+		m.expanded = -1
+		return m, nil, FormActionNone
+	case tea.KeyEnter:
+		if si, ok := m.items[m.expanded].(*SelectItem); ok {
+			if selected, ok := si.List().Selected(); ok {
+				si.SetValue(selected.ID)
+				m.items[m.expanded] = si
+			}
 		}
-	case tea.KeyDelete:
-		if m.editCursor < len(field.Value) {
-			newVal := make([]rune, len(field.Value)-1)
-			copy(newVal, field.Value[:m.editCursor])
-			copy(newVal[m.editCursor:], field.Value[m.editCursor+1:])
-			field.Value = newVal
-		}
-	case tea.KeyLeft:
-		if m.editCursor > 0 {
-			m.editCursor--
-		}
-	case tea.KeyRight:
-		if m.editCursor < len(field.Value) {
-			m.editCursor++
-		}
-	case tea.KeyHome:
-		m.editCursor = 0
-	case tea.KeyEnd:
-		m.editCursor = len(field.Value)
+		m.expanded = -1
+		return m, nil, FormActionNone
 	default:
-		for _, r := range msg.Runes {
-			if unicode.IsPrint(r) {
-				newVal := make([]rune, len(field.Value)+1)
-				copy(newVal, field.Value[:m.editCursor])
-				newVal[m.editCursor] = r
-				copy(newVal[m.editCursor+1:], field.Value[m.editCursor:])
-				field.Value = newVal
-				m.editCursor++
+		if si, ok := m.items[m.expanded].(*SelectItem); ok {
+			updated, cmd := si.List().Update(keyMsg)
+			*si.List() = updated
+			return m, cmd, FormActionNone
+		}
+		return m, nil, FormActionNone
+	}
+}
+
+func (m Form) updateButtons(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
+	switch keyMsg.Type {
+	case tea.KeyEsc:
+		return m, nil, FormActionBack
+	case tea.KeyUp:
+		m.focusZone = 0
+		m.focused = len(m.items) - 1
+	case tea.KeyDown:
+		m.focusZone = 0
+		m.focused = 0
+	case tea.KeyLeft:
+		if m.focusedBtn > 0 {
+			m.focusedBtn--
+		}
+	case tea.KeyRight, tea.KeyTab:
+		if m.focusedBtn < len(m.buttons)-1 {
+			m.focusedBtn++
+		}
+	case tea.KeyShiftTab:
+		if m.focusedBtn > 0 {
+			m.focusedBtn--
+		} else {
+			m.focusZone = 0
+			m.focused = len(m.items) - 1
+		}
+	case tea.KeyEnter:
+		if m.focusedBtn == 0 {
+			return m, nil, FormActionSave
+		}
+		return m, nil, FormActionCancel
+	default:
+		s := keyMsg.String()
+		for i, btn := range m.buttons {
+			if s == btn.Key {
+				if i == 0 {
+					return m, nil, FormActionSave
+				}
+				return m, nil, FormActionCancel
 			}
 		}
 	}
@@ -175,147 +219,159 @@ func (m Form) updateEditing(msg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
 	return m, nil, FormActionNone
 }
 
-func (m Form) View(spinFrame int) string {
+func (m Form) View(width int, spinFrame int) string {
 	var b strings.Builder
 
+	b.WriteString("\n")
+
 	dim := m.theme.Styles.DimLabel
-	highlight := m.theme.Styles.Highlight
-	accent := m.theme.Styles.InputPrompt
+	accent := m.theme.Colors.Accent
 
-	// Title
-	b.WriteString(accent.Bold(true).Render("  Settings"))
-	b.WriteString("\n\n")
+	titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
+	b.WriteString("  " + titleStyle.Render(m.title))
+	b.WriteString("\n")
+	b.WriteString(dim.Render(" " + strings.Repeat("─", 52)))
+	b.WriteString("\n")
 
-	for i, f := range m.fields {
-		val := string(f.Value)
-		if f.Masked && val != "" {
-			val = strings.Repeat("*", len(f.Value))
-		}
-		display := val
-		if display == "" {
-			display = dim.Render("-")
-		}
-
-		if m.focusedBtn == 0 && m.focused == i {
-			if m.editing {
-				cursor := components.BlockCursor(spinFrame, m.theme.Colors.Accent)
-				before := string(f.Value[:m.editCursor])
-				after := string(f.Value[m.editCursor:])
-				b.WriteString(highlight.Render(fmt.Sprintf("  ❯ %s: %s%s%s", f.Label, before, cursor, after)))
+	if m.expanded >= 0 {
+		if si, ok := m.items[m.expanded].(*SelectItem); ok {
+			if si.IsLoading() {
+				b.WriteString(dim.Render("  " + si.LoadMsg()))
+				b.WriteString("\n")
 			} else {
-				// Show ← → arrows for thinking effort
-				if i == 5 {
-					arrowL := dim.Render(" ← ")
-					arrowR := dim.Render(" → ")
-					b.WriteString(highlight.Render(fmt.Sprintf("  ❯ %s: %s%s%s", f.Label, arrowL, display, arrowR)))
-				} else {
-					b.WriteString(highlight.Render(fmt.Sprintf("  ❯ %s: %s", f.Label, display)))
-				}
-			}
-		} else {
-			// Show ← → arrows for thinking effort when focused
-			if i == 5 {
-				arrowL := dim.Render(" ← ")
-				arrowR := dim.Render(" → ")
-				b.WriteString(fmt.Sprintf("    %s: %s%s%s", f.Label, arrowL, display, arrowR))
-			} else {
-				b.WriteString(fmt.Sprintf("    %s: %s", f.Label, display))
+				b.WriteString(si.List().View(width))
 			}
 		}
+		return b.String()
+	}
+
+	for i, item := range m.items {
+		focused := m.focusZone == 0 && m.focused == i
+		b.WriteString(item.View(focused, spinFrame))
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
+	if m.hasButtons {
+		b.WriteString("\n")
+		highlight := m.theme.Styles.Highlight
+		btnDim := m.theme.Styles.ButtonDim
 
-	saveBtn := "  [ Save ]"
-	cancelBtn := "  [ Cancel ]"
-	if m.focusedBtn == 1 {
-		saveBtn = highlight.Render("❯ [ Save ]")
-	} else {
-		saveBtn = dim.Render(saveBtn)
+		var btnStrs []string
+		for i, btn := range m.buttons {
+			if m.focusZone == 1 && m.focusedBtn == i {
+				btnStrs = append(btnStrs, highlight.Render(fmt.Sprintf("❯ [ %s ]", btn.Label)))
+			} else {
+				btnStrs = append(btnStrs, btnDim.Render(fmt.Sprintf("  [ %s ]", btn.Label)))
+			}
+		}
+		b.WriteString(" " + strings.Join(btnStrs, "  "))
+		b.WriteString("\n")
 	}
-	if m.focusedBtn == 2 {
-		cancelBtn = highlight.Render("❯ [ Cancel ]")
-	} else {
-		cancelBtn = dim.Render(cancelBtn)
-	}
-
-	b.WriteString(saveBtn + "  " + cancelBtn)
-	b.WriteString("\n")
 
 	return b.String()
 }
 
-func (m Form) ToMap() map[string]string {
-	result := make(map[string]string, len(m.fields))
-	for _, f := range m.fields {
-		result[f.Label] = string(f.Value)
-	}
-	return result
-}
-
-func (m *Form) SaveSnapshot() {
-	fields := make([]Field, len(m.fields))
-	for i, f := range m.fields {
-		val := make([]rune, len(f.Value))
-		copy(val, f.Value)
-		fields[i] = Field{Label: f.Label, Value: val, Masked: f.Masked}
-	}
-	m.snapshot = &Form{fields: fields}
-}
-
-func (m *Form) RestoreSnapshot() {
-	if m.snapshot != nil {
-		m.fields = m.snapshot.fields
-		m.focused = 0
-		m.editing = false
-		m.focusedBtn = 0
-	}
+func (m Form) Hint() string {
+	return m.hint
 }
 
 func (m Form) IsEditing() bool {
-	return m.editing
+	if m.focusZone != 0 {
+		return false
+	}
+	if ti, ok := m.items[m.focused].(*TextItem); ok {
+		return ti.IsEditing()
+	}
+	return false
 }
 
-func (m Form) FocusedField() int {
-	if m.focusedBtn == 0 {
+func (m Form) FocusedItem() int {
+	if m.focusZone == 0 {
 		return m.focused
 	}
 	return -1
 }
 
-func (m *Form) SetFieldValue(idx int, val string) {
-	if idx >= 0 && idx < len(m.fields) {
-		m.fields[idx].Value = []rune(val)
+func (m *Form) FocusItem(idx int) {
+	if idx >= 0 && idx < len(m.items) {
+		m.focused = idx
+		m.focusZone = 0
+		m.expanded = -1
 	}
 }
 
-func (m Form) FieldValue(idx int) string {
-	if idx >= 0 && idx < len(m.fields) {
-		return string(m.fields[idx].Value)
+func (m Form) ExpandedIndex() int {
+	return m.expanded
+}
+
+func (m *Form) ExpandItem(idx int) {
+	if idx >= 0 && idx < len(m.items) {
+		if _, ok := m.items[idx].(*SelectItem); ok {
+			m.expanded = idx
+		}
+	}
+}
+
+func (m *Form) CollapseExpanded() {
+	m.expanded = -1
+}
+
+func (m Form) ItemValue(idx int) string {
+	if idx >= 0 && idx < len(m.items) {
+		return m.items[idx].Value()
 	}
 	return ""
 }
 
-func (m *Form) SetFocusedBtn(idx int) {
-	if idx >= 0 && idx <= 2 {
-		m.focusedBtn = idx
+func (m *Form) SetItemValue(idx int, val string) {
+	if idx >= 0 && idx < len(m.items) {
+		m.items[idx].SetValue(val)
 	}
 }
 
-func (m *Form) FocusField(idx int) {
-	if idx >= 0 && idx < len(m.fields) {
-		m.focused = idx
-		m.focusedBtn = 0
-		m.editing = false
+func (m *Form) SetItemSelectOptions(idx int, options []components.ListItem) {
+	if idx >= 0 && idx < len(m.items) {
+		if si, ok := m.items[idx].(*SelectItem); ok {
+			si.SetOptions(options)
+		}
 	}
 }
 
-func (m *Form) StartEditing(idx int) {
-	if idx >= 0 && idx < len(m.fields) {
-		m.focused = idx
-		m.focusedBtn = 0
-		m.editing = true
-		m.editCursor = len(m.fields[idx].Value)
+func (m *Form) SetItemLoading(idx int, loading bool, msg string) {
+	if idx >= 0 && idx < len(m.items) {
+		if si, ok := m.items[idx].(*SelectItem); ok {
+			si.SetLoading(loading, msg)
+		}
 	}
+}
+
+func (m *Form) SaveSnapshot() {
+	items := make([]FormItem, len(m.items))
+	for i, item := range m.items {
+		items[i] = item.Snapshot()
+	}
+	m.snapshot = &formSnapshot{items: items}
+}
+
+func (m *Form) RestoreSnapshot() {
+	if m.snapshot != nil {
+		for i, snap := range m.snapshot.items {
+			m.items[i].Restore(snap)
+		}
+		m.focused = 0
+		m.focusZone = 0
+		m.expanded = -1
+	}
+}
+
+func (m Form) IsExpanded() bool {
+	return m.expanded >= 0
+}
+
+func (m *Form) SetHint(h string) {
+	m.hint = h
+}
+
+func (m Form) ItemCount() int {
+	return len(m.items)
 }
