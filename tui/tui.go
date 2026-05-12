@@ -4,11 +4,13 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"crude/tui/types"
 )
 
 // TUI wraps the Bubble Tea program and exposes control methods.
 type TUI struct {
-	model   *Model
+	app     *App
 	Program *tea.Program
 	InputCh <-chan string
 	doneCh  chan struct{}
@@ -45,15 +47,6 @@ type TUI struct {
 	ProviderPresets []ProviderPreset
 }
 
-// ProviderConfig holds configuration for a specific provider.
-type ProviderConfig struct {
-	APIKey         string
-	Model          string
-	OracleModel    string
-	ProviderURL    string
-	ThinkingEffort string
-}
-
 var global *TUI
 
 // Start initialises and starts the TUI, returning the handle and a channel
@@ -81,13 +74,13 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	fetchFn := func(providerID, baseURL, apiKey string) tea.Cmd {
 		return func() tea.Msg {
 			if t.FetchModelsFn == nil {
-				return ModelsErrorMsg("no fetch function configured")
+				return types.ModelsErrorMsg("no fetch function configured")
 			}
 			models, err := t.FetchModelsFn(providerID, baseURL, apiKey)
 			if err != nil {
-				return ModelsErrorMsg(err.Error())
+				return types.ModelsErrorMsg(err.Error())
 			}
-			return ModelsListMsg(models)
+			return types.ModelsListMsg(models)
 		}
 	}
 
@@ -98,26 +91,27 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return ProviderConfig{}
 	}
 
-	model := NewModel(modelName, username, inputCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn)
-	model.SetProviderPresets(t.ProviderPresets)
-	model.SetHistory(history)
-	model.OnConfirmResult = func(result ConfirmResult) {
+	app := NewApp(modelName, username, inputCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn)
+	app.SetProviderPresets(t.ProviderPresets)
+	app.SetHistory(history)
+	app.OnSettingsSave = t.OnSettingsSave
+	app.OnConfirmResult = func(result ConfirmResult) {
 		if t.OnConfirmResult != nil {
 			t.OnConfirmResult(result)
 		}
 	}
-	model.OnYoloCmd = func(enabled bool) {
+	app.OnYoloCmd = func(enabled bool) {
 		if t.OnYoloCmd != nil {
 			t.OnYoloCmd(enabled)
 		}
 	}
-	model.OnUndoCmd = func(cmd string) {
+	app.OnUndoCmd = func(cmd string) {
 		if t.OnUndoCmd != nil {
 			t.OnUndoCmd(cmd)
 		}
 	}
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion())
-	t.model = model
+	program := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseAllMotion())
+	t.app = app
 	t.Program = program
 
 	go func() {
