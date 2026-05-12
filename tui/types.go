@@ -1,6 +1,73 @@
 package tui
 
-import ttypes "crude/tui/types"
+import (
+	"time"
+
+	"crude/tui/input"
+	"crude/tui/settings"
+	"crude/tui/theme"
+	ttypes "crude/tui/types"
+	"crude/tui/widgets"
+)
+
+var OnHistorySave func([]string)
+
+type mode int
+
+const (
+	modeChat mode = iota
+	modeSettings
+	modeConfirm
+	modeYolo
+)
+
+type App struct {
+	theme  *theme.Theme
+	mode   mode
+	width  int
+	height int
+
+	chat      widgets.ChatModel
+	input     input.Model
+	statusbar *widgets.StatusBar
+	settings  settings.Model
+	confirm   widgets.ConfirmDialog
+	yoloDlg   widgets.YoloDialog
+
+	thinking  bool
+	blocking  bool
+	streaming bool
+	yolo      bool
+
+	inputCh  chan<- string
+	cancelCh chan<- struct{}
+
+	OnQuit, OnExitMessage               func()
+	OnSettingsSave                      func(Settings)
+	OnConfirmResult                     func(ConfirmResult)
+	OnYoloCmd                           func(bool)
+	OnUndoCmd                           func(string)
+	FetchModelsFn                       func(string, string, string) ([]ModelEntry, error)
+	GetProviderConfigFn                 func(string) ProviderConfig
+	ProviderPresets                     []ProviderPreset
+
+	quit           bool
+	lastCancelTime time.Time
+	modelName      string
+	username       string
+	startTime      time.Time
+
+	spinFrame int
+	history   []string
+
+	tokenPrompt, tokenCompletion, tokenCached         int
+	sessionCost                                       float64
+	contextWindow, contextUsed                        int
+
+	lastSettings Settings
+
+	formHint string
+}
 
 // Public API types — type aliases so consumers use tui.Settings etc.
 type (
@@ -12,16 +79,13 @@ type (
 	UndoResultMsg  = ttypes.UndoResultMsg
 )
 
-// ChatMessage is aliased for internal use by old code during migration.
 type ChatMessage = ttypes.ChatMessage
 
-// AgentEventMsg is aliased for internal use by old code during migration.
 type AgentEventMsg = ttypes.AgentEventMsg
 
-// Const redeclarations (Go has no const alias)
 const (
 	ToolPreviewPreparing = ttypes.ToolPreviewPreparing
-	ToolPreviewStreaming = ttypes.ToolPreviewStreaming
+	ToolPreviewStreaming  = ttypes.ToolPreviewStreaming
 	ToolPreviewDone      = ttypes.ToolPreviewDone
 	ToolPreviewError     = ttypes.ToolPreviewError
 )
@@ -40,10 +104,21 @@ const (
 	ConfirmDeny   = ttypes.ConfirmDeny
 )
 
-// ModelsListMsg, ModelsErrorMsg etc are message types exported for external use.
 type (
 	ModelsListMsg        = ttypes.ModelsListMsg
 	ModelsErrorMsg       = ttypes.ModelsErrorMsg
 	OracleModelsListMsg  = ttypes.OracleModelsListMsg
 	OracleModelsErrorMsg = ttypes.OracleModelsErrorMsg
 )
+
+type tickMsg = ttypes.TickMsg
+type errorMsg = ttypes.ErrorMsg
+type statusMsg = ttypes.StatusMsg
+type agentMsg = ttypes.AgentMsg
+type openSettingsMsg = ttypes.OpenSettingsMsg
+type fetchModelsMsg = ttypes.FetchModelsMsg
+type saveSettingsMsg = ttypes.SaveSettingsMsg
+type updateModelMsg = ttypes.UpdateModelMsg
+type selectionTickMsg = ttypes.SelectionTickMsg
+type clipboardCopiedMsg = ttypes.ClipboardCopiedMsg
+type clipboardErrorMsg = ttypes.ClipboardErrorMsg

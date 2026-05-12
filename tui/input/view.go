@@ -16,7 +16,7 @@ func (m Model) View(width, chatAreaHeight int, settingsActive, confirmActive boo
 
 	if m.showHint && !m.thinking && m.input.Value() == "" {
 		hint := "[ enter: send · alt+enter: new line · ↑↓: history · ctrl+s: settings · esc: exit ]"
-		b.WriteString(m.theme.Styles.DimLabel.Render(hint))
+		b.WriteString(" " + m.theme.Styles.DimLabel.Render(hint))
 		b.WriteByte('\n')
 	}
 

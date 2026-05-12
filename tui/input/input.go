@@ -57,10 +57,8 @@ func cmdsToItems(cmds []CmdInfo) []components.ListItem {
 	items := make([]components.ListItem, len(cmds))
 	for i, c := range cmds {
 		items[i] = components.ListItem{
-			ID:     c.Name,
-			Label:  c.Label,
-			Detail: c.Desc,
-			Icon:   c.Icon,
+			ID:    c.Name,
+			Label: c.Label,
 		}
 	}
 	return items

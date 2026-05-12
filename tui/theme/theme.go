@@ -32,11 +32,14 @@ type DiffColors struct {
 }
 
 type Spacing struct {
-	PadLR       int
-	InputPadLR  int
-	FieldGap    int
+	PadLR        int
+	InputPadLR   int
+	FieldGap     int
 	ButtonGap   int
 	DialogPad   int
+	FormIndent  int
+	LabelColGap int
+	FormTitlePad int
 }
 
 type Styles struct {
@@ -90,27 +93,27 @@ func DefaultDark() *Theme {
 	}
 
 	s := Spacing{
-		PadLR:      2,
-		InputPadLR: 2,
-		FieldGap:   1,
-		ButtonGap:  2,
-		DialogPad:  2,
+		PadLR:        2,
+		InputPadLR:   2,
+		FieldGap:     1,
+		ButtonGap:    2,
+		DialogPad:    2,
+		FormIndent:   2,
+		LabelColGap:  1,
+		FormTitlePad: 2,
 	}
 
 	st := Styles{
 		Header: lipgloss.NewStyle().
 			Foreground(c.Accent).
-			Bold(true).
-			Padding(0, 1),
+			Bold(true),
 		Separator: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#333333")),
 		DimLabel: lipgloss.NewStyle().
-			Foreground(c.Muted).
-			Padding(0, 1),
+			Foreground(c.Muted),
 		AccentLabel: lipgloss.NewStyle().
 			Foreground(c.Accent2).
-			Italic(true).
-			Padding(0, 1),
+			Italic(true),
 		Body: lipgloss.NewStyle().
 			Foreground(c.Fg),
 		Button: lipgloss.NewStyle().

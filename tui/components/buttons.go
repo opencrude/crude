@@ -1,7 +1,6 @@
 package components
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -65,14 +64,13 @@ func (m ButtonGroup) Update(msg tea.Msg) (ButtonGroup, int, bool) {
 func (m ButtonGroup) View() string {
 	var btnStrs []string
 	dim := m.theme.Styles.ButtonDim
-	box := m.theme.Styles.ButtonFocus
-	normal := m.theme.Styles.Button
+	accent := m.theme.Styles.InputPrompt
 
 	for _, btn := range m.buttons {
 		if m.focused == indexOf(m.buttons, btn) {
-			btnStrs = append(btnStrs, box.Render(fmt.Sprintf("❯ [ %s ]", btn.Label))+"  "+dim.Render("("+btn.Key+")"))
+			btnStrs = append(btnStrs, accent.Render("❯")+" [ "+btn.Label+" ]  "+dim.Render("("+btn.Key+")"))
 		} else {
-			btnStrs = append(btnStrs, normal.Render(fmt.Sprintf("  [ %s ]", btn.Label))+"  "+dim.Render("("+btn.Key+")"))
+			btnStrs = append(btnStrs, dim.Render("  [ "+btn.Label+" ]")+"  "+dim.Render("("+btn.Key+")"))
 		}
 	}
 	return strings.Join(btnStrs, "  ")

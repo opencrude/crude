@@ -63,6 +63,8 @@ func (m ConfirmDialog) Update(msg tea.Msg) (ConfirmDialog, types.ConfirmResult, 
 func (m ConfirmDialog) View(spinFrame int) string {
 	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
 
+	indent := strings.Repeat(" ", m.th.Spacing.FormIndent)
+
 	var details strings.Builder
 
 	if m.risk != "" {
@@ -89,17 +91,17 @@ func (m ConfirmDialog) View(spinFrame int) string {
 			riskLabel = m.risk
 		}
 		riskStyle := lipgloss.NewStyle().Foreground(riskColor).Bold(true)
-		details.WriteString(dim.Render("  risk:      ") + riskStyle.Render(strings.ToUpper(riskLabel)))
+		details.WriteString(dim.Render(indent+"risk:      ") + riskStyle.Render(strings.ToUpper(riskLabel)))
 		details.WriteString("\n")
 	}
 
 	if m.operation != "" {
 		opStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent2)
-		details.WriteString(dim.Render("  operation: ") + opStyle.Render(m.operation))
+		details.WriteString(dim.Render(indent+"operation: ") + opStyle.Render(m.operation))
 		details.WriteString("\n")
 	}
 	if m.tool != "" {
-		details.WriteString(dim.Render("  tool:      ") + m.th.Styles.AccentLabel.Render(m.tool))
+		details.WriteString(dim.Render(indent+"tool:      ") + m.th.Styles.AccentLabel.Render(m.tool))
 		details.WriteString("\n")
 	}
 	if m.target != "" {
@@ -108,30 +110,34 @@ func (m ConfirmDialog) View(spinFrame int) string {
 		if len(targetDisplay) > 80 {
 			targetDisplay = targetDisplay[:77] + "..."
 		}
-		details.WriteString(dim.Render("  target:    ") + targetStyle.Render(targetDisplay))
+		details.WriteString(dim.Render(indent+"target:    ") + targetStyle.Render(targetDisplay))
 		details.WriteString("\n")
 	}
 
 	if m.reason != "" {
 		reasonStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Italic(true)
 		details.WriteString("\n")
-		details.WriteString(dim.Render("  reason: ") + reasonStyle.Render(m.reason))
+		details.WriteString(dim.Render(indent+"reason: ") + reasonStyle.Render(m.reason))
 		details.WriteString("\n")
 	}
 
 	if m.suggestion != "" {
 		suggStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Italic(true)
-		details.WriteString(dim.Render("  tip: ") + suggStyle.Render(m.suggestion))
+		details.WriteString(dim.Render(indent+"tip: ") + suggStyle.Render(m.suggestion))
 		details.WriteString("\n")
 	}
 
 	details.WriteString("\n")
-	details.WriteString(dim.Render("  " + m.question))
+	details.WriteString(dim.Render(indent + m.question))
 
 	body := details.String()
 	m.dialog.SetBody(body)
 
 	return m.dialog.View()
+}
+
+func (m *ConfirmDialog) SetWidth(w int) {
+	m.dialog.SetWidth(w)
 }
 
 func (m *ConfirmDialog) Reset(question, operation, tool, target string) {
