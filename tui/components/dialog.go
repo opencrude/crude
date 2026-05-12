@@ -1,21 +1,23 @@
-package widget
+package components
 
 import (
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"crude/tui/theme"
 )
 
 type Dialog struct {
-	theme   *Theme
+	theme   *theme.Theme
 	title   string
 	icon    string
 	body    string
 	buttons ButtonGroup
 }
 
-func NewDialog(t *Theme, title, icon string, buttons ButtonGroup) Dialog {
+func NewDialog(t *theme.Theme, title, icon string, buttons ButtonGroup) Dialog {
 	return Dialog{theme: t, title: title, icon: icon, buttons: buttons}
 }
 

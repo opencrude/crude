@@ -1,4 +1,4 @@
-package widget
+package theme
 
 import "github.com/charmbracelet/lipgloss"
 
@@ -18,8 +18,9 @@ type Colors struct {
 }
 
 type CodeColors struct {
-	Keyword, String, Number, Comment    lipgloss.Color
+	Keyword, String, Number, Comment     lipgloss.Color
 	Function, Type, Operator, Bg, Border lipgloss.Color
+	Property                             lipgloss.Color
 }
 
 type SpinnerColors struct {
@@ -69,6 +70,7 @@ func DefaultDark() *Theme {
 			Operator: lipgloss.Color("#ff7b72"),
 			Bg:       lipgloss.Color("#161b22"),
 			Border:   lipgloss.Color("#30363d"),
+			Property: lipgloss.Color("#79c0ff"),
 		},
 		Spinner: SpinnerColors{
 			Grounding: lipgloss.Color("#f0883e"),

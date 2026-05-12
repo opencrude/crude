@@ -1,7 +1,9 @@
-package widget
+package components
 
 import (
 	"github.com/charmbracelet/lipgloss"
+
+	"crude/tui/theme"
 )
 
 type Phase string
@@ -15,12 +17,12 @@ const (
 )
 
 type Spinner struct {
-	theme *Theme
+	theme *theme.Theme
 	frame int
 	phase Phase
 }
 
-func NewSpinner(t *Theme) Spinner {
+func NewSpinner(t *theme.Theme) Spinner {
 	return Spinner{theme: t, phase: PhaseDefault}
 }
 

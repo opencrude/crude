@@ -94,7 +94,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	app := NewApp(modelName, username, inputCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn)
 	app.SetProviderPresets(t.ProviderPresets)
 	app.SetHistory(history)
-	app.OnSettingsSave = t.OnSettingsSave
+	// onSave is already a closure capturing t, no need for app.OnSettingsSave
 	app.OnConfirmResult = func(result ConfirmResult) {
 		if t.OnConfirmResult != nil {
 			t.OnConfirmResult(result)

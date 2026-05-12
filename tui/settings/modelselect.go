@@ -3,7 +3,7 @@ package settings
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"crude/tui/widget"
+	"crude/tui/components"
 )
 
 func (m *Model) openModelSelect(target string) {
@@ -12,7 +12,7 @@ func (m *Model) openModelSelect(target string) {
 	m.models.SetFetching(true)
 }
 
-func (m *Model) handleModelSelectResult(selected widget.ListItem, target string) {
+func (m *Model) handleModelSelectResult(selected components.ListItem, target string) {
 	if m.selectTarget == "model" {
 		m.form.SetFieldValue(3, selected.ID)
 	} else {
@@ -23,8 +23,12 @@ func (m *Model) handleModelSelectResult(selected widget.ListItem, target string)
 	inPrice := 0.0
 	outPrice := 0.0
 	cachePrice := 0.0
-	for _, item := range m.models.Items() {
-		if item.ID == selected.ID || item.Label == selected.Label {
+	for _, entry := range m.modelsData {
+		if entry.ID == selected.ID {
+			ctx = entry.ContextWindow
+			inPrice = entry.InputPrice
+			outPrice = entry.OutputPrice
+			cachePrice = entry.CacheReadPrice
 			break
 		}
 	}

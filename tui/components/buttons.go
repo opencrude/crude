@@ -1,10 +1,12 @@
-package widget
+package components
 
 import (
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"crude/tui/theme"
 )
 
 type Button struct {
@@ -13,12 +15,12 @@ type Button struct {
 }
 
 type ButtonGroup struct {
-	theme   *Theme
+	theme   *theme.Theme
 	buttons []Button
 	focused int
 }
 
-func NewButtonGroup(t *Theme, buttons ...Button) ButtonGroup {
+func NewButtonGroup(t *theme.Theme, buttons ...Button) ButtonGroup {
 	return ButtonGroup{theme: t, buttons: buttons}
 }
 

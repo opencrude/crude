@@ -1,4 +1,4 @@
-package tui
+package widgets
 
 import (
 	"fmt"
@@ -6,17 +6,19 @@ import (
 	"time"
 
 	"crude/fileio"
-	"crude/tui/widget"
+	"crude/tui/components"
+	"crude/tui/rendering"
+	"crude/tui/theme"
 	"github.com/charmbracelet/lipgloss"
 )
 
 type StatusBar struct {
-	theme  *widget.Theme
+	theme  *theme.Theme
 	width  int
 
 	thinking, streaming, blocking bool
 	isConfirming                   bool
-	spinner    widget.Spinner
+	spinner    components.Spinner
 	statusLine string
 	statusPhase string
 
@@ -37,8 +39,8 @@ type StatusBar struct {
 	spinFrame int
 }
 
-func NewStatusBar(t *widget.Theme) *StatusBar {
-	return &StatusBar{theme: t, spinner: widget.NewSpinner(t)}
+func NewStatusBar(t *theme.Theme) *StatusBar {
+	return &StatusBar{theme: t, spinner: components.NewSpinner(t)}
 }
 
 func (s *StatusBar) View() string {
@@ -48,17 +50,17 @@ func (s *StatusBar) View() string {
 	var left string
 	if s.infoMsg != "" {
 		left = pad + lipgloss.NewStyle().Foreground(s.theme.Colors.Success).Render(
-			widget.TruncateLine(s.infoMsg, s.width/2))
-	} else if s.retryMsg != "" {
+			rendering.TruncateLine(s.infoMsg, s.width/2))
+	} else if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
 		left = pad + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render(
-			widget.TruncateLine(s.retryMsg, s.width/2))
+			rendering.TruncateLine(s.retryMsg, s.width/2))
 	} else if s.lastError != "" {
 		left = pad + s.theme.Styles.ErrorText.Render(
-			widget.TruncateLine(s.lastError, s.width/2))
+			rendering.TruncateLine(s.lastError, s.width/2))
 	} else if s.confirming() {
-		left = pad + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("confirming...")
+		left = pad + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ confirming")
 	} else if s.blocking {
-		left = pad + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("awaiting input...")
+		left = pad + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ awaiting input")
 	} else if s.streaming {
 		left = pad + s.spinner.StreamAnimation()
 	} else if s.thinking {
@@ -77,7 +79,7 @@ func (s *StatusBar) View() string {
 		parts = append(parts, fmt.Sprintf("↓%s", formatTokens(s.tokenCompletion)))
 		percent := 0
 		if s.contextWindow > 0 {
-			percent = (s.contextUsed * 100) / s.contextWindow
+			percent = int(float64(s.contextUsed) / float64(s.contextWindow) * 100)
 			parts = append(parts, fmt.Sprintf("%d%%", percent))
 		}
 		if s.sessionCost > 0 {
@@ -86,12 +88,12 @@ func (s *StatusBar) View() string {
 		right = dim.Render(strings.Join(parts, " "))
 	}
 
-	spacer := s.width - lipgloss.Width(left) - lipgloss.Width(right)
+	spacer := s.width - lipgloss.Width(left) - lipgloss.Width(right) - s.theme.Spacing.PadLR
 	if spacer < 0 {
 		spacer = 0
 	}
 
-	return left + strings.Repeat(" ", spacer) + right
+	return left + strings.Repeat(" ", spacer) + right + pad
 }
 
 func (s *StatusBar) confirming() bool {
@@ -100,69 +102,6 @@ func (s *StatusBar) confirming() bool {
 
 func (s *StatusBar) SetConfirming(c bool) {
 	s.isConfirming = c
-}
-
-func (s *StatusBar) visibleAsyncCommands() []fileio.AsyncCmdInfo {
-	var visible []fileio.AsyncCmdInfo
-	for _, c := range s.asyncCommands {
-		if c.Status != fileio.AsyncRunning && time.Since(c.EndedAt) > 15*time.Second {
-			continue
-		}
-		visible = append(visible, c)
-	}
-	return visible
-}
-
-func (s *StatusBar) RenderAsyncBar() []string {
-	visible := s.visibleAsyncCommands()
-	if len(visible) == 0 {
-		return nil
-	}
-	dim := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
-	var lines []string
-
-	for _, c := range visible {
-		var dot string
-		var dotColor lipgloss.Color
-		switch c.Status {
-		case fileio.AsyncRunning:
-			if s.spinFrame%2 == 0 {
-				dot = "●"
-			} else {
-				dot = "○"
-			}
-			dotColor = s.theme.Colors.Accent2
-		case fileio.AsyncCompleted:
-			dot = "✓"
-			dotColor = s.theme.Colors.Success
-		case fileio.AsyncFailed:
-			dot = "✗"
-			dotColor = s.theme.Colors.Error
-		case fileio.AsyncKilled:
-			dot = "!"
-			dotColor = s.theme.Colors.Warning
-		default:
-			dot = "?"
-			dotColor = s.theme.Colors.Muted
-		}
-		cmd := c.Command
-		if len(cmd) > 40 {
-			cmd = cmd[:37] + "…"
-		}
-		var durStr string
-		durStr = c.Duration.Truncate(time.Second).String()
-		statusLine := dim.Render("│ ") +
-			lipgloss.NewStyle().Foreground(dotColor).Render(dot+" ") +
-			lipgloss.NewStyle().Foreground(s.theme.Colors.Accent2).Render("["+c.Handle+"]") + " " +
-			dim.Render(cmd) + "  " +
-			dim.Render(durStr)
-		lines = append(lines, statusLine)
-	}
-	return lines
-}
-
-func (s *StatusBar) AsyncBarHeight() int {
-	return len(s.visibleAsyncCommands())
 }
 
 func (s *StatusBar) SetSpinFrame(frame int) {
@@ -182,6 +121,11 @@ func (s *StatusBar) SetInfo(msg string) {
 func (s *StatusBar) SetRetry(msg string) {
 	s.retryMsg = msg
 	s.retryTime = time.Now()
+}
+
+func (s *StatusBar) ClearRetry() {
+	s.retryMsg = ""
+	s.retryTime = time.Time{}
 }
 
 func (s *StatusBar) ClearExpired() {
@@ -215,13 +159,13 @@ func (s *StatusBar) SetPhase(phase string) {
 	s.statusPhase = phase
 	switch phase {
 	case "grounding":
-		s.spinner.SetPhase(widget.PhaseGrounding)
+		s.spinner.SetPhase(components.PhaseGrounding)
 	case "planning":
-		s.spinner.SetPhase(widget.PhasePlanning)
+		s.spinner.SetPhase(components.PhasePlanning)
 	case "executing":
-		s.spinner.SetPhase(widget.PhaseExecuting)
+		s.spinner.SetPhase(components.PhaseExecuting)
 	default:
-		s.spinner.SetPhase(widget.PhaseDefault)
+		s.spinner.SetPhase(components.PhaseDefault)
 	}
 }
 
@@ -229,8 +173,16 @@ func (s *StatusBar) SetWidth(w int) {
 	s.width = w
 }
 
-func (s *StatusBar) SetAsyncCommands(cmds []fileio.AsyncCmdInfo) {
-	s.asyncCommands = cmds
+func (s *StatusBar) SetStatusLine(line string) {
+	s.statusLine = line
+}
+
+func (s *StatusBar) StatusLine() string {
+	return s.statusLine
+}
+
+func (s *StatusBar) Phase() string {
+	return s.statusPhase
 }
 
 func formatTokens(n int) string {
