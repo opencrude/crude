@@ -40,14 +40,14 @@ type Model struct {
 	oracleInPrice, oracleOutPrice, oracleCachePrice float64
 
 	getProviderConfigFn func(string) types.ProviderConfig
-	fetchModelsFn       func(string, string, string) tea.Cmd
+	fetchModelsFn       func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd
 
 	modelsData []types.ModelEntry
 
 	snapshot *settingsSnapshot
 }
 
-func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPreset, getProviderConfigFn func(string) types.ProviderConfig, fetchModelsFn func(string, string, string) tea.Cmd) Model {
+func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPreset, getProviderConfigFn func(string) types.ProviderConfig, fetchModelsFn func(string, string, string, bool) tea.Cmd) Model {
 	providerOptions := make([]components.ListItem, len(presets))
 	for i, p := range presets {
 		providerOptions[i] = components.ListItem{ID: p.ID, Label: p.Name, Detail: p.HelpText}
@@ -102,36 +102,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 	oldModel := m.form.ItemValue(3)
 	oldOracleModel := m.form.ItemValue(4)
 
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyEnter {
-		focused := m.form.FocusedItem()
-		if focused == 3 || focused == 4 {
-			if !m.canFetchModels() {
-				m.form.ExpandItem(focused)
-				providerID := m.form.ItemValue(0)
-				return m, func() tea.Msg {
-					return types.ErrorMsg("Type model name manually for " + providerID + ".")
-				}, nil
-			}
-			m.form.SetItemLoading(focused, true, "fetching models...")
-			return m, m.fetchModels(), nil
-		}
-	}
-
 	updated, cmd, action := m.form.Update(msg)
 	m.form = updated
 
-	if action == form.FormActionExpand && m.form.ExpandedIndex() == -1 {
-		focused := m.form.FocusedItem()
-		if focused == 3 || focused == 4 {
+	if action == form.FormActionExpand {
+		expanded := m.form.ExpandedIndex()
+		if expanded == 3 || expanded == 4 {
+			isOracle := expanded == 4
 			if !m.canFetchModels() {
-				m.form.ExpandItem(focused)
-				providerID := m.form.ItemValue(0)
-				return m, func() tea.Msg {
-					return types.ErrorMsg("Type model name manually for " + providerID + ".")
-				}, nil
+			} else if m.form.ItemOptionCount(expanded) == 0 && !m.form.IsItemLoading(expanded) {
+				m.form.SetItemLoading(expanded, true, "fetching models...")
+				fetchCmd := m.fetchModels(isOracle)
+				if fetchCmd != nil {
+					return m, fetchCmd, nil
+				}
 			}
-			m.form.SetItemLoading(focused, true, "fetching models...")
-			return m, m.fetchModels(), nil
 		}
 	}
 
@@ -185,7 +170,11 @@ func (m *Model) SetModels(models []types.ModelEntry, isOracle bool) {
 		if mod.ContextWindow > 0 {
 			detail = formatCtxWindow(mod.ContextWindow)
 		}
-		items = append(items, components.ListItem{ID: mod.ID, Label: mod.Name, Detail: detail})
+		name := mod.Name
+		if name == "" {
+			name = mod.ID
+		}
+		items = append(items, components.ListItem{ID: mod.ID, Label: name, Detail: detail})
 	}
 
 	idx := 3
@@ -194,14 +183,15 @@ func (m *Model) SetModels(models []types.ModelEntry, isOracle bool) {
 	}
 	m.form.SetItemSelectOptions(idx, items)
 	m.form.SetItemLoading(idx, false, "")
-	m.form.ExpandItem(idx)
 }
 
-func (m *Model) SetModelsError(err string) {
-	for i := 0; i < m.form.ItemCount(); i++ {
-		m.form.SetItemLoading(i, false, "")
+func (m *Model) SetModelsError(err string, isOracle bool) {
+	idx := 3
+	if isOracle {
+		idx = 4
 	}
-	m.form.CollapseExpanded()
+	m.form.SetItemLoading(idx, false, "")
+	m.form.SetItemFetchError(idx, err)
 }
 
 func (m *Model) SaveSnapshot() {
@@ -277,12 +267,12 @@ func (m *Model) canFetchModels() bool {
 	return true
 }
 
-func (m Model) fetchModels() tea.Cmd {
+func (m Model) fetchModels(isOracle bool) tea.Cmd {
 	providerID := m.form.ItemValue(0)
 	baseURL := m.form.ItemValue(1)
 	apiKey := m.form.ItemValue(2)
 	if m.fetchModelsFn != nil {
-		return m.fetchModelsFn(providerID, baseURL, apiKey)
+		return m.fetchModelsFn(providerID, baseURL, apiKey, isOracle)
 	}
 	return nil
 }

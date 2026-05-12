@@ -2,10 +2,15 @@ package tui
 
 import (
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"crude/tui/input"
+	"crude/tui/settings"
+	"crude/tui/theme"
 	"crude/tui/types"
+	"crude/tui/widgets"
 )
 
 // TUI wraps the Bubble Tea program and exposes control methods.
@@ -71,14 +76,23 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		}
 	}
 
-	fetchFn := func(providerID, baseURL, apiKey string) tea.Cmd {
+	fetchFn := func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd {
 		return func() tea.Msg {
 			if t.FetchModelsFn == nil {
+				if isOracle {
+					return types.OracleModelsErrorMsg("no fetch function configured")
+				}
 				return types.ModelsErrorMsg("no fetch function configured")
 			}
 			models, err := t.FetchModelsFn(providerID, baseURL, apiKey)
 			if err != nil {
+				if isOracle {
+					return types.OracleModelsErrorMsg(err.Error())
+				}
 				return types.ModelsErrorMsg(err.Error())
+			}
+			if isOracle {
+				return types.OracleModelsListMsg(models)
 			}
 			return types.ModelsListMsg(models)
 		}
@@ -178,4 +192,59 @@ func (t *TUI) OpenSettings() {
 // GetGlobal returns the global TUI instance (set by the most recent Start call).
 func GetGlobal() *TUI {
 	return global
+}
+
+func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd, getProviderConfigFn func(providerID string) ProviderConfig) *App {
+	th := theme.DefaultDark()
+	cm := widgets.NewChatModel(th)
+	im := input.NewModel(th)
+	sb := widgets.NewStatusBar(th)
+	sm := settings.NewModel(th, initial, nil, getProviderConfigFn, fetchFn)
+	cd := widgets.NewConfirmDialog(th)
+	yd := widgets.NewYoloDialog(th)
+
+	return &App{
+		theme:          th,
+		chat:           cm,
+		input:          im,
+		statusbar:      sb,
+		settings:       sm,
+		confirm:        cd,
+		yoloDlg:        yd,
+		inputCh:        inputCh,
+		cancelCh:       cancelCh,
+		modelName:      modelName,
+		username:       username,
+		startTime:      time.Now(),
+		lastCancelTime: time.Now(),
+		lastSettings:   initial,
+	}
+}
+
+func (m *App) SetProviderPresets(presets []ProviderPreset) {
+	m.ProviderPresets = presets
+	m.settings.SetPresets(presets)
+}
+
+func (m *App) SetHistory(history []string) {
+	m.history = history
+	m.input.SetHistory(history)
+}
+
+func (m *App) setMode(newMode mode) {
+	m.mode = newMode
+	switch newMode {
+	case modeSettings:
+		m.input.ClearInput()
+	case modeChat:
+		m.formHint = ""
+	}
+}
+
+func (m *App) History() []string {
+	return m.history
+}
+
+func (m *App) Init() tea.Cmd {
+	return tea.Batch(tickCmd(), tea.EnterAltScreen)
 }

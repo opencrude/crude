@@ -42,22 +42,28 @@ func (m YoloDialog) View() string {
 	warn := lipgloss.NewStyle().Foreground(m.theme.Colors.Warning)
 	danger := lipgloss.NewStyle().Foreground(m.theme.Colors.Error).Bold(true)
 
+	indent := strings.Repeat(" ", m.theme.Spacing.FormIndent)
+
 	var body strings.Builder
-	body.WriteString(warn.Render("  This disables ALL safety checks."))
+	body.WriteString(warn.Render(indent + "This disables ALL safety checks."))
 	body.WriteString("\n")
-	body.WriteString(dim.Render("  Your system is vulnerable to:"))
+	body.WriteString(dim.Render(indent + "Your system is vulnerable to:"))
 	body.WriteString("\n")
-	body.WriteString(dim.Render("  • accidental file deletion or damage"))
+	body.WriteString(dim.Render(indent + "• accidental file deletion or damage"))
 	body.WriteString("\n")
-	body.WriteString(dim.Render("  • prompt injection attacks"))
+	body.WriteString(dim.Render(indent + "• prompt injection attacks"))
 	body.WriteString("\n")
-	body.WriteString(dim.Render("  • unintended command execution"))
+	body.WriteString(dim.Render(indent + "• unintended command execution"))
 	body.WriteString("\n")
 	body.WriteString("\n")
-	body.WriteString(danger.Render("  Are you absolutely sure?"))
+	body.WriteString(danger.Render(indent + "Are you absolutely sure?"))
 
 	m.dialog.SetBody(body.String())
 	return m.dialog.View()
+}
+
+func (m *YoloDialog) SetWidth(w int) {
+	m.dialog.SetWidth(w)
 }
 
 func (m *YoloDialog) Reset() {

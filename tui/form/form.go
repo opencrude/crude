@@ -1,7 +1,6 @@
 package form
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -100,10 +99,8 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 	m.items[m.focused] = updated
 
 	if action == FormItemActionExpand {
-		if si, ok := m.items[m.focused].(*SelectItem); ok {
-			if len(si.Options()) > 0 || si.IsLoading() {
-				m.expanded = m.focused
-			}
+		if _, ok := m.items[m.focused].(*SelectItem); ok {
+			m.expanded = m.focused
 		}
 		return m, cmd, FormActionExpand
 	}
@@ -157,9 +154,18 @@ func (m Form) updateExpanded(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
 		return m, nil, FormActionNone
 	case tea.KeyEnter:
 		if si, ok := m.items[m.expanded].(*SelectItem); ok {
-			if selected, ok := si.List().Selected(); ok {
-				si.SetValue(selected.ID)
-				m.items[m.expanded] = si
+			list := si.List()
+			updated, _ := list.Update(keyMsg)
+			*list = updated
+			switch list.Action() {
+			case components.ListActionSelect:
+				if selected, ok := list.Selected(); ok {
+					si.SetValue(selected.ID)
+				}
+			case components.ListActionTyped:
+				if typed := list.TypedValue(); typed != "" {
+					si.SetValue(typed)
+				}
 			}
 		}
 		m.expanded = -1
@@ -219,52 +225,70 @@ func (m Form) updateButtons(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
 	return m, nil, FormActionNone
 }
 
+func (m Form) calcLabelWidth() int {
+	maxW := 0
+	for _, item := range m.items {
+		l := len(item.InlineLabel())
+		if l > maxW {
+			maxW = l
+		}
+	}
+	return maxW
+}
+
 func (m Form) View(width int, spinFrame int) string {
 	var b strings.Builder
 
 	b.WriteString("\n")
 
-	dim := m.theme.Styles.DimLabel
-	accent := m.theme.Colors.Accent
-
-	titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
-	b.WriteString("  " + titleStyle.Render(m.title))
-	b.WriteString("\n")
-	b.WriteString(dim.Render(" " + strings.Repeat("─", 52)))
-	b.WriteString("\n")
-
 	if m.expanded >= 0 {
 		if si, ok := m.items[m.expanded].(*SelectItem); ok {
-			if si.IsLoading() {
-				b.WriteString(dim.Render("  " + si.LoadMsg()))
-				b.WriteString("\n")
-			} else {
-				b.WriteString(si.List().View(width))
-			}
+			breadcrumb := m.title + " ❯ " + m.items[m.expanded].Label()
+			si.List().SetTitle(breadcrumb)
+			si.List().SetSelectedID(si.Value())
+			si.List().SetSpinFrame(spinFrame)
+			b.WriteString(si.List().View(width))
 		}
 		return b.String()
 	}
 
+	dim := m.theme.Styles.DimLabel
+	accent := m.theme.Colors.Accent
+	indent := strings.Repeat(" ", m.theme.Spacing.FormIndent)
+
+	sepWidth := width - m.theme.Spacing.FormIndent*2
+	if sepWidth < 20 {
+		sepWidth = 20
+	}
+
+	titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
+	b.WriteString(indent + titleStyle.Render(m.title))
+	b.WriteString("\n")
+	b.WriteString(dim.Render(indent + strings.Repeat("─", sepWidth)))
+	b.WriteString("\n")
+
+	labelWidth := m.calcLabelWidth()
+
 	for i, item := range m.items {
 		focused := m.focusZone == 0 && m.focused == i
-		b.WriteString(item.View(focused, spinFrame))
+		b.WriteString(item.View(focused, spinFrame, labelWidth))
 		b.WriteString("\n")
 	}
 
 	if m.hasButtons {
 		b.WriteString("\n")
-		highlight := m.theme.Styles.Highlight
+		accent := m.theme.Styles.InputPrompt
 		btnDim := m.theme.Styles.ButtonDim
 
 		var btnStrs []string
 		for i, btn := range m.buttons {
 			if m.focusZone == 1 && m.focusedBtn == i {
-				btnStrs = append(btnStrs, highlight.Render(fmt.Sprintf("❯ [ %s ]", btn.Label)))
+				btnStrs = append(btnStrs, accent.Render("❯")+" [ "+btn.Label+" ]")
 			} else {
-				btnStrs = append(btnStrs, btnDim.Render(fmt.Sprintf("  [ %s ]", btn.Label)))
+				btnStrs = append(btnStrs, btnDim.Render("  [ "+btn.Label+" ]"))
 			}
 		}
-		b.WriteString(" " + strings.Join(btnStrs, "  "))
+		b.WriteString(indent + strings.Join(btnStrs, "  "))
 		b.WriteString("\n")
 	}
 
@@ -272,7 +296,22 @@ func (m Form) View(width int, spinFrame int) string {
 }
 
 func (m Form) Hint() string {
-	return m.hint
+	var h string
+	if m.expanded >= 0 {
+		if si, ok := m.items[m.expanded].(*SelectItem); ok {
+			h = si.List().Hint()
+		}
+	} else if m.hasButtons && m.focusZone == 1 {
+		h = "← → choose · enter select · esc back"
+	} else if ti, ok := m.items[m.focused].(*TextItem); ok && ti.IsEditing() {
+		h = "editing · enter/esc confirm · ctrl+u clear"
+	} else {
+		h = m.hint
+	}
+	if h != "" && !strings.HasPrefix(h, "[") {
+		h = "[ " + h + " ]"
+	}
+	return h
 }
 
 func (m Form) IsEditing() bool {
@@ -374,4 +413,30 @@ func (m *Form) SetHint(h string) {
 
 func (m Form) ItemCount() int {
 	return len(m.items)
+}
+
+func (m *Form) SetItemFetchError(idx int, err string) {
+	if idx >= 0 && idx < len(m.items) {
+		if si, ok := m.items[idx].(*SelectItem); ok {
+			si.SetFetchError(err)
+		}
+	}
+}
+
+func (m Form) IsItemLoading(idx int) bool {
+	if idx >= 0 && idx < len(m.items) {
+		if si, ok := m.items[idx].(*SelectItem); ok {
+			return si.IsLoading()
+		}
+	}
+	return false
+}
+
+func (m Form) ItemOptionCount(idx int) int {
+	if idx >= 0 && idx < len(m.items) {
+		if si, ok := m.items[idx].(*SelectItem); ok {
+			return len(si.Options())
+		}
+	}
+	return 0
 }

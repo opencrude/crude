@@ -25,13 +25,19 @@ func (m *App) View() string {
 
 	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
 
-	isSpecialMode := m.formHint != ""
+	isSpecialMode := m.mode != modeChat
+
+	m.syncFormHint()
 
 	var inputView string
 	var inputLineCount int
 	if isSpecialMode {
 		inputLineCount = 1
-		inputView = "  " + dim.Render(m.formHint)
+		hint := m.formHint
+		if hint == "" {
+			hint = " "
+		}
+		inputView = strings.Repeat(" ", m.theme.Spacing.InputPadLR) + dim.Render(hint)
 	} else {
 		inputView = m.input.View(m.width, m.height, false, false, m.spinFrame)
 		inputLineCount = len(strings.Split(inputView, "\n"))
@@ -43,7 +49,7 @@ func (m *App) View() string {
 	asyncBarLines := m.statusbar.RenderAsyncBar()
 	asyncLineCount := len(asyncBarLines)
 
-	nonChat := 7 + inputLineCount
+	nonChat := 6 + inputLineCount
 	if asyncLineCount > 0 {
 		nonChat += 2 + asyncLineCount
 	}
@@ -74,7 +80,7 @@ func (m *App) View() string {
 
 	uptime := time.Since(m.startTime).Truncate(time.Second)
 	left := m.theme.Styles.Header.Render("crude") +
-		" " + dim.Render(rendering.TruncateLine(m.modelName, innerW/3))
+		"  " + dim.Render(rendering.TruncateLine(m.modelName, innerW/3))
 
 	var middle string
 	if m.yolo {
@@ -88,11 +94,11 @@ func (m *App) View() string {
 	} else {
 		rightStr = dim.Render(uptime.String())
 	}
-	spacer := innerW - lipgloss.Width(left) - lipgloss.Width(rightStr)
+	spacer := m.width - lipgloss.Width(pad+left) - lipgloss.Width(rightStr+pad)
 	if spacer < 0 {
 		spacer = 0
 	}
-	lines = append(lines, pad+left+strings.Repeat(" ", spacer)+rightStr)
+	lines = append(lines, pad+left+strings.Repeat(" ", spacer)+rightStr+pad)
 	lines = append(lines, m.theme.Styles.Separator.Render(strings.Repeat("─", m.width)))
 
 	emptyTop := chatH - len(visible)
@@ -130,8 +136,6 @@ func (m *App) View() string {
 	statusView := m.statusbar.View()
 	lines = append(lines, statusView)
 
-	lines = append(lines, "")
-
 	if len(lines) > m.height {
 		lines = lines[:m.height]
 	}
@@ -148,11 +152,13 @@ func (m *App) renderChatArea() []string {
 			all = append(all, noPadMarker+sl)
 		}
 	} else if m.mode == modeConfirm {
+		m.confirm.SetWidth(m.width)
 		confirmView := m.confirm.View(m.spinFrame)
 		for _, cl := range strings.Split(confirmView, "\n") {
 			all = append(all, noPadMarker+cl)
 		}
 	} else if m.mode == modeYolo {
+		m.yoloDlg.SetWidth(m.width)
 		yoloView := m.yoloDlg.View()
 		for _, yl := range strings.Split(yoloView, "\n") {
 			all = append(all, noPadMarker+yl)
@@ -160,4 +166,17 @@ func (m *App) renderChatArea() []string {
 	}
 
 	return all
+}
+
+func (m *App) syncFormHint() {
+	switch m.mode {
+	case modeSettings:
+		m.formHint = m.settings.Hint()
+	case modeConfirm:
+		m.formHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
+	case modeYolo:
+		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
+	default:
+		m.formHint = ""
+	}
 }

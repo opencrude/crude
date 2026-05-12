@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 
 	"crude/fileio"
 	"crude/tui/input"
@@ -158,9 +159,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ttypes.OracleModelsListMsg:
 		m.settings.SetModels([]ttypes.ModelEntry(msg), true)
 	case ttypes.ModelsErrorMsg:
-		m.settings.SetModelsError(string(msg))
+		m.settings.SetModelsError(string(msg), false)
 	case ttypes.OracleModelsErrorMsg:
-		m.settings.SetModelsError(string(msg))
+		m.settings.SetModelsError(string(msg), true)
 	case ttypes.ClipboardCopiedMsg:
 		m.statusbar.SetInfo("copied to clipboard")
 	case ttypes.ClipboardErrorMsg:
@@ -633,4 +634,105 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	}
 
 	return nil
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return ttypes.TickMsg(t)
+	})
+}
+
+func summarizeToolArgs(tool, argsStr string) string {
+	path := extractArg(argsStr, "path")
+	if path != "" {
+		return path
+	}
+	if pattern := extractArg(argsStr, "pattern"); pattern != "" {
+		return pattern
+	}
+	if command := extractArg(argsStr, "command"); command != "" {
+		return truncateLine(command, 50)
+	}
+	if content := extractArg(argsStr, "content"); content != "" {
+		return truncateLine(content, 50) + " (content)"
+	}
+	if query := extractArg(argsStr, "query"); query != "" {
+		return truncateLine(query, 50)
+	}
+	if url := extractArg(argsStr, "url"); url != "" {
+		return truncateLine(url, 50)
+	}
+	if source := extractArg(argsStr, "source"); source != "" {
+		dest := extractArg(argsStr, "destination")
+		if dest != "" {
+			return fmt.Sprintf("%s → %s", source, dest)
+		}
+		return source
+	}
+	if tool == "plan" || tool == "list_goal_status" {
+		return pascalCaseTool(tool)
+	}
+	if tool == "mark_step_complete" || tool == "mark_step_failed" {
+		if stepID := extractArg(argsStr, "step_id"); stepID != "" {
+			return stepID
+		}
+		return pascalCaseTool(tool)
+	}
+	if tool == "report_blocker" {
+		if msg := extractArg(argsStr, "message"); msg != "" {
+			return truncateLine(msg, 50)
+		}
+		return pascalCaseTool(tool)
+	}
+	if tool == "resolve_blocker" {
+		return pascalCaseTool(tool)
+	}
+	if code := extractArg(argsStr, "code"); code != "" {
+		return truncateLine(code, 50)
+	}
+	return truncateLine(argsStr, 60)
+}
+
+func extractArg(str, key string) string {
+	prefixes := []string{key + ":", key + ": "}
+	for _, prefix := range prefixes {
+		idx := strings.Index(str, prefix)
+		if idx == -1 {
+			continue
+		}
+		start := idx + len(prefix)
+		if start >= len(str) {
+			return ""
+		}
+		end := strings.IndexAny(str[start:], " ,}]")
+		if end == -1 {
+			return strings.TrimSpace(str[start:])
+		}
+		return strings.TrimSpace(str[start : start+end])
+	}
+	return ""
+}
+
+func toolLabel(tool, argsSummary string) string {
+	if argsSummary != "" {
+		return fmt.Sprintf("%s %s", tool, argsSummary)
+	}
+	return tool
+}
+
+func pascalCaseTool(name string) string {
+	parts := strings.Split(name, "_")
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func truncateLine(s string, max int) string {
+	if runewidth.StringWidth(s) <= max {
+		return s
+	}
+	return runewidth.Truncate(s, max, "…")
 }
