@@ -67,6 +67,8 @@ type App struct {
 	contextWindow, contextUsed                        int
 
 	lastSettings Settings
+
+	formHint string
 }
 
 func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial Settings, onSave func(Settings), fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(providerID string) ProviderConfig) *App {
@@ -104,6 +106,21 @@ func (m *App) SetProviderPresets(presets []ProviderPreset) {
 func (m *App) SetHistory(history []string) {
 	m.history = history
 	m.input.SetHistory(history)
+}
+
+func (m *App) setMode(newMode mode) {
+	m.mode = newMode
+	switch newMode {
+	case modeSettings:
+		m.formHint = m.settings.Hint()
+		m.input.ClearInput()
+	case modeConfirm:
+		m.formHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
+	case modeYolo:
+		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
+	case modeChat:
+		m.formHint = ""
+	}
 }
 
 func (m *App) History() []string {

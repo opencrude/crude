@@ -32,9 +32,10 @@ func (m Dialog) View() string {
 	dim := m.theme.Styles.DimLabel
 	warn := m.theme.Styles.ErrorText
 
-	b.WriteString(warn.Render(fmt.Sprintf("  %s  %s", m.icon, m.title)))
 	b.WriteString("\n")
-	b.WriteString(dim.Render("  " + strings.Repeat("─", 54)))
+	b.WriteString("  " + warn.Render(fmt.Sprintf("%s  %s", m.icon, m.title)))
+	b.WriteString("\n")
+	b.WriteString(dim.Render(" " + strings.Repeat("─", 54)))
 	b.WriteString("\n")
 
 	if m.body != "" {
@@ -45,7 +46,7 @@ func (m Dialog) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString("  " + m.buttons.View())
+	b.WriteString(" " + m.buttons.View())
 	b.WriteString("\n")
 	b.WriteString(dim.Render("  ← → navigate · enter select · esc cancel"))
 	b.WriteString("\n")

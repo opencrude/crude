@@ -70,9 +70,9 @@ func (m ButtonGroup) View() string {
 
 	for _, btn := range m.buttons {
 		if m.focused == indexOf(m.buttons, btn) {
-			btnStrs = append(btnStrs, box.Render(fmt.Sprintf("❯ [ %s ]", btn.Label))+" "+dim.Render("("+btn.Key+")"))
+			btnStrs = append(btnStrs, box.Render(fmt.Sprintf("❯ [ %s ]", btn.Label))+"  "+dim.Render("("+btn.Key+")"))
 		} else {
-			btnStrs = append(btnStrs, normal.Render(fmt.Sprintf("  [ %s ]", btn.Label))+" "+dim.Render("("+btn.Key+")"))
+			btnStrs = append(btnStrs, normal.Render(fmt.Sprintf("  [ %s ]", btn.Label))+"  "+dim.Render("("+btn.Key+")"))
 		}
 	}
 	return strings.Join(btnStrs, "  ")

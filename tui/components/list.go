@@ -17,7 +17,24 @@ type ListItem struct {
 	ID     string
 	Label  string
 	Detail string
+	Icon   string
 }
+
+type ListRenderMode int
+
+const (
+	ListRenderPanel ListRenderMode = iota
+	ListRenderPopup
+)
+
+type ListAction int
+
+const (
+	ListActionNone ListAction = iota
+	ListActionSelect
+	ListActionTyped
+	ListActionCancel
+)
 
 type List struct {
 	theme      *theme.Theme
@@ -31,6 +48,12 @@ type List struct {
 	fetching   bool
 	fetchError string
 	spinFrame  int
+
+	renderMode ListRenderMode
+
+	FilterMatchFn func(item ListItem, filter string) bool
+
+	action ListAction
 }
 
 func NewList(t *theme.Theme, pageSize int) List {
@@ -38,6 +61,8 @@ func NewList(t *theme.Theme, pageSize int) List {
 }
 
 func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
+	m.action = ListActionNone
+
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -45,12 +70,28 @@ func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
 
 	switch keyMsg.Type {
 	case tea.KeyEsc:
+		if m.renderMode == ListRenderPopup {
+			m.action = ListActionCancel
+			return m, nil
+		}
 		m.filter = ""
 		m.filtered = nil
 		m.idx = 0
 		m.offset = 0
 		return m, nil
 	case tea.KeyEnter:
+		if len(m.filtered) > 0 {
+			m.action = ListActionSelect
+		} else {
+			m.action = ListActionTyped
+		}
+		return m, nil
+	case tea.KeyTab:
+		if len(m.filtered) > 0 {
+			m.action = ListActionSelect
+		} else {
+			m.action = ListActionCancel
+		}
 		return m, nil
 	case tea.KeyUp:
 		if len(m.filtered) > 0 {
@@ -69,17 +110,33 @@ func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
 			m.clampOffset()
 		}
 	case tea.KeyPgUp:
-		m.idx -= m.pageSize
-		if m.idx < 0 {
-			m.idx = 0
+		if m.renderMode == ListRenderPopup {
+			m.idx -= m.pageSize
+			if m.idx < 0 {
+				m.idx = 0
+			}
+			m.clampOffset()
+		} else {
+			m.idx -= m.pageSize
+			if m.idx < 0 {
+				m.idx = 0
+			}
+			m.clampOffset()
 		}
-		m.clampOffset()
 	case tea.KeyPgDown:
-		m.idx += m.pageSize
-		if m.idx >= len(m.filtered) {
-			m.idx = len(m.filtered) - 1
+		if m.renderMode == ListRenderPopup {
+			m.idx += m.pageSize
+			if m.idx >= len(m.filtered) {
+				m.idx = len(m.filtered) - 1
+			}
+			m.clampOffset()
+		} else {
+			m.idx += m.pageSize
+			if m.idx >= len(m.filtered) {
+				m.idx = len(m.filtered) - 1
+			}
+			m.clampOffset()
 		}
-		m.clampOffset()
 	case tea.KeyBackspace, tea.KeyDelete:
 		if len(m.filter) > 0 {
 			runes := []rune(m.filter)
@@ -99,15 +156,62 @@ func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
 }
 
 func (m List) View(width int) string {
+	if m.renderMode == ListRenderPopup {
+		return m.viewPopup(width)
+	}
+	return m.viewPanel(width)
+}
+
+func (m List) viewPopup(width int) string {
+	dim := m.theme.Styles.DimLabel
+	highlight := m.theme.Styles.Highlight
+	accent := m.theme.Styles.InputPrompt
+
+	if len(m.filtered) == 0 {
+		return ""
+	}
+
+	end := m.offset + m.pageSize
+	if end > len(m.filtered) {
+		end = len(m.filtered)
+	}
+	aboveCount := m.offset
+	belowCount := len(m.filtered) - end
+
+	var lines []string
+	if aboveCount > 0 {
+		lines = append(lines, dim.Render(fmt.Sprintf("  ... %d above", aboveCount)))
+	}
+	for i := m.offset; i < end; i++ {
+		item := m.filtered[i]
+		marker := ""
+		if i == m.idx {
+			marker = accent.Render("❯")
+		}
+		label := fmt.Sprintf("%-16s", item.Label)
+		if i == m.idx {
+			label = highlight.Render(label)
+		} else {
+			label = dim.Render(label)
+		}
+		lines = append(lines, " "+marker+" "+label+" "+dim.Render(item.Detail))
+	}
+	if belowCount > 0 {
+		lines = append(lines, dim.Render(fmt.Sprintf("  ... %d below", belowCount)))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m List) viewPanel(width int) string {
 	accent := m.theme.Colors.Accent
 	dim := m.theme.Styles.DimLabel
 
 	var b strings.Builder
 
-	// Header with title + count
 	if m.title != "" {
 		titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
-		b.WriteString(titleStyle.Render(m.title))
+		b.WriteString("   " + titleStyle.Render(m.title))
 		if m.fetching {
 			b.WriteString(dim.Render("  fetching models..."))
 		} else if len(m.items) > 0 {
@@ -116,11 +220,10 @@ func (m List) View(width int) string {
 		b.WriteString("\n")
 	}
 
-	// Search bar / error
 	if m.fetchError != "" {
-		b.WriteString(m.theme.Styles.ErrorText.Render("  ✗ "+m.fetchError) + "\n")
+		b.WriteString("   " + m.theme.Styles.ErrorText.Render("✗ "+m.fetchError) + "\n")
 	} else {
-		searchPrompt := lipgloss.NewStyle().Foreground(accent).Render("/ ")
+		searchPrompt := lipgloss.NewStyle().Foreground(accent).Render(" ❯ / ")
 		searchText := lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Render(m.filter)
 		cursor := " "
 		if m.spinFrame%2 == 0 {
@@ -131,14 +234,12 @@ func (m List) View(width int) string {
 
 	b.WriteString(dim.Render("  " + strings.Repeat("─", 52)) + "\n")
 
-	// Items
 	if m.fetching {
 		b.WriteString(dim.Render("  waiting for models...") + "\n")
 	} else if len(m.filtered) == 0 {
 		if m.filter != "" {
 			b.WriteString(dim.Render("  no matches — press enter to use typed value") + "\n")
 		} else if m.fetchError != "" {
-			// error already shown above
 		} else {
 			b.WriteString(dim.Render("  no models available") + "\n")
 		}
@@ -168,19 +269,18 @@ func (m List) View(width int) string {
 			if i == m.idx {
 				highlightStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Background(m.theme.Colors.Selection)
 				detail := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted).Render(item.Detail)
-				b.WriteString(lipgloss.NewStyle().Foreground(accent).Render("❯ ") +
+				b.WriteString(lipgloss.NewStyle().Foreground(accent).Render(" ❯ ") +
 					highlightStyle.Render(fmt.Sprintf("%-*s", lineWidth-runewidth.StringWidth(item.Detail)-2, label)) +
 					detail)
 			} else {
 				detail := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted).Render(item.Detail)
-				b.WriteString("  " + lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Render(label) +
+				b.WriteString("   " + lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Render(label) +
 					strings.Repeat(" ", padding) + detail)
 			}
 			b.WriteString("\n")
 		}
 	}
 
-	// Footer with scroll hints
 	b.WriteString(dim.Render("  " + strings.Repeat("─", 52)) + "\n")
 	footer := "↑↓ navigate · enter select · esc cancel"
 	if !m.fetching && len(m.filtered) > 0 {
@@ -199,15 +299,18 @@ func (m List) View(width int) string {
 			footer = scrollHint + " · enter select · esc cancel"
 		}
 	}
-	b.WriteString(dim.Render(footer) + "\n")
+	b.WriteString(dim.Render("  " + footer) + "\n")
 
-	// Typed value hint when fetching
 	if m.fetching && m.filter != "" {
 		b.WriteString(dim.Render("  enter will use: ") +
 			lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Render(m.filter) + "\n")
 	}
 
 	return b.String()
+}
+
+func (m *List) SetRenderMode(mode ListRenderMode) {
+	m.renderMode = mode
 }
 
 func (m *List) SetTitle(title string) {
@@ -256,14 +359,24 @@ func (m List) TypedValue() string {
 	return ""
 }
 
+func (m List) Action() ListAction {
+	return m.action
+}
+
 func (m *List) applyFilter() {
 	m.filtered = nil
 	m.idx = 0
 	m.offset = 0
 	s := strings.ToLower(m.filter)
 	for _, item := range m.items {
-		if strings.Contains(strings.ToLower(item.ID), s) || strings.Contains(strings.ToLower(item.Label), s) {
-			m.filtered = append(m.filtered, item)
+		if m.FilterMatchFn != nil {
+			if m.FilterMatchFn(item, s) {
+				m.filtered = append(m.filtered, item)
+			}
+		} else {
+			if strings.Contains(strings.ToLower(item.ID), s) || strings.Contains(strings.ToLower(item.Label), s) {
+				m.filtered = append(m.filtered, item)
+			}
 		}
 	}
 }

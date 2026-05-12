@@ -57,7 +57,7 @@ func (m YoloDialog) View() string {
 	body.WriteString(danger.Render("  Are you absolutely sure?"))
 
 	m.dialog.SetBody(body.String())
-	return "  " + m.dialog.View() + "\n"
+	return m.dialog.View()
 }
 
 func (m *YoloDialog) Reset() {

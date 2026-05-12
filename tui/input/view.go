@@ -1,7 +1,6 @@
 package input
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -34,41 +33,11 @@ func (m Model) View(width, chatAreaHeight int, settingsActive, confirmActive boo
 		strings.HasPrefix(inputVal, "/") && !strings.Contains(inputVal, " ") && !strings.Contains(inputVal, "\n")
 
 	if showSlash {
-		dim := m.theme.Styles.DimLabel
-		highlight := m.theme.Styles.Highlight
-		accent := m.theme.Styles.InputPrompt
-
-		end := m.slashOffset + slashPageSize
-		if end > len(m.slashFiltered) {
-			end = len(m.slashFiltered)
+		popupView := m.slashList.View(width)
+		if popupView != "" {
+			b.WriteByte('\n')
+			b.WriteString(popupView)
 		}
-		aboveCount := m.slashOffset
-		belowCount := len(m.slashFiltered) - end
-
-		var menuLines []string
-		if aboveCount > 0 {
-			menuLines = append(menuLines, dim.Render(fmt.Sprintf("  ... %d above", aboveCount)))
-		}
-		for i := m.slashOffset; i < end; i++ {
-			cmd := m.slashFiltered[i]
-			marker := ""
-			if i == m.slashIdx {
-				marker = accent.Render("❯")
-			}
-			label := fmt.Sprintf("%-16s", cmd.Label)
-			if i == m.slashIdx {
-				label = highlight.Render(label)
-			} else {
-				label = dim.Render(label)
-			}
-			menuLines = append(menuLines, " "+marker+" "+label+" "+dim.Render(cmd.Desc))
-		}
-		if belowCount > 0 {
-			menuLines = append(menuLines, dim.Render(fmt.Sprintf("  ... %d below", belowCount)))
-		}
-
-		b.WriteByte('\n')
-		b.WriteString(strings.Join(menuLines, "\n"))
 	}
 
 	return b.String()

@@ -1,6 +1,8 @@
 package input
 
 import (
+	"strings"
+
 	"crude/tui/components"
 	"crude/tui/theme"
 )
@@ -51,6 +53,19 @@ func AvailableCmds() []CmdInfo {
 	return availableCmds
 }
 
+func cmdsToItems(cmds []CmdInfo) []components.ListItem {
+	items := make([]components.ListItem, len(cmds))
+	for i, c := range cmds {
+		items[i] = components.ListItem{
+			ID:     c.Name,
+			Label:  c.Label,
+			Detail: c.Desc,
+			Icon:   c.Icon,
+		}
+	}
+	return items
+}
+
 type Model struct {
 	theme    *theme.Theme
 	input    components.TextInput
@@ -58,11 +73,8 @@ type Model struct {
 	histIdx  int
 	histDraft, histPrefix string
 
-	slashActive   bool
-	slashIdx      int
-	slashOffset   int
-	slashFilter   string
-	slashFiltered []CmdInfo
+	slashActive bool
+	slashList   components.List
 
 	showHint  bool
 	width     int
@@ -73,11 +85,19 @@ type Model struct {
 }
 
 func NewModel(t *theme.Theme) Model {
+	slashList := components.NewList(t, slashPageSize)
+	slashList.SetRenderMode(components.ListRenderPopup)
+	slashList.SetItems(cmdsToItems(availableCmds))
+	slashList.FilterMatchFn = func(item components.ListItem, filter string) bool {
+		return strings.HasPrefix(strings.ToLower(item.ID), filter) || strings.Contains(strings.ToLower(item.Detail), filter)
+	}
+
 	return Model{
-		theme:    t,
-		input:    components.NewTextInput(t),
-		histIdx:  -1,
-		showHint: true,
+		theme:     t,
+		input:     components.NewTextInput(t),
+		slashList: slashList,
+		histIdx:   -1,
+		showHint:  true,
 	}
 }
 
@@ -125,10 +145,6 @@ func (m *Model) ClearInput() {
 	m.histDraft = ""
 	m.histPrefix = ""
 	m.slashActive = false
-	m.slashFilter = ""
-	m.slashFiltered = nil
-	m.slashIdx = 0
-	m.slashOffset = 0
 }
 
 func (m Model) Height() int {
@@ -167,5 +183,15 @@ func (m Model) SlashActive() bool {
 }
 
 func (m Model) SlashFiltered() []CmdInfo {
-	return m.slashFiltered
+	items := m.slashList.Items()
+	cmds := make([]CmdInfo, len(items))
+	for i, item := range items {
+		cmds[i] = CmdInfo{
+			Name:  item.ID,
+			Label: item.Label,
+			Desc:  item.Detail,
+			Icon:  item.Icon,
+		}
+	}
+	return cmds
 }

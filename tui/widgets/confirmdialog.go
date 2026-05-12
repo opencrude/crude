@@ -131,7 +131,7 @@ func (m ConfirmDialog) View(spinFrame int) string {
 	body := details.String()
 	m.dialog.SetBody(body)
 
-	return "  " + m.dialog.View() + "\n"
+	return m.dialog.View()
 }
 
 func (m *ConfirmDialog) Reset(question, operation, tool, target string) {
