@@ -141,7 +141,3 @@ type OracleModelsListMsg []ModelEntry
 type OracleModelsErrorMsg string
 
 type SelectionTickMsg time.Time
-
-type ClipboardCopiedMsg struct{}
-
-type ClipboardErrorMsg string

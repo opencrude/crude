@@ -2,11 +2,11 @@ package widgets
 
 import (
 	"strings"
-	"time"
 
 	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	"crude/tui/tools"
 	"crude/tui/types"
 
 	"github.com/charmbracelet/glamour"
@@ -43,7 +43,7 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 			continue
 		}
 
-		timeLine1, timeLine2 := FormatTimeLabel(msg.Time)
+		timeLine1, timeLine2 := rendering.FormatTimeLabel(msg.Time)
 		timeW := rendering.Max(len(timeLine1), len(timeLine2))
 
 		var msgLines []string
@@ -66,7 +66,7 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 				cursorLine = len(msgLines) - 1
 			}
 		case types.RoleTool:
-			msgLines = RenderToolMessage(*msg, th, contentWidth, innerW, width, spinFrame, height, phase)
+			msgLines = tools.RenderToolMessage(*msg, th, contentWidth, innerW, width, spinFrame, height, phase)
 		case types.RoleError:
 			msgLines = RenderErrorMessage(*msg, th, contentWidth, innerW, timeLine1, timeLine2, timeW)
 		}
@@ -299,18 +299,4 @@ func RenderErrorMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, in
 		lines = append(lines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 	}
 	return lines
-}
-
-func FormatTimeLabel(t time.Time) (string, string) {
-	line1 := t.Format("15:04")
-	now := time.Now()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	if t.After(todayStart) {
-		return line1, "today"
-	}
-	yesterdayStart := todayStart.Add(-24 * time.Hour)
-	if t.After(yesterdayStart) {
-		return line1, "yesterday"
-	}
-	return line1, t.Format("01/02")
 }

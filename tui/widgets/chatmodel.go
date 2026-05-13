@@ -1,17 +1,13 @@
 package widgets
 
 import (
-	"math"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/glamour/styles"
 
 	"crude/tui/components"
-	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
 )
@@ -72,120 +68,6 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 	case types.SelectionTickMsg:
 		return m.handleSelectionTick()
 	}
-	return m, nil
-}
-
-func (m ChatModel) handleMouse(msg tea.MouseMsg) (ChatModel, tea.Cmd) {
-	chatBottom := m.chatAreaTop + m.chatAreaHeight - 1
-
-	switch {
-	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
-		if msg.Y >= m.chatAreaTop && msg.Y <= chatBottom {
-			lineIdx, ok := m.MouseToAllLine(msg.Y)
-			if ok {
-				m.selecting = true
-				m.selAnchorLine = lineIdx
-				m.selAnchorCol = rendering.Max(0, msg.X-m.theme.Spacing.PadLR)
-				m.selEndLine = lineIdx
-				m.selEndCol = m.selAnchorCol
-				m.selMouseY = msg.Y
-				m.selAutoScroll = false
-			}
-		} else {
-			m.selecting = false
-			m.selAutoScroll = false
-		}
-
-	case msg.Action == tea.MouseActionMotion && m.selecting:
-		lineIdx, ok := m.MouseToAllLine(msg.Y)
-		if ok {
-			m.selEndLine = lineIdx
-			m.selEndCol = rendering.Max(0, msg.X-m.theme.Spacing.PadLR)
-		} else if msg.Y < m.chatAreaTop {
-			firstLine, _ := m.ChatAreaContentBounds()
-			if firstLine >= 0 {
-				m.selEndLine = firstLine
-				m.selEndCol = 0
-			}
-		} else if msg.Y > chatBottom {
-			_, lastLine := m.ChatAreaContentBounds()
-			if lastLine >= 0 {
-				m.selEndLine = lastLine
-				m.selEndCol = 1 << 30
-			}
-		}
-		m.selMouseY = msg.Y
-
-		if !m.selAutoScroll && (m.selMouseY <= m.chatAreaTop-1 || m.selMouseY >= chatBottom+1) {
-			m.selAutoScroll = true
-			return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
-				return types.SelectionTickMsg(t)
-			})
-		}
-
-	case msg.Action == tea.MouseActionRelease && m.selecting:
-		m.selecting = false
-		m.selAutoScroll = false
-		sLine, sCol, eLine, eCol := m.SelectionRange()
-		text := rendering.ExtractSelectedText(m.cachedAllLines, sLine, sCol, eLine, eCol)
-		text = strings.TrimRight(text, " \t\n\r")
-		if text != "" {
-			return m, rendering.CopyToClipboardCmd(text)
-		}
-
-	case msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown:
-		now := time.Now()
-		elapsed := now.Sub(m.lastScrollTime).Seconds()
-		if elapsed < 0.1 {
-			m.scrollVelocity = math.Min(m.scrollVelocity+0.5, 5)
-		} else {
-			m.scrollVelocity = 1
-		}
-		m.lastScrollTime = now
-		n := int(m.scrollVelocity)
-		if n < 1 {
-			n = 1
-		}
-		if msg.Button == tea.MouseButtonWheelUp {
-			m.ScrollUp(n)
-		} else {
-			m.ScrollDown(n)
-		}
-	}
-
-	return m, nil
-}
-
-func (m ChatModel) handleSelectionTick() (ChatModel, tea.Cmd) {
-	if !m.selecting || !m.selAutoScroll {
-		return m, nil
-	}
-
-	chatBottom := m.chatAreaTop + m.chatAreaHeight - 1
-
-	if m.selMouseY <= m.chatAreaTop-1 {
-		m.ScrollUp(1)
-		lineIdx, ok := m.MouseToAllLine(m.chatAreaTop)
-		if ok {
-			m.selEndLine = lineIdx
-			m.selEndCol = 0
-		}
-	} else if m.selMouseY >= chatBottom+1 {
-		m.ScrollDown(1)
-		lineIdx, ok := m.MouseToAllLine(chatBottom)
-		if ok {
-			m.selEndLine = lineIdx
-			m.selEndCol = 1 << 30
-		}
-	}
-
-	if m.selMouseY <= m.chatAreaTop-1 || m.selMouseY >= chatBottom+1 {
-		return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
-			return types.SelectionTickMsg(t)
-		})
-	}
-
-	m.selAutoScroll = false
 	return m, nil
 }
 
@@ -462,11 +344,6 @@ func (m *ChatModel) SetSize(w, h int) {
 	m.height = h
 }
 
-func (m *ChatModel) ScrollToBottom() {
-	m.scrolled = false
-	m.offset = 0
-}
-
 func (m *ChatModel) MarkAllThinkingDone() {
 	for _, msg := range m.messages {
 		if msg.Role == types.RoleThinking {
@@ -487,196 +364,8 @@ func (m *ChatModel) InvalidateCache() {
 	}
 }
 
-func (m *ChatModel) SelectionRange() (startLine, startCol, endLine, endCol int) {
-	if m.selAnchorLine < m.selEndLine ||
-		(m.selAnchorLine == m.selEndLine && m.selAnchorCol <= m.selEndCol) {
-		return m.selAnchorLine, m.selAnchorCol, m.selEndLine, m.selEndCol
-	}
-	return m.selEndLine, m.selEndCol, m.selAnchorLine, m.selAnchorCol
-}
-
-func (m *ChatModel) MouseToAllLine(mouseY int) (allIdx int, ok bool) {
-	if len(m.cachedAllLines) == 0 {
-		return -1, false
-	}
-	chatY := mouseY - m.chatAreaTop
-	if chatY < 0 || chatY >= m.chatAreaHeight {
-		return -1, false
-	}
-	total := len(m.cachedAllLines)
-	maxOffset := total - m.chatAreaHeight
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	offset := m.offset
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	endIdx := total - offset
-	startIdx := endIdx - m.chatAreaHeight
-	if startIdx < 0 {
-		startIdx = 0
-	}
-	visible := endIdx - startIdx
-	emptyTop := m.chatAreaHeight - visible
-	if emptyTop < 0 {
-		emptyTop = 0
-	}
-	if chatY < emptyTop {
-		return -1, false
-	}
-	allIdx = startIdx + (chatY - emptyTop)
-	if allIdx < 0 || allIdx >= total {
-		return -1, false
-	}
-	return allIdx, true
-}
-
-func (m *ChatModel) ChatAreaContentBounds() (firstLine, lastLine int) {
-	if len(m.cachedAllLines) == 0 {
-		return -1, -1
-	}
-	total := len(m.cachedAllLines)
-	maxOffset := total - m.chatAreaHeight
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	offset := m.offset
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	endIdx := total - offset
-	startIdx := endIdx - m.chatAreaHeight
-	if startIdx < 0 {
-		startIdx = 0
-	}
-	if endIdx > total {
-		endIdx = total
-	}
-	return startIdx, endIdx - 1
-}
-
 func (m *ChatModel) Messages() []*types.ChatMessage {
 	return m.messages
 }
 
-func (m *ChatModel) ScrollUp(n int) {
-	m.offset += n
-	m.scrolled = true
-}
-
-func (m *ChatModel) ScrollDown(n int) {
-	m.offset -= n
-	if m.offset < 0 {
-		m.offset = 0
-	}
-	if m.offset == 0 {
-		m.scrolled = false
-	}
-}
-
-func (m *ChatModel) Scrolled() bool {
-	return m.scrolled
-}
-
-func (m *ChatModel) ChatOffset() int {
-	return m.offset
-}
-
-func (m *ChatModel) ClampOffset(maxOffset int) {
-	if m.offset > maxOffset {
-		m.offset = maxOffset
-	}
-	if m.offset < 0 {
-		m.offset = 0
-	}
-}
-
-func (m *ChatModel) MdRenderer() *glamour.TermRenderer {
-	return m.makeMdRenderer()
-}
-
-func (m *ChatModel) makeMdRenderer() *glamour.TermRenderer {
-	w := m.width - 4 - 16
-	if w < 20 {
-		w = 20
-	}
-	if m.mdRenderer != nil && m.cachedWidth == w {
-		return m.mdRenderer
-	}
-	style := styles.DarkStyleConfig
-	style.Document.Margin = uintPtr(0)
-	style.CodeBlock.Margin = uintPtr(0)
-	style.CodeBlock.Chroma = &ansi.Chroma{
-		Text:                ansi.StylePrimitive{Color: strPtr("#e6edf3")},
-		Error:               ansi.StylePrimitive{Color: strPtr("#ff7b72")},
-		Comment:             ansi.StylePrimitive{Color: strPtr("#8b949e")},
-		CommentPreproc:      ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		Keyword:             ansi.StylePrimitive{Color: strPtr("#ff7b72")},
-		KeywordReserved:     ansi.StylePrimitive{Color: strPtr("#ff7b72")},
-		KeywordNamespace:    ansi.StylePrimitive{Color: strPtr("#ff7b72")},
-		KeywordType:         ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		Operator:            ansi.StylePrimitive{Color: strPtr("#ff7b72")},
-		Punctuation:         ansi.StylePrimitive{Color: strPtr("#e6edf3")},
-		Name:                ansi.StylePrimitive{Color: strPtr("#e6edf3")},
-		NameBuiltin:         ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		NameTag:             ansi.StylePrimitive{Color: strPtr("#7ee787")},
-		NameAttribute:       ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		NameClass:           ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		NameConstant:        ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		NameDecorator:        ansi.StylePrimitive{Color: strPtr("#d2a8ff")},
-		NameFunction:        ansi.StylePrimitive{Color: strPtr("#d2a8ff")},
-		LiteralNumber:       ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		LiteralString:       ansi.StylePrimitive{Color: strPtr("#a5d6ff")},
-		LiteralStringEscape: ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		GenericDeleted:      ansi.StylePrimitive{Color: strPtr("#ff7b72")},
-		GenericInserted:     ansi.StylePrimitive{Color: strPtr("#7ee787")},
-		GenericStrong:       ansi.StylePrimitive{Color: strPtr("#e6edf3")},
-		GenericSubheading:   ansi.StylePrimitive{Color: strPtr("#e6edf3")},
-	}
-	style.CodeBlock.StylePrimitive.Color = strPtr("#e6edf3")
-	style.CodeBlock.StylePrimitive.BackgroundColor = strPtr("#161b22")
-	style.CodeBlock.BlockPrefix = ""
-	style.Paragraph.Margin = uintPtr(0)
-	style.Heading.Margin = uintPtr(0)
-	style.List.Margin = uintPtr(0)
-	style.Table.Margin = uintPtr(0)
-
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStyles(style),
-		glamour.WithWordWrap(w),
-	)
-	if err == nil {
-		m.mdRenderer = r
-		m.cachedWidth = w
-		return r
-	}
-	return nil
-}
-
-func (m *ChatModel) SetCachedAllLines(lines []string) { m.cachedAllLines = lines }
-func (m *ChatModel) SetChatAreaBounds(top, height int) {
-	m.chatAreaTop = top
-	m.chatAreaHeight = height
-}
-
-func (m *ChatModel) HasActiveSelection() bool {
-	if !m.selecting && m.selAnchorLine == m.selEndLine && m.selAnchorCol == m.selEndCol {
-		return false
-	}
-	return m.selAnchorLine != m.selEndLine || m.selAnchorCol != m.selEndCol
-}
-
 func (m *ChatModel) SetStreaming(s bool) { m.streaming = s }
-
-func (m *ChatModel) ClearSelection() {
-	m.selecting = false
-	m.selAutoScroll = false
-	m.selAnchorLine = 0
-	m.selAnchorCol = 0
-	m.selEndLine = 0
-	m.selEndCol = 0
-}
-
-func uintPtr(u uint) *uint    { return &u }
-func strPtr(s string) *string { return &s }

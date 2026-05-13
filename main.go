@@ -11,6 +11,7 @@ import (
 	"crude/provider"
 	"crude/session"
 	"crude/tui"
+	"crude/tui/app"
 )
 
 const defaultModel = ""
@@ -191,7 +192,7 @@ func main() {
 		return tui.ProviderConfig{}
 	}
 
-	tui.OnHistorySave = func(history []string) {
+	app.OnHistorySave = func(history []string) {
 		if err := saveHistory(history); err != nil {
 			slog.Error("history.save", "error", err.Error())
 		}

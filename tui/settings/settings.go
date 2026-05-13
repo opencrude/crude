@@ -1,12 +1,11 @@
 package settings
 
 import (
-	"fmt"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"crude/tui/components"
 	"crude/tui/form"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
 )
@@ -168,7 +167,7 @@ func (m *Model) SetModels(models []types.ModelEntry, isOracle bool) {
 	for _, mod := range models {
 		detail := ""
 		if mod.ContextWindow > 0 {
-			detail = formatCtxWindow(mod.ContextWindow)
+			detail = rendering.FormatTokens(mod.ContextWindow)
 		}
 		name := mod.Name
 		if name == "" {
@@ -343,13 +342,4 @@ func (m *Model) updateModelMetadata(modelID string, isOracle bool) {
 	}
 }
 
-func formatCtxWindow(n int) string {
-	switch {
-	case n >= 1000000:
-		return fmt.Sprintf("%.1fM", float64(n)/1000000)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
-}
+

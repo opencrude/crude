@@ -1,0 +1,293 @@
+package tools
+
+import (
+	"crude/tui/rendering"
+	"crude/tui/types"
+	"fmt"
+)
+
+func BuildToolTitle(msg types.ChatMessage, phase string) string {
+	target := msg.ToolProgressLabel
+	if target == "" {
+		target = msg.ToolArgs
+	}
+
+	switch phase {
+	case types.ToolPreviewPreparing:
+		return "Preparing " + rendering.PascalCaseTool(msg.ToolName)
+	case types.ToolPreviewStreaming:
+		return BuildStreamingLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens)
+	case types.ToolPreviewDone:
+		dur := rendering.FormatDuration(msg.ToolDuration)
+		if msg.ToolStatus == "error" {
+			label := rendering.PascalCaseTool(msg.ToolName)
+			if target != "" {
+				label += " " + target
+			}
+			label += " failed"
+			if dur != "" {
+				label += " " + dur
+			}
+			return label
+		}
+		return BuildDoneLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens, dur)
+	default:
+		if msg.ToolStatus == "success" || msg.ToolStatus == "error" {
+			dur := rendering.FormatDuration(msg.ToolDuration)
+			return BuildDoneLabel(msg.ToolName, target, 0, 0, 0, dur)
+		}
+		if target != "" {
+			return rendering.PascalCaseTool(msg.ToolName) + " " + target
+		}
+		return rendering.PascalCaseTool(msg.ToolName)
+	}
+}
+
+func BuildStreamingLabel(tool, target string, added, removed, tokens int) string {
+	switch tool {
+	case "write_file":
+		if target != "" {
+			return fmt.Sprintf("Writing %s +%d ↓%d", target, added, tokens)
+		}
+		return fmt.Sprintf("Writing ↓%d", tokens)
+	case "edit_file":
+		if target != "" {
+			return fmt.Sprintf("Editing %s -%d +%d ↓%d", target, removed, added, tokens)
+		}
+		return fmt.Sprintf("Editing -%d +%d ↓%d", removed, added, tokens)
+	case "read_file":
+		return fmt.Sprintf("Reading %s", target)
+	case "execute_command":
+		if target != "" {
+			return fmt.Sprintf("Running %s", rendering.TruncateLine(target, 50))
+		}
+		return "Running command"
+	case "delete_file":
+		return fmt.Sprintf("Deleting %s", target)
+	case "move_file":
+		return fmt.Sprintf("Moving %s", target)
+	case "copy_file":
+		return fmt.Sprintf("Copying %s", target)
+	case "web_search":
+		if target != "" {
+			return fmt.Sprintf("Searching \"%s\"", rendering.TruncateLine(target, 40))
+		}
+		return "Searching web"
+	case "web_fetch":
+		if target != "" {
+			return fmt.Sprintf("Fetching %s", rendering.TruncateLine(target, 50))
+		}
+		return "Fetching URL"
+	case "grep_files":
+		if target != "" {
+			return fmt.Sprintf("Grepping %s", rendering.TruncateLine(target, 50))
+		}
+		return "Grepping files"
+	case "glob_files":
+		return fmt.Sprintf("Globbing %s", target)
+	case "list_directory":
+		return fmt.Sprintf("Listing %s", target)
+	case "run_javascript":
+		return "Running JavaScript"
+	case "arxiv_search":
+		if target != "" {
+			return fmt.Sprintf("Searching ArXiv \"%s\"", rendering.TruncateLine(target, 40))
+		}
+		return "Searching ArXiv"
+	case "consult_oracle":
+		return "Consulting oracle"
+	case "plan", "list_goal_status":
+		return fmt.Sprintf("Running %s", rendering.PascalCaseTool(tool))
+	case "mark_step_complete":
+		if target != "" {
+			return fmt.Sprintf("Completing %s", target)
+		}
+		return "Completing step"
+	case "mark_step_failed":
+		if target != "" {
+			return fmt.Sprintf("Failing %s", target)
+		}
+		return "Failing step"
+	case "report_blocker":
+		return "Reporting blocker"
+	case "resolve_blocker":
+		return "Resolving blocker"
+	default:
+		if target != "" {
+			return fmt.Sprintf("Running %s %s", rendering.PascalCaseTool(tool), target)
+		}
+		return fmt.Sprintf("Running %s", rendering.PascalCaseTool(tool))
+	}
+}
+
+func BuildDoneLabel(tool, target string, added, removed, tokens int, duration string) string {
+	switch tool {
+	case "write_file":
+		label := "Wrote"
+		if target != "" {
+			label += " " + target
+		}
+		label += fmt.Sprintf(" +%d", added)
+		if tokens > 0 {
+			label += fmt.Sprintf(" ↓%d", tokens)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "edit_file":
+		label := "Edited"
+		if target != "" {
+			label += " " + target
+		}
+		label += fmt.Sprintf(" -%d +%d", removed, added)
+		if tokens > 0 {
+			label += fmt.Sprintf(" ↓%d", tokens)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "read_file":
+		return fmt.Sprintf("Read %s", target)
+	case "execute_command":
+		return fmt.Sprintf("Ran %s %s", rendering.TruncateLine(target, 50), duration)
+	case "delete_file":
+		label := "Deleted " + target
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "move_file":
+		label := "Moved " + target
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "copy_file":
+		label := "Copied " + target
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "web_search":
+		label := "Searched"
+		if target != "" {
+			label += fmt.Sprintf(" \"%s\"", rendering.TruncateLine(target, 40))
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "web_fetch":
+		label := "Fetched"
+		if target != "" {
+			label += " " + rendering.TruncateLine(target, 50)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "grep_files":
+		label := "Grepped"
+		if target != "" {
+			label += " " + rendering.TruncateLine(target, 50)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "glob_files":
+		label := "Globbed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "list_directory":
+		label := "Listed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "run_javascript":
+		label := "Ran JavaScript"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "arxiv_search":
+		label := "ArXiv"
+		if target != "" {
+			label += fmt.Sprintf(" \"%s\"", rendering.TruncateLine(target, 40))
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "consult_oracle":
+		label := "Consulted oracle"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "plan", "list_goal_status":
+		return rendering.PascalCaseTool(tool)
+	case "mark_step_complete":
+		label := "Completed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "mark_step_failed":
+		label := "Failed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "report_blocker":
+		label := "Blocked"
+		if target != "" {
+			label += ": " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "resolve_blocker":
+		label := "Resolved blocker"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	default:
+		label := rendering.PascalCaseTool(tool)
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+}
+
+func IsPlanTool(name string) bool {
+	switch name {
+	case "plan", "mark_step_complete", "mark_step_failed", "report_blocker", "resolve_blocker", "list_goal_status":
+		return true
+	default:
+		return false
+	}
+}

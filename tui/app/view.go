@@ -1,4 +1,4 @@
-package tui
+package app
 
 import (
 	"strings"
@@ -25,7 +25,7 @@ func (m *App) View() string {
 
 	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
 
-	isSpecialMode := m.mode != modeChat
+	isSpecialMode := m.Mode != ModeChat
 
 	m.syncFormHint()
 
@@ -99,28 +99,9 @@ func (m *App) View() string {
 
 	lines = append(lines, "")
 
-	uptime := time.Since(m.startTime).Truncate(time.Second)
-	left := m.theme.Styles.Header.Render("crude") +
-		"  " + dim.Render(rendering.TruncateLine(m.modelName, innerW/3))
-
-	var middle string
-	if m.yolo {
-		yoloStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0000")).Bold(true)
-		middle = " " + yoloStyle.Render("⚠ YOLO")
-	}
-
-	var rightStr string
-	if middle != "" {
-		rightStr = middle + " " + dim.Render(uptime.String())
-	} else {
-		rightStr = dim.Render(uptime.String())
-	}
-	spacer := m.width - lipgloss.Width(pad+left) - lipgloss.Width(rightStr+pad)
-	if spacer < 0 {
-		spacer = 0
-	}
-	lines = append(lines, pad+left+strings.Repeat(" ", spacer)+rightStr+pad)
-	lines = append(lines, m.theme.Styles.Separator.Render(strings.Repeat("─", m.width)))
+	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
+	lines = append(lines, pad+headerLine+pad)
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	emptyTop := chatH - len(visible)
 	for i := 0; i < emptyTop; i++ {
@@ -142,7 +123,7 @@ func (m *App) View() string {
 		lines = append(lines, pad+al)
 	}
 
-	lines = append(lines, m.theme.Styles.Separator.Render(strings.Repeat("─", m.width)))
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	if isSpecialMode {
 		lines = append(lines, pad+inputView)
@@ -152,7 +133,7 @@ func (m *App) View() string {
 		}
 	}
 
-	lines = append(lines, m.theme.Styles.Separator.Render(strings.Repeat("─", m.width)))
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	statusView := m.statusbar.View()
 	lines = append(lines, pad+statusView)
@@ -168,18 +149,18 @@ func (m *App) renderChatArea() []string {
 	activeTyping := m.streaming && !m.lastTokenTime.IsZero() && time.Since(m.lastTokenTime) < 400*time.Millisecond
 	all := widgets.RenderAllMessages(m.chat.Messages(), m.theme, m.width, m.spinFrame, m.chat.MdRenderer(), m.modelName, m.streaming, m.height, m.username, m.statusbar.Phase(), activeTyping)
 
-	if m.mode == modeSettings {
+	if m.Mode == ModeSettings {
 		settingsView := m.settings.View(m.spinFrame)
 		for _, sl := range strings.Split(settingsView, "\n") {
 			all = append(all, noPadMarker+sl)
 		}
-	} else if m.mode == modeConfirm {
+	} else if m.Mode == ModeConfirm {
 		m.confirm.SetWidth(m.width)
 		confirmView := m.confirm.View(m.spinFrame)
 		for _, cl := range strings.Split(confirmView, "\n") {
 			all = append(all, noPadMarker+cl)
 		}
-	} else if m.mode == modeYolo {
+	} else if m.Mode == ModeYolo {
 		m.yoloDlg.SetWidth(m.width)
 		yoloView := m.yoloDlg.View()
 		for _, yl := range strings.Split(yoloView, "\n") {
@@ -191,12 +172,12 @@ func (m *App) renderChatArea() []string {
 }
 
 func (m *App) syncFormHint() {
-	switch m.mode {
-	case modeSettings:
+	switch m.Mode {
+	case ModeSettings:
 		m.formHint = m.settings.Hint()
-	case modeConfirm:
+	case ModeConfirm:
 		m.formHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
-	case modeYolo:
+	case ModeYolo:
 		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
 	default:
 		m.formHint = ""
