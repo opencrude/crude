@@ -56,6 +56,7 @@ type App struct {
 	modelName      string
 	username       string
 	startTime      time.Time
+	chatAreaHeight int
 
 	spinFrame int
 	history   []string

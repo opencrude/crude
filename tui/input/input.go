@@ -4,7 +4,10 @@ import (
 	"strings"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"crude/tui/theme"
+
+	"github.com/mattn/go-runewidth"
 )
 
 const slashPageSize = 8
@@ -36,15 +39,12 @@ type CmdInfo struct {
 
 var availableCmds = []CmdInfo{
 	{Name: "settings", Label: "settings", Desc: "Open general settings"},
-	{Name: "provider", Label: "provider", Desc: "Select provider"},
 	{Name: "model", Label: "model", Desc: "Select model"},
 	{Name: "oracle-model", Label: "oracle model", Desc: "Select oracle (reasoning) model"},
-	{Name: "api-key", Label: "api key", Desc: "Set API key"},
 	{Name: "effort", Label: "effort", Desc: "Cycle thinking effort (none/low/medium/high/xhigh)"},
 	{Name: "undo", Label: "undo", Desc: "Undo last file operation"},
 	{Name: "undo-n", Label: "undo N", Desc: "Undo last N file operations"},
 	{Name: "undo-all", Label: "undo all", Desc: "Undo all file operations this session"},
-	{Name: "changes", Label: "changes", Desc: "Show files changed this session"},
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "help", Label: "help", Desc: "Show available commands"},
 }
@@ -74,12 +74,15 @@ type Model struct {
 	slashActive bool
 	slashList   components.List
 
-	showHint  bool
-	width     int
-	textWidth int
-	thinking  bool
-	blocking  bool
-	spinFrame int
+	showHint        bool
+	width           int
+	textWidth       int
+	thinking        bool
+	blocking        bool
+	spinFrame       int
+	inputSelecting  bool
+	inputSelAnchor  int
+	inputSelEnd     int
 }
 
 func NewModel(t *theme.Theme) Model {
@@ -114,7 +117,7 @@ func (m *Model) SetState(thinking, blocking bool) {
 
 func (m *Model) SetWidth(w int) {
 	m.width = w
-	m.textWidth = w - 5
+	m.textWidth = w - m.theme.Spacing.PadLR*2 - 2
 	if m.textWidth < 1 {
 		m.textWidth = 1
 	}
@@ -148,7 +151,7 @@ func (m *Model) ClearInput() {
 func (m Model) Height() int {
 	textW := m.textWidth
 	if textW < 1 {
-		textW = m.width - 5
+		textW = m.width - m.theme.Spacing.PadLR*2 - 2
 		if textW < 1 {
 			textW = 1
 		}
@@ -157,7 +160,7 @@ func (m Model) Height() int {
 }
 
 func (m Model) InputTextWidth() int {
-	w := m.width - 5
+	w := m.width - m.theme.Spacing.PadLR*2 - 2
 	if w < 1 {
 		w = 1
 	}
@@ -165,11 +168,82 @@ func (m Model) InputTextWidth() int {
 }
 
 func (m Model) FirstLineY(chatAreaHeight int, showHint, thinking bool, inputLen int) int {
-	return 0
+	y := chatAreaHeight + 4
+	if showHint && !thinking && inputLen == 0 {
+		y++
+	}
+	return y
 }
 
 func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool) (runeIdx int, ok bool) {
-	return 0, false
+	if m.thinking && !m.blocking {
+		return -1, false
+	}
+	firstY := m.FirstLineY(chatAreaHeight, showHint, m.thinking, m.input.Len())
+	relY := mouseY - firstY
+	if relY < 0 {
+		return -1, false
+	}
+
+	textW := m.textWidth
+	if textW < 1 {
+		textW = m.width - 5
+		if textW < 1 {
+			textW = 1
+		}
+	}
+
+	lines := m.input.Lines()
+	visIdx := 0
+	for li, logLine := range lines {
+		segments := rendering.WordWrap(string(logLine), textW)
+		for si, seg := range segments {
+			if visIdx == relY {
+				col := mouseX - m.theme.Spacing.PadLR - 2
+				if col < 0 {
+					col = 0
+				}
+				segW := runewidth.StringWidth(seg)
+				if col > segW {
+					col = segW
+				}
+
+				pos := 0
+				for i := 0; i < li; i++ {
+					pos += len(lines[i]) + 1
+				}
+				segRunes := []rune(seg)
+				segRuneIdx := 0
+				colW := 0
+				for segRuneIdx < len(segRunes) && colW < col {
+					colW += runewidth.RuneWidth(segRunes[segRuneIdx])
+					if colW > col {
+						break
+					}
+					segRuneIdx++
+				}
+				pos += rendering.FindSegmentStart(logLine, textW, si) + segRuneIdx
+				return pos, true
+			}
+			visIdx++
+		}
+	}
+	return -1, false
+}
+
+func (m Model) InputSelecting() bool { return m.inputSelecting }
+
+func (m Model) InputSelectionRange() (start, end int) {
+	if m.inputSelAnchor <= m.inputSelEnd {
+		return m.inputSelAnchor, m.inputSelEnd
+	}
+	return m.inputSelEnd, m.inputSelAnchor
+}
+
+func (m *Model) ClearInputSelection() {
+	m.inputSelecting = false
+	m.inputSelAnchor = 0
+	m.inputSelEnd = 0
 }
 
 func (m Model) Value() string {

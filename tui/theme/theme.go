@@ -33,12 +33,11 @@ type DiffColors struct {
 
 type Spacing struct {
 	PadLR        int
-	InputPadLR   int
 	FieldGap     int
-	ButtonGap   int
-	DialogPad   int
-	FormIndent  int
-	LabelColGap int
+	ButtonGap    int
+	DialogPad    int
+	FormIndent   int
+	LabelColGap  int
 	FormTitlePad int
 }
 
@@ -94,7 +93,6 @@ func DefaultDark() *Theme {
 
 	s := Spacing{
 		PadLR:        2,
-		InputPadLR:   2,
 		FieldGap:     1,
 		ButtonGap:    2,
 		DialogPad:    2,

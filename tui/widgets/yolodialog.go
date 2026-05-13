@@ -17,8 +17,8 @@ type YoloDialog struct {
 
 func NewYoloDialog(th *theme.Theme) YoloDialog {
 	buttons := components.NewButtonGroup(th,
-		components.Button{Label: "Enable YOLO", Key: "y"},
-		components.Button{Label: "Cancel", Key: "n"},
+		components.Button{Label: "Enable YOLO", Key: "y", Color: th.Colors.Error},
+		components.Button{Label: "Cancel", Key: "n", Color: th.Colors.Muted, Cancel: true},
 	)
 	return YoloDialog{
 		dialog: components.NewDialog(th, "YOLO MODE", "☠", buttons),

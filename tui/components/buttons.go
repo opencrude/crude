@@ -4,13 +4,16 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"crude/tui/theme"
 )
 
 type Button struct {
-	Label string
-	Key   string
+	Label  string
+	Key    string
+	Color  lipgloss.Color
+	Cancel bool
 }
 
 type ButtonGroup struct {
@@ -64,11 +67,14 @@ func (m ButtonGroup) Update(msg tea.Msg) (ButtonGroup, int, bool) {
 func (m ButtonGroup) View() string {
 	var btnStrs []string
 	dim := m.theme.Styles.ButtonDim
-	accent := m.theme.Styles.InputPrompt
 
 	for _, btn := range m.buttons {
 		if m.focused == indexOf(m.buttons, btn) {
-			btnStrs = append(btnStrs, accent.Render("❯")+" [ "+btn.Label+" ]  "+dim.Render("("+btn.Key+")"))
+			focusedStyle := lipgloss.NewStyle().Foreground(btn.Color).Bold(true)
+			btnStrs = append(btnStrs, focusedStyle.Render("❯ [ "+btn.Label+" ]")+"  "+dim.Render("("+btn.Key+")"))
+		} else if btn.Cancel && btn.Color != "" {
+			cancelStyle := lipgloss.NewStyle().Foreground(btn.Color)
+			btnStrs = append(btnStrs, dim.Render("  [ ")+cancelStyle.Render(btn.Label)+dim.Render(" ]")+"  "+dim.Render("("+btn.Key+")"))
 		} else {
 			btnStrs = append(btnStrs, dim.Render("  [ "+btn.Label+" ]")+"  "+dim.Render("("+btn.Key+")"))
 		}
@@ -88,7 +94,7 @@ func (m *ButtonGroup) FocusIndex(idx int) {
 
 func indexOf(buttons []Button, btn Button) int {
 	for i, b := range buttons {
-		if b.Label == btn.Label && b.Key == btn.Key {
+		if b.Label == btn.Label && b.Key == btn.Key && b.Color == btn.Color && b.Cancel == btn.Cancel {
 			return i
 		}
 	}

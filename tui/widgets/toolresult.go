@@ -102,16 +102,38 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("… full content returned to agent"))
 					}
 				}
-			} else if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || isDiffContent(resultContent) {
-				resultLines := renderCompactDiff(msg.ToolName, resultContent, th)
-				maxRes := terminalResultHeight(height)
-				for i, rl := range resultLines {
-					if i >= maxRes-1 {
-						remaining := len(resultLines) - i
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
-						break
+		} else if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || isDiffContent(resultContent) {
+				diffBlock := extractDiffBlock(resultContent)
+				if diffBlock != "" {
+					diffLineCount := len(strings.Split(diffBlock, "\n"))
+					maxRes := terminalResultHeight(height)
+					if diffLineCount <= maxRes {
+						renderedDiff := renderDiffContent(diffBlock, innerW-4, th)
+						for _, dl := range strings.Split(renderedDiff, "\n") {
+							msgLines = append(msgLines, dim.Render("│ ")+dl)
+						}
+					} else {
+						resultLines := renderCompactDiff(msg.ToolName, resultContent, th)
+						for i, rl := range resultLines {
+							if i >= maxRes-1 {
+								remaining := len(resultLines) - i
+								msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
+								break
+							}
+							msgLines = append(msgLines, dim.Render("│ ")+rl)
+						}
 					}
-					msgLines = append(msgLines, dim.Render("│ ")+rl)
+				} else {
+					resultLines := renderCompactDiff(msg.ToolName, resultContent, th)
+					maxRes := terminalResultHeight(height)
+					for i, rl := range resultLines {
+						if i >= maxRes-1 {
+							remaining := len(resultLines) - i
+							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
+							break
+						}
+						msgLines = append(msgLines, dim.Render("│ ")+rl)
+					}
 				}
 			} else {
 				toolLineWidth := width - th.Spacing.PadLR*2 - 6
@@ -568,6 +590,101 @@ func truncateLine(s string, max int) string {
 }
 
 func isDiffContent(content string) bool {
-	return strings.Contains(content, "```diff") ||
-		(strings.Contains(content, "\n--- ") && strings.Contains(content, "\n+++ "))
+	text := strings.TrimSpace(content)
+	if strings.Contains(text, "```diff") {
+		return true
+	}
+	hasMinus := false
+	hasPlus := false
+	hasHunk := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "--- ") {
+			hasMinus = true
+		}
+		if strings.HasPrefix(line, "+++ ") {
+			hasPlus = true
+		}
+		if strings.HasPrefix(line, "@@") {
+			hasHunk = true
+		}
+	}
+	return (hasMinus && hasPlus) || hasHunk
+}
+
+func renderDiffContent(text string, maxWidth int, th *theme.Theme) string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "```diff" || trimmed == "```" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+
+	fileStyle := lipgloss.NewStyle().
+		Foreground(th.Colors.Diff.File).
+		Background(lipgloss.Color("#1e2235"))
+	hunkStyle := lipgloss.NewStyle().
+		Foreground(th.Colors.Diff.Hunk).
+		Background(lipgloss.Color("#0d1117"))
+	ctxStyle := lipgloss.NewStyle().
+		Foreground(th.Colors.Diff.Context).
+		Background(lipgloss.Color("#0d1117"))
+	addStyle := lipgloss.NewStyle().
+		Foreground(th.Colors.Diff.Add).
+		Background(lipgloss.Color("#1c2a20"))
+	delStyle := lipgloss.NewStyle().
+		Foreground(th.Colors.Diff.Delete).
+		Background(lipgloss.Color("#2a1d1e"))
+
+	var sb strings.Builder
+	for _, line := range lines {
+		if runewidth.StringWidth(line) <= maxWidth {
+			renderDiffLine(&sb, line, fileStyle, hunkStyle, ctxStyle, addStyle, delStyle)
+			sb.WriteByte('\n')
+			continue
+		}
+
+		var prefix string
+		content := line
+		switch {
+		case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
+			prefix = line[:4]
+			content = line[4:]
+		case len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' '):
+			prefix = line[:1]
+			content = line[1:]
+		}
+
+		pw := runewidth.StringWidth(prefix)
+		wrapW := maxWidth - pw
+		if wrapW < 4 {
+			wrapW = 4
+		}
+		segs := rendering.HardWrap(strings.TrimLeft(content, " "), wrapW)
+		for i, seg := range segs {
+			if i == 0 {
+				renderDiffLine(&sb, prefix+seg, fileStyle, hunkStyle, ctxStyle, addStyle, delStyle)
+			} else {
+				renderDiffLine(&sb, strings.Repeat(" ", pw)+seg, fileStyle, hunkStyle, ctxStyle, addStyle, delStyle)
+			}
+			sb.WriteByte('\n')
+		}
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func renderDiffLine(sb *strings.Builder, line string, fileStyle, hunkStyle, ctxStyle, addStyle, delStyle lipgloss.Style) {
+	switch {
+	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+		sb.WriteString(fileStyle.Render(line))
+	case strings.HasPrefix(line, "@@"):
+		sb.WriteString(hunkStyle.Render(line))
+	case strings.HasPrefix(line, "+"):
+		sb.WriteString(addStyle.Render(line))
+	case strings.HasPrefix(line, "-"):
+		sb.WriteString(delStyle.Render(line))
+	default:
+		sb.WriteString(ctxStyle.Render(line))
+	}
 }

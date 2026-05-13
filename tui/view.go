@@ -37,7 +37,7 @@ func (m *App) View() string {
 		if hint == "" {
 			hint = " "
 		}
-		inputView = strings.Repeat(" ", m.theme.Spacing.InputPadLR) + dim.Render(hint)
+		inputView = dim.Render(hint)
 	} else {
 		inputView = m.input.View(m.width, m.height, false, false, m.spinFrame)
 		inputLineCount = len(strings.Split(inputView, "\n"))
@@ -58,8 +58,11 @@ func (m *App) View() string {
 	if chatH < 1 {
 		chatH = 1
 	}
+	m.chatAreaHeight = chatH
 
 	chatLines := m.renderChatArea()
+	m.chat.SetCachedAllLines(chatLines)
+	m.chat.SetChatAreaBounds(3, chatH)
 	total := len(chatLines)
 
 	m.chat.ClampOffset(total - chatH)
@@ -73,6 +76,24 @@ func (m *App) View() string {
 		endIdx = total
 	}
 	visible := chatLines[startIdx:endIdx]
+
+	if m.chat.HasActiveSelection() {
+		sLine, sCol, eLine, eCol := m.chat.SelectionRange()
+		for i := range visible {
+			allIdx := startIdx + i
+			if allIdx >= sLine && allIdx <= eLine {
+				lineStartCol := 0
+				lineEndCol := 1 << 30
+				if allIdx == sLine {
+					lineStartCol = sCol
+				}
+				if allIdx == eLine {
+					lineEndCol = eCol
+				}
+				visible[i] = rendering.ApplySelection(visible[i], lineStartCol, lineEndCol)
+			}
+		}
+	}
 
 	lines := make([]string, 0, m.height)
 
@@ -118,23 +139,23 @@ func (m *App) View() string {
 		lines = append(lines, dim.Render(strings.Repeat("─", m.width)))
 	}
 	for _, al := range asyncBarLines {
-		lines = append(lines, al)
+		lines = append(lines, pad+al)
 	}
 
 	lines = append(lines, m.theme.Styles.Separator.Render(strings.Repeat("─", m.width)))
 
 	if isSpecialMode {
-		lines = append(lines, inputView)
+		lines = append(lines, pad+inputView)
 	} else {
 		for _, il := range strings.Split(inputView, "\n") {
-			lines = append(lines, il)
+			lines = append(lines, pad+il)
 		}
 	}
 
 	lines = append(lines, m.theme.Styles.Separator.Render(strings.Repeat("─", m.width)))
 
 	statusView := m.statusbar.View()
-	lines = append(lines, statusView)
+	lines = append(lines, pad+statusView)
 
 	if len(lines) > m.height {
 		lines = lines[:m.height]

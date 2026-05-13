@@ -61,7 +61,7 @@ func (m *TextItem) View(focused bool, spinFrame int, labelWidth int) string {
 		prefix = "  " + accent.Render("❯") + " "
 	}
 
-	labelFmt := fmt.Sprintf("%%-%ds:%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
+	labelFmt := fmt.Sprintf("%%-%ds%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
 	labelPart := dim.Render(fmt.Sprintf(labelFmt, m.label))
 
 	if focused && m.editing {
@@ -231,7 +231,7 @@ func (m *SelectItem) View(focused bool, spinFrame int, labelWidth int) string {
 		prefix = "  " + accent.Render("❯") + " "
 	}
 
-	labelFmt := fmt.Sprintf("%%-%ds:%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
+	labelFmt := fmt.Sprintf("%%-%ds%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
 	labelPart := dim.Render(fmt.Sprintf(labelFmt, m.label))
 
 	display := m.value
@@ -314,7 +314,7 @@ func (m *CycleItem) View(focused bool, spinFrame int, labelWidth int) string {
 		prefix = "  " + accent.Render("❯") + " "
 	}
 
-	labelFmt := fmt.Sprintf("%%-%ds:%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
+	labelFmt := fmt.Sprintf("%%-%ds%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
 	labelPart := dim.Render(fmt.Sprintf(labelFmt, m.label))
 
 	arrowL := dim.Render("← ")
