@@ -195,8 +195,11 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 			asstLines = make([]string, len(msg.StreamCompletedLines))
 			copy(asstLines, msg.StreamCompletedLines)
 		}
-		lastLines := rendering.WrapText(lastLineText, contentWidth)
-		asstLines = append(asstLines, lastLines...)
+		lastLineText = strings.TrimRight(lastLineText, "\n")
+		if lastLineText != "" {
+			lastLines := rendering.WrapText(lastLineText, contentWidth)
+			asstLines = append(asstLines, lastLines...)
+		}
 	} else {
 		rendered, isMarkdown := renderMarkdown(msg.Content, mdRenderer)
 		if !isMarkdown {

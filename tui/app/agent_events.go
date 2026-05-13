@@ -18,7 +18,9 @@ func (m *App) submitInput(text string) tea.Cmd {
 		Content: text,
 		Time:    time.Now(),
 	})
-	m.history = append(m.history, text)
+	if len(m.history) == 0 || m.history[len(m.history)-1] != text {
+		m.history = append(m.history, text)
+	}
 	if len(m.history) > 500 {
 		m.history = m.history[len(m.history)-500:]
 	}
