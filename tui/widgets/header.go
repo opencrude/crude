@@ -10,16 +10,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func RenderHeader(th *theme.Theme, modelName string, yolo bool, startTime time.Time, innerW int) string {
+func RenderHeader(th *theme.Theme, modelName string, yolo bool, startTime time.Time, width int) string {
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 	uptime := time.Since(startTime).Truncate(time.Second)
-	left := lipgloss.NewStyle().Foreground(th.Colors.Accent).Bold(true).Render("crude") +
-		" " + dim.Render(rendering.TruncateLine(modelName, innerW/3))
+	left := th.Styles.Header.Render("crude") +
+		"  " + dim.Render(rendering.TruncateLine(modelName, (width-4)/3))
 
 	var middle string
 	if yolo {
-		yoloStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0000")).Bold(true)
-		middle = " " + yoloStyle.Render("⚠ YOLO")
+		middle = " " + th.Styles.DangerText.Render("⚠ YOLO")
 	}
 
 	var rightStr string
@@ -28,6 +27,7 @@ func RenderHeader(th *theme.Theme, modelName string, yolo bool, startTime time.T
 	} else {
 		rightStr = dim.Render(uptime.String())
 	}
+	innerW := width - th.Spacing.PadLR*2
 	spacer := innerW - lipgloss.Width(left) - lipgloss.Width(rightStr)
 	if spacer < 0 {
 		spacer = 0

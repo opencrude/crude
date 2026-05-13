@@ -9,6 +9,7 @@ import (
 	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
+
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -72,18 +73,18 @@ func (s *StatusBar) View() string {
 	right := ""
 	if s.tokenPrompt > 0 || s.tokenCompletion > 0 {
 		var parts []string
-		parts = append(parts, fmt.Sprintf("↑%s", formatTokens(s.tokenPrompt)))
+		parts = append(parts, fmt.Sprintf("↑%s", rendering.FormatTokens(s.tokenPrompt)))
 		if s.tokenCached > 0 {
-			parts = append(parts, fmt.Sprintf("·%s", formatTokens(s.tokenCached)))
+			parts = append(parts, fmt.Sprintf("·%s", rendering.FormatTokens(s.tokenCached)))
 		}
-		parts = append(parts, fmt.Sprintf("↓%s", formatTokens(s.tokenCompletion)))
+		parts = append(parts, fmt.Sprintf("↓%s", rendering.FormatTokens(s.tokenCompletion)))
 		percent := 0
 		if s.contextWindow > 0 {
 			percent = int(float64(s.contextUsed) / float64(s.contextWindow) * 100)
 			parts = append(parts, fmt.Sprintf("%d%%", percent))
 		}
 		if s.sessionCost > 0 {
-			parts = append(parts, formatCost(s.sessionCost))
+			parts = append(parts, rendering.FormatCost(s.sessionCost))
 		}
 		right = dim.Render(strings.Join(parts, " "))
 	} else {
@@ -186,30 +187,4 @@ func (s *StatusBar) StatusLine() string {
 
 func (s *StatusBar) Phase() string {
 	return s.statusPhase
-}
-
-func formatTokens(n int) string {
-	switch {
-	case n >= 1000000:
-		return fmt.Sprintf("%.1fM", float64(n)/1000000)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
-}
-
-func formatCost(cost float64) string {
-	switch {
-	case cost >= 1.0:
-		return fmt.Sprintf("$%.2f", cost)
-	case cost >= 0.01:
-		return fmt.Sprintf("$%.4f", cost)
-	case cost >= 0.0001:
-		return fmt.Sprintf("$%.5f", cost)
-	case cost > 0:
-		return fmt.Sprintf("$%.6f", cost)
-	default:
-		return ""
-	}
 }
