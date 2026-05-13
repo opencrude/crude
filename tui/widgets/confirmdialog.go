@@ -25,9 +25,9 @@ type ConfirmDialog struct {
 
 func NewConfirmDialog(th *theme.Theme) ConfirmDialog {
 	buttons := components.NewButtonGroup(th,
-		components.Button{Label: "Allow", Key: "y"},
-		components.Button{Label: "Always Allow", Key: "a"},
-		components.Button{Label: "Deny", Key: "n"},
+		components.Button{Label: "Allow", Key: "y", Color: th.Colors.Success},
+		components.Button{Label: "Always Allow", Key: "a", Color: th.Colors.Accent},
+		components.Button{Label: "Deny", Key: "n", Color: th.Colors.Error, Cancel: true},
 	)
 	return ConfirmDialog{
 		dialog: components.NewDialog(th, "confirmation required", "⚠", buttons),

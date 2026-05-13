@@ -35,11 +35,55 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tea.KeyMsg:
+		if m.chat.HasActiveSelection() {
+			m.chat.ClearSelection()
+			return m, nil
+		}
 		if msg.Type == tea.KeyCtrlC {
 			return m, m.handleCancel(msg)
 		}
 		if msg.Type == tea.KeyEsc && m.mode != modeSettings {
 			return m, m.handleCancel(msg)
+		}
+
+	case tea.MouseMsg:
+		if m.mode == modeChat {
+			inputStartLine := m.chatAreaHeight + 4
+			if m.input.InputSelecting() || msg.Y >= inputStartLine {
+				updated, cmd, evt := m.input.Update(msg, m.thinking && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+				m.input = updated
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				switch e := evt.(type) {
+				case input.SubmitEvent:
+					cmds = append(cmds, m.submitInput(e.Text))
+				case input.SlashCommandEvent:
+					cmds = append(cmds, m.executeSlashCommand(e.Command))
+				case input.SettingsOpenEvent:
+					m.settings.SaveSnapshot()
+					m.setMode(modeSettings)
+				}
+			} else {
+				updatedChat, chatCmd := m.chat.Update(msg)
+				m.chat = updatedChat
+				if chatCmd != nil {
+					cmds = append(cmds, chatCmd)
+				}
+			}
+		} else {
+			updatedChat, chatCmd := m.chat.Update(msg)
+			m.chat = updatedChat
+			if chatCmd != nil {
+				cmds = append(cmds, chatCmd)
+			}
+		}
+
+	case ttypes.SelectionTickMsg:
+		updatedChat, chatCmd := m.chat.Update(msg)
+		m.chat = updatedChat
+		if chatCmd != nil {
+			cmds = append(cmds, chatCmd)
 		}
 	}
 
@@ -119,25 +163,43 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case modeChat:
-		updated, cmd, evt := m.input.Update(msg, m.thinking && !m.blocking, m.blocking)
-		m.input = updated
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		switch e := evt.(type) {
-		case input.SubmitEvent:
-			cmds = append(cmds, m.submitInput(e.Text))
-		case input.SlashCommandEvent:
-			cmds = append(cmds, m.executeSlashCommand(e.Command))
-		case input.SettingsOpenEvent:
-			m.settings.SaveSnapshot()
-			m.setMode(modeSettings)
+		if m.thinking && !m.blocking {
+			if keyMsg, ok := msg.(tea.KeyMsg); ok {
+				switch keyMsg.Type {
+				case tea.KeyHome, tea.KeyEnd, tea.KeyCtrlHome, tea.KeyCtrlEnd:
+					updatedChat, chatCmd := m.chat.Update(keyMsg)
+					m.chat = updatedChat
+					if chatCmd != nil {
+						cmds = append(cmds, chatCmd)
+					}
+					return m, tea.Batch(cmds...)
+				}
+			}
 		}
 
-		updatedChat, chatCmd := m.chat.Update(msg)
-		m.chat = updatedChat
-		if chatCmd != nil {
-			cmds = append(cmds, chatCmd)
+		if _, isMouse := msg.(tea.MouseMsg); !isMouse {
+			updated, cmd, evt := m.input.Update(msg, m.thinking && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+			m.input = updated
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			switch e := evt.(type) {
+			case input.SubmitEvent:
+				cmds = append(cmds, m.submitInput(e.Text))
+			case input.SlashCommandEvent:
+				cmds = append(cmds, m.executeSlashCommand(e.Command))
+			case input.SettingsOpenEvent:
+				m.settings.SaveSnapshot()
+				m.setMode(modeSettings)
+			}
+		}
+
+		if _, ok := msg.(tea.KeyMsg); ok {
+			updatedChat, chatCmd := m.chat.Update(msg)
+			m.chat = updatedChat
+			if chatCmd != nil {
+				cmds = append(cmds, chatCmd)
+			}
 		}
 	}
 

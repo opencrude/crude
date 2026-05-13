@@ -6,11 +6,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 )
 
-func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
+func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, showHint bool) (Model, tea.Cmd, Event) {
 	m.thinking = thinking
 	m.blocking = blocking
+
+	if mouseMsg, ok := msg.(tea.MouseMsg); ok {
+		return m.handleMouse(mouseMsg, chatAreaHeight, showHint)
+	}
 
 	if m.slashActive {
 		return m.updateSlash(msg)
@@ -186,4 +191,58 @@ func (m *Model) appendHistory(text string) {
 	if len(m.history) > 500 {
 		m.history = m.history[len(m.history)-500:]
 	}
+}
+
+func (m Model) handleMouse(msg tea.MouseMsg, chatAreaHeight int, showHint bool) (Model, tea.Cmd, Event) {
+	switch {
+	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+		pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
+		if ok {
+			m.inputSelecting = true
+			m.inputSelAnchor = pos
+			m.inputSelEnd = pos
+			m.input.SetCursorFlat(pos)
+		} else {
+			m.inputSelecting = false
+		}
+
+	case msg.Action == tea.MouseActionMotion && m.inputSelecting:
+		pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
+		if ok {
+			m.inputSelEnd = pos
+		} else {
+			firstY := m.FirstLineY(chatAreaHeight, showHint, m.thinking, m.input.Len())
+			if msg.Y < firstY {
+				m.inputSelEnd = 0
+			} else {
+				m.inputSelEnd = m.input.Len()
+			}
+		}
+
+	case msg.Action == tea.MouseActionRelease && m.inputSelecting:
+		m.inputSelecting = false
+		selStart, selEnd := m.InputSelectionRange()
+		if selStart != selEnd {
+			text := m.input.Value()
+			runes := []rune(text)
+			if selEnd > len(runes) {
+				selEnd = len(runes)
+			}
+			if selStart < selEnd {
+				selected := string(runes[selStart:selEnd])
+				if selected != "" {
+					return m, rendering.CopyToClipboardCmd(selected), nil
+				}
+			}
+		}
+
+	case msg.Action == tea.MouseActionPress && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown):
+		if msg.Button == tea.MouseButtonWheelUp {
+			m.browseHistoryUp()
+		} else {
+			m.browseHistoryDown()
+		}
+	}
+
+	return m, nil, nil
 }

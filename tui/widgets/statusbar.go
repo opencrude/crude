@@ -49,24 +49,24 @@ func (s *StatusBar) View() string {
 
 	var left string
 	if s.infoMsg != "" {
-		left = " " + lipgloss.NewStyle().Foreground(s.theme.Colors.Success).Render(
+		left = lipgloss.NewStyle().Foreground(s.theme.Colors.Success).Render(
 			rendering.TruncateLine(s.infoMsg, s.width/2))
 	} else if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
-		left = " " + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render(
+		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render(
 			rendering.TruncateLine(s.retryMsg, s.width/2))
 	} else if s.lastError != "" {
-		left = " " + s.theme.Styles.ErrorText.Render(
+		left = s.theme.Styles.ErrorText.Render(
 			rendering.TruncateLine(s.lastError, s.width/2))
 	} else if s.confirming() {
-		left = " " + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ confirming")
+		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ confirming")
 	} else if s.blocking {
-		left = " " + lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ awaiting input")
+		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ awaiting input")
 	} else if s.streaming {
-		left = " " + s.spinner.StreamAnimation()
+		left = s.spinner.StreamAnimation()
 	} else if s.thinking {
-		left = " " + s.spinner.WorkAnimation()
+		left = s.spinner.WorkAnimation()
 	} else {
-		left = " "
+		left = ""
 	}
 
 	right := ""
@@ -90,7 +90,7 @@ func (s *StatusBar) View() string {
 		right = dim.Render("ready")
 	}
 
-	spacer := s.width - lipgloss.Width(left) - lipgloss.Width(right) - s.theme.Spacing.PadLR
+	spacer := s.width - s.theme.Spacing.PadLR - lipgloss.Width(left) - lipgloss.Width(right) - s.theme.Spacing.PadLR
 	if spacer < 0 {
 		spacer = 0
 	}

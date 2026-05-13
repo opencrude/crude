@@ -21,8 +21,10 @@ const (
 )
 
 type Button struct {
-	Label string
-	Key   string
+	Label  string
+	Key    string
+	Color  lipgloss.Color
+	Cancel bool
 }
 
 type Form struct {
@@ -277,13 +279,16 @@ func (m Form) View(width int, spinFrame int) string {
 
 	if m.hasButtons {
 		b.WriteString("\n")
-		accent := m.theme.Styles.InputPrompt
 		btnDim := m.theme.Styles.ButtonDim
 
 		var btnStrs []string
 		for i, btn := range m.buttons {
 			if m.focusZone == 1 && m.focusedBtn == i {
-				btnStrs = append(btnStrs, accent.Render("❯")+" [ "+btn.Label+" ]")
+				focusedStyle := lipgloss.NewStyle().Foreground(btn.Color).Bold(true)
+				btnStrs = append(btnStrs, focusedStyle.Render("❯ [ "+btn.Label+" ]"))
+			} else if btn.Cancel && btn.Color != "" {
+				cancelStyle := lipgloss.NewStyle().Foreground(btn.Color)
+				btnStrs = append(btnStrs, btnDim.Render("  [ ")+cancelStyle.Render(btn.Label)+btnDim.Render(" ]"))
 			} else {
 				btnStrs = append(btnStrs, btnDim.Render("  [ "+btn.Label+" ]"))
 			}

@@ -1,6 +1,8 @@
 package widgets
 
 import (
+	"math"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,30 +11,39 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
 )
 
+var selScrollInterval = 60 * time.Millisecond
+
 type ChatModel struct {
-	theme         *theme.Theme
-	messages      []*types.ChatMessage
-	offset        int
-	scrolled      bool
-	width         int
-	height        int
-	modelName     string
-	selecting     bool
-	selAnchorLine int
-	selAnchorCol  int
-	selEndLine    int
-	selEndCol     int
-	selAutoScroll bool
-	cachedLines   []string
-	cachedWidth   int
-	mdRenderer    *glamour.TermRenderer
-	spinner       components.Spinner
-	streaming     bool
-	scrollTimes   []time.Time
+	theme           *theme.Theme
+	messages        []*types.ChatMessage
+	offset          int
+	scrolled        bool
+	width           int
+	height          int
+	modelName       string
+	selecting       bool
+	selAnchorLine   int
+	selAnchorCol    int
+	selEndLine      int
+	selEndCol       int
+	selAutoScroll   bool
+	cachedLines     []string
+	cachedWidth     int
+	cachedAllLines  []string
+	chatAreaTop     int
+	chatAreaHeight  int
+	selMouseY       int
+	scrollVelocity  float64
+	lastScrollTime  time.Time
+	mdRenderer      *glamour.TermRenderer
+	spinner         components.Spinner
+	streaming       bool
+	scrollTimes     []time.Time
 }
 
 func NewChatModel(t *theme.Theme) ChatModel {
@@ -47,9 +58,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyPgUp:
-			m.ScrollUp(m.height)
+			m.ScrollUp(m.chatAreaHeight)
 		case tea.KeyPgDown:
-			m.ScrollDown(m.height)
+			m.ScrollDown(m.chatAreaHeight)
 		case tea.KeyHome:
 			m.offset = 1 << 30
 			m.scrolled = true
@@ -57,34 +68,124 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			m.ScrollToBottom()
 		}
 	case tea.MouseMsg:
-		now := time.Now()
-		cutoff := now.Add(-300 * time.Millisecond)
-		var recent []time.Time
-		for _, t := range m.scrollTimes {
-			if t.After(cutoff) {
-				recent = append(recent, t)
+		return m.handleMouse(msg)
+	case types.SelectionTickMsg:
+		return m.handleSelectionTick()
+	}
+	return m, nil
+}
+
+func (m ChatModel) handleMouse(msg tea.MouseMsg) (ChatModel, tea.Cmd) {
+	chatBottom := m.chatAreaTop + m.chatAreaHeight - 1
+
+	switch {
+	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+		if msg.Y >= m.chatAreaTop && msg.Y <= chatBottom {
+			lineIdx, ok := m.MouseToAllLine(msg.Y)
+			if ok {
+				m.selecting = true
+				m.selAnchorLine = lineIdx
+				m.selAnchorCol = rendering.Max(0, msg.X-m.theme.Spacing.PadLR)
+				m.selEndLine = lineIdx
+				m.selEndCol = m.selAnchorCol
+				m.selMouseY = msg.Y
+				m.selAutoScroll = false
+			}
+		} else {
+			m.selecting = false
+			m.selAutoScroll = false
+		}
+
+	case msg.Action == tea.MouseActionMotion && m.selecting:
+		lineIdx, ok := m.MouseToAllLine(msg.Y)
+		if ok {
+			m.selEndLine = lineIdx
+			m.selEndCol = rendering.Max(0, msg.X-m.theme.Spacing.PadLR)
+		} else if msg.Y < m.chatAreaTop {
+			firstLine, _ := m.ChatAreaContentBounds()
+			if firstLine >= 0 {
+				m.selEndLine = firstLine
+				m.selEndCol = 0
+			}
+		} else if msg.Y > chatBottom {
+			_, lastLine := m.ChatAreaContentBounds()
+			if lastLine >= 0 {
+				m.selEndLine = lastLine
+				m.selEndCol = 1 << 30
 			}
 		}
-		recent = append(recent, now)
-		m.scrollTimes = recent
-		n := 3
-		if len(recent) > 3 {
-			n = 6
+		m.selMouseY = msg.Y
+
+		if !m.selAutoScroll && (m.selMouseY <= m.chatAreaTop-1 || m.selMouseY >= chatBottom+1) {
+			m.selAutoScroll = true
+			return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
+				return types.SelectionTickMsg(t)
+			})
 		}
-		// velocity-based scrolling
-		scrollCount := len(recent)
-		if scrollCount > 5 {
-			n = 9
-		} else if scrollCount > 3 {
-			n = 6
+
+	case msg.Action == tea.MouseActionRelease && m.selecting:
+		m.selecting = false
+		m.selAutoScroll = false
+		sLine, sCol, eLine, eCol := m.SelectionRange()
+		text := rendering.ExtractSelectedText(m.cachedAllLines, sLine, sCol, eLine, eCol)
+		text = strings.TrimRight(text, " \t\n\r")
+		if text != "" {
+			return m, rendering.CopyToClipboardCmd(text)
 		}
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
+
+	case msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown:
+		now := time.Now()
+		elapsed := now.Sub(m.lastScrollTime).Seconds()
+		if elapsed < 0.1 {
+			m.scrollVelocity = math.Min(m.scrollVelocity+0.5, 5)
+		} else {
+			m.scrollVelocity = 1
+		}
+		m.lastScrollTime = now
+		n := int(m.scrollVelocity)
+		if n < 1 {
+			n = 1
+		}
+		if msg.Button == tea.MouseButtonWheelUp {
 			m.ScrollUp(n)
-		case tea.MouseButtonWheelDown:
+		} else {
 			m.ScrollDown(n)
 		}
 	}
+
+	return m, nil
+}
+
+func (m ChatModel) handleSelectionTick() (ChatModel, tea.Cmd) {
+	if !m.selecting || !m.selAutoScroll {
+		return m, nil
+	}
+
+	chatBottom := m.chatAreaTop + m.chatAreaHeight - 1
+
+	if m.selMouseY <= m.chatAreaTop-1 {
+		m.ScrollUp(1)
+		lineIdx, ok := m.MouseToAllLine(m.chatAreaTop)
+		if ok {
+			m.selEndLine = lineIdx
+			m.selEndCol = 0
+		}
+	} else if m.selMouseY >= chatBottom+1 {
+		m.ScrollDown(1)
+		lineIdx, ok := m.MouseToAllLine(chatBottom)
+		if ok {
+			m.selEndLine = lineIdx
+			m.selEndCol = 1 << 30
+		}
+	}
+
+	if m.selMouseY <= m.chatAreaTop-1 || m.selMouseY >= chatBottom+1 {
+		return m, tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
+			return types.SelectionTickMsg(t)
+		})
+	}
+
+	m.selAutoScroll = false
 	return m, nil
 }
 
@@ -107,7 +208,6 @@ func (m *ChatModel) AppendToken(token string) {
 	}
 	last.Content += token
 	last.CachedLines = nil
-	// auto-scroll if user hasn't manually scrolled
 	if !m.scrolled {
 		m.offset = 0
 	}
@@ -121,7 +221,6 @@ func (m *ChatModel) AppendThinking(s string) {
 			return
 		}
 	}
-	// mark all previous thinking as done
 	for _, msg := range m.messages {
 		if msg.ThinkingActive {
 			msg.ThinkingActive = false
@@ -347,6 +446,12 @@ func (m *ChatModel) SetModelName(name string) {
 }
 
 func (m *ChatModel) SetSize(w, h int) {
+	if m.width != w {
+		for i := range m.messages {
+			m.messages[i].CachedLines = nil
+		}
+		m.mdRenderer = nil
+	}
 	m.width = w
 	m.height = h
 }
@@ -365,8 +470,11 @@ func (m *ChatModel) MarkAllThinkingDone() {
 }
 
 func (m *ChatModel) InvalidateCache() {
-	m.cachedLines = nil
-	m.cachedWidth = 0
+	for _, msg := range m.messages {
+		if msg.Role == types.RoleTool && (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") {
+			msg.CachedLines = nil
+		}
+	}
 }
 
 func (m *ChatModel) SelectionRange() (startLine, startCol, endLine, endCol int) {
@@ -378,11 +486,64 @@ func (m *ChatModel) SelectionRange() (startLine, startCol, endLine, endCol int) 
 }
 
 func (m *ChatModel) MouseToAllLine(mouseY int) (allIdx int, ok bool) {
-	return 0, false
+	if len(m.cachedAllLines) == 0 {
+		return -1, false
+	}
+	chatY := mouseY - m.chatAreaTop
+	if chatY < 0 || chatY >= m.chatAreaHeight {
+		return -1, false
+	}
+	total := len(m.cachedAllLines)
+	maxOffset := total - m.chatAreaHeight
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	offset := m.offset
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	endIdx := total - offset
+	startIdx := endIdx - m.chatAreaHeight
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	visible := endIdx - startIdx
+	emptyTop := m.chatAreaHeight - visible
+	if emptyTop < 0 {
+		emptyTop = 0
+	}
+	if chatY < emptyTop {
+		return -1, false
+	}
+	allIdx = startIdx + (chatY - emptyTop)
+	if allIdx < 0 || allIdx >= total {
+		return -1, false
+	}
+	return allIdx, true
 }
 
 func (m *ChatModel) ChatAreaContentBounds() (firstLine, lastLine int) {
-	return 0, 0
+	if len(m.cachedAllLines) == 0 {
+		return -1, -1
+	}
+	total := len(m.cachedAllLines)
+	maxOffset := total - m.chatAreaHeight
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	offset := m.offset
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	endIdx := total - offset
+	startIdx := endIdx - m.chatAreaHeight
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	if endIdx > total {
+		endIdx = total
+	}
+	return startIdx, endIdx - 1
 }
 
 func (m *ChatModel) Messages() []*types.ChatMessage {
@@ -453,7 +614,7 @@ func (m *ChatModel) makeMdRenderer() *glamour.TermRenderer {
 		NameAttribute:       ansi.StylePrimitive{Color: strPtr("#79c0ff")},
 		NameClass:           ansi.StylePrimitive{Color: strPtr("#79c0ff")},
 		NameConstant:        ansi.StylePrimitive{Color: strPtr("#79c0ff")},
-		NameDecorator:       ansi.StylePrimitive{Color: strPtr("#d2a8ff")},
+		NameDecorator:        ansi.StylePrimitive{Color: strPtr("#d2a8ff")},
 		NameFunction:        ansi.StylePrimitive{Color: strPtr("#d2a8ff")},
 		LiteralNumber:       ansi.StylePrimitive{Color: strPtr("#79c0ff")},
 		LiteralString:       ansi.StylePrimitive{Color: strPtr("#a5d6ff")},
@@ -483,5 +644,29 @@ func (m *ChatModel) makeMdRenderer() *glamour.TermRenderer {
 	return nil
 }
 
-func uintPtr(u uint) *uint { return &u }
+func (m *ChatModel) SetCachedAllLines(lines []string) { m.cachedAllLines = lines }
+func (m *ChatModel) SetChatAreaBounds(top, height int) {
+	m.chatAreaTop = top
+	m.chatAreaHeight = height
+}
+
+func (m *ChatModel) HasActiveSelection() bool {
+	if !m.selecting && m.selAnchorLine == m.selEndLine && m.selAnchorCol == m.selEndCol {
+		return false
+	}
+	return m.selAnchorLine != m.selEndLine || m.selAnchorCol != m.selEndCol
+}
+
+func (m *ChatModel) SetStreaming(s bool) { m.streaming = s }
+
+func (m *ChatModel) ClearSelection() {
+	m.selecting = false
+	m.selAutoScroll = false
+	m.selAnchorLine = 0
+	m.selAnchorCol = 0
+	m.selEndLine = 0
+	m.selEndCol = 0
+}
+
+func uintPtr(u uint) *uint    { return &u }
 func strPtr(s string) *string { return &s }

@@ -194,7 +194,7 @@ func (m List) viewPopup(width int) string {
 
 	var lines []string
 	if aboveCount > 0 {
-		lines = append(lines, dim.Render(fmt.Sprintf("   ... %d above", aboveCount)))
+		lines = append(lines, dim.Render(fmt.Sprintf("  ... %d above", aboveCount)))
 	}
 	for i := m.offset; i < end; i++ {
 		item := m.filtered[i]
@@ -205,18 +205,18 @@ func (m List) viewPopup(width int) string {
 			if item.Detail != "" {
 				detail = " " + dim.Render(item.Detail)
 			}
-			lines = append(lines, " "+marker+" "+label+detail)
+			lines = append(lines, marker+" "+label+detail)
 		} else {
 			label := dim.Render(item.Label)
 			detail := ""
 			if item.Detail != "" {
 				detail = " " + dim.Render(item.Detail)
 			}
-			lines = append(lines, "   "+label+detail)
+			lines = append(lines, "  "+label+detail)
 		}
 	}
 	if belowCount > 0 {
-		lines = append(lines, dim.Render(fmt.Sprintf("   ... %d below", belowCount)))
+		lines = append(lines, dim.Render(fmt.Sprintf("  ... %d below", belowCount)))
 	}
 
 	return strings.Join(lines, "\n")

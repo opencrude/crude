@@ -65,7 +65,7 @@ func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPr
 
 	f := form.NewFormWithButtons(t, "Settings",
 		"[ interactive settings · arrows/tab: navigate · enter: edit · esc: return ]",
-		[]form.Button{{Label: "Save", Key: "s"}, {Label: "Cancel", Key: "c"}},
+		[]form.Button{{Label: "Save", Key: "s", Color: t.Colors.Success}, {Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true}},
 		providerItem, baseURLItem, apiKeyItem, modelItem, oracleModelItem, effortItem)
 
 	return Model{

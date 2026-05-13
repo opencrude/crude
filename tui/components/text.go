@@ -162,7 +162,8 @@ func (m TextInput) View(width int, spinFrame int) string {
 	if width < 1 {
 		width = 1
 	}
-	textW := width - 5
+	padLR := m.theme.Spacing.PadLR
+	textW := width - padLR*2 - 2
 	if textW < 1 {
 		textW = 1
 	}
@@ -177,9 +178,9 @@ func (m TextInput) View(width int, spinFrame int) string {
 		for si, seg := range segments {
 			var prefix string
 			if li == 0 && si == 0 {
-				prefix = " " + promptStyle.Render("❯") + " "
+				prefix = promptStyle.Render("❯") + " "
 			} else {
-				prefix = "   "
+				prefix = "  "
 			}
 
 			segRunes := []rune(seg)
@@ -232,7 +233,7 @@ func (m TextInput) View(width int, spinFrame int) string {
 		if cursorSolid {
 			cursorChar = lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("█")
 		}
-		allLines = append(allLines, " "+promptStyle.Render("❯")+" "+cursorChar)
+		allLines = append(allLines, promptStyle.Render("❯")+" "+cursorChar)
 	}
 
 	return strings.Join(allLines, "\n")
@@ -434,6 +435,14 @@ func (m *TextInput) SetTextWidth(w int) {
 
 func (m *TextInput) SetSelecting(selecting bool) {
 	m.selecting = selecting
+}
+
+func (m TextInput) FlatToLineCol(pos int) (line, col int) {
+	return m.flatToLineCol(pos)
+}
+
+func (m *TextInput) SetCursorFlat(pos int) {
+	m.setCursorFlat(pos)
 }
 
 func (m TextInput) flatToLineCol(pos int) (line, col int) {
