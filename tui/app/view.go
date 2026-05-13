@@ -78,6 +78,9 @@ func (m *App) View() string {
 	visible := chatLines[startIdx:endIdx]
 
 	if m.chat.HasActiveSelection() {
+		visCopy := make([]string, len(visible))
+		copy(visCopy, visible)
+		visible = visCopy
 		sLine, sCol, eLine, eCol := m.chat.SelectionRange()
 		for i := range visible {
 			allIdx := startIdx + i
@@ -146,6 +149,10 @@ func (m *App) View() string {
 }
 
 func (m *App) renderChatArea() []string {
+	if !m.chat.AllLinesDirty() && !m.streaming && m.Mode == ModeChat && len(m.chat.CachedAllLines()) > 0 {
+		return m.chat.CachedAllLines()
+	}
+
 	activeTyping := m.streaming && !m.lastTokenTime.IsZero() && time.Since(m.lastTokenTime) < 400*time.Millisecond
 	all := widgets.RenderAllMessages(m.chat.Messages(), m.theme, m.width, m.spinFrame, m.chat.MdRenderer(), m.modelName, m.streaming, m.height, m.username, m.statusbar.Phase(), activeTyping)
 
@@ -168,6 +175,7 @@ func (m *App) renderChatArea() []string {
 		}
 	}
 
+	m.chat.SetAllLinesDirty(false)
 	return all
 }
 
