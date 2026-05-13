@@ -127,6 +127,7 @@ func (m *App) SetHistory(history []string) {
 
 func (m *App) setMode(newMode Mode) {
 	m.Mode = newMode
+	m.chat.SetAllLinesDirty(true)
 	switch newMode {
 	case ModeSettings:
 		m.input.ClearInput()

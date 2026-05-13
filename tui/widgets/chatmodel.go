@@ -39,6 +39,7 @@ type ChatModel struct {
 	mdRenderer      *glamour.TermRenderer
 	spinner         components.Spinner
 	streaming       bool
+	allLinesDirty   bool
 	scrollTimes     []time.Time
 }
 
@@ -78,6 +79,7 @@ func (m ChatModel) View() string {
 func (m *ChatModel) AppendMessage(msg types.ChatMessage) {
 	msgCopy := msg
 	m.messages = append(m.messages, &msgCopy)
+	m.allLinesDirty = true
 }
 
 func (m *ChatModel) AppendToken(token string) {
@@ -90,6 +92,7 @@ func (m *ChatModel) AppendToken(token string) {
 	}
 	last.Content += token
 	last.CachedLines = nil
+	m.allLinesDirty = true
 	if strings.Contains(token, "\n") {
 		last.StreamCompletedLines = nil
 	}
@@ -104,6 +107,7 @@ func (m *ChatModel) AppendThinking(s string) {
 		if last.Role == types.RoleThinking {
 			last.Content += s
 			last.CachedLines = nil
+			m.allLinesDirty = true
 			return
 		}
 	}
@@ -118,6 +122,7 @@ func (m *ChatModel) AppendThinking(s string) {
 		Content:        s,
 		ThinkingActive: true,
 	})
+	m.allLinesDirty = true
 }
 
 func (m *ChatModel) UpdateToolStreaming(toolID, name string, data map[string]any) {
@@ -191,6 +196,7 @@ func (m *ChatModel) UpdateToolStreaming(toolID, name string, data map[string]any
 			msg.ToolProgressPhase = "streaming"
 			msg.ToolProgressMessage = ""
 			msg.CachedLines = nil
+			m.allLinesDirty = true
 			return
 		}
 	}
@@ -215,6 +221,7 @@ func (m *ChatModel) UpdateToolStreaming(toolID, name string, data map[string]any
 		msg.ToolLivedAdded = newLines
 	}
 	m.messages = append(m.messages, &msg)
+	m.allLinesDirty = true
 }
 
 func (m *ChatModel) UpdateToolCall(toolID, name, argsCompact string) {
@@ -232,6 +239,7 @@ func (m *ChatModel) UpdateToolCall(toolID, name, argsCompact string) {
 				msg.ToolProgressLabel = argsCompact
 			}
 			msg.CachedLines = nil
+			m.allLinesDirty = true
 			found = true
 			break
 		}
@@ -250,6 +258,7 @@ func (m *ChatModel) UpdateToolCall(toolID, name, argsCompact string) {
 			ToolProgressLabel: argsCompact,
 			ToolStartTime:     time.Now(),
 		})
+		m.allLinesDirty = true
 	}
 }
 
@@ -277,6 +286,7 @@ func (m *ChatModel) UpdateToolProgress(toolID, name, phase, message, path string
 				msg.ToolLivedRemoved = linesRemoved
 			}
 			msg.CachedLines = nil
+			m.allLinesDirty = true
 			return
 		}
 	}
@@ -311,6 +321,7 @@ func (m *ChatModel) UpdateToolResult(toolID, name, result string, isError bool) 
 			} else {
 				msg.Content = msg.ToolName + " " + msg.ToolArgs
 			}
+			m.allLinesDirty = true
 			return
 		}
 	}
@@ -325,6 +336,7 @@ func (m *ChatModel) ClearStreamingTools() {
 		keep = append(keep, msg)
 	}
 	m.messages = keep
+	m.allLinesDirty = true
 }
 
 func (m *ChatModel) SetModelName(name string) {
@@ -339,6 +351,7 @@ func (m *ChatModel) SetSize(w, h int) {
 			m.messages[i].StreamCompletedLen = 0
 		}
 		m.mdRenderer = nil
+		m.allLinesDirty = true
 	}
 	m.width = w
 	m.height = h
@@ -351,16 +364,23 @@ func (m *ChatModel) MarkAllThinkingDone() {
 			msg.CachedLines = nil
 		}
 	}
+	m.allLinesDirty = true
 }
 
 func (m *ChatModel) InvalidateCache() {
+	invalidated := false
 	for _, msg := range m.messages {
 		if msg.Role == types.RoleTool && (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") {
 			msg.CachedLines = nil
+			invalidated = true
 		}
 		if msg.Role == types.RoleThinking && msg.ThinkingActive {
 			msg.CachedLines = nil
+			invalidated = true
 		}
+	}
+	if invalidated {
+		m.allLinesDirty = true
 	}
 }
 
@@ -369,3 +389,9 @@ func (m *ChatModel) Messages() []*types.ChatMessage {
 }
 
 func (m *ChatModel) SetStreaming(s bool) { m.streaming = s }
+
+func (m ChatModel) CachedAllLines() []string { return m.cachedAllLines }
+
+func (m *ChatModel) SetAllLinesDirty(d bool) { m.allLinesDirty = d }
+
+func (m ChatModel) AllLinesDirty() bool { return m.allLinesDirty }
