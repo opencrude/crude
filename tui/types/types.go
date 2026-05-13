@@ -101,8 +101,10 @@ type ChatMessage struct {
 
 	ThinkingActive bool
 
-	CachedLines []string
-	CursorLine  int
+	CachedLines          []string
+	CursorLine           int
+	StreamCompletedLines []string
+	StreamCompletedLen   int
 }
 
 type AgentEventMsg struct {

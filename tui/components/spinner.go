@@ -6,6 +6,40 @@ import (
 	"crude/tui/theme"
 )
 
+const (
+	BlinkPeriod    = 800
+	BlinkHalf      = BlinkPeriod / 2
+	DotCycleStep   = 300
+	SpinnerPeriod  = BlinkPeriod
+	SpinnerHalf    = SpinnerPeriod / 2
+)
+
+func BlinkOn(frame int) bool {
+	return frame%BlinkPeriod < BlinkHalf
+}
+
+func SpinnerPhase(frame int) string {
+	if BlinkOn(frame) {
+		return "●"
+	}
+	return "○"
+}
+
+func ThinkingDotIndex(frame int) int {
+	return (frame / DotCycleStep) % 4
+}
+
+func BlockCursor(frame int, color lipgloss.Color) string {
+	if BlinkOn(frame) {
+		return lipgloss.NewStyle().Foreground(color).Render("█")
+	}
+	return " "
+}
+
+func BlockCursorSolid(color lipgloss.Color) string {
+	return lipgloss.NewStyle().Foreground(color).Render("█")
+}
+
 type Phase string
 
 const (
@@ -27,20 +61,19 @@ func NewSpinner(t *theme.Theme) Spinner {
 }
 
 func (m Spinner) View() string {
-	moon := spinnerPhases[m.frame%len(spinnerPhases)]
-	return lipgloss.NewStyle().Foreground(m.spinnerColor()).Render(moon)
+	return lipgloss.NewStyle().Foreground(m.spinnerColor()).Render(SpinnerPhase(m.frame))
 }
 
 func (m *Spinner) SetPhase(p Phase) {
 	m.phase = p
 }
 
-func (m *Spinner) Tick() {
-	m.frame++
+func (m *Spinner) SetFrame(f int) {
+	m.frame = f
 }
 
 func (m Spinner) WorkAnimation() string {
-	moon := spinnerPhases[m.frame%len(spinnerPhases)]
+	moon := SpinnerPhase(m.frame)
 
 	var label string
 	var color lipgloss.Color
@@ -64,15 +97,8 @@ func (m Spinner) WorkAnimation() string {
 }
 
 func (m Spinner) StreamAnimation() string {
-	moon := spinnerPhases[m.frame%len(spinnerPhases)]
+	moon := SpinnerPhase(m.frame)
 	return lipgloss.NewStyle().Foreground(m.theme.Colors.Spinner.Planning).Render(moon + " streaming")
-}
-
-func BlockCursor(frame int, color lipgloss.Color) string {
-	if frame%2 == 0 {
-		return lipgloss.NewStyle().Foreground(color).Render("█")
-	}
-	return " "
 }
 
 func (m Spinner) spinnerColor() lipgloss.Color {
@@ -90,5 +116,3 @@ func (m Spinner) spinnerColor() lipgloss.Color {
 	}
 	return m.theme.Colors.Spinner.Default
 }
-
-var spinnerPhases = []string{"●", "○"}

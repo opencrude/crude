@@ -203,7 +203,7 @@ func (m TextInput) View(width int, spinFrame int) string {
 					right := string(segRunes[cursorInSeg+1:])
 					if cursorSolid {
 						cursorChar = lipgloss.NewStyle().Reverse(true).Render(string(segRunes[cursorInSeg]))
-					} else if spinFrame%2 == 0 {
+					} else if BlinkOn(spinFrame) {
 						cursorChar = lipgloss.NewStyle().
 							Background(m.theme.Colors.Accent).
 							Foreground(m.theme.Colors.Bg).

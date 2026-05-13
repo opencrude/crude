@@ -61,6 +61,9 @@ type App struct {
 	spinFrame int
 	history   []string
 
+	tokenBuf     string
+	lastTokenTime time.Time
+
 	tokenPrompt, tokenCompletion, tokenCached         int
 	sessionCost                                       float64
 	contextWindow, contextUsed                        int

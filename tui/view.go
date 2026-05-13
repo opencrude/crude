@@ -165,7 +165,8 @@ func (m *App) View() string {
 }
 
 func (m *App) renderChatArea() []string {
-	all := widgets.RenderAllMessages(m.chat.Messages(), m.theme, m.width, m.spinFrame, m.chat.MdRenderer(), m.modelName, m.streaming, m.height, m.username, m.statusbar.Phase())
+	activeTyping := m.streaming && !m.lastTokenTime.IsZero() && time.Since(m.lastTokenTime) < 400*time.Millisecond
+	all := widgets.RenderAllMessages(m.chat.Messages(), m.theme, m.width, m.spinFrame, m.chat.MdRenderer(), m.modelName, m.streaming, m.height, m.username, m.statusbar.Phase(), activeTyping)
 
 	if m.mode == modeSettings {
 		settingsView := m.settings.View(m.spinFrame)

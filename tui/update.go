@@ -27,11 +27,20 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ttypes.TickMsg:
-		m.spinFrame++
+		if m.tokenBuf != "" {
+			m.chat.AppendToken(m.tokenBuf)
+			m.tokenBuf = ""
+			m.lastTokenTime = time.Now()
+		}
+		m.spinFrame = int(time.Now().UnixMilli())
 		m.statusbar.SetSpinFrame(m.spinFrame)
 		m.input.SetSpinFrame(m.spinFrame)
 		m.statusbar.ClearExpired()
 		m.chat.InvalidateCache()
+		// Adaptive tick: fast during streaming for smooth typing feel, slow when idle
+		if m.streaming {
+			return m, streamingTickCmd()
+		}
 		return m, tickCmd()
 
 	case tea.KeyMsg:
@@ -259,6 +268,7 @@ func (m *App) submitInput(text string) tea.Cmd {
 	}
 	m.thinking = true
 	m.streaming = false
+	m.tokenBuf = "" // clear any leftover buffer on new input
 	m.statusbar.SetThinking(true, false, false)
 	m.chat.ScrollToBottom()
 	ch := m.inputCh
@@ -424,9 +434,20 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 	case "stream_token":
 		if s, ok := evt.Data.(string); ok && s != "" {
-			m.chat.AppendToken(s)
+			if !m.streaming {
+				m.chat.MarkAllThinkingDone()
+			}
+			m.tokenBuf += s
 			m.streaming = true
 			m.statusbar.SetThinking(true, true, false)
+			msgs := m.chat.Messages()
+			if len(msgs) == 0 || msgs[len(msgs)-1].Role != ttypes.RoleAssistant {
+				m.chat.AppendMessage(ttypes.ChatMessage{
+					Role:    ttypes.RoleAssistant,
+					Content: "",
+					Time:    time.Now(),
+				})
+			}
 		}
 
 	case "tool_call_streaming":
@@ -582,6 +603,11 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		m.setMode(modeChat)
 
 	case "done":
+		// Flush any remaining buffered tokens before finalizing
+		if m.tokenBuf != "" {
+			m.chat.AppendToken(m.tokenBuf)
+			m.tokenBuf = ""
+		}
 		wasStreaming := m.streaming
 		m.chat.MarkAllThinkingDone()
 		m.chat.ClearStreamingTools()
@@ -607,6 +633,8 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 		for _, msg := range m.chat.Messages() {
 			msg.CachedLines = nil
+			msg.StreamCompletedLines = nil
+			msg.StreamCompletedLen = 0
 		}
 
 		if content != "" {
@@ -614,7 +642,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			merged := false
 			if wasStreaming && len(msgs) > 0 {
 				last := msgs[len(msgs)-1]
-				if last.Role == ttypes.RoleAssistant && last.Content == "" {
+				if last.Role == ttypes.RoleAssistant {
 					last.Content = content
 					last.CursorLine = -1
 					merged = true
@@ -631,6 +659,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		m.chat.ScrollToBottom()
 
 	case "error":
+		m.tokenBuf = "" // discard any buffered tokens
 		m.chat.MarkAllThinkingDone()
 		m.chat.ClearStreamingTools()
 		errMsg := fmt.Sprintf("%v", evt.Data)
@@ -700,6 +729,14 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return ttypes.TickMsg(t)
+	})
+}
+
+// streamingTickCmd returns a fast tick (~60fps) for smooth text rendering
+// during token streaming. The idle tickCmd (500ms) is used otherwise.
+func streamingTickCmd() tea.Cmd {
+	return tea.Tick(16*time.Millisecond, func(t time.Time) tea.Msg {
 		return ttypes.TickMsg(t)
 	})
 }

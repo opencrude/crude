@@ -108,6 +108,7 @@ func (s *StatusBar) SetConfirming(c bool) {
 
 func (s *StatusBar) SetSpinFrame(frame int) {
 	s.spinFrame = frame
+	s.spinner.SetFrame(frame)
 }
 
 func (s *StatusBar) SetError(err string) {
