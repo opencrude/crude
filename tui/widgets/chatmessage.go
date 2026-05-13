@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
@@ -12,7 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int, spinFrame int, mdRenderer *glamour.TermRenderer, modelName string, streaming bool, height int, username string, phase string) []string {
+func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int, spinFrame int, mdRenderer *glamour.TermRenderer, modelName string, streaming bool, height int, username string, phase string, activeTyping bool) []string {
 	var all []string
 
 	padLR := th.Spacing.PadLR
@@ -36,7 +37,7 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 			all = append(all, msg.CachedLines...)
 			if msg.CursorLine >= 0 && msg.CursorLine < len(msg.CachedLines) &&
 				isLastMsg && (streaming || msg.ThinkingActive) {
-				cursor := blockCursor(spinFrame, th.Colors.Accent)
+				cursor := blockCursor(spinFrame, th.Colors.Accent, activeTyping)
 				all[len(all)-len(msg.CachedLines)+msg.CursorLine] += cursor
 			}
 			continue
@@ -51,11 +52,14 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 		switch msg.Role {
 		case types.RoleUser:
 			msgLines = RenderUserMessage(*msg, th, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, username)
-		case types.RoleAssistant:
-			msgLines = RenderAssistantMessage(*msg, th, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, modelName, streaming, isLastMsg)
-			if streaming && isLastMsg && len(msgLines) > 0 {
-				cursorLine = len(msgLines) - 1
-			}
+	case types.RoleAssistant:
+		if streaming && isLastMsg {
+			updateStreamingCache(msg, mdRenderer, contentWidth)
+		}
+		msgLines = RenderAssistantMessage(*msg, th, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, modelName, streaming, isLastMsg)
+		if streaming && isLastMsg && len(msgLines) > 0 {
+			cursorLine = len(msgLines) - 1
+		}
 		case types.RoleThinking:
 			msgLines = RenderThinkingMessage(*msg, th, contentWidth, innerW, spinFrame)
 			if msg.ThinkingActive && isLastMsg && len(msgLines) > 0 {
@@ -76,7 +80,7 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 		msg.CursorLine = cursorLine
 
 		if cursorLine >= 0 && cursorLine < len(msgLines) {
-			cursor := blockCursor(spinFrame, th.Colors.Accent)
+			cursor := blockCursor(spinFrame, th.Colors.Accent, activeTyping)
 			all[prevLen+cursorLine] = all[prevLen+cursorLine] + cursor
 		}
 	}
@@ -84,11 +88,11 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 	return all
 }
 
-func blockCursor(frame int, color lipgloss.Color) string {
-	if frame%2 == 0 {
-		return lipgloss.NewStyle().Foreground(color).Render("█")
+func blockCursor(frame int, color lipgloss.Color, activeTyping bool) string {
+	if activeTyping {
+		return components.BlockCursorSolid(color)
 	}
-	return " "
+	return components.BlockCursor(frame, color)
 }
 
 func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, bool) {
@@ -100,6 +104,35 @@ func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, b
 		return "", false
 	}
 	return strings.TrimRight(r, "\n"), true
+}
+
+func updateStreamingCache(msg *types.ChatMessage, mdRenderer *glamour.TermRenderer, contentWidth int) {
+	lastNL := strings.LastIndex(msg.Content, "\n")
+	completedLen := 0
+	if lastNL >= 0 {
+		completedLen = lastNL + 1
+	}
+	if msg.StreamCompletedLen == completedLen {
+		return
+	}
+	if completedLen == 0 {
+		msg.StreamCompletedLines = nil
+		msg.StreamCompletedLen = 0
+		return
+	}
+	completed := msg.Content[:completedLen]
+	rendered, isMarkdown := renderMarkdown(completed, mdRenderer)
+	var lines []string
+	if isMarkdown {
+		lines = strings.Split(rendered, "\n")
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+	} else {
+		lines = rendering.WrapText(strings.TrimRight(completed, "\n"), contentWidth)
+	}
+	msg.StreamCompletedLines = lines
+	msg.StreamCompletedLen = completedLen
 }
 
 func RenderUserMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int, mdRenderer *glamour.TermRenderer, username string) []string {
@@ -150,11 +183,27 @@ func RenderUserMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int, mdRenderer *glamour.TermRenderer, modelName string, streaming bool, isLastMsg bool) []string {
 	var asstLines []string
 
-	rendered, isMarkdown := renderMarkdown(msg.Content, mdRenderer)
-	if !isMarkdown {
-		asstLines = rendering.WrapText(msg.Content, contentWidth)
+	if streaming && isLastMsg {
+		lastNL := strings.LastIndex(msg.Content, "\n")
+		var lastLineText string
+		if lastNL >= 0 {
+			lastLineText = msg.Content[lastNL+1:]
+		} else {
+			lastLineText = msg.Content
+		}
+		if len(msg.StreamCompletedLines) > 0 {
+			asstLines = make([]string, len(msg.StreamCompletedLines))
+			copy(asstLines, msg.StreamCompletedLines)
+		}
+		lastLines := rendering.WrapText(lastLineText, contentWidth)
+		asstLines = append(asstLines, lastLines...)
 	} else {
-		asstLines = strings.Split(rendered, "\n")
+		rendered, isMarkdown := renderMarkdown(msg.Content, mdRenderer)
+		if !isMarkdown {
+			asstLines = rendering.WrapText(msg.Content, contentWidth)
+		} else {
+			asstLines = strings.Split(rendered, "\n")
+		}
 	}
 
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
@@ -203,8 +252,8 @@ func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth,
 	var result []string
 	for i, line := range lines {
 		if i == 0 {
-			if msg.ThinkingActive {
-				alpha := (spinFrame % 4) + 1
+		if msg.ThinkingActive {
+			alpha := components.ThinkingDotIndex(spinFrame)
 				dotColors := []string{"#f0883e", "#d0681e", "#b85010", "#d0681e"}
 				dotColor := dotColors[alpha%len(dotColors)]
 				result = append(result, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Render("● ")+thinkingStyle.Render(line))

@@ -208,6 +208,9 @@ func (m *ChatModel) AppendToken(token string) {
 	}
 	last.Content += token
 	last.CachedLines = nil
+	if strings.Contains(token, "\n") {
+		last.StreamCompletedLines = nil
+	}
 	if !m.scrolled {
 		m.offset = 0
 	}
@@ -218,6 +221,7 @@ func (m *ChatModel) AppendThinking(s string) {
 		last := m.messages[len(m.messages)-1]
 		if last.Role == types.RoleThinking {
 			last.Content += s
+			last.CachedLines = nil
 			return
 		}
 	}
@@ -449,6 +453,8 @@ func (m *ChatModel) SetSize(w, h int) {
 	if m.width != w {
 		for i := range m.messages {
 			m.messages[i].CachedLines = nil
+			m.messages[i].StreamCompletedLines = nil
+			m.messages[i].StreamCompletedLen = 0
 		}
 		m.mdRenderer = nil
 	}
@@ -465,6 +471,7 @@ func (m *ChatModel) MarkAllThinkingDone() {
 	for _, msg := range m.messages {
 		if msg.Role == types.RoleThinking {
 			msg.ThinkingActive = false
+			msg.CachedLines = nil
 		}
 	}
 }
@@ -472,6 +479,9 @@ func (m *ChatModel) MarkAllThinkingDone() {
 func (m *ChatModel) InvalidateCache() {
 	for _, msg := range m.messages {
 		if msg.Role == types.RoleTool && (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") {
+			msg.CachedLines = nil
+		}
+		if msg.Role == types.RoleThinking && msg.ThinkingActive {
 			msg.CachedLines = nil
 		}
 	}

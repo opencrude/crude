@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"crude/fileio"
+	"crude/tui/components"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -31,7 +32,7 @@ func (s *StatusBar) RenderAsyncBar() []string {
 		var dotColor lipgloss.Color
 		switch c.Status {
 		case fileio.AsyncRunning:
-			if s.spinFrame%2 == 0 {
+			if components.BlinkOn(s.spinFrame) {
 				dot = "●"
 			} else {
 				dot = "○"

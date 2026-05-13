@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
@@ -40,7 +41,7 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 
 	if isActive {
 		var dot string
-		if spinFrame%2 == 0 {
+		if components.BlinkOn(spinFrame) {
 			dot = "● "
 		} else {
 			dot = "○ "

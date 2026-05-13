@@ -249,7 +249,7 @@ func (m List) viewPanel(width int) string {
 		filterPrompt := lipgloss.NewStyle().Foreground(muted).Render("/ ")
 		searchText := lipgloss.NewStyle().Foreground(fg).Render(m.filter)
 		cursor := " "
-		if m.spinFrame%2 == 0 {
+		if BlinkOn(m.spinFrame) {
 			cursor = lipgloss.NewStyle().Foreground(accent).Render("█")
 		}
 		b.WriteString(indent + filterPrompt + searchText + cursor + "\n")
@@ -258,7 +258,7 @@ func (m List) viewPanel(width int) string {
 	b.WriteString(dim.Render(indent + strings.Repeat("─", sepWidth)) + "\n")
 
 	if m.fetching {
-		spinner := spinnerPhases[m.spinFrame%len(spinnerPhases)]
+		spinner := SpinnerPhase(m.spinFrame)
 		spinnerStyle := lipgloss.NewStyle().Foreground(accent)
 		b.WriteString(indent + spinnerStyle.Render(spinner) + " " + dim.Render("waiting for models...") + "\n")
 	} else if len(m.filtered) == 0 {

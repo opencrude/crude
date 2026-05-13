@@ -86,7 +86,7 @@ func (m *TextItem) View(focused bool, spinFrame int, labelWidth int) string {
 				rendered := lipgloss.NewStyle().Reverse(true).Render(curChar)
 				return prefix + labelPart + textStyle.Render(before) + rendered + textStyle.Render(right)
 			}
-			if spinFrame%2 == 0 {
+			if components.BlinkOn(spinFrame) {
 				rendered := lipgloss.NewStyle().
 					Background(m.theme.Colors.Accent).
 					Foreground(m.theme.Colors.Bg).
