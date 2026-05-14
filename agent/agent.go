@@ -22,8 +22,9 @@ import (
 )
 
 type AgentEvent struct {
-	Type string
-	Data any
+	Type    string
+	Data    any
+	AgentID string
 }
 
 const (

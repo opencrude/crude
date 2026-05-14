@@ -101,6 +101,8 @@ type ChatMessage struct {
 
 	ThinkingActive bool
 
+	SubPaneID string
+
 	CachedLines          []string
 	CursorLine           int
 	StreamCompletedLines []string
@@ -108,8 +110,9 @@ type ChatMessage struct {
 }
 
 type AgentEventMsg struct {
-	Type string
-	Data any
+	Type    string
+	Data    any
+	AgentID string
 }
 
 type TickMsg time.Time

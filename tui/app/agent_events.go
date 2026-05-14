@@ -7,13 +7,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"crude/fileio"
-	"crude/tui/rendering"
-	"crude/tui/tools"
 	ttypes "crude/tui/types"
+	"crude/tui/widgets"
 )
 
 func (m *App) submitInput(text string) tea.Cmd {
-	m.msgList.AppendMessage(ttypes.ChatMessage{
+	ma := m.mainAgent()
+	ma.MsgList.AppendMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleUser,
 		Content: text,
 		Time:    time.Now(),
@@ -27,11 +27,8 @@ func (m *App) submitInput(text string) tea.Cmd {
 	if OnHistorySave != nil {
 		OnHistorySave(m.history)
 	}
-	m.thinking = true
-	m.streaming = false
-	m.tokenBuf = ""
+	ma.SubmitInput(text)
 	m.statusbar.SetThinking(true, false, false)
-	m.msgList.ScrollToBottom()
 	ch := m.inputCh
 	return func() tea.Msg {
 		select {
@@ -44,324 +41,78 @@ func (m *App) submitInput(text string) tea.Cmd {
 }
 
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
-	switch evt.Type {
-	case "phase":
-		if phase, ok := evt.Data.(string); ok {
-			m.statusbar.SetPhase(phase)
-			var statusLine string
-			switch phase {
-			case "grounding":
-				statusLine = "Gathering context"
-			case "planning":
-				statusLine = "Planning"
-			case "executing":
-				statusLine = "Executing"
-			default:
-				statusLine = phase
-			}
+	agentID := evt.AgentID
+	if agentID == "" {
+		agentID = MainAgentID
+	}
+
+	agent, ok := m.agents[agentID]
+	if !ok {
+		if agentID == MainAgentID {
+			agent = NewAgentState(agentID, m.mainMsgList)
+		} else {
+			sp := m.paneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.theme)
+			sp.MsgList.SetModelName(m.modelName)
+			sp.MsgList.SetUsername(m.username)
+			agent = NewAgentState(agentID, sp.MsgList)
+			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
+				Role:      ttypes.RoleTool,
+				Content:   agentID,
+				SubPaneID: agentID,
+				Time:      time.Now(),
+			})
+		}
+		m.agents[agentID] = agent
+	}
+
+	thinkingTarget := m.getThinkingTarget(agentID, agent)
+
+	cmd := agent.HandleEvent(evt, thinkingTarget,
+		func(statusLine string) {
 			m.statusbar.SetStatusLine(statusLine)
-		}
-
-	case "thinking":
-		if s, ok := evt.Data.(string); ok && s != "" {
-			m.msgList.AppendThinking(s)
-			m.thinking = true
-			m.lastTokenTime = time.Now()
-			m.statusbar.SetThinking(true, false, false)
-		}
-
-	case "stream_token":
-		if s, ok := evt.Data.(string); ok && s != "" {
-			if !m.streaming {
-				m.msgList.MarkAllThinkingDone()
-			}
-			m.tokenBuf += s
-			m.streaming = true
-			m.statusbar.SetThinking(true, true, false)
-			msgs := m.msgList.Messages()
-			if len(msgs) == 0 || msgs[len(msgs)-1].Role != ttypes.RoleAssistant {
-				m.msgList.AppendMessage(ttypes.ChatMessage{
-					Role:    ttypes.RoleAssistant,
-					Content: "",
-					Time:    time.Now(),
-				})
-			}
-		}
-
-	case "tool_call_streaming":
-		if m.streaming {
-			if m.tokenBuf != "" {
-				m.msgList.AppendToken(m.tokenBuf)
-				m.tokenBuf = ""
-			}
-			m.msgList.MarkAllThinkingDone()
-			m.msgList.EndStreamingCursor()
-			m.streaming = false
-		}
-		if data, ok := evt.Data.(map[string]any); ok {
-			toolID, _ := data["tool_id"].(string)
-			name, _ := data["name"].(string)
-			if name == "" || name == "reply" {
-				break
-			}
-			path, _ := data["path"].(string)
-			command, _ := data["command"].(string)
-			urlStr, _ := data["url"].(string)
-			query, _ := data["query"].(string)
-			source, _ := data["source"].(string)
-			dest, _ := data["destination"].(string)
-			pattern, _ := data["pattern"].(string)
-
-			var target string
-			target = path
-			if target == "" && command != "" {
-				target = command
-			}
-			if target == "" && source != "" && dest != "" {
-				target = source + " → " + dest
-			} else if target == "" && source != "" {
-				target = source
-			}
-			if target == "" && urlStr != "" {
-				target = urlStr
-			}
-			if target == "" && query != "" {
-				target = query
-			}
-			if target == "" && pattern != "" {
-				target = pattern
-			}
-
-			contentLines, _ := data["content_lines"].(float64)
-			oldLines, _ := data["old_lines"].(float64)
-			newLines, _ := data["new_lines"].(float64)
-
-			if name == "read_file" && target != "" {
-				offset, _ := data["offset"].(float64)
-				limit, _ := data["limit"].(float64)
-				if offset > 0 && limit > 0 {
-					target = fmt.Sprintf("%s line %d-%d", target, int(offset), int(offset+limit-1))
-				} else if offset > 0 {
-					target = fmt.Sprintf("%s line %d+", target, int(offset))
-				} else if limit > 0 {
-					target = fmt.Sprintf("%s (first %d lines)", target, int(limit))
-				}
-			}
-
-			data["target"] = target
-			data["content_lines_int"] = int(contentLines)
-			data["old_lines_int"] = int(oldLines)
-			data["new_lines_int"] = int(newLines)
-
-			m.msgList.UpdateToolStreaming(toolID, name, data)
-		}
-
-	case "tool_call":
-		if m.streaming {
-			if m.tokenBuf != "" {
-				m.msgList.AppendToken(m.tokenBuf)
-				m.tokenBuf = ""
-			}
-			m.msgList.MarkAllThinkingDone()
-			m.msgList.EndStreamingCursor()
-			m.streaming = false
-		}
-		m.statusbar.ClearRetry()
-		if data, ok := evt.Data.(map[string]any); ok {
-			toolID, _ := data["tool_id"].(string)
-			name, _ := data["name"].(string)
-			if name == "" || name == "reply" {
-				break
-			}
-			args, _ := data["args"].(string)
-			argsCompact := tools.SummarizeToolArgs(name, args)
-			m.statusbar.SetStatusLine(rendering.ToolLabel(name, argsCompact))
-			m.msgList.UpdateToolCall(toolID, name, argsCompact)
-		}
-
-	case "tool_progress":
-		if data, ok := evt.Data.(map[string]any); ok {
-			toolID, _ := data["tool_id"].(string)
-			name, _ := data["name"].(string)
-			if name == "" || name == "reply" {
-				break
-			}
-			phase, _ := data["phase"].(string)
-			message, _ := data["message"].(string)
-			path, _ := data["path"].(string)
-			linesAdded, _ := data["lines_added"].(float64)
-			linesRemoved, _ := data["lines_removed"].(float64)
-
-			m.msgList.UpdateToolProgress(toolID, name, phase, message, path, int(linesAdded), int(linesRemoved))
-			if phase == "done" {
-				m.statusbar.SetStatusLine(name)
-			} else if phase != "" && message != "" {
-				m.statusbar.SetStatusLine(message)
-			}
-		}
-
-	case "tool_result":
-		if data, ok := evt.Data.(map[string]any); ok {
-			toolID, _ := data["tool_id"].(string)
-			name, _ := data["name"].(string)
-			if name == "" || name == "reply" {
-				break
-			}
-			result, _ := data["result"].(string)
-			errFlag, _ := data["error"].(string)
-			isError := errFlag == "true"
-			m.statusbar.SetStatusLine(name)
-			m.msgList.UpdateToolResult(toolID, name, result, isError)
-		}
-
-	case "blocking":
-		var data map[string]string
-		if d, ok := evt.Data.(map[string]any); ok {
-			data = make(map[string]string, len(d))
-			for k, v := range d {
-				data[k] = fmt.Sprintf("%v", v)
-			}
-		} else if d, ok := evt.Data.(map[string]string); ok {
-			data = d
-		} else {
-			question := fmt.Sprintf("%v", evt.Data)
-			data = map[string]string{"question": question}
-		}
-		question := data["question"]
-		operation := data["operation"]
-		tool := data["tool"]
-		target := data["target"]
-		risk := data["risk"]
-		reason := data["reason"]
-		suggestion := data["suggestion"]
-		m.thinking = false
-		m.blocking = true
-		m.statusbar.SetStatusLine("")
-		m.statusbar.SetThinking(false, false, true)
-		m.msgList.MarkAllThinkingDone()
-		if risk != "" {
-			m.confirm.ResetWithDetails(question, operation, tool, target, risk, reason, suggestion)
-		} else {
-			m.confirm.Reset(question, operation, tool, target)
-		}
-		m.msgList.AppendMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
-			Content: "⚠  " + question,
-			Time:    time.Now(),
-		})
-		m.setMode(ModeConfirm)
-
-	case "blocking_complete":
-		m.blocking = false
-		m.confirm.Dismiss()
-		m.statusbar.SetConfirming(false)
-		m.statusbar.SetThinking(false, false, false)
-		m.setMode(ModeChat)
-
-	case "done":
-		if m.tokenBuf != "" {
-			m.msgList.AppendToken(m.tokenBuf)
-			m.tokenBuf = ""
-		}
-		wasStreaming := m.streaming
-		m.msgList.MarkAllThinkingDone()
-		m.msgList.ClearStreamingTools()
-		m.thinking = false
-		m.streaming = false
-		m.statusbar.SetStatusLine("")
-		m.statusbar.SetThinking(false, false, false)
-
-		var content, reason string
-		switch d := evt.Data.(type) {
-		case string:
-			content = d
-		case map[string]any:
-			content, _ = d["content"].(string)
-			reason, _ = d["reason"].(string)
-		}
-
-		if reason == "completed" {
-			m.statusbar.SetInfo("✓ done")
-		} else if reason != "" {
-			m.statusbar.SetError("⚠ " + reason)
-		}
-
-		for _, msg := range m.msgList.Messages() {
-			msg.CachedLines = nil
-			msg.StreamCompletedLines = nil
-			msg.StreamCompletedLen = 0
-		}
-		m.msgList.InvalidateAllMessages()
-
-		if content != "" {
-			msgs := m.msgList.Messages()
-			merged := false
-			if wasStreaming && len(msgs) > 0 {
-				last := msgs[len(msgs)-1]
-				if last.Role == ttypes.RoleAssistant {
-					if last.Content == "" {
-						last.Content = content
-					}
-					last.CursorLine = -1
-					merged = true
-				}
-			}
-			if !merged {
-				m.msgList.AppendMessage(ttypes.ChatMessage{
-					Role:    ttypes.RoleAssistant,
-					Content: content,
-					Time:    time.Now(),
-				})
+		},
+		func(thinking, streaming, blocking bool) {
+			m.statusbar.SetThinking(thinking, streaming, blocking)
+		},
+		func() {
+			m.blocking = true
+			m.statusbar.SetStatusLine("")
+		},
+		func(question, operation, tool, target, risk, reason, suggestion string) {
+			if risk != "" {
+				m.confirm.ResetWithDetails(question, operation, tool, target, risk, reason, suggestion)
 			} else {
-				m.msgList.RebuildItems()
+				m.confirm.Reset(question, operation, tool, target)
 			}
+			m.setMode(ModeConfirm)
+		},
+		func() {
+			m.blocking = false
+			m.confirm.Dismiss()
+			m.statusbar.SetConfirming(false)
+			m.statusbar.SetThinking(false, false, false)
+			m.setMode(ModeChat)
+		},
+	)
+
+	if evt.Type == "thinking" && agentID == MainAgentID {
+		m.checkThinkingPromotion()
+	}
+
+	if agentID == MainAgentID && m.mainAgent().ThinkingPaneID != "" {
+		switch evt.Type {
+		case "stream_token", "tool_call", "tool_call_streaming":
+			m.handleSubPaneCompletion(agentID)
 		}
-		m.msgList.ScrollToBottom()
+	}
 
-	case "error":
-		m.tokenBuf = ""
-		m.msgList.MarkAllThinkingDone()
-		m.msgList.ClearStreamingTools()
-		errMsg := fmt.Sprintf("%v", evt.Data)
-		m.msgList.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
-		m.statusbar.SetError(errMsg)
-		m.thinking = false
-		m.streaming = false
-		m.blocking = false
-		m.statusbar.SetThinking(false, false, false)
-		m.statusbar.ClearRetry()
-		m.statusbar.SetStatusLine("")
-		m.msgList.ScrollToBottom()
+	if evt.Type == "done" || evt.Type == "error" {
+		m.handleSubPaneCompletion(agentID)
+	}
 
+	switch evt.Type {
 	case "usage":
-		switch d := evt.Data.(type) {
-		case map[string]any:
-			prompt, _ := d["prompt"].(float64)
-			completion, _ := d["completion"].(float64)
-			cached, _ := d["cached"].(float64)
-			cost, _ := d["cost"].(float64)
-			ctxWindow, _ := d["context_window"].(float64)
-			ctxUsed, _ := d["context_used"].(float64)
-			m.tokenPrompt = int(prompt)
-			m.tokenCompletion += int(completion)
-			m.tokenCached = int(cached)
-			m.sessionCost += cost
-			if int(ctxWindow) > 0 {
-				m.contextWindow = int(ctxWindow)
-				m.contextUsed = int(ctxUsed)
-			}
-			m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed)
-		case map[string]int:
-			m.tokenCached = d["prompt_cached"]
-			m.tokenCompletion += d["completion"]
-			m.tokenPrompt = d["prompt"]
-			if cw := d["context_window"]; cw > 0 {
-				m.contextWindow = cw
-				m.contextUsed = d["prompt"]
-			}
-			m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed)
-		}
-
+		m.handleUsageData(evt.Data)
 	case "retry":
 		switch d := evt.Data.(type) {
 		case map[string]any:
@@ -377,12 +128,151 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		case string:
 			m.statusbar.SetRetry(d)
 		}
-
 	case "async_command_status":
 		if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
 			m.statusbar.SetAsyncCommands(cmds)
 		}
 	}
 
+	return m.processAgentResults(cmd)
+}
+
+func (m *App) getThinkingTarget(agentID string, agent *AgentState) *widgets.MessageList {
+	if agentID != MainAgentID {
+		if m.paneMgr.Has(agentID) {
+			return m.paneMgr.Get(agentID).MsgList
+		}
+		sp := m.paneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.theme)
+		return sp.MsgList
+	}
+
+	if agent.ThinkingPaneID != "" {
+		if sp := m.paneMgr.Get(agent.ThinkingPaneID); sp != nil {
+			return sp.MsgList
+		}
+		agent.ThinkingPaneID = ""
+	}
 	return nil
+}
+
+func (m *App) checkThinkingPromotion() {
+	ma := m.mainAgent()
+	if !ma.Thinking || ma.ThinkingPaneID != "" {
+		return
+	}
+
+	chatH := m.chatAreaHeight
+	threshold := chatH / 3
+	if threshold < 5 {
+		threshold = 5
+	}
+
+	contentWidth := m.width - 16
+	if contentWidth < 10 {
+		contentWidth = 10
+	}
+	lineCount := m.mainMsgList.ActiveThinkingLineCount(contentWidth)
+
+	if lineCount > threshold {
+		m.promoteThinkingToPane(ma)
+	}
+}
+
+func (m *App) promoteThinkingToPane(agent *AgentState) {
+	paneID := "thinking-" + time.Now().Format("150405")
+	content := m.mainMsgList.RemoveActiveThinking()
+
+	sp := m.paneMgr.GetOrCreate(paneID, PaneThinking, "Thinking", m.theme)
+	sp.MsgList.SetModelName(m.modelName)
+	sp.MsgList.SetUsername(m.username)
+
+	if content != "" {
+		sp.MsgList.AppendThinking(content)
+		sp.MsgList.Messages()[len(sp.MsgList.Messages())-1].ThinkingActive = true
+	}
+
+	agent.ThinkingPaneID = paneID
+
+	m.mainMsgList.AppendMessage(ttypes.ChatMessage{
+		Role:      ttypes.RoleTool,
+		Content:   "Thinking",
+		SubPaneID: paneID,
+		Time:      time.Now(),
+	})
+}
+
+func (m *App) handleSubPaneCompletion(agentID string) {
+	if agentID == MainAgentID {
+		ma := m.mainAgent()
+		if ma.ThinkingPaneID != "" {
+			sp := m.paneMgr.Get(ma.ThinkingPaneID)
+			if sp != nil {
+				sp.Collapse()
+				m.mainMsgList.InvalidateSubPane(ma.ThinkingPaneID)
+			}
+			ma.ThinkingPaneID = ""
+		}
+		return
+	}
+
+	sp := m.paneMgr.Get(agentID)
+	if sp == nil {
+		return
+	}
+	sp.Collapse()
+	m.mainMsgList.InvalidateSubPane(agentID)
+}
+
+func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg := cmd()
+		switch result := msg.(type) {
+		case agentDoneResultMsg:
+			if result.Reason == "completed" {
+				m.statusbar.SetInfo("✓ done")
+			} else if result.Reason != "" {
+				m.statusbar.SetError("⚠ " + result.Reason)
+			}
+		case agentErrorResultMsg:
+			m.statusbar.SetError(result.Err)
+			m.statusbar.ClearRetry()
+			m.statusbar.SetStatusLine("")
+		case agentRetryResultMsg:
+			m.statusbar.SetRetry(result.Msg)
+		}
+		return nil
+	}
+}
+
+func (m *App) handleUsageData(data any) {
+	switch d := data.(type) {
+	case map[string]any:
+		prompt, _ := d["prompt"].(float64)
+		completion, _ := d["completion"].(float64)
+		cached, _ := d["cached"].(float64)
+		cost, _ := d["cost"].(float64)
+		ctxWindow, _ := d["context_window"].(float64)
+		ctxUsed, _ := d["context_used"].(float64)
+		m.tokenPrompt = int(prompt)
+		m.tokenCompletion += int(completion)
+		m.tokenCached = int(cached)
+		m.sessionCost += cost
+		if int(ctxWindow) > 0 {
+			m.contextWindow = int(ctxWindow)
+			m.contextUsed = int(ctxUsed)
+		}
+		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed)
+	case map[string]int:
+		m.tokenCached = d["prompt_cached"]
+		m.tokenCompletion += d["completion"]
+		m.tokenPrompt = d["prompt"]
+		if cw := d["context_window"]; cw > 0 {
+			m.contextWindow = cw
+			m.contextUsed = d["prompt"]
+		}
+		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed)
+	}
 }

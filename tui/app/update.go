@@ -19,30 +19,47 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.msgList.SetSize(msg.Width, msg.Height)
+		m.mainMsgList.SetSize(msg.Width, msg.Height)
+		for _, a := range m.agents {
+			if a.MsgList != m.mainMsgList {
+				a.MsgList.SetSize(msg.Width, msg.Height)
+			}
+		}
+		m.paneMgr.SetSize(msg.Width, msg.Height)
 		m.input.SetWidth(msg.Width)
 		m.statusbar.SetWidth(msg.Width)
 		return m, nil
 
 	case ttypes.TickMsg:
-		if m.tokenBuf != "" {
-			m.msgList.AppendToken(m.tokenBuf)
-			m.tokenBuf = ""
-			m.lastTokenTime = time.Now()
-		}
-		m.spinFrame = int(time.Now().UnixMilli())
-		m.statusbar.SetSpinFrame(m.spinFrame)
-		m.input.SetSpinFrame(m.spinFrame)
+		spinFrame := int(time.Now().UnixMilli())
+		m.spinFrame = spinFrame
+		m.statusbar.SetSpinFrame(spinFrame)
+		m.input.SetSpinFrame(spinFrame)
 		m.statusbar.ClearExpired()
-		m.msgList.InvalidateCache()
-		if m.streaming || m.thinking {
+		for _, a := range m.agents {
+			a.Tick(spinFrame)
+		}
+		m.paneMgr.TickAll(spinFrame)
+		for _, sp := range m.paneMgr.panes {
+			if !sp.Done && sp.MsgList != nil {
+				if agent, ok := m.agents[sp.ID]; ok {
+					if agent.TokenBuf != "" {
+						sp.MsgList.AppendToken(agent.TokenBuf)
+						agent.TokenBuf = ""
+						agent.LastTokenTime = time.Now()
+					}
+				}
+				m.mainMsgList.InvalidateSubPane(sp.ID)
+			}
+		}
+		if m.anyActive() {
 			return m, streamingTickCmd()
 		}
 		return m, tickCmd()
 
 	case tea.KeyMsg:
-		if m.msgList.HasActiveSelection() {
-			m.msgList.ClearSelection()
+		if m.mainMsgList.HasActiveSelection() {
+			m.mainMsgList.ClearSelection()
 			return m, nil
 		}
 		if msg.Type == tea.KeyCtrlC {
@@ -56,7 +73,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Mode == ModeChat {
 			inputStartLine := m.chatAreaHeight + 4
 			if m.input.InputSelecting() || msg.Y >= inputStartLine {
-				updated, cmd, evt := m.input.Update(msg, m.thinking && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+				updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 				m.input = updated
 				if cmd != nil {
 					cmds = append(cmds, cmd)
@@ -71,28 +88,42 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.setMode(ModeSettings)
 				}
 			} else {
-				_, cmd := m.msgList.Update(msg)
-				if cmd != nil {
-					cmds = append(cmds, cmd)
+				handled, paneCmd := m.routeMouseToInlinePane(msg)
+				if paneCmd != nil {
+					cmds = append(cmds, paneCmd)
+				}
+				if !handled {
+					_, cmd := m.mainMsgList.Update(msg)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			}
 		} else {
-			_, cmd := m.msgList.Update(msg)
+			_, cmd := m.mainMsgList.Update(msg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
 
 	case ttypes.SelectionTickMsg:
-		_, cmd := m.msgList.Update(msg)
+		_, cmd := m.mainMsgList.Update(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 
 	case scrollbar.FadeTickMsg, scrollbar.HideTickMsg:
-		cmd := m.msgList.HandleScrollbarTick(msg)
+		cmd := m.mainMsgList.HandleScrollbarTick(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
+		}
+		for _, sp := range m.paneMgr.panes {
+			if !sp.Done && sp.MsgList != nil {
+				paneCmd := sp.MsgList.HandleScrollbarTick(msg)
+				if paneCmd != nil {
+					cmds = append(cmds, paneCmd)
+				}
+			}
 		}
 	}
 
@@ -117,12 +148,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modelName = s.Model
 			m.lastSettings = s
 			m.setMode(ModeChat)
-			m.msgList.InvalidateCache()
+			m.mainMsgList.InvalidateCache()
 		}
 	case settings.CancelEvent:
 		m.settings.RestoreSnapshot()
 		m.setMode(ModeChat)
-		m.msgList.InvalidateCache()
+		m.mainMsgList.InvalidateCache()
 	}
 
 	case ModeConfirm:
@@ -132,7 +163,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			m.statusbar.SetConfirming(false)
 			m.blocking = false
-			m.thinking = true
+			ma := m.mainAgent()
+			ma.Thinking = true
 			if m.OnConfirmResult != nil {
 				m.OnConfirmResult(result)
 			}
@@ -143,7 +175,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case ttypes.ConfirmDeny:
 				resultMsg = "✗ Denied"
 			}
-			m.msgList.AppendMessage(ttypes.ChatMessage{
+			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: resultMsg,
 				Time:    time.Now(),
@@ -164,7 +196,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				content = "YOLO mode cancelled. Safety checks remain active."
 			}
-			m.msgList.AppendMessage(ttypes.ChatMessage{
+			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: content,
 				Time:    time.Now(),
@@ -176,11 +208,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case ModeChat:
-		if m.thinking && !m.blocking {
+		if m.anyActive() && !m.blocking {
 			if keyMsg, ok := msg.(tea.KeyMsg); ok {
 				switch keyMsg.Type {
 				case tea.KeyHome, tea.KeyEnd, tea.KeyCtrlHome, tea.KeyCtrlEnd:
-					_, cmd := m.msgList.Update(keyMsg)
+					_, cmd := m.mainMsgList.Update(keyMsg)
 					if cmd != nil {
 						cmds = append(cmds, cmd)
 					}
@@ -190,7 +222,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if _, isMouse := msg.(tea.MouseMsg); !isMouse {
-			updated, cmd, evt := m.input.Update(msg, m.thinking && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+			updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 			m.input = updated
 			if cmd != nil {
 				cmds = append(cmds, cmd)
@@ -207,7 +239,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if _, ok := msg.(tea.KeyMsg); ok {
-			_, cmd := m.msgList.Update(msg)
+			_, cmd := m.mainMsgList.Update(msg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -223,7 +255,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusbar.SetError(string(msg))
 	case ttypes.UpdateModelMsg:
 		m.modelName = string(msg)
-		m.msgList.SetModelName(string(msg))
+		m.mainMsgList.SetModelName(string(msg))
+		for _, a := range m.agents {
+			if a.MsgList != m.mainMsgList {
+				a.MsgList.SetModelName(string(msg))
+			}
+		}
 	case ttypes.OpenSettingsMsg:
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
@@ -242,7 +279,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modelName = msg.Settings.Model
 			m.lastSettings = msg.Settings
 			m.setMode(ModeChat)
-			m.msgList.InvalidateCache()
+			m.mainMsgList.InvalidateCache()
 			m.statusbar.SetInfo("settings saved")
 		}
 	case rendering.ClipboardCopiedMsg:
@@ -254,7 +291,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusbar.SetError(msg.Error)
 		}
 		if msg.Desc != "" {
-			m.msgList.AppendMessage(ttypes.ChatMessage{
+			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: msg.Desc,
 				Time:    time.Now(),
@@ -263,6 +300,36 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
+	chatAreaTop := 3
+	paneLineMap := m.mainMsgList.PaneLineMap()
+	y := msg.Y - chatAreaTop
+	if y < 0 || y >= len(paneLineMap) {
+		return false, nil
+	}
+
+	info := paneLineMap[y]
+	if info.PaneID == "" {
+		return false, nil
+	}
+
+	sp := m.paneMgr.Get(info.PaneID)
+	if sp == nil || sp.Done || sp.MsgList == nil {
+		return false, nil
+	}
+
+	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+		if !sp.MsgList.CanScroll() {
+			return false, nil
+		}
+	}
+
+	paneMsg := msg
+	paneMsg.Y = info.LineIdx
+	_, cmd := sp.MsgList.Update(paneMsg)
+	return true, cmd
 }
 
 func tickCmd() tea.Cmd {
