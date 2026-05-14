@@ -322,8 +322,6 @@ func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLi
 					out[i] = rl
 				} else if rlws == "" {
 					out[i] = cws + rl
-				} else if strings.HasPrefix(rlws, si) && si != "" {
-					out[i] = cws + rl[len(si):]
 				} else {
 					out[i] = rl
 				}
@@ -335,7 +333,7 @@ func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLi
 				} else if rlws == cws {
 					out[i] = rl
 				} else {
-					out[i] = cws + rl
+					out[i] = rl
 				}
 			}
 		} else if crossType {

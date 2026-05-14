@@ -1424,6 +1424,108 @@ func TestApplySearchReplace_tabSearchSpaceFile_regression(t *testing.T) {
 }
 
 // ============================================================================
+// Absolute-line re-indent corruption (the mixedIndent si-based adjustment bug)
+// ============================================================================
+
+func TestApplySearchReplace_mixedIndentAbsoluteLineNotCorrupted(t *testing.T) {
+	content := "\t\ttotalPromptTokens += promptTokens\n\t\ttotalCompletionTokens += completionTokens\n\t\tlastPromptTokens = promptTokens\n\n\t\tif promptTokens > 0 || completionTokens > 0 {\n\t\t\t// Compute cost for this turn using model pricing\n\t\t\tprice := provider.LookupPrice(a.Model)\n\t\t\tturnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)\n\t\t\temit(AgentEvent{Type: \"usage\", Data: map[string]any{\n\t\t\t\t\"prompt\":         promptTokens,\n\t\t\t\t\"completion\":     completionTokens,\n\t\t\t}})\n\t\t}"
+	search := "\ttotalPromptTokens += promptTokens\n\t\ttotalCompletionTokens += completionTokens\n\t\tlastPromptTokens = promptTokens\n\n\t\tif promptTokens > 0 || completionTokens > 0 {\n\t\t\t// Compute cost for this turn using model pricing\n\t\t\tprice := provider.LookupPrice(a.Model)\n\t\t\tturnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)\n\t\t\temit(AgentEvent{Type: \"usage\", Data: map[string]any{\n\t\t\t\t\"prompt\":         promptTokens,\n\t\t\t\t\"completion\":     completionTokens,\n\t\t\t}})\n\t\t}"
+	replace := "\ttotalPromptTokens += promptTokens\n\t\ttotalCompletionTokens += completionTokens\n\t\tlastPromptTokens = promptTokens\n\n\t\t// Always emit a usage event so the TUI status bar updates.\n\t\t// When the API doesn't return token counts, estimate tokens.\n\t\testimated := false\n\t\tif promptTokens == 0 && completionTokens == 0 {\n\t\t\tpromptTokens = provider.EstimateMessagesTotal(msgs, a.Model)\n\t\t\tcompletionTokens = provider.EstimateTokens(content, a.Model)\n\t\t\testimated = true\n\t\t}\n\n\t\t// Compute cost for this turn using model pricing\n\t\tprice := provider.LookupPrice(a.Model)\n\t\tturnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)\n\t\temit(AgentEvent{Type: \"usage\", Data: map[string]any{\n\t\t\t\"prompt\":         promptTokens,\n\t\t\t\"completion\":     completionTokens,\n\t\t\t\"estimated\":      estimated,\n\t\t}})"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\t\ttotalPromptTokens += promptTokens\n\t\ttotalCompletionTokens += completionTokens\n\t\tlastPromptTokens = promptTokens\n\n\t\t// Always emit a usage event so the TUI status bar updates.\n\t\t// When the API doesn't return token counts, estimate tokens.\n\t\testimated := false\n\t\tif promptTokens == 0 && completionTokens == 0 {\n\t\t\tpromptTokens = provider.EstimateMessagesTotal(msgs, a.Model)\n\t\t\tcompletionTokens = provider.EstimateTokens(content, a.Model)\n\t\t\testimated = true\n\t\t}\n\n\t\t// Compute cost for this turn using model pricing\n\t\tprice := provider.LookupPrice(a.Model)\n\t\tturnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)\n\t\temit(AgentEvent{Type: \"usage\", Data: map[string]any{\n\t\t\t\"prompt\":         promptTokens,\n\t\t\t\"completion\":     completionTokens,\n\t\t\t\"estimated\":      estimated,\n\t\t}})"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_mixedIndentReplacementDeeperThanContent(t *testing.T) {
+	content := "def outer():\n    x = 1\n    y = 2"
+	search := "x = 1\n    y = 2"
+	replace := "x = 1\n    if cond:\n        y = 2"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "def outer():\n    x = 1\n    if cond:\n        y = 2"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_mixedIndentReplacementShallowerThanContent(t *testing.T) {
+	content := "def outer():\n    if cond:\n        x = 1\n        y = 2"
+	search := "x = 1\n        y = 2"
+	replace := "x = 1\n    y = 2"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "def outer():\n    if cond:\n        x = 1\n    y = 2"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_mixedIndentNewLinesNotDoubled(t *testing.T) {
+	content := "def outer():\n    x = process(a)\n\n    for i in items:\n        print(i)"
+	search := "x = process(a)\n\n    for i in items:\n        print(i)"
+	replace := "x = process(b)\n    is_cached = False\n\n    for i in items:\n        print(i)"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "def outer():\n    x = process(b)\n    is_cached = False\n\n    for i in items:\n        print(i)"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_mixedIndentSessionGoExactScenario(t *testing.T) {
+	content := "\t\tif evt.Type == \"usage\" {\n\t\t\tmodel := activeCfg.Model\n\t\t\tvar promptT, compT, cachedT int\n\t\t\tswitch d := evt.Data.(type) {\n\t\t\tcase map[string]int:\n\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\tcompT = d[\"completion\"]\n\t\t\t\tcachedT = d[\"prompt_cached\"]\n\t\t\tcase map[string]any:\n\t\t\t\tif v, ok := d[\"prompt\"].(float64); ok {\n\t\t\t\t\tpromptT = int(v)\n\t\t\t\t}\n\t\t\t}\n\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t}\n\t\t}"
+	search := "if evt.Type == \"usage\" {\n\t\t\tmodel := activeCfg.Model\n\t\t\tvar promptT, compT, cachedT int\n\t\t\tswitch d := evt.Data.(type) {\n\t\t\tcase map[string]int:\n\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\tcompT = d[\"completion\"]\n\t\t\t\tcachedT = d[\"prompt_cached\"]\n\t\t\tcase map[string]any:\n\t\t\t\tif v, ok := d[\"prompt\"].(float64); ok {\n\t\t\t\t\tpromptT = int(v)\n\t\t\t\t}\n\t\t\t}\n\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t}\n\t\t}"
+	replace := "if evt.Type == \"usage\" {\n\t\t\tmodel := activeCfg.Model\n\t\t\tvar promptT, compT, cachedT int\n\t\t\tisEstimated := false\n\t\t\tswitch d := evt.Data.(type) {\n\t\t\tcase map[string]int:\n\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\tcompT = d[\"completion\"]\n\t\t\t\tcachedT = d[\"prompt_cached\"]\n\t\t\tcase map[string]any:\n\t\t\t\tif v, ok := d[\"prompt\"].(float64); ok {\n\t\t\t\t\tpromptT = int(v)\n\t\t\t\t}\n\t\t\t\tif v, ok := d[\"estimated\"].(bool); ok {\n\t\t\t\t\tisEstimated = v\n\t\t\t\t}\n\t\t\t}\n\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t}\n\t\t}"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\t\tif evt.Type == \"usage\" {\n\t\t\tmodel := activeCfg.Model\n\t\t\tvar promptT, compT, cachedT int\n\t\t\tisEstimated := false\n\t\t\tswitch d := evt.Data.(type) {\n\t\t\tcase map[string]int:\n\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\tcompT = d[\"completion\"]\n\t\t\t\tcachedT = d[\"prompt_cached\"]\n\t\t\tcase map[string]any:\n\t\t\t\tif v, ok := d[\"prompt\"].(float64); ok {\n\t\t\t\t\tpromptT = int(v)\n\t\t\t\t}\n\t\t\t\tif v, ok := d[\"estimated\"].(bool); ok {\n\t\t\t\t\tisEstimated = v\n\t\t\t\t}\n\t\t\t}\n\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t}\n\t\t}"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_mixedIndentRemovingNesting(t *testing.T) {
+	content := "func handler() {\n\t\tif debug {\n\t\t\tlog.Printf(\"msg\")\n\t\t\tlog.Printf(\"detail\")\n\t\t}\n\t}"
+	search := "if debug {\n\t\t\tlog.Printf(\"msg\")\n\t\t\tlog.Printf(\"detail\")\n\t\t}"
+	replace := "if debug {\n\t\tlog.Printf(\"msg\")\n\t}"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "func handler() {\n\t\tif debug {\n\t\tlog.Printf(\"msg\")\n\t}\n\t}"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_mixedIndentAddLineAtAbsoluteDepth(t *testing.T) {
+	content := "\t\tfor i := range items {\n\t\t\tval := items[i]\n\t\t\tresult = append(result, val)\n\t\t}"
+	search := "for i := range items {\n\t\t\tval := items[i]\n\t\t\tresult = append(result, val)\n\t\t}"
+	replace := "for i := range items {\n\t\t\tval := items[i]\n\t\t\tif val > 0 {\n\t\t\t\tresult = append(result, val)\n\t\t\t}\n\t\t}"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\t\tfor i := range items {\n\t\t\tval := items[i]\n\t\t\tif val > 0 {\n\t\t\t\tresult = append(result, val)\n\t\t\t}\n\t\t}"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// ============================================================================
 // assertEqual helper
 // ============================================================================
 

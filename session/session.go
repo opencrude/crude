@@ -692,6 +692,20 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 
 	cancelCh := tuiInst.CancelCh
 
+	// Auto-load models.dev pricing in the background on first session run.
+	// This populates the dynamic price map so LookupPrice and
+	// LookupContextWindow can return accurate data without waiting for a
+	// manual model-list fetch.
+	go func() {
+		metas, err := provider.FetchModelsDevAll()
+		if err != nil {
+			s.logger.Warn("modelsdev.auto_load_error", "error", err.Error())
+			return
+		}
+		provider.LoadModelMetas(metas)
+		s.logger.Info("modelsdev.auto_load_ok", "models", len(metas))
+	}()
+
 	// Start polling async command status for TUI status bar
 	asyncPollingStop := make(chan struct{})
 	defer close(asyncPollingStop)
@@ -847,12 +861,18 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				case map[string]any:
 					if v, ok := d["prompt"].(float64); ok {
 						promptT = int(v)
+					} else if v, ok := d["prompt"].(int); ok {
+						promptT = v
 					}
 					if v, ok := d["completion"].(float64); ok {
 						compT = int(v)
+					} else if v, ok := d["completion"].(int); ok {
+						compT = v
 					}
 					if v, ok := d["prompt_cached"].(float64); ok {
 						cachedT = int(v)
+					} else if v, ok := d["prompt_cached"].(int); ok {
+						cachedT = v
 					}
 					if v, ok := d["estimated"].(bool); ok {
 						isEstimated = v

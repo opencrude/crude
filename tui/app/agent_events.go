@@ -250,16 +250,18 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 func (m *App) handleUsageData(data any) {
 	switch d := data.(type) {
 	case map[string]any:
-		prompt, _ := d["prompt"].(float64)
-		completion, _ := d["completion"].(float64)
-		cached, _ := d["prompt_cached"].(float64)
+		prompt := toInt(d["prompt"])
+		completion := toInt(d["completion"])
+		cached := toInt(d["prompt_cached"])
 		cost, _ := d["cost"].(float64)
-		ctxWindow, _ := d["context_window"].(float64)
-		ctxUsed, _ := d["context_used"].(float64)
+		ctxWindow := toInt(d["context_window"])
+		ctxUsed := toInt(d["context_used"])
+		estimated, _ := d["estimated"].(bool)
 		m.tokenPrompt = int(prompt)
 		m.tokenCompletion += int(completion)
 		m.tokenCached = int(cached)
 		m.sessionCost += cost
+		m.tokenEstimated = estimated
 		if int(ctxWindow) > 0 {
 			m.contextWindow = int(ctxWindow)
 			if int(ctxUsed) > 0 {
@@ -269,7 +271,7 @@ func (m *App) handleUsageData(data any) {
 				m.contextUsed = int(prompt)
 			}
 		}
-		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed)
+		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed, m.tokenEstimated)
 	case map[string]int:
 		m.tokenCached = d["prompt_cached"]
 		m.tokenCompletion += d["completion"]
@@ -278,6 +280,18 @@ func (m *App) handleUsageData(data any) {
 			m.contextWindow = cw
 			m.contextUsed = d["prompt"]
 		}
-		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed)
+		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed, false)
 	}
+}
+
+func toInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	case int64:
+		return int(n)
+	}
+	return 0
 }

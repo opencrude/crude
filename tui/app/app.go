@@ -67,6 +67,7 @@ type App struct {
 	tokenPrompt, tokenCompletion, tokenCached int
 	sessionCost                               float64
 	contextWindow, contextUsed                 int
+	tokenEstimated                             bool
 
 	lastSettings ttypes.Settings
 

@@ -27,6 +27,7 @@ type StatusBar struct {
 	sessionCost   float64
 	contextWindow int
 	contextUsed   int
+	tokenEstimated bool
 
 	lastError   string
 	errorTime   time.Time
@@ -72,8 +73,12 @@ func (s *StatusBar) View() string {
 
 	right := ""
 	if s.tokenPrompt > 0 || s.tokenCompletion > 0 {
+		prefix := ""
+		if s.tokenEstimated {
+			prefix = "~"
+		}
 		var parts []string
-		parts = append(parts, fmt.Sprintf("↑%s", rendering.FormatTokens(s.tokenPrompt)))
+		parts = append(parts, fmt.Sprintf("%s↑%s", prefix, rendering.FormatTokens(s.tokenPrompt)))
 		if s.tokenCached > 0 {
 			parts = append(parts, fmt.Sprintf("·%s", rendering.FormatTokens(s.tokenCached)))
 		}
@@ -144,13 +149,14 @@ func (s *StatusBar) ClearExpired() {
 	}
 }
 
-func (s *StatusBar) UpdateUsage(prompt, completion, cached int, cost float64, ctxWindow, ctxUsed int) {
+func (s *StatusBar) UpdateUsage(prompt, completion, cached int, cost float64, ctxWindow, ctxUsed int, estimated bool) {
 	s.tokenPrompt = prompt
 	s.tokenCompletion = completion
 	s.tokenCached = cached
 	s.sessionCost = cost
 	s.contextWindow = ctxWindow
 	s.contextUsed = ctxUsed
+	s.tokenEstimated = estimated
 }
 
 func (s *StatusBar) SetThinking(thinking, streaming, blocking bool) {

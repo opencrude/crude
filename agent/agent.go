@@ -28,7 +28,7 @@ type AgentEvent struct {
 }
 
 const (
-	maxSteps          = 50
+	maxSteps          = 10000
 	loopDetectWindow  = 8
 	loopDetectRepeats = 4
 	contextSafetyPct  = 0.85

@@ -100,38 +100,22 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("… full content returned to agent"))
 					}
 				}
-		} else if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || IsDiffContent(resultContent) {
-				diffBlock := ExtractDiffBlock(resultContent)
-				if diffBlock != "" {
-					diffLineCount := len(strings.Split(diffBlock, "\n"))
-					maxRes := TerminalResultHeight(height)
-					if diffLineCount <= maxRes {
-						renderedDiff := RenderDiffContent(diffBlock, innerW-4, th)
-						for _, dl := range strings.Split(renderedDiff, "\n") {
-							msgLines = append(msgLines, dim.Render("│ ")+dl)
-						}
-					} else {
-						resultLines := RenderCompactDiff(msg.ToolName, resultContent, th)
-						for i, rl := range resultLines {
-							if i >= maxRes-1 {
-								remaining := len(resultLines) - i
-								msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
-								break
-							}
-							msgLines = append(msgLines, dim.Render("│ ")+rl)
-						}
+			} else if isDiffTool(msg.ToolName) || IsDiffContent(resultContent) {
+				// Use the new unified RenderDiff for all diff-like content
+				maxRes := TerminalResultHeight(height)
+				diffWidth := innerW - 4
+				if diffWidth < 20 {
+					diffWidth = 20
+				}
+				renderedDiff := RenderDiff(resultContent, maxRes, diffWidth, th)
+				if renderedDiff != "" {
+					for _, dl := range strings.Split(renderedDiff, "\n") {
+						msgLines = append(msgLines, dim.Render("│ ")+dl)
 					}
 				} else {
-					resultLines := RenderCompactDiff(msg.ToolName, resultContent, th)
-					maxRes := TerminalResultHeight(height)
-					for i, rl := range resultLines {
-						if i >= maxRes-1 {
-							remaining := len(resultLines) - i
-							msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
-							break
-						}
-						msgLines = append(msgLines, dim.Render("│ ")+rl)
-					}
+					// Fallback for non-diff content
+					firstLine := strings.SplitN(resultContent, "\n", 2)[0]
+					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(firstLine))
 				}
 			} else {
 				toolLineWidth := width - th.Spacing.PadLR*2 - 6
@@ -159,6 +143,15 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 	}
 
 	return msgLines
+}
+
+// isDiffTool returns true for tool names that produce diff-like output.
+func isDiffTool(name string) bool {
+	switch name {
+	case "write_file", "edit_file", "delete_lines", "replace_lines":
+		return true
+	}
+	return false
 }
 
 func RenderPlanBox(text string, maxWidth int, th *theme.Theme) string {
