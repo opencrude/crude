@@ -153,8 +153,9 @@ func LookupModelMeta(modelID string, metas map[string]ModelMeta) *ModelMeta {
 
 // LookupPrice finds the best-known price for a model.  It first tries an
 // exact match against the dynamic price map, then tries stripping any
-// "provider/" prefix to match against the base model name.  Models whose
-// IDs contain a known free suffix always return zero pricing.
+// "provider/" prefix to match against the base model name, then falls back
+// to a fuzzy substring match against all known keys.  Models whose IDs
+// contain a known free suffix always return zero pricing.
 func LookupPrice(model string) ModelPrice {
 	lower := strings.ToLower(model)
 
@@ -175,6 +176,19 @@ func LookupPrice(model string) ModelPrice {
 		}
 		dynamicPricesMu.RUnlock()
 	}
+
+	// Fuzzy fallback: if no exact match, check whether any key in
+	// dynamicPrices contains the model ID as a substring (case-insensitive).
+	// This handles models like "glm-5.1" matching "zhipu/glm-5.1" from
+	// models.dev, or "claude-3.5-sonnet" matching "anthropic/claude-3.5-sonnet".
+	dynamicPricesMu.RLock()
+	for key, price := range dynamicPrices {
+		if strings.Contains(key, lower) || strings.Contains(lower, key) {
+			dynamicPricesMu.RUnlock()
+			return price
+		}
+	}
+	dynamicPricesMu.RUnlock()
 
 	// Free variant suffixes.
 	for _, prefix := range knownFreePrefixes {

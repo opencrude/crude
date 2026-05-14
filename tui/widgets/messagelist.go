@@ -463,8 +463,11 @@ func (ml *MessageList) SetStreaming(s bool) {
 
 func (ml *MessageList) EndStreamingCursor() {
 	ml.streaming = false
-	for i, msg := range ml.messages {
-		if msg.Role == types.RoleAssistant {
+	// Invalidate the LAST assistant message — that's the one whose
+	// item.Rendered buffer still contains the cursor block (█).
+	// Iterating backward matches isStreamingCursor's isLastMessage check.
+	for i := len(ml.messages) - 1; i >= 0; i-- {
+		if ml.messages[i].Role == types.RoleAssistant {
 			ml.vl.InvalidateItem(ml.itemID(i))
 			break
 		}
