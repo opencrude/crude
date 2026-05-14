@@ -28,12 +28,17 @@ type FunctionCall struct {
 	Arguments string `json:"arguments"`
 }
 
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 type ChatRequest struct {
-	Model      string       `json:"model"`
-	Messages   []ChatMessage `json:"messages"`
-	Tools      []ToolDef    `json:"tools,omitempty"`
-	ToolChoice any          `json:"tool_choice,omitempty"`
-	Stream     bool         `json:"stream"`
+	Model        string        `json:"model"`
+	Messages     []ChatMessage `json:"messages"`
+	Tools        []ToolDef     `json:"tools,omitempty"`
+	ToolChoice   any           `json:"tool_choice,omitempty"`
+	Stream       bool          `json:"stream"`
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
 }
 
 type ChatResponse struct {

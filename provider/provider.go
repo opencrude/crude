@@ -185,6 +185,13 @@ var Presets = []Preset{
 		StandardID: "openai",
 	},
 	{
+		ID:         "wafer",
+		Name:       "Wafer AI",
+		BaseURL:    "https://pass.wafer.ai/v1",
+		HelpText:   "Fast open-source models: Qwen3.5-397B-A17B, GLM-5.1. wafer.ai/pass",
+		StandardID: "openai",
+	},
+	{
 		ID:         "custom",
 		Name:       "Custom",
 		BaseURL:    "",

@@ -71,6 +71,10 @@ type Session struct {
 	sessionStart time.Time
 	knowledgeDir string
 	yolo         bool
+
+	// Token tracking and cost accumulation — real counts from API
+	cost   *CostAccumulator
+	tokens *TokenTracker
 }
 
 func New(cfg *Config, homeDir string) (*Session, error) {
@@ -136,6 +140,8 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		asyncMgr:     fileio.NewAsyncCommandManager(),
 		sessionID:    sessionID,
 		sessionStart: time.Now(),
+		cost:         NewCostAccumulator(),
+		tokens:       NewTokenTracker(),
 	}, nil
 }
 
@@ -150,11 +156,40 @@ func (s *Session) Close() {
 		s.editor.Close()
 	}
 	hasMsgs := s.HasMessages()
+
+	// Persist session cost to JSON file before closing the logger.
+	// This allows post-session cost analysis and future session resumption.
+	if hasMsgs && s.cost != nil {
+		s.persistCostSnapshot()
+	}
+
 	s.logger.Info("session.end", "duration_ms", 0)
 	s.logger.Close()
 	if !hasMsgs {
 		os.Remove(s.logger.Path())
 	}
+}
+
+// persistCostSnapshot writes the session's cost snapshot to a JSON file
+// alongside the session log. The file is named <session-id>-cost.json
+// and contains total token usage, cost, and per-model breakdown.
+func (s *Session) persistCostSnapshot() {
+	snap := s.cost.Snapshot()
+	snapData, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		s.logger.Error("cost.persist_error", "error", err.Error())
+		return
+	}
+
+	logPath := s.logger.Path()
+	costPath := logPath[:len(logPath)-len(".log")] + "-cost.json"
+	if err := os.WriteFile(costPath, snapData, 0o644); err != nil {
+		s.logger.Error("cost.persist_error", "error", err.Error())
+		return
+	}
+
+	s.logger.Info("cost.persisted", "path", costPath, "total_cost", snap.TotalCost,
+		"prompt_tokens", snap.TotalPromptTokens, "completion_tokens", snap.TotalCompletionTokens)
 }
 
 func (c *Config) GetActiveProviderConfig() ProviderConfig {
@@ -798,6 +833,42 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				return
 			}
 			tuiInst.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
+			if evt.Type == "usage" {
+				// Record real token counts into session's cost accumulator
+				// and token tracker. Extract from the event data.
+				model := activeCfg.Model
+				var promptT, compT, cachedT int
+				isEstimated := false
+				switch d := evt.Data.(type) {
+				case map[string]int:
+					promptT = d["prompt"]
+					compT = d["completion"]
+					cachedT = d["prompt_cached"]
+				case map[string]any:
+					if v, ok := d["prompt"].(float64); ok {
+						promptT = int(v)
+					}
+					if v, ok := d["completion"].(float64); ok {
+						compT = int(v)
+					}
+					if v, ok := d["prompt_cached"].(float64); ok {
+						cachedT = int(v)
+					}
+					if v, ok := d["estimated"].(bool); ok {
+						isEstimated = v
+					}
+				}
+				if promptT > 0 || compT > 0 {
+					s.cost.RecordUsage(model, promptT, compT, cachedT)
+					// Only record real token counts in the tracker —
+					// estimated counts would pollute truncation decisions.
+					if !isEstimated {
+						s.tokens.Record(promptT, compT)
+					}
+					s.logger.Info("usage.tokens", "model", model, "prompt", promptT, "completion", compT, "cached", cachedT, "session_cost", s.cost.Snapshot().TotalCost, "estimated", isEstimated)
+				}
+			}
+
 			if evt.Type == "done" {
 				if content, ok := evt.Data.(string); ok {
 					finalContent = content
@@ -835,7 +906,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		}
 		persisted = sanitizeMessages(persisted)
 		ctxWindow := provider.LookupContextWindow(activeCfg.Model)
-		persisted = truncateMessages(persisted, ctxWindow)
+		persisted = truncateMessages(persisted, ctxWindow, activeCfg.Model)
 		if len(persisted) > 0 {
 			s.msgs = persisted
 		} else if finalContent != "" {
@@ -1020,25 +1091,29 @@ func allCommTools(toolCalls []provider.ToolCall) bool {
 	return true
 }
 
-func truncateMessages(msgs []provider.ChatMessage, ctxWindow int) []provider.ChatMessage {
+func truncateMessages(msgs []provider.ChatMessage, ctxWindow int, model string) []provider.ChatMessage {
 	if ctxWindow <= 0 || len(msgs) <= 2 {
 		return msgs
 	}
-	charBudget := int(float64(ctxWindow)*0.75) * 4
+
+	// Token budget: use 75% of the context window for messages.
+	// The remaining 25% is reserved for the system prompt, tool schemas,
+	// output generation, and a safety margin.
+	tokenBudget := int(float64(ctxWindow) * 0.75)
+
+	// Walk messages from newest to oldest, accumulating estimated token counts.
+	// When we exceed the budget, truncate older messages.
 	used := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
-		c := len(msgs[i].Content)
-		for _, tc := range msgs[i].ToolCalls {
-			c += len(tc.Function.Arguments)
-		}
-		if used+c > charBudget && i > 0 {
+		msgTokens := provider.EstimateMessageTokens(msgs[i], model)
+		if used+msgTokens > tokenBudget && i > 0 {
 			summary := provider.ChatMessage{
 				Role:    "user",
-				Content: fmt.Sprintf("[Earlier conversation truncated — %d messages omitted]", i),
+				Content: fmt.Sprintf("[Earlier conversation truncated — %d messages omitted, ~%d tokens saved]", i, used),
 			}
 			return append([]provider.ChatMessage{summary}, msgs[i+1:]...)
 		}
-		used += c
+		used += msgTokens
 	}
 	return msgs
 }

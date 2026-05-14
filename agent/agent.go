@@ -324,14 +324,29 @@ func (a *Agent) Run(
 		totalCompletionTokens += completionTokens
 		lastPromptTokens = promptTokens
 
-		if promptTokens > 0 || completionTokens > 0 {
-			emit(AgentEvent{Type: "usage", Data: map[string]int{
-				"prompt":         promptTokens,
-				"completion":     completionTokens,
-				"prompt_cached":  promptTokensCached,
-				"context_window": ctxWindow,
-			}})
+		// Always emit a usage event so the TUI status bar updates.
+		// When the API doesn't return token counts (some OpenAI-compatible
+		// providers omit usage even with stream_options), estimate tokens
+		// from the message content and mark them as estimated.
+		estimated := false
+		if promptTokens == 0 && completionTokens == 0 {
+			promptTokens = provider.EstimateMessagesTotal(msgs, a.Model)
+			completionTokens = provider.EstimateTokens(content, a.Model)
+			estimated = true
 		}
+
+		// Compute cost for this turn using model pricing
+		price := provider.LookupPrice(a.Model)
+		turnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)
+		emit(AgentEvent{Type: "usage", Data: map[string]any{
+			"prompt":         promptTokens,
+			"completion":     completionTokens,
+			"prompt_cached":  promptTokensCached,
+			"context_window": ctxWindow,
+			"cost":           turnCost,
+			"model":          a.Model,
+			"estimated":      estimated,
+		}})
 
 		accumulatedText = content
 		toolCalls = streamToolCalls

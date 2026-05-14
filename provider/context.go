@@ -68,6 +68,10 @@ var contextHints = []struct {
 	{"tencent/hy3", 256000},
 	{"tencent/hunyuan", 131072},
 
+	// Wafer AI — fast open-source models
+	{"qwen3.5-397b-a17b", 262144},
+	{"glm-5.1", 202752},
+
 	// Zhipu / GLM
 	{"glm-5", 131072},
 	{"glm-4", 131072},
