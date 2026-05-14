@@ -6,11 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"crude/tui/rendering"
 	"crude/tui/widgets"
 )
-
-const noPadMarker = "\x00"
 
 func (m *App) View() string {
 	if m.width == 0 || m.height == 0 {
@@ -60,43 +57,41 @@ func (m *App) View() string {
 	}
 	m.chatAreaHeight = chatH
 
-	chatLines := m.renderChatArea()
-	m.chat.SetCachedAllLines(chatLines)
-	m.chat.SetChatAreaBounds(3, chatH)
-	total := len(chatLines)
+	activeTyping := (m.streaming || m.thinking) && !m.lastTokenTime.IsZero() && time.Since(m.lastTokenTime) < 400*time.Millisecond
+	m.msgList.SetStreaming(m.streaming)
+	m.msgList.SetSpinFrame(m.spinFrame)
+	m.msgList.SetActiveTyping(activeTyping)
+	m.msgList.SetPhase(m.statusbar.Phase())
+	m.msgList.SetSize(m.width, m.height)
+	m.msgList.SetChatAreaBounds(3, chatH)
 
-	m.chat.ClampOffset(total - chatH)
+	chatVisible := m.msgList.Render(innerW)
 
-	endIdx := total - m.chat.ChatOffset()
-	startIdx := endIdx - chatH
-	if startIdx < 0 {
-		startIdx = 0
-	}
-	if endIdx > total {
-		endIdx = total
-	}
-	visible := chatLines[startIdx:endIdx]
-
-	if m.chat.HasActiveSelection() {
-		visCopy := make([]string, len(visible))
-		copy(visCopy, visible)
-		visible = visCopy
-		sLine, sCol, eLine, eCol := m.chat.SelectionRange()
-		for i := range visible {
-			allIdx := startIdx + i
-			if allIdx >= sLine && allIdx <= eLine {
-				lineStartCol := 0
-				lineEndCol := 1 << 30
-				if allIdx == sLine {
-					lineStartCol = sCol
-				}
-				if allIdx == eLine {
-					lineEndCol = eCol
-				}
-				visible[i] = rendering.ApplySelection(visible[i], lineStartCol, lineEndCol)
-			}
+	var overlayLines []string
+	if m.Mode == ModeSettings {
+		settingsView := m.settings.View(m.spinFrame)
+		for _, sl := range strings.Split(settingsView, "\n") {
+			overlayLines = append(overlayLines, sl)
+		}
+	} else if m.Mode == ModeConfirm {
+		m.confirm.SetWidth(m.width)
+		confirmView := m.confirm.View(m.spinFrame)
+		for _, cl := range strings.Split(confirmView, "\n") {
+			overlayLines = append(overlayLines, cl)
+		}
+	} else if m.Mode == ModeYolo {
+		m.yoloDlg.SetWidth(m.width)
+		yoloView := m.yoloDlg.View()
+		for _, yl := range strings.Split(yoloView, "\n") {
+			overlayLines = append(overlayLines, yl)
 		}
 	}
+
+	chatVisible = m.appendOverlay(chatVisible, overlayLines, chatH)
+
+	scrollbarView := m.msgList.ScrollbarView()
+	scrollbarW := m.msgList.ScrollbarWidth()
+	scrollbarLines := strings.Split(scrollbarView, "\n")
 
 	lines := make([]string, 0, m.height)
 
@@ -106,16 +101,22 @@ func (m *App) View() string {
 	lines = append(lines, pad+headerLine+pad)
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
-	emptyTop := chatH - len(visible)
-	for i := 0; i < emptyTop; i++ {
-		lines = append(lines, "")
-	}
-	for _, line := range visible {
-		if strings.HasPrefix(line, noPadMarker) {
-			lines = append(lines, strings.TrimPrefix(line, noPadMarker))
+	for i, line := range chatVisible {
+		if scrollbarW > 0 && i < len(scrollbarLines) && scrollbarLines[i] != "" {
+			visW := lipgloss.Width(line)
+			padRight := m.width - m.theme.Spacing.PadLR - scrollbarW - visW
+			if padRight < 0 {
+				padRight = 0
+			}
+			line = pad + line + strings.Repeat(" ", padRight) + scrollbarLines[i] + pad
 		} else {
-			lines = append(lines, pad+line)
+			rightPad := m.width - m.theme.Spacing.PadLR - lipgloss.Width(line)
+			if rightPad < 0 {
+				rightPad = 0
+			}
+			line = pad + line + strings.Repeat(" ", rightPad) + pad
 		}
+		lines = append(lines, line)
 	}
 
 	if asyncLineCount > 0 {
@@ -148,35 +149,28 @@ func (m *App) View() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *App) renderChatArea() []string {
-	if !m.chat.AllLinesDirty() && !m.streaming && m.Mode == ModeChat && len(m.chat.CachedAllLines()) > 0 {
-		return m.chat.CachedAllLines()
+func (m *App) appendOverlay(chatVisible []string, overlayLines []string, chatH int) []string {
+	if len(overlayLines) == 0 {
+		return chatVisible
 	}
 
-	activeTyping := m.streaming && !m.lastTokenTime.IsZero() && time.Since(m.lastTokenTime) < 400*time.Millisecond
-	all := widgets.RenderAllMessages(m.chat.Messages(), m.theme, m.width, m.spinFrame, m.chat.MdRenderer(), m.modelName, m.streaming, m.height, m.username, m.statusbar.Phase(), activeTyping)
+	result := make([]string, 0, chatH)
+	overlayStart := chatH - len(overlayLines)
+	if overlayStart < 0 {
+		overlayStart = 0
+	}
 
-	if m.Mode == ModeSettings {
-		settingsView := m.settings.View(m.spinFrame)
-		for _, sl := range strings.Split(settingsView, "\n") {
-			all = append(all, noPadMarker+sl)
-		}
-	} else if m.Mode == ModeConfirm {
-		m.confirm.SetWidth(m.width)
-		confirmView := m.confirm.View(m.spinFrame)
-		for _, cl := range strings.Split(confirmView, "\n") {
-			all = append(all, noPadMarker+cl)
-		}
-	} else if m.Mode == ModeYolo {
-		m.yoloDlg.SetWidth(m.width)
-		yoloView := m.yoloDlg.View()
-		for _, yl := range strings.Split(yoloView, "\n") {
-			all = append(all, noPadMarker+yl)
+	for i := 0; i < chatH; i++ {
+		if i >= overlayStart && (i-overlayStart) < len(overlayLines) {
+			result = append(result, overlayLines[i-overlayStart])
+		} else if i < len(chatVisible) {
+			result = append(result, chatVisible[i])
+		} else {
+			result = append(result, "")
 		}
 	}
 
-	m.chat.SetAllLinesDirty(false)
-	return all
+	return result
 }
 
 func (m *App) syncFormHint() {

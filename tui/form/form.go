@@ -107,6 +107,16 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 		return m, cmd, FormActionExpand
 	}
 
+	if action == FormItemActionAdvance {
+		if m.focused < len(m.items)-1 {
+			m.focused++
+		} else if m.hasButtons {
+			m.focusZone = 1
+			m.focusedBtn = 0
+		}
+		return m, cmd, FormActionNone
+	}
+
 	if handled {
 		return m, cmd, FormActionNone
 	}
@@ -247,7 +257,9 @@ func (m Form) View(width int, spinFrame int) string {
 		if si, ok := m.items[m.expanded].(*SelectItem); ok {
 			breadcrumb := m.title + " ❯ " + m.items[m.expanded].Label()
 			si.List().SetTitle(breadcrumb)
-			si.List().SetSelectedID(si.Value())
+			if si.List().SelectedID() != si.Value() {
+				si.List().SetSelectedID(si.Value())
+			}
 			si.List().SetSpinFrame(spinFrame)
 			b.WriteString(si.List().View(width))
 		}
@@ -256,17 +268,16 @@ func (m Form) View(width int, spinFrame int) string {
 
 	dim := m.theme.Styles.DimLabel
 	accent := m.theme.Colors.Accent
-	indent := strings.Repeat(" ", m.theme.Spacing.FormIndent)
 
-	sepWidth := width - m.theme.Spacing.FormIndent*2
+	sepWidth := width
 	if sepWidth < 20 {
 		sepWidth = 20
 	}
 
 	titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
-	b.WriteString(indent + titleStyle.Render(m.title))
+	b.WriteString(titleStyle.Render(m.title))
 	b.WriteString("\n")
-	b.WriteString(dim.Render(indent + strings.Repeat("─", sepWidth)))
+	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)))
 	b.WriteString("\n")
 
 	labelWidth := m.calcLabelWidth()
@@ -293,7 +304,7 @@ func (m Form) View(width int, spinFrame int) string {
 				btnStrs = append(btnStrs, btnDim.Render("  [ "+btn.Label+" ]"))
 			}
 		}
-		b.WriteString(indent + strings.Join(btnStrs, "  "))
+		b.WriteString(strings.Join(btnStrs, "  "))
 		b.WriteString("\n")
 	}
 

@@ -227,9 +227,7 @@ func (m List) viewPanel(width int) string {
 	dim := m.theme.Styles.DimLabel
 	fg := m.theme.Colors.Fg
 	muted := m.theme.Colors.Muted
-	pad := m.theme.Spacing.PadLR
-	indent := strings.Repeat(" ", pad)
-	sepWidth := width - pad*2
+	sepWidth := width
 	if sepWidth < 20 {
 		sepWidth = 20
 	}
@@ -238,13 +236,13 @@ func (m List) viewPanel(width int) string {
 
 	if m.title != "" {
 		titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
-		b.WriteString(indent + titleStyle.Render(m.title))
+		b.WriteString(titleStyle.Render(m.title))
 		b.WriteString("\n")
-		b.WriteString(dim.Render(indent + strings.Repeat("─", sepWidth)) + "\n")
+		b.WriteString(dim.Render(strings.Repeat("─", sepWidth)) + "\n")
 	}
 
 	if m.fetchError != "" {
-		b.WriteString(indent + m.theme.Styles.ErrorText.Render("✗ "+m.fetchError) + "\n")
+		b.WriteString(m.theme.Styles.ErrorText.Render("✗ "+m.fetchError) + "\n")
 	} else if m.config.ShowFilter {
 		filterPrompt := lipgloss.NewStyle().Foreground(muted).Render("/ ")
 		searchText := lipgloss.NewStyle().Foreground(fg).Render(m.filter)
@@ -252,21 +250,21 @@ func (m List) viewPanel(width int) string {
 		if BlinkOn(m.spinFrame) {
 			cursor = lipgloss.NewStyle().Foreground(accent).Render("█")
 		}
-		b.WriteString(indent + filterPrompt + searchText + cursor + "\n")
+		b.WriteString(filterPrompt + searchText + cursor + "\n")
 	}
 
-	b.WriteString(dim.Render(indent + strings.Repeat("─", sepWidth)) + "\n")
+	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)) + "\n")
 
 	if m.fetching {
 		spinner := SpinnerPhase(m.spinFrame)
 		spinnerStyle := lipgloss.NewStyle().Foreground(accent)
-		b.WriteString(indent + spinnerStyle.Render(spinner) + " " + dim.Render("waiting for models...") + "\n")
+		b.WriteString(spinnerStyle.Render(spinner) + " " + dim.Render("waiting for models...") + "\n")
 	} else if len(m.filtered) == 0 {
 		if m.filter != "" {
-			b.WriteString(dim.Render(indent + "no matches — press enter to use typed value") + "\n")
+			b.WriteString(dim.Render("no matches — press enter to use typed value") + "\n")
 		} else if m.fetchError != "" {
 		} else {
-			b.WriteString(dim.Render(indent + "no models available") + "\n")
+			b.WriteString(dim.Render("no models available") + "\n")
 		}
 	} else {
 		start := m.offset
@@ -275,7 +273,7 @@ func (m List) viewPanel(width int) string {
 			end = len(m.filtered)
 		}
 
-		lineWidth := width - pad*2 - 2
+		lineWidth := width - 2
 
 		maxLabelW := 0
 		maxDetailW := 0
@@ -317,19 +315,14 @@ func (m List) viewPanel(width int) string {
 			}
 
 			isCursor := i == m.idx
-			isSelected := m.selectedID != "" && item.ID == m.selectedID
 
 			if isCursor {
 				marker := lipgloss.NewStyle().Foreground(accent).Render("❯")
 				labelRendered := lipgloss.NewStyle().Foreground(fg).Bold(true).Render(label)
-				b.WriteString(indent + marker + " " + labelRendered + detailPart)
-			} else if isSelected {
-				marker := lipgloss.NewStyle().Foreground(muted).Render("❯")
-				labelRendered := lipgloss.NewStyle().Foreground(fg).Render(label)
-				b.WriteString(indent + marker + " " + labelRendered + detailPart)
+				b.WriteString(marker + " " + labelRendered + detailPart)
 			} else {
 				labelRendered := lipgloss.NewStyle().Foreground(fg).Render(label)
-				b.WriteString(indent + "  " + labelRendered + detailPart)
+				b.WriteString("  " + labelRendered + detailPart)
 			}
 			b.WriteString("\n")
 		}
@@ -394,6 +387,15 @@ func (m *List) SetSpinFrame(frame int) {
 
 func (m *List) SetSelectedID(id string) {
 	m.selectedID = id
+	if id != "" {
+		for i, item := range m.filtered {
+			if item.ID == id {
+				m.idx = i
+				m.clampOffset()
+				return
+			}
+		}
+	}
 }
 
 func (m List) SelectedID() string {
@@ -460,6 +462,16 @@ func (m *List) applyFilter() {
 		} else {
 			if strings.Contains(strings.ToLower(item.ID), s) || strings.Contains(strings.ToLower(item.Label), s) {
 				m.filtered = append(m.filtered, item)
+			}
+		}
+	}
+	// Restore cursor to the selected item if it's in the filtered results
+	if m.selectedID != "" {
+		for i, item := range m.filtered {
+			if item.ID == m.selectedID {
+				m.idx = i
+				m.clampOffset()
+				break
 			}
 		}
 	}

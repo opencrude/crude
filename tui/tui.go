@@ -21,7 +21,7 @@ type TUI struct {
 
 	OnExitMessage func()
 
-	OnSettingsSave func(Settings)
+	OnSettingsSave func(Settings) error
 
 	OnConfirmResult func(ConfirmResult)
 
@@ -50,10 +50,11 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	}
 	global = t
 
-	onSave := func(s Settings) {
+	onSave := func(s Settings) error {
 		if t.OnSettingsSave != nil {
-			t.OnSettingsSave(s)
+			return t.OnSettingsSave(s)
 		}
+		return nil
 	}
 
 	fetchFn := func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd {

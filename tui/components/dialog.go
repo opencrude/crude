@@ -33,17 +33,15 @@ func (m Dialog) View() string {
 	dim := m.theme.Styles.DimLabel
 	warn := m.theme.Styles.ErrorText
 
-	indent := strings.Repeat(" ", m.theme.Spacing.FormTitlePad)
-
 	sepWidth := m.width - 3
 	if sepWidth < 20 {
 		sepWidth = 20
 	}
 
 	b.WriteString("\n")
-	b.WriteString(indent + warn.Render(fmt.Sprintf("%s  %s", m.icon, m.title)))
+	b.WriteString(warn.Render(fmt.Sprintf("%s  %s", m.icon, m.title)))
 	b.WriteString("\n")
-	b.WriteString(dim.Render(indent + strings.Repeat("─", sepWidth)))
+	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)))
 	b.WriteString("\n")
 
 	if m.body != "" {
@@ -54,7 +52,7 @@ func (m Dialog) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat(" ", m.theme.Spacing.FormIndent) + m.buttons.View())
+	b.WriteString(m.buttons.View())
 	b.WriteString("\n")
 
 	return b.String()

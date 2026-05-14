@@ -29,12 +29,12 @@ type App struct {
 	width  int
 	height int
 
-	chat      widgets.ChatModel
-	input     input.Model
-	statusbar *widgets.StatusBar
-	settings  settings.Model
-	confirm   widgets.ConfirmDialog
-	yoloDlg   widgets.YoloDialog
+	msgList    *widgets.MessageList
+	input      input.Model
+	statusbar  *widgets.StatusBar
+	settings   settings.Model
+	confirm    widgets.ConfirmDialog
+	yoloDlg    widgets.YoloDialog
 
 	thinking  bool
 	blocking  bool
@@ -46,7 +46,7 @@ type App struct {
 
 	OnQuit             func()
 	OnExitMessage      func()
-	OnSettingsSave     func(ttypes.Settings)
+	OnSettingsSave     func(ttypes.Settings) error
 	OnConfirmResult    func(ttypes.ConfirmResult)
 	OnYoloCmd          func(bool)
 	OnUndoCmd          func(string)
@@ -83,14 +83,17 @@ type (
 	agentMsg         = ttypes.AgentMsg
 	openSettingsMsg  = ttypes.OpenSettingsMsg
 	fetchModelsMsg   = ttypes.FetchModelsMsg
-	saveSettingsMsg  = ttypes.SaveSettingsMsg
-	updateModelMsg   = ttypes.UpdateModelMsg
-	selectionTickMsg = ttypes.SelectionTickMsg
+	saveSettingsMsg       = ttypes.SaveSettingsMsg
+	updateModelMsg        = ttypes.UpdateModelMsg
+	selectionTickMsg      = ttypes.SelectionTickMsg
+	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings), fetchFn func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd, getProviderConfigFn func(providerID string) ttypes.ProviderConfig) *App {
+func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig) *App {
 	th := theme.DefaultDark()
-	cm := widgets.NewChatModel(th)
+	ml := widgets.NewMessageList(th)
+	ml.SetModelName(modelName)
+	ml.SetUsername(username)
 	im := input.NewModel(th)
 	sb := widgets.NewStatusBar(th)
 	sm := settings.NewModel(th, initial, nil, getProviderConfigFn, fetchFn)
@@ -99,7 +102,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, cancelCh c
 
 	return &App{
 		theme:          th,
-		chat:           cm,
+		msgList:        ml,
 		input:          im,
 		statusbar:      sb,
 		settings:       sm,
@@ -112,6 +115,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, cancelCh c
 		startTime:      time.Now(),
 		lastCancelTime: time.Now(),
 		lastSettings:   initial,
+		OnSettingsSave: onSave,
 	}
 }
 
@@ -127,7 +131,7 @@ func (m *App) SetHistory(history []string) {
 
 func (m *App) setMode(newMode Mode) {
 	m.Mode = newMode
-	m.chat.SetAllLinesDirty(true)
+	m.msgList.InvalidateAllMessages()
 	switch newMode {
 	case ModeSettings:
 		m.input.ClearInput()

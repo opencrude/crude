@@ -7,6 +7,7 @@ import (
 
 	"crude/tui/input"
 	"crude/tui/rendering"
+	"crude/tui/scrollbar"
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
 )
@@ -18,14 +19,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.chat.SetSize(msg.Width, msg.Height)
+		m.msgList.SetSize(msg.Width, msg.Height)
 		m.input.SetWidth(msg.Width)
 		m.statusbar.SetWidth(msg.Width)
 		return m, nil
 
 	case ttypes.TickMsg:
 		if m.tokenBuf != "" {
-			m.chat.AppendToken(m.tokenBuf)
+			m.msgList.AppendToken(m.tokenBuf)
 			m.tokenBuf = ""
 			m.lastTokenTime = time.Now()
 		}
@@ -33,15 +34,15 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusbar.SetSpinFrame(m.spinFrame)
 		m.input.SetSpinFrame(m.spinFrame)
 		m.statusbar.ClearExpired()
-		m.chat.InvalidateCache()
-		if m.streaming {
+		m.msgList.InvalidateCache()
+		if m.streaming || m.thinking {
 			return m, streamingTickCmd()
 		}
 		return m, tickCmd()
 
 	case tea.KeyMsg:
-		if m.chat.HasActiveSelection() {
-			m.chat.ClearSelection()
+		if m.msgList.HasActiveSelection() {
+			m.msgList.ClearSelection()
 			return m, nil
 		}
 		if msg.Type == tea.KeyCtrlC {
@@ -70,25 +71,28 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.setMode(ModeSettings)
 				}
 			} else {
-				updatedChat, chatCmd := m.chat.Update(msg)
-				m.chat = updatedChat
-				if chatCmd != nil {
-					cmds = append(cmds, chatCmd)
+				_, cmd := m.msgList.Update(msg)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
 				}
 			}
 		} else {
-			updatedChat, chatCmd := m.chat.Update(msg)
-			m.chat = updatedChat
-			if chatCmd != nil {
-				cmds = append(cmds, chatCmd)
+			_, cmd := m.msgList.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 
 	case ttypes.SelectionTickMsg:
-		updatedChat, chatCmd := m.chat.Update(msg)
-		m.chat = updatedChat
-		if chatCmd != nil {
-			cmds = append(cmds, chatCmd)
+		_, cmd := m.msgList.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+	case scrollbar.FadeTickMsg, scrollbar.HideTickMsg:
+		cmd := m.msgList.HandleScrollbarTick(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
 
@@ -99,21 +103,27 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		switch e := evt.(type) {
-		case settings.SaveEvent:
-			s := e.Settings
+	switch e := evt.(type) {
+	case settings.SaveEvent:
+		s := e.Settings
+		if m.OnSettingsSave != nil {
+			m.statusbar.SetInfo("saving...")
+			onSave := m.OnSettingsSave
+			cmds = append(cmds, func() tea.Msg {
+				err := onSave(s)
+				return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
+			})
+		} else {
 			m.modelName = s.Model
 			m.lastSettings = s
-			if m.OnSettingsSave != nil {
-				m.OnSettingsSave(s)
-			}
-		m.setMode(ModeChat)
-		m.chat.InvalidateCache()
+			m.setMode(ModeChat)
+			m.msgList.InvalidateCache()
+		}
 	case settings.CancelEvent:
 		m.settings.RestoreSnapshot()
 		m.setMode(ModeChat)
-		m.chat.InvalidateCache()
-		}
+		m.msgList.InvalidateCache()
+	}
 
 	case ModeConfirm:
 		m.statusbar.SetConfirming(true)
@@ -133,7 +143,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case ttypes.ConfirmDeny:
 				resultMsg = "✗ Denied"
 			}
-			m.chat.AppendMessage(ttypes.ChatMessage{
+			m.msgList.AppendMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: resultMsg,
 				Time:    time.Now(),
@@ -148,19 +158,17 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			m.statusbar.SetConfirming(false)
 			m.yolo = enabled
+			var content string
 			if enabled {
-				m.chat.AppendMessage(ttypes.ChatMessage{
-					Role:    ttypes.RoleAssistant,
-					Content: "⚠ YOLO mode ACTIVE — all safety checks disabled. Use /yolo again to restore.",
-					Time:    time.Now(),
-				})
+				content = "⚠ YOLO mode ACTIVE — all safety checks disabled. Use /yolo again to restore."
 			} else {
-				m.chat.AppendMessage(ttypes.ChatMessage{
-					Role:    ttypes.RoleAssistant,
-					Content: "YOLO mode cancelled. Safety checks remain active.",
-					Time:    time.Now(),
-				})
+				content = "YOLO mode cancelled. Safety checks remain active."
 			}
+			m.msgList.AppendMessage(ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
+				Content: content,
+				Time:    time.Now(),
+			})
 			if m.OnYoloCmd != nil {
 				m.OnYoloCmd(enabled)
 			}
@@ -172,10 +180,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if keyMsg, ok := msg.(tea.KeyMsg); ok {
 				switch keyMsg.Type {
 				case tea.KeyHome, tea.KeyEnd, tea.KeyCtrlHome, tea.KeyCtrlEnd:
-					updatedChat, chatCmd := m.chat.Update(keyMsg)
-					m.chat = updatedChat
-					if chatCmd != nil {
-						cmds = append(cmds, chatCmd)
+					_, cmd := m.msgList.Update(keyMsg)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
 					}
 					return m, tea.Batch(cmds...)
 				}
@@ -200,10 +207,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if _, ok := msg.(tea.KeyMsg); ok {
-			updatedChat, chatCmd := m.chat.Update(msg)
-			m.chat = updatedChat
-			if chatCmd != nil {
-				cmds = append(cmds, chatCmd)
+			_, cmd := m.msgList.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 	}
@@ -217,7 +223,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusbar.SetError(string(msg))
 	case ttypes.UpdateModelMsg:
 		m.modelName = string(msg)
-		m.chat.SetModelName(string(msg))
+		m.msgList.SetModelName(string(msg))
 	case ttypes.OpenSettingsMsg:
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
@@ -229,6 +235,16 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settings.SetModelsError(string(msg), false)
 	case ttypes.OracleModelsErrorMsg:
 		m.settings.SetModelsError(string(msg), true)
+	case ttypes.SettingsSaveResultMsg:
+		if msg.Err != nil {
+			m.statusbar.SetError(msg.Err.Error())
+		} else {
+			m.modelName = msg.Settings.Model
+			m.lastSettings = msg.Settings
+			m.setMode(ModeChat)
+			m.msgList.InvalidateCache()
+			m.statusbar.SetInfo("settings saved")
+		}
 	case rendering.ClipboardCopiedMsg:
 		m.statusbar.SetInfo("copied to clipboard")
 	case rendering.ClipboardErrorMsg:
@@ -238,7 +254,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusbar.SetError(msg.Error)
 		}
 		if msg.Desc != "" {
-			m.chat.AppendMessage(ttypes.ChatMessage{
+			m.msgList.AppendMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: msg.Desc,
 				Time:    time.Now(),

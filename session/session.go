@@ -926,9 +926,9 @@ func settingsToConfig(s tui.Settings, base *Config) *Config {
 		apiKey = s.ProviderAPIKey
 	}
 
-	providers := base.Providers
-	if providers == nil {
-		providers = make(map[string]ProviderConfig)
+	providers := make(map[string]ProviderConfig, len(base.Providers))
+	for k, v := range base.Providers {
+		providers[k] = v
 	}
 	providers[providerID] = ProviderConfig{
 		APIKey:                   apiKey,

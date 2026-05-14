@@ -17,6 +17,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		return nil
 	}
 
+	var cmds []tea.Cmd
 	cmdName := parts[0]
 
 	switch cmdName {
@@ -52,7 +53,12 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.lastSettings.ThinkingEffort = efforts[idx]
 		m.settings.SetFieldValue(5, efforts[idx])
 		if m.OnSettingsSave != nil {
-			go m.OnSettingsSave(m.lastSettings)
+			onSave := m.OnSettingsSave
+			s := m.lastSettings
+			cmds = append(cmds, func() tea.Msg {
+				err := onSave(s)
+				return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
+			})
 		}
 		m.statusbar.SetInfo(fmt.Sprintf("Thinking effort: %s", efforts[idx]))
 	case "/help":
@@ -61,11 +67,11 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		for _, c := range input.AvailableCmds() {
 			b.WriteString(fmt.Sprintf("  %-16s %s\n", "/"+c.Label, c.Desc))
 		}
-		m.chat.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+		m.msgList.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 	case "/yolo":
 		if m.yolo {
 			m.yolo = false
-			m.chat.ScrollToBottom()
+			m.msgList.ScrollToBottom()
 			m.statusbar.SetInfo("YOLO mode disabled. Safety checks restored.")
 			if m.OnYoloCmd != nil {
 				go m.OnYoloCmd(false)
@@ -82,5 +88,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.statusbar.SetError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))
 	}
 
+	if len(cmds) > 0 {
+		return tea.Batch(cmds...)
+	}
 	return nil
 }

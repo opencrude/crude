@@ -45,17 +45,15 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			if text == "" {
 				return m, nil, nil
 			}
-			if strings.HasPrefix(text, "/") {
-				m.appendHistory(text)
-				m.slashActive = false
-				return m, nil, SlashCommandEvent{Command: text}
-			}
 			m.appendHistory(text)
 			m.input.Clear()
 			m.slashActive = false
 			m.histIdx = -1
 			m.histDraft = ""
 			m.histPrefix = ""
+			if strings.HasPrefix(text, "/") {
+				return m, nil, SlashCommandEvent{Command: text}
+			}
 			return m, nil, SubmitEvent{Text: text}
 
 		case tea.KeyUp:
@@ -135,15 +133,24 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		m.slashList, _ = m.slashList.Update(msg)
 		if m.slashList.Action() == components.ListActionSelect {
 			if item, ok := m.slashList.Selected(); ok {
-				m.input.SetValue("/" + item.ID + " ")
+				cmd := "/" + item.ID
+				m.appendHistory(cmd)
+				m.input.Clear()
 				m.slashActive = false
-				return m, nil, SlashCommandEvent{Command: "/" + item.ID}
+				m.histIdx = -1
+				m.histDraft = ""
+				m.histPrefix = ""
+				return m, nil, SlashCommandEvent{Command: cmd}
 			}
 		}
 		text := strings.TrimSpace(m.input.Value())
 		if text != "" && strings.HasPrefix(text, "/") {
 			m.appendHistory(text)
+			m.input.Clear()
 			m.slashActive = false
+			m.histIdx = -1
+			m.histDraft = ""
+			m.histPrefix = ""
 			return m, nil, SlashCommandEvent{Command: text}
 		}
 		m.slashActive = false
@@ -198,42 +205,30 @@ func (m Model) handleMouse(msg tea.MouseMsg, chatAreaHeight int, showHint bool) 
 	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
 		pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
 		if ok {
-			m.inputSelecting = true
-			m.inputSelAnchor = pos
-			m.inputSelEnd = pos
+			m.input.SetSelection(pos, pos)
 			m.input.SetCursorFlat(pos)
 		} else {
-			m.inputSelecting = false
+			m.input.ClearSelection()
 		}
 
-	case msg.Action == tea.MouseActionMotion && m.inputSelecting:
+	case msg.Action == tea.MouseActionMotion && m.input.IsSelecting():
 		pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
 		if ok {
-			m.inputSelEnd = pos
+			m.input.UpdateSelectionEnd(pos)
 		} else {
 			firstY := m.FirstLineY(chatAreaHeight, showHint, m.thinking, m.input.Len())
 			if msg.Y < firstY {
-				m.inputSelEnd = 0
+				m.input.UpdateSelectionEnd(0)
 			} else {
-				m.inputSelEnd = m.input.Len()
+				m.input.UpdateSelectionEnd(m.input.Len())
 			}
 		}
 
-	case msg.Action == tea.MouseActionRelease && m.inputSelecting:
-		m.inputSelecting = false
-		selStart, selEnd := m.InputSelectionRange()
-		if selStart != selEnd {
-			text := m.input.Value()
-			runes := []rune(text)
-			if selEnd > len(runes) {
-				selEnd = len(runes)
-			}
-			if selStart < selEnd {
-				selected := string(runes[selStart:selEnd])
-				if selected != "" {
-					return m, rendering.CopyToClipboardCmd(selected), nil
-				}
-			}
+	case msg.Action == tea.MouseActionRelease && m.input.IsSelecting():
+		selected := m.input.SelectedText()
+		m.input.ClearSelection()
+		if selected != "" {
+			return m, rendering.CopyToClipboardCmd(selected), nil
 		}
 
 	case msg.Action == tea.MouseActionPress && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown):

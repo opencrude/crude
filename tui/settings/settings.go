@@ -236,10 +236,12 @@ func (m Model) ToSettings() types.Settings {
 }
 
 func (m Model) toSettings() types.Settings {
+	apiKey := m.form.ItemValue(2)
 	return types.Settings{
 		ProviderID:              m.form.ItemValue(0),
 		ProviderURL:             m.form.ItemValue(1),
-		ProviderAPIKey:          m.form.ItemValue(2),
+		ProviderAPIKey:          apiKey,
+		APIKey:                  apiKey,
 		Model:                   m.form.ItemValue(3),
 		OracleModel:             m.form.ItemValue(4),
 		ThinkingEffort:          m.form.ItemValue(5),
@@ -305,6 +307,7 @@ func (m *Model) updateProviderFields(newProvider string) {
 			m.form.SetItemValue(2, savedCfg.APIKey)
 			m.form.SetItemValue(3, savedCfg.Model)
 			m.form.SetItemValue(4, savedCfg.OracleModel)
+			m.form.SetItemValue(5, savedCfg.ThinkingEffort)
 			if savedCfg.ProviderURL == "" {
 				m.form.SetItemValue(1, preset.BaseURL)
 			}
