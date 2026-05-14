@@ -22,6 +22,10 @@ type AgentState struct {
 	ActiveTyping  bool
 
 	ThinkingPaneID string
+
+	// Index of the last blocking question message in the message list,
+	// so it can be updated in-place when the user confirms/denies.
+	blockingMsgIdx int
 }
 
 func NewAgentState(id string, msgList *widgets.MessageList) *AgentState {
@@ -142,6 +146,9 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 
 	case "blocking":
 		return a.handleBlocking(evt, target, thinkTarget, onBlocking, onConfirmReset)
+
+	case "blocking_auto":
+		return a.handleBlockingAuto(evt, target, thinkTarget)
 
 	case "blocking_complete":
 		onConfirmDismiss()

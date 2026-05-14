@@ -168,6 +168,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.OnConfirmResult != nil {
 				m.OnConfirmResult(result)
 			}
+			// Update the existing blocking question message in-place with the result,
+			// instead of appending a separate result message.
 			resultMsg := "✓ Allowed"
 			switch result.Choice {
 			case ttypes.ConfirmAlways:
@@ -175,11 +177,19 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case ttypes.ConfirmDeny:
 				resultMsg = "✗ Denied"
 			}
-			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: resultMsg,
-				Time:    time.Now(),
-			})
+			msgs := m.mainMsgList.Messages()
+			if idx := ma.blockingMsgIdx; idx >= 0 && idx < len(msgs) {
+				msgs[idx].Content = resultMsg
+				msgs[idx].CachedLines = nil
+				m.mainMsgList.InvalidateAllMessages()
+			} else {
+				// Fallback: if index is invalid, append as before
+				m.mainMsgList.AppendMessage(ttypes.ChatMessage{
+					Role:    ttypes.RoleAssistant,
+					Content: resultMsg,
+					Time:    time.Now(),
+				})
+			}
 			m.setMode(ModeChat)
 		}
 
