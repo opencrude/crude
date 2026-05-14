@@ -140,4 +140,9 @@ type OracleModelsListMsg []ModelEntry
 
 type OracleModelsErrorMsg string
 
+type SettingsSaveResultMsg struct {
+	Settings Settings
+	Err      error
+}
+
 type SelectionTickMsg time.Time

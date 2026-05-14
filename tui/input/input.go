@@ -80,9 +80,6 @@ type Model struct {
 	thinking        bool
 	blocking        bool
 	spinFrame       int
-	inputSelecting  bool
-	inputSelAnchor  int
-	inputSelEnd     int
 }
 
 func NewModel(t *theme.Theme) Model {
@@ -231,19 +228,14 @@ func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool
 	return -1, false
 }
 
-func (m Model) InputSelecting() bool { return m.inputSelecting }
+func (m Model) InputSelecting() bool { return m.input.HasActiveSelection() || m.input.IsSelecting() }
 
 func (m Model) InputSelectionRange() (start, end int) {
-	if m.inputSelAnchor <= m.inputSelEnd {
-		return m.inputSelAnchor, m.inputSelEnd
-	}
-	return m.inputSelEnd, m.inputSelAnchor
+	return m.input.SelectionRange()
 }
 
 func (m *Model) ClearInputSelection() {
-	m.inputSelecting = false
-	m.inputSelAnchor = 0
-	m.inputSelEnd = 0
+	m.input.ClearSelection()
 }
 
 func (m Model) Value() string {

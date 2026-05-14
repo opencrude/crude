@@ -208,16 +208,16 @@ func main() {
 		}
 	}
 
-	tuiInst.OnSettingsSave = func(s tui.Settings) {
+	tuiInst.OnSettingsSave = func(s tui.Settings) error {
 		if err := sess.HandleSettingsSave(s); err != nil {
-			tuiInst.SetError(err.Error())
-			return
+			return err
 		}
 		newFC := sessionToFileConfig(sess.Config())
 		if err := saveFileConfig(newFC); err != nil {
-			tuiInst.SetError("Failed to save config: " + err.Error())
+			return fmt.Errorf("Failed to save config: %w", err)
 		}
 		tuiInst.UpdateModelName(sess.ModelName())
+		return nil
 	}
 
 	tuiInst.FetchModelsFn = func(providerID, baseURL, apiKey string) ([]tui.ModelEntry, error) {

@@ -13,7 +13,7 @@ import (
 )
 
 func (m *App) submitInput(text string) tea.Cmd {
-	m.chat.AppendMessage(ttypes.ChatMessage{
+	m.msgList.AppendMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleUser,
 		Content: text,
 		Time:    time.Now(),
@@ -31,7 +31,7 @@ func (m *App) submitInput(text string) tea.Cmd {
 	m.streaming = false
 	m.tokenBuf = ""
 	m.statusbar.SetThinking(true, false, false)
-	m.chat.ScrollToBottom()
+	m.msgList.ScrollToBottom()
 	ch := m.inputCh
 	return func() tea.Msg {
 		select {
@@ -64,22 +64,23 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 	case "thinking":
 		if s, ok := evt.Data.(string); ok && s != "" {
-			m.chat.AppendThinking(s)
+			m.msgList.AppendThinking(s)
 			m.thinking = true
+			m.lastTokenTime = time.Now()
 			m.statusbar.SetThinking(true, false, false)
 		}
 
 	case "stream_token":
 		if s, ok := evt.Data.(string); ok && s != "" {
 			if !m.streaming {
-				m.chat.MarkAllThinkingDone()
+				m.msgList.MarkAllThinkingDone()
 			}
 			m.tokenBuf += s
 			m.streaming = true
 			m.statusbar.SetThinking(true, true, false)
-			msgs := m.chat.Messages()
+			msgs := m.msgList.Messages()
 			if len(msgs) == 0 || msgs[len(msgs)-1].Role != ttypes.RoleAssistant {
-				m.chat.AppendMessage(ttypes.ChatMessage{
+				m.msgList.AppendMessage(ttypes.ChatMessage{
 					Role:    ttypes.RoleAssistant,
 					Content: "",
 					Time:    time.Now(),
@@ -88,6 +89,15 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		}
 
 	case "tool_call_streaming":
+		if m.streaming {
+			if m.tokenBuf != "" {
+				m.msgList.AppendToken(m.tokenBuf)
+				m.tokenBuf = ""
+			}
+			m.msgList.MarkAllThinkingDone()
+			m.msgList.EndStreamingCursor()
+			m.streaming = false
+		}
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
 			name, _ := data["name"].(string)
@@ -143,10 +153,19 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			data["old_lines_int"] = int(oldLines)
 			data["new_lines_int"] = int(newLines)
 
-			m.chat.UpdateToolStreaming(toolID, name, data)
+			m.msgList.UpdateToolStreaming(toolID, name, data)
 		}
 
 	case "tool_call":
+		if m.streaming {
+			if m.tokenBuf != "" {
+				m.msgList.AppendToken(m.tokenBuf)
+				m.tokenBuf = ""
+			}
+			m.msgList.MarkAllThinkingDone()
+			m.msgList.EndStreamingCursor()
+			m.streaming = false
+		}
 		m.statusbar.ClearRetry()
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
@@ -157,7 +176,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			args, _ := data["args"].(string)
 			argsCompact := tools.SummarizeToolArgs(name, args)
 			m.statusbar.SetStatusLine(rendering.ToolLabel(name, argsCompact))
-			m.chat.UpdateToolCall(toolID, name, argsCompact)
+			m.msgList.UpdateToolCall(toolID, name, argsCompact)
 		}
 
 	case "tool_progress":
@@ -173,7 +192,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			linesAdded, _ := data["lines_added"].(float64)
 			linesRemoved, _ := data["lines_removed"].(float64)
 
-			m.chat.UpdateToolProgress(toolID, name, phase, message, path, int(linesAdded), int(linesRemoved))
+			m.msgList.UpdateToolProgress(toolID, name, phase, message, path, int(linesAdded), int(linesRemoved))
 			if phase == "done" {
 				m.statusbar.SetStatusLine(name)
 			} else if phase != "" && message != "" {
@@ -192,7 +211,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			errFlag, _ := data["error"].(string)
 			isError := errFlag == "true"
 			m.statusbar.SetStatusLine(name)
-			m.chat.UpdateToolResult(toolID, name, result, isError)
+			m.msgList.UpdateToolResult(toolID, name, result, isError)
 		}
 
 	case "blocking":
@@ -219,13 +238,13 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		m.blocking = true
 		m.statusbar.SetStatusLine("")
 		m.statusbar.SetThinking(false, false, true)
-		m.chat.MarkAllThinkingDone()
+		m.msgList.MarkAllThinkingDone()
 		if risk != "" {
 			m.confirm.ResetWithDetails(question, operation, tool, target, risk, reason, suggestion)
 		} else {
 			m.confirm.Reset(question, operation, tool, target)
 		}
-		m.chat.AppendMessage(ttypes.ChatMessage{
+		m.msgList.AppendMessage(ttypes.ChatMessage{
 			Role:    ttypes.RoleAssistant,
 			Content: "⚠  " + question,
 			Time:    time.Now(),
@@ -241,12 +260,12 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 	case "done":
 		if m.tokenBuf != "" {
-			m.chat.AppendToken(m.tokenBuf)
+			m.msgList.AppendToken(m.tokenBuf)
 			m.tokenBuf = ""
 		}
 		wasStreaming := m.streaming
-		m.chat.MarkAllThinkingDone()
-		m.chat.ClearStreamingTools()
+		m.msgList.MarkAllThinkingDone()
+		m.msgList.ClearStreamingTools()
 		m.thinking = false
 		m.streaming = false
 		m.statusbar.SetStatusLine("")
@@ -267,39 +286,44 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.statusbar.SetError("⚠ " + reason)
 		}
 
-		for _, msg := range m.chat.Messages() {
+		for _, msg := range m.msgList.Messages() {
 			msg.CachedLines = nil
 			msg.StreamCompletedLines = nil
 			msg.StreamCompletedLen = 0
 		}
+		m.msgList.InvalidateAllMessages()
 
 		if content != "" {
-			msgs := m.chat.Messages()
+			msgs := m.msgList.Messages()
 			merged := false
 			if wasStreaming && len(msgs) > 0 {
 				last := msgs[len(msgs)-1]
 				if last.Role == ttypes.RoleAssistant {
-					last.Content = content
+					if last.Content == "" {
+						last.Content = content
+					}
 					last.CursorLine = -1
 					merged = true
 				}
 			}
 			if !merged {
-				m.chat.AppendMessage(ttypes.ChatMessage{
+				m.msgList.AppendMessage(ttypes.ChatMessage{
 					Role:    ttypes.RoleAssistant,
 					Content: content,
 					Time:    time.Now(),
 				})
+			} else {
+				m.msgList.RebuildItems()
 			}
 		}
-		m.chat.ScrollToBottom()
+		m.msgList.ScrollToBottom()
 
 	case "error":
 		m.tokenBuf = ""
-		m.chat.MarkAllThinkingDone()
-		m.chat.ClearStreamingTools()
+		m.msgList.MarkAllThinkingDone()
+		m.msgList.ClearStreamingTools()
 		errMsg := fmt.Sprintf("%v", evt.Data)
-		m.chat.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
+		m.msgList.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
 		m.statusbar.SetError(errMsg)
 		m.thinking = false
 		m.streaming = false
@@ -307,7 +331,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		m.statusbar.SetThinking(false, false, false)
 		m.statusbar.ClearRetry()
 		m.statusbar.SetStatusLine("")
-		m.chat.ScrollToBottom()
+		m.msgList.ScrollToBottom()
 
 	case "usage":
 		switch d := evt.Data.(type) {

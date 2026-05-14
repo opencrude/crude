@@ -19,6 +19,7 @@ const (
 	FormItemActionNone FormItemAction = iota
 	FormItemActionExpand
 	FormItemActionChanged
+	FormItemActionAdvance
 )
 
 type FormItem interface {
@@ -56,9 +57,9 @@ func (m *TextItem) View(focused bool, spinFrame int, labelWidth int) string {
 		val = strings.Repeat("*", len(m.value))
 	}
 
-	prefix := "    "
+	prefix := "  "
 	if focused {
-		prefix = "  " + accent.Render("❯") + " "
+		prefix = accent.Render("❯") + " "
 	}
 
 	labelFmt := fmt.Sprintf("%%-%ds%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
@@ -171,12 +172,13 @@ func (m *TextItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction,
 	}
 
 	if msg.Type == tea.KeyEnter {
-		if m.masked {
-			m.value = nil
+		if m.masked && len(m.value) > 0 {
+			m.editCursor = len(m.value)
+		} else {
+			m.editCursor = 0
 		}
 		m.editing = true
 		m.lastInputTime = time.Now()
-		m.editCursor = len(m.value)
 		return m, nil, FormItemActionNone, true
 	}
 
@@ -226,9 +228,9 @@ func (m *SelectItem) View(focused bool, spinFrame int, labelWidth int) string {
 	accent := m.theme.Styles.InputPrompt
 	textStyle := m.theme.Styles.InputText
 
-	prefix := "    "
+	prefix := "  "
 	if focused {
-		prefix = "  " + accent.Render("❯") + " "
+		prefix = accent.Render("❯") + " "
 	}
 
 	labelFmt := fmt.Sprintf("%%-%ds%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
@@ -309,9 +311,9 @@ func (m *CycleItem) View(focused bool, spinFrame int, labelWidth int) string {
 	accent := m.theme.Styles.InputPrompt
 	textStyle := m.theme.Styles.InputText
 
-	prefix := "    "
+	prefix := "  "
 	if focused {
-		prefix = "  " + accent.Render("❯") + " "
+		prefix = accent.Render("❯") + " "
 	}
 
 	labelFmt := fmt.Sprintf("%%-%ds%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
@@ -338,6 +340,8 @@ func (m *CycleItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction
 			m.idx = 0
 		}
 		return m, nil, FormItemActionChanged, true
+	case tea.KeyEnter:
+		return m, nil, FormItemActionAdvance, true
 	}
 	return m, nil, FormItemActionNone, false
 }

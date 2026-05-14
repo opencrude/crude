@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,18 +19,18 @@ type SubmitEvent struct {
 }
 
 type TextInput struct {
-	buf        [][]rune
-	curLine    int
-	curCol     int
-	lastVisCol int
-	selecting  bool
-	selAnchor  int
-	selEnd     int
-	prompt     string
-	theme      *theme.Theme
+	buf           [][]rune
+	curLine       int
+	curCol        int
+	lastVisCol    int
+	selecting     bool
+	selAnchor     int
+	selEnd        int
+	prompt        string
+	theme         *theme.Theme
 	lastInputTime time.Time
-	frame      int
-	textWidth  int
+	frame         int
+	textWidth     int
 }
 
 func NewTextInput(t *theme.Theme) TextInput {
@@ -169,10 +170,16 @@ func (m TextInput) View(width int, spinFrame int) string {
 	}
 	m.textWidth = textW
 
+	selStart, selEnd := -1, -1
+	if m.selecting {
+		selStart, selEnd = m.SelectionRange()
+	}
+
 	var allLines []string
 	promptStyle := m.theme.Styles.InputPrompt
 	textStyle := m.theme.Styles.InputText
 
+	flatOffset := 0
 	for li, line := range m.buf {
 		segments := rendering.WordWrap(string(line), textW)
 		for si, seg := range segments {
@@ -184,10 +191,13 @@ func (m TextInput) View(width int, spinFrame int) string {
 			}
 
 			segRunes := []rune(seg)
+			segStart := rendering.FindSegmentStart(line, textW, si)
+			segFlatStart := flatOffset + segStart
+			segFlatEnd := segFlatStart + len(segRunes)
+
 			isCursorSeg := li == m.curLine && si == segmentIdx(m.curLine, m.curCol, m.buf, textW)
 
 			if isCursorSeg {
-				segStart := rendering.FindSegmentStart(line, textW, si)
 				cursorInSeg := m.curCol - segStart
 				if cursorInSeg < 0 {
 					cursorInSeg = 0
@@ -211,19 +221,32 @@ func (m TextInput) View(width int, spinFrame int) string {
 					} else {
 						cursorChar = textStyle.Render(string(segRunes[cursorInSeg]))
 					}
-					allLines = append(allLines, prefix+textStyle.Render(left)+cursorChar+textStyle.Render(right))
+					rendered := textStyle.Render(left) + cursorChar + textStyle.Render(right)
+					if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
+						rendered = m.applySelectionToRendered(rendered, segFlatStart, segFlatEnd, selStart, selEnd)
+					}
+					allLines = append(allLines, prefix+rendered)
 				} else {
 					if cursorSolid {
 						cursorChar = lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("█")
 					} else {
 						cursorChar = BlockCursor(spinFrame, m.theme.Colors.Accent)
 					}
-					allLines = append(allLines, prefix+textStyle.Render(left)+cursorChar)
+					rendered := textStyle.Render(left) + cursorChar
+					if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
+						rendered = m.applySelectionToRendered(rendered, segFlatStart, segFlatEnd, selStart, selEnd)
+					}
+					allLines = append(allLines, prefix+rendered)
 				}
 			} else {
-				allLines = append(allLines, prefix+textStyle.Render(seg))
+				rendered := textStyle.Render(seg)
+				if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
+					rendered = m.applySelectionToRendered(rendered, segFlatStart, segFlatEnd, selStart, selEnd)
+				}
+				allLines = append(allLines, prefix+rendered)
 			}
 		}
+		flatOffset += len(line) + 1
 	}
 
 	if len(allLines) == 0 {
@@ -237,6 +260,55 @@ func (m TextInput) View(width int, spinFrame int) string {
 	}
 
 	return strings.Join(allLines, "\n")
+}
+
+func (m TextInput) applySelectionToRendered(line string, segFlatStart, segFlatEnd, selStart, selEnd int) string {
+	relStart := selStart - segFlatStart
+	if relStart < 0 {
+		relStart = 0
+	}
+	relEnd := selEnd - segFlatStart
+	if relEnd > segFlatEnd-segFlatStart {
+		relEnd = segFlatEnd - segFlatStart
+	}
+	if relStart >= relEnd {
+		return line
+	}
+
+	colStart := m.runeIdxToCol(line, relStart)
+	colEnd := m.runeIdxToCol(line, relEnd)
+	return rendering.ApplySelection(line, colStart, colEnd)
+}
+
+func (m TextInput) runeIdxToCol(line string, runeIdx int) int {
+	col := 0
+	visRuneIdx := 0
+	i := 0
+	for i < len(line) && visRuneIdx < runeIdx {
+		if line[i] == '\x1b' {
+			j := i + 1
+			if j < len(line) && line[j] == '[' {
+				j++
+				for j < len(line) && !(line[j] >= 0x40 && line[j] <= 0x7e) {
+					j++
+				}
+				if j < len(line) {
+					j++
+				}
+			} else if j < len(line) && line[j] >= 0x40 && line[j] <= 0x5f {
+				j++
+			} else {
+				j++
+			}
+			i = j
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(line[i:])
+		col += runewidth.RuneWidth(r)
+		visRuneIdx++
+		i += size
+	}
+	return col
 }
 
 func segmentIdx(line int, col int, buf [][]rune, textW int) int {
@@ -283,6 +355,9 @@ func (m *TextInput) Clear() {
 	m.buf = [][]rune{{}}
 	m.curLine = 0
 	m.curCol = 0
+	m.selecting = false
+	m.selAnchor = 0
+	m.selEnd = 0
 }
 
 func (m TextInput) Len() int {
@@ -427,6 +502,49 @@ func (m TextInput) SelectionRange() (start, end int) {
 		return m.selAnchor, m.selEnd
 	}
 	return m.selEnd, m.selAnchor
+}
+
+func (m TextInput) HasActiveSelection() bool {
+	if !m.selecting {
+		return false
+	}
+	s, e := m.SelectionRange()
+	return s != e
+}
+
+func (m TextInput) IsSelecting() bool {
+	return m.selecting
+}
+
+func (m *TextInput) SetSelection(anchor, end int) {
+	m.selecting = true
+	m.selAnchor = anchor
+	m.selEnd = end
+}
+
+func (m *TextInput) UpdateSelectionEnd(end int) {
+	m.selEnd = end
+}
+
+func (m *TextInput) ClearSelection() {
+	m.selecting = false
+	m.selAnchor = 0
+	m.selEnd = 0
+}
+
+func (m TextInput) SelectedText() string {
+	if !m.selecting {
+		return ""
+	}
+	s, e := m.SelectionRange()
+	runes := []rune(m.Value())
+	if e > len(runes) {
+		e = len(runes)
+	}
+	if s >= e {
+		return ""
+	}
+	return string(runes[s:e])
 }
 
 func (m *TextInput) SetTextWidth(w int) {
