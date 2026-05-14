@@ -34,7 +34,7 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
-	if m.thinking {
+	if m.anyActive() {
 		select {
 		case m.cancelCh <- struct{}{}:
 		default:

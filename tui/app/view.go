@@ -2,10 +2,10 @@ package app
 
 import (
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
+	"crude/tui/scrollbar"
 	"crude/tui/widgets"
 )
 
@@ -57,15 +57,21 @@ func (m *App) View() string {
 	}
 	m.chatAreaHeight = chatH
 
-	activeTyping := (m.streaming || m.thinking) && !m.lastTokenTime.IsZero() && time.Since(m.lastTokenTime) < 400*time.Millisecond
-	m.msgList.SetStreaming(m.streaming)
-	m.msgList.SetSpinFrame(m.spinFrame)
-	m.msgList.SetActiveTyping(activeTyping)
-	m.msgList.SetPhase(m.statusbar.Phase())
-	m.msgList.SetSize(m.width, m.height)
-	m.msgList.SetChatAreaBounds(3, chatH)
+	ma := m.mainAgent()
+	activeTyping := ma.ComputeActiveTyping()
 
-	chatVisible := m.msgList.Render(innerW)
+	nestingLevel := m.paneMgr.ScrollbarNestingLevel()
+	paneSBW := nestingLevel * scrollbar.ScrollbarWidth
+	ma.MsgList.SetPaneScrollbarWidth(paneSBW)
+
+	ma.MsgList.SetStreaming(ma.Streaming)
+	ma.MsgList.SetSpinFrame(m.spinFrame)
+	ma.MsgList.SetActiveTyping(activeTyping)
+	ma.MsgList.SetPhase(m.statusbar.Phase())
+	ma.MsgList.SetSize(m.width, m.height)
+	ma.MsgList.SetChatAreaBounds(3, chatH)
+
+	chatVisible := ma.MsgList.Render(innerW)
 
 	var overlayLines []string
 	if m.Mode == ModeSettings {
@@ -89,9 +95,35 @@ func (m *App) View() string {
 
 	chatVisible = m.appendOverlay(chatVisible, overlayLines, chatH)
 
-	scrollbarView := m.msgList.ScrollbarView()
-	scrollbarW := m.msgList.ScrollbarWidth()
-	scrollbarLines := strings.Split(scrollbarView, "\n")
+	mainSBVisible := ma.MsgList.ScrollbarWidth() > 0
+
+	totalSBW := scrollbar.ScrollbarWidth * (1 + nestingLevel)
+	if !mainSBVisible && nestingLevel == 0 {
+		totalSBW = 0
+	}
+	if !mainSBVisible && nestingLevel > 0 {
+		totalSBW = scrollbar.ScrollbarWidth * nestingLevel
+	}
+
+	mainScrollbarView := ma.MsgList.ScrollbarView()
+	mainSBLines := strings.Split(mainScrollbarView, "\n")
+
+	paneLineMap := ma.MsgList.PaneLineMap()
+
+	paneSBViews := make(map[string][]string)
+	if nestingLevel > 0 {
+		for _, info := range paneLineMap {
+			if info.PaneID != "" {
+				if _, ok := paneSBViews[info.PaneID]; !ok {
+					sp := m.paneMgr.Get(info.PaneID)
+					if sp != nil {
+						view := sp.ScrollbarView()
+						paneSBViews[info.PaneID] = strings.Split(view, "\n")
+					}
+				}
+			}
+		}
+	}
 
 	lines := make([]string, 0, m.height)
 
@@ -102,15 +134,69 @@ func (m *App) View() string {
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	for i, line := range chatVisible {
-		if scrollbarW > 0 && i < len(scrollbarLines) && scrollbarLines[i] != "" {
-			visW := lipgloss.Width(line)
-			padRight := m.width - m.theme.Spacing.PadLR - scrollbarW - visW
-			if padRight < 0 {
-				padRight = 0
+		visW := lipgloss.Width(line)
+
+		if totalSBW > 0 {
+			var sbColumn string
+
+			isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
+
+			if nestingLevel > 0 && isPaneLine {
+				info := paneLineMap[i]
+				paneSBLine := ""
+				if paneSBLines, ok := paneSBViews[info.PaneID]; ok {
+					if info.LineIdx < len(paneSBLines) && paneSBLines[info.LineIdx] != "" {
+						paneSBLine = paneSBLines[info.LineIdx]
+					}
+				}
+				if paneSBLine == "" {
+					paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+				}
+
+				mainSBLine := ""
+				if mainSBVisible && i < len(mainSBLines) {
+					mainSBLine = mainSBLines[i]
+				}
+				if mainSBLine == "" {
+					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+				}
+
+				sbColumn = paneSBLine + mainSBLine
+			} else if nestingLevel > 0 {
+				paneGap := strings.Repeat(" ", scrollbar.ScrollbarWidth)
+
+				mainSBLine := ""
+				if mainSBVisible && i < len(mainSBLines) {
+					mainSBLine = mainSBLines[i]
+				}
+				if mainSBLine == "" {
+					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+				}
+
+				sbColumn = paneGap + mainSBLine
+			} else {
+				if mainSBVisible && i < len(mainSBLines) && mainSBLines[i] != "" {
+					sbColumn = mainSBLines[i]
+				} else {
+					sbColumn = ""
+				}
 			}
-			line = pad + line + strings.Repeat(" ", padRight) + scrollbarLines[i] + pad
+
+			if sbColumn != "" {
+				padRight := m.width - m.theme.Spacing.PadLR - totalSBW - visW
+				if padRight < 0 {
+					padRight = 0
+				}
+				line = pad + line + strings.Repeat(" ", padRight) + sbColumn + pad
+			} else {
+				rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+				if rightPad < 0 {
+					rightPad = 0
+				}
+				line = pad + line + strings.Repeat(" ", rightPad) + pad
+			}
 		} else {
-			rightPad := m.width - m.theme.Spacing.PadLR - lipgloss.Width(line)
+			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
 			if rightPad < 0 {
 				rightPad = 0
 			}

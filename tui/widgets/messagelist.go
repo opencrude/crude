@@ -18,6 +18,13 @@ import (
 
 var selScrollInterval = 60 * time.Millisecond
 
+type SubPaneContentFn func(paneID string, width, maxH, spinFrame int) []string
+
+type PaneLineInfo struct {
+	PaneID  string
+	LineIdx int
+}
+
 type MessageList struct {
 	vl         virtlist.VirtualList
 	scroll     virtlist.ScrollState
@@ -47,8 +54,11 @@ type MessageList struct {
 	activeTyping bool
 	phase        string
 
-	lastScrollbarW    int
-	lastRenderedLines []string
+	lastScrollbarW     int
+	lastRenderedLines  []string
+	subPaneContentFn   SubPaneContentFn
+	paneLineMap        []PaneLineInfo
+	paneScrollbarW     int
 }
 
 func NewMessageList(t *theme.Theme) *MessageList {
@@ -59,6 +69,34 @@ func NewMessageList(t *theme.Theme) *MessageList {
 	}
 	ml.scrollbar = scrollbar.New(0)
 	return ml
+}
+
+func (ml *MessageList) SetSubPaneContentFn(fn SubPaneContentFn) {
+	ml.subPaneContentFn = fn
+}
+
+func (ml *MessageList) PaneLineMap() []PaneLineInfo {
+	return ml.paneLineMap
+}
+
+func (ml *MessageList) SetPaneScrollbarWidth(w int) {
+	if w != ml.paneScrollbarW {
+		ml.paneScrollbarW = w
+		for _, msg := range ml.messages {
+			msg.CachedLines = nil
+		}
+		ml.vl.InvalidateAll()
+	}
+}
+
+func (ml *MessageList) PaneScrollbarWidth() int {
+	return ml.paneScrollbarW
+}
+
+func (ml *MessageList) SetTheme(t *theme.Theme) {
+	if t != nil {
+		ml.theme = t
+	}
 }
 
 func (ml *MessageList) SetModelName(name string) {
@@ -368,6 +406,35 @@ func (ml *MessageList) MarkAllThinkingDone() {
 			ml.vl.InvalidateItem(ml.itemID(i))
 		}
 	}
+}
+
+func (ml *MessageList) RemoveActiveThinking() string {
+	var content string
+	var keep []*types.ChatMessage
+	for _, msg := range ml.messages {
+		if msg.Role == types.RoleThinking && msg.ThinkingActive {
+			content = msg.Content
+			continue
+		}
+		keep = append(keep, msg)
+	}
+	if len(keep) != len(ml.messages) {
+		ml.messages = keep
+		ml.RebuildItems()
+	}
+	return content
+}
+
+func (ml *MessageList) ActiveThinkingLineCount(contentWidth int) int {
+	for _, msg := range ml.messages {
+		if msg.Role == types.RoleThinking && msg.ThinkingActive {
+			if msg.CachedLines != nil {
+				return len(msg.CachedLines) + 1
+			}
+			return len(rendering.WrapText(msg.Content, contentWidth)) + 1
+		}
+	}
+	return 0
 }
 
 func (ml *MessageList) InvalidateCache() {
@@ -733,7 +800,6 @@ func (ml *MessageList) Render(width int) []string {
 		return []string{}
 	}
 
-	// Invalidate caches if scrollbar visibility changed (affects time label positioning)
 	sbW := ml.ScrollbarWidth()
 	if sbW != ml.lastScrollbarW {
 		ml.lastScrollbarW = sbW
@@ -743,20 +809,14 @@ func (ml *MessageList) Render(width int) []string {
 		ml.vl.InvalidateAll()
 	}
 
-	// Step 1: Render dirty items to get accurate heights.
-	// The output from this call may be at a stale scroll position,
-	// but all heights will be up-to-date afterward.
 	_ = ml.vl.RenderVisible(ml.renderItem, width)
 
-	// Step 2: Apply auto-scroll with accurate heights.
 	if ml.scroll.AutoScroll {
 		ml.vl.BuildIndex()
 		ml.vl.ScrollToBottom()
 	}
 	ml.vl.ClampScroll()
 
-	// Step 3: Re-extract visible lines at the correct scroll position.
-	// Items are already rendered (not Dirty), so this is a fast array-slice.
 	visible := ml.vl.ExtractVisible()
 
 	ml.applySelection(visible)
@@ -765,7 +825,52 @@ func (ml *MessageList) Render(width int) []string {
 
 	ml.scrollbar.SetScrollInfo(ml.vl.TotalHeight()+ml.vl.BottomPadding(), ml.vl.ViewportHeight(), ml.vl.ScrollY())
 
+	ml.buildPaneLineMap(visible)
+
 	return visible
+}
+
+func (ml *MessageList) buildPaneLineMap(visible []string) {
+	ml.paneLineMap = make([]PaneLineInfo, len(visible))
+	if len(ml.messages) == 0 {
+		return
+	}
+
+	ml.vl.BuildIndex()
+	scrollY := ml.vl.ScrollY()
+	total := ml.vl.TotalHeight()
+
+	for i := range visible {
+		var globalLine int
+		if total <= ml.chatAreaHeight {
+			emptyTop := ml.chatAreaHeight - total
+			if i < emptyTop {
+				continue
+			}
+			globalLine = i - emptyTop
+		} else {
+			globalLine = scrollY + i
+			if globalLine >= total {
+				continue
+			}
+		}
+
+		itemIdx, localLine := ml.vl.ItemAtLine(globalLine)
+		if itemIdx < 0 || itemIdx >= len(ml.messages) {
+			continue
+		}
+		msg := ml.messages[itemIdx]
+		if msg.SubPaneID == "" {
+			continue
+		}
+
+		if localLine >= 2 {
+			ml.paneLineMap[i] = PaneLineInfo{
+				PaneID:  msg.SubPaneID,
+				LineIdx: localLine - 2,
+			}
+		}
+	}
 }
 
 func (ml *MessageList) ScrollbarView() string {
@@ -773,10 +878,12 @@ func (ml *MessageList) ScrollbarView() string {
 }
 
 func (ml *MessageList) ScrollbarWidth() int {
+	w := 0
 	if ml.scrollbar.IsVisible() && ml.vl.MaxScroll() > 0 {
-		return scrollbar.ScrollbarWidth
+		w += scrollbar.ScrollbarWidth
 	}
-	return 0
+	w += ml.paneScrollbarW
+	return w
 }
 
 func (ml *MessageList) applySelection(visible []string) {
@@ -821,6 +928,15 @@ func (ml *MessageList) renderItem(idx int, item *virtlist.Item, width int) []str
 		return []string{""}
 	}
 
+	if msg.SubPaneID != "" && ml.subPaneContentFn != nil {
+		maxH := ml.chatAreaHeight / 3
+		if maxH < 5 {
+			maxH = 5
+		}
+		lines := ml.subPaneContentFn(msg.SubPaneID, ml.width, maxH, ml.spinFrame)
+		return lines
+	}
+
 	isStreamingCursor := ml.isStreamingCursor(msg)
 
 	if msg.CachedLines != nil && !isStreamingCursor {
@@ -857,6 +973,11 @@ func (ml *MessageList) isStreamingCursor(msg *types.ChatMessage) bool {
 
 func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 	padLR := ml.theme.Spacing.PadLR
+	// sbW reflects the actual scrollbar width: 0 when hidden, ScrollbarWidth when visible.
+	// This means content (including time labels) shifts when the scrollbar appears/disappears.
+	// This is intentional — it maximizes content width when no scrollbar is needed,
+	// at the cost of a slight reflow when scrollability changes. The alternative (always
+	// reserving scrollbar space) wastes horizontal space when content fits the viewport.
 	sbW := ml.ScrollbarWidth()
 	contentWidth := ml.width - padLR*2 - 16 - sbW
 	if contentWidth < 10 {
@@ -987,4 +1108,33 @@ func (ml *MessageList) HandleScrollbarTick(msg tea.Msg) tea.Cmd {
 	updated, cmd := ml.scrollbar.Update(msg)
 	ml.scrollbar = updated
 	return cmd
+}
+
+func (ml *MessageList) InvalidateSubPane(paneID string) {
+	for i, msg := range ml.messages {
+		if msg.SubPaneID == paneID {
+			msg.CachedLines = nil
+			ml.vl.InvalidateItem(ml.itemID(i))
+			return
+		}
+	}
+}
+
+func (ml *MessageList) HasVisiblePaneScrollbar() bool {
+	for _, info := range ml.paneLineMap {
+		if info.PaneID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (ml *MessageList) CanScroll() bool {
+	ml.vl.BuildIndex()
+	return ml.vl.MaxScroll() > 0
+}
+
+func (ml *MessageList) ContentHeight() int {
+	ml.vl.BuildIndex()
+	return ml.vl.TotalHeight()
 }

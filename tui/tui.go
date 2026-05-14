@@ -147,7 +147,11 @@ func (t *TUI) ReleaseTerminal() {
 }
 
 func (t *TUI) SendAgentEvent(typ string, data any) {
-	t.Program.Send(types.AgentMsg(AgentEventMsg{Type: typ, Data: data}))
+	t.SendAgentEventWithID(typ, data, "main")
+}
+
+func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
+	t.Program.Send(types.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
 }
 
 func (t *TUI) SetError(err string) {

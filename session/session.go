@@ -769,7 +769,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				s.blockMu.Lock()
 				s.pendingBlock = true
 				s.blockMu.Unlock()
-				tuiInst.SendAgentEvent(evt.Type, evt.Data)
+				tuiInst.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
 				return
 			}
 			if evt.Type == "confirmation_always" {
@@ -797,7 +797,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				}
 				return
 			}
-			tuiInst.SendAgentEvent(evt.Type, evt.Data)
+			tuiInst.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
 			if evt.Type == "done" {
 				if content, ok := evt.Data.(string); ok {
 					finalContent = content

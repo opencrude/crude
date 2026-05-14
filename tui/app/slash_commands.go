@@ -67,11 +67,11 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		for _, c := range input.AvailableCmds() {
 			b.WriteString(fmt.Sprintf("  %-16s %s\n", "/"+c.Label, c.Desc))
 		}
-		m.msgList.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+		m.mainMsgList.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 	case "/yolo":
 		if m.yolo {
 			m.yolo = false
-			m.msgList.ScrollToBottom()
+			m.mainMsgList.ScrollToBottom()
 			m.statusbar.SetInfo("YOLO mode disabled. Safety checks restored.")
 			if m.OnYoloCmd != nil {
 				go m.OnYoloCmd(false)
