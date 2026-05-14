@@ -54,6 +54,28 @@ func SummarizeToolArgs(tool, argsStr string) string {
 	if code := ExtractArg(argsStr, "code"); code != "" {
 		return rendering.TruncateLine(code, 50)
 	}
+	if tool == "async_execute_command" {
+		handle := ExtractArg(argsStr, "handle")
+		if command := ExtractArg(argsStr, "command"); command != "" {
+			if handle != "" {
+				return rendering.TruncateLine(command, 40) + " [" + handle + "]"
+			}
+			return rendering.TruncateLine(command, 50)
+		}
+		if handle != "" {
+			return handle
+		}
+	}
+	if tool == "check_async_command" || tool == "kill_async_command" || tool == "read_async_output" {
+		if handle := ExtractArg(argsStr, "handle"); handle != "" {
+			return handle
+		}
+	}
+	if tool == "wait" {
+		if seconds := ExtractArg(argsStr, "seconds"); seconds != "" {
+			return seconds + "s"
+		}
+	}
 	return rendering.TruncateLine(argsStr, 60)
 }
 

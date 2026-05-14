@@ -833,7 +833,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 
 					// File tool operations: store path-tree permission
 					switch tool {
-					case "write_file", "edit_file", "delete_file", "move_file", "copy_file", "delete_lines", "replace_lines":
+					case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 						s.permStore.GrantAlways(safety.CRUDEOp(opStr), tool, target)
 					default:
 						// Command risk handling (existing)

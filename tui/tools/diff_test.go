@@ -138,25 +138,43 @@ func TestRenderDiffWithContext(t *testing.T) {
 func TestRenderDiffCompactMode(t *testing.T) {
 	th := theme.DefaultDark()
 
-	// Create a diff with many context lines so compact mode kicks in
+	// Create a diff with two change groups separated by context so compact mode
+	// inserts an ellipsis between them.
 	lines := []string{"```diff", "--- a/big.go", "+++ b/big.go", "@@ -1,20 +1,20 @@"}
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 3; i++ {
 		lines = append(lines, " // context line "+strings.Repeat("x", i))
 	}
 	lines = append(lines, "-    old code here")
 	lines = append(lines, "+    new code here")
-	for i := 6; i <= 20; i++ {
-		lines = append(lines, " // more context "+strings.Repeat("y", i))
+	for i := 5; i <= 12; i++ {
+		lines = append(lines, " // middle context "+strings.Repeat("m", i))
+	}
+	lines = append(lines, "-    second old code")
+	lines = append(lines, "+    second new code")
+	for i := 14; i <= 20; i++ {
+		lines = append(lines, " // trailing context "+strings.Repeat("y", i))
 	}
 	lines = append(lines, "```")
 	raw := strings.Join(lines, "\n")
 
-	// With maxLines=6, it should trim context
-	result := RenderDiff(raw, 6, 80, th)
+	// With maxLines=8, compact mode should trim context between the two changes
+	result := RenderDiff(raw, 8, 80, th)
 
-	// Should contain ellipsis marker
+	// Should contain ellipsis marker between the two change groups
 	if !strings.Contains(result, "···") {
-		t.Error("RenderDiff compact mode missing ellipsis marker")
+		t.Error("RenderDiff compact mode missing ellipsis marker between change groups")
+	}
+
+	// Should NOT start with an ellipsis (leading ellipsis is redundant)
+	resultLines := strings.Split(result, "\n")
+	for _, line := range resultLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			if strings.Contains(trimmed, "···") {
+				t.Error("RenderDiff compact mode should not have leading ellipsis as first visible line")
+			}
+			break
+		}
 	}
 }
 

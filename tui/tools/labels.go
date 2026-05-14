@@ -96,6 +96,31 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 		return "Searching ArXiv"
 	case "consult_oracle":
 		return "Consulting oracle"
+	case "async_execute_command":
+		if target != "" {
+			return fmt.Sprintf("Running %s", rendering.TruncateLine(target, 50))
+		}
+		return "Running background command"
+	case "check_async_command":
+		if target != "" {
+			return fmt.Sprintf("Checking %s", target)
+		}
+		return "Checking async command"
+	case "kill_async_command":
+		if target != "" {
+			return fmt.Sprintf("Killing %s", target)
+		}
+		return "Killing async command"
+	case "read_async_output":
+		if target != "" {
+			return fmt.Sprintf("Reading output %s", target)
+		}
+		return "Reading async output"
+	case "wait":
+		if target != "" {
+			return fmt.Sprintf("Waiting %s", target)
+		}
+		return "Waiting"
 	case "plan", "list_goal_status":
 		return fmt.Sprintf("Running %s", rendering.PascalCaseTool(tool))
 	case "mark_step_complete":
@@ -236,6 +261,51 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 			label += " " + duration
 		}
 		return label
+	case "async_execute_command":
+		label := "Started"
+		if target != "" {
+			label += " " + rendering.TruncateLine(target, 50)
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "check_async_command":
+		label := "Checked"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "kill_async_command":
+		label := "Killed"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "read_async_output":
+		label := "Read output"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "wait":
+		label := "Waited"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
 	case "plan", "list_goal_status":
 		return rendering.PascalCaseTool(tool)
 	case "mark_step_complete":
@@ -269,6 +339,12 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		label := "Resolved blocker"
 		if duration != "" {
 			label += " " + duration
+		}
+		return label
+	case "auto_allowed":
+		label := "✓ auto-allowed"
+		if target != "" {
+			label += " " + target
 		}
 		return label
 	default:

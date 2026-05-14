@@ -301,22 +301,6 @@ func FormatPreview(p ToolCallPreview) string {
 		}
 		return fmt.Sprintf("%s \u2026", name)
 
-	case "delete_lines":
-		if path != "" {
-			return fmt.Sprintf("%s %s (\u2212\u2217 lines)", name, path)
-		}
-		return fmt.Sprintf("%s \u2026", name)
-
-	case "replace_lines":
-		if path != "" {
-			newText := getPS(p.Params, "new_text")
-			if newText != "" {
-				return fmt.Sprintf("%s %s (+%d lines)", name, path, CountLines(newText))
-			}
-			return fmt.Sprintf("%s %s \u2026", name, path)
-		}
-		return fmt.Sprintf("%s \u2026", name)
-
 	case "read_file":
 		if path != "" {
 			return fmt.Sprintf("%s %s", name, path)
@@ -376,6 +360,43 @@ func FormatPreview(p ToolCallPreview) string {
 			return fmt.Sprintf("%s %s", name, trunc(url, 50))
 		}
 		return fmt.Sprintf("%s \u2026", name)
+
+	case "async_execute_command":
+		handle := getPS(p.Params, "handle")
+		if command != "" && handle != "" {
+			return fmt.Sprintf("%s %s [%s]", name, trunc(command, 40), handle)
+		}
+		if command != "" {
+			return fmt.Sprintf("%s %s", name, trunc(command, 50))
+		}
+		if handle != "" {
+			return fmt.Sprintf("%s [%s]", name, handle)
+		}
+		return name
+
+	case "check_async_command":
+		if handle := getPS(p.Params, "handle"); handle != "" {
+			return fmt.Sprintf("%s %s", name, handle)
+		}
+		return name
+
+	case "kill_async_command":
+		if handle := getPS(p.Params, "handle"); handle != "" {
+			return fmt.Sprintf("%s %s", name, handle)
+		}
+		return name
+
+	case "read_async_output":
+		if handle := getPS(p.Params, "handle"); handle != "" {
+			return fmt.Sprintf("%s %s", name, handle)
+		}
+		return name
+
+	case "wait":
+		if seconds := getPS(p.Params, "seconds"); seconds != "" {
+			return fmt.Sprintf("%s %ss", name, seconds)
+		}
+		return name
 
 	default:
 		if path != "" {

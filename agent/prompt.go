@@ -112,24 +112,6 @@ When modifying files, follow these rules to maximize patch success:
 - When replacing a function body, include the function definition line in old_string as context.
 - If your search fails with "not found", re-read the file and copy the text character-for-character, including invisible whitespace.
 
-### Escape Hatch: delete_lines and replace_lines
-When you know the lines BEFORE and AFTER a region but don't know (or don't want to specify) the region's exact content:
-- **delete_lines(path, prefix, suffix)** — Delete everything BETWEEN prefix and suffix. Both anchors are KEPT.
-  Example: file has "import os\nimport sys\nimport re\n\nprint('hello')". To delete "import re", use prefix="import sys", suffix="\n\nprint" (the blank line is kept).
-- **replace_lines(path, prefix, suffix, new_text)** — Replace everything BETWEEN prefix and suffix with new_text. Anchors are KEPT.
-  Example: To replace the body of a function without knowing it, use prefix="def foo():", suffix="def bar():", new_text="    pass\n".
-
-Key rules for anchors:
-1. Copy prefix and suffix as FULL lines from read_file output (including leading whitespace)
-2. Anchors MUST start at the beginning of a line — never start mid-line
-3. Add enough surrounding lines to make each anchor UNIQUE in the file
-4. The suffix must appear AFTER the prefix in the file
-5. Everything strictly between anchors is deleted/replaced — the anchors themselves are preserved
-
-Prefer edit_file when you know the exact text to change. Use delete_lines/replace_lines only when:
-- You need to remove a large block and don't know its exact content
-- You know the boundary lines but the interior is too large or complex to copy
-- edit_file fails with "not found" and you want an alternative approach
 
 ## Web Fetching (web_fetch)
 - **web_fetch(url, offset?, limit?)** — Fetches and extracts readable content from a URL.

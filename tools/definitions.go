@@ -108,49 +108,6 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name: "delete_lines",
-			Description: "Delete all content between two anchor blocks in a file (Delete primitive). " +
-				"prefix and suffix are FULL lines you copy from read_file output — they must start at the beginning of a line, including all leading whitespace. " +
-				"Everything strictly between the end of prefix and the start of suffix is removed. The prefix and suffix lines themselves are KEPT. " +
-				"Unlike edit_file, you do NOT need to know the exact text being deleted — only the lines before and after it. " +
-				"Use when you want to remove a block of code without specifying its exact content. " +
-				"Operations are journalled and revertable with /undo.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"path":{"type":"string","description":"Path to the file to edit"},
-					"prefix":{"type":"string","description":"FULL line(s) BEFORE the deletion region — copy exact text from read_file output including indentation"},
-					"suffix":{"type":"string","description":"FULL line(s) AFTER the deletion region — copy exact text from read_file output including indentation"}
-				},
-				"required":["path","prefix","suffix"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "replace_lines",
-			Description: "Replace all content between two anchor blocks with new text (Update primitive). " +
-				"prefix and suffix are FULL lines you copy from read_file output — they must start at the beginning of a line, including all leading whitespace. " +
-				"Everything strictly between the end of prefix and the start of suffix is REPLACED with new_text. The prefix and suffix lines themselves are KEPT. " +
-				"Unlike edit_file, you do NOT need to know the exact text being replaced — only the surrounding lines. " +
-				"Use when you want to replace a block of code but don't know (or don't want to specify) its exact content. " +
-				"Operations are journalled and revertable with /undo.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"path":{"type":"string","description":"Path to the file to edit"},
-					"prefix":{"type":"string","description":"FULL line(s) BEFORE the replacement region — copy exact text from read_file output including indentation"},
-					"suffix":{"type":"string","description":"FULL line(s) AFTER the replacement region — copy exact text from read_file output including indentation"},
-					"new_text":{"type":"string","description":"New content to insert between prefix and suffix (replaces everything currently between them)"}
-				},
-				"required":["path","prefix","suffix"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
 			Name: "delete_file",
 			Description: "Delete a file (Delete primitive). Verify the path with read_file or list_directory before calling. " +
 				"Operations are journalled and revertable with /undo. " +

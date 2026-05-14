@@ -182,6 +182,16 @@ const (
 // The function adapts context depth based on available space but always uses
 // the same visual language: clean header, numbered gutter, change indicators.
 func RenderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme) string {
+	return renderDiff(raw, maxLines, maxWidth, th, false)
+}
+
+// RenderDiffNoHeader renders a diff without the file header line (▌ path −X +Y).
+// Used when the title line already shows file path and change counts.
+func RenderDiffNoHeader(raw string, maxLines int, maxWidth int, th *theme.Theme) string {
+	return renderDiff(raw, maxLines, maxWidth, th, true)
+}
+
+func renderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme, skipHeader bool) string {
 	files := parseUnifiedDiff(raw)
 	if len(files) == 0 {
 		return ""
@@ -203,29 +213,33 @@ func RenderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme) string 
 			sb.WriteString("\n")
 		}
 
-		// Header: ▌ filepath   −X +Y
-		sb.WriteString(accentStyle.Render("▌ "))
-		sb.WriteString(pathStyle.Render(file.Path))
+		headerLines := 0
+		if !skipHeader {
+			// Header: ▌ filepath   −X +Y
+			sb.WriteString(accentStyle.Render("▌ "))
+			sb.WriteString(pathStyle.Render(file.Path))
 
-		stats := ""
-		if file.DelCount > 0 {
-			stats += delStyle.Render(fmt.Sprintf(" −%d", file.DelCount))
-		}
-		if file.AddCount > 0 {
-			if stats != "" {
-				stats += mutedStyle.Render(" ")
+			stats := ""
+			if file.DelCount > 0 {
+				stats += delStyle.Render(fmt.Sprintf(" −%d", file.DelCount))
 			}
-			stats += addStyle.Render(fmt.Sprintf("+%d", file.AddCount))
+			if file.AddCount > 0 {
+				if stats != "" {
+					stats += mutedStyle.Render(" ")
+				}
+				stats += addStyle.Render(fmt.Sprintf("+%d", file.AddCount))
+			}
+			if stats != "" {
+				sb.WriteString(mutedStyle.Render("   "))
+				sb.WriteString(stats)
+			}
+			sb.WriteString("\n")
+			headerLines = 1
 		}
-		if stats != "" {
-			sb.WriteString(mutedStyle.Render("   "))
-			sb.WriteString(stats)
-		}
-		sb.WriteString("\n")
 
 		// Determine if we need compact mode (trim context)
 		allRenderLines := buildRenderLines(file.Hunks)
-		needCompact := maxLines > 0 && len(allRenderLines)+1 > maxLines // +1 for header
+		needCompact := maxLines > 0 && len(allRenderLines)+headerLines > maxLines
 
 		var renderLines []renderLine
 		if needCompact {
@@ -237,7 +251,7 @@ func RenderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme) string 
 		// If still too many lines, truncate from bottom
 		availLines := maxLines
 		if availLines > 0 {
-			availLines-- // account for header
+			availLines -= headerLines
 		}
 		truncated := false
 		truncatedRemaining := 0
@@ -404,7 +418,7 @@ func trimContext(lines []renderLine, keep int) []renderLine {
 
 	for i, rl := range lines {
 		if keepFlags[i] {
-			if i-lastKept > 1 {
+			if i-lastKept > 1 && lastKept >= 0 {
 				result = append(result, renderLine{ellipsis: true})
 			}
 			result = append(result, rl)
