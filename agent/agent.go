@@ -213,6 +213,8 @@ func (a *Agent) Run(
 				source := getPS(preview.Params, "source")
 				dest := getPS(preview.Params, "destination")
 				pattern := getPS(preview.Params, "pattern")
+				handle := getPS(preview.Params, "handle")
+				seconds := getPS(preview.Params, "seconds")
 
 				var offsetVal int
 				if o, ok := preview.Params["offset"]; ok {
@@ -287,6 +289,12 @@ func (a *Agent) Run(
 				}
 				if pattern != "" {
 					data["pattern"] = pattern
+				}
+				if handle != "" {
+					data["handle"] = handle
+				}
+				if seconds != "" {
+					data["seconds"] = seconds
 				}
 				if offsetVal > 0 {
 					data["offset"] = offsetVal
@@ -473,7 +481,7 @@ func (a *Agent) Run(
 					fileOp = "Create"
 					filePath = getStr(params, "path")
 					fileTarget = filePath
-				case "edit_file", "delete_lines", "replace_lines":
+				case "edit_file":
 					fileCheck = true
 					fileOp = "Update"
 					filePath = getStr(params, "path")
@@ -562,24 +570,6 @@ func (a *Agent) Run(
 						"path":    path,
 						"message": fmt.Sprintf("Editing %s (−%d/+%d lines)", path, oldLines, newLines),
 					}})
-				} else if tc.Function.Name == "delete_lines" {
-					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-						"tool_id": tc.ID,
-						"name":    tc.Function.Name,
-						"phase":   "patching",
-						"path":    path,
-						"message": fmt.Sprintf("Deleting lines in %s", path),
-					}})
-				} else if tc.Function.Name == "replace_lines" {
-					newText := getStr(params, "new_text")
-					newLines := CountLines(newText)
-					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-						"tool_id": tc.ID,
-						"name":    tc.Function.Name,
-						"phase":   "patching",
-						"path":    path,
-						"message": fmt.Sprintf("Replacing lines in %s (+%d lines)", path, newLines),
-					}})
 				} else if tc.Function.Name == "read_file" {
 					if path != "" {
 						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
@@ -617,7 +607,7 @@ func (a *Agent) Run(
 					a.logger.Info("tool.result", "tool", tc.Function.Name, "latency_ms", toolDur, "content", result)
 				}
 
-				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" || tc.Function.Name == "delete_lines" || tc.Function.Name == "replace_lines") && !strings.HasPrefix(result, "Error:") {
+				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result, "Error:") {
 					additions, removals := ParseDiffStats(result)
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 						"tool_id":       tc.ID,

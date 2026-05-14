@@ -11,6 +11,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// isSummaryOnlyTool returns true for tools whose result is fully expressed
+// in the title-line summary — no content lines are rendered below.
+func isSummaryOnlyTool(name string) bool {
+	switch name {
+	case "read_file", "grep_files", "list_directory", "glob_files",
+		"web_search", "arxiv_search", "wait", "kill_async_command",
+		"delete_file", "move_file", "copy_file":
+		return true
+	}
+	return false
+}
+
 func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string) []string {
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 	isActive := msg.ToolStatus == "streaming" || msg.ToolStatus == "calling"
@@ -33,6 +45,18 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 	spinStyle := lipgloss.NewStyle().Foreground(spinColor)
 	nameStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 	title := BuildToolTitle(msg, phase)
+
+	// Override title with content-derived summary on success
+	if msg.ToolStatus == "success" {
+		dur := rendering.FormatDuration(msg.ToolDuration)
+		target := msg.ToolArgs
+		if target == "" {
+			target = msg.ToolProgressLabel
+		}
+		if summary := resultSummary(msg.ToolName, msg.Content, target, dur); summary != "" {
+			title = summary
+		}
+	}
 
 	var msgLines []string
 
@@ -68,46 +92,17 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 				for _, pl := range strings.Split(planBox, "\n") {
 					msgLines = append(msgLines, dim.Render("│ ")+pl)
 				}
-			} else if msg.ToolName == "read_file" {
-				path := msg.ToolArgs
-				if path == "" {
-					path = msg.ToolProgressLabel
-				}
-				if path == "" {
-					path = "file"
-				}
-				if strings.Contains(resultContent, "— (empty file)") {
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("(empty file)"))
-				} else if strings.HasPrefix(resultContent, "Error:") {
-					firstLine := strings.SplitN(resultContent, "\n", 2)[0]
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(firstLine))
-				} else {
-					contentLines := len(strings.Split(resultContent, "\n"))
-					if strings.HasPrefix(resultContent, "Lines") {
-						contentLines--
-					}
-					if contentLines < 1 {
-						contentLines = 1
-					}
-					suffix := "s"
-					if contentLines == 1 {
-						suffix = ""
-					}
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("Read %d line%s from %s", contentLines, suffix, path)))
-					if strings.HasPrefix(resultContent, "Lines") {
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("… partial content returned to agent"))
-					} else {
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("… full content returned to agent"))
-					}
-				}
+			} else if isSummaryOnlyTool(msg.ToolName) {
+				// Summary already embedded in the title line; no content lines needed
 			} else if isDiffTool(msg.ToolName) || IsDiffContent(resultContent) {
-				// Use the new unified RenderDiff for all diff-like content
+				// Use the no-header variant: the title line already shows
+				// the file path and change counts (plus tokens & duration).
 				maxRes := TerminalResultHeight(height)
 				diffWidth := innerW - 4
 				if diffWidth < 20 {
 					diffWidth = 20
 				}
-				renderedDiff := RenderDiff(resultContent, maxRes, diffWidth, th)
+				renderedDiff := RenderDiffNoHeader(resultContent, maxRes, diffWidth, th)
 				if renderedDiff != "" {
 					for _, dl := range strings.Split(renderedDiff, "\n") {
 						msgLines = append(msgLines, dim.Render("│ ")+dl)
@@ -148,7 +143,7 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 // isDiffTool returns true for tool names that produce diff-like output.
 func isDiffTool(name string) bool {
 	switch name {
-	case "write_file", "edit_file", "delete_lines", "replace_lines":
+	case "write_file", "edit_file":
 		return true
 	}
 	return false
@@ -205,4 +200,468 @@ func TerminalResultHeight(height int) int {
 		h = 4
 	}
 	return h
+}
+
+// ─────────────────────────────────────────────────────────────
+// Result summary functions — all use " — " as the consistent
+// separator between the action+target and the result gist.
+// ─────────────────────────────────────────────────────────────
+
+// resultSummary dispatches to the appropriate tool-specific
+// summary function. Returns "" when no summary is available
+// (letting the default title handle display).
+func resultSummary(tool, content, target, dur string) string {
+	if strings.HasPrefix(strings.TrimSpace(content), "Error:") {
+		return "" // let default title handle errors
+	}
+
+	switch tool {
+	case "read_file":
+		return readResultSummary(content, target, dur)
+	case "grep_files":
+		return grepResultSummary(content, target, dur)
+	case "list_directory":
+		return listDirResultSummary(content, target, dur)
+	case "glob_files":
+		return globResultSummary(content, target, dur)
+	case "web_search":
+		return webSearchResultSummary(content, target, dur)
+	case "arxiv_search":
+		return arxivResultSummary(content, target, dur)
+	case "execute_command":
+		return execResultSummary(content, target, dur)
+	case "web_fetch":
+		return webFetchResultSummary(content, target, dur)
+	case "consult_oracle":
+		return oracleResultSummary(content, target, dur)
+	case "run_javascript":
+		return jsResultSummary(content, target, dur)
+	case "async_execute_command":
+		return asyncExecResultSummary(content, target, dur)
+	case "check_async_command":
+		return checkAsyncResultSummary(content, target, dur)
+	case "read_async_output":
+		return readAsyncResultSummary(content, target, dur)
+	case "kill_async_command":
+		return killAsyncResultSummary(content, target, dur)
+	case "wait":
+		return waitResultSummary(content, target, dur)
+	case "delete_file":
+		return deleteResultSummary(content, target, dur)
+	case "move_file":
+		return moveResultSummary(content, target, dur)
+	case "copy_file":
+		return copyResultSummary(content, target, dur)
+	default:
+		return ""
+	}
+}
+
+// ── read_file ──────────────────────────────────────────────
+
+func readResultSummary(content, path, duration string) string {
+	if path == "" {
+		path = "file"
+	}
+
+	if strings.Contains(content, "— (empty file)") {
+		label := "Read " + path + " — empty"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	// Partial read: first line is "Lines X–Y of path (N total):"
+	if strings.HasPrefix(content, "Lines ") {
+		firstNewline := strings.Index(content, "\n")
+		firstLine := content
+		if firstNewline > 0 {
+			firstLine = content[:firstNewline]
+		}
+		firstLine = strings.TrimSuffix(firstLine, ":")
+		afterLines := strings.TrimPrefix(firstLine, "Lines ")
+		ofIdx := strings.Index(afterLines, " of ")
+		if ofIdx > 0 {
+			rangeStr := afterLines[:ofIdx]
+			rest := afterLines[ofIdx+4:]
+			openParen := strings.LastIndex(rest, "(")
+			closeParen := strings.LastIndex(rest, ")")
+			if openParen > 0 && closeParen > openParen {
+				totalStr := rest[openParen+1 : closeParen]
+				totalStr = strings.TrimSuffix(totalStr, " total")
+				label := fmt.Sprintf("Read %s — L%s (of %s)", path, rangeStr, totalStr)
+				if duration != "" {
+					label += " " + duration
+				}
+				return label
+			}
+		}
+	}
+
+	// Full read: count lines in the returned content
+	contentLines := len(strings.Split(content, "\n"))
+	label := fmt.Sprintf("Read %s — %d lines", path, contentLines)
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── grep_files ──────────────────────────────────────────────
+
+func grepResultSummary(content, target, duration string) string {
+	// "No matches for ..."
+	if strings.HasPrefix(content, "No matches") {
+		label := "Grepped"
+		if target != "" {
+			label += " " + rendering.TruncateLine(target, 50)
+		}
+		label += " — 0 matches"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	// "N match(es) for ..." — extract N from first line
+	firstNewline := strings.Index(content, "\n")
+	firstLine := content
+	if firstNewline > 0 {
+		firstLine = content[:firstNewline]
+	}
+	spaceIdx := strings.Index(firstLine, " ")
+	if spaceIdx > 0 {
+		count := firstLine[:spaceIdx]
+		label := "Grepped"
+		if target != "" {
+			label += " " + rendering.TruncateLine(target, 50)
+		}
+		label += " — " + count + " matches"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	return "" // fallback to default
+}
+
+// ── list_directory ──────────────────────────────────────────
+
+func listDirResultSummary(content, target, duration string) string {
+	if strings.Contains(content, "is empty") {
+		label := "Listed " + target + " — empty"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	// "path — N entries:" or "path — N entries (recursive):"
+	if idx := strings.Index(content, " — "); idx > 0 {
+		afterDash := content[idx+3:]
+		colonIdx := strings.Index(afterDash, ":")
+		if colonIdx > 0 {
+			info := strings.TrimSpace(afterDash[:colonIdx])
+			label := "Listed " + target + " — " + info
+			if duration != "" {
+				label += " " + duration
+			}
+			return label
+		}
+	}
+
+	// Count non-empty lines as a fallback
+	lines := strings.Count(content, "\n") + 1
+	label := fmt.Sprintf("Listed %s — %d entries", target, lines)
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── glob_files ──────────────────────────────────────────────
+
+func globResultSummary(content, target, duration string) string {
+	if strings.HasPrefix(content, "No files matching") {
+		label := "Globbed " + rendering.TruncateLine(target, 50) + " — 0 matches"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	// "N file(s) matching ..."
+	spaceIdx := strings.Index(content, " ")
+	if spaceIdx > 0 {
+		count := content[:spaceIdx]
+		label := "Globbed " + rendering.TruncateLine(target, 50) + " — " + count + " files"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	return ""
+}
+
+// ── web_search ──────────────────────────────────────────────
+
+func webSearchResultSummary(content, target, duration string) string {
+	if strings.HasPrefix(content, "No results found") {
+		label := "Searched"
+		if target != "" {
+			label += fmt.Sprintf(" \"%s\"", rendering.TruncateLine(target, 40))
+		}
+		label += " — 0 results"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	if strings.HasPrefix(content, "Search error") {
+		return "" // let default handle error
+	}
+
+	// "Web search results for: query" — count numbered results (lines starting with "N. ")
+	count := strings.Count(content, "\n") + 1
+	// Count numbered entries like "1. ", "2. ", etc.
+	resultCount := 0
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) >= 3 && trimmed[0] >= '0' && trimmed[0] <= '9' && trimmed[1] == '.' && trimmed[2] == ' ' {
+			resultCount++
+		}
+	}
+	label := "Searched"
+	if target != "" {
+		label += fmt.Sprintf(" \"%s\"", rendering.TruncateLine(target, 40))
+	}
+	if resultCount > 0 {
+		label += fmt.Sprintf(" — %d results", resultCount)
+	} else {
+		label += fmt.Sprintf(" — %d lines", count)
+	}
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── arxiv_search ────────────────────────────────────────────
+
+func arxivResultSummary(content, target, duration string) string {
+	if strings.HasPrefix(content, "ArXiv search error") {
+		return "" // let default handle error
+	}
+
+	if strings.Contains(content, "No papers found") || strings.Contains(content, "no results") {
+		label := "ArXiv"
+		if target != "" {
+			label += fmt.Sprintf(" \"%s\"", rendering.TruncateLine(target, 40))
+		}
+		label += " — 0 papers"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	// Count paper entries (lines starting with "Title: " or numbered entries)
+	paperCount := strings.Count(content, "Title: ")
+	label := "ArXiv"
+	if target != "" {
+		label += fmt.Sprintf(" \"%s\"", rendering.TruncateLine(target, 40))
+	}
+	if paperCount > 0 {
+		label += fmt.Sprintf(" — %d papers", paperCount)
+	} else {
+		lines := strings.Count(content, "\n") + 1
+		label += fmt.Sprintf(" — %d lines", lines)
+	}
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── execute_command ─────────────────────────────────────────
+
+func execResultSummary(content, target, duration string) string {
+	if strings.HasPrefix(content, "Command failed") {
+		return "" // let default handle error
+	}
+
+	lineCount := strings.Count(content, "\n") + 1
+	label := "Ran " + rendering.TruncateLine(target, 50)
+	if content == "(command completed with no output)" {
+		label += " — no output"
+	} else {
+		label += fmt.Sprintf(" — %d lines", lineCount)
+	}
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── web_fetch ───────────────────────────────────────────────
+
+func webFetchResultSummary(content, target, duration string) string {
+	if strings.HasPrefix(content, "Fetch error") || strings.HasPrefix(content, "fetch:") {
+		return "" // let default handle error
+	}
+
+	if strings.HasPrefix(content, "No content could be extracted") {
+		label := "Fetched " + rendering.TruncateLine(target, 50) + " — no content"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
+
+	charCount := len(content)
+	label := "Fetched " + rendering.TruncateLine(target, 50)
+	label += fmt.Sprintf(" — %s", formatCharCount(charCount))
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── consult_oracle ──────────────────────────────────────────
+
+func oracleResultSummary(content, target, duration string) string {
+	charCount := len(content)
+	label := "Consulted oracle"
+	label += fmt.Sprintf(" — %s", formatCharCount(charCount))
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── run_javascript ──────────────────────────────────────────
+
+func jsResultSummary(content, target, duration string) string {
+	if strings.HasPrefix(content, "JavaScript error") {
+		return "" // let default handle error
+	}
+
+	firstLine := strings.SplitN(content, "\n", 2)[0]
+	label := "Ran JS"
+	if firstLine != "" {
+		label += " — " + rendering.TruncateLine(firstLine, 40)
+	}
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── async_execute_command ──────────────────────────────────
+
+func asyncExecResultSummary(content, target, duration string) string {
+	label := "Started " + rendering.TruncateLine(target, 50)
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── check_async_command ─────────────────────────────────────
+
+func checkAsyncResultSummary(content, target, duration string) string {
+	// Content looks like: "Handle: X\nPID: Y\nStatus: running/completed/failed/killed\n..."
+	status := "unknown"
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "Status:") {
+			status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
+			break
+		}
+	}
+	label := "Checked " + target + " — " + status
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── read_async_output ───────────────────────────────────────
+
+func readAsyncResultSummary(content, target, duration string) string {
+	label := "Read output " + target
+	lineCount := strings.Count(content, "\n") + 1
+	if content != "" {
+		label += fmt.Sprintf(" — %d lines", lineCount)
+	}
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── kill_async_command ──────────────────────────────────────
+
+func killAsyncResultSummary(content, target, duration string) string {
+	label := "Killed " + target
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── wait ────────────────────────────────────────────────────
+
+func waitResultSummary(content, target, duration string) string {
+	label := "Waited " + target
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── delete_file ─────────────────────────────────────────────
+
+func deleteResultSummary(content, target, duration string) string {
+	label := "Deleted " + target
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── move_file ───────────────────────────────────────────────
+
+func moveResultSummary(content, target, duration string) string {
+	label := "Moved " + target
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── copy_file ───────────────────────────────────────────────
+
+func copyResultSummary(content, target, duration string) string {
+	label := "Copied " + target
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+// ── helpers ─────────────────────────────────────────────────
+
+func formatCharCount(n int) string {
+	switch {
+	case n >= 1000000:
+		return fmt.Sprintf("%.1fM chars", float64(n)/1000000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk chars", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d chars", n)
+	}
 }

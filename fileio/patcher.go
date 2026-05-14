@@ -112,8 +112,7 @@ func applySingleOp(content string, op SearchReplace) (string, error) {
 	return "", fmt.Errorf(
 		"search text not found (tried exact match, whitespace-normalised match, and substring match):\n  %s\n\n"+
 			"ⓘ  HINT: Copy FULL lines from read_file output — from the START of each line including all indentation.\n"+
-			"ⓘ  Do NOT start your search in the middle of a line.\n"+
-			"ⓘ  Try delete_lines or replace_lines if you know the lines before/after but not the exact content.",
+			"ⓘ  Do NOT start your search in the middle of a line.",
 		preview(op.Search),
 	)
 }
@@ -557,12 +556,6 @@ func multiMatchErr(hits []int, mode, search string) error {
 		"search matches %d locations %s (%s) — add more surrounding FULL lines (from start of line) to make it unique:\n  %s",
 		len(hits), mode, strings.Join(locs, ", "), preview(search),
 	)
-}
-
-type AnchorEdit struct {
-	Anchor  string
-	NewText string
-	Delete  bool
 }
 
 func preview(s string) string {

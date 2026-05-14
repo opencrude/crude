@@ -33,15 +33,11 @@ func (m Dialog) View() string {
 	dim := m.theme.Styles.DimLabel
 	warn := m.theme.Styles.ErrorText
 
-	sepWidth := m.width - 3
-	if sepWidth < 20 {
-		sepWidth = 20
-	}
-
+	// Title line + short separator
 	b.WriteString("\n")
 	b.WriteString(warn.Render(fmt.Sprintf("%s  %s", m.icon, m.title)))
 	b.WriteString("\n")
-	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)))
+	b.WriteString(dim.Render(strings.Repeat("─", len(m.title)+4)))
 	b.WriteString("\n")
 
 	if m.body != "" {

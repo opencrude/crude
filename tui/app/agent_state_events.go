@@ -26,6 +26,8 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 		source, _ := data["source"].(string)
 		dest, _ := data["destination"].(string)
 		pattern, _ := data["pattern"].(string)
+		handle, _ := data["handle"].(string)
+		seconds, _ := data["seconds"].(string)
 
 		var tgt string
 		tgt = path
@@ -45,6 +47,16 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 		}
 		if tgt == "" && pattern != "" {
 			tgt = pattern
+		}
+		if tgt == "" && handle != "" {
+			if command != "" {
+				tgt = rendering.TruncateLine(command, 40) + " [" + handle + "]"
+			} else {
+				tgt = handle
+			}
+		}
+		if tgt == "" && seconds != "" {
+			tgt = seconds + "s"
 		}
 
 		contentLines, _ := data["content_lines"].(float64)
@@ -179,16 +191,23 @@ func (a *AgentState) handleBlockingAuto(evt ttypes.AgentEventMsg, target *widget
 	} else {
 		data = map[string]string{"question": fmt.Sprintf("%v", evt.Data)}
 	}
-	question := data["question"]
+	operation := data["operation"]
+	tgt := data["target"]
 	target.MarkAllThinkingDone()
 	if thinkTarget != target {
 		thinkTarget.MarkAllThinkingDone()
 	}
-	// Show the question with an auto-allowed checkmark directly — no dialog needed.
+	// Show a compact, muted tool-like line instead of a verbose assistant message.
+	label := operation
+	if tgt != "" {
+		label += " " + tgt
+	}
 	target.AppendMessage(ttypes.ChatMessage{
-		Role:    ttypes.RoleAssistant,
-		Content: "✓ Always allowed — " + question,
-		Time:    time.Now(),
+		Role:              ttypes.RoleTool,
+		ToolName:          "auto_allowed",
+		ToolStatus:        "success",
+		ToolProgressLabel: label,
+		Time:              time.Now(),
 	})
 	return nil
 }
