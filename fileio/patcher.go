@@ -243,34 +243,31 @@ func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLi
 	mi := leadingWS(contentLines[matchStart])
 	si := leadingWS(searchLines[0])
 
-	// If the first line's indent matches, the whole block is likely already correct.
 	if mi == si {
 		return replaceLines
 	}
 
 	ri0 := leadingWS(replaceLines[0])
 
-	// Replacement already absolutely indented to matched level → pass through.
 	if ri0 == mi {
 		return replaceLines
 	}
 
-	// Check if the search pattern mixes indentation levels — some lines at
-	// column 0 (relative) and others matching the file's actual indentation
-	// (absolute). Detected when any continuation search line has the same WS
-	// as its content counterpart.
-	mixedIndent := false
-	for i := 1; i < len(searchLines) && matchStart+i < len(contentLines); i++ {
-		sws := leadingWS(searchLines[i])
-		cws := leadingWS(contentLines[matchStart+i])
-		if sws == cws {
-			mixedIndent = true
-			break
+	crossType := detectCrossType(si, mi)
+
+	mixedIndent := crossType
+	if !mixedIndent {
+		for i := 1; i < len(searchLines) && matchStart+i < len(contentLines); i++ {
+			sws := leadingWS(searchLines[i])
+			cws := leadingWS(contentLines[matchStart+i])
+			if sws == cws {
+				mixedIndent = true
+				break
+			}
 		}
 	}
 
 	if !mixedIndent {
-		// No mixed indent — use the original block-wide logic.
 		if ri0 == si {
 			return upgradeIndent(replaceLines, si, mi)
 		}
@@ -280,9 +277,15 @@ func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLi
 		return replaceLines
 	}
 
-	// Mixed indent: use per-line logic with content WS as the target.
-	// For each replacement line where we have content info, the content line's
-	// leading WS tells us the desired indent level at that position.
+	// Per-line reindent using content WS as the target.
+	fileUnit := detectFileIndentUnit(contentLines, matchStart, len(searchLines))
+	// For cross-type, compute the indent step: how many search-WS characters
+	// correspond to one file indent level. Derived from the search→content
+	// depth relationship across matched lines.
+	indentStep := 0
+	if crossType {
+		indentStep = computeIndentStep(searchLines, contentLines, matchStart, fileUnit)
+	}
 	out := make([]string, len(replaceLines))
 	for i, rl := range replaceLines {
 		if rl == "" {
@@ -290,28 +293,41 @@ func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLi
 			continue
 		}
 		rlws := leadingWS(rl)
-		if i < len(searchLines) && matchStart+i < len(contentLines) {
+		hasContentRef := i < len(searchLines) && matchStart+i < len(contentLines)
+		if hasContentRef {
 			sws := leadingWS(searchLines[i])
 			cws := leadingWS(contentLines[matchStart+i])
-			if sws == cws {
-				// Absolute line: search WS matches file WS.
-				// The model intended this line to be at cws depth.
+			if crossType {
+				if rlws == "" {
+					out[i] = cws + rl
+				} else {
+					delta := len(rlws) - len(sws)
+					if delta == 0 {
+						out[i] = cws + rl[len(rlws):]
+					} else if indentStep > 0 {
+						depthAdj := delta / indentStep
+						remainder := delta % indentStep
+						if remainder != 0 {
+							out[i] = cws + rl[len(rlws):]
+						} else {
+							target := adjustWS(cws, depthAdj, fileUnit)
+							out[i] = target + rl[len(rlws):]
+						}
+					} else {
+						out[i] = cws + rl[len(rlws):]
+					}
+				}
+			} else if sws == cws {
 				if rlws == cws {
-					// Already at the right depth → keep as-is.
 					out[i] = rl
 				} else if rlws == "" {
-					// Model wrote at column 0 but file expects cws → add cws.
 					out[i] = cws + rl
 				} else if strings.HasPrefix(rlws, si) && si != "" {
-					// Model wrote relative to si → upgrade from si to cws.
 					out[i] = cws + rl[len(si):]
 				} else {
-					// Unknown intent — trust the model's indent.
 					out[i] = rl
 				}
 			} else {
-				// Relative line: search is at col 0, content is at cws.
-				// The replacement should be placed at cws depth.
 				if rlws == "" {
 					out[i] = cws + rl
 				} else if strings.HasPrefix(rlws, si) && si != "" {
@@ -319,12 +335,12 @@ func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLi
 				} else if rlws == cws {
 					out[i] = rl
 				} else {
-					// Unknown intent — shift entire indent by delta.
 					out[i] = cws + rl
 				}
 			}
+		} else if crossType {
+			out[i] = reindentLineByContent(rl, contentLines, matchStart, len(searchLines), fileUnit, si, mi, indentStep)
 		} else {
-			// No content info for this line — fall back to block-level logic.
 			if rlws == "" {
 				out[i] = mi + rl
 			} else {
@@ -333,6 +349,160 @@ func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLi
 		}
 	}
 	return out
+}
+
+// computeIndentStep determines how many characters of search-WS correspond
+// to one file indent level. It scans matched search/content line pairs and
+// finds the smallest positive indent difference in search-WS characters
+// that corresponds to one fileUnit step.
+func computeIndentStep(searchLines, contentLines []string, matchStart int, fileUnit string) int {
+	best := 0
+	for i := 1; i < len(searchLines) && matchStart+i < len(contentLines); i++ {
+		swsPrev := leadingWS(searchLines[i-1])
+		cwsPrev := leadingWS(contentLines[matchStart+i-1])
+		swsCur := leadingWS(searchLines[i])
+		cwsCur := leadingWS(contentLines[matchStart+i])
+		sDelta := len(swsCur) - len(swsPrev)
+		cDelta := len(cwsCur) - len(cwsPrev)
+		if sDelta > 0 && cDelta > 0 && cDelta == len(fileUnit) {
+			if best == 0 || sDelta < best {
+				best = sDelta
+			}
+		}
+	}
+	if best > 0 {
+		return best
+	}
+	// Fallback: infer from first line ratio. si and mi represent the
+	// same logical depth in different WS types. If mi has N units and
+	// si has S chars, then 1 file-level = S/N search-chars (rounded).
+	si := leadingWS(searchLines[0])
+	mi := leadingWS(contentLines[matchStart])
+	_ = mi
+	if len(si) > 0 && len(fileUnit) > 0 {
+		fileDepth := len(leadingWS(contentLines[matchStart])) / len(fileUnit)
+		if fileDepth > 0 {
+			step := len(si) / fileDepth
+			if step > 0 {
+				return step
+			}
+		}
+		return len(si)
+	}
+	return len(fileUnit) * 2
+}
+
+// adjustWS adds or removes file indent levels from a whitespace prefix.
+func adjustWS(ws string, delta int, unit string) string {
+	if delta == 0 {
+		return ws
+	}
+	if delta > 0 {
+		return ws + strings.Repeat(unit, delta)
+	}
+	// delta < 0: remove |delta| units from the end of ws
+	removal := len(unit) * (-delta)
+	if removal >= len(ws) {
+		return ""
+	}
+	return ws[:len(ws)-removal]
+}
+
+func detectCrossType(si, mi string) bool {
+	if si == "" || mi == "" {
+		return false
+	}
+	siHasTabs := strings.Contains(si, "\t")
+	miHasTabs := strings.Contains(mi, "\t")
+	return siHasTabs != miHasTabs
+}
+
+// detectFileIndentUnit determines the file's indentation unit by computing
+// the GCD of indent-level differences across the matched content lines.
+// Returns "\t" for tab-indented files or the space string for space-indented
+// files (e.g., "    " for 4-space indent).
+func detectFileIndentUnit(contentLines []string, matchStart, matchLen int) string {
+	var prevLen int
+	var diffs []int
+	useTabs := false
+	useSpaces := false
+	for i := matchStart; i < matchStart+matchLen && i < len(contentLines); i++ {
+		ws := leadingWS(contentLines[i])
+		if strings.Contains(ws, "\t") {
+			useTabs = true
+		}
+		if len(ws) > 0 && !strings.Contains(ws, "\t") {
+			useSpaces = true
+		}
+		if prevLen > 0 && len(ws) > prevLen {
+			diffs = append(diffs, len(ws)-prevLen)
+		}
+		prevLen = len(ws)
+	}
+	if useTabs && !useSpaces {
+		return "\t"
+	}
+	if len(diffs) == 0 {
+		if useSpaces {
+			return "    "
+		}
+		return "\t"
+	}
+	g := diffs[0]
+	for _, d := range diffs[1:] {
+		g = gcd(g, d)
+	}
+	if g < 2 {
+		g = 2
+	}
+	return strings.Repeat(" ", g)
+}
+
+func gcd(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+// reindentLineByContent reindents a replacement line that has no direct
+// search/content reference. It looks for a content line with matching
+// non-whitespace content in the vicinity; if found, uses that line's WS.
+// Otherwise, computes the depth from the file's indent unit.
+func reindentLineByContent(line string, contentLines []string, matchStart, matchLen int, fileUnit, si, mi string, indentStep int) string {
+	rlws := leadingWS(line)
+	body := strings.TrimSpace(line)
+	if body == "" {
+		return ""
+	}
+	if rlws == "" {
+		return mi + line
+	}
+	for j := matchStart; j < matchStart+matchLen && j < len(contentLines); j++ {
+		if strings.TrimSpace(contentLines[j]) == body {
+			cws := leadingWS(contentLines[j])
+			return cws + body
+		}
+	}
+	if idx := matchStart + matchLen; idx < len(contentLines) {
+		if strings.TrimSpace(contentLines[idx]) == body {
+			cws := leadingWS(contentLines[idx])
+			return cws + body
+		}
+	}
+	if indentStep > 0 && len(si) > 0 {
+		depthRel := (len(rlws) - len(si)) / indentStep
+		baseDepth := len(mi) / len(fileUnit)
+		if len(fileUnit) == 0 {
+			return line
+		}
+		targetDepth := baseDepth + depthRel
+		if targetDepth < 0 {
+			targetDepth = 0
+		}
+		return strings.Repeat(fileUnit, targetDepth) + body
+	}
+	return mi + body
 }
 
 func upgradeIndent(lines []string, from, to string) []string {

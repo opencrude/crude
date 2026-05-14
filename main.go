@@ -140,6 +140,9 @@ func main() {
 		} else {
 			pc.APIKey = os.Getenv("CRUDE_API_KEY")
 			if pc.APIKey == "" {
+				pc.APIKey = os.Getenv("WAFER_API_KEY")
+			}
+			if pc.APIKey == "" {
 				pc.APIKey = os.Getenv("OPENROUTER_API_KEY")
 			}
 		}

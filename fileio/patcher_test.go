@@ -1392,6 +1392,38 @@ func TestApplySearchReplace_mixedIndentTopLevelFuncNotDoubled(t *testing.T) {
 }
 
 // ============================================================================
+// Space-to-tab reindent regression (the cascade corruption bug)
+// ============================================================================
+
+func TestApplySearchReplace_spaceSearchTabFile_regression(t *testing.T) {
+	content := "func foo() {\n\t\t\tif evt.Type == \"usage\" {\n\t\t\t\tmodel := activeCfg.Model\n\t\t\t\tvar promptT, compT, cachedT int\n\t\t\t\tswitch d := evt.Data.(type) {\n\t\t\t\tcase map[string]int:\n\t\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\t}\n\t\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t\t}\n\t\t\t}"
+	search := "        if evt.Type == \"usage\" {\n            model := activeCfg.Model\n            var promptT, compT, cachedT int\n            switch d := evt.Data.(type) {\n            case map[string]int:\n                promptT = d[\"prompt\"]\n            }\n            if promptT > 0 || compT > 0 {\n                s.cost.RecordUsage(model, promptT, compT, cachedT)\n            }"
+	replace := "        if evt.Type == \"usage\" {\n            model := activeCfg.Model\n            var promptT, compT, cachedT int\n            isEstimated := false\n            switch d := evt.Data.(type) {\n            case map[string]int:\n                promptT = d[\"prompt\"]\n            }\n            if promptT > 0 || compT > 0 {\n                s.cost.RecordUsage(model, promptT, compT, cachedT)\n            }"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "func foo() {\n\t\t\tif evt.Type == \"usage\" {\n\t\t\t\tmodel := activeCfg.Model\n\t\t\t\tvar promptT, compT, cachedT int\n\t\t\t\tisEstimated := false\n\t\t\t\tswitch d := evt.Data.(type) {\n\t\t\t\tcase map[string]int:\n\t\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\t}\n\t\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t\t}\n\t\t\t}"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestApplySearchReplace_tabSearchSpaceFile_regression(t *testing.T) {
+	content := "def foo():\n        if evt.type == \"usage\":\n            model = active_cfg.model\n            var_t = d[\"prompt\"]\n        }"
+	search := "\tif evt.type == \"usage\":\n\t\tmodel = active_cfg.model\n\t\tvar_t = d[\"prompt\"]\n\t}"
+	replace := "\tif evt.type == \"usage\":\n\t\tmodel = active_cfg.model\n\t\tis_estimated = False\n\t\tvar_t = d[\"prompt\"]\n\t}"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "def foo():\n        if evt.type == \"usage\":\n            model = active_cfg.model\n            is_estimated = False\n            var_t = d[\"prompt\"]\n        }"
+	if got != want {
+		t.Errorf("\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// ============================================================================
 // assertEqual helper
 // ============================================================================
 

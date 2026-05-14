@@ -252,7 +252,7 @@ func (m *App) handleUsageData(data any) {
 	case map[string]any:
 		prompt, _ := d["prompt"].(float64)
 		completion, _ := d["completion"].(float64)
-		cached, _ := d["cached"].(float64)
+		cached, _ := d["prompt_cached"].(float64)
 		cost, _ := d["cost"].(float64)
 		ctxWindow, _ := d["context_window"].(float64)
 		ctxUsed, _ := d["context_used"].(float64)
@@ -262,7 +262,12 @@ func (m *App) handleUsageData(data any) {
 		m.sessionCost += cost
 		if int(ctxWindow) > 0 {
 			m.contextWindow = int(ctxWindow)
-			m.contextUsed = int(ctxUsed)
+			if int(ctxUsed) > 0 {
+				m.contextUsed = int(ctxUsed)
+			} else {
+				// context_used not always sent; use prompt tokens as proxy
+				m.contextUsed = int(prompt)
+			}
 		}
 		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed)
 	case map[string]int:

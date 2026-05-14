@@ -150,6 +150,7 @@ func (a *Agent) completeStream(
 		Messages: msgs,
 		Tools:    tools,
 		Stream:   true,
+		StreamOptions: &provider.StreamOptions{IncludeUsage: true},
 	}
 
 	std := a.Provider.Standard()
