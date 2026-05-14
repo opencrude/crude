@@ -796,6 +796,8 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					target := data["target"]
 					if s.permStore.IsAlwaysAllowed(op, tool, target) {
 						blockResolveCh <- "allow"
+						// Show the question in chat with an auto-allowed checkmark
+						tuiInst.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 						return
 					}
 				}
@@ -809,6 +811,8 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 							sr := &safety.CommandSafetyResult{Risk: r, BaseCommand: data["tool"]}
 							if s.permStore.IsCommandAllowed(sr) {
 								blockResolveCh <- "always"
+								// Show the question in chat with an auto-allowed checkmark
+								tuiInst.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 								return
 							}
 							break

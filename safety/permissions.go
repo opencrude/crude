@@ -98,15 +98,23 @@ func (s *PermissionStore) GrantAlways(op CRUDEOp, tool string, targetPath string
 		return
 	}
 
-	// For file tools: store path-tree permission scoped to the target's parent directory.
-	// All files under this directory tree will be auto-allowed for this tool+op.
+	// For file tools: store path-tree permission scoped to the project working directory.
+	// All files under the project tree will be auto-allowed for this tool+op.
+	// This is more useful than scoping to the target's parent directory, since
+	// "always allow" should cover the entire codebase, not just one subdirectory.
 	if targetPath != "" {
 		absPath, err := filepath.Abs(targetPath)
 		if err != nil {
 			absPath = targetPath
 		}
-		dir := filepath.Dir(absPath)
-		treeKey := PermissionKey{Scope: ScopePathTree, Op: op, Tool: tool, Dir: dir}
+		// Use the project working directory as the scope root.
+		// If the target is inside the working directory, use the working directory.
+		// If it's outside, use the target's parent directory (existing behavior).
+		scopeDir := s.workDir
+		if s.isOutsideWorkDir(absPath) {
+			scopeDir = filepath.Dir(absPath)
+		}
+		treeKey := PermissionKey{Scope: ScopePathTree, Op: op, Tool: tool, Dir: scopeDir}
 		s.allowed[treeKey] = true
 	}
 }

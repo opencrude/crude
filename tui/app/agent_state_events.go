@@ -159,6 +159,37 @@ func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.Me
 		Content: "⚠  " + question,
 		Time:    time.Now(),
 	})
+	// Record the index of this question message so it can be updated in-place later.
+	a.blockingMsgIdx = len(target.Messages()) - 1
+	return nil
+}
+
+// handleBlockingAuto handles operations that are auto-allowed because the user
+// previously chose "Always Allow". It shows the question with a checkmark
+// indicating it was auto-resolved, without showing a confirmation dialog.
+func (a *AgentState) handleBlockingAuto(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList) tea.Cmd {
+	var data map[string]string
+	if d, ok := evt.Data.(map[string]any); ok {
+		data = make(map[string]string, len(d))
+		for k, v := range d {
+			data[k] = fmt.Sprintf("%v", v)
+		}
+	} else if d, ok := evt.Data.(map[string]string); ok {
+		data = d
+	} else {
+		data = map[string]string{"question": fmt.Sprintf("%v", evt.Data)}
+	}
+	question := data["question"]
+	target.MarkAllThinkingDone()
+	if thinkTarget != target {
+		thinkTarget.MarkAllThinkingDone()
+	}
+	// Show the question with an auto-allowed checkmark directly — no dialog needed.
+	target.AppendMessage(ttypes.ChatMessage{
+		Role:    ttypes.RoleAssistant,
+		Content: "✓ Always allowed — " + question,
+		Time:    time.Now(),
+	})
 	return nil
 }
 
