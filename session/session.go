@@ -284,15 +284,11 @@ func (s *Session) newAgent() *agent.Agent {
 
 			stepStatuses := make(map[string]string)
 			stepLabels := make(map[string]string)
-			for i, step := range steps {
+			for _, step := range steps {
 				id, _ := step["id"].(string)
 				desc, _ := step["description"].(string)
 				stepLabels[id] = desc
-				if i == 0 {
-					stepStatuses[id] = "active"
-				} else {
-					stepStatuses[id] = "pending"
-				}
+				stepStatuses[id] = "pending"
 			}
 			state.AddToContext("plan_steps", steps)
 			state.AddToContext("plan_step_statuses", stepStatuses)
@@ -303,36 +299,17 @@ func (s *Session) newAgent() *agent.Agent {
 			return status, nil
 
 		case "mark_step_complete":
-			stepID := getStrParam(params, "step_id")
-			if stepID == "" {
+			stepIDs := resolveStepIDs(params["step_id"])
+			if len(stepIDs) == 0 {
 				return "", fmt.Errorf("mark_step_complete: missing 'step_id'")
 			}
 			state := s.sm.GetOrCreateState(s.sessionID)
 
-			wasActive := false
-			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
-				if m, ok := raw.(map[string]string); ok {
-					wasActive = m[stepID] == "active"
-					m[stepID] = "completed"
-					state.AddToContext("plan_step_statuses", m)
-				}
-			}
-
-			if wasActive {
-				if raw, ok := state.GetFromContext("plan_steps"); ok {
-					if steps, ok := raw.([]map[string]any); ok {
-						if rawStatuses, ok2 := state.GetFromContext("plan_step_statuses"); ok2 {
-							if m, ok2 := rawStatuses.(map[string]string); ok2 {
-								for _, step := range steps {
-									id, _ := step["id"].(string)
-									if m[id] == "pending" {
-										m[id] = "active"
-										break
-									}
-								}
-								state.AddToContext("plan_step_statuses", m)
-							}
-						}
+			for _, stepID := range stepIDs {
+				if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+					if m, ok := raw.(map[string]string); ok {
+						m[stepID] = "completed"
+						state.AddToContext("plan_step_statuses", m)
 					}
 				}
 			}
@@ -356,7 +333,38 @@ func (s *Session) newAgent() *agent.Agent {
 			if status != "" {
 				return status, nil
 			}
-			return fmt.Sprintf("Step %q marked as complete.", stepID), nil
+			if len(stepIDs) == 1 {
+				return fmt.Sprintf("Step %q marked as complete.", stepIDs[0]), nil
+			}
+			return fmt.Sprintf("Steps %v marked as complete.", stepIDs), nil
+
+		case "mark_step_doing":
+			stepIDs := resolveStepIDs(params["step_id"])
+			if len(stepIDs) == 0 {
+				return "", fmt.Errorf("mark_step_doing: missing 'step_id'")
+			}
+			state := s.sm.GetOrCreateState(s.sessionID)
+
+			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := raw.(map[string]string); ok {
+					for _, stepID := range stepIDs {
+						// Only mark as doing if step is currently pending
+						if m[stepID] == "pending" || m[stepID] == "active" {
+							m[stepID] = "doing"
+						}
+					}
+					state.AddToContext("plan_step_statuses", m)
+				}
+			}
+
+			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
+			if status != "" {
+				return status, nil
+			}
+			if len(stepIDs) == 1 {
+				return fmt.Sprintf("Step %q marked as doing.", stepIDs[0]), nil
+			}
+			return fmt.Sprintf("Steps %v marked as doing.", stepIDs), nil
 
 		case "mark_step_failed":
 			stepID := getStrParam(params, "step_id")
@@ -411,7 +419,7 @@ func (s *Session) newAgent() *agent.Agent {
 			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := statuses.(map[string]string); ok {
 					for id, st := range m {
-						if st == "active" {
+						if st == "doing" || st == "active" {
 							m[id] = "blocked"
 							break
 						}
@@ -431,19 +439,11 @@ func (s *Session) newAgent() *agent.Agent {
 				state := s.sm.GetOrCreateState(s.sessionID)
 				if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
 					if m, ok := statuses.(map[string]string); ok {
-						hasActive := false
-						for _, st := range m {
-							if st == "active" {
-								hasActive = true
-								break
-							}
-						}
-						if !hasActive {
-							for id, st := range m {
-								if st == "blocked" {
-									m[id] = "active"
-									break
-								}
+						// Transition blocked steps back to pending.
+						// The LLM should call mark_step_doing to explicitly resume work.
+						for id, st := range m {
+							if st == "blocked" {
+								m[id] = "pending"
 							}
 						}
 						state.AddToContext("plan_step_statuses", m)
@@ -1055,6 +1055,33 @@ func getStrParam(params map[string]any, key string) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return ""
+}
+
+// resolveStepIDs extracts step IDs from a parameter that can be either
+// a single string (e.g. "step1") or an array of strings (e.g. ["step1","step2"]).
+func resolveStepIDs(val any) []string {
+	if val == nil {
+		return nil
+	}
+	// Direct string
+	if s, ok := val.(string); ok && s != "" {
+		return []string{s}
+	}
+	// Array of strings (from JSON: []interface{})
+	if arr, ok := val.([]any); ok {
+		var ids []string
+		for _, v := range arr {
+			if s, ok := v.(string); ok && s != "" {
+				ids = append(ids, s)
+			}
+		}
+		return ids
+	}
+	// Fallback: try stringifying
+	if s := fmt.Sprintf("%v", val); s != "" && s != "<nil>" {
+		return []string{s}
+	}
+	return nil
 }
 
 func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {

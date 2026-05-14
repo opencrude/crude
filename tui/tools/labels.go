@@ -123,6 +123,11 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 		return "Waiting"
 	case "plan", "list_goal_status":
 		return fmt.Sprintf("Running %s", rendering.PascalCaseTool(tool))
+	case "mark_step_doing":
+		if target != "" {
+			return fmt.Sprintf("Starting %s", target)
+		}
+		return "Starting step"
 	case "mark_step_complete":
 		if target != "" {
 			return fmt.Sprintf("Completing %s", target)
@@ -308,6 +313,15 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		return label
 	case "plan", "list_goal_status":
 		return rendering.PascalCaseTool(tool)
+	case "mark_step_doing":
+		label := "Started"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
 	case "mark_step_complete":
 		label := "Completed"
 		if target != "" {
@@ -361,7 +375,7 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 
 func IsPlanTool(name string) bool {
 	switch name {
-	case "plan", "mark_step_complete", "mark_step_failed", "report_blocker", "resolve_blocker", "list_goal_status":
+	case "plan", "mark_step_doing", "mark_step_complete", "mark_step_failed", "report_blocker", "resolve_blocker", "list_goal_status":
 		return true
 	default:
 		return false

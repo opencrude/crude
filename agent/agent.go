@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"crude/logger"
 	"crude/provider"
@@ -733,6 +734,14 @@ func containsPrefix(s, prefix string) bool {
 	return s[:len(prefix)] == prefix
 }
 
+func truncateDesc(desc string, maxRunes int) string {
+	if utf8.RuneCountInString(desc) <= maxRunes {
+		return desc
+	}
+	runes := []rune(desc)
+	return string(runes[:maxRunes]) + "…"
+}
+
 func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionID string) string {
 	// ... unchanged from original, see original file
 	if sm == nil {
@@ -772,7 +781,7 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 					total = len(steps)
 					for _, step := range steps {
 						id, _ := step["id"].(string)
-						desc := stepLabels[id]
+						desc := truncateDesc(stepLabels[id], 50)
 						status := stepStatuses[id]
 						marker := persistentStepMarker(status)
 						if status == "completed" {
@@ -784,7 +793,7 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 				} else {
 					for id, status := range stepStatuses {
 						marker := persistentStepMarker(status)
-						desc := stepLabels[id]
+						desc := truncateDesc(stepLabels[id], 50)
 						line := fmt.Sprintf("  %s %s: %s", marker, id, desc)
 						if status == "completed" {
 							completed++
@@ -829,6 +838,8 @@ func persistentStepMarker(status string) string {
 	switch status {
 	case "completed":
 		return "✓"
+	case "doing":
+		return "→"
 	case "active":
 		return "→"
 	case "blocked":

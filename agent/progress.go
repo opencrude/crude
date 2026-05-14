@@ -398,6 +398,12 @@ func FormatPreview(p ToolCallPreview) string {
 		}
 		return name
 
+	case "mark_step_doing":
+		if stepID := getPS(p.Params, "step_id"); stepID != "" {
+			return fmt.Sprintf("%s %s", name, stepID)
+		}
+		return name
+
 	default:
 		if path != "" {
 			return fmt.Sprintf("%s %s", name, path)
