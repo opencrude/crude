@@ -242,6 +242,21 @@ func (ml *MessageList) UpdateToolStreaming(toolID, name string, data map[string]
 		}
 	}
 
+	if toolID != "" {
+		for i, msg := range ml.messages {
+			if msg.ToolName == name && msg.ToolID == "" && msg.ToolStatus == "streaming" {
+				msg.ToolID = toolID
+				msg.ToolProgressLabel = target
+				msg.ToolPreviewPhase = previewPhase
+				msg.ToolProgressPhase = "streaming"
+				msg.ToolProgressMessage = ""
+				msg.CachedLines = nil
+				ml.vl.InvalidateItem(ml.itemID(i))
+				return
+			}
+		}
+	}
+
 	msg := types.ChatMessage{
 		Role:              types.RoleTool,
 		Time:              time.Now(),
@@ -267,6 +282,13 @@ func (ml *MessageList) UpdateToolStreaming(toolID, name string, data map[string]
 }
 
 func (ml *MessageList) UpdateToolCall(toolID, name, argsCompact string) {
+	if toolID != "" {
+		for _, msg := range ml.messages {
+			if msg.ToolName == name && msg.ToolID == "" && (msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
+				msg.ToolID = toolID
+			}
+		}
+	}
 	found := false
 	for i, msg := range ml.messages {
 		if msg.ToolID == toolID && msg.ToolName == name &&
@@ -306,6 +328,13 @@ func (ml *MessageList) UpdateToolCall(toolID, name, argsCompact string) {
 }
 
 func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path string, linesAdded, linesRemoved int) {
+	if toolID != "" {
+		for _, msg := range ml.messages {
+			if msg.ToolName == name && msg.ToolID == "" && (msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
+				msg.ToolID = toolID
+			}
+		}
+	}
 	for i, msg := range ml.messages {
 		if msg.ToolStatus != "calling" && msg.ToolStatus != "streaming" && msg.ToolStatus != "success" {
 			continue
@@ -336,6 +365,13 @@ func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path str
 }
 
 func (ml *MessageList) UpdateToolResult(toolID, name, result string, isError bool) {
+	if toolID != "" {
+		for _, msg := range ml.messages {
+			if msg.ToolName == name && msg.ToolID == "" && (msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
+				msg.ToolID = toolID
+			}
+		}
+	}
 	for i, msg := range ml.messages {
 		if msg.ToolStatus != "calling" && msg.ToolStatus != "streaming" {
 			continue
@@ -364,6 +400,18 @@ func (ml *MessageList) UpdateToolResult(toolID, name, result string, isError boo
 			} else {
 				msg.Content = msg.ToolName + " " + msg.ToolArgs
 			}
+			ml.vl.InvalidateItem(ml.itemID(i))
+			return
+		}
+	}
+}
+
+// SetToolPermTag sets the PermTag on a tool message matched by toolID.
+func (ml *MessageList) SetToolPermTag(toolID, tag string) {
+	for i, msg := range ml.messages {
+		if msg.ToolID == toolID {
+			msg.PermTag = tag
+			msg.CachedLines = nil
 			ml.vl.InvalidateItem(ml.itemID(i))
 			return
 		}

@@ -168,26 +168,25 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.OnConfirmResult != nil {
 				m.OnConfirmResult(result)
 			}
-			// Update the existing blocking question message in-place with the result,
-			// instead of appending a separate result message.
-			resultMsg := "✓ Allowed"
+			// Compact permission tag: no separate assistant message.
+			// Instead, store the tag on the agent state so it gets applied
+			// to the next matching tool_call as a muted suffix.
 			switch result.Choice {
+			case ttypes.ConfirmAllow:
+				ma.pendingPermTag = "allowed"
 			case ttypes.ConfirmAlways:
-				resultMsg = "✓ Always allowed (session)"
+				ma.pendingPermTag = "always"
 			case ttypes.ConfirmDeny:
-				resultMsg = "✗ Denied"
-			}
-			msgs := m.mainMsgList.Messages()
-			if idx := ma.blockingMsgIdx; idx >= 0 && idx < len(msgs) {
-				msgs[idx].Content = resultMsg
-				msgs[idx].CachedLines = nil
-				m.mainMsgList.InvalidateAllMessages()
-			} else {
-				// Fallback: if index is invalid, append as before
+				ma.pendingPermTag = "denied"
+				// Denied operations don't produce a tool_call, so create a
+				// compact tool-like message showing the denial directly.
 				m.mainMsgList.AppendMessage(ttypes.ChatMessage{
-					Role:    ttypes.RoleAssistant,
-					Content: resultMsg,
-					Time:    time.Now(),
+					Role:              ttypes.RoleTool,
+					ToolName:          result.Tool,
+					ToolStatus:        "error",
+					ToolProgressLabel: result.Target,
+					PermTag:           "denied",
+					Time:              time.Now(),
 				})
 			}
 			m.setMode(ModeChat)

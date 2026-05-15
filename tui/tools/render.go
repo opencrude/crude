@@ -63,6 +63,9 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 		}
 	}
 
+	// Build the permission tag suffix for the title line
+	permSuffix := formatPermTag(msg.PermTag, th)
+
 	var msgLines []string
 
 	if isActive {
@@ -72,17 +75,17 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 		} else {
 			dot = "○ "
 		}
-		line := dim.Render("│ ") + spinStyle.Render(dot) + nameStyle.Render(title)
+		line := dim.Render("│ ") + spinStyle.Render(dot) + nameStyle.Render(title) + permSuffix
 		msgLines = append(msgLines, line)
 	} else if msg.ToolStatus == "success" && msg.ToolName == "plan" {
 	} else if msg.ToolStatus == "success" {
-		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title)
+		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title) + permSuffix
 		msgLines = append(msgLines, line)
 	} else if msg.ToolStatus == "error" {
-		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title)
+		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title) + permSuffix
 		msgLines = append(msgLines, line)
 	} else {
-		line := dim.Render("│ ") + spinStyle.Render("○ ") + nameStyle.Render(title)
+		line := dim.Render("│ ") + spinStyle.Render("○ ") + nameStyle.Render(title) + permSuffix
 		msgLines = append(msgLines, line)
 	}
 
@@ -692,5 +695,26 @@ func formatCharCount(n int) string {
 		return fmt.Sprintf("%.1fk chars", float64(n)/1000)
 	default:
 		return fmt.Sprintf("%d chars", n)
+	}
+}
+
+// formatPermTag renders a compact, muted permission indicator as a title-line
+// suffix. Returns "" when tag is empty.
+func formatPermTag(tag string, th *theme.Theme) string {
+	if tag == "" {
+		return ""
+	}
+	muted := lipgloss.NewStyle().Foreground(th.Colors.Muted)
+	switch tag {
+	case "allowed":
+		return muted.Render("  ✓")
+	case "always":
+		return muted.Render("  ✓ always")
+	case "auto":
+		return muted.Render("  ✓ auto")
+	case "denied":
+		return muted.Render("  ✗")
+	default:
+		return muted.Render("  " + tag)
 	}
 }

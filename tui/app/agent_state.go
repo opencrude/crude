@@ -25,7 +25,16 @@ type AgentState struct {
 
 	// Index of the last blocking question message in the message list,
 	// so it can be updated in-place when the user confirms/denies.
+	// Set to -1 when no blocking message was appended (new compact-tag mode).
 	blockingMsgIdx int
+
+	// pendingPermTag stores a permission result that should be attached to the
+	// next tool_call's message as a PermTag suffix. Values: "allowed",
+	// "always", "auto". Cleared after being applied.
+	pendingPermTag string
+	// pendingPermTool stores the tool name that the pending tag applies to,
+	// so it's only applied to the correct tool message.
+	pendingPermTool string
 }
 
 func NewAgentState(id string, msgList *widgets.MessageList) *AgentState {
