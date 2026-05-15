@@ -76,7 +76,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
+			a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
 			select {
 			case <-time.After(bo):
 			case <-ctx.Done():
@@ -98,7 +98,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 			}
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
-				a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
+				a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				select {
 				case <-time.After(bo):
 				case <-ctx.Done():
@@ -175,6 +175,8 @@ func (a *Agent) completeStream(
 	client := &http.Client{Timeout: 300 * time.Second}
 	endpoint := a.Provider.ChatEndpoint()
 
+	firstTokenLogged := false
+
 	for attempt := 1; ; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -194,7 +196,7 @@ func (a *Agent) completeStream(
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
+			a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
 			if onRetry != nil {
 				onRetry(attempt, bo.Seconds())
 			}
@@ -215,7 +217,7 @@ func (a *Agent) completeStream(
 			}
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
-				a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
+				a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				if onRetry != nil {
 					onRetry(attempt, bo.Seconds())
 				}
@@ -272,6 +274,7 @@ func (a *Agent) completeStream(
 				if chunk.Usage.PromptTokensDetails != nil {
 					promptTokensCached = chunk.Usage.PromptTokensDetails.CachedTokens
 				}
+				a.logger.Debug("STREAM", "usage_received", "prompt", promptTokens, "completion", completionTokens, "cached", promptTokensCached)
 			}
 
 			reasoningText := choice.Delta.ReasoningContent
@@ -287,6 +290,11 @@ func (a *Agent) completeStream(
 
 			delta := choice.Delta.Content
 			if delta != "" {
+				if !firstTokenLogged {
+					latencyMs := time.Since(streamStart).Milliseconds()
+					a.logger.Debug("STREAM", "first_token", "model", a.Model, "latency_ms", latencyMs)
+					firstTokenLogged = true
+				}
 				contentBuf.WriteString(delta)
 				emit(delta)
 			}
@@ -304,36 +312,39 @@ func (a *Agent) completeStream(
 						},
 					}
 					if onToolCallStart != nil && tc.Function.Name != "" {
+						a.logger.Debug("STREAM", "tool_call_start", "id", tc.ID, "name", tc.Function.Name)
 						onToolCallStart(tc.ID, tc.Function.Name)
 					}
 					if onToolCallDelta != nil && tc.Function.Name != "" {
+						a.logger.Debug("STREAM", "tool_call_delta", "id", tc.ID, "name", tc.Function.Name, "args_len", len(tc.Function.Arguments))
 						onToolCallDelta(tc.ID, tc.Function.Name, tc.Function.Arguments)
 					}
-			} else {
-				if tc.ID != "" && existing.ID == "" {
-					existing.ID = tc.ID
-				}
-				if tc.Type != "" && existing.Type == "" {
-					existing.Type = tc.Type
-				}
-				if tc.Function.Name != "" && existing.Function.Name == "" {
-					existing.Function.Name = tc.Function.Name
-					if onToolCallStart != nil {
-						onToolCallStart(existing.ID, existing.Function.Name)
+				} else {
+					if tc.ID != "" && existing.ID == "" {
+						existing.ID = tc.ID
+					}
+					if tc.Type != "" && existing.Type == "" {
+						existing.Type = tc.Type
+					}
+					if tc.Function.Name != "" && existing.Function.Name == "" {
+						existing.Function.Name = tc.Function.Name
+						a.logger.Debug("STREAM", "tool_call_start", "id", existing.ID, "name", existing.Function.Name)
+						if onToolCallStart != nil {
+							onToolCallStart(existing.ID, existing.Function.Name)
+						}
+					}
+					existing.Function.Arguments += tc.Function.Arguments
+					if onToolCallDelta != nil && existing.Function.Name != "" {
+						onToolCallDelta(existing.ID, existing.Function.Name, existing.Function.Arguments)
 					}
 				}
-				existing.Function.Arguments += tc.Function.Arguments
-				if onToolCallDelta != nil && existing.Function.Name != "" {
-					onToolCallDelta(existing.ID, existing.Function.Name, existing.Function.Arguments)
-				}
-			}
 			}
 		}
 		resp.Body.Close()
 
 		if err := scanner.Err(); err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("stream scan error: %w", err).Error())
+			a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("stream scan error: %w", err).Error())
 			if onRetry != nil {
 				onRetry(attempt, bo.Seconds())
 			}
@@ -395,6 +406,7 @@ func (a *Agent) completeStream(
 
 func (a *Agent) emitError(emit func(AgentEvent), err error) {
 	errMsg := err.Error()
+	originalMsg := errMsg
 	if strings.Contains(errMsg, "429") {
 		errMsg = "Rate limited — please wait a moment and try again"
 	} else if strings.Contains(errMsg, "OpenRouter 5") {
@@ -405,5 +417,6 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 			errMsg = errMsg[:120] + "…"
 		}
 	}
+	a.logger.Error("LLM", "emit_error", "original", originalMsg, "display", errMsg)
 	emit(AgentEvent{Type: "error", Data: errMsg})
 }

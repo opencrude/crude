@@ -32,11 +32,17 @@ func (m *ConversationStateMachine) GetOrCreateState(conversationID string) *Conv
 }
 
 func (m *ConversationStateMachine) HasActiveGoal(conversationID string) bool {
-	return m.GetOrCreateState(conversationID).HasActiveGoal()
+	state := m.GetOrCreateState(conversationID)
+	has := state.HasActiveGoal()
+	m.logger.Debug("STATE", "has_active_goal", "conversation_id", conversationID, "has", has)
+	return has
 }
 
 func (m *ConversationStateMachine) HasBlocker(conversationID string) bool {
-	return m.GetOrCreateState(conversationID).HasBlocker()
+	state := m.GetOrCreateState(conversationID)
+	has := state.HasBlocker()
+	m.logger.Debug("STATE", "has_blocker", "conversation_id", conversationID, "has", has)
+	return has
 }
 
 func (m *ConversationStateMachine) CreateGoal(
@@ -254,13 +260,18 @@ func (m *ConversationStateMachine) CancelGoal(conversationID, goalID string) {
 
 func (m *ConversationStateMachine) ClearState(conversationID string) {
 	if state, ok := m.states[conversationID]; ok {
+		m.logger.Info("STATE", "clear", "goal_id", state.FocusGoalID, "conversation_id", conversationID, "root_count", len(state.ThreadRoots))
 		delete(m.states, conversationID)
-		m.logger.Info("STATE", "cancelled", "goal_id", state.FocusGoalID, "conversation_id", conversationID)
 	}
 }
 
 func (m *ConversationStateMachine) GetState(conversationID string) *ConversationState {
-	return m.states[conversationID]
+	s, ok := m.states[conversationID]
+	if !ok {
+		m.logger.Debug("STATE", "get_state_not_found", "conversation_id", conversationID)
+		return nil
+	}
+	return s
 }
 
 func priorityLabel(p GoalPriority) string {

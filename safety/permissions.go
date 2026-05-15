@@ -1,10 +1,13 @@
 package safety
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"crude/logger"
 )
 
 type PermissionScope string
@@ -26,6 +29,7 @@ type PermissionStore struct {
 	mu      sync.Mutex
 	allowed map[PermissionKey]bool
 	workDir string
+	logger  *logger.Logger
 }
 
 func NewPermissionStore() *PermissionStore {
@@ -33,7 +37,14 @@ func NewPermissionStore() *PermissionStore {
 	return &PermissionStore{
 		allowed: make(map[PermissionKey]bool),
 		workDir: wd,
+		logger:  nil, // set via SetLogger
 	}
+}
+
+func (s *PermissionStore) SetLogger(lg *logger.Logger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logger = lg
 }
 
 func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath string) bool {
@@ -43,6 +54,7 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 	// 1. Check global destructive op permission (for commands)
 	key := PermissionKey{Scope: ScopeDestructiveOp, Tool: tool, Op: op}
 	if s.allowed[key] {
+		s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_destructive_op") })
 		return true
 	}
 
@@ -55,6 +67,7 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 		dir := filepath.Dir(absPath)
 		outsideKey := PermissionKey{Scope: ScopeOutsideCwd, Op: op, Tool: tool, Dir: dir}
 		if s.allowed[outsideKey] {
+			s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_outside_cwd") })
 			return true
 		}
 	}
@@ -67,6 +80,7 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 				if pk.Scope == ScopePathTree && pk.Tool == tool && pk.Op == op {
 					// Check if the target path is within the allowed directory tree
 					if strings.HasPrefix(absPath, pk.Dir+string(os.PathSeparator)) || absPath == pk.Dir {
+						s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_path_tree") })
 						return true
 					}
 				}
@@ -74,12 +88,15 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 		}
 	}
 
+	s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "denied") })
 	return false
 }
 
 func (s *PermissionStore) GrantAlways(op CRUDEOp, tool string, targetPath string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.logIf(func(lg *logger.Logger) { lg.Info("PERM", "grant", "op", op, "tool", tool, "target", targetPath) })
 
 	// For commands: store global destructive op permission (existing behavior)
 	if tool == "execute_command" {
@@ -99,17 +116,11 @@ func (s *PermissionStore) GrantAlways(op CRUDEOp, tool string, targetPath string
 	}
 
 	// For file tools: store path-tree permission scoped to the project working directory.
-	// All files under the project tree will be auto-allowed for this tool+op.
-	// This is more useful than scoping to the target's parent directory, since
-	// "always allow" should cover the entire codebase, not just one subdirectory.
 	if targetPath != "" {
 		absPath, err := filepath.Abs(targetPath)
 		if err != nil {
 			absPath = targetPath
 		}
-		// Use the project working directory as the scope root.
-		// If the target is inside the working directory, use the working directory.
-		// If it's outside, use the target's parent directory (existing behavior).
 		scopeDir := s.workDir
 		if s.isOutsideWorkDir(absPath) {
 			scopeDir = filepath.Dir(absPath)
@@ -122,7 +133,9 @@ func (s *PermissionStore) GrantAlways(op CRUDEOp, tool string, targetPath string
 func (s *PermissionStore) NeedsOutsideCwdConfirmation(targetPath string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return targetPath != "" && s.isOutsideWorkDir(targetPath)
+	outside := targetPath != "" && s.isOutsideWorkDir(targetPath)
+	s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "outside_check", "target", targetPath, "outside", outside) })
+	return outside
 }
 
 // IsCommandAllowed checks if a command safety result's risk level has been pre-approved.
@@ -136,6 +149,7 @@ func (s *PermissionStore) IsCommandAllowed(sr *CommandSafetyResult) bool {
 		Op:    OpExecute,
 	}
 	if s.allowed[key] {
+		s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", "allowed_global") })
 		return true
 	}
 
@@ -145,8 +159,11 @@ func (s *PermissionStore) IsCommandAllowed(sr *CommandSafetyResult) bool {
 			Tool:  "execute_command",
 			Dir:   sr.Risk.String(),
 		}
-		return s.allowed[riskKey]
+		allowed := s.allowed[riskKey]
+		s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", fmt.Sprintf("%v", allowed)) })
+		return allowed
 	}
+	s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", "denied") })
 	return false
 }
 
@@ -154,6 +171,8 @@ func (s *PermissionStore) IsCommandAllowed(sr *CommandSafetyResult) bool {
 func (s *PermissionStore) GrantCommandRisk(risk CommandRisk) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.logIf(func(lg *logger.Logger) { lg.Info("PERM", "grant_risk", "risk", risk.String()) })
 
 	riskKey := PermissionKey{
 		Scope: "risk_level",
@@ -169,4 +188,10 @@ func (s *PermissionStore) isOutsideWorkDir(targetPath string) bool {
 		return true
 	}
 	return !strings.HasPrefix(absPath, s.workDir+string(os.PathSeparator)) && absPath != s.workDir
+}
+
+func (s *PermissionStore) logIf(fn func(lg *logger.Logger)) {
+	if s.logger != nil {
+		fn(s.logger)
+	}
 }

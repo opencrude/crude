@@ -100,6 +100,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	lg.Info("SESSION", "config", "provider", cfg.ActiveProvider, "model", activeCfg.Model)
 
 	permStore := safety.NewPermissionStore()
+	permStore.SetLogger(lg)
 
 	fileioSessionID := fileio.GenerateSessionID()
 	var editor *fileio.Editor
@@ -525,7 +526,7 @@ func (s *Session) newAgent() *agent.Agent {
 		default:
 			if tool == "execute_command" && !s.yolo {
 				cmd := getStrParam(params, "command")
-				sr := safety.CheckCommandSafety(cmd)
+				sr := safety.CheckCommandSafety(cmd, s.logger)
 				if sr.Risk.IsAlwaysBlocked() {
 					errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
 					s.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
@@ -535,7 +536,7 @@ func (s *Session) newAgent() *agent.Agent {
 					s.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
 				}
 			}
-			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo)
+			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo, s.logger)
 			if strings.HasPrefix(result.Content, "Error:") {
 				return result, fmt.Errorf("%s", result.Content)
 			}
@@ -551,18 +552,25 @@ func (s *Session) SetYolo(enabled bool) {
 }
 
 func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
+	l := s.logger
+	l.Info("INPUT", "undo", "cmd", cmd)
 	if s.editor == nil {
+		l.Warn("EDITOR", "undo_no_editor", "cmd", cmd)
 		return tui.UndoResultMsg{Error: "file editor not available"}
 	}
 	switch {
 	case cmd == "/undo":
+		l.Info("JOURNAL", "undo_last", "journal_len", len(s.editor.Log()))
 		if err := s.editor.UndoLast(); err != nil {
+			l.Error("JOURNAL", "undo_failed", "error", err.Error())
 			return tui.UndoResultMsg{Error: err.Error()}
 		}
 		journalLog := s.editor.Log()
+		remaining := len(journalLog)
+		l.Info("JOURNAL", "undo_ok", "remaining", remaining)
 		desc := "Undo complete. No more operations to undo."
-		if len(journalLog) > 0 {
-			desc = fmt.Sprintf("Undo complete. %d operation(s) remaining in journal.", len(journalLog))
+		if remaining > 0 {
+			desc = fmt.Sprintf("Undo complete. %d operation(s) remaining in journal.", remaining)
 		}
 		return tui.UndoResultMsg{Desc: desc}
 	case strings.HasPrefix(cmd, "/undo-n"):
@@ -574,17 +582,25 @@ func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
 		if n <= 0 {
 			n = 1
 		}
+		l.Info("JOURNAL", "undo_n", "count", n, "journal_len", len(s.editor.Log()))
 		if err := s.editor.UndoN(n); err != nil {
+			l.Error("JOURNAL", "undo_n_failed", "count", n, "error", err.Error())
 			return tui.UndoResultMsg{Error: err.Error()}
 		}
+		l.Info("JOURNAL", "undo_n_ok", "count", n)
 		return tui.UndoResultMsg{Desc: fmt.Sprintf("Undid last %d file operation(s).", n)}
 	case cmd == "/undo-all":
+		totalOps := len(s.editor.Log())
+		l.Info("JOURNAL", "undo_session", "ops_to_revert", totalOps)
 		if err := s.editor.UndoSession(); err != nil {
+			l.Error("JOURNAL", "undo_session_failed", "error", err.Error())
 			return tui.UndoResultMsg{Error: err.Error()}
 		}
+		l.Info("JOURNAL", "undo_session_ok", "ops_reverted", totalOps)
 		return tui.UndoResultMsg{Desc: "All file operations this session have been reverted."}
 	case cmd == "/changes":
 		files := s.editor.ChangedFiles()
+		l.Info("EDITOR", "changed_files", "count", len(files))
 		if len(files) == 0 {
 			return tui.UndoResultMsg{Desc: "No file changes this session."}
 		}
@@ -600,18 +616,28 @@ func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
 		sb.WriteString("Use /undo to revert the last operation, /undo-all to revert everything.")
 		return tui.UndoResultMsg{Desc: sb.String()}
 	}
+	l.Warn("INPUT", "undo_unknown", "cmd", cmd)
 	return tui.UndoResultMsg{}
 }
 
 func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
+	l := s.logger
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	oldProvider := s.cfg.ActiveProvider
+	oldModel := s.cfg.GetActiveProviderConfig().Model
+	l.Info("CONFIG", "save_begin", "old_provider", oldProvider, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
 
 	newCfg := settingsToConfig(tuiSettings, s.cfg)
 	activeCfg := newCfg.GetActiveProviderConfig()
 	if activeCfg.APIKey == "" {
+		l.Warn("CONFIG", "save_blocked", "reason", "empty_api_key")
 		return fmt.Errorf("API key cannot be empty — settings not saved")
 	}
+
+	providerChanged := s.cfg.ActiveProvider != newCfg.ActiveProvider
+	modelChanged := activeCfg.Model != oldModel
 
 	s.cfg = newCfg
 	s.provider = provider.FromPreset(s.cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
@@ -619,6 +645,7 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 	s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
 	if activeCfg.ModelContextWindow > 0 {
 		provider.SetModelContext(activeCfg.Model, activeCfg.ModelContextWindow)
+		l.Debug("CONFIG", "ctx_window_set", "model", activeCfg.Model, "window", activeCfg.ModelContextWindow)
 	}
 	if activeCfg.MainInputPrice > 0 {
 		provider.SetModelPrice(activeCfg.Model, provider.ModelPrice{
@@ -626,23 +653,40 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 			OutputPricePerToken:      activeCfg.MainOutputPrice,
 			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
 		})
+		l.Debug("CONFIG", "price_set", "model", activeCfg.Model, "input", activeCfg.MainInputPrice, "output", activeCfg.MainOutputPrice)
 	}
 	s.logger.SetTurnEnabled(tuiSettings.TurnLogsEnabled != "off")
 	s.cfg.TurnLogsEnabled = tuiSettings.TurnLogsEnabled != "off"
+
+	if providerChanged {
+		l.Info("CONFIG", "provider_switch", "from", oldProvider, "to", newCfg.ActiveProvider)
+	}
+	if modelChanged {
+		l.Info("CONFIG", "model_change", "from", oldModel, "to", activeCfg.Model)
+	}
+	l.Info("CONFIG", "save_complete", "provider", newCfg.ActiveProvider, "model", activeCfg.Model, "turn_logs", s.cfg.TurnLogsEnabled)
 	return nil
 }
 
 func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.ModelEntry, error) {
+	l := s.logger
+	l.Info("MODEL", "fetch_begin", "provider", providerID)
 	p := provider.FromPreset(providerID, apiKey, baseURL)
 	models, err := provider.FetchModels(p)
 	if err != nil {
+		l.Error("MODEL", "fetch_error", "provider", providerID, "error", err.Error())
 		return nil, err
 	}
+	l.Info("MODEL", "fetched", "provider", providerID, "count", len(models))
 
 	// Enrich with models.dev data (context window + pricing).
 	metas, mdErr := provider.FetchModelsDevAll()
+	if mdErr != nil {
+		l.Warn("MODEL", "meta_fetch_error", "error", mdErr.Error())
+	}
 
 	entries := make([]tui.ModelEntry, len(models))
+	enriched := 0
 	for i, m := range models {
 		entry := tui.ModelEntry{
 			ID:            m.ID,
@@ -657,37 +701,44 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.M
 				entry.InputPrice = meta.InputPrice
 				entry.OutputPrice = meta.OutputPrice
 				entry.CacheReadPrice = meta.CacheReadPrice
+				enriched++
 			}
 		}
 		entries[i] = entry
 	}
+	l.Info("MODEL", "fetch_ok", "provider", providerID, "total", len(entries), "enriched", enriched)
 	return entries, nil
 }
 
 func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
+	l := s.logger
+	l.Info("SESSION", "run_start", "session_id", s.sessionID)
 	defer func() {
 		if r := recover(); r != nil {
-			s.logger.Error("SESSION", "panic", "error", fmt.Sprintf("%v", r))
+			l.Error("SESSION", "panic", "error", fmt.Sprintf("%v", r))
 			tuiInst.SendAgentEvent("error", fmt.Sprintf("Internal error: %v", r))
 		}
 	}()
 
 	cancelCh := tuiInst.CancelCh
+	l.Debug("SESSION", "cancel_ch_setup", "channel", "cancelCh")
 
 	go func() {
+		l.Debug("MODEL", "models_dev_start")
 		metas, err := provider.FetchModelsDevAll()
 		if err != nil {
-			s.logger.Warn("MODEL", "load_error", "error", err.Error())
+			l.Warn("MODEL", "load_error", "error", err.Error())
 			return
 		}
 		provider.LoadModelMetas(metas)
-		s.logger.Info("MODEL", "load_ok", "count", len(metas))
+		l.Info("MODEL", "load_ok", "count", len(metas))
 	}()
 
 	// Start polling async command status for TUI status bar
 	asyncPollingStop := make(chan struct{})
 	defer close(asyncPollingStop)
 	go func() {
+		l.Debug("ASYNC", "poll_start", "interval", "1s")
 		tick := time.NewTicker(1 * time.Second)
 		defer tick.Stop()
 		for {
@@ -700,6 +751,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					tuiInst.SendAgentEvent("async_command_status", []fileio.AsyncCmdInfo{})
 				}
 			case <-asyncPollingStop:
+				l.Debug("ASYNC", "poll_stop")
 				return
 			}
 		}
@@ -708,11 +760,13 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 	for userText := range tuiInst.InputCh {
 		select {
 		case <-cancelCh:
+			l.Debug("CANCEL", "cancel_drained", "iteration", "start_of_loop")
 		default:
 		}
 
 		activeCfg := s.cfg.GetActiveProviderConfig()
 		if activeCfg.APIKey == "" {
+			l.Warn("INPUT", "no_api_key")
 			tuiInst.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
 			continue
 		}
@@ -722,6 +776,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		s.pendingBlock = false
 		s.blockMu.Unlock()
 		if isBlocked {
+			l.Debug("BLOCK", "block_resolve", "text_len", len(userText))
 			s.blockRespMu.Lock()
 			s.lastBlockResp = userText
 			s.blockRespMu.Unlock()
@@ -733,18 +788,20 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		s.msgCounter++
 		currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
 		s.msgCounterMu.Unlock()
+		l.Info("INPUT", "received", "len", len(userText), "msg_id", currentMsgID, "is_blocked", isBlocked)
 
 		s.msgsMu.Lock()
 		s.msgs = append(s.msgs, provider.ChatMessage{Role: "user", Content: userText})
 		msgsCopy := make([]provider.ChatMessage, len(s.msgs))
 		copy(msgsCopy, s.msgs)
 		s.msgsMu.Unlock()
-		s.logger.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userText))
+		l.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userText))
 
-		s.logger.Info("AGENT", "loop_start", "msg_id", currentMsgID)
+		l.Info("AGENT", "loop_start", "msg_id", currentMsgID)
 
 		if s.editor != nil {
 			s.editor = s.editor.WithMessage(currentMsgID)
+			l.Debug("EDITOR", "with_message", "msg_id", currentMsgID)
 		}
 
 		// Update provider model & thinking effort before each run (settings may have changed)
@@ -760,10 +817,12 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		go func() {
 			select {
 			case <-cancelCh:
+				l.Debug("CANCEL", "ctx_cancelled", "msg_id", currentMsgID)
 				cancel()
 			case <-ctx.Done():
 			}
 		}()
+		activeCfg = s.cfg.GetActiveProviderConfig() // refresh for emit closure
 
 		emit := func(evt agent.AgentEvent) {
 			if evt.Type == "blocking" {
@@ -773,6 +832,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					tool := data["tool"]
 					target := data["target"]
 					if s.permStore.IsAlwaysAllowed(op, tool, target) {
+						l.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
 						blockResolveCh <- "allow"
 						tuiInst.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 						return
@@ -787,6 +847,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 						if r.String() == riskStr {
 							sr := &safety.CommandSafetyResult{Risk: r, BaseCommand: data["tool"]}
 							if s.permStore.IsCommandAllowed(sr) {
+								l.Debug("PERM", "command_auto_allowed", "risk", riskStr, "tool", data["tool"])
 								blockResolveCh <- "always"
 								tuiInst.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 								return
@@ -795,6 +856,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 						}
 					}
 				}
+				l.Info("BLOCK", "prompt", "operation", data["operation"], "tool", data["tool"], "target", data["target"], "question", data["question"])
 				s.blockMu.Lock()
 				s.pendingBlock = true
 				s.blockMu.Unlock()
@@ -806,6 +868,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					opStr := data["operation"]
 					tool := data["tool"]
 					target := data["target"]
+					l.Info("PERM", "grant", "operation", opStr, "tool", tool, "target", target)
 
 					switch tool {
 					case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
@@ -817,6 +880,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 						} {
 							if r.String() == opStr {
 								s.permStore.GrantCommandRisk(r)
+								l.Debug("PERM", "risk_granted", "risk", opStr)
 								break
 							}
 						}
@@ -859,7 +923,8 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					if !isEstimated {
 						s.tokens.Record(promptT, compT)
 					}
-					s.logger.Info("COST", "tokens", "model", model, "prompt", promptT, "completion", compT, "cached", cachedT, "session_cost", s.cost.Snapshot().TotalCost, "estimated", isEstimated)
+					turnCost := s.cost.Snapshot().TotalCost
+					l.Info("COST", "turn_usage", "model", model, "prompt", promptT, "completion", compT, "cached", cachedT, "turn_cost", turnCost, "session_total", turnCost, "estimated", isEstimated)
 				}
 			}
 
@@ -878,14 +943,19 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 
 		cancel()
 
-		s.logger.Info("AGENT", "loop_end", "len", len(finalContent))
+		l.Info("AGENT", "loop_end", "len", len(finalContent))
 		s.blockMu.Lock()
+		wasPending := s.pendingBlock
 		s.pendingBlock = false
 		s.blockMu.Unlock()
+		if wasPending {
+			l.Debug("BLOCK", "pending_cleared", "msg_id", currentMsgID)
+		}
 
 		s.blockRespMu.Lock()
 		if s.lastBlockResp != "" && finalContent == "" {
 			finalContent = s.lastBlockResp
+			l.Debug("BLOCK", "block_resp_used", "len", len(s.lastBlockResp))
 		}
 		s.lastBlockResp = ""
 		s.blockRespMu.Unlock()
@@ -898,9 +968,18 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 			persisted = append(persisted, m)
 		}
+		preSanitize := len(persisted)
 		persisted = sanitizeMessages(persisted)
+		removedCount := preSanitize - len(persisted)
+		if removedCount > 0 {
+			l.Debug("SANITIZE", "messages_removed", "count", removedCount, "remaining", len(persisted))
+		}
 		ctxWindow := provider.LookupContextWindow(activeCfg.Model)
+		preTruncate := len(persisted)
 		persisted = truncateMessages(persisted, ctxWindow, activeCfg.Model)
+		if len(persisted) < preTruncate {
+			l.Info("TRUNCATE", "messages", "before", preTruncate, "after", len(persisted), "window", ctxWindow)
+		}
 		if len(persisted) > 0 {
 			s.msgs = persisted
 		} else if finalContent != "" {
@@ -908,14 +987,17 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		}
 		s.msgsMu.Unlock()
 		if finalContent != "" {
-			s.logger.Info("CONV", "assistant_msg", "msg_id", currentMsgID, "len", len(finalContent))
+			l.Info("CONV", "assistant_msg", "msg_id", currentMsgID, "len", len(finalContent))
 		}
 	}
+	l.Info("SESSION", "run_exit")
 }
 
 func (s *Session) ModelName() string {
 	return s.cfg.GetActiveProviderConfig().Model
 }
+
+func (s *Session) Logger() *logger.Logger { return s.logger }
 
 func ConfigToSettings(cfg *Config) tui.Settings {
 	providerID := cfg.EffectiveProviderID()
@@ -1055,7 +1137,9 @@ func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
 				prev := msgs[len(msgs)-2]
 				if len(prev.ToolCalls) > 0 && allCommTools(prev.ToolCalls) {
 					content := prev.Content
+					toolCount := 0
 					for i := len(msgs) - 1; i >= 0 && msgs[i].Role == "tool"; i-- {
+						toolCount++
 						if content == "" && msgs[i].Content != "" {
 							content = msgs[i].Content
 						}

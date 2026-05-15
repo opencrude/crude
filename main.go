@@ -186,7 +186,7 @@ func main() {
 		})
 	}
 
-	tuiInst, err := tui.Start(sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, loadHistory())
+	tuiInst, err := tui.Start(sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, loadHistory(), sess.Logger())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		os.Exit(1)

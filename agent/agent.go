@@ -115,7 +115,10 @@ func (a *Agent) Run(
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
 ) []provider.ChatMessage {
+	l := a.logger
 	allTools := allToolDefs()
+
+	l.Debug("AGENT", "run_enter", "msgs", len(sessionMessages), "tools", len(allTools), "session_id", sessionID)
 
 	lastReply := ""
 	msgs := []provider.ChatMessage{
@@ -152,6 +155,7 @@ func (a *Agent) Run(
 
 	ctxWindow := a.Provider.ContextWindow()
 	ctxLimit := int(float64(ctxWindow) * contextSafetyPct)
+	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "safety_limit", ctxLimit, "safety_pct", contextSafetyPct)
 
 	stopConditions := []stopCondition{
 		func(steps []StepRecord) bool {
@@ -169,6 +173,7 @@ func (a *Agent) Run(
 
 	for step := 0; step < maxSteps; step++ {
 		if ctx.Err() != nil {
+			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
 			emit(AgentEvent{Type: "done", Data: "Cancelled."})
 			return msgs
 		}
@@ -367,6 +372,11 @@ func (a *Agent) Run(
 		}
 
 		hasToolCalls := len(toolCalls) > 0
+		if hasToolCalls {
+			l.Debug("AGENT", "branch_has_tool_calls", "count", len(toolCalls), "step", step)
+		} else {
+			l.Debug("AGENT", "branch_text_only", "text_len", len(accumulatedText), "step", step)
+		}
 
 		assistantMsg := provider.ChatMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, Reasoning: reasoningContent}
 		if hasToolCalls {
@@ -399,6 +409,7 @@ func (a *Agent) Run(
 		resultCh := make(chan execResult, len(toolCalls))
 
 		for _, tc := range toolCalls {
+			l.Debug("AGENT", "goroutine_start", "tool", tc.Function.Name, "step", step)
 			go func(tc provider.ToolCall) {
 				var params map[string]any
 				if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
@@ -426,7 +437,7 @@ func (a *Agent) Run(
 
 				if tc.Function.Name == "execute_command" && !a.Yolo {
 					cmd := getStr(params, "command")
-					sr := safety.CheckCommandSafety(cmd)
+					sr := safety.CheckCommandSafety(cmd, a.logger)
 					if sr.Risk.IsAlwaysBlocked() {
 						errMsg := fmt.Sprintf("[SAFETY BLOCK] This command was automatically blocked and will never execute. DO NOT retry this command or any variant of it.\nBlock reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the system prevented a dangerous operation. Move on to a different approach. Explain to the user why this was blocked and what you'll do instead.", sr.Reason, sr.Suggestion, cmd)
 						a.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
@@ -665,6 +676,7 @@ func (a *Agent) Run(
 		// on the next API call.
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
 			msgs[lastToolResultIdx].CacheControl = &provider.CacheControl{Type: "ephemeral"}
+			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
 		}
 
 		// LOOP TERMINATION (safety): Stop conditions catch infinite loops
@@ -674,7 +686,7 @@ func (a *Agent) Run(
 			if lastPromptTokens > ctxLimit {
 				reason = fmt.Sprintf("context_limit_reached (%d/%d tokens)", lastPromptTokens, ctxWindow)
 			}
-			a.logger.Warn("LLM", "stop_condition", "reason", reason, "steps", len(steps), "prompt_tokens", lastPromptTokens, "total_prompt_tokens_spent", totalPromptTokens, "ctx_window", ctxWindow)
+			l.Warn("AGENT", "stop_condition", "reason", reason, "steps", len(steps), "prompt_tokens", lastPromptTokens, "total_prompt_tokens_spent", totalPromptTokens, "ctx_window", ctxWindow)
 			if lastReply != "" {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": lastReply, "reason": reason}})
 			} else {
@@ -684,6 +696,7 @@ func (a *Agent) Run(
 		}
 	}
 
+	l.Warn("AGENT", "max_steps", "steps", maxSteps, "total_prompt_tokens", totalPromptTokens)
 	emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Reached maximum " + fmt.Sprint(maxSteps) + " steps. Task may be incomplete.", "reason": "max_steps_reached"}})
 	return msgs
 }
