@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"crude/jsonrepair"
+
 	"github.com/buger/jsonparser"
 )
 
@@ -35,82 +37,20 @@ func ExtractPreview(id, name, accumulatedJSON string) ToolCallPreview {
 		return p
 	}
 
-	repaired := repairJSON(cleaned)
-	if err := json.Unmarshal([]byte(repaired), &m); err == nil {
-		p.Params = m
-		return p
+	repaired, repairErr := jsonrepair.Repair(cleaned)
+	if repairErr == nil {
+		if err := json.Unmarshal([]byte(repaired), &m); err == nil {
+			p.Params = m
+			return p
+		}
 	}
 
-	p.Params = extractWithJSONParser(repaired, name)
+	fallbackData := cleaned
+	if repairErr == nil {
+		fallbackData = repaired
+	}
+	p.Params = extractWithJSONParser(fallbackData, name)
 	return p
-}
-
-func repairJSON(s string) string {
-	b := []byte(s)
-	if len(b) == 0 {
-		return s
-	}
-
-	var stack []byte
-	inStr := false
-	escape := false
-
-	for i := 0; i < len(b); i++ {
-		if escape {
-			escape = false
-			continue
-		}
-		if b[i] == '\\' && inStr {
-			escape = true
-			continue
-		}
-		if b[i] == '"' {
-			inStr = !inStr
-			continue
-		}
-		if inStr {
-			continue
-		}
-		switch b[i] {
-		case '{', '[':
-			stack = append(stack, b[i])
-		case '}':
-			if len(stack) > 0 && stack[len(stack)-1] == '{' {
-				stack = stack[:len(stack)-1]
-			}
-		case ']':
-			if len(stack) > 0 && stack[len(stack)-1] == '[' {
-				stack = stack[:len(stack)-1]
-			}
-		}
-	}
-
-	var suffix []byte
-	for i := len(stack) - 1; i >= 0; i-- {
-		switch stack[i] {
-		case '{':
-			if inStr {
-				suffix = append(suffix, '"')
-				inStr = false
-			}
-			suffix = append(suffix, '}')
-		case '[':
-			if inStr {
-				suffix = append(suffix, '"')
-				inStr = false
-			}
-			suffix = append(suffix, ']')
-		}
-	}
-
-	if inStr {
-		suffix = append([]byte{'"'}, suffix...)
-	}
-
-	repaired := append(b, suffix...)
-	repairedStr := string(repaired)
-	repairedStr = strings.TrimRight(repairedStr, ", \t\n\r")
-	return repairedStr
 }
 
 func extractWithJSONParser(data string, toolName string) map[string]any {

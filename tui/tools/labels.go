@@ -34,7 +34,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) string {
 	default:
 		if msg.ToolStatus == "success" || msg.ToolStatus == "error" {
 			dur := rendering.FormatDuration(msg.ToolDuration)
-			return BuildDoneLabel(msg.ToolName, target, 0, 0, 0, dur)
+			return BuildDoneLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens, dur)
 		}
 		if target != "" {
 			return rendering.PascalCaseTool(msg.ToolName) + " " + target
