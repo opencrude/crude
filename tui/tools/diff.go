@@ -45,9 +45,11 @@ type diffFile struct {
 var hunkRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
 // parseUnifiedDiff extracts structured data from a raw unified diff string.
-// It strips markdown fences (```diff / ```), file headers (+++ / ---), and
-// @@ hunk markers, returning only the semantically useful data: file path,
-// change counts, and per-hunk line classifications with new-file line numbers.
+// It strips markdown fences (```diff / ```), file headers (+++ / ---),
+// @@ hunk markers, and git-specific metadata headers (diff --git, index,
+// mode changes, renames, etc.), returning only the semantically useful data:
+// file path, change counts, and per-hunk line classifications with new-file
+// line numbers.
 func parseUnifiedDiff(raw string) []diffFile {
 	text := raw
 
@@ -104,6 +106,22 @@ func parseUnifiedDiff(raw string) []diffFile {
 				}
 			}
 			currentHunk = &diffHunk{StartLine: startLine}
+			continue
+		}
+
+		// Skip git-specific metadata headers — these appear before the
+		// standard unified diff headers (---/+++) and are not content.
+		if strings.HasPrefix(line, "diff --git ") ||
+			strings.HasPrefix(line, "index ") ||
+			strings.HasPrefix(line, "new file mode ") ||
+			strings.HasPrefix(line, "deleted file mode ") ||
+			strings.HasPrefix(line, "old mode ") ||
+			strings.HasPrefix(line, "new mode ") ||
+			strings.HasPrefix(line, "similarity index ") ||
+			strings.HasPrefix(line, "rename from ") ||
+			strings.HasPrefix(line, "rename to ") ||
+			strings.HasPrefix(line, "copy from ") ||
+			strings.HasPrefix(line, "copy to ") {
 			continue
 		}
 

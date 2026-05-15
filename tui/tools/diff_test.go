@@ -178,6 +178,55 @@ func TestRenderDiffCompactMode(t *testing.T) {
 	}
 }
 
+func TestParseGitDiffHeaders(t *testing.T) {
+	// Git diff output with diff --git and index headers
+	raw := "diff --git a/agent/agent.go b/agent/agent.go\n" +
+		"index 4d2d242..8a3e2dd 100644\n" +
+		"--- a/agent/agent.go\n" +
+		"+++ b/agent/agent.go\n" +
+		"@@ -693,6 +693,9 @@ func getStr(params map[string]any, key string) string {\n" +
+		" \tif s, ok := v.(string); ok {\n" +
+		" \t\treturn s\n" +
+		" \t}\n" +
+		"+\tif v == nil {\n" +
+		"+\t\treturn \"\"\n" +
+		"+\t}\n" +
+		" \treturn fmt.Sprintf(\"%v\", v)\n" +
+		" }\n"
+
+	files := parseUnifiedDiff(raw)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
+	}
+	f := files[0]
+	if f.Path != "agent/agent.go" {
+		t.Errorf("expected path 'agent/agent.go', got '%s'", f.Path)
+	}
+	if f.DelCount != 0 {
+		t.Errorf("expected 0 deletions, got %d", f.DelCount)
+	}
+	if f.AddCount != 3 {
+		t.Errorf("expected 3 additions, got %d", f.AddCount)
+	}
+	if len(f.Hunks) != 1 {
+		t.Fatalf("expected 1 hunk, got %d", len(f.Hunks))
+	}
+	h := f.Hunks[0]
+	if h.StartLine != 693 {
+		t.Errorf("expected start line 693, got %d", h.StartLine)
+	}
+
+	// Verify the diff --git and index lines are NOT present as content
+	for _, line := range h.Lines {
+		if strings.Contains(line.Content, "diff --git") {
+			t.Error("git diff --git header leaked into content lines")
+		}
+		if strings.Contains(line.Content, "index ") {
+			t.Error("git index header leaked into content lines")
+		}
+	}
+}
+
 func TestIsDiffContent(t *testing.T) {
 	tests := []struct {
 		input   string
