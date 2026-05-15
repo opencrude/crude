@@ -127,10 +127,9 @@ func (a *AgentState) handleToolProgress(evt ttypes.AgentEventMsg, target *widget
 		path, _ := data["path"].(string)
 		linesAdded := toInt(data["lines_added"])
 		linesRemoved := toInt(data["lines_removed"])
-		toolDurMs := toInt(data["tool_dur_ms"])
 		estTokens := toInt(data["tool_est_tokens"])
 
-		target.UpdateToolProgress(toolID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(toolDurMs), int(estTokens))
+		target.UpdateToolProgress(toolID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(estTokens))
 		if phase == "done" {
 			onStatusLine(name)
 		} else if phase != "" && message != "" {
@@ -150,12 +149,11 @@ func (a *AgentState) handleToolResult(evt ttypes.AgentEventMsg, target *widgets.
 		result, _ := data["result"].(string)
 		errFlag, _ := data["error"].(string)
 		isError := errFlag == "true"
-		toolDurMs := toInt(data["tool_dur_ms"])
 		estTokens := toInt(data["tool_est_tokens"])
 		linesAdded := toInt(data["lines_added"])
 		linesRemoved := toInt(data["lines_removed"])
 		onStatusLine(name)
-		target.UpdateToolResult(toolID, name, result, isError, int(toolDurMs), int(estTokens), int(linesAdded), int(linesRemoved))
+		target.UpdateToolResult(toolID, name, result, isError, int(estTokens), int(linesAdded), int(linesRemoved))
 	}
 	return nil
 }
