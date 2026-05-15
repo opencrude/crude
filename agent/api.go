@@ -38,6 +38,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 	}
 
 	if extra := a.Provider.BuildExtraBody(); len(extra) > 0 {
+		a.logger.Debug("LLM", "extra_body", "keys", len(extra))
 		var merged map[string]any
 		if err := json.Unmarshal(body, &merged); err != nil {
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("merge extras: %w", err)
@@ -118,6 +119,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("API error: %s", chatResp.Error.Message)
 		}
 		if len(chatResp.Choices) == 0 {
+			a.logger.Error("LLM", "empty_response", "model", a.Provider.Name)
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("empty response from model")
 		}
 
@@ -156,6 +158,7 @@ func (a *Agent) completeStream(
 	}
 
 	if extra := a.Provider.BuildExtraBody(); len(extra) > 0 {
+		a.logger.Debug("LLM", "extra_body", "keys", len(extra))
 		var merged map[string]any
 		if err := json.Unmarshal(body, &merged); err != nil {
 			return "", "", "", nil, 0, 0, 0, fmt.Errorf("merge extras: %w", err)

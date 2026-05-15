@@ -86,8 +86,6 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
 		})
 	}
-	exec := fileio.NewLocalExec()
-
 	lg, err := logger.New(logger.Options{
 		HomeDir:        homeDir,
 		TurnLogEnabled: cfg.TurnLogsEnabled,
@@ -95,6 +93,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("logger: %w", err)
 	}
+	exec := fileio.NewLocalExecWithLogger(lg)
 	sessionID := lg.SessionID()
 	lg.Info("SESSION", "start", "version", "1.0")
 	lg.Info("SESSION", "config", "provider", cfg.ActiveProvider, "model", activeCfg.Model)
@@ -120,7 +119,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		logger:       lg,
 		permStore:    permStore,
 		sm:           sm,
-		asyncMgr:     fileio.NewAsyncCommandManager(),
+		asyncMgr:     fileio.NewAsyncCommandManagerWithLogger(lg),
 		sessionID:    sessionID,
 		sessionStart: time.Now(),
 		cost:         NewCostAccumulator(),

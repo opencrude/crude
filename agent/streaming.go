@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"crude/jsonrepair"
+	"crude/logger"
 
 	"github.com/buger/jsonparser"
 )
@@ -17,7 +18,7 @@ type ToolCallPreview struct {
 	Complete bool
 }
 
-func ExtractPreview(id, name, accumulatedJSON string) ToolCallPreview {
+func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCallPreview {
 	p := ToolCallPreview{
 		ToolID:   id,
 		ToolName: name,
@@ -31,23 +32,36 @@ func ExtractPreview(id, name, accumulatedJSON string) ToolCallPreview {
 	cleaned := strings.TrimSpace(accumulatedJSON)
 
 	var m map[string]any
-	if err := json.Unmarshal([]byte(cleaned), &m); err == nil {
+	unmarshalErr := json.Unmarshal([]byte(cleaned), &m)
+	if unmarshalErr == nil {
 		p.Params = m
 		p.Complete = true
 		return p
 	}
 
+	if lg != nil {
+		lg.Debug("STREAM", "json_unmarshal_failed", "tool", name, "tool_id", id, "error", unmarshalErr.Error())
+	}
+
 	repaired, repairErr := jsonrepair.Repair(cleaned)
 	if repairErr == nil {
 		if err := json.Unmarshal([]byte(repaired), &m); err == nil {
+			if lg != nil {
+				lg.Debug("STREAM", "json_repaired", "tool", name, "tool_id", id)
+			}
 			p.Params = m
 			return p
 		}
+	} else if lg != nil {
+		lg.Debug("STREAM", "json_repair_failed", "tool", name, "tool_id", id, "repair_error", repairErr.Error())
 	}
 
 	fallbackData := cleaned
 	if repairErr == nil {
 		fallbackData = repaired
+	}
+	if lg != nil {
+		lg.Debug("STREAM", "json_fallback_parser", "tool", name, "tool_id", id)
 	}
 	p.Params = extractWithJSONParser(fallbackData, name)
 	return p

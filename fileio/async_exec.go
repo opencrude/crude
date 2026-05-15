@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"crude/logger"
 )
 
 type AsyncStatus string
@@ -43,12 +45,25 @@ type asyncCmdState struct {
 type AsyncCommandManager struct {
 	mu       sync.Mutex
 	commands map[string]*asyncCmdState
+	logger   *logger.Logger
 }
 
 func NewAsyncCommandManager() *AsyncCommandManager {
 	return &AsyncCommandManager{
 		commands: make(map[string]*asyncCmdState),
 	}
+}
+
+func NewAsyncCommandManagerWithLogger(lg *logger.Logger) *AsyncCommandManager {
+	return &AsyncCommandManager{
+		commands: make(map[string]*asyncCmdState),
+		logger:   lg,
+	}
+}
+
+// SetLogger attaches a logger for lifecycle logging.
+func (m *AsyncCommandManager) SetLogger(lg *logger.Logger) {
+	m.logger = lg
 }
 
 func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds int) (*AsyncCmdInfo, error) {
@@ -106,6 +121,9 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 
 	if err := c.Start(); err != nil {
 		cancel()
+		if m.logger != nil {
+			m.logger.Error("ASYNC", "start_failed", "handle", handle, "error", err.Error())
+		}
 		return nil, fmt.Errorf("failed to start async command %q: %w", handle, err)
 	}
 
@@ -114,6 +132,10 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 	m.mu.Lock()
 	m.commands[handle] = state
 	m.mu.Unlock()
+
+	if m.logger != nil {
+		m.logger.Info("ASYNC", "start", "handle", handle, "pid", c.Process.Pid, "timeout", timeoutSeconds)
+	}
 
 	go func() {
 		err := c.Wait()
@@ -124,19 +146,31 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 			if ctx.Err() == context.Canceled {
 				state.info.Status = AsyncKilled
 				state.info.Error = "killed"
+				if m.logger != nil {
+					m.logger.Warn("ASYNC", "killed", "handle", handle, "pid", state.info.PID, "duration", time.Since(state.info.StartedAt).Round(time.Second).String())
+				}
 			} else if ctx.Err() == context.DeadlineExceeded {
 				state.info.Status = AsyncKilled
 				state.info.Error = "timed out"
+				if m.logger != nil {
+					m.logger.Warn("ASYNC", "timeout", "handle", handle, "pid", state.info.PID, "timeout_seconds", timeoutSeconds)
+				}
 			} else {
 				state.info.Status = AsyncFailed
 				state.info.Error = err.Error()
 				if exitErr, ok := err.(*exec.ExitError); ok {
 					state.info.ExitCode = exitErr.ExitCode()
 				}
+				if m.logger != nil {
+					m.logger.Warn("ASYNC", "failed", "handle", handle, "pid", state.info.PID, "exit_code", state.info.ExitCode, "error", err.Error())
+				}
 			}
 		} else {
 			state.info.Status = AsyncCompleted
 			state.info.ExitCode = 0
+			if m.logger != nil {
+				m.logger.Info("ASYNC", "completed", "handle", handle, "pid", state.info.PID, "duration", time.Since(state.info.StartedAt).Round(time.Second).String())
+			}
 		}
 	}()
 
@@ -148,12 +182,18 @@ func (m *AsyncCommandManager) Check(handle string) (*AsyncCmdInfo, bool) {
 	state, ok := m.commands[handle]
 	m.mu.Unlock()
 	if !ok {
+		if m.logger != nil {
+			m.logger.Debug("ASYNC", "check_not_found", "handle", handle)
+		}
 		return nil, false
 	}
 	state.mu.Lock()
 	info := state.info
 	state.mu.Unlock()
 	info.computeDuration()
+	if m.logger != nil {
+		m.logger.Debug("ASYNC", "check", "handle", handle, "status", info.Status, "pid", info.PID)
+	}
 	return &info, true
 }
 
@@ -162,7 +202,13 @@ func (m *AsyncCommandManager) Kill(handle string) error {
 	state, ok := m.commands[handle]
 	m.mu.Unlock()
 	if !ok {
+		if m.logger != nil {
+			m.logger.Warn("ASYNC", "kill_not_found", "handle", handle)
+		}
 		return fmt.Errorf("async command handle %q not found", handle)
+	}
+	if m.logger != nil {
+		m.logger.Info("ASYNC", "kill", "handle", handle, "pid", state.info.PID)
 	}
 	state.cancel()
 	return nil
@@ -173,16 +219,25 @@ func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, 
 	state, ok := m.commands[handle]
 	m.mu.Unlock()
 	if !ok {
+		if m.logger != nil {
+			m.logger.Warn("ASYNC", "read_output_not_found", "handle", handle)
+		}
 		return "", 0, fmt.Errorf("async command handle %q not found", handle)
 	}
 	state.mu.Lock()
 	total := state.output.Len()
 	if sinceByte >= total {
 		state.mu.Unlock()
+		if m.logger != nil {
+			m.logger.Debug("ASYNC", "read_output_no_new", "handle", handle, "since_byte", sinceByte, "total", total)
+		}
 		return "", total, nil
 	}
 	out := string(state.output.Bytes()[sinceByte:total])
 	state.mu.Unlock()
+	if m.logger != nil {
+		m.logger.Debug("ASYNC", "read_output", "handle", handle, "bytes", len(out), "since_byte", sinceByte, "total", total, "next_byte", total)
+	}
 	return out, total, nil
 }
 
@@ -230,6 +285,11 @@ func (info *AsyncCmdInfo) computeDuration() {
 
 func (m *AsyncCommandManager) Cleanup(handle string) {
 	m.mu.Lock()
-	delete(m.commands, handle)
+	if _, ok := m.commands[handle]; ok {
+		if m.logger != nil {
+			m.logger.Debug("ASYNC", "cleanup", "handle", handle)
+		}
+		delete(m.commands, handle)
+	}
 	m.mu.Unlock()
 }

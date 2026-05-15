@@ -207,11 +207,11 @@ func (a *Agent) Run(
 				emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
 					"tool_id": id,
 					"name":    name,
-					"preview": tools.FormatPreview(name, ExtractPreview(id, name, "").Params),
+					"preview": tools.FormatPreview(name, ExtractPreview(id, name, "", a.logger).Params),
 				}})
 			},
 			func(id, name, args string) {
-				preview := ExtractPreview(id, name, args)
+				preview := ExtractPreview(id, name, args, a.logger)
 				path := getStr(preview.Params, "path")
 				command := getStr(preview.Params, "command")
 				urlStr := getStr(preview.Params, "url")
@@ -412,8 +412,10 @@ func (a *Agent) Run(
 		for _, tc := range toolCalls {
 			l.Debug("AGENT", "goroutine_start", "tool", tc.Function.Name, "step", step)
 			go func(tc provider.ToolCall) {
+				goroutineStart := time.Now()
 				var params map[string]any
 				if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
+					a.logger.Error("TOOL", "invalid_args", "name", tc.Function.Name, "error", err.Error())
 					errResult := "Error: invalid arguments: " + err.Error()
 					emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 						"tool_id": tc.ID,
@@ -432,6 +434,7 @@ func (a *Agent) Run(
 				if tc.Function.Name == "reply" {
 					content := getStr(params, "content")
 					lastReply = content
+					a.logger.Debug("AGENT", "goroutine_reply", "content_len", len(content), "tool_id", tc.ID)
 					resultCh <- execResult{id: tc.ID, params: params, name: tc.Function.Name, result: tools.ToolResult{Content: content}}
 					return
 				}
@@ -615,6 +618,9 @@ func (a *Agent) Run(
 				toolStart := time.Now()
 				result, _ := a.ToolFn(tc.Function.Name, params)
 				toolDur := time.Since(toolStart).Milliseconds()
+
+				goroutineDur := time.Since(goroutineStart).Milliseconds()
+				a.logger.Debug("AGENT", "goroutine_complete", "tool", tc.Function.Name, "tool_id", tc.ID, "goroutine_dur_ms", goroutineDur, "tool_dur_ms", toolDur)
 
 				if strings.HasPrefix(result.Content, "Error:") {
 					a.logger.Error("TOOL", "error", "name", tc.Function.Name, "error", result.Content, "latency_ms", toolDur)

@@ -75,11 +75,12 @@ func (e *Editor) Read(path string) (string, error) {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	if IsBinary(data) {
-		e.logger.Info("FILEIO", "read", "path", path, "latency_ms", dur)
+		e.logger.Info("FILEIO", "read_binary", "path", path, "latency_ms", dur, "size", int64(len(data)))
 		return "", &BinaryFileError{Path: abs, Size: int64(len(data))}
 	}
-	e.logger.Info("FILEIO", "read", "path", path, "latency_ms", dur)
-	return EncodeHashlines(string(data)), nil
+	encoded := EncodeHashlines(string(data))
+	e.logger.Info("FILEIO", "read", "path", path, "latency_ms", dur, "size", len(data), "encoded_size", len(encoded))
+	return encoded, nil
 }
 
 func (e *Editor) ReadRaw(path string) (string, error) {
@@ -87,13 +88,18 @@ func (e *Editor) ReadRaw(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read raw %s: %w", path, err)
 	}
+	start := time.Now()
 	data, _, err := readFileSecure(abs, e.policy)
+	dur := time.Since(start).Milliseconds()
 	if err != nil {
+		e.logger.Error("FILEIO", "read_raw", "path", path, "latency_ms", dur, "error", err.Error())
 		return "", fmt.Errorf("read raw %s: %w", path, err)
 	}
 	if IsBinary(data) {
+		e.logger.Warn("FILEIO", "read_raw_binary", "path", path, "size", int64(len(data)))
 		return "", &BinaryFileError{Path: abs, Size: int64(len(data))}
 	}
+	e.logger.Debug("FILEIO", "read_raw_ok", "path", abs, "latency_ms", dur, "size", len(data))
 	return string(data), nil
 }
 
@@ -108,12 +114,15 @@ func (e *Editor) Write(path string, content string) error {
 
 	newBytes := []byte(content)
 	opID := newOpID()
+	e.logger.Debug("FILEIO", "write_begin", "path", abs, "content_len", len(newBytes), "op_id", opID)
 
 	existing, fi, statErr := readFile(abs)
 	if statErr != nil {
 		if !errors.Is(statErr, os.ErrNotExist) {
 			return fmt.Errorf("write %s: pre-read: %w", path, statErr)
 		}
+		// File doesn't exist — creating new file
+		e.logger.Debug("FILEIO", "write_create", "path", abs, "op_id", opID)
 		if err := validateParentDir(abs); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
@@ -122,15 +131,21 @@ func (e *Editor) Write(path string, content string) error {
 			return fmt.Errorf("write %s: journal: %w", path, err)
 		}
 		start := time.Now()
-		writeErr := writeAtomic(abs, newBytes, 0644)
+		writeErr := writeAtomic(abs, newBytes, 0644, e.logger)
 		dur := time.Since(start).Milliseconds()
-		e.logger.Info("FILEIO", "create", "path", abs, "latency_ms", dur)
+		e.logger.Info("FILEIO", "create", "path", abs, "latency_ms", dur, "size", len(newBytes))
 		return writeErr
 	}
 
 	if IsBinary(existing) {
+		e.logger.Warn("FILEIO", "write_binary_skip", "path", abs, "size", fi.Size())
 		return &BinaryFileError{Path: abs, Size: fi.Size()}
 	}
+
+	// Existing file — recording before/after content details
+	oldSize := len(existing)
+	newSize := len(newBytes)
+	e.logger.Debug("FILEIO", "write_overwrite", "path", abs, "old_size", oldSize, "new_size", newSize, "delta", newSize-oldSize, "op_id", opID)
 
 	entry, err := buildWriteEntry(e.sessionID, e.msgID, opID, abs, existing, newBytes, fi.Mode().Perm())
 	if err != nil {
@@ -140,9 +155,13 @@ func (e *Editor) Write(path string, content string) error {
 		return fmt.Errorf("write %s: journal: %w", path, err)
 	}
 	start := time.Now()
-	writeErr := writeAtomic(abs, newBytes, fi.Mode().Perm())
+	writeErr := writeAtomic(abs, newBytes, fi.Mode().Perm(), e.logger)
 	dur := time.Since(start).Milliseconds()
-	e.logger.Info("FILEIO", "write", "path", abs, "latency_ms", dur)
+	if writeErr != nil {
+		e.logger.Error("FILEIO", "write_failed", "path", abs, "latency_ms", dur, "error", writeErr.Error())
+	} else {
+		e.logger.Info("FILEIO", "write_ok", "path", abs, "latency_ms", dur, "old_size", oldSize, "new_size", newSize)
+	}
 	return writeErr
 }
 
@@ -163,7 +182,7 @@ func (e *Editor) Patch(path string, ops []SearchReplace) error {
 		return fmt.Errorf("patch %s: %w", path, err)
 	}
 
-	newContent, err := ApplySearchReplace(string(oldBytes), ops)
+	newContent, err := ApplySearchReplace(string(oldBytes), ops, e.logger)
 	if err != nil {
 		e.logger.Error("FILEIO", "patch_apply_failed", "path", abs, "error", err.Error())
 		return fmt.Errorf("patch %s: %w", path, err)
@@ -182,7 +201,7 @@ func (e *Editor) Patch(path string, ops []SearchReplace) error {
 		return fmt.Errorf("patch %s: journal: %w", path, err)
 	}
 	start := time.Now()
-	writeErr := writeAtomic(abs, newBytes, fi.Mode().Perm())
+	writeErr := writeAtomic(abs, newBytes, fi.Mode().Perm(), e.logger)
 	dur := time.Since(start).Milliseconds()
 	if writeErr != nil {
 		e.logger.Error("FILEIO", "patch_write_failed", "path", abs, "latency_ms", dur, "error", writeErr.Error())
@@ -299,7 +318,7 @@ func (e *Editor) Copy(src, dst string) error {
 	if err := e.journal.record(entry); err != nil {
 		return fmt.Errorf("copy %s → %s: journal: %w", src, dst, err)
 	}
-	return writeAtomic(dstAbs, data, 0644)
+	return writeAtomic(dstAbs, data, 0644, e.logger)
 }
 
 func (e *Editor) UndoLast() error {

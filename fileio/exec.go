@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"crude/logger"
 )
 
 // windowsCommandWarning checks for common patterns that fail on Windows and
@@ -70,9 +72,17 @@ type Executer interface {
 	GrepFiles(pattern, baseDir string, recursive, includeHidden bool) ([]GrepMatch, error)
 }
 
-type LocalExec struct{}
+type LocalExec struct {
+	logger *logger.Logger
+}
 
-func NewLocalExec() *LocalExec { return &LocalExec{} }
+func NewLocalExec() *LocalExec {
+	return &LocalExec{}
+}
+
+func NewLocalExecWithLogger(lg *logger.Logger) *LocalExec {
+	return &LocalExec{logger: lg}
+}
 
 func (l *LocalExec) Execute(cmd string, opts ExecOptions) (string, error) {
 	var c *exec.Cmd
@@ -113,20 +123,35 @@ func (l *LocalExec) Execute(cmd string, opts ExecOptions) (string, error) {
 		c.Dir = opts.CWD
 	}
 
+	start := time.Now()
 	var buf bytes.Buffer
 	c.Stdout = &buf
 	c.Stderr = &buf
 	err := c.Run()
 	out := buf.String()
+	dur := time.Since(start).Milliseconds()
 	if warning != "" {
 		out = warning + out
+	}
+	if l.logger != nil {
+		if err != nil {
+			l.logger.Warn("COMMAND", "exec", "cmd_len", len(cmd), "timeout", opts.TimeoutSeconds, "latency_ms", dur, "out_len", len(out), "exit_code", "non-zero", "cwd", opts.CWD)
+		} else {
+			l.logger.Info("COMMAND", "exec_ok", "cmd_len", len(cmd), "timeout", opts.TimeoutSeconds, "latency_ms", dur, "out_len", len(out), "cwd", opts.CWD)
+		}
 	}
 	return out, err
 }
 
 func (l *LocalExec) ListDir(path string) ([]DirEntry, error) {
+	if l.logger != nil {
+		l.logger.Debug("COMMAND", "list_dir", "path", path)
+	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
+		if l.logger != nil {
+			l.logger.Error("COMMAND", "list_dir_failed", "path", path, "error", err.Error())
+		}
 		return nil, err
 	}
 	result := make([]DirEntry, 0, len(entries))
@@ -144,6 +169,9 @@ func (l *LocalExec) ListDir(path string) ([]DirEntry, error) {
 			Mode:    info.Mode().String(),
 		}
 		result = append(result, de)
+	}
+	if l.logger != nil {
+		l.logger.Debug("COMMAND", "list_dir_ok", "path", path, "entries", len(result))
 	}
 	return result, nil
 }
@@ -211,6 +239,11 @@ func (l *LocalExec) GlobFiles(baseDir, pattern string, includeHidden bool) ([]st
 		return nil, err
 	}
 
+	if l.logger != nil {
+		l.logger.Debug("COMMAND", "glob_start", "base_dir", baseDir, "pattern", pattern, "include_hidden", includeHidden)
+	}
+
+	start := time.Now()
 	var matches []string
 	err = filepath.WalkDir(absBase, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
@@ -233,6 +266,14 @@ func (l *LocalExec) GlobFiles(baseDir, pattern string, includeHidden bool) ([]st
 		}
 		return nil
 	})
+	dur := time.Since(start).Milliseconds()
+	if l.logger != nil {
+		if err != nil {
+			l.logger.Error("COMMAND", "glob_failed", "pattern", pattern, "base_dir", baseDir, "latency_ms", dur, "error", err.Error())
+		} else {
+			l.logger.Info("COMMAND", "glob_ok", "pattern", pattern, "base_dir", baseDir, "matches", len(matches), "latency_ms", dur)
+		}
+	}
 	return matches, err
 }
 
@@ -250,6 +291,11 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden 
 		return nil, err
 	}
 
+	if l.logger != nil {
+		l.logger.Debug("COMMAND", "grep_start", "pattern_len", len(pattern), "base_dir", baseDir, "recursive", recursive, "include_hidden", includeHidden)
+	}
+
+	start := time.Now()
 	var results []GrepMatch
 
 	walkFn := func(path string, d fs.DirEntry, werr error) error {
@@ -312,6 +358,14 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden 
 
 	if err := filepath.WalkDir(absBase, walkFn); err != nil {
 		return nil, err
+	}
+	dur := time.Since(start).Milliseconds()
+	if l.logger != nil {
+		if len(results) == maxGrepResults {
+			l.logger.Warn("COMMAND", "grep_truncated", "pattern_len", len(pattern), "base_dir", baseDir, "matches", len(results), "limit", maxGrepResults, "latency_ms", dur)
+		} else {
+			l.logger.Info("COMMAND", "grep_ok", "pattern_len", len(pattern), "base_dir", baseDir, "matches", len(results), "latency_ms", dur)
+		}
 	}
 	return results, err
 }
