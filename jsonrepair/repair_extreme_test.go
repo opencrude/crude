@@ -2486,8 +2486,8 @@ func TestQuotesAndCommasWeird(t *testing.T) {
 		t.Parallel()
 		for _, tc := range []struct{ input, expected string }{
 			{`["hello,"world"]`, `["hello","world"]`},
-			{`["hello,world]`, `["hello", "world"]`},
-			{`[1,"hello,2]`, `[1, "hello", 2]`},
+			{`["hello,world]`, `["hello","world"]`},
+			{`[1,"hello,2]`, `[1,"hello",2]`},
 			{`["a,"b","c,"d"]`, `["a","b","c","d"]`},
 		} {
 			tc := tc
