@@ -327,7 +327,7 @@ func (ml *MessageList) UpdateToolCall(toolID, name, argsCompact string) {
 	}
 }
 
-func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path string, linesAdded, linesRemoved int) {
+func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path string, linesAdded, linesRemoved, toolDurMs, estTokens int) {
 	if toolID != "" {
 		for _, msg := range ml.messages {
 			if msg.ToolName == name && msg.ToolID == "" && (msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
@@ -351,11 +351,25 @@ func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path str
 			if path != "" {
 				msg.ToolProgressLabel = path
 			}
-			if linesAdded > 0 {
+			if phase == "done" {
 				msg.ToolLivedAdded = linesAdded
-			}
-			if linesRemoved > 0 {
 				msg.ToolLivedRemoved = linesRemoved
+				if toolDurMs > 0 {
+					msg.ToolDuration = time.Duration(toolDurMs) * time.Millisecond
+				}
+				if estTokens > 0 {
+					msg.ToolEstTokens = estTokens
+				}
+			} else {
+				if linesAdded > 0 {
+					msg.ToolLivedAdded = linesAdded
+				}
+				if linesRemoved > 0 {
+					msg.ToolLivedRemoved = linesRemoved
+				}
+				if estTokens > 0 {
+					msg.ToolEstTokens = estTokens
+				}
 			}
 			msg.CachedLines = nil
 			ml.vl.InvalidateItem(ml.itemID(i))
@@ -364,7 +378,7 @@ func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path str
 	}
 }
 
-func (ml *MessageList) UpdateToolResult(toolID, name, result string, isError bool) {
+func (ml *MessageList) UpdateToolResult(toolID, name, result string, isError bool, toolDurMs, estTokens, linesAdded, linesRemoved int) {
 	if toolID != "" {
 		for _, msg := range ml.messages {
 			if msg.ToolName == name && msg.ToolID == "" && (msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
@@ -391,8 +405,17 @@ func (ml *MessageList) UpdateToolResult(toolID, name, result string, isError boo
 			msg.ToolPreviewPhase = types.ToolPreviewDone
 			msg.ToolProgressPhase = ""
 			msg.ToolProgressMessage = ""
-			if !msg.ToolStartTime.IsZero() {
+			if toolDurMs > 0 {
+				msg.ToolDuration = time.Duration(toolDurMs) * time.Millisecond
+			} else if !msg.ToolStartTime.IsZero() {
 				msg.ToolDuration = time.Since(msg.ToolStartTime)
+			}
+			if estTokens > 0 {
+				msg.ToolEstTokens = estTokens
+			}
+			if linesAdded > 0 || linesRemoved > 0 {
+				msg.ToolLivedAdded = linesAdded
+				msg.ToolLivedRemoved = linesRemoved
 			}
 			msg.CachedLines = nil
 			if result != "" {
