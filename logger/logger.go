@@ -2,7 +2,6 @@ package logger
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -13,7 +12,7 @@ import (
 )
 
 // Logger provides session-scoped structured logging.
-// Each session gets a unique directory: ~/.crude/sessions/{8-char-hash}/
+// Each session gets a unique directory: ~/.crude/sessions/{YYYY-MM-DD_HHMMSS_hex}/
 // containing session.log (central log) and turns/ (LLM dump files).
 type Logger struct {
 	dir       string
@@ -82,12 +81,11 @@ func New(opts Options) (*Logger, error) {
 }
 
 func generateSessionID() string {
-	h := sha256.New()
-	h.Write([]byte(time.Now().Format(time.RFC3339Nano)))
-	b := make([]byte, 8)
+	now := time.Now()
+	b := make([]byte, 4)
 	rand.Read(b)
-	h.Write(b)
-	return hex.EncodeToString(h.Sum(nil))[:8]
+	short := hex.EncodeToString(b)
+	return fmt.Sprintf("%s_%s", now.Format("2006-01-02_150405"), short)
 }
 
 func (l *Logger) SessionID() string  { return l.sessionID }
