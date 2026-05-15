@@ -138,6 +138,42 @@ func (m *ConversationStateMachine) CompleteCurrentGoal(conversationID string, re
 	}
 }
 
+// CompleteGoalByID finds a goal by ID anywhere in the goal tree (root or
+// sub-goal), marks it as completed, removes it from the tree, and returns
+// true. Returns false if the goal was not found.
+func (m *ConversationStateMachine) CompleteGoalByID(conversationID, goalID string, resultData map[string]any) bool {
+	state := m.GetOrCreateState(conversationID)
+
+	// Check root goals first.
+	if g, ok := state.ThreadRoots[goalID]; ok {
+		g.Status = GoalCompleted
+		for k, v := range resultData {
+			state.AddToContext(fmt.Sprintf("%s.%s", g.Intent, k), v)
+		}
+		delete(state.ThreadRoots, goalID)
+		if state.FocusGoalID == goalID {
+			state.FocusGoalID = ""
+			// Promote the next available root goal if any.
+			for id := range state.ThreadRoots {
+				state.FocusGoalID = id
+				break
+			}
+		}
+		m.logger.Info("state.goal_complete", "goal_id", goalID, "result", "root goal completed by ID")
+		return true
+	}
+
+	// Search sub-goals recursively.
+	for _, root := range state.ThreadRoots {
+		if root.completeSubGoalByID(goalID, resultData) {
+			m.logger.Info("state.goal_complete", "goal_id", goalID, "result", "sub-goal completed by ID")
+			return true
+		}
+	}
+
+	return false
+}
+
 func (m *ConversationStateMachine) FailCurrentGoal(conversationID, reason string) {
 	state := m.GetOrCreateState(conversationID)
 	focus := state.GetFocusGoal()

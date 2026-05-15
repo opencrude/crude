@@ -46,17 +46,15 @@ type StepRecord struct {
 type stopCondition func(steps []StepRecord) bool
 
 type Agent struct {
-	Provider       *provider.Provider
-	Model          string
-	Policy         safety.Policy
-	ToolFn         func(tool string, params map[string]any) (tools.ToolResult, error)
-	logger         *logger.Logger
-	OracleProvider *provider.Provider
-	OracleModel    string
-	Emit           func(AgentEvent) // for forwarding streaming events from tools (e.g. oracle reasoning)
-	Ctx            context.Context
-	Yolo           bool
-	AsyncMgr       *fileio.AsyncCommandManager
+	Provider *provider.Provider
+	Model    string
+	Policy   safety.Policy
+	ToolFn   func(tool string, params map[string]any) (tools.ToolResult, error)
+	logger   *logger.Logger
+	Emit     func(AgentEvent) // for forwarding streaming events from tools
+	Ctx      context.Context
+	Yolo     bool
+	AsyncMgr *fileio.AsyncCommandManager
 }
 
 func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {

@@ -41,6 +41,4 @@ const (
 type (
 	ModelsListMsg        = ttypes.ModelsListMsg
 	ModelsErrorMsg       = ttypes.ModelsErrorMsg
-	OracleModelsListMsg  = ttypes.OracleModelsListMsg
-	OracleModelsErrorMsg = ttypes.OracleModelsErrorMsg
 )

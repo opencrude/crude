@@ -274,13 +274,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
 	case ttypes.ModelsListMsg:
-		m.settings.SetModels([]ttypes.ModelEntry(msg), false)
-	case ttypes.OracleModelsListMsg:
-		m.settings.SetModels([]ttypes.ModelEntry(msg), true)
+		m.settings.SetModels([]ttypes.ModelEntry(msg))
 	case ttypes.ModelsErrorMsg:
-		m.settings.SetModelsError(string(msg), false)
-	case ttypes.OracleModelsErrorMsg:
-		m.settings.SetModelsError(string(msg), true)
+		m.settings.SetModelsError(string(msg))
 	case ttypes.SettingsSaveResultMsg:
 		if msg.Err != nil {
 			m.statusbar.SetError(msg.Err.Error())

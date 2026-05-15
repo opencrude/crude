@@ -238,12 +238,6 @@ var previewRegistry = map[string]PreviewSpec{
 			return name
 		},
 	},
-	"consult_oracle": {
-		Keys: []string{"task", "decision_point"},
-		Format: func(name string, p map[string]string) string {
-			return name
-		},
-	},
 	"run_javascript": {
 		Keys: []string{"code"},
 		Format: func(name string, p map[string]string) string {

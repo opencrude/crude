@@ -109,3 +109,22 @@ func (g *Goal) popSubGoal() *Goal {
 	g.SubGoalStack = g.SubGoalStack[:len(g.SubGoalStack)-1]
 	return top
 }
+
+// completeSubGoalByID recursively searches the sub-goal stack for a goal with
+// the given ID. If found, it marks the goal as completed, removes it from the
+// stack, and returns true. If not found, it returns false.
+func (g *Goal) completeSubGoalByID(goalID string, resultData map[string]any) bool {
+	for i, sub := range g.SubGoalStack {
+		if sub.ID == goalID {
+			sub.Status = GoalCompleted
+			// Remove from stack by splicing.
+			g.SubGoalStack = append(g.SubGoalStack[:i], g.SubGoalStack[i+1:]...)
+			return true
+		}
+		// Recurse into the sub-goal's own sub-goals.
+		if sub.completeSubGoalByID(goalID, resultData) {
+			return true
+		}
+	}
+	return false
+}

@@ -32,10 +32,6 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
 		m.settings.FocusField(3)
-	case "/oracle-model":
-		m.settings.SaveSnapshot()
-		m.setMode(ModeSettings)
-		m.settings.FocusField(4)
 	case "/api-key":
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)

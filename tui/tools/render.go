@@ -264,8 +264,6 @@ func resultSummary(tool, content, target, dur string) string {
 		return execResultSummary(content, target, dur)
 	case "web_fetch":
 		return webFetchResultSummary(content, target, dur)
-	case "consult_oracle":
-		return oracleResultSummary(content, target, dur)
 	case "run_javascript":
 		return jsResultSummary(content, target, dur)
 	case "async_execute_command":
@@ -563,17 +561,6 @@ func webFetchResultSummary(content, target, duration string) string {
 	return label
 }
 
-// ── consult_oracle ──────────────────────────────────────────
-
-func oracleResultSummary(content, target, duration string) string {
-	charCount := len(content)
-	label := "Consulted oracle"
-	label += fmt.Sprintf(" — %s", formatCharCount(charCount))
-	if duration != "" {
-		label += " " + duration
-	}
-	return label
-}
 
 // ── run_javascript ──────────────────────────────────────────
 

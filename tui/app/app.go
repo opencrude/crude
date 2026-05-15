@@ -87,7 +87,7 @@ type (
 	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig) *App {
+func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig) *App {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	ml.SetModelName(modelName)

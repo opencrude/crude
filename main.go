@@ -187,7 +187,6 @@ func main() {
 			return tui.ProviderConfig{
 				APIKey:         cfg.APIKey,
 				Model:          cfg.Model,
-				OracleModel:    cfg.OracleModel,
 				ProviderURL:    cfg.ProviderURL,
 				ThinkingEffort: cfg.ThinkingEffort,
 			}

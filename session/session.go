@@ -37,13 +37,6 @@ type ProviderConfig struct {
 	MainInputPrice      float64 `json:"main_input_price,omitempty"`
 	MainOutputPrice     float64 `json:"main_output_price,omitempty"`
 	MainCacheReadPrice  float64 `json:"main_cache_read_price,omitempty"`
-
-	// Oracle model metadata
-	OracleModel              string  `json:"oracle_model,omitempty"`
-	OracleModelContextWindow int    `json:"oracle_model_context_window,omitempty"`
-	OracleInputPrice         float64 `json:"oracle_input_price,omitempty"`
-	OracleOutputPrice        float64 `json:"oracle_output_price,omitempty"`
-	OracleCacheReadPrice     float64 `json:"oracle_cache_read_price,omitempty"`
 }
 
 type Session struct {
@@ -90,16 +83,6 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 			InputPricePerToken:       activeCfg.MainInputPrice,
 			OutputPricePerToken:      activeCfg.MainOutputPrice,
 			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
-		})
-	}
-	if activeCfg.OracleModelContextWindow > 0 {
-		provider.SetModelContext(activeCfg.OracleModel, activeCfg.OracleModelContextWindow)
-	}
-	if activeCfg.OracleInputPrice > 0 {
-		provider.SetModelPrice(activeCfg.OracleModel, provider.ModelPrice{
-			InputPricePerToken:       activeCfg.OracleInputPrice,
-			OutputPricePerToken:      activeCfg.OracleOutputPrice,
-			InputCachedPricePerToken: activeCfg.OracleCacheReadPrice,
 		})
 	}
 	exec := fileio.NewLocalExec()
@@ -233,33 +216,11 @@ func (s *Session) newAgent() *agent.Agent {
 
 	a := agent.NewAgent(p, activeCfg.Model, s.logger)
 
-	oracleModel := activeCfg.OracleModel
-	oracleProvider := s.provider
-	if oracleModel == "" {
-		oracleModel = activeCfg.Model
-	}
-	a.OracleProvider = oracleProvider
-	a.OracleModel = oracleModel
 	a.Yolo = s.yolo
 	a.AsyncMgr = s.asyncMgr
 
 	a.ToolFn = func(tool string, params map[string]any) (tools.ToolResult, error) {
 		switch tool {
-		case "consult_oracle":
-			s.logger.Info("oracle.consult", "task", params["task"], "decision_point", params["decision_point"])
-			query := agent.OracleQuery{
-				Task:          getStrParam(params, "task"),
-				Context:       getStrParam(params, "context"),
-				DecisionPoint: getStrParam(params, "decision_point"),
-				Constraints:   getStrParam(params, "constraints"),
-			}
-			resp, err := agent.ConsultOracle(a.Ctx, oracleProvider, oracleModel, query, a.Emit)
-			if err != nil {
-				s.logger.Error("oracle.error", "error", err.Error())
-				return tools.ToolResult{}, fmt.Errorf("oracle consultation failed: %w", err)
-			}
-			return tools.ToolResult{Content: agent.FormatOracleResponse(resp)}, nil
-
 		case "plan":
 			objective := getStrParam(params, "objective")
 			if objective == "" {
@@ -279,8 +240,14 @@ func (s *Session) newAgent() *agent.Agent {
 				return tools.ToolResult{}, fmt.Errorf("plan: invalid steps format: %w", err)
 			}
 
-			goal := s.sm.CreateGoal(s.sessionID, "plan: "+objective, objective, statemachine.PriorityNormal, false)
 			state := s.sm.GetOrCreateState(s.sessionID)
+			// Guard against concurrent plans — fixed context keys would be
+			// silently overwritten, orphaning the previous plan's goal.
+			if _, exists := state.GetFromContext("plan_step_statuses"); exists {
+				return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one.")
+			}
+
+			goal := s.sm.CreateGoal(s.sessionID, "plan: "+objective, objective, statemachine.PriorityNormal, false)
 
 			stepStatuses := make(map[string]string)
 			stepLabels := make(map[string]string)
@@ -308,6 +275,9 @@ func (s *Session) newAgent() *agent.Agent {
 			for _, stepID := range stepIDs {
 				if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
 					if m, ok := raw.(map[string]string); ok {
+						if _, exists := m[stepID]; !exists {
+							return tools.ToolResult{}, fmt.Errorf("mark_step_complete: step %q not found in plan", stepID)
+						}
 						m[stepID] = "completed"
 						state.AddToContext("plan_step_statuses", m)
 					}
@@ -319,6 +289,9 @@ func (s *Session) newAgent() *agent.Agent {
 			for _, actID := range activateIDs {
 				if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
 					if m, ok := raw.(map[string]string); ok {
+						if _, exists := m[actID]; !exists {
+							return tools.ToolResult{}, fmt.Errorf("mark_step_complete: activate step %q not found in plan", actID)
+						}
 						if m[actID] == "pending" || m[actID] == "active" {
 							m[actID] = "doing"
 							state.AddToContext("plan_step_statuses", m)
@@ -327,9 +300,12 @@ func (s *Session) newAgent() *agent.Agent {
 				}
 			}
 
-			allDone := true
+			// Check if all steps are in a terminal state (completed or failed).
+			// Guard against empty map — an empty plan should never trigger completion.
+			allDone := false
 			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
-				if m, ok := raw.(map[string]string); ok {
+				if m, ok := raw.(map[string]string); ok && len(m) > 0 {
+					allDone = true
 					for _, st := range m {
 						if st != "completed" && st != "failed" {
 							allDone = false
@@ -339,7 +315,18 @@ func (s *Session) newAgent() *agent.Agent {
 				}
 			}
 			if allDone {
-				s.sm.CompleteCurrentGoal(s.sessionID, map[string]any{"status": "plan_complete"})
+				// Use plan_goal_id to complete the correct goal, not whatever
+				// the statemachine considers "current".
+				if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
+					if goalID, ok := rawGoalID.(string); ok && goalID != "" {
+						s.sm.CompleteGoalByID(s.sessionID, goalID, map[string]any{"status": "plan_complete"})
+					}
+				}
+				// Clean up plan context data now that the plan is done.
+				state.AddToContext("plan_steps", nil)
+				state.AddToContext("plan_step_statuses", nil)
+				state.AddToContext("plan_step_labels", nil)
+				state.AddToContext("plan_goal_id", nil)
 			}
 
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
@@ -367,6 +354,9 @@ func (s *Session) newAgent() *agent.Agent {
 			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := raw.(map[string]string); ok {
 					for _, stepID := range stepIDs {
+						if _, exists := m[stepID]; !exists {
+							return tools.ToolResult{}, fmt.Errorf("mark_step_doing: step %q not found in plan", stepID)
+						}
 						// Only mark as doing if step is currently pending
 						if m[stepID] == "pending" || m[stepID] == "active" {
 							m[stepID] = "doing"
@@ -397,11 +387,17 @@ func (s *Session) newAgent() *agent.Agent {
 			state := s.sm.GetOrCreateState(s.sessionID)
 			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := raw.(map[string]string); ok {
+					if _, exists := m[stepID]; !exists {
+						return tools.ToolResult{}, fmt.Errorf("mark_step_failed: step %q not found in plan", stepID)
+					}
 					m[stepID] = "failed"
 					state.AddToContext("plan_step_statuses", m)
 				}
 			}
-			s.sm.FailCurrentGoal(s.sessionID, reason)
+			// Do NOT call FailCurrentGoal — a step failure should not destroy
+			// the entire plan goal. The plan completes naturally when all steps
+			// reach a terminal state (completed or failed) via the allDone check
+			// in mark_step_complete.
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
 				return tools.ToolResult{Content: status}, nil
@@ -437,10 +433,10 @@ func (s *Session) newAgent() *agent.Agent {
 			state := s.sm.GetOrCreateState(s.sessionID)
 			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := statuses.(map[string]string); ok {
+					// Mark ALL in-progress steps as blocked, not just the first one.
 					for id, st := range m {
 						if st == "doing" || st == "active" {
 							m[id] = "blocked"
-							break
 						}
 					}
 					state.AddToContext("plan_step_statuses", m)
@@ -458,11 +454,11 @@ func (s *Session) newAgent() *agent.Agent {
 				state := s.sm.GetOrCreateState(s.sessionID)
 				if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
 					if m, ok := statuses.(map[string]string); ok {
-						// Transition blocked steps back to pending.
-						// The LLM should call mark_step_doing to explicitly resume work.
+						// Transition blocked steps back to "doing" — they were
+						// in progress when blocked, not cancelled.
 						for id, st := range m {
 							if st == "blocked" {
-								m[id] = "pending"
+								m[id] = "doing"
 							}
 						}
 						state.AddToContext("plan_step_statuses", m)
@@ -655,16 +651,6 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
 		})
 	}
-	if activeCfg.OracleModelContextWindow > 0 {
-		provider.SetModelContext(activeCfg.OracleModel, activeCfg.OracleModelContextWindow)
-	}
-	if activeCfg.OracleInputPrice > 0 {
-		provider.SetModelPrice(activeCfg.OracleModel, provider.ModelPrice{
-			InputPricePerToken:       activeCfg.OracleInputPrice,
-			OutputPricePerToken:      activeCfg.OracleOutputPrice,
-			InputCachedPricePerToken: activeCfg.OracleCacheReadPrice,
-		})
-	}
 	return nil
 }
 
@@ -806,7 +792,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 		}()
 
-		oracleEmit := func(evt agent.AgentEvent) {
+		emit := func(evt agent.AgentEvent) {
 			if evt.Type == "blocking" {
 				data, _ := evt.Data.(map[string]string)
 				if data != nil {
@@ -922,8 +908,8 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				}
 			}
 		}
-		ag.Emit = oracleEmit
-		agentMsgs := ag.Run(ctx, msgsCopy, prompt, oracleEmit, blockResolveCh, s.sm, s.sessionID)
+		ag.Emit = emit
+		agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID)
 
 		cancel()
 
@@ -972,14 +958,12 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 	providerURL := ""
 	apiKey := ""
 	model := ""
-	oracleModel := ""
 	thinkingEffort := ""
 
 	if pc, ok := cfg.Providers[providerID]; ok {
 		providerURL = pc.ProviderURL
 		apiKey = pc.APIKey
 		model = pc.Model
-		oracleModel = pc.OracleModel
 		thinkingEffort = pc.ThinkingEffort
 	}
 
@@ -992,22 +976,14 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 	}
 
 	ctxWindow := 0
-	oracleCtxWindow := 0
 	mainInputPrice := 0.0
 	mainOutputPrice := 0.0
 	mainCacheReadPrice := 0.0
-	oracleInputPrice := 0.0
-	oracleOutputPrice := 0.0
-	oracleCacheReadPrice := 0.0
 	if pc, ok := cfg.Providers[providerID]; ok {
 		ctxWindow = pc.ModelContextWindow
-		oracleCtxWindow = pc.OracleModelContextWindow
 		mainInputPrice = pc.MainInputPrice
 		mainOutputPrice = pc.MainOutputPrice
 		mainCacheReadPrice = pc.MainCacheReadPrice
-		oracleInputPrice = pc.OracleInputPrice
-		oracleOutputPrice = pc.OracleOutputPrice
-		oracleCacheReadPrice = pc.OracleCacheReadPrice
 	}
 
 	return tui.Settings{
@@ -1017,11 +993,6 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 		MainInputPrice:           mainInputPrice,
 		MainOutputPrice:          mainOutputPrice,
 		MainCacheReadPrice:       mainCacheReadPrice,
-		OracleModel:              oracleModel,
-		OracleModelContextWindow: oracleCtxWindow,
-		OracleInputPrice:         oracleInputPrice,
-		OracleOutputPrice:        oracleOutputPrice,
-		OracleCacheReadPrice:     oracleCacheReadPrice,
 		ProviderID:               providerID,
 		ProviderURL:              providerURL,
 		ProviderAPIKey:           apiKey,
@@ -1051,11 +1022,6 @@ func settingsToConfig(s tui.Settings, base *Config) *Config {
 		MainInputPrice:           s.MainInputPrice,
 		MainOutputPrice:          s.MainOutputPrice,
 		MainCacheReadPrice:       s.MainCacheReadPrice,
-		OracleModel:              s.OracleModel,
-		OracleModelContextWindow: s.OracleModelContextWindow,
-		OracleInputPrice:         s.OracleInputPrice,
-		OracleOutputPrice:        s.OracleOutputPrice,
-		OracleCacheReadPrice:     s.OracleCacheReadPrice,
 		ProviderURL:              s.ProviderURL,
 		ThinkingEffort:           s.ThinkingEffort,
 	}
