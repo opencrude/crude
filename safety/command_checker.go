@@ -309,7 +309,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		return res
 
 	case "sed":
-		if hasFlag(argsAfterFirst, "i") || hasFlag(argsAfterFirst, "i") {
+		if hasFlag(argsAfterFirst, "i") {
 			if res.TargetsSystem {
 				res.Risk = RiskDestructive
 				res.Reason = "In-place edit of system files"
