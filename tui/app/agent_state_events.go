@@ -30,33 +30,41 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 		seconds, _ := data["seconds"].(string)
 
 		var tgt string
-		tgt = path
-		if tgt == "" && command != "" {
-			tgt = command
-		}
-		if tgt == "" && source != "" && dest != "" {
-			tgt = source + " → " + dest
-		} else if tgt == "" && source != "" {
-			tgt = source
-		}
-		if tgt == "" && urlStr != "" {
-			tgt = urlStr
-		}
-		if tgt == "" && query != "" {
-			tgt = query
-		}
-		if tgt == "" && pattern != "" {
-			tgt = pattern
-		}
-		if tgt == "" && handle != "" {
-			if command != "" {
-				tgt = rendering.TruncateLine(command, 40) + " [" + handle + "]"
-			} else {
-				tgt = handle
+		// grep_files: show both what (pattern) and where (path)
+		if name == "grep_files" && pattern != "" {
+			tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(pattern, 30))
+			if path != "" && path != "." {
+				tgt += " in " + path
 			}
-		}
-		if tgt == "" && seconds != "" {
-			tgt = seconds + "s"
+		} else {
+			tgt = path
+			if tgt == "" && command != "" {
+				tgt = command
+			}
+			if tgt == "" && source != "" && dest != "" {
+				tgt = source + " → " + dest
+			} else if tgt == "" && source != "" {
+				tgt = source
+			}
+			if tgt == "" && urlStr != "" {
+				tgt = urlStr
+			}
+			if tgt == "" && query != "" {
+				tgt = query
+			}
+			if tgt == "" && pattern != "" {
+				tgt = pattern
+			}
+			if tgt == "" && handle != "" {
+				if command != "" {
+					tgt = rendering.TruncateLine(command, 40) + " [" + handle + "]"
+				} else {
+					tgt = handle
+				}
+			}
+			if tgt == "" && seconds != "" {
+				tgt = seconds + "s"
+			}
 		}
 
 		contentLines := toInt(data["content_lines"])

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 )
 
 // isSummaryOnlyTool returns true for tools whose result is fully expressed
@@ -159,6 +160,13 @@ func RenderPlanBox(text string, maxWidth int, th *theme.Theme) string {
 		return ""
 	}
 
+	// The box has Padding(0,1) so content area is maxWidth-2 characters.
+	// Truncate long lines (especially step descriptions) to fit.
+	contentWidth := maxWidth - 2
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+
 	var styledLines []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -166,6 +174,11 @@ func RenderPlanBox(text string, maxWidth int, th *theme.Theme) string {
 			styledLines = append(styledLines, "")
 			continue
 		}
+
+		// Truncate the line to fit within contentWidth if needed.
+		// Step lines have format: "  [marker] [id]: [description]"
+		// We truncate the whole line rather than trying to split it.
+		line = truncateLineToWidth(line, contentWidth)
 
 		var styled string
 		switch {
@@ -196,6 +209,18 @@ func RenderPlanBox(text string, maxWidth int, th *theme.Theme) string {
 		Width(maxWidth)
 
 	return box.Render(content)
+}
+
+// truncateLineToWidth truncates a line to fit within maxDisplayWidth using
+// rune-width-aware measurement (handles CJK wide chars etc.).
+func truncateLineToWidth(line string, maxDisplayWidth int) string {
+	if maxDisplayWidth <= 0 {
+		return line
+	}
+	if runewidth.StringWidth(line) <= maxDisplayWidth {
+		return line
+	}
+	return runewidth.Truncate(line, maxDisplayWidth, "…")
 }
 
 func TerminalResultHeight(height int) int {

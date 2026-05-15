@@ -335,7 +335,7 @@ var AgentTools = []ToolDef{
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"objective":{"type":"string","description":"High-level description of what this plan aims to achieve"},
+					"objective":{"type":"string","description":"Brief one-line title for this plan (max ~80 chars). Be concise — this is displayed as a heading, not a detailed spec. Example: 'Fix auth redirect loop' NOT 'Fix the bug where users get redirected in a loop when their session expires and they try to access /dashboard'"},
 					"steps":{
 						"type":"array",
 						"description":"Ordered list of plan steps to track",
@@ -360,12 +360,21 @@ var AgentTools = []ToolDef{
 			Name: "mark_step_complete",
 			Description: "Mark one or more plan steps as completed. Call this after successfully executing steps of your plan. " +
 				"Provide the step ID (or an array of step IDs for batch completion) and optionally a result summary. " +
-				"This updates the state machine. Does NOT auto-activate the next step — use mark_step_doing to explicitly start working on a step.",
+				"Optionally provide 'activate_steps' to also mark steps as doing in the same call — " +
+				"this is a convenience so you don't need a separate mark_step_doing call. " +
+				"Does NOT auto-activate the next step unless you specify activate_steps.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"step_id":{"description":"A single step ID (string) or an array of step IDs to mark as complete (e.g. 'step1' or ['step1','step2'])"},
-					"result":{"type":"string","description":"Summary of what was accomplished (optional)"}
+					"step_id":{
+						"type":"string",
+						"description":"A single step ID or an array of step IDs to mark as complete (e.g. 'step1' or 'step1,step2')"
+					},
+					"result":{"type":"string","description":"Summary of what was accomplished (optional)"},
+					"activate_steps":{
+						"type":"string",
+						"description":"A single step ID or comma-separated step IDs to mark as doing (e.g. 'step3' or 'step3,step4'). Optional convenience to activate next step(s) without a separate call."
+					}
 				},
 				"required":["step_id"]
 			}`),
@@ -381,7 +390,10 @@ var AgentTools = []ToolDef{
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"step_id":{"description":"A single step ID (string) or an array of step IDs to mark as doing (e.g. 'step1' or ['step1','step2'])"}
+					"step_id":{
+						"type":"string",
+						"description":"A single step ID or an array of step IDs to mark as doing (e.g. 'step1' or 'step1,step2')"
+					}
 				},
 				"required":["step_id"]
 			}`),

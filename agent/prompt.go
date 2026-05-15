@@ -78,15 +78,15 @@ After receiving the oracle response, follow its plan. If confidence is low, use 
 ## Planning System
 You have access to a state machine for tracking plans and goals. Use it for all non-trivial tasks:
 
-1. plan — Create a plan with steps. Each step starts in "pending" status. Call this FIRST for multi-step work.
+1. plan — Create a plan with steps. Each step starts in "pending" status. Call this FIRST for multi-step work. Keep the objective BRIEF — it's shown as a heading (max ~80 chars). Example: "Fix auth redirect loop", NOT "Fix the bug where users get redirected...".
 2. mark_step_doing — Mark step(s) as actively being worked on. Call this BEFORE you start executing a step. You can pass a single step ID or an array of IDs for parallel work.
-3. After executing a step, call mark_step_complete to mark it done. You can pass a single step ID or an array of IDs for batch completion.
+3. After executing a step, call mark_step_complete to mark it done. You can pass a single step ID or an array of IDs for batch completion. Optionally provide 'activate_steps' to also mark the next step(s) as doing in the same call — this is preferred over a separate mark_step_doing call.
 4. If a step fails, call mark_step_failed with the step ID and reason.
 5. If you hit a blocker (missing info, need confirmation, API error), call report_blocker.
 6. Once the blocker is resolved, call resolve_blocker to resume. Steps will return to "pending" — call mark_step_doing to start working again.
 7. Use list_goal_status to see all goals, steps, blockers, and current focus at any time.
 
-IMPORTANT: Steps do NOT auto-activate. You must explicitly call mark_step_doing to indicate which step you are working on. This gives you full control over the execution flow.
+IMPORTANT: Steps do NOT auto-activate. You must explicitly indicate which step you are working on — either by calling mark_step_doing separately, or by using the activate_steps parameter on mark_step_complete. The preferred pattern is: mark_step_complete(step_id="step1", activate_steps="step2") — this completes step1 and atomically starts step2 in a single call.
 
 ## Command Safety
 Commands are classified into risk levels: safe (auto-allow), project-write, network, destructive, and blocked. If a command returns "[SAFETY BLOCK]", it means:
