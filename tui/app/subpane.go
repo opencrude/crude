@@ -16,7 +16,6 @@ type PaneType string
 
 const (
 	PaneThinking PaneType = "thinking"
-	PaneOracle   PaneType = "oracle"
 	PaneAgent    PaneType = "agent"
 )
 
@@ -71,10 +70,7 @@ func (sp *SubPane) SummaryText() string {
 	if sp.Done {
 		verb = "Thinked"
 	}
-	switch sp.Type {
-	case PaneOracle:
-		verb = "Consulted oracle"
-	case PaneAgent:
+	if sp.Type == PaneAgent {
 		verb = sp.Title
 	}
 	return fmt.Sprintf("%s for %.1fs%s", verb, dur.Seconds(), tokens)

@@ -40,7 +40,6 @@ type CmdInfo struct {
 var availableCmds = []CmdInfo{
 	{Name: "settings", Label: "settings", Desc: "Open general settings"},
 	{Name: "model", Label: "model", Desc: "Select model"},
-	{Name: "oracle-model", Label: "oracle model", Desc: "Select oracle (reasoning) model"},
 	{Name: "effort", Label: "effort", Desc: "Cycle thinking effort (none/low/medium/high/xhigh)"},
 	{Name: "undo", Label: "undo", Desc: "Undo last file operation"},
 	{Name: "undo-n", Label: "undo N", Desc: "Undo last N file operations"},

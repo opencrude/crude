@@ -22,9 +22,8 @@ func (CancelEvent) event() {}
 
 type settingsSnapshot struct {
 	providerID                                           string
-	modelCtx, oracleCtx                                  int
+	modelCtx                                  int
 	modelInPrice, modelOutPrice, modelCachePrice         float64
-	oracleInPrice, oracleOutPrice, oracleCachePrice      float64
 }
 
 type Model struct {
@@ -34,19 +33,18 @@ type Model struct {
 	providerID    string
 	activePresets []types.ProviderPreset
 
-	modelCtx, oracleCtx                        int
+	modelCtx                                  int
 	modelInPrice, modelOutPrice, modelCachePrice float64
-	oracleInPrice, oracleOutPrice, oracleCachePrice float64
 
 	getProviderConfigFn func(string) types.ProviderConfig
-	fetchModelsFn       func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd
+	fetchModelsFn       func(providerID, baseURL, apiKey string) tea.Cmd
 
 	modelsData []types.ModelEntry
 
 	snapshot *settingsSnapshot
 }
 
-func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPreset, getProviderConfigFn func(string) types.ProviderConfig, fetchModelsFn func(string, string, string, bool) tea.Cmd) Model {
+func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPreset, getProviderConfigFn func(string) types.ProviderConfig, fetchModelsFn func(string, string, string) tea.Cmd) Model {
 	providerOptions := make([]components.ListItem, len(presets))
 	for i, p := range presets {
 		providerOptions[i] = components.ListItem{ID: p.ID, Label: p.Name, Detail: p.HelpText}
@@ -58,14 +56,13 @@ func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPr
 	baseURLItem := form.NewTextItem(t, "base url", initial.ProviderURL, false)
 	apiKeyItem := form.NewTextItem(t, "api key", initial.ProviderAPIKey, true)
 	modelItem := form.NewSelectItem(t, "model", initial.Model, 12)
-	oracleModelItem := form.NewSelectItem(t, "oracle model", initial.OracleModel, 12)
 	effortItem := form.NewCycleItem(t, "thinking effort",
 		[]string{"none", "low", "medium", "high", "xhigh"}, initial.ThinkingEffort)
 
 	f := form.NewFormWithButtons(t, "Settings",
 		"[ interactive settings · arrows/tab: navigate · enter: edit · esc: return ]",
 		[]form.Button{{Label: "Save", Key: "s", Color: t.Colors.Success}, {Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true}},
-		providerItem, baseURLItem, apiKeyItem, modelItem, oracleModelItem, effortItem)
+		providerItem, baseURLItem, apiKeyItem, modelItem, effortItem)
 
 	return Model{
 		theme:               t,
@@ -73,13 +70,9 @@ func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPr
 		providerID:          initial.ProviderID,
 		activePresets:       presets,
 		modelCtx:            initial.ModelContextWindow,
-		oracleCtx:           initial.OracleModelContextWindow,
 		modelInPrice:        initial.MainInputPrice,
 		modelOutPrice:       initial.MainOutputPrice,
 		modelCachePrice:     initial.MainCacheReadPrice,
-		oracleInPrice:       initial.OracleInputPrice,
-		oracleOutPrice:      initial.OracleOutputPrice,
-		oracleCachePrice:    initial.OracleCacheReadPrice,
 		getProviderConfigFn: getProviderConfigFn,
 		fetchModelsFn:       fetchModelsFn,
 	}
@@ -99,22 +92,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 
 	oldProvider := m.form.ItemValue(0)
 	oldModel := m.form.ItemValue(3)
-	oldOracleModel := m.form.ItemValue(4)
 
 	updated, cmd, action := m.form.Update(msg)
 	m.form = updated
 
 	if action == form.FormActionExpand {
 		expanded := m.form.ExpandedIndex()
-		if expanded == 3 || expanded == 4 {
-			isOracle := expanded == 4
-			if !m.canFetchModels() {
-			} else if m.form.ItemOptionCount(expanded) == 0 && !m.form.IsItemLoading(expanded) {
-				m.form.SetItemLoading(expanded, true, "fetching models...")
-				fetchCmd := m.fetchModels(isOracle)
-				if fetchCmd != nil {
-					return m, fetchCmd, nil
-				}
+		if expanded == 3 && m.canFetchModels() && m.form.ItemOptionCount(expanded) == 0 && !m.form.IsItemLoading(expanded) {
+			m.form.SetItemLoading(expanded, true, "fetching models...")
+			fetchCmd := m.fetchModels()
+			if fetchCmd != nil {
+				return m, fetchCmd, nil
 			}
 		}
 	}
@@ -126,12 +114,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 
 	newModel := m.form.ItemValue(3)
 	if newModel != oldModel {
-		m.updateModelMetadata(newModel, false)
-	}
-
-	newOracleModel := m.form.ItemValue(4)
-	if newOracleModel != oldOracleModel {
-		m.updateModelMetadata(newOracleModel, true)
+		m.updateModelMetadata(newModel)
 	}
 
 	switch action {
@@ -161,7 +144,7 @@ func (m *Model) SetPresets(presets []types.ProviderPreset) {
 	m.form.SetItemSelectOptions(0, providerOptions)
 }
 
-func (m *Model) SetModels(models []types.ModelEntry, isOracle bool) {
+func (m *Model) SetModels(models []types.ModelEntry) {
 	m.modelsData = models
 	items := make([]components.ListItem, 0, len(models))
 	for _, mod := range models {
@@ -176,21 +159,13 @@ func (m *Model) SetModels(models []types.ModelEntry, isOracle bool) {
 		items = append(items, components.ListItem{ID: mod.ID, Label: name, Detail: detail})
 	}
 
-	idx := 3
-	if isOracle {
-		idx = 4
-	}
-	m.form.SetItemSelectOptions(idx, items)
-	m.form.SetItemLoading(idx, false, "")
+	m.form.SetItemSelectOptions(3, items)
+	m.form.SetItemLoading(3, false, "")
 }
 
-func (m *Model) SetModelsError(err string, isOracle bool) {
-	idx := 3
-	if isOracle {
-		idx = 4
-	}
-	m.form.SetItemLoading(idx, false, "")
-	m.form.SetItemFetchError(idx, err)
+func (m *Model) SetModelsError(err string) {
+	m.form.SetItemLoading(3, false, "")
+	m.form.SetItemFetchError(3, err)
 }
 
 func (m *Model) SaveSnapshot() {
@@ -198,13 +173,9 @@ func (m *Model) SaveSnapshot() {
 	m.snapshot = &settingsSnapshot{
 		providerID:      m.providerID,
 		modelCtx:        m.modelCtx,
-		oracleCtx:       m.oracleCtx,
 		modelInPrice:    m.modelInPrice,
 		modelOutPrice:   m.modelOutPrice,
 		modelCachePrice: m.modelCachePrice,
-		oracleInPrice:   m.oracleInPrice,
-		oracleOutPrice:  m.oracleOutPrice,
-		oracleCachePrice: m.oracleCachePrice,
 	}
 }
 
@@ -212,13 +183,9 @@ func (m *Model) RestoreSnapshot() {
 	if m.snapshot != nil {
 		m.providerID = m.snapshot.providerID
 		m.modelCtx = m.snapshot.modelCtx
-		m.oracleCtx = m.snapshot.oracleCtx
 		m.modelInPrice = m.snapshot.modelInPrice
 		m.modelOutPrice = m.snapshot.modelOutPrice
 		m.modelCachePrice = m.snapshot.modelCachePrice
-		m.oracleInPrice = m.snapshot.oracleInPrice
-		m.oracleOutPrice = m.snapshot.oracleOutPrice
-		m.oracleCachePrice = m.snapshot.oracleCachePrice
 	}
 	m.form.RestoreSnapshot()
 }
@@ -243,16 +210,11 @@ func (m Model) toSettings() types.Settings {
 		ProviderAPIKey:          apiKey,
 		APIKey:                  apiKey,
 		Model:                   m.form.ItemValue(3),
-		OracleModel:             m.form.ItemValue(4),
-		ThinkingEffort:          m.form.ItemValue(5),
+		ThinkingEffort:          m.form.ItemValue(4),
 		ModelContextWindow:       m.modelCtx,
 		MainInputPrice:           m.modelInPrice,
 		MainOutputPrice:          m.modelOutPrice,
 		MainCacheReadPrice:       m.modelCachePrice,
-		OracleModelContextWindow: m.oracleCtx,
-		OracleInputPrice:         m.oracleInPrice,
-		OracleOutputPrice:        m.oracleOutPrice,
-		OracleCacheReadPrice:     m.oracleCachePrice,
 	}
 }
 
@@ -268,12 +230,12 @@ func (m *Model) canFetchModels() bool {
 	return true
 }
 
-func (m Model) fetchModels(isOracle bool) tea.Cmd {
+func (m Model) fetchModels() tea.Cmd {
 	providerID := m.form.ItemValue(0)
 	baseURL := m.form.ItemValue(1)
 	apiKey := m.form.ItemValue(2)
 	if m.fetchModelsFn != nil {
-		return m.fetchModelsFn(providerID, baseURL, apiKey, isOracle)
+		return m.fetchModelsFn(providerID, baseURL, apiKey)
 	}
 	return nil
 }
@@ -284,15 +246,10 @@ func (m *Model) updateProviderFields(newProvider string) {
 
 	if newProvider != oldID {
 		m.form.SetItemSelectOptions(3, nil)
-		m.form.SetItemSelectOptions(4, nil)
 		m.modelCtx = 0
 		m.modelInPrice = 0
 		m.modelOutPrice = 0
 		m.modelCachePrice = 0
-		m.oracleCtx = 0
-		m.oracleInPrice = 0
-		m.oracleOutPrice = 0
-		m.oracleCachePrice = 0
 
 		var preset types.ProviderPreset
 		for _, p := range m.activePresets {
@@ -306,8 +263,7 @@ func (m *Model) updateProviderFields(newProvider string) {
 			m.form.SetItemValue(1, savedCfg.ProviderURL)
 			m.form.SetItemValue(2, savedCfg.APIKey)
 			m.form.SetItemValue(3, savedCfg.Model)
-			m.form.SetItemValue(4, savedCfg.OracleModel)
-			m.form.SetItemValue(5, savedCfg.ThinkingEffort)
+			m.form.SetItemValue(4, savedCfg.ThinkingEffort)
 			if savedCfg.ProviderURL == "" {
 				m.form.SetItemValue(1, preset.BaseURL)
 			}
@@ -317,7 +273,7 @@ func (m *Model) updateProviderFields(newProvider string) {
 	}
 }
 
-func (m *Model) updateModelMetadata(modelID string, isOracle bool) {
+func (m *Model) updateModelMetadata(modelID string) {
 	ctx := 0
 	inPrice := 0.0
 	outPrice := 0.0
@@ -332,17 +288,10 @@ func (m *Model) updateModelMetadata(modelID string, isOracle bool) {
 		}
 	}
 
-	if isOracle {
-		m.oracleCtx = ctx
-		m.oracleInPrice = inPrice
-		m.oracleOutPrice = outPrice
-		m.oracleCachePrice = cachePrice
-	} else {
-		m.modelCtx = ctx
-		m.modelInPrice = inPrice
-		m.modelOutPrice = outPrice
-		m.modelCachePrice = cachePrice
-	}
+	m.modelCtx = ctx
+	m.modelInPrice = inPrice
+	m.modelOutPrice = outPrice
+	m.modelCachePrice = cachePrice
 }
 
 

@@ -94,8 +94,6 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 			return fmt.Sprintf("Searching ArXiv \"%s\"", rendering.TruncateLine(target, 40))
 		}
 		return "Searching ArXiv"
-	case "consult_oracle":
-		return "Consulting oracle"
 	case "async_execute_command":
 		if target != "" {
 			return fmt.Sprintf("Running %s", rendering.TruncateLine(target, 50))
@@ -256,12 +254,6 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		if target != "" {
 			label += fmt.Sprintf(" \"%s\"", rendering.TruncateLine(target, 40))
 		}
-		if duration != "" {
-			label += " " + duration
-		}
-		return label
-	case "consult_oracle":
-		label := "Consulted oracle"
 		if duration != "" {
 			label += " " + duration
 		}

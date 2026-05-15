@@ -129,7 +129,6 @@ var toolPreviewKeys = map[string][]string{
 	"web_search":            {"query"},
 	"web_fetch":             {"url", "offset", "limit"},
 	"arxiv_search":          {"query", "max_results"},
-	"consult_oracle":        {"task", "context", "decision_point", "constraints"},
 	"run_javascript":        {"code"},
 	"reply":                 {"content"},
 	"plan":                  {"objective", "steps"},

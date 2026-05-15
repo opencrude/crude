@@ -30,11 +30,6 @@ type Settings struct {
 	MainInputPrice           float64
 	MainOutputPrice          float64
 	MainCacheReadPrice       float64
-	OracleModel              string
-	OracleModelContextWindow int
-	OracleInputPrice         float64
-	OracleOutputPrice        float64
-	OracleCacheReadPrice     float64
 	ProviderID               string
 	ProviderURL              string
 	ProviderAPIKey           string
@@ -53,7 +48,6 @@ type ModelEntry struct {
 type ProviderConfig struct {
 	APIKey         string
 	Model          string
-	OracleModel    string
 	ProviderURL    string
 	ThinkingEffort string
 }
@@ -142,10 +136,6 @@ type UpdateModelMsg string
 type ModelsListMsg []ModelEntry
 
 type ModelsErrorMsg string
-
-type OracleModelsListMsg []ModelEntry
-
-type OracleModelsErrorMsg string
 
 type SettingsSaveResultMsg struct {
 	Settings Settings

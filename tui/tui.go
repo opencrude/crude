@@ -57,23 +57,14 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return nil
 	}
 
-	fetchFn := func(providerID, baseURL, apiKey string, isOracle bool) tea.Cmd {
+	fetchFn := func(providerID, baseURL, apiKey string) tea.Cmd {
 		return func() tea.Msg {
 			if t.FetchModelsFn == nil {
-				if isOracle {
-					return types.OracleModelsErrorMsg("no fetch function configured")
-				}
 				return types.ModelsErrorMsg("no fetch function configured")
 			}
 			models, err := t.FetchModelsFn(providerID, baseURL, apiKey)
 			if err != nil {
-				if isOracle {
-					return types.OracleModelsErrorMsg(err.Error())
-				}
 				return types.ModelsErrorMsg(err.Error())
-			}
-			if isOracle {
-				return types.OracleModelsListMsg(models)
 			}
 			return types.ModelsListMsg(models)
 		}
