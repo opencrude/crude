@@ -327,7 +327,7 @@ func (ml *MessageList) UpdateToolCall(toolID, name, argsCompact string) {
 	}
 }
 
-func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path string, linesAdded, linesRemoved, toolDurMs, estTokens int) {
+func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path string, linesAdded, linesRemoved, estTokens int) {
 	if toolID != "" {
 		for _, msg := range ml.messages {
 			if msg.ToolName == name && msg.ToolID == "" && (msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
@@ -354,8 +354,8 @@ func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path str
 			if phase == "done" {
 				msg.ToolLivedAdded = linesAdded
 				msg.ToolLivedRemoved = linesRemoved
-				if toolDurMs > 0 {
-					msg.ToolDuration = time.Duration(toolDurMs) * time.Millisecond
+				if !msg.ToolStartTime.IsZero() {
+					msg.ToolDuration = time.Since(msg.ToolStartTime)
 				}
 				if estTokens > 0 {
 					msg.ToolEstTokens = estTokens
@@ -378,7 +378,7 @@ func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path str
 	}
 }
 
-func (ml *MessageList) UpdateToolResult(toolID, name, result string, isError bool, toolDurMs, estTokens, linesAdded, linesRemoved int) {
+func (ml *MessageList) UpdateToolResult(toolID, name, result string, isError bool, estTokens, linesAdded, linesRemoved int) {
 	if toolID != "" {
 		for _, msg := range ml.messages {
 			if msg.ToolName == name && msg.ToolID == "" && (msg.ToolStatus == "calling" || msg.ToolStatus == "streaming") {
@@ -405,9 +405,7 @@ func (ml *MessageList) UpdateToolResult(toolID, name, result string, isError boo
 			msg.ToolPreviewPhase = types.ToolPreviewDone
 			msg.ToolProgressPhase = ""
 			msg.ToolProgressMessage = ""
-			if toolDurMs > 0 {
-				msg.ToolDuration = time.Duration(toolDurMs) * time.Millisecond
-			} else if !msg.ToolStartTime.IsZero() {
+			if !msg.ToolStartTime.IsZero() {
 				msg.ToolDuration = time.Since(msg.ToolStartTime)
 			}
 			if estTokens > 0 {
