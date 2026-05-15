@@ -15,7 +15,7 @@ import (
 func TestApplySearchReplace_basicExactMatch(t *testing.T) {
 	content := "line1\nline2\nline3"
 	ops := []SearchReplace{{Search: "line2", Replace: "replaced"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestApplySearchReplace_basicExactMatch(t *testing.T) {
 func TestApplySearchReplace_multiLineExact(t *testing.T) {
 	content := "a\nb\nc\nd\ne"
 	ops := []SearchReplace{{Search: "b\nc\nd", Replace: "x\ny"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestApplySearchReplace_multiLineExact(t *testing.T) {
 func TestApplySearchReplace_searchEqualsReplace(t *testing.T) {
 	content := "hello\nworld"
 	ops := []SearchReplace{{Search: "world", Replace: "world"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,14 +43,14 @@ func TestApplySearchReplace_searchEqualsReplace(t *testing.T) {
 }
 
 func TestApplySearchReplace_emptySearch(t *testing.T) {
-	_, err := ApplySearchReplace("hello", []SearchReplace{{Search: "", Replace: "x"}})
+	_, err := ApplySearchReplace("hello", []SearchReplace{{Search: "", Replace: "x"}}, nil)
 	if err == nil {
 		t.Fatal("expected error for empty search")
 	}
 }
 
 func TestApplySearchReplace_searchNotFound(t *testing.T) {
-	_, err := ApplySearchReplace("hello\nworld", []SearchReplace{{Search: "missing", Replace: "x"}})
+	_, err := ApplySearchReplace("hello\nworld", []SearchReplace{{Search: "missing", Replace: "x"}}, nil)
 	if err == nil {
 		t.Fatal("expected error for not found")
 	}
@@ -61,7 +61,7 @@ func TestApplySearchReplace_searchNotFound(t *testing.T) {
 
 func TestApplySearchReplace_multipleExactMatches(t *testing.T) {
 	content := "foo\nbar\nfoo\nbar"
-	_, err := ApplySearchReplace(content, []SearchReplace{{Search: "foo\nbar", Replace: "x"}})
+	_, err := ApplySearchReplace(content, []SearchReplace{{Search: "foo\nbar", Replace: "x"}}, nil)
 	if err == nil {
 		t.Fatal("expected error for multiple matches")
 	}
@@ -73,7 +73,7 @@ func TestApplySearchReplace_multipleExactMatches(t *testing.T) {
 func TestApplySearchReplace_multipleWSMatchesButUniqueExact(t *testing.T) {
 	content := "  foo\n  bar\nfoo\nbar"
 	ops := []SearchReplace{{Search: "foo\nbar", Replace: "replaced"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestApplySearchReplace_multipleWSMatchesButUniqueExact(t *testing.T) {
 
 func TestApplySearchReplace_multipleWSMatchesError(t *testing.T) {
 	content := "  a\n  b\na\n  b"
-	_, err := ApplySearchReplace(content, []SearchReplace{{Search: "a\nb", Replace: "x"}})
+	_, err := ApplySearchReplace(content, []SearchReplace{{Search: "a\nb", Replace: "x"}}, nil)
 	if err == nil {
 		t.Fatal("expected error for multiple WS matches")
 	}
@@ -96,7 +96,7 @@ func TestApplySearchReplace_leadingNewlineInSearch(t *testing.T) {
 	content := "header\n\ndef do_thing():\n    pass"
 	search := "\ndef do_thing():\n    pass"
 	ops := []SearchReplace{{Search: search, Replace: "def new_func():\n    pass"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestApplySearchReplace_trailingNewlineInSearch(t *testing.T) {
 	content := "line1\nline2\nline3"
 	search := "line2\n"
 	ops := []SearchReplace{{Search: search, Replace: "replaced"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestApplySearchReplace_leadingAndTrailingBlankSearch(t *testing.T) {
 	content := "a\n\n\nb\n\nc"
 	search := "\n\nb\n\n"
 	ops := []SearchReplace{{Search: search, Replace: "B"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestApplySearchReplace_leadingAndTrailingBlankSearch(t *testing.T) {
 func TestApplySearchReplace_searchIsOnlyBlankLines(t *testing.T) {
 	content := "a\n\n\nb"
 	search := " \n\n\t"
-	_, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: "x"}})
+	_, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: "x"}}, nil)
 	if err == nil {
 		t.Fatal("expected error for all-whitespace search")
 	}
@@ -141,7 +141,7 @@ func TestApplySearchReplace_searchIsOnlyBlankLines(t *testing.T) {
 func TestApplySearchReplace_replaceSmaller(t *testing.T) {
 	content := "a\nb\nc\nd\ne"
 	ops := []SearchReplace{{Search: "b\nc\nd", Replace: "x"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestApplySearchReplace_replaceSmaller(t *testing.T) {
 func TestApplySearchReplace_replaceBigger(t *testing.T) {
 	content := "a\nb\ne"
 	ops := []SearchReplace{{Search: "b", Replace: "c\nd\ne\nf"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestApplySearchReplace_replaceBigger(t *testing.T) {
 func TestApplySearchReplace_replaceToEmpty(t *testing.T) {
 	content := "a\nb\nc"
 	ops := []SearchReplace{{Search: "b", Replace: ""}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestApplySearchReplace_replaceToEmpty(t *testing.T) {
 func TestApplySearchReplace_replaceToEmpty_multiline(t *testing.T) {
 	content := "a\nb\nc\nd"
 	ops := []SearchReplace{{Search: "b\nc", Replace: ""}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestApplySearchReplace_replaceToEmpty_multiline(t *testing.T) {
 func TestApplySearchReplace_sameIndentation_exactMatch(t *testing.T) {
 	content := "def foo():\n    x = 1\n    y = 2\n    return x"
 	ops := []SearchReplace{{Search: "    x = 1\n    y = 2", Replace: "    a = 10\n    b = 20"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestApplySearchReplace_differentIndentation_wsMatch(t *testing.T) {
 	content := "def foo():\n    x = 1\n    y = 2"
 	search := "x = 1\ny = 2"
 	ops := []SearchReplace{{Search: search, Replace: "a = 10\nb = 20"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestApplySearchReplace_tabIndentation(t *testing.T) {
 	content := "def foo():\n\tx = 1\n\ty = 2"
 	search := "x = 1\ny = 2"
 	ops := []SearchReplace{{Search: search, Replace: "a = 10"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestApplySearchReplace_mixedIndentation_tabToSpace(t *testing.T) {
 	content := "def foo():\n    x = 1\n    y = 2"
 	search := "\tx = 1\n\ty = 2"
 	ops := []SearchReplace{{Search: search, Replace: "a = 1"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestApplySearchReplace_mixedIndentation_spaceToTab(t *testing.T) {
 	content := "def foo():\n\tx = 1\n\ty = 2"
 	search := "    x = 1\n    y = 2"
 	ops := []SearchReplace{{Search: search, Replace: "a = 1"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestApplySearchReplace_reindentDeeperLevel(t *testing.T) {
 	content := "def outer():\n        x = 1\n        y = 2"
 	search := "  x = 1\n  y = 2"
 	ops := []SearchReplace{{Search: search, Replace: "  a = 10\n  b = 20"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestApplySearchReplace_reindentShallowerLevel(t *testing.T) {
 	content := "if True:\n  x = 1\n  y = 2"
 	search := "        x = 1\n        y = 2"
 	ops := []SearchReplace{{Search: search, Replace: "        a = 10\n        b = 20"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestApplySearchReplace_reindentShallowerLevel(t *testing.T) {
 func TestApplySearchReplace_crlfContent(t *testing.T) {
 	content := "line1\r\nline2\r\nline3"
 	ops := []SearchReplace{{Search: "line2", Replace: "replaced"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestApplySearchReplace_crlfInSearchReplace(t *testing.T) {
 	search := "a\r\nb"
 	replace := "x\r\ny"
 	ops := []SearchReplace{{Search: search, Replace: replace}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestApplySearchReplace_crlfInSearchReplace(t *testing.T) {
 func TestApplySearchReplace_mixedCrlfLf(t *testing.T) {
 	content := "a\r\nb\nc\r\n"
 	ops := []SearchReplace{{Search: "b", Replace: "X"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestApplySearchReplace_mixedCrlfLf(t *testing.T) {
 func TestApplySearchReplace_lfContent_staysLf(t *testing.T) {
 	content := "a\nb\nc"
 	ops := []SearchReplace{{Search: "b", Replace: "X"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestApplySearchReplace_sequentialOps(t *testing.T) {
 		{Search: "b\nc", Replace: "X"},
 		{Search: "d", Replace: "Y"},
 	}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestApplySearchReplace_sequentialFirstFails(t *testing.T) {
 	_, err := ApplySearchReplace("a\nb", []SearchReplace{
 		{Search: "missing", Replace: "X"},
 		{Search: "a", Replace: "Y"},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error from first op")
 	}
@@ -337,7 +337,7 @@ func TestApplySearchReplace_sequentialWithNoops(t *testing.T) {
 		{Search: "a", Replace: "a"},
 		{Search: "b", Replace: "B"},
 	}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestApplySearchReplace_sequentialWithNoops(t *testing.T) {
 // ============================================================================
 
 func TestApplySearchReplace_singleLineContent(t *testing.T) {
-	got, err := ApplySearchReplace("hello", []SearchReplace{{Search: "hello", Replace: "world"}})
+	got, err := ApplySearchReplace("hello", []SearchReplace{{Search: "hello", Replace: "world"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestApplySearchReplace_singleLineContent(t *testing.T) {
 }
 
 func TestApplySearchReplace_singleLineContentWSMatch(t *testing.T) {
-	got, err := ApplySearchReplace("  hello", []SearchReplace{{Search: "hello", Replace: "world"}})
+	got, err := ApplySearchReplace("  hello", []SearchReplace{{Search: "hello", Replace: "world"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,14 +365,14 @@ func TestApplySearchReplace_singleLineContentWSMatch(t *testing.T) {
 }
 
 func TestApplySearchReplace_contentOnlyNewlines(t *testing.T) {
-	_, err := ApplySearchReplace("\n\n\n", []SearchReplace{{Search: "x", Replace: "y"}})
+	_, err := ApplySearchReplace("\n\n\n", []SearchReplace{{Search: "x", Replace: "y"}}, nil)
 	if err == nil {
 		t.Fatal("expected 'not found' error")
 	}
 }
 
 func TestApplySearchReplace_searchOnFirstLine(t *testing.T) {
-	got, err := ApplySearchReplace("target\nrest", []SearchReplace{{Search: "target", Replace: "hit"}})
+	got, err := ApplySearchReplace("target\nrest", []SearchReplace{{Search: "target", Replace: "hit"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ func TestApplySearchReplace_searchOnFirstLine(t *testing.T) {
 }
 
 func TestApplySearchReplace_searchOnLastLine(t *testing.T) {
-	got, err := ApplySearchReplace("first\nlast", []SearchReplace{{Search: "last", Replace: "final"}})
+	got, err := ApplySearchReplace("first\nlast", []SearchReplace{{Search: "last", Replace: "final"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestApplySearchReplace_searchOnLastLine(t *testing.T) {
 func TestApplySearchReplace_specialChars(t *testing.T) {
 	content := "cost: $100\ntax: 8%\npath: C:\\foo"
 	ops := []SearchReplace{{Search: "cost: $100", Replace: "cost: $200"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func TestApplySearchReplace_specialChars(t *testing.T) {
 }
 
 func TestApplySearchReplace_emptyContent(t *testing.T) {
-	_, err := ApplySearchReplace("", []SearchReplace{{Search: "x", Replace: "y"}})
+	_, err := ApplySearchReplace("", []SearchReplace{{Search: "x", Replace: "y"}}, nil)
 	if err == nil {
 		t.Fatal("expected error for search in empty content")
 	}
@@ -410,7 +410,7 @@ func TestApplySearchReplace_emptyContent(t *testing.T) {
 
 func TestApplySearchReplace_contentEndsWithNewline(t *testing.T) {
 	content := "a\nb\n"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: "b", Replace: "c"}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: "b", Replace: "c"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestApplySearchReplace_contentEndsWithNewline(t *testing.T) {
 func TestApplySearchReplace_contentEndsWithNewlineMultiLine(t *testing.T) {
 	content := "a\nb\nc\n"
 	ops := []SearchReplace{{Search: "b\nc", Replace: "x"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +430,7 @@ func TestApplySearchReplace_contentEndsWithNewlineMultiLine(t *testing.T) {
 func TestApplySearchReplace_whitespaceContentLines(t *testing.T) {
 	content := "a\n   \n\t\nb"
 	ops := []SearchReplace{{Search: "a\n   \n\t\nb", Replace: "replaced"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +444,7 @@ func TestApplySearchReplace_whitespaceContentLines(t *testing.T) {
 func TestApplySearchReplace_substringWithinLine(t *testing.T) {
 	content := "add = lambda a, b: a + b"
 	ops := []SearchReplace{{Search: "lambda a, b: a + b", Replace: "lambda a, b: a * b"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestApplySearchReplace_substringWithinLine(t *testing.T) {
 func TestApplySearchReplace_substringWithinIndentedLine(t *testing.T) {
 	content := "def foo():\n    result = x + y\n    return result"
 	ops := []SearchReplace{{Search: "x + y", Replace: "x * y"}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +464,7 @@ func TestApplySearchReplace_substringWithinIndentedLine(t *testing.T) {
 func TestApplySearchReplace_substringWithFString(t *testing.T) {
 	content := "name = \"world\"\nprint(f\"hello {name}\")\n"
 	ops := []SearchReplace{{Search: `f"hello {name}"`, Replace: `f"goodbye {name}"`}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +474,7 @@ func TestApplySearchReplace_substringWithFString(t *testing.T) {
 func TestApplySearchReplace_substringDictKey(t *testing.T) {
 	content := "config = {\"host\": \"localhost\", \"port\": 8080}\nprint(config[\"host\"])\n"
 	ops := []SearchReplace{{Search: `"host": "localhost"`, Replace: `"host": "0.0.0.0"`}}
-	got, err := ApplySearchReplace(content, ops)
+	got, err := ApplySearchReplace(content, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +486,7 @@ func TestApplySearchReplace_substringDictKey(t *testing.T) {
 // ============================================================================
 
 func TestApplySearchReplace_noOps(t *testing.T) {
-	got, err := ApplySearchReplace("content", nil)
+	got, err := ApplySearchReplace("content", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestApplySearchReplace_noOps(t *testing.T) {
 }
 
 func TestApplySearchReplace_zeroValueOpSlice(t *testing.T) {
-	got, err := ApplySearchReplace("content", []SearchReplace{})
+	got, err := ApplySearchReplace("content", []SearchReplace{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +526,7 @@ func runPython(t *testing.T, code string) string {
 func TestPython_editPrint(t *testing.T) {
 	code := "print(\"hello\")\nprint(\"world\")\n"
 	ops := []SearchReplace{{Search: `print("hello")`, Replace: `print("hi")`}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +540,7 @@ func TestPython_editFunctionBody(t *testing.T) {
 		Search:  `    name = "Alice"`,
 		Replace: `    name = "Bob"`,
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +554,7 @@ func TestPython_editBiggerReplace(t *testing.T) {
 		Search:  "x = 1",
 		Replace: "x = 1\ny = 2\nz = 3",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +568,7 @@ func TestPython_editSmallerReplace(t *testing.T) {
 		Search:  "a = 10\nb = 20",
 		Replace: "a = 100",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +582,7 @@ func TestPython_removeVariableUsage(t *testing.T) {
 		Search:  "items = [1, 2, 3, 4, 5]",
 		Replace: "items = [1, 2, 3]",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +596,7 @@ func TestPython_editSameIndentation(t *testing.T) {
 		Search:  "    for i in range(5):\n        total += i",
 		Replace: "    for i in range(10):\n        total += i",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +610,7 @@ func TestPython_editDifferentIndentation_wsMatch(t *testing.T) {
 		Search:  "for i in range(5):\ntotal += i",
 		Replace: "for i in range(3):\n    total += i",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +624,7 @@ func TestPython_wsMatchPreservesIndentation(t *testing.T) {
 		Search:  "def inner():\n    return 42",
 		Replace: "def inner():\n    return 99",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +639,7 @@ func TestPython_editLeadingBlankLineInSearch(t *testing.T) {
 		Search:  search,
 		Replace: "def main():\n    print(\"goodbye\")",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,7 +654,7 @@ func TestPython_sequentialEdits(t *testing.T) {
 		{Search: "y = 2", Replace: "y = 20"},
 		{Search: "z = 3", Replace: "z = 30"},
 	}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -672,7 +672,7 @@ func TestPython_editConditionalLogic(t *testing.T) {
 		Search:  `        return "positive"`,
 		Replace: `        return "POSITIVE"`,
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +686,7 @@ func TestPython_editLoopBody(t *testing.T) {
 		Search:  "    result.append(i)",
 		Replace: "    result.append(i * 2)",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -700,7 +700,7 @@ func TestPython_editClassMethod(t *testing.T) {
 		Search:  "        return a + b",
 		Replace: "        return a + b + 1",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,7 +714,7 @@ func TestPython_editReplaceLineWithEmpty(t *testing.T) {
 		Search:  "y = 2",
 		Replace: "",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -728,7 +728,7 @@ func TestPython_editNestedIndentation(t *testing.T) {
 		Search:  "        if True:\n            return 1\n        return 2",
 		Replace: "        if False:\n            return 10\n        return 20",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -742,7 +742,7 @@ func TestPython_editComment(t *testing.T) {
 		Search:  "# compute sum",
 		Replace: "# compute sum (v2)",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -756,7 +756,7 @@ func TestPython_editAddImport(t *testing.T) {
 		Search:  "import os",
 		Replace: "import os\nimport sys",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,7 +772,7 @@ func TestPython_editKeepSemanticsWhenSpacingChanges(t *testing.T) {
 		Search:  "    return a + b",
 		Replace: "    return a * b",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -787,7 +787,7 @@ func TestPython_editTabsToSpaces(t *testing.T) {
 		Search:  search,
 		Replace: "x = 10\ny = 20",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -802,7 +802,7 @@ func TestPython_editPreserveLogicAfterSearchTrim(t *testing.T) {
 		Search:  search,
 		Replace: "def greet(name):\n    return \"Hi, \" + name",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -816,7 +816,7 @@ func TestPython_editMultipleSameIndentBlocks(t *testing.T) {
 		Search:  "def second():\n    x = 2\n    return x",
 		Replace: "def second():\n    x = 20\n    return x",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -830,7 +830,7 @@ func TestPython_editComplexNested(t *testing.T) {
 		Search:  "        result.append(x * 10)\n    else:\n        result.append(x)",
 		Replace: "        result.append(x * 100)\n    else:\n        result.append(x * -1)",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -845,7 +845,7 @@ func TestPython_editFuzzyMatchIndentDifferences(t *testing.T) {
 		Search:  search,
 		Replace: "total = 100\nfor i in [1,2,3]:\n    total += i",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +863,7 @@ func TestPython_substringLambda(t *testing.T) {
 		Search:  "lambda a, b: a + b",
 		Replace: "lambda a, b: a * b",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -877,7 +877,7 @@ func TestPython_substringListComp(t *testing.T) {
 		Search:  "[x*x for x in range(5)]",
 		Replace: "[x*x for x in range(10)]",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -891,7 +891,7 @@ func TestPython_substringFString(t *testing.T) {
 		Search:  `f"hello {name}"`,
 		Replace: `f"goodbye {name}"`,
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -905,7 +905,7 @@ func TestPython_substringDictKey(t *testing.T) {
 		Search:  `"host": "localhost"`,
 		Replace: `"host": "0.0.0.0"`,
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -919,7 +919,7 @@ func TestPython_substringGenerator(t *testing.T) {
 		Search:  "x*2",
 		Replace: "x*3",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -933,7 +933,7 @@ func TestPython_substringTypeAnnotation(t *testing.T) {
 		Search:  "name: str) -> str:",
 		Replace: "name: str) -> str:",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -947,7 +947,7 @@ func TestPython_substringWalrusOperator(t *testing.T) {
 		Search:  "(y := x * 2)",
 		Replace: "(y := x * 3)",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -965,7 +965,7 @@ func TestPython_editTryExcept(t *testing.T) {
 		Search:  "        return -1",
 		Replace: "        return float('inf')",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -979,7 +979,7 @@ func TestPython_editDecorator(t *testing.T) {
 		Search:  `return "hello"`,
 		Replace: `return "HELLO"`,
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -993,7 +993,7 @@ func TestPython_editDataclass(t *testing.T) {
 		Search:  "    x: int\n    y: int",
 		Replace: "    x: int\n    y: int\n    z: int = 0",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1007,7 +1007,7 @@ func TestPython_editReplaceEntireFile(t *testing.T) {
 		Search:  "x = 1\nprint(x)",
 		Replace: "print(42)",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1021,7 +1021,7 @@ func TestPython_editWithClosure(t *testing.T) {
 		Search:  "        return x * n",
 		Replace: "        return x * n * 10",
 	}}
-	got, err := ApplySearchReplace(code, ops)
+	got, err := ApplySearchReplace(code, ops, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1074,7 +1074,7 @@ func TestApplySearchReplace_absoluteIndentTabBlock(t *testing.T) {
 	content := "func foo() {\n\t\t\t\tsegments := hardWrap(logStr, textW)\n\n\t\t\t\tfor _, seg := range segments {\n\t\t\t\t\tprefix := \"❯ \"\n\t\t\t\t}"
 	search := "segments := hardWrap(logStr, textW)\n\n\t\t\t\tfor _, seg := range segments {\n\t\t\t\t\tprefix := \"❯ \"\n\t\t\t\t}"
 	replace := "segments := wordWrap(logStr, textW)\n\n\t\t\t\tfor _, seg := range segments {\n\t\t\t\t\tprefix := \"❯ \"\n\t\t\t\t}"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1089,7 +1089,7 @@ func TestApplySearchReplace_absoluteIndentSpaceBlock(t *testing.T) {
 	content := "def foo():\n    x = process(a)\n\n    for i in items:\n        print(i)"
 	search := "x = process(a)\n\n    for i in items:\n        print(i)"
 	replace := "x = process(b)\n\n    for i in items:\n        print(i)"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1105,7 +1105,7 @@ func TestApplySearchReplace_relativeIndentStillWorks(t *testing.T) {
 	content := "def compute():\n    total = 0\n    for i in [1,2,3]:\n        total += i\n    return total\n\nprint(compute())\n"
 	search := "total = 0\nfor i in [1,2,3]:\n    total += i"
 	replace := "total = 100\nfor i in [1,2,3]:\n    total += i"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1120,7 +1120,7 @@ func TestApplySearchReplace_absoluteIndentSingleLineReplace(t *testing.T) {
 	content := "func foo() {\n\t\t\t\tresult := compute()\n\t\t}"
 	search := "result := compute()"
 	replace := "result := process()"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1141,7 +1141,7 @@ func TestApplySearchReplace_mixedIndentLevelsAcrossBlock(t *testing.T) {
 	content := "func foo() {\n\treturn i\n\t}\n\nfunc bar() {"
 	search := "return i\n\t}\n\nfunc bar"
 	replace := "return i\n}\n\nfunc bar"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1161,7 +1161,7 @@ func TestApplySearchReplace_mixedIndentTopLevelFuncNotDoubled(t *testing.T) {
 	content := "if true {\n\t\tdoStuff()\n\t}\n\nfunc next() {"
 	search := "doStuff()\n\t}\n\nfunc next"
 	replace := "doOther()\n}\n\nfunc next"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1183,7 +1183,7 @@ func TestApplySearchReplace_spaceSearchTabFile_regression(t *testing.T) {
 	content := "func foo() {\n\t\t\tif evt.Type == \"usage\" {\n\t\t\t\tmodel := activeCfg.Model\n\t\t\t\tvar promptT, compT, cachedT int\n\t\t\t\tswitch d := evt.Data.(type) {\n\t\t\t\tcase map[string]int:\n\t\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\t}\n\t\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t\t}\n\t\t\t}"
 	search := "        if evt.Type == \"usage\" {\n            model := activeCfg.Model\n            var promptT, compT, cachedT int\n            switch d := evt.Data.(type) {\n            case map[string]int:\n                promptT = d[\"prompt\"]\n            }\n            if promptT > 0 || compT > 0 {\n                s.cost.RecordUsage(model, promptT, compT, cachedT)\n            }"
 	replace := "        if evt.Type == \"usage\" {\n            model := activeCfg.Model\n            var promptT, compT, cachedT int\n            isEstimated := false\n            switch d := evt.Data.(type) {\n            case map[string]int:\n                promptT = d[\"prompt\"]\n            }\n            if promptT > 0 || compT > 0 {\n                s.cost.RecordUsage(model, promptT, compT, cachedT)\n            }"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1197,7 +1197,7 @@ func TestApplySearchReplace_tabSearchSpaceFile_regression(t *testing.T) {
 	content := "def foo():\n        if evt.type == \"usage\":\n            model = active_cfg.model\n            var_t = d[\"prompt\"]\n        }"
 	search := "\tif evt.type == \"usage\":\n\t\tmodel = active_cfg.model\n\t\tvar_t = d[\"prompt\"]\n\t}"
 	replace := "\tif evt.type == \"usage\":\n\t\tmodel = active_cfg.model\n\t\tis_estimated = False\n\t\tvar_t = d[\"prompt\"]\n\t}"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1215,7 +1215,7 @@ func TestApplySearchReplace_mixedIndentAbsoluteLineNotCorrupted(t *testing.T) {
 	content := "\t\ttotalPromptTokens += promptTokens\n\t\ttotalCompletionTokens += completionTokens\n\t\tlastPromptTokens = promptTokens\n\n\t\tif promptTokens > 0 || completionTokens > 0 {\n\t\t\t// Compute cost for this turn using model pricing\n\t\t\tprice := provider.LookupPrice(a.Model)\n\t\t\tturnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)\n\t\t\temit(AgentEvent{Type: \"usage\", Data: map[string]any{\n\t\t\t\t\"prompt\":         promptTokens,\n\t\t\t\t\"completion\":     completionTokens,\n\t\t\t}})\n\t\t}"
 	search := "\ttotalPromptTokens += promptTokens\n\t\ttotalCompletionTokens += completionTokens\n\t\tlastPromptTokens = promptTokens\n\n\t\tif promptTokens > 0 || completionTokens > 0 {\n\t\t\t// Compute cost for this turn using model pricing\n\t\t\tprice := provider.LookupPrice(a.Model)\n\t\t\tturnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)\n\t\t\temit(AgentEvent{Type: \"usage\", Data: map[string]any{\n\t\t\t\t\"prompt\":         promptTokens,\n\t\t\t\t\"completion\":     completionTokens,\n\t\t\t}})\n\t\t}"
 	replace := "\ttotalPromptTokens += promptTokens\n\t\ttotalCompletionTokens += completionTokens\n\t\tlastPromptTokens = promptTokens\n\n\t\t// Always emit a usage event so the TUI status bar updates.\n\t\t// When the API doesn't return token counts, estimate tokens.\n\t\testimated := false\n\t\tif promptTokens == 0 && completionTokens == 0 {\n\t\t\tpromptTokens = provider.EstimateMessagesTotal(msgs, a.Model)\n\t\t\tcompletionTokens = provider.EstimateTokens(content, a.Model)\n\t\t\testimated = true\n\t\t}\n\n\t\t// Compute cost for this turn using model pricing\n\t\tprice := provider.LookupPrice(a.Model)\n\t\tturnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)\n\t\temit(AgentEvent{Type: \"usage\", Data: map[string]any{\n\t\t\t\"prompt\":         promptTokens,\n\t\t\t\"completion\":     completionTokens,\n\t\t\t\"estimated\":      estimated,\n\t\t}})"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1229,7 +1229,7 @@ func TestApplySearchReplace_mixedIndentReplacementDeeperThanContent(t *testing.T
 	content := "def outer():\n    x = 1\n    y = 2"
 	search := "x = 1\n    y = 2"
 	replace := "x = 1\n    if cond:\n        y = 2"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1243,7 +1243,7 @@ func TestApplySearchReplace_mixedIndentReplacementShallowerThanContent(t *testin
 	content := "def outer():\n    if cond:\n        x = 1\n        y = 2"
 	search := "x = 1\n        y = 2"
 	replace := "x = 1\n    y = 2"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1257,7 +1257,7 @@ func TestApplySearchReplace_mixedIndentNewLinesNotDoubled(t *testing.T) {
 	content := "def outer():\n    x = process(a)\n\n    for i in items:\n        print(i)"
 	search := "x = process(a)\n\n    for i in items:\n        print(i)"
 	replace := "x = process(b)\n    is_cached = False\n\n    for i in items:\n        print(i)"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1271,7 +1271,7 @@ func TestApplySearchReplace_mixedIndentSessionGoExactScenario(t *testing.T) {
 	content := "\t\tif evt.Type == \"usage\" {\n\t\t\tmodel := activeCfg.Model\n\t\t\tvar promptT, compT, cachedT int\n\t\t\tswitch d := evt.Data.(type) {\n\t\t\tcase map[string]int:\n\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\tcompT = d[\"completion\"]\n\t\t\t\tcachedT = d[\"prompt_cached\"]\n\t\t\tcase map[string]any:\n\t\t\t\tif v, ok := d[\"prompt\"].(float64); ok {\n\t\t\t\t\tpromptT = int(v)\n\t\t\t\t}\n\t\t\t}\n\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t}\n\t\t}"
 	search := "if evt.Type == \"usage\" {\n\t\t\tmodel := activeCfg.Model\n\t\t\tvar promptT, compT, cachedT int\n\t\t\tswitch d := evt.Data.(type) {\n\t\t\tcase map[string]int:\n\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\tcompT = d[\"completion\"]\n\t\t\t\tcachedT = d[\"prompt_cached\"]\n\t\t\tcase map[string]any:\n\t\t\t\tif v, ok := d[\"prompt\"].(float64); ok {\n\t\t\t\t\tpromptT = int(v)\n\t\t\t\t}\n\t\t\t}\n\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t}\n\t\t}"
 	replace := "if evt.Type == \"usage\" {\n\t\t\tmodel := activeCfg.Model\n\t\t\tvar promptT, compT, cachedT int\n\t\t\tisEstimated := false\n\t\t\tswitch d := evt.Data.(type) {\n\t\t\tcase map[string]int:\n\t\t\t\tpromptT = d[\"prompt\"]\n\t\t\t\tcompT = d[\"completion\"]\n\t\t\t\tcachedT = d[\"prompt_cached\"]\n\t\t\tcase map[string]any:\n\t\t\t\tif v, ok := d[\"prompt\"].(float64); ok {\n\t\t\t\t\tpromptT = int(v)\n\t\t\t\t}\n\t\t\t\tif v, ok := d[\"estimated\"].(bool); ok {\n\t\t\t\t\tisEstimated = v\n\t\t\t\t}\n\t\t\t}\n\t\t\tif promptT > 0 || compT > 0 {\n\t\t\t\ts.cost.RecordUsage(model, promptT, compT, cachedT)\n\t\t\t}\n\t\t}"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1285,7 +1285,7 @@ func TestApplySearchReplace_mixedIndentRemovingNesting(t *testing.T) {
 	content := "func handler() {\n\t\tif debug {\n\t\t\tlog.Printf(\"msg\")\n\t\t\tlog.Printf(\"detail\")\n\t\t}\n\t}"
 	search := "if debug {\n\t\t\tlog.Printf(\"msg\")\n\t\t\tlog.Printf(\"detail\")\n\t\t}"
 	replace := "if debug {\n\t\tlog.Printf(\"msg\")\n\t}"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1299,7 +1299,7 @@ func TestApplySearchReplace_mixedIndentAddLineAtAbsoluteDepth(t *testing.T) {
 	content := "\t\tfor i := range items {\n\t\t\tval := items[i]\n\t\t\tresult = append(result, val)\n\t\t}"
 	search := "for i := range items {\n\t\t\tval := items[i]\n\t\t\tresult = append(result, val)\n\t\t}"
 	replace := "for i := range items {\n\t\t\tval := items[i]\n\t\t\tif val > 0 {\n\t\t\t\tresult = append(result, val)\n\t\t\t}\n\t\t}"
-	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}})
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -192,7 +192,7 @@ func (j *Journal) UndoLast() error {
 	}
 	last := j.entries[len(j.entries)-1]
 	j.logger.Info("JOURNAL", "undo_last", "op", last.Op, "path", last.Path, "op_id", last.OpID, "remaining", len(j.entries)-1)
-	if err := revertEntry(last); err != nil {
+	if err := revertEntry(last, j.logger); err != nil {
 		j.logger.Error("JOURNAL", "undo_revert_failed", "op_id", last.OpID, "error", err.Error())
 		return err
 	}
@@ -222,7 +222,7 @@ func (j *Journal) UndoMessage(msgID string) error {
 
 	var undone []string
 	for _, e := range matching {
-		if err := revertEntry(e); err != nil {
+		if err := revertEntry(e, j.logger); err != nil {
 			j.logger.Error("JOURNAL", "undo_msg_revert_failed", "msg_id", msgID, "op_id", e.OpID, "error", err.Error())
 			if len(undone) > 0 {
 				return fmt.Errorf("partial undo: reverted %d of %d ops for message %q, then failed: %w", len(undone), len(matching), msgID, err)
@@ -256,7 +256,7 @@ func (j *Journal) UndoSession() error {
 
 	var undone []string
 	for _, e := range all {
-		if err := revertEntry(e); err != nil {
+		if err := revertEntry(e, j.logger); err != nil {
 			j.logger.Error("JOURNAL", "undo_session_revert_failed", "op_id", e.OpID, "error", err.Error())
 			return fmt.Errorf("partial undo: reverted %d of %d ops, then failed: %w", len(undone), len(all), err)
 		}
@@ -286,7 +286,7 @@ func (j *Journal) UndoN(n int) error {
 
 	var undone []string
 	for _, e := range tail {
-		if err := revertEntry(e); err != nil {
+		if err := revertEntry(e, j.logger); err != nil {
 			j.logger.Error("JOURNAL", "undo_n_revert_failed", "n", n, "op_id", e.OpID, "error", err.Error())
 			return fmt.Errorf("partial undo: reverted %d of %d ops, then failed: %w", len(undone), n, err)
 		}
@@ -301,7 +301,7 @@ func (j *Journal) UndoN(n int) error {
 	return nil
 }
 
-func revertEntry(e JournalEntry) error {
+func revertEntry(e JournalEntry, lg *logger.Logger) error {
 	switch e.Op {
 	case OpCreate:
 		cur, _, err := readFile(e.Path)
@@ -309,10 +309,11 @@ func revertEntry(e JournalEntry) error {
 			return fmt.Errorf("read for checksum: %w", err)
 		}
 		if err == nil {
-			if cs := checksum(cur); cs != e.ChecksumN {
+			curCS := checksum(cur)
+			if curCS != e.ChecksumN {
 				return fmt.Errorf(
 					"file %s has been modified since CRUDE created it (expected %s, got %s); not deleting — resolve manually",
-					e.Path, e.ChecksumN[:8], cs[:8],
+					e.Path, truncateHash(e.ChecksumN, 8), truncateHash(curCS, 8),
 				)
 			}
 		}
@@ -325,14 +326,15 @@ func revertEntry(e JournalEntry) error {
 		}
 		cur, _, err := readFile(e.Path)
 		if err == nil {
-			if cs := checksum(cur); cs != e.ChecksumN {
+			curCS := checksum(cur)
+			if curCS != e.ChecksumN {
 				fmt.Fprintf(os.Stderr,
-					"[crude/fileio] warning: %s was modified externally after op %s; restoring old content anyway\n",
-					e.Path, e.OpID,
+					"[crude/fileio] warning: %s was modified externally after op %s; expected %s, got %s — restoring old content anyway\n",
+					e.Path, truncateHash(e.OpID, 8), truncateHash(e.ChecksumN, 8), truncateHash(curCS, 8),
 				)
 			}
 		}
-		return writeAtomic(e.Path, old, os.FileMode(e.OldPerm))
+		return writeAtomic(e.Path, old, os.FileMode(e.OldPerm), lg)
 
 	case OpMove:
 		if e.DestPath == "" {
@@ -349,10 +351,11 @@ func revertEntry(e JournalEntry) error {
 			return fmt.Errorf("read for checksum: %w", err)
 		}
 		if err == nil {
-			if cs := checksum(cur); cs != e.ChecksumN {
+			curCS := checksum(cur)
+			if curCS != e.ChecksumN {
 				return fmt.Errorf(
 					"copied file %s has been modified since CRUDE created it (expected %s, got %s); not deleting — resolve manually",
-					e.DestPath, e.ChecksumN[:8], cs[:8],
+					e.DestPath, truncateHash(e.ChecksumN, 8), truncateHash(curCS, 8),
 				)
 			}
 		}
@@ -361,11 +364,20 @@ func revertEntry(e JournalEntry) error {
 	return fmt.Errorf("unknown op type %q", e.Op)
 }
 
+func truncateHash(hash string, n int) string {
+	if len(hash) <= n {
+		return hash
+	}
+	return hash[:n]
+}
+
 func buildWriteEntry(sessionID, msgID, opID, path string, oldContent, newContent []byte, perm os.FileMode) (JournalEntry, error) {
 	gz, err := compressContent(oldContent)
 	if err != nil {
 		return JournalEntry{}, err
 	}
+	csOld := checksum(oldContent)
+	csNew := checksum(newContent)
 	return JournalEntry{
 		OpID:      opID,
 		SessionID: sessionID,
@@ -375,8 +387,8 @@ func buildWriteEntry(sessionID, msgID, opID, path string, oldContent, newContent
 		Op:        OpWrite,
 		OldGzip:   gz,
 		OldPerm:   uint32(perm),
-		ChecksumO: checksum(oldContent),
-		ChecksumN: checksum(newContent),
+		ChecksumO: csOld,
+		ChecksumN: csNew,
 	}, nil
 }
 
