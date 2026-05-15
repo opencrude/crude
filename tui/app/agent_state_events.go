@@ -59,19 +59,19 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 			tgt = seconds + "s"
 		}
 
-		contentLines, _ := data["content_lines"].(float64)
-		oldLines, _ := data["old_lines"].(float64)
-		newLines, _ := data["new_lines"].(float64)
+		contentLines := toInt(data["content_lines"])
+		oldLines := toInt(data["old_lines"])
+		newLines := toInt(data["new_lines"])
 
 		if name == "read_file" && tgt != "" {
-			offset, _ := data["offset"].(float64)
-			limit, _ := data["limit"].(float64)
+			offset := toInt(data["offset"])
+			limit := toInt(data["limit"])
 			if offset > 0 && limit > 0 {
-				tgt = fmt.Sprintf("%s line %d-%d", tgt, int(offset), int(offset+limit-1))
+				tgt = fmt.Sprintf("%s line %d-%d", tgt, offset, offset+limit-1)
 			} else if offset > 0 {
-				tgt = fmt.Sprintf("%s line %d+", tgt, int(offset))
+				tgt = fmt.Sprintf("%s line %d+", tgt, offset)
 			} else if limit > 0 {
-				tgt = fmt.Sprintf("%s (first %d lines)", tgt, int(limit))
+				tgt = fmt.Sprintf("%s (first %d lines)", tgt, limit)
 			}
 		}
 
@@ -110,8 +110,8 @@ func (a *AgentState) handleToolProgress(evt ttypes.AgentEventMsg, target *widget
 		phase, _ := data["phase"].(string)
 		message, _ := data["message"].(string)
 		path, _ := data["path"].(string)
-		linesAdded, _ := data["lines_added"].(float64)
-		linesRemoved, _ := data["lines_removed"].(float64)
+		linesAdded := toInt(data["lines_added"])
+		linesRemoved := toInt(data["lines_removed"])
 
 		target.UpdateToolProgress(toolID, name, phase, message, path, int(linesAdded), int(linesRemoved))
 		if phase == "done" {

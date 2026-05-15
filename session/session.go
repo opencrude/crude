@@ -243,7 +243,7 @@ func (s *Session) newAgent() *agent.Agent {
 	a.Yolo = s.yolo
 	a.AsyncMgr = s.asyncMgr
 
-	a.ToolFn = func(tool string, params map[string]any) (string, error) {
+	a.ToolFn = func(tool string, params map[string]any) (tools.ToolResult, error) {
 		switch tool {
 		case "consult_oracle":
 			s.logger.Info("oracle.consult", "task", params["task"], "decision_point", params["decision_point"])
@@ -256,9 +256,9 @@ func (s *Session) newAgent() *agent.Agent {
 			resp, err := agent.ConsultOracle(a.Ctx, oracleProvider, oracleModel, query, a.Emit)
 			if err != nil {
 				s.logger.Error("oracle.error", "error", err.Error())
-				return "", fmt.Errorf("oracle consultation failed: %w", err)
+				return tools.ToolResult{}, fmt.Errorf("oracle consultation failed: %w", err)
 			}
-			return agent.FormatOracleResponse(resp), nil
+			return tools.ToolResult{Content: agent.FormatOracleResponse(resp)}, nil
 
 		case "plan":
 			objective := getStrParam(params, "objective")
@@ -268,15 +268,15 @@ func (s *Session) newAgent() *agent.Agent {
 
 			rawSteps, ok := params["steps"]
 			if !ok {
-				return "", fmt.Errorf("plan: missing 'steps' parameter")
+				return tools.ToolResult{}, fmt.Errorf("plan: missing 'steps' parameter")
 			}
 			stepsJSON, err := json.Marshal(rawSteps)
 			if err != nil {
-				return "", fmt.Errorf("plan: failed to marshal steps: %w", err)
+				return tools.ToolResult{}, fmt.Errorf("plan: failed to marshal steps: %w", err)
 			}
 			var steps []map[string]any
 			if err := json.Unmarshal(stepsJSON, &steps); err != nil {
-				return "", fmt.Errorf("plan: invalid steps format: %w", err)
+				return tools.ToolResult{}, fmt.Errorf("plan: invalid steps format: %w", err)
 			}
 
 			goal := s.sm.CreateGoal(s.sessionID, "plan: "+objective, objective, statemachine.PriorityNormal, false)
@@ -296,12 +296,12 @@ func (s *Session) newAgent() *agent.Agent {
 			state.AddToContext("plan_goal_id", goal.ID)
 
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
-			return status, nil
+			return tools.ToolResult{Content: status}, nil
 
 		case "mark_step_complete":
 			stepIDs := resolveStepIDs(params["step_id"])
 			if len(stepIDs) == 0 {
-				return "", fmt.Errorf("mark_step_complete: missing 'step_id'")
+				return tools.ToolResult{}, fmt.Errorf("mark_step_complete: missing 'step_id'")
 			}
 			state := s.sm.GetOrCreateState(s.sessionID)
 
@@ -331,17 +331,17 @@ func (s *Session) newAgent() *agent.Agent {
 
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
-				return status, nil
+				return tools.ToolResult{Content: status}, nil
 			}
 			if len(stepIDs) == 1 {
-				return fmt.Sprintf("Step %q marked as complete.", stepIDs[0]), nil
+				return tools.ToolResult{Content: fmt.Sprintf("Step %q marked as complete.", stepIDs[0])}, nil
 			}
-			return fmt.Sprintf("Steps %v marked as complete.", stepIDs), nil
+			return tools.ToolResult{Content: fmt.Sprintf("Steps %v marked as complete.", stepIDs)}, nil
 
 		case "mark_step_doing":
 			stepIDs := resolveStepIDs(params["step_id"])
 			if len(stepIDs) == 0 {
-				return "", fmt.Errorf("mark_step_doing: missing 'step_id'")
+				return tools.ToolResult{}, fmt.Errorf("mark_step_doing: missing 'step_id'")
 			}
 			state := s.sm.GetOrCreateState(s.sessionID)
 
@@ -359,18 +359,18 @@ func (s *Session) newAgent() *agent.Agent {
 
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
-				return status, nil
+				return tools.ToolResult{Content: status}, nil
 			}
 			if len(stepIDs) == 1 {
-				return fmt.Sprintf("Step %q marked as doing.", stepIDs[0]), nil
+				return tools.ToolResult{Content: fmt.Sprintf("Step %q marked as doing.", stepIDs[0])}, nil
 			}
-			return fmt.Sprintf("Steps %v marked as doing.", stepIDs), nil
+			return tools.ToolResult{Content: fmt.Sprintf("Steps %v marked as doing.", stepIDs)}, nil
 
 		case "mark_step_failed":
 			stepID := getStrParam(params, "step_id")
 			reason := getStrParam(params, "reason")
 			if stepID == "" {
-				return "", fmt.Errorf("mark_step_failed: missing 'step_id'")
+				return tools.ToolResult{}, fmt.Errorf("mark_step_failed: missing 'step_id'")
 			}
 			if reason == "" {
 				reason = "unknown error"
@@ -385,15 +385,15 @@ func (s *Session) newAgent() *agent.Agent {
 			s.sm.FailCurrentGoal(s.sessionID, reason)
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
-				return status, nil
+				return tools.ToolResult{Content: status}, nil
 			}
-			return fmt.Sprintf("Step %q marked as failed: %s", stepID, reason), nil
+			return tools.ToolResult{Content: fmt.Sprintf("Step %q marked as failed: %s", stepID, reason)}, nil
 
 		case "report_blocker":
 			blockerType := getStrParam(params, "blocker_type")
 			message := getStrParam(params, "message")
 			if message == "" {
-				return "", fmt.Errorf("report_blocker: missing 'message'")
+				return tools.ToolResult{}, fmt.Errorf("report_blocker: missing 'message'")
 			}
 			var bt statemachine.BlockingConditionType
 			switch blockerType {
@@ -429,9 +429,9 @@ func (s *Session) newAgent() *agent.Agent {
 			}
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
-				return status, nil
+				return tools.ToolResult{Content: status}, nil
 			}
-			return fmt.Sprintf("Blocker reported: [%s] %s", blockerType, message), nil
+			return tools.ToolResult{Content: fmt.Sprintf("Blocker reported: [%s] %s", blockerType, message)}, nil
 
 		case "resolve_blocker":
 			resolved := s.sm.TryResolveBlocker(s.sessionID, getStrParam(params, "message"))
@@ -451,85 +451,85 @@ func (s *Session) newAgent() *agent.Agent {
 				}
 				status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 				if status != "" {
-					return status, nil
+					return tools.ToolResult{Content: status}, nil
 				}
-				return "Blocker resolved. Plan execution can resume.", nil
+				return tools.ToolResult{Content: "Blocker resolved. Plan execution can resume."}, nil
 			}
-			return "No active blocker to resolve.", nil
+			return tools.ToolResult{Content: "No active blocker to resolve."}, nil
 
 		case "list_goal_status":
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status == "" {
-				return "No active goals or plans.", nil
+				return tools.ToolResult{Content: "No active goals or plans."}, nil
 			}
-			return status, nil
+			return tools.ToolResult{Content: status}, nil
 
 		case "async_execute_command":
 			command := getStrParam(params, "command")
 			handle := getStrParam(params, "handle")
 			if command == "" {
-				return "", fmt.Errorf("async_execute_command: missing 'command'")
+				return tools.ToolResult{}, fmt.Errorf("async_execute_command: missing 'command'")
 			}
 			if handle == "" {
-				return "", fmt.Errorf("async_execute_command: missing 'handle'")
+				return tools.ToolResult{}, fmt.Errorf("async_execute_command: missing 'handle'")
 			}
 			cwd := getStrParam(params, "cwd")
 			timeout := tools.GetIntArgAny(params, "timeout_seconds", 0)
 			info, err := s.asyncMgr.Start(handle, command, cwd, timeout)
 			if err != nil {
-				return "", fmt.Errorf("async_execute_command: %w", err)
+				return tools.ToolResult{}, fmt.Errorf("async_execute_command: %w", err)
 			}
-			return fmt.Sprintf("Started async command [%s]: PID %d, status=%s, command=%q", handle, info.PID, info.Status, command), nil
+			return tools.ToolResult{Content: fmt.Sprintf("Started async command [%s]: PID %d, status=%s, command=%q", handle, info.PID, info.Status, command)}, nil
 
 		case "check_async_command":
 			handle := getStrParam(params, "handle")
 			if handle == "" {
-				return "", fmt.Errorf("check_async_command: missing 'handle'")
+				return tools.ToolResult{}, fmt.Errorf("check_async_command: missing 'handle'")
 			}
 			info, ok := s.asyncMgr.Check(handle)
 			if !ok {
-				return fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handle), nil
+				return tools.ToolResult{Content: fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handle)}, nil
 			}
 			dur := info.Duration.Truncate(time.Second).String()
 			status := fmt.Sprintf("Handle: %s\nPID: %d\nStatus: %s\nExit code: %d\nDuration: %s", info.Handle, info.PID, info.Status, info.ExitCode, dur)
 			if info.Error != "" {
 				status += "\nError: " + info.Error
 			}
-			return status, nil
+			return tools.ToolResult{Content: status}, nil
 
 		case "kill_async_command":
 			handle := getStrParam(params, "handle")
 			if handle == "" {
-				return "", fmt.Errorf("kill_async_command: missing 'handle'")
+				return tools.ToolResult{}, fmt.Errorf("kill_async_command: missing 'handle'")
 			}
 			if err := s.asyncMgr.Kill(handle); err != nil {
-				return "", fmt.Errorf("kill_async_command: %w", err)
+				return tools.ToolResult{}, fmt.Errorf("kill_async_command: %w", err)
 			}
-			return fmt.Sprintf("Async command [%s] killed.", handle), nil
+			return tools.ToolResult{Content: fmt.Sprintf("Async command [%s] killed.", handle)}, nil
 
 		case "read_async_output":
 			handle := getStrParam(params, "handle")
 			if handle == "" {
-				return "", fmt.Errorf("read_async_output: missing 'handle'")
+				return tools.ToolResult{}, fmt.Errorf("read_async_output: missing 'handle'")
 			}
 			sinceByte := tools.GetIntArgAny(params, "since_byte", 0)
 			out, nextByte, err := s.asyncMgr.ReadOutput(handle, sinceByte)
 			if err != nil {
-				return "", fmt.Errorf("read_async_output: %w", err)
+				return tools.ToolResult{}, fmt.Errorf("read_async_output: %w", err)
 			}
 			if out == "" {
-				return fmt.Sprintf("[%s] next_byte=%d (no new output since byte %d)", handle, nextByte, sinceByte), nil
+				return tools.ToolResult{Content: fmt.Sprintf("[%s] next_byte=%d (no new output since byte %d)", handle, nextByte, sinceByte)}, nil
 			}
-			return fmt.Sprintf("[%s output from byte %d]\n%s\n[next_byte=%d]", handle, sinceByte, out, nextByte), nil
+			return tools.ToolResult{Content: fmt.Sprintf("[%s output from byte %d]\n%s\n[next_byte=%d]", handle, sinceByte, out, nextByte)}, nil
 
 		case "wait":
 			seconds := tools.GetFloatArgAny(params, "seconds", 0)
 			if seconds <= 0 {
-				return "", fmt.Errorf("wait: seconds must be > 0")
+				return tools.ToolResult{}, fmt.Errorf("wait: seconds must be > 0")
 			}
 			s.logger.Info("tool.wait", "seconds", seconds)
 			time.Sleep(time.Duration(seconds * float64(time.Second)))
-			return fmt.Sprintf("Waited %.1f seconds.", seconds), nil
+			return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
 
 		default:
 			if tool == "execute_command" && !s.yolo {
@@ -538,15 +538,15 @@ func (s *Session) newAgent() *agent.Agent {
 				if sr.Risk.IsAlwaysBlocked() {
 					errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
 					s.logger.Warn("safety.blocked", "command", cmd, "reason", sr.Reason)
-					return errMsg, fmt.Errorf("%s", errMsg)
+					return tools.ToolResult{Content: errMsg}, fmt.Errorf("%s", errMsg)
 				}
 				if sr.Risk.NeedsConfirmation() {
 					s.logger.Info("safety.risky", "command", cmd, "risk", sr.Risk.String())
 				}
 			}
 			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo)
-			if strings.HasPrefix(result, "Error:") {
-				return result, fmt.Errorf("%s", result)
+			if strings.HasPrefix(result.Content, "Error:") {
+				return result, fmt.Errorf("%s", result.Content)
 			}
 			return result, nil
 		}

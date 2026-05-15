@@ -81,7 +81,17 @@ func GetFloatArgAny(args map[string]any, key string, defaultVal float64) float64
 	return defaultVal
 }
 
-func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool) string {
+type ToolResult struct {
+	Content  string
+	Added    int
+	Removed  int
+}
+
+func (r ToolResult) String() string {
+	return r.Content
+}
+
+func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool) ToolResult {
 	switch tool {
 
 	case "execute_command":
@@ -89,8 +99,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		if !yolo {
 			safetyResult := safety.CheckCommandSafety(cmd)
 			if safetyResult.Risk.IsAlwaysBlocked() {
-				return fmt.Sprintf("Error: [BLOCKED] %s\nSuggestion: %s",
-					safetyResult.Reason, safetyResult.Suggestion)
+				return ToolResult{Content: fmt.Sprintf("Error: [BLOCKED] %s\nSuggestion: %s",
+					safetyResult.Reason, safetyResult.Suggestion)}
 			}
 		}
 		timeout := GetIntArgAny(params, "timeout_seconds", -1)
@@ -104,14 +114,14 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		out, err := exec.Execute(cmd, opts)
 		if err != nil {
 			if out != "" {
-				return fmt.Sprintf("Command failed: %v\n\n%s", err, out)
+				return ToolResult{Content: fmt.Sprintf("Command failed: %v\n\n%s", err, out)}
 			}
-			return "Command failed: " + err.Error()
+			return ToolResult{Content: "Command failed: " + err.Error()}
 		}
 		if out == "" {
-			return "(command completed with no output)"
+			return ToolResult{Content: "(command completed with no output)"}
 		}
-		return out
+		return ToolResult{Content: out}
 
 	case "read_file":
 		if ed != nil {
@@ -120,30 +130,30 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 				content, err := ed.Read(GetStrArg(params, "path", ""))
 				if err != nil {
 					if _, ok := err.(*fileio.BinaryFileError); ok {
-						return fmt.Sprintf("Error: %v", err)
+						return ToolResult{Content: fmt.Sprintf("Error: %v", err)}
 					}
-					return "Error: " + err.Error()
+					return ToolResult{Content: "Error: " + err.Error()}
 				}
-				return formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
+				return ToolResult{Content: formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))}
 			}
 			content, err := ed.ReadRaw(GetStrArg(params, "path", ""))
 			if err != nil {
 				if _, ok := err.(*fileio.BinaryFileError); ok {
-					return fmt.Sprintf("Error: %v", err)
+					return ToolResult{Content: fmt.Sprintf("Error: %v", err)}
 				}
-				return "Error: " + err.Error()
+				return ToolResult{Content: "Error: " + err.Error()}
 			}
-			return formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
+			return ToolResult{Content: formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))}
 		}
 		path := GetStrArg(params, "path", "")
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		if fileio.IsBinary(data) {
-			return fmt.Sprintf("Error: binary file detected: %s (%d bytes) — cannot read binary files, use execute_command instead", path, len(data))
+			return ToolResult{Content: fmt.Sprintf("Error: binary file detected: %s (%d bytes) — cannot read binary files, use execute_command instead", path, len(data))}
 		}
-		return formatReadFile(path, string(data), GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))
+		return ToolResult{Content: formatReadFile(path, string(data), GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))}
 
 	case "write_file":
 		content := GetStrArg(params, "content", "")
@@ -156,18 +166,18 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		if ed != nil {
 			if err := ed.Write(path, content); err != nil {
 				if _, ok := err.(*fileio.BinaryFileError); ok {
-					return fmt.Sprintf("Error: %v", err)
+					return ToolResult{Content: fmt.Sprintf("Error: %v", err)}
 				}
-				return "Error: " + err.Error()
+				return ToolResult{Content: "Error: " + err.Error()}
 			}
 			lines := strings.Count(content, "\n") + 1
 			return formatWriteResult(path, lines, oldContent, content)
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		lines := strings.Count(content, "\n") + 1
 		return formatWriteResult(path, lines, oldContent, content)
@@ -183,9 +193,9 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			ops := []fileio.SearchReplace{{Search: oldString, Replace: newString}}
 			if err := ed.Patch(path, ops); err != nil {
 				if _, ok := err.(*fileio.BinaryFileError); ok {
-					return fmt.Sprintf("Error: %v", err)
+					return ToolResult{Content: fmt.Sprintf("Error: %v", err)}
 				}
-				return fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)
+				return ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
 			}
 			newData, _ := os.ReadFile(path)
 			replaced := string(newData)
@@ -193,16 +203,16 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)
+			return ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
 		}
 		orig = string(data)
 		count := strings.Count(orig, oldString)
 		if count == 0 {
-			return fmt.Sprintf("Error: old_string not found in %s\nHint: use read_file to verify the exact content before retrying.", path)
+			return ToolResult{Content: fmt.Sprintf("Error: old_string not found in %s\nHint: use read_file to verify the exact content before retrying.", path)}
 		}
 		replaced := strings.ReplaceAll(orig, oldString, newString)
 		if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		return formatEditResult(path, count, orig, replaced)
 
@@ -210,73 +220,73 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		path := GetStrArg(params, "path", "")
 		if ed != nil {
 			if err := ed.Delete(path); err != nil {
-				return "Error: " + err.Error()
+				return ToolResult{Content: "Error: " + err.Error()}
 			}
-			return "Deleted: " + path
+			return ToolResult{Content: "Deleted: " + path}
 		}
 		if err := os.Remove(path); err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
-		return "Deleted: " + path
+		return ToolResult{Content: "Deleted: " + path}
 
 	case "move_file":
 		source := GetStrArg(params, "source", "")
 		dest := GetStrArg(params, "destination", "")
 		if ed != nil {
 			if err := ed.Move(source, dest); err != nil {
-				return "Error: " + err.Error()
+				return ToolResult{Content: "Error: " + err.Error()}
 			}
-			return fmt.Sprintf("Moved %s → %s", source, dest)
+			return ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
 		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		if err := os.Rename(source, dest); err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
-		return fmt.Sprintf("Moved %s → %s", source, dest)
+		return ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
 
 	case "copy_file":
 		source := GetStrArg(params, "source", "")
 		dest := GetStrArg(params, "destination", "")
 		if ed != nil {
 			if err := ed.Copy(source, dest); err != nil {
-				return "Error: " + err.Error()
+				return ToolResult{Content: "Error: " + err.Error()}
 			}
-			return fmt.Sprintf("Copied %s → %s", source, dest)
+			return ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
 		}
 		in, err := os.Open(source)
 		if err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		defer in.Close()
 		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		out, err := os.Create(dest)
 		if err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		defer out.Close()
 		if _, err := io.Copy(out, in); err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
-		return fmt.Sprintf("Copied %s → %s", source, dest)
+		return ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
 
 	case "list_directory":
 		path := GetStrArg(params, "path", "")
 		recursive := GetBoolArgAny(params, "recursive", false)
 		if recursive {
-			return listDirectoryRecursive(path, exec)
+			return ToolResult{Content: listDirectoryRecursive(path, exec)}
 		}
 		entries, err := exec.ListDir(path)
 		if err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		if len(entries) == 0 {
-			return fmt.Sprintf("Directory %s is empty (no files or subdirectories). This is a successful result, not an error — the directory exists but contains nothing.", path)
+			return ToolResult{Content: fmt.Sprintf("Directory %s is empty (no files or subdirectories). This is a successful result, not an error — the directory exists but contains nothing.", path)}
 		}
-		return formatDirEntries(path, entries)
+		return ToolResult{Content: formatDirEntries(path, entries)}
 
 	case "glob_files":
 		pattern := GetStrArg(params, "pattern", "")
@@ -284,10 +294,10 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		includeHidden := GetBoolArgAny(params, "include_hidden", false)
 		matches, err := exec.GlobFiles(baseDir, pattern, includeHidden)
 		if err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		if len(matches) == 0 {
-			return fmt.Sprintf("No files matching %q under %s", pattern, baseDir)
+			return ToolResult{Content: fmt.Sprintf("No files matching %q under %s", pattern, baseDir)}
 		}
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "%d file(s) matching %q under %s:\n", len(matches), pattern, baseDir)
@@ -295,7 +305,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			sb.WriteString(m)
 			sb.WriteByte('\n')
 		}
-		return strings.TrimRight(sb.String(), "\n")
+		return ToolResult{Content: strings.TrimRight(sb.String(), "\n")}
 
 	case "grep_files":
 		pattern := GetStrArg(params, "pattern", "")
@@ -304,24 +314,24 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		includeHidden := GetBoolArgAny(params, "include_hidden", false)
 		matches, err := exec.GrepFiles(pattern, searchPath, recursive, includeHidden)
 		if err != nil {
-			return "Error: " + err.Error()
+			return ToolResult{Content: "Error: " + err.Error()}
 		}
 		if len(matches) == 0 {
-			return fmt.Sprintf("No matches for %q in %s", pattern, searchPath)
+			return ToolResult{Content: fmt.Sprintf("No matches for %q in %s", pattern, searchPath)}
 		}
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "%d match(es) for %q in %s:\n", len(matches), pattern, searchPath)
 		for _, m := range matches {
 			fmt.Fprintf(&sb, "%s:%d: %s\n", m.Path, m.LineNum, m.Line)
 		}
-		return strings.TrimRight(sb.String(), "\n")
+		return ToolResult{Content: strings.TrimRight(sb.String(), "\n")}
 
 	case "web_search":
 		result, err := search.WebSearch(GetStrArg(params, "query", ""), 6)
 		if err != nil {
-			return "Search error: " + err.Error()
+			return ToolResult{Content: "Search error: " + err.Error()}
 		}
-		return result
+		return ToolResult{Content: result}
 
 	case "arxiv_search":
 		maxResults := GetIntArgAny(params, "max_results", 5)
@@ -330,63 +340,61 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		}
 		result, err := search.ArxivSearch(GetStrArg(params, "query", ""), maxResults)
 		if err != nil {
-			return "ArXiv search error: " + err.Error()
+			return ToolResult{Content: "ArXiv search error: " + err.Error()}
 		}
-		return result
+		return ToolResult{Content: result}
 
 	case "web_fetch":
 		offset := GetIntArgAny(params, "offset", 0)
 		limit := GetIntArgAny(params, "limit", 0)
 		result, err := search.WebFetch(GetStrArg(params, "url", ""), offset, limit)
 		if err != nil {
-			return "Fetch error: " + err.Error()
+			return ToolResult{Content: "Fetch error: " + err.Error()}
 		}
-		return result
+		return ToolResult{Content: result}
 
 	case "run_javascript":
 		code := GetStrArg(params, "code", "")
 		result, err := js.Run(code)
 		if err != nil {
-			return "JavaScript error: " + err.Error()
+			return ToolResult{Content: "JavaScript error: " + err.Error()}
 		}
-		return result
+		return ToolResult{Content: result}
 
 	case "reply":
-		return GetStrArg(params, "content", "")
+		return ToolResult{Content: GetStrArg(params, "content", "")}
 
 	default:
-		return "Error: unknown tool: " + tool
+		return ToolResult{Content: "Error: unknown tool: " + tool}
 	}
 }
 
-func formatWriteResult(path string, lines int, oldContent, newContent string) string {
+func formatWriteResult(path string, lines int, oldContent, newContent string) ToolResult {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Written %d lines to %s\n", lines, path))
-	diffText, _, _ := diff.GenerateDiff(oldContent, newContent, path)
+	diffText, additions, removals := diff.GenerateDiff(oldContent, newContent, path)
 	diffText = strings.TrimSpace(diffText)
 	if !diff.IsEmptyDiff(diffText) {
 		sb.WriteString("\n```diff\n")
 		sb.WriteString(diffText)
 		sb.WriteString("\n```\n")
 	}
-	return sb.String()
+	return ToolResult{Content: sb.String(), Added: additions, Removed: removals}
 }
 
-func formatEditResult(path string, count int, oldContent, newContent string) string {
+func formatEditResult(path string, count int, oldContent, newContent string) ToolResult {
 	var sb strings.Builder
 	if count == 1 {
 		sb.WriteString(fmt.Sprintf("Replaced 1 occurrence in %s\n", path))
 	} else {
 		sb.WriteString(fmt.Sprintf("Replaced %d occurrences in %s\n", count, path))
 	}
-	diffText, _, _ := diff.GenerateDiff(oldContent, newContent, path)
+	diffText, additions, removals := diff.GenerateDiff(oldContent, newContent, path)
 	diffText = strings.TrimSpace(diffText)
 	if !diff.IsEmptyDiff(diffText) {
 		sb.WriteString("\n```diff\n")
 		sb.WriteString(diffText)
 		sb.WriteString("\n```\n")
 	}
-	return sb.String()
+	return ToolResult{Content: sb.String(), Added: additions, Removed: removals}
 }
-
-
