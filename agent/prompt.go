@@ -129,11 +129,11 @@ When using edit_file, follow these rules precisely — failed edits waste contex
 - Common dependency/build folders are also excluded: node_modules, vendor, dist, build, target, __pycache__, etc.
 - To search hidden directories, set include_hidden=true on grep_files or glob_files.
 - To search a specific excluded folder, set path/base_dir directly to that folder.
-- AI agent config directories are always allowed: .cursor/, .claude/, .vscode/, .github/, .kilo/
+- AI agent config directories are always allowed: .cursor/, .claude/, .vscode/, .github/, .kilo/ and if present you must read their contents for project-specific guidance.
 
 # Agent Context Files
 
-If a file named 'AGENTS.md' or 'agents.md' exists in the working directory, READ it at the start of your session. It contains project-specific guidance (similar to Cursor's .cursorrules or Claude's CLAUDE.md). Treat its contents as high-priority instructions that augment or override default behavior.
+If a file named 'AGENTS.md' or 'agents.md', .cursorrules, CLAUDE.md exists in the working directory, READ it at the start of your session. It contains project-specific guidance. Treat its contents as high-priority instructions that augment or override default behavior.
 
 # Command Safety
 
@@ -147,7 +147,16 @@ Commands are classified by risk level: safe (auto-allow), project-write, network
 web_fetch(url, offset?, limit?) works like read_file for web pages:
 1. First fetch returns total character count
 2. Use offset (1-based) and limit (max chars) to paginate long pages
-3. Output shows "Characters X–Y of URL (N total)" so you always know the content size`
+3. Output shows "Characters X–Y of URL (N total)" so you always know the content size
+
+# Test Discipline
+
+When a project has tests, you MUST ensure they pass after your changes:
+- Before making changes, run the existing test suite to establish a baseline.
+- After each meaningful change, run the relevant tests — not just at the very end.
+- If tests fail, fix them before proceeding. Do not leave failing tests behind unless they were already failing before your changes.
+- If you add new functionality, when it does makes sense, add tests for it.
+- Use the project's standard test command (go test, npm test, pytest, cargo test, etc.).`
 
 func BuildSystemPrompt() string {
 	shell := os.Getenv("SHELL")
@@ -217,7 +226,6 @@ func BuildSystemPrompt() string {
 			"# Windows Command Execution\n" +
 			"- All commands run through cmd.exe — cmd.exe syntax works directly\n" +
 			"- For PowerShell, prefix with powershell -Command \"...\"\n" +
-			"- curl.exe is the real curl binary — prefer it over PowerShell's Invoke-WebRequest\n" +
 			"- Use && echo SUCCESS to chain a visible completion signal after your command\n" +
 			"- Use || echo FAILED to catch errors explicitly\n" +
 			"- Paths are case-insensitive, use backslashes or forward slashes\n" +
@@ -227,9 +235,6 @@ func BuildSystemPrompt() string {
 			"# Windows Pitfalls — AVOID these\n" +
 			"- Do NOT use Unix-only tools: head, tail, grep, awk, sed, cat, ls, tr, cut, sort, uniq, xargs, find, wc, tee, diff, comm. These do not exist on Windows.\n" +
 			"- Do NOT pipe to echo — echo does NOT read stdin on Windows. Piping to echo silently discards your data.\n" +
-			"- Do NOT put unnecessary quotes around URLs for curl: curl.exe -s https://example.com works; curl.exe -s \"https://example.com\" can cause issues.\n" +
-			"- Do NOT use complex pipes with Unix tools. Instead: run curl alone and capture output, or redirect to a file and use read_file.\n" +
-			"- curl.exe format strings like -w \"%%{http_code}\" use double-percent when inside batch context.\n" +
 			"- python -c works, but single quotes inside the code string are safest: python -c \"print('hello')\"\n"
 	}
 
@@ -255,6 +260,13 @@ func BuildSystemPrompt() string {
 	}
 	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", toolsStr))
 
+	// Directory listing of cwd
+	dirListing := buildDirListing(cwd)
+	if dirListing != "" {
+		envLines = append(envLines, "")
+		envLines = append(envLines, dirListing)
+	}
+
 	return fmt.Sprintf("%s\n\n%s%s",
 		SystemPromptBase,
 		strings.Join(envLines, "\n"),
@@ -268,4 +280,60 @@ func getCWD() string {
 		return "."
 	}
 	return cwd
+}
+
+func buildDirListing(cwd string) string {
+	entries, err := os.ReadDir(cwd)
+	if err != nil {
+		return ""
+	}
+
+	const maxEntries = 100
+	var lines []string
+	lines = append(lines, "# Directory Listing")
+
+	showAll := len(entries) <= maxEntries
+	truncated := len(entries) > maxEntries
+
+	if showAll {
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() {
+				name += "/"
+			}
+			lines = append(lines, name)
+		}
+	} else {
+		// Show directories first, then files, up to maxEntries
+		var dirs, files []string
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() {
+				dirs = append(dirs, name+"/")
+			} else {
+				files = append(files, name)
+			}
+		}
+		count := 0
+		for _, d := range dirs {
+			if count >= maxEntries {
+				break
+			}
+			lines = append(lines, d)
+			count++
+		}
+		for _, f := range files {
+			if count >= maxEntries {
+				break
+			}
+			lines = append(lines, f)
+			count++
+		}
+	}
+
+	if truncated {
+		lines = append(lines, fmt.Sprintf("... (%d items total — full listing redacted for brevity, use list_directory if you need more context)", len(entries)))
+	}
+
+	return strings.Join(lines, "\n")
 }
