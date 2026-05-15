@@ -103,6 +103,10 @@ type ChatMessage struct {
 
 	SubPaneID string
 
+	// PermTag carries a compact permission indicator shown as a muted suffix
+	// on tool message title lines. Values: "", "allowed", "always", "auto", "denied".
+	PermTag string
+
 	CachedLines          []string
 	CursorLine           int
 	StreamCompletedLines []string

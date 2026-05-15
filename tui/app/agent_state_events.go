@@ -104,6 +104,13 @@ func (a *AgentState) handleToolCall(evt ttypes.AgentEventMsg, target *widgets.Me
 		argsCompact := tools.SummarizeToolArgs(name, args)
 		onStatusLine(rendering.ToolLabel(name, argsCompact))
 		target.UpdateToolCall(toolID, name, argsCompact)
+		// Apply pending permission tag to the newly created tool message
+		// (matched by toolID) if the tag's tool name matches.
+		if a.pendingPermTag != "" && (a.pendingPermTool == "" || a.pendingPermTool == name) {
+			target.SetToolPermTag(toolID, a.pendingPermTag)
+			a.pendingPermTag = ""
+			a.pendingPermTool = ""
+		}
 	}
 	return nil
 }
@@ -174,19 +181,17 @@ func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.Me
 		thinkTarget.MarkAllThinkingDone()
 	}
 	onConfirmReset(question, operation, tool, tgt, risk, reason, suggestion)
-	target.AppendMessage(ttypes.ChatMessage{
-		Role:    ttypes.RoleAssistant,
-		Content: "⚠  " + question,
-		Time:    time.Now(),
-	})
-	// Record the index of this question message so it can be updated in-place later.
-	a.blockingMsgIdx = len(target.Messages()) - 1
+	// No assistant message — the confirm dialog already shows the question.
+	// Store the tool name so the tag can be matched when the tool_call arrives.
+	a.pendingPermTool = tool
+	a.blockingMsgIdx = -1
 	return nil
 }
 
 // handleBlockingAuto handles operations that are auto-allowed because the user
-// previously chose "Always Allow". It shows the question with a checkmark
-// indicating it was auto-resolved, without showing a confirmation dialog.
+// previously chose "Always Allow". It stores a compact permission tag that will
+// be applied to the next matching tool_call message, instead of showing a
+// separate verbose message.
 func (a *AgentState) handleBlockingAuto(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList) tea.Cmd {
 	var data map[string]string
 	if d, ok := evt.Data.(map[string]any); ok {
@@ -199,24 +204,14 @@ func (a *AgentState) handleBlockingAuto(evt ttypes.AgentEventMsg, target *widget
 	} else {
 		data = map[string]string{"question": fmt.Sprintf("%v", evt.Data)}
 	}
-	operation := data["operation"]
-	tgt := data["target"]
+	tool := data["tool"]
 	target.MarkAllThinkingDone()
 	if thinkTarget != target {
 		thinkTarget.MarkAllThinkingDone()
 	}
-	// Show a compact, muted tool-like line instead of a verbose assistant message.
-	label := operation
-	if tgt != "" {
-		label += " " + tgt
-	}
-	target.AppendMessage(ttypes.ChatMessage{
-		Role:              ttypes.RoleTool,
-		ToolName:          "auto_allowed",
-		ToolStatus:        "success",
-		ToolProgressLabel: label,
-		Time:              time.Now(),
-	})
+	// Store the tag so it's applied as a muted suffix on the next tool_call.
+	a.pendingPermTag = "auto"
+	a.pendingPermTool = tool
 	return nil
 }
 
