@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"crude/diff"
 	"crude/fileio"
 	"crude/js"
+	"crude/logger"
 	"crude/safety"
 	"crude/search"
 )
@@ -91,17 +93,26 @@ func (r ToolResult) String() string {
 	return r.Content
 }
 
-func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool) ToolResult {
+func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool, lg *logger.Logger) ToolResult {
+	start := time.Now()
+	lg.Debug("DISPATCH", "route", "tool", tool, "has_editor", ed != nil)
+
+	var result ToolResult
+
 	switch tool {
 
 	case "execute_command":
 		cmd := GetStrArg(params, "command", "")
+		lg.Info("TOOL", "call", "tool", tool, "cmd_len", len(cmd))
 		if !yolo {
-			safetyResult := safety.CheckCommandSafety(cmd)
+			safetyResult := safety.CheckCommandSafety(cmd, lg)
 			if safetyResult.Risk.IsAlwaysBlocked() {
-				return ToolResult{Content: fmt.Sprintf("Error: [BLOCKED] %s\nSuggestion: %s",
+				lg.Warn("SAFETY", "block_always", "command", cmd, "reason", safetyResult.Reason)
+				result = ToolResult{Content: fmt.Sprintf("Error: [BLOCKED] %s\nSuggestion: %s",
 					safetyResult.Reason, safetyResult.Suggestion)}
+				break
 			}
+			lg.Debug("TOOL", "safety_check", "risk", safetyResult.Risk.String(), "needs_confirm", safetyResult.Risk.NeedsConfirmation())
 		}
 		timeout := GetIntArgAny(params, "timeout_seconds", -1)
 		if timeout < 0 {
@@ -114,50 +125,78 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		out, err := exec.Execute(cmd, opts)
 		if err != nil {
 			if out != "" {
-				return ToolResult{Content: fmt.Sprintf("Command failed: %v\n\n%s", err, out)}
+				result = ToolResult{Content: fmt.Sprintf("Command failed: %v\n\n%s", err, out)}
+			} else {
+				result = ToolResult{Content: "Command failed: " + err.Error()}
 			}
-			return ToolResult{Content: "Command failed: " + err.Error()}
+			lg.Error("TOOL", "execute_failed", "tool", tool, "error", err.Error(), "latency_ms", time.Since(start).Milliseconds())
+			break
 		}
 		if out == "" {
-			return ToolResult{Content: "(command completed with no output)"}
+			result = ToolResult{Content: "(command completed with no output)"}
+		} else {
+			result = ToolResult{Content: out}
 		}
-		return ToolResult{Content: out}
+		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds(), "out_len", len(out))
 
 	case "read_file":
+		path := GetStrArg(params, "path", "")
+		encoded := GetBoolArgAny(params, "encoded", false)
+		offset := GetIntArgAny(params, "offset", 0)
+		limit := GetIntArgAny(params, "limit", 0)
+		lg.Info("TOOL", "call", "tool", tool, "path", path, "encoded", encoded, "offset", offset, "limit", limit)
 		if ed != nil {
-			encoded := GetBoolArgAny(params, "encoded", false)
 			if encoded {
-				content, err := ed.Read(GetStrArg(params, "path", ""))
+				content, err := ed.Read(path)
 				if err != nil {
 					if _, ok := err.(*fileio.BinaryFileError); ok {
-						return ToolResult{Content: fmt.Sprintf("Error: %v", err)}
+						result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
+						lg.Warn("TOOL", "binary_file", "path", path)
+						break
 					}
-					return ToolResult{Content: "Error: " + err.Error()}
+					result = ToolResult{Content: "Error: " + err.Error()}
+					lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+					break
 				}
-				return ToolResult{Content: formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))}
+				result = ToolResult{Content: formatReadFile(path, content, offset, limit)}
+			} else {
+				content, err := ed.ReadRaw(path)
+				if err != nil {
+					if _, ok := err.(*fileio.BinaryFileError); ok {
+						result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
+						lg.Warn("TOOL", "binary_file", "path", path)
+						break
+					}
+					result = ToolResult{Content: "Error: " + err.Error()}
+					lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+					break
+				}
+				result = ToolResult{Content: formatReadFile(path, content, offset, limit)}
 			}
-			content, err := ed.ReadRaw(GetStrArg(params, "path", ""))
+		} else {
+			path := GetStrArg(params, "path", "")
+			data, err := os.ReadFile(path)
 			if err != nil {
-				if _, ok := err.(*fileio.BinaryFileError); ok {
-					return ToolResult{Content: fmt.Sprintf("Error: %v", err)}
-				}
-				return ToolResult{Content: "Error: " + err.Error()}
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
 			}
-			return ToolResult{Content: formatReadFile(GetStrArg(params, "path", ""), content, GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))}
+			if fileio.IsBinary(data) {
+				result = ToolResult{Content: fmt.Sprintf("Error: binary file detected: %s (%d bytes) — cannot read binary files, use execute_command instead", path, len(data))}
+				lg.Warn("TOOL", "binary_file", "path", path)
+				break
+			}
+			result = ToolResult{Content: formatReadFile(path, string(data), offset, limit)}
 		}
-		path := GetStrArg(params, "path", "")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		if fileio.IsBinary(data) {
-			return ToolResult{Content: fmt.Sprintf("Error: binary file detected: %s (%d bytes) — cannot read binary files, use execute_command instead", path, len(data))}
-		}
-		return ToolResult{Content: formatReadFile(path, string(data), GetIntArgAny(params, "offset", 0), GetIntArgAny(params, "limit", 0))}
+		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "write_file":
 		content := GetStrArg(params, "content", "")
 		path := GetStrArg(params, "path", "")
+		lg.Info("TOOL", "call", "tool", tool, "path", path, "content_len", len(content))
+		if content != "" && len(content) > 200 {
+			lg.Debug("DISPATCH", "content_preview", "first_80", content[:80]+"…")
+		}
 		oldContent := ""
 		existing, err := os.ReadFile(path)
 		if err == nil {
@@ -166,26 +205,40 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		if ed != nil {
 			if err := ed.Write(path, content); err != nil {
 				if _, ok := err.(*fileio.BinaryFileError); ok {
-					return ToolResult{Content: fmt.Sprintf("Error: %v", err)}
+					result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
+					lg.Warn("TOOL", "binary_file", "path", path)
+					break
 				}
-				return ToolResult{Content: "Error: " + err.Error()}
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
 			}
 			lines := strings.Count(content, "\n") + 1
-			return formatWriteResult(path, lines, oldContent, content)
+			result = formatWriteResult(path, lines, oldContent, content)
+		} else {
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			lines := strings.Count(content, "\n") + 1
+			result = formatWriteResult(path, lines, oldContent, content)
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		lines := strings.Count(content, "\n") + 1
-		return formatWriteResult(path, lines, oldContent, content)
+		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "edit_file":
 		path := GetStrArg(params, "path", "")
 		oldString := GetStrArg(params, "old_string", "")
 		newString := GetStrArg(params, "new_string", "")
+		lg.Info("TOOL", "call", "tool", tool, "path", path, "old_len", len(oldString), "new_len", len(newString))
+		if len(oldString) > 80 {
+			lg.Debug("DISPATCH", "old_preview", "first_80", oldString[:80]+"…")
+		}
 		orig := ""
 		if ed != nil {
 			origData, _ := ed.ReadRaw(path)
@@ -193,180 +246,261 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			ops := []fileio.SearchReplace{{Search: oldString, Replace: newString}}
 			if err := ed.Patch(path, ops); err != nil {
 				if _, ok := err.(*fileio.BinaryFileError); ok {
-					return ToolResult{Content: fmt.Sprintf("Error: %v", err)}
+					result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
+					break
 				}
-				return ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
+				result = ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
 			}
 			newData, _ := os.ReadFile(path)
 			replaced := string(newData)
-			return formatEditResult(path, 1, orig, replaced)
+			result = formatEditResult(path, 1, orig, replaced)
+		} else {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				result = ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			orig = string(data)
+			count := strings.Count(orig, oldString)
+			if count == 0 {
+				result = ToolResult{Content: fmt.Sprintf("Error: old_string not found in %s\nHint: use read_file to verify the exact content before retrying.", path)}
+				lg.Warn("TOOL", "old_string_not_found", "path", path)
+				break
+			}
+			replaced := strings.ReplaceAll(orig, oldString, newString)
+			if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			result = formatEditResult(path, count, orig, replaced)
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
-		}
-		orig = string(data)
-		count := strings.Count(orig, oldString)
-		if count == 0 {
-			return ToolResult{Content: fmt.Sprintf("Error: old_string not found in %s\nHint: use read_file to verify the exact content before retrying.", path)}
-		}
-		replaced := strings.ReplaceAll(orig, oldString, newString)
-		if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		return formatEditResult(path, count, orig, replaced)
+		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "delete_file":
 		path := GetStrArg(params, "path", "")
+		lg.Info("TOOL", "call", "tool", tool, "path", path)
 		if ed != nil {
 			if err := ed.Delete(path); err != nil {
-				return ToolResult{Content: "Error: " + err.Error()}
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
 			}
-			return ToolResult{Content: "Deleted: " + path}
+			result = ToolResult{Content: "Deleted: " + path}
+		} else {
+			if err := os.Remove(path); err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			result = ToolResult{Content: "Deleted: " + path}
 		}
-		if err := os.Remove(path); err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		return ToolResult{Content: "Deleted: " + path}
+		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "move_file":
 		source := GetStrArg(params, "source", "")
 		dest := GetStrArg(params, "destination", "")
+		lg.Info("TOOL", "call", "tool", tool, "source", source, "dest", dest)
 		if ed != nil {
 			if err := ed.Move(source, dest); err != nil {
-				return ToolResult{Content: "Error: " + err.Error()}
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
 			}
-			return ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
+			result = ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
+		} else {
+			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			if err := os.Rename(source, dest); err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			result = ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
 		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		if err := os.Rename(source, dest); err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		return ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
+		lg.Info("TOOL", "result", "tool", tool, "source", source, "dest", dest, "latency_ms", time.Since(start).Milliseconds())
 
 	case "copy_file":
 		source := GetStrArg(params, "source", "")
 		dest := GetStrArg(params, "destination", "")
+		lg.Info("TOOL", "call", "tool", tool, "source", source, "dest", dest)
 		if ed != nil {
 			if err := ed.Copy(source, dest); err != nil {
-				return ToolResult{Content: "Error: " + err.Error()}
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
 			}
-			return ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
+			result = ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
+		} else {
+			in, err := os.Open(source)
+			if err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			defer in.Close()
+			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			out, err := os.Create(dest)
+			if err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			defer out.Close()
+			if _, err := io.Copy(out, in); err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			result = ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
 		}
-		in, err := os.Open(source)
-		if err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		defer in.Close()
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		out, err := os.Create(dest)
-		if err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		defer out.Close()
-		if _, err := io.Copy(out, in); err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		return ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
+		lg.Info("TOOL", "result", "tool", tool, "source", source, "dest", dest, "latency_ms", time.Since(start).Milliseconds())
 
 	case "list_directory":
 		path := GetStrArg(params, "path", "")
 		recursive := GetBoolArgAny(params, "recursive", false)
+		lg.Info("TOOL", "call", "tool", tool, "path", path, "recursive", recursive)
 		if recursive {
-			return ToolResult{Content: listDirectoryRecursive(path, exec)}
+			result = ToolResult{Content: listDirectoryRecursive(path, exec)}
+		} else {
+			entries, err := exec.ListDir(path)
+			if err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			if len(entries) == 0 {
+				result = ToolResult{Content: fmt.Sprintf("Directory %s is empty (no files or subdirectories). This is a successful result, not an error — the directory exists but contains nothing.", path)}
+			} else {
+				result = ToolResult{Content: formatDirEntries(path, entries)}
+			}
 		}
-		entries, err := exec.ListDir(path)
-		if err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
-		}
-		if len(entries) == 0 {
-			return ToolResult{Content: fmt.Sprintf("Directory %s is empty (no files or subdirectories). This is a successful result, not an error — the directory exists but contains nothing.", path)}
-		}
-		return ToolResult{Content: formatDirEntries(path, entries)}
+		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "glob_files":
 		pattern := GetStrArg(params, "pattern", "")
 		baseDir := GetStrArg(params, "base_dir", ".")
 		includeHidden := GetBoolArgAny(params, "include_hidden", false)
+		lg.Info("TOOL", "call", "tool", tool, "pattern", pattern, "base_dir", baseDir, "include_hidden", includeHidden)
 		matches, err := exec.GlobFiles(baseDir, pattern, includeHidden)
 		if err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
+			result = ToolResult{Content: "Error: " + err.Error()}
+			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			break
 		}
 		if len(matches) == 0 {
-			return ToolResult{Content: fmt.Sprintf("No files matching %q under %s", pattern, baseDir)}
+			result = ToolResult{Content: fmt.Sprintf("No files matching %q under %s", pattern, baseDir)}
+		} else {
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "%d file(s) matching %q under %s:\n", len(matches), pattern, baseDir)
+			for _, m := range matches {
+				sb.WriteString(m)
+				sb.WriteByte('\n')
+			}
+			result = ToolResult{Content: strings.TrimRight(sb.String(), "\n")}
 		}
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "%d file(s) matching %q under %s:\n", len(matches), pattern, baseDir)
-		for _, m := range matches {
-			sb.WriteString(m)
-			sb.WriteByte('\n')
-		}
-		return ToolResult{Content: strings.TrimRight(sb.String(), "\n")}
+		lg.Info("TOOL", "result", "tool", tool, "matches", len(matches), "latency_ms", time.Since(start).Milliseconds())
 
 	case "grep_files":
 		pattern := GetStrArg(params, "pattern", "")
 		searchPath := GetStrArg(params, "path", ".")
 		recursive := GetBoolArgAny(params, "recursive", true)
 		includeHidden := GetBoolArgAny(params, "include_hidden", false)
+		lg.Info("TOOL", "call", "tool", tool, "pattern", pattern, "path", searchPath, "recursive", recursive, "include_hidden", includeHidden)
 		matches, err := exec.GrepFiles(pattern, searchPath, recursive, includeHidden)
 		if err != nil {
-			return ToolResult{Content: "Error: " + err.Error()}
+			result = ToolResult{Content: "Error: " + err.Error()}
+			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			break
 		}
 		if len(matches) == 0 {
-			return ToolResult{Content: fmt.Sprintf("No matches for %q in %s", pattern, searchPath)}
+			result = ToolResult{Content: fmt.Sprintf("No matches for %q in %s", pattern, searchPath)}
+		} else {
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "%d match(es) for %q in %s:\n", len(matches), pattern, searchPath)
+			for _, m := range matches {
+				fmt.Fprintf(&sb, "%s:%d: %s\n", m.Path, m.LineNum, m.Line)
+			}
+			result = ToolResult{Content: strings.TrimRight(sb.String(), "\n")}
 		}
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "%d match(es) for %q in %s:\n", len(matches), pattern, searchPath)
-		for _, m := range matches {
-			fmt.Fprintf(&sb, "%s:%d: %s\n", m.Path, m.LineNum, m.Line)
-		}
-		return ToolResult{Content: strings.TrimRight(sb.String(), "\n")}
+		lg.Info("TOOL", "result", "tool", tool, "matches", len(matches), "latency_ms", time.Since(start).Milliseconds())
 
 	case "web_search":
-		result, err := search.WebSearch(GetStrArg(params, "query", ""), 6)
+		query := GetStrArg(params, "query", "")
+		lg.Info("TOOL", "call", "tool", tool, "query_len", len(query))
+		resultText, err := search.WebSearch(query, 6)
 		if err != nil {
-			return ToolResult{Content: "Search error: " + err.Error()}
+			result = ToolResult{Content: "Search error: " + err.Error()}
+			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			break
 		}
-		return ToolResult{Content: result}
+		result = ToolResult{Content: resultText}
+		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds())
 
 	case "arxiv_search":
+		query := GetStrArg(params, "query", "")
 		maxResults := GetIntArgAny(params, "max_results", 5)
 		if maxResults <= 0 || maxResults > 10 {
 			maxResults = 5
 		}
-		result, err := search.ArxivSearch(GetStrArg(params, "query", ""), maxResults)
+		lg.Info("TOOL", "call", "tool", tool, "query_len", len(query), "max_results", maxResults)
+		resultText, err := search.ArxivSearch(query, maxResults)
 		if err != nil {
-			return ToolResult{Content: "ArXiv search error: " + err.Error()}
+			result = ToolResult{Content: "ArXiv search error: " + err.Error()}
+			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			break
 		}
-		return ToolResult{Content: result}
+		result = ToolResult{Content: resultText}
+		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds())
 
 	case "web_fetch":
+		url := GetStrArg(params, "url", "")
 		offset := GetIntArgAny(params, "offset", 0)
 		limit := GetIntArgAny(params, "limit", 0)
-		result, err := search.WebFetch(GetStrArg(params, "url", ""), offset, limit)
+		lg.Info("TOOL", "call", "tool", tool, "url", url, "offset", offset, "limit", limit)
+		resultText, err := search.WebFetch(url, offset, limit)
 		if err != nil {
-			return ToolResult{Content: "Fetch error: " + err.Error()}
+			result = ToolResult{Content: "Fetch error: " + err.Error()}
+			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			break
 		}
-		return ToolResult{Content: result}
+		result = ToolResult{Content: resultText}
+		lg.Info("TOOL", "result", "tool", tool, "url", url, "latency_ms", time.Since(start).Milliseconds())
 
 	case "run_javascript":
 		code := GetStrArg(params, "code", "")
-		result, err := js.Run(code)
+		lg.Info("TOOL", "call", "tool", tool, "code_len", len(code))
+		resultText, err := js.Run(code)
 		if err != nil {
-			return ToolResult{Content: "JavaScript error: " + err.Error()}
+			result = ToolResult{Content: "JavaScript error: " + err.Error()}
+			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			break
 		}
-		return ToolResult{Content: result}
+		result = ToolResult{Content: resultText}
+		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds())
 
 	case "reply":
-		return ToolResult{Content: GetStrArg(params, "content", "")}
+		content := GetStrArg(params, "content", "")
+		lg.Info("TOOL", "call", "tool", tool, "len", len(content))
+		result = ToolResult{Content: content}
+		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds())
 
 	default:
-		return ToolResult{Content: "Error: unknown tool: " + tool}
+		lg.Error("TOOL", "unknown_tool", "tool", tool)
+		result = ToolResult{Content: "Error: unknown tool: " + tool}
 	}
+
+	return result
 }
 
 func formatWriteResult(path string, lines int, oldContent, newContent string) ToolResult {

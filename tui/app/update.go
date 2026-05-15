@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,6 +18,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
 		m.width = msg.Width
 		m.height = msg.Height
 		m.mainMsgList.SetSize(msg.Width, msg.Height)
@@ -63,13 +65,16 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.Type == tea.KeyCtrlC {
+			m.logger.Debug("CANCEL", "ctrl_c", "mode", modeName(m.Mode))
 			return m, m.handleCancel(msg)
 		}
 		if msg.Type == tea.KeyEsc && m.Mode != ModeSettings {
+			m.logger.Debug("CANCEL", "esc", "mode", modeName(m.Mode))
 			return m, m.handleCancel(msg)
 		}
 
 	case tea.MouseMsg:
+		m.logger.Debug("UI", "mouse", "type", fmt.Sprintf("%d", msg.Type), "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 		if m.Mode == ModeChat {
 			inputStartLine := m.chatAreaHeight + 4
 			if m.input.InputSelecting() || msg.Y >= inputStartLine {
@@ -137,6 +142,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch e := evt.(type) {
 	case settings.SaveEvent:
 		s := e.Settings
+		m.logger.Info("CONFIG", "settings_save", "provider", s.ProviderID, "model", s.Model)
 		if m.OnSettingsSave != nil {
 			m.statusbar.SetInfo("saving...")
 			onSave := m.OnSettingsSave
@@ -151,6 +157,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mainMsgList.InvalidateCache()
 		}
 	case settings.CancelEvent:
+		m.logger.Info("CONFIG", "settings_cancel")
 		m.settings.RestoreSnapshot()
 		m.setMode(ModeChat)
 		m.mainMsgList.InvalidateCache()
@@ -167,6 +174,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ma.Thinking = true
 			if m.OnConfirmResult != nil {
 				m.OnConfirmResult(result)
+				m.logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
 			}
 			// Compact permission tag: no separate assistant message.
 			// Instead, store the tag on the agent state so it gets applied
@@ -202,8 +210,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var content string
 			if enabled {
 				content = "⚠ YOLO mode ACTIVE — all safety checks disabled. Use /yolo again to restore."
+				m.logger.Warn("SAFETY", "yolo_enabled")
 			} else {
 				content = "YOLO mode cancelled. Safety checks remain active."
+				m.logger.Info("SAFETY", "yolo_disabled")
 			}
 			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
@@ -261,9 +271,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case ttypes.ErrorMsg:
+		m.logger.Debug("UI", "error", "msg", string(msg))
 		m.statusbar.SetError(string(msg))
 	case ttypes.UpdateModelMsg:
 		m.modelName = string(msg)
+		m.logger.Debug("UI", "model_update", "model", string(msg))
 		m.mainMsgList.SetModelName(string(msg))
 		for _, a := range m.agents {
 			if a.MsgList != m.mainMsgList {
@@ -271,16 +283,21 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case ttypes.OpenSettingsMsg:
+		m.logger.Info("UI", "open_settings")
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
 	case ttypes.ModelsListMsg:
+		m.logger.Info("MODEL", "list_received", "count", len(msg))
 		m.settings.SetModels([]ttypes.ModelEntry(msg))
 	case ttypes.ModelsErrorMsg:
+		m.logger.Error("MODEL", "list_error", "error", string(msg))
 		m.settings.SetModelsError(string(msg))
 	case ttypes.SettingsSaveResultMsg:
 		if msg.Err != nil {
+			m.logger.Error("CONFIG", "save_error", "error", msg.Err.Error())
 			m.statusbar.SetError(msg.Err.Error())
 		} else {
+			m.logger.Info("CONFIG", "saved")
 			m.modelName = msg.Settings.Model
 			m.lastSettings = msg.Settings
 			m.setMode(ModeChat)
@@ -288,14 +305,18 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusbar.SetInfo("settings saved")
 		}
 	case rendering.ClipboardCopiedMsg:
+		m.logger.Debug("CLIPBOARD", "copied")
 		m.statusbar.SetInfo("copied to clipboard")
 	case rendering.ClipboardErrorMsg:
+		m.logger.Error("CLIPBOARD", "error", "error", string(msg))
 		m.statusbar.SetError(string(msg))
 	case ttypes.UndoResultMsg:
 		if msg.Error != "" {
+			m.logger.Error("JOURNAL", "undo_error", "error", msg.Error)
 			m.statusbar.SetError(msg.Error)
 		}
 		if msg.Desc != "" {
+			m.logger.Info("JOURNAL", "undo_result", "desc", msg.Desc)
 			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: msg.Desc,

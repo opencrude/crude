@@ -12,6 +12,14 @@ import (
 	"crude/tui/widgets"
 )
 
+// Logger interface for TUI logging. Matches crude/logger.Logger methods.
+type Logger interface {
+	Info(tag, msg string, pairs ...any)
+	Warn(tag, msg string, pairs ...any)
+	Error(tag, msg string, pairs ...any)
+	Debug(tag, msg string, pairs ...any)
+}
+
 var OnHistorySave func([]string)
 
 type Mode int
@@ -72,6 +80,8 @@ type App struct {
 	lastSettings ttypes.Settings
 
 	formHint string
+
+	logger Logger
 }
 
 type (
@@ -87,7 +97,7 @@ type (
 	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig) *App {
+func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger) *App {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	ml.SetModelName(modelName)
@@ -119,6 +129,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, cancelCh c
 		lastCancelTime: time.Now(),
 		lastSettings: initial,
 		OnSettingsSave: onSave,
+		logger:       lg,
 	}
 
 	ml.SetSubPaneContentFn(app.renderSubPaneContent)
@@ -168,6 +179,8 @@ func (m *App) SetHistory(history []string) {
 }
 
 func (m *App) setMode(newMode Mode) {
+	oldMode := m.Mode
+	m.logger.Debug("UI", "mode_switch", "from", modeName(oldMode), "to", modeName(newMode))
 	m.Mode = newMode
 	m.mainMsgList.InvalidateAllMessages()
 	switch newMode {
@@ -175,6 +188,21 @@ func (m *App) setMode(newMode Mode) {
 		m.input.ClearInput()
 	case ModeChat:
 		m.formHint = ""
+	}
+}
+
+func modeName(m Mode) string {
+	switch m {
+	case ModeChat:
+		return "chat"
+	case ModeSettings:
+		return "settings"
+	case ModeConfirm:
+		return "confirm"
+	case ModeYolo:
+		return "yolo"
+	default:
+		return "unknown"
 	}
 }
 

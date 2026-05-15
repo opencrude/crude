@@ -38,7 +38,12 @@ type TUI struct {
 
 var global *TUI
 
-func Start(modelName string, username string, initial Settings, presets []ProviderPreset, history []string) (*TUI, error) {
+func Start(modelName string, username string, initial Settings, presets []ProviderPreset, history []string, lg interface {
+	Info(tag, msg string, pairs ...any)
+	Warn(tag, msg string, pairs ...any)
+	Error(tag, msg string, pairs ...any)
+	Debug(tag, msg string, pairs ...any)
+}) (*TUI, error) {
 	inputCh := make(chan string, 8)
 	cancelCh := make(chan struct{}, 1)
 
@@ -77,7 +82,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return ProviderConfig{}
 	}
 
-	a := app.NewApp(modelName, username, inputCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn)
+	a := app.NewApp(modelName, username, inputCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg)
 	a.SetProviderPresets(t.ProviderPresets)
 	a.SetHistory(history)
 	a.OnConfirmResult = func(result ConfirmResult) {

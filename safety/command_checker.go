@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"crude/logger"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -124,7 +125,7 @@ func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirect
 }
 
 // CheckCommandSafety analyzes a shell command and returns its risk assessment.
-func CheckCommandSafety(cmd string) *CommandSafetyResult {
+func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 	res := &CommandSafetyResult{
 		FullCommand: cmd,
 	}
@@ -140,6 +141,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 	if err != nil {
 		res.Risk = RiskDestructive
 		res.Reason = fmt.Sprintf("Could not parse command — treating as dangerous: %v", err)
+		lg.Debug("COMMAND", "parse", "error", err.Error(), "risk", res.Risk.String())
 		return res
 	}
 
@@ -165,6 +167,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		if strings.HasPrefix(rt, "/dev/sd") || strings.HasPrefix(rt, "/dev/nvme") || strings.HasPrefix(rt, "/dev/mmcblk") || strings.HasPrefix(rt, "/dev/loop") {
 			res.Risk = RiskBlocked
 			res.Reason = fmt.Sprintf("Redirecting output to block device: %s — destroys all data", rt)
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 	}
@@ -192,10 +195,12 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = fmt.Sprintf("Redirecting output to system path: %s", strings.Join(res.AffectedPaths, ", "))
+			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
 		res.Reason = "Redirecting output"
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
@@ -210,6 +215,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 	if res.ModifiesConfig {
 		res.Risk = RiskDestructive
 		res.Reason = "Writing to shell or application configuration — possible persistence mechanism"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
@@ -217,6 +223,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		res.Risk = RiskBlocked
 		res.Reason = "Downloading and immediately executing code from the internet — possible supply chain or prompt injection attack"
 		res.Suggestion = "Download to a file first, inspect it, then execute separately"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
@@ -225,6 +232,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		res.Risk = RiskBlocked
 		res.Reason = dangerousMatch.Reason
 		res.Suggestion = dangerousMatch.Suggestion
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
@@ -232,6 +240,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		res.Risk = RiskBlocked
 		res.Reason = "Bypassing root protection — extremely dangerous"
 		res.Suggestion = "Do not use --no-preserve-root"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
@@ -254,34 +263,49 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		"npm --version", "rustc --version", "cargo --version",
 		"pip --version":
 		res.Risk = RiskSafe
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "git":
-		return classifyGit(argsAfterFirst, res)
+		res = classifyGit(argsAfterFirst, res)
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
 
 	case "npm":
-		return classifyNpm(argsAfterFirst, res)
+		res = classifyNpm(argsAfterFirst, res)
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
 
 	case "pip", "pip3":
-		return classifyPip(argsAfterFirst, res)
+		res = classifyPip(argsAfterFirst, res)
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
 
 	case "go":
-		return classifyGo(argsAfterFirst, res)
+		res = classifyGo(argsAfterFirst, res)
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
 
 	case "cargo":
-		return classifyCargo(argsAfterFirst, res)
+		res = classifyCargo(argsAfterFirst, res)
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
 
 	case "rm", "rmdir", "unlink":
-		return classifyRm(argsAfterFirst, res)
+		res = classifyRm(argsAfterFirst, res)
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
 
 	case "mv", "cp":
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = "Moving/copying to system path"
+			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
 		res.Reason = "File move/copy"
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "sed":
@@ -289,22 +313,27 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 			if res.TargetsSystem {
 				res.Risk = RiskDestructive
 				res.Reason = "In-place edit of system files"
+				lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 				return res
 			}
 			res.Risk = RiskProjectWrite
 			res.Reason = "In-place file edit"
+			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskSafe
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "mkdir", "touch", "ln", "rename", "install":
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = fmt.Sprintf("Modifying system path: %s", strings.Join(res.AffectedPaths, ", "))
+			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "chmod", "chown", "chattr", "setfacl":
@@ -312,29 +341,35 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		if res.TargetsSystem && isRec {
 			res.Risk = RiskBlocked
 			res.Reason = fmt.Sprintf("Recursive permission change on system path: %s", strings.Join(res.AffectedPaths, ", "))
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = fmt.Sprintf("Permission change on system path: %s", strings.Join(res.AffectedPaths, ", "))
+			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		if isRec {
 			res.Risk = RiskDestructive
 			res.Reason = "Recursive permission change"
+			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "sudo", "doas":
 		res.Risk = RiskDestructive
 		res.Reason = "Privilege escalation — running as root"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "su":
 		res.Risk = RiskDestructive
 		res.Reason = "Switching user"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "dd":
@@ -346,6 +381,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 						res.Risk = RiskBlocked
 						res.Reason = fmt.Sprintf("Writing directly to block device: %s", target)
 						res.Suggestion = "This destroys all data on the target device"
+						lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 						return res
 					}
 				}
@@ -353,6 +389,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		}
 		res.Risk = RiskDestructive
 		res.Reason = "Direct disk write — can destroy data"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "mkfs", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs",
@@ -361,17 +398,20 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		res.Risk = RiskBlocked
 		res.Reason = "Disk partitioning/formatting — can destroy all data on a drive"
 		res.Suggestion = "This should not be done by an AI agent. If needed, do it manually."
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "shred", "wipe", "wipefs", "blkdiscard":
 		res.Risk = RiskBlocked
 		res.Reason = "Irreversible data destruction"
 		res.Suggestion = "This cannot be undone. Do not run this from an AI agent."
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "reboot", "shutdown", "poweroff", "halt", "init":
 		res.Risk = RiskDestructive
 		res.Reason = "System state change"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "apt", "apt-get", "aptitude", "dpkg", "rpm",
@@ -379,10 +419,12 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		if containsFlag(allArgs, "--allow-unauthenticated") {
 			res.Risk = RiskBlocked
 			res.Reason = "Installing packages without authentication check — security risk"
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskDestructive
 		res.Reason = "Package manager — modifies system packages"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "curl", "wget":
@@ -390,39 +432,47 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 			res.Risk = RiskBlocked
 			res.Reason = "Downloading and immediately executing code — possible supply chain or prompt injection attack"
 			res.Suggestion = "Download to a file first, inspect it, then execute separately"
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskNetwork
 		res.Reason = "Network request"
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "ssh", "scp", "sftp", "rsync":
 		res.Risk = RiskNetwork
 		res.Reason = "Remote connection — network access"
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "nc", "ncat", "netcat", "socat", "telnet", "ftp", "ping":
 		res.Risk = RiskNetwork
 		res.Reason = "Network tool — external connection"
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "docker", "podman", "nerdctl":
 		if hasAnyArg(allArgs, "run", "exec", "build", "push", "pull") {
 			res.Risk = RiskDestructive
 			res.Reason = "Container operation with potential system impact"
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskDestructive
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "eval", "source", ".":
 		res.Risk = RiskDestructive
 		res.Reason = "Shell code evaluation — can execute arbitrary code"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "kill", "pkill", "killall":
 		res.Risk = RiskProjectWrite
 		res.Reason = "Process termination"
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "passwd", "chpasswd", "adduser", "useradd",
@@ -430,20 +480,24 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		res.Risk = RiskBlocked
 		res.Reason = "User/group management — should not be done by an AI agent"
 		res.Suggestion = "Manage users manually or use configuration management tools"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "crontab", "at", "batch":
 		res.Risk = RiskDestructive
 		res.Reason = "Scheduling commands — possible persistence mechanism"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 
 	case "systemctl", "service":
 		if hasAnyArg(allArgs, "enable", "disable", "start", "stop", "restart") {
 			res.Risk = RiskDestructive
 			res.Reason = "System service modification"
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskSafe
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
@@ -451,6 +505,7 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 	if isHeredocEval(prog) {
 		res.Risk = RiskDestructive
 		res.Reason = "Evaluating code from heredoc — possible arbitrary code execution"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
@@ -458,23 +513,27 @@ func CheckCommandSafety(cmd string) *CommandSafetyResult {
 		res.Risk = RiskBlocked
 		res.Reason = "Piping command output to a shell for execution — potential injection vector"
 		res.Suggestion = "Avoid piping to shell. Use explicit commands instead."
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
 	if res.ReadsCredentials {
 		res.Risk = RiskDestructive
 		res.Reason = "Command reads credentials or secrets"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
 	if res.TargetsSystem {
 		res.Risk = RiskDestructive
 		res.Reason = fmt.Sprintf("Command targets system files: %s", strings.Join(res.AffectedPaths, ", "))
+		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
 	res.Risk = RiskUnknown
 	res.Reason = "Unknown command — requires confirmation"
+	lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 	return res
 }
 

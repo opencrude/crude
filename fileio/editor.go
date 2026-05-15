@@ -21,7 +21,7 @@ type Editor struct {
 }
 
 func NewEditorWithLogger(sessionID string, lg *logger.Logger) (*Editor, error) {
-	j, err := OpenJournal(sessionID)
+	j, err := OpenJournal(sessionID, lg)
 	if err != nil {
 		return nil, fmt.Errorf("editor: open journal: %w", err)
 	}
@@ -48,6 +48,7 @@ func GenerateSessionID() string {
 }
 
 func (e *Editor) WithMessage(msgID string) *Editor {
+	e.logger.Debug("EDITOR", "with_message", "msg_id", msgID)
 	return &Editor{
 		sessionID: e.sessionID,
 		msgID:     msgID,
@@ -147,20 +148,24 @@ func (e *Editor) Write(path string, content string) error {
 
 func (e *Editor) Patch(path string, ops []SearchReplace) error {
 	if len(ops) == 0 {
+		e.logger.Warn("FILEIO", "patch_empty", "path", path)
 		return nil
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("patch %s: %w", path, err)
 	}
+	e.logger.Debug("FILEIO", "patch_enter", "path", abs, "ops", len(ops))
 
 	oldBytes, fi, err := readFileForEdit(abs, e.policy)
 	if err != nil {
+		e.logger.Error("FILEIO", "patch_read_failed", "path", abs, "error", err.Error())
 		return fmt.Errorf("patch %s: %w", path, err)
 	}
 
 	newContent, err := ApplySearchReplace(string(oldBytes), ops)
 	if err != nil {
+		e.logger.Error("FILEIO", "patch_apply_failed", "path", abs, "error", err.Error())
 		return fmt.Errorf("patch %s: %w", path, err)
 	}
 
@@ -169,12 +174,22 @@ func (e *Editor) Patch(path string, ops []SearchReplace) error {
 
 	entry, err := buildWriteEntry(e.sessionID, e.msgID, opID, abs, oldBytes, newBytes, fi.Mode().Perm())
 	if err != nil {
+		e.logger.Error("FILEIO", "patch_journal_failed", "path", abs, "error", err.Error())
 		return fmt.Errorf("patch %s: build journal entry: %w", path, err)
 	}
 	if err := e.journal.record(entry); err != nil {
+		e.logger.Error("FILEIO", "patch_journal_record_failed", "path", abs, "error", err.Error())
 		return fmt.Errorf("patch %s: journal: %w", path, err)
 	}
-	return writeAtomic(abs, newBytes, fi.Mode().Perm())
+	start := time.Now()
+	writeErr := writeAtomic(abs, newBytes, fi.Mode().Perm())
+	dur := time.Since(start).Milliseconds()
+	if writeErr != nil {
+		e.logger.Error("FILEIO", "patch_write_failed", "path", abs, "latency_ms", dur, "error", writeErr.Error())
+	} else {
+		e.logger.Info("FILEIO", "patch_ok", "path", abs, "latency_ms", dur, "old_bytes", len(oldBytes), "new_bytes", len(newBytes))
+	}
+	return writeErr
 }
 
 func (e *Editor) Delete(path string) error {
