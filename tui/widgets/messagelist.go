@@ -307,7 +307,7 @@ func (ml *MessageList) UpdateToolCall(toolID, name, argsCompact string) {
 
 func (ml *MessageList) UpdateToolProgress(toolID, name, phase, message, path string, linesAdded, linesRemoved int) {
 	for i, msg := range ml.messages {
-		if msg.ToolStatus != "calling" && msg.ToolStatus != "streaming" {
+		if msg.ToolStatus != "calling" && msg.ToolStatus != "streaming" && msg.ToolStatus != "success" {
 			continue
 		}
 		matched := false

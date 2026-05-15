@@ -561,6 +561,7 @@ func (a *Agent) Run(
 						"path":    path,
 						"message": fmt.Sprintf("Writing %d lines to %s", lines, path),
 					}})
+					time.Sleep(30 * time.Millisecond)
 				} else if tc.Function.Name == "edit_file" {
 					oldStr := getStr(params, "old_string")
 					newStr := getStr(params, "new_string")
@@ -573,6 +574,7 @@ func (a *Agent) Run(
 						"path":    path,
 						"message": fmt.Sprintf("Editing %s (−%d/+%d lines)", path, oldLines, newLines),
 					}})
+					time.Sleep(30 * time.Millisecond)
 				} else if tc.Function.Name == "read_file" {
 					if path != "" {
 						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
