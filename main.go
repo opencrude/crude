@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -17,8 +16,16 @@ import (
 const defaultModel = ""
 
 type fileConfig struct {
-	ActiveProvider string                            `json:"active_provider"`
-	Providers      map[string]session.ProviderConfig `json:"providers"`
+	ActiveProvider  string                            `json:"active_provider"`
+	Providers       map[string]session.ProviderConfig `json:"providers"`
+	TurnLogsEnabled *bool                             `json:"turn_logs_enabled,omitempty"`
+}
+
+func (c *fileConfig) IsTurnLogsEnabled() bool {
+	if c.TurnLogsEnabled == nil {
+		return true
+	}
+	return *c.TurnLogsEnabled
 }
 
 func defaultFileConfig() fileConfig {
@@ -96,15 +103,18 @@ func saveHistory(history []string) error {
 
 func fileConfigToSession(fc fileConfig) *session.Config {
 	return &session.Config{
-		ActiveProvider: fc.ActiveProvider,
-		Providers:      fc.Providers,
+		ActiveProvider:  fc.ActiveProvider,
+		Providers:       fc.Providers,
+		TurnLogsEnabled: fc.IsTurnLogsEnabled(),
 	}
 }
 
 func sessionToFileConfig(sc *session.Config) fileConfig {
+	tl := sc.TurnLogsEnabled
 	return fileConfig{
-		ActiveProvider: sc.ActiveProvider,
-		Providers:      sc.Providers,
+		ActiveProvider:  sc.ActiveProvider,
+		Providers:       sc.Providers,
+		TurnLogsEnabled: &tl,
 	}
 }
 
@@ -196,7 +206,7 @@ func main() {
 
 	app.OnHistorySave = func(history []string) {
 		if err := saveHistory(history); err != nil {
-			slog.Error("history.save", "error", err.Error())
+			fmt.Fprintf(os.Stderr, "warning: failed to save history: %v\n", err)
 		}
 	}
 
@@ -205,8 +215,8 @@ func main() {
 	}
 
 	tuiInst.OnExitMessage = func() {
-		if path := sess.LogPath(); path != "" && sess.HasMessages() {
-			fmt.Fprintf(os.Stderr, "\n✓ Session log saved to: %s\n", path)
+		if sess.HasMessages() {
+			fmt.Fprintf(os.Stderr, "\n✓ Session saved to: %s\n", sess.SessionDir())
 		}
 	}
 

@@ -34,6 +34,7 @@ type Settings struct {
 	ProviderURL              string
 	ProviderAPIKey           string
 	ThinkingEffort           string
+	TurnLogsEnabled          string
 }
 
 type ModelEntry struct {

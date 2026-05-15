@@ -58,11 +58,13 @@ func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPr
 	modelItem := form.NewSelectItem(t, "model", initial.Model, 12)
 	effortItem := form.NewCycleItem(t, "thinking effort",
 		[]string{"none", "low", "medium", "high", "xhigh"}, initial.ThinkingEffort)
+	turnLogsItem := form.NewCycleItem(t, "turn logs",
+		[]string{"on", "off"}, initial.TurnLogsEnabled)
 
 	f := form.NewFormWithButtons(t, "Settings",
 		"[ interactive settings · arrows/tab: navigate · enter: edit · esc: return ]",
 		[]form.Button{{Label: "Save", Key: "s", Color: t.Colors.Success}, {Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true}},
-		providerItem, baseURLItem, apiKeyItem, modelItem, effortItem)
+		providerItem, baseURLItem, apiKeyItem, modelItem, effortItem, turnLogsItem)
 
 	return Model{
 		theme:               t,
@@ -211,6 +213,7 @@ func (m Model) toSettings() types.Settings {
 		APIKey:                  apiKey,
 		Model:                   m.form.ItemValue(3),
 		ThinkingEffort:          m.form.ItemValue(4),
+		TurnLogsEnabled:         m.form.ItemValue(5),
 		ModelContextWindow:       m.modelCtx,
 		MainInputPrice:           m.modelInPrice,
 		MainOutputPrice:          m.modelOutPrice,

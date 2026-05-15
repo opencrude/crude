@@ -51,7 +51,8 @@ type Agent struct {
 	Policy   safety.Policy
 	ToolFn   func(tool string, params map[string]any) (tools.ToolResult, error)
 	logger   *logger.Logger
-	Emit     func(AgentEvent) // for forwarding streaming events from tools
+	turn     *logger.TurnLogger
+	Emit     func(AgentEvent)
 	Ctx      context.Context
 	Yolo     bool
 	AsyncMgr *fileio.AsyncCommandManager
@@ -66,6 +67,7 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 		Model:    model,
 		ToolFn:   func(tool string, params map[string]any) (tools.ToolResult, error) { return tools.ToolResult{}, nil },
 		logger:   lg,
+		turn:     lg.Turn(),
 	}
 }
 
@@ -358,7 +360,7 @@ func (a *Agent) Run(
 		accumulatedText = content
 		toolCalls = streamToolCalls
 
-		a.logger.Info("llm.step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason, "prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
+		a.logger.Info("LLM", "step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason, "prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
 
 		if accumulatedText == "" {
 			accumulatedText = lastReply
@@ -427,7 +429,7 @@ func (a *Agent) Run(
 					sr := safety.CheckCommandSafety(cmd)
 					if sr.Risk.IsAlwaysBlocked() {
 						errMsg := fmt.Sprintf("[SAFETY BLOCK] This command was automatically blocked and will never execute. DO NOT retry this command or any variant of it.\nBlock reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the system prevented a dangerous operation. Move on to a different approach. Explain to the user why this was blocked and what you'll do instead.", sr.Reason, sr.Suggestion, cmd)
-						a.logger.Warn("safety.blocked", "command", cmd, "reason", sr.Reason)
+						a.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
 						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 							"tool_id": tc.ID,
 							"name":    "execute_command",
@@ -449,7 +451,7 @@ func (a *Agent) Run(
 						resp := <-blockResolveCh
 						if resp == "deny" {
 							errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
-							a.logger.Info("safety.denied", "command", cmd, "risk", sr.Risk.String())
+							a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
 							emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 								"tool_id": tc.ID,
 								"name":    "execute_command",
@@ -520,7 +522,7 @@ func (a *Agent) Run(
 					resp := <-blockResolveCh
 					if resp == "deny" {
 						errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
-						a.logger.Info("safety.denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
+						a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
 						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 							"tool_id": tc.ID,
 							"name":    tc.Function.Name,
@@ -597,15 +599,15 @@ func (a *Agent) Run(
 					}
 				}
 
-				a.logger.Info("tool.call", "tool", tc.Function.Name, "params", fmt.Sprintf("%v", params))
+				a.logger.Info("TOOL", "call", "name", tc.Function.Name, "params", formatToolArgs(params))
 				toolStart := time.Now()
 				result, _ := a.ToolFn(tc.Function.Name, params)
 				toolDur := time.Since(toolStart).Milliseconds()
 
 				if strings.HasPrefix(result.Content, "Error:") {
-					a.logger.Error("tool.error", "tool", tc.Function.Name, "error", result.Content, "latency_ms", toolDur)
+					a.logger.Error("TOOL", "error", "name", tc.Function.Name, "error", result.Content, "latency_ms", toolDur)
 				} else {
-					a.logger.Info("tool.result", "tool", tc.Function.Name, "latency_ms", toolDur, "content", result.Content)
+					a.logger.Info("TOOL", "result", "name", tc.Function.Name, "latency_ms", toolDur, "len", len(result.Content))
 				}
 
 				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result.Content, "Error:") {
@@ -672,7 +674,7 @@ func (a *Agent) Run(
 			if lastPromptTokens > ctxLimit {
 				reason = fmt.Sprintf("context_limit_reached (%d/%d tokens)", lastPromptTokens, ctxWindow)
 			}
-			a.logger.Info("loop."+reason, "steps", len(steps), "prompt_tokens", lastPromptTokens, "total_prompt_tokens_spent", totalPromptTokens, "ctx_window", ctxWindow)
+			a.logger.Warn("LLM", "stop_condition", "reason", reason, "steps", len(steps), "prompt_tokens", lastPromptTokens, "total_prompt_tokens_spent", totalPromptTokens, "ctx_window", ctxWindow)
 			if lastReply != "" {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": lastReply, "reason": reason}})
 			} else {
