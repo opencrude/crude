@@ -565,12 +565,12 @@ func isLikelyFilePath(content string) bool {
 		return false
 	}
 
-	if !passesEarlyExclusionFilters(content) {
-		return false
-	}
-
 	if matchesAbsolutePathFormat(content) {
 		return true
+	}
+
+	if !passesEarlyExclusionFilters(content) {
+		return false
 	}
 
 	hasForwardSlash := strings.Contains(content, "/")
@@ -612,6 +612,18 @@ func analyzePotentialFilePath(text *[]rune, startPos int) bool {
 		char := (*text)[i]
 
 		if char == '"' {
+			j := i + 1
+			for j < len(*text) && j < startPos+maxScanLength && (*text)[j] != '"' {
+				c := (*text)[j]
+				if c == ':' || c == '{' || c == '[' || c == '}' || c == ']' || c == ',' {
+					break
+				}
+				j++
+			}
+			if j < len(*text) && j < startPos+maxScanLength && (*text)[j] == '"' {
+				i++
+				continue
+			}
 			break
 		}
 

@@ -70,6 +70,30 @@ func Repair(text string) (string, error) {
 
 	parseWhitespaceAndSkipComments(&runes, &i, &output, true)
 
+	startedWithSlash := len(runes) > 0 && runes[0] == codeSlash
+	var ignored strings.Builder
+	for i < len(runes) {
+		if runes[i] == codeSemicolon {
+			i++
+			startedWithSlash = true
+			parseWhitespaceAndSkipComments(&runes, &i, &ignored, true)
+			continue
+		}
+		if startedWithSlash && (isStartOfValue(runes[i]) || runes[i] == codeSlash) {
+			ignored.Reset()
+			if parsed, _ := parseValue(&runes, &i, &ignored); parsed {
+				continue
+			}
+		}
+		if !startedWithSlash && runes[i] == codeSlash {
+			ignored.Reset()
+			if parsed, _ := parseValue(&runes, &i, &ignored); parsed {
+				continue
+			}
+		}
+		break
+	}
+
 	if i >= len(runes) {
 		return output.String(), nil
 	}
@@ -539,17 +563,34 @@ func parseString(text *[]rune, i *int, output *strings.Builder, stopAtDelimiter 
 				var tempWhitespace strings.Builder
 				parseWhitespaceAndSkipComments(text, &iAfterWhitespace, &tempWhitespace, false)
 
+				nextAfterQuote := rune(0)
+				if iAfterWhitespace < len(*text) {
+					nextAfterQuote = (*text)[iAfterWhitespace]
+				}
+				isPathSeparatorAfterQuote := mightContainFilePaths &&
+					(nextAfterQuote == '/' || nextAfterQuote == '\\')
+				isPathContinuationAfterQuote := mightContainFilePaths &&
+					!isPathSeparatorAfterQuote &&
+					(isValidPathCharacter(nextAfterQuote) || nextAfterQuote == '.' || nextAfterQuote == '-' || nextAfterQuote == '_')
+
 				if stopAtDelimiter ||
 					iAfterWhitespace >= len(*text) ||
-					isDelimiter((*text)[iAfterWhitespace]) ||
-					(isQuote((*text)[iAfterWhitespace]) && (iAfterWhitespace != *i || !isEndQuote((*text)[iAfterWhitespace]))) ||
-					isDigit((*text)[iAfterWhitespace]) {
+					(isDelimiter(nextAfterQuote) && !isPathSeparatorAfterQuote && !isPathContinuationAfterQuote) ||
+					(isQuote(nextAfterQuote) && (iAfterWhitespace != *i || !isEndQuote(nextAfterQuote))) ||
+					isDigit(nextAfterQuote) {
 					// The quote is followed by the end of the text, a delimiter,
 					// or a next value. So the quote is indeed the end of the string.
 					*i = iAfterWhitespace
 					output.WriteString(tempWhitespace.String())
 					parseConcatenatedString(text, i, output)
 					return true, nil
+				}
+
+				if isPathSeparatorAfterQuote || isPathContinuationAfterQuote {
+					// In file path context, a quote followed by a path continuation
+					// is a spurious quote in the middle of a path - skip it and continue
+					*i = iAfterWhitespace
+					continue
 				}
 
 				iPrevChar := prevNonWhitespaceIndex(*text, iQuote-1)
