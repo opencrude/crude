@@ -28,11 +28,19 @@ func Repair(text string) (string, error) {
 
 	parseMarkdownCodeBlock(&runes, &i, []string{"```", "[```", "{```"}, &output)
 
+	for i < len(runes) && runes[i] == codeComma {
+		i++
+	}
+
 	success, err := parseValue(&runes, &i, &output)
 	if err != nil {
 		return "", err
 	}
 	if !success {
+		for i < len(runes) && (runes[i] == codeClosingBrace || runes[i] == codeClosingBracket) {
+			i++
+		}
+		parseWhitespaceAndSkipComments(&runes, &i, &output, true)
 		if i >= len(runes) && hasNonWhitespaceContent(runes) {
 			return "null", nil
 		}
@@ -219,8 +227,10 @@ func parseObject(text *[]rune, i *int, output *strings.Builder) (bool, error) {
 		parseWhitespaceAndSkipComments(text, i, output, true)
 
 		// Repair: skip leading comma like in {, message: "hi"}
-		skipCharacter(text, i, codeComma)
-		parseWhitespaceAndSkipComments(text, i, output, true)
+		for *i < len(*text) && (*text)[*i] == codeComma {
+			*i++
+			parseWhitespaceAndSkipComments(text, i, output, true)
+		}
 
 		initial := true
 		for *i < len(*text) && (*text)[*i] != codeClosingBrace {
@@ -262,6 +272,11 @@ func parseObject(text *[]rune, i *int, output *strings.Builder) (bool, error) {
 							}
 						}
 						resetOutput(output, temp)
+					}
+
+					for *i < len(*text) && (*text)[*i] == codeComma {
+						*i++
+						parseWhitespaceAndSkipComments(text, i, output, true)
 					}
 				} else {
 					// repair missing comma - restore output to oBefore and insert comma
@@ -343,7 +358,8 @@ func parseArray(text *[]rune, i *int, output *strings.Builder) (bool, error) {
 		*i++
 		parseWhitespaceAndSkipComments(text, i, output, true)
 
-		if skipCharacter(text, i, codeComma) {
+		for *i < len(*text) && (*text)[*i] == codeComma {
+			*i++
 			parseWhitespaceAndSkipComments(text, i, output, true)
 		}
 
@@ -359,6 +375,11 @@ func parseArray(text *[]rune, i *int, output *strings.Builder) (bool, error) {
 					*i = iBefore
 					// repair missing comma
 					resetOutput(output, insertBeforeLastWhitespace(output.String()[:oBefore], ","))
+				} else {
+					for *i < len(*text) && (*text)[*i] == codeComma {
+						*i++
+						parseWhitespaceAndSkipComments(text, i, output, true)
+					}
 				}
 			} else {
 				initial = false
@@ -521,7 +542,7 @@ func parseString(text *[]rune, i *int, output *strings.Builder, stopAtDelimiter 
 				if stopAtDelimiter ||
 					iAfterWhitespace >= len(*text) ||
 					isDelimiter((*text)[iAfterWhitespace]) ||
-					isQuote((*text)[iAfterWhitespace]) ||
+					(isQuote((*text)[iAfterWhitespace]) && (iAfterWhitespace != *i || !isEndQuote((*text)[iAfterWhitespace]))) ||
 					isDigit((*text)[iAfterWhitespace]) {
 					// The quote is followed by the end of the text, a delimiter,
 					// or a next value. So the quote is indeed the end of the string.
@@ -988,7 +1009,7 @@ func parseUnquotedStringWithMode(text *[]rune, i *int, output *strings.Builder, 
 		output.WriteByte('"')
 	}
 
-	if *i < len(*text) && (*text)[*i] == codeDoubleQuote {
+	if *i < len(*text) && isQuote((*text)[*i]) {
 		*i++
 	}
 
