@@ -34,17 +34,18 @@ func NewEditorWithLogger(sessionID string, lg *logger.Logger) (*Editor, error) {
 }
 
 func GenerateSessionID() string {
-	b := make([]byte, 16)
+	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
 		panic(fmt.Sprintf("fileio: entropy source failed: %v", err))
 	}
+	short := hex.EncodeToString(b)
 	wd, _ := os.Getwd()
-	h := hex.EncodeToString(b)[:12]
+	now := time.Now().Format("2006-01-02_150405")
 	if wd != "" {
 		abs, _ := filepath.Abs(wd)
-		return fmt.Sprintf("s-%s-%s", filepath.Base(abs), h)
+		return fmt.Sprintf("%s_%s_%s", now, filepath.Base(abs), short)
 	}
-	return "s-" + h
+	return fmt.Sprintf("%s_%s", now, short)
 }
 
 func (e *Editor) WithMessage(msgID string) *Editor {
