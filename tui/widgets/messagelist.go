@@ -180,32 +180,24 @@ func (ml *MessageList) AppendThinking(s string) {
 	ml.vl.AppendItem(item)
 }
 
+func toIntField(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	case int64:
+		return int(n)
+	}
+	return 0
+}
+
 func (ml *MessageList) UpdateToolStreaming(toolID, name string, data map[string]any) {
 	target, _ := data["target"].(string)
-	estTokens := 0
-	if v, ok := data["tool_est_tokens"]; ok {
-		if n, ok := v.(float64); ok {
-			estTokens = int(n)
-		}
-	}
-	contentLines := 0
-	if v, ok := data["content_lines_int"]; ok {
-		if n, ok := v.(float64); ok {
-			contentLines = int(n)
-		}
-	}
-	oldLines := 0
-	if v, ok := data["old_lines_int"]; ok {
-		if n, ok := v.(float64); ok {
-			oldLines = int(n)
-		}
-	}
-	newLines := 0
-	if v, ok := data["new_lines_int"]; ok {
-		if n, ok := v.(float64); ok {
-			newLines = int(n)
-		}
-	}
+	estTokens := toIntField(data["tool_est_tokens"])
+	contentLines := toIntField(data["content_lines_int"])
+	oldLines := toIntField(data["old_lines_int"])
+	newLines := toIntField(data["new_lines_int"])
 
 	previewPhase := types.ToolPreviewPreparing
 	if target != "" {
@@ -221,19 +213,13 @@ func (ml *MessageList) UpdateToolStreaming(toolID, name string, data map[string]
 				}
 			}
 			if v, ok := data["tool_est_tokens"]; ok {
-				if n, ok := v.(float64); ok {
-					msg.ToolEstTokens = int(n)
-				}
+				msg.ToolEstTokens = toIntField(v)
 			}
 			if v, ok := data["lived_added"]; ok {
-				if n, ok := v.(float64); ok {
-					msg.ToolLivedAdded = int(n)
-				}
+				msg.ToolLivedAdded = toIntField(v)
 			}
 			if v, ok := data["lived_removed"]; ok {
-				if n, ok := v.(float64); ok {
-					msg.ToolLivedRemoved = int(n)
-				}
+				msg.ToolLivedRemoved = toIntField(v)
 			}
 			if target != "" {
 				msg.ToolProgressLabel = target

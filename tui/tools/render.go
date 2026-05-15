@@ -44,7 +44,11 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 	}
 	spinStyle := lipgloss.NewStyle().Foreground(spinColor)
 	nameStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	title := BuildToolTitle(msg, phase)
+	titlePhase := msg.ToolPreviewPhase
+	if titlePhase == "" {
+		titlePhase = phase
+	}
+	title := BuildToolTitle(msg, titlePhase)
 
 	// Override title with content-derived summary on success
 	if msg.ToolStatus == "success" {

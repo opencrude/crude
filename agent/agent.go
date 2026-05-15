@@ -49,7 +49,7 @@ type Agent struct {
 	Provider       *provider.Provider
 	Model          string
 	Policy         safety.Policy
-	ToolFn         func(tool string, params map[string]any) (string, error)
+	ToolFn         func(tool string, params map[string]any) (tools.ToolResult, error)
 	logger         *logger.Logger
 	OracleProvider *provider.Provider
 	OracleModel    string
@@ -66,7 +66,7 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 	return &Agent{
 		Provider: p,
 		Model:    model,
-		ToolFn:   func(tool string, params map[string]any) (string, error) { return "", nil },
+		ToolFn:   func(tool string, params map[string]any) (tools.ToolResult, error) { return tools.ToolResult{}, nil },
 		logger:   lg,
 	}
 }
@@ -202,20 +202,20 @@ func (a *Agent) Run(
 				emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
 					"tool_id": id,
 					"name":    name,
-					"preview": FormatPreview(ExtractPreview(id, name, "")),
+					"preview": tools.FormatPreview(name, ExtractPreview(id, name, "").Params),
 				}})
 			},
 			func(id, name, args string) {
 				preview := ExtractPreview(id, name, args)
-				path := getPS(preview.Params, "path")
-				command := getPS(preview.Params, "command")
-				urlStr := getPS(preview.Params, "url")
-				query := getPS(preview.Params, "query")
-				source := getPS(preview.Params, "source")
-				dest := getPS(preview.Params, "destination")
-				pattern := getPS(preview.Params, "pattern")
-				handle := getPS(preview.Params, "handle")
-				seconds := getPS(preview.Params, "seconds")
+				path := getStr(preview.Params, "path")
+				command := getStr(preview.Params, "command")
+				urlStr := getStr(preview.Params, "url")
+				query := getStr(preview.Params, "query")
+				source := getStr(preview.Params, "source")
+				dest := getStr(preview.Params, "destination")
+				pattern := getStr(preview.Params, "pattern")
+				handle := getStr(preview.Params, "handle")
+				seconds := getStr(preview.Params, "seconds")
 
 				var offsetVal int
 				if o, ok := preview.Params["offset"]; ok {
@@ -236,11 +236,11 @@ func (a *Agent) Run(
 					}
 				}
 
-				contentStr := getPS(preview.Params, "content")
-				oldStr := getPS(preview.Params, "old_string")
-				newStr := getPS(preview.Params, "new_string")
+				contentStr := getStr(preview.Params, "content")
+				oldStr := getStr(preview.Params, "old_string")
+				newStr := getStr(preview.Params, "new_string")
 				if newStr == "" {
-					newStr = getPS(preview.Params, "new_text")
+					newStr = getStr(preview.Params, "new_text")
 				}
 
 				contentLines := 0
@@ -267,7 +267,7 @@ func (a *Agent) Run(
 				data := map[string]any{
 					"tool_id": id,
 					"name":    name,
-					"preview": FormatPreview(preview),
+					"preview": tools.FormatPreview(name, preview.Params),
 					"args":    args,
 				}
 				if path != "" {
@@ -394,7 +394,7 @@ func (a *Agent) Run(
 			id     string
 			params map[string]any
 			name   string
-			result string
+			result tools.ToolResult
 		}
 		resultCh := make(chan execResult, len(toolCalls))
 
@@ -413,14 +413,14 @@ func (a *Agent) Run(
 						"name":    tc.Function.Name,
 						"result":  errResult,
 					}})
-					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: errResult}
+					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errResult}}
 					return
 				}
 
 				if tc.Function.Name == "reply" {
 					content := getStr(params, "content")
 					lastReply = content
-					resultCh <- execResult{id: tc.ID, params: params, name: tc.Function.Name, result: content}
+					resultCh <- execResult{id: tc.ID, params: params, name: tc.Function.Name, result: tools.ToolResult{Content: content}}
 					return
 				}
 
@@ -435,7 +435,7 @@ func (a *Agent) Run(
 							"name":    "execute_command",
 							"result":  errMsg,
 						}})
-						resultCh <- execResult{id: tc.ID, name: "execute_command", result: errMsg}
+						resultCh <- execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
 						return
 					}
 					if sr.Risk.NeedsConfirmation() {
@@ -457,7 +457,7 @@ func (a *Agent) Run(
 								"name":    "execute_command",
 								"result":  errMsg,
 							}})
-							resultCh <- execResult{id: tc.ID, name: "execute_command", result: errMsg}
+							resultCh <- execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
 							return
 						}
 						emit(AgentEvent{Type: "blocking_complete"})
@@ -528,7 +528,7 @@ func (a *Agent) Run(
 							"name":    tc.Function.Name,
 							"result":  errMsg,
 						}})
-						resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: errMsg}
+						resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}}
 						return
 					}
 					emit(AgentEvent{Type: "blocking_complete"})
@@ -602,22 +602,21 @@ func (a *Agent) Run(
 				result, _ := a.ToolFn(tc.Function.Name, params)
 				toolDur := time.Since(toolStart).Milliseconds()
 
-				if strings.HasPrefix(result, "Error:") {
-					a.logger.Error("tool.error", "tool", tc.Function.Name, "error", result, "latency_ms", toolDur)
+				if strings.HasPrefix(result.Content, "Error:") {
+					a.logger.Error("tool.error", "tool", tc.Function.Name, "error", result.Content, "latency_ms", toolDur)
 				} else {
-					a.logger.Info("tool.result", "tool", tc.Function.Name, "latency_ms", toolDur, "content", result)
+					a.logger.Info("tool.result", "tool", tc.Function.Name, "latency_ms", toolDur, "content", result.Content)
 				}
 
-				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result, "Error:") {
-					additions, removals := ParseDiffStats(result)
+				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result.Content, "Error:") {
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 						"tool_id":       tc.ID,
 						"name":          tc.Function.Name,
 						"phase":         "done",
 						"path":          path,
-						"message":       fmt.Sprintf("\u2212%d/+%d lines", removals, additions),
-						"lines_added":   additions,
-						"lines_removed": removals,
+						"message":       fmt.Sprintf("\u2212%d/+%d lines", result.Removed, result.Added),
+						"lines_added":   result.Added,
+						"lines_removed": result.Removed,
 					}})
 				}
 
@@ -625,7 +624,7 @@ func (a *Agent) Run(
 				emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 					"tool_id":  tc.ID,
 					"name":     tc.Function.Name,
-					"result":   result,
+					"result":   result.Content,
 					"duration": durSeconds,
 				}})
 
@@ -640,18 +639,18 @@ func (a *Agent) Run(
 				msgs = append(msgs, provider.ChatMessage{
 					Role:       "tool",
 					ToolCallID: r.id,
-					Content:    r.result,
+					Content:    r.result.Content,
 				})
 				lastToolResultIdx = len(msgs) - 1
 				steps = append(steps, StepRecord{
 					Content:      accumulatedText,
 					ToolName:     r.name,
 					ToolInput:    fmt.Sprintf("%v", r.params),
-					ToolResult:   r.result,
+					ToolResult:   r.result.Content,
 					FinishReason: finishReason,
 				})
-				if r.name == "reply" && r.result != "" {
-					emit(AgentEvent{Type: "stream_token", Data: r.result})
+				if r.name == "reply" && r.result.Content != "" {
+					emit(AgentEvent{Type: "stream_token", Data: r.result.Content})
 				}
 			case <-ctx.Done():
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
