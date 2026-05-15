@@ -22,8 +22,9 @@ import (
 )
 
 type Config struct {
-	ActiveProvider string
-	Providers      map[string]ProviderConfig
+	ActiveProvider  string
+	Providers       map[string]ProviderConfig
+	TurnLogsEnabled bool
 }
 
 type ProviderConfig struct {
@@ -87,25 +88,23 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	}
 	exec := fileio.NewLocalExec()
 
-	sessionDir := filepath.Join(homeDir, ".crude", "sessions")
-	sessionID := fmt.Sprintf("session-%s", time.Now().Format("20060102-150405"))
-	lg, err := logger.New(logger.Config{
-		SessionDir: sessionDir,
-		SessionID:  sessionID,
-		Console:    false,
+	lg, err := logger.New(logger.Options{
+		HomeDir:        homeDir,
+		TurnLogEnabled: cfg.TurnLogsEnabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("logger: %w", err)
 	}
-	lg.Info("session.start", "version", "1.0")
-	lg.Info("session.config", "provider", cfg.ActiveProvider, "model", activeCfg.Model)
+	sessionID := lg.SessionID()
+	lg.Info("SESSION", "start", "version", "1.0")
+	lg.Info("SESSION", "config", "provider", cfg.ActiveProvider, "model", activeCfg.Model)
 
 	permStore := safety.NewPermissionStore()
 
 	fileioSessionID := fileio.GenerateSessionID()
 	var editor *fileio.Editor
 	if ed, edErr := fileio.NewEditorWithLogger(fileioSessionID, lg); edErr != nil {
-		lg.Info("agent.reflection", "content", fmt.Sprintf("editor init error: %v", edErr))
+		lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
 	} else {
 		editor = ed
 	}
@@ -140,38 +139,31 @@ func (s *Session) Close() {
 	}
 	hasMsgs := s.HasMessages()
 
-	// Persist session cost to JSON file before closing the logger.
-	// This allows post-session cost analysis and future session resumption.
 	if hasMsgs && s.cost != nil {
 		s.persistCostSnapshot()
 	}
 
-	s.logger.Info("session.end", "duration_ms", 0)
 	s.logger.Close()
 	if !hasMsgs {
-		os.Remove(s.logger.Path())
+		s.logger.Remove()
 	}
 }
 
-// persistCostSnapshot writes the session's cost snapshot to a JSON file
-// alongside the session log. The file is named <session-id>-cost.json
-// and contains total token usage, cost, and per-model breakdown.
 func (s *Session) persistCostSnapshot() {
 	snap := s.cost.Snapshot()
 	snapData, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
-		s.logger.Error("cost.persist_error", "error", err.Error())
+		s.logger.Error("COST", "persist_error", "error", err.Error())
 		return
 	}
 
-	logPath := s.logger.Path()
-	costPath := logPath[:len(logPath)-len(".log")] + "-cost.json"
+	costPath := filepath.Join(s.logger.SessionDir(), "cost.json")
 	if err := os.WriteFile(costPath, snapData, 0o644); err != nil {
-		s.logger.Error("cost.persist_error", "error", err.Error())
+		s.logger.Error("COST", "persist_error", "error", err.Error())
 		return
 	}
 
-	s.logger.Info("cost.persisted", "path", costPath, "total_cost", snap.TotalCost,
+	s.logger.Info("COST", "persisted", "path", costPath, "total_cost", snap.TotalCost,
 		"prompt_tokens", snap.TotalPromptTokens, "completion_tokens", snap.TotalCompletionTokens)
 }
 
@@ -199,8 +191,8 @@ func (c *Config) EffectiveProviderID() string {
 	return "openrouter"
 }
 
-func (s *Session) LogPath() string {
-	return s.logger.Path()
+func (s *Session) SessionDir() string {
+	return s.logger.SessionDir()
 }
 
 func (s *Session) Editor() *fileio.Editor { return s.editor }
@@ -241,8 +233,6 @@ func (s *Session) newAgent() *agent.Agent {
 			}
 
 			state := s.sm.GetOrCreateState(s.sessionID)
-			// Guard against concurrent plans — fixed context keys would be
-			// silently overwritten, orphaning the previous plan's goal.
 			if _, exists := state.GetFromContext("plan_step_statuses"); exists {
 				return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one.")
 			}
@@ -284,7 +274,6 @@ func (s *Session) newAgent() *agent.Agent {
 				}
 			}
 
-			// Process optional activate_steps — mark them as "doing"
 			activateIDs := resolveStepIDs(params["activate_steps"])
 			for _, actID := range activateIDs {
 				if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
@@ -300,8 +289,6 @@ func (s *Session) newAgent() *agent.Agent {
 				}
 			}
 
-			// Check if all steps are in a terminal state (completed or failed).
-			// Guard against empty map — an empty plan should never trigger completion.
 			allDone := false
 			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := raw.(map[string]string); ok && len(m) > 0 {
@@ -315,14 +302,11 @@ func (s *Session) newAgent() *agent.Agent {
 				}
 			}
 			if allDone {
-				// Use plan_goal_id to complete the correct goal, not whatever
-				// the statemachine considers "current".
 				if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
 					if goalID, ok := rawGoalID.(string); ok && goalID != "" {
 						s.sm.CompleteGoalByID(s.sessionID, goalID, map[string]any{"status": "plan_complete"})
 					}
 				}
-				// Clean up plan context data now that the plan is done.
 				state.AddToContext("plan_steps", nil)
 				state.AddToContext("plan_step_statuses", nil)
 				state.AddToContext("plan_step_labels", nil)
@@ -357,7 +341,6 @@ func (s *Session) newAgent() *agent.Agent {
 						if _, exists := m[stepID]; !exists {
 							return tools.ToolResult{}, fmt.Errorf("mark_step_doing: step %q not found in plan", stepID)
 						}
-						// Only mark as doing if step is currently pending
 						if m[stepID] == "pending" || m[stepID] == "active" {
 							m[stepID] = "doing"
 						}
@@ -394,10 +377,6 @@ func (s *Session) newAgent() *agent.Agent {
 					state.AddToContext("plan_step_statuses", m)
 				}
 			}
-			// Do NOT call FailCurrentGoal — a step failure should not destroy
-			// the entire plan goal. The plan completes naturally when all steps
-			// reach a terminal state (completed or failed) via the allDone check
-			// in mark_step_complete.
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
 				return tools.ToolResult{Content: status}, nil
@@ -433,7 +412,6 @@ func (s *Session) newAgent() *agent.Agent {
 			state := s.sm.GetOrCreateState(s.sessionID)
 			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := statuses.(map[string]string); ok {
-					// Mark ALL in-progress steps as blocked, not just the first one.
 					for id, st := range m {
 						if st == "doing" || st == "active" {
 							m[id] = "blocked"
@@ -454,8 +432,6 @@ func (s *Session) newAgent() *agent.Agent {
 				state := s.sm.GetOrCreateState(s.sessionID)
 				if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
 					if m, ok := statuses.(map[string]string); ok {
-						// Transition blocked steps back to "doing" — they were
-						// in progress when blocked, not cancelled.
 						for id, st := range m {
 							if st == "blocked" {
 								m[id] = "doing"
@@ -542,7 +518,7 @@ func (s *Session) newAgent() *agent.Agent {
 			if seconds <= 0 {
 				return tools.ToolResult{}, fmt.Errorf("wait: seconds must be > 0")
 			}
-			s.logger.Info("tool.wait", "seconds", seconds)
+			s.logger.Info("TOOL", "wait", "seconds", seconds)
 			time.Sleep(time.Duration(seconds * float64(time.Second)))
 			return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
 
@@ -552,11 +528,11 @@ func (s *Session) newAgent() *agent.Agent {
 				sr := safety.CheckCommandSafety(cmd)
 				if sr.Risk.IsAlwaysBlocked() {
 					errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
-					s.logger.Warn("safety.blocked", "command", cmd, "reason", sr.Reason)
+					s.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
 					return tools.ToolResult{Content: errMsg}, fmt.Errorf("%s", errMsg)
 				}
 				if sr.Risk.NeedsConfirmation() {
-					s.logger.Info("safety.risky", "command", cmd, "risk", sr.Risk.String())
+					s.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
 				}
 			}
 			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo)
@@ -571,7 +547,7 @@ func (s *Session) newAgent() *agent.Agent {
 
 func (s *Session) SetYolo(enabled bool) {
 	s.yolo = enabled
-	s.logger.Info("safety.yolo", "enabled", enabled)
+	s.logger.Info("SAFETY", "yolo", "enabled", enabled)
 }
 
 func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
@@ -651,6 +627,8 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
 		})
 	}
+	s.logger.SetTurnEnabled(tuiSettings.TurnLogsEnabled != "off")
+	s.cfg.TurnLogsEnabled = tuiSettings.TurnLogsEnabled != "off"
 	return nil
 }
 
@@ -689,26 +667,21 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.M
 func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 	defer func() {
 		if r := recover(); r != nil {
-			s.logger.Error("agent.panic", "recovered", fmt.Sprintf("%v", r))
-			s.logger.Error("session.error", "error", fmt.Sprintf("panic: %v", r))
+			s.logger.Error("SESSION", "panic", "error", fmt.Sprintf("%v", r))
 			tuiInst.SendAgentEvent("error", fmt.Sprintf("Internal error: %v", r))
 		}
 	}()
 
 	cancelCh := tuiInst.CancelCh
 
-	// Auto-load models.dev pricing in the background on first session run.
-	// This populates the dynamic price map so LookupPrice and
-	// LookupContextWindow can return accurate data without waiting for a
-	// manual model-list fetch.
 	go func() {
 		metas, err := provider.FetchModelsDevAll()
 		if err != nil {
-			s.logger.Warn("modelsdev.auto_load_error", "error", err.Error())
+			s.logger.Warn("MODEL", "load_error", "error", err.Error())
 			return
 		}
 		provider.LoadModelMetas(metas)
-		s.logger.Info("modelsdev.auto_load_ok", "models", len(metas))
+		s.logger.Info("MODEL", "load_ok", "count", len(metas))
 	}()
 
 	// Start polling async command status for TUI status bar
@@ -766,9 +739,9 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		msgsCopy := make([]provider.ChatMessage, len(s.msgs))
 		copy(msgsCopy, s.msgs)
 		s.msgsMu.Unlock()
-		s.logger.Info("conv.user_msg", "content", userText, "msg_id", currentMsgID)
+		s.logger.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userText))
 
-		s.logger.Info("agent.loop_start", "content", userText, "iteration", 0)
+		s.logger.Info("AGENT", "loop_start", "msg_id", currentMsgID)
 
 		if s.editor != nil {
 			s.editor = s.editor.WithMessage(currentMsgID)
@@ -801,7 +774,6 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					target := data["target"]
 					if s.permStore.IsAlwaysAllowed(op, tool, target) {
 						blockResolveCh <- "allow"
-						// Show the question in chat with an auto-allowed checkmark
 						tuiInst.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 						return
 					}
@@ -816,7 +788,6 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 							sr := &safety.CommandSafetyResult{Risk: r, BaseCommand: data["tool"]}
 							if s.permStore.IsCommandAllowed(sr) {
 								blockResolveCh <- "always"
-								// Show the question in chat with an auto-allowed checkmark
 								tuiInst.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 								return
 							}
@@ -836,12 +807,10 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					tool := data["tool"]
 					target := data["target"]
 
-					// File tool operations: store path-tree permission
 					switch tool {
 					case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 						s.permStore.GrantAlways(safety.CRUDEOp(opStr), tool, target)
 					default:
-						// Command risk handling (existing)
 						for _, r := range []safety.CommandRisk{
 							safety.RiskDestructive, safety.RiskNetwork,
 							safety.RiskProjectWrite, safety.RiskUnknown,
@@ -857,8 +826,6 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 			tuiInst.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
 			if evt.Type == "usage" {
-				// Record real token counts into session's cost accumulator
-				// and token tracker. Extract from the event data.
 				model := activeCfg.Model
 				var promptT, compT, cachedT int
 				isEstimated := false
@@ -889,12 +856,10 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 				}
 				if promptT > 0 || compT > 0 {
 					s.cost.RecordUsage(model, promptT, compT, cachedT)
-					// Only record real token counts in the tracker —
-					// estimated counts would pollute truncation decisions.
 					if !isEstimated {
 						s.tokens.Record(promptT, compT)
 					}
-					s.logger.Info("usage.tokens", "model", model, "prompt", promptT, "completion", compT, "cached", cachedT, "session_cost", s.cost.Snapshot().TotalCost, "estimated", isEstimated)
+					s.logger.Info("COST", "tokens", "model", model, "prompt", promptT, "completion", compT, "cached", cachedT, "session_cost", s.cost.Snapshot().TotalCost, "estimated", isEstimated)
 				}
 			}
 
@@ -913,7 +878,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 
 		cancel()
 
-		s.logger.Info("agent.loop_end", "content", finalContent, "iteration", 1)
+		s.logger.Info("AGENT", "loop_end", "len", len(finalContent))
 		s.blockMu.Lock()
 		s.pendingBlock = false
 		s.blockMu.Unlock()
@@ -943,7 +908,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 		}
 		s.msgsMu.Unlock()
 		if finalContent != "" {
-			s.logger.Info("conv.assistant_msg", "content", finalContent, "msg_id", currentMsgID)
+			s.logger.Info("CONV", "assistant_msg", "msg_id", currentMsgID, "len", len(finalContent))
 		}
 	}
 }
@@ -986,6 +951,11 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 		mainCacheReadPrice = pc.MainCacheReadPrice
 	}
 
+	turnLogs := "on"
+	if !cfg.TurnLogsEnabled {
+		turnLogs = "off"
+	}
+
 	return tui.Settings{
 		APIKey:                   apiKey,
 		Model:                    model,
@@ -997,6 +967,7 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 		ProviderURL:              providerURL,
 		ProviderAPIKey:           apiKey,
 		ThinkingEffort:           thinkingEffort,
+		TurnLogsEnabled:          turnLogs,
 	}
 }
 
@@ -1027,8 +998,9 @@ func settingsToConfig(s tui.Settings, base *Config) *Config {
 	}
 
 	return &Config{
-		ActiveProvider: providerID,
+		ActiveProvider:  providerID,
 		Providers:      providers,
+		TurnLogsEnabled: s.TurnLogsEnabled != "off",
 	}
 }
 
@@ -1042,14 +1014,10 @@ func getStrParam(params map[string]any, key string) string {
 	return ""
 }
 
-// resolveStepIDs extracts step IDs from a parameter that can be either
-// a single string (e.g. "step1"), a comma-separated string (e.g. "step1,step2"),
-// or an array of strings (e.g. ["step1","step2"]).
 func resolveStepIDs(val any) []string {
 	if val == nil {
 		return nil
 	}
-	// Direct string — may be comma-separated
 	if s, ok := val.(string); ok && s != "" {
 		parts := strings.Split(s, ",")
 		var ids []string
@@ -1061,7 +1029,6 @@ func resolveStepIDs(val any) []string {
 		}
 		return ids
 	}
-	// Array of strings (from JSON: []interface{})
 	if arr, ok := val.([]any); ok {
 		var ids []string
 		for _, v := range arr {
@@ -1071,7 +1038,6 @@ func resolveStepIDs(val any) []string {
 		}
 		return ids
 	}
-	// Fallback: try stringifying
 	if s := fmt.Sprintf("%v", val); s != "" && s != "<nil>" {
 		return []string{s}
 	}
@@ -1141,13 +1107,8 @@ func truncateMessages(msgs []provider.ChatMessage, ctxWindow int, model string) 
 		return msgs
 	}
 
-	// Token budget: use 75% of the context window for messages.
-	// The remaining 25% is reserved for the system prompt, tool schemas,
-	// output generation, and a safety margin.
 	tokenBudget := int(float64(ctxWindow) * 0.75)
 
-	// Walk messages from newest to oldest, accumulating estimated token counts.
-	// When we exceed the budget, truncate older messages.
 	used := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
 		msgTokens := provider.EstimateMessageTokens(msgs[i], model)

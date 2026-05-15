@@ -70,14 +70,14 @@ func (e *Editor) Read(path string) (string, error) {
 	data, _, err := readFileSecure(abs, e.policy)
 	dur := time.Since(start).Milliseconds()
 	if err != nil {
-		e.logger.Error("fileio.read", "path", path, "latency_ms", dur, "error", err.Error())
+		e.logger.Error("FILEIO", "read", "path", path, "latency_ms", dur, "error", err.Error())
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	if IsBinary(data) {
-		e.logger.Info("fileio.read", "path", path, "latency_ms", dur)
+		e.logger.Info("FILEIO", "read", "path", path, "latency_ms", dur)
 		return "", &BinaryFileError{Path: abs, Size: int64(len(data))}
 	}
-	e.logger.Info("fileio.read", "path", path, "latency_ms", dur)
+	e.logger.Info("FILEIO", "read", "path", path, "latency_ms", dur)
 	return EncodeHashlines(string(data)), nil
 }
 
@@ -123,7 +123,7 @@ func (e *Editor) Write(path string, content string) error {
 		start := time.Now()
 		writeErr := writeAtomic(abs, newBytes, 0644)
 		dur := time.Since(start).Milliseconds()
-		e.logger.Info("fileio.create", "path", abs, "latency_ms", dur)
+		e.logger.Info("FILEIO", "create", "path", abs, "latency_ms", dur)
 		return writeErr
 	}
 
@@ -141,7 +141,7 @@ func (e *Editor) Write(path string, content string) error {
 	start := time.Now()
 	writeErr := writeAtomic(abs, newBytes, fi.Mode().Perm())
 	dur := time.Since(start).Milliseconds()
-	e.logger.Info("fileio.write", "path", abs, "latency_ms", dur)
+	e.logger.Info("FILEIO", "write", "path", abs, "latency_ms", dur)
 	return writeErr
 }
 
@@ -206,7 +206,7 @@ func (e *Editor) Delete(path string) error {
 	if removeErr != nil {
 		errStr = removeErr.Error()
 	}
-	e.logger.Error("fileio.delete", "path", abs, "latency_ms", dur, "error", errStr)
+	e.logger.Error("FILEIO", "delete", "path", abs, "latency_ms", dur, "error", errStr)
 	return removeErr
 }
 
@@ -250,7 +250,7 @@ func (e *Editor) Move(src, dst string) error {
 	if renameErr != nil {
 		renameErrStr = renameErr.Error()
 	}
-	e.logger.Error("fileio.rename", "path", srcAbs+" → "+dstAbs, "latency_ms", dur, "error", renameErrStr)
+	e.logger.Error("FILEIO", "rename", "src", srcAbs, "dst", dstAbs, "latency_ms", dur, "error", renameErrStr)
 	return renameErr
 }
 

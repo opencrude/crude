@@ -27,7 +27,7 @@ func (m *ConversationStateMachine) GetOrCreateState(conversationID string) *Conv
 	}
 	s := NewConversationState(conversationID)
 	m.states[conversationID] = s
-	m.logger.Info("state.goal_created", "goal_id", conversationID, "type", "state", "description", conversationID, "priority", "info")
+	m.logger.Info("STATE", "goal_created", "goal_id", conversationID, "type", "state", "description", conversationID, "priority", "info")
 	return s
 }
 
@@ -48,7 +48,7 @@ func (m *ConversationStateMachine) CreateGoal(
 
 	cleaned := state.CleanupExpiredGoals()
 	if cleaned > 0 {
-		m.logger.Info("state.goal_created", "goal_id", conversationID, "type", "cleanup", "description", fmt.Sprintf("cleaned %d expired goals", cleaned), "priority", "info")
+		m.logger.Info("STATE", "goal_created", "goal_id", conversationID, "type", "cleanup", "description", fmt.Sprintf("cleaned %d expired goals", cleaned), "priority", "info")
 	}
 
 	goal := NewGoal(intent, originalQuery, priority, true)
@@ -57,15 +57,15 @@ func (m *ConversationStateMachine) CreateGoal(
 	if focus == nil {
 		state.ThreadRoots[goal.ID] = goal
 		state.FocusGoalID = goal.ID
-		m.logger.Info("state.goal_created", "goal_id", goal.ID, "type", "root", "description", intent, "priority", priorityLabel(priority))
+		m.logger.Info("STATE", "goal_created", "goal_id", goal.ID, "type", "root", "description", intent, "priority", priorityLabel(priority))
 	} else {
 		focus.pushSubGoal(goal)
-		m.logger.Info("state.goal_created", "goal_id", goal.ID, "type", "sub", "description", intent, "priority", priorityLabel(priority))
+		m.logger.Info("STATE", "goal_created", "goal_id", goal.ID, "type", "sub", "description", intent, "priority", priorityLabel(priority))
 	}
 
 	if transferSlots && focus != nil {
 		state.TransferSlotsToGoal(focus, goal)
-		m.logger.Info("state.goal_created", "goal_id", goal.ID, "type", "slot_transfer", "description", fmt.Sprintf("transferred slots from %q to %q", focus.Intent, goal.Intent), "priority", priorityLabel(priority))
+		m.logger.Info("STATE", "goal_created", "goal_id", goal.ID, "type", "slot_transfer", "description", fmt.Sprintf("transferred slots from %q to %q", focus.Intent, goal.Intent), "priority", priorityLabel(priority))
 	}
 
 	goal.Status = GoalActive
@@ -78,9 +78,9 @@ func (m *ConversationStateMachine) PauseWithBlocker(conversationID string, block
 	if g != nil {
 		g.CurrentBlocker = blocker
 		g.Status = GoalBlocked
-		m.logger.Info("state.blocked", "goal_id", g.ID, "blocker_type", blocker.Type.String(), "reason", blocker.Message)
+		m.logger.Info("STATE", "blocked", "goal_id", g.ID, "blocker_type", blocker.Type.String(), "reason", blocker.Message)
 	} else {
-		m.logger.Info("state.blocked", "goal_id", "", "blocker_type", blocker.Type.String(), "reason", blocker.Message, "conversation_id", conversationID)
+		m.logger.Info("STATE", "blocked", "goal_id", "", "blocker_type", blocker.Type.String(), "reason", blocker.Message, "conversation_id", conversationID)
 	}
 }
 
@@ -92,7 +92,7 @@ func (m *ConversationStateMachine) TryResolveBlocker(conversationID, _ string) b
 	}
 	g.CurrentBlocker = nil
 	g.Status = GoalActive
-	m.logger.Info("state.unblocked", "goal_id", g.ID, "reason", "blocker resolved")
+	m.logger.Info("STATE", "unblocked", "goal_id", g.ID, "reason", "blocker resolved")
 	return true
 }
 
@@ -118,7 +118,7 @@ func (m *ConversationStateMachine) CompleteCurrentGoal(conversationID string, re
 	g := state.GetCurrentGoal()
 
 	if g == nil {
-		m.logger.Info("state.goal_complete", "goal_id", "", "result", "no current goal", "conversation_id", conversationID)
+		m.logger.Info("STATE", "goal_complete", "goal_id", "", "result", "no current goal", "conversation_id", conversationID)
 		return
 	}
 
@@ -130,11 +130,11 @@ func (m *ConversationStateMachine) CompleteCurrentGoal(conversationID string, re
 
 	if focus != nil && focus.peekSubGoal() == g {
 		focus.popSubGoal()
-		m.logger.Info("state.goal_complete", "goal_id", g.ID, "result", "sub-goal completed")
+		m.logger.Info("STATE", "goal_complete", "goal_id", g.ID, "result", "sub-goal completed")
 	} else if focus == g {
 		delete(state.ThreadRoots, g.ID)
 		state.FocusGoalID = ""
-		m.logger.Info("state.goal_complete", "goal_id", g.ID, "result", "root goal completed")
+		m.logger.Info("STATE", "goal_complete", "goal_id", g.ID, "result", "root goal completed")
 	}
 }
 
@@ -159,14 +159,14 @@ func (m *ConversationStateMachine) CompleteGoalByID(conversationID, goalID strin
 				break
 			}
 		}
-		m.logger.Info("state.goal_complete", "goal_id", goalID, "result", "root goal completed by ID")
+		m.logger.Info("STATE", "goal_complete", "goal_id", goalID, "result", "root goal completed by ID")
 		return true
 	}
 
 	// Search sub-goals recursively.
 	for _, root := range state.ThreadRoots {
 		if root.completeSubGoalByID(goalID, resultData) {
-			m.logger.Info("state.goal_complete", "goal_id", goalID, "result", "sub-goal completed by ID")
+			m.logger.Info("STATE", "goal_complete", "goal_id", goalID, "result", "sub-goal completed by ID")
 			return true
 		}
 	}
@@ -180,12 +180,12 @@ func (m *ConversationStateMachine) FailCurrentGoal(conversationID, reason string
 	g := state.GetCurrentGoal()
 
 	if g == nil {
-		m.logger.Error("state.goal_failed", "goal_id", "", "reason", "no active goal", "conversation_id", conversationID)
+		m.logger.Error("STATE", "goal_failed", "goal_id", "", "reason", "no active goal", "conversation_id", conversationID)
 		return
 	}
 
 	g.Status = GoalFailed
-	m.logger.Error("state.goal_failed", "goal_id", g.ID, "reason", reason)
+	m.logger.Error("STATE", "goal_failed", "goal_id", g.ID, "reason", reason)
 
 	if focus != nil && focus.peekSubGoal() == g {
 		focus.popSubGoal()
@@ -198,7 +198,7 @@ func (m *ConversationStateMachine) FailCurrentGoal(conversationID, reason string
 func (m *ConversationStateMachine) ParkCurrentThread(conversationID string) {
 	state := m.GetOrCreateState(conversationID)
 	if state.FocusGoalID != "" {
-		m.logger.Info("state.blocked", "goal_id", state.FocusGoalID, "blocker_type", "parked", "reason", fmt.Sprintf("parking thread %s for %s", state.FocusGoalID, conversationID))
+		m.logger.Info("STATE", "blocked", "goal_id", state.FocusGoalID, "blocker_type", "parked", "reason", fmt.Sprintf("parking thread %s for %s", state.FocusGoalID, conversationID))
 		state.PushToResumeStack(state.FocusGoalID)
 		state.FocusGoalID = ""
 	}
@@ -209,7 +209,7 @@ func (m *ConversationStateMachine) ResumeGoal(conversationID, goalID string) {
 	if g, ok := state.ThreadRoots[goalID]; ok {
 		g.Touch()
 		state.FocusGoalID = goalID
-		m.logger.Info("state.goal_start", "goal_id", goalID, "type", "resumed")
+		m.logger.Info("STATE", "goal_start", "goal_id", goalID, "type", "resumed")
 	}
 }
 
@@ -222,7 +222,7 @@ func (m *ConversationStateMachine) ResumeLastParkedGoal(conversationID string) *
 	state.FocusGoalID = lastID
 	g := state.ThreadRoots[lastID]
 	g.Touch()
-	m.logger.Info("state.goal_start", "goal_id", lastID, "type", "resumed_parked")
+	m.logger.Info("STATE", "goal_start", "goal_id", lastID, "type", "resumed_parked")
 	return g
 }
 
@@ -248,14 +248,14 @@ func (m *ConversationStateMachine) CancelGoal(conversationID, goalID string) {
 		if state.FocusGoalID == goalID {
 			state.FocusGoalID = ""
 		}
-		m.logger.Info("state.cancelled", "goal_id", goalID, "conversation_id", conversationID)
+		m.logger.Info("STATE", "cancelled", "goal_id", goalID, "conversation_id", conversationID)
 	}
 }
 
 func (m *ConversationStateMachine) ClearState(conversationID string) {
 	if state, ok := m.states[conversationID]; ok {
 		delete(m.states, conversationID)
-		m.logger.Info("state.cancelled", "goal_id", state.FocusGoalID, "conversation_id", conversationID)
+		m.logger.Info("STATE", "cancelled", "goal_id", state.FocusGoalID, "conversation_id", conversationID)
 	}
 }
 

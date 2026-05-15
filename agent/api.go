@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"crude/logger"
 	"crude/provider"
 )
 
@@ -50,7 +51,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 		}
 	}
 
-	a.logger.Info("llm.prompt", "model", a.Provider.Name, "msg_count", len(msgs), "tool_count", len(tools))
+	a.logger.Info("LLM", "prompt", "model", a.Provider.Name, "msgs", len(msgs), "tools", len(tools))
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	endpoint := a.Provider.ChatEndpoint()
@@ -75,7 +76,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
+			a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
 			select {
 			case <-time.After(bo):
 			case <-ctx.Done():
@@ -97,7 +98,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 			}
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
-				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
+				a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				select {
 				case <-time.After(bo):
 				case <-ctx.Done():
@@ -113,7 +114,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("decode response: %w", err)
 		}
 		if chatResp.Error != nil {
-			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("API error: %s", chatResp.Error.Message).Error(), "latency_ms", time.Since(apiStart).Milliseconds())
+			a.logger.Error("LLM", "error", "model", a.Provider.Name, "error", chatResp.Error.Message, "latency_ms", time.Since(apiStart).Milliseconds())
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("API error: %s", chatResp.Error.Message)
 		}
 		if len(chatResp.Choices) == 0 {
@@ -123,13 +124,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 		choice := chatResp.Choices[0]
 		apiDur := time.Since(apiStart).Milliseconds()
 		promptTokens, completionTokens, promptTokensCached := std.UsageFromResponse(chatResp)
-		usageAttrs := []any{}
-		if promptTokens > 0 || completionTokens > 0 {
-			usageAttrs = append(usageAttrs, "prompt_tokens", promptTokens, "completion_tokens", completionTokens)
-		}
-		respArgs := []any{"model", a.Provider.Name, "content", choice.Message.Content, "latency_ms", apiDur}
-		respArgs = append(respArgs, usageAttrs...)
-		a.logger.Info("llm.response", respArgs...)
+		a.logger.Info("LLM", "response", "model", a.Provider.Name, "latency_ms", apiDur, "prompt_tokens", promptTokens, "completion_tokens", completionTokens)
 
 		return chatResp, nil, choice.FinishReason, promptTokens, completionTokens, promptTokensCached, nil
 	}
@@ -175,7 +170,7 @@ func (a *Agent) completeStream(
 	}
 
 	streamStart := time.Now()
-	a.logger.Info("llm.prompt", "model", a.Provider.Name, "msg_count", len(msgs), "tool_count", len(tools))
+	a.logger.Info("LLM", "prompt", "model", a.Provider.Name, "msgs", len(msgs), "tools", len(tools))
 
 	client := &http.Client{Timeout: 300 * time.Second}
 	endpoint := a.Provider.ChatEndpoint()
@@ -199,7 +194,7 @@ func (a *Agent) completeStream(
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
+			a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", err.Error())
 			if onRetry != nil {
 				onRetry(attempt, bo.Seconds())
 			}
@@ -220,7 +215,7 @@ func (a *Agent) completeStream(
 			}
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
-				a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
+				a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				if onRetry != nil {
 					onRetry(attempt, bo.Seconds())
 				}
@@ -231,7 +226,7 @@ func (a *Agent) completeStream(
 				}
 				continue
 			}
-			a.logger.Error("llm.error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
+			a.logger.Error("LLM", "error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
 			return "", "", "", nil, 0, 0, 0, fmt.Errorf("API %d: %s", resp.StatusCode, snippet)
 		}
 
@@ -338,7 +333,7 @@ func (a *Agent) completeStream(
 
 		if err := scanner.Err(); err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("llm.retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("stream scan error: %w", err).Error())
+			a.logger.Warn("LLM", "retry", "model", a.Provider.Name, "attempt", attempt, "error", fmt.Errorf("stream scan error: %w", err).Error())
 			if onRetry != nil {
 				onRetry(attempt, bo.Seconds())
 			}
@@ -366,7 +361,34 @@ func (a *Agent) completeStream(
 		}
 
 		streamDur := time.Since(streamStart).Milliseconds()
-		a.logger.Info("llm.response", "model", a.Provider.Name, "content", contentBuf.String(), "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "prompt_tokens_cached", promptTokensCached, "latency_ms", streamDur)
+		a.logger.Info("LLM", "response", "model", a.Provider.Name, "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "cached_tokens", promptTokensCached, "latency_ms", streamDur)
+
+		if a.turn != nil {
+			turnToolCalls := make([]logger.TurnToolCall, len(resultToolCalls))
+			for i, tc := range resultToolCalls {
+				turnToolCalls[i] = logger.TurnToolCall{
+					ID:        tc.ID,
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				}
+			}
+			if turnFile := a.turn.Write(logger.TurnRecord{
+				Time:             time.Now(),
+				Model:            a.Model,
+				LatencyMS:        streamDur,
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				CachedTokens:     promptTokensCached,
+				FinishReason:     finishReason,
+				RequestBody:      body,
+				ResponseContent:  contentBuf.String(),
+				ReasoningContent: reasoningBuf.String(),
+				ToolCalls:        turnToolCalls,
+			}); turnFile != "" {
+				a.logger.Debug("LLM", "turn_dump", "file", turnFile)
+			}
+		}
+
 		return contentBuf.String(), reasoningBuf.String(), finishReason, resultToolCalls, promptTokens, completionTokens, promptTokensCached, nil
 	}
 }
