@@ -7,6 +7,26 @@ import (
 )
 
 func SummarizeToolArgs(tool, argsStr string) string {
+	// grep_files: show what (pattern) and where (path)
+	if tool == "grep_files" {
+		pattern := ExtractArg(argsStr, "pattern")
+		path := ExtractArg(argsStr, "path")
+		label := ""
+		if pattern != "" {
+			label = fmt.Sprintf("\"%s\"", rendering.TruncateLine(pattern, 30))
+		}
+		if path != "" && path != "." {
+			if label != "" {
+				label += " in " + path
+			} else {
+				label = path
+			}
+		}
+		if label != "" {
+			return label
+		}
+	}
+
 	path := ExtractArg(argsStr, "path")
 	if path != "" {
 		return path
@@ -36,9 +56,19 @@ func SummarizeToolArgs(tool, argsStr string) string {
 	if tool == "plan" || tool == "list_goal_status" {
 		return rendering.PascalCaseTool(tool)
 	}
-	if tool == "mark_step_complete" || tool == "mark_step_failed" {
+	if tool == "mark_step_doing" {
 		if stepID := ExtractArg(argsStr, "step_id"); stepID != "" {
 			return stepID
+		}
+		return rendering.PascalCaseTool(tool)
+	}
+	if tool == "mark_step_complete" || tool == "mark_step_failed" {
+		if stepID := ExtractArg(argsStr, "step_id"); stepID != "" {
+			label := stepID
+			if activate := ExtractArg(argsStr, "activate_steps"); activate != "" {
+				label += " → " + activate
+			}
+			return label
 		}
 		return rendering.PascalCaseTool(tool)
 	}

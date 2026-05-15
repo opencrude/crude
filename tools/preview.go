@@ -120,7 +120,11 @@ var previewRegistry = map[string]PreviewSpec{
 		Keys: []string{"pattern", "path"},
 		Format: func(name string, p map[string]string) string {
 			if p["pattern"] != "" {
-				return fmt.Sprintf("%s %s", name, trunc(p["pattern"], 50))
+				label := fmt.Sprintf("%s \"%s\"", name, trunc(p["pattern"], 30))
+				if p["path"] != "" && p["path"] != "." {
+					label += " in " + p["path"]
+				}
+				return label
 			}
 			return fmt.Sprintf("%s \u2026", name)
 		},

@@ -314,6 +314,19 @@ func (s *Session) newAgent() *agent.Agent {
 				}
 			}
 
+			// Process optional activate_steps — mark them as "doing"
+			activateIDs := resolveStepIDs(params["activate_steps"])
+			for _, actID := range activateIDs {
+				if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+					if m, ok := raw.(map[string]string); ok {
+						if m[actID] == "pending" || m[actID] == "active" {
+							m[actID] = "doing"
+							state.AddToContext("plan_step_statuses", m)
+						}
+					}
+				}
+			}
+
 			allDone := true
 			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
 				if m, ok := raw.(map[string]string); ok {
@@ -333,10 +346,16 @@ func (s *Session) newAgent() *agent.Agent {
 			if status != "" {
 				return tools.ToolResult{Content: status}, nil
 			}
+			var resultParts []string
 			if len(stepIDs) == 1 {
-				return tools.ToolResult{Content: fmt.Sprintf("Step %q marked as complete.", stepIDs[0])}, nil
+				resultParts = append(resultParts, fmt.Sprintf("Step %q marked as complete.", stepIDs[0]))
+			} else {
+				resultParts = append(resultParts, fmt.Sprintf("Steps %v marked as complete.", stepIDs))
 			}
-			return tools.ToolResult{Content: fmt.Sprintf("Steps %v marked as complete.", stepIDs)}, nil
+			if len(activateIDs) > 0 {
+				resultParts = append(resultParts, fmt.Sprintf("Step %v marked as doing.", activateIDs))
+			}
+			return tools.ToolResult{Content: strings.Join(resultParts, " ")}, nil
 
 		case "mark_step_doing":
 			stepIDs := resolveStepIDs(params["step_id"])
@@ -1058,14 +1077,23 @@ func getStrParam(params map[string]any, key string) string {
 }
 
 // resolveStepIDs extracts step IDs from a parameter that can be either
-// a single string (e.g. "step1") or an array of strings (e.g. ["step1","step2"]).
+// a single string (e.g. "step1"), a comma-separated string (e.g. "step1,step2"),
+// or an array of strings (e.g. ["step1","step2"]).
 func resolveStepIDs(val any) []string {
 	if val == nil {
 		return nil
 	}
-	// Direct string
+	// Direct string — may be comma-separated
 	if s, ok := val.(string); ok && s != "" {
-		return []string{s}
+		parts := strings.Split(s, ",")
+		var ids []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				ids = append(ids, p)
+			}
+		}
+		return ids
 	}
 	// Array of strings (from JSON: []interface{})
 	if arr, ok := val.([]any); ok {

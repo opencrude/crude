@@ -9,9 +9,9 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"crude/logger"
 	"crude/provider"
@@ -133,7 +133,7 @@ func (a *Agent) Run(
 		}
 		parts := make([]string, 0, 2)
 		if status := BuildStateMachineStatus(sm, sessionID); status != "" {
-			parts = append(parts, status)
+			parts = append(parts, "## Current State\n"+status)
 		}
 		if a.AsyncMgr != nil {
 			if asyncStatus := BuildAsyncCommandStatus(a.AsyncMgr); asyncStatus != "" {
@@ -541,10 +541,12 @@ func (a *Agent) Run(
 					}
 				}
 
+				// Format args as compact key=value pairs instead of Go's map[key:val]
+				argsStr := formatToolArgs(params)
 				emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 					"tool_id": tc.ID,
 					"name":    tc.Function.Name,
-					"args":     fmt.Sprintf("%v", params),
+					"args":    argsStr,
 				}})
 
 				path := getStr(params, "path")
@@ -733,12 +735,43 @@ func containsPrefix(s, prefix string) bool {
 	return s[:len(prefix)] == prefix
 }
 
-func truncateDesc(desc string, maxRunes int) string {
-	if utf8.RuneCountInString(desc) <= maxRunes {
-		return desc
+// formatToolArgs produces a compact key:value string from a params map
+// instead of Go's default map[key:val] formatting.
+func formatToolArgs(params map[string]any) string {
+	if len(params) == 0 {
+		return ""
 	}
-	runes := []rune(desc)
-	return string(runes[:maxRunes]) + "…"
+	// Collect and sort keys for deterministic output
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var parts []string
+	for _, k := range keys {
+		v := params[k]
+		switch val := v.(type) {
+		case string:
+			if len(val) > 80 {
+				parts = append(parts, k+": "+val[:80]+"…")
+			} else {
+				parts = append(parts, k+": "+val)
+			}
+		case []any:
+			// Format arrays as comma-separated values
+			var items []string
+			for _, item := range val {
+				if s, ok := item.(string); ok && s != "" {
+					items = append(items, s)
+				}
+			}
+			parts = append(parts, k+": "+strings.Join(items, ","))
+		default:
+			parts = append(parts, fmt.Sprintf("%s: %v", k, v))
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionID string) string {
@@ -765,6 +798,13 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 
 		if isPlan {
 			objective := strings.TrimPrefix(focus.Intent, "plan: ")
+			// Truncate the objective to keep the status label visible.
+			// Format: "Plan: [objective] (status)" — reserve ~10 chars for "Plan: " and ~12 for " (status)".
+			maxObjRunes := 80
+			objRunes := []rune(objective)
+			if len(objRunes) > maxObjRunes {
+				objective = string(objRunes[:maxObjRunes]) + "…"
+			}
 			sb.WriteString(fmt.Sprintf("Plan: %s (%s)\n", objective, statusLabel))
 
 			rawStatuses, _ := state.GetFromContext("plan_step_statuses")
@@ -780,7 +820,7 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 					total = len(steps)
 					for _, step := range steps {
 						id, _ := step["id"].(string)
-						desc := truncateDesc(stepLabels[id], 50)
+						desc := stepLabels[id]
 						status := stepStatuses[id]
 						marker := persistentStepMarker(status)
 						if status == "completed" {
@@ -792,7 +832,7 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 				} else {
 					for id, status := range stepStatuses {
 						marker := persistentStepMarker(status)
-						desc := truncateDesc(stepLabels[id], 50)
+						desc := stepLabels[id]
 						line := fmt.Sprintf("  %s %s: %s", marker, id, desc)
 						if status == "completed" {
 							completed++
