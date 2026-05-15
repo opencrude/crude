@@ -270,10 +270,11 @@ func (a *Agent) Run(
 				prevPreviewKeys[id] = previewKey
 
 				data := map[string]any{
-					"tool_id": id,
-					"name":    name,
-					"preview": tools.FormatPreview(name, preview.Params),
-					"args":    args,
+					"tool_id":         id,
+					"name":            name,
+					"preview":        tools.FormatPreview(name, preview.Params),
+					"args":            args,
+					"tool_est_tokens": provider.EstimateTokens(args, a.Model),
 				}
 				if path != "" {
 					data["path"] = path
@@ -623,23 +624,30 @@ func (a *Agent) Run(
 
 				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result.Content, "Error:") {
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-						"tool_id":       tc.ID,
-						"name":          tc.Function.Name,
-						"phase":         "done",
-						"path":          path,
-						"message":       fmt.Sprintf("\u2212%d/+%d lines", result.Removed, result.Added),
-						"lines_added":   result.Added,
-						"lines_removed": result.Removed,
+						"tool_id":         tc.ID,
+						"name":            tc.Function.Name,
+						"phase":           "done",
+						"path":            path,
+						"message":         fmt.Sprintf("\u2212%d/+%d lines", result.Removed, result.Added),
+						"lines_added":     result.Added,
+						"lines_removed":   result.Removed,
+						"tool_dur_ms":     toolDur,
+						"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
 					}})
 				}
 
-				durSeconds := fmt.Sprintf("%.0f", time.Since(toolStart).Seconds())
-				emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-					"tool_id":  tc.ID,
-					"name":     tc.Function.Name,
-					"result":   result.Content,
-					"duration": durSeconds,
-				}})
+				resultData := map[string]any{
+					"tool_id":         tc.ID,
+					"name":            tc.Function.Name,
+					"result":          result.Content,
+					"tool_dur_ms":     toolDur,
+					"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
+				}
+				if tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" {
+					resultData["lines_added"] = result.Added
+					resultData["lines_removed"] = result.Removed
+				}
+				emit(AgentEvent{Type: "tool_result", Data: resultData})
 
 				resultCh <- execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result}
 			}(tc)
