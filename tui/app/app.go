@@ -10,6 +10,7 @@ import (
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
+	"crude/tui/window"
 )
 
 // Logger interface for TUI logging. Matches crude/logger.Logger methods.
@@ -45,6 +46,8 @@ type App struct {
 	settings   settings.Model
 	confirm    widgets.ConfirmDialog
 	yoloDlg    widgets.YoloDialog
+
+	win *window.Window
 
 	blocking  bool
 	yolo      bool
@@ -111,10 +114,13 @@ func NewApp(modelName string, username string, inputCh chan<- string, cancelCh c
 
 	pm := NewPaneManager()
 
+	w := window.New(th)
+
 	app := &App{
 		theme:        th,
 		agents:       map[string]*AgentState{MainAgentID: mainAgent},
 		paneMgr:      pm,
+		win:          w,
 		mainMsgList:  ml,
 		input:        im,
 		statusbar:    sb,
@@ -186,8 +192,16 @@ func (m *App) setMode(newMode Mode) {
 	switch newMode {
 	case ModeSettings:
 		m.input.ClearInput()
+		m.win.OpenTabWithLayout("Settings", "", true, window.TabVertical)
+	case ModeConfirm:
+		m.win.OpenTabWithLayout("Confirm", "", true, window.TabVertical)
+	case ModeYolo:
+		m.win.OpenTabWithLayout("YOLO", "", true, window.TabVertical)
 	case ModeChat:
 		m.formHint = ""
+		if m.win.HasClosableTabs() {
+			m.win.CloseAll()
+		}
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"crude/tui/scrollbar"
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
+	"crude/tui/window"
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -75,6 +76,46 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		m.logger.Debug("UI", "mouse", "type", fmt.Sprintf("%d", msg.Type), "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
+
+		if m.win.IsOpen() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			var hit window.TabHitResult
+
+			if m.win.Layout() == window.TabVertical {
+				windowStartLine := m.chatAreaHeight + 3
+				windowEndLine := windowStartLine + len(m.renderWindowContent())
+				if msg.Y >= windowStartLine && msg.Y < windowEndLine {
+					adjustedX := msg.X - m.theme.Spacing.PadLR
+					adjustedY := msg.Y - windowStartLine
+					if adjustedX < 0 {
+						adjustedX = 0
+					}
+					if adjustedY < 0 {
+						adjustedY = 0
+					}
+					hit = m.win.HitTest(adjustedX, adjustedY)
+				}
+			} else {
+				windowTabBarLine := m.chatAreaHeight + 5
+				if msg.Y == windowTabBarLine {
+					adjustedX := msg.X - m.theme.Spacing.PadLR
+					if adjustedX < 0 {
+						adjustedX = 0
+					}
+					hit = m.win.HitTest(adjustedX, 0)
+				}
+			}
+
+			if hit.TabIndex >= 0 {
+				if hit.IsClose {
+					cmds = append(cmds, m.handleWindowTabClose(hit.TabIndex))
+					return m, tea.Batch(cmds...)
+				}
+				m.win.SwitchTo(hit.TabIndex)
+				m.syncActiveTabMode()
+				return m, nil
+			}
+		}
+
 		if m.Mode == ModeChat {
 			inputStartLine := m.chatAreaHeight + 4
 			if m.input.InputSelecting() || msg.Y >= inputStartLine {
@@ -153,13 +194,27 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.modelName = s.Model
 			m.lastSettings = s
-			m.setMode(ModeChat)
+			if tab := m.win.TabByTitle("Settings"); tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
 			m.mainMsgList.InvalidateCache()
 		}
 	case settings.CancelEvent:
 		m.logger.Info("CONFIG", "settings_cancel")
 		m.settings.RestoreSnapshot()
-		m.setMode(ModeChat)
+		if tab := m.win.TabByTitle("Settings"); tab != nil {
+			m.win.CloseTabByID(tab.ID)
+		}
+		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+			m.setMode(ModeChat)
+		} else {
+			m.syncActiveTabMode()
+		}
 		m.mainMsgList.InvalidateCache()
 	}
 
@@ -176,9 +231,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.OnConfirmResult(result)
 				m.logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
 			}
-			// Compact permission tag: no separate assistant message.
-			// Instead, store the tag on the agent state so it gets applied
-			// to the next matching tool_call as a muted suffix.
 			switch result.Choice {
 			case ttypes.ConfirmAllow:
 				ma.pendingPermTag = "allowed"
@@ -186,8 +238,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ma.pendingPermTag = "always"
 			case ttypes.ConfirmDeny:
 				ma.pendingPermTag = "denied"
-				// Denied operations don't produce a tool_call, so create a
-				// compact tool-like message showing the denial directly.
 				m.mainMsgList.AppendMessage(ttypes.ChatMessage{
 					Role:              ttypes.RoleTool,
 					ToolName:          result.Tool,
@@ -197,7 +247,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Time:              time.Now(),
 				})
 			}
-			m.setMode(ModeChat)
+			if tab := m.win.TabByTitle("Confirm"); tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
 		}
 
 	case ModeYolo:
@@ -223,7 +280,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.OnYoloCmd != nil {
 				m.OnYoloCmd(enabled)
 			}
-			m.setMode(ModeChat)
+			if tab := m.win.TabByTitle("YOLO"); tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
 		}
 
 	case ModeChat:
@@ -300,7 +364,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logger.Info("CONFIG", "saved")
 			m.modelName = msg.Settings.Model
 			m.lastSettings = msg.Settings
-			m.setMode(ModeChat)
+			if tab := m.win.TabByTitle("Settings"); tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
 			m.mainMsgList.InvalidateCache()
 			m.statusbar.SetInfo("settings saved")
 		}
@@ -356,6 +427,76 @@ func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
 	paneMsg.Y = info.LineIdx
 	_, cmd := sp.MsgList.Update(paneMsg)
 	return true, cmd
+}
+
+func (m *App) handleWindowTabClose(index int) tea.Cmd {
+	if index < 0 || index >= m.win.TabCount() {
+		return nil
+	}
+	tab := m.win.Tabs()[index]
+	if !tab.Closable {
+		return nil
+	}
+
+	switch tab.Title {
+	case "Settings":
+		m.settings.RestoreSnapshot()
+		m.win.CloseTab(index)
+		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+			m.setMode(ModeChat)
+		} else {
+			m.syncActiveTabMode()
+		}
+		m.mainMsgList.InvalidateCache()
+	case "Confirm":
+		m.confirm.Dismiss()
+		m.blocking = false
+		m.win.CloseTab(index)
+		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+			m.setMode(ModeChat)
+		} else {
+			m.syncActiveTabMode()
+		}
+		if m.OnConfirmResult != nil {
+			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
+		}
+	case "YOLO":
+		m.yoloDlg.Dismiss()
+		m.win.CloseTab(index)
+		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+			m.setMode(ModeChat)
+		} else {
+			m.syncActiveTabMode()
+		}
+	default:
+		m.win.CloseTab(index)
+		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+			m.setMode(ModeChat)
+		} else {
+			m.syncActiveTabMode()
+		}
+	}
+
+	return nil
+}
+
+func (m *App) syncActiveTabMode() {
+	activeTab := m.win.ActiveTab()
+	if activeTab == nil {
+		m.Mode = ModeChat
+		m.formHint = ""
+		return
+	}
+	switch activeTab.Title {
+	case "Settings":
+		m.Mode = ModeSettings
+	case "Confirm":
+		m.Mode = ModeConfirm
+	case "YOLO":
+		m.Mode = ModeYolo
+	default:
+		m.Mode = ModeChat
+	}
 }
 
 func tickCmd() tea.Cmd {
