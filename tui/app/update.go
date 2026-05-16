@@ -229,6 +229,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.blocking = false
 			ma := m.mainAgent()
 			ma.Thinking = true
+			m.statusbar.SetThinking(true, false, false)
 			if m.OnConfirmResult != nil {
 				m.OnConfirmResult(result)
 				m.logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
@@ -504,7 +505,7 @@ func (m *App) syncActiveTabMode() {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(400*time.Millisecond, func(t time.Time) tea.Msg {
 		return ttypes.TickMsg(t)
 	})
 }

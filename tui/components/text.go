@@ -213,7 +213,7 @@ func (m TextInput) View(width int, spinFrame int, cursorSolidAlways bool) string
 					right := string(segRunes[cursorInSeg+1:])
 					if cursorSolid {
 						cursorChar = lipgloss.NewStyle().Reverse(true).Render(string(segRunes[cursorInSeg]))
-					} else if BlinkOn(spinFrame) {
+					} else if BlinkOnTime(time.Now()) {
 						cursorChar = lipgloss.NewStyle().
 							Background(m.theme.Colors.Accent).
 							Foreground(m.theme.Colors.Bg).
@@ -230,7 +230,7 @@ func (m TextInput) View(width int, spinFrame int, cursorSolidAlways bool) string
 					if cursorSolid {
 						cursorChar = lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("█")
 					} else {
-						cursorChar = BlockCursor(spinFrame, m.theme.Colors.Accent)
+						cursorChar = BlockCursorTime(m.theme.Colors.Accent)
 					}
 					rendered := textStyle.Render(left) + cursorChar
 					if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
@@ -256,7 +256,7 @@ func (m TextInput) View(width int, spinFrame int, cursorSolidAlways bool) string
 		if cursorSolid {
 			cursorChar = lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("█")
 		} else {
-			cursorChar = BlockCursor(spinFrame, m.theme.Colors.Accent)
+			cursorChar = BlockCursorTime(m.theme.Colors.Accent)
 		}
 		allLines = append(allLines, promptStyle.Render("❯")+" "+cursorChar)
 	}

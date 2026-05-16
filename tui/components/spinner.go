@@ -1,6 +1,8 @@
 package components
 
 import (
+	"time"
+
 	"github.com/charmbracelet/lipgloss"
 
 	"crude/tui/theme"
@@ -18,11 +20,8 @@ func BlinkOn(frame int) bool {
 	return frame%BlinkPeriod < BlinkHalf
 }
 
-func SpinnerPhase(frame int) string {
-	if BlinkOn(frame) {
-		return "●"
-	}
-	return "○"
+func BlinkOnTime(t time.Time) bool {
+	return t.UnixMilli()%BlinkPeriod < BlinkHalf
 }
 
 func ThinkingDotIndex(frame int) int {
@@ -36,8 +35,22 @@ func BlockCursor(frame int, color lipgloss.Color) string {
 	return " "
 }
 
+func BlockCursorTime(color lipgloss.Color) string {
+	if BlinkOnTime(time.Now()) {
+		return lipgloss.NewStyle().Foreground(color).Render("█")
+	}
+	return " "
+}
+
 func BlockCursorSolid(color lipgloss.Color) string {
 	return lipgloss.NewStyle().Foreground(color).Render("█")
+}
+
+func SpinnerPhase(frame int) string {
+	if BlinkOn(frame) {
+		return "●"
+	}
+	return "○"
 }
 
 type Phase string
@@ -51,10 +64,10 @@ const (
 )
 
 type Spinner struct {
-	theme         *theme.Theme
-	frame         int
-	phase         Phase
-	activityStep  int
+	theme        *theme.Theme
+	frame        int
+	phase        Phase
+	activityStep int
 }
 
 func NewSpinner(t *theme.Theme) Spinner {
