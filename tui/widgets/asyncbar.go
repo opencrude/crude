@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (s *StatusBar) visibleAsyncCommands() []fileio.AsyncCmdInfo {
+func (s *StatusBar) VisibleAsyncCommands() []fileio.AsyncCmdInfo {
 	var visible []fileio.AsyncCmdInfo
 	for _, c := range s.asyncCommands {
 		if c.Status != fileio.AsyncRunning && time.Since(c.EndedAt) > 15*time.Second {
@@ -17,6 +17,10 @@ func (s *StatusBar) visibleAsyncCommands() []fileio.AsyncCmdInfo {
 		visible = append(visible, c)
 	}
 	return visible
+}
+
+func (s *StatusBar) visibleAsyncCommands() []fileio.AsyncCmdInfo {
+	return s.VisibleAsyncCommands()
 }
 
 func (s *StatusBar) RenderAsyncBar() []string {

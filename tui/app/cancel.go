@@ -14,20 +14,56 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 
 	if m.Mode == ModeSettings {
 		m.settings.RestoreSnapshot()
-		m.setMode(ModeChat)
+		if m.win.IsOpen() {
+			tab := m.win.TabByTitle("Settings")
+			if tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
+		} else {
+			m.setMode(ModeChat)
+		}
 		return nil
 	}
 
 	if m.Mode == ModeYolo {
 		m.yoloDlg.Dismiss()
-		m.setMode(ModeChat)
+		if m.win.IsOpen() {
+			tab := m.win.TabByTitle("YOLO")
+			if tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
+		} else {
+			m.setMode(ModeChat)
+		}
 		return nil
 	}
 
 	if m.Mode == ModeConfirm {
 		m.confirm.Dismiss()
 		m.blocking = false
-		m.setMode(ModeChat)
+		if m.win.IsOpen() {
+			tab := m.win.TabByTitle("Confirm")
+			if tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
+		} else {
+			m.setMode(ModeChat)
+		}
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}

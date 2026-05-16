@@ -2,11 +2,15 @@ package app
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
+	"crude/fileio"
+	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/widgets"
+	"crude/tui/window"
 )
 
 func (m *App) View() string {
@@ -46,9 +50,17 @@ func (m *App) View() string {
 	asyncBarLines := m.statusbar.RenderAsyncBar()
 	asyncLineCount := len(asyncBarLines)
 
+	asyncInWindow := m.win.IsOpen() && m.win.Layout() == window.TabVertical && m.win.TabCount() > 1 && asyncLineCount > 0
+
 	nonChat := 6 + inputLineCount
-	if asyncLineCount > 0 {
+	if asyncLineCount > 0 && !asyncInWindow {
 		nonChat += 2 + asyncLineCount
+	}
+
+	windowLines := m.renderWindowContent()
+	windowLineCount := len(windowLines)
+	if windowLineCount > 0 {
+		nonChat += 1 + windowLineCount
 	}
 
 	chatH := m.height - nonChat
@@ -72,28 +84,6 @@ func (m *App) View() string {
 	ma.MsgList.SetChatAreaBounds(3, chatH)
 
 	chatVisible := ma.MsgList.Render(innerW)
-
-	var overlayLines []string
-	if m.Mode == ModeSettings {
-		settingsView := m.settings.View(m.spinFrame)
-		for _, sl := range strings.Split(settingsView, "\n") {
-			overlayLines = append(overlayLines, sl)
-		}
-	} else if m.Mode == ModeConfirm {
-		m.confirm.SetWidth(m.width)
-		confirmView := m.confirm.View(m.spinFrame)
-		for _, cl := range strings.Split(confirmView, "\n") {
-			overlayLines = append(overlayLines, cl)
-		}
-	} else if m.Mode == ModeYolo {
-		m.yoloDlg.SetWidth(m.width)
-		yoloView := m.yoloDlg.View()
-		for _, yl := range strings.Split(yoloView, "\n") {
-			overlayLines = append(overlayLines, yl)
-		}
-	}
-
-	chatVisible = m.appendOverlay(chatVisible, overlayLines, chatH)
 
 	mainSBVisible := ma.MsgList.ScrollbarWidth() > 0
 
@@ -205,12 +195,24 @@ func (m *App) View() string {
 		lines = append(lines, line)
 	}
 
-	if asyncLineCount > 0 {
-		lines = append(lines, "")
-		lines = append(lines, dim.Render(strings.Repeat("─", m.width)))
+	if windowLineCount > 0 {
+		lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+		for _, wl := range windowLines {
+			visW := lipgloss.Width(wl)
+			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+			if rightPad < 0 {
+				rightPad = 0
+			}
+			lines = append(lines, pad+wl+strings.Repeat(" ", rightPad)+pad)
+		}
 	}
-	for _, al := range asyncBarLines {
-		lines = append(lines, pad+al)
+
+	if asyncLineCount > 0 && !asyncInWindow {
+		lines = append(lines, "")
+		lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+		for _, al := range asyncBarLines {
+			lines = append(lines, pad+al)
+		}
 	}
 
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
@@ -235,37 +237,158 @@ func (m *App) View() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *App) appendOverlay(chatVisible []string, overlayLines []string, chatH int) []string {
-	if len(overlayLines) == 0 {
-		return chatVisible
+func (m *App) renderWindowContent() []string {
+	if !m.win.IsOpen() {
+		return nil
 	}
 
-	result := make([]string, 0, chatH)
-	overlayStart := chatH - len(overlayLines)
-	if overlayStart < 0 {
-		overlayStart = 0
+	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
+
+	if m.win.Layout() == window.TabVertical {
+		return m.renderWindowVertical()
+	}
+	return m.renderWindowHorizontal()
+}
+
+func (m *App) renderWindowHorizontal() []string {
+	var lines []string
+
+	tabBarLine := m.win.RenderTabBar()
+	lines = append(lines, tabBarLine)
+
+	sepLine := m.win.RenderSeparator()
+	lines = append(lines, sepLine)
+
+	activeTab := m.win.ActiveTab()
+	if activeTab == nil {
+		return lines
 	}
 
-	for i := 0; i < chatH; i++ {
-		if i >= overlayStart && (i-overlayStart) < len(overlayLines) {
-			result = append(result, overlayLines[i-overlayStart])
-		} else if i < len(chatVisible) {
-			result = append(result, chatVisible[i])
-		} else {
-			result = append(result, "")
+	contentLines := m.getWindowContentLines(activeTab.Title)
+
+	for _, cl := range contentLines {
+		lines = append(lines, cl)
+	}
+
+	return lines
+}
+
+func (m *App) renderWindowVertical() []string {
+	activeTab := m.win.ActiveTab()
+	if activeTab == nil {
+		return nil
+	}
+
+	rawContentLines := m.getWindowContentLines(activeTab.Title)
+
+	verticalLines := m.win.RenderVerticalSidebar(rawContentLines)
+	if verticalLines != nil {
+		asyncItems := m.getAsyncItemsForVertical()
+		if len(asyncItems) > 0 {
+			verticalLines = append(verticalLines, asyncItems...)
+		}
+		return verticalLines
+	}
+
+	return rawContentLines
+}
+
+func (m *App) getAsyncItemsForVertical() []string {
+	asyncBarLines := m.statusbar.RenderAsyncBar()
+	if len(asyncBarLines) == 0 {
+		return nil
+	}
+
+	visibleCmds := m.statusbar.VisibleAsyncCommands()
+
+	var lines []string
+	for i, c := range visibleCmds {
+		if i >= len(asyncBarLines) {
+			break
+		}
+		row := m.win.RenderVerticalAsyncRow(window.AsyncItem{
+			Handle:   c.Handle,
+			Command:  c.Command,
+			Duration: c.Duration.Truncate(time.Second).String(),
+			Status: func() string {
+				switch c.Status {
+				case fileio.AsyncRunning:
+					return "running"
+				case fileio.AsyncCompleted:
+					return "completed"
+				case fileio.AsyncFailed:
+					return "failed"
+				case fileio.AsyncKilled:
+					return "killed"
+				default:
+					return "unknown"
+				}
+			}(),
+		}, m.spinFrame)
+
+		lines = append(lines, row)
+	}
+	return lines
+}
+
+func (m *App) getWindowContentLines(tabTitle string) []string {
+	var rawLines []string
+
+	contentW := m.width
+	if m.win.Layout() == window.TabVertical {
+		contentW = m.win.VerticalContentWidth()
+	}
+
+	switch tabTitle {
+	case "Settings":
+		settingsView := m.settings.View(m.spinFrame)
+		for _, sl := range strings.Split(settingsView, "\n") {
+			rawLines = append(rawLines, rendering.TruncateLine(sl, contentW))
+		}
+	case "Confirm":
+		m.confirm.SetWidth(contentW)
+		confirmView := m.confirm.View(m.spinFrame)
+		for _, cl := range strings.Split(confirmView, "\n") {
+			rawLines = append(rawLines, rendering.TruncateLine(cl, contentW))
+		}
+	case "YOLO":
+		m.yoloDlg.SetWidth(contentW)
+		yoloView := m.yoloDlg.View()
+		for _, yl := range strings.Split(yoloView, "\n") {
+			rawLines = append(rawLines, rendering.TruncateLine(yl, contentW))
 		}
 	}
 
-	return result
+	stripLeadingTrailingEmpty := func(ss []string) []string {
+		start := 0
+		for start < len(ss) && ss[start] == "" {
+			start++
+		}
+		end := len(ss)
+		for end > start && ss[end-1] == "" {
+			end--
+		}
+		return ss[start:end]
+	}
+	return stripLeadingTrailingEmpty(rawLines)
 }
 
 func (m *App) syncFormHint() {
-	switch m.Mode {
-	case ModeSettings:
+	if !m.win.IsOpen() {
+		m.formHint = ""
+		return
+	}
+	activeTab := m.win.ActiveTab()
+	if activeTab == nil {
+		m.formHint = ""
+		return
+	}
+	switch activeTab.Title {
+	case "Settings":
 		m.formHint = m.settings.Hint()
-	case ModeConfirm:
+	case "Confirm":
 		m.formHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
-	case ModeYolo:
+	case "YOLO":
 		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
 	default:
 		m.formHint = ""
