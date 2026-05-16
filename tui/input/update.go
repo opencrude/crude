@@ -23,10 +23,6 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if thinking && !blocking {
-			return m, nil, nil
-		}
-
 		if m.showHint {
 			m.showHint = false
 		}
@@ -53,6 +49,9 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			m.histPrefix = ""
 			if strings.HasPrefix(text, "/") {
 				return m, nil, SlashCommandEvent{Command: text}
+			}
+			if m.thinking && !m.blocking {
+				return m, nil, BtwSubmitEvent{Text: text}
 			}
 			return m, nil, SubmitEvent{Text: text}
 

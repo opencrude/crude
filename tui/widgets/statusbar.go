@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -22,6 +23,10 @@ type StatusBar struct {
 	spinner    components.Spinner
 	statusLine string
 	statusPhase string
+	btwCount   int
+
+	lastLabelChange time.Time
+	nextLabelMinGap time.Duration
 
 	tokenPrompt, tokenCompletion, tokenCached int
 	sessionCost   float64
@@ -38,7 +43,8 @@ type StatusBar struct {
 
 	asyncCommands []fileio.AsyncCmdInfo
 
-	spinFrame int
+	spinFrame     int
+	activityStep  int
 }
 
 func NewStatusBar(t *theme.Theme) *StatusBar {
@@ -69,6 +75,11 @@ func (s *StatusBar) View() string {
 		left = s.spinner.WorkAnimation()
 	} else {
 		left = ""
+	}
+
+	if s.btwCount > 0 && (s.thinking || s.streaming) {
+		btwLabel := fmt.Sprintf(" · %d user note%s", s.btwCount, pluralS(s.btwCount))
+		left += lipgloss.NewStyle().Foreground(lipgloss.Color("#ffcc00")).Bold(true).Render(btwLabel)
 	}
 
 	right := ""
@@ -104,6 +115,20 @@ func (s *StatusBar) View() string {
 	return left + strings.Repeat(" ", spacer) + right + pad
 }
 
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func randInt(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	return rand.Intn(n)
+}
+
 func (s *StatusBar) confirming() bool {
 	return s.isConfirming
 }
@@ -115,6 +140,33 @@ func (s *StatusBar) SetConfirming(c bool) {
 func (s *StatusBar) SetSpinFrame(frame int) {
 	s.spinFrame = frame
 	s.spinner.SetFrame(frame)
+	s.spinner.SetActivityStep(s.activityStep)
+}
+
+func (s *StatusBar) RecordActivity() {
+	now := time.Now()
+	if s.nextLabelMinGap == 0 {
+		s.nextLabelMinGap = s.randLabelGap()
+	}
+	if now.Sub(s.lastLabelChange) >= s.nextLabelMinGap {
+		s.activityStep++
+		s.spinner.SetActivityStep(s.activityStep)
+		s.lastLabelChange = now
+		s.nextLabelMinGap = s.randLabelGap()
+	}
+}
+
+func (s *StatusBar) ResetActivity() {
+	s.activityStep = 0
+	s.spinner.SetActivityStep(0)
+	s.lastLabelChange = time.Time{}
+	s.nextLabelMinGap = 0
+}
+
+func (s *StatusBar) randLabelGap() time.Duration {
+	const lo = 3
+	const hi = 7
+	return time.Duration(lo+randInt(hi-lo+1)) * time.Second
 }
 
 func (s *StatusBar) SetError(err string) {
@@ -193,4 +245,12 @@ func (s *StatusBar) StatusLine() string {
 
 func (s *StatusBar) Phase() string {
 	return s.statusPhase
+}
+
+func (s *StatusBar) BtwCount() int {
+	return s.btwCount
+}
+
+func (s *StatusBar) SetBtwCount(n int) {
+	s.btwCount = n
 }

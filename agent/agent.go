@@ -114,6 +114,7 @@ func (a *Agent) Run(
 	blockResolveCh <-chan string,
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
+	btwCh <-chan string,
 ) []provider.ChatMessage {
 	l := a.logger
 	allTools := allToolDefs()
@@ -178,6 +179,23 @@ func (a *Agent) Run(
 			emit(AgentEvent{Type: "done", Data: "Cancelled."})
 			return msgs
 		}
+
+		// Drain btw channel — user mid-run input takes priority
+		drainBtw := func() {
+			for {
+				select {
+				case btwText := <-btwCh:
+					l.Info("BTW", "user_interruption", "len", len(btwText), "step", step)
+					msgs = append(msgs, provider.ChatMessage{
+						Role: "user",
+						Content: "[USER INTERRUPTION — READ THIS NOW]\nThe user interrupted your work with an important message while you were running. Stop what you're doing, read this carefully, and adjust your approach accordingly. This takes priority over whatever you were doing.\n\n" + btwText,
+					})
+				default:
+					return
+				}
+			}
+		}
+		drainBtw()
 
 		if smStatus := buildSMStatusMsg(); smStatus != nil {
 			replaced := false

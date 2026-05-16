@@ -11,6 +11,7 @@ type TUI struct {
 	app     *app.App
 	Program *tea.Program
 	InputCh <-chan string
+	BtwCh   <-chan string
 	doneCh  chan struct{}
 
 	CancelCh chan struct{}
@@ -43,10 +44,12 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	Debug(tag, msg string, pairs ...any)
 }) (*TUI, error) {
 	inputCh := make(chan string, 8)
+	btwCh := make(chan string, 8)
 	cancelCh := make(chan struct{}, 1)
 
 	t := &TUI{
 		InputCh:         inputCh,
+		BtwCh:           btwCh,
 		CancelCh:        cancelCh,
 		doneCh:          make(chan struct{}),
 		ProviderPresets: presets,
@@ -80,7 +83,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return ProviderConfig{}
 	}
 
-	a := app.NewApp(modelName, username, inputCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg)
+	a := app.NewApp(modelName, username, inputCh, btwCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg)
 	a.SetProviderPresets(t.ProviderPresets)
 	a.SetHistory(history)
 	a.OnConfirmResult = func(result ConfirmResult) {

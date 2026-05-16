@@ -156,7 +156,20 @@ When a project has tests, you MUST ensure they pass after your changes:
 - After each meaningful change, run the relevant tests — not just at the very end.
 - If tests fail, fix them before proceeding. Do not leave failing tests behind unless they were already failing before your changes.
 - If you add new functionality, when it does makes sense, add tests for it.
-- Use the project's standard test command (go test, npm test, pytest, cargo test, etc.).`
+- Use the project's standard test command (go test, npm test, pytest, cargo test, etc.).
+
+# User Interruptions (btw)
+
+While you are working, the user may send messages mid-run. These arrive as user messages prefixed with [USER INTERRUPTION — READ THIS NOW]. This is the user's real-time take on what you're doing.
+
+Rules:
+- TREAT THESE AS HIGH PRIORITY. The user chose to interrupt you — they have something important to say.
+- Pause your current line of thinking. Reassess based on the user's input.
+- If the user corrects your approach, course-correct immediately. Don't stubbornly continue the old plan.
+- If the user asks you to stop something, stop it. Don't justify why you were doing it.
+- If the user provides additional context or constraints, incorporate them into your work going forward.
+- Acknowledge the user's input briefly, then act on it. Don't just say "okay" and ignore it.
+- You may still use tools after receiving an interruption — you're still in the loop. But your next actions should reflect the user's input.`
 
 func BuildSystemPrompt() string {
 	shell := os.Getenv("SHELL")

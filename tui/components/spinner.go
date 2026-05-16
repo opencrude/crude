@@ -7,11 +7,11 @@ import (
 )
 
 const (
-	BlinkPeriod    = 800
-	BlinkHalf      = BlinkPeriod / 2
-	DotCycleStep   = 300
-	SpinnerPeriod  = BlinkPeriod
-	SpinnerHalf    = SpinnerPeriod / 2
+	BlinkPeriod   = 800
+	BlinkHalf     = BlinkPeriod / 2
+	DotCycleStep  = 300
+	SpinnerPeriod = BlinkPeriod
+	SpinnerHalf   = SpinnerPeriod / 2
 )
 
 func BlinkOn(frame int) bool {
@@ -51,9 +51,10 @@ const (
 )
 
 type Spinner struct {
-	theme *theme.Theme
-	frame int
-	phase Phase
+	theme         *theme.Theme
+	frame         int
+	phase         Phase
+	activityStep  int
 }
 
 func NewSpinner(t *theme.Theme) Spinner {
@@ -72,6 +73,10 @@ func (m *Spinner) SetFrame(f int) {
 	m.frame = f
 }
 
+func (m *Spinner) SetActivityStep(step int) {
+	m.activityStep = step
+}
+
 func (m Spinner) WorkAnimation() string {
 	moon := SpinnerPhase(m.frame)
 
@@ -79,16 +84,16 @@ func (m Spinner) WorkAnimation() string {
 	var color lipgloss.Color
 	switch m.phase {
 	case PhaseGrounding:
-		label = "gathering context"
+		label = m.groundingLabel()
 		color = m.theme.Colors.Spinner.Grounding
 	case PhasePlanning:
-		label = "planning"
+		label = m.planningLabel()
 		color = m.theme.Colors.Spinner.Planning
 	case PhaseExecuting:
-		label = "executing"
+		label = m.executingLabel()
 		color = m.theme.Colors.Spinner.Executing
 	default:
-		label = "thinking"
+		label = m.thinkingLabel()
 		color = m.theme.Colors.Spinner.Default
 	}
 
@@ -98,7 +103,41 @@ func (m Spinner) WorkAnimation() string {
 
 func (m Spinner) StreamAnimation() string {
 	moon := SpinnerPhase(m.frame)
-	return lipgloss.NewStyle().Foreground(m.theme.Colors.Spinner.Planning).Render(moon + " streaming")
+	label := m.streamingLabel()
+	return lipgloss.NewStyle().Foreground(m.theme.Colors.Spinner.Planning).Render(moon+" ") +
+		lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Render(label)
+}
+
+func (m Spinner) activityIdx(n int) int {
+	if n == 0 {
+		return 0
+	}
+	return m.activityStep % n
+}
+
+func (m Spinner) thinkingLabel() string {
+	labels := []string{"Thinking", "Pondering", "Crunching", "Mulling It Over", "Connecting Dots"}
+	return labels[m.activityIdx(len(labels))]
+}
+
+func (m Spinner) groundingLabel() string {
+	labels := []string{"Gathering Context", "Digging In", "Scanning The Field", "Looking Around", "Getting The Lay Of The Land"}
+	return labels[m.activityIdx(len(labels))]
+}
+
+func (m Spinner) planningLabel() string {
+	labels := []string{"Planning", "Figuring It Out", "Mapping The Route", "Strategizing", "Plotting The Course"}
+	return labels[m.activityIdx(len(labels))]
+}
+
+func (m Spinner) executingLabel() string {
+	labels := []string{"Executing", "Making Moves", "Getting Things Done", "In The Weeds", "Grinding Away"}
+	return labels[m.activityIdx(len(labels))]
+}
+
+func (m Spinner) streamingLabel() string {
+	labels := []string{"Words Flowing In", "Tokens Arriving", "Streaming In", "Pipes Are Full", "Bits On The Wire"}
+	return labels[m.activityIdx(len(labels))]
 }
 
 func (m Spinner) spinnerColor() lipgloss.Color {

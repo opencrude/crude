@@ -127,6 +127,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch e := evt.(type) {
 				case input.SubmitEvent:
 					cmds = append(cmds, m.submitInput(e.Text))
+				case input.BtwSubmitEvent:
+					cmds = append(cmds, m.submitBtw(e.Text))
 				case input.SlashCommandEvent:
 					cmds = append(cmds, m.executeSlashCommand(e.Command))
 				case input.SettingsOpenEvent:
@@ -290,7 +292,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case ModeChat:
+		case ModeChat:
 		if m.anyActive() && !m.blocking {
 			if keyMsg, ok := msg.(tea.KeyMsg); ok {
 				switch keyMsg.Type {
@@ -313,6 +315,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch e := evt.(type) {
 			case input.SubmitEvent:
 				cmds = append(cmds, m.submitInput(e.Text))
+			case input.BtwSubmitEvent:
+				cmds = append(cmds, m.submitBtw(e.Text))
 			case input.SlashCommandEvent:
 				cmds = append(cmds, m.executeSlashCommand(e.Command))
 			case input.SettingsOpenEvent:

@@ -726,7 +726,7 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.M
 	return entries, nil
 }
 
-func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
+func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan string) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "session_id", s.sessionID)
 	defer func() {
@@ -960,7 +960,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 			}
 		}
 		ag.Emit = emit
-		agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID)
+		agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID, btwCh)
 
 		cancel()
 

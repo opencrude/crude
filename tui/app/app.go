@@ -53,6 +53,7 @@ type App struct {
 	yolo      bool
 
 	inputCh  chan<- string
+	btwCh    chan<- string
 	cancelCh chan<- struct{}
 
 	OnQuit             func()
@@ -100,7 +101,7 @@ type (
 	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, inputCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger) *App {
+func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger) *App {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	ml.SetModelName(modelName)
@@ -128,7 +129,8 @@ func NewApp(modelName string, username string, inputCh chan<- string, cancelCh c
 		confirm:      cd,
 		yoloDlg:      yd,
 		inputCh:      inputCh,
-		cancelCh:     cancelCh,
+		btwCh:        btwCh,
+		cancelCh:    cancelCh,
 		modelName:    modelName,
 		username:     username,
 		startTime:    time.Now(),
