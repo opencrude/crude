@@ -135,7 +135,11 @@ func (l *LocalExec) Execute(cmd string, opts ExecOptions) (string, error) {
 	}
 	if l.logger != nil {
 		if err != nil {
-			l.logger.Warn("COMMAND", "exec", "cmd_len", len(cmd), "timeout", opts.TimeoutSeconds, "latency_ms", dur, "out_len", len(out), "exit_code", "non-zero", "cwd", opts.CWD)
+			exitCode := -1
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			}
+			l.logger.Warn("COMMAND", "exec_failed", "cmd_len", len(cmd), "timeout", opts.TimeoutSeconds, "latency_ms", dur, "out_len", len(out), "exit_code", exitCode, "cwd", opts.CWD)
 		} else {
 			l.logger.Info("COMMAND", "exec_ok", "cmd_len", len(cmd), "timeout", opts.TimeoutSeconds, "latency_ms", dur, "out_len", len(out), "cwd", opts.CWD)
 		}

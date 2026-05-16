@@ -188,7 +188,8 @@ func main() {
 
 	tuiInst, err := tui.Start(sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, loadHistory(), sess.Logger())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
+		sess.Logger().Error("SESSION", "tui_start_failed", "error", err.Error())
+	fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -206,7 +207,7 @@ func main() {
 
 	app.OnHistorySave = func(history []string) {
 		if err := saveHistory(history); err != nil {
-			sess.Logger().Warn("main", "failed to save history", "error", err)
+			sess.Logger().Warn("HISTORY", "save_failed", "error", err.Error())
 		}
 	}
 
@@ -269,6 +270,6 @@ func main() {
 
 	tuiInst.Wait()
 	if exitMessage != "" {
-		fmt.Fprintf(os.Stderr, exitMessage)
+		fmt.Fprint(os.Stderr, exitMessage)
 	}
 }

@@ -124,6 +124,7 @@ func (a *Agent) Run(
 	msgs := []provider.ChatMessage{
 		{Role: "system", Content: systemPrompt, CacheControl: &provider.CacheControl{Type: "ephemeral"}},
 	}
+	l.Debug("CACHE", "system_ephemeral", "position", 0, "len", len(systemPrompt))
 	for _, m := range sessionMessages {
 		if m.Role != "system" {
 			msgs = append(msgs, m)
@@ -366,7 +367,7 @@ func (a *Agent) Run(
 		accumulatedText = content
 		toolCalls = streamToolCalls
 
-		a.logger.Info("LLM", "step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason, "prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
+		a.logger.Info("LLM", "step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason, "cumulative_prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
 
 		if accumulatedText == "" {
 			accumulatedText = lastReply
@@ -475,6 +476,7 @@ func (a *Agent) Run(
 							resultCh <- execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
 							return
 						}
+						l.Info("BLOCK", "resolved", "response", resp, "operation", sr.Risk.String(), "tool", "execute_command")
 						emit(AgentEvent{Type: "blocking_complete"})
 						if resp == "always" {
 							emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
@@ -484,6 +486,8 @@ func (a *Agent) Run(
 							}})
 						}
 					}
+				} else if tc.Function.Name == "execute_command" && a.Yolo {
+					l.Debug("SAFETY", "yolo_skip", "tool", "execute_command")
 				}
 
 				// File mutation tools — require user confirmation before executing
@@ -546,6 +550,7 @@ func (a *Agent) Run(
 						resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}}
 						return
 					}
+					l.Info("BLOCK", "resolved", "response", resp, "operation", fileOp, "tool", tc.Function.Name)
 					emit(AgentEvent{Type: "blocking_complete"})
 					if resp == "always" {
 						emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
@@ -554,6 +559,8 @@ func (a *Agent) Run(
 							"target":    filePath,
 						}})
 					}
+				} else if fileCheck && a.Yolo {
+					l.Debug("SAFETY", "yolo_skip", "tool", tc.Function.Name, "op", fileOp)
 				}
 
 				// Format args as compact key=value pairs instead of Go's map[key:val]
@@ -680,6 +687,7 @@ func (a *Agent) Run(
 					emit(AgentEvent{Type: "stream_token", Data: r.result.Content})
 				}
 			case <-ctx.Done():
+				l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 				return msgs
 			}
@@ -699,7 +707,20 @@ func (a *Agent) Run(
 			reason := "stop_condition_met"
 			if lastPromptTokens > ctxLimit {
 				reason = fmt.Sprintf("context_limit_reached (%d/%d tokens)", lastPromptTokens, ctxWindow)
+				l.Warn("CTX", "overflow", "prompt_tokens", lastPromptTokens, "limit", ctxLimit, "window", ctxWindow)
 			}
+			loopSigs := 0
+			if len(steps) >= loopDetectWindow {
+				window := steps[len(steps)-loopDetectWindow:]
+				sigCount := make(map[string]int)
+				for _, s := range window {
+					if s.ToolName != "" {
+						sigCount[s.ToolName]++
+					}
+				}
+				loopSigs = len(sigCount)
+			}
+			l.Debug("LOOP", "check", "steps", len(steps), "window", loopDetectWindow, "unique_sigs", loopSigs)
 			l.Warn("AGENT", "stop_condition", "reason", reason, "steps", len(steps), "prompt_tokens", lastPromptTokens, "total_prompt_tokens_spent", totalPromptTokens, "ctx_window", ctxWindow)
 			if lastReply != "" {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": lastReply, "reason": reason}})

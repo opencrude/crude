@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"crude/logger"
+
 	"github.com/PuerkitoBio/goquery"
 )
 
@@ -20,7 +22,10 @@ func WebSearch(query string, maxResults int) (string, error) {
 		maxResults = 6
 	}
 
+	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "web_search", "query", query, "max_results", maxResults) })
+	start := time.Now()
 	results, succeeded, failed := SuperSearch(query, maxResults)
+	dur := time.Since(start).Milliseconds()
 
 	if len(results) == 0 {
 		var sb strings.Builder
@@ -28,6 +33,7 @@ func WebSearch(query string, maxResults int) (string, error) {
 
 		if len(succeeded) == 0 && len(failed) > 0 {
 			sb.WriteString("All search engines failed:\n")
+			logIf(func(lg *logger.Logger) { lg.Warn("SEARCH", "all_engines_failed", "query", query, "latency_ms", dur, "failures", fmt.Sprintf("%v", failed)) })
 			for eng, errMsg := range failed {
 				sb.WriteString(fmt.Sprintf("  - %s: %s\n", eng, errMsg))
 			}
@@ -45,6 +51,8 @@ func WebSearch(query string, maxResults int) (string, error) {
 
 		return sb.String(), nil
 	}
+
+	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "web_search_ok", "query", query, "results", len(results), "engines", len(succeeded), "latency_ms", dur) })
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Web search results for: %s\n", query))
@@ -97,8 +105,12 @@ func WebFetch(rawURL string, offset, limit int) (string, error) {
 		rawURL = "https://" + rawURL
 	}
 
+	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "fetch", "url", rawURL, "offset", offset, "limit", limit) })
+	start := time.Now()
+
 	result, err := fetchWebContent(rawURL, offset, limit)
 	if err != nil {
+		logIf(func(lg *logger.Logger) { lg.Warn("SEARCH", "fetch_error", "url", rawURL, "latency_ms", time.Since(start).Milliseconds(), "error", err.Error()) })
 		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
 			return "", fmt.Errorf("fetch: request timed out for %s — the site may be slow or blocking automated requests. Try again or try a different URL", rawURL)
 		}
@@ -110,6 +122,9 @@ func WebFetch(rawURL string, offset, limit int) (string, error) {
 		}
 		return "", fmt.Errorf("fetch: %w", err)
 	}
+
+	dur := time.Since(start).Milliseconds()
+	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "fetch_ok", "url", rawURL, "total_chars", result.TotalChars, "latency_ms", dur) })
 
 	if result.Content == "" {
 		return fmt.Sprintf("No content could be extracted from %s\n\nThe page may be:\n- A JavaScript-rendered single-page app (try a different URL)\n- Empty or requiring authentication\n- A binary file (PDF, image, etc.)", rawURL), nil

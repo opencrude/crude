@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"crude/logger"
 )
 
 // ModelPrice holds per-token pricing for a single model, used for manual
@@ -30,7 +32,9 @@ func (p ModelPrice) CalculateCost(promptTokens, completionTokens, cachedTokens i
 	}
 	inputCost := float64(newPromptTokens)*p.InputPricePerToken + float64(cachedTokens)*cachedPrice
 	outputCost := float64(completionTokens) * p.OutputPricePerToken
-	return inputCost + outputCost
+	cost := inputCost + outputCost
+	logIf(func(lg *logger.Logger) { lg.Debug("COST", "calculate", "prompt", promptTokens, "completion", completionTokens, "cached", cachedTokens, "cost", cost) })
+	return cost
 }
 
 // ModelMeta is the serialisable form of a model's metadata, used to persist
@@ -87,6 +91,7 @@ func SetModelMeta(modelID string, meta ModelMeta) {
 	if meta.ContextWindow > 0 {
 		SetModelContext(modelID, meta.ContextWindow)
 	}
+	logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "set_meta", "model", modelID, "ctx", meta.ContextWindow, "input_price", meta.InputPrice) })
 }
 
 // LoadModelMetas bulk-loads a map of model metadata (e.g. from config).
@@ -95,6 +100,7 @@ func LoadModelMetas(metas map[string]ModelMeta) {
 	for id, meta := range metas {
 		SetModelMeta(id, meta)
 	}
+	logIf(func(lg *logger.Logger) { lg.Info("PRICING", "load_metas", "count", len(metas)) })
 }
 
 // GetAllModelMetas returns a snapshot of every cached model metadata,
@@ -163,6 +169,7 @@ func LookupPrice(model string) ModelPrice {
 	dynamicPricesMu.RLock()
 	if p, ok := dynamicPrices[lower]; ok {
 		dynamicPricesMu.RUnlock()
+		logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "exact") })
 		return p
 	}
 	dynamicPricesMu.RUnlock()
@@ -172,6 +179,7 @@ func LookupPrice(model string) ModelPrice {
 		dynamicPricesMu.RLock()
 		if p, ok := dynamicPrices[stripped]; ok {
 			dynamicPricesMu.RUnlock()
+			logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "stripped", "matched", stripped) })
 			return p
 		}
 		dynamicPricesMu.RUnlock()
@@ -179,12 +187,11 @@ func LookupPrice(model string) ModelPrice {
 
 	// Fuzzy fallback: if no exact match, check whether any key in
 	// dynamicPrices contains the model ID as a substring (case-insensitive).
-	// This handles models like "glm-5.1" matching "zhipu/glm-5.1" from
-	// models.dev, or "claude-3.5-sonnet" matching "anthropic/claude-3.5-sonnet".
 	dynamicPricesMu.RLock()
 	for key, price := range dynamicPrices {
 		if strings.Contains(key, lower) || strings.Contains(lower, key) {
 			dynamicPricesMu.RUnlock()
+			logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "fuzzy", "matched", key) })
 			return price
 		}
 	}
@@ -193,10 +200,12 @@ func LookupPrice(model string) ModelPrice {
 	// Free variant suffixes.
 	for _, prefix := range knownFreePrefixes {
 		if strings.Contains(lower, prefix) {
+			logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "free_suffix") })
 			return ModelPrice{0, 0, 0}
 		}
 	}
 
+	logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "zero") })
 	return ModelPrice{0, 0, 0}
 }
 
