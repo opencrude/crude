@@ -123,7 +123,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.blocking = false
 			m.confirm.Dismiss()
 			m.statusbar.SetConfirming(false)
-			m.statusbar.SetThinking(false, false, false)
+			m.statusbar.SetThinking(true, false, false)
 			if tab := m.win.TabByTitle("Confirm"); tab != nil {
 				m.win.CloseTabByID(tab.ID)
 			}
