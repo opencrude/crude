@@ -159,7 +159,7 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 	return m, nil
 }
 
-func (m TextInput) View(width int, spinFrame int) string {
+func (m TextInput) View(width int, spinFrame int, cursorSolidAlways bool) string {
 	if width < 1 {
 		width = 1
 	}
@@ -208,7 +208,7 @@ func (m TextInput) View(width int, spinFrame int) string {
 
 				left := string(segRunes[:cursorInSeg])
 				var cursorChar string
-				cursorSolid := time.Since(m.lastInputTime) < 800*time.Millisecond
+				cursorSolid := cursorSolidAlways || time.Since(m.lastInputTime) < 800*time.Millisecond
 				if cursorInSeg < len(segRunes) {
 					right := string(segRunes[cursorInSeg+1:])
 					if cursorSolid {
@@ -251,10 +251,12 @@ func (m TextInput) View(width int, spinFrame int) string {
 
 	if len(allLines) == 0 {
 		promptStyle := m.theme.Styles.InputPrompt
-		cursorChar := BlockCursor(spinFrame, m.theme.Colors.Accent)
-		cursorSolid := time.Since(m.lastInputTime) < 800*time.Millisecond
+		cursorSolid := cursorSolidAlways || time.Since(m.lastInputTime) < 800*time.Millisecond
+		var cursorChar string
 		if cursorSolid {
 			cursorChar = lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("█")
+		} else {
+			cursorChar = BlockCursor(spinFrame, m.theme.Colors.Accent)
 		}
 		allLines = append(allLines, promptStyle.Render("❯")+" "+cursorChar)
 	}

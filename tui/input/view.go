@@ -25,7 +25,7 @@ func (m Model) View(width, chatAreaHeight int, settingsActive, confirmActive boo
 		b.WriteByte('\n')
 	}
 
-	b.WriteString(m.input.View(width, spinFrame))
+	b.WriteString(m.input.View(width, spinFrame, m.thinking))
 
 	inputVal := m.input.Value()
 	showSlash := m.slashActive &&
