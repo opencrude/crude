@@ -132,5 +132,7 @@ func (p Policy) IsAllowed(op CRUDEOp) bool {
 }
 
 func (p Policy) NeedsConfirmation(op CRUDEOp) bool {
-	return p.RequireConfirmation[CapabilityFromOp(op)]
+	needed := p.RequireConfirmation[CapabilityFromOp(op)]
+	safetyLogIf(func(lg *logger.Logger) { lg.Debug("SAFETY", "needs_confirmation", "op", op, "needed", needed) })
+	return needed
 }

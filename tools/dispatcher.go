@@ -107,7 +107,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		if !yolo {
 			safetyResult := safety.CheckCommandSafety(cmd, lg)
 			if safetyResult.Risk.IsAlwaysBlocked() {
-				lg.Warn("SAFETY", "block_always", "command", cmd, "reason", safetyResult.Reason)
+				lg.Warn("COMMAND", "block_always", "command", cmd, "reason", safetyResult.Reason)
 				result = ToolResult{Content: fmt.Sprintf("Error: [BLOCKED] %s\nSuggestion: %s",
 					safetyResult.Reason, safetyResult.Suggestion)}
 				break
@@ -155,7 +155,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 						break
 					}
 					result = ToolResult{Content: "Error: " + err.Error()}
-					lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+					lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 					break
 				}
 				result = ToolResult{Content: formatReadFile(path, content, offset, limit)}
@@ -168,7 +168,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 						break
 					}
 					result = ToolResult{Content: "Error: " + err.Error()}
-					lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+					lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 					break
 				}
 				result = ToolResult{Content: formatReadFile(path, content, offset, limit)}
@@ -178,7 +178,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			data, err := os.ReadFile(path)
 			if err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			if fileio.IsBinary(data) {
@@ -210,7 +210,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 					break
 				}
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			lines := strings.Count(content, "\n") + 1
@@ -218,12 +218,12 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		} else {
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			lines := strings.Count(content, "\n") + 1
@@ -250,7 +250,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 					break
 				}
 				result = ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			newData, _ := os.ReadFile(path)
@@ -260,7 +260,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			data, err := os.ReadFile(path)
 			if err != nil {
 				result = ToolResult{Content: fmt.Sprintf("Error: %v\nHint: use read_file to verify the exact content before retrying.", err)}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			orig = string(data)
@@ -273,7 +273,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			replaced := strings.ReplaceAll(orig, oldString, newString)
 			if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			result = formatEditResult(path, count, orig, replaced)
@@ -286,14 +286,14 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		if ed != nil {
 			if err := ed.Delete(path); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			result = ToolResult{Content: "Deleted: " + path}
 		} else {
 			if err := os.Remove(path); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			result = ToolResult{Content: "Deleted: " + path}
@@ -303,37 +303,37 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 	case "move_file":
 		source := GetStrArg(params, "source", "")
 		dest := GetStrArg(params, "destination", "")
-		lg.Info("TOOL", "call", "tool", tool, "source", source, "dest", dest)
+		lg.Info("TOOL", "call", "tool", tool, "source", source, "destination", dest)
 		if ed != nil {
 			if err := ed.Move(source, dest); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			result = ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
 		} else {
 			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			if err := os.Rename(source, dest); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			result = ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
 		}
-		lg.Info("TOOL", "result", "tool", tool, "source", source, "dest", dest, "latency_ms", time.Since(start).Milliseconds())
+		lg.Info("TOOL", "result", "tool", tool, "source", source, "destination", dest, "latency_ms", time.Since(start).Milliseconds())
 
 	case "copy_file":
 		source := GetStrArg(params, "source", "")
 		dest := GetStrArg(params, "destination", "")
-		lg.Info("TOOL", "call", "tool", tool, "source", source, "dest", dest)
+		lg.Info("TOOL", "call", "tool", tool, "source", source, "destination", dest)
 		if ed != nil {
 			if err := ed.Copy(source, dest); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			result = ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
@@ -341,30 +341,30 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			in, err := os.Open(source)
 			if err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			defer in.Close()
 			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			out, err := os.Create(dest)
 			if err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			defer out.Close()
 			if _, err := io.Copy(out, in); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			result = ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
 		}
-		lg.Info("TOOL", "result", "tool", tool, "source", source, "dest", dest, "latency_ms", time.Since(start).Milliseconds())
+		lg.Info("TOOL", "result", "tool", tool, "source", source, "destination", dest, "latency_ms", time.Since(start).Milliseconds())
 
 	case "list_directory":
 		path := GetStrArg(params, "path", "")
@@ -376,7 +376,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			entries, err := exec.ListDir(path)
 			if err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			if len(entries) == 0 {
@@ -395,7 +395,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		matches, err := exec.GlobFiles(baseDir, pattern, includeHidden)
 		if err != nil {
 			result = ToolResult{Content: "Error: " + err.Error()}
-			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 			break
 		}
 		if len(matches) == 0 {
@@ -420,7 +420,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		matches, err := exec.GrepFiles(pattern, searchPath, recursive, includeHidden)
 		if err != nil {
 			result = ToolResult{Content: "Error: " + err.Error()}
-			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 			break
 		}
 		if len(matches) == 0 {
@@ -441,7 +441,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		resultText, err := search.WebSearch(query, 6)
 		if err != nil {
 			result = ToolResult{Content: "Search error: " + err.Error()}
-			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 			break
 		}
 		result = ToolResult{Content: resultText}
@@ -457,7 +457,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		resultText, err := search.ArxivSearch(query, maxResults)
 		if err != nil {
 			result = ToolResult{Content: "ArXiv search error: " + err.Error()}
-			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 			break
 		}
 		result = ToolResult{Content: resultText}
@@ -471,7 +471,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		resultText, err := search.WebFetch(url, offset, limit)
 		if err != nil {
 			result = ToolResult{Content: "Fetch error: " + err.Error()}
-			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 			break
 		}
 		result = ToolResult{Content: resultText}
@@ -483,7 +483,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		resultText, err := js.Run(code)
 		if err != nil {
 			result = ToolResult{Content: "JavaScript error: " + err.Error()}
-			lg.Error("TOOL", "error", "tool", tool, "error", err.Error())
+			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 			break
 		}
 		result = ToolResult{Content: resultText}
@@ -491,9 +491,9 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 
 	case "reply":
 		content := GetStrArg(params, "content", "")
-		lg.Info("TOOL", "call", "tool", tool, "len", len(content))
+		lg.Info("TOOL", "call", "tool", tool, "content_len", len(content))
 		result = ToolResult{Content: content}
-		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds())
+		lg.Info("TOOL", "result", "tool", tool, "content_len", len(content), "latency_ms", time.Since(start).Milliseconds())
 
 	default:
 		lg.Error("TOOL", "unknown_tool", "tool", tool)

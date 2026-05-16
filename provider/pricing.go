@@ -33,7 +33,7 @@ func (p ModelPrice) CalculateCost(promptTokens, completionTokens, cachedTokens i
 	inputCost := float64(newPromptTokens)*p.InputPricePerToken + float64(cachedTokens)*cachedPrice
 	outputCost := float64(completionTokens) * p.OutputPricePerToken
 	cost := inputCost + outputCost
-	logIf(func(lg *logger.Logger) { lg.Debug("COST", "calculate", "prompt", promptTokens, "completion", completionTokens, "cached", cachedTokens, "cost", cost) })
+	logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "calculate_cost", "prompt", promptTokens, "completion", completionTokens, "cached", cachedTokens, "cost", cost) })
 	return cost
 }
 

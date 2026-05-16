@@ -1,6 +1,22 @@
 package statemachine
 
-import "time"
+import (
+	"time"
+
+	"crude/logger"
+)
+
+var goalLogger *logger.Logger
+
+func SetGoalLogger(lg *logger.Logger) {
+	goalLogger = lg
+}
+
+func goalLogIf(fn func(lg *logger.Logger)) {
+	if goalLogger != nil {
+		fn(goalLogger)
+	}
+}
 
 // GoalPriority controls execution order when multiple goals compete.
 type GoalPriority int
@@ -51,6 +67,23 @@ type Goal struct {
 }
 
 // NewGoal creates a new goal with the given intent and query.
+func (s GoalStatus) String() string {
+	switch s {
+	case GoalPending:
+		return "pending"
+	case GoalActive:
+		return "active"
+	case GoalBlocked:
+		return "blocked"
+	case GoalCompleted:
+		return "completed"
+	case GoalFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
 func NewGoal(intent, originalQuery string, priority GoalPriority, isBlocking bool) *Goal {
 	return &Goal{
 		ID:                 newID(),
@@ -73,7 +106,11 @@ func (g *Goal) Touch() {
 
 // IsExpired returns true if the goal has not been accessed within ttl.
 func (g *Goal) IsExpired(ttl time.Duration) bool {
-	return time.Since(g.LastAccessedAt) > ttl
+	expired := time.Since(g.LastAccessedAt) > ttl
+	if expired {
+		goalLogIf(func(lg *logger.Logger) { lg.Info("GOAL", "expired", "goal_id", g.ID, "intent", g.Intent, "ttl_hours", ttl.Hours()) })
+	}
+	return expired
 }
 
 // GetTransferableSlotData returns the subset of slots marked as transferable.
@@ -90,6 +127,7 @@ func (g *Goal) GetTransferableSlotData() map[string]any {
 // pushSubGoal appends a sub-goal to the top of the stack.
 func (g *Goal) pushSubGoal(sub *Goal) {
 	g.SubGoalStack = append(g.SubGoalStack, sub)
+	goalLogIf(func(lg *logger.Logger) { lg.Debug("GOAL", "push_sub", "parent_id", g.ID, "sub_id", sub.ID, "sub_intent", sub.Intent, "depth", len(g.SubGoalStack)) })
 }
 
 // peekSubGoal returns the top sub-goal without removing it (nil if empty).
@@ -107,6 +145,7 @@ func (g *Goal) popSubGoal() *Goal {
 	}
 	top := g.SubGoalStack[len(g.SubGoalStack)-1]
 	g.SubGoalStack = g.SubGoalStack[:len(g.SubGoalStack)-1]
+	goalLogIf(func(lg *logger.Logger) { lg.Debug("GOAL", "pop_sub", "parent_id", g.ID, "sub_id", top.ID, "sub_intent", top.Intent, "depth", len(g.SubGoalStack)) })
 	return top
 }
 
@@ -117,11 +156,10 @@ func (g *Goal) completeSubGoalByID(goalID string, resultData map[string]any) boo
 	for i, sub := range g.SubGoalStack {
 		if sub.ID == goalID {
 			sub.Status = GoalCompleted
-			// Remove from stack by splicing.
 			g.SubGoalStack = append(g.SubGoalStack[:i], g.SubGoalStack[i+1:]...)
+			goalLogIf(func(lg *logger.Logger) { lg.Info("GOAL", "complete_sub", "parent_id", g.ID, "sub_id", goalID, "sub_intent", sub.Intent, "remaining", len(g.SubGoalStack)) })
 			return true
 		}
-		// Recurse into the sub-goal's own sub-goals.
 		if sub.completeSubGoalByID(goalID, resultData) {
 			return true
 		}

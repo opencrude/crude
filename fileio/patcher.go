@@ -19,47 +19,33 @@ func ApplySearchReplace(content string, ops []SearchReplace, lg *logger.Logger) 
 		content = content[len(bom):]
 	}
 	useCRLF := strings.Contains(content, "\r\n")
-	if lg != nil {
-		lg.Debug("DIFF", "apply_enter", "use_crlf", useCRLF, "has_bom", bom != "", "ops", len(ops), "content_len", len(content))
-	}
+	lg.Debug("DIFF", "apply_enter", "use_crlf", useCRLF, "has_bom", bom != "", "ops", len(ops), "content_len", len(content))
 
 	result := strings.ReplaceAll(content, "\r\n", "\n")
-	if result != content && lg != nil {
+	if result != content {
 		lg.Debug("DIFF", "normalized_to_lf", "original_len", len(content), "normalized_len", len(result))
 	}
 	for i, op := range ops {
 		if op.Search == "" {
-			if lg != nil {
-				lg.Error("DIFF", "empty_search", "op_idx", i)
-			}
+			lg.Error("DIFF", "empty_search", "op_idx", i)
 			return "", fmt.Errorf("op[%d]: empty search string", i)
 		}
 		if op.Search == op.Replace {
-			if lg != nil {
-				lg.Debug("DIFF", "skip_noop", "op_idx", i, "search_len", len(op.Search))
-			}
+			lg.Debug("DIFF", "skip_noop", "op_idx", i, "search_len", len(op.Search))
 			continue
 		}
-		if lg != nil {
-			lg.Debug("DIFF", "apply_op", "op_idx", i, "search_len", len(op.Search), "replace_len", len(op.Replace), "content_len_before", len(result))
-		}
+		lg.Debug("DIFF", "apply_op", "op_idx", i, "search_len", len(op.Search), "replace_len", len(op.Replace), "content_len_before", len(result))
 		applied, err := applySingleOp(result, op, lg)
 		if err != nil {
-			if lg != nil {
-				lg.Error("DIFF", "op_failed", "op_idx", i, "error", err.Error())
-			}
+			lg.Error("DIFF", "op_failed", "op_idx", i, "error", err.Error())
 			return "", fmt.Errorf("op[%d]: %w", i, err)
 		}
-		if lg != nil {
-			lg.Debug("DIFF", "op_success", "op_idx", i, "result_len", len(applied))
-		}
+		lg.Debug("DIFF", "op_success", "op_idx", i, "result_len", len(applied))
 		result = applied
 	}
 	if useCRLF {
 		result = strings.ReplaceAll(result, "\n", "\r\n")
-		if lg != nil {
-			lg.Debug("DIFF", "restored_crlf", "len", len(result))
-		}
+		lg.Debug("DIFF", "restored_crlf", "len", len(result))
 	}
 	return bom + result, nil
 }
@@ -80,147 +66,109 @@ func applySingleOp(content string, op SearchReplace, lg *logger.Logger) (string,
 	trimmedSearchLines := trimBlankEdges(fullSearchLines)
 	replaceLines := strings.Split(replace, "\n")
 
-	if lg != nil {
-		lg.Debug("DIFF", "apply_single", "content_lines", len(contentLines), "search_lines", len(fullSearchLines), "trimmed_lines", len(trimmedSearchLines), "replace_lines", len(replaceLines))
-	}
+	lg.Debug("DIFF", "apply_single", "content_lines", len(contentLines), "search_lines", len(fullSearchLines), "trimmed_lines", len(trimmedSearchLines), "replace_lines", len(replaceLines))
 
 	if len(trimmedSearchLines) == 0 {
-		if lg != nil {
-			lg.Error("DIFF", "trimmed_to_empty", "error", "search is only whitespace after trimming blank edges")
-		}
+		lg.Error("DIFF", "trimmed_to_empty", "error", "search is only whitespace after trimming blank edges")
 		return "", fmt.Errorf("search is only whitespace after trimming blank edges")
 	}
 
-	// Phase 1: Exact match with trimmed search (handles accidental leading/trailing blank lines in search)
 	if hits := findMatches(contentLines, trimmedSearchLines, func(a, b string) bool { return a == b }); len(hits) == 1 {
-		if lg != nil {
-			lg.Debug("DIFF", "phase1_exact_trimmed", "match_line", hits[0]+1, "search_lines", len(trimmedSearchLines))
-		}
+		lg.Debug("DIFF", "phase1_exact_trimmed", "match_line", hits[0]+1, "search_lines", len(trimmedSearchLines))
 		return splice(contentLines, hits[0], len(trimmedSearchLines), replaceLines), nil
 	} else if len(hits) > 1 {
-		if lg != nil {
-			lg.Warn("DIFF", "phase1_ambiguous", "match_count", len(hits), "locations", multiMatchLocations(hits))
-		}
+		lg.Warn("DIFF", "phase1_ambiguous", "match_count", len(hits), "locations", multiMatchLocations(hits))
 		return "", multiMatchErr(hits, "exactly", op.Search)
-	} else if lg != nil {
+	} else {
 		lg.Debug("DIFF", "phase1_no_match", "desc", "proceeding to phase2")
 	}
 
-	// Phase 2: WS-normalized match with trimmed search + re-indentation
 	if hits := findMatches(contentLines, trimmedSearchLines, func(a, b string) bool {
 		return strings.TrimSpace(a) == strings.TrimSpace(b)
 	}); len(hits) == 1 {
 		reIndented := reindentBlock(contentLines, trimmedSearchLines, hits[0], replaceLines)
-		if lg != nil {
+		origLen := len(replaceLines)
+		newLen := len(reIndented)
+		changed := 0
+		for i := 0; i < origLen && i < newLen; i++ {
+			if reIndented[i] != replaceLines[i] {
+				changed++
+			}
+		}
+		if changed > 0 {
+			lg.Debug("DIFF", "phase2_reindented", "match_line", hits[0]+1, "lines_changed", changed, "total_lines", newLen)
+		}
+		lg.Debug("DIFF", "phase2_ws_normalized", "match_line", hits[0]+1, "reindent_type", "trimmed")
+		return splice(contentLines, hits[0], len(trimmedSearchLines), reIndented), nil
+	} else if len(hits) > 1 {
+		lg.Warn("DIFF", "phase2_ambiguous", "match_count", len(hits), "locations", multiMatchLocations(hits))
+		return "", multiMatchErr(hits, "after whitespace normalisation", op.Search)
+	} else {
+		lg.Debug("DIFF", "phase2_no_match", "desc", "proceeding to phase3")
+	}
+
+	if len(fullSearchLines) != len(trimmedSearchLines) {
+		lg.Debug("DIFF", "phase3_trying_full", "full_lines", len(fullSearchLines), "trimmed_lines", len(trimmedSearchLines))
+		if hits := findMatches(contentLines, fullSearchLines, func(a, b string) bool { return a == b }); len(hits) == 1 {
+			lg.Debug("DIFF", "phase3_exact_full", "match_line", hits[0]+1, "search_lines", len(fullSearchLines))
+			return splice(contentLines, hits[0], len(fullSearchLines), replaceLines), nil
+		} else if len(hits) > 1 {
+			lg.Warn("DIFF", "phase3_ambiguous", "match_count", len(hits), "locations", multiMatchLocations(hits))
+			return "", multiMatchErr(hits, "exactly (untrimmed)", op.Search)
+		} else {
+			lg.Debug("DIFF", "phase3_no_match", "desc", "proceeding to phase4")
+		}
+
+		if hits := findMatches(contentLines, fullSearchLines, func(a, b string) bool {
+			return strings.TrimSpace(a) == strings.TrimSpace(b)
+		}); len(hits) == 1 {
+			reIndented := reindentBlock(contentLines, fullSearchLines, hits[0], replaceLines)
+			changed := 0
 			origLen := len(replaceLines)
 			newLen := len(reIndented)
-			changed := 0
 			for i := 0; i < origLen && i < newLen; i++ {
 				if reIndented[i] != replaceLines[i] {
 					changed++
 				}
 			}
 			if changed > 0 {
-				lg.Debug("DIFF", "phase2_reindented", "match_line", hits[0]+1, "lines_changed", changed, "total_lines", newLen)
+				lg.Debug("DIFF", "phase4_reindented", "match_line", hits[0]+1, "lines_changed", changed)
 			}
-			lg.Debug("DIFF", "phase2_ws_normalized", "match_line", hits[0]+1, "reindent_type", "trimmed")
-		}
-		return splice(contentLines, hits[0], len(trimmedSearchLines), reIndented), nil
-	} else if len(hits) > 1 {
-		if lg != nil {
-			lg.Warn("DIFF", "phase2_ambiguous", "match_count", len(hits), "locations", multiMatchLocations(hits))
-		}
-		return "", multiMatchErr(hits, "after whitespace normalisation", op.Search)
-	} else if lg != nil {
-		lg.Debug("DIFF", "phase2_no_match", "desc", "proceeding to phase3")
-	}
-
-	// Phase 3: Exact match with full search (for intentional blank lines in search)
-	if len(fullSearchLines) != len(trimmedSearchLines) {
-		if lg != nil {
-			lg.Debug("DIFF", "phase3_trying_full", "full_lines", len(fullSearchLines), "trimmed_lines", len(trimmedSearchLines))
-		}
-		if hits := findMatches(contentLines, fullSearchLines, func(a, b string) bool { return a == b }); len(hits) == 1 {
-			if lg != nil {
-				lg.Debug("DIFF", "phase3_exact_full", "match_line", hits[0]+1, "search_lines", len(fullSearchLines))
-			}
-			return splice(contentLines, hits[0], len(fullSearchLines), replaceLines), nil
-		} else if len(hits) > 1 {
-			if lg != nil {
-				lg.Warn("DIFF", "phase3_ambiguous", "match_count", len(hits), "locations", multiMatchLocations(hits))
-			}
-			return "", multiMatchErr(hits, "exactly (untrimmed)", op.Search)
-		} else if lg != nil {
-			lg.Debug("DIFF", "phase3_no_match", "desc", "proceeding to phase4")
-		}
-
-		// Phase 4: WS-normalized match with full search + re-indentation
-		if hits := findMatches(contentLines, fullSearchLines, func(a, b string) bool {
-			return strings.TrimSpace(a) == strings.TrimSpace(b)
-		}); len(hits) == 1 {
-			reIndented := reindentBlock(contentLines, fullSearchLines, hits[0], replaceLines)
-			if lg != nil {
-				changed := 0
-				origLen := len(replaceLines)
-				newLen := len(reIndented)
-				for i := 0; i < origLen && i < newLen; i++ {
-					if reIndented[i] != replaceLines[i] {
-						changed++
-					}
-				}
-				if changed > 0 {
-					lg.Debug("DIFF", "phase4_reindented", "match_line", hits[0]+1, "lines_changed", changed)
-				}
-				lg.Debug("DIFF", "phase4_ws_normalized_full", "match_line", hits[0]+1)
-			}
+			lg.Debug("DIFF", "phase4_ws_normalized_full", "match_line", hits[0]+1)
 			return splice(contentLines, hits[0], len(fullSearchLines), reIndented), nil
 		} else if len(hits) > 1 {
-			if lg != nil {
-				lg.Warn("DIFF", "phase4_ambiguous", "match_count", len(hits), "locations", multiMatchLocations(hits))
-			}
+			lg.Warn("DIFF", "phase4_ambiguous", "match_count", len(hits), "locations", multiMatchLocations(hits))
 			return "", multiMatchErr(hits, "after whitespace normalisation (untrimmed)", op.Search)
-		} else if lg != nil {
+		} else {
 			lg.Debug("DIFF", "phase4_no_match", "desc", "proceeding to phase5")
 		}
-	} else if lg != nil {
+	} else {
 		lg.Debug("DIFF", "phase3_skip", "desc", "full and trimmed have same line count")
 	}
 
-	// Phase 5: Substring within-line matching. Each trimmedSearchLines line
-	// must occur as a substring inside the corresponding contentLines line.
 	subHits := findSubstringMatches(contentLines, trimmedSearchLines)
 	if len(subHits) == 1 {
 		start := subHits[0]
-		if lg != nil {
-			lg.Debug("DIFF", "phase5_substring", "match_line", start+1, "search_lines", len(trimmedSearchLines))
-		}
+		lg.Debug("DIFF", "phase5_substring", "match_line", start+1, "search_lines", len(trimmedSearchLines))
 		if len(trimmedSearchLines) == 1 {
 			replaced, ok := substringReplaceInLine(contentLines[start], trimmedSearchLines[0], replaceLines)
 			if ok {
-				if lg != nil {
-					lg.Debug("DIFF", "phase5_inline_replace", "line", start+1)
-				}
+				lg.Debug("DIFF", "phase5_inline_replace", "line", start+1)
 				contentLines[start] = replaced
 				return strings.Join(contentLines, "\n"), nil
 			}
 		}
 		reIndented := reindentBlock(contentLines, trimmedSearchLines, start, replaceLines)
-		if lg != nil {
-			lg.Debug("DIFF", "phase5_ws_adjusted", "match_line", start+1, "reindented", reIndented[0] != replaceLines[0])
-		}
+		lg.Debug("DIFF", "phase5_ws_adjusted", "match_line", start+1, "reindented", reIndented[0] != replaceLines[0])
 		return splice(contentLines, start, len(trimmedSearchLines), reIndented), nil
 	} else if len(subHits) > 1 {
-		if lg != nil {
-			lg.Warn("DIFF", "phase5_ambiguous", "match_count", len(subHits), "locations", multiMatchLocations(subHits))
-		}
+		lg.Warn("DIFF", "phase5_ambiguous", "match_count", len(subHits), "locations", multiMatchLocations(subHits))
 		return "", multiMatchErr(subHits, "by substring", op.Search)
-	} else if lg != nil {
+	} else {
 		lg.Debug("DIFF", "phase5_no_match", "desc", "all phases exhausted")
 	}
 
-	if lg != nil {
-		lg.Error("DIFF", "all_phases_failed", "search_preview", preview(op.Search))
-	}
+	lg.Error("DIFF", "all_phases_failed", "search_preview", preview(op.Search))
 	return "", fmt.Errorf(
 		"search text not found (tried exact match, whitespace-normalised match, and substring match):\n  %s\n\n"+
 			"ⓘ  HINT: Copy FULL lines from read_file output — from the START of each line including all indentation.\n"+

@@ -104,7 +104,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 
 	go func() {
 		if _, err := program.Run(); err != nil {
-			lg.Error("tui", "program error: %v", "err", err)
+			lg.Error("TUI", "program_error", "error", err.Error())
 		}
 		if t.OnQuit != nil {
 			t.OnQuit()

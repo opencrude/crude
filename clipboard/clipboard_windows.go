@@ -42,6 +42,7 @@ func openClipboardWithRetry() error {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	logIf(func(lg *logger.Logger) { lg.Warn("CLIPBOARD", "open_retry_exhausted", "retries", maxRetries) })
 	return fmt.Errorf("failed to open clipboard after retries")
 }
 
@@ -49,7 +50,10 @@ func read(t Format) ([]byte, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
+	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read", "format", t) })
+
 	if t != FmtText {
+		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read_unsupported", "format", t) })
 		return nil, errUnsupported
 	}
 
@@ -64,16 +68,17 @@ func read(t Format) ([]byte, error) {
 func readText() ([]byte, error) {
 	hMem, _, _ := getClipboardData.Call(cFmtUnicodeText)
 	if hMem == 0 {
+		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read_no_data") })
 		return nil, errUnavailable
 	}
 
 	p, _, _ := gLock.Call(hMem)
 	if p == 0 {
+		logIf(func(lg *logger.Logger) { lg.Warn("CLIPBOARD", "win_read_lock_failed") })
 		return nil, errUnavailable
 	}
 	defer gUnlock.Call(hMem)
 
-	// p is GlobalAlloc'd Win32 memory — not on the Go heap, so the GC will never move it, is safe.
 	const maxChars = 1 << 20
 	buf := unsafe.Slice((*uint16)(unsafe.Pointer(p)), maxChars)
 
@@ -82,7 +87,9 @@ func readText() ([]byte, error) {
 		n++
 	}
 
-	return []byte(string(utf16.Decode(buf[:n]))), nil
+	result := []byte(string(utf16.Decode(buf[:n])))
+	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read_ok", "chars", n, "bytes", len(result)) })
+	return result, nil
 }
 
 func write(t Format, buf []byte) (bool, error) {
@@ -90,6 +97,7 @@ func write(t Format, buf []byte) (bool, error) {
 	defer runtime.UnlockOSThread()
 
 	if t != FmtText {
+		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_write_unsupported", "format", t) })
 		return false, errUnsupported
 	}
 
@@ -100,26 +108,31 @@ func write(t Format, buf []byte) (bool, error) {
 
 	r, _, err := emptyClipboard.Call()
 	if r == 0 {
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_clear_failed", "error", err.Error()) })
 		return false, fmt.Errorf("failed to clear clipboard: %w", err)
 	}
 
 	if len(buf) == 0 {
+		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_write_empty") })
 		return true, nil
 	}
 
 	s, err := syscall.UTF16FromString(string(buf))
 	if err != nil {
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_utf16_failed", "error", err.Error()) })
 		return false, fmt.Errorf("failed to convert string: %w", err)
 	}
 
 	hMem, _, err := gAlloc.Call(gmemMoveable, uintptr(len(s)*2))
 	if hMem == 0 {
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_alloc_failed", "error", err.Error()) })
 		return false, fmt.Errorf("failed to alloc memory: %w", err)
 	}
 
 	p, _, err := gLock.Call(hMem)
 	if p == 0 {
 		gFree.Call(hMem)
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_lock_failed", "error", err.Error()) })
 		return false, fmt.Errorf("failed to lock memory: %w", err)
 	}
 
@@ -129,9 +142,11 @@ func write(t Format, buf []byte) (bool, error) {
 
 	v, _, err := setClipboardData.Call(cFmtUnicodeText, hMem)
 	if v == 0 {
-		gFree.Call(hMem) // only free on failure
+		gFree.Call(hMem)
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_set_failed", "error", err.Error()) })
 		return false, fmt.Errorf("failed to set clipboard data: %w", err)
 	}
 
+	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_write_ok", "bytes", len(buf)) })
 	return true, nil
 }
