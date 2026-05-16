@@ -258,7 +258,7 @@ func (m *App) handleUsageData(data any) {
 		ctxUsed := toInt(d["context_used"])
 		estimated, _ := d["estimated"].(bool)
 		m.tokenPrompt = int(prompt)
-		m.tokenCompletion += int(completion)
+		m.tokenCompletion = int(completion)
 		m.tokenCached = int(cached)
 		m.sessionCost += cost
 		m.tokenEstimated = estimated
@@ -274,7 +274,7 @@ func (m *App) handleUsageData(data any) {
 		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed, m.tokenEstimated)
 	case map[string]int:
 		m.tokenCached = d["prompt_cached"]
-		m.tokenCompletion += d["completion"]
+		m.tokenCompletion = d["completion"]
 		m.tokenPrompt = d["prompt"]
 		if cw := d["context_window"]; cw > 0 {
 			m.contextWindow = cw

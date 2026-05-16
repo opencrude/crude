@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"crude/logger"
 )
 
 // modelsDevURL is the single endpoint for models.dev — a comprehensive
@@ -47,7 +49,10 @@ type mdLimit struct {
 // Prices from models.dev are per million tokens; they are converted to
 // per-token values before being returned.
 func FetchModelsDevAll() (map[string]ModelMeta, error) {
+	logIf(func(lg *logger.Logger) { lg.Info("PROVIDER", "models_dev_fetch", "url", modelsDevURL) })
+
 	client := &http.Client{Timeout: 30 * time.Second}
+	start := time.Now()
 	resp, err := client.Get(modelsDevURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch models.dev: %w", err)
@@ -55,6 +60,7 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		logIf(func(lg *logger.Logger) { lg.Warn("PROVIDER", "models_dev_http_error", "status", resp.StatusCode) })
 		return nil, fmt.Errorf("models.dev returned %d", resp.StatusCode)
 	}
 
@@ -62,6 +68,8 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read models.dev: %w", err)
 	}
+	readDur := time.Since(start).Milliseconds()
+	logIf(func(lg *logger.Logger) { lg.Debug("PROVIDER", "models_dev_downloaded", "bytes", len(body), "latency_ms", readDur) })
 
 	var data map[string]mdProvider
 	if err := json.Unmarshal(body, &data); err != nil {
@@ -102,6 +110,8 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 			}
 		}
 	}
+
+	logIf(func(lg *logger.Logger) { lg.Info("PROVIDER", "models_dev_ok", "count", len(result), "latency_ms", time.Since(start).Milliseconds()) })
 
 	return result, nil
 }

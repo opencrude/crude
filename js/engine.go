@@ -3,7 +3,10 @@ package js
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
+
+	"crude/logger"
 
 	"github.com/dop251/goja"
 )
@@ -12,6 +15,26 @@ const (
 	maxExecTime = 10 * time.Second
 	maxCodeLen  = 50000
 )
+
+var (
+	pkgLogger   *logger.Logger
+	pkgLoggerMu sync.RWMutex
+)
+
+func SetLogger(lg *logger.Logger) {
+	pkgLoggerMu.Lock()
+	defer pkgLoggerMu.Unlock()
+	pkgLogger = lg
+}
+
+func logIf(fn func(lg *logger.Logger)) {
+	pkgLoggerMu.RLock()
+	lg := pkgLogger
+	pkgLoggerMu.RUnlock()
+	if lg != nil {
+		fn(lg)
+	}
+}
 
 // Run executes JavaScript code in a sandboxed goja VM and returns the result.
 // The last expression value is returned as a string.
@@ -22,6 +45,9 @@ func Run(code string) (string, error) {
 	if len(code) > maxCodeLen {
 		return "", fmt.Errorf("js: code too long (%d chars, max %d)", len(code), maxCodeLen)
 	}
+
+	logIf(func(lg *logger.Logger) { lg.Info("JS", "run", "code_len", len(code), "timeout", maxExecTime) })
+	start := time.Now()
 
 	vm := goja.New()
 	vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
@@ -82,6 +108,7 @@ func Run(code string) (string, error) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				logIf(func(lg *logger.Logger) { lg.Error("JS", "panic", "code_len", len(code), "error", fmt.Sprintf("%v", r)) })
 				ch <- result{nil, fmt.Errorf("js: panic: %v", r)}
 			}
 		}()
@@ -95,10 +122,12 @@ func Run(code string) (string, error) {
 	case r := <-ch:
 		val, err = r.value, r.err
 	case <-time.After(maxExecTime):
+		logIf(func(lg *logger.Logger) { lg.Warn("JS", "timeout", "code_len", len(code), "timeout", maxExecTime) })
 		return "", fmt.Errorf("js: execution timed out (%s)", maxExecTime)
 	}
 
 	if err != nil {
+		logIf(func(lg *logger.Logger) { lg.Debug("JS", "error", "code_len", len(code), "error", err.Error()) })
 		return formatJSError(err, consoleOut.String()), nil
 	}
 
@@ -117,6 +146,7 @@ func Run(code string) (string, error) {
 	}
 
 	out := sb.String()
+	logIf(func(lg *logger.Logger) { lg.Info("JS", "result", "code_len", len(code), "output_len", len(out), "latency_ms", time.Since(start).Milliseconds()) })
 	if out == "" {
 		return "(no output)", nil
 	}

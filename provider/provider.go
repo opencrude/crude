@@ -1,6 +1,31 @@
 package provider
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+
+	"crude/logger"
+)
+
+var (
+	pkgLogger   *logger.Logger
+	pkgLoggerMu sync.RWMutex
+)
+
+func SetLogger(lg *logger.Logger) {
+	pkgLoggerMu.Lock()
+	defer pkgLoggerMu.Unlock()
+	pkgLogger = lg
+}
+
+func logIf(fn func(lg *logger.Logger)) {
+	pkgLoggerMu.RLock()
+	lg := pkgLogger
+	pkgLoggerMu.RUnlock()
+	if lg != nil {
+		fn(lg)
+	}
+}
 
 type Provider struct {
 	ID      string `json:"id"`
@@ -221,6 +246,7 @@ func standardByID(id string) APIStandard {
 func FromPreset(presetID, apiKey, customBaseURL string) *Provider {
 	preset := GetPreset(presetID)
 	if preset == nil {
+		logIf(func(lg *logger.Logger) { lg.Warn("PROVIDER", "unknown_preset", "requested", presetID, "fallback", "openrouter") })
 		preset = GetPreset("openrouter")
 	}
 

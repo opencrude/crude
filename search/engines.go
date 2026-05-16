@@ -11,8 +11,30 @@ import (
 	"sync"
 	"time"
 
+	"crude/logger"
+
 	"github.com/PuerkitoBio/goquery"
 )
+
+var (
+	pkgLogger   *logger.Logger
+	pkgLoggerMu sync.RWMutex
+)
+
+func SetLogger(lg *logger.Logger) {
+	pkgLoggerMu.Lock()
+	defer pkgLoggerMu.Unlock()
+	pkgLogger = lg
+}
+
+func logIf(fn func(lg *logger.Logger)) {
+	pkgLoggerMu.RLock()
+	lg := pkgLogger
+	pkgLoggerMu.RUnlock()
+	if lg != nil {
+		fn(lg)
+	}
+}
 
 // SearchResult represents a single web search result from any engine.
 type SearchResult struct {
@@ -39,13 +61,17 @@ var tracker = &engineTracker{
 func (t *engineTracker) success(engine string) {
 	t.mu.Lock()
 	t.scores[engine]++
+	scores := t.scores[engine]
 	t.mu.Unlock()
+	logIf(func(lg *logger.Logger) { lg.Debug("SEARCH", "engine_success", "engine", engine, "score", scores) })
 }
 
 func (t *engineTracker) failure(engine string) {
 	t.mu.Lock()
 	t.scores[engine]--
+	scores := t.scores[engine]
 	t.mu.Unlock()
+	logIf(func(lg *logger.Logger) { lg.Debug("SEARCH", "engine_failure", "engine", engine, "score", scores) })
 }
 
 func (t *engineTracker) engines() []string {
@@ -66,18 +92,29 @@ func (t *engineTracker) engines() []string {
 }
 
 func searchWithEngine(engine, query string, limit int) ([]SearchResult, error) {
-	switch strings.ToLower(engine) {
-	case "brave":
-		return searchBrave(query, limit)
-	case "duckduckgo":
-		return searchDuckDuckGo(query, limit)
-	case "startpage":
-		return searchStartpage(query, limit)
-	case "exa":
-		return searchExa(query, limit)
-	default:
-		return searchBrave(query, limit)
+	logIf(func(lg *logger.Logger) { lg.Debug("SEARCH", "engine_start", "engine", engine, "query", query, "limit", limit) })
+	start := time.Now()
+	results, err := func() ([]SearchResult, error) {
+		switch strings.ToLower(engine) {
+		case "brave":
+			return searchBrave(query, limit)
+		case "duckduckgo":
+			return searchDuckDuckGo(query, limit)
+		case "startpage":
+			return searchStartpage(query, limit)
+		case "exa":
+			return searchExa(query, limit)
+		default:
+			return searchBrave(query, limit)
+		}
+	}()
+	dur := time.Since(start).Milliseconds()
+	if err != nil {
+		logIf(func(lg *logger.Logger) { lg.Warn("SEARCH", "engine_failed", "engine", engine, "latency_ms", dur, "error", err.Error()) })
+	} else {
+		logIf(func(lg *logger.Logger) { lg.Debug("SEARCH", "engine_ok", "engine", engine, "results", len(results), "latency_ms", dur) })
 	}
+	return results, err
 }
 
 // SuperSearch queries multiple engines concurrently, deduplicates results,
@@ -85,6 +122,7 @@ func searchWithEngine(engine, query string, limit int) ([]SearchResult, error) {
 // and failed engines with their error messages.
 func SuperSearch(query string, limit int) ([]SearchResult, []string, map[string]string) {
 	engines := tracker.engines()
+	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "super_start", "query", query, "limit", limit, "engines", engines) })
 
 	type engineResult struct {
 		engine  string
@@ -118,6 +156,7 @@ func SuperSearch(query string, limit int) ([]SearchResult, []string, map[string]
 	}
 
 	deduped := deduplicateResults(allResults, limit)
+	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "super_done", "query", query, "raw", len(allResults), "deduped", len(deduped), "succeeded", len(succeeded), "failed_engines", len(failed)) })
 	return deduped, succeeded, failed
 }
 

@@ -1,5 +1,31 @@
 package safety
 
+import (
+	"sync"
+
+	"crude/logger"
+)
+
+var (
+	pkgLogger   *logger.Logger
+	pkgLoggerMu sync.RWMutex
+)
+
+func SetCapabilitiesLogger(lg *logger.Logger) {
+	pkgLoggerMu.Lock()
+	defer pkgLoggerMu.Unlock()
+	pkgLogger = lg
+}
+
+func safetyLogIf(fn func(lg *logger.Logger)) {
+	pkgLoggerMu.RLock()
+	lg := pkgLogger
+	pkgLoggerMu.RUnlock()
+	if lg != nil {
+		fn(lg)
+	}
+}
+
 type CRUDEOp string
 
 const (
@@ -97,9 +123,12 @@ func ReadOnlyPolicy() Policy {
 
 func (p Policy) IsAllowed(op CRUDEOp) bool {
 	if len(p.AllowedCapabilities) == 0 {
+		safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "empty_policy_allow_all", "op", op) })
 		return true
 	}
-	return p.AllowedCapabilities[CapabilityFromOp(op)]
+	allowed := p.AllowedCapabilities[CapabilityFromOp(op)]
+	safetyLogIf(func(lg *logger.Logger) { lg.Debug("SAFETY", "policy_check", "op", op, "allowed", allowed) })
+	return allowed
 }
 
 func (p Policy) NeedsConfirmation(op CRUDEOp) bool {

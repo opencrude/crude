@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"crude/logger"
 )
 
 // ModelInfo is a minimal model descriptor returned by the Models API.
@@ -29,6 +31,8 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 		return nil, fmt.Errorf("model listing not supported by %s standard", p.StandardID())
 	}
 
+	logIf(func(lg *logger.Logger) { lg.Info("PROVIDER", "fetch_models", "provider", p.Name, "endpoint", endpoint) })
+
 	client := &http.Client{Timeout: 15 * time.Second}
 
 	req, err := http.NewRequest("GET", endpoint, nil)
@@ -38,6 +42,7 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 	header, value := p.Auth()
 	req.Header.Set(header, value)
 
+	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch models: %w", err)
@@ -46,9 +51,11 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 
 	if resp.StatusCode != 200 {
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			logIf(func(lg *logger.Logger) { lg.Error("PROVIDER", "fetch_models_auth_fail", "provider", p.Name, "status", resp.StatusCode) })
 			return nil, fmt.Errorf("invalid API key for %s", p.Name)
 		}
 		if resp.StatusCode == 404 {
+			logIf(func(lg *logger.Logger) { lg.Warn("PROVIDER", "fetch_models_not_supported", "provider", p.Name) })
 			return nil, fmt.Errorf("models endpoint not supported by %s", p.Name)
 		}
 		return nil, fmt.Errorf("%s returned %d", p.Name, resp.StatusCode)
@@ -67,6 +74,8 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 	sort.Slice(models, func(i, j int) bool {
 		return strings.ToLower(models[i].ID) < strings.ToLower(models[j].ID)
 	})
+
+	logIf(func(lg *logger.Logger) { lg.Info("PROVIDER", "fetch_models_ok", "provider", p.Name, "count", len(models), "latency_ms", time.Since(start).Milliseconds()) })
 
 	return models, nil
 }

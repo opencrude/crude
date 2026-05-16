@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"crude/logger"
 )
 
 const arxivAPIURL = "https://export.arxiv.org/api/query"
@@ -62,6 +64,9 @@ func ArxivSearch(query string, maxResults int) (string, error) {
 		maxResults = 10
 	}
 
+	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "arxiv", "query", query, "max_results", maxResults) })
+	start := time.Now()
+
 	params := url.Values{}
 	params.Set("search_query", "all:"+query)
 	params.Set("start", "0")
@@ -93,6 +98,9 @@ func ArxivSearch(query string, maxResults int) (string, error) {
 	if err := xml.Unmarshal(body, &feed); err != nil {
 		return "", fmt.Errorf("search: parsing arxiv response: %w", err)
 	}
+
+	dur := time.Since(start).Milliseconds()
+	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "arxiv_ok", "query", query, "results", len(feed.Entries), "latency_ms", dur) })
 
 	if len(feed.Entries) == 0 {
 		return "No arXiv papers found for: " + query, nil

@@ -12,10 +12,13 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/clipboard"
 	"crude/fileio"
+	"crude/js"
 	"crude/logger"
 	"crude/provider"
 	"crude/safety"
+	"crude/search"
 	"crude/statemachine"
 	"crude/tools"
 	"crude/tui"
@@ -100,6 +103,12 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 
 	permStore := safety.NewPermissionStore()
 	permStore.SetLogger(lg)
+	safety.SetCapabilitiesLogger(lg)
+
+	provider.SetLogger(lg)
+	search.SetLogger(lg)
+	js.SetLogger(lg)
+	clipboard.SetLogger(lg)
 
 	fileioSessionID := fileio.GenerateSessionID()
 	var editor *fileio.Editor
@@ -122,8 +131,8 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		asyncMgr:     fileio.NewAsyncCommandManagerWithLogger(lg),
 		sessionID:    sessionID,
 		sessionStart: time.Now(),
-		cost:         NewCostAccumulator(),
-		tokens:       NewTokenTracker(),
+		cost:         NewCostAccumulator(lg),
+		tokens:       NewTokenTracker(lg),
 	}, nil
 }
 
@@ -134,6 +143,7 @@ func (s *Session) HasMessages() bool {
 }
 
 func (s *Session) Close() {
+	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
 	if s.editor != nil {
 		s.editor.Close()
 	}
@@ -800,7 +810,6 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 
 		if s.editor != nil {
 			s.editor = s.editor.WithMessage(currentMsgID)
-			l.Debug("EDITOR", "with_message", "msg_id", currentMsgID)
 		}
 
 		// Update provider model & thinking effort before each run (settings may have changed)
@@ -922,8 +931,14 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string) {
 					if !isEstimated {
 						s.tokens.Record(promptT, compT)
 					}
-					turnCost := s.cost.Snapshot().TotalCost
-					l.Info("COST", "turn_usage", "model", model, "prompt", promptT, "completion", compT, "cached", cachedT, "turn_cost", turnCost, "session_total", turnCost, "estimated", isEstimated)
+					var perTurnCost float64
+					if c, ok := evt.Data.(map[string]any); ok {
+						if v, ok := c["cost"].(float64); ok {
+							perTurnCost = v
+						}
+					}
+					sessionTotal := s.cost.Snapshot().TotalCost
+					l.Info("COST", "turn_usage", "model", model, "prompt", promptT, "completion", compT, "cached", cachedT, "turn_cost", perTurnCost, "session_total", sessionTotal, "estimated", isEstimated)
 				}
 			}
 

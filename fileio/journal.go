@@ -328,8 +328,7 @@ func revertEntry(e JournalEntry, lg *logger.Logger) error {
 		if err == nil {
 			curCS := checksum(cur)
 			if curCS != e.ChecksumN {
-				lg.Warn("JOURNAL", "file modified externally, restoring old content anyway",
-				"path", e.Path, "op_id", truncateHash(e.OpID, 8),
+				lg.Warn("JOURNAL", "modified_externally", "path", e.Path, "op_id", truncateHash(e.OpID, 8),
 				"expected", truncateHash(e.ChecksumN, 8), "got", truncateHash(curCS, 8))
 			}
 		}

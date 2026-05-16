@@ -171,7 +171,7 @@ func formatValue(v any) string {
 	case int64:
 		return fmt.Sprintf("%d", val)
 	case float64:
-		return fmt.Sprintf("%g", val)
+		return fmt.Sprintf("%.10g", val)
 	case bool:
 		return fmt.Sprintf("%t", val)
 	case time.Duration:

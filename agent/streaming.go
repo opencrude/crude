@@ -39,6 +39,11 @@ func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCal
 		return p
 	}
 
+	if !looksComplete(cleaned) {
+		p.Params = extractWithJSONParser(cleaned, name)
+		return p
+	}
+
 	if lg != nil {
 		lg.Debug("STREAM", "json_unmarshal_failed", "tool", name, "tool_id", id, "error", unmarshalErr.Error())
 	}
@@ -65,6 +70,34 @@ func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCal
 	}
 	p.Params = extractWithJSONParser(fallbackData, name)
 	return p
+}
+
+func looksComplete(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) == 0 {
+		return true
+	}
+	if s[0] == '{' {
+		last := findLastNonWhitespace(s)
+		return last == '}'
+	}
+	if s[0] == '[' {
+		last := findLastNonWhitespace(s)
+		return last == ']'
+	}
+	return true
+}
+
+func findLastNonWhitespace(s string) byte {
+	for i := len(s) - 1; i >= 0; i-- {
+		switch s[i] {
+		case ' ', '\t', '\n', '\r':
+			continue
+		default:
+			return s[i]
+		}
+	}
+	return 0
 }
 
 func extractWithJSONParser(data string, toolName string) map[string]any {

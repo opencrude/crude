@@ -52,7 +52,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 		}
 	}
 
-	a.logger.Info("LLM", "prompt", "model", a.Provider.Name, "msgs", len(msgs), "tools", len(tools))
+	a.logger.Info("LLM", "prompt", "model", a.Model, "msgs", len(msgs), "tools", len(tools))
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	endpoint := a.Provider.ChatEndpoint()
@@ -60,6 +60,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 	for attempt := 1; ; attempt++ {
 		select {
 		case <-ctx.Done():
+			a.logger.Warn("CANCEL", "complete_cancelled", "reason", ctx.Err().Error())
 			return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API request cancelled: %v", ctx.Err())}
 		default:
 		}
@@ -77,10 +78,11 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
+			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
 			select {
 			case <-time.After(bo):
 			case <-ctx.Done():
+				a.logger.Warn("CANCEL", "retry_cancelled", "reason", ctx.Err().Error())
 				return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API request cancelled during retry: %v", ctx.Err())}
 			}
 			continue
@@ -89,6 +91,7 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 		respBody, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
+			a.logger.Error("LLM", "read_body_failed", "error", readErr.Error())
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("read response: %w", readErr)
 		}
 
@@ -99,34 +102,37 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 			}
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
-				a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
+				a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				select {
 				case <-time.After(bo):
 				case <-ctx.Done():
+					a.logger.Warn("CANCEL", "retry_cancelled", "reason", ctx.Err().Error())
 					return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API request cancelled during retry: %v", ctx.Err())}
 				}
 				continue
 			}
+			a.logger.Error("LLM", "non_retryable_error", "model", a.Model, "status", resp.StatusCode, "snippet_len", len(snippet))
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("API %d: %s", resp.StatusCode, string(respBody))
 		}
 
 		chatResp, err := std.DecodeResponse(respBody)
 		if err != nil {
+			a.logger.Error("LLM", "decode_failed", "model", a.Model, "error", err.Error())
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("decode response: %w", err)
 		}
 		if chatResp.Error != nil {
-			a.logger.Error("LLM", "error", "model", a.Provider.Name, "error", chatResp.Error.Message, "latency_ms", time.Since(apiStart).Milliseconds())
+			a.logger.Error("LLM", "error", "model", a.Model, "error", chatResp.Error.Message, "latency_ms", time.Since(apiStart).Milliseconds())
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("API error: %s", chatResp.Error.Message)
 		}
 		if len(chatResp.Choices) == 0 {
-			a.logger.Error("LLM", "empty_response", "model", a.Provider.Name)
+			a.logger.Error("LLM", "empty_response", "model", a.Model)
 			return nil, nil, "", 0, 0, 0, fmt.Errorf("empty response from model")
 		}
 
 		choice := chatResp.Choices[0]
 		apiDur := time.Since(apiStart).Milliseconds()
 		promptTokens, completionTokens, promptTokensCached := std.UsageFromResponse(chatResp)
-		a.logger.Info("LLM", "response", "model", a.Provider.Name, "latency_ms", apiDur, "prompt_tokens", promptTokens, "completion_tokens", completionTokens)
+		a.logger.Info("LLM", "response", "model", a.Model, "latency_ms", apiDur, "prompt_tokens", promptTokens, "completion_tokens", completionTokens)
 
 		return chatResp, nil, choice.FinishReason, promptTokens, completionTokens, promptTokensCached, nil
 	}
@@ -173,7 +179,7 @@ func (a *Agent) completeStream(
 	}
 
 	streamStart := time.Now()
-	a.logger.Info("LLM", "prompt", "model", a.Provider.Name, "msgs", len(msgs), "tools", len(tools))
+	a.logger.Info("LLM", "prompt", "model", a.Model, "msgs", len(msgs), "tools", len(tools))
 
 	client := &http.Client{Timeout: 300 * time.Second}
 	endpoint := a.Provider.ChatEndpoint()
@@ -183,6 +189,7 @@ func (a *Agent) completeStream(
 	for attempt := 1; ; attempt++ {
 		select {
 		case <-ctx.Done():
+			a.logger.Warn("CANCEL", "stream_cancelled", "reason", ctx.Err().Error())
 			return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled: %v", ctx.Err())}
 		default:
 		}
@@ -199,13 +206,14 @@ func (a *Agent) completeStream(
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
+			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
 			if onRetry != nil {
 				onRetry(attempt, bo.Seconds())
 			}
 			select {
 			case <-time.After(bo):
 			case <-ctx.Done():
+				a.logger.Warn("CANCEL", "stream_retry_cancelled", "reason", ctx.Err().Error())
 				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled during retry: %v", ctx.Err())}
 			}
 			continue
@@ -220,18 +228,19 @@ func (a *Agent) completeStream(
 			}
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
-				a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
+				a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				if onRetry != nil {
 					onRetry(attempt, bo.Seconds())
 				}
 				select {
 				case <-time.After(bo):
 				case <-ctx.Done():
+					a.logger.Warn("CANCEL", "stream_retry_cancelled", "reason", ctx.Err().Error())
 					return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled during retry: %v", ctx.Err())}
 				}
 				continue
 			}
-			a.logger.Error("LLM", "error", "model", a.Provider.Name, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
+			a.logger.Error("LLM", "error", "model", a.Model, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
 			return "", "", "", nil, 0, 0, 0, fmt.Errorf("API %d: %s", resp.StatusCode, snippet)
 		}
 
@@ -347,7 +356,7 @@ func (a *Agent) completeStream(
 
 		if err := scanner.Err(); err != nil {
 			bo := retryBackoff(attempt)
-			a.logger.Warn("RETRY", "attempt", "model", a.Provider.Name, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("stream scan error: %w", err).Error())
+			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("stream scan error: %w", err).Error())
 			if onRetry != nil {
 				onRetry(attempt, bo.Seconds())
 			}
@@ -375,7 +384,7 @@ func (a *Agent) completeStream(
 		}
 
 		streamDur := time.Since(streamStart).Milliseconds()
-		a.logger.Info("LLM", "response", "model", a.Provider.Name, "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "cached_tokens", promptTokensCached, "latency_ms", streamDur)
+		a.logger.Info("LLM", "response", "model", a.Model, "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "cached_tokens", promptTokensCached, "latency_ms", streamDur)
 
 		if a.turn != nil {
 			turnToolCalls := make([]logger.TurnToolCall, len(resultToolCalls))

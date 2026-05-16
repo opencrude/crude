@@ -1,6 +1,10 @@
 package provider
 
-import "strings"
+import (
+	"strings"
+
+	"crude/logger"
+)
 
 // TokenEstimator provides model-family-aware token estimation.
 //
@@ -18,7 +22,11 @@ import "strings"
 // default is used.
 func EstimateTokens(text string, model string) int {
 	ratio := tokenRatioForModel(model)
-	return estimateTokensWithRatio(text, ratio)
+	estimated := estimateTokensWithRatio(text, ratio)
+	if estimated > 0 {
+		logIf(func(lg *logger.Logger) { lg.Debug("TOKENS", "estimate", "model", model, "ratio", ratio, "chars", len(text), "estimated", estimated) })
+	}
+	return estimated
 }
 
 // EstimateMessageTokens estimates the total token cost of a single
@@ -57,35 +65,31 @@ func EstimateMessagesTotal(msgs []ChatMessage, model string) int {
 func tokenRatioForModel(model string) float64 {
 	lower := strings.ToLower(model)
 
-	// Claude models tend to have slightly higher chars/token for code
-	// (their tokenizer is less code-optimized than GPT's)
+	var ratio float64
+	var family string
+
 	if strings.Contains(lower, "claude") {
-		return 2.8
+		ratio = 2.8
+		family = "claude"
+	} else if strings.Contains(lower, "gemini") {
+		ratio = 2.8
+		family = "gemini"
+	} else if strings.Contains(lower, "deepseek") {
+		ratio = 2.9
+		family = "deepseek"
+	} else if strings.Contains(lower, "llama") || strings.Contains(lower, "qwen") || strings.Contains(lower, "glm") {
+		ratio = 2.8
+		family = "llama/qwen/glm"
+	} else if strings.Contains(lower, "mistral") || strings.Contains(lower, "codestral") {
+		ratio = 2.9
+		family = "mistral"
+	} else {
+		ratio = 3.0
+		family = "default"
 	}
 
-	// Gemini models — Google's SentencePiece-based tokenizer
-	if strings.Contains(lower, "gemini") {
-		return 2.8
-	}
-
-	// DeepSeek — their tokenizer is similar to GPT's for code
-	if strings.Contains(lower, "deepseek") {
-		return 2.9
-	}
-
-	// Llama/Qwen/GLM families — SentencePiece, similar to Gemini
-	if strings.Contains(lower, "llama") || strings.Contains(lower, "qwen") || strings.Contains(lower, "glm") {
-		return 2.8
-	}
-
-	// Mistral — their tokenizer is efficient on code
-	if strings.Contains(lower, "mistral") || strings.Contains(lower, "codestral") {
-		return 2.9
-	}
-
-	// Default for GPT-4/o-series and OpenAI-compatible models (OpenRouter, etc.)
-	// cl100k_base and o200k_base are well-optimized for code.
-	return 3.0
+	logIf(func(lg *logger.Logger) { lg.Debug("TOKENS", "token_ratio", "model", model, "family", family, "ratio", ratio) })
+	return ratio
 }
 
 // estimateTokensWithRatio does the actual estimation using a

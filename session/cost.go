@@ -3,6 +3,7 @@ package session
 import (
 	"sync"
 
+	"crude/logger"
 	"crude/provider"
 )
 
@@ -30,6 +31,8 @@ type CostAccumulator struct {
 
 	// Per-model breakdown (model ID → cumulative stats)
 	ByModel map[string]*ModelCost
+
+	logger *logger.Logger
 }
 
 // ModelCost tracks usage and cost for a single model within a session.
@@ -41,9 +44,10 @@ type ModelCost struct {
 }
 
 // NewCostAccumulator creates a ready-to-use CostAccumulator.
-func NewCostAccumulator() *CostAccumulator {
+func NewCostAccumulator(lg *logger.Logger) *CostAccumulator {
 	return &CostAccumulator{
 		ByModel: make(map[string]*ModelCost),
+		logger:  lg,
 	}
 }
 
@@ -57,6 +61,12 @@ func (c *CostAccumulator) RecordUsage(model string, promptTokens, completionToke
 
 	price := provider.LookupPrice(model)
 	cost := price.CalculateCost(promptTokens, completionTokens, cachedTokens)
+
+	if cost == 0 && promptTokens+completionTokens > 0 {
+		if c.logger != nil {
+			c.logger.Warn("COST", "unknown_model_pricing", "model", model, "prompt", promptTokens, "completion", completionTokens)
+		}
+	}
 
 	c.TotalPromptTokens += promptTokens
 	c.TotalCompletionTokens += completionTokens
@@ -86,6 +96,10 @@ func (c *CostAccumulator) RecordUsage(model string, promptTokens, completionToke
 	mc.CompletionTokens += completionTokens
 	mc.CachedTokens += cachedTokens
 	mc.Cost += cost
+
+	if c.logger != nil {
+		c.logger.Debug("COST", "record", "model", model, "prompt", promptTokens, "completion", completionTokens, "cached", cachedTokens, "cost", cost, "total", c.TotalCost)
+	}
 }
 
 // Snapshot returns a copy of the accumulator's state suitable for
@@ -132,15 +146,15 @@ type TokenTracker struct {
 	LastRealPromptTokens int
 
 	// Cumulative real prompt tokens across all turns.
-	// (Note: this is NOT useful for budget calculation since
-	// prompt_tokens is absolute, not delta — see agent.go comments.)
-	CumulativePromptTokens int
+	CumulativePromptTokens    int
 	CumulativeCompletionTokens int
+
+	logger *logger.Logger
 }
 
 // NewTokenTracker creates a ready-to-use TokenTracker.
-func NewTokenTracker() *TokenTracker {
-	return &TokenTracker{}
+func NewTokenTracker(lg *logger.Logger) *TokenTracker {
+	return &TokenTracker{logger: lg}
 }
 
 // Record records token counts from a single API response.
@@ -151,6 +165,10 @@ func (t *TokenTracker) Record(promptTokens, completionTokens int) {
 	t.LastRealPromptTokens = promptTokens
 	t.CumulativePromptTokens += promptTokens
 	t.CumulativeCompletionTokens += completionTokens
+
+	if t.logger != nil {
+		t.logger.Debug("TOKENS", "real_usage", "prompt", promptTokens, "completion", completionTokens, "cumulative_prompt", t.CumulativePromptTokens)
+	}
 }
 
 // GetLastRealPromptTokens returns the most recent real prompt token count.
