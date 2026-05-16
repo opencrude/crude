@@ -18,6 +18,10 @@ type SubmitEvent struct{ Text string }
 
 func (SubmitEvent) event() {}
 
+type BtwSubmitEvent struct{ Text string }
+
+func (BtwSubmitEvent) event() {}
+
 type SlashCommandEvent struct{ Command string }
 
 func (SlashCommandEvent) event() {}
@@ -165,16 +169,13 @@ func (m Model) InputTextWidth() int {
 
 func (m Model) FirstLineY(chatAreaHeight int, showHint, thinking bool, inputLen int) int {
 	y := chatAreaHeight + 4
-	if showHint && !thinking && inputLen == 0 {
+	if showHint && inputLen == 0 {
 		y++
 	}
 	return y
 }
 
 func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool) (runeIdx int, ok bool) {
-	if m.thinking && !m.blocking {
-		return -1, false
-	}
 	firstY := m.FirstLineY(chatAreaHeight, showHint, m.thinking, m.input.Len())
 	relY := mouseY - firstY
 	if relY < 0 {

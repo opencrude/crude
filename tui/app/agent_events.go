@@ -40,10 +40,43 @@ func (m *App) submitInput(text string) tea.Cmd {
 	}
 }
 
+func (m *App) submitBtw(text string) tea.Cmd {
+	ma := m.mainAgent()
+	ma.MsgList.AppendMessage(ttypes.ChatMessage{
+		Role:    ttypes.RoleUser,
+		Content: text,
+		Time:    time.Now(),
+	})
+	if len(m.history) == 0 || m.history[len(m.history)-1] != text {
+		m.history = append(m.history, text)
+	}
+	if len(m.history) > 500 {
+		m.history = m.history[len(m.history)-500:]
+	}
+	if OnHistorySave != nil {
+		OnHistorySave(m.history)
+	}
+	m.statusbar.SetBtwCount(m.statusbar.BtwCount() + 1)
+	ch := m.btwCh
+	return func() tea.Msg {
+		select {
+		case ch <- text:
+			return nil
+		default:
+		}
+		return nil
+	}
+}
+
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	agentID := evt.AgentID
 	if agentID == "" {
 		agentID = MainAgentID
+	}
+
+	switch evt.Type {
+	case "stream_token", "thinking", "tool_call", "tool_call_streaming", "tool_result", "tool_progress", "phase":
+		m.statusbar.RecordActivity()
 	}
 
 	agent, ok := m.agents[agentID]
@@ -115,6 +148,10 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 	if evt.Type == "done" || evt.Type == "error" {
 		m.handleSubPaneCompletion(agentID)
+		if agentID == MainAgentID {
+			m.statusbar.SetBtwCount(0)
+			m.statusbar.ResetActivity()
+		}
 	}
 
 	switch evt.Type {

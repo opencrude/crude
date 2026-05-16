@@ -266,7 +266,7 @@ func main() {
 		}
 	}
 
-	go sess.Run(tuiInst, blockResolveCh)
+	go sess.Run(tuiInst, blockResolveCh, tuiInst.BtwCh)
 
 	tuiInst.Wait()
 	if exitMessage != "" {
