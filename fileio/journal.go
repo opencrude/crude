@@ -328,10 +328,9 @@ func revertEntry(e JournalEntry, lg *logger.Logger) error {
 		if err == nil {
 			curCS := checksum(cur)
 			if curCS != e.ChecksumN {
-				fmt.Fprintf(os.Stderr,
-					"[crude/fileio] warning: %s was modified externally after op %s; expected %s, got %s — restoring old content anyway\n",
-					e.Path, truncateHash(e.OpID, 8), truncateHash(e.ChecksumN, 8), truncateHash(curCS, 8),
-				)
+				lg.Warn("JOURNAL", "file modified externally, restoring old content anyway",
+				"path", e.Path, "op_id", truncateHash(e.OpID, 8),
+				"expected", truncateHash(e.ChecksumN, 8), "got", truncateHash(curCS, 8))
 			}
 		}
 		return writeAtomic(e.Path, old, os.FileMode(e.OldPerm), lg)

@@ -206,7 +206,7 @@ func main() {
 
 	app.OnHistorySave = func(history []string) {
 		if err := saveHistory(history); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save history: %v\n", err)
+			sess.Logger().Warn("main", "failed to save history", "error", err)
 		}
 	}
 
@@ -214,9 +214,10 @@ func main() {
 		sess.Close()
 	}
 
+	var exitMessage string
 	tuiInst.OnExitMessage = func() {
 		if sess.HasMessages() {
-			fmt.Fprintf(os.Stderr, "\n✓ Session saved to: %s\n", sess.SessionDir())
+			exitMessage = fmt.Sprintf("\n✓ Session saved to: %s\n", sess.SessionDir())
 		}
 	}
 
@@ -267,4 +268,7 @@ func main() {
 	go sess.Run(tuiInst, blockResolveCh)
 
 	tuiInst.Wait()
+	if exitMessage != "" {
+		fmt.Fprintf(os.Stderr, exitMessage)
+	}
 }
