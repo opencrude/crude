@@ -5,7 +5,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"crude/logger"
 )
+
+var safetyLogger *logger.Logger
+
+func SetSafetyLogger(lg *logger.Logger) {
+	safetyLogger = lg
+}
+
+func safetyLogIf(fn func(lg *logger.Logger)) {
+	if safetyLogger != nil {
+		fn(safetyLogger)
+	}
+}
 
 const binaryProbeSize = 512
 
@@ -86,6 +100,7 @@ func (p *pathPolicy) validatePath(absPath string) error {
 		resolved, err := resolveSymlink(absPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
+				safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "symlink_resolve_failed", "path", absPath, "error", err.Error()) })
 				return fmt.Errorf("symlink resolution failed for %s: %w", absPath, err)
 			}
 		} else {
@@ -97,6 +112,7 @@ func (p *pathPolicy) validatePath(absPath string) error {
 			return fmt.Errorf("cannot classify path %s: %w", absPath, err)
 		}
 		if ft == ftSymlink {
+			safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "symlink_blocked", "path", absPath) })
 			return fmt.Errorf("refusing to follow symlink %s — resolve the actual file path instead", absPath)
 		}
 	}
@@ -108,10 +124,13 @@ func (p *pathPolicy) validatePath(absPath string) error {
 
 	switch ft {
 	case ftDirectory:
+		safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "path_is_directory", "path", absPath) })
 		return fmt.Errorf("%s is a directory, not a file", absPath)
 	case ftDevice:
+		safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "path_is_device", "path", absPath) })
 		return fmt.Errorf("refusing to operate on device file %s", absPath)
 	case ftOther:
+		safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "path_is_nonregular", "path", absPath) })
 		return fmt.Errorf("refusing to operate on non-regular file %s", absPath)
 	}
 
@@ -129,10 +148,13 @@ func validatePathForRead(absPath string) error {
 	case ftDirectory:
 		return fmt.Errorf("%s is a directory, not a file", absPath)
 	case ftDevice:
+		safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "read_device_blocked", "path", absPath) })
 		return fmt.Errorf("refusing to read device file %s", absPath)
 	case ftSymlink:
+		safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "read_symlink_blocked", "path", absPath) })
 		return fmt.Errorf("refusing to follow symlink %s", absPath)
 	case ftOther:
+		safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "read_nonregular_blocked", "path", absPath) })
 		return fmt.Errorf("refusing to read non-regular file %s", absPath)
 	}
 	return nil

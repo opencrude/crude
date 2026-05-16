@@ -58,7 +58,7 @@ func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCal
 			return p
 		}
 	} else if lg != nil {
-		lg.Debug("STREAM", "json_repair_failed", "tool", name, "tool_id", id, "repair_error", repairErr.Error())
+		lg.Debug("STREAM", "json_repair_failed", "tool", name, "tool_id", id, "error", repairErr.Error())
 	}
 
 	fallbackData := cleaned

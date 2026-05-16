@@ -1,5 +1,19 @@
 package statemachine
 
+import "crude/logger"
+
+var stepResultLogger *logger.Logger
+
+func SetStepResultLogger(lg *logger.Logger) {
+	stepResultLogger = lg
+}
+
+func stepLogIf(fn func(lg *logger.Logger)) {
+	if stepResultLogger != nil {
+		fn(stepResultLogger)
+	}
+}
+
 // StepStatus is the outcome state of a goal step execution.
 type StepStatus int
 
@@ -28,7 +42,25 @@ type StepResult struct {
 }
 
 // Complete creates a successful step result.
+func (s StepStatus) String() string {
+	switch s {
+	case StepComplete:
+		return "complete"
+	case StepBlocked:
+		return "blocked"
+	case StepNeedsMoreInfo:
+		return "needs_more_info"
+	case StepInProgress:
+		return "in_progress"
+	case StepFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
 func Complete(response string, outputData map[string]any) *StepResult {
+	stepLogIf(func(lg *logger.Logger) { lg.Debug("STEP", "complete", "response_len", len(response), "output_keys", len(outputData)) })
 	return &StepResult{
 		Status:      StepComplete,
 		Response:    response,
@@ -56,6 +88,7 @@ func Blocked(blocker *BlockingCondition, response string) *StepResult {
 			NewGoal(blocker.SubGoalIntent, blocker.Message, PriorityNormal, blocker.IsBlocking),
 		}
 	}
+	stepLogIf(func(lg *logger.Logger) { lg.Info("STEP", "blocked", "blocker_type", blocker.Type.String(), "sub_goal", blocker.SubGoalIntent) })
 	return r
 }
 
@@ -72,11 +105,13 @@ func NeedsMoreInfo(message string, requiredSlots []string) *StepResult {
 	if len(requiredSlots) > 0 {
 		r.OutputData = map[string]any{"requiredSlots": requiredSlots}
 	}
+	stepLogIf(func(lg *logger.Logger) { lg.Info("STEP", "needs_more_info", "slots", requiredSlots) })
 	return r
 }
 
 // InProgress creates a step result indicating asynchronous work is underway.
 func InProgress(message string) *StepResult {
+	stepLogIf(func(lg *logger.Logger) { lg.Debug("STEP", "in_progress", "message_len", len(message)) })
 	return &StepResult{
 		Status:      StepInProgress,
 		Response:    message,
@@ -99,5 +134,6 @@ func Failed(message, errorDetails string) *StepResult {
 	if errorDetails != "" {
 		r.OutputData = map[string]any{"errorDetails": errorDetails}
 	}
+	stepLogIf(func(lg *logger.Logger) { lg.Error("STEP", "failed", "message", message, "details", errorDetails) })
 	return r
 }

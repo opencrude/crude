@@ -29,18 +29,14 @@ func writeAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger) 
 		return fmt.Errorf("atomic write: create temp: %w", err)
 	}
 	tmpName := tmp.Name()
-	if lg != nil {
-		lg.Debug("ATOMIC", "temp_created", "path", abs, "tmp", tmpName, "data_len", len(data))
-	}
+	lg.Debug("ATOMIC", "temp_created", "path", abs, "tmp", tmpName, "data_len", len(data))
 
 	ok := false
 	defer func() {
 		if !ok {
 			tmp.Close()
 			os.Remove(tmpName)
-			if lg != nil {
-				lg.Debug("ATOMIC", "temp_rolled_back", "tmp", tmpName, "path", abs)
-			}
+			lg.Debug("ATOMIC", "temp_rolled_back", "tmp", tmpName, "path", abs)
 		}
 	}()
 
@@ -62,16 +58,12 @@ func writeAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger) 
 	}
 
 	if err := os.Rename(tmpName, abs); err != nil {
-		if lg != nil {
-			lg.Error("ATOMIC", "rename_failed", "tmp", tmpName, "path", abs, "error", err.Error())
-		}
+		lg.Error("ATOMIC", "rename_failed", "tmp", tmpName, "path", abs, "error", err.Error())
 		return fmt.Errorf("atomic write: rename: %w", err)
 	}
 
 	ok = true
-	if lg != nil {
-		lg.Debug("ATOMIC", "committed", "path", abs, "data_len", len(data))
-	}
+	lg.Debug("ATOMIC", "committed", "path", abs, "data_len", len(data))
 	return nil
 }
 

@@ -25,7 +25,7 @@ func (m *ConversationStateMachine) GetOrCreateState(conversationID string) *Conv
 	if s, ok := m.states[conversationID]; ok {
 		return s
 	}
-	s := NewConversationState(conversationID)
+	s := NewConversationState(conversationID, m.logger)
 	m.states[conversationID] = s
 	m.logger.Info("STATE", "goal_created", "goal_id", conversationID, "type", "state", "description", conversationID, "priority", "info")
 	return s

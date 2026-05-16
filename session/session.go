@@ -13,8 +13,10 @@ import (
 
 	"crude/agent"
 	"crude/clipboard"
+	"crude/diff"
 	"crude/fileio"
 	"crude/js"
+	"crude/jsonrepair"
 	"crude/logger"
 	"crude/provider"
 	"crude/safety"
@@ -109,6 +111,11 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	search.SetLogger(lg)
 	js.SetLogger(lg)
 	clipboard.SetLogger(lg)
+	jsonrepair.SetLogger(lg)
+	diff.SetLogger(lg)
+	statemachine.SetGoalLogger(lg)
+	statemachine.SetStepResultLogger(lg)
+	fileio.SetSafetyLogger(lg)
 
 	fileioSessionID := fileio.GenerateSessionID()
 	var editor *fileio.Editor

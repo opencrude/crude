@@ -193,14 +193,14 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 
 	if len(calls) == 0 && len(redirectTargets) > 0 {
 		if res.TargetsSystem {
-			res.Risk = RiskDestructive
-			res.Reason = fmt.Sprintf("Redirecting output to system path: %s", strings.Join(res.AffectedPaths, ", "))
-			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		res.Risk = RiskDestructive
+		res.Reason = "Redirecting output to system path: " + strings.Join(res.AffectedPaths, ", ")
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
 		res.Reason = "Redirecting output"
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 
@@ -300,7 +300,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = "Moving/copying to system path"
-			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
@@ -313,7 +313,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 			if res.TargetsSystem {
 				res.Risk = RiskDestructive
 				res.Reason = "In-place edit of system files"
-				lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+				lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 				return res
 			}
 			res.Risk = RiskProjectWrite
@@ -329,7 +329,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = fmt.Sprintf("Modifying system path: %s", strings.Join(res.AffectedPaths, ", "))
-			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
@@ -347,13 +347,13 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		if res.TargetsSystem {
 			res.Risk = RiskDestructive
 			res.Reason = fmt.Sprintf("Permission change on system path: %s", strings.Join(res.AffectedPaths, ", "))
-			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		if isRec {
 			res.Risk = RiskDestructive
 			res.Reason = "Recursive permission change"
-			lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
@@ -527,7 +527,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 	if res.TargetsSystem {
 		res.Risk = RiskDestructive
 		res.Reason = fmt.Sprintf("Command targets system files: %s", strings.Join(res.AffectedPaths, ", "))
-		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
 

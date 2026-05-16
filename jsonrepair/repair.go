@@ -10,15 +10,37 @@ package jsonrepair
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
+	"crude/logger"
 	"encoding/json"
 )
 
-// Repair repairs malformed JSON-like input into valid JSON.
-//
-// It returns a structured [*Error] when the input is empty or cannot be repaired.
+var (
+	pkgLogger   *logger.Logger
+	pkgLoggerMu sync.RWMutex
+)
+
+func SetLogger(lg *logger.Logger) {
+	pkgLoggerMu.Lock()
+	defer pkgLoggerMu.Unlock()
+	pkgLogger = lg
+}
+
+func logIf(fn func(lg *logger.Logger)) {
+	pkgLoggerMu.RLock()
+	lg := pkgLogger
+	pkgLoggerMu.RUnlock()
+	if lg != nil {
+		fn(lg)
+	}
+}
+
 func Repair(text string) (string, error) {
+	start := time.Now()
 	if len(text) == 0 {
+		logIf(func(lg *logger.Logger) { lg.Warn("JSON_REPAIR", "empty_input") })
 		return "", newUnexpectedEndError(0)
 	}
 
@@ -34,6 +56,7 @@ func Repair(text string) (string, error) {
 
 	success, err := parseValue(&runes, &i, &output)
 	if err != nil {
+		logIf(func(lg *logger.Logger) { lg.Error("JSON_REPAIR", "parse_value_error", "position", i, "error", err.Error(), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds()) })
 		return "", err
 	}
 	if !success {
@@ -42,8 +65,10 @@ func Repair(text string) (string, error) {
 		}
 		parseWhitespaceAndSkipComments(&runes, &i, &output, true)
 		if i >= len(runes) && hasNonWhitespaceContent(runes) {
+			logIf(func(lg *logger.Logger) { lg.Warn("JSON_REPAIR", "fallback_null", "input_len", len(text), "latency_ms", time.Since(start).Milliseconds()) })
 			return "null", nil
 		}
+		logIf(func(lg *logger.Logger) { lg.Error("JSON_REPAIR", "unexpected_end", "position", len(runes), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds()) })
 		return "", newUnexpectedEndError(len(runes))
 	}
 
@@ -95,10 +120,12 @@ func Repair(text string) (string, error) {
 	}
 
 	if i >= len(runes) {
+		logIf(func(lg *logger.Logger) { lg.Info("JSON_REPAIR", "ok", "input_len", len(text), "output_len", output.Len(), "latency_ms", time.Since(start).Milliseconds()) })
 		return output.String(), nil
 	}
 
 	message := fmt.Sprintf("unexpected character %q", string(runes[i]))
+	logIf(func(lg *logger.Logger) { lg.Error("JSON_REPAIR", "unexpected_character", "position", i, "char", string(runes[i]), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds()) })
 	return "", newUnexpectedCharacterError(message, i)
 }
 
@@ -264,34 +291,16 @@ func parseObject(text *[]rune, i *int, output *strings.Builder) (bool, error) {
 				// parse optional comma
 				processedComma := parseCharacter(text, i, output, codeComma)
 				if processedComma {
-					// We just appended the comma, but it may be located *after* a
-					// previously written whitespace sequence (for example a
-					// newline and indentation). In order to keep the output
-					// consistent with the reference implementation, we move the
-					// comma so that it comes *before* those trailing
-					// whitespaces.
 					temp := output.String()
-					// Remove the comma we just wrote (it is guaranteed to be
-					// the last rune).
 					if tempWithoutComma, ok := strings.CutSuffix(temp, ","); ok {
 						temp = tempWithoutComma
-						// Re-insert the comma before the trailing whitespace
 						temp = insertBeforeLastWhitespace(temp, ",")
-
-						// After moving the comma, remove the spaces that are
-						// still attached to the newline – they will be
-						// re-added when we later write the original
-						// whitespace found in the source text. This prevents
-						// duplicating the indentation (which previously
-						// resulted in 4 spaces instead of 2).
 						if idx := strings.LastIndex(temp, "\n"); idx != -1 {
-							// Only trim spaces when they are *trailing* after the newline.
 							j := idx + 1
 							for j < len(temp) && (temp[j] == ' ' || temp[j] == '\t') {
 								j++
 							}
 							if j == len(temp) {
-								// All remaining characters are whitespace → safe to trim.
 								temp = temp[:idx+1]
 							}
 						}
@@ -303,7 +312,6 @@ func parseObject(text *[]rune, i *int, output *strings.Builder) (bool, error) {
 						parseWhitespaceAndSkipComments(text, i, output, true)
 					}
 				} else {
-					// repair missing comma - restore output to oBefore and insert comma
 					*i = iBefore
 					resetOutput(output, insertBeforeLastWhitespace(output.String()[:oBefore], ","))
 				}
@@ -443,12 +451,6 @@ func parseArray(text *[]rune, i *int, output *strings.Builder) (bool, error) {
 					}
 				}
 			}
-
-			// Note: the TypeScript reference implementation does not attempt to
-			// strip trailing commas that are *inside* JSON strings here. Any
-			// such cleanup is handled during string parsing itself. Keeping the
-			// Go implementation aligned with the reference prevents accidental
-			// removal of valid characters such as a standalone "," string.
 
 			if !processedValue {
 				// repair trailing comma
@@ -756,23 +758,18 @@ func parseString(text *[]rune, i *int, output *strings.Builder, stopAtDelimiter 
 					}
 				}
 			default:
-				// handle regular characters
 				char := (*text)[*i]
 				switch {
 				case char == '"' && (*text)[*i-1] != '\\':
-					// repair unescaped double quote
 					str.WriteString("\\\"")
 					*i++
 				case isControlCharacter(char):
-					// unescaped control character
 					if replacement, ok := controlCharacters[char]; ok {
 						str.WriteString(replacement)
 					}
 					*i++
 				default:
-					// Check character validity - matches TypeScript throwInvalidCharacter()
 					if !isValidStringCharacter(char) {
-						// Format control characters as Unicode escape sequences to match TypeScript
 						message := fmt.Sprintf("invalid character \"\\\\u%04x\"", char)
 						return false, newInvalidCharacterError(message, *i)
 					}

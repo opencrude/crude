@@ -3,6 +3,8 @@ package statemachine
 import (
 	"strings"
 	"time"
+
+	"crude/logger"
 )
 
 // GoalExecutionLog records one goal step execution for auditing.
@@ -20,13 +22,9 @@ type ConversationState struct {
 	ID             string
 	ConversationID string
 
-	// ThreadRoots maps goalID → root Goal.
-	ThreadRoots map[string]*Goal
-	// FocusGoalID is the currently active root goal.
-	FocusGoalID string
-
-	// ResumeStack is a stack of goal IDs (last element = top).
-	ResumeStack []string
+	ThreadRoots  map[string]*Goal
+	FocusGoalID  string
+	ResumeStack  []string
 
 	ContextData      map[string]any
 	ExecutionHistory []GoalExecutionLog
@@ -34,10 +32,12 @@ type ConversationState struct {
 	CreatedAt     time.Time
 	LastUpdatedAt time.Time
 	GoalTTL       time.Duration
+
+	logger *logger.Logger
 }
 
 // NewConversationState creates a fresh ConversationState.
-func NewConversationState(conversationID string) *ConversationState {
+func NewConversationState(conversationID string, lg *logger.Logger) *ConversationState {
 	return &ConversationState{
 		ID:             newID(),
 		ConversationID: conversationID,
@@ -47,6 +47,13 @@ func NewConversationState(conversationID string) *ConversationState {
 		CreatedAt:      time.Now().UTC(),
 		LastUpdatedAt:  time.Now().UTC(),
 		GoalTTL:        2 * time.Hour,
+		logger:         lg,
+	}
+}
+
+func (s *ConversationState) logIf(fn func(lg *logger.Logger)) {
+	if s.logger != nil {
+		fn(s.logger)
 	}
 }
 
@@ -116,11 +123,13 @@ func (s *ConversationState) LogExecution(goal *Goal, result *StepResult) {
 		Response:    result.Response,
 	})
 	s.LastUpdatedAt = time.Now().UTC()
+	s.logIf(func(lg *logger.Logger) {
+		lg.Debug("STATE", "log_execution", "goal_id", goal.ID, "intent", goal.Intent, "status", result.Status.String(), "outcome", result.OutcomeCode)
+	})
 }
 
 // PushToResumeStack pushes a goal ID onto the resume stack (deduplicating first).
 func (s *ConversationState) PushToResumeStack(goalID string) {
-	// Remove existing entry if present.
 	filtered := s.ResumeStack[:0]
 	for _, id := range s.ResumeStack {
 		if id != goalID {
@@ -128,6 +137,7 @@ func (s *ConversationState) PushToResumeStack(goalID string) {
 		}
 	}
 	s.ResumeStack = append(filtered, goalID)
+	s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "push_resume", "goal_id", goalID, "stack_depth", len(s.ResumeStack)) })
 }
 
 // PopFromResumeStack pops the topmost valid (non-terminal) goal ID.
@@ -137,8 +147,10 @@ func (s *ConversationState) PopFromResumeStack() string {
 		s.ResumeStack = s.ResumeStack[:len(s.ResumeStack)-1]
 		g, ok := s.ThreadRoots[top]
 		if ok && g.Status != GoalCompleted && g.Status != GoalFailed {
+			s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "pop_resume", "goal_id", top, "stack_depth", len(s.ResumeStack)) })
 			return top
 		}
+		s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "pop_resume_skipped", "goal_id", top, "status", g.Status.String()) })
 	}
 	return ""
 }
@@ -168,7 +180,6 @@ func (s *ConversationState) CleanupExpiredGoals() int {
 	}
 	for _, id := range expired {
 		delete(s.ThreadRoots, id)
-		// Remove from resume stack.
 		filtered := s.ResumeStack[:0]
 		for _, rid := range s.ResumeStack {
 			if rid != id {
@@ -176,6 +187,9 @@ func (s *ConversationState) CleanupExpiredGoals() int {
 			}
 		}
 		s.ResumeStack = filtered
+	}
+	if len(expired) > 0 {
+		s.logIf(func(lg *logger.Logger) { lg.Info("STATE", "cleanup_expired", "expired_count", len(expired), "remaining", len(s.ThreadRoots)) })
 	}
 	return len(expired)
 }
@@ -191,13 +205,17 @@ func (s *ConversationState) TransferSlotsToGoal(source, target *Goal) {
 		}
 	}
 	if !related {
+		s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "transfer_skipped", "source", source.Intent, "target", target.Intent, "reason", "not_related") })
 		return
 	}
+	transferred := 0
 	for k, v := range source.GetTransferableSlotData() {
 		if _, exists := target.Slots[k]; !exists {
 			target.Slots[k] = v
+			transferred++
 		}
 	}
+	s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "transfer_slots", "source", source.Intent, "target", target.Intent, "transferred", transferred) })
 }
 
 // GoalContext

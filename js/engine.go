@@ -127,7 +127,7 @@ func Run(code string) (string, error) {
 	}
 
 	if err != nil {
-		logIf(func(lg *logger.Logger) { lg.Debug("JS", "error", "code_len", len(code), "error", err.Error()) })
+		logIf(func(lg *logger.Logger) { lg.Warn("JS", "error", "code_len", len(code), "error", err.Error(), "latency_ms", time.Since(start).Milliseconds()) })
 		return formatJSError(err, consoleOut.String()), nil
 	}
 
