@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"fmt"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"crude/tui/app"
@@ -106,7 +104,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 
 	go func() {
 		if _, err := program.Run(); err != nil {
-			fmt.Printf("TUI error: %v\n", err)
+			lg.Error("tui", "program error: %v", "err", err)
 		}
 		if t.OnQuit != nil {
 			t.OnQuit()
