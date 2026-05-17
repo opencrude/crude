@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode/utf16"
 	"unsafe"
+
+	"crude/logger"
 )
 
 var (
@@ -80,7 +82,9 @@ func readText() ([]byte, error) {
 	defer gUnlock.Call(hMem)
 
 	const maxChars = 1 << 20
-	buf := unsafe.Slice((*uint16)(unsafe.Pointer(p)), maxChars)
+	var ptr *uint16
+	*(*uintptr)(unsafe.Pointer(&ptr)) = p
+	buf := unsafe.Slice(ptr, maxChars)
 
 	n := 0
 	for buf[n] != 0 {

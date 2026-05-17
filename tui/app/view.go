@@ -125,6 +125,11 @@ func (m *App) View() string {
 
 	for i, line := range chatVisible {
 		visW := lipgloss.Width(line)
+		maxContentW := m.width - 2*m.theme.Spacing.PadLR - totalSBW
+		if visW > maxContentW {
+			line = rendering.TruncateLine(line, maxContentW)
+			visW = lipgloss.Width(line)
+		}
 
 		if totalSBW > 0 {
 			var sbColumn string

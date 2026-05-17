@@ -1030,6 +1030,12 @@ func (ml *MessageList) isStreamingCursor(msg *types.ChatMessage) bool {
 }
 
 func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
+	sanitized := *msg
+	sanitized.Content = rendering.SanitizeForTerminal(msg.Content)
+	sanitized.ToolArgs = rendering.SanitizeForTerminal(msg.ToolArgs)
+	sanitized.ToolProgressLabel = rendering.SanitizeForTerminal(msg.ToolProgressLabel)
+	msg = &sanitized
+
 	padLR := ml.theme.Spacing.PadLR
 	// sbW reflects the actual scrollbar width: 0 when hidden, ScrollbarWidth when visible.
 	// This means content (including time labels) shifts when the scrollbar appears/disappears.

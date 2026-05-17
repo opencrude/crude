@@ -129,6 +129,8 @@ func (l *LocalExec) Execute(cmd string, opts ExecOptions) (string, error) {
 	c.Stderr = &buf
 	err := c.Run()
 	out := buf.String()
+	out = strings.ReplaceAll(out, "\r\n", "\n")
+	out = strings.ReplaceAll(out, "\r", "")
 	dur := time.Since(start).Milliseconds()
 	if warning != "" {
 		out = warning + out
@@ -228,10 +230,11 @@ func shouldSkipDir(name string, includeHidden bool) bool {
 }
 
 func truncateLine(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "…"
+	return string(runes[:maxLen]) + "…"
 }
 
 func (l *LocalExec) GlobFiles(baseDir, pattern string, includeHidden bool) ([]string, error) {
