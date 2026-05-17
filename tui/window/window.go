@@ -694,8 +694,8 @@ func (w *Window) RenderVerticalAsyncRow(item AsyncItem, spinFrame int) string {
 	}
 
 	cmd := item.Command
-	if len(cmd) > 20 {
-		cmd = cmd[:17] + "…"
+	if len([]rune(cmd)) > 20 {
+		cmd = string([]rune(cmd)[:17]) + "…"
 	}
 
 	dotStyle := lipgloss.NewStyle().Foreground(dotColor)

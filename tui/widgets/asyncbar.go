@@ -56,8 +56,8 @@ func (s *StatusBar) RenderAsyncBar() []string {
 			dotColor = s.theme.Colors.Muted
 		}
 		cmd := c.Command
-		if len(cmd) > 40 {
-			cmd = cmd[:37] + "…"
+		if len([]rune(cmd)) > 40 {
+			cmd = string([]rune(cmd)[:37]) + "…"
 		}
 		var durStr string
 		durStr = c.Duration.Truncate(time.Second).String()

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -235,6 +236,8 @@ func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, 
 	}
 	out := string(state.output.Bytes()[sinceByte:total])
 	state.mu.Unlock()
+	out = strings.ReplaceAll(out, "\r\n", "\n")
+	out = strings.ReplaceAll(out, "\r", "")
 	if m.logger != nil {
 		m.logger.Debug("ASYNC", "read_output", "handle", handle, "bytes", len(out), "since_byte", sinceByte, "total", total, "next_byte", total)
 	}
@@ -258,7 +261,10 @@ func (m *AsyncCommandManager) OutputTail(handle string, maxBytes int) string {
 		maxBytes = 250
 	}
 	start := n - min(n, maxBytes)
-	return string(state.output.Bytes()[start:n])
+	out := string(state.output.Bytes()[start:n])
+	out = strings.ReplaceAll(out, "\r\n", "\n")
+	out = strings.ReplaceAll(out, "\r", "")
+	return out
 }
 
 func (m *AsyncCommandManager) List() []AsyncCmdInfo {

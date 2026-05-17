@@ -115,8 +115,8 @@ func parseArxivEntries(entries []arxivEntry) []ArxivResult {
 	for _, entry := range entries {
 		title := cleanWhitespace(entry.Title)
 		abstract := cleanWhitespace(entry.Summary)
-		if len(abstract) > 400 {
-			abstract = abstract[:400] + "…"
+		if len([]rune(abstract)) > 400 {
+			abstract = string([]rune(abstract)[:400]) + "…"
 		}
 
 		authors := make([]string, 0, len(entry.Authors))

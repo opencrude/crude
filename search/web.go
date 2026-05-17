@@ -74,8 +74,8 @@ func WebSearch(query string, maxResults int) (string, error) {
 		sb.WriteString(fmt.Sprintf("   %s\n", r.URL))
 		if r.Description != "" {
 			desc := r.Description
-			if len(desc) > 200 {
-				desc = desc[:200] + "..."
+			if len([]rune(desc)) > 200 {
+				desc = string([]rune(desc)[:200]) + "..."
 			}
 			sb.WriteString(fmt.Sprintf("   %s\n", desc))
 		}
@@ -186,6 +186,8 @@ func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
 				return nil, err
 			}
 			content := string(body)
+			content = strings.ReplaceAll(content, "\r\n", "\n")
+			content = strings.ReplaceAll(content, "\r", "")
 			totalChars := len([]rune(content))
 			content = sliceContent(content, offset, limit)
 			return &WebPage{
