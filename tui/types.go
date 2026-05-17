@@ -25,11 +25,12 @@ const (
 )
 
 const (
-	RoleUser      = ttypes.RoleUser
-	RoleAssistant = ttypes.RoleAssistant
-	RoleThinking  = ttypes.RoleThinking
-	RoleTool      = ttypes.RoleTool
-	RoleError     = ttypes.RoleError
+	RoleUser          = ttypes.RoleUser
+	RoleAssistant     = ttypes.RoleAssistant
+	RoleThinking      = ttypes.RoleThinking
+	RoleTool          = ttypes.RoleTool
+	RoleError         = ttypes.RoleError
+	RoleSessionPicker = ttypes.RoleSessionPicker
 )
 
 const (

@@ -1220,6 +1220,21 @@ func (s *Session) ModelName() string {
 	return s.cfg.GetActiveProviderConfig().Model
 }
 
+func (s *Session) SessionID() string {
+	return s.sessionID
+}
+
+func (s *Session) SessionStart() time.Time {
+	return s.sessionStart
+}
+
+func (s *Session) CostSnapshot() CostSnapshot {
+	if s.cost != nil {
+		return s.cost.Snapshot()
+	}
+	return CostSnapshot{}
+}
+
 func (s *Session) Logger() *logger.Logger { return s.logger }
 
 func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error) {

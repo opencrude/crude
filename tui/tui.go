@@ -3,6 +3,7 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
+	"crude/sessiondb"
 	"crude/tui/app"
 	"crude/tui/types"
 )
@@ -19,6 +20,8 @@ type TUI struct {
 	OnQuit func()
 
 	OnExitMessage func()
+
+	OnResumeSession func(string)
 
 	OnSettingsSave func(Settings) error
 
@@ -42,7 +45,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	Warn(tag, msg string, pairs ...any)
 	Error(tag, msg string, pairs ...any)
 	Debug(tag, msg string, pairs ...any)
-}) (*TUI, error) {
+}, sessions []sessiondb.SessionMeta) (*TUI, error) {
 	inputCh := make(chan string, 8)
 	btwCh := make(chan string, 8)
 	cancelCh := make(chan struct{}, 1)
@@ -83,7 +86,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return ProviderConfig{}
 	}
 
-	a := app.NewApp(modelName, username, inputCh, btwCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg)
+	a := app.NewApp(modelName, username, inputCh, btwCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions)
 	a.SetProviderPresets(t.ProviderPresets)
 	a.SetHistory(history)
 	a.OnConfirmResult = func(result ConfirmResult) {
@@ -99,6 +102,11 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	a.OnUndoCmd = func(cmd string) {
 		if t.OnUndoCmd != nil {
 			t.OnUndoCmd(cmd)
+		}
+	}
+	a.OnResumeSession = func(sessionID string) {
+		if t.OnResumeSession != nil {
+			t.OnResumeSession(sessionID)
 		}
 	}
 	program := tea.NewProgram(a, tea.WithAltScreen(), tea.WithMouseAllMotion())

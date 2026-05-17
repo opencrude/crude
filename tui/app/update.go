@@ -11,6 +11,7 @@ import (
 	"crude/tui/scrollbar"
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
+	"crude/tui/widgets"
 	"crude/tui/window"
 )
 
@@ -119,6 +120,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Mode == ModeChat {
 			inputStartLine := m.chatAreaHeight + 4
 			if m.input.InputSelecting() || msg.Y >= inputStartLine {
+				if m.sessionPickerActive {
+					m.sessionPickerFocused = false
+					m.updateSessionPickerMessage()
+				}
 				updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 				m.input = updated
 				if cmd != nil {
@@ -126,24 +131,53 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				switch e := evt.(type) {
 				case input.SubmitEvent:
+					m.removeSessionPickerMessage()
 					cmds = append(cmds, m.submitInput(e.Text))
 				case input.BtwSubmitEvent:
+					m.removeSessionPickerMessage()
 					cmds = append(cmds, m.submitBtw(e.Text))
 				case input.SlashCommandEvent:
+					m.removeSessionPickerMessage()
 					cmds = append(cmds, m.executeSlashCommand(e.Command))
 				case input.SettingsOpenEvent:
+					m.removeSessionPickerMessage()
 					m.settings.SaveSnapshot()
 					m.setMode(ModeSettings)
 				}
 			} else {
-				handled, paneCmd := m.routeMouseToInlinePane(msg)
-				if paneCmd != nil {
-					cmds = append(cmds, paneCmd)
-				}
-				if !handled {
-					_, cmd := m.mainMsgList.Update(msg)
-					if cmd != nil {
-						cmds = append(cmds, cmd)
+				if m.sessionPickerActive {
+					m.sessionPickerFocused = true
+					m.updateSessionPickerMessage()
+					if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+						clickLine := msg.Y - 3
+						if clickLine >= 0 {
+							m.handleSessionPickerClick(clickLine)
+						}
+					}
+					if msg.Button == tea.MouseButtonWheelUp {
+						if m.sessionPickerSelected > 0 {
+							m.sessionPickerSelected--
+							m.updateSessionPickerMessage()
+						}
+						return m, nil
+					}
+					if msg.Button == tea.MouseButtonWheelDown {
+						if m.sessionPickerSelected < len(m.sessionPickerSessions)-1 {
+							m.sessionPickerSelected++
+							m.updateSessionPickerMessage()
+						}
+						return m, nil
+					}
+				} else {
+					handled, paneCmd := m.routeMouseToInlinePane(msg)
+					if paneCmd != nil {
+						cmds = append(cmds, paneCmd)
+					}
+					if !handled {
+						_, cmd := m.mainMsgList.Update(msg)
+						if cmd != nil {
+							cmds = append(cmds, cmd)
+						}
 					}
 				}
 			}
@@ -307,6 +341,36 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if m.sessionPickerActive && m.sessionPickerFocused {
+			if keyMsg, ok := msg.(tea.KeyMsg); ok {
+				switch keyMsg.String() {
+				case "up", "k":
+					if m.sessionPickerSelected > 0 {
+						m.sessionPickerSelected--
+						m.updateSessionPickerMessage()
+					}
+					return m, nil
+				case "down", "j":
+					if m.sessionPickerSelected < len(m.sessionPickerSessions)-1 {
+						m.sessionPickerSelected++
+						m.updateSessionPickerMessage()
+					}
+					return m, nil
+				case "enter":
+					sessionID := widgets.SessionPickerFlatIndex(m.sessionPickerSessions, m.sessionPickerSelected)
+					if sessionID != "" {
+						m.logger.Info("SESSION", "resume_selected", "id", sessionID)
+						if m.OnResumeSession != nil {
+							m.OnResumeSession(sessionID)
+						}
+						m.Quit = true
+						return m, tea.Quit
+					}
+					return m, nil
+				}
+			}
+		}
+
 		if _, isMouse := msg.(tea.MouseMsg); !isMouse {
 			updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 			m.input = updated
@@ -315,12 +379,16 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch e := evt.(type) {
 			case input.SubmitEvent:
+				m.removeSessionPickerMessage()
 				cmds = append(cmds, m.submitInput(e.Text))
 			case input.BtwSubmitEvent:
+				m.removeSessionPickerMessage()
 				cmds = append(cmds, m.submitBtw(e.Text))
 			case input.SlashCommandEvent:
+				m.removeSessionPickerMessage()
 				cmds = append(cmds, m.executeSlashCommand(e.Command))
 			case input.SettingsOpenEvent:
+				m.removeSessionPickerMessage()
 				m.settings.SaveSnapshot()
 				m.setMode(ModeSettings)
 			}
@@ -514,4 +582,26 @@ func streamingTickCmd() tea.Cmd {
 	return tea.Tick(16*time.Millisecond, func(t time.Time) tea.Msg {
 		return ttypes.TickMsg(t)
 	})
+}
+
+func (m *App) handleSessionPickerClick(y int) {
+	if !m.sessionPickerActive || len(m.sessionPickerSessions) == 0 {
+		return
+	}
+	groups := widgets.BuildSessionGroups(m.sessionPickerSessions)
+	clickLine := y
+	flatIdx := 0
+	line := 0
+	for _, g := range groups {
+		line++
+		for range g.Sessions {
+			if line == clickLine {
+				m.sessionPickerSelected = flatIdx
+				m.updateSessionPickerMessage()
+				return
+			}
+			line++
+			flatIdx++
+		}
+	}
 }
