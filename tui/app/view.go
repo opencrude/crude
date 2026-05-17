@@ -124,12 +124,19 @@ func (m *App) View() string {
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	for i, line := range chatVisible {
-		visW := lipgloss.Width(line)
 		maxContentW := m.width - 2*m.theme.Spacing.PadLR - totalSBW
+		// Trim trailing padding before the overflow check. Subpane header/summary
+		// lines are right-padded to innerW (which doesn't account for scrollbar
+		// width), so the raw line can exceed maxContentW even though the actual
+		// content fits. Without trimming, TruncateLine would append a false "…"
+		// after the trailing spaces (e.g. "│ ● Thinking 8s      …").
+		trimmed := rendering.TrimRightAnsiSpaces(line)
+		visW := lipgloss.Width(trimmed)
 		if visW > maxContentW {
-			line = rendering.TruncateLine(line, maxContentW)
-			visW = lipgloss.Width(line)
+			trimmed = rendering.TruncateLine(trimmed, maxContentW)
+			visW = lipgloss.Width(trimmed)
 		}
+		line = trimmed
 
 		if totalSBW > 0 {
 			var sbColumn string
