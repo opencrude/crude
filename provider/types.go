@@ -17,10 +17,11 @@ type CacheControl struct {
 }
 
 type ToolCall struct {
-	Index    int          `json:"index"`
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function FunctionCall `json:"function"`
+	Index     int          `json:"index"`
+	ID        string       `json:"id"`
+	Type      string       `json:"type"`
+	Function  FunctionCall `json:"function"`
+	InternalID string      `json:"-"`
 }
 
 type FunctionCall struct {

@@ -15,6 +15,7 @@ import (
 func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
+		internalID, _ := data["internal_id"].(string)
 		name, _ := data["name"].(string)
 		if name == "" || name == "reply" {
 			return nil
@@ -30,7 +31,6 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 		seconds, _ := data["seconds"].(string)
 
 		var tgt string
-		// grep_files: show both what (pattern) and where (path)
 		if name == "grep_files" && pattern != "" {
 			tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(pattern, 30))
 			if path != "" && path != "." {
@@ -88,7 +88,7 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 		data["old_lines_int"] = int(oldLines)
 		data["new_lines_int"] = int(newLines)
 
-		target.UpdateToolStreaming(toolID, name, data)
+		target.UpdateToolStreaming(toolID, internalID, name, data)
 	}
 	return nil
 }
@@ -96,6 +96,7 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 func (a *AgentState) handleToolCall(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
+		internalID, _ := data["internal_id"].(string)
 		name, _ := data["name"].(string)
 		if name == "" || name == "reply" {
 			return nil
@@ -103,11 +104,9 @@ func (a *AgentState) handleToolCall(evt ttypes.AgentEventMsg, target *widgets.Me
 		args, _ := data["args"].(string)
 		argsCompact := tools.SummarizeToolArgs(name, args)
 		onStatusLine(rendering.ToolLabel(name, argsCompact))
-		target.UpdateToolCall(toolID, name, argsCompact)
-		// Apply pending permission tag to the newly created tool message
-		// (matched by toolID) if the tag's tool name matches.
+		target.UpdateToolCall(toolID, internalID, name, argsCompact)
 		if a.pendingPermTag != "" && (a.pendingPermTool == "" || a.pendingPermTool == name) {
-			target.SetToolPermTag(toolID, a.pendingPermTag)
+			target.SetToolPermTag(toolID, internalID, a.pendingPermTag)
 			a.pendingPermTag = ""
 			a.pendingPermTool = ""
 		}
@@ -118,6 +117,7 @@ func (a *AgentState) handleToolCall(evt ttypes.AgentEventMsg, target *widgets.Me
 func (a *AgentState) handleToolProgress(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
+		internalID, _ := data["internal_id"].(string)
 		name, _ := data["name"].(string)
 		if name == "" || name == "reply" {
 			return nil
@@ -129,7 +129,7 @@ func (a *AgentState) handleToolProgress(evt ttypes.AgentEventMsg, target *widget
 		linesRemoved := toInt(data["lines_removed"])
 		estTokens := toInt(data["tool_est_tokens"])
 
-		target.UpdateToolProgress(toolID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(estTokens))
+		target.UpdateToolProgress(toolID, internalID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(estTokens))
 		if phase == "done" {
 			onStatusLine(name)
 		} else if phase != "" && message != "" {
@@ -142,6 +142,7 @@ func (a *AgentState) handleToolProgress(evt ttypes.AgentEventMsg, target *widget
 func (a *AgentState) handleToolResult(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
+		internalID, _ := data["internal_id"].(string)
 		name, _ := data["name"].(string)
 		if name == "" || name == "reply" {
 			return nil
@@ -153,7 +154,7 @@ func (a *AgentState) handleToolResult(evt ttypes.AgentEventMsg, target *widgets.
 		linesAdded := toInt(data["lines_added"])
 		linesRemoved := toInt(data["lines_removed"])
 		onStatusLine(name)
-		target.UpdateToolResult(toolID, name, result, isError, int(estTokens), int(linesAdded), int(linesRemoved))
+		target.UpdateToolResult(toolID, internalID, name, result, isError, int(estTokens), int(linesAdded), int(linesRemoved))
 	}
 	return nil
 }

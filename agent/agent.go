@@ -46,16 +46,17 @@ type StepRecord struct {
 type stopCondition func(steps []StepRecord) bool
 
 type Agent struct {
-	Provider *provider.Provider
-	Model    string
-	Policy   safety.Policy
-	ToolFn   func(tool string, params map[string]any) (tools.ToolResult, error)
-	logger   *logger.Logger
-	turn     *logger.TurnLogger
-	Emit     func(AgentEvent)
-	Ctx      context.Context
-	Yolo     bool
-	AsyncMgr *fileio.AsyncCommandManager
+	Provider    *provider.Provider
+	Model       string
+	Policy      safety.Policy
+	ToolFn      func(tool string, params map[string]any) (tools.ToolResult, error)
+	logger      *logger.Logger
+	turn        *logger.TurnLogger
+	Emit        func(AgentEvent)
+	Ctx         context.Context
+	Yolo        bool
+	AsyncMgr    *fileio.AsyncCommandManager
+	toolCallSeq int
 }
 
 func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
@@ -222,14 +223,15 @@ func (a *Agent) Run(
 			func(text string) {
 				emit(AgentEvent{Type: "thinking", Data: text})
 			},
-			func(id, name string) {
+			func(internalID, id, name string) {
 				emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
-					"tool_id": id,
-					"name":    name,
-					"preview": tools.FormatPreview(name, ExtractPreview(id, name, "", a.logger).Params),
+					"internal_id": internalID,
+					"tool_id":     id,
+					"name":        name,
+					"preview":     tools.FormatPreview(name, ExtractPreview(id, name, "", a.logger).Params),
 				}})
 			},
-			func(id, name, args string) {
+			func(internalID, id, name, args string) {
 				preview := ExtractPreview(id, name, args, a.logger)
 				path := getStr(preview.Params, "path")
 				command := getStr(preview.Params, "command")
@@ -283,12 +285,13 @@ func (a *Agent) Run(
 				previewKey := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d",
 					path, command, urlStr, query, source, dest, pattern,
 					offsetVal, limitVal, contentLines, oldLines, newLines)
-				if prev, ok := prevPreviewKeys[id]; ok && prev == previewKey {
+				if prev, ok := prevPreviewKeys[internalID]; ok && prev == previewKey {
 					return
 				}
-				prevPreviewKeys[id] = previewKey
+				prevPreviewKeys[internalID] = previewKey
 
 				data := map[string]any{
+					"internal_id":     internalID,
 					"tool_id":         id,
 					"name":            name,
 					"preview":        tools.FormatPreview(name, preview.Params),
@@ -431,20 +434,23 @@ func (a *Agent) Run(
 		for _, tc := range toolCalls {
 			l.Debug("AGENT", "goroutine_start", "tool", tc.Function.Name, "step", step)
 			go func(tc provider.ToolCall) {
+				internalID := tc.InternalID
 				goroutineStart := time.Now()
 				var params map[string]any
 				if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
 					a.logger.Error("TOOL", "invalid_args", "name", tc.Function.Name, "error", err.Error())
 					errResult := "Error: invalid arguments: " + err.Error()
 					emit(AgentEvent{Type: "tool_call", Data: map[string]any{
-						"tool_id": tc.ID,
-						"name":    tc.Function.Name,
-						"args":    tc.Function.Arguments,
+						"internal_id": internalID,
+						"tool_id":     tc.ID,
+						"name":        tc.Function.Name,
+						"args":        tc.Function.Arguments,
 					}})
 					emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-						"tool_id": tc.ID,
-						"name":    tc.Function.Name,
-						"result":  errResult,
+						"internal_id": internalID,
+						"tool_id":     tc.ID,
+						"name":        tc.Function.Name,
+						"result":      errResult,
 					}})
 					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errResult}}
 					return
@@ -465,9 +471,10 @@ func (a *Agent) Run(
 						errMsg := fmt.Sprintf("[SAFETY BLOCK] This command was automatically blocked and will never execute. DO NOT retry this command or any variant of it.\nBlock reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the system prevented a dangerous operation. Move on to a different approach. Explain to the user why this was blocked and what you'll do instead.", sr.Reason, sr.Suggestion, cmd)
 						a.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
 						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-							"tool_id": tc.ID,
-							"name":    "execute_command",
-							"result":  errMsg,
+							"internal_id": internalID,
+							"tool_id":     tc.ID,
+							"name":        "execute_command",
+							"result":      errMsg,
 						}})
 						resultCh <- execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
 						return
@@ -487,9 +494,10 @@ func (a *Agent) Run(
 							errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
 							a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
 							emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-								"tool_id": tc.ID,
-								"name":    "execute_command",
-								"result":  errMsg,
+								"internal_id": internalID,
+								"tool_id":     tc.ID,
+								"name":        "execute_command",
+								"result":      errMsg,
 							}})
 							resultCh <- execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
 							return
@@ -561,9 +569,10 @@ func (a *Agent) Run(
 						errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
 						a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
 						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-							"tool_id": tc.ID,
-							"name":    tc.Function.Name,
-							"result":  errMsg,
+							"internal_id": internalID,
+							"tool_id":     tc.ID,
+							"name":        tc.Function.Name,
+							"result":      errMsg,
 						}})
 						resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}}
 						return
@@ -581,12 +590,12 @@ func (a *Agent) Run(
 					l.Debug("SAFETY", "yolo_skip", "tool", tc.Function.Name, "op", fileOp)
 				}
 
-				// Format args as compact key=value pairs instead of Go's map[key:val]
 				argsStr := formatToolArgs(params)
 				emit(AgentEvent{Type: "tool_call", Data: map[string]any{
-					"tool_id": tc.ID,
-					"name":    tc.Function.Name,
-					"args":    argsStr,
+					"internal_id": internalID,
+					"tool_id":     tc.ID,
+					"name":        tc.Function.Name,
+					"args":        argsStr,
 				}})
 
 				path := getStr(params, "path")
@@ -595,11 +604,12 @@ func (a *Agent) Run(
 					content := getStr(params, "content")
 					lines := CountLines(content)
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-						"tool_id": tc.ID,
-						"name":    tc.Function.Name,
-						"phase":   "writing",
-						"path":    path,
-						"message": fmt.Sprintf("Writing %d lines to %s", lines, path),
+						"internal_id": internalID,
+						"tool_id":     tc.ID,
+						"name":        tc.Function.Name,
+						"phase":       "writing",
+						"path":        path,
+						"message":     fmt.Sprintf("Writing %d lines to %s", lines, path),
 					}})
 				} else if tc.Function.Name == "edit_file" {
 					oldStr := getStr(params, "old_string")
@@ -607,20 +617,22 @@ func (a *Agent) Run(
 					oldLines := CountLines(oldStr)
 					newLines := CountLines(newStr)
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-						"tool_id": tc.ID,
-						"name":    tc.Function.Name,
-						"phase":   "patching",
-						"path":    path,
-						"message": fmt.Sprintf("Editing %s (−%d/+%d lines)", path, oldLines, newLines),
+						"internal_id": internalID,
+						"tool_id":     tc.ID,
+						"name":        tc.Function.Name,
+						"phase":       "patching",
+						"path":        path,
+						"message":     fmt.Sprintf("Editing %s (−%d/+%d lines)", path, oldLines, newLines),
 					}})
 				} else if tc.Function.Name == "read_file" {
 					if path != "" {
 						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-							"tool_id": tc.ID,
-							"name":    tc.Function.Name,
-							"phase":   "reading",
-							"path":    path,
-							"message": fmt.Sprintf("Reading %s", path),
+							"internal_id": internalID,
+							"tool_id":     tc.ID,
+							"name":        tc.Function.Name,
+							"phase":       "reading",
+							"path":        path,
+							"message":     fmt.Sprintf("Reading %s", path),
 						}})
 					}
 				} else if tc.Function.Name == "execute_command" {
@@ -631,10 +643,11 @@ func (a *Agent) Run(
 							display = string([]rune(display)[:60]) + "\u2026"
 						}
 						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-							"tool_id": tc.ID,
-							"name":    tc.Function.Name,
-							"phase":   "running",
-							"message": fmt.Sprintf("Running %s", display),
+							"internal_id": internalID,
+							"tool_id":     tc.ID,
+							"name":        tc.Function.Name,
+							"phase":       "running",
+							"message":     fmt.Sprintf("Running %s", display),
 						}})
 					}
 				}
@@ -655,6 +668,7 @@ func (a *Agent) Run(
 
 				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result.Content, "Error:") {
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"internal_id":     internalID,
 						"tool_id":         tc.ID,
 						"name":            tc.Function.Name,
 						"phase":           "done",
@@ -668,6 +682,7 @@ func (a *Agent) Run(
 				}
 
 				resultData := map[string]any{
+					"internal_id":     internalID,
 					"tool_id":         tc.ID,
 					"name":            tc.Function.Name,
 					"result":          result.Content,

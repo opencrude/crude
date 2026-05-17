@@ -73,9 +73,10 @@ type UndoResultMsg struct {
 }
 
 type ChatMessage struct {
-	Role    string
-	Content string
-	Time    time.Time
+	InternalID string
+	Role       string
+	Content    string
+	Time       time.Time
 
 	ToolName   string
 	ToolArgs   string
