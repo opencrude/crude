@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"crude/provider"
@@ -236,6 +237,11 @@ func main() {
 	sessCfg := fileConfigToSession(fc)
 	home, _ := os.UserHomeDir()
 
+	var sessionMetas []sessiondb.SessionMeta
+	if sessionsRoot != "" {
+		sessionMetas, _, _ = sessiondb.ListSessionsPaginated(sessionsRoot, sessiondb.ListSessionsOpts{Limit: 30, Offset: 0})
+	}
+
 	var sess *session.Session
 	var err error
 
@@ -269,7 +275,7 @@ func main() {
 		})
 	}
 
-	tuiInst, err := tui.Start(sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, loadHistory(), sess.Logger())
+	tuiInst, err := tui.Start(sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, loadHistory(), sess.Logger(), sessionMetas)
 	if err != nil {
 		sess.Logger().Error("SESSION", "tui_start_failed", "error", err.Error())
 	fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
@@ -301,7 +307,8 @@ func main() {
 	var exitMessage string
 	tuiInst.OnExitMessage = func() {
 		if sess.HasMessages() {
-			exitMessage = fmt.Sprintf("\n✓ Session saved to: %s\n", sess.SessionDir())
+			uptime := time.Since(sess.SessionStart()).Truncate(time.Second)
+			exitMessage = renderExitMessage(sess.SessionID(), sess.SessionDir(), uptime, sess.CostSnapshot(), sess.ModelName())
 		}
 	}
 
@@ -323,6 +330,11 @@ func main() {
 
 	tuiInst.OnYoloCmd = func(enabled bool) {
 		sess.SetYolo(enabled)
+	}
+
+	var resumeNextSessionID string
+	tuiInst.OnResumeSession = func(sessionID string) {
+		resumeNextSessionID = sessionID
 	}
 
 	tuiInst.OnUndoCmd = func(cmd string) {
@@ -355,4 +367,91 @@ func main() {
 	if exitMessage != "" {
 		fmt.Fprint(os.Stderr, exitMessage)
 	}
+
+	if resumeNextSessionID != "" {
+		sess.Close()
+		resumeSessionID = resumeNextSessionID
+		sessionsRoot2, _ := session.SessionsRoot()
+		dbPath := filepath.Join(sessionsRoot2, resumeSessionID+".db")
+		sess, err = session.ResumeSession(dbPath, sessCfg, home)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to resume session %s: %v\n", resumeSessionID, err)
+			return
+		}
+
+		sessionMetas2, _, _ := sessiondb.ListSessionsPaginated(sessionsRoot2, sessiondb.ListSessionsOpts{Limit: 30, Offset: 0})
+
+		tuiInst2, err2 := tui.Start(sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, loadHistory(), sess.Logger(), sessionMetas2)
+		if err2 != nil {
+			fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err2)
+			os.Exit(1)
+		}
+
+		tuiInst2.GetProviderConfigFn = tuiInst.GetProviderConfigFn
+		tuiInst2.FetchModelsFn = tuiInst.FetchModelsFn
+		tuiInst2.OnQuit = func() { sess.Close() }
+		var exitMessage2 string
+		tuiInst2.OnExitMessage = func() {
+			if sess.HasMessages() {
+				uptime := time.Since(sess.SessionStart()).Truncate(time.Second)
+				exitMessage2 = renderExitMessage(sess.SessionID(), sess.SessionDir(), uptime, sess.CostSnapshot(), sess.ModelName())
+			}
+		}
+		tuiInst2.OnSettingsSave = tuiInst.OnSettingsSave
+		tuiInst2.OnConfirmResult = func(result tui.ConfirmResult) {
+			switch result.Choice {
+			case tui.ConfirmAllow:
+				blockResolveCh <- "allow"
+			case tui.ConfirmAlways:
+				blockResolveCh <- "always"
+			case tui.ConfirmDeny:
+				blockResolveCh <- "deny"
+			default:
+				blockResolveCh <- "deny"
+			}
+		}
+		tuiInst2.OnYoloCmd = func(enabled bool) { sess.SetYolo(enabled) }
+		tuiInst2.OnUndoCmd = func(cmd string) {
+			result := sess.HandleUndo(cmd)
+			tuiInst2.Program.Send(result)
+		}
+		tuiInst2.UpdateModelName(sess.ModelName())
+
+		go sess.Run(tuiInst2, blockResolveCh, tuiInst2.BtwCh)
+		tuiInst2.Wait()
+		if exitMessage2 != "" {
+			fmt.Fprint(os.Stderr, exitMessage2)
+		}
+	}
+}
+
+func renderExitMessage(sessionID string, sessionDir string, uptime time.Duration, costSnap session.CostSnapshot, model string) string {
+	var b strings.Builder
+
+	b.WriteString("\n")
+	b.WriteString("    ·  ·  ·\n")
+	b.WriteString("   · · ♥ · ·   session saved\n")
+	b.WriteString("    ·  ·  ·\n")
+	b.WriteString("\n")
+	b.WriteString("  resume this session:\n")
+	b.WriteString("    crude --resume " + sessionID + "\n")
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("  uptime  %s\n", uptime))
+	b.WriteString(fmt.Sprintf("  model   %s\n", model))
+
+	if costSnap.TotalCost > 0 || costSnap.TotalPromptTokens > 0 {
+		b.WriteString(fmt.Sprintf("  cost    $%.4f", costSnap.TotalCost))
+		if costSnap.TotalPromptTokens > 0 {
+			b.WriteString(fmt.Sprintf("  (%dk↑ %dk↓", costSnap.TotalPromptTokens/1024, costSnap.TotalCompletionTokens/1024))
+			if costSnap.TotalCachedTokens > 0 {
+				b.WriteString(fmt.Sprintf(" %dk cached", costSnap.TotalCachedTokens/1024))
+			}
+			b.WriteString(")")
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(fmt.Sprintf("  logs    %s\n", filepath.Join(sessionDir, "session.log")))
+
+	return b.String()
 }

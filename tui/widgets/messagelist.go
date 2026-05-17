@@ -583,6 +583,26 @@ func (ml *MessageList) Messages() []*types.ChatMessage {
 	return ml.messages
 }
 
+func (ml *MessageList) RemoveMessage(idx int) {
+	if idx < 0 || idx >= len(ml.messages) {
+		return
+	}
+	msg := ml.messages[idx]
+	delete(ml.msgByID, msg.InternalID)
+	ml.messages = append(ml.messages[:idx], ml.messages[idx+1:]...)
+	ml.RebuildItems()
+}
+
+func (ml *MessageList) InvalidateItem(id string) {
+	for _, msg := range ml.messages {
+		if msg.InternalID == id {
+			msg.CachedLines = nil
+			ml.vl.InvalidateItem(id)
+			return
+		}
+	}
+}
+
 func (ml *MessageList) Update(msg tea.Msg) (*MessageList, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -1108,6 +1128,9 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 		lines = append(lines, msgLines...)
 	case types.RoleError:
 		msgLines := RenderErrorMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW)
+		lines = append(lines, msgLines...)
+	case types.RoleSessionPicker:
+		msgLines := RenderSessionPicker(msg.SessionPickerSessions, msg.SessionPickerSelected, msg.SessionPickerFocused, ml.theme, contentWidth)
 		lines = append(lines, msgLines...)
 	}
 

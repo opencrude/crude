@@ -79,6 +79,18 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
+	if m.sessionPickerActive && m.sessionPickerFocused {
+		m.sessionPickerFocused = false
+		m.updateSessionPickerMessage()
+		return nil
+	}
+
+	if m.sessionPickerActive && !m.sessionPickerFocused {
+		m.sessionPickerFocused = true
+		m.updateSessionPickerMessage()
+		return nil
+	}
+
 	inputText := strings.TrimSpace(m.input.Value())
 	if inputText != "" {
 		m.input.ClearInput()

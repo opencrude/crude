@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"crude/sessiondb"
 	"crude/tui/input"
 	"crude/tui/settings"
 	"crude/tui/theme"
@@ -12,14 +13,6 @@ import (
 	"crude/tui/widgets"
 	"crude/tui/window"
 )
-
-// Logger interface for TUI logging. Matches crude/logger.Logger methods.
-type Logger interface {
-	Info(tag, msg string, pairs ...any)
-	Warn(tag, msg string, pairs ...any)
-	Error(tag, msg string, pairs ...any)
-	Debug(tag, msg string, pairs ...any)
-}
 
 var OnHistorySave func([]string)
 
@@ -31,6 +24,15 @@ const (
 	ModeConfirm
 	ModeYolo
 )
+
+const sessionPickerMsgID = "__session_picker__"
+
+type Logger interface {
+	Info(tag, msg string, pairs ...any)
+	Warn(tag, msg string, pairs ...any)
+	Error(tag, msg string, pairs ...any)
+	Debug(tag, msg string, pairs ...any)
+}
 
 type App struct {
 	theme  *theme.Theme
@@ -62,6 +64,7 @@ type App struct {
 	OnConfirmResult    func(ttypes.ConfirmResult)
 	OnYoloCmd          func(bool)
 	OnUndoCmd          func(string)
+	OnResumeSession    func(string)
 	FetchModelsFn      func(string, string, string) ([]ttypes.ModelEntry, error)
 	GetProviderConfigFn func(string) ttypes.ProviderConfig
 	ProviderPresets    []ttypes.ProviderPreset
@@ -86,6 +89,11 @@ type App struct {
 	formHint string
 
 	logger Logger
+
+	sessionPickerSessions []sessiondb.SessionMeta
+	sessionPickerActive   bool
+	sessionPickerSelected int
+	sessionPickerFocused  bool
 }
 
 type (
@@ -101,7 +109,7 @@ type (
 	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger) *App {
+func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta) *App {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	ml.SetModelName(modelName)
@@ -116,6 +124,8 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 	pm := NewPaneManager()
 
 	w := window.New(th)
+
+	spActive := len(sessions) > 0
 
 	app := &App{
 		theme:        th,
@@ -138,9 +148,24 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		lastSettings: initial,
 		OnSettingsSave: onSave,
 		logger:       lg,
+		sessionPickerSessions: sessions,
+		sessionPickerActive:   spActive,
+		sessionPickerSelected: 0,
+		sessionPickerFocused:  spActive,
 	}
 
 	ml.SetSubPaneContentFn(app.renderSubPaneContent)
+
+	if spActive {
+		ml.AppendMessage(ttypes.ChatMessage{
+			InternalID:            sessionPickerMsgID,
+			Role:                 ttypes.RoleSessionPicker,
+			SessionPickerSessions: sessions,
+			SessionPickerSelected: 0,
+			SessionPickerFocused:  true,
+			Time:                 time.Now(),
+		})
+	}
 
 	return app
 }
@@ -160,6 +185,36 @@ func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []
 
 func (m *App) mainAgent() *AgentState {
 	return m.agents[MainAgentID]
+}
+
+func (m *App) updateSessionPickerMessage() {
+	if !m.sessionPickerActive {
+		return
+	}
+	for _, msg := range m.mainMsgList.Messages() {
+		if msg.InternalID == sessionPickerMsgID {
+			msg.SessionPickerSelected = m.sessionPickerSelected
+			msg.SessionPickerFocused = m.sessionPickerFocused
+			msg.CachedLines = nil
+			m.mainMsgList.InvalidateItem(sessionPickerMsgID)
+			return
+		}
+	}
+}
+
+func (m *App) removeSessionPickerMessage() {
+	if !m.sessionPickerActive {
+		return
+	}
+	messages := m.mainMsgList.Messages()
+	for i, msg := range messages {
+		if msg.InternalID == sessionPickerMsgID {
+			m.mainMsgList.RemoveMessage(i)
+			break
+		}
+	}
+	m.sessionPickerActive = false
+	m.sessionPickerSessions = nil
 }
 
 func (m *App) anyActive() bool {

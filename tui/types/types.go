@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"crude/sessiondb"
+	"time"
+)
 
 const (
 	ToolPreviewPreparing = "preparing"
@@ -10,11 +13,12 @@ const (
 )
 
 const (
-	RoleUser      = "user"
-	RoleAssistant = "assistant"
-	RoleThinking  = "thinking"
-	RoleTool      = "tool"
-	RoleError     = "error"
+	RoleUser           = "user"
+	RoleAssistant      = "assistant"
+	RoleThinking       = "thinking"
+	RoleTool           = "tool"
+	RoleError          = "error"
+	RoleSessionPicker  = "sessionpicker"
 )
 
 const (
@@ -107,6 +111,10 @@ type ChatMessage struct {
 	CursorLine           int
 	StreamCompletedLines []string
 	StreamCompletedLen   int
+
+	SessionPickerSessions []sessiondb.SessionMeta
+	SessionPickerSelected int
+	SessionPickerFocused  bool
 }
 
 type AgentEventMsg struct {

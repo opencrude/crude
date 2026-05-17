@@ -40,7 +40,15 @@ func (m *App) View() string {
 		}
 		inputView = dim.Render(hint)
 	} else {
-		inputView = m.input.View(m.width, m.height, false, false, m.spinFrame)
+		if m.sessionPickerActive && m.sessionPickerFocused {
+			hint := "[ ↑↓: browse sessions · enter: resume · click here to type · ctrl+c: switch focus ]"
+			inputView = m.theme.Styles.DimLabel.Render(hint) + "\n" + m.input.View(m.width, m.height, false, false, m.spinFrame)
+		} else if m.sessionPickerActive && !m.sessionPickerFocused {
+			hint := "[ ctrl+c: browse sessions ]"
+			inputView = m.theme.Styles.DimLabel.Render(hint) + "\n" + m.input.View(m.width, m.height, false, false, m.spinFrame)
+		} else {
+			inputView = m.input.View(m.width, m.height, false, false, m.spinFrame)
+		}
 		inputLineCount = len(strings.Split(inputView, "\n"))
 		if inputLineCount < 1 {
 			inputLineCount = 1
@@ -87,7 +95,12 @@ func (m *App) View() string {
 
 	mainSBVisible := ma.MsgList.ScrollbarWidth() > 0
 
-	totalSBW := scrollbar.ScrollbarWidth * (1 + nestingLevel)
+	var totalSBW int
+	var mainSBLines []string
+	var paneLineMap []widgets.PaneLineInfo
+	var paneSBViews map[string][]string
+
+	totalSBW = scrollbar.ScrollbarWidth * (1 + nestingLevel)
 	if !mainSBVisible && nestingLevel == 0 {
 		totalSBW = 0
 	}
@@ -96,11 +109,11 @@ func (m *App) View() string {
 	}
 
 	mainScrollbarView := ma.MsgList.ScrollbarView()
-	mainSBLines := strings.Split(mainScrollbarView, "\n")
+	mainSBLines = strings.Split(mainScrollbarView, "\n")
 
-	paneLineMap := ma.MsgList.PaneLineMap()
+	paneLineMap = ma.MsgList.PaneLineMap()
 
-	paneSBViews := make(map[string][]string)
+	paneSBViews = make(map[string][]string)
 	if nestingLevel > 0 {
 		for _, info := range paneLineMap {
 			if info.PaneID != "" {
