@@ -282,6 +282,19 @@ func (a *Agent) Run(
 					newLines = CountLines(newStr)
 				}
 
+				if name == "write_file" || name == "edit_file" {
+					estContent, estOld, estNew := EstimateStreamingLines(name, args)
+					if contentLines == 0 && estContent > 0 {
+						contentLines = estContent
+					}
+					if oldLines == 0 && estOld > 0 {
+						oldLines = estOld
+					}
+					if newLines == 0 && estNew > 0 {
+						newLines = estNew
+					}
+				}
+
 				previewKey := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d",
 					path, command, urlStr, query, source, dest, pattern,
 					offsetVal, limitVal, contentLines, oldLines, newLines)

@@ -143,6 +143,17 @@ func extractWithJSONParser(data string, toolName string) map[string]any {
 		}
 	}
 
+	if len(result) < len(keys) {
+		fallback := fallbackKVScan(data)
+		for _, key := range keys {
+			if _, ok := result[key]; !ok {
+				if v, ok2 := fallback[key]; ok2 {
+					result[key] = v
+				}
+			}
+		}
+	}
+
 	if len(result) == 0 {
 		result = fallbackKVScan(data)
 	}
@@ -398,4 +409,67 @@ func isValidIdent(s string) bool {
 
 func isNumChar(c byte) bool {
 	return (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E'
+}
+
+func EstimateStreamingLines(name, rawArgs string) (contentLines, oldLines, newLines int) {
+	switch name {
+	case "write_file":
+		contentLines = countNewlinesInJSONValue(rawArgs, "content")
+	case "edit_file":
+		oldLines = countNewlinesInJSONValue(rawArgs, "old_string")
+		newLines = countNewlinesInJSONValue(rawArgs, "new_string")
+		if newLines == 0 {
+			newLines = countNewlinesInJSONValue(rawArgs, "new_text")
+		}
+	}
+	return
+}
+
+func countNewlinesInJSONValue(raw, key string) int {
+	needle := `"` + key + `":`
+	idx := strings.Index(raw, needle)
+	if idx < 0 {
+		return 0
+	}
+	pos := idx + len(needle)
+	for pos < len(raw) && (raw[pos] == ' ' || raw[pos] == '\t' || raw[pos] == '\n' || raw[pos] == '\r') {
+		pos++
+	}
+	if pos >= len(raw) || raw[pos] != '"' {
+		return 0
+	}
+	pos++
+
+	newlines := 0
+	hasContent := false
+	for pos < len(raw) {
+		ch := raw[pos]
+		if ch == '\\' && pos+1 < len(raw) {
+			if raw[pos+1] == 'n' {
+				newlines++
+			}
+			pos += 2
+			hasContent = true
+			continue
+		}
+		if ch == '"' {
+			backslashes := 0
+			for j := pos - 1; j >= 0 && raw[j] == '\\'; j-- {
+				backslashes++
+			}
+			if backslashes%2 == 0 {
+				break
+			}
+		}
+		pos++
+		hasContent = true
+	}
+
+	if newlines == 0 && hasContent {
+		return 1
+	}
+	if newlines > 0 && hasContent {
+		return newlines + 1
+	}
+	return 0
 }
