@@ -33,6 +33,19 @@ func NewEditorWithLogger(sessionID string, lg *logger.Logger) (*Editor, error) {
 	}, nil
 }
 
+func NewEditorWithSessionDir(sessionID, sessionsRoot string, lg *logger.Logger) (*Editor, error) {
+	j, err := OpenJournalAtDir(sessionID, sessionsRoot, lg)
+	if err != nil {
+		return nil, fmt.Errorf("editor: open journal: %w", err)
+	}
+	return &Editor{
+		sessionID: sessionID,
+		journal:   j,
+		policy:    defaultPathPolicy(),
+		logger:    lg,
+	}, nil
+}
+
 func GenerateSessionID() string {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {

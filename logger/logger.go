@@ -28,6 +28,8 @@ type Logger struct {
 type Options struct {
 	HomeDir        string
 	TurnLogEnabled bool
+	SessionID      string
+	SessionsDir    string
 }
 
 // New creates a new session logger with a unique session directory.
@@ -40,8 +42,17 @@ func New(opts Options) (*Logger, error) {
 		opts.HomeDir = home
 	}
 
-	sessionID := generateSessionID()
-	dir := filepath.Join(opts.HomeDir, ".crude", "sessions", sessionID)
+	sessionID := opts.SessionID
+	if sessionID == "" {
+		sessionID = generateSessionID()
+	}
+
+	var dir string
+	if opts.SessionsDir != "" {
+		dir = filepath.Join(opts.SessionsDir, sessionID)
+	} else {
+		dir = filepath.Join(opts.HomeDir, ".crude", "sessions", sessionID)
+	}
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("logger: create session dir: %w", err)
@@ -68,11 +79,12 @@ func New(opts Options) (*Logger, error) {
 		start: now,
 	}
 
-	// Session header
 	l.w.WriteString(fmt.Sprintf("# session %s | %s\n\n", sessionID, now.Format(time.RFC3339)))
 
-	// Clean up old sessions
-	sessionsDir := filepath.Join(opts.HomeDir, ".crude", "sessions")
+	sessionsDir := opts.SessionsDir
+	if sessionsDir == "" {
+		sessionsDir = filepath.Join(opts.HomeDir, ".crude", "sessions")
+	}
 	if removed, _ := CleanOldSessions(sessionsDir, 0, 0); removed > 0 {
 		l.Info("SESSION", "cleanup", "removed", removed)
 	}
