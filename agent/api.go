@@ -144,8 +144,8 @@ func (a *Agent) completeStream(
 	tools []provider.ToolDef,
 	emit func(token string),
 	emitThinking func(text string),
-	onToolCallStart func(id, name string),
-	onToolCallDelta func(id, name, accumulatedArgs string),
+	onToolCallStart func(internalID, id, name string),
+	onToolCallDelta func(internalID, id, name, accumulatedArgs string),
 	onRetry func(attempt int, backoffSeconds float64),
 ) (content string, reasoningContent string, finishReason string, toolCalls []provider.ToolCall, promptTokens int, completionTokens int, promptTokensCached int, err error) {
 	req := provider.ChatRequest{
@@ -314,22 +314,25 @@ func (a *Agent) completeStream(
 			for _, tc := range choice.Delta.ToolCalls {
 				existing, ok := toolCallsByIndex[tc.Index]
 				if !ok {
+					a.toolCallSeq++
+					internalID := fmt.Sprintf("_tc%d", a.toolCallSeq)
 					toolCallsByIndex[tc.Index] = &provider.ToolCall{
-						Index: tc.Index,
-						ID:    tc.ID,
-						Type:  tc.Type,
+						Index:      tc.Index,
+						ID:         tc.ID,
+						Type:       tc.Type,
+						InternalID: internalID,
 						Function: provider.FunctionCall{
 							Name:      tc.Function.Name,
 							Arguments: tc.Function.Arguments,
 						},
 					}
 					if onToolCallStart != nil && tc.Function.Name != "" {
-						a.logger.Debug("STREAM", "tool_call_start", "id", tc.ID, "name", tc.Function.Name)
-						onToolCallStart(tc.ID, tc.Function.Name)
+						a.logger.Debug("STREAM", "tool_call_start", "id", tc.ID, "internal_id", internalID, "name", tc.Function.Name)
+						onToolCallStart(internalID, tc.ID, tc.Function.Name)
 					}
 					if onToolCallDelta != nil && tc.Function.Name != "" {
-						a.logger.Debug("STREAM", "tool_call_delta", "id", tc.ID, "name", tc.Function.Name, "args_len", len(tc.Function.Arguments))
-						onToolCallDelta(tc.ID, tc.Function.Name, tc.Function.Arguments)
+						a.logger.Debug("STREAM", "tool_call_delta", "id", tc.ID, "internal_id", internalID, "name", tc.Function.Name, "args_len", len(tc.Function.Arguments))
+						onToolCallDelta(internalID, tc.ID, tc.Function.Name, tc.Function.Arguments)
 					}
 				} else {
 					if tc.ID != "" && existing.ID == "" {
@@ -340,14 +343,14 @@ func (a *Agent) completeStream(
 					}
 					if tc.Function.Name != "" && existing.Function.Name == "" {
 						existing.Function.Name = tc.Function.Name
-						a.logger.Debug("STREAM", "tool_call_start", "id", existing.ID, "name", existing.Function.Name)
+						a.logger.Debug("STREAM", "tool_call_start", "id", existing.ID, "internal_id", existing.InternalID, "name", existing.Function.Name)
 						if onToolCallStart != nil {
-							onToolCallStart(existing.ID, existing.Function.Name)
+							onToolCallStart(existing.InternalID, existing.ID, existing.Function.Name)
 						}
 					}
 					existing.Function.Arguments += tc.Function.Arguments
 					if onToolCallDelta != nil && existing.Function.Name != "" {
-						onToolCallDelta(existing.ID, existing.Function.Name, existing.Function.Arguments)
+						onToolCallDelta(existing.InternalID, existing.ID, existing.Function.Name, existing.Function.Arguments)
 					}
 				}
 			}
