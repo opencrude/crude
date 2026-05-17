@@ -390,7 +390,7 @@ func listDirResultSummary(content, target, duration string) string {
 
 	// "path — N entries:" or "path — N entries (recursive):"
 	if idx := strings.Index(content, " — "); idx > 0 {
-		afterDash := content[idx+3:]
+		afterDash := content[idx+len(" — "):]
 		colonIdx := strings.Index(afterDash, ":")
 		if colonIdx > 0 {
 			info := strings.TrimSpace(afterDash[:colonIdx])

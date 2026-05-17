@@ -4,6 +4,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 const (
@@ -34,9 +35,9 @@ type ScrollBar struct {
 	scrollY        int
 	trackChar      string
 	thumbChar      string
-	trackStyle     string
-	thumbStyle     string
-	fadeThumbStyle string
+	trackStyle     lipgloss.Style
+	thumbStyle     lipgloss.Style
+	fadeThumbStyle lipgloss.Style
 	scrollChanged  bool
 }
 

@@ -1,10 +1,56 @@
 package rendering
 
 import (
+	"runtime"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
 )
+
+var isWindows = runtime.GOOS == "windows"
+
+func SanitizeForTerminal(s string) string {
+	if s == "" {
+		return s
+	}
+	if !isWindows && utf8.ValidString(s) && !strings.ContainsRune(s, '\r') {
+		return s
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "")
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			b.WriteByte('?')
+			i++
+			continue
+		}
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case unicode.IsControl(r):
+			b.WriteByte(' ')
+		case r >= 0x20 && r <= 0x7E:
+			b.WriteRune(r)
+		case isWindows:
+			w := runewidth.RuneWidth(r)
+			if w == 1 {
+				b.WriteRune(r)
+			} else {
+				b.WriteByte('?')
+			}
+		default:
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	return b.String()
+}
 
 func Max(a, b int) int {
 	if a > b {

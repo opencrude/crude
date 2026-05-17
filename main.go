@@ -11,6 +11,7 @@ import (
 	"crude/session"
 	"crude/tui"
 	"crude/tui/app"
+	"crude/tui/platform"
 )
 
 const defaultModel = ""
@@ -119,6 +120,8 @@ func sessionToFileConfig(sc *session.Config) fileConfig {
 }
 
 func main() {
+	platform.InitConsole()
+
 	apiKeyFlag := flag.String("key", "", "API key (or set CRUDE_API_KEY)")
 	modelFlag := flag.String("model", "", "Model to use")
 	providerFlag := flag.String("provider", "", "Provider ID (openrouter, openai, anthropic, etc.)")

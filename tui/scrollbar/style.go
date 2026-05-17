@@ -1,12 +1,13 @@
 package scrollbar
 
-const (
-	defaultTrackStyle    = "\x1b[38;5;236m"
-	defaultThumbStyle    = "\x1b[38;5;243m"
-	defaultFadeThumbStyle = "\x1b[38;5;239m"
-	resetStyle           = "\x1b[0m"
+import "github.com/charmbracelet/lipgloss"
+
+var (
+	defaultTrackStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#303030"))
+	defaultThumbStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#767676"))
+	defaultFadeThumbStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#4e4e4e"))
 )
 
-func styleChar(ch, style string) string {
-	return style + ch + resetStyle
+func styleChar(ch string, style lipgloss.Style) string {
+	return style.Render(ch)
 }
