@@ -627,8 +627,8 @@ func (a *Agent) Run(
 					cmd := getStr(params, "command")
 					if cmd != "" {
 						display := cmd
-						if len(display) > 60 {
-							display = display[:60] + "\u2026"
+						if len([]rune(display)) > 60 {
+							display = string([]rune(display)[:60]) + "\u2026"
 						}
 						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 							"tool_id": tc.ID,
@@ -822,8 +822,8 @@ func formatToolArgs(params map[string]any) string {
 		v := params[k]
 		switch val := v.(type) {
 		case string:
-			if len(val) > 80 {
-				parts = append(parts, k+": "+val[:80]+"…")
+			if len([]rune(val)) > 80 {
+				parts = append(parts, k+": "+string([]rune(val)[:80])+"…")
 			} else {
 				parts = append(parts, k+": "+val)
 			}

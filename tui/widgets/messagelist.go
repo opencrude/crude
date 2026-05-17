@@ -1030,6 +1030,7 @@ func (ml *MessageList) isStreamingCursor(msg *types.ChatMessage) bool {
 }
 
 func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
+	origMsg := msg
 	sanitized := *msg
 	sanitized.Content = rendering.SanitizeForTerminal(msg.Content)
 	sanitized.ToolArgs = rendering.SanitizeForTerminal(msg.ToolArgs)
@@ -1053,7 +1054,7 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 	}
 
 	var lines []string
-	isLastMsg := ml.isLastMessage(msg)
+	isLastMsg := ml.isLastMessage(origMsg)
 
 	timeLine1, timeLine2 := rendering.FormatTimeLabel(msg.Time)
 	timeW := rendering.Max(len(timeLine1), len(timeLine2))

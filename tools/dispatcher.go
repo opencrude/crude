@@ -194,8 +194,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		content := GetStrArg(params, "content", "")
 		path := GetStrArg(params, "path", "")
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "content_len", len(content))
-		if content != "" && len(content) > 200 {
-			lg.Debug("DISPATCH", "content_preview", "first_80", content[:80]+"…")
+		if content != "" && len([]rune(content)) > 200 {
+			lg.Debug("DISPATCH", "content_preview", "first_80", string([]rune(content)[:80])+"…")
 		}
 		oldContent := ""
 		existing, err := os.ReadFile(path)
@@ -236,8 +236,8 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		oldString := GetStrArg(params, "old_string", "")
 		newString := GetStrArg(params, "new_string", "")
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "old_len", len(oldString), "new_len", len(newString))
-		if len(oldString) > 80 {
-			lg.Debug("DISPATCH", "old_preview", "first_80", oldString[:80]+"…")
+	if len([]rune(oldString)) > 80 {
+			lg.Debug("DISPATCH", "old_preview", "first_80", string([]rune(oldString)[:80])+"…")
 		}
 		orig := ""
 		if ed != nil {

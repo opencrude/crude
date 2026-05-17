@@ -8,6 +8,8 @@ import (
 )
 
 func formatReadFile(path, content string, offset, limit int) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "")
 	lines := strings.Split(content, "\n")
 	total := len(lines)
 

@@ -97,8 +97,8 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 
 		if resp.StatusCode != 200 {
 			snippet := string(respBody)
-			if len(snippet) > 240 {
-				snippet = snippet[:240]
+			if len([]rune(snippet)) > 240 {
+				snippet = string([]rune(snippet)[:240])
 			}
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
@@ -223,8 +223,8 @@ func (a *Agent) completeStream(
 			respBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			snippet := string(respBody)
-			if len(snippet) > 240 {
-				snippet = snippet[:240]
+			if len([]rune(snippet)) > 240 {
+				snippet = string([]rune(snippet)[:240])
 			}
 			if isRetryable(resp.StatusCode) {
 				bo := retryBackoff(attempt)
@@ -425,8 +425,8 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 		errMsg = "API server error — please try again"
 	} else if idx := strings.Index(errMsg, "API error: "); idx >= 0 {
 		errMsg = errMsg[idx+len("API error: "):]
-		if len(errMsg) > 120 {
-			errMsg = errMsg[:120] + "…"
+		if len([]rune(errMsg)) > 120 {
+			errMsg = string([]rune(errMsg)[:120]) + "…"
 		}
 	}
 	a.logger.Error("LLM", "emit_error", "original", originalMsg, "display", errMsg)
