@@ -61,6 +61,14 @@ func OpenJournal(sessionID string, lg *logger.Logger) (*Journal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("journal: data dir: %w", err)
 	}
+	return openJournalAt(sessionID, dir, lg)
+}
+
+func OpenJournalAtDir(sessionID, dir string, lg *logger.Logger) (*Journal, error) {
+	return openJournalAt(sessionID, dir, lg)
+}
+
+func openJournalAt(sessionID, dir string, lg *logger.Logger) (*Journal, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("journal: mkdir: %w", err)
 	}
@@ -506,7 +514,20 @@ func checksum(data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
+var sessionsRootFn func() (string, error)
+
+func SetSessionsRootFn(fn func() (string, error)) {
+	sessionsRootFn = fn
+}
+
 func journalDir() (string, error) {
+	if sessionsRootFn != nil {
+		return sessionsRootFn()
+	}
+	return journalDirFallback()
+}
+
+func journalDirFallback() (string, error) {
 	switch runtime.GOOS {
 	case "linux":
 		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {

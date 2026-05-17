@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"crude/provider"
 	"crude/session"
+	"crude/sessiondb"
 	"crude/tui"
 	"crude/tui/app"
 	"crude/tui/platform"
@@ -127,7 +129,71 @@ func main() {
 	providerFlag := flag.String("provider", "", "Provider ID (openrouter, openai, anthropic, etc.)")
 	sysPromptFlag := flag.String("system", "", "Override system prompt")
 	settingsFlag := flag.Bool("settings", false, "Open settings on startup")
+	resumeFlag := flag.String("resume", "", "Resume session (session ID, 'last', or empty for picker)")
+	listSessionsFlag := flag.Bool("list-sessions", false, "List sessions and exit")
+	limitFlag := flag.Int("limit", 50, "Number of sessions to list (used with --list-sessions)")
+	offsetFlag := flag.Int("offset", 0, "Offset for session listing (used with --list-sessions)")
+	deleteSessionFlag := flag.String("delete-session", "", "Delete a session by ID")
 	flag.Parse()
+
+	sessionsRoot, _ := session.SessionsRoot()
+
+	if *listSessionsFlag {
+		metas, total, err := sessiondb.ListSessionsPaginated(sessionsRoot, sessiondb.ListSessionsOpts{
+			Limit:  *limitFlag,
+			Offset: *offsetFlag,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
+			os.Exit(1)
+		}
+		if total == 0 {
+			fmt.Println("No sessions found.")
+			return
+		}
+		fmt.Printf("Showing %d-%d of %d sessions\n\n", *offsetFlag+1, *offsetFlag+len(metas), total)
+		fmt.Printf("%-30s %-20s %-8s %-8s %-20s %-16s %s\n", "ID", "Project", "Turns", "Msgs", "Model", "Created", "First Prompt")
+		sep := make([]byte, 140)
+		for i := range sep {
+			sep[i] = '-'
+		}
+		fmt.Println(string(sep))
+		for _, m := range metas {
+			firstPrompt := ""
+			if m.FirstPrompt.Valid {
+				firstPrompt = m.FirstPrompt.String
+			}
+			created := ""
+			if m.CreatedAt > 0 {
+				created = time.Unix(0, m.CreatedAt).Format("2006-01-02 15:04")
+			}
+			fmt.Printf("%-30s %-20s %-8d %-8d %-20s %-16s %.40s\n", m.ID, m.ProjectName, m.TurnCount, m.MessageCount, m.Model, created, firstPrompt)
+		}
+		return
+	}
+
+	if *deleteSessionFlag != "" {
+		if err := sessiondb.DeleteSession(sessionsRoot, *deleteSessionFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "Error deleting session: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Session %s deleted.\n", *deleteSessionFlag)
+		return
+	}
+
+	var resumeSessionID string
+	if *resumeFlag != "" {
+		if *resumeFlag == "last" || *resumeFlag == "true" {
+			metas, err := sessiondb.ListSessions(sessionsRoot)
+			if err != nil || len(metas) == 0 {
+				fmt.Fprintln(os.Stderr, "No sessions found to resume.")
+				os.Exit(1)
+			}
+			resumeSessionID = metas[0].ID
+		} else {
+			resumeSessionID = *resumeFlag
+		}
+	}
 
 	fc := loadFileConfig()
 
@@ -170,7 +236,21 @@ func main() {
 	sessCfg := fileConfigToSession(fc)
 	home, _ := os.UserHomeDir()
 
-	sess, err := session.New(sessCfg, home)
+	var sess *session.Session
+	var err error
+
+	if resumeSessionID != "" {
+		dbPath := filepath.Join(sessionsRoot, resumeSessionID+".db")
+		sess, err = session.ResumeSession(dbPath, sessCfg, home)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to resume session %s: %v\n", resumeSessionID, err)
+			fmt.Fprintln(os.Stderr, "Starting new session instead.")
+			sess, err = session.New(sessCfg, home)
+		}
+	} else {
+		sess, err = session.New(sessCfg, home)
+	}
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create session: %v\n", err)
 		os.Exit(1)

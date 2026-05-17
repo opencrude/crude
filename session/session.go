@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crude/agent"
@@ -21,6 +23,7 @@ import (
 	"crude/provider"
 	"crude/safety"
 	"crude/search"
+	"crude/sessiondb"
 	"crude/statemachine"
 	"crude/tools"
 	"crude/tui"
@@ -45,6 +48,11 @@ type ProviderConfig struct {
 	MainCacheReadPrice  float64 `json:"main_cache_read_price,omitempty"`
 }
 
+type taggedMessage struct {
+	msg  provider.ChatMessage
+	turn int
+}
+
 type Session struct {
 	cfg *Config
 	mu  sync.Mutex
@@ -58,6 +66,7 @@ type Session struct {
 	asyncMgr  *fileio.AsyncCommandManager
 
 	msgs          []provider.ChatMessage
+	msgTurns      []int
 	msgsMu        sync.Mutex
 	pendingBlock  bool
 	blockMu       sync.Mutex
@@ -71,9 +80,17 @@ type Session struct {
 	knowledgeDir string
 	yolo         bool
 
-	// Token tracking and cost accumulation — real counts from API
 	cost   *CostAccumulator
 	tokens *TokenTracker
+
+	db        *sql.DB
+	dbPath    string
+	turnNumber int
+	seqNum    int
+	writeBuf  []taggedMessage
+	writeMu   sync.Mutex
+	flushWg   sync.WaitGroup
+	closing   int32
 }
 
 func New(cfg *Config, homeDir string) (*Session, error) {
@@ -91,9 +108,18 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
 		})
 	}
+
+	sessionsRoot, _ := SessionsRoot()
+	if sessionsRoot != "" {
+		os.MkdirAll(sessionsRoot, 0700)
+		sessiondb.CleanOldSessions(sessionsRoot)
+	}
+	fileio.SetSessionsRootFn(SessionsRoot)
+
 	lg, err := logger.New(logger.Options{
 		HomeDir:        homeDir,
 		TurnLogEnabled: cfg.TurnLogsEnabled,
+		SessionsDir:    sessionsRoot,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("logger: %w", err)
@@ -117,15 +143,51 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	statemachine.SetStepResultLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
-	fileioSessionID := fileio.GenerateSessionID()
 	var editor *fileio.Editor
-	if ed, edErr := fileio.NewEditorWithLogger(fileioSessionID, lg); edErr != nil {
-		lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
-	} else {
-		editor = ed
+	if sessionsRoot != "" {
+		if ed, edErr := fileio.NewEditorWithSessionDir(sessionID, sessionsRoot, lg); edErr != nil {
+			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
+		} else {
+			editor = ed
+		}
+	}
+	if editor == nil {
+		fileioSessionID := fileio.GenerateSessionID()
+		if ed, edErr := fileio.NewEditorWithLogger(fileioSessionID, lg); edErr != nil {
+			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
+		} else {
+			editor = ed
+		}
 	}
 
 	sm := statemachine.NewConversationStateMachine(lg)
+
+	var db *sql.DB
+	var dbPath string
+	if sessionsRoot != "" {
+		dbPath = filepath.Join(sessionsRoot, sessionID+".db")
+		openDB, dbErr := sessiondb.OpenAndMigrate(dbPath)
+		if dbErr != nil {
+			lg.Warn("SESSION", "db_open_error", "error", fmt.Sprintf("%v", dbErr))
+		} else {
+			db = openDB
+			wd, _ := os.Getwd()
+			projectName := "unknown"
+			if wd != "" {
+				projectName = filepath.Base(wd)
+			}
+			if sErr := sessiondb.Create(db, sessiondb.SessionMeta{
+				ID:          sessionID,
+				ProjectPath: wd,
+				ProjectName: projectName,
+				Model:       activeCfg.Model,
+				Provider:    cfg.ActiveProvider,
+				CreatedAt:   time.Now().UnixNano(),
+			}); sErr != nil {
+				lg.Warn("SESSION", "db_session_create_error", "error", fmt.Sprintf("%v", sErr))
+			}
+		}
+	}
 
 	return &Session{
 		cfg:          cfg,
@@ -140,6 +202,9 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		sessionStart: time.Now(),
 		cost:         NewCostAccumulator(lg),
 		tokens:       NewTokenTracker(lg),
+		db:           db,
+		dbPath:       dbPath,
+		writeBuf:     make([]taggedMessage, 0, 64),
 	}, nil
 }
 
@@ -150,7 +215,12 @@ func (s *Session) HasMessages() bool {
 }
 
 func (s *Session) Close() {
+	atomic.StoreInt32(&s.closing, 1)
 	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
+
+	s.flushWg.Wait()
+	s.flushWriteBufSync()
+
 	if s.editor != nil {
 		s.editor.Close()
 	}
@@ -160,9 +230,22 @@ func (s *Session) Close() {
 		s.persistCostSnapshot()
 	}
 
+	if s.db != nil {
+		if err := sessiondb.CloseSession(s.db, s.sessionID); err != nil {
+			s.logger.Error("SESSION", "close_session_error", "error", err.Error())
+		}
+		s.persistCostToDB()
+		if err := s.db.Close(); err != nil {
+			s.logger.Error("SESSION", "db_close_error", "error", err.Error())
+		}
+	}
+
 	s.logger.Close()
 	if !hasMsgs {
 		s.logger.Remove()
+		if s.dbPath != "" {
+			os.Remove(s.dbPath)
+		}
 	}
 }
 
@@ -182,6 +265,90 @@ func (s *Session) persistCostSnapshot() {
 
 	s.logger.Info("COST", "persisted", "path", costPath, "total_cost", snap.TotalCost,
 		"prompt_tokens", snap.TotalPromptTokens, "completion_tokens", snap.TotalCompletionTokens)
+}
+
+func (s *Session) persistCostToDB() {
+	if s.db == nil {
+		return
+	}
+	snap := s.cost.Snapshot()
+	byModel := make(map[string]json.RawMessage, len(snap.ByModel))
+	for k, v := range snap.ByModel {
+		b, _ := json.Marshal(v)
+		byModel[k] = b
+	}
+	if err := sessiondb.InsertCostSnapshot(s.db,
+		snap.TotalPromptTokens, snap.TotalCompletionTokens,
+		snap.TotalCachedTokens, snap.TotalCost, byModel); err != nil {
+		s.logger.Error("COST", "db_persist_error", "error", err.Error())
+	}
+}
+
+func (s *Session) appendToWriteBuf(msgs []provider.ChatMessage, turns []int) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	for i, m := range msgs {
+		turn := 0
+		if i < len(turns) {
+			turn = turns[i]
+		}
+		s.writeBuf = append(s.writeBuf, taggedMessage{msg: m, turn: turn})
+	}
+}
+
+func (s *Session) flushWriteBuf() {
+	defer s.flushWg.Done()
+	s.writeMu.Lock()
+	buf := s.writeBuf
+	s.writeBuf = s.writeBuf[:0]
+	s.writeMu.Unlock()
+
+	if len(buf) == 0 || s.db == nil {
+		return
+	}
+
+	msgs := make([]provider.ChatMessage, len(buf))
+	turns := make([]int, len(buf))
+	for i, tm := range buf {
+		msgs[i] = tm.msg
+		turns[i] = tm.turn
+	}
+
+	newSeq, err := sessiondb.ReplaceMessages(s.db, s.sessionID, msgs, turns)
+	if err != nil {
+		s.logger.Error("SESSIONDB", "flush_error", "error", err.Error())
+		return
+	}
+	s.msgsMu.Lock()
+	s.seqNum = newSeq
+	s.msgsMu.Unlock()
+}
+
+func (s *Session) flushWriteBufSync() {
+	s.writeMu.Lock()
+	buf := s.writeBuf
+	s.writeBuf = s.writeBuf[:0]
+	s.writeMu.Unlock()
+
+	if len(buf) == 0 || s.db == nil {
+		return
+	}
+
+	msgs := make([]provider.ChatMessage, len(buf))
+	turns := make([]int, len(buf))
+	for i, tm := range buf {
+		msgs[i] = tm.msg
+		turns[i] = tm.turn
+	}
+
+	newSeq, err := sessiondb.ReplaceMessages(s.db, s.sessionID, msgs, turns)
+	if err != nil {
+		s.logger.Error("SESSIONDB", "sync_flush_error", "error", err.Error())
+		return
+	}
+	s.msgsMu.Lock()
+	s.seqNum = newSeq
+	s.msgsMu.Unlock()
 }
 
 func (c *Config) GetActiveProviderConfig() ProviderConfig {
@@ -774,6 +941,9 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 	}()
 
 	for userText := range tuiInst.InputCh {
+		if atomic.LoadInt32(&s.closing) == 1 {
+			break
+		}
 		select {
 		case <-cancelCh:
 			l.Debug("CANCEL", "cancel_drained", "iteration", "start_of_loop")
@@ -800,14 +970,21 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 			continue
 		}
 
+		s.turnNumber++
 		s.msgCounterMu.Lock()
 		s.msgCounter++
 		currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
 		s.msgCounterMu.Unlock()
-		l.Info("INPUT", "received", "len", len(userText), "msg_id", currentMsgID, "is_blocked", isBlocked)
+		l.Info("INPUT", "received", "len", len(userText), "msg_id", currentMsgID, "is_blocked", isBlocked, "turn", s.turnNumber)
+
+		if s.db != nil {
+			sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userText)
+			sessiondb.UpdateLastPrompt(s.db, s.sessionID, userText)
+		}
 
 		s.msgsMu.Lock()
 		s.msgs = append(s.msgs, provider.ChatMessage{Role: "user", Content: userText})
+		s.msgTurns = append(s.msgTurns, s.turnNumber)
 		msgsCopy := make([]provider.ChatMessage, len(s.msgs))
 		copy(msgsCopy, s.msgs)
 		s.msgsMu.Unlock()
@@ -983,30 +1160,55 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 
 		s.msgsMu.Lock()
 		var persisted []provider.ChatMessage
+		var persistedTurns []int
 		for _, m := range agentMsgs {
 			if m.Role == "system" {
 				continue
 			}
 			persisted = append(persisted, m)
+			persistedTurns = append(persistedTurns, s.turnNumber)
 		}
 		preSanitize := len(persisted)
 		persisted = sanitizeMessages(persisted)
 		removedCount := preSanitize - len(persisted)
 		if removedCount > 0 {
+			persistedTurns = persistedTurns[:len(persisted)]
 			l.Debug("SANITIZE", "messages_removed", "count", removedCount, "remaining", len(persisted))
+		}
+		if len(persisted) == 0 {
+			persistedTurns = nil
 		}
 		ctxWindow := provider.LookupContextWindow(activeCfg.Model)
 		preTruncate := len(persisted)
 		persisted = truncateMessages(persisted, ctxWindow, activeCfg.Model)
 		if len(persisted) < preTruncate {
+			persistedTurns = persistedTurns[preTruncate-len(persisted):]
 			l.Info("TRUNCATE", "messages", "before", preTruncate, "after", len(persisted), "window", ctxWindow)
+		}
+		if len(persisted) > len(persistedTurns) {
+			extra := len(persisted) - len(persistedTurns)
+			prefix := make([]int, extra)
+			persistedTurns = append(prefix, persistedTurns...)
 		}
 		if len(persisted) > 0 {
 			s.msgs = persisted
+			s.msgTurns = persistedTurns
 		} else if finalContent != "" {
 			s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", Content: finalContent})
+			s.msgTurns = append(s.msgTurns, s.turnNumber)
 		}
+
+		if s.db != nil && len(s.msgs) > 0 {
+			s.appendToWriteBuf(s.msgs, s.msgTurns)
+		}
+
 		s.msgsMu.Unlock()
+
+		if s.db != nil {
+			s.flushWg.Add(1)
+			go s.flushWriteBuf()
+		}
+
 		if finalContent != "" {
 			l.Info("CONV", "assistant_msg", "msg_id", currentMsgID, "len", len(finalContent))
 		}
@@ -1019,6 +1221,140 @@ func (s *Session) ModelName() string {
 }
 
 func (s *Session) Logger() *logger.Logger { return s.logger }
+
+func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error) {
+	db, err := sessiondb.Open(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("resume: open db: %w", err)
+	}
+
+	meta, err := sessiondb.GetMeta(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: get meta: %w", err)
+	}
+
+	msgs, msgTurns, err := sessiondb.LoadMessages(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load messages: %w", err)
+	}
+
+	maxTurn := 0
+	for _, t := range msgTurns {
+		if t > maxTurn {
+			maxTurn = t
+		}
+	}
+
+	sessionsRoot, _ := SessionsRoot()
+	fileio.SetSessionsRootFn(SessionsRoot)
+
+	lg, err := logger.New(logger.Options{
+		HomeDir:        homeDir,
+		TurnLogEnabled: cfg.TurnLogsEnabled,
+		SessionID:      meta.ID,
+		SessionsDir:    sessionsRoot,
+	})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: logger: %w", err)
+	}
+	exec := fileio.NewLocalExecWithLogger(lg)
+
+	permStore := safety.NewPermissionStore()
+	permStore.SetLogger(lg)
+	safety.SetCapabilitiesLogger(lg)
+	provider.SetLogger(lg)
+	search.SetLogger(lg)
+	js.SetLogger(lg)
+	clipboard.SetLogger(lg)
+	jsonrepair.SetLogger(lg)
+	diff.SetLogger(lg)
+	statemachine.SetGoalLogger(lg)
+	statemachine.SetStepResultLogger(lg)
+	fileio.SetSafetyLogger(lg)
+
+	var editor *fileio.Editor
+	if sessionsRoot != "" {
+		if ed, edErr := fileio.NewEditorWithSessionDir(meta.ID, sessionsRoot, lg); edErr != nil {
+			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
+		} else {
+			editor = ed
+		}
+	}
+	if editor == nil {
+		if ed, edErr := fileio.NewEditorWithLogger(meta.ID, lg); edErr != nil {
+			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
+		} else {
+			editor = ed
+		}
+	}
+
+	sm := statemachine.NewConversationStateMachine(lg)
+
+	activeCfg := cfg.GetActiveProviderConfig()
+	p := provider.FromPreset(cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
+	p.Model = activeCfg.Model
+	p.SetThinkingEffort(activeCfg.ThinkingEffort)
+
+	interrupted, action := detectInterruption(msgs)
+	if interrupted {
+		msgs = append(msgs, provider.ChatMessage{
+			Role:    "user",
+			Content: action,
+		})
+		msgTurns = append(msgTurns, maxTurn+1)
+		maxTurn++
+	}
+
+	resumeTurnNumber := maxTurn
+	if meta.TurnCount > maxTurn {
+		resumeTurnNumber = meta.TurnCount
+	}
+
+	return &Session{
+		cfg:          cfg,
+		provider:     p,
+		exec:         exec,
+		editor:       editor,
+		logger:       lg,
+		permStore:    permStore,
+		sm:           sm,
+		asyncMgr:     fileio.NewAsyncCommandManagerWithLogger(lg),
+		sessionID:    meta.ID,
+		sessionStart: time.Now(),
+		cost:         NewCostAccumulator(lg),
+		tokens:       NewTokenTracker(lg),
+		db:           db,
+		dbPath:       dbPath,
+		turnNumber:   resumeTurnNumber,
+		seqNum:       len(msgs),
+		msgCounter:   len(msgs),
+		msgs:         msgs,
+		msgTurns:     msgTurns,
+		writeBuf:     make([]taggedMessage, 0, 64),
+	}, nil
+}
+
+func detectInterruption(msgs []provider.ChatMessage) (bool, string) {
+	if len(msgs) == 0 {
+		return false, ""
+	}
+	last := msgs[len(msgs)-1]
+	switch last.Role {
+	case "assistant":
+		if len(last.ToolCalls) > 0 {
+			return true, "Continue from where you left off. The previous tool calls may or may not have executed."
+		}
+		return false, ""
+	case "tool":
+		return true, "Continue — the tool result above is the last thing that happened."
+	case "user":
+		return true, "You were about to respond to the message above. Please continue."
+	}
+	return false, ""
+}
 
 func ConfigToSettings(cfg *Config) tui.Settings {
 	providerID := cfg.EffectiveProviderID()

@@ -34,20 +34,21 @@ func CleanOldSessions(sessionsDir string, maxAge time.Duration, maxCount int) (i
 	type info struct {
 		name    string
 		modTime time.Time
+		isDB    bool
 	}
 	var sessions []info
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
 		fi, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		sessions = append(sessions, info{name: entry.Name(), modTime: fi.ModTime()})
+		isDB := !entry.IsDir() && filepath.Ext(entry.Name()) == ".db"
+		if !entry.IsDir() && !isDB {
+			continue
+		}
+		sessions = append(sessions, info{name: entry.Name(), modTime: fi.ModTime(), isDB: isDB})
 	}
 
-	// Sort oldest first
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].modTime.Before(sessions[j].modTime)
 	})
@@ -55,7 +56,6 @@ func CleanOldSessions(sessionsDir string, maxAge time.Duration, maxCount int) (i
 	cutoff := time.Now().Add(-maxAge)
 	removed := 0
 
-	// Pass 1: Remove expired sessions
 	var kept []info
 	for _, s := range sessions {
 		if s.modTime.Before(cutoff) {
@@ -67,7 +67,6 @@ func CleanOldSessions(sessionsDir string, maxAge time.Duration, maxCount int) (i
 		}
 	}
 
-	// Pass 2: Remove oldest if count exceeds limit
 	if len(kept) > maxCount {
 		excess := len(kept) - maxCount
 		for i := 0; i < excess; i++ {
