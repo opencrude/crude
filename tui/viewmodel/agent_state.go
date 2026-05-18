@@ -167,7 +167,10 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 		return a.handleDone(evt, target, thinkTarget, onThinking, onStatusLine)
 
 	case "error":
-		a.TokenBuf = ""
+		if a.TokenBuf != "" {
+			target.AppendToken(a.TokenBuf)
+			a.TokenBuf = ""
+		}
 		target.MarkAllThinkingDone()
 		target.ClearStreamingTools()
 		if thinkTarget != target {

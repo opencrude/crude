@@ -437,7 +437,7 @@ func (s *Session) newAgent() *agent.Agent {
 	a.Yolo = s.yolo
 	a.AsyncMgr = s.asyncMgr
 
-	a.ToolFn = func(tool string, params map[string]any) (tools.ToolResult, error) {
+	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		switch tool {
 		case "plan":
 			objective := getStrParam(params, "objective")
@@ -745,8 +745,13 @@ func (s *Session) newAgent() *agent.Agent {
 				return tools.ToolResult{}, fmt.Errorf("wait: seconds must be > 0")
 			}
 			s.logger.Info("TOOL", "wait", "seconds", seconds)
-			time.Sleep(time.Duration(seconds * float64(time.Second)))
-			return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
+			dur := time.Duration(seconds * float64(time.Second))
+			select {
+			case <-time.After(dur):
+				return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
+			case <-ctx.Done():
+				return tools.ToolResult{Content: "Wait cancelled"}, nil
+			}
 
 		default:
 			if tool == "execute_command" && !s.yolo {
@@ -762,7 +767,7 @@ func (s *Session) newAgent() *agent.Agent {
 				}
 			}
 			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo, s.logger)
-			if strings.HasPrefix(result.Content, "Error:") {
+			if agent.IsToolError(result.Content) {
 				return result, fmt.Errorf("%s", result.Content)
 			}
 			return result, nil
@@ -941,7 +946,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 	defer func() {
 		if r := recover(); r != nil {
 			l.Error("SESSION", "panic", "error", fmt.Sprintf("%v", r))
-			sender.SendAgentEvent("error", fmt.Sprintf("Internal error: %v", r))
+			sender.SendAgentEventWithID("error", fmt.Sprintf("Internal error: %v", r), "main")
 		}
 	}()
 
@@ -1063,7 +1068,13 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 		}()
 		activeCfg = s.cfg.GetActiveProviderConfig() // refresh for emit closure
 
+	var emitActive atomic.Bool
+	emitActive.Store(true)
+
 		emit := func(evt agent.AgentEvent) {
+			if !emitActive.Load() {
+				return
+			}
 			if evt.Type == "blocking" {
 				data, _ := evt.Data.(map[string]string)
 				if data != nil {
@@ -1239,6 +1250,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 		}
 		ag.Emit = emit
 		agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID, btwCh)
+		emitActive.Store(false)
 
 		cancel()
 

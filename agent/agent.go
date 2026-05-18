@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"crude/logger"
@@ -49,7 +51,7 @@ type Agent struct {
 	Provider    *provider.Provider
 	Model       string
 	Policy      safety.Policy
-	ToolFn      func(tool string, params map[string]any) (tools.ToolResult, error)
+	ToolFn      func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
 	logger      *logger.Logger
 	turn        *logger.TurnLogger
 	Emit        func(AgentEvent)
@@ -66,10 +68,20 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 	return &Agent{
 		Provider: p,
 		Model:    model,
-		ToolFn:   func(tool string, params map[string]any) (tools.ToolResult, error) { return tools.ToolResult{}, nil },
+		ToolFn:   func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) { return tools.ToolResult{}, nil },
 		logger:   lg,
 		turn:     lg.Turn(),
 	}
+}
+
+func IsToolError(content string) bool {
+	prefixes := []string{"Error:", "Command failed:", "Search error:", "ArXiv search error:", "Fetch error:", "JavaScript error:", "[SAFETY BLOCK]"}
+	for _, p := range prefixes {
+		if strings.HasPrefix(strings.TrimSpace(content), p) {
+			return true
+		}
+	}
+	return false
 }
 
 func isStopConditionMet(conditions []stopCondition, steps []StepRecord) bool {
@@ -118,6 +130,17 @@ func (a *Agent) Run(
 	btwCh <-chan string,
 ) []provider.ChatMessage {
 	l := a.logger
+	var emitActive atomic.Bool
+	emitActive.Store(true)
+	defer emitActive.Store(false)
+	origEmit := emit
+	emit = func(evt AgentEvent) {
+		if !emitActive.Load() {
+			return
+		}
+		origEmit(evt)
+	}
+
 	allTools := allToolDefs()
 
 	l.Debug("AGENT", "run_enter", "msgs", len(sessionMessages), "tools", len(allTools), "session_id", sessionID)
@@ -366,6 +389,11 @@ func (a *Agent) Run(
 			},
 		)
 		if err != nil {
+			var apiErr *apiCallError
+			if errors.As(err, &apiErr) && apiErr.IsCancellation() {
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+				return msgs
+			}
 			a.emitError(emit, err)
 			return msgs
 		}
@@ -459,11 +487,18 @@ func (a *Agent) Run(
 						"name":        tc.Function.Name,
 						"args":        tc.Function.Arguments,
 					}})
+					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"internal_id": internalID,
+						"tool_id":     tc.ID,
+						"name":        tc.Function.Name,
+						"phase":       "error",
+					}})
 					emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 						"internal_id": internalID,
 						"tool_id":     tc.ID,
 						"name":        tc.Function.Name,
 						"result":      errResult,
+						"error":       "true",
 					}})
 					resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errResult}}
 					return
@@ -483,11 +518,18 @@ func (a *Agent) Run(
 					if sr.Risk.IsAlwaysBlocked() {
 						errMsg := fmt.Sprintf("[SAFETY BLOCK] This command was automatically blocked and will never execute. DO NOT retry this command or any variant of it.\nBlock reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the system prevented a dangerous operation. Move on to a different approach. Explain to the user why this was blocked and what you'll do instead.", sr.Reason, sr.Suggestion, cmd)
 						a.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
+						emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+							"internal_id": internalID,
+							"tool_id":     tc.ID,
+							"name":        "execute_command",
+							"phase":       "error",
+						}})
 						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 							"internal_id": internalID,
 							"tool_id":     tc.ID,
 							"name":        "execute_command",
 							"result":      errMsg,
+							"error":       "true",
 						}})
 						resultCh <- execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
 						return
@@ -506,11 +548,18 @@ func (a *Agent) Run(
 						if resp == "deny" {
 							errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
 							a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
+							emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+								"internal_id": internalID,
+								"tool_id":     tc.ID,
+								"name":        "execute_command",
+								"phase":       "error",
+							}})
 							emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 								"internal_id": internalID,
 								"tool_id":     tc.ID,
 								"name":        "execute_command",
 								"result":      errMsg,
+								"error":       "true",
 							}})
 							resultCh <- execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
 							return
@@ -581,12 +630,19 @@ func (a *Agent) Run(
 					if resp == "deny" {
 						errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
 						a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
-						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-							"internal_id": internalID,
-							"tool_id":     tc.ID,
-							"name":        tc.Function.Name,
-							"result":      errMsg,
-						}})
+							emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+								"internal_id": internalID,
+								"tool_id":     tc.ID,
+								"name":        tc.Function.Name,
+								"phase":       "error",
+							}})
+							emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+								"internal_id": internalID,
+								"tool_id":     tc.ID,
+								"name":        tc.Function.Name,
+								"result":      errMsg,
+								"error":       "true",
+							}})
 						resultCh <- execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}}
 						return
 					}
@@ -667,19 +723,19 @@ func (a *Agent) Run(
 
 				a.logger.Info("TOOL", "call", "name", tc.Function.Name, "params", formatToolArgs(params))
 				toolStart := time.Now()
-				result, _ := a.ToolFn(tc.Function.Name, params)
+				result, _ := a.ToolFn(ctx, tc.Function.Name, params)
 				toolDur := time.Since(toolStart).Milliseconds()
 
 				goroutineDur := time.Since(goroutineStart).Milliseconds()
 				a.logger.Debug("AGENT", "goroutine_complete", "tool", tc.Function.Name, "tool_id", tc.ID, "goroutine_dur_ms", goroutineDur, "tool_dur_ms", toolDur)
 
-				if strings.HasPrefix(result.Content, "Error:") {
+				if IsToolError(result.Content) {
 					a.logger.Error("TOOL", "error", "name", tc.Function.Name, "error", result.Content, "latency_ms", toolDur)
 				} else {
 					a.logger.Info("TOOL", "result", "name", tc.Function.Name, "latency_ms", toolDur, "len", len(result.Content))
 				}
 
-				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !strings.HasPrefix(result.Content, "Error:") {
+				if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !IsToolError(result.Content) {
 					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 						"internal_id":     internalID,
 						"tool_id":         tc.ID,
@@ -705,6 +761,15 @@ func (a *Agent) Run(
 				if tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" {
 					resultData["lines_added"] = result.Added
 					resultData["lines_removed"] = result.Removed
+				}
+				if IsToolError(result.Content) {
+					resultData["error"] = "true"
+					emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+						"internal_id": internalID,
+						"tool_id":     tc.ID,
+						"name":        tc.Function.Name,
+						"phase":       "error",
+					}})
 				}
 				emit(AgentEvent{Type: "tool_result", Data: resultData})
 

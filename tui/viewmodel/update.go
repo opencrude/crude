@@ -270,14 +270,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ma.pendingPermTag = "always"
 			case ttypes.ConfirmDeny:
 				ma.pendingPermTag = "denied"
-				m.mainMsgList.AppendMessage(ttypes.ChatMessage{
-					Role:              ttypes.RoleTool,
-					ToolName:          result.Tool,
-					ToolStatus:        "error",
-					ToolProgressLabel: result.Target,
-					PermTag:           "denied",
-					Time:              time.Now(),
-				})
+				m.mainMsgList.SetToolPermTag(result.Tool, "", "denied")
 			}
 			if tab := m.win.TabByTitle("Confirm"); tab != nil {
 				m.win.CloseTabByID(tab.ID)

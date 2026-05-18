@@ -334,6 +334,9 @@ func TestListSessions(t *testing.T) {
 			ID: name, ProjectPath: "/", ProjectName: name,
 			Model: "m", Provider: "p", CreatedAt: int64(i + 1),
 		})
+		ReplaceMessages(db, name, []provider.ChatMessage{
+			{Role: "user", Content: "hello"},
+		}, []int{1})
 		db.Close()
 	}
 
@@ -363,6 +366,9 @@ func TestListSessionsPaginated(t *testing.T) {
 			ID: name, ProjectPath: "/", ProjectName: name,
 			Model: "m", Provider: "p", CreatedAt: int64(i + 1),
 		})
+		ReplaceMessages(db, name, []provider.ChatMessage{
+			{Role: "user", Content: "hello"},
+		}, []int{1})
 		db.Close()
 	}
 

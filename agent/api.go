@@ -22,6 +22,12 @@ type apiCallError struct {
 
 func (e *apiCallError) Error() string { return e.Message }
 
+func (e *apiCallError) IsCancellation() bool {
+	return strings.Contains(e.Message, "context canceled") || strings.Contains(e.Message, "context cancelled")
+}
+
+const maxRetries = 10
+
 func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools []provider.ToolDef) (*provider.ChatResponse, *provider.ChatResponse, string, int, int, int, error) {
 	req := provider.ChatRequest{
 		Model:    a.Model,
@@ -77,6 +83,9 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
+			if attempt >= maxRetries {
+				return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API request failed after %d attempts: %v", attempt, err), RetriesExhausted: true}
+			}
 			bo := retryBackoff(attempt)
 			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
 			select {
@@ -97,10 +106,10 @@ func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools
 
 		if resp.StatusCode != 200 {
 			snippet := string(respBody)
-			if len([]rune(snippet)) > 240 {
-				snippet = string([]rune(snippet)[:240])
-			}
 			if isRetryable(resp.StatusCode) {
+				if attempt >= maxRetries {
+					return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API %d after %d attempts: %s", resp.StatusCode, attempt, snippet), RetriesExhausted: true}
+				}
 				bo := retryBackoff(attempt)
 				a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				select {
@@ -205,6 +214,9 @@ func (a *Agent) completeStream(
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
+			if attempt >= maxRetries {
+				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request failed after %d attempts: %v", attempt, err), RetriesExhausted: true}
+			}
 			bo := retryBackoff(attempt)
 			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
 			if onRetry != nil {
@@ -223,10 +235,10 @@ func (a *Agent) completeStream(
 			respBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			snippet := string(respBody)
-			if len([]rune(snippet)) > 240 {
-				snippet = string([]rune(snippet)[:240])
-			}
 			if isRetryable(resp.StatusCode) {
+				if attempt >= maxRetries {
+					return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API %d after %d attempts: %s", resp.StatusCode, attempt, snippet), RetriesExhausted: true}
+				}
 				bo := retryBackoff(attempt)
 				a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
 				if onRetry != nil {
@@ -358,6 +370,14 @@ func (a *Agent) completeStream(
 		resp.Body.Close()
 
 		if err := scanner.Err(); err != nil {
+			partialContent := contentBuf.String()
+			if partialContent != "" {
+				a.logger.Warn("STREAM", "scan_error_partial", "model", a.Model, "content_len", len(partialContent), "error", err.Error())
+				return partialContent, reasoningBuf.String(), finishReason, nil, promptTokens, completionTokens, promptTokensCached, nil
+			}
+			if attempt >= maxRetries {
+				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream scan error after %d attempts: %v", attempt, err), RetriesExhausted: true}
+			}
 			bo := retryBackoff(attempt)
 			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("stream scan error: %w", err).Error())
 			if onRetry != nil {
@@ -422,9 +442,11 @@ func (a *Agent) completeStream(
 func (a *Agent) emitError(emit func(AgentEvent), err error) {
 	errMsg := err.Error()
 	originalMsg := errMsg
-	if strings.Contains(errMsg, "429") {
+	if strings.Contains(errMsg, "context canceled") || strings.Contains(errMsg, "context cancelled") {
+		errMsg = "Request was cancelled"
+	} else if strings.Contains(errMsg, "429") {
 		errMsg = "Rate limited — please wait a moment and try again"
-	} else if strings.Contains(errMsg, "OpenRouter 5") {
+	} else if strings.Contains(errMsg, " 5") && (strings.Contains(errMsg, "API 5") || strings.Contains(errMsg, "50") || strings.Contains(errMsg, "529")) {
 		errMsg = "API server error — please try again"
 	} else if idx := strings.Index(errMsg, "API error: "); idx >= 0 {
 		errMsg = errMsg[idx+len("API error: "):]

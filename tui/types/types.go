@@ -13,6 +13,14 @@ const (
 )
 
 const (
+	ToolStatusCalling    = "calling"
+	ToolStatusStreaming  = "streaming"
+	ToolStatusSuccess    = "success"
+	ToolStatusError      = "error"
+	ToolStatusCancelled  = "cancelled"
+)
+
+const (
 	RoleUser           = "user"
 	RoleAssistant      = "assistant"
 	RoleThinking       = "thinking"
@@ -99,7 +107,8 @@ type ChatMessage struct {
 	ToolStartTime    time.Time
 	ToolDuration     time.Duration
 
-	ThinkingActive bool
+	ThinkingActive      bool
+	ThinkingInterrupted bool
 
 	SubPaneID string
 

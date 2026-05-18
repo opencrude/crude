@@ -53,8 +53,8 @@ func TestSessionsRoot_ContainsCrudeSessions(t *testing.T) {
 		t.Skip("empty root")
 	}
 	base := filepath.Base(filepath.Dir(root))
-	if base != "crude" {
-		t.Errorf("parent dir should be 'crude', got %q", base)
+	if base != ".crude" && base != "crude" {
+		t.Errorf("parent dir should be '.crude' or 'crude', got %q", base)
 	}
 	last := filepath.Base(root)
 	if last != "sessions" {

@@ -56,15 +56,15 @@ func (s *StatusBar) View() string {
 	pad := strings.Repeat(" ", s.theme.Spacing.PadLR)
 
 	var left string
-	if s.infoMsg != "" {
-		left = lipgloss.NewStyle().Foreground(s.theme.Colors.Success).Render(
-			rendering.TruncateLine(s.infoMsg, s.width/2))
+	if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
+		left = s.theme.Styles.ErrorText.Render(
+			rendering.TruncateLine(s.lastError, s.width/2))
 	} else if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
 		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render(
 			rendering.TruncateLine(s.retryMsg, s.width/2))
-	} else if s.lastError != "" {
-		left = s.theme.Styles.ErrorText.Render(
-			rendering.TruncateLine(s.lastError, s.width/2))
+	} else if s.infoMsg != "" && time.Since(s.infoMsgTime) < 5*time.Second {
+		left = lipgloss.NewStyle().Foreground(s.theme.Colors.Success).Render(
+			rendering.TruncateLine(s.infoMsg, s.width/2))
 	} else if s.confirming() {
 		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ confirming")
 	} else if s.blocking {
@@ -190,7 +190,7 @@ func (s *StatusBar) ClearRetry() {
 }
 
 func (s *StatusBar) ClearExpired() {
-	if time.Since(s.errorTime) > 8*time.Second {
+	if time.Since(s.errorTime) > 12*time.Second {
 		s.lastError = ""
 	}
 	if time.Since(s.infoMsgTime) > 5*time.Second {

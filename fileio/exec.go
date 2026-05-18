@@ -66,7 +66,7 @@ type GrepMatch struct {
 }
 
 type Executer interface {
-	Execute(cmd string, opts ExecOptions) (string, error)
+	Execute(ctx context.Context, cmd string, opts ExecOptions) (string, error)
 	ListDir(path string) ([]DirEntry, error)
 	GlobFiles(baseDir, pattern string, includeHidden bool) ([]string, error)
 	GrepFiles(pattern, baseDir string, recursive, includeHidden bool) ([]GrepMatch, error)
@@ -84,10 +84,12 @@ func NewLocalExecWithLogger(lg *logger.Logger) *LocalExec {
 	return &LocalExec{logger: lg}
 }
 
-func (l *LocalExec) Execute(cmd string, opts ExecOptions) (string, error) {
+func (l *LocalExec) Execute(ctx context.Context, cmd string, opts ExecOptions) (string, error) {
 	var c *exec.Cmd
 
-	ctx := context.Background()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if opts.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(opts.TimeoutSeconds)*time.Second)
