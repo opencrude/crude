@@ -171,6 +171,10 @@ func ListSessionsPaginated(sessionsRoot string, opts ListSessionsOpts) ([]Sessio
 		if err != nil {
 			continue
 		}
+		if m.TurnCount == 0 {
+			total--
+			continue
+		}
 		metas = append(metas, m)
 	}
 

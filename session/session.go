@@ -26,8 +26,18 @@ import (
 	"crude/sessiondb"
 	"crude/statemachine"
 	"crude/tools"
-	"crude/tui"
+	ttypes "crude/tui/types"
 )
+
+type EventSender interface {
+	SendAgentEvent(typ string, data any)
+	SendAgentEventWithID(typ string, data any, agentID string)
+}
+
+type EventInput interface {
+	GetInputCh() <-chan string
+	GetCancelCh() <-chan struct{}
+}
 
 type Config struct {
 	ActiveProvider  string
@@ -51,6 +61,7 @@ type ProviderConfig struct {
 type taggedMessage struct {
 	msg  provider.ChatMessage
 	turn int
+	meta sessiondb.DisplayMeta
 }
 
 type Session struct {
@@ -67,6 +78,7 @@ type Session struct {
 
 	msgs          []provider.ChatMessage
 	msgTurns      []int
+	displayMetas  []sessiondb.DisplayMeta
 	msgsMu        sync.Mutex
 	pendingBlock  bool
 	blockMu       sync.Mutex
@@ -214,6 +226,28 @@ func (s *Session) HasMessages() bool {
 	return s.msgCounter > 0
 }
 
+func (s *Session) MessagesWithMeta() []sessiondb.MessageWithMeta {
+	s.msgsMu.Lock()
+	defer s.msgsMu.Unlock()
+	if len(s.msgs) == 0 {
+		return nil
+	}
+	out := make([]sessiondb.MessageWithMeta, len(s.msgs))
+	for i, m := range s.msgs {
+		out[i].Msg = m
+		out[i].Turn = 0
+		if i < len(s.msgTurns) {
+			out[i].Turn = s.msgTurns[i]
+		}
+		if i < len(s.displayMetas) {
+			out[i].Meta = s.displayMetas[i]
+		} else {
+			out[i].Meta = sessiondb.DisplayMeta{DisplayRole: m.Role}
+		}
+	}
+	return out
+}
+
 func (s *Session) Close() {
 	atomic.StoreInt32(&s.closing, 1)
 	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
@@ -284,7 +318,7 @@ func (s *Session) persistCostToDB() {
 	}
 }
 
-func (s *Session) appendToWriteBuf(msgs []provider.ChatMessage, turns []int) {
+func (s *Session) appendToWriteBuf(msgs []provider.ChatMessage, turns []int, metas []sessiondb.DisplayMeta) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	for i, m := range msgs {
@@ -292,7 +326,11 @@ func (s *Session) appendToWriteBuf(msgs []provider.ChatMessage, turns []int) {
 		if i < len(turns) {
 			turn = turns[i]
 		}
-		s.writeBuf = append(s.writeBuf, taggedMessage{msg: m, turn: turn})
+		var meta sessiondb.DisplayMeta
+		if i < len(metas) {
+			meta = metas[i]
+		}
+		s.writeBuf = append(s.writeBuf, taggedMessage{msg: m, turn: turn, meta: meta})
 	}
 }
 
@@ -309,12 +347,14 @@ func (s *Session) flushWriteBuf() {
 
 	msgs := make([]provider.ChatMessage, len(buf))
 	turns := make([]int, len(buf))
+	metas := make([]sessiondb.DisplayMeta, len(buf))
 	for i, tm := range buf {
 		msgs[i] = tm.msg
 		turns[i] = tm.turn
+		metas[i] = tm.meta
 	}
 
-	newSeq, err := sessiondb.ReplaceMessages(s.db, s.sessionID, msgs, turns)
+	newSeq, err := sessiondb.ReplaceMessagesWithMeta(s.db, s.sessionID, msgs, turns, metas)
 	if err != nil {
 		s.logger.Error("SESSIONDB", "flush_error", "error", err.Error())
 		return
@@ -336,12 +376,14 @@ func (s *Session) flushWriteBufSync() {
 
 	msgs := make([]provider.ChatMessage, len(buf))
 	turns := make([]int, len(buf))
+	metas := make([]sessiondb.DisplayMeta, len(buf))
 	for i, tm := range buf {
 		msgs[i] = tm.msg
 		turns[i] = tm.turn
+		metas[i] = tm.meta
 	}
 
-	newSeq, err := sessiondb.ReplaceMessages(s.db, s.sessionID, msgs, turns)
+	newSeq, err := sessiondb.ReplaceMessagesWithMeta(s.db, s.sessionID, msgs, turns, metas)
 	if err != nil {
 		s.logger.Error("SESSIONDB", "sync_flush_error", "error", err.Error())
 		return
@@ -734,19 +776,19 @@ func (s *Session) SetYolo(enabled bool) {
 	s.logger.Info("SAFETY", "yolo", "enabled", enabled)
 }
 
-func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
+func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
 	l := s.logger
 	l.Info("INPUT", "undo", "cmd", cmd)
 	if s.editor == nil {
 		l.Warn("EDITOR", "undo_no_editor", "cmd", cmd)
-		return tui.UndoResultMsg{Error: "file editor not available"}
+		return ttypes.UndoResultMsg{Error: "file editor not available"}
 	}
 	switch {
 	case cmd == "/undo":
 		l.Info("JOURNAL", "undo_last", "journal_len", len(s.editor.Log()))
 		if err := s.editor.UndoLast(); err != nil {
 			l.Error("JOURNAL", "undo_failed", "error", err.Error())
-			return tui.UndoResultMsg{Error: err.Error()}
+			return ttypes.UndoResultMsg{Error: err.Error()}
 		}
 		journalLog := s.editor.Log()
 		remaining := len(journalLog)
@@ -755,7 +797,7 @@ func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
 		if remaining > 0 {
 			desc = fmt.Sprintf("Undo complete. %d operation(s) remaining in journal.", remaining)
 		}
-		return tui.UndoResultMsg{Desc: desc}
+		return ttypes.UndoResultMsg{Desc: desc}
 	case strings.HasPrefix(cmd, "/undo-n"):
 		n := 1
 		parts := strings.Fields(cmd)
@@ -768,24 +810,24 @@ func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
 		l.Info("JOURNAL", "undo_n", "count", n, "journal_len", len(s.editor.Log()))
 		if err := s.editor.UndoN(n); err != nil {
 			l.Error("JOURNAL", "undo_n_failed", "count", n, "error", err.Error())
-			return tui.UndoResultMsg{Error: err.Error()}
+			return ttypes.UndoResultMsg{Error: err.Error()}
 		}
 		l.Info("JOURNAL", "undo_n_ok", "count", n)
-		return tui.UndoResultMsg{Desc: fmt.Sprintf("Undid last %d file operation(s).", n)}
+		return ttypes.UndoResultMsg{Desc: fmt.Sprintf("Undid last %d file operation(s).", n)}
 	case cmd == "/undo-all":
 		totalOps := len(s.editor.Log())
 		l.Info("JOURNAL", "undo_session", "ops_to_revert", totalOps)
 		if err := s.editor.UndoSession(); err != nil {
 			l.Error("JOURNAL", "undo_session_failed", "error", err.Error())
-			return tui.UndoResultMsg{Error: err.Error()}
+			return ttypes.UndoResultMsg{Error: err.Error()}
 		}
 		l.Info("JOURNAL", "undo_session_ok", "ops_reverted", totalOps)
-		return tui.UndoResultMsg{Desc: "All file operations this session have been reverted."}
+		return ttypes.UndoResultMsg{Desc: "All file operations this session have been reverted."}
 	case cmd == "/changes":
 		files := s.editor.ChangedFiles()
 		l.Info("EDITOR", "changed_files", "count", len(files))
 		if len(files) == 0 {
-			return tui.UndoResultMsg{Desc: "No file changes this session."}
+			return ttypes.UndoResultMsg{Desc: "No file changes this session."}
 		}
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("%d file(s) changed this session:\n", len(files)))
@@ -797,13 +839,13 @@ func (s *Session) HandleUndo(cmd string) tui.UndoResultMsg {
 			sb.WriteString("  " + rel + "\n")
 		}
 		sb.WriteString("Use /undo to revert the last operation, /undo-all to revert everything.")
-		return tui.UndoResultMsg{Desc: sb.String()}
+		return ttypes.UndoResultMsg{Desc: sb.String()}
 	}
 	l.Warn("INPUT", "undo_unknown", "cmd", cmd)
-	return tui.UndoResultMsg{}
+	return ttypes.UndoResultMsg{}
 }
 
-func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
+func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	l := s.logger
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -851,7 +893,7 @@ func (s *Session) HandleSettingsSave(tuiSettings tui.Settings) error {
 	return nil
 }
 
-func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.ModelEntry, error) {
+func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]ttypes.ModelEntry, error) {
 	l := s.logger
 	l.Info("MODEL", "fetch_begin", "provider", providerID)
 	p := provider.FromPreset(providerID, apiKey, baseURL)
@@ -868,10 +910,10 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.M
 		l.Warn("MODEL", "meta_fetch_error", "error", mdErr.Error())
 	}
 
-	entries := make([]tui.ModelEntry, len(models))
+	entries := make([]ttypes.ModelEntry, len(models))
 	enriched := 0
 	for i, m := range models {
-		entry := tui.ModelEntry{
+		entry := ttypes.ModelEntry{
 			ID:            m.ID,
 			Name:          m.Name,
 			ContextWindow: m.ContextWindow,
@@ -893,17 +935,17 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]tui.M
 	return entries, nil
 }
 
-func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan string) {
+func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan string) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "session_id", s.sessionID)
 	defer func() {
 		if r := recover(); r != nil {
 			l.Error("SESSION", "panic", "error", fmt.Sprintf("%v", r))
-			tuiInst.SendAgentEvent("error", fmt.Sprintf("Internal error: %v", r))
+			sender.SendAgentEvent("error", fmt.Sprintf("Internal error: %v", r))
 		}
 	}()
 
-	cancelCh := tuiInst.CancelCh
+	cancelCh := input.GetCancelCh()
 	l.Debug("SESSION", "cancel_ch_setup", "channel", "cancelCh")
 
 	go func() {
@@ -929,9 +971,9 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 			case <-tick.C:
 				cmds := s.asyncMgr.List()
 				if len(cmds) > 0 {
-					tuiInst.SendAgentEvent("async_command_status", cmds)
+					sender.SendAgentEvent("async_command_status", cmds)
 				} else {
-					tuiInst.SendAgentEvent("async_command_status", []fileio.AsyncCmdInfo{})
+					sender.SendAgentEvent("async_command_status", []fileio.AsyncCmdInfo{})
 				}
 			case <-asyncPollingStop:
 				l.Debug("ASYNC", "poll_stop")
@@ -940,7 +982,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 		}
 	}()
 
-	for userText := range tuiInst.InputCh {
+	for userText := range input.GetInputCh() {
 		if atomic.LoadInt32(&s.closing) == 1 {
 			break
 		}
@@ -953,7 +995,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 		activeCfg := s.cfg.GetActiveProviderConfig()
 		if activeCfg.APIKey == "" {
 			l.Warn("INPUT", "no_api_key")
-			tuiInst.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
+			sender.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
 			continue
 		}
 
@@ -985,6 +1027,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 		s.msgsMu.Lock()
 		s.msgs = append(s.msgs, provider.ChatMessage{Role: "user", Content: userText})
 		s.msgTurns = append(s.msgTurns, s.turnNumber)
+		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{DisplayRole: "user"})
 		msgsCopy := make([]provider.ChatMessage, len(s.msgs))
 		copy(msgsCopy, s.msgs)
 		s.msgsMu.Unlock()
@@ -1003,6 +1046,10 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 		ag := s.newAgent()
 		var finalContent string
 		prompt := agent.BuildSystemPrompt()
+
+		displayTracker := &displayMetaTracker{
+			metas: make(map[string]*sessiondb.DisplayMeta),
+		}
 
 		ctx, cancel := context.WithCancel(context.Background())
 		ag.Ctx = ctx
@@ -1026,7 +1073,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 					if s.permStore.IsAlwaysAllowed(op, tool, target) {
 						l.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
 						blockResolveCh <- "allow"
-						tuiInst.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
+						sender.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 						return
 					}
 				}
@@ -1041,7 +1088,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 							if s.permStore.IsCommandAllowed(sr) {
 								l.Debug("PERM", "command_auto_allowed", "risk", riskStr, "tool", data["tool"])
 								blockResolveCh <- "always"
-								tuiInst.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
+								sender.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 								return
 							}
 							break
@@ -1052,7 +1099,7 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 				s.blockMu.Lock()
 				s.pendingBlock = true
 				s.blockMu.Unlock()
-				tuiInst.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
+				sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
 				return
 			}
 			if evt.Type == "confirmation_always" {
@@ -1080,7 +1127,61 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 				}
 				return
 			}
-			tuiInst.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
+			sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
+
+			switch evt.Type {
+			case "tool_call_streaming", "tool_call":
+				if data, ok := evt.Data.(map[string]any); ok {
+					toolID, _ := data["tool_id"].(string)
+					name, _ := data["name"].(string)
+					if name != "" && name != "reply" && toolID != "" {
+						args, _ := data["args"].(string)
+						displayTracker.updateToolCall(toolID, name, args)
+					}
+				}
+			case "tool_result":
+				if data, ok := evt.Data.(map[string]any); ok {
+					toolID, _ := data["tool_id"].(string)
+					if toolID != "" {
+						errFlag, _ := data["error"].(string)
+						status := "success"
+						if errFlag == "true" {
+							status = "error"
+						}
+						durMs, _ := data["tool_dur_ms"].(float64)
+						estTok := 0
+						if v, ok := data["tool_est_tokens"].(float64); ok {
+							estTok = int(v)
+						}
+						la := 0
+						if v, ok := data["lines_added"].(float64); ok {
+							la = int(v)
+						}
+						lr := 0
+						if v, ok := data["lines_removed"].(float64); ok {
+							lr = int(v)
+						}
+						displayTracker.updateToolResult(toolID, status, int64(durMs), estTok, la, lr)
+					}
+				}
+			case "blocking_auto":
+				if data, ok := evt.Data.(map[string]any); ok {
+					tool, _ := data["tool"].(string)
+					displayTracker.setPendingPermTag(tool, "auto")
+				} else if data, ok := evt.Data.(map[string]string); ok {
+					tool := data["tool"]
+					displayTracker.setPendingPermTag(tool, "auto")
+				}
+			case "blocking":
+				if data, ok := evt.Data.(map[string]string); ok {
+					displayTracker.setPendingPermTag(data["tool"], "")
+				}
+			case "confirmation_always":
+				if data, ok := evt.Data.(map[string]string); ok {
+					displayTracker.setPendingPermTag(data["tool"], "always")
+				}
+			}
+
 			if evt.Type == "usage" {
 				model := activeCfg.Model
 				var promptT, compT, cachedT int
@@ -1161,45 +1262,66 @@ func (s *Session) Run(tuiInst *tui.TUI, blockResolveCh chan string, btwCh <-chan
 		s.msgsMu.Lock()
 		var persisted []provider.ChatMessage
 		var persistedTurns []int
+		var persistedMetas []sessiondb.DisplayMeta
 		for _, m := range agentMsgs {
 			if m.Role == "system" {
 				continue
 			}
 			persisted = append(persisted, m)
 			persistedTurns = append(persistedTurns, s.turnNumber)
+			var dm sessiondb.DisplayMeta
+			switch m.Role {
+			case "tool":
+				dm = displayTracker.get(m.ToolCallID)
+			case "assistant":
+				dm.DisplayRole = "assistant"
+				if m.ReasoningContent != "" || m.Reasoning != "" {
+					dm.DisplayRole = "thinking"
+				}
+			case "user":
+				dm.DisplayRole = "user"
+			}
+			persistedMetas = append(persistedMetas, dm)
 		}
 		preSanitize := len(persisted)
 		persisted = sanitizeMessages(persisted)
 		removedCount := preSanitize - len(persisted)
 		if removedCount > 0 {
 			persistedTurns = persistedTurns[:len(persisted)]
+			persistedMetas = persistedMetas[:len(persisted)]
 			l.Debug("SANITIZE", "messages_removed", "count", removedCount, "remaining", len(persisted))
 		}
 		if len(persisted) == 0 {
 			persistedTurns = nil
+			persistedMetas = nil
 		}
 		ctxWindow := provider.LookupContextWindow(activeCfg.Model)
 		preTruncate := len(persisted)
 		persisted = truncateMessages(persisted, ctxWindow, activeCfg.Model)
 		if len(persisted) < preTruncate {
 			persistedTurns = persistedTurns[preTruncate-len(persisted):]
+			persistedMetas = persistedMetas[preTruncate-len(persisted):]
 			l.Info("TRUNCATE", "messages", "before", preTruncate, "after", len(persisted), "window", ctxWindow)
 		}
 		if len(persisted) > len(persistedTurns) {
 			extra := len(persisted) - len(persistedTurns)
 			prefix := make([]int, extra)
 			persistedTurns = append(prefix, persistedTurns...)
+			metaPrefix := make([]sessiondb.DisplayMeta, extra)
+			persistedMetas = append(metaPrefix, persistedMetas...)
 		}
 		if len(persisted) > 0 {
 			s.msgs = persisted
 			s.msgTurns = persistedTurns
+			s.displayMetas = persistedMetas
 		} else if finalContent != "" {
 			s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", Content: finalContent})
 			s.msgTurns = append(s.msgTurns, s.turnNumber)
+			s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{DisplayRole: "assistant"})
 		}
 
 		if s.db != nil && len(s.msgs) > 0 {
-			s.appendToWriteBuf(s.msgs, s.msgTurns)
+			s.appendToWriteBuf(s.msgs, s.msgTurns, s.displayMetas)
 		}
 
 		s.msgsMu.Unlock()
@@ -1253,6 +1375,12 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("resume: load messages: %w", err)
+	}
+
+	msgsWithMeta, err := sessiondb.LoadMessagesWithMeta(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load messages with meta: %w", err)
 	}
 
 	maxTurn := 0
@@ -1313,6 +1441,14 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 	p.Model = activeCfg.Model
 	p.SetThinkingEffort(activeCfg.ThinkingEffort)
 
+	var displayMetas []sessiondb.DisplayMeta
+	if len(msgsWithMeta) > 0 {
+		displayMetas = make([]sessiondb.DisplayMeta, len(msgsWithMeta))
+		for i, mm := range msgsWithMeta {
+			displayMetas[i] = mm.Meta
+		}
+	}
+
 	interrupted, action := detectInterruption(msgs)
 	if interrupted {
 		msgs = append(msgs, provider.ChatMessage{
@@ -1321,6 +1457,7 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		})
 		msgTurns = append(msgTurns, maxTurn+1)
 		maxTurn++
+		displayMetas = append(displayMetas, sessiondb.DisplayMeta{DisplayRole: "user"})
 	}
 
 	resumeTurnNumber := maxTurn
@@ -1348,6 +1485,7 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		msgCounter:   len(msgs),
 		msgs:         msgs,
 		msgTurns:     msgTurns,
+		displayMetas: displayMetas,
 		writeBuf:     make([]taggedMessage, 0, 64),
 	}, nil
 }
@@ -1371,7 +1509,7 @@ func detectInterruption(msgs []provider.ChatMessage) (bool, string) {
 	return false, ""
 }
 
-func ConfigToSettings(cfg *Config) tui.Settings {
+func ConfigToSettings(cfg *Config) ttypes.Settings {
 	providerID := cfg.EffectiveProviderID()
 
 	providerURL := ""
@@ -1410,7 +1548,7 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 		turnLogs = "off"
 	}
 
-	return tui.Settings{
+	return ttypes.Settings{
 		APIKey:                   apiKey,
 		Model:                    model,
 		ModelContextWindow:       ctxWindow,
@@ -1425,7 +1563,7 @@ func ConfigToSettings(cfg *Config) tui.Settings {
 	}
 }
 
-func settingsToConfig(s tui.Settings, base *Config) *Config {
+func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 	providerID := s.ProviderID
 	if providerID == "" {
 		providerID = base.EffectiveProviderID()
@@ -1591,4 +1729,51 @@ func ResolveUsername() string {
 		return name
 	}
 	return "user"
+}
+
+type displayMetaTracker struct {
+	metas          map[string]*sessiondb.DisplayMeta
+	pendingPermTag  string
+	pendingPermTool string
+}
+
+func (t *displayMetaTracker) updateToolCall(toolID, name, args string) {
+	m, ok := t.metas[toolID]
+	if !ok {
+		m = &sessiondb.DisplayMeta{}
+		t.metas[toolID] = m
+	}
+	m.ToolName = name
+	m.ToolArgs = args
+	m.ToolStatus = "calling"
+	if t.pendingPermTag != "" && (t.pendingPermTool == "" || t.pendingPermTool == name) {
+		m.PermTag = t.pendingPermTag
+		t.pendingPermTag = ""
+		t.pendingPermTool = ""
+	}
+}
+
+func (t *displayMetaTracker) updateToolResult(toolID, status string, durMs int64, estTokens, linesAdded, linesRemoved int) {
+	m, ok := t.metas[toolID]
+	if !ok {
+		m = &sessiondb.DisplayMeta{}
+		t.metas[toolID] = m
+	}
+	m.ToolStatus = status
+	m.DurationMs = durMs
+	m.EstTokens = estTokens
+	m.LinesAdded = linesAdded
+	m.LinesRemoved = linesRemoved
+}
+
+func (t *displayMetaTracker) setPendingPermTag(tool, tag string) {
+	t.pendingPermTag = tag
+	t.pendingPermTool = tool
+}
+
+func (t *displayMetaTracker) get(toolID string) sessiondb.DisplayMeta {
+	if m, ok := t.metas[toolID]; ok {
+		return *m
+	}
+	return sessiondb.DisplayMeta{}
 }

@@ -4,12 +4,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"crude/sessiondb"
-	"crude/tui/app"
+	"crude/tui/viewmodel"
 	"crude/tui/types"
 )
 
 type TUI struct {
-	app     *app.App
+	app     *viewmodel.App
 	Program *tea.Program
 	InputCh <-chan string
 	BtwCh   <-chan string
@@ -86,7 +86,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return ProviderConfig{}
 	}
 
-	a := app.NewApp(modelName, username, inputCh, btwCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions)
+	a := viewmodel.NewApp(modelName, username, inputCh, btwCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions)
 	a.SetProviderPresets(t.ProviderPresets)
 	a.SetHistory(history)
 	a.OnConfirmResult = func(result ConfirmResult) {
@@ -159,12 +159,24 @@ func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
 	t.Program.Send(types.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
 }
 
+func (t *TUI) GetInputCh() <-chan string {
+	return t.InputCh
+}
+
+func (t *TUI) GetCancelCh() <-chan struct{} {
+	return t.CancelCh
+}
+
 func (t *TUI) SetError(err string) {
 	t.Program.Send(types.ErrorMsg(err))
 }
 
 func (t *TUI) UpdateModelName(name string) {
 	t.Program.Send(types.UpdateModelMsg(name))
+}
+
+func (t *TUI) HydrateMessages(msgs []types.ChatMessage) {
+	t.Program.Send(types.HistoryMessagesMsg(msgs))
 }
 
 func (t *TUI) OpenSettings() {
