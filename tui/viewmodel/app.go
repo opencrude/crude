@@ -1,0 +1,286 @@
+package viewmodel
+
+import (
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"crude/sessiondb"
+	"crude/tui/input"
+	"crude/tui/settings"
+	"crude/tui/theme"
+	ttypes "crude/tui/types"
+	"crude/tui/widgets"
+	"crude/tui/window"
+)
+
+var OnHistorySave func([]string)
+
+type Mode int
+
+const (
+	ModeChat Mode = iota
+	ModeSettings
+	ModeConfirm
+	ModeYolo
+)
+
+const sessionPickerMsgID = "__session_picker__"
+
+type Logger interface {
+	Info(tag, msg string, pairs ...any)
+	Warn(tag, msg string, pairs ...any)
+	Error(tag, msg string, pairs ...any)
+	Debug(tag, msg string, pairs ...any)
+}
+
+type App struct {
+	theme  *theme.Theme
+	Mode   Mode
+	width  int
+	height int
+
+	agents     map[string]*AgentState
+	paneMgr    *PaneManager
+	mainMsgList *widgets.MessageList
+	input      input.Model
+	statusbar  *widgets.StatusBar
+	settings   settings.Model
+	confirm    widgets.ConfirmDialog
+	yoloDlg    widgets.YoloDialog
+
+	win *window.Window
+
+	blocking  bool
+	yolo      bool
+
+	inputCh  chan<- string
+	btwCh    chan<- string
+	cancelCh chan<- struct{}
+
+	OnQuit             func()
+	OnExitMessage      func()
+	OnSettingsSave     func(ttypes.Settings) error
+	OnConfirmResult    func(ttypes.ConfirmResult)
+	OnYoloCmd          func(bool)
+	OnUndoCmd          func(string)
+	OnResumeSession    func(string)
+	FetchModelsFn      func(string, string, string) ([]ttypes.ModelEntry, error)
+	GetProviderConfigFn func(string) ttypes.ProviderConfig
+	ProviderPresets    []ttypes.ProviderPreset
+
+	Quit           bool
+	lastCancelTime time.Time
+	modelName      string
+	username       string
+	startTime      time.Time
+	chatAreaHeight int
+
+	spinFrame int
+	history   []string
+
+	tokenPrompt, tokenCompletion, tokenCached int
+	sessionCost                               float64
+	contextWindow, contextUsed                 int
+	tokenEstimated                             bool
+
+	lastSettings ttypes.Settings
+
+	formHint string
+
+	logger Logger
+
+	sessionPickerSessions []sessiondb.SessionMeta
+	sessionPickerActive   bool
+	sessionPickerSelected int
+	sessionPickerFocused  bool
+}
+
+type (
+	tickMsg          = ttypes.TickMsg
+	errorMsg         = ttypes.ErrorMsg
+	statusMsg        = ttypes.StatusMsg
+	agentMsg         = ttypes.AgentMsg
+	openSettingsMsg  = ttypes.OpenSettingsMsg
+	fetchModelsMsg   = ttypes.FetchModelsMsg
+	saveSettingsMsg       = ttypes.SaveSettingsMsg
+	updateModelMsg        = ttypes.UpdateModelMsg
+	selectionTickMsg      = ttypes.SelectionTickMsg
+	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
+)
+
+func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta) *App {
+	th := theme.DefaultDark()
+	ml := widgets.NewMessageList(th)
+	ml.SetModelName(modelName)
+	ml.SetUsername(username)
+	mainAgent := NewAgentState(MainAgentID, ml)
+	im := input.NewModel(th)
+	sb := widgets.NewStatusBar(th)
+	sm := settings.NewModel(th, initial, nil, getProviderConfigFn, fetchFn)
+	cd := widgets.NewConfirmDialog(th)
+	yd := widgets.NewYoloDialog(th)
+
+	pm := NewPaneManager()
+
+	w := window.New(th)
+
+	spActive := len(sessions) > 0
+
+	app := &App{
+		theme:        th,
+		agents:       map[string]*AgentState{MainAgentID: mainAgent},
+		paneMgr:      pm,
+		win:          w,
+		mainMsgList:  ml,
+		input:        im,
+		statusbar:    sb,
+		settings:     sm,
+		confirm:      cd,
+		yoloDlg:      yd,
+		inputCh:      inputCh,
+		btwCh:        btwCh,
+		cancelCh:    cancelCh,
+		modelName:    modelName,
+		username:     username,
+		startTime:    time.Now(),
+		lastCancelTime: time.Now(),
+		lastSettings: initial,
+		OnSettingsSave: onSave,
+		logger:       lg,
+		sessionPickerSessions: sessions,
+		sessionPickerActive:   spActive,
+		sessionPickerSelected: 0,
+		sessionPickerFocused:  spActive,
+	}
+
+	ml.SetSubPaneContentFn(app.renderSubPaneContent)
+
+	if spActive {
+		ml.AppendMessage(ttypes.ChatMessage{
+			InternalID:            sessionPickerMsgID,
+			Role:                 ttypes.RoleSessionPicker,
+			SessionPickerSessions: sessions,
+			SessionPickerSelected: 0,
+			SessionPickerFocused:  true,
+			Time:                 time.Now(),
+		})
+	}
+
+	return app
+}
+
+func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []string {
+	sp := m.paneMgr.Get(paneID)
+	if sp == nil {
+		return []string{"", "● unknown pane"}
+	}
+	if agent, ok := m.agents[paneID]; ok {
+		sp.MsgList.SetStreaming(agent.Streaming)
+		sp.MsgList.SetActiveTyping(agent.ComputeActiveTyping())
+	}
+	result := sp.Render(width, maxH, spinFrame)
+	return result.Lines
+}
+
+func (m *App) mainAgent() *AgentState {
+	return m.agents[MainAgentID]
+}
+
+func (m *App) updateSessionPickerMessage() {
+	if !m.sessionPickerActive {
+		return
+	}
+	for _, msg := range m.mainMsgList.Messages() {
+		if msg.InternalID == sessionPickerMsgID {
+			msg.SessionPickerSelected = m.sessionPickerSelected
+			msg.SessionPickerFocused = m.sessionPickerFocused
+			msg.CachedLines = nil
+			m.mainMsgList.InvalidateItem(sessionPickerMsgID)
+			return
+		}
+	}
+}
+
+func (m *App) removeSessionPickerMessage() {
+	if !m.sessionPickerActive {
+		return
+	}
+	messages := m.mainMsgList.Messages()
+	for i, msg := range messages {
+		if msg.InternalID == sessionPickerMsgID {
+			m.mainMsgList.RemoveMessage(i)
+			break
+		}
+	}
+	m.sessionPickerActive = false
+	m.sessionPickerSessions = nil
+}
+
+func (m *App) anyActive() bool {
+	for _, a := range m.agents {
+		if a.IsActive() {
+			return true
+		}
+	}
+	for _, sp := range m.paneMgr.panes {
+		if !sp.Done {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *App) SetProviderPresets(presets []ttypes.ProviderPreset) {
+	m.ProviderPresets = presets
+	m.settings.SetPresets(presets)
+}
+
+func (m *App) SetHistory(history []string) {
+	m.history = history
+	m.input.SetHistory(history)
+}
+
+func (m *App) setMode(newMode Mode) {
+	oldMode := m.Mode
+	m.logger.Debug("UI", "mode_switch", "from", modeName(oldMode), "to", modeName(newMode))
+	m.Mode = newMode
+	m.mainMsgList.InvalidateAllMessages()
+	switch newMode {
+	case ModeSettings:
+		m.input.ClearInput()
+		m.win.OpenTabWithLayout("Settings", "", true, window.TabVertical)
+	case ModeConfirm:
+		m.win.OpenTabWithLayout("Confirm", "", true, window.TabVertical)
+	case ModeYolo:
+		m.win.OpenTabWithLayout("YOLO", "", true, window.TabVertical)
+	case ModeChat:
+		m.formHint = ""
+		if m.win.HasClosableTabs() {
+			m.win.CloseAll()
+		}
+	}
+}
+
+func modeName(m Mode) string {
+	switch m {
+	case ModeChat:
+		return "chat"
+	case ModeSettings:
+		return "settings"
+	case ModeConfirm:
+		return "confirm"
+	case ModeYolo:
+		return "yolo"
+	default:
+		return "unknown"
+	}
+}
+
+func (m *App) History() []string {
+	return m.history
+}
+
+func (m *App) Init() tea.Cmd {
+	return tea.Batch(tickCmd(), tea.EnterAltScreen)
+}
