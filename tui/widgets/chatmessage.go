@@ -263,6 +263,8 @@ func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth,
 				dotColors := []string{"#f0883e", "#d0681e", "#b85010", "#d0681e"}
 				dotColor := dotColors[alpha%len(dotColors)]
 				result = append(result, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Render("● ")+thinkingStyle.Render(line))
+			} else if msg.ThinkingInterrupted {
+				result = append(result, borderPrefix+lipgloss.NewStyle().Foreground(th.Colors.Warning).Render("● ")+thinkingStyle.Render(line))
 			} else {
 				result = append(result, borderPrefix+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("● ")+thinkingStyle.Render(line))
 			}

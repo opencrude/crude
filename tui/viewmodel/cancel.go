@@ -67,6 +67,11 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
+		select {
+		case m.cancelCh <- struct{}{}:
+		default:
+		}
+		m.statusbar.SetInfo("cancelling...")
 		return nil
 	}
 

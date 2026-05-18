@@ -118,17 +118,11 @@ func ListSessionsPaginated(sessionsRoot string, opts ListSessionsOpts) ([]Sessio
 		return nil, 0, fmt.Errorf("sessiondb: list sessions glob: %w", err)
 	}
 
-	total := len(files)
-	if total == 0 {
+	if len(files) == 0 {
 		return nil, 0, nil
 	}
 
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-
-	fileInfos := make([]dbFileWithModTime, 0, total)
+	fileInfos := make([]dbFileWithModTime, 0, len(files))
 	for _, f := range files {
 		fi, err := os.Stat(f)
 		if err != nil {
@@ -141,18 +135,8 @@ func ListSessionsPaginated(sessionsRoot string, opts ListSessionsOpts) ([]Sessio
 		return fileInfos[i].modTime.After(fileInfos[j].modTime)
 	})
 
-	start := opts.Offset
-	if start > len(fileInfos) {
-		start = len(fileInfos)
-	}
-	end := start + limit
-	if end > len(fileInfos) {
-		end = len(fileInfos)
-	}
-
-	page := fileInfos[start:end]
-	var metas []SessionMeta
-	for _, fi := range page {
+	var allMetas []SessionMeta
+	for _, fi := range fileInfos {
 		db, err := sql.Open("sqlite", fi.path+"?mode=ro&_journal_mode=WAL")
 		if err != nil {
 			continue
@@ -172,13 +156,28 @@ func ListSessionsPaginated(sessionsRoot string, opts ListSessionsOpts) ([]Sessio
 			continue
 		}
 		if m.TurnCount == 0 {
-			total--
 			continue
 		}
-		metas = append(metas, m)
+		allMetas = append(allMetas, m)
 	}
 
-	return metas, total, nil
+	total := len(allMetas)
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	start := opts.Offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+
+	return allMetas[start:end], total, nil
 }
 
 func ListSessions(sessionsRoot string) ([]SessionMeta, error) {

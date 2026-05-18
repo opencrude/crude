@@ -42,6 +42,8 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 		spinColor = th.Colors.Spinner.Done
 	} else if msg.ToolStatus == "error" {
 		spinColor = th.Colors.Spinner.Error
+	} else if msg.ToolStatus == "cancelled" {
+		spinColor = th.Colors.Warning
 	}
 	spinStyle := lipgloss.NewStyle().Foreground(spinColor)
 	nameStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted)
@@ -141,6 +143,29 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 					}
 					msgLines = append(msgLines, wl)
 				}
+			}
+		}
+	} else if msg.ToolStatus == "error" || msg.ToolStatus == "cancelled" {
+		if msg.Content != "" {
+			maxRes := TerminalResultHeight(height)
+			toolLineWidth := width - th.Spacing.PadLR*2 - 6
+			if toolLineWidth < 20 {
+				toolLineWidth = 20
+			}
+			var wrappedLines []string
+			for _, rl := range strings.Split(msg.Content, "\n") {
+				trimmed := strings.TrimLeft(rl, " ")
+				for _, seg := range rendering.HardWrap(trimmed, toolLineWidth) {
+					wrappedLines = append(wrappedLines, dim.Render("│   ")+th.Styles.ErrorText.Render(seg))
+				}
+			}
+			for i, wl := range wrappedLines {
+				if i >= maxRes-1 {
+					remaining := len(wrappedLines) - i
+					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
+					break
+				}
+				msgLines = append(msgLines, wl)
 			}
 		}
 	}
@@ -244,7 +269,11 @@ func TerminalResultHeight(height int) int {
 // (letting the default title handle display).
 func resultSummary(tool, content, target, dur string) string {
 	if strings.HasPrefix(strings.TrimSpace(content), "Error:") {
-		return "" // let default title handle errors
+		summary := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(content), "Error:"))
+		if len(summary) > 60 {
+			summary = summary[:59] + "…"
+		}
+		return "Error: " + summary
 	}
 
 	switch tool {

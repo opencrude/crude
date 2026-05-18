@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -122,7 +123,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			CWD:            GetStrArg(params, "cwd", ""),
 			TimeoutSeconds: timeout,
 		}
-		out, err := exec.Execute(cmd, opts)
+		out, err := exec.Execute(context.Background(), cmd, opts)
 		if err != nil {
 			if out != "" {
 				result = ToolResult{Content: fmt.Sprintf("Command failed: %v\n\n%s", err, out)}

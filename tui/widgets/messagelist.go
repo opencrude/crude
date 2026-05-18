@@ -484,12 +484,37 @@ func (ml *MessageList) ClearStreamingTools() {
 	ml.vl.SetItems(items)
 }
 
+func (ml *MessageList) MarkStreamingToolsCancelled() {
+	for _, msg := range ml.messages {
+		if msg.ToolStatus == "streaming" || msg.ToolStatus == "calling" {
+			msg.ToolStatus = types.ToolStatusCancelled
+			msg.ToolPreviewPhase = types.ToolPreviewDone
+			msg.CachedLines = nil
+			ml.vl.InvalidateItem(msg.InternalID)
+		}
+	}
+}
+
 func (ml *MessageList) MarkAllThinkingDone() {
 	for _, msg := range ml.messages {
 		if msg.Role == types.RoleThinking {
 			msg.ThinkingActive = false
+			msg.ThinkingInterrupted = false
 			msg.CachedLines = nil
 			ml.vl.InvalidateItem(msg.InternalID)
+		}
+	}
+}
+
+func (ml *MessageList) MarkAllThinkingInterrupted() {
+	for _, msg := range ml.messages {
+		if msg.Role == types.RoleThinking && msg.ThinkingActive {
+			msg.ThinkingActive = false
+			msg.ThinkingInterrupted = true
+			msg.CachedLines = nil
+			ml.vl.InvalidateItem(msg.InternalID)
+		} else if msg.Role == types.RoleThinking {
+			msg.ThinkingActive = false
 		}
 	}
 }

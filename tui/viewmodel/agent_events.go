@@ -255,6 +255,7 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 		if ma.ThinkingPaneID != "" {
 			sp := m.paneMgr.Get(ma.ThinkingPaneID)
 			if sp != nil {
+				sp.Done = true
 				sp.Collapse()
 				m.mainMsgList.InvalidateSubPane(ma.ThinkingPaneID)
 			}
@@ -267,6 +268,7 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 	if sp == nil {
 		return
 	}
+	sp.Done = true
 	sp.Collapse()
 	m.mainMsgList.InvalidateSubPane(agentID)
 }

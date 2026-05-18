@@ -226,16 +226,6 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 		a.TokenBuf = ""
 	}
 	wasStreaming := a.Streaming
-	target.MarkAllThinkingDone()
-	target.ClearStreamingTools()
-	if thinkTarget != target {
-		thinkTarget.MarkAllThinkingDone()
-		thinkTarget.ClearStreamingTools()
-	}
-	a.Thinking = false
-	a.Streaming = false
-	onThinking(false, false, false)
-	onStatusLine("")
 
 	var content, reason string
 	switch d := evt.Data.(type) {
@@ -245,6 +235,28 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 		content, _ = d["content"].(string)
 		reason, _ = d["reason"].(string)
 	}
+
+	if reason == "cancelled" {
+		target.MarkAllThinkingInterrupted()
+		if thinkTarget != target {
+			thinkTarget.MarkAllThinkingInterrupted()
+		}
+		target.MarkStreamingToolsCancelled()
+		if thinkTarget != target {
+			thinkTarget.MarkStreamingToolsCancelled()
+		}
+	} else {
+		target.MarkAllThinkingDone()
+		target.ClearStreamingTools()
+		if thinkTarget != target {
+			thinkTarget.MarkAllThinkingDone()
+			thinkTarget.ClearStreamingTools()
+		}
+	}
+	a.Thinking = false
+	a.Streaming = false
+	onThinking(false, false, false)
+	onStatusLine("")
 
 	for _, msg := range target.Messages() {
 		msg.CachedLines = nil
@@ -284,6 +296,15 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 			target.RebuildItems()
 		}
 	}
+
+	if reason == "cancelled" {
+		target.AppendMessage(ttypes.ChatMessage{
+			Role:    ttypes.RoleAssistant,
+			Content: "Operation cancelled by user.",
+			Time:    time.Now(),
+		})
+	}
+
 	target.ScrollToBottom()
 
 	return a.doneResultCmd(reason)
