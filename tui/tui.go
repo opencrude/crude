@@ -23,6 +23,10 @@ type TUI struct {
 
 	OnResumeSession func(string)
 
+	OnDeleteSession func(string)
+
+	OnListSessions func() []sessiondb.SessionMeta
+
 	OnSettingsSave func(Settings) error
 
 	OnConfirmResult func(ConfirmResult)
@@ -109,6 +113,17 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 			t.OnResumeSession(sessionID)
 		}
 	}
+	a.SetDeleteSessionFn(func(sessionID string) {
+		if t.OnDeleteSession != nil {
+			t.OnDeleteSession(sessionID)
+		}
+	})
+	a.SetListSessionsFn(func() []sessiondb.SessionMeta {
+		if t.OnListSessions != nil {
+			return t.OnListSessions()
+		}
+		return nil
+	})
 	program := tea.NewProgram(a, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	t.app = a
 	t.Program = program
