@@ -153,3 +153,5 @@ type SettingsSaveResultMsg struct {
 }
 
 type SelectionTickMsg time.Time
+
+type HistoryMessagesMsg []ChatMessage

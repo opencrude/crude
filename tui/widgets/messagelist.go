@@ -1130,7 +1130,7 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 		msgLines := RenderErrorMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW)
 		lines = append(lines, msgLines...)
 	case types.RoleSessionPicker:
-		msgLines := RenderSessionPicker(msg.SessionPickerSessions, msg.SessionPickerSelected, msg.SessionPickerFocused, ml.theme, contentWidth)
+		msgLines := RenderSessionPicker(msg.SessionPickerSessions, msg.SessionPickerSelected, msg.SessionPickerFocused, ml.theme, innerW)
 		lines = append(lines, msgLines...)
 	}
 

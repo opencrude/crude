@@ -9,6 +9,20 @@ import (
 	"crude/provider"
 )
 
+type DisplayMeta struct {
+	DisplayRole    string `json:"display_role,omitempty"`
+	ToolName       string `json:"tool_name,omitempty"`
+	ToolArgs       string `json:"tool_args,omitempty"`
+	ToolStatus     string `json:"tool_status,omitempty"`
+	PermTag        string `json:"perm_tag,omitempty"`
+	ProgressLabel  string `json:"progress_label,omitempty"`
+	DurationMs     int64  `json:"duration_ms,omitempty"`
+	EstTokens      int    `json:"est_tokens,omitempty"`
+	LinesAdded     int    `json:"lines_added,omitempty"`
+	LinesRemoved   int    `json:"lines_removed,omitempty"`
+	SubPaneID      string `json:"sub_pane_id,omitempty"`
+}
+
 type MessageRow struct {
 	Role             string
 	Content          sql.NullString
@@ -24,9 +38,20 @@ type MessageRow struct {
 	TurnNumber       int
 	AgentID          sql.NullString
 	CreatedAt        int64
+	DisplayMeta      sql.NullString
+}
+
+type MessageWithMeta struct {
+	Msg  provider.ChatMessage
+	Meta DisplayMeta
+	Turn int
 }
 
 func ReplaceMessages(db *sql.DB, sessionID string, msgs []provider.ChatMessage, turnNumbers []int) (int, error) {
+	return ReplaceMessagesWithMeta(db, sessionID, msgs, turnNumbers, nil)
+}
+
+func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatMessage, turnNumbers []int, metas []DisplayMeta) (int, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("sessiondb: replace messages begin: %w", err)
@@ -61,8 +86,8 @@ func ReplaceMessages(db *sql.DB, sessionID string, msgs []provider.ChatMessage, 
 			role, content, reasoning_content, reasoning,
 			tool_calls, tool_name, tool_result, tool_call_id,
 			cache_control, token_count, sequence_num, turn_number,
-			agent_id, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			agent_id, created_at, display_meta
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return 0, fmt.Errorf("sessiondb: replace messages prepare: %w", err)
@@ -94,6 +119,13 @@ func ReplaceMessages(db *sql.DB, sessionID string, msgs []provider.ChatMessage, 
 			turn = turnNumbers[i]
 		}
 
+		var metaJSON sql.NullString
+		if i < len(metas) {
+			if b, err := json.Marshal(metas[i]); err == nil && len(b) > 2 {
+				metaJSON = sql.NullString{String: string(b), Valid: true}
+			}
+		}
+
 		_, err := stmt.Exec(
 			m.Role,
 			nullString(content),
@@ -109,6 +141,7 @@ func ReplaceMessages(db *sql.DB, sessionID string, msgs []provider.ChatMessage, 
 			turn,
 			nil,
 			now,
+			metaJSON,
 		)
 		if err != nil {
 			return 0, fmt.Errorf("sessiondb: replace messages exec seq=%d: %w", i, err)
@@ -135,7 +168,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 		SELECT role, content, reasoning_content, reasoning,
 		       tool_calls, tool_name, tool_result, tool_call_id,
 		       cache_control, token_count, sequence_num, turn_number,
-		       agent_id, created_at
+		       agent_id, created_at, display_meta
 		FROM messages ORDER BY sequence_num
 	`)
 	if err != nil {
@@ -151,7 +184,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 			&r.Role, &r.Content, &r.ReasoningContent, &r.Reasoning,
 			&r.ToolCalls, &r.ToolName, &r.ToolResult, &r.ToolCallID,
 			&r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
-			&r.AgentID, &r.CreatedAt,
+			&r.AgentID, &r.CreatedAt, &r.DisplayMeta,
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("sessiondb: load messages scan: %w", err)
@@ -189,6 +222,81 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 	}
 
 	return msgs, turns, nil
+}
+
+func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
+	rows, err := db.Query(`
+		SELECT role, content, reasoning_content, reasoning,
+		       tool_calls, tool_name, tool_result, tool_call_id,
+		       cache_control, token_count, sequence_num, turn_number,
+		       agent_id, created_at, display_meta
+		FROM messages ORDER BY sequence_num
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("sessiondb: load messages with meta: %w", err)
+	}
+	defer rows.Close()
+
+	var result []MessageWithMeta
+	for rows.Next() {
+		var r MessageRow
+		err := rows.Scan(
+			&r.Role, &r.Content, &r.ReasoningContent, &r.Reasoning,
+			&r.ToolCalls, &r.ToolName, &r.ToolResult, &r.ToolCallID,
+			&r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
+			&r.AgentID, &r.CreatedAt, &r.DisplayMeta,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("sessiondb: load messages with meta scan: %w", err)
+		}
+
+		m := provider.ChatMessage{
+			Role:    r.Role,
+			Content: r.Content.String,
+		}
+
+		if r.ReasoningContent.Valid {
+			m.ReasoningContent = r.ReasoningContent.String
+		}
+		if r.Reasoning.Valid {
+			m.Reasoning = r.Reasoning.String
+		}
+		if r.ToolCallID.Valid {
+			m.ToolCallID = r.ToolCallID.String
+		}
+		if r.ToolCalls.Valid && r.ToolCalls.String != "" {
+			json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
+		}
+		if r.CacheControl.Valid && r.CacheControl.String != "" {
+			var cc provider.CacheControl
+			if json.Unmarshal([]byte(r.CacheControl.String), &cc) == nil {
+				m.CacheControl = &cc
+			}
+		}
+		if m.Role == "tool" && r.ToolResult.Valid {
+			m.Content = r.ToolResult.String
+		}
+
+		var meta DisplayMeta
+		if r.DisplayMeta.Valid && r.DisplayMeta.String != "" {
+			if err := json.Unmarshal([]byte(r.DisplayMeta.String), &meta); err != nil {
+				meta = DisplayMeta{}
+			}
+		}
+
+		turn := r.TurnNumber
+		if meta.DisplayRole == "" {
+			meta.DisplayRole = r.Role
+		}
+
+		result = append(result, MessageWithMeta{
+			Msg:  m,
+			Meta: meta,
+			Turn: turn,
+		})
+	}
+
+	return result, nil
 }
 
 func nullString(s string) sql.NullString {

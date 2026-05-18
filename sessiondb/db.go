@@ -74,6 +74,12 @@ func Migrate(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("sessiondb: migrate: %w", err)
 	}
+	migrations := []string{
+		"ALTER TABLE messages ADD COLUMN display_meta TEXT",
+	}
+	for _, m := range migrations {
+		db.Exec(m)
+	}
 	return nil
 }
 
