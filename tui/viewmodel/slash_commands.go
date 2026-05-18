@@ -32,38 +32,29 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
 		m.settings.FocusField(0)
-	case "/model":
-		m.logger.Info("INPUT", "slash", "command", "model")
-		m.settings.SaveSnapshot()
-		m.setMode(ModeSettings)
-		m.settings.FocusField(3)
 	case "/api-key":
 		m.logger.Info("INPUT", "slash", "command", "api-key")
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
 		m.settings.FocusField(2)
-	case "/effort":
-		efforts := []string{"none", "low", "medium", "high", "xhigh"}
-		idx := 0
-		for i, v := range efforts {
-			if v == m.lastSettings.ThinkingEffort {
-				idx = i
-				break
+	case "/sessions":
+		m.logger.Info("INPUT", "slash", "command", "sessions")
+		if m.anyActive() {
+			m.statusbar.SetError("Cannot switch sessions while agent is running — press ctrl+c to cancel first")
+			return nil
+		}
+		if m.onListSessions != nil {
+			sessions := m.onListSessions()
+			if len(sessions) > 0 {
+				m.launcher = NewLauncherState(sessions)
+				m.lastInteractionTime = time.Now()
+				m.setMode(ModeLauncher)
+			} else {
+				m.statusbar.SetInfo("No past sessions found")
 			}
+		} else {
+			m.statusbar.SetError("Session browser not available")
 		}
-		idx = (idx + 1) % len(efforts)
-		m.lastSettings.ThinkingEffort = efforts[idx]
-		m.settings.SetFieldValue(5, efforts[idx])
-		m.logger.Info("INPUT", "slash", "command", "effort", "value", efforts[idx])
-		if m.OnSettingsSave != nil {
-			onSave := m.OnSettingsSave
-			s := m.lastSettings
-			cmds = append(cmds, func() tea.Msg {
-				err := onSave(s)
-				return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
-			})
-		}
-		m.statusbar.SetInfo(fmt.Sprintf("Thinking effort: %s", efforts[idx]))
 	case "/help":
 		m.logger.Info("INPUT", "slash", "command", "help")
 		var b strings.Builder

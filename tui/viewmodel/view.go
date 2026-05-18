@@ -18,6 +18,11 @@ func (m *App) View() string {
 		return ""
 	}
 
+	// Full-screen launcher mode — completely separate render path
+	if m.Mode == ModeLauncher && m.launcher != nil {
+		return m.renderLauncherView()
+	}
+
 	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
 	innerW := m.width - m.theme.Spacing.PadLR*2
 	if innerW < 20 {
@@ -40,15 +45,7 @@ func (m *App) View() string {
 		}
 		inputView = dim.Render(hint)
 	} else {
-		if m.sessionPickerActive && m.sessionPickerFocused {
-			hint := "[ ↑↓: browse sessions · enter: resume · click here to type · ctrl+c: switch focus ]"
-			inputView = m.theme.Styles.DimLabel.Render(hint) + "\n" + m.input.View(m.width, m.height, false, false, m.spinFrame)
-		} else if m.sessionPickerActive && !m.sessionPickerFocused {
-			hint := "[ ctrl+c: browse sessions ]"
-			inputView = m.theme.Styles.DimLabel.Render(hint) + "\n" + m.input.View(m.width, m.height, false, false, m.spinFrame)
-		} else {
-			inputView = m.input.View(m.width, m.height, false, false, m.spinFrame)
-		}
+		inputView = m.input.View(m.width, m.height, false, false, m.spinFrame)
 		inputLineCount = len(strings.Split(inputView, "\n"))
 		if inputLineCount < 1 {
 			inputLineCount = 1
@@ -418,4 +415,165 @@ func (m *App) syncFormHint() {
 	default:
 		m.formHint = ""
 	}
+}
+
+// renderLauncherView renders the full-screen session launcher.
+func (m *App) renderLauncherView() string {
+	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
+	innerW := m.width - m.theme.Spacing.PadLR*2
+	if innerW < 20 {
+		innerW = 20
+	}
+
+	lines := make([]string, 0, m.height)
+
+	// Line 1: blank
+	lines = append(lines, "")
+
+	// Line 2: header
+	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
+	lines = append(lines, pad+headerLine+pad)
+
+	// Line 3: separator
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+
+	// Lines 4..n-5: session list
+	idleSeconds := time.Since(m.lastInteractionTime).Seconds()
+	visibleSessions := m.launcher.visibleSessions()
+	sessionLines := widgets.RenderLauncher(
+		visibleSessions,
+		m.launcher.selected,
+		m.launcher.filterActive,
+		m.launcher.filterText,
+		m.theme,
+		m.width,
+		m.height,
+		m.spinFrame,
+		idleSeconds,
+	)
+
+	// Calculate available space for session list
+	// Layout: blank + header + sep + [sessions] + sep + preview(1) + sep + hints + sep + statusbar = 8 fixed lines
+	fixedLines := 8 + 1 // 8 structural + 1 preview line
+	availableH := m.height - fixedLines
+	if availableH < 3 {
+		availableH = 3
+	}
+
+	// Apply scroll offset for long lists
+	totalSessionLines := len(sessionLines)
+	scrollOffset := m.launcher.scrollOffset
+
+	// Auto-scroll to keep selection visible
+	// We need to figure out which line the selected item is on
+	selectedLineIdx := m.launcherSelectedLineIndex(sessionLines)
+	if selectedLineIdx >= scrollOffset+availableH {
+		scrollOffset = selectedLineIdx - availableH + 1
+	}
+	if selectedLineIdx < scrollOffset {
+		scrollOffset = selectedLineIdx
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+	m.launcher.scrollOffset = scrollOffset
+
+	// Slice visible portion
+	endIdx := scrollOffset + availableH
+	if endIdx > totalSessionLines {
+		endIdx = totalSessionLines
+	}
+	visibleLines := sessionLines
+	if scrollOffset < totalSessionLines {
+		visibleLines = sessionLines[scrollOffset:endIdx]
+	} else {
+		visibleLines = nil
+	}
+
+	for _, line := range visibleLines {
+		visW := lipgloss.Width(line)
+		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+		if rightPad < 0 {
+			rightPad = 0
+		}
+		lines = append(lines, pad+line+strings.Repeat(" ", rightPad)+pad)
+	}
+
+	// Fill remaining space with empty lines
+	targetBeforeSep := 3 + availableH // blank + header + sep + session area
+	for len(lines) < targetBeforeSep {
+		lines = append(lines, strings.Repeat(" ", m.width))
+	}
+
+	// Separator before preview
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+
+	// Preview pane
+	previewLines := m.launcherPreviewLines()
+	renderedPreview := widgets.RenderLauncherPreview(previewLines, m.theme, m.width)
+	for _, pl := range renderedPreview {
+		visW := lipgloss.Width(pl)
+		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+		if rightPad < 0 {
+			rightPad = 0
+		}
+		lines = append(lines, pad+pl+strings.Repeat(" ", rightPad)+pad)
+	}
+
+	// Separator before hints
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+
+	// Hints bar
+	hintsLine := widgets.RenderLauncherHints(m.launcher.filterActive, m.launcher.filterText, m.theme, m.width)
+	visW := lipgloss.Width(hintsLine)
+	rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+	if rightPad < 0 {
+		rightPad = 0
+	}
+	lines = append(lines, pad+hintsLine+strings.Repeat(" ", rightPad)+pad)
+
+	// Separator before statusbar
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+
+	// Status bar (same as main view)
+	statusView := m.statusbar.View()
+	lines = append(lines, pad+statusView)
+
+	if len(lines) > m.height {
+		lines = lines[:m.height]
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// launcherSelectedLineIndex finds which rendered line the selected item is on.
+func (m *App) launcherSelectedLineIndex(sessionLines []string) int {
+	if m.launcher == nil {
+		return 0
+	}
+	// The selected index maps to rendered lines:
+	// Index 0 = "New Session" = line 0
+	// Then date separators and session lines follow.
+	// We need to find which line corresponds to the selected item.
+	if m.launcher.selected == 0 {
+		return 0
+	}
+
+	// Walk through the groups to find the line
+	visibleSessions := m.launcher.visibleSessions()
+	groups := widgets.BuildLauncherGroups(visibleSessions)
+	lineIdx := 2 // "New Session" line + blank line
+	flatIdx := 1
+
+	for _, g := range groups {
+		lineIdx++ // date separator
+		for range g.Sessions {
+			if flatIdx == m.launcher.selected {
+				return lineIdx
+			}
+			lineIdx++
+			flatIdx++
+		}
+	}
+	return 0
 }

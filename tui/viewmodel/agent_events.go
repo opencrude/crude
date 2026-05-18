@@ -69,6 +69,10 @@ func (m *App) submitBtw(text string) tea.Cmd {
 }
 
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
+	if m.Mode == ModeLauncher {
+		return nil
+	}
+
 	agentID := evt.AgentID
 	if agentID == "" {
 		agentID = MainAgentID

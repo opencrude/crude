@@ -23,9 +23,8 @@ const (
 	ModeSettings
 	ModeConfirm
 	ModeYolo
+	ModeLauncher
 )
-
-const sessionPickerMsgID = "__session_picker__"
 
 type Logger interface {
 	Info(tag, msg string, pairs ...any)
@@ -90,10 +89,11 @@ type App struct {
 
 	logger Logger
 
-	sessionPickerSessions []sessiondb.SessionMeta
-	sessionPickerActive   bool
-	sessionPickerSelected int
-	sessionPickerFocused  bool
+	// Launcher state (replaces old session picker)
+	launcher             *LauncherState
+	onDeleteSession      func(string)
+	onListSessions       func() []sessiondb.SessionMeta
+	lastInteractionTime  time.Time
 }
 
 type (
@@ -125,10 +125,19 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 
 	w := window.New(th)
 
-	spActive := len(sessions) > 0
+	hasSessions := len(sessions) > 0
+	var initialMode Mode
+	var launcher *LauncherState
+	if hasSessions {
+		initialMode = ModeLauncher
+		launcher = NewLauncherState(sessions)
+	} else {
+		initialMode = ModeChat
+	}
 
 	app := &App{
 		theme:        th,
+		Mode:         initialMode,
 		agents:       map[string]*AgentState{MainAgentID: mainAgent},
 		paneMgr:      pm,
 		win:          w,
@@ -145,27 +154,14 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		username:     username,
 		startTime:    time.Now(),
 		lastCancelTime: time.Now(),
+		lastInteractionTime: time.Now(),
 		lastSettings: initial,
 		OnSettingsSave: onSave,
 		logger:       lg,
-		sessionPickerSessions: sessions,
-		sessionPickerActive:   spActive,
-		sessionPickerSelected: 0,
-		sessionPickerFocused:  spActive,
+		launcher:     launcher,
 	}
 
 	ml.SetSubPaneContentFn(app.renderSubPaneContent)
-
-	if spActive {
-		ml.AppendMessage(ttypes.ChatMessage{
-			InternalID:            sessionPickerMsgID,
-			Role:                 ttypes.RoleSessionPicker,
-			SessionPickerSessions: sessions,
-			SessionPickerSelected: 0,
-			SessionPickerFocused:  true,
-			Time:                 time.Now(),
-		})
-	}
 
 	return app
 }
@@ -185,36 +181,6 @@ func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []
 
 func (m *App) mainAgent() *AgentState {
 	return m.agents[MainAgentID]
-}
-
-func (m *App) updateSessionPickerMessage() {
-	if !m.sessionPickerActive {
-		return
-	}
-	for _, msg := range m.mainMsgList.Messages() {
-		if msg.InternalID == sessionPickerMsgID {
-			msg.SessionPickerSelected = m.sessionPickerSelected
-			msg.SessionPickerFocused = m.sessionPickerFocused
-			msg.CachedLines = nil
-			m.mainMsgList.InvalidateItem(sessionPickerMsgID)
-			return
-		}
-	}
-}
-
-func (m *App) removeSessionPickerMessage() {
-	if !m.sessionPickerActive {
-		return
-	}
-	messages := m.mainMsgList.Messages()
-	for i, msg := range messages {
-		if msg.InternalID == sessionPickerMsgID {
-			m.mainMsgList.RemoveMessage(i)
-			break
-		}
-	}
-	m.sessionPickerActive = false
-	m.sessionPickerSessions = nil
 }
 
 func (m *App) anyActive() bool {
@@ -272,6 +238,8 @@ func modeName(m Mode) string {
 		return "confirm"
 	case ModeYolo:
 		return "yolo"
+	case ModeLauncher:
+		return "launcher"
 	default:
 		return "unknown"
 	}
@@ -279,6 +247,14 @@ func modeName(m Mode) string {
 
 func (m *App) History() []string {
 	return m.history
+}
+
+func (m *App) SetDeleteSessionFn(fn func(string)) {
+	m.onDeleteSession = fn
+}
+
+func (m *App) SetListSessionsFn(fn func() []sessiondb.SessionMeta) {
+	m.onListSessions = fn
 }
 
 func (m *App) Init() tea.Cmd {

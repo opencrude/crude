@@ -43,12 +43,11 @@ type CmdInfo struct {
 
 var availableCmds = []CmdInfo{
 	{Name: "settings", Label: "settings", Desc: "Open general settings"},
-	{Name: "model", Label: "model", Desc: "Select model"},
-	{Name: "effort", Label: "effort", Desc: "Cycle thinking effort (none/low/medium/high/xhigh)"},
 	{Name: "undo", Label: "undo", Desc: "Undo last file operation"},
 	{Name: "undo-n", Label: "undo N", Desc: "Undo last N file operations"},
 	{Name: "undo-all", Label: "undo all", Desc: "Undo all file operations this session"},
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
+	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
 	{Name: "help", Label: "help", Desc: "Show available commands"},
 }
 

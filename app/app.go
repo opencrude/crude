@@ -200,6 +200,17 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 	tuiInst.OnResumeSession = func(sessionID string) {
 		a.resumeNextID = sessionID
 	}
+
+	tuiInst.OnDeleteSession = func(sessionID string) {
+		if err := sessiondb.DeleteSession(a.sessionsRoot, sessionID); err != nil {
+			sess.Logger().Warn("SESSION", "delete_failed", "id", sessionID, "error", err.Error())
+		}
+	}
+
+	tuiInst.OnListSessions = func() []sessiondb.SessionMeta {
+		metas, _, _ := sessiondb.ListSessionsPaginated(a.sessionsRoot, sessiondb.ListSessionsOpts{Limit: 30, Offset: 0})
+		return metas
+	}
 }
 
 func (a *App) hydrateTUI(tuiInst *tui.TUI) {
