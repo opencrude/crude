@@ -147,15 +147,6 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		cancel()
 		return nil, err
 	}
-	c.Cancel = func() error {
-		if c.Process != nil {
-			if runtime.GOOS != "windows" {
-				return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
-			}
-			return c.Process.Kill()
-		}
-		return nil
-	}
 
 	state := &asyncCmdState{
 		cmd:    c,
