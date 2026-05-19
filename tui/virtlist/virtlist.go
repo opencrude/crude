@@ -133,6 +133,17 @@ func (vl *VirtualList) InvalidateItem(id string) {
 	}
 }
 
+func (vl *VirtualList) RenameItemID(oldID, newID string) {
+	for i := range vl.items {
+		if vl.items[i].ID == oldID {
+			vl.items[i].ID = newID
+			vl.items[i].Dirty = true
+			vl.indexDirty = true
+			return
+		}
+	}
+}
+
 func (vl *VirtualList) ItemHeight(id string) (int, bool) {
 	for i := range vl.items {
 		if vl.items[i].ID == id {
@@ -149,6 +160,7 @@ func (vl *VirtualList) InvalidateAll() {
 	for i := range vl.items {
 		vl.items[i].Dirty = true
 	}
+	vl.indexDirty = true
 }
 
 func (vl *VirtualList) InvalidateHeights() {

@@ -224,20 +224,6 @@ func (ml *MessageList) findToolMsg(internalID, toolID string) *types.ChatMessage
 	return nil
 }
 
-func (ml *MessageList) removeToolMsg(msg *types.ChatMessage) {
-	delete(ml.msgByID, msg.InternalID)
-	if msg.ToolID != "" {
-		delete(ml.msgByID, msg.ToolID)
-	}
-	for i, m := range ml.messages {
-		if m == msg {
-			ml.messages = append(ml.messages[:i], ml.messages[i+1:]...)
-			break
-		}
-	}
-	ml.RebuildItems()
-}
-
 func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data map[string]any) {
 	target, _ := data["target"].(string)
 	estTokens := toIntField(data["tool_est_tokens"])
@@ -252,7 +238,8 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 
 	if msg := ml.findToolMsg(internalID, toolID); msg != nil {
 		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
-			ml.removeToolMsg(msg)
+			// Completed tool collides with new call's ID — don't corrupt history.
+			// Fall through to create a fresh message with a unique ID.
 		} else {
 			if v, ok := data["content"]; ok {
 				if s, ok := v.(string); ok {
@@ -296,7 +283,7 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 	}
 
 	id := internalID
-	if id == "" {
+	if id == "" || ml.msgByID[id] != nil {
 		id = ml.nextMsgID()
 	}
 	msg := &types.ChatMessage{
@@ -331,7 +318,8 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 func (ml *MessageList) UpdateToolCall(toolID, internalID, name, argsCompact string) {
 	if msg := ml.findToolMsg(internalID, toolID); msg != nil {
 		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
-			ml.removeToolMsg(msg)
+			// Completed tool collides with new call's ID — don't corrupt history.
+			// Fall through to create a fresh message with a unique ID.
 		} else {
 			msg.ToolStatus = "calling"
 			msg.ToolArgs = argsCompact
@@ -355,7 +343,7 @@ func (ml *MessageList) UpdateToolCall(toolID, internalID, name, argsCompact stri
 	}
 
 	id := internalID
-	if id == "" {
+	if id == "" || ml.msgByID[id] != nil {
 		id = ml.nextMsgID()
 	}
 	msg := &types.ChatMessage{
