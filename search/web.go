@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"crude/docconv"
 	"crude/logger"
 
 	"github.com/PuerkitoBio/goquery"
@@ -151,6 +153,31 @@ func WebFetch(rawURL string, offset, limit int) (string, error) {
 	return sb.String(), nil
 }
 
+// mimeToExt maps document MIME types to file extensions for docconv.
+var mimeToExt = map[string]string{
+	"application/pdf":                                                  ".pdf",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+	"application/vnd.ms-excel":         ".xls",
+	"application/epub+zip":             ".epub",
+	"application/x-ipynb+json":         ".ipynb",
+}
+
+// docExtFromURL checks if a URL ends with a supported document extension.
+func docExtFromURL(rawURL string) string {
+	// Strip query string and fragment
+	path := rawURL
+	if idx := strings.IndexAny(path, "?#"); idx >= 0 {
+		path = path[:idx]
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if docconv.SupportedExt(ext) {
+		return ext
+	}
+	return ""
+}
+
 func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
 	req, err := http.NewRequest("GET", fetchURL, nil)
 	if err != nil {
@@ -197,6 +224,47 @@ func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
 				TotalChars: totalChars,
 			}, nil
 		}
+
+		// Try document conversion (PDF, DOCX, PPTX, XLSX, etc.)
+		// Parse the media type from Content-Type (strip parameters like charset)
+		mediaType := strings.TrimSpace(contentType)
+		if idx := strings.IndexAny(mediaType, ";"); idx >= 0 {
+			mediaType = strings.TrimSpace(mediaType[:idx])
+		}
+		ext := mimeToExt[mediaType]
+		if ext == "" {
+			ext = docExtFromURL(finalURL)
+		}
+		if ext != "" {
+			logIf(func(lg *logger.Logger) {
+				lg.Info("SEARCH", "fetch_doc", "url", finalURL, "mime", contentType, "ext", ext)
+			})
+			if resp.ContentLength > 25*1024*1024 {
+				return nil, fmt.Errorf("fetch: document too large (%d MB, limit 25 MB) — use execute_command to download and convert locally", resp.ContentLength/(1024*1024))
+			}
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 25*1024*1024))
+			if err != nil {
+				return nil, fmt.Errorf("fetch: reading document: %w", err)
+			}
+			md, meta, err := docconv.ConvertBytes(body, ext)
+			if err != nil {
+				return nil, fmt.Errorf("fetch: could not convert %s document: %w — try downloading it directly", docconv.FormatName(ext), err)
+			}
+			content := ""
+			if meta != nil {
+				content = docconv.Header(finalURL, meta)
+			}
+			content += md
+			totalChars := len([]rune(content))
+			content = sliceContent(content, offset, limit)
+			return &WebPage{
+				URL:        finalURL,
+				Title:      "Document: " + docconv.FormatName(ext),
+				Content:    content,
+				TotalChars: totalChars,
+			}, nil
+		}
+
 		return nil, fmt.Errorf("unsupported content type %q — this appears to be a binary file (PDF, image, etc.). Try accessing the URL directly in a browser", contentType)
 	}
 

@@ -50,7 +50,8 @@ var AgentTools = []ToolDef{
 				"Output includes line numbers. Always read a file before editing it. " +
 				"Set encoded=true for hashline format with line anchors (e.g. '1:a3b7| code') — " +
 				"useful for anchor-based edits that save tokens on large files. " +
-				"Binary files are detected and rejected with a helpful error message.",
+				"Binary files (PDF, DOCX, PPTX, XLSX, etc.) are automatically converted to Markdown — " +
+				"you can read PDFs, Word docs, spreadsheets, and presentations like text files.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -256,7 +257,8 @@ var AgentTools = []ToolDef{
 				"Returns the main text content of a web page, stripped of HTML markup. " +
 				"Use offset and limit to read a specific range of characters (like read_file). " +
 				"First fetch gives the total content length — use offset/limit for subsequent pagination. " +
-				"Use to read documentation, articles, or any web page content.",
+				"Use to read documentation, articles, or any web page content. " +
+				"PDFs, Word docs, and other document URLs are automatically converted to Markdown.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
