@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/widgets"
 )
@@ -64,7 +65,7 @@ func (sp *SubPane) SummaryText() string {
 	dur := sp.Elapsed()
 	tokens := ""
 	if sp.TokenCount > 0 {
-		tokens = fmt.Sprintf(" ↓%d tokens", sp.TokenCount)
+		tokens = fmt.Sprintf(" ↓%s", rendering.FormatTokens(sp.TokenCount))
 	}
 	verb := "Thinking"
 	if sp.Done {

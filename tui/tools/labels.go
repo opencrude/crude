@@ -55,14 +55,14 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 	switch tool {
 	case "write_file":
 		if target != "" {
-			return fmt.Sprintf("Writing %s +%d ↓%d", target, added, tokens)
+			return fmt.Sprintf("Writing %s +%s ↓%s", target, rendering.FormatCount(added), rendering.FormatTokens(tokens))
 		}
-		return fmt.Sprintf("Writing ↓%d", tokens)
+		return fmt.Sprintf("Writing ↓%s", rendering.FormatTokens(tokens))
 	case "edit_file":
 		if target != "" {
-			return fmt.Sprintf("Editing %s -%d +%d ↓%d", target, removed, added, tokens)
+			return fmt.Sprintf("Editing %s -%s +%s ↓%s", target, rendering.FormatCount(removed), rendering.FormatCount(added), rendering.FormatTokens(tokens))
 		}
-		return fmt.Sprintf("Editing -%d +%d ↓%d", removed, added, tokens)
+		return fmt.Sprintf("Editing -%s +%s ↓%s", rendering.FormatCount(removed), rendering.FormatCount(added), rendering.FormatTokens(tokens))
 	case "read_file":
 		return fmt.Sprintf("Reading %s", target)
 	case "execute_command":
@@ -163,9 +163,9 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		if target != "" {
 			label += " " + target
 		}
-		label += fmt.Sprintf(" +%d", added)
+		label += fmt.Sprintf(" +%s", rendering.FormatCount(added))
 		if tokens > 0 {
-			label += fmt.Sprintf(" ↓%d", tokens)
+			label += fmt.Sprintf(" ↓%s", rendering.FormatTokens(tokens))
 		}
 		if duration != "" {
 			label += " " + duration
@@ -176,9 +176,9 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		if target != "" {
 			label += " " + target
 		}
-		label += fmt.Sprintf(" -%d +%d", removed, added)
+		label += fmt.Sprintf(" -%s +%s", rendering.FormatCount(removed), rendering.FormatCount(added))
 		if tokens > 0 {
-			label += fmt.Sprintf(" ↓%d", tokens)
+			label += fmt.Sprintf(" ↓%s", rendering.FormatTokens(tokens))
 		}
 		if duration != "" {
 			label += " " + duration
