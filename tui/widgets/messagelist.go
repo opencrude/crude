@@ -1105,6 +1105,8 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 
 	var lines []string
 	isLastMsg := ml.isLastMessage(origMsg)
+	msgIdx := ml.messageIndexOf(origMsg)
+	suppressHeader := ml.shouldSuppressHeader(msgIdx)
 
 	timeLine1, timeLine2 := rendering.FormatTimeLabel(msg.Time)
 	timeW := rendering.Max(len(timeLine1), len(timeLine2))
@@ -1113,16 +1115,16 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 
 	switch msg.Role {
 	case types.RoleUser:
-		msgLines := RenderUserMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW, ml.MdRenderer(), ml.username)
+		msgLines := RenderUserMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW, ml.MdRenderer(), ml.username, suppressHeader)
 		lines = append(lines, msgLines...)
 	case types.RoleAssistant:
 		if ml.streaming && isLastMsg {
 			updateStreamingCache(msg, ml.MdRenderer(), contentWidth)
 		}
-		msgLines := RenderAssistantMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW, ml.MdRenderer(), ml.modelName, ml.streaming, isLastMsg)
+		msgLines := RenderAssistantMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW, ml.MdRenderer(), ml.modelName, ml.streaming, isLastMsg, suppressHeader)
 		lines = append(lines, msgLines...)
 	case types.RoleThinking:
-		msgLines := RenderThinkingMessage(*msg, ml.theme, contentWidth, innerW, ml.spinFrame, ml.modelName, timeLine1, timeLine2, timeW)
+		msgLines := RenderThinkingMessage(*msg, ml.theme, contentWidth, innerW, ml.spinFrame, ml.modelName, timeLine1, timeLine2, timeW, suppressHeader)
 		lines = append(lines, msgLines...)
 	case types.RoleTool:
 		msgLines := tools.RenderToolMessage(*msg, ml.theme, contentWidth, innerW, ml.width, ml.spinFrame, ml.height, ml.phase)
@@ -1158,6 +1160,46 @@ func (ml *MessageList) isLastMessage(msg *types.ChatMessage) bool {
 		return false
 	}
 	return ml.messages[len(ml.messages)-1] == msg
+}
+
+func messageParty(role string) string {
+	switch role {
+	case types.RoleUser:
+		return "user"
+	case types.RoleAssistant, types.RoleThinking:
+		return "agent"
+	default:
+		return ""
+	}
+}
+
+func (ml *MessageList) shouldSuppressHeader(msgIdx int) bool {
+	if msgIdx <= 0 {
+		return false
+	}
+	currentParty := messageParty(ml.messages[msgIdx].Role)
+	if currentParty == "" {
+		return false
+	}
+	for i := msgIdx - 1; i >= 0; i-- {
+		prevParty := messageParty(ml.messages[i].Role)
+		if prevParty == currentParty {
+			return true
+		}
+		if prevParty != "" {
+			return false
+		}
+	}
+	return false
+}
+
+func (ml *MessageList) messageIndexOf(target *types.ChatMessage) int {
+	for i, m := range ml.messages {
+		if m == target {
+			return i
+		}
+	}
+	return -1
 }
 
 func (ml *MessageList) messageToItem(idx int) virtlist.Item {

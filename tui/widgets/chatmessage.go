@@ -51,17 +51,17 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 
 		switch msg.Role {
 		case types.RoleUser:
-			msgLines = RenderUserMessage(*msg, th, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, username)
-	case types.RoleAssistant:
-		if streaming && isLastMsg {
-			updateStreamingCache(msg, mdRenderer, contentWidth)
-		}
-		msgLines = RenderAssistantMessage(*msg, th, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, modelName, streaming, isLastMsg)
-		if streaming && isLastMsg && len(msgLines) > 0 {
-			cursorLine = len(msgLines) - 1
-		}
+			msgLines = RenderUserMessage(*msg, th, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, username, false)
+		case types.RoleAssistant:
+			if streaming && isLastMsg {
+				updateStreamingCache(msg, mdRenderer, contentWidth)
+			}
+			msgLines = RenderAssistantMessage(*msg, th, contentWidth, innerW, timeLine1, timeLine2, timeW, mdRenderer, modelName, streaming, isLastMsg, false)
+			if streaming && isLastMsg && len(msgLines) > 0 {
+				cursorLine = len(msgLines) - 1
+			}
 		case types.RoleThinking:
-			msgLines = RenderThinkingMessage(*msg, th, contentWidth, innerW, spinFrame, modelName, timeLine1, timeLine2, timeW)
+			msgLines = RenderThinkingMessage(*msg, th, contentWidth, innerW, spinFrame, modelName, timeLine1, timeLine2, timeW, false)
 			if msg.ThinkingActive && isLastMsg && len(msgLines) > 0 {
 				cursorLine = len(msgLines) - 1
 			}
@@ -135,7 +135,7 @@ func updateStreamingCache(msg *types.ChatMessage, mdRenderer *glamour.TermRender
 	msg.StreamCompletedLen = completedLen
 }
 
-func RenderUserMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int, mdRenderer *glamour.TermRenderer, username string) []string {
+func RenderUserMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int, mdRenderer *glamour.TermRenderer, username string, suppressHeader bool) []string {
 	var userLines []string
 
 	rendered, isMarkdown := renderMarkdown(msg.Content, mdRenderer)
@@ -146,10 +146,12 @@ func RenderUserMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 	}
 
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	labelStyle := th.Styles.UserLabel
-	if len(userLines) > 0 {
-		label := labelStyle.Render("❯ " + username + " ")
-		userLines[0] = label + userLines[0]
+	if !suppressHeader {
+		labelStyle := th.Styles.UserLabel
+		if len(userLines) > 0 {
+			label := labelStyle.Render("❯ " + username + " ")
+			userLines[0] = label + userLines[0]
+		}
 	}
 
 	for i, line := range userLines {
@@ -180,7 +182,7 @@ func RenderUserMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 	return userLines
 }
 
-func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int, mdRenderer *glamour.TermRenderer, modelName string, streaming bool, isLastMsg bool) []string {
+func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, timeLine1, timeLine2 string, timeW int, mdRenderer *glamour.TermRenderer, modelName string, streaming bool, isLastMsg bool, suppressHeader bool) []string {
 	var asstLines []string
 
 	if streaming && isLastMsg {
@@ -217,18 +219,20 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 	}
 
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	if msg.Incomplete {
-		incompleteLabelStyle := lipgloss.NewStyle().
-			Foreground(th.Colors.Error).
-			Italic(true).
-			Bold(true).
-			Background(lipgloss.Color("#3a1a1a"))
-		label := incompleteLabelStyle.Render("❯ ⚠ Crude " + modelName + " ")
-		asstLines[0] = label + asstLines[0]
-	} else {
-		labelStyle := th.Styles.AsstLabel
-		label := labelStyle.Render("❯ Crude " + modelName + " ")
-		asstLines[0] = label + asstLines[0]
+	if !suppressHeader {
+		if msg.Incomplete {
+			incompleteLabelStyle := lipgloss.NewStyle().
+				Foreground(th.Colors.Error).
+				Italic(true).
+				Bold(true).
+				Background(lipgloss.Color("#3a1a1a"))
+			label := incompleteLabelStyle.Render("❯ ⚠ Crude " + modelName + " ")
+			asstLines[0] = label + asstLines[0]
+		} else {
+			labelStyle := th.Styles.AsstLabel
+			label := labelStyle.Render("❯ Crude " + modelName + " ")
+			asstLines[0] = label + asstLines[0]
+		}
 	}
 
 	for i, line := range asstLines {
@@ -271,30 +275,32 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 	return asstLines
 }
 
-func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, spinFrame int, modelName string, timeLine1, timeLine2 string, timeW int) []string {
+func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, spinFrame int, modelName string, timeLine1, timeLine2 string, timeW int, suppressHeader bool) []string {
 	var result []string
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 
-	var headerLabel string
-	if msg.Incomplete {
-		incompleteLabelStyle := lipgloss.NewStyle().
-			Foreground(th.Colors.Error).
-			Italic(true).
-			Bold(true).
-			Background(lipgloss.Color("#3a1a1a"))
-		headerLabel = incompleteLabelStyle.Render("❯ ⚠ Crude " + modelName + " ")
-	} else {
-		headerLabel = th.Styles.AsstLabel.Render("❯ Crude " + modelName + " ")
-	}
-	result = append(result, headerLabel)
-
-	if len(timeLine1) > 0 {
-		lineW := lipgloss.Width(headerLabel)
-		sp := innerW - lineW - timeW
-		if sp < 1 {
-			sp = 1
+	if !suppressHeader {
+		var headerLabel string
+		if msg.Incomplete {
+			incompleteLabelStyle := lipgloss.NewStyle().
+				Foreground(th.Colors.Error).
+				Italic(true).
+				Bold(true).
+				Background(lipgloss.Color("#3a1a1a"))
+			headerLabel = incompleteLabelStyle.Render("❯ ⚠ Crude " + modelName + " ")
+		} else {
+			headerLabel = th.Styles.AsstLabel.Render("❯ Crude " + modelName + " ")
 		}
-		result[0] = headerLabel + strings.Repeat(" ", sp) + dim.Render(timeLine1)
+		result = append(result, headerLabel)
+
+		if len(timeLine1) > 0 {
+			lineW := lipgloss.Width(headerLabel)
+			sp := innerW - lineW - timeW
+			if sp < 1 {
+				sp = 1
+			}
+			result[0] = headerLabel + strings.Repeat(" ", sp) + dim.Render(timeLine1)
+		}
 	}
 
 	lines := rendering.WrapText(msg.Content, contentWidth)

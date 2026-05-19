@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"crude/diff"
+	"crude/docconv"
 	"crude/fileio"
 	"crude/js"
 	"crude/logger"
@@ -159,11 +160,31 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		offset := GetIntArgAny(params, "offset", 0)
 		limit := GetIntArgAny(params, "limit", 0)
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "encoded", encoded, "offset", offset, "limit", limit)
+		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+			entries, err := exec.ListDir(path)
+			if err != nil {
+				result = ToolResult{Content: "Error: " + err.Error()}
+				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
+				break
+			}
+			if len(entries) == 0 {
+				result = ToolResult{Content: fmt.Sprintf("Directory %s is empty (no files or subdirectories). This is a successful result, not an error — the directory exists but contains nothing.", path)}
+			} else {
+				result = ToolResult{Content: formatDirEntries(path, entries)}
+			}
+			lg.Info("TOOL", "result", "tool", tool, "path", path, "redirected", "list_directory", "latency_ms", time.Since(start).Milliseconds())
+			break
+		}
 		if ed != nil {
 			if encoded {
 				content, err := ed.Read(path)
 				if err != nil {
 					if _, ok := err.(*fileio.BinaryFileError); ok {
+						if conv, ok := tryDocRead(path, offset, limit, lg); ok {
+							result = ToolResult{Content: conv}
+							lg.Info("TOOL", "doc_converted", "path", path)
+							break
+						}
 						result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
 						lg.Warn("TOOL", "binary_file", "path", path)
 						break
@@ -177,6 +198,11 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 				content, err := ed.ReadRaw(path)
 				if err != nil {
 					if _, ok := err.(*fileio.BinaryFileError); ok {
+						if conv, ok := tryDocRead(path, offset, limit, lg); ok {
+							result = ToolResult{Content: conv}
+							lg.Info("TOOL", "doc_converted", "path", path)
+							break
+						}
 						result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
 						lg.Warn("TOOL", "binary_file", "path", path)
 						break
@@ -196,6 +222,11 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 				break
 			}
 			if fileio.IsBinary(data) {
+				if conv, ok := tryDocRead(path, offset, limit, lg); ok {
+					result = ToolResult{Content: conv}
+					lg.Info("TOOL", "doc_converted", "path", path)
+					break
+				}
 				result = ToolResult{Content: fmt.Sprintf("Error: binary file detected: %s (%d bytes) — cannot read binary files, use execute_command instead", path, len(data))}
 				lg.Warn("TOOL", "binary_file", "path", path)
 				break
@@ -515,6 +546,58 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 	}
 
 	return result
+}
+
+// tryDocRead attempts to convert a binary document file to Markdown
+// and format it for display (with offset/limit support, line-based).
+// Returns the formatted content and true if the conversion succeeded,
+// or ("", false) if the format is not supported or conversion failed.
+func tryDocRead(path string, offset, limit int, lg *logger.Logger) (string, bool) {
+	ext := strings.ToLower(filepath.Ext(path))
+	if !docconv.SupportedExt(ext) {
+		return "", false
+	}
+
+	lg.Info("DOCONV", "converting", "path", path, "format", docconv.FormatName(ext))
+	md, meta, err := docconv.ConvertFile(path)
+	if err != nil {
+		lg.Warn("DOCONV", "conversion_failed", "path", path, "error", err.Error())
+		return "", false
+	}
+
+	// Build full output: header line + blank line + markdown content
+	var sb strings.Builder
+	sb.WriteString(docconv.Header(path, meta))
+	sb.WriteString(md)
+	full := sb.String()
+
+	// Apply line-based offset/limit (same model as formatReadFile)
+	lines := strings.Split(full, "\n")
+	total := len(lines)
+
+	startIdx := 0
+	if offset > 1 {
+		startIdx = offset - 1
+	}
+	if startIdx >= total {
+		if total == 0 {
+			return "", false
+		}
+		startIdx = total - 1
+	}
+
+	endIdx := total
+	if limit > 0 && startIdx+limit < total {
+		endIdx = startIdx + limit
+	}
+
+	slice := lines[startIdx:endIdx]
+	var out strings.Builder
+	if offset > 1 || limit > 0 {
+		fmt.Fprintf(&out, "Lines %d–%d of converted document (%d total)\n\n", startIdx+1, endIdx, total)
+	}
+	out.WriteString(strings.Join(slice, "\n"))
+	return strings.TrimRight(out.String(), "\n"), true
 }
 
 func formatWriteResult(path string, lines int, oldContent, newContent string) ToolResult {
