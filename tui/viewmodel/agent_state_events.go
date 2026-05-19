@@ -317,24 +317,27 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 
 	if isIncomplete {
 		msgs := target.Messages()
-		if len(msgs) > 0 {
-			last := msgs[len(msgs)-1]
-			if last.Role == ttypes.RoleAssistant {
+		marked := false
+		for i := len(msgs) - 1; i >= 0; i-- {
+			last := msgs[i]
+			if last.Role == ttypes.RoleAssistant || last.Role == ttypes.RoleThinking {
 				last.Incomplete = true
 				last.IncompleteReason = incompleteLabel
 				last.CursorLine = -1
 				last.CachedLines = nil
 				last.StreamCompletedLines = nil
 				last.StreamCompletedLen = 0
-			} else {
-				target.AppendMessage(ttypes.ChatMessage{
-					Role:            ttypes.RoleAssistant,
-					Content:         content,
-					Incomplete:      true,
-					IncompleteReason: incompleteLabel,
-					Time:            time.Now(),
-				})
+				marked = true
+				break
 			}
+		}
+		if !marked {
+			target.AppendMessage(ttypes.ChatMessage{
+				Role:            ttypes.RoleAssistant,
+				Incomplete:      true,
+				IncompleteReason: incompleteLabel,
+				Time:            time.Now(),
+			})
 		}
 		target.RebuildItems()
 	}

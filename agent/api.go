@@ -163,9 +163,6 @@ func (a *Agent) completeStream(
 		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
 		for scanner.Scan() {
-			if ctx.Err() != nil {
-				break
-			}
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
 				continue
@@ -264,6 +261,13 @@ func (a *Agent) completeStream(
 			}
 		}
 		resp.Body.Close()
+
+		if ctx.Err() != nil {
+			partialContent := contentBuf.String()
+			partialReasoning := reasoningBuf.String()
+			a.logger.Warn("CANCEL", "stream_interrupted", "content_len", len(partialContent), "reason", ctx.Err().Error())
+			return partialContent, partialReasoning, finishReason, nil, promptTokens, completionTokens, promptTokensCached, &apiCallError{Message: fmt.Sprintf("Stream request cancelled: %v", ctx.Err())}
+		}
 
 		if err := scanner.Err(); err != nil {
 			partialContent := contentBuf.String()
