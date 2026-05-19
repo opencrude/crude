@@ -34,6 +34,7 @@ These rules prevent the most common agent failure modes. Follow them strictly.
 
 ## Discover Before You Act
 - When starting work on an unfamiliar project, explore first: list_directory, glob_files, grep_files, read_file on README or key entry points.
+- ALWAYS list a directory's contents before trying to read files from it — guessing filenames causes failed reads and wastes context. list_directory first, then read_file with the exact name you saw.
 - Check for AGENTS.md or agents.md in the working directory — it contains project-specific guidance that overrides default behavior.
 - Look for spec files, documentation, and test files before making changes. Understanding the structure prevents blind edits.
 

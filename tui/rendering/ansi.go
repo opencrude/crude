@@ -25,12 +25,17 @@ func TrimRightAnsiSpaces(s string) string {
 				}
 			} else if j < len(s) && s[j] >= 0x40 && s[j] <= 0x5f {
 				j++
-			} else {
+			} else if j < len(s) {
 				j++
+			} else {
+				break
 			}
 			i = j
 		} else {
 			rn, size := utf8.DecodeRuneInString(s[i:])
+			if size == 0 {
+				break
+			}
 			if !unicode.IsSpace(rn) {
 				lastNonSpaceEnd = i + size
 			}
@@ -68,8 +73,10 @@ func StripAnsi(s string) string {
 				}
 			} else if j < len(s) && s[j] >= 0x40 && s[j] <= 0x5f {
 				j++
-			} else {
+			} else if j < len(s) {
 				j++
+			} else {
+				break
 			}
 			i = j
 		} else {
