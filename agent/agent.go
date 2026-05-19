@@ -2,7 +2,10 @@ package agent
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"strings"
+	"time"
 
 	"crude/fileio"
 	"crude/logger"
@@ -43,6 +46,7 @@ type Agent struct {
 	Ctx         context.Context
 	Yolo        bool
 	AsyncMgr    *fileio.AsyncCommandManager
+	client      *http.Client
 	toolCallSeq int
 }
 
@@ -56,6 +60,19 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 		ToolFn:   func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) { return tools.ToolResult{}, nil },
 		logger:   lg,
 		turn:     lg.Turn(),
+		client: &http.Client{
+			Timeout: 300 * time.Second,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				TLSHandshakeTimeout: 10 * time.Second,
+			},
+		},
 	}
 }
 

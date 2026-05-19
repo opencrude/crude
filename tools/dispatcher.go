@@ -94,7 +94,7 @@ func (r ToolResult) String() string {
 	return r.Content
 }
 
-func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool, lg *logger.Logger) ToolResult {
+func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool, lg *logger.Logger, ctx context.Context) ToolResult {
 	start := time.Now()
 	lg.Debug("DISPATCH", "route", "tool", tool, "has_editor", ed != nil)
 
@@ -123,7 +123,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			CWD:            GetStrArg(params, "cwd", ""),
 			TimeoutSeconds: timeout,
 		}
-		out, err := exec.Execute(context.Background(), cmd, opts)
+		out, err := exec.Execute(ctx, cmd, opts)
 		if err != nil {
 			if out != "" {
 				result = ToolResult{Content: fmt.Sprintf("Command failed: %v\n\n%s", err, out)}

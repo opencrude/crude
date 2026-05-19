@@ -88,7 +88,7 @@ func (a *Agent) Run(
 	for step := 0; step < maxSteps; step++ {
 		if ctx.Err() != nil {
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
-			emit(AgentEvent{Type: "done", Data: "Cancelled."})
+			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 			return msgs
 		}
 

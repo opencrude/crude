@@ -212,11 +212,29 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 		}
 	}
 
+	if msg.Incomplete && msg.IncompleteReason != "" {
+		reasonStyle := lipgloss.NewStyle().Foreground(th.Colors.Error).Italic(true)
+		reasonLine := reasonStyle.Render(msg.IncompleteReason)
+		asstLines = append(asstLines, "", reasonLine)
+	}
+
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	labelStyle := th.Styles.AsstLabel
-	if len(asstLines) > 0 {
-		label := labelStyle.Render("❯ Crude " + modelName + " ")
-		asstLines[0] = label + asstLines[0]
+	if msg.Incomplete {
+		incompleteLabelStyle := lipgloss.NewStyle().
+			Foreground(th.Colors.Error).
+			Italic(true).
+			Bold(true).
+			Background(lipgloss.Color("#3a1a1a"))
+		if len(asstLines) > 0 {
+			label := incompleteLabelStyle.Render("⚠ Crude " + modelName + " ")
+			asstLines[0] = label + asstLines[0]
+		}
+	} else {
+		labelStyle := th.Styles.AsstLabel
+		if len(asstLines) > 0 {
+			label := labelStyle.Render("❯ Crude " + modelName + " ")
+			asstLines[0] = label + asstLines[0]
+		}
 	}
 
 	for i, line := range asstLines {
