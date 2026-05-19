@@ -274,7 +274,16 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 
 	a.logger.Info("TOOL", "call", "name", tc.Function.Name, "params", formatToolArgs(params))
 	toolStart := time.Now()
-	result, _ := a.ToolFn(ctx, tc.Function.Name, params)
+
+	var result tools.ToolResult
+	if fileCheck && filePath != "" {
+		mu := a.fileMutex(filePath)
+		mu.Lock()
+		result, _ = a.ToolFn(ctx, tc.Function.Name, params)
+		mu.Unlock()
+	} else {
+		result, _ = a.ToolFn(ctx, tc.Function.Name, params)
+	}
 	toolDur := time.Since(toolStart).Milliseconds()
 
 	goroutineDur := time.Since(goroutineStart).Milliseconds()

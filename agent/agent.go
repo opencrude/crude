@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"crude/fileio"
@@ -48,6 +49,13 @@ type Agent struct {
 	AsyncMgr    *fileio.AsyncCommandManager
 	client      *http.Client
 	toolCallSeq int
+
+	fileMu   sync.Map
+}
+
+func (a *Agent) fileMutex(path string) *sync.Mutex {
+	val, _ := a.fileMu.LoadOrStore(path, &sync.Mutex{})
+	return val.(*sync.Mutex)
 }
 
 func (a *Agent) SetToolCallSeqStart(n int) { a.toolCallSeq = n }
