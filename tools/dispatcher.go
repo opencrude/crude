@@ -180,9 +180,14 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 				content, err := ed.Read(path)
 				if err != nil {
 					if _, ok := err.(*fileio.BinaryFileError); ok {
-						if conv, ok := tryDocRead(path, offset, limit, lg); ok {
+						conv, convOk := tryDocRead(path, offset, limit, lg)
+						if convOk {
 							result = ToolResult{Content: conv}
 							lg.Info("TOOL", "doc_converted", "path", path)
+							break
+						}
+						if docconv.SupportedExt(strings.ToLower(filepath.Ext(path))) {
+							result = ToolResult{Content: conv}
 							break
 						}
 						result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
@@ -198,9 +203,14 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 				content, err := ed.ReadRaw(path)
 				if err != nil {
 					if _, ok := err.(*fileio.BinaryFileError); ok {
-						if conv, ok := tryDocRead(path, offset, limit, lg); ok {
+						conv, convOk := tryDocRead(path, offset, limit, lg)
+						if convOk {
 							result = ToolResult{Content: conv}
 							lg.Info("TOOL", "doc_converted", "path", path)
+							break
+						}
+						if docconv.SupportedExt(strings.ToLower(filepath.Ext(path))) {
+							result = ToolResult{Content: conv}
 							break
 						}
 						result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
@@ -215,6 +225,17 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			}
 		} else {
 			path := GetStrArg(params, "path", "")
+			ext := strings.ToLower(filepath.Ext(path))
+			if docconv.SupportedExt(ext) {
+				conv, convOk := tryDocRead(path, offset, limit, lg)
+				if convOk {
+					result = ToolResult{Content: conv}
+					lg.Info("TOOL", "doc_converted", "path", path)
+					break
+				}
+				result = ToolResult{Content: conv}
+				break
+			}
 			data, err := os.ReadFile(path)
 			if err != nil {
 				result = ToolResult{Content: readFileHint(err, path)}
@@ -222,9 +243,14 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 				break
 			}
 			if fileio.IsBinary(data) {
-				if conv, ok := tryDocRead(path, offset, limit, lg); ok {
+				conv, convOk := tryDocRead(path, offset, limit, lg)
+				if convOk {
 					result = ToolResult{Content: conv}
 					lg.Info("TOOL", "doc_converted", "path", path)
+					break
+				}
+				if docconv.SupportedExt(strings.ToLower(filepath.Ext(path))) {
+					result = ToolResult{Content: conv}
 					break
 				}
 				result = ToolResult{Content: fmt.Sprintf("Error: binary file detected: %s (%d bytes) — cannot read binary files, use execute_command instead", path, len(data))}
@@ -558,11 +584,12 @@ func tryDocRead(path string, offset, limit int, lg *logger.Logger) (string, bool
 		return "", false
 	}
 
-	lg.Info("DOCONV", "converting", "path", path, "format", docconv.FormatName(ext))
+	formatName := docconv.FormatName(ext)
+	lg.Info("DOCONV", "converting", "path", path, "format", formatName)
 	md, meta, err := docconv.ConvertFile(path)
 	if err != nil {
 		lg.Warn("DOCONV", "conversion_failed", "path", path, "error", err.Error())
-		return "", false
+		return fmt.Sprintf("Error: %s file detected but conversion failed: %s — the file may be corrupted or image-only", formatName, err.Error()), false
 	}
 
 	// Build full output: header line + blank line + markdown content
