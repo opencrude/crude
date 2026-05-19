@@ -2,8 +2,10 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +19,17 @@ import (
 	"crude/safety"
 	"crude/search"
 )
+
+// readFileHint wraps a read_file error with a helpful hint when the file
+// is not found — this guides less experienced LLMs toward using list_directory
+// to discover actual filenames instead of guessing them.
+func readFileHint(err error, path string) string {
+	msg := "Error: " + err.Error()
+	if errors.Is(err, fs.ErrNotExist) {
+		msg += "\n\nHint: file not found. Use list_directory on the parent directory to discover actual filenames — package directories often contain multiple files with different names."
+	}
+	return msg
+}
 
 func GetStrArg(args map[string]any, key string, defaultVal string) string {
 	if v, ok := args[key]; ok {
@@ -155,7 +168,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 						lg.Warn("TOOL", "binary_file", "path", path)
 						break
 					}
-					result = ToolResult{Content: "Error: " + err.Error()}
+					result = ToolResult{Content: readFileHint(err, path)}
 					lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 					break
 				}
@@ -168,7 +181,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 						lg.Warn("TOOL", "binary_file", "path", path)
 						break
 					}
-					result = ToolResult{Content: "Error: " + err.Error()}
+					result = ToolResult{Content: readFileHint(err, path)}
 					lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 					break
 				}
@@ -178,7 +191,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 			path := GetStrArg(params, "path", "")
 			data, err := os.ReadFile(path)
 			if err != nil {
-				result = ToolResult{Content: "Error: " + err.Error()}
+				result = ToolResult{Content: readFileHint(err, path)}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}

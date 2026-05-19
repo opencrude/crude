@@ -97,8 +97,9 @@ type Session struct {
 
 	db        *sql.DB
 	dbPath    string
-	turnNumber int
-	seqNum    int
+	turnNumber  int
+	toolCallSeq int
+	seqNum     int
 	writeBuf  []taggedMessage
 	writeMu   sync.Mutex
 	flushWg   sync.WaitGroup
@@ -1049,6 +1050,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 		s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
 
 		ag := s.newAgent()
+		ag.SetToolCallSeqStart(s.toolCallSeq)
 		var finalContent string
 		prompt := agent.BuildSystemPrompt()
 
@@ -1251,6 +1253,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 		ag.Emit = emit
 		agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID, btwCh)
 		emitActive.Store(false)
+		s.toolCallSeq = ag.ToolCallSeq()
 
 		cancel()
 
