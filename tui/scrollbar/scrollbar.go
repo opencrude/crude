@@ -147,6 +147,7 @@ func (s *ScrollBar) handleMouse(msg tea.MouseMsg) (ScrollBar, tea.Cmd) {
 
 	case msg.Action == tea.MouseActionRelease && s.dragging:
 		s.dragging = false
+		s.dragOffsetY = 0
 		s.lastActivity = time.Now()
 		return *s, nil
 

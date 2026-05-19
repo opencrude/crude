@@ -134,7 +134,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.Mode == ModeChat {
 			inputStartLine := m.chatAreaHeight + 4
-			if m.input.InputSelecting() || msg.Y >= inputStartLine {
+			msgListCapturing := m.mainMsgList.IsSelecting() || m.mainMsgList.IsScrollbarDragging()
+			if m.input.InputSelecting() || (msg.Y >= inputStartLine && !msgListCapturing) {
 				updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 				m.input = updated
 				if cmd != nil {
@@ -483,6 +484,7 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 	case "Confirm":
 		m.confirm.Dismiss()
 		m.blocking = false
+		m.statusbar.SetConfirming(false)
 		m.win.CloseTab(index)
 		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
 			m.setMode(ModeChat)
@@ -494,6 +496,7 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 		}
 	case "YOLO":
 		m.yoloDlg.Dismiss()
+		m.statusbar.SetConfirming(false)
 		m.win.CloseTab(index)
 		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
 			m.setMode(ModeChat)

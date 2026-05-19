@@ -170,6 +170,25 @@ func (vl *VirtualList) InvalidateHeights() {
 	vl.indexDirty = true
 }
 
+// EnsureHeights renders all items that need it and updates their heights so
+// the height index is fully correct. Unlike RenderVisible which only processes
+// visible-range items, this covers the entire list. Called before operations
+// that depend on accurate global line indices (e.g. selection).
+// Items are rendered if Dirty OR if Rendered is nil (e.g. items created from
+// cache that had CachedLines but no Rendered data).
+func (vl *VirtualList) EnsureHeights(renderFn func(idx int, item *Item, width int) []string, width int) {
+	for i := range vl.items {
+		item := &vl.items[i]
+		if item.Dirty || item.Rendered == nil {
+			rendered := renderFn(i, item, width)
+			item.Rendered = rendered
+			item.Height = len(rendered)
+			item.Dirty = false
+		}
+	}
+	vl.indexDirty = true
+}
+
 func (vl *VirtualList) BuildIndex() {
 	if vl.indexDirty {
 		vl.index.Rebuild(vl.items)

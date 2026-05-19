@@ -307,6 +307,9 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 	}
 	a.Thinking = false
 	a.Streaming = false
+	a.pendingPermTag = ""
+	a.pendingPermTool = ""
+	a.blockingMsgIdx = -1
 	onThinking(false, false, false)
 	onStatusLine("")
 

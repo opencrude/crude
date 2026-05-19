@@ -170,6 +170,9 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 	case "blocking_complete":
 		onConfirmDismiss()
 		onThinking(false, false, false)
+		a.pendingPermTag = ""
+		a.pendingPermTool = ""
+		a.blockingMsgIdx = -1
 
 	case "done":
 		return a.handleDone(evt, target, thinkTarget, onThinking, onStatusLine)
@@ -196,6 +199,11 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 				last.CachedLines = nil
 				last.StreamCompletedLines = nil
 				last.StreamCompletedLen = 0
+				for _, msg := range msgs {
+					if msg != last {
+						msg.CachedLines = nil
+					}
+				}
 				target.RebuildItems()
 			} else {
 				target.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
@@ -205,6 +213,9 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 		}
 		a.Thinking = false
 		a.Streaming = false
+		a.pendingPermTag = ""
+		a.pendingPermTool = ""
+		a.blockingMsgIdx = -1
 		onThinking(false, false, false)
 		target.ScrollToBottom()
 		return a.errorResultCmd(errMsg)
@@ -217,6 +228,9 @@ func (a *AgentState) SubmitInput(text string) {
 	a.Thinking = true
 	a.Streaming = false
 	a.TokenBuf = ""
+	a.pendingPermTag = ""
+	a.pendingPermTool = ""
+	a.blockingMsgIdx = -1
 	a.MsgList.ScrollToBottom()
 }
 
