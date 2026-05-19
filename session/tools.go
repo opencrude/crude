@@ -416,23 +416,18 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 		}
 	}
 
-	s.autoHandleMu.Lock()
-	s.autoHandleCounter++
-	handle := fmt.Sprintf("auto-%d", s.autoHandleCounter)
-	s.autoHandleMu.Unlock()
-
 	cwd := getStrParam(params, "cwd")
 	timeout := tools.GetIntArgAny(params, "timeout_seconds", -1)
 	if timeout < 0 {
 		timeout = 60
 	}
 
-	info, err := s.asyncMgr.Start(handle, cmd, cwd, timeout)
+	uc, err := s.asyncMgr.StartUntracked(cmd, cwd, timeout)
 	if err != nil {
-		s.logger.Warn("ASYNC", "start_fallback", "handle", handle, "error", err.Error())
 		return tools.ToolResult{}, fmt.Errorf("execute_command: %w", err)
 	}
-	s.logger.Info("ASYNC", "auto_start", "handle", handle, "pid", info.PID, "cmd", cmd)
+	pid := uc.PID()
+	s.logger.Info("EXEC", "auto_start", "pid", pid, "cmd", cmd)
 
 	deadline := time.After(asyncPromotionThreshold)
 	poll := time.NewTicker(200 * time.Millisecond)
@@ -441,48 +436,46 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 	for {
 		select {
 		case <-ctx.Done():
-			s.asyncMgr.Kill(handle)
-			s.asyncMgr.Cleanup(handle)
+			uc.Kill()
 			return tools.ToolResult{Content: "Command cancelled."}, nil
 		case <-deadline:
-			s.logger.Info("ASYNC", "auto_promote", "handle", handle, "threshold", asyncPromotionThreshold)
+			s.autoHandleMu.Lock()
+			s.autoHandleCounter++
+			handle := fmt.Sprintf("auto-%d", s.autoHandleCounter)
+			s.autoHandleMu.Unlock()
+
+			s.asyncMgr.Promote(uc, handle)
+			s.logger.Info("ASYNC", "auto_promote", "handle", handle, "pid", pid, "threshold", asyncPromotionThreshold)
 			return tools.ToolResult{Content: fmt.Sprintf(
 				"Command still running after %s — automatically promoted to async (handle: %q, PID: %d).\n\nYou can continue working while it runs. To manage this command:\n- check_async_command(handle=%q) — check if it's done\n- read_async_output(handle=%q, since_byte=0) — read output so far\n- kill_async_command(handle=%q) — kill it if needed",
-				asyncPromotionThreshold, handle, info.PID, handle, handle, handle,
+				asyncPromotionThreshold, handle, pid, handle, handle, handle,
 			)}, nil
 		case <-poll.C:
-			cmdInfo, ok := s.asyncMgr.Check(handle)
-			if !ok {
-				return tools.ToolResult{Content: "Command state lost — unexpected cleanup."}, nil
+			status := uc.Status()
+			if status == fileio.AsyncRunning {
+				continue
 			}
-			if cmdInfo.Status != fileio.AsyncRunning {
-				out, _, _ := s.asyncMgr.ReadOutput(handle, 0)
-				s.asyncMgr.Cleanup(handle)
+			out, _ := uc.ReadOutput(0)
+			info := uc.Info()
 
-				if cmdInfo.Status == fileio.AsyncCompleted {
-					s.logger.Info("ASYNC", "auto_completed", "handle", handle, "status", string(cmdInfo.Status))
-					if out == "" {
-						return tools.ToolResult{Content: "(command completed with no output)"}, nil
-					}
-					return tools.ToolResult{Content: out}, nil
+			if status == fileio.AsyncCompleted {
+				if out == "" {
+					return tools.ToolResult{Content: "(command completed with no output)"}, nil
 				}
-
-				var errMsg string
-				if cmdInfo.Status == fileio.AsyncKilled {
-					errMsg = cmdInfo.Error
-				} else {
-					errMsg = cmdInfo.Error
-					if errMsg == "" {
-						errMsg = fmt.Sprintf("exit code %d", cmdInfo.ExitCode)
-					}
-				}
-				content := fmt.Sprintf("Command failed: %s", errMsg)
-				if out != "" {
-					content += "\n\n" + out
-				}
-				s.logger.Info("ASYNC", "auto_completed", "handle", handle, "status", string(cmdInfo.Status), "exit_code", cmdInfo.ExitCode)
-				return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
+				return tools.ToolResult{Content: out}, nil
 			}
+
+			var errMsg string
+			if info.Error != "" {
+				errMsg = info.Error
+			} else {
+				errMsg = fmt.Sprintf("exit code %d", info.ExitCode)
+			}
+			content := fmt.Sprintf("Command failed: %s", errMsg)
+			if out != "" {
+				content += "\n\n" + out
+			}
+			return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
 		}
 	}
 }

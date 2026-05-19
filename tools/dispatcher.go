@@ -17,7 +17,6 @@ import (
 	"crude/fileio"
 	"crude/js"
 	"crude/logger"
-	"crude/safety"
 	"crude/search"
 )
 
@@ -115,44 +114,6 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 	var result ToolResult
 
 	switch tool {
-
-	case "execute_command":
-		cmd := GetStrArg(params, "command", "")
-		lg.Info("TOOL", "call", "tool", tool, "cmd_len", len(cmd))
-		if !yolo {
-			safetyResult := safety.CheckCommandSafety(cmd, lg)
-			if safetyResult.Risk.IsAlwaysBlocked() {
-				lg.Warn("COMMAND", "block_always", "command", cmd, "reason", safetyResult.Reason)
-				result = ToolResult{Content: fmt.Sprintf("Error: [BLOCKED] %s\nSuggestion: %s",
-					safetyResult.Reason, safetyResult.Suggestion)}
-				break
-			}
-			lg.Debug("TOOL", "safety_check", "risk", safetyResult.Risk.String(), "needs_confirm", safetyResult.Risk.NeedsConfirmation())
-		}
-		timeout := GetIntArgAny(params, "timeout_seconds", -1)
-		if timeout < 0 {
-			timeout = 60
-		}
-		opts := fileio.ExecOptions{
-			CWD:            GetStrArg(params, "cwd", ""),
-			TimeoutSeconds: timeout,
-		}
-		out, err := exec.Execute(ctx, cmd, opts)
-		if err != nil {
-			if out != "" {
-				result = ToolResult{Content: fmt.Sprintf("Command failed: %v\n\n%s", err, out)}
-			} else {
-				result = ToolResult{Content: "Command failed: " + err.Error()}
-			}
-			lg.Error("TOOL", "execute_failed", "tool", tool, "error", err.Error(), "latency_ms", time.Since(start).Milliseconds())
-			break
-		}
-		if out == "" {
-			result = ToolResult{Content: "(command completed with no output)"}
-		} else {
-			result = ToolResult{Content: out}
-		}
-		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds(), "out_len", len(out))
 
 	case "read_file":
 		path := GetStrArg(params, "path", "")
