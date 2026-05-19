@@ -8,10 +8,13 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/fileio"
 	"crude/safety"
 	"crude/statemachine"
 	"crude/tools"
 )
+
+const asyncPromotionThreshold = 15 * time.Second
 
 func (s *Session) newAgent() *agent.Agent {
 	activeCfg := s.cfg.GetActiveProviderConfig()
@@ -341,19 +344,10 @@ func (s *Session) newAgent() *agent.Agent {
 				return tools.ToolResult{Content: "Wait cancelled"}, nil
 			}
 
+		case "execute_command":
+			return s.executeCommandAutoPromote(ctx, params)
+
 		default:
-			if tool == "execute_command" && !s.yolo {
-				cmd := getStrParam(params, "command")
-				sr := safety.CheckCommandSafety(cmd, s.logger)
-				if sr.Risk.IsAlwaysBlocked() {
-					errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
-					s.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
-					return tools.ToolResult{Content: errMsg}, fmt.Errorf("%s", errMsg)
-				}
-				if sr.Risk.NeedsConfirmation() {
-					s.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
-				}
-			}
 			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo, s.logger, ctx)
 			if agent.IsToolError(result.Content) {
 				return result, fmt.Errorf("%s", result.Content)
@@ -402,4 +396,93 @@ func resolveStepIDs(val any) []string {
 		return []string{s}
 	}
 	return nil
+}
+
+func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
+	cmd := getStrParam(params, "command")
+	if cmd == "" {
+		return tools.ToolResult{}, fmt.Errorf("execute_command: missing 'command'")
+	}
+
+	if !s.yolo {
+		sr := safety.CheckCommandSafety(cmd, s.logger)
+		if sr.Risk.IsAlwaysBlocked() {
+			errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
+			s.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
+			return tools.ToolResult{Content: errMsg}, fmt.Errorf("%s", errMsg)
+		}
+		if sr.Risk.NeedsConfirmation() {
+			s.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
+		}
+	}
+
+	s.autoHandleMu.Lock()
+	s.autoHandleCounter++
+	handle := fmt.Sprintf("auto-%d", s.autoHandleCounter)
+	s.autoHandleMu.Unlock()
+
+	cwd := getStrParam(params, "cwd")
+	timeout := tools.GetIntArgAny(params, "timeout_seconds", -1)
+	if timeout < 0 {
+		timeout = 60
+	}
+
+	info, err := s.asyncMgr.Start(handle, cmd, cwd, timeout)
+	if err != nil {
+		s.logger.Warn("ASYNC", "start_fallback", "handle", handle, "error", err.Error())
+		return tools.ToolResult{}, fmt.Errorf("execute_command: %w", err)
+	}
+	s.logger.Info("ASYNC", "auto_start", "handle", handle, "pid", info.PID, "cmd", cmd)
+
+	deadline := time.After(asyncPromotionThreshold)
+	poll := time.NewTicker(200 * time.Millisecond)
+	defer poll.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.asyncMgr.Kill(handle)
+			s.asyncMgr.Cleanup(handle)
+			return tools.ToolResult{Content: "Command cancelled."}, nil
+		case <-deadline:
+			s.logger.Info("ASYNC", "auto_promote", "handle", handle, "threshold", asyncPromotionThreshold)
+			return tools.ToolResult{Content: fmt.Sprintf(
+				"Command still running after %s — automatically promoted to async (handle: %q, PID: %d).\n\nYou can continue working while it runs. To manage this command:\n- check_async_command(handle=%q) — check if it's done\n- read_async_output(handle=%q, since_byte=0) — read output so far\n- kill_async_command(handle=%q) — kill it if needed",
+				asyncPromotionThreshold, handle, info.PID, handle, handle, handle,
+			)}, nil
+		case <-poll.C:
+			cmdInfo, ok := s.asyncMgr.Check(handle)
+			if !ok {
+				return tools.ToolResult{Content: "Command state lost — unexpected cleanup."}, nil
+			}
+			if cmdInfo.Status != fileio.AsyncRunning {
+				out, _, _ := s.asyncMgr.ReadOutput(handle, 0)
+				s.asyncMgr.Cleanup(handle)
+
+				if cmdInfo.Status == fileio.AsyncCompleted {
+					s.logger.Info("ASYNC", "auto_completed", "handle", handle, "status", string(cmdInfo.Status))
+					if out == "" {
+						return tools.ToolResult{Content: "(command completed with no output)"}, nil
+					}
+					return tools.ToolResult{Content: out}, nil
+				}
+
+				var errMsg string
+				if cmdInfo.Status == fileio.AsyncKilled {
+					errMsg = cmdInfo.Error
+				} else {
+					errMsg = cmdInfo.Error
+					if errMsg == "" {
+						errMsg = fmt.Sprintf("exit code %d", cmdInfo.ExitCode)
+					}
+				}
+				content := fmt.Sprintf("Command failed: %s", errMsg)
+				if out != "" {
+					content += "\n\n" + out
+				}
+				s.logger.Info("ASYNC", "auto_completed", "handle", handle, "status", string(cmdInfo.Status), "exit_code", cmdInfo.ExitCode)
+				return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
+			}
+		}
+	}
 }
