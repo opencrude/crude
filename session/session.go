@@ -63,6 +63,9 @@ type Session struct {
 	cost   *CostAccumulator
 	tokens *TokenTracker
 
+	autoHandleCounter int
+	autoHandleMu      sync.Mutex
+
 	db        *sql.DB
 	dbPath    string
 	turnNumber  int
