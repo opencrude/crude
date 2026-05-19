@@ -232,7 +232,7 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 	newLines := toIntField(data["new_lines_int"])
 
 	previewPhase := types.ToolPreviewPreparing
-	if target != "" {
+	if target != "" || contentLines > 0 || oldLines > 0 || newLines > 0 || estTokens > 0 {
 		previewPhase = types.ToolPreviewStreaming
 	}
 
