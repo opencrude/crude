@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -73,6 +74,41 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 	contentLines := toInt(origData["content_lines"])
 	oldLines := toInt(origData["old_lines"])
 	newLines := toInt(origData["new_lines"])
+
+	if tgt == "" {
+		if rawArgs, _ := origData["args"].(string); rawArgs != "" {
+			switch name {
+			case "write_file", "edit_file", "read_file", "delete_file", "list_directory":
+				if p := extractJSONStringValue(rawArgs, "path"); p != "" {
+					tgt = p
+				}
+			case "move_file", "copy_file":
+				s := extractJSONStringValue(rawArgs, "source")
+				d := extractJSONStringValue(rawArgs, "destination")
+				if s != "" && d != "" {
+					tgt = s + " → " + d
+				} else if s != "" {
+					tgt = s
+				}
+			case "execute_command", "async_execute_command":
+				if c := extractJSONStringValue(rawArgs, "command"); c != "" {
+					tgt = rendering.TruncateLine(c, 50)
+				}
+			case "web_search", "arxiv_search":
+				if q := extractJSONStringValue(rawArgs, "query"); q != "" {
+					tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(q, 40))
+				}
+			case "web_fetch":
+				if u := extractJSONStringValue(rawArgs, "url"); u != "" {
+					tgt = u
+				}
+			case "grep_files":
+				if p := extractJSONStringValue(rawArgs, "pattern"); p != "" {
+					tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(p, 30))
+				}
+			}
+		}
+	}
 
 	if name == "read_file" && tgt != "" {
 		offset := toInt(origData["offset"])
@@ -353,4 +389,56 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 
 func formatErr(data any) string {
 	return fmt.Sprintf("%v", data)
+}
+
+func extractJSONStringValue(raw, key string) string {
+	needle := `"` + key + `"`
+	idx := strings.Index(raw, needle)
+	if idx < 0 {
+		return ""
+	}
+	pos := idx + len(needle)
+	for pos < len(raw) && raw[pos] != ':' {
+		if raw[pos] == ',' || raw[pos] == '}' {
+			return ""
+		}
+		pos++
+	}
+	if pos >= len(raw) || raw[pos] != ':' {
+		return ""
+	}
+	pos++
+	for pos < len(raw) && (raw[pos] == ' ' || raw[pos] == '\t') {
+		pos++
+	}
+	if pos >= len(raw) || raw[pos] != '"' {
+		return ""
+	}
+	pos++
+	var b strings.Builder
+	for pos < len(raw) {
+		ch := raw[pos]
+		if ch == '\\' && pos+1 < len(raw) {
+			switch raw[pos+1] {
+			case '"':
+				b.WriteByte('"')
+			case '\\':
+				b.WriteByte('\\')
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			default:
+				b.WriteByte(raw[pos+1])
+			}
+			pos += 2
+			continue
+		}
+		if ch == '"' {
+			break
+		}
+		b.WriteByte(ch)
+		pos++
+	}
+	return b.String()
 }
