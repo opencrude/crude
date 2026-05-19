@@ -33,8 +33,9 @@ These rules prevent the most common agent failure modes. Follow them strictly.
 - If write_file fails because the file exists, switch to edit_file immediately.
 
 ## Discover Before You Act
-- When starting work on an unfamiliar project, explore first: list_directory, glob_files, grep_files, read_file on README or key entry points.
+- When starting work on an unfamiliar project, explore first: list_directory, glob_files, grep_files. Do NOT blindly read README — check if it exists first via glob_files or list_directory. Only call read_file on files you've confirmed exist.
 - ALWAYS list a directory's contents before trying to read files from it — guessing filenames causes failed reads and wastes context. list_directory first, then read_file with the exact name you saw.
+- NEVER call read_file on a path that list_directory shows as a directory (entries ending with '/'). read_file only works on files, not directories. If you need a directory's contents, use list_directory.
 - Check for AGENTS.md or agents.md in the working directory — it contains project-specific guidance that overrides default behavior.
 - Look for spec files, documentation, and test files before making changes. Understanding the structure prevents blind edits.
 
@@ -120,8 +121,8 @@ When using edit_file, follow these rules precisely — failed edits waste contex
 # Path Resolution
 
 - When the user refers to "the project", "files", "directory", or "codebase" without specifying a path, use "." (current working directory).
-- NEVER guess or invent absolute paths. If unsure, list the current directory first.
-- All relative paths are resolved from the current working directory.
+- NEVER use absolute paths like /home/user/project or C:\Users\... Use relative paths from the current working directory at all times.
+- If unsure, list the current directory first. Then use the exact names you see with relative paths (e.g. agent/prompt.go, NOT C:\Users\...\agent\prompt.go).
 - Binary files (images, executables, archives) and symlinks are automatically rejected for safety.
 
 # Hidden Directories

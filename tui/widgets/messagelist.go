@@ -224,6 +224,20 @@ func (ml *MessageList) findToolMsg(internalID, toolID string) *types.ChatMessage
 	return nil
 }
 
+func (ml *MessageList) removeToolMsg(msg *types.ChatMessage) {
+	delete(ml.msgByID, msg.InternalID)
+	if msg.ToolID != "" {
+		delete(ml.msgByID, msg.ToolID)
+	}
+	for i, m := range ml.messages {
+		if m == msg {
+			ml.messages = append(ml.messages[:i], ml.messages[i+1:]...)
+			break
+		}
+	}
+	ml.RebuildItems()
+}
+
 func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data map[string]any) {
 	target, _ := data["target"].(string)
 	estTokens := toIntField(data["tool_est_tokens"])
@@ -237,13 +251,8 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 	}
 
 	if msg := ml.findToolMsg(internalID, toolID); msg != nil {
-		if msg.ToolStatus == "success" || msg.ToolStatus == "error" {
-			delete(ml.msgByID, msg.InternalID)
-			if msg.ToolID != "" {
-				delete(ml.msgByID, msg.ToolID)
-			}
-			msg.InternalID = ""
-			msg.ToolID = ""
+		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
+			ml.removeToolMsg(msg)
 		} else {
 			if v, ok := data["content"]; ok {
 				if s, ok := v.(string); ok {
@@ -321,13 +330,8 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 
 func (ml *MessageList) UpdateToolCall(toolID, internalID, name, argsCompact string) {
 	if msg := ml.findToolMsg(internalID, toolID); msg != nil {
-		if msg.ToolStatus == "success" || msg.ToolStatus == "error" {
-			delete(ml.msgByID, msg.InternalID)
-			if msg.ToolID != "" {
-				delete(ml.msgByID, msg.ToolID)
-			}
-			msg.InternalID = ""
-			msg.ToolID = ""
+		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
+			ml.removeToolMsg(msg)
 		} else {
 			msg.ToolStatus = "calling"
 			msg.ToolArgs = argsCompact
@@ -399,13 +403,15 @@ func (ml *MessageList) UpdateToolProgress(toolID, internalID, name, phase, messa
 	if phase == "done" {
 		msg.ToolLivedAdded = linesAdded
 		msg.ToolLivedRemoved = linesRemoved
+		msg.ToolPreviewPhase = types.ToolPreviewDone
 		if !msg.ToolStartTime.IsZero() {
 			msg.ToolDuration = time.Since(msg.ToolStartTime)
 		}
 		if estTokens > 0 {
 			msg.ToolEstTokens = estTokens
 		}
-	} else {
+	} else if phase == "error" {
+		msg.ToolPreviewPhase = types.ToolPreviewError
 		if linesAdded > 0 {
 			msg.ToolLivedAdded = linesAdded
 		}
@@ -464,24 +470,6 @@ func (ml *MessageList) SetToolPermTag(toolID, internalID, tag string) {
 	msg.PermTag = tag
 	msg.CachedLines = nil
 	ml.vl.InvalidateItem(msg.InternalID)
-}
-
-func (ml *MessageList) ClearStreamingTools() {
-	var keep []*types.ChatMessage
-	var items []virtlist.Item
-	for i, msg := range ml.messages {
-		if msg.ToolStatus == "streaming" || msg.ToolStatus == "calling" {
-			delete(ml.msgByID, msg.InternalID)
-			if msg.ToolID != "" {
-				delete(ml.msgByID, msg.ToolID)
-			}
-			continue
-		}
-		keep = append(keep, msg)
-		items = append(items, ml.messageToItem(i))
-	}
-	ml.messages = keep
-	ml.vl.SetItems(items)
 }
 
 func (ml *MessageList) MarkStreamingToolsCancelled() {

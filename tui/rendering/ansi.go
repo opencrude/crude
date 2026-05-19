@@ -1,12 +1,59 @@
 package rendering
 
 import (
+	"encoding/hex"
 	"strings"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
 )
+
+var invalidUTF8Logger atomic.Pointer[func(tag, msg string, pairs ...any)]
+
+func SetInvalidUTF8Logger(fn func(tag, msg string, pairs ...any)) {
+	invalidUTF8Logger.Store(&fn)
+}
+
+func logInvalidUTF8(source string, s string) {
+	fn := invalidUTF8Logger.Load()
+	if fn == nil {
+		return
+	}
+	badBytes := []byte{}
+	badOff := -1
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x80 {
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(s[i:])
+		if size == 1 {
+			if badOff == -1 {
+				badOff = i
+			}
+			end := i + 8
+			if end > len(s) {
+				end = len(s)
+			}
+			badBytes = append(badBytes, s[i:end]...)
+		}
+		i += size - 1
+	}
+	ctx := ""
+	if badOff >= 0 {
+		start := badOff - 16
+		if start < 0 {
+			start = 0
+		}
+		end := badOff + 32
+		if end > len(s) {
+			end = len(s)
+		}
+		ctx = s[start:end]
+	}
+	(*fn)("UTF8", "invalid_runes_in_render", "source", source, "string_len", len(s), "first_bad_offset", badOff, "bad_bytes_hex", hex.EncodeToString(badBytes), "context", ctx)
+}
 
 func TrimRightAnsiSpaces(s string) string {
 	lastNonSpaceEnd := 0
@@ -36,13 +83,18 @@ func TrimRightAnsiSpaces(s string) string {
 			if size == 0 {
 				break
 			}
-			if !unicode.IsSpace(rn) {
+			if rn == utf8.RuneError {
+				lastNonSpaceEnd = i + size
+			} else if !unicode.IsSpace(rn) {
 				lastNonSpaceEnd = i + size
 			}
 			i += size
 		}
 	}
 	if lastNonSpaceEnd == 0 {
+		if !utf8.ValidString(s) {
+			logInvalidUTF8("TrimRightAnsiSpaces", s)
+		}
 		return ""
 	}
 	return s[:lastNonSpaceEnd] + "\x1b[0m"

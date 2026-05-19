@@ -18,6 +18,9 @@ func SanitizeForTerminal(s string) string {
 	if !isWindows && utf8.ValidString(s) && !strings.ContainsRune(s, '\r') {
 		return s
 	}
+	if !utf8.ValidString(s) {
+		logInvalidUTF8("SanitizeForTerminal", s)
+	}
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "")
 	var b strings.Builder

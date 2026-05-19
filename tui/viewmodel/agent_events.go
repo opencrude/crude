@@ -86,12 +86,12 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	agent, ok := m.agents[agentID]
 	if !ok {
 		if agentID == MainAgentID {
-			agent = NewAgentState(agentID, m.mainMsgList)
+			agent = NewAgentState(agentID, m.mainMsgList, m.logger)
 		} else {
 			sp := m.paneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.theme)
 			sp.MsgList.SetModelName(m.modelName)
 			sp.MsgList.SetUsername(m.username)
-			agent = NewAgentState(agentID, sp.MsgList)
+			agent = NewAgentState(agentID, sp.MsgList, m.logger)
 			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
 				Role:      ttypes.RoleTool,
 				Content:   agentID,
