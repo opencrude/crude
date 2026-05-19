@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -28,123 +29,17 @@ func (e *apiCallError) IsCancellation() bool {
 
 const maxRetries = 10
 
-func (a *Agent) complete(ctx context.Context, msgs []provider.ChatMessage, tools []provider.ToolDef) (*provider.ChatResponse, *provider.ChatResponse, string, int, int, int, error) {
-	req := provider.ChatRequest{
-		Model:    a.Model,
-		Messages: msgs,
-		Tools:    tools,
-		Stream:   false,
+func isRetryable(code int) bool {
+	return code == http.StatusTooManyRequests || code >= 500
+}
+
+func retryBackoff(attempt int) time.Duration {
+	if attempt <= 1 {
+		return time.Duration(500+rand.Intn(1500)) * time.Millisecond
 	}
-
-	std := a.Provider.Standard()
-
-	body, err := std.EncodeRequest(&req)
-	if err != nil {
-		return nil, nil, "", 0, 0, 0, fmt.Errorf("encode request: %w", err)
-	}
-
-	if extra := a.Provider.BuildExtraBody(); len(extra) > 0 {
-		a.logger.Debug("LLM", "extra_body", "keys", len(extra))
-		var merged map[string]any
-		if err := json.Unmarshal(body, &merged); err != nil {
-			return nil, nil, "", 0, 0, 0, fmt.Errorf("merge extras: %w", err)
-		}
-		for k, v := range extra {
-			merged[k] = v
-		}
-		body, err = json.Marshal(merged)
-		if err != nil {
-			return nil, nil, "", 0, 0, 0, fmt.Errorf("marshal merged: %w", err)
-		}
-	}
-
-	a.logger.Info("LLM", "prompt", "model", a.Model, "msgs", len(msgs), "tools", len(tools))
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	endpoint := a.Provider.ChatEndpoint()
-
-	for attempt := 1; ; attempt++ {
-		select {
-		case <-ctx.Done():
-			a.logger.Warn("CANCEL", "complete_cancelled", "reason", ctx.Err().Error())
-			return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API request cancelled: %v", ctx.Err())}
-		default:
-		}
-
-		apiStart := time.Now()
-
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
-		if err != nil {
-			return nil, nil, "", 0, 0, 0, fmt.Errorf("create request: %w", err)
-		}
-		hdr, val := a.Provider.Auth()
-		httpReq.Header.Set(hdr, val)
-		httpReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			if attempt >= maxRetries {
-				return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API request failed after %d attempts: %v", attempt, err), RetriesExhausted: true}
-			}
-			bo := retryBackoff(attempt)
-			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
-			select {
-			case <-time.After(bo):
-			case <-ctx.Done():
-				a.logger.Warn("CANCEL", "retry_cancelled", "reason", ctx.Err().Error())
-				return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API request cancelled during retry: %v", ctx.Err())}
-			}
-			continue
-		}
-
-		respBody, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			a.logger.Error("LLM", "read_body_failed", "error", readErr.Error())
-			return nil, nil, "", 0, 0, 0, fmt.Errorf("read response: %w", readErr)
-		}
-
-		if resp.StatusCode != 200 {
-			snippet := string(respBody)
-			if isRetryable(resp.StatusCode) {
-				if attempt >= maxRetries {
-					return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API %d after %d attempts: %s", resp.StatusCode, attempt, snippet), RetriesExhausted: true}
-				}
-				bo := retryBackoff(attempt)
-				a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
-				select {
-				case <-time.After(bo):
-				case <-ctx.Done():
-					a.logger.Warn("CANCEL", "retry_cancelled", "reason", ctx.Err().Error())
-					return nil, nil, "", 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API request cancelled during retry: %v", ctx.Err())}
-				}
-				continue
-			}
-			a.logger.Error("LLM", "non_retryable_error", "model", a.Model, "status", resp.StatusCode, "snippet_len", len(snippet))
-			return nil, nil, "", 0, 0, 0, fmt.Errorf("API %d: %s", resp.StatusCode, string(respBody))
-		}
-
-		chatResp, err := std.DecodeResponse(respBody)
-		if err != nil {
-			a.logger.Error("LLM", "decode_failed", "model", a.Model, "error", err.Error())
-			return nil, nil, "", 0, 0, 0, fmt.Errorf("decode response: %w", err)
-		}
-		if chatResp.Error != nil {
-			a.logger.Error("LLM", "error", "model", a.Model, "error", chatResp.Error.Message, "latency_ms", time.Since(apiStart).Milliseconds())
-			return nil, nil, "", 0, 0, 0, fmt.Errorf("API error: %s", chatResp.Error.Message)
-		}
-		if len(chatResp.Choices) == 0 {
-			a.logger.Error("LLM", "empty_response", "model", a.Model)
-			return nil, nil, "", 0, 0, 0, fmt.Errorf("empty response from model")
-		}
-
-		choice := chatResp.Choices[0]
-		apiDur := time.Since(apiStart).Milliseconds()
-		promptTokens, completionTokens, promptTokensCached := std.UsageFromResponse(chatResp)
-		a.logger.Info("LLM", "response", "model", a.Model, "latency_ms", apiDur, "prompt_tokens", promptTokens, "completion_tokens", completionTokens)
-
-		return chatResp, nil, choice.FinishReason, promptTokens, completionTokens, promptTokensCached, nil
-	}
+	base := time.Duration(1<<min(attempt-1, 6)) * time.Second
+	jitter := time.Duration(rand.Intn(int(base))) / 4
+	return base + jitter
 }
 
 func (a *Agent) completeStream(
