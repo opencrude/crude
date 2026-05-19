@@ -1,10 +1,14 @@
 package session
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"crude/logger"
 	"crude/provider"
+	"crude/sessiondb"
 )
 
 // CostAccumulator tracks cumulative token usage and cost across a session.
@@ -176,4 +180,39 @@ func (t *TokenTracker) GetLastRealPromptTokens() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.LastRealPromptTokens
+}
+
+func (s *Session) persistCostSnapshot() {
+	snap := s.cost.Snapshot()
+	snapData, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		s.logger.Error("COST", "persist_error", "error", err.Error())
+		return
+	}
+
+	costPath := filepath.Join(s.logger.SessionDir(), "cost.json")
+	if err := os.WriteFile(costPath, snapData, 0o644); err != nil {
+		s.logger.Error("COST", "persist_error", "error", err.Error())
+		return
+	}
+
+	s.logger.Info("COST", "persisted", "path", costPath, "total_cost", snap.TotalCost,
+		"prompt_tokens", snap.TotalPromptTokens, "completion_tokens", snap.TotalCompletionTokens)
+}
+
+func (s *Session) persistCostToDB() {
+	if s.db == nil {
+		return
+	}
+	snap := s.cost.Snapshot()
+	byModel := make(map[string]json.RawMessage, len(snap.ByModel))
+	for k, v := range snap.ByModel {
+		b, _ := json.Marshal(v)
+		byModel[k] = b
+	}
+	if err := sessiondb.InsertCostSnapshot(s.db,
+		snap.TotalPromptTokens, snap.TotalCompletionTokens,
+		snap.TotalCachedTokens, snap.TotalCost, byModel); err != nil {
+		s.logger.Error("COST", "db_persist_error", "error", err.Error())
+	}
 }
