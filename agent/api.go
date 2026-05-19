@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -24,7 +25,8 @@ type apiCallError struct {
 func (e *apiCallError) Error() string { return e.Message }
 
 func (e *apiCallError) IsCancellation() bool {
-	return strings.Contains(e.Message, "context canceled") || strings.Contains(e.Message, "context cancelled")
+	return errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded) ||
+		strings.Contains(e.Message, "context canceled") || strings.Contains(e.Message, "context cancelled")
 }
 
 const maxRetries = 10
@@ -85,7 +87,6 @@ func (a *Agent) completeStream(
 	streamStart := time.Now()
 	a.logger.Info("LLM", "prompt", "model", a.Model, "msgs", len(msgs), "tools", len(tools))
 
-	client := &http.Client{Timeout: 300 * time.Second}
 	endpoint := a.Provider.ChatEndpoint()
 
 	firstTokenLogged := false
@@ -107,7 +108,7 @@ func (a *Agent) completeStream(
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "text/event-stream")
 
-		resp, err := client.Do(httpReq)
+		resp, err := a.client.Do(httpReq)
 		if err != nil {
 			if attempt >= maxRetries {
 				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request failed after %d attempts: %v", attempt, err), RetriesExhausted: true}
@@ -159,7 +160,7 @@ func (a *Agent) completeStream(
 		promptTokensCached := 0
 		toolCallsByIndex := make(map[int]*provider.ToolCall)
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 1024*64), 1024*64)
+		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
 		for scanner.Scan() {
 			if ctx.Err() != nil {
@@ -338,7 +339,9 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 	errMsg := err.Error()
 	originalMsg := errMsg
 	if strings.Contains(errMsg, "context canceled") || strings.Contains(errMsg, "context cancelled") {
-		errMsg = "Request was cancelled"
+		a.logger.Warn("LLM", "cancel_intercepted", "original", originalMsg)
+		emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+		return
 	} else if strings.Contains(errMsg, "429") {
 		errMsg = "Rate limited — please wait a moment and try again"
 	} else if strings.Contains(errMsg, " 5") && (strings.Contains(errMsg, "API 5") || strings.Contains(errMsg, "50") || strings.Contains(errMsg, "529")) {

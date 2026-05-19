@@ -171,14 +171,30 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 			target.AppendToken(a.TokenBuf)
 			a.TokenBuf = ""
 		}
-		target.MarkAllThinkingDone()
-		target.ClearStreamingTools()
+		target.MarkAllThinkingInterrupted()
+		target.MarkStreamingToolsCancelled()
 		if thinkTarget != target {
-			thinkTarget.MarkAllThinkingDone()
-			thinkTarget.ClearStreamingTools()
+			thinkTarget.MarkAllThinkingInterrupted()
+			thinkTarget.MarkStreamingToolsCancelled()
 		}
 		errMsg := formatErr(evt.Data)
-		target.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
+		msgs := target.Messages()
+		if len(msgs) > 0 {
+			last := msgs[len(msgs)-1]
+			if last.Role == ttypes.RoleAssistant && last.Content != "" {
+				last.Incomplete = true
+				last.IncompleteReason = errMsg
+				last.CursorLine = -1
+				last.CachedLines = nil
+				last.StreamCompletedLines = nil
+				last.StreamCompletedLen = 0
+				target.RebuildItems()
+			} else {
+				target.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
+			}
+		} else {
+			target.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
+		}
 		a.Thinking = false
 		a.Streaming = false
 		onThinking(false, false, false)

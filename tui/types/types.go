@@ -110,6 +110,9 @@ type ChatMessage struct {
 	ThinkingActive      bool
 	ThinkingInterrupted bool
 
+	Incomplete       bool
+	IncompleteReason string
+
 	SubPaneID string
 
 	// PermTag carries a compact permission indicator shown as a muted suffix

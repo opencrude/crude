@@ -766,7 +766,7 @@ func (s *Session) newAgent() *agent.Agent {
 					s.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
 				}
 			}
-			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo, s.logger)
+			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo, s.logger, ctx)
 			if agent.IsToolError(result.Content) {
 				return result, fmt.Errorf("%s", result.Content)
 			}
@@ -1372,7 +1372,7 @@ func (s *Session) CostSnapshot() CostSnapshot {
 func (s *Session) Logger() *logger.Logger { return s.logger }
 
 func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error) {
-	db, err := sessiondb.Open(dbPath)
+	db, err := sessiondb.OpenAndMigrate(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("resume: open db: %w", err)
 	}

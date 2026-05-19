@@ -231,12 +231,24 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 	switch d := evt.Data.(type) {
 	case string:
 		content = d
+		if content == "Cancelled." || content == "Cancelled" {
+			reason = "cancelled"
+		}
 	case map[string]any:
 		content, _ = d["content"].(string)
 		reason, _ = d["reason"].(string)
 	}
 
 	if reason == "cancelled" {
+		target.MarkAllThinkingInterrupted()
+		if thinkTarget != target {
+			thinkTarget.MarkAllThinkingInterrupted()
+		}
+		target.MarkStreamingToolsCancelled()
+		if thinkTarget != target {
+			thinkTarget.MarkStreamingToolsCancelled()
+		}
+	} else if reason != "completed" && reason != "" {
 		target.MarkAllThinkingInterrupted()
 		if thinkTarget != target {
 			thinkTarget.MarkAllThinkingInterrupted()
@@ -273,7 +285,13 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 		thinkTarget.InvalidateAllMessages()
 	}
 
-	if content != "" {
+	isIncomplete := reason != "" && reason != "completed"
+	incompleteLabel := reason
+	if reason == "cancelled" {
+		incompleteLabel = "operation cancelled by user"
+	}
+
+	if content != "" && !isIncomplete {
 		msgs := target.Messages()
 		merged := false
 		if wasStreaming && len(msgs) > 0 {
@@ -297,12 +315,28 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 		}
 	}
 
-	if reason == "cancelled" {
-		target.AppendMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
-			Content: "Operation cancelled by user.",
-			Time:    time.Now(),
-		})
+	if isIncomplete {
+		msgs := target.Messages()
+		if len(msgs) > 0 {
+			last := msgs[len(msgs)-1]
+			if last.Role == ttypes.RoleAssistant {
+				last.Incomplete = true
+				last.IncompleteReason = incompleteLabel
+				last.CursorLine = -1
+				last.CachedLines = nil
+				last.StreamCompletedLines = nil
+				last.StreamCompletedLen = 0
+			} else {
+				target.AppendMessage(ttypes.ChatMessage{
+					Role:            ttypes.RoleAssistant,
+					Content:         content,
+					Incomplete:      true,
+					IncompleteReason: incompleteLabel,
+					Time:            time.Now(),
+				})
+			}
+		}
+		target.RebuildItems()
 	}
 
 	target.ScrollToBottom()
