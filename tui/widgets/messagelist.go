@@ -1146,7 +1146,7 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 		msgLines := RenderAssistantMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW, ml.MdRenderer(), ml.modelName, ml.streaming, isLastMsg)
 		lines = append(lines, msgLines...)
 	case types.RoleThinking:
-		msgLines := RenderThinkingMessage(*msg, ml.theme, contentWidth, innerW, ml.spinFrame)
+		msgLines := RenderThinkingMessage(*msg, ml.theme, contentWidth, innerW, ml.spinFrame, ml.modelName, timeLine1, timeLine2, timeW)
 		lines = append(lines, msgLines...)
 	case types.RoleTool:
 		msgLines := tools.RenderToolMessage(*msg, ml.theme, contentWidth, innerW, ml.width, ml.spinFrame, ml.height, ml.phase)

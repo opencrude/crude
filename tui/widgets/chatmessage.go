@@ -61,7 +61,7 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 			cursorLine = len(msgLines) - 1
 		}
 		case types.RoleThinking:
-			msgLines = RenderThinkingMessage(*msg, th, contentWidth, innerW, spinFrame)
+			msgLines = RenderThinkingMessage(*msg, th, contentWidth, innerW, spinFrame, modelName, timeLine1, timeLine2, timeW)
 			if msg.ThinkingActive && isLastMsg && len(msgLines) > 0 {
 				cursorLine = len(msgLines) - 1
 			}
@@ -212,10 +212,8 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 		}
 	}
 
-	if msg.Incomplete && msg.IncompleteReason != "" {
-		reasonStyle := lipgloss.NewStyle().Foreground(th.Colors.Error).Italic(true)
-		reasonLine := reasonStyle.Render(msg.IncompleteReason)
-		asstLines = append(asstLines, "", reasonLine)
+	if len(asstLines) == 0 {
+		asstLines = []string{""}
 	}
 
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
@@ -225,16 +223,12 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 			Italic(true).
 			Bold(true).
 			Background(lipgloss.Color("#3a1a1a"))
-		if len(asstLines) > 0 {
-			label := incompleteLabelStyle.Render("⚠ Crude " + modelName + " ")
-			asstLines[0] = label + asstLines[0]
-		}
+		label := incompleteLabelStyle.Render("❯ ⚠ Crude " + modelName + " ")
+		asstLines[0] = label + asstLines[0]
 	} else {
 		labelStyle := th.Styles.AsstLabel
-		if len(asstLines) > 0 {
-			label := labelStyle.Render("❯ Crude " + modelName + " ")
-			asstLines[0] = label + asstLines[0]
-		}
+		label := labelStyle.Render("❯ Crude " + modelName + " ")
+		asstLines[0] = label + asstLines[0]
 	}
 
 	for i, line := range asstLines {
@@ -257,6 +251,15 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 		}
 	}
 
+	if msg.Incomplete && msg.IncompleteReason != "" {
+		reasonStyle := lipgloss.NewStyle().Foreground(th.Colors.Error).Italic(true)
+		reasonText := reasonStyle.Render(" (" + msg.IncompleteReason + ")")
+		lastIdx := len(asstLines) - 1
+		if lastIdx >= 0 {
+			asstLines[lastIdx] = asstLines[lastIdx] + reasonText
+		}
+	}
+
 	if len(asstLines) == 1 && !(streaming && isLastMsg) {
 		sp := innerW - timeW
 		if sp < 0 {
@@ -268,16 +271,40 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 	return asstLines
 }
 
-func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, spinFrame int) []string {
+func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW int, spinFrame int, modelName string, timeLine1, timeLine2 string, timeW int) []string {
+	var result []string
+	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
+
+	var headerLabel string
+	if msg.Incomplete {
+		incompleteLabelStyle := lipgloss.NewStyle().
+			Foreground(th.Colors.Error).
+			Italic(true).
+			Bold(true).
+			Background(lipgloss.Color("#3a1a1a"))
+		headerLabel = incompleteLabelStyle.Render("❯ ⚠ Crude " + modelName + " ")
+	} else {
+		headerLabel = th.Styles.AsstLabel.Render("❯ Crude " + modelName + " ")
+	}
+	result = append(result, headerLabel)
+
+	if len(timeLine1) > 0 {
+		lineW := lipgloss.Width(headerLabel)
+		sp := innerW - lineW - timeW
+		if sp < 1 {
+			sp = 1
+		}
+		result[0] = headerLabel + strings.Repeat(" ", sp) + dim.Render(timeLine1)
+	}
+
 	lines := rendering.WrapText(msg.Content, contentWidth)
 	borderPrefix := lipgloss.NewStyle().Foreground(th.Colors.Border).Render("│ ")
 	thinkingStyle := th.Styles.ThinkingLine
 
-	var result []string
 	for i, line := range lines {
 		if i == 0 {
-		if msg.ThinkingActive {
-			alpha := components.ThinkingDotIndex(spinFrame)
+			if msg.ThinkingActive {
+				alpha := components.ThinkingDotIndex(spinFrame)
 				dotColors := []string{"#f0883e", "#d0681e", "#b85010", "#d0681e"}
 				dotColor := dotColors[alpha%len(dotColors)]
 				result = append(result, borderPrefix+lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Render("● ")+thinkingStyle.Render(line))
@@ -290,6 +317,13 @@ func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth,
 			result = append(result, borderPrefix+"  "+thinkingStyle.Render(line))
 		}
 	}
+
+	if msg.Incomplete && msg.IncompleteReason != "" && len(result) > 1 {
+		reasonStyle := lipgloss.NewStyle().Foreground(th.Colors.Error).Italic(true)
+		reasonText := reasonStyle.Render(" (" + msg.IncompleteReason + ")")
+		result[len(result)-1] = result[len(result)-1] + reasonText
+	}
+
 	return result
 }
 
