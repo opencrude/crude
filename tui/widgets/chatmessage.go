@@ -202,7 +202,7 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 			lastLines := rendering.WrapText(lastLineText, contentWidth)
 			asstLines = append(asstLines, lastLines...)
 		}
-		if len(asstLines) > 0 && asstLines[0] != "" {
+		if len(asstLines) > 0 && asstLines[0] != "" && !suppressHeader {
 			asstLines = append([]string{""}, asstLines...)
 		}
 	} else {
@@ -212,6 +212,10 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 		} else {
 			asstLines = strings.Split(rendered, "\n")
 		}
+	}
+
+	if suppressHeader && len(asstLines) > 0 && asstLines[0] == "" {
+		asstLines = asstLines[1:]
 	}
 
 	if len(asstLines) == 0 {

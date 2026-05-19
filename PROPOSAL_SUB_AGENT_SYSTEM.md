@@ -38,11 +38,12 @@ The design is informed by deep analysis of OpenAI Codex subagents, Claude Code's
 
 **Key design goals:**
 - Sub-agents get **isolated context windows** — no context pollution between agents
+- **Four capability categories** — Main (orchestrator), Researcher (gatherer), Crafter (implementer), Aeron (grunt) — each with default model, policy, and tool access
 - **Custom instructions** injected into sub-agent prompts to specialize behavior
-- **Scoped permission policies** — read-only, no-destructive-tools, custom tool subsets
-- **Per-agent model/provider routing** — cheap models for exploration, powerful models for implementation
+- **Scoped permission policies** per category — read-only for researchers, no-delete for crafters, highly restricted for aerons
+- **Category-based model/provider routing** — cheap models for research, powerful models for implementation, ultra-cheap for grunt work
 - **Structured inter-agent communication** — results flow up, not sideways
-- **Permission escalation** that preserves user context about *which* agent is asking
+- **Permission escalation** that preserves user context about *which* agent (and category) is asking
 - **Depth and concurrency limits** to prevent runaway spawning
 - **Race condition prevention** through file ownership claims and sequential commit zones
 
@@ -77,7 +78,7 @@ User Input → Session.Run() → newAgent() → Agent.Run() → [LLM call → to
 4. **Session** needs a `SubAgentManager` to track active sub-agents
 5. **Permission escalation** must tag which agent caused the prompt
 6. **Editor** needs file-ownership tracking to prevent concurrent write conflicts
-7. **Config** needs per-agent-type model/provider settings
+7. **Config** needs per-category model/provider settings (Main → Researcher → Crafter → Aeron)
 
 ---
 
@@ -206,31 +207,62 @@ User Input → Session.Run() → newAgent() → Agent.Run() → [LLM call → to
 
 ## 6. Core Architecture
 
+### Agent Categories
+
+Sub-agents are organized into four fundamental **categories** that define their capability tier, tool access, budget, and model defaults:
+
+```
+         ┌────────┐
+         │  MAIN  │   Orchestrator — plans, delegates, interacts with user
+        ┌┴────────┴┐   Best model, full tool access, highest reasoning
+        │ CRAFTER  │   Implementer — writes code, edits files, runs tests
+       ┌┴──────────┴┐  Good model, no-delete policy, write-capable
+       │ RESEARCHER │   Gatherer — explores codebase, searches web, experiments
+      ┌┴────────────┴┐ Cheap/fast model, read-only policy, limited execution
+      │    AERON     │   Grunt — formats, lints, boilerplate, simple refactors
+      └──────────────┘  Cheapest model, highly restricted, minimal context
+```
+
+Each tier down = cheaper model, more restricted tools, less autonomy, lower budget.
+Each tier up = more expensive model, broader tools, higher reasoning, higher budget.
+
+Every sub-agent belongs to exactly one category. The category sets the **baseline defaults**. A named **profile** (e.g. `explorer`, `reviewer`, `fixer`) specifies which category it belongs to and can override individual fields (model, instructions, etc.).
+
 ### Agent Hierarchy
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Session                                             │
-│  ┌─────────────────────────────────────────────┐    │
-│  │  Main Agent (depth=0)                        │    │
-│  │  Provider: openrouter, Model: claude-sonnet   │    │
-│  │  Policy: Default (all tools)                  │    │
-│  │  ToolFn: [all tools including run_sub_agent]  │    │
-│  │                                               │    │
-│  │  ┌──────────────────┐ ┌──────────────────┐   │    │
-│  │  │ Explorer Agent    │ │ Fixer Agent      │   │    │
-│  │  │ (depth=1)        │ │ (depth=1)        │   │    │
-│  │  │ Model: flash     │ │ Model: sonnet    │   │    │
-│  │  │ Policy: ReadOnly │ │ Policy: NoDelete │   │    │
-│  │  │ Tools: read-only │ │ Tools: read+edit │   │    │
-│  │  └──────────────────┘ └──────────────────┘   │    │
-│  └─────────────────────────────────────────────┘    │
-│                                                      │
-│  SubAgentManager: tracks active, completed, failed   │
-│  PermissionStore: global + per-agent scopes          │
-│  Editor: file-ownership-aware journal                │
-│  StateMachine: sub-agent goals visible in tree       │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  Session                                                  │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  MAIN (depth=0)                                    │    │
+│  │  Category: main                                     │    │
+│  │  Provider: openrouter, Model: claude-sonnet-4       │    │
+│  │  Policy: Default (all tools)                        │    │
+│  │  ToolFn: [all tools including run_sub_agent]        │    │
+│  │                                                     │    │
+│  │  ┌─────────────────────┐ ┌─────────────────────┐   │    │
+│  │  │ RESEARCHER (depth=1) │ │ CRAFTER (depth=1)   │   │    │
+│  │  │ Profile: explorer    │ │ Profile: fixer      │   │    │
+│  │  │ Model: gemini-flash  │ │ Model: claude-sonnet│   │    │
+│  │  │ Policy: read-only    │ │ Policy: no-delete   │   │    │
+│  │  │ Tools: read+search   │ │ Tools: read+write   │   │    │
+│  │  └─────────────────────┘ └─────────────────────┘   │    │
+│  │                                                     │    │
+│  │  ┌─────────────────────┐                             │    │
+│  │  │ AERON (depth=1)     │                             │    │
+│  │  │ Profile: formatter  │                             │    │
+│  │  │ Model: gemini-flash │                             │    │
+│  │  │ Policy: no-delete   │                             │    │
+│  │  │ Tools: no-delete    │                             │    │
+│  │  │ MaxSteps: 10        │                             │    │
+│  │  └─────────────────────┘                             │    │
+│  └──────────────────────────────────────────────────┘    │
+│                                                           │
+│  SubAgentManager: tracks by category + agent ID           │
+│  PermissionStore: global + per-category + per-agent       │
+│  Editor: file-ownership-aware journal                     │
+│  StateMachine: sub-agent goals visible in tree            │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### New Types
@@ -243,25 +275,28 @@ type AgentID string
 type SubAgentSpec struct {
     ID              AgentID          `json:"id"`
     Name            string           `json:"name"`
+    Category        string           `json:"category"`        // "main" | "researcher" | "crafter" | "aeron" — determines defaults
     Description     string           `json:"description"`
     Instructions    string           `json:"instructions"`     // Custom instructions injected into prompt
-    Model           string           `json:"model"`            // Override model (empty = inherit parent)
-    Provider        string           `json:"provider"`         // Override provider key (empty = inherit)
-    Policy          safety.Policy    `json:"policy"`           // Scoped permission policy
-    AllowedTools    []string         `json:"allowed_tools"`    // Tool whitelist (empty = all non-destructive)
-    DeniedTools     []string         `json:"denied_tools"`     // Tool blacklist
-    MaxSteps        int              `json:"max_steps"`        // Max tool-use steps (default 50)
+    Model           string           `json:"model"`            // Override model (empty = inherit from category)
+    Provider        string           `json:"provider"`         // Override provider key (empty = inherit from category)
+    Policy          safety.Policy    `json:"policy"`           // Scoped permission policy (overrides category default)
+    AllowedTools    []string         `json:"allowed_tools"`    // Tool whitelist (intersects with category defaults)
+    DeniedTools     []string         `json:"denied_tools"`     // Tool blacklist (unioned with category defaults)
+    MaxSteps        int              `json:"max_steps"`        // Max tool-use steps (default from category)
     Depth           int              `json:"depth"`            // Current nesting depth
     FileOwnership   []string         `json:"file_ownership"`   // Paths this agent owns (prevent conflicts)
     ParentID        AgentID          `json:"parent_id"`
-    TimeoutSeconds  int              `json:"timeout_seconds"`  // Max runtime (default 300)
+    TimeoutSeconds  int              `json:"timeout_seconds"`  // Max runtime (default from category)
 }
 
 type SubAgentResult struct {
     AgentID      AgentID          `json:"agent_id"`
     Name         string           `json:"name"`
-    Status       SubAgentStatus   `json:"status"`          // completed, failed_timeout, failed_quota, failed_error, failed_policy, cancelled
-    Summary      string           `json:"summary"`         // Structured result summary
+    Category     string           `json:"category"`           // Which category produced this result
+    Status       SubAgentStatus   `json:"status"`             // completed, failed_timeout, failed_quota, failed_error, failed_policy, cancelled
+    Summary      string           `json:"summary"`            // Structured result summary
+    Log          []string         `json:"log"`                // Sub-agent's reply() messages, accumulated during execution
     FilesRead    []string         `json:"files_read"`
     FilesWritten []string         `json:"files_written"`
     Errors       []string         `json:"errors"`
@@ -280,6 +315,16 @@ const (
     SubAgentFailedError   SubAgentStatus = "failed_error"
     SubAgentFailedPolicy  SubAgentStatus = "failed_policy"
     SubAgentCancelled      SubAgentStatus = "cancelled"
+)
+
+// AgentCategory defines the four capability tiers for sub-agents.
+type AgentCategory string
+
+const (
+    CategoryMain       AgentCategory = "main"
+    CategoryResearcher AgentCategory = "researcher"
+    CategoryCrafter    AgentCategory = "crafter"
+    CategoryAeron      AgentCategory = "aeron"
 )
 
 type SubAgentManager struct {
@@ -318,36 +363,41 @@ type SubAgentHandle struct {
           "type": "string",
           "description": "Short name for this sub-agent (e.g. 'explorer', 'fixer', 'reviewer'). Used for display and tracking."
         },
+        "category": {
+          "type": "string",
+          "description": "Capability tier: 'researcher' (read-only, cheap, fast), 'crafter' (implementation, write-capable, mid-cost), or 'aeron' (grunt work, ultra-cheap, restricted). Default: 'crafter'. The main agent itself is always category 'main'. Category sets default model, policy, max_steps, timeout, and tool access — which can all be overridden individually.",
+          "enum": ["researcher", "crafter", "aeron"]
+        },
         "description": {
           "type": "string",
           "description": "The task this sub-agent should accomplish. Be specific: 'Find all API routes that lack authentication middleware and list them with file:line references' NOT 'check security'."
         },
         "instructions": {
           "type": "string",
-          "description": "Custom instructions injected into the sub-agent's system prompt. Use to specialize behavior: 'Focus only on the backend API layer. Do not modify frontend code. Prefer fast search over broad scans.' Empty = inherit parent's behavior."
+          "description": "Custom instructions injected into the sub-agent's system prompt. Use to specialize behavior: 'Focus only on the backend API layer. Do not modify frontend code. Prefer fast search over broad scans.' Empty = inherit from category/profile defaults."
         },
         "model": {
           "type": "string",
-          "description": "Model override for this sub-agent (e.g. 'google/gemini-2.0-flash-exp:free' for cheap exploration). Empty = inherit parent's model."
+          "description": "Model override for this sub-agent (e.g. 'google/gemini-2.0-flash-exp:free' for cheap exploration). Empty = inherit from category default."
         },
         "provider": {
           "type": "string",
-          "description": "Provider key override (e.g. 'groq' for fast inference, 'deepseek' for cheap reasoning). Empty = inherit parent's provider."
+          "description": "Provider key override (e.g. 'groq' for fast inference, 'deepseek' for cheap reasoning). Empty = inherit from category default."
         },
         "policy": {
           "type": "string",
-          "description": "Permission policy: 'default' (all tools), 'read-only' (no writes/execution), 'no-delete' (no delete_file), 'no-execute' (no command execution), or 'custom'. Default: 'default'.",
-          "enum": ["default", "read-only", "no-delete", "no-execute", "custom"]
+          "description": "Permission policy: 'default' (all tools), 'read-only' (no writes/execution), 'no-delete' (no delete_file), or 'no-execute' (no command execution). Default: inherited from category.",
+          "enum": ["default", "read-only", "no-delete", "no-execute"]
         },
         "allowed_tools": {
           "type": "array",
           "items": {"type": "string"},
-          "description": "Explicit tool whitelist. If provided, only these tools are available to the sub-agent. Example: ['read_file', 'glob_files', 'grep_files', 'list_directory']"
+          "description": "Explicit tool whitelist. If provided, only these tools are available to the sub-agent (intersected with category defaults). Example: ['read_file', 'glob_files', 'grep_files', 'list_directory']"
         },
         "denied_tools": {
           "type": "array",
           "items": {"type": "string"},
-          "description": "Explicit tool blacklist. These tools are removed from the sub-agent's available tools. Example: ['delete_file', 'execute_command']"
+          "description": "Explicit tool blacklist. These tools are removed from the sub-agent's available tools (unioned with category defaults). Example: ['delete_file', 'execute_command']"
         },
         "file_ownership": {
           "type": "array",
@@ -356,11 +406,11 @@ type SubAgentHandle struct {
         },
         "max_steps": {
           "type": "integer",
-          "description": "Maximum tool-use steps for this sub-agent (default 50, max 200). Lower = cheaper and faster."
+          "description": "Maximum tool-use steps for this sub-agent. Default from category (researcher: 30, crafter: 60, aeron: 10). Max 200."
         },
         "timeout_seconds": {
           "type": "integer",
-          "description": "Maximum runtime in seconds (default 300). Sub-agent is cancelled if it exceeds this."
+          "description": "Maximum runtime in seconds. Default from category (researcher: 120, crafter: 300, aeron: 60)."
         },
         "wait": {
           "type": "boolean",
@@ -381,22 +431,29 @@ Parent calls run_sub_agent(spec)
   ├── SubAgentManager.Validate(spec)
   │   ├── Check max_depth not exceeded
   │   ├── Check max_concurrent not exceeded
+  │   ├── Resolve Category defaults
+  │   │   ├── Look up category config for spec.Category
+  │   │   ├── Apply category defaults: model, provider, policy, max_steps, timeout
+  │   │   ├── Intersect allowed_tools with category defaults
+  │   │   ├── Union denied_tools with category defaults
+  │   │   └── Override with any inline spec fields (inline > profile > category)
   │   ├── Check policy ⊆ parent policy (cannot widen permissions)
   │   ├── Check file_ownership doesn't conflict with active agents
   │   └── Check tool list is valid
   │
   ├── Build Sub-Agent
-  │   ├── Create new Agent with spec.Model or inherited model
-  │   ├── Create Provider with spec.Provider or inherited provider
-  │   ├── Filter tool list by allowed_tools / denied_tools
-  │   ├── Build custom system prompt (base + instructions + policy constraints)
-  │   ├── Set max_steps limit
+  │   ├── Resolve final model: inline > profile > category > parent
+  │   ├── Resolve final provider: inline > profile > category > parent
+  │   ├── Create Agent with resolved model and provider
+  │   ├── Filter tool list (intersection of allowed, subtraction of denied)
+  │   ├── Build custom system prompt (base + category identity + instructions + policy)
+  │   ├── Set max_steps from resolved value
   │   └── Wire ToolFn with permission scoping
   │
   ├── Launch Sub-Agent.Run()
   │   ├── Context with timeout
   │   ├── Separate blockResolveCh (or shared with agent-id tagging)
-  │   ├── Emit events tagged with agent_id for TUI
+  │   ├── Emit events tagged with agent_id + category for TUI
   │   └── Collect SubAgentResult on completion
   │
   └── Return result to parent
@@ -415,20 +472,28 @@ The sub-agent's system prompt is constructed as:
 ```
 [SystemPromptBase]                          ← Same base prompt as main agent
 + [Environment Section]                     ← Same environment (OS, git, PATH)
-+ [Sub-Agent Identity]                      ← NEW: "You are sub-agent '{name}'. Your task: {description}"
-+ [Custom Instructions]                     ← NEW: User-provided instructions
++ [Sub-Agent Identity]                      ← NEW: "You are a {category} sub-agent '{name}'. Your task: {description}"
++ [Category Briefing]                       ← NEW: "You are in the {category} tier. This means: {category description, defaults, constraints}"
++ [Custom Instructions]                     ← NEW: Profile or user-provided instructions
 + [Policy Constraints]                      ← NEW: "You have the following tool restrictions..."
 + [File Ownership]                          ← NEW: "You own these paths: ..."
 + [Depth Limit]                             ← NEW: "You cannot spawn further sub-agents." (if at max depth)
 ```
 
+The Category Briefing lets the sub-agent know what tier it's in, so it self-regulates:
+- **Researcher:** "You are in the Researcher tier. Prioritize gathering information and analysis. Do not modify files. Return structured findings."
+- **Crafter:** "You are in the Crafter tier. You have write access. Make changes carefully and verify them. You are responsible for the code you write."
+- **Aeron:** "You are in the Aeron tier. You have minimal tools and a tight budget. Stay focused on the simple task at hand. Do not over-engineer."
+
 ### Custom Instructions from Config Files
 
-Like Codex's `.codex/agents/*.toml` files, Crude supports agent profiles in config:
+Like Codex's `.codex/agents/*.toml` files, Crude supports agent profiles in config.
+Each profile declares which **category** it belongs to. The category provides the baseline defaults; the profile provides specialized behavior.
 
 **`~/.crude/agents/explorer.toml`:**
 ```toml
 name = "explorer"
+category = "researcher"
 description = "Read-only codebase explorer for gathering evidence before changes."
 model = "google/gemini-2.0-flash-exp:free"
 policy = "read-only"
@@ -438,28 +503,28 @@ and avoid proposing fixes unless the parent agent asks for them.
 Prefer fast search and targeted file reads over broad scans.
 Never modify any files.
 """
-allowed_tools = ["read_file", "glob_files", "grep_files", "list_directory"]
+allowed_tools = ["read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search"]
 ```
 
-**`.crude/agents/reviewer.toml`** (project-scoped):
+**`.crude/agents/reviewer.toml`** (project-scoped, overrides category's cheap default model):
 ```toml
 name = "reviewer"
+category = "researcher"
 description = "Code reviewer focused on correctness, security, and missing tests."
-model = "anthropic/claude-sonnet-4"
+model = "anthropic/claude-sonnet-4"  # override: researcher defaults to cheap flash, but review needs deep reasoning
 policy = "read-only"
 instructions = """
 Review code like an owner. Prioritize correctness, security, behavior regressions, 
 and missing test coverage. Lead with concrete findings, include reproduction steps 
 when possible, and avoid style-only comments unless they hide a real bug.
 """
-denied_tools = ["write_file", "edit_file", "delete_file", "execute_command"]
 ```
 
 **`.crude/agents/fixer.toml`:**
 ```toml
 name = "fixer"
+category = "crafter"
 description = "Implementation-focused agent for targeted fixes."
-model = ""  # inherit parent model
 policy = "no-delete"
 instructions = """
 Own the fix. Make the smallest defensible change, keep unrelated files untouched, 
@@ -469,53 +534,154 @@ denied_tools = ["delete_file"]
 file_ownership = ["src/api/", "tests/api/"]
 ```
 
+**`.crude/agents/formatter.toml`** (new — Aeron tier example):
+```toml
+name = "formatter"
+category = "aeron"
+description = "Quick formatting and linting pass."
+max_steps = 8
+timeout_seconds = 30
+instructions = """
+Run the project's formatter and linter. Only fix formatting issues. 
+Do not change logic, structure, or behavior. Return a summary of what was fixed.
+"""
+allowed_tools = ["read_file", "write_file", "execute_command", "glob_files"]
+```
+
+### Inheritance Chain
+
+When a sub-agent is spawned, values are resolved in this order (first wins):
+
+```
+Inline Parameters (run_sub_agent call)
+  └── Named Profile (TOML file or built-in)
+       └── Category Defaults (config.json agents.categories)
+            └── Parent Agent's Values (fallback)
+```
+
+Example for `run_sub_agent(name="reviewer", category="researcher", model="claude-sonnet-4")`:
+1. **model** → `claude-sonnet-4` (inline override wins)
+2. **policy** → `read-only` (inherited from `researcher` category, not overridden)
+3. **max_steps** → `30` (inherited from `researcher` category)
+4. **instructions** → from `reviewer` profile if it exists, else category default
+5. **allowed_tools** → intersection of inline + profile + category defaults
+
 ### Lookup Order
 
 When `run_sub_agent` is called with `name="explorer"`:
 1. Check `.crude/agents/explorer.toml` (project-scoped, overrides global)
 2. Check `~/.crude/agents/explorer.toml` (user-global)
-3. Check built-in profiles (`explorer`, `reviewer`, `fixer`)
-4. If no profile found, use inline parameters only
+3. Check built-in profiles (`explorer`, `reviewer`, `fixer`, `formatter`)
+4. If no profile found, use category defaults + inline parameters only
 
 ---
 
 ## 9. Permission & Safety Model
+
+### Category Default Policies
+
+Each category has a built-in default policy that defines the baseline permission scope. Inline overrides and profile settings can tighten further but cannot widen beyond these defaults.
+
+| Category | Default Policy | Rationale |
+|----------|---------------|-----------|
+| **main** | `default` (all tools) | Orchestrator needs full access to delegate and manage |
+| **researcher** | `read-only` | Gathers information, never modifies project state |
+| **crafter** | `no-delete` | Writes code and runs tests, but should not delete files |
+| **aeron** | `no-delete` + no-network | Grunt work on local files only; no web, no exec |
 
 ### Policy Hierarchy
 
 ```
 Session Global Policy
   └── Main Agent Policy (always = Session Global)
-       └── Sub-Agent Policy (intersection of parent policy + spec policy)
-            └── Grandchild Policy (intersection of parent + spec, again)
+       └── Category Default Policy (researcher | crafter | aeron)
+            └── Sub-Agent Spec Policy (inline overrides)
+                 └── Grandchild Policy (intersection again)
 ```
 
-**Rule: Sub-agent policy is always ≤ parent policy.** A read-only parent cannot spawn a write-capable child.
+**Rule: Sub-agent policy is always ≤ parent policy.** A read-only parent cannot spawn a write-capable child. Additionally, a sub-agent's policy cannot exceed its **category** defaults — you cannot set `policy=default` on an aeron sub-agent; it starts from `no-delete` and can only be tightened.
+
+### Category Default Resolution
+
+```go
+// CategoryDefaults returns the built-in baseline for a category.
+// These can be overridden by config.json's agents.categories section.
+func CategoryDefaults(category AgentCategory) CategoryConfig {
+    switch category {
+    case CategoryResearcher:
+        return CategoryConfig{
+            Policy:      "read-only",
+            MaxSteps:    30,
+            TimeoutSec:  120,
+            AllowedTools: []string{
+                "read_file", "glob_files", "grep_files", "list_directory",
+                "web_search", "web_fetch", "arxiv_search", "run_javascript",
+            },
+            DeniedTools: []string{
+                "write_file", "edit_file", "delete_file", "move_file", "copy_file",
+                "execute_command", "async_execute_command",
+            },
+        }
+    case CategoryCrafter:
+        return CategoryConfig{
+            Policy:     "no-delete",
+            MaxSteps:   60,
+            TimeoutSec: 300,
+            DeniedTools: []string{
+                "delete_file",
+            },
+        }
+    case CategoryAeron:
+        return CategoryConfig{
+            Policy:     "no-delete",
+            MaxSteps:   10,
+            TimeoutSec: 60,
+            DeniedTools: []string{
+                "delete_file", "move_file", "copy_file",
+                "web_search", "web_fetch", "arxiv_search",
+                "run_javascript",
+            },
+        }
+    default:
+        return CategoryConfig{} // main or unknown — full access
+    }
+}
+```
 
 ### Policy Composition
 
 ```go
-func ComposePolicy(parent safety.Policy, spec SubAgentSpec) safety.Policy {
-    child := safety.DefaultPolicy()
+func ComposePolicy(parent safety.Policy, spec SubAgentSpec, category AgentCategory) safety.Policy {
+    // Start from category default
+    catCfg := CategoryDefaults(category)
+    child := policyFromCategory(catCfg.Policy)
     
-    // Apply named policy preset
-    switch spec.PolicyName {
-    case "read-only":
-        child = safety.ReadOnlyPolicy()
-    case "no-delete":
-        child = safety.DefaultPolicy()
-        child.AllowedCapabilities[safety.CanDelete] = false
-    case "no-execute":
-        child = safety.DefaultPolicy()
-        child.AllowedCapabilities[safety.CanExecute] = false
-    case "custom":
-        child = safety.DefaultPolicy()
+    // Apply named policy override from spec
+    if spec.PolicyName != "" {
+        switch spec.PolicyName {
+        case "read-only":
+            child = safety.ReadOnlyPolicy()
+        case "no-delete":
+            child = safety.DefaultPolicy()
+            child.AllowedCapabilities[safety.CanDelete] = false
+        case "no-execute":
+            child = safety.DefaultPolicy()
+            child.AllowedCapabilities[safety.CanExecute] = false
+        }
     }
     
     // Intersection with parent: child cannot exceed parent
     for cap, allowed := range child.AllowedCapabilities {
         if !parent.AllowedCapabilities[cap] {
-            child.AllowedCapabilities[cap] = false  // narrow
+            child.AllowedCapabilities[cap] = false
+        }
+    }
+    
+    // Intersection with category: child cannot exceed category defaults either
+    catPolicy := policyFromCategory(catCfg.Policy)
+    for cap, allowed := range child.AllowedCapabilities {
+        if !catPolicy.AllowedCapabilities[cap] {
+            child.AllowedCapabilities[cap] = false
         }
     }
     
@@ -526,31 +692,44 @@ func ComposePolicy(parent safety.Policy, spec SubAgentSpec) safety.Policy {
 ### Tool Filtering
 
 ```go
-func FilterTools(allTools []tools.ToolDef, spec SubAgentSpec, depth int) []tools.ToolDef {
+func FilterTools(allTools []tools.ToolDef, spec SubAgentSpec, category AgentCategory, depth int) []tools.ToolDef {
+    // Start with category's allowed/denied tool lists
+    catCfg := CategoryDefaults(category)
+    
     filtered := allTools
+    
+    // Apply category's denied tools first
+    if len(catCfg.DeniedTools) > 0 {
+        denied := makeSet(catCfg.DeniedTools)
+        filtered = filterTools(filtered, func(t tools.ToolDef) bool {
+            return !denied[t.Function.Name]
+        })
+    }
+    
+    // Apply category's allowed tools (if any)
+    if len(catCfg.AllowedTools) > 0 {
+        allowed := makeSet(catCfg.AllowedTools)
+        filtered = filterTools(filtered, func(t tools.ToolDef) bool {
+            return allowed[t.Function.Name]
+        })
+    }
     
     // Always remove run_sub_agent if at max depth
     if depth >= maxDepth {
         filtered = removeTool(filtered, "run_sub_agent")
     }
     
-    // Apply whitelist
+    // Apply spec's allowed_tools (intersection — can only narrow)
     if len(spec.AllowedTools) > 0 {
-        allowed := make(map[string]bool)
-        for _, t := range spec.AllowedTools {
-            allowed[t] = true
-        }
+        allowed := makeSet(spec.AllowedTools)
         filtered = filterTools(filtered, func(t tools.ToolDef) bool {
             return allowed[t.Function.Name]
         })
     }
     
-    // Apply blacklist
+    // Apply spec's denied_tools (union — can only add restrictions)
     if len(spec.DeniedTools) > 0 {
-        denied := make(map[string]bool)
-        for _, t := range spec.DeniedTools {
-            denied[t] = true
-        }
+        denied := makeSet(spec.DeniedTools)
         filtered = filterTools(filtered, func(t tools.ToolDef) bool {
             return !denied[t.Function.Name]
         })
@@ -579,41 +758,87 @@ Following the lessons from the Devin privilege escalation analysis:
 
 ## 10. Model/Provider Routing
 
-### Per-Agent Model Configuration
+### Category-Based Model Resolution
 
-The `run_sub_agent` spec allows overriding `model` and `provider` independently. This enables patterns like:
+Model and provider are resolved through the inheritance chain:
 
-- **Explorer agent:** `model="google/gemini-2.0-flash-exp:free"` (cheap, fast, read-only)
-- **Reviewer agent:** `model="anthropic/claude-sonnet-4"` (expensive, thorough, read-only)
-- **Fixer agent:** inherit parent model (balanced, write-capable)
-- **Test writer:** `provider="groq"`, `model="llama-3.3-70b-versatile"` (fast, cheap, write tests)
+```
+           Inline spec.model / spec.provider
+                       ↓
+            Named Profile model / provider
+                       ↓
+         Category Default model / provider
+                       ↓
+          Parent Agent's model / provider
+```
+
+Each level overrides the level below it. If a profile has `model = "claude-sonnet-4"`, it uses that regardless of what the category default says. If neither inline nor profile specifies a model, the category default is used.
+
+### Category Default Model Tiers
+
+| Category | Default Model | Default Provider | Reasoning | Cost Tier |
+|----------|--------------|-----------------|-----------|-----------|
+| **main** | *(inherits from parent / active config)* | — | Highest — orchestrates everything | $$$$ |
+| **crafter** | `qwen/qwen3.5-235b-a22b` | openrouter | High — writes real code | $$$ |
+| **researcher** | `google/gemini-2.0-flash-exp:free` | openrouter | Medium — fast searches | $$ |
+| **aeron** | `google/gemini-2.0-flash-exp:free` | openrouter | Low — simple tasks | $ |
+
+The defaults are deliberately conservative: researcher defaults to cheap flash so users aren't surprised by costs, crafter gets a strong but not top-tier model. Users override per profile or per call.
+
+### Typical Patterns
+
+- **Deep code review:** `category: researcher, model: anthropic/claude-sonnet-4` — researcher category (read-only policy), but with expensive model for deep reasoning
+- **Feature implementation:** `category: crafter` — uses crafter defaults, no override needed
+- **Security audit:** `category: researcher, model: openai/o3, policy: read-only` — top model for critical analysis
+- **Format codebase:** `category: aeron, name: formatter` — ultra-cheap, tight budget, simple task
+- **Write tests:** `category: crafter, provider: groq, model: llama-3.3-70b-versatile` — cheaper provider for test code
+- **Quick docs search:** `category: aeron, instructions: "Find the API docs for X"` — simple lookup, no reasoning needed
 
 ### Implementation
 
 ```go
-func (s *Session) buildProviderForSubAgent(spec SubAgentSpec) *provider.Provider {
-    // Start with parent provider as base
-    p := *s.provider  // copy
+func (s *Session) buildProviderForSubAgent(spec SubAgentSpec, category AgentCategory) *provider.Provider {
+    // Resolve model and provider through the chain
+    resolvedModel := spec.Model
+    resolvedProvider := spec.Provider
+    catCfg := s.resolveCategoryConfig(category)
     
-    // Override provider if specified
-    if spec.Provider != "" {
+    // 1. If inline spec doesn't set model, try category default
+    if resolvedModel == "" && catCfg.Model != "" {
+        resolvedModel = catCfg.Model
+    }
+    
+    // 2. If still empty, inherit from parent/session
+    if resolvedModel == "" {
         activeCfg := s.cfg.GetActiveProviderConfig()
-        // Look up provider config from session config
-        if provCfg, ok := s.cfg.Providers[spec.Provider]; ok {
-            p = *provider.FromPreset(spec.Provider, provCfg.APIKey, provCfg.ProviderURL)
-        }
+        resolvedModel = activeCfg.Model
     }
     
-    // Override model if specified
-    if spec.Model != "" {
-        p.Model = spec.Model
+    // 3. Resolve provider
+    if resolvedProvider == "" && catCfg.Provider != "" {
+        resolvedProvider = catCfg.Provider
+    }
+    if resolvedProvider == "" {
+        resolvedProvider = s.cfg.EffectiveProviderID()
     }
     
-    return &p
+    // Build provider from resolved values
+    var activeCfg ProviderConfig
+    if pc, ok := s.cfg.Providers[resolvedProvider]; ok {
+        activeCfg = pc
+    }
+    
+    p := provider.FromPreset(resolvedProvider, activeCfg.APIKey, activeCfg.ProviderURL)
+    p.Model = resolvedModel
+    if activeCfg.ThinkingEffort != "" {
+        p.SetThinkingEffort(activeCfg.ThinkingEffort)
+    }
+    
+    return p
 }
 ```
 
-### Config Schema for Agent-Type Defaults
+### Config Schema for Category Defaults
 
 ```json
 // ~/.crude/config.json
@@ -621,41 +846,89 @@ func (s *Session) buildProviderForSubAgent(spec SubAgentSpec) *provider.Provider
   "active_provider": "openrouter",
   "providers": {
     "openrouter": {
-      "model": "anthropic/claude-sonnet-4",
-      "api_key": "sk-..."
+      "api_key": "sk-...",
+      "model": "anthropic/claude-sonnet-4"
     },
     "groq": {
-      "model": "llama-3.3-70b-versatile",
-      "api_key": "gsk_..."
+      "api_key": "gsk_...",
+      "model": "llama-3.3-70b-versatile"
     }
   },
   "agents": {
     "max_concurrent": 4,
     "max_depth": 2,
-    "max_steps_default": 50,
-    "timeout_default_seconds": 300,
+    "categories": {
+      "main": {
+        "description": "Orchestrator — plans, delegates, interacts with user"
+      },
+      "researcher": {
+        "model": "google/gemini-2.0-flash-exp:free",
+        "provider": "",
+        "policy": "read-only",
+        "max_steps": 30,
+        "timeout_seconds": 120,
+        "allowed_tools": [
+          "read_file", "glob_files", "grep_files", "list_directory",
+          "web_search", "web_fetch", "arxiv_search", "run_javascript"
+        ],
+        "denied_tools": [
+          "write_file", "edit_file", "delete_file", "move_file", "copy_file",
+          "execute_command", "async_execute_command"
+        ]
+      },
+      "crafter": {
+        "model": "qwen/qwen3.5-235b-a22b",
+        "provider": "",
+        "policy": "no-delete",
+        "max_steps": 60,
+        "timeout_seconds": 300,
+        "denied_tools": ["delete_file"]
+      },
+      "aeron": {
+        "model": "google/gemini-2.0-flash-exp:free",
+        "provider": "",
+        "policy": "no-delete",
+        "max_steps": 10,
+        "timeout_seconds": 60,
+        "denied_tools": [
+          "delete_file", "move_file", "copy_file",
+          "web_search", "web_fetch", "arxiv_search",
+          "run_javascript"
+        ]
+      }
+    },
     "profiles": {
       "explorer": {
-        "model": "google/gemini-2.0-flash-exp:free",
-        "policy": "read-only"
+        "category": "researcher",
+        "description": "Read-only codebase explorer for gathering evidence before changes.",
+        "instructions": "Stay in exploration mode..."
       },
       "reviewer": {
-        "provider": "openrouter",
+        "category": "researcher",
         "model": "anthropic/claude-sonnet-4",
-        "policy": "read-only"
+        "instructions": "Review code for correctness, security, and missing tests..."
       },
       "fixer": {
-        "policy": "no-delete"
+        "category": "crafter",
+        "instructions": "Make the smallest defensible change..."
       },
       "tester": {
+        "category": "crafter",
         "provider": "groq",
         "model": "llama-3.3-70b-versatile",
-        "policy": "no-delete"
+        "instructions": "Write comprehensive tests..."
+      },
+      "formatter": {
+        "category": "aeron",
+        "description": "Quick formatting and linting pass.",
+        "instructions": "Run the project's formatter and linter..."
       }
     }
   }
 }
 ```
+
+The key difference from the old flat model: **profiles now declare a `category`**, and categories provide the baseline. A profile like `reviewer` doesn't need to specify `policy: read-only` because it inherits it from the `researcher` category. It only overrides what makes it special: the model (sonnet-4 for deep review).
 
 ---
 
@@ -729,6 +1002,7 @@ emit(AgentEvent{
         "reason":      "The execute_command tool modifies files on disk",
         "agent_id":    "fixer-abc123",          // NEW: which agent
         "agent_name":  "fixer",                 // NEW: human-readable name
+        "agent_category": "crafter",             // NEW: capability tier
         "agent_task":  "Fix the form validation bug in src/components/Form.tsx",  // NEW: what it's doing
     },
     AgentID: "fixer-abc123",  // NEW: tagged at event level
@@ -741,7 +1015,7 @@ The TUI shows a blocking dialog with agent identity:
 
 ```
 ╭─ Permission Request ──────────────────────────────────────╮
-│ Agent: fixer                                                │
+│ Agent: fixer [crafter]                                      │
 │ Task: Fix the form validation bug in src/components/Form.tsx│
 │                                                             │
 │ Allow this Execute operation?                                │
@@ -876,6 +1150,7 @@ goal := sm.CreateGoal(sessionID,
 goal.Metadata = map[string]any{
     "agent_id":  spec.ID,
     "agent_name": spec.Name,
+    "category":  spec.Category,   // which capability tier
     "depth":     spec.Depth,
     "model":     spec.Model,
 }
@@ -898,9 +1173,9 @@ The parent's `list_goal_status` shows sub-agent progress:
 
 ```
 Plan: Fix the authentication system (active)
-  ✓ step1: Explore auth code paths (completed) [explorer agent]
-  → step2: Fix the token validation (doing) [fixer agent, depth=1]
-  ☐ step3: Write auth tests (pending) [tester agent, depth=1]
+  ✓ step1: Explore auth code paths (completed) [researcher:explorer]
+  → step2: Fix the token validation (doing) [crafter:fixer, depth=1]
+  ☐ step3: Write auth tests (pending) [crafter:tester, depth=1]
 ```
 
 ---
@@ -915,9 +1190,9 @@ The TUI shows active sub-agents in the status bar:
 ┌──────────────────────────────────────────────────┐
 │ ⚡ 3 agents active: explorer, reviewer, fixer     │
 ├──────────────────────────────────────────────────┤
-│ [explorer] Reading src/api/auth.go               │
-│ [reviewer] Analyzing security patterns...         │
-│ [fixer]     Writing src/api/token.go              │
+│ [researcher:explorer] Reading src/api/auth.go    │
+│ [researcher:reviewer] Analyzing security patterns...│
+│ [crafter:fixer]      Writing src/api/token.go    │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -925,18 +1200,19 @@ The TUI shows active sub-agents in the status bar:
 
 Following Codex's approach, allow the user to switch to a specific agent's thread:
 
-- Press `/` to open agent list
+- Press `/` to open agent list (showing `category:name` for each agent)
 - Select an agent to see its live output
-- Permission prompts from any thread show the agent label
+- Permission prompts from any thread show the agent label with category
 - Press `q` to return to main thread view
 
 ### Sub-Agent Result Display
 
-When a sub-agent completes, its result is shown inline:
+When a sub-agent completes, its result is shown inline with category:
 
 ```
-┌─ Sub-agent Result: explorer ─────────────────────┐
+┌─ Sub-agent Result: researcher:explorer ──────────┐
 │ Status: completed (45s, 12k tokens, $0.003)       │
+│ Category: researcher                               │
 │                                                   │
 │ Found 3 API routes without auth middleware:       │
 │  - src/api/users.go:42   GET /users              │
@@ -1080,11 +1356,11 @@ The LLM should learn from this and not retry. If it retries 3 times, the loop de
 
 ### 16.14 Sub-Agent Config File Is Missing or Malformed
 
-**Case:** `run_sub_agent(name="explorer")` but `.crude/agents/explorer.toml` has a syntax error.
+**Case:** `run_sub_agent(name="explorer")` but `.crude/agents/explorer.toml` has a syntax error or doesn't exist.
 
 **Behavior:** 
-1. Log a warning about the malformed config
-2. Fall back to inline parameters only (no custom instructions from the file)
+1. Log a warning about the missing/malformed config
+2. Fall back to category defaults + inline parameters (the `category` field determines model, policy, tool defaults)
 3. The `run_sub_agent` call proceeds with whatever valid parameters are available
 
 ### 16.15 Concurrent Sub-Agent Count at Maximum
@@ -1110,57 +1386,150 @@ The LLM should learn from this and not retry. If it retries 3 times, the loop de
       "model": "anthropic/claude-sonnet-4",
       "provider_url": "",
       "thinking_effort": ""
+    },
+    "groq": {
+      "api_key": "",
+      "model": "llama-3.3-70b-versatile",
+      "provider_url": "",
+      "thinking_effort": ""
+    },
+    "wafer": {
+      "api_key": "",
+      "model": "qwen/qwen3.5-235b-a22b",
+      "provider_url": "",
+      "thinking_effort": ""
     }
   },
   "turn_logs_enabled": true,
   "agents": {
     "max_concurrent": 4,
     "max_depth": 2,
-    "max_steps_default": 50,
-    "timeout_default_seconds": 300,
     "auto_approve_read_only": true,
     "auto_approve_test_commands": true,
+    "categories": {
+      "main": {
+        "description": "Orchestrator — plans, delegates, interacts with user. Highest reasoning tier.",
+        "policy": "default",
+        "max_steps": 200,
+        "timeout_seconds": 600
+      },
+      "researcher": {
+        "model": "google/gemini-2.0-flash-exp:free",
+        "provider": "",
+        "policy": "read-only",
+        "max_steps": 30,
+        "timeout_seconds": 120,
+        "allowed_tools": [
+          "read_file", "glob_files", "grep_files", "list_directory",
+          "web_search", "web_fetch", "arxiv_search", "run_javascript"
+        ],
+        "denied_tools": [
+          "write_file", "edit_file", "delete_file", "move_file", "copy_file",
+          "execute_command", "async_execute_command"
+        ],
+        "description": "Gatherer — explores codebase, searches web, runs experiments. Read-heavy, cheap, fast."
+      },
+      "crafter": {
+        "model": "qwen/qwen3.5-235b-a22b",
+        "provider": "",
+        "policy": "no-delete",
+        "max_steps": 60,
+        "timeout_seconds": 300,
+        "denied_tools": ["delete_file"],
+        "description": "Implementer — writes code, edits files, runs tests. Mid-cost, write-capable."
+      },
+      "aeron": {
+        "model": "google/gemini-2.0-flash-exp:free",
+        "provider": "",
+        "policy": "read-only",
+        "max_steps": 10,
+        "timeout_seconds": 60,
+        "denied_tools": [
+          "delete_file", "move_file", "copy_file",
+          "execute_command", "async_execute_command",
+          "web_search", "web_fetch", "arxiv_search",
+          "run_javascript"
+        ],
+        "description": "Grunt — formatting, linting, boilerplate, simple refactors. Ultra-cheap, ultra-fast."
+      }
+    },
     "profiles": {
       "explorer": {
-        "model": "google/gemini-2.0-flash-exp:free",
-        "provider": "",
-        "policy": "read-only",
-        "allowed_tools": ["read_file", "glob_files", "grep_files", "list_directory", "web_search", "arxiv_search", "web_fetch"],
-        "denied_tools": [],
-        "instructions": "Stay in exploration mode. Trace execution paths, cite files and symbols. Prefer fast search over broad scans. Never modify any files.",
-        "max_steps": 30,
-        "timeout_seconds": 120
+        "category": "researcher",
+        "description": "Read-only codebase explorer for gathering evidence before changes.",
+        "allowed_tools": ["read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search"],
+        "instructions": "Stay in exploration mode. Trace execution paths, cite files and symbols. Prefer fast search over broad scans. Never modify any files."
       },
       "reviewer": {
+        "category": "researcher",
         "model": "anthropic/claude-sonnet-4",
-        "provider": "",
-        "policy": "read-only",
-        "instructions": "Review code for correctness, security, and missing tests. Lead with concrete findings.",
+        "description": "Code reviewer focused on correctness, security, and missing tests.",
         "max_steps": 40,
-        "timeout_seconds": 180
+        "timeout_seconds": 180,
+        "instructions": "Review code for correctness, security, and missing tests. Lead with concrete findings. Include reproduction steps when possible."
       },
       "fixer": {
-        "model": "",
-        "provider": "",
-        "policy": "no-delete",
+        "category": "crafter",
+        "description": "Implementation-focused agent for targeted fixes.",
         "instructions": "Make the smallest defensible change. Keep unrelated files untouched. Run tests after each fix.",
         "denied_tools": ["delete_file"],
-        "max_steps": 60,
-        "timeout_seconds": 300
+        "file_ownership": ["src/", "tests/"]
       },
       "tester": {
-        "model": "google/gemini-2.0-flash-exp:free",
-        "provider": "",
-        "policy": "no-delete",
-        "instructions": "Write comprehensive tests. Focus on edge cases and integration coverage.",
+        "category": "crafter",
+        "provider": "groq",
+        "model": "llama-3.3-70b-versatile",
+        "description": "Test writer focused on edge cases and integration coverage.",
+        "instructions": "Write comprehensive tests. Focus on edge cases and integration coverage. Run the test suite after writing.",
         "denied_tools": ["delete_file", "execute_command"],
         "max_steps": 80,
         "timeout_seconds": 300
+      },
+      "security-audit": {
+        "category": "researcher",
+        "model": "anthropic/claude-sonnet-4",
+        "description": "Deep security analysis of the codebase.",
+        "policy": "read-only",
+        "max_steps": 80,
+        "timeout_seconds": 300,
+        "instructions": "Conduct a thorough security audit. Focus on authentication, authorization, input validation, and secret management. Prioritize OWASP Top 10 vulnerabilities. Provide file:line references for every finding."
+      },
+      "formatter": {
+        "category": "aeron",
+        "description": "Quick formatting and linting pass.",
+        "max_steps": 8,
+        "timeout_seconds": 30,
+        "allowed_tools": ["read_file", "write_file", "execute_command", "glob_files"],
+        "instructions": "Run the project's formatter and linter. Only fix formatting issues. Do not change logic, structure, or behavior."
       }
     }
   }
 }
 ```
+
+### Inheritance Summary
+
+```
+run_sub_agent inline params
+    └── Profile (TOML or built-in)
+         └── Category defaults (config.json agents.categories)
+              └── Parent / Session defaults
+```
+
+**What each level provides:**
+
+| Field | Inline | Profile | Category | Parent |
+|-------|--------|---------|----------|--------|
+| `category` | ✅ overrides | ✅ declares | — | — |
+| `model` | ✅ overrides | ✅ overrides | ✅ default | ✅ fallback |
+| `provider` | ✅ overrides | ✅ overrides | ✅ default | ✅ fallback |
+| `policy` | ✅ overrides | ✅ overrides | ✅ default | ❌ |
+| `max_steps` | ✅ overrides | ✅ overrides | ✅ default | ❌ |
+| `timeout_seconds` | ✅ overrides | ✅ overrides | ✅ default | ❌ |
+| `allowed_tools` | ✅ intersects | ✅ intersects | ✅ baseline | ❌ |
+| `denied_tools` | ✅ unions | ✅ unions | ✅ baseline | ❌ |
+| `instructions` | ✅ overrides | ✅ overrides | ❌ | ❌ |
+| `file_ownership` | ✅ overrides | ✅ overrides | ❌ | ❌ |
 
 ### Agent Profile File (TOML)
 
@@ -1168,16 +1537,16 @@ The LLM should learn from this and not retry. If it retries 3 times, the loop de
 # ~/.crude/agents/explorer.toml
 
 name = "explorer"
+category = "researcher"
 description = "Read-only codebase explorer for gathering evidence."
-model = "google/gemini-2.0-flash-exp:free"
-# provider = ""  # inherit from session
-policy = "read-only"
+# Model inherits from researcher category default (gemini-flash)
+# Policy inherits from researcher category default (read-only)
 max_steps = 30
 timeout_seconds = 120
 
 allowed_tools = [
     "read_file",
-    "glob_files", 
+    "glob_files",
     "grep_files",
     "list_directory",
     "web_search",
@@ -1185,12 +1554,14 @@ allowed_tools = [
 ]
 
 instructions = """
-Stay in exploration mode. Trace the real execution path, cite files and 
-symbols, and avoid proposing fixes unless the parent agent asks for them. 
+Stay in exploration mode. Trace the real execution path, cite files and
+symbols, and avoid proposing fixes unless the parent agent asks for them.
 Prefer fast search and targeted file reads over broad scans.
 Never modify any files.
 """
 ```
+
+A profile TOML file sets `category` to inherit its category's model, policy, and tool defaults. The profile only specifies what differs from the category baseline.
 
 ---
 
@@ -1198,40 +1569,43 @@ Never modify any files.
 
 ### Phase 1: Core Sub-Agent Infrastructure (2-3 weeks)
 
-1. **Add `SubAgentSpec`, `SubAgentResult`, `SubAgentManager` types** in `agent/subagent.go`
-2. **Add `run_sub_agent` tool definition** to `tools/definitions.go`
-3. **Implement `SubAgentManager`** in `session/subagent.go`:
+1. **Add `SubAgentSpec`, `SubAgentResult`, `SubAgentManager` types** in `agent/subagent.go` (with `Category` field)
+2. **Add `run_sub_agent` tool definition** to `tools/definitions.go` (with `category` parameter)
+3. **Add `AgentCategory` type** and built-in defaults for Main/Researcher/Crafter/Aeron
+4. **Implement `SubAgentManager`** in `session/subagent.go`:
    - Spawn/cancel/track sub-agents
    - Enforce `max_concurrent`, `max_depth`
+   - Resolve category defaults (model, policy, tools, steps, timeout)
    - File ownership claims
-4. **Wire `run_sub_agent` into `session.go`'s `ToolFn`**:
-   - Build provider for sub-agent
-   - Filter tool list
-   - Compose policy
-   - Build custom system prompt
-   - Launch `Agent.Run()` in goroutine
-   - Collect `SubAgentResult`
-5. **Add `AgentID` to `AgentEvent`** for TUI tagging
-6. **Update `Agent` struct** with `AgentID`, `Depth`, `ParentID`
-7. **Basic TUI**: Show sub-agent status in status bar
+5. **Wire `run_sub_agent` into `session.go`'s `ToolFn`**:
+   - Resolve category defaults → profile overrides → inline overrides
+   - Build provider for sub-agent (inheritance chain)
+   - Filter tool list (category baseline + spec intersection/union)
+   - Compose policy (category → spec → parent intersection)
+   - Build custom system prompt with Category Briefing
+   - Launch `Agent.Run()` in goroutine, collect `SubAgentResult`
+6. **Add `AgentID` + `Category` to `AgentEvent`** for TUI tagging
+7. **Update `Agent` struct** with `AgentID`, `Depth`, `ParentID`
+8. **Basic TUI**: Show sub-agent category:name in status bar
 
 ### Phase 2: Permission & Safety Hardening (1-2 weeks)
 
-1. **Implement policy composition** (`ComposePolicy`)
-2. **Implement tool filtering** (`FilterTools`)
-3. **Implement file ownership system** (`FileOwnership`)
-4. **Tag permission prompts with agent identity**
-5. **Scope "always allow" grants to agent ID**
-6. **Add auto-approve classifier** for low-risk operations
-7. **Write comprehensive safety tests**
+1. **Implement `CategoryDefaults()`** in safety package
+2. **Implement category-aware policy composition** (`ComposePolicy` with category parameter)
+3. **Implement category-aware tool filtering** (`FilterTools` with category parameter)
+4. **Implement file ownership system** (`FileOwnership`)
+5. **Tag permission prompts with agent identity + category**
+6. **Scope "always allow" grants to agent ID**
+7. **Add auto-approve classifier** for low-risk operations
+8. **Write comprehensive safety tests**
 
-### Phase 3: Agent Profiles & Config (1 week)
+### Phase 3: Agent Profiles, Categories & Config (1 week)
 
-1. **Add TOML parsing** for `.crude/agents/*.toml` files
+1. **Add TOML parsing** for `.crude/agents/*.toml` files (with `category` field)
 2. **Implement profile lookup** (project → global → built-in)
-3. **Add `agents` section to `config.json` schema**
-4. **Implement config-driven model/provider routing**
-5. **Update TUI settings to show agent profiles**
+3. **Add `categories` + `profiles` section to `config.json` schema**
+4. **Implement category-based model/provider routing** (inheritance chain)
+5. **Update TUI settings to show categories and profiles**
 
 ### Phase 4: Advanced Features (2-3 weeks)
 

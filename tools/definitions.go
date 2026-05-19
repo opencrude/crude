@@ -290,11 +290,11 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "reply",
-			Description: "Send an intermediate message to the user WITHOUT ending the loop. Use for progress updates, partial results, or questions that need a response before continuing work. The loop continues after this — simply respond with text and no tool calls when you are truly done.",
+			Description: "Send a brief progress update to the user WITHOUT ending the loop. Maximum 1 line — this is for short status updates only (e.g. 'Running tests...', 'Found 3 issues'). Do NOT use this for full reports, detailed explanations, or long text — instead, respond with text only (no tool calls) when done. Long content will not be displayed properly.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"content":{"type":"string","description":"The intermediate message to show the user"}
+					"content":{"type":"string","description":"A short one-line status update. NOT for full reports or long text."}
 				},
 				"required":["content"]
 			}`),

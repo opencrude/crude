@@ -1084,7 +1084,10 @@ func (ml *MessageList) renderItem(idx int, item *virtlist.Item, width int) []str
 
 	if msg.CachedLines != nil && !isStreamingCursor {
 		result := make([]string, 0, len(msg.CachedLines)+1)
-		result = append(result, "")
+		msgIdx := ml.messageIndexOf(msg)
+		if !ml.shouldSuppressHeader(msgIdx) || ml.needsThinkingSpacer(msgIdx) || ml.needsPostThinkingSpacer(msgIdx) {
+			result = append(result, "")
+		}
 		result = append(result, msg.CachedLines...)
 		return result
 	}
@@ -1146,7 +1149,9 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 	timeLine1, timeLine2 := rendering.FormatTimeLabel(msg.Time)
 	timeW := rendering.Max(len(timeLine1), len(timeLine2))
 
-	lines = append(lines, "")
+	if !suppressHeader || ml.needsThinkingSpacer(msgIdx) || ml.needsPostThinkingSpacer(msgIdx) {
+		lines = append(lines, "")
+	}
 
 	switch msg.Role {
 	case types.RoleUser:
@@ -1208,6 +1213,26 @@ func messageParty(role string) string {
 	}
 }
 
+func (ml *MessageList) needsThinkingSpacer(msgIdx int) bool {
+	if ml.messages[msgIdx].Role != types.RoleThinking {
+		return false
+	}
+	if msgIdx <= 0 {
+		return true
+	}
+	return ml.messages[msgIdx-1].Role != types.RoleThinking
+}
+
+func (ml *MessageList) needsPostThinkingSpacer(msgIdx int) bool {
+	if ml.messages[msgIdx].Role != types.RoleAssistant {
+		return false
+	}
+	if msgIdx <= 0 {
+		return false
+	}
+	return ml.messages[msgIdx-1].Role == types.RoleThinking
+}
+
 func (ml *MessageList) shouldSuppressHeader(msgIdx int) bool {
 	if msgIdx <= 0 {
 		return false
@@ -1242,10 +1267,18 @@ func (ml *MessageList) messageToItem(idx int) virtlist.Item {
 	height := -1
 	var rendered []string
 	if msg.CachedLines != nil {
-		height = len(msg.CachedLines) + 1
-		rendered = make([]string, 0, height)
-		rendered = append(rendered, "")
-		rendered = append(rendered, msg.CachedLines...)
+		suppressHeader := ml.shouldSuppressHeader(idx)
+		needsSpacer := !suppressHeader || ml.needsThinkingSpacer(idx) || ml.needsPostThinkingSpacer(idx)
+		if needsSpacer {
+			height = len(msg.CachedLines) + 1
+			rendered = make([]string, 0, height)
+			rendered = append(rendered, "")
+			rendered = append(rendered, msg.CachedLines...)
+		} else {
+			height = len(msg.CachedLines)
+			rendered = make([]string, 0, height)
+			rendered = append(rendered, msg.CachedLines...)
+		}
 	} else if h, ok := ml.vl.ItemHeight(msg.InternalID); ok {
 		height = h
 	}
