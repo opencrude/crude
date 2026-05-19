@@ -7,6 +7,7 @@ import (
 
 	"crude/sessiondb"
 	"crude/tui/input"
+	"crude/tui/rendering"
 	"crude/tui/settings"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -114,12 +115,14 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 	ml := widgets.NewMessageList(th)
 	ml.SetModelName(modelName)
 	ml.SetUsername(username)
-	mainAgent := NewAgentState(MainAgentID, ml)
+	mainAgent := NewAgentState(MainAgentID, ml, lg)
 	im := input.NewModel(th)
 	sb := widgets.NewStatusBar(th)
 	sm := settings.NewModel(th, initial, nil, getProviderConfigFn, fetchFn)
 	cd := widgets.NewConfirmDialog(th)
 	yd := widgets.NewYoloDialog(th)
+
+	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) { lg.Warn(tag, msg, pairs...) })
 
 	pm := NewPaneManager()
 

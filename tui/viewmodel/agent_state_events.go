@@ -13,83 +13,89 @@ import (
 )
 
 func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
-	if data, ok := evt.Data.(map[string]any); ok {
-		toolID, _ := data["tool_id"].(string)
-		internalID, _ := data["internal_id"].(string)
-		name, _ := data["name"].(string)
-		if name == "" || name == "reply" {
-			return nil
-		}
-		path, _ := data["path"].(string)
-		command, _ := data["command"].(string)
-		urlStr, _ := data["url"].(string)
-		query, _ := data["query"].(string)
-		source, _ := data["source"].(string)
-		dest, _ := data["destination"].(string)
-		pattern, _ := data["pattern"].(string)
-		handle, _ := data["handle"].(string)
-		seconds, _ := data["seconds"].(string)
-
-		var tgt string
-		if name == "grep_files" && pattern != "" {
-			tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(pattern, 30))
-			if path != "" && path != "." {
-				tgt += " in " + path
-			}
-		} else {
-			tgt = path
-			if tgt == "" && command != "" {
-				tgt = command
-			}
-			if tgt == "" && source != "" && dest != "" {
-				tgt = source + " → " + dest
-			} else if tgt == "" && source != "" {
-				tgt = source
-			}
-			if tgt == "" && urlStr != "" {
-				tgt = urlStr
-			}
-			if tgt == "" && query != "" {
-				tgt = query
-			}
-			if tgt == "" && pattern != "" {
-				tgt = pattern
-			}
-			if tgt == "" && handle != "" {
-				if command != "" {
-					tgt = rendering.TruncateLine(command, 40) + " [" + handle + "]"
-				} else {
-					tgt = handle
-				}
-			}
-			if tgt == "" && seconds != "" {
-				tgt = seconds + "s"
-			}
-		}
-
-		contentLines := toInt(data["content_lines"])
-		oldLines := toInt(data["old_lines"])
-		newLines := toInt(data["new_lines"])
-
-		if name == "read_file" && tgt != "" {
-			offset := toInt(data["offset"])
-			limit := toInt(data["limit"])
-			if offset > 0 && limit > 0 {
-				tgt = fmt.Sprintf("%s line %d-%d", tgt, offset, offset+limit-1)
-			} else if offset > 0 {
-				tgt = fmt.Sprintf("%s line %d+", tgt, offset)
-			} else if limit > 0 {
-				tgt = fmt.Sprintf("%s (first %d lines)", tgt, limit)
-			}
-		}
-
-		data["target"] = tgt
-		data["content_lines_int"] = int(contentLines)
-		data["old_lines_int"] = int(oldLines)
-		data["new_lines_int"] = int(newLines)
-
-		target.UpdateToolStreaming(toolID, internalID, name, data)
+	origData, ok := evt.Data.(map[string]any)
+	if !ok {
+		return nil
 	}
+	toolID, _ := origData["tool_id"].(string)
+	internalID, _ := origData["internal_id"].(string)
+	name, _ := origData["name"].(string)
+	if name == "" || name == "reply" {
+		return nil
+	}
+	path, _ := origData["path"].(string)
+	command, _ := origData["command"].(string)
+	urlStr, _ := origData["url"].(string)
+	query, _ := origData["query"].(string)
+	source, _ := origData["source"].(string)
+	dest, _ := origData["destination"].(string)
+	pattern, _ := origData["pattern"].(string)
+	handle, _ := origData["handle"].(string)
+	seconds, _ := origData["seconds"].(string)
+
+	var tgt string
+	if name == "grep_files" && pattern != "" {
+		tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(pattern, 30))
+		if path != "" && path != "." {
+			tgt += " in " + path
+		}
+	} else {
+		tgt = path
+		if tgt == "" && command != "" {
+			tgt = command
+		}
+		if tgt == "" && source != "" && dest != "" {
+			tgt = source + " → " + dest
+		} else if tgt == "" && source != "" {
+			tgt = source
+		}
+		if tgt == "" && urlStr != "" {
+			tgt = urlStr
+		}
+		if tgt == "" && query != "" {
+			tgt = query
+		}
+		if tgt == "" && pattern != "" {
+			tgt = pattern
+		}
+		if tgt == "" && handle != "" {
+			if command != "" {
+				tgt = rendering.TruncateLine(command, 40) + " [" + handle + "]"
+			} else {
+				tgt = handle
+			}
+		}
+		if tgt == "" && seconds != "" {
+			tgt = seconds + "s"
+		}
+	}
+
+	contentLines := toInt(origData["content_lines"])
+	oldLines := toInt(origData["old_lines"])
+	newLines := toInt(origData["new_lines"])
+
+	if name == "read_file" && tgt != "" {
+		offset := toInt(origData["offset"])
+		limit := toInt(origData["limit"])
+		if offset > 0 && limit > 0 {
+			tgt = fmt.Sprintf("%s line %d-%d", tgt, offset, offset+limit-1)
+		} else if offset > 0 {
+			tgt = fmt.Sprintf("%s line %d+", tgt, offset)
+		} else if limit > 0 {
+			tgt = fmt.Sprintf("%s (first %d lines)", tgt, limit)
+		}
+	}
+
+	data := make(map[string]any, len(origData)+4)
+	for k, v := range origData {
+		data[k] = v
+	}
+	data["target"] = tgt
+	data["content_lines_int"] = int(contentLines)
+	data["old_lines_int"] = int(oldLines)
+	data["new_lines_int"] = int(newLines)
+
+	target.UpdateToolStreaming(toolID, internalID, name, data)
 	return nil
 }
 
@@ -259,10 +265,8 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 		}
 	} else {
 		target.MarkAllThinkingDone()
-		target.ClearStreamingTools()
 		if thinkTarget != target {
 			thinkTarget.MarkAllThinkingDone()
-			thinkTarget.ClearStreamingTools()
 		}
 	}
 	a.Thinking = false

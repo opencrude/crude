@@ -1,10 +1,13 @@
 package viewmodel
 
 import (
+	"encoding/hex"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"crude/tui/rendering"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 )
@@ -20,6 +23,7 @@ type AgentState struct {
 	LastTokenTime time.Time
 	SpinFrame     int
 	ActiveTyping  bool
+	Logger        Logger
 
 	ThinkingPaneID string
 
@@ -37,10 +41,11 @@ type AgentState struct {
 	pendingPermTool string
 }
 
-func NewAgentState(id string, msgList *widgets.MessageList) *AgentState {
+func NewAgentState(id string, msgList *widgets.MessageList, lg Logger) *AgentState {
 	return &AgentState{
 		ID:      id,
 		MsgList: msgList,
+		Logger:  lg,
 	}
 }
 
@@ -88,7 +93,8 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 
 	case "thinking":
 		if s, ok := evt.Data.(string); ok && s != "" {
-			thinkTarget.AppendThinking(s)
+			a.logIfInvalidUTF8("thinking", s)
+			thinkTarget.AppendThinking(rendering.SanitizeForTerminal(s))
 			a.Thinking = true
 			a.LastTokenTime = time.Now()
 			onThinking(true, false, false)
@@ -96,6 +102,8 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 
 	case "stream_token":
 		if s, ok := evt.Data.(string); ok && s != "" {
+			a.logIfInvalidUTF8("stream_token", s)
+			s = rendering.SanitizeForTerminal(s)
 			if !a.Streaming {
 				target.MarkAllThinkingDone()
 				if thinkTarget != target {
@@ -247,4 +255,47 @@ func (a *AgentState) retryResultCmd(msg string) tea.Cmd {
 	return func() tea.Msg {
 		return agentRetryResultMsg{Msg: msg, AgentID: a.ID}
 	}
+}
+
+func (a *AgentState) logIfInvalidUTF8(eventType, s string) {
+	if utf8.ValidString(s) {
+		return
+	}
+	badOff := -1
+	badBytes := []byte{}
+	for i := 0; i < len(s); {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		if size == 0 {
+			break
+		}
+		if size == 1 && s[i] < 0x80 {
+			i++
+			continue
+		}
+		rn := rune(s[i])
+		if rn == utf8.RuneError {
+			if badOff == -1 {
+				badOff = i
+			}
+			end := i + 8
+			if end > len(s) {
+				end = len(s)
+			}
+			badBytes = append(badBytes, s[i:end]...)
+		}
+		i += size
+	}
+	ctx := ""
+	if badOff >= 0 {
+		start := badOff - 16
+		if start < 0 {
+			start = 0
+		}
+		end := badOff + 32
+		if end > len(s) {
+			end = len(s)
+		}
+		ctx = s[start:end]
+	}
+	a.Logger.Warn("UTF8", "invalid_runes_in_event", "event_type", eventType, "agent_id", a.ID, "string_len", len(s), "first_bad_offset", badOff, "bad_bytes_hex", hex.EncodeToString(badBytes), "context", ctx)
 }

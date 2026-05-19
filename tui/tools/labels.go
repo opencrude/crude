@@ -30,6 +30,14 @@ func BuildToolTitle(msg types.ChatMessage, phase string) string {
 			}
 			return label
 		}
+		if msg.ToolStatus == types.ToolStatusCancelled {
+			label := rendering.PascalCaseTool(msg.ToolName)
+			if target != "" {
+				label += " " + target
+			}
+			label += " cancelled"
+			return label
+		}
 		return BuildDoneLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens, dur)
 	default:
 		if msg.ToolStatus == "success" || msg.ToolStatus == "error" {

@@ -92,6 +92,10 @@ func (a *Agent) Run(
 			return msgs
 		}
 
+		if step == 0 {
+			emit(AgentEvent{Type: "phase", Data: "grounding"})
+		}
+
 		drainBtw := func() {
 			for {
 				select {
@@ -213,6 +217,8 @@ func (a *Agent) Run(
 			}
 			return msgs
 		}
+
+		emit(AgentEvent{Type: "phase", Data: "executing"})
 
 		resultCh := a.executeToolCalls(ctx, toolCalls, emit, blockResolveCh, &lastReply, step)
 

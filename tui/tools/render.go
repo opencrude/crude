@@ -26,7 +26,7 @@ func isSummaryOnlyTool(name string) bool {
 
 func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string) []string {
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	isActive := msg.ToolStatus == "streaming" || msg.ToolStatus == "calling"
+	isActive := (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") && msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
 
 	spinColor := th.Colors.Spinner.Default
 	if isActive {
@@ -38,9 +38,13 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 		case "executing":
 			spinColor = th.Colors.Spinner.Executing
 		}
-	} else if msg.ToolStatus == "success" {
-		spinColor = th.Colors.Spinner.Done
-	} else if msg.ToolStatus == "error" {
+	} else if msg.ToolPreviewPhase == types.ToolPreviewDone {
+		if msg.ToolStatus == types.ToolStatusCancelled {
+			spinColor = th.Colors.Warning
+		} else {
+			spinColor = th.Colors.Spinner.Done
+		}
+	} else if msg.ToolPreviewPhase == types.ToolPreviewError || msg.ToolStatus == "error" {
 		spinColor = th.Colors.Spinner.Error
 	} else if msg.ToolStatus == "cancelled" {
 		spinColor = th.Colors.Warning
@@ -78,6 +82,12 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 			dot = "○ "
 		}
 		line := dim.Render("│ ") + spinStyle.Render(dot) + nameStyle.Render(title) + permSuffix
+		msgLines = append(msgLines, line)
+	} else if msg.ToolPreviewPhase == types.ToolPreviewDone {
+		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title) + permSuffix
+		msgLines = append(msgLines, line)
+	} else if msg.ToolPreviewPhase == types.ToolPreviewError {
+		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title) + permSuffix
 		msgLines = append(msgLines, line)
 	} else if msg.ToolStatus == "success" && msg.ToolName == "plan" {
 	} else if msg.ToolStatus == "success" {
