@@ -148,7 +148,7 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 				for i, wl := range wrappedLines {
 					if i >= maxRes-1 {
 						remaining := len(wrappedLines) - i
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
+					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))))
 						break
 					}
 					msgLines = append(msgLines, wl)
@@ -172,7 +172,7 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 			for i, wl := range wrappedLines {
 				if i >= maxRes-1 {
 					remaining := len(wrappedLines) - i
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%d more lines", remaining)))
+					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))))
 					break
 				}
 				msgLines = append(msgLines, wl)
@@ -370,7 +370,7 @@ func readResultSummary(content, path, duration string) string {
 
 	// Full read: count lines in the returned content
 	contentLines := len(strings.Split(content, "\n"))
-	label := fmt.Sprintf("Read %s — %d lines", path, contentLines)
+	label := fmt.Sprintf("Read %s — %s lines", path, rendering.FormatCount(contentLines))
 	if duration != "" {
 		label += " " + duration
 	}
@@ -443,7 +443,7 @@ func listDirResultSummary(content, target, duration string) string {
 
 	// Count non-empty lines as a fallback
 	lines := strings.Count(content, "\n") + 1
-	label := fmt.Sprintf("Listed %s — %d entries", target, lines)
+	label := fmt.Sprintf("Listed %s — %s entries", target, rendering.FormatCount(lines))
 	if duration != "" {
 		label += " " + duration
 	}
@@ -509,9 +509,9 @@ func webSearchResultSummary(content, target, duration string) string {
 		label += fmt.Sprintf(" \"%s\"", rendering.TruncateLine(target, 40))
 	}
 	if resultCount > 0 {
-		label += fmt.Sprintf(" — %d results", resultCount)
+		label += fmt.Sprintf(" — %s results", rendering.FormatCount(resultCount))
 	} else {
-		label += fmt.Sprintf(" — %d lines", count)
+		label += fmt.Sprintf(" — %s lines", rendering.FormatCount(count))
 	}
 	if duration != "" {
 		label += " " + duration
@@ -548,7 +548,7 @@ func arxivResultSummary(content, target, duration string) string {
 		label += fmt.Sprintf(" — %d papers", paperCount)
 	} else {
 		lines := strings.Count(content, "\n") + 1
-		label += fmt.Sprintf(" — %d lines", lines)
+		label += fmt.Sprintf(" — %s lines", rendering.FormatCount(lines))
 	}
 	if duration != "" {
 		label += " " + duration
@@ -568,7 +568,7 @@ func execResultSummary(content, target, duration string) string {
 	if content == "(command completed with no output)" {
 		label += " — no output"
 	} else {
-		label += fmt.Sprintf(" — %d lines", lineCount)
+		label += fmt.Sprintf(" — %s lines", rendering.FormatCount(lineCount))
 	}
 	if duration != "" {
 		label += " " + duration
@@ -593,7 +593,7 @@ func webFetchResultSummary(content, target, duration string) string {
 
 	charCount := len(content)
 	label := "Fetched " + rendering.TruncateLine(target, 50)
-	label += fmt.Sprintf(" — %s", formatCharCount(charCount))
+	label += fmt.Sprintf(" — %s chars", rendering.FormatCount(charCount))
 	if duration != "" {
 		label += " " + duration
 	}
@@ -653,7 +653,7 @@ func readAsyncResultSummary(content, target, duration string) string {
 	label := "Read output " + target
 	lineCount := strings.Count(content, "\n") + 1
 	if content != "" {
-		label += fmt.Sprintf(" — %d lines", lineCount)
+		label += fmt.Sprintf(" — %s lines", rendering.FormatCount(lineCount))
 	}
 	if duration != "" {
 		label += " " + duration
@@ -713,19 +713,6 @@ func copyResultSummary(content, target, duration string) string {
 
 // ── helpers ─────────────────────────────────────────────────
 
-func formatCharCount(n int) string {
-	switch {
-	case n >= 1000000:
-		return fmt.Sprintf("%.1fM chars", float64(n)/1000000)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk chars", float64(n)/1000)
-	default:
-		return fmt.Sprintf("%d chars", n)
-	}
-}
-
-// formatPermTag renders a compact, muted permission indicator as a title-line
-// suffix. Returns "" when tag is empty.
 func formatPermTag(tag string, th *theme.Theme) string {
 	if tag == "" {
 		return ""

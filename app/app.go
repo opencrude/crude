@@ -11,6 +11,7 @@ import (
 	"crude/session"
 	"crude/sessiondb"
 	"crude/tui"
+	"crude/tui/rendering"
 	ttypes "crude/tui/types"
 	"crude/tui/viewmodel"
 )
@@ -272,11 +273,11 @@ func (a *App) renderExitMessage() string {
 	m2 := sess.ModelName()
 	m3 := ""
 	if costSnap.TotalCost > 0 || costSnap.TotalPromptTokens > 0 {
-		m3 = fmt.Sprintf("$%.4f", costSnap.TotalCost)
+		m3 = rendering.FormatCost(costSnap.TotalCost)
 		if costSnap.TotalPromptTokens > 0 {
-			m3 += fmt.Sprintf(" (%dk↑ %dk↓", costSnap.TotalPromptTokens/1024, costSnap.TotalCompletionTokens/1024)
+			m3 += fmt.Sprintf(" (%s↑ %s↓", rendering.FormatTokens(costSnap.TotalPromptTokens), rendering.FormatTokens(costSnap.TotalCompletionTokens))
 			if costSnap.TotalCachedTokens > 0 {
-				m3 += fmt.Sprintf(" %dk cached", costSnap.TotalCachedTokens/1024)
+				m3 += fmt.Sprintf(" %s cached", rendering.FormatTokens(costSnap.TotalCachedTokens))
 			}
 			m3 += ")"
 		}

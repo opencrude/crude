@@ -17,11 +17,23 @@ func PascalCaseTool(name string) string {
 }
 
 func FormatTokens(n int) string {
+	return FormatCount(n)
+}
+
+func FormatCount(n int) string {
 	switch {
 	case n >= 1000000:
-		return fmt.Sprintf("%.1fM", float64(n)/1000000)
+		v := float64(n) / 1000000
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%dM", int(v))
+		}
+		return fmt.Sprintf("%.1fM", v)
 	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
+		v := float64(n) / 1000
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%dK", int(v))
+		}
+		return fmt.Sprintf("%.1fK", v)
 	default:
 		return fmt.Sprintf("%d", n)
 	}
