@@ -214,6 +214,7 @@ func (m *App) setMode(newMode Mode) {
 	oldMode := m.Mode
 	m.logger.Debug("UI", "mode_switch", "from", modeName(oldMode), "to", modeName(newMode))
 	m.Mode = newMode
+	m.mainMsgList.ClearSelection()
 	m.mainMsgList.InvalidateAllMessages()
 	switch newMode {
 	case ModeSettings:

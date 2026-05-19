@@ -32,6 +32,7 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 
 	if m.Mode == ModeYolo {
 		m.yoloDlg.Dismiss()
+		m.statusbar.SetConfirming(false)
 		if m.win.IsOpen() {
 			tab := m.win.TabByTitle("YOLO")
 			if tab != nil {
@@ -51,6 +52,7 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 	if m.Mode == ModeConfirm {
 		m.confirm.Dismiss()
 		m.blocking = false
+		m.statusbar.SetConfirming(false)
 		if m.win.IsOpen() {
 			tab := m.win.TabByTitle("Confirm")
 			if tab != nil {

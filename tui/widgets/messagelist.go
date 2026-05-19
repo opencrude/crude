@@ -92,6 +92,8 @@ func (ml *MessageList) SetPaneScrollbarWidth(w int) {
 		ml.paneScrollbarW = w
 		for _, msg := range ml.messages {
 			msg.CachedLines = nil
+			msg.StreamCompletedLines = nil
+			msg.StreamCompletedLen = 0
 		}
 		ml.vl.InvalidateAll()
 	}
@@ -104,15 +106,22 @@ func (ml *MessageList) PaneScrollbarWidth() int {
 func (ml *MessageList) SetTheme(t *theme.Theme) {
 	if t != nil {
 		ml.theme = t
+		ml.InvalidateAllMessages()
 	}
 }
 
 func (ml *MessageList) SetModelName(name string) {
-	ml.modelName = name
+	if ml.modelName != name {
+		ml.modelName = name
+		ml.InvalidateAllMessages()
+	}
 }
 
 func (ml *MessageList) SetUsername(name string) {
-	ml.username = name
+	if ml.username != name {
+		ml.username = name
+		ml.InvalidateAllMessages()
+	}
 }
 
 func (ml *MessageList) SetSize(w, h int) {
@@ -125,6 +134,7 @@ func (ml *MessageList) SetSize(w, h int) {
 		ml.mdRenderer = nil
 		ml.vl.InvalidateHeights()
 		ml.vl.InvalidateAll()
+		ml.ClearSelection()
 	}
 	ml.width = w
 	ml.height = h
@@ -465,6 +475,8 @@ func (ml *MessageList) MarkStreamingToolsCancelled() {
 		if msg.ToolStatus == "streaming" || msg.ToolStatus == "calling" {
 			msg.ToolStatus = types.ToolStatusCancelled
 			msg.ToolPreviewPhase = types.ToolPreviewDone
+			msg.ToolProgressPhase = ""
+			msg.ToolProgressMessage = ""
 			msg.CachedLines = nil
 			ml.vl.InvalidateItem(msg.InternalID)
 		}
@@ -508,6 +520,9 @@ func (ml *MessageList) RemoveActiveThinking() string {
 	}
 	if len(keep) != len(ml.messages) {
 		ml.messages = keep
+		for _, msg := range ml.messages {
+			msg.CachedLines = nil
+		}
 		ml.RebuildItems()
 	}
 	return content
@@ -664,9 +679,7 @@ func (ml *MessageList) handleMouse(msg tea.MouseMsg) tea.Cmd {
 		msg.Y >= ml.chatAreaTop && msg.Y <= chatBottom
 
 	if inScrollbarZone && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-		// Cancel any active selection when interacting with scrollbar
-		ml.selecting = false
-		ml.selAutoScroll = false
+		ml.ClearSelection()
 
 		trackMsg := msg
 		trackMsg.Y = msg.Y - ml.chatAreaTop
@@ -698,8 +711,7 @@ func (ml *MessageList) handleMouse(msg tea.MouseMsg) tea.Cmd {
 				ml.selAutoScroll = false
 			}
 		} else {
-			ml.selecting = false
-			ml.selAutoScroll = false
+			ml.ClearSelection()
 		}
 
 	case msg.Action == tea.MouseActionMotion && ml.selecting:
@@ -730,6 +742,12 @@ func (ml *MessageList) handleMouse(msg tea.MouseMsg) tea.Cmd {
 		}
 
 	case msg.Action == tea.MouseActionRelease && ml.selecting:
+		ml.ForceUpdateHeights()
+		lineIdx, ok := ml.MouseToGlobalLine(msg.Y)
+		if ok {
+			ml.selEndLine = lineIdx
+			ml.selEndCol = rendering.Max(0, msg.X-ml.theme.Spacing.PadLR)
+		}
 		ml.selecting = false
 		ml.selAutoScroll = false
 		sLine, sCol, eLine, eCol := ml.SelectionRange()
@@ -809,6 +827,23 @@ func (ml *MessageList) HasActiveSelection() bool {
 	return ml.selAnchorLine != ml.selEndLine || ml.selAnchorCol != ml.selEndCol
 }
 
+func (ml *MessageList) IsSelecting() bool {
+	return ml.selecting
+}
+
+func (ml *MessageList) IsScrollbarDragging() bool {
+	return ml.scrollbar.IsDragging()
+}
+
+func (ml *MessageList) ForceUpdateHeights() {
+	width := ml.width - ml.theme.Spacing.PadLR*2 - ml.ScrollbarWidth()
+	if width < 20 {
+		width = 20
+	}
+	ml.vl.EnsureHeights(ml.renderItem, width)
+	ml.vl.BuildIndex()
+}
+
 func (ml *MessageList) ClearSelection() {
 	ml.selecting = false
 	ml.selAutoScroll = false
@@ -816,6 +851,7 @@ func (ml *MessageList) ClearSelection() {
 	ml.selAnchorCol = 0
 	ml.selEndLine = 0
 	ml.selEndCol = 0
+	ml.selMouseY = 0
 }
 
 func (ml *MessageList) MouseToGlobalLine(mouseY int) (globalLine int, ok bool) {
@@ -881,18 +917,17 @@ func (ml *MessageList) ExtractSelectedText(startLine, startCol, endLine, endCol 
 	return rendering.ExtractSelectedText(allLines, startLine, startCol, endLine, endCol)
 }
 
+// buildAllLinesForSelection produces the line array that selection
+// coordinates index into. It reads directly from VL item Rendered data
+// populated by ForceUpdateHeights, guaranteeing structural consistency
+// with the height index used by MouseToGlobalLine — no redundant
+// re-rendering that could diverge.
 func (ml *MessageList) buildAllLinesForSelection() []string {
-	var all []string
-	for _, msg := range ml.messages {
-		all = append(all, "")
-		if msg.CachedLines != nil {
-			all = append(all, msg.CachedLines...)
-		} else {
-			lines := ml.renderSingleMessage(msg)
-			if len(lines) > 1 {
-				all = append(all, lines[1:]...)
-			}
-		}
+	n := ml.vl.ItemCount()
+	all := make([]string, 0, ml.vl.TotalHeight())
+	for i := 0; i < n; i++ {
+		item := ml.vl.Item(i)
+		all = append(all, item.Rendered...)
 	}
 	return all
 }
@@ -1205,16 +1240,21 @@ func (ml *MessageList) messageIndexOf(target *types.ChatMessage) int {
 func (ml *MessageList) messageToItem(idx int) virtlist.Item {
 	msg := ml.messages[idx]
 	height := -1
+	var rendered []string
 	if msg.CachedLines != nil {
 		height = len(msg.CachedLines) + 1
+		rendered = make([]string, 0, height)
+		rendered = append(rendered, "")
+		rendered = append(rendered, msg.CachedLines...)
 	} else if h, ok := ml.vl.ItemHeight(msg.InternalID); ok {
 		height = h
 	}
 	return virtlist.Item{
-		ID:     msg.InternalID,
-		Height: height,
-		Dirty:  msg.CachedLines == nil,
-		Data:   msg,
+		ID:       msg.InternalID,
+		Height:   height,
+		Rendered: rendered,
+		Dirty:    msg.CachedLines == nil,
+		Data:     msg,
 	}
 }
 
