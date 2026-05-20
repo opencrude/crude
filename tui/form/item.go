@@ -20,6 +20,7 @@ const (
 	FormItemActionExpand
 	FormItemActionChanged
 	FormItemActionAdvance
+	FormItemActionNavigate
 )
 
 type FormItem interface {
@@ -367,3 +368,50 @@ func (m *CycleItem) Restore(snap FormItem) {
 		m.idx = s.idx
 	}
 }
+
+type NavItem struct {
+	theme  *theme.Theme
+	label  string
+	detail string
+	target string
+}
+
+func NewNavItem(t *theme.Theme, label, detail, target string) *NavItem {
+	return &NavItem{theme: t, label: label, detail: detail, target: target}
+}
+
+func (m *NavItem) View(focused bool, spinFrame int, labelWidth int) string {
+	dim := m.theme.Styles.DimLabel
+	accent := m.theme.Styles.InputPrompt
+	textStyle := m.theme.Styles.InputText
+
+	prefix := "  "
+	if focused {
+		prefix = accent.Render("❯") + " "
+	}
+
+	labelFmt := fmt.Sprintf("%%-%ds%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
+	labelPart := dim.Render(fmt.Sprintf(labelFmt, m.label))
+	detailPart := textStyle.Render(m.detail)
+
+	return prefix + labelPart + detailPart
+}
+
+func (m *NavItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
+	if msg.Type == tea.KeyEnter {
+		return m, nil, FormItemActionNavigate, true
+	}
+	return m, nil, FormItemActionNone, false
+}
+
+func (m *NavItem) Label() string       { return m.label }
+func (m *NavItem) InlineLabel() string  { return m.label }
+func (m *NavItem) Value() string        { return m.target }
+func (m *NavItem) SetValue(string)      {}
+func (m *NavItem) Target() string       { return m.target }
+
+func (m *NavItem) Snapshot() FormItem {
+	return &NavItem{theme: m.theme, label: m.label, detail: m.detail, target: m.target}
+}
+
+func (m *NavItem) Restore(snap FormItem) {}

@@ -42,9 +42,10 @@ type MessageRow struct {
 }
 
 type MessageWithMeta struct {
-	Msg  provider.ChatMessage
-	Meta DisplayMeta
-	Turn int
+	Msg       provider.ChatMessage
+	Meta      DisplayMeta
+	Turn      int
+	CreatedAt int64
 }
 
 func ReplaceMessages(db *sql.DB, sessionID string, msgs []provider.ChatMessage, turnNumbers []int) (int, error) {
@@ -290,9 +291,10 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 		}
 
 		result = append(result, MessageWithMeta{
-			Msg:  m,
-			Meta: meta,
-			Turn: turn,
+			Msg:       m,
+			Meta:      meta,
+			Turn:      turn,
+			CreatedAt: r.CreatedAt,
 		})
 	}
 

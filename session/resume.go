@@ -102,10 +102,13 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 	p.SetThinkingEffort(activeCfg.ThinkingEffort)
 
 	var displayMetas []sessiondb.DisplayMeta
+	var createdAts []int64
 	if len(msgsWithMeta) > 0 {
 		displayMetas = make([]sessiondb.DisplayMeta, len(msgsWithMeta))
+		createdAts = make([]int64, len(msgsWithMeta))
 		for i, mm := range msgsWithMeta {
 			displayMetas[i] = mm.Meta
+			createdAts[i] = mm.CreatedAt
 		}
 	}
 
@@ -146,6 +149,7 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		msgs:         msgs,
 		msgTurns:     msgTurns,
 		displayMetas: displayMetas,
+		createdAts:   createdAts,
 		writeBuf:     make([]taggedMessage, 0, 64),
 	}, nil
 }

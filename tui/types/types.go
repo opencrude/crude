@@ -35,6 +35,34 @@ const (
 	ConfirmDeny   = "deny"
 )
 
+type CategorySettings struct {
+	Provider       string
+	ProviderURL    string
+	APIKey         string
+	Model          string
+	ThinkingEffort string
+	Policy         string
+	MaxSteps       int
+	TimeoutSeconds int
+	Description    string
+}
+
+type ProfileSettings struct {
+	Name       string
+	Categories map[string]CategorySettings
+	MultiAgent string // "on", "off", ""
+	TurnLogs   string // "on", "off", ""
+}
+
+type AgentsSettings struct {
+	Enabled       bool
+	ActiveProfile string
+	MaxConcurrent int
+	MaxDepth      int
+	Categories    map[string]CategorySettings
+	Profiles      []ProfileSettings
+}
+
 type Settings struct {
 	APIKey                   string
 	Model                    string
@@ -47,6 +75,7 @@ type Settings struct {
 	ProviderAPIKey           string
 	ThinkingEffort           string
 	TurnLogsEnabled          string
+	Agents                   AgentsSettings
 }
 
 type ModelEntry struct {
@@ -77,6 +106,12 @@ type ConfirmResult struct {
 	Operation string
 	Tool      string
 	Target    string
+}
+
+type QuestionResult struct {
+	Answer    string
+	Custom    bool
+	Cancelled bool
 }
 
 type UndoResultMsg struct {

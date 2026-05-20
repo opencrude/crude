@@ -18,6 +18,7 @@ const (
 	FormActionCancel
 	FormActionBack
 	FormActionExpand
+	FormActionNavigate
 )
 
 type Button struct {
@@ -115,6 +116,10 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 			m.focusedBtn = 0
 		}
 		return m, cmd, FormActionNone
+	}
+
+	if action == FormItemActionNavigate {
+		return m, cmd, FormActionNavigate
 	}
 
 	if handled {
@@ -455,4 +460,13 @@ func (m Form) ItemOptionCount(idx int) int {
 		}
 	}
 	return 0
+}
+
+func (m Form) FocusedNavTarget() (string, bool) {
+	if m.focusZone == 0 && m.focused >= 0 && m.focused < len(m.items) {
+		if ni, ok := m.items[m.focused].(*NavItem); ok {
+			return ni.Target(), true
+		}
+	}
+	return "", false
 }

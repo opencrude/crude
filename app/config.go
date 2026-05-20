@@ -12,6 +12,7 @@ type FileConfig struct {
 	ActiveProvider  string                            `json:"active_provider"`
 	Providers       map[string]session.ProviderConfig `json:"providers"`
 	TurnLogsEnabled *bool                             `json:"turn_logs_enabled,omitempty"`
+	Agents          *session.AgentsConfig             `json:"agents,omitempty"`
 }
 
 func (c *FileConfig) IsTurnLogsEnabled() bool {
@@ -95,18 +96,24 @@ func SaveHistory(history []string) error {
 }
 
 func FileConfigToSession(fc FileConfig) *session.Config {
-	return &session.Config{
+	cfg := &session.Config{
 		ActiveProvider:  fc.ActiveProvider,
 		Providers:       fc.Providers,
 		TurnLogsEnabled: fc.IsTurnLogsEnabled(),
 	}
+	if fc.Agents != nil {
+		cfg.Agents = *fc.Agents
+	}
+	return cfg
 }
 
 func SessionToFileConfig(sc *session.Config) FileConfig {
 	tl := sc.TurnLogsEnabled
-	return FileConfig{
+	fc := FileConfig{
 		ActiveProvider:  sc.ActiveProvider,
 		Providers:       sc.Providers,
 		TurnLogsEnabled: &tl,
 	}
+	fc.Agents = &sc.Agents
+	return fc
 }

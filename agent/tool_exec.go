@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"crude/provider"
@@ -64,6 +65,46 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		*lastReply = content
 		a.logger.Debug("AGENT", "goroutine_reply", "content_len", len(content), "tool_id", tc.ID)
 		return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: tools.ToolResult{Content: content}}
+	}
+
+	if tc.Function.Name == "question" {
+		questionText := getStr(params, "question")
+		if questionText == "" {
+			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Error: question tool requires a 'question' parameter"}}
+		}
+		rawOpts, _ := params["options"]
+		var optStrs []string
+		if rawOpts != nil {
+			if arr, ok := rawOpts.([]any); ok {
+				for _, v := range arr {
+					if s, ok := v.(string); ok {
+						optStrs = append(optStrs, s)
+					}
+				}
+			}
+		}
+		emit(AgentEvent{Type: "tool_call", Data: map[string]any{
+			"internal_id": internalID,
+			"tool_id":     tc.ID,
+			"name":        "question",
+			"args":        formatToolArgs(params),
+		}})
+		emit(AgentEvent{Type: "blocking", Data: map[string]string{
+			"operation": "question",
+			"tool":       "question",
+			"target":     questionText,
+			"question":   questionText,
+			"options":    strings.Join(optStrs, "\x00"),
+		}})
+		resp := <-blockResolveCh
+		emit(AgentEvent{Type: "blocking_complete"})
+		emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+			"internal_id": internalID,
+			"tool_id":     tc.ID,
+			"name":        "question",
+			"result":      resp,
+		}})
+		return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: resp}}
 	}
 
 	if tc.Function.Name == "execute_command" && !a.Yolo {

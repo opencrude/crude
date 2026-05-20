@@ -1,7 +1,11 @@
 package settings
 
 import (
+	"strings"
+	"unicode"
+
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"crude/tui/components"
 	"crude/tui/form"
@@ -20,15 +24,27 @@ type CancelEvent struct{}
 
 func (CancelEvent) event() {}
 
-type settingsSnapshot struct {
-	providerID                                           string
-	modelCtx                                  int
-	modelInPrice, modelOutPrice, modelCachePrice         float64
-}
+const (
+	pageRoot = iota
+	pageProfiles
+	pageCategory
+)
 
 type Model struct {
 	theme *theme.Theme
-	form  form.Form
+
+	page        int
+	categoryKey string
+
+	rootForm     form.Form
+	categoryForm form.Form
+
+	profileCursor     int
+	profileFocusZone  int
+	creatingProfile   bool
+	profileNameInput  []rune
+	profileNameCursor int
+	profileBtnIdx     int
 
 	providerID    string
 	activePresets []types.ProviderPreset
@@ -42,33 +58,39 @@ type Model struct {
 	modelsData []types.ModelEntry
 
 	snapshot *settingsSnapshot
+
+	agentsSettings types.AgentsSettings
+	turnLogs      string
+}
+
+type settingsSnapshot struct {
+	providerID      string
+	modelCtx        int
+	modelInPrice    float64
+	modelOutPrice   float64
+	modelCachePrice float64
+	agentsSettings types.AgentsSettings
+	turnLogs        string
 }
 
 func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPreset, getProviderConfigFn func(string) types.ProviderConfig, fetchModelsFn func(string, string, string) tea.Cmd) Model {
-	providerOptions := make([]components.ListItem, len(presets))
-	for i, p := range presets {
-		providerOptions[i] = components.ListItem{ID: p.ID, Label: p.Name, Detail: p.HelpText}
+	agents := initial.Agents
+	if agents.Categories == nil {
+		agents.Categories = make(map[string]types.CategorySettings)
+	}
+	if agents.ActiveProfile == "" {
+		agents.ActiveProfile = "default"
 	}
 
-	providerItem := form.NewSelectItem(t, "provider", initial.ProviderID, 12)
-	providerItem.SetOptions(providerOptions)
-
-	baseURLItem := form.NewTextItem(t, "base url", initial.ProviderURL, false)
-	apiKeyItem := form.NewTextItem(t, "api key", initial.ProviderAPIKey, true)
-	modelItem := form.NewSelectItem(t, "model", initial.Model, 12)
-	effortItem := form.NewCycleItem(t, "thinking effort",
-		[]string{"none", "low", "medium", "high", "xhigh"}, initial.ThinkingEffort)
-	turnLogsItem := form.NewCycleItem(t, "turn logs",
-		[]string{"on", "off"}, initial.TurnLogsEnabled)
-
-	f := form.NewFormWithButtons(t, "Settings",
-		"[ interactive settings · arrows/tab: navigate · enter: edit · esc: return ]",
-		[]form.Button{{Label: "Save", Key: "s", Color: t.Colors.Success}, {Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true}},
-		providerItem, baseURLItem, apiKeyItem, modelItem, effortItem, turnLogsItem)
+	turnLogs := initial.TurnLogsEnabled
+	if turnLogs == "" {
+		turnLogs = "on"
+	}
 
 	return Model{
 		theme:               t,
-		form:                f,
+		page:                pageRoot,
+		rootForm:            buildRootForm(t, agents, turnLogs, initial.ProviderID, initial.Model),
 		providerID:          initial.ProviderID,
 		activePresets:       presets,
 		modelCtx:            initial.ModelContextWindow,
@@ -77,11 +99,100 @@ func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPr
 		modelCachePrice:     initial.MainCacheReadPrice,
 		getProviderConfigFn: getProviderConfigFn,
 		fetchModelsFn:       fetchModelsFn,
+		agentsSettings:      agents,
+		turnLogs:            turnLogs,
 	}
 }
 
+func catDetail(cat types.CategorySettings, agentsEnabled bool) string {
+	if !agentsEnabled {
+		return "Off"
+	}
+	if cat.Model != "" && cat.Provider != "" {
+		return cat.Model + "/" + cat.Provider
+	}
+	if cat.Model != "" {
+		return cat.Model
+	}
+	return "inherit"
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}
+
+func buildRootForm(t *theme.Theme, agents types.AgentsSettings, turnLogs, defaultProvider, defaultModel string) form.Form {
+	profileLabel := agents.ActiveProfile
+	if profileLabel == "" {
+		profileLabel = "default"
+	}
+
+	mainCat := agents.Categories["main"]
+	mainModel := mainCat.Model
+	if mainModel == "" {
+		mainModel = defaultModel
+	}
+	mainProv := mainCat.Provider
+	if mainProv == "" {
+		mainProv = defaultProvider
+	}
+	mainDetail := mainModel + "/" + mainProv
+
+	items := []form.FormItem{
+		form.NewNavItem(t, "Profiles", profileLabel+" - organize your configuration for different categories", "profiles"),
+		form.NewNavItem(t, "Main Agent", mainDetail+" - Orchestrator(plans, delegates...)", "cat:main"),
+		form.NewNavItem(t, "Researcher", catDetail(agents.Categories["researcher"], agents.Enabled)+" - Researcher(gatherer...)", "cat:researcher"),
+		form.NewNavItem(t, "Crafter", catDetail(agents.Categories["crafter"], agents.Enabled)+" - Crafter(implementer...)", "cat:crafter"),
+		form.NewNavItem(t, "Aeron", catDetail(agents.Categories["aeron"], agents.Enabled)+" - Aeron(grunt...)", "cat:aeron"),
+		form.NewCycleItem(t, "Multi agent", []string{"on", "off"}, boolStr(agents.Enabled)),
+		form.NewCycleItem(t, "Turn Logs", []string{"on", "off"}, turnLogs),
+	}
+
+	return form.NewFormWithButtons(t, "Settings",
+		"[ arrows/tab: navigate · enter: edit · esc: return ]",
+		[]form.Button{
+			{Label: "Save", Key: "s", Color: t.Colors.Success},
+			{Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true},
+		},
+		items...)
+}
+
+func buildCategoryForm(t *theme.Theme, catKey string, cat types.CategorySettings, presets []types.ProviderPreset, isMain bool) form.Form {
+	providerItem := form.NewSelectItem(t, "provider", cat.Provider, 12)
+	providerOptions := make([]components.ListItem, len(presets))
+	for i, p := range presets {
+		providerOptions[i] = components.ListItem{ID: p.ID, Label: p.Name, Detail: p.HelpText}
+	}
+	providerItem.SetOptions(providerOptions)
+
+	baseURLItem := form.NewTextItem(t, "base url", cat.ProviderURL, false)
+	apiKeyItem := form.NewTextItem(t, "api key", cat.APIKey, true)
+	modelItem := form.NewSelectItem(t, "model", cat.Model, 12)
+	effortItem := form.NewCycleItem(t, "thinking effort",
+		[]string{"none", "low", "medium", "high", "xhigh"}, cat.ThinkingEffort)
+
+	title := "Category: " + catKey
+	if cat.Description != "" {
+		title = cat.Description
+	}
+	if isMain {
+		title = "Main Agent"
+	}
+
+	return form.NewFormWithButtons(t, title,
+		"[ enter: edit · esc: back ]",
+		[]form.Button{
+			{Label: "Save", Key: "s", Color: t.Colors.Success},
+			{Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true},
+		},
+		providerItem, baseURLItem, apiKeyItem, modelItem, effortItem)
+}
+
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && !m.form.IsEditing() {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && !m.isEditing() {
 		switch keyMsg.String() {
 		case "j":
 			msg = tea.KeyMsg{Type: tea.KeyDown}
@@ -92,35 +203,119 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 		}
 	}
 
-	oldProvider := m.form.ItemValue(0)
-	oldModel := m.form.ItemValue(3)
+	switch m.page {
+	case pageRoot:
+		return m.updateRoot(msg)
+	case pageProfiles:
+		return m.updateProfiles(msg)
+	case pageCategory:
+		return m.updateCategory(msg)
+	}
 
-	updated, cmd, action := m.form.Update(msg)
-	m.form = updated
+	return m, nil, nil
+}
 
-	if action == form.FormActionExpand {
-		expanded := m.form.ExpandedIndex()
-		if expanded == 3 && m.canFetchModels() && m.form.ItemOptionCount(expanded) == 0 && !m.form.IsItemLoading(expanded) {
-			m.form.SetItemLoading(expanded, true, "fetching models...")
-			fetchCmd := m.fetchModels()
-			if fetchCmd != nil {
-				return m, fetchCmd, nil
-			}
+func (m Model) isEditing() bool {
+	switch m.page {
+	case pageRoot:
+		return m.rootForm.IsEditing()
+	case pageProfiles:
+		return m.creatingProfile
+	case pageCategory:
+		return m.categoryForm.IsEditing()
+	}
+	return false
+}
+
+func (m *Model) saveActiveProfileState() {
+	maEnabled := m.agentsSettings.Enabled
+	tl := m.turnLogs
+	for i := range m.agentsSettings.Profiles {
+		if m.agentsSettings.Profiles[i].Name == m.agentsSettings.ActiveProfile {
+			m.agentsSettings.Profiles[i].MultiAgent = boolStr(maEnabled)
+			m.agentsSettings.Profiles[i].TurnLogs = tl
+			m.agentsSettings.Profiles[i].Categories = copyCatMap(m.agentsSettings.Categories)
+			return
 		}
 	}
+	m.agentsSettings.Profiles = append(m.agentsSettings.Profiles, types.ProfileSettings{
+		Name:       m.agentsSettings.ActiveProfile,
+		MultiAgent: boolStr(maEnabled),
+		TurnLogs:   tl,
+		Categories: copyCatMap(m.agentsSettings.Categories),
+	})
+}
 
-	newProvider := m.form.ItemValue(0)
-	if newProvider != oldProvider {
-		m.updateProviderFields(newProvider)
+func copyCatMap(src map[string]types.CategorySettings) map[string]types.CategorySettings {
+	dst := make(map[string]types.CategorySettings, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func (m *Model) loadProfile(name string) bool {
+	for _, p := range m.agentsSettings.Profiles {
+		if p.Name == name {
+			m.agentsSettings.Categories = copyCatMap(p.Categories)
+			m.agentsSettings.Enabled = p.MultiAgent != "off"
+			m.turnLogs = p.TurnLogs
+			if m.turnLogs == "" {
+				m.turnLogs = "on"
+			}
+			mainCat := p.Categories["main"]
+			if mainCat.Provider == "" {
+				m.providerID = ""
+			}
+			return true
+		}
+	}
+	m.agentsSettings.Categories = make(map[string]types.CategorySettings)
+	m.agentsSettings.Enabled = true
+	m.turnLogs = "on"
+	m.providerID = ""
+	return false
+}
+
+func (m Model) updateRoot(msg tea.Msg) (Model, tea.Cmd, Event) {
+	wasEnabled := m.agentsSettings.Enabled
+
+	updated, cmd, action := m.rootForm.Update(msg)
+	m.rootForm = updated
+
+	if action == form.FormActionNavigate {
+		if target, ok := m.rootForm.FocusedNavTarget(); ok {
+			switch {
+			case target == "profiles":
+				m.saveActiveProfileState()
+				m.openProfiles()
+			case strings.HasPrefix(target, "cat:"):
+				m.OpenCategory(strings.TrimPrefix(target, "cat:"))
+			}
+		}
+		return m, cmd, nil
 	}
 
-	newModel := m.form.ItemValue(3)
-	if newModel != oldModel {
-		m.updateModelMetadata(newModel)
+	multiAgentVal := m.rootForm.ItemValue(5)
+	m.agentsSettings.Enabled = multiAgentVal == "on"
+	m.turnLogs = m.rootForm.ItemValue(6)
+
+	if m.agentsSettings.Enabled && len(m.agentsSettings.Categories) == 0 {
+		m.agentsSettings.MaxConcurrent = 4
+		m.agentsSettings.MaxDepth = 2
+		m.agentsSettings.Categories["main"] = types.CategorySettings{}
+		m.agentsSettings.Categories["researcher"] = types.CategorySettings{}
+		m.agentsSettings.Categories["crafter"] = types.CategorySettings{}
+		m.agentsSettings.Categories["aeron"] = types.CategorySettings{}
+	}
+
+	if m.agentsSettings.Enabled != wasEnabled {
+		m.rebuildRootForm()
 	}
 
 	switch action {
 	case form.FormActionSave:
+		m.saveActiveProfileState()
 		return m, nil, SaveEvent{Settings: m.toSettings()}
 	case form.FormActionBack, form.FormActionCancel:
 		return m, nil, CancelEvent{}
@@ -129,21 +324,366 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 	return m, cmd, nil
 }
 
+func (m Model) updateProfiles(msg tea.Msg) (Model, tea.Cmd, Event) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil, nil
+	}
+
+	numProfiles := len(m.agentsSettings.Profiles)
+	createIdx := numProfiles
+
+	if keyMsg.Type == tea.KeyEsc {
+		if m.profileFocusZone == 1 {
+			m.profileFocusZone = 0
+			return m, nil, nil
+		}
+		if m.creatingProfile {
+			m.cancelCreate()
+			return m, nil, nil
+		}
+		m.page = pageRoot
+		return m, nil, nil
+	}
+
+	if m.profileFocusZone == 1 {
+		return m.updateProfileButtons(keyMsg)
+	}
+
+	if m.profileCursor == createIdx {
+		return m.updateCreateRow(keyMsg, numProfiles, createIdx)
+	}
+
+	return m.updateProfileList(keyMsg, numProfiles, createIdx)
+}
+
+func (m Model) updateProfileButtons(keyMsg tea.KeyMsg) (Model, tea.Cmd, Event) {
+	switch keyMsg.Type {
+	case tea.KeyLeft:
+		if m.profileBtnIdx > 0 {
+			m.profileBtnIdx--
+		}
+	case tea.KeyRight, tea.KeyTab:
+		if m.profileBtnIdx < 1 {
+			m.profileBtnIdx++
+		}
+	case tea.KeyShiftTab:
+		m.profileFocusZone = 0
+	case tea.KeyUp:
+		m.profileFocusZone = 0
+	case tea.KeyEnter:
+		if m.profileBtnIdx == 0 {
+			return m.saveNewProfile()
+		}
+		m.cancelCreate()
+	default:
+		s := keyMsg.String()
+		if s == "s" {
+			return m.saveNewProfile()
+		}
+		if s == "c" {
+			m.cancelCreate()
+		}
+	}
+	return m, nil, nil
+}
+
+func (m Model) updateCreateRow(keyMsg tea.KeyMsg, numProfiles, createIdx int) (Model, tea.Cmd, Event) {
+	m.creatingProfile = true
+
+	switch keyMsg.Type {
+	case tea.KeyUp:
+		if m.profileCursor > 0 {
+			m.profileCursor--
+		}
+		m.creatingProfile = false
+		return m, nil, nil
+	case tea.KeyDown:
+		return m, nil, nil
+	case tea.KeyTab:
+		m.profileFocusZone = 1
+		m.profileBtnIdx = 0
+		return m, nil, nil
+	case tea.KeyBackspace:
+		if m.profileNameCursor > 0 {
+			m.profileNameInput = append(m.profileNameInput[:m.profileNameCursor-1], m.profileNameInput[m.profileNameCursor:]...)
+			m.profileNameCursor--
+		}
+		return m, nil, nil
+	case tea.KeyDelete:
+		if m.profileNameCursor < len(m.profileNameInput) {
+			m.profileNameInput = append(m.profileNameInput[:m.profileNameCursor], m.profileNameInput[m.profileNameCursor+1:]...)
+		}
+		return m, nil, nil
+	case tea.KeyLeft:
+		if m.profileNameCursor > 0 {
+			m.profileNameCursor--
+		}
+		return m, nil, nil
+	case tea.KeyRight:
+		if m.profileNameCursor < len(m.profileNameInput) {
+			m.profileNameCursor++
+		}
+		return m, nil, nil
+	case tea.KeyHome:
+		m.profileNameCursor = 0
+		return m, nil, nil
+	case tea.KeyEnd:
+		m.profileNameCursor = len(m.profileNameInput)
+		return m, nil, nil
+	case tea.KeyEnter:
+		return m.saveNewProfile()
+	default:
+		for _, r := range keyMsg.Runes {
+			if unicode.IsPrint(r) {
+				m.profileNameInput = append(m.profileNameInput[:m.profileNameCursor], append([]rune{r}, m.profileNameInput[m.profileNameCursor:]...)...)
+				m.profileNameCursor++
+			}
+		}
+	}
+	return m, nil, nil
+}
+
+func (m Model) updateProfileList(keyMsg tea.KeyMsg, numProfiles, createIdx int) (Model, tea.Cmd, Event) {
+	switch keyMsg.Type {
+	case tea.KeyUp:
+		if m.profileCursor > 0 {
+			m.profileCursor--
+		}
+	case tea.KeyDown:
+		if m.profileCursor < createIdx {
+			m.profileCursor++
+		}
+	case tea.KeyEnter:
+		if m.profileCursor < numProfiles {
+			name := m.agentsSettings.Profiles[m.profileCursor].Name
+			if name != m.agentsSettings.ActiveProfile {
+				m.saveActiveProfileState()
+				m.agentsSettings.ActiveProfile = name
+				m.loadProfile(name)
+				m.rebuildRootForm()
+			}
+			m.page = pageRoot
+			return m, nil, nil
+		}
+	case tea.KeyDelete:
+		if m.profileCursor < numProfiles {
+			name := m.agentsSettings.Profiles[m.profileCursor].Name
+			if name != "default" {
+				m.deleteProfile(name)
+				if m.profileCursor >= len(m.agentsSettings.Profiles) {
+					m.profileCursor = len(m.agentsSettings.Profiles) - 1
+				}
+			}
+		}
+	}
+	return m, nil, nil
+}
+
+func (m *Model) cancelCreate() {
+	m.creatingProfile = false
+	m.profileNameInput = nil
+	m.profileNameCursor = 0
+	m.profileFocusZone = 0
+	m.profileBtnIdx = 0
+	for i, p := range m.agentsSettings.Profiles {
+		if p.Name == m.agentsSettings.ActiveProfile {
+			m.profileCursor = i
+			break
+		}
+	}
+}
+
+func (m Model) saveNewProfile() (Model, tea.Cmd, Event) {
+	name := strings.TrimSpace(string(m.profileNameInput))
+	if name != "" && name != "default" && !m.profileExists(name) {
+		m.createProfile(name)
+		m.profileCursor = len(m.agentsSettings.Profiles) - 1
+		m.creatingProfile = false
+		m.profileNameInput = nil
+		m.profileNameCursor = 0
+		m.profileFocusZone = 0
+		m.profileBtnIdx = 0
+	}
+	return m, nil, nil
+}
+
+func (m Model) updateCategory(msg tea.Msg) (Model, tea.Cmd, Event) {
+	oldProvider := m.categoryForm.ItemValue(0)
+
+	updated, cmd, action := m.categoryForm.Update(msg)
+	m.categoryForm = updated
+
+	if action == form.FormActionExpand {
+		expanded := m.categoryForm.ExpandedIndex()
+		if expanded == 0 && m.canFetchModels() && m.categoryForm.ItemOptionCount(0) == 0 && !m.categoryForm.IsItemLoading(0) {
+			m.categoryForm.SetItemLoading(0, true, "fetching models...")
+		}
+		if expanded == 3 && m.canFetchModels() && m.categoryForm.ItemOptionCount(3) == 0 && !m.categoryForm.IsItemLoading(3) {
+			m.categoryForm.SetItemLoading(3, true, "fetching models...")
+			fetchCmd := m.fetchModels()
+			if fetchCmd != nil {
+				return m, fetchCmd, nil
+			}
+		}
+	}
+
+	newProvider := m.categoryForm.ItemValue(0)
+	if newProvider != oldProvider && m.categoryKey == "main" {
+		m.updateProviderFields(newProvider)
+	}
+
+	switch action {
+	case form.FormActionSave:
+		m.saveCategoryForm()
+		m.saveActiveProfileState()
+		m.rebuildRootForm()
+		m.page = pageRoot
+		return m, nil, nil
+	case form.FormActionBack, form.FormActionCancel:
+		m.page = pageRoot
+		return m, nil, nil
+	}
+
+	return m, cmd, nil
+}
+
 func (m Model) View(spinFrame int) string {
-	return m.form.View(60, spinFrame)
+	switch m.page {
+	case pageRoot:
+		return m.rootForm.View(60, spinFrame)
+	case pageProfiles:
+		return "\n" + m.viewProfiles(60, spinFrame)
+	case pageCategory:
+		return m.categoryForm.View(60, spinFrame)
+	}
+	return ""
 }
 
 func (m Model) Hint() string {
-	return m.form.Hint()
+	switch m.page {
+	case pageRoot:
+		return m.rootForm.Hint()
+	case pageProfiles:
+		return m.profileHint()
+	case pageCategory:
+		return m.categoryForm.Hint()
+	}
+	return ""
+}
+
+func (m Model) viewProfiles(width int, spinFrame int) string {
+	dim := m.theme.Styles.DimLabel
+	accent := m.theme.Styles.InputPrompt
+	accentColor := m.theme.Colors.Accent
+	fg := m.theme.Colors.Fg
+
+	sepWidth := width
+	if sepWidth < 20 {
+		sepWidth = 20
+	}
+
+	var b strings.Builder
+
+	titleStyle := lipgloss.NewStyle().Foreground(accentColor).Bold(true)
+	b.WriteString(titleStyle.Render("Profiles"))
+	b.WriteString("\n")
+	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)))
+	b.WriteString("\n")
+
+	numProfiles := len(m.agentsSettings.Profiles)
+	createIdx := numProfiles
+
+	for i, p := range m.agentsSettings.Profiles {
+		if m.profileCursor == i && m.profileFocusZone == 0 {
+			marker := accent.Render("❯")
+			label := lipgloss.NewStyle().Foreground(fg).Bold(true).Render(p.Name)
+			b.WriteString(marker + " " + label)
+		} else {
+			label := lipgloss.NewStyle().Foreground(fg).Render(p.Name)
+			b.WriteString("  " + label)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)))
+	b.WriteString("\n")
+
+	if m.profileCursor == createIdx && m.profileFocusZone == 0 {
+		marker := accent.Render("❯")
+		if m.creatingProfile && len(m.profileNameInput) > 0 {
+			before := string(m.profileNameInput[:m.profileNameCursor])
+			after := string(m.profileNameInput[m.profileNameCursor:])
+			inputStyle := m.theme.Styles.InputText
+
+			curChar := " "
+			cursorBlock := ""
+			if m.profileNameCursor < len(m.profileNameInput) {
+				curChar = string(m.profileNameInput[m.profileNameCursor])
+				after = string(m.profileNameInput[m.profileNameCursor+1:])
+				if components.BlinkOn(spinFrame) {
+					rendered := lipgloss.NewStyle().Background(accentColor).Foreground(m.theme.Colors.Bg).Render(curChar)
+					cursorBlock = inputStyle.Render(before) + rendered + inputStyle.Render(after)
+				} else {
+					cursorBlock = inputStyle.Render(before) + inputStyle.Render(curChar) + inputStyle.Render(after)
+				}
+			} else {
+				cursorBlock = inputStyle.Render(before) + components.BlockCursor(spinFrame, accentColor)
+			}
+			b.WriteString(marker + " " + cursorBlock)
+		} else if m.creatingProfile {
+			cursorBlock := components.BlockCursor(spinFrame, accentColor)
+			b.WriteString(marker + " " + cursorBlock)
+		} else {
+			createLabel := lipgloss.NewStyle().Foreground(fg).Render("Create new profile")
+			b.WriteString(marker + " " + createLabel)
+		}
+	} else {
+		createLabel := dim.Render("Create new profile")
+		b.WriteString("  " + createLabel)
+	}
+	b.WriteString("\n")
+
+	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)))
+	b.WriteString("\n")
+
+	if m.creatingProfile && m.profileCursor == createIdx {
+		var btnStrs []string
+		buttons := []struct {
+			label string
+			key   string
+			color lipgloss.Color
+		}{
+			{"save", "s", m.theme.Colors.Success},
+			{"cancel", "c", m.theme.Colors.Error},
+		}
+		for i, btn := range buttons {
+			if m.profileFocusZone == 1 && m.profileBtnIdx == i {
+				focusedStyle := lipgloss.NewStyle().Foreground(btn.color).Bold(true)
+				btnStrs = append(btnStrs, focusedStyle.Render("❯ [ "+btn.label+" ]")+"  "+dim.Render("("+btn.key+")"))
+			} else {
+				btnStrs = append(btnStrs, dim.Render("  [ "+btn.label+" ]")+"  "+dim.Render("("+btn.key+")"))
+			}
+		}
+		b.WriteString(strings.Join(btnStrs, "  "))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func (m Model) profileHint() string {
+	if m.creatingProfile {
+		if m.profileFocusZone == 1 {
+			return "[ ← → choose · enter select · esc cancel ]"
+		}
+		return "[ type name · tab/enter: save · esc: cancel ]"
+	}
+	return "[ ↑↓ navigate · enter: select · del: delete · esc: back ]"
 }
 
 func (m *Model) SetPresets(presets []types.ProviderPreset) {
 	m.activePresets = presets
-	providerOptions := make([]components.ListItem, len(presets))
-	for i, p := range presets {
-		providerOptions[i] = components.ListItem{ID: p.ID, Label: p.Name, Detail: p.HelpText}
-	}
-	m.form.SetItemSelectOptions(0, providerOptions)
 }
 
 func (m *Model) SetModels(models []types.ModelEntry) {
@@ -160,24 +700,29 @@ func (m *Model) SetModels(models []types.ModelEntry) {
 		}
 		items = append(items, components.ListItem{ID: mod.ID, Label: name, Detail: detail})
 	}
-
-	m.form.SetItemSelectOptions(3, items)
-	m.form.SetItemLoading(3, false, "")
+	if m.page == pageCategory {
+		m.categoryForm.SetItemSelectOptions(3, items)
+		m.categoryForm.SetItemLoading(3, false, "")
+	}
 }
 
 func (m *Model) SetModelsError(err string) {
-	m.form.SetItemLoading(3, false, "")
-	m.form.SetItemFetchError(3, err)
+	if m.page == pageCategory {
+		m.categoryForm.SetItemLoading(3, false, "")
+		m.categoryForm.SetItemFetchError(3, err)
+	}
 }
 
 func (m *Model) SaveSnapshot() {
-	m.form.SaveSnapshot()
+	m.rootForm.SaveSnapshot()
 	m.snapshot = &settingsSnapshot{
 		providerID:      m.providerID,
 		modelCtx:        m.modelCtx,
 		modelInPrice:    m.modelInPrice,
 		modelOutPrice:   m.modelOutPrice,
 		modelCachePrice: m.modelCachePrice,
+		agentsSettings:  m.agentsSettings,
+		turnLogs:        m.turnLogs,
 	}
 }
 
@@ -188,16 +733,19 @@ func (m *Model) RestoreSnapshot() {
 		m.modelInPrice = m.snapshot.modelInPrice
 		m.modelOutPrice = m.snapshot.modelOutPrice
 		m.modelCachePrice = m.snapshot.modelCachePrice
+		m.agentsSettings = m.snapshot.agentsSettings
+		m.turnLogs = m.snapshot.turnLogs
 	}
-	m.form.RestoreSnapshot()
+	m.rootForm.RestoreSnapshot()
+	m.rebuildRootForm()
 }
 
 func (m *Model) FocusField(idx int) {
-	m.form.FocusItem(idx)
+	m.rootForm.FocusItem(idx)
 }
 
 func (m *Model) SetFieldValue(idx int, val string) {
-	m.form.SetItemValue(idx, val)
+	m.rootForm.SetItemValue(idx, val)
 }
 
 func (m Model) ToSettings() types.Settings {
@@ -205,28 +753,109 @@ func (m Model) ToSettings() types.Settings {
 }
 
 func (m Model) toSettings() types.Settings {
-	apiKey := m.form.ItemValue(2)
+	mainCat := m.agentsSettings.Categories["main"]
+	providerID := mainCat.Provider
+	apiKey := mainCat.APIKey
+	providerURL := mainCat.ProviderURL
+	model := mainCat.Model
+	thinkingEffort := mainCat.ThinkingEffort
+
 	return types.Settings{
-		ProviderID:              m.form.ItemValue(0),
-		ProviderURL:             m.form.ItemValue(1),
-		ProviderAPIKey:          apiKey,
-		APIKey:                  apiKey,
-		Model:                   m.form.ItemValue(3),
-		ThinkingEffort:          m.form.ItemValue(4),
-		TurnLogsEnabled:         m.form.ItemValue(5),
-		ModelContextWindow:       m.modelCtx,
-		MainInputPrice:           m.modelInPrice,
-		MainOutputPrice:          m.modelOutPrice,
-		MainCacheReadPrice:       m.modelCachePrice,
+		APIKey:             apiKey,
+		Model:              model,
+		ModelContextWindow: m.modelCtx,
+		MainInputPrice:     m.modelInPrice,
+		MainOutputPrice:    m.modelOutPrice,
+		MainCacheReadPrice: m.modelCachePrice,
+		ProviderID:         providerID,
+		ProviderURL:        providerURL,
+		ProviderAPIKey:     apiKey,
+		ThinkingEffort:     thinkingEffort,
+		TurnLogsEnabled:    m.turnLogs,
+		Agents:             m.agentsSettings,
 	}
 }
 
-func (m *Model) canFetchModels() bool {
-	providerID := m.form.ItemValue(0)
+func (m *Model) openProfiles() {
+	m.profileCursor = 0
+	for i, p := range m.agentsSettings.Profiles {
+		if p.Name == m.agentsSettings.ActiveProfile {
+			m.profileCursor = i
+			break
+		}
+	}
+	m.creatingProfile = false
+	m.profileNameInput = nil
+	m.profileNameCursor = 0
+	m.profileFocusZone = 0
+	m.profileBtnIdx = 0
+	m.page = pageProfiles
+}
+
+func (m *Model) OpenCategory(catKey string) {
+	cat := m.agentsSettings.Categories[catKey]
+	if cat.Provider == "" && catKey == "main" {
+		cat.Provider = m.providerID
+	}
+	m.categoryKey = catKey
+	m.categoryForm = buildCategoryForm(m.theme, catKey, cat, m.activePresets, catKey == "main")
+	m.page = pageCategory
+}
+
+func (m *Model) OpenDefaultProfileEdit() {
+	m.OpenCategory("main")
+}
+
+func (m *Model) saveCategoryForm() {
+	cat := m.agentsSettings.Categories[m.categoryKey]
+	cat.Provider = m.categoryForm.ItemValue(0)
+	cat.ProviderURL = m.categoryForm.ItemValue(1)
+	cat.APIKey = m.categoryForm.ItemValue(2)
+	cat.Model = m.categoryForm.ItemValue(3)
+	cat.ThinkingEffort = m.categoryForm.ItemValue(4)
+	m.agentsSettings.Categories[m.categoryKey] = cat
+
+	if m.categoryKey == "main" {
+		m.providerID = cat.Provider
+	}
+}
+
+func (m *Model) createProfile(name string) {
+	m.agentsSettings.Profiles = append(m.agentsSettings.Profiles, types.ProfileSettings{
+		Name:       name,
+		Categories: make(map[string]types.CategorySettings),
+		MultiAgent: "on",
+		TurnLogs:   "on",
+	})
+}
+
+func (m *Model) deleteProfile(name string) {
+	if name == "default" {
+		return
+	}
+	for i := range m.agentsSettings.Profiles {
+		if m.agentsSettings.Profiles[i].Name == name {
+			m.agentsSettings.Profiles = append(m.agentsSettings.Profiles[:i], m.agentsSettings.Profiles[i+1:]...)
+			return
+		}
+	}
+}
+
+func (m Model) profileExists(name string) bool {
+	for _, p := range m.agentsSettings.Profiles {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) canFetchModels() bool {
+	providerID := m.categoryForm.ItemValue(0)
 	if providerID == "ollama" || providerID == "custom" {
 		return false
 	}
-	apiKey := m.form.ItemValue(2)
+	apiKey := m.categoryForm.ItemValue(2)
 	if apiKey == "" && providerID != "openrouter" {
 		return false
 	}
@@ -234,9 +863,9 @@ func (m *Model) canFetchModels() bool {
 }
 
 func (m Model) fetchModels() tea.Cmd {
-	providerID := m.form.ItemValue(0)
-	baseURL := m.form.ItemValue(1)
-	apiKey := m.form.ItemValue(2)
+	providerID := m.categoryForm.ItemValue(0)
+	baseURL := m.categoryForm.ItemValue(1)
+	apiKey := m.categoryForm.ItemValue(2)
 	if m.fetchModelsFn != nil {
 		return m.fetchModelsFn(providerID, baseURL, apiKey)
 	}
@@ -244,11 +873,14 @@ func (m Model) fetchModels() tea.Cmd {
 }
 
 func (m *Model) updateProviderFields(newProvider string) {
+	if m.categoryKey != "main" {
+		return
+	}
 	oldID := m.providerID
 	m.providerID = newProvider
 
 	if newProvider != oldID {
-		m.form.SetItemSelectOptions(3, nil)
+		m.categoryForm.SetItemSelectOptions(3, nil)
 		m.modelCtx = 0
 		m.modelInPrice = 0
 		m.modelOutPrice = 0
@@ -263,38 +895,28 @@ func (m *Model) updateProviderFields(newProvider string) {
 		}
 		if m.getProviderConfigFn != nil {
 			savedCfg := m.getProviderConfigFn(newProvider)
-			m.form.SetItemValue(1, savedCfg.ProviderURL)
-			m.form.SetItemValue(2, savedCfg.APIKey)
-			m.form.SetItemValue(3, savedCfg.Model)
-			m.form.SetItemValue(4, savedCfg.ThinkingEffort)
+			m.categoryForm.SetItemValue(1, savedCfg.ProviderURL)
+			m.categoryForm.SetItemValue(2, savedCfg.APIKey)
+			m.categoryForm.SetItemValue(3, savedCfg.Model)
+			m.categoryForm.SetItemValue(4, savedCfg.ThinkingEffort)
 			if savedCfg.ProviderURL == "" {
-				m.form.SetItemValue(1, preset.BaseURL)
+				m.categoryForm.SetItemValue(1, preset.BaseURL)
 			}
 		} else {
-			m.form.SetItemValue(1, preset.BaseURL)
+			m.categoryForm.SetItemValue(1, preset.BaseURL)
 		}
 	}
 }
 
-func (m *Model) updateModelMetadata(modelID string) {
-	ctx := 0
-	inPrice := 0.0
-	outPrice := 0.0
-	cachePrice := 0.0
-	for _, entry := range m.modelsData {
-		if entry.ID == modelID {
-			ctx = entry.ContextWindow
-			inPrice = entry.InputPrice
-			outPrice = entry.OutputPrice
-			cachePrice = entry.CacheReadPrice
-			break
-		}
+func (m *Model) NavigateTo(target string) {
+	switch {
+	case target == "profiles":
+		m.openProfiles()
+	case strings.HasPrefix(target, "cat:"):
+		m.OpenCategory(strings.TrimPrefix(target, "cat:"))
 	}
-
-	m.modelCtx = ctx
-	m.modelInPrice = inPrice
-	m.modelOutPrice = outPrice
-	m.modelCachePrice = cachePrice
 }
 
-
+func (m *Model) rebuildRootForm() {
+	m.rootForm = buildRootForm(m.theme, m.agentsSettings, m.turnLogs, m.providerID, "")
+}

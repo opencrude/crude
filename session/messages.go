@@ -84,6 +84,9 @@ func (s *Session) MessagesWithMeta() []sessiondb.MessageWithMeta {
 		} else {
 			out[i].Meta = sessiondb.DisplayMeta{DisplayRole: m.Role}
 		}
+		if i < len(s.createdAts) {
+			out[i].CreatedAt = s.createdAts[i]
+		}
 	}
 	return out
 }

@@ -201,7 +201,7 @@ func (a *AgentState) handleToolResult(evt ttypes.AgentEventMsg, target *widgets.
 	return nil
 }
 
-func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList, onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string)) tea.Cmd {
+func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList, onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(question string, options []string)) tea.Cmd {
 	var data map[string]string
 	if d, ok := evt.Data.(map[string]any); ok {
 		data = make(map[string]string, len(d))
@@ -227,9 +227,18 @@ func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.Me
 	if thinkTarget != target {
 		thinkTarget.MarkAllThinkingDone()
 	}
-	onConfirmReset(question, operation, tool, tgt, risk, reason, suggestion)
-	// No assistant message — the confirm dialog already shows the question.
-	// Store the tool name so the tag can be matched when the tool_call arrives.
+
+	if operation == "question" {
+		optsRaw := data["options"]
+		var options []string
+		if optsRaw != "" {
+			options = strings.Split(optsRaw, "\x00")
+		}
+		onQuestionReset(question, options)
+	} else {
+		onConfirmReset(question, operation, tool, tgt, risk, reason, suggestion)
+	}
+
 	a.pendingPermTool = tool
 	a.blockingMsgIdx = -1
 	return nil

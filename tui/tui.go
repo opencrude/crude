@@ -31,6 +31,8 @@ type TUI struct {
 
 	OnConfirmResult func(ConfirmResult)
 
+	OnQuestionResult func(types.QuestionResult)
+
 	OnYoloCmd func(enabled bool)
 
 	OnUndoCmd func(cmd string)
@@ -96,6 +98,11 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	a.OnConfirmResult = func(result ConfirmResult) {
 		if t.OnConfirmResult != nil {
 			t.OnConfirmResult(result)
+		}
+	}
+	a.OnQuestionResult = func(result types.QuestionResult) {
+		if t.OnQuestionResult != nil {
+			t.OnQuestionResult(result)
 		}
 	}
 	a.OnYoloCmd = func(enabled bool) {

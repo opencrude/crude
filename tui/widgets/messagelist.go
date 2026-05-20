@@ -197,9 +197,10 @@ func (ml *MessageList) AppendThinking(s string) {
 		}
 	}
 	newMsg := &types.ChatMessage{
-		InternalID:    ml.nextMsgID(),
-		Role:          types.RoleThinking,
-		Content:       s,
+		InternalID:     ml.nextMsgID(),
+		Role:           types.RoleThinking,
+		Content:        s,
+		Time:           time.Now(),
 		ThinkingActive: true,
 	}
 	ml.msgByID[newMsg.InternalID] = newMsg

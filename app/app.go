@@ -193,6 +193,14 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 		}
 	}
 
+	tuiInst.OnQuestionResult = func(result ttypes.QuestionResult) {
+		if result.Cancelled {
+			a.blockResolveCh <- "cancelled"
+		} else {
+			a.blockResolveCh <- result.Answer
+		}
+	}
+
 	tuiInst.OnUndoCmd = func(cmd string) {
 		result := sess.HandleUndo(cmd)
 		tuiInst.Program.Send(result)

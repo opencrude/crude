@@ -286,7 +286,7 @@ var AgentTools = []ToolDef{
 			}`),
 		},
 	},
-{
+ {
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "reply",
@@ -297,6 +297,25 @@ var AgentTools = []ToolDef{
 					"content":{"type":"string","description":"A short one-line status update. NOT for full reports or long text."}
 				},
 				"required":["content"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "question",
+			Description: "Ask the user a question with suggested options. Use when you need clarification, a decision, or user input to proceed. The user can select one of your suggested options or type a custom answer. For yes/no questions, provide options like ['yes', 'no']. For multiple choice, list the choices. The user's answer is returned as a string.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"question":{"type":"string","description":"The question to ask the user"},
+					"options":{
+						"type":"array",
+						"items":{"type":"string"},
+						"description":"Suggested options for the user to choose from. The user can also type a custom answer."
+					}
+				},
+				"required":["question"]
 			}`),
 		},
 	},
