@@ -373,17 +373,19 @@ type NavItem struct {
 	theme  *theme.Theme
 	label  string
 	detail string
+	desc   string
 	target string
 }
 
-func NewNavItem(t *theme.Theme, label, detail, target string) *NavItem {
-	return &NavItem{theme: t, label: label, detail: detail, target: target}
+func NewNavItem(t *theme.Theme, label, detail, desc, target string) *NavItem {
+	return &NavItem{theme: t, label: label, detail: detail, desc: desc, target: target}
 }
+
+func (m *NavItem) Desc() string { return m.desc }
 
 func (m *NavItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
 	accent := m.theme.Styles.InputPrompt
-	textStyle := m.theme.Styles.InputText
 
 	prefix := "  "
 	if focused {
@@ -392,9 +394,8 @@ func (m *NavItem) View(focused bool, spinFrame int, labelWidth int) string {
 
 	labelFmt := fmt.Sprintf("%%-%ds%s", labelWidth, strings.Repeat(" ", m.theme.Spacing.LabelColGap))
 	labelPart := dim.Render(fmt.Sprintf(labelFmt, m.label))
-	detailPart := textStyle.Render(m.detail)
 
-	return prefix + labelPart + detailPart
+	return prefix + labelPart + m.detail
 }
 
 func (m *NavItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
@@ -411,7 +412,7 @@ func (m *NavItem) SetValue(string)      {}
 func (m *NavItem) Target() string       { return m.target }
 
 func (m *NavItem) Snapshot() FormItem {
-	return &NavItem{theme: m.theme, label: m.label, detail: m.detail, target: m.target}
+	return &NavItem{theme: m.theme, label: m.label, detail: m.detail, desc: m.desc, target: m.target}
 }
 
 func (m *NavItem) Restore(snap FormItem) {}
