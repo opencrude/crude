@@ -47,6 +47,7 @@ type Session struct {
 	msgs         []provider.ChatMessage
 	msgTurns     []int
 	displayMetas []sessiondb.DisplayMeta
+	createdAts   []int64
 	msgsMu       sync.Mutex
 	pendingBlock bool
 	blockMu      sync.Mutex

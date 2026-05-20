@@ -373,6 +373,11 @@ func (m *App) getWindowContentLines(tabTitle string) []string {
 		for _, cl := range strings.Split(confirmView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(cl, contentW))
 		}
+	case "Question":
+		questionView := m.questionDlg.View(m.spinFrame)
+		for _, ql := range strings.Split(questionView, "\n") {
+			rawLines = append(rawLines, rendering.TruncateLine(ql, contentW))
+		}
 	case "YOLO":
 		m.yoloDlg.SetWidth(contentW)
 		yoloView := m.yoloDlg.View()

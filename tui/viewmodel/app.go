@@ -23,6 +23,7 @@ const (
 	ModeChat Mode = iota
 	ModeSettings
 	ModeConfirm
+	ModeQuestion
 	ModeYolo
 	ModeLauncher
 )
@@ -46,8 +47,9 @@ type App struct {
 	input      input.Model
 	statusbar  *widgets.StatusBar
 	settings   settings.Model
-	confirm    widgets.ConfirmDialog
-	yoloDlg    widgets.YoloDialog
+	confirm      widgets.ConfirmDialog
+	questionDlg   widgets.QuestionDialog
+	yoloDlg      widgets.YoloDialog
 
 	win *window.Window
 
@@ -62,6 +64,7 @@ type App struct {
 	OnExitMessage      func()
 	OnSettingsSave     func(ttypes.Settings) error
 	OnConfirmResult    func(ttypes.ConfirmResult)
+	OnQuestionResult   func(ttypes.QuestionResult)
 	OnYoloCmd          func(bool)
 	OnUndoCmd          func(string)
 	OnResumeSession    func(string)
@@ -120,6 +123,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 	sb := widgets.NewStatusBar(th)
 	sm := settings.NewModel(th, initial, nil, getProviderConfigFn, fetchFn)
 	cd := widgets.NewConfirmDialog(th)
+	qd := widgets.NewQuestionDialog(th)
 	yd := widgets.NewYoloDialog(th)
 
 	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) { lg.Warn(tag, msg, pairs...) })
@@ -149,6 +153,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		statusbar:    sb,
 		settings:     sm,
 		confirm:      cd,
+		questionDlg:   qd,
 		yoloDlg:      yd,
 		inputCh:      inputCh,
 		btwCh:        btwCh,
@@ -222,6 +227,8 @@ func (m *App) setMode(newMode Mode) {
 		m.win.OpenTabWithLayout("Settings", "", true, window.TabVertical)
 	case ModeConfirm:
 		m.win.OpenTabWithLayout("Confirm", "", true, window.TabVertical)
+	case ModeQuestion:
+		m.win.OpenTabWithLayout("Question", "", true, window.TabVertical)
 	case ModeYolo:
 		m.win.OpenTabWithLayout("YOLO", "", true, window.TabVertical)
 	case ModeChat:
@@ -240,6 +247,8 @@ func modeName(m Mode) string {
 		return "settings"
 	case ModeConfirm:
 		return "confirm"
+	case ModeQuestion:
+		return "question"
 	case ModeYolo:
 		return "yolo"
 	case ModeLauncher:

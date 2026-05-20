@@ -123,12 +123,20 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			}
 			m.setMode(ModeConfirm)
 		},
+		func(question string, options []string) {
+			m.questionDlg.Reset(question, options)
+			m.setMode(ModeQuestion)
+		},
 		func() {
 			m.blocking = false
 			m.confirm.Dismiss()
+			m.questionDlg.Dismiss()
 			m.statusbar.SetConfirming(false)
 			m.statusbar.SetThinking(true, false, false)
 			if tab := m.win.TabByTitle("Confirm"); tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if tab := m.win.TabByTitle("Question"); tab != nil {
 				m.win.CloseTabByID(tab.ID)
 			}
 			if !m.win.IsOpen() || !m.win.HasClosableTabs() {

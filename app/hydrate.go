@@ -10,7 +10,6 @@ import (
 
 func convertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMessage {
 	var result []ttypes.ChatMessage
-	now := time.Now()
 
 	toolNameByCallID := buildToolNameIndex(msgs)
 
@@ -20,32 +19,37 @@ func convertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 			role = mm.Msg.Role
 		}
 
+		msgTime := time.Now()
+		if mm.CreatedAt > 0 {
+			msgTime = time.Unix(0, mm.CreatedAt)
+		}
+
 		switch role {
 		case "user":
 			result = append(result, ttypes.ChatMessage{
 				Role:    ttypes.RoleUser,
 				Content: mm.Msg.Content,
-				Time:    now,
+				Time:    msgTime,
 			})
 
 		case "assistant":
 			result = append(result, ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: mm.Msg.Content,
-				Time:    now,
+				Time:    msgTime,
 			})
 
 		case "thinking":
 			result = append(result, ttypes.ChatMessage{
 				Role:    ttypes.RoleThinking,
 				Content: mm.Msg.ReasoningContent,
-				Time:    now,
+				Time:    msgTime,
 			})
 			if mm.Msg.Content != "" {
 				result = append(result, ttypes.ChatMessage{
 					Role:    ttypes.RoleAssistant,
 					Content: mm.Msg.Content,
-					Time:    now,
+					Time:    msgTime,
 				})
 			}
 
@@ -71,7 +75,7 @@ func convertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 			chatMsg := ttypes.ChatMessage{
 				Role:              ttypes.RoleTool,
 				Content:           content,
-				Time:              now,
+				Time:              msgTime,
 				ToolName:          toolName,
 				ToolID:            mm.Msg.ToolCallID,
 				ToolArgs:          argsCompact,
@@ -102,7 +106,7 @@ func convertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 				result = append(result, ttypes.ChatMessage{
 					Role:    role,
 					Content: mm.Msg.Content,
-					Time:    now,
+					Time:    msgTime,
 				})
 			}
 		}

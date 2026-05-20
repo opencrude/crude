@@ -97,7 +97,7 @@ func DefaultDark() *Theme {
 		ButtonGap:    2,
 		DialogPad:    2,
 		FormIndent:   0,
-		LabelColGap:  1,
+		LabelColGap:  3,
 		FormTitlePad: 2,
 	}
 

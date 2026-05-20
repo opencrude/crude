@@ -148,35 +148,34 @@ func RenderUserMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 	if !suppressHeader {
 		labelStyle := th.Styles.UserLabel
-		if len(userLines) > 0 {
-			label := labelStyle.Render("❯ " + username + " ")
-			userLines[0] = label + userLines[0]
-		}
+		userLines = append([]string{labelStyle.Render("❯ " + username + " ")}, userLines...)
 	}
 
-	for i, line := range userLines {
-		var timePart string
-		if i == 0 {
-			timePart = dim.Render(timeLine1)
-		} else if i == 1 {
-			timePart = dim.Render(timeLine2)
-		}
-		if timePart != "" {
-			lineW := lipgloss.Width(line)
-			sp := innerW - lineW - timeW
-			if sp < 1 {
-				sp = 1
+	if !suppressHeader {
+		for i, line := range userLines {
+			var timePart string
+			if i == 0 {
+				timePart = dim.Render(timeLine1)
+			} else if i == 1 {
+				timePart = dim.Render(timeLine2)
 			}
-			userLines[i] = line + strings.Repeat(" ", sp) + timePart
+			if timePart != "" {
+				lineW := lipgloss.Width(line)
+				sp := innerW - lineW - timeW
+				if sp < 1 {
+					sp = 1
+				}
+				userLines[i] = line + strings.Repeat(" ", sp) + timePart
+			}
 		}
-	}
 
-	if len(userLines) == 1 {
-		sp := innerW - timeW
-		if sp < 0 {
-			sp = 0
+		if len(userLines) == 1 {
+			sp := innerW - timeW
+			if sp < 0 {
+				sp = 0
+			}
+			userLines = append(userLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 		}
-		userLines = append(userLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 	}
 
 	return userLines
@@ -202,9 +201,6 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 			lastLines := rendering.WrapText(lastLineText, contentWidth)
 			asstLines = append(asstLines, lastLines...)
 		}
-		if len(asstLines) > 0 && asstLines[0] != "" && !suppressHeader {
-			asstLines = append([]string{""}, asstLines...)
-		}
 	} else {
 		rendered, isMarkdown := renderMarkdown(msg.Content, mdRenderer)
 		if !isMarkdown {
@@ -214,48 +210,53 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 		}
 	}
 
-	if suppressHeader && len(asstLines) > 0 && asstLines[0] == "" {
-		asstLines = asstLines[1:]
-	}
-
 	if len(asstLines) == 0 {
 		asstLines = []string{""}
 	}
 
 	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 	if !suppressHeader {
+		var headerLabel string
 		if msg.Incomplete {
 			incompleteLabelStyle := lipgloss.NewStyle().
 				Foreground(th.Colors.Error).
 				Italic(true).
 				Bold(true).
 				Background(lipgloss.Color("#3a1a1a"))
-			label := incompleteLabelStyle.Render("❯ ⚠ Crude " + modelName + " ")
-			asstLines[0] = label + asstLines[0]
+			headerLabel = incompleteLabelStyle.Render("❯ ⚠ Crude " + modelName + " ")
 		} else {
-			labelStyle := th.Styles.AsstLabel
-			label := labelStyle.Render("❯ Crude " + modelName + " ")
-			asstLines[0] = label + asstLines[0]
+			headerLabel = th.Styles.AsstLabel.Render("❯ Crude " + modelName + " ")
 		}
+		asstLines = append([]string{headerLabel}, asstLines...)
 	}
 
-	for i, line := range asstLines {
-		isCursorLine := streaming && isLastMsg && i == len(asstLines)-1
-		var timePart string
-		if i == 0 && !isCursorLine {
-			timePart = dim.Render(timeLine1)
-		} else if i == 1 && !isCursorLine {
-			timePart = dim.Render(timeLine2)
-		}
-		if timePart != "" {
-			lineW := lipgloss.Width(line)
-			sp := innerW - lineW - timeW
-			if sp < 1 {
-				sp = 1
+	if !suppressHeader {
+		for i, line := range asstLines {
+			isCursorLine := streaming && isLastMsg && i == len(asstLines)-1
+			var timePart string
+			if i == 0 && !isCursorLine {
+				timePart = dim.Render(timeLine1)
+			} else if i == 1 && !isCursorLine {
+				timePart = dim.Render(timeLine2)
 			}
-			asstLines[i] = line + strings.Repeat(" ", sp) + timePart
-		} else if isCursorLine {
-			asstLines[i] = rendering.TrimRightAnsiSpaces(line)
+			if timePart != "" {
+				lineW := lipgloss.Width(line)
+				sp := innerW - lineW - timeW
+				if sp < 1 {
+					sp = 1
+				}
+				asstLines[i] = line + strings.Repeat(" ", sp) + timePart
+			} else if isCursorLine {
+				asstLines[i] = rendering.TrimRightAnsiSpaces(line)
+			}
+		}
+
+		if len(asstLines) == 1 {
+			sp := innerW - timeW
+			if sp < 0 {
+				sp = 0
+			}
+			asstLines = append(asstLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 		}
 	}
 
@@ -266,14 +267,6 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 		if lastIdx >= 0 {
 			asstLines[lastIdx] = asstLines[lastIdx] + reasonText
 		}
-	}
-
-	if len(asstLines) == 1 && !(streaming && isLastMsg) {
-		sp := innerW - timeW
-		if sp < 0 {
-			sp = 0
-		}
-		asstLines = append(asstLines, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 	}
 
 	return asstLines
@@ -304,6 +297,14 @@ func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth,
 				sp = 1
 			}
 			result[0] = headerLabel + strings.Repeat(" ", sp) + dim.Render(timeLine1)
+		}
+
+		if len(timeLine2) > 0 {
+			sp := innerW - timeW
+			if sp < 0 {
+				sp = 0
+			}
+			result = append(result, strings.Repeat(" ", sp)+dim.Render(timeLine2))
 		}
 	}
 

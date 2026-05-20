@@ -283,6 +283,29 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case ModeQuestion:
+		m.statusbar.SetConfirming(true)
+		updated, result, done := m.questionDlg.Update(msg)
+		m.questionDlg = updated
+		if done {
+			m.statusbar.SetConfirming(false)
+			m.blocking = false
+			ma := m.mainAgent()
+			ma.Thinking = true
+			m.statusbar.SetThinking(true, false, false)
+			if m.OnQuestionResult != nil {
+				m.OnQuestionResult(ttypes.QuestionResult(result))
+			}
+			if tab := m.win.TabByTitle("Question"); tab != nil {
+				m.win.CloseTabByID(tab.ID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
+		}
+
 	case ModeYolo:
 		m.statusbar.SetConfirming(true)
 		updated, enabled, done := m.yoloDlg.Update(msg)
@@ -494,6 +517,19 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
+	case "Question":
+		m.questionDlg.Dismiss()
+		m.blocking = false
+		m.statusbar.SetConfirming(false)
+		m.win.CloseTab(index)
+		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+			m.setMode(ModeChat)
+		} else {
+			m.syncActiveTabMode()
+		}
+		if m.OnQuestionResult != nil {
+			m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
+		}
 	case "YOLO":
 		m.yoloDlg.Dismiss()
 		m.statusbar.SetConfirming(false)
@@ -527,6 +563,8 @@ func (m *App) syncActiveTabMode() {
 		m.Mode = ModeSettings
 	case "Confirm":
 		m.Mode = ModeConfirm
+	case "Question":
+		m.Mode = ModeQuestion
 	case "YOLO":
 		m.Mode = ModeYolo
 	default:

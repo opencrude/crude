@@ -31,12 +31,12 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.logger.Info("INPUT", "slash", "command", "provider")
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
-		m.settings.FocusField(0)
+		m.settings.OpenDefaultProfileEdit()
 	case "/api-key":
 		m.logger.Info("INPUT", "slash", "command", "api-key")
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
-		m.settings.FocusField(2)
+		m.settings.OpenDefaultProfileEdit()
 	case "/sessions":
 		m.logger.Info("INPUT", "slash", "command", "sessions")
 		if m.anyActive() {
