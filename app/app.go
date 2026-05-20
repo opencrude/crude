@@ -197,7 +197,7 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 		if result.Cancelled {
 			a.blockResolveCh <- "cancelled"
 		} else {
-			a.blockResolveCh <- result.Answer
+			a.blockResolveCh <- formatQuestionAnswers(result)
 		}
 	}
 
@@ -266,6 +266,28 @@ func (a *App) runResumeSession(username string, initial ttypes.Settings, provide
 	if a.resumeNextID != "" {
 		a.runResumeSession(username, initial, providerPresets)
 	}
+}
+
+func formatQuestionAnswers(result ttypes.QuestionResult) string {
+	if len(result.Answers) == 0 {
+		return "No answers provided"
+	}
+	n := len(result.Answers)
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		key := fmt.Sprintf("%d", i)
+		question := result.Questions[key]
+		answer := result.Answers[key]
+		if question != "" {
+			b.WriteString(fmt.Sprintf("Q%d: %s\nA%d: %s", i, question, i, answer))
+		} else {
+			b.WriteString(fmt.Sprintf("A%d: %s", i, answer))
+		}
+		if i < n {
+			b.WriteString("\n\n")
+		}
+	}
+	return b.String()
 }
 
 func (a *App) renderExitMessage() string {

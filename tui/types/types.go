@@ -109,8 +109,8 @@ type ConfirmResult struct {
 }
 
 type QuestionResult struct {
-	Answer    string
-	Custom    bool
+	Answers   map[string]string
+	Questions map[string]string
 	Cancelled bool
 }
 

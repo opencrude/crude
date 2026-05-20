@@ -9,6 +9,7 @@ import (
 	"crude/fileio"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
+	"crude/tui/window"
 )
 
 func (m *App) submitInput(text string) tea.Cmd {
@@ -123,14 +124,26 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			}
 			m.setMode(ModeConfirm)
 		},
-		func(question string, options []string) {
-			m.questionDlg.Reset(question, options)
+		func(questionsJSON string) {
+			n := m.questionForm.Reset(questionsJSON)
+			if n == 0 {
+				return
+			}
+			if n == 1 {
+				m.win.OpenTabWithLayout("Question", "", true, window.TabVertical)
+			} else {
+				for i := range m.questionForm.Items() {
+					m.win.OpenTabWithLayout(m.questionForm.TabTitle(i), "", true, window.TabVertical)
+				}
+			}
 			m.setMode(ModeQuestion)
 		},
 		func() {
 			m.blocking = false
 			m.confirm.Dismiss()
-			m.questionDlg.Dismiss()
+			m.questionForm.Dismiss()
+			m.input.ResetPrompt()
+			m.input.ClearInput()
 			m.statusbar.SetConfirming(false)
 			m.statusbar.SetThinking(true, false, false)
 			if tab := m.win.TabByTitle("Confirm"); tab != nil {
@@ -138,6 +151,17 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			}
 			if tab := m.win.TabByTitle("Question"); tab != nil {
 				m.win.CloseTabByID(tab.ID)
+			}
+			for m.win.IsOpen() {
+				tabs := m.win.Tabs()
+				if len(tabs) == 0 {
+					break
+				}
+				if tabs[0].Closable {
+					m.win.CloseTab(0)
+				} else {
+					break
+				}
 			}
 			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
 				m.setMode(ModeChat)

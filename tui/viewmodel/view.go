@@ -32,12 +32,13 @@ func (m *App) View() string {
 	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
 
 	isSpecialMode := m.Mode != ModeChat
+	showMainInputForQuestion := m.Mode == ModeQuestion && m.questionForm.IsTextQuestion(m.questionForm.Focused())
 
 	m.syncFormHint()
 
 	var inputView string
 	var inputLineCount int
-	if isSpecialMode {
+	if isSpecialMode && !showMainInputForQuestion {
 		inputLineCount = 1
 		hint := m.formHint
 		if hint == "" {
@@ -374,9 +375,16 @@ func (m *App) getWindowContentLines(tabTitle string) []string {
 			rawLines = append(rawLines, rendering.TruncateLine(cl, contentW))
 		}
 	case "Question":
-		questionView := m.questionDlg.View(m.spinFrame)
+		questionView := m.questionForm.View(m.spinFrame, contentW)
 		for _, ql := range strings.Split(questionView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(ql, contentW))
+		}
+	default:
+		if m.isQuestionTabTitle(tabTitle) {
+			questionView := m.questionForm.View(m.spinFrame, contentW)
+			for _, ql := range strings.Split(questionView, "\n") {
+				rawLines = append(rawLines, rendering.TruncateLine(ql, contentW))
+			}
 		}
 	case "YOLO":
 		m.yoloDlg.SetWidth(contentW)
@@ -417,8 +425,14 @@ func (m *App) syncFormHint() {
 		m.formHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
 	case "YOLO":
 		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
+	case "Question":
+		m.formHint = m.questionForm.Hint()
 	default:
-		m.formHint = ""
+		if m.isQuestionTabTitle(activeTab.Title) {
+			m.formHint = m.questionForm.Hint()
+		} else {
+			m.formHint = ""
+		}
 	}
 }
 

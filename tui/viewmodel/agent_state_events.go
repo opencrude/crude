@@ -201,11 +201,17 @@ func (a *AgentState) handleToolResult(evt ttypes.AgentEventMsg, target *widgets.
 	return nil
 }
 
-func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList, onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(question string, options []string)) tea.Cmd {
+func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList, onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(questionsJSON string)) tea.Cmd {
 	var data map[string]string
+	questionsJSON := ""
 	if d, ok := evt.Data.(map[string]any); ok {
 		data = make(map[string]string, len(d))
 		for k, v := range d {
+			if k == "questions_json" {
+				if s, ok := v.(string); ok {
+					questionsJSON = s
+				}
+			}
 			data[k] = fmt.Sprintf("%v", v)
 		}
 	} else if d, ok := evt.Data.(map[string]string); ok {
@@ -228,13 +234,8 @@ func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.Me
 		thinkTarget.MarkAllThinkingDone()
 	}
 
-	if operation == "question" {
-		optsRaw := data["options"]
-		var options []string
-		if optsRaw != "" {
-			options = strings.Split(optsRaw, "\x00")
-		}
-		onQuestionReset(question, options)
+	if operation == "questions" || operation == "question" {
+		onQuestionReset(questionsJSON)
 	} else {
 		onConfirmReset(question, operation, tool, tgt, risk, reason, suggestion)
 	}
