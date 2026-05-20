@@ -19,6 +19,7 @@ const (
 	FormActionBack
 	FormActionExpand
 	FormActionNavigate
+	FormActionReset
 )
 
 type Button struct {
@@ -26,6 +27,7 @@ type Button struct {
 	Key    string
 	Color  lipgloss.Color
 	Cancel bool
+	Reset  bool
 }
 
 type Form struct {
@@ -223,6 +225,10 @@ func (m Form) updateButtons(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
 			m.focused = len(m.items) - 1
 		}
 	case tea.KeyEnter:
+		btn := m.buttons[m.focusedBtn]
+		if btn.Reset {
+			return m, nil, FormActionReset
+		}
 		if m.focusedBtn == 0 {
 			return m, nil, FormActionSave
 		}
@@ -231,6 +237,9 @@ func (m Form) updateButtons(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
 		s := keyMsg.String()
 		for i, btn := range m.buttons {
 			if s == btn.Key {
+				if btn.Reset {
+					return m, nil, FormActionReset
+				}
 				if i == 0 {
 					return m, nil, FormActionSave
 				}
@@ -328,6 +337,9 @@ func (m Form) Hint() string {
 		h = "editing · enter/esc confirm · ctrl+u clear"
 	} else {
 		h = m.hint
+		if ni, ok := m.items[m.focused].(*NavItem); ok && ni.Desc() != "" {
+			h = ni.Desc() + " · " + h
+		}
 	}
 	if h != "" && !strings.HasPrefix(h, "[") {
 		h = "[ " + h + " ]"
