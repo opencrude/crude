@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"crude/logger"
@@ -51,28 +50,15 @@ func (st *asyncCmdState) killGroup() {
 	if pid <= 0 {
 		return
 	}
-	if runtime.GOOS != "windows" {
-		syscall.Kill(-pid, syscall.SIGKILL)
-	}
+	killProcessGroup(pid)
 	st.cancel()
 }
 
-func setProcessGroupCmd(ctx context.Context, name string, arg ...string) *exec.Cmd {
+func setProcessGroupCmd(name string, arg ...string) *exec.Cmd {
 	c := exec.Command(name, arg...)
-	if runtime.GOOS != "windows" {
-		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	setCmdSysProcAttr(c)
 	c.Cancel = func() error {
-		if c.Process != nil {
-			if runtime.GOOS != "windows" {
-				return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
-			}
-			return c.Process.Kill()
-		}
-		return nil
-	}
-	if ctx != nil {
-		c.Args = append([]string{name}, arg...)
+		return cancelProcess(c)
 	}
 	return c
 }
@@ -100,7 +86,7 @@ func (m *AsyncCommandManager) SetLogger(lg *logger.Logger) {
 	m.logger = lg
 }
 
-func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, context.CancelFunc, error) {
+func buildCommand(command string, cwd string) (*exec.Cmd, context.CancelFunc, error) {
 	cancelFn := func() {}
 
 	if runtime.GOOS == "windows" {
@@ -115,14 +101,14 @@ func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, c
 			return nil, cancelFn, fmt.Errorf("prepare windows command: %w", err)
 		}
 		tmp.Close()
-		c := setProcessGroupCmd(ctx, "cmd", "/C", batPath)
+		c := setProcessGroupCmd("cmd", "/C", batPath)
 		if cwd != "" {
 			c.Dir = cwd
 		}
 		return c, cancelFn, nil
 	}
 
-	c := setProcessGroupCmd(nil, "sh", "-c", command)
+	c := setProcessGroupCmd("sh", "-c", command)
 	if cwd != "" {
 		c.Dir = cwd
 	}
@@ -142,7 +128,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	c, _, err := buildCommand(ctx, command, cwd)
+	c, _, err := buildCommand(command, cwd)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -371,16 +357,10 @@ func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds
 		c = exec.CommandContext(ctx, "cmd", "/C", batPath)
 	} else {
 		c = exec.CommandContext(ctx, "sh", "-c", command)
-		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		setCmdSysProcAttr(c)
 	}
 	c.Cancel = func() error {
-		if c.Process != nil {
-			if runtime.GOOS != "windows" {
-				return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
-			}
-			return c.Process.Kill()
-		}
-		return nil
+		return cancelProcess(c)
 	}
 	if cwd != "" {
 		c.Dir = cwd
