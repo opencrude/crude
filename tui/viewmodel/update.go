@@ -285,24 +285,63 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ModeQuestion:
 		m.statusbar.SetConfirming(true)
-		updated, result, done := m.questionDlg.Update(msg)
-		m.questionDlg = updated
-		if done {
-			m.statusbar.SetConfirming(false)
-			m.blocking = false
-			ma := m.mainAgent()
-			ma.Thinking = true
-			m.statusbar.SetThinking(true, false, false)
-			if m.OnQuestionResult != nil {
-				m.OnQuestionResult(ttypes.QuestionResult(result))
+		keyMsg, isKey := msg.(tea.KeyMsg)
+		isNavKey := isKey && (keyMsg.Type == tea.KeyUp || keyMsg.Type == tea.KeyDown ||
+			keyMsg.Type == tea.KeyEsc || keyMsg.String() == "ctrl+s" ||
+			keyMsg.Type == tea.KeyTab || keyMsg.Type == tea.KeyShiftTab)
+		if m.questionForm.IsTextQuestion(m.questionForm.Focused()) && !isNavKey {
+			if _, ok := msg.(tea.MouseMsg); !ok {
+				updated, cmd, evt := m.input.Update(msg, false, false, m.chatAreaHeight, false)
+				m.input = updated
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				switch e := evt.(type) {
+				case input.SubmitEvent:
+					m.questionForm.SetAnswer(m.questionForm.Focused(), e.Text)
+					m.input.ClearInput()
+					if m.questionForm.AllAnswered() {
+						result := m.questionForm.BuildResult()
+						m.statusbar.SetConfirming(false)
+						m.blocking = false
+						ma := m.mainAgent()
+						ma.Thinking = true
+						m.statusbar.SetThinking(true, false, false)
+						if m.OnQuestionResult != nil {
+							m.OnQuestionResult(ttypes.QuestionResult(result))
+						}
+						m.closeAllQuestionTabs()
+						m.input.ResetPrompt()
+					} else {
+						for i := 0; i < m.questionForm.Count(); i++ {
+							next := (m.questionForm.Focused() + 1 + i) % m.questionForm.Count()
+							if !m.questionForm.IsAnswered(next) {
+								m.questionForm.SetFocused(next)
+								break
+							}
+						}
+						m.switchToQuestionTab(m.questionForm.Focused())
+						m.syncQuestionInputPrompt()
+					}
+				}
 			}
-			if tab := m.win.TabByTitle("Question"); tab != nil {
-				m.win.CloseTabByID(tab.ID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
+		} else {
+			updated, result, done := m.questionForm.Update(msg)
+			m.questionForm = updated
+			m.syncQuestionInputPrompt()
+			if done {
+				m.statusbar.SetConfirming(false)
+				m.blocking = false
+				ma := m.mainAgent()
+				ma.Thinking = true
+				m.statusbar.SetThinking(true, false, false)
+				if m.OnQuestionResult != nil {
+					m.OnQuestionResult(ttypes.QuestionResult(result))
+				}
+				m.closeAllQuestionTabs()
+				m.input.ResetPrompt()
 			} else {
-				m.syncActiveTabMode()
+				m.switchToQuestionTab(m.questionForm.Focused())
 			}
 		}
 
@@ -518,15 +557,13 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
 	case "Question":
-		m.questionDlg.Dismiss()
+		m.questionForm.Dismiss()
 		m.blocking = false
 		m.statusbar.SetConfirming(false)
+		m.input.ResetPrompt()
+		m.input.ClearInput()
 		m.win.CloseTab(index)
-		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-			m.setMode(ModeChat)
-		} else {
-			m.syncActiveTabMode()
-		}
+		m.closeAllQuestionTabs()
 		if m.OnQuestionResult != nil {
 			m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
 		}
@@ -540,6 +577,19 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 			m.syncActiveTabMode()
 		}
 	default:
+		if m.isQuestionTabTitle(tab.Title) {
+			m.questionForm.Dismiss()
+			m.blocking = false
+			m.statusbar.SetConfirming(false)
+			m.input.ResetPrompt()
+			m.input.ClearInput()
+			m.win.CloseTab(index)
+			m.closeAllQuestionTabs()
+			if m.OnQuestionResult != nil {
+				m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
+			}
+			return nil
+		}
 		m.win.CloseTab(index)
 		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
 			m.setMode(ModeChat)
@@ -556,6 +606,7 @@ func (m *App) syncActiveTabMode() {
 	if activeTab == nil {
 		m.Mode = ModeChat
 		m.formHint = ""
+		m.input.ResetPrompt()
 		return
 	}
 	switch activeTab.Title {
@@ -568,7 +619,101 @@ func (m *App) syncActiveTabMode() {
 	case "YOLO":
 		m.Mode = ModeYolo
 	default:
-		m.Mode = ModeChat
+		if m.isQuestionTabTitle(activeTab.Title) {
+			m.Mode = ModeQuestion
+			idx := m.questionTabIndex(activeTab.Title)
+			if idx >= 0 {
+				m.questionForm.SetFocused(idx)
+				m.syncQuestionInputPrompt()
+			}
+		} else {
+			m.Mode = ModeChat
+		}
+	}
+}
+
+func (m *App) isQuestionTabTitle(title string) bool {
+	if len(title) < 3 || title[0] < '0' || title[0] > '9' || title[1] != '.' {
+		return false
+	}
+	if m.questionForm.Count() > 1 {
+		for i := range m.questionForm.Items() {
+			if m.questionForm.TabTitle(i) == title {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (m *App) questionTabIndex(title string) int {
+	for i := range m.questionForm.Items() {
+		if m.questionForm.TabTitle(i) == title {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *App) closeAllQuestionTabs() {
+	for {
+		found := false
+		for i := m.win.TabCount() - 1; i >= 0; i-- {
+			tabs := m.win.Tabs()
+			if i >= len(tabs) {
+				continue
+			}
+			if tabs[i].Title == "Question" || m.isQuestionTabTitle(tabs[i].Title) {
+				m.win.CloseTab(i)
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+	}
+	if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+		m.setMode(ModeChat)
+	} else {
+		m.syncActiveTabMode()
+	}
+}
+
+func (m *App) syncQuestionInputPrompt() {
+	if m.Mode != ModeQuestion {
+		m.input.ResetPrompt()
+		m.input.ClearInput()
+		return
+	}
+	if m.questionForm.IsTextQuestion(m.questionForm.Focused()) {
+		q, _ := m.questionForm.FocusedItem()
+		label := q.Header
+		if label == "" {
+			runes := []rune(q.Question)
+			if len(runes) > 16 {
+				label = string(runes[:16]) + "…"
+			} else {
+				label = q.Question
+			}
+		}
+		m.input.SetPrompt(fmt.Sprintf("Q%d %s", m.questionForm.Focused()+1, label))
+	} else {
+		m.input.ResetPrompt()
+		m.input.ClearInput()
+	}
+}
+
+func (m *App) switchToQuestionTab(questionIdx int) {
+	if m.questionForm.Count() <= 1 {
+		if tab := m.win.TabByTitle("Question"); tab != nil {
+			m.win.SwitchTo(m.win.IndexOf(tab.ID))
+		}
+		return
+	}
+	title := m.questionForm.TabTitle(questionIdx)
+	if tab := m.win.TabByTitle(title); tab != nil {
+		m.win.SwitchTo(m.win.IndexOf(tab.ID))
 	}
 }
 

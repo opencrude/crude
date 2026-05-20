@@ -185,7 +185,7 @@ func (m TextInput) View(width int, spinFrame int, cursorSolidAlways bool) string
 		for si, seg := range segments {
 			var prefix string
 			if li == 0 && si == 0 {
-				prefix = promptStyle.Render("❯") + " "
+				prefix = promptStyle.Render(m.promptChar()) + " "
 			} else {
 				prefix = "  "
 			}
@@ -258,7 +258,7 @@ func (m TextInput) View(width int, spinFrame int, cursorSolidAlways bool) string
 		} else {
 			cursorChar = BlockCursorTime(m.theme.Colors.Accent)
 		}
-		allLines = append(allLines, promptStyle.Render("❯")+" "+cursorChar)
+		allLines = append(allLines, promptStyle.Render(m.promptChar())+" "+cursorChar)
 	}
 
 	return strings.Join(allLines, "\n")
@@ -551,6 +551,17 @@ func (m TextInput) SelectedText() string {
 
 func (m *TextInput) SetTextWidth(w int) {
 	m.textWidth = w
+}
+
+func (m *TextInput) SetPrompt(p string) {
+	m.prompt = p
+}
+
+func (m TextInput) promptChar() string {
+	if m.prompt != "" {
+		return m.prompt
+	}
+	return "❯"
 }
 
 func (m *TextInput) SetSelecting(selecting bool) {

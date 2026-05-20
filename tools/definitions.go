@@ -304,18 +304,43 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name: "question",
-			Description: "Ask the user a question with suggested options. Use when you need clarification, a decision, or user input to proceed. The user can select one of your suggested options or type a custom answer. For yes/no questions, provide options like ['yes', 'no']. For multiple choice, list the choices. The user's answer is returned as a string.",
+			Description: "Ask the user one or more questions with suggested options. " +
+				"Use when you need clarification, a decision, or user input to proceed. " +
+				"Batch multiple questions into a single call using the 'questions' array — " +
+				"this presents all questions together in one form for efficient interaction. " +
+				"For yes/no questions, provide options like ['yes', 'no']. " +
+				"For multiple choice, list the choices. " +
+				"For free-text input, omit the options array. " +
+				"Returns a JSON object mapping question indices (1-based) to answers.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"question":{"type":"string","description":"The question to ask the user"},
+					"questions":{
+						"type":"array",
+						"items":{
+							"type":"object",
+							"properties":{
+								"question":{"type":"string","description":"The question text"},
+								"header":{"type":"string","description":"Short label for this question (max 30 chars, e.g. 'Language', 'Rating')"},
+								"options":{
+									"type":"array",
+									"items":{"type":"string"},
+									"description":"Suggested options for the user to choose from. Omit for free-text input."
+								},
+								"multiple":{"type":"boolean","description":"Allow selecting multiple choices (default: false)"}
+							},
+							"required":["question"]
+						},
+						"description":"Array of questions to ask. Batch related questions together."
+					},
+					"question":{"type":"string","description":"Single question (legacy, prefer 'questions' array)"},
 					"options":{
 						"type":"array",
 						"items":{"type":"string"},
-						"description":"Suggested options for the user to choose from. The user can also type a custom answer."
+						"description":"Options for single question (legacy, prefer 'questions' array)"
 					}
 				},
-				"required":["question"]
+				"required":[]
 			}`),
 		},
 	},

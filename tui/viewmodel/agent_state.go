@@ -67,7 +67,7 @@ func (a *AgentState) ComputeActiveTyping() bool {
 	return (a.Streaming || a.Thinking) && !a.LastTokenTime.IsZero() && time.Since(a.LastTokenTime) < 400*time.Millisecond
 }
 
-func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widgets.MessageList, onStatusLine func(string), onThinking func(thinking, streaming, blocking bool), onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(question string, options []string), onConfirmDismiss func()) tea.Cmd {
+func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widgets.MessageList, onStatusLine func(string), onThinking func(thinking, streaming, blocking bool), onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(questionsJSON string), onConfirmDismiss func()) tea.Cmd {
 	target := a.MsgList
 	thinkTarget := thinkingTarget
 	if thinkTarget == nil {

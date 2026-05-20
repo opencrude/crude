@@ -147,6 +147,14 @@ func (m *Model) ClearInput() {
 	m.slashActive = false
 }
 
+func (m *Model) SetPrompt(p string) {
+	m.input.SetPrompt(p)
+}
+
+func (m *Model) ResetPrompt() {
+	m.input.SetPrompt("")
+}
+
 func (m Model) Height() int {
 	textW := m.textWidth
 	if textW < 1 {

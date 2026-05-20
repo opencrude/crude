@@ -48,7 +48,7 @@ type App struct {
 	statusbar  *widgets.StatusBar
 	settings   settings.Model
 	confirm      widgets.ConfirmDialog
-	questionDlg   widgets.QuestionDialog
+	questionForm  widgets.QuestionForm
 	yoloDlg      widgets.YoloDialog
 
 	win *window.Window
@@ -123,7 +123,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 	sb := widgets.NewStatusBar(th)
 	sm := settings.NewModel(th, initial, nil, getProviderConfigFn, fetchFn)
 	cd := widgets.NewConfirmDialog(th)
-	qd := widgets.NewQuestionDialog(th)
+	qd := widgets.NewQuestionForm(th)
 	yd := widgets.NewYoloDialog(th)
 
 	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) { lg.Warn(tag, msg, pairs...) })
@@ -153,7 +153,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		statusbar:    sb,
 		settings:     sm,
 		confirm:      cd,
-		questionDlg:   qd,
+		questionForm:  qd,
 		yoloDlg:      yd,
 		inputCh:      inputCh,
 		btwCh:        btwCh,
@@ -228,7 +228,6 @@ func (m *App) setMode(newMode Mode) {
 	case ModeConfirm:
 		m.win.OpenTabWithLayout("Confirm", "", true, window.TabVertical)
 	case ModeQuestion:
-		m.win.OpenTabWithLayout("Question", "", true, window.TabVertical)
 	case ModeYolo:
 		m.win.OpenTabWithLayout("YOLO", "", true, window.TabVertical)
 	case ModeChat:

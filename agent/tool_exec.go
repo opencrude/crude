@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"crude/provider"
@@ -21,13 +20,46 @@ type execResult struct {
 
 func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan string, lastReply *string, step int) <-chan execResult {
 	ch := make(chan execResult, len(toolCalls))
+
+	var nonBlocking, blocking []provider.ToolCall
 	for _, tc := range toolCalls {
+		if isPotentiallyBlocking(tc.Function.Name, a.Yolo) {
+			blocking = append(blocking, tc)
+		} else {
+			nonBlocking = append(nonBlocking, tc)
+		}
+	}
+
+	for _, tc := range nonBlocking {
 		a.logger.Debug("AGENT", "goroutine_start", "tool", tc.Function.Name, "step", step)
 		go func(tc provider.ToolCall) {
-			ch <- a.executeOneToolCall(ctx, tc, emit, blockResolveCh, lastReply)
+			ch <- a.executeOneToolCall(ctx, tc, emit, nil, lastReply)
 		}(tc)
 	}
+
+	if len(blocking) > 0 {
+		go func() {
+			for _, tc := range blocking {
+				a.logger.Debug("AGENT", "blocking_start", "tool", tc.Function.Name, "step", step)
+				ch <- a.executeOneToolCall(ctx, tc, emit, blockResolveCh, lastReply)
+			}
+		}()
+	}
+
 	return ch
+}
+
+func isPotentiallyBlocking(name string, yolo bool) bool {
+	switch name {
+	case "question":
+		return true
+	case "execute_command":
+		return true
+	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
+		return !yolo
+	default:
+		return false
+	}
 }
 
 func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan string, lastReply *string) execResult {
@@ -69,32 +101,53 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 
 	if tc.Function.Name == "question" {
 		questionText := getStr(params, "question")
-		if questionText == "" {
-			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Error: question tool requires a 'question' parameter"}}
-		}
-		rawOpts, _ := params["options"]
-		var optStrs []string
-		if rawOpts != nil {
-			if arr, ok := rawOpts.([]any); ok {
-				for _, v := range arr {
-					if s, ok := v.(string); ok {
-						optStrs = append(optStrs, s)
+		rawQuestions, hasQuestions := params["questions"]
+
+		var questions []map[string]any
+		if hasQuestions && rawQuestions != nil {
+			if arr, ok := rawQuestions.([]any); ok {
+				for _, q := range arr {
+					if m, ok := q.(map[string]any); ok {
+						questions = append(questions, m)
 					}
 				}
 			}
+		} else if questionText != "" {
+			rawOpts, _ := params["options"]
+			var optStrs []string
+			if rawOpts != nil {
+				if arr, ok := rawOpts.([]any); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							optStrs = append(optStrs, s)
+						}
+					}
+				}
+			}
+			q := map[string]any{"question": questionText}
+			if len(optStrs) > 0 {
+				q["options"] = optStrs
+			}
+			questions = []map[string]any{q}
 		}
+
+		if len(questions) == 0 {
+			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Error: question tool requires a 'questions' array or 'question' parameter"}}
+		}
+
+		questionsJSON, _ := json.Marshal(questions)
+
 		emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 			"internal_id": internalID,
 			"tool_id":     tc.ID,
 			"name":        "question",
 			"args":        formatToolArgs(params),
 		}})
-		emit(AgentEvent{Type: "blocking", Data: map[string]string{
-			"operation": "question",
-			"tool":       "question",
-			"target":     questionText,
-			"question":   questionText,
-			"options":    strings.Join(optStrs, "\x00"),
+		emit(AgentEvent{Type: "blocking", Data: map[string]any{
+			"operation":      "questions",
+			"tool":           "question",
+			"target":         getStr(params, "question"),
+			"questions_json":  string(questionsJSON),
 		}})
 		resp := <-blockResolveCh
 		emit(AgentEvent{Type: "blocking_complete"})
