@@ -160,13 +160,83 @@ func (o *SubAgentOrchestrator) RunSubAgent(ctx context.Context, params map[strin
 
 	select {
 	case result := <-handle.ResultCh:
-		resultJSON, _ := json.Marshal(result)
-		return tools.ToolResult{Content: string(resultJSON)}, nil
+		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	case <-ctx.Done():
 		o.mgr.Cancel(spec.ID)
 		o.fileOwnership.Release(spec.ID)
 		return tools.ToolResult{Content: "Sub-agent cancelled"}, nil
 	}
+}
+
+func formatSubAgentResult(result agent.SubAgentResult) string {
+	var sb strings.Builder
+	icon := "OK"
+	switch result.Status {
+	case agent.SubAgentCompleted:
+		icon = "OK"
+	case agent.SubAgentFailedTimeout:
+		icon = "TIMEOUT"
+	case agent.SubAgentFailedQuota:
+		icon = "QUOTA"
+	case agent.SubAgentFailedError:
+		icon = "ERROR"
+	case agent.SubAgentFailedPolicy:
+		icon = "POLICY"
+	case agent.SubAgentCancelled:
+		icon = "CANCELLED"
+	default:
+		icon = string(result.Status)
+	}
+	sb.WriteString(fmt.Sprintf("## Sub-Agent Result: %s [%s]\n", result.Name, result.Category))
+	sb.WriteString(fmt.Sprintf("**Status:** %s", icon))
+	if result.DurationMs > 0 {
+		dur := time.Duration(result.DurationMs) * time.Millisecond
+		sb.WriteString(fmt.Sprintf(" (%s)", dur.Round(time.Second).String()))
+	}
+	sb.WriteString("\n")
+	if result.SessionID != "" {
+		sb.WriteString(fmt.Sprintf("**Session:** %s\n", result.SessionID))
+	}
+	if len(result.SummaryGist) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(result.SummaryGist)
+		sb.WriteString("\n")
+	}
+	if len(result.FilesRead) > 0 {
+		sb.WriteString(fmt.Sprintf("\n**Files read:** %d\n", len(result.FilesRead)))
+		for _, f := range result.FilesRead {
+			sb.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+	}
+	if len(result.FilesWritten) > 0 {
+		sb.WriteString(fmt.Sprintf("\n**Files written:** %d\n", len(result.FilesWritten)))
+		for _, f := range result.FilesWritten {
+			sb.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+	}
+	costInfo := ""
+	if result.PromptTokens > 0 || result.CompTokens > 0 {
+		costInfo += fmt.Sprintf("**Tokens:** %d prompt + %d completion", result.PromptTokens, result.CompTokens)
+	}
+	if result.CostUSD > 0 {
+		if costInfo != "" {
+			costInfo += " | "
+		}
+		costInfo += fmt.Sprintf("**Cost:** $%.4f", result.CostUSD)
+	}
+	if costInfo != "" {
+		sb.WriteString("\n" + costInfo + "\n")
+	}
+	if len(result.Errors) > 0 {
+		sb.WriteString(fmt.Sprintf("\n**Errors:** %d\n", len(result.Errors)))
+		for _, e := range result.Errors {
+			if len(e) > 200 {
+				e = e[:200] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("- %s\n", e))
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 func (o *SubAgentOrchestrator) PollSubAgent(params map[string]any) (tools.ToolResult, error) {
@@ -389,6 +459,17 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 
 func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, prompt string) {
 	done := false
+
+	// Send agent identity to TUI for tab labeling
+	if o.sender != nil {
+		o.sender.SendAgentEventWithID("sub_agent_started", map[string]string{
+			"agent_id":   string(handle.Spec.ID),
+			"agent_name": handle.Spec.Name,
+			"category":   handle.Spec.Category,
+			"task":       handle.Spec.Description,
+		}, string(handle.Spec.ID))
+	}
+
 	defer func() {
 		o.fileOwnership.Release(handle.Spec.ID)
 
@@ -458,6 +539,15 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 	}, handle.BlockCh, o.session.sm, handle.SessionID, nil)
 
 	result := o.buildResultFromMessages(handle, agentMsgs)
+
+	if o.sender != nil {
+		o.sender.SendAgentEventWithID("sub_agent_completed", map[string]string{
+			"agent_id":   string(handle.Spec.ID),
+			"agent_name": handle.Spec.Name,
+			"category":   handle.Spec.Category,
+			"status":     string(result.Status),
+		}, string(handle.Spec.ID))
+	}
 
 	handle.ResultCh <- result
 	o.mgr.Unregister(handle.Spec.ID, result)
@@ -756,14 +846,7 @@ func (o *SubAgentOrchestrator) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		}
 	}
 	if spec.Model == "" {
-		switch spec.Category {
-		case agent.CatResearcher:
-			spec.Model = "google/gemini-2.0-flash-exp:free"
-		case agent.CatCrafter:
-			spec.Model = "qwen/qwen3.5-235b-a22b"
-		case agent.CatAeron:
-			spec.Model = "google/gemini-2.0-flash-exp:free"
-		}
+		spec.Model = o.session.ModelName()
 	}
 	if spec.PolicyName == "" {
 		switch spec.Category {

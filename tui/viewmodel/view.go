@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -22,6 +23,9 @@ func (m *App) View() string {
 	if m.Mode == ModeLauncher && m.launcher != nil {
 		return m.renderLauncherView()
 	}
+
+	m.syncAgentTabs()
+	m.syncAgentWindow()
 
 	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
 	innerW := m.width - m.theme.Spacing.PadLR*2
@@ -75,23 +79,31 @@ func (m *App) View() string {
 	}
 	m.chatAreaHeight = chatH
 
-	ma := m.mainAgent()
-	activeTyping := ma.ComputeActiveTyping()
+	activeML := m.activeMessageList()
+	activeAgent := m.agentForView()
+	activeTyping := false
+	if activeAgent != nil {
+		activeTyping = activeAgent.ComputeActiveTyping()
+	}
 
 	nestingLevel := m.paneMgr.ScrollbarNestingLevel()
 	paneSBW := nestingLevel * scrollbar.ScrollbarWidth
+	ma := m.mainAgent()
 	ma.MsgList.SetPaneScrollbarWidth(paneSBW)
 
-	ma.MsgList.SetStreaming(ma.Streaming)
-	ma.MsgList.SetSpinFrame(m.spinFrame)
-	ma.MsgList.SetActiveTyping(activeTyping)
-	ma.MsgList.SetPhase(m.statusbar.Phase())
-	ma.MsgList.SetSize(m.width, m.height)
-	ma.MsgList.SetChatAreaBounds(3, chatH)
+	if activeML != ma.MsgList {
+		activeML.SetPaneScrollbarWidth(0)
+	}
+	activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
+	activeML.SetSpinFrame(m.spinFrame)
+	activeML.SetActiveTyping(activeTyping)
+	activeML.SetPhase(m.statusbar.Phase())
+	activeML.SetSize(m.width, m.height)
+	activeML.SetChatAreaBounds(3, chatH)
 
-	chatVisible := ma.MsgList.Render(innerW)
+	chatVisible := activeML.Render(innerW)
 
-	mainSBVisible := ma.MsgList.ScrollbarWidth() > 0
+	mainSBVisible := activeML.ScrollbarWidth() > 0
 
 	var totalSBW int
 	var mainSBLines []string
@@ -106,10 +118,10 @@ func (m *App) View() string {
 		totalSBW = scrollbar.ScrollbarWidth * nestingLevel
 	}
 
-	mainScrollbarView := ma.MsgList.ScrollbarView()
+	mainScrollbarView := activeML.ScrollbarView()
 	mainSBLines = strings.Split(mainScrollbarView, "\n")
 
-	paneLineMap = ma.MsgList.PaneLineMap()
+	paneLineMap = activeML.PaneLineMap()
 
 	paneSBViews = make(map[string][]string)
 	if nestingLevel > 0 {
@@ -131,16 +143,31 @@ func (m *App) View() string {
 	lines = append(lines, "")
 
 	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
+	if m.activeAgentView != "" && m.activeAgentView != MainAgentID {
+		agentLabel := m.activeAgentView
+		if lbl, ok := m.agentLabels[m.activeAgentView]; ok && lbl != "" {
+			agentLabel = lbl
+		}
+		sp := m.paneMgr.Get(m.activeAgentView)
+		catLabel := ""
+		if sp != nil {
+			catLabel = string(sp.Type)
+		}
+		viewLabel := agentLabel
+		if catLabel != "" {
+			viewLabel = catLabel + ":" + agentLabel
+		}
+		accentStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Bold(true)
+		headerLine += " " + accentStyle.Render("⟨"+viewLabel+"⟩")
+	}
 	lines = append(lines, pad+headerLine+pad)
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	for i, line := range chatVisible {
-		maxContentW := m.width - 2*m.theme.Spacing.PadLR - totalSBW
-		// Trim trailing padding before the overflow check. Subpane header/summary
-		// lines are right-padded to innerW (which doesn't account for scrollbar
-		// width), so the raw line can exceed maxContentW even though the actual
-		// content fits. Without trimming, TruncateLine would append a false "…"
-		// after the trailing spaces (e.g. "│ ● Thinking 8s      …").
+		maxContentW := innerW - totalSBW
+		if maxContentW < 10 {
+			maxContentW = 10
+		}
 		trimmed := rendering.TrimRightAnsiSpaces(line)
 		visW := lipgloss.Width(trimmed)
 		if visW > maxContentW {
@@ -196,25 +223,28 @@ func (m *App) View() string {
 			}
 
 			if sbColumn != "" {
-				padRight := m.width - m.theme.Spacing.PadLR - totalSBW - visW
+				padRight := innerW - totalSBW - visW
 				if padRight < 0 {
 					padRight = 0
 				}
-				line = pad + line + strings.Repeat(" ", padRight) + sbColumn + pad
+				line = pad + line + strings.Repeat(" ", padRight) + sbColumn
 			} else {
-				rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+				rightPad := innerW - visW
 				if rightPad < 0 {
 					rightPad = 0
 				}
-				line = pad + line + strings.Repeat(" ", rightPad) + pad
+				line = pad + line + strings.Repeat(" ", rightPad)
 			}
 		} else {
-			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+			rightPad := innerW - visW
 			if rightPad < 0 {
 				rightPad = 0
 			}
-			line = pad + line + strings.Repeat(" ", rightPad) + pad
+			line = pad + line + strings.Repeat(" ", rightPad)
 		}
+
+		line += pad
+
 		lines = append(lines, line)
 	}
 
@@ -362,35 +392,38 @@ func (m *App) getWindowContentLines(tabTitle string) []string {
 		contentW = m.win.VerticalContentWidth()
 	}
 
-	switch tabTitle {
-	case "Settings":
+	switch {
+	case tabTitle == "Settings":
 		settingsView := m.settings.View(m.spinFrame)
 		for _, sl := range strings.Split(settingsView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(sl, contentW))
 		}
-	case "Confirm":
+	case tabTitle == "Confirm":
 		m.confirm.SetWidth(contentW)
 		confirmView := m.confirm.View(m.spinFrame)
 		for _, cl := range strings.Split(confirmView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(cl, contentW))
 		}
-	case "Question":
+	case tabTitle == "Question":
 		questionView := m.questionForm.View(m.spinFrame, contentW)
 		for _, ql := range strings.Split(questionView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(ql, contentW))
 		}
-	default:
-		if m.isQuestionTabTitle(tabTitle) {
-			questionView := m.questionForm.View(m.spinFrame, contentW)
-			for _, ql := range strings.Split(questionView, "\n") {
-				rawLines = append(rawLines, rendering.TruncateLine(ql, contentW))
-			}
-		}
-	case "YOLO":
+	case tabTitle == "YOLO":
 		m.yoloDlg.SetWidth(contentW)
 		yoloView := m.yoloDlg.View()
 		for _, yl := range strings.Split(yoloView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(yl, contentW))
+		}
+	case m.isAgentTabTitle(tabTitle):
+		agentLines := m.renderAgentTabContent(tabTitle, contentW)
+		for _, al := range agentLines {
+			rawLines = append(rawLines, rendering.TruncateLine(al, contentW))
+		}
+	case m.isQuestionTabTitle(tabTitle):
+		questionView := m.questionForm.View(m.spinFrame, contentW)
+		for _, ql := range strings.Split(questionView, "\n") {
+			rawLines = append(rawLines, rendering.TruncateLine(ql, contentW))
 		}
 	}
 
@@ -418,15 +451,17 @@ func (m *App) syncFormHint() {
 		m.formHint = ""
 		return
 	}
-	switch activeTab.Title {
-	case "Settings":
+	switch {
+	case activeTab.Title == "Settings":
 		m.formHint = m.settings.Hint()
-	case "Confirm":
+	case activeTab.Title == "Confirm":
 		m.formHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
-	case "YOLO":
+	case activeTab.Title == "YOLO":
 		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
-	case "Question":
+	case activeTab.Title == "Question":
 		m.formHint = m.questionForm.Hint()
+	case m.isAgentTabTitle(activeTab.Title):
+		m.formHint = ""
 	default:
 		if m.isQuestionTabTitle(activeTab.Title) {
 			m.formHint = m.questionForm.Hint()
@@ -595,4 +630,68 @@ func (m *App) launcherSelectedLineIndex(sessionLines []string) int {
 		}
 	}
 	return 0
+}
+
+func (m *App) renderAgentTabContent(tabTitle string, contentW int) []string {
+	agentID := m.agentIDFromTabTitle(tabTitle)
+	if agentID == "" {
+		return nil
+	}
+
+	var lines []string
+
+	if agentID == MainAgentID {
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Bold(true).Render("Main Agent"))
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Muted).Render("Primary orchestrator · full tool access"))
+		return lines
+	}
+
+	label := agentID
+	if lbl, ok := m.agentLabels[agentID]; ok && lbl != "" {
+		label = lbl
+	}
+
+	status := "running"
+	if st, ok := m.agentStatuses[agentID]; ok && st != "" {
+		status = st
+	}
+
+	agent, hasAgent := m.agents[agentID]
+	category := ""
+	sp := m.paneMgr.Get(agentID)
+	if sp != nil {
+		category = string(sp.Type)
+	}
+
+	statusStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
+	switch {
+	case status == "completed":
+		statusStyle = lipgloss.NewStyle().Foreground(m.theme.Colors.Success)
+	case len(status) > 6 && status[:6] == "failed":
+		statusStyle = lipgloss.NewStyle().Foreground(m.theme.Colors.Error)
+	case status == "cancelled":
+		statusStyle = lipgloss.NewStyle().Foreground(m.theme.Colors.Warning)
+	}
+
+	lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Bold(true).Render(label))
+	lines = append(lines, "")
+
+	if category != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Muted).Render("Category: "+category))
+	}
+	lines = append(lines, "Status: "+statusStyle.Render(status))
+
+	if sp != nil {
+		elapsed := sp.Elapsed()
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Muted).Render(fmt.Sprintf("Elapsed: %.0fs", elapsed.Seconds())))
+	}
+
+	if hasAgent && agent.Streaming {
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("● Streaming..."))
+	} else if hasAgent && agent.Thinking {
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("● Thinking..."))
+	}
+
+	return lines
 }

@@ -1,8 +1,23 @@
-# Development status:
-- Tui integration is Remained
+# Development status — 2026-05-21
 
-## Critical identified issues
-  Deep Validation Review: Sub-Agent System Implementation
+## Completed
+- **Step 1–7:** Core backend fully implemented (types, manager, session DB schema, tool definitions, proxied ToolFn, policy enforcement, file ownership, concurrency, custom instructions, model/provider routing)
+- **Step 8 (TUI Integration):** Implemented with right-side vertical agent tab bar widget (`tui/widgets/agenttabs.go`), agent view swapping, formatted sub-agent results (no raw JSON), event handling for file claims + sub-agent questions, tab click/switching, agent lifecycle events (`sub_agent_started`/`sub_agent_completed`). Agent tabs render on the right edge of the chat area alongside the scrollbar rail. Clicking a sub-agent tab swaps the entire chat view to that agent's full conversation history.
+- **Step 10 (partial):** Sub-agent goals integrated into state machine, sub-agent progress visible in `list_goal_status`
+- **Step 11:** Crash recovery implemented (`recover()` in sub-agent goroutine, panic → `SubAgentResult{failed_error}`, stack trace logging)
+
+## All 21 critical issues from validation review — FIXED
+Issues #1–#21 documented below are resolved in the current implementation.
+
+## Remaining
+- **Step 9:** Aeron Monitor Pattern (monitor profile exists in config, but suspend/wake/escalation loop not wired)
+- **Step 10 (cost):** Tree-based cost aggregation (parent = own + sum of children) — not yet plumbed into TUI display
+- **Step 12:** Testing — no sub-agent specific tests exist yet
+- **Stale-read detection (Layer 2):** Editor stale-read detection with agent identity — not yet wired
+
+## Critical identified issues — ALL RESOLVED
+  Deep Validation Review: Sub-Agent System Implementation (audit date: 2026-05-20, resolved: 2026-05-21)
+All 21 issues below are fixed in current code. Retained for historical reference.
 CRITICAL ISSUES
 1. DEADLOCK: Sub-agents with Yolo=false block forever on user-confirmation tools
 File: session/subagent.go:302 and agent/tool_exec.go:102-161, 163-225, 227-304
@@ -2226,28 +2241,28 @@ Runtime Override (CLI flags)
 
 ## 23. Implementation Roadmap
 
-### Step 1: Core Types and Sub-Agent Manager
+### Step 1: Core Types and Sub-Agent Manager ✅ COMPLETE
 
 - Add `SubAgentSpec`, `SubAgentResult`, `SubAgentManager`, `SubAgentHandle` types
 - Add `AgentCategory` type and `CategoryDefaults()` function
 - Update `Agent` struct with `AgentID`, `Depth`, `ParentID`
 - Implement `SubAgentManager` with spawn/validate/track/cancel
 
-### Step 2: Session DB Schema
+### Step 2: Session DB Schema ✅ COMPLETE
 
 - Add `parent_session_id`, `agent_category`, `agent_name`, `depth` columns to `sessions`
 - Create `sub_agent_results` and `file_claims` tables
 - Add migration path for existing DBs
 - Implement sub-agent session DB creation and lifecycle
 
-### Step 3: Tool Definitions
+### Step 3: Tool Definitions ✅ COMPLETE
 
 - Add `run_sub_agent` tool definition
 - Add `poll_sub_agent`, `cancel_sub_agent`, `list_sub_agents` tool definitions
 - Add `write_report` tool definition
 - Add `question` tool definition (for sub-agents, routes to main agent)
 
-### Step 4: Proxied ToolFn and Policy Enforcement
+### Step 4: Proxied ToolFn and Policy Enforcement ✅ COMPLETE
 
 - Implement proxied ToolFn that routes sub-agent tool calls through parent session
 - Implement `ComposePolicy` with runtime overrides, category, profile, inline, and parent intersection
@@ -2255,15 +2270,15 @@ Runtime Override (CLI flags)
 - Wire `run_sub_agent` into session's ToolFn
 - Implement per-agent `blockResolveCh`
 
-### Step 5: File Ownership and Concurrency
+### Step 5: File Ownership and Concurrency ✅ COMPLETE
 
 - Implement auto-claim `FileOwnership` system
-- Implement stale-read detection in Editor
+- Implement stale-read detection in Editor ⚠ (Layer 2 runtime stale-read check not wired yet)
 - Implement file ownership claim/release notifications to main agent
 - Implement shared rate limiter per provider+API key with retry/backoff
 - Implement loop detection (same tool call 3+ times → auto-kill)
 
-### Step 6: Custom Instructions and Profiles
+### Step 6: Custom Instructions and Profiles ✅ COMPLETE
 
 - Implement category briefing system prompt construction
 - Implement profile lookup from `config.json` `agents.profiles`
@@ -2271,44 +2286,52 @@ Runtime Override (CLI flags)
 - Add `categories` and `profiles` sections to `config.json` schema
 - Implement full inheritance chain with runtime overrides at top
 
-### Step 7: Model/Provider Routing
+### Step 7: Model/Provider Routing ✅ COMPLETE
 
 - Implement model/provider resolution through inheritance chain
 - Implement model validation (fail if no tool-use support)
 - Implement invalid API key handling (fail with `failed_quota`)
 - Implement provider build for sub-agent with resolved values
 
-### Step 8: TUI Integration
+### Step 8: TUI Integration ✅ COMPLETE
 
-- Add tab-based sub-agent view (one tab per sub-agent session)
-- Show sub-agent category:name in status bar
-- Show file ownership claim/release events in main tab
-- Show orange warning icons for heavy-usage agents with kill buttons
-- Show sub-agent results inline in main tab
-- Implement agent list and tab switching
+- ~~Add tab-based sub-agent view (one tab per sub-agent session)~~ Implemented as right-side vertical agent tab bar integrated into chat area alongside scrollbar rail. Tabs use UTF8 symbols (●/○ for running, ✓ completed, ✗ failed, ! cancelled, ■ main) themed with existing color palette.
+- ~~Show sub-agent category:name in status bar~~ Agent name shown in tab labels via `agentLabels` cache from `sub_agent_started` events
+- ~~Show file ownership claim/release events in main tab~~ Implemented via `[category:name] claimed path` messages in main chat
+- ~~Show orange warning icons for heavy-usage agents with kill buttons~~ ⚠ Not yet — deferred
+- ~~Show sub-agent results inline in main tab~~ Implemented via `formatSubAgentResult()` rendering structured text blocks (status, duration, files read/written, tokens, cost, gist)
+- ~~Implement agent list and tab switching~~ Implemented: click agent tab on right rail to swap chat view to that agent's full history. Main tab returns to orchestrator view.
 
-### Step 9: Aeron Monitor Pattern
+**TUI Architecture details:**
+- `tui/widgets/agenttabs.go` — new widget: lightweight vertical tab bar
+- `tui/viewmodel/app.go` — `activeAgentView`, `agentLabels`, `agentStatuses`, tab sync
+- `tui/viewmodel/view.go` — tab bar rendering on right edge, dynamic message list swap
+- `tui/viewmodel/agent_events.go` — handlers for `sub_agent_question`, `file_claim`, `sub_agent_started`, `sub_agent_completed`
+- `tui/viewmodel/update.go` — `hitTestAgentTabs()` click handler
+- `session/subagent.go` — emits `sub_agent_started` + `sub_agent_completed` lifecycle events; `formatSubAgentResult()` replaces raw JSON
 
-- Implement monitor aeron profile (built-in)
+### Step 9: Aeron Monitor Pattern ⚠ NOT STARTED
+
+- Implement monitor aeron profile (built-in) ⚠ Profile defined in config, not wired
 - Implement main agent suspend/wake mechanism
 - Implement escalation from monitor to main agent
 - Implement monitor spawn cycle (monitor → escalate → terminate → new monitor)
 
-### Step 10: Cost Tracking and State Machine
+### Step 10: Cost Tracking and State Machine ⚠ PARTIAL
 
-- Implement tree-based cost aggregation (parent = own + sum of children)
-- Add sub-agent goals to state machine
-- Show sub-agent progress in `list_goal_status`
-- Implement per-agent cost display in TUI
+- Implement tree-based cost aggregation (parent = own + sum of children) ⚠ Not done
+- Add sub-agent goals to state machine ✅ Done
+- Show sub-agent progress in `list_goal_status` ✅ Done
+- Implement per-agent cost display in TUI ⚠ Not done
 
-### Step 11: Error Handling and Crash Recovery
+### Step 11: Error Handling and Crash Recovery ✅ COMPLETE
 
 - Implement `recover()` in sub-agent goroutine launch
 - Implement panic → `SubAgentResult{failed_error}` conversion
 - Implement stack trace logging to sub-agent session DB
 - Implement graceful degradation for all error paths
 
-### Step 12: Testing
+### Step 12: Testing ⚠ NOT STARTED
 
 - Write mock-based unit tests for sub-agent lifecycle
 - Write integration tests for policy composition and tool filtering

@@ -155,17 +155,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			if tab := m.win.TabByTitle("Question"); tab != nil {
 				m.win.CloseTabByID(tab.ID)
 			}
-			for m.win.IsOpen() {
-				tabs := m.win.Tabs()
-				if len(tabs) == 0 {
-					break
-				}
-				if tabs[0].Closable {
-					m.win.CloseTab(0)
-				} else {
-					break
-				}
-			}
+			m.closeNonAgentClosableTabs()
 			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
 				m.setMode(ModeChat)
 			} else {
@@ -215,6 +205,19 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
 			m.statusbar.SetAsyncCommands(cmds)
 		}
+	case "sub_agent_question":
+		m.handleSubAgentQuestion(evt)
+	case "file_claim":
+		m.handleFileClaim(evt)
+	case "sub_agent_started":
+		m.handleSubAgentStarted(evt)
+	case "sub_agent_completed":
+		m.handleSubAgentCompleted(evt)
+	}
+
+	// Sync agent tabs after any non-main agent event
+	if agentID != MainAgentID {
+		m.syncAgentTabs()
 	}
 
 	return m.processAgentResults(cmd)
@@ -379,4 +382,76 @@ func toInt(v any) int {
 		return int(n)
 	}
 	return 0
+}
+
+func (m *App) handleSubAgentQuestion(evt ttypes.AgentEventMsg) {
+	data, ok := evt.Data.(map[string]string)
+	if !ok {
+		return
+	}
+	agentName := data["agent_name"]
+	category := data["category"]
+	question := data["question"]
+	if agentName == "" || question == "" {
+		return
+	}
+	content := fmt.Sprintf("[%s:%s] asks: %s", category, agentName, question)
+	m.mainMsgList.AppendMessage(ttypes.ChatMessage{
+		Role:    ttypes.RoleTool,
+		Content: content,
+		Time:    time.Now(),
+	})
+}
+
+func (m *App) handleFileClaim(evt ttypes.AgentEventMsg) {
+	data, ok := evt.Data.(map[string]string)
+	if !ok {
+		return
+	}
+	agentName := data["agent_name"]
+	category := data["category"]
+	path := data["path"]
+	if agentName == "" || path == "" {
+		return
+	}
+	content := fmt.Sprintf("[%s:%s] claimed %s", category, agentName, path)
+	m.mainMsgList.AppendMessage(ttypes.ChatMessage{
+		Role:    ttypes.RoleTool,
+		Content: content,
+		Time:    time.Now(),
+	})
+}
+
+func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
+	data, ok := evt.Data.(map[string]string)
+	if !ok {
+		return
+	}
+	agentID := data["agent_id"]
+	agentName := data["agent_name"]
+	if agentID == "" || agentName == "" {
+		return
+	}
+	label := agentName
+	if len(label) > 16 {
+		label = label[:16]
+	}
+	m.agentLabels[agentID] = label
+	m.syncAgentTabs()
+	m.syncAgentWindowTabs()
+}
+
+func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
+	data, ok := evt.Data.(map[string]string)
+	if !ok {
+		return
+	}
+	agentID := data["agent_id"]
+	status := data["status"]
+	if agentID == "" || status == "" {
+		return
+	}
+	m.agentStatuses[agentID] = status
+	m.syncAgentTabs()
+	m.syncAgentWindowTabs()
 }
