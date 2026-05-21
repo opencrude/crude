@@ -430,7 +430,7 @@ func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) string {
 		inlineStr = "\n# Additional Instructions\n" + spec.Instructions
 	}
 	resultFormat := "\n# Result Format\nUse write_report to produce your final result. The gist (max 2000 chars) enters the parent's context window. If you don't call write_report, your last non-tool-call message becomes the result. Keep gists concise and structured."
-	questionNote := "\n\nThe question tool routes to the orchestrator (main agent), not the user directly. Use it when you need clarification or information outside your scope."
+	questionNote := "\n\nIf you need clarification or information outside your scope, use reply() to communicate with the orchestrator. The question tool is not available for sub-agents."
 	envLines := []string{
 		"# Environment",
 		fmt.Sprintf("- Date: %s", now),

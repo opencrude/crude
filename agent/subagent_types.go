@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"sync/atomic"
 	"time"
 
 	"crude/safety"
@@ -75,5 +76,46 @@ type SubAgentHandle struct {
 	StartedAt time.Time
 	SessionID string
 	DB        *sql.DB
-	StepCount int
+	StepCount         atomic.Int32
+	totalPromptTokens int
+	totalCompTokens   int
+	totalCostUSD      float64
+	errors            []string
+	termReason        string
+	reportGist        string
+	reportPath        string
+}
+
+func (h *SubAgentHandle) AddUsage(promptT, compT int) {
+	h.totalPromptTokens += promptT
+	h.totalCompTokens += compT
+}
+
+func (h *SubAgentHandle) AddCost(cost float64) {
+	h.totalCostUSD += cost
+}
+
+func (h *SubAgentHandle) AddError(msg string) {
+	h.errors = append(h.errors, msg)
+}
+
+func (h *SubAgentHandle) Usage() (promptTokens, compTokens int, costUSD float64, errs []string) {
+	return h.totalPromptTokens, h.totalCompTokens, h.totalCostUSD, h.errors
+}
+
+func (h *SubAgentHandle) SetTermReason(reason string) {
+	h.termReason = reason
+}
+
+func (h *SubAgentHandle) TermReason() string {
+	return h.termReason
+}
+
+func (h *SubAgentHandle) SetReport(gist, path string) {
+	h.reportGist = gist
+	h.reportPath = path
+}
+
+func (h *SubAgentHandle) Report() (gist, path string, hasReport bool) {
+	return h.reportGist, h.reportPath, h.reportGist != ""
 }

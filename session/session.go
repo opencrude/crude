@@ -175,7 +175,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		}
 	}
 
-	return &Session{
+	sess := &Session{
 		cfg:          cfg,
 		provider:     p,
 		exec:         exec,
@@ -192,7 +192,11 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		db:           db,
 		dbPath:       dbPath,
 		writeBuf:     make([]taggedMessage, 0, 64),
-	}, nil
+	}
+	if cfg.Agents.Enabled {
+		sess.subAgentOrch = NewSubAgentOrchestrator(sess, cfg.Agents.MaxConcurrent, cfg.Agents.MaxDepth)
+	}
+	return sess, nil
 }
 
 func (s *Session) Close() {
@@ -211,6 +215,14 @@ func (s *Session) Close() {
 		s.persistCostSnapshot()
 	}
 
+	if s.subAgentOrch != nil {
+		for _, h := range s.subAgentOrch.Manager().ActiveHandles() {
+			s.subAgentOrch.Manager().Cancel(h.Spec.ID)
+			s.subAgentOrch.FileOwnership().Release(h.Spec.ID)
+		}
+		s.subAgentOrch.Wait()
+	}
+
 	if s.db != nil {
 		if err := sessiondb.CloseSession(s.db, s.sessionID); err != nil {
 			s.logger.Error("SESSION", "close_session_error", "error", err.Error())
@@ -218,13 +230,6 @@ func (s *Session) Close() {
 		s.persistCostToDB()
 		if err := s.db.Close(); err != nil {
 			s.logger.Error("SESSION", "db_close_error", "error", err.Error())
-		}
-	}
-
-	if s.subAgentOrch != nil {
-		for _, h := range s.subAgentOrch.Manager().ActiveHandles() {
-			s.subAgentOrch.Manager().Cancel(h.Spec.ID)
-			s.subAgentOrch.FileOwnership().Release(h.Spec.ID)
 		}
 	}
 

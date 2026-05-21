@@ -52,7 +52,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 func isPotentiallyBlocking(name string, yolo bool) bool {
 	switch name {
 	case "question":
-		return true
+		return !yolo
 	case "execute_command":
 		return true
 	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
@@ -99,7 +99,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: tools.ToolResult{Content: content}}
 	}
 
-	if tc.Function.Name == "question" {
+	if tc.Function.Name == "question" && blockResolveCh != nil {
 		questionText := getStr(params, "question")
 		rawQuestions, hasQuestions := params["questions"]
 
@@ -160,7 +160,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: resp}}
 	}
 
-	if tc.Function.Name == "execute_command" && !a.Yolo {
+	if tc.Function.Name == "execute_command" {
 		cmd := getStr(params, "command")
 		sr := safety.CheckCommandSafety(cmd, a.logger)
 		if sr.Risk.IsAlwaysBlocked() {
@@ -181,7 +181,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			}})
 			return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
 		}
-		if sr.Risk.NeedsConfirmation() {
+		if !a.Yolo && sr.Risk.NeedsConfirmation() {
 			emit(AgentEvent{Type: "blocking", Data: map[string]string{
 				"operation":  sr.Risk.String(),
 				"tool":       "execute_command",
@@ -219,9 +219,9 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 					"target":    cmd,
 				}})
 			}
+		} else if a.Yolo {
+			a.logger.Debug("SAFETY", "yolo_skip", "tool", "execute_command")
 		}
-	} else if tc.Function.Name == "execute_command" && a.Yolo {
-		a.logger.Debug("SAFETY", "yolo_skip", "tool", "execute_command")
 	}
 
 	fileCheck := false

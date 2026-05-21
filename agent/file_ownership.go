@@ -16,6 +16,7 @@ type ClaimEntry struct {
 	AgentID   AgentID
 	AgentName string
 	ClaimedAt time.Time
+	IsWrite   bool
 }
 
 func NewFileOwnership() *FileOwnership {
@@ -24,7 +25,7 @@ func NewFileOwnership() *FileOwnership {
 	}
 }
 
-func (fo *FileOwnership) CheckOrClaim(agentID AgentID, agentName string, path string) error {
+func (fo *FileOwnership) CheckOrClaim(agentID AgentID, agentName string, path string, isWrite bool) error {
 	fo.mu.Lock()
 	defer fo.mu.Unlock()
 
@@ -40,6 +41,7 @@ func (fo *FileOwnership) CheckOrClaim(agentID AgentID, agentName string, path st
 		AgentID:   agentID,
 		AgentName: agentName,
 		ClaimedAt: time.Now(),
+		IsWrite:   isWrite,
 	}
 	return nil
 }
@@ -64,6 +66,7 @@ func (fo *FileOwnership) PreClaim(agentID AgentID, agentName string, paths []str
 			AgentID:   agentID,
 			AgentName: agentName,
 			ClaimedAt: now,
+			IsWrite:   true,
 		}
 	}
 	return nil
@@ -79,33 +82,28 @@ func (fo *FileOwnership) Release(agentID AgentID) {
 	}
 }
 
-func (fo *FileOwnership) Query(path string) AgentID {
-	fo.mu.Lock()
-	defer fo.mu.Unlock()
-	if entry, ok := fo.claims[path]; ok {
-		return entry.AgentID
-	}
-	return ""
-}
-
-func (fo *FileOwnership) ClaimsByAgent(agentID AgentID) []string {
+func (fo *FileOwnership) ReadClaimsByAgent(agentID AgentID) []string {
 	fo.mu.Lock()
 	defer fo.mu.Unlock()
 	var paths []string
 	for path, entry := range fo.claims {
-		if entry.AgentID == agentID {
+		if entry.AgentID == agentID && !entry.IsWrite {
 			paths = append(paths, path)
 		}
 	}
 	return paths
 }
 
-func (fo *FileOwnership) AllClaims() map[string]ClaimEntry {
+func (fo *FileOwnership) WriteClaimsByAgent(agentID AgentID) []string {
 	fo.mu.Lock()
 	defer fo.mu.Unlock()
-	cp := make(map[string]ClaimEntry, len(fo.claims))
-	for k, v := range fo.claims {
-		cp[k] = v
+	var paths []string
+	for path, entry := range fo.claims {
+		if entry.AgentID == agentID && entry.IsWrite {
+			paths = append(paths, path)
+		}
 	}
-	return cp
+	return paths
 }
+
+

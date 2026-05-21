@@ -39,10 +39,6 @@ func toolDefsToProviderDefs(tds []tools.ToolDef) []provider.ToolDef {
 	return result
 }
 
-func AllToolDefs() []tools.ToolDef {
-	return tools.AgentTools
-}
-
 func allToolDefs() []provider.ToolDef {
 	ephemeral := &provider.CacheControl{Type: "ephemeral"}
 	result := make([]provider.ToolDef, len(tools.AgentTools))
