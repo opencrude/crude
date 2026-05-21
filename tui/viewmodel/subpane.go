@@ -87,17 +87,21 @@ type PaneRenderResult struct {
 func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 	bgSeq := sp.bgSeq()
 	sbW := sp.MsgList.ScrollbarWidth()
-	innerW := width - sp.theme.Spacing.PadLR*2 - sbW
+	sbGapW := 0
+	if sbW > 0 {
+		sbGapW = 1
+	}
+	innerW := width - sp.theme.Spacing.PadLR*2 - sbW - sbGapW
 	if innerW < 10 {
 		innerW = 10
 	}
 	emptyBgLine := ""
 	if bgSeq != "" {
-		emptyBgLine = bgSeq + strings.Repeat(" ", innerW) + "\x1b[0m" + bgSeq + strings.Repeat(" ", sbW)
+		emptyBgLine = bgSeq + strings.Repeat(" ", innerW) + "\x1b[0m" + bgSeq + strings.Repeat(" ", sbW+sbGapW)
 	}
 
 	if sp.Done {
-		summary := sp.renderSummaryLine(innerW, sbW)
+		summary := sp.renderSummaryLine(innerW, sbW+sbGapW)
 		return PaneRenderResult{
 			Lines: []string{emptyBgLine, summary},
 		}
@@ -119,7 +123,7 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 		s = strings.ReplaceAll(s, resetSeq, resetSeq+bgSeq)
 		return bgSeq + s + resetSeq + bgSeq
 	}
-	sbPad := strings.Repeat(" ", sbW)
+	sbPad := strings.Repeat(" ", sbW+sbGapW)
 	if bgSeq != "" {
 		sbPad = bgSeq + sbPad
 	}
@@ -147,7 +151,7 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 		contentLines = contentLines[topPad:]
 	}
 
-	headerLine := sp.renderHeaderLine(innerW, sbW, spinFrame)
+	headerLine := sp.renderHeaderLine(innerW, sbW+sbGapW, spinFrame)
 
 	lines := make([]string, 0, 1+visibleH+1)
 	lines = append(lines, emptyBgLine)

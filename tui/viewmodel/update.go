@@ -122,7 +122,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				tabBarExtra = 2
 			}
 			inputStartLine := m.chatAreaHeight + 4 + tabBarExtra
-			msgListCapturing := m.mainMsgList.IsSelecting() || m.mainMsgList.IsScrollbarDragging()
+			activeML := m.activeMessageList()
+			msgListCapturing := activeML.IsSelecting() || activeML.IsScrollbarDragging()
 			if m.input.InputSelecting() || (msg.Y >= inputStartLine && !msgListCapturing) {
 				updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 				m.input = updated
@@ -146,7 +147,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, paneCmd)
 				}
 				if !handled {
-					_, cmd := m.mainMsgList.Update(msg)
+					_, cmd := activeML.Update(msg)
 					if cmd != nil {
 						cmds = append(cmds, cmd)
 					}
@@ -157,7 +158,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, paneCmd)
 				}
 				if !handled {
-					_, cmd := m.mainMsgList.Update(msg)
+					_, cmd := activeML.Update(msg)
 					if cmd != nil {
 						cmds = append(cmds, cmd)
 					}

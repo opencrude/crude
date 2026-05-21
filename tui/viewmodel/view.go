@@ -99,7 +99,7 @@ func (m *App) View() string {
 	}
 
 	nestingLevel := m.paneMgr.ScrollbarNestingLevel()
-	paneSBW := nestingLevel * scrollbar.ScrollbarWidth
+	paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
 	ma := m.mainAgent()
 	ma.MsgList.SetPaneScrollbarWidth(paneSBW)
 
@@ -117,8 +117,6 @@ func (m *App) View() string {
 	}
 	activeML.SetChatAreaBounds(chatAreaTop, chatH)
 
-	chatVisible := activeML.Render(innerW)
-
 	mainSBVisible := activeML.ScrollbarWidth() > 0
 
 	var totalSBW int
@@ -127,12 +125,17 @@ func (m *App) View() string {
 	var paneSBViews map[string][]string
 
 	totalSBW = scrollbar.ScrollbarWidth * (1 + nestingLevel)
+	if nestingLevel > 0 {
+		totalSBW += nestingLevel
+	}
 	if !mainSBVisible && nestingLevel == 0 {
 		totalSBW = 0
 	}
 	if !mainSBVisible && nestingLevel > 0 {
-		totalSBW = scrollbar.ScrollbarWidth * nestingLevel
+		totalSBW = scrollbar.ScrollbarWidth*nestingLevel + nestingLevel
 	}
+
+	chatVisible := activeML.Render(innerW)
 
 	mainScrollbarView := activeML.ScrollbarView()
 	mainSBLines = strings.Split(mainScrollbarView, "\n")
@@ -191,6 +194,9 @@ func (m *App) View() string {
 
 	for i, line := range chatVisible {
 		maxContentW := innerW - totalSBW
+		if totalSBW > 0 {
+			maxContentW = innerW - totalSBW - 1
+		}
 		if maxContentW < 10 {
 			maxContentW = 10
 		}
@@ -227,7 +233,7 @@ func (m *App) View() string {
 					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
 				}
 
-				sbColumn = paneSBLine + mainSBLine
+				sbColumn = paneSBLine + " " + mainSBLine
 			} else if nestingLevel > 0 {
 				paneGap := strings.Repeat(" ", scrollbar.ScrollbarWidth)
 
@@ -239,7 +245,7 @@ func (m *App) View() string {
 					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
 				}
 
-				sbColumn = paneGap + mainSBLine
+				sbColumn = paneGap + " " + mainSBLine
 			} else {
 				if mainSBVisible && i < len(mainSBLines) && mainSBLines[i] != "" {
 					sbColumn = mainSBLines[i]
@@ -249,14 +255,14 @@ func (m *App) View() string {
 			}
 
 			if totalSBW > 0 {
-				padRight := innerW - totalSBW - visW
+				padRight := innerW - totalSBW - 1 - visW
 				if padRight < 0 {
 					padRight = 0
 				}
 				if sbColumn == "" {
 					sbColumn = strings.Repeat(" ", totalSBW)
 				}
-				line = pad + line + strings.Repeat(" ", padRight) + sbColumn
+				line = pad + line + strings.Repeat(" ", padRight) + " " + sbColumn
 			} else {
 				rightPad := innerW - visW
 				if rightPad < 0 {

@@ -1133,11 +1133,15 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 	// at the cost of a slight reflow when scrollability changes. The alternative (always
 	// reserving scrollbar space) wastes horizontal space when content fits the viewport.
 	sbW := ml.ScrollbarWidth()
-	contentWidth := ml.width - padLR*2 - 16 - sbW
+	sbGapW := 0
+	if sbW > 0 {
+		sbGapW = 1
+	}
+	contentWidth := ml.width - padLR*2 - 16 - sbW - sbGapW
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
-	innerW := ml.width - padLR*2 - sbW
+	innerW := ml.width - padLR*2 - sbW - sbGapW
 	if innerW < 20 {
 		innerW = 20
 	}
