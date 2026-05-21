@@ -102,6 +102,7 @@ func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, b
 	if err != nil {
 		return "", false
 	}
+	r = strings.TrimPrefix(r, "\n")
 	return strings.TrimRight(r, "\n"), true
 }
 
