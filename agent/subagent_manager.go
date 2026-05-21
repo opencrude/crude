@@ -10,6 +10,7 @@ type SubAgentManager struct {
 	mu            sync.Mutex
 	active        map[AgentID]*SubAgentHandle
 	completed     []SubAgentResult
+	completedMap  map[AgentID]SubAgentResult
 	maxConcurrent int
 	maxDepth      int
 }
@@ -24,6 +25,7 @@ func NewSubAgentManager(maxConcurrent, maxDepth int) *SubAgentManager {
 	return &SubAgentManager{
 		active:        make(map[AgentID]*SubAgentHandle),
 		completed:     make([]SubAgentResult, 0),
+		completedMap:  make(map[AgentID]SubAgentResult),
 		maxConcurrent: maxConcurrent,
 		maxDepth:      maxDepth,
 	}
@@ -43,16 +45,17 @@ func (m *SubAgentManager) Validate(spec SubAgentSpec, parentDepth int) error {
 	if depth > m.maxDepth {
 		return fmt.Errorf("cannot spawn sub-agent at depth %d (max_depth=%d)", depth, m.maxDepth)
 	}
-	if len(m.active) >= m.maxConcurrent {
-		return fmt.Errorf("maximum concurrent sub-agents (%d) reached", m.maxConcurrent)
-	}
 	return nil
 }
 
-func (m *SubAgentManager) Register(handle *SubAgentHandle) {
+func (m *SubAgentManager) Register(handle *SubAgentHandle) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.active) >= m.maxConcurrent {
+		return fmt.Errorf("maximum concurrent sub-agents (%d) reached", m.maxConcurrent)
+	}
 	m.active[handle.Spec.ID] = handle
+	return nil
 }
 
 func (m *SubAgentManager) Unregister(id AgentID, result SubAgentResult) {
@@ -60,6 +63,14 @@ func (m *SubAgentManager) Unregister(id AgentID, result SubAgentResult) {
 	defer m.mu.Unlock()
 	delete(m.active, id)
 	m.completed = append(m.completed, result)
+	m.completedMap[id] = result
+}
+
+func (m *SubAgentManager) GetCompleted(id AgentID) (SubAgentResult, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.completedMap[id]
+	return r, ok
 }
 
 func (m *SubAgentManager) Cancel(id AgentID) (SubAgentResult, bool) {
@@ -124,7 +135,7 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 			Category:      h.Spec.Category,
 			Status:        string(SubAgentRunning),
 			ElapsedSeconds: int(time.Since(h.StartedAt).Seconds()),
-			StepsUsed:     h.StepCount,
+			StepsUsed:     int(h.StepCount.Load()),
 			MaxSteps:      h.Spec.MaxSteps,
 			Model:         h.Spec.Model,
 			FilesClaimed:  h.Spec.FileOwnership,
@@ -143,8 +154,7 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 	return entries
 }
 
-func (m *SubAgentManager) MaxConcurrent() int { return m.maxConcurrent }
-func (m *SubAgentManager) MaxDepth() int      { return m.maxDepth }
+func (m *SubAgentManager) MaxDepth() int { return m.maxDepth }
 
 type SubAgentStatusEntry struct {
 	HandleID       string   `json:"handle_id"`

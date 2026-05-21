@@ -16,7 +16,6 @@ import (
 func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan string) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "session_id", s.sessionID)
-	s.subAgentOrch = NewSubAgentOrchestrator(s, s.cfg.Agents.MaxConcurrent, s.cfg.Agents.MaxDepth)
 	if s.subAgentOrch != nil {
 		s.subAgentOrch.SetSender(sender)
 	}

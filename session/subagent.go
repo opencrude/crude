@@ -8,7 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sync"
 	"time"
+
+	"strings"
+
+	"crypto/rand"
+	"encoding/hex"
 
 	"crude/agent"
 	"crude/provider"
@@ -25,6 +31,7 @@ type SubAgentOrchestrator struct {
 	rateLimiter   *agent.RateLimiter
 	sender        EventSender
 	parentToolFn  func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	wg            sync.WaitGroup
 }
 
 func NewSubAgentOrchestrator(s *Session, maxConcurrent, maxDepth int) *SubAgentOrchestrator {
@@ -42,6 +49,10 @@ func (o *SubAgentOrchestrator) Manager() *agent.SubAgentManager {
 
 func (o *SubAgentOrchestrator) FileOwnership() *agent.FileOwnership {
 	return o.fileOwnership
+}
+
+func (o *SubAgentOrchestrator) Wait() {
+	o.wg.Wait()
 }
 
 func (o *SubAgentOrchestrator) SetSender(sender EventSender) {
@@ -64,6 +75,16 @@ func (o *SubAgentOrchestrator) RunSubAgent(ctx context.Context, params map[strin
 		category = agent.CatCrafter
 	}
 
+	parentDepth := 0
+	if pd, ok := params["parent_depth"]; ok {
+		switch v := pd.(type) {
+		case float64:
+			parentDepth = int(v)
+		case int:
+			parentDepth = v
+		}
+	}
+
 	spec := agent.SubAgentSpec{
 		ID:             agent.AgentID(name + "-" + generateShortID()),
 		Name:           name,
@@ -74,7 +95,7 @@ func (o *SubAgentOrchestrator) RunSubAgent(ctx context.Context, params map[strin
 		Provider:       getStrParam(params, "provider"),
 		PolicyName:     getStrParam(params, "policy"),
 		MaxSteps:       getIntParam(params, "max_steps"),
-		Depth:          o.currentDepth() + 1,
+		Depth:          parentDepth + 1,
 		ParentID:       agent.AgentID("main"),
 		TimeoutSeconds: getIntParam(params, "timeout_seconds"),
 	}
@@ -96,7 +117,7 @@ func (o *SubAgentOrchestrator) RunSubAgent(ctx context.Context, params map[strin
 	parentPolicy := safety.DefaultPolicy()
 	spec.Policy = agent.ComposePolicy(parentPolicy, spec.PolicyName, spec.Category)
 
-	if err := o.mgr.Validate(spec, o.currentDepth()); err != nil {
+	if err := o.mgr.Validate(spec, parentDepth); err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("%s", err)
 	}
 
@@ -120,6 +141,13 @@ func (o *SubAgentOrchestrator) RunSubAgent(ctx context.Context, params map[strin
 	}
 
 	if !wait {
+		go func() {
+			select {
+			case <-ctx.Done():
+				o.mgr.Cancel(spec.ID)
+			case <-handle.ResultCh:
+			}
+		}()
 		resultJSON, _ := json.Marshal(map[string]string{
 			"handle_id":  string(spec.ID),
 			"name":       spec.Name,
@@ -149,11 +177,9 @@ func (o *SubAgentOrchestrator) PollSubAgent(params map[string]any) (tools.ToolRe
 
 	handle, ok := o.mgr.GetActive(agent.AgentID(handleID))
 	if !ok {
-		for _, r := range o.mgr.CompletedResults() {
-			if string(r.AgentID) == handleID {
-				resultJSON, _ := json.Marshal(r)
-				return tools.ToolResult{Content: string(resultJSON)}, nil
-			}
+		if r, found := o.mgr.GetCompleted(agent.AgentID(handleID)); found {
+			resultJSON, _ := json.Marshal(r)
+			return tools.ToolResult{Content: string(resultJSON)}, nil
 		}
 		return tools.ToolResult{Content: `{"status":"not_found","error":"Handle ID not found"}`}, nil
 	}
@@ -164,10 +190,10 @@ func (o *SubAgentOrchestrator) PollSubAgent(params map[string]any) (tools.ToolRe
 		"category":        handle.Spec.Category,
 		"status":          "running",
 		"elapsed_seconds": int(time.Since(handle.StartedAt).Seconds()),
-		"steps_used":      handle.StepCount,
+		"steps_used":      handle.StepCount.Load(),
 		"max_steps":       handle.Spec.MaxSteps,
 		"model":           handle.Spec.Model,
-		"files_claimed":   o.fileOwnership.ClaimsByAgent(handle.Spec.ID),
+		"files_claimed":   o.fileOwnership.WriteClaimsByAgent(handle.Spec.ID),
 	}
 	statusJSON, _ := json.Marshal(status)
 	return tools.ToolResult{Content: string(statusJSON)}, nil
@@ -225,6 +251,10 @@ func (o *SubAgentOrchestrator) WriteReport(agentID agent.AgentID, params map[str
 				resultPath = path
 			}
 		}
+	}
+
+	if handle, ok := o.mgr.GetActive(agentID); ok {
+		handle.SetReport(gist, resultPath)
 	}
 
 	resultJSON, _ := json.Marshal(map[string]string{
@@ -299,7 +329,7 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 	a.ParentID = spec.ParentID
 	a.MaxSteps = maxSteps
 	a.Policy = spec.Policy
-	a.Yolo = o.session.yolo
+	a.Yolo = true
 	a.AsyncMgr = o.session.asyncMgr
 	a.FilteredTools = filteredTools
 
@@ -311,6 +341,7 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 		timeout = 300
 	}
 	subCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	a.Ctx = subCtx
 
 	prompt := agent.BuildSubAgentPrompt(spec, profileInstructions)
 
@@ -325,7 +356,14 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 		DB:        subDB,
 	}
 
-	o.mgr.Register(handle)
+	if err := o.mgr.Register(handle); err != nil {
+		o.fileOwnership.Release(spec.ID)
+		if subDB != nil {
+			sessiondb.CloseSession(subDB, subSessionID)
+			subDB.Close()
+		}
+		return nil, fmt.Errorf("register: %w", err)
+	}
 
 	if o.session.sm != nil {
 		goal := o.session.sm.CreateGoal(o.session.sessionID, "sub-agent: "+spec.Name, spec.Description, statemachine.PriorityNormal, false)
@@ -340,16 +378,21 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 		}
 	}
 
-	go o.runSubAgentLoop(subCtx, handle, prompt)
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		o.runSubAgentLoop(subCtx, handle, prompt)
+	}()
 
 	return handle, nil
 }
 
 func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, prompt string) {
+	done := false
 	defer func() {
 		o.fileOwnership.Release(handle.Spec.ID)
 
-		if r := recover(); r != nil {
+		if r := recover(); r != nil && !done {
 			stack := debug.Stack()
 			o.session.logger.Error("SUBAGENT", "panic", "agent_id", handle.Spec.ID, "error", fmt.Sprintf("%v", r))
 			result := agent.SubAgentResult{
@@ -392,7 +435,23 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 					}
 				}
 				if promptT > 0 || compT > 0 {
-					handle.StepCount++
+					handle.StepCount.Add(1)
+					handle.AddUsage(promptT, compT)
+				}
+				if cost, ok := data["cost"].(float64); ok {
+					handle.AddCost(cost)
+				}
+			}
+		}
+		if evt.Type == "error" {
+			if msg, ok := evt.Data.(string); ok && msg != "" {
+				handle.AddError(msg)
+			}
+		}
+		if evt.Type == "done" {
+			if data, ok := evt.Data.(map[string]any); ok {
+				if reason, ok := data["reason"].(string); ok && reason != "completed" && reason != "cancelled" {
+					handle.SetTermReason(reason)
 				}
 			}
 		}
@@ -402,6 +461,7 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 
 	handle.ResultCh <- result
 	o.mgr.Unregister(handle.Spec.ID, result)
+	done = true
 	o.persistResult(result)
 
 	if o.session.sm != nil {
@@ -427,9 +487,40 @@ func (o *SubAgentOrchestrator) buildResultFromMessages(handle *agent.SubAgentHan
 		}
 	}
 
+	switch handle.TermReason() {
+	case "stop_condition_met", "context_limit_reached":
+		status = agent.SubAgentFailedError
+	case "max_steps_reached":
+		status = agent.SubAgentFailedTimeout
+	}
+
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == "tool" && agent.IsToolError(m.Content) {
+			if strings.Contains(m.Content, "429") || strings.Contains(m.Content, "quota") {
+				status = agent.SubAgentFailedQuota
+				break
+			}
+			if strings.Contains(m.Content, "401") || strings.Contains(m.Content, "403") || strings.Contains(m.Content, "invalid api key") || strings.Contains(m.Content, "authentication") {
+				status = agent.SubAgentFailedQuota
+				break
+			}
+		}
+		if m.Role == "assistant" {
+			if m.Content != "" && (strings.Contains(m.Content, "429") || strings.Contains(m.Content, "quota")) {
+				status = agent.SubAgentFailedQuota
+				break
+			}
+		}
+	}
+
 	gist := ""
 	resultPath := ""
 	logPath := handle.SessionID
+	if reportGist, reportPath, hasReport := handle.Report(); hasReport {
+		gist = reportGist
+		resultPath = reportPath
+	}
 	if handle.SessionID != "" {
 		sessionsRoot, _ := SessionsRoot()
 		if sessionsRoot != "" {
@@ -437,28 +528,36 @@ func (o *SubAgentOrchestrator) buildResultFromMessages(handle *agent.SubAgentHan
 		}
 	}
 
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if m.Role == "assistant" && len(m.ToolCalls) == 0 && m.Content != "" {
-			gist = m.Content
-			break
+	if gist == "" {
+		for i := len(msgs) - 1; i >= 0; i-- {
+			m := msgs[i]
+			if m.Role == "assistant" && len(m.ToolCalls) == 0 && m.Content != "" {
+				gist = m.Content
+				break
+			}
 		}
 	}
 	if len(gist) > 2000 {
 		gist = gist[:2000]
 	}
 
+	promptTokens, compTokens, costUSD, errs := handle.Usage()
 	return agent.SubAgentResult{
-		AgentID:     handle.Spec.ID,
-		Name:        handle.Spec.Name,
-		Category:    handle.Spec.Category,
-		SessionID:   handle.SessionID,
-		Status:      status,
-		SummaryGist: gist,
-		ResultPath:  resultPath,
-		LogPath:     logPath,
-		FilesRead:   o.fileOwnership.ClaimsByAgent(handle.Spec.ID),
-		DurationMs:  time.Since(handle.StartedAt).Milliseconds(),
+		AgentID:      handle.Spec.ID,
+		Name:         handle.Spec.Name,
+		Category:     handle.Spec.Category,
+		SessionID:    handle.SessionID,
+		Status:       status,
+		SummaryGist:  gist,
+		ResultPath:   resultPath,
+		LogPath:      logPath,
+		FilesRead:    o.fileOwnership.ReadClaimsByAgent(handle.Spec.ID),
+		FilesWritten: o.fileOwnership.WriteClaimsByAgent(handle.Spec.ID),
+		DurationMs:   time.Since(handle.StartedAt).Milliseconds(),
+		Errors:       errs,
+		PromptTokens: promptTokens,
+		CompTokens:   compTokens,
+		CostUSD:      costUSD,
 	}
 }
 
@@ -468,41 +567,54 @@ func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, block
 			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q.", tool, spec.PolicyName)
 		}
 
+		if tool == "question" {
+			questionText := getStrParam(params, "question")
+			if o.sender != nil && questionText != "" {
+				o.sender.SendAgentEventWithID("sub_agent_question", map[string]string{
+					"agent_id":   string(spec.ID),
+					"agent_name": spec.Name,
+					"category":   spec.Category,
+					"question":   questionText,
+					"task":       spec.Description,
+				}, string(spec.ID))
+			}
+			return tools.ToolResult{Content: "Question forwarded to orchestrator. Continue with your task using available information."}, nil
+		}
+
 		if isWriteTool(tool) {
 			target := getStrParam(params, "path")
 			if target == "" {
 				target = getStrParam(params, "source")
 			}
 			if target != "" {
-				if err := o.fileOwnership.CheckOrClaim(spec.ID, spec.Name, target); err != nil {
+				if err := o.fileOwnership.CheckOrClaim(spec.ID, spec.Name, target, true); err != nil {
 					return tools.ToolResult{}, err
+				}
+				if o.sender != nil {
+					o.sender.SendAgentEventWithID("file_claim", map[string]string{
+						"agent_id":   string(spec.ID),
+						"agent_name": spec.Name,
+						"category":   spec.Category,
+						"path":       target,
+					}, string(spec.ID))
 				}
 			}
 		}
 
-		if err := o.rateLimiter.Wait(ctx, spec.Provider); err != nil {
-			return tools.ToolResult{}, fmt.Errorf("Rate limit exceeded for provider %q", spec.Provider)
+		if tool == "run_sub_agent" {
+			params["parent_depth"] = spec.Depth
+		}
+
+		resolvedProvider := spec.Provider
+		if resolvedProvider == "" {
+			resolvedProvider = o.session.cfg.ActiveProvider
+		}
+		if err := o.rateLimiter.Wait(ctx, resolvedProvider); err != nil {
+			return tools.ToolResult{}, fmt.Errorf("Rate limit exceeded for provider %q", resolvedProvider)
 		}
 
 		if tool == "write_report" {
 			return o.WriteReport(spec.ID, params)
-		}
-
-		if tool == "question" {
-			questionText := getStrParam(params, "question")
-			questionData := map[string]string{
-				"operation":       "questions",
-				"tool":           "question",
-				"target":         questionText,
-				"agent_id":       string(spec.ID),
-				"agent_name":     spec.Name,
-				"agent_category": spec.Category,
-				"agent_task":     spec.Description,
-			}
-			if o.sender != nil {
-				o.sender.SendAgentEventWithID("blocking", questionData, string(spec.ID))
-			}
-			return tools.ToolResult{Content: "Question sent to orchestrator."}, nil
 		}
 
 		if o.parentToolFn != nil {
@@ -541,10 +653,6 @@ func (o *SubAgentOrchestrator) persistResult(result agent.SubAgentResult) {
 	})
 }
 
-func (o *SubAgentOrchestrator) currentDepth() int {
-	return 0
-}
-
 func (o *SubAgentOrchestrator) resolveProfile(name string, category string, spec *agent.SubAgentSpec) string {
 	activeProfile := o.session.cfg.Agents.ActiveProfile
 	if activeProfile == "" {
@@ -558,6 +666,9 @@ func (o *SubAgentOrchestrator) resolveProfile(name string, category string, spec
 	if !ok {
 		return ""
 	}
+
+	var instructionsParts []string
+
 	if catCfg, ok := profile.Categories[category]; ok {
 		if spec.Model == "" && catCfg.Model != "" {
 			spec.Model = catCfg.Model
@@ -580,7 +691,9 @@ func (o *SubAgentOrchestrator) resolveProfile(name string, category string, spec
 		if len(spec.DeniedTools) == 0 && len(catCfg.DeniedTools) > 0 {
 			spec.DeniedTools = catCfg.DeniedTools
 		}
-		return catCfg.Description
+		if catCfg.Description != "" {
+			instructionsParts = append(instructionsParts, catCfg.Description)
+		}
 	}
 
 	if agentProfiles := o.session.cfg.Agents.AgentProfiles; agentProfiles != nil {
@@ -609,15 +722,19 @@ func (o *SubAgentOrchestrator) resolveProfile(name string, category string, spec
 			if len(spec.FileOwnership) == 0 && len(ap.FileOwnership) > 0 {
 				spec.FileOwnership = ap.FileOwnership
 			}
-			return ap.Instructions
+			if ap.Instructions != "" {
+				instructionsParts = append(instructionsParts, ap.Instructions)
+			}
 		}
 	}
 
+	if len(instructionsParts) > 0 {
+		return strings.Join(instructionsParts, "\n\n")
+	}
 	return ""
 }
 
 func (o *SubAgentOrchestrator) applyCategoryDefaults(spec *agent.SubAgentSpec) {
-	catCfg := agent.CategoryToolDefaults(spec.Category)
 	if spec.MaxSteps == 0 {
 		switch spec.Category {
 		case agent.CatResearcher:
@@ -658,12 +775,6 @@ func (o *SubAgentOrchestrator) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 			spec.PolicyName = "no-delete"
 		}
 	}
-	if len(spec.AllowedTools) == 0 && len(catCfg.AllowedTools) > 0 {
-		spec.AllowedTools = catCfg.AllowedTools
-	}
-	if len(spec.DeniedTools) == 0 && len(catCfg.DeniedTools) > 0 {
-		spec.DeniedTools = catCfg.DeniedTools
-	}
 }
 
 func isWriteTool(name string) bool {
@@ -675,7 +786,9 @@ func isWriteTool(name string) bool {
 }
 
 func generateShortID() string {
-	return fmt.Sprintf("%04x", time.Now().UnixNano()&0xFFFF)
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func toStringSlice(val any) []string {
