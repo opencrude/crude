@@ -125,6 +125,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.setMode(ModeConfirm)
 		},
 		func(questionsJSON string) {
+			m.purgeQuestionTabs()
 			n := m.questionForm.Reset(questionsJSON)
 			if n == 0 {
 				return
@@ -137,6 +138,8 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 				}
 			}
 			m.setMode(ModeQuestion)
+			m.switchToQuestionTab(0)
+			m.syncQuestionInputPrompt()
 		},
 		func() {
 			m.blocking = false

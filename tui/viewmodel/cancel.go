@@ -77,6 +77,19 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
+	if m.Mode == ModeQuestion {
+		m.questionForm.Dismiss()
+		m.blocking = false
+		m.statusbar.SetConfirming(false)
+		m.input.ResetPrompt()
+		m.input.ClearInput()
+		m.closeAllQuestionTabs()
+		if m.OnQuestionResult != nil {
+			m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
+		}
+		return nil
+	}
+
 	if m.anyActive() {
 		select {
 		case m.cancelCh <- struct{}{}:

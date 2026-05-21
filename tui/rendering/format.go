@@ -62,18 +62,18 @@ func ToolLabel(tool, argsSummary string) string {
 	return tool
 }
 
-func FormatTimeLabel(t time.Time) (string, string) {
-	line1 := t.Format("15:04")
+func FormatTimeLabel(t time.Time) string {
+	timeStr := t.Format("15:04")
 	now := time.Now()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	if t.After(todayStart) {
-		return line1, "today"
+		return "today at " + timeStr
 	}
 	yesterdayStart := todayStart.Add(-24 * time.Hour)
 	if t.After(yesterdayStart) {
-		return line1, "yesterday"
+		return "yesterday at " + timeStr
 	}
-	return line1, t.Format("01/02")
+	return t.Format("01/02") + " " + timeStr
 }
 
 func FormatCost(cost float64) string {

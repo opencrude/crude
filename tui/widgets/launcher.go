@@ -84,7 +84,7 @@ func RenderLauncher(sessions []sessiondb.SessionMeta, selected int, filterActive
 	lines := make([]string, 0, height)
 
 	// "New Session" entry (always first, index 0)
-	newSessionLines := renderNewSessionEntry(selected == 0, th, innerW, spinFrame, idleSeconds)
+	newSessionLines := RenderNewSessionEntry(selected == 0, th, innerW, spinFrame, idleSeconds)
 	for _, l := range newSessionLines {
 		lines = append(lines, l)
 	}
@@ -130,6 +130,46 @@ func RenderLauncherHints(filterActive bool, filterText string, th *theme.Theme, 
 	return th.Styles.DimLabel.Render("[ ↑↓: navigate · enter: select · /: filter · d: delete · q: quit ]")
 }
 
+// RenderLauncherPreviewHints renders a single combined line with session preview and keybinding hints.
+func RenderLauncherPreviewHints(preview string, filterActive bool, filterText string, th *theme.Theme, width int) string {
+	innerW := width - th.Spacing.PadLR*2
+	if innerW < 20 {
+		innerW = 20
+	}
+
+	if preview == "" {
+		return th.Styles.DimLabel.Render("[ ") +
+			th.Styles.Body.Render("Start a new conversation") +
+			th.Styles.DimLabel.Render(" · ↑↓: navigate · enter: select ]")
+	}
+
+	previewRendered := th.Styles.Body.Render(preview)
+
+	var hints string
+	if filterActive {
+		filterDisplay := "/" + filterText
+		hints = th.Styles.Body.Render(filterDisplay) +
+			th.Styles.DimLabel.Render(" · esc: cancel · enter: select · ↑↓: navigate")
+	} else {
+		hints = th.Styles.DimLabel.Render("↑↓: navigate · enter: select · /: filter · d: delete · q: quit")
+	}
+
+	previewW := lipgloss.Width(previewRendered)
+	dotW := lipgloss.Width(th.Styles.DimLabel.Render(" · "))
+	bracketW := lipgloss.Width(th.Styles.DimLabel.Render("[ ") + th.Styles.DimLabel.Render(" ]"))
+	availForHints := innerW - bracketW - dotW - previewW
+	hintsRendered := hints
+
+	if lipgloss.Width(hintsRendered) > availForHints && availForHints > 0 {
+		hintsRendered = hints
+		for lipgloss.Width(hintsRendered) > availForHints {
+			hintsRendered = hintsRendered[:len(hintsRendered)-1]
+		}
+	}
+
+	return th.Styles.DimLabel.Render("[ ") + previewRendered + th.Styles.DimLabel.Render(" · ") + hintsRendered + th.Styles.DimLabel.Render(" ]")
+}
+
 // RenderLauncherPreview renders the preview pane for the selected session.
 func RenderLauncherPreview(previewLines []string, th *theme.Theme, width int) []string {
 	innerW := width - th.Spacing.PadLR*2
@@ -153,7 +193,7 @@ func sparkle(frame int) string {
 	return sparkleFrames[frame%len(sparkleFrames)]
 }
 
-func renderNewSessionEntry(selected bool, th *theme.Theme, width int, spinFrame int, idleSeconds float64) []string {
+func RenderNewSessionEntry(selected bool, th *theme.Theme, width int, spinFrame int, idleSeconds float64) []string {
 	boxW := width
 
 	titleStyle := lipgloss.NewStyle().Bold(true)

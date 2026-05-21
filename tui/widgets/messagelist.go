@@ -1147,8 +1147,7 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 	msgIdx := ml.messageIndexOf(origMsg)
 	suppressHeader := ml.shouldSuppressHeader(msgIdx)
 
-	timeLine1, timeLine2 := rendering.FormatTimeLabel(msg.Time)
-	timeW := rendering.Max(len(timeLine1), len(timeLine2))
+	timeLabel := rendering.FormatTimeLabel(msg.Time)
 
 	if !suppressHeader || ml.needsThinkingSpacer(msgIdx) || ml.needsPostThinkingSpacer(msgIdx) {
 		lines = append(lines, "")
@@ -1156,22 +1155,22 @@ func (ml *MessageList) renderSingleMessage(msg *types.ChatMessage) []string {
 
 	switch msg.Role {
 	case types.RoleUser:
-		msgLines := RenderUserMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW, ml.MdRenderer(), ml.username, suppressHeader)
+		msgLines := RenderUserMessage(*msg, ml.theme, contentWidth, innerW, timeLabel, ml.MdRenderer(), ml.username, suppressHeader)
 		lines = append(lines, msgLines...)
 	case types.RoleAssistant:
 		if ml.streaming && isLastMsg {
 			updateStreamingCache(msg, ml.MdRenderer(), contentWidth)
 		}
-		msgLines := RenderAssistantMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW, ml.MdRenderer(), ml.modelName, ml.streaming, isLastMsg, suppressHeader)
+		msgLines := RenderAssistantMessage(*msg, ml.theme, contentWidth, innerW, timeLabel, ml.MdRenderer(), ml.modelName, ml.streaming, isLastMsg, suppressHeader)
 		lines = append(lines, msgLines...)
 	case types.RoleThinking:
-		msgLines := RenderThinkingMessage(*msg, ml.theme, contentWidth, innerW, ml.spinFrame, ml.modelName, timeLine1, timeLine2, timeW, suppressHeader)
+		msgLines := RenderThinkingMessage(*msg, ml.theme, contentWidth, innerW, ml.spinFrame, ml.modelName, timeLabel, suppressHeader)
 		lines = append(lines, msgLines...)
 	case types.RoleTool:
 		msgLines := tools.RenderToolMessage(*msg, ml.theme, contentWidth, innerW, ml.width, ml.spinFrame, ml.height, ml.phase)
 		lines = append(lines, msgLines...)
 	case types.RoleError:
-		msgLines := RenderErrorMessage(*msg, ml.theme, contentWidth, innerW, timeLine1, timeLine2, timeW)
+		msgLines := RenderErrorMessage(*msg, ml.theme, contentWidth, innerW, timeLabel)
 		lines = append(lines, msgLines...)
 	case types.RoleSessionPicker:
 		msgLines := RenderSessionPicker(msg.SessionPickerSessions, msg.SessionPickerSelected, msg.SessionPickerFocused, ml.theme, innerW)
