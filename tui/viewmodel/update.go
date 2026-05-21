@@ -97,29 +97,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.win.IsOpen() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			var hit window.TabHitResult
 
-			if m.win.Layout() == window.TabVertical {
-				windowStartLine := m.chatAreaHeight + 3
-				windowEndLine := windowStartLine + len(m.renderWindowContent())
-				if msg.Y >= windowStartLine && msg.Y < windowEndLine {
-					adjustedX := msg.X - m.theme.Spacing.PadLR
-					adjustedY := msg.Y - windowStartLine
-					if adjustedX < 0 {
-						adjustedX = 0
-					}
-					if adjustedY < 0 {
-						adjustedY = 0
-					}
-					hit = m.win.HitTest(adjustedX, adjustedY)
+			if m.win.TabCount() >= 2 && msg.Y == 3 {
+				adjustedX := msg.X - m.theme.Spacing.PadLR
+				if adjustedX < 0 {
+					adjustedX = 0
 				}
-			} else {
-				windowTabBarLine := m.chatAreaHeight + 5
-				if msg.Y == windowTabBarLine {
-					adjustedX := msg.X - m.theme.Spacing.PadLR
-					if adjustedX < 0 {
-						adjustedX = 0
-					}
-					hit = m.win.HitTest(adjustedX, 0)
-				}
+				hit = m.win.HitTest(adjustedX, 0)
 			}
 
 			if hit.TabIndex >= 0 {
@@ -134,7 +117,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.Mode == ModeChat {
-			inputStartLine := m.chatAreaHeight + 4
+			tabBarExtra := 0
+			if m.win.IsOpen() && m.win.TabCount() >= 2 {
+				tabBarExtra = 2
+			}
+			inputStartLine := m.chatAreaHeight + 4 + tabBarExtra
 			msgListCapturing := m.mainMsgList.IsSelecting() || m.mainMsgList.IsScrollbarDragging()
 			if m.input.InputSelecting() || (msg.Y >= inputStartLine && !msgListCapturing) {
 				updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
@@ -457,6 +444,28 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			if m.tabBarFocused {
+				switch keyMsg.Type {
+				case tea.KeyLeft:
+					m.win.Prev()
+					m.handleTabSwitch()
+					return m, nil
+				case tea.KeyRight:
+					m.win.Next()
+					m.handleTabSwitch()
+					return m, nil
+				case tea.KeyEnter:
+					m.tabBarFocused = false
+					m.handleTabSwitch()
+					return m, nil
+				case tea.KeyEsc:
+					m.tabBarFocused = false
+					return m, nil
+				default:
+					m.tabBarFocused = false
+				}
+			}
+
 			switch keyMsg.String() {
 			case "ctrl+]", "ctrl+[":
 				if m.win.IsOpen() {
@@ -466,6 +475,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.win.Prev()
 					}
 					m.handleTabSwitch()
+					return m, nil
+				}
+			case "ctrl+t":
+				if m.win.IsOpen() && m.win.TabCount() >= 2 {
+					m.tabBarFocused = !m.tabBarFocused
 					return m, nil
 				}
 			}
@@ -575,6 +589,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
 	chatAreaTop := 3
+	if m.win.IsOpen() && m.win.TabCount() >= 2 {
+		chatAreaTop += 2
+	}
 	paneLineMap := m.mainMsgList.PaneLineMap()
 	y := msg.Y - chatAreaTop
 	if y < 0 || y >= len(paneLineMap) {
@@ -658,14 +675,12 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 	default:
 		if m.isAgentTabTitle(tab.Title) {
 			agentID := m.agentIDFromTabTitle(tab.Title)
-			m.win.CloseTab(index)
-			if agentID == m.activeAgentView {
-				m.switchToAgentView(MainAgentID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
-			} else {
-				m.syncActiveTabMode()
+			m.completeSubAgent(agentID)
+			if agentID != MainAgentID && agentID != "" {
+				if m.OnCancelSubAgent != nil {
+					cancelFn := m.OnCancelSubAgent
+					go cancelFn(agentID)
+				}
 			}
 			return nil
 		}
@@ -775,19 +790,20 @@ func (m *App) closeAllQuestionTabs() {
 // creating a fresh set.
 func (m *App) purgeQuestionTabs() {
 	for {
-		found := false
+		removed := false
 		for i := m.win.TabCount() - 1; i >= 0; i-- {
 			tabs := m.win.Tabs()
 			if i >= len(tabs) {
 				continue
 			}
 			if tabs[i].Title == "Question" || m.isQuestionTabTitle(tabs[i].Title) {
-				m.win.CloseTab(i)
-				found = true
+				if m.win.CloseTab(i) != window.CloseNone {
+					removed = true
+				}
 				break
 			}
 		}
-		if !found {
+		if !removed {
 			break
 		}
 	}
@@ -874,10 +890,6 @@ func (m *App) handleTabSwitch() {
 		}
 	}
 	m.syncActiveTabMode()
-}
-
-func (m *App) hitTestAgentWindowSidebar(x, y int) string {
-	return ""
 }
 
 func tickCmd() tea.Cmd {

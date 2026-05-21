@@ -23,6 +23,8 @@ type TUI struct {
 
 	OnResumeSession func(string)
 
+	OnCancelSubAgent func(agentID string)
+
 	OnDeleteSession func(string)
 
 	OnListSessions func() []sessiondb.SessionMeta
@@ -118,6 +120,11 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	a.OnResumeSession = func(sessionID string) {
 		if t.OnResumeSession != nil {
 			t.OnResumeSession(sessionID)
+		}
+	}
+	a.OnCancelSubAgent = func(agentID string) {
+		if t.OnCancelSubAgent != nil {
+			t.OnCancelSubAgent(agentID)
 		}
 	}
 	a.SetDeleteSessionFn(func(sessionID string) {

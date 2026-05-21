@@ -5,6 +5,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -18,7 +19,9 @@ func isSummaryOnlyTool(name string) bool {
 	switch name {
 	case "read_file", "grep_files", "list_directory", "glob_files",
 		"web_search", "arxiv_search", "wait", "kill_async_command",
-		"delete_file", "move_file", "copy_file":
+		"delete_file", "move_file", "copy_file",
+		"run_sub_agent", "poll_sub_agent", "cancel_sub_agent",
+		"list_sub_agents", "write_report":
 		return true
 	}
 	return false
@@ -321,6 +324,16 @@ func resultSummary(tool, content, target, dur string) string {
 		return moveResultSummary(content, target, dur)
 	case "copy_file":
 		return copyResultSummary(content, target, dur)
+	case "run_sub_agent":
+		return subAgentRunSummary(content, target, dur)
+	case "poll_sub_agent":
+		return subAgentPollSummary(content, target, dur)
+	case "cancel_sub_agent":
+		return subAgentCancelSummary(content, target, dur)
+	case "list_sub_agents":
+		return subAgentListSummary(content, target, dur)
+	case "write_report":
+		return subAgentWriteReportSummary(content, target, dur)
 	default:
 		return ""
 	}
@@ -709,6 +722,157 @@ func copyResultSummary(content, target, duration string) string {
 		label += " " + duration
 	}
 	return label
+}
+
+// ── sub-agent tools ──────────────────────────────────────────
+
+func parseJSONMap(content string) map[string]string {
+	result := make(map[string]string)
+	json.Unmarshal([]byte(content), &result)
+	return result
+}
+
+func subAgentRunSummary(content, target, duration string) string {
+	m := parseJSONMap(content)
+	name := m["name"]
+	cat := m["category"]
+	status := m["status"]
+	handle := m["handle_id"]
+
+	if status == "running" {
+		parts := []string{"Spawned"}
+		if cat != "" {
+			parts = append(parts, cat)
+		}
+		if name != "" {
+			parts = append(parts, "\""+name+"\"")
+		}
+		label := strings.Join(parts, " ")
+		if handle != "" && len(handle) > 8 {
+			label += " " + handle[:8]
+		}
+		return label + " (async)"
+	}
+
+	parts := []string{"Sub-agent"}
+	if name != "" {
+		parts = append(parts, "\""+name+"\"")
+	}
+	if cat != "" {
+		parts = append(parts, "("+cat+")")
+	}
+	label := strings.Join(parts, " ")
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
+}
+
+func subAgentPollSummary(content, target, duration string) string {
+	m := parseJSONMap(content)
+	status := m["status"]
+	name := m["name"]
+	cat := m["category"]
+	elapsed := m["elapsed_seconds"]
+	steps := m["steps_used"]
+	maxSteps := m["max_steps"]
+
+	switch status {
+	case "running":
+		parts := []string{"Running"}
+		if name != "" {
+			parts = append(parts, "\""+name+"\"")
+		}
+		if cat != "" {
+			parts = append(parts, "("+cat+")")
+		}
+		label := strings.Join(parts, " ")
+		if elapsed != "" {
+			label += " " + elapsed + "s"
+		}
+		if steps != "" {
+			label += " " + steps
+			if maxSteps != "" {
+				label += "/" + maxSteps
+			}
+			label += " steps"
+		}
+		return label
+	case "completed":
+		parts := []string{"Completed"}
+		if name != "" {
+			parts = append(parts, "\""+name+"\"")
+		}
+		label := strings.Join(parts, " ")
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "not_found":
+		return "Agent not found"
+	default:
+		if strings.HasPrefix(status, "failed") {
+			parts := []string{"Failed"}
+			if name != "" {
+				parts = append(parts, "\""+name+"\"")
+			}
+			return strings.Join(parts, " ") + " (" + status + ")"
+		}
+		if status == "cancelled" {
+			return "Cancelled " + name
+		}
+	}
+	return "Poll " + name + " " + status
+}
+
+func subAgentCancelSummary(content, target, duration string) string {
+	m := parseJSONMap(content)
+	status := m["status"]
+	name := m["name"]
+
+	if status == "not_found" {
+		return "Agent not found"
+	}
+	if name != "" {
+		return "Cancelled \"" + name + "\""
+	}
+	return "Cancelled agent"
+}
+
+func subAgentListSummary(content, target, duration string) string {
+	var entries []map[string]any
+	if err := json.Unmarshal([]byte(content), &entries); err != nil {
+		return "Listed sub-agents"
+	}
+	active := 0
+	completed := 0
+	for _, e := range entries {
+		switch s, _ := e["status"].(string); s {
+		case "running":
+			active++
+		default:
+			completed++
+		}
+	}
+	if active == 0 && completed == 0 {
+		return "No sub-agents"
+	}
+	parts := []string{}
+	if active > 0 {
+		parts = append(parts, fmt.Sprintf("%d active", active))
+	}
+	if completed > 0 {
+		parts = append(parts, fmt.Sprintf("%d done", completed))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func subAgentWriteReportSummary(content, target, duration string) string {
+	m := parseJSONMap(content)
+	if m["status"] == "report_written" {
+		return "Report written"
+	}
+	return "Write report"
 }
 
 // ── helpers ─────────────────────────────────────────────────

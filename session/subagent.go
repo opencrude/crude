@@ -848,6 +848,9 @@ func (o *SubAgentOrchestrator) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 	if spec.Model == "" {
 		spec.Model = o.session.ModelName()
 	}
+	if spec.Provider == "" {
+		spec.Provider = o.session.cfg.ActiveProvider
+	}
 	if spec.PolicyName == "" {
 		switch spec.Category {
 		case agent.CatResearcher:

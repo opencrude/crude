@@ -210,6 +210,13 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 		a.resumeNextID = sessionID
 	}
 
+	tuiInst.OnCancelSubAgent = func(agentID string) {
+		orch := sess.SubAgentOrchestrator()
+		if orch != nil {
+			orch.CancelSubAgent(map[string]any{"handle_id": agentID})
+		}
+	}
+
 	tuiInst.OnDeleteSession = func(sessionID string) {
 		if err := sessiondb.DeleteSession(a.sessionsRoot, sessionID); err != nil {
 			sess.Logger().Warn("SESSION", "delete_failed", "id", sessionID, "error", err.Error())
