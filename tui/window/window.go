@@ -276,8 +276,8 @@ const (
 	tabMinWidth    = 6
 	tabMaxWidth    = 30
 	tabGap         = 1
-	tabBarPadLeft  = 1
-	tabBarPadRight = 1
+	tabBarPadLeft  = 0
+	tabBarPadRight = 0
 
 	// vTabBarMinWidth is the floor for the computed vertical tab sidebar width.
 	vTabBarMinWidth = 12
@@ -359,7 +359,7 @@ func (w *Window) hitTestHorizontal(x, y int) TabHitResult {
 	}
 
 	tabWidths := w.computeTabWidths()
-	px := tabBarPadLeft
+	px := 0
 
 	for i, tw := range tabWidths {
 		tabStart := px

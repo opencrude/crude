@@ -10,7 +10,7 @@ import (
 const (
 	VisibleDuration = 1500 * time.Millisecond
 	FadeDuration    = 500 * time.Millisecond
-	ScrollbarWidth  = 2
+	ScrollbarWidth  = 1
 )
 
 type Visibility int
@@ -186,9 +186,9 @@ func (s ScrollBar) View() string {
 	var lines []string
 	for i := 0; i < s.trackH; i++ {
 		if i >= thumbTop && i < thumbTop+thumbH {
-			lines = append(lines, styleChar(s.thumbChar, activeThumbStyle)+" ")
+			lines = append(lines, styleChar(s.thumbChar, activeThumbStyle))
 		} else {
-			lines = append(lines, styleChar(s.trackChar, s.trackStyle)+" ")
+			lines = append(lines, styleChar(s.trackChar, s.trackStyle))
 		}
 	}
 	result := ""

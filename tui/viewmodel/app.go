@@ -444,20 +444,32 @@ func (m *App) syncAgentWindowTabs() {
 		activeID = MainAgentID
 	}
 
-	for id, a := range m.agents {
-		if a.Completed {
+	// Main agent tab always first.
+	if ma, ok := m.agents[MainAgentID]; ok && !ma.Completed {
+		title := m.agentTabTitle(MainAgentID)
+		if m.win.TabByTitle(title) == nil {
+			m.win.OpenTabWithLayout(title, "", false, window.TabHorizontal)
+		}
+		if tab := m.win.TabByTitle(title); tab != nil {
+			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.agentTabIcon(MainAgentID))
+		}
+	}
+
+	// Sub-agent tabs in pane creation order (deterministic).
+	for _, id := range m.paneMgr.paneOrder {
+		if id == MainAgentID {
+			continue
+		}
+		a, ok := m.agents[id]
+		if !ok || a.Completed {
 			continue
 		}
 		title := m.agentTabTitle(id)
-		existing := m.win.TabByTitle(title)
-		if existing == nil {
-			closable := id != MainAgentID
-			m.win.OpenTabWithLayout(title, "", closable, window.TabHorizontal)
+		if m.win.TabByTitle(title) == nil {
+			m.win.OpenTabWithLayout(title, "", true, window.TabHorizontal)
 		}
-
-		icon := m.agentTabIcon(id)
 		if tab := m.win.TabByTitle(title); tab != nil {
-			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), icon)
+			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.agentTabIcon(id))
 		}
 	}
 
