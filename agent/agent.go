@@ -39,14 +39,20 @@ type StepRecord struct {
 type Agent struct {
 	Provider    *provider.Provider
 	Model       string
+	AgentID     AgentID
 	Policy      safety.Policy
-	ToolFn      func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	Depth       int
+	ParentID    AgentID
+	MaxSteps      int
+	FilteredTools []tools.ToolDef
+	ToolFn        func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
 	logger      *logger.Logger
 	turn        *logger.TurnLogger
 	Emit        func(AgentEvent)
 	Ctx         context.Context
 	Yolo        bool
 	AsyncMgr    *fileio.AsyncCommandManager
+	SubAgentMgr *SubAgentManager
 	client      *http.Client
 	toolCallSeq int
 

@@ -34,7 +34,10 @@ func (a *Agent) Run(
 		origEmit(evt)
 	}
 
-	allTools := allToolDefs()
+	allTools := toolDefsToProviderDefs(a.FilteredTools)
+	if len(allTools) == 0 {
+		allTools = allToolDefs()
+	}
 
 	l.Debug("AGENT", "run_enter", "msgs", len(sessionMessages), "tools", len(allTools), "session_id", sessionID)
 
@@ -53,13 +56,18 @@ func (a *Agent) Run(
 		if sm == nil || sessionID == "" {
 			return nil
 		}
-		parts := make([]string, 0, 2)
+		parts := make([]string, 0, 3)
 		if status := BuildStateMachineStatus(sm, sessionID); status != "" {
 			parts = append(parts, "## Current State\n"+status)
 		}
 		if a.AsyncMgr != nil {
 			if asyncStatus := BuildAsyncCommandStatus(a.AsyncMgr); asyncStatus != "" {
 				parts = append(parts, asyncStatus)
+			}
+		}
+		if a.SubAgentMgr != nil {
+			if subStatus := BuildSubAgentStatus(a.SubAgentMgr); subStatus != "" {
+				parts = append(parts, subStatus)
 			}
 		}
 		if len(parts) == 0 {
@@ -85,7 +93,11 @@ func (a *Agent) Run(
 		},
 	}
 
-	for step := 0; step < maxSteps; step++ {
+	stepsLimit := maxSteps
+	if a.MaxSteps > 0 {
+		stepsLimit = a.MaxSteps
+	}
+	for step := 0; step < stepsLimit; step++ {
 		if ctx.Err() != nil {
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
@@ -282,8 +294,8 @@ func (a *Agent) Run(
 		}
 	}
 
-	l.Warn("AGENT", "max_steps", "steps", maxSteps, "total_prompt_tokens", totalPromptTokens)
-	emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Reached maximum " + fmt.Sprint(maxSteps) + " steps. Task may be incomplete.", "reason": "max_steps_reached"}})
+	l.Warn("AGENT", "max_steps", "steps", stepsLimit, "total_prompt_tokens", totalPromptTokens)
+	emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Reached maximum " + fmt.Sprint(stepsLimit) + " steps. Task may be incomplete.", "reason": "max_steps_reached"}})
 	return msgs
 }
 

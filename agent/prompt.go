@@ -352,3 +352,126 @@ func buildDirListing(cwd string) string {
 
 	return strings.Join(lines, "\n")
 }
+
+func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) string {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "unknown"
+	}
+	osInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+	cwd := getCWD()
+	now := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+	username := "unknown"
+	if u, err := user.Current(); err == nil {
+		username = u.Username
+	}
+	hostname := "unknown"
+	if h, err := os.Hostname(); err == nil {
+		hostname = h
+	}
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = "/unknown"
+	}
+	gitBranch := ""
+	gitDirty := ""
+	if branch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
+		gitBranch = strings.TrimSpace(string(branch))
+	}
+	if status, err := exec.Command("git", "status", "--porcelain").Output(); err == nil {
+		trimmed := strings.TrimSpace(string(status))
+		if trimmed == "" {
+			gitDirty = "clean"
+		} else {
+			gitDirty = fmt.Sprintf("%d changes", len(strings.Split(trimmed, "\n")))
+		}
+	}
+	toolChecks := []string{"go", "python3", "python", "node", "npm", "pnpm", "bun", "make", "docker", "cargo", "rustc", "java", "javac", "dotnet", "gcc", "g++", "clang", "rg", "fd", "jq", "gh"}
+	var foundTools []string
+	for _, t := range toolChecks {
+		if _, err := exec.LookPath(t); err == nil {
+			foundTools = append(foundTools, t)
+		}
+	}
+	toolsStr := "none detected"
+	if len(foundTools) > 0 {
+		toolsStr = strings.Join(foundTools, ", ")
+	}
+	categoryBrief := categoryBriefing(spec.Category)
+	identity := fmt.Sprintf("You are a %s sub-agent named '%s'. Your task: %s", spec.Category, spec.Name, spec.Description)
+	var policyConstraints []string
+	if spec.PolicyName != "" {
+		policyConstraints = append(policyConstraints, fmt.Sprintf("Your permission policy is '%s'.", spec.PolicyName))
+	}
+	if len(spec.DeniedTools) > 0 {
+		policyConstraints = append(policyConstraints, fmt.Sprintf("Denied tools: %s", strings.Join(spec.DeniedTools, ", ")))
+	}
+	if len(spec.AllowedTools) > 0 {
+		policyConstraints = append(policyConstraints, fmt.Sprintf("Allowed tools: %s", strings.Join(spec.AllowedTools, ", ")))
+	}
+	policyStr := ""
+	if len(policyConstraints) > 0 {
+		policyStr = "\n# Policy Constraints\n" + strings.Join(policyConstraints, "\n")
+	}
+	fileOwnershipStr := ""
+	if len(spec.FileOwnership) > 0 {
+		fileOwnershipStr = fmt.Sprintf("\n# File Ownership\nYou have pre-declared ownership of these paths: %s. Files you write will be auto-claimed.", strings.Join(spec.FileOwnership, ", "))
+	}
+	depthStr := ""
+	if spec.Depth > 0 {
+		depthStr = fmt.Sprintf("\n# Depth Limit\nYou are at depth %d in the agent hierarchy.", spec.Depth)
+	}
+	profileStr := ""
+	if profileInstructions != "" {
+		profileStr = "\n# Profile Instructions\n" + profileInstructions
+	}
+	inlineStr := ""
+	if spec.Instructions != "" {
+		inlineStr = "\n# Additional Instructions\n" + spec.Instructions
+	}
+	resultFormat := "\n# Result Format\nUse write_report to produce your final result. The gist (max 2000 chars) enters the parent's context window. If you don't call write_report, your last non-tool-call message becomes the result. Keep gists concise and structured."
+	questionNote := "\n\nThe question tool routes to the orchestrator (main agent), not the user directly. Use it when you need clarification or information outside your scope."
+	envLines := []string{
+		"# Environment",
+		fmt.Sprintf("- Date: %s", now),
+		fmt.Sprintf("- OS: %s", osInfo),
+		fmt.Sprintf("- Shell: %s", shell),
+		fmt.Sprintf("- User: %s@%s", username, hostname),
+		fmt.Sprintf("- Home: %s", homeDir),
+		fmt.Sprintf("- Working Directory: %s", cwd),
+	}
+	if gitBranch != "" {
+		envLines = append(envLines, fmt.Sprintf("- Git: branch=%s, status=%s", gitBranch, gitDirty))
+	}
+	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", toolsStr))
+	dirListing := buildDirListing(cwd)
+	if dirListing != "" {
+		envLines = append(envLines, "")
+		envLines = append(envLines, dirListing)
+	}
+	return fmt.Sprintf("%s\n\n# Sub-Agent Identity\n%s\n\n# Category Briefing\n%s%s%s%s%s%s%s\n\n%s",
+		SystemPromptBase,
+		identity,
+		categoryBrief,
+		policyStr,
+		fileOwnershipStr,
+		depthStr,
+		profileStr,
+		inlineStr,
+		resultFormat,
+		strings.Join(envLines, "\n"),
+	) + questionNote
+}
+
+func categoryBriefing(category string) string {
+	switch category {
+	case CatResearcher:
+		return "You are in the Researcher tier. Prioritize gathering information and analysis. Do not modify files. Return structured findings with file:line references. Use read_file, grep_files, glob_files, and web tools. Your policy is read-only."
+	case CatCrafter:
+		return "You are in the Crafter tier. You have write access. Make changes carefully and verify them. You are responsible for the code you write. Prefer edit_file over write_file for existing files. Run tests after changes. You cannot delete files."
+	case CatAeron:
+		return "You are in the Aeron tier. You have minimal tools and a tight budget. Stay focused on the simple task at hand. Do not over-engineer. Keep actions minimal and efficient. You cannot delete files or execute arbitrary commands unless explicitly allowed."
+	default:
+		return "You are a sub-agent. Follow your instructions precisely."
+	}
+}

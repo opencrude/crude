@@ -57,6 +57,46 @@ CREATE TABLE IF NOT EXISTS cost_snapshots (
     by_model                TEXT,
     snapshot_at             INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sub_agent_results (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_session_id TEXT NOT NULL,
+    child_session_id  TEXT NOT NULL,
+    agent_id          TEXT NOT NULL,
+    agent_name        TEXT NOT NULL,
+    agent_category    TEXT NOT NULL,
+    status            TEXT NOT NULL,
+    summary_gist      TEXT,
+    result_path       TEXT,
+    session_log_path  TEXT,
+    files_read        TEXT,
+    files_written     TEXT,
+    errors            TEXT,
+    prompt_tokens     INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    cost_usd          REAL DEFAULT 0.0,
+    duration_ms       INTEGER DEFAULT 0,
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY (parent_session_id) REFERENCES sessions(id),
+    FOREIGN KEY (child_session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_results_parent ON sub_agent_results(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_sub_results_child ON sub_agent_results(child_session_id);
+
+CREATE TABLE IF NOT EXISTS file_claims (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL,
+    agent_id        TEXT NOT NULL,
+    agent_name      TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    claimed_at      INTEGER NOT NULL,
+    released_at     INTEGER,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_claims_path ON file_claims(path);
+CREATE INDEX IF NOT EXISTS idx_file_claims_session ON file_claims(session_id);
 `
 
 func Open(dbPath string) (*sql.DB, error) {
@@ -76,6 +116,10 @@ func Migrate(db *sql.DB) error {
 	}
 	migrations := []string{
 		"ALTER TABLE messages ADD COLUMN display_meta TEXT",
+		"ALTER TABLE sessions ADD COLUMN parent_session_id TEXT",
+		"ALTER TABLE sessions ADD COLUMN agent_category TEXT",
+		"ALTER TABLE sessions ADD COLUMN agent_name TEXT",
+		"ALTER TABLE sessions ADD COLUMN depth INTEGER DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m)

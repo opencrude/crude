@@ -574,4 +574,86 @@ var AgentTools = []ToolDef{
 			}`),
 		},
 	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "run_sub_agent",
+			Description: "Spawn a specialized sub-agent to handle a well-defined subtask. The sub-agent gets its own context window, tool set, permission policy, session, and TUI tab. It runs to completion and returns a structured result. Use for: parallel codebase exploration, focused implementation tasks, read-only audits, or any work that benefits from a clean context window. Sub-agents can spawn their own sub-agents up to max_depth.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"name":{"type":"string","description":"Short name for this sub-agent (e.g. 'explorer', 'fixer', 'reviewer'). Used for display and tracking."},
+					"category":{"type":"string","description":"Capability tier: 'researcher' (read-only, cheap, fast), 'crafter' (implementation, write-capable, mid-cost), or 'aeron' (grunt work, ultra-cheap, restricted). Default: 'crafter'.","enum":["researcher","crafter","aeron"]},
+					"description":{"type":"string","description":"The task this sub-agent should accomplish. Be specific."},
+					"instructions":{"type":"string","description":"Custom instructions appended to the sub-agent's system prompt. Use to specialize behavior."},
+					"model":{"type":"string","description":"Model override for this sub-agent. Empty = inherit from category default."},
+					"provider":{"type":"string","description":"Provider key override. Empty = inherit from category default."},
+					"policy":{"type":"string","description":"Permission policy: 'default', 'read-only', 'no-delete', or 'no-execute'. Default: inherited from category.","enum":["default","read-only","no-delete","no-execute"]},
+					"allowed_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool whitelist. If provided, only these tools are available (intersected with category defaults)."},
+					"denied_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool blacklist. These tools are removed (unioned with category defaults)."},
+					"file_ownership":{"type":"array","items":{"type":"string"},"description":"Optional pre-declared paths this sub-agent claims exclusive write access to."},
+					"max_steps":{"type":"integer","description":"Maximum tool-use steps. Default from category. Max 200."},
+					"timeout_seconds":{"type":"integer","description":"Maximum runtime in seconds. Default from category."},
+					"wait":{"type":"boolean","description":"If true (default), block until the sub-agent completes. If false, return immediately with a handle ID for later polling."}
+				},
+				"required":["name","description"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "poll_sub_agent",
+			Description: "Check the status and retrieve results from an asynchronously spawned sub-agent. Returns the SubAgentResult if completed, or current status if still running.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"handle_id":{"type":"string","description":"The handle ID returned by run_sub_agent(wait=false)."}
+				},
+				"required":["handle_id"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "cancel_sub_agent",
+			Description: "Cancel a running sub-agent. The sub-agent's context is cancelled, it returns a SubAgentResult with status 'cancelled', and all its file ownership claims are released.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"handle_id":{"type":"string","description":"The handle ID of the sub-agent to cancel."}
+				},
+				"required":["handle_id"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "list_sub_agents",
+			Description: "List all active and recently completed sub-agents. Shows status, category, model, elapsed time, and steps used.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"include_completed":{"type":"boolean","description":"If true, also include completed/cancelled/failed agents from this session. Default: false (active only)."}
+				}
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "write_report",
+			Description: "Write your final result report. This becomes the sub-agent's official result. The gist (first 2000 chars) enters the parent's context window. The full report is saved to disk. If you don't call this, your last non-tool-call message becomes the result.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"gist":{"type":"string","description":"Concise summary of results, max 2000 characters. This enters the parent's context window."},
+					"report":{"type":"string","description":"Full detailed report. Saved to disk. No size limit."}
+				},
+				"required":["gist"]
+			}`),
+		},
+	},
 }

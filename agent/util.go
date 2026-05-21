@@ -22,6 +22,27 @@ func getStr(params map[string]any, key string) string {
 	return ""
 }
 
+func toolDefsToProviderDefs(tds []tools.ToolDef) []provider.ToolDef {
+	ephemeral := &provider.CacheControl{Type: "ephemeral"}
+	result := make([]provider.ToolDef, len(tds))
+	for i, td := range tds {
+		result[i] = provider.ToolDef{
+			Type: td.Type,
+			Function: provider.FunctionDef{
+				Name:        td.Function.Name,
+				Description: td.Function.Description,
+				Parameters:  td.Function.Parameters,
+			},
+			CacheControl: ephemeral,
+		}
+	}
+	return result
+}
+
+func AllToolDefs() []tools.ToolDef {
+	return tools.AgentTools
+}
+
 func allToolDefs() []provider.ToolDef {
 	ephemeral := &provider.CacheControl{Type: "ephemeral"}
 	result := make([]provider.ToolDef, len(tools.AgentTools))
