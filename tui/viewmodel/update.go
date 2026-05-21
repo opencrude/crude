@@ -372,7 +372,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				updated, result, done := m.questionForm.Update(msg)
 				m.questionForm = updated
 				if !done && m.questionForm.IsTextQuestion(m.questionForm.Focused()) {
-					m.input.ClearInput()
+					existing := m.questionForm.Answer(m.questionForm.Focused())
+					if existing != "" {
+						m.input.SetInput(existing)
+					} else {
+						m.input.ClearInput()
+					}
 				}
 				m.syncQuestionInputPrompt()
 				if done {
@@ -754,6 +759,10 @@ func (m *App) syncQuestionInputPrompt() {
 			}
 		}
 		m.input.SetPrompt(fmt.Sprintf("Q%d %s", m.questionForm.Focused()+1, label))
+		existing := m.questionForm.Answer(m.questionForm.Focused())
+		if existing != "" {
+			m.input.SetInput(existing)
+		}
 	} else {
 		m.input.ResetPrompt()
 		m.input.ClearInput()

@@ -193,7 +193,7 @@ func WordWrap(s string, maxWidth int) []string {
 }
 
 func TruncateLine(s string, max int) string {
-	if runewidth.StringWidth(s) <= max {
+	if runewidth.StringWidth(StripAnsi(s)) <= max {
 		return s
 	}
 	return runewidth.Truncate(s, max, "…")

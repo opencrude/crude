@@ -102,7 +102,7 @@ func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, b
 	if err != nil {
 		return "", false
 	}
-	return strings.Trim(r, "\n"), true
+	return strings.TrimRight(r, "\n"), true
 }
 
 func updateStreamingCache(msg *types.ChatMessage, mdRenderer *glamour.TermRenderer, contentWidth int) {

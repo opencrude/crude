@@ -120,7 +120,6 @@ func (m *QuestionForm) ExitTextMode(idx int) {
 		return
 	}
 	m.textMode[idx] = false
-	m.answers[idx] = ""
 	m.optionCursor[idx] = len(m.items[idx].Options)
 }
 
@@ -265,7 +264,6 @@ func (m QuestionForm) Update(msg tea.Msg) (QuestionForm, QuestionFormResult, boo
 			m.FocusNext()
 		} else if cur == ownRow {
 			m.textMode[idx] = true
-			m.answers[idx] = ""
 		} else if cur == submitRow {
 			if m.AllAnswered() {
 				return m, m.BuildResult(), true
@@ -424,13 +422,27 @@ func (m *QuestionForm) View(spinFrame int, width int) string {
 
 	if isTextActive || (!isTextActive && cursor == ownRow) {
 		marker := accent.Render("❯")
-		if isTextActive && m.answers[idx] != "" {
-			b.WriteString(marker + " " + textStyle.Render("Type your own answer…") + " " + checkStyle.Render("✓"))
+		answerText := m.answers[idx]
+		if answerText != "" {
+			displayText := answerText
+			if runewidth.StringWidth(displayText) > sepW-6 {
+				displayText = runewidth.Truncate(displayText, sepW-7, "…")
+			}
+			b.WriteString(marker + " " + textStyle.Render(displayText) + " " + checkStyle.Render("✓"))
 		} else {
 			b.WriteString(marker + " " + textStyle.Render("Type your own answer…"))
 		}
 	} else {
-		b.WriteString("  " + dim.Render("Type your own answer…"))
+		answerText := m.answers[idx]
+		if answerText != "" {
+			displayText := answerText
+			if runewidth.StringWidth(displayText) > sepW-6 {
+				displayText = runewidth.Truncate(displayText, sepW-7, "…")
+			}
+			b.WriteString("  " + dim.Render(displayText) + " " + checkStyle.Render("✓"))
+		} else {
+			b.WriteString("  " + dim.Render("Type your own answer…"))
+		}
 	}
 	b.WriteString("\n")
 
