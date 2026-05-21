@@ -1,4 +1,384 @@
+# Development status:
+- Tui integration is Remained
 
+## Critical identified issues
+  Deep Validation Review: Sub-Agent System Implementation
+CRITICAL ISSUES
+1. DEADLOCK: Sub-agents with Yolo=false block forever on user-confirmation tools
+File: session/subagent.go:302 and agent/tool_exec.go:102-161, 163-225, 227-304
+Problem: Sub-agents inherit a.Yolo = o.session.yolo. When yolo = false (the default), executeOneToolCall will wait on blockResolveCh (which is handle.BlockCh) for three tool categories:
+
+question tool (line 152): resp := <-blockResolveCh
+File operations (line 274): resp := <-blockResolveCh
+execute_command needing confirmation (line 194): resp := <-blockResolveCh
+Nobody ever writes to handle.BlockCh. The sub-agent's emit function (subagent.go:370-399) forwards "blocking" events to the TUI via o.sender.SendAgentEventWithID, but no response is ever sent back through handle.BlockCh. The sub-agent goroutine deadlocks permanently.
+
+The buildProxiedToolFn has a question handler that returns immediately (subagent.go:491-506), but this is dead code because executeOneToolCall handles question entirely (lines 102-161) and returns before ToolFn is ever called.
+
+Fix: Set Yolo = true for sub-agents since policy enforcement is already handled by PolicyAllows in buildProxiedToolFn. In session/subagent.go:302:
+
+// Before:
+a.Yolo = o.session.yolo
+
+// After:
+a.Yolo = true // sub-agents skip user confirmation; policy enforced via PolicyAllows
+2. DEADLOCK AGGRAVATION: ensureToolExists forces question tool into sub-agent toolset
+File: agent/tool_filter.go:100-103
+Problem: FilterTools explicitly adds the question tool for sub-agents at depth > 0:
+
+if depth > 0 {
+    filtered = ensureToolExists(filtered, "write_report")
+    filtered = ensureToolExists(filtered, "question")
+}
+Combined with issue #1, this guarantees that every sub-agent will have the question tool available, and calling it will deadlock.
+
+Fix: Remove question from ensureToolExists for sub-agents. In agent/tool_filter.go:100-103:
+
+// Before:
+if depth > 0 {
+    filtered = ensureToolExists(filtered, "write_report")
+    filtered = ensureToolExists(filtered, "question")
+}
+
+// After:
+if depth > 0 {
+    filtered = ensureToolExists(filtered, "write_report")
+    // Do not add "question" - sub-agents cannot resolve blocking prompts
+}
+3. RACE CONDITION: SubAgentHandle.StepCount accessed from multiple goroutines without synchronization
+File: agent/subagent_types.go:78, session/subagent.go:395,167, agent/subagent_manager.go:127
+Problem: StepCount is an int field that is:
+
+Written in runSubAgentLoop (subagent.go:395): handle.StepCount++ — from the sub-agent goroutine
+Read in PollSubAgent (subagent.go:167): handle.StepCount — from the main goroutine
+Read in ListStatus (subagent_manager.go:127): h.StepCount — from any goroutine
+This is a textbook data race under Go's memory model.
+
+Fix: Change StepCount to use atomic operations. In agent/subagent_types.go:78:
+
+// Before:
+StepCount int
+
+// After:
+stepCount atomic.Int32  // use atomic for concurrent access
+Then update all access sites:
+
+session/subagent.go:395: handle.stepCount.Add(1) instead of handle.StepCount++
+session/subagent.go:167: "steps_used": handle.stepCount.Load() instead of handle.StepCount
+agent/subagent_manager.go:127: StepsUsed: int(h.stepCount.Load()) instead of h.StepCount
+4. BUG: Agent.Ctx never set for sub-agents — timeout/cancellation status always wrong
+File: session/subagent.go:296-307, session/subagent.go:420-428
+Problem: In launchSubAgent, subCtx is created and passed to Agent.Run(ctx, ...), but a.Ctx is never assigned. In buildResultFromMessages (subagent.go:422):
+
+if ctx := handle.Agent.Ctx; ctx != nil {
+    if ctx.Err() == context.DeadlineExceeded {
+        status = agent.SubAgentFailedTimeout
+    } else if ctx.Err() == context.Canceled {
+        status = agent.SubAgentCancelled
+    }
+}
+Since handle.Agent.Ctx is always nil for sub-agents, this check is skipped. Sub-agents that time out or are cancelled always report SubAgentCompleted instead of SubAgentFailedTimeout or SubAgentCancelled.
+
+Fix: Set a.Ctx = subCtx in launchSubAgent. In session/subagent.go, after line 304:
+
+a.Ctx = subCtx
+5. BUG: currentDepth() always returns 0 — depth limiting broken for nested sub-agents
+File: session/subagent.go:544-546
+Problem:
+
+func (o *SubAgentOrchestrator) currentDepth() int {
+    return 0
+}
+This means SubAgentSpec.Depth is always set to o.currentDepth() + 1 = 1 (subagent.go:77). All sub-agents are created at depth 1 regardless of nesting. Validate computes depth = 0 + 1 = 1, which passes the depth > maxDepth check (1 > 2 is false). A depth-1 sub-agent can then spawn a child that is ALSO at depth 1, defeating the depth limit entirely.
+
+Fix: The RunSubAgent method should accept and use the parent agent's depth. The simplest approach is to store depth information in the SubAgentSpec and use it when computing child depth. In session/subagent.go:77:
+
+// Before:
+Depth: o.currentDepth() + 1,
+
+// After:
+Depth: o.depthFromContext(params) + 1,
+Add a helper method:
+
+func (o *SubAgentOrchestrator) depthFromContext(params map[string]any) int {
+    // If called from a sub-agent tool function, the parent depth is available
+    // via the agent's Depth field which was set during creation
+    if o.session != nil {
+        // The orchestrator is always at depth 0 (main session)
+        // Sub-agents calling run_sub_agent go through the parent tool fn,
+        // which is the main session's tool fn. The parent depth needs to
+        // be passed explicitly in params or tracked per-handle.
+    }
+    return 0
+}
+A more robust fix: add a "parent_depth" parameter to run_sub_agent and pass it from the sub-agent's buildProxiedToolFn:
+
+// In buildProxiedToolFn, when calling run_sub_agent:
+// Add parent depth to params before forwarding
+Alternatively, store the parent depth in the SubAgentOrchestrator and update it per-call context.
+
+HIGH SEVERITY ISSUES
+6. RACE CONDITION: SubAgentManager.Validate reads m.active without holding the mutex (TOCTOU)
+File: agent/subagent_manager.go:46
+Problem: Validate reads len(m.active) without holding m.mu:
+
+if len(m.active) >= m.maxConcurrent {
+Between Validate (subagent.go:99) and Register (subagent.go:328), another goroutine could register a sub-agent, allowing the concurrent limit to be exceeded.
+
+Fix: Move the concurrent count check into Register under the lock. In agent/subagent_manager.go:
+
+func (m *SubAgentManager) Register(handle *SubAgentHandle) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    if len(m.active) >= m.maxConcurrent {
+        return fmt.Errorf("maximum concurrent sub-agents (%d) reached", m.maxConcurrent)
+    }
+    m.active[handle.Spec.ID] = handle
+    return nil
+}
+Update the caller in session/subagent.go:328 to handle the error.
+
+7. BUG: buildResultFromMessages fails to populate Errors, PromptTokens, CompTokens, CostUSD
+File: session/subagent.go:420-463
+Problem: The result always has zero values for these fields:
+
+return agent.SubAgentResult{
+    ...
+    // Missing: Errors, PromptTokens, CompTokens, CostUSD
+}
+The runSubAgentLoop emit function (subagent.go:375-397) tracks usage events but only increments StepCount. The token counts and cost are not accumulated anywhere.
+
+Fix: Add accumulator fields to SubAgentHandle and populate them from the usage events. In agent/subagent_types.go, add:
+
+type SubAgentHandle struct {
+    ...
+    totalPromptTokens int
+    totalCompTokens   int
+    totalCostUSD      float64
+    errors            []string
+}
+In session/subagent.go:375-397, accumulate usage data:
+
+if evt.Type == "usage" {
+    if data, ok := evt.Data.(map[string]any); ok {
+        ...
+        handle.totalPromptTokens += promptT
+        handle.totalCompTokens += compT
+        if cost, ok := data["cost"].(float64); ok {
+            handle.totalCostUSD += cost
+        }
+    }
+}
+Then populate in buildResultFromMessages:
+
+PromptTokens: handle.totalPromptTokens,
+CompTokens:   handle.totalCompTokens,
+CostUSD:      handle.totalCostUSD,
+Errors:       handle.errors,
+8. SEMANTIC BUG: FilesRead populated with all claimed files, FilesWritten always empty
+File: session/subagent.go:460
+Problem:
+
+FilesRead: o.fileOwnership.ClaimsByAgent(handle.Spec.ID),
+ClaimsByAgent returns ALL files the agent claimed (both read and written). FilesWritten is never populated. This misrepresents the data — a researcher agent that reads 10 files and claims them would show 10 files in FilesRead and 0 in FilesWritten, even though it only read them.
+
+Fix: Track write claims separately. Add a writeClaims map to FileOwnership (or a flag in ClaimEntry), and update CheckOrClaim to record whether the claim was for a write operation. Add a ClaimsWrittenByAgent method:
+
+type ClaimEntry struct {
+    AgentID   AgentID
+    AgentName string
+    ClaimedAt time.Time
+    IsWrite   bool
+}
+Then in buildResultFromMessages:
+
+FilesRead:    o.fileOwnership.ReadClaimsByAgent(handle.Spec.ID),
+FilesWritten: o.fileOwnership.WriteClaimsByAgent(handle.Spec.ID),
+9. RACE: Session.Close() may close s.db while sub-agent goroutines are still running
+File: session/session.go:214-229
+Problem: Close() cancels sub-agents and immediately closes the DB:
+
+if s.subAgentOrch != nil {
+    for _, h := range s.subAgentOrch.Manager().ActiveHandles() {
+        s.subAgentOrch.Manager().Cancel(h.Spec.ID)
+        s.subAgentOrch.FileOwnership().Release(h.Spec.ID)
+    }
+}
+...
+s.db.Close()
+Cancel() calls handle.Cancel() (context cancel), but the goroutine may still be running and trying to call persistResult(o.session.db, ...) when s.db.Close() is invoked. This can cause "database is closed" errors.
+
+Fix: Wait for sub-agent goroutines to finish before closing the DB. Add a WaitGroup to the orchestrator:
+
+type SubAgentOrchestrator struct {
+    ...
+    wg sync.WaitGroup
+}
+In launchSubAgent, before go o.runSubAgentLoop(...):
+
+o.wg.Add(1)
+go func() {
+    defer o.wg.Done()
+    o.runSubAgentLoop(subCtx, handle, prompt)
+}()
+In Session.Close(), before s.db.Close():
+
+if s.subAgentOrch != nil {
+    s.subAgentOrch.wg.Wait()
+}
+MEDIUM SEVERITY ISSUES
+10. PANIC RECOVERY DOUBLE-SEND on ResultCh and double-Unregister
+File: session/subagent.go:348-368, 401-404
+Problem: If a panic occurs after handle.ResultCh <- result (line 403) but before the function returns, the defer will try to send another result to ResultCh. Since the channel has buffer size 1 and the first result may not have been consumed, the second send will block indefinitely, deadlocking the goroutine.
+
+Similarly, if a panic occurs after o.mgr.Unregister(handle.Spec.ID, result) (line 404), the defer will call Unregister again, creating a duplicate entry in m.completed.
+
+Fix: Use a flag to track whether the result was already sent. In session/subagent.go:348-418:
+
+func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, prompt string) {
+    done := false
+    defer func() {
+        o.fileOwnership.Release(handle.Spec.ID)
+        if r := recover(); r != nil {
+            if !done {
+                stack := debug.Stack()
+                o.session.logger.Error("SUBAGENT", "panic", ...)
+                result := agent.SubAgentResult{...}
+                handle.ResultCh <- result
+                o.mgr.Unregister(handle.Spec.ID, result)
+                o.persistResult(result)
+            }
+        }
+    }()
+
+    agentMsgs := handle.Agent.Run(...)
+    result := o.buildResultFromMessages(handle, agentMsgs)
+    handle.ResultCh <- result
+    o.mgr.Unregister(handle.Spec.ID, result)
+    done = true
+    o.persistResult(result)
+    ...
+}
+11. CONTRADICTION: CatAeron has execute_command in both AllowedTools and DeniedTools
+File: agent/tool_filter.go:38-50
+Problem: CatAeron's CategoryToolDefaults lists execute_command in both AllowedTools (line 40) and DeniedTools (line 44). The filter applies deny first, then allow. Since execute_command is denied, it's removed. The allow filter then only keeps tools in the allowed list (which execute_command is no longer in since it was removed). The net effect is that execute_command is denied, but the contradiction is confusing and error-prone.
+
+Fix: Remove execute_command from AllowedTools for CatAeron. In agent/tool_filter.go:38-50:
+
+case CatAeron:
+    return CategoryToolConfig{
+        AllowedTools: []string{
+            "read_file", "write_file", "edit_file", "glob_files", "grep_files",
+            "list_directory",
+            "write_report", "question", "reply",
+            "list_sub_agents", "poll_sub_agent", "wait",
+        },
+        DeniedTools: []string{
+            "delete_file", "move_file", "copy_file",
+            "execute_command", "async_execute_command",
+            "web_search", "web_fetch", "arxiv_search",
+            "run_javascript",
+        },
+    }
+12. EDGE CASE 20.4/20.18: Quota errors and API key errors produce wrong status
+File: session/subagent.go:420-428
+Problem: buildResultFromMessages only checks for context.DeadlineExceeded and context.Canceled. API errors (quota exhaustion, invalid API key, rate limiting) result in Agent.Run returning early via emitError, but the status is still SubAgentCompleted. The SubAgentFailedQuota status is defined but never produced.
+
+Fix: Scan the agent's messages for error indicators. In buildResultFromMessages, add message scanning:
+
+// Scan for error indicators in messages
+for _, m := range msgs {
+    if m.Role == "tool" && IsToolError(m.Content) {
+        if strings.Contains(m.Content, "429") || strings.Contains(m.Content, "quota") {
+            status = agent.SubAgentFailedQuota
+        }
+        result.Errors = append(result.Errors, m.Content)
+    }
+}
+13. SubAgentFailedQuota status is defined but never produced
+File: agent/subagent_types.go:18
+Problem: The constant SubAgentFailedQuota exists but no code path sets this status. See issue #12.
+
+14. Non-wait sub-agents have no cancellation path when parent is cancelled
+File: session/subagent.go:109-131
+Problem: When wait=false, RunSubAgent returns immediately. If the parent agent is subsequently cancelled, there's no mechanism to cancel the running sub-agent. The sub-agent continues running until it finishes or its own timeout expires, consuming resources even though the parent no longer cares about the result.
+
+Fix: Register a context cancellation callback. In the wait=false path:
+
+go func() {
+    <-ctx.Done()
+    o.mgr.Cancel(spec.ID)
+}()
+LOW SEVERITY ISSUES
+15. DEAD CODE: agent.AllToolDefs() (exported) is never called
+File: agent/util.go:42-44
+Problem: AllToolDefs() is exported but never called from outside the package. Only the unexported allToolDefs() (which returns provider.ToolDef format) is used.
+
+Fix: Remove the unused exported function, or use it in session/subagent.go:285 (which currently uses tools.AgentTools directly).
+
+16. DEAD CODE: FileOwnership.Query() is never called
+File: agent/file_ownership.go:82-89
+Problem: The Query method is defined but never called from any code.
+
+Fix: Remove or add a caller.
+
+17. DEAD CODE: FileOwnership.AllClaims() is never called
+File: agent/file_ownership.go:103-111
+Problem: The AllClaims method is defined but never called from any code.
+
+Fix: Remove or add a caller.
+
+18. DEAD CODE: SubAgentManager.MaxConcurrent() is never called
+File: agent/subagent_manager.go:146
+Problem: MaxConcurrent() is defined but never called. Only MaxDepth() is used (in session/subagent.go:286).
+
+Fix: Remove or add a caller.
+
+19. DEAD CODE: question handler in buildProxiedToolFn is unreachable
+File: session/subagent.go:491-506
+Problem: The question tool case in buildProxiedToolFn can never be reached because executeOneToolCall (tool_exec.go:102-161) handles question entirely before ToolFn is called.
+
+Fix: Remove the dead question handler from buildProxiedToolFn, or restructure executeOneToolCall to allow ToolFn to handle question.
+
+20. Duplicate getStrParam function definitions across packages
+File: session/tools.go:388-396, session/subagent.go (uses it), agent/util.go:12-23 (getStr)
+Problem: getStrParam is defined in session/tools.go and used in session/subagent.go (same package, so it works). But agent/util.go has a similar getStr function. Not a bug, but a maintenance concern.
+
+21. RateLimiter.Wait uses empty string key when provider is not specified
+File: session/subagent.go:483
+Problem: o.rateLimiter.Wait(ctx, spec.Provider) — if spec.Provider is empty, all sub-agents without a provider share the same rate-limiting bucket keyed by "", which is likely not the intended behavior.
+
+Fix: Use the resolved provider name instead of the raw spec value:
+
+resolvedProvider := spec.Provider
+if resolvedProvider == "" {
+    resolvedProvider = o.session.cfg.ActiveProvider
+}
+if err := o.rateLimiter.Wait(ctx, resolvedProvider); err != nil {
+SUMMARY TABLE
+#	Severity	File	Line	Problem
+1	CRITICAL	session/subagent.go	302	Sub-agents deadlock on question/file ops/execute_command when Yolo=false
+2	CRITICAL	agent/tool_filter.go	102	ensureToolExists("question") guarantees deadlock for sub-agents
+3	CRITICAL	agent/subagent_types.go	78	StepCount data race across goroutines
+4	CRITICAL	session/subagent.go	296-307	Agent.Ctx never set — timeout/cancel status always wrong
+5	HIGH	session/subagent.go	544	currentDepth() always 0 — depth limiting broken for nesting
+6	HIGH	agent/subagent_manager.go	46	Validate reads m.active without mutex (TOCTOU)
+7	HIGH	session/subagent.go	420-463	Result missing Errors, PromptTokens, CompTokens, CostUSD
+8	MEDIUM	session/subagent.go	460	FilesRead contains all claims, FilesWritten always empty
+9	MEDIUM	session/session.go	214-229	Close() may close DB while sub-agent goroutines running
+10	MEDIUM	session/subagent.go	348-368	Panic recovery can double-send on ResultCh / double-Unregister
+11	MEDIUM	agent/tool_filter.go	38-50	CatAeron execute_command in both AllowedTools and DeniedTools
+12	MEDIUM	session/subagent.go	420-428	Quota/API errors produce SubAgentCompleted instead of proper status
+13	LOW	agent/subagent_types.go	18	SubAgentFailedQuota defined but never produced
+14	LOW	session/subagent.go	109-131	Non-wait sub-agents not cancelled when parent cancelled
+15	LOW	agent/util.go	42	AllToolDefs() exported but never called
+16	LOW	agent/file_ownership.go	82	Query() never called
+17	LOW	agent/file_ownership.go	103	AllClaims() never called
+18	LOW	agent/subagent_manager.go	146	MaxConcurrent() never called
+19	LOW	session/subagent.go	491	question handler in buildProxiedToolFn is unreachable
+20	LOW	session/tools.go:388 / agent/util.go:12	—	Duplicate getStrParam/getStr across packages
+21	LOW	session/subagent.go	483	RateLimiter uses "" key when provider unspecified
+Issues #1 and #2 are the most urgent — they cause guaranteed deadlocks for any sub-agent that calls question (which is force-added by ensureToolExists) or any file operation when yolo=false (the default). These will make the sub-agent system completely non-functional in the default configuration.
 # Crude Sub-Agent System: Design Proposal
 
 **Author:** Crude Architect

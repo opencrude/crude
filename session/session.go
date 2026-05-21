@@ -75,7 +75,8 @@ type Session struct {
 	writeBuf  []taggedMessage
 	writeMu   sync.Mutex
 	flushWg   sync.WaitGroup
-	closing   int32
+	closing      int32
+	subAgentOrch *SubAgentOrchestrator
 }
 
 func New(cfg *Config, homeDir string) (*Session, error) {
@@ -183,6 +184,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		permStore:    permStore,
 		sm:           sm,
 		asyncMgr:     fileio.NewAsyncCommandManagerWithLogger(lg),
+		subAgentOrch: nil,
 		sessionID:    sessionID,
 		sessionStart: time.Now(),
 		cost:         NewCostAccumulator(lg),
@@ -216,6 +218,13 @@ func (s *Session) Close() {
 		s.persistCostToDB()
 		if err := s.db.Close(); err != nil {
 			s.logger.Error("SESSION", "db_close_error", "error", err.Error())
+		}
+	}
+
+	if s.subAgentOrch != nil {
+		for _, h := range s.subAgentOrch.Manager().ActiveHandles() {
+			s.subAgentOrch.Manager().Cancel(h.Spec.ID)
+			s.subAgentOrch.FileOwnership().Release(h.Spec.ID)
 		}
 	}
 
@@ -256,3 +265,7 @@ func (s *Session) CostSnapshot() CostSnapshot {
 }
 
 func (s *Session) Logger() *logger.Logger { return s.logger }
+
+func (s *Session) SubAgentOrchestrator() *SubAgentOrchestrator {
+	return s.subAgentOrch
+}

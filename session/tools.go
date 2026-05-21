@@ -347,6 +347,33 @@ func (s *Session) newAgent() *agent.Agent {
 		case "execute_command":
 			return s.executeCommandAutoPromote(ctx, params)
 
+		case "run_sub_agent":
+			if s.subAgentOrch == nil {
+				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+			}
+			return s.subAgentOrch.RunSubAgent(ctx, params)
+
+		case "poll_sub_agent":
+			if s.subAgentOrch == nil {
+				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+			}
+			return s.subAgentOrch.PollSubAgent(params)
+
+		case "cancel_sub_agent":
+			if s.subAgentOrch == nil {
+				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+			}
+			return s.subAgentOrch.CancelSubAgent(params)
+
+		case "list_sub_agents":
+			if s.subAgentOrch == nil {
+				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+			}
+			return s.subAgentOrch.ListSubAgents(params)
+
+		case "write_report":
+			return tools.ToolResult{Content: "write_report is for sub-agents only. Your response is already shown to the user."}, nil
+
 		default:
 			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo, s.logger, ctx)
 			if agent.IsToolError(result.Content) {

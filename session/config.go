@@ -38,6 +38,20 @@ type AgentsConfig struct {
 	MaxConcurrent int                       `json:"max_concurrent,omitempty"`
 	MaxDepth      int                       `json:"max_depth,omitempty"`
 	Profiles      map[string]ProfileConfig  `json:"profiles,omitempty"`
+	AgentProfiles map[string]AgentProfileConfig `json:"agent_profiles,omitempty"`
+}
+
+type AgentProfileConfig struct {
+	Category       string   `json:"category,omitempty"`
+	Description    string   `json:"description,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	Provider       string   `json:"provider,omitempty"`
+	Instructions   string   `json:"instructions,omitempty"`
+	AllowedTools   []string `json:"allowed_tools,omitempty"`
+	DeniedTools    []string `json:"denied_tools,omitempty"`
+	FileOwnership  []string `json:"file_ownership,omitempty"`
+	MaxSteps       int      `json:"max_steps,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 }
 
 func DefaultAgentsConfig() AgentsConfig {
@@ -78,6 +92,45 @@ func DefaultAgentsConfig() AgentsConfig {
 						DeniedTools:    []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
 					},
 				},
+			},
+		},
+		AgentProfiles: map[string]AgentProfileConfig{
+			"explorer": {
+				Category:       CategoryResearcher,
+				Description:    "Read-only codebase explorer for research and investigation",
+				MaxSteps:       30,
+				TimeoutSeconds: 120,
+			},
+			"reviewer": {
+				Category:       CategoryResearcher,
+				Description:    "Code reviewer with expensive model for thorough analysis",
+				Model:          "anthropic/claude-sonnet-4",
+				MaxSteps:       40,
+				TimeoutSeconds: 180,
+			},
+			"fixer": {
+				Category:       CategoryCrafter,
+				Description:    "Implementation-focused agent for fixing bugs and writing code",
+				MaxSteps:       60,
+				TimeoutSeconds: 300,
+			},
+			"tester": {
+				Category:       CategoryCrafter,
+				Description:    "Test writer agent focused on writing and running tests",
+				MaxSteps:       50,
+				TimeoutSeconds: 240,
+			},
+			"formatter": {
+				Category:       CategoryAeron,
+				Description:    "Quick formatting and linting agent",
+				MaxSteps:       10,
+				TimeoutSeconds: 60,
+			},
+			"monitor": {
+				Category:       CategoryAeron,
+				Description:    "Watches running sub-agents and reports status",
+				MaxSteps:       20,
+				TimeoutSeconds: 90,
 			},
 		},
 	}

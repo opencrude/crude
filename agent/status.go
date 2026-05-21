@@ -105,6 +105,39 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 	return strings.TrimSpace(sb.String())
 }
 
+func BuildSubAgentStatus(mgr *SubAgentManager) string {
+	if mgr == nil {
+		return ""
+	}
+	entries := mgr.ListStatus(false)
+	if len(entries) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("## Sub-Agents\n")
+	for _, e := range entries {
+		marker := "→"
+		switch e.Status {
+		case "completed":
+			marker = "✓"
+		case "failed_timeout", "failed_error", "failed_policy", "failed_quota":
+			marker = "✗"
+		case "cancelled":
+			marker = "!"
+		}
+		line := fmt.Sprintf("  %s [%s:%s]: %s", marker, e.Category, e.Name, e.Status)
+		if e.ElapsedSeconds > 0 {
+			line += fmt.Sprintf(" (%ds", e.ElapsedSeconds)
+			if e.MaxSteps > 0 {
+				line += fmt.Sprintf(", %d/%d steps", e.StepsUsed, e.MaxSteps)
+			}
+			line += ")"
+		}
+		sb.WriteString(line + "\n")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
 func persistentStepMarker(status string) string {
 	switch status {
 	case "completed":
