@@ -85,14 +85,21 @@ type PaneRenderResult struct {
 }
 
 func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
+	bgSeq := sp.bgSeq()
+	sbW := sp.MsgList.ScrollbarWidth()
+	innerW := width - sp.theme.Spacing.PadLR*2 - sbW
+	if innerW < 10 {
+		innerW = 10
+	}
+	emptyBgLine := ""
+	if bgSeq != "" {
+		emptyBgLine = bgSeq + strings.Repeat(" ", innerW) + "\x1b[0m" + bgSeq + strings.Repeat(" ", sbW)
+	}
+
 	if sp.Done {
-		innerW := width - sp.theme.Spacing.PadLR*2
-		if innerW < 10 {
-			innerW = 10
-		}
-		summary := sp.renderSummaryLine(innerW)
+		summary := sp.renderSummaryLine(innerW, sbW)
 		return PaneRenderResult{
-			Lines: []string{"", summary},
+			Lines: []string{emptyBgLine, summary},
 		}
 	}
 
@@ -102,13 +109,29 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 	sp.MsgList.SetActiveTyping(!sp.Done)
 	sp.MsgList.SetPhase("")
 
-	sbW := sp.MsgList.ScrollbarWidth()
-	innerW := width - sp.theme.Spacing.PadLR*2 - sbW
-	if innerW < 10 {
-		innerW = 10
-	}
-
 	contentLines := sp.MsgList.Render(innerW)
+
+	resetSeq := "\x1b[0m"
+	bgApply := func(s string) string {
+		if bgSeq == "" {
+			return s
+		}
+		s = strings.ReplaceAll(s, resetSeq, resetSeq+bgSeq)
+		return bgSeq + s + resetSeq + bgSeq
+	}
+	sbPad := strings.Repeat(" ", sbW)
+	if bgSeq != "" {
+		sbPad = bgSeq + sbPad
+	}
+	for i, line := range contentLines {
+		visW := lipgloss.Width(line)
+		padR := innerW - visW
+		if padR < 0 {
+			padR = 0
+		}
+		padded := line + strings.Repeat(" ", padR)
+		contentLines[i] = bgApply(padded) + sbPad
+	}
 
 	actualH := sp.MsgList.ContentHeight()
 	visibleH := actualH
@@ -127,13 +150,13 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 	headerLine := sp.renderHeaderLine(innerW, sbW, spinFrame)
 
 	lines := make([]string, 0, 1+visibleH+1)
-	lines = append(lines, "")
+	lines = append(lines, emptyBgLine)
 	lines = append(lines, headerLine)
 	for i := 0; i < visibleH; i++ {
 		if i < len(contentLines) {
 			lines = append(lines, contentLines[i])
 		} else {
-			lines = append(lines, "")
+			lines = append(lines, emptyBgLine)
 		}
 	}
 
@@ -161,6 +184,7 @@ func (sp *SubPane) ScrollbarWidth() int {
 }
 
 func (sp *SubPane) renderHeaderLine(innerW, sbW, spinFrame int) string {
+	bgSeq := sp.bgSeq()
 	borderPrefix := lipgloss.NewStyle().Foreground(sp.theme.Colors.Border).Render("│ ")
 	var styledTitle string
 	if !sp.Done {
@@ -182,16 +206,24 @@ func (sp *SubPane) renderHeaderLine(innerW, sbW, spinFrame int) string {
 	meta := fmt.Sprintf("%.0fs", elapsed.Seconds())
 	styledMeta := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted).Render(meta)
 
-	content := borderPrefix + styledTitle + " " + styledMeta
-	visW := lipgloss.Width(content)
+	full := borderPrefix + styledTitle + " " + styledMeta
+	visW := lipgloss.Width(full)
 	padR := innerW - visW
 	if padR < 0 {
 		padR = 0
 	}
-	return content + strings.Repeat(" ", padR)
+	pad := strings.Repeat(" ", padR)
+	full = full + pad
+
+	if bgSeq != "" {
+		full = strings.ReplaceAll(full, "\x1b[0m", "\x1b[0m"+bgSeq)
+		full = bgSeq + full + "\x1b[0m" + bgSeq + strings.Repeat(" ", sbW)
+	}
+	return full
 }
 
-func (sp *SubPane) renderSummaryLine(innerW int) string {
+func (sp *SubPane) renderSummaryLine(innerW, sbW int) string {
+	bgSeq := sp.bgSeq()
 	borderPrefix := lipgloss.NewStyle().Foreground(sp.theme.Colors.Border).Render("│ ")
 	summary := sp.SummaryText()
 	styled := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted).Render("● " + summary)
@@ -201,7 +233,23 @@ func (sp *SubPane) renderSummaryLine(innerW int) string {
 	if padR < 0 {
 		padR = 0
 	}
-	return full + strings.Repeat(" ", padR)
+	pad := strings.Repeat(" ", padR)
+	full = full + pad
+
+	if bgSeq != "" {
+		full = strings.ReplaceAll(full, "\x1b[0m", "\x1b[0m"+bgSeq)
+		full = bgSeq + full + "\x1b[0m" + bgSeq + strings.Repeat(" ", sbW)
+	}
+	return full
+}
+
+func (sp *SubPane) bgSeq() string {
+	s := lipgloss.NewStyle().Background(sp.theme.Colors.SubPaneBg).Render(" ")
+	idx := strings.Index(s, " ")
+	if idx <= 0 {
+		return ""
+	}
+	return s[:idx]
 }
 
 type PaneManager struct {

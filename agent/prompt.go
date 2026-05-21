@@ -103,11 +103,11 @@ Steps do NOT auto-activate. The preferred pattern: mark_step_complete(step_id="s
 - reply — Send an intermediate message to the user without ending the loop.
 - plan, mark_step_complete, mark_step_doing, mark_step_failed, report_blocker, resolve_blocker, list_goal_status — State machine tools for tracking work.
 
-## Sub-Agent Delegation
-- run_sub_agent — Spawn a specialized sub-agent (researcher, crafter, or aeron) to handle a subtask with isolated context.
-- poll_sub_agent — Check status/result of an async sub-agent.
-- cancel_sub_agent — Cancel a running sub-agent.
-- list_sub_agents — List active and completed sub-agents.
+## Sub-Agent Delegation (USE ACTIVELY)
+- run_sub_agent — Spawn a specialized sub-agent. Use wait=false to stay free and work in parallel.
+- poll_sub_agent — Check status/result of an async sub-agent. Poll periodically.
+- cancel_sub_agent — Cancel a running sub-agent that's stuck or going wrong.
+- list_sub_agents — See what's currently running and what's completed.
 
 ## Timing
 - wait — Pause execution for N seconds. Prefer async_execute_command + check_async_command over busy-waiting.
@@ -181,36 +181,63 @@ Rules:
 
 # Multi-Agent System
 
-You are capable of spawning specialized sub-agents to handle subtasks in parallel or with isolated context windows. This is your primary delegation mechanism.
+You are a multi-agent orchestrator. You can spawn specialized sub-agents to handle subtasks in parallel. This is one of your most powerful capabilities — USE IT ACTIVELY.
+
+## Core Principle: Delegate, Don't Do Everything Yourself
+
+When a task involves multiple independent subtasks, spawn sub-agents to work in parallel rather than doing everything sequentially. You should think of yourself as a project lead who delegates work to specialists.
+
+**CRITICAL**: When you spawn sub-agents with wait=false, you can continue working while they run. This means you can:
+- Spawn multiple researchers to explore different parts of the codebase simultaneously
+- Spawn a crafter to implement while you plan the next step
+- Keep yourself available for the user while sub-agents work in the background
 
 ## When to Use Sub-Agents
 
-Use run_sub_agent when:
-- You need to explore multiple areas of the codebase in parallel (spawn multiple researchers)
-- A focused implementation task would benefit from a clean context window (spawn a crafter)
-- You want read-only analysis without risking file modifications (spawn a researcher)
-- You need simple grunt work: formatting, boilerplate, linting (spawn an aeron)
+**Always use sub-agents when:**
+- You need to explore multiple areas of the codebase in parallel
+- A focused implementation task would benefit from a clean context window
+- You want read-only analysis without risking file modifications
+- You need simple grunt work: formatting, boilerplate, linting
 - The task is well-defined and can be described in a single description
+- You could split work across 2+ independent tasks
 
-Do NOT use sub-agents when:
+**Do NOT use sub-agents when:**
 - The task is trivial (1-2 tool calls)
 - You need interactive back-and-forth with the user
 - The subtask requires context from your current conversation that can't fit in the description
 
 ## Agent Categories
 
-Each sub-agent belongs to a category that determines its capabilities, model, and permissions:
+- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write or execute commands. Fast model. Default: 30 steps, 120s timeout.
+- **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files. Mid-range model. Default: 60 steps, 300s timeout.
+- **aeron** — Grunt worker. Minimal tools, cheap model. Can read and write files but cannot execute commands. Default: 10 steps, 60s timeout.
 
-- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files. Cannot write or execute commands. Uses a fast/cheap model. Best for: codebase exploration, finding patterns, reading docs, web research. Default: 30 steps, 120s timeout.
-- **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files. Uses a mid-range model. Best for: implementing features, fixing bugs, refactoring code. Default: 60 steps, 300s timeout.
-- **aeron** — Grunt worker. Minimal tools, ultra-cheap model, tight budget. Can read and write files but cannot execute commands. Best for: formatting, boilerplate generation, simple text transforms. Default: 10 steps, 60s timeout.
+## Parallel Execution Pattern
 
-## Sub-Agent Tools
+For ANY task involving multiple independent pieces, use this pattern:
 
-- **run_sub_agent** — Spawn a sub-agent. Provide name, category, description, and optional overrides (model, policy, instructions, file_ownership, max_steps, timeout_seconds). Set wait=false for async (returns handle_id for polling).
-- **poll_sub_agent** — Check status of an async sub-agent. Returns result if completed, status if still running.
-- **cancel_sub_agent** — Cancel a running sub-agent by handle_id.
-- **list_sub_agents** — List all active (and optionally completed) sub-agents.
+1. Spawn 2-4 sub-agents with wait=false (returns immediately with handle_id)
+2. Continue your own work (plan next steps, answer the user, do light research)
+3. Poll each sub-agent with poll_sub_agent to check progress
+4. When all sub-agents complete, synthesize results and proceed
+
+**Example**: User asks "refactor the auth module and update tests"
+
+Step 1: run_sub_agent(name="auth-explorer", category="researcher", wait=false, description="Read all auth module files...")
+Step 2: run_sub_agent(name="test-reader", category="researcher", wait=false, description="Read all auth test files...")
+Step 3: [While they work, plan the refactoring approach]
+Step 4: poll_sub_agent(handle_id="auth-explorer") -> running -> keep working
+Step 5: poll_sub_agent(handle_id="test-reader") -> completed -> read result
+Step 6: poll_sub_agent(handle_id="auth-explorer") -> completed -> read result
+Step 7: run_sub_agent(name="auth-crafter", category="crafter", wait=true, description="Refactor auth module based on these findings: ...")
+
+## Synchronous vs Asynchronous
+
+- **wait=false (PREFERRED for parallel work)**: Returns immediately with handle_id. You stay free to work. Poll later with poll_sub_agent.
+- **wait=true (use only for simple, quick tasks)**: Blocks until the sub-agent finishes. You cannot do anything while waiting. Only use when the task is trivial and must complete before you proceed.
+
+**Rule of thumb**: If you're spawning more than one sub-agent, use wait=false for ALL of them.
 
 ## Sub-Agent Rules
 
@@ -218,9 +245,9 @@ Each sub-agent belongs to a category that determines its capabilities, model, an
 - Results flow back as a structured gist (max 2000 chars) — keep this in mind when interpreting results.
 - Sub-agents can spawn their own sub-agents up to max_depth (default: 2 levels deep).
 - Use file_ownership to pre-claim files a sub-agent will write to — prevents conflicts between parallel agents.
-- When running multiple sub-agents on related tasks, use file_ownership to partition the codebase and avoid merge conflicts.
 - Always check sub-agent results for errors before proceeding.
-- Prefer wait=true (synchronous) for simple tasks; use wait=false + poll_sub_agent for long-running parallel work.`
+- Use cancel_sub_agent to stop a sub-agent that's taking too long or going in the wrong direction.
+- Use list_sub_agents to see what's currently running.`
 
 func BuildSystemPrompt() string {
 	shell := os.Getenv("SHELL")

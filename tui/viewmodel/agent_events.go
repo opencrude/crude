@@ -80,8 +80,21 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	}
 
 	switch evt.Type {
-	case "stream_token", "thinking", "tool_call", "tool_call_streaming", "tool_result", "tool_progress", "phase":
-		m.statusbar.RecordActivity()
+	case "stream_token", "thinking", "tool_call", "tool_call_streaming", "tool_result", "tool_progress":
+		if agentID == MainAgentID {
+			m.statusbar.RecordActivity()
+		} else {
+			m.statusbar.RecordActivityForAgent(agentID)
+		}
+	case "phase":
+		if agentID == MainAgentID {
+			m.statusbar.RecordActivity()
+		} else {
+			m.statusbar.RecordActivityForAgent(agentID)
+			if phase, ok := evt.Data.(string); ok {
+				m.statusbar.SetPhaseForAgent(agentID, phase)
+			}
+		}
 	}
 
 	agent, ok := m.agents[agentID]
@@ -101,16 +114,29 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			})
 		}
 		m.agents[agentID] = agent
+	} else if agent.Completed {
+		if evt.Type == "done" || evt.Type == "error" {
+			m.handleSubPaneCompletion(agentID)
+		}
+		return nil
 	}
 
 	thinkingTarget := m.getThinkingTarget(agentID, agent)
 
 	cmd := agent.HandleEvent(evt, thinkingTarget,
 		func(statusLine string) {
-			m.statusbar.SetStatusLine(statusLine)
+			if agentID == MainAgentID {
+				m.statusbar.SetStatusLine(statusLine)
+			} else {
+				m.statusbar.SetStatusLineForAgent(agentID, statusLine)
+			}
 		},
 		func(thinking, streaming, blocking bool) {
-			m.statusbar.SetThinking(thinking, streaming, blocking)
+			if agentID == MainAgentID {
+				m.statusbar.SetThinking(thinking, streaming, blocking)
+			} else {
+				m.statusbar.SetThinkingForAgent(agentID, thinking, streaming, blocking)
+			}
 		},
 		func() {
 			m.blocking = true
@@ -131,10 +157,10 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 				return
 			}
 			if n == 1 {
-				m.win.OpenTabWithLayout("Question", "", true, window.TabVertical)
+				m.win.OpenTabWithLayout("Question", "", true, window.TabHorizontal)
 			} else {
 				for i := range m.questionForm.Items() {
-					m.win.OpenTabWithLayout(m.questionForm.TabTitle(i), "", true, window.TabVertical)
+					m.win.OpenTabWithLayout(m.questionForm.TabTitle(i), "", true, window.TabHorizontal)
 				}
 			}
 			m.setMode(ModeQuestion)
@@ -180,6 +206,8 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		if agentID == MainAgentID {
 			m.statusbar.SetBtwCount(0)
 			m.statusbar.ResetActivity()
+		} else {
+			m.statusbar.ClearAgentState(agentID)
 		}
 	}
 
@@ -213,11 +241,6 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		m.handleSubAgentStarted(evt)
 	case "sub_agent_completed":
 		m.handleSubAgentCompleted(evt)
-	}
-
-	// Sync agent tabs after any non-main agent event
-	if agentID != MainAgentID {
-		m.syncAgentTabs()
 	}
 
 	return m.processAgentResults(cmd)
@@ -319,16 +342,25 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 		msg := cmd()
 		switch result := msg.(type) {
 		case agentDoneResultMsg:
+			if result.AgentID != MainAgentID {
+				return nil
+			}
 			if result.Reason == "completed" {
 				m.statusbar.SetInfo("✓ done")
 			} else if result.Reason != "" {
 				m.statusbar.SetError("⚠ " + result.Reason)
 			}
 		case agentErrorResultMsg:
+			if result.AgentID != MainAgentID {
+				return nil
+			}
 			m.statusbar.SetError(result.Err)
 			m.statusbar.ClearRetry()
 			m.statusbar.SetStatusLine("")
 		case agentRetryResultMsg:
+			if result.AgentID != MainAgentID {
+				return nil
+			}
 			m.statusbar.SetRetry(result.Msg)
 		}
 		return nil
@@ -437,7 +469,6 @@ func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
 		label = label[:16]
 	}
 	m.agentLabels[agentID] = label
-	m.syncAgentTabs()
 	m.syncAgentWindowTabs()
 }
 
@@ -451,7 +482,12 @@ func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
 	if agentID == "" || status == "" {
 		return
 	}
-	m.agentStatuses[agentID] = status
-	m.syncAgentTabs()
-	m.syncAgentWindowTabs()
+
+	if status == "running" {
+		m.agentStatuses[agentID] = status
+		m.syncAgentWindowTabs()
+		return
+	}
+
+	m.completeSubAgent(agentID)
 }

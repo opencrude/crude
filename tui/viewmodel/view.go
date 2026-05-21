@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"crude/fileio"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/widgets"
@@ -24,8 +23,9 @@ func (m *App) View() string {
 		return m.renderLauncherView()
 	}
 
-	m.syncAgentTabs()
-	m.syncAgentWindow()
+	m.syncAgentWindowTabs()
+
+	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
 
 	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
 	innerW := m.width - m.theme.Spacing.PadLR*2
@@ -60,10 +60,22 @@ func (m *App) View() string {
 	asyncBarLines := m.statusbar.RenderAsyncBar()
 	asyncLineCount := len(asyncBarLines)
 
-	asyncInWindow := m.win.IsOpen() && m.win.Layout() == window.TabVertical && m.win.TabCount() > 1 && asyncLineCount > 0
+	tabBarLine := ""
+	tabBarVisible := false
+	if m.win.IsOpen() && m.win.TabCount() >= 2 {
+		tabBarLine = m.win.RenderTabBar()
+		tabBarVisible = tabBarLine != ""
+	}
+	if m.tabBarFocused && tabBarVisible {
+		focusStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
+		tabBarLine = focusStyle.Render(tabBarLine)
+	}
 
 	nonChat := 6 + inputLineCount
-	if asyncLineCount > 0 && !asyncInWindow {
+	if tabBarVisible {
+		nonChat += 2
+	}
+	if asyncLineCount > 0 {
 		nonChat += 2 + asyncLineCount
 	}
 
@@ -99,7 +111,11 @@ func (m *App) View() string {
 	activeML.SetActiveTyping(activeTyping)
 	activeML.SetPhase(m.statusbar.Phase())
 	activeML.SetSize(m.width, m.height)
-	activeML.SetChatAreaBounds(3, chatH)
+	chatAreaTop := 3
+	if tabBarVisible {
+		chatAreaTop += 2
+	}
+	activeML.SetChatAreaBounds(chatAreaTop, chatH)
 
 	chatVisible := activeML.Render(innerW)
 
@@ -163,6 +179,16 @@ func (m *App) View() string {
 	lines = append(lines, pad+headerLine+pad)
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
+	if tabBarVisible {
+		lines = append(lines, pad+tabBarLine+pad)
+		if m.tabBarFocused {
+			accentSepStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
+			lines = append(lines, accentSepStyle.Render(strings.Repeat("━", m.width)))
+		} else {
+			lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+		}
+	}
+
 	for i, line := range chatVisible {
 		maxContentW := innerW - totalSBW
 		if maxContentW < 10 {
@@ -218,14 +244,17 @@ func (m *App) View() string {
 				if mainSBVisible && i < len(mainSBLines) && mainSBLines[i] != "" {
 					sbColumn = mainSBLines[i]
 				} else {
-					sbColumn = ""
+					sbColumn = strings.Repeat(" ", scrollbar.ScrollbarWidth)
 				}
 			}
 
-			if sbColumn != "" {
+			if totalSBW > 0 {
 				padRight := innerW - totalSBW - visW
 				if padRight < 0 {
 					padRight = 0
+				}
+				if sbColumn == "" {
+					sbColumn = strings.Repeat(" ", totalSBW)
 				}
 				line = pad + line + strings.Repeat(" ", padRight) + sbColumn
 			} else {
@@ -260,7 +289,7 @@ func (m *App) View() string {
 		}
 	}
 
-	if asyncLineCount > 0 && !asyncInWindow {
+	if asyncLineCount > 0 {
 		lines = append(lines, "")
 		lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 		for _, al := range asyncBarLines {
@@ -295,99 +324,27 @@ func (m *App) renderWindowContent() []string {
 		return nil
 	}
 
+	activeTab := m.win.ActiveTab()
+	if activeTab == nil {
+		return nil
+	}
+
+	if m.isAgentTabTitle(activeTab.Title) {
+		return nil
+	}
+
 	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
 
-	if m.win.Layout() == window.TabVertical {
-		return m.renderWindowVertical()
-	}
-	return m.renderWindowHorizontal()
-}
-
-func (m *App) renderWindowHorizontal() []string {
-	var lines []string
-
-	tabBarLine := m.win.RenderTabBar()
-	lines = append(lines, tabBarLine)
-
-	sepLine := m.win.RenderSeparator()
-	lines = append(lines, sepLine)
-
-	activeTab := m.win.ActiveTab()
-	if activeTab == nil {
-		return lines
-	}
-
-	contentLines := m.getWindowContentLines(activeTab.Title)
-
-	for _, cl := range contentLines {
-		lines = append(lines, cl)
-	}
-
-	return lines
-}
-
-func (m *App) renderWindowVertical() []string {
-	activeTab := m.win.ActiveTab()
-	if activeTab == nil {
-		return nil
-	}
-
-	rawContentLines := m.getWindowContentLines(activeTab.Title)
-
-	verticalLines := m.win.RenderVerticalSidebar(rawContentLines)
-	if verticalLines != nil {
-		asyncItems := m.getAsyncItemsForVertical()
-		if len(asyncItems) > 0 {
-			verticalLines = append(verticalLines, asyncItems...)
-		}
-		return verticalLines
-	}
-
-	return rawContentLines
-}
-
-func (m *App) getAsyncItemsForVertical() []string {
-	asyncBarLines := m.statusbar.RenderAsyncBar()
-	if len(asyncBarLines) == 0 {
-		return nil
-	}
-
-	visibleCmds := m.statusbar.VisibleAsyncCommands()
-
-	var lines []string
-	for i, c := range visibleCmds {
-		if i >= len(asyncBarLines) {
-			break
-		}
-		row := m.win.RenderVerticalAsyncRow(window.AsyncItem{
-			Handle:   c.Handle,
-			Command:  c.Command,
-			Duration: c.Duration.Truncate(time.Second).String(),
-			Status: func() string {
-				switch c.Status {
-				case fileio.AsyncRunning:
-					return "running"
-				case fileio.AsyncCompleted:
-					return "completed"
-				case fileio.AsyncFailed:
-					return "failed"
-				case fileio.AsyncKilled:
-					return "killed"
-				default:
-					return "unknown"
-				}
-			}(),
-		}, m.spinFrame)
-
-		lines = append(lines, row)
-	}
-	return lines
+	return m.getWindowContentLines(activeTab.Title)
 }
 
 func (m *App) getWindowContentLines(tabTitle string) []string {
 	var rawLines []string
 
-	contentW := m.width
+	contentW := m.width - 2*m.theme.Spacing.PadLR
+	if contentW < 20 {
+		contentW = 20
+	}
 	if m.win.Layout() == window.TabVertical {
 		contentW = m.win.VerticalContentWidth()
 	}
@@ -442,6 +399,10 @@ func (m *App) getWindowContentLines(tabTitle string) []string {
 }
 
 func (m *App) syncFormHint() {
+	if m.tabBarFocused {
+		m.formHint = "[ tab bar focused · ← →: navigate · enter: select · esc: unfocus ]"
+		return
+	}
 	if !m.win.IsOpen() {
 		m.formHint = ""
 		return

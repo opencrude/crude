@@ -148,6 +148,25 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 		return "Reporting blocker"
 	case "resolve_blocker":
 		return "Resolving blocker"
+	case "run_sub_agent":
+		if target != "" {
+			return fmt.Sprintf("Spawning %s", rendering.TruncateLine(target, 40))
+		}
+		return "Spawning sub-agent"
+	case "poll_sub_agent":
+		if target != "" {
+			return fmt.Sprintf("Polling %s", target)
+		}
+		return "Polling sub-agent"
+	case "cancel_sub_agent":
+		if target != "" {
+			return fmt.Sprintf("Cancelling %s", target)
+		}
+		return "Cancelling sub-agent"
+	case "list_sub_agents":
+		return "Listing sub-agents"
+	case "write_report":
+		return "Writing report"
 	default:
 		if target != "" {
 			return fmt.Sprintf("Running %s %s", rendering.PascalCaseTool(tool), target)
@@ -361,6 +380,23 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 			label += " " + target
 		}
 		return label
+	case "run_sub_agent":
+		label := "Spawned"
+		if target != "" {
+			label += " " + target
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	case "poll_sub_agent":
+		return "Polled " + target
+	case "cancel_sub_agent":
+		return "Cancelled " + target
+	case "list_sub_agents":
+		return "Listed sub-agents"
+	case "write_report":
+		return "Report written"
 	default:
 		label := rendering.PascalCaseTool(tool)
 		if target != "" {

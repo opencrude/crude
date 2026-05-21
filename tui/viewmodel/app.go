@@ -53,11 +53,11 @@ type App struct {
 
 	win *window.Window
 
-	blocking bool
-	yolo     bool
+	blocking       bool
+	yolo           bool
+	tabBarFocused  bool
 
 	activeAgentView string
-	agentTabs       *widgets.AgentTabBar
 	agentLabels     map[string]string
 	agentStatuses   map[string]string
 
@@ -73,6 +73,7 @@ type App struct {
 	OnYoloCmd          func(bool)
 	OnUndoCmd          func(string)
 	OnResumeSession    func(string)
+	OnCancelSubAgent   func(agentID string)
 	FetchModelsFn      func(string, string, string) ([]ttypes.ModelEntry, error)
 	GetProviderConfigFn func(string) ttypes.ProviderConfig
 	ProviderPresets    []ttypes.ProviderPreset
@@ -160,7 +161,6 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		confirm:      cd,
 		questionForm:  qd,
 		yoloDlg:      yd,
-		agentTabs:    widgets.NewAgentTabBar(th),
 		agentLabels:  make(map[string]string),
 		agentStatuses: make(map[string]string),
 		inputCh:      inputCh,
@@ -195,13 +195,66 @@ func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []
 	return result.Lines
 }
 
+func (m *App) completeSubAgent(agentID string) {
+	if agentID == MainAgentID || agentID == "" {
+		return
+	}
+
+	agent, agentOK := m.agents[agentID]
+	alreadyCompleted := agentOK && agent.Completed
+
+	// Close the window tab FIRST (agentTabTitle depends on agentLabels,
+	// which we delete later). Idempotent — TabByTitle returns nil if
+	// the tab was already closed.
+	title := m.agentTabTitle(agentID)
+	if tab := m.win.TabByTitle(title); tab != nil {
+		wasActive := m.win.IndexOf(tab.ID) == m.win.ActiveIndex()
+		m.win.CloseTabByID(tab.ID)
+		if wasActive && m.activeAgentView == agentID {
+			m.activeAgentView = ""
+			if m.mainMsgList != nil {
+				m.mainMsgList.InvalidateAllMessages()
+			}
+		}
+	}
+
+	// Mark SubPane as Done so anyActive() returns false and
+	// the tick loop goes back to slow mode.
+	if sp := m.paneMgr.Get(agentID); sp != nil && !sp.Done {
+		sp.Done = true
+		sp.Collapse()
+		m.mainMsgList.InvalidateSubPane(agentID)
+	}
+
+	// Mark agent as Completed so late-arriving events are ignored.
+	if agentOK {
+		agent.Completed = true
+		agent.Streaming = false
+		agent.Thinking = false
+	}
+
+	// Clean up bookkeeping maps.
+	delete(m.agentLabels, agentID)
+	delete(m.agentStatuses, agentID)
+	m.statusbar.ClearAgentState(agentID)
+
+	// Sync mode — if no closable tabs remain, go to chat.
+	if !alreadyCompleted {
+		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+			m.setMode(ModeChat)
+		} else {
+			m.syncActiveTabMode()
+		}
+	}
+}
+
 func (m *App) mainAgent() *AgentState {
 	return m.agents[MainAgentID]
 }
 
 func (m *App) anyActive() bool {
 	for _, a := range m.agents {
-		if a.IsActive() {
+		if !a.Completed && a.IsActive() {
 			return true
 		}
 	}
@@ -232,12 +285,12 @@ func (m *App) setMode(newMode Mode) {
 	switch newMode {
 	case ModeSettings:
 		m.input.ClearInput()
-		m.win.OpenTabWithLayout("Settings", "", true, window.TabVertical)
+		m.win.OpenTabWithLayout("Settings", "", true, window.TabHorizontal)
 	case ModeConfirm:
-		m.win.OpenTabWithLayout("Confirm", "", true, window.TabVertical)
+		m.win.OpenTabWithLayout("Confirm", "", true, window.TabHorizontal)
 	case ModeQuestion:
 	case ModeYolo:
-		m.win.OpenTabWithLayout("YOLO", "", true, window.TabVertical)
+		m.win.OpenTabWithLayout("YOLO", "", true, window.TabHorizontal)
 	case ModeChat:
 		m.formHint = ""
 		m.closeNonAgentClosableTabs()
@@ -302,7 +355,7 @@ func (m *App) switchToAgentView(agentID string) {
 	prev := m.activeAgentView
 	if agentID == MainAgentID || agentID == "" {
 		m.activeAgentView = ""
-	} else if _, ok := m.agents[agentID]; ok {
+	} else if a, ok := m.agents[agentID]; ok && !a.Completed {
 		m.activeAgentView = agentID
 	}
 
@@ -374,9 +427,14 @@ func (m *App) agentIDFromTabTitle(title string) string {
 // Each agent gets its own window tab (like question tabs), so the window system's
 // vertical sidebar handles the ❯ markers, clicks, and ctrl+]/ctrl+[ natively.
 func (m *App) syncAgentWindowTabs() {
-	hasSubAgents := len(m.agents) > 1
+	activeSubAgents := 0
+	for id, a := range m.agents {
+		if id != MainAgentID && !a.Completed {
+			activeSubAgents++
+		}
+	}
 
-	if !hasSubAgents {
+	if activeSubAgents == 0 {
 		m.purgeAgentTabs()
 		return
 	}
@@ -386,11 +444,15 @@ func (m *App) syncAgentWindowTabs() {
 		activeID = MainAgentID
 	}
 
-	for id := range m.agents {
+	for id, a := range m.agents {
+		if a.Completed {
+			continue
+		}
 		title := m.agentTabTitle(id)
 		existing := m.win.TabByTitle(title)
 		if existing == nil {
-			m.win.OpenTabWithLayout(title, "", true, window.TabVertical)
+			closable := id != MainAgentID
+			m.win.OpenTabWithLayout(title, "", closable, window.TabHorizontal)
 		}
 
 		icon := m.agentTabIcon(id)
@@ -433,19 +495,20 @@ func (m *App) agentTabIcon(id string) string {
 // purgeAgentTabs closes all agent window tabs.
 func (m *App) purgeAgentTabs() {
 	for {
-		found := false
+		removed := false
 		for i := m.win.TabCount() - 1; i >= 0; i-- {
 			tabs := m.win.Tabs()
 			if i >= len(tabs) {
 				continue
 			}
 			if m.isAgentTabTitle(tabs[i].Title) {
-				m.win.CloseTab(i)
-				found = true
+				if m.win.CloseTab(i) != window.CloseNone {
+					removed = true
+				}
 				break
 			}
 		}
-		if !found {
+		if !removed {
 			break
 		}
 	}
@@ -454,7 +517,7 @@ func (m *App) purgeAgentTabs() {
 // purgeStaleAgentTabs closes agent tabs for agents that no longer exist.
 func (m *App) purgeStaleAgentTabs() {
 	for {
-		found := false
+		removed := false
 		for i := m.win.TabCount() - 1; i >= 0; i-- {
 			tabs := m.win.Tabs()
 			if i >= len(tabs) {
@@ -462,14 +525,16 @@ func (m *App) purgeStaleAgentTabs() {
 			}
 			if m.isAgentTabTitle(tabs[i].Title) {
 				agentID := m.agentIDFromTabTitle(tabs[i].Title)
-				if _, ok := m.agents[agentID]; !ok {
-					m.win.CloseTab(i)
-					found = true
+				a, ok := m.agents[agentID]
+				if !ok || a.Completed {
+					if m.win.CloseTab(i) != window.CloseNone {
+						removed = true
+					}
 					break
 				}
 			}
 		}
-		if !found {
+		if !removed {
 			break
 		}
 	}
@@ -477,70 +542,23 @@ func (m *App) purgeStaleAgentTabs() {
 
 // closeNonAgentClosableTabs closes all closable tabs except agent tabs.
 func (m *App) closeNonAgentClosableTabs() {
-	for m.win.HasClosableTabs() {
+	for {
+		removed := false
 		tabs := m.win.Tabs()
-		allAgents := true
-		for _, t := range tabs {
-			if t.Closable && !m.isAgentTabTitle(t.Title) {
-				allAgents = false
+		for i := len(tabs) - 1; i >= 0; i-- {
+			if tabs[i].Closable && !tabs[i].Pinned && !m.isAgentTabTitle(tabs[i].Title) {
+				if m.win.CloseTab(i) != window.CloseNone {
+					removed = true
+				}
 				break
 			}
 		}
-		if allAgents {
+		if !removed {
 			break
 		}
-		for i := len(tabs) - 1; i >= 0; i-- {
-			if tabs[i].Closable && !m.isAgentTabTitle(tabs[i].Title) {
-				m.win.CloseTab(i)
-				break
-			}
-		}
 	}
-}
-
-func (m *App) syncAgentTabs() {
-	var tabs []widgets.AgentTab
-	tabs = append(tabs, widgets.AgentTab{
-		ID:       MainAgentID,
-		Label:    "main",
-		Status:   "main",
-		IsActive: m.activeAgentView == "" || m.activeAgentView == MainAgentID,
-	})
-	for id := range m.agents {
-		if id == MainAgentID {
-			continue
-		}
-		sp := m.paneMgr.Get(id)
-		status := "running"
-		elapsed := 0
-		if st, ok := m.agentStatuses[id]; ok && st != "" {
-			status = st
-		}
-		if sp != nil {
-			elapsed = int(sp.Elapsed().Seconds())
-		}
-		label := id
-		if lbl, ok := m.agentLabels[id]; ok && lbl != "" {
-			label = lbl
-		} else if len(id) > 12 {
-			label = id[:12]
-		}
-		tabs = append(tabs, widgets.AgentTab{
-			ID:       id,
-			Label:    label,
-			Status:   status,
-			Elapsed:  elapsed,
-			IsActive: m.activeAgentView == id,
-		})
-	}
-	m.agentTabs.SetTabs(tabs)
 }
 
 func (m *App) Init() tea.Cmd {
 	return tea.Batch(tickCmd(), tea.EnterAltScreen)
-}
-
-func (m *App) syncAgentWindow() {
-	m.syncAgentTabs()
-	m.syncAgentWindowTabs()
 }

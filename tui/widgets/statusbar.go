@@ -14,10 +14,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+type agentStatus struct {
+	thinking  bool
+	streaming bool
+	blocking  bool
+	phase     string
+	statusLine string
+}
+
 type StatusBar struct {
 	theme  *theme.Theme
 	width  int
 
+	agentStates map[string]*agentStatus
 	thinking, streaming, blocking bool
 	isConfirming                   bool
 	spinner    components.Spinner
@@ -48,7 +57,7 @@ type StatusBar struct {
 }
 
 func NewStatusBar(t *theme.Theme) *StatusBar {
-	return &StatusBar{theme: t, spinner: components.NewSpinner(t)}
+	return &StatusBar{theme: t, spinner: components.NewSpinner(t), agentStates: make(map[string]*agentStatus)}
 }
 
 func (s *StatusBar) View() string {
@@ -75,6 +84,17 @@ func (s *StatusBar) View() string {
 		left = s.spinner.WorkAnimation()
 	} else {
 		left = ""
+	}
+
+	activeAgents := 0
+	for _, st := range s.agentStates {
+		if st.thinking || st.streaming {
+			activeAgents++
+		}
+	}
+	if activeAgents > 0 {
+		agentStyle := lipgloss.NewStyle().Foreground(s.theme.Colors.Accent2)
+		left += " " + agentStyle.Render(fmt.Sprintf("· %d agent%s active", activeAgents, pluralS(activeAgents)))
 	}
 
 	if s.btwCount > 0 && (s.thinking || s.streaming) {
@@ -215,6 +235,63 @@ func (s *StatusBar) SetThinking(thinking, streaming, blocking bool) {
 	s.thinking = thinking
 	s.streaming = streaming
 	s.blocking = blocking
+}
+
+func (s *StatusBar) SetThinkingForAgent(agentID string, thinking, streaming, blocking bool) {
+	st := s.getAgentState(agentID)
+	st.thinking = thinking
+	st.streaming = streaming
+	st.blocking = blocking
+}
+
+func (s *StatusBar) SetPhaseForAgent(agentID, phase string) {
+	st := s.getAgentState(agentID)
+	st.phase = phase
+}
+
+func (s *StatusBar) SetStatusLineForAgent(agentID, line string) {
+	st := s.getAgentState(agentID)
+	st.statusLine = line
+}
+
+func (s *StatusBar) RecordActivityForAgent(agentID string) {
+	s.RecordActivity()
+}
+
+func (s *StatusBar) getAgentState(agentID string) *agentStatus {
+	if agentID == "" || agentID == "main" {
+		return nil
+	}
+	if s.agentStates == nil {
+		s.agentStates = make(map[string]*agentStatus)
+	}
+	st, ok := s.agentStates[agentID]
+	if !ok {
+		st = &agentStatus{}
+		s.agentStates[agentID] = st
+	}
+	return st
+}
+
+func (s *StatusBar) AgentStatusView(agentID string) string {
+	if agentID == "" || agentID == "main" {
+		return ""
+	}
+	st := s.getAgentState(agentID)
+	if st == nil {
+		return ""
+	}
+	if st.streaming {
+		return s.spinner.StreamAnimation()
+	}
+	if st.thinking {
+		return s.spinner.WorkAnimation()
+	}
+	return ""
+}
+
+func (s *StatusBar) ClearAgentState(agentID string) {
+	delete(s.agentStates, agentID)
 }
 
 func (s *StatusBar) SetPhase(phase string) {

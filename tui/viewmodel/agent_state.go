@@ -23,6 +23,7 @@ type AgentState struct {
 	LastTokenTime time.Time
 	SpinFrame     int
 	ActiveTyping  bool
+	Completed     bool
 	Logger        Logger
 
 	ThinkingPaneID string
