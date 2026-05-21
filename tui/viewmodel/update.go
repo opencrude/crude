@@ -128,7 +128,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(cmds...)
 				}
 				m.win.SwitchTo(hit.TabIndex)
-				m.syncActiveTabMode()
+				m.handleTabSwitch()
 				return m, nil
 			}
 		}
@@ -152,6 +152,17 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case input.SettingsOpenEvent:
 					m.settings.SaveSnapshot()
 					m.setMode(ModeSettings)
+				}
+			} else if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+				handled, paneCmd := m.routeMouseToInlinePane(msg)
+				if paneCmd != nil {
+					cmds = append(cmds, paneCmd)
+				}
+				if !handled {
+					_, cmd := m.mainMsgList.Update(msg)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			} else {
 				handled, paneCmd := m.routeMouseToInlinePane(msg)
@@ -445,6 +456,21 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "ctrl+]", "ctrl+[":
+				if m.win.IsOpen() {
+					if keyMsg.String() == "ctrl+]" {
+						m.win.Next()
+					} else {
+						m.win.Prev()
+					}
+					m.handleTabSwitch()
+					return m, nil
+				}
+			}
+		}
+
 		if _, isMouse := msg.(tea.MouseMsg); !isMouse {
 			updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 			m.input = updated
@@ -630,6 +656,19 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 			m.syncActiveTabMode()
 		}
 	default:
+		if m.isAgentTabTitle(tab.Title) {
+			agentID := m.agentIDFromTabTitle(tab.Title)
+			m.win.CloseTab(index)
+			if agentID == m.activeAgentView {
+				m.switchToAgentView(MainAgentID)
+			}
+			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+				m.setMode(ModeChat)
+			} else {
+				m.syncActiveTabMode()
+			}
+			return nil
+		}
 		if m.isQuestionTabTitle(tab.Title) {
 			m.questionForm.Dismiss()
 			m.blocking = false
@@ -662,14 +701,28 @@ func (m *App) syncActiveTabMode() {
 		m.input.ResetPrompt()
 		return
 	}
-	switch activeTab.Title {
-	case "Settings":
+	switch {
+	case m.isAgentTabTitle(activeTab.Title):
+		m.Mode = ModeChat
+		agentID := m.agentIDFromTabTitle(activeTab.Title)
+		status := ""
+		if agentID != MainAgentID && agentID != "" {
+			if st, ok := m.agentStatuses[agentID]; ok {
+				status = st
+			}
+		}
+		if status == "running" {
+			m.formHint = "[ ctrl+]/[: switch agents · viewing sub-agent ]"
+		} else {
+			m.formHint = "[ ctrl+]/[: switch agents · click × to close ]"
+		}
+	case activeTab.Title == "Settings":
 		m.Mode = ModeSettings
-	case "Confirm":
+	case activeTab.Title == "Confirm":
 		m.Mode = ModeConfirm
-	case "Question":
+	case activeTab.Title == "Question":
 		m.Mode = ModeQuestion
-	case "YOLO":
+	case activeTab.Title == "YOLO":
 		m.Mode = ModeYolo
 	default:
 		if m.isQuestionTabTitle(activeTab.Title) {
@@ -795,6 +848,36 @@ func (m *App) switchToQuestionTab(questionIdx int) {
 	if tab := m.win.TabByTitle(title); tab != nil {
 		m.win.SwitchTo(m.win.IndexOf(tab.ID))
 	}
+}
+
+// handleTabSwitch is called after the window switches tabs.
+// If an agent tab became active, sync the agent view.
+func (m *App) handleTabSwitch() {
+	activeTab := m.win.ActiveTab()
+	if activeTab == nil {
+		m.syncActiveTabMode()
+		return
+	}
+	if m.isAgentTabTitle(activeTab.Title) {
+		agentID := m.agentIDFromTabTitle(activeTab.Title)
+		if agentID != m.activeAgentView && agentID != "" {
+			m.activeAgentView = agentID
+			if agentID == MainAgentID {
+				m.activeAgentView = ""
+			}
+			if m.mainMsgList != nil {
+				m.mainMsgList.InvalidateAllMessages()
+			}
+			if agent, ok := m.agents[agentID]; ok && agent.MsgList != nil {
+				agent.MsgList.InvalidateAllMessages()
+			}
+		}
+	}
+	m.syncActiveTabMode()
+}
+
+func (m *App) hitTestAgentWindowSidebar(x, y int) string {
+	return ""
 }
 
 func tickCmd() tea.Cmd {

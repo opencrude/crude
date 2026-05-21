@@ -53,8 +53,13 @@ type App struct {
 
 	win *window.Window
 
-	blocking  bool
-	yolo      bool
+	blocking bool
+	yolo     bool
+
+	activeAgentView string
+	agentTabs       *widgets.AgentTabBar
+	agentLabels     map[string]string
+	agentStatuses   map[string]string
 
 	inputCh  chan<- string
 	btwCh    chan<- string
@@ -155,6 +160,9 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		confirm:      cd,
 		questionForm:  qd,
 		yoloDlg:      yd,
+		agentTabs:    widgets.NewAgentTabBar(th),
+		agentLabels:  make(map[string]string),
+		agentStatuses: make(map[string]string),
 		inputCh:      inputCh,
 		btwCh:        btwCh,
 		cancelCh:    cancelCh,
@@ -232,9 +240,7 @@ func (m *App) setMode(newMode Mode) {
 		m.win.OpenTabWithLayout("YOLO", "", true, window.TabVertical)
 	case ModeChat:
 		m.formHint = ""
-		if m.win.HasClosableTabs() {
-			m.win.CloseAll()
-		}
+		m.closeNonAgentClosableTabs()
 	}
 }
 
@@ -269,6 +275,272 @@ func (m *App) SetListSessionsFn(fn func() []sessiondb.SessionMeta) {
 	m.onListSessions = fn
 }
 
+func (m *App) activeMessageList() *widgets.MessageList {
+	if m.activeAgentView != "" && m.activeAgentView != MainAgentID {
+		if agent, ok := m.agents[m.activeAgentView]; ok && agent.MsgList != nil {
+			return agent.MsgList
+		}
+	}
+	return m.mainMsgList
+}
+
+func (m *App) agentForView() *AgentState {
+	if m.activeAgentView == "" || m.activeAgentView == MainAgentID {
+		return m.mainAgent()
+	}
+	return m.agents[m.activeAgentView]
+}
+
+func (m *App) activeAgentID() string {
+	if m.activeAgentView == "" {
+		return MainAgentID
+	}
+	return m.activeAgentView
+}
+
+func (m *App) switchToAgentView(agentID string) {
+	prev := m.activeAgentView
+	if agentID == MainAgentID || agentID == "" {
+		m.activeAgentView = ""
+	} else if _, ok := m.agents[agentID]; ok {
+		m.activeAgentView = agentID
+	}
+
+	if prev != m.activeAgentView {
+		if prev != "" {
+			if agent, ok := m.agents[prev]; ok && agent.MsgList != nil {
+				agent.MsgList.InvalidateAllMessages()
+			}
+		}
+		if m.activeAgentView != "" {
+			if agent, ok := m.agents[m.activeAgentView]; ok && agent.MsgList != nil {
+				agent.MsgList.InvalidateAllMessages()
+			}
+		}
+		if m.mainMsgList != nil {
+			m.mainMsgList.InvalidateAllMessages()
+		}
+	}
+
+	m.syncAgentWindowTabs()
+}
+
+// agentTabTitle returns the window tab title for an agent.
+// Uses "agent:<label>" format so it's identifiable as an agent tab.
+func (m *App) agentTabTitle(agentID string) string {
+	if agentID == MainAgentID || agentID == "" {
+		return "agent:main"
+	}
+	label := agentID
+	if lbl, ok := m.agentLabels[agentID]; ok && lbl != "" {
+		label = lbl
+	} else if len(agentID) > 12 {
+		label = agentID[:12]
+	}
+	return "agent:" + label
+}
+
+// isAgentTabTitle checks if a window tab title is an agent tab.
+func (m *App) isAgentTabTitle(title string) bool {
+	return len(title) > 6 && title[:6] == "agent:"
+}
+
+// agentIDFromTabTitle extracts the agent ID from a window tab title.
+func (m *App) agentIDFromTabTitle(title string) string {
+	if !m.isAgentTabTitle(title) {
+		return ""
+	}
+	label := title[6:]
+	if label == "main" {
+		return MainAgentID
+	}
+	for id, lbl := range m.agentLabels {
+		if lbl == label {
+			return id
+		}
+	}
+	if _, ok := m.agents[label]; ok {
+		return label
+	}
+	for id := range m.agents {
+		if id != MainAgentID && len(id) > 12 && id[:12] == label {
+			return id
+		}
+	}
+	return label
+}
+
+// syncAgentWindowTabs creates/removes window tabs to match the current agent set.
+// Each agent gets its own window tab (like question tabs), so the window system's
+// vertical sidebar handles the ❯ markers, clicks, and ctrl+]/ctrl+[ natively.
+func (m *App) syncAgentWindowTabs() {
+	hasSubAgents := len(m.agents) > 1
+
+	if !hasSubAgents {
+		m.purgeAgentTabs()
+		return
+	}
+
+	activeID := m.activeAgentView
+	if activeID == "" {
+		activeID = MainAgentID
+	}
+
+	for id := range m.agents {
+		title := m.agentTabTitle(id)
+		existing := m.win.TabByTitle(title)
+		if existing == nil {
+			m.win.OpenTabWithLayout(title, "", true, window.TabVertical)
+		}
+
+		icon := m.agentTabIcon(id)
+		if tab := m.win.TabByTitle(title); tab != nil {
+			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), icon)
+		}
+	}
+
+	activeTitle := m.agentTabTitle(activeID)
+	if tab := m.win.TabByTitle(activeTitle); tab != nil {
+		m.win.SwitchTo(m.win.IndexOf(tab.ID))
+	}
+
+	m.purgeStaleAgentTabs()
+}
+
+// agentTabIcon returns the status icon for an agent's window tab.
+func (m *App) agentTabIcon(id string) string {
+	if id == MainAgentID || id == "" {
+		return "■"
+	}
+	status := "running"
+	if st, ok := m.agentStatuses[id]; ok && st != "" {
+		status = st
+	}
+	switch {
+	case status == "running":
+		return "●"
+	case status == "completed":
+		return "✓"
+	case len(status) > 6 && status[:6] == "failed":
+		return "✗"
+	case status == "cancelled":
+		return "!"
+	default:
+		return "■"
+	}
+}
+
+// purgeAgentTabs closes all agent window tabs.
+func (m *App) purgeAgentTabs() {
+	for {
+		found := false
+		for i := m.win.TabCount() - 1; i >= 0; i-- {
+			tabs := m.win.Tabs()
+			if i >= len(tabs) {
+				continue
+			}
+			if m.isAgentTabTitle(tabs[i].Title) {
+				m.win.CloseTab(i)
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+	}
+}
+
+// purgeStaleAgentTabs closes agent tabs for agents that no longer exist.
+func (m *App) purgeStaleAgentTabs() {
+	for {
+		found := false
+		for i := m.win.TabCount() - 1; i >= 0; i-- {
+			tabs := m.win.Tabs()
+			if i >= len(tabs) {
+				continue
+			}
+			if m.isAgentTabTitle(tabs[i].Title) {
+				agentID := m.agentIDFromTabTitle(tabs[i].Title)
+				if _, ok := m.agents[agentID]; !ok {
+					m.win.CloseTab(i)
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			break
+		}
+	}
+}
+
+// closeNonAgentClosableTabs closes all closable tabs except agent tabs.
+func (m *App) closeNonAgentClosableTabs() {
+	for m.win.HasClosableTabs() {
+		tabs := m.win.Tabs()
+		allAgents := true
+		for _, t := range tabs {
+			if t.Closable && !m.isAgentTabTitle(t.Title) {
+				allAgents = false
+				break
+			}
+		}
+		if allAgents {
+			break
+		}
+		for i := len(tabs) - 1; i >= 0; i-- {
+			if tabs[i].Closable && !m.isAgentTabTitle(tabs[i].Title) {
+				m.win.CloseTab(i)
+				break
+			}
+		}
+	}
+}
+
+func (m *App) syncAgentTabs() {
+	var tabs []widgets.AgentTab
+	tabs = append(tabs, widgets.AgentTab{
+		ID:       MainAgentID,
+		Label:    "main",
+		Status:   "main",
+		IsActive: m.activeAgentView == "" || m.activeAgentView == MainAgentID,
+	})
+	for id := range m.agents {
+		if id == MainAgentID {
+			continue
+		}
+		sp := m.paneMgr.Get(id)
+		status := "running"
+		elapsed := 0
+		if st, ok := m.agentStatuses[id]; ok && st != "" {
+			status = st
+		}
+		if sp != nil {
+			elapsed = int(sp.Elapsed().Seconds())
+		}
+		label := id
+		if lbl, ok := m.agentLabels[id]; ok && lbl != "" {
+			label = lbl
+		} else if len(id) > 12 {
+			label = id[:12]
+		}
+		tabs = append(tabs, widgets.AgentTab{
+			ID:       id,
+			Label:    label,
+			Status:   status,
+			Elapsed:  elapsed,
+			IsActive: m.activeAgentView == id,
+		})
+	}
+	m.agentTabs.SetTabs(tabs)
+}
+
 func (m *App) Init() tea.Cmd {
 	return tea.Batch(tickCmd(), tea.EnterAltScreen)
+}
+
+func (m *App) syncAgentWindow() {
+	m.syncAgentTabs()
+	m.syncAgentWindowTabs()
 }
