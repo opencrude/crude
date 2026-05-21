@@ -323,7 +323,8 @@ func TestHitTestVertical(t *testing.T) {
 	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
 	w.OpenTabWithLayout("Confirm", "⚠", true, TabVertical)
 
-	contentWidth := w.width - vTabBarWidth
+	tabBarW := w.VTabBarWidth()
+	contentWidth := w.width - tabBarW
 	tabX := contentWidth + 2
 
 	hit := w.HitTest(tabX, 0)
@@ -357,8 +358,9 @@ func TestHitTestVerticalClose(t *testing.T) {
 	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
 	w.OpenTabWithLayout("Confirm", "⚠", true, TabVertical)
 
-	contentWidth := w.width - vTabBarWidth
-	closeStart := contentWidth + vTabBarWidth - vCloseBtnWidth
+	tabBarW := w.VTabBarWidth()
+	contentWidth := w.width - tabBarW
+	closeStart := contentWidth + tabBarW - vCloseBtnWidth
 
 	hit := w.HitTest(closeStart, 0)
 	if hit.TabIndex != 0 {
@@ -504,9 +506,62 @@ func TestVerticalContentWidth(t *testing.T) {
 	}
 
 	w.OpenTabWithLayout("Confirm", "⚠", true, TabVertical)
-	expected := 80 - vTabBarWidth
+	expected := 80 - w.VTabBarWidth()
 	if w.VerticalContentWidth() != expected {
 		t.Errorf("expected %d for multi-tab vertical layout, got %d", expected, w.VerticalContentWidth())
+	}
+}
+
+func TestVTabBarWidthDynamic(t *testing.T) {
+	w := newTestWindow()
+	w.SetWidth(80)
+
+	// No tabs or single tab → 0
+	if w.VTabBarWidth() != 0 {
+		t.Errorf("expected 0 for no tabs, got %d", w.VTabBarWidth())
+	}
+	w.OpenTabWithLayout("A", "", true, TabVertical)
+	if w.VTabBarWidth() != 0 {
+		t.Errorf("expected 0 for single tab, got %d", w.VTabBarWidth())
+	}
+
+	// Two short tabs → should hit minimum (12)
+	w.OpenTabWithLayout("B", "", true, TabVertical)
+	got := w.VTabBarWidth()
+	if got < vTabBarMinWidth {
+		t.Errorf("expected >= %d for short tabs, got %d", vTabBarMinWidth, got)
+	}
+
+	// Tabs with long names → width should grow
+	w.CloseAll()
+	w.OpenTabWithLayout("1. Backend technology", "○", true, TabVertical)
+	w.OpenTabWithLayout("2. Database choice", "○", true, TabVertical)
+	wideGot := w.VTabBarWidth()
+	if wideGot <= vTabBarMinWidth {
+		t.Errorf("expected wider than %d for long titles, got %d", vTabBarMinWidth, wideGot)
+	}
+
+	// Content area must remain at least vMinContentWidth
+	contentW := 80 - wideGot
+	if contentW < vMinContentWidth {
+		t.Errorf("content area %d is below minimum %d", contentW, vMinContentWidth)
+	}
+
+	// Narrow terminal → tab bar capped, content preserved
+	w.SetWidth(50)
+	narrowGot := w.VTabBarWidth()
+	if 50-narrowGot < vMinContentWidth {
+		t.Errorf("narrow terminal: content area %d below minimum %d", 50-narrowGot, vMinContentWidth)
+	}
+
+	// Wide terminal → tab bar grows to show more, but stays ≤ max
+	w.SetWidth(200)
+	widerGot := w.VTabBarWidth()
+	if widerGot > vTabBarMaxAbsolute {
+		t.Errorf("expected <= %d on wide terminal, got %d", vTabBarMaxAbsolute, widerGot)
+	}
+	if widerGot < wideGot {
+		t.Errorf("wider terminal should not produce smaller tab bar: %d < %d", widerGot, wideGot)
 	}
 }
 

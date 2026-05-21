@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -81,11 +82,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.handleLauncherKey(msg)
 		}
-		if msg.Type == tea.KeyCtrlC {
+		if msg.Type == tea.KeyCtrlC && m.Mode != ModeQuestion {
 			m.logger.Debug("CANCEL", "ctrl_c", "mode", modeName(m.Mode))
 			return m, m.handleCancel(msg)
 		}
-		if msg.Type == tea.KeyEsc && m.Mode != ModeSettings {
+		if msg.Type == tea.KeyEsc && m.Mode != ModeSettings && m.Mode != ModeQuestion {
 			m.logger.Debug("CANCEL", "esc", "mode", modeName(m.Mode))
 			return m, m.handleCancel(msg)
 		}
@@ -286,62 +287,109 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ModeQuestion:
 		m.statusbar.SetConfirming(true)
 		keyMsg, isKey := msg.(tea.KeyMsg)
-		isNavKey := isKey && (keyMsg.Type == tea.KeyUp || keyMsg.Type == tea.KeyDown ||
-			keyMsg.Type == tea.KeyEsc || keyMsg.String() == "ctrl+s" ||
-			keyMsg.Type == tea.KeyTab || keyMsg.Type == tea.KeyShiftTab)
-		if m.questionForm.IsTextQuestion(m.questionForm.Focused()) && !isNavKey {
-			if _, ok := msg.(tea.MouseMsg); !ok {
-				updated, cmd, evt := m.input.Update(msg, false, false, m.chatAreaHeight, false)
-				m.input = updated
-				if cmd != nil {
-					cmds = append(cmds, cmd)
+		inTextMode := m.questionForm.IsTextQuestion(m.questionForm.Focused())
+
+		if inTextMode {
+			isCancelKey := isKey && (keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyCtrlC)
+			isSubmitKey := isKey && keyMsg.String() == "ctrl+s"
+			isTabKey := isKey && (keyMsg.Type == tea.KeyTab || keyMsg.Type == tea.KeyShiftTab)
+
+			if isCancelKey {
+				m.questionForm.ExitTextMode(m.questionForm.Focused())
+				m.input.ClearInput()
+				m.syncQuestionInputPrompt()
+			} else if isSubmitKey {
+				text := strings.TrimSpace(m.input.Value())
+				if text != "" {
+					m.questionForm.SetAnswer(m.questionForm.Focused(), text)
 				}
-				switch e := evt.(type) {
-				case input.SubmitEvent:
-					m.questionForm.SetAnswer(m.questionForm.Focused(), e.Text)
+				if m.questionForm.AllAnswered() {
+					result := m.questionForm.BuildResult()
+					m.statusbar.SetConfirming(false)
+					m.blocking = false
+					ma := m.mainAgent()
+					ma.Thinking = true
+					m.statusbar.SetThinking(true, false, false)
+					if m.OnQuestionResult != nil {
+						m.OnQuestionResult(ttypes.QuestionResult(result))
+					}
+					m.closeAllQuestionTabs()
+					m.input.ResetPrompt()
 					m.input.ClearInput()
-					if m.questionForm.AllAnswered() {
-						result := m.questionForm.BuildResult()
-						m.statusbar.SetConfirming(false)
-						m.blocking = false
-						ma := m.mainAgent()
-						ma.Thinking = true
-						m.statusbar.SetThinking(true, false, false)
-						if m.OnQuestionResult != nil {
-							m.OnQuestionResult(ttypes.QuestionResult(result))
-						}
-						m.closeAllQuestionTabs()
-						m.input.ResetPrompt()
-					} else {
-						for i := 0; i < m.questionForm.Count(); i++ {
-							next := (m.questionForm.Focused() + 1 + i) % m.questionForm.Count()
-							if !m.questionForm.IsAnswered(next) {
-								m.questionForm.SetFocused(next)
-								break
+				}
+			} else if isTabKey {
+				if keyMsg.Type == tea.KeyShiftTab {
+					m.questionForm.FocusPrev()
+				} else {
+					m.questionForm.FocusNext()
+				}
+				m.switchToQuestionTab(m.questionForm.Focused())
+				m.syncQuestionInputPrompt()
+			} else {
+				if _, ok := msg.(tea.MouseMsg); !ok {
+					updated, cmd, evt := m.input.Update(msg, false, false, m.chatAreaHeight, false)
+					m.input = updated
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					switch e := evt.(type) {
+					case input.SubmitEvent:
+						m.questionForm.SetAnswer(m.questionForm.Focused(), e.Text)
+						m.input.ClearInput()
+						if m.questionForm.AllAnswered() {
+							result := m.questionForm.BuildResult()
+							m.statusbar.SetConfirming(false)
+							m.blocking = false
+							ma := m.mainAgent()
+							ma.Thinking = true
+							m.statusbar.SetThinking(true, false, false)
+							if m.OnQuestionResult != nil {
+								m.OnQuestionResult(ttypes.QuestionResult(result))
 							}
+							m.closeAllQuestionTabs()
+							m.input.ResetPrompt()
+						} else {
+							m.questionForm.FocusNext()
+							m.switchToQuestionTab(m.questionForm.Focused())
+							m.syncQuestionInputPrompt()
 						}
-						m.switchToQuestionTab(m.questionForm.Focused())
-						m.syncQuestionInputPrompt()
 					}
 				}
 			}
 		} else {
-			updated, result, done := m.questionForm.Update(msg)
-			m.questionForm = updated
-			m.syncQuestionInputPrompt()
-			if done {
-				m.statusbar.SetConfirming(false)
+			isCancelKey := isKey && (keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyCtrlC)
+			if isCancelKey {
+				m.questionForm.Dismiss()
 				m.blocking = false
-				ma := m.mainAgent()
-				ma.Thinking = true
-				m.statusbar.SetThinking(true, false, false)
-				if m.OnQuestionResult != nil {
-					m.OnQuestionResult(ttypes.QuestionResult(result))
-				}
-				m.closeAllQuestionTabs()
+				m.statusbar.SetConfirming(false)
 				m.input.ResetPrompt()
+				m.input.ClearInput()
+				m.closeAllQuestionTabs()
+				if m.OnQuestionResult != nil {
+					m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
+				}
 			} else {
-				m.switchToQuestionTab(m.questionForm.Focused())
+				updated, result, done := m.questionForm.Update(msg)
+				m.questionForm = updated
+				if !done && m.questionForm.IsTextQuestion(m.questionForm.Focused()) {
+					m.input.ClearInput()
+				}
+				m.syncQuestionInputPrompt()
+				if done {
+					m.statusbar.SetConfirming(false)
+					m.blocking = false
+					ma := m.mainAgent()
+					ma.Thinking = true
+					m.statusbar.SetThinking(true, false, false)
+					if m.OnQuestionResult != nil {
+						m.OnQuestionResult(ttypes.QuestionResult(result))
+					}
+					m.closeAllQuestionTabs()
+					m.input.ResetPrompt()
+					m.input.ClearInput()
+				} else {
+					m.switchToQuestionTab(m.questionForm.Focused())
+				}
 			}
 		}
 
@@ -656,6 +704,18 @@ func (m *App) questionTabIndex(title string) int {
 }
 
 func (m *App) closeAllQuestionTabs() {
+	m.purgeQuestionTabs()
+	if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+		m.setMode(ModeChat)
+	} else {
+		m.syncActiveTabMode()
+	}
+}
+
+// purgeQuestionTabs closes all question-related tabs without changing mode
+// or input state. Use this when you need to clean up stale tabs before
+// creating a fresh set.
+func (m *App) purgeQuestionTabs() {
 	for {
 		found := false
 		for i := m.win.TabCount() - 1; i >= 0; i-- {
@@ -673,11 +733,6 @@ func (m *App) closeAllQuestionTabs() {
 			break
 		}
 	}
-	if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-		m.setMode(ModeChat)
-	} else {
-		m.syncActiveTabMode()
-	}
 }
 
 func (m *App) syncQuestionInputPrompt() {
@@ -686,6 +741,7 @@ func (m *App) syncQuestionInputPrompt() {
 		m.input.ClearInput()
 		return
 	}
+	m.syncQuestionTabIcons()
 	if m.questionForm.IsTextQuestion(m.questionForm.Focused()) {
 		q, _ := m.questionForm.FocusedItem()
 		label := q.Header
@@ -701,6 +757,21 @@ func (m *App) syncQuestionInputPrompt() {
 	} else {
 		m.input.ResetPrompt()
 		m.input.ClearInput()
+	}
+}
+
+func (m *App) syncQuestionTabIcons() {
+	if m.questionForm.Count() <= 1 {
+		if tab := m.win.TabByTitle("Question"); tab != nil {
+			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.questionForm.TabIcon(0))
+		}
+		return
+	}
+	for i := range m.questionForm.Items() {
+		title := m.questionForm.TabTitle(i)
+		if tab := m.win.TabByTitle(title); tab != nil {
+			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.questionForm.TabIcon(i))
+		}
 	}
 }
 

@@ -472,8 +472,8 @@ func (m *App) renderLauncherView() string {
 	)
 
 	// Calculate available space for session list
-	// Layout: blank + header + sep + [sessions] + sep + preview(1) + sep + hints + sep + statusbar = 8 fixed lines
-	fixedLines := 8 + 1 // 8 structural + 1 preview line
+	// Layout: blank + header + sep + [sessions] + sep + hints + sep + statusbar = 7 fixed lines
+	fixedLines := 7
 	availableH := m.height - fixedLines
 	if availableH < 3 {
 		availableH = 3
@@ -524,26 +524,16 @@ func (m *App) renderLauncherView() string {
 		lines = append(lines, strings.Repeat(" ", m.width))
 	}
 
-	// Separator before preview
+	// Separator before combined hints bar
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
-	// Preview pane
+	// Combined preview + hints bar
 	previewLines := m.launcherPreviewLines()
-	renderedPreview := widgets.RenderLauncherPreview(previewLines, m.theme, m.width)
-	for _, pl := range renderedPreview {
-		visW := lipgloss.Width(pl)
-		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
-		if rightPad < 0 {
-			rightPad = 0
-		}
-		lines = append(lines, pad+pl+strings.Repeat(" ", rightPad)+pad)
+	previewText := ""
+	if len(previewLines) > 0 {
+		previewText = previewLines[0]
 	}
-
-	// Separator before hints
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
-
-	// Hints bar
-	hintsLine := widgets.RenderLauncherHints(m.launcher.filterActive, m.launcher.filterText, m.theme, m.width)
+	hintsLine := widgets.RenderLauncherPreviewHints(previewText, m.launcher.filterActive, m.launcher.filterText, m.theme, m.width)
 	visW := lipgloss.Width(hintsLine)
 	rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
 	if rightPad < 0 {
@@ -581,7 +571,17 @@ func (m *App) launcherSelectedLineIndex(sessionLines []string) int {
 	// Walk through the groups to find the line
 	visibleSessions := m.launcher.visibleSessions()
 	groups := widgets.BuildLauncherGroups(visibleSessions)
-	lineIdx := 2 // "New Session" line + blank line
+
+	innerW := m.width - m.theme.Spacing.PadLR*2
+	if innerW < 20 {
+		innerW = 20
+	}
+	newSessionLines := widgets.RenderNewSessionEntry(0 == m.launcher.selected, m.theme, innerW, m.spinFrame, 0)
+	transitionLines := 0
+	if len(visibleSessions) > 0 {
+		transitionLines = 2
+	}
+	lineIdx := len(newSessionLines) + transitionLines
 	flatIdx := 1
 
 	for _, g := range groups {

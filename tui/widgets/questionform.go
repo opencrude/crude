@@ -12,8 +12,6 @@ import (
 	"crude/tui/theme"
 )
 
-// QuestionItem describes one question to ask the user.
-// Mirrors the JSON shape emitted by the agent.
 type QuestionItem struct {
 	Question string   `json:"question"`
 	Header   string   `json:"header,omitempty"`
@@ -21,35 +19,30 @@ type QuestionItem struct {
 	Multiple bool     `json:"multiple,omitempty"`
 }
 
-// QuestionFormResult is returned when the user finishes the form.
 type QuestionFormResult struct {
 	Answers   map[string]string
 	Questions map[string]string
 	Cancelled bool
 }
 
-// QuestionForm holds the state for an interactive multi-question form.
-// It is purely a data + render model — input routing happens in the viewmodel
-// so we can reuse the main TextInput for free-text answers (multi-line, etc.)
-// rather than reinventing an inline editor.
 type QuestionForm struct {
-	th      *theme.Theme
-	items   []QuestionItem
-	answers []string // current value per question (parallel to items)
-	cycleIdx []int    // for option-based questions: current option index
-	focused int       // currently focused question index
+	th           *theme.Theme
+	items        []QuestionItem
+	answers      []string
+	optionCursor []int
+	textMode     []bool
+	focused      int
 }
 
 func NewQuestionForm(th *theme.Theme) QuestionForm {
 	return QuestionForm{th: th}
 }
 
-// Reset re-initialises the form from a JSON-encoded questions array.
-// Returns the number of questions parsed (0 if parse failed).
 func (m *QuestionForm) Reset(questionsJSON string) int {
 	m.items = nil
 	m.answers = nil
-	m.cycleIdx = nil
+	m.optionCursor = nil
+	m.textMode = nil
 	m.focused = 0
 
 	if questionsJSON == "" {
@@ -61,26 +54,19 @@ func (m *QuestionForm) Reset(questionsJSON string) int {
 	}
 	m.items = items
 	m.answers = make([]string, len(items))
-	m.cycleIdx = make([]int, len(items))
+	m.optionCursor = make([]int, len(items))
+	m.textMode = make([]bool, len(items))
 	for i, q := range items {
-		if len(q.Options) > 0 {
-			// default to first option but mark as not-yet-answered (-1 cycleIdx)
-			m.cycleIdx[i] = -1
+		if len(q.Options) == 0 {
+			m.textMode[i] = true
 		}
 	}
 	return len(items)
 }
 
-// Items returns the parsed question items.
-func (m *QuestionForm) Items() []QuestionItem { return m.items }
-
-// Count returns the number of questions.
-func (m *QuestionForm) Count() int { return len(m.items) }
-
-// Focused returns the currently focused question index.
-func (m *QuestionForm) Focused() int { return m.focused }
-
-// SetFocused changes the focused question. Bounds-checked.
+func (m *QuestionForm) Items() []QuestionItem     { return m.items }
+func (m *QuestionForm) Count() int                 { return len(m.items) }
+func (m *QuestionForm) Focused() int               { return m.focused }
 func (m *QuestionForm) SetFocused(idx int) {
 	if idx < 0 || idx >= len(m.items) {
 		return
@@ -88,7 +74,6 @@ func (m *QuestionForm) SetFocused(idx int) {
 	m.focused = idx
 }
 
-// FocusNext advances focus to the next question (wraps around).
 func (m *QuestionForm) FocusNext() {
 	if len(m.items) == 0 {
 		return
@@ -96,7 +81,6 @@ func (m *QuestionForm) FocusNext() {
 	m.focused = (m.focused + 1) % len(m.items)
 }
 
-// FocusPrev moves focus to the previous question (wraps around).
 func (m *QuestionForm) FocusPrev() {
 	if len(m.items) == 0 {
 		return
@@ -107,7 +91,6 @@ func (m *QuestionForm) FocusPrev() {
 	}
 }
 
-// FocusedItem returns the currently focused question.
 func (m *QuestionForm) FocusedItem() (QuestionItem, bool) {
 	if m.focused < 0 || m.focused >= len(m.items) {
 		return QuestionItem{}, false
@@ -115,39 +98,16 @@ func (m *QuestionForm) FocusedItem() (QuestionItem, bool) {
 	return m.items[m.focused], true
 }
 
-// IsTextQuestion reports whether the focused question is free-text (no options).
 func (m *QuestionForm) IsTextQuestion(idx int) bool {
 	if idx < 0 || idx >= len(m.items) {
 		return false
 	}
-	return len(m.items[idx].Options) == 0
+	if m.textMode == nil {
+		return len(m.items[idx].Options) == 0
+	}
+	return m.textMode[idx]
 }
 
-// CycleOption moves the focused option question forward (+1) or backward (-1).
-// No-op for text questions.
-func (m *QuestionForm) CycleOption(delta int) {
-	idx := m.focused
-	if idx < 0 || idx >= len(m.items) {
-		return
-	}
-	q := m.items[idx]
-	if len(q.Options) == 0 {
-		return
-	}
-	cur := m.cycleIdx[idx]
-	if cur < 0 {
-		// first interaction → select first option
-		cur = 0
-	} else {
-		cur += delta
-		n := len(q.Options)
-		cur = ((cur % n) + n) % n
-	}
-	m.cycleIdx[idx] = cur
-	m.answers[idx] = q.Options[cur]
-}
-
-// SetAnswer records a free-text answer for the question at idx.
 func (m *QuestionForm) SetAnswer(idx int, text string) {
 	if idx < 0 || idx >= len(m.items) {
 		return
@@ -155,15 +115,22 @@ func (m *QuestionForm) SetAnswer(idx int, text string) {
 	m.answers[idx] = text
 }
 
-// Answer returns the current answer for question idx.
-func (m *QuestionForm) Answer(idx int) string {
+func (m *QuestionForm) ExitTextMode(idx int) {
 	if idx < 0 || idx >= len(m.items) {
+		return
+	}
+	m.textMode[idx] = false
+	m.answers[idx] = ""
+	m.optionCursor[idx] = len(m.items[idx].Options)
+}
+
+func (m *QuestionForm) Answer(idx int) string {
+	if idx < 0 || idx >= len(m.answers) {
 		return ""
 	}
 	return m.answers[idx]
 }
 
-// Answered reports the number of questions that have a non-empty answer.
 func (m *QuestionForm) Answered() int {
 	n := 0
 	for _, a := range m.answers {
@@ -174,7 +141,6 @@ func (m *QuestionForm) Answered() int {
 	return n
 }
 
-// IsAnswered reports whether question idx has been answered.
 func (m *QuestionForm) IsAnswered(idx int) bool {
 	if idx < 0 || idx >= len(m.answers) {
 		return false
@@ -182,7 +148,6 @@ func (m *QuestionForm) IsAnswered(idx int) bool {
 	return strings.TrimSpace(m.answers[idx]) != ""
 }
 
-// BuildResult assembles the final QuestionFormResult.
 func (m *QuestionForm) BuildResult() QuestionFormResult {
 	answers := make(map[string]string, len(m.items))
 	questions := make(map[string]string, len(m.items))
@@ -194,7 +159,6 @@ func (m *QuestionForm) BuildResult() QuestionFormResult {
 	return QuestionFormResult{Answers: answers, Questions: questions}
 }
 
-// TabTitle returns a short tab label for question idx (e.g. "1. Lang").
 func (m *QuestionForm) TabTitle(idx int) string {
 	if idx < 0 || idx >= len(m.items) {
 		return ""
@@ -202,68 +166,120 @@ func (m *QuestionForm) TabTitle(idx int) string {
 	q := m.items[idx]
 	label := q.Header
 	if label == "" {
-		runes := []rune(q.Question)
-		if len(runes) > 12 {
-			label = string(runes[:11]) + "…"
-		} else {
-			label = q.Question
-		}
+		label = q.Question
 	}
-	if runewidth.StringWidth(label) > 10 {
-		label = runewidth.Truncate(label, 9, "…")
+	// Allow generous titles — the tab renderer truncates to fit the
+	// dynamically computed sidebar width.
+	runes := []rune(label)
+	if len(runes) > 25 {
+		label = string(runes[:24]) + "…"
 	}
 	return fmt.Sprintf("%d. %s", idx+1, label)
 }
 
-// AllAnswered reports whether every question has a non-empty answer.
+func (m *QuestionForm) TabIcon(idx int) string {
+	if idx < 0 || idx >= len(m.items) {
+		return ""
+	}
+	if m.IsAnswered(idx) {
+		return "✓"
+	}
+	return "○"
+}
+
 func (m *QuestionForm) AllAnswered() bool {
 	return len(m.items) > 0 && m.Answered() == len(m.items)
 }
 
-// Update handles key messages for the question form.
-// It manages navigation (↑↓), option cycling (←→), and submission.
-// Text input for free-text questions is handled externally via the main input.
+func (m *QuestionForm) rowCount(idx int) int {
+	if idx < 0 || idx >= len(m.items) {
+		return 0
+	}
+	return len(m.items[idx].Options) + 3
+}
+
 func (m QuestionForm) Update(msg tea.Msg) (QuestionForm, QuestionFormResult, bool) {
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, QuestionFormResult{}, false
 	}
 
+	idx := m.focused
+	if idx < 0 || idx >= len(m.items) {
+		switch keyMsg.Type {
+		case tea.KeyEsc:
+			return m, QuestionFormResult{Cancelled: true}, true
+		}
+		return m, QuestionFormResult{}, false
+	}
+
+	if m.textMode[idx] {
+		switch keyMsg.Type {
+		case tea.KeyEsc:
+			return m, QuestionFormResult{Cancelled: true}, true
+		}
+		return m, QuestionFormResult{}, false
+	}
+
+	rowCount := m.rowCount(idx)
+	ownRow := len(m.items[idx].Options)
+	submitRow := ownRow + 1
+	cancelRow := ownRow + 2
+
 	switch keyMsg.Type {
 	case tea.KeyEsc:
 		return m, QuestionFormResult{Cancelled: true}, true
 	case tea.KeyUp:
-		m.FocusPrev()
+		if m.optionCursor[idx] > 0 {
+			m.optionCursor[idx]--
+		}
 		return m, QuestionFormResult{}, false
 	case tea.KeyDown:
-		m.FocusNext()
+		if m.optionCursor[idx] < rowCount-1 {
+			m.optionCursor[idx]++
+		}
 		return m, QuestionFormResult{}, false
 	case tea.KeyLeft:
-		m.CycleOption(-1)
+		if m.optionCursor[idx] == cancelRow {
+			m.optionCursor[idx] = submitRow
+		} else if m.optionCursor[idx] == submitRow {
+			m.optionCursor[idx] = cancelRow
+		}
 		return m, QuestionFormResult{}, false
 	case tea.KeyRight:
-		m.CycleOption(1)
+		if m.optionCursor[idx] == submitRow {
+			m.optionCursor[idx] = cancelRow
+		} else if m.optionCursor[idx] == cancelRow {
+			m.optionCursor[idx] = submitRow
+		}
 		return m, QuestionFormResult{}, false
 	case tea.KeyEnter:
-		if m.IsTextQuestion(m.focused) {
-			return m, QuestionFormResult{}, false
+		cur := m.optionCursor[idx]
+		q := m.items[idx]
+		if cur < len(q.Options) {
+			m.answers[idx] = q.Options[cur]
+			m.textMode[idx] = false
+			if m.AllAnswered() {
+				return m, m.BuildResult(), true
+			}
+			m.FocusNext()
+		} else if cur == ownRow {
+			m.textMode[idx] = true
+			m.answers[idx] = ""
+		} else if cur == submitRow {
+			if m.AllAnswered() {
+				return m, m.BuildResult(), true
+			}
+			m.FocusNext()
+		} else if cur == cancelRow {
+			return m, QuestionFormResult{Cancelled: true}, true
 		}
-		if m.AllAnswered() {
-			return m, m.BuildResult(), true
-		}
-		m.FocusNext()
 		return m, QuestionFormResult{}, false
 	case tea.KeyTab:
-		if m.AllAnswered() {
-			return m, m.BuildResult(), true
-		}
-		for i := 0; i < len(m.items); i++ {
-			next := (m.focused + 1 + i) % len(m.items)
-			if !m.IsAnswered(next) {
-				m.focused = next
-				break
-			}
-		}
+		m.FocusNext()
+		return m, QuestionFormResult{}, false
+	case tea.KeyShiftTab:
+		m.FocusPrev()
 		return m, QuestionFormResult{}, false
 	}
 
@@ -277,13 +293,16 @@ func (m QuestionForm) Update(msg tea.Msg) (QuestionForm, QuestionFormResult, boo
 	return m, QuestionFormResult{}, false
 }
 
-// Hint returns a contextual hint for the bottom input area.
-func (m QuestionForm) Hint() string {
+func (m *QuestionForm) Hint() string {
 	if len(m.items) == 0 {
 		return ""
 	}
-	if m.IsTextQuestion(m.focused) {
-		q := m.items[m.focused]
+	idx := m.focused
+	if idx < 0 || idx >= len(m.items) {
+		return ""
+	}
+	if m.textMode[idx] {
+		q := m.items[idx]
 		label := q.Header
 		if label == "" {
 			runes := []rune(q.Question)
@@ -293,167 +312,148 @@ func (m QuestionForm) Hint() string {
 				label = q.Question
 			}
 		}
-		return fmt.Sprintf("[ enter: submit answer · alt+enter: new line · ↑↓: navigate · esc: cancel ]  ❯ Q%d (%s)", m.focused+1, label)
+		return fmt.Sprintf("[ enter: submit answer · alt+enter: new line · esc: back · ctrl+s: submit all ]  ❯ Q%d (%s)", idx+1, label)
 	}
-	hint := "[ ↑↓: navigate · ← →: cycle · enter/tab: next · ctrl+s: submit all · esc: cancel ]"
-	progress := fmt.Sprintf("  (%d/%d answered)", m.Answered(), len(m.items))
-	return hint + progress
+	ownRow := len(m.items[idx].Options)
+	submitRow := ownRow + 1
+	cancelRow := ownRow + 2
+	cur := m.optionCursor[idx]
+	if cur == cancelRow {
+		return "[ enter: cancel · ↑↓: navigate ]"
+	}
+	if cur == submitRow {
+		if m.AllAnswered() {
+			return "[ enter: submit all · ↑↓: navigate ]"
+		}
+		return fmt.Sprintf("[ ↑↓: navigate · %d unanswered ]", len(m.items)-m.Answered())
+	}
+	hint := "[ ↑↓: navigate · enter: select · tab: next question · esc: cancel"
+	if m.Count() > 1 {
+		hint += fmt.Sprintf(" · %d/%d", m.focused+1, len(m.items))
+	}
+	hint += " ]"
+	return hint
 }
 
-// SetWidth is a no-op kept for API compatibility (the form uses width param in View).
 func (m *QuestionForm) SetWidth(int) {}
 
-// Dismiss clears all state.
 func (m *QuestionForm) Dismiss() {
 	m.items = nil
 	m.answers = nil
-	m.cycleIdx = nil
+	m.optionCursor = nil
+	m.textMode = nil
 	m.focused = 0
 }
 
-// View renders the form. All tabs render the same view — only the focused
-// question's marker and option highlight change.
 func (m *QuestionForm) View(spinFrame int, width int) string {
 	if len(m.items) == 0 {
 		return ""
 	}
+	idx := m.focused
+	if idx < 0 || idx >= len(m.items) {
+		return ""
+	}
 
+	q := m.items[idx]
 	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
 	accent := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Bold(true)
 	textStyle := m.th.Styles.InputText
-	checkStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Success)
 	titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Bold(true)
-	indent := strings.Repeat(" ", m.th.Spacing.FormIndent)
 
 	var b strings.Builder
 	b.WriteString("\n")
 
-	// Header
-	if len(m.items) > 1 {
-		progress := fmt.Sprintf("  (%d/%d answered)", m.Answered(), len(m.items))
-		b.WriteString(titleStyle.Render("?  questions") + dim.Render(progress))
+	headerLabel := q.Header
+	if headerLabel == "" {
+		headerLabel = q.Question
+	}
+	// Use available content width for the title, leaving room for "? " prefix.
+	maxLabelW := width - 4
+	if maxLabelW < 20 {
+		maxLabelW = 20
+	}
+	if runewidth.StringWidth(headerLabel) > maxLabelW {
+		headerLabel = runewidth.Truncate(headerLabel, maxLabelW-1, "…")
+	}
+
+	if m.Count() > 1 {
+		progress := fmt.Sprintf("  (%d/%d)", m.focused+1, len(m.items))
+		b.WriteString(titleStyle.Render("? "+headerLabel) + dim.Render(progress))
 	} else {
-		b.WriteString(titleStyle.Render("?  question"))
+		b.WriteString(titleStyle.Render("? " + headerLabel))
 	}
 	b.WriteString("\n")
-	b.WriteString(dim.Render(strings.Repeat("─", 24)))
-	b.WriteString("\n\n")
 
-	// Compute label width for alignment
-	labelW := 0
-	for i := range m.items {
-		l := m.questionLabel(i)
-		w := runewidth.StringWidth(l)
-		if w > labelW {
-			labelW = w
-		}
-	}
-	if labelW > 24 {
-		labelW = 24
+	if q.Header != "" && q.Question != "" && q.Header != q.Question {
+		b.WriteString(dim.Render(q.Question))
+		b.WriteString("\n")
 	}
 
-	// Render each question row
-	for i := range m.items {
-		isFocused := i == m.focused
-		isAnswered := m.IsAnswered(i)
+	sepW := width
+	if sepW < 20 {
+		sepW = 20
+	}
+	b.WriteString(dim.Render(strings.Repeat("─", sepW)))
+	b.WriteString("\n")
 
-		// Prefix marker: ❯ for focused, ✓ for answered, blank otherwise
-		var marker string
-		switch {
-		case isFocused:
-			marker = accent.Render("❯ ")
-		case isAnswered:
-			marker = checkStyle.Render("✓ ")
-		default:
-			marker = "  "
-		}
+	cursor := m.optionCursor[idx]
+	checkStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Success)
+	cancelStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Error).Bold(true)
+	ownRow := len(q.Options)
+	submitRow := ownRow + 1
+	cancelRow := ownRow + 2
+	isTextActive := m.textMode[idx]
 
-		// Number + label
-		numStr := fmt.Sprintf("%d.", i+1)
-		label := m.questionLabel(i)
-		// pad label to labelW
-		labelPad := labelW - runewidth.StringWidth(label)
-		if labelPad < 0 {
-			labelPad = 0
-		}
-		labelPart := label + strings.Repeat(" ", labelPad)
-
-		// Style label by state
-		var renderedLabel string
-		if isFocused {
-			renderedLabel = textStyle.Render(labelPart)
+	for i, opt := range q.Options {
+		if !isTextActive && i == cursor {
+			marker := accent.Render("❯")
+			if m.answers[idx] == opt {
+				b.WriteString(marker + " " + textStyle.Render(opt) + " " + checkStyle.Render("✓"))
+			} else {
+				b.WriteString(marker + " " + textStyle.Render(opt))
+			}
 		} else {
-			renderedLabel = dim.Render(labelPart)
+			if m.answers[idx] == opt && !isTextActive {
+				b.WriteString("  " + dim.Render(opt) + " " + checkStyle.Render("✓"))
+			} else {
+				b.WriteString("  " + dim.Render(opt))
+			}
 		}
-
-		// Value column
-		valuePart := m.renderValue(i, isFocused)
-
-		b.WriteString(indent + marker + dim.Render(numStr+" ") + renderedLabel + "  " + valuePart + "\n")
+		b.WriteString("\n")
 	}
 
-	// Detail: show the full question text for focused item if header was used
-	if m.focused >= 0 && m.focused < len(m.items) {
-		q := m.items[m.focused]
-		if q.Header != "" && q.Question != "" && q.Header != q.Question {
-			b.WriteString("\n")
-			b.WriteString(indent + dim.Render("  ") + dim.Render(q.Question) + "\n")
+	if isTextActive || (!isTextActive && cursor == ownRow) {
+		marker := accent.Render("❯")
+		if isTextActive && m.answers[idx] != "" {
+			b.WriteString(marker + " " + textStyle.Render("Type your own answer…") + " " + checkStyle.Render("✓"))
+		} else {
+			b.WriteString(marker + " " + textStyle.Render("Type your own answer…"))
 		}
+	} else {
+		b.WriteString("  " + dim.Render("Type your own answer…"))
 	}
+	b.WriteString("\n")
+
+	b.WriteString(dim.Render(strings.Repeat("─", sepW)))
+	b.WriteString("\n")
+
+	submitLabel := "Next"
+	if m.AllAnswered() {
+		submitLabel = "Submit"
+	}
+	var submitBtn, cancelBtn string
+	if !isTextActive && cursor == submitRow {
+		submitBtn = accent.Render("❯") + " " + dim.Render("[") + " " + submitLabel + " " + dim.Render("]")
+	} else {
+		submitBtn = "  " + dim.Render("[") + " " + submitLabel + " " + dim.Render("]")
+	}
+	if !isTextActive && cursor == cancelRow {
+		cancelBtn = accent.Render("❯") + " " + dim.Render("[") + " " + cancelStyle.Render("Cancel") + " " + dim.Render("]")
+	} else {
+		cancelBtn = "  " + dim.Render("[") + " " + cancelStyle.Render("Cancel") + " " + dim.Render("]")
+	}
+	b.WriteString(submitBtn + "  " + cancelBtn)
+	b.WriteString("\n")
 
 	return b.String()
-}
-
-// questionLabel returns the display label for question idx (Header or truncated Question).
-func (m *QuestionForm) questionLabel(idx int) string {
-	q := m.items[idx]
-	if q.Header != "" {
-		return q.Header
-	}
-	runes := []rune(q.Question)
-	if len(runes) > 20 {
-		return string(runes[:19]) + "…"
-	}
-	return q.Question
-}
-
-// renderValue renders the value cell for a question (the right-hand column).
-func (m *QuestionForm) renderValue(idx int, isFocused bool) string {
-	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
-	accent := lipgloss.NewStyle().Foreground(m.th.Colors.Accent)
-	textStyle := m.th.Styles.InputText
-
-	q := m.items[idx]
-	val := m.answers[idx]
-
-	if len(q.Options) > 0 {
-		// Cycle-style: ← Option →
-		if val == "" {
-			if isFocused {
-				return accent.Render("← ") + dim.Render("choose…") + accent.Render(" →")
-			}
-			return dim.Render("-")
-		}
-		if isFocused {
-			return accent.Render("← ") + textStyle.Render(val) + accent.Render(" →")
-		}
-		return textStyle.Render(val)
-	}
-
-	// Text-style: show value or placeholder
-	if val == "" {
-		if isFocused {
-			return dim.Render("type below… ") + accent.Render("▌")
-		}
-		return dim.Render("-")
-	}
-	display := val
-	// truncate long values inline
-	if runewidth.StringWidth(display) > 40 {
-		display = runewidth.Truncate(display, 39, "…")
-	}
-	if isFocused {
-		return textStyle.Render(display)
-	}
-	return dim.Render(display)
 }

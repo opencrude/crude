@@ -155,6 +155,7 @@ func (l *LauncherState) deleteSelected() string {
 			l.selected = 0
 		}
 	}
+	l.scrollOffset = 0
 	return sessionID
 }
 

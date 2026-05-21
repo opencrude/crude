@@ -203,6 +203,18 @@ func (w *Window) TabByTitle(title string) *Tab {
 	return nil
 }
 
+func (w *Window) SetTabTitleByIndex(idx int, title string) {
+	if idx >= 0 && idx < len(w.tabs) {
+		w.tabs[idx].Title = title
+	}
+}
+
+func (w *Window) SetTabIconByIndex(idx int, icon string) {
+	if idx >= 0 && idx < len(w.tabs) {
+		w.tabs[idx].Icon = icon
+	}
+}
+
 func (w *Window) IsOpen() bool {
 	return len(w.tabs) > 0
 }
@@ -267,8 +279,63 @@ const (
 	tabBarPadLeft  = 1
 	tabBarPadRight = 1
 
-	vTabBarWidth = 15
+	// vTabBarMinWidth is the floor for the computed vertical tab sidebar width.
+	vTabBarMinWidth = 12
+	// vTabBarMaxAbsolute caps the sidebar so it never dominates the screen.
+	vTabBarMaxAbsolute = 35
+	// vTabBarPctOfWidth is the max percentage of terminal width the sidebar may use.
+	vTabBarPctOfWidth = 25
+	// vMinContentWidth is the minimum columns reserved for the content area.
+	vMinContentWidth = 30
 )
+
+// VTabBarWidth returns the computed width for the vertical tab sidebar.
+// It adapts to terminal width and actual tab title lengths so that tabs
+// show as much information as possible while maintaining sane proportions.
+// Returns 0 when no sidebar is needed (horizontal layout or ≤1 tab).
+func (w *Window) VTabBarWidth() int {
+	if w.layout != TabVertical || len(w.tabs) <= 1 {
+		return 0
+	}
+
+	// Find the widest tab item (title + optional icon).
+	maxItemW := 0
+	for _, t := range w.tabs {
+		itemW := runewidth.StringWidth(t.Title)
+		if t.Icon != "" {
+			itemW += runewidth.StringWidth(t.Icon) + 1 // icon + trailing space
+		}
+		if itemW > maxItemW {
+			maxItemW = itemW
+		}
+	}
+
+	// Per-line overhead: │(1) + marker/indent(2) + close btn(1) + gap(1) = 5
+	const overhead = 5
+	idealW := overhead + maxItemW
+
+	// Upper bound: percentage of terminal width, with absolute cap.
+	maxW := w.width * vTabBarPctOfWidth / 100
+	if maxW > vTabBarMaxAbsolute {
+		maxW = vTabBarMaxAbsolute
+	}
+	// Ensure enough room for content.
+	if maxFromContent := w.width - vMinContentWidth; maxFromContent > vTabBarMinWidth && maxFromContent < maxW {
+		maxW = maxFromContent
+	}
+	if maxW < vTabBarMinWidth {
+		maxW = vTabBarMinWidth
+	}
+
+	// Clamp ideal to [min, max].
+	if idealW < vTabBarMinWidth {
+		idealW = vTabBarMinWidth
+	}
+	if idealW > maxW {
+		idealW = maxW
+	}
+	return idealW
+}
 
 type TabHitResult struct {
 	TabIndex int
@@ -316,13 +383,14 @@ func (w *Window) hitTestVertical(x, y int) TabHitResult {
 		return TabHitResult{TabIndex: -1}
 	}
 
-	contentWidth := w.width - vTabBarWidth
+	tabBarW := w.VTabBarWidth()
+	contentWidth := w.width - tabBarW
 	if x < contentWidth {
 		return TabHitResult{TabIndex: -1}
 	}
 
 	tabX := x - contentWidth
-	if tabX < 0 || tabX >= vTabBarWidth {
+	if tabX < 0 || tabX >= tabBarW {
 		return TabHitResult{TabIndex: -1}
 	}
 
@@ -335,7 +403,7 @@ func (w *Window) hitTestVertical(x, y int) TabHitResult {
 		if tabX == 0 {
 			return TabHitResult{TabIndex: tabIndex, IsClose: false}
 		}
-		closeStart := vTabBarWidth - vCloseBtnWidth
+		closeStart := tabBarW - vCloseBtnWidth
 		if tabX >= closeStart && w.tabs[tabIndex].Closable {
 			return TabHitResult{TabIndex: tabIndex, IsClose: true}
 		}
@@ -511,7 +579,8 @@ func (w *Window) RenderVerticalSidebar(contentLines []string) []string {
 		return nil
 	}
 
-	contentW := w.width - vTabBarWidth
+	tabBarW := w.VTabBarWidth()
+	contentW := w.width - tabBarW
 	if contentW < 10 {
 		contentW = 10
 	}
@@ -549,7 +618,7 @@ func (w *Window) RenderVerticalSidebar(contentLines []string) []string {
 
 		var tabLine string
 		if tabLineIdx < tabCount {
-			tabLine = w.renderVerticalTabItem(w.tabs[tabLineIdx], tabLineIdx == w.active, vTabBarWidth)
+			tabLine = w.renderVerticalTabItem(w.tabs[tabLineIdx], tabLineIdx == w.active, tabBarW)
 			tabLineIdx++
 			if tabLineIdx < tabCount && i+1 < totalLines {
 				result[i] = paddedContent + tabLine
@@ -565,12 +634,12 @@ func (w *Window) RenderVerticalSidebar(contentLines []string) []string {
 					nextPad = 0
 				}
 
-				tabSep := w.renderVerticalTabSeparator(vTabBarWidth)
+				tabSep := w.renderVerticalTabSeparator(tabBarW)
 				result[i] = nextContent + strings.Repeat(" ", nextPad) + tabSep
 				continue
 			}
 		} else {
-			tabLine = sep + strings.Repeat(" ", vTabBarWidth-1)
+			tabLine = sep + strings.Repeat(" ", tabBarW-1)
 		}
 
 		result[i] = paddedContent + tabLine
@@ -590,12 +659,19 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 	if isActive {
 		markerStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Accent).Bold(true)
 		b.WriteString(markerStyle.Render("❯ "))
-		usedW := 4
+		usedW := 3 // │(1) + ❯(1) + space(1)
 		closeW := 0
 		if t.Closable {
 			closeW = vCloseBtnWidth
 		}
-		availForTitle := width - usedW - closeW
+		iconW := 0
+		iconStr := ""
+		if t.Icon != "" {
+			iconStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Success)
+			iconStr = iconStyle.Render(t.Icon) + " "
+			iconW = runewidth.StringWidth(t.Icon) + 1
+		}
+		availForTitle := width - usedW - closeW - iconW
 		if availForTitle < 1 {
 			availForTitle = 1
 		}
@@ -605,7 +681,7 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 			titleText = runewidth.Truncate(titleText, availForTitle-1, "…")
 		}
 		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Fg).Bold(true)
-		b.WriteString(titleStyle.Render(titleText))
+		b.WriteString(iconStr + titleStyle.Render(titleText))
 		rendered := b.String()
 		renderedW := lipgloss.Width(rendered)
 		flexSpace := width - renderedW - closeW
@@ -624,7 +700,14 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if t.Closable {
 			closeW = vCloseBtnWidth
 		}
-		availForTitle := width - usedW - closeW
+		iconW := 0
+		iconStr := ""
+		if t.Icon != "" {
+			iconStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
+			iconStr = iconStyle.Render(t.Icon) + " "
+			iconW = runewidth.StringWidth(t.Icon) + 1
+		}
+		availForTitle := width - usedW - closeW - iconW
 		if availForTitle < 1 {
 			availForTitle = 1
 		}
@@ -634,7 +717,7 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 			titleText = runewidth.Truncate(titleText, availForTitle-1, "…")
 		}
 		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-		b.WriteString(titleStyle.Render(titleText))
+		b.WriteString(iconStr + titleStyle.Render(titleText))
 		rendered := b.String()
 		renderedW := lipgloss.Width(rendered)
 		flexSpace := width - renderedW - closeW
@@ -715,7 +798,7 @@ func (w *Window) VerticalContentWidth() int {
 	if w.layout != TabVertical || len(w.tabs) <= 1 {
 		return w.width
 	}
-	contentW := w.width - vTabBarWidth
+	contentW := w.width - w.VTabBarWidth()
 	if contentW < 10 {
 		contentW = 10
 	}
