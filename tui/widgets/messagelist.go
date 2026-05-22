@@ -1008,7 +1008,7 @@ func (ml *MessageList) buildPaneLineMap(visible []string) {
 			continue
 		}
 
-		if localLine >= 2 {
+		if localLine >= 1 {
 			ml.paneLineMap[i] = PaneLineInfo{
 				PaneID:  msg.SubPaneID,
 				LineIdx: localLine - 2,
@@ -1077,8 +1077,15 @@ func (ml *MessageList) renderItem(idx int, item *virtlist.Item, width int) []str
 		if maxH < 5 {
 			maxH = 5
 		}
-		lines := ml.subPaneContentFn(msg.SubPaneID, ml.width, maxH, ml.spinFrame)
-		return lines
+		paneWidth := ml.width - 2*scrollbar.ScrollbarWidth - 2
+		if paneWidth < 10 {
+			paneWidth = 10
+		}
+		paneLines := ml.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, ml.spinFrame)
+		result := make([]string, 0, len(paneLines)+1)
+		result = append(result, "")
+		result = append(result, paneLines...)
+		return result
 	}
 
 	isStreamingCursor := ml.isStreamingCursor(msg)

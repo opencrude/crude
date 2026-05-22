@@ -85,25 +85,17 @@ type PaneRenderResult struct {
 }
 
 func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
-	bgSeq := sp.bgSeq()
-	sbW := sp.MsgList.ScrollbarWidth()
-	sbGapW := 0
-	if sbW > 0 {
-		sbGapW = 1
-	}
-	innerW := width - sp.theme.Spacing.PadLR*2 - sbW - sbGapW
-	if innerW < 10 {
-		innerW = 10
-	}
-	emptyBgLine := ""
-	if bgSeq != "" {
-		emptyBgLine = bgSeq + strings.Repeat(" ", innerW) + "\x1b[0m" + bgSeq + strings.Repeat(" ", sbW+sbGapW)
+	if width < 10 {
+		width = 10
 	}
 
 	if sp.Done {
-		summary := sp.renderSummaryLine(innerW, sbW+sbGapW)
+		summary := sp.renderSummaryLine(width, spinFrame)
 		return PaneRenderResult{
-			Lines: []string{emptyBgLine, summary},
+			Lines:         []string{summary},
+			PaneID:        sp.ID,
+			ContentStart:  0,
+			ContentHeight: 0,
 		}
 	}
 
@@ -113,29 +105,7 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 	sp.MsgList.SetActiveTyping(!sp.Done)
 	sp.MsgList.SetPhase("")
 
-	contentLines := sp.MsgList.Render(innerW)
-
-	resetSeq := "\x1b[0m"
-	bgApply := func(s string) string {
-		if bgSeq == "" {
-			return s
-		}
-		s = strings.ReplaceAll(s, resetSeq, resetSeq+bgSeq)
-		return bgSeq + s + resetSeq + bgSeq
-	}
-	sbPad := strings.Repeat(" ", sbW+sbGapW)
-	if bgSeq != "" {
-		sbPad = bgSeq + sbPad
-	}
-	for i, line := range contentLines {
-		visW := lipgloss.Width(line)
-		padR := innerW - visW
-		if padR < 0 {
-			padR = 0
-		}
-		padded := line + strings.Repeat(" ", padR)
-		contentLines[i] = bgApply(padded) + sbPad
-	}
+	contentLines := sp.MsgList.Render(width)
 
 	actualH := sp.MsgList.ContentHeight()
 	visibleH := actualH
@@ -151,23 +121,20 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 		contentLines = contentLines[topPad:]
 	}
 
-	headerLine := sp.renderHeaderLine(innerW, sbW+sbGapW, spinFrame)
+	headerLine := sp.renderHeaderLine(width, spinFrame)
 
-	lines := make([]string, 0, 1+visibleH+1)
-	lines = append(lines, emptyBgLine)
+	lines := make([]string, 0, 1+visibleH)
 	lines = append(lines, headerLine)
 	for i := 0; i < visibleH; i++ {
 		if i < len(contentLines) {
 			lines = append(lines, contentLines[i])
-		} else {
-			lines = append(lines, emptyBgLine)
 		}
 	}
 
 	return PaneRenderResult{
 		Lines:         lines,
 		PaneID:        sp.ID,
-		ContentStart:  2,
+		ContentStart:  1,
 		ContentHeight: visibleH,
 	}
 }
@@ -187,8 +154,7 @@ func (sp *SubPane) ScrollbarWidth() int {
 	return sp.MsgList.ScrollbarWidth()
 }
 
-func (sp *SubPane) renderHeaderLine(innerW, sbW, spinFrame int) string {
-	bgSeq := sp.bgSeq()
+func (sp *SubPane) renderHeaderLine(width, spinFrame int) string {
 	borderPrefix := lipgloss.NewStyle().Foreground(sp.theme.Colors.Border).Render("│ ")
 	var styledTitle string
 	if !sp.Done {
@@ -212,48 +178,26 @@ func (sp *SubPane) renderHeaderLine(innerW, sbW, spinFrame int) string {
 
 	full := borderPrefix + styledTitle + " " + styledMeta
 	visW := lipgloss.Width(full)
-	padR := innerW - visW
+	padR := width - visW
 	if padR < 0 {
 		padR = 0
 	}
-	pad := strings.Repeat(" ", padR)
-	full = full + pad
-
-	if bgSeq != "" {
-		full = strings.ReplaceAll(full, "\x1b[0m", "\x1b[0m"+bgSeq)
-		full = bgSeq + full + "\x1b[0m" + bgSeq + strings.Repeat(" ", sbW)
-	}
+	full = full + strings.Repeat(" ", padR)
 	return full
 }
 
-func (sp *SubPane) renderSummaryLine(innerW, sbW int) string {
-	bgSeq := sp.bgSeq()
+func (sp *SubPane) renderSummaryLine(width, spinFrame int) string {
 	borderPrefix := lipgloss.NewStyle().Foreground(sp.theme.Colors.Border).Render("│ ")
 	summary := sp.SummaryText()
 	styled := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted).Render("● " + summary)
 	full := borderPrefix + styled
 	visW := lipgloss.Width(full)
-	padR := innerW - visW
+	padR := width - visW
 	if padR < 0 {
 		padR = 0
 	}
-	pad := strings.Repeat(" ", padR)
-	full = full + pad
-
-	if bgSeq != "" {
-		full = strings.ReplaceAll(full, "\x1b[0m", "\x1b[0m"+bgSeq)
-		full = bgSeq + full + "\x1b[0m" + bgSeq + strings.Repeat(" ", sbW)
-	}
+	full = full + strings.Repeat(" ", padR)
 	return full
-}
-
-func (sp *SubPane) bgSeq() string {
-	s := lipgloss.NewStyle().Background(sp.theme.Colors.SubPaneBg).Render(" ")
-	idx := strings.Index(s, " ")
-	if idx <= 0 {
-		return ""
-	}
-	return s[:idx]
 }
 
 type PaneManager struct {
