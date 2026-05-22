@@ -157,10 +157,10 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 				return
 			}
 			if n == 1 {
-				m.win.OpenTabWithLayout("Question", "", true, window.TabHorizontal)
+				m.win.OpenTabWithLayout("Question", "", true, window.TabVertical)
 			} else {
 				for i := range m.questionForm.Items() {
-					m.win.OpenTabWithLayout(m.questionForm.TabTitle(i), "", true, window.TabHorizontal)
+					m.win.OpenTabWithLayout(m.questionForm.TabTitle(i), "", true, window.TabVertical)
 				}
 			}
 			m.setMode(ModeQuestion)
