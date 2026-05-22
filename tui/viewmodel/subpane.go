@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"crude/tui/components"
 	"crude/tui/rendering"
@@ -177,7 +178,7 @@ func (sp *SubPane) renderHeaderLine(width, spinFrame int) string {
 	styledMeta := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted).Render(meta)
 
 	full := borderPrefix + styledTitle + " " + styledMeta
-	visW := lipgloss.Width(full)
+	visW := runewidth.StringWidth(rendering.StripAnsi(full))
 	padR := width - visW
 	if padR < 0 {
 		padR = 0
@@ -191,7 +192,7 @@ func (sp *SubPane) renderSummaryLine(width, spinFrame int) string {
 	summary := sp.SummaryText()
 	styled := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted).Render("● " + summary)
 	full := borderPrefix + styled
-	visW := lipgloss.Width(full)
+	visW := runewidth.StringWidth(rendering.StripAnsi(full))
 	padR := width - visW
 	if padR < 0 {
 		padR = 0
