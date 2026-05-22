@@ -1077,7 +1077,7 @@ func (ml *MessageList) renderItem(idx int, item *virtlist.Item, width int) []str
 		if maxH < 5 {
 			maxH = 5
 		}
-		paneWidth := ml.width - 2*scrollbar.ScrollbarWidth - 2
+		paneWidth := width - 2*scrollbar.ScrollbarWidth - 2
 		if paneWidth < 10 {
 			paneWidth = 10
 		}
