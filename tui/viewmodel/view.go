@@ -192,6 +192,15 @@ func (m *App) View() string {
 		}
 	}
 
+	subPaneBgSeq := ""
+	{
+		s := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Render(" ")
+		idx := strings.Index(s, " ")
+		if idx > 0 {
+			subPaneBgSeq = s[:idx]
+		}
+	}
+
 	for i, line := range chatVisible {
 		maxContentW := innerW - totalSBW
 		if totalSBW > 0 {
@@ -200,85 +209,99 @@ func (m *App) View() string {
 		if maxContentW < 10 {
 			maxContentW = 10
 		}
-		trimmed := rendering.TrimRightAnsiSpaces(line)
-		visW := lipgloss.Width(trimmed)
-		if visW > maxContentW {
-			trimmed = rendering.TruncateLine(trimmed, maxContentW)
+
+		isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
+		hasBg := false
+		if isPaneLine {
+			sp := m.paneMgr.Get(paneLineMap[i].PaneID)
+			hasBg = sp != nil && sp.Type == PaneAgent
+		}
+
+		var trimmed string
+		var visW int
+		if hasBg {
+			trimmed = line
 			visW = lipgloss.Width(trimmed)
+			if visW > maxContentW {
+				trimmed = rendering.TruncateLine(trimmed, maxContentW)
+				visW = lipgloss.Width(trimmed)
+			}
+		} else {
+			trimmed = rendering.TrimRightAnsiSpaces(line)
+			visW = lipgloss.Width(trimmed)
+			if visW > maxContentW {
+				trimmed = rendering.TruncateLine(trimmed, maxContentW)
+				visW = lipgloss.Width(trimmed)
+			}
 		}
 		line = trimmed
 
 		if totalSBW > 0 {
-			var sbColumn string
-
-			isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
+			var paneSBLine, mainSBLine string
 
 			if nestingLevel > 0 && isPaneLine {
 				info := paneLineMap[i]
-				paneSBLine := ""
 				if paneSBLines, ok := paneSBViews[info.PaneID]; ok {
-					if info.LineIdx < len(paneSBLines) && paneSBLines[info.LineIdx] != "" {
+					if info.LineIdx >= 0 && info.LineIdx < len(paneSBLines) && paneSBLines[info.LineIdx] != "" {
 						paneSBLine = paneSBLines[info.LineIdx]
 					}
 				}
 				if paneSBLine == "" {
 					paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
 				}
-
-				mainSBLine := ""
 				if mainSBVisible && i < len(mainSBLines) {
 					mainSBLine = mainSBLines[i]
 				}
 				if mainSBLine == "" {
 					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
 				}
-
-				sbColumn = paneSBLine + " " + mainSBLine
 			} else if nestingLevel > 0 {
-				paneGap := strings.Repeat(" ", scrollbar.ScrollbarWidth)
-
-				mainSBLine := ""
+				paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
 				if mainSBVisible && i < len(mainSBLines) {
 					mainSBLine = mainSBLines[i]
 				}
 				if mainSBLine == "" {
 					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
 				}
-
-				sbColumn = paneGap + " " + mainSBLine
 			} else {
 				if mainSBVisible && i < len(mainSBLines) && mainSBLines[i] != "" {
-					sbColumn = mainSBLines[i]
+					mainSBLine = mainSBLines[i]
 				} else {
-					sbColumn = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
 				}
 			}
 
-			if totalSBW > 0 {
-				padRight := innerW - totalSBW - 1 - visW
-				if padRight < 0 {
-					padRight = 0
-				}
-				if sbColumn == "" {
-					sbColumn = strings.Repeat(" ", totalSBW)
-				}
-				line = pad + line + strings.Repeat(" ", padRight) + " " + sbColumn
-			} else {
-				rightPad := innerW - visW
-				if rightPad < 0 {
-					rightPad = 0
-				}
-				line = pad + line + strings.Repeat(" ", rightPad)
+			padRight := innerW - totalSBW - 1 - visW
+			if padRight < 0 {
+				padRight = 0
 			}
+
+			var bgPart, noBgPart string
+			if nestingLevel > 0 {
+				// bg covers content + padding + gap + pane scrollbar
+				// no-bg: gap + main scrollbar
+				bgPart = line + strings.Repeat(" ", padRight) + " " + paneSBLine
+				noBgPart = " " + mainSBLine
+			} else {
+				bgPart = line + strings.Repeat(" ", padRight)
+				noBgPart = " " + mainSBLine
+			}
+
+			if hasBg && subPaneBgSeq != "" {
+				bgPart = subPaneBgSeq + strings.ReplaceAll(bgPart, "\x1b[0m", "\x1b[0m"+subPaneBgSeq) + "\x1b[0m"
+			}
+			line = pad + bgPart + noBgPart + pad
 		} else {
 			rightPad := innerW - visW
 			if rightPad < 0 {
 				rightPad = 0
 			}
-			line = pad + line + strings.Repeat(" ", rightPad)
+			inner := line + strings.Repeat(" ", rightPad)
+			if hasBg && subPaneBgSeq != "" {
+				inner = subPaneBgSeq + strings.ReplaceAll(inner, "\x1b[0m", "\x1b[0m"+subPaneBgSeq) + "\x1b[0m"
+			}
+			line = pad + inner + pad
 		}
-
-		line += pad
 
 		lines = append(lines, line)
 	}
