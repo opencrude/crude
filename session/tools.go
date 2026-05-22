@@ -52,20 +52,6 @@ func (s *Session) newAgent() *agent.Agent {
 	}
 
 	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
-		if !multiAgent && !isFreeTool(tool) && s.toolCallBudget > 0 && !isSubAgentRequest(params) {
-			s.toolCallCountMu.Lock()
-			s.toolCallCount++
-			count := s.toolCallCount
-			budget := s.toolCallBudget
-			s.toolCallCountMu.Unlock()
-			if count > budget {
-				return tools.ToolResult{Content: fmt.Sprintf(
-					"[BUDGET EXCEEDED] You've used %d/%d tool calls this turn. Your budget is exhausted. Delegate remaining work to a sub-agent via run_sub_agent.",
-					count, budget,
-				)}, nil
-			}
-		}
-
 		switch tool {
 		case "plan":
 			objective := getStrParam(params, "objective")
@@ -424,9 +410,6 @@ func (s *Session) newAgent() *agent.Agent {
 			if multiAgent {
 				params["wait"] = false
 			}
-			s.toolCallCountMu.Lock()
-			s.toolCallCount = 0
-			s.toolCallCountMu.Unlock()
 			return s.subAgentOrch.RunSubAgent(ctx, params)
 
 		case "poll_sub_agent":
