@@ -20,6 +20,7 @@ type CategoryConfig struct {
 	ThinkingEffort string   `json:"thinking_effort,omitempty"`
 	Policy         string   `json:"policy,omitempty"`
 	MaxSteps       int      `json:"max_steps,omitempty"`
+	ToolCallBudget int      `json:"tool_call_budget,omitempty"`
 	Description    string   `json:"description,omitempty"`
 	AllowedTools   []string `json:"allowed_tools,omitempty"`
 	DeniedTools    []string `json:"denied_tools,omitempty"`
@@ -165,6 +166,14 @@ func (c *Config) EffectiveProviderID() string {
 	return "openrouter"
 }
 
+func (c *Config) IsMultiAgentEnabled() bool {
+	prof, _ := activeProfileCfg(c)
+	if prof.MultiAgent != nil {
+		return *prof.MultiAgent
+	}
+	return c.Agents.Enabled
+}
+
 func (c *Config) GetActiveMainCategory() CategoryConfig {
 	prof, _ := activeProfileCfg(c)
 	if mainCat, ok := prof.Categories[CategoryMain]; ok {
@@ -234,6 +243,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		ThinkingEffort:     v.ThinkingEffort,
 		Policy:             v.Policy,
 		MaxSteps:           v.MaxSteps,
+		ToolCallBudget:     v.ToolCallBudget,
 		Description:        v.Description,
 		ModelContextWindow: v.ModelContextWindow,
 		ModelInputPrice:    v.ModelInputPrice,
@@ -251,6 +261,7 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		ThinkingEffort:     v.ThinkingEffort,
 		Policy:             v.Policy,
 		MaxSteps:           v.MaxSteps,
+		ToolCallBudget:     v.ToolCallBudget,
 		Description:        v.Description,
 		ModelContextWindow: v.ModelContextWindow,
 		ModelInputPrice:    v.ModelInputPrice,

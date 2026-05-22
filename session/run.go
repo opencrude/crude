@@ -131,8 +131,13 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 			ag.SubAgentMgr = s.subAgentOrch.Manager()
 		}
 		ag.SetToolCallSeqStart(s.toolCallSeq)
-		var finalContent string
-		prompt := agent.BuildSystemPrompt()
+	var finalContent string
+	var prompt string
+	if s.cfg.IsMultiAgentEnabled() {
+		prompt = agent.BuildOrchestratorPrompt()
+	} else {
+		prompt = agent.BuildSystemPrompt()
+	}
 
 		displayTracker := &displayMetaTracker{
 			metas: make(map[string]*sessiondb.DisplayMeta),

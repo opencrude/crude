@@ -121,6 +121,17 @@ func ReadOnlyPolicy() Policy {
 	}
 }
 
+func OrchestratorPolicy() Policy {
+	return Policy{
+		AllowedCapabilities: map[Capability]bool{
+			CanRead:    true,
+			CanExecute: true,
+		},
+		RequireConfirmation: map[Capability]bool{},
+		AllowRollback:       false,
+	}
+}
+
 func (p Policy) IsAllowed(op CRUDEOp) bool {
 	if len(p.AllowedCapabilities) == 0 {
 		safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "empty_policy_allow_all", "op", op) })

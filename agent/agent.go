@@ -94,7 +94,7 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 }
 
 func IsToolError(content string) bool {
-	prefixes := []string{"Error:", "Command failed:", "Search error:", "ArXiv search error:", "Fetch error:", "JavaScript error:", "[SAFETY BLOCK]"}
+	prefixes := []string{"Error:", "Command failed:", "Search error:", "ArXiv search error:", "Fetch error:", "JavaScript error:", "[SAFETY BLOCK]", "[ORCHESTRATOR MODE]"}
 	for _, p := range prefixes {
 		if strings.HasPrefix(strings.TrimSpace(content), p) {
 			return true
