@@ -604,6 +604,12 @@ func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
+	// LineIdx < 0 means this is the subpane header line (not content),
+	// which has no scrollbar position — skip mouse routing for it.
+	if info.LineIdx < 0 {
+		return false, nil
+	}
+
 	sp := m.paneMgr.Get(info.PaneID)
 	if sp == nil || sp.Done || sp.MsgList == nil {
 		return false, nil

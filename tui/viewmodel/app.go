@@ -221,7 +221,6 @@ func (m *App) completeSubAgent(agentID string) {
 	// Mark SubPane as Done so anyActive() returns false and
 	// the tick loop goes back to slow mode.
 	if sp := m.paneMgr.Get(agentID); sp != nil && !sp.Done {
-		sp.Done = true
 		sp.Collapse()
 		m.mainMsgList.InvalidateSubPane(agentID)
 	}
