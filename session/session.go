@@ -67,6 +67,10 @@ type Session struct {
 	autoHandleCounter int
 	autoHandleMu      sync.Mutex
 
+	toolCallCount    int
+	toolCallBudget   int
+	toolCallCountMu  sync.Mutex
+
 	db        *sql.DB
 	dbPath    string
 	turnNumber  int
@@ -176,22 +180,23 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	}
 
 	sess := &Session{
-		cfg:          cfg,
-		provider:     p,
-		exec:         exec,
-		editor:       editor,
-		logger:       lg,
-		permStore:    permStore,
-		sm:           sm,
-		asyncMgr:     fileio.NewAsyncCommandManagerWithLogger(lg),
-		subAgentOrch: nil,
-		sessionID:    sessionID,
-		sessionStart: time.Now(),
-		cost:         NewCostAccumulator(lg),
-		tokens:       NewTokenTracker(lg),
-		db:           db,
-		dbPath:       dbPath,
-		writeBuf:     make([]taggedMessage, 0, 64),
+		cfg:            cfg,
+		provider:       p,
+		exec:           exec,
+		editor:         editor,
+		logger:         lg,
+		permStore:      permStore,
+		sm:             sm,
+		asyncMgr:       fileio.NewAsyncCommandManagerWithLogger(lg),
+		subAgentOrch:   nil,
+		sessionID:      sessionID,
+		sessionStart:   time.Now(),
+		cost:           NewCostAccumulator(lg),
+		tokens:         NewTokenTracker(lg),
+		db:             db,
+		dbPath:         dbPath,
+		writeBuf:       make([]taggedMessage, 0, 64),
+		toolCallBudget: 3,
 	}
 	if cfg.Agents.Enabled {
 		sess.subAgentOrch = NewSubAgentOrchestrator(sess, cfg.Agents.MaxConcurrent, cfg.Agents.MaxDepth)

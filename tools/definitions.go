@@ -578,7 +578,7 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "run_sub_agent",
-			Description: "Spawn a specialized sub-agent to handle a well-defined subtask. The sub-agent gets its own context window, tool set, permission policy, session, and TUI tab. It runs to completion and returns a structured result. Use for: parallel codebase exploration, focused implementation tasks, read-only audits, or any work that benefits from a clean context window. Sub-agents can spawn their own sub-agents up to max_depth.",
+			Description: "Spawn a specialized sub-agent to handle a well-defined subtask. The sub-agent gets its own context window, tool set, permission policy, session, and TUI tab. It runs to completion and returns a structured result. USE when a task is: self-contained (fully describable in 1-2 sentences), non-trivial (3+ tool calls), and benefits from a separate context window or cheaper model. Do NOT use for tasks requiring context from the current conversation or trivial 1-2 call operations. Sub-agents can spawn their own sub-agents up to max_depth.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{

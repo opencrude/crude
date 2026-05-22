@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"strings"
 
 	"crude/provider"
 	"crude/sessiondb"
@@ -167,54 +168,76 @@ func (s *Session) flushWriteBufSync() {
 }
 
 func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
+	msgs = backfillMissingToolResults(msgs)
 	for {
 		if len(msgs) == 0 {
 			break
 		}
 		last := msgs[len(msgs)-1]
 		if last.Role == "tool" {
-			if len(msgs) >= 2 && msgs[len(msgs)-2].Role == "assistant" {
-				prev := msgs[len(msgs)-2]
-				if len(prev.ToolCalls) > 0 && allCommTools(prev.ToolCalls) {
-					content := prev.Content
-					toolCount := 0
-					for i := len(msgs) - 1; i >= 0 && msgs[i].Role == "tool"; i-- {
-						toolCount++
-						if content == "" && msgs[i].Content != "" {
-							content = msgs[i].Content
+			hasParent := false
+			for i := len(msgs) - 2; i >= 0; i-- {
+				if msgs[i].Role == "assistant" && len(msgs[i].ToolCalls) > 0 {
+					for _, tc := range msgs[i].ToolCalls {
+						if tc.ID == last.ToolCallID {
+							hasParent = true
+							break
 						}
-					}
-					for len(msgs) > 0 && msgs[len(msgs)-1].Role == "tool" {
-						msgs = msgs[:len(msgs)-1]
-					}
-					msgs[len(msgs)-1].ToolCalls = nil
-					if content != "" {
-						msgs[len(msgs)-1].Content = content
 					}
 					break
 				}
 			}
-			msgs = msgs[:len(msgs)-1]
-			continue
-		}
-		if last.Role == "assistant" && len(last.ToolCalls) > 0 {
-			expectedIDs := make(map[string]bool)
-			for _, tc := range last.ToolCalls {
-				expectedIDs[tc.ID] = true
-			}
-			i := len(msgs) - 1
-			for i+1 < len(msgs) && msgs[i+1].Role == "tool" {
-				delete(expectedIDs, msgs[i+1].ToolCallID)
-				i++
-			}
-			if len(expectedIDs) > 0 {
+			if !hasParent {
 				msgs = msgs[:len(msgs)-1]
 				continue
 			}
 		}
+		if last.Role == "assistant" && len(last.ToolCalls) > 0 && allCommTools(last.ToolCalls) {
+			content := last.Content
+			for i := len(msgs) - 1; i > len(msgs)-1-len(last.ToolCalls); i-- {
+				if i >= 0 && msgs[i].Role == "tool" && msgs[i].Content != "" && !strings.HasPrefix(msgs[i].Content, "[cancelled]") {
+					if content == "" {
+						content = msgs[i].Content
+					}
+				}
+			}
+			msgs = msgs[:len(msgs)-len(last.ToolCalls)]
+			msgs[len(msgs)-1].ToolCalls = nil
+			if content != "" {
+				msgs[len(msgs)-1].Content = content
+			}
+			break
+		}
 		break
 	}
 	return msgs
+}
+
+func backfillMissingToolResults(msgs []provider.ChatMessage) []provider.ChatMessage {
+	var result []provider.ChatMessage
+	for i := 0; i < len(msgs); i++ {
+		result = append(result, msgs[i])
+		if msgs[i].Role == "assistant" && len(msgs[i].ToolCalls) > 0 {
+			presentIDs := make(map[string]bool)
+			j := i + 1
+			for j < len(msgs) && msgs[j].Role == "tool" {
+				presentIDs[msgs[j].ToolCallID] = true
+				result = append(result, msgs[j])
+				j++
+			}
+			for _, tc := range msgs[i].ToolCalls {
+				if !presentIDs[tc.ID] {
+					result = append(result, provider.ChatMessage{
+						Role:       "tool",
+						ToolCallID: tc.ID,
+						Content:    "[cancelled] Operation cancelled by user",
+					})
+				}
+			}
+			i = j - 1
+		}
+	}
+	return result
 }
 
 func allCommTools(toolCalls []provider.ToolCall) bool {

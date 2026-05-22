@@ -93,6 +93,9 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 		}
 
 		s.turnNumber++
+		s.toolCallCountMu.Lock()
+		s.toolCallCount = 0
+		s.toolCallCountMu.Unlock()
 		s.msgCounterMu.Lock()
 		s.msgCounter++
 		currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
@@ -397,11 +400,25 @@ func (s *Session) finalizeTurn(agentMsgs []provider.ChatMessage, tracker *displa
 	}
 	preSanitize := len(persisted)
 	persisted = sanitizeMessages(persisted)
-	removedCount := preSanitize - len(persisted)
-	if removedCount > 0 {
+	delta := len(persisted) - preSanitize
+	if delta < 0 {
+		removedCount := -delta
 		persistedTurns = persistedTurns[:len(persisted)]
 		persistedMetas = persistedMetas[:len(persisted)]
 		s.logger.Debug("SANITIZE", "messages_removed", "count", removedCount, "remaining", len(persisted))
+	} else if delta > 0 {
+		extra := delta
+		extraTurns := make([]int, extra)
+		for i := range extraTurns {
+			extraTurns[i] = s.turnNumber
+		}
+		persistedTurns = append(persistedTurns, extraTurns...)
+		extraMetas := make([]sessiondb.DisplayMeta, extra)
+		for i := range extraMetas {
+			extraMetas[i] = sessiondb.DisplayMeta{DisplayRole: "tool", ToolStatus: "cancelled"}
+		}
+		persistedMetas = append(persistedMetas, extraMetas...)
+		s.logger.Debug("SANITIZE", "messages_backfilled", "count", delta, "total", len(persisted))
 	}
 	if len(persisted) == 0 {
 		persistedTurns = nil

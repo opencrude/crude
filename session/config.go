@@ -20,7 +20,6 @@ type CategoryConfig struct {
 	ThinkingEffort string   `json:"thinking_effort,omitempty"`
 	Policy         string   `json:"policy,omitempty"`
 	MaxSteps       int      `json:"max_steps,omitempty"`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 	Description    string   `json:"description,omitempty"`
 	AllowedTools   []string `json:"allowed_tools,omitempty"`
 	DeniedTools    []string `json:"denied_tools,omitempty"`
@@ -56,7 +55,6 @@ type AgentProfileConfig struct {
 	DeniedTools    []string `json:"denied_tools,omitempty"`
 	FileOwnership  []string `json:"file_ownership,omitempty"`
 	MaxSteps       int      `json:"max_steps,omitempty"`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
 }
 
 func DefaultAgentsConfig() AgentsConfig {
@@ -72,70 +70,60 @@ func DefaultAgentsConfig() AgentsConfig {
 				TurnLogs:   &t,
 				Categories: map[string]CategoryConfig{
 					CategoryResearcher: {
-						Model:          "google/gemini-2.0-flash-exp:free",
-						Policy:         "read-only",
-						MaxSteps:       30,
-						TimeoutSeconds: 120,
-						Description:    "Gatherer — explores codebase, searches web, runs experiments",
-						AllowedTools:   []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "run_javascript", "write_report", "question"},
-						DeniedTools:    []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
+						Model:        "google/gemini-2.0-flash-exp:free",
+						Policy:       "read-only",
+						MaxSteps:     1000,
+						Description:  "Gatherer — explores codebase, searches web, runs experiments",
+						AllowedTools: []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "run_javascript", "write_report", "question"},
+						DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
 					},
 					CategoryCrafter: {
-						Model:          "qwen/qwen3.5-235b-a22b",
-						Policy:         "no-delete",
-						MaxSteps:       60,
-						TimeoutSeconds: 300,
-						Description:    "Implementer — writes code, edits files, runs tests",
-						DeniedTools:    []string{"delete_file"},
+						Model:        "qwen/qwen3.5-235b-a22b",
+						Policy:       "no-delete",
+						MaxSteps:     1000,
+						Description:  "Implementer — writes code, edits files, runs tests",
+						DeniedTools:  []string{"delete_file"},
 					},
 					CategoryAeron: {
-						Model:          "google/gemini-2.0-flash-exp:free",
-						Policy:         "read-only",
-						MaxSteps:       10,
-						TimeoutSeconds: 60,
-						Description:    "Grunt — formatting, linting, boilerplate, monitoring",
-						DeniedTools:    []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
+						Model:        "google/gemini-2.0-flash-exp:free",
+						Policy:       "read-only",
+						MaxSteps:     1000,
+						Description:  "Grunt — formatting, linting, boilerplate, monitoring",
+						DeniedTools:  []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
 					},
 				},
 			},
 		},
 		AgentProfiles: map[string]AgentProfileConfig{
 			"explorer": {
-				Category:       CategoryResearcher,
-				Description:    "Read-only codebase explorer for research and investigation",
-				MaxSteps:       30,
-				TimeoutSeconds: 120,
+				Category:    CategoryResearcher,
+				Description: "Read-only codebase explorer for research and investigation",
+				MaxSteps:    1000,
 			},
 			"reviewer": {
-				Category:       CategoryResearcher,
-				Description:    "Code reviewer with expensive model for thorough analysis",
-				Model:          "anthropic/claude-sonnet-4",
-				MaxSteps:       40,
-				TimeoutSeconds: 180,
+				Category:    CategoryResearcher,
+				Description: "Code reviewer with expensive model for thorough analysis",
+				MaxSteps:    1000,
 			},
 			"fixer": {
-				Category:       CategoryCrafter,
-				Description:    "Implementation-focused agent for fixing bugs and writing code",
-				MaxSteps:       60,
-				TimeoutSeconds: 300,
+				Category:    CategoryCrafter,
+				Description: "Implementation-focused agent for fixing bugs and writing code",
+				MaxSteps:    1000,
 			},
 			"tester": {
-				Category:       CategoryCrafter,
-				Description:    "Test writer agent focused on writing and running tests",
-				MaxSteps:       50,
-				TimeoutSeconds: 240,
+				Category:    CategoryCrafter,
+				Description: "Test writer agent focused on writing and running tests",
+				MaxSteps:    1000,
 			},
 			"formatter": {
-				Category:       CategoryAeron,
-				Description:    "Quick formatting and linting agent",
-				MaxSteps:       10,
-				TimeoutSeconds: 60,
+				Category:    CategoryAeron,
+				Description: "Quick formatting and linting agent",
+				MaxSteps:    1000,
 			},
 			"monitor": {
-				Category:       CategoryAeron,
-				Description:    "Watches running sub-agents and reports status",
-				MaxSteps:       20,
-				TimeoutSeconds: 90,
+				Category:    CategoryAeron,
+				Description: "Watches running sub-agents and reports status",
+				MaxSteps:    1000,
 			},
 		},
 	}
@@ -246,7 +234,6 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		ThinkingEffort:     v.ThinkingEffort,
 		Policy:             v.Policy,
 		MaxSteps:           v.MaxSteps,
-		TimeoutSeconds:     v.TimeoutSeconds,
 		Description:        v.Description,
 		ModelContextWindow: v.ModelContextWindow,
 		ModelInputPrice:    v.ModelInputPrice,
@@ -264,7 +251,6 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		ThinkingEffort:     v.ThinkingEffort,
 		Policy:             v.Policy,
 		MaxSteps:           v.MaxSteps,
-		TimeoutSeconds:     v.TimeoutSeconds,
 		Description:        v.Description,
 		ModelContextWindow: v.ModelContextWindow,
 		ModelInputPrice:    v.ModelInputPrice,

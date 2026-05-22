@@ -40,6 +40,9 @@ type SubAgentSpec struct {
 	Instructions   string        `json:"instructions"`
 	Model          string        `json:"model"`
 	Provider       string        `json:"provider"`
+	ProviderURL    string        `json:"provider_url,omitempty"`
+	APIKey         string        `json:"api_key,omitempty"`
+	ThinkingEffort string        `json:"thinking_effort,omitempty"`
 	PolicyName     string        `json:"policy"`
 	Policy         safety.Policy `json:"-"`
 	AllowedTools   []string      `json:"allowed_tools"`
@@ -48,7 +51,11 @@ type SubAgentSpec struct {
 	Depth          int           `json:"depth"`
 	FileOwnership  []string      `json:"file_ownership"`
 	ParentID       AgentID       `json:"parent_id"`
-	TimeoutSeconds int           `json:"timeout_seconds"`
+
+	ModelContextWindow int     `json:"model_context_window,omitempty"`
+	ModelInputPrice    float64 `json:"model_input_price,omitempty"`
+	ModelOutputPrice   float64 `json:"model_output_price,omitempty"`
+	ModelCachePrice    float64 `json:"model_cache_price,omitempty"`
 }
 
 type SubAgentResult struct {

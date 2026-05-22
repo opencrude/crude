@@ -16,6 +16,43 @@ import (
 
 const asyncPromotionThreshold = 15 * time.Second
 
+func isFreeTool(name string) bool {
+	switch name {
+	case "plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
+		"report_blocker", "resolve_blocker", "list_goal_status",
+		"run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents",
+		"write_report":
+		return true
+	}
+	return false
+}
+
+func delegateSuggestion(tool string, params map[string]any) string {
+	var suggestions []string
+	switch tool {
+	case "read_file", "grep_files", "glob_files", "list_directory":
+		suggestions = append(suggestions, "\n\n• **researcher** — Read-only explorer that searches codebase, reads files, and returns compact findings. Perfect for further discovery.")
+	default:
+		path := getStrParam(params, "path")
+		if path != "" {
+			suggestions = append(suggestions, fmt.Sprintf("\n\n• **researcher** — Can gather more context about %s before you make changes.", path))
+		}
+	}
+	if tool == "write_file" || tool == "edit_file" || tool == "delete_file" || tool == "move_file" || tool == "copy_file" {
+		suggestions = append(suggestions, "\n\n• **crafter** — Implementation agent that can read and write files, run tests. Good for self-contained code changes.")
+	}
+	if tool == "execute_command" {
+		suggestions = append(suggestions, "\n\n• **crafter** — Can execute commands and verify results.")
+	}
+	if tool == "web_search" || tool == "web_fetch" || tool == "arxiv_search" {
+		suggestions = append(suggestions, "\n\n• **researcher** — Can do web research and return structured findings.")
+	}
+	if len(suggestions) == 0 {
+		return "\n\nUse run_sub_agent to delegate to a researcher (for research), crafter (for implementation), or aeron (for simple tasks)."
+	}
+	return strings.Join(suggestions, "")
+}
+
 func (s *Session) newAgent() *agent.Agent {
 	mainCat := s.cfg.GetActiveMainCategory()
 
@@ -29,6 +66,25 @@ func (s *Session) newAgent() *agent.Agent {
 	a.AsyncMgr = s.asyncMgr
 
 	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		if !isFreeTool(tool) && s.toolCallBudget > 0 {
+			s.toolCallCountMu.Lock()
+			s.toolCallCount++
+			count := s.toolCallCount
+			budget := s.toolCallBudget
+			exceeded := count > budget
+			if exceeded {
+				s.toolCallCount = 0
+			}
+			s.toolCallCountMu.Unlock()
+			if exceeded {
+				suggestion := delegateSuggestion(tool, params)
+				return tools.ToolResult{Content: fmt.Sprintf(
+					"You've made %d tool calls this turn. Consider delegating to save your context window for reasoning and planning.%s Planning and delegation tools (plan, run_sub_agent, poll_sub_agent, etc.) are always available.",
+					budget, suggestion,
+				)}, nil
+			}
+		}
+
 		switch tool {
 		case "plan":
 			objective := getStrParam(params, "objective")
