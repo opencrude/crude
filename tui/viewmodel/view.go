@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
+	"crude/fileio"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/widgets"
@@ -61,6 +62,8 @@ func (m *App) View() string {
 	asyncBarLines := m.statusbar.RenderAsyncBar()
 	asyncLineCount := len(asyncBarLines)
 
+	asyncInWindow := m.win.IsOpen() && m.win.Layout() == window.TabVertical && m.win.TabCount() > 1 && asyncLineCount > 0
+
 	tabBarLine := ""
 	tabBarVisible := false
 	if m.win.IsOpen() && m.win.TabCount() >= 2 {
@@ -76,7 +79,7 @@ func (m *App) View() string {
 	if tabBarVisible {
 		nonChat += 2
 	}
-	if asyncLineCount > 0 {
+	if asyncLineCount > 0 && !asyncInWindow {
 		nonChat += 2 + asyncLineCount
 	}
 
@@ -378,7 +381,85 @@ func (m *App) renderWindowContent() []string {
 
 	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
 
-	return m.getWindowContentLines(activeTab.Title)
+	if m.win.Layout() == window.TabVertical {
+		return m.renderWindowVertical()
+	}
+	return m.renderWindowHorizontal()
+}
+
+func (m *App) renderWindowHorizontal() []string {
+	tabBarLine := m.win.RenderTabBar()
+
+	activeTab := m.win.ActiveTab()
+	if activeTab == nil {
+		return []string{tabBarLine}
+	}
+
+	contentLines := m.getWindowContentLines(activeTab.Title)
+
+	var lines []string
+	lines = append(lines, tabBarLine)
+	lines = append(lines, m.win.RenderSeparator())
+	lines = append(lines, contentLines...)
+	return lines
+}
+
+func (m *App) renderWindowVertical() []string {
+	activeTab := m.win.ActiveTab()
+	if activeTab == nil {
+		return nil
+	}
+
+	rawContentLines := m.getWindowContentLines(activeTab.Title)
+
+	verticalLines := m.win.RenderVerticalSidebar(rawContentLines)
+	if verticalLines != nil {
+		asyncItems := m.getAsyncItemsForVertical()
+		if len(asyncItems) > 0 {
+			verticalLines = append(verticalLines, asyncItems...)
+		}
+		return verticalLines
+	}
+
+	return rawContentLines
+}
+
+func (m *App) getAsyncItemsForVertical() []string {
+	asyncBarLines := m.statusbar.RenderAsyncBar()
+	if len(asyncBarLines) == 0 {
+		return nil
+	}
+
+	visibleCmds := m.statusbar.VisibleAsyncCommands()
+
+	var lines []string
+	for i, c := range visibleCmds {
+		if i >= len(asyncBarLines) {
+			break
+		}
+		row := m.win.RenderVerticalAsyncRow(window.AsyncItem{
+			Handle:   c.Handle,
+			Command:  c.Command,
+			Duration: c.Duration.Truncate(time.Second).String(),
+			Status: func() string {
+				switch c.Status {
+				case fileio.AsyncRunning:
+					return "running"
+				case fileio.AsyncCompleted:
+					return "completed"
+				case fileio.AsyncFailed:
+					return "failed"
+				case fileio.AsyncKilled:
+					return "killed"
+				default:
+					return "unknown"
+				}
+			}(),
+		}, m.spinFrame)
+
+		lines = append(lines, row)
+	}
+	return lines
 }
 
 func (m *App) getWindowContentLines(tabTitle string) []string {
