@@ -155,15 +155,8 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			if n == 0 {
 				return
 			}
-			if n == 1 {
-				m.overlay.OpenTab("Question", "", true)
-			} else {
-				for i := range m.questionForm.Items() {
-					m.overlay.OpenTab(m.questionForm.TabTitle(i), "", true)
-				}
-			}
+			m.overlay.OpenTab("Question", "", true)
 			m.setMode(ModeQuestion)
-			m.switchToQuestionTab(0)
 			m.syncQuestionInputPrompt()
 		},
 		func() {
