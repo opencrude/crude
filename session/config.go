@@ -20,7 +20,6 @@ type CategoryConfig struct {
 	ThinkingEffort string   `json:"thinking_effort,omitempty"`
 	Policy         string   `json:"policy,omitempty"`
 	MaxSteps       int      `json:"max_steps,omitempty"`
-	ToolCallBudget int      `json:"tool_call_budget,omitempty"`
 	Description    string   `json:"description,omitempty"`
 	AllowedTools   []string `json:"allowed_tools,omitempty"`
 	DeniedTools    []string `json:"denied_tools,omitempty"`
@@ -243,7 +242,6 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		ThinkingEffort:     v.ThinkingEffort,
 		Policy:             v.Policy,
 		MaxSteps:           v.MaxSteps,
-		ToolCallBudget:     v.ToolCallBudget,
 		Description:        v.Description,
 		ModelContextWindow: v.ModelContextWindow,
 		ModelInputPrice:    v.ModelInputPrice,
@@ -261,7 +259,6 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		ThinkingEffort:     v.ThinkingEffort,
 		Policy:             v.Policy,
 		MaxSteps:           v.MaxSteps,
-		ToolCallBudget:     v.ToolCallBudget,
 		Description:        v.Description,
 		ModelContextWindow: v.ModelContextWindow,
 		ModelInputPrice:    v.ModelInputPrice,

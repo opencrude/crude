@@ -68,7 +68,6 @@ type Session struct {
 	autoHandleMu      sync.Mutex
 
 	toolCallCount    int
-	toolCallBudget   int
 	toolCallCountMu  sync.Mutex
 
 	db        *sql.DB
@@ -196,7 +195,6 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		db:             db,
 		dbPath:         dbPath,
 		writeBuf:       make([]taggedMessage, 0, 64),
-		toolCallBudget: toolCallBudgetOrDefault(mainCat.ToolCallBudget),
 	}
 	if cfg.Agents.Enabled {
 		sess.subAgentOrch = NewSubAgentOrchestrator(sess, cfg.Agents.MaxConcurrent, cfg.Agents.MaxDepth)
@@ -272,18 +270,6 @@ func (s *Session) CostSnapshot() CostSnapshot {
 		return s.cost.Snapshot()
 	}
 	return CostSnapshot{}
-}
-
-const defaultToolCallBudget = 5
-
-func toolCallBudgetOrDefault(v int) int {
-	if v < 0 {
-		return 0
-	}
-	if v > 0 {
-		return v
-	}
-	return defaultToolCallBudget
 }
 
 func (s *Session) Logger() *logger.Logger { return s.logger }
