@@ -97,7 +97,21 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.win.IsOpen() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			var hit window.TabHitResult
 
-			if m.win.TabCount() >= 2 && msg.Y == 3 {
+			if m.win.Layout() == window.TabVertical {
+				windowStartLine := m.chatAreaHeight + 3
+				windowEndLine := windowStartLine + len(m.renderWindowContent())
+				if msg.Y >= windowStartLine && msg.Y < windowEndLine {
+					adjustedX := msg.X - m.theme.Spacing.PadLR
+					adjustedY := msg.Y - windowStartLine
+					if adjustedX < 0 {
+						adjustedX = 0
+					}
+					if adjustedY < 0 {
+						adjustedY = 0
+					}
+					hit = m.win.HitTest(adjustedX, adjustedY)
+				}
+			} else if m.win.TabCount() >= 2 && msg.Y == 3 {
 				adjustedX := msg.X - m.theme.Spacing.PadLR
 				if adjustedX < 0 {
 					adjustedX = 0
