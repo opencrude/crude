@@ -14,6 +14,8 @@ import (
 	"crude/tui/widgets"
 )
 
+// PaneType distinguishes subpane variants. Only PaneAgent gets background color
+// applied in view.go; PaneThinking (the thinking indicator) has no background.
 type PaneType string
 
 const (
@@ -85,6 +87,21 @@ type PaneRenderResult struct {
 	ContentHeight int
 }
 
+// Render produces the subpane lines to be embedded in the chat message list.
+//
+// Width contract: `width` is the CONTENT-ONLY width already subtracting all
+// scrollbar columns and gaps (computed in renderItem as
+// `width - 2*scrollbarWidth - 2`). The subpane must NOT subtract PadLR or
+// scrollbar space itself — that's the caller's responsibility.
+//
+// Background color is NOT applied here. view.go applies it after composing
+// the full line (content + padding + scrollbars) so the background spans
+// edge-to-edge as a coherent block.
+//
+// IMPORTANT: We use runewidth.StringWidth(StripAnsi(s)) instead of
+// lipgloss.Width(s) for measuring visible width. lipgloss.Width undercounts
+// wide Unicode characters like │ and ● by 1 cell each, which caused overflow
+// and "..." truncation artifacts.
 func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 	if width < 10 {
 		width = 10
@@ -155,6 +172,9 @@ func (sp *SubPane) ScrollbarWidth() int {
 	return sp.MsgList.ScrollbarWidth()
 }
 
+// renderHeaderLine produces the title bar ("│ ● agent-name 12s").
+// It pads to exactly `width` visible cells using runewidth (not lipgloss.Width)
+// to avoid overflow from wide Unicode chars like │ and ●.
 func (sp *SubPane) renderHeaderLine(width, spinFrame int) string {
 	borderPrefix := lipgloss.NewStyle().Foreground(sp.theme.Colors.Border).Render("│ ")
 	var styledTitle string
@@ -187,6 +207,8 @@ func (sp *SubPane) renderHeaderLine(width, spinFrame int) string {
 	return full
 }
 
+// renderSummaryLine produces the collapsed summary ("│ ● agent for 5.0s").
+// Same width contract as renderHeaderLine — pads to `width` using runewidth.
 func (sp *SubPane) renderSummaryLine(width, spinFrame int) string {
 	borderPrefix := lipgloss.NewStyle().Foreground(sp.theme.Colors.Border).Render("│ ")
 	summary := sp.SummaryText()
