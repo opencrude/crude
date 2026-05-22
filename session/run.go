@@ -72,7 +72,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 		default:
 		}
 
-		activeCfg := s.cfg.GetActiveProviderConfig()
+		activeCfg := s.cfg.GetActiveMainCategory()
 		if activeCfg.APIKey == "" {
 			l.Warn("INPUT", "no_api_key")
 			sender.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
@@ -145,7 +145,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 			case <-ctx.Done():
 			}
 		}()
-		activeCfg = s.cfg.GetActiveProviderConfig()
+		activeCfg = s.cfg.GetActiveMainCategory()
 
 		var emitActive atomic.Bool
 		emitActive.Store(true)

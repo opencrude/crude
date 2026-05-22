@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 
 	"crude/agent"
+	"crude/fileio"
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
@@ -400,11 +401,8 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 	a.MaxSteps = maxSteps
 	a.Policy = spec.Policy
 	a.Yolo = true
-	a.AsyncMgr = o.session.asyncMgr
+	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(o.session.logger)
 	a.FilteredTools = filteredTools
-
-	blockCh := make(chan string, 8)
-	a.ToolFn = o.buildProxiedToolFn(spec, blockCh)
 
 	timeout := spec.TimeoutSeconds
 	if timeout <= 0 {
@@ -413,7 +411,8 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 	subCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	a.Ctx = subCtx
 
-	prompt := agent.BuildSubAgentPrompt(spec, profileInstructions)
+	subSM := statemachine.NewConversationStateMachine(o.session.logger)
+	blockCh := make(chan string, 8)
 
 	handle := &agent.SubAgentHandle{
 		Spec:      spec,
@@ -424,7 +423,12 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 		StartedAt: time.Now(),
 		SessionID: subSessionID,
 		DB:        subDB,
+		SM:        subSM,
 	}
+
+	a.ToolFn = o.buildProxiedToolFn(spec, blockCh, handle)
+
+	prompt := agent.BuildSubAgentPrompt(spec, profileInstructions)
 
 	if err := o.mgr.Register(handle); err != nil {
 		o.fileOwnership.Release(spec.ID)
@@ -433,19 +437,6 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 			subDB.Close()
 		}
 		return nil, fmt.Errorf("register: %w", err)
-	}
-
-	if o.session.sm != nil {
-		goal := o.session.sm.CreateGoal(o.session.sessionID, "sub-agent: "+spec.Name, spec.Description, statemachine.PriorityNormal, false)
-		if goal != nil {
-			goal.Slots = map[string]any{
-				"agent_id":   string(spec.ID),
-				"agent_name": spec.Name,
-				"category":   spec.Category,
-				"depth":      spec.Depth,
-				"model":      spec.Model,
-			}
-		}
 	}
 
 	o.wg.Add(1)
@@ -487,6 +478,10 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 			handle.ResultCh <- result
 			o.mgr.Unregister(handle.Spec.ID, result)
 			o.persistResult(result)
+			if handle.DB != nil {
+				sessiondb.CloseSession(handle.DB, handle.SessionID)
+				handle.DB.Close()
+			}
 			return
 		}
 	}()
@@ -536,7 +531,7 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 				}
 			}
 		}
-	}, handle.BlockCh, o.session.sm, handle.SessionID, nil)
+	}, handle.BlockCh, handle.SM, handle.SessionID, nil)
 
 	result := o.buildResultFromMessages(handle, agentMsgs)
 
@@ -553,13 +548,6 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 	o.mgr.Unregister(handle.Spec.ID, result)
 	done = true
 	o.persistResult(result)
-
-	if o.session.sm != nil {
-		o.session.sm.CompleteGoalByID(o.session.sessionID, "sub-agent: "+handle.Spec.Name, map[string]any{
-			"status":       result.Status,
-			"summary_gist": result.SummaryGist,
-		})
-	}
 
 	if handle.DB != nil {
 		sessiondb.CloseSession(handle.DB, handle.SessionID)
@@ -651,7 +639,8 @@ func (o *SubAgentOrchestrator) buildResultFromMessages(handle *agent.SubAgentHan
 	}
 }
 
-func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan string) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan string, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+	parentFn := o.parentToolFn
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if !agent.PolicyAllows(spec.Policy, tool) {
 			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q.", tool, spec.PolicyName)
@@ -669,6 +658,10 @@ func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, block
 				}, string(spec.ID))
 			}
 			return tools.ToolResult{Content: "Question forwarded to orchestrator. Continue with your task using available information."}, nil
+		}
+
+		if isPlanningTool(tool) {
+			return o.executeSubAgentPlanningTool(handle, tool, params)
 		}
 
 		if isWriteTool(tool) {
@@ -695,6 +688,10 @@ func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, block
 			params["parent_depth"] = spec.Depth
 		}
 
+		if isAsyncCommandTool(tool) {
+			return o.executeSubAgentAsyncCommand(handle, tool, params)
+		}
+
 		resolvedProvider := spec.Provider
 		if resolvedProvider == "" {
 			resolvedProvider = o.session.cfg.ActiveProvider
@@ -707,8 +704,8 @@ func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, block
 			return o.WriteReport(spec.ID, params)
 		}
 
-		if o.parentToolFn != nil {
-			return o.parentToolFn(ctx, tool, params)
+		if parentFn != nil {
+			return parentFn(ctx, tool, params)
 		}
 		result := tools.ExecuteWithJSON(tool, params, o.session.exec, o.session.editor, o.session.yolo, o.session.logger, ctx)
 		if agent.IsToolError(result.Content) {
@@ -869,6 +866,378 @@ func isWriteTool(name string) bool {
 		return true
 	}
 	return false
+}
+
+func isPlanningTool(name string) bool {
+	switch name {
+	case "plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
+		"report_blocker", "resolve_blocker", "list_goal_status":
+		return true
+	}
+	return false
+}
+
+func isAsyncCommandTool(name string) bool {
+	switch name {
+	case "async_execute_command", "check_async_command", "kill_async_command", "read_async_output":
+		return true
+	}
+	return false
+}
+
+func (o *SubAgentOrchestrator) executeSubAgentPlanningTool(handle *agent.SubAgentHandle, tool string, params map[string]any) (tools.ToolResult, error) {
+	sm := handle.SM
+	sessionID := handle.SessionID
+
+	switch tool {
+	case "plan":
+		objective := getStrParam(params, "objective")
+		if objective == "" {
+			objective = "multi-step plan"
+		}
+
+		rawSteps, ok := params["steps"]
+		if !ok {
+			return tools.ToolResult{}, fmt.Errorf("plan: missing 'steps' parameter")
+		}
+		stepsJSON, err := json.Marshal(rawSteps)
+		if err != nil {
+			return tools.ToolResult{}, fmt.Errorf("plan: failed to marshal steps: %w", err)
+		}
+		var steps []map[string]any
+		if err := json.Unmarshal(stepsJSON, &steps); err != nil {
+			return tools.ToolResult{}, fmt.Errorf("plan: invalid steps format: %w", err)
+		}
+
+		state := sm.GetOrCreateState(sessionID)
+		if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
+			if goalID, ok := rawGoalID.(string); ok && goalID != "" {
+				if g := sm.GetActiveGoal(sessionID); g != nil && g.ID == goalID {
+					return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one.")
+				}
+			}
+		}
+		state.AddToContext("plan_steps", nil)
+		state.AddToContext("plan_step_statuses", nil)
+		state.AddToContext("plan_step_labels", nil)
+		state.AddToContext("plan_goal_id", nil)
+
+		goal := sm.CreateGoal(sessionID, "plan: "+objective, objective, statemachine.PriorityNormal, false)
+
+		stepStatuses := make(map[string]string)
+		stepLabels := make(map[string]string)
+		for _, step := range steps {
+			id, _ := step["id"].(string)
+			desc, _ := step["description"].(string)
+			stepLabels[id] = desc
+			stepStatuses[id] = "pending"
+		}
+		state.AddToContext("plan_steps", steps)
+		state.AddToContext("plan_step_statuses", stepStatuses)
+		state.AddToContext("plan_step_labels", stepLabels)
+		state.AddToContext("plan_goal_id", goal.ID)
+
+		status := agent.BuildStateMachineStatus(sm, sessionID)
+		return tools.ToolResult{Content: status}, nil
+
+	case "mark_step_complete":
+		stepIDs := resolveStepIDs(params["step_id"])
+		if len(stepIDs) == 0 {
+			return tools.ToolResult{}, fmt.Errorf("mark_step_complete: missing 'step_id'")
+		}
+		state := sm.GetOrCreateState(sessionID)
+
+		for _, stepID := range stepIDs {
+			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := raw.(map[string]string); ok {
+					if _, exists := m[stepID]; !exists {
+						return tools.ToolResult{}, fmt.Errorf("mark_step_complete: step %q not found in plan", stepID)
+					}
+					m[stepID] = "completed"
+					state.AddToContext("plan_step_statuses", m)
+				}
+			}
+		}
+
+		activateIDs := resolveStepIDs(params["activate_steps"])
+		for _, actID := range activateIDs {
+			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := raw.(map[string]string); ok {
+					if _, exists := m[actID]; !exists {
+						return tools.ToolResult{}, fmt.Errorf("mark_step_complete: activate step %q not found in plan", actID)
+					}
+					if m[actID] == "pending" || m[actID] == "active" {
+						m[actID] = "doing"
+						state.AddToContext("plan_step_statuses", m)
+					}
+				}
+			}
+		}
+
+		allDone := false
+		if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+			if m, ok := raw.(map[string]string); ok && len(m) > 0 {
+				allDone = true
+				for _, st := range m {
+					if st != "completed" && st != "failed" {
+						allDone = false
+						break
+					}
+				}
+			}
+		}
+		if allDone {
+			if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
+				if goalID, ok := rawGoalID.(string); ok && goalID != "" {
+					sm.CompleteGoalByID(sessionID, goalID, map[string]any{"status": "plan_complete"})
+				}
+			}
+			state.AddToContext("plan_steps", nil)
+			state.AddToContext("plan_step_statuses", nil)
+			state.AddToContext("plan_step_labels", nil)
+			state.AddToContext("plan_goal_id", nil)
+		}
+
+		status := agent.BuildStateMachineStatus(sm, sessionID)
+		if status != "" {
+			return tools.ToolResult{Content: status}, nil
+		}
+		var resultParts []string
+		if len(stepIDs) == 1 {
+			resultParts = append(resultParts, fmt.Sprintf("Step %q marked as complete.", stepIDs[0]))
+		} else {
+			resultParts = append(resultParts, fmt.Sprintf("Steps %v marked as complete.", stepIDs))
+		}
+		if len(activateIDs) > 0 {
+			resultParts = append(resultParts, fmt.Sprintf("Step %v marked as doing.", activateIDs))
+		}
+		return tools.ToolResult{Content: strings.Join(resultParts, " ")}, nil
+
+	case "mark_step_doing":
+		stepIDs := resolveStepIDs(params["step_id"])
+		if len(stepIDs) == 0 {
+			return tools.ToolResult{}, fmt.Errorf("mark_step_doing: missing 'step_id'")
+		}
+		state := sm.GetOrCreateState(sessionID)
+
+		if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+			if m, ok := raw.(map[string]string); ok {
+				for _, stepID := range stepIDs {
+					if _, exists := m[stepID]; !exists {
+						return tools.ToolResult{}, fmt.Errorf("mark_step_doing: step %q not found in plan", stepID)
+					}
+					if m[stepID] == "pending" || m[stepID] == "active" {
+						m[stepID] = "doing"
+					}
+				}
+				state.AddToContext("plan_step_statuses", m)
+			}
+		}
+
+		status := agent.BuildStateMachineStatus(sm, sessionID)
+		if status != "" {
+			return tools.ToolResult{Content: status}, nil
+		}
+		if len(stepIDs) == 1 {
+			return tools.ToolResult{Content: fmt.Sprintf("Step %q marked as doing.", stepIDs[0])}, nil
+		}
+		return tools.ToolResult{Content: fmt.Sprintf("Steps %v marked as doing.", stepIDs)}, nil
+
+	case "mark_step_failed":
+		stepID := getStrParam(params, "step_id")
+		reason := getStrParam(params, "reason")
+		if stepID == "" {
+			return tools.ToolResult{}, fmt.Errorf("mark_step_failed: missing 'step_id'")
+		}
+		if reason == "" {
+			reason = "unknown error"
+		}
+		state := sm.GetOrCreateState(sessionID)
+		if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+			if m, ok := raw.(map[string]string); ok {
+				if _, exists := m[stepID]; !exists {
+					return tools.ToolResult{}, fmt.Errorf("mark_step_failed: step %q not found in plan", stepID)
+				}
+				m[stepID] = "failed"
+				state.AddToContext("plan_step_statuses", m)
+			}
+		}
+
+		allDone := false
+		if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+			if m, ok := raw.(map[string]string); ok && len(m) > 0 {
+				allDone = true
+				for _, st := range m {
+					if st != "completed" && st != "failed" {
+						allDone = false
+						break
+					}
+				}
+			}
+		}
+		if allDone {
+			if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
+				if goalID, ok := rawGoalID.(string); ok && goalID != "" {
+					sm.CompleteGoalByID(sessionID, goalID, map[string]any{"status": "plan_all_steps_done"})
+				}
+			}
+			state.AddToContext("plan_steps", nil)
+			state.AddToContext("plan_step_statuses", nil)
+			state.AddToContext("plan_step_labels", nil)
+			state.AddToContext("plan_goal_id", nil)
+		}
+
+		status := agent.BuildStateMachineStatus(sm, sessionID)
+		if status != "" {
+			return tools.ToolResult{Content: status}, nil
+		}
+		return tools.ToolResult{Content: fmt.Sprintf("Step %q marked as failed: %s", stepID, reason)}, nil
+
+	case "report_blocker":
+		blockerType := getStrParam(params, "blocker_type")
+		message := getStrParam(params, "message")
+		if message == "" {
+			return tools.ToolResult{}, fmt.Errorf("report_blocker: missing 'message'")
+		}
+		var bt statemachine.BlockingConditionType
+		switch blockerType {
+		case "missing_info":
+			bt = statemachine.BlockMissingParameter
+		case "confirmation_needed":
+			bt = statemachine.BlockConfirmationNeeded
+		case "api_error":
+			bt = statemachine.BlockExternalAPIError
+		case "ambiguous":
+			bt = statemachine.BlockAmbiguousInput
+		case "auth_required":
+			bt = statemachine.BlockAuthRequired
+		default:
+			bt = statemachine.BlockConfirmationNeeded
+		}
+		blocker := &statemachine.BlockingCondition{
+			Type:    bt,
+			Message: message,
+		}
+		sm.PauseWithBlocker(sessionID, blocker)
+		state := sm.GetOrCreateState(sessionID)
+		if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
+			if m, ok := statuses.(map[string]string); ok {
+				for id, st := range m {
+					if st == "doing" || st == "active" {
+						m[id] = "blocked"
+					}
+				}
+				state.AddToContext("plan_step_statuses", m)
+			}
+		}
+		status := agent.BuildStateMachineStatus(sm, sessionID)
+		if status != "" {
+			return tools.ToolResult{Content: status}, nil
+		}
+		return tools.ToolResult{Content: fmt.Sprintf("Blocker reported: [%s] %s", blockerType, message)}, nil
+
+	case "resolve_blocker":
+		resolved := sm.TryResolveBlocker(sessionID, getStrParam(params, "message"))
+		if resolved {
+			state := sm.GetOrCreateState(sessionID)
+			if statuses, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := statuses.(map[string]string); ok {
+					for id, st := range m {
+						if st == "blocked" {
+							m[id] = "doing"
+						}
+					}
+					state.AddToContext("plan_step_statuses", m)
+				}
+			}
+			status := agent.BuildStateMachineStatus(sm, sessionID)
+			if status != "" {
+				return tools.ToolResult{Content: status}, nil
+			}
+			return tools.ToolResult{Content: "Blocker resolved. Plan execution can resume."}, nil
+		}
+		return tools.ToolResult{Content: "No active blocker to resolve."}, nil
+
+	case "list_goal_status":
+		status := agent.BuildStateMachineStatus(sm, sessionID)
+		if status == "" {
+			return tools.ToolResult{Content: "No active goals or plans."}, nil
+		}
+		return tools.ToolResult{Content: status}, nil
+
+	default:
+		return tools.ToolResult{}, fmt.Errorf("unknown planning tool: %s", tool)
+	}
+}
+
+func (o *SubAgentOrchestrator) executeSubAgentAsyncCommand(handle *agent.SubAgentHandle, tool string, params map[string]any) (tools.ToolResult, error) {
+	mgr := handle.Agent.AsyncMgr
+	if mgr == nil {
+		return tools.ToolResult{Content: "Error: async command system not available for this sub-agent"}, fmt.Errorf("async command system not available")
+	}
+
+	switch tool {
+	case "async_execute_command":
+		command := getStrParam(params, "command")
+		handleName := getStrParam(params, "handle")
+		if command == "" {
+			return tools.ToolResult{}, fmt.Errorf("async_execute_command: missing 'command'")
+		}
+		if handleName == "" {
+			return tools.ToolResult{}, fmt.Errorf("async_execute_command: missing 'handle'")
+		}
+		cwd := getStrParam(params, "cwd")
+		timeout := tools.GetIntArgAny(params, "timeout_seconds", 0)
+		info, err := mgr.Start(handleName, command, cwd, timeout)
+		if err != nil {
+			return tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("async_execute_command: %w", err)
+		}
+		return tools.ToolResult{Content: fmt.Sprintf("Started async command [%s]: PID %d, status=%s, command=%q", info.Handle, info.PID, info.Status, command)}, nil
+
+	case "check_async_command":
+		handleName := getStrParam(params, "handle")
+		if handleName == "" {
+			return tools.ToolResult{}, fmt.Errorf("check_async_command: missing 'handle'")
+		}
+		info, ok := mgr.Check(handleName)
+		if !ok {
+			return tools.ToolResult{Content: fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handleName)}, nil
+		}
+		dur := info.Duration.Truncate(time.Second).String()
+		status := fmt.Sprintf("Handle: %s\nPID: %d\nStatus: %s\nExit code: %d\nDuration: %s", info.Handle, info.PID, info.Status, info.ExitCode, dur)
+		if info.Error != "" {
+			status += "\nError: " + info.Error
+		}
+		return tools.ToolResult{Content: status}, nil
+
+	case "kill_async_command":
+		handleName := getStrParam(params, "handle")
+		if handleName == "" {
+			return tools.ToolResult{}, fmt.Errorf("kill_async_command: missing 'handle'")
+		}
+		if err := mgr.Kill(handleName); err != nil {
+			return tools.ToolResult{}, fmt.Errorf("kill_async_command: %w", err)
+		}
+		return tools.ToolResult{Content: fmt.Sprintf("Async command [%s] killed.", handleName)}, nil
+
+	case "read_async_output":
+		handleName := getStrParam(params, "handle")
+		if handleName == "" {
+			return tools.ToolResult{}, fmt.Errorf("read_async_output: missing 'handle'")
+		}
+		sinceByte := tools.GetIntArgAny(params, "since_byte", 0)
+		out, nextByte, err := mgr.ReadOutput(handleName, sinceByte)
+		if err != nil {
+			return tools.ToolResult{}, fmt.Errorf("read_async_output: %w", err)
+		}
+		if out == "" {
+			return tools.ToolResult{Content: fmt.Sprintf("[%s] next_byte=%d (no new output since byte %d)", handleName, nextByte, sinceByte)}, nil
+		}
+		return tools.ToolResult{Content: fmt.Sprintf("[%s output from byte %d]\n%s\n[next_byte=%d]", handleName, sinceByte, out, nextByte)}, nil
+
+	default:
+		return tools.ToolResult{}, fmt.Errorf("unknown async command tool: %s", tool)
+	}
 }
 
 func generateShortID() string {

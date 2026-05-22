@@ -26,9 +26,7 @@ func DefaultFileConfig() FileConfig {
 	return FileConfig{
 		ActiveProvider: "openrouter",
 		Providers: map[string]session.ProviderConfig{
-			"openrouter": {
-				Model: "",
-			},
+			"openrouter": {},
 		},
 	}
 }

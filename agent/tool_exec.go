@@ -57,6 +57,9 @@ func isPotentiallyBlocking(name string, yolo bool) bool {
 		return true
 	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 		return !yolo
+	case "plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
+		"report_blocker", "resolve_blocker", "list_goal_status":
+		return true
 	default:
 		return false
 	}

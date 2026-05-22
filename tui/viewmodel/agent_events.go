@@ -213,7 +213,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 	switch evt.Type {
 	case "usage":
-		m.handleUsageData(evt.Data)
+		m.handleUsageData(evt.Data, agentID)
 	case "retry":
 		switch d := evt.Data.(type) {
 		case map[string]any:
@@ -365,7 +365,7 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 	}
 }
 
-func (m *App) handleUsageData(data any) {
+func (m *App) handleUsageData(data any, agentID string) {
 	switch d := data.(type) {
 	case map[string]any:
 		prompt := toInt(d["prompt"])
@@ -375,28 +375,32 @@ func (m *App) handleUsageData(data any) {
 		ctxWindow := toInt(d["context_window"])
 		ctxUsed := toInt(d["context_used"])
 		estimated, _ := d["estimated"].(bool)
-		m.tokenPrompt = int(prompt)
-		m.tokenCompletion = int(completion)
-		m.tokenCached = int(cached)
 		m.sessionCost += cost
-		m.tokenEstimated = estimated
-		if int(ctxWindow) > 0 {
-			m.contextWindow = int(ctxWindow)
-			if int(ctxUsed) > 0 {
-				m.contextUsed = int(ctxUsed)
-			} else {
-				// context_used not always sent; use prompt tokens as proxy
-				m.contextUsed = int(prompt)
+		if agentID == MainAgentID || agentID == "" {
+			m.tokenPrompt = int(prompt)
+			m.tokenCompletion = int(completion)
+			m.tokenCached = int(cached)
+			m.tokenEstimated = estimated
+			if int(ctxWindow) > 0 {
+				m.contextWindow = int(ctxWindow)
+				if int(ctxUsed) > 0 {
+					m.contextUsed = int(ctxUsed)
+				} else {
+					m.contextUsed = int(prompt)
+				}
 			}
 		}
 		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed, m.tokenEstimated)
 	case map[string]int:
-		m.tokenCached = d["prompt_cached"]
-		m.tokenCompletion = d["completion"]
-		m.tokenPrompt = d["prompt"]
-		if cw := d["context_window"]; cw > 0 {
-			m.contextWindow = cw
-			m.contextUsed = d["prompt"]
+		m.sessionCost += 0
+		if agentID == MainAgentID || agentID == "" {
+			m.tokenCached = d["prompt_cached"]
+			m.tokenCompletion = d["completion"]
+			m.tokenPrompt = d["prompt"]
+			if cw := d["context_window"]; cw > 0 {
+				m.contextWindow = cw
+				m.contextUsed = d["prompt"]
+			}
 		}
 		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed, false)
 	}

@@ -80,18 +80,18 @@ type Session struct {
 }
 
 func New(cfg *Config, homeDir string) (*Session, error) {
-	activeCfg := cfg.GetActiveProviderConfig()
-	p := provider.FromPreset(cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
-	p.Model = activeCfg.Model
-	p.SetThinkingEffort(activeCfg.ThinkingEffort)
-	if activeCfg.ModelContextWindow > 0 {
-		provider.SetModelContext(activeCfg.Model, activeCfg.ModelContextWindow)
+	mainCat := cfg.GetActiveMainCategory()
+	p := provider.FromPreset(mainCat.Provider, mainCat.APIKey, mainCat.ProviderURL)
+	p.Model = mainCat.Model
+	p.SetThinkingEffort(mainCat.ThinkingEffort)
+	if mainCat.ModelContextWindow > 0 {
+		provider.SetModelContext(mainCat.Model, mainCat.ModelContextWindow)
 	}
-	if activeCfg.MainInputPrice > 0 {
-		provider.SetModelPrice(activeCfg.Model, provider.ModelPrice{
-			InputPricePerToken:       activeCfg.MainInputPrice,
-			OutputPricePerToken:      activeCfg.MainOutputPrice,
-			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
+	if mainCat.ModelInputPrice > 0 {
+		provider.SetModelPrice(mainCat.Model, provider.ModelPrice{
+			InputPricePerToken:       mainCat.ModelInputPrice,
+			OutputPricePerToken:      mainCat.ModelOutputPrice,
+			InputCachedPricePerToken: mainCat.ModelCachePrice,
 		})
 	}
 
@@ -113,7 +113,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	exec := fileio.NewLocalExecWithLogger(lg)
 	sessionID := lg.SessionID()
 	lg.Info("SESSION", "start", "version", "1.0")
-	lg.Info("SESSION", "config", "provider", cfg.ActiveProvider, "model", activeCfg.Model)
+	lg.Info("SESSION", "config", "provider", mainCat.Provider, "model", mainCat.Model)
 
 	permStore := safety.NewPermissionStore()
 	permStore.SetLogger(lg)
@@ -166,8 +166,8 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 				ID:          sessionID,
 				ProjectPath: wd,
 				ProjectName: projectName,
-				Model:       activeCfg.Model,
-				Provider:    cfg.ActiveProvider,
+				Model:       mainCat.Model,
+				Provider:    mainCat.Provider,
 				CreatedAt:   time.Now().UnixNano(),
 			}); sErr != nil {
 				lg.Warn("SESSION", "db_session_create_error", "error", fmt.Sprintf("%v", sErr))
@@ -251,7 +251,7 @@ func (s *Session) Editor() *fileio.Editor { return s.editor }
 func (s *Session) Config() *Config { return s.cfg }
 
 func (s *Session) ModelName() string {
-	return s.cfg.GetActiveProviderConfig().Model
+	return s.cfg.GetActiveMainCategory().Model
 }
 
 func (s *Session) SessionID() string {

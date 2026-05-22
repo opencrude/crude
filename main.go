@@ -73,10 +73,29 @@ func main() {
 			}
 		}
 	}
-	if *modelFlag != "" {
-		pc.Model = *modelFlag
-	}
 	fc.Providers[providerID] = pc
+
+	if *modelFlag != "" {
+		if fc.Agents == nil {
+			fc.Agents = &session.AgentsConfig{ActiveProfile: "default", Profiles: make(map[string]session.ProfileConfig)}
+		}
+		ap := fc.Agents.ActiveProfile
+		if ap == "" {
+			ap = "default"
+		}
+		if fc.Agents.Profiles == nil {
+			fc.Agents.Profiles = make(map[string]session.ProfileConfig)
+		}
+		prof := fc.Agents.Profiles[ap]
+		if prof.Categories == nil {
+			prof.Categories = make(map[string]session.CategoryConfig)
+		}
+		mainCat := prof.Categories[session.CategoryMain]
+		mainCat.Model = *modelFlag
+		mainCat.Provider = providerID
+		prof.Categories[session.CategoryMain] = mainCat
+		fc.Agents.Profiles[ap] = prof
+	}
 
 	_ = sysPromptFlag
 

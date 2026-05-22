@@ -24,6 +24,11 @@ type CategoryConfig struct {
 	Description    string   `json:"description,omitempty"`
 	AllowedTools   []string `json:"allowed_tools,omitempty"`
 	DeniedTools    []string `json:"denied_tools,omitempty"`
+
+	ModelContextWindow int     `json:"model_context_window,omitempty"`
+	ModelInputPrice    float64 `json:"model_input_price,omitempty"`
+	ModelOutputPrice   float64 `json:"model_output_price,omitempty"`
+	ModelCachePrice    float64 `json:"model_cache_price,omitempty"`
 }
 
 type ProfileConfig struct {
@@ -144,15 +149,8 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	APIKey         string `json:"api_key,omitempty"`
-	Model          string `json:"model,omitempty"`
-	ProviderURL    string `json:"provider_url,omitempty"`
-	ThinkingEffort string `json:"thinking_effort,omitempty"`
-
-	ModelContextWindow  int     `json:"model_context_window,omitempty"`
-	MainInputPrice      float64 `json:"main_input_price,omitempty"`
-	MainOutputPrice     float64 `json:"main_output_price,omitempty"`
-	MainCacheReadPrice  float64 `json:"main_cache_read_price,omitempty"`
+	APIKey      string `json:"api_key,omitempty"`
+	ProviderURL string `json:"provider_url,omitempty"`
 }
 
 func (c *Config) GetActiveProviderConfig() ProviderConfig {
@@ -179,6 +177,55 @@ func (c *Config) EffectiveProviderID() string {
 	return "openrouter"
 }
 
+func (c *Config) GetActiveMainCategory() CategoryConfig {
+	prof, _ := activeProfileCfg(c)
+	if mainCat, ok := prof.Categories[CategoryMain]; ok {
+		c.resolveCategoryDefaults(&mainCat)
+		return mainCat
+	}
+	mainCat := CategoryConfig{Provider: c.EffectiveProviderID()}
+	c.resolveCategoryDefaults(&mainCat)
+	return mainCat
+}
+
+func (c *Config) GetCategoryConfig(category string) CategoryConfig {
+	prof, _ := activeProfileCfg(c)
+	if cat, ok := prof.Categories[category]; ok {
+		c.resolveCategoryDefaults(&cat)
+		return cat
+	}
+	return c.GetActiveMainCategory()
+}
+
+func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
+	if cat.Provider == "" {
+		cat.Provider = c.EffectiveProviderID()
+	}
+	if cat.APIKey == "" || cat.ProviderURL == "" {
+		if prov, ok := c.Providers[cat.Provider]; ok {
+			if cat.APIKey == "" {
+				cat.APIKey = prov.APIKey
+			}
+			if cat.ProviderURL == "" {
+				cat.ProviderURL = prov.ProviderURL
+			}
+		} else if prov, ok := c.Providers[c.EffectiveProviderID()]; ok {
+			if cat.APIKey == "" {
+				cat.APIKey = prov.APIKey
+			}
+			if cat.ProviderURL == "" {
+				cat.ProviderURL = prov.ProviderURL
+			}
+		}
+	}
+	if cat.ProviderURL == "" {
+		p := provider.GetPreset(cat.Provider)
+		if p != nil {
+			cat.ProviderURL = p.BaseURL
+		}
+	}
+}
+
 func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 	ap := cfg.Agents.ActiveProfile
 	if ap == "" {
@@ -192,66 +239,52 @@ func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 
 func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	return ttypes.CategorySettings{
-		Provider:       v.Provider,
-		ProviderURL:    v.ProviderURL,
-		APIKey:         v.APIKey,
-		Model:          v.Model,
-		ThinkingEffort: v.ThinkingEffort,
-		Policy:         v.Policy,
-		MaxSteps:       v.MaxSteps,
-		TimeoutSeconds: v.TimeoutSeconds,
-		Description:    v.Description,
+		Provider:           v.Provider,
+		ProviderURL:        v.ProviderURL,
+		APIKey:             v.APIKey,
+		Model:              v.Model,
+		ThinkingEffort:     v.ThinkingEffort,
+		Policy:             v.Policy,
+		MaxSteps:           v.MaxSteps,
+		TimeoutSeconds:     v.TimeoutSeconds,
+		Description:        v.Description,
+		ModelContextWindow: v.ModelContextWindow,
+		ModelInputPrice:    v.ModelInputPrice,
+		ModelOutputPrice:   v.ModelOutputPrice,
+		ModelCachePrice:    v.ModelCachePrice,
 	}
 }
 
 func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	return CategoryConfig{
-		Provider:       v.Provider,
-		ProviderURL:    v.ProviderURL,
-		APIKey:         v.APIKey,
-		Model:          v.Model,
-		ThinkingEffort: v.ThinkingEffort,
-		Policy:         v.Policy,
-		MaxSteps:       v.MaxSteps,
-		TimeoutSeconds: v.TimeoutSeconds,
-		Description:    v.Description,
+		Provider:           v.Provider,
+		ProviderURL:        v.ProviderURL,
+		APIKey:             v.APIKey,
+		Model:              v.Model,
+		ThinkingEffort:     v.ThinkingEffort,
+		Policy:             v.Policy,
+		MaxSteps:           v.MaxSteps,
+		TimeoutSeconds:     v.TimeoutSeconds,
+		Description:        v.Description,
+		ModelContextWindow: v.ModelContextWindow,
+		ModelInputPrice:    v.ModelInputPrice,
+		ModelOutputPrice:   v.ModelOutputPrice,
+		ModelCachePrice:    v.ModelCachePrice,
 	}
 }
 
 func boolPtr(b bool) *bool { return &b }
 
 func ConfigToSettings(cfg *Config) ttypes.Settings {
-	providerID := cfg.EffectiveProviderID()
+	mainCat := cfg.GetActiveMainCategory()
 
-	providerURL := ""
-	apiKey := ""
-	model := ""
-	thinkingEffort := ""
-
-	if pc, ok := cfg.Providers[providerID]; ok {
-		providerURL = pc.ProviderURL
-		apiKey = pc.APIKey
-		model = pc.Model
-		thinkingEffort = pc.ThinkingEffort
-	}
-
+	providerURL := mainCat.ProviderURL
 	if providerURL == "" {
-		p := provider.GetPreset(providerID)
+		p := provider.GetPreset(mainCat.Provider)
 		if p == nil {
 			p = provider.GetPreset("openrouter")
 		}
 		providerURL = p.BaseURL
-	}
-
-	ctxWindow := 0
-	mainInputPrice := 0.0
-	mainOutputPrice := 0.0
-	mainCacheReadPrice := 0.0
-	if pc, ok := cfg.Providers[providerID]; ok {
-		ctxWindow = pc.ModelContextWindow
-		mainInputPrice = pc.MainInputPrice
-		mainOutputPrice = pc.MainOutputPrice
-		mainCacheReadPrice = pc.MainCacheReadPrice
 	}
 
 	activeProf, ap := activeProfileCfg(cfg)
@@ -278,23 +311,21 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		Categories:    make(map[string]ttypes.CategorySettings),
 	}
 	for k, v := range activeProf.Categories {
-		agentsSettings.Categories[k] = catConfigToSettings(v)
+		resolved := v
+		cfg.resolveCategoryDefaults(&resolved)
+		agentsSettings.Categories[k] = catConfigToSettings(resolved)
 	}
 
 	if _, hasMain := agentsSettings.Categories["main"]; !hasMain {
-		agentsSettings.Categories["main"] = ttypes.CategorySettings{
-			Provider:       providerID,
-			ProviderURL:    providerURL,
-			APIKey:         apiKey,
-			Model:          model,
-			ThinkingEffort: thinkingEffort,
-		}
+		agentsSettings.Categories["main"] = catConfigToSettings(mainCat)
 	}
 
 	for name, p := range cfg.Agents.Profiles {
 		ps := ttypes.ProfileSettings{Name: name, Categories: make(map[string]ttypes.CategorySettings)}
 		for k, v := range p.Categories {
-			ps.Categories[k] = catConfigToSettings(v)
+			resolved := v
+			cfg.resolveCategoryDefaults(&resolved)
+			ps.Categories[k] = catConfigToSettings(resolved)
 		}
 		if p.MultiAgent != nil {
 			if *p.MultiAgent {
@@ -314,18 +345,14 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 	}
 
 	return ttypes.Settings{
-		APIKey:             apiKey,
-		Model:              model,
-		ModelContextWindow: ctxWindow,
-		MainInputPrice:     mainInputPrice,
-		MainOutputPrice:    mainOutputPrice,
-		MainCacheReadPrice: mainCacheReadPrice,
-		ProviderID:         providerID,
-		ProviderURL:        providerURL,
-		ProviderAPIKey:     apiKey,
-		ThinkingEffort:     thinkingEffort,
-		TurnLogsEnabled:    turnLogs,
-		Agents:             agentsSettings,
+		APIKey:          mainCat.APIKey,
+		Model:           mainCat.Model,
+		ProviderID:      mainCat.Provider,
+		ProviderURL:     providerURL,
+		ProviderAPIKey:  mainCat.APIKey,
+		ThinkingEffort:  mainCat.ThinkingEffort,
+		TurnLogsEnabled: turnLogs,
+		Agents:          agentsSettings,
 	}
 }
 
@@ -379,7 +406,6 @@ func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 	}
 
 	mainCat := activeProf.Categories["main"]
-
 	prov := mainCat.Provider
 	if prov == "" {
 		prov = providerID
@@ -408,20 +434,32 @@ func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 		prov = base.EffectiveProviderID()
 	}
 
+	if mainCat.Model == "" {
+		mainCat.Model = pModel
+	}
+	if mainCat.Provider == "" {
+		mainCat.Provider = prov
+	}
+	if mainCat.ProviderURL == "" {
+		mainCat.ProviderURL = pURL
+	}
+	if mainCat.APIKey == "" {
+		mainCat.APIKey = aKey
+	}
+	if mainCat.ThinkingEffort == "" {
+		mainCat.ThinkingEffort = pEffort
+	}
+	activeProf.Categories["main"] = mainCat
+	profiles[activeProfile] = activeProf
+
 	providers := make(map[string]ProviderConfig, len(base.Providers))
 	for k, v := range base.Providers {
 		providers[k] = v
 	}
 
 	providers[prov] = ProviderConfig{
-		APIKey:              aKey,
-		Model:               pModel,
-		ModelContextWindow:  s.ModelContextWindow,
-		MainInputPrice:      s.MainInputPrice,
-		MainOutputPrice:     s.MainOutputPrice,
-		MainCacheReadPrice:  s.MainCacheReadPrice,
-		ProviderURL:         pURL,
-		ThinkingEffort:      pEffort,
+		APIKey:      aKey,
+		ProviderURL: pURL,
 	}
 
 	agents := AgentsConfig{

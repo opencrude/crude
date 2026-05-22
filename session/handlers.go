@@ -89,34 +89,34 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	defer s.mu.Unlock()
 
 	oldProvider := s.cfg.ActiveProvider
-	oldModel := s.cfg.GetActiveProviderConfig().Model
+	oldModel := s.cfg.GetActiveMainCategory().Model
 	l.Info("CONFIG", "save_begin", "old_provider", oldProvider, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
 
 	newCfg := settingsToConfig(tuiSettings, s.cfg)
-	activeCfg := newCfg.GetActiveProviderConfig()
-	if activeCfg.APIKey == "" {
+	mainCat := newCfg.GetActiveMainCategory()
+	if mainCat.APIKey == "" {
 		l.Warn("CONFIG", "save_blocked", "reason", "empty_api_key")
 		return fmt.Errorf("API key cannot be empty — settings not saved")
 	}
 
 	providerChanged := s.cfg.ActiveProvider != newCfg.ActiveProvider
-	modelChanged := activeCfg.Model != oldModel
+	modelChanged := mainCat.Model != oldModel
 
 	s.cfg = newCfg
-	s.provider = provider.FromPreset(s.cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
-	s.provider.Model = activeCfg.Model
-	s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
-	if activeCfg.ModelContextWindow > 0 {
-		provider.SetModelContext(activeCfg.Model, activeCfg.ModelContextWindow)
-		l.Debug("CONFIG", "ctx_window_set", "model", activeCfg.Model, "window", activeCfg.ModelContextWindow)
+	s.provider = provider.FromPreset(mainCat.Provider, mainCat.APIKey, mainCat.ProviderURL)
+	s.provider.Model = mainCat.Model
+	s.provider.SetThinkingEffort(mainCat.ThinkingEffort)
+	if mainCat.ModelContextWindow > 0 {
+		provider.SetModelContext(mainCat.Model, mainCat.ModelContextWindow)
+		l.Debug("CONFIG", "ctx_window_set", "model", mainCat.Model, "window", mainCat.ModelContextWindow)
 	}
-	if activeCfg.MainInputPrice > 0 {
-		provider.SetModelPrice(activeCfg.Model, provider.ModelPrice{
-			InputPricePerToken:       activeCfg.MainInputPrice,
-			OutputPricePerToken:      activeCfg.MainOutputPrice,
-			InputCachedPricePerToken: activeCfg.MainCacheReadPrice,
+	if mainCat.ModelInputPrice > 0 {
+		provider.SetModelPrice(mainCat.Model, provider.ModelPrice{
+			InputPricePerToken:       mainCat.ModelInputPrice,
+			OutputPricePerToken:      mainCat.ModelOutputPrice,
+			InputCachedPricePerToken: mainCat.ModelCachePrice,
 		})
-		l.Debug("CONFIG", "price_set", "model", activeCfg.Model, "input", activeCfg.MainInputPrice, "output", activeCfg.MainOutputPrice)
+		l.Debug("CONFIG", "price_set", "model", mainCat.Model, "input", mainCat.ModelInputPrice, "output", mainCat.ModelOutputPrice)
 	}
 	s.logger.SetTurnEnabled(tuiSettings.TurnLogsEnabled != "off")
 	s.cfg.TurnLogsEnabled = tuiSettings.TurnLogsEnabled != "off"
@@ -125,9 +125,9 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		l.Info("CONFIG", "provider_switch", "from", oldProvider, "to", newCfg.ActiveProvider)
 	}
 	if modelChanged {
-		l.Info("CONFIG", "model_change", "from", oldModel, "to", activeCfg.Model)
+		l.Info("CONFIG", "model_change", "from", oldModel, "to", mainCat.Model)
 	}
-	l.Info("CONFIG", "save_complete", "provider", newCfg.ActiveProvider, "model", activeCfg.Model, "turn_logs", s.cfg.TurnLogsEnabled)
+	l.Info("CONFIG", "save_complete", "provider", newCfg.ActiveProvider, "model", mainCat.Model, "turn_logs", s.cfg.TurnLogsEnabled)
 	return nil
 }
 

@@ -54,8 +54,8 @@ func (st *asyncCmdState) killGroup() {
 	st.cancel()
 }
 
-func setProcessGroupCmd(name string, arg ...string) *exec.Cmd {
-	c := exec.Command(name, arg...)
+func setProcessGroupCmd(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	c := exec.CommandContext(ctx, name, arg...)
 	setCmdSysProcAttr(c)
 	c.Cancel = func() error {
 		return cancelProcess(c)
@@ -86,33 +86,31 @@ func (m *AsyncCommandManager) SetLogger(lg *logger.Logger) {
 	m.logger = lg
 }
 
-func buildCommand(command string, cwd string) (*exec.Cmd, context.CancelFunc, error) {
-	cancelFn := func() {}
-
+func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, error) {
 	if runtime.GOOS == "windows" {
 		tmp, err := os.CreateTemp("", "crude_*.cmd")
 		if err != nil {
-			return nil, cancelFn, fmt.Errorf("prepare windows command: %w", err)
+			return nil, fmt.Errorf("prepare windows command: %w", err)
 		}
 		batPath := tmp.Name()
 		if _, err := tmp.WriteString("@echo off\r\n" + command + "\r\n"); err != nil {
 			tmp.Close()
 			os.Remove(batPath)
-			return nil, cancelFn, fmt.Errorf("prepare windows command: %w", err)
+			return nil, fmt.Errorf("prepare windows command: %w", err)
 		}
 		tmp.Close()
-		c := setProcessGroupCmd("cmd", "/C", batPath)
+		c := setProcessGroupCmd(ctx, "cmd", "/C", batPath)
 		if cwd != "" {
 			c.Dir = cwd
 		}
-		return c, cancelFn, nil
+		return c, nil
 	}
 
-	c := setProcessGroupCmd("sh", "-c", command)
+	c := setProcessGroupCmd(ctx, "sh", "-c", command)
 	if cwd != "" {
 		c.Dir = cwd
 	}
-	return c, cancelFn, nil
+	return c, nil
 }
 
 func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds int) (*AsyncCmdInfo, error) {
@@ -128,7 +126,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	c, _, err := buildCommand(command, cwd)
+	c, err := buildCommand(ctx, command, cwd)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -339,31 +337,10 @@ func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	var c *exec.Cmd
-	if runtime.GOOS == "windows" {
-		tmp, err := os.CreateTemp("", "crude_*.cmd")
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("prepare windows command: %w", err)
-		}
-		batPath := tmp.Name()
-		if _, err := tmp.WriteString("@echo off\r\n" + command + "\r\n"); err != nil {
-			tmp.Close()
-			os.Remove(batPath)
-			cancel()
-			return nil, fmt.Errorf("prepare windows command: %w", err)
-		}
-		tmp.Close()
-		c = exec.CommandContext(ctx, "cmd", "/C", batPath)
-	} else {
-		c = exec.CommandContext(ctx, "sh", "-c", command)
-		setCmdSysProcAttr(c)
-	}
-	c.Cancel = func() error {
-		return cancelProcess(c)
-	}
-	if cwd != "" {
-		c.Dir = cwd
+	c, err := buildCommand(ctx, command, cwd)
+	if err != nil {
+		cancel()
+		return nil, err
 	}
 
 	state := &asyncCmdState{
