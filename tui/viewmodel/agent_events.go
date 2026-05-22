@@ -79,6 +79,14 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	}
 
 	switch evt.Type {
+	case "sub_agent_started":
+		m.handleSubAgentStarted(evt)
+	case "sub_agent_completed":
+		m.handleSubAgentCompleted(evt)
+	case "sub_agent_question":
+		m.handleSubAgentQuestion(evt)
+	case "file_claim":
+		m.handleFileClaim(evt)
 	case "stream_token", "thinking", "tool_call", "tool_call_streaming", "tool_result", "tool_progress":
 		if agentID == MainAgentID {
 			m.statusbar.RecordActivity()
@@ -102,7 +110,11 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			agent = NewAgentState(agentID, m.mainMsgList, m.logger)
 		} else {
 			sp := m.paneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.theme)
-			sp.MsgList.SetModelName(m.modelName)
+			subModel := m.modelName
+			if am, ok := m.agentModels[agentID]; ok && am != "" {
+				subModel = am
+			}
+			sp.MsgList.SetModelName(subModel)
 			sp.MsgList.SetUsername(m.username)
 			agent = NewAgentState(agentID, sp.MsgList, m.logger)
 			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
@@ -216,14 +228,6 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
 			m.statusbar.SetAsyncCommands(cmds)
 		}
-	case "sub_agent_question":
-		m.handleSubAgentQuestion(evt)
-	case "file_claim":
-		m.handleFileClaim(evt)
-	case "sub_agent_started":
-		m.handleSubAgentStarted(evt)
-	case "sub_agent_completed":
-		m.handleSubAgentCompleted(evt)
 	}
 
 	return m.processAgentResults(cmd)
@@ -454,6 +458,12 @@ func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
 		label = label[:16]
 	}
 	m.agentLabels[agentID] = label
+	if model := data["model"]; model != "" {
+		m.agentModels[agentID] = model
+		if sp := m.paneMgr.Get(agentID); sp != nil {
+			sp.MsgList.SetModelName(model)
+		}
+	}
 	m.syncAgentWindowTabs()
 }
 
