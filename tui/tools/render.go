@@ -136,26 +136,34 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(firstLine))
 				}
 			} else {
-				toolLineWidth := width - th.Spacing.PadLR*2 - 6
-				if toolLineWidth < 20 {
-					toolLineWidth = 20
+			toolLineWidth := width - th.Spacing.PadLR*2 - 6
+			if toolLineWidth < 20 {
+				toolLineWidth = 20
+			}
+			var wrappedLines []string
+			for _, rl := range strings.Split(resultContent, "\n") {
+				// Trim all whitespace including tabs, not just spaces
+				trimmed := strings.TrimSpace(rl)
+				if trimmed == "" {
+					continue
 				}
-				var wrappedLines []string
-				for _, rl := range strings.Split(resultContent, "\n") {
-					trimmed := strings.TrimLeft(rl, " ")
-					for _, seg := range rendering.HardWrap(trimmed, toolLineWidth) {
+				// Sanitize the content to prevent TUI breakage
+				sanitized := rendering.SanitizeForTerminal(trimmed)
+				for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
+					if seg != "" {
 						wrappedLines = append(wrappedLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(seg))
 					}
 				}
-				maxRes := TerminalResultHeight(height)
-				for i, wl := range wrappedLines {
-					if i >= maxRes-1 {
-						remaining := len(wrappedLines) - i
+			}
+			maxRes := TerminalResultHeight(height)
+			for i, wl := range wrappedLines {
+				if i >= maxRes-1 {
+					remaining := len(wrappedLines) - i
 					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))))
-						break
-					}
-					msgLines = append(msgLines, wl)
+					break
 				}
+				msgLines = append(msgLines, wl)
+			}
 			}
 		}
 	} else if msg.ToolStatus == "error" || msg.ToolStatus == "cancelled" {
@@ -167,9 +175,15 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 			}
 			var wrappedLines []string
 			for _, rl := range strings.Split(msg.Content, "\n") {
-				trimmed := strings.TrimLeft(rl, " ")
-				for _, seg := range rendering.HardWrap(trimmed, toolLineWidth) {
-					wrappedLines = append(wrappedLines, dim.Render("│   ")+th.Styles.ErrorText.Render(seg))
+				trimmed := strings.TrimSpace(rl)
+				if trimmed == "" {
+					continue
+				}
+				sanitized := rendering.SanitizeForTerminal(trimmed)
+				for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
+					if seg != "" {
+						wrappedLines = append(wrappedLines, dim.Render("│   ")+th.Styles.ErrorText.Render(seg))
+					}
 				}
 			}
 			for i, wl := range wrappedLines {

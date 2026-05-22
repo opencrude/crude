@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"crude/diff"
 	"crude/docconv"
@@ -514,7 +515,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		lg.Info("TOOL", "call", "tool", tool, "code_len", len(code))
 		resultText, err := js.Run(code)
 		if err != nil {
-			result = ToolResult{Content: "JavaScript error: " + err.Error()}
+			result = ToolResult{Content: "JavaScript error: " + sanitizeDispatcherError(err.Error())}
 			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 			break
 		}
@@ -533,6 +534,21 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 	}
 
 	return result
+}
+
+func sanitizeDispatcherError(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			b.WriteString(" ")
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // tryDocRead attempts to convert a binary document file to Markdown

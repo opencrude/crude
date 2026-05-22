@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"crude/logger"
 
@@ -55,10 +56,26 @@ func Run(code string) (string, error) {
 	// Capture console.log output.
 	var consoleOut strings.Builder
 	consoleObj := vm.NewObject()
+	consoleFormatArg := func(a goja.Value) string {
+		if a == nil || goja.IsUndefined(a) || goja.IsNull(a) {
+			return "undefined"
+		}
+		if obj, ok := a.(*goja.Object); ok {
+			_ = vm.Set("__crude_console_arg__", obj)
+			jsonStr, err := vm.RunString("JSON.stringify(__crude_console_arg__)")
+			if err == nil && !goja.IsUndefined(jsonStr) {
+				s := jsonStr.String()
+				if s != "" && s != "undefined" {
+					return s
+				}
+			}
+		}
+		return a.String()
+	}
 	_ = consoleObj.Set("log", func(args ...goja.Value) {
 		parts := make([]string, 0, len(args))
 		for _, a := range args {
-			parts = append(parts, a.String())
+			parts = append(parts, consoleFormatArg(a))
 		}
 		consoleOut.WriteString(strings.Join(parts, " "))
 		consoleOut.WriteByte('\n')
@@ -66,7 +83,7 @@ func Run(code string) (string, error) {
 	_ = consoleObj.Set("error", func(args ...goja.Value) {
 		parts := make([]string, 0, len(args))
 		for _, a := range args {
-			parts = append(parts, a.String())
+			parts = append(parts, consoleFormatArg(a))
 		}
 		consoleOut.WriteString("[error] " + strings.Join(parts, " "))
 		consoleOut.WriteByte('\n')
@@ -158,26 +175,97 @@ func formatValue(vm *goja.Runtime, val goja.Value) string {
 		return "undefined"
 	}
 
-	// Try JSON.stringify for objects.
 	if obj, ok := val.(*goja.Object); ok {
-		jsonStr, err := vm.RunString("JSON.stringify(" + obj.String() + ", null, 2)")
+		_ = vm.Set("__crude_json_val__", obj)
+
+		_, _ = vm.RunString(`__crude_replacer__ = function(key, value) {
+			if (typeof value === 'function') return '[Function]';
+			if (value instanceof RegExp) return value.toString();
+			if (value instanceof Map) return Object.fromEntries(value);
+			if (value instanceof Set) return [...value];
+			return value;
+		}`)
+
+		jsonStr, err := vm.RunString("JSON.stringify(__crude_json_val__, __crude_replacer__, 2)")
 		if err == nil && !goja.IsUndefined(jsonStr) {
 			s := jsonStr.String()
 			if s != "undefined" && s != "" {
 				return s
 			}
 		}
+
+		desc, descErr := vm.RunString(`(function() {
+			var v = __crude_json_val__;
+			var name = (v.constructor && v.constructor.name) ? v.constructor.name : 'Object';
+			try {
+				var keys = Object.keys(v);
+				if (keys.length === 0) {
+					try { var entries = [...v.entries()]; if (entries.length > 0) return name + ' (' + entries.length + ' entries)'; } catch(e) {}
+					return name + ' {}';
+				}
+				if (keys.length <= 10) return name + ' { ' + keys.join(', ') + ' }';
+				return name + ' (' + keys.length + ' keys)';
+			} catch(e) { return name; }
+		})()`)
+		if descErr == nil && desc != nil && !goja.IsUndefined(desc) {
+			return desc.String()
+		}
 	}
+
 	return val.String()
 }
 
 func formatJSError(err error, consoleOut string) string {
 	var sb strings.Builder
-	sb.WriteString("JavaScript error: ")
-	sb.WriteString(err.Error())
+
+	msg := err.Error()
+	if ex, ok := err.(*goja.Exception); ok {
+		msg = ex.String()
+	}
+
+	msg = sanitizeJSErrorMessage(msg)
+
+	sb.WriteString(msg)
+
 	if consoleOut != "" {
 		sb.WriteString("\n\nConsole output before error:\n")
-		sb.WriteString(consoleOut)
+		sb.WriteString(sanitizeJSConsoleOutput(consoleOut))
 	}
 	return sb.String()
+}
+
+func sanitizeJSErrorMessage(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteString(" — ")
+		case r == '\t':
+			b.WriteString(" ")
+		case unicode.IsControl(r):
+			b.WriteString(" ")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func sanitizeJSConsoleOutput(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteRune(r)
+		case r == '\t':
+			b.WriteString("  ")
+		case unicode.IsControl(r):
+			b.WriteString(" ")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

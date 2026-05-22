@@ -110,7 +110,7 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 	if sp.Done {
 		summary := sp.renderSummaryLine(width, spinFrame)
 		return PaneRenderResult{
-			Lines:         []string{summary},
+			Lines:         []string{summary, ""},
 			PaneID:        sp.ID,
 			ContentStart:  0,
 			ContentHeight: 0,
