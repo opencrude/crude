@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
+	"crude/tui/rendering"
 	"crude/tui/theme"
 )
 
@@ -435,7 +436,7 @@ func (m *QuestionForm) viewWithSidebar(spinFrame int, width int) string {
 			sLine = sidebarLines[i]
 		}
 
-		cVisW := lipgloss.Width(cLine)
+		cVisW := rendering.VisibleWidth(cLine)
 		cPad := contentW - cVisW
 		if cPad < 0 {
 			cPad = 0
@@ -543,7 +544,7 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 			}
 			titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Bold(true)
 			b.WriteString(titleStyle.Render(displayTitle))
-			flexSpace := sidebarW - lipgloss.Width(b.String())
+			flexSpace := sidebarW - rendering.VisibleWidth(b.String())
 			if flexSpace > 0 {
 				b.WriteString(strings.Repeat(" ", flexSpace))
 			}
@@ -563,7 +564,7 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 			}
 			titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
 			b.WriteString(titleStyle.Render(displayTitle))
-			flexSpace := sidebarW - lipgloss.Width(b.String())
+			flexSpace := sidebarW - rendering.VisibleWidth(b.String())
 			if flexSpace > 0 {
 				b.WriteString(strings.Repeat(" ", flexSpace))
 			}

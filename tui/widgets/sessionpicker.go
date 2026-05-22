@@ -6,9 +6,8 @@ import (
 	"time"
 
 	"crude/sessiondb"
+	"crude/tui/rendering"
 	"crude/tui/theme"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 type SessionPickerGroup struct {
@@ -88,7 +87,7 @@ func RenderSessionPicker(sessions []sessiondb.SessionMeta, selected int, focused
 func renderDateSep(label string, width int, th *theme.Theme) string {
 	sepStyle := th.Styles.Separator
 	content := " " + label + " "
-	contentWidth := lipgloss.Width(content)
+	contentWidth := rendering.VisibleWidth(content)
 	remaining := width - contentWidth
 	if remaining < 0 {
 		remaining = 0
@@ -118,8 +117,8 @@ func renderSessionLine(s sessiondb.SessionMeta, selected bool, focused bool, wid
 
 	meta := fmt.Sprintf("%d turns · %s", s.TurnCount, s.Model)
 
-	cursorWidth := lipgloss.Width(cursor)
-	metaWidth := lipgloss.Width(meta)
+	cursorWidth := rendering.VisibleWidth(cursor)
+	metaWidth := rendering.VisibleWidth(meta)
 	projectWidth := 14
 	spacingWidth := 4
 
@@ -140,7 +139,7 @@ func renderSessionLine(s sessiondb.SessionMeta, selected bool, focused bool, wid
 	}
 
 	promptStr := firstPrompt
-	promptPad := maxPrompt - lipgloss.Width(promptStr)
+	promptPad := maxPrompt - rendering.VisibleWidth(promptStr)
 	if promptPad > 0 {
 		promptStr += strings.Repeat(" ", promptPad)
 	}

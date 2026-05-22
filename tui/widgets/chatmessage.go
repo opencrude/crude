@@ -154,7 +154,7 @@ func RenderUserMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 	if !suppressHeader {
 		timeW := len(timeLabel)
 		timePart := dim.Render(timeLabel)
-		lineW := lipgloss.Width(userLines[0])
+		lineW := rendering.VisibleWidth(userLines[0])
 		sp := innerW - lineW - timeW
 		if sp < 1 {
 			sp = 1
@@ -217,7 +217,7 @@ func RenderAssistantMessage(msg types.ChatMessage, th *theme.Theme, contentWidth
 	if !suppressHeader {
 		timeW := len(timeLabel)
 		timePart := dim.Render(timeLabel)
-		lineW := lipgloss.Width(asstLines[0])
+		lineW := rendering.VisibleWidth(asstLines[0])
 		sp := innerW - lineW - timeW
 		if sp < 1 {
 			sp = 1
@@ -256,7 +256,7 @@ func RenderThinkingMessage(msg types.ChatMessage, th *theme.Theme, contentWidth,
 		result = append(result, headerLabel, "")
 
 		timeW := len(timeLabel)
-		lineW := lipgloss.Width(headerLabel)
+		lineW := rendering.VisibleWidth(headerLabel)
 		sp := innerW - lineW - timeW
 		if sp < 1 {
 			sp = 1
@@ -305,7 +305,7 @@ func RenderErrorMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, in
 		if i == 0 {
 			label := th.Styles.ErrorText.Render("error")
 			styled = label + " " + th.Styles.ErrorText.Render(line)
-			sp := innerW - lipgloss.Width(styled) - timeW
+			sp := innerW - rendering.VisibleWidth(styled) - timeW
 			if sp < 1 {
 				sp = 1
 			}
