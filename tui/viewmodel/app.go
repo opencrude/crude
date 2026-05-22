@@ -591,15 +591,8 @@ func (m *App) syncOverlayMode() {
 		m.Mode = ModeConfirm
 	case activeTab.Title == "YOLO":
 		m.Mode = ModeYolo
-	case activeTab.Title == "Question" || m.isQuestionTabTitle(activeTab.Title):
+	case activeTab.Title == "Question":
 		m.Mode = ModeQuestion
-		if m.isQuestionTabTitle(activeTab.Title) {
-			idx := m.questionTabIndex(activeTab.Title)
-			if idx >= 0 {
-				m.questionForm.SetFocused(idx)
-				m.syncQuestionInputPrompt()
-			}
-		}
 	default:
 		m.Mode = ModeChat
 		m.formHint = ""

@@ -186,6 +186,10 @@ func (m *QuestionForm) TabIcon(idx int) string {
 	return "○"
 }
 
+func (m *QuestionForm) FocusedIcon() string {
+	return m.TabIcon(m.focused)
+}
+
 func (m *QuestionForm) AllAnswered() bool {
 	return len(m.items) > 0 && m.Answered() == len(m.items)
 }
@@ -352,6 +356,14 @@ func (m *QuestionForm) View(spinFrame int, width int) string {
 		return ""
 	}
 
+	if m.Count() > 1 {
+		return m.viewWithSidebar(spinFrame, width)
+	}
+	return m.viewSingle(spinFrame, width)
+}
+
+func (m *QuestionForm) viewSingle(spinFrame int, width int) string {
+	idx := m.focused
 	q := m.items[idx]
 	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
 	accent := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Bold(true)
@@ -365,7 +377,6 @@ func (m *QuestionForm) View(spinFrame int, width int) string {
 	if headerLabel == "" {
 		headerLabel = q.Question
 	}
-	// Use available content width for the title, leaving room for "? " prefix.
 	maxLabelW := width - 4
 	if maxLabelW < 20 {
 		maxLabelW = 20
@@ -374,12 +385,7 @@ func (m *QuestionForm) View(spinFrame int, width int) string {
 		headerLabel = runewidth.Truncate(headerLabel, maxLabelW-1, "…")
 	}
 
-	if m.Count() > 1 {
-		progress := fmt.Sprintf("  (%d/%d)", m.focused+1, len(m.items))
-		b.WriteString(titleStyle.Render("? "+headerLabel) + dim.Render(progress))
-	} else {
-		b.WriteString(titleStyle.Render("? " + headerLabel))
-	}
+	b.WriteString(titleStyle.Render("? " + headerLabel))
 	b.WriteString("\n")
 
 	if q.Header != "" && q.Question != "" && q.Header != q.Question {
@@ -394,6 +400,231 @@ func (m *QuestionForm) View(spinFrame int, width int) string {
 	b.WriteString(dim.Render(strings.Repeat("─", sepW)))
 	b.WriteString("\n")
 
+	m.renderOptions(&b, q, idx, accent, dim, textStyle, sepW)
+
+	return b.String()
+}
+
+func (m *QuestionForm) viewWithSidebar(spinFrame int, width int) string {
+	sidebarW := m.ComputeSidebarWidth(width)
+	if sidebarW < 8 {
+		sidebarW = 8
+	}
+	contentW := width - sidebarW - 1
+	if contentW < 20 {
+		contentW = 20
+	}
+
+	content := m.renderQuestionContent(contentW)
+
+	contentLines := strings.Split(content, "\n")
+	sidebarLines := m.buildSidebarLines(sidebarW)
+
+	maxLines := len(contentLines)
+	if len(sidebarLines) > maxLines {
+		maxLines = len(sidebarLines)
+	}
+
+	var b strings.Builder
+	for i := 0; i < maxLines; i++ {
+		var cLine, sLine string
+		if i < len(contentLines) {
+			cLine = contentLines[i]
+		}
+		if i < len(sidebarLines) {
+			sLine = sidebarLines[i]
+		}
+
+		cVisW := lipgloss.Width(cLine)
+		cPad := contentW - cVisW
+		if cPad < 0 {
+			cPad = 0
+		}
+
+		b.WriteString(cLine + strings.Repeat(" ", cPad) + sLine)
+		if i < maxLines-1 {
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
+}
+
+func (m *QuestionForm) ComputeSidebarWidth(availableWidth int) int {
+	maxItemW := 0
+	for i, q := range m.items {
+		label := q.Header
+		if label == "" {
+			label = q.Question
+		}
+		runes := []rune(label)
+		if len(runes) > 20 {
+			label = string(runes[:19]) + "…"
+		}
+		title := fmt.Sprintf("%d. %s", i+1, label)
+		w := runewidth.StringWidth(title)
+		if w > maxItemW {
+			maxItemW = w
+		}
+	}
+	const overhead = 5
+	idealW := overhead + maxItemW
+
+	maxW := availableWidth * 25 / 100
+	if maxW > 35 {
+		maxW = 35
+	}
+	minContent := 30
+	if maxFromContent := availableWidth - minContent; maxFromContent > 8 && maxFromContent < maxW {
+		maxW = maxFromContent
+	}
+	if maxW < 8 {
+		maxW = 8
+	}
+
+	if idealW < 8 {
+		idealW = 8
+	}
+	if idealW > maxW {
+		idealW = maxW
+	}
+	return idealW
+}
+
+func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
+	sepStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Border)
+	sep := sepStyle.Render("│")
+
+	lines := make([]string, 0, m.Count()*2-1)
+	for i, q := range m.items {
+		isActive := i == m.focused
+		icon := "○"
+		iconColor := m.th.Colors.Muted
+		if m.IsAnswered(i) {
+			icon = "✓"
+			iconColor = m.th.Colors.Success
+		}
+
+		label := q.Header
+		if label == "" {
+			runes := []rune(q.Question)
+			if len(runes) > 16 {
+				label = string(runes[:15]) + "…"
+			} else {
+				label = q.Question
+			}
+		}
+		titleText := fmt.Sprintf("%d. %s", i+1, label)
+		availForTitle := sidebarW - 5
+		if availForTitle < 1 {
+			availForTitle = 1
+		}
+		titleRW := runewidth.StringWidth(titleText)
+		if titleRW > availForTitle {
+			titleText = runewidth.Truncate(titleText, availForTitle-1, "…")
+		}
+
+		var b strings.Builder
+		b.WriteString(sep)
+		if isActive {
+			markerStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Bold(true)
+			b.WriteString(markerStyle.Render("❯ "))
+			iconStyle := lipgloss.NewStyle().Foreground(iconColor)
+			iconStr := iconStyle.Render(icon) + " "
+			b.WriteString(iconStr)
+			usedW := 3 + runewidth.StringWidth(icon) + 1
+			availW := sidebarW - usedW - 1
+			if availW < 1 {
+				availW = 1
+			}
+			displayTitle := titleText
+			if runewidth.StringWidth(displayTitle) > availW {
+				displayTitle = runewidth.Truncate(displayTitle, availW-1, "…")
+			}
+			titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Bold(true)
+			b.WriteString(titleStyle.Render(displayTitle))
+			flexSpace := sidebarW - lipgloss.Width(b.String())
+			if flexSpace > 0 {
+				b.WriteString(strings.Repeat(" ", flexSpace))
+			}
+		} else {
+			b.WriteString("  ")
+			iconStyle := lipgloss.NewStyle().Foreground(iconColor)
+			iconStr := iconStyle.Render(icon) + " "
+			b.WriteString(iconStr)
+			usedW := 3 + runewidth.StringWidth(icon) + 1
+			availW := sidebarW - usedW - 1
+			if availW < 1 {
+				availW = 1
+			}
+			displayTitle := titleText
+			if runewidth.StringWidth(displayTitle) > availW {
+				displayTitle = runewidth.Truncate(displayTitle, availW-1, "…")
+			}
+			titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
+			b.WriteString(titleStyle.Render(displayTitle))
+			flexSpace := sidebarW - lipgloss.Width(b.String())
+			if flexSpace > 0 {
+				b.WriteString(strings.Repeat(" ", flexSpace))
+			}
+		}
+
+		lines = append(lines, b.String())
+
+		if i < m.Count()-1 {
+			sepLineStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
+			sepLine := sepLineStyle.Render("│") + sepLineStyle.Render(strings.Repeat("─", sidebarW-1))
+			lines = append(lines, sepLine)
+		}
+	}
+	return lines
+}
+
+func (m *QuestionForm) renderQuestionContent(contentW int) string {
+	idx := m.focused
+	q := m.items[idx]
+	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
+	accent := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Bold(true)
+	textStyle := m.th.Styles.InputText
+	titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Bold(true)
+
+	var b strings.Builder
+	b.WriteString("\n")
+
+	headerLabel := q.Header
+	if headerLabel == "" {
+		headerLabel = q.Question
+	}
+	maxLabelW := contentW - 4
+	if maxLabelW < 20 {
+		maxLabelW = 20
+	}
+	if runewidth.StringWidth(headerLabel) > maxLabelW {
+		headerLabel = runewidth.Truncate(headerLabel, maxLabelW-1, "…")
+	}
+
+	progress := fmt.Sprintf("  (%d/%d)", m.focused+1, len(m.items))
+	b.WriteString(titleStyle.Render("? "+headerLabel) + dim.Render(progress))
+	b.WriteString("\n")
+
+	if q.Header != "" && q.Question != "" && q.Header != q.Question {
+		b.WriteString(dim.Render(q.Question))
+		b.WriteString("\n")
+	}
+
+	sepW := contentW
+	if sepW < 20 {
+		sepW = 20
+	}
+	b.WriteString(dim.Render(strings.Repeat("─", sepW)))
+	b.WriteString("\n")
+
+	m.renderOptions(&b, q, idx, accent, dim, textStyle, sepW)
+
+	return b.String()
+}
+
+func (m *QuestionForm) renderOptions(b *strings.Builder, q QuestionItem, idx int, accent lipgloss.Style, dim lipgloss.Style, textStyle lipgloss.Style, sepW int) {
 	cursor := m.optionCursor[idx]
 	checkStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Success)
 	cancelStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Error).Bold(true)
@@ -466,6 +697,4 @@ func (m *QuestionForm) View(spinFrame int, width int) string {
 	}
 	b.WriteString(submitBtn + "  " + cancelBtn)
 	b.WriteString("\n")
-
-	return b.String()
 }

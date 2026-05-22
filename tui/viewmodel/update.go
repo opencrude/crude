@@ -12,7 +12,6 @@ import (
 	"crude/tui/scrollbar"
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
-	"crude/tui/window"
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -111,12 +110,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if m.overlay.IsOpen() && m.overlay.TabCount() >= 1 && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		if m.overlay.IsOpen() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			overlayStartLine := m.chatAreaHeight + 3
 			if m.win.IsOpen() && m.win.TabCount() >= 2 {
 				overlayStartLine += 2
 			}
-			if msg.Y == overlayStartLine+1 {
+
+			if m.overlay.TabCount() >= 2 && msg.Y == overlayStartLine+1 {
 				adjustedX := msg.X - m.theme.Spacing.PadLR
 				if adjustedX < 0 {
 					adjustedX = 0
@@ -130,6 +130,28 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.overlay.SwitchTo(hit.TabIndex)
 					m.syncOverlayMode()
 					return m, nil
+				}
+			}
+
+			overlayContentOffset := 1
+			if m.overlay.TabCount() >= 2 {
+				overlayContentOffset = 3
+			}
+			contentStartLine := overlayStartLine + overlayContentOffset
+
+			activeTab := m.overlay.ActiveTab()
+			if activeTab != nil && activeTab.Title == "Question" && m.questionForm.Count() > 1 && msg.Y >= contentStartLine {
+				contentY := msg.Y - contentStartLine
+				innerW := m.width - 2*m.theme.Spacing.PadLR
+				sidebarW := m.questionForm.ComputeSidebarWidth(innerW)
+				sidebarStartX := m.theme.Spacing.PadLR + innerW - sidebarW
+				if msg.X >= sidebarStartX {
+					itemIdx := contentY / 2
+					if itemIdx >= 0 && itemIdx < m.questionForm.Count() {
+						m.questionForm.SetFocused(itemIdx)
+						m.syncQuestionInputPrompt()
+						return m, nil
+					}
 				}
 			}
 		}
@@ -301,20 +323,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+]":
 				m.overlay.Next()
 				m.syncOverlayMode()
-				if m.questionForm.Focused() != m.questionTabIndexFromOverlay() {
-					if idx := m.questionTabIndexFromOverlay(); idx >= 0 {
-						m.questionForm.SetFocused(idx)
-					}
-				}
-				m.syncQuestionInputPrompt()
 				return m, nil
 			case "ctrl+[":
 				m.overlay.Prev()
 				m.syncOverlayMode()
-				if idx := m.questionTabIndexFromOverlay(); idx >= 0 {
-					m.questionForm.SetFocused(idx)
-				}
-				m.syncQuestionInputPrompt()
 				return m, nil
 			}
 		}
@@ -355,7 +367,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.questionForm.FocusNext()
 				}
-				m.switchToQuestionTab(m.questionForm.Focused())
 				m.syncQuestionInputPrompt()
 			} else {
 				if _, ok := msg.(tea.MouseMsg); !ok {
@@ -382,7 +393,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.input.ResetPrompt()
 						} else {
 							m.questionForm.FocusNext()
-							m.switchToQuestionTab(m.questionForm.Focused())
 							m.syncQuestionInputPrompt()
 						}
 					}
@@ -425,7 +435,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.input.ResetPrompt()
 					m.input.ClearInput()
 				} else {
-					m.switchToQuestionTab(m.questionForm.Focused())
+					m.syncQuestionInputPrompt()
 				}
 			}
 		}
@@ -713,7 +723,6 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 		m.input.ResetPrompt()
 		m.input.ClearInput()
 		m.overlay.CloseTab(index)
-		m.purgeQuestionOverlayTabs()
 		m.syncOverlayMode()
 		if m.OnQuestionResult != nil {
 			m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
@@ -724,20 +733,6 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 		m.overlay.CloseTab(index)
 		m.syncOverlayMode()
 	default:
-		if m.isQuestionTabTitle(tab.Title) {
-			m.questionForm.Dismiss()
-			m.blocking = false
-			m.statusbar.SetConfirming(false)
-			m.input.ResetPrompt()
-			m.input.ClearInput()
-			m.overlay.CloseTab(index)
-			m.purgeQuestionOverlayTabs()
-			m.syncOverlayMode()
-			if m.OnQuestionResult != nil {
-				m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
-			}
-			return nil
-		}
 		m.overlay.CloseTab(index)
 		m.syncOverlayMode()
 	}
@@ -745,52 +740,13 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 	return nil
 }
 
-func (m *App) isQuestionTabTitle(title string) bool {
-	if len(title) < 3 || title[0] < '0' || title[0] > '9' || title[1] != '.' {
-		return false
-	}
-	if m.questionForm.Count() > 1 {
-		for i := range m.questionForm.Items() {
-			if m.questionForm.TabTitle(i) == title {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (m *App) questionTabIndex(title string) int {
-	for i := range m.questionForm.Items() {
-		if m.questionForm.TabTitle(i) == title {
-			return i
-		}
-	}
-	return -1
-}
-
 func (m *App) closeAllQuestionOverlayTabs() {
-	m.purgeQuestionOverlayTabs()
-	m.syncOverlayMode()
+	m.closeOverlayTab("Question")
 }
 
 func (m *App) purgeQuestionOverlayTabs() {
-	for {
-		removed := false
-		for i := m.overlay.TabCount() - 1; i >= 0; i-- {
-			tabs := m.overlay.Tabs()
-			if i >= len(tabs) {
-				continue
-			}
-			if tabs[i].Title == "Question" || m.isQuestionTabTitle(tabs[i].Title) {
-				if m.overlay.CloseTab(i) != window.CloseNone {
-					removed = true
-				}
-				break
-			}
-		}
-		if !removed {
-			break
-		}
+	if tab := m.overlay.TabByTitle("Question"); tab != nil {
+		m.overlay.CloseTabByID(tab.ID)
 	}
 }
 
@@ -808,7 +764,9 @@ func (m *App) syncQuestionInputPrompt() {
 		m.input.ClearInput()
 		return
 	}
-	m.syncQuestionTabIcons()
+	if tab := m.overlay.TabByTitle("Question"); tab != nil {
+		m.overlay.SetTabIconByIndex(m.overlay.IndexOf(tab.ID), m.questionForm.FocusedIcon())
+	}
 	if m.questionForm.IsTextQuestion(m.questionForm.Focused()) {
 		q, _ := m.questionForm.FocusedItem()
 		label := q.Header
@@ -831,50 +789,6 @@ func (m *App) syncQuestionInputPrompt() {
 	}
 }
 
-func (m *App) syncQuestionTabIcons() {
-	if m.questionForm.Count() <= 1 {
-		if tab := m.overlay.TabByTitle("Question"); tab != nil {
-			m.overlay.SetTabIconByIndex(m.overlay.IndexOf(tab.ID), m.questionForm.TabIcon(0))
-		}
-		return
-	}
-	for i := range m.questionForm.Items() {
-		title := m.questionForm.TabTitle(i)
-		if tab := m.overlay.TabByTitle(title); tab != nil {
-			m.overlay.SetTabIconByIndex(m.overlay.IndexOf(tab.ID), m.questionForm.TabIcon(i))
-		}
-	}
-}
-
-func (m *App) switchToQuestionTab(questionIdx int) {
-	if m.questionForm.Count() <= 1 {
-		if tab := m.overlay.TabByTitle("Question"); tab != nil {
-			m.overlay.SwitchTo(m.overlay.IndexOf(tab.ID))
-		}
-		return
-	}
-	title := m.questionForm.TabTitle(questionIdx)
-	if tab := m.overlay.TabByTitle(title); tab != nil {
-		m.overlay.SwitchTo(m.overlay.IndexOf(tab.ID))
-	}
-}
-
-func (m *App) questionTabIndexFromOverlay() int {
-	if !m.overlay.IsOpen() {
-		return 0
-	}
-	activeTab := m.overlay.ActiveTab()
-	if activeTab == nil {
-		return 0
-	}
-	if activeTab.Title == "Question" {
-		return 0
-	}
-	return m.questionTabIndex(activeTab.Title)
-}
-
-// handleTabSwitch is called after the window switches tabs.
-// If an agent tab became active, sync the agent view.
 func (m *App) handleTabSwitch() {
 	activeTab := m.win.ActiveTab()
 	if activeTab == nil {

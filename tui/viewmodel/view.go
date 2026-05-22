@@ -375,8 +375,10 @@ func (m *App) renderOverlayArea() []string {
 
 	var lines []string
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
-	lines = append(lines, tabBarLine)
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+	if m.overlay.TabCount() >= 2 {
+		lines = append(lines, tabBarLine)
+		lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+	}
 	lines = append(lines, contentLines...)
 	return lines
 }
@@ -412,11 +414,6 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 		for _, yl := range strings.Split(yoloView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(yl, contentW))
 		}
-	case m.isQuestionTabTitle(tabTitle):
-		questionView := m.questionForm.View(m.spinFrame, contentW)
-		for _, ql := range strings.Split(questionView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(ql, contentW))
-		}
 	}
 
 	return rawLines
@@ -444,8 +441,6 @@ func (m *App) syncFormHint() {
 	case activeTab.Title == "YOLO":
 		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
 	case activeTab.Title == "Question":
-		m.formHint = m.questionForm.Hint()
-	case m.isQuestionTabTitle(activeTab.Title):
 		m.formHint = m.questionForm.Hint()
 	default:
 		m.formHint = ""
