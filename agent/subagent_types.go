@@ -26,10 +26,11 @@ const (
 )
 
 const (
-	CatMain       = "main"
-	CatResearcher = "researcher"
-	CatCrafter    = "crafter"
-	CatAeron      = "aeron"
+	CatMain        = "main"
+	CatOrchestrator = "orchestrator"
+	CatResearcher  = "researcher"
+	CatCrafter     = "crafter"
+	CatAeron       = "aeron"
 )
 
 type SubAgentSpec struct {
@@ -95,6 +96,7 @@ type SubAgentHandle struct {
 	termReason        string
 	reportGist        string
 	reportPath        string
+	reportDone        bool
 }
 
 func (h *SubAgentHandle) AddUsage(promptT, compT int) {
@@ -136,13 +138,20 @@ func (h *SubAgentHandle) TermReason() string {
 
 func (h *SubAgentHandle) SetReport(gist, path string) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.reportGist = gist
 	h.reportPath = path
-	h.mu.Unlock()
+	h.reportDone = true
 }
 
 func (h *SubAgentHandle) Report() (gist, path string, hasReport bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.reportGist, h.reportPath, h.reportGist != ""
+}
+
+func (h *SubAgentHandle) ReportDone() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.reportDone
 }

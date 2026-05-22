@@ -11,6 +11,7 @@ import (
 	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	tuitools "crude/tui/tools"
 	"crude/tui/widgets"
 )
 
@@ -117,6 +118,10 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 		}
 	}
 
+	if sp.Type == PaneAgent {
+		return sp.renderAgentCompact(width, maxH, spinFrame)
+	}
+
 	sp.MsgList.SetSize(width, maxH)
 	sp.MsgList.SetChatAreaBounds(0, maxH)
 	sp.MsgList.SetSpinFrame(spinFrame)
@@ -154,6 +159,75 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 		PaneID:        sp.ID,
 		ContentStart:  1,
 		ContentHeight: visibleH,
+	}
+}
+
+func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResult {
+	headerLine := sp.renderHeaderLine(width, spinFrame)
+	borderStyle := lipgloss.NewStyle().Foreground(sp.theme.Colors.Border)
+	mutedStyle := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted)
+
+	msgs := sp.MsgList.Messages()
+	var toolLines []string
+	for _, msg := range msgs {
+		if msg.Role != "tool" || msg.ToolName == "" {
+			continue
+		}
+		phase := msg.ToolPreviewPhase
+		label := tuitools.BuildToolTitle(*msg, phase)
+		if label == "" {
+			continue
+		}
+
+		var icon string
+		switch {
+		case msg.ToolStatus == "error" || phase == "error":
+			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#f85149")).Render("✗")
+		case phase == "done" || msg.ToolStatus == "success":
+			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("✓")
+		case phase == "streaming":
+			icon = "●"
+		default:
+			icon = "○"
+		}
+
+		line := borderStyle.Render("│ ") + icon + " " + label
+		visW := runewidth.StringWidth(rendering.StripAnsi(line))
+		padR := width - visW
+		if padR < 0 {
+			padR = 0
+		}
+		line = line + strings.Repeat(" ", padR)
+		toolLines = append(toolLines, line)
+
+		if len(toolLines) >= maxH-1 {
+			break
+		}
+	}
+
+	if len(toolLines) == 0 {
+		thinking := "Thinking..."
+		if sp.MsgList.ActiveThinkingLineCount(width) == 0 {
+			thinking = "Working..."
+		}
+		line := borderStyle.Render("│ ") + mutedStyle.Render("● "+thinking)
+		visW := runewidth.StringWidth(rendering.StripAnsi(line))
+		padR := width - visW
+		if padR < 0 {
+			padR = 0
+		}
+		toolLines = append(toolLines, line+strings.Repeat(" ", padR))
+	}
+
+	lines := make([]string, 0, 1+len(toolLines))
+	lines = append(lines, headerLine)
+	lines = append(lines, toolLines...)
+
+	return PaneRenderResult{
+		Lines:         lines,
+		PaneID:        sp.ID,
+		ContentStart:  1,
+		ContentHeight: len(toolLines),
 	}
 }
 

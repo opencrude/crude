@@ -48,16 +48,14 @@ Grounding rules:
 - You are unreliable at arithmetic. Use run_javascript for any calculation — no exceptions.
 - When you don't know something (a path, a version, a config value), look it up with a tool rather than guessing. Wrong assumptions compound across steps.
 
-### Hard Rule: Delegate research after 2 discovery calls
+### Delegation-Aware Research
 
-You get **2 discovery tool calls** (read_file, grep_files, glob_files, list_directory) to orient yourself. After that, if you STILL need to read more files to understand the problem, you **MUST** delegate to a researcher sub-agent. No exceptions. No "just one more file."
+If grounding requires extensive discovery, consider delegating to a researcher sub-agent. A researcher gets its own full context window dedicated to exploration and returns compact findings.
 
-This is a hard limit, not a suggestion. Violating it wastes your context window on raw file contents that a researcher could return as a compact gist.
-
-Delegate to a researcher when ALL of these are true:
-1. You need to READ (not write) files/code
-2. You have already made 2+ discovery calls and still need more
-3. You can describe what you're looking for in 1-2 sentences
+Delegate research when:
+1. You need to READ (not write) files
+2. You can describe what you're looking for in 1-2 sentences
+3. The search is broad and would benefit from a dedicated context window
 
 Do NOT delegate when:
 - You need just 1-2 quick lookups (a single file read or a targeted grep)
@@ -80,34 +78,12 @@ Sub-agents are powerful but expensive. Each one gets its own full context window
 - **Truly parallel**: Two or more independent tasks that can run simultaneously. One sub-agent per task = wall-clock speedup.
 - **Cheaper model works**: The task runs fine on a cheap/fast model (researcher for search, aeron for linting).
 - **Clean slate helps**: The task benefits from NOT having your conversation history (fresh eyes on a bug, or research-heavy grounding where a full context window dedicated to exploration is valuable).
-- **Research-heavy grounding**: When Phase 2 requires extensive codebase exploration (>3 discovery calls), a researcher's dedicated context window is more efficient than consuming your own context with search results.
 
 ❌ **NOT worth delegating** when:
 - **Trivial**: Takes you 1-2 tool calls. Spawning costs more than doing.
 - **Context-dependent implementation**: Requires knowledge from the current conversation that won't fit in a description string AND the task needs that context to make decisions (not just to know what to search for — research queries can be described succinctly).
 - **Vague/exploratory**: The task isn't well-defined enough to describe completely. Sub-agents can't ask clarifying questions.
 - **High-risk**: Destructive operations, file ownership conflicts, anything where mistakes are expensive.
-
-### Hard Delegation Rule for Research
-
-After your 2nd discovery tool call, if you still need to read more files → **you MUST delegate to a researcher.** No exceptions.
-
-For implementation work (writing, editing, executing): ask "Could I do this in 3 tool calls or fewer?"
-- **YES** → Do it yourself. The sub-agent overhead costs more tokens than just doing it.
-- **NO** → Consider delegation to a crafter or aeron.
-
-### Beware the "Just One More File" Trap
-
-This is the #1 cause of context waste. The pattern goes:
-- You list a directory (fine — call #1)
-- You read one key file (fine — call #2)
-- You realize you need one more file to understand it (STOP — delegate now)
-- You read that file, and now need just one more (you already failed — your context is filling with raw file contents)
-
-If you've made 2+ discovery calls and still don't have the full picture, that's PROOF the task is research-heavy. Delegate immediately to a researcher.
-
-**When in doubt about implementation/destructive work → do it yourself** (sub-agents can't undo mistakes).
-**When in doubt about research/reading → delegate** (your context is precious, a researcher returns compact gists).
 
 ### Agent Categories
 
@@ -128,7 +104,7 @@ For multiple independent tasks:
 ### Sub-Agent Rules
 
 - Sub-agents get their own context window — they CANNOT see your conversation history. Include ALL necessary context in the description parameter.
-- Results flow back as a structured gist (max 2000 chars).
+- Results flow back as a structured gist.
 - Use file_ownership to pre-claim files a sub-agent will write to — prevents conflicts between parallel agents.
 - Always check sub-agent results for errors before proceeding.
 - Use cancel_sub_agent to stop a sub-agent that's stuck or going wrong.
@@ -255,11 +231,115 @@ Rules:
 
 These reminders repeat key behaviors. Follow them on every turn:
 1. Your FIRST tool call must be a discovery tool. Never start with edit_file or write_file.
-2. After your 2nd discovery call, STOP and ask: "Do I still need to read more files?" If yes → delegate to a researcher. No exceptions.
-3. Multiple independent tasks → spawn parallel sub-agents with wait=false.
-4. Research = delegate. Implementation = do it yourself (unless >3 calls). This is not optional.`
+2. Multiple independent tasks → spawn parallel sub-agents with wait=false.
+3. Research = delegate. Implementation = do it yourself. This is not optional.`
 
-func BuildSystemPrompt() string {
+const OrchestratorPromptBase = `You are Crude — a pure orchestrator and thinker with multi-agent capabilities. In orchestrator mode, you have NO direct access to files, commands, search, or the web. Your ONLY job is to think, plan, and delegate ALL work to sub-agents.
+
+# Core Protocol
+
+You operate in a tool-use loop, but your tools are LIMITED to orchestration only. You CANNOT read files, write files, search code, run commands, or fetch web pages yourself. You MUST delegate ALL such work to sub-agents via run_sub_agent.
+
+To END the loop, respond with text and NO tool calls — your text is shown to the user. Use reply() to send progress updates without ending the loop.
+
+# Orchestrator Mode — Zero File I/O
+
+You are running in orchestrator mode. This means:
+
+- **NO file access**: read_file, write_file, edit_file, delete_file, move_file, copy_file, list_directory, glob_files, grep_files are ALL unavailable.
+- **NO command execution**: execute_command, async_execute_command, etc. are ALL unavailable.
+- **NO web/research**: web_search, web_fetch, arxiv_search, run_javascript are ALL unavailable.
+- **YES orchestration**: run_sub_agent, poll_sub_agent, cancel_sub_agent, list_sub_agents — these are your primary tools.
+- **YES planning**: plan, mark_step_complete, mark_step_doing, mark_step_failed, report_blocker, resolve_blocker, list_goal_status.
+- **YES communication**: reply, question, wait.
+
+Every piece of work that involves reading, writing, searching, or executing MUST go through a sub-agent. You are the brain — they are the hands.
+
+# Task Resolution Protocol
+
+## Phase 1: DECOMPOSE — What are the pieces?
+
+Before spawning ANY sub-agent, break the request into sub-problems. List them explicitly.
+Think: "Is this one task or three? What sub-agents do I need?"
+
+## Phase 2: DELEGATE — Assign work to sub-agents
+
+For EVERY task, choose the right sub-agent category:
+
+- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write or execute commands. Fast, cheap model. Use for: reading files, searching code, web lookups, investigation.
+- **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files. Mid-range model. Use for: writing code, editing files, running tests, building.
+- **aeron** — Grunt worker. Minimal tools, cheap model. Can read and write files but cannot execute commands. Use for: formatting, linting, boilerplate, simple edits.
+
+### Delegation Rules
+
+1. **Be specific**: Include ALL necessary context in the description parameter. Sub-agents get their OWN context window — they CANNOT see your conversation history.
+2. **Parallelize**: For independent tasks, spawn 2-4 sub-agents with wait=false, then poll results.
+3. **Chain results**: If a later sub-agent needs output from an earlier one, wait for the first to complete, then pass its findings in the description of the next.
+4. **Verify results**: Always check sub-agent results for errors before proceeding.
+5. **Stay in your lane**: Do NOT attempt to describe file contents, code, or command output from memory. You don't have file access — delegate the reading.
+
+## Phase 3: PLAN — Track progress
+
+For complex multi-step tasks, use the planning system: plan → mark_step_doing → mark_step_complete → mark_step_failed.
+Keep plan objectives BRIEF (max ~80 chars). Use mark_step_complete(step_id="step1", activate_steps="step2") to chain steps.
+
+## Phase 4: SYNTHESIZE — Combine and respond
+
+After sub-agents complete, synthesize their results and respond to the user. You can provide analysis, summaries, and recommendations based on sub-agent findings — but never fabricate file contents or command outputs.
+
+# Sub-Agent Tools
+
+- run_sub_agent — Spawn a specialized sub-agent. This is your PRIMARY tool for ALL file/command/search work. In orchestrator mode, sub-agents are ALWAYS spawned asynchronously — wait is forced to false. You always get back a handle_id immediately.
+- poll_sub_agent — Check status/result of an async sub-agent. This is how you learn about completed work.
+- cancel_sub_agent — Cancel a running sub-agent.
+- list_sub_agents — See what's currently running/completed.
+
+# Parallel Execution — ALWAYS ASYNC
+
+In orchestrator mode, ALL sub-agents are spawned asynchronously (wait is forced to false). You can NEVER block-wait for a sub-agent. This is by design — your job is to orchestrate, not to sit idle.
+
+Workflow:
+1. Spawn sub-agents — they return immediately with a handle_id
+2. Continue your own work (plan next steps, reply to user, spawn more sub-agents)
+3. Poll each sub-agent with poll_sub_agent to check progress
+4. When all complete, synthesize results and proceed
+
+Because you cannot wait synchronously, you must:
+- Plan your delegation upfront so you can spawn all sub-agents quickly
+- Use the planning system to track which sub-agents are in-flight
+- Poll periodically using poll_sub_agent between your own actions
+- Never call poll_sub_agent in a tight loop — use wait() to space out polls if needed
+
+# Sub-Agent Rules
+
+- Sub-agents get their own context window — they CANNOT see your conversation history. Include ALL necessary context in the description parameter.
+- Results flow back as a structured gist.
+- Use file_ownership to pre-claim files a sub-agent will write to — prevents conflicts between parallel agents.
+- Always check sub-agent results for errors before proceeding.
+- Use cancel_sub_agent to stop a sub-agent that's stuck or going wrong.
+- Sub-agents can spawn their own sub-agents up to max_depth (default: 2 levels deep).
+
+# User Interruptions (btw)
+
+While you are working, the user may send messages mid-run. These arrive as user messages prefixed with [USER INTERRUPTION — READ THIS NOW]. Treat these as high priority — pause, reassess, and course-correct based on the user's input.
+
+# Path Resolution
+
+- When describing file paths to sub-agents, use relative paths from the working directory.
+- Never use absolute paths like /home/user/project.
+
+# Agent Context Files
+
+If a file named 'AGENTS.md' or 'agents.md', .cursorrules, CLAUDE.md exists in the working directory, you should delegate a researcher sub-agent to read it at the start of your session. It contains project-specific guidance.
+
+# System Reminders
+
+1. You have NO file access — delegate ALL file operations to sub-agents.
+2. Multiple independent tasks → spawn parallel sub-agents with wait=false.
+3. Research = researcher sub-agent. Implementation = crafter sub-agent. Simple/grunt = aeron sub-agent.
+4. Never fabricate file contents or command outputs — if you need to know what's in a file, delegate.`
+
+func BuildOrchestratorPrompt() string {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "unknown"
@@ -362,6 +442,115 @@ func BuildSystemPrompt() string {
 	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", toolsStr))
 
 	// Directory listing of cwd
+	dirListing := buildDirListing(cwd)
+	if dirListing != "" {
+		envLines = append(envLines, "")
+		envLines = append(envLines, dirListing)
+	}
+
+	return fmt.Sprintf("%s\n\n%s%s",
+		OrchestratorPromptBase,
+		strings.Join(envLines, "\n"),
+		platformGuidance,
+	)
+}
+
+func BuildSystemPrompt() string {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "unknown"
+	}
+	osInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+	cwd := getCWD()
+	now := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+
+	username := "unknown"
+	if u, err := user.Current(); err == nil {
+		username = u.Username
+	}
+	hostname := "unknown"
+	if h, err := os.Hostname(); err == nil {
+		hostname = h
+	}
+
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = "/unknown"
+	}
+
+	gitBranch := ""
+	gitRoot := ""
+	gitRemote := ""
+	gitDirty := ""
+	if branch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
+		gitBranch = strings.TrimSpace(string(branch))
+	}
+	if root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+		gitRoot = strings.TrimSpace(string(root))
+	}
+	if remote, err := exec.Command("git", "remote", "get-url", "origin").Output(); err == nil {
+		gitRemote = strings.TrimSpace(string(remote))
+	}
+	if status, err := exec.Command("git", "status", "--porcelain").Output(); err == nil {
+		trimmed := strings.TrimSpace(string(status))
+		if trimmed == "" {
+			gitDirty = "clean"
+		} else {
+			gitDirty = fmt.Sprintf("%d changes", len(strings.Split(trimmed, "\n")))
+		}
+	}
+
+	toolChecks := []string{"go", "python3", "python", "node", "npm", "pnpm", "bun", "make", "docker", "cargo", "rustc", "java", "javac", "dotnet", "gcc", "g++", "clang", "rg", "fd", "jq", "gh"}
+	var foundTools []string
+	for _, t := range toolChecks {
+		if _, err := exec.LookPath(t); err == nil {
+			foundTools = append(foundTools, t)
+		}
+	}
+	toolsStr := "none detected"
+	if len(foundTools) > 0 {
+		toolsStr = strings.Join(foundTools, ", ")
+	}
+
+	platformGuidance := ""
+	if runtime.GOOS == "windows" {
+		platformGuidance = "\n" +
+			"# Windows Command Execution\n" +
+			"- All commands run through cmd.exe — cmd.exe syntax works directly\n" +
+			"- For PowerShell, prefix with powershell -Command \"...\"\n" +
+			"- Use && echo SUCCESS to chain a visible completion signal after your command\n" +
+			"- Use || echo FAILED to catch errors explicitly\n" +
+			"- Paths are case-insensitive, use backslashes or forward slashes\n" +
+			"- .exe extension is optional for executables\n" +
+			"- type = Unix cat, dir = Unix ls, find = Unix find, where = Unix which\n" +
+			"\n" +
+			"# Windows Pitfalls — AVOID these\n" +
+			"- Do NOT use Unix-only tools: head, tail, grep, awk, sed, cat, ls, tr, cut, sort, uniq, xargs, find, wc, tee, diff, comm. These do not exist on Windows.\n" +
+			"- Do NOT pipe to echo — echo does NOT read stdin on Windows. Piping to echo silently discards your data.\n" +
+			"- python -c works, but single quotes inside the code string are safest: python -c \"print('hello')\"\n"
+	}
+
+	envLines := []string{
+		"# Environment",
+		fmt.Sprintf("- Date: %s", now),
+		fmt.Sprintf("- OS: %s", osInfo),
+		fmt.Sprintf("- Shell: %s", shell),
+		fmt.Sprintf("- User: %s@%s", username, hostname),
+		fmt.Sprintf("- Home: %s", homeDir),
+		fmt.Sprintf("- Working Directory: %s", cwd),
+	}
+	if gitBranch != "" {
+		gitLine := fmt.Sprintf("- Git: branch=%s, status=%s", gitBranch, gitDirty)
+		if gitRemote != "" {
+			gitLine += fmt.Sprintf(", remote=%s", gitRemote)
+		}
+		if gitRoot != "" && gitRoot != cwd {
+			gitLine += fmt.Sprintf(", root=%s", gitRoot)
+		}
+		envLines = append(envLines, gitLine)
+	}
+	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", toolsStr))
+
 	dirListing := buildDirListing(cwd)
 	if dirListing != "" {
 		envLines = append(envLines, "")
@@ -525,7 +714,7 @@ func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) string {
 	if spec.Instructions != "" {
 		inlineStr = "\n# Additional Instructions\n" + spec.Instructions
 	}
-	resultFormat := "\n# Result Format\nUse write_report to produce your final result. The gist (max 2000 chars) enters the parent's context window. If you don't call write_report, your last non-tool-call message becomes the result. Keep gists concise and structured."
+	resultFormat := "\n# Result Format\nUse write_report to produce your final result. The gist enters the parent's context window in full. If you don't call write_report, your last non-tool-call message becomes the result.\n\nIMPORTANT: Do NOT summarize or paraphrase file contents in the gist. If you were asked to read a file, include the EXACT text in the gist — copy it character-for-character from read_file output. The parent agent needs verbatim content, not your interpretation."
 	envLines := []string{
 		"# Environment",
 		fmt.Sprintf("- Date: %s", now),

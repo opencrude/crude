@@ -645,11 +645,11 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "write_report",
-			Description: "Write your final result report. This becomes the sub-agent's official result. The gist (first 2000 chars) enters the parent's context window. The full report is saved to disk. If you don't call this, your last non-tool-call message becomes the result.",
+			Description: "Write your final result report. This becomes the sub-agent's official result. The gist enters the parent's context window in full. The full report is also saved to disk. If you don't call this, your last non-tool-call message becomes the result.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"gist":{"type":"string","description":"Concise summary of results, max 2000 characters. This enters the parent's context window."},
+					"gist":{"type":"string","description":"Summary of results. This enters the parent's context window in full."},
 					"report":{"type":"string","description":"Full detailed report. Saved to disk. No size limit."}
 				},
 				"required":["gist"]

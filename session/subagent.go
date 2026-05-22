@@ -246,27 +246,45 @@ func (o *SubAgentOrchestrator) PollSubAgent(params map[string]any) (tools.ToolRe
 	}
 
 	handle, ok := o.mgr.GetActive(agent.AgentID(handleID))
-	if !ok {
-		if r, found := o.mgr.GetCompleted(agent.AgentID(handleID)); found {
-			resultJSON, _ := json.Marshal(r)
-			return tools.ToolResult{Content: string(resultJSON)}, nil
+	if ok && handle.ReportDone() {
+		gist, _, _ := handle.Report()
+		result := agent.SubAgentResult{
+			AgentID:      handle.Spec.ID,
+			Name:         handle.Spec.Name,
+			Category:     handle.Spec.Category,
+			SessionID:    handle.SessionID,
+			Status:       agent.SubAgentCompleted,
+			SummaryGist:  gist,
+			FilesRead:    o.fileOwnership.ReadClaimsByAgent(handle.Spec.ID),
+			FilesWritten: o.fileOwnership.WriteClaimsByAgent(handle.Spec.ID),
+			DurationMs:   time.Since(handle.StartedAt).Milliseconds(),
 		}
-		return tools.ToolResult{Content: `{"status":"not_found","error":"Handle ID not found"}`}, nil
+		promptTokens, compTokens, costUSD, errs := handle.Usage()
+		result.PromptTokens = promptTokens
+		result.CompTokens = compTokens
+		result.CostUSD = costUSD
+		result.Errors = errs
+		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	}
 
-	status := map[string]any{
-		"handle_id":       handleID,
-		"name":            handle.Spec.Name,
-		"category":        handle.Spec.Category,
-		"status":          "running",
-		"elapsed_seconds": int(time.Since(handle.StartedAt).Seconds()),
-		"steps_used":      handle.StepCount.Load(),
-		"max_steps":       handle.Spec.MaxSteps,
-		"model":           handle.Spec.Model,
-		"files_claimed":   o.fileOwnership.WriteClaimsByAgent(handle.Spec.ID),
+	if !ok {
+		if r, found := o.mgr.GetCompleted(agent.AgentID(handleID)); found {
+			return tools.ToolResult{Content: formatSubAgentResult(r)}, nil
+		}
+		return tools.ToolResult{Content: "Sub-agent not found. It may have already been cleaned up or never started."}, nil
 	}
-	statusJSON, _ := json.Marshal(status)
-	return tools.ToolResult{Content: string(statusJSON)}, nil
+
+	elapsed := time.Since(handle.StartedAt).Round(time.Second)
+	stepsUsed := handle.StepCount.Load()
+	maxSteps := handle.Spec.MaxSteps
+	if maxSteps == 0 {
+		maxSteps = 1000
+	}
+
+	status := fmt.Sprintf("Sub-agent %q [%s] is still running.\nElapsed: %s | Steps: %d/%d | Model: %s",
+		handle.Spec.Name, handle.Spec.Category, elapsed, stepsUsed, maxSteps, handle.Spec.Model)
+
+	return tools.ToolResult{Content: status}, nil
 }
 
 func (o *SubAgentOrchestrator) CancelSubAgent(params map[string]any) (tools.ToolResult, error) {
@@ -281,8 +299,7 @@ func (o *SubAgentOrchestrator) CancelSubAgent(params map[string]any) (tools.Tool
 	}
 
 	o.fileOwnership.Release(agent.AgentID(handleID))
-	resultJSON, _ := json.Marshal(result)
-	return tools.ToolResult{Content: string(resultJSON)}, nil
+	return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 }
 
 func (o *SubAgentOrchestrator) ListSubAgents(params map[string]any) (tools.ToolResult, error) {
@@ -298,17 +315,28 @@ func (o *SubAgentOrchestrator) ListSubAgents(params map[string]any) (tools.ToolR
 		return tools.ToolResult{Content: "No sub-agents."}, nil
 	}
 
-	resultJSON, _ := json.Marshal(entries)
-	return tools.ToolResult{Content: string(resultJSON)}, nil
+	var sb strings.Builder
+	for _, e := range entries {
+		status := "running"
+		if e.Status != "" {
+			status = e.Status
+		}
+		sb.WriteString(fmt.Sprintf("- %s [%s] %s", e.Name, e.Category, status))
+		if e.ElapsedSeconds > 0 {
+			sb.WriteString(fmt.Sprintf(" (%s)", (time.Duration(e.ElapsedSeconds)*time.Second).Round(time.Second)))
+		}
+		if e.StepsUsed > 0 {
+			sb.WriteString(fmt.Sprintf(" steps=%d", e.StepsUsed))
+		}
+		sb.WriteString("\n")
+	}
+	return tools.ToolResult{Content: strings.TrimSpace(sb.String())}, nil
 }
 
 func (o *SubAgentOrchestrator) WriteReport(agentID agent.AgentID, params map[string]any) (tools.ToolResult, error) {
 	gist := getStrParam(params, "gist")
 	if gist == "" {
 		return tools.ToolResult{}, fmt.Errorf("write_report: 'gist' is required")
-	}
-	if len(gist) > 2000 {
-		gist = gist[:2000]
 	}
 
 	report := getStrParam(params, "report")
@@ -325,6 +353,7 @@ func (o *SubAgentOrchestrator) WriteReport(agentID agent.AgentID, params map[str
 
 	if handle, ok := o.mgr.GetActive(agentID); ok {
 		handle.SetReport(gist, resultPath)
+		handle.Cancel()
 	}
 
 	resultJSON, _ := json.Marshal(map[string]string{
@@ -590,7 +619,9 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 
 func (o *SubAgentOrchestrator) buildResultFromMessages(handle *agent.SubAgentHandle, msgs []provider.ChatMessage) agent.SubAgentResult {
 	status := agent.SubAgentCompleted
-	if ctx := handle.Agent.Ctx; ctx != nil {
+	if handle.ReportDone() {
+		status = agent.SubAgentCompleted
+	} else if ctx := handle.Agent.Ctx; ctx != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			status = agent.SubAgentFailedTimeout
 		} else if ctx.Err() == context.Canceled {
@@ -648,10 +679,6 @@ func (o *SubAgentOrchestrator) buildResultFromMessages(handle *agent.SubAgentHan
 			}
 		}
 	}
-	if len(gist) > 2000 {
-		gist = gist[:2000]
-	}
-
 	promptTokens, compTokens, costUSD, errs := handle.Usage()
 	return agent.SubAgentResult{
 		AgentID:      handle.Spec.ID,

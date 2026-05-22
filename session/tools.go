@@ -32,32 +32,6 @@ func isSubAgentRequest(params map[string]any) bool {
 	return ok
 }
 
-func delegateSuggestion(tool string, params map[string]any) string {
-	var suggestions []string
-	switch tool {
-	case "read_file", "grep_files", "glob_files", "list_directory":
-		suggestions = append(suggestions, "\n\n• **researcher** — Read-only explorer that searches codebase, reads files, and returns compact findings. Perfect for further discovery.")
-	default:
-		path := getStrParam(params, "path")
-		if path != "" {
-			suggestions = append(suggestions, fmt.Sprintf("\n\n• **researcher** — Can gather more context about %s before you make changes.", path))
-		}
-	}
-	if tool == "write_file" || tool == "edit_file" || tool == "delete_file" || tool == "move_file" || tool == "copy_file" {
-		suggestions = append(suggestions, "\n\n• **crafter** — Implementation agent that can read and write files, run tests. Good for self-contained code changes.")
-	}
-	if tool == "execute_command" {
-		suggestions = append(suggestions, "\n\n• **crafter** — Can execute commands and verify results.")
-	}
-	if tool == "web_search" || tool == "web_fetch" || tool == "arxiv_search" {
-		suggestions = append(suggestions, "\n\n• **researcher** — Can do web research and return structured findings.")
-	}
-	if len(suggestions) == 0 {
-		return "\n\nUse run_sub_agent to delegate to a researcher (for research), crafter (for implementation), or aeron (for simple tasks)."
-	}
-	return strings.Join(suggestions, "")
-}
-
 func (s *Session) newAgent() *agent.Agent {
 	mainCat := s.cfg.GetActiveMainCategory()
 
@@ -70,22 +44,24 @@ func (s *Session) newAgent() *agent.Agent {
 	a.Yolo = s.yolo
 	a.AsyncMgr = s.asyncMgr
 
+	multiAgent := s.cfg.IsMultiAgentEnabled()
+
+	if multiAgent {
+		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, nil, agent.CatOrchestrator, 0, s.cfg.Agents.MaxDepth)
+		a.Policy = safety.OrchestratorPolicy()
+	}
+
 	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
-		if !isFreeTool(tool) && s.toolCallBudget > 0 && !isSubAgentRequest(params) {
+		if !multiAgent && !isFreeTool(tool) && s.toolCallBudget > 0 && !isSubAgentRequest(params) {
 			s.toolCallCountMu.Lock()
 			s.toolCallCount++
 			count := s.toolCallCount
 			budget := s.toolCallBudget
-			exceeded := count > budget
-			if exceeded {
-				s.toolCallCount = 0
-			}
 			s.toolCallCountMu.Unlock()
-			if exceeded {
-				suggestion := delegateSuggestion(tool, params)
+			if count > budget {
 				return tools.ToolResult{Content: fmt.Sprintf(
-					"You've made %d tool calls this turn. Consider delegating to save your context window for reasoning and planning.%s Planning and delegation tools (plan, run_sub_agent, poll_sub_agent, etc.) are always available.",
-					budget, suggestion,
+					"[BUDGET EXCEEDED] You've used %d/%d tool calls this turn. Your budget is exhausted. Delegate remaining work to a sub-agent via run_sub_agent.",
+					count, budget,
 				)}, nil
 			}
 		}
@@ -445,6 +421,12 @@ func (s *Session) newAgent() *agent.Agent {
 			if s.subAgentOrch == nil {
 				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
 			}
+			if multiAgent {
+				params["wait"] = false
+			}
+			s.toolCallCountMu.Lock()
+			s.toolCallCount = 0
+			s.toolCallCountMu.Unlock()
 			return s.subAgentOrch.RunSubAgent(ctx, params)
 
 		case "poll_sub_agent":
@@ -469,6 +451,18 @@ func (s *Session) newAgent() *agent.Agent {
 			return tools.ToolResult{Content: "write_report is for sub-agents only. Your response is already shown to the user."}, nil
 
 		default:
+			if multiAgent && !isSubAgentRequest(params) {
+				switch tool {
+				case "read_file", "write_file", "edit_file", "delete_file",
+					"move_file", "copy_file", "list_directory",
+					"glob_files", "grep_files",
+					"execute_command", "async_execute_command",
+					"check_async_command", "kill_async_command", "read_async_output",
+					"web_search", "web_fetch", "arxiv_search",
+					"run_javascript":
+					return tools.ToolResult{Content: fmt.Sprintf("[ORCHESTRATOR MODE] Tool %q is not available. Delegate this work to a sub-agent via run_sub_agent.", tool)}, fmt.Errorf("orchestrator mode: tool %q blocked", tool)
+				}
+			}
 			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo, s.logger, ctx)
 			if agent.IsToolError(result.Content) {
 				return result, fmt.Errorf("%s", result.Content)
