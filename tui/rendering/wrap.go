@@ -15,7 +15,7 @@ func SanitizeForTerminal(s string) string {
 	if s == "" {
 		return s
 	}
-	if !isWindows && utf8.ValidString(s) && !strings.ContainsRune(s, '\r') {
+	if !isWindows && utf8.ValidString(s) && !strings.ContainsRune(s, '\r') && !needsSanitization(s) {
 		return s
 	}
 	if !utf8.ValidString(s) {
@@ -53,6 +53,18 @@ func SanitizeForTerminal(s string) string {
 		i += size
 	}
 	return b.String()
+}
+
+func needsSanitization(s string) bool {
+	for _, r := range s {
+		if r < ' ' && r != '\n' && r != '\t' {
+			return true
+		}
+		if r == 0x7F {
+			return true
+		}
+	}
+	return false
 }
 
 func Max(a, b int) int {
