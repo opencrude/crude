@@ -98,7 +98,6 @@ func (o *SubAgentOrchestrator) RunSubAgent(ctx context.Context, params map[strin
 		MaxSteps:       getIntParam(params, "max_steps"),
 		Depth:          parentDepth + 1,
 		ParentID:       agent.AgentID("main"),
-		TimeoutSeconds: getIntParam(params, "timeout_seconds"),
 	}
 
 	if raw, ok := params["allowed_tools"]; ok {
@@ -368,19 +367,56 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 	}
 
 	resolvedProvider := spec.Provider
+	resolvedAPIKey := spec.APIKey
+	resolvedURL := spec.ProviderURL
+	resolvedModelName := spec.Model
+	resolvedThinkingEffort := spec.ThinkingEffort
+
 	if resolvedProvider == "" {
-		resolvedProvider = o.session.cfg.ActiveProvider
+		mainCat := o.session.cfg.GetActiveMainCategory()
+		resolvedProvider = mainCat.Provider
 	}
-	resolvedAPIKey := ""
-	resolvedURL := ""
-	if provCfg, ok := o.session.cfg.Providers[resolvedProvider]; ok {
-		resolvedAPIKey = provCfg.APIKey
-		resolvedURL = provCfg.ProviderURL
+	if resolvedAPIKey == "" || resolvedURL == "" {
+		if prov, ok := o.session.cfg.Providers[resolvedProvider]; ok {
+			if resolvedAPIKey == "" {
+				resolvedAPIKey = prov.APIKey
+			}
+			if resolvedURL == "" {
+				resolvedURL = prov.ProviderURL
+			}
+		} else {
+			mainCat := o.session.cfg.GetActiveMainCategory()
+			if resolvedAPIKey == "" {
+				resolvedAPIKey = mainCat.APIKey
+			}
+			if resolvedURL == "" {
+				resolvedURL = mainCat.ProviderURL
+			}
+		}
 	}
+	if resolvedModelName == "" {
+		mainCat := o.session.cfg.GetActiveMainCategory()
+		resolvedModelName = mainCat.Model
+	}
+	if resolvedThinkingEffort == "" {
+		mainCat := o.session.cfg.GetActiveMainCategory()
+		resolvedThinkingEffort = mainCat.ThinkingEffort
+	}
+
 	p := provider.FromPreset(resolvedProvider, resolvedAPIKey, resolvedURL)
-	p.Model = spec.Model
-	if spec.Model == "" {
-		p.Model = resolvedModel(o.session, spec)
+	p.Model = resolvedModelName
+	if resolvedThinkingEffort != "" {
+		p.SetThinkingEffort(resolvedThinkingEffort)
+	}
+	if spec.ModelContextWindow > 0 {
+		provider.SetModelContext(resolvedModelName, spec.ModelContextWindow)
+	}
+	if spec.ModelInputPrice > 0 {
+		provider.SetModelPrice(resolvedModelName, provider.ModelPrice{
+			InputPricePerToken:       spec.ModelInputPrice,
+			OutputPricePerToken:      spec.ModelOutputPrice,
+			InputCachedPricePerToken: spec.ModelCachePrice,
+		})
 	}
 
 	allToolDefs := tools.AgentTools
@@ -388,10 +424,7 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 
 	maxSteps := spec.MaxSteps
 	if maxSteps <= 0 {
-		maxSteps = 60
-	}
-	if maxSteps > 200 {
-		maxSteps = 200
+		maxSteps = 1000
 	}
 
 	a := agent.NewAgent(p, p.Model, o.session.logger)
@@ -404,11 +437,7 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(o.session.logger)
 	a.FilteredTools = filteredTools
 
-	timeout := spec.TimeoutSeconds
-	if timeout <= 0 {
-		timeout = 300
-	}
-	subCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	subCtx, subCancel := context.WithCancel(ctx)
 	a.Ctx = subCtx
 
 	subSM := statemachine.NewConversationStateMachine(o.session.logger)
@@ -417,7 +446,7 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 	handle := &agent.SubAgentHandle{
 		Spec:      spec,
 		Agent:     a,
-		Cancel:    cancel,
+		Cancel:    subCancel,
 		ResultCh:  make(chan agent.SubAgentResult, 1),
 		BlockCh:   blockCh,
 		StartedAt: time.Now(),
@@ -694,7 +723,7 @@ func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, block
 
 		resolvedProvider := spec.Provider
 		if resolvedProvider == "" {
-			resolvedProvider = o.session.cfg.ActiveProvider
+			resolvedProvider = o.session.cfg.GetActiveMainCategory().Provider
 		}
 		if err := o.rateLimiter.Wait(ctx, resolvedProvider); err != nil {
 			return tools.ToolResult{}, fmt.Errorf("Rate limit exceeded for provider %q", resolvedProvider)
@@ -763,20 +792,38 @@ func (o *SubAgentOrchestrator) resolveProfile(name string, category string, spec
 		if spec.Provider == "" && catCfg.Provider != "" {
 			spec.Provider = catCfg.Provider
 		}
+		if spec.ProviderURL == "" && catCfg.ProviderURL != "" {
+			spec.ProviderURL = catCfg.ProviderURL
+		}
+		if spec.APIKey == "" && catCfg.APIKey != "" {
+			spec.APIKey = catCfg.APIKey
+		}
+		if spec.ThinkingEffort == "" && catCfg.ThinkingEffort != "" {
+			spec.ThinkingEffort = catCfg.ThinkingEffort
+		}
 		if spec.PolicyName == "" && catCfg.Policy != "" {
 			spec.PolicyName = catCfg.Policy
 		}
 		if spec.MaxSteps == 0 && catCfg.MaxSteps > 0 {
 			spec.MaxSteps = catCfg.MaxSteps
 		}
-		if spec.TimeoutSeconds == 0 && catCfg.TimeoutSeconds > 0 {
-			spec.TimeoutSeconds = catCfg.TimeoutSeconds
-		}
 		if len(spec.AllowedTools) == 0 && len(catCfg.AllowedTools) > 0 {
 			spec.AllowedTools = catCfg.AllowedTools
 		}
 		if len(spec.DeniedTools) == 0 && len(catCfg.DeniedTools) > 0 {
 			spec.DeniedTools = catCfg.DeniedTools
+		}
+		if spec.ModelContextWindow == 0 && catCfg.ModelContextWindow > 0 {
+			spec.ModelContextWindow = catCfg.ModelContextWindow
+		}
+		if spec.ModelInputPrice == 0 && catCfg.ModelInputPrice > 0 {
+			spec.ModelInputPrice = catCfg.ModelInputPrice
+		}
+		if spec.ModelOutputPrice == 0 && catCfg.ModelOutputPrice > 0 {
+			spec.ModelOutputPrice = catCfg.ModelOutputPrice
+		}
+		if spec.ModelCachePrice == 0 && catCfg.ModelCachePrice > 0 {
+			spec.ModelCachePrice = catCfg.ModelCachePrice
 		}
 		if catCfg.Description != "" {
 			instructionsParts = append(instructionsParts, catCfg.Description)
@@ -796,9 +843,6 @@ func (o *SubAgentOrchestrator) resolveProfile(name string, category string, spec
 			}
 			if spec.MaxSteps == 0 && ap.MaxSteps > 0 {
 				spec.MaxSteps = ap.MaxSteps
-			}
-			if spec.TimeoutSeconds == 0 && ap.TimeoutSeconds > 0 {
-				spec.TimeoutSeconds = ap.TimeoutSeconds
 			}
 			if len(spec.AllowedTools) == 0 && len(ap.AllowedTools) > 0 {
 				spec.AllowedTools = ap.AllowedTools
@@ -825,28 +869,27 @@ func (o *SubAgentOrchestrator) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 	if spec.MaxSteps == 0 {
 		switch spec.Category {
 		case agent.CatResearcher:
-			spec.MaxSteps = 30
+			spec.MaxSteps = 1000
 		case agent.CatCrafter:
-			spec.MaxSteps = 60
+			spec.MaxSteps = 1000
 		case agent.CatAeron:
-			spec.MaxSteps = 10
+			spec.MaxSteps = 1000
 		}
 	}
-	if spec.TimeoutSeconds == 0 {
-		switch spec.Category {
-		case agent.CatResearcher:
-			spec.TimeoutSeconds = 120
-		case agent.CatCrafter:
-			spec.TimeoutSeconds = 300
-		case agent.CatAeron:
-			spec.TimeoutSeconds = 60
+	if spec.Model == "" || spec.Provider == "" || spec.APIKey == "" || spec.ProviderURL == "" {
+		mainCat := o.session.cfg.GetActiveMainCategory()
+		if spec.Model == "" {
+			spec.Model = mainCat.Model
 		}
-	}
-	if spec.Model == "" {
-		spec.Model = o.session.ModelName()
-	}
-	if spec.Provider == "" {
-		spec.Provider = o.session.cfg.ActiveProvider
+		if spec.Provider == "" {
+			spec.Provider = mainCat.Provider
+		}
+		if spec.APIKey == "" {
+			spec.APIKey = mainCat.APIKey
+		}
+		if spec.ProviderURL == "" {
+			spec.ProviderURL = mainCat.ProviderURL
+		}
 	}
 	if spec.PolicyName == "" {
 		switch spec.Category {
@@ -1276,11 +1319,4 @@ func getIntParam(params map[string]any, key string) int {
 
 func toNullString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
-}
-
-func resolvedModel(s *Session, spec agent.SubAgentSpec) string {
-	if spec.Model != "" {
-		return spec.Model
-	}
-	return s.ModelName()
 }

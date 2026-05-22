@@ -43,7 +43,6 @@ type CategorySettings struct {
 	ThinkingEffort     string
 	Policy             string
 	MaxSteps           int
-	TimeoutSeconds     int
 	Description        string
 	ModelContextWindow int
 	ModelInputPrice    float64

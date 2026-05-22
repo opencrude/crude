@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 
 	"crude/provider"
@@ -116,8 +117,15 @@ func TestSanitizeMessages_OrphanedToolCalls(t *testing.T) {
 		{Role: "tool", Content: "data", ToolCallID: "tc1"},
 	}
 	result := sanitizeMessages(msgs)
-	if len(result) != 1 {
-		t.Errorf("expected 1 (assistant with missing tool result removed), got %d", len(result))
+	if len(result) != 4 {
+		t.Errorf("expected 4 (missing result backfilled, context preserved), got %d", len(result))
+	}
+	last := result[len(result)-1]
+	if last.Role != "tool" || last.ToolCallID != "tc2" {
+		t.Errorf("expected backfilled tool result for tc2, got role=%s id=%s", last.Role, last.ToolCallID)
+	}
+	if !strings.HasPrefix(last.Content, "[cancelled]") {
+		t.Errorf("expected backfilled result to start with [cancelled], got %q", last.Content)
 	}
 }
 
