@@ -51,7 +51,8 @@ type App struct {
 	questionForm  widgets.QuestionForm
 	yoloDlg      widgets.YoloDialog
 
-	win *window.Window
+	win     *window.Window
+	overlay *window.Window
 
 	blocking       bool
 	yolo           bool
@@ -137,6 +138,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 	pm := NewPaneManager()
 
 	w := window.New(th)
+	ov := window.New(th)
 
 	hasSessions := len(sessions) > 0
 	var initialMode Mode
@@ -154,6 +156,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		agents:       map[string]*AgentState{MainAgentID: mainAgent},
 		paneMgr:      pm,
 		win:          w,
+		overlay:      ov,
 		mainMsgList:  ml,
 		input:        im,
 		statusbar:    sb,
@@ -239,10 +242,10 @@ func (m *App) completeSubAgent(agentID string) {
 
 	// Sync mode — if no closable tabs remain, go to chat.
 	if !alreadyCompleted {
-		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
+		if !m.win.IsOpen() {
 			m.setMode(ModeChat)
 		} else {
-			m.syncActiveTabMode()
+			m.syncOverlayMode()
 		}
 	}
 }
@@ -284,15 +287,14 @@ func (m *App) setMode(newMode Mode) {
 	switch newMode {
 	case ModeSettings:
 		m.input.ClearInput()
-		m.win.OpenTabWithLayout("Settings", "", true, window.TabHorizontal)
+		m.overlay.OpenTab("Settings", "", true)
 	case ModeConfirm:
-		m.win.OpenTabWithLayout("Confirm", "", true, window.TabHorizontal)
+		m.overlay.OpenTab("Confirm", "", true)
 	case ModeQuestion:
 	case ModeYolo:
-		m.win.OpenTabWithLayout("YOLO", "", true, window.TabHorizontal)
+		m.overlay.OpenTab("YOLO", "", true)
 	case ModeChat:
 		m.formHint = ""
-		m.closeNonAgentClosableTabs()
 	}
 }
 
@@ -447,7 +449,7 @@ func (m *App) syncAgentWindowTabs() {
 	if ma, ok := m.agents[MainAgentID]; ok && !ma.Completed {
 		title := m.agentTabTitle(MainAgentID)
 		if m.win.TabByTitle(title) == nil {
-			m.win.OpenTabWithLayout(title, "", false, window.TabHorizontal)
+			m.win.OpenTab(title, "", false)
 		}
 		if tab := m.win.TabByTitle(title); tab != nil {
 			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.agentTabIcon(MainAgentID))
@@ -465,7 +467,7 @@ func (m *App) syncAgentWindowTabs() {
 		}
 		title := m.agentTabTitle(id)
 		if m.win.TabByTitle(title) == nil {
-			m.win.OpenTabWithLayout(title, "", true, window.TabHorizontal)
+			m.win.OpenTab(title, "", true)
 		}
 		if tab := m.win.TabByTitle(title); tab != nil {
 			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.agentTabIcon(id))
@@ -551,22 +553,56 @@ func (m *App) purgeStaleAgentTabs() {
 	}
 }
 
-// closeNonAgentClosableTabs closes all closable tabs except agent tabs.
-func (m *App) closeNonAgentClosableTabs() {
-	for {
-		removed := false
-		tabs := m.win.Tabs()
-		for i := len(tabs) - 1; i >= 0; i-- {
-			if tabs[i].Closable && !tabs[i].Pinned && !m.isAgentTabTitle(tabs[i].Title) {
-				if m.win.CloseTab(i) != window.CloseNone {
-					removed = true
-				}
-				break
+// closeAllOverlayTabs closes all overlay tabs and returns to chat mode.
+func (m *App) closeAllOverlayTabs() {
+	m.overlay.CloseAll()
+	if m.Mode != ModeChat {
+		m.Mode = ModeChat
+		m.formHint = ""
+		m.input.ResetPrompt()
+		m.input.ClearInput()
+	}
+}
+
+func (m *App) syncOverlayMode() {
+	if !m.overlay.IsOpen() {
+		if m.Mode != ModeChat {
+			m.Mode = ModeChat
+			m.formHint = ""
+			m.input.ResetPrompt()
+			m.input.ClearInput()
+		}
+		return
+	}
+	activeTab := m.overlay.ActiveTab()
+	if activeTab == nil {
+		if m.Mode != ModeChat {
+			m.Mode = ModeChat
+			m.formHint = ""
+			m.input.ResetPrompt()
+			m.input.ClearInput()
+		}
+		return
+	}
+	switch {
+	case activeTab.Title == "Settings":
+		m.Mode = ModeSettings
+	case activeTab.Title == "Confirm":
+		m.Mode = ModeConfirm
+	case activeTab.Title == "YOLO":
+		m.Mode = ModeYolo
+	case activeTab.Title == "Question" || m.isQuestionTabTitle(activeTab.Title):
+		m.Mode = ModeQuestion
+		if m.isQuestionTabTitle(activeTab.Title) {
+			idx := m.questionTabIndex(activeTab.Title)
+			if idx >= 0 {
+				m.questionForm.SetFocused(idx)
+				m.syncQuestionInputPrompt()
 			}
 		}
-		if !removed {
-			break
-		}
+	default:
+		m.Mode = ModeChat
+		m.formHint = ""
 	}
 }
 

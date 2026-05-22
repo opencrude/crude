@@ -1,18 +1,15 @@
 package viewmodel
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"crude/fileio"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/widgets"
-	"crude/tui/window"
 )
 
 func (m *App) View() string {
@@ -20,7 +17,6 @@ func (m *App) View() string {
 		return ""
 	}
 
-	// Full-screen launcher mode — completely separate render path
 	if m.Mode == ModeLauncher && m.launcher != nil {
 		return m.renderLauncherView()
 	}
@@ -28,6 +24,7 @@ func (m *App) View() string {
 	m.syncAgentWindowTabs()
 
 	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
+	m.overlay.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
 
 	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
 	innerW := m.width - m.theme.Spacing.PadLR*2
@@ -62,31 +59,29 @@ func (m *App) View() string {
 	asyncBarLines := m.statusbar.RenderAsyncBar()
 	asyncLineCount := len(asyncBarLines)
 
-	asyncInWindow := m.win.IsOpen() && m.win.Layout() == window.TabVertical && m.win.TabCount() > 1 && asyncLineCount > 0
-
-	tabBarLine := ""
-	tabBarVisible := false
+	agentTabBarLine := ""
+	agentTabBarVisible := false
 	if m.win.IsOpen() && m.win.TabCount() >= 2 {
-		tabBarLine = m.win.RenderTabBar()
-		tabBarVisible = tabBarLine != ""
+		agentTabBarLine = m.win.RenderTabBar()
+		agentTabBarVisible = agentTabBarLine != ""
 	}
-	if m.tabBarFocused && tabBarVisible {
+	if m.tabBarFocused && agentTabBarVisible {
 		focusStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
-		tabBarLine = focusStyle.Render(tabBarLine)
+		agentTabBarLine = focusStyle.Render(agentTabBarLine)
 	}
+
+	overlayLines := m.renderOverlayArea()
+	overlayLineCount := len(overlayLines)
 
 	nonChat := 6 + inputLineCount
-	if tabBarVisible {
+	if agentTabBarVisible {
 		nonChat += 2
 	}
-	if asyncLineCount > 0 && !asyncInWindow {
-		nonChat += 2 + asyncLineCount
+	if overlayLineCount > 0 {
+		nonChat += overlayLineCount
 	}
-
-	windowLines := m.renderWindowContent()
-	windowLineCount := len(windowLines)
-	if windowLineCount > 0 {
-		nonChat += 1 + windowLineCount
+	if asyncLineCount > 0 {
+		nonChat += 2 + asyncLineCount
 	}
 
 	chatH := m.height - nonChat
@@ -116,7 +111,7 @@ func (m *App) View() string {
 	activeML.SetPhase(m.statusbar.Phase())
 	activeML.SetSize(m.width, m.height)
 	chatAreaTop := 3
-	if tabBarVisible {
+	if agentTabBarVisible {
 		chatAreaTop += 2
 	}
 	activeML.SetChatAreaBounds(chatAreaTop, chatH)
@@ -186,8 +181,8 @@ func (m *App) View() string {
 	lines = append(lines, pad+headerLine+pad)
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
-	if tabBarVisible {
-		lines = append(lines, pad+tabBarLine+pad)
+	if agentTabBarVisible {
+		lines = append(lines, pad+agentTabBarLine+pad)
 		if m.tabBarFocused {
 			accentSepStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
 			lines = append(lines, accentSepStyle.Render(strings.Repeat("━", m.width)))
@@ -196,9 +191,6 @@ func (m *App) View() string {
 		}
 	}
 
-	// Pre-compute the ANSI escape sequence for subpane background color.
-	// This is used to wrap the bgPart of pane lines so background spans
-	// edge-to-edge within the content area (but NOT the outer pad margins).
 	subPaneBgSeq := ""
 	{
 		s := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Render(" ")
@@ -217,9 +209,6 @@ func (m *App) View() string {
 			maxContentW = 10
 		}
 
-		// isPaneLine: this line belongs to a subpane (header or content).
-		// hasBg: only PaneAgent subpanes get background color; PaneThinking
-		// subpanes and non-pane lines get no background.
 		isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
 		hasBg := false
 		if isPaneLine {
@@ -227,10 +216,6 @@ func (m *App) View() string {
 			hasBg = sp != nil && sp.Type == PaneAgent
 		}
 
-		// IMPORTANT: We use runewidth.StringWidth(StripAnsi(s)) instead of
-		// lipgloss.Width(s). lipgloss.Width undercounts wide Unicode chars
-		// like │ and ● by 1 cell each, which caused padRight to be too large
-		// and lines to overflow the terminal width.
 		var trimmed string
 		var visW int
 		if hasBg {
@@ -290,13 +275,8 @@ func (m *App) View() string {
 				padRight = 0
 			}
 
-			// Background color split: bgPart gets background, noBgPart doesn't.
-			// This makes the background stop one column before the main
-			// scrollbar, giving a clean professional look.
 			var bgPart, noBgPart string
 			if nestingLevel > 0 {
-				// bg covers: content + padRight + gap + pane scrollbar
-				// no-bg: gap + main scrollbar
 				bgPart = line + strings.Repeat(" ", padRight) + " " + paneSBLine
 				noBgPart = " " + mainSBLine
 			} else {
@@ -323,15 +303,14 @@ func (m *App) View() string {
 		lines = append(lines, line)
 	}
 
-	if windowLineCount > 0 {
-		lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
-		for _, wl := range windowLines {
-			visW := lipgloss.Width(wl)
+	if overlayLineCount > 0 {
+		for _, ol := range overlayLines {
+			visW := lipgloss.Width(ol)
 			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
 			if rightPad < 0 {
 				rightPad = 0
 			}
-			lines = append(lines, pad+wl+strings.Repeat(" ", rightPad)+pad)
+			lines = append(lines, pad+ol+strings.Repeat(" ", rightPad)+pad)
 		}
 	}
 
@@ -365,112 +344,49 @@ func (m *App) View() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *App) renderWindowContent() []string {
-	if !m.win.IsOpen() {
+func (m *App) renderOverlayArea() []string {
+	if !m.overlay.IsOpen() {
 		return nil
 	}
 
-	activeTab := m.win.ActiveTab()
+	activeTab := m.overlay.ActiveTab()
 	if activeTab == nil {
 		return nil
 	}
 
-	if m.isAgentTabTitle(activeTab.Title) {
-		return nil
+	m.overlay.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
+
+	tabBarLine := m.overlay.RenderTabBar()
+
+	contentLines := m.getOverlayContentLines(activeTab.Title)
+
+	stripLeadingTrailingEmpty := func(ss []string) []string {
+		start := 0
+		for start < len(ss) && ss[start] == "" {
+			start++
+		}
+		end := len(ss)
+		for end > start && ss[end-1] == "" {
+			end--
+		}
+		return ss[start:end]
 	}
-
-	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
-
-	if m.win.Layout() == window.TabVertical {
-		return m.renderWindowVertical()
-	}
-	return m.renderWindowHorizontal()
-}
-
-func (m *App) renderWindowHorizontal() []string {
-	tabBarLine := m.win.RenderTabBar()
-
-	activeTab := m.win.ActiveTab()
-	if activeTab == nil {
-		return []string{tabBarLine}
-	}
-
-	contentLines := m.getWindowContentLines(activeTab.Title)
+	contentLines = stripLeadingTrailingEmpty(contentLines)
 
 	var lines []string
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 	lines = append(lines, tabBarLine)
-	lines = append(lines, m.win.RenderSeparator())
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 	lines = append(lines, contentLines...)
 	return lines
 }
 
-func (m *App) renderWindowVertical() []string {
-	activeTab := m.win.ActiveTab()
-	if activeTab == nil {
-		return nil
-	}
-
-	rawContentLines := m.getWindowContentLines(activeTab.Title)
-
-	verticalLines := m.win.RenderVerticalSidebar(rawContentLines)
-	if verticalLines != nil {
-		asyncItems := m.getAsyncItemsForVertical()
-		if len(asyncItems) > 0 {
-			verticalLines = append(verticalLines, asyncItems...)
-		}
-		return verticalLines
-	}
-
-	return rawContentLines
-}
-
-func (m *App) getAsyncItemsForVertical() []string {
-	asyncBarLines := m.statusbar.RenderAsyncBar()
-	if len(asyncBarLines) == 0 {
-		return nil
-	}
-
-	visibleCmds := m.statusbar.VisibleAsyncCommands()
-
-	var lines []string
-	for i, c := range visibleCmds {
-		if i >= len(asyncBarLines) {
-			break
-		}
-		row := m.win.RenderVerticalAsyncRow(window.AsyncItem{
-			Handle:   c.Handle,
-			Command:  c.Command,
-			Duration: c.Duration.Truncate(time.Second).String(),
-			Status: func() string {
-				switch c.Status {
-				case fileio.AsyncRunning:
-					return "running"
-				case fileio.AsyncCompleted:
-					return "completed"
-				case fileio.AsyncFailed:
-					return "failed"
-				case fileio.AsyncKilled:
-					return "killed"
-				default:
-					return "unknown"
-				}
-			}(),
-		}, m.spinFrame)
-
-		lines = append(lines, row)
-	}
-	return lines
-}
-
-func (m *App) getWindowContentLines(tabTitle string) []string {
+func (m *App) getOverlayContentLines(tabTitle string) []string {
 	var rawLines []string
 
 	contentW := m.width - 2*m.theme.Spacing.PadLR
 	if contentW < 20 {
 		contentW = 20
-	}
-	if m.win.Layout() == window.TabVertical {
-		contentW = m.win.VerticalContentWidth()
 	}
 
 	switch {
@@ -496,11 +412,6 @@ func (m *App) getWindowContentLines(tabTitle string) []string {
 		for _, yl := range strings.Split(yoloView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(yl, contentW))
 		}
-	case m.isAgentTabTitle(tabTitle):
-		agentLines := m.renderAgentTabContent(tabTitle, contentW)
-		for _, al := range agentLines {
-			rawLines = append(rawLines, rendering.TruncateLine(al, contentW))
-		}
 	case m.isQuestionTabTitle(tabTitle):
 		questionView := m.questionForm.View(m.spinFrame, contentW)
 		for _, ql := range strings.Split(questionView, "\n") {
@@ -508,18 +419,7 @@ func (m *App) getWindowContentLines(tabTitle string) []string {
 		}
 	}
 
-	stripLeadingTrailingEmpty := func(ss []string) []string {
-		start := 0
-		for start < len(ss) && ss[start] == "" {
-			start++
-		}
-		end := len(ss)
-		for end > start && ss[end-1] == "" {
-			end--
-		}
-		return ss[start:end]
-	}
-	return stripLeadingTrailingEmpty(rawLines)
+	return rawLines
 }
 
 func (m *App) syncFormHint() {
@@ -527,11 +427,11 @@ func (m *App) syncFormHint() {
 		m.formHint = "[ tab bar focused · ← →: navigate · enter: select · esc: unfocus ]"
 		return
 	}
-	if !m.win.IsOpen() {
+	if !m.overlay.IsOpen() {
 		m.formHint = ""
 		return
 	}
-	activeTab := m.win.ActiveTab()
+	activeTab := m.overlay.ActiveTab()
 	if activeTab == nil {
 		m.formHint = ""
 		return
@@ -545,14 +445,10 @@ func (m *App) syncFormHint() {
 		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
 	case activeTab.Title == "Question":
 		m.formHint = m.questionForm.Hint()
-	case m.isAgentTabTitle(activeTab.Title):
-		m.formHint = ""
+	case m.isQuestionTabTitle(activeTab.Title):
+		m.formHint = m.questionForm.Hint()
 	default:
-		if m.isQuestionTabTitle(activeTab.Title) {
-			m.formHint = m.questionForm.Hint()
-		} else {
-			m.formHint = ""
-		}
+		m.formHint = ""
 	}
 }
 
@@ -717,66 +613,4 @@ func (m *App) launcherSelectedLineIndex(sessionLines []string) int {
 	return 0
 }
 
-func (m *App) renderAgentTabContent(tabTitle string, contentW int) []string {
-	agentID := m.agentIDFromTabTitle(tabTitle)
-	if agentID == "" {
-		return nil
-	}
 
-	var lines []string
-
-	if agentID == MainAgentID {
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Bold(true).Render("Main Agent"))
-		lines = append(lines, "")
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Muted).Render("Primary orchestrator · full tool access"))
-		return lines
-	}
-
-	label := agentID
-	if lbl, ok := m.agentLabels[agentID]; ok && lbl != "" {
-		label = lbl
-	}
-
-	status := "running"
-	if st, ok := m.agentStatuses[agentID]; ok && st != "" {
-		status = st
-	}
-
-	agent, hasAgent := m.agents[agentID]
-	category := ""
-	sp := m.paneMgr.Get(agentID)
-	if sp != nil {
-		category = string(sp.Type)
-	}
-
-	statusStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
-	switch {
-	case status == "completed":
-		statusStyle = lipgloss.NewStyle().Foreground(m.theme.Colors.Success)
-	case len(status) > 6 && status[:6] == "failed":
-		statusStyle = lipgloss.NewStyle().Foreground(m.theme.Colors.Error)
-	case status == "cancelled":
-		statusStyle = lipgloss.NewStyle().Foreground(m.theme.Colors.Warning)
-	}
-
-	lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Bold(true).Render(label))
-	lines = append(lines, "")
-
-	if category != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Muted).Render("Category: "+category))
-	}
-	lines = append(lines, "Status: "+statusStyle.Render(status))
-
-	if sp != nil {
-		elapsed := sp.Elapsed()
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Muted).Render(fmt.Sprintf("Elapsed: %.0fs", elapsed.Seconds())))
-	}
-
-	if hasAgent && agent.Streaming {
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("● Streaming..."))
-	} else if hasAgent && agent.Thinking {
-		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("● Thinking..."))
-	}
-
-	return lines
-}
