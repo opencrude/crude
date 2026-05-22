@@ -193,6 +193,9 @@ func (m *App) View() string {
 		}
 	}
 
+	// Pre-compute the ANSI escape sequence for subpane background color.
+	// This is used to wrap the bgPart of pane lines so background spans
+	// edge-to-edge within the content area (but NOT the outer pad margins).
 	subPaneBgSeq := ""
 	{
 		s := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Render(" ")
@@ -211,6 +214,9 @@ func (m *App) View() string {
 			maxContentW = 10
 		}
 
+		// isPaneLine: this line belongs to a subpane (header or content).
+		// hasBg: only PaneAgent subpanes get background color; PaneThinking
+		// subpanes and non-pane lines get no background.
 		isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
 		hasBg := false
 		if isPaneLine {
@@ -218,6 +224,10 @@ func (m *App) View() string {
 			hasBg = sp != nil && sp.Type == PaneAgent
 		}
 
+		// IMPORTANT: We use runewidth.StringWidth(StripAnsi(s)) instead of
+		// lipgloss.Width(s). lipgloss.Width undercounts wide Unicode chars
+		// like │ and ● by 1 cell each, which caused padRight to be too large
+		// and lines to overflow the terminal width.
 		var trimmed string
 		var visW int
 		if hasBg {
@@ -277,9 +287,12 @@ func (m *App) View() string {
 				padRight = 0
 			}
 
+			// Background color split: bgPart gets background, noBgPart doesn't.
+			// This makes the background stop one column before the main
+			// scrollbar, giving a clean professional look.
 			var bgPart, noBgPart string
 			if nestingLevel > 0 {
-				// bg covers content + padding + gap + pane scrollbar
+				// bg covers: content + padRight + gap + pane scrollbar
 				// no-bg: gap + main scrollbar
 				bgPart = line + strings.Repeat(" ", padRight) + " " + paneSBLine
 				noBgPart = " " + mainSBLine

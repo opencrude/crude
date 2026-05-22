@@ -1008,12 +1008,18 @@ func (ml *MessageList) buildPaneLineMap(visible []string) {
 			continue
 		}
 
-		if localLine >= 1 {
-			ml.paneLineMap[i] = PaneLineInfo{
-				PaneID:  msg.SubPaneID,
-				LineIdx: localLine - 2,
-			}
+	// localLine 0 is the leading spacer (from renderItem) — skip it so it
+	// doesn't get background color. localLine 1 is the subpane header, which
+	// should get background (hasBg check in view.go). LineIdx maps content
+	// lines to their scrollbar position: localLine 2 = content line 0, etc.
+	// LineIdx can be -1 for the header line, which view.go handles by
+	// rendering a blank scrollbar track character.
+	if localLine >= 1 {
+		ml.paneLineMap[i] = PaneLineInfo{
+			PaneID:  msg.SubPaneID,
+			LineIdx: localLine - 2,
 		}
+	}
 	}
 }
 
@@ -1077,14 +1083,23 @@ func (ml *MessageList) renderItem(idx int, item *virtlist.Item, width int) []str
 		if maxH < 5 {
 			maxH = 5
 		}
-		paneWidth := width - 2*scrollbar.ScrollbarWidth - 2
-		if paneWidth < 10 {
-			paneWidth = 10
-		}
-		paneLines := ml.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, ml.spinFrame)
-		result := make([]string, 0, len(paneLines)+1)
-		result = append(result, "")
-		result = append(result, paneLines...)
+	// Subpane rendering: compute content-only width by subtracting scrollbar
+	// columns and gaps that view.go will add during composition. The sbColumn
+	// in view.go is always [paneSB] + " " + [mainSB] = 2*scrollbarWidth + 1
+	// wide when nesting>0, plus 1 gap before sbColumn = 2*scrollbarWidth + 2
+	// total reserved space. We use `width` (not ml.width) because ml.width
+	// can be stale between renders.
+	paneWidth := width - 2*scrollbar.ScrollbarWidth - 2
+	if paneWidth < 10 {
+		paneWidth = 10
+	}
+	paneLines := ml.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, ml.spinFrame)
+	// Prepend empty spacer line for visual separation from the previous
+	// chat message. This spacer (localLine 0) is skipped by buildPaneLineMap
+	// (which requires localLine >= 1) so it does NOT get background color.
+	result := make([]string, 0, len(paneLines)+1)
+	result = append(result, "")
+	result = append(result, paneLines...)
 		return result
 	}
 
