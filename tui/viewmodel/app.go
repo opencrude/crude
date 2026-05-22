@@ -61,6 +61,7 @@ type App struct {
 	activeAgentView string
 	agentLabels     map[string]string
 	agentStatuses   map[string]string
+	agentModels     map[string]string
 
 	inputCh  chan<- string
 	btwCh    chan<- string
@@ -166,6 +167,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		yoloDlg:      yd,
 		agentLabels:  make(map[string]string),
 		agentStatuses: make(map[string]string),
+		agentModels:  make(map[string]string),
 		inputCh:      inputCh,
 		btwCh:        btwCh,
 		cancelCh:    cancelCh,
@@ -238,6 +240,7 @@ func (m *App) completeSubAgent(agentID string) {
 	// Clean up bookkeeping maps.
 	delete(m.agentLabels, agentID)
 	delete(m.agentStatuses, agentID)
+	delete(m.agentModels, agentID)
 	m.statusbar.ClearAgentState(agentID)
 
 	// Sync mode — if no closable tabs remain, go to chat.

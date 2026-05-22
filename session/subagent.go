@@ -403,6 +403,8 @@ func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.Su
 		resolvedThinkingEffort = mainCat.ThinkingEffort
 	}
 
+	o.session.logger.Info("SUBAGENT", "launch", "agent_id", spec.ID, "category", spec.Category, "provider", resolvedProvider, "model", resolvedModelName)
+
 	p := provider.FromPreset(resolvedProvider, resolvedAPIKey, resolvedURL)
 	p.Model = resolvedModelName
 	if resolvedThinkingEffort != "" {
@@ -486,6 +488,8 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 			"agent_id":   string(handle.Spec.ID),
 			"agent_name": handle.Spec.Name,
 			"category":   handle.Spec.Category,
+			"model":      handle.Spec.Model,
+			"provider":   handle.Spec.Provider,
 			"task":       handle.Spec.Description,
 		}, string(handle.Spec.ID))
 	}
@@ -734,7 +738,12 @@ func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, block
 		}
 
 		if parentFn != nil {
-			return parentFn(ctx, tool, params)
+			p := params
+			if p == nil {
+				p = make(map[string]any)
+			}
+			p["_subagent"] = true
+			return parentFn(ctx, tool, p)
 		}
 		result := tools.ExecuteWithJSON(tool, params, o.session.exec, o.session.editor, o.session.yolo, o.session.logger, ctx)
 		if agent.IsToolError(result.Content) {

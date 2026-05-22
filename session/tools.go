@@ -27,6 +27,11 @@ func isFreeTool(name string) bool {
 	return false
 }
 
+func isSubAgentRequest(params map[string]any) bool {
+	_, ok := params["_subagent"]
+	return ok
+}
+
 func delegateSuggestion(tool string, params map[string]any) string {
 	var suggestions []string
 	switch tool {
@@ -66,7 +71,7 @@ func (s *Session) newAgent() *agent.Agent {
 	a.AsyncMgr = s.asyncMgr
 
 	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
-		if !isFreeTool(tool) && s.toolCallBudget > 0 {
+		if !isFreeTool(tool) && s.toolCallBudget > 0 && !isSubAgentRequest(params) {
 			s.toolCallCountMu.Lock()
 			s.toolCallCount++
 			count := s.toolCallCount
