@@ -94,34 +94,15 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		m.logger.Debug("UI", "mouse", "type", fmt.Sprintf("%d", msg.Type), "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 
-		if m.win.IsOpen() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			hit := window.TabHitResult{TabIndex: -1}
-
-			if m.win.Layout() == window.TabVertical {
-				windowStartLine := m.chatAreaHeight + 3
-				windowEndLine := windowStartLine + len(m.renderWindowContent())
-				if msg.Y >= windowStartLine && msg.Y < windowEndLine {
-					adjustedX := msg.X - m.theme.Spacing.PadLR
-					adjustedY := msg.Y - windowStartLine
-					if adjustedX < 0 {
-						adjustedX = 0
-					}
-					if adjustedY < 0 {
-						adjustedY = 0
-					}
-					hit = m.win.HitTest(adjustedX, adjustedY)
-				}
-			} else if m.win.TabCount() >= 2 && msg.Y == 3 {
-				adjustedX := msg.X - m.theme.Spacing.PadLR
-				if adjustedX < 0 {
-					adjustedX = 0
-				}
-				hit = m.win.HitTest(adjustedX, 0)
+		if m.win.IsOpen() && m.win.TabCount() >= 2 && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && msg.Y == 3 {
+			adjustedX := msg.X - m.theme.Spacing.PadLR
+			if adjustedX < 0 {
+				adjustedX = 0
 			}
-
+			hit := m.win.HitTest(adjustedX, 0)
 			if hit.TabIndex >= 0 {
 				if hit.IsClose {
-					cmds = append(cmds, m.handleWindowTabClose(hit.TabIndex))
+					cmds = append(cmds, m.handleAgentTabClose(hit.TabIndex))
 					return m, tea.Batch(cmds...)
 				}
 				m.win.SwitchTo(hit.TabIndex)
@@ -130,12 +111,39 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if m.overlay.IsOpen() && m.overlay.TabCount() >= 1 && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			overlayStartLine := m.chatAreaHeight + 3
+			if m.win.IsOpen() && m.win.TabCount() >= 2 {
+				overlayStartLine += 2
+			}
+			if msg.Y == overlayStartLine+1 {
+				adjustedX := msg.X - m.theme.Spacing.PadLR
+				if adjustedX < 0 {
+					adjustedX = 0
+				}
+				hit := m.overlay.HitTest(adjustedX, 0)
+				if hit.TabIndex >= 0 {
+					if hit.IsClose {
+						cmds = append(cmds, m.handleOverlayTabClose(hit.TabIndex))
+						return m, tea.Batch(cmds...)
+					}
+					m.overlay.SwitchTo(hit.TabIndex)
+					m.syncOverlayMode()
+					return m, nil
+				}
+			}
+		}
+
 		if m.Mode == ModeChat {
 			tabBarExtra := 0
 			if m.win.IsOpen() && m.win.TabCount() >= 2 {
 				tabBarExtra = 2
 			}
-			inputStartLine := m.chatAreaHeight + 4 + tabBarExtra
+			overlayExtra := 0
+			if m.overlay.IsOpen() {
+				overlayExtra = len(m.renderOverlayArea())
+			}
+			inputStartLine := m.chatAreaHeight + 4 + tabBarExtra + overlayExtra
 			activeML := m.activeMessageList()
 			msgListCapturing := activeML.IsSelecting() || activeML.IsScrollbarDragging()
 			if m.input.InputSelecting() || (msg.Y >= inputStartLine && !msgListCapturing) {
@@ -240,32 +248,28 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.modelName = s.Model
 			m.lastSettings = s
-			if tab := m.win.TabByTitle("Settings"); tab != nil {
-				m.win.CloseTabByID(tab.ID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
-			} else {
-				m.syncActiveTabMode()
-			}
-			m.mainMsgList.InvalidateCache()
+			m.closeOverlayTab("Settings")
 		}
 	case settings.CancelEvent:
 		m.logger.Info("CONFIG", "settings_cancel")
 		m.settings.RestoreSnapshot()
-		if tab := m.win.TabByTitle("Settings"); tab != nil {
-			m.win.CloseTabByID(tab.ID)
-		}
-		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-			m.setMode(ModeChat)
-		} else {
-			m.syncActiveTabMode()
-		}
-		m.mainMsgList.InvalidateCache()
+		m.closeOverlayTab("Settings")
 	}
 
 	case ModeConfirm:
 		m.statusbar.SetConfirming(true)
+		if keyMsg, ok := msg.(tea.KeyMsg); ok && m.overlay.TabCount() >= 2 {
+			switch keyMsg.String() {
+			case "ctrl+]":
+				m.overlay.Next()
+				m.syncOverlayMode()
+				return m, nil
+			case "ctrl+[":
+				m.overlay.Prev()
+				m.syncOverlayMode()
+				return m, nil
+			}
+		}
 		updated, result, done := m.confirm.Update(msg)
 		m.confirm = updated
 		if done {
@@ -287,18 +291,33 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ma.pendingPermTag = "denied"
 				m.mainMsgList.SetToolPermTag(result.Tool, "", "denied")
 			}
-			if tab := m.win.TabByTitle("Confirm"); tab != nil {
-				m.win.CloseTabByID(tab.ID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
-			} else {
-				m.syncActiveTabMode()
-			}
+			m.closeOverlayTab("Confirm")
 		}
 
 	case ModeQuestion:
 		m.statusbar.SetConfirming(true)
+		if keyMsg, ok := msg.(tea.KeyMsg); ok && m.overlay.TabCount() >= 2 {
+			switch keyMsg.String() {
+			case "ctrl+]":
+				m.overlay.Next()
+				m.syncOverlayMode()
+				if m.questionForm.Focused() != m.questionTabIndexFromOverlay() {
+					if idx := m.questionTabIndexFromOverlay(); idx >= 0 {
+						m.questionForm.SetFocused(idx)
+					}
+				}
+				m.syncQuestionInputPrompt()
+				return m, nil
+			case "ctrl+[":
+				m.overlay.Prev()
+				m.syncOverlayMode()
+				if idx := m.questionTabIndexFromOverlay(); idx >= 0 {
+					m.questionForm.SetFocused(idx)
+				}
+				m.syncQuestionInputPrompt()
+				return m, nil
+			}
+		}
 		keyMsg, isKey := msg.(tea.KeyMsg)
 		inTextMode := m.questionForm.IsTextQuestion(m.questionForm.Focused())
 
@@ -326,7 +345,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.OnQuestionResult != nil {
 						m.OnQuestionResult(ttypes.QuestionResult(result))
 					}
-					m.closeAllQuestionTabs()
+					m.closeAllQuestionOverlayTabs()
 					m.input.ResetPrompt()
 					m.input.ClearInput()
 				}
@@ -359,7 +378,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							if m.OnQuestionResult != nil {
 								m.OnQuestionResult(ttypes.QuestionResult(result))
 							}
-							m.closeAllQuestionTabs()
+							m.closeAllQuestionOverlayTabs()
 							m.input.ResetPrompt()
 						} else {
 							m.questionForm.FocusNext()
@@ -377,7 +396,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusbar.SetConfirming(false)
 				m.input.ResetPrompt()
 				m.input.ClearInput()
-				m.closeAllQuestionTabs()
+				m.closeAllQuestionOverlayTabs()
 				if m.OnQuestionResult != nil {
 					m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
 				}
@@ -402,7 +421,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.OnQuestionResult != nil {
 						m.OnQuestionResult(ttypes.QuestionResult(result))
 					}
-					m.closeAllQuestionTabs()
+					m.closeAllQuestionOverlayTabs()
 					m.input.ResetPrompt()
 					m.input.ClearInput()
 				} else {
@@ -413,6 +432,18 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ModeYolo:
 		m.statusbar.SetConfirming(true)
+		if keyMsg, ok := msg.(tea.KeyMsg); ok && m.overlay.TabCount() >= 2 {
+			switch keyMsg.String() {
+			case "ctrl+]":
+				m.overlay.Next()
+				m.syncOverlayMode()
+				return m, nil
+			case "ctrl+[":
+				m.overlay.Prev()
+				m.syncOverlayMode()
+				return m, nil
+			}
+		}
 		updated, enabled, done := m.yoloDlg.Update(msg)
 		m.yoloDlg = updated
 		if done {
@@ -434,14 +465,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.OnYoloCmd != nil {
 				m.OnYoloCmd(enabled)
 			}
-			if tab := m.win.TabByTitle("YOLO"); tab != nil {
-				m.win.CloseTabByID(tab.ID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
-			} else {
-				m.syncActiveTabMode()
-			}
+			m.closeOverlayTab("YOLO")
 		}
 
 		case ModeChat:
@@ -562,15 +586,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logger.Info("CONFIG", "saved")
 			m.modelName = msg.Settings.Model
 			m.lastSettings = msg.Settings
-			if tab := m.win.TabByTitle("Settings"); tab != nil {
-				m.win.CloseTabByID(tab.ID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
-			} else {
-				m.syncActiveTabMode()
-			}
-			m.mainMsgList.InvalidateCache()
+			m.closeOverlayTab("Settings")
 			m.statusbar.SetInfo("settings saved")
 		}
 	case rendering.ClipboardCopiedMsg:
@@ -641,7 +657,7 @@ func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
 	return true, cmd
 }
 
-func (m *App) handleWindowTabClose(index int) tea.Cmd {
+func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	if index < 0 || index >= m.win.TabCount() {
 		return nil
 	}
@@ -650,26 +666,43 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 		return nil
 	}
 
+	if m.isAgentTabTitle(tab.Title) {
+		agentID := m.agentIDFromTabTitle(tab.Title)
+		m.completeSubAgent(agentID)
+		if agentID != MainAgentID && agentID != "" {
+			if m.OnCancelSubAgent != nil {
+				cancelFn := m.OnCancelSubAgent
+				go cancelFn(agentID)
+			}
+		}
+		return nil
+	}
+
+	m.win.CloseTab(index)
+	return nil
+}
+
+func (m *App) handleOverlayTabClose(index int) tea.Cmd {
+	if index < 0 || index >= m.overlay.TabCount() {
+		return nil
+	}
+	tab := m.overlay.Tabs()[index]
+	if !tab.Closable {
+		return nil
+	}
+
 	switch tab.Title {
 	case "Settings":
 		m.settings.RestoreSnapshot()
-		m.win.CloseTab(index)
-		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-			m.setMode(ModeChat)
-		} else {
-			m.syncActiveTabMode()
-		}
+		m.overlay.CloseTab(index)
+		m.syncOverlayMode()
 		m.mainMsgList.InvalidateCache()
 	case "Confirm":
 		m.confirm.Dismiss()
 		m.blocking = false
 		m.statusbar.SetConfirming(false)
-		m.win.CloseTab(index)
-		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-			m.setMode(ModeChat)
-		} else {
-			m.syncActiveTabMode()
-		}
+		m.overlay.CloseTab(index)
+		m.syncOverlayMode()
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
@@ -679,99 +712,37 @@ func (m *App) handleWindowTabClose(index int) tea.Cmd {
 		m.statusbar.SetConfirming(false)
 		m.input.ResetPrompt()
 		m.input.ClearInput()
-		m.win.CloseTab(index)
-		m.closeAllQuestionTabs()
+		m.overlay.CloseTab(index)
+		m.purgeQuestionOverlayTabs()
+		m.syncOverlayMode()
 		if m.OnQuestionResult != nil {
 			m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
 		}
 	case "YOLO":
 		m.yoloDlg.Dismiss()
 		m.statusbar.SetConfirming(false)
-		m.win.CloseTab(index)
-		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-			m.setMode(ModeChat)
-		} else {
-			m.syncActiveTabMode()
-		}
+		m.overlay.CloseTab(index)
+		m.syncOverlayMode()
 	default:
-		if m.isAgentTabTitle(tab.Title) {
-			agentID := m.agentIDFromTabTitle(tab.Title)
-			m.completeSubAgent(agentID)
-			if agentID != MainAgentID && agentID != "" {
-				if m.OnCancelSubAgent != nil {
-					cancelFn := m.OnCancelSubAgent
-					go cancelFn(agentID)
-				}
-			}
-			return nil
-		}
 		if m.isQuestionTabTitle(tab.Title) {
 			m.questionForm.Dismiss()
 			m.blocking = false
 			m.statusbar.SetConfirming(false)
 			m.input.ResetPrompt()
 			m.input.ClearInput()
-			m.win.CloseTab(index)
-			m.closeAllQuestionTabs()
+			m.overlay.CloseTab(index)
+			m.purgeQuestionOverlayTabs()
+			m.syncOverlayMode()
 			if m.OnQuestionResult != nil {
 				m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
 			}
 			return nil
 		}
-		m.win.CloseTab(index)
-		if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-			m.setMode(ModeChat)
-		} else {
-			m.syncActiveTabMode()
-		}
+		m.overlay.CloseTab(index)
+		m.syncOverlayMode()
 	}
 
 	return nil
-}
-
-func (m *App) syncActiveTabMode() {
-	activeTab := m.win.ActiveTab()
-	if activeTab == nil {
-		m.Mode = ModeChat
-		m.formHint = ""
-		m.input.ResetPrompt()
-		return
-	}
-	switch {
-	case m.isAgentTabTitle(activeTab.Title):
-		m.Mode = ModeChat
-		agentID := m.agentIDFromTabTitle(activeTab.Title)
-		status := ""
-		if agentID != MainAgentID && agentID != "" {
-			if st, ok := m.agentStatuses[agentID]; ok {
-				status = st
-			}
-		}
-		if status == "running" {
-			m.formHint = "[ ctrl+]/[: switch agents · viewing sub-agent ]"
-		} else {
-			m.formHint = "[ ctrl+]/[: switch agents · click × to close ]"
-		}
-	case activeTab.Title == "Settings":
-		m.Mode = ModeSettings
-	case activeTab.Title == "Confirm":
-		m.Mode = ModeConfirm
-	case activeTab.Title == "Question":
-		m.Mode = ModeQuestion
-	case activeTab.Title == "YOLO":
-		m.Mode = ModeYolo
-	default:
-		if m.isQuestionTabTitle(activeTab.Title) {
-			m.Mode = ModeQuestion
-			idx := m.questionTabIndex(activeTab.Title)
-			if idx >= 0 {
-				m.questionForm.SetFocused(idx)
-				m.syncQuestionInputPrompt()
-			}
-		} else {
-			m.Mode = ModeChat
-		}
-	}
 }
 
 func (m *App) isQuestionTabTitle(title string) bool {
@@ -797,28 +768,21 @@ func (m *App) questionTabIndex(title string) int {
 	return -1
 }
 
-func (m *App) closeAllQuestionTabs() {
-	m.purgeQuestionTabs()
-	if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-		m.setMode(ModeChat)
-	} else {
-		m.syncActiveTabMode()
-	}
+func (m *App) closeAllQuestionOverlayTabs() {
+	m.purgeQuestionOverlayTabs()
+	m.syncOverlayMode()
 }
 
-// purgeQuestionTabs closes all question-related tabs without changing mode
-// or input state. Use this when you need to clean up stale tabs before
-// creating a fresh set.
-func (m *App) purgeQuestionTabs() {
+func (m *App) purgeQuestionOverlayTabs() {
 	for {
 		removed := false
-		for i := m.win.TabCount() - 1; i >= 0; i-- {
-			tabs := m.win.Tabs()
+		for i := m.overlay.TabCount() - 1; i >= 0; i-- {
+			tabs := m.overlay.Tabs()
 			if i >= len(tabs) {
 				continue
 			}
 			if tabs[i].Title == "Question" || m.isQuestionTabTitle(tabs[i].Title) {
-				if m.win.CloseTab(i) != window.CloseNone {
+				if m.overlay.CloseTab(i) != window.CloseNone {
 					removed = true
 				}
 				break
@@ -828,6 +792,14 @@ func (m *App) purgeQuestionTabs() {
 			break
 		}
 	}
+}
+
+func (m *App) closeOverlayTab(title string) {
+	if tab := m.overlay.TabByTitle(title); tab != nil {
+		m.overlay.CloseTabByID(tab.ID)
+	}
+	m.syncOverlayMode()
+	m.mainMsgList.InvalidateCache()
 }
 
 func (m *App) syncQuestionInputPrompt() {
@@ -861,30 +833,44 @@ func (m *App) syncQuestionInputPrompt() {
 
 func (m *App) syncQuestionTabIcons() {
 	if m.questionForm.Count() <= 1 {
-		if tab := m.win.TabByTitle("Question"); tab != nil {
-			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.questionForm.TabIcon(0))
+		if tab := m.overlay.TabByTitle("Question"); tab != nil {
+			m.overlay.SetTabIconByIndex(m.overlay.IndexOf(tab.ID), m.questionForm.TabIcon(0))
 		}
 		return
 	}
 	for i := range m.questionForm.Items() {
 		title := m.questionForm.TabTitle(i)
-		if tab := m.win.TabByTitle(title); tab != nil {
-			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.questionForm.TabIcon(i))
+		if tab := m.overlay.TabByTitle(title); tab != nil {
+			m.overlay.SetTabIconByIndex(m.overlay.IndexOf(tab.ID), m.questionForm.TabIcon(i))
 		}
 	}
 }
 
 func (m *App) switchToQuestionTab(questionIdx int) {
 	if m.questionForm.Count() <= 1 {
-		if tab := m.win.TabByTitle("Question"); tab != nil {
-			m.win.SwitchTo(m.win.IndexOf(tab.ID))
+		if tab := m.overlay.TabByTitle("Question"); tab != nil {
+			m.overlay.SwitchTo(m.overlay.IndexOf(tab.ID))
 		}
 		return
 	}
 	title := m.questionForm.TabTitle(questionIdx)
-	if tab := m.win.TabByTitle(title); tab != nil {
-		m.win.SwitchTo(m.win.IndexOf(tab.ID))
+	if tab := m.overlay.TabByTitle(title); tab != nil {
+		m.overlay.SwitchTo(m.overlay.IndexOf(tab.ID))
 	}
+}
+
+func (m *App) questionTabIndexFromOverlay() int {
+	if !m.overlay.IsOpen() {
+		return 0
+	}
+	activeTab := m.overlay.ActiveTab()
+	if activeTab == nil {
+		return 0
+	}
+	if activeTab.Title == "Question" {
+		return 0
+	}
+	return m.questionTabIndex(activeTab.Title)
 }
 
 // handleTabSwitch is called after the window switches tabs.
@@ -892,7 +878,6 @@ func (m *App) switchToQuestionTab(questionIdx int) {
 func (m *App) handleTabSwitch() {
 	activeTab := m.win.ActiveTab()
 	if activeTab == nil {
-		m.syncActiveTabMode()
 		return
 	}
 	if m.isAgentTabTitle(activeTab.Title) {
@@ -910,7 +895,6 @@ func (m *App) handleTabSwitch() {
 			}
 		}
 	}
-	m.syncActiveTabMode()
 }
 
 func tickCmd() tea.Cmd {

@@ -14,38 +14,14 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 
 	if m.Mode == ModeSettings {
 		m.settings.RestoreSnapshot()
-		if m.win.IsOpen() {
-			tab := m.win.TabByTitle("Settings")
-			if tab != nil {
-				m.win.CloseTabByID(tab.ID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
-			} else {
-				m.syncActiveTabMode()
-			}
-		} else {
-			m.setMode(ModeChat)
-		}
+		m.closeOverlayTab("Settings")
 		return nil
 	}
 
 	if m.Mode == ModeYolo {
 		m.yoloDlg.Dismiss()
 		m.statusbar.SetConfirming(false)
-		if m.win.IsOpen() {
-			tab := m.win.TabByTitle("YOLO")
-			if tab != nil {
-				m.win.CloseTabByID(tab.ID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
-			} else {
-				m.syncActiveTabMode()
-			}
-		} else {
-			m.setMode(ModeChat)
-		}
+		m.closeOverlayTab("YOLO")
 		return nil
 	}
 
@@ -53,19 +29,7 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		m.confirm.Dismiss()
 		m.blocking = false
 		m.statusbar.SetConfirming(false)
-		if m.win.IsOpen() {
-			tab := m.win.TabByTitle("Confirm")
-			if tab != nil {
-				m.win.CloseTabByID(tab.ID)
-			}
-			if !m.win.IsOpen() || !m.win.HasClosableTabs() {
-				m.setMode(ModeChat)
-			} else {
-				m.syncActiveTabMode()
-			}
-		} else {
-			m.setMode(ModeChat)
-		}
+		m.closeOverlayTab("Confirm")
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
@@ -83,7 +47,7 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		m.statusbar.SetConfirming(false)
 		m.input.ResetPrompt()
 		m.input.ClearInput()
-		m.closeAllQuestionTabs()
+		m.closeAllQuestionOverlayTabs()
 		if m.OnQuestionResult != nil {
 			m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
 		}
