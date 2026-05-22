@@ -28,7 +28,7 @@ func RenderHeader(th *theme.Theme, modelName string, yolo bool, startTime time.T
 		rightStr = dim.Render(uptime.String())
 	}
 	innerW := width - th.Spacing.PadLR*2
-	spacer := innerW - lipgloss.Width(left) - lipgloss.Width(rightStr)
+	spacer := innerW - rendering.VisibleWidth(left) - rendering.VisibleWidth(rightStr)
 	if spacer < 0 {
 		spacer = 0
 	}

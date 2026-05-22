@@ -305,7 +305,7 @@ func (m *App) View() string {
 
 	if overlayLineCount > 0 {
 		for _, ol := range overlayLines {
-			visW := lipgloss.Width(ol)
+			visW := rendering.VisibleWidth(ol)
 			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
 			if rightPad < 0 {
 				rightPad = 0
@@ -521,7 +521,7 @@ func (m *App) renderLauncherView() string {
 	}
 
 	for _, line := range visibleLines {
-		visW := lipgloss.Width(line)
+		visW := rendering.VisibleWidth(line)
 		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
 		if rightPad < 0 {
 			rightPad = 0
@@ -545,7 +545,7 @@ func (m *App) renderLauncherView() string {
 		previewText = previewLines[0]
 	}
 	hintsLine := widgets.RenderLauncherPreviewHints(previewText, m.launcher.filterActive, m.launcher.filterText, m.theme, m.width)
-	visW := lipgloss.Width(hintsLine)
+	visW := rendering.VisibleWidth(hintsLine)
 	rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
 	if rightPad < 0 {
 		rightPad = 0

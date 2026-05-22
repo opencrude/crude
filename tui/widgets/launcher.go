@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"crude/sessiondb"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 
 	"github.com/charmbracelet/lipgloss"
@@ -154,15 +155,15 @@ func RenderLauncherPreviewHints(preview string, filterActive bool, filterText st
 		hints = th.Styles.DimLabel.Render("↑↓: navigate · enter: select · /: filter · d: delete · q: quit")
 	}
 
-	previewW := lipgloss.Width(previewRendered)
-	dotW := lipgloss.Width(th.Styles.DimLabel.Render(" · "))
-	bracketW := lipgloss.Width(th.Styles.DimLabel.Render("[ ") + th.Styles.DimLabel.Render(" ]"))
+	previewW := rendering.VisibleWidth(previewRendered)
+	dotW := rendering.VisibleWidth(th.Styles.DimLabel.Render(" · "))
+	bracketW := rendering.VisibleWidth(th.Styles.DimLabel.Render("[ ") + th.Styles.DimLabel.Render(" ]"))
 	availForHints := innerW - bracketW - dotW - previewW
 	hintsRendered := hints
 
-	if lipgloss.Width(hintsRendered) > availForHints && availForHints > 0 {
+	if rendering.VisibleWidth(hintsRendered) > availForHints && availForHints > 0 {
 		hintsRendered = hints
-		for lipgloss.Width(hintsRendered) > availForHints {
+		for rendering.VisibleWidth(hintsRendered) > availForHints {
 			hintsRendered = hintsRendered[:len(hintsRendered)-1]
 		}
 	}
@@ -179,7 +180,7 @@ func RenderLauncherPreview(previewLines []string, th *theme.Theme, width int) []
 
 	var result []string
 	for _, line := range previewLines {
-		if lipgloss.Width(line) > innerW {
+		if rendering.VisibleWidth(line) > innerW {
 			line = line[:innerW-1] + "…"
 		}
 		result = append(result, th.Styles.DimLabel.Render(line))
@@ -214,8 +215,8 @@ func RenderNewSessionEntry(selected bool, th *theme.Theme, width int, spinFrame 
 
 	topLine := titleStyle.Render(title)
 
-	taglineW := lipgloss.Width(dim.Render(tagline))
-	hintW := lipgloss.Width(dim.Render(hint))
+	taglineW := rendering.VisibleWidth(dim.Render(tagline))
+	hintW := rendering.VisibleWidth(dim.Render(hint))
 	spacerW := innerW - taglineW - hintW
 	if spacerW < 1 {
 		spacerW = 1
@@ -291,7 +292,7 @@ func hexByte(s string) uint8 {
 
 func renderLauncherDateSep(label string, width int, th *theme.Theme) string {
 	content := " " + label + " "
-	contentWidth := lipgloss.Width(content)
+	contentWidth := rendering.VisibleWidth(content)
 	remaining := width - contentWidth
 	if remaining < 0 {
 		remaining = 0
@@ -324,7 +325,7 @@ func renderLauncherSessionLine(s sessiondb.SessionMeta, selected bool, width int
 	turnStr := FormatTurnCount(s.TurnCount)
 	modelStr := s.Model
 
-	cursorWidth := lipgloss.Width(cursor)
+	cursorWidth := rendering.VisibleWidth(cursor)
 	projectWidth := 14
 	turnColWidth := 10 // e.g. "12 turns "
 	dotWidth := 3     // " · "
@@ -333,13 +334,13 @@ func renderLauncherSessionLine(s sessiondb.SessionMeta, selected bool, width int
 
 	// Right-pad turn count to fixed width so the "·" aligns
 	paddedTurn := turnStr
-	for lipgloss.Width(paddedTurn) < turnColWidth {
+	for rendering.VisibleWidth(paddedTurn) < turnColWidth {
 		paddedTurn += " "
 	}
 
 	// Right-align model name (left-pad) so right edge aligns across rows
 	paddedModel := modelStr
-	for lipgloss.Width(paddedModel) < modelColWidth {
+	for rendering.VisibleWidth(paddedModel) < modelColWidth {
 		paddedModel = " " + paddedModel
 	}
 

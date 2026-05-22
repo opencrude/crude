@@ -10,6 +10,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 )
 
@@ -510,7 +511,7 @@ func (w *Window) renderHorizontalTabBar() string {
 	}
 
 	result := b.String()
-	resultW := lipgloss.Width(result)
+	resultW := rendering.VisibleWidth(result)
 	padEnd := w.width - resultW - tabBarPadLeft - tabBarPadRight
 	if padEnd > 0 {
 		b.WriteString(strings.Repeat(" ", padEnd))
@@ -555,7 +556,7 @@ func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool) string {
 	}
 
 	rendered := b.String()
-	renderedW := lipgloss.Width(rendered)
+	renderedW := rendering.VisibleWidth(rendered)
 	padTotal := tw - renderedW
 	if padTotal < 0 {
 		padTotal = 0
@@ -608,7 +609,7 @@ func (w *Window) RenderVerticalSidebar(contentLines []string) []string {
 			contentLine = contentLines[i]
 		}
 
-		contentVisW := lipgloss.Width(contentLine)
+		contentVisW := rendering.VisibleWidth(contentLine)
 		contentPad := contentW - contentVisW
 		if contentPad < 0 {
 			contentPad = 0
@@ -628,7 +629,7 @@ func (w *Window) RenderVerticalSidebar(contentLines []string) []string {
 				if i < len(contentLines) {
 					nextContent = contentLines[i]
 				}
-				nextVisW := lipgloss.Width(nextContent)
+				nextVisW := rendering.VisibleWidth(nextContent)
 				nextPad := contentW - nextVisW
 				if nextPad < 0 {
 					nextPad = 0
@@ -683,7 +684,7 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Fg).Bold(true)
 		b.WriteString(iconStr + titleStyle.Render(titleText))
 		rendered := b.String()
-		renderedW := lipgloss.Width(rendered)
+		renderedW := rendering.VisibleWidth(rendered)
 		flexSpace := width - renderedW - closeW
 		if flexSpace < 0 {
 			flexSpace = 0
@@ -719,7 +720,7 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
 		b.WriteString(iconStr + titleStyle.Render(titleText))
 		rendered := b.String()
-		renderedW := lipgloss.Width(rendered)
+		renderedW := rendering.VisibleWidth(rendered)
 		flexSpace := width - renderedW - closeW
 		if flexSpace < 0 {
 			flexSpace = 0

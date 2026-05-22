@@ -127,7 +127,7 @@ func (s *StatusBar) View() string {
 		right = dim.Render("ready")
 	}
 
-	spacer := s.width - s.theme.Spacing.PadLR - lipgloss.Width(left) - lipgloss.Width(right) - s.theme.Spacing.PadLR
+	spacer := s.width - s.theme.Spacing.PadLR - rendering.VisibleWidth(left) - rendering.VisibleWidth(right) - s.theme.Spacing.PadLR
 	if spacer < 0 {
 		spacer = 0
 	}

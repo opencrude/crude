@@ -139,6 +139,14 @@ func StripAnsi(s string) string {
 	return buf.String()
 }
 
+// VisibleWidth returns the terminal cell width of s, stripping ANSI escape
+// sequences and measuring with runewidth. This is the correct way to measure
+// styled strings for screen-space padding — lipgloss.Width undercounts wide
+// Unicode characters (emojis, │, ●, etc.) by 1 cell each.
+func VisibleWidth(s string) int {
+	return runewidth.StringWidth(StripAnsi(s))
+}
+
 func ApplySelection(line string, startCol, endCol int) string {
 	if startCol >= endCol || startCol < 0 {
 		return line
