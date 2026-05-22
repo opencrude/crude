@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"crude/safety"
+	"crude/statemachine"
 )
 
 type AgentID string
@@ -76,7 +78,9 @@ type SubAgentHandle struct {
 	StartedAt time.Time
 	SessionID string
 	DB        *sql.DB
+	SM        *statemachine.ConversationStateMachine
 	StepCount         atomic.Int32
+	mu                sync.Mutex
 	totalPromptTokens int
 	totalCompTokens   int
 	totalCostUSD      float64
@@ -87,35 +91,51 @@ type SubAgentHandle struct {
 }
 
 func (h *SubAgentHandle) AddUsage(promptT, compT int) {
+	h.mu.Lock()
 	h.totalPromptTokens += promptT
 	h.totalCompTokens += compT
+	h.mu.Unlock()
 }
 
 func (h *SubAgentHandle) AddCost(cost float64) {
+	h.mu.Lock()
 	h.totalCostUSD += cost
+	h.mu.Unlock()
 }
 
 func (h *SubAgentHandle) AddError(msg string) {
+	h.mu.Lock()
 	h.errors = append(h.errors, msg)
+	h.mu.Unlock()
 }
 
 func (h *SubAgentHandle) Usage() (promptTokens, compTokens int, costUSD float64, errs []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return h.totalPromptTokens, h.totalCompTokens, h.totalCostUSD, h.errors
 }
 
 func (h *SubAgentHandle) SetTermReason(reason string) {
+	h.mu.Lock()
 	h.termReason = reason
+	h.mu.Unlock()
 }
 
 func (h *SubAgentHandle) TermReason() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return h.termReason
 }
 
 func (h *SubAgentHandle) SetReport(gist, path string) {
+	h.mu.Lock()
 	h.reportGist = gist
 	h.reportPath = path
+	h.mu.Unlock()
 }
 
 func (h *SubAgentHandle) Report() (gist, path string, hasReport bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return h.reportGist, h.reportPath, h.reportGist != ""
 }

@@ -102,7 +102,7 @@ func (a *App) Run() {
 		sessionMetas, _, _ = sessiondb.ListSessionsPaginated(a.sessionsRoot, sessiondb.ListSessionsOpts{Limit: 30, Offset: 0})
 	}
 
-	tuiInst, err := tui.Start(sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), sessionMetas)
+	tuiInst, err := tui.Start(sessCfg.GetActiveMainCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), sessionMetas)
 	if err != nil {
 		sess.Logger().Error("SESSION", "tui_start_failed", "error", err.Error())
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
@@ -139,10 +139,8 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 	tuiInst.GetProviderConfigFn = func(providerID string) tui.ProviderConfig {
 		if cfg, ok := sess.Config().Providers[providerID]; ok {
 			return tui.ProviderConfig{
-				APIKey:         cfg.APIKey,
-				Model:          cfg.Model,
-				ProviderURL:    cfg.ProviderURL,
-				ThinkingEffort: cfg.ThinkingEffort,
+				APIKey:      cfg.APIKey,
+				ProviderURL: cfg.ProviderURL,
 			}
 		}
 		return tui.ProviderConfig{}
@@ -250,7 +248,7 @@ func (a *App) runResumeSession(username string, initial ttypes.Settings, provide
 	}
 	a.sess = sess
 
-	tuiInst2, err2 := tui.Start(a.sessCfg.GetActiveProviderConfig().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), nil)
+	tuiInst2, err2 := tui.Start(a.sessCfg.GetActiveMainCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), nil)
 	if err2 != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err2)
 		return

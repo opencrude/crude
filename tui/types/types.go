@@ -36,15 +36,19 @@ const (
 )
 
 type CategorySettings struct {
-	Provider       string
-	ProviderURL    string
-	APIKey         string
-	Model          string
-	ThinkingEffort string
-	Policy         string
-	MaxSteps       int
-	TimeoutSeconds int
-	Description    string
+	Provider           string
+	ProviderURL        string
+	APIKey             string
+	Model              string
+	ThinkingEffort     string
+	Policy             string
+	MaxSteps           int
+	TimeoutSeconds     int
+	Description        string
+	ModelContextWindow int
+	ModelInputPrice    float64
+	ModelOutputPrice   float64
+	ModelCachePrice    float64
 }
 
 type ProfileSettings struct {
@@ -64,18 +68,14 @@ type AgentsSettings struct {
 }
 
 type Settings struct {
-	APIKey                   string
-	Model                    string
-	ModelContextWindow       int
-	MainInputPrice           float64
-	MainOutputPrice          float64
-	MainCacheReadPrice       float64
-	ProviderID               string
-	ProviderURL              string
-	ProviderAPIKey           string
-	ThinkingEffort           string
-	TurnLogsEnabled          string
-	Agents                   AgentsSettings
+	APIKey          string
+	Model           string
+	ProviderID      string
+	ProviderURL     string
+	ProviderAPIKey  string
+	ThinkingEffort  string
+	TurnLogsEnabled string
+	Agents          AgentsSettings
 }
 
 type ModelEntry struct {
@@ -88,10 +88,8 @@ type ModelEntry struct {
 }
 
 type ProviderConfig struct {
-	APIKey         string
-	Model          string
-	ProviderURL    string
-	ThinkingEffort string
+	APIKey      string
+	ProviderURL string
 }
 
 type ProviderPreset struct {

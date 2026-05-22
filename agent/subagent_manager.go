@@ -13,6 +13,7 @@ type SubAgentManager struct {
 	completedMap  map[AgentID]SubAgentResult
 	maxConcurrent int
 	maxDepth      int
+	maxCompleted  int
 }
 
 func NewSubAgentManager(maxConcurrent, maxDepth int) *SubAgentManager {
@@ -28,6 +29,7 @@ func NewSubAgentManager(maxConcurrent, maxDepth int) *SubAgentManager {
 		completedMap:  make(map[AgentID]SubAgentResult),
 		maxConcurrent: maxConcurrent,
 		maxDepth:      maxDepth,
+		maxCompleted:  64,
 	}
 }
 
@@ -64,6 +66,13 @@ func (m *SubAgentManager) Unregister(id AgentID, result SubAgentResult) {
 	delete(m.active, id)
 	m.completed = append(m.completed, result)
 	m.completedMap[id] = result
+	if len(m.completed) > m.maxCompleted {
+		evicted := m.completed[:len(m.completed)-m.maxCompleted]
+		m.completed = m.completed[len(m.completed)-m.maxCompleted:]
+		for _, r := range evicted {
+			delete(m.completedMap, r.AgentID)
+		}
+	}
 }
 
 func (m *SubAgentManager) GetCompleted(id AgentID) (SubAgentResult, bool) {

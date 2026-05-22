@@ -95,7 +95,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logger.Debug("UI", "mouse", "type", fmt.Sprintf("%d", msg.Type), "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 
 		if m.win.IsOpen() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			var hit window.TabHitResult
+			hit := window.TabHitResult{TabIndex: -1}
 
 			if m.win.Layout() == window.TabVertical {
 				windowStartLine := m.chatAreaHeight + 3

@@ -47,9 +47,6 @@ type Model struct {
 	providerID    string
 	activePresets []types.ProviderPreset
 
-	modelCtx                                  int
-	modelInPrice, modelOutPrice, modelCachePrice float64
-
 	getProviderConfigFn func(string) types.ProviderConfig
 	fetchModelsFn       func(providerID, baseURL, apiKey string) tea.Cmd
 
@@ -63,11 +60,7 @@ type Model struct {
 
 type settingsSnapshot struct {
 	providerID      string
-	modelCtx        int
-	modelInPrice    float64
-	modelOutPrice   float64
-	modelCachePrice float64
-	agentsSettings types.AgentsSettings
+	agentsSettings  types.AgentsSettings
 	turnLogs        string
 }
 
@@ -91,10 +84,6 @@ func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPr
 		rootForm:            buildRootForm(t, agents, turnLogs, initial.ProviderID, initial.Model),
 		providerID:          initial.ProviderID,
 		activePresets:       presets,
-		modelCtx:            initial.ModelContextWindow,
-		modelInPrice:        initial.MainInputPrice,
-		modelOutPrice:       initial.MainOutputPrice,
-		modelCachePrice:     initial.MainCacheReadPrice,
 		getProviderConfigFn: getProviderConfigFn,
 		fetchModelsFn:       fetchModelsFn,
 		agentsSettings:      agents,
@@ -493,11 +482,7 @@ func (m Model) updateCategory(msg tea.Msg) (Model, tea.Cmd, Event) {
 
 	newProvider := m.categoryForm.ItemValue(0)
 	if newProvider != oldProvider {
-		if m.categoryKey == "main" {
-			m.updateProviderFields(newProvider)
-		} else {
-			m.autofillFromExistingProvider(newProvider)
-		}
+		m.updateProviderFields(newProvider)
 	}
 
 	switch action {
@@ -677,10 +662,6 @@ func (m *Model) SaveSnapshot() {
 	m.rootForm.SaveSnapshot()
 	m.snapshot = &settingsSnapshot{
 		providerID:      m.providerID,
-		modelCtx:        m.modelCtx,
-		modelInPrice:    m.modelInPrice,
-		modelOutPrice:   m.modelOutPrice,
-		modelCachePrice: m.modelCachePrice,
 		agentsSettings:  m.agentsSettings,
 		turnLogs:        m.turnLogs,
 	}
@@ -689,10 +670,6 @@ func (m *Model) SaveSnapshot() {
 func (m *Model) RestoreSnapshot() {
 	if m.snapshot != nil {
 		m.providerID = m.snapshot.providerID
-		m.modelCtx = m.snapshot.modelCtx
-		m.modelInPrice = m.snapshot.modelInPrice
-		m.modelOutPrice = m.snapshot.modelOutPrice
-		m.modelCachePrice = m.snapshot.modelCachePrice
 		m.agentsSettings = m.snapshot.agentsSettings
 		m.turnLogs = m.snapshot.turnLogs
 	}
@@ -721,18 +698,14 @@ func (m Model) toSettings() types.Settings {
 	thinkingEffort := mainCat.ThinkingEffort
 
 	return types.Settings{
-		APIKey:             apiKey,
-		Model:              model,
-		ModelContextWindow: m.modelCtx,
-		MainInputPrice:     m.modelInPrice,
-		MainOutputPrice:    m.modelOutPrice,
-		MainCacheReadPrice: m.modelCachePrice,
-		ProviderID:         providerID,
-		ProviderURL:        providerURL,
-		ProviderAPIKey:     apiKey,
-		ThinkingEffort:     thinkingEffort,
-		TurnLogsEnabled:    m.turnLogs,
-		Agents:             m.agentsSettings,
+		APIKey:          apiKey,
+		Model:           model,
+		ProviderID:      providerID,
+		ProviderURL:     providerURL,
+		ProviderAPIKey:  apiKey,
+		ThinkingEffort:  thinkingEffort,
+		TurnLogsEnabled: m.turnLogs,
+		Agents:          m.agentsSettings,
 	}
 }
 
@@ -771,6 +744,17 @@ func (m *Model) saveCategoryForm() {
 	cat.APIKey = m.categoryForm.ItemValue(2)
 	cat.Model = m.categoryForm.ItemValue(3)
 	cat.ThinkingEffort = m.categoryForm.ItemValue(4)
+
+	for _, mod := range m.modelsData {
+		if mod.ID == cat.Model {
+			cat.ModelContextWindow = mod.ContextWindow
+			cat.ModelInputPrice = mod.InputPrice
+			cat.ModelOutputPrice = mod.OutputPrice
+			cat.ModelCachePrice = mod.CacheReadPrice
+			break
+		}
+	}
+
 	m.agentsSettings.Categories[m.categoryKey] = cat
 
 	if m.categoryKey == "main" {
@@ -873,38 +857,40 @@ func (m *Model) autofillFromExistingProvider(providerID string) {
 }
 
 func (m *Model) updateProviderFields(newProvider string) {
-	if m.categoryKey != "main" {
-		return
+	if m.categoryKey == "main" {
+		m.providerID = newProvider
 	}
-	oldID := m.providerID
-	m.providerID = newProvider
 
-	if newProvider != oldID {
-		m.categoryForm.SetItemSelectOptions(3, nil)
-		m.modelCtx = 0
-		m.modelInPrice = 0
-		m.modelOutPrice = 0
-		m.modelCachePrice = 0
-
-		var preset types.ProviderPreset
-		for _, p := range m.activePresets {
-			if p.ID == newProvider {
-				preset = p
-				break
-			}
+	var preset types.ProviderPreset
+	for _, p := range m.activePresets {
+		if p.ID == newProvider {
+			preset = p
+			break
 		}
-		if m.getProviderConfigFn != nil {
-			savedCfg := m.getProviderConfigFn(newProvider)
-			m.categoryForm.SetItemValue(1, savedCfg.ProviderURL)
-			m.categoryForm.SetItemValue(2, savedCfg.APIKey)
-			m.categoryForm.SetItemValue(3, savedCfg.Model)
-			m.categoryForm.SetItemValue(4, savedCfg.ThinkingEffort)
-			if savedCfg.ProviderURL == "" {
-				m.categoryForm.SetItemValue(1, preset.BaseURL)
-			}
-		} else {
+	}
+
+	m.categoryForm.SetItemSelectOptions(3, nil)
+	m.categoryForm.SetItemValue(3, "")
+	m.categoryForm.SetItemValue(4, "")
+
+	cat := m.agentsSettings.Categories[m.categoryKey]
+	cat.Model = ""
+	cat.ThinkingEffort = ""
+	cat.ModelContextWindow = 0
+	cat.ModelInputPrice = 0
+	cat.ModelOutputPrice = 0
+	cat.ModelCachePrice = 0
+	m.agentsSettings.Categories[m.categoryKey] = cat
+
+	if m.getProviderConfigFn != nil {
+		savedCfg := m.getProviderConfigFn(newProvider)
+		m.categoryForm.SetItemValue(1, savedCfg.ProviderURL)
+		m.categoryForm.SetItemValue(2, savedCfg.APIKey)
+		if savedCfg.ProviderURL == "" {
 			m.categoryForm.SetItemValue(1, preset.BaseURL)
 		}
+	} else {
+		m.categoryForm.SetItemValue(1, preset.BaseURL)
 	}
 }
 

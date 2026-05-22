@@ -17,13 +17,13 @@ import (
 const asyncPromotionThreshold = 15 * time.Second
 
 func (s *Session) newAgent() *agent.Agent {
-	activeCfg := s.cfg.GetActiveProviderConfig()
+	mainCat := s.cfg.GetActiveMainCategory()
 
 	p := s.provider
-	p.Model = activeCfg.Model
-	p.SetThinkingEffort(activeCfg.ThinkingEffort)
+	p.Model = mainCat.Model
+	p.SetThinkingEffort(mainCat.ThinkingEffort)
 
-	a := agent.NewAgent(p, activeCfg.Model, s.logger)
+	a := agent.NewAgent(p, mainCat.Model, s.logger)
 
 	a.Yolo = s.yolo
 	a.AsyncMgr = s.asyncMgr
@@ -50,9 +50,17 @@ func (s *Session) newAgent() *agent.Agent {
 			}
 
 			state := s.sm.GetOrCreateState(s.sessionID)
-			if _, exists := state.GetFromContext("plan_step_statuses"); exists {
-				return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one.")
+			if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
+				if goalID, ok := rawGoalID.(string); ok && goalID != "" {
+					if g := s.sm.GetActiveGoal(s.sessionID); g != nil && g.ID == goalID {
+						return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one.")
+					}
+				}
 			}
+			state.AddToContext("plan_steps", nil)
+			state.AddToContext("plan_step_statuses", nil)
+			state.AddToContext("plan_step_labels", nil)
+			state.AddToContext("plan_goal_id", nil)
 
 			goal := s.sm.CreateGoal(s.sessionID, "plan: "+objective, objective, statemachine.PriorityNormal, false)
 
@@ -194,6 +202,31 @@ func (s *Session) newAgent() *agent.Agent {
 					state.AddToContext("plan_step_statuses", m)
 				}
 			}
+
+			allDone := false
+			if raw, ok := state.GetFromContext("plan_step_statuses"); ok {
+				if m, ok := raw.(map[string]string); ok && len(m) > 0 {
+					allDone = true
+					for _, st := range m {
+						if st != "completed" && st != "failed" {
+							allDone = false
+							break
+						}
+					}
+				}
+			}
+			if allDone {
+				if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
+					if goalID, ok := rawGoalID.(string); ok && goalID != "" {
+						s.sm.CompleteGoalByID(s.sessionID, goalID, map[string]any{"status": "plan_all_steps_done"})
+					}
+				}
+				state.AddToContext("plan_steps", nil)
+				state.AddToContext("plan_step_statuses", nil)
+				state.AddToContext("plan_step_labels", nil)
+				state.AddToContext("plan_goal_id", nil)
+			}
+
 			status := agent.BuildStateMachineStatus(s.sm, s.sessionID)
 			if status != "" {
 				return tools.ToolResult{Content: status}, nil

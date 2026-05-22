@@ -96,8 +96,8 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 
 	sm := statemachine.NewConversationStateMachine(lg)
 
-	activeCfg := cfg.GetActiveProviderConfig()
-	p := provider.FromPreset(cfg.ActiveProvider, activeCfg.APIKey, activeCfg.ProviderURL)
+	activeCfg := cfg.GetActiveMainCategory()
+	p := provider.FromPreset(activeCfg.Provider, activeCfg.APIKey, activeCfg.ProviderURL)
 	p.Model = activeCfg.Model
 	p.SetThinkingEffort(activeCfg.ThinkingEffort)
 

@@ -2,11 +2,13 @@ package statemachine
 
 import (
 	"fmt"
+	"sync"
 
 	"crude/logger"
 )
 
 type ConversationStateMachine struct {
+	mu     sync.Mutex
 	states map[string]*ConversationState
 	logger *logger.Logger
 }
@@ -21,7 +23,7 @@ func NewConversationStateMachine(lg *logger.Logger) *ConversationStateMachine {
 	}
 }
 
-func (m *ConversationStateMachine) GetOrCreateState(conversationID string) *ConversationState {
+func (m *ConversationStateMachine) getOrCreateState(conversationID string) *ConversationState {
 	if s, ok := m.states[conversationID]; ok {
 		return s
 	}
@@ -31,15 +33,25 @@ func (m *ConversationStateMachine) GetOrCreateState(conversationID string) *Conv
 	return s
 }
 
+func (m *ConversationStateMachine) GetOrCreateState(conversationID string) *ConversationState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getOrCreateState(conversationID)
+}
+
 func (m *ConversationStateMachine) HasActiveGoal(conversationID string) bool {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	has := state.HasActiveGoal()
 	m.logger.Debug("STATE", "has_active_goal", "conversation_id", conversationID, "has", has)
 	return has
 }
 
 func (m *ConversationStateMachine) HasBlocker(conversationID string) bool {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	has := state.HasBlocker()
 	m.logger.Debug("STATE", "has_blocker", "conversation_id", conversationID, "has", has)
 	return has
@@ -50,7 +62,9 @@ func (m *ConversationStateMachine) CreateGoal(
 	priority GoalPriority,
 	transferSlots bool,
 ) *Goal {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 
 	cleaned := state.CleanupExpiredGoals()
 	if cleaned > 0 {
@@ -79,7 +93,9 @@ func (m *ConversationStateMachine) CreateGoal(
 }
 
 func (m *ConversationStateMachine) PauseWithBlocker(conversationID string, blocker *BlockingCondition) {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	g := state.GetCurrentGoal()
 	if g != nil {
 		g.CurrentBlocker = blocker
@@ -91,7 +107,9 @@ func (m *ConversationStateMachine) PauseWithBlocker(conversationID string, block
 }
 
 func (m *ConversationStateMachine) TryResolveBlocker(conversationID, _ string) bool {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	g := state.GetCurrentGoal()
 	if g == nil || g.CurrentBlocker == nil {
 		return false
@@ -103,15 +121,21 @@ func (m *ConversationStateMachine) TryResolveBlocker(conversationID, _ string) b
 }
 
 func (m *ConversationStateMachine) GetActiveGoal(conversationID string) *Goal {
-	return m.GetOrCreateState(conversationID).GetCurrentGoal()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getOrCreateState(conversationID).GetCurrentGoal()
 }
 
 func (m *ConversationStateMachine) GetFocusGoal(conversationID string) *Goal {
-	return m.GetOrCreateState(conversationID).GetFocusGoal()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getOrCreateState(conversationID).GetFocusGoal()
 }
 
 func (m *ConversationStateMachine) GetCurrentBlocker(conversationID string) *BlockingCondition {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	if g := state.GetCurrentGoal(); g != nil {
 		return g.CurrentBlocker
 	}
@@ -119,7 +143,9 @@ func (m *ConversationStateMachine) GetCurrentBlocker(conversationID string) *Blo
 }
 
 func (m *ConversationStateMachine) CompleteCurrentGoal(conversationID string, resultData map[string]any) {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	focus := state.GetFocusGoal()
 	g := state.GetCurrentGoal()
 
@@ -144,13 +170,11 @@ func (m *ConversationStateMachine) CompleteCurrentGoal(conversationID string, re
 	}
 }
 
-// CompleteGoalByID finds a goal by ID anywhere in the goal tree (root or
-// sub-goal), marks it as completed, removes it from the tree, and returns
-// true. Returns false if the goal was not found.
 func (m *ConversationStateMachine) CompleteGoalByID(conversationID, goalID string, resultData map[string]any) bool {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 
-	// Check root goals first.
 	if g, ok := state.ThreadRoots[goalID]; ok {
 		g.Status = GoalCompleted
 		for k, v := range resultData {
@@ -159,7 +183,6 @@ func (m *ConversationStateMachine) CompleteGoalByID(conversationID, goalID strin
 		delete(state.ThreadRoots, goalID)
 		if state.FocusGoalID == goalID {
 			state.FocusGoalID = ""
-			// Promote the next available root goal if any.
 			for id := range state.ThreadRoots {
 				state.FocusGoalID = id
 				break
@@ -169,7 +192,6 @@ func (m *ConversationStateMachine) CompleteGoalByID(conversationID, goalID strin
 		return true
 	}
 
-	// Search sub-goals recursively.
 	for _, root := range state.ThreadRoots {
 		if root.completeSubGoalByID(goalID, resultData) {
 			m.logger.Info("STATE", "goal_complete", "goal_id", goalID, "result", "sub-goal completed by ID")
@@ -181,7 +203,9 @@ func (m *ConversationStateMachine) CompleteGoalByID(conversationID, goalID strin
 }
 
 func (m *ConversationStateMachine) FailCurrentGoal(conversationID, reason string) {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	focus := state.GetFocusGoal()
 	g := state.GetCurrentGoal()
 
@@ -202,7 +226,9 @@ func (m *ConversationStateMachine) FailCurrentGoal(conversationID, reason string
 }
 
 func (m *ConversationStateMachine) ParkCurrentThread(conversationID string) {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	if state.FocusGoalID != "" {
 		m.logger.Info("STATE", "blocked", "goal_id", state.FocusGoalID, "blocker_type", "parked", "reason", fmt.Sprintf("parking thread %s for %s", state.FocusGoalID, conversationID))
 		state.PushToResumeStack(state.FocusGoalID)
@@ -211,7 +237,9 @@ func (m *ConversationStateMachine) ParkCurrentThread(conversationID string) {
 }
 
 func (m *ConversationStateMachine) ResumeGoal(conversationID, goalID string) {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	if g, ok := state.ThreadRoots[goalID]; ok {
 		g.Touch()
 		state.FocusGoalID = goalID
@@ -220,7 +248,9 @@ func (m *ConversationStateMachine) ResumeGoal(conversationID, goalID string) {
 }
 
 func (m *ConversationStateMachine) ResumeLastParkedGoal(conversationID string) *Goal {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	lastID := state.PopFromResumeStack()
 	if lastID == "" {
 		return nil
@@ -233,11 +263,15 @@ func (m *ConversationStateMachine) ResumeLastParkedGoal(conversationID string) *
 }
 
 func (m *ConversationStateMachine) CanResumePreviousGoal(conversationID string) bool {
-	return m.GetOrCreateState(conversationID).PeekResumeStack() != ""
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getOrCreateState(conversationID).PeekResumeStack() != ""
 }
 
 func (m *ConversationStateMachine) GetSuspendedGoals(conversationID string) []*Goal {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	var result []*Goal
 	for id, g := range state.ThreadRoots {
 		if id != state.FocusGoalID {
@@ -248,7 +282,9 @@ func (m *ConversationStateMachine) GetSuspendedGoals(conversationID string) []*G
 }
 
 func (m *ConversationStateMachine) CancelGoal(conversationID, goalID string) {
-	state := m.GetOrCreateState(conversationID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.getOrCreateState(conversationID)
 	if _, ok := state.ThreadRoots[goalID]; ok {
 		delete(state.ThreadRoots, goalID)
 		if state.FocusGoalID == goalID {
@@ -259,6 +295,8 @@ func (m *ConversationStateMachine) CancelGoal(conversationID, goalID string) {
 }
 
 func (m *ConversationStateMachine) ClearState(conversationID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if state, ok := m.states[conversationID]; ok {
 		m.logger.Info("STATE", "clear", "goal_id", state.FocusGoalID, "conversation_id", conversationID, "root_count", len(state.ThreadRoots))
 		delete(m.states, conversationID)
@@ -266,6 +304,8 @@ func (m *ConversationStateMachine) ClearState(conversationID string) {
 }
 
 func (m *ConversationStateMachine) GetState(conversationID string) *ConversationState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	s, ok := m.states[conversationID]
 	if !ok {
 		m.logger.Debug("STATE", "get_state_not_found", "conversation_id", conversationID)
