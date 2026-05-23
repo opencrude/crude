@@ -34,12 +34,14 @@ type StreamOptions struct {
 }
 
 type ChatRequest struct {
-	Model        string        `json:"model"`
-	Messages     []ChatMessage `json:"messages"`
-	Tools        []ToolDef     `json:"tools,omitempty"`
-	ToolChoice   any           `json:"tool_choice,omitempty"`
-	Stream       bool          `json:"stream"`
-	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+	Model            string        `json:"model"`
+	Messages         []ChatMessage `json:"messages"`
+	Tools            []ToolDef     `json:"tools,omitempty"`
+	ToolChoice       any           `json:"tool_choice,omitempty"`
+	Stream           bool          `json:"stream"`
+	StreamOptions    *StreamOptions `json:"stream_options,omitempty"`
+	MaxTokens        int           `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int        `json:"max_completion_tokens,omitempty"`
 }
 
 type ChatResponse struct {

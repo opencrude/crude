@@ -62,6 +62,19 @@ func (a *Agent) completeStream(
 		StreamOptions: &provider.StreamOptions{IncludeUsage: true},
 	}
 
+	ctxWindow := provider.LookupContextWindow(a.Model)
+	if ctxWindow > 0 {
+		maxOut := ctxWindow / 4
+		if maxOut < 8192 {
+			maxOut = 8192
+		}
+		if maxOut > 65536 {
+			maxOut = 65536
+		}
+		req.MaxTokens = maxOut
+		req.MaxCompletionTokens = maxOut
+	}
+
 	std := a.Provider.Standard()
 
 	body, err := std.EncodeRequest(&req)
