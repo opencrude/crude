@@ -9,6 +9,7 @@ import (
 
 	"crude/tui/components"
 	"crude/tui/rendering"
+	"crude/tui/scrollbar"
 	"crude/tui/theme"
 	tuitools "crude/tui/tools"
 	"crude/tui/widgets"
@@ -33,6 +34,11 @@ type SubPane struct {
 	EndTime    time.Time
 	TokenCount int
 
+	compactSB       scrollbar.ScrollBar
+	compactScrollY  int
+	compactContentH int
+	compactVisibleH int
+
 	theme *theme.Theme
 }
 
@@ -45,6 +51,7 @@ func NewSubPane(id string, paneType PaneType, title string, th *theme.Theme) *Su
 		MsgList:   ml,
 		Done:      false,
 		StartTime: time.Now(),
+		compactSB: scrollbar.New(0),
 		theme:     th,
 	}
 }
@@ -110,7 +117,7 @@ func (sp *SubPane) Render(width, maxH, spinFrame int) PaneRenderResult {
 	if sp.Done {
 		summary := sp.renderSummaryLine(width, spinFrame)
 		return PaneRenderResult{
-			Lines:         []string{summary, ""},
+			Lines:         []string{summary},
 			PaneID:        sp.ID,
 			ContentStart:  0,
 			ContentHeight: 0,
@@ -167,7 +174,7 @@ func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResu
 	mutedStyle := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted)
 
 	msgs := sp.MsgList.Messages()
-	var toolLines []string
+	var allToolLines []string
 	for _, msg := range msgs {
 		if msg.Role != "tool" || msg.ToolName == "" {
 			continue
@@ -184,7 +191,7 @@ func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResu
 			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#f85149")).Render("✗")
 		case phase == "done" || msg.ToolStatus == "success":
 			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("✓")
-		case phase == "streaming":
+		case phase == "streaming" || msg.ToolStatus == "streaming" || msg.ToolStatus == "calling":
 			icon = "●"
 		default:
 			icon = "○"
@@ -197,14 +204,30 @@ func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResu
 			padR = 0
 		}
 		line = line + strings.Repeat(" ", padR)
-		toolLines = append(toolLines, line)
-
-		if len(toolLines) >= maxH-1 {
-			break
-		}
+		allToolLines = append(allToolLines, line)
 	}
 
-	if len(toolLines) == 0 {
+	visibleH := maxH - 1
+	if visibleH < 1 {
+		visibleH = 1
+	}
+
+	sp.compactContentH = len(allToolLines)
+	sp.compactVisibleH = visibleH
+
+	maxScroll := sp.compactContentH - visibleH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if sp.compactScrollY > maxScroll {
+		sp.compactScrollY = maxScroll
+	}
+	if sp.compactScrollY < 0 {
+		sp.compactScrollY = 0
+	}
+
+	var toolLines []string
+	if len(allToolLines) == 0 {
 		thinking := "Thinking..."
 		if sp.MsgList.ActiveThinkingLineCount(width) == 0 {
 			thinking = "Working..."
@@ -216,7 +239,17 @@ func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResu
 			padR = 0
 		}
 		toolLines = append(toolLines, line+strings.Repeat(" ", padR))
+	} else {
+		start := sp.compactScrollY
+		end := start + visibleH
+		if end > len(allToolLines) {
+			end = len(allToolLines)
+		}
+		toolLines = allToolLines[start:end]
 	}
+
+	sp.compactSB.SetTrackHeight(visibleH)
+	sp.compactSB.SetScrollInfo(sp.compactContentH, visibleH, sp.compactScrollY)
 
 	lines := make([]string, 0, 1+len(toolLines))
 	lines = append(lines, headerLine)
@@ -234,14 +267,26 @@ func (sp *SubPane) ScrollbarLineCount() int {
 	if sp.Done || sp.MsgList == nil {
 		return 0
 	}
+	if sp.Type == PaneAgent {
+		return sp.compactContentH
+	}
 	return sp.MsgList.ContentHeight()
 }
 
 func (sp *SubPane) ScrollbarView() string {
+	if sp.Type == PaneAgent && !sp.Done {
+		return sp.compactSB.View()
+	}
 	return sp.MsgList.ScrollbarView()
 }
 
 func (sp *SubPane) ScrollbarWidth() int {
+	if sp.Type == PaneAgent && !sp.Done {
+		if sp.compactSB.IsVisible() && sp.compactContentH > 0 {
+			return scrollbar.ScrollbarWidth
+		}
+		return 0
+	}
 	return sp.MsgList.ScrollbarWidth()
 }
 
@@ -294,6 +339,36 @@ func (sp *SubPane) renderSummaryLine(width, spinFrame int) string {
 	}
 	full = full + strings.Repeat(" ", padR)
 	return full
+}
+
+func (sp *SubPane) CanScrollCompact() bool {
+	if sp.Done || sp.Type != PaneAgent {
+		return false
+	}
+	return sp.compactContentH > sp.compactVisibleH && sp.compactVisibleH > 0
+}
+
+func (sp *SubPane) ScrollCompactUp() {
+	if sp.compactScrollY > 0 {
+		sp.compactScrollY--
+	}
+}
+
+func (sp *SubPane) ScrollCompactDown() {
+	maxScroll := sp.compactContentH - sp.compactVisibleH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if sp.compactScrollY < maxScroll {
+		sp.compactScrollY++
+	}
+}
+
+func (sp *SubPane) HandleScrollbarTick(msg interface{}) {
+	if sp.Type == PaneAgent && !sp.Done {
+		newSB, _ := sp.compactSB.Update(msg)
+		sp.compactSB = newSB
+	}
 }
 
 type PaneManager struct {
@@ -364,7 +439,7 @@ func (pm *PaneManager) HasAnyActive() bool {
 
 func (pm *PaneManager) HasAnyScrollbarVisible() bool {
 	for _, sp := range pm.panes {
-		if !sp.Done && sp.MsgList != nil && sp.MsgList.ScrollbarWidth() > 0 {
+		if !sp.Done && sp.ScrollbarWidth() > 0 {
 			return true
 		}
 	}

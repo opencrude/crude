@@ -240,11 +240,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		for _, sp := range m.paneMgr.panes {
-			if !sp.Done && sp.MsgList != nil {
-				paneCmd := sp.MsgList.HandleScrollbarTick(msg)
-				if paneCmd != nil {
-					cmds = append(cmds, paneCmd)
+			if !sp.Done {
+				if sp.MsgList != nil {
+					paneCmd := sp.MsgList.HandleScrollbarTick(msg)
+					if paneCmd != nil {
+						cmds = append(cmds, paneCmd)
+					}
 				}
+				sp.HandleScrollbarTick(msg)
 			}
 		}
 	}
@@ -651,7 +654,25 @@ func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
 	}
 
 	sp := m.paneMgr.Get(info.PaneID)
-	if sp == nil || sp.Done || sp.MsgList == nil {
+	if sp == nil || sp.Done {
+		return false, nil
+	}
+
+	if sp.CanScrollCompact() {
+		if msg.Button == tea.MouseButtonWheelUp {
+			sp.ScrollCompactUp()
+			m.mainMsgList.InvalidateSubPane(sp.ID)
+			return true, nil
+		}
+		if msg.Button == tea.MouseButtonWheelDown {
+			sp.ScrollCompactDown()
+			m.mainMsgList.InvalidateSubPane(sp.ID)
+			return true, nil
+		}
+		return true, nil
+	}
+
+	if sp.MsgList == nil {
 		return false, nil
 	}
 
