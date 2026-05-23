@@ -34,15 +34,20 @@ type SubAgentRunner struct {
 	parentToolFn  func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
 	wg            sync.WaitGroup
 	wakeCh        chan<- WakeEvent
+	sessionCtx    context.Context
+	sessionCancel context.CancelFunc
 }
 
 func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &SubAgentRunner{
 		session:       s,
 		mgr:           agent.NewSubAgentManager(maxConcurrent),
 		fileOwnership: agent.NewFileOwnership(),
 		rateLimiter:   agent.NewRateLimiter(),
 		wakeCh:        s.WakeCh(),
+		sessionCtx:    ctx,
+		sessionCancel: cancel,
 	}
 }
 
@@ -56,6 +61,10 @@ func (r *SubAgentRunner) FileOwnership() *agent.FileOwnership {
 
 func (r *SubAgentRunner) Wait() {
 	r.wg.Wait()
+}
+
+func (r *SubAgentRunner) SessionCancel() {
+	r.sessionCancel()
 }
 
 func (r *SubAgentRunner) SetSender(sender EventSender) {
@@ -84,8 +93,6 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		Category:    category,
 		Description: description,
 		Instructions: getStrParam(params, "instructions"),
-		Model:       getStrParam(params, "model"),
-		Provider:    getStrParam(params, "provider"),
 		PolicyName:  getStrParam(params, "policy"),
 		MaxSteps:    getIntParam(params, "max_steps"),
 		Depth:       1,
@@ -135,7 +142,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	if !wait {
 		go func() {
 			select {
-			case <-ctx.Done():
+			case <-r.sessionCtx.Done():
 				r.mgr.Cancel(spec.ID)
 			case <-handle.ResultCh:
 			}
@@ -154,9 +161,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	case result := <-handle.ResultCh:
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	case <-ctx.Done():
-		r.mgr.Cancel(spec.ID)
-		r.fileOwnership.Release(spec.ID)
-		return tools.ToolResult{Content: "Sub-agent cancelled"}, nil
+		return tools.ToolResult{Content: fmt.Sprintf("Sub-agent %q still running (turn ended). Use poll_sub_agent with handle_id=%q to check later.", spec.Name, spec.ID)}, nil
 	}
 }
 
@@ -488,8 +493,9 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
 	a.FilteredTools = filteredTools
 
-	subCtx, subCancel := context.WithCancel(ctx)
+	subCtx, subCancel := context.WithCancel(r.sessionCtx)
 	a.Ctx = subCtx
+	r.session.logger.Info("SUBAGENT", "ctx_independence", "agent_id", spec.ID, "session_ctx_valid", r.sessionCtx.Err() == nil)
 
 	subSM := statemachine.NewConversationStateMachine(r.session.logger)
 	blockCh := make(chan string, 8)
@@ -619,6 +625,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 
 	if !handle.ReportDone() {
 		r.session.logger.Warn("SUBAGENT", "no_report", "agent_id", handle.Spec.ID, "name", handle.Spec.Name)
+		r.autoGenerateReport(handle, agentMsgs, &result)
 	}
 
 	if r.sender != nil {

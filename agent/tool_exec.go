@@ -109,6 +109,10 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	internalID := tc.InternalID
 	goroutineStart := time.Now()
 
+	if tc.Function.Name == "write_report" {
+		a.writeReportCalled = true
+	}
+
 	var params map[string]any
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
 		a.logger.Error("TOOL", "invalid_args", "name", tc.Function.Name, "error", err.Error())

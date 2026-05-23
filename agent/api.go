@@ -278,7 +278,7 @@ func (a *Agent) completeStream(
 		if ctx.Err() != nil {
 			partialContent := contentBuf.String()
 			partialReasoning := reasoningBuf.String()
-			a.logger.Warn("CANCEL", "stream_interrupted", "content_len", len(partialContent), "reason", ctx.Err().Error())
+			a.logger.Warn("CANCEL", "stream_interrupted", "agent_id", a.AgentID, "content_len", len(partialContent), "reason", ctx.Err().Error())
 			return partialContent, partialReasoning, finishReason, nil, promptTokens, completionTokens, promptTokensCached, &apiCallError{Message: fmt.Sprintf("Stream request cancelled: %v", ctx.Err())}
 		}
 

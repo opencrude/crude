@@ -79,15 +79,19 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 				return
 			}
 			switch wake.Type {
-			case WakeSubAgentDone:
-				l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
-				// Build a synthetic system message describing the sub-agent completion
-				summary := ""
-				if result, ok := wake.Data.(agent.SubAgentResult); ok {
-					summary = result.SummaryGist
-				}
-				wakeText := fmt.Sprintf("[System notification: Sub-agent '%s' completed. %s]", wake.SourceID, summary)
-				s.processTurn(wakeText, sender, input, blockResolveCh, btwCh, l)
+		case WakeSubAgentDone:
+			l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
+			summary := ""
+			reportPath := ""
+			if result, ok := wake.Data.(agent.SubAgentResult); ok {
+				summary = result.SummaryGist
+				reportPath = result.ResultPath
+			}
+			wakeText := fmt.Sprintf("[System notification: Sub-agent '%s' completed. %s]", wake.SourceID, summary)
+			if reportPath != "" {
+				wakeText += fmt.Sprintf("\nReport available at: %s", reportPath)
+			}
+			s.processTurn(wakeText, sender, input, blockResolveCh, btwCh, l)
 
 			case WakeShutdown:
 				l.Info("SLEEP", "wake_shutdown")
