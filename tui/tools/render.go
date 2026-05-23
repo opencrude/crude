@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 )
 
 // isSummaryOnlyTool returns true for tools whose result is fully expressed
@@ -272,10 +272,10 @@ func truncateLineToWidth(line string, maxDisplayWidth int) string {
 	if maxDisplayWidth <= 0 {
 		return line
 	}
-	if runewidth.StringWidth(line) <= maxDisplayWidth {
+	if rendering.StringWidth(line) <= maxDisplayWidth {
 		return line
 	}
-	return runewidth.Truncate(line, maxDisplayWidth, "…")
+	return rendering.TruncateVisual(line, maxDisplayWidth, "…")
 }
 
 func TerminalResultHeight(height int) int {
@@ -618,7 +618,7 @@ func webFetchResultSummary(content, target, duration string) string {
 		return label
 	}
 
-	charCount := len(content)
+	charCount := utf8.RuneCountInString(content)
 	label := "Fetched " + rendering.TruncateLine(target, 50)
 	label += fmt.Sprintf(" — %s chars", rendering.FormatCount(charCount))
 	if duration != "" {

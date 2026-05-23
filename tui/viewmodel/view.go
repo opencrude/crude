@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
@@ -220,17 +219,17 @@ func (m *App) View() string {
 		var visW int
 		if hasBg {
 			trimmed = line
-			visW = runewidth.StringWidth(rendering.StripAnsi(trimmed))
+			visW = rendering.VisibleWidth(trimmed)
 			if visW > maxContentW {
 				trimmed = rendering.TruncateLine(trimmed, maxContentW)
-				visW = runewidth.StringWidth(rendering.StripAnsi(trimmed))
+				visW = rendering.VisibleWidth(trimmed)
 			}
 		} else {
 			trimmed = rendering.TrimRightAnsiSpaces(line)
-			visW = runewidth.StringWidth(rendering.StripAnsi(trimmed))
+			visW = rendering.VisibleWidth(trimmed)
 			if visW > maxContentW {
 				trimmed = rendering.TruncateLine(trimmed, maxContentW)
-				visW = runewidth.StringWidth(rendering.StripAnsi(trimmed))
+				visW = rendering.VisibleWidth(trimmed)
 			}
 		}
 		line = trimmed

@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -278,8 +277,8 @@ func (m List) viewPanel(width int) string {
 		maxLabelW := 0
 		maxDetailW := 0
 		for _, item := range m.filtered {
-			lw := runewidth.StringWidth(item.Label)
-			dw := runewidth.StringWidth(item.Detail)
+			lw := rendering.StringWidth(item.Label)
+			dw := rendering.StringWidth(item.Detail)
 			if lw > maxLabelW {
 				maxLabelW = lw
 			}
@@ -303,7 +302,7 @@ func (m List) viewPanel(width int) string {
 			item := m.filtered[i]
 
 			label := rendering.TruncateLine(item.Label, labelColW)
-			labelPad := labelColW - runewidth.StringWidth(label)
+			labelPad := labelColW - rendering.StringWidth(label)
 			if labelPad < 0 {
 				labelPad = 0
 			}

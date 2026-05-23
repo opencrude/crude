@@ -14,6 +14,7 @@ require (
 	github.com/conductor-oss/markitdown v0.0.1
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/mattn/go-runewidth v0.0.17
+	github.com/rivo/uniseg v0.4.7
 	github.com/stretchr/testify v1.11.1
 	modernc.org/sqlite v1.50.1
 	mvdan.cc/sh/v3 v3.13.1
@@ -61,7 +62,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/richardlehane/mscfb v1.0.4 // indirect
 	github.com/richardlehane/msoleps v1.0.4 // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect

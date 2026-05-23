@@ -5,6 +5,7 @@ import (
 
 	"crude/fileio"
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -56,8 +57,8 @@ func (s *StatusBar) RenderAsyncBar() []string {
 			dotColor = s.theme.Colors.Muted
 		}
 		cmd := c.Command
-		if len([]rune(cmd)) > 40 {
-			cmd = string([]rune(cmd)[:37]) + "…"
+		if rendering.VisibleWidth(cmd) > 40 {
+			cmd = rendering.TruncateVisual(cmd, 37, "…")
 		}
 		var durStr string
 		durStr = c.Duration.Truncate(time.Second).String()

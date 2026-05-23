@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
+	"crude/tui/rendering"
 )
 
 func pad(v any, width int) string {
 	s := fmt.Sprintf("%v", v)
-	w := ansi.StringWidth(s)
+	w := rendering.VisibleWidth(s)
 	if w >= width {
 		return s
 	}

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"crude/tui/components"
 	"crude/tui/rendering"
@@ -192,7 +191,7 @@ func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResu
 		}
 
 		line := borderStyle.Render("│ ") + icon + " " + label
-		visW := runewidth.StringWidth(rendering.StripAnsi(line))
+		visW := rendering.VisibleWidth(line)
 		padR := width - visW
 		if padR < 0 {
 			padR = 0
@@ -211,7 +210,7 @@ func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResu
 			thinking = "Working..."
 		}
 		line := borderStyle.Render("│ ") + mutedStyle.Render("● "+thinking)
-		visW := runewidth.StringWidth(rendering.StripAnsi(line))
+		visW := rendering.VisibleWidth(line)
 		padR := width - visW
 		if padR < 0 {
 			padR = 0
@@ -272,7 +271,7 @@ func (sp *SubPane) renderHeaderLine(width, spinFrame int) string {
 	styledMeta := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted).Render(meta)
 
 	full := borderPrefix + styledTitle + " " + styledMeta
-	visW := runewidth.StringWidth(rendering.StripAnsi(full))
+	visW := rendering.VisibleWidth(full)
 	padR := width - visW
 	if padR < 0 {
 		padR = 0
@@ -288,7 +287,7 @@ func (sp *SubPane) renderSummaryLine(width, spinFrame int) string {
 	summary := sp.SummaryText()
 	styled := lipgloss.NewStyle().Foreground(sp.theme.Colors.Muted).Render("● " + summary)
 	full := borderPrefix + styled
-	visW := runewidth.StringWidth(rendering.StripAnsi(full))
+	visW := rendering.VisibleWidth(full)
 	padR := width - visW
 	if padR < 0 {
 		padR = 0

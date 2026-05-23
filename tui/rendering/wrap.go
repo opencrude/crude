@@ -1,21 +1,18 @@
 package rendering
 
 import (
-	"runtime"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mattn/go-runewidth"
+	"github.com/rivo/uniseg"
 )
-
-var isWindows = runtime.GOOS == "windows"
 
 func SanitizeForTerminal(s string) string {
 	if s == "" {
 		return s
 	}
-	if !isWindows && utf8.ValidString(s) && !strings.ContainsRune(s, '\r') && !needsSanitization(s) {
+	if utf8.ValidString(s) && !strings.ContainsRune(s, '\r') && !needsSanitization(s) {
 		return s
 	}
 	if !utf8.ValidString(s) {
@@ -38,15 +35,6 @@ func SanitizeForTerminal(s string) string {
 			b.WriteRune(r)
 		case unicode.IsControl(r):
 			b.WriteByte(' ')
-		case r >= 0x20 && r <= 0x7E:
-			b.WriteRune(r)
-		case isWindows:
-			w := runewidth.RuneWidth(r)
-			if w == 1 {
-				b.WriteRune(r)
-			} else {
-				b.WriteByte('?')
-			}
 		default:
 			b.WriteRune(r)
 		}
@@ -97,7 +85,7 @@ func WrapText(text string, width int) []string {
 	}
 	var result []string
 	for _, para := range strings.Split(text, "\n") {
-		if runewidth.StringWidth(para) <= width {
+		if uniseg.StringWidth(para) <= width {
 			result = append(result, para)
 			continue
 		}
@@ -108,7 +96,7 @@ func WrapText(text string, width int) []string {
 		}
 		current := words[0]
 		for _, w := range words[1:] {
-			if runewidth.StringWidth(current)+1+runewidth.StringWidth(w) <= width {
+			if uniseg.StringWidth(current)+1+uniseg.StringWidth(w) <= width {
 				current += " " + w
 			} else {
 				result = append(result, current)
@@ -130,15 +118,20 @@ func HardWrap(s string, maxWidth int) []string {
 	var result []string
 	var cur strings.Builder
 	curW := 0
-	for _, r := range s {
-		rw := runewidth.RuneWidth(r)
-		if curW+rw > maxWidth && curW > 0 {
+	rest := s
+	state := -1
+	for len(rest) > 0 {
+		cluster, newRest, _, newState := uniseg.StepString(rest, state)
+		cw := uniseg.StringWidth(cluster)
+		if curW+cw > maxWidth && curW > 0 {
 			result = append(result, cur.String())
 			cur.Reset()
 			curW = 0
 		}
-		cur.WriteRune(r)
-		curW += rw
+		cur.WriteString(cluster)
+		curW += cw
+		rest = newRest
+		state = newState
 	}
 	if cur.Len() > 0 || len(result) == 0 {
 		result = append(result, cur.String())
@@ -150,17 +143,30 @@ func WordWrap(s string, maxWidth int) []string {
 	if maxWidth <= 0 {
 		return []string{s}
 	}
-	runes := []rune(s)
-	n := len(runes)
-	if n == 0 {
-		return []string{""}
+	if uniseg.StringWidth(s) <= maxWidth {
+		return []string{s}
 	}
+
+	type cluster struct {
+		str   string
+		width int
+	}
+	var clusters []cluster
+	rest := s
+	state := -1
+	for len(rest) > 0 {
+		c, newRest, _, newState := uniseg.StepString(rest, state)
+		clusters = append(clusters, cluster{str: c, width: uniseg.StringWidth(c)})
+		rest = newRest
+		state = newState
+	}
+	n := len(clusters)
 
 	var result []string
 	i := 0
 	for i < n {
 		if len(result) > 0 {
-			for i < n && runes[i] == ' ' {
+			for i < n && clusters[i].str == " " {
 				i++
 			}
 			if i >= n {
@@ -168,32 +174,48 @@ func WordWrap(s string, maxWidth int) []string {
 			}
 		}
 
-		if runewidth.StringWidth(string(runes[i:])) <= maxWidth {
-			result = append(result, string(runes[i:]))
+		remainingW := 0
+		for k := i; k < n; k++ {
+			remainingW += clusters[k].width
+		}
+		if remainingW <= maxWidth {
+			var line strings.Builder
+			for k := i; k < n; k++ {
+				line.WriteString(clusters[k].str)
+			}
+			result = append(result, line.String())
 			break
 		}
 
 		lineEnd := i + 1
 		lastSpace := -1
-		w := runewidth.RuneWidth(runes[i])
+		w := clusters[i].width
 
 		for j := i + 1; j < n; j++ {
-			rw := runewidth.RuneWidth(runes[j])
+			rw := clusters[j].width
 			if w+rw > maxWidth {
 				break
 			}
 			w += rw
 			lineEnd = j + 1
-			if runes[j] == ' ' {
+			if clusters[j].str == " " {
 				lastSpace = j
 			}
 		}
 
 		if lastSpace >= i {
-			result = append(result, string(runes[i:lastSpace]))
+			var line strings.Builder
+			for k := i; k < lastSpace; k++ {
+				line.WriteString(clusters[k].str)
+			}
+			result = append(result, line.String())
 			i = lastSpace + 1
 		} else {
-			result = append(result, string(runes[i:lineEnd]))
+			var line strings.Builder
+			for k := i; k < lineEnd; k++ {
+				line.WriteString(clusters[k].str)
+			}
+			result = append(result, line.String())
 			i = lineEnd
 		}
 	}
@@ -205,10 +227,32 @@ func WordWrap(s string, maxWidth int) []string {
 }
 
 func TruncateLine(s string, max int) string {
-	if runewidth.StringWidth(StripAnsi(s)) <= max {
+	plain := StripAnsi(s)
+	if uniseg.StringWidth(plain) <= max {
 		return s
 	}
-	return runewidth.Truncate(s, max, "…")
+	tailW := uniseg.StringWidth("…")
+	target := max - tailW
+	if target < 0 {
+		target = 0
+	}
+	rest := plain
+	var result strings.Builder
+	w := 0
+	state := -1
+	for len(rest) > 0 {
+		cluster, newRest, _, newState := uniseg.StepString(rest, state)
+		cw := uniseg.StringWidth(cluster)
+		if w+cw > target {
+			break
+		}
+		result.WriteString(cluster)
+		w += cw
+		rest = newRest
+		state = newState
+	}
+	result.WriteString("…")
+	return result.String()
 }
 
 func FindSegmentStart(logLine []rune, textW int, segmentIdx int) int {
@@ -216,55 +260,86 @@ func FindSegmentStart(logLine []rune, textW int, segmentIdx int) int {
 		return 0
 	}
 	s := string(logLine)
-	runes := []rune(s)
-	n := len(runes)
 
-	i := 0
+	type cluster struct {
+		runeStart int
+		runeEnd   int
+		width     int
+		str       string
+	}
+	var clusters []cluster
+	rest := s
+	state := -1
+	runePos := 0
+	for len(rest) > 0 {
+		c, newRest, _, newState := uniseg.StepString(rest, state)
+		cRunes := len([]rune(c))
+		clusters = append(clusters, cluster{
+			runeStart: runePos,
+			runeEnd:   runePos + cRunes,
+			width:     uniseg.StringWidth(c),
+			str:       c,
+		})
+		runePos += cRunes
+		rest = newRest
+		state = newState
+	}
+	n := len(clusters)
+
+	ci := 0
 	currentSeg := 0
-	for currentSeg < segmentIdx && i < n {
+	for currentSeg < segmentIdx && ci < n {
 		if currentSeg > 0 {
-			for i < n && runes[i] == ' ' {
-				i++
+			for ci < n && clusters[ci].str == " " {
+				ci++
 			}
-			if i >= n {
+			if ci >= n {
 				break
 			}
 		}
 
-		if runewidth.StringWidth(string(runes[i:])) <= textW {
+		remainingW := 0
+		for k := ci; k < n; k++ {
+			remainingW += clusters[k].width
+		}
+		if remainingW <= textW {
 			currentSeg++
 			break
 		}
 
-		lineEnd := i + 1
+		lineEnd := ci + 1
 		lastSpace := -1
-		w := runewidth.RuneWidth(runes[i])
+		w := clusters[ci].width
 
-		for j := i + 1; j < n; j++ {
-			rw := runewidth.RuneWidth(runes[j])
+		for j := ci + 1; j < n; j++ {
+			rw := clusters[j].width
 			if w+rw > textW {
 				break
 			}
 			w += rw
 			lineEnd = j + 1
-			if runes[j] == ' ' {
+			if clusters[j].str == " " {
 				lastSpace = j
 			}
 		}
 
 		currentSeg++
 
-		if lastSpace >= i {
-			i = lastSpace + 1
+		if lastSpace >= ci {
+			ci = lastSpace + 1
 		} else {
-			i = lineEnd
+			ci = lineEnd
 		}
 	}
 
 	if segmentIdx > 0 {
-		for i < n && runes[i] == ' ' {
-			i++
+		for ci < n && clusters[ci].str == " " {
+			ci++
 		}
 	}
-	return i
+
+	if ci < n {
+		return clusters[ci].runeStart
+	}
+	return len(logLine)
 }

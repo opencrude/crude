@@ -6,8 +6,6 @@ import (
 	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-
-	"github.com/mattn/go-runewidth"
 )
 
 const slashPageSize = 8
@@ -207,7 +205,7 @@ func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool
 				if col < 0 {
 					col = 0
 				}
-				segW := runewidth.StringWidth(seg)
+				segW := rendering.StringWidth(seg)
 				if col > segW {
 					col = segW
 				}
@@ -217,15 +215,7 @@ func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool
 					pos += len(lines[i]) + 1
 				}
 				segRunes := []rune(seg)
-				segRuneIdx := 0
-				colW := 0
-				for segRuneIdx < len(segRunes) && colW < col {
-					colW += runewidth.RuneWidth(segRunes[segRuneIdx])
-					if colW > col {
-						break
-					}
-					segRuneIdx++
-				}
+				segRuneIdx := rendering.ColToRuneIdx(segRunes, col)
 				pos += rendering.FindSegmentStart(logLine, textW, si) + segRuneIdx
 				return pos, true
 			}

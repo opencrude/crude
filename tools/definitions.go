@@ -578,7 +578,7 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "run_sub_agent",
-			Description: "Spawn a specialized sub-agent to handle a well-defined subtask. The sub-agent gets its own context window, tool set, permission policy, session, and TUI tab. It runs to completion and returns a structured result. USE when a task is: self-contained (fully describable in 1-2 sentences), non-trivial (3+ tool calls), and benefits from a separate context window or cheaper model. Do NOT use for tasks requiring context from the current conversation or trivial 1-2 call operations. Sub-agents can spawn their own sub-agents up to max_depth.",
+			Description: "Spawn a specialized leaf agent to handle a well-defined subtask. The sub-agent gets its own context window, tool set, permission policy, session, and TUI tab. It runs to completion and returns a structured result. USE when a task is: self-contained (fully describable in 1-2 sentences), non-trivial (3+ tool calls), and benefits from a separate context window or cheaper model. Do NOT use for tasks requiring context from the current conversation or trivial 1-2 call operations. Sub-agents are leaf agents and cannot spawn further sub-agents — the hierarchy is strictly 2 levels.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -645,14 +645,13 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "write_report",
-			Description: "Write your final result report. This becomes the sub-agent's official result. The gist enters the parent's context window in full. The full report is also saved to disk. If you don't call this, your last non-tool-call message becomes the result.",
+			Description: "Write your full detailed report to disk. The report is saved in the orchestrator's reports directory. After writing, continue working or finish naturally — the orchestrator will read the report file. Your report should contain ALL findings, file contents, analysis, and results in full detail. Do NOT summarize — the orchestrator needs verbatim content.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"gist":{"type":"string","description":"Summary of results. This enters the parent's context window in full."},
-					"report":{"type":"string","description":"Full detailed report. Saved to disk. No size limit."}
+					"report":{"type":"string","description":"Full detailed report content. Include ALL findings, verbatim file contents, analysis, and results. The orchestrator will read this file."}
 				},
-				"required":["gist"]
+				"required":["report"]
 			}`),
 		},
 	},

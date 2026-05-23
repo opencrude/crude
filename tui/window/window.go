@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"crude/tui/components"
 	"crude/tui/rendering"
@@ -302,9 +301,9 @@ func (w *Window) VTabBarWidth() int {
 	// Find the widest tab item (title + optional icon).
 	maxItemW := 0
 	for _, t := range w.tabs {
-		itemW := runewidth.StringWidth(t.Title)
+		itemW := rendering.StringWidth(t.Title)
 		if t.Icon != "" {
-			itemW += runewidth.StringWidth(t.Icon) + 1 // icon + trailing space
+			itemW += rendering.StringWidth(t.Icon) + 1 // icon + trailing space
 		}
 		if itemW > maxItemW {
 			maxItemW = itemW
@@ -428,7 +427,7 @@ func (w *Window) computeTabWidths() []int {
 	idealWidths := make([]int, n)
 	totalIdeal := 0
 	for i, t := range w.tabs {
-		titleW := runewidth.StringWidth(t.Title)
+		titleW := rendering.StringWidth(t.Title)
 		closeW := 0
 		if t.Closable {
 			closeW = closeBtnWidth
@@ -535,9 +534,9 @@ func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool) string {
 		availForTitle = 1
 	}
 
-	titleRW := runewidth.StringWidth(titleText)
+	titleRW := rendering.StringWidth(titleText)
 	if titleRW > availForTitle {
-		titleText = runewidth.Truncate(titleText, availForTitle-1, "…")
+		titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
 	}
 
 	if isActive {
@@ -670,16 +669,16 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if t.Icon != "" {
 			iconStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Success)
 			iconStr = iconStyle.Render(t.Icon) + " "
-			iconW = runewidth.StringWidth(t.Icon) + 1
+			iconW = rendering.StringWidth(t.Icon) + 1
 		}
 		availForTitle := width - usedW - closeW - iconW
 		if availForTitle < 1 {
 			availForTitle = 1
 		}
 		titleText := t.Title
-		titleRW := runewidth.StringWidth(titleText)
+		titleRW := rendering.StringWidth(titleText)
 		if titleRW > availForTitle {
-			titleText = runewidth.Truncate(titleText, availForTitle-1, "…")
+			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
 		}
 		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Fg).Bold(true)
 		b.WriteString(iconStr + titleStyle.Render(titleText))
@@ -706,16 +705,16 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if t.Icon != "" {
 			iconStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
 			iconStr = iconStyle.Render(t.Icon) + " "
-			iconW = runewidth.StringWidth(t.Icon) + 1
+			iconW = rendering.StringWidth(t.Icon) + 1
 		}
 		availForTitle := width - usedW - closeW - iconW
 		if availForTitle < 1 {
 			availForTitle = 1
 		}
 		titleText := t.Title
-		titleRW := runewidth.StringWidth(titleText)
+		titleRW := rendering.StringWidth(titleText)
 		if titleRW > availForTitle {
-			titleText = runewidth.Truncate(titleText, availForTitle-1, "…")
+			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
 		}
 		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
 		b.WriteString(iconStr + titleStyle.Render(titleText))
@@ -778,8 +777,8 @@ func (w *Window) RenderVerticalAsyncRow(item AsyncItem, spinFrame int) string {
 	}
 
 	cmd := item.Command
-	if len([]rune(cmd)) > 20 {
-		cmd = string([]rune(cmd)[:17]) + "…"
+	if rendering.VisibleWidth(cmd) > 20 {
+		cmd = rendering.TruncateVisual(cmd, 17, "…")
 	}
 
 	dotStyle := lipgloss.NewStyle().Foreground(dotColor)
@@ -855,9 +854,9 @@ func (w *Window) DisplayTitles(maxLen int) []string {
 			for _, idx := range indices {
 				if w.tabs[idx].Icon != "" {
 					disambig := fmt.Sprintf("%s — %s", titles[idx], w.tabs[idx].Icon)
-					rw := runewidth.StringWidth(disambig)
+					rw := rendering.StringWidth(disambig)
 					if rw > maxLen {
-						disambig = runewidth.Truncate(disambig, maxLen-1, "…")
+						disambig = rendering.TruncateVisual(disambig, maxLen-1, "…")
 					}
 					result[idx] = disambig
 				}
@@ -866,9 +865,9 @@ func (w *Window) DisplayTitles(maxLen int) []string {
 	}
 
 	for i, s := range result {
-		rw := runewidth.StringWidth(s)
+		rw := rendering.StringWidth(s)
 		if rw > maxLen {
-			result[i] = runewidth.Truncate(s, maxLen-1, "…")
+			result[i] = rendering.TruncateVisual(s, maxLen-1, "…")
 		}
 	}
 

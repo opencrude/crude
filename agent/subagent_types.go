@@ -94,7 +94,6 @@ type SubAgentHandle struct {
 	totalCostUSD      float64
 	errors            []string
 	termReason        string
-	reportGist        string
 	reportPath        string
 	reportDone        bool
 }
@@ -136,18 +135,17 @@ func (h *SubAgentHandle) TermReason() string {
 	return h.termReason
 }
 
-func (h *SubAgentHandle) SetReport(gist, path string) {
+func (h *SubAgentHandle) SetReportPath(path string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.reportGist = gist
 	h.reportPath = path
 	h.reportDone = true
 }
 
-func (h *SubAgentHandle) Report() (gist, path string, hasReport bool) {
+func (h *SubAgentHandle) ReportPath() (path string, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.reportGist, h.reportPath, h.reportGist != ""
+	return h.reportPath, h.reportDone
 }
 
 func (h *SubAgentHandle) ReportDone() bool {

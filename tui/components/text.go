@@ -4,11 +4,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -283,34 +281,9 @@ func (m TextInput) applySelectionToRendered(line string, segFlatStart, segFlatEn
 }
 
 func (m TextInput) runeIdxToCol(line string, runeIdx int) int {
-	col := 0
-	visRuneIdx := 0
-	i := 0
-	for i < len(line) && visRuneIdx < runeIdx {
-		if line[i] == '\x1b' {
-			j := i + 1
-			if j < len(line) && line[j] == '[' {
-				j++
-				for j < len(line) && !(line[j] >= 0x40 && line[j] <= 0x7e) {
-					j++
-				}
-				if j < len(line) {
-					j++
-				}
-			} else if j < len(line) && line[j] >= 0x40 && line[j] <= 0x5f {
-				j++
-			} else {
-				j++
-			}
-			i = j
-			continue
-		}
-		r, size := utf8.DecodeRuneInString(line[i:])
-		col += runewidth.RuneWidth(r)
-		visRuneIdx++
-		i += size
-	}
-	return col
+	plain := rendering.StripAnsi(line)
+	runes := []rune(plain)
+	return rendering.RuneIdxToCol(runes, runeIdx)
 }
 
 func segmentIdx(line int, col int, buf [][]rune, textW int) int {
@@ -722,19 +695,13 @@ func (m *TextInput) cursorVisualInfo() (visualLine, visualCol int) {
 		segStart := rendering.FindSegmentStart(lines[m.curLine], m.textWidth, si)
 		segEnd := segStart + len([]rune(segs[si]))
 		if m.curCol <= segEnd || si == len(segs)-1 {
-			colW := 0
-			for i := segStart; i < m.curCol && i < len(lines[m.curLine]); i++ {
-				colW += runewidth.RuneWidth(lines[m.curLine][i])
-			}
+			colW := rendering.RuneIdxToCol(lines[m.curLine][segStart:m.curCol], m.curCol-segStart)
 			return vis + si, colW
 		}
 	}
 	last := len(segs) - 1
 	segStart := rendering.FindSegmentStart(lines[m.curLine], m.textWidth, last)
-	colW := 0
-	for i := segStart; i < len(lines[m.curLine]); i++ {
-		colW += runewidth.RuneWidth(lines[m.curLine][i])
-	}
+	colW := rendering.RuneIdxToCol(lines[m.curLine][segStart:], len(lines[m.curLine])-segStart)
 	return vis + last, colW
 }
 
@@ -796,15 +763,7 @@ func (m *TextInput) setCursorFromVisualLine(targetVisLine, targetVisCol int) {
 				m.curLine = li
 				segStart := rendering.FindSegmentStart(logLine, m.textWidth, si)
 				segRunes := []rune(segs[si])
-				colW := 0
-				segRuneIdx := 0
-				for segRuneIdx < len(segRunes) && colW < targetVisCol {
-					colW += runewidth.RuneWidth(segRunes[segRuneIdx])
-					if colW > targetVisCol {
-						break
-					}
-					segRuneIdx++
-				}
+				segRuneIdx := rendering.ColToRuneIdx(segRunes, targetVisCol)
 				m.curCol = segStart + segRuneIdx
 				if m.curCol > len(lines[li]) {
 					m.curCol = len(lines[li])

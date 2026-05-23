@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 )
 
 // ── Structured diff types ──────────────────────────────────────────
@@ -283,7 +282,7 @@ func renderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme, skipHea
 		maxNumWidth := 3
 		for _, rl := range renderLines {
 			if rl.lineNum > 0 {
-				w := runewidth.StringWidth(strconv.Itoa(rl.lineNum))
+				w := rendering.StringWidth(strconv.Itoa(rl.lineNum))
 				if w > maxNumWidth {
 					maxNumWidth = w
 				}
@@ -332,7 +331,7 @@ func renderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme, skipHea
 				contentWidth = 10
 			}
 
-			if runewidth.StringWidth(content) <= contentWidth {
+			if rendering.StringWidth(content) <= contentWidth {
 				sb.WriteString(mutedStyle.Render(paddedNum))
 				sb.WriteString(sepStyle.Render(" │ "))
 				sb.WriteString(indStyle.Render(indicator + " "))

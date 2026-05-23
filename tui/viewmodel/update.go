@@ -771,11 +771,9 @@ func (m *App) syncQuestionInputPrompt() {
 		q, _ := m.questionForm.FocusedItem()
 		label := q.Header
 		if label == "" {
-			runes := []rune(q.Question)
-			if len(runes) > 16 {
-				label = string(runes[:16]) + "…"
-			} else {
-				label = q.Question
+			label = q.Question
+			if rendering.VisibleWidth(label) > 16 {
+				label = rendering.TruncateVisual(label, 16, "…")
 			}
 		}
 		m.input.SetPrompt(fmt.Sprintf("Q%d %s", m.questionForm.Focused()+1, label))

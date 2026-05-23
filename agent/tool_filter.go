@@ -31,15 +31,14 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 	case CatCrafter:
 		return CategoryToolConfig{
 			AllowedTools: nil,
-			DeniedTools:  []string{"delete_file"},
+			DeniedTools:  []string{"delete_file", "run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents"},
 		}
 	case CatAeron:
 		return CategoryToolConfig{
 			AllowedTools: []string{
 				"read_file", "write_file", "edit_file", "glob_files", "grep_files",
 				"list_directory",
-				"write_report", "reply",
-				"list_sub_agents", "poll_sub_agent", "wait",
+				"write_report", "reply", "wait",
 			},
 			DeniedTools: []string{
 				"delete_file", "move_file", "copy_file",
@@ -51,13 +50,14 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 	case CatOrchestrator:
 		return CategoryToolConfig{
 			AllowedTools: []string{
+				"read_file",
 				"run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents",
 				"plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
 				"report_blocker", "resolve_blocker", "list_goal_status",
 				"reply", "question", "wait",
 			},
 			DeniedTools: []string{
-				"read_file", "write_file", "edit_file", "delete_file",
+				"write_file", "edit_file", "delete_file",
 				"move_file", "copy_file", "list_directory",
 				"glob_files", "grep_files",
 				"execute_command", "async_execute_command",
@@ -71,7 +71,7 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 	}
 }
 
-func FilterTools(allTools []tools.ToolDef, specAllowed []string, specDenied []string, category string, depth int, maxDepth int) []tools.ToolDef {
+func FilterTools(allTools []tools.ToolDef, specAllowed []string, specDenied []string, category string, isSubAgent bool) []tools.ToolDef {
 	catCfg := CategoryToolDefaults(category)
 	filtered := allTools
 
@@ -103,19 +103,7 @@ func FilterTools(allTools []tools.ToolDef, specAllowed []string, specDenied []st
 		})
 	}
 
-	if depth >= maxDepth {
-		filtered = filterToolSlice(filtered, func(t tools.ToolDef) bool {
-			return t.Function.Name != "run_sub_agent"
-		})
-	}
-
-	if depth >= 2 {
-		filtered = filterToolSlice(filtered, func(t tools.ToolDef) bool {
-			return t.Function.Name != "execute_command" && t.Function.Name != "delete_file"
-		})
-	}
-
-	if depth > 0 {
+	if isSubAgent {
 		filtered = ensureToolExists(filtered, "write_report")
 	}
 
