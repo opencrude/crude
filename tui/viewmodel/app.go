@@ -208,9 +208,6 @@ func (m *App) completeSubAgent(agentID string) {
 	agent, agentOK := m.agents[agentID]
 	alreadyCompleted := agentOK && agent.Completed
 
-	// Close the window tab FIRST (agentTabTitle depends on agentLabels,
-	// which we delete later). Idempotent — TabByTitle returns nil if
-	// the tab was already closed.
 	title := m.agentTabTitle(agentID)
 	if tab := m.win.TabByTitle(title); tab != nil {
 		wasActive := m.win.IndexOf(tab.ID) == m.win.ActiveIndex()
@@ -223,27 +220,19 @@ func (m *App) completeSubAgent(agentID string) {
 		}
 	}
 
-	// Mark SubPane as Done so anyActive() returns false and
-	// the tick loop goes back to slow mode.
 	if sp := m.paneMgr.Get(agentID); sp != nil && !sp.Done {
 		sp.Collapse()
 		m.mainMsgList.InvalidateSubPane(agentID)
 	}
 
-	// Mark agent as Completed so late-arriving events are ignored.
 	if agentOK {
 		agent.Completed = true
 		agent.Streaming = false
 		agent.Thinking = false
 	}
 
-	// Clean up bookkeeping maps.
-	delete(m.agentLabels, agentID)
-	delete(m.agentStatuses, agentID)
-	delete(m.agentModels, agentID)
 	m.statusbar.ClearAgentState(agentID)
 
-	// Sync mode — if no closable tabs remain, go to chat.
 	if !alreadyCompleted {
 		if !m.win.IsOpen() {
 			m.setMode(ModeChat)

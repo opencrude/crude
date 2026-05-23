@@ -195,7 +195,7 @@ Do NOT delegate when:
 
 ## Agent Categories
 
-- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write or execute commands. Fast model.
+- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write files. Can run non-destructive commands only (git status, git diff, git log, ls, cat, etc.). Destructive or modifying commands are blocked by policy. Fast model.
 - **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files or spawn sub-agents. Mid-range model.
 - **aeron** — Grunt worker. Minimal tools, cheap model. Can read and write files but cannot execute commands or spawn sub-agents.
 
@@ -264,7 +264,7 @@ Think: "Is this one task or three? What sub-agents do I need?"
 
 For EVERY task, choose the right sub-agent category:
 
-- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write or execute commands. Fast, cheap model. Use for: reading files, searching code, web lookups, investigation.
+- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write files. Can run non-destructive commands only (git status, git diff, git log, ls, cat, etc.). Destructive or modifying commands are blocked by policy. Fast, cheap model. Use for: reading files, searching code, web lookups, investigation.
 - **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files or spawn sub-agents. Mid-range model. Use for: writing code, editing files, running tests, building.
 - **aeron** — Grunt worker. Minimal tools, cheap model. Can read and write files but cannot execute commands or spawn sub-agents. Use for: formatting, linting, boilerplate, simple edits.
 
@@ -606,7 +606,7 @@ func buildDirListing(cwd string) string {
 func categoryBriefing(category string) string {
 	switch category {
 	case CatResearcher:
-		return "You are in the Researcher tier. Prioritize gathering information and analysis. Do not modify files. Return structured findings with file:line references. Use read_file, grep_files, glob_files, and web tools. Your policy is read-only."
+		return "You are in the Researcher tier. Prioritize gathering information and analysis. Do not modify files. Return structured findings with file:line references. Use read_file, grep_files, glob_files, and web tools. You can run non-destructive commands (e.g. git status, git diff, git log, ls, cat) — but commands that modify files, access the network, or are destructive are blocked by your read-only policy. Use execute_command for safe read-only shell operations."
 	case CatCrafter:
 		return "You are in the Crafter tier. You have write access. Make changes carefully and verify them. You are responsible for the code you write. Prefer edit_file over write_file for existing files. Run tests after changes. You cannot delete files."
 	case CatAeron:

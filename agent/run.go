@@ -310,6 +310,7 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		dest := getStr(preview.Params, "destination")
 		pattern := getStr(preview.Params, "pattern")
 		handle := getStr(preview.Params, "handle")
+		handleID := getStr(preview.Params, "handle_id")
 		seconds := getStr(preview.Params, "seconds")
 
 		var offsetVal int
@@ -332,6 +333,9 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		}
 
 		contentStr := getStr(preview.Params, "content")
+		if contentStr == "" {
+			contentStr = getStr(preview.Params, "report")
+		}
 		oldStr := getStr(preview.Params, "old_string")
 		newStr := getStr(preview.Params, "new_string")
 		if newStr == "" {
@@ -351,7 +355,7 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 			newLines = CountLines(newStr)
 		}
 
-		if name == "write_file" || name == "edit_file" {
+		if name == "write_file" || name == "edit_file" || name == "write_report" {
 			estContent, estOld, estNew := EstimateStreamingLines(name, args)
 			if contentLines == 0 && estContent > 0 {
 				contentLines = estContent
@@ -403,6 +407,9 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		}
 		if handle != "" {
 			data["handle"] = handle
+		}
+		if handleID != "" {
+			data["handle_id"] = handleID
 		}
 		if seconds != "" {
 			data["seconds"] = seconds

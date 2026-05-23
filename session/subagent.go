@@ -260,24 +260,47 @@ func (o *SubAgentOrchestrator) PollSubAgent(params map[string]any) (tools.ToolRe
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	}
 
-	if !ok {
-		if r, found := o.mgr.GetCompleted(agent.AgentID(handleID)); found {
+	if ok {
+		elapsed := time.Since(handle.StartedAt).Round(time.Second)
+		stepsUsed := handle.StepCount.Load()
+		maxSteps := handle.Spec.MaxSteps
+		if maxSteps == 0 {
+			maxSteps = 1000
+		}
+
+		status := fmt.Sprintf("Sub-agent %q [%s] is still running.\nElapsed: %s | Steps: %d/%d | Model: %s",
+			handle.Spec.Name, handle.Spec.Category, elapsed, stepsUsed, maxSteps, handle.Spec.Model)
+
+		return tools.ToolResult{Content: status}, nil
+	}
+
+	if finishedHandle, found := o.mgr.GetFinished(agent.AgentID(handleID)); found {
+		if r, rFound := o.mgr.GetCompleted(agent.AgentID(handleID)); rFound {
 			return tools.ToolResult{Content: formatSubAgentResult(r)}, nil
 		}
-		return tools.ToolResult{Content: "Sub-agent not found. It may have already been cleaned up or never started."}, nil
+		result := agent.SubAgentResult{
+			AgentID:      finishedHandle.Spec.ID,
+			Name:         finishedHandle.Spec.Name,
+			Category:     finishedHandle.Spec.Category,
+			SessionID:    finishedHandle.SessionID,
+			Status:       agent.SubAgentCompleted,
+			DurationMs:   time.Since(finishedHandle.StartedAt).Milliseconds(),
+		}
+		promptTokens, compTokens, costUSD, errs := finishedHandle.Usage()
+		result.PromptTokens = promptTokens
+		result.CompTokens = compTokens
+		result.CostUSD = costUSD
+		result.Errors = errs
+		if reportPath, done := finishedHandle.ReportPath(); done {
+			result.ResultPath = reportPath
+		}
+		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	}
 
-	elapsed := time.Since(handle.StartedAt).Round(time.Second)
-	stepsUsed := handle.StepCount.Load()
-	maxSteps := handle.Spec.MaxSteps
-	if maxSteps == 0 {
-		maxSteps = 1000
+	if r, found := o.mgr.GetCompleted(agent.AgentID(handleID)); found {
+		return tools.ToolResult{Content: formatSubAgentResult(r)}, nil
 	}
-
-	status := fmt.Sprintf("Sub-agent %q [%s] is still running.\nElapsed: %s | Steps: %d/%d | Model: %s",
-		handle.Spec.Name, handle.Spec.Category, elapsed, stepsUsed, maxSteps, handle.Spec.Model)
-
-	return tools.ToolResult{Content: status}, nil
+	return tools.ToolResult{Content: "Sub-agent not found. It may have never started."}, nil
 }
 
 func (o *SubAgentOrchestrator) CancelSubAgent(params map[string]any) (tools.ToolResult, error) {
@@ -351,11 +374,12 @@ func (o *SubAgentOrchestrator) WriteReport(agentID agent.AgentID, params map[str
 		handle.SetReportPath(reportPath)
 	}
 
+	lines := strings.Count(report, "\n") + 1
 	resultJSON, _ := json.Marshal(map[string]string{
 		"status":      "report_written",
 		"report_path": reportPath,
 	})
-	return tools.ToolResult{Content: string(resultJSON)}, nil
+	return tools.ToolResult{Content: string(resultJSON), Added: lines}, nil
 }
 
 func (o *SubAgentOrchestrator) launchSubAgent(ctx context.Context, spec agent.SubAgentSpec, profileInstructions string) (*agent.SubAgentHandle, error) {
@@ -532,7 +556,7 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 				Errors:    []string{fmt.Sprintf("panic: %v\n%s", r, stack)},
 			}
 			handle.ResultCh <- result
-			o.mgr.Unregister(handle.Spec.ID, result)
+			o.mgr.MarkFinished(handle.Spec.ID, result)
 			o.persistResult(result)
 			if handle.DB != nil {
 				sessiondb.CloseSession(handle.DB, handle.SessionID)
@@ -591,17 +615,22 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 
 	result := o.buildResultFromMessages(handle, agentMsgs)
 
+	if !handle.ReportDone() {
+		o.autoGenerateReport(handle, agentMsgs, &result)
+	}
+
 	if o.sender != nil {
 		o.sender.SendAgentEventWithID("sub_agent_completed", map[string]string{
-			"agent_id":   string(handle.Spec.ID),
-			"agent_name": handle.Spec.Name,
-			"category":   handle.Spec.Category,
-			"status":     string(result.Status),
+			"agent_id":    string(handle.Spec.ID),
+			"agent_name":  handle.Spec.Name,
+			"category":    handle.Spec.Category,
+			"status":      string(result.Status),
+			"result_path": result.ResultPath,
 		}, string(handle.Spec.ID))
 	}
 
 	handle.ResultCh <- result
-	o.mgr.Unregister(handle.Spec.ID, result)
+	o.mgr.MarkFinished(handle.Spec.ID, result)
 	done = true
 	o.persistResult(result)
 
@@ -690,11 +719,80 @@ func (o *SubAgentOrchestrator) buildResultFromMessages(handle *agent.SubAgentHan
 	}
 }
 
+func (o *SubAgentOrchestrator) autoGenerateReport(handle *agent.SubAgentHandle, msgs []provider.ChatMessage, result *agent.SubAgentResult) {
+	sessionDir := o.session.logger.SessionDir()
+	if sessionDir == "" {
+		return
+	}
+
+	reportsDir := filepath.Join(sessionDir, "reports")
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Sub-Agent Report: %s [%s]\n\n", handle.Spec.Name, handle.Spec.Category))
+	sb.WriteString(fmt.Sprintf("Task: %s\n\n", handle.Spec.Description))
+
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" && msgs[i].Content != "" && len(msgs[i].ToolCalls) == 0 {
+			sb.WriteString("## Summary\n\n")
+			sb.WriteString(msgs[i].Content)
+			sb.WriteString("\n")
+			break
+		}
+	}
+
+	filesRead := o.fileOwnership.ReadClaimsByAgent(handle.Spec.ID)
+	filesWritten := o.fileOwnership.WriteClaimsByAgent(handle.Spec.ID)
+	if len(filesRead) > 0 {
+		sb.WriteString("\n## Files Read\n\n")
+		for _, f := range filesRead {
+			sb.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+	}
+	if len(filesWritten) > 0 {
+		sb.WriteString("\n## Files Written\n\n")
+		for _, f := range filesWritten {
+			sb.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+	}
+
+	if len(result.Errors) > 0 {
+		sb.WriteString("\n## Errors\n\n")
+		for _, e := range result.Errors {
+			if len(e) > 200 {
+				e = e[:200] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("- %s\n", e))
+		}
+	}
+
+	reportPath := filepath.Join(reportsDir, fmt.Sprintf("%s-report.md", handle.Spec.ID))
+	if err := os.WriteFile(reportPath, []byte(sb.String()), 0644); err != nil {
+		return
+	}
+
+	handle.SetReportPath(reportPath)
+	result.ResultPath = reportPath
+}
+
 func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan string, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 	parentFn := o.parentToolFn
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if !agent.PolicyAllows(spec.Policy, tool) {
 			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q.", tool, spec.PolicyName)
+		}
+
+		isReadOnlyExec := spec.Policy.AllowedCapabilities[safety.CanExecuteReadOnly] && !spec.Policy.AllowedCapabilities[safety.CanExecute]
+		if isReadOnlyExec && (tool == "execute_command" || tool == "async_execute_command") {
+			command := getStrParam(params, "command")
+			if command != "" {
+				safetyRes := safety.CheckCommandSafety(command, o.session.logger)
+				if safetyRes.Risk != safety.RiskSafe {
+					return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed.", command, safetyRes.Risk, safetyRes.Reason)
+				}
+			}
 		}
 
 		if tool == "question" {

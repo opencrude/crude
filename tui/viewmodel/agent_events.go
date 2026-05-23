@@ -478,6 +478,12 @@ func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
 		return
 	}
 
+	if resultPath := data["result_path"]; resultPath != "" {
+		if _, aok := m.agents[agentID]; aok {
+			m.agentStatuses[agentID] = status
+		}
+	}
+
 	if status == "running" {
 		m.agentStatuses[agentID] = status
 		m.syncAgentWindowTabs()

@@ -88,6 +88,7 @@ type SubAgentHandle struct {
 	DB        *sql.DB
 	SM        *statemachine.ConversationStateMachine
 	StepCount         atomic.Int32
+	Finished          bool
 	mu                sync.Mutex
 	totalPromptTokens int
 	totalCompTokens   int

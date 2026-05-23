@@ -790,6 +790,7 @@ func subAgentPollSummary(content, target, duration string) string {
 	elapsed := m["elapsed_seconds"]
 	steps := m["steps_used"]
 	maxSteps := m["max_steps"]
+	resultPath := m["result_path"]
 
 	switch status {
 	case "running":
@@ -818,6 +819,9 @@ func subAgentPollSummary(content, target, duration string) string {
 			parts = append(parts, "\""+name+"\"")
 		}
 		label := strings.Join(parts, " ")
+		if resultPath != "" {
+			label += " — " + resultPath
+		}
 		if duration != "" {
 			label += " " + duration
 		}
@@ -830,10 +834,18 @@ func subAgentPollSummary(content, target, duration string) string {
 			if name != "" {
 				parts = append(parts, "\""+name+"\"")
 			}
-			return strings.Join(parts, " ") + " (" + status + ")"
+			label := strings.Join(parts, " ") + " (" + status + ")"
+			if duration != "" {
+				label += " " + duration
+			}
+			return label
 		}
 		if status == "cancelled" {
-			return "Cancelled " + name
+			label := "Cancelled"
+			if name != "" {
+				label += " " + name
+			}
+			return label
 		}
 	}
 	return "Poll " + name + " " + status
@@ -883,8 +895,23 @@ func subAgentListSummary(content, target, duration string) string {
 
 func subAgentWriteReportSummary(content, target, duration string) string {
 	m := parseJSONMap(content)
+	path := m["report_path"]
+	if path == "" {
+		path = target
+	}
+	if path != "" {
+		label := "Wrote " + path
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
+	}
 	if m["status"] == "report_written" {
-		return "Report written"
+		label := "Wrote report"
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
 	}
 	return "Write report"
 }

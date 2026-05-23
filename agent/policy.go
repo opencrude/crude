@@ -79,7 +79,7 @@ func PolicyAllows(policy safety.Policy, toolName string) bool {
 		return policy.IsAllowed(safety.OpDelete)
 	case "execute_command", "async_execute_command", "check_async_command",
 		"kill_async_command", "read_async_output":
-		return policy.IsAllowed(safety.OpExecute)
+		return policy.IsAllowed(safety.OpExecute) || policy.IsAllowed(safety.OpExecuteReadOnly)
 	case "run_sub_agent":
 		return policy.IsAllowed(safety.OpExecute)
 	default:

@@ -33,13 +33,16 @@ const (
 	OpRead    CRUDEOp = "Read"
 	OpUpdate  CRUDEOp = "Update"
 	OpDelete  CRUDEOp = "Delete"
-	OpExecute CRUDEOp = "Execute"
+	OpExecute        CRUDEOp = "Execute"
+	OpExecuteReadOnly CRUDEOp = "ExecuteReadOnly"
 )
 
 func (op CRUDEOp) IsDestructive() bool {
 	switch op {
 	case OpCreate, OpUpdate, OpDelete, OpExecute:
 		return true
+	case OpExecuteReadOnly:
+		return false
 	default:
 		return false
 	}
@@ -53,6 +56,7 @@ const (
 	CanUpdate
 	CanDelete
 	CanExecute
+	CanExecuteReadOnly
 )
 
 func (c Capability) String() string {
@@ -67,6 +71,8 @@ func (c Capability) String() string {
 		return "delete"
 	case CanExecute:
 		return "execute"
+	case CanExecuteReadOnly:
+		return "execute-read-only"
 	default:
 		return "unknown"
 	}
@@ -84,6 +90,8 @@ func CapabilityFromOp(op CRUDEOp) Capability {
 		return CanDelete
 	case OpExecute:
 		return CanExecute
+	case OpExecuteReadOnly:
+		return CanExecuteReadOnly
 	default:
 		return CanRead
 	}
@@ -98,11 +106,12 @@ type Policy struct {
 func DefaultPolicy() Policy {
 	return Policy{
 		AllowedCapabilities: map[Capability]bool{
-			CanCreate:  true,
-			CanRead:    true,
-			CanUpdate:  true,
-			CanDelete:  true,
-			CanExecute: true,
+			CanCreate:          true,
+			CanRead:            true,
+			CanUpdate:          true,
+			CanDelete:          true,
+			CanExecute:         true,
+			CanExecuteReadOnly: true,
 		},
 		RequireConfirmation: map[Capability]bool{
 			CanDelete: true,
@@ -114,7 +123,8 @@ func DefaultPolicy() Policy {
 func ReadOnlyPolicy() Policy {
 	return Policy{
 		AllowedCapabilities: map[Capability]bool{
-			CanRead: true,
+			CanRead:            true,
+			CanExecuteReadOnly: true,
 		},
 		RequireConfirmation: map[Capability]bool{},
 		AllowRollback:       false,
