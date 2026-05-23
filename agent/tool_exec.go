@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"crude/provider"
@@ -16,6 +17,45 @@ type execResult struct {
 	params map[string]any
 	name   string
 	result tools.ToolResult
+}
+
+type toolParamSchema struct {
+	Required []string `json:"required"`
+}
+
+func findToolDef(name string, defs []tools.ToolDef) *tools.ToolFuncDef {
+	for i := range defs {
+		if defs[i].Function.Name == name {
+			return &defs[i].Function
+		}
+	}
+	return nil
+}
+
+func validateRequiredParams(toolName string, params map[string]any, defs []tools.ToolDef) string {
+	def := findToolDef(toolName, defs)
+	if def == nil {
+		return ""
+	}
+	var schema toolParamSchema
+	if err := json.Unmarshal(def.Parameters, &schema); err != nil || len(schema.Required) == 0 {
+		return ""
+	}
+	var empty []string
+	for _, req := range schema.Required {
+		val, exists := params[req]
+		if !exists {
+			empty = append(empty, req)
+			continue
+		}
+		if s, ok := val.(string); ok && strings.TrimSpace(s) == "" {
+			empty = append(empty, req)
+		}
+	}
+	if len(empty) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Error: tool %q has empty required parameter(s): %s. You MUST provide a non-empty value for each required parameter. Call %s again with %s filled in.", toolName, strings.Join(empty, ", "), toolName, strings.Join(empty, ", "))
 }
 
 func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan string, lastReply *string, step int) <-chan execResult {
@@ -93,6 +133,30 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"error":       "true",
 		}})
 		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errResult}}
+	}
+
+	if errMsg := validateRequiredParams(tc.Function.Name, params, a.FilteredTools); errMsg != "" {
+		a.logger.Warn("TOOL", "empty_required_param", "name", tc.Function.Name)
+		emit(AgentEvent{Type: "tool_call", Data: map[string]any{
+			"internal_id": internalID,
+			"tool_id":     tc.ID,
+			"name":        tc.Function.Name,
+			"args":        tc.Function.Arguments,
+		}})
+		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+			"internal_id": internalID,
+			"tool_id":     tc.ID,
+			"name":        tc.Function.Name,
+			"phase":       "error",
+		}})
+		emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+			"internal_id": internalID,
+			"tool_id":     tc.ID,
+			"name":        tc.Function.Name,
+			"result":      errMsg,
+			"error":       "true",
+		}})
+		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}}
 	}
 
 	if tc.Function.Name == "reply" {
