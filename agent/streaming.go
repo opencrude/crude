@@ -175,6 +175,7 @@ func defaultParamKeys() []string {
 
 var toolPreviewKeys = map[string][]string{
 	"write_file":            {"path", "content"},
+	"write_report":          {"report"},
 	"edit_file":             {"path", "old_string", "new_string", "new_text"},
 	"read_file":             {"path", "offset", "limit", "encoded"},
 	"execute_command":       {"command", "cwd", "timeout_seconds"},
@@ -201,6 +202,8 @@ var toolPreviewKeys = map[string][]string{
 	"kill_async_command":    {"handle"},
 	"read_async_output":     {"handle", "since_byte"},
 	"wait":                  {"seconds"},
+	"poll_sub_agent":        {"handle_id"},
+	"cancel_sub_agent":      {"handle_id"},
 }
 
 func fallbackKVScan(jsonStr string) map[string]any {
@@ -415,6 +418,8 @@ func EstimateStreamingLines(name, rawArgs string) (contentLines, oldLines, newLi
 	switch name {
 	case "write_file":
 		contentLines = countNewlinesInJSONValue(rawArgs, "content")
+	case "write_report":
+		contentLines = countNewlinesInJSONValue(rawArgs, "report")
 	case "edit_file":
 		oldLines = countNewlinesInJSONValue(rawArgs, "old_string")
 		newLines = countNewlinesInJSONValue(rawArgs, "new_string")

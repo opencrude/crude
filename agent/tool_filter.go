@@ -18,15 +18,16 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 		AllowedTools: []string{
 			"read_file", "glob_files", "grep_files", "list_directory",
 			"web_search", "web_fetch", "arxiv_search", "run_javascript",
+			"execute_command",
 			"write_report", "question",
 			"plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
 			"report_blocker", "resolve_blocker", "list_goal_status",
 			"wait", "reply",
 		},
-			DeniedTools: []string{
-				"write_file", "edit_file", "delete_file", "move_file", "copy_file",
-				"execute_command", "async_execute_command",
-			},
+		DeniedTools: []string{
+			"write_file", "edit_file", "delete_file", "move_file", "copy_file",
+			"async_execute_command",
+		},
 		}
 	case CatCrafter:
 		return CategoryToolConfig{

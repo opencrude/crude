@@ -32,6 +32,7 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 	dest, _ := origData["destination"].(string)
 	pattern, _ := origData["pattern"].(string)
 	handle, _ := origData["handle"].(string)
+	handleID, _ := origData["handle_id"].(string)
 	seconds, _ := origData["seconds"].(string)
 
 	var tgt string
@@ -66,6 +67,9 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 				tgt = handle
 			}
 		}
+		if tgt == "" && handleID != "" {
+			tgt = handleID
+		}
 		if tgt == "" && seconds != "" {
 			tgt = seconds + "s"
 		}
@@ -74,6 +78,14 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 	contentLines := toInt(origData["content_lines"])
 	oldLines := toInt(origData["old_lines"])
 	newLines := toInt(origData["new_lines"])
+
+	if contentLines == 0 && name == "write_report" {
+		if rawArgs, _ := origData["args"].(string); rawArgs != "" {
+			if r := extractJSONStringValue(rawArgs, "report"); r != "" {
+				contentLines = strings.Count(r, "\n") + 1
+			}
+		}
+	}
 
 	if tgt == "" {
 		if rawArgs, _ := origData["args"].(string); rawArgs != "" {
@@ -105,6 +117,18 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 			case "grep_files":
 				if p := extractJSONStringValue(rawArgs, "pattern"); p != "" {
 					tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(p, 30))
+				}
+			case "write_report":
+				if r := extractJSONStringValue(rawArgs, "report"); r != "" {
+					tgt = "report"
+				}
+			case "poll_sub_agent", "cancel_sub_agent":
+				if hid := extractJSONStringValue(rawArgs, "handle_id"); hid != "" {
+					if len(hid) > 12 {
+						tgt = hid[:12] + "…"
+					} else {
+						tgt = hid
+					}
 				}
 			}
 		}

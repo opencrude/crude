@@ -79,6 +79,94 @@ var configFilePatterns = []string{
 
 var credPattern = regexp.MustCompile(`(?i)(~\/\.ssh|~\/\.aws|~\/\.gcp|~\/\.azure|~\/\.config/gcloud|~\/\.docker|/etc/shadow|/etc/passwd|\$[A-Z_]+(KEY|SECRET|TOKEN|PASS|CREDENTIAL|API))`)
 
+var (
+	cdPrefixRe  = regexp.MustCompile(`(?i)^cd\s+(?:/d\s+)?(?:\S+|"[^"]*"|'[^']*')\s*&&\s*`)
+	cmdPrefixRe = regexp.MustCompile(`(?i)^cmd\s+/c\s+`)
+)
+
+var shellNames = []string{"sh", "bash", "zsh", "dash", "fish", "source"}
+
+func preprocessCommand(cmd string) string {
+	normalized := strings.ReplaceAll(cmd, "\\", "/")
+	for cdPrefixRe.MatchString(normalized) {
+		normalized = cdPrefixRe.ReplaceAllString(normalized, "")
+	}
+	normalized = cmdPrefixRe.ReplaceAllString(normalized, "")
+	return normalized
+}
+
+func extractCmdsSimple(cmd string) (calls []string, pipedToShell bool, redirectTargets []string, allArgs []string) {
+	pipeSegs := splitOnPipes(cmd)
+
+	for i, seg := range pipeSegs {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		tokens := tokenizeRespectingQuotes(seg)
+		if len(tokens) == 0 {
+			continue
+		}
+		calls = append(calls, tokens[0])
+		allArgs = append(allArgs, tokens...)
+		if i > 0 {
+			lowBase := strings.ToLower(tokens[0])
+			for _, s := range shellNames {
+				if lowBase == s {
+					pipedToShell = true
+					break
+				}
+			}
+		}
+	}
+
+	for i, t := range allArgs {
+		if (strings.HasPrefix(t, ">") || strings.HasPrefix(t, ">>")) && i+1 < len(allArgs) {
+			redirectTargets = append(redirectTargets, allArgs[i+1])
+		}
+	}
+
+	return
+}
+
+func splitOnPipes(cmd string) []string {
+	const orPlaceholder = "\x00OR\x00"
+	normalized := strings.ReplaceAll(cmd, "||", orPlaceholder)
+	parts := strings.Split(normalized, "|")
+	for i, p := range parts {
+		parts[i] = strings.ReplaceAll(p, orPlaceholder, "||")
+	}
+	return parts
+}
+
+func tokenizeRespectingQuotes(s string) []string {
+	var tokens []string
+	var current strings.Builder
+	inSingleQ := false
+	inDoubleQ := false
+
+	for _, ch := range s {
+		switch {
+		case ch == '\'' && !inDoubleQ:
+			inSingleQ = !inSingleQ
+		case ch == '"' && !inSingleQ:
+			inDoubleQ = !inDoubleQ
+		case ch == ' ' && !inSingleQ && !inDoubleQ:
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(ch)
+		}
+	}
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+
+	return tokens
+}
+
 // wordString reconstructs the full string of a Word using the printer.
 func wordString(w *syntax.Word) string {
 	if w == nil {
@@ -136,16 +224,32 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		return res
 	}
 
+	preprocessed := preprocessCommand(cmd)
+
+	var calls []string
+	var pipedToShell bool
+	var redirectTargets []string
+	var allArgs []string
+	var prog *syntax.File
+
 	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
-	prog, err := parser.Parse(strings.NewReader(cmd), "")
-	if err != nil {
-		res.Risk = RiskDestructive
-		res.Reason = fmt.Sprintf("Could not parse command — treating as dangerous: %v", err)
-		lg.Debug("COMMAND", "parse", "error", err.Error(), "risk", res.Risk.String())
-		return res
+	parsedProg, parseErr := parser.Parse(strings.NewReader(preprocessed), "")
+	if parseErr == nil {
+		var stmts []*syntax.CallExpr
+		calls, pipedToShell, redirectTargets, stmts = extractCmds(parsedProg)
+		allArgs = collectAllArgs(stmts)
+		prog = parsedProg
+	} else {
+		calls, pipedToShell, redirectTargets, allArgs = extractCmdsSimple(preprocessed)
+		if len(calls) == 0 {
+			res.Risk = RiskUnknown
+			res.Reason = fmt.Sprintf("Could not parse or extract command: %v", parseErr)
+			lg.Debug("COMMAND", "parse", "error", parseErr.Error(), "risk", res.Risk.String())
+			return res
+		}
+		lg.Debug("COMMAND", "fallback_parse", "original_error", parseErr.Error(), "extracted_calls", fmt.Sprintf("%v", calls))
 	}
 
-	calls, pipedToShell, redirectTargets, stmts := extractCmds(prog)
 	res.Calls = calls
 	res.PipedToShell = pipedToShell
 	res.RedirectTargets = redirectTargets
@@ -172,8 +276,6 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		}
 	}
 
-	// Check all CallExpr args for system paths and config file targets too
-	allArgs := collectAllArgs(stmts)
 	for _, a := range allArgs {
 		if strings.HasPrefix(a, "-") {
 			continue
@@ -193,9 +295,9 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 
 	if len(calls) == 0 && len(redirectTargets) > 0 {
 		if res.TargetsSystem {
-		res.Risk = RiskDestructive
-		res.Reason = "Redirecting output to system path: " + strings.Join(res.AffectedPaths, ", ")
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+			res.Risk = RiskDestructive
+			res.Reason = "Redirecting output to system path: " + strings.Join(res.AffectedPaths, ", ")
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 			return res
 		}
 		res.Risk = RiskProjectWrite
@@ -259,9 +361,8 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		"getconf", "locale", "localectl", "timedatectl",
 		"dmesg", "journalctl", "help", "info", "man", "whatis",
 		"apropos", "cd", "pushd", "popd", "dirs",
-		"python --version", "go version", "node --version",
-		"npm --version", "rustc --version", "cargo --version",
-		"pip --version":
+		"dir", "where", "findstr", "more", "less",
+		"python3":
 		res.Risk = RiskSafe
 		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
@@ -428,7 +529,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		return res
 
 	case "curl", "wget":
-		if pipedToShell || isPipedToShell(prog) {
+		if pipedToShell || (prog != nil && isPipedToShell(prog)) {
 			res.Risk = RiskBlocked
 			res.Reason = "Downloading and immediately executing code — possible supply chain or prompt injection attack"
 			res.Suggestion = "Download to a file first, inspect it, then execute separately"
@@ -501,8 +602,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 		return res
 	}
 
-	// Check for heredoc with eval/source
-	if isHeredocEval(prog) {
+	if prog != nil && isHeredocEval(prog) {
 		res.Risk = RiskDestructive
 		res.Reason = "Evaluating code from heredoc — possible arbitrary code execution"
 		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)

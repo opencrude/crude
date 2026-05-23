@@ -155,7 +155,11 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 		return "Spawning sub-agent"
 	case "poll_sub_agent":
 		if target != "" {
-			return fmt.Sprintf("Polling %s", target)
+			shortID := target
+			if len(shortID) > 12 {
+				shortID = shortID[:12] + "…"
+			}
+			return fmt.Sprintf("Polling %s", shortID)
 		}
 		return "Polling sub-agent"
 	case "cancel_sub_agent":
@@ -166,7 +170,10 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 	case "list_sub_agents":
 		return "Listing sub-agents"
 	case "write_report":
-		return "Writing report"
+		if added > 0 {
+			return fmt.Sprintf("Writing report +%s ↓%s", rendering.FormatCount(added), rendering.FormatTokens(tokens))
+		}
+		return fmt.Sprintf("Writing report ↓%s", rendering.FormatTokens(tokens))
 	default:
 		if target != "" {
 			return fmt.Sprintf("Running %s %s", rendering.PascalCaseTool(tool), target)
@@ -390,13 +397,27 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		}
 		return label
 	case "poll_sub_agent":
-		return "Polled " + target
+		if target != "" {
+			return "Polled " + target
+		}
+		return "Polled sub-agent"
 	case "cancel_sub_agent":
 		return "Cancelled " + target
 	case "list_sub_agents":
 		return "Listed sub-agents"
 	case "write_report":
-		return "Report written"
+		label := "Wrote"
+		if target != "" {
+			label += " " + target
+		}
+		label += fmt.Sprintf(" +%s", rendering.FormatCount(added))
+		if tokens > 0 {
+			label += fmt.Sprintf(" ↓%s", rendering.FormatTokens(tokens))
+		}
+		if duration != "" {
+			label += " " + duration
+		}
+		return label
 	default:
 		label := rendering.PascalCaseTool(tool)
 		if target != "" {

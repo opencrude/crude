@@ -328,6 +328,17 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"path":        path,
 			"message":     fmt.Sprintf("Writing %d lines to %s", lines, path),
 		}})
+	case "write_report":
+		report := getStr(params, "report")
+		lines := CountLines(report)
+		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+			"internal_id": internalID,
+			"tool_id":     tc.ID,
+			"name":        tc.Function.Name,
+			"phase":       "writing",
+			"path":        "report",
+			"message":     fmt.Sprintf("Writing report (%d lines)", lines),
+		}})
 	case "edit_file":
 		oldStr := getStr(params, "old_string")
 		newStr := getStr(params, "new_string")
@@ -373,13 +384,17 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	toolStart := time.Now()
 
 	var result tools.ToolResult
+	var toolErr error
 	if fileCheck && filePath != "" {
 		mu := a.fileMutex(filePath)
 		mu.Lock()
-		result, _ = a.ToolFn(ctx, tc.Function.Name, params)
+		result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
 		mu.Unlock()
 	} else {
-		result, _ = a.ToolFn(ctx, tc.Function.Name, params)
+		result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
+	}
+	if toolErr != nil && result.Content == "" {
+		result.Content = fmt.Sprintf("Error: %s", toolErr.Error())
 	}
 	toolDur := time.Since(toolStart).Milliseconds()
 
@@ -407,6 +422,30 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}})
 	}
 
+	if tc.Function.Name == "write_report" && !IsToolError(result.Content) {
+		reportPath := ""
+		if raw := result.Content; raw != "" {
+			var parsed struct {
+				ReportPath string `json:"report_path"`
+			}
+			if json.Unmarshal([]byte(raw), &parsed) == nil {
+				reportPath = parsed.ReportPath
+			}
+		}
+		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+			"internal_id":     internalID,
+			"tool_id":         tc.ID,
+			"name":            tc.Function.Name,
+			"phase":           "done",
+			"path":            reportPath,
+			"message":          fmt.Sprintf("+%d lines", result.Added),
+			"lines_added":     result.Added,
+			"lines_removed":   0,
+			"tool_dur_ms":     toolDur,
+			"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
+		}})
+	}
+
 	resultData := map[string]any{
 		"internal_id":     internalID,
 		"tool_id":         tc.ID,
@@ -415,7 +454,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		"tool_dur_ms":     toolDur,
 		"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
 	}
-	if tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" {
+	if tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" || tc.Function.Name == "write_report" {
 		resultData["lines_added"] = result.Added
 		resultData["lines_removed"] = result.Removed
 	}

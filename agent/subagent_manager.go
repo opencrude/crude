@@ -9,10 +9,10 @@ import (
 type SubAgentManager struct {
 	mu            sync.Mutex
 	active        map[AgentID]*SubAgentHandle
+	finished      map[AgentID]*SubAgentHandle
 	completed     []SubAgentResult
 	completedMap  map[AgentID]SubAgentResult
 	maxConcurrent int
-	maxCompleted  int
 }
 
 func NewSubAgentManager(maxConcurrent int) *SubAgentManager {
@@ -21,10 +21,10 @@ func NewSubAgentManager(maxConcurrent int) *SubAgentManager {
 	}
 	return &SubAgentManager{
 		active:        make(map[AgentID]*SubAgentHandle),
+		finished:      make(map[AgentID]*SubAgentHandle),
 		completed:     make([]SubAgentResult, 0),
 		completedMap:  make(map[AgentID]SubAgentResult),
 		maxConcurrent: maxConcurrent,
-		maxCompleted:  64,
 	}
 }
 
@@ -51,19 +51,16 @@ func (m *SubAgentManager) Register(handle *SubAgentHandle) error {
 	return nil
 }
 
-func (m *SubAgentManager) Unregister(id AgentID, result SubAgentResult) {
+func (m *SubAgentManager) MarkFinished(id AgentID, result SubAgentResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.active, id)
+	if handle, ok := m.active[id]; ok {
+		handle.Finished = true
+		m.finished[id] = handle
+		delete(m.active, id)
+	}
 	m.completed = append(m.completed, result)
 	m.completedMap[id] = result
-	if len(m.completed) > m.maxCompleted {
-		evicted := m.completed[:len(m.completed)-m.maxCompleted]
-		m.completed = m.completed[len(m.completed)-m.maxCompleted:]
-		for _, r := range evicted {
-			delete(m.completedMap, r.AgentID)
-		}
-	}
 }
 
 func (m *SubAgentManager) GetCompleted(id AgentID) (SubAgentResult, bool) {
@@ -71,6 +68,13 @@ func (m *SubAgentManager) GetCompleted(id AgentID) (SubAgentResult, bool) {
 	defer m.mu.Unlock()
 	r, ok := m.completedMap[id]
 	return r, ok
+}
+
+func (m *SubAgentManager) GetFinished(id AgentID) (*SubAgentHandle, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h, ok := m.finished[id]
+	return h, ok
 }
 
 func (m *SubAgentManager) Cancel(id AgentID) (SubAgentResult, bool) {
@@ -81,16 +85,25 @@ func (m *SubAgentManager) Cancel(id AgentID) (SubAgentResult, bool) {
 		return SubAgentResult{}, false
 	}
 	delete(m.active, id)
+	handle.Finished = true
+	m.finished[id] = handle
 	m.mu.Unlock()
 
 	handle.Cancel()
-	return SubAgentResult{
+	result := SubAgentResult{
 		AgentID:   id,
 		Name:      handle.Spec.Name,
 		Category:  handle.Spec.Category,
 		Status:    SubAgentCancelled,
 		SessionID: handle.SessionID,
-	}, true
+	}
+
+	m.mu.Lock()
+	m.completed = append(m.completed, result)
+	m.completedMap[id] = result
+	m.mu.Unlock()
+
+	return result, true
 }
 
 func (m *SubAgentManager) GetActive(id AgentID) (*SubAgentHandle, bool) {
@@ -142,12 +155,27 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 		})
 	}
 	if includeCompleted {
-		for _, r := range m.completed {
+		for id, h := range m.finished {
+			status := "unknown"
+			resultPath := ""
+			summaryGist := ""
+			if r, ok := m.completedMap[id]; ok {
+				status = string(r.Status)
+				resultPath = r.ResultPath
+				summaryGist = r.SummaryGist
+			}
 			entries = append(entries, SubAgentStatusEntry{
-				HandleID: string(r.AgentID),
-				Name:     r.Name,
-				Category: r.Category,
-				Status:   string(r.Status),
+				HandleID:      string(id),
+				Name:          h.Spec.Name,
+				Category:      h.Spec.Category,
+				Status:        status,
+				ElapsedSeconds: int(time.Since(h.StartedAt).Seconds()),
+				StepsUsed:     int(h.StepCount.Load()),
+				MaxSteps:      h.Spec.MaxSteps,
+				Model:         h.Spec.Model,
+				FilesClaimed:  h.Spec.FileOwnership,
+				ResultPath:    resultPath,
+				SummaryGist:   summaryGist,
 			})
 		}
 	}
@@ -166,4 +194,6 @@ type SubAgentStatusEntry struct {
 	MaxSteps       int      `json:"max_steps"`
 	Model          string   `json:"model"`
 	FilesClaimed   []string `json:"files_claimed"`
+	ResultPath     string   `json:"result_path,omitempty"`
+	SummaryGist    string   `json:"summary_gist,omitempty"`
 }
