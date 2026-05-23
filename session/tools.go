@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,7 +49,7 @@ func (s *Session) newAgent() *agent.Agent {
 	multiAgent := s.cfg.IsMultiAgentEnabled()
 
 	if multiAgent {
-		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, nil, agent.CatOrchestrator, 0, s.cfg.Agents.MaxDepth)
+		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, nil, agent.CatOrchestrator, false)
 		a.Policy = safety.OrchestratorPolicy()
 	}
 
@@ -436,7 +438,9 @@ func (s *Session) newAgent() *agent.Agent {
 		default:
 			if multiAgent && !isSubAgentRequest(params) {
 				switch tool {
-				case "read_file", "write_file", "edit_file", "delete_file",
+				case "read_file":
+					return s.orchestratorReadFile(ctx, params)
+				case "write_file", "edit_file", "delete_file",
 					"move_file", "copy_file", "list_directory",
 					"glob_files", "grep_files",
 					"execute_command", "async_execute_command",
@@ -576,4 +580,38 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 			return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
 		}
 	}
+}
+
+func (s *Session) orchestratorReadFile(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
+	path := getStrParam(params, "path")
+	if path == "" {
+		return tools.ToolResult{}, fmt.Errorf("read_file: 'path' is required")
+	}
+
+	sessionDir := s.logger.SessionDir()
+	if sessionDir == "" {
+		return tools.ToolResult{}, fmt.Errorf("read_file: session directory not available")
+	}
+
+	reportsDir := filepath.Join(sessionDir, "reports")
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return tools.ToolResult{}, fmt.Errorf("read_file: invalid path: %w", err)
+	}
+	absReportsDir, err := filepath.Abs(reportsDir)
+	if err != nil {
+		return tools.ToolResult{}, fmt.Errorf("read_file: internal error resolving reports directory: %w", err)
+	}
+
+	if !strings.HasPrefix(absPath, absReportsDir+string(filepath.Separator)) && absPath != absReportsDir {
+		return tools.ToolResult{Content: fmt.Sprintf("[ORCHESTRATOR MODE] read_file is restricted to the reports directory: %s. The path %q is outside this directory.", reportsDir, path)}, fmt.Errorf("orchestrator read_file: path %q is outside reports directory", path)
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return tools.ToolResult{}, fmt.Errorf("read_file: %w", err)
+	}
+
+	return tools.ToolResult{Content: string(data)}, nil
 }

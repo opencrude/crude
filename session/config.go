@@ -40,7 +40,6 @@ type AgentsConfig struct {
 	Enabled       bool                      `json:"enabled,omitempty"`
 	ActiveProfile string                    `json:"active_profile,omitempty"`
 	MaxConcurrent int                       `json:"max_concurrent,omitempty"`
-	MaxDepth      int                       `json:"max_depth,omitempty"`
 	Profiles      map[string]ProfileConfig  `json:"profiles,omitempty"`
 	AgentProfiles map[string]AgentProfileConfig `json:"agent_profiles,omitempty"`
 }
@@ -63,7 +62,6 @@ func DefaultAgentsConfig() AgentsConfig {
 		Enabled:       true,
 		ActiveProfile: "default",
 		MaxConcurrent: 4,
-		MaxDepth:      2,
 		Profiles: map[string]ProfileConfig{
 			"default": {
 				MultiAgent: &t,
@@ -301,7 +299,6 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		Enabled:       maEnabled,
 		ActiveProfile: ap,
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
-		MaxDepth:      cfg.Agents.MaxDepth,
 		Categories:    make(map[string]ttypes.CategorySettings),
 	}
 	for k, v := range activeProf.Categories {
@@ -460,7 +457,6 @@ func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 		Enabled:       maEnabled,
 		ActiveProfile: activeProfile,
 		MaxConcurrent: s.Agents.MaxConcurrent,
-		MaxDepth:      s.Agents.MaxDepth,
 		Profiles:      profiles,
 	}
 

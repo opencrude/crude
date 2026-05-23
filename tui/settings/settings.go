@@ -301,7 +301,6 @@ func (m Model) updateRoot(msg tea.Msg) (Model, tea.Cmd, Event) {
 
 	if m.agentsSettings.Enabled && len(m.agentsSettings.Categories) == 0 {
 		m.agentsSettings.MaxConcurrent = 4
-		m.agentsSettings.MaxDepth = 2
 		m.agentsSettings.Categories["main"] = types.CategorySettings{}
 		m.agentsSettings.Categories["researcher"] = types.CategorySettings{}
 		m.agentsSettings.Categories["crafter"] = types.CategorySettings{}

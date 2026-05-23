@@ -3,7 +3,7 @@ package virtlist
 import (
 	"strings"
 
-	"github.com/mattn/go-runewidth"
+	"crude/tui/rendering"
 )
 
 func EstimatePlainTextHeight(text string, width int) int {
@@ -52,19 +52,19 @@ func WrapText(text string, width int) []string {
 			result = append(result, "")
 			continue
 		}
-		if runewidth.StringWidth(para) <= width {
+		if rendering.StringWidth(para) <= width {
 			result = append(result, para)
 			continue
 		}
 		words := strings.Fields(para)
 		var cur string
 		for _, word := range words {
-			wordWidth := runewidth.StringWidth(word)
+			wordWidth := rendering.StringWidth(word)
 			if cur == "" {
 				cur = word
 				continue
 			}
-			if runewidth.StringWidth(cur)+1+wordWidth <= width {
+			if rendering.StringWidth(cur)+1+wordWidth <= width {
 				cur += " " + word
 			} else {
 				result = append(result, cur)

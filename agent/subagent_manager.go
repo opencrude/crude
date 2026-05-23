@@ -12,28 +12,23 @@ type SubAgentManager struct {
 	completed     []SubAgentResult
 	completedMap  map[AgentID]SubAgentResult
 	maxConcurrent int
-	maxDepth      int
 	maxCompleted  int
 }
 
-func NewSubAgentManager(maxConcurrent, maxDepth int) *SubAgentManager {
+func NewSubAgentManager(maxConcurrent int) *SubAgentManager {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 4
-	}
-	if maxDepth <= 0 {
-		maxDepth = 2
 	}
 	return &SubAgentManager{
 		active:        make(map[AgentID]*SubAgentHandle),
 		completed:     make([]SubAgentResult, 0),
 		completedMap:  make(map[AgentID]SubAgentResult),
 		maxConcurrent: maxConcurrent,
-		maxDepth:      maxDepth,
 		maxCompleted:  64,
 	}
 }
 
-func (m *SubAgentManager) Validate(spec SubAgentSpec, parentDepth int) error {
+func (m *SubAgentManager) Validate(spec SubAgentSpec) error {
 	if spec.Name == "" {
 		return fmt.Errorf("sub-agent name is required")
 	}
@@ -42,10 +37,6 @@ func (m *SubAgentManager) Validate(spec SubAgentSpec, parentDepth int) error {
 	}
 	if spec.Category != CatResearcher && spec.Category != CatCrafter && spec.Category != CatAeron {
 		return fmt.Errorf("invalid category %q: must be researcher, crafter, or aeron", spec.Category)
-	}
-	depth := parentDepth + 1
-	if depth > m.maxDepth {
-		return fmt.Errorf("cannot spawn sub-agent at depth %d (max_depth=%d)", depth, m.maxDepth)
 	}
 	return nil
 }
@@ -163,7 +154,7 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 	return entries
 }
 
-func (m *SubAgentManager) MaxDepth() int { return m.maxDepth }
+
 
 type SubAgentStatusEntry struct {
 	HandleID       string   `json:"handle_id"`

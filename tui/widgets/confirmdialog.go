@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
 )
@@ -107,8 +108,8 @@ func (m ConfirmDialog) View(spinFrame int) string {
 	if m.target != "" {
 		targetStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Warning)
 		targetDisplay := m.target
-		if len([]rune(targetDisplay)) > 80 {
-			targetDisplay = string([]rune(targetDisplay)[:77]) + "..."
+		if rendering.VisibleWidth(targetDisplay) > 80 {
+			targetDisplay = rendering.TruncateVisual(targetDisplay, 77, "…")
 		}
 		details.WriteString(dim.Render(indent+"target:    ") + targetStyle.Render(targetDisplay))
 		details.WriteString("\n")

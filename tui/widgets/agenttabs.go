@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 )
 
 // AgentTab represents one sub-agent in the tab bar.
@@ -65,7 +65,7 @@ func (b *AgentTabBar) computeWidth() int {
 	for _, t := range b.tabs {
 		// symbol(1) + space(1) + label + space(1) + elapsed
 		elapsed := formatElapsed(t.Elapsed)
-		content := 1 + 1 + runewidth.StringWidth(t.Label) + 1 + runewidth.StringWidth(elapsed)
+		content := 1 + 1 + rendering.StringWidth(t.Label) + 1 + rendering.StringWidth(elapsed)
 		if content > maxContent {
 			maxContent = content
 		}
@@ -123,7 +123,7 @@ func (b *AgentTabBar) renderTabLine(tab AgentTab, totalWidth, spinFrame int, bor
 	elapsed := formatElapsed(tab.Elapsed)
 
 	// Available space for label: totalWidth - "│"(1) - " "(1) - symbol_visual(1) - " "(1) - elapsed - "│"(1)
-	elapsedWidth := runewidth.StringWidth(elapsed)
+	elapsedWidth := rendering.StringWidth(elapsed)
 	// inner = totalWidth - 2 (for the two │ chars)
 	inner := totalWidth - 2
 	// inner layout: " " + symbol(1) + " " + label + " " + elapsed
@@ -134,12 +134,12 @@ func (b *AgentTabBar) renderTabLine(tab AgentTab, totalWidth, spinFrame int, bor
 	}
 
 	label := tab.Label
-	if runewidth.StringWidth(label) > labelSpace {
-		label = runewidth.Truncate(label, labelSpace, "")
+	if rendering.StringWidth(label) > labelSpace {
+		label = rendering.TruncateVisual(label, labelSpace, "")
 	}
 
 	// Pad label to fill the space
-	labelPad := labelSpace - runewidth.StringWidth(label)
+	labelPad := labelSpace - rendering.StringWidth(label)
 	if labelPad < 0 {
 		labelPad = 0
 	}

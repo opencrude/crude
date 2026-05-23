@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/mattn/go-runewidth"
+	"github.com/rivo/uniseg"
 )
 
 var invalidUTF8Logger atomic.Pointer[func(tag, msg string, pairs ...any)]
@@ -139,12 +139,41 @@ func StripAnsi(s string) string {
 	return buf.String()
 }
 
-// VisibleWidth returns the terminal cell width of s, stripping ANSI escape
-// sequences and measuring with runewidth. This is the correct way to measure
-// styled strings for screen-space padding — lipgloss.Width undercounts wide
-// Unicode characters (emojis, │, ●, etc.) by 1 cell each.
 func VisibleWidth(s string) int {
-	return runewidth.StringWidth(StripAnsi(s))
+	return uniseg.StringWidth(StripAnsi(s))
+}
+
+func StringWidth(s string) int {
+	return uniseg.StringWidth(s)
+}
+
+func TruncateVisual(s string, maxW int, tail string) string {
+	plain := StripAnsi(s)
+	if uniseg.StringWidth(plain) <= maxW {
+		return s
+	}
+	tailW := uniseg.StringWidth(tail)
+	target := maxW - tailW
+	if target < 0 {
+		target = 0
+	}
+	rest := plain
+	var result strings.Builder
+	w := 0
+	state := -1
+	for len(rest) > 0 {
+		cluster, newRest, _, newState := uniseg.StepString(rest, state)
+		cw := uniseg.StringWidth(cluster)
+		if w+cw > target {
+			break
+		}
+		result.WriteString(cluster)
+		w += cw
+		rest = newRest
+		state = newState
+	}
+	result.WriteString(tail)
+	return result.String()
 }
 
 func ApplySelection(line string, startCol, endCol int) string {
@@ -153,9 +182,9 @@ func ApplySelection(line string, startCol, endCol int) string {
 	}
 	var buf strings.Builder
 	col := 0
-	i := 0
 	inSelect := false
 
+	i := 0
 	for i < len(line) {
 		if line[i] == '\x1b' && i+1 < len(line) {
 			j := i + 1
@@ -203,22 +232,32 @@ func ApplySelection(line string, startCol, endCol int) string {
 			}
 		}
 
-		r, size := utf8.DecodeRuneInString(line[i:])
-		w := runewidth.RuneWidth(r)
+		segment := line[i:]
+		cluster, newSegment, _, newState := uniseg.StepString(segment, -1)
+		cw := uniseg.StringWidth(cluster)
+		nextCol := col + cw
 
-		shouldSelect := col >= startCol && col < endCol
+		shouldSelect := col >= startCol || nextCol > startCol
+		shouldNotSelect := nextCol <= startCol || col >= endCol
 
-		if shouldSelect && !inSelect {
+		shouldSelectFull := col >= startCol && col < endCol
+
+		if shouldSelectFull && !inSelect {
 			buf.WriteString("\x1b[7m")
 			inSelect = true
-		} else if !shouldSelect && inSelect {
-			buf.WriteString("\x1b[27m")
-			inSelect = false
+		} else if !shouldSelectFull && inSelect {
+			if !shouldSelect || col >= endCol {
+				buf.WriteString("\x1b[27m")
+				inSelect = false
+			}
 		}
 
-		buf.WriteString(line[i : i+size])
-		col += w
-		i += size
+		buf.WriteString(cluster)
+		col = nextCol
+		i += len(cluster)
+		_ = newSegment
+		_ = newState
+		_ = shouldNotSelect
 	}
 
 	if inSelect {
@@ -231,15 +270,21 @@ func ApplySelection(line string, startCol, endCol int) string {
 func ExtractVisibleRange(s string, startCol, endCol int) string {
 	var buf strings.Builder
 	col := 0
-	for _, r := range s {
-		w := runewidth.RuneWidth(r)
+	rest := s
+	state := -1
+	for len(rest) > 0 {
+		cluster, newRest, _, newState := uniseg.StepString(rest, state)
+		cw := uniseg.StringWidth(cluster)
 		if endCol >= 0 && col >= endCol {
 			break
 		}
-		if col+w > startCol {
-			buf.WriteRune(r)
+		nextCol := col + cw
+		if nextCol > startCol {
+			buf.WriteString(cluster)
 		}
-		col += w
+		col = nextCol
+		rest = newRest
+		state = newState
 	}
 	return buf.String()
 }
@@ -271,4 +316,36 @@ func ExtractSelectedText(allLines []string, startLine, startCol, endLine, endCol
 		}
 	}
 	return buf.String()
+}
+
+func RuneIdxToCol(runes []rune, idx int) int {
+	if idx <= 0 {
+		return 0
+	}
+	if idx >= len(runes) {
+		idx = len(runes)
+	}
+	return uniseg.StringWidth(string(runes[:idx]))
+}
+
+func ColToRuneIdx(runes []rune, col int) int {
+	if col <= 0 || len(runes) == 0 {
+		return 0
+	}
+	rest := string(runes)
+	runeIdx := 0
+	curCol := 0
+	state := -1
+	for len(rest) > 0 {
+		cluster, newRest, _, newState := uniseg.StepString(rest, state)
+		cw := uniseg.StringWidth(cluster)
+		if curCol+cw > col {
+			return runeIdx
+		}
+		curCol += cw
+		runeIdx += len([]rune(cluster))
+		rest = newRest
+		state = newState
+	}
+	return runeIdx
 }

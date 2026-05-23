@@ -136,7 +136,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 	if s.cfg.IsMultiAgentEnabled() {
 		prompt = agent.BuildOrchestratorPrompt()
 	} else {
-		prompt = agent.BuildSystemPrompt()
+		prompt = agent.BuildSystemPrompt(false)
 	}
 
 		displayTracker := &displayMetaTracker{

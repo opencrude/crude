@@ -197,8 +197,13 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		writeBuf:       make([]taggedMessage, 0, 64),
 	}
 	if cfg.Agents.Enabled {
-		sess.subAgentOrch = NewSubAgentOrchestrator(sess, cfg.Agents.MaxConcurrent, cfg.Agents.MaxDepth)
+		sess.subAgentOrch = NewSubAgentOrchestrator(sess, cfg.Agents.MaxConcurrent)
 	}
+
+	if dir := lg.SessionDir(); dir != "" {
+		os.MkdirAll(filepath.Join(dir, "reports"), 0755)
+	}
+
 	return sess, nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/aymanbagabas/go-udiff"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"crude/tui/rendering"
 	"crude/tui/xchroma"
 )
 
@@ -300,9 +301,9 @@ func (dv *DiffView) detectCodeWidth() {
 func (dv *DiffView) detectUnifiedCodeWidth() {
 	dv.codeWidth = 0
 	for _, h := range dv.unified.Hunks {
-		shownLines := ansi.StringWidth(dv.hunkLineFor(h))
+		shownLines := rendering.VisibleWidth(dv.hunkLineFor(h))
 		for _, l := range h.Lines {
-			lineWidth := ansi.StringWidth(strings.TrimSuffix(l.Content, "\n")) + 1
+			lineWidth := rendering.VisibleWidth(strings.TrimSuffix(l.Content, "\n")) + 1
 			dv.codeWidth = max(dv.codeWidth, lineWidth, shownLines)
 		}
 	}
@@ -311,14 +312,14 @@ func (dv *DiffView) detectUnifiedCodeWidth() {
 func (dv *DiffView) detectSplitCodeWidth() {
 	dv.codeWidth = 0
 	for i, h := range dv.splitHunks {
-		shownLines := ansi.StringWidth(dv.hunkLineFor(dv.unified.Hunks[i]))
+		shownLines := rendering.VisibleWidth(dv.hunkLineFor(dv.unified.Hunks[i]))
 		for _, l := range h.lines {
 			if l.before != nil {
-				codeWidth := ansi.StringWidth(strings.TrimSuffix(l.before.Content, "\n")) + 1
+				codeWidth := rendering.VisibleWidth(strings.TrimSuffix(l.before.Content, "\n")) + 1
 				dv.codeWidth = max(dv.codeWidth, codeWidth, shownLines)
 			}
 			if l.after != nil {
-				codeWidth := ansi.StringWidth(strings.TrimSuffix(l.after.Content, "\n")) + 1
+				codeWidth := rendering.VisibleWidth(strings.TrimSuffix(l.after.Content, "\n")) + 1
 				dv.codeWidth = max(dv.codeWidth, codeWidth, shownLines)
 			}
 		}

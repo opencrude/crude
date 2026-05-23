@@ -68,9 +68,6 @@ func (a *Agent) SetToolCallSeqStart(n int) { a.toolCallSeq = n }
 func (a *Agent) ToolCallSeq() int           { return a.toolCallSeq }
 
 func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
-	if model == "" {
-		model = "google/gemini-2.0-flash-exp:free"
-	}
 	return &Agent{
 		Provider: p,
 		Model:    model,

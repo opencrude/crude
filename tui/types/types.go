@@ -61,7 +61,6 @@ type AgentsSettings struct {
 	Enabled       bool
 	ActiveProfile string
 	MaxConcurrent int
-	MaxDepth      int
 	Categories    map[string]CategorySettings
 	Profiles      []ProfileSettings
 }

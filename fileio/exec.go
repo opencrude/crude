@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"crude/logger"
+	"github.com/mattn/go-runewidth"
 )
 
 // windowsCommandWarning checks for common patterns that fail on Windows and
@@ -232,11 +233,10 @@ func shouldSkipDir(name string, includeHidden bool) bool {
 }
 
 func truncateLine(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
+	if runewidth.StringWidth(s) <= maxLen {
 		return s
 	}
-	return string(runes[:maxLen]) + "…"
+	return runewidth.Truncate(s, maxLen, "…")
 }
 
 func (l *LocalExec) GlobFiles(baseDir, pattern string, includeHidden bool) ([]string, error) {

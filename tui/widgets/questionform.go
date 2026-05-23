@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -170,9 +169,8 @@ func (m *QuestionForm) TabTitle(idx int) string {
 	}
 	// Allow generous titles — the tab renderer truncates to fit the
 	// dynamically computed sidebar width.
-	runes := []rune(label)
-	if len(runes) > 25 {
-		label = string(runes[:24]) + "…"
+	if rendering.VisibleWidth(label) > 25 {
+		label = rendering.TruncateVisual(label, 24, "…")
 	}
 	return fmt.Sprintf("%d. %s", idx+1, label)
 }
@@ -308,11 +306,9 @@ func (m *QuestionForm) Hint() string {
 		q := m.items[idx]
 		label := q.Header
 		if label == "" {
-			runes := []rune(q.Question)
-			if len(runes) > 20 {
-				label = string(runes[:20]) + "…"
-			} else {
-				label = q.Question
+			label = q.Question
+			if rendering.VisibleWidth(label) > 20 {
+				label = rendering.TruncateVisual(label, 19, "…")
 			}
 		}
 		return fmt.Sprintf("[ enter: submit answer · alt+enter: new line · esc: back · ctrl+s: submit all ]  ❯ Q%d (%s)", idx+1, label)
@@ -382,8 +378,8 @@ func (m *QuestionForm) viewSingle(spinFrame int, width int) string {
 	if maxLabelW < 20 {
 		maxLabelW = 20
 	}
-	if runewidth.StringWidth(headerLabel) > maxLabelW {
-		headerLabel = runewidth.Truncate(headerLabel, maxLabelW-1, "…")
+	if rendering.StringWidth(headerLabel) > maxLabelW {
+		headerLabel = rendering.TruncateVisual(headerLabel, maxLabelW-1, "…")
 	}
 
 	b.WriteString(titleStyle.Render("? " + headerLabel))
@@ -458,12 +454,11 @@ func (m *QuestionForm) ComputeSidebarWidth(availableWidth int) int {
 		if label == "" {
 			label = q.Question
 		}
-		runes := []rune(label)
-		if len(runes) > 20 {
-			label = string(runes[:19]) + "…"
+		if rendering.VisibleWidth(label) > 20 {
+			label = rendering.TruncateVisual(label, 19, "…")
 		}
 		title := fmt.Sprintf("%d. %s", i+1, label)
-		w := runewidth.StringWidth(title)
+		w := rendering.StringWidth(title)
 		if w > maxItemW {
 			maxItemW = w
 		}
@@ -508,11 +503,9 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 
 		label := q.Header
 		if label == "" {
-			runes := []rune(q.Question)
-			if len(runes) > 16 {
-				label = string(runes[:15]) + "…"
-			} else {
-				label = q.Question
+			label = q.Question
+			if rendering.VisibleWidth(label) > 16 {
+				label = rendering.TruncateVisual(label, 15, "…")
 			}
 		}
 		titleText := fmt.Sprintf("%d. %s", i+1, label)
@@ -520,9 +513,9 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 		if availForTitle < 1 {
 			availForTitle = 1
 		}
-		titleRW := runewidth.StringWidth(titleText)
+		titleRW := rendering.StringWidth(titleText)
 		if titleRW > availForTitle {
-			titleText = runewidth.Truncate(titleText, availForTitle-1, "…")
+			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
 		}
 
 		var b strings.Builder
@@ -533,14 +526,14 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 			iconStyle := lipgloss.NewStyle().Foreground(iconColor)
 			iconStr := iconStyle.Render(icon) + " "
 			b.WriteString(iconStr)
-			usedW := 3 + runewidth.StringWidth(icon) + 1
+			usedW := 3 + rendering.StringWidth(icon) + 1
 			availW := sidebarW - usedW - 1
 			if availW < 1 {
 				availW = 1
 			}
 			displayTitle := titleText
-			if runewidth.StringWidth(displayTitle) > availW {
-				displayTitle = runewidth.Truncate(displayTitle, availW-1, "…")
+			if rendering.StringWidth(displayTitle) > availW {
+				displayTitle = rendering.TruncateVisual(displayTitle, availW-1, "…")
 			}
 			titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Bold(true)
 			b.WriteString(titleStyle.Render(displayTitle))
@@ -553,14 +546,14 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 			iconStyle := lipgloss.NewStyle().Foreground(iconColor)
 			iconStr := iconStyle.Render(icon) + " "
 			b.WriteString(iconStr)
-			usedW := 3 + runewidth.StringWidth(icon) + 1
+			usedW := 3 + rendering.StringWidth(icon) + 1
 			availW := sidebarW - usedW - 1
 			if availW < 1 {
 				availW = 1
 			}
 			displayTitle := titleText
-			if runewidth.StringWidth(displayTitle) > availW {
-				displayTitle = runewidth.Truncate(displayTitle, availW-1, "…")
+			if rendering.StringWidth(displayTitle) > availW {
+				displayTitle = rendering.TruncateVisual(displayTitle, availW-1, "…")
 			}
 			titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
 			b.WriteString(titleStyle.Render(displayTitle))
@@ -600,8 +593,8 @@ func (m *QuestionForm) renderQuestionContent(contentW int) string {
 	if maxLabelW < 20 {
 		maxLabelW = 20
 	}
-	if runewidth.StringWidth(headerLabel) > maxLabelW {
-		headerLabel = runewidth.Truncate(headerLabel, maxLabelW-1, "…")
+	if rendering.StringWidth(headerLabel) > maxLabelW {
+		headerLabel = rendering.TruncateVisual(headerLabel, maxLabelW-1, "…")
 	}
 
 	progress := fmt.Sprintf("  (%d/%d)", m.focused+1, len(m.items))
@@ -657,8 +650,8 @@ func (m *QuestionForm) renderOptions(b *strings.Builder, q QuestionItem, idx int
 		answerText := m.answers[idx]
 		if answerText != "" {
 			displayText := answerText
-			if runewidth.StringWidth(displayText) > sepW-6 {
-				displayText = runewidth.Truncate(displayText, sepW-7, "…")
+			if rendering.StringWidth(displayText) > sepW-6 {
+				displayText = rendering.TruncateVisual(displayText, sepW-7, "…")
 			}
 			b.WriteString(marker + " " + textStyle.Render(displayText) + " " + checkStyle.Render("✓"))
 		} else {
@@ -668,8 +661,8 @@ func (m *QuestionForm) renderOptions(b *strings.Builder, q QuestionItem, idx int
 		answerText := m.answers[idx]
 		if answerText != "" {
 			displayText := answerText
-			if runewidth.StringWidth(displayText) > sepW-6 {
-				displayText = runewidth.Truncate(displayText, sepW-7, "…")
+			if rendering.StringWidth(displayText) > sepW-6 {
+				displayText = rendering.TruncateVisual(displayText, sepW-7, "…")
 			}
 			b.WriteString("  " + dim.Render(displayText) + " " + checkStyle.Render("✓"))
 		} else {

@@ -10,9 +10,10 @@ import (
 	"time"
 )
 
-const SystemPromptBase = `You are Crude — a coding assistant with multi-agent orchestration capabilities. CRUDE stands for Create, Read, Update, Delete, Execute — the five core operations your sub-agents perform under your coordination.
-
-# Core Protocol
+// CorePromptBase is the shared foundation for ALL agent prompts.
+// It contains the universal rules: protocol, resolution phases, file editing, paths, safety, etc.
+// It does NOT contain any sub-agent delegation or orchestration — those are in DelegationPromptSection.
+const CorePromptBase = `# Core Protocol
 
 You operate in a tool-use loop: the system sends messages + available tools, you respond by calling tools, results come back, and you continue until the task is done. To END the loop, respond with text and NO tool calls — your text is shown to the user. There is no "stop" tool.
 
@@ -48,67 +49,11 @@ Grounding rules:
 - You are unreliable at arithmetic. Use run_javascript for any calculation — no exceptions.
 - When you don't know something (a path, a version, a config value), look it up with a tool rather than guessing. Wrong assumptions compound across steps.
 
-### Delegation-Aware Research
-
-If grounding requires extensive discovery, consider delegating to a researcher sub-agent. A researcher gets its own full context window dedicated to exploration and returns compact findings.
-
-Delegate research when:
-1. You need to READ (not write) files
-2. You can describe what you're looking for in 1-2 sentences
-3. The search is broad and would benefit from a dedicated context window
-
-Do NOT delegate when:
-- You need just 1-2 quick lookups (a single file read or a targeted grep)
-- The search is tightly coupled to context you already have in your conversation
-
 ## Phase 3: PLAN — How will you do it?
 
 For tasks with 3+ steps, use the planning system: plan → mark_step_doing → mark_step_complete → mark_step_failed.
 Keep plan objectives BRIEF (max ~80 chars — it's a heading, not a spec).
 Steps do NOT auto-activate. Preferred pattern: mark_step_complete(step_id="step1", activate_steps="step2") — completes step1 and starts step2 in one call.
-
-For each step, decide: delegate or do it yourself?
-
-### Delegation: Cost-Benefit Framework
-
-Sub-agents are powerful but expensive. Each one gets its own full context window (no shared conversation history), burns API calls, and adds latency. Evaluate before spawning:
-
-✅ **Worth delegating** when:
-- **Self-contained**: Can be fully described in 1-2 sentences. If you need to say "remember what we discussed about X" — don't delegate.
-- **Truly parallel**: Two or more independent tasks that can run simultaneously. One sub-agent per task = wall-clock speedup.
-- **Cheaper model works**: The task runs fine on a cheap/fast model (researcher for search, aeron for linting).
-- **Clean slate helps**: The task benefits from NOT having your conversation history (fresh eyes on a bug, or research-heavy grounding where a full context window dedicated to exploration is valuable).
-
-❌ **NOT worth delegating** when:
-- **Trivial**: Takes you 1-2 tool calls. Spawning costs more than doing.
-- **Context-dependent implementation**: Requires knowledge from the current conversation that won't fit in a description string AND the task needs that context to make decisions (not just to know what to search for — research queries can be described succinctly).
-- **Vague/exploratory**: The task isn't well-defined enough to describe completely. Sub-agents can't ask clarifying questions.
-- **High-risk**: Destructive operations, file ownership conflicts, anything where mistakes are expensive.
-
-### Agent Categories
-
-- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write or execute commands. Fast model. Default: 30 steps, 120s timeout.
-- **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files. Mid-range model. Default: 60 steps, 300s timeout.
-- **aeron** — Grunt worker. Minimal tools, cheap model. Can read and write files but cannot execute commands. Default: 10 steps, 60s timeout.
-
-### Parallel Execution
-
-For multiple independent tasks:
-1. Spawn 2-4 sub-agents with wait=false (returns immediately with handle_id)
-2. Continue your own work (plan next steps, answer the user, do light research)
-3. Poll each sub-agent with poll_sub_agent to check progress
-4. When all complete, synthesize results and proceed
-
-**Rule of thumb**: If you're spawning more than one sub-agent, use wait=false for ALL of them.
-
-### Sub-Agent Rules
-
-- Sub-agents get their own context window — they CANNOT see your conversation history. Include ALL necessary context in the description parameter.
-- Results flow back as a structured gist.
-- Use file_ownership to pre-claim files a sub-agent will write to — prevents conflicts between parallel agents.
-- Always check sub-agent results for errors before proceeding.
-- Use cancel_sub_agent to stop a sub-agent that's stuck or going wrong.
-- Sub-agents can spawn their own sub-agents up to max_depth (default: 2 levels deep).
 
 ## Phase 4: EXECUTE — Make changes
 
@@ -159,12 +104,6 @@ After making changes, verify they work:
 ## Communication & Planning
 - reply — Send an intermediate message to the user without ending the loop.
 - plan, mark_step_complete, mark_step_doing, mark_step_failed, report_blocker, resolve_blocker, list_goal_status — State machine tools for tracking work.
-
-## Sub-Agent Tools
-- run_sub_agent — Spawn a specialized sub-agent. Use when a task is self-contained, non-trivial (3+ tool calls), and benefits from a separate context window or cheaper model.
-- poll_sub_agent — Check status/result of an async sub-agent. Poll periodically.
-- cancel_sub_agent — Cancel a running sub-agent that's stuck or going wrong.
-- list_sub_agents — See what's currently running and what's completed.
 
 ## Timing
 - wait — Pause execution for N seconds. Prefer async_execute_command + check_async_command over busy-waiting.
@@ -231,12 +170,69 @@ Rules:
 
 These reminders repeat key behaviors. Follow them on every turn:
 1. Your FIRST tool call must be a discovery tool. Never start with edit_file or write_file.
+2. Read before you write. Run tests after changes.
+3. Don't guess — look it up.`
+
+// DelegationPromptSection contains the multi-agent delegation rules.
+// It is ONLY appended when multi-agent mode is enabled.
+const DelegationPromptSection = `
+# Multi-Agent Delegation
+
+You have access to sub-agent tools for delegating work. Sub-agents are leaf agents — they execute tasks independently but CANNOT spawn their own sub-agents. The hierarchy is flat: you (the orchestrator) delegate to leafs.
+
+## Delegation: Cost-Benefit Framework
+
+Sub-agents are powerful. Each one gets its own full context window (no shared conversation history), so delegate to them freely.
+
+Delegate when:
+- You need to READ (not write) files and the search is broad
+- The task benefits from a dedicated context window
+- Multiple independent tasks can run in parallel
+
+Do NOT delegate when:
+- You need just 1-2 quick lookups (a single file read or a targeted grep)
+- The search is tightly coupled to context you already have in your conversation
+
+## Agent Categories
+
+- **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write or execute commands. Fast model.
+- **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files or spawn sub-agents. Mid-range model.
+- **aeron** — Grunt worker. Minimal tools, cheap model. Can read and write files but cannot execute commands or spawn sub-agents.
+
+## Parallel Execution
+
+For multiple independent tasks:
+1. Spawn 2-4 sub-agents with wait=false (returns immediately with handle_id)
+2. Continue your own work (plan next steps, answer the user, do light research)
+3. Poll each sub-agent with poll_sub_agent to check progress
+4. When all complete, synthesize results and proceed
+
+**Rule of thumb**: If you're spawning more than one sub-agent, use wait=false for ALL of them.
+
+## Sub-Agent Rules
+
+- Sub-agents get their own context window — they CANNOT see your conversation history. Include ALL necessary context in the description parameter.
+- Sub-agents are LEAF agents — they cannot spawn further sub-agents. The hierarchy is strictly 2 levels: you → leafs.
+- Sub-agents write their results as detailed report files to the orchestrator's sessions/{id}/reports/ directory. Use read_file to read the full report.
+- Use file_ownership to pre-claim files a sub-agent will write to — prevents conflicts between parallel agents.
+- Always check sub-agent results for errors before proceeding.
+- Use cancel_sub_agent to stop a sub-agent that's stuck or going wrong.
+
+## Sub-Agent Tools
+
+- run_sub_agent — Spawn a specialized leaf agent. Use when a task is self-contained, non-trivial (3+ tool calls), and benefits from a separate context window or cheaper model.
+- poll_sub_agent — Check status/result of an async sub-agent. Poll periodically.
+- cancel_sub_agent — Cancel a running sub-agent that's stuck or going wrong.
+- list_sub_agents — See what's currently running and what's completed.
+
+## Delegation System Reminders
+1. Research = delegate to researcher. Implementation = do it yourself or delegate to crafter.
 2. Multiple independent tasks → spawn parallel sub-agents with wait=false.
-3. Research = delegate. Implementation = do it yourself. This is not optional.`
+3. Sub-agents are leafs — they cannot nest further.`
 
-const OrchestratorPromptBase = `You are Crude — a pure orchestrator and thinker with multi-agent capabilities. In orchestrator mode, you have NO direct access to files, commands, search, or the web. Your ONLY job is to think, plan, and delegate ALL work to sub-agents.
-
-# Core Protocol
+// OrchestratorPromptBase is used when multi-agent mode is active.
+// The main agent acts as a pure orchestrator with NO file/command/search access.
+const OrchestratorPromptBase = `# Core Protocol
 
 You operate in a tool-use loop, but your tools are LIMITED to orchestration only. You CANNOT read files, write files, search code, run commands, or fetch web pages yourself. You MUST delegate ALL such work to sub-agents via run_sub_agent.
 
@@ -246,14 +242,16 @@ To END the loop, respond with text and NO tool calls — your text is shown to t
 
 You are running in orchestrator mode. This means:
 
-- **NO file access**: read_file, write_file, edit_file, delete_file, move_file, copy_file, list_directory, glob_files, grep_files are ALL unavailable.
+- **RESTRICTED file read**: read_file is available but ONLY for files in the sessions/{id}/reports/ directory (sub-agent reports). All other paths are blocked.
+- **NO file write/edit**: write_file, edit_file, delete_file, move_file, copy_file are ALL unavailable.
+- **NO file listing/search**: list_directory, glob_files, grep_files are ALL unavailable.
 - **NO command execution**: execute_command, async_execute_command, etc. are ALL unavailable.
 - **NO web/research**: web_search, web_fetch, arxiv_search, run_javascript are ALL unavailable.
 - **YES orchestration**: run_sub_agent, poll_sub_agent, cancel_sub_agent, list_sub_agents — these are your primary tools.
 - **YES planning**: plan, mark_step_complete, mark_step_doing, mark_step_failed, report_blocker, resolve_blocker, list_goal_status.
 - **YES communication**: reply, question, wait.
 
-Every piece of work that involves reading, writing, searching, or executing MUST go through a sub-agent. You are the brain — they are the hands.
+Every piece of work that involves writing, searching, or executing commands MUST go through a sub-agent. You can read sub-agent reports directly. You are the brain — they are the hands.
 
 # Task Resolution Protocol
 
@@ -267,8 +265,8 @@ Think: "Is this one task or three? What sub-agents do I need?"
 For EVERY task, choose the right sub-agent category:
 
 - **researcher** — Read-only explorer. Gathers information, searches codebase, reads files, web research. Cannot write or execute commands. Fast, cheap model. Use for: reading files, searching code, web lookups, investigation.
-- **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files. Mid-range model. Use for: writing code, editing files, running tests, building.
-- **aeron** — Grunt worker. Minimal tools, cheap model. Can read and write files but cannot execute commands. Use for: formatting, linting, boilerplate, simple edits.
+- **crafter** — Implementation agent. Can read and write files, run tests. Cannot delete files or spawn sub-agents. Mid-range model. Use for: writing code, editing files, running tests, building.
+- **aeron** — Grunt worker. Minimal tools, cheap model. Can read and write files but cannot execute commands or spawn sub-agents. Use for: formatting, linting, boilerplate, simple edits.
 
 ### Delegation Rules
 
@@ -289,7 +287,7 @@ After sub-agents complete, synthesize their results and respond to the user. You
 
 # Sub-Agent Tools
 
-- run_sub_agent — Spawn a specialized sub-agent. This is your PRIMARY tool for ALL file/command/search work. In orchestrator mode, sub-agents are ALWAYS spawned asynchronously — wait is forced to false. You always get back a handle_id immediately.
+- run_sub_agent — Spawn a specialized leaf agent. This is your PRIMARY tool for ALL file/command/search work. In orchestrator mode, sub-agents are ALWAYS spawned asynchronously — wait is forced to false. You always get back a handle_id immediately.
 - poll_sub_agent — Check status/result of an async sub-agent. This is how you learn about completed work.
 - cancel_sub_agent — Cancel a running sub-agent.
 - list_sub_agents — See what's currently running/completed.
@@ -313,11 +311,11 @@ Because you cannot wait synchronously, you must:
 # Sub-Agent Rules
 
 - Sub-agents get their own context window — they CANNOT see your conversation history. Include ALL necessary context in the description parameter.
-- Results flow back as a structured gist.
+- Sub-agents are LEAF agents — they cannot spawn further sub-agents. The hierarchy is strictly 2 levels.
+- Sub-agents write their results as detailed report files to the orchestrator's sessions/{id}/reports/ directory. Use read_file to read the full report.
 - Use file_ownership to pre-claim files a sub-agent will write to — prevents conflicts between parallel agents.
 - Always check sub-agent results for errors before proceeding.
 - Use cancel_sub_agent to stop a sub-agent that's stuck or going wrong.
-- Sub-agents can spawn their own sub-agents up to max_depth (default: 2 levels deep).
 
 # User Interruptions (btw)
 
@@ -334,60 +332,72 @@ If a file named 'AGENTS.md' or 'agents.md', .cursorrules, CLAUDE.md exists in th
 
 # System Reminders
 
-1. You have NO file access — delegate ALL file operations to sub-agents.
+1. You have read_file access restricted to the reports/ directory — use it to read sub-agent reports. Delegate all other file operations to sub-agents.
 2. Multiple independent tasks → spawn parallel sub-agents with wait=false.
 3. Research = researcher sub-agent. Implementation = crafter sub-agent. Simple/grunt = aeron sub-agent.
-4. Never fabricate file contents or command outputs — if you need to know what's in a file, delegate.`
+4. Never fabricate file contents or command outputs — if you need to know what's in a file, delegate.
+5. Sub-agents are leafs — they cannot nest further.`
 
-func BuildOrchestratorPrompt() string {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "unknown"
+// envContext collects environment information for prompts.
+type envContext struct {
+	Shell           string
+	OSInfo          string
+	CWD             string
+	Now             string
+	Username        string
+	Hostname        string
+	HomeDir         string
+	GitBranch       string
+	GitRoot         string
+	GitRemote       string
+	GitDirty        string
+	ToolsStr        string
+	PlatformGuidance string
+	DirListing      string
+}
+
+func gatherEnvContext() envContext {
+	e := envContext{}
+	e.Shell = os.Getenv("SHELL")
+	if e.Shell == "" {
+		e.Shell = "unknown"
 	}
-	osInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-	cwd := getCWD()
-	now := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+	e.OSInfo = fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+	e.CWD = getCWD()
+	e.Now = time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
 
-	// User and host
-	username := "unknown"
+	e.Username = "unknown"
 	if u, err := user.Current(); err == nil {
-		username = u.Username
+		e.Username = u.Username
 	}
-	hostname := "unknown"
+	e.Hostname = "unknown"
 	if h, err := os.Hostname(); err == nil {
-		hostname = h
+		e.Hostname = h
 	}
 
-	// Home directory
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
-		homeDir = "/unknown"
+	e.HomeDir = os.Getenv("HOME")
+	if e.HomeDir == "" {
+		e.HomeDir = "/unknown"
 	}
 
-	// Git context — gathered from the working directory
-	gitBranch := ""
-	gitRoot := ""
-	gitRemote := ""
-	gitDirty := ""
 	if branch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
-		gitBranch = strings.TrimSpace(string(branch))
+		e.GitBranch = strings.TrimSpace(string(branch))
 	}
 	if root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-		gitRoot = strings.TrimSpace(string(root))
+		e.GitRoot = strings.TrimSpace(string(root))
 	}
 	if remote, err := exec.Command("git", "remote", "get-url", "origin").Output(); err == nil {
-		gitRemote = strings.TrimSpace(string(remote))
+		e.GitRemote = strings.TrimSpace(string(remote))
 	}
 	if status, err := exec.Command("git", "status", "--porcelain").Output(); err == nil {
 		trimmed := strings.TrimSpace(string(status))
 		if trimmed == "" {
-			gitDirty = "clean"
+			e.GitDirty = "clean"
 		} else {
-			gitDirty = fmt.Sprintf("%d changes", len(strings.Split(trimmed, "\n")))
+			e.GitDirty = fmt.Sprintf("%d changes", len(strings.Split(trimmed, "\n")))
 		}
 	}
 
-	// Available dev tools on PATH
 	toolChecks := []string{"go", "python3", "python", "node", "npm", "pnpm", "bun", "make", "docker", "cargo", "rustc", "java", "javac", "dotnet", "gcc", "g++", "clang", "rg", "fd", "jq", "gh"}
 	var foundTools []string
 	for _, t := range toolChecks {
@@ -395,15 +405,13 @@ func BuildOrchestratorPrompt() string {
 			foundTools = append(foundTools, t)
 		}
 	}
-	toolsStr := "none detected"
+	e.ToolsStr = "none detected"
 	if len(foundTools) > 0 {
-		toolsStr = strings.Join(foundTools, ", ")
+		e.ToolsStr = strings.Join(foundTools, ", ")
 	}
 
-	// Platform-specific guidance
-	platformGuidance := ""
 	if runtime.GOOS == "windows" {
-		platformGuidance = "\n" +
+		e.PlatformGuidance = "\n" +
 			"# Windows Command Execution\n" +
 			"- All commands run through cmd.exe — cmd.exe syntax works directly\n" +
 			"- For PowerShell, prefix with powershell -Command \"...\"\n" +
@@ -419,148 +427,116 @@ func BuildOrchestratorPrompt() string {
 			"- python -c works, but single quotes inside the code string are safest: python -c \"print('hello')\"\n"
 	}
 
-	// Build environment section
+	e.DirListing = buildDirListing(e.CWD)
+	return e
+}
+
+func (e envContext) buildSection() string {
 	envLines := []string{
 		"# Environment",
-		fmt.Sprintf("- Date: %s", now),
-		fmt.Sprintf("- OS: %s", osInfo),
-		fmt.Sprintf("- Shell: %s", shell),
-		fmt.Sprintf("- User: %s@%s", username, hostname),
-		fmt.Sprintf("- Home: %s", homeDir),
-		fmt.Sprintf("- Working Directory: %s", cwd),
+		fmt.Sprintf("- Date: %s", e.Now),
+		fmt.Sprintf("- OS: %s", e.OSInfo),
+		fmt.Sprintf("- Shell: %s", e.Shell),
+		fmt.Sprintf("- User: %s@%s", e.Username, e.Hostname),
+		fmt.Sprintf("- Home: %s", e.HomeDir),
+		fmt.Sprintf("- Working Directory: %s", e.CWD),
 	}
-	if gitBranch != "" {
-		gitLine := fmt.Sprintf("- Git: branch=%s, status=%s", gitBranch, gitDirty)
-		if gitRemote != "" {
-			gitLine += fmt.Sprintf(", remote=%s", gitRemote)
+	if e.GitBranch != "" {
+		gitLine := fmt.Sprintf("- Git: branch=%s, status=%s", e.GitBranch, e.GitDirty)
+		if e.GitRemote != "" {
+			gitLine += fmt.Sprintf(", remote=%s", e.GitRemote)
 		}
-		if gitRoot != "" && gitRoot != cwd {
-			gitLine += fmt.Sprintf(", root=%s", gitRoot)
+		if e.GitRoot != "" && e.GitRoot != e.CWD {
+			gitLine += fmt.Sprintf(", root=%s", e.GitRoot)
 		}
 		envLines = append(envLines, gitLine)
 	}
-	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", toolsStr))
+	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", e.ToolsStr))
 
-	// Directory listing of cwd
-	dirListing := buildDirListing(cwd)
-	if dirListing != "" {
+	if e.DirListing != "" {
 		envLines = append(envLines, "")
-		envLines = append(envLines, dirListing)
+		envLines = append(envLines, e.DirListing)
 	}
 
-	return fmt.Sprintf("%s\n\n%s%s",
+	return strings.Join(envLines, "\n") + e.PlatformGuidance
+}
+
+// BuildSystemPrompt builds the standard (non-orchestrator) prompt.
+// When multiAgent is true, it includes the delegation section.
+// When multiAgent is false, no orchestration content is included at all.
+func BuildSystemPrompt(multiAgent bool) string {
+	base := "You are Crude — a coding assistant.\n\n" + CorePromptBase
+	if multiAgent {
+		base += DelegationPromptSection
+	}
+	env := gatherEnvContext()
+	return base + "\n\n" + env.buildSection()
+}
+
+// BuildOrchestratorPrompt builds the pure orchestrator prompt.
+// Used when multi-agent mode is active and the main agent acts as orchestrator.
+func BuildOrchestratorPrompt() string {
+	env := gatherEnvContext()
+	return fmt.Sprintf("You are Crude — a pure orchestrator with multi-agent capabilities.\n\n%s\n\n%s",
 		OrchestratorPromptBase,
-		strings.Join(envLines, "\n"),
-		platformGuidance,
+		env.buildSection(),
 	)
 }
 
-func BuildSystemPrompt() string {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "unknown"
-	}
-	osInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-	cwd := getCWD()
-	now := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+// BuildSubAgentPrompt builds the compact prompt for leaf sub-agents.
+// Leaf agents never see orchestration tools or depth information.
+func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) string {
+	env := gatherEnvContext()
 
-	username := "unknown"
-	if u, err := user.Current(); err == nil {
-		username = u.Username
-	}
-	hostname := "unknown"
-	if h, err := os.Hostname(); err == nil {
-		hostname = h
-	}
+	identity := fmt.Sprintf("You are a %s sub-agent named '%s'. Your task: %s", spec.Category, spec.Name, spec.Description)
 
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
-		homeDir = "/unknown"
-	}
+	groundingRules := `# Grounding Rules
+- ALWAYS read a file before editing it. Your first action on any file must be read_file.
+- Use edit_file for existing files, write_file only for new files.
+- If an edit fails with "not found", re-read the file and copy exact text.
+- You do NOT have access to the orchestrator's conversation history. Work only with what's described here.
+- If you need clarification, use reply() to contact the orchestrator.
+- Use run_javascript for any calculation — you are unreliable at arithmetic.`
 
-	gitBranch := ""
-	gitRoot := ""
-	gitRemote := ""
-	gitDirty := ""
-	if branch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
-		gitBranch = strings.TrimSpace(string(branch))
+	categoryBrief := categoryBriefing(spec.Category)
+	var policyConstraints []string
+	if spec.PolicyName != "" {
+		policyConstraints = append(policyConstraints, fmt.Sprintf("Your permission policy is '%s'.", spec.PolicyName))
 	}
-	if root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-		gitRoot = strings.TrimSpace(string(root))
+	if len(spec.DeniedTools) > 0 {
+		policyConstraints = append(policyConstraints, fmt.Sprintf("Denied tools: %s", strings.Join(spec.DeniedTools, ", ")))
 	}
-	if remote, err := exec.Command("git", "remote", "get-url", "origin").Output(); err == nil {
-		gitRemote = strings.TrimSpace(string(remote))
+	if len(spec.AllowedTools) > 0 {
+		policyConstraints = append(policyConstraints, fmt.Sprintf("Allowed tools: %s", strings.Join(spec.AllowedTools, ", ")))
 	}
-	if status, err := exec.Command("git", "status", "--porcelain").Output(); err == nil {
-		trimmed := strings.TrimSpace(string(status))
-		if trimmed == "" {
-			gitDirty = "clean"
-		} else {
-			gitDirty = fmt.Sprintf("%d changes", len(strings.Split(trimmed, "\n")))
-		}
+	policyStr := ""
+	if len(policyConstraints) > 0 {
+		policyStr = "\n# Policy Constraints\n" + strings.Join(policyConstraints, "\n")
 	}
+	fileOwnershipStr := ""
+	if len(spec.FileOwnership) > 0 {
+		fileOwnershipStr = fmt.Sprintf("\n# File Ownership\nYou have pre-declared ownership of these paths: %s. Files you write will be auto-claimed.", strings.Join(spec.FileOwnership, ", "))
+	}
+	profileStr := ""
+	if profileInstructions != "" {
+		profileStr = "\n# Profile Instructions\n" + profileInstructions
+	}
+	inlineStr := ""
+	if spec.Instructions != "" {
+		inlineStr = "\n# Additional Instructions\n" + spec.Instructions
+	}
+	resultFormat := "\n# Result Format\nUse write_report to write your full detailed report to disk. The report is saved as a file the orchestrator can read. After writing your report, you SHOULD NOT then do anymore tool calls, just compactly mention your key findings and include the report path so the orchestrator knows where to read it."
 
-	toolChecks := []string{"go", "python3", "python", "node", "npm", "pnpm", "bun", "make", "docker", "cargo", "rustc", "java", "javac", "dotnet", "gcc", "g++", "clang", "rg", "fd", "jq", "gh"}
-	var foundTools []string
-	for _, t := range toolChecks {
-		if _, err := exec.LookPath(t); err == nil {
-			foundTools = append(foundTools, t)
-		}
-	}
-	toolsStr := "none detected"
-	if len(foundTools) > 0 {
-		toolsStr = strings.Join(foundTools, ", ")
-	}
-
-	platformGuidance := ""
-	if runtime.GOOS == "windows" {
-		platformGuidance = "\n" +
-			"# Windows Command Execution\n" +
-			"- All commands run through cmd.exe — cmd.exe syntax works directly\n" +
-			"- For PowerShell, prefix with powershell -Command \"...\"\n" +
-			"- Use && echo SUCCESS to chain a visible completion signal after your command\n" +
-			"- Use || echo FAILED to catch errors explicitly\n" +
-			"- Paths are case-insensitive, use backslashes or forward slashes\n" +
-			"- .exe extension is optional for executables\n" +
-			"- type = Unix cat, dir = Unix ls, find = Unix find, where = Unix which\n" +
-			"\n" +
-			"# Windows Pitfalls — AVOID these\n" +
-			"- Do NOT use Unix-only tools: head, tail, grep, awk, sed, cat, ls, tr, cut, sort, uniq, xargs, find, wc, tee, diff, comm. These do not exist on Windows.\n" +
-			"- Do NOT pipe to echo — echo does NOT read stdin on Windows. Piping to echo silently discards your data.\n" +
-			"- python -c works, but single quotes inside the code string are safest: python -c \"print('hello')\"\n"
-	}
-
-	envLines := []string{
-		"# Environment",
-		fmt.Sprintf("- Date: %s", now),
-		fmt.Sprintf("- OS: %s", osInfo),
-		fmt.Sprintf("- Shell: %s", shell),
-		fmt.Sprintf("- User: %s@%s", username, hostname),
-		fmt.Sprintf("- Home: %s", homeDir),
-		fmt.Sprintf("- Working Directory: %s", cwd),
-	}
-	if gitBranch != "" {
-		gitLine := fmt.Sprintf("- Git: branch=%s, status=%s", gitBranch, gitDirty)
-		if gitRemote != "" {
-			gitLine += fmt.Sprintf(", remote=%s", gitRemote)
-		}
-		if gitRoot != "" && gitRoot != cwd {
-			gitLine += fmt.Sprintf(", root=%s", gitRoot)
-		}
-		envLines = append(envLines, gitLine)
-	}
-	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", toolsStr))
-
-	dirListing := buildDirListing(cwd)
-	if dirListing != "" {
-		envLines = append(envLines, "")
-		envLines = append(envLines, dirListing)
-	}
-
-	return fmt.Sprintf("%s\n\n%s%s",
-		SystemPromptBase,
-		strings.Join(envLines, "\n"),
-		platformGuidance,
+	return fmt.Sprintf("%s\n\n%s\n\n# Category Briefing\n%s%s%s%s%s%s\n\n%s",
+		identity,
+		groundingRules,
+		categoryBrief,
+		policyStr,
+		fileOwnershipStr,
+		profileStr,
+		inlineStr,
+		resultFormat,
+		env.buildSection(),
 	)
 }
 
@@ -594,7 +570,6 @@ func buildDirListing(cwd string) string {
 			lines = append(lines, name)
 		}
 	} else {
-		// Show directories first, then files, up to maxEntries
 		var dirs, files []string
 		for _, e := range entries {
 			name := e.Name()
@@ -626,125 +601,6 @@ func buildDirListing(cwd string) string {
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) string {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "unknown"
-	}
-	osInfo := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-	cwd := getCWD()
-	now := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
-	username := "unknown"
-	if u, err := user.Current(); err == nil {
-		username = u.Username
-	}
-	hostname := "unknown"
-	if h, err := os.Hostname(); err == nil {
-		hostname = h
-	}
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
-		homeDir = "/unknown"
-	}
-	gitBranch := ""
-	gitDirty := ""
-	if branch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
-		gitBranch = strings.TrimSpace(string(branch))
-	}
-	if status, err := exec.Command("git", "status", "--porcelain").Output(); err == nil {
-		trimmed := strings.TrimSpace(string(status))
-		if trimmed == "" {
-			gitDirty = "clean"
-		} else {
-			gitDirty = fmt.Sprintf("%d changes", len(strings.Split(trimmed, "\n")))
-		}
-	}
-	toolChecks := []string{"go", "python3", "python", "node", "npm", "pnpm", "bun", "make", "docker", "cargo", "rustc", "java", "javac", "dotnet", "gcc", "g++", "clang", "rg", "fd", "jq", "gh"}
-	var foundTools []string
-	for _, t := range toolChecks {
-		if _, err := exec.LookPath(t); err == nil {
-			foundTools = append(foundTools, t)
-		}
-	}
-	toolsStr := "none detected"
-	if len(foundTools) > 0 {
-		toolsStr = strings.Join(foundTools, ", ")
-	}
-	identity := fmt.Sprintf("You are a %s sub-agent named '%s'. Your task: %s", spec.Category, spec.Name, spec.Description)
-
-	// Compact grounding rules instead of full SystemPromptBase (~150 tokens vs ~2500+)
-	groundingRules := `# Grounding Rules
-- ALWAYS read a file before editing it. Your first action on any file must be read_file.
-- Use edit_file for existing files, write_file only for new files.
-- If an edit fails with "not found", re-read the file and copy exact text.
-- You do NOT have access to the orchestrator's conversation history. Work only with what's described here.
-- If you need clarification, use reply() to contact the orchestrator.
-- Use run_javascript for any calculation — you are unreliable at arithmetic.`
-
-	categoryBrief := categoryBriefing(spec.Category)
-	var policyConstraints []string
-	if spec.PolicyName != "" {
-		policyConstraints = append(policyConstraints, fmt.Sprintf("Your permission policy is '%s'.", spec.PolicyName))
-	}
-	if len(spec.DeniedTools) > 0 {
-		policyConstraints = append(policyConstraints, fmt.Sprintf("Denied tools: %s", strings.Join(spec.DeniedTools, ", ")))
-	}
-	if len(spec.AllowedTools) > 0 {
-		policyConstraints = append(policyConstraints, fmt.Sprintf("Allowed tools: %s", strings.Join(spec.AllowedTools, ", ")))
-	}
-	policyStr := ""
-	if len(policyConstraints) > 0 {
-		policyStr = "\n# Policy Constraints\n" + strings.Join(policyConstraints, "\n")
-	}
-	fileOwnershipStr := ""
-	if len(spec.FileOwnership) > 0 {
-		fileOwnershipStr = fmt.Sprintf("\n# File Ownership\nYou have pre-declared ownership of these paths: %s. Files you write will be auto-claimed.", strings.Join(spec.FileOwnership, ", "))
-	}
-	depthStr := ""
-	if spec.Depth > 0 {
-		depthStr = fmt.Sprintf("\n# Depth Limit\nYou are at depth %d in the agent hierarchy.", spec.Depth)
-	}
-	profileStr := ""
-	if profileInstructions != "" {
-		profileStr = "\n# Profile Instructions\n" + profileInstructions
-	}
-	inlineStr := ""
-	if spec.Instructions != "" {
-		inlineStr = "\n# Additional Instructions\n" + spec.Instructions
-	}
-	resultFormat := "\n# Result Format\nUse write_report to produce your final result. The gist enters the parent's context window in full. If you don't call write_report, your last non-tool-call message becomes the result.\n\nIMPORTANT: Do NOT summarize or paraphrase file contents in the gist. If you were asked to read a file, include the EXACT text in the gist — copy it character-for-character from read_file output. The parent agent needs verbatim content, not your interpretation."
-	envLines := []string{
-		"# Environment",
-		fmt.Sprintf("- Date: %s", now),
-		fmt.Sprintf("- OS: %s", osInfo),
-		fmt.Sprintf("- Shell: %s", shell),
-		fmt.Sprintf("- User: %s@%s", username, hostname),
-		fmt.Sprintf("- Home: %s", homeDir),
-		fmt.Sprintf("- Working Directory: %s", cwd),
-	}
-	if gitBranch != "" {
-		envLines = append(envLines, fmt.Sprintf("- Git: branch=%s, status=%s", gitBranch, gitDirty))
-	}
-	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", toolsStr))
-	dirListing := buildDirListing(cwd)
-	if dirListing != "" {
-		envLines = append(envLines, "")
-		envLines = append(envLines, dirListing)
-	}
-	return fmt.Sprintf("%s\n\n%s\n\n# Category Briefing\n%s%s%s%s%s%s%s\n\n%s",
-		identity,
-		groundingRules,
-		categoryBrief,
-		policyStr,
-		fileOwnershipStr,
-		depthStr,
-		profileStr,
-		inlineStr,
-		resultFormat,
-		strings.Join(envLines, "\n"),
-	)
 }
 
 func categoryBriefing(category string) string {
