@@ -777,6 +777,50 @@ func (o *SubAgentOrchestrator) autoGenerateReport(handle *agent.SubAgentHandle, 
 	result.ResultPath = reportPath
 }
 
+func (o *SubAgentOrchestrator) autoWriteReportFromContext(handle *agent.SubAgentHandle, spec agent.SubAgentSpec) (tools.ToolResult, error) {
+	sessionDir := o.session.logger.SessionDir()
+	if sessionDir == "" {
+		return tools.ToolResult{}, fmt.Errorf("write_report: session directory not available")
+	}
+
+	reportsDir := filepath.Join(sessionDir, "reports")
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		return tools.ToolResult{}, fmt.Errorf("write_report: failed to create reports directory: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Sub-Agent Report: %s [%s]\n\n", spec.Name, spec.Category))
+	sb.WriteString(fmt.Sprintf("Task: %s\n\n", spec.Description))
+
+	filesRead := o.fileOwnership.ReadClaimsByAgent(spec.ID)
+	filesWritten := o.fileOwnership.WriteClaimsByAgent(spec.ID)
+	if len(filesRead) > 0 {
+		sb.WriteString("## Files Read\n\n")
+		for _, f := range filesRead {
+			sb.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+	}
+	if len(filesWritten) > 0 {
+		sb.WriteString("\n## Files Written\n\n")
+		for _, f := range filesWritten {
+			sb.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+	}
+
+	reportPath := filepath.Join(reportsDir, fmt.Sprintf("%s-report.md", spec.ID))
+	if err := os.WriteFile(reportPath, []byte(sb.String()), 0644); err != nil {
+		return tools.ToolResult{}, fmt.Errorf("write_report: failed to write report: %w", err)
+	}
+
+	handle.SetReportPath(reportPath)
+
+	resultJSON, _ := json.Marshal(map[string]string{
+		"status":      "report_auto_generated",
+		"report_path": reportPath,
+	})
+	return tools.ToolResult{Content: string(resultJSON)}, nil
+}
+
 func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan string, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 	parentFn := o.parentToolFn
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
@@ -846,7 +890,11 @@ func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, block
 		}
 
 		if tool == "write_report" {
-			return o.WriteReport(spec.ID, params)
+			report := getStrParam(params, "report")
+			if report != "" {
+				return o.WriteReport(spec.ID, params)
+			}
+			return o.autoWriteReportFromContext(handle, spec)
 		}
 
 		if parentFn != nil {

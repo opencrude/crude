@@ -14,6 +14,7 @@ require (
 	github.com/conductor-oss/markitdown v0.0.1
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/mattn/go-runewidth v0.0.17
+	github.com/mattn/go-shellwords v1.0.13
 	github.com/rivo/uniseg v0.4.7
 	github.com/stretchr/testify v1.11.1
 	modernc.org/sqlite v1.50.1

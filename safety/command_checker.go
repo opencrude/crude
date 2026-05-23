@@ -3,10 +3,16 @@ package safety
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"crude/logger"
+
+	"github.com/mattn/go-shellwords"
+	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -57,15 +63,97 @@ type CommandSafetyResult struct {
 	PipedToShell      bool
 	ModifiesConfig    bool
 	ReadsCredentials  bool
+	Obfuscated        bool
 	AffectedPaths     []string
 	RedirectTargets   []string
 	Calls             []string
 }
 
-var systemPrefixes = []string{
-	"/", "/etc", "/dev", "/proc", "/sys", "/boot", "/usr", "/bin",
-	"/sbin", "/lib", "/lib64", "/opt", "/root", "/var/log",
-	"/var/lib", "/var/spool",
+var systemPrefixes []string
+
+func init() {
+	systemPrefixes = buildSystemPrefixes()
+}
+
+func buildSystemPrefixes() []string {
+	posixPrefixes := []string{
+		"/", "/etc", "/dev", "/proc", "/sys", "/boot", "/usr", "/bin",
+		"/sbin", "/lib", "/lib64", "/opt", "/root", "/var/log",
+		"/var/lib", "/var/spool",
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		sysDrive := os.Getenv("SystemDrive")
+		if sysDrive == "" {
+			sysDrive = "C:"
+		}
+		return append(posixPrefixes,
+			filepath.Clean(sysDrive+`\Windows`),
+			filepath.Clean(sysDrive+`\Program Files`),
+			filepath.Clean(sysDrive+`\Program Files (x86)`),
+			filepath.Clean(sysDrive+`\ProgramData`),
+			filepath.Clean(sysDrive+`\Users\Default`),
+			filepath.Clean(sysDrive+`\Recovery`),
+		)
+	default:
+		return posixPrefixes
+	}
+}
+
+func isPathUnderPrefix(path string, prefix string) bool {
+	cleaned := filepath.Clean(path)
+	abs, err := filepath.Abs(cleaned)
+	if err != nil {
+		abs = cleaned
+	}
+	cleanPrefix := filepath.Clean(prefix)
+	absPrefix, err := filepath.Abs(cleanPrefix)
+	if err != nil {
+		absPrefix = cleanPrefix
+	}
+
+	if runtime.GOOS == "windows" {
+		if strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "\\") {
+			if cleanPrefix == "/" || cleanPrefix == "\\" {
+				return true
+			}
+			return strings.HasPrefix(cleaned, cleanPrefix)
+		}
+		if len(abs) < len(absPrefix) {
+			return false
+		}
+		if !strings.EqualFold(abs[:len(absPrefix)], absPrefix) {
+			return false
+		}
+		return len(abs) == len(absPrefix) || abs[len(absPrefix)] == filepath.Separator
+	}
+
+	if absPrefix == string(filepath.Separator) {
+		return strings.HasPrefix(abs, absPrefix)
+	}
+	if !strings.HasPrefix(abs, absPrefix) {
+		return false
+	}
+	return len(abs) == len(absPrefix) || abs[len(absPrefix)] == filepath.Separator
+}
+
+func isBlockDevicePath(path string) bool {
+	cleaned := filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		lower := strings.ToLower(cleaned)
+		if strings.HasPrefix(lower, `\\.\physicaldrive`) ||
+			strings.HasPrefix(lower, `\\.\cdrom`) {
+			return true
+		}
+		if strings.HasPrefix(cleaned, "\\dev\\") {
+			return true
+		}
+	}
+	return strings.HasPrefix(cleaned, "/dev/sd") ||
+		strings.HasPrefix(cleaned, "/dev/nvme") ||
+		strings.HasPrefix(cleaned, "/dev/mmcblk") ||
+		strings.HasPrefix(cleaned, "/dev/loop")
 }
 
 var configFilePatterns = []string{
@@ -86,8 +174,13 @@ var (
 
 var shellNames = []string{"sh", "bash", "zsh", "dash", "fish", "source"}
 
+var expandCfg = &expand.Config{
+	Env: expand.FuncEnviron(os.Getenv),
+}
+
 func preprocessCommand(cmd string) string {
-	normalized := strings.ReplaceAll(cmd, "\\", "/")
+	normalized := cmd
+	normalized = strings.ReplaceAll(normalized, "\\", "/")
 	for cdPrefixRe.MatchString(normalized) {
 		normalized = cdPrefixRe.ReplaceAllString(normalized, "")
 	}
@@ -96,6 +189,8 @@ func preprocessCommand(cmd string) string {
 }
 
 func extractCmdsSimple(cmd string) (calls []string, pipedToShell bool, redirectTargets []string, allArgs []string) {
+	redirectTargets = extractRedirectsSimple(cmd)
+
 	pipeSegs := splitOnPipes(cmd)
 
 	for i, seg := range pipeSegs {
@@ -103,8 +198,8 @@ func extractCmdsSimple(cmd string) (calls []string, pipedToShell bool, redirectT
 		if seg == "" {
 			continue
 		}
-		tokens := tokenizeRespectingQuotes(seg)
-		if len(tokens) == 0 {
+		tokens, err := shellwords.Parse(seg)
+		if err != nil || len(tokens) == 0 {
 			continue
 		}
 		calls = append(calls, tokens[0])
@@ -120,13 +215,20 @@ func extractCmdsSimple(cmd string) (calls []string, pipedToShell bool, redirectT
 		}
 	}
 
-	for i, t := range allArgs {
-		if (strings.HasPrefix(t, ">") || strings.HasPrefix(t, ">>")) && i+1 < len(allArgs) {
-			redirectTargets = append(redirectTargets, allArgs[i+1])
+	return
+}
+
+var redirectRe = regexp.MustCompile(`(?:^|\s)(>>?)\s+(\S+)`)
+
+func extractRedirectsSimple(cmd string) []string {
+	var targets []string
+	matches := redirectRe.FindAllStringSubmatch(cmd, -1)
+	for _, m := range matches {
+		if len(m) >= 3 {
+			targets = append(targets, m[2])
 		}
 	}
-
-	return
+	return targets
 }
 
 func splitOnPipes(cmd string) []string {
@@ -139,35 +241,6 @@ func splitOnPipes(cmd string) []string {
 	return parts
 }
 
-func tokenizeRespectingQuotes(s string) []string {
-	var tokens []string
-	var current strings.Builder
-	inSingleQ := false
-	inDoubleQ := false
-
-	for _, ch := range s {
-		switch {
-		case ch == '\'' && !inDoubleQ:
-			inSingleQ = !inSingleQ
-		case ch == '"' && !inSingleQ:
-			inDoubleQ = !inDoubleQ
-		case ch == ' ' && !inSingleQ && !inDoubleQ:
-			if current.Len() > 0 {
-				tokens = append(tokens, current.String())
-				current.Reset()
-			}
-		default:
-			current.WriteRune(ch)
-		}
-	}
-	if current.Len() > 0 {
-		tokens = append(tokens, current.String())
-	}
-
-	return tokens
-}
-
-// wordString reconstructs the full string of a Word using the printer.
 func wordString(w *syntax.Word) string {
 	if w == nil {
 		return ""
@@ -180,8 +253,37 @@ func wordString(w *syntax.Word) string {
 	return strings.TrimSpace(buf.String())
 }
 
-// extractCmds walks a parsed shell AST and returns structured info about all commands.
-func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirectTargets []string, stmts []*syntax.CallExpr) {
+func resolveWord(w *syntax.Word) string {
+	if w == nil {
+		return ""
+	}
+	if lit := w.Lit(); lit != "" {
+		return lit
+	}
+	expanded, err := expand.Literal(expandCfg, w)
+	if err != nil {
+		return wordString(w)
+	}
+	return expanded
+}
+
+func isObfuscatedWord(w *syntax.Word) bool {
+	if w == nil || len(w.Parts) == 0 {
+		return false
+	}
+	if w.Lit() != "" {
+		return false
+	}
+	for _, part := range w.Parts {
+		switch part.(type) {
+		case *syntax.ParamExp, *syntax.CmdSubst, *syntax.ArithmExp:
+			return true
+		}
+	}
+	return false
+}
+
+func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirectTargets []string, stmts []*syntax.CallExpr, obfuscated bool) {
 	pipeChain := false
 	lastInPipe := false
 
@@ -195,14 +297,17 @@ func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirect
 			if len(n.Args) == 0 {
 				return true
 			}
-			cmdName := wordString(n.Args[0])
+			cmdName := resolveWord(n.Args[0])
 			calls = append(calls, cmdName)
 			stmts = append(stmts, n)
+			if isObfuscatedWord(n.Args[0]) {
+				obfuscated = true
+			}
 			if lastInPipe && (cmdName == "sh" || cmdName == "bash" || cmdName == "zsh" || cmdName == "dash" || cmdName == "fish" || cmdName == "source") {
 				pipedToShell = true
 			}
 		case *syntax.Redirect:
-			target := wordString(n.Word)
+			target := resolveWord(n.Word)
 			if target != "" {
 				redirectTargets = append(redirectTargets, target)
 			}
@@ -212,7 +317,6 @@ func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirect
 	return
 }
 
-// CheckCommandSafety analyzes a shell command and returns its risk assessment.
 func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 	res := &CommandSafetyResult{
 		FullCommand: cmd,
@@ -236,7 +340,9 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 	parsedProg, parseErr := parser.Parse(strings.NewReader(preprocessed), "")
 	if parseErr == nil {
 		var stmts []*syntax.CallExpr
-		calls, pipedToShell, redirectTargets, stmts = extractCmds(parsedProg)
+		var obfuscated bool
+		calls, pipedToShell, redirectTargets, stmts, obfuscated = extractCmds(parsedProg)
+		res.Obfuscated = obfuscated
 		allArgs = collectAllArgs(stmts)
 		prog = parsedProg
 	} else {
@@ -256,7 +362,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 
 	for _, rt := range redirectTargets {
 		for _, sp := range systemPrefixes {
-			if strings.HasPrefix(rt, sp) {
+			if isPathUnderPrefix(rt, sp) {
 				res.TargetsSystem = true
 				res.AffectedPaths = append(res.AffectedPaths, rt)
 				break
@@ -268,7 +374,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 				break
 			}
 		}
-		if strings.HasPrefix(rt, "/dev/sd") || strings.HasPrefix(rt, "/dev/nvme") || strings.HasPrefix(rt, "/dev/mmcblk") || strings.HasPrefix(rt, "/dev/loop") {
+		if isBlockDevicePath(rt) {
 			res.Risk = RiskBlocked
 			res.Reason = fmt.Sprintf("Redirecting output to block device: %s — destroys all data", rt)
 			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
@@ -285,7 +391,7 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 			continue
 		}
 		for _, sp := range systemPrefixes {
-			if strings.HasPrefix(resolved, sp) {
+			if isPathUnderPrefix(resolved, sp) {
 				res.TargetsSystem = true
 				res.AffectedPaths = append(res.AffectedPaths, resolved)
 				break
@@ -309,6 +415,13 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 	firstCmd := calls[0]
 	res.BaseCommand = firstCmd
 	argsAfterFirst := allArgs
+
+	if res.Obfuscated {
+		res.Risk = RiskDestructive
+		res.Reason = "Command name uses shell expansion/obfuscation — possible evasion attempt"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
+	}
 
 	if credPattern.MatchString(cmd) {
 		res.ReadsCredentials = true
@@ -478,13 +591,20 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 			if strings.HasPrefix(a, "of=") {
 				target := strings.TrimPrefix(a, "of=")
 				for _, sp := range systemPrefixes {
-					if strings.HasPrefix(target, sp) {
+					if isPathUnderPrefix(target, sp) {
 						res.Risk = RiskBlocked
 						res.Reason = fmt.Sprintf("Writing directly to block device: %s", target)
 						res.Suggestion = "This destroys all data on the target device"
 						lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 						return res
 					}
+				}
+				if isBlockDevicePath(target) {
+					res.Risk = RiskBlocked
+					res.Reason = fmt.Sprintf("Writing directly to block device: %s", target)
+					res.Suggestion = "This destroys all data on the target device"
+					lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+					return res
 				}
 			}
 		}
@@ -641,7 +761,7 @@ func collectAllArgs(stmts []*syntax.CallExpr) []string {
 	var all []string
 	for _, stmt := range stmts {
 		for _, w := range stmt.Args {
-			all = append(all, wordString(w))
+			all = append(all, resolveWord(w))
 		}
 	}
 	return all
@@ -713,7 +833,7 @@ func isPipedToShell(prog *syntax.File) bool {
 			}
 		case *syntax.CallExpr:
 			if len(n.Args) > 0 {
-				lastCmd = wordString(n.Args[0])
+				lastCmd = resolveWord(n.Args[0])
 			}
 		}
 		return true
@@ -732,7 +852,7 @@ func isHeredocEval(prog *syntax.File) bool {
 			}
 		case *syntax.CallExpr:
 			if len(n.Args) > 0 && firstCmd == "" {
-				firstCmd = wordString(n.Args[0])
+				firstCmd = resolveWord(n.Args[0])
 			}
 		}
 		return true
