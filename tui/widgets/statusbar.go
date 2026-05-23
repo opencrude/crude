@@ -14,6 +14,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+var sleepMessages = []string{
+	"agents at work, catching zzz's",
+	"snoozing while agents hustle",
+	"naptime, agents on the clock",
+	"do not disturb, agents working",
+	"power nap mode · agents in control",
+	"counting sub-agents instead of sheep",
+	"sleeping on the job (it's by design)",
+}
+
 type agentStatus struct {
 	thinking  bool
 	streaming bool
@@ -64,6 +74,13 @@ func (s *StatusBar) View() string {
 	dim := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
 	pad := strings.Repeat(" ", s.theme.Spacing.PadLR)
 
+	activeAgents := 0
+	for _, st := range s.agentStates {
+		if st.thinking || st.streaming {
+			activeAgents++
+		}
+	}
+
 	var left string
 	if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
 		left = s.theme.Styles.ErrorText.Render(
@@ -82,17 +99,14 @@ func (s *StatusBar) View() string {
 		left = s.spinner.StreamAnimation()
 	} else if s.thinking {
 		left = s.spinner.WorkAnimation()
+	} else if activeAgents > 0 {
+		msg := sleepMessages[s.activityStep%len(sleepMessages)]
+		left = lipgloss.NewStyle().Foreground(s.theme.Colors.Accent2).Render(fmt.Sprintf("💤 %s", msg))
 	} else {
 		left = ""
 	}
 
-	activeAgents := 0
-	for _, st := range s.agentStates {
-		if st.thinking || st.streaming {
-			activeAgents++
-		}
-	}
-	if activeAgents > 0 {
+	if activeAgents > 0 && (s.thinking || s.streaming) {
 		agentStyle := lipgloss.NewStyle().Foreground(s.theme.Colors.Accent2)
 		left += " " + agentStyle.Render(fmt.Sprintf("· %d agent%s active", activeAgents, pluralS(activeAgents)))
 	}

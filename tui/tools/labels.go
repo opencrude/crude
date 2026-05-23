@@ -4,6 +4,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/types"
 	"fmt"
+	"strings"
 )
 
 func BuildToolTitle(msg types.ChatMessage, phase string) string {
@@ -11,6 +12,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) string {
 	if target == "" {
 		target = msg.ToolArgs
 	}
+	target = strings.ReplaceAll(target, "\n", " ")
 
 	switch phase {
 	case types.ToolPreviewPreparing:
