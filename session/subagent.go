@@ -352,7 +352,7 @@ func (o *SubAgentOrchestrator) ListSubAgents(params map[string]any) (tools.ToolR
 func (o *SubAgentOrchestrator) WriteReport(agentID agent.AgentID, params map[string]any) (tools.ToolResult, error) {
 	report := getStrParam(params, "report")
 	if report == "" {
-		return tools.ToolResult{}, fmt.Errorf("write_report: 'report' is required")
+		return tools.ToolResult{Content: "Error: write_report requires a non-empty 'report' parameter. You MUST write a meaningful summary of your work, findings, and results in the 'report' field. Call write_report again with the report content filled in."}, fmt.Errorf("write_report: 'report' parameter is required and cannot be empty — provide a summary of your work and retry")
 	}
 
 	sessionDir := o.session.logger.SessionDir()
@@ -616,7 +616,7 @@ func (o *SubAgentOrchestrator) runSubAgentLoop(ctx context.Context, handle *agen
 	result := o.buildResultFromMessages(handle, agentMsgs)
 
 	if !handle.ReportDone() {
-		o.autoGenerateReport(handle, agentMsgs, &result)
+		o.session.logger.Warn("SUBAGENT", "no_report", "agent_id", handle.Spec.ID, "name", handle.Spec.Name)
 	}
 
 	if o.sender != nil {
@@ -894,7 +894,7 @@ func (o *SubAgentOrchestrator) buildProxiedToolFn(spec agent.SubAgentSpec, block
 			if report != "" {
 				return o.WriteReport(spec.ID, params)
 			}
-			return o.autoWriteReportFromContext(handle, spec)
+			return tools.ToolResult{Content: "Error: write_report requires a non-empty 'report' parameter. You MUST write a meaningful summary of your work, findings, and results in the 'report' field. Call write_report again with the report content filled in."}, fmt.Errorf("write_report: 'report' parameter is required and cannot be empty — provide a summary of your work and retry")
 		}
 
 		if parentFn != nil {
