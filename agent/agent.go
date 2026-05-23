@@ -56,7 +56,8 @@ type Agent struct {
 	client      *http.Client
 	toolCallSeq int
 
-	fileMu   sync.Map
+	fileMu           sync.Map
+	writeReportCalled bool
 }
 
 func (a *Agent) fileMutex(path string) *sync.Mutex {

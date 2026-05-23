@@ -227,6 +227,7 @@ func (s *Session) Close() {
 	}
 
 	if s.subAgentSup != nil {
+		s.subAgentSup.SessionCancel()
 		for _, h := range s.subAgentSup.Manager().ActiveHandles() {
 			s.subAgentSup.Manager().Cancel(h.Spec.ID)
 			s.subAgentSup.FileOwnership().Release(h.Spec.ID)

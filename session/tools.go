@@ -47,7 +47,9 @@ func (s *Session) newAgent() *agent.Agent {
 	multiAgent := s.cfg.IsMultiAgentEnabled()
 
 	if multiAgent {
-		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, []string{"write_report"}, agent.CatMain, false)
+		a.FilteredTools = agent.ApplyMainAgentOverrides(
+			agent.FilterTools(tools.AgentTools, nil, []string{"write_report"}, agent.CatMain, false),
+		)
 	} else {
 		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, []string{"write_report", "run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents"}, agent.CatMain, false)
 	}

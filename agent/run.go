@@ -222,6 +222,18 @@ func (a *Agent) Run(
 		msgs = append(msgs, assistantMsg)
 
 		if !hasToolCalls {
+			if a.Depth > 0 && !a.writeReportCalled {
+				a.logger.Warn("SUBAGENT", "write_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
+				msgs = append(msgs, provider.ChatMessage{
+					Role:    "user",
+					Content: "[SYSTEM] You are about to end your loop without calling write_report. Your work will be LOST — the main agent cannot see your chat messages. You MUST call write_report with a detailed report before ending. Do it now.",
+				})
+				drainBtw()
+				if smStatus := buildSMStatusMsg(); smStatus != nil {
+					msgs = append(msgs, *smStatus)
+				}
+				continue
+			}
 			if accumulatedText != "" {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": accumulatedText, "reason": "completed"}})
 			} else {
