@@ -645,11 +645,11 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "write_report",
-			Description: "Write your full detailed report to disk. The report is saved in the orchestrator's reports directory. After writing, continue working or finish naturally — the orchestrator will read the report file. Your report should contain ALL findings, file contents, analysis, and results in full detail. Do NOT summarize — the orchestrator needs verbatim content.",
+			Description: "Write your full detailed report to disk. The report is saved in the main agent's reports directory. After writing, continue working or finish naturally — the main agent will read the report file. Your report should contain ALL findings, file contents, analysis, and results in full detail. Do NOT summarize — the main agent needs verbatim content.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"report":{"type":"string","description":"Full detailed report content. Include ALL findings, verbatim file contents, analysis, and results. The orchestrator will read this file."}
+					"report":{"type":"string","description":"Full detailed report content. Include ALL findings, verbatim file contents, analysis, and results. The main agent will read this file."}
 				},
 				"required":["report"]
 			}`),

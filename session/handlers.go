@@ -103,6 +103,15 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	modelChanged := mainCat.Model != oldModel
 
 	s.cfg = newCfg
+
+	// If multi-agent was just enabled, create the sub-agent runner if missing
+	if s.cfg.IsMultiAgentEnabled() && s.subAgentSup == nil {
+		l.Info("CONFIG", "sub_agent_runner_create", "reason", "multi_agent_enabled")
+		s.subAgentSup = NewSubAgentRunner(s, s.cfg.Agents.MaxConcurrent)
+		if s.sender != nil {
+			s.subAgentSup.SetSender(s.sender)
+		}
+	}
 	s.provider = provider.FromPreset(mainCat.Provider, mainCat.APIKey, mainCat.ProviderURL)
 	s.provider.Model = mainCat.Model
 	s.provider.SetThinkingEffort(mainCat.ThinkingEffort)

@@ -48,25 +48,6 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 				"run_javascript",
 			},
 		}
-	case CatOrchestrator:
-		return CategoryToolConfig{
-			AllowedTools: []string{
-				"read_file",
-				"run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents",
-				"plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
-				"report_blocker", "resolve_blocker", "list_goal_status",
-				"reply", "question", "wait",
-			},
-			DeniedTools: []string{
-				"write_file", "edit_file", "delete_file",
-				"move_file", "copy_file", "list_directory",
-				"glob_files", "grep_files",
-				"execute_command", "async_execute_command",
-				"check_async_command", "kill_async_command", "read_async_output",
-				"web_search", "web_fetch", "arxiv_search",
-				"run_javascript",
-			},
-		}
 	default:
 		return CategoryToolConfig{}
 	}

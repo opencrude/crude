@@ -26,11 +26,10 @@ const (
 )
 
 const (
-	CatMain        = "main"
-	CatOrchestrator = "orchestrator"
-	CatResearcher  = "researcher"
-	CatCrafter     = "crafter"
-	CatAeron       = "aeron"
+	CatMain       = "main"
+	CatResearcher = "researcher"
+	CatCrafter    = "crafter"
+	CatAeron      = "aeron"
 )
 
 type SubAgentSpec struct {

@@ -79,7 +79,9 @@ type Session struct {
 	writeMu   sync.Mutex
 	flushWg   sync.WaitGroup
 	closing      int32
-	subAgentOrch *SubAgentOrchestrator
+	wakeCh       chan WakeEvent
+	sender       EventSender
+	subAgentSup *SubAgentRunner
 }
 
 func New(cfg *Config, homeDir string) (*Session, error) {
@@ -187,17 +189,18 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		permStore:      permStore,
 		sm:             sm,
 		asyncMgr:       fileio.NewAsyncCommandManagerWithLogger(lg),
-		subAgentOrch:   nil,
+		subAgentSup:   nil,
 		sessionID:      sessionID,
 		sessionStart:   time.Now(),
+		wakeCh:         make(chan WakeEvent, 8),
 		cost:           NewCostAccumulator(lg),
 		tokens:         NewTokenTracker(lg),
 		db:             db,
 		dbPath:         dbPath,
 		writeBuf:       make([]taggedMessage, 0, 64),
 	}
-	if cfg.Agents.Enabled {
-		sess.subAgentOrch = NewSubAgentOrchestrator(sess, cfg.Agents.MaxConcurrent)
+	if cfg.IsMultiAgentEnabled() {
+		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
 	}
 
 	if dir := lg.SessionDir(); dir != "" {
@@ -223,12 +226,12 @@ func (s *Session) Close() {
 		s.persistCostSnapshot()
 	}
 
-	if s.subAgentOrch != nil {
-		for _, h := range s.subAgentOrch.Manager().ActiveHandles() {
-			s.subAgentOrch.Manager().Cancel(h.Spec.ID)
-			s.subAgentOrch.FileOwnership().Release(h.Spec.ID)
+	if s.subAgentSup != nil {
+		for _, h := range s.subAgentSup.Manager().ActiveHandles() {
+			s.subAgentSup.Manager().Cancel(h.Spec.ID)
+			s.subAgentSup.FileOwnership().Release(h.Spec.ID)
 		}
-		s.subAgentOrch.Wait()
+		s.subAgentSup.Wait()
 	}
 
 	if s.db != nil {
@@ -248,6 +251,10 @@ func (s *Session) Close() {
 			os.Remove(s.dbPath)
 		}
 	}
+}
+
+func (s *Session) WakeCh() chan<- WakeEvent {
+	return s.wakeCh
 }
 
 func (s *Session) SessionDir() string {
@@ -279,6 +286,22 @@ func (s *Session) CostSnapshot() CostSnapshot {
 
 func (s *Session) Logger() *logger.Logger { return s.logger }
 
-func (s *Session) SubAgentOrchestrator() *SubAgentOrchestrator {
-	return s.subAgentOrch
+// initSubAgentRunner lazily creates the sub-agent runner if multi-agent is enabled.
+// Returns true if the runner is available after the call.
+func (s *Session) initSubAgentRunner() bool {
+	if s.subAgentSup != nil {
+		return true
+	}
+	if s.cfg != nil && s.cfg.IsMultiAgentEnabled() {
+		s.subAgentSup = NewSubAgentRunner(s, s.cfg.Agents.MaxConcurrent)
+		if s.sender != nil {
+			s.subAgentSup.SetSender(s.sender)
+		}
+		return true
+	}
+	return false
+}
+
+func (s *Session) SubAgentRunner() *SubAgentRunner {
+	return s.subAgentSup
 }

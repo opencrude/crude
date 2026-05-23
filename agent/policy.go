@@ -57,8 +57,6 @@ func categoryPolicy(category string) safety.Policy {
 		p.AllowedCapabilities[safety.CanDelete] = false
 		p.AllowedCapabilities[safety.CanExecute] = false
 		return p
-	case CatOrchestrator:
-		return safety.OrchestratorPolicy()
 	default:
 		return safety.DefaultPolicy()
 	}
