@@ -128,7 +128,7 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		resumeTurnNumber = meta.TurnCount
 	}
 
-	return &Session{
+	sess := &Session{
 		cfg:          cfg,
 		provider:     p,
 		exec:         exec,
@@ -150,8 +150,13 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		msgTurns:     msgTurns,
 		displayMetas: displayMetas,
 		createdAts:   createdAts,
+		wakeCh:       make(chan WakeEvent, 8),
 		writeBuf:     make([]taggedMessage, 0, 64),
-	}, nil
+	}
+	if cfg.IsMultiAgentEnabled() {
+		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
+	}
+	return sess, nil
 }
 
 func detectInterruption(msgs []provider.ChatMessage) (bool, string) {

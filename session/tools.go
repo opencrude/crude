@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -49,9 +47,11 @@ func (s *Session) newAgent() *agent.Agent {
 	multiAgent := s.cfg.IsMultiAgentEnabled()
 
 	if multiAgent {
-		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, nil, agent.CatOrchestrator, false)
-		a.Policy = safety.OrchestratorPolicy()
+		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, []string{"write_report"}, agent.CatMain, false)
+	} else {
+		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, []string{"write_report", "run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents"}, agent.CatMain, false)
 	}
+	a.Policy = safety.DefaultPolicy()
 
 	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		switch tool {
@@ -406,50 +406,44 @@ func (s *Session) newAgent() *agent.Agent {
 			return s.executeCommandAutoPromote(ctx, params)
 
 		case "run_sub_agent":
-			if s.subAgentOrch == nil {
-				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+			if s.subAgentSup == nil {
+				if !s.initSubAgentRunner() {
+					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+				}
 			}
 			if multiAgent {
 				params["wait"] = false
 			}
-			return s.subAgentOrch.RunSubAgent(ctx, params)
+			return s.subAgentSup.RunSubAgent(ctx, params)
 
 		case "poll_sub_agent":
-			if s.subAgentOrch == nil {
-				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+			if s.subAgentSup == nil {
+				if !s.initSubAgentRunner() {
+					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+				}
 			}
-			return s.subAgentOrch.PollSubAgent(params)
+			return s.subAgentSup.PollSubAgent(params)
 
 		case "cancel_sub_agent":
-			if s.subAgentOrch == nil {
-				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+			if s.subAgentSup == nil {
+				if !s.initSubAgentRunner() {
+					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+				}
 			}
-			return s.subAgentOrch.CancelSubAgent(params)
+			return s.subAgentSup.CancelSubAgent(params)
 
 		case "list_sub_agents":
-			if s.subAgentOrch == nil {
-				return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+			if s.subAgentSup == nil {
+				if !s.initSubAgentRunner() {
+					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
+				}
 			}
-			return s.subAgentOrch.ListSubAgents(params)
+			return s.subAgentSup.ListSubAgents(params)
 
 		case "write_report":
 			return tools.ToolResult{Content: "write_report is for sub-agents only. Your response is already shown to the user."}, nil
 
 		default:
-			if multiAgent && !isSubAgentRequest(params) {
-				switch tool {
-				case "read_file":
-					return s.orchestratorReadFile(ctx, params)
-				case "write_file", "edit_file", "delete_file",
-					"move_file", "copy_file", "list_directory",
-					"glob_files", "grep_files",
-					"execute_command", "async_execute_command",
-					"check_async_command", "kill_async_command", "read_async_output",
-					"web_search", "web_fetch", "arxiv_search",
-					"run_javascript":
-					return tools.ToolResult{Content: fmt.Sprintf("[ORCHESTRATOR MODE] Tool %q is not available. Delegate this work to a sub-agent via run_sub_agent.", tool)}, fmt.Errorf("orchestrator mode: tool %q blocked", tool)
-				}
-			}
 			result := tools.ExecuteWithJSON(tool, params, s.exec, s.editor, s.yolo, s.logger, ctx)
 			if agent.IsToolError(result.Content) {
 				return result, fmt.Errorf("%s", result.Content)
@@ -582,36 +576,4 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 	}
 }
 
-func (s *Session) orchestratorReadFile(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
-	path := getStrParam(params, "path")
-	if path == "" {
-		return tools.ToolResult{}, fmt.Errorf("read_file: 'path' is required")
-	}
 
-	sessionDir := s.logger.SessionDir()
-	if sessionDir == "" {
-		return tools.ToolResult{}, fmt.Errorf("read_file: session directory not available")
-	}
-
-	reportsDir := filepath.Join(sessionDir, "reports")
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return tools.ToolResult{}, fmt.Errorf("read_file: invalid path: %w", err)
-	}
-	absReportsDir, err := filepath.Abs(reportsDir)
-	if err != nil {
-		return tools.ToolResult{}, fmt.Errorf("read_file: internal error resolving reports directory: %w", err)
-	}
-
-	if !strings.HasPrefix(absPath, absReportsDir+string(filepath.Separator)) && absPath != absReportsDir {
-		return tools.ToolResult{Content: fmt.Sprintf("[ORCHESTRATOR MODE] read_file is restricted to the reports directory: %s. The path %q is outside this directory.", reportsDir, path)}, fmt.Errorf("orchestrator read_file: path %q is outside reports directory", path)
-	}
-
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		return tools.ToolResult{}, fmt.Errorf("read_file: %w", err)
-	}
-
-	return tools.ToolResult{Content: string(data)}, nil
-}

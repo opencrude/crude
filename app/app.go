@@ -209,9 +209,9 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 	}
 
 	tuiInst.OnCancelSubAgent = func(agentID string) {
-		orch := sess.SubAgentOrchestrator()
-		if orch != nil {
-			orch.CancelSubAgent(map[string]any{"handle_id": agentID})
+		runner := sess.SubAgentRunner()
+		if runner != nil {
+			runner.CancelSubAgent(map[string]any{"handle_id": agentID})
 		}
 	}
 

@@ -8,6 +8,7 @@ import (
 
 	"crude/agent"
 	"crude/fileio"
+	"crude/logger"
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
@@ -16,8 +17,9 @@ import (
 func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan string) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "session_id", s.sessionID)
-	if s.subAgentOrch != nil {
-		s.subAgentOrch.SetSender(sender)
+	s.sender = sender
+	if s.subAgentSup != nil {
+		s.subAgentSup.SetSender(sender)
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -25,9 +27,6 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 			sender.SendAgentEventWithID("error", fmt.Sprintf("Internal error: %v", r), "main")
 		}
 	}()
-
-	cancelCh := input.GetCancelCh()
-	l.Debug("SESSION", "cancel_ch_setup", "channel", "cancelCh")
 
 	go func() {
 		l.Debug("MODEL", "models_dev_start")
@@ -62,144 +61,174 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 		}
 	}()
 
-	for userText := range input.GetInputCh() {
-		if atomic.LoadInt32(&s.closing) == 1 {
-			break
+	for {
+		select {
+		case userText, ok := <-input.GetInputCh():
+			if !ok {
+				l.Info("SESSION", "run_exit_input_closed")
+				return
+			}
+			if atomic.LoadInt32(&s.closing) == 1 {
+				l.Info("SESSION", "run_exit_closing")
+				return
+			}
+			s.processTurn(userText, sender, input, blockResolveCh, btwCh, l)
+
+		case wake := <-s.wakeCh:
+			if atomic.LoadInt32(&s.closing) == 1 {
+				return
+			}
+			switch wake.Type {
+			case WakeSubAgentDone:
+				l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
+				// Build a synthetic system message describing the sub-agent completion
+				summary := ""
+				if result, ok := wake.Data.(agent.SubAgentResult); ok {
+					summary = result.SummaryGist
+				}
+				wakeText := fmt.Sprintf("[System notification: Sub-agent '%s' completed. %s]", wake.SourceID, summary)
+				s.processTurn(wakeText, sender, input, blockResolveCh, btwCh, l)
+
+			case WakeShutdown:
+				l.Info("SLEEP", "wake_shutdown")
+				return
+			}
 		}
+	}
+}
+
+func (s *Session) processTurn(userText string, sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan string, l *logger.Logger) {
+	// Make a local copy of cancelCh
+	cancelCh := input.GetCancelCh()
+
+	// Drain any pending cancel signal
+	select {
+	case <-cancelCh:
+		l.Debug("CANCEL", "cancel_drained", "iteration", "start_of_loop")
+	default:
+	}
+
+	activeCfg := s.cfg.GetActiveMainCategory()
+	if activeCfg.APIKey == "" {
+		l.Warn("INPUT", "no_api_key")
+		sender.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
+		return
+	}
+
+	s.blockMu.Lock()
+	isBlocked := s.pendingBlock
+	s.pendingBlock = false
+	s.blockMu.Unlock()
+	if isBlocked {
+		l.Debug("BLOCK", "block_resolve", "text_len", len(userText))
+		s.blockRespMu.Lock()
+		s.lastBlockResp = userText
+		s.blockRespMu.Unlock()
+		blockResolveCh <- userText
+		return
+	}
+
+	s.turnNumber++
+	s.toolCallCountMu.Lock()
+	s.toolCallCount = 0
+	s.toolCallCountMu.Unlock()
+	s.msgCounterMu.Lock()
+	s.msgCounter++
+	currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
+	s.msgCounterMu.Unlock()
+	l.Info("INPUT", "received", "len", len(userText), "msg_id", currentMsgID, "is_blocked", isBlocked, "turn", s.turnNumber)
+
+	if s.db != nil {
+		sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userText)
+		sessiondb.UpdateLastPrompt(s.db, s.sessionID, userText)
+	}
+
+	s.msgsMu.Lock()
+	s.msgs = append(s.msgs, provider.ChatMessage{Role: "user", Content: userText})
+	s.msgTurns = append(s.msgTurns, s.turnNumber)
+	s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{DisplayRole: "user"})
+	msgsCopy := make([]provider.ChatMessage, len(s.msgs))
+	copy(msgsCopy, s.msgs)
+	s.msgsMu.Unlock()
+	l.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userText))
+
+	l.Info("AGENT", "loop_start", "msg_id", currentMsgID)
+
+	if s.editor != nil {
+		s.editor = s.editor.WithMessage(currentMsgID)
+	}
+
+	s.provider.Model = activeCfg.Model
+	s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
+
+	ag := s.newAgent()
+	if s.subAgentSup != nil {
+		s.subAgentSup.SetParentToolFn(ag.ToolFn)
+		ag.SubAgentMgr = s.subAgentSup.Manager()
+	}
+	ag.SetToolCallSeqStart(s.toolCallSeq)
+	var finalContent string
+	var prompt string = agent.BuildSystemPrompt(s.cfg.IsMultiAgentEnabled())
+
+	displayTracker := &displayMetaTracker{
+		metas: make(map[string]*sessiondb.DisplayMeta),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ag.Ctx = ctx
+	go func() {
 		select {
 		case <-cancelCh:
-			l.Debug("CANCEL", "cancel_drained", "iteration", "start_of_loop")
-		default:
+			l.Debug("CANCEL", "ctx_cancelled", "msg_id", currentMsgID)
+			cancel()
+		case <-ctx.Done():
 		}
+	}()
+	activeCfg = s.cfg.GetActiveMainCategory()
 
-		activeCfg := s.cfg.GetActiveMainCategory()
-		if activeCfg.APIKey == "" {
-			l.Warn("INPUT", "no_api_key")
-			sender.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
-			continue
+	var emitActive atomic.Bool
+	emitActive.Store(true)
+
+	emit := func(evt agent.AgentEvent) {
+		if !emitActive.Load() {
+			return
 		}
-
-		s.blockMu.Lock()
-		isBlocked := s.pendingBlock
-		s.pendingBlock = false
-		s.blockMu.Unlock()
-		if isBlocked {
-			l.Debug("BLOCK", "block_resolve", "text_len", len(userText))
-			s.blockRespMu.Lock()
-			s.lastBlockResp = userText
-			s.blockRespMu.Unlock()
-			blockResolveCh <- userText
-			continue
-		}
-
-		s.turnNumber++
-		s.toolCallCountMu.Lock()
-		s.toolCallCount = 0
-		s.toolCallCountMu.Unlock()
-		s.msgCounterMu.Lock()
-		s.msgCounter++
-		currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
-		s.msgCounterMu.Unlock()
-		l.Info("INPUT", "received", "len", len(userText), "msg_id", currentMsgID, "is_blocked", isBlocked, "turn", s.turnNumber)
-
-		if s.db != nil {
-			sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userText)
-			sessiondb.UpdateLastPrompt(s.db, s.sessionID, userText)
-		}
-
-		s.msgsMu.Lock()
-		s.msgs = append(s.msgs, provider.ChatMessage{Role: "user", Content: userText})
-		s.msgTurns = append(s.msgTurns, s.turnNumber)
-		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{DisplayRole: "user"})
-		msgsCopy := make([]provider.ChatMessage, len(s.msgs))
-		copy(msgsCopy, s.msgs)
-		s.msgsMu.Unlock()
-		l.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userText))
-
-		l.Info("AGENT", "loop_start", "msg_id", currentMsgID)
-
-		if s.editor != nil {
-			s.editor = s.editor.WithMessage(currentMsgID)
-		}
-
-		s.provider.Model = activeCfg.Model
-		s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
-
-		ag := s.newAgent()
-		if s.subAgentOrch != nil {
-			s.subAgentOrch.SetParentToolFn(ag.ToolFn)
-			ag.SubAgentMgr = s.subAgentOrch.Manager()
-		}
-		ag.SetToolCallSeqStart(s.toolCallSeq)
-	var finalContent string
-	var prompt string
-	if s.cfg.IsMultiAgentEnabled() {
-		prompt = agent.BuildOrchestratorPrompt()
-	} else {
-		prompt = agent.BuildSystemPrompt(false)
-	}
-
-		displayTracker := &displayMetaTracker{
-			metas: make(map[string]*sessiondb.DisplayMeta),
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		ag.Ctx = ctx
-		go func() {
-			select {
-			case <-cancelCh:
-				l.Debug("CANCEL", "ctx_cancelled", "msg_id", currentMsgID)
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
-		activeCfg = s.cfg.GetActiveMainCategory()
-
-		var emitActive atomic.Bool
-		emitActive.Store(true)
-
-		emit := func(evt agent.AgentEvent) {
-			if !emitActive.Load() {
+		if evt.Type == "blocking" {
+			data, _ := evt.Data.(map[string]string)
+			if s.handleBlockingEvent(data, evt, sender, blockResolveCh) {
 				return
 			}
-			if evt.Type == "blocking" {
-				data, _ := evt.Data.(map[string]string)
-				if s.handleBlockingEvent(data, evt, sender, blockResolveCh) {
-					return
-				}
+		}
+		if evt.Type == "confirmation_always" {
+			if data, ok := evt.Data.(map[string]string); ok {
+				s.handleConfirmationAlways(data)
 			}
-			if evt.Type == "confirmation_always" {
-				if data, ok := evt.Data.(map[string]string); ok {
-					s.handleConfirmationAlways(data)
-				}
-				return
-			}
-			sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
-			s.updateDisplayFromEvent(evt, displayTracker)
-			if evt.Type == "usage" {
-				s.processUsageEvent(evt.Data, activeCfg.Model)
-			}
-			if evt.Type == "done" {
-				if content, ok := evt.Data.(string); ok {
-					finalContent = content
-				} else if m, ok := evt.Data.(map[string]any); ok {
-					if c, ok := m["content"].(string); ok {
-						finalContent = c
-					}
+			return
+		}
+		sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
+		s.updateDisplayFromEvent(evt, displayTracker)
+		if evt.Type == "usage" {
+			s.processUsageEvent(evt.Data, activeCfg.Model)
+		}
+		if evt.Type == "done" {
+			if content, ok := evt.Data.(string); ok {
+				finalContent = content
+			} else if m, ok := evt.Data.(map[string]any); ok {
+				if c, ok := m["content"].(string); ok {
+					finalContent = c
 				}
 			}
 		}
-		ag.Emit = emit
-		agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID, btwCh)
-		emitActive.Store(false)
-		s.toolCallSeq = ag.ToolCallSeq()
-
-		cancel()
-
-		l.Info("AGENT", "loop_end", "len", len(finalContent))
-		s.finalizeTurn(agentMsgs, displayTracker, finalContent, currentMsgID, activeCfg.Model)
 	}
-	l.Info("SESSION", "run_exit")
+	ag.Emit = emit
+	agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID, btwCh)
+	emitActive.Store(false)
+	s.toolCallSeq = ag.ToolCallSeq()
+
+	cancel()
+
+	l.Info("AGENT", "loop_end", "len", len(finalContent))
+	s.finalizeTurn(agentMsgs, displayTracker, finalContent, currentMsgID, activeCfg.Model)
 }
 
 func (s *Session) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender, blockResolveCh chan string) bool {
