@@ -19,7 +19,7 @@ func (m Model) View(width, chatAreaHeight int, settingsActive, confirmActive boo
 		if m.thinking && !m.blocking {
 			hint = "[ type to send a note to the agent · enter: send · esc: cancel ]"
 		} else {
-			hint = "[ enter: send · alt+enter: new line · ↑↓: history · ctrl+s: settings · esc: exit ]"
+			hint = "[ enter: send · alt+enter|alt+\\: new line · ↑↓: history · ctrl+s: settings · esc: exit ]"
 		}
 		b.WriteString(m.theme.Styles.DimLabel.Render(hint))
 		b.WriteByte('\n')
