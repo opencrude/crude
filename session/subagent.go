@@ -67,6 +67,19 @@ func (r *SubAgentRunner) SessionCancel() {
 	r.sessionCancel()
 }
 
+func (r *SubAgentRunner) CancelAllActive() []agent.AgentID {
+	var ids []agent.AgentID
+	for _, h := range r.mgr.ActiveHandles() {
+		ids = append(ids, h.Spec.ID)
+	}
+	for _, id := range ids {
+		r.mgr.Cancel(id)
+		r.fileOwnership.Release(id)
+	}
+	r.sessionCancel()
+	return ids
+}
+
 func (r *SubAgentRunner) SetSender(sender EventSender) {
 	r.sender = sender
 }

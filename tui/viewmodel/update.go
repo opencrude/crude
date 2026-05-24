@@ -169,7 +169,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			activeML := m.activeMessageList()
 			msgListCapturing := activeML.IsSelecting() || activeML.IsScrollbarDragging()
 			if m.input.InputSelecting() || (msg.Y >= inputStartLine && !msgListCapturing) {
-				updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+				updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 				m.input = updated
 				if cmd != nil {
 					cmds = append(cmds, cmd)
@@ -538,7 +538,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if _, isMouse := msg.(tea.MouseMsg); !isMouse {
-			updated, cmd, evt := m.input.Update(msg, m.anyActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+			updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 			m.input = updated
 			if cmd != nil {
 				cmds = append(cmds, cmd)
