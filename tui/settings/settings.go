@@ -4,8 +4,8 @@ import (
 	"strings"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/components"
 	"crude/tui/form"
@@ -191,14 +191,14 @@ func buildCategoryForm(t *theme.Theme, catKey string, cat types.CategorySettings
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && !m.isEditing() {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && !m.isEditing() {
 		switch keyMsg.String() {
 		case "j":
-			msg = tea.KeyMsg{Type: tea.KeyDown}
+			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		case "k":
-			msg = tea.KeyMsg{Type: tea.KeyUp}
+			msg = tea.KeyPressMsg{Code: tea.KeyUp}
 		case "e":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
+			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
 		}
 	}
 
@@ -323,7 +323,7 @@ func (m Model) updateRoot(msg tea.Msg) (Model, tea.Cmd, Event) {
 }
 
 func (m Model) updateProfiles(msg tea.Msg) (Model, tea.Cmd, Event) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil, nil
 	}
@@ -331,7 +331,7 @@ func (m Model) updateProfiles(msg tea.Msg) (Model, tea.Cmd, Event) {
 	numProfiles := len(m.agentsSettings.Profiles)
 	createIdx := numProfiles
 
-	if keyMsg.Type == tea.KeyEsc {
+	if keyMsg.Code == tea.KeyEsc {
 		if m.creatingProfile {
 			m.cancelCreate()
 			return m, nil, nil
@@ -347,10 +347,10 @@ func (m Model) updateProfiles(msg tea.Msg) (Model, tea.Cmd, Event) {
 	return m.updateProfileList(keyMsg, numProfiles, createIdx)
 }
 
-func (m Model) updateCreateRow(keyMsg tea.KeyMsg, numProfiles, createIdx int) (Model, tea.Cmd, Event) {
+func (m Model) updateCreateRow(keyMsg tea.KeyPressMsg, numProfiles, createIdx int) (Model, tea.Cmd, Event) {
 	m.creatingProfile = true
 
-	switch keyMsg.Type {
+	switch keyMsg.Code {
 	case tea.KeyUp:
 		if m.profileCursor > 0 {
 			m.profileCursor--
@@ -389,7 +389,7 @@ func (m Model) updateCreateRow(keyMsg tea.KeyMsg, numProfiles, createIdx int) (M
 	case tea.KeyEnter:
 		return m.saveNewProfile()
 	default:
-		for _, r := range keyMsg.Runes {
+		for _, r := range keyMsg.Text {
 			if unicode.IsPrint(r) {
 				m.profileNameInput = append(m.profileNameInput[:m.profileNameCursor], append([]rune{r}, m.profileNameInput[m.profileNameCursor:]...)...)
 				m.profileNameCursor++
@@ -399,8 +399,8 @@ func (m Model) updateCreateRow(keyMsg tea.KeyMsg, numProfiles, createIdx int) (M
 	return m, nil, nil
 }
 
-func (m Model) updateProfileList(keyMsg tea.KeyMsg, numProfiles, createIdx int) (Model, tea.Cmd, Event) {
-	switch keyMsg.Type {
+func (m Model) updateProfileList(keyMsg tea.KeyPressMsg, numProfiles, createIdx int) (Model, tea.Cmd, Event) {
+	switch keyMsg.Code {
 	case tea.KeyUp:
 		if m.profileCursor > 0 {
 			m.profileCursor--

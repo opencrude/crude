@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/alecthomas/chroma/v2"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 func Formatter(bgColor color.Color, processValue func(string) string) chroma.Formatter {

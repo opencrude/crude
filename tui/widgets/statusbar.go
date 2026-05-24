@@ -11,7 +11,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 var sleepMessages = []string{

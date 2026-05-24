@@ -1,6 +1,6 @@
 package diffview
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 type LineStyle struct {
 	LineNumber lipgloss.Style

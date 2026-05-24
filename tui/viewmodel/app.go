@@ -3,7 +3,7 @@ package viewmodel
 import (
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"crude/sessiondb"
 	"crude/tui/input"
@@ -627,5 +627,5 @@ func (m *App) syncOverlayMode() {
 }
 
 func (m *App) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), tea.EnterAltScreen)
+	return tea.Batch(tickCmd())
 }

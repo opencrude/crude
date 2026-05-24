@@ -3,7 +3,9 @@ package components
 import (
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/theme"
 )
@@ -28,22 +30,22 @@ func ThinkingDotIndex(frame int) int {
 	return (frame / DotCycleStep) % 4
 }
 
-func BlockCursor(frame int, color lipgloss.Color) string {
+func BlockCursor(frame int, clr color.Color) string {
 	if BlinkOn(frame) {
-		return lipgloss.NewStyle().Foreground(color).Render("█")
+		return lipgloss.NewStyle().Foreground(clr).Render("█")
 	}
 	return " "
 }
 
-func BlockCursorTime(color lipgloss.Color) string {
+func BlockCursorTime(clr color.Color) string {
 	if BlinkOnTime(time.Now()) {
-		return lipgloss.NewStyle().Foreground(color).Render("█")
+		return lipgloss.NewStyle().Foreground(clr).Render("█")
 	}
 	return " "
 }
 
-func BlockCursorSolid(color lipgloss.Color) string {
-	return lipgloss.NewStyle().Foreground(color).Render("█")
+func BlockCursorSolid(clr color.Color) string {
+	return lipgloss.NewStyle().Foreground(clr).Render("█")
 }
 
 func SpinnerPhase(frame int) string {
@@ -94,23 +96,23 @@ func (m Spinner) WorkAnimation() string {
 	moon := SpinnerPhase(m.frame)
 
 	var label string
-	var color lipgloss.Color
+	var clr color.Color
 	switch m.phase {
 	case PhaseGrounding:
 		label = m.groundingLabel()
-		color = m.theme.Colors.Spinner.Grounding
+		clr = m.theme.Colors.Spinner.Grounding
 	case PhasePlanning:
 		label = m.planningLabel()
-		color = m.theme.Colors.Spinner.Planning
+		clr = m.theme.Colors.Spinner.Planning
 	case PhaseExecuting:
 		label = m.executingLabel()
-		color = m.theme.Colors.Spinner.Executing
+		clr = m.theme.Colors.Spinner.Executing
 	default:
 		label = m.thinkingLabel()
-		color = m.theme.Colors.Spinner.Default
+		clr = m.theme.Colors.Spinner.Default
 	}
 
-	return lipgloss.NewStyle().Foreground(color).Render(moon+" ") +
+	return lipgloss.NewStyle().Foreground(clr).Render(moon+" ") +
 		lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Render(label)
 }
 
@@ -153,7 +155,7 @@ func (m Spinner) streamingLabel() string {
 	return labels[m.activityIdx(len(labels))]
 }
 
-func (m Spinner) spinnerColor() lipgloss.Color {
+func (m Spinner) spinnerColor() color.Color {
 	switch m.phase {
 	case PhaseGrounding:
 		return m.theme.Colors.Spinner.Grounding

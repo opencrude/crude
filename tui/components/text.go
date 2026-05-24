@@ -5,8 +5,8 @@ import (
 	"time"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -44,10 +44,10 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
+	case tea.KeyPressMsg:
+		switch msg.Code {
 		case tea.KeyEnter:
-			if msg.Alt {
+			if msg.Mod.Contains(tea.ModAlt) {
 				m.splitLineAt(m.curLine, m.curCol)
 				m.curLine++
 				m.curCol = 0
@@ -77,7 +77,9 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 			m.lastVisCol = visCol
 			m.cursorDownVisual()
 		case tea.KeyLeft:
-			if m.curCol > 0 {
+			if msg.Mod.Contains(tea.ModCtrl) {
+				m.setCursorFlat(m.cursorPrevWord())
+			} else if m.curCol > 0 {
 				m.curCol--
 			} else if m.curLine > 0 {
 				m.curLine--
@@ -85,7 +87,9 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 			}
 			m.lastVisCol = -1
 		case tea.KeyRight:
-			if m.curCol < len(m.buf[m.curLine]) {
+			if msg.Mod.Contains(tea.ModCtrl) {
+				m.setCursorFlat(m.cursorNextWord())
+			} else if m.curCol < len(m.buf[m.curLine]) {
 				m.curCol++
 			} else if m.curLine < len(m.buf)-1 {
 				m.curLine++
@@ -93,63 +97,59 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 			}
 			m.lastVisCol = -1
 		case tea.KeyHome:
+			if msg.Mod.Contains(tea.ModCtrl) {
+				m.curLine = 0
+			}
 			m.curCol = 0
 			m.lastVisCol = -1
 		case tea.KeyEnd:
-			m.curCol = len(m.buf[m.curLine])
-			m.lastVisCol = -1
-		case tea.KeyCtrlLeft:
-			m.setCursorFlat(m.cursorPrevWord())
-			m.lastVisCol = -1
-		case tea.KeyCtrlRight:
-			m.setCursorFlat(m.cursorNextWord())
-			m.lastVisCol = -1
-		case tea.KeyCtrlA:
-			m.curCol = 0
-			m.lastVisCol = -1
-		case tea.KeyCtrlE:
-			m.curCol = len(m.buf[m.curLine])
-			m.lastVisCol = -1
-		case tea.KeyCtrlU:
-			start := m.cursorLineStart()
-			cf := m.lineColToFlat(m.curLine, m.curCol)
-			if start < cf {
-				m.deleteRange(start, cf)
-				m.setCursorFlat(start)
-			}
-		case tea.KeyCtrlK:
-			end := m.cursorLineEnd()
-			cf := m.lineColToFlat(m.curLine, m.curCol)
-			if end > cf {
-				m.deleteRange(cf, end)
-			}
-		case tea.KeyCtrlW:
-			if m.lineColToFlat(m.curLine, m.curCol) > 0 {
-				pos := m.cursorPrevWord()
-				cf := m.lineColToFlat(m.curLine, m.curCol)
-				m.deleteRange(pos, cf)
-				m.setCursorFlat(pos)
-			}
-		case tea.KeyCtrlHome:
-			m.curLine = 0
-			m.curCol = 0
-			m.lastVisCol = -1
-		case tea.KeyCtrlEnd:
-			m.curLine = len(m.buf) - 1
-			if m.curLine < 0 {
-				m.curLine = 0
+			if msg.Mod.Contains(tea.ModCtrl) {
+				m.curLine = len(m.buf) - 1
+				if m.curLine < 0 {
+					m.curLine = 0
+				}
 			}
 			m.curCol = len(m.buf[m.curLine])
 			m.lastVisCol = -1
 		default:
-			// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
-			// where Alt+Enter is intercepted as "toggle fullscreen".
-			if msg.Alt && len(msg.Runes) == 1 && msg.Runes[0] == '\\' {
+			// Handle Ctrl+letter keys (Ctrl+A, Ctrl+E, Ctrl+U, Ctrl+K, Ctrl+W)
+			if msg.Mod.Contains(tea.ModCtrl) && len(msg.Text) == 0 {
+				switch msg.Code {
+				case 'a':
+					m.curCol = 0
+					m.lastVisCol = -1
+				case 'e':
+					m.curCol = len(m.buf[m.curLine])
+					m.lastVisCol = -1
+				case 'u':
+					start := m.cursorLineStart()
+					cf := m.lineColToFlat(m.curLine, m.curCol)
+					if start < cf {
+						m.deleteRange(start, cf)
+						m.setCursorFlat(start)
+					}
+				case 'k':
+					end := m.cursorLineEnd()
+					cf := m.lineColToFlat(m.curLine, m.curCol)
+					if end > cf {
+						m.deleteRange(cf, end)
+					}
+				case 'w':
+					if m.lineColToFlat(m.curLine, m.curCol) > 0 {
+						pos := m.cursorPrevWord()
+						cf := m.lineColToFlat(m.curLine, m.curCol)
+						m.deleteRange(pos, cf)
+						m.setCursorFlat(pos)
+					}
+				}
+			} else if msg.Mod.Contains(tea.ModAlt) && len(msg.Text) == 1 && msg.Text[0] == '\\' {
+				// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
+				// where Alt+Enter is intercepted as "toggle fullscreen".
 				m.splitLineAt(m.curLine, m.curCol)
 				m.curLine++
 				m.curCol = 0
 			} else {
-				for _, r := range msg.Runes {
+				for _, r := range msg.Text {
 					if unicode.IsPrint(r) {
 						pos := m.lineColToFlat(m.curLine, m.curCol)
 						m.insertRuneAt(pos, r)

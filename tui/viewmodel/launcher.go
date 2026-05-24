@@ -8,7 +8,7 @@ import (
 	"crude/sessiondb"
 	"crude/tui/widgets"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // LauncherState holds the state for the full-screen session launcher.
@@ -160,13 +160,13 @@ func (l *LauncherState) deleteSelected() string {
 }
 
 // handleLauncherKey processes key events in ModeLauncher.
-func (m *App) handleLauncherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.lastInteractionTime = time.Now()
 	launcher := m.launcher
 
 	// Filter mode input handling
 	if launcher.filterActive {
-		switch msg.Type {
+		switch msg.Code {
 		case tea.KeyEsc:
 			launcher.deactivateFilter()
 			return m, nil
@@ -188,8 +188,8 @@ func (m *App) handleLauncherKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			launcher.moveDown()
 			return m, nil
 		default:
-			if msg.Type == tea.KeyRunes {
-				launcher.filterText += string(msg.Runes)
+			if len(msg.Text) > 0 {
+				launcher.filterText += msg.Text
 				launcher.updateFilter(launcher.filterText)
 				return m, nil
 			}

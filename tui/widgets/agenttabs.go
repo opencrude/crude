@@ -8,7 +8,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // AgentTab represents one sub-agent in the tab bar.

@@ -1,10 +1,11 @@
 package form
 
 import (
+	"image/color"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/components"
 	"crude/tui/theme"
@@ -25,7 +26,7 @@ const (
 type Button struct {
 	Label  string
 	Key    string
-	Color  lipgloss.Color
+	Color  color.Color
 	Cancel bool
 	Reset  bool
 }
@@ -78,12 +79,12 @@ func NewFormWithButtons(t *theme.Theme, title, hint string, buttons []Button, it
 }
 
 func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil, FormActionNone
 	}
 
-	if keyMsg.Type == tea.KeyCtrlC {
+	if keyMsg.String() == "ctrl+c" {
 		if m.expanded >= 0 {
 			m.expanded = -1
 			return m, nil, FormActionNone
@@ -128,7 +129,7 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 		return m, cmd, FormActionNone
 	}
 
-	switch keyMsg.Type {
+	switch keyMsg.Code {
 	case tea.KeyEsc:
 		return m, nil, FormActionBack
 	case tea.KeyUp:
@@ -146,28 +147,28 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 			m.focusedBtn = 0
 		}
 	case tea.KeyTab:
-		if m.hasButtons {
+		if keyMsg.Mod.Contains(tea.ModShift) {
+			if m.hasButtons {
+				m.focusZone = 1
+				m.focusedBtn = len(m.buttons) - 1
+			} else {
+				if m.focused > 0 {
+					m.focused--
+				} else {
+					m.focused = len(m.items) - 1
+				}
+			}
+		} else if m.hasButtons {
 			m.focusZone = 1
 			m.focusedBtn = 0
-		}
-	case tea.KeyShiftTab:
-		if m.hasButtons {
-			m.focusZone = 1
-			m.focusedBtn = len(m.buttons) - 1
-		} else {
-			if m.focused > 0 {
-				m.focused--
-			} else {
-				m.focused = len(m.items) - 1
-			}
 		}
 	}
 
 	return m, nil, FormActionNone
 }
 
-func (m Form) updateExpanded(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
-	switch keyMsg.Type {
+func (m Form) updateExpanded(keyMsg tea.KeyPressMsg) (Form, tea.Cmd, FormAction) {
+	switch keyMsg.Code {
 	case tea.KeyEsc:
 		m.expanded = -1
 		return m, nil, FormActionNone
@@ -199,8 +200,8 @@ func (m Form) updateExpanded(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
 	}
 }
 
-func (m Form) updateButtons(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
-	switch keyMsg.Type {
+func (m Form) updateButtons(keyMsg tea.KeyPressMsg) (Form, tea.Cmd, FormAction) {
+	switch keyMsg.Code {
 	case tea.KeyEsc:
 		return m, nil, FormActionBack
 	case tea.KeyUp:
@@ -213,16 +214,20 @@ func (m Form) updateButtons(keyMsg tea.KeyMsg) (Form, tea.Cmd, FormAction) {
 		if m.focusedBtn > 0 {
 			m.focusedBtn--
 		}
-	case tea.KeyRight, tea.KeyTab:
+	case tea.KeyRight:
 		if m.focusedBtn < len(m.buttons)-1 {
 			m.focusedBtn++
 		}
-	case tea.KeyShiftTab:
-		if m.focusedBtn > 0 {
-			m.focusedBtn--
-		} else {
-			m.focusZone = 0
-			m.focused = len(m.items) - 1
+	case tea.KeyTab:
+		if keyMsg.Mod.Contains(tea.ModShift) {
+			if m.focusedBtn > 0 {
+				m.focusedBtn--
+			} else {
+				m.focusZone = 0
+				m.focused = len(m.items) - 1
+			}
+		} else if m.focusedBtn < len(m.buttons)-1 {
+			m.focusedBtn++
 		}
 	case tea.KeyEnter:
 		btn := m.buttons[m.focusedBtn]
@@ -311,7 +316,7 @@ func (m Form) View(width int, spinFrame int) string {
 			if m.focusZone == 1 && m.focusedBtn == i {
 				focusedStyle := lipgloss.NewStyle().Foreground(btn.Color).Bold(true)
 				btnStrs = append(btnStrs, focusedStyle.Render("❯ [ "+btn.Label+" ]"))
-			} else if btn.Cancel && btn.Color != "" {
+			} else if btn.Cancel && btn.Color != nil {
 				cancelStyle := lipgloss.NewStyle().Foreground(btn.Color)
 				btnStrs = append(btnStrs, btnDim.Render("  [ ")+cancelStyle.Render(btn.Label)+btnDim.Render(" ]"))
 			} else {
