@@ -79,6 +79,7 @@ type Session struct {
 	writeMu   sync.Mutex
 	flushWg   sync.WaitGroup
 	closing      int32
+	hardCancelled int32
 	wakeCh       chan WakeEvent
 	sender       EventSender
 	subAgentSup *SubAgentRunner
@@ -341,4 +342,31 @@ func (s *Session) IsAndClearReportConsumed(agentID string) bool {
 	delete(s.consumedReports, agentID)
 	s.consumedReportsMu.Unlock()
 	return consumed
+}
+
+func (s *Session) HardCancel() {
+	atomic.StoreInt32(&s.hardCancelled, 1)
+	if s.subAgentSup != nil {
+		s.subAgentSup.CancelAllActive()
+	}
+	s.logger.Info("CANCEL", "hard_cancel", "sub_agents_cancelled", s.subAgentSup != nil)
+}
+
+func (s *Session) isHardCancelled() bool {
+	return atomic.LoadInt32(&s.hardCancelled) == 1
+}
+
+func (s *Session) clearHardCancel() {
+	atomic.StoreInt32(&s.hardCancelled, 0)
+}
+
+func (s *Session) drainWakeCh() {
+	for {
+		select {
+		case <-s.wakeCh:
+			s.logger.Debug("SLEEP", "drained_stale_wake")
+		default:
+			return
+		}
+	}
 }

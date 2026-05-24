@@ -54,10 +54,25 @@ func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
+	if m.activeAgentView != "" && m.activeAgentView != MainAgentID {
+		if agent, ok := m.agents[m.activeAgentView]; ok && !agent.Completed && agent.IsActive() {
+			if m.OnCancelSubAgent != nil {
+				go m.OnCancelSubAgent(m.activeAgentView)
+			}
+			agent.Streaming = false
+			agent.Thinking = false
+			m.statusbar.SetInfo("cancelling sub-agent...")
+			return nil
+		}
+	}
+
 	if m.anyActive() {
 		select {
 		case m.cancelCh <- struct{}{}:
 		default:
+		}
+		if m.OnHardCancel != nil {
+			m.OnHardCancel()
 		}
 		m.statusbar.SetInfo("cancelling...")
 		return nil

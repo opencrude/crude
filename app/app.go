@@ -215,6 +215,10 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 		}
 	}
 
+	tuiInst.OnHardCancel = func() {
+		sess.HardCancel()
+	}
+
 	tuiInst.OnDeleteSession = func(sessionID string) {
 		if err := sessiondb.DeleteSession(a.sessionsRoot, sessionID); err != nil {
 			sess.Logger().Warn("SESSION", "delete_failed", "id", sessionID, "error", err.Error())
