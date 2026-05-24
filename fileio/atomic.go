@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"crude/buildinfo"
 	"crude/logger"
 )
 
@@ -24,7 +25,7 @@ func writeAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger) 
 		return fmt.Errorf("atomic write: ensure parent dir: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".crude_tmp_*")
+	tmp, err := os.CreateTemp(dir, buildinfo.DataDirName+"_tmp_*")
 	if err != nil {
 		return fmt.Errorf("atomic write: create temp: %w", err)
 	}

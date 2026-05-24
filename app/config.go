@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"crude/buildinfo"
 	"crude/session"
 )
 
@@ -36,7 +37,7 @@ func ConfigPath() string {
 	if err != nil {
 		return "crude_config.json"
 	}
-	return filepath.Join(home, ".crude", "config.json")
+	return filepath.Join(home, buildinfo.DataDir(), "config.json")
 }
 
 func HistoryPath() string {
@@ -44,7 +45,7 @@ func HistoryPath() string {
 	if err != nil {
 		return "crude_history.json"
 	}
-	return filepath.Join(home, ".crude", "history.json")
+	return filepath.Join(home, buildinfo.DataDir(), "history.json")
 }
 
 func LoadFileConfig() FileConfig {

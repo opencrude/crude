@@ -429,18 +429,9 @@ func (m *App) handleFileClaim(evt ttypes.AgentEventMsg) {
 	if !ok {
 		return
 	}
-	agentName := data["agent_name"]
-	category := data["category"]
-	path := data["path"]
-	if agentName == "" || path == "" {
-		return
-	}
-	content := fmt.Sprintf("[%s:%s] claimed %s", category, agentName, path)
-	m.mainMsgList.AppendMessage(ttypes.ChatMessage{
-		Role:    ttypes.RoleTool,
-		Content: content,
-		Time:    time.Now(),
-	})
+	_ = data["agent_name"]
+	_ = data["category"]
+	_ = data["path"]
 }
 
 func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
