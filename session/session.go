@@ -82,6 +82,13 @@ type Session struct {
 	wakeCh       chan WakeEvent
 	sender       EventSender
 	subAgentSup *SubAgentRunner
+
+	// consumedReports tracks sub-agent IDs whose results the main agent has already
+	// consumed during an active turn (typically via poll_sub_agent). When a WakeSubAgentDone
+	// event later arrives for a consumed sub-agent, the wake is suppressed to prevent a
+	// redundant turn where the agent would see the same report/notification again.
+	consumedReports   map[string]bool
+	consumedReportsMu sync.Mutex
 }
 
 func New(cfg *Config, homeDir string) (*Session, error) {
@@ -197,7 +204,8 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		tokens:         NewTokenTracker(lg),
 		db:             db,
 		dbPath:         dbPath,
-		writeBuf:       make([]taggedMessage, 0, 64),
+		writeBuf:         make([]taggedMessage, 0, 64),
+		consumedReports:  make(map[string]bool),
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
@@ -305,4 +313,32 @@ func (s *Session) initSubAgentRunner() bool {
 
 func (s *Session) SubAgentRunner() *SubAgentRunner {
 	return s.subAgentSup
+}
+
+// MarkReportConsumed records that the main agent has already consumed a sub-agent's
+// result during an active turn (e.g. via poll_sub_agent). The corresponding
+// WakeSubAgentDone event will be suppressed to prevent a redundant wake-up turn
+// where the agent would re-read the same report it already processed.
+//
+// This handles the edge case where the agent polls a completed sub-agent during
+// an active turn (against the "don't poll" instruction, which LLMs sometimes
+// ignore), reads the report, and then gets woken up again by the queued wake
+// event when the turn ends — resulting in a wasteful duplicate turn.
+func (s *Session) MarkReportConsumed(agentID string) {
+	s.consumedReportsMu.Lock()
+	s.consumedReports[agentID] = true
+	s.consumedReportsMu.Unlock()
+}
+
+// IsAndClearReportConsumed checks whether a sub-agent's result was already consumed
+// by the main agent during an earlier turn. If so, it removes the entry (each
+// sub-agent completes at most once, so the entry is no longer needed) and returns
+// true, indicating the wake event should be suppressed. Returns false if the
+// sub-agent was not previously consumed, meaning the wake should be processed.
+func (s *Session) IsAndClearReportConsumed(agentID string) bool {
+	s.consumedReportsMu.Lock()
+	consumed := s.consumedReports[agentID]
+	delete(s.consumedReports, agentID)
+	s.consumedReportsMu.Unlock()
+	return consumed
 }

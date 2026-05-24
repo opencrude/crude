@@ -176,6 +176,10 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 
 	select {
 	case result := <-handle.ResultCh:
+		// The agent now has the final result via synchronous wait; mark consumed
+		// so the pending WakeSubAgentDone event is suppressed. Currently, wait=true
+		// is forced to false in multi-agent mode, but this guards against future changes.
+		r.session.MarkReportConsumed(string(spec.ID))
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	case <-ctx.Done():
 		return tools.ToolResult{Content: fmt.Sprintf("Sub-agent %q still running (turn ended). Use poll_sub_agent with handle_id=%q to check later.", spec.Name, spec.ID)}, nil
@@ -286,6 +290,9 @@ func (r *SubAgentRunner) PollSubAgent(params map[string]any) (tools.ToolResult, 
 		result.CompTokens = compTokens
 		result.CostUSD = costUSD
 		result.Errors = errs
+		// The agent now has the result and report path; suppress the
+		// pending WakeSubAgentDone to avoid a redundant wake-up turn.
+		r.session.MarkReportConsumed(handleID)
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	}
 
@@ -304,8 +311,10 @@ func (r *SubAgentRunner) PollSubAgent(params map[string]any) (tools.ToolResult, 
 	}
 
 	if finishedHandle, found := r.mgr.GetFinished(agent.AgentID(handleID)); found {
-		if r, rFound := r.mgr.GetCompleted(agent.AgentID(handleID)); rFound {
-			return tools.ToolResult{Content: formatSubAgentResult(r)}, nil
+		if completedResult, rFound := r.mgr.GetCompleted(agent.AgentID(handleID)); rFound {
+			// Agent already has the completed result; suppress the pending wake.
+			r.session.MarkReportConsumed(handleID)
+			return tools.ToolResult{Content: formatSubAgentResult(completedResult)}, nil
 		}
 		result := agent.SubAgentResult{
 			AgentID:      finishedHandle.Spec.ID,
@@ -323,11 +332,15 @@ func (r *SubAgentRunner) PollSubAgent(params map[string]any) (tools.ToolResult, 
 		if reportPath, done := finishedHandle.ReportPath(); done {
 			result.ResultPath = reportPath
 		}
+		// Agent now has the finished result; suppress the pending wake.
+		r.session.MarkReportConsumed(handleID)
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	}
 
-	if r, found := r.mgr.GetCompleted(agent.AgentID(handleID)); found {
-		return tools.ToolResult{Content: formatSubAgentResult(r)}, nil
+	if completedResult, found := r.mgr.GetCompleted(agent.AgentID(handleID)); found {
+		// Agent already has the completed result; suppress the pending wake.
+		r.session.MarkReportConsumed(handleID)
+		return tools.ToolResult{Content: formatSubAgentResult(completedResult)}, nil
 	}
 	return tools.ToolResult{Content: "Sub-agent not found. It may have never started."}, nil
 }

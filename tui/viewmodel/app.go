@@ -444,14 +444,19 @@ func (m *App) syncAgentWindowTabs() {
 		activeID = MainAgentID
 	}
 
-	// Main agent tab always first.
-	if ma, ok := m.agents[MainAgentID]; ok && !ma.Completed {
-		title := m.agentTabTitle(MainAgentID)
-		if m.win.TabByTitle(title) == nil {
-			m.win.OpenTab(title, "", false)
-		}
-		if tab := m.win.TabByTitle(title); tab != nil {
-			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.agentTabIcon(MainAgentID))
+	// Main agent tab always first. It must be present whenever sub-agents are
+	// active so the user can switch back to the orchestrator. The main agent's
+	// Completed flag toggles between turns (true when idle, false when active);
+	// basing the tab on that flag causes the tab to flicker in and out of
+	// existence every turn boundary.
+	title := m.agentTabTitle(MainAgentID)
+	if m.win.TabByTitle(title) == nil {
+		m.win.OpenTab(title, "", false)
+	}
+	if tab := m.win.TabByTitle(title); tab != nil {
+		newIcon := m.agentTabIcon(MainAgentID)
+		if tab.Icon != newIcon {
+			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), newIcon)
 		}
 	}
 
@@ -469,13 +474,19 @@ func (m *App) syncAgentWindowTabs() {
 			m.win.OpenTab(title, "", true)
 		}
 		if tab := m.win.TabByTitle(title); tab != nil {
-			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), m.agentTabIcon(id))
+			newIcon := m.agentTabIcon(id)
+			if tab.Icon != newIcon {
+				m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), newIcon)
+			}
 		}
 	}
 
 	activeTitle := m.agentTabTitle(activeID)
 	if tab := m.win.TabByTitle(activeTitle); tab != nil {
-		m.win.SwitchTo(m.win.IndexOf(tab.ID))
+		targetIdx := m.win.IndexOf(tab.ID)
+		if m.win.ActiveIndex() != targetIdx {
+			m.win.SwitchTo(targetIdx)
+		}
 	}
 
 	m.purgeStaleAgentTabs()
@@ -526,8 +537,20 @@ func (m *App) purgeAgentTabs() {
 	}
 }
 
-// purgeStaleAgentTabs closes agent tabs for agents that no longer exist.
+// purgeStaleAgentTabs closes agent tabs for agents that no longer exist
+// or have completed. The main agent tab is never purged here as long as
+// at least one sub-agent is still active — the main agent is the
+// orchestrator and its tab must remain accessible between turns even when
+// the main agent is idle (Completed=true).
 func (m *App) purgeStaleAgentTabs() {
+	hasActiveSubs := false
+	for id, a := range m.agents {
+		if id != MainAgentID && !a.Completed {
+			hasActiveSubs = true
+			break
+		}
+	}
+
 	for {
 		removed := false
 		for i := m.win.TabCount() - 1; i >= 0; i-- {
@@ -537,6 +560,10 @@ func (m *App) purgeStaleAgentTabs() {
 			}
 			if m.isAgentTabTitle(tabs[i].Title) {
 				agentID := m.agentIDFromTabTitle(tabs[i].Title)
+				// Preserve the main agent tab while sub-agents are active.
+				if agentID == MainAgentID && hasActiveSubs {
+					continue
+				}
 				a, ok := m.agents[agentID]
 				if !ok || a.Completed {
 					if m.win.CloseTab(i) != window.CloseNone {

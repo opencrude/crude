@@ -150,8 +150,9 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		msgTurns:     msgTurns,
 		displayMetas: displayMetas,
 		createdAts:   createdAts,
-		wakeCh:       make(chan WakeEvent, 8),
-		writeBuf:     make([]taggedMessage, 0, 64),
+		wakeCh:           make(chan WakeEvent, 8),
+		writeBuf:         make([]taggedMessage, 0, 64),
+		consumedReports:  make(map[string]bool),
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)

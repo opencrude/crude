@@ -81,6 +81,17 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 			switch wake.Type {
 		case WakeSubAgentDone:
 			l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
+
+			// Suppress the wake if the agent already consumed this sub-agent's result
+			// during an earlier turn (e.g. via poll_sub_agent while another turn was
+			// active). Without this, the agent gets woken up with a notification
+			// for a report it already read — a redundant turn that wastes tokens
+			// and may confuse the agent into re-reading the same report.
+			if s.IsAndClearReportConsumed(wake.SourceID) {
+				l.Info("SLEEP", "wake_suppressed_already_consumed", "source", wake.SourceID)
+				continue
+			}
+
 			summary := ""
 			reportPath := ""
 			if result, ok := wake.Data.(agent.SubAgentResult); ok {
