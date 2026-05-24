@@ -260,6 +260,13 @@ func (m *App) anyActive() bool {
 	return false
 }
 
+func (m *App) mainAgentActive() bool {
+	if ma, ok := m.agents[MainAgentID]; ok {
+		return !ma.Completed && ma.IsActive()
+	}
+	return false
+}
+
 func (m *App) SetProviderPresets(presets []ttypes.ProviderPreset) {
 	m.ProviderPresets = presets
 	m.settings.SetPresets(presets)

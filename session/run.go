@@ -185,6 +185,12 @@ func (s *Session) processTurn(userText string, sender EventSender, input EventIn
 		case <-cancelCh:
 			l.Debug("CANCEL", "ctx_cancelled", "msg_id", currentMsgID)
 			cancel()
+			if s.subAgentSup != nil {
+				cancelled := s.subAgentSup.CancelAllActive()
+				if len(cancelled) > 0 {
+					l.Info("CANCEL", "sub_agents_cancelled", "count", len(cancelled))
+				}
+			}
 		case <-ctx.Done():
 		}
 	}()
