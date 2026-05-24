@@ -960,6 +960,10 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			return r.executeSubAgentAsyncCommand(handle, tool, params)
 		}
 
+		if tool == "execute_command" {
+			return r.executeSubAgentCommandAutoPromote(ctx, handle, params)
+		}
+
 		resolvedProvider := spec.Provider
 		if resolvedProvider == "" {
 			resolvedProvider = r.session.cfg.GetActiveMainCategory().Provider
@@ -1528,6 +1532,95 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 
 	default:
 		return tools.ToolResult{}, fmt.Errorf("unknown async command tool: %s", tool)
+	}
+}
+
+func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, handle *agent.SubAgentHandle, params map[string]any) (tools.ToolResult, error) {
+	cmd := getStrParam(params, "command")
+	if cmd == "" {
+		return tools.ToolResult{}, fmt.Errorf("execute_command: missing 'command'")
+	}
+
+	a := handle.Agent
+	mgr := a.AsyncMgr
+	if mgr == nil {
+		return tools.ToolResult{}, fmt.Errorf("execute_command: async command system not available for this sub-agent")
+	}
+
+	isReadOnlyExec := a.Policy.AllowedCapabilities[safety.CanExecuteReadOnly] && !a.Policy.AllowedCapabilities[safety.CanExecute]
+	if !a.Yolo {
+		sr := safety.CheckCommandSafety(cmd, r.session.logger)
+		if sr.Risk.IsAlwaysBlocked() {
+			errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
+			r.session.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
+			return tools.ToolResult{Content: errMsg}, fmt.Errorf("%s", errMsg)
+		}
+		if sr.Risk.NeedsConfirmation() {
+			r.session.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
+		}
+		if isReadOnlyExec && sr.Risk != safety.RiskSafe {
+			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed.", cmd, sr.Risk, sr.Reason)
+		}
+	}
+
+	cwd := getStrParam(params, "cwd")
+	timeout := tools.GetIntArgAny(params, "timeout_seconds", -1)
+	if timeout < 0 {
+		timeout = 60
+	}
+
+	uc, err := mgr.StartUntracked(cmd, cwd, timeout)
+	if err != nil {
+		return tools.ToolResult{}, fmt.Errorf("execute_command: %w", err)
+	}
+	pid := uc.PID()
+	r.session.logger.Info("EXEC", "subagent_auto_start", "agent_id", a.AgentID, "pid", pid, "cmd", cmd)
+
+	deadline := time.After(asyncPromotionThreshold)
+	poll := time.NewTicker(200 * time.Millisecond)
+	defer poll.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			uc.Kill()
+			return tools.ToolResult{Content: "Command cancelled."}, nil
+		case <-deadline:
+			h := a.NextAutoHandle()
+
+			mgr.Promote(uc, h)
+			r.session.logger.Info("ASYNC", "subagent_auto_promote", "agent_id", a.AgentID, "handle", h, "pid", pid, "threshold", asyncPromotionThreshold)
+			return tools.ToolResult{Content: fmt.Sprintf(
+				"Command still running after %s — automatically promoted to async (handle: %q, PID: %d).\n\nYou can continue working while it runs. To manage this command:\n- check_async_command(handle=%q) — check if it's done\n- read_async_output(handle=%q, since_byte=0) — read output so far\n- kill_async_command(handle=%q) — kill it if needed",
+				asyncPromotionThreshold, h, pid, h, h, h,
+			)}, nil
+		case <-poll.C:
+			status := uc.Status()
+			if status == fileio.AsyncRunning {
+				continue
+			}
+			out, _ := uc.ReadOutput(0)
+			info := uc.Info()
+
+			if status == fileio.AsyncCompleted {
+				if out == "" {
+					return tools.ToolResult{Content: "(command completed with no output)"}, nil
+				}
+				return tools.ToolResult{Content: out}, nil
+			}
+
+			var errMsg string
+			if info.Error != "" {
+				errMsg = info.Error
+			} else {
+				errMsg = fmt.Sprintf("exit code %d", info.ExitCode)
+			}
+			content := fmt.Sprintf("Command failed: %s", errMsg)
+			if out != "" {
+				content += "\n\n" + out
+			}
+			return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
+		}
 	}
 }
 
