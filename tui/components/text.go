@@ -142,11 +142,19 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 			m.curCol = len(m.buf[m.curLine])
 			m.lastVisCol = -1
 		default:
-			for _, r := range msg.Runes {
-				if unicode.IsPrint(r) {
-					pos := m.lineColToFlat(m.curLine, m.curCol)
-					m.insertRuneAt(pos, r)
-					m.curCol++
+			// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
+			// where Alt+Enter is intercepted as "toggle fullscreen".
+			if msg.Alt && len(msg.Runes) == 1 && msg.Runes[0] == '\\' {
+				m.splitLineAt(m.curLine, m.curCol)
+				m.curLine++
+				m.curCol = 0
+			} else {
+				for _, r := range msg.Runes {
+					if unicode.IsPrint(r) {
+						pos := m.lineColToFlat(m.curLine, m.curCol)
+						m.insertRuneAt(pos, r)
+						m.curCol++
+					}
 				}
 			}
 		}

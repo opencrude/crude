@@ -311,7 +311,7 @@ func (m *QuestionForm) Hint() string {
 				label = rendering.TruncateVisual(label, 19, "…")
 			}
 		}
-		return fmt.Sprintf("[ enter: submit answer · alt+enter: new line · esc: back · ctrl+s: submit all ]  ❯ Q%d (%s)", idx+1, label)
+		return fmt.Sprintf("[ enter: submit answer · alt+enter|alt+\\: new line · esc: back · ctrl+s: submit all ]  ❯ Q%d (%s)", idx+1, label)
 	}
 	ownRow := len(m.items[idx].Options)
 	submitRow := ownRow + 1

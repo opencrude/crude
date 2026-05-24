@@ -27,6 +27,14 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			m.showHint = false
 		}
 
+		// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
+		// where Alt+Enter is intercepted as "toggle fullscreen".
+		if msg.Alt && msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == '\\' {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg, false)
+			return m, cmd, nil
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlS:
 			return m, nil, SettingsOpenEvent{}
