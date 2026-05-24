@@ -76,6 +76,7 @@ type App struct {
 	OnUndoCmd          func(string)
 	OnResumeSession    func(string)
 	OnCancelSubAgent   func(agentID string)
+	OnHardCancel       func()
 	FetchModelsFn      func(string, string, string) ([]ttypes.ModelEntry, error)
 	GetProviderConfigFn func(string) ttypes.ProviderConfig
 	ProviderPresets    []ttypes.ProviderPreset

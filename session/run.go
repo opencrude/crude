@@ -72,11 +72,19 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 				l.Info("SESSION", "run_exit_closing")
 				return
 			}
+			if s.isHardCancelled() {
+				s.clearHardCancel()
+				s.drainWakeCh()
+			}
 			s.processTurn(userText, sender, input, blockResolveCh, btwCh, l)
 
 		case wake := <-s.wakeCh:
 			if atomic.LoadInt32(&s.closing) == 1 {
 				return
+			}
+			if s.isHardCancelled() {
+				l.Info("SLEEP", "wake_suppressed_hard_cancel", "source", wake.SourceID)
+				continue
 			}
 			switch wake.Type {
 		case WakeSubAgentDone:
