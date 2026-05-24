@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -58,6 +59,15 @@ type Agent struct {
 
 	fileMu           sync.Map
 	writeReportCalled bool
+	autoHandleMu     sync.Mutex
+	autoHandleCounter int
+}
+
+func (a *Agent) NextAutoHandle() string {
+	a.autoHandleMu.Lock()
+	defer a.autoHandleMu.Unlock()
+	a.autoHandleCounter++
+	return fmt.Sprintf("auto-%d", a.autoHandleCounter)
 }
 
 func (a *Agent) fileMutex(path string) *sync.Mutex {
