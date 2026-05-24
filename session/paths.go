@@ -3,6 +3,8 @@ package session
 import (
 	"os"
 	"path/filepath"
+
+	"crude/buildinfo"
 )
 
 func SessionsRoot() (string, error) {
@@ -10,5 +12,5 @@ func SessionsRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".crude", "sessions"), nil
+	return filepath.Join(home, buildinfo.DataDir(), "sessions"), nil
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"crude/buildinfo"
 )
 
 // Logger provides session-scoped structured logging.
@@ -51,7 +53,7 @@ func New(opts Options) (*Logger, error) {
 	if opts.SessionsDir != "" {
 		dir = filepath.Join(opts.SessionsDir, sessionID)
 	} else {
-		dir = filepath.Join(opts.HomeDir, ".crude", "sessions", sessionID)
+		dir = filepath.Join(opts.HomeDir, buildinfo.DataDir(), "sessions", sessionID)
 	}
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -83,7 +85,7 @@ func New(opts Options) (*Logger, error) {
 
 	sessionsDir := opts.SessionsDir
 	if sessionsDir == "" {
-		sessionsDir = filepath.Join(opts.HomeDir, ".crude", "sessions")
+		sessionsDir = filepath.Join(opts.HomeDir, buildinfo.DataDir(), "sessions")
 	}
 	if removed, _ := CleanOldSessions(sessionsDir, 0, 0); removed > 0 {
 		l.Info("SESSION", "cleanup", "removed", removed)

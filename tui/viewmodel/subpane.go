@@ -34,10 +34,11 @@ type SubPane struct {
 	EndTime    time.Time
 	TokenCount int
 
-	compactSB       scrollbar.ScrollBar
-	compactScrollY  int
-	compactContentH int
-	compactVisibleH int
+	compactSB         scrollbar.ScrollBar
+	compactScrollY    int
+	compactContentH   int
+	compactVisibleH   int
+	compactAutoScroll bool
 
 	theme *theme.Theme
 }
@@ -45,14 +46,15 @@ type SubPane struct {
 func NewSubPane(id string, paneType PaneType, title string, th *theme.Theme) *SubPane {
 	ml := widgets.NewMessageList(th)
 	return &SubPane{
-		ID:        id,
-		Title:     title,
-		Type:      paneType,
-		MsgList:   ml,
-		Done:      false,
-		StartTime: time.Now(),
-		compactSB: scrollbar.New(0),
-		theme:     th,
+		ID:                id,
+		Title:             title,
+		Type:              paneType,
+		MsgList:           ml,
+		Done:              false,
+		StartTime:         time.Now(),
+		compactSB:         scrollbar.New(0),
+		compactAutoScroll: true,
+		theme:             th,
 	}
 }
 
@@ -219,6 +221,9 @@ func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResu
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
+	if sp.compactAutoScroll {
+		sp.compactScrollY = maxScroll
+	}
 	if sp.compactScrollY > maxScroll {
 		sp.compactScrollY = maxScroll
 	}
@@ -349,6 +354,7 @@ func (sp *SubPane) CanScrollCompact() bool {
 }
 
 func (sp *SubPane) ScrollCompactUp() {
+	sp.compactAutoScroll = false
 	if sp.compactScrollY > 0 {
 		sp.compactScrollY--
 	}
@@ -361,6 +367,9 @@ func (sp *SubPane) ScrollCompactDown() {
 	}
 	if sp.compactScrollY < maxScroll {
 		sp.compactScrollY++
+	}
+	if sp.compactScrollY >= maxScroll {
+		sp.compactAutoScroll = true
 	}
 }
 
