@@ -861,19 +861,79 @@ func isHeredocEval(prog *syntax.File) bool {
 }
 
 func classifyGit(args []string, res *CommandSafetyResult) *CommandSafetyResult {
+	subCmd := ""
 	for _, a := range args {
 		switch a {
 		case "push", "fetch", "pull", "clone":
-			res.Risk = RiskNetwork
-			res.Reason = "Remote git operation"
-			return res
+			if subCmd != "" {
+				break
+			}
+			subCmd = a
 		case "add", "rm", "mv", "commit", "rebase",
-			"reset", "cherry-pick", "merge":
-			res.Risk = RiskProjectWrite
-			res.Reason = "Git write operation"
-			return res
+			"reset", "cherry-pick", "merge", "clean",
+			"checkout", "switch", "stash", "bisect":
+			if subCmd == "" {
+				subCmd = a
+			}
 		}
 	}
+
+	switch subCmd {
+	case "push", "fetch", "pull", "clone":
+		for _, a := range args {
+			if a == "--force" || a == "--force-with-lease" || a == "-f" {
+				res.Risk = RiskDestructive
+				res.Reason = "Force push can overwrite remote history"
+				return res
+			}
+		}
+		res.Risk = RiskNetwork
+		res.Reason = "Remote git operation"
+		return res
+
+	case "reset":
+		for _, a := range args {
+			if a == "--hard" || a == "--merge" || a == "--keep" {
+				res.Risk = RiskDestructive
+				res.Reason = fmt.Sprintf("Git reset %s discards uncommitted changes irreversibly", a)
+				return res
+			}
+		}
+		res.Risk = RiskProjectWrite
+		res.Reason = "Git write operation"
+		return res
+
+	case "clean":
+		for _, a := range args {
+			if a == "-n" || a == "--dry-run" {
+				res.Risk = RiskSafe
+				res.Reason = "Git clean dry run"
+				return res
+			}
+		}
+		res.Risk = RiskDestructive
+		res.Reason = "Git clean removes untracked files — changes cannot be recovered"
+		return res
+
+	case "checkout":
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") && strings.ContainsAny(a, "f") {
+				res.Risk = RiskDestructive
+				res.Reason = "Force checkout discards local changes"
+				return res
+			}
+		}
+		res.Risk = RiskProjectWrite
+		res.Reason = "Git write operation"
+		return res
+
+	case "add", "rm", "mv", "commit", "rebase", "cherry-pick", "merge",
+		"switch", "stash", "bisect":
+		res.Risk = RiskProjectWrite
+		res.Reason = "Git write operation"
+		return res
+	}
+
 	res.Risk = RiskSafe
 	return res
 }

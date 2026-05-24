@@ -110,6 +110,31 @@ Primary action → category:
 - Implement / fix / refactor / test → crafter
 - Mechanical / boilerplate / formatting / simple edits → aeron
 
+## Permission Model
+
+Each category has a default policy:
+- **researcher**: read-only (can read files, search, run read-only commands)
+- **crafter**: no-delete (can read, write, edit, execute — cannot delete)
+- **aeron**: no-delete, no-execute (can read, write, edit — cannot run commands or delete)
+
+You can OVERRIDE the default policy by explicitly listing tools in allowed_tools. When you do, the system automatically upgrades the agent's policy to include the required capability. For example:
+- To give a researcher execute access: set allowed_tools=["execute_command"] — the system will grant CanExecute
+- To give an aeron command access: set allowed_tools=["execute_command"] — the system will grant CanExecute
+- To give a crafter delete access: set allowed_tools=["delete_file"] — the system will grant CanDelete
+
+You do NOT need to specify a custom policy name when using allowed_tools — the capability upgrade is automatic.
+
+## Sub-Agent Result Statuses
+
+When a sub-agent completes, its status tells you what happened:
+- **OK**: Completed successfully. Read the report.
+- **ERROR**: Failed due to a recoverable error (API error, tool failure, etc.). You can retry with different instructions.
+- **TIMEOUT**: Exceeded step limit or time. Consider increasing max_steps or simplifying the task.
+- **QUOTA**: API rate limit or authentication issue. Check your API key and plan.
+- **POLICY**: Tool blocked by policy. Use allowed_tools to grant the required capability.
+- **CRASH**: Agent process crashed unexpectedly (internal system error). This is NOT a normal failure — do NOT blindly retry. Investigate the crash errors. If it's a system bug, report it.
+- **CANCELLED**: You cancelled it, or the user pressed Ctrl+C.
+
 ## File Ownership
 When parallel agents could touch overlapping files, declare file_ownership per agent. Paths are prefix-matched: "src/auth/" claims all files under that directory.
 

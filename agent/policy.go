@@ -84,3 +84,27 @@ func PolicyAllows(policy safety.Policy, toolName string) bool {
 		return true
 	}
 }
+
+func UpgradePolicyForAllowedTools(policy safety.Policy, allowedTools []string) safety.Policy {
+	if len(allowedTools) == 0 {
+		return policy
+	}
+	if policy.AllowedCapabilities == nil {
+		policy.AllowedCapabilities = make(map[safety.Capability]bool)
+	}
+	for _, tool := range allowedTools {
+		switch tool {
+		case "write_file", "edit_file", "move_file", "copy_file":
+			policy.AllowedCapabilities[safety.CanUpdate] = true
+		case "delete_file":
+			policy.AllowedCapabilities[safety.CanDelete] = true
+		case "execute_command", "async_execute_command":
+			policy.AllowedCapabilities[safety.CanExecute] = true
+		case "check_async_command", "kill_async_command", "read_async_output":
+			if !policy.AllowedCapabilities[safety.CanExecute] {
+				policy.AllowedCapabilities[safety.CanExecuteReadOnly] = true
+			}
+		}
+	}
+	return policy
+}
