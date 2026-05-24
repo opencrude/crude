@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/input"
 	"crude/tui/rendering"
@@ -60,18 +60,18 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickCmd()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.mainMsgList.HasActiveSelection() {
 			m.mainMsgList.ClearSelection()
 			return m, nil
 		}
 		// In launcher mode, route all keys to launcher handler
 		if m.Mode == ModeLauncher {
-			if msg.Type == tea.KeyCtrlC {
+			if msg.String() == "ctrl+c" {
 				m.Quit = true
 				return m, tea.Quit
 			}
-			if msg.Type == tea.KeyEsc {
+			if msg.Code == tea.KeyEsc {
 				if m.launcher != nil && m.launcher.filterActive {
 					m.launcher.deactivateFilter()
 					return m, nil
@@ -81,20 +81,21 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.handleLauncherKey(msg)
 		}
-		if msg.Type == tea.KeyCtrlC && m.Mode != ModeQuestion {
+		if msg.String() == "ctrl+c" && m.Mode != ModeQuestion {
 			m.logger.Debug("CANCEL", "ctrl_c", "mode", modeName(m.Mode))
 			return m, m.handleCancel(msg)
 		}
-		if msg.Type == tea.KeyEsc && m.Mode != ModeSettings && m.Mode != ModeQuestion {
+		if msg.Code == tea.KeyEsc && m.Mode != ModeSettings && m.Mode != ModeQuestion {
 			m.logger.Debug("CANCEL", "esc", "mode", modeName(m.Mode))
 			return m, m.handleCancel(msg)
 		}
 
-	case tea.MouseMsg:
-		m.logger.Debug("UI", "mouse", "type", fmt.Sprintf("%d", msg.Type), "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		m.logger.Debug("UI", "mouse", "click", "x", mouse.X, "y", mouse.Y, "button", fmt.Sprintf("%d", msg.Button))
 
-		if m.win.IsOpen() && m.win.TabCount() >= 2 && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && msg.Y == 3 {
-			adjustedX := msg.X - m.theme.Spacing.PadLR
+		if m.win.IsOpen() && m.win.TabCount() >= 2 && msg.Button == tea.MouseLeft && mouse.Y == 3 {
+			adjustedX := mouse.X - m.theme.Spacing.PadLR
 			if adjustedX < 0 {
 				adjustedX = 0
 			}
@@ -110,14 +111,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if m.overlay.IsOpen() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		if m.overlay.IsOpen() && msg.Button == tea.MouseLeft {
 			overlayStartLine := m.chatAreaHeight + 3
 			if m.win.IsOpen() && m.win.TabCount() >= 2 {
 				overlayStartLine += 2
 			}
 
-			if m.overlay.TabCount() >= 2 && msg.Y == overlayStartLine+1 {
-				adjustedX := msg.X - m.theme.Spacing.PadLR
+			if m.overlay.TabCount() >= 2 && mouse.Y == overlayStartLine+1 {
+				adjustedX := mouse.X - m.theme.Spacing.PadLR
 				if adjustedX < 0 {
 					adjustedX = 0
 				}
@@ -140,12 +141,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			contentStartLine := overlayStartLine + overlayContentOffset
 
 			activeTab := m.overlay.ActiveTab()
-			if activeTab != nil && activeTab.Title == "Question" && m.questionForm.Count() > 1 && msg.Y >= contentStartLine {
-				contentY := msg.Y - contentStartLine
+			if activeTab != nil && activeTab.Title == "Question" && m.questionForm.Count() > 1 && mouse.Y >= contentStartLine {
+				contentY := mouse.Y - contentStartLine
 				innerW := m.width - 2*m.theme.Spacing.PadLR
 				sidebarW := m.questionForm.ComputeSidebarWidth(innerW)
 				sidebarStartX := m.theme.Spacing.PadLR + innerW - sidebarW
-				if msg.X >= sidebarStartX {
+				if mouse.X >= sidebarStartX {
 					itemIdx := contentY / 2
 					if itemIdx >= 0 && itemIdx < m.questionForm.Count() {
 						m.questionForm.SetFocused(itemIdx)
@@ -155,6 +156,68 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+
+		if m.Mode == ModeChat {
+			tabBarExtra := 0
+			if m.win.IsOpen() && m.win.TabCount() >= 2 {
+				tabBarExtra = 2
+			}
+			overlayExtra := 0
+			if m.overlay.IsOpen() {
+				overlayExtra = len(m.renderOverlayArea())
+			}
+			inputStartLine := m.chatAreaHeight + 4 + tabBarExtra + overlayExtra
+			activeML := m.activeMessageList()
+			msgListCapturing := activeML.IsSelecting() || activeML.IsScrollbarDragging()
+			if m.input.InputSelecting() || (mouse.Y >= inputStartLine && !msgListCapturing) {
+				updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+				m.input = updated
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				switch e := evt.(type) {
+				case input.SubmitEvent:
+					cmds = append(cmds, m.submitInput(e.Text))
+				case input.BtwSubmitEvent:
+					cmds = append(cmds, m.submitBtw(e.Text))
+				case input.SlashCommandEvent:
+					cmds = append(cmds, m.executeSlashCommand(e.Command))
+				case input.SettingsOpenEvent:
+					m.settings.SaveSnapshot()
+					m.setMode(ModeSettings)
+				}
+			} else if msg.Button == tea.MouseLeft {
+				handled, paneCmd := m.routeMouseToInlinePane(msg)
+				if paneCmd != nil {
+					cmds = append(cmds, paneCmd)
+				}
+				if !handled {
+					_, cmd := activeML.Update(msg)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
+			} else {
+				handled, paneCmd := m.routeMouseToInlinePane(msg)
+				if paneCmd != nil {
+					cmds = append(cmds, paneCmd)
+				}
+				if !handled {
+					_, cmd := activeML.Update(msg)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
+			}
+		} else if m.Mode != ModeLauncher {
+			_, cmd := m.mainMsgList.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
+	case tea.MouseWheelMsg:
+		m.logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 
 		if m.Mode == ModeChat {
 			tabBarExtra := 0
@@ -185,17 +248,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.settings.SaveSnapshot()
 					m.setMode(ModeSettings)
 				}
-			} else if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
-				handled, paneCmd := m.routeMouseToInlinePane(msg)
-				if paneCmd != nil {
-					cmds = append(cmds, paneCmd)
-				}
-				if !handled {
-					_, cmd := activeML.Update(msg)
-					if cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-				}
 			} else {
 				handled, paneCmd := m.routeMouseToInlinePane(msg)
 				if paneCmd != nil {
@@ -209,16 +261,107 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else if m.Mode == ModeLauncher {
-			// Mouse handling in launcher mode
 			if m.launcher != nil {
 				m.lastInteractionTime = time.Now()
-				if msg.Button == tea.MouseButtonWheelUp {
+				if msg.Button == tea.MouseWheelUp {
 					m.launcher.moveUp()
 					return m, nil
 				}
-				if msg.Button == tea.MouseButtonWheelDown {
+				if msg.Button == tea.MouseWheelDown {
 					m.launcher.moveDown()
 					return m, nil
+				}
+			}
+		} else {
+			_, cmd := m.mainMsgList.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
+	case tea.MouseMotionMsg:
+		mouse := msg.Mouse()
+		m.logger.Debug("UI", "mouse", "motion", "x", mouse.X, "y", mouse.Y, "button", fmt.Sprintf("%d", msg.Button))
+
+		if m.Mode == ModeChat {
+			tabBarExtra := 0
+			if m.win.IsOpen() && m.win.TabCount() >= 2 {
+				tabBarExtra = 2
+			}
+			overlayExtra := 0
+			if m.overlay.IsOpen() {
+				overlayExtra = len(m.renderOverlayArea())
+			}
+			inputStartLine := m.chatAreaHeight + 4 + tabBarExtra + overlayExtra
+			activeML := m.activeMessageList()
+			msgListCapturing := activeML.IsSelecting() || activeML.IsScrollbarDragging()
+			if m.input.InputSelecting() || (mouse.Y >= inputStartLine && !msgListCapturing) {
+				updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+				m.input = updated
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				switch e := evt.(type) {
+				case input.SubmitEvent:
+					cmds = append(cmds, m.submitInput(e.Text))
+				case input.BtwSubmitEvent:
+					cmds = append(cmds, m.submitBtw(e.Text))
+				case input.SlashCommandEvent:
+					cmds = append(cmds, m.executeSlashCommand(e.Command))
+				case input.SettingsOpenEvent:
+					m.settings.SaveSnapshot()
+					m.setMode(ModeSettings)
+				}
+			} else {
+				_, cmd := activeML.Update(msg)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+		} else {
+			_, cmd := m.mainMsgList.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
+	case tea.MouseReleaseMsg:
+		mouse := msg.Mouse()
+		m.logger.Debug("UI", "mouse", "release", "x", mouse.X, "y", mouse.Y)
+
+		if m.Mode == ModeChat {
+			tabBarExtra := 0
+			if m.win.IsOpen() && m.win.TabCount() >= 2 {
+				tabBarExtra = 2
+			}
+			overlayExtra := 0
+			if m.overlay.IsOpen() {
+				overlayExtra = len(m.renderOverlayArea())
+			}
+			inputStartLine := m.chatAreaHeight + 4 + tabBarExtra + overlayExtra
+			activeML := m.activeMessageList()
+			msgListCapturing := activeML.IsSelecting() || activeML.IsScrollbarDragging()
+			if m.input.InputSelecting() || (mouse.Y >= inputStartLine && !msgListCapturing) {
+				updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+				m.input = updated
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				switch e := evt.(type) {
+				case input.SubmitEvent:
+					cmds = append(cmds, m.submitInput(e.Text))
+				case input.BtwSubmitEvent:
+					cmds = append(cmds, m.submitBtw(e.Text))
+				case input.SlashCommandEvent:
+					cmds = append(cmds, m.executeSlashCommand(e.Command))
+				case input.SettingsOpenEvent:
+					m.settings.SaveSnapshot()
+					m.setMode(ModeSettings)
+				}
+			} else {
+				_, cmd := activeML.Update(msg)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
 				}
 			}
 		} else {
@@ -283,7 +426,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ModeConfirm:
 		m.statusbar.SetConfirming(true)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok && m.overlay.TabCount() >= 2 {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok && m.overlay.TabCount() >= 2 {
 			switch keyMsg.String() {
 			case "ctrl+]":
 				m.overlay.Next()
@@ -321,7 +464,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ModeQuestion:
 		m.statusbar.SetConfirming(true)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok && m.overlay.TabCount() >= 2 {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok && m.overlay.TabCount() >= 2 {
 			switch keyMsg.String() {
 			case "ctrl+]":
 				m.overlay.Next()
@@ -333,13 +476,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		keyMsg, isKey := msg.(tea.KeyMsg)
+		keyMsg, isKey := msg.(tea.KeyPressMsg)
 		inTextMode := m.questionForm.IsTextQuestion(m.questionForm.Focused())
 
 		if inTextMode {
-			isCancelKey := isKey && (keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyCtrlC)
+			isCancelKey := isKey && (keyMsg.Code == tea.KeyEsc || keyMsg.String() == "ctrl+c")
 			isSubmitKey := isKey && keyMsg.String() == "ctrl+s"
-			isTabKey := isKey && (keyMsg.Type == tea.KeyTab || keyMsg.Type == tea.KeyShiftTab)
+			isTabKey := isKey && keyMsg.Code == tea.KeyTab
 
 			if isCancelKey {
 				m.questionForm.ExitTextMode(m.questionForm.Focused())
@@ -365,14 +508,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.input.ClearInput()
 				}
 			} else if isTabKey {
-				if keyMsg.Type == tea.KeyShiftTab {
+				if keyMsg.Mod.Contains(tea.ModShift) {
 					m.questionForm.FocusPrev()
 				} else {
 					m.questionForm.FocusNext()
 				}
 				m.syncQuestionInputPrompt()
 			} else {
-				if _, ok := msg.(tea.MouseMsg); !ok {
+				if !m.isMouseMsg(msg) {
 					updated, cmd, evt := m.input.Update(msg, false, false, m.chatAreaHeight, false)
 					m.input = updated
 					if cmd != nil {
@@ -402,7 +545,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
-			isCancelKey := isKey && (keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyCtrlC)
+			isCancelKey := isKey && (keyMsg.Code == tea.KeyEsc || keyMsg.String() == "ctrl+c")
 			if isCancelKey {
 				m.questionForm.Dismiss()
 				m.blocking = false
@@ -445,7 +588,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ModeYolo:
 		m.statusbar.SetConfirming(true)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok && m.overlay.TabCount() >= 2 {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok && m.overlay.TabCount() >= 2 {
 			switch keyMsg.String() {
 			case "ctrl+]":
 				m.overlay.Next()
@@ -483,9 +626,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case ModeChat:
 		if m.anyActive() && !m.blocking {
-			if keyMsg, ok := msg.(tea.KeyMsg); ok {
-				switch keyMsg.Type {
-				case tea.KeyHome, tea.KeyEnd, tea.KeyCtrlHome, tea.KeyCtrlEnd:
+			if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+				switch keyMsg.Code {
+				case tea.KeyHome, tea.KeyEnd:
 					_, cmd := m.mainMsgList.Update(keyMsg)
 					if cmd != nil {
 						cmds = append(cmds, cmd)
@@ -495,9 +638,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 			if m.tabBarFocused {
-				switch keyMsg.Type {
+				switch keyMsg.Code {
 				case tea.KeyLeft:
 					m.win.Prev()
 					m.handleTabSwitch()
@@ -537,7 +680,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if _, isMouse := msg.(tea.MouseMsg); !isMouse {
+		if !m.isMouseMsg(msg) {
 			updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 			m.input = updated
 			if cmd != nil {
@@ -556,7 +699,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if _, ok := msg.(tea.KeyMsg); ok {
+		if _, ok := msg.(tea.KeyPressMsg); ok {
 			_, cmd := m.mainMsgList.Update(msg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
@@ -631,18 +774,50 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
+// isMouseMsg returns true if the message is any of the Bubble Tea v2 mouse message types.
+func (m *App) isMouseMsg(msg tea.Msg) bool {
+	switch msg.(type) {
+	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
+		return true
+	}
+	return false
+}
+
+func (m *App) routeMouseToInlinePane(msg tea.Msg) (bool, tea.Cmd) {
 	chatAreaTop := 3
 	if m.win.IsOpen() && m.win.TabCount() >= 2 {
 		chatAreaTop += 2
 	}
-	paneLineMap := m.mainMsgList.PaneLineMap()
-	y := msg.Y - chatAreaTop
-	if y < 0 || y >= len(paneLineMap) {
+
+	// Extract Y coordinate and button from the mouse message
+	var y int
+	var isWheel bool
+	var wheelUp, wheelDown bool
+
+	switch mm := msg.(type) {
+	case tea.MouseClickMsg:
+		mouse := mm.Mouse()
+		y = mouse.Y
+	case tea.MouseWheelMsg:
+		y = mm.Y
+		isWheel = true
+		wheelUp = mm.Button == tea.MouseWheelUp
+		wheelDown = mm.Button == tea.MouseWheelDown
+	case tea.MouseMotionMsg:
+		y = mm.Mouse().Y
+	case tea.MouseReleaseMsg:
+		y = mm.Mouse().Y
+	default:
 		return false, nil
 	}
 
-	info := paneLineMap[y]
+	paneLineMap := m.mainMsgList.PaneLineMap()
+	y2 := y - chatAreaTop
+	if y2 < 0 || y2 >= len(paneLineMap) {
+		return false, nil
+	}
+
+	info := paneLineMap[y2]
 	if info.PaneID == "" {
 		return false, nil
 	}
@@ -659,12 +834,12 @@ func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
 	}
 
 	if sp.CanScrollCompact() {
-		if msg.Button == tea.MouseButtonWheelUp {
+		if wheelUp {
 			sp.ScrollCompactUp()
 			m.mainMsgList.InvalidateSubPane(sp.ID)
 			return true, nil
 		}
-		if msg.Button == tea.MouseButtonWheelDown {
+		if wheelDown {
 			sp.ScrollCompactDown()
 			m.mainMsgList.InvalidateSubPane(sp.ID)
 			return true, nil
@@ -676,15 +851,11 @@ func (m *App) routeMouseToInlinePane(msg tea.MouseMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
-	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-		if !sp.MsgList.CanScroll() {
-			return false, nil
-		}
+	if isWheel && !sp.MsgList.CanScroll() {
+		return false, nil
 	}
 
-	paneMsg := msg
-	paneMsg.Y = info.LineIdx
-	_, cmd := sp.MsgList.Update(paneMsg)
+	_, cmd := sp.MsgList.Update(msg)
 	return true, cmd
 }
 

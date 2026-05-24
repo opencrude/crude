@@ -2,7 +2,7 @@ package rendering
 
 import (
 	"crude/clipboard"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type ClipboardCopiedMsg struct{}

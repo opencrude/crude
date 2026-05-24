@@ -2,11 +2,12 @@ package window
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"sync/atomic"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/components"
 	"crude/tui/rendering"
@@ -251,7 +252,7 @@ func (w *Window) Hint() string {
 }
 
 func (w *Window) Update(msg tea.Msg) tea.Cmd {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return nil
 	}
@@ -753,7 +754,7 @@ func (w *Window) RenderVerticalAsyncRow(item AsyncItem, spinFrame int) string {
 	sep := sepStyle.Render("│")
 
 	var dot string
-	var dotColor lipgloss.Color
+	var dotColor color.Color
 	switch item.Status {
 	case "running":
 		if components.BlinkOn(spinFrame) {

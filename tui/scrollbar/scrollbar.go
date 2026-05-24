@@ -3,8 +3,8 @@ package scrollbar
 import (
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -85,8 +85,12 @@ func (s ScrollBar) Update(msg tea.Msg) (ScrollBar, tea.Cmd) {
 			s.visibility = Hidden
 		}
 		return s, nil
-	case tea.MouseMsg:
-		return s.handleMouse(m)
+	case tea.MouseClickMsg:
+		return s.handleMouseClick(m)
+	case tea.MouseMotionMsg:
+		return s.handleMouseMotion(m)
+	case tea.MouseReleaseMsg:
+		return s.handleMouseRelease(m)
 	default:
 		s.lastActivity = time.Now()
 		if s.visibility == Hidden || s.visibility == Fading {
@@ -97,24 +101,24 @@ func (s ScrollBar) Update(msg tea.Msg) (ScrollBar, tea.Cmd) {
 	}
 }
 
-func (s *ScrollBar) handleMouse(msg tea.MouseMsg) (ScrollBar, tea.Cmd) {
+func (s *ScrollBar) handleMouseClick(msg tea.MouseClickMsg) (ScrollBar, tea.Cmd) {
 	if s.contentH <= s.visibleH || s.trackH == 0 {
 		return *s, nil
 	}
 	thumbTop, thumbH := s.ThumbBounds()
 	maxScroll := s.contentH - s.visibleH
-	switch {
-	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
-		if msg.Y >= thumbTop && msg.Y < thumbTop+thumbH {
+	if msg.Button == tea.MouseLeft {
+		mouse := msg.Mouse()
+		if mouse.Y >= thumbTop && mouse.Y < thumbTop+thumbH {
 			s.dragging = true
-			s.dragOffsetY = msg.Y - thumbTop
+			s.dragOffsetY = mouse.Y - thumbTop
 		} else {
 			// Jump-to-position: center thumb on click Y, then begin drag
 			availableTrack := s.trackH - thumbH
 			if availableTrack <= 0 {
-				break
+				return *s, nil
 			}
-			desiredThumbTop := msg.Y - thumbH/2
+			desiredThumbTop := mouse.Y - thumbH/2
 			if desiredThumbTop < 0 {
 				desiredThumbTop = 0
 			}
@@ -129,30 +133,35 @@ func (s *ScrollBar) handleMouse(msg tea.MouseMsg) (ScrollBar, tea.Cmd) {
 				s.scrollY = maxScroll
 			}
 			s.dragging = true
-			s.dragOffsetY = msg.Y - desiredThumbTop
+			s.dragOffsetY = mouse.Y - desiredThumbTop
 			s.scrollChanged = true
 		}
-		s.lastActivity = time.Now()
-		if s.visibility != Visible {
-			s.visibility = Visible
-			return *s, s.startFadeTimer()
-		}
-		return *s, nil
+	}
+	s.lastActivity = time.Now()
+	if s.visibility != Visible {
+		s.visibility = Visible
+		return *s, s.startFadeTimer()
+	}
+	return *s, nil
+}
 
-	case msg.Action == tea.MouseActionMotion && s.dragging:
-		s.scrollY = s.DragScrollY(msg.Y)
+func (s *ScrollBar) handleMouseMotion(msg tea.MouseMotionMsg) (ScrollBar, tea.Cmd) {
+	if s.contentH <= s.visibleH || s.trackH == 0 {
+		return *s, nil
+	}
+	if s.dragging {
+		s.scrollY = s.DragScrollY(msg.Mouse().Y)
 		s.scrollChanged = true
 		s.lastActivity = time.Now()
-		return *s, nil
+	}
+	return *s, nil
+}
 
-	case msg.Action == tea.MouseActionRelease && s.dragging:
+func (s *ScrollBar) handleMouseRelease(msg tea.MouseReleaseMsg) (ScrollBar, tea.Cmd) {
+	if s.dragging {
 		s.dragging = false
 		s.dragOffsetY = 0
 		s.lastActivity = time.Now()
-		return *s, nil
-
-	default:
-		return *s, nil
 	}
 	return *s, nil
 }

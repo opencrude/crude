@@ -3,8 +3,10 @@ package components
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/theme"
 )
@@ -12,7 +14,7 @@ import (
 type Button struct {
 	Label  string
 	Key    string
-	Color  lipgloss.Color
+	Color  color.Color
 	Cancel bool
 }
 
@@ -27,25 +29,29 @@ func NewButtonGroup(t *theme.Theme, buttons ...Button) ButtonGroup {
 }
 
 func (m ButtonGroup) Update(msg tea.Msg) (ButtonGroup, int, bool) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, 0, false
 	}
 
-	switch keyMsg.Type {
+	switch keyMsg.Code {
 	case tea.KeyLeft:
 		if m.focused > 0 {
 			m.focused--
 		}
 		return m, 0, false
-	case tea.KeyRight, tea.KeyTab:
+	case tea.KeyRight:
 		if m.focused < len(m.buttons)-1 {
 			m.focused++
 		}
 		return m, 0, false
-	case tea.KeyShiftTab:
-		if m.focused > 0 {
-			m.focused--
+	case tea.KeyTab:
+		if keyMsg.Mod.Contains(tea.ModShift) {
+			if m.focused > 0 {
+				m.focused--
+			}
+		} else if m.focused < len(m.buttons)-1 {
+			m.focused++
 		}
 		return m, 0, false
 	case tea.KeyEnter:
@@ -72,7 +78,7 @@ func (m ButtonGroup) View() string {
 		if m.focused == indexOf(m.buttons, btn) {
 			focusedStyle := lipgloss.NewStyle().Foreground(btn.Color).Bold(true)
 			btnStrs = append(btnStrs, focusedStyle.Render("❯ [ "+btn.Label+" ]")+"  "+dim.Render("("+btn.Key+")"))
-		} else if btn.Cancel && btn.Color != "" {
+		} else if btn.Cancel && btn.Color != nil {
 			cancelStyle := lipgloss.NewStyle().Foreground(btn.Color)
 			btnStrs = append(btnStrs, dim.Render("  [ ")+cancelStyle.Render(btn.Label)+dim.Render(" ]")+"  "+dim.Render("("+btn.Key+")"))
 		} else {

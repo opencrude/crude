@@ -1,6 +1,10 @@
 package theme
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 type Theme struct {
 	Colors  Colors
@@ -9,26 +13,26 @@ type Theme struct {
 }
 
 type Colors struct {
-	Bg, Fg, Muted, Accent, Accent2  lipgloss.Color
-	Success, Error, Warning, Border lipgloss.Color
-	Selection, SubPaneBg            lipgloss.Color
+	Bg, Fg, Muted, Accent, Accent2  color.Color
+	Success, Error, Warning, Border color.Color
+	Selection, SubPaneBg            color.Color
 	Code                            CodeColors
 	Spinner                         SpinnerColors
 	Diff                            DiffColors
 }
 
 type CodeColors struct {
-	Keyword, String, Number, Comment     lipgloss.Color
-	Function, Type, Operator, Bg, Border lipgloss.Color
-	Property                             lipgloss.Color
+	Keyword, String, Number, Comment     color.Color
+	Function, Type, Operator, Bg, Border color.Color
+	Property                             color.Color
 }
 
 type SpinnerColors struct {
-	Grounding, Planning, Executing, Default, Done, Error lipgloss.Color
+	Grounding, Planning, Executing, Default, Done, Error color.Color
 }
 
 type DiffColors struct {
-	File, Hunk, Context, Add, Delete lipgloss.Color
+	File, Hunk, Context, Add, Delete color.Color
 }
 
 type Spacing struct {

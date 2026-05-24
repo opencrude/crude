@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
 
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
@@ -624,8 +624,8 @@ func (ml *MessageList) Update(msg tea.Msg) (*MessageList, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
+	case tea.KeyPressMsg:
+		switch msg.Code {
 		case tea.KeyPgUp:
 			ml.vl.ScrollBy(-ml.chatAreaHeight)
 			ml.scroll.SetAutoScroll(false)
@@ -641,8 +641,14 @@ func (ml *MessageList) Update(msg tea.Msg) (*MessageList, tea.Cmd) {
 			ml.ScrollToBottom()
 		}
 
-	case tea.MouseMsg:
-		return ml, ml.handleMouse(msg)
+	case tea.MouseClickMsg:
+		return ml, ml.handleMouseClick(msg)
+	case tea.MouseMotionMsg:
+		return ml, ml.handleMouseMotion(msg)
+	case tea.MouseReleaseMsg:
+		return ml, ml.handleMouseRelease(msg)
+	case tea.MouseWheelMsg:
+		return ml, ml.handleMouseWheel(msg)
 
 	case types.SelectionTickMsg:
 		return ml, ml.handleSelectionTick()
@@ -651,39 +657,22 @@ func (ml *MessageList) Update(msg tea.Msg) (*MessageList, tea.Cmd) {
 	return ml, tea.Batch(cmds...)
 }
 
-func (ml *MessageList) handleMouse(msg tea.MouseMsg) tea.Cmd {
+func (ml *MessageList) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 	chatBottom := ml.chatAreaTop + ml.chatAreaHeight - 1
-
-	// If scrollbar is being dragged, route all motion/release events to it
-	if ml.scrollbar.IsDragging() {
-		if msg.Action == tea.MouseActionMotion || msg.Action == tea.MouseActionRelease {
-			trackMsg := msg
-			trackMsg.Y = msg.Y - ml.chatAreaTop
-			updated, cmd := ml.scrollbar.Update(trackMsg)
-			ml.scrollbar = updated
-			if ml.scrollbar.ConsumeScrollChanged() {
-				ml.vl.ScrollTo(ml.scrollbar.GetScrollY())
-				ml.vl.ClampScroll()
-				if ml.vl.IsAtBottom() {
-					ml.scroll.SetAutoScroll(true)
-				} else {
-					ml.scroll.SetAutoScroll(false)
-				}
-			}
-			return cmd
-		}
-	}
 
 	// Check if the mouse event is in the scrollbar zone
 	inScrollbarZone := ml.vl.MaxScroll() > 0 &&
 		msg.X >= ml.width-ml.theme.Spacing.PadLR-scrollbar.ScrollbarWidth &&
 		msg.Y >= ml.chatAreaTop && msg.Y <= chatBottom
 
-	if inScrollbarZone && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+	if inScrollbarZone && msg.Button == tea.MouseLeft {
 		ml.ClearSelection()
 
-		trackMsg := msg
-		trackMsg.Y = msg.Y - ml.chatAreaTop
+		trackMsg := tea.MouseClickMsg{
+			X:      msg.X,
+			Y:      msg.Y - ml.chatAreaTop,
+			Button: msg.Button,
+		}
 		updated, cmd := ml.scrollbar.Update(trackMsg)
 		ml.scrollbar = updated
 		if ml.scrollbar.ConsumeScrollChanged() {
@@ -698,24 +687,49 @@ func (ml *MessageList) handleMouse(msg tea.MouseMsg) tea.Cmd {
 		return cmd
 	}
 
-	switch {
-	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
-		if msg.Y >= ml.chatAreaTop && msg.Y <= chatBottom {
-			lineIdx, ok := ml.MouseToGlobalLine(msg.Y)
-			if ok {
-				ml.selecting = true
-				ml.selAnchorLine = lineIdx
-				ml.selAnchorCol = rendering.Max(0, msg.X-ml.theme.Spacing.PadLR)
-				ml.selEndLine = lineIdx
-				ml.selEndCol = ml.selAnchorCol
-				ml.selMouseY = msg.Y
-				ml.selAutoScroll = false
-			}
-		} else {
-			ml.ClearSelection()
+	if msg.Button == tea.MouseLeft && msg.Y >= ml.chatAreaTop && msg.Y <= chatBottom {
+		lineIdx, ok := ml.MouseToGlobalLine(msg.Y)
+		if ok {
+			ml.selecting = true
+			ml.selAnchorLine = lineIdx
+			ml.selAnchorCol = rendering.Max(0, msg.X-ml.theme.Spacing.PadLR)
+			ml.selEndLine = lineIdx
+			ml.selEndCol = ml.selAnchorCol
+			ml.selMouseY = msg.Y
+			ml.selAutoScroll = false
 		}
+	} else {
+		ml.ClearSelection()
+	}
 
-	case msg.Action == tea.MouseActionMotion && ml.selecting:
+	return nil
+}
+
+func (ml *MessageList) handleMouseMotion(msg tea.MouseMotionMsg) tea.Cmd {
+	chatBottom := ml.chatAreaTop + ml.chatAreaHeight - 1
+
+	// If scrollbar is being dragged, route motion events to it
+	if ml.scrollbar.IsDragging() {
+		trackMsg := tea.MouseMotionMsg{
+			X:      msg.X,
+			Y:      msg.Y - ml.chatAreaTop,
+			Button: msg.Button,
+		}
+		updated, cmd := ml.scrollbar.Update(trackMsg)
+		ml.scrollbar = updated
+		if ml.scrollbar.ConsumeScrollChanged() {
+			ml.vl.ScrollTo(ml.scrollbar.GetScrollY())
+			ml.vl.ClampScroll()
+			if ml.vl.IsAtBottom() {
+				ml.scroll.SetAutoScroll(true)
+			} else {
+				ml.scroll.SetAutoScroll(false)
+			}
+		}
+		return cmd
+	}
+
+	if ml.selecting {
 		lineIdx, ok := ml.MouseToGlobalLine(msg.Y)
 		if ok {
 			ml.selEndLine = lineIdx
@@ -741,8 +755,33 @@ func (ml *MessageList) handleMouse(msg tea.MouseMsg) tea.Cmd {
 				return types.SelectionTickMsg(t)
 			})
 		}
+	}
 
-	case msg.Action == tea.MouseActionRelease && ml.selecting:
+	return nil
+}
+
+func (ml *MessageList) handleMouseRelease(msg tea.MouseReleaseMsg) tea.Cmd {
+	// If scrollbar is being dragged, route release events to it
+	if ml.scrollbar.IsDragging() {
+		trackMsg := tea.MouseReleaseMsg{
+			X: msg.X,
+			Y: msg.Y - ml.chatAreaTop,
+		}
+		updated, cmd := ml.scrollbar.Update(trackMsg)
+		ml.scrollbar = updated
+		if ml.scrollbar.ConsumeScrollChanged() {
+			ml.vl.ScrollTo(ml.scrollbar.GetScrollY())
+			ml.vl.ClampScroll()
+			if ml.vl.IsAtBottom() {
+				ml.scroll.SetAutoScroll(true)
+			} else {
+				ml.scroll.SetAutoScroll(false)
+			}
+		}
+		return cmd
+	}
+
+	if ml.selecting {
 		ml.ForceUpdateHeights()
 		lineIdx, ok := ml.MouseToGlobalLine(msg.Y)
 		if ok {
@@ -761,14 +800,20 @@ func (ml *MessageList) handleMouse(msg tea.MouseMsg) tea.Cmd {
 		if text != "" {
 			return rendering.CopyToClipboardCmd(text)
 		}
+	}
 
-	case msg.Button == tea.MouseButtonWheelUp:
+	return nil
+}
+
+func (ml *MessageList) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
+	switch {
+	case msg.Button == tea.MouseWheelUp:
 		n := ml.scroll.OnWheelUp()
 		ml.vl.ScrollBy(-n)
 		ml.scroll.SetAutoScroll(false)
 		ml.scrollbar.SetScrollInfo(ml.vl.TotalHeight(), ml.vl.ViewportHeight(), ml.vl.ScrollY())
 
-	case msg.Button == tea.MouseButtonWheelDown:
+	case msg.Button == tea.MouseWheelDown:
 		n := ml.scroll.OnWheelDown()
 		ml.vl.ScrollBy(n)
 		if ml.scroll.ShouldAutoScroll(ml.vl.ScrollY(), ml.vl.MaxScroll()) {

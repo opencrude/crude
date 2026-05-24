@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -201,14 +201,14 @@ func (m *QuestionForm) rowCount(idx int) int {
 }
 
 func (m QuestionForm) Update(msg tea.Msg) (QuestionForm, QuestionFormResult, bool) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, QuestionFormResult{}, false
 	}
 
 	idx := m.focused
 	if idx < 0 || idx >= len(m.items) {
-		switch keyMsg.Type {
+		switch keyMsg.Code {
 		case tea.KeyEsc:
 			return m, QuestionFormResult{Cancelled: true}, true
 		}
@@ -216,7 +216,7 @@ func (m QuestionForm) Update(msg tea.Msg) (QuestionForm, QuestionFormResult, boo
 	}
 
 	if m.textMode[idx] {
-		switch keyMsg.Type {
+		switch keyMsg.Code {
 		case tea.KeyEsc:
 			return m, QuestionFormResult{Cancelled: true}, true
 		}
@@ -228,7 +228,7 @@ func (m QuestionForm) Update(msg tea.Msg) (QuestionForm, QuestionFormResult, boo
 	submitRow := ownRow + 1
 	cancelRow := ownRow + 2
 
-	switch keyMsg.Type {
+	switch keyMsg.Code {
 	case tea.KeyEsc:
 		return m, QuestionFormResult{Cancelled: true}, true
 	case tea.KeyUp:
@@ -277,10 +277,11 @@ func (m QuestionForm) Update(msg tea.Msg) (QuestionForm, QuestionFormResult, boo
 		}
 		return m, QuestionFormResult{}, false
 	case tea.KeyTab:
-		m.FocusNext()
-		return m, QuestionFormResult{}, false
-	case tea.KeyShiftTab:
-		m.FocusPrev()
+		if keyMsg.Mod.Contains(tea.ModShift) {
+			m.FocusPrev()
+		} else {
+			m.FocusNext()
+		}
 		return m, QuestionFormResult{}, false
 	}
 

@@ -4,12 +4,12 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	ttypes "crude/tui/types"
 )
 
-func (m *App) handleCancel(msg tea.KeyMsg) tea.Cmd {
+func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	now := time.Now()
 
 	if m.Mode == ModeSettings {

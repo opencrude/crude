@@ -1,13 +1,14 @@
 package widgets
 
 import (
+	"image/color"
 	"strings"
 	"time"
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 func RenderHeader(th *theme.Theme, modelName string, yolo bool, startTime time.Time, width int) string {
@@ -35,6 +36,6 @@ func RenderHeader(th *theme.Theme, modelName string, yolo bool, startTime time.T
 	return left + strings.Repeat(" ", spacer) + rightStr
 }
 
-func RenderSep(width int, color lipgloss.Color) string {
-	return lipgloss.NewStyle().Foreground(color).Render(strings.Repeat("─", width))
+func RenderSep(width int, clr color.Color) string {
+	return lipgloss.NewStyle().Foreground(clr).Render(strings.Repeat("─", width))
 }

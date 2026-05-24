@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"image/color"
 	"strings"
 
 	"crude/tui/components"
@@ -9,8 +10,8 @@ import (
 	"crude/tui/tools"
 	"crude/tui/types"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int, spinFrame int, mdRenderer *glamour.TermRenderer, modelName string, streaming bool, height int, username string, phase string, activeTyping bool) []string {
@@ -87,11 +88,11 @@ func RenderAllMessages(messages []*types.ChatMessage, th *theme.Theme, width int
 	return all
 }
 
-func blockCursor(frame int, color lipgloss.Color, activeTyping bool) string {
+func blockCursor(frame int, clr color.Color, activeTyping bool) string {
 	if activeTyping {
-		return components.BlockCursorSolid(color)
+		return components.BlockCursorSolid(clr)
 	}
-	return components.BlockCursor(frame, color)
+	return components.BlockCursor(frame, clr)
 }
 
 func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, bool) {

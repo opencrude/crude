@@ -4,20 +4,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/widgets"
 )
 
-func (m *App) View() string {
+func (m *App) View() tea.View {
 	if m.width == 0 || m.height == 0 {
-		return ""
+		return tea.NewView("")
 	}
 
 	if m.Mode == ModeLauncher && m.launcher != nil {
-		return m.renderLauncherView()
+		v := tea.NewView(m.renderLauncherView())
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeAllMotion
+		return v
 	}
 
 	m.syncAgentWindowTabs()
@@ -340,7 +344,10 @@ func (m *App) View() string {
 		lines = lines[:m.height]
 	}
 
-	return strings.Join(lines, "\n")
+	v := tea.NewView(strings.Join(lines, "\n"))
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeAllMotion
+	return v
 }
 
 func (m *App) renderOverlayArea() []string {

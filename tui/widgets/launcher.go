@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"strings"
 	"time"
@@ -10,7 +11,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // FormatTurnCount formats a turn count for display.
@@ -244,50 +245,23 @@ func RenderNewSessionEntry(selected bool, th *theme.Theme, width int, spinFrame 
 
 // pulseColor creates a slow breathing glow between two colors.
 // spinFrame is the Unix millisecond timestamp; period is 3 seconds.
-func pulseColor(spinFrame int, c1, c2 lipgloss.Color) lipgloss.Color {
-	r1, g1, b1 := parseHexColor(string(c1))
-	r2, g2, b2 := parseHexColor(string(c2))
+func pulseColor(spinFrame int, c1, c2 color.Color) color.Color {
+	r1, g1, b1, _ := c1.RGBA()
+	r2, g2, b2, _ := c2.RGBA()
 
 	// 3-second breathing period using millis
 	phase := float64(spinFrame%3000) / 3000.0
 	t := 0.5 - 0.5*math.Cos(2*math.Pi*phase)
 
-	r := lerp(r1, r2, t)
-	g := lerp(g1, g2, t)
-	b := lerp(b1, b2, t)
+	r := lerp(uint8(r1>>8), uint8(r2>>8), t)
+	g := lerp(uint8(g1>>8), uint8(g2>>8), t)
+	b := lerp(uint8(b1>>8), uint8(b2>>8), t)
 
 	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", r, g, b))
 }
 
 func lerp(a, b uint8, t float64) uint8 {
 	return uint8(float64(a) + (float64(b)-float64(a))*t)
-}
-
-func parseHexColor(hex string) (r, g, b uint8) {
-	hex = strings.TrimPrefix(hex, "#")
-	if len(hex) != 6 {
-		return 128, 128, 128
-	}
-	r = hexByte(hex[0:2])
-	g = hexByte(hex[2:4])
-	b = hexByte(hex[4:6])
-	return
-}
-
-func hexByte(s string) uint8 {
-	var v uint8
-	for _, c := range s {
-		v <<= 4
-		switch {
-		case c >= '0' && c <= '9':
-			v |= uint8(c - '0')
-		case c >= 'a' && c <= 'f':
-			v |= uint8(c-'a') + 10
-		case c >= 'A' && c <= 'F':
-			v |= uint8(c-'A') + 10
-		}
-	}
-	return v
 }
 
 func renderLauncherDateSep(label string, width int, th *theme.Theme) string {

@@ -1,6 +1,6 @@
 package scrollbar
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 var (
 	defaultTrackStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#303030"))

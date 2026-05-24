@@ -6,8 +6,8 @@ import (
 	"time"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/components"
 	"crude/tui/theme"
@@ -25,7 +25,7 @@ const (
 
 type FormItem interface {
 	View(focused bool, spinFrame int, labelWidth int) string
-	HandleKey(msg tea.KeyMsg) (item FormItem, cmd tea.Cmd, action FormItemAction, handled bool)
+	HandleKey(msg tea.KeyPressMsg) (item FormItem, cmd tea.Cmd, action FormItemAction, handled bool)
 	Label() string
 	InlineLabel() string
 	Value() string
@@ -115,10 +115,10 @@ func (m *TextItem) View(focused bool, spinFrame int, labelWidth int) string {
 	return prefix + labelPart + display
 }
 
-func (m *TextItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
+func (m *TextItem) HandleKey(msg tea.KeyPressMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
 	if m.editing {
 		m.lastInputTime = time.Now()
-		switch msg.Type {
+		switch msg.Code {
 		case tea.KeyEnter, tea.KeyEsc:
 			m.editing = false
 			return m, nil, FormItemActionChanged, true
@@ -158,7 +158,7 @@ func (m *TextItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction,
 			m.editCursor = len(m.value)
 			return m, nil, FormItemActionNone, true
 		default:
-			for _, r := range msg.Runes {
+			for _, r := range msg.Text {
 				if unicode.IsPrint(r) {
 					newVal := make([]rune, len(m.value)+1)
 					copy(newVal, m.value[:m.editCursor])
@@ -172,7 +172,7 @@ func (m *TextItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction,
 		}
 	}
 
-	if msg.Type == tea.KeyEnter {
+	if msg.Code == tea.KeyEnter {
 		if m.masked && len(m.value) > 0 {
 			m.editCursor = len(m.value)
 		} else {
@@ -247,8 +247,8 @@ func (m *SelectItem) View(focused bool, spinFrame int, labelWidth int) string {
 	return prefix + labelPart + display
 }
 
-func (m *SelectItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
-	if msg.Type == tea.KeyEnter {
+func (m *SelectItem) HandleKey(msg tea.KeyPressMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
+	if msg.Code == tea.KeyEnter {
 		return m, nil, FormItemActionExpand, true
 	}
 	return m, nil, FormItemActionNone, false
@@ -327,8 +327,8 @@ func (m *CycleItem) View(focused bool, spinFrame int, labelWidth int) string {
 	return prefix + labelPart + arrowL + display + arrowR
 }
 
-func (m *CycleItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
-	switch msg.Type {
+func (m *CycleItem) HandleKey(msg tea.KeyPressMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
+	switch msg.Code {
 	case tea.KeyLeft:
 		m.idx--
 		if m.idx < 0 {
@@ -398,8 +398,8 @@ func (m *NavItem) View(focused bool, spinFrame int, labelWidth int) string {
 	return prefix + labelPart + m.detail
 }
 
-func (m *NavItem) HandleKey(msg tea.KeyMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
-	if msg.Type == tea.KeyEnter {
+func (m *NavItem) HandleKey(msg tea.KeyPressMsg) (FormItem, tea.Cmd, FormItemAction, bool) {
+	if msg.Code == tea.KeyEnter {
 		return m, nil, FormItemActionNavigate, true
 	}
 	return m, nil, FormItemActionNone, false

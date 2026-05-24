@@ -1,7 +1,7 @@
 package tui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"crude/sessiondb"
 	"crude/tui/viewmodel"
@@ -145,7 +145,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		}
 		return nil
 	})
-	program := tea.NewProgram(a, tea.WithAltScreen(), tea.WithMouseAllMotion())
+	program := tea.NewProgram(a)
 	t.app = a
 	t.Program = program
 

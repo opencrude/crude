@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -90,12 +90,12 @@ func NewList(t *theme.Theme, pageSize int) List {
 func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
 	m.action = ListActionNone
 
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
 
-	switch keyMsg.Type {
+	switch keyMsg.Code {
 	case tea.KeyEsc:
 		if m.config.Floating {
 			m.action = ListActionCancel
@@ -156,7 +156,7 @@ func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
 		}
 	default:
 		if m.config.ShowFilter {
-			for _, r := range keyMsg.Runes {
+			for _, r := range keyMsg.Text {
 				if unicode.IsPrint(r) {
 					m.filter += string(r)
 					m.applyFilter()

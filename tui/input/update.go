@@ -3,7 +3,7 @@ package input
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/components"
 	"crude/tui/rendering"
@@ -22,25 +22,22 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.showHint {
 			m.showHint = false
 		}
 
 		// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
 		// where Alt+Enter is intercepted as "toggle fullscreen".
-		if msg.Alt && msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == '\\' {
+		if msg.Mod.Contains(tea.ModAlt) && len(msg.Text) == 1 && msg.Text[0] == '\\' {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg, false)
 			return m, cmd, nil
 		}
 
-		switch msg.Type {
-		case tea.KeyCtrlS:
-			return m, nil, SettingsOpenEvent{}
-
+		switch msg.Code {
 		case tea.KeyEnter:
-			if msg.Alt {
+			if msg.Mod.Contains(tea.ModAlt) {
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg, false)
 				return m, cmd, nil
@@ -93,6 +90,9 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			return m, cmd, nil
 
 		default:
+			if msg.Mod.Contains(tea.ModCtrl) && msg.Code == 's' {
+				return m, nil, SettingsOpenEvent{}
+			}
 			if m.histIdx >= 0 {
 				m.histPrefix = strings.TrimSpace(m.input.Value())
 				m.histDraft = m.input.Value()
@@ -119,12 +119,12 @@ func (m *Model) syncSlashState() {
 }
 
 func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil, nil
 	}
 
-	switch keyMsg.Type {
+	switch keyMsg.Code {
 	case tea.KeyEsc:
 		m.slashActive = false
 		return m, nil, nil
@@ -208,41 +208,46 @@ func (m *Model) appendHistory(text string) {
 }
 
 func (m Model) handleMouse(msg tea.MouseMsg, chatAreaHeight int, showHint bool) (Model, tea.Cmd, Event) {
-	switch {
-	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
-		pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
-		if ok {
-			m.input.SetSelection(pos, pos)
-			m.input.SetCursorFlat(pos)
-		} else {
-			m.input.ClearSelection()
-		}
-
-	case msg.Action == tea.MouseActionMotion && m.input.IsSelecting():
-		pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
-		if ok {
-			m.input.UpdateSelectionEnd(pos)
-		} else {
-			firstY := m.FirstLineY(chatAreaHeight, showHint, m.thinking, m.input.Len())
-			if msg.Y < firstY {
-				m.input.UpdateSelectionEnd(0)
+	switch msg := msg.(type) {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
+			if ok {
+				m.input.SetSelection(pos, pos)
+				m.input.SetCursorFlat(pos)
 			} else {
-				m.input.UpdateSelectionEnd(m.input.Len())
+				m.input.ClearSelection()
+			}
+		} else if msg.Button == tea.MouseWheelUp || msg.Button == tea.MouseWheelDown {
+			if msg.Button == tea.MouseWheelUp {
+				m.browseHistoryUp()
+			} else {
+				m.browseHistoryDown()
 			}
 		}
 
-	case msg.Action == tea.MouseActionRelease && m.input.IsSelecting():
-		selected := m.input.SelectedText()
-		m.input.ClearSelection()
-		if selected != "" {
-			return m, rendering.CopyToClipboardCmd(selected), nil
+	case tea.MouseMotionMsg:
+		if m.input.IsSelecting() {
+			pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
+			if ok {
+				m.input.UpdateSelectionEnd(pos)
+			} else {
+				firstY := m.FirstLineY(chatAreaHeight, showHint, m.thinking, m.input.Len())
+				if msg.Y < firstY {
+					m.input.UpdateSelectionEnd(0)
+				} else {
+					m.input.UpdateSelectionEnd(m.input.Len())
+				}
+			}
 		}
 
-	case msg.Action == tea.MouseActionPress && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown):
-		if msg.Button == tea.MouseButtonWheelUp {
-			m.browseHistoryUp()
-		} else {
-			m.browseHistoryDown()
+	case tea.MouseReleaseMsg:
+		if m.input.IsSelecting() {
+			selected := m.input.SelectedText()
+			m.input.ClearSelection()
+			if selected != "" {
+				return m, rendering.CopyToClipboardCmd(selected), nil
+			}
 		}
 	}
 

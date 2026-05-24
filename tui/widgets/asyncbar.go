@@ -1,12 +1,13 @@
 package widgets
 
 import (
+	"image/color"
 	"time"
 
 	"crude/fileio"
 	"crude/tui/components"
 	"crude/tui/rendering"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 func (s *StatusBar) VisibleAsyncCommands() []fileio.AsyncCmdInfo {
@@ -34,7 +35,7 @@ func (s *StatusBar) RenderAsyncBar() []string {
 
 	for _, c := range visible {
 		var dot string
-		var dotColor lipgloss.Color
+		var dotColor color.Color
 		switch c.Status {
 		case fileio.AsyncRunning:
 			if components.BlinkOn(s.spinFrame) {
