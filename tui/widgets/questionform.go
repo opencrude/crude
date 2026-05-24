@@ -386,8 +386,10 @@ func (m *QuestionForm) viewSingle(spinFrame int, width int) string {
 	b.WriteString("\n")
 
 	if q.Header != "" && q.Question != "" && q.Header != q.Question {
-		b.WriteString(dim.Render(q.Question))
-		b.WriteString("\n")
+		for _, wl := range rendering.WordWrap(q.Question, width) {
+			b.WriteString(dim.Render(wl))
+			b.WriteString("\n")
+		}
 	}
 
 	sepW := width
@@ -602,8 +604,10 @@ func (m *QuestionForm) renderQuestionContent(contentW int) string {
 	b.WriteString("\n")
 
 	if q.Header != "" && q.Question != "" && q.Header != q.Question {
-		b.WriteString(dim.Render(q.Question))
-		b.WriteString("\n")
+		for _, wl := range rendering.WordWrap(q.Question, contentW) {
+			b.WriteString(dim.Render(wl))
+			b.WriteString("\n")
+		}
 	}
 
 	sepW := contentW
