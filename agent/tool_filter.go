@@ -116,9 +116,9 @@ func ApplyMainAgentOverrides(filtered []tools.ToolDef) []tools.ToolDef {
 
 func mainAgentToolDescriptions() map[string]string {
 	return map[string]string{
-		"read_file": "Emergency-only file reader for the orchestrator. " +
+		"read_file": "Only for reading the agents reports or in case of emergency for the orchestrator. " +
 			"Delegate ALL file reading to a researcher sub-agent. " +
-			"Using this means your delegation pipeline failed — you are doing reconnaissance that should be handled by a specialist.",
+			"Using this for anything other than the agents reports means your delegation pipeline failed — you are doing reconnaissance that should be handled by a specialist.",
 
 		"write_file": "Emergency-only file writer for the orchestrator. " +
 			"Delegate ALL file writing to a crafter or aeron sub-agent. " +
