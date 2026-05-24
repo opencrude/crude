@@ -220,7 +220,19 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"target":         getStr(params, "question"),
 			"questions_json":  string(questionsJSON),
 		}})
-		resp := <-blockResolveCh
+		var resp string
+		select {
+		case resp = <-blockResolveCh:
+		case <-ctx.Done():
+			emit(AgentEvent{Type: "blocking_complete"})
+			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+				"internal_id": internalID,
+				"tool_id":     tc.ID,
+				"name":        "question",
+				"result":      "Turn cancelled by user.",
+			}})
+			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Turn cancelled by user."}}
+		}
 		emit(AgentEvent{Type: "blocking_complete"})
 		emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 			"internal_id": internalID,
@@ -262,7 +274,13 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				"reason":     sr.Reason,
 				"suggestion": sr.Suggestion,
 			}})
-			resp := <-blockResolveCh
+			var resp string
+			select {
+			case resp = <-blockResolveCh:
+			case <-ctx.Done():
+				emit(AgentEvent{Type: "blocking_complete"})
+				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: "Turn cancelled by user."}}
+			}
 			if resp == "deny" {
 				errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
 				a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
@@ -342,7 +360,13 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"reason":     fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name),
 			"suggestion": "",
 		}})
-		resp := <-blockResolveCh
+		var resp string
+		select {
+		case resp = <-blockResolveCh:
+		case <-ctx.Done():
+			emit(AgentEvent{Type: "blocking_complete"})
+			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled by user."}}
+		}
 		if resp == "deny" {
 			errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
 			a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)

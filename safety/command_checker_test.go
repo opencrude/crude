@@ -64,6 +64,13 @@ func TestProjectWriteCommands(t *testing.T) {
 		{"git push", RiskNetwork},
 		{"git clone https://example.com/repo", RiskNetwork},
 		{"git fetch origin", RiskNetwork},
+		{"git reset HEAD~1", RiskProjectWrite},
+		{"git reset --soft HEAD~1", RiskProjectWrite},
+		{"git rebase main", RiskProjectWrite},
+		{"git merge feature", RiskProjectWrite},
+		{"git cherry-pick abc123", RiskProjectWrite},
+		{"git clean -n", RiskSafe},
+		{"git checkout -b feature", RiskProjectWrite},
 	}
 	for _, tt := range tests {
 		r := CheckCommandSafety(tt.cmd, nil)
@@ -117,6 +124,13 @@ func TestDestructiveCommands(t *testing.T) {
 		{"chmod -R 755 vendor", RiskDestructive},
 		{"crontab -e", RiskDestructive},
 		{"systemctl enable nginx", RiskDestructive},
+		{"git reset --hard HEAD~1", RiskDestructive},
+		{"git reset --merge", RiskDestructive},
+		{"git reset --keep", RiskDestructive},
+		{"git clean -fd", RiskDestructive},
+		{"git clean", RiskDestructive},
+		{"git push --force", RiskDestructive},
+		{"git push --force-with-lease", RiskDestructive},
 	}
 	for _, tt := range tests {
 		r := CheckCommandSafety(tt.cmd, nil)

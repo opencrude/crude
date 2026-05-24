@@ -278,6 +278,12 @@ func (a *Agent) Run(
 			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
 		}
 
+		if ctx.Err() != nil {
+			l.Warn("CANCEL", "turn_cancelled_after_tools", "step", step)
+			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+			return msgs
+		}
+
 		if isStopConditionMet(stopConditions, steps) {
 			reason := "stop_condition_met"
 			if lastPromptTokens > ctxLimit {

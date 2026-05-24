@@ -185,6 +185,11 @@ func (s *Session) processTurn(userText string, sender EventSender, input EventIn
 		case <-cancelCh:
 			l.Debug("CANCEL", "ctx_cancelled", "msg_id", currentMsgID)
 			cancel()
+			select {
+			case blockResolveCh <- "deny":
+				l.Debug("CANCEL", "block_unblocked", "msg_id", currentMsgID)
+			default:
+			}
 			if s.subAgentSup != nil {
 				cancelled := s.subAgentSup.CancelAllActive()
 				if len(cancelled) > 0 {

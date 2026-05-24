@@ -129,6 +129,10 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	parentPolicy := safety.DefaultPolicy()
 	spec.Policy = agent.ComposePolicy(parentPolicy, spec.PolicyName, spec.Category)
 
+	if len(spec.AllowedTools) > 0 {
+		spec.Policy = agent.UpgradePolicyForAllowedTools(spec.Policy, spec.AllowedTools)
+	}
+
 	if err := r.mgr.Validate(spec); err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("%s", err)
 	}
@@ -184,6 +188,8 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 	switch result.Status {
 	case agent.SubAgentCompleted:
 		icon = "OK"
+	case agent.SubAgentCrashed:
+		icon = "CRASH"
 	case agent.SubAgentFailedTimeout:
 		icon = "TIMEOUT"
 	case agent.SubAgentFailedQuota:
@@ -199,6 +205,9 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 	}
 	sb.WriteString(fmt.Sprintf("## Sub-Agent Result: %s [%s]\n", result.Name, result.Category))
 	sb.WriteString(fmt.Sprintf("**Status:** %s", icon))
+	if icon == "CRASH" {
+		sb.WriteString(" — **the agent process crashed unexpectedly (internal error, NOT a normal failure). Do NOT retry the same sub-agent configuration without investigating the crash errors below.**")
+	}
 	if result.DurationMs > 0 {
 		dur := time.Duration(result.DurationMs) * time.Millisecond
 		sb.WriteString(fmt.Sprintf(" (%s)", dur.Round(time.Second).String()))
@@ -549,6 +558,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 
 func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, prompt string) {
 	done := false
+	crashed := false
 
 	// Send agent identity to TUI for tab labeling
 	if r.sender != nil {
@@ -565,16 +575,37 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 	defer func() {
 		r.fileOwnership.Release(handle.Spec.ID)
 
-		if rec := recover(); rec != nil && !done {
+		if rec := recover(); rec != nil {
+			crashed = true
 			stack := debug.Stack()
-			r.session.logger.Error("SUBAGENT", "panic", "agent_id", handle.Spec.ID, "error", fmt.Sprintf("%v", rec))
+			r.session.logger.Error("SUBAGENT", "crash", "agent_id", handle.Spec.ID, "error", fmt.Sprintf("%v", rec))
 			result := agent.SubAgentResult{
 				AgentID:   handle.Spec.ID,
 				Name:      handle.Spec.Name,
 				Category:  handle.Spec.Category,
 				SessionID: handle.SessionID,
-				Status:    agent.SubAgentFailedError,
-				Errors:    []string{fmt.Sprintf("panic: %v\n%s", rec, stack)},
+				Status:    agent.SubAgentCrashed,
+				Errors:    []string{fmt.Sprintf("CRASH: %v\n\nStack trace:\n%s", rec, stack)},
+			}
+			handle.ResultCh <- result
+			r.mgr.MarkFinished(handle.Spec.ID, result)
+			r.persistResult(result)
+			if handle.DB != nil {
+				sessiondb.CloseSession(handle.DB, handle.SessionID)
+				handle.DB.Close()
+			}
+			return
+		}
+
+		if !done && !crashed {
+			r.session.logger.Error("SUBAGENT", "unexpected_exit", "agent_id", handle.Spec.ID)
+			result := agent.SubAgentResult{
+				AgentID:   handle.Spec.ID,
+				Name:      handle.Spec.Name,
+				Category:  handle.Spec.Category,
+				SessionID: handle.SessionID,
+				Status:    agent.SubAgentCrashed,
+				Errors:    []string{"Agent exited unexpectedly without completing or panicking — this is an internal system bug"},
 			}
 			handle.ResultCh <- result
 			r.mgr.MarkFinished(handle.Spec.ID, result)

@@ -17,6 +17,7 @@ type SubAgentStatus string
 
 const (
 	SubAgentCompleted     SubAgentStatus = "completed"
+	SubAgentCrashed       SubAgentStatus = "crashed"
 	SubAgentFailedTimeout SubAgentStatus = "failed_timeout"
 	SubAgentFailedQuota   SubAgentStatus = "failed_quota"
 	SubAgentFailedError   SubAgentStatus = "failed_error"
