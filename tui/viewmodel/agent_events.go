@@ -458,6 +458,9 @@ func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
 		label = label[:16]
 	}
 	m.agentLabels[agentID] = label
+	if agent, ok := m.agents[agentID]; ok {
+		agent.Status = "running"
+	}
 	if model := data["model"]; model != "" {
 		m.agentModels[agentID] = model
 		if sp := m.paneMgr.Get(agentID); sp != nil {
@@ -477,14 +480,11 @@ func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
 		return
 	}
 
-	if resultPath := data["result_path"]; resultPath != "" {
-		if _, aok := m.agents[agentID]; aok {
-			m.agentStatuses[agentID] = status
-		}
+	if agent, aok := m.agents[agentID]; aok {
+		agent.Status = status
 	}
 
 	if status == "running" {
-		m.agentStatuses[agentID] = status
 		return
 	}
 

@@ -43,6 +43,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.Tick(spinFrame)
 		}
 		m.paneMgr.TickAll(spinFrame)
+		m.syncAgentWindowTabs()
 		for _, sp := range m.paneMgr.panes {
 			if !sp.Done && sp.MsgList != nil {
 				if agent, ok := m.agents[sp.ID]; ok {

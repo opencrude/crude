@@ -24,6 +24,7 @@ type AgentState struct {
 	SpinFrame     int
 	ActiveTyping  bool
 	Completed     bool
+	Status        string
 	Logger        Logger
 
 	ThinkingPaneID string
