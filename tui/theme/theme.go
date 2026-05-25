@@ -66,7 +66,7 @@ func DefaultDark() *Theme {
 		Warning:  lipgloss.Color("#d29922"),
 		Border:   lipgloss.Color("#30363d"),
 		Selection: lipgloss.Color("#1e2a3a"),
-		SubPaneBg: lipgloss.Color("#161b22"),
+		SubPaneBg: lipgloss.Color("#1c2333"),
 		Code: CodeColors{
 			Keyword:  lipgloss.Color("#ff7b72"),
 			String:   lipgloss.Color("#a5d6ff"),
