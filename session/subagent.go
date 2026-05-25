@@ -738,18 +738,19 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
-		if m.Role == "tool" && agent.IsToolError(m.Content) {
-			if strings.Contains(m.Content, "429") || strings.Contains(m.Content, "quota") {
+		mc := m.ContentString()
+		if m.Role == "tool" && agent.IsToolError(mc) {
+			if strings.Contains(mc, "429") || strings.Contains(mc, "quota") {
 				status = agent.SubAgentFailedQuota
 				break
 			}
-			if strings.Contains(m.Content, "401") || strings.Contains(m.Content, "403") || strings.Contains(m.Content, "invalid api key") || strings.Contains(m.Content, "authentication") {
+			if strings.Contains(mc, "401") || strings.Contains(mc, "403") || strings.Contains(mc, "invalid api key") || strings.Contains(mc, "authentication") {
 				status = agent.SubAgentFailedQuota
 				break
 			}
 		}
 		if m.Role == "assistant" {
-			if m.Content != "" && (strings.Contains(m.Content, "429") || strings.Contains(m.Content, "quota")) {
+			if mc != "" && (strings.Contains(mc, "429") || strings.Contains(mc, "quota")) {
 				status = agent.SubAgentFailedQuota
 				break
 			}
@@ -772,8 +773,9 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 	if gist == "" {
 		for i := len(msgs) - 1; i >= 0; i-- {
 			m := msgs[i]
-			if m.Role == "assistant" && len(m.ToolCalls) == 0 && m.Content != "" {
-				gist = m.Content
+			mc := m.ContentString()
+			if m.Role == "assistant" && len(m.ToolCalls) == 0 && mc != "" {
+				gist = mc
 				break
 			}
 		}
@@ -814,9 +816,9 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 	sb.WriteString(fmt.Sprintf("Task: %s\n\n", handle.Spec.Description))
 
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "assistant" && msgs[i].Content != "" && len(msgs[i].ToolCalls) == 0 {
+		if msgs[i].Role == "assistant" && msgs[i].ContentString() != "" && len(msgs[i].ToolCalls) == 0 {
 			sb.WriteString("## Summary\n\n")
-			sb.WriteString(msgs[i].Content)
+			sb.WriteString(msgs[i].ContentString())
 			sb.WriteString("\n")
 			break
 		}

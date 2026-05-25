@@ -16,8 +16,8 @@ func TestDetectInterruption_Empty(t *testing.T) {
 
 func TestDetectInterruption_CleanClose(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", Content: "hello"},
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "assistant", Content: provider.TextContent("hello")},
 	}
 	ok, _ := detectInterruption(msgs)
 	if ok {
@@ -27,8 +27,8 @@ func TestDetectInterruption_CleanClose(t *testing.T) {
 
 func TestDetectInterruption_MidToolCall(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "read file"},
-		{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{
+		{Role: "user", Content: provider.TextContent("read file")},
+		{Role: "assistant", Content: provider.TextContent(""), ToolCalls: []provider.ToolCall{
 			{ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read"}},
 		}},
 	}
@@ -43,11 +43,11 @@ func TestDetectInterruption_MidToolCall(t *testing.T) {
 
 func TestDetectInterruption_ToolResult(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", Content: "let me check", ToolCalls: []provider.ToolCall{
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "assistant", Content: provider.TextContent("let me check"), ToolCalls: []provider.ToolCall{
 			{ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read"}},
 		}},
-		{Role: "tool", Content: "file contents", ToolCallID: "tc1"},
+		{Role: "tool", Content: provider.TextContent("file contents"), ToolCallID: "tc1"},
 	}
 	ok, action := detectInterruption(msgs)
 	if !ok {
@@ -60,7 +60,7 @@ func TestDetectInterruption_ToolResult(t *testing.T) {
 
 func TestDetectInterruption_UnansweredUser(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "do something"},
+		{Role: "user", Content: provider.TextContent("do something")},
 	}
 	ok, action := detectInterruption(msgs)
 	if !ok {
@@ -73,8 +73,8 @@ func TestDetectInterruption_UnansweredUser(t *testing.T) {
 
 func TestSanitizeMessages_CleanTail(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", Content: "hello"},
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "assistant", Content: provider.TextContent("hello")},
 	}
 	result := sanitizeMessages(msgs)
 	if len(result) != 2 {
@@ -84,11 +84,11 @@ func TestSanitizeMessages_CleanTail(t *testing.T) {
 
 func TestSanitizeMessages_TrailingTool(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "assistant", Content: provider.TextContent(""), ToolCalls: []provider.ToolCall{
 			{ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read"}},
 		}},
-		{Role: "tool", Content: "data", ToolCallID: "tc1"},
+		{Role: "tool", Content: provider.TextContent("data"), ToolCallID: "tc1"},
 	}
 	result := sanitizeMessages(msgs)
 	if len(result) < 1 {
@@ -98,8 +98,8 @@ func TestSanitizeMessages_TrailingTool(t *testing.T) {
 
 func TestSanitizeMessages_TrailingToolNoAssistant(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hi"},
-		{Role: "tool", Content: "orphan"},
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "tool", Content: provider.TextContent("orphan")},
 	}
 	result := sanitizeMessages(msgs)
 	if len(result) != 1 {
@@ -109,12 +109,12 @@ func TestSanitizeMessages_TrailingToolNoAssistant(t *testing.T) {
 
 func TestSanitizeMessages_OrphanedToolCalls(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "assistant", Content: provider.TextContent(""), ToolCalls: []provider.ToolCall{
 			{ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read"}},
 			{ID: "tc2", Type: "function", Function: provider.FunctionCall{Name: "write"}},
 		}},
-		{Role: "tool", Content: "data", ToolCallID: "tc1"},
+		{Role: "tool", Content: provider.TextContent("data"), ToolCallID: "tc1"},
 	}
 	result := sanitizeMessages(msgs)
 	if len(result) != 4 {
@@ -124,15 +124,15 @@ func TestSanitizeMessages_OrphanedToolCalls(t *testing.T) {
 	if last.Role != "tool" || last.ToolCallID != "tc2" {
 		t.Errorf("expected backfilled tool result for tc2, got role=%s id=%s", last.Role, last.ToolCallID)
 	}
-	if !strings.HasPrefix(last.Content, "[cancelled]") {
-		t.Errorf("expected backfilled result to start with [cancelled], got %q", last.Content)
+	if !strings.HasPrefix(last.ContentString(), "[cancelled]") {
+		t.Errorf("expected backfilled result to start with [cancelled], got %q", last.ContentString())
 	}
 }
 
 func TestTruncateMessages_NoTruncation(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", Content: "hello"},
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "assistant", Content: provider.TextContent("hello")},
 	}
 	result := truncateMessages(msgs, 100000, "test")
 	if len(result) != 2 {
@@ -142,8 +142,8 @@ func TestTruncateMessages_NoTruncation(t *testing.T) {
 
 func TestTruncateMessages_ZeroWindow(t *testing.T) {
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", Content: "hello"},
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "assistant", Content: provider.TextContent("hello")},
 	}
 	result := truncateMessages(msgs, 0, "test")
 	if len(result) != 2 {

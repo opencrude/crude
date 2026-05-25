@@ -32,7 +32,7 @@ func EstimateTokens(text string, model string) int {
 // EstimateMessageTokens estimates the total token cost of a single
 // ChatMessage, including its content, tool calls, and role overhead.
 func EstimateMessageTokens(msg ChatMessage, model string) int {
-	tokens := EstimateTokens(msg.Content, model)
+	tokens := EstimateTokens(msg.ContentString(), model)
 	for _, tc := range msg.ToolCalls {
 		tokens += EstimateTokens(tc.Function.Arguments, model)
 		tokens += EstimateTokens(tc.Function.Name, model)

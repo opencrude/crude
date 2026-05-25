@@ -102,7 +102,7 @@ func (a *App) Run() {
 		sessionMetas, _, _ = sessiondb.ListSessionsPaginated(a.sessionsRoot, sessiondb.ListSessionsOpts{Limit: 30, Offset: 0})
 	}
 
-	tuiInst, err := tui.Start(sessCfg.GetActiveMainCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), sessionMetas)
+	tuiInst, err := tui.Start(sessCfg.GetActiveMainCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), sessionMetas, sess.SessionID(), sess.SessionDir(), sess.DB())
 	if err != nil {
 		sess.Logger().Error("SESSION", "tui_start_failed", "error", err.Error())
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
@@ -238,6 +238,12 @@ func (a *App) hydrateTUI(tuiInst *tui.TUI) {
 	}
 	chatMsgs := convertMessagesForDisplay(msgs)
 	tuiInst.HydrateMessages(chatMsgs)
+
+	if db := a.sess.DB(); db != nil {
+		if refs, err := sessiondb.LoadPromptReferences(db); err == nil && len(refs) > 0 {
+			tuiInst.SetReferences(refs)
+		}
+	}
 }
 
 func (a *App) runResumeSession(username string, initial ttypes.Settings, providerPresets []tui.ProviderPreset) {
@@ -252,7 +258,7 @@ func (a *App) runResumeSession(username string, initial ttypes.Settings, provide
 	}
 	a.sess = sess
 
-	tuiInst2, err2 := tui.Start(a.sessCfg.GetActiveMainCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), nil)
+	tuiInst2, err2 := tui.Start(a.sessCfg.GetActiveMainCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), nil, sess.SessionID(), sess.SessionDir(), sess.DB())
 	if err2 != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err2)
 		return

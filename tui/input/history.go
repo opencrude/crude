@@ -19,7 +19,7 @@ func (m *Model) browseHistoryUp() {
 		return
 	}
 	m.histIdx = idx
-	m.input.SetValue(m.history[m.histIdx])
+	m.SetValuePreserveReferences(m.history[m.histIdx])
 }
 
 func (m *Model) browseHistoryDown() {
@@ -32,7 +32,7 @@ func (m *Model) browseHistoryDown() {
 		return
 	}
 	m.histIdx = next
-	m.input.SetValue(m.history[m.histIdx])
+	m.SetValuePreserveReferences(m.history[m.histIdx])
 }
 
 func (m *Model) findHistoryIndex(startIdx int) int {
@@ -59,7 +59,7 @@ func (m *Model) findHistoryDown(startIdx int) int {
 
 func (m *Model) resetHistory() {
 	if m.histIdx >= 0 && m.histIdx < len(m.history) {
-		m.input.SetValue(m.histDraft)
+		m.SetValuePreserveReferences(m.histDraft)
 	}
 	m.histDraft = ""
 	m.histPrefix = ""

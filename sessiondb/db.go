@@ -97,6 +97,23 @@ CREATE TABLE IF NOT EXISTS file_claims (
 
 CREATE INDEX IF NOT EXISTS idx_file_claims_path ON file_claims(path);
 CREATE INDEX IF NOT EXISTS idx_file_claims_session ON file_claims(session_id);
+
+CREATE TABLE IF NOT EXISTS prompt_references (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    title       TEXT,
+    mime        TEXT,
+    content     TEXT,
+    file_path   TEXT,
+    inline      INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    deleted_at  INTEGER,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_refs_session ON prompt_references(session_id, deleted_at, created_at);
 `
 
 func Open(dbPath string) (*sql.DB, error) {

@@ -114,11 +114,11 @@ func TestReplaceMessagesRoundtrip(t *testing.T) {
 
 	cc := provider.CacheControl{Type: "ephemeral"}
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "hi there", ReasoningContent: "thinking...", Reasoning: "reasoning...", CacheControl: &cc, ToolCalls: []provider.ToolCall{
+		{Role: "user", Content: provider.TextContent("hello")},
+		{Role: "assistant", Content: provider.TextContent("hi there"), ReasoningContent: "thinking...", Reasoning: "reasoning...", CacheControl: &cc, ToolCalls: []provider.ToolCall{
 			{Index: 0, ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read", Arguments: `{"path":"/foo"}`}},
 		}},
-		{Role: "tool", Content: "file contents", ToolCallID: "tc1"},
+		{Role: "tool", Content: provider.TextContent("file contents"), ToolCallID: "tc1"},
 	}
 	turns := []int{1, 1, 1}
 
@@ -141,8 +141,8 @@ func TestReplaceMessagesRoundtrip(t *testing.T) {
 		t.Fatalf("expected 3 turn numbers, got %d", len(loadedTurns))
 	}
 
-	if loaded[0].Role != "user" || loaded[0].Content != "hello" {
-		t.Errorf("msg[0]: expected user/hello, got %s/%s", loaded[0].Role, loaded[0].Content)
+	if loaded[0].Role != "user" || loaded[0].ContentString() != "hello" {
+		t.Errorf("msg[0]: expected user/hello, got %s/%s", loaded[0].Role, loaded[0].ContentString())
 	}
 	if loaded[1].ReasoningContent != "thinking..." {
 		t.Errorf("msg[1] ReasoningContent: expected 'thinking...', got %q", loaded[1].ReasoningContent)
@@ -156,8 +156,8 @@ func TestReplaceMessagesRoundtrip(t *testing.T) {
 	if len(loaded[1].ToolCalls) != 1 || loaded[1].ToolCalls[0].ID != "tc1" {
 		t.Errorf("msg[1] ToolCalls: expected [tc1], got %v", loaded[1].ToolCalls)
 	}
-	if loaded[2].Role != "tool" || loaded[2].Content != "file contents" {
-		t.Errorf("msg[2]: expected tool/file contents, got %s/%s", loaded[2].Role, loaded[2].Content)
+	if loaded[2].Role != "tool" || loaded[2].ContentString() != "file contents" {
+		t.Errorf("msg[2]: expected tool/file contents, got %s/%s", loaded[2].Role, loaded[2].ContentString())
 	}
 	if loaded[2].ToolCallID != "tc1" {
 		t.Errorf("msg[2] ToolCallID: expected tc1, got %s", loaded[2].ToolCallID)
@@ -186,15 +186,15 @@ func TestReplaceMessagesOverwrite(t *testing.T) {
 	})
 
 	msgs1 := []provider.ChatMessage{
-		{Role: "user", Content: "first"},
-		{Role: "assistant", Content: "reply1"},
+		{Role: "user", Content: provider.TextContent("first")},
+		{Role: "assistant", Content: provider.TextContent("reply1")},
 	}
 	turns1 := []int{1, 1}
 	ReplaceMessages(db, "test", msgs1, turns1)
 
 	msgs2 := []provider.ChatMessage{
-		{Role: "user", Content: "second"},
-		{Role: "assistant", Content: "reply2"},
+		{Role: "user", Content: provider.TextContent("second")},
+		{Role: "assistant", Content: provider.TextContent("reply2")},
 	}
 	turns2 := []int{2, 2}
 	ReplaceMessages(db, "test", msgs2, turns2)
@@ -206,8 +206,8 @@ func TestReplaceMessagesOverwrite(t *testing.T) {
 	if len(loaded) != 2 {
 		t.Fatalf("expected 2 messages after overwrite, got %d", len(loaded))
 	}
-	if loaded[0].Content != "second" {
-		t.Errorf("msg[0] Content: expected 'second', got %q", loaded[0].Content)
+	if loaded[0].ContentString() != "second" {
+		t.Errorf("msg[0] Content: expected 'second', got %q", loaded[0].ContentString())
 	}
 	if loadedTurns[0] != 2 || loadedTurns[1] != 2 {
 		t.Errorf("turn numbers: expected [2,2], got %v", loadedTurns)
@@ -233,10 +233,10 @@ func TestPerMessageTurnNumbers(t *testing.T) {
 	})
 
 	msgs := []provider.ChatMessage{
-		{Role: "user", Content: "turn1"},
-		{Role: "assistant", Content: "reply1"},
-		{Role: "user", Content: "turn2"},
-		{Role: "assistant", Content: "reply2"},
+		{Role: "user", Content: provider.TextContent("turn1")},
+		{Role: "assistant", Content: provider.TextContent("reply1")},
+		{Role: "user", Content: provider.TextContent("turn2")},
+		{Role: "assistant", Content: provider.TextContent("reply2")},
 	}
 	turns := []int{1, 1, 2, 2}
 
@@ -335,7 +335,7 @@ func TestListSessions(t *testing.T) {
 			Model: "m", Provider: "p", CreatedAt: int64(i + 1),
 		})
 		ReplaceMessages(db, name, []provider.ChatMessage{
-			{Role: "user", Content: "hello"},
+			{Role: "user", Content: provider.TextContent("hello")},
 		}, []int{1})
 		db.Close()
 	}
@@ -367,7 +367,7 @@ func TestListSessionsPaginated(t *testing.T) {
 			Model: "m", Provider: "p", CreatedAt: int64(i + 1),
 		})
 		ReplaceMessages(db, name, []provider.ChatMessage{
-			{Role: "user", Content: "hello"},
+			{Role: "user", Content: provider.TextContent("hello")},
 		}, []int{1})
 		db.Close()
 	}

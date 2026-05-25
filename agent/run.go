@@ -43,7 +43,7 @@ func (a *Agent) Run(
 
 	lastReply := ""
 	msgs := []provider.ChatMessage{
-		{Role: "system", Content: systemPrompt, CacheControl: &provider.CacheControl{Type: "ephemeral"}},
+		{Role: "system", Content: provider.TextContent(systemPrompt), CacheControl: &provider.CacheControl{Type: "ephemeral"}},
 	}
 	l.Debug("CACHE", "system_ephemeral", "position", 0, "len", len(systemPrompt))
 	for _, m := range sessionMessages {
@@ -73,7 +73,7 @@ func (a *Agent) Run(
 		if len(parts) == 0 {
 			return nil
 		}
-		return &provider.ChatMessage{Role: "system", Content: strings.Join(parts, "\n\n"), CacheControl: &provider.CacheControl{Type: "ephemeral"}}
+		return &provider.ChatMessage{Role: "system", Content: provider.TextContent(strings.Join(parts, "\n\n")), CacheControl: &provider.CacheControl{Type: "ephemeral"}}
 	}
 
 	var steps []StepRecord
@@ -115,7 +115,7 @@ func (a *Agent) Run(
 					l.Info("BTW", "user_interruption", "len", len(btwText), "step", step)
 					msgs = append(msgs, provider.ChatMessage{
 						Role:    "user",
-						Content: "[USER INTERRUPTION — READ THIS NOW]\nThe user interrupted your work with an important message while you were running. Stop what you're doing, read this carefully, and adjust your approach accordingly. This takes priority over whatever you were doing.\n\n" + btwText,
+						Content: provider.TextContent("[USER INTERRUPTION — READ THIS NOW]\nThe user interrupted your work with an important message while you were running. Stop what you're doing, read this carefully, and adjust your approach accordingly. This takes priority over whatever you were doing.\n\n" + btwText),
 					})
 				default:
 					return
@@ -127,7 +127,7 @@ func (a *Agent) Run(
 		if smStatus := buildSMStatusMsg(); smStatus != nil {
 			replaced := false
 			for i := len(msgs) - 1; i >= 0; i-- {
-				if msgs[i].Role == "system" && containsPrefix(msgs[i].Content, "## Current State") {
+				if msgs[i].Role == "system" && containsPrefix(msgs[i].ContentString(), "## Current State") {
 					msgs[i] = *smStatus
 					replaced = true
 					break
@@ -215,7 +215,7 @@ func (a *Agent) Run(
 			l.Debug("AGENT", "branch_text_only", "text_len", len(accumulatedText), "step", step)
 		}
 
-		assistantMsg := provider.ChatMessage{Role: "assistant", Content: accumulatedText, ReasoningContent: reasoningContent, Reasoning: reasoningContent}
+		assistantMsg := provider.ChatMessage{Role: "assistant", Content: provider.TextContent(accumulatedText), ReasoningContent: reasoningContent, Reasoning: reasoningContent}
 		if hasToolCalls {
 			assistantMsg.ToolCalls = toolCalls
 		}
@@ -226,7 +226,7 @@ func (a *Agent) Run(
 				a.logger.Warn("SUBAGENT", "write_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
 				msgs = append(msgs, provider.ChatMessage{
 					Role:    "user",
-					Content: "[SYSTEM] You are about to end your loop without calling write_report. Your work will be LOST — the main agent cannot see your chat messages. You MUST call write_report with a detailed report before ending. Do it now.",
+					Content: provider.TextContent("[SYSTEM] You are about to end your loop without calling write_report. Your work will be LOST — the main agent cannot see your chat messages. You MUST call write_report with a detailed report before ending. Do it now."),
 				})
 				drainBtw()
 				if smStatus := buildSMStatusMsg(); smStatus != nil {
@@ -253,7 +253,7 @@ func (a *Agent) Run(
 				msgs = append(msgs, provider.ChatMessage{
 					Role:       "tool",
 					ToolCallID: r.id,
-					Content:    r.result.Content,
+					Content:    provider.TextContent(r.result.Content),
 				})
 				lastToolResultIdx = len(msgs) - 1
 				steps = append(steps, StepRecord{

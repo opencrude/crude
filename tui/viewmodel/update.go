@@ -2,16 +2,20 @@ package viewmodel
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/promptref"
 	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
+	"crude/tui/widgets"
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -697,6 +701,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case input.SettingsOpenEvent:
 				m.settings.SaveSnapshot()
 				m.setMode(ModeSettings)
+			case input.RefOpenEvent:
+				m.openReferenceOverlay(e.ID)
+			case input.AttachFilesEvent:
+				m.openFilePicker()
 			}
 		}
 
@@ -704,6 +712,37 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_, cmd := m.mainMsgList.Update(msg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
+			}
+		}
+
+	case ModeTextOverlay:
+		if !m.isMouseMsg(msg) {
+			updated, cmd, action := m.textOverlay.Update(msg)
+			m.textOverlay = updated
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			switch action {
+			case widgets.TextOverlaySave:
+				m.saveReferenceFromOverlay()
+			case widgets.TextOverlayCancel:
+				m.textOverlay.Close()
+				m.setMode(ModeChat)
+			}
+		}
+
+	case ModeFilePicker:
+		if !m.isMouseMsg(msg) {
+			updated, path, action := m.filePicker.Update(msg)
+			m.filePicker = updated
+			switch action {
+			case widgets.FilePickerSelect:
+				m.addFileReference(path)
+				m.filePicker.Close()
+				m.setMode(ModeChat)
+			case widgets.FilePickerCancel:
+				m.filePicker.Close()
+				m.setMode(ModeChat)
 			}
 		}
 	}
@@ -1000,6 +1039,74 @@ func (m *App) handleTabSwitch() {
 			}
 		}
 	}
+}
+
+func (m *App) openReferenceOverlay(refID string) {
+	if m.refStore == nil {
+		return
+	}
+	ref, ok := m.refStore.GetReference(refID)
+	if !ok || !ref.Active() {
+		return
+	}
+	title := ref.DisplayName()
+	if title == "" {
+		title = ref.ID
+	}
+	m.textOverlay.Open(refID, title, ref.Content)
+	m.setMode(ModeTextOverlay)
+}
+
+func (m *App) saveReferenceFromOverlay() {
+	refID := m.textOverlay.RefID()
+	content := m.textOverlay.Value()
+	m.textOverlay.Close()
+	if m.refStore != nil && refID != "" {
+		_ = m.refStore.UpdateReferenceContent(refID, content)
+	}
+	m.setMode(ModeChat)
+}
+
+func (m *App) openFilePicker() {
+	root, _ := m.workingDir()
+	m.filePicker.Open(root)
+	m.setMode(ModeFilePicker)
+}
+
+func (m *App) addFileReference(path string) {
+	if m.refStore == nil || path == "" {
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	isImage := ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg"
+	kind := promptref.KindSelectedFile
+	mime := "text/plain"
+	if isImage {
+		kind = promptref.KindPastedImage
+		mime = "image/" + strings.TrimPrefix(ext, ".")
+		if ext == ".jpg" {
+			mime = "image/jpeg"
+		}
+		if ext == ".svg" {
+			mime = "image/svg+xml"
+		}
+	}
+	ref, err := m.refStore.CreateReference(promptref.CreateRequest{
+		Kind:     kind,
+		Title:    filepath.Base(path),
+		Mime:     mime,
+		FilePath: path,
+		Inline:   false,
+	})
+	if err != nil {
+		m.statusbar.SetError("Failed to add file reference")
+		return
+	}
+	m.input.InsertReference(ref)
+}
+
+func (m *App) workingDir() (string, error) {
+	return os.Getwd()
 }
 
 func tickCmd() tea.Cmd {

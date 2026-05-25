@@ -2,13 +2,18 @@ package session
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"crude/agent"
 	"crude/fileio"
 	"crude/logger"
+	"crude/promptref"
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
@@ -63,7 +68,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 
 	for {
 		select {
-		case userText, ok := <-input.GetInputCh():
+		case userInput, ok := <-input.GetInputCh():
 			if !ok {
 				l.Info("SESSION", "run_exit_input_closed")
 				return
@@ -76,7 +81,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 				s.clearHardCancel()
 				s.drainWakeCh()
 			}
-			s.processTurn(userText, sender, input, blockResolveCh, btwCh, l)
+			s.processTurn(userInput, sender, input, blockResolveCh, btwCh, l)
 
 		case wake := <-s.wakeCh:
 			if atomic.LoadInt32(&s.closing) == 1 {
@@ -110,7 +115,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 			if reportPath != "" {
 				wakeText += fmt.Sprintf("\nReport available at: %s", reportPath)
 			}
-			s.processTurn(wakeText, sender, input, blockResolveCh, btwCh, l)
+			s.processTurn(PlainInput(wakeText), sender, input, blockResolveCh, btwCh, l)
 
 			case WakeShutdown:
 				l.Info("SLEEP", "wake_shutdown")
@@ -120,7 +125,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 	}
 }
 
-func (s *Session) processTurn(userText string, sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan string, l *logger.Logger) {
+func (s *Session) processTurn(userInput UserInput, sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan string, l *logger.Logger) {
 	// Make a local copy of cancelCh
 	cancelCh := input.GetCancelCh()
 
@@ -143,11 +148,11 @@ func (s *Session) processTurn(userText string, sender EventSender, input EventIn
 	s.pendingBlock = false
 	s.blockMu.Unlock()
 	if isBlocked {
-		l.Debug("BLOCK", "block_resolve", "text_len", len(userText))
+		l.Debug("BLOCK", "block_resolve", "text_len", len(userInput.Text))
 		s.blockRespMu.Lock()
-		s.lastBlockResp = userText
+		s.lastBlockResp = userInput.Text
 		s.blockRespMu.Unlock()
-		blockResolveCh <- userText
+		blockResolveCh <- userInput.Text
 		return
 	}
 
@@ -159,21 +164,23 @@ func (s *Session) processTurn(userText string, sender EventSender, input EventIn
 	s.msgCounter++
 	currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
 	s.msgCounterMu.Unlock()
-	l.Info("INPUT", "received", "len", len(userText), "msg_id", currentMsgID, "is_blocked", isBlocked, "turn", s.turnNumber)
+	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "is_blocked", isBlocked, "turn", s.turnNumber)
+
+	userMsg := s.buildUserMessage(userInput)
 
 	if s.db != nil {
-		sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userText)
-		sessiondb.UpdateLastPrompt(s.db, s.sessionID, userText)
+		sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
+		sessiondb.UpdateLastPrompt(s.db, s.sessionID, userInput.Text)
 	}
 
 	s.msgsMu.Lock()
-	s.msgs = append(s.msgs, provider.ChatMessage{Role: "user", Content: userText})
+	s.msgs = append(s.msgs, userMsg)
 	s.msgTurns = append(s.msgTurns, s.turnNumber)
 	s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{DisplayRole: "user"})
 	msgsCopy := make([]provider.ChatMessage, len(s.msgs))
 	copy(msgsCopy, s.msgs)
 	s.msgsMu.Unlock()
-	l.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userText))
+	l.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userInput.Text))
 
 	l.Info("AGENT", "loop_start", "msg_id", currentMsgID)
 
@@ -512,7 +519,7 @@ func (s *Session) finalizeTurn(agentMsgs []provider.ChatMessage, tracker *displa
 		s.msgTurns = persistedTurns
 		s.displayMetas = persistedMetas
 	} else if finalContent != "" {
-		s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", Content: finalContent})
+		s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", Content: provider.TextContent(finalContent)})
 		s.msgTurns = append(s.msgTurns, s.turnNumber)
 		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{DisplayRole: "assistant"})
 	}
@@ -530,5 +537,100 @@ func (s *Session) finalizeTurn(agentMsgs []provider.ChatMessage, tracker *displa
 
 	if finalContent != "" {
 		s.logger.Info("CONV", "assistant_msg", "msg_id", msgID, "len", len(finalContent))
+	}
+}
+
+func (s *Session) buildUserMessage(input UserInput) provider.ChatMessage {
+	if len(input.ReferenceIDs) == 0 || s.db == nil {
+		return provider.NewTextMessage("user", input.Text)
+	}
+
+	refs, err := sessiondb.LoadPromptReferences(s.db)
+	if err != nil {
+		s.logger.Warn("REF", "load_refs_error", "error", err.Error())
+		return provider.NewTextMessage("user", input.Text)
+	}
+
+	refMap := make(map[string]promptref.Reference, len(refs))
+	for _, r := range refs {
+		refMap[r.ID] = r
+	}
+
+	var parts []provider.ContentPart
+	if input.Text != "" {
+		parts = append(parts, provider.ContentPart{Type: "text", Text: input.Text})
+	}
+
+	for _, id := range input.ReferenceIDs {
+		ref, ok := refMap[id]
+		if !ok || !ref.Active() {
+			continue
+		}
+		switch ref.Kind {
+		case promptref.KindPastedImage:
+			var dataURL string
+			if ref.Content != "" {
+				dataURL = "data:" + ref.Mime + ";base64," + ref.Content
+			} else if ref.FilePath != "" {
+				imgData, err := os.ReadFile(ref.FilePath)
+				if err != nil {
+					s.logger.Warn("REF", "image_read_error", "path", ref.FilePath, "error", err.Error())
+					continue
+				}
+				mime := ref.Mime
+				if mime == "" {
+					mime = imageMimeFromExt(filepath.Ext(ref.FilePath))
+				}
+				dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(imgData)
+			}
+			if dataURL == "" {
+				continue
+			}
+			parts = append(parts, provider.ContentPart{
+				Type:     "image_url",
+				ImageURL: &provider.ImageURL{URL: dataURL},
+			})
+		case promptref.KindPastedText:
+			parts = append(parts, provider.ContentPart{Type: "text", Text: ref.Content})
+		case promptref.KindPastedTextFile, promptref.KindSelectedFile:
+			content := ref.Content
+			if content == "" && ref.FilePath != "" {
+				data, err := os.ReadFile(ref.FilePath)
+				if err == nil {
+					content = string(data)
+				}
+			}
+			if content != "" {
+				label := ref.DisplayName()
+				parts = append(parts, provider.ContentPart{
+					Type: "text",
+					Text: fmt.Sprintf("--- %s ---\n%s", label, content),
+				})
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return provider.NewTextMessage("user", input.Text)
+	}
+	return provider.NewMultiPartMessage("user", parts)
+}
+
+func imageMimeFromExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".bmp":
+		return "image/bmp"
+	default:
+		return "image/png"
 	}
 }
