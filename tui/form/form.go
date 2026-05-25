@@ -79,6 +79,16 @@ func NewFormWithButtons(t *theme.Theme, title, hint string, buttons []Button, it
 }
 
 func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
+	// Handle paste messages: route to the currently-editing TextItem
+	if pasteMsg, ok := msg.(tea.PasteMsg); ok {
+		if m.focusZone == 0 && m.focused >= 0 && m.focused < len(m.items) {
+			if ti, ok := m.items[m.focused].(*TextItem); ok && ti.IsEditing() {
+				ti.HandlePaste(pasteMsg.Content)
+			}
+		}
+		return m, nil, FormActionNone
+	}
+
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil, FormActionNone
