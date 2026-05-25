@@ -39,13 +39,14 @@ const (
 )
 
 type Tab struct {
-	ID       TabID
-	Title    string
-	Icon     string
-	State    TabState
-	Closable bool
-	Pinned   bool
-	Layout   TabLayout
+	ID           TabID
+	Title        string
+	DisplayTitle string
+	Icon         string
+	State        TabState
+	Closable     bool
+	Pinned       bool
+	Layout       TabLayout
 }
 
 func newTab(title, icon string, closable bool, layout TabLayout) Tab {
@@ -216,6 +217,13 @@ func (w *Window) SetTabIconByIndex(idx int, icon string) {
 	}
 }
 
+func (w *Window) SetTabDisplayTitleByIndex(index int, displayTitle string) {
+	if index < 0 || index >= len(w.tabs) {
+		return
+	}
+	w.tabs[index].DisplayTitle = displayTitle
+}
+
 func (w *Window) IsOpen() bool {
 	return len(w.tabs) > 0
 }
@@ -302,7 +310,11 @@ func (w *Window) VTabBarWidth() int {
 	// Find the widest tab item (title + optional icon).
 	maxItemW := 0
 	for _, t := range w.tabs {
-		itemW := rendering.StringWidth(t.Title)
+		titleForWidth := t.DisplayTitle
+		if titleForWidth == "" {
+			titleForWidth = t.Title
+		}
+		itemW := rendering.StringWidth(titleForWidth)
 		if t.Icon != "" {
 			itemW += rendering.StringWidth(t.Icon) + 1 // icon + trailing space
 		}
@@ -428,7 +440,11 @@ func (w *Window) computeTabWidths() []int {
 	idealWidths := make([]int, n)
 	totalIdeal := 0
 	for i, t := range w.tabs {
-		titleW := rendering.StringWidth(t.Title)
+		titleForWidth := t.DisplayTitle
+		if titleForWidth == "" {
+			titleForWidth = t.Title
+		}
+		titleW := rendering.StringWidth(titleForWidth)
 		closeW := 0
 		if t.Closable {
 			closeW = closeBtnWidth
@@ -523,7 +539,10 @@ func (w *Window) renderHorizontalTabBar() string {
 func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool) string {
 	var b strings.Builder
 
-	titleText := t.Title
+	titleText := t.DisplayTitle
+	if titleText == "" {
+		titleText = t.Title
+	}
 	availForTitle := tw - tabPadLeft - tabPadRight
 	if isActive {
 		availForTitle -= 2
@@ -676,7 +695,10 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if availForTitle < 1 {
 			availForTitle = 1
 		}
-		titleText := t.Title
+		titleText := t.DisplayTitle
+		if titleText == "" {
+			titleText = t.Title
+		}
 		titleRW := rendering.StringWidth(titleText)
 		if titleRW > availForTitle {
 			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
@@ -712,7 +734,10 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if availForTitle < 1 {
 			availForTitle = 1
 		}
-		titleText := t.Title
+		titleText := t.DisplayTitle
+		if titleText == "" {
+			titleText = t.Title
+		}
 		titleRW := rendering.StringWidth(titleText)
 		if titleRW > availForTitle {
 			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
@@ -839,12 +864,19 @@ func (w *Window) MoveTab(from, to int) {
 func (w *Window) DisplayTitles(maxLen int) []string {
 	titles := make([]string, len(w.tabs))
 	for i, t := range w.tabs {
-		titles[i] = t.Title
+		titles[i] = t.DisplayTitle
+		if titles[i] == "" {
+			titles[i] = t.Title
+		}
 	}
 
 	counts := make(map[string][]int)
 	for i, t := range w.tabs {
-		counts[t.Title] = append(counts[t.Title], i)
+		displayTitle := t.DisplayTitle
+		if displayTitle == "" {
+			displayTitle = t.Title
+		}
+		counts[displayTitle] = append(counts[displayTitle], i)
 	}
 
 	result := make([]string, len(w.tabs))

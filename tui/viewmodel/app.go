@@ -60,7 +60,6 @@ type App struct {
 
 	activeAgentView string
 	agentLabels     map[string]string
-	agentStatuses   map[string]string
 	agentModels     map[string]string
 
 	inputCh  chan<- string
@@ -167,7 +166,6 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		questionForm:  qd,
 		yoloDlg:      yd,
 		agentLabels:  make(map[string]string),
-		agentStatuses: make(map[string]string),
 		agentModels:  make(map[string]string),
 		inputCh:      inputCh,
 		btwCh:        btwCh,
@@ -207,7 +205,9 @@ func (m *App) completeSubAgent(agentID string) {
 	}
 
 	agent, agentOK := m.agents[agentID]
-	alreadyCompleted := agentOK && agent.Completed
+	if agentOK && agent.Completed {
+		return // idempotent: already completed
+	}
 
 	title := m.agentTabTitle(agentID)
 	if tab := m.win.TabByTitle(title); tab != nil {
@@ -230,16 +230,17 @@ func (m *App) completeSubAgent(agentID string) {
 		agent.Completed = true
 		agent.Streaming = false
 		agent.Thinking = false
+		if agent.Status == "" || agent.Status == "running" {
+			agent.Status = "completed"
+		}
 	}
 
 	m.statusbar.ClearAgentState(agentID)
 
-	if !alreadyCompleted {
-		if !m.win.IsOpen() {
-			m.setMode(ModeChat)
-		} else {
-			m.syncOverlayMode()
-		}
+	if !m.win.IsOpen() {
+		m.setMode(ModeChat)
+	} else {
+		m.syncOverlayMode()
 	}
 }
 
@@ -380,18 +381,13 @@ func (m *App) switchToAgentView(agentID string) {
 }
 
 // agentTabTitle returns the window tab title for an agent.
-// Uses "agent:<label>" format so it's identifiable as an agent tab.
+// Uses the full agentID to guarantee uniqueness (no truncation).
+// Human-readable display names are set via DisplayTitle on the tab.
 func (m *App) agentTabTitle(agentID string) string {
 	if agentID == MainAgentID || agentID == "" {
 		return "agent:main"
 	}
-	label := agentID
-	if lbl, ok := m.agentLabels[agentID]; ok && lbl != "" {
-		label = lbl
-	} else if len(agentID) > 12 {
-		label = agentID[:12]
-	}
-	return "agent:" + label
+	return "agent:" + agentID
 }
 
 // isAgentTabTitle checks if a window tab title is an agent tab.
@@ -400,28 +396,16 @@ func (m *App) isAgentTabTitle(title string) bool {
 }
 
 // agentIDFromTabTitle extracts the agent ID from a window tab title.
+// Since tab titles now use the full agentID, parsing is direct.
 func (m *App) agentIDFromTabTitle(title string) string {
 	if !m.isAgentTabTitle(title) {
 		return ""
 	}
-	label := title[6:]
-	if label == "main" {
+	id := title[6:]
+	if id == "main" {
 		return MainAgentID
 	}
-	for id, lbl := range m.agentLabels {
-		if lbl == label {
-			return id
-		}
-	}
-	if _, ok := m.agents[label]; ok {
-		return label
-	}
-	for id := range m.agents {
-		if id != MainAgentID && len(id) > 12 && id[:12] == label {
-			return id
-		}
-	}
-	return label
+	return id
 }
 
 // syncAgentWindowTabs creates/removes window tabs to match the current agent set.
@@ -459,6 +443,9 @@ func (m *App) syncAgentWindowTabs() {
 		if tab.Icon != newIcon {
 			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), newIcon)
 		}
+		if tab.DisplayTitle != "main" {
+			m.win.SetTabDisplayTitleByIndex(m.win.IndexOf(tab.ID), "main")
+		}
 	}
 
 	// Sub-agent tabs in pane creation order (deterministic).
@@ -479,6 +466,13 @@ func (m *App) syncAgentWindowTabs() {
 			if tab.Icon != newIcon {
 				m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), newIcon)
 			}
+			displayLabel := id
+			if lbl, ok := m.agentLabels[id]; ok && lbl != "" {
+				displayLabel = lbl
+			}
+			if tab.DisplayTitle != displayLabel {
+				m.win.SetTabDisplayTitleByIndex(m.win.IndexOf(tab.ID), displayLabel)
+			}
 		}
 	}
 
@@ -498,10 +492,11 @@ func (m *App) agentTabIcon(id string) string {
 	if id == MainAgentID || id == "" {
 		return "■"
 	}
-	status := "running"
-	if st, ok := m.agentStatuses[id]; ok && st != "" {
-		status = st
+	agent, ok := m.agents[id]
+	if !ok || agent.Status == "" {
+		return "●"
 	}
+	status := agent.Status
 	switch {
 	case status == "running":
 		return "●"
@@ -516,24 +511,15 @@ func (m *App) agentTabIcon(id string) string {
 	}
 }
 
-// purgeAgentTabs closes all agent window tabs.
+// purgeAgentTabs closes all agent window tabs in a single pass.
 func (m *App) purgeAgentTabs() {
-	for {
-		removed := false
-		for i := m.win.TabCount() - 1; i >= 0; i-- {
-			tabs := m.win.Tabs()
-			if i >= len(tabs) {
-				continue
-			}
-			if m.isAgentTabTitle(tabs[i].Title) {
-				if m.win.CloseTab(i) != window.CloseNone {
-					removed = true
-				}
-				break
-			}
+	for i := m.win.TabCount() - 1; i >= 0; i-- {
+		tabs := m.win.Tabs()
+		if i >= len(tabs) {
+			continue
 		}
-		if !removed {
-			break
+		if m.isAgentTabTitle(tabs[i].Title) {
+			m.win.CloseTabByID(tabs[i].ID)
 		}
 	}
 }
@@ -552,30 +538,21 @@ func (m *App) purgeStaleAgentTabs() {
 		}
 	}
 
-	for {
-		removed := false
-		for i := m.win.TabCount() - 1; i >= 0; i-- {
-			tabs := m.win.Tabs()
-			if i >= len(tabs) {
+	for i := m.win.TabCount() - 1; i >= 0; i-- {
+		tabs := m.win.Tabs()
+		if i >= len(tabs) {
+			continue
+		}
+		if m.isAgentTabTitle(tabs[i].Title) {
+			agentID := m.agentIDFromTabTitle(tabs[i].Title)
+			// Preserve the main agent tab while sub-agents are active.
+			if agentID == MainAgentID && hasActiveSubs {
 				continue
 			}
-			if m.isAgentTabTitle(tabs[i].Title) {
-				agentID := m.agentIDFromTabTitle(tabs[i].Title)
-				// Preserve the main agent tab while sub-agents are active.
-				if agentID == MainAgentID && hasActiveSubs {
-					continue
-				}
-				a, ok := m.agents[agentID]
-				if !ok || a.Completed {
-					if m.win.CloseTab(i) != window.CloseNone {
-						removed = true
-					}
-					break
-				}
+			a, ok := m.agents[agentID]
+			if !ok || a.Completed {
+				m.win.CloseTabByID(tabs[i].ID)
 			}
-		}
-		if !removed {
-			break
 		}
 	}
 }

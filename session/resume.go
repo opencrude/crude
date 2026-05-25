@@ -150,7 +150,7 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		msgTurns:     msgTurns,
 		displayMetas: displayMetas,
 		createdAts:   createdAts,
-		wakeCh:           make(chan WakeEvent, 8),
+		wakeCh:           make(chan WakeEvent, WakeChBufSize),
 		writeBuf:         make([]taggedMessage, 0, 64),
 		consumedReports:  make(map[string]bool),
 	}

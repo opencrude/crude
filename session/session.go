@@ -22,6 +22,11 @@ import (
 	"crude/statemachine"
 )
 
+// WakeChBufSize is the buffer size for the session wake channel.
+// Must be large enough to handle bursts of concurrent sub-agent completions
+// without dropping wake events.
+const WakeChBufSize = 32
+
 type EventSender interface {
 	SendAgentEvent(typ string, data any)
 	SendAgentEventWithID(typ string, data any, agentID string)
@@ -200,7 +205,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		subAgentSup:   nil,
 		sessionID:      sessionID,
 		sessionStart:   time.Now(),
-		wakeCh:         make(chan WakeEvent, 8),
+		wakeCh:         make(chan WakeEvent, WakeChBufSize),
 		cost:           NewCostAccumulator(lg),
 		tokens:         NewTokenTracker(lg),
 		db:             db,
