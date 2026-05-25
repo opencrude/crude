@@ -25,8 +25,6 @@ func (m *App) View() tea.View {
 		return v
 	}
 
-	m.syncAgentWindowTabs()
-
 	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
 	m.overlay.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
 
