@@ -78,32 +78,9 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		agentID = MainAgentID
 	}
 
-	switch evt.Type {
-	case "sub_agent_started":
-		m.handleSubAgentStarted(evt)
-	case "sub_agent_completed":
-		m.handleSubAgentCompleted(evt)
-	case "sub_agent_question":
-		m.handleSubAgentQuestion(evt)
-	case "file_claim":
-		m.handleFileClaim(evt)
-	case "stream_token", "thinking", "tool_call", "tool_call_streaming", "tool_result", "tool_progress":
-		if agentID == MainAgentID {
-			m.statusbar.RecordActivity()
-		} else {
-			m.statusbar.RecordActivityForAgent(agentID)
-		}
-	case "phase":
-		if agentID == MainAgentID {
-			m.statusbar.RecordActivity()
-		} else {
-			m.statusbar.RecordActivityForAgent(agentID)
-			if phase, ok := evt.Data.(string); ok {
-				m.statusbar.SetPhaseForAgent(agentID, phase)
-			}
-		}
-	}
-
+	// Ensure agent state exists before processing event-specific logic.
+	// This must happen before the switch so that syncAgentWindowTabs()
+	// (called at the end of this function) can find the agent in m.agents.
 	agent, ok := m.agents[agentID]
 	if !ok {
 		if agentID == MainAgentID {
@@ -129,7 +106,34 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		if evt.Type == "done" || evt.Type == "error" {
 			m.handleSubPaneCompletion(agentID)
 		}
+		m.syncAgentWindowTabs()
 		return nil
+	}
+
+	switch evt.Type {
+	case "sub_agent_started":
+		m.handleSubAgentStarted(evt)
+	case "sub_agent_completed":
+		m.handleSubAgentCompleted(evt)
+	case "sub_agent_question":
+		m.handleSubAgentQuestion(evt)
+	case "file_claim":
+		m.handleFileClaim(evt)
+	case "stream_token", "thinking", "tool_call", "tool_call_streaming", "tool_result", "tool_progress":
+		if agentID == MainAgentID {
+			m.statusbar.RecordActivity()
+		} else {
+			m.statusbar.RecordActivityForAgent(agentID)
+		}
+	case "phase":
+		if agentID == MainAgentID {
+			m.statusbar.RecordActivity()
+		} else {
+			m.statusbar.RecordActivityForAgent(agentID)
+			if phase, ok := evt.Data.(string); ok {
+				m.statusbar.SetPhaseForAgent(agentID, phase)
+			}
+		}
 	}
 
 	thinkingTarget := m.getThinkingTarget(agentID, agent)
@@ -229,6 +233,11 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.statusbar.SetAsyncCommands(cmds)
 		}
 	}
+
+	// Sync window tabs after all state mutations to ensure tab state
+	// matches agent state. This was previously called in View() which
+	// caused flickering by mutating render state every frame.
+	m.syncAgentWindowTabs()
 
 	return m.processAgentResults(cmd)
 }
@@ -455,7 +464,6 @@ func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
 			sp.MsgList.SetModelName(model)
 		}
 	}
-	m.syncAgentWindowTabs()
 }
 
 func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
@@ -477,7 +485,6 @@ func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
 
 	if status == "running" {
 		m.agentStatuses[agentID] = status
-		m.syncAgentWindowTabs()
 		return
 	}
 
