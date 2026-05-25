@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -203,6 +204,14 @@ func (m *App) View() tea.View {
 		}
 	}
 
+	// reapplySubPaneBg replaces ANSI reset/selective-reset sequences within s
+	// and appends subPaneBgSeq after each one, ensuring the sub-pane background
+	// persists across style resets emitted by glamour, chroma, etc.
+	reapplySubPaneBg := func(s string) string {
+		re := regexp.MustCompile(`\x1b\[(?:0?m|39m|49m)`)
+		return re.ReplaceAllString(s, "${0}"+subPaneBgSeq)
+	}
+
 	for i, line := range chatVisible {
 		maxContentW := innerW - totalSBW
 		if totalSBW > 0 {
@@ -288,17 +297,17 @@ func (m *App) View() tea.View {
 			}
 
 			if hasBg && subPaneBgSeq != "" {
-				bgPart = subPaneBgSeq + strings.ReplaceAll(bgPart, "\x1b[0m", "\x1b[0m"+subPaneBgSeq) + "\x1b[0m"
+				bgPart = subPaneBgSeq + reapplySubPaneBg(bgPart) + "\x1b[0m"
 			}
 			line = pad + bgPart + noBgPart + pad
 		} else {
-			rightPad := innerW - visW
-			if rightPad < 0 {
-				rightPad = 0
+			padRight := innerW - visW
+			if padRight < 0 {
+				padRight = 0
 			}
-			inner := line + strings.Repeat(" ", rightPad)
+			inner := line + strings.Repeat(" ", padRight)
 			if hasBg && subPaneBgSeq != "" {
-				inner = subPaneBgSeq + strings.ReplaceAll(inner, "\x1b[0m", "\x1b[0m"+subPaneBgSeq) + "\x1b[0m"
+				inner = subPaneBgSeq + reapplySubPaneBg(inner) + "\x1b[0m"
 			}
 			line = pad + inner + pad
 		}

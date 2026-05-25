@@ -116,71 +116,71 @@ func ApplyMainAgentOverrides(filtered []tools.ToolDef) []tools.ToolDef {
 
 func mainAgentToolDescriptions() map[string]string {
 	return map[string]string{
-		"read_file": "Only for reading the agents reports or in case of emergency for the orchestrator. " +
+		"read_file": "Only for reading agent reports, or as a limited fallback for the orchestrator. " +
 			"Delegate ALL file reading to a researcher sub-agent. " +
-			"Using this for anything other than the agents reports means your delegation pipeline failed — you are doing reconnaissance that should be handled by a specialist.",
+			"Using this for anything other than agent reports means the task should usually be routed to a specialist instead.",
 
-		"write_file": "Emergency-only file writer for the orchestrator. " +
+		"write_file": "Fallback-only file writer for the orchestrator. " +
 			"Delegate ALL file writing to a crafter or aeron sub-agent. " +
-			"Using this means you are doing implementation work that should be delegated.",
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"edit_file": "Emergency-only file editor for the orchestrator. " +
+		"edit_file": "Fallback-only file editor for the orchestrator. " +
 			"Delegate ALL file editing to a crafter or aeron sub-agent. " +
-			"Using this means you are doing implementation work that should be delegated.",
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"delete_file": "Emergency-only. Delegate to a crafter sub-agent. " +
-			"Using this means you are doing file operations that should be delegated.",
+		"delete_file": "Fallback-only. Delegate to a crafter sub-agent whenever possible. " +
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"move_file": "Emergency-only. Delegate to a crafter sub-agent. " +
-			"Using this means you are doing file operations that should be delegated.",
+		"move_file": "Fallback-only. Delegate to a crafter sub-agent whenever possible. " +
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"copy_file": "Emergency-only. Delegate to a crafter sub-agent. " +
-			"Using this means you are doing file operations that should be delegated.",
+		"copy_file": "Fallback-only. Delegate to a crafter sub-agent whenever possible. " +
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"glob_files": "Emergency-only file finder for the orchestrator. " +
+		"glob_files": "Fallback-only file finder for the orchestrator. " +
 			"Delegate ALL file search to a researcher sub-agent. " +
-			"Using this means you failed to delegate reconnaissance.",
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"grep_files": "Emergency-only code search for the orchestrator. " +
+		"grep_files": "Fallback-only code search for the orchestrator. " +
 			"Delegate ALL code search to a researcher sub-agent. " +
-			"Using this means you failed to delegate reconnaissance.",
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"list_directory": "Emergency-only directory listing for the orchestrator. " +
+		"list_directory": "Fallback-only directory listing for the orchestrator. " +
 			"Delegate to a researcher sub-agent. " +
-			"Using this means you failed to delegate reconnaissance.",
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"web_search": "Emergency-only web search for the orchestrator. " +
+		"web_search": "Fallback-only web search for the orchestrator. " +
 			"Delegate ALL web research to a researcher sub-agent. " +
-			"Using this means you failed to delegate research work.",
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"web_fetch": "Emergency-only web fetch for the orchestrator. " +
+		"web_fetch": "Fallback-only web fetch for the orchestrator. " +
 			"Delegate ALL web research to a researcher sub-agent. " +
-			"Using this means you failed to delegate research work.",
+			"Use this directly only when delegation is unavailable or exhausted.",
 
-		"arxiv_search": "Emergency-only academic search for the orchestrator. " +
+		"arxiv_search": "Fallback-only academic search for the orchestrator. " +
 			"Delegate ALL research to a researcher sub-agent. " +
-			"Using this means you failed to delegate research work.",
+			"Use this directly only when delegation is unavailable or exhausted.",
 
 		"run_sub_agent": "Spawn a leaf agent for a well-defined subtask. " +
-			"Sub-agents run ASYNCHRONOUSLY — the system auto-wakes you on completion. " +
-			"Launch, then either continue other work or end your turn. " +
-			"NEVER actively wait or poll for results. " +
+			"Context handoff: pass the file paths of any previous agent reports (.md) in the `instructions` parameter so the new agent has context. " +
+			"Sub-agents run asynchronously; the system auto-wakes you on completion. " +
+			"Launch, then either continue independent work or end your turn. " +
+			"Do not actively wait or poll for routine results. " +
 			"Required: category, description. " +
 			"Optional: instructions, policy, allowed_tools, denied_tools, file_ownership, max_steps, timeout_seconds, wait. " +
-			"Model and provider are resolved automatically from your configuration — do NOT specify them.",
+			"Model and provider are resolved automatically from your configuration; do not specify them.",
 
-		"poll_sub_agent": "DISASTER RECOVERY ONLY — do NOT use during normal operation. " +
+		"poll_sub_agent": "Recovery-only status check; do not use during normal operation. " +
 			"Check a sub-agent that appears genuinely stalled, unresponsive, or broken. " +
-			"The system AUTO-WAKES you when sub-agents complete — you never need to poll for results. " +
-			"If you reach for this tool and there is no real emergency, something is wrong with your approach. " +
-			"End your turn instead and let the system notify you.",
+			"The system auto-wakes you when sub-agents complete, so routine polling is unnecessary. " +
+			"For normal waiting, end your turn and let the system notify you.",
 
-		"list_sub_agents": "TROUBLESHOOTING ONLY — not for routine status checks. " +
+		"list_sub_agents": "Troubleshooting-only; not for routine status checks. " +
 			"Diagnose stalled, unresponsive, or conflicting sub-agents. " +
 			"The system auto-wakes you on completion — you never need to check who is running. " +
-			"Use only when something appears to have gone wrong.",
+			"Use only when the asynchronous flow appears blocked.",
 
-		"cancel_sub_agent": "Cancel a sub-agent that is wrong, stale, or unresponsive. " +
+		"cancel_sub_agent": "Cancel a sub-agent that is misrouted, stale, or unresponsive. " +
 			"Use only for genuine course corrections — never as a routine workflow tool.",
 	}
 }
