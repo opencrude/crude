@@ -193,6 +193,23 @@ func (m *TextItem) SetValue(s string)     { m.value = []rune(s) }
 func (m *TextItem) IsEditing() bool      { return m.editing }
 func (m *TextItem) StartEditing()        { m.editing = true; m.editCursor = len(m.value) }
 
+func (m *TextItem) HandlePaste(content string) {
+	if !m.editing {
+		return
+	}
+	for _, r := range content {
+		if unicode.IsPrint(r) {
+			newVal := make([]rune, len(m.value)+1)
+			copy(newVal, m.value[:m.editCursor])
+			newVal[m.editCursor] = r
+			copy(newVal[m.editCursor+1:], m.value[m.editCursor:])
+			m.value = newVal
+			m.editCursor++
+		}
+	}
+	m.lastInputTime = time.Now()
+}
+
 func (m *TextItem) Snapshot() FormItem {
 	val := make([]rune, len(m.value))
 	copy(val, m.value)

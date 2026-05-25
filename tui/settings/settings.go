@@ -323,6 +323,19 @@ func (m Model) updateRoot(msg tea.Msg) (Model, tea.Cmd, Event) {
 }
 
 func (m Model) updateProfiles(msg tea.Msg) (Model, tea.Cmd, Event) {
+	// Handle paste for profile name creation field
+	if pasteMsg, ok := msg.(tea.PasteMsg); ok {
+		if m.creatingProfile {
+			for _, r := range pasteMsg.Content {
+				if unicode.IsPrint(r) {
+					m.profileNameInput = append(m.profileNameInput[:m.profileNameCursor], append([]rune{r}, m.profileNameInput[m.profileNameCursor:]...)...)
+					m.profileNameCursor++
+				}
+			}
+		}
+		return m, nil, nil
+	}
+
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil, nil
