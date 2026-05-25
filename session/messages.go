@@ -193,18 +193,18 @@ func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
 			}
 		}
 		if last.Role == "assistant" && len(last.ToolCalls) > 0 && allCommTools(last.ToolCalls) {
-			content := last.Content
+			content := last.ContentString()
 			for i := len(msgs) - 1; i > len(msgs)-1-len(last.ToolCalls); i-- {
-				if i >= 0 && msgs[i].Role == "tool" && msgs[i].Content != "" && !strings.HasPrefix(msgs[i].Content, "[cancelled]") {
+				if i >= 0 && msgs[i].Role == "tool" && msgs[i].ContentString() != "" && !strings.HasPrefix(msgs[i].ContentString(), "[cancelled]") {
 					if content == "" {
-						content = msgs[i].Content
+						content = msgs[i].ContentString()
 					}
 				}
 			}
 			msgs = msgs[:len(msgs)-len(last.ToolCalls)]
 			msgs[len(msgs)-1].ToolCalls = nil
 			if content != "" {
-				msgs[len(msgs)-1].Content = content
+				msgs[len(msgs)-1].Content = provider.TextContent(content)
 			}
 			break
 		}
@@ -230,7 +230,7 @@ func backfillMissingToolResults(msgs []provider.ChatMessage) []provider.ChatMess
 					result = append(result, provider.ChatMessage{
 						Role:       "tool",
 						ToolCallID: tc.ID,
-						Content:    "[cancelled] Operation cancelled by user",
+						Content:    provider.TextContent("[cancelled] Operation cancelled by user"),
 					})
 				}
 			}
@@ -262,7 +262,7 @@ func truncateMessages(msgs []provider.ChatMessage, ctxWindow int, model string) 
 		if used+msgTokens > tokenBudget && i > 0 {
 			summary := provider.ChatMessage{
 				Role:    "user",
-				Content: fmt.Sprintf("[Earlier conversation truncated — %d messages omitted, ~%d tokens saved]", i, used),
+				Content: provider.TextContent(fmt.Sprintf("[Earlier conversation truncated — %d messages omitted, ~%d tokens saved]", i, used)),
 			}
 			return append([]provider.ChatMessage{summary}, msgs[i+1:]...)
 		}

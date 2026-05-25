@@ -116,7 +116,7 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 	if interrupted {
 		msgs = append(msgs, provider.ChatMessage{
 			Role:    "user",
-			Content: action,
+			Content: provider.TextContent(action),
 		})
 		msgTurns = append(msgTurns, maxTurn+1)
 		maxTurn++

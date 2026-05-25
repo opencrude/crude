@@ -33,7 +33,7 @@ type EventSender interface {
 }
 
 type EventInput interface {
-	GetInputCh() <-chan string
+	GetInputCh() <-chan UserInput
 	GetCancelCh() <-chan struct{}
 }
 
@@ -275,6 +275,8 @@ func (s *Session) WakeCh() chan<- WakeEvent {
 func (s *Session) SessionDir() string {
 	return s.logger.SessionDir()
 }
+
+func (s *Session) DB() *sql.DB { return s.db }
 
 func (s *Session) Editor() *fileio.Editor { return s.editor }
 

@@ -337,12 +337,31 @@ func (m *App) View() tea.View {
 	if isSpecialMode {
 		lines = append(lines, pad+inputView)
 	} else {
+		refChips := m.renderReferenceChips()
+		if len(refChips) > 0 {
+			for _, rc := range refChips {
+				lines = append(lines, pad+rc)
+			}
+		}
 		for _, il := range strings.Split(inputView, "\n") {
 			lines = append(lines, pad+il)
 		}
 	}
 
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+
+	if m.Mode == ModeTextOverlay && m.textOverlay.IsOpen() {
+		overlayLines := m.textOverlay.View(m.width, m.height, m.spinFrame)
+		for _, ol := range overlayLines {
+			lines = append(lines, ol)
+		}
+	}
+	if m.Mode == ModeFilePicker && m.filePicker.IsOpen() {
+		overlayLines := m.filePicker.View(m.width, m.height, m.spinFrame)
+		for _, ol := range overlayLines {
+			lines = append(lines, ol)
+		}
+	}
 
 	statusView := m.statusbar.View()
 	lines = append(lines, pad+statusView)
@@ -619,6 +638,31 @@ func (m *App) launcherSelectedLineIndex(sessionLines []string) int {
 		}
 	}
 	return 0
+}
+
+func (m *App) renderReferenceChips() []string {
+	refs := m.input.PromptReferences()
+	if len(refs) == 0 {
+		return nil
+	}
+	var chips []string
+	for _, ref := range refs {
+		if !ref.Active() {
+			continue
+		}
+		label := ref.DisplayName()
+		chipStyle := lipgloss.NewStyle().
+			Foreground(m.theme.Colors.Accent2).
+			Background(m.theme.Colors.Selection).
+			Padding(0, 1)
+		closeStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Error).Bold(true)
+		chip := chipStyle.Render(label) + closeStyle.Render(" ×")
+		chips = append(chips, chip)
+	}
+	if len(chips) == 0 {
+		return nil
+	}
+	return []string{strings.Join(chips, " ")}
 }
 
 

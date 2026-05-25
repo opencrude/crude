@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
+	"crude/session"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 )
@@ -27,12 +28,13 @@ func (m *App) submitInput(text string) tea.Cmd {
 	if OnHistorySave != nil {
 		OnHistorySave(m.history)
 	}
+	refIDs := m.input.ReferencedIDs()
 	ma.SubmitInput(text)
 	m.statusbar.SetThinking(true, false, false)
 	ch := m.inputCh
 	return func() tea.Msg {
 		select {
-		case ch <- text:
+		case ch <- session.InputWithRefs(text, refIDs):
 			return nil
 		default:
 			return ttypes.ErrorMsg("input channel blocked - please try again")

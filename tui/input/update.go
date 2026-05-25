@@ -2,12 +2,46 @@ package input
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/promptref"
 	"crude/tui/components"
 	"crude/tui/rendering"
 )
+
+const pasteInlineThreshold = 16 * 1024
+
+func isBase64Image(s string) bool {
+	return strings.HasPrefix(s, "data:image/") || (len(s) > 100 && strings.HasPrefix(s, "/9j/"))
+}
+
+func detectImageMime(s string) string {
+	if strings.HasPrefix(s, "data:image/png;") {
+		return "image/png"
+	}
+	if strings.HasPrefix(s, "data:image/jpeg;") || strings.HasPrefix(s, "data:image/jpg;") {
+		return "image/jpeg"
+	}
+	if strings.HasPrefix(s, "data:image/gif;") {
+		return "image/gif"
+	}
+	if strings.HasPrefix(s, "data:image/webp;") {
+		return "image/webp"
+	}
+	if strings.HasPrefix(s, "/9j/") {
+		return "image/jpeg"
+	}
+	return "image/png"
+}
+
+func extractBase64Data(s string) string {
+	if idx := strings.Index(s, ";base64,"); idx >= 0 {
+		return s[idx+8:]
+	}
+	return s
+}
 
 func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, showHint bool) (Model, tea.Cmd, Event) {
 	m.thinking = thinking
@@ -22,9 +56,16 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 	}
 
 	switch msg := msg.(type) {
+	case tea.PasteMsg:
+		return m.handlePaste(msg.Content)
+
 	case tea.KeyPressMsg:
 		if m.showHint {
 			m.showHint = false
+		}
+
+		if msg.String() == "ctrl+o" {
+			return m, nil, AttachFilesEvent{}
 		}
 
 		// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
@@ -46,6 +87,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			if text == "" {
 				return m, nil, nil
 			}
+			expandedText := strings.TrimSpace(m.ExpandedValue())
 			m.appendHistory(text)
 			m.input.Clear()
 			m.slashActive = false
@@ -56,9 +98,9 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 				return m, nil, SlashCommandEvent{Command: text}
 			}
 			if m.thinking && !m.blocking {
-				return m, nil, BtwSubmitEvent{Text: text}
+				return m, nil, BtwSubmitEvent{Text: expandedText}
 			}
-			return m, nil, SubmitEvent{Text: text}
+			return m, nil, SubmitEvent{Text: expandedText}
 
 		case tea.KeyUp:
 			if m.input.CursorVisualLine() == 0 {
@@ -79,6 +121,10 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			return m, cmd, nil
 
 		case tea.KeyBackspace, tea.KeyDelete:
+			if id, deleted := m.deleteReferenceAtCursor(msg.Code == tea.KeyBackspace); deleted {
+				m.syncSlashState()
+				return m, nil, RefSelectEvent{ID: id}
+			}
 			if m.histIdx >= 0 {
 				m.histPrefix = strings.TrimSpace(m.input.Value())
 				m.histDraft = m.input.Value()
@@ -90,6 +136,11 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			return m, cmd, nil
 
 		default:
+			if msg.Code == tea.KeySpace && msg.Text == " " {
+				if id := m.ActiveReferenceID(); id != "" {
+					return m, nil, RefOpenEvent{ID: id}
+				}
+			}
 			if msg.Mod.Contains(tea.ModCtrl) && msg.Code == 's' {
 				return m, nil, SettingsOpenEvent{}
 			}
@@ -100,12 +151,98 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg, false)
+			m.applyReferenceRanges()
 			m.syncSlashState()
 			return m, cmd, nil
 		}
 	}
 
 	return m, nil, nil
+}
+
+func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
+	content = rendering.SanitizeForTerminal(content)
+	if content == "" {
+		return m, nil, nil
+	}
+
+	if isBase64Image(content) {
+		return m.handleImagePaste(content)
+	}
+
+	if m.refStore == nil || (utf8.RuneCountInString(content) < 240 && !strings.Contains(content, "\n")) {
+		m.input.InsertString(content)
+		m.syncSlashState()
+		return m, nil, nil
+	}
+
+	inline := len(content) <= pasteInlineThreshold
+	kind := promptref.KindPastedText
+	title := "Pasted text"
+	if !inline {
+		kind = promptref.KindPastedTextFile
+		title = "Pasted text file"
+	}
+	ref, err := m.refStore.CreateReference(promptref.CreateRequest{
+		Kind:    kind,
+		Title:   title,
+		Mime:    "text/plain; charset=utf-8",
+		Content: content,
+		Inline:  inline,
+	})
+	if err != nil {
+		m.input.InsertString(content)
+		m.syncSlashState()
+		return m, nil, nil
+	}
+	if inline {
+		m.InsertReference(ref)
+	}
+	m.syncSlashState()
+	return m, nil, RefSelectEvent{ID: ref.ID}
+}
+
+func (m Model) handleImagePaste(content string) (Model, tea.Cmd, Event) {
+	if m.refStore == nil {
+		return m, nil, nil
+	}
+	mime := detectImageMime(content)
+	b64data := extractBase64Data(content)
+	ref, err := m.refStore.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedImage,
+		Title:   "Pasted image",
+		Mime:    mime,
+		Content: b64data,
+		Inline:  false,
+	})
+	if err != nil {
+		return m, nil, nil
+	}
+	m.InsertReference(ref)
+	m.syncSlashState()
+	return m, nil, RefSelectEvent{ID: ref.ID}
+}
+
+func (m *Model) deleteReferenceAtCursor(backspace bool) (string, bool) {
+	pos := m.input.CursorFlat()
+	for _, rr := range m.RefRanges() {
+		deleteIt := false
+		if backspace {
+			deleteIt = pos > rr.Start && pos <= rr.End
+		} else {
+			deleteIt = pos >= rr.Start && pos < rr.End
+		}
+		if !deleteIt {
+			continue
+		}
+		m.input.DeleteRange(rr.Start, rr.End)
+		m.input.SetCursorFlat(rr.Start)
+		if m.refStore != nil {
+			_ = m.refStore.DeleteReference(rr.ID)
+		}
+		return rr.ID, true
+	}
+	return "", false
 }
 
 func (m *Model) syncSlashState() {

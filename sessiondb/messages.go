@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"crude/provider"
@@ -108,11 +109,23 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 			cacheControlJSON, _ = json.Marshal(m.CacheControl)
 		}
 
-		content := m.Content
+		contentStr := m.ContentString()
 		toolResult := ""
 		if m.Role == "tool" {
-			toolResult = m.Content
-			content = ""
+			toolResult = contentStr
+			contentStr = ""
+		}
+
+		var dbContent string
+		if m.Content.IsText() {
+			dbContent = contentStr
+		} else {
+			partsJSON, err := json.Marshal(m.Content.Parts())
+			if err == nil {
+				dbContent = string(partsJSON)
+			} else {
+				dbContent = contentStr
+			}
 		}
 
 		turn := 0
@@ -129,7 +142,7 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 
 		_, err := stmt.Exec(
 			m.Role,
-			nullString(content),
+			nullString(dbContent),
 			nullString(m.ReasoningContent),
 			nullString(m.Reasoning),
 			nullBytes(toolCallsJSON),
@@ -192,9 +205,9 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 		}
 
 		m := provider.ChatMessage{
-			Role:    r.Role,
-			Content: r.Content.String,
+			Role: r.Role,
 		}
+		m.Content = parseMessageContent(r.Content.String)
 
 		if r.ReasoningContent.Valid {
 			m.ReasoningContent = r.ReasoningContent.String
@@ -215,7 +228,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 			}
 		}
 		if m.Role == "tool" && r.ToolResult.Valid {
-			m.Content = r.ToolResult.String
+			m.Content = provider.TextContent(r.ToolResult.String)
 		}
 
 		msgs = append(msgs, m)
@@ -252,9 +265,9 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 		}
 
 		m := provider.ChatMessage{
-			Role:    r.Role,
-			Content: r.Content.String,
+			Role: r.Role,
 		}
+		m.Content = parseMessageContent(r.Content.String)
 
 		if r.ReasoningContent.Valid {
 			m.ReasoningContent = r.ReasoningContent.String
@@ -275,7 +288,7 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 			}
 		}
 		if m.Role == "tool" && r.ToolResult.Valid {
-			m.Content = r.ToolResult.String
+			m.Content = provider.TextContent(r.ToolResult.String)
 		}
 
 		var meta DisplayMeta
@@ -310,4 +323,15 @@ func nullBytes(b []byte) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: string(b), Valid: true}
+}
+
+func parseMessageContent(s string) provider.MessageContent {
+	s = strings.TrimSpace(s)
+	if len(s) > 0 && s[0] == '[' {
+		var parts []provider.ContentPart
+		if err := json.Unmarshal([]byte(s), &parts); err == nil && len(parts) > 0 {
+			return provider.PartsContent(parts)
+		}
+	}
+	return provider.TextContent(s)
 }

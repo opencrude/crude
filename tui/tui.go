@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"database/sql"
+
 	tea "charm.land/bubbletea/v2"
 
+	"crude/promptref"
+	"crude/session"
 	"crude/sessiondb"
 	"crude/tui/viewmodel"
 	"crude/tui/types"
@@ -11,7 +15,7 @@ import (
 type TUI struct {
 	app     *viewmodel.App
 	Program *tea.Program
-	InputCh <-chan string
+	InputCh <-chan session.UserInput
 	BtwCh   <-chan string
 	doneCh  chan struct{}
 
@@ -55,8 +59,8 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	Warn(tag, msg string, pairs ...any)
 	Error(tag, msg string, pairs ...any)
 	Debug(tag, msg string, pairs ...any)
-}, sessions []sessiondb.SessionMeta) (*TUI, error) {
-	inputCh := make(chan string, 8)
+}, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) (*TUI, error) {
+	inputCh := make(chan session.UserInput, 8)
 	btwCh := make(chan string, 8)
 	cancelCh := make(chan struct{}, 1)
 
@@ -96,7 +100,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return ProviderConfig{}
 	}
 
-	a := viewmodel.NewApp(modelName, username, inputCh, btwCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions)
+	a := viewmodel.NewApp(modelName, username, inputCh, btwCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions, sessionID, sessionDir, db)
 	a.SetProviderPresets(t.ProviderPresets)
 	a.SetHistory(history)
 	a.OnConfirmResult = func(result ConfirmResult) {
@@ -195,7 +199,7 @@ func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
 	t.Program.Send(types.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
 }
 
-func (t *TUI) GetInputCh() <-chan string {
+func (t *TUI) GetInputCh() <-chan session.UserInput {
 	return t.InputCh
 }
 
@@ -217,6 +221,10 @@ func (t *TUI) HydrateMessages(msgs []types.ChatMessage) {
 
 func (t *TUI) OpenSettings() {
 	t.Program.Send(types.OpenSettingsMsg{})
+}
+
+func (t *TUI) SetReferences(refs []promptref.Reference) {
+	t.app.SetReferences(refs)
 }
 
 func GetGlobal() *TUI {

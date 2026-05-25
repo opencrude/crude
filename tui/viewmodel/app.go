@@ -1,10 +1,13 @@
 package viewmodel
 
 import (
+	"database/sql"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/promptref"
+	"crude/session"
 	"crude/sessiondb"
 	"crude/tui/input"
 	"crude/tui/rendering"
@@ -26,6 +29,8 @@ const (
 	ModeQuestion
 	ModeYolo
 	ModeLauncher
+	ModeTextOverlay
+	ModeFilePicker
 )
 
 type Logger interface {
@@ -50,6 +55,9 @@ type App struct {
 	confirm      widgets.ConfirmDialog
 	questionForm  widgets.QuestionForm
 	yoloDlg      widgets.YoloDialog
+	textOverlay widgets.TextOverlay
+	filePicker  widgets.FilePicker
+	refStore    *referenceStore
 
 	win     *window.Window
 	overlay *window.Window
@@ -62,7 +70,7 @@ type App struct {
 	agentLabels     map[string]string
 	agentModels     map[string]string
 
-	inputCh  chan<- string
+	inputCh  chan<- session.UserInput
 	btwCh    chan<- string
 	cancelCh chan<- struct{}
 
@@ -121,7 +129,7 @@ type (
 	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta) *App {
+func NewApp(modelName string, username string, inputCh chan<- session.UserInput, btwCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) *App {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	ml.SetModelName(modelName)
@@ -133,6 +141,9 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 	cd := widgets.NewConfirmDialog(th)
 	qd := widgets.NewQuestionForm(th)
 	yd := widgets.NewYoloDialog(th)
+	to := widgets.NewTextOverlay(th)
+	fp := widgets.NewFilePicker(th)
+	refs := newReferenceStore(sessionID, sessionDir, db)
 
 	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) { lg.Warn(tag, msg, pairs...) })
 
@@ -165,6 +176,9 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 		confirm:      cd,
 		questionForm:  qd,
 		yoloDlg:      yd,
+		textOverlay: to,
+		filePicker: fp,
+		refStore:   refs,
 		agentLabels:  make(map[string]string),
 		agentModels:  make(map[string]string),
 		inputCh:      inputCh,
@@ -182,6 +196,7 @@ func NewApp(modelName string, username string, inputCh chan<- string, btwCh chan
 	}
 
 	ml.SetSubPaneContentFn(app.renderSubPaneContent)
+	app.input.SetReferenceStore(refs)
 
 	return app
 }
@@ -313,6 +328,10 @@ func modeName(m Mode) string {
 		return "yolo"
 	case ModeLauncher:
 		return "launcher"
+	case ModeTextOverlay:
+		return "text-overlay"
+	case ModeFilePicker:
+		return "file-picker"
 	default:
 		return "unknown"
 	}
@@ -328,6 +347,16 @@ func (m *App) SetDeleteSessionFn(fn func(string)) {
 
 func (m *App) SetListSessionsFn(fn func() []sessiondb.SessionMeta) {
 	m.onListSessions = fn
+}
+
+func (m *App) SetReferences(refs []promptref.Reference) {
+	if m.refStore == nil {
+		return
+	}
+	for _, ref := range refs {
+		m.refStore.AddExisting(ref)
+	}
+	m.input.SetReferenceStore(m.refStore)
 }
 
 func (m *App) activeMessageList() *widgets.MessageList {

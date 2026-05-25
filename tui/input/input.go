@@ -3,6 +3,7 @@ package input
 import (
 	"strings"
 
+	"crude/promptref"
 	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -31,6 +32,10 @@ func (SettingsOpenEvent) event() {}
 type HistorySaveEvent struct{ History []string }
 
 func (HistorySaveEvent) event() {}
+
+type AttachFilesEvent struct{}
+
+func (AttachFilesEvent) event() {}
 
 type CmdInfo struct {
 	Name  string
@@ -80,6 +85,7 @@ type Model struct {
 	thinking        bool
 	blocking        bool
 	spinFrame       int
+	refStore        ReferenceStore
 }
 
 func NewModel(t *theme.Theme) Model {
@@ -134,7 +140,7 @@ func (m Model) History() []string {
 }
 
 func (m *Model) SetInput(s string) {
-	m.input.SetValue(s)
+	m.SetValuePreserveReferences(s)
 }
 
 func (m *Model) ClearInput() {
@@ -237,6 +243,34 @@ func (m *Model) ClearInputSelection() {
 
 func (m Model) Value() string {
 	return m.input.Value()
+}
+
+func (m Model) DisplayValue() string {
+	if m.refStore == nil {
+		return m.input.Value()
+	}
+	return DisplayReferences(m.input.Value(), m.refStore.ListReferences())
+}
+
+func (m Model) ExpandedValue() string {
+	if m.refStore == nil {
+		return m.input.Value()
+	}
+	return ExpandReferences(m.input.Value(), m.refStore.ListReferences())
+}
+
+func (m Model) PromptReferences() []promptref.Reference {
+	if m.refStore == nil {
+		return nil
+	}
+	ids := m.ReferencedIDs()
+	refs := make([]promptref.Reference, 0, len(ids))
+	for _, id := range ids {
+		if ref, ok := m.refStore.GetReference(id); ok && ref.Active() {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
 }
 
 func (m Model) SlashActive() bool {

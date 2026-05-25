@@ -12,6 +12,23 @@ import (
 	"crude/tui/theme"
 )
 
+type AtomicRange struct {
+	ID    string
+	Start int
+	End   int
+}
+
+type TextToken struct {
+	Text      string
+	RefID     string
+	Start     int
+	End       int
+	Atomic    bool
+	Cursor    bool
+	CursorEnd bool
+	Selected  bool
+}
+
 type SubmitEvent struct {
 	Text string
 }
@@ -29,6 +46,7 @@ type TextInput struct {
 	lastInputTime time.Time
 	frame         int
 	textWidth     int
+	atomicRanges []AtomicRange
 }
 
 func NewTextInput(t *theme.Theme) TextInput {
@@ -59,6 +77,11 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 		case tea.KeyBackspace:
 			pos := m.lineColToFlat(m.curLine, m.curCol)
 			if pos > 0 {
+				if ar, ok := m.atomicRangeAround(pos-1, true); ok {
+					m.deleteRange(ar.Start, ar.End)
+					m.setCursorFlat(ar.Start)
+					break
+				}
 				m.deleteRuneAt(pos)
 				m.curLine, m.curCol = m.flatToLineCol(pos - 1)
 			}
@@ -66,6 +89,11 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 			pos := m.lineColToFlat(m.curLine, m.curCol)
 			totalLen := m.Len()
 			if pos < totalLen {
+				if ar, ok := m.atomicRangeAround(pos, false); ok {
+					m.deleteRange(ar.Start, ar.End)
+					m.setCursorFlat(ar.Start)
+					break
+				}
 				m.deleteForwardAt(pos)
 			}
 		case tea.KeyUp:
@@ -85,6 +113,7 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 				m.curLine--
 				m.curCol = len(m.buf[m.curLine])
 			}
+			m.snapCursorAcrossAtomic(false)
 			m.lastVisCol = -1
 		case tea.KeyRight:
 			if msg.Mod.Contains(tea.ModCtrl) {
@@ -95,6 +124,7 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 				m.curLine++
 				m.curCol = 0
 			}
+			m.snapCursorAcrossAtomic(true)
 			m.lastVisCol = -1
 		case tea.KeyHome:
 			if msg.Mod.Contains(tea.ModCtrl) {
@@ -183,7 +213,6 @@ func (m TextInput) View(width int, spinFrame int, cursorSolidAlways bool) string
 
 	var allLines []string
 	promptStyle := m.theme.Styles.InputPrompt
-	textStyle := m.theme.Styles.InputText
 
 	flatOffset := 0
 	for li, line := range m.buf {
@@ -198,59 +227,13 @@ func (m TextInput) View(width int, spinFrame int, cursorSolidAlways bool) string
 
 			segRunes := []rune(seg)
 			segStart := rendering.FindSegmentStart(line, textW, si)
-			segFlatStart := flatOffset + segStart
-			segFlatEnd := segFlatStart + len(segRunes)
+			lineTokenStart := segStart
+			lineTokenEnd := segStart + len(segRunes)
 
 			isCursorSeg := li == m.curLine && si == segmentIdx(m.curLine, m.curCol, m.buf, textW)
 
-			if isCursorSeg {
-				cursorInSeg := m.curCol - segStart
-				if cursorInSeg < 0 {
-					cursorInSeg = 0
-				}
-				if cursorInSeg > len(segRunes) {
-					cursorInSeg = len(segRunes)
-				}
-
-				left := string(segRunes[:cursorInSeg])
-				var cursorChar string
-				cursorSolid := cursorSolidAlways || time.Since(m.lastInputTime) < 800*time.Millisecond
-				if cursorInSeg < len(segRunes) {
-					right := string(segRunes[cursorInSeg+1:])
-					if cursorSolid {
-						cursorChar = lipgloss.NewStyle().Reverse(true).Render(string(segRunes[cursorInSeg]))
-					} else if BlinkOnTime(time.Now()) {
-						cursorChar = lipgloss.NewStyle().
-							Background(m.theme.Colors.Accent).
-							Foreground(m.theme.Colors.Bg).
-							Render(string(segRunes[cursorInSeg]))
-					} else {
-						cursorChar = textStyle.Render(string(segRunes[cursorInSeg]))
-					}
-					rendered := textStyle.Render(left) + cursorChar + textStyle.Render(right)
-					if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
-						rendered = m.applySelectionToRendered(rendered, segFlatStart, segFlatEnd, selStart, selEnd)
-					}
-					allLines = append(allLines, prefix+rendered)
-				} else {
-					if cursorSolid {
-						cursorChar = lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("█")
-					} else {
-						cursorChar = BlockCursorTime(m.theme.Colors.Accent)
-					}
-					rendered := textStyle.Render(left) + cursorChar
-					if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
-						rendered = m.applySelectionToRendered(rendered, segFlatStart, segFlatEnd, selStart, selEnd)
-					}
-					allLines = append(allLines, prefix+rendered)
-				}
-			} else {
-				rendered := textStyle.Render(seg)
-				if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
-					rendered = m.applySelectionToRendered(rendered, segFlatStart, segFlatEnd, selStart, selEnd)
-				}
-				allLines = append(allLines, prefix+rendered)
-			}
+			rendered := m.renderSegmentTokens(line, flatOffset, lineTokenStart, lineTokenEnd, isCursorSeg, selStart, selEnd, cursorSolidAlways)
+			allLines = append(allLines, prefix+rendered)
 		}
 		flatOffset += len(line) + 1
 	}
@@ -310,6 +293,103 @@ func segmentIdx(line int, col int, buf [][]rune, textW int) int {
 	return 0
 }
 
+func (m TextInput) renderSegmentTokens(line []rune, flatOffset, start, end int, isCursorSeg bool, selStart, selEnd int, cursorSolidAlways bool) string {
+	textStyle := m.theme.Styles.InputText
+	cursorPos := m.CursorFlat()
+	cursorSolid := cursorSolidAlways || time.Since(m.lastInputTime) < 800*time.Millisecond
+	var b strings.Builder
+	pos := start
+	for pos < end {
+		flatPos := flatOffset + pos
+		if ar, ok := m.atomicRangeStartingAt(flatPos); ok && ar.End <= flatOffset+end {
+			label := string(line[pos : pos+(ar.End-ar.Start)])
+			b.WriteString(m.renderAtomicLabel(label, ar, isCursorSeg && cursorPos >= ar.Start && cursorPos < ar.End, cursorSolid))
+			pos += ar.End - ar.Start
+			continue
+		}
+		if isCursorSeg && cursorPos == flatPos {
+			if pos < len(line) {
+				ch := string(line[pos])
+				if cursorSolid {
+					b.WriteString(lipgloss.NewStyle().Reverse(true).Render(ch))
+				} else if BlinkOnTime(time.Now()) {
+					b.WriteString(lipgloss.NewStyle().Background(m.theme.Colors.Accent).Foreground(m.theme.Colors.Bg).Render(ch))
+				} else {
+					b.WriteString(textStyle.Render(ch))
+				}
+				pos++
+				continue
+			}
+		}
+		b.WriteString(textStyle.Render(string(line[pos])))
+		pos++
+	}
+	if isCursorSeg && cursorPos == flatOffset+end {
+		if cursorSolid {
+			b.WriteString(lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Render("█"))
+		} else {
+			b.WriteString(BlockCursorTime(m.theme.Colors.Accent))
+		}
+	}
+	rendered := b.String()
+	segFlatStart := flatOffset + start
+	segFlatEnd := flatOffset + end
+	if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
+		rendered = m.applySelectionToRendered(rendered, segFlatStart, segFlatEnd, selStart, selEnd)
+	}
+	return rendered
+}
+
+func (m TextInput) renderAtomicLabel(label string, ar AtomicRange, focused, cursorSolid bool) string {
+	style := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent2).Bold(true)
+	if focused {
+		if cursorSolid || BlinkOnTime(time.Now()) {
+			style = style.Background(m.theme.Colors.Selection).Foreground(m.theme.Colors.Fg)
+		}
+	}
+	return style.Render(label)
+}
+
+func (m TextInput) atomicRangeStartingAt(pos int) (AtomicRange, bool) {
+	for _, ar := range m.atomicRanges {
+		if ar.Start == pos && ar.End > ar.Start {
+			return ar, true
+		}
+	}
+	return AtomicRange{}, false
+}
+
+func (m TextInput) atomicRangeAround(pos int, backspace bool) (AtomicRange, bool) {
+	for _, ar := range m.atomicRanges {
+		if ar.End <= ar.Start {
+			continue
+		}
+		if backspace {
+			if pos >= ar.Start && pos < ar.End {
+				return ar, true
+			}
+		} else if pos >= ar.Start && pos < ar.End {
+			return ar, true
+		}
+	}
+	return AtomicRange{}, false
+}
+
+func (m *TextInput) snapCursorAcrossAtomic(forward bool) {
+	pos := m.CursorFlat()
+	for _, ar := range m.atomicRanges {
+		if ar.End <= ar.Start || pos <= ar.Start || pos >= ar.End {
+			continue
+		}
+		if forward {
+			m.setCursorFlat(ar.End)
+		} else {
+			m.setCursorFlat(ar.Start)
+		}
+		return
+	}
+}
+
 func (m TextInput) Value() string {
 	var parts []string
 	for _, line := range m.buf {
@@ -332,6 +412,25 @@ func (m *TextInput) SetValue(s string) {
 		m.curLine = 0
 	}
 	m.curCol = len(m.buf[m.curLine])
+}
+
+func (m *TextInput) InsertString(s string) {
+	for _, r := range s {
+		if r == '\r' {
+			continue
+		}
+		pos := m.lineColToFlat(m.curLine, m.curCol)
+		if r == '\n' {
+			m.splitLineAt(m.curLine, m.curCol)
+			m.curLine++
+			m.curCol = 0
+			continue
+		}
+		m.insertRuneAt(pos, r)
+		m.curCol++
+	}
+	m.lastInputTime = time.Now()
+	m.frame++
 }
 
 func (m *TextInput) Clear() {
@@ -532,6 +631,23 @@ func (m TextInput) SelectedText() string {
 
 func (m *TextInput) SetTextWidth(w int) {
 	m.textWidth = w
+}
+
+func (m *TextInput) SetAtomicRanges(ranges []AtomicRange) {
+	m.atomicRanges = ranges
+	for i := range m.atomicRanges {
+		if m.atomicRanges[i].Start > m.atomicRanges[i].End {
+			m.atomicRanges[i].Start, m.atomicRanges[i].End = m.atomicRanges[i].End, m.atomicRanges[i].Start
+		}
+	}
+}
+
+func (m *TextInput) NormalizeCursorAtomic() {
+	m.snapCursorAcrossAtomic(true)
+}
+
+func (m *TextInput) DeleteRange(start, end int) {
+	m.deleteRange(start, end)
 }
 
 func (m *TextInput) SetPrompt(p string) {
