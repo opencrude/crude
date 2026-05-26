@@ -49,42 +49,47 @@ Your write_report must be detailed so the main agent can decide next steps witho
 - **Verification**: Checks run and their exact results, or why checks could not be run.
 - **Risks**: Unresolved issues, assumptions, conflicts, follow-up work.`
 
-func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) string {
-	var b strings.Builder
-	b.WriteString(SubAgentPrompt)
-	b.WriteString("\n\n")
-	b.WriteString(buildSubAgentAssignment(spec))
+// BuildSubAgentPrompt builds the sub-agent's system prompt (role instructions, policy, context)
+// and the user prompt (task assignment, instructions).
+// Returns (systemPrompt, userPrompt).
+func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) (string, string) {
+	var sysB strings.Builder
+	sysB.WriteString(SubAgentPrompt)
 
 	if category := subAgentCategoryBriefing(spec.Category); category != "" {
-		b.WriteString("\n\n# Category Briefing\n")
-		b.WriteString(category)
+		sysB.WriteString("\n\n# Category Briefing\n")
+		sysB.WriteString(category)
 	}
 
 	if policy := buildSubAgentPolicySection(spec); policy != "" {
-		b.WriteString("\n\n")
-		b.WriteString(policy)
+		sysB.WriteString("\n\n")
+		sysB.WriteString(policy)
 	}
 
 	if len(spec.FileOwnership) > 0 {
-		b.WriteString("\n\n# File Ownership\n")
-		b.WriteString("You have pre-declared write ownership of these paths: ")
-		b.WriteString(strings.Join(spec.FileOwnership, ", "))
-		b.WriteString(". Do not write outside this ownership when parallel work could conflict.")
+		sysB.WriteString("\n\n# File Ownership\n")
+		sysB.WriteString("You have pre-declared write ownership of these paths: ")
+		sysB.WriteString(strings.Join(spec.FileOwnership, ", "))
+		sysB.WriteString(". Do not write outside this ownership when parallel work could conflict.")
 	}
 
 	if profileInstructions != "" {
-		b.WriteString("\n\n# Profile Instructions\n")
-		b.WriteString(strings.TrimSpace(profileInstructions))
+		sysB.WriteString("\n\n# Profile Instructions\n")
+		sysB.WriteString(strings.TrimSpace(profileInstructions))
 	}
+
+	sysB.WriteString("\n\n")
+	sysB.WriteString(gatherEnvContext().buildSection())
+
+	var userB strings.Builder
+	userB.WriteString(buildSubAgentAssignment(spec))
 
 	if spec.Instructions != "" {
-		b.WriteString("\n\n# Assignment Instructions\n")
-		b.WriteString(strings.TrimSpace(spec.Instructions))
+		userB.WriteString("\n\n# Assignment Instructions\n")
+		userB.WriteString(strings.TrimSpace(spec.Instructions))
 	}
 
-	b.WriteString("\n\n")
-	b.WriteString(gatherEnvContext().buildSection())
-	return b.String()
+	return sysB.String(), userB.String()
 }
 
 func buildSubAgentAssignment(spec SubAgentSpec) string {

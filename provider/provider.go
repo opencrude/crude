@@ -217,6 +217,13 @@ var Presets = []Preset{
 		StandardID: "openai",
 	},
 	{
+		ID:         "crof",
+		Name:       "Crof AI",
+		BaseURL:    "https://crof.ai/v1",
+		HelpText:   "Shitty and useless lobotomized models. crof.ai/",
+		StandardID: "openai",
+	},
+	{
 		ID:         "custom",
 		Name:       "Custom",
 		BaseURL:    "",

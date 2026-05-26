@@ -143,6 +143,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// The window manager handled focus/drag initiation above;
 				// the content widget needs the click too for its own state.
 				if m.Mode == ModeFilePicker {
+					m.syncFilePickerScrollOffset()
 					updated, path, action, cmd := m.filePicker.Update(msg)
 					m.filePicker = updated
 					if cmd != nil {
@@ -378,6 +379,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Forward mouse motion to floating window content widgets
 		// so scrollbar dragging etc. works inside floating windows.
 		if m.Mode == ModeFilePicker && m.windowManager != nil && !m.windowManager.IsDragging() {
+			m.syncFilePickerScrollOffset()
 			updated, _, _, cmd := m.filePicker.Update(msg)
 			m.filePicker = updated
 			if cmd != nil {
@@ -454,6 +456,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Forward mouse release to floating window content widgets.
 		if m.Mode == ModeFilePicker && m.windowManager != nil {
+			m.syncFilePickerScrollOffset()
 			updated, _, _, cmd := m.filePicker.Update(msg)
 			m.filePicker = updated
 			if cmd != nil {
@@ -959,6 +962,29 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// syncFilePickerScrollOffset computes the screen Y of the FilePicker's
+// scrollbar track area and stores it on the FilePicker, so that mouse
+// events can be translated from screen-absolute to track-relative
+// coordinates before being passed to the scrollbar.
+//
+// The track starts 2 lines below the content area top (after the path
+// and filter header lines). The content area top is at
+// fw.y + fw.contentY.
+func (m *App) syncFilePickerScrollOffset() {
+	if m.windowManager == nil {
+		return
+	}
+	fw := m.windowManager.Window("filepicker")
+	if fw == nil {
+		return
+	}
+	_, winY := fw.Position()
+	bounds := fw.ContentBounds()
+	// 2 header lines (path + filter) sit above the entry list / scrollbar track.
+	trackY := winY + bounds.Y + 2
+	m.filePicker.SetScrollbarTrackOffset(trackY)
 }
 
 // isMouseMsg returns true if the message is any of the Bubble Tea v2 mouse message types.

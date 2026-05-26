@@ -145,6 +145,9 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 				// Trim all whitespace including tabs, not just spaces
 				trimmed := strings.TrimSpace(rl)
 				if trimmed == "" {
+					// Preserve empty lines to maintain output structure
+					// (paragraph breaks between sections, etc.)
+					wrappedLines = append(wrappedLines, dim.Render("│   "))
 					continue
 				}
 				// Sanitize the content to prevent TUI breakage
@@ -177,6 +180,7 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 			for _, rl := range strings.Split(msg.Content, "\n") {
 				trimmed := strings.TrimSpace(rl)
 				if trimmed == "" {
+					wrappedLines = append(wrappedLines, dim.Render("│   "))
 					continue
 				}
 				sanitized := rendering.SanitizeForTerminal(trimmed)
