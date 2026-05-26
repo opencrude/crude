@@ -44,6 +44,16 @@ func Blit(dst *CellBuffer, dstX, dstY int, src *CellBuffer, clip *ClipStack) {
 			}
 
 			// Write the primary cell
+			// If the source cell has no explicit background (NoColor), preserve
+			// the destination's background color instead of overwriting it.
+			// This ensures text rendered without an explicit background color
+			// inherits the background of whatever container it's composited into
+			// (e.g., a floating window's SubPaneBg), rather than reverting to the
+			// terminal's default background.
+			if srcCell.BG.IsDefault() {
+				dstCell := dst.Get(dx, dy)
+				srcCell.BG = dstCell.BG
+			}
 			dst.Set(dx, dy, srcCell)
 
 			// If this is a wide cell, also write the continuation cell

@@ -23,15 +23,16 @@ const (
 )
 
 type FilePicker struct {
-	th               *theme.Theme
-	root             string
-	current          string
-	entries          []fileEntry
-	selected         int
-	filter           string
-	active           bool
-	scrollbar        scrollbar.ScrollBar
-	lastEntryPageSize int // cached from last ViewInner render
+	th                  *theme.Theme
+	root                string
+	current             string
+	entries             []fileEntry
+	selected            int
+	filter              string
+	active              bool
+	scrollbar           scrollbar.ScrollBar
+	lastEntryPageSize   int // cached from last ViewInner render
+	scrollbarTrackOffY  int // screen Y of the scrollbar track area (set during rendering)
 }
 
 type fileEntry struct {
@@ -137,40 +138,91 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 
 	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
 		// Forward mouse events to the scrollbar for thumb dragging.
+		// Translate mouse Y from screen-absolute to track-relative
+		// coordinates, since the scrollbar expects Y relative to the
+		// top of its track area (like MessageList does with chatAreaTop).
+		var translatedMsg tea.Msg
+		switch mm := msg.(type) {
+		case tea.MouseClickMsg:
+			mouse := mm.Mouse()
+			translatedMsg = tea.MouseClickMsg{
+				X:      mouse.X,
+				Y:      mouse.Y - m.scrollbarTrackOffY,
+				Button: mm.Button,
+			}
+		case tea.MouseMotionMsg:
+			mouse := mm.Mouse()
+			translatedMsg = tea.MouseMotionMsg{
+				X:      mouse.X,
+				Y:      mouse.Y - m.scrollbarTrackOffY,
+				Button: mm.Button,
+			}
+		case tea.MouseReleaseMsg:
+			mouse := mm.Mouse()
+			translatedMsg = tea.MouseReleaseMsg{
+				X:      mouse.X,
+				Y:      mouse.Y - m.scrollbarTrackOffY,
+				Button: mm.Button,
+			}
+		}
 		var sbCmd tea.Cmd
-		m.scrollbar, sbCmd = m.scrollbar.Update(msg)
+		m.scrollbar, sbCmd = m.scrollbar.Update(translatedMsg)
 		if sbCmd != nil {
 			cmd = sbCmd
 		}
-		// If the scrollbar is dragging, update selection based on scroll position.
+		// If the scrollbar is being dragged, read the drag-driven scroll
+		// position and update the selection accordingly. Do NOT overwrite
+		// scrollY with a selection-derived value (that snaps the thumb back).
 		if m.scrollbar.IsDragging() {
+			if m.scrollbar.ConsumeScrollChanged() {
+				newScrollY := m.scrollbar.GetScrollY()
+				// scrollY is the first visible entry index (scrollStart).
+				// Set selected to the last visible entry in the range.
+				entryPageSize := m.scrollPageSize()
+				if entryPageSize < 1 {
+					entryPageSize = 1
+				}
+				newSelected := newScrollY + entryPageSize - 1
+				totalEntries := len(m.visibleEntries())
+				if totalEntries > 0 {
+					if newSelected < 0 {
+						newSelected = 0
+					}
+					if newSelected >= totalEntries {
+						newSelected = totalEntries - 1
+					}
+					m.selected = newSelected
+				}
+			}
+			// Update scrollbar dimensions but preserve the drag-driven scrollY
+			// so the thumb stays where the user dragged it.
 			entries := m.visibleEntries()
 			entryPageSize := m.scrollPageSize()
 			if entryPageSize < 1 {
 				entryPageSize = 1
 			}
-			scrollStart := 0
-			if m.selected >= entryPageSize {
-				scrollStart = m.selected - entryPageSize + 1
-			}
 			if cmd == nil {
-				cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
+				cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, m.scrollbar.GetScrollY())
 			}
 		}
 	}
 
-	// Update scrollbar on any activity
-	entries := m.visibleEntries()
-	entryPageSize := m.scrollPageSize()
-	if entryPageSize < 1 {
-		entryPageSize = 1
-	}
-	scrollStart := 0
-	if m.selected >= entryPageSize {
-		scrollStart = m.selected - entryPageSize + 1
-	}
-	if cmd == nil {
-		cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
+	// Update scrollbar on any activity (skip during thumb drag — the
+	// IsDragging block above already updates the scrollbar position
+	// and preserves the drag-driven scrollY).
+	if !m.scrollbar.IsDragging() {
+		entries := m.visibleEntries()
+		entryPageSize := m.scrollPageSize()
+		if entryPageSize < 1 {
+			entryPageSize = 1
+		}
+		scrollStart := 0
+		if m.selected >= entryPageSize {
+			scrollStart = m.selected - entryPageSize + 1
+		}
+		if cmd == nil {
+			cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
+		}
 	}
 
 	return m, "", FilePickerNone, cmd
@@ -398,6 +450,18 @@ func (m FilePicker) ScrollbarWidth() int {
 		return scrollbar.ScrollbarWidth
 	}
 	return 0
+}
+
+// SetScrollbarTrackOffset sets the screen Y coordinate of the top of the
+// scrollbar track area. Mouse event Y coordinates are translated by this
+// offset before being passed to the scrollbar, so that the scrollbar (which
+// uses track-relative coordinates) receives correct positions.
+//
+// For a FilePicker inside a FloatingWindow, the caller should compute:
+//
+//	fw.y + fw.contentY + 2   (2 header lines: path + filter)
+func (m *FilePicker) SetScrollbarTrackOffset(screenY int) {
+	m.scrollbarTrackOffY = screenY
 }
 
 // UpdateScrollbar processes scrollbar-specific messages (fade/hide timers).

@@ -209,8 +209,26 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 	}
 	sb.WriteString(fmt.Sprintf("## Sub-Agent Result: %s [%s]\n", result.Name, result.Category))
 	sb.WriteString(fmt.Sprintf("**Status:** %s", icon))
-	if icon == "CRASH" {
+	switch icon {
+	case "CRASH":
 		sb.WriteString(" — **the agent process crashed unexpectedly (internal error, NOT a normal failure). Do NOT retry the same sub-agent configuration without investigating the crash errors below.**")
+	case "ERROR":
+		if len(result.Errors) > 0 {
+			err := result.Errors[0]
+			if strings.Contains(err, "400") || strings.Contains(err, "messages must not be empty") {
+				sb.WriteString(" — **the provider rejected the request. Check that the sub-agent prompt includes a user message (not just a system message), or the model may not be available.**")
+			} else if strings.Contains(err, "429") {
+				sb.WriteString(" — **rate limited. Wait before retrying.**")
+			} else if strings.Contains(err, "401") || strings.Contains(err, "403") || strings.Contains(err, "invalid api key") {
+				sb.WriteString(" — **authentication failed. Check your API key.**")
+			} else if strings.Contains(err, "5") && (strings.Contains(err, "5") || strings.Contains(err, "50")) {
+				sb.WriteString(" — **the API server returned an error. This may be transient; retry might work.**")
+			} else {
+				sb.WriteString(fmt.Sprintf(" — **the agent failed with an error: %s**", truncateString(err, 80)))
+			}
+		}
+	case "QUOTA":
+		sb.WriteString(" — **rate limited or quota exceeded. Wait before retrying.**")
 	}
 	if result.DurationMs > 0 {
 		dur := time.Duration(result.DurationMs) * time.Millisecond
@@ -549,7 +567,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 
 	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
 
-	prompt := agent.BuildSubAgentPrompt(spec, profileInstructions)
+	systemPrompt, userPrompt := agent.BuildSubAgentPrompt(spec, profileInstructions)
 
 	if err := r.mgr.Register(handle); err != nil {
 		r.fileOwnership.Release(spec.ID)
@@ -563,13 +581,13 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		r.runSubAgentLoop(subCtx, handle, prompt)
+		r.runSubAgentLoop(subCtx, handle, systemPrompt, userPrompt)
 	}()
 
 	return handle, nil
 }
 
-func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, prompt string) {
+func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, systemPrompt, userPrompt string) {
 	done := false
 	crashed := false
 
@@ -631,7 +649,8 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		}
 	}()
 
-	agentMsgs := handle.Agent.Run(ctx, nil, prompt, func(evt agent.AgentEvent) {
+	userMsgs := []provider.ChatMessage{{Role: "user", Content: provider.TextContent(userPrompt)}}
+	agentMsgs := handle.Agent.Run(ctx, userMsgs, systemPrompt, func(evt agent.AgentEvent) {
 		evt.AgentID = string(handle.Spec.ID)
 		if r.sender != nil {
 			r.sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
@@ -736,6 +755,7 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 		status = agent.SubAgentFailedTimeout
 	}
 
+	// Check for tool-level errors (quota, auth, etc.)
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
 		mc := m.ContentString()
@@ -754,6 +774,24 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 				status = agent.SubAgentFailedQuota
 				break
 			}
+		}
+	}
+
+	// If the agent has errors (LLM API failures, HTTP errors, etc.) and no
+	// successful work was done, mark as failed error rather than completed.
+	_, _, _, errs := handle.Usage()
+	if len(errs) > 0 && status == agent.SubAgentCompleted {
+		// Check if the agent actually did any work: meaningful assistant
+		// messages (not just the system prompt), tool calls, or file writes.
+		hadWork := false
+		for _, m := range msgs {
+			if m.Role == "assistant" && (m.ContentString() != "" || len(m.ToolCalls) > 0) {
+				hadWork = true
+				break
+			}
+		}
+		if !hadWork && len(msgs) <= 2 { // system + maybe one user message
+			status = agent.SubAgentFailedError
 		}
 	}
 
@@ -815,27 +853,51 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 	sb.WriteString(fmt.Sprintf("# Sub-Agent Report: %s [%s]\n\n", handle.Spec.Name, handle.Spec.Category))
 	sb.WriteString(fmt.Sprintf("Task: %s\n\n", handle.Spec.Description))
 
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "assistant" && msgs[i].ContentString() != "" && len(msgs[i].ToolCalls) == 0 {
-			sb.WriteString("## Summary\n\n")
-			sb.WriteString(msgs[i].ContentString())
-			sb.WriteString("\n")
+	// Determine if the agent actually ran or failed immediately
+	hadAssistantMsg := false
+	for _, m := range msgs {
+		if m.Role == "assistant" && (m.ContentString() != "" || len(m.ToolCalls) > 0) {
+			hadAssistantMsg = true
 			break
 		}
 	}
 
-	filesRead := r.fileOwnership.ReadClaimsByAgent(handle.Spec.ID)
-	filesWritten := r.fileOwnership.WriteClaimsByAgent(handle.Spec.ID)
-	if len(filesRead) > 0 {
-		sb.WriteString("\n## Files Read\n\n")
-		for _, f := range filesRead {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
+	if len(result.Errors) > 0 && !hadAssistantMsg {
+		// Agent never ran — API error on first call.
+		sb.WriteString("## Failure Summary\n\n")
+		sb.WriteString("The sub-agent encountered an error before it could start working. The LLM API call failed, so no assistant messages were generated and no work was performed.\n\n")
+		if len(result.Errors) == 1 {
+			sb.WriteString(fmt.Sprintf("**Error:** %s\n", result.Errors[0]))
+		} else {
+			sb.WriteString(fmt.Sprintf("**Errors (%d total):**\n", len(result.Errors)))
+			for _, e := range result.Errors {
+				sb.WriteString(fmt.Sprintf("- %s\n", e))
+			}
 		}
-	}
-	if len(filesWritten) > 0 {
-		sb.WriteString("\n## Files Written\n\n")
-		for _, f := range filesWritten {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
+		sb.WriteString("\n**No files were read or written.**\n")
+	} else {
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].Role == "assistant" && msgs[i].ContentString() != "" && len(msgs[i].ToolCalls) == 0 {
+				sb.WriteString("## Summary\n\n")
+				sb.WriteString(msgs[i].ContentString())
+				sb.WriteString("\n")
+				break
+			}
+		}
+
+		filesRead := r.fileOwnership.ReadClaimsByAgent(handle.Spec.ID)
+		filesWritten := r.fileOwnership.WriteClaimsByAgent(handle.Spec.ID)
+		if len(filesRead) > 0 {
+			sb.WriteString("\n## Files Read\n\n")
+			for _, f := range filesRead {
+				sb.WriteString(fmt.Sprintf("- %s\n", f))
+			}
+		}
+		if len(filesWritten) > 0 {
+			sb.WriteString("\n## Files Written\n\n")
+			for _, f := range filesWritten {
+				sb.WriteString(fmt.Sprintf("- %s\n", f))
+			}
 		}
 	}
 
@@ -1630,6 +1692,13 @@ func generateShortID() string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
 }
 
 func toStringSlice(val any) []string {
