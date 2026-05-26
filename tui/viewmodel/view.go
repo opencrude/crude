@@ -25,28 +25,57 @@ func (m *App) View() tea.View {
 		return v
 	}
 
-	// === Compositing Engine Pipeline ===
+	isDragging := m.windowManager.IsDragging()
+	wmNeedsRender := m.windowManager.NeedsRender()
 
-	// 1. Begin frame — clear back buffer, reset damage, clear root children
-	m.compositor.BeginFrame()
+	// Throttle: during drag, if no position change since last render,
+	// return cached output without re-compositing.
+	if isDragging && !wmNeedsRender {
+		v := tea.NewView(m.cachedOutput)
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeAllMotion
+		return v
+	}
 
-	// 2. Update render context
-	m.renderCtx.SpinFrame = m.spinFrame
+	// Full rebuild throttle: if we did a full render less than 16ms ago,
+	// return cached output. This prevents 50+ full rebuilds when queued
+	// motion events arrive after drag release.
+	now := time.Now()
+	if !isDragging && now.Sub(m.lastFullRender) < 16*time.Millisecond && m.cachedOutput != "" {
+		v := tea.NewView(m.cachedOutput)
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeAllMotion
+		return v
+	}
 
-	// 3. Render main content (background) into root surface
-	//    This uses the existing rendering logic but writes into the cell buffer
-	//    via the ANSI parser (RenderToSurface).
-	mainContent := m.buildMainView()
-	rendering.RenderToSurface(m.compositor.Root(), mainContent)
+	if isDragging && m.compositor.HasRootCellCache() {
+		// Drag frame with cached cells: skip expensive buildMainView + ANSI parse.
+		// Just copy cached cells to root surface and reposition windows.
+		m.compositor.BeginPartialFrame()
+		m.compositor.RestoreRootCells()
+		m.windowManager.UpdatePositions(m.compositor.Root())
+		m.windowManager.ClearNeedsRender()
+	} else {
+		// Full frame: rebuild everything (first drag frame or non-drag)
+		m.compositor.BeginFrame()
+		m.renderCtx.SpinFrame = m.spinFrame
+		mainContent := m.buildMainView()
+		rendering.RenderToSurface(m.compositor.Root(), mainContent)
+		m.compositor.CacheRootCells()
+		m.windowManager.Render(m.compositor.Root(), m.renderCtx)
+		m.lastFullRender = now
+		// If we're entering drag mode, this full frame serves as the first drag frame
+		if isDragging {
+			m.windowManager.ClearNeedsRender()
+		}
+	}
 
-	// 4. Render floating windows on top
-	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
-
-	// 5. Composite all surfaces into back buffer
+	// Composite all surfaces into back buffer
 	m.compositor.Composite()
 
-	// 6. Generate ANSI output and present
+	// Generate ANSI output and present
 	output := m.compositor.Present()
+	m.cachedOutput = output
 
 	v := tea.NewView(output)
 	v.AltScreen = true

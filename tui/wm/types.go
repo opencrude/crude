@@ -47,6 +47,7 @@ const (
 	BorderRounded                    // ╭─╮│╰─╯
 	BorderThick                      // ┏━┓┃┗━┛
 	BorderASCII                      // +-+|
+	BorderLShape                     // Left+bottom border only, like ⌐ shape
 )
 
 // TextAlign controls horizontal alignment of text within a region.
@@ -97,6 +98,12 @@ func BorderCharsFor(style BorderStyle) BorderChars {
 			TopLeft: '+', TopRight: '+', BottomLeft: '+', BottomRight: '+',
 			Horizontal: '-', Vertical: '|',
 			LeftT: '+', RightT: '+', TopT: '+', BottomT: '+',
+		}
+	case BorderLShape:
+		return BorderChars{
+			TopLeft: ' ', TopRight: ' ', BottomLeft: '└', BottomRight: '─',
+			Horizontal: '─', Vertical: '│',
+			LeftT: '├', RightT: '┤', TopT: '┬', BottomT: '┴',
 		}
 	default:
 		// BorderNone: all spaces

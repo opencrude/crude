@@ -128,7 +128,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Check if the close button was clicked
 				if hitWin.Closable() && hitWin.IsOnCloseButton(mouse.X, mouse.Y) {
 					m.windowManager.RemoveWindow(hitWin.ID)
-					// If the closed window was for a specific mode, return to chat
 					switch hitWin.ID {
 					case "textoverlay":
 						m.textOverlay.Close()
@@ -137,8 +136,48 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.filePicker.Close()
 						m.setMode(ModeChat)
 					}
+					return m, nil
 				}
-				return m, nil
+				// Forward the mouse event to the window's content widget
+				// so that interactions like scrollbar dragging still work.
+				// The window manager handled focus/drag initiation above;
+				// the content widget needs the click too for its own state.
+				if m.Mode == ModeFilePicker {
+					updated, path, action, cmd := m.filePicker.Update(msg)
+					m.filePicker = updated
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					switch action {
+					case widgets.FilePickerSelect:
+						m.addFileReference(path)
+						m.filePicker.Close()
+						m.setMode(ModeChat)
+						return m, tea.Batch(cmds...)
+					case widgets.FilePickerCancel:
+						m.filePicker.Close()
+						m.setMode(ModeChat)
+						return m, tea.Batch(cmds...)
+					}
+					hitWin.MarkContentDirty()
+				} else if m.Mode == ModeTextOverlay {
+					if !m.isMouseMsg(msg) {
+						updated, cmd, action := m.textOverlay.Update(msg)
+						m.textOverlay = updated
+						if cmd != nil {
+							cmds = append(cmds, cmd)
+						}
+						switch action {
+						case widgets.TextOverlaySave:
+							m.saveReferenceFromOverlay()
+						case widgets.TextOverlayCancel:
+							m.textOverlay.Close()
+							m.setMode(ModeChat)
+						}
+					}
+					hitWin.MarkContentDirty()
+				}
+				return m, tea.Batch(cmds...)
 			}
 		}
 
@@ -336,6 +375,19 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.windowManager.HandleMouseMotion(msg)
 		}
 
+		// Forward mouse motion to floating window content widgets
+		// so scrollbar dragging etc. works inside floating windows.
+		if m.Mode == ModeFilePicker && m.windowManager != nil && !m.windowManager.IsDragging() {
+			updated, _, _, cmd := m.filePicker.Update(msg)
+			m.filePicker = updated
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if fw := m.windowManager.Focused(); fw != nil {
+				fw.MarkContentDirty()
+			}
+		}
+
 		if m.Mode == ModeChat {
 			tabBarExtra := 0
 			if m.win.IsOpen() && m.win.TabCount() >= 2 {
@@ -384,7 +436,32 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Route to floating window manager to end drag/resize
 		if m.windowManager != nil {
-			m.windowManager.HandleMouseRelease(msg)
+			releaseWin := m.windowManager.HandleMouseRelease(msg)
+			// Check if the release was on a close button of the dragged window.
+			// This handles the case where a user clicks the X during a drag.
+			if releaseWin != nil && releaseWin.Closable() && releaseWin.IsOnCloseButton(mouse.X, mouse.Y) {
+				m.windowManager.RemoveWindow(releaseWin.ID)
+				switch releaseWin.ID {
+				case "textoverlay":
+					m.textOverlay.Close()
+					m.setMode(ModeChat)
+				case "filepicker":
+					m.filePicker.Close()
+					m.setMode(ModeChat)
+				}
+			}
+		}
+
+		// Forward mouse release to floating window content widgets.
+		if m.Mode == ModeFilePicker && m.windowManager != nil {
+			updated, _, _, cmd := m.filePicker.Update(msg)
+			m.filePicker = updated
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if fw := m.windowManager.Focused(); fw != nil {
+				fw.MarkContentDirty()
+			}
 		}
 
 		if m.Mode == ModeChat {
@@ -449,6 +526,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				sp.HandleScrollbarTick(msg)
+			}
+		}
+		if m.filePicker.IsOpen() {
+			fpCmd := m.filePicker.UpdateScrollbar(msg)
+			if fpCmd != nil {
+				cmds = append(cmds, fpCmd)
 			}
 		}
 	}
@@ -783,20 +866,31 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setMode(ModeChat)
 			}
 		}
+		// Mark the floating window content dirty so text overlay
+		// edits are rendered.
+		if fw := m.windowManager.Focused(); fw != nil {
+			fw.MarkContentDirty()
+		}
 
 	case ModeFilePicker:
-		if !m.isMouseMsg(msg) {
-			updated, path, action := m.filePicker.Update(msg)
-			m.filePicker = updated
-			switch action {
-			case widgets.FilePickerSelect:
-				m.addFileReference(path)
-				m.filePicker.Close()
-				m.setMode(ModeChat)
-			case widgets.FilePickerCancel:
-				m.filePicker.Close()
-				m.setMode(ModeChat)
-			}
+		updated, path, action, cmd := m.filePicker.Update(msg)
+		m.filePicker = updated
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		switch action {
+		case widgets.FilePickerSelect:
+			m.addFileReference(path)
+			m.filePicker.Close()
+			m.setMode(ModeChat)
+		case widgets.FilePickerCancel:
+			m.filePicker.Close()
+			m.setMode(ModeChat)
+		}
+		// Mark the floating window content dirty so visual changes
+		// (selection, filter, directory change) are rendered.
+		if fw := m.windowManager.Focused(); fw != nil {
+			fw.MarkContentDirty()
 		}
 	}
 

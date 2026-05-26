@@ -35,6 +35,7 @@ type WindowManager struct {
 	activeResize  *FloatingWindow
 	lastMouseX    int
 	lastMouseY    int
+	needsRender   bool // set true when drag/resize changes position
 }
 
 // NewWindowManager creates a new window manager with no windows.
@@ -215,6 +216,35 @@ func (wm *WindowManager) Focused() *FloatingWindow {
 	return wm.focused
 }
 
+// IsDragging reports whether a drag or resize interaction is in progress.
+func (wm *WindowManager) IsDragging() bool {
+	return wm.activeDrag != nil || wm.activeResize != nil
+}
+
+// NeedsRender reports whether a drag/resize moved a window since the last render.
+func (wm *WindowManager) NeedsRender() bool { return wm.needsRender }
+
+// ClearNeedsRender resets the needs-render flag after rendering.
+func (wm *WindowManager) ClearNeedsRender() { wm.needsRender = false }
+
+// UpdatePositions repositions all visible window surfaces on the root surface
+// without re-rendering their content. Used during drag/resize to avoid
+// expensive content regeneration — only the window positions change.
+func (wm *WindowManager) UpdatePositions(rootSurf *surface.Surface) {
+	for i, fw := range wm.zOrder {
+		if !fw.Visible() {
+			continue
+		}
+		winSurf := fw.Surface()
+		if winSurf == nil {
+			continue
+		}
+		winSurf.SetPosition(fw.Position())
+		winSurf.SetZOrder(i)
+		rootSurf.AddChild(winSurf)
+	}
+}
+
 // HandleMouse processes a mouse click event and routes it to the correct window.
 // Returns the window that consumed the event (if any).
 //
@@ -229,7 +259,12 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 
 	// If we have an active drag or resize, don't start a new one;
 	// the motion handler continues the interaction.
+	// However, still check if the click is on the close button of the
+	// actively dragged window — users expect to close by clicking the X.
 	if wm.activeDrag != nil || wm.activeResize != nil {
+		if wm.activeDrag != nil && wm.activeDrag.Closable() && wm.activeDrag.IsOnCloseButton(m.X, m.Y) {
+			return wm.activeDrag // Let caller handle close
+		}
 		return wm.focused
 	}
 
@@ -301,7 +336,10 @@ func (wm *WindowManager) HandleMouseMotion(msg tea.MouseMsg) *FloatingWindow {
 	if wm.activeDrag != nil {
 		dx := m.X - wm.lastMouseX
 		dy := m.Y - wm.lastMouseY
-		wm.activeDrag.ApplyMove(dx, dy)
+		if dx != 0 || dy != 0 {
+			wm.activeDrag.ApplyMove(dx, dy)
+			wm.needsRender = true
+		}
 		wm.lastMouseX = m.X
 		wm.lastMouseY = m.Y
 		return wm.activeDrag
@@ -311,7 +349,10 @@ func (wm *WindowManager) HandleMouseMotion(msg tea.MouseMsg) *FloatingWindow {
 	if wm.activeResize != nil {
 		dx := m.X - wm.lastMouseX
 		dy := m.Y - wm.lastMouseY
-		wm.activeResize.ApplyResize(wm.activeResize.ResizeEdge(), dx, dy)
+		if dx != 0 || dy != 0 {
+			wm.activeResize.ApplyResize(wm.activeResize.ResizeEdge(), dx, dy)
+			wm.needsRender = true
+		}
 		wm.lastMouseX = m.X
 		wm.lastMouseY = m.Y
 		return wm.activeResize
@@ -321,15 +362,20 @@ func (wm *WindowManager) HandleMouseMotion(msg tea.MouseMsg) *FloatingWindow {
 }
 
 // HandleMouseRelease ends drag/resize interactions.
-func (wm *WindowManager) HandleMouseRelease(msg tea.MouseMsg) {
+// Returns the window that was released (if any).
+func (wm *WindowManager) HandleMouseRelease(msg tea.MouseMsg) *FloatingWindow {
+	var released *FloatingWindow
 	if wm.activeDrag != nil {
+		released = wm.activeDrag
 		wm.activeDrag.SetDragging(false)
 		wm.activeDrag = nil
 	}
 	if wm.activeResize != nil {
+		released = wm.activeResize
 		wm.activeResize.SetResizing(false, EdgeNone)
 		wm.activeResize = nil
 	}
+	return released
 }
 
 // isBlockedByModal reports whether a window is blocked by a modal window

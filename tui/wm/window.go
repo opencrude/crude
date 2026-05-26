@@ -74,28 +74,37 @@ type FloatingWindow struct {
 	surf *surface.Surface
 	// contentSurf is the reusable content surface (prevents per-frame allocation).
 	contentSurf *surface.Surface
+
+	// contentDirty tracks whether the window's content needs re-rendering.
+	// Position-only changes (drag) do not mark content dirty.
+	contentDirty bool
 }
 
 // NewFloatingWindow creates a new floating window with the given dimensions
 // and options.
 //
 // The window is visible by default. All options are applied before the
-// content area is computed. If the window is decorated, the content area
-// starts at (1,1) with size (w-2, h-2); otherwise the content fills the
-// entire window. A minimum content size of 1×1 is enforced.
+// content area is computed. The content area depends on border style:
+//   - BorderNone: (0,1) with size (w, h-1)
+//   - BorderLShape: (1,1) with size (w-1, h-2)
+//   - Other borders: (1,1) with size (w-2, h-2)
+//   - Undecorated: (0,0) with size (w, h)
+//
+// A minimum content size of 1×1 is enforced.
 func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts ...WindowOption) *FloatingWindow {
 	fw := &FloatingWindow{
-		ID:       id,
-		Title:    title,
-		Content:  content,
-		w:        w,
-		h:        h,
-		decorated: true, // decorated by default
-		movable:  true,  // movable by default
-		resizable: true, // resizable by default
-		closable:  true, // closable by default
-		visible:   true,
-		state:     WindowNormal,
+		ID:           id,
+		Title:        title,
+		Content:      content,
+		w:            w,
+		h:            h,
+		decorated:    true, // decorated by default
+		movable:      true, // movable by default
+		resizable:    true, // resizable by default
+		closable:     true, // closable by default
+		visible:      true,
+		state:        WindowNormal,
+		contentDirty: true, // needs initial render
 	}
 
 	for _, opt := range opts {
@@ -110,14 +119,44 @@ func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts .
 	return fw
 }
 
-// computeContentArea calculates the content area based on the window size
-// and whether it is decorated.
+// computeContentArea calculates the content area based on the window size,
+// decoration state, and border style.
+//
+// For decorated windows with BorderNone: content starts at column 0, row 1
+// (after the title bar), with full width and height-1.
+//
+// For decorated windows with BorderLShape: content starts at column 1, row 1
+// (after left border + title bar), with width-1 and height-2.
+// Left column is the border, bottom row is the border.
+//
+// For decorated windows with border chars: content starts at column 1, row 1
+// (inside the border), with width-2 and height-2.
+//
+// For undecorated windows: content fills the entire window.
 func (fw *FloatingWindow) computeContentArea() {
 	if fw.decorated {
-		fw.contentX = 1
-		fw.contentY = 1
-		fw.contentW = fw.w - 2
-		fw.contentH = fw.h - 2
+		switch fw.borderStyle {
+		case BorderNone:
+			// No border chars: content starts at column 0, row 1 (after title bar).
+			fw.contentX = 0
+			fw.contentY = 1
+			fw.contentW = fw.w
+			fw.contentH = fw.h - 1
+		case BorderLShape:
+			// Left+bottom border: content starts at column 1, row 1.
+			// Left column (x=0) is border, bottom row (y=h-1) is border.
+			// No right border — content extends to the right edge.
+			fw.contentX = 1
+			fw.contentY = 1
+			fw.contentW = fw.w - 1
+			fw.contentH = fw.h - 2
+		default:
+			// Full border chars: content starts at column 1, row 1 (inside border).
+			fw.contentX = 1
+			fw.contentY = 1
+			fw.contentW = fw.w - 2
+			fw.contentH = fw.h - 2
+		}
 	} else {
 		fw.contentX = 0
 		fw.contentY = 0
@@ -154,8 +193,13 @@ func (fw *FloatingWindow) Position() (int, int) {
 // Returns EdgeNone if the coordinate is not on an edge or if the window
 // is not decorated.
 //
-// The edge detection zone is 1 cell wide (the border itself).
-// Corners take priority over edges.
+// For BorderNone: the top row is the title bar (for dragging), not a resize
+// handle. Only bottom and side edges are detected for resize.
+//
+// For BorderLShape: only left and bottom edges are detected. The top row is
+// the title bar, and the right side has no border (scrollbar area).
+//
+// For fully bordered windows: all edges and corners are detected.
 func (fw *FloatingWindow) HitTestEdge(screenX, screenY int) Edge {
 	if !fw.decorated {
 		return EdgeNone
@@ -170,7 +214,32 @@ func (fw *FloatingWindow) HitTestEdge(screenX, screenY int) Edge {
 		return EdgeNone
 	}
 
-	// Check corners first (they take priority).
+	if fw.borderStyle == BorderNone || fw.borderStyle == BorderLShape {
+		// For BorderNone and BorderLShape: top row is the title bar (drag),
+		// not a resize handle. Only detect edges on bottom and left sides.
+		if ly == fw.h-1 {
+			// Bottom edge + corners.
+			if lx == 0 {
+				return EdgeBottomLeft
+			}
+			if lx == fw.w-1 {
+				return EdgeBottomRight
+			}
+			return EdgeBottom
+		}
+		if ly > 0 {
+			// Left edge only (no right border for BorderNone/LShape).
+			if lx == 0 {
+				return EdgeLeft
+			}
+			if fw.borderStyle == BorderNone && lx == fw.w-1 {
+				return EdgeRight
+			}
+		}
+		return EdgeNone
+	}
+
+	// Fully bordered windows: all edges and corners.
 	if lx == 0 && ly == 0 {
 		return EdgeTopLeft
 	}
@@ -183,8 +252,6 @@ func (fw *FloatingWindow) HitTestEdge(screenX, screenY int) Edge {
 	if lx == fw.w-1 && ly == fw.h-1 {
 		return EdgeBottomRight
 	}
-
-	// Then edges.
 	if ly == 0 {
 		return EdgeTop
 	}
@@ -221,6 +288,7 @@ func (fw *FloatingWindow) SetSize(w, h int) {
 	fw.h = h
 	ClampSize(fw)
 	fw.computeContentArea()
+	fw.contentDirty = true
 }
 
 // ApplyResize adjusts the window size and position based on a drag edge
@@ -246,6 +314,7 @@ func (fw *FloatingWindow) ApplyResize(edge Edge, dx, dy int) {
 	}
 	ClampSize(fw)
 	fw.computeContentArea()
+	fw.contentDirty = true
 }
 
 // ApplyMove adjusts the window position by the given drag delta.
@@ -264,43 +333,54 @@ func (fw *FloatingWindow) ApplyMove(dx, dy int) {
 //  4. Create a child surface for the content area
 //  5. Call fw.Content.Render(contentSurf, ctx)
 func (fw *FloatingWindow) Render(ctx *widget.RenderContext) {
-	// Create or resize the window's surface.
+	// Always create/resize the window's surface.
 	if fw.surf == nil {
 		fw.surf = surface.NewSurface(fw.ID, fw.w, fw.h, cell.TransparentBlank())
+		fw.contentDirty = true // new surface needs render
 	} else {
 		fw.surf.Resize(fw.w, fw.h)
+	}
+
+	if fw.contentDirty {
 		// Clear to transparent blanks so uncovered areas show through.
 		fw.surf.Buffer().Clear()
-	}
 
-	// Clear previous frame's children to prevent accumulation.
-	fw.surf.RemoveAllChildren()
+		// Clear previous frame's children to prevent accumulation.
+		fw.surf.RemoveAllChildren()
 
-	// Draw decorations if the window is decorated.
-	if fw.decorated {
-		RenderDecoration(fw, fw.surf, ctx.Theme)
-	}
-
-	// Create or reuse a child surface for the content area and render the content.
-	if fw.Content != nil && fw.contentW > 0 && fw.contentH > 0 {
-		// Reuse or create content surface
-		if fw.contentSurf == nil || fw.contentSurf.Width() != fw.contentW || fw.contentSurf.Height() != fw.contentH {
-			fw.contentSurf = surface.NewSurface(
-				fw.ID+"-content",
-				fw.contentW,
-				fw.contentH,
-				cell.TransparentBlank(),
-			)
+		// Draw decorations if the window is decorated.
+		if fw.decorated {
+			RenderDecoration(fw, fw.surf, ctx.Theme)
 		}
-		fw.contentSurf.Buffer().Clear() // Clear for fresh rendering
-		fw.contentSurf.SetPosition(fw.contentX, fw.contentY)
 
-		// Render the content widget with the appropriate focus state.
-		contentCtx := ctx.WithFocus(fw.focused)
-		fw.Content.Render(fw.contentSurf, contentCtx)
+		// Create or reuse a child surface for the content area and render the content.
+		if fw.Content != nil && fw.contentW > 0 && fw.contentH > 0 {
+			// Reuse or create content surface
+			if fw.contentSurf == nil || fw.contentSurf.Width() != fw.contentW || fw.contentSurf.Height() != fw.contentH {
+				fw.contentSurf = surface.NewSurface(
+					fw.ID+"-content",
+					fw.contentW,
+					fw.contentH,
+					cell.TransparentBlank(),
+				)
+			}
+			fw.contentSurf.Buffer().Clear() // Clear for fresh rendering
+			fw.contentSurf.SetPosition(fw.contentX, fw.contentY)
 
-		// Attach the content surface as a child of the window surface.
-		fw.surf.AddChild(fw.contentSurf)
+			// Render the content widget with the appropriate focus state.
+			contentCtx := ctx.WithFocus(fw.focused)
+			fw.Content.Render(fw.contentSurf, contentCtx)
+
+			// Make cells with default/NoColor background transparent so the window's
+			// background fill shows through. Without this, NoColor cells are opaque
+			// and overwrite the window's SubPaneBg during Blit compositing.
+			makeNoColorBgTransparent(fw.contentSurf.Buffer())
+
+			// Attach the content surface as a child of the window surface.
+			fw.surf.AddChild(fw.contentSurf)
+		}
+
+		fw.contentDirty = false
 	}
 }
 
@@ -310,10 +390,16 @@ func (fw *FloatingWindow) Surface() *surface.Surface {
 }
 
 // Focus marks this window as having keyboard focus.
-func (fw *FloatingWindow) Focus() { fw.focused = true }
+func (fw *FloatingWindow) Focus() {
+	fw.focused = true
+	fw.contentDirty = true // decoration colors change
+}
 
 // Unfocus removes keyboard focus from this window.
-func (fw *FloatingWindow) Unfocus() { fw.focused = false }
+func (fw *FloatingWindow) Unfocus() {
+	fw.focused = false
+	fw.contentDirty = true // decoration colors change
+}
 
 // Focused reports whether this window has keyboard focus.
 func (fw *FloatingWindow) Focused() bool { return fw.focused }
@@ -390,25 +476,81 @@ func (fw *FloatingWindow) ResizeStartSize() (int, int) {
 }
 
 // IsOnTitleBar reports whether a screen coordinate is on the title bar
-// (the top border row, excluding corners).
+// (the top row of the window).
+//
+// For BorderNone: the entire top row (x=0 to x=w-1) is the title bar.
+// For BorderLShape: the top row from x=1 to x=w-1 (left column is border).
+// For fully bordered windows: the top row between border corners (x=1 to x=w-2).
 func (fw *FloatingWindow) IsOnTitleBar(screenX, screenY int) bool {
 	if !fw.decorated {
 		return false
 	}
 	lx := screenX - fw.x
 	ly := screenY - fw.y
-	return ly == 0 && lx > 0 && lx < fw.w-1
+	if ly != 0 {
+		return false
+	}
+	switch fw.borderStyle {
+	case BorderNone:
+		// Entire top row is title bar (no border corners to exclude).
+		return lx >= 0 && lx < fw.w
+	case BorderLShape:
+		// Title bar from x=1 to x=w-1 (left column x=0 is border).
+		return lx >= 1 && lx < fw.w
+	default:
+		// With full borders: exclude corner cells.
+		return lx > 0 && lx < fw.w-1
+	}
 }
 
 // IsOnCloseButton reports whether a screen coordinate hits the close button
-// area in the title bar. The close button occupies the rightmost 3 cells
-// of the title bar: " ✕ ".
+// area in the title bar.
+//
+// For BorderNone and BorderLShape: the close button occupies positions
+// (w-3, w-2, w-1) — flush with right edge, aligned with scrollbar column.
+// For fully bordered windows: the close button occupies positions (w-4, w-3, w-2).
 func (fw *FloatingWindow) IsOnCloseButton(screenX, screenY int) bool {
 	if !fw.closable || !fw.decorated {
 		return false
 	}
 	lx := screenX - fw.x
 	ly := screenY - fw.y
-	// Close button is at the right side of the title bar: positions w-4, w-3, w-2
-	return ly == 0 && lx >= fw.w-4 && lx <= fw.w-2
+	if ly != 0 {
+		return false
+	}
+	if fw.borderStyle == BorderNone || fw.borderStyle == BorderLShape {
+		// Close button at w-3, w-2, w-1 (right edge, aligned with scrollbar).
+		return lx >= fw.w-3 && lx <= fw.w-1
+	}
+	// With full borders: close button at w-4, w-3, w-2 (leaving w-1 for border).
+	return lx >= fw.w-4 && lx <= fw.w-2
+}
+
+// MarkContentDirty flags the window's content as needing re-rendering.
+// Call this when the window's appearance changes (resize, focus, etc.).
+func (fw *FloatingWindow) MarkContentDirty() { fw.contentDirty = true }
+
+// IsContentDirty reports whether the window's content needs re-rendering.
+func (fw *FloatingWindow) IsContentDirty() bool { return fw.contentDirty }
+
+// makeNoColorBgTransparent replaces blank cells with NoColor background with
+// transparent cells. This ensures that content widgets that don't set explicit
+// background colors don't overwrite the window's background fill during Blit
+// compositing.
+//
+// Only BLANK cells (spaces and continuation cells) are made transparent.
+// Text cells with NoColor BG must remain opaque so their characters are
+// visible during Blit compositing — the window's body background is already
+// painted on the parent surface, so NoColor BG cells compositing over it
+// looks correct (default bg ≈ body bg).
+func makeNoColorBgTransparent(buf *surface.CellBuffer) {
+	cells := buf.Cells()
+	for i := range cells {
+		c := &cells[i]
+		if c.BG.Type == cell.ColorDefault && !c.Transparent && c.IsBlank() {
+			// Blank cell with no explicit background — make it transparent
+			// so the window's background fill shows through.
+			c.Transparent = true
+		}
+	}
 }
