@@ -348,7 +348,18 @@ func (m *App) buildMainView() string {
 	// TextOverlay and FilePicker remain floating windows.
 	if overlayLineCount > 0 {
 		for _, ol := range overlayLines {
-			lines = append(lines, ol)
+			visW := rendering.VisibleWidth(ol)
+			if visW > innerW {
+				// Full-width line (separator/border) — append as-is,
+				// do not apply pad wrapping which would cause overflow.
+				lines = append(lines, ol)
+			} else {
+				rightPad := innerW - visW
+				if rightPad < 0 {
+					rightPad = 0
+				}
+				lines = append(lines, pad+ol+strings.Repeat(" ", rightPad)+pad)
+			}
 		}
 	}
 
@@ -356,30 +367,57 @@ func (m *App) buildMainView() string {
 		lines = append(lines, "")
 		lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 		for _, al := range asyncBarLines {
-			lines = append(lines, pad+al)
+			visW := rendering.VisibleWidth(al)
+			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+			if rightPad < 0 {
+				rightPad = 0
+			}
+			lines = append(lines, pad+al+strings.Repeat(" ", rightPad)+pad)
 		}
 	}
 
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	if isSpecialMode {
-		lines = append(lines, pad+inputView)
+		visW := rendering.VisibleWidth(inputView)
+		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+		if rightPad < 0 {
+			rightPad = 0
+		}
+		lines = append(lines, pad+inputView+strings.Repeat(" ", rightPad)+pad)
 	} else {
 		refChips := m.renderReferenceChips()
 		if len(refChips) > 0 {
 			for _, rc := range refChips {
-				lines = append(lines, pad+rc)
+				visW := rendering.VisibleWidth(rc)
+				rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+				if rightPad < 0 {
+					rightPad = 0
+				}
+				lines = append(lines, pad+rc+strings.Repeat(" ", rightPad)+pad)
 			}
 		}
 		for _, il := range strings.Split(inputView, "\n") {
-			lines = append(lines, pad+il)
+			visW := rendering.VisibleWidth(il)
+			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+			if rightPad < 0 {
+				rightPad = 0
+			}
+			lines = append(lines, pad+il+strings.Repeat(" ", rightPad)+pad)
 		}
 	}
 
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	statusView := m.statusbar.View()
-	lines = append(lines, pad+statusView)
+	{
+		visW := rendering.VisibleWidth(statusView)
+		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+		if rightPad < 0 {
+			rightPad = 0
+		}
+		lines = append(lines, pad+statusView+strings.Repeat(" ", rightPad)+pad)
+	}
 
 	if len(lines) > m.height {
 		lines = lines[:m.height]

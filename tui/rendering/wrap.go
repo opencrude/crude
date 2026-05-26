@@ -5,6 +5,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/rivo/uniseg"
 )
 
@@ -85,7 +86,7 @@ func WrapText(text string, width int) []string {
 	}
 	var result []string
 	for _, para := range strings.Split(text, "\n") {
-		if uniseg.StringWidth(para) <= width {
+		if displaywidth.String(para) <= width {
 			result = append(result, para)
 			continue
 		}
@@ -96,7 +97,7 @@ func WrapText(text string, width int) []string {
 		}
 		current := words[0]
 		for _, w := range words[1:] {
-			if uniseg.StringWidth(current)+1+uniseg.StringWidth(w) <= width {
+			if displaywidth.String(current)+1+displaywidth.String(w) <= width {
 				current += " " + w
 			} else {
 				result = append(result, current)
@@ -122,7 +123,7 @@ func HardWrap(s string, maxWidth int) []string {
 	state := -1
 	for len(rest) > 0 {
 		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := uniseg.StringWidth(cluster)
+		cw := displaywidth.String(cluster)
 		if curW+cw > maxWidth && curW > 0 {
 			result = append(result, cur.String())
 			cur.Reset()
@@ -143,7 +144,7 @@ func WordWrap(s string, maxWidth int) []string {
 	if maxWidth <= 0 {
 		return []string{s}
 	}
-	if uniseg.StringWidth(s) <= maxWidth {
+	if displaywidth.String(s) <= maxWidth {
 		return []string{s}
 	}
 
@@ -156,7 +157,7 @@ func WordWrap(s string, maxWidth int) []string {
 	state := -1
 	for len(rest) > 0 {
 		c, newRest, _, newState := uniseg.StepString(rest, state)
-		clusters = append(clusters, cluster{str: c, width: uniseg.StringWidth(c)})
+		clusters = append(clusters, cluster{str: c, width: displaywidth.String(c)})
 		rest = newRest
 		state = newState
 	}
@@ -228,10 +229,10 @@ func WordWrap(s string, maxWidth int) []string {
 
 func TruncateLine(s string, max int) string {
 	plain := StripAnsi(s)
-	if uniseg.StringWidth(plain) <= max {
+	if displaywidth.String(plain) <= max {
 		return s
 	}
-	tailW := uniseg.StringWidth("…")
+	tailW := displaywidth.String("…")
 	target := max - tailW
 	if target < 0 {
 		target = 0
@@ -242,7 +243,7 @@ func TruncateLine(s string, max int) string {
 	state := -1
 	for len(rest) > 0 {
 		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := uniseg.StringWidth(cluster)
+		cw := displaywidth.String(cluster)
 		if w+cw > target {
 			break
 		}
@@ -277,7 +278,7 @@ func FindSegmentStart(logLine []rune, textW int, segmentIdx int) int {
 		clusters = append(clusters, cluster{
 			runeStart: runePos,
 			runeEnd:   runePos + cRunes,
-			width:     uniseg.StringWidth(c),
+			width:     displaywidth.String(c),
 			str:       c,
 		})
 		runePos += cRunes

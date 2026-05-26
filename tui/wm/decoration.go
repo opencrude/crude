@@ -14,26 +14,32 @@ func RenderDecoration(fw *FloatingWindow, surf *surface.Surface, t *theme.Theme)
 		return
 	}
 
-	// Determine colors from the theme.
-	borderFg := cell.NewTrueColor(0x30, 0x36, 0x3d) // theme border color
-	borderBg := cell.NoColor
-	titleFg := cell.NewTrueColor(0xe6, 0xed, 0xf3) // bright foreground for title
+	// Determine colors from the theme — Windows-dark-mode style.
+	var borderFg, borderBg, titleFg, titleBg cell.Color
 
-	// If the window is focused, use accent colors for the title bar.
+	// Unfocused: subtle, muted
+	borderFg = cell.NewTrueColor(0x44, 0x4c, 0x56) // #444c56
+	borderBg = cell.NoColor
+	titleFg = cell.NewTrueColor(0x8b, 0x94, 0x9e)  // #8b949e (muted gray)
+	titleBg = cell.NewTrueColor(0x2d, 0x2d, 0x30)   // #2d2d30 (dark blue-gray title bar bg)
+
 	if fw.focused {
-		borderFg = cell.NewTrueColor(0xf0, 0x88, 0x3e) // accent
-		titleFg = cell.NewTrueColor(0xf0, 0x88, 0x3e)
+		// Focused: accent blue
+		borderFg = cell.NewTrueColor(0x58, 0xa6, 0xff) // #58a6ff
+		borderBg = cell.NoColor
+		titleFg = cell.NewTrueColor(0xff, 0xff, 0xff)   // #ffffff (bright white)
+		titleBg = cell.NewTrueColor(0x1f, 0x6f, 0xeb)   // #1f6feb (blue accent title bar bg)
 	}
 
 	// Draw the border around the perimeter.
 	DrawBorder(surf.Buffer(), fw.borderStyle, borderFg, borderBg)
 
 	// Draw the title bar text in the top border row.
-	DrawTitleBar(surf.Buffer(), fw.Title, fw.titleAlign, fw.closable, titleFg, borderBg, fw.w)
+	DrawTitleBar(surf.Buffer(), fw.Title, fw.titleAlign, fw.closable, titleFg, titleBg, fw.w)
 
 	// If closable, draw the close button.
 	if fw.closable {
-		DrawCloseButton(surf.Buffer(), fw.w, titleFg, borderBg)
+		DrawCloseButton(surf.Buffer(), fw.w, titleFg, titleBg)
 	}
 }
 
@@ -108,8 +114,8 @@ func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closab
 		return
 	}
 
-	// Fill the title bar area with spaces (the border chars have already been
-	// drawn by DrawBorder; we overwrite the inner part of the top row).
+	// Fill the ENTIRE title row (between left and right border corners) with
+	// the title bar background color. This gives a Windows-style filled title bar.
 	for x := 1; x < titleW-1; x++ {
 		buf.Set(x, 0, cell.NewCell(' ', fg, bg, 0))
 	}
