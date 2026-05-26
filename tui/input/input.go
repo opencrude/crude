@@ -13,11 +13,17 @@ const slashPageSize = 8
 
 type Event interface{ event() }
 
-type SubmitEvent struct{ Text string }
+type SubmitEvent struct {
+	Text         string
+	ReferenceIDs []string
+}
 
 func (SubmitEvent) event() {}
 
-type BtwSubmitEvent struct{ Text string }
+type BtwSubmitEvent struct {
+	Text         string
+	ReferenceIDs []string
+}
 
 func (BtwSubmitEvent) event() {}
 
@@ -70,22 +76,22 @@ func cmdsToItems(cmds []CmdInfo) []components.ListItem {
 }
 
 type Model struct {
-	theme    *theme.Theme
-	input    components.TextInput
-	history  []string
-	histIdx  int
+	theme                 *theme.Theme
+	input                 components.TextInput
+	history               []string
+	histIdx               int
 	histDraft, histPrefix string
 
 	slashActive bool
 	slashList   components.List
 
-	showHint        bool
-	width           int
-	textWidth       int
-	thinking        bool
-	blocking        bool
-	spinFrame       int
-	refStore        ReferenceStore
+	showHint  bool
+	width     int
+	textWidth int
+	thinking  bool
+	blocking  bool
+	spinFrame int
+	refStore  ReferenceStore
 }
 
 func NewModel(t *theme.Theme) Model {

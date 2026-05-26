@@ -172,7 +172,7 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 						m.setCursorFlat(pos)
 					}
 				}
-			} else if msg.Mod.Contains(tea.ModAlt) && len(msg.Text) == 1 && msg.Text[0] == '\\' {
+			} else if msg.Mod.Contains(tea.ModAlt) && msg.Code == '\\' {
 				// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
 				// where Alt+Enter is intercepted as "toggle fullscreen".
 				m.splitLineAt(m.curLine, m.curCol)

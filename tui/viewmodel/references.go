@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"crude/promptref"
+	"crude/provider"
 	"crude/sessiondb"
 )
 
@@ -40,6 +42,25 @@ func (s *referenceStore) CreateReference(req promptref.CreateRequest) (promptref
 	label := req.Label
 	if label == "" {
 		label = defaultReferenceLabel(req.Kind, idx)
+		// Ensure label is unique among active refs
+		for s.labelExists(label) {
+			s.counter[req.Kind]++
+			idx = s.counter[req.Kind]
+			label = defaultReferenceLabel(req.Kind, idx)
+		}
+	} else if s.labelExists(label) {
+		// Custom label collides with an existing active label — uniquify
+		// by appending an incrementing numeric suffix.
+		base := label[:len(label)-1] // strip trailing ]
+		suffix := 1
+		for {
+			candidate := fmt.Sprintf("%s%d]", base, suffix)
+			if !s.labelExists(candidate) {
+				label = candidate
+				break
+			}
+			suffix++
+		}
 	}
 	ref := promptref.Reference{
 		ID:        fmt.Sprintf("ref-%d-%d", time.Now().UnixNano(), idx),
@@ -55,7 +76,7 @@ func (s *referenceStore) CreateReference(req promptref.CreateRequest) (promptref
 	}
 
 	if ref.Kind == promptref.KindPastedTextFile && ref.FilePath == "" {
-		path, err := s.writeReferenceFile(ref.Label, req.Content, ".txt")
+		path, err := s.writeReferenceFile(ref.Label, []byte(req.Content), ".txt")
 		if err != nil {
 			return promptref.Reference{}, err
 		}
@@ -63,22 +84,15 @@ func (s *referenceStore) CreateReference(req promptref.CreateRequest) (promptref
 		ref.Content = ""
 	}
 
-	if ref.Kind == promptref.KindPastedImage && ref.FilePath == "" && ref.Content != "" {
-		ext := ".png"
-		if strings.Contains(ref.Mime, "jpeg") || strings.Contains(ref.Mime, "jpg") {
-			ext = ".jpg"
-		} else if strings.Contains(ref.Mime, "gif") {
-			ext = ".gif"
-		} else if strings.Contains(ref.Mime, "webp") {
-			ext = ".webp"
-		}
+	if ref.Kind == promptref.KindPastedImage && ref.Content != "" {
+		ext := provider.ImageExtFromMime(ref.Mime)
 		b64 := ref.Content
 		ref.Content = ""
 		data, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
 			return promptref.Reference{}, fmt.Errorf("decode base64 image: %w", err)
 		}
-		path, err := s.writeReferenceBinary(ref.Label, data, ext)
+		path, err := s.writeReferenceFile(ref.Label, data, ext)
 		if err != nil {
 			return promptref.Reference{}, err
 		}
@@ -126,7 +140,9 @@ func (s *referenceStore) GetReference(id string) (promptref.Reference, bool) {
 func (s *referenceStore) ListReferences() []promptref.Reference {
 	refs := make([]promptref.Reference, 0, len(s.refs))
 	for _, ref := range s.refs {
-		refs = append(refs, ref)
+		if ref.Active() {
+			refs = append(refs, ref)
+		}
 	}
 	return refs
 }
@@ -135,30 +151,36 @@ func (s *referenceStore) AddExisting(ref promptref.Reference) {
 	if s.refs == nil {
 		s.refs = make(map[string]promptref.Reference)
 	}
+
+	// Migrate legacy pasted images: decode base64 to disk if Content is set
+	// but FilePath is empty. Also migrate if both are set (Content should be
+	// cleared to avoid DB bloat).
+	if ref.Kind == promptref.KindPastedImage && ref.Content != "" {
+		b64 := ref.Content
+		ref.Content = ""
+		data, err := base64.StdEncoding.DecodeString(b64)
+		if err == nil {
+			ext := provider.ImageExtFromMime(ref.Mime)
+			path, err := s.writeReferenceFile(ref.Label, data, ext)
+			if err == nil {
+				ref.FilePath = path
+				// Persist the migration so we don't re-migrate on next load
+				if s.db != nil {
+					_ = sessiondb.UpdatePromptReferenceFilePath(s.db, ref.ID, path)
+				}
+			}
+		}
+	}
+
 	s.refs[ref.ID] = ref
+
+	// Update counter to avoid label collision on next creation
+	if idx := extractLabelIndex(ref.Label); idx > s.counter[ref.Kind] {
+		s.counter[ref.Kind] = idx
+	}
 }
 
-func (s *referenceStore) writeReferenceFile(label, content, ext string) (string, error) {
-	dir := filepath.Join(s.sessionDir, "references")
-	if dir == "" {
-		dir = filepath.Join(os.TempDir(), "crude-references")
-	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", err
-	}
-	base := strings.Trim(label, "[]")
-	base = strings.ReplaceAll(base, " ", "-")
-	if base == "" {
-		base = "reference"
-	}
-	path := filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext))
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
-func (s *referenceStore) writeReferenceBinary(label string, data []byte, ext string) (string, error) {
+func (s *referenceStore) writeReferenceFile(label string, data []byte, ext string) (string, error) {
 	dir := filepath.Join(s.sessionDir, "references")
 	if dir == "" {
 		dir = filepath.Join(os.TempDir(), "crude-references")
@@ -193,10 +215,37 @@ func defaultReferenceLabel(kind promptref.Kind, idx int) string {
 	}
 }
 
-func (m *App) persistReference(ref promptref.Reference) {
-	if m.refStore != nil && m.refStore.db != nil {
-		if err := sessiondb.InsertPromptReference(m.refStore.db, ref); err != nil {
-			m.logger.Warn("REF", "persist_failed", "error", err.Error())
+// labelExists checks if any active reference already has this label.
+func (s *referenceStore) labelExists(label string) bool {
+	for _, ref := range s.refs {
+		if ref.Active() && ref.Label == label {
+			return true
 		}
 	}
+	return false
+}
+
+// extractLabelIndex extracts the numeric suffix from a reference label.
+// Generated labels have the format "[Pasted Text1]", "[File2]", "[Pasted IMG1]",
+// "[Pasted Text File3]", "[Reference4]" where the number is attached to the
+// last word before the closing bracket. Returns 0 if no numeric suffix is found.
+func extractLabelIndex(label string) int {
+	// Strip surrounding brackets
+	s := strings.Trim(label, "[]")
+	if s == "" {
+		return 0
+	}
+	// Find the trailing numeric portion
+	i := len(s) - 1
+	for i >= 0 && s[i] >= '0' && s[i] <= '9' {
+		i--
+	}
+	if i == len(s)-1 {
+		return 0 // no trailing digits
+	}
+	idx, err := strconv.Atoi(s[i+1:])
+	if err != nil {
+		return 0
+	}
+	return idx
 }

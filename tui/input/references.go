@@ -30,14 +30,6 @@ type RefSelectEvent struct{ ID string }
 
 func (RefSelectEvent) event() {}
 
-func PlaceholderFor(id string) string {
-	return id
-}
-
-func IsPlaceholderRune(r rune) bool {
-	return false
-}
-
 func (m *Model) SetReferenceStore(store ReferenceStore) {
 	m.refStore = store
 	m.applyReferenceRanges()
@@ -96,24 +88,46 @@ func (m *Model) applyReferenceRanges() {
 }
 
 func FindRefRanges(text string, refs []promptref.Reference) []RefRange {
-	var ranges []RefRange
+	// Build label→ID map for fast lookup
+	labelMap := make(map[string]string, len(refs))
 	for _, ref := range refs {
 		if !ref.Active() {
 			continue
 		}
 		label := ref.DisplayName()
-		if label == "" {
-			continue
-		}
-		runes := []rune(text)
-		labelRunes := []rune(label)
-		for i := 0; i <= len(runes)-len(labelRunes); i++ {
-			if string(runes[i:i+len(labelRunes)]) == label {
-				ranges = append(ranges, RefRange{ID: ref.ID, Start: i, End: i + len(labelRunes)})
-				i += len(labelRunes) - 1
-			}
+		if label != "" {
+			labelMap[label] = ref.ID
 		}
 	}
+	if len(labelMap) == 0 {
+		return nil
+	}
+
+	// Single-pass scan for bracket-delimited tokens: O(N + M)
+	var ranges []RefRange
+	runes := []rune(text)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '[' {
+			continue
+		}
+		// Find closing bracket
+		end := -1
+		for j := i + 1; j < len(runes); j++ {
+			if runes[j] == ']' {
+				end = j + 1 // include the closing bracket
+				break
+			}
+		}
+		if end == -1 {
+			continue // unclosed bracket, skip
+		}
+		label := string(runes[i:end])
+		if id, ok := labelMap[label]; ok {
+			ranges = append(ranges, RefRange{ID: id, Start: i, End: end})
+			i = end - 1 // advance past this match
+		}
+	}
+
 	sort.Slice(ranges, func(i, j int) bool { return ranges[i].Start < ranges[j].Start })
 	return ranges
 }

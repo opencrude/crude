@@ -6,17 +6,17 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/promptref"
-	"crude/session"
+	"crude/provider"
 	"crude/sessiondb"
-	"crude/tui/viewmodel"
 	"crude/tui/types"
+	"crude/tui/viewmodel"
 )
 
 type TUI struct {
 	app     *viewmodel.App
 	Program *tea.Program
-	InputCh <-chan session.UserInput
-	BtwCh   <-chan string
+	InputCh <-chan provider.UserInput
+	BtwCh   <-chan provider.UserInput
 	doneCh  chan struct{}
 
 	CancelCh chan struct{}
@@ -60,8 +60,8 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	Error(tag, msg string, pairs ...any)
 	Debug(tag, msg string, pairs ...any)
 }, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) (*TUI, error) {
-	inputCh := make(chan session.UserInput, 8)
-	btwCh := make(chan string, 8)
+	inputCh := make(chan provider.UserInput, 8)
+	btwCh := make(chan provider.UserInput, 8)
 	cancelCh := make(chan struct{}, 1)
 
 	t := &TUI{
@@ -199,7 +199,7 @@ func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
 	t.Program.Send(types.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
 }
 
-func (t *TUI) GetInputCh() <-chan session.UserInput {
+func (t *TUI) GetInputCh() <-chan provider.UserInput {
 	return t.InputCh
 }
 

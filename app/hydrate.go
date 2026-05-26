@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"crude/sessiondb"
-	ttypes "crude/tui/types"
 	"crude/tui/tools"
+	ttypes "crude/tui/types"
 )
 
 func convertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMessage {
@@ -24,34 +24,34 @@ func convertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 			msgTime = time.Unix(0, mm.CreatedAt)
 		}
 
-	switch role {
-	case "user":
-		result = append(result, ttypes.ChatMessage{
-			Role:    ttypes.RoleUser,
-			Content: mm.Msg.ContentString(),
-			Time:    msgTime,
-		})
-
-	case "assistant":
-		result = append(result, ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
-			Content: mm.Msg.ContentString(),
-			Time:    msgTime,
-		})
-
-	case "thinking":
-		result = append(result, ttypes.ChatMessage{
-			Role:    ttypes.RoleThinking,
-			Content: mm.Msg.ReasoningContent,
-			Time:    msgTime,
-		})
-		if mm.Msg.ContentString() != "" {
+		switch role {
+		case "user":
 			result = append(result, ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: mm.Msg.ContentString(),
+				Role:    ttypes.RoleUser,
+				Content: mm.Msg.Content.ContentDescription(),
 				Time:    msgTime,
 			})
-		}
+
+		case "assistant":
+			result = append(result, ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
+				Content: mm.Msg.Content.String(),
+				Time:    msgTime,
+			})
+
+		case "thinking":
+			result = append(result, ttypes.ChatMessage{
+				Role:    ttypes.RoleThinking,
+				Content: mm.Msg.ReasoningContent,
+				Time:    msgTime,
+			})
+			if mm.Msg.Content.String() != "" {
+				result = append(result, ttypes.ChatMessage{
+					Role:    ttypes.RoleAssistant,
+					Content: mm.Msg.Content.String(),
+					Time:    msgTime,
+				})
+			}
 
 		case "tool":
 			toolName := mm.Meta.ToolName
@@ -102,10 +102,10 @@ func convertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 			result = append(result, chatMsg)
 
 		default:
-			if mm.Msg.ContentString() != "" {
+			if mm.Msg.Content.String() != "" {
 				result = append(result, ttypes.ChatMessage{
 					Role:    role,
-					Content: mm.Msg.ContentString(),
+					Content: mm.Msg.Content.String(),
 					Time:    msgTime,
 				})
 			}

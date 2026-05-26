@@ -11,22 +11,23 @@ import (
 )
 
 type DisplayMeta struct {
-	DisplayRole    string `json:"display_role,omitempty"`
-	ToolName       string `json:"tool_name,omitempty"`
-	ToolArgs       string `json:"tool_args,omitempty"`
-	ToolStatus     string `json:"tool_status,omitempty"`
-	PermTag        string `json:"perm_tag,omitempty"`
-	ProgressLabel  string `json:"progress_label,omitempty"`
-	DurationMs     int64  `json:"duration_ms,omitempty"`
-	EstTokens      int    `json:"est_tokens,omitempty"`
-	LinesAdded     int    `json:"lines_added,omitempty"`
-	LinesRemoved   int    `json:"lines_removed,omitempty"`
-	SubPaneID      string `json:"sub_pane_id,omitempty"`
+	DisplayRole   string `json:"display_role,omitempty"`
+	ToolName      string `json:"tool_name,omitempty"`
+	ToolArgs      string `json:"tool_args,omitempty"`
+	ToolStatus    string `json:"tool_status,omitempty"`
+	PermTag       string `json:"perm_tag,omitempty"`
+	ProgressLabel string `json:"progress_label,omitempty"`
+	DurationMs    int64  `json:"duration_ms,omitempty"`
+	EstTokens     int    `json:"est_tokens,omitempty"`
+	LinesAdded    int    `json:"lines_added,omitempty"`
+	LinesRemoved  int    `json:"lines_removed,omitempty"`
+	SubPaneID     string `json:"sub_pane_id,omitempty"`
 }
 
 type MessageRow struct {
 	Role             string
 	Content          sql.NullString
+	ContentType      sql.NullString
 	ReasoningContent sql.NullString
 	Reasoning        sql.NullString
 	ToolCalls        sql.NullString
@@ -85,11 +86,11 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO messages (
-			role, content, reasoning_content, reasoning,
+			role, content, content_type, reasoning_content, reasoning,
 			tool_calls, tool_name, tool_result, tool_call_id,
 			cache_control, token_count, sequence_num, turn_number,
 			agent_id, created_at, display_meta
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return 0, fmt.Errorf("sessiondb: replace messages prepare: %w", err)
@@ -109,7 +110,7 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 			cacheControlJSON, _ = json.Marshal(m.CacheControl)
 		}
 
-		contentStr := m.ContentString()
+		contentStr := m.Content.String()
 		toolResult := ""
 		if m.Role == "tool" {
 			toolResult = contentStr
@@ -117,15 +118,13 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 		}
 
 		var dbContent string
+		var contentType string
 		if m.Content.IsText() {
 			dbContent = contentStr
+			contentType = "text"
 		} else {
-			partsJSON, err := json.Marshal(m.Content.Parts())
-			if err == nil {
-				dbContent = string(partsJSON)
-			} else {
-				dbContent = contentStr
-			}
+			dbContent = m.Content.MultipartJSON()
+			contentType = "multipart"
 		}
 
 		turn := 0
@@ -143,6 +142,7 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 		_, err := stmt.Exec(
 			m.Role,
 			nullString(dbContent),
+			nullString(contentType),
 			nullString(m.ReasoningContent),
 			nullString(m.Reasoning),
 			nullBytes(toolCallsJSON),
@@ -179,7 +179,7 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 
 func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 	rows, err := db.Query(`
-		SELECT role, content, reasoning_content, reasoning,
+		SELECT role, content, content_type, reasoning_content, reasoning,
 		       tool_calls, tool_name, tool_result, tool_call_id,
 		       cache_control, token_count, sequence_num, turn_number,
 		       agent_id, created_at, display_meta
@@ -195,7 +195,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 	for rows.Next() {
 		var r MessageRow
 		err := rows.Scan(
-			&r.Role, &r.Content, &r.ReasoningContent, &r.Reasoning,
+			&r.Role, &r.Content, &r.ContentType, &r.ReasoningContent, &r.Reasoning,
 			&r.ToolCalls, &r.ToolName, &r.ToolResult, &r.ToolCallID,
 			&r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
 			&r.AgentID, &r.CreatedAt, &r.DisplayMeta,
@@ -207,7 +207,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 		m := provider.ChatMessage{
 			Role: r.Role,
 		}
-		m.Content = parseMessageContent(r.Content.String)
+		m.Content = parseMessageContent(r.Content.String, r.ContentType.String)
 
 		if r.ReasoningContent.Valid {
 			m.ReasoningContent = r.ReasoningContent.String
@@ -240,7 +240,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 
 func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 	rows, err := db.Query(`
-		SELECT role, content, reasoning_content, reasoning,
+		SELECT role, content, content_type, reasoning_content, reasoning,
 		       tool_calls, tool_name, tool_result, tool_call_id,
 		       cache_control, token_count, sequence_num, turn_number,
 		       agent_id, created_at, display_meta
@@ -255,7 +255,7 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 	for rows.Next() {
 		var r MessageRow
 		err := rows.Scan(
-			&r.Role, &r.Content, &r.ReasoningContent, &r.Reasoning,
+			&r.Role, &r.Content, &r.ContentType, &r.ReasoningContent, &r.Reasoning,
 			&r.ToolCalls, &r.ToolName, &r.ToolResult, &r.ToolCallID,
 			&r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
 			&r.AgentID, &r.CreatedAt, &r.DisplayMeta,
@@ -267,7 +267,7 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 		m := provider.ChatMessage{
 			Role: r.Role,
 		}
-		m.Content = parseMessageContent(r.Content.String)
+		m.Content = parseMessageContent(r.Content.String, r.ContentType.String)
 
 		if r.ReasoningContent.Valid {
 			m.ReasoningContent = r.ReasoningContent.String
@@ -325,13 +325,15 @@ func nullBytes(b []byte) sql.NullString {
 	return sql.NullString{String: string(b), Valid: true}
 }
 
-func parseMessageContent(s string) provider.MessageContent {
+func parseMessageContent(s string, contentType string) provider.MessageContent {
 	s = strings.TrimSpace(s)
-	if len(s) > 0 && s[0] == '[' {
+	if contentType == "multipart" {
 		var parts []provider.ContentPart
 		if err := json.Unmarshal([]byte(s), &parts); err == nil && len(parts) > 0 {
 			return provider.PartsContent(parts)
 		}
+		// Fallback: treat as text if JSON parse fails
 	}
+	// Default: treat as text content (covers both "text" and empty/legacy contentType)
 	return provider.TextContent(s)
 }

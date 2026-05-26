@@ -33,7 +33,7 @@ type EventSender interface {
 }
 
 type EventInput interface {
-	GetInputCh() <-chan UserInput
+	GetInputCh() <-chan provider.UserInput
 	GetCancelCh() <-chan struct{}
 }
 
@@ -49,13 +49,13 @@ type Session struct {
 	sm        *statemachine.ConversationStateMachine
 	asyncMgr  *fileio.AsyncCommandManager
 
-	msgs         []provider.ChatMessage
-	msgTurns     []int
-	displayMetas []sessiondb.DisplayMeta
-	createdAts   []int64
-	msgsMu       sync.Mutex
-	pendingBlock bool
-	blockMu      sync.Mutex
+	msgs          []provider.ChatMessage
+	msgTurns      []int
+	displayMetas  []sessiondb.DisplayMeta
+	createdAts    []int64
+	msgsMu        sync.Mutex
+	pendingBlock  bool
+	blockMu       sync.Mutex
 	lastBlockResp string
 	blockRespMu   sync.Mutex
 	msgCounter    int
@@ -72,22 +72,22 @@ type Session struct {
 	autoHandleCounter int
 	autoHandleMu      sync.Mutex
 
-	toolCallCount    int
-	toolCallCountMu  sync.Mutex
+	toolCallCount   int
+	toolCallCountMu sync.Mutex
 
-	db        *sql.DB
-	dbPath    string
-	turnNumber  int
-	toolCallSeq int
-	seqNum     int
-	writeBuf  []taggedMessage
-	writeMu   sync.Mutex
-	flushWg   sync.WaitGroup
-	closing      int32
+	db            *sql.DB
+	dbPath        string
+	turnNumber    int
+	toolCallSeq   int
+	seqNum        int
+	writeBuf      []taggedMessage
+	writeMu       sync.Mutex
+	flushWg       sync.WaitGroup
+	closing       int32
 	hardCancelled int32
-	wakeCh       chan WakeEvent
-	sender       EventSender
-	subAgentSup *SubAgentRunner
+	wakeCh        chan WakeEvent
+	sender        EventSender
+	subAgentSup   *SubAgentRunner
 
 	// consumedReports tracks sub-agent IDs whose results the main agent has already
 	// consumed during an active turn (typically via poll_sub_agent). When a WakeSubAgentDone
@@ -194,24 +194,24 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	}
 
 	sess := &Session{
-		cfg:            cfg,
-		provider:       p,
-		exec:           exec,
-		editor:         editor,
-		logger:         lg,
-		permStore:      permStore,
-		sm:             sm,
-		asyncMgr:       fileio.NewAsyncCommandManagerWithLogger(lg),
-		subAgentSup:   nil,
-		sessionID:      sessionID,
-		sessionStart:   time.Now(),
-		wakeCh:         make(chan WakeEvent, WakeChBufSize),
-		cost:           NewCostAccumulator(lg),
-		tokens:         NewTokenTracker(lg),
-		db:             db,
-		dbPath:         dbPath,
-		writeBuf:         make([]taggedMessage, 0, 64),
-		consumedReports:  make(map[string]bool),
+		cfg:             cfg,
+		provider:        p,
+		exec:            exec,
+		editor:          editor,
+		logger:          lg,
+		permStore:       permStore,
+		sm:              sm,
+		asyncMgr:        fileio.NewAsyncCommandManagerWithLogger(lg),
+		subAgentSup:     nil,
+		sessionID:       sessionID,
+		sessionStart:    time.Now(),
+		wakeCh:          make(chan WakeEvent, WakeChBufSize),
+		cost:            NewCostAccumulator(lg),
+		tokens:          NewTokenTracker(lg),
+		db:              db,
+		dbPath:          dbPath,
+		writeBuf:        make([]taggedMessage, 0, 64),
+		consumedReports: make(map[string]bool),
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)

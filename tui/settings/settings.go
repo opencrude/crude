@@ -197,8 +197,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		case "k":
 			msg = tea.KeyPressMsg{Code: tea.KeyUp}
-		case "e":
-			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
 		}
 	}
 
@@ -763,6 +761,10 @@ func (m *Model) saveCategoryForm() {
 			cat.ModelInputPrice = mod.InputPrice
 			cat.ModelOutputPrice = mod.OutputPrice
 			cat.ModelCachePrice = mod.CacheReadPrice
+			cat.ModelSupportsVision = mod.SupportsVision
+			cat.ModelSupportsTools = mod.SupportsTools
+			cat.ModelMaxOutput = mod.MaxOutput
+			cat.ModelAttachment = mod.Attachment
 			break
 		}
 	}

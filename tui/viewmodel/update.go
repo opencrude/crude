@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/promptref"
+	"crude/provider"
 	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
@@ -182,9 +183,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				switch e := evt.(type) {
 				case input.SubmitEvent:
-					cmds = append(cmds, m.submitInput(e.Text))
+					cmds = append(cmds, m.submitInput(e.Text, e.ReferenceIDs))
 				case input.BtwSubmitEvent:
-					cmds = append(cmds, m.submitBtw(e.Text))
+					cmds = append(cmds, m.submitBtw(e.Text, e.ReferenceIDs))
 				case input.SlashCommandEvent:
 					cmds = append(cmds, m.executeSlashCommand(e.Command))
 				case input.SettingsOpenEvent:
@@ -244,9 +245,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				switch e := evt.(type) {
 				case input.SubmitEvent:
-					cmds = append(cmds, m.submitInput(e.Text))
+					cmds = append(cmds, m.submitInput(e.Text, e.ReferenceIDs))
 				case input.BtwSubmitEvent:
-					cmds = append(cmds, m.submitBtw(e.Text))
+					cmds = append(cmds, m.submitBtw(e.Text, e.ReferenceIDs))
 				case input.SlashCommandEvent:
 					cmds = append(cmds, m.executeSlashCommand(e.Command))
 				case input.SettingsOpenEvent:
@@ -308,9 +309,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				switch e := evt.(type) {
 				case input.SubmitEvent:
-					cmds = append(cmds, m.submitInput(e.Text))
+					cmds = append(cmds, m.submitInput(e.Text, e.ReferenceIDs))
 				case input.BtwSubmitEvent:
-					cmds = append(cmds, m.submitBtw(e.Text))
+					cmds = append(cmds, m.submitBtw(e.Text, e.ReferenceIDs))
 				case input.SlashCommandEvent:
 					cmds = append(cmds, m.executeSlashCommand(e.Command))
 				case input.SettingsOpenEvent:
@@ -354,9 +355,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				switch e := evt.(type) {
 				case input.SubmitEvent:
-					cmds = append(cmds, m.submitInput(e.Text))
+					cmds = append(cmds, m.submitInput(e.Text, e.ReferenceIDs))
 				case input.BtwSubmitEvent:
-					cmds = append(cmds, m.submitBtw(e.Text))
+					cmds = append(cmds, m.submitBtw(e.Text, e.ReferenceIDs))
 				case input.SlashCommandEvent:
 					cmds = append(cmds, m.executeSlashCommand(e.Command))
 				case input.SettingsOpenEvent:
@@ -407,27 +408,27 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	switch e := evt.(type) {
-	case settings.SaveEvent:
-		s := e.Settings
-		m.logger.Info("CONFIG", "settings_save", "provider", s.ProviderID, "model", s.Model)
-		if m.OnSettingsSave != nil {
-			m.statusbar.SetInfo("saving...")
-			onSave := m.OnSettingsSave
-			cmds = append(cmds, func() tea.Msg {
-				err := onSave(s)
-				return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
-			})
-		} else {
-			m.modelName = s.Model
-			m.lastSettings = s
+		switch e := evt.(type) {
+		case settings.SaveEvent:
+			s := e.Settings
+			m.logger.Info("CONFIG", "settings_save", "provider", s.ProviderID, "model", s.Model)
+			if m.OnSettingsSave != nil {
+				m.statusbar.SetInfo("saving...")
+				onSave := m.OnSettingsSave
+				cmds = append(cmds, func() tea.Msg {
+					err := onSave(s)
+					return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
+				})
+			} else {
+				m.modelName = s.Model
+				m.lastSettings = s
+				m.closeOverlayTab("Settings")
+			}
+		case settings.CancelEvent:
+			m.logger.Info("CONFIG", "settings_cancel")
+			m.settings.RestoreSnapshot()
 			m.closeOverlayTab("Settings")
 		}
-	case settings.CancelEvent:
-		m.logger.Info("CONFIG", "settings_cancel")
-		m.settings.RestoreSnapshot()
-		m.closeOverlayTab("Settings")
-	}
 
 	case ModeConfirm:
 		m.statusbar.SetConfirming(true)
@@ -629,7 +630,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.closeOverlayTab("YOLO")
 		}
 
-		case ModeChat:
+	case ModeChat:
 		if m.anyActive() && !m.blocking {
 			if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 				switch keyMsg.Code {
@@ -693,9 +694,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch e := evt.(type) {
 			case input.SubmitEvent:
-				cmds = append(cmds, m.submitInput(e.Text))
+				cmds = append(cmds, m.submitInput(e.Text, e.ReferenceIDs))
 			case input.BtwSubmitEvent:
-				cmds = append(cmds, m.submitBtw(e.Text))
+				cmds = append(cmds, m.submitBtw(e.Text, e.ReferenceIDs))
 			case input.SlashCommandEvent:
 				cmds = append(cmds, m.executeSlashCommand(e.Command))
 			case input.SettingsOpenEvent:
@@ -1077,19 +1078,12 @@ func (m *App) addFileReference(path string) {
 	if m.refStore == nil || path == "" {
 		return
 	}
-	ext := strings.ToLower(filepath.Ext(path))
-	isImage := ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg"
+	mime, isImage := provider.ImageMimeFromExt(filepath.Ext(path))
 	kind := promptref.KindSelectedFile
-	mime := "text/plain"
 	if isImage {
 		kind = promptref.KindPastedImage
-		mime = "image/" + strings.TrimPrefix(ext, ".")
-		if ext == ".jpg" {
-			mime = "image/jpeg"
-		}
-		if ext == ".svg" {
-			mime = "image/svg+xml"
-		}
+	} else {
+		mime = "text/plain"
 	}
 	ref, err := m.refStore.CreateReference(promptref.CreateRequest{
 		Kind:     kind,

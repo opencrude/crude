@@ -36,18 +36,22 @@ const (
 )
 
 type CategorySettings struct {
-	Provider           string
-	ProviderURL        string
-	APIKey             string
-	Model              string
-	ThinkingEffort     string
-	Policy             string
-	MaxSteps           int
-	Description        string
-	ModelContextWindow int
-	ModelInputPrice    float64
-	ModelOutputPrice   float64
-	ModelCachePrice    float64
+	Provider            string
+	ProviderURL         string
+	APIKey              string
+	Model               string
+	ThinkingEffort      string
+	Policy              string
+	MaxSteps            int
+	Description         string
+	ModelContextWindow  int
+	ModelInputPrice     float64
+	ModelOutputPrice    float64
+	ModelCachePrice     float64
+	ModelSupportsVision bool
+	ModelSupportsTools  bool
+	ModelMaxOutput      int
+	ModelAttachment     bool
 }
 
 type ProfileSettings struct {
@@ -83,6 +87,10 @@ type ModelEntry struct {
 	InputPrice     float64
 	OutputPrice    float64
 	CacheReadPrice float64
+	SupportsVision bool
+	SupportsTools  bool
+	MaxOutput      int
+	Attachment     bool
 }
 
 type ProviderConfig struct {

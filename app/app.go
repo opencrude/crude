@@ -17,16 +17,16 @@ import (
 )
 
 type App struct {
-	fc             FileConfig
-	sessCfg        *session.Config
-	home           string
-	sessionsRoot   string
-	sess           *session.Session
-	blockResolveCh chan string
-	isResuming     bool
-	openSettings   bool
+	fc              FileConfig
+	sessCfg         *session.Config
+	home            string
+	sessionsRoot    string
+	sess            *session.Session
+	blockResolveCh  chan string
+	isResuming      bool
+	openSettings    bool
 	resumeSessionID string
-	resumeNextID   string
+	resumeNextID    string
 }
 
 type Opts struct {

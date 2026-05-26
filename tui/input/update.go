@@ -13,36 +13,6 @@ import (
 
 const pasteInlineThreshold = 16 * 1024
 
-func isBase64Image(s string) bool {
-	return strings.HasPrefix(s, "data:image/") || (len(s) > 100 && strings.HasPrefix(s, "/9j/"))
-}
-
-func detectImageMime(s string) string {
-	if strings.HasPrefix(s, "data:image/png;") {
-		return "image/png"
-	}
-	if strings.HasPrefix(s, "data:image/jpeg;") || strings.HasPrefix(s, "data:image/jpg;") {
-		return "image/jpeg"
-	}
-	if strings.HasPrefix(s, "data:image/gif;") {
-		return "image/gif"
-	}
-	if strings.HasPrefix(s, "data:image/webp;") {
-		return "image/webp"
-	}
-	if strings.HasPrefix(s, "/9j/") {
-		return "image/jpeg"
-	}
-	return "image/png"
-}
-
-func extractBase64Data(s string) string {
-	if idx := strings.Index(s, ";base64,"); idx >= 0 {
-		return s[idx+8:]
-	}
-	return s
-}
-
 func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, showHint bool) (Model, tea.Cmd, Event) {
 	m.thinking = thinking
 	m.blocking = blocking
@@ -70,7 +40,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 
 		// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
 		// where Alt+Enter is intercepted as "toggle fullscreen".
-		if msg.Mod.Contains(tea.ModAlt) && len(msg.Text) == 1 && msg.Text[0] == '\\' {
+		if msg.Mod.Contains(tea.ModAlt) && msg.Code == '\\' {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg, false)
 			return m, cmd, nil
@@ -87,7 +57,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 			if text == "" {
 				return m, nil, nil
 			}
-			expandedText := strings.TrimSpace(m.ExpandedValue())
+			refIDs := m.ReferencedIDs()
 			m.appendHistory(text)
 			m.input.Clear()
 			m.slashActive = false
@@ -98,9 +68,9 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 				return m, nil, SlashCommandEvent{Command: text}
 			}
 			if m.thinking && !m.blocking {
-				return m, nil, BtwSubmitEvent{Text: expandedText}
+				return m, nil, BtwSubmitEvent{Text: text, ReferenceIDs: refIDs}
 			}
-			return m, nil, SubmitEvent{Text: expandedText}
+			return m, nil, SubmitEvent{Text: text, ReferenceIDs: refIDs}
 
 		case tea.KeyUp:
 			if m.input.CursorVisualLine() == 0 {
@@ -166,10 +136,6 @@ func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 	}
 
-	if isBase64Image(content) {
-		return m.handleImagePaste(content)
-	}
-
 	if m.refStore == nil || (utf8.RuneCountInString(content) < 240 && !strings.Contains(content, "\n")) {
 		m.input.InsertString(content)
 		m.syncSlashState()
@@ -198,27 +164,6 @@ func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
 	if inline {
 		m.InsertReference(ref)
 	}
-	m.syncSlashState()
-	return m, nil, RefSelectEvent{ID: ref.ID}
-}
-
-func (m Model) handleImagePaste(content string) (Model, tea.Cmd, Event) {
-	if m.refStore == nil {
-		return m, nil, nil
-	}
-	mime := detectImageMime(content)
-	b64data := extractBase64Data(content)
-	ref, err := m.refStore.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedImage,
-		Title:   "Pasted image",
-		Mime:    mime,
-		Content: b64data,
-		Inline:  false,
-	})
-	if err != nil {
-		return m, nil, nil
-	}
-	m.InsertReference(ref)
 	m.syncSlashState()
 	return m, nil, RefSelectEvent{ID: ref.ID}
 }
