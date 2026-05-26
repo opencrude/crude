@@ -69,6 +69,8 @@ type App struct {
 	compositor    *compositor.Compositor
 	windowManager *wm.WindowManager
 	renderCtx     *widget.RenderContext
+	cachedOutput  string // last rendered ANSI output for View() throttling during drag
+	lastFullRender time.Time
 
 	blocking      bool
 	yolo          bool
@@ -693,7 +695,7 @@ func (m *App) openTextOverlayWindow() {
 		wm.WithMovable(true),
 		wm.WithResizable(true),
 		wm.WithClosable(true),
-		wm.WithBorderStyle(wm.BorderRounded),
+		wm.WithBorderStyle(wm.BorderLShape),
 		wm.WithMinSize(32, 8),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
@@ -733,7 +735,7 @@ func (m *App) openFilePickerWindow() {
 		wm.WithMovable(true),
 		wm.WithResizable(true),
 		wm.WithClosable(true),
-		wm.WithBorderStyle(wm.BorderRounded),
+		wm.WithBorderStyle(wm.BorderLShape),
 		wm.WithMinSize(32, 10),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)

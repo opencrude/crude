@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"crude/tui/rendering"
+	"crude/tui/scrollbar"
 	"crude/tui/theme"
 )
 
@@ -22,13 +23,15 @@ const (
 )
 
 type FilePicker struct {
-	th       *theme.Theme
-	root     string
-	current  string
-	entries  []fileEntry
-	selected int
-	filter   string
-	active   bool
+	th               *theme.Theme
+	root             string
+	current          string
+	entries          []fileEntry
+	selected         int
+	filter           string
+	active           bool
+	scrollbar        scrollbar.ScrollBar
+	lastEntryPageSize int // cached from last ViewInner render
 }
 
 type fileEntry struct {
@@ -38,7 +41,10 @@ type fileEntry struct {
 }
 
 func NewFilePicker(th *theme.Theme) FilePicker {
-	return FilePicker{th: th}
+	return FilePicker{
+		th:        th,
+		scrollbar: scrollbar.New(0),
+	}
 }
 
 func (m *FilePicker) Open(root string) {
@@ -60,52 +66,114 @@ func (m *FilePicker) Open(root string) {
 func (m *FilePicker) Close() { m.active = false }
 func (m FilePicker) IsOpen() bool { return m.active }
 
-func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction) {
-	keyMsg, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		return m, "", FilePickerNone
-	}
-	switch keyMsg.Code {
-	case tea.KeyEsc:
-		return m, "", FilePickerCancel
-	case tea.KeyUp:
-		if m.selected > 0 {
-			m.selected--
+func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, tea.Cmd) {
+	var cmd tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.MouseWheelMsg:
+		entries := m.visibleEntries()
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if m.selected > 0 {
+				m.selected--
+			}
+		case tea.MouseWheelDown:
+			if m.selected < len(entries)-1 {
+				m.selected++
+			}
 		}
-	case tea.KeyDown:
-		if m.selected < len(m.entries)-1 {
-			m.selected++
+		// Update scrollbar scroll info based on current position
+		entryPageSize := m.scrollPageSize()
+		if entryPageSize < 1 {
+			entryPageSize = 1
 		}
-	case tea.KeyBackspace:
-		if m.filter != "" {
-			r := []rune(m.filter)
-			m.filter = string(r[:len(r)-1])
-		} else if m.current != m.root {
-			m.current = filepath.Dir(m.current)
-			m.selected = 0
-			m.loadEntries()
+		scrollStart := 0
+		if m.selected >= entryPageSize {
+			scrollStart = m.selected - entryPageSize + 1
 		}
-	case tea.KeyEnter:
-		if len(m.entries) == 0 || m.selected < 0 || m.selected >= len(m.entries) {
-			return m, "", FilePickerNone
+		cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
+
+	case tea.KeyPressMsg:
+		switch msg.Code {
+		case tea.KeyEsc:
+			return m, "", FilePickerCancel, nil
+		case tea.KeyUp:
+			if m.selected > 0 {
+				m.selected--
+			}
+		case tea.KeyDown:
+			if m.selected < len(m.entries)-1 {
+				m.selected++
+			}
+		case tea.KeyBackspace:
+			if m.filter != "" {
+				r := []rune(m.filter)
+				m.filter = string(r[:len(r)-1])
+			} else if m.current != m.root {
+				m.current = filepath.Dir(m.current)
+				m.selected = 0
+				m.loadEntries()
+			}
+		case tea.KeyEnter:
+			if len(m.entries) == 0 || m.selected < 0 || m.selected >= len(m.entries) {
+				return m, "", FilePickerNone, nil
+			}
+			entry := m.entries[m.selected]
+			if entry.IsDir {
+				m.current = entry.Path
+				m.selected = 0
+				m.filter = ""
+				m.loadEntries()
+				return m, "", FilePickerNone, nil
+			}
+			return m, entry.Path, FilePickerSelect, nil
+		default:
+			for _, r := range msg.Text {
+				if r >= 32 {
+					m.filter += string(r)
+				}
+			}
 		}
-		entry := m.entries[m.selected]
-		if entry.IsDir {
-			m.current = entry.Path
-			m.selected = 0
-			m.filter = ""
-			m.loadEntries()
-			return m, "", FilePickerNone
+
+	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		// Forward mouse events to the scrollbar for thumb dragging.
+		var sbCmd tea.Cmd
+		m.scrollbar, sbCmd = m.scrollbar.Update(msg)
+		if sbCmd != nil {
+			cmd = sbCmd
 		}
-		return m, entry.Path, FilePickerSelect
-	default:
-		for _, r := range keyMsg.Text {
-			if r >= 32 {
-				m.filter += string(r)
+		// If the scrollbar is dragging, update selection based on scroll position.
+		if m.scrollbar.IsDragging() {
+			entries := m.visibleEntries()
+			entryPageSize := m.scrollPageSize()
+			if entryPageSize < 1 {
+				entryPageSize = 1
+			}
+			scrollStart := 0
+			if m.selected >= entryPageSize {
+				scrollStart = m.selected - entryPageSize + 1
+			}
+			if cmd == nil {
+				cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
 			}
 		}
 	}
-	return m, "", FilePickerNone
+
+	// Update scrollbar on any activity
+	entries := m.visibleEntries()
+	entryPageSize := m.scrollPageSize()
+	if entryPageSize < 1 {
+		entryPageSize = 1
+	}
+	scrollStart := 0
+	if m.selected >= entryPageSize {
+		scrollStart = m.selected - entryPageSize + 1
+	}
+	if cmd == nil {
+		cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
+	}
+
+	return m, "", FilePickerNone, cmd
 }
 
 func (m FilePicker) View(width, height, spinFrame int) []string {
@@ -122,11 +190,15 @@ func (m FilePicker) View(width, height, spinFrame int) []string {
 		bodyH = 4
 	}
 	entries := m.visibleEntries()
-	start := 0
-	if m.selected >= bodyH {
-		start = m.selected - bodyH + 1
+	entryPageSize := bodyH - 2 // body includes 2 header lines (path + filter)
+	if entryPageSize < 1 {
+		entryPageSize = 1
 	}
-	end := start + bodyH
+	start := 0
+	if m.selected >= entryPageSize {
+		start = m.selected - entryPageSize + 1
+	}
+	end := start + entryPageSize
 	if end > len(entries) {
 		end = len(entries)
 	}
@@ -159,7 +231,7 @@ func (m FilePicker) View(width, height, spinFrame int) []string {
 //
 // Use View() for standalone rendering (with border/centering).
 // Use ViewInner() for embedded rendering inside a container (without border).
-func (m FilePicker) ViewInner(width, height, spinFrame int) []string {
+func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 	if width < 10 || height < 4 {
 		return nil
 	}
@@ -174,20 +246,46 @@ func (m FilePicker) ViewInner(width, height, spinFrame int) []string {
 	}
 
 	entries := m.visibleEntries()
-	start := 0
-	if m.selected >= bodyH {
-		start = m.selected - bodyH + 1
+	entryPageSize := bodyH - 2 // body includes 2 header lines (path + filter)
+	if entryPageSize < 1 {
+		entryPageSize = 1
 	}
-	end := start + bodyH
+	m.lastEntryPageSize = entryPageSize
+
+	start := 0
+	if m.selected >= entryPageSize {
+		start = m.selected - entryPageSize + 1
+	}
+	end := start + entryPageSize
 	if end > len(entries) {
 		end = len(entries)
 	}
 
+	// Update scrollbar state
+	scrollStart := start
+	m.scrollbar.SetTrackHeight(entryPageSize)
+	// SetScrollInfo returns a tea.Cmd for fade timer; since ViewInner is a
+	// render method (not an Update method), we call it only for the side
+	// effect of updating the scrollbar's internal position. The cmd is
+	// discarded here; the scrollbar visibility is maintained through
+	// Update() calls.
+	m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
+
+	// Account for scrollbar width in content area
+	sbW := 0
+	if m.scrollbar.IsVisible() && len(entries) > entryPageSize {
+		sbW = scrollbar.ScrollbarWidth
+	}
+	contentW := innerW - sbW
+	if contentW < 1 {
+		contentW = 1
+	}
+
 	var body []string
-	pathLine := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(m.current, innerW))
+	pathLine := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(m.current, contentW))
 	body = append(body, pathLine)
 	filter := "/ " + m.filter
-	body = append(body, lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Render(rendering.TruncateLine(filter, innerW)))
+	body = append(body, lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Render(rendering.TruncateLine(filter, contentW)))
 	for i := start; i < end; i++ {
 		entry := entries[i]
 		icon := "  "
@@ -196,26 +294,49 @@ func (m FilePicker) ViewInner(width, height, spinFrame int) []string {
 		}
 		name := icon + entry.Name
 		if i == m.selected {
-			name = lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Selection).Render(rendering.TruncateLine(name, innerW))
+			name = lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Selection).Render(rendering.TruncateLine(name, contentW))
 		} else {
-			name = lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(name, innerW))
+			name = lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(name, contentW))
 		}
 		body = append(body, name)
+	}
+
+	// Build scrollbar lines aligned with the entry area
+	var sbLines []string
+	if sbW > 0 {
+		sbView := m.scrollbar.View()
+		if sbView != "" {
+			sbLines = strings.Split(sbView, "\n")
+		}
 	}
 
 	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
 
 	result := make([]string, 0, height)
-	for _, line := range body {
-		result = append(result, "  "+padRight(line, innerW)+"  ")
+	for i, line := range body {
+		padded := "  " + padRight(line, contentW) + "  "
+		// Append scrollbar character for entry lines (i >= 2), otherwise blank
+		if sbW > 0 {
+			if i >= 2 && i-2 < len(sbLines) {
+				padded = padded + sbLines[i-2]
+			} else {
+				padded = padded + strings.Repeat(" ", sbW)
+			}
+		}
+		result = append(result, padded)
 	}
 
 	hint := "enter select · esc cancel · type filter"
-	result = append(result, "  "+dim.Render(padRight(rendering.TruncateLine(hint, innerW), innerW))+"  ")
+	hintLine := "  " + dim.Render(padRight(rendering.TruncateLine(hint, contentW), contentW)) + "  "
+	if sbW > 0 {
+		hintLine = hintLine + strings.Repeat(" ", sbW)
+	}
+	result = append(result, hintLine)
 
 	// Fill remaining lines with blanks to cover the content area.
 	for len(result) < height {
-		result = append(result, strings.Repeat(" ", width))
+		blank := strings.Repeat(" ", width)
+		result = append(result, blank)
 	}
 
 	return result
@@ -255,4 +376,33 @@ func (m FilePicker) visibleEntries() []fileEntry {
 		}
 	}
 	return out
+}
+
+// scrollPageSize returns the number of entry lines that fit in the visible area.
+func (m FilePicker) scrollPageSize() int {
+	if m.lastEntryPageSize <= 0 {
+		return 10 // reasonable default before first render
+	}
+	return m.lastEntryPageSize
+}
+
+// ScrollbarView returns the rendered scrollbar string for display alongside
+// the entry list.
+func (m FilePicker) ScrollbarView() string {
+	return m.scrollbar.View()
+}
+
+// ScrollbarWidth returns the width occupied by the scrollbar (0 if hidden, 1 if visible).
+func (m FilePicker) ScrollbarWidth() int {
+	if m.scrollbar.IsVisible() && len(m.entries) > 0 {
+		return scrollbar.ScrollbarWidth
+	}
+	return 0
+}
+
+// UpdateScrollbar processes scrollbar-specific messages (fade/hide timers).
+func (m *FilePicker) UpdateScrollbar(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.scrollbar, cmd = m.scrollbar.Update(msg)
+	return cmd
 }

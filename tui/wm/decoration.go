@@ -2,55 +2,135 @@ package wm
 
 import (
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 )
 
-// RenderDecoration draws borders, title bar, and close button into the
+// RenderDecoration draws background, title bar, and close button into the
 // window surface. This is called by FloatingWindow.Render when the window
 // is decorated.
+//
+// For BorderNone windows: the background fill IS the visual boundary —
+// no border characters are drawn. The title bar spans the full width and
+// the close button sits at the right edge.
+//
+// For bordered windows (BorderSingle, BorderRounded, etc.): the traditional
+// border characters are drawn around the perimeter, and the title bar and
+// close button sit between the border chars.
 func RenderDecoration(fw *FloatingWindow, surf *surface.Surface, t *theme.Theme) {
 	if t == nil {
 		return
 	}
 
-	// Determine colors from the theme — Windows-dark-mode style.
-	var borderFg, borderBg, titleFg, titleBg cell.Color
+	// Determine colors from the theme.
+	var borderFg, borderBg, titleFg, titleBg, bodyBg cell.Color
 
-	// Unfocused: subtle, muted
-	borderFg = cell.NewTrueColor(0x44, 0x4c, 0x56) // #444c56
+	// Unfocused: subtle, muted — blend into the background.
+	borderFg = rendering.ThemeColorToCell(t.Colors.Border) // #30363d subtle gray
 	borderBg = cell.NoColor
-	titleFg = cell.NewTrueColor(0x8b, 0x94, 0x9e)  // #8b949e (muted gray)
-	titleBg = cell.NewTrueColor(0x2d, 0x2d, 0x30)   // #2d2d30 (dark blue-gray title bar bg)
+	titleFg = rendering.ThemeColorToCell(t.Colors.Muted)    // #8b949e muted gray
+	titleBg = rendering.ThemeColorToCell(t.Colors.SubPaneBg) // #1c2333 very dark blue-gray
+	bodyBg = rendering.ThemeColorToCell(t.Colors.SubPaneBg) // #1c2333 matches sub-pane bg
 
 	if fw.focused {
-		// Focused: accent blue
-		borderFg = cell.NewTrueColor(0x58, 0xa6, 0xff) // #58a6ff
+		// Focused: accent color border with a distinct title bar.
+		borderFg = rendering.ThemeColorToCell(t.Colors.Accent)   // #f0883e orange accent
 		borderBg = cell.NoColor
-		titleFg = cell.NewTrueColor(0xff, 0xff, 0xff)   // #ffffff (bright white)
-		titleBg = cell.NewTrueColor(0x1f, 0x6f, 0xeb)   // #1f6feb (blue accent title bar bg)
+		titleFg = rendering.ThemeColorToCell(t.Colors.Fg)       // #e6edf3 bright foreground
+		titleBg = rendering.ThemeColorToCell(t.Colors.Selection) // #1e2a3a dark selection blue
+		bodyBg = rendering.ThemeColorToCell(t.Colors.SubPaneBg)  // #1c2333 same bg, focus in title
 	}
 
-	// Draw the border around the perimeter.
-	DrawBorder(surf.Buffer(), fw.borderStyle, borderFg, borderBg)
+	// For BorderNone: fill the entire window surface with background color.
+	// The background IS the visual boundary — no border chars needed.
+	switch fw.borderStyle {
+	case BorderNone:
+		DrawBackground(surf.Buffer(), bodyBg)
+	case BorderLShape:
+		DrawBackground(surf.Buffer(), bodyBg)
+		// L-border uses body bg for both fg and bg — the border lines are
+		// structural only (column/row reserved for layout), not visually colored.
+		// The background fill IS the visual boundary.
+		DrawLBorder(surf.Buffer(), bodyBg, bodyBg)
+	default:
+		// For bordered windows, draw the border around the perimeter.
+		DrawBorder(surf.Buffer(), fw.borderStyle, borderFg, borderBg)
+	}
 
-	// Draw the title bar text in the top border row.
-	DrawTitleBar(surf.Buffer(), fw.Title, fw.titleAlign, fw.closable, titleFg, titleBg, fw.w)
+	// Draw the title bar text in the top row.
+	DrawTitleBar(surf.Buffer(), fw.Title, fw.titleAlign, fw.closable, titleFg, titleBg, fw.w, fw.borderStyle)
 
 	// If closable, draw the close button.
 	if fw.closable {
-		DrawCloseButton(surf.Buffer(), fw.w, titleFg, titleBg)
+		closeFg := titleFg
+		if fw.focused {
+			closeFg = rendering.ThemeColorToCell(t.Colors.Error) // #ff7b72 red for focused close
+		}
+		DrawCloseButton(surf.Buffer(), fw.w, closeFg, titleBg, fw.borderStyle)
+	}
+}
+
+// DrawBackground fills the entire window surface with a background color.
+// This provides the visual boundary for BorderNone windows — the bg color
+// defines the window's extent without any border characters.
+func DrawBackground(buf *surface.CellBuffer, bg cell.Color) {
+	w := buf.Width()
+	h := buf.Height()
+	bgCell := cell.NewCell(' ', cell.NoColor, bg, 0)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			buf.Set(x, y, bgCell)
+		}
+	}
+}
+
+// DrawLBorder draws an L-shaped border (left + bottom edges only) with the
+// given foreground color on top of the existing background fill.
+// The left vertical goes from row 1 to row h-2 (between title bar and bottom).
+// The bottom horizontal spans the full width. Corners are drawn at bottom-left
+// and bottom-right.
+func DrawLBorder(buf *surface.CellBuffer, fg, bg cell.Color) {
+	w := buf.Width()
+	h := buf.Height()
+
+	if w < 2 || h < 3 {
+		return // Too small for L-border + title bar
+	}
+
+	// Bottom-left corner
+	buf.Set(0, h-1, cell.NewCell('└', fg, bg, 0))
+	// Bottom-right: just end the horizontal line (no right vertical meets it)
+	buf.Set(w-1, h-1, cell.NewCell('─', fg, bg, 0))
+
+	// Bottom horizontal (between corners)
+	horizCell := cell.NewCell('─', fg, bg, 0)
+	for x := 1; x < w-1; x++ {
+		buf.Set(x, h-1, horizCell)
+	}
+
+	// Left vertical (from row 1 to row h-2, between title bar and bottom)
+	vertCell := cell.NewCell('│', fg, bg, 0)
+	for y := 1; y < h-1; y++ {
+		buf.Set(0, y, vertCell)
 	}
 }
 
 // DrawBorder draws a border around the perimeter of a CellBuffer using
 // the specified border style and colors.
 //
-// The border occupies the outermost row/column of the buffer:
+// For BorderNone, this is a no-op — the background fill handles the visual
+// boundary instead.
+//
+// For other styles, the border occupies the outermost row/column:
 //   - Corners at (0,0), (w-1,0), (0,h-1), (w-1,h-1)
 //   - Horizontal borders on rows 0 and h-1
 //   - Vertical borders on columns 0 and w-1
 func DrawBorder(buf *surface.CellBuffer, style BorderStyle, fg, bg cell.Color) {
+	if style == BorderNone {
+		return // No border chars drawn — background fill is the visual boundary
+	}
+
 	chars := BorderCharsFor(style)
 	w := buf.Width()
 	h := buf.Height()
@@ -84,22 +164,47 @@ func DrawBorder(buf *surface.CellBuffer, style BorderStyle, fg, bg cell.Color) {
 	}
 }
 
-// DrawTitleBar draws a title in the top border row (y=0) of a CellBuffer,
-// between the left border character (x=1) and the right border character
-// (x=titleW-2).
+// DrawTitleBar draws a title in the top row (y=0) of a CellBuffer.
 //
-// If closable, 3 cells are reserved at the right for the close button.
-// The title is aligned according to the given alignment.
+// For BorderNone: the title bar spans the FULL width (x=0 to x=titleW-1).
+// The title text starts at x=1 (1 cell left padding). 3 cells are reserved
+// at the right for the close button if closable.
+//
+// For bordered windows: the title bar sits between the left and right border
+// characters (x=1 to x=titleW-2), with 1-cell left padding starting at x=2.
+// 3 cells are reserved at the right for the close button if closable.
+//
 // If the title is too long for the available space, it is truncated with "…".
-// Remaining space is filled with the horizontal border character.
-func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closable bool, fg, bg cell.Color, titleW int) {
+// The title row is filled with the title bar background color.
+func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closable bool, fg, bg cell.Color, titleW int, borderStyle BorderStyle) {
 	// If titleW is too small, skip title drawing.
 	if titleW < 4 {
 		return
 	}
 
-	// Available width for title + close button.
-	availW := titleW - 2 // exclude left and right border chars
+	var startX, endX int // title bar fill range (inclusive)
+	var textStartX int  // where title text begins (after left pad)
+	var availW int      // available width for title + close button
+
+	if borderStyle == BorderNone {
+		// Title bar spans the full width — no border chars.
+		startX = 0
+		endX = titleW - 1
+		availW = titleW
+		textStartX = 1 // left pad
+	} else if borderStyle == BorderLShape {
+		// Title bar between left border and right edge (no right border).
+		startX = 1      // after left border
+		endX = titleW - 1
+		availW = titleW - 1 // exclude left border column
+		textStartX = 2      // left pad + left border
+	} else {
+		// Title bar sits between border chars.
+		startX = 1
+		endX = titleW - 2
+		availW = titleW - 2 // exclude left and right border chars
+		textStartX = 2      // left pad + 1 border char
+	}
 
 	// Reserve space for the close button if closable.
 	closeW := 0
@@ -107,16 +212,16 @@ func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closab
 		closeW = 3 // " ✕ "
 	}
 
-	// The title area is between x=1 and x=titleW-2 (exclusive of borders).
-	// The close button occupies the rightmost closeW cells of the title area.
-	titleAreaW := availW - closeW
+	// Reserve 1 cell of left padding for a cleaner title appearance.
+	const leftPad = 1
+
+	titleAreaW := availW - closeW - leftPad
 	if titleAreaW < 1 {
 		return
 	}
 
-	// Fill the ENTIRE title row (between left and right border corners) with
-	// the title bar background color. This gives a Windows-style filled title bar.
-	for x := 1; x < titleW-1; x++ {
+	// Fill the title row with the title bar background color.
+	for x := startX; x <= endX; x++ {
 		buf.Set(x, 0, cell.NewCell(' ', fg, bg, 0))
 	}
 
@@ -139,22 +244,39 @@ func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closab
 		titleText = string(titleRunes)
 	}
 
-	// Calculate title start position based on alignment.
+	// Calculate title start position based on alignment (with left padding offset).
 	titleLen := len(titleRunes)
-	var startX int
+	var titleX int
 	switch align {
 	case AlignCenter:
-		startX = 1 + (titleAreaW-titleLen)/2
+		titleX = textStartX + (titleAreaW-titleLen)/2
 	case AlignRight:
-		startX = 1 + titleAreaW - titleLen
+		titleX = textStartX + titleAreaW - titleLen
 	default: // AlignLeft
-		startX = 1
+		titleX = textStartX
+	}
+
+	// Determine the right boundary for title text (before close button area).
+	var textEndX int
+	if borderStyle == BorderNone || borderStyle == BorderLShape {
+		// No right border — close button flush with right edge.
+		if closable {
+			textEndX = titleW - closeW - 1
+		} else {
+			textEndX = titleW - 1
+		}
+	} else {
+		if closable {
+			textEndX = titleW - closeW - 2
+		} else {
+			textEndX = titleW - 2
+		}
 	}
 
 	// Draw the title text.
 	for i, r := range titleRunes {
-		x := startX + i
-		if x >= 1 && x < titleW-1-closeW || (!closable && x < titleW-1) {
+		x := titleX + i
+		if x >= startX && x <= textEndX {
 			buf.Set(x, 0, cell.NewCell(r, fg, bg, cell.AttrBold))
 		}
 	}
@@ -162,15 +284,23 @@ func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closab
 
 // DrawCloseButton draws a close button in the title bar at the right side.
 // The button is represented as " ✕ " (space, multiplication X, space).
-// The x parameter is the buffer width; the close button is placed at
-// positions (x-4, x-3, x-2) within row 0.
-func DrawCloseButton(buf *surface.CellBuffer, x int, fg, bg cell.Color) {
-	// Close button at positions x-4, x-3, x-2 (leaving room for right border at x-1)
-	startX := x - 4
+//
+// For BorderNone: the close button occupies positions (w-3, w-2, w-1),
+// flush with the right edge of the window.
+//
+// For bordered windows: the close button occupies positions (w-4, w-3, w-2),
+// leaving position (w-1) for the right border character.
+func DrawCloseButton(buf *surface.CellBuffer, w int, fg, bg cell.Color, borderStyle BorderStyle) {
+	startX := w - 4
+	if borderStyle == BorderNone || borderStyle == BorderLShape {
+		// No right border — close button flush with right edge,
+		// aligned with the scrollbar column.
+		startX = w - 3
+	}
 	if startX < 1 {
 		startX = 1
 	}
 	buf.Set(startX, 0, cell.NewCell(' ', fg, bg, 0))
-	buf.Set(startX+1, 0, cell.NewCell('✕', fg, bg, 0))
+	buf.Set(startX+1, 0, cell.NewCell('✕', fg, bg, cell.AttrBold))
 	buf.Set(startX+2, 0, cell.NewCell(' ', fg, bg, 0))
 }
