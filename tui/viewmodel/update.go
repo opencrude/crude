@@ -36,6 +36,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.paneMgr.SetSize(msg.Width, msg.Height)
 		m.input.SetWidth(msg.Width)
 		m.statusbar.SetWidth(msg.Width)
+		// Resize the compositor to match the new terminal dimensions
+		if m.compositor != nil {
+			m.compositor.Resize(msg.Width, msg.Height)
+		}
 		return m, nil
 
 	case ttypes.TickMsg:
@@ -99,6 +103,26 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		mouse := msg.Mouse()
 		m.logger.Debug("UI", "mouse", "click", "x", mouse.X, "y", mouse.Y, "button", fmt.Sprintf("%d", msg.Button))
+
+		// Route to floating window manager first
+		if m.windowManager != nil {
+			if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
+				// Check if the close button was clicked
+				if hitWin.Closable() && hitWin.IsOnCloseButton(mouse.X, mouse.Y) {
+					m.windowManager.RemoveWindow(hitWin.ID)
+					// If the closed window was for a specific mode, return to chat
+					switch hitWin.ID {
+					case "textoverlay":
+						m.textOverlay.Close()
+						m.setMode(ModeChat)
+					case "filepicker":
+						m.filePicker.Close()
+						m.setMode(ModeChat)
+					}
+				}
+				return m, nil
+			}
+		}
 
 		if m.win.IsOpen() && m.win.TabCount() >= 2 && msg.Button == tea.MouseLeft && mouse.Y == 3 {
 			adjustedX := mouse.X - m.theme.Spacing.PadLR
@@ -289,6 +313,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mouse := msg.Mouse()
 		m.logger.Debug("UI", "mouse", "motion", "x", mouse.X, "y", mouse.Y, "button", fmt.Sprintf("%d", msg.Button))
 
+		// Route to floating window manager for drag/resize
+		if m.windowManager != nil {
+			m.windowManager.HandleMouseMotion(msg)
+		}
+
 		if m.Mode == ModeChat {
 			tabBarExtra := 0
 			if m.win.IsOpen() && m.win.TabCount() >= 2 {
@@ -334,6 +363,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseReleaseMsg:
 		mouse := msg.Mouse()
 		m.logger.Debug("UI", "mouse", "release", "x", mouse.X, "y", mouse.Y)
+
+		// Route to floating window manager to end drag/resize
+		if m.windowManager != nil {
+			m.windowManager.HandleMouseRelease(msg)
+		}
 
 		if m.Mode == ModeChat {
 			tabBarExtra := 0

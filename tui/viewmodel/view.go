@@ -25,6 +25,40 @@ func (m *App) View() tea.View {
 		return v
 	}
 
+	// === Compositing Engine Pipeline ===
+
+	// 1. Begin frame — clear back buffer, reset damage, clear root children
+	m.compositor.BeginFrame()
+
+	// 2. Update render context
+	m.renderCtx.SpinFrame = m.spinFrame
+
+	// 3. Render main content (background) into root surface
+	//    This uses the existing rendering logic but writes into the cell buffer
+	//    via the ANSI parser (RenderToSurface).
+	mainContent := m.buildMainView()
+	rendering.RenderToSurface(m.compositor.Root(), mainContent)
+
+	// 4. Render floating windows on top
+	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
+
+	// 5. Composite all surfaces into back buffer
+	m.compositor.Composite()
+
+	// 6. Generate ANSI output and present
+	output := m.compositor.Present()
+
+	v := tea.NewView(output)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeAllMotion
+	return v
+}
+
+// buildMainView renders the main TUI content (header, chat, input, status)
+// as an ANSI string. The output is fed into the compositor's root surface
+// via RenderToSurface. Floating windows are rendered on top separately by
+// the compositor pipeline.
+func (m *App) buildMainView() string {
 	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
 	m.overlay.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
 
@@ -75,12 +109,9 @@ func (m *App) View() tea.View {
 	overlayLines := m.renderOverlayArea()
 	overlayLineCount := len(overlayLines)
 
-	nonChat := 6 + inputLineCount
+	nonChat := 6 + inputLineCount + overlayLineCount
 	if agentTabBarVisible {
 		nonChat += 2
-	}
-	if overlayLineCount > 0 {
-		nonChat += overlayLineCount
 	}
 	if asyncLineCount > 0 {
 		nonChat += 2 + asyncLineCount
@@ -313,14 +344,11 @@ func (m *App) View() tea.View {
 		lines = append(lines, line)
 	}
 
+	// Overlay area (settings, confirm, question, yolo) rendered inline.
+	// TextOverlay and FilePicker remain floating windows.
 	if overlayLineCount > 0 {
 		for _, ol := range overlayLines {
-			visW := rendering.VisibleWidth(ol)
-			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
-			if rightPad < 0 {
-				rightPad = 0
-			}
-			lines = append(lines, pad+ol+strings.Repeat(" ", rightPad)+pad)
+			lines = append(lines, ol)
 		}
 	}
 
@@ -350,19 +378,6 @@ func (m *App) View() tea.View {
 
 	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
-	if m.Mode == ModeTextOverlay && m.textOverlay.IsOpen() {
-		overlayLines := m.textOverlay.View(m.width, m.height, m.spinFrame)
-		for _, ol := range overlayLines {
-			lines = append(lines, ol)
-		}
-	}
-	if m.Mode == ModeFilePicker && m.filePicker.IsOpen() {
-		overlayLines := m.filePicker.View(m.width, m.height, m.spinFrame)
-		for _, ol := range overlayLines {
-			lines = append(lines, ol)
-		}
-	}
-
 	statusView := m.statusbar.View()
 	lines = append(lines, pad+statusView)
 
@@ -370,10 +385,7 @@ func (m *App) View() tea.View {
 		lines = lines[:m.height]
 	}
 
-	v := tea.NewView(strings.Join(lines, "\n"))
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeAllMotion
-	return v
+	return strings.Join(lines, "\n")
 }
 
 func (m *App) renderOverlayArea() []string {
