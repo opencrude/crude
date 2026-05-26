@@ -9,13 +9,16 @@ import (
 	"crude/promptref"
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/tui/compositor"
 	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/settings"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
+	"crude/tui/widget"
 	"crude/tui/window"
+	"crude/tui/wm"
 )
 
 var OnHistorySave func([]string)
@@ -61,6 +64,11 @@ type App struct {
 
 	win     *window.Window
 	overlay *window.Window
+
+	// Compositing engine
+	compositor    *compositor.Compositor
+	windowManager *wm.WindowManager
+	renderCtx     *widget.RenderContext
 
 	blocking      bool
 	yolo          bool
@@ -152,6 +160,11 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 	w := window.New(th)
 	ov := window.New(th)
 
+	// Initialize compositing engine
+	comp := compositor.NewCompositor(80, 24) // Will be resized on first WindowSizeMsg
+	wmgr := wm.NewWindowManager()
+	rctx := widget.NewRenderContext(th)
+
 	hasSessions := len(sessions) > 0
 	var initialMode Mode
 	var launcher *LauncherState
@@ -169,6 +182,9 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 		paneMgr:             pm,
 		win:                 w,
 		overlay:             ov,
+		compositor:          comp,
+		windowManager:       wmgr,
+		renderCtx:           rctx,
 		mainMsgList:         ml,
 		input:               im,
 		statusbar:           sb,
@@ -307,10 +323,17 @@ func (m *App) setMode(newMode Mode) {
 	case ModeConfirm:
 		m.overlay.OpenTab("Confirm", "", true)
 	case ModeQuestion:
+		m.overlay.OpenTab("Question", "", true)
 	case ModeYolo:
 		m.overlay.OpenTab("YOLO", "", true)
+	case ModeTextOverlay:
+		m.openTextOverlayWindow()
+	case ModeFilePicker:
+		m.openFilePickerWindow()
 	case ModeChat:
 		m.formHint = ""
+		m.windowManager.RemoveWindow("textoverlay")
+		m.windowManager.RemoveWindow("filepicker")
 	}
 }
 
@@ -634,4 +657,92 @@ func (m *App) syncOverlayMode() {
 
 func (m *App) Init() tea.Cmd {
 	return tea.Batch(tickCmd())
+}
+
+// openTextOverlayWindow opens the text overlay as a floating window.
+func (m *App) openTextOverlayWindow() {
+	m.windowManager.RemoveWindow("textoverlay")
+
+	textViewFn := func() string {
+		// Use the floating window's content area dimensions, not the full
+		// screen dimensions. RenderFloatingBox centers content based on the
+		// given width/height; passing screen dimensions causes the content
+		// to be offset far into the bottom-right of the small content surface.
+		w, h := m.width, m.height
+		if fw := m.windowManager.Window("textoverlay"); fw != nil {
+			b := fw.ContentBounds()
+			w, h = b.W, b.H
+		}
+		lines := m.textOverlay.View(w, h, m.spinFrame)
+		// Join lines into a single string
+		result := ""
+		for i, l := range lines {
+			if i > 0 {
+				result += "\n"
+			}
+			result += l
+		}
+		return result
+	}
+
+	textWidget := rendering.NewANSIAdapter(textViewFn)
+
+	win := wm.NewFloatingWindow("textoverlay", "Edit", textWidget,
+		72, 30,
+		wm.WithDecoration(true),
+		wm.WithMovable(true),
+		wm.WithResizable(true),
+		wm.WithClosable(true),
+		wm.WithBorderStyle(wm.BorderRounded),
+		wm.WithMinSize(32, 8),
+	)
+	wm.CenterOnScreen(win, m.width, m.height)
+	m.windowManager.AddWindow(win)
+}
+
+// openFilePickerWindow opens the file picker as a floating window.
+func (m *App) openFilePickerWindow() {
+	m.windowManager.RemoveWindow("filepicker")
+
+	fpViewFn := func() string {
+		// Use the floating window's content area dimensions, not the full
+		// screen dimensions. RenderFloatingBox centers content based on the
+		// given width/height; passing screen dimensions causes the content
+		// to be offset far into the bottom-right of the small content surface.
+		w, h := m.width, m.height
+		if fw := m.windowManager.Window("filepicker"); fw != nil {
+			b := fw.ContentBounds()
+			w, h = b.W, b.H
+		}
+		lines := m.filePicker.View(w, h, m.spinFrame)
+		result := ""
+		for i, l := range lines {
+			if i > 0 {
+				result += "\n"
+			}
+			result += l
+		}
+		return result
+	}
+
+	fpWidget := rendering.NewANSIAdapter(fpViewFn)
+
+	win := wm.NewFloatingWindow("filepicker", "File Picker", fpWidget,
+		60, 20,
+		wm.WithDecoration(true),
+		wm.WithMovable(true),
+		wm.WithResizable(true),
+		wm.WithClosable(true),
+		wm.WithBorderStyle(wm.BorderRounded),
+		wm.WithMinSize(32, 10),
+	)
+	wm.CenterOnScreen(win, m.width, m.height)
+	m.windowManager.AddWindow(win)
+}
+
+// closeAllWindows removes all floating windows.
+func (m *App) closeAllWindows() {
+	for _, w := range m.windowManager.Windows() {
+		m.windowManager.RemoveWindow(w.ID)
+	}
 }
