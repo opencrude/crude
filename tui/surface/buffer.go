@@ -3,6 +3,7 @@ package surface
 import (
 	"crude/tui/cell"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/rivo/uniseg"
 )
 
@@ -127,7 +128,7 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 	gr := uniseg.NewGraphemes(text)
 	for gr.Next() {
 		cluster := gr.Str()
-		w := uniseg.StringWidth(cluster)
+		w := displaywidth.String(cluster)
 		if w == 0 {
 			// Skip zero-width combining characters visually
 			continue

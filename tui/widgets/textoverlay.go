@@ -110,3 +110,68 @@ func (m *TextOverlay) View(width, height, spinFrame int) []string {
 	title = lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Bold(true).Render(title)
 	return RenderFloatingBox(m.th, rendering.StripAnsi(title), lines, "ctrl+s save · esc cancel", width, height)
 }
+
+// ViewInner renders the text overlay content for embedding inside a container
+// (e.g., a FloatingWindow). Unlike View(), which wraps content in a centered
+// RenderFloatingBox with its own border, ViewInner renders the content directly
+// to fill the available area. The container provides the border and title bar.
+//
+// Use View() for standalone rendering (with border/centering).
+// Use ViewInner() for embedded rendering inside a container (without border).
+func (m *TextOverlay) ViewInner(width, height, spinFrame int) []string {
+	m.width = width
+	m.height = height
+	if width < 10 || height < 4 {
+		return nil
+	}
+
+	// Use full content area — no 72% scaling or box border subtraction.
+	innerW := width - 4
+	if innerW < 1 {
+		innerW = 1
+	}
+	m.input.SetTextWidth(innerW)
+	view := m.input.View(width, spinFrame, false)
+	lines := strings.Split(view, "\n")
+
+	maxBody := height - 1 // reserve 1 line for hint
+	if maxBody < 3 {
+		maxBody = 3
+	}
+	if len(lines) > maxBody {
+		cursorLine := m.input.CursorVisualLine()
+		if cursorLine < m.scroll {
+			m.scroll = cursorLine
+		}
+		if cursorLine >= m.scroll+maxBody {
+			m.scroll = cursorLine - maxBody + 1
+		}
+		if m.scroll < 0 {
+			m.scroll = 0
+		}
+		if m.scroll > len(lines)-maxBody {
+			m.scroll = len(lines) - maxBody
+		}
+		lines = lines[m.scroll : m.scroll+maxBody]
+	}
+	for i, line := range lines {
+		lines[i] = rendering.TruncateLine(line, innerW)
+	}
+
+	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
+
+	result := make([]string, 0, height)
+	for _, line := range lines {
+		result = append(result, "  "+padRight(line, innerW)+"  ")
+	}
+
+	hint := "ctrl+s save · esc cancel"
+	result = append(result, "  "+dim.Render(padRight(rendering.TruncateLine(hint, innerW), innerW))+"  ")
+
+	// Fill remaining lines with blanks to cover the content area.
+	for len(result) < height {
+		result = append(result, strings.Repeat(" ", width))
+	}
+
+	return result
+}

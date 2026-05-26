@@ -95,6 +95,24 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logger.Debug("CANCEL", "ctrl_c", "mode", modeName(m.Mode))
 			return m, m.handleCancel(msg)
 		}
+		// Floating window ESC: close focused floating window first
+		if msg.Code == tea.KeyEsc && m.windowManager != nil && m.windowManager.Focused() != nil {
+			focusedID := m.windowManager.Focused().ID
+			switch focusedID {
+			case "textoverlay":
+				m.textOverlay.Close()
+				m.setMode(ModeChat)
+				m.windowManager.RemoveWindow("textoverlay")
+			case "filepicker":
+				m.filePicker.Close()
+				m.setMode(ModeChat)
+				m.windowManager.RemoveWindow("filepicker")
+			default:
+				// Unknown floating window, just remove it
+				m.windowManager.RemoveWindow(focusedID)
+			}
+			return m, nil
+		}
 		if msg.Code == tea.KeyEsc && m.Mode != ModeSettings && m.Mode != ModeQuestion {
 			m.logger.Debug("CANCEL", "esc", "mode", modeName(m.Mode))
 			return m, m.handleCancel(msg)

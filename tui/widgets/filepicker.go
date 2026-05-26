@@ -152,6 +152,75 @@ func (m FilePicker) View(width, height, spinFrame int) []string {
 	return RenderFloatingBox(m.th, "Select file", body, "enter select · esc cancel · type filter", width, height)
 }
 
+// ViewInner renders the file picker content for embedding inside a container
+// (e.g., a FloatingWindow). Unlike View(), which wraps content in a centered
+// RenderFloatingBox with its own border, ViewInner renders the content directly
+// to fill the available area. The container provides the border and title bar.
+//
+// Use View() for standalone rendering (with border/centering).
+// Use ViewInner() for embedded rendering inside a container (without border).
+func (m FilePicker) ViewInner(width, height, spinFrame int) []string {
+	if width < 10 || height < 4 {
+		return nil
+	}
+
+	innerW := width - 4
+	if innerW < 1 {
+		innerW = 1
+	}
+	bodyH := height - 1 // reserve 1 line for hint
+	if bodyH < 4 {
+		bodyH = 4
+	}
+
+	entries := m.visibleEntries()
+	start := 0
+	if m.selected >= bodyH {
+		start = m.selected - bodyH + 1
+	}
+	end := start + bodyH
+	if end > len(entries) {
+		end = len(entries)
+	}
+
+	var body []string
+	pathLine := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(m.current, innerW))
+	body = append(body, pathLine)
+	filter := "/ " + m.filter
+	body = append(body, lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Render(rendering.TruncateLine(filter, innerW)))
+	for i := start; i < end; i++ {
+		entry := entries[i]
+		icon := "  "
+		if entry.IsDir {
+			icon = "▸ "
+		}
+		name := icon + entry.Name
+		if i == m.selected {
+			name = lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Selection).Render(rendering.TruncateLine(name, innerW))
+		} else {
+			name = lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(name, innerW))
+		}
+		body = append(body, name)
+	}
+
+	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
+
+	result := make([]string, 0, height)
+	for _, line := range body {
+		result = append(result, "  "+padRight(line, innerW)+"  ")
+	}
+
+	hint := "enter select · esc cancel · type filter"
+	result = append(result, "  "+dim.Render(padRight(rendering.TruncateLine(hint, innerW), innerW))+"  ")
+
+	// Fill remaining lines with blanks to cover the content area.
+	for len(result) < height {
+		result = append(result, strings.Repeat(" ", width))
+	}
+
+	return result
+}
+
 func (m *FilePicker) loadEntries() {
 	entries, err := os.ReadDir(m.current)
 	if err != nil {

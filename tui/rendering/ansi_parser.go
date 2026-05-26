@@ -4,6 +4,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/rivo/uniseg"
 )
 
@@ -76,7 +77,7 @@ func RenderToSurface(surf *surface.Surface, ansi string) {
 		i = clusterStart + len(cluster)
 
 		// Skip zero-width clusters (combining characters, etc.)
-		displayWidth := uniseg.StringWidth(cluster)
+		displayWidth := displaywidth.String(cluster)
 		if displayWidth == 0 {
 			continue
 		}

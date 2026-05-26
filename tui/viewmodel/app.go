@@ -665,15 +665,15 @@ func (m *App) openTextOverlayWindow() {
 
 	textViewFn := func() string {
 		// Use the floating window's content area dimensions, not the full
-		// screen dimensions. RenderFloatingBox centers content based on the
-		// given width/height; passing screen dimensions causes the content
-		// to be offset far into the bottom-right of the small content surface.
+		// screen dimensions. ViewInner renders content directly (no
+		// RenderFloatingBox wrapper) since the FloatingWindow already
+		// provides its own border and title bar.
 		w, h := m.width, m.height
 		if fw := m.windowManager.Window("textoverlay"); fw != nil {
 			b := fw.ContentBounds()
 			w, h = b.W, b.H
 		}
-		lines := m.textOverlay.View(w, h, m.spinFrame)
+		lines := m.textOverlay.ViewInner(w, h, m.spinFrame)
 		// Join lines into a single string
 		result := ""
 		for i, l := range lines {
@@ -706,15 +706,15 @@ func (m *App) openFilePickerWindow() {
 
 	fpViewFn := func() string {
 		// Use the floating window's content area dimensions, not the full
-		// screen dimensions. RenderFloatingBox centers content based on the
-		// given width/height; passing screen dimensions causes the content
-		// to be offset far into the bottom-right of the small content surface.
+		// screen dimensions. ViewInner renders content directly (no
+		// RenderFloatingBox wrapper) since the FloatingWindow already
+		// provides its own border and title bar.
 		w, h := m.width, m.height
 		if fw := m.windowManager.Window("filepicker"); fw != nil {
 			b := fw.ContentBounds()
 			w, h = b.W, b.H
 		}
-		lines := m.filePicker.View(w, h, m.spinFrame)
+		lines := m.filePicker.ViewInner(w, h, m.spinFrame)
 		result := ""
 		for i, l := range lines {
 			if i > 0 {
