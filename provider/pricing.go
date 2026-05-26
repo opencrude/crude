@@ -33,7 +33,9 @@ func (p ModelPrice) CalculateCost(promptTokens, completionTokens, cachedTokens i
 	inputCost := float64(newPromptTokens)*p.InputPricePerToken + float64(cachedTokens)*cachedPrice
 	outputCost := float64(completionTokens) * p.OutputPricePerToken
 	cost := inputCost + outputCost
-	logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "calculate_cost", "prompt", promptTokens, "completion", completionTokens, "cached", cachedTokens, "cost", cost) })
+	logIf(func(lg *logger.Logger) {
+		lg.Debug("PRICING", "calculate_cost", "prompt", promptTokens, "completion", completionTokens, "cached", cachedTokens, "cost", cost)
+	})
 	return cost
 }
 
@@ -42,8 +44,12 @@ func (p ModelPrice) CalculateCost(promptTokens, completionTokens, cachedTokens i
 type ModelMeta struct {
 	ContextWindow  int     `json:"context_window"`
 	InputPrice     float64 `json:"input_price"`      // USD per token
-	OutputPrice    float64 `json:"output_price"`      // USD per token
+	OutputPrice    float64 `json:"output_price"`     // USD per token
 	CacheReadPrice float64 `json:"cache_read_price"` // USD per token
+	SupportsVision bool    `json:"supports_vision,omitempty"`
+	SupportsTools  bool    `json:"supports_tools,omitempty"`
+	MaxOutput      int     `json:"max_output,omitempty"`
+	Attachment     bool    `json:"attachment,omitempty"`
 }
 
 // ToModelPrice converts ModelMeta to ModelPrice for cost calculation.
@@ -91,7 +97,9 @@ func SetModelMeta(modelID string, meta ModelMeta) {
 	if meta.ContextWindow > 0 {
 		SetModelContext(modelID, meta.ContextWindow)
 	}
-	logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "set_meta", "model", modelID, "ctx", meta.ContextWindow, "input_price", meta.InputPrice) })
+	logIf(func(lg *logger.Logger) {
+		lg.Debug("PRICING", "set_meta", "model", modelID, "ctx", meta.ContextWindow, "input_price", meta.InputPrice)
+	})
 }
 
 // LoadModelMetas bulk-loads a map of model metadata (e.g. from config).
@@ -100,6 +108,8 @@ func LoadModelMetas(metas map[string]ModelMeta) {
 	for id, meta := range metas {
 		SetModelMeta(id, meta)
 	}
+	// Populate capabilities from the same data source.
+	LoadModelCaps(metas)
 	logIf(func(lg *logger.Logger) { lg.Info("PRICING", "load_metas", "count", len(metas)) })
 }
 
@@ -179,7 +189,9 @@ func LookupPrice(model string) ModelPrice {
 		dynamicPricesMu.RLock()
 		if p, ok := dynamicPrices[stripped]; ok {
 			dynamicPricesMu.RUnlock()
-			logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "stripped", "matched", stripped) })
+			logIf(func(lg *logger.Logger) {
+				lg.Debug("PRICING", "lookup", "model", model, "match", "stripped", "matched", stripped)
+			})
 			return p
 		}
 		dynamicPricesMu.RUnlock()
@@ -191,7 +203,9 @@ func LookupPrice(model string) ModelPrice {
 	for key, price := range dynamicPrices {
 		if strings.Contains(key, lower) || strings.Contains(lower, key) {
 			dynamicPricesMu.RUnlock()
-			logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "fuzzy", "matched", key) })
+			logIf(func(lg *logger.Logger) {
+				lg.Debug("PRICING", "lookup", "model", model, "match", "fuzzy", "matched", key)
+			})
 			return price
 		}
 	}

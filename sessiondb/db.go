@@ -28,10 +28,11 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE TABLE IF NOT EXISTS messages (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    role              TEXT NOT NULL,
-    content           TEXT,
-    reasoning_content TEXT,
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      role              TEXT NOT NULL,
+      content           TEXT,
+      content_type      TEXT NOT NULL DEFAULT 'text',
+      reasoning_content TEXT,
     reasoning         TEXT,
     tool_calls        TEXT,
     tool_name         TEXT,
@@ -133,6 +134,7 @@ func Migrate(db *sql.DB) error {
 	}
 	migrations := []string{
 		"ALTER TABLE messages ADD COLUMN display_meta TEXT",
+		"ALTER TABLE messages ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text'",
 		"ALTER TABLE sessions ADD COLUMN parent_session_id TEXT",
 		"ALTER TABLE sessions ADD COLUMN agent_category TEXT",
 		"ALTER TABLE sessions ADD COLUMN agent_name TEXT",

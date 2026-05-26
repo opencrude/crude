@@ -127,6 +127,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		})
 		l.Debug("CONFIG", "price_set", "model", mainCat.Model, "input", mainCat.ModelInputPrice, "output", mainCat.ModelOutputPrice)
 	}
+	provider.SetModelCap(mainCat.Model, mainCat.ModelSupportsVision, mainCat.ModelSupportsTools)
 	s.logger.SetTurnEnabled(tuiSettings.TurnLogsEnabled != "off")
 	s.cfg.TurnLogsEnabled = tuiSettings.TurnLogsEnabled != "off"
 
@@ -172,6 +173,10 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]ttype
 				entry.InputPrice = meta.InputPrice
 				entry.OutputPrice = meta.OutputPrice
 				entry.CacheReadPrice = meta.CacheReadPrice
+				entry.SupportsVision = meta.SupportsVision
+				entry.SupportsTools = meta.SupportsTools
+				entry.MaxOutput = meta.MaxOutput
+				entry.Attachment = meta.Attachment
 				enriched++
 			}
 		}

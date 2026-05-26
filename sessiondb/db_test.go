@@ -436,6 +436,169 @@ func TestDeleteSession(t *testing.T) {
 	}
 }
 
+func TestReplaceMessagesMultipartRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_ = Create(db, SessionMeta{
+		ID:          "test",
+		ProjectPath: "/tmp",
+		ProjectName: "test",
+		Model:       "test-model",
+		Provider:    "test",
+		CreatedAt:   1,
+	})
+
+	// Store a text message and a multipart message
+	msgs := []provider.ChatMessage{
+		{Role: "user", Content: provider.TextContent("plain text message")},
+		{Role: "user", Content: provider.PartsContent([]provider.ContentPart{
+			{Type: "text", Text: "look at this"},
+			{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64,abc123"}},
+		})},
+	}
+	turns := []int{1, 1}
+
+	n, err := ReplaceMessages(db, "test", msgs, turns)
+	if err != nil {
+		t.Fatalf("ReplaceMessages: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 messages, got %d", n)
+	}
+
+	loaded, loadedTurns, err := LoadMessages(db)
+	if err != nil {
+		t.Fatalf("LoadMessages: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("expected 2 loaded messages, got %d", len(loaded))
+	}
+
+	// First message should be text
+	if !loaded[0].Content.IsText() {
+		t.Error("first message should be text content")
+	}
+	if loaded[0].ContentString() != "plain text message" {
+		t.Errorf("msg[0]: got %q, want 'plain text message'", loaded[0].ContentString())
+	}
+
+	// Second message should be multipart
+	if loaded[1].Content.IsText() {
+		t.Error("second message should be multipart content")
+	}
+	if !loaded[1].Content.HasImage() {
+		t.Error("second message should have image")
+	}
+	parts := loaded[1].Content.Parts()
+	if len(parts) != 2 {
+		t.Fatalf("second message parts: expected 2, got %d", len(parts))
+	}
+	if parts[0].Type != "text" || parts[0].Text != "look at this" {
+		t.Errorf("parts[0]: got %+v", parts[0])
+	}
+	if parts[1].Type != "image_url" || parts[1].ImageURL == nil {
+		t.Errorf("parts[1]: got %+v", parts[1])
+	}
+
+	// Verify content_type column in DB directly
+	rows, err := db.Query("SELECT content_type FROM messages ORDER BY sequence_num")
+	if err != nil {
+		t.Fatalf("query content_type: %v", err)
+	}
+	defer rows.Close()
+	var contentTypes []string
+	for rows.Next() {
+		var ct string
+		if err := rows.Scan(&ct); err != nil {
+			t.Fatalf("scan content_type: %v", err)
+		}
+		contentTypes = append(contentTypes, ct)
+	}
+	if len(contentTypes) != 2 {
+		t.Fatalf("expected 2 content_type rows, got %d", len(contentTypes))
+	}
+	if contentTypes[0] != "text" {
+		t.Errorf("content_type[0]: got %q, want 'text'", contentTypes[0])
+	}
+	if contentTypes[1] != "multipart" {
+		t.Errorf("content_type[1]: got %q, want 'multipart'", contentTypes[1])
+	}
+
+	_ = loadedTurns
+}
+
+func TestParseMessageContent_NullContentType(t *testing.T) {
+	// Old DB rows may have NULL content_type — should default to text behavior
+	got := parseMessageContent("hello world", "")
+	if !got.IsText() {
+		t.Error("empty content_type should default to text")
+	}
+	if got.String() != "hello world" {
+		t.Errorf("got %q, want 'hello world'", got.String())
+	}
+
+	// Even content that looks like JSON array should be text when content_type is not "multipart"
+	got = parseMessageContent("[{\"type\":\"text\",\"text\":\"hello\"}]", "")
+	if !got.IsText() {
+		t.Error("content_type='text' should treat even array-looking content as text")
+	}
+}
+
+func TestReplaceMessagesMultipartWithMeta(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_ = Create(db, SessionMeta{
+		ID:          "test",
+		ProjectPath: "/tmp",
+		ProjectName: "test",
+		Model:       "test-model",
+		Provider:    "test",
+		CreatedAt:   1,
+	})
+
+	msgs := []provider.ChatMessage{
+		{Role: "user", Content: provider.PartsContent([]provider.ContentPart{
+			{Type: "text", Text: "multi-part msg"},
+			{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/jpeg;base64,xyz"}},
+		})},
+	}
+	turns := []int{1}
+	metas := []DisplayMeta{
+		{DisplayRole: "user", ToolName: ""},
+	}
+
+	_, err = ReplaceMessagesWithMeta(db, "test", msgs, turns, metas)
+	if err != nil {
+		t.Fatalf("ReplaceMessagesWithMeta: %v", err)
+	}
+
+	loaded, err := LoadMessagesWithMeta(db)
+	if err != nil {
+		t.Fatalf("LoadMessagesWithMeta: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(loaded))
+	}
+	if loaded[0].Msg.Content.IsText() {
+		t.Error("should be multipart")
+	}
+	if !loaded[0].Msg.Content.HasImage() {
+		t.Error("should have image")
+	}
+}
+
 func TestInsertCostSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")

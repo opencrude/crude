@@ -23,8 +23,18 @@ type mdProvider struct {
 
 // mdModel mirrors a single model entry in models.dev.
 type mdModel struct {
-	Cost  mdCost  `json:"cost,omitempty"`
-	Limit mdLimit `json:"limit,omitempty"`
+	Cost       mdCost       `json:"cost,omitempty"`
+	Limit      mdLimit      `json:"limit,omitempty"`
+	ToolCall   bool         `json:"tool_call,omitempty"`
+	Modalities mdModalities `json:"modalities,omitempty"`
+	Attachment bool         `json:"attachment,omitempty"`
+	Reasoning  bool         `json:"reasoning,omitempty"`
+	Family     string       `json:"family,omitempty"`
+}
+
+// mdModalities mirrors the modalities sub-section of a model entry.
+type mdModalities struct {
+	Input []string `json:"input,omitempty"`
 }
 
 // mdCost mirrors the pricing sub-section of a model entry.
@@ -38,13 +48,26 @@ type mdCost struct {
 // mdLimit mirrors the limits sub-section of a model entry.
 type mdLimit struct {
 	Context int `json:"context"`
+	Output  int `json:"output,omitempty"`
+}
+
+// hasModality returns true if the list of modalities contains the given modality string.
+func hasModality(modalities []string, modality string) bool {
+	for _, m := range modalities {
+		if strings.EqualFold(m, modality) {
+			return true
+		}
+	}
+	return false
 }
 
 // FetchModelsDevAll downloads the full models.dev dataset and returns a flat
-// map of lowercased model ID → ModelMeta (context window + per-token pricing).
+// map of lowercased model ID → ModelMeta (context window + per-token pricing
+// + capabilities).
 //
 // When the same model ID appears under multiple providers, the cheapest input
-// price wins and the largest context window is retained.
+// price wins and the largest context window is retained. Capabilities (vision,
+// tools) are merged: if any provider entry reports a capability, it is kept.
 //
 // Prices from models.dev are per million tokens; they are converted to
 // per-token values before being returned.
@@ -69,7 +92,9 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 		return nil, fmt.Errorf("read models.dev: %w", err)
 	}
 	readDur := time.Since(start).Milliseconds()
-	logIf(func(lg *logger.Logger) { lg.Debug("PROVIDER", "models_dev_downloaded", "bytes", len(body), "latency_ms", readDur) })
+	logIf(func(lg *logger.Logger) {
+		lg.Debug("PROVIDER", "models_dev_downloaded", "bytes", len(body), "latency_ms", readDur)
+	})
 
 	var data map[string]mdProvider
 	if err := json.Unmarshal(body, &data); err != nil {
@@ -87,6 +112,10 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 			outPerToken := entry.Cost.Output / 1e6
 			cachePerToken := entry.Cost.CacheRead / 1e6
 			ctx := entry.Limit.Context
+			vision := hasModality(entry.Modalities.Input, "image")
+			tools := entry.ToolCall
+			maxOut := entry.Limit.Output
+			attach := entry.Attachment
 
 			if existing, ok := result[lower]; ok {
 				// Cheapest input price wins.
@@ -99,6 +128,19 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 				if ctx > existing.ContextWindow {
 					existing.ContextWindow = ctx
 				}
+				// Merge capabilities: if any entry reports it, keep it.
+				if vision {
+					existing.SupportsVision = true
+				}
+				if tools {
+					existing.SupportsTools = true
+				}
+				if maxOut > existing.MaxOutput {
+					existing.MaxOutput = maxOut
+				}
+				if attach {
+					existing.Attachment = true
+				}
 				result[lower] = existing
 			} else if inPerToken > 0 || ctx > 0 {
 				result[lower] = ModelMeta{
@@ -106,12 +148,18 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 					InputPrice:     inPerToken,
 					OutputPrice:    outPerToken,
 					CacheReadPrice: cachePerToken,
+					SupportsVision: vision,
+					SupportsTools:  tools,
+					MaxOutput:      maxOut,
+					Attachment:     attach,
 				}
 			}
 		}
 	}
 
-	logIf(func(lg *logger.Logger) { lg.Info("PROVIDER", "models_dev_ok", "count", len(result), "latency_ms", time.Since(start).Milliseconds()) })
+	logIf(func(lg *logger.Logger) {
+		lg.Info("PROVIDER", "models_dev_ok", "count", len(result), "latency_ms", time.Since(start).Milliseconds())
+	})
 
 	return result, nil
 }

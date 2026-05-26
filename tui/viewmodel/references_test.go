@@ -1,0 +1,424 @@
+package viewmodel
+
+import (
+	"database/sql"
+	"encoding/base64"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"crude/promptref"
+	"crude/sessiondb"
+)
+
+func setupRefStoreDB(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "refstore.db")
+	db, err := sessiondb.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate: %v", err)
+	}
+	_ = sessiondb.Create(db, sessiondb.SessionMeta{
+		ID:          "sess1",
+		ProjectPath: "/tmp",
+		ProjectName: "test",
+		Model:       "test-model",
+		Provider:    "test",
+		CreatedAt:   1,
+	})
+	return db, dir
+}
+
+func TestReferenceStore_CreateReference(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	ref, err := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedText,
+		Content: "hello world",
+	})
+	if err != nil {
+		t.Fatalf("CreateReference: %v", err)
+	}
+	if ref.ID == "" {
+		t.Error("ref should have ID")
+	}
+	if ref.Label != "[Pasted Text1]" {
+		t.Errorf("Label: got %q, want [Pasted Text1]", ref.Label)
+	}
+	// KindPastedText keeps Content in memory (no file write)
+	if ref.Content != "hello world" {
+		t.Errorf("Content: got %q, want 'hello world'", ref.Content)
+	}
+}
+
+func TestReferenceStore_CreateReference_TextFile(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	ref, err := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedTextFile,
+		Content: "file content here",
+	})
+	if err != nil {
+		t.Fatalf("CreateReference: %v", err)
+	}
+	if ref.ID == "" {
+		t.Error("ref should have ID")
+	}
+	if ref.Label != "[Pasted Text File1]" {
+		t.Errorf("Label: got %q, want [Pasted Text File1]", ref.Label)
+	}
+	// KindPastedTextFile writes content to disk and clears Content
+	if ref.Content != "" {
+		t.Errorf("Content should be cleared after writing to file, got %q", ref.Content)
+	}
+	if ref.FilePath == "" {
+		t.Error("FilePath should be set after writing to disk")
+	}
+	// Verify file exists
+	if _, err := os.Stat(ref.FilePath); os.IsNotExist(err) {
+		t.Errorf("file should exist at %q", ref.FilePath)
+	}
+}
+
+func TestReferenceStore_CreateReference_Image(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	imgData := []byte("fake image")
+	b64 := base64.StdEncoding.EncodeToString(imgData)
+
+	ref, err := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedImage,
+		Content: b64,
+		Mime:    "image/png",
+	})
+	if err != nil {
+		t.Fatalf("CreateReference: %v", err)
+	}
+	if ref.ID == "" {
+		t.Error("ref should have ID")
+	}
+	if ref.Label != "[Pasted IMG1]" {
+		t.Errorf("Label: got %q, want [Pasted IMG1]", ref.Label)
+	}
+	// KindPastedImage decodes base64, writes to disk, clears Content
+	if ref.Content != "" {
+		t.Errorf("Content should be cleared after writing to file, got %d chars", len(ref.Content))
+	}
+	if ref.FilePath == "" {
+		t.Error("FilePath should be set after writing to disk")
+	}
+	if _, err := os.Stat(ref.FilePath); os.IsNotExist(err) {
+		t.Errorf("file should exist at %q", ref.FilePath)
+	}
+}
+
+func TestReferenceStore_CreateReference_LabelCollision(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	// Create a ref, then add it as existing to simulate session resume
+	ref1, err := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedTextFile,
+		Content: "first content",
+	})
+	if err != nil {
+		t.Fatalf("CreateReference: %v", err)
+	}
+
+	// Simulate resume: re-add the existing ref
+	store2 := newReferenceStore("sess1", dir, db)
+	store2.AddExisting(ref1)
+
+	// Create new ref — should NOT collide
+	ref2, err := store2.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedTextFile,
+		Content: "second content",
+	})
+	if err != nil {
+		t.Fatalf("CreateReference after AddExisting: %v", err)
+	}
+	if ref2.Label == ref1.Label {
+		t.Errorf("labels should not collide: both %q", ref1.Label)
+	}
+	if ref2.Label != "[Pasted Text File2]" {
+		t.Errorf("expected [Pasted Text File2], got %q", ref2.Label)
+	}
+}
+
+func TestReferenceStore_CreateReference_CustomLabelCollision(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	// Create a ref with auto label
+	_, err := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedText,
+		Content: "auto content",
+	})
+	if err != nil {
+		t.Fatalf("CreateReference: %v", err)
+	}
+
+	// Create a ref with custom label that collides
+	ref2, err := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedText,
+		Content: "custom content",
+		Label:   "[Pasted Text1]", // same as first
+	})
+	if err != nil {
+		t.Fatalf("CreateReference with colliding label: %v", err)
+	}
+	if ref2.Label == "[Pasted Text1]" {
+		t.Errorf("custom colliding label should be uniquified, got %q", ref2.Label)
+	}
+	// Should have a numeric suffix
+	if ref2.Label != "[Pasted Text11]" {
+		t.Errorf("expected [Pasted Text11], got %q", ref2.Label)
+	}
+}
+
+func TestReferenceStore_ListReferences_FiltersDeleted(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	ref1, _ := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedText,
+		Content: "keep this",
+	})
+	ref2, _ := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedText,
+		Content: "delete this",
+	})
+
+	// Before delete, 2 refs
+	list := store.ListReferences()
+	if len(list) != 2 {
+		t.Fatalf("expected 2 refs, got %d", len(list))
+	}
+
+	// Delete ref2
+	store.DeleteReference(ref2.ID)
+
+	// After delete, only 1 ref
+	list = store.ListReferences()
+	if len(list) != 1 {
+		t.Fatalf("expected 1 ref after delete, got %d", len(list))
+	}
+	if list[0].ID != ref1.ID {
+		t.Errorf("expected ref1, got %s", list[0].ID)
+	}
+
+	// Verify deleted ref still in map but not active
+	got, ok := store.GetReference(ref2.ID)
+	if !ok {
+		t.Error("deleted ref should still be in map")
+	}
+	if got.Active() {
+		t.Error("deleted ref should not be active")
+	}
+	_ = got
+}
+
+func TestReferenceStore_AddExisting_UpdatesCounter(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	// Add an existing ref with a high index label
+	ref := promptref.Reference{
+		ID:        "existing-ref",
+		SessionID: "sess1",
+		Kind:      promptref.KindPastedText,
+		Label:     "[Pasted Text5]",
+		Content:   "existing content",
+		CreatedAt: time.Now().UnixNano(),
+	}
+	store.AddExisting(ref)
+
+	// Next create should use index 6, not 1
+	newRef, err := store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedText,
+		Content: "new content",
+	})
+	if err != nil {
+		t.Fatalf("CreateReference: %v", err)
+	}
+	if newRef.Label != "[Pasted Text6]" {
+		t.Errorf("expected [Pasted Text6], got %q", newRef.Label)
+	}
+}
+
+func TestReferenceStore_AddExisting_ImageMigration(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	// Create base64 image content
+	imgData := []byte("fake image data")
+	b64 := base64.StdEncoding.EncodeToString(imgData)
+
+	// Add existing ref with Content set but no FilePath
+	ref := promptref.Reference{
+		ID:        "img-ref",
+		SessionID: "sess1",
+		Kind:      promptref.KindPastedImage,
+		Label:     "[Pasted IMG3]",
+		Mime:      "image/png",
+		Content:   b64,
+		FilePath:  "",
+		CreatedAt: time.Now().UnixNano(),
+	}
+	store.AddExisting(ref)
+
+	// Verify migration happened
+	got, ok := store.GetReference("img-ref")
+	if !ok {
+		t.Fatal("ref should be in store")
+	}
+	if got.Content != "" {
+		t.Errorf("Content should be cleared after migration, got %d chars", len(got.Content))
+	}
+	if got.FilePath == "" {
+		t.Error("FilePath should be set after migration")
+	}
+	// File should exist on disk
+	if _, err := os.Stat(got.FilePath); os.IsNotExist(err) {
+		t.Errorf("migrated file should exist at %q", got.FilePath)
+	}
+}
+
+func TestReferenceStore_AddExisting_ImageMigration_DBPersist(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	// Insert the legacy reference into DB first
+	imgData := []byte("fake image data for DB test")
+	b64 := base64.StdEncoding.EncodeToString(imgData)
+	ref := promptref.Reference{
+		ID:        "img-db-ref",
+		SessionID: "sess1",
+		Kind:      promptref.KindPastedImage,
+		Label:     "[Pasted IMG1]",
+		Mime:      "image/png",
+		Content:   b64,
+		FilePath:  "",
+		CreatedAt: time.Now().UnixNano(),
+	}
+	_ = sessiondb.InsertPromptReference(db, ref)
+
+	// Now load and add via AddExisting
+	store.AddExisting(ref)
+
+	// Verify the DB was updated
+	refs, err := sessiondb.LoadPromptReferencesByIDs(db, []string{"img-db-ref"})
+	if err != nil {
+		t.Fatalf("LoadPromptReferencesByIDs: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if refs[0].Content != "" {
+		t.Errorf("DB Content should be cleared after migration, got %q", refs[0].Content)
+	}
+	if refs[0].FilePath == "" {
+		t.Error("DB FilePath should be set after migration")
+	}
+}
+
+// --- extractLabelIndex tests ---
+
+func TestExtractLabelIndex(t *testing.T) {
+	tests := []struct {
+		label string
+		want  int
+	}{
+		{"[Pasted Text1]", 1},
+		{"[Pasted Text5]", 5},
+		{"[Pasted Text10]", 10},
+		{"[File2]", 2},
+		{"[Pasted IMG1]", 1},
+		{"[Pasted Text File3]", 3},
+		{"[Reference4]", 4},
+		{"[Custom Label]", 0},     // no trailing digits
+		{"", 0},                   // empty
+		{"[no-number]", 0},       // no number
+		{"[Pasted Text0]", 0},     // zero
+		{"[Pasted Text99]", 99},   // two-digit
+		{"[Pasted Text100]", 100}, // three-digit
+	}
+	for _, tt := range tests {
+		got := extractLabelIndex(tt.label)
+		if got != tt.want {
+			t.Errorf("extractLabelIndex(%q): got %d, want %d", tt.label, got, tt.want)
+		}
+	}
+}
+
+// --- defaultReferenceLabel tests ---
+
+func TestDefaultReferenceLabel(t *testing.T) {
+	tests := []struct {
+		kind promptref.Kind
+		idx  int
+		want string
+	}{
+		{promptref.KindPastedText, 1, "[Pasted Text1]"},
+		{promptref.KindPastedTextFile, 2, "[Pasted Text File2]"},
+		{promptref.KindPastedImage, 3, "[Pasted IMG3]"},
+		{promptref.KindSelectedFile, 4, "[File4]"},
+		{promptref.Kind("unknown"), 5, "[Reference5]"},
+	}
+	for _, tt := range tests {
+		got := defaultReferenceLabel(tt.kind, tt.idx)
+		if got != tt.want {
+			t.Errorf("defaultReferenceLabel(%s, %d): got %q, want %q", tt.kind, tt.idx, got, tt.want)
+		}
+	}
+}
+
+// --- labelExists tests ---
+
+func TestLabelExists(t *testing.T) {
+	db, dir := setupRefStoreDB(t)
+	defer db.Close()
+
+	store := newReferenceStore("sess1", dir, db)
+
+	// No refs yet
+	if store.labelExists("[Pasted Text1]") {
+		t.Error("labelExists should be false with no refs")
+	}
+
+	// Add a ref
+	store.CreateReference(promptref.CreateRequest{
+		Kind:    promptref.KindPastedText,
+		Content: "content",
+	})
+
+	if !store.labelExists("[Pasted Text1]") {
+		t.Error("labelExists should find existing label")
+	}
+	if store.labelExists("[Pasted Text99]") {
+		t.Error("labelExists should not find non-existent label")
+	}
+}

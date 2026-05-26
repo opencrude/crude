@@ -20,7 +20,7 @@ func (a *Agent) Run(
 	blockResolveCh <-chan string,
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
-	btwCh <-chan string,
+	btwCh <-chan provider.ChatMessage,
 ) []provider.ChatMessage {
 	l := a.logger
 	var emitActive atomic.Bool
@@ -111,12 +111,9 @@ func (a *Agent) Run(
 		drainBtw := func() {
 			for {
 				select {
-				case btwText := <-btwCh:
-					l.Info("BTW", "user_interruption", "len", len(btwText), "step", step)
-					msgs = append(msgs, provider.ChatMessage{
-						Role:    "user",
-						Content: provider.TextContent("[USER INTERRUPTION — READ THIS NOW]\nThe user interrupted your work with an important message while you were running. Stop what you're doing, read this carefully, and adjust your approach accordingly. This takes priority over whatever you were doing.\n\n" + btwText),
-					})
+				case btwMsg := <-btwCh:
+					l.Info("BTW", "user_interruption", "step", step)
+					msgs = append(msgs, btwMsg)
 				default:
 					return
 				}

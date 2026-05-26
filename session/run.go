@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -19,7 +18,7 @@ import (
 	"crude/sessiondb"
 )
 
-func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan string) {
+func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan provider.UserInput) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "session_id", s.sessionID)
 	s.sender = sender
@@ -92,30 +91,30 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 				continue
 			}
 			switch wake.Type {
-		case WakeSubAgentDone:
-			l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
+			case WakeSubAgentDone:
+				l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
 
-			// Suppress the wake if the agent already consumed this sub-agent's result
-			// during an earlier turn (e.g. via poll_sub_agent while another turn was
-			// active). Without this, the agent gets woken up with a notification
-			// for a report it already read — a redundant turn that wastes tokens
-			// and may confuse the agent into re-reading the same report.
-			if s.IsAndClearReportConsumed(wake.SourceID) {
-				l.Info("SLEEP", "wake_suppressed_already_consumed", "source", wake.SourceID)
-				continue
-			}
+				// Suppress the wake if the agent already consumed this sub-agent's result
+				// during an earlier turn (e.g. via poll_sub_agent while another turn was
+				// active). Without this, the agent gets woken up with a notification
+				// for a report it already read — a redundant turn that wastes tokens
+				// and may confuse the agent into re-reading the same report.
+				if s.IsAndClearReportConsumed(wake.SourceID) {
+					l.Info("SLEEP", "wake_suppressed_already_consumed", "source", wake.SourceID)
+					continue
+				}
 
-			summary := ""
-			reportPath := ""
-			if result, ok := wake.Data.(agent.SubAgentResult); ok {
-				summary = result.SummaryGist
-				reportPath = result.ResultPath
-			}
-			wakeText := fmt.Sprintf("[System notification: Sub-agent '%s' completed. %s]", wake.SourceID, summary)
-			if reportPath != "" {
-				wakeText += fmt.Sprintf("\nReport available at: %s", reportPath)
-			}
-			s.processTurn(PlainInput(wakeText), sender, input, blockResolveCh, btwCh, l)
+				summary := ""
+				reportPath := ""
+				if result, ok := wake.Data.(agent.SubAgentResult); ok {
+					summary = result.SummaryGist
+					reportPath = result.ResultPath
+				}
+				wakeText := fmt.Sprintf("[System notification: Sub-agent '%s' completed. %s]", wake.SourceID, summary)
+				if reportPath != "" {
+					wakeText += fmt.Sprintf("\nReport available at: %s", reportPath)
+				}
+				s.processTurn(provider.PlainInput(wakeText), sender, input, blockResolveCh, btwCh, l)
 
 			case WakeShutdown:
 				l.Info("SLEEP", "wake_shutdown")
@@ -125,7 +124,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 	}
 }
 
-func (s *Session) processTurn(userInput UserInput, sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan string, l *logger.Logger) {
+func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan provider.UserInput, l *logger.Logger) {
 	// Make a local copy of cancelCh
 	cancelCh := input.GetCancelCh()
 
@@ -190,6 +189,7 @@ func (s *Session) processTurn(userInput UserInput, sender EventSender, input Eve
 
 	s.provider.Model = activeCfg.Model
 	s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
+	provider.SetModelCap(activeCfg.Model, activeCfg.ModelSupportsVision, activeCfg.ModelSupportsTools)
 
 	ag := s.newAgent()
 	if s.subAgentSup != nil {
@@ -227,6 +227,32 @@ func (s *Session) processTurn(userInput UserInput, sender EventSender, input Eve
 	}()
 	activeCfg = s.cfg.GetActiveMainCategory()
 
+	// Transform btwCh from provider.UserInput to provider.ChatMessage.
+	// This resolves references using buildBtwMessage (which calls
+	// buildUserMessage) and adds the urgent interruption prefix.
+	btwMsgCh := make(chan provider.ChatMessage, 8)
+	go func() {
+		for {
+			select {
+			case btwInput, ok := <-btwCh:
+				if !ok {
+					close(btwMsgCh)
+					return
+				}
+				btwMsg := s.buildBtwMessage(btwInput)
+				select {
+				case btwMsgCh <- btwMsg:
+				case <-ctx.Done():
+					close(btwMsgCh)
+					return
+				}
+			case <-ctx.Done():
+				close(btwMsgCh)
+				return
+			}
+		}
+	}()
+
 	var emitActive atomic.Bool
 	emitActive.Store(true)
 
@@ -262,7 +288,7 @@ func (s *Session) processTurn(userInput UserInput, sender EventSender, input Eve
 		}
 	}
 	ag.Emit = emit
-	agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID, btwCh)
+	agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID, btwMsgCh)
 	emitActive.Store(false)
 	s.toolCallSeq = ag.ToolCallSeq()
 
@@ -540,17 +566,22 @@ func (s *Session) finalizeTurn(agentMsgs []provider.ChatMessage, tracker *displa
 	}
 }
 
-func (s *Session) buildUserMessage(input UserInput) provider.ChatMessage {
+func (s *Session) buildUserMessage(input provider.UserInput) provider.ChatMessage {
 	if len(input.ReferenceIDs) == 0 || s.db == nil {
 		return provider.NewTextMessage("user", input.Text)
 	}
 
-	refs, err := sessiondb.LoadPromptReferences(s.db)
+	// Check if the current model supports vision
+	hasVision := provider.SupportsVision(s.provider.Model)
+
+	// Load only the referenced prompt references (filtered query)
+	refs, err := sessiondb.LoadPromptReferencesByIDs(s.db, input.ReferenceIDs)
 	if err != nil {
 		s.logger.Warn("REF", "load_refs_error", "error", err.Error())
 		return provider.NewTextMessage("user", input.Text)
 	}
 
+	// Build an order-preserving map keyed by reference ID
 	refMap := make(map[string]promptref.Reference, len(refs))
 	for _, r := range refs {
 		refMap[r.ID] = r
@@ -568,10 +599,32 @@ func (s *Session) buildUserMessage(input UserInput) provider.ChatMessage {
 		}
 		switch ref.Kind {
 		case promptref.KindPastedImage:
+			if !hasVision {
+				// Model doesn't support images; add text description instead
+				label := ref.DisplayName()
+				desc := fmt.Sprintf("--- %s (image", label)
+				if ref.FilePath != "" {
+					desc += fmt.Sprintf(": %s", ref.FilePath)
+				}
+				if ref.Mime != "" {
+					desc += fmt.Sprintf(", %s", ref.Mime)
+				}
+				desc += ") ---"
+				parts = append(parts, provider.ContentPart{Type: "text", Text: desc})
+				continue
+			}
 			var dataURL string
-			if ref.Content != "" {
-				dataURL = "data:" + ref.Mime + ";base64," + ref.Content
-			} else if ref.FilePath != "" {
+			if ref.FilePath != "" {
+				// Validate file size before reading
+				if warning := provider.FileSizeExceeded(ref.FilePath, provider.MaxImageFileSizeFor(s.provider.Model)); warning != "" {
+					s.logger.Warn("REF", "image_too_large", "warning", warning)
+					parts = append(parts, provider.ContentPart{
+						Type: "text",
+						Text: fmt.Sprintf("--- %s (image omitted: too large) ---", ref.DisplayName()),
+					})
+					continue
+				}
+				// Read from file (preferred path — no base64 bloat in DB)
 				imgData, err := os.ReadFile(ref.FilePath)
 				if err != nil {
 					s.logger.Warn("REF", "image_read_error", "path", ref.FilePath, "error", err.Error())
@@ -579,9 +632,30 @@ func (s *Session) buildUserMessage(input UserInput) provider.ChatMessage {
 				}
 				mime := ref.Mime
 				if mime == "" {
-					mime = imageMimeFromExt(filepath.Ext(ref.FilePath))
+					if detected, ok := provider.ImageMimeFromExt(filepath.Ext(ref.FilePath)); ok {
+						mime = detected
+					}
+				}
+				if mime == "" {
+					mime = "image/png"
 				}
 				dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(imgData)
+			} else if ref.Content != "" {
+				// Validate inline content size (base64 string length approximates byte size)
+				if int64(len(ref.Content)) > provider.MaxInlineContentSizeFor(s.provider.Model) {
+					s.logger.Warn("REF", "inline_image_too_large", "content_len", len(ref.Content))
+					parts = append(parts, provider.ContentPart{
+						Type: "text",
+						Text: fmt.Sprintf("--- %s (image omitted: too large) ---", ref.DisplayName()),
+					})
+					continue
+				}
+				// Fallback for legacy entries or inline content
+				mime := ref.Mime
+				if mime == "" {
+					mime = "image/png"
+				}
+				dataURL = "data:" + mime + ";base64," + ref.Content
 			}
 			if dataURL == "" {
 				continue
@@ -595,6 +669,15 @@ func (s *Session) buildUserMessage(input UserInput) provider.ChatMessage {
 		case promptref.KindPastedTextFile, promptref.KindSelectedFile:
 			content := ref.Content
 			if content == "" && ref.FilePath != "" {
+				// Validate file size before reading
+				if warning := provider.FileSizeExceeded(ref.FilePath, provider.MaxTextFileSizeFor(s.provider.Model)); warning != "" {
+					s.logger.Warn("REF", "file_too_large", "warning", warning)
+					parts = append(parts, provider.ContentPart{
+						Type: "text",
+						Text: fmt.Sprintf("--- %s (omitted: too large) ---", ref.DisplayName()),
+					})
+					continue
+				}
 				data, err := os.ReadFile(ref.FilePath)
 				if err == nil {
 					content = string(data)
@@ -616,21 +699,22 @@ func (s *Session) buildUserMessage(input UserInput) provider.ChatMessage {
 	return provider.NewMultiPartMessage("user", parts)
 }
 
-func imageMimeFromExt(ext string) string {
-	switch strings.ToLower(ext) {
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".bmp":
-		return "image/bmp"
-	default:
-		return "image/png"
+const btwUrgentPrefix = "[USER INTERRUPTION — READ THIS NOW]\nThe user interrupted your work with an important message while you were running. Stop what you're doing, read this carefully, and adjust your approach accordingly. This takes priority over whatever you are doing.\n\n"
+
+// buildBtwMessage creates a ChatMessage for a BTW (by-the-way) interruption.
+// It resolves any reference IDs via buildUserMessage and prepends the urgent
+// interruption prefix so the LLM prioritises the message.
+func (s *Session) buildBtwMessage(input provider.UserInput) provider.ChatMessage {
+	msg := s.buildUserMessage(input)
+	if msg.Content.IsText() {
+		return provider.ChatMessage{
+			Role:    "user",
+			Content: provider.TextContent(btwUrgentPrefix + msg.Content.String()),
+		}
 	}
+	// Multipart: insert the urgent prefix as a text part at the beginning
+	prefixPart := provider.ContentPart{Type: "text", Text: btwUrgentPrefix}
+	parts := []provider.ContentPart{prefixPart}
+	parts = append(parts, msg.Content.Parts()...)
+	return provider.NewMultiPartMessage("user", parts)
 }

@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/promptref"
-	"crude/session"
+	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/input"
 	"crude/tui/rendering"
@@ -46,47 +46,47 @@ type App struct {
 	width  int
 	height int
 
-	agents     map[string]*AgentState
-	paneMgr    *PaneManager
-	mainMsgList *widgets.MessageList
-	input      input.Model
-	statusbar  *widgets.StatusBar
-	settings   settings.Model
+	agents       map[string]*AgentState
+	paneMgr      *PaneManager
+	mainMsgList  *widgets.MessageList
+	input        input.Model
+	statusbar    *widgets.StatusBar
+	settings     settings.Model
 	confirm      widgets.ConfirmDialog
-	questionForm  widgets.QuestionForm
+	questionForm widgets.QuestionForm
 	yoloDlg      widgets.YoloDialog
-	textOverlay widgets.TextOverlay
-	filePicker  widgets.FilePicker
-	refStore    *referenceStore
+	textOverlay  widgets.TextOverlay
+	filePicker   widgets.FilePicker
+	refStore     *referenceStore
 
 	win     *window.Window
 	overlay *window.Window
 
-	blocking       bool
-	yolo           bool
-	tabBarFocused  bool
+	blocking      bool
+	yolo          bool
+	tabBarFocused bool
 
 	activeAgentView string
 	agentLabels     map[string]string
 	agentModels     map[string]string
 
-	inputCh  chan<- session.UserInput
-	btwCh    chan<- string
+	inputCh  chan<- provider.UserInput
+	btwCh    chan<- provider.UserInput
 	cancelCh chan<- struct{}
 
-	OnQuit             func()
-	OnExitMessage      func()
-	OnSettingsSave     func(ttypes.Settings) error
-	OnConfirmResult    func(ttypes.ConfirmResult)
-	OnQuestionResult   func(ttypes.QuestionResult)
-	OnYoloCmd          func(bool)
-	OnUndoCmd          func(string)
-	OnResumeSession    func(string)
-	OnCancelSubAgent   func(agentID string)
-	OnHardCancel       func()
-	FetchModelsFn      func(string, string, string) ([]ttypes.ModelEntry, error)
+	OnQuit              func()
+	OnExitMessage       func()
+	OnSettingsSave      func(ttypes.Settings) error
+	OnConfirmResult     func(ttypes.ConfirmResult)
+	OnQuestionResult    func(ttypes.QuestionResult)
+	OnYoloCmd           func(bool)
+	OnUndoCmd           func(string)
+	OnResumeSession     func(string)
+	OnCancelSubAgent    func(agentID string)
+	OnHardCancel        func()
+	FetchModelsFn       func(string, string, string) ([]ttypes.ModelEntry, error)
 	GetProviderConfigFn func(string) ttypes.ProviderConfig
-	ProviderPresets    []ttypes.ProviderPreset
+	ProviderPresets     []ttypes.ProviderPreset
 
 	Quit           bool
 	lastCancelTime time.Time
@@ -100,8 +100,8 @@ type App struct {
 
 	tokenPrompt, tokenCompletion, tokenCached int
 	sessionCost                               float64
-	contextWindow, contextUsed                 int
-	tokenEstimated                             bool
+	contextWindow, contextUsed                int
+	tokenEstimated                            bool
 
 	lastSettings ttypes.Settings
 
@@ -110,26 +110,26 @@ type App struct {
 	logger Logger
 
 	// Launcher state (replaces old session picker)
-	launcher             *LauncherState
-	onDeleteSession      func(string)
-	onListSessions       func() []sessiondb.SessionMeta
-	lastInteractionTime  time.Time
+	launcher            *LauncherState
+	onDeleteSession     func(string)
+	onListSessions      func() []sessiondb.SessionMeta
+	lastInteractionTime time.Time
 }
 
 type (
-	tickMsg          = ttypes.TickMsg
-	errorMsg         = ttypes.ErrorMsg
-	statusMsg        = ttypes.StatusMsg
-	agentMsg         = ttypes.AgentMsg
-	openSettingsMsg  = ttypes.OpenSettingsMsg
-	fetchModelsMsg   = ttypes.FetchModelsMsg
+	tickMsg               = ttypes.TickMsg
+	errorMsg              = ttypes.ErrorMsg
+	statusMsg             = ttypes.StatusMsg
+	agentMsg              = ttypes.AgentMsg
+	openSettingsMsg       = ttypes.OpenSettingsMsg
+	fetchModelsMsg        = ttypes.FetchModelsMsg
 	saveSettingsMsg       = ttypes.SaveSettingsMsg
 	updateModelMsg        = ttypes.UpdateModelMsg
 	selectionTickMsg      = ttypes.SelectionTickMsg
 	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, inputCh chan<- session.UserInput, btwCh chan<- string, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) *App {
+func NewApp(modelName string, username string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) *App {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	ml.SetModelName(modelName)
@@ -163,36 +163,36 @@ func NewApp(modelName string, username string, inputCh chan<- session.UserInput,
 	}
 
 	app := &App{
-		theme:        th,
-		Mode:         initialMode,
-		agents:       map[string]*AgentState{MainAgentID: mainAgent},
-		paneMgr:      pm,
-		win:          w,
-		overlay:      ov,
-		mainMsgList:  ml,
-		input:        im,
-		statusbar:    sb,
-		settings:     sm,
-		confirm:      cd,
-		questionForm:  qd,
-		yoloDlg:      yd,
-		textOverlay: to,
-		filePicker: fp,
-		refStore:   refs,
-		agentLabels:  make(map[string]string),
-		agentModels:  make(map[string]string),
-		inputCh:      inputCh,
-		btwCh:        btwCh,
-		cancelCh:    cancelCh,
-		modelName:    modelName,
-		username:     username,
-		startTime:    time.Now(),
-		lastCancelTime: time.Now(),
+		theme:               th,
+		Mode:                initialMode,
+		agents:              map[string]*AgentState{MainAgentID: mainAgent},
+		paneMgr:             pm,
+		win:                 w,
+		overlay:             ov,
+		mainMsgList:         ml,
+		input:               im,
+		statusbar:           sb,
+		settings:            sm,
+		confirm:             cd,
+		questionForm:        qd,
+		yoloDlg:             yd,
+		textOverlay:         to,
+		filePicker:          fp,
+		refStore:            refs,
+		agentLabels:         make(map[string]string),
+		agentModels:         make(map[string]string),
+		inputCh:             inputCh,
+		btwCh:               btwCh,
+		cancelCh:            cancelCh,
+		modelName:           modelName,
+		username:            username,
+		startTime:           time.Now(),
+		lastCancelTime:      time.Now(),
 		lastInteractionTime: time.Now(),
-		lastSettings: initial,
-		OnSettingsSave: onSave,
-		logger:       lg,
-		launcher:     launcher,
+		lastSettings:        initial,
+		OnSettingsSave:      onSave,
+		logger:              lg,
+		launcher:            launcher,
 	}
 
 	ml.SetSubPaneContentFn(app.renderSubPaneContent)

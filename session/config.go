@@ -24,10 +24,14 @@ type CategoryConfig struct {
 	AllowedTools   []string `json:"allowed_tools,omitempty"`
 	DeniedTools    []string `json:"denied_tools,omitempty"`
 
-	ModelContextWindow int     `json:"model_context_window,omitempty"`
-	ModelInputPrice    float64 `json:"model_input_price,omitempty"`
-	ModelOutputPrice   float64 `json:"model_output_price,omitempty"`
-	ModelCachePrice    float64 `json:"model_cache_price,omitempty"`
+	ModelContextWindow  int     `json:"model_context_window,omitempty"`
+	ModelInputPrice     float64 `json:"model_input_price,omitempty"`
+	ModelOutputPrice    float64 `json:"model_output_price,omitempty"`
+	ModelCachePrice     float64 `json:"model_cache_price,omitempty"`
+	ModelSupportsVision bool    `json:"model_supports_vision,omitempty"`
+	ModelSupportsTools  bool    `json:"model_supports_tools,omitempty"`
+	ModelMaxOutput      int     `json:"model_max_output,omitempty"`
+	ModelAttachment     bool    `json:"model_attachment,omitempty"`
 }
 
 type ProfileConfig struct {
@@ -233,35 +237,43 @@ func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 
 func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	return ttypes.CategorySettings{
-		Provider:           v.Provider,
-		ProviderURL:        v.ProviderURL,
-		APIKey:             v.APIKey,
-		Model:              v.Model,
-		ThinkingEffort:     v.ThinkingEffort,
-		Policy:             v.Policy,
-		MaxSteps:           v.MaxSteps,
-		Description:        v.Description,
-		ModelContextWindow: v.ModelContextWindow,
-		ModelInputPrice:    v.ModelInputPrice,
-		ModelOutputPrice:   v.ModelOutputPrice,
-		ModelCachePrice:    v.ModelCachePrice,
+		Provider:            v.Provider,
+		ProviderURL:         v.ProviderURL,
+		APIKey:              v.APIKey,
+		Model:               v.Model,
+		ThinkingEffort:      v.ThinkingEffort,
+		Policy:              v.Policy,
+		MaxSteps:            v.MaxSteps,
+		Description:         v.Description,
+		ModelContextWindow:  v.ModelContextWindow,
+		ModelInputPrice:     v.ModelInputPrice,
+		ModelOutputPrice:    v.ModelOutputPrice,
+		ModelCachePrice:     v.ModelCachePrice,
+		ModelSupportsVision: v.ModelSupportsVision,
+		ModelSupportsTools:  v.ModelSupportsTools,
+		ModelMaxOutput:      v.ModelMaxOutput,
+		ModelAttachment:     v.ModelAttachment,
 	}
 }
 
 func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	return CategoryConfig{
-		Provider:           v.Provider,
-		ProviderURL:        v.ProviderURL,
-		APIKey:             v.APIKey,
-		Model:              v.Model,
-		ThinkingEffort:     v.ThinkingEffort,
-		Policy:             v.Policy,
-		MaxSteps:           v.MaxSteps,
-		Description:        v.Description,
-		ModelContextWindow: v.ModelContextWindow,
-		ModelInputPrice:    v.ModelInputPrice,
-		ModelOutputPrice:   v.ModelOutputPrice,
-		ModelCachePrice:    v.ModelCachePrice,
+		Provider:            v.Provider,
+		ProviderURL:         v.ProviderURL,
+		APIKey:              v.APIKey,
+		Model:               v.Model,
+		ThinkingEffort:      v.ThinkingEffort,
+		Policy:              v.Policy,
+		MaxSteps:            v.MaxSteps,
+		Description:         v.Description,
+		ModelContextWindow:  v.ModelContextWindow,
+		ModelInputPrice:     v.ModelInputPrice,
+		ModelOutputPrice:    v.ModelOutputPrice,
+		ModelCachePrice:     v.ModelCachePrice,
+		ModelSupportsVision: v.ModelSupportsVision,
+		ModelSupportsTools:  v.ModelSupportsTools,
+		ModelMaxOutput:      v.ModelMaxOutput,
+		ModelAttachment:     v.ModelAttachment,
 	}
 }
 
