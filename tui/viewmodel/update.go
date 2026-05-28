@@ -311,6 +311,31 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		m.logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 
+		// Route to floating window manager first — if the wheel is over a
+		// floating window, forward it to the window's content widget and
+		// absorb the event so it doesn't leak to the background.
+		if m.windowManager != nil {
+			if hitWin := m.windowManager.HandleMouseWheel(msg); hitWin != nil {
+				if m.Mode == ModeFilePicker {
+					m.syncFilePickerScrollOffset()
+					updated, _, _, cmd := m.filePicker.Update(msg)
+					m.filePicker = updated
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					hitWin.MarkContentDirty()
+				} else if m.Mode == ModeTextOverlay {
+					updated, cmd, _ := m.textOverlay.Update(msg)
+					m.textOverlay = updated
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					hitWin.MarkContentDirty()
+				}
+				return m, tea.Batch(cmds...)
+			}
+		}
+
 		if m.Mode == ModeChat {
 			tabBarExtra := 0
 			if m.win.IsOpen() && m.win.TabCount() >= 2 {
@@ -378,6 +403,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Route to floating window manager for drag/resize
 		if m.windowManager != nil {
 			m.windowManager.HandleMouseMotion(msg)
+			// If drag or resize is in progress, absorb the motion event
+			// to prevent it from scrolling/selecting background content.
+			if m.windowManager.IsDragging() {
+				return m, nil
+			}
 		}
 
 		// Forward mouse motion to floating window content widgets
@@ -455,6 +485,30 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.filePicker.Close()
 					m.setMode(ModeChat)
 				}
+			}
+			// If a window was released from drag/resize, forward the release
+			// to the content widget so it can reset its internal state (e.g.,
+			// scrollbar thumb drag initiated by the title-bar click that also
+			// started the WM drag), but prevent the release from cascading to
+			// background content handlers.
+			if releaseWin != nil {
+				if m.Mode == ModeFilePicker {
+					m.syncFilePickerScrollOffset()
+					updated, _, _, cmd := m.filePicker.Update(msg)
+					m.filePicker = updated
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					releaseWin.MarkContentDirty()
+				} else if m.Mode == ModeTextOverlay {
+					updated, cmd, _ := m.textOverlay.Update(msg)
+					m.textOverlay = updated
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					releaseWin.MarkContentDirty()
+				}
+				return m, tea.Batch(cmds...)
 			}
 		}
 
