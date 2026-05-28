@@ -37,37 +37,28 @@ func (m *App) View() tea.View {
 		return v
 	}
 
-	// Full rebuild throttle: if we did a full render less than 16ms ago,
-	// return cached output. This prevents 50+ full rebuilds when queued
-	// motion events arrive after drag release.
-	now := time.Now()
-	if !isDragging && now.Sub(m.lastFullRender) < 16*time.Millisecond && m.cachedOutput != "" {
+	// Skip rendering if nothing changed since the last render.
+	// mainViewDirty is set in Update() whenever view content changes.
+	if !m.mainViewDirty && m.cachedOutput != "" {
 		v := tea.NewView(m.cachedOutput)
 		v.AltScreen = true
 		v.MouseMode = tea.MouseModeAllMotion
 		return v
 	}
 
-	if isDragging && m.compositor.HasRootCellCache() {
-		// Drag frame with cached cells: skip expensive buildMainView + ANSI parse.
-		// Just copy cached cells to root surface and reposition windows.
-		m.compositor.BeginPartialFrame()
-		m.compositor.RestoreRootCells()
-		m.windowManager.UpdatePositions(m.compositor.Root())
+	// Always do a full frame: build the main view, render windows,
+	// composite, and present. This ensures the background is always
+	// live (streaming text, animations update in real-time, even during
+	// drag). Window content efficiency is handled by FloatingWindow's
+	// contentDirty flag — windows only re-render their content when
+	// it actually changes (not on every position update during drag).
+	m.compositor.BeginFrame()
+	m.renderCtx.SpinFrame = m.spinFrame
+	mainContent := m.buildMainView()
+	rendering.RenderToSurface(m.compositor.Root(), mainContent)
+	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
+	if isDragging {
 		m.windowManager.ClearNeedsRender()
-	} else {
-		// Full frame: rebuild everything (first drag frame or non-drag)
-		m.compositor.BeginFrame()
-		m.renderCtx.SpinFrame = m.spinFrame
-		mainContent := m.buildMainView()
-		rendering.RenderToSurface(m.compositor.Root(), mainContent)
-		m.compositor.CacheRootCells()
-		m.windowManager.Render(m.compositor.Root(), m.renderCtx)
-		m.lastFullRender = now
-		// If we're entering drag mode, this full frame serves as the first drag frame
-		if isDragging {
-			m.windowManager.ClearNeedsRender()
-		}
 	}
 
 	// Composite all surfaces into back buffer
@@ -75,6 +66,7 @@ func (m *App) View() tea.View {
 
 	// Generate ANSI output and present
 	output := m.compositor.Present()
+	m.mainViewDirty = false
 	m.cachedOutput = output
 
 	v := tea.NewView(output)
