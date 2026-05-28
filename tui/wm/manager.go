@@ -362,6 +362,23 @@ func (wm *WindowManager) HandleMouseRelease(msg tea.MouseMsg) *FloatingWindow {
 	return released
 }
 
+// HandleMouseWheel handles a mouse wheel event by hit-testing against
+// floating windows top-to-bottom. Returns the window under the cursor,
+// or nil if no window was hit.
+func (wm *WindowManager) HandleMouseWheel(msg tea.MouseWheelMsg) *FloatingWindow {
+	// Iterate windows top-to-bottom (reverse zOrder).
+	for i := len(wm.zOrder) - 1; i >= 0; i-- {
+		fw := wm.zOrder[i]
+		if !fw.Visible() {
+			continue
+		}
+		if fw.ContainsPoint(msg.X, msg.Y) {
+			return fw
+		}
+	}
+	return nil
+}
+
 // isBlockedByModal reports whether a window is blocked by a modal window
 // above it in the z-order. A window is blocked if there is any visible
 // modal window with a higher z-order position.
