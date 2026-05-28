@@ -69,8 +69,8 @@ type App struct {
 	compositor    *compositor.Compositor
 	windowManager *wm.WindowManager
 	renderCtx     *widget.RenderContext
-	cachedOutput  string // last rendered ANSI output for View() throttling during drag
-	lastFullRender time.Time
+	cachedOutput   string    // last rendered ANSI output for View() throttling during drag
+	mainViewDirty  bool      // true when main view content has changed and needs re-rendering
 
 	blocking      bool
 	yolo          bool
@@ -211,6 +211,7 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 		OnSettingsSave:      onSave,
 		logger:              lg,
 		launcher:            launcher,
+		mainViewDirty:       true,
 	}
 
 	ml.SetSubPaneContentFn(app.renderSubPaneContent)

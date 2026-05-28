@@ -22,6 +22,10 @@ import (
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// Mark the view as needing a re-render. Any event that reaches Update()
+	// potentially changes the view state.
+	m.mainViewDirty = true
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)

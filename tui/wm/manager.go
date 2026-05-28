@@ -227,23 +227,7 @@ func (wm *WindowManager) NeedsRender() bool { return wm.needsRender }
 // ClearNeedsRender resets the needs-render flag after rendering.
 func (wm *WindowManager) ClearNeedsRender() { wm.needsRender = false }
 
-// UpdatePositions repositions all visible window surfaces on the root surface
-// without re-rendering their content. Used during drag/resize to avoid
-// expensive content regeneration — only the window positions change.
-func (wm *WindowManager) UpdatePositions(rootSurf *surface.Surface) {
-	for i, fw := range wm.zOrder {
-		if !fw.Visible() {
-			continue
-		}
-		winSurf := fw.Surface()
-		if winSurf == nil {
-			continue
-		}
-		winSurf.SetPosition(fw.Position())
-		winSurf.SetZOrder(i)
-		rootSurf.AddChild(winSurf)
-	}
-}
+
 
 // HandleMouse processes a mouse click event and routes it to the correct window.
 // Returns the window that consumed the event (if any).
