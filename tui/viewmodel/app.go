@@ -707,30 +707,7 @@ func (m *App) openTextOverlayWindow() {
 func (m *App) openFilePickerWindow() {
 	m.windowManager.RemoveWindow("filepicker")
 
-	fpViewFn := func() string {
-		// Use the floating window's content area dimensions, not the full
-		// screen dimensions. ViewInner renders content directly (no
-		// RenderFloatingBox wrapper) since the FloatingWindow already
-		// provides its own border and title bar.
-		w, h := m.width, m.height
-		if fw := m.windowManager.Window("filepicker"); fw != nil {
-			b := fw.ContentBounds()
-			w, h = b.W, b.H
-		}
-		lines := m.filePicker.ViewInner(w, h, m.spinFrame)
-		result := ""
-		for i, l := range lines {
-			if i > 0 {
-				result += "\n"
-			}
-			result += l
-		}
-		return result
-	}
-
-	fpWidget := rendering.NewANSIAdapter(fpViewFn)
-
-	win := wm.NewFloatingWindow("filepicker", "File Picker", fpWidget,
+	win := wm.NewFloatingWindow("filepicker", "File Picker", &m.filePicker,
 		60, 20,
 		wm.WithDecoration(true),
 		wm.WithMovable(true),
