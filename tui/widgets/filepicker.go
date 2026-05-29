@@ -11,7 +11,9 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
+	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/widget"
 )
 
 type FilePickerAction int
@@ -32,7 +34,6 @@ type FilePicker struct {
 	active              bool
 	scrollbar           scrollbar.ScrollBar
 	lastEntryPageSize   int // cached from last ViewInner render
-	scrollbarTrackOffY  int // screen Y of the scrollbar track area (set during rendering)
 }
 
 type fileEntry struct {
@@ -147,21 +148,21 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 			mouse := mm.Mouse()
 			translatedMsg = tea.MouseClickMsg{
 				X:      mouse.X,
-				Y:      mouse.Y - m.scrollbarTrackOffY,
+				Y:      mouse.Y - 2,
 				Button: mm.Button,
 			}
 		case tea.MouseMotionMsg:
 			mouse := mm.Mouse()
 			translatedMsg = tea.MouseMotionMsg{
 				X:      mouse.X,
-				Y:      mouse.Y - m.scrollbarTrackOffY,
+				Y:      mouse.Y - 2,
 				Button: mm.Button,
 			}
 		case tea.MouseReleaseMsg:
 			mouse := mm.Mouse()
 			translatedMsg = tea.MouseReleaseMsg{
 				X:      mouse.X,
-				Y:      mouse.Y - m.scrollbarTrackOffY,
+				Y:      mouse.Y - 2,
 				Button: mm.Button,
 			}
 		}
@@ -281,6 +282,9 @@ func (m FilePicker) View(width, height, spinFrame int) []string {
 // RenderFloatingBox with its own border, ViewInner renders the content directly
 // to fill the available area. The container provides the border and title bar.
 //
+// ViewInner is also called by Render() (widget.Widget interface) to produce
+// the cell content that is written to the surface.
+//
 // Use View() for standalone rendering (with border/centering).
 // Use ViewInner() for embedded rendering inside a container (without border).
 func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
@@ -394,6 +398,23 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 	return result
 }
 
+// Render implements widget.Widget. Calls ViewInner to get the rendered
+// lines, joins them, and writes the cells into the surface.
+func (m *FilePicker) Render(surf *surface.Surface, ctx *widget.RenderContext) {
+	lines := m.ViewInner(surf.Width(), surf.Height(), ctx.SpinFrame)
+	if len(lines) == 0 {
+		return
+	}
+	result := strings.Join(lines, "\n")
+	rendering.RenderToSurface(surf, result)
+}
+
+// Measure implements widget.Widget. Returns the full available space,
+// indicating the FilePicker is willing to fill whatever space it is given.
+func (m *FilePicker) Measure(availW, availH int) (int, int) {
+	return availW, availH
+}
+
 func (m *FilePicker) loadEntries() {
 	entries, err := os.ReadDir(m.current)
 	if err != nil {
@@ -452,21 +473,45 @@ func (m FilePicker) ScrollbarWidth() int {
 	return 0
 }
 
-// SetScrollbarTrackOffset sets the screen Y coordinate of the top of the
-// scrollbar track area. Mouse event Y coordinates are translated by this
-// offset before being passed to the scrollbar, so that the scrollbar (which
-// uses track-relative coordinates) receives correct positions.
-//
-// For a FilePicker inside a FloatingWindow, the caller should compute:
-//
-//	fw.y + fw.contentY + 2   (2 header lines: path + filter)
-func (m *FilePicker) SetScrollbarTrackOffset(screenY int) {
-	m.scrollbarTrackOffY = screenY
-}
-
 // UpdateScrollbar processes scrollbar-specific messages (fade/hide timers).
 func (m *FilePicker) UpdateScrollbar(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	m.scrollbar, cmd = m.scrollbar.Update(msg)
+	return cmd
+}
+
+// FilePickerSelectMsg is sent when the user selects a file in the picker.
+type FilePickerSelectMsg struct{ Path string }
+
+// FilePickerCancelMsg is sent when the user cancels the file picker.
+type FilePickerCancelMsg struct{}
+
+// HandleEvent processes an input event in the file picker and returns any
+// resulting commands (including messages for select/cancel actions).
+// This method implements the generic interactive-widget contract so the
+// App does not need to know about FilePicker internals.
+func (m *FilePicker) HandleEvent(msg tea.Msg) tea.Cmd {
+	switch msg.(type) {
+	case scrollbar.FadeTickMsg, scrollbar.HideTickMsg:
+		return m.UpdateScrollbar(msg)
+	}
+	updated, path, action, cmd := m.Update(msg)
+	*m = updated
+	switch action {
+	case FilePickerSelect:
+		m.Close()
+		selectCmd := func() tea.Msg { return FilePickerSelectMsg{Path: path} }
+		if cmd != nil {
+			return tea.Batch(cmd, selectCmd)
+		}
+		return selectCmd
+	case FilePickerCancel:
+		m.Close()
+		cancelCmd := func() tea.Msg { return FilePickerCancelMsg{} }
+		if cmd != nil {
+			return tea.Batch(cmd, cancelCmd)
+		}
+		return cancelCmd
+	}
 	return cmd
 }
