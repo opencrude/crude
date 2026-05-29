@@ -142,6 +142,15 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, nil
 				}
+				// If the click started a window manager interaction (drag on
+				// title bar or resize on edge), do NOT forward it to the
+				// content widget — decoration clicks belong to the window
+				// frame, not the content area. Leaking them would cause
+				// spurious scrollbar jumps, selection changes, etc.
+				if m.windowManager.IsDragging() {
+					return m, tea.Batch(cmds...)
+				}
+
 				// Forward the mouse event to the window's content widget
 				// so that interactions like scrollbar dragging still work.
 				// The window manager handled focus/drag initiation above;
