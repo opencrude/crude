@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"database/sql"
+	"os"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +11,7 @@ import (
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/compositor"
+	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/settings"
@@ -71,6 +73,16 @@ type App struct {
 	renderCtx     *widget.RenderContext
 	cachedOutput   string    // last rendered ANSI output for View() throttling during drag
 	mainViewDirty  bool      // true when main view content has changed and needs re-rendering
+
+	// File tree sidebar
+	treeModel           *filetree.FileTreeModel
+	treeRenderer        *filetree.TreeRenderer
+	treeVisible         bool    // whether sidebar is shown (Ctrl+B toggles)
+	treeWidth           int     // current sidebar width in cells
+	treeResizing        bool    // true when user is dragging the divider
+	treeResizeStartX    int     // mouse X when resize started
+	treeResizeStartWidth int    // width when resize started
+	treeFocused         bool    // whether the file tree sidebar receives keyboard input
 
 	blocking      bool
 	yolo          bool
@@ -167,6 +179,15 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 	wmgr := wm.NewWindowManager()
 	rctx := widget.NewRenderContext(th)
 
+	// Initialize file tree sidebar
+	wsDir := sessionDir
+	if wsDir == "" {
+		wsDir, _ = os.Getwd()
+	}
+	treeModel := filetree.NewFileTreeModel(wsDir)
+	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())
+	treeRenderer.ApplyTheme(th)
+
 	hasSessions := len(sessions) > 0
 	var initialMode Mode
 	var launcher *LauncherState
@@ -212,6 +233,10 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 		logger:              lg,
 		launcher:            launcher,
 		mainViewDirty:       true,
+		treeModel:           treeModel,
+		treeRenderer:        treeRenderer,
+		treeVisible:         true,
+		treeWidth:           th.Tree.Config.DefaultWidth,
 	}
 
 	ml.SetSubPaneContentFn(app.renderSubPaneContent)
