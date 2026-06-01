@@ -80,11 +80,19 @@ func (m *App) View() tea.View {
 // via RenderToSurface. Floating windows are rendered on top separately by
 // the compositor pipeline.
 func (m *App) buildMainView() string {
-	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
-	m.overlay.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
+	// Account for file tree sidebar when visible.
+	sidebarW := 0
+	sidebarVisible := m.treeVisible && m.treeModel != nil && m.treeRenderer != nil && m.Mode != ModeLauncher
+	if sidebarVisible {
+		sidebarW = m.treeWidth + 1 // +1 for divider
+	}
+
+	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR - sidebarW)
+	m.overlay.SetWidth(m.width - 2*m.theme.Spacing.PadLR - sidebarW)
 
 	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
-	innerW := m.width - m.theme.Spacing.PadLR*2
+	contentW := m.width - sidebarW
+	innerW := contentW - m.theme.Spacing.PadLR*2
 	if innerW < 20 {
 		innerW = 20
 	}
@@ -106,7 +114,7 @@ func (m *App) buildMainView() string {
 		}
 		inputView = dim.Render(hint)
 	} else {
-		inputView = m.input.View(m.width, m.height, false, false, m.spinFrame)
+		inputView = m.input.View(contentW, m.height, false, false, m.spinFrame)
 		inputLineCount = len(strings.Split(inputView, "\n"))
 		if inputLineCount < 1 {
 			inputLineCount = 1
@@ -214,7 +222,7 @@ func (m *App) buildMainView() string {
 
 	lines = append(lines, "")
 
-	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
+	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, contentW)
 	if m.activeAgentView != "" && m.activeAgentView != MainAgentID {
 		agentLabel := m.activeAgentView
 		if lbl, ok := m.agentLabels[m.activeAgentView]; ok && lbl != "" {
@@ -233,15 +241,15 @@ func (m *App) buildMainView() string {
 		headerLine += " " + accentStyle.Render("⟨"+viewLabel+"⟩")
 	}
 	lines = append(lines, pad+headerLine+pad)
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
 
 	if agentTabBarVisible {
 		lines = append(lines, pad+agentTabBarLine+pad)
 		if m.tabBarFocused {
 			accentSepStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
-			lines = append(lines, accentSepStyle.Render(strings.Repeat("━", m.width)))
+			lines = append(lines, accentSepStyle.Render(strings.Repeat("━", contentW)))
 		} else {
-			lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+			lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
 		}
 	}
 
@@ -386,10 +394,10 @@ func (m *App) buildMainView() string {
 
 	if asyncLineCount > 0 {
 		lines = append(lines, "")
-		lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+		lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
 		for _, al := range asyncBarLines {
 			visW := rendering.VisibleWidth(al)
-			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+			rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
 			if rightPad < 0 {
 				rightPad = 0
 			}
@@ -397,11 +405,11 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
 
 	if isSpecialMode {
 		visW := rendering.VisibleWidth(inputView)
-		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+		rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
 		if rightPad < 0 {
 			rightPad = 0
 		}
@@ -411,7 +419,7 @@ func (m *App) buildMainView() string {
 		if len(refChips) > 0 {
 			for _, rc := range refChips {
 				visW := rendering.VisibleWidth(rc)
-				rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+				rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
 				if rightPad < 0 {
 					rightPad = 0
 				}
@@ -420,7 +428,7 @@ func (m *App) buildMainView() string {
 		}
 		for _, il := range strings.Split(inputView, "\n") {
 			visW := rendering.VisibleWidth(il)
-			rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+			rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
 			if rightPad < 0 {
 				rightPad = 0
 			}
@@ -428,16 +436,34 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
 
 	statusView := m.statusbar.View()
 	{
 		visW := rendering.VisibleWidth(statusView)
-		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+		rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
 		if rightPad < 0 {
 			rightPad = 0
 		}
 		lines = append(lines, pad+statusView+strings.Repeat(" ", rightPad)+pad)
+	}
+
+	// If the file tree sidebar is visible, combine tree content with main content.
+	if sidebarVisible {
+		treeLines := m.treeRenderer.RenderToLines(m.treeWidth, m.height)
+		dividerStyle := lipgloss.NewStyle().Foreground(m.theme.Tree.Colors.BorderFg)
+		divider := dividerStyle.Render("│")
+		for i := 0; i < len(lines); i++ {
+			var treePart string
+			if i < len(treeLines) {
+				treePart = treeLines[i]
+			} else {
+				treePart = strings.Repeat(" ", m.treeWidth)
+			}
+			// The content line is already at contentW width.
+			// Prepend tree part + divider to reach full m.width.
+			lines[i] = treePart + divider + lines[i]
+		}
 	}
 
 	if len(lines) > m.height {
@@ -457,7 +483,14 @@ func (m *App) renderOverlayArea() []string {
 		return nil
 	}
 
-	m.overlay.SetWidth(m.width - 2*m.theme.Spacing.PadLR)
+	// Compute content width accounting for sidebar
+	sidebarW := 0
+	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil && m.Mode != ModeLauncher {
+		sidebarW = m.treeWidth + 1
+	}
+	contentW := m.width - sidebarW
+
+	m.overlay.SetWidth(contentW - 2*m.theme.Spacing.PadLR)
 
 	tabBarLine := m.overlay.RenderTabBar()
 
@@ -477,10 +510,10 @@ func (m *App) renderOverlayArea() []string {
 	contentLines = stripLeadingTrailingEmpty(contentLines)
 
 	var lines []string
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
 	if m.overlay.TabCount() >= 2 {
 		lines = append(lines, tabBarLine)
-		lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+		lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
 	}
 	lines = append(lines, contentLines...)
 	return lines
@@ -489,33 +522,38 @@ func (m *App) renderOverlayArea() []string {
 func (m *App) getOverlayContentLines(tabTitle string) []string {
 	var rawLines []string
 
-	contentW := m.width - 2*m.theme.Spacing.PadLR
-	if contentW < 20 {
-		contentW = 20
+	// Compute content width accounting for sidebar
+	sidebarW := 0
+	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil && m.Mode != ModeLauncher {
+		sidebarW = m.treeWidth + 1
+	}
+	overlayContentW := m.width - sidebarW - 2*m.theme.Spacing.PadLR
+	if overlayContentW < 20 {
+		overlayContentW = 20
 	}
 
 	switch {
 	case tabTitle == "Settings":
 		settingsView := m.settings.View(m.spinFrame)
 		for _, sl := range strings.Split(settingsView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(sl, contentW))
+			rawLines = append(rawLines, rendering.TruncateLine(sl, overlayContentW))
 		}
 	case tabTitle == "Confirm":
-		m.confirm.SetWidth(contentW)
+		m.confirm.SetWidth(overlayContentW)
 		confirmView := m.confirm.View(m.spinFrame)
 		for _, cl := range strings.Split(confirmView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(cl, contentW))
+			rawLines = append(rawLines, rendering.TruncateLine(cl, overlayContentW))
 		}
 	case tabTitle == "Question":
-		questionView := m.questionForm.View(m.spinFrame, contentW)
+		questionView := m.questionForm.View(m.spinFrame, overlayContentW)
 		for _, ql := range strings.Split(questionView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(ql, contentW))
+			rawLines = append(rawLines, rendering.TruncateLine(ql, overlayContentW))
 		}
 	case tabTitle == "YOLO":
-		m.yoloDlg.SetWidth(contentW)
+		m.yoloDlg.SetWidth(overlayContentW)
 		yoloView := m.yoloDlg.View()
 		for _, yl := range strings.Split(yoloView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(yl, contentW))
+			rawLines = append(rawLines, rendering.TruncateLine(yl, overlayContentW))
 		}
 	}
 

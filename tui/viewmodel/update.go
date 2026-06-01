@@ -11,6 +11,7 @@ import (
 
 	"crude/promptref"
 	"crude/provider"
+	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
@@ -80,6 +81,24 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mainMsgList.ClearSelection()
 			return m, nil
 		}
+
+		// Ctrl+B toggle sidebar visibility — works in all modes
+		if msg.String() == "ctrl+b" {
+			m.ToggleSidebar()
+			return m, nil
+		}
+
+		// When the sidebar tree has focus, route keyboard events to it.
+		// Escape unfocuses the tree; all other keys are forwarded.
+		if m.treeFocused && m.treeModel != nil && m.treeVisible {
+			if msg.Code == tea.KeyEsc {
+				m.treeFocused = false
+				return m, nil
+			}
+			cmd := m.treeModel.Update(filetree.TreeKeyPressMsg{Key: msg})
+			return m, cmd
+		}
+
 		// In launcher mode, route all keys to launcher handler
 		if m.Mode == ModeLauncher {
 			if msg.String() == "ctrl+c" {
@@ -167,6 +186,24 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, tea.Batch(cmds...)
 			}
+		}
+
+		// Route sidebar clicks to the file tree
+		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
+			m.treeFocused = true
+			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: msg})
+			return m, cmd
+		}
+		// Start sidebar divider drag
+		if m.treeVisible && msg.Button == tea.MouseLeft && mouse.X == m.treeWidth {
+			m.treeResizing = true
+			m.treeResizeStartX = mouse.X
+			m.treeResizeStartWidth = m.treeWidth
+			return m, nil
+		}
+		// Click outside sidebar area — unfocus the tree
+		if m.treeFocused && mouse.X >= m.treeWidth {
+			m.treeFocused = false
 		}
 
 		if m.win.IsOpen() && m.win.TabCount() >= 2 && msg.Button == tea.MouseLeft && mouse.Y == 3 {
@@ -315,6 +352,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Route wheel events in the sidebar to the file tree
+		if m.treeVisible && m.treeModel != nil && msg.X < m.treeWidth {
+			m.treeFocused = true
+			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: msg})
+			return m, cmd
+		}
+
 		if m.Mode == ModeChat {
 			tabBarExtra := 0
 			if m.win.IsOpen() && m.win.TabCount() >= 2 {
@@ -399,6 +443,40 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Handle sidebar divider drag
+		if m.treeResizing && m.treeVisible {
+			delta := mouse.X - m.treeResizeStartX
+			newWidth := m.treeResizeStartWidth + delta
+			// Clamp to min/max width from theme config
+			minW := m.theme.Tree.Config.MinWidth
+			maxW := m.theme.Tree.Config.MaxWidth
+			if newWidth < minW {
+				newWidth = minW
+			}
+			if newWidth > maxW {
+				newWidth = maxW
+			}
+			// Also ensure there's enough room for the main content
+			minContentW := 40
+			if m.width-newWidth-1 < minContentW {
+				newWidth = m.width - minContentW - 1
+			}
+			if newWidth < minW {
+				newWidth = minW
+			}
+			m.treeWidth = newWidth
+			m.treeModel.Update(filetree.TreeWidthMsg{Width: newWidth})
+			// Re-render immediately during drag
+			m.mainViewDirty = true
+			return m, nil
+		}
+
+		// Route motion events in the sidebar to the file tree
+		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
+			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: msg})
+			return m, cmd
+		}
+
 		if m.Mode == ModeChat {
 			tabBarExtra := 0
 			if m.win.IsOpen() && m.win.TabCount() >= 2 {
@@ -479,6 +557,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// End sidebar divider drag
+		if m.treeResizing {
+			m.treeResizing = false
+			m.mainViewDirty = true
+			return m, nil
+		}
+
 		// Forward mouse release to floating window content widgets.
 		if m.windowManager != nil {
 			if fw := m.windowManager.Focused(); fw != nil {
@@ -486,6 +571,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, cmd)
 				}
 			}
+		}
+
+		// Route release events in the sidebar to the file tree
+		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
+			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: msg})
+			return m, cmd
 		}
 
 		if m.Mode == ModeChat {
@@ -843,6 +934,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.tabBarFocused = !m.tabBarFocused
 					return m, nil
 				}
+			case "ctrl+1":
+				if m.treeModel != nil && m.treeVisible {
+					m.treeFocused = !m.treeFocused
+					return m, nil
+				}
 			}
 		}
 
@@ -974,9 +1070,51 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case widgets.FilePickerCancelMsg:
 		m.windowManager.RemoveWindow("filepicker")
 		m.setMode(ModeChat)
+
+	// -----------------------------------------------------------------------
+	// File tree sidebar messages
+	// -----------------------------------------------------------------------
+	case filetree.FileSelectedMsg:
+		m.logger.Info("TREE", "file_selected", "path", msg.Path)
+		m.addFileReference(msg.Path)
+		// After selecting a file, unfocus the tree so the user can interact
+		// with the input area. Keep the sidebar visible so the selection is
+		// still shown.
+		m.treeFocused = false
+
+	case filetree.EnterFilterModeMsg:
+		m.logger.Debug("TREE", "enter_filter_mode")
+		// The tree has an active filter — keyboard events are captured by
+		// the tree's filter, so leave m.treeFocused true. The tree's own
+		// key handling manages filter input characters.
+		m.treeFocused = true
+
+	case filetree.TreeRefreshDoneMsg:
+		if msg.Err != nil {
+			m.logger.Error("TREE", "refresh_error", "error", msg.Err.Error())
+			m.statusbar.SetError("tree refresh error: " + msg.Err.Error())
+		}
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// ToggleSidebar toggles the file tree sidebar visibility on/off.
+// When opening, the tree receives keyboard focus. When closing,
+// focus is cleared and returns to the main content area.
+func (m *App) ToggleSidebar() {
+	if m.treeModel == nil {
+		return
+	}
+	m.treeVisible = !m.treeVisible
+	if m.treeVisible {
+		m.treeFocused = true
+		// Send TreeWidthMsg so the tree knows its rendering width
+		m.treeModel.Update(filetree.TreeWidthMsg{Width: m.treeWidth})
+	} else {
+		m.treeFocused = false
+	}
+	m.mainViewDirty = true
 }
 
 // translateToLocalMouse converts a mouse event from screen coordinates to

@@ -10,6 +10,13 @@ type Theme struct {
 	Colors  Colors
 	Spacing Spacing
 	Styles  Styles
+	Tree    Tree
+}
+
+type Tree struct {
+	Colors TreeColors
+	Styles TreeStyles
+	Config TreeConfig
 }
 
 type Colors struct {
@@ -19,6 +26,7 @@ type Colors struct {
 	Code                            CodeColors
 	Spinner                         SpinnerColors
 	Diff                            DiffColors
+	Tree                            TreeColors
 }
 
 type CodeColors struct {
@@ -33,6 +41,34 @@ type SpinnerColors struct {
 
 type DiffColors struct {
 	File, Hunk, Context, Add, Delete color.Color
+}
+
+type TreeColors struct {
+	DirFg, FileFg, SymlinkFg                  color.Color
+	SelectedBg, SelectedFg                     color.Color
+	CursorBg, CursorFg                         color.Color
+	IndentLine                                 color.Color
+	GitModified, GitAdded, GitDeleted          color.Color
+	GitUntracked, GitConflicted                color.Color
+	IconDir, IconFile, IconSymlink, BorderFg  color.Color
+}
+
+type TreeStyles struct {
+	DirStyle, FileStyle                        lipgloss.Style
+	SelectedStyle, CursorStyle                  lipgloss.Style
+	GitModifiedStyle, GitAddedStyle             lipgloss.Style
+	GitDeletedStyle, GitUntrackedStyle          lipgloss.Style
+}
+
+type TreeConfig struct {
+	IndentWidth  int
+	ShowIcons    bool
+	ShowGitStatus bool
+	ShowHidden   bool
+	DefaultWidth int
+	MinWidth     int
+	MaxWidth     int
+	UseNerdFont  *bool // nil = auto-detect
 }
 
 type Spacing struct {
@@ -94,6 +130,25 @@ func DefaultDark() *Theme {
 			Add:    lipgloss.Color("#7ee787"),
 			Delete: lipgloss.Color("#ff7b72"),
 		},
+		Tree: TreeColors{
+			DirFg:        lipgloss.Color("#79c0ff"),
+			FileFg:       lipgloss.Color("#e6edf3"),
+			SymlinkFg:    lipgloss.Color("#a0a8b7"),
+			SelectedBg:   lipgloss.Color("#1e2a3a"),
+			SelectedFg:   lipgloss.Color("#e6edf3"),
+			CursorBg:     lipgloss.Color("#161b22"),
+			CursorFg:     lipgloss.Color("#e6edf3"),
+			IndentLine:   lipgloss.Color("#30363d"),
+			GitModified:  lipgloss.Color("#d29922"),
+			GitAdded:     lipgloss.Color("#7ee787"),
+			GitDeleted:   lipgloss.Color("#ff7b72"),
+			GitUntracked: lipgloss.Color("#636d83"),
+			GitConflicted: lipgloss.Color("#ff7b72"),
+			IconDir:      lipgloss.Color("#f0883e"),
+			IconFile:     lipgloss.Color("#8b949e"),
+			IconSymlink:  lipgloss.Color("#79c0ff"),
+			BorderFg:     lipgloss.Color("#30363d"),
+		},
 	}
 
 	s := Spacing{
@@ -104,6 +159,17 @@ func DefaultDark() *Theme {
 		FormIndent:   0,
 		LabelColGap:  3,
 		FormTitlePad: 2,
+	}
+
+	tc := TreeConfig{
+		IndentWidth:   2,
+		ShowIcons:     true,
+		ShowGitStatus: true,
+		ShowHidden:    false,
+		DefaultWidth:  30,
+		MinWidth:      20,
+		MaxWidth:      60,
+		UseNerdFont:   nil,
 	}
 
 	st := Styles{
@@ -170,5 +236,28 @@ func DefaultDark() *Theme {
 			Foreground(lipgloss.Color("#ffaa00")),
 	}
 
-	return &Theme{Colors: c, Spacing: s, Styles: st}
+	ts := TreeStyles{
+		DirStyle: lipgloss.NewStyle().
+			Foreground(c.Tree.DirFg).
+			Bold(true),
+		FileStyle: lipgloss.NewStyle().
+			Foreground(c.Tree.FileFg),
+		SelectedStyle: lipgloss.NewStyle().
+			Foreground(c.Tree.SelectedFg).
+			Background(c.Tree.SelectedBg),
+		CursorStyle: lipgloss.NewStyle().
+			Foreground(c.Tree.CursorFg).
+			Background(c.Tree.CursorBg),
+		GitModifiedStyle: lipgloss.NewStyle().
+			Foreground(c.Tree.GitModified),
+		GitAddedStyle: lipgloss.NewStyle().
+			Foreground(c.Tree.GitAdded),
+		GitDeletedStyle: lipgloss.NewStyle().
+			Foreground(c.Tree.GitDeleted),
+		GitUntrackedStyle: lipgloss.NewStyle().
+			Foreground(c.Tree.GitUntracked).
+			Italic(true),
+	}
+
+	return &Theme{Colors: c, Spacing: s, Styles: st, Tree: Tree{Colors: c.Tree, Styles: ts, Config: tc}}
 }
