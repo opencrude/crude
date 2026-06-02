@@ -191,8 +191,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Route sidebar clicks to the file tree
 		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
 			m.treeFocused = true
-			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: msg})
-			return m, cmd
+			localY := mouse.Y - m.treeYOffset
+			if localY >= 1 {
+				translated := m.translateToTreeMouse(msg)
+				cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: translated})
+				return m, cmd
+			}
+			return m, nil
 		}
 		// Start sidebar divider drag
 		if m.treeVisible && msg.Button == tea.MouseLeft && mouse.X == m.treeWidth {
@@ -355,7 +360,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Route wheel events in the sidebar to the file tree
 		if m.treeVisible && m.treeModel != nil && msg.X < m.treeWidth {
 			m.treeFocused = true
-			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: msg})
+			translated := m.translateToTreeMouse(msg)
+			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: translated})
 			return m, cmd
 		}
 
@@ -473,7 +479,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Route motion events in the sidebar to the file tree
 		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
-			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: msg})
+			translated := m.translateToTreeMouse(msg)
+			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: translated})
 			return m, cmd
 		}
 
@@ -575,7 +582,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Route release events in the sidebar to the file tree
 		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
-			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: msg})
+			translated := m.translateToTreeMouse(msg)
+			cmd := m.treeModel.Update(filetree.TreeMouseMsg{Mouse: translated})
 			return m, cmd
 		}
 
@@ -1155,6 +1163,44 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 		return tea.MouseWheelMsg{
 			X:      mm.X - offX,
 			Y:      mm.Y - offY,
+			Button: mm.Button,
+		}
+	}
+	return msg
+}
+
+// translateToTreeMouse converts a mouse event from screen coordinates to
+// tree-sidebar-local coordinates by subtracting the tree's Y offset. This
+// ensures the tree model receives Y values relative to the tree title bar
+// (Y=0 is the title bar, Y=1+ is tree content).
+func (m *App) translateToTreeMouse(msg tea.Msg) tea.Msg {
+	offsetY := m.treeYOffset
+	switch mm := msg.(type) {
+	case tea.MouseClickMsg:
+		mouse := mm.Mouse()
+		return tea.MouseClickMsg{
+			X:      mouse.X,
+			Y:      mouse.Y - offsetY,
+			Button: mm.Button,
+		}
+	case tea.MouseMotionMsg:
+		mouse := mm.Mouse()
+		return tea.MouseMotionMsg{
+			X:      mouse.X,
+			Y:      mouse.Y - offsetY,
+			Button: mm.Button,
+		}
+	case tea.MouseReleaseMsg:
+		mouse := mm.Mouse()
+		return tea.MouseReleaseMsg{
+			X:      mouse.X,
+			Y:      mouse.Y - offsetY,
+			Button: mm.Button,
+		}
+	case tea.MouseWheelMsg:
+		return tea.MouseWheelMsg{
+			X:      mm.X,
+			Y:      mm.Y - offsetY,
 			Button: mm.Button,
 		}
 	}
