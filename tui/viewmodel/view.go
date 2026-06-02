@@ -489,6 +489,7 @@ func (m *App) buildMainView() string {
 		// Tree covers everything from the first sep to just before the last
 		// separator+status line.
 		treeStart := 3
+		m.treeYOffset = treeStart
 		treeEnd := len(lines) - 2
 		if treeEnd < treeStart {
 			treeEnd = treeStart

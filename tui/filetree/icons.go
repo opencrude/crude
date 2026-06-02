@@ -9,6 +9,7 @@ package filetree
 import (
 	"image/color"
 	"os"
+	"runtime"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -179,8 +180,10 @@ func (r *IconResolver) fileIcon(name string) IconResult {
 	return IconResult{Icon: fallbackFileIcon, Color: r.FileColor}
 }
 
-// fallbackFileIcon is the Unicode fallback for any file.
-const fallbackFileIcon = "📄"
+// fallbackFileIcon is the Unicode fallback for any file (U+25CF ● BLACK CIRCLE).
+// Chosen over the 📄 emoji because emoji may not render in all Windows terminals,
+// and is outside the BMP which older terminals cannot display.
+const fallbackFileIcon = "●"
 
 // DetectNerdFont checks the terminal environment for NerdFont support.
 //
@@ -235,9 +238,20 @@ func DetectNerdFont() bool {
 	}
 
 	// If TERM is set to something modern, assume NerdFont.
+	// On Windows, be conservative — most users don't have NerdFonts installed
+	// even if TERM indicates modern capabilities (e.g., Windows Terminal).
 	term := os.Getenv("TERM")
 	if strings.Contains(term, "truecolor") || strings.Contains(term, "256color") {
+		if runtime.GOOS == "windows" {
+			return false
+		}
 		return true
+	}
+
+	// On Windows, default to false to avoid rendering NerdFont codepoints
+	// that appear as "?" in the terminal.
+	if runtime.GOOS == "windows" {
+		return false
 	}
 
 	// Default to true — most modern terminals support NerdFonts.

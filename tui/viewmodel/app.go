@@ -83,6 +83,7 @@ type App struct {
 	treeResizeStartX    int     // mouse X when resize started
 	treeResizeStartWidth int    // width when resize started
 	treeFocused         bool    // whether the file tree sidebar receives keyboard input
+	treeYOffset         int     // screen Y where tree sidebar starts (title bar line), computed in buildMainView
 
 	blocking      bool
 	yolo          bool
@@ -239,6 +240,7 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 		treeRenderer:        treeRenderer,
 		treeVisible:         true,
 		treeWidth:           th.Tree.Config.DefaultWidth,
+		treeYOffset:         3,
 	}
 
 	ml.SetSubPaneContentFn(app.renderSubPaneContent)
