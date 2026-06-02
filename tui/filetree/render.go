@@ -250,7 +250,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 	}
 
 	// Connector at the current level.
-	if node.Depth > 0 {
+	if node.Depth >= 0 {
 		if isLastChild(node) {
 			b.WriteString(indentStyle.Render("└"))
 		} else {
@@ -319,6 +319,23 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 	}
 
 	// ---- file / directory name ----
+	// Truncate the name to prevent overflow beyond the allocated width.
+	// Measure what has already been written (indent, connector, icons)
+	// and reserve space for the git decoration.
+	usedW := rendering.StringWidth(rendering.StripAnsi(b.String()))
+	gitReserveW := 0
+	if cfg.ShowGitStatus && node.GitStatus != GitNone {
+		gitReserveW = rendering.StringWidth(StatusString(node.GitStatus)) + 2
+	}
+	nameMaxW := width - usedW - gitReserveW
+	if nameMaxW < 3 {
+		nameMaxW = 3
+	}
+	nameText := node.Name
+	if rendering.StringWidth(node.Name) > nameMaxW {
+		nameText = rendering.TruncateVisual(node.Name, nameMaxW, "…")
+	}
+
 	var nameStyle lipgloss.Style
 	if node.IsDir {
 		nameStyle = lipgloss.NewStyle().Foreground(colors.DirFg).Bold(true)
@@ -332,7 +349,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 	} else if isSelected {
 		nameStyle = nameStyle.Background(colors.SelectedBg)
 	}
-	b.WriteString(nameStyle.Render(node.Name))
+	b.WriteString(nameStyle.Render(nameText))
 
 	// ---- git status decoration (right-aligned) ----
 	if cfg.ShowGitStatus && node.GitStatus != GitNone {
@@ -529,7 +546,7 @@ func (r *TreeRenderer) Render(surf *surface.Surface, ctx *widget.RenderContext) 
 		}
 
 		// Connector at the current node's depth.
-		if node.Depth > 0 {
+		if node.Depth >= 0 {
 			if isLastChild(node) {
 				buf.Set(x, y, cell.NewCell('└', indentCellColor, bg, 0))
 			} else {

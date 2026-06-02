@@ -44,6 +44,7 @@ type MessageList struct {
 
 	chatAreaTop    int
 	chatAreaHeight int
+	leftOffset     int // absolute screen X where the chat column starts (e.g. sidebar width)
 
 	mdRenderer   *glamour.TermRenderer
 	cachedWidth  int
@@ -146,6 +147,13 @@ func (ml *MessageList) SetChatAreaBounds(top, height int) {
 	ml.chatAreaHeight = height
 	ml.vl.SetViewport(height)
 	ml.scrollbar.SetTrackHeight(height)
+}
+
+// SetLeftOffset sets the absolute screen X coordinate where the chat column
+// starts. Mouse X coordinates are absolute; the list subtracts this offset
+// before computing selection columns and scrollbar-zone checks.
+func (ml *MessageList) SetLeftOffset(off int) {
+	ml.leftOffset = off
 }
 
 func (ml *MessageList) AppendMessage(msg types.ChatMessage) {
@@ -659,10 +667,11 @@ func (ml *MessageList) Update(msg tea.Msg) (*MessageList, tea.Cmd) {
 
 func (ml *MessageList) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 	chatBottom := ml.chatAreaTop + ml.chatAreaHeight - 1
+	localX := msg.X - ml.leftOffset
 
 	// Check if the mouse event is in the scrollbar zone
 	inScrollbarZone := ml.vl.MaxScroll() > 0 &&
-		msg.X >= ml.width-ml.theme.Spacing.PadLR-scrollbar.ScrollbarWidth &&
+		localX >= ml.width-ml.theme.Spacing.PadLR-scrollbar.ScrollbarWidth &&
 		msg.Y >= ml.chatAreaTop && msg.Y <= chatBottom
 
 	if inScrollbarZone && msg.Button == tea.MouseLeft {
@@ -692,7 +701,7 @@ func (ml *MessageList) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 		if ok {
 			ml.selecting = true
 			ml.selAnchorLine = lineIdx
-			ml.selAnchorCol = rendering.Max(0, msg.X-ml.theme.Spacing.PadLR)
+			ml.selAnchorCol = rendering.Max(0, localX-ml.theme.Spacing.PadLR)
 			ml.selEndLine = lineIdx
 			ml.selEndCol = ml.selAnchorCol
 			ml.selMouseY = msg.Y
@@ -707,6 +716,7 @@ func (ml *MessageList) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 
 func (ml *MessageList) handleMouseMotion(msg tea.MouseMotionMsg) tea.Cmd {
 	chatBottom := ml.chatAreaTop + ml.chatAreaHeight - 1
+	localX := msg.X - ml.leftOffset
 
 	// If scrollbar is being dragged, route motion events to it
 	if ml.scrollbar.IsDragging() {
@@ -733,7 +743,7 @@ func (ml *MessageList) handleMouseMotion(msg tea.MouseMotionMsg) tea.Cmd {
 		lineIdx, ok := ml.MouseToGlobalLine(msg.Y)
 		if ok {
 			ml.selEndLine = lineIdx
-			ml.selEndCol = rendering.Max(0, msg.X-ml.theme.Spacing.PadLR)
+			ml.selEndCol = rendering.Max(0, localX-ml.theme.Spacing.PadLR)
 		} else if msg.Y < ml.chatAreaTop {
 			firstLine, _ := ml.ChatAreaContentBounds()
 			if firstLine >= 0 {
@@ -786,7 +796,7 @@ func (ml *MessageList) handleMouseRelease(msg tea.MouseReleaseMsg) tea.Cmd {
 		lineIdx, ok := ml.MouseToGlobalLine(msg.Y)
 		if ok {
 			ml.selEndLine = lineIdx
-			ml.selEndCol = rendering.Max(0, msg.X-ml.theme.Spacing.PadLR)
+			ml.selEndCol = rendering.Max(0, msg.X-ml.leftOffset-ml.theme.Spacing.PadLR)
 		}
 		ml.selecting = false
 		ml.selAutoScroll = false

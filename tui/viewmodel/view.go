@@ -171,12 +171,17 @@ func (m *App) buildMainView() string {
 	activeML.SetSpinFrame(m.spinFrame)
 	activeML.SetActiveTyping(activeTyping)
 	activeML.SetPhase(m.statusbar.Phase())
-	activeML.SetSize(m.width, m.height)
 	chatAreaTop := 3
 	if agentTabBarVisible {
 		chatAreaTop += 2
 	}
 	activeML.SetChatAreaBounds(chatAreaTop, chatH)
+
+	// The message list lives in the chat column, not the full app width.
+	// Width excludes the sidebar; leftOffset is where the chat starts on
+	// screen so the list can translate absolute mouse X coordinates.
+	activeML.SetSize(m.width-sidebarW, m.height)
+	activeML.SetLeftOffset(sidebarW)
 
 	mainSBVisible := activeML.ScrollbarWidth() > 0
 
@@ -222,7 +227,7 @@ func (m *App) buildMainView() string {
 
 	lines = append(lines, "")
 
-	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, contentW)
+	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
 	if m.activeAgentView != "" && m.activeAgentView != MainAgentID {
 		agentLabel := m.activeAgentView
 		if lbl, ok := m.agentLabels[m.activeAgentView]; ok && lbl != "" {
@@ -241,7 +246,7 @@ func (m *App) buildMainView() string {
 		headerLine += " " + accentStyle.Render("⟨"+viewLabel+"⟩")
 	}
 	lines = append(lines, pad+headerLine+pad)
-	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	if agentTabBarVisible {
 		lines = append(lines, pad+agentTabBarLine+pad)
@@ -436,33 +441,84 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
+	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
 
 	statusView := m.statusbar.View()
 	{
 		visW := rendering.VisibleWidth(statusView)
-		rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
+		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
 		if rightPad < 0 {
 			rightPad = 0
 		}
 		lines = append(lines, pad+statusView+strings.Repeat(" ", rightPad)+pad)
 	}
 
-	// If the file tree sidebar is visible, combine tree content with main content.
+	// If the file tree sidebar is visible, render it on the left of the
+	// content column (chat + overlay + input). Header, separators, and
+	// status bar span the full app width. Non-tree lines are right-padded
+	// to m.width so the screen does not have an empty gap on the right.
 	if sidebarVisible {
+		// Fixed title bar at the top of the tree column showing the
+		// current directory name.
+		titleStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(m.theme.Tree.Colors.DirFg)
+		var titleStr string
+		if m.theme.Tree.Config.ShowIcons {
+			iconResult := m.treeModel.IconResolver().ResolveIcon(
+				m.treeModel.Root.Name, true, false, true,
+			)
+			iconColor := iconResult.Color
+			if iconColor == nil {
+				iconColor = m.theme.Tree.Colors.IconDir
+			}
+			iconStyle := lipgloss.NewStyle().Foreground(iconColor)
+			titleStr = iconStyle.Render(iconResult.Icon) + " " + titleStyle.Render(m.treeModel.Root.Name)
+		} else {
+			titleStr = titleStyle.Render(m.treeModel.Root.Name)
+		}
+		visW := rendering.VisibleWidth(titleStr)
+		if visW < m.treeWidth {
+			titleStr += strings.Repeat(" ", m.treeWidth-visW)
+		}
+		titleBar := titleStr
+
 		treeLines := m.treeRenderer.RenderToLines(m.treeWidth, m.height)
 		dividerStyle := lipgloss.NewStyle().Foreground(m.theme.Tree.Colors.BorderFg)
 		divider := dividerStyle.Render("│")
-		for i := 0; i < len(lines); i++ {
+		// Tree covers everything from the first sep to just before the last
+		// separator+status line.
+		treeStart := 3
+		treeEnd := len(lines) - 2
+		if treeEnd < treeStart {
+			treeEnd = treeStart
+		}
+		for i := treeStart; i < treeEnd; i++ {
 			var treePart string
-			if i < len(treeLines) {
-				treePart = treeLines[i]
+			if i == treeStart {
+				treePart = titleBar
 			} else {
-				treePart = strings.Repeat(" ", m.treeWidth)
+				// Skip treeLines[0] (the root node — redundant
+				// with the title bar).
+				idx := i - treeStart
+				if idx < len(treeLines) {
+					treePart = treeLines[idx]
+				} else {
+					treePart = strings.Repeat(" ", m.treeWidth)
+				}
 			}
-			// The content line is already at contentW width.
-			// Prepend tree part + divider to reach full m.width.
 			lines[i] = treePart + divider + lines[i]
+		}
+		// Right-pad non-tree lines (header, first sep, tab bar, last
+		// sep, status bar) to fill the full screen width.
+		for i := range lines {
+			if i >= treeStart && i < treeEnd {
+				continue
+			}
+			visW := rendering.VisibleWidth(lines[i])
+			if visW < m.width {
+				lines[i] += strings.Repeat(" ", m.width-visW)
+			}
 		}
 	}
 

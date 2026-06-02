@@ -179,10 +179,12 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 	wmgr := wm.NewWindowManager()
 	rctx := widget.NewRenderContext(th)
 
-	// Initialize file tree sidebar
-	wsDir := sessionDir
+	// Initialize file tree sidebar.
+	// Root at the user's current working directory (the project they launched
+	// crude from), not the session storage directory.
+	wsDir, _ := os.Getwd()
 	if wsDir == "" {
-		wsDir, _ = os.Getwd()
+		wsDir = sessionDir
 	}
 	treeModel := filetree.NewFileTreeModel(wsDir)
 	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())

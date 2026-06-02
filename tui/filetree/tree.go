@@ -188,7 +188,7 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 		Name:       filepath.Base(absPath),
 		Path:       absPath,
 		IsDir:      true,
-		Depth:      0,
+		Depth:      -1,
 		IsExpanded: false,
 		Children:   nil, // lazy load
 	}
