@@ -11,6 +11,7 @@ import (
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/compositor"
+	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
@@ -90,6 +91,8 @@ type App struct {
 	tabBarFocused bool
 
 	activeAgentView string
+	activeEditorView string
+	editor          *editor.Editor
 	agentLabels     map[string]string
 	agentModels     map[string]string
 
@@ -221,6 +224,7 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 		textOverlay:         to,
 		filePicker:          fp,
 		refStore:            refs,
+		editor:              editor.New(th),
 		agentLabels:         make(map[string]string),
 		agentModels:         make(map[string]string),
 		inputCh:             inputCh,
@@ -496,6 +500,13 @@ func (m *App) agentIDFromTabTitle(title string) string {
 // Each agent gets its own window tab (like question tabs), so the window system's
 // vertical sidebar handles the ❯ markers, clicks, and ctrl+]/ctrl+[ natively.
 func (m *App) syncAgentWindowTabs() {
+	// Don't switch away from editor tab
+	if m.activeEditorView != "" {
+		// But still purge stale agent tabs in the background
+		m.purgeStaleAgentTabs()
+		return
+	}
+
 	activeSubAgents := 0
 	for id, a := range m.agents {
 		if id != MainAgentID && !a.Completed {
@@ -685,6 +696,68 @@ func (m *App) syncOverlayMode() {
 		m.Mode = ModeChat
 		m.formHint = ""
 	}
+}
+
+func (m *App) editorTabTitle(path string) string {
+	return "editor:" + path
+}
+
+func (m *App) isEditorTabTitle(title string) bool {
+	return len(title) > 7 && title[:7] == "editor:"
+}
+
+func (m *App) editorPathFromTabTitle(title string) string {
+	if !m.isEditorTabTitle(title) {
+		return ""
+	}
+	return title[7:]
+}
+
+func (m *App) openEditorTab(path string) (tea.Cmd, error) {
+	tabTitle := m.editorTabTitle(path)
+
+	if m.editor.FilePath() == path && m.editor.IsOpen() {
+		if tab := m.win.TabByTitle(tabTitle); tab != nil {
+			m.win.SwitchTo(m.win.IndexOf(tab.ID))
+			m.handleTabSwitch()
+		}
+		return nil, nil
+	}
+
+	err := m.editor.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	displayTitle := m.editor.Title()
+
+	if m.win.TabByTitle(tabTitle) == nil {
+		m.win.OpenTab(tabTitle, "✎", true)
+	}
+	if tab := m.win.TabByTitle(tabTitle); tab != nil {
+		m.win.SetTabDisplayTitleByIndex(m.win.IndexOf(tab.ID), displayTitle)
+		m.win.SwitchTo(m.win.IndexOf(tab.ID))
+		m.handleTabSwitch()
+	}
+
+	return m.editor.BlinkCmd(), nil
+}
+
+func (m *App) closeEditorTab() {
+	if m.activeEditorPath() == "" {
+		return
+	}
+	tabTitle := m.editorTabTitle(m.activeEditorPath())
+	if tab := m.win.TabByTitle(tabTitle); tab != nil {
+		m.win.CloseTabByID(tab.ID)
+	}
+	m.editor.Close()
+	m.activeEditorView = ""
+	m.handleTabSwitch()
+}
+
+func (m *App) activeEditorPath() string {
+	return m.activeEditorView
 }
 
 func (m *App) Init() tea.Cmd {

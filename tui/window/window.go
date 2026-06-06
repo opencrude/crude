@@ -278,7 +278,7 @@ func (w *Window) Update(msg tea.Msg) tea.Cmd {
 }
 
 const (
-	closeBtnWidth  = 3
+	closeBtnWidth  = 2
 	vCloseBtnWidth = 1
 	tabPadLeft     = 1
 	tabPadRight    = 1
@@ -537,18 +537,19 @@ func (w *Window) renderHorizontalTabBar() string {
 }
 
 func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool) string {
-	var b strings.Builder
+	var titleBuilder strings.Builder
 
 	titleText := t.DisplayTitle
 	if titleText == "" {
 		titleText = t.Title
 	}
-	availForTitle := tw - tabPadLeft - tabPadRight
+	closeW := 0
+	if t.Closable {
+		closeW = closeBtnWidth
+	}
+	availForTitle := tw - tabPadLeft - tabPadRight - closeW
 	if isActive {
 		availForTitle -= 2
-	}
-	if t.Closable {
-		availForTitle -= closeBtnWidth
 	}
 	if availForTitle < 1 {
 		availForTitle = 1
@@ -561,29 +562,32 @@ func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool) string {
 
 	if isActive {
 		markerStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Accent).Bold(true)
-		b.WriteString(markerStyle.Render("❯ "))
+		titleBuilder.WriteString(markerStyle.Render("❯ "))
 		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Fg).Bold(true)
-		b.WriteString(titleStyle.Render(titleText))
+		titleBuilder.WriteString(titleStyle.Render(titleText))
 	} else {
 		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-		b.WriteString(titleStyle.Render(titleText))
+		titleBuilder.WriteString(titleStyle.Render(titleText))
 	}
+
+	titleRendered := titleBuilder.String()
+	titleW := rendering.VisibleWidth(titleRendered)
+	contentW := titleW + closeW
+	flex := tw - contentW
+	if flex < 0 {
+		flex = 0
+	}
+	padL := flex / 2
+	padR := flex - padL
+
+	result := strings.Repeat(" ", padL) + titleRendered + strings.Repeat(" ", padR)
 
 	if t.Closable {
 		closeStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-		b.WriteString(closeStyle.Render(" ×"))
+		result += closeStyle.Render(" ×")
 	}
 
-	rendered := b.String()
-	renderedW := rendering.VisibleWidth(rendered)
-	padTotal := tw - renderedW
-	if padTotal < 0 {
-		padTotal = 0
-	}
-	padL := padTotal / 2
-	padR := padTotal - padL
-
-	return strings.Repeat(" ", padL) + rendered + strings.Repeat(" ", padR)
+	return result
 }
 
 func (w *Window) RenderSeparator() string {
