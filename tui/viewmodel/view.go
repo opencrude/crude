@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -101,6 +102,7 @@ func (m *App) buildMainView() string {
 
 	isSpecialMode := m.Mode != ModeChat
 	showMainInputForQuestion := m.Mode == ModeQuestion && m.questionForm.IsTextQuestion(m.questionForm.Focused())
+	isEditorActive := m.activeEditorView != "" && m.editor.IsOpen()
 
 	m.syncFormHint()
 
@@ -113,6 +115,13 @@ func (m *App) buildMainView() string {
 			hint = " "
 		}
 		inputView = dim.Render(hint)
+	} else if isEditorActive {
+		inputLineCount = 1
+		fileInfo := m.editor.Title()
+		cursorInfo := fmt.Sprintf("%d:%d", m.editor.CursorLine()+1, m.editor.CursorCol()+1)
+		lineCount := m.editor.LineCount()
+		hintText := fmt.Sprintf("[ %s  %s  %dL  ·  ctrl+s save  ctrl+z undo  ctrl+y redo  esc close ]", fileInfo, cursorInfo, lineCount)
+		inputView = dim.Render(hintText)
 	} else {
 		inputView = m.input.View(contentW, m.height, false, false, m.spinFrame)
 		inputLineCount = len(strings.Split(inputView, "\n"))
@@ -152,79 +161,205 @@ func (m *App) buildMainView() string {
 	}
 	m.chatAreaHeight = chatH
 
-	activeML := m.activeMessageList()
-	activeAgent := m.agentForView()
-	activeTyping := false
-	if activeAgent != nil {
-		activeTyping = activeAgent.ComputeActiveTyping()
-	}
-
-	nestingLevel := m.paneMgr.ScrollbarNestingLevel()
-	paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
-	ma := m.mainAgent()
-	ma.MsgList.SetPaneScrollbarWidth(paneSBW)
-
-	if activeML != ma.MsgList {
-		activeML.SetPaneScrollbarWidth(0)
-	}
-	activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
-	activeML.SetSpinFrame(m.spinFrame)
-	activeML.SetActiveTyping(activeTyping)
-	activeML.SetPhase(m.statusbar.Phase())
-	chatAreaTop := 3
-	if agentTabBarVisible {
-		chatAreaTop += 2
-	}
-	activeML.SetChatAreaBounds(chatAreaTop, chatH)
-
-	// The message list lives in the chat column, not the full app width.
-	// Width excludes the sidebar; leftOffset is where the chat starts on
-	// screen so the list can translate absolute mouse X coordinates.
-	activeML.SetSize(m.width-sidebarW, m.height)
-	activeML.SetLeftOffset(sidebarW)
-
-	mainSBVisible := activeML.ScrollbarWidth() > 0
-
+	var chatVisible []string
 	var totalSBW int
-	var mainSBLines []string
-	var paneLineMap []widgets.PaneLineInfo
-	var paneSBViews map[string][]string
 
-	totalSBW = scrollbar.ScrollbarWidth * (1 + nestingLevel)
-	if nestingLevel > 0 {
-		totalSBW += nestingLevel
-	}
-	if !mainSBVisible && nestingLevel == 0 {
+	if isEditorActive {
+		editorPadL := m.theme.Spacing.PadLR
+		editorPadR := m.theme.Spacing.PadLR
+		if sidebarVisible {
+			editorPadL = 0
+		}
+		chatVisible = m.editor.View(contentW, chatH, editorPadL, editorPadR)
 		totalSBW = 0
-	}
-	if !mainSBVisible && nestingLevel > 0 {
-		totalSBW = scrollbar.ScrollbarWidth*nestingLevel + nestingLevel
-	}
+	} else {
+		activeML := m.activeMessageList()
+		activeAgent := m.agentForView()
+		activeTyping := false
+		if activeAgent != nil {
+			activeTyping = activeAgent.ComputeActiveTyping()
+		}
 
-	chatVisible := activeML.Render(innerW)
+		nestingLevel := m.paneMgr.ScrollbarNestingLevel()
+		paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
+		ma := m.mainAgent()
+		ma.MsgList.SetPaneScrollbarWidth(paneSBW)
 
-	mainScrollbarView := activeML.ScrollbarView()
-	mainSBLines = strings.Split(mainScrollbarView, "\n")
+		if activeML != ma.MsgList {
+			activeML.SetPaneScrollbarWidth(0)
+		}
+		activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
+		activeML.SetSpinFrame(m.spinFrame)
+		activeML.SetActiveTyping(activeTyping)
+		activeML.SetPhase(m.statusbar.Phase())
+		chatAreaTop := 3
+		if agentTabBarVisible {
+			chatAreaTop += 2
+		}
+		activeML.SetChatAreaBounds(chatAreaTop, chatH)
 
-	paneLineMap = activeML.PaneLineMap()
+		activeML.SetSize(m.width-sidebarW, m.height)
+		activeML.SetLeftOffset(sidebarW)
 
-	paneSBViews = make(map[string][]string)
-	if nestingLevel > 0 {
-		for _, info := range paneLineMap {
-			if info.PaneID != "" {
-				if _, ok := paneSBViews[info.PaneID]; !ok {
-					sp := m.paneMgr.Get(info.PaneID)
-					if sp != nil {
-						view := sp.ScrollbarView()
-						paneSBViews[info.PaneID] = strings.Split(view, "\n")
+		chatVisible = activeML.Render(innerW)
+
+		mainSBVisible := activeML.ScrollbarWidth() > 0
+
+		var mainSBLines []string
+		var paneLineMap []widgets.PaneLineInfo
+		var paneSBViews map[string][]string
+
+		totalSBW = scrollbar.ScrollbarWidth * (1 + nestingLevel)
+		if nestingLevel > 0 {
+			totalSBW += nestingLevel
+		}
+		if !mainSBVisible && nestingLevel == 0 {
+			totalSBW = 0
+		}
+		if !mainSBVisible && nestingLevel > 0 {
+			totalSBW = scrollbar.ScrollbarWidth*nestingLevel + nestingLevel
+		}
+
+		mainScrollbarView := activeML.ScrollbarView()
+		mainSBLines = strings.Split(mainScrollbarView, "\n")
+
+		paneLineMap = activeML.PaneLineMap()
+
+		paneSBViews = make(map[string][]string)
+		if nestingLevel > 0 {
+			for _, info := range paneLineMap {
+				if info.PaneID != "" {
+					if _, ok := paneSBViews[info.PaneID]; !ok {
+						sp := m.paneMgr.Get(info.PaneID)
+						if sp != nil {
+							view := sp.ScrollbarView()
+							paneSBViews[info.PaneID] = strings.Split(view, "\n")
+						}
 					}
 				}
 			}
 		}
+
+		// Re-process chatVisible with scrollbar/pane annotations
+		subPaneBgSeq := ""
+		{
+			s := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Render(" ")
+			idx := strings.Index(s, " ")
+			if idx > 0 {
+				subPaneBgSeq = s[:idx]
+			}
+		}
+
+		reapplySubPaneBg := func(s string) string {
+			re := regexp.MustCompile(`\x1b\[(?:0?m|39m|49m)`)
+			return re.ReplaceAllString(s, "${0}"+subPaneBgSeq)
+		}
+
+		for i, line := range chatVisible {
+			maxContentW := innerW - totalSBW
+			if totalSBW > 0 {
+				maxContentW = innerW - totalSBW - 1
+			}
+			if maxContentW < 10 {
+				maxContentW = 10
+			}
+
+			isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
+			hasBg := false
+			if isPaneLine {
+				sp := m.paneMgr.Get(paneLineMap[i].PaneID)
+				hasBg = sp != nil && sp.Type == PaneAgent
+			}
+
+			var trimmed string
+			var visW int
+			if hasBg {
+				trimmed = line
+				visW = rendering.VisibleWidth(trimmed)
+				if visW > maxContentW {
+					trimmed = rendering.TruncateLine(trimmed, maxContentW)
+					visW = rendering.VisibleWidth(trimmed)
+				}
+			} else {
+				trimmed = rendering.TrimRightAnsiSpaces(line)
+				visW = rendering.VisibleWidth(trimmed)
+				if visW > maxContentW {
+					trimmed = rendering.TruncateLine(trimmed, maxContentW)
+					visW = rendering.VisibleWidth(trimmed)
+				}
+			}
+			line = trimmed
+
+			if totalSBW > 0 {
+				var paneSBLine, mainSBLine string
+
+				if nestingLevel > 0 && isPaneLine {
+					info := paneLineMap[i]
+					if paneSBLines, ok := paneSBViews[info.PaneID]; ok {
+						if info.LineIdx >= 0 && info.LineIdx < len(paneSBLines) && paneSBLines[info.LineIdx] != "" {
+							paneSBLine = paneSBLines[info.LineIdx]
+						}
+					}
+					if paneSBLine == "" {
+						paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+					}
+					if mainSBVisible && i < len(mainSBLines) {
+						mainSBLine = mainSBLines[i]
+					}
+					if mainSBLine == "" {
+						mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+					}
+				} else if nestingLevel > 0 {
+					paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+					if mainSBVisible && i < len(mainSBLines) {
+						mainSBLine = mainSBLines[i]
+					}
+					if mainSBLine == "" {
+						mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+					}
+				} else {
+					if mainSBVisible && i < len(mainSBLines) && mainSBLines[i] != "" {
+						mainSBLine = mainSBLines[i]
+					} else {
+						mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
+					}
+				}
+
+				padRight := innerW - totalSBW - 1 - visW
+				if padRight < 0 {
+					padRight = 0
+				}
+
+				var bgPart, noBgPart string
+				if nestingLevel > 0 {
+					bgPart = line + strings.Repeat(" ", padRight) + " " + paneSBLine
+					noBgPart = " " + mainSBLine
+				} else {
+					bgPart = line + strings.Repeat(" ", padRight)
+					noBgPart = " " + mainSBLine
+				}
+
+				if hasBg && subPaneBgSeq != "" {
+					bgPart = subPaneBgSeq + reapplySubPaneBg(bgPart) + "\x1b[0m"
+				}
+				line = pad + bgPart + noBgPart + pad
+			} else {
+				padRight := innerW - visW
+				if padRight < 0 {
+					padRight = 0
+				}
+				inner := line + strings.Repeat(" ", padRight)
+				if hasBg && subPaneBgSeq != "" {
+					inner = subPaneBgSeq + reapplySubPaneBg(inner) + "\x1b[0m"
+				}
+				line = pad + inner + pad
+			}
+
+			chatVisible[i] = line
+		}
 	}
 
 	lines := make([]string, 0, m.height)
-
 	lines = append(lines, "")
 
 	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
@@ -258,123 +393,7 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	subPaneBgSeq := ""
-	{
-		s := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Render(" ")
-		idx := strings.Index(s, " ")
-		if idx > 0 {
-			subPaneBgSeq = s[:idx]
-		}
-	}
-
-	// reapplySubPaneBg replaces ANSI reset/selective-reset sequences within s
-	// and appends subPaneBgSeq after each one, ensuring the sub-pane background
-	// persists across style resets emitted by glamour, chroma, etc.
-	reapplySubPaneBg := func(s string) string {
-		re := regexp.MustCompile(`\x1b\[(?:0?m|39m|49m)`)
-		return re.ReplaceAllString(s, "${0}"+subPaneBgSeq)
-	}
-
-	for i, line := range chatVisible {
-		maxContentW := innerW - totalSBW
-		if totalSBW > 0 {
-			maxContentW = innerW - totalSBW - 1
-		}
-		if maxContentW < 10 {
-			maxContentW = 10
-		}
-
-		isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
-		hasBg := false
-		if isPaneLine {
-			sp := m.paneMgr.Get(paneLineMap[i].PaneID)
-			hasBg = sp != nil && sp.Type == PaneAgent
-		}
-
-		var trimmed string
-		var visW int
-		if hasBg {
-			trimmed = line
-			visW = rendering.VisibleWidth(trimmed)
-			if visW > maxContentW {
-				trimmed = rendering.TruncateLine(trimmed, maxContentW)
-				visW = rendering.VisibleWidth(trimmed)
-			}
-		} else {
-			trimmed = rendering.TrimRightAnsiSpaces(line)
-			visW = rendering.VisibleWidth(trimmed)
-			if visW > maxContentW {
-				trimmed = rendering.TruncateLine(trimmed, maxContentW)
-				visW = rendering.VisibleWidth(trimmed)
-			}
-		}
-		line = trimmed
-
-		if totalSBW > 0 {
-			var paneSBLine, mainSBLine string
-
-			if nestingLevel > 0 && isPaneLine {
-				info := paneLineMap[i]
-				if paneSBLines, ok := paneSBViews[info.PaneID]; ok {
-					if info.LineIdx >= 0 && info.LineIdx < len(paneSBLines) && paneSBLines[info.LineIdx] != "" {
-						paneSBLine = paneSBLines[info.LineIdx]
-					}
-				}
-				if paneSBLine == "" {
-					paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-				}
-				if mainSBVisible && i < len(mainSBLines) {
-					mainSBLine = mainSBLines[i]
-				}
-				if mainSBLine == "" {
-					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-				}
-			} else if nestingLevel > 0 {
-				paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-				if mainSBVisible && i < len(mainSBLines) {
-					mainSBLine = mainSBLines[i]
-				}
-				if mainSBLine == "" {
-					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-				}
-			} else {
-				if mainSBVisible && i < len(mainSBLines) && mainSBLines[i] != "" {
-					mainSBLine = mainSBLines[i]
-				} else {
-					mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-				}
-			}
-
-			padRight := innerW - totalSBW - 1 - visW
-			if padRight < 0 {
-				padRight = 0
-			}
-
-			var bgPart, noBgPart string
-			if nestingLevel > 0 {
-				bgPart = line + strings.Repeat(" ", padRight) + " " + paneSBLine
-				noBgPart = " " + mainSBLine
-			} else {
-				bgPart = line + strings.Repeat(" ", padRight)
-				noBgPart = " " + mainSBLine
-			}
-
-			if hasBg && subPaneBgSeq != "" {
-				bgPart = subPaneBgSeq + reapplySubPaneBg(bgPart) + "\x1b[0m"
-			}
-			line = pad + bgPart + noBgPart + pad
-		} else {
-			padRight := innerW - visW
-			if padRight < 0 {
-				padRight = 0
-			}
-			inner := line + strings.Repeat(" ", padRight)
-			if hasBg && subPaneBgSeq != "" {
-				inner = subPaneBgSeq + reapplySubPaneBg(inner) + "\x1b[0m"
-			}
-			line = pad + inner + pad
-		}
-
+	for _, line := range chatVisible {
 		lines = append(lines, line)
 	}
 
@@ -384,8 +403,6 @@ func (m *App) buildMainView() string {
 		for _, ol := range overlayLines {
 			visW := rendering.VisibleWidth(ol)
 			if visW > innerW {
-				// Full-width line (separator/border) — append as-is,
-				// do not apply pad wrapping which would cause overflow.
 				lines = append(lines, ol)
 			} else {
 				rightPad := innerW - visW
@@ -412,7 +429,14 @@ func (m *App) buildMainView() string {
 
 	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
 
-	if isSpecialMode {
+	if isSpecialMode && !isEditorActive {
+		visW := rendering.VisibleWidth(inputView)
+		rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
+		if rightPad < 0 {
+			rightPad = 0
+		}
+		lines = append(lines, pad+inputView+strings.Repeat(" ", rightPad)+pad)
+	} else if isEditorActive {
 		visW := rendering.VisibleWidth(inputView)
 		rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
 		if rightPad < 0 {
