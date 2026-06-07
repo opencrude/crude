@@ -288,22 +288,34 @@ func (m *FileTreeModel) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 		return nil
 	}
 
-	// Map mouse Y to visible node index, accounting for scroll offset.
-	idx := msg.Y + m.scrollOffset
+	m.mu.RLock()
+	so := m.scrollOffset
+	m.mu.RUnlock()
+
 	nodes := m.VisibleNodes()
+	idx := msg.Y + so
 	if idx < 0 || idx >= len(nodes) {
 		return nil
 	}
 
+	node := nodes[idx]
+
 	// Select the node at the clicked position.
-	m.Select(nodes[idx].Path)
+	m.Select(node.Path)
 
 	// If clicking on a directory, toggle its expanded state.
-	if nodes[idx].IsDir {
-		m.ToggleExpand(nodes[idx].Path)
+	if node.IsDir {
+		m.ToggleExpand(node.Path)
+		return nil
 	}
 
-	return nil
+	// File clicked — emit FileSelectedMsg so the parent opens it.
+	return func() tea.Msg {
+		return FileSelectedMsg{
+			Path: node.Path,
+			Node: node,
+		}
+	}
 }
 
 // handleMouseWheel processes a mouse wheel / scroll event.
@@ -311,26 +323,32 @@ func (m *FileTreeModel) handleMouseWheel(msg tea.MouseWheelMsg) tea.Cmd {
 	scrollLines := 3
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		m.scrollOffset -= scrollLines
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
+		m.mu.Lock()
+		if m.scrollOffset > 0 {
+			m.scrollOffset -= scrollLines
+			if m.scrollOffset < 0 {
+				m.scrollOffset = 0
+			}
 		}
-		// Move cursor up proportionally.
+		m.mu.Unlock()
 		for i := 0; i < scrollLines; i++ {
 			m.MoveUp()
 		}
 
 	case tea.MouseWheelDown:
-		m.scrollOffset += scrollLines
 		nodes := m.VisibleNodes()
+		m.mu.Lock()
 		maxOffset := len(nodes) - m.visibleHeight
 		if maxOffset < 0 {
 			maxOffset = 0
 		}
-		if m.scrollOffset > maxOffset {
-			m.scrollOffset = maxOffset
+		if m.scrollOffset < maxOffset {
+			m.scrollOffset += scrollLines
+			if m.scrollOffset > maxOffset {
+				m.scrollOffset = maxOffset
+			}
 		}
-		// Move cursor down proportionally.
+		m.mu.Unlock()
 		for i := 0; i < scrollLines; i++ {
 			m.MoveDown()
 		}
@@ -368,7 +386,9 @@ func (m *FileTreeModel) MovePageDown() {
 // GoToTop sets the cursor to the first visible node.
 func (m *FileTreeModel) GoToTop() {
 	m.SetCursorIndex(0)
+	m.mu.Lock()
 	m.scrollOffset = 0
+	m.mu.Unlock()
 }
 
 // GoToBottom sets the cursor to the last visible node.
@@ -389,16 +409,34 @@ func (m *FileTreeModel) pageSize() int {
 }
 
 // updateScrollOffset adjusts the scroll offset so that the cursor remains
-// within the visible area.
+// within the visible area with VSCode-style context lines.
 func (m *FileTreeModel) updateScrollOffset() {
-	idx := m.CursorIndex()
-	if idx < m.scrollOffset {
-		m.scrollOffset = idx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	idx := m.cursorIndex
+	vh := m.visibleHeight
+	if vh <= 0 {
+		vh = 10
 	}
-	maxOffset := idx - m.pageSize() + 1
-	if maxOffset > m.scrollOffset {
-		m.scrollOffset = maxOffset
+	contextLines := 3
+
+	// If cursor is above the viewport + top context, scroll up.
+	if idx < m.scrollOffset+contextLines {
+		m.scrollOffset = idx - contextLines
+		if m.scrollOffset < 0 {
+			m.scrollOffset = 0
+		}
 	}
+
+	// If cursor is below the viewport - bottom context, scroll down.
+	if idx >= m.scrollOffset+vh-contextLines {
+		newOff := idx - vh + contextLines + 1
+		if newOff > m.scrollOffset {
+			m.scrollOffset = newOff
+		}
+	}
+
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0
 	}

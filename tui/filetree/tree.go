@@ -481,23 +481,23 @@ func (m *FileTreeModel) Select(path string) {
 // MoveUp moves the cursor up by one visible item.
 func (m *FileTreeModel) MoveUp() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.cursorIndex > 0 {
 		m.cursorIndex--
 		m.selectedPath = m.visibleNodes[m.cursorIndex].Path
 	}
+	m.mu.Unlock()
+	m.updateScrollOffset()
 }
 
 // MoveDown moves the cursor down by one visible item.
 func (m *FileTreeModel) MoveDown() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.cursorIndex < len(m.visibleNodes)-1 {
 		m.cursorIndex++
 		m.selectedPath = m.visibleNodes[m.cursorIndex].Path
 	}
+	m.mu.Unlock()
+	m.updateScrollOffset()
 }
 
 // SelectedNode returns the currently selected TreeNode, or nil if the tree

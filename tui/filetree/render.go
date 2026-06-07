@@ -10,10 +10,12 @@ import (
 	"image/color"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
+	"crude/tui/scrollbar"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/widget"
@@ -40,10 +42,14 @@ type TreeRenderer struct {
 	config       *theme.TreeConfig
 	iconResolver *IconResolver
 
-	width        int
-	height       int
-	scrollOffset int
-	maxWidth     int
+	width            int
+	height           int
+	scrollOffset     int
+	maxWidth         int
+	sb               scrollbar.ScrollBar
+	sbTrackHeight    int // effective scrollbar track height (0 = use view height)
+	lastScrollOffset int // for scrollbar change detection
+	lastTotalNodes   int // for scrollbar change detection
 }
 
 // NewTreeRenderer creates a TreeRenderer with the given model and icon
@@ -55,6 +61,7 @@ func NewTreeRenderer(model *FileTreeModel, iconResolver *IconResolver) *TreeRend
 		model:        model,
 		iconResolver: iconResolver,
 		config:       cfg,
+		sb:           scrollbar.New(0),
 	}
 }
 
@@ -81,9 +88,9 @@ func defaultTreeColors() *theme.TreeColors {
 		DirFg:        lipgloss.Color("#79c0ff"),
 		FileFg:       lipgloss.Color("#e6edf3"),
 		SymlinkFg:    lipgloss.Color("#a0a8b7"),
-		SelectedBg:   lipgloss.Color("#1e2a3a"),
+		SelectedBg:   lipgloss.Color("#264040"),
 		SelectedFg:   lipgloss.Color("#e6edf3"),
-		CursorBg:     lipgloss.Color("#161b22"),
+		CursorBg:     lipgloss.Color("#2d4f4f"),
 		CursorFg:     lipgloss.Color("#e6edf3"),
 		IndentLine:   lipgloss.Color("#30363d"),
 		GitModified:  lipgloss.Color("#d29922"),
@@ -235,36 +242,38 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 		cfg = defaultTreeConfig()
 	}
 
+	// ---- background style for indent/connector cells ----
+	bgFn := func(s lipgloss.Style) lipgloss.Style {
+		if isCursor {
+			return s.Background(colors.CursorBg)
+		} else if isSelected {
+			return s.Background(colors.SelectedBg)
+		}
+		return s
+	}
+
 	// ---- indentation & connector ----
 	indentColor := colors.IndentLine
-	indentStyle := lipgloss.NewStyle().Foreground(indentColor)
+	indentStyle := bgFn(lipgloss.NewStyle().Foreground(indentColor))
+	noColorStyle := bgFn(lipgloss.NewStyle())
 	indentW := cfg.IndentWidth
 
 	for d := 0; d < node.Depth; d++ {
 		if hasSiblingBelow(node, d) {
 			b.WriteString(indentStyle.Render("│"))
 		} else {
-			b.WriteString(" ")
+			b.WriteString(noColorStyle.Render(" "))
 		}
-		b.WriteString(strings.Repeat(" ", indentW))
+		b.WriteString(noColorStyle.Render(strings.Repeat(" ", indentW)))
 	}
 
 	// Connector at the current level.
 	if node.Depth >= 0 {
 		if isLastChild(node) {
-			b.WriteString(indentStyle.Render("└"))
+			b.WriteString(indentStyle.Render("└── "))
 		} else {
-			b.WriteString(indentStyle.Render("├"))
+			b.WriteString(indentStyle.Render("├── "))
 		}
-		b.WriteString(indentStyle.Render("── "))
-	}
-
-	// ---- background highlight (cursor / selection) ----
-	bgStyle := lipgloss.NewStyle()
-	if isCursor {
-		bgStyle = lipgloss.NewStyle().Background(colors.CursorBg)
-	} else if isSelected {
-		bgStyle = lipgloss.NewStyle().Background(colors.SelectedBg)
 	}
 
 	// ---- expand/collapse indicator ----
@@ -296,7 +305,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 			dirStyle = dirStyle.Background(colors.SelectedBg)
 		}
 		b.WriteString(dirStyle.Render(indicator))
-		b.WriteString(" ")
+		b.WriteString(noColorStyle.Render(" "))
 	}
 
 	// ---- file type icon ----
@@ -314,7 +323,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 		}
 		if iconRes.Icon != "" {
 			b.WriteString(iconStyle.Render(iconRes.Icon))
-			b.WriteString(" ")
+			b.WriteString(noColorStyle.Render(" "))
 		}
 	}
 
@@ -389,7 +398,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 			gitStart := width - gitW - padNeeded
 			if gitStart > contentW {
 				pad := gitStart - contentW
-				b.WriteString(strings.Repeat(" ", pad))
+				b.WriteString(noColorStyle.Render(strings.Repeat(" ", pad)))
 				b.WriteString(gitStyle.Render(gitStr))
 			}
 		}
@@ -399,12 +408,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 	raw := b.String()
 	visibleW := rendering.StringWidth(rendering.StripAnsi(raw))
 	if visibleW < width {
-		pad := strings.Repeat(" ", width-visibleW)
-		if isCursor {
-			pad = bgStyle.Render(pad)
-		} else if isSelected {
-			pad = bgStyle.Render(pad)
-		}
+		pad := noColorStyle.Render(strings.Repeat(" ", width-visibleW))
 		b.WriteString(pad)
 	}
 
@@ -433,7 +437,9 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 		selectedPath = sel.Path
 	}
 
-	// Clamp scroll offset.
+	// Sync scroll offset from the model (single source of truth).
+	r.scrollOffset = r.model.ScrollOffset()
+
 	total := len(nodes)
 	if r.scrollOffset >= total && total > 0 {
 		r.scrollOffset = total - 1
@@ -442,17 +448,43 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 		r.scrollOffset = 0
 	}
 
+	// Update scrollbar state — only call SetScrollInfo when position or
+	// content size actually changes to avoid resetting the fade timer on
+	// every render frame.
+	sbW := scrollbar.ScrollbarWidth
+	contentW := width - sbW
+	trackH := r.sbTrackHeight
+	if trackH <= 0 {
+		trackH = height
+	}
+	r.sb.SetTrackHeight(trackH)
+	if r.scrollOffset != r.lastScrollOffset || total != r.lastTotalNodes {
+		r.sb.SetScrollInfo(total, trackH, r.scrollOffset)
+		r.lastScrollOffset = r.scrollOffset
+		r.lastTotalNodes = total
+	} else {
+		r.sb.Touch()
+	}
+	sbView := r.sb.View()
+	sbLines := strings.Split(sbView, "\n")
+
 	lines := make([]string, height)
 	for i := 0; i < height; i++ {
 		nodeIdx := r.scrollOffset + i
+		var line string
 		if nodeIdx >= total {
-			lines[i] = strings.Repeat(" ", width)
-			continue
+			line = strings.Repeat(" ", contentW)
+		} else {
+			node := nodes[nodeIdx]
+			isCursor := nodeIdx == cursorIdx
+			isSelected := node.Path == selectedPath && !isCursor
+			line = r.formatLine(node, nodeIdx, contentW, isCursor, isSelected)
 		}
-		node := nodes[nodeIdx]
-		isCursor := nodeIdx == cursorIdx
-		isSelected := node.Path == selectedPath && !isCursor
-		lines[i] = r.formatLine(node, nodeIdx, width, isCursor, isSelected)
+		sbChar := " "
+		if i < len(sbLines) && sbLines[i] != "" {
+			sbChar = sbLines[i]
+		}
+		lines[i] = line + sbChar
 	}
 
 	return lines
@@ -739,10 +771,39 @@ func (r *TreeRenderer) ScrollToCursor() {
 
 // GetScrollbarInfo returns the total item count, the number of visible items,
 // and the current scroll offset — all parameters needed by the scrollbar
-// widget.
+// widget. Uses the model as the source of truth for scroll offset.
 func (r *TreeRenderer) GetScrollbarInfo() (totalItems, visibleItems, scrollOff int) {
 	nodes := r.model.VisibleNodes()
-	return len(nodes), r.height, r.scrollOffset
+	return len(nodes), r.height, r.model.ScrollOffset()
+}
+
+// HandleScrollbarMsg forwards a mouse message to the scrollbar widget for
+// click-to-jump and drag-scrolling. Returns a tea.Cmd for fade/hide tick
+// timers, or nil if no action was taken.
+// The scrollbar's Y coordinate is expected to be content-relative
+// (Y=0 = first content row).
+func (r *TreeRenderer) HandleScrollbarMsg(msg tea.Msg) tea.Cmd {
+	updated, cmd := r.sb.Update(msg)
+	r.sb = updated
+	if r.sb.ConsumeScrollChanged() {
+		r.model.SetScrollOffset(r.sb.GetScrollY())
+		r.scrollOffset = r.model.ScrollOffset()
+	}
+	return cmd
+}
+
+// HandleScrollbarTick forwards fade/hide timer ticks to the scrollbar.
+func (r *TreeRenderer) HandleScrollbarTick(msg tea.Msg) tea.Cmd {
+	updated, cmd := r.sb.Update(msg)
+	r.sb = updated
+	return cmd
+}
+
+// SetScrollbarContentHeight sets the effective scrollbar track height.
+// This should be the number of visible tree content rows on screen.
+// Pass 0 to reset to the view height.
+func (r *TreeRenderer) SetScrollbarContentHeight(h int) {
+	r.sbTrackHeight = h
 }
 
 // ---------------------------------------------------------------------------

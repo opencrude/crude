@@ -69,6 +69,7 @@ const (
 	cursorBlinkInterval = 530 * time.Millisecond
 	tickInterval        = 100 * time.Millisecond
 	scrollMargin        = 3
+	tabWidth            = 4
 )
 
 type CursorBlinkMsg time.Time
@@ -169,42 +170,69 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 		if lineIdx >= 0 && lineIdx < e.buf.LineCount() {
 			b, err := e.buf.Line(lineIdx)
 			if err == nil {
-				lineStr = string(b)
+				lineStr = strings.ReplaceAll(string(b), "\t", "    ")
 			}
 		}
 
+		runes := []rune(lineStr)
+		rw := make([]int, len(runes))
+		lineVisW := 0
+		for i, r := range runes {
+			w := rendering.StringWidth(string(r))
+			rw[i] = w
+			lineVisW += w
+		}
+
+		ri := 0
+		visCol := 0
+		for ri < len(runes) && visCol+rw[ri] <= e.scrollX {
+			visCol += rw[ri]
+			ri++
+		}
+
+		numW := sw - 1
+		numStr := e.formatLineNum(lineIdx+1, numW)
+
 		for x := 0; x < w; x++ {
 			if x < sw-1 {
-				numW := sw - 1
-				numStr := e.formatLineNum(lineIdx+1, numW)
-				numEnd := len(numStr)
-				if x >= 0 && x < numEnd {
-					ci := x
-					if ci < len(numStr) {
-						buf.Set(x, bufY, cell.NewCell(rune(numStr[ci]), e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Bg), 0))
-					}
+				if x < len(numStr) {
+					buf.Set(x, bufY, cell.NewCell(rune(numStr[x]), e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Bg), 0))
 				} else {
 					buf.Set(x, bufY, blankCell)
 				}
 			} else if x == sw-1 {
 				buf.Set(x, bufY, cell.NewCell('│', e.cellColor(e.th.Colors.Border), bgColor, 0))
 			} else {
-				textX := x - sw
-				vCol := e.scrollX + textX
-				runes := []rune(lineStr)
+				cx := x
+				vCol := e.scrollX + (cx - sw)
+				focused := ctx.Focused
+				isCursorLine := lineIdx == e.cursor.Line
 
-				if vCol >= 0 && vCol < len(runes) {
-					ch := runes[vCol]
-					isCursor := ctx.Focused && lineIdx == e.cursor.Line && vCol == e.cursor.Col
-					if isCursor {
-						buf.Set(x, bufY, cell.NewCell(ch, e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
+				for ri < len(runes) && vCol >= visCol+rw[ri] {
+					visCol += rw[ri]
+					ri++
+				}
+
+				if ri < len(runes) && vCol < visCol+rw[ri] && vCol < lineVisW {
+					if vCol == visCol {
+						if focused && isCursorLine && vCol == e.cursor.Col {
+							buf.Set(cx, bufY, cell.NewCell(runes[ri], e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
+						} else {
+							buf.Set(cx, bufY, cell.NewCell(runes[ri], e.cellColor(e.th.Colors.Fg), bgColor, 0))
+						}
 					} else {
-						buf.Set(x, bufY, cell.NewCell(ch, e.cellColor(e.th.Colors.Fg), bgColor, 0))
+						if focused && isCursorLine && vCol == e.cursor.Col {
+							buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
+						} else {
+							buf.Set(cx, bufY, blankCell)
+						}
 					}
-				} else if vCol >= 0 && vCol == len(runes) && ctx.Focused && lineIdx == e.cursor.Line && vCol == e.cursor.Col {
-					buf.Set(x, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
 				} else {
-					buf.Set(x, bufY, blankCell)
+					if focused && isCursorLine && vCol == e.cursor.Col {
+						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
+					} else {
+						buf.Set(cx, bufY, blankCell)
+					}
 				}
 			}
 		}
@@ -268,7 +296,7 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 		if lineIdx >= 0 && lineIdx < e.buf.LineCount() {
 			b, err := e.buf.Line(lineIdx)
 			if err == nil {
-				lineStr = string(b)
+				lineStr = strings.ReplaceAll(string(b), "\t", "    ")
 			}
 		}
 
@@ -279,24 +307,66 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 
 		isCursorLine := lineIdx == e.cursor.Line && showCursor
 
-		var textPart string
 		runes := []rune(lineStr)
-		vCol := e.scrollX
+		rw := make([]int, len(runes))
+		lineVisW := 0
+		for i, r := range runes {
+			w := rendering.StringWidth(string(r))
+			rw[i] = w
+			lineVisW += w
+		}
+
+		ri := 0
+		visCol := 0
+		for ri < len(runes) && visCol+rw[ri] <= e.scrollX {
+			visCol += rw[ri]
+			ri++
+		}
+
+		var textPart strings.Builder
 		for i := 0; i < textW; i++ {
-			ci := vCol + i
-			if ci >= 0 && ci < len(runes) {
-				ch := string(runes[ci])
-				if ci == e.cursor.Col && isCursorLine {
-					textPart += cursorFg.Render(ch)
-				} else {
-					textPart += fgStyle.Render(ch)
+			vCol := e.scrollX + i
+
+			if vCol >= lineVisW {
+				for j := i; j < textW; j++ {
+					cvCol := e.scrollX + j
+					if cvCol == e.cursor.Col && isCursorLine {
+						textPart.WriteString(cursorFg.Render(" "))
+					} else {
+						textPart.WriteString(blankStyle.Render(" "))
+					}
 				}
-			} else if ci == e.cursor.Col && isCursorLine {
-				textPart += cursorFg.Render(" ")
+				break
+			}
+
+			for ri < len(runes) && vCol >= visCol+rw[ri] {
+				visCol += rw[ri]
+				ri++
+			}
+
+			if ri < len(runes) && vCol < visCol+rw[ri] && vCol < lineVisW {
+				if vCol == visCol {
+					if vCol == e.cursor.Col && isCursorLine {
+						textPart.WriteString(cursorFg.Render(string(runes[ri])))
+					} else {
+						textPart.WriteString(fgStyle.Render(string(runes[ri])))
+					}
+				} else {
+					if vCol == e.cursor.Col && isCursorLine {
+						textPart.WriteString(cursorFg.Render(" "))
+					} else {
+						textPart.WriteString(blankStyle.Render(" "))
+					}
+				}
 			} else {
-				textPart += blankStyle.Render(" ")
+				if vCol == e.cursor.Col && isCursorLine {
+					textPart.WriteString(cursorFg.Render(" "))
+				} else {
+					textPart.WriteString(blankStyle.Render(" "))
+				}
 			}
 		}
+		textStr := textPart.String()
 
 		sbChar := " "
 		if y < len(sbLines) && sbLines[y] != "" {
@@ -304,7 +374,7 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 		}
 		renderedSB := sbBgStyle.Render(sbChar)
 
-		innerLine := gutter + sep + textPart + renderedSB
+		innerLine := gutter + sep + textStr + renderedSB
 		innerVisW := rendering.VisibleWidth(innerLine)
 		rightPad := e.viewW - innerVisW
 		if rightPad < 0 {
@@ -365,6 +435,43 @@ func (e *Editor) renderStatusLine(w int) string {
 
 func (e *Editor) cellColor(c color.Color) cell.Color {
 	return rendering.ThemeColorToCell(c)
+}
+
+func colToRuneIdxExpanded(runes []rune, col int) int {
+	visCol := 0
+	for i, r := range runes {
+		var w int
+		if r == '\t' {
+			w = tabWidth
+		} else {
+			w = rendering.StringWidth(string(r))
+		}
+		if visCol+w > col {
+			return i
+		}
+		if visCol+w == col {
+			return i + 1
+		}
+		visCol += w
+	}
+	return len(runes)
+}
+
+func (e *Editor) lineVisualWidth(lineIdx int) int {
+	b, err := e.buf.Line(lineIdx)
+	if err != nil {
+		return 0
+	}
+	s := strings.ReplaceAll(string(b), "\t", "    ")
+	return rendering.StringWidth(s)
+}
+
+func (e *Editor) lineRunes(lineIdx int) []rune {
+	b, err := e.buf.Line(lineIdx)
+	if err != nil {
+		return nil
+	}
+	return []rune(string(b))
 }
 
 func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
@@ -485,12 +592,9 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 	if col < 0 {
 		col = 0
 	}
-	b, err := e.buf.Line(lineIdx)
-	if err == nil {
-		lineLen := utf8.RuneCount(b)
-		if col > lineLen {
-			col = lineLen
-		}
+	lineVisW := e.lineVisualWidth(lineIdx)
+	if col > lineVisW {
+		col = lineVisW
 	}
 
 	e.cursor = Position{Line: lineIdx, Col: col}
@@ -597,13 +701,9 @@ func (e *Editor) moveDown() {
 }
 
 func (e *Editor) applyGoalCol() {
-	b, err := e.buf.Line(e.cursor.Line)
-	if err != nil {
-		return
-	}
-	lineLen := utf8.RuneCount(b)
-	if e.goalCol > lineLen {
-		e.cursor.Col = lineLen
+	lineVisW := e.lineVisualWidth(e.cursor.Line)
+	if e.goalCol > lineVisW {
+		e.cursor.Col = lineVisW
 	} else {
 		e.cursor.Col = e.goalCol
 	}
@@ -617,28 +717,45 @@ func (e *Editor) clearGoal() {
 func (e *Editor) moveLeft() {
 	e.clearGoal()
 	if e.cursor.Col > 0 {
-		e.cursor.Col--
+		runes := e.lineRunes(e.cursor.Line)
+		if len(runes) > 0 {
+			ri := rendering.ColToRuneIdx(runes, e.cursor.Col)
+			if ri > 0 {
+				prevChW := rendering.StringWidth(string(runes[ri-1]))
+				e.cursor.Col -= prevChW
+			} else {
+				e.cursor.Col = 0
+			}
+		} else {
+			e.cursor.Col--
+		}
 	} else if e.cursor.Line > 0 {
 		e.cursor.Line--
-		b, err := e.buf.Line(e.cursor.Line)
-		if err == nil {
-			e.cursor.Col = utf8.RuneCount(b)
-		}
+		e.cursor.Col = e.lineVisualWidth(e.cursor.Line)
 	}
 	e.ensureCursorVisible()
 }
 
 func (e *Editor) moveRight() {
 	e.clearGoal()
-	b, err := e.buf.Line(e.cursor.Line)
-	if err == nil {
-		lineLen := utf8.RuneCount(b)
-		if e.cursor.Col < lineLen {
+	lineVisW := e.lineVisualWidth(e.cursor.Line)
+	if e.cursor.Col < lineVisW {
+		runes := e.lineRunes(e.cursor.Line)
+		if len(runes) > 0 {
+			ri := rendering.ColToRuneIdx(runes, e.cursor.Col)
+			if ri < len(runes) {
+				chW := rendering.StringWidth(string(runes[ri]))
+				e.cursor.Col += chW
+				if e.cursor.Col > lineVisW {
+					e.cursor.Col = lineVisW
+				}
+			}
+		} else {
 			e.cursor.Col++
-		} else if e.cursor.Line < e.buf.LineCount()-1 {
-			e.cursor.Line++
-			e.cursor.Col = 0
 		}
+	} else if e.cursor.Line < e.buf.LineCount()-1 {
+		e.cursor.Line++
+		e.cursor.Col = 0
 	}
 	e.ensureCursorVisible()
 }
@@ -651,14 +768,14 @@ func (e *Editor) moveToLineStart() {
 		e.ensureCursorVisible()
 		return
 	}
-	runes := []rune(string(b))
+	expLine := strings.ReplaceAll(string(b), "\t", "    ")
 	if e.cursor.Col > 0 {
 		firstNonWS := 0
-		for i, r := range runes {
-			if r != ' ' && r != '\t' {
-				firstNonWS = i
+		for _, r := range expLine {
+			if r != ' ' {
 				break
 			}
+			firstNonWS++
 		}
 		if e.cursor.Col != firstNonWS {
 			e.cursor.Col = firstNonWS
@@ -671,10 +788,7 @@ func (e *Editor) moveToLineStart() {
 
 func (e *Editor) moveToLineEnd() {
 	e.clearGoal()
-	b, err := e.buf.Line(e.cursor.Line)
-	if err == nil {
-		e.cursor.Col = utf8.RuneCount(b)
-	}
+	e.cursor.Col = e.lineVisualWidth(e.cursor.Line)
 	e.ensureCursorVisible()
 }
 
@@ -714,12 +828,9 @@ func (e *Editor) clampCol(lineIdx int) {
 	if lineIdx < 0 {
 		return
 	}
-	b, err := e.buf.Line(lineIdx)
-	if err == nil {
-		lineLen := utf8.RuneCount(b)
-		if e.cursor.Col > lineLen {
-			e.cursor.Col = lineLen
-		}
+	lineVisW := e.lineVisualWidth(lineIdx)
+	if e.cursor.Col > lineVisW {
+		e.cursor.Col = lineVisW
 	}
 }
 
@@ -736,7 +847,7 @@ func (e *Editor) insertRune(r rune) {
 		cursorAfter.Line++
 		cursorAfter.Col = 0
 	} else {
-		cursorAfter.Col++
+		cursorAfter.Col += rendering.StringWidth(string(r))
 	}
 	e.cursor = cursorAfter
 	e.modified = true
@@ -756,7 +867,10 @@ func (e *Editor) insertNewline() {
 }
 
 func (e *Editor) insertTab() {
-	e.insertRune('\t')
+	e.insertRune(' ')
+	e.insertRune(' ')
+	e.insertRune(' ')
+	e.insertRune(' ')
 }
 
 func (e *Editor) deleteBackward() {
@@ -768,13 +882,15 @@ func (e *Editor) deleteBackward() {
 			return
 		}
 		runes := []rune(string(lineBytes))
-		if e.cursor.Col-1 >= 0 && e.cursor.Col-1 < len(runes) {
-			ch := runes[e.cursor.Col-1]
-			start := Position{Line: e.cursor.Line, Col: e.cursor.Col - 1}
+		ri := rendering.ColToRuneIdx(runes, e.cursor.Col)
+		if ri > 0 {
+			ch := runes[ri-1]
+			chVisW := rendering.StringWidth(string(ch))
+			start := Position{Line: e.cursor.Line, Col: e.cursor.Col - chVisW}
 			end := e.cursor
 
 			e.buf.Delete(start, end)
-			e.cursor.Col--
+			e.cursor.Col -= chVisW
 			e.modified = true
 
 			e.recordChange(Change{
@@ -788,18 +904,14 @@ func (e *Editor) deleteBackward() {
 	} else if e.cursor.Line > 0 {
 		cursorBefore := e.cursor
 		prevLine := e.cursor.Line - 1
-		prevLineBytes, err := e.buf.Line(prevLine)
-		if err != nil {
-			return
-		}
-		prevLineLen := utf8.RuneCount(prevLineBytes)
+		prevLineVisW := e.lineVisualWidth(prevLine)
 
-		start := Position{Line: prevLine, Col: prevLineLen}
+		start := Position{Line: prevLine, Col: prevLineVisW}
 		end := Position{Line: e.cursor.Line, Col: 0}
 
 		e.buf.Delete(start, end)
 		e.cursor.Line = prevLine
-		e.cursor.Col = prevLineLen
+		e.cursor.Col = prevLineVisW
 		e.modified = true
 
 		e.recordChange(Change{
@@ -820,24 +932,28 @@ func (e *Editor) deleteForward() {
 		return
 	}
 	runes := []rune(string(lineBytes))
-	lineLen := len(runes)
+	lineVisW := rendering.StringWidth(string(runes))
 
-	if e.cursor.Col < lineLen {
+	if e.cursor.Col < lineVisW {
 		cursorBefore := e.cursor
-		ch := runes[e.cursor.Col]
-		start := e.cursor
-		end := Position{Line: e.cursor.Line, Col: e.cursor.Col + 1}
+		ri := rendering.ColToRuneIdx(runes, e.cursor.Col)
+		if ri < len(runes) {
+			ch := runes[ri]
+			chVisW := rendering.StringWidth(string(ch))
+			start := e.cursor
+			end := Position{Line: e.cursor.Line, Col: e.cursor.Col + chVisW}
 
-		e.buf.Delete(start, end)
-		e.modified = true
+			e.buf.Delete(start, end)
+			e.modified = true
 
-		e.recordChange(Change{
-			Type:         ActDelete,
-			Text:         []byte(string(ch)),
-			StartPos:     start,
-			EndPos:       end,
-			CursorBefore: cursorBefore,
-		})
+			e.recordChange(Change{
+				Type:         ActDelete,
+				Text:         []byte(string(ch)),
+				StartPos:     start,
+				EndPos:       end,
+				CursorBefore: cursorBefore,
+			})
+		}
 	} else if e.cursor.Line < e.buf.LineCount()-1 {
 		cursorBefore := e.cursor
 		start := e.cursor
@@ -973,5 +1089,3 @@ func (e *Editor) ensureCursorVisible() {
 	e.scrollbar.SetTrackHeight(e.viewH)
 	e.scrollbar.SetScrollInfo(lc, e.viewH, e.scrollY)
 }
-
-
