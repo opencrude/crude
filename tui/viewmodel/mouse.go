@@ -99,6 +99,25 @@ func (m *App) routeSidebarMouse(msg tea.Msg) tea.Cmd {
 	return m.treeModel.Update(filetree.TreeMouseMsg{Mouse: translated})
 }
 
+// routeTreeScrollbarMsg translates a mouse event from screen coordinates to
+// scrollbar-relative coordinates (Y=0 at first tree content row) and forwards
+// it to the tree renderer's scrollbar handler.
+func (m *App) routeTreeScrollbarMsg(msg tea.Msg) tea.Cmd {
+	adjusted := msg
+	switch mm := msg.(type) {
+	case tea.MouseClickMsg:
+		mouse := mm.Mouse()
+		adjusted = tea.MouseClickMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - 1, Button: mm.Button}
+	case tea.MouseMotionMsg:
+		mouse := mm.Mouse()
+		adjusted = tea.MouseMotionMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - 1, Button: mm.Button}
+	case tea.MouseReleaseMsg:
+		mouse := mm.Mouse()
+		adjusted = tea.MouseReleaseMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - 1, Button: mm.Button}
+	}
+	return m.treeRenderer.HandleScrollbarMsg(adjusted)
+}
+
 func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []tea.Cmd {
 	var cmds []tea.Cmd
 	activeML := m.activeMessageList()
@@ -186,6 +205,10 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.treeFocused = true
 		localY := mouse.Y - m.treeYOffset
 		if localY >= 1 {
+			if mouse.X == m.treeWidth-1 {
+				cmd := m.routeTreeScrollbarMsg(msg)
+				return m, cmd
+			}
 			cmd := m.routeSidebarMouse(msg)
 			return m, cmd
 		}
@@ -391,6 +414,10 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 
 	if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
 		m.treeFocused = true
+		if mouse.X == m.treeWidth-1 {
+			cmd := m.routeTreeScrollbarMsg(msg)
+			return m, cmd
+		}
 		cmd := m.routeSidebarMouse(msg)
 		return m, cmd
 	}
@@ -438,6 +465,10 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 	if m.treeVisible && m.treeModel != nil {
 		mouse := msg.Mouse()
 		if mouse.X < m.treeWidth {
+			if mouse.X == m.treeWidth-1 {
+				cmd := m.routeTreeScrollbarMsg(msg)
+				return m, cmd
+			}
 			cmd := m.routeSidebarMouse(msg)
 			return m, cmd
 		}

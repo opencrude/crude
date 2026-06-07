@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"crude/tui/filetree"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/widgets"
@@ -507,9 +508,6 @@ func (m *App) buildMainView() string {
 		}
 		titleBar := titleStr
 
-		treeLines := m.treeRenderer.RenderToLines(m.treeWidth, m.height)
-		dividerStyle := lipgloss.NewStyle().Foreground(m.theme.Tree.Colors.BorderFg)
-		divider := dividerStyle.Render("│")
 		// Tree covers everything from the first sep to just before the last
 		// separator+status line.
 		treeStart := 3
@@ -518,6 +516,16 @@ func (m *App) buildMainView() string {
 		if treeEnd < treeStart {
 			treeEnd = treeStart
 		}
+		contentH := treeEnd - treeStart - 1
+		if contentH < 0 {
+			contentH = 0
+		}
+		m.treeModel.Update(filetree.TreeHeightMsg{Height: contentH})
+		m.treeRenderer.SetScrollbarContentHeight(contentH)
+
+		treeLines := m.treeRenderer.RenderToLines(m.treeWidth, m.height)
+		dividerStyle := lipgloss.NewStyle().Foreground(m.theme.Tree.Colors.BorderFg)
+		divider := dividerStyle.Render("│")
 		for i := treeStart; i < treeEnd; i++ {
 			var treePart string
 			if i == treeStart {

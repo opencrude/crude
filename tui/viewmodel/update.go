@@ -76,6 +76,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		if m.treeVisible && m.treeRenderer != nil {
+			treeCmd := m.treeRenderer.HandleScrollbarTick(msg)
+			if treeCmd != nil {
+				cmds = append(cmds, treeCmd)
+			}
+		}
 		for _, sp := range m.paneMgr.panes {
 			if !sp.Done {
 				if sp.MsgList != nil {
