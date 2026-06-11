@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"crude/promptref"
 )
 
-func InsertPromptReference(db *sql.DB, ref promptref.Reference) error {
+func InsertPromptReference(db *sql.DB, ref Reference) error {
 	if ref.CreatedAt == 0 {
 		ref.CreatedAt = time.Now().UnixNano()
 	}
@@ -59,7 +57,7 @@ func DeletePromptReference(db *sql.DB, id string) error {
 	return nil
 }
 
-func LoadPromptReferences(db *sql.DB) ([]promptref.Reference, error) {
+func LoadPromptReferences(db *sql.DB) ([]Reference, error) {
 	rows, err := db.Query(`
 		SELECT id, session_id, kind, label, title, mime, content, file_path,
 		       inline, created_at, COALESCE(deleted_at, 0)
@@ -72,9 +70,9 @@ func LoadPromptReferences(db *sql.DB) ([]promptref.Reference, error) {
 	}
 	defer rows.Close()
 
-	var refs []promptref.Reference
+	var refs []Reference
 	for rows.Next() {
-		var r promptref.Reference
+		var r Reference
 		var kind string
 		var content, filePath sql.NullString
 		var inline int
@@ -82,7 +80,7 @@ func LoadPromptReferences(db *sql.DB) ([]promptref.Reference, error) {
 			&content, &filePath, &inline, &r.CreatedAt, &r.DeletedAt); err != nil {
 			return nil, fmt.Errorf("sessiondb: load prompt references scan: %w", err)
 		}
-		r.Kind = promptref.Kind(kind)
+		r.Kind = Kind(kind)
 		r.Content = content.String
 		r.FilePath = filePath.String
 		r.Inline = inline != 0
@@ -93,7 +91,7 @@ func LoadPromptReferences(db *sql.DB) ([]promptref.Reference, error) {
 
 // LoadPromptReferencesByIDs loads only the specified active prompt references.
 // Missing or deleted IDs are silently skipped.
-func LoadPromptReferencesByIDs(db *sql.DB, ids []string) ([]promptref.Reference, error) {
+func LoadPromptReferencesByIDs(db *sql.DB, ids []string) ([]Reference, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -117,9 +115,9 @@ func LoadPromptReferencesByIDs(db *sql.DB, ids []string) ([]promptref.Reference,
 	}
 	defer rows.Close()
 
-	var refs []promptref.Reference
+	var refs []Reference
 	for rows.Next() {
-		var r promptref.Reference
+		var r Reference
 		var kind string
 		var content, filePath sql.NullString
 		var inline int
@@ -127,7 +125,7 @@ func LoadPromptReferencesByIDs(db *sql.DB, ids []string) ([]promptref.Reference,
 			&content, &filePath, &inline, &r.CreatedAt, &r.DeletedAt); err != nil {
 			return nil, fmt.Errorf("sessiondb: load prompt references by ids scan: %w", err)
 		}
-		r.Kind = promptref.Kind(kind)
+		r.Kind = Kind(kind)
 		r.Content = content.String
 		r.FilePath = filePath.String
 		r.Inline = inline != 0

@@ -155,7 +155,7 @@ func (pt *PieceTable) positionToOffset(pos Position) int {
 	lineBytes := pt.cachedBytes[lineStart:lineEnd]
 
 	runes := []rune(string(lineBytes))
-	ri := colToRuneIdxExpanded(runes, pos.Col)
+	ri := colToRuneIdx(runes, pos.Col)
 	if ri > len(runes) {
 		ri = len(runes)
 	}

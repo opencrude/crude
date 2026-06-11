@@ -4,16 +4,16 @@ import (
 	"sort"
 	"strings"
 
-	"crude/promptref"
+	"crude/sessiondb"
 	"crude/tui/components"
 )
 
 type ReferenceStore interface {
-	CreateReference(promptref.CreateRequest) (promptref.Reference, error)
+	CreateReference(sessiondb.CreateRequest) (sessiondb.Reference, error)
 	UpdateReferenceContent(id, content string) error
 	DeleteReference(id string) error
-	GetReference(id string) (promptref.Reference, bool)
-	ListReferences() []promptref.Reference
+	GetReference(id string) (sessiondb.Reference, bool)
+	ListReferences() []sessiondb.Reference
 }
 
 type RefRange struct {
@@ -35,7 +35,7 @@ func (m *Model) SetReferenceStore(store ReferenceStore) {
 	m.applyReferenceRanges()
 }
 
-func (m *Model) InsertReference(ref promptref.Reference) {
+func (m *Model) InsertReference(ref sessiondb.Reference) {
 	m.input.InsertString(ref.DisplayName())
 	m.applyReferenceRanges()
 	m.showHint = false
@@ -87,7 +87,7 @@ func (m *Model) applyReferenceRanges() {
 	m.input.NormalizeCursorAtomic()
 }
 
-func FindRefRanges(text string, refs []promptref.Reference) []RefRange {
+func FindRefRanges(text string, refs []sessiondb.Reference) []RefRange {
 	// Build label→ID map for fast lookup
 	labelMap := make(map[string]string, len(refs))
 	for _, ref := range refs {
@@ -132,7 +132,7 @@ func FindRefRanges(text string, refs []promptref.Reference) []RefRange {
 	return ranges
 }
 
-func ExpandReferences(text string, refs []promptref.Reference) string {
+func ExpandReferences(text string, refs []sessiondb.Reference) string {
 	ranges := FindRefRanges(text, refs)
 	if len(ranges) == 0 {
 		return text
@@ -159,7 +159,7 @@ func ExpandReferences(text string, refs []promptref.Reference) string {
 	return b.String()
 }
 
-func DisplayReferences(text string, refs []promptref.Reference) string {
+func DisplayReferences(text string, refs []sessiondb.Reference) string {
 	ranges := FindRefRanges(text, refs)
 	if len(ranges) == 0 {
 		return text
@@ -184,11 +184,11 @@ func DisplayReferences(text string, refs []promptref.Reference) string {
 	return b.String()
 }
 
-func refByID(refs []promptref.Reference, id string) (promptref.Reference, bool) {
+func refByID(refs []sessiondb.Reference, id string) (sessiondb.Reference, bool) {
 	for _, ref := range refs {
 		if ref.ID == id {
 			return ref, true
 		}
 	}
-	return promptref.Reference{}, false
+	return sessiondb.Reference{}, false
 }

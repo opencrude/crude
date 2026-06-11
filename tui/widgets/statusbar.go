@@ -14,16 +14,6 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-var sleepMessages = []string{
-	"agents at work, catching zzz's",
-	"snoozing while agents hustle",
-	"naptime, agents on the clock",
-	"do not disturb, agents working",
-	"power nap mode · agents in control",
-	"counting sub-agents instead of sheep",
-	"sleeping on the job (it's by design)",
-}
-
 type agentStatus struct {
 	thinking  bool
 	streaming bool
@@ -64,6 +54,13 @@ type StatusBar struct {
 
 	spinFrame     int
 	activityStep  int
+
+	diagErrors   int
+	diagWarnings int
+	diagHints    int
+	lspVisible   bool
+	lspStatus    string // displayed when LSP is visible but disconnected or failed
+	lspError     string
 }
 
 func NewStatusBar(t *theme.Theme) *StatusBar {
@@ -75,9 +72,12 @@ func (s *StatusBar) View() string {
 	pad := strings.Repeat(" ", s.theme.Spacing.PadLR)
 
 	activeAgents := 0
+	sleepingAgents := 0
 	for _, st := range s.agentStates {
 		if st.thinking || st.streaming {
 			activeAgents++
+		} else {
+			sleepingAgents++
 		}
 	}
 
@@ -99,22 +99,54 @@ func (s *StatusBar) View() string {
 		left = s.spinner.StreamAnimation()
 	} else if s.thinking {
 		left = s.spinner.WorkAnimation()
-	} else if activeAgents > 0 {
-		msg := sleepMessages[s.activityStep%len(sleepMessages)]
-		left = lipgloss.NewStyle().Foreground(s.theme.Colors.Accent2).Render(fmt.Sprintf("💤 %s", msg))
+	} else if sleepingAgents > 0 {
+		muted := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
+		left = muted.Render(fmt.Sprintf("💤 %d", sleepingAgents))
+		if s.btwCount > 0 {
+			btwLabel := fmt.Sprintf(" 📝 %d", s.btwCount)
+			left += muted.Render(btwLabel)
+		}
 	} else {
 		left = ""
 	}
 
 	if activeAgents > 0 && (s.thinking || s.streaming) {
 		agentStyle := lipgloss.NewStyle().Foreground(s.theme.Colors.Accent2)
-		left += " " + agentStyle.Render(fmt.Sprintf("· %d agent%s active", activeAgents, pluralS(activeAgents)))
+		left += " " + agentStyle.Render(fmt.Sprintf("⚡%d", activeAgents))
 	}
 
-	if s.btwCount > 0 && (s.thinking || s.streaming) {
-		btwLabel := fmt.Sprintf(" · %d user note%s", s.btwCount, pluralS(s.btwCount))
-		left += lipgloss.NewStyle().Foreground(lipgloss.Color("#ffcc00")).Bold(true).Render(btwLabel)
+	diagParts := ""
+	if s.lspVisible {
+		if s.diagErrors > 0 || s.diagWarnings > 0 || s.diagHints > 0 {
+			var parts []string
+			if s.diagErrors > 0 {
+				parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
+			}
+			if s.diagWarnings > 0 {
+				parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
+			}
+			if s.diagHints > 0 {
+				parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Muted).Render(fmt.Sprintf("ℹ%d", s.diagHints)))
+			}
+			diagParts = " " + strings.Join(parts, " ")
+		} else if s.lspStatus != "" {
+			dimmed := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
+			diagParts = " " + dimmed.Render(s.lspStatus)
+		}
+	} else if s.diagErrors > 0 || s.diagWarnings > 0 || s.diagHints > 0 {
+		var parts []string
+		if s.diagErrors > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
+		}
+		if s.diagWarnings > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
+		}
+		if s.diagHints > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Muted).Render(fmt.Sprintf("ℹ%d", s.diagHints)))
+		}
+		diagParts = " " + strings.Join(parts, " ")
 	}
+	left += diagParts
 
 	right := ""
 	if s.tokenPrompt > 0 || s.tokenCompletion > 0 {
@@ -344,4 +376,18 @@ func (s *StatusBar) BtwCount() int {
 
 func (s *StatusBar) SetBtwCount(n int) {
 	s.btwCount = n
+}
+
+func (s *StatusBar) SetDiagnostics(errors, warnings, hints int) {
+	s.diagErrors = errors
+	s.diagWarnings = warnings
+	s.diagHints = hints
+}
+
+func (s *StatusBar) SetLSPVisible(v bool) {
+	s.lspVisible = v
+}
+
+func (s *StatusBar) SetLSPStatus(status string) {
+	s.lspStatus = status
 }

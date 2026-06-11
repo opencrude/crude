@@ -3,12 +3,12 @@ package input
 import (
 	"testing"
 
-	"crude/promptref"
+	"crude/sessiondb"
 )
 
 func TestFindRefRanges_SingleLabel(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
 	}
 	text := "Hello [Pasted Text1] world"
 	ranges := FindRefRanges(text, refs)
@@ -28,10 +28,10 @@ func TestFindRefRanges_SingleLabel(t *testing.T) {
 }
 
 func TestFindRefRanges_MultipleLabels(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
-		{ID: "r2", Kind: promptref.KindPastedImage, Label: "[Pasted IMG1]", DeletedAt: 0},
-		{ID: "r3", Kind: promptref.KindSelectedFile, Label: "[File1]", DeletedAt: 0},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
+		{ID: "r2", Kind: sessiondb.KindPastedImage, Label: "[Pasted IMG1]", DeletedAt: 0},
+		{ID: "r3", Kind: sessiondb.KindSelectedFile, Label: "[File1]", DeletedAt: 0},
 	}
 	text := "See [Pasted Text1] and [Pasted IMG1] also [File1]"
 	ranges := FindRefRanges(text, refs)
@@ -54,9 +54,9 @@ func TestFindRefRanges_MultipleLabels(t *testing.T) {
 }
 
 func TestFindRefRanges_DeletedExcluded(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
-		{ID: "r2", Kind: promptref.KindPastedText, Label: "[Pasted Text2]", DeletedAt: 12345}, // deleted
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
+		{ID: "r2", Kind: sessiondb.KindPastedText, Label: "[Pasted Text2]", DeletedAt: 12345}, // deleted
 	}
 	text := "[Pasted Text1] [Pasted Text2]"
 	ranges := FindRefRanges(text, refs)
@@ -69,8 +69,8 @@ func TestFindRefRanges_DeletedExcluded(t *testing.T) {
 }
 
 func TestFindRefRanges_NonMatchingBracketsIgnored(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
 	}
 	text := "Hello [some random text] and [Pasted Text1]"
 	ranges := FindRefRanges(text, refs)
@@ -83,8 +83,8 @@ func TestFindRefRanges_NonMatchingBracketsIgnored(t *testing.T) {
 }
 
 func TestFindRefRanges_MultipleOccurrences(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
 	}
 	text := "[Pasted Text1] first [Pasted Text1] second"
 	ranges := FindRefRanges(text, refs)
@@ -100,8 +100,8 @@ func TestFindRefRanges_MultipleOccurrences(t *testing.T) {
 }
 
 func TestFindRefRanges_EmptyText(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
 	}
 	ranges := FindRefRanges("", refs)
 	if len(ranges) != 0 {
@@ -110,8 +110,8 @@ func TestFindRefRanges_EmptyText(t *testing.T) {
 }
 
 func TestFindRefRanges_UnclosedBracketIgnored(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 0},
 	}
 	text := "[Pasted Text1 is here without closing bracket"
 	ranges := FindRefRanges(text, refs)
@@ -129,9 +129,9 @@ func TestFindRefRanges_NoRefs(t *testing.T) {
 }
 
 func TestFindRefRanges_AllDeleted(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 999},
-		{ID: "r2", Kind: promptref.KindPastedImage, Label: "[Pasted IMG1]", DeletedAt: 999},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", DeletedAt: 999},
+		{ID: "r2", Kind: sessiondb.KindPastedImage, Label: "[Pasted IMG1]", DeletedAt: 999},
 	}
 	text := "[Pasted Text1] [Pasted IMG1]"
 	ranges := FindRefRanges(text, refs)
@@ -143,8 +143,8 @@ func TestFindRefRanges_AllDeleted(t *testing.T) {
 func TestFindRefRanges_LabelWithoutBrackets(t *testing.T) {
 	// A ref with a label that doesn't use brackets won't be found
 	// because FindRefRanges scans for [....] tokens
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "PastedText1", DeletedAt: 0},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "PastedText1", DeletedAt: 0},
 	}
 	text := "Hello PastedText1 world"
 	ranges := FindRefRanges(text, refs)
@@ -154,8 +154,8 @@ func TestFindRefRanges_LabelWithoutBrackets(t *testing.T) {
 }
 
 func TestFindRefRanges_EmptyLabel(t *testing.T) {
-	refs := []promptref.Reference{
-		{ID: "r1", Kind: promptref.KindPastedText, Label: "", DeletedAt: 0},
+	refs := []sessiondb.Reference{
+		{ID: "r1", Kind: sessiondb.KindPastedText, Label: "", DeletedAt: 0},
 	}
 	text := "Hello world"
 	ranges := FindRefRanges(text, refs)

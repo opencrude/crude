@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/promptref"
+	"crude/sessiondb"
 	"crude/tui/components"
 	"crude/tui/rendering"
 )
@@ -143,13 +143,13 @@ func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
 	}
 
 	inline := len(content) <= pasteInlineThreshold
-	kind := promptref.KindPastedText
+	kind := sessiondb.KindPastedText
 	title := "Pasted text"
 	if !inline {
-		kind = promptref.KindPastedTextFile
+		kind = sessiondb.KindPastedTextFile
 		title = "Pasted text file"
 	}
-	ref, err := m.refStore.CreateReference(promptref.CreateRequest{
+	ref, err := m.refStore.CreateReference(sessiondb.CreateRequest{
 		Kind:    kind,
 		Title:   title,
 		Mime:    "text/plain; charset=utf-8",

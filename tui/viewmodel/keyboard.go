@@ -488,6 +488,23 @@ func (m *App) routeToInputInQuestion(msg tea.KeyPressMsg, cmds *[]tea.Cmd) tea.M
 	return m
 }
 
+func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	switch m.focusTarget() {
+	case FocusEditor:
+		cmd := m.editor.HandleEvent(msg)
+		return m, cmd
+	default:
+		updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+		m.input = updated
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		cmds = append(cmds, m.handleInputEvent(evt)...)
+		return m, tea.Batch(cmds...)
+	}
+}
+
 func (m *App) dispatchEditorTick(msg any) []tea.Cmd {
 	var cmds []tea.Cmd
 	if m.activeEditorView != "" && m.editor.IsOpen() {

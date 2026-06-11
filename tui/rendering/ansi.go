@@ -7,7 +7,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/clipperhouse/displaywidth"
 	"github.com/rivo/uniseg"
 )
 
@@ -141,19 +140,19 @@ func StripAnsi(s string) string {
 }
 
 func VisibleWidth(s string) int {
-	return displaywidth.String(StripAnsi(s))
+	return uniseg.StringWidth(StripAnsi(s))
 }
 
 func StringWidth(s string) int {
-	return displaywidth.String(s)
+	return uniseg.StringWidth(s)
 }
 
 func TruncateVisual(s string, maxW int, tail string) string {
 	plain := StripAnsi(s)
-	if displaywidth.String(plain) <= maxW {
+	if uniseg.StringWidth(plain) <= maxW {
 		return s
 	}
-	tailW := displaywidth.String(tail)
+	tailW := uniseg.StringWidth(tail)
 	target := maxW - tailW
 	if target < 0 {
 		target = 0
@@ -164,7 +163,7 @@ func TruncateVisual(s string, maxW int, tail string) string {
 	state := -1
 	for len(rest) > 0 {
 		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := displaywidth.String(cluster)
+		cw := uniseg.StringWidth(cluster)
 		if w+cw > target {
 			break
 		}
@@ -235,7 +234,7 @@ func ApplySelection(line string, startCol, endCol int) string {
 
 		segment := line[i:]
 		cluster, newSegment, _, newState := uniseg.StepString(segment, -1)
-		cw := displaywidth.String(cluster)
+		cw := uniseg.StringWidth(cluster)
 		nextCol := col + cw
 
 		shouldSelect := col >= startCol || nextCol > startCol
@@ -275,7 +274,7 @@ func ExtractVisibleRange(s string, startCol, endCol int) string {
 	state := -1
 	for len(rest) > 0 {
 		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := displaywidth.String(cluster)
+		cw := uniseg.StringWidth(cluster)
 		if endCol >= 0 && col >= endCol {
 			break
 		}
@@ -326,7 +325,7 @@ func RuneIdxToCol(runes []rune, idx int) int {
 	if idx >= len(runes) {
 		idx = len(runes)
 	}
-	return displaywidth.String(string(runes[:idx]))
+	return uniseg.StringWidth(string(runes[:idx]))
 }
 
 func ColToRuneIdx(runes []rune, col int) int {
@@ -339,7 +338,7 @@ func ColToRuneIdx(runes []rune, col int) int {
 	state := -1
 	for len(rest) > 0 {
 		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := displaywidth.String(cluster)
+		cw := uniseg.StringWidth(cluster)
 		if curCol+cw > col {
 			return runeIdx
 		}

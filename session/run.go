@@ -12,7 +12,6 @@ import (
 	"crude/agent"
 	"crude/fileio"
 	"crude/logger"
-	"crude/promptref"
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
@@ -582,7 +581,7 @@ func (s *Session) buildUserMessage(input provider.UserInput) provider.ChatMessag
 	}
 
 	// Build an order-preserving map keyed by reference ID
-	refMap := make(map[string]promptref.Reference, len(refs))
+	refMap := make(map[string]sessiondb.Reference, len(refs))
 	for _, r := range refs {
 		refMap[r.ID] = r
 	}
@@ -598,7 +597,7 @@ func (s *Session) buildUserMessage(input provider.UserInput) provider.ChatMessag
 			continue
 		}
 		switch ref.Kind {
-		case promptref.KindPastedImage:
+		case sessiondb.KindPastedImage:
 			if !hasVision {
 				// Model doesn't support images; add text description instead
 				label := ref.DisplayName()
@@ -664,9 +663,9 @@ func (s *Session) buildUserMessage(input provider.UserInput) provider.ChatMessag
 				Type:     "image_url",
 				ImageURL: &provider.ImageURL{URL: dataURL},
 			})
-		case promptref.KindPastedText:
+		case sessiondb.KindPastedText:
 			parts = append(parts, provider.ContentPart{Type: "text", Text: ref.Content})
-		case promptref.KindPastedTextFile, promptref.KindSelectedFile:
+		case sessiondb.KindPastedTextFile, sessiondb.KindSelectedFile:
 			content := ref.Content
 			if content == "" && ref.FilePath != "" {
 				// Validate file size before reading

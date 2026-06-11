@@ -49,3 +49,11 @@ func (m *App) setFocusTabBar() {
 	m.unfocus()
 	m.tabBarFocused = true
 }
+
+func (m *App) syncRenderFocus() {
+	if m.renderCtx == nil {
+		return
+	}
+	focused := m.focusTarget() == FocusEditor
+	m.renderCtx.Focused = focused
+}

@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/promptref"
 )
 
 func setupRefDB(t *testing.T) (*DB, string) {
@@ -28,11 +27,11 @@ func setupRefDB(t *testing.T) (*DB, string) {
 	return &DB{db: db, path: dbPath}, dir
 }
 
-func makeRef(id, kind, label string) promptref.Reference {
-	return promptref.Reference{
+func makeRef(id, kind, label string) Reference {
+	return Reference{
 		ID:        id,
 		SessionID: "sess1",
-		Kind:      promptref.Kind(kind),
+		Kind:      Kind(kind),
 		Label:     label,
 		Title:     "test ref",
 		Mime:      "",

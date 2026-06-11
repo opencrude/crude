@@ -10,14 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"crude/promptref"
 	"crude/provider"
 	"crude/sessiondb"
 )
 
 type referenceStore struct {
-	refs       map[string]promptref.Reference
-	counter    map[promptref.Kind]int
+	refs       map[string]sessiondb.Reference
+	counter    map[sessiondb.Kind]int
 	sessionID  string
 	sessionDir string
 	db         *sql.DB
@@ -25,17 +24,17 @@ type referenceStore struct {
 
 func newReferenceStore(sessionID, sessionDir string, db *sql.DB) *referenceStore {
 	return &referenceStore{
-		refs:       make(map[string]promptref.Reference),
-		counter:    make(map[promptref.Kind]int),
+		refs:       make(map[string]sessiondb.Reference),
+		counter:    make(map[sessiondb.Kind]int),
 		sessionID:  sessionID,
 		sessionDir: sessionDir,
 		db:         db,
 	}
 }
 
-func (s *referenceStore) CreateReference(req promptref.CreateRequest) (promptref.Reference, error) {
+func (s *referenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb.Reference, error) {
 	if req.Kind == "" {
-		req.Kind = promptref.KindPastedText
+		req.Kind = sessiondb.KindPastedText
 	}
 	s.counter[req.Kind]++
 	idx := s.counter[req.Kind]
@@ -62,7 +61,7 @@ func (s *referenceStore) CreateReference(req promptref.CreateRequest) (promptref
 			suffix++
 		}
 	}
-	ref := promptref.Reference{
+	ref := sessiondb.Reference{
 		ID:        fmt.Sprintf("ref-%d-%d", time.Now().UnixNano(), idx),
 		SessionID: s.sessionID,
 		Kind:      req.Kind,
@@ -75,26 +74,26 @@ func (s *referenceStore) CreateReference(req promptref.CreateRequest) (promptref
 		CreatedAt: time.Now().UnixNano(),
 	}
 
-	if ref.Kind == promptref.KindPastedTextFile && ref.FilePath == "" {
+	if ref.Kind == sessiondb.KindPastedTextFile && ref.FilePath == "" {
 		path, err := s.writeReferenceFile(ref.Label, []byte(req.Content), ".txt")
 		if err != nil {
-			return promptref.Reference{}, err
+			return sessiondb.Reference{}, err
 		}
 		ref.FilePath = path
 		ref.Content = ""
 	}
 
-	if ref.Kind == promptref.KindPastedImage && ref.Content != "" {
+	if ref.Kind == sessiondb.KindPastedImage && ref.Content != "" {
 		ext := provider.ImageExtFromMime(ref.Mime)
 		b64 := ref.Content
 		ref.Content = ""
 		data, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
-			return promptref.Reference{}, fmt.Errorf("decode base64 image: %w", err)
+			return sessiondb.Reference{}, fmt.Errorf("decode base64 image: %w", err)
 		}
 		path, err := s.writeReferenceFile(ref.Label, data, ext)
 		if err != nil {
-			return promptref.Reference{}, err
+			return sessiondb.Reference{}, err
 		}
 		ref.FilePath = path
 	}
@@ -132,13 +131,13 @@ func (s *referenceStore) DeleteReference(id string) error {
 	return nil
 }
 
-func (s *referenceStore) GetReference(id string) (promptref.Reference, bool) {
+func (s *referenceStore) GetReference(id string) (sessiondb.Reference, bool) {
 	ref, ok := s.refs[id]
 	return ref, ok
 }
 
-func (s *referenceStore) ListReferences() []promptref.Reference {
-	refs := make([]promptref.Reference, 0, len(s.refs))
+func (s *referenceStore) ListReferences() []sessiondb.Reference {
+	refs := make([]sessiondb.Reference, 0, len(s.refs))
 	for _, ref := range s.refs {
 		if ref.Active() {
 			refs = append(refs, ref)
@@ -147,15 +146,15 @@ func (s *referenceStore) ListReferences() []promptref.Reference {
 	return refs
 }
 
-func (s *referenceStore) AddExisting(ref promptref.Reference) {
+func (s *referenceStore) AddExisting(ref sessiondb.Reference) {
 	if s.refs == nil {
-		s.refs = make(map[string]promptref.Reference)
+		s.refs = make(map[string]sessiondb.Reference)
 	}
 
 	// Migrate legacy pasted images: decode base64 to disk if Content is set
 	// but FilePath is empty. Also migrate if both are set (Content should be
 	// cleared to avoid DB bloat).
-	if ref.Kind == promptref.KindPastedImage && ref.Content != "" {
+	if ref.Kind == sessiondb.KindPastedImage && ref.Content != "" {
 		b64 := ref.Content
 		ref.Content = ""
 		data, err := base64.StdEncoding.DecodeString(b64)
@@ -200,15 +199,15 @@ func (s *referenceStore) writeReferenceFile(label string, data []byte, ext strin
 	return path, nil
 }
 
-func defaultReferenceLabel(kind promptref.Kind, idx int) string {
+func defaultReferenceLabel(kind sessiondb.Kind, idx int) string {
 	switch kind {
-	case promptref.KindPastedText:
+	case sessiondb.KindPastedText:
 		return fmt.Sprintf("[Pasted Text%d]", idx)
-	case promptref.KindPastedTextFile:
+	case sessiondb.KindPastedTextFile:
 		return fmt.Sprintf("[Pasted Text File%d]", idx)
-	case promptref.KindPastedImage:
+	case sessiondb.KindPastedImage:
 		return fmt.Sprintf("[Pasted IMG%d]", idx)
-	case promptref.KindSelectedFile:
+	case sessiondb.KindSelectedFile:
 		return fmt.Sprintf("[File%d]", idx)
 	default:
 		return fmt.Sprintf("[Reference%d]", idx)

@@ -1,4 +1,4 @@
-package promptref
+package sessiondb
 
 import (
 	"fmt"

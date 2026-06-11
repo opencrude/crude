@@ -3,11 +3,11 @@ package viewmodel
 import (
 	"database/sql"
 	"os"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/promptref"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/compositor"
@@ -18,8 +18,8 @@ import (
 	"crude/tui/settings"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
-	"crude/tui/widgets"
 	"crude/tui/widget"
+	"crude/tui/widgets"
 	"crude/tui/window"
 	"crude/tui/wm"
 )
@@ -72,29 +72,30 @@ type App struct {
 	compositor    *compositor.Compositor
 	windowManager *wm.WindowManager
 	renderCtx     *widget.RenderContext
-	cachedOutput   string    // last rendered ANSI output for View() throttling during drag
-	mainViewDirty  bool      // true when main view content has changed and needs re-rendering
+	cachedOutput  string // last rendered ANSI output for View() throttling during drag
+	mainViewDirty bool   // true when main view content has changed and needs re-rendering
 
 	// File tree sidebar
-	treeModel           *filetree.FileTreeModel
-	treeRenderer        *filetree.TreeRenderer
-	treeVisible         bool    // whether sidebar is shown (Ctrl+B toggles)
-	treeWidth           int     // current sidebar width in cells
-	treeResizing        bool    // true when user is dragging the divider
-	treeResizeStartX    int     // mouse X when resize started
-	treeResizeStartWidth int    // width when resize started
-	treeFocused         bool    // whether the file tree sidebar receives keyboard input
-	treeYOffset         int     // screen Y where tree sidebar starts (title bar line), computed in buildMainView
+	treeModel            *filetree.FileTreeModel
+	treeRenderer         *filetree.TreeRenderer
+	treeVisible          bool // whether sidebar is shown (Ctrl+B toggles)
+	treeWidth            int  // current sidebar width in cells
+	treeResizing         bool // true when user is dragging the divider
+	treeResizeStartX     int  // mouse X when resize started
+	treeResizeStartWidth int  // width when resize started
+	treeFocused          bool // whether the file tree sidebar receives keyboard input
+	treeYOffset          int  // screen Y where tree sidebar starts (title bar line), computed in buildMainView
 
 	blocking      bool
 	yolo          bool
 	tabBarFocused bool
 
-	activeAgentView string
-	activeEditorView string
-	editor          *editor.Editor
-	agentLabels     map[string]string
-	agentModels     map[string]string
+	activeAgentView       string
+	activeEditorView      string
+	editor                *editor.Editor
+	agentLabels           map[string]string
+	agentModels           map[string]string
+	agentTabSnapshotCache string
 
 	inputCh  chan<- provider.UserInput
 	btwCh    chan<- provider.UserInput
@@ -204,6 +205,8 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 		initialMode = ModeChat
 	}
 
+	ed := editor.New(th)
+
 	app := &App{
 		theme:               th,
 		Mode:                initialMode,
@@ -224,7 +227,7 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 		textOverlay:         to,
 		filePicker:          fp,
 		refStore:            refs,
-		editor:              editor.New(th),
+		editor:              ed,
 		agentLabels:         make(map[string]string),
 		agentModels:         make(map[string]string),
 		inputCh:             inputCh,
@@ -408,7 +411,7 @@ func (m *App) SetListSessionsFn(fn func() []sessiondb.SessionMeta) {
 	m.onListSessions = fn
 }
 
-func (m *App) SetReferences(refs []promptref.Reference) {
+func (m *App) SetReferences(refs []sessiondb.Reference) {
 	if m.refStore == nil {
 		return
 	}
@@ -516,8 +519,17 @@ func (m *App) syncAgentWindowTabs() {
 
 	if activeSubAgents == 0 {
 		m.purgeAgentTabs()
+		m.agentTabSnapshotCache = ""
 		return
 	}
+
+	snapshot := m.agentTabSnapshot()
+	if snapshot == m.agentTabSnapshotCache {
+		m.ensureAgentTabActive()
+		m.purgeStaleAgentTabs()
+		return
+	}
+	m.agentTabSnapshotCache = snapshot
 
 	activeID := m.activeAgentView
 	if activeID == "" {
@@ -580,6 +592,42 @@ func (m *App) syncAgentWindowTabs() {
 	}
 
 	m.purgeStaleAgentTabs()
+}
+
+func (m *App) agentTabSnapshot() string {
+	var b strings.Builder
+	for _, id := range m.paneMgr.paneOrder {
+		if id == MainAgentID {
+			continue
+		}
+		a, ok := m.agents[id]
+		if !ok || a.Completed {
+			continue
+		}
+		b.WriteString(id)
+		b.WriteByte('|')
+		b.WriteString(a.Status)
+		b.WriteByte('|')
+		if lbl := m.agentLabels[id]; lbl != "" {
+			b.WriteString(lbl)
+		}
+		b.WriteByte('|')
+	}
+	return b.String()
+}
+
+func (m *App) ensureAgentTabActive() {
+	activeID := m.activeAgentView
+	if activeID == "" {
+		activeID = MainAgentID
+	}
+	activeTitle := m.agentTabTitle(activeID)
+	if tab := m.win.TabByTitle(activeTitle); tab != nil {
+		targetIdx := m.win.IndexOf(tab.ID)
+		if targetIdx >= 0 && m.win.ActiveIndex() != targetIdx {
+			m.win.SwitchTo(targetIdx)
+		}
+	}
 }
 
 // agentTabIcon returns the status icon for an agent's window tab.
@@ -751,8 +799,17 @@ func (m *App) closeEditorTab() {
 	if tab := m.win.TabByTitle(tabTitle); tab != nil {
 		m.win.CloseTabByID(tab.ID)
 	}
-	m.editor.Close()
-	m.activeEditorView = ""
+	hasEditor := false
+	for _, t := range m.win.Tabs() {
+		if m.isEditorTabTitle(t.Title) {
+			hasEditor = true
+			break
+		}
+	}
+	if !hasEditor {
+		m.editor.Close()
+		m.activeEditorView = ""
+	}
 	m.handleTabSwitch()
 }
 

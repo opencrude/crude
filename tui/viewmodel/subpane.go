@@ -12,6 +12,7 @@ import (
 	"crude/tui/scrollbar"
 	"crude/tui/theme"
 	tuitools "crude/tui/tools"
+	"crude/tui/types"
 	"crude/tui/widgets"
 )
 
@@ -39,6 +40,10 @@ type SubPane struct {
 	compactContentH   int
 	compactVisibleH   int
 	compactAutoScroll bool
+	compactToolLines  []string
+	compactCacheWidth int
+	compactMsgVersion uint64
+	compactMsgCount   int
 
 	theme *theme.Theme
 }
@@ -177,36 +182,18 @@ func (sp *SubPane) renderAgentCompact(width, maxH, spinFrame int) PaneRenderResu
 
 	msgs := sp.MsgList.Messages()
 	var allToolLines []string
-	for _, msg := range msgs {
-		if msg.Role != "tool" || msg.ToolName == "" {
-			continue
-		}
-		phase := msg.ToolPreviewPhase
-		label := tuitools.BuildToolTitle(*msg, phase)
-		if label == "" {
-			continue
-		}
-
-		var icon string
-		switch {
-		case msg.ToolStatus == "error" || phase == "error":
-			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#f85149")).Render("✗")
-		case phase == "done" || msg.ToolStatus == "success":
-			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("✓")
-		case phase == "streaming" || msg.ToolStatus == "streaming" || msg.ToolStatus == "calling":
-			icon = "●"
-		default:
-			icon = "○"
-		}
-
-		line := borderStyle.Render("│ ") + icon + " " + label
-		visW := rendering.VisibleWidth(line)
-		padR := width - visW
-		if padR < 0 {
-			padR = 0
-		}
-		line = line + strings.Repeat(" ", padR)
-		allToolLines = append(allToolLines, line)
+	msgVersion := uint64(0)
+	if sp.MsgList != nil {
+		msgVersion = sp.MsgList.Version()
+	}
+	if sp.compactToolLines != nil && sp.compactMsgVersion == msgVersion && sp.compactMsgCount == len(msgs) && sp.compactCacheWidth == width {
+		allToolLines = sp.compactToolLines
+	} else {
+		allToolLines = sp.renderAgentToolLines(width, msgs)
+		sp.compactToolLines = allToolLines
+		sp.compactMsgVersion = msgVersion
+		sp.compactMsgCount = len(msgs)
+		sp.compactCacheWidth = width
 	}
 
 	visibleH := maxH - 1
@@ -293,6 +280,42 @@ func (sp *SubPane) ScrollbarWidth() int {
 		return 0
 	}
 	return sp.MsgList.ScrollbarWidth()
+}
+
+func (sp *SubPane) renderAgentToolLines(width int, msgs []*types.ChatMessage) []string {
+	borderStyle := lipgloss.NewStyle().Foreground(sp.theme.Colors.Border)
+	var allToolLines []string
+	for _, msg := range msgs {
+		if msg.Role != "tool" || msg.ToolName == "" {
+			continue
+		}
+		phase := msg.ToolPreviewPhase
+		label := tuitools.BuildToolTitle(*msg, phase)
+		if label == "" {
+			continue
+		}
+
+		var icon string
+		switch {
+		case msg.ToolStatus == "error" || phase == "error":
+			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#f85149")).Render("✗")
+		case phase == "done" || msg.ToolStatus == "success":
+			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("✓")
+		case phase == "streaming" || msg.ToolStatus == "streaming" || msg.ToolStatus == "calling":
+			icon = "●"
+		default:
+			icon = "○"
+		}
+
+		line := borderStyle.Render("│ ") + icon + " " + label
+		visW := rendering.VisibleWidth(line)
+		padR := width - visW
+		if padR < 0 {
+			padR = 0
+		}
+		allToolLines = append(allToolLines, line+strings.Repeat(" ", padR))
+	}
+	return allToolLines
 }
 
 // renderHeaderLine produces the title bar ("│ ● agent-name 12s").

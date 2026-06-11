@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/promptref"
+	"crude/sessiondb"
 	"crude/provider"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
@@ -47,6 +47,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.dispatchKeyPress(msg)
+
+	case tea.PasteMsg:
+		return m.dispatchPasteMsg(msg)
 
 	case tea.MouseClickMsg:
 		m.logger.Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
@@ -135,6 +138,35 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			m.mainMsgList.InvalidateSubPane(sp.ID)
 		}
 	}
+	if m.activeEditorView != "" && m.editor.IsOpen() && m.editor.DiskChanged() {
+		if !m.editor.Modified() {
+			if err := m.editor.Reload(); err != nil {
+				m.logger.Error("EDITOR", "reload_error", "error", err.Error())
+			}
+		}
+	}
+
+	if m.activeEditorView != "" && m.editor.IsOpen() {
+		errs, warns, hints := m.editor.DiagnosticCounts()
+		m.statusbar.SetDiagnostics(errs, warns, hints)
+		m.statusbar.SetLSPVisible(true)
+		connected := m.editor.LSPConnected()
+		if connected {
+			m.statusbar.SetLSPStatus("")
+		} else {
+			errMsg := m.editor.LSPError()
+			if errMsg != "" {
+				m.statusbar.SetLSPStatus("LSP: " + errMsg)
+			} else {
+				m.statusbar.SetLSPStatus("LSP: connecting…")
+			}
+		}
+	} else {
+		m.statusbar.SetDiagnostics(0, 0, 0)
+		m.statusbar.SetLSPVisible(false)
+		m.statusbar.SetLSPStatus("")
+	}
+
 	if m.anyActive() || m.Mode == ModeLauncher {
 		return m, streamingTickCmd()
 	}
@@ -215,7 +247,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.setMode(ModeChat)
 	case filetree.FileSelectedMsg:
 		m.logger.Info("TREE", "file_selected", "path", msg.Path)
-		m.addFileReference(msg.Path)
 		cmd, err := m.openEditorTab(msg.Path)
 		if err != nil {
 			m.logger.Error("TREE", "open_editor_error", "error", err.Error())
@@ -223,7 +254,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.treeFocused = false
+		m.unfocus()
+		m.syncRenderFocus()
 	case filetree.EnterFilterModeMsg:
 		m.logger.Debug("TREE", "enter_filter_mode")
 		m.treeFocused = true
@@ -243,7 +275,9 @@ func (m *App) ToggleSidebar() {
 	}
 	m.treeVisible = !m.treeVisible
 	if m.treeVisible {
-		m.treeFocused = true
+		if m.activeEditorView == "" {
+			m.treeFocused = true
+		}
 		m.treeModel.Update(filetree.TreeWidthMsg{Width: m.treeWidth})
 	} else {
 		m.treeFocused = false
@@ -565,7 +599,13 @@ func (m *App) handleTabSwitch() {
 		}
 	} else if m.isEditorTabTitle(activeTab.Title) {
 		m.activeAgentView = ""
-		m.activeEditorView = m.editorPathFromTabTitle(activeTab.Title)
+		path := m.editorPathFromTabTitle(activeTab.Title)
+		m.activeEditorView = path
+		if m.editor.FilePath() != path || !m.editor.IsOpen() {
+			if err := m.editor.Open(path); err != nil {
+				m.logger.Error("EDITOR", "reload_on_switch", "error", err.Error())
+			}
+		}
 	}
 }
 
@@ -606,13 +646,13 @@ func (m *App) addFileReference(path string) {
 		return
 	}
 	mime, isImage := provider.ImageMimeFromExt(filepath.Ext(path))
-	kind := promptref.KindSelectedFile
+	kind := sessiondb.KindSelectedFile
 	if isImage {
-		kind = promptref.KindPastedImage
+		kind = sessiondb.KindPastedImage
 	} else {
 		mime = "text/plain"
 	}
-	ref, err := m.refStore.CreateReference(promptref.CreateRequest{
+	ref, err := m.refStore.CreateReference(sessiondb.CreateRequest{
 		Kind:     kind,
 		Title:    filepath.Base(path),
 		Mime:     mime,
