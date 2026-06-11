@@ -50,28 +50,28 @@ type Color struct {
 // Predefined colors for convenience. Palette indices follow the standard
 // xterm 16-color map (indices 0-15).
 var (
-	NoColor  = Color{Type: ColorDefault}
-	Black    = Color{Type: ColorPalette, Palette: 0}
-	Red      = Color{Type: ColorPalette, Palette: 1}
-	Green    = Color{Type: ColorPalette, Palette: 2}
-	Yellow   = Color{Type: ColorPalette, Palette: 3}
-	Blue     = Color{Type: ColorPalette, Palette: 4}
-	Magenta  = Color{Type: ColorPalette, Palette: 5}
-	Cyan     = Color{Type: ColorPalette, Palette: 6}
-	White    = Color{Type: ColorPalette, Palette: 7}
-	BrightBlack   = Color{Type: ColorPalette, Palette: 8}  // Dark gray
+	NoColor       = Color{Type: ColorDefault}
+	Black         = Color{Type: ColorPalette, Palette: 0}
+	Red           = Color{Type: ColorPalette, Palette: 1}
+	Green         = Color{Type: ColorPalette, Palette: 2}
+	Yellow        = Color{Type: ColorPalette, Palette: 3}
+	Blue          = Color{Type: ColorPalette, Palette: 4}
+	Magenta       = Color{Type: ColorPalette, Palette: 5}
+	Cyan          = Color{Type: ColorPalette, Palette: 6}
+	White         = Color{Type: ColorPalette, Palette: 7}
+	BrightBlack   = Color{Type: ColorPalette, Palette: 8} // Dark gray
 	BrightRed     = Color{Type: ColorPalette, Palette: 9}
 	BrightGreen   = Color{Type: ColorPalette, Palette: 10}
 	BrightYellow  = Color{Type: ColorPalette, Palette: 11}
 	BrightBlue    = Color{Type: ColorPalette, Palette: 12}
 	BrightMagenta = Color{Type: ColorPalette, Palette: 13}
 	BrightCyan    = Color{Type: ColorPalette, Palette: 14}
-	BrightWhite   = Color{Type: ColorPalette, Palette: 15}  // Light gray
+	BrightWhite   = Color{Type: ColorPalette, Palette: 15} // Light gray
 
 	// Gray ramps using palette indices 232-255 (24-step grayscale).
-	GrayDark   = Color{Type: ColorPalette, Palette: 232}
-	GrayMid    = Color{Type: ColorPalette, Palette: 244}
-	GrayLight  = Color{Type: ColorPalette, Palette: 253}
+	GrayDark  = Color{Type: ColorPalette, Palette: 232}
+	GrayMid   = Color{Type: ColorPalette, Palette: 244}
+	GrayLight = Color{Type: ColorPalette, Palette: 253}
 )
 
 // NewTrueColor creates a 24-bit RGB truecolor.
@@ -259,18 +259,26 @@ func colorToRGB(c Color) (r, g, b uint8) {
 type Attrs uint16
 
 const (
-	AttrBold          Attrs = 1 << iota // Bold intensity
-	AttrItalic                          // Italic text
-	AttrUnderline                       // Underlined text
-	AttrStrikethrough                   // Strikethrough text
-	AttrReverse                         // Swap foreground/background
-	AttrBlink                           // Blinking text
-	AttrDim                             // Dim/faint intensity
+	AttrBold            Attrs = 1 << iota // Bold intensity
+	AttrItalic                            // Italic text
+	AttrUnderline                         // Underlined text
+	AttrStrikethrough                     // Strikethrough text
+	AttrReverse                           // Swap foreground/background
+	AttrBlink                             // Blinking text
+	AttrDim                               // Dim/faint intensity
+	AttrUndercurl                         // Wavy/curly underline (supported by kitty, WezTerm, foot, Windows Terminal)
+	AttrUnderlineDotted                   // Dotted underline (supported by kitty, WezTerm, foot, Windows Terminal)
 )
 
 // ANSI returns the ANSI escape sequence for enabling these attributes.
 // The sequence starts with a reset (\x1b[0m) and then sets each active bit.
 // This ensures no stale attributes leak from previous cells.
+//
+// For underline styles (wavy, dotted), we use the modern ECMA-48 / kitty
+// extended sequences: \x1b[4:3m (wavy) and \x1b[4:4m (dotted). These are
+// widely supported by kitty, WezTerm, foot, and Windows Terminal ≥ 1.22.
+// When AttrUnderline is combined with AttrUndercurl or AttrUnderlineDotted,
+// the more specific style takes precedence.
 func (a Attrs) ANSI() string {
 	if a == 0 {
 		return "\x1b[0m"
@@ -287,7 +295,7 @@ func (a Attrs) ANSI() string {
 	if a&AttrItalic != 0 {
 		sb.WriteString(";3")
 	}
-	if a&AttrUnderline != 0 {
+	if a&AttrUnderline != 0 || a&AttrUndercurl != 0 || a&AttrUnderlineDotted != 0 {
 		sb.WriteString(";4")
 	}
 	if a&AttrBlink != 0 {
@@ -298,6 +306,12 @@ func (a Attrs) ANSI() string {
 	}
 	if a&AttrStrikethrough != 0 {
 		sb.WriteString(";9")
+	}
+	if a&AttrUndercurl != 0 {
+		sb.WriteString(";4:3")
+	}
+	if a&AttrUnderlineDotted != 0 {
+		sb.WriteString(";4:4")
 	}
 	sb.WriteString("m")
 	return sb.String()
@@ -322,12 +336,12 @@ func (a Attrs) Has(mask Attrs) bool {
 // A Transparent cell does not overwrite the cell below during compositing.
 // This is how "holes" in floating windows let background content show through.
 type Cell struct {
-	Char        rune   // The character to display (0 for continuation cells)
-	Width       uint8  // Display width: 0 (continuation), 1 (normal), 2 (wide)
-	FG          Color  // Foreground color
-	BG          Color  // Background color
-	Attr        Attrs  // Text rendering attributes
-	Transparent bool   // If true, compositing skips this cell (shows below)
+	Char        rune  // The character to display (0 for continuation cells)
+	Width       uint8 // Display width: 0 (continuation), 1 (normal), 2 (wide)
+	FG          Color // Foreground color
+	BG          Color // Background color
+	Attr        Attrs // Text rendering attributes
+	Transparent bool  // If true, compositing skips this cell (shows below)
 }
 
 // NewCell creates a normal-width cell with the given character and style.

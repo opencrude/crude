@@ -484,31 +484,6 @@ func (m *App) buildMainView() string {
 	// status bar span the full app width. Non-tree lines are right-padded
 	// to m.width so the screen does not have an empty gap on the right.
 	if sidebarVisible {
-		// Fixed title bar at the top of the tree column showing the
-		// current directory name.
-		titleStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(m.theme.Tree.Colors.DirFg)
-		var titleStr string
-		if m.theme.Tree.Config.ShowIcons {
-			iconResult := m.treeModel.IconResolver().ResolveIcon(
-				m.treeModel.Root.Name, true, false, true,
-			)
-			iconColor := iconResult.Color
-			if iconColor == nil {
-				iconColor = m.theme.Tree.Colors.IconDir
-			}
-			iconStyle := lipgloss.NewStyle().Foreground(iconColor)
-			titleStr = iconStyle.Render(iconResult.Icon) + " " + titleStyle.Render(m.treeModel.Root.Name)
-		} else {
-			titleStr = titleStyle.Render(m.treeModel.Root.Name)
-		}
-		visW := rendering.VisibleWidth(titleStr)
-		if visW < m.treeWidth {
-			titleStr += strings.Repeat(" ", m.treeWidth-visW)
-		}
-		titleBar := titleStr
-
 		// Tree covers everything from the first sep to just before the last
 		// separator+status line.
 		treeStart := 3
@@ -517,7 +492,7 @@ func (m *App) buildMainView() string {
 		if treeEnd < treeStart {
 			treeEnd = treeStart
 		}
-		contentH := treeEnd - treeStart - 1
+		contentH := treeEnd - treeStart
 		if contentH < 0 {
 			contentH = 0
 		}
@@ -528,18 +503,12 @@ func (m *App) buildMainView() string {
 		dividerStyle := lipgloss.NewStyle().Foreground(m.theme.Tree.Colors.BorderFg)
 		divider := dividerStyle.Render("│")
 		for i := treeStart; i < treeEnd; i++ {
+			idx := i - treeStart
 			var treePart string
-			if i == treeStart {
-				treePart = titleBar
+			if idx < len(treeLines) {
+				treePart = treeLines[idx]
 			} else {
-				// Skip treeLines[0] (the root node — redundant
-				// with the title bar).
-				idx := i - treeStart
-				if idx < len(treeLines) {
-					treePart = treeLines[idx]
-				} else {
-					treePart = strings.Repeat(" ", m.treeWidth)
-				}
+				treePart = strings.Repeat(" ", m.treeWidth)
 			}
 			lines[i] = treePart + divider + lines[i]
 		}

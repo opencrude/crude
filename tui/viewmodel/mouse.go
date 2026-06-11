@@ -1,12 +1,17 @@
 package viewmodel
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/filetree"
+	"crude/tui/rendering"
 	"crude/tui/widgets"
+	"crude/tui/wm"
 )
 
 type mouseRegion int
@@ -103,19 +108,29 @@ func (m *App) routeSidebarMouse(msg tea.Msg) tea.Cmd {
 // scrollbar-relative coordinates (Y=0 at first tree content row) and forwards
 // it to the tree renderer's scrollbar handler.
 func (m *App) routeTreeScrollbarMsg(msg tea.Msg) tea.Cmd {
+	bcOff := m.breadcrumbOffset()
 	adjusted := msg
 	switch mm := msg.(type) {
 	case tea.MouseClickMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseClickMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - 1, Button: mm.Button}
+		adjusted = tea.MouseClickMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - bcOff, Button: mm.Button}
 	case tea.MouseMotionMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseMotionMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - 1, Button: mm.Button}
+		adjusted = tea.MouseMotionMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - bcOff, Button: mm.Button}
 	case tea.MouseReleaseMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseReleaseMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - 1, Button: mm.Button}
+		adjusted = tea.MouseReleaseMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - bcOff, Button: mm.Button}
 	}
 	return m.treeRenderer.HandleScrollbarMsg(adjusted)
+}
+
+// breadcrumbOffset returns 1 when the tree is scrolled (breadcrumb visible),
+// 0 otherwise.
+func (m *App) breadcrumbOffset() int {
+	if m.treeModel.ScrollOffset() > 0 {
+		return 1
+	}
+	return 0
 }
 
 func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []tea.Cmd {
@@ -173,19 +188,17 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(cmds...)
 			}
 			if m.Mode == ModeTextOverlay {
-				if !m.isMouseMsg(msg) {
-					updated, cmd, action := m.textOverlay.Update(msg)
-					m.textOverlay = updated
-					if cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-					switch action {
-					case widgets.TextOverlaySave:
-						m.saveReferenceFromOverlay()
-					case widgets.TextOverlayCancel:
-						m.textOverlay.Close()
-						m.setMode(ModeChat)
-					}
+				updated, cmd, action := m.textOverlay.Update(msg)
+				m.textOverlay = updated
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				switch action {
+				case widgets.TextOverlaySave:
+					m.saveReferenceFromOverlay()
+				case widgets.TextOverlayCancel:
+					m.textOverlay.Close()
+					m.setMode(ModeChat)
 				}
 				hitWin.MarkContentDirty()
 			} else {
@@ -203,7 +216,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	case regionSidebar:
 		m.treeFocused = true
 		localY := mouse.Y - m.treeYOffset
-		if localY >= 1 {
+		if localY >= 0 {
 			if mouse.X == m.treeWidth-1 {
 				cmd := m.routeTreeScrollbarMsg(msg)
 				return m, cmd
@@ -246,6 +259,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	case regionEditor:
 		m.unfocus()
 		cmd := m.routeEditorMouse(msg)
+		m.updateDiagHoverPopup(mouse.X, mouse.Y)
 		if cmd != nil {
 			return m, cmd
 		}
@@ -423,12 +437,16 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		region := m.classifyMouse(mouse.X, mouse.Y, false)
 		if region == regionEditor {
 			cmd := m.routeEditorMouse(msg)
+			m.updateDiagHoverPopup(mouse.X, mouse.Y)
 			if cmd != nil {
 				return m, cmd
 			}
 			return m, nil
 		}
 	}
+
+	// Mouse moved away from editor — clear any diagnostic popup.
+	m.clearDiagHoverPopup()
 
 	if m.Mode == ModeChat {
 		activeML := m.activeMessageList()
@@ -451,10 +469,15 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 	mouse := msg.Mouse()
 
 	if m.windowManager != nil {
-		m.windowManager.HandleMouseRelease(msg)
-		if fw := m.windowManager.Focused(); fw != nil {
-			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
-				cmds = append(cmds, cmd)
+		released := m.windowManager.HandleMouseRelease(msg)
+		// If a drag or resize just ended, don't forward the release event to content.
+		// The content never received the initial click (dispatchMouseClick returns
+		// early when IsDragging()), so forwarding a stray release would confuse it.
+		if released == nil {
+			if fw := m.windowManager.Focused(); fw != nil {
+				if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		}
 	}
@@ -501,4 +524,135 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 	}
 
 	return m, nil
+}
+
+// updateDiagHoverPopup checks the editor's hover state and shows/updates a
+// floating popup window with diagnostic messages at the hovered position.
+func (m *App) updateDiagHoverPopup(screenX, screenY int) {
+	if m.windowManager == nil || !m.editor.IsOpen() {
+		return
+	}
+	state := m.editor.HoverState()
+	if len(state.Messages) == 0 {
+		m.clearDiagHoverPopup()
+		return
+	}
+
+	// Build popup content lines with minimal styling.
+	title := fmt.Sprintf(" %s:%d:%d", m.editor.Title(), state.Line+1, state.Col+1)
+	body := make([]string, 0, len(state.Messages))
+	maxLineW := 0
+	for _, msg := range state.Messages {
+		body = append(body, msg)
+		if rendering.VisibleWidth(msg) > maxLineW {
+			maxLineW = rendering.VisibleWidth(msg)
+		}
+	}
+
+	// Compute popup dimensions.
+	boxW := maxLineW + 4 // 2 padding + 2 border
+	if boxW < 40 {
+		boxW = 40
+	}
+	if boxW > m.width-4 {
+		boxW = m.width - 4
+	}
+	innerW := boxW - 4
+
+	// Render each message line wrapped to fit.
+	bodyStyled := make([]string, 0, len(body))
+	border := lipgloss.NewStyle().Foreground(m.theme.Colors.Border)
+	bodyStyle := lipgloss.NewStyle().Background(m.theme.Colors.Code.Bg).Foreground(m.theme.Colors.Fg)
+	for _, msg := range body {
+		if rendering.VisibleWidth(msg) > innerW {
+			msg = rendering.TruncateLine(msg, innerW)
+		}
+		bodyStyled = append(bodyStyled, border.Render("│ ")+bodyStyle.Render(padRight(msg, innerW))+border.Render(" │"))
+	}
+
+	// Title line.
+	titleRendered := border.Render("│ ") + lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Bold(true).Render(padRight(title, innerW)) + border.Render(" │")
+	// Top and bottom borders.
+	top := border.Render("╭" + strings.Repeat("─", boxW-2) + "╮")
+	bottom := border.Render("╰" + strings.Repeat("─", boxW-2) + "╯")
+
+	popupLines := make([]string, 0, 2+len(bodyStyled)+1)
+	popupLines = append(popupLines, top)
+	popupLines = append(popupLines, titleRendered)
+	popupLines = append(popupLines, bodyStyled...)
+	popupLines = append(popupLines, bottom)
+
+	popupH := len(popupLines)
+	popupX, popupY := m.diagPopupPosition(screenX, screenY, boxW, popupH)
+
+	// Create or update the popup window.
+	if m.diagPopupID != "" {
+		if existing := m.windowManager.Window(m.diagPopupID); existing != nil {
+			existing.Content = widgets.NewPopupContent(popupLines)
+			existing.SetSize(boxW, popupH)
+			existing.SetPosition(popupX, popupY)
+			existing.MarkContentDirty()
+			return
+		}
+	}
+
+	popupContent := widgets.NewPopupContent(popupLines)
+	fw := wm.NewFloatingWindow(
+		"diag-hover",
+		"",
+		popupContent,
+		boxW, popupH,
+		wm.WithDecoration(false),
+		wm.WithMovable(false),
+		wm.WithResizable(false),
+		wm.WithClosable(false),
+		wm.WithModal(false),
+		wm.WithFocusable(false),
+	)
+	fw.SetPosition(popupX, popupY)
+	m.windowManager.AddWindow(fw)
+	m.diagPopupID = "diag-hover"
+}
+
+// updateDiagHoverPopupFromCursor shows the diagnostic hover popup at the
+// keyboard cursor position.
+func (m *App) updateDiagHoverPopupFromCursor() {
+	layout := m.computeLayout()
+	screenX, screenY := m.editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
+	m.updateDiagHoverPopup(screenX, screenY)
+}
+
+func (m *App) diagPopupPosition(screenX, screenY, w, h int) (int, int) {
+	popupX := screenX + 2
+	popupY := screenY + 1
+	if popupX+w >= m.width {
+		popupX = screenX - w - 2
+	}
+	if popupY+h >= m.height {
+		popupY = screenY - h - 1
+	}
+	if popupX < 0 {
+		popupX = 0
+	}
+	if popupY < 0 {
+		popupY = 0
+	}
+	return popupX, popupY
+}
+
+// clearDiagHoverPopup removes the diagnostic hover popup, if any.
+func (m *App) clearDiagHoverPopup() {
+	if m.diagPopupID != "" && m.windowManager != nil {
+		m.windowManager.RemoveWindow(m.diagPopupID)
+		m.diagPopupID = ""
+	}
+}
+
+// padRight pads a string to the given visible width with spaces on the right.
+func padRight(s string, width int) string {
+	pad := width - rendering.VisibleWidth(s)
+	if pad < 0 {
+		pad = 0
+	}
+	return s + strings.Repeat(" ", pad)
 }

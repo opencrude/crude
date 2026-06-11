@@ -31,11 +31,11 @@ type WindowManager struct {
 	background widget.Widget
 
 	// Interaction state.
-	activeDrag    *FloatingWindow
-	activeResize  *FloatingWindow
-	lastMouseX    int
-	lastMouseY    int
-	needsRender   bool // set true when drag/resize changes position
+	activeDrag   *FloatingWindow
+	activeResize *FloatingWindow
+	lastMouseX   int
+	lastMouseY   int
+	needsRender  bool // set true when drag/resize changes position
 }
 
 // NewWindowManager creates a new window manager with no windows.
@@ -51,7 +51,9 @@ func NewWindowManager() *WindowManager {
 func (wm *WindowManager) AddWindow(fw *FloatingWindow) {
 	wm.windows = append(wm.windows, fw)
 	wm.zOrder = append(wm.zOrder, fw)
-	wm.FocusWindow(fw.ID)
+	if fw.focusable {
+		wm.FocusWindow(fw.ID)
+	}
 }
 
 // RemoveWindow removes a floating window by ID.
@@ -227,8 +229,6 @@ func (wm *WindowManager) NeedsRender() bool { return wm.needsRender }
 // ClearNeedsRender resets the needs-render flag after rendering.
 func (wm *WindowManager) ClearNeedsRender() { wm.needsRender = false }
 
-
-
 // HandleMouse processes a mouse click event and routes it to the correct window.
 // Returns the window that consumed the event (if any).
 //
@@ -255,7 +255,7 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 	// Iterate windows top-to-bottom (reverse zOrder) to find the hit.
 	for i := len(wm.zOrder) - 1; i >= 0; i-- {
 		fw := wm.zOrder[i]
-		if !fw.Visible() {
+		if !fw.Visible() || !fw.focusable {
 			continue
 		}
 
@@ -318,6 +318,14 @@ func (wm *WindowManager) HandleMouseMotion(msg tea.MouseMsg) *FloatingWindow {
 
 	// Handle active drag.
 	if wm.activeDrag != nil {
+		// In all-motion mode (DECSET 1003), motion events arrive even after
+		// button release. If no button is pressed, the drag is over.
+		if m.Button == tea.MouseNone {
+			wm.activeDrag.SetDragging(false)
+			wm.activeDrag = nil
+			wm.needsRender = true
+			return nil
+		}
 		dx := m.X - wm.lastMouseX
 		dy := m.Y - wm.lastMouseY
 		if dx != 0 || dy != 0 {
@@ -331,6 +339,12 @@ func (wm *WindowManager) HandleMouseMotion(msg tea.MouseMsg) *FloatingWindow {
 
 	// Handle active resize.
 	if wm.activeResize != nil {
+		if m.Button == tea.MouseNone {
+			wm.activeResize.SetResizing(false, EdgeNone)
+			wm.activeResize = nil
+			wm.needsRender = true
+			return nil
+		}
 		dx := m.X - wm.lastMouseX
 		dy := m.Y - wm.lastMouseY
 		if dx != 0 || dy != 0 {
@@ -369,7 +383,7 @@ func (wm *WindowManager) HandleMouseWheel(msg tea.MouseWheelMsg) *FloatingWindow
 	// Iterate windows top-to-bottom (reverse zOrder).
 	for i := len(wm.zOrder) - 1; i >= 0; i-- {
 		fw := wm.zOrder[i]
-		if !fw.Visible() {
+		if !fw.Visible() || !fw.focusable {
 			continue
 		}
 		if fw.ContainsPoint(msg.X, msg.Y) {

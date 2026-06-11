@@ -312,18 +312,19 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 
 func (m *App) translateToTreeMouse(msg tea.Msg) tea.Msg {
 	offsetY := m.treeYOffset
+	bcOff := m.breadcrumbOffset()
 	switch mm := msg.(type) {
 	case tea.MouseClickMsg:
 		mouse := mm.Mouse()
-		return tea.MouseClickMsg{X: mouse.X, Y: mouse.Y - offsetY, Button: mm.Button}
+		return tea.MouseClickMsg{X: mouse.X, Y: mouse.Y - offsetY - bcOff, Button: mm.Button}
 	case tea.MouseMotionMsg:
 		mouse := mm.Mouse()
-		return tea.MouseMotionMsg{X: mouse.X, Y: mouse.Y - offsetY, Button: mm.Button}
+		return tea.MouseMotionMsg{X: mouse.X, Y: mouse.Y - offsetY - bcOff, Button: mm.Button}
 	case tea.MouseReleaseMsg:
 		mouse := mm.Mouse()
-		return tea.MouseReleaseMsg{X: mouse.X, Y: mouse.Y - offsetY, Button: mm.Button}
+		return tea.MouseReleaseMsg{X: mouse.X, Y: mouse.Y - offsetY - bcOff, Button: mm.Button}
 	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X, Y: mm.Y - offsetY, Button: mm.Button}
+		return tea.MouseWheelMsg{X: mm.X, Y: mm.Y - offsetY - bcOff, Button: mm.Button}
 	}
 	return msg
 }

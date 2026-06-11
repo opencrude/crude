@@ -178,7 +178,7 @@ func setStyle(sb *strings.Builder, targetFG, targetBG cell.Color, targetAttr cel
 	if targetAttr&cell.AttrItalic != 0 {
 		sb.WriteString(";3")
 	}
-	if targetAttr&cell.AttrUnderline != 0 {
+	if targetAttr&cell.AttrUnderline != 0 || targetAttr&cell.AttrUndercurl != 0 || targetAttr&cell.AttrUnderlineDotted != 0 {
 		sb.WriteString(";4")
 	}
 	if targetAttr&cell.AttrBlink != 0 {
@@ -189,6 +189,12 @@ func setStyle(sb *strings.Builder, targetFG, targetBG cell.Color, targetAttr cel
 	}
 	if targetAttr&cell.AttrStrikethrough != 0 {
 		sb.WriteString(";9")
+	}
+	if targetAttr&cell.AttrUndercurl != 0 {
+		sb.WriteString(";4:3")
+	}
+	if targetAttr&cell.AttrUnderlineDotted != 0 {
+		sb.WriteString(";4:4")
 	}
 
 	// Foreground color

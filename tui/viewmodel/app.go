@@ -141,6 +141,8 @@ type App struct {
 	onDeleteSession     func(string)
 	onListSessions      func() []sessiondb.SessionMeta
 	lastInteractionTime time.Time
+
+	diagPopupID string // ID of the diagnostic hover popup window
 }
 
 type (
@@ -776,6 +778,13 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Wire up diagnostics to file tree.
+	m.editor.SetOnDiagnostics(func(p string, errs, warns, hints int) {
+		if m.treeModel != nil {
+			m.treeModel.SetDiagnostics(p, errs, warns, hints)
+		}
+	})
 
 	displayTitle := m.editor.Title()
 

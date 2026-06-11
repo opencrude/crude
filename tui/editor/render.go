@@ -42,6 +42,26 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 	warnColor := e.cellColor(e.th.Colors.Warning)
 	infoColor := e.cellColor(e.th.Colors.Muted)
 
+	// Diagnostic gutter icon characters.
+	diagIcons := map[int]rune{
+		DiagError:   '✕',
+		DiagWarning: '⚠',
+		DiagInfo:    'ℹ',
+		DiagHint:    'ℹ',
+	}
+	diagIconColors := map[int]cell.Color{
+		DiagError:   errColor,
+		DiagWarning: warnColor,
+		DiagInfo:    infoColor,
+		DiagHint:    infoColor,
+	}
+	diagAttrs := map[int]cell.Attrs{
+		DiagError:   cell.AttrUnderline | cell.AttrUndercurl,
+		DiagWarning: cell.AttrUnderline | cell.AttrUnderlineDotted,
+		DiagInfo:    cell.AttrUnderline,
+		DiagHint:    cell.AttrUnderline,
+	}
+
 	buf := surf.Buffer()
 	for y := 0; y < bodyH; y++ {
 		bufY := y
@@ -60,13 +80,33 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 			ri++
 		}
 
-		numW := sw - 1
+		numW := sw - 2 // reserve 1 column for diagnostic icon
 		numStr := e.formatLineNum(lineIdx+1, numW)
 
+		// Determine highest severity diagnostic on this line for the gutter icon.
+		lineSev := 0
+		for _, d := range diags {
+			if d.severity > lineSev {
+				lineSev = d.severity
+			}
+		}
+
 		for x := 0; x < w; x++ {
-			if x < sw-1 {
+			if x < sw-2 {
 				if x < len(numStr) {
 					buf.Set(x, bufY, cell.NewCell(rune(numStr[x]), e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Bg), 0))
+				} else {
+					buf.Set(x, bufY, blankCell)
+				}
+			} else if x == sw-2 {
+				// Diagnostic icon column.
+				if lineSev > 0 {
+					icon, ok := diagIcons[lineSev]
+					if !ok {
+						icon = 'ℹ'
+					}
+					iconColor := diagIconColors[lineSev]
+					buf.Set(x, bufY, cell.NewCell(icon, iconColor, bgColor, 0))
 				} else {
 					buf.Set(x, bufY, blankCell)
 				}
@@ -87,7 +127,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 				diagAttr := cell.Attrs(0)
 				var diagFg cell.Color
 				if sev > 0 {
-					diagAttr = cell.AttrUnderline
+					diagAttr = diagAttrs[sev]
 					switch sev {
 					case DiagError:
 						diagFg = errColor
@@ -195,16 +235,18 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 	blankStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Muted)
 	sbBgStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Border)
 	selStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Fg).Background(e.th.Colors.Selection)
-	errStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Error).Underline(true)
-	warnStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Warning).Underline(true)
-	infoStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Muted).Underline(true)
+	errIconStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Error)
+	warnIconStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Warning)
+	infoIconStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Muted)
 
-	diagStyles := map[int]lipgloss.Style{
-		DiagError:   errStyle,
-		DiagWarning: warnStyle,
-		DiagInfo:    infoStyle,
-		DiagHint:    infoStyle,
-	}
+	// For the ANSI View() path, we use raw ANSI escape sequences to support
+	// modern underline styles (wavy, dotted) via the ECMA-48 extended sequences.
+	// lipgloss only supports basic underline, so we wrap diagnostic spans in
+	// raw \x1b[...m sequences instead of lipgloss styles.
+	errUnderline := "\x1b[0;4;4:3;38;2;248;81;73m"   // straight + wavy underline, red
+	warnUnderline := "\x1b[0;4;4:4;38;2;210;153;34m" // straight + dotted underline, yellow
+	infoUnderline := "\x1b[0;4;38;2;139;148;158m"    // straight underline, gray
+	diagUnderlineReset := "\x1b[0m"
 
 	for y := 0; y < bodyH; y++ {
 		lineIdx := e.scrollY + y
@@ -221,7 +263,25 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 		numStr := e.formatLineNum(lineIdx+1, sw-1)
 		numPadded := strings.Repeat(" ", sw-1-len(numStr)) + numStr
 		gutter := gutterStyle.Render(numPadded)
-		sep := sepStyle.Render("│")
+		// Diagnostic gutter icon.
+		lineSev := 0
+		for _, d := range diags {
+			if d.severity > lineSev {
+				lineSev = d.severity
+			}
+		}
+		var iconPart string
+		switch lineSev {
+		case DiagError:
+			iconPart = errIconStyle.Render("✕")
+		case DiagWarning:
+			iconPart = warnIconStyle.Render("⚠")
+		case DiagInfo, DiagHint:
+			iconPart = infoIconStyle.Render("ℹ")
+		default:
+			iconPart = " "
+		}
+		sep := iconPart + sepStyle.Render("│")
 
 		isCursorLine := lineIdx == e.cursor.Line && showCursor
 
@@ -240,7 +300,16 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 					case e.isSelected(lineIdx, cvCol):
 						textPart.WriteString(selStyle.Render(" "))
 					case sev > 0:
-						textPart.WriteString(diagStyles[sev].Render(" "))
+						switch sev {
+						case DiagError:
+							textPart.WriteString(errUnderline)
+						case DiagWarning:
+							textPart.WriteString(warnUnderline)
+						default:
+							textPart.WriteString(infoUnderline)
+						}
+						textPart.WriteString(" ")
+						textPart.WriteString(diagUnderlineReset)
 					default:
 						textPart.WriteString(blankStyle.Render(" "))
 					}
@@ -263,11 +332,25 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 					case e.isSelected(lineIdx, vCol):
 						textPart.WriteString(selStyle.Render(ch))
 					case sev > 0:
-						ds := diagStyles[sev]
-						if vCol < len(colorMap) && colorMap[vCol] != "" {
-							ds = ds.Foreground(lipgloss.Color(colorMap[vCol])).Underline(true)
+						var underlineSeq string
+						switch sev {
+						case DiagError:
+							underlineSeq = errUnderline
+						case DiagWarning:
+							underlineSeq = warnUnderline
+						default:
+							underlineSeq = infoUnderline
 						}
-						textPart.WriteString(ds.Render(ch))
+						textPart.WriteString(underlineSeq)
+						if vCol < len(colorMap) && colorMap[vCol] != "" {
+							// Override foreground in the underline seq by
+							// appending the syntax-highlighted color after reset.
+							textPart.WriteString(ch)
+							textPart.WriteString(diagUnderlineReset)
+						} else {
+							textPart.WriteString(ch)
+						}
+						textPart.WriteString(diagUnderlineReset)
 					default:
 						if vCol < len(colorMap) && colorMap[vCol] != "" {
 							key := colorMap[vCol]
@@ -288,7 +371,16 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 					case e.isSelected(lineIdx, vCol):
 						textPart.WriteString(selStyle.Render(" "))
 					case sev > 0:
-						textPart.WriteString(diagStyles[sev].Render(" "))
+						switch sev {
+						case DiagError:
+							textPart.WriteString(errUnderline)
+						case DiagWarning:
+							textPart.WriteString(warnUnderline)
+						default:
+							textPart.WriteString(infoUnderline)
+						}
+						textPart.WriteString(" ")
+						textPart.WriteString(diagUnderlineReset)
 					default:
 						textPart.WriteString(blankStyle.Render(" "))
 					}
@@ -301,7 +393,16 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 				case e.isSelected(lineIdx, vCol):
 					textPart.WriteString(selStyle.Render(" "))
 				case sev > 0:
-					textPart.WriteString(diagStyles[sev].Render(" "))
+					switch sev {
+					case DiagError:
+						textPart.WriteString(errUnderline)
+					case DiagWarning:
+						textPart.WriteString(warnUnderline)
+					default:
+						textPart.WriteString(infoUnderline)
+					}
+					textPart.WriteString(" ")
+					textPart.WriteString(diagUnderlineReset)
 				default:
 					textPart.WriteString(blankStyle.Render(" "))
 				}

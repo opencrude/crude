@@ -51,6 +51,7 @@ type TreeColors struct {
 	GitModified, GitAdded, GitDeleted          color.Color
 	GitUntracked, GitConflicted                color.Color
 	IconDir, IconFile, IconSymlink, BorderFg  color.Color
+	DiagError, DiagWarning, DiagInfo           color.Color
 }
 
 type TreeStyles struct {
@@ -61,14 +62,15 @@ type TreeStyles struct {
 }
 
 type TreeConfig struct {
-	IndentWidth  int
-	ShowIcons    bool
-	ShowGitStatus bool
-	ShowHidden   bool
-	DefaultWidth int
-	MinWidth     int
-	MaxWidth     int
-	UseNerdFont  *bool // nil = auto-detect
+	IndentWidth    int
+	ShowIcons      bool
+	ShowGitStatus  bool
+	ShowDiagnostics bool
+	ShowHidden     bool
+	DefaultWidth   int
+	MinWidth       int
+	MaxWidth       int
+	UseNerdFont    *bool // nil = auto-detect
 }
 
 type Spacing struct {

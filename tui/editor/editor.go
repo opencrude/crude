@@ -91,6 +91,27 @@ type Editor struct {
 	diagMu      sync.RWMutex
 	diagnostics []LSPDiagnostic
 	diagByLine  map[int][]diagSpan
+
+	// onDiagnostics is called (asynchronously) whenever LSP diagnostics are
+	// updated. The callback receives the absolute file path and the new
+	// diagnostic counts (errors, warnings, hints).
+	onDiagnostics func(path string, errors, warnings, hints int)
+
+	// hover state for diagnostic tooltip popup.
+	hoverMessages []string
+	hoverLine     int
+	hoverCol      int
+	hoverScreenX  int
+	hoverScreenY  int
+}
+
+// HoverState is the current diagnostic hover state.
+type HoverState struct {
+	Messages []string
+	Line     int
+	Col      int
+	ScreenX  int
+	ScreenY  int
 }
 
 const (
@@ -195,12 +216,12 @@ func (e *Editor) Title() string {
 	}
 	return e.title
 }
-func (e *Editor) Modified() bool     { return e.modified }
-func (e *Editor) Value() string      { return string(e.buf.Bytes()) }
-func (e *Editor) CursorLine() int    { return e.cursor.Line }
-func (e *Editor) CursorCol() int     { return e.cursor.Col }
-func (e *Editor) LineCount() int     { return e.buf.LineCount() }
-func (e *Editor) LSPConnected() bool { return e.lspConnected }
+func (e *Editor) Modified() bool       { return e.modified }
+func (e *Editor) Value() string        { return string(e.buf.Bytes()) }
+func (e *Editor) CursorLine() int      { return e.cursor.Line }
+func (e *Editor) CursorCol() int       { return e.cursor.Col }
+func (e *Editor) LineCount() int       { return e.buf.LineCount() }
+func (e *Editor) LSPConnected() bool   { return e.lspConnected }
 func (e *Editor) LSPStatus() LSPStatus { return e.lspStatus }
 func (e *Editor) LSPError() string     { return e.lspError }
 func (e *Editor) resetLSPStatus() {
@@ -258,19 +279,38 @@ func (e *Editor) syncLSP() {
 	e.lsp.UpdateFile(e.lspCtx, string(e.buf.Bytes()))
 }
 
+// SetOnDiagnostics registers a callback invoked when LSP diagnostics arrive.
+// The callback receives the file path and error/warning/hint counts.
+func (e *Editor) SetOnDiagnostics(fn func(path string, errors, warnings, hints int)) {
+	e.onDiagnostics = fn
+}
+
 func (e *Editor) setDiagnostics(diags []LSPDiagnostic) {
 	e.diagMu.Lock()
 	e.diagnostics = diags
 	byLine := make(map[int][]diagSpan, len(diags))
+	errs, warns, hints := 0, 0, 0
 	for _, d := range diags {
 		byLine[d.Line] = append(byLine[d.Line], diagSpan{
 			startCol: d.Col,
 			endCol:   d.EndCol,
 			severity: d.Severity,
 		})
+		switch d.Severity {
+		case DiagError:
+			errs++
+		case DiagWarning:
+			warns++
+		default:
+			hints++
+		}
 	}
 	e.diagByLine = byLine
 	e.diagMu.Unlock()
+
+	if e.onDiagnostics != nil {
+		e.onDiagnostics(e.filePath, errs, warns, hints)
+	}
 }
 
 func (e *Editor) DiagnosticCounts() (errors, warnings, hints int) {
@@ -296,6 +336,112 @@ func (e *Editor) lineDiagnostics(lineIdx int) []diagSpan {
 		return nil
 	}
 	return e.diagByLine[lineIdx]
+}
+
+// diagnosticsAt returns all LSPDiagnostics covering the given position.
+func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
+	e.diagMu.RLock()
+	defer e.diagMu.RUnlock()
+	var result []LSPDiagnostic
+	lineEnd := -1
+	for _, d := range e.diagnostics {
+		if d.Line != line {
+			continue
+		}
+		endCol := d.EndCol
+		if endCol <= d.Col {
+			if lineEnd < 0 {
+				lineEnd = e.lineVisualWidth(line)
+			}
+			if lineEnd <= d.Col {
+				lineEnd = d.Col + 1
+			}
+			endCol = lineEnd
+		}
+		if col >= d.Col && col < endCol {
+			result = append(result, d)
+		}
+	}
+	return result
+}
+
+// SetHover sets the hover diagnostic state for a tooltip popup.
+func (e *Editor) SetHover(screenX, screenY, line, col int, msgs []string) {
+	e.hoverScreenX = screenX
+	e.hoverScreenY = screenY
+	e.hoverLine = line
+	e.hoverCol = col
+	e.hoverMessages = msgs
+}
+
+// ClearHover clears the hover diagnostic state.
+func (e *Editor) ClearHover() {
+	e.hoverMessages = nil
+}
+
+// HoverState returns the current hover diagnostics state.
+func (e *Editor) HoverState() HoverState {
+	return HoverState{
+		Messages: e.hoverMessages,
+		Line:     e.hoverLine,
+		Col:      e.hoverCol,
+		ScreenX:  e.hoverScreenX,
+		ScreenY:  e.hoverScreenY,
+	}
+}
+
+// refreshMouseHover updates hover diagnostics for a screen-positioned mouse.
+func (e *Editor) refreshMouseHover(screenX, screenY int) {
+	pos, ok := e.mouseToPosition(screenX, screenY)
+	if !ok {
+		e.ClearHover()
+		return
+	}
+	diags := e.diagnosticsAt(pos.Line, pos.Col)
+	if len(diags) == 0 {
+		e.ClearHover()
+		return
+	}
+	msgs := make([]string, 0, len(diags))
+	for _, d := range diags {
+		msgs = append(msgs, d.Message)
+	}
+	e.SetHover(screenX, screenY, pos.Line, pos.Col, msgs)
+}
+
+// refreshCursorHover updates hover diagnostics for the keyboard cursor.
+func (e *Editor) refreshCursorHover(sidebarW, chatAreaTop int) {
+	diags := e.diagnosticsAt(e.cursor.Line, e.cursor.Col)
+	if len(diags) == 0 {
+		e.ClearHover()
+		return
+	}
+	msgs := make([]string, 0, len(diags))
+	for _, d := range diags {
+		msgs = append(msgs, d.Message)
+	}
+	screenX, screenY := e.CursorScreenPosition(sidebarW, chatAreaTop)
+	e.SetHover(screenX, screenY, e.cursor.Line, e.cursor.Col, msgs)
+}
+
+// CursorScreenPosition returns the approximate absolute screen cell of the cursor.
+func (e *Editor) CursorScreenPosition(sidebarW, chatAreaTop int) (int, int) {
+	bodyH := e.viewH
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	lineOff := e.cursor.Line - e.scrollY
+	if lineOff < 0 {
+		lineOff = 0
+	}
+	if lineOff >= bodyH {
+		lineOff = bodyH - 1
+	}
+	colOff := e.cursor.Col - e.scrollX
+	if colOff < 0 {
+		colOff = 0
+	}
+	return sidebarW + e.gutterWidth() + colOff, chatAreaTop + lineOff
 }
 
 func (e *Editor) severityColor(severity int) string {

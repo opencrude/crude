@@ -168,6 +168,23 @@ func mapGitStatus(staging, worktree git.StatusCode) GitStatus {
 	}
 }
 
+// RepoPath returns the absolute path of the git repository root.
+func (r *GitStatusResolver) RepoPath() string {
+	return r.repoPath
+}
+
+// AllStatuses returns a copy of the full status map (relative path → status).
+// Returns nil when the resolver is in no-op mode.
+func (r *GitStatusResolver) AllStatuses() map[string]GitStatus {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]GitStatus, len(r.statuses))
+	for k, v := range r.statuses {
+		result[k] = v
+	}
+	return result
+}
+
 // WatchForChanges starts a background goroutine that watches .git/index (or
 // the .git directory as a fallback) for file system events using fsnotify.
 // When a write or create event is detected, it triggers a Refresh after a

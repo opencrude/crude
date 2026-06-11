@@ -116,6 +116,9 @@ func (m *FileTreeModel) Update(msg TreeMsg) tea.Cmd {
 	case TreeGitRefreshMsg:
 		if m.gitResolver != nil {
 			_ = m.gitResolver.Refresh()
+			m.mu.Lock()
+			m.recomputeAggregateStatuses()
+			m.mu.Unlock()
 		}
 		return nil
 
@@ -182,15 +185,27 @@ func (m *FileTreeModel) handleKey(key tea.KeyPressMsg) tea.Cmd {
 		return m.ToggleExpandOrSelect()
 	case tea.KeyRight:
 		// Right arrow expands directory or moves into it.
-		if key.Mod.Contains(tea.ModShift) {
+		// Shift+Right previously did ExpandAllNested; now it scrolls right.
+		// Ctrl+Shift+Right still does ExpandAllNested.
+		if key.Mod.Contains(tea.ModShift) && key.Mod.Contains(tea.ModCtrl) {
 			m.ExpandAllNested()
+			return nil
+		}
+		if key.Mod.Contains(tea.ModShift) {
+			m.SetHScrollOffset(m.hscrollOffset + 4)
 			return nil
 		}
 		return m.expandOrMoveIn()
 	case tea.KeyLeft:
 		// Left arrow collapses directory or moves to parent.
-		if key.Mod.Contains(tea.ModShift) {
+		// Shift+Left previously did CollapseAllNested; now it scrolls left.
+		// Ctrl+Shift+Left still does CollapseAllNested.
+		if key.Mod.Contains(tea.ModShift) && key.Mod.Contains(tea.ModCtrl) {
 			m.CollapseAllNested()
+			return nil
+		}
+		if key.Mod.Contains(tea.ModShift) {
+			m.SetHScrollOffset(m.hscrollOffset - 4)
 			return nil
 		}
 		return m.CollapseOrParent()
@@ -409,7 +424,9 @@ func (m *FileTreeModel) pageSize() int {
 }
 
 // updateScrollOffset adjusts the scroll offset so that the cursor remains
-// within the visible area with VSCode-style context lines.
+// within the visible area.  Only scrolls when the cursor is strictly outside
+// the viewport — scroll up by 1 when above the top, scroll down by 1 when
+// below the bottom.  Page-sized movements set scrollOffset directly.
 func (m *FileTreeModel) updateScrollOffset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -419,26 +436,23 @@ func (m *FileTreeModel) updateScrollOffset() {
 	if vh <= 0 {
 		vh = 10
 	}
-	contextLines := 3
 
-	// If cursor is above the viewport + top context, scroll up.
-	if idx < m.scrollOffset+contextLines {
-		m.scrollOffset = idx - contextLines
+	// If cursor is strictly above the viewport, scroll up.
+	if idx < m.scrollOffset {
+		m.scrollOffset = idx
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
 		}
+		return
 	}
 
-	// If cursor is below the viewport - bottom context, scroll down.
-	if idx >= m.scrollOffset+vh-contextLines {
-		newOff := idx - vh + contextLines + 1
-		if newOff > m.scrollOffset {
-			m.scrollOffset = newOff
+	// If cursor is strictly below the viewport, scroll down by 1.
+	if idx >= m.scrollOffset+vh {
+		m.scrollOffset = idx - vh + 1
+		if m.scrollOffset < 0 {
+			m.scrollOffset = 0
 		}
-	}
-
-	if m.scrollOffset < 0 {
-		m.scrollOffset = 0
+		return
 	}
 }
 
@@ -707,4 +721,26 @@ func (m *FileTreeModel) SetScrollOffset(offset int) {
 		offset = maxOffset
 	}
 	m.scrollOffset = offset
+}
+
+// HScrollOffset returns the horizontal scroll offset.
+func (m *FileTreeModel) HScrollOffset() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.hscrollOffset
+}
+
+// SetHScrollOffset sets the horizontal scroll offset, clamped to a reasonable
+// maximum (currently 128 columns). Returns the new offset.
+func (m *FileTreeModel) SetHScrollOffset(off int) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if off < 0 {
+		off = 0
+	}
+	if off > 128 {
+		off = 128
+	}
+	m.hscrollOffset = off
+	return off
 }

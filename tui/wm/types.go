@@ -26,15 +26,15 @@ const (
 type Edge int
 
 const (
-	EdgeNone       Edge = iota
-	EdgeTop             // Top border edge
-	EdgeBottom          // Bottom border edge
-	EdgeLeft            // Left border edge
-	EdgeRight           // Right border edge
-	EdgeTopLeft         // Top-left corner
-	EdgeTopRight        // Top-right corner
-	EdgeBottomLeft      // Bottom-left corner
-	EdgeBottomRight     // Bottom-right corner
+	EdgeNone        Edge = iota
+	EdgeTop              // Top border edge
+	EdgeBottom           // Bottom border edge
+	EdgeLeft             // Left border edge
+	EdgeRight            // Right border edge
+	EdgeTopLeft          // Top-left corner
+	EdgeTopRight         // Top-right corner
+	EdgeBottomLeft       // Bottom-left corner
+	EdgeBottomRight      // Bottom-right corner
 )
 
 // BorderStyle defines the visual style of window borders.
@@ -141,6 +141,12 @@ func WithClosable(closable bool) WindowOption {
 // WithModal controls whether the window blocks input to windows below it.
 func WithModal(modal bool) WindowOption {
 	return func(fw *FloatingWindow) { fw.modal = modal }
+}
+
+// WithFocusable controls whether the window participates in focus and mouse hit-testing.
+// Non-focusable windows are still rendered, but mouse and keyboard input passes through.
+func WithFocusable(focusable bool) WindowOption {
+	return func(fw *FloatingWindow) { fw.focusable = focusable }
 }
 
 // WithBorderStyle sets the border drawing style.
