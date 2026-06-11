@@ -291,9 +291,20 @@ func (e *Editor) setDiagnostics(diags []LSPDiagnostic) {
 	byLine := make(map[int][]diagSpan, len(diags))
 	errs, warns, hints := 0, 0, 0
 	for _, d := range diags {
+		endCol := d.EndCol
+		if endCol <= d.Col {
+			// LSP sometimes sends EndCol=0 for whole-line diagnostics.
+			// Fall back to the visual width of the line, same as diagnosticsAt.
+			lw := e.lineVisualWidth(d.Line)
+			if lw > d.Col {
+				endCol = lw
+			} else {
+				endCol = d.Col + 1
+			}
+		}
 		byLine[d.Line] = append(byLine[d.Line], diagSpan{
 			startCol: d.Col,
-			endCol:   d.EndCol,
+			endCol:   endCol,
 			severity: d.Severity,
 		})
 		switch d.Severity {
