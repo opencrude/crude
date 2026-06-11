@@ -11,10 +11,12 @@ require (
 	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/buger/jsonparser v1.2.0
 	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/charmbracelet/x/powernap v0.1.6
 	github.com/clipperhouse/displaywidth v0.11.0
 	github.com/conductor-oss/markitdown v0.0.1
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/go-git/go-git/v5 v5.19.1
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/mattn/go-shellwords v1.0.13
 	github.com/rivo/uniseg v0.4.7
@@ -23,10 +25,7 @@ require (
 	mvdan.cc/sh/v3 v3.13.1
 )
 
-require (
-	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
-	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
-)
+require github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 
 require (
 	dario.cat/mergo v1.0.0 // indirect
@@ -54,7 +53,6 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.9.0 // indirect
-	github.com/go-git/go-git/v5 v5.19.1 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
@@ -83,6 +81,7 @@ require (
 	github.com/richardlehane/msoleps v1.0.4 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
+	github.com/sourcegraph/jsonrpc2 v0.2.1 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect

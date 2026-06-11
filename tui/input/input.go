@@ -3,7 +3,7 @@ package input
 import (
 	"strings"
 
-	"crude/promptref"
+	"crude/sessiondb"
 	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -265,12 +265,12 @@ func (m Model) ExpandedValue() string {
 	return ExpandReferences(m.input.Value(), m.refStore.ListReferences())
 }
 
-func (m Model) PromptReferences() []promptref.Reference {
+func (m Model) PromptReferences() []sessiondb.Reference {
 	if m.refStore == nil {
 		return nil
 	}
 	ids := m.ReferencedIDs()
-	refs := make([]promptref.Reference, 0, len(ids))
+	refs := make([]sessiondb.Reference, 0, len(ids))
 	for _, id := range ids {
 		if ref, ok := m.refStore.GetReference(id); ok && ref.Active() {
 			refs = append(refs, ref)

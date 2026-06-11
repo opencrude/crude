@@ -56,6 +56,7 @@ func (m *App) View() tea.View {
 	// it actually changes (not on every position update during drag).
 	m.compositor.BeginFrame()
 	m.renderCtx.SpinFrame = m.spinFrame
+	m.syncRenderFocus()
 	mainContent := m.buildMainView()
 	rendering.RenderToSurface(m.compositor.Root(), mainContent)
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)

@@ -26,13 +26,14 @@ type PaneLineInfo struct {
 }
 
 type MessageList struct {
-	vl         virtlist.VirtualList
-	scroll     virtlist.ScrollState
-	scrollbar  scrollbar.ScrollBar
-	theme      *theme.Theme
-	messages   []*types.ChatMessage
-	msgIDSeq   uint64
-	msgByID    map[string]*types.ChatMessage
+	vl        virtlist.VirtualList
+	scroll    virtlist.ScrollState
+	scrollbar scrollbar.ScrollBar
+	theme     *theme.Theme
+	messages  []*types.ChatMessage
+	msgIDSeq  uint64
+	msgByID   map[string]*types.ChatMessage
+	version   uint64
 
 	selecting     bool
 	selAnchorLine int
@@ -57,11 +58,11 @@ type MessageList struct {
 	activeTyping bool
 	phase        string
 
-	lastScrollbarW     int
-	lastRenderedLines  []string
-	subPaneContentFn   SubPaneContentFn
-	paneLineMap        []PaneLineInfo
-	paneScrollbarW     int
+	lastScrollbarW    int
+	lastRenderedLines []string
+	subPaneContentFn  SubPaneContentFn
+	paneLineMap       []PaneLineInfo
+	paneScrollbarW    int
 }
 
 func NewMessageList(t *theme.Theme) *MessageList {
@@ -78,6 +79,14 @@ func NewMessageList(t *theme.Theme) *MessageList {
 func (ml *MessageList) nextMsgID() string {
 	ml.msgIDSeq++
 	return fmt.Sprintf("msg-%d", ml.msgIDSeq)
+}
+
+func (ml *MessageList) bumpVersion() {
+	ml.version++
+}
+
+func (ml *MessageList) Version() uint64 {
+	return ml.version
 }
 
 func (ml *MessageList) SetSubPaneContentFn(fn SubPaneContentFn) {
@@ -166,6 +175,7 @@ func (ml *MessageList) AppendMessage(msg types.ChatMessage) {
 		ml.msgByID[msgCopy.ToolID] = &msgCopy
 	}
 	ml.messages = append(ml.messages, &msgCopy)
+	ml.bumpVersion()
 	item := ml.messageToItem(len(ml.messages) - 1)
 	ml.vl.AppendItem(item)
 }
@@ -179,6 +189,7 @@ func (ml *MessageList) AppendToken(token string) {
 		return
 	}
 	last.Content += token
+	ml.bumpVersion()
 	last.CachedLines = nil
 	if strings.Contains(token, "\n") {
 		last.StreamCompletedLines = nil
@@ -192,6 +203,7 @@ func (ml *MessageList) AppendThinking(s string) {
 		last := ml.messages[len(ml.messages)-1]
 		if last.Role == types.RoleThinking {
 			last.Content += s
+			ml.bumpVersion()
 			last.CachedLines = nil
 			ml.vl.InvalidateItem(last.InternalID)
 			return
@@ -200,6 +212,7 @@ func (ml *MessageList) AppendThinking(s string) {
 	for _, msg := range ml.messages {
 		if msg.ThinkingActive {
 			msg.ThinkingActive = false
+			ml.bumpVersion()
 			msg.CachedLines = nil
 			ml.vl.InvalidateItem(msg.InternalID)
 		}
@@ -213,6 +226,7 @@ func (ml *MessageList) AppendThinking(s string) {
 	}
 	ml.msgByID[newMsg.InternalID] = newMsg
 	ml.messages = append(ml.messages, newMsg)
+	ml.bumpVersion()
 	item := ml.messageToItem(len(ml.messages) - 1)
 	ml.vl.AppendItem(item)
 }
@@ -257,8 +271,6 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 
 	if msg := ml.findToolMsg(internalID, toolID); msg != nil {
 		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
-			// Completed tool collides with new call's ID — don't corrupt history.
-			// Fall through to create a fresh message with a unique ID.
 		} else {
 			if v, ok := data["content"]; ok {
 				if s, ok := v.(string); ok {
@@ -289,6 +301,7 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 			msg.ToolPreviewPhase = previewPhase
 			msg.ToolProgressPhase = "streaming"
 			msg.ToolProgressMessage = ""
+			ml.bumpVersion()
 			msg.CachedLines = nil
 			if toolID != "" && msg.ToolID == "" {
 				if existing, ok := ml.msgByID[toolID]; !ok || existing == msg {
@@ -330,6 +343,7 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 		ml.msgByID[toolID] = msg
 	}
 	ml.messages = append(ml.messages, msg)
+	ml.bumpVersion()
 	item := ml.messageToItem(len(ml.messages) - 1)
 	ml.vl.AppendItem(item)
 }
@@ -337,8 +351,6 @@ func (ml *MessageList) UpdateToolStreaming(toolID, internalID, name string, data
 func (ml *MessageList) UpdateToolCall(toolID, internalID, name, argsCompact string) {
 	if msg := ml.findToolMsg(internalID, toolID); msg != nil {
 		if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
-			// Completed tool collides with new call's ID — don't corrupt history.
-			// Fall through to create a fresh message with a unique ID.
 		} else {
 			msg.ToolStatus = "calling"
 			msg.ToolArgs = argsCompact
@@ -349,6 +361,7 @@ func (ml *MessageList) UpdateToolCall(toolID, internalID, name, argsCompact stri
 			if msg.ToolProgressLabel == "" {
 				msg.ToolProgressLabel = argsCompact
 			}
+			ml.bumpVersion()
 			msg.CachedLines = nil
 			if toolID != "" && msg.ToolID == "" {
 				if existing, ok := ml.msgByID[toolID]; !ok || existing == msg {
@@ -366,24 +379,25 @@ func (ml *MessageList) UpdateToolCall(toolID, internalID, name, argsCompact stri
 		id = ml.nextMsgID()
 	}
 	msg := &types.ChatMessage{
-		InternalID:       id,
-		Role:             types.RoleTool,
-		Content:          name + " " + argsCompact,
-		Time:             time.Now(),
-		ToolName:         name,
-		ToolID:           toolID,
-		ToolArgs:         argsCompact,
-		ToolStatus:       "calling",
-		ToolIndex:        len(ml.messages),
-		ToolPreviewPhase: types.ToolPreviewStreaming,
+		InternalID:        id,
+		Role:              types.RoleTool,
+		Content:           name + " " + argsCompact,
+		Time:              time.Now(),
+		ToolName:          name,
+		ToolID:            toolID,
+		ToolArgs:          argsCompact,
+		ToolStatus:        "calling",
+		ToolIndex:         len(ml.messages),
+		ToolPreviewPhase:  types.ToolPreviewStreaming,
 		ToolProgressLabel: argsCompact,
-		ToolStartTime:    time.Now(),
+		ToolStartTime:     time.Now(),
 	}
 	ml.msgByID[msg.InternalID] = msg
 	if toolID != "" {
 		ml.msgByID[toolID] = msg
 	}
 	ml.messages = append(ml.messages, msg)
+	ml.bumpVersion()
 	item := ml.messageToItem(len(ml.messages) - 1)
 	ml.vl.AppendItem(item)
 }
@@ -429,6 +443,7 @@ func (ml *MessageList) UpdateToolProgress(toolID, internalID, name, phase, messa
 			msg.ToolEstTokens = estTokens
 		}
 	}
+	ml.bumpVersion()
 	msg.CachedLines = nil
 	ml.vl.InvalidateItem(msg.InternalID)
 }
@@ -465,6 +480,8 @@ func (ml *MessageList) UpdateToolResult(toolID, internalID, name, result string,
 	} else {
 		msg.Content = msg.ToolName + " " + msg.ToolArgs
 	}
+	ml.bumpVersion()
+	msg.CachedLines = nil
 	ml.vl.InvalidateItem(msg.InternalID)
 }
 
@@ -475,11 +492,13 @@ func (ml *MessageList) SetToolPermTag(toolID, internalID, tag string) {
 		return
 	}
 	msg.PermTag = tag
+	ml.bumpVersion()
 	msg.CachedLines = nil
 	ml.vl.InvalidateItem(msg.InternalID)
 }
 
 func (ml *MessageList) MarkStreamingToolsCancelled() {
+	changed := false
 	for _, msg := range ml.messages {
 		if msg.ToolStatus == "streaming" || msg.ToolStatus == "calling" {
 			msg.ToolStatus = types.ToolStatusCancelled
@@ -488,31 +507,46 @@ func (ml *MessageList) MarkStreamingToolsCancelled() {
 			msg.ToolProgressMessage = ""
 			msg.CachedLines = nil
 			ml.vl.InvalidateItem(msg.InternalID)
+			changed = true
 		}
+	}
+	if changed {
+		ml.bumpVersion()
 	}
 }
 
 func (ml *MessageList) MarkAllThinkingDone() {
+	changed := false
 	for _, msg := range ml.messages {
 		if msg.Role == types.RoleThinking {
 			msg.ThinkingActive = false
 			msg.ThinkingInterrupted = false
 			msg.CachedLines = nil
 			ml.vl.InvalidateItem(msg.InternalID)
+			changed = true
 		}
+	}
+	if changed {
+		ml.bumpVersion()
 	}
 }
 
 func (ml *MessageList) MarkAllThinkingInterrupted() {
+	changed := false
 	for _, msg := range ml.messages {
 		if msg.Role == types.RoleThinking && msg.ThinkingActive {
 			msg.ThinkingActive = false
 			msg.ThinkingInterrupted = true
 			msg.CachedLines = nil
 			ml.vl.InvalidateItem(msg.InternalID)
+			changed = true
 		} else if msg.Role == types.RoleThinking {
 			msg.ThinkingActive = false
+			changed = true
 		}
+	}
+	if changed {
+		ml.bumpVersion()
 	}
 }
 
@@ -532,6 +566,7 @@ func (ml *MessageList) RemoveActiveThinking() string {
 		for _, msg := range ml.messages {
 			msg.CachedLines = nil
 		}
+		ml.bumpVersion()
 		ml.RebuildItems()
 	}
 	return content
@@ -615,6 +650,7 @@ func (ml *MessageList) RemoveMessage(idx int) {
 	msg := ml.messages[idx]
 	delete(ml.msgByID, msg.InternalID)
 	ml.messages = append(ml.messages[:idx], ml.messages[idx+1:]...)
+	ml.bumpVersion()
 	ml.RebuildItems()
 }
 

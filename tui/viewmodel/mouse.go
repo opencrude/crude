@@ -121,9 +121,8 @@ func (m *App) routeTreeScrollbarMsg(msg tea.Msg) tea.Cmd {
 func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []tea.Cmd {
 	var cmds []tea.Cmd
 	activeML := m.activeMessageList()
-	msgListCapturing := activeML.IsSelecting() || activeML.IsScrollbarDragging()
 
-	if m.input.InputSelecting() || (mouse.Y >= 0 && !msgListCapturing) {
+	if m.input.InputSelecting() {
 		updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 		m.input = updated
 		if cmd != nil {
@@ -352,7 +351,6 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 	switch region {
 	case regionSidebar:
-		m.treeFocused = true
 		cmd := m.routeSidebarMouse(msg)
 		return m, cmd
 
@@ -413,7 +411,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
-		m.treeFocused = true
 		if mouse.X == m.treeWidth-1 {
 			cmd := m.routeTreeScrollbarMsg(msg)
 			return m, cmd
@@ -423,11 +420,14 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.activeEditorView != "" && m.editor.IsOpen() {
-		cmd := m.routeEditorMouse(msg)
-		if cmd != nil {
-			return m, cmd
+		region := m.classifyMouse(mouse.X, mouse.Y, false)
+		if region == regionEditor {
+			cmd := m.routeEditorMouse(msg)
+			if cmd != nil {
+				return m, cmd
+			}
+			return m, nil
 		}
-		return m, nil
 	}
 
 	if m.Mode == ModeChat {
@@ -448,8 +448,10 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 
 func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	mouse := msg.Mouse()
 
 	if m.windowManager != nil {
+		m.windowManager.HandleMouseRelease(msg)
 		if fw := m.windowManager.Focused(); fw != nil {
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -462,27 +464,30 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, nil
 	}
 
-	if m.treeVisible && m.treeModel != nil {
-		mouse := msg.Mouse()
-		if mouse.X < m.treeWidth {
-			if mouse.X == m.treeWidth-1 {
-				cmd := m.routeTreeScrollbarMsg(msg)
-				return m, cmd
-			}
-			cmd := m.routeSidebarMouse(msg)
+	if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
+		if mouse.X == m.treeWidth-1 {
+			cmd := m.routeTreeScrollbarMsg(msg)
 			return m, cmd
 		}
+		cmd := m.routeSidebarMouse(msg)
+		return m, cmd
 	}
 
-	if m.activeEditorView != "" && m.editor.IsOpen() {
+	region := m.classifyMouse(mouse.X, mouse.Y, false)
+
+	switch region {
+	case regionEditor:
 		cmd := m.routeEditorMouse(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		return m, tea.Batch(cmds...)
-	}
 
-	if m.Mode == ModeChat {
+	case regionInput:
+		cmds = append(cmds, m.routeInputMouse(msg)...)
+		return m, tea.Batch(cmds...)
+
+	case regionChat:
 		activeML := m.activeMessageList()
 		if activeML.IsScrollbarDragging() {
 			_, cmd := activeML.Update(msg)
@@ -491,7 +496,7 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 			}
 			return m, tea.Batch(cmds...)
 		}
-		cmds = append(cmds, m.routeChatMouse(msg, msg.Mouse(), false)...)
+		cmds = append(cmds, m.routeChatMouse(msg, mouse, false)...)
 		return m, tea.Batch(cmds...)
 	}
 

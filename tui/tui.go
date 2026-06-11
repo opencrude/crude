@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/promptref"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/types"
@@ -223,7 +222,7 @@ func (t *TUI) OpenSettings() {
 	t.Program.Send(types.OpenSettingsMsg{})
 }
 
-func (t *TUI) SetReferences(refs []promptref.Reference) {
+func (t *TUI) SetReferences(refs []sessiondb.Reference) {
 	t.app.SetReferences(refs)
 }
 

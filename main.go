@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 
 	"crude/app"
@@ -11,6 +13,10 @@ import (
 )
 
 func main() {
+	// Suppress slog globally: powernap uses slog.Default() which writes to
+	// os.Stderr and would corrupt the Bubble Tea TUI.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	platform.InitConsole()
 
 	apiKeyFlag := flag.String("key", "", "API key (or set CRUDE_API_KEY)")

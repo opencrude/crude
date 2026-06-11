@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/promptref"
 	"crude/sessiondb"
 )
 
@@ -37,8 +36,8 @@ func TestReferenceStore_CreateReference(t *testing.T) {
 
 	store := newReferenceStore("sess1", dir, db)
 
-	ref, err := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedText,
+	ref, err := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedText,
 		Content: "hello world",
 	})
 	if err != nil {
@@ -62,8 +61,8 @@ func TestReferenceStore_CreateReference_TextFile(t *testing.T) {
 
 	store := newReferenceStore("sess1", dir, db)
 
-	ref, err := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedTextFile,
+	ref, err := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedTextFile,
 		Content: "file content here",
 	})
 	if err != nil {
@@ -97,8 +96,8 @@ func TestReferenceStore_CreateReference_Image(t *testing.T) {
 	imgData := []byte("fake image")
 	b64 := base64.StdEncoding.EncodeToString(imgData)
 
-	ref, err := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedImage,
+	ref, err := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedImage,
 		Content: b64,
 		Mime:    "image/png",
 	})
@@ -130,8 +129,8 @@ func TestReferenceStore_CreateReference_LabelCollision(t *testing.T) {
 	store := newReferenceStore("sess1", dir, db)
 
 	// Create a ref, then add it as existing to simulate session resume
-	ref1, err := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedTextFile,
+	ref1, err := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedTextFile,
 		Content: "first content",
 	})
 	if err != nil {
@@ -143,8 +142,8 @@ func TestReferenceStore_CreateReference_LabelCollision(t *testing.T) {
 	store2.AddExisting(ref1)
 
 	// Create new ref — should NOT collide
-	ref2, err := store2.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedTextFile,
+	ref2, err := store2.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedTextFile,
 		Content: "second content",
 	})
 	if err != nil {
@@ -165,8 +164,8 @@ func TestReferenceStore_CreateReference_CustomLabelCollision(t *testing.T) {
 	store := newReferenceStore("sess1", dir, db)
 
 	// Create a ref with auto label
-	_, err := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedText,
+	_, err := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedText,
 		Content: "auto content",
 	})
 	if err != nil {
@@ -174,8 +173,8 @@ func TestReferenceStore_CreateReference_CustomLabelCollision(t *testing.T) {
 	}
 
 	// Create a ref with custom label that collides
-	ref2, err := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedText,
+	ref2, err := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedText,
 		Content: "custom content",
 		Label:   "[Pasted Text1]", // same as first
 	})
@@ -197,12 +196,12 @@ func TestReferenceStore_ListReferences_FiltersDeleted(t *testing.T) {
 
 	store := newReferenceStore("sess1", dir, db)
 
-	ref1, _ := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedText,
+	ref1, _ := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedText,
 		Content: "keep this",
 	})
-	ref2, _ := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedText,
+	ref2, _ := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedText,
 		Content: "delete this",
 	})
 
@@ -242,10 +241,10 @@ func TestReferenceStore_AddExisting_UpdatesCounter(t *testing.T) {
 	store := newReferenceStore("sess1", dir, db)
 
 	// Add an existing ref with a high index label
-	ref := promptref.Reference{
+	ref := sessiondb.Reference{
 		ID:        "existing-ref",
 		SessionID: "sess1",
-		Kind:      promptref.KindPastedText,
+		Kind:      sessiondb.KindPastedText,
 		Label:     "[Pasted Text5]",
 		Content:   "existing content",
 		CreatedAt: time.Now().UnixNano(),
@@ -253,8 +252,8 @@ func TestReferenceStore_AddExisting_UpdatesCounter(t *testing.T) {
 	store.AddExisting(ref)
 
 	// Next create should use index 6, not 1
-	newRef, err := store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedText,
+	newRef, err := store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedText,
 		Content: "new content",
 	})
 	if err != nil {
@@ -276,10 +275,10 @@ func TestReferenceStore_AddExisting_ImageMigration(t *testing.T) {
 	b64 := base64.StdEncoding.EncodeToString(imgData)
 
 	// Add existing ref with Content set but no FilePath
-	ref := promptref.Reference{
+	ref := sessiondb.Reference{
 		ID:        "img-ref",
 		SessionID: "sess1",
-		Kind:      promptref.KindPastedImage,
+		Kind:      sessiondb.KindPastedImage,
 		Label:     "[Pasted IMG3]",
 		Mime:      "image/png",
 		Content:   b64,
@@ -314,10 +313,10 @@ func TestReferenceStore_AddExisting_ImageMigration_DBPersist(t *testing.T) {
 	// Insert the legacy reference into DB first
 	imgData := []byte("fake image data for DB test")
 	b64 := base64.StdEncoding.EncodeToString(imgData)
-	ref := promptref.Reference{
+	ref := sessiondb.Reference{
 		ID:        "img-db-ref",
 		SessionID: "sess1",
-		Kind:      promptref.KindPastedImage,
+		Kind:      sessiondb.KindPastedImage,
 		Label:     "[Pasted IMG1]",
 		Mime:      "image/png",
 		Content:   b64,
@@ -378,15 +377,15 @@ func TestExtractLabelIndex(t *testing.T) {
 
 func TestDefaultReferenceLabel(t *testing.T) {
 	tests := []struct {
-		kind promptref.Kind
+		kind sessiondb.Kind
 		idx  int
 		want string
 	}{
-		{promptref.KindPastedText, 1, "[Pasted Text1]"},
-		{promptref.KindPastedTextFile, 2, "[Pasted Text File2]"},
-		{promptref.KindPastedImage, 3, "[Pasted IMG3]"},
-		{promptref.KindSelectedFile, 4, "[File4]"},
-		{promptref.Kind("unknown"), 5, "[Reference5]"},
+		{sessiondb.KindPastedText, 1, "[Pasted Text1]"},
+		{sessiondb.KindPastedTextFile, 2, "[Pasted Text File2]"},
+		{sessiondb.KindPastedImage, 3, "[Pasted IMG3]"},
+		{sessiondb.KindSelectedFile, 4, "[File4]"},
+		{sessiondb.Kind("unknown"), 5, "[Reference5]"},
 	}
 	for _, tt := range tests {
 		got := defaultReferenceLabel(tt.kind, tt.idx)
@@ -410,8 +409,8 @@ func TestLabelExists(t *testing.T) {
 	}
 
 	// Add a ref
-	store.CreateReference(promptref.CreateRequest{
-		Kind:    promptref.KindPastedText,
+	store.CreateReference(sessiondb.CreateRequest{
+		Kind:    sessiondb.KindPastedText,
 		Content: "content",
 	})
 

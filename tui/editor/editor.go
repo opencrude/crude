@@ -1,21 +1,19 @@
 package editor
 
 import (
-	"image/color"
+	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
-	"unicode/utf8"
 
-	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	"github.com/alecthomas/chroma/v2"
+	"github.com/fsnotify/fsnotify"
 
-	"crude/tui/cell"
-	"crude/tui/rendering"
 	"crude/tui/scrollbar"
-	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/widget"
 )
 
 type ActionType int
@@ -46,10 +44,10 @@ type Editor struct {
 	goalCol int
 	goalSet bool
 
-	viewW      int
-	viewH      int
-	scrollbar  scrollbar.ScrollBar
-	sbTrackH   int
+	viewW     int
+	viewH     int
+	scrollbar scrollbar.ScrollBar
+	sbTrackH  int
 
 	modified bool
 
@@ -63,6 +61,36 @@ type Editor struct {
 	lastActivity  time.Time
 	lastToggle    time.Time
 	blinkActive   bool
+
+	selecting bool
+	selAnchor Position
+	selEnd    Position
+
+	chromaStyle *chroma.Style
+	chromaLexer chroma.Lexer
+	chromaCache map[string][]string
+
+	lineRunesCacheValid bool
+	lineRunesCacheLine  int
+	lineRunesCache      []rune
+	lineRunesCacheWidth int
+	lineRenderCache     map[int]*lineRenderCache
+
+	watcher      *fsnotify.Watcher
+	watchDir     string
+	watchChanged chan struct{}
+	watchDone    chan struct{}
+
+	lsp          *LSPIntegration
+	lspCtx       context.Context
+	lspCancel    context.CancelFunc
+	lspConnected bool
+	lspStatus    LSPStatus
+	lspError     string
+
+	diagMu      sync.RWMutex
+	diagnostics []LSPDiagnostic
+	diagByLine  map[int][]diagSpan
 }
 
 const (
@@ -72,16 +100,18 @@ const (
 	tabWidth            = 4
 )
 
-type CursorBlinkMsg time.Time
-
 func New(th *theme.Theme) *Editor {
-	return &Editor{
+	e := &Editor{
 		th:            th,
 		buf:           NewPieceTable(),
 		scrollbar:     scrollbar.New(0),
 		maxHistory:    500,
 		cursorVisible: true,
+		diagnostics:   make([]LSPDiagnostic, 0),
+		diagByLine:    make(map[int][]diagSpan),
 	}
+	e.ClearSelection()
+	return e
 }
 
 func (e *Editor) Open(path string) error {
@@ -110,17 +140,54 @@ func (e *Editor) Open(path string) error {
 	e.cursorVisible = true
 	e.blinkActive = false
 	e.lastActivity = time.Now()
+	e.ClearSelection()
+	e.invalidateEditorCaches()
+	e.initChroma()
+	e.startWatching()
+	e.startLSP()
 
 	return nil
 }
 
 func (e *Editor) Close() {
+	e.stopLSP()
+	e.stopWatching()
 	e.open = false
 	e.filePath = ""
 	e.title = ""
+	e.ClearSelection()
+	e.diagMu.Lock()
+	e.diagnostics = nil
+	e.diagByLine = nil
+	e.diagMu.Unlock()
 }
 
-func (e *Editor) IsOpen() bool   { return e.open }
+func (e *Editor) Reload() error {
+	if !e.open || e.filePath == "" {
+		return nil
+	}
+	buf := NewPieceTable()
+	err := buf.Load(e.filePath)
+	if err != nil {
+		return err
+	}
+	e.buf = buf
+	e.modified = false
+	e.chromaCache = nil
+	e.invalidateEditorCaches()
+	e.syncLSP()
+	return nil
+}
+
+func (e *Editor) invalidateEditorCaches() {
+	e.lineRunesCacheValid = false
+	e.lineRunesCacheLine = -1
+	e.lineRunesCache = nil
+	e.lineRunesCacheWidth = 0
+	e.lineRenderCache = nil
+}
+
+func (e *Editor) IsOpen() bool     { return e.open }
 func (e *Editor) FilePath() string { return e.filePath }
 func (e *Editor) Title() string {
 	if e.modified {
@@ -128,964 +195,164 @@ func (e *Editor) Title() string {
 	}
 	return e.title
 }
-func (e *Editor) Modified() bool { return e.modified }
-func (e *Editor) Value() string   { return string(e.buf.Bytes()) }
-func (e *Editor) CursorLine() int  { return e.cursor.Line }
-func (e *Editor) CursorCol() int   { return e.cursor.Col }
-func (e *Editor) LineCount() int   { return e.buf.LineCount() }
-
-func (e *Editor) Measure(availW, availH int) (int, int) {
-	return availW, availH
+func (e *Editor) Modified() bool     { return e.modified }
+func (e *Editor) Value() string      { return string(e.buf.Bytes()) }
+func (e *Editor) CursorLine() int    { return e.cursor.Line }
+func (e *Editor) CursorCol() int     { return e.cursor.Col }
+func (e *Editor) LineCount() int     { return e.buf.LineCount() }
+func (e *Editor) LSPConnected() bool { return e.lspConnected }
+func (e *Editor) LSPStatus() LSPStatus { return e.lspStatus }
+func (e *Editor) LSPError() string     { return e.lspError }
+func (e *Editor) resetLSPStatus() {
+	e.lspStatus = LSPIdle
+	e.lspError = ""
 }
 
-func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
-	if !e.open {
+func (e *Editor) startLSP() {
+	e.lspConnected = false
+	e.resetLSPStatus()
+	ext := strings.ToLower(filepath.Ext(e.filePath))
+	cfg, ok := lspServers[ext]
+	if !ok {
+		e.lspError = "no LSP server configured for " + ext
 		return
 	}
-	w, h := surf.Width(), surf.Height()
-	e.viewW = w
-	e.viewH = h
-	if w < 10 || h < 4 {
+	e.lspStatus = LSPStarting
+	if _, err := exec.LookPath(cfg.cmd); err != nil {
+		e.lspStatus = LSPFailed
+		e.lspError = cfg.cmd + " not found in PATH"
 		return
 	}
-
-	bgColor := e.cellColor(e.th.Colors.Bg)
-	blankCell := cell.NewCell(' ', bgColor, bgColor, 0)
-	sw := e.gutterWidth()
-	textW := w - sw
-	if textW < 1 {
-		textW = 1
-	}
-	bodyH := h - 1
-
-	buf := surf.Buffer()
-	for y := 0; y < bodyH; y++ {
-		bufY := y
-		if bufY >= h {
-			break
-		}
-
-		lineIdx := e.scrollY + y
-		var lineStr string
-		if lineIdx >= 0 && lineIdx < e.buf.LineCount() {
-			b, err := e.buf.Line(lineIdx)
-			if err == nil {
-				lineStr = strings.ReplaceAll(string(b), "\t", "    ")
-			}
-		}
-
-		runes := []rune(lineStr)
-		rw := make([]int, len(runes))
-		lineVisW := 0
-		for i, r := range runes {
-			w := rendering.StringWidth(string(r))
-			rw[i] = w
-			lineVisW += w
-		}
-
-		ri := 0
-		visCol := 0
-		for ri < len(runes) && visCol+rw[ri] <= e.scrollX {
-			visCol += rw[ri]
-			ri++
-		}
-
-		numW := sw - 1
-		numStr := e.formatLineNum(lineIdx+1, numW)
-
-		for x := 0; x < w; x++ {
-			if x < sw-1 {
-				if x < len(numStr) {
-					buf.Set(x, bufY, cell.NewCell(rune(numStr[x]), e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Bg), 0))
-				} else {
-					buf.Set(x, bufY, blankCell)
-				}
-			} else if x == sw-1 {
-				buf.Set(x, bufY, cell.NewCell('│', e.cellColor(e.th.Colors.Border), bgColor, 0))
-			} else {
-				cx := x
-				vCol := e.scrollX + (cx - sw)
-				focused := ctx.Focused
-				isCursorLine := lineIdx == e.cursor.Line
-
-				for ri < len(runes) && vCol >= visCol+rw[ri] {
-					visCol += rw[ri]
-					ri++
-				}
-
-				if ri < len(runes) && vCol < visCol+rw[ri] && vCol < lineVisW {
-					if vCol == visCol {
-						if focused && isCursorLine && vCol == e.cursor.Col {
-							buf.Set(cx, bufY, cell.NewCell(runes[ri], e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
-						} else {
-							buf.Set(cx, bufY, cell.NewCell(runes[ri], e.cellColor(e.th.Colors.Fg), bgColor, 0))
-						}
-					} else {
-						if focused && isCursorLine && vCol == e.cursor.Col {
-							buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
-						} else {
-							buf.Set(cx, bufY, blankCell)
-						}
-					}
-				} else {
-					if focused && isCursorLine && vCol == e.cursor.Col {
-						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
-					} else {
-						buf.Set(cx, bufY, blankCell)
-					}
-				}
-			}
-		}
-	}
-
-	statusY := h - 1
-	if statusY >= 0 {
-		statusStr := e.renderStatusLine(w)
-		for x := 0; x < w; x++ {
-			if x < len(statusStr) {
-				buf.Set(x, statusY, cell.NewCell(rune(statusStr[x]), e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Border), 0))
-			} else {
-				buf.Set(x, statusY, blankCell)
-			}
-		}
-	}
-}
-
-func (e *Editor) View(width, height int, padLeft, padRight int) []string {
-	if !e.open || width < 10 || height < 4 {
-		return nil
-	}
-	e.viewW = width - padLeft - padRight
-	e.viewH = height
-
-	sw := e.gutterWidth()
-	sbW := scrollbar.ScrollbarWidth
-	textW := e.viewW - sw - sbW
-	if textW < 1 {
-		textW = 1
-	}
-	bodyH := height
-
-	// Update scrollbar
-	lc := e.buf.LineCount()
-	e.sbTrackH = bodyH
-	e.scrollbar.SetTrackHeight(bodyH)
-	maxScroll := lc - bodyH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	e.scrollbar.SetScrollInfo(lc, bodyH, e.scrollY)
-	sbView := e.scrollbar.View()
-	sbLines := strings.Split(sbView, "\n")
-
-	lines := make([]string, 0, bodyH)
-
-	padL := strings.Repeat(" ", padLeft)
-	padR := strings.Repeat(" ", padRight)
-	gutterStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Muted)
-	sepStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Border)
-	fgStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Fg)
-	showCursor := e.cursorVisible
-	cursorFg := lipgloss.NewStyle().Foreground(e.th.Colors.Bg).Background(e.th.Colors.Accent).Bold(true)
-	blankStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Muted)
-	sbBgStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Border)
-
-	for y := 0; y < bodyH; y++ {
-		lineIdx := e.scrollY + y
-		var lineStr string
-		if lineIdx >= 0 && lineIdx < e.buf.LineCount() {
-			b, err := e.buf.Line(lineIdx)
-			if err == nil {
-				lineStr = strings.ReplaceAll(string(b), "\t", "    ")
-			}
-		}
-
-		numStr := e.formatLineNum(lineIdx+1, sw-1)
-		numPadded := strings.Repeat(" ", sw-1-len(numStr)) + numStr
-		gutter := gutterStyle.Render(numPadded)
-		sep := sepStyle.Render("│")
-
-		isCursorLine := lineIdx == e.cursor.Line && showCursor
-
-		runes := []rune(lineStr)
-		rw := make([]int, len(runes))
-		lineVisW := 0
-		for i, r := range runes {
-			w := rendering.StringWidth(string(r))
-			rw[i] = w
-			lineVisW += w
-		}
-
-		ri := 0
-		visCol := 0
-		for ri < len(runes) && visCol+rw[ri] <= e.scrollX {
-			visCol += rw[ri]
-			ri++
-		}
-
-		var textPart strings.Builder
-		for i := 0; i < textW; i++ {
-			vCol := e.scrollX + i
-
-			if vCol >= lineVisW {
-				for j := i; j < textW; j++ {
-					cvCol := e.scrollX + j
-					if cvCol == e.cursor.Col && isCursorLine {
-						textPart.WriteString(cursorFg.Render(" "))
-					} else {
-						textPart.WriteString(blankStyle.Render(" "))
-					}
-				}
-				break
-			}
-
-			for ri < len(runes) && vCol >= visCol+rw[ri] {
-				visCol += rw[ri]
-				ri++
-			}
-
-			if ri < len(runes) && vCol < visCol+rw[ri] && vCol < lineVisW {
-				if vCol == visCol {
-					if vCol == e.cursor.Col && isCursorLine {
-						textPart.WriteString(cursorFg.Render(string(runes[ri])))
-					} else {
-						textPart.WriteString(fgStyle.Render(string(runes[ri])))
-					}
-				} else {
-					if vCol == e.cursor.Col && isCursorLine {
-						textPart.WriteString(cursorFg.Render(" "))
-					} else {
-						textPart.WriteString(blankStyle.Render(" "))
-					}
-				}
-			} else {
-				if vCol == e.cursor.Col && isCursorLine {
-					textPart.WriteString(cursorFg.Render(" "))
-				} else {
-					textPart.WriteString(blankStyle.Render(" "))
-				}
-			}
-		}
-		textStr := textPart.String()
-
-		sbChar := " "
-		if y < len(sbLines) && sbLines[y] != "" {
-			sbChar = sbLines[y]
-		}
-		renderedSB := sbBgStyle.Render(sbChar)
-
-		innerLine := gutter + sep + textStr + renderedSB
-		innerVisW := rendering.VisibleWidth(innerLine)
-		rightPad := e.viewW - innerVisW
-		if rightPad < 0 {
-			rightPad = 0
-		}
-		line := padL + innerLine + strings.Repeat(" ", rightPad) + padR
-		lines = append(lines, line)
-	}
-
-	return lines
-}
-
-func (e *Editor) gutterWidth() int {
-	lineCount := e.buf.LineCount()
-	digits := 1
-	for n := lineCount; n >= 10; n /= 10 {
-		digits++
-	}
-	if digits < 2 {
-		digits = 2
-	}
-	return digits + 1
-}
-
-func (e *Editor) formatLineNum(n int, width int) string {
-	s := e.itoa(n)
-	if len(s) > width {
-		s = s[len(s)-width:]
-	}
-	return s
-}
-
-func (e *Editor) itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	s := ""
-	for n > 0 {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	return s
-}
-
-func (e *Editor) renderStatusLine(w int) string {
-	lc := e.buf.LineCount()
-	left := e.title
-	if e.modified {
-		left += " ●"
-	}
-	right := e.itoa(e.cursor.Line+1) + ":" + e.itoa(e.cursor.Col+1) + "  " + e.itoa(lc) + "L"
-	padding := w - len(left) - len(right) - 2
-	if padding < 1 {
-		padding = 1
-	}
-	return " " + left + strings.Repeat(" ", padding) + right + " "
-}
-
-func (e *Editor) cellColor(c color.Color) cell.Color {
-	return rendering.ThemeColorToCell(c)
-}
-
-func colToRuneIdxExpanded(runes []rune, col int) int {
-	visCol := 0
-	for i, r := range runes {
-		var w int
-		if r == '\t' {
-			w = tabWidth
-		} else {
-			w = rendering.StringWidth(string(r))
-		}
-		if visCol+w > col {
-			return i
-		}
-		if visCol+w == col {
-			return i + 1
-		}
-		visCol += w
-	}
-	return len(runes)
-}
-
-func (e *Editor) lineVisualWidth(lineIdx int) int {
-	b, err := e.buf.Line(lineIdx)
-	if err != nil {
-		return 0
-	}
-	s := strings.ReplaceAll(string(b), "\t", "    ")
-	return rendering.StringWidth(s)
-}
-
-func (e *Editor) lineRunes(lineIdx int) []rune {
-	b, err := e.buf.Line(lineIdx)
-	if err != nil {
-		return nil
-	}
-	return []rune(string(b))
-}
-
-func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
-	if !e.open {
-		return nil
-	}
-
-	switch msg := msg.(type) {
-	case CursorBlinkMsg:
-		idle := time.Since(e.lastActivity)
-		if idle < cursorBlinkInterval {
-			e.blinkActive = false
-			e.cursorVisible = true
-		} else if !e.blinkActive {
-			e.blinkActive = true
-			e.cursorVisible = false
-			e.lastToggle = time.Now()
-		} else if time.Since(e.lastToggle) >= cursorBlinkInterval {
-			e.cursorVisible = !e.cursorVisible
-			e.lastToggle = time.Now()
-		}
-		return e.blinkCmd()
-	case tea.KeyPressMsg:
-		e.cursorVisible = true
-		e.blinkActive = false
-		e.lastActivity = time.Now()
-		return e.handleKey(msg)
-	case tea.MouseWheelMsg:
-		e.cursorVisible = true
-		e.blinkActive = false
-		e.lastActivity = time.Now()
-		e.handleMouseWheel(msg)
-	case tea.MouseClickMsg:
-		e.cursorVisible = true
-		e.blinkActive = false
-		e.lastActivity = time.Now()
-		e.handleMouseClick(msg)
-	case tea.MouseMotionMsg:
-		sb, cmd := e.scrollbar.Update(msg)
-		e.scrollbar = sb
-		if cmd != nil && sb.GetScrollY() != e.scrollY {
-			e.scrollY = sb.GetScrollY()
-		}
-	case tea.MouseReleaseMsg:
-		sb, cmd := e.scrollbar.Update(msg)
-		e.scrollbar = sb
-		if sb.GetScrollY() != e.scrollY {
-			e.scrollY = sb.GetScrollY()
-		}
-		if cmd != nil {
-			return cmd
-		}
-	}
-	return nil
-}
-
-func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
-	scrollLines := 3
-	bodyH := e.viewH
-	if bodyH < 1 {
-		bodyH = 1
-	}
-	switch msg.Button {
-	case tea.MouseWheelUp:
-		e.scrollY -= scrollLines
-		if e.scrollY < 0 {
-			e.scrollY = 0
-		}
-	case tea.MouseWheelDown:
-		e.scrollY += scrollLines
-		maxScroll := e.buf.LineCount() - bodyH
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
-		if e.scrollY > maxScroll {
-			e.scrollY = maxScroll
-		}
-	}
-	lc := e.buf.LineCount()
-	e.scrollbar.SetTrackHeight(bodyH)
-	e.scrollbar.SetScrollInfo(lc, bodyH, e.scrollY)
-}
-
-func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
-	if msg.Button != tea.MouseLeft {
+	e.lspCtx, e.lspCancel = context.WithCancel(context.Background())
+	rootURI := e.lspRootURI()
+	e.lsp = NewLSPIntegration(cfg.cmd, cfg.args, rootURI)
+	e.lsp.onDiagnostics = e.setDiagnostics
+	if err := e.lsp.Start(e.lspCtx); err != nil {
+		e.lsp = nil
+		e.lspCancel()
+		e.lspStatus = LSPFailed
+		e.lspError = cfg.cmd + " failed to start: " + err.Error()
 		return
 	}
-	e.clearGoal()
-	mouse := msg.Mouse()
-	sw := e.gutterWidth()
-	sbW := scrollbar.ScrollbarWidth
-	textW := e.viewW - sw - sbW
-	if textW < 1 {
-		textW = 1
-	}
-
-	sbX := sw + textW
-	if mouse.X >= sbX {
-		sb, cmd := e.scrollbar.Update(msg)
-		e.scrollbar = sb
-		if cmd != nil {
-			if sb.GetScrollY() != e.scrollY {
-				e.scrollY = sb.GetScrollY()
-			}
-		}
-		return
-	}
-
-	lineIdx := e.scrollY + mouse.Y
-	if lineIdx >= e.buf.LineCount() {
-		lineIdx = e.buf.LineCount() - 1
-	}
-	if lineIdx < 0 {
-		lineIdx = 0
-	}
-
-	col := e.scrollX + mouse.X - sw
-	if col < 0 {
-		col = 0
-	}
-	lineVisW := e.lineVisualWidth(lineIdx)
-	if col > lineVisW {
-		col = lineVisW
-	}
-
-	e.cursor = Position{Line: lineIdx, Col: col}
-	e.ensureCursorVisible()
+	e.lspStatus = LSPConnected
+	e.lspConnected = true
+	langID := e.lspLanguageID(ext)
+	e.lsp.OpenFile(e.lspCtx, e.filePath, langID, string(e.buf.Bytes()))
+	e.syncLSP()
 }
 
-func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
-	switch key.Code {
-	case tea.KeyUp:
-		e.moveUp()
-	case tea.KeyDown:
-		e.moveDown()
-	case tea.KeyLeft:
-		e.moveLeft()
-	case tea.KeyRight:
-		e.moveRight()
-	case tea.KeyHome:
-		e.moveToLineStart()
-	case tea.KeyEnd:
-		e.moveToLineEnd()
-	case tea.KeyPgUp:
-		e.pageUp()
-	case tea.KeyPgDown:
-		e.pageDown()
-	case tea.KeyBackspace:
-		e.deleteBackward()
-	case tea.KeyDelete:
-		e.deleteForward()
-	case tea.KeyEnter:
-		e.insertNewline()
-	case tea.KeyTab:
-		e.insertTab()
-	case tea.KeyEsc:
-		return e.closeCmd()
-	default:
-		switch key.String() {
-		case "ctrl+s":
-			e.save()
-		case "ctrl+z":
-			e.undo()
-		case "ctrl+y":
-			e.redo()
+func (e *Editor) stopLSP() {
+	if e.lsp == nil {
+		return
+	}
+	e.lsp.CloseFile(e.lspCtx)
+	e.lsp.Stop()
+	e.lspCancel()
+	e.lsp = nil
+}
+
+func (e *Editor) syncLSP() {
+	if e.lsp == nil {
+		return
+	}
+	e.lsp.UpdateFile(e.lspCtx, string(e.buf.Bytes()))
+}
+
+func (e *Editor) setDiagnostics(diags []LSPDiagnostic) {
+	e.diagMu.Lock()
+	e.diagnostics = diags
+	byLine := make(map[int][]diagSpan, len(diags))
+	for _, d := range diags {
+		byLine[d.Line] = append(byLine[d.Line], diagSpan{
+			startCol: d.Col,
+			endCol:   d.EndCol,
+			severity: d.Severity,
+		})
+	}
+	e.diagByLine = byLine
+	e.diagMu.Unlock()
+}
+
+func (e *Editor) DiagnosticCounts() (errors, warnings, hints int) {
+	e.diagMu.RLock()
+	defer e.diagMu.RUnlock()
+	for _, d := range e.diagnostics {
+		switch d.Severity {
+		case DiagError:
+			errors++
+		case DiagWarning:
+			warnings++
 		default:
-			if len(key.Text) > 0 {
-				for _, r := range key.Text {
-					if r >= 32 {
-						e.insertRune(r)
-					}
-				}
+			hints++
+		}
+	}
+	return
+}
+
+func (e *Editor) lineDiagnostics(lineIdx int) []diagSpan {
+	e.diagMu.RLock()
+	defer e.diagMu.RUnlock()
+	if e.diagByLine == nil {
+		return nil
+	}
+	return e.diagByLine[lineIdx]
+}
+
+func (e *Editor) severityColor(severity int) string {
+	switch severity {
+	case DiagError:
+		return "#ff7b72"
+	case DiagWarning:
+		return "#d29922"
+	default:
+		return "#8b949e"
+	}
+}
+
+func (e *Editor) lspRootURI() string {
+	dir := filepath.Dir(e.filePath)
+	ext := strings.ToLower(filepath.Ext(e.filePath))
+	markers := []string{"go.mod", "package.json", "Cargo.toml", "pyproject.toml", "composer.json"}
+	preferred := map[string]string{
+		".go": "go.mod",
+		".rs": "Cargo.toml",
+		".py": "pyproject.toml",
+	}
+	if p, ok := preferred[ext]; ok {
+		markers = []string{p}
+	}
+	d := dir
+	for {
+		for _, m := range markers {
+			if _, err := os.Stat(filepath.Join(d, m)); err == nil {
+				return "file://" + d
 			}
 		}
-	}
-	return nil
-}
-
-func (e *Editor) closeCmd() tea.Cmd {
-	return func() tea.Msg {
-		return EditorCloseMsg{FilePath: e.filePath}
-	}
-}
-
-func (e *Editor) blinkCmd() tea.Cmd {
-	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
-		return CursorBlinkMsg(t)
-	})
-}
-
-func (e *Editor) BlinkCmd() tea.Cmd {
-	return e.blinkCmd()
-}
-
-type EditorCloseMsg struct {
-	FilePath string
-}
-
-func (e *Editor) moveUp() {
-	if e.cursor.Line <= 0 {
-		return
-	}
-	if !e.goalSet {
-		e.goalCol = e.cursor.Col
-		e.goalSet = true
-	}
-	e.cursor.Line--
-	e.applyGoalCol()
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) moveDown() {
-	maxLine := e.buf.LineCount() - 1
-	if maxLine < 0 {
-		maxLine = 0
-	}
-	if e.cursor.Line >= maxLine {
-		return
-	}
-	if !e.goalSet {
-		e.goalCol = e.cursor.Col
-		e.goalSet = true
-	}
-	e.cursor.Line++
-	e.applyGoalCol()
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) applyGoalCol() {
-	lineVisW := e.lineVisualWidth(e.cursor.Line)
-	if e.goalCol > lineVisW {
-		e.cursor.Col = lineVisW
-	} else {
-		e.cursor.Col = e.goalCol
-	}
-}
-
-func (e *Editor) clearGoal() {
-	e.goalSet = false
-	e.goalCol = 0
-}
-
-func (e *Editor) moveLeft() {
-	e.clearGoal()
-	if e.cursor.Col > 0 {
-		runes := e.lineRunes(e.cursor.Line)
-		if len(runes) > 0 {
-			ri := rendering.ColToRuneIdx(runes, e.cursor.Col)
-			if ri > 0 {
-				prevChW := rendering.StringWidth(string(runes[ri-1]))
-				e.cursor.Col -= prevChW
-			} else {
-				e.cursor.Col = 0
-			}
-		} else {
-			e.cursor.Col--
+		parent := filepath.Dir(d)
+		if parent == d {
+			return "file://" + dir
 		}
-	} else if e.cursor.Line > 0 {
-		e.cursor.Line--
-		e.cursor.Col = e.lineVisualWidth(e.cursor.Line)
-	}
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) moveRight() {
-	e.clearGoal()
-	lineVisW := e.lineVisualWidth(e.cursor.Line)
-	if e.cursor.Col < lineVisW {
-		runes := e.lineRunes(e.cursor.Line)
-		if len(runes) > 0 {
-			ri := rendering.ColToRuneIdx(runes, e.cursor.Col)
-			if ri < len(runes) {
-				chW := rendering.StringWidth(string(runes[ri]))
-				e.cursor.Col += chW
-				if e.cursor.Col > lineVisW {
-					e.cursor.Col = lineVisW
-				}
-			}
-		} else {
-			e.cursor.Col++
-		}
-	} else if e.cursor.Line < e.buf.LineCount()-1 {
-		e.cursor.Line++
-		e.cursor.Col = 0
-	}
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) moveToLineStart() {
-	e.clearGoal()
-	b, err := e.buf.Line(e.cursor.Line)
-	if err != nil {
-		e.cursor.Col = 0
-		e.ensureCursorVisible()
-		return
-	}
-	expLine := strings.ReplaceAll(string(b), "\t", "    ")
-	if e.cursor.Col > 0 {
-		firstNonWS := 0
-		for _, r := range expLine {
-			if r != ' ' {
-				break
-			}
-			firstNonWS++
-		}
-		if e.cursor.Col != firstNonWS {
-			e.cursor.Col = firstNonWS
-		} else {
-			e.cursor.Col = 0
-		}
-	}
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) moveToLineEnd() {
-	e.clearGoal()
-	e.cursor.Col = e.lineVisualWidth(e.cursor.Line)
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) pageUp() {
-	e.clearGoal()
-	pageSize := e.viewH - 2
-	if pageSize < 1 {
-		pageSize = 1
-	}
-	e.cursor.Line -= pageSize
-	if e.cursor.Line < 0 {
-		e.cursor.Line = 0
-	}
-	e.clampCol(e.cursor.Line)
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) pageDown() {
-	e.clearGoal()
-	pageSize := e.viewH - 2
-	if pageSize < 1 {
-		pageSize = 1
-	}
-	e.cursor.Line += pageSize
-	lastLine := e.buf.LineCount() - 1
-	if lastLine < 0 {
-		lastLine = 0
-	}
-	if e.cursor.Line >= lastLine {
-		e.cursor.Line = lastLine
-	}
-	e.clampCol(e.cursor.Line)
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) clampCol(lineIdx int) {
-	if lineIdx < 0 {
-		return
-	}
-	lineVisW := e.lineVisualWidth(lineIdx)
-	if e.cursor.Col > lineVisW {
-		e.cursor.Col = lineVisW
+		d = parent
 	}
 }
 
-func (e *Editor) insertRune(r rune) {
-	e.clearGoal()
-	cursorBefore := e.cursor
-	runeBytes := make([]byte, utf8.RuneLen(r))
-	utf8.EncodeRune(runeBytes, r)
-
-	e.buf.Insert(e.cursor, runeBytes)
-
-	cursorAfter := e.cursor
-	if r == '\n' {
-		cursorAfter.Line++
-		cursorAfter.Col = 0
-	} else {
-		cursorAfter.Col += rendering.StringWidth(string(r))
+func (e *Editor) lspLanguageID(ext string) string {
+	switch ext {
+	case ".go":
+		return "go"
+	case ".rs":
+		return "rust"
+	case ".py":
+		return "python"
+	case ".ts", ".tsx":
+		return "typescript"
+	case ".js", ".jsx":
+		return "javascript"
+	case ".css":
+		return "css"
+	case ".json":
+		return "json"
+	default:
+		return ""
 	}
-	e.cursor = cursorAfter
-	e.modified = true
-
-	e.recordChange(Change{
-		Type:         ActInsert,
-		Text:         runeBytes,
-		StartPos:     cursorBefore,
-		EndPos:       cursorAfter,
-		CursorBefore: cursorBefore,
-	})
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) insertNewline() {
-	e.insertRune('\n')
-}
-
-func (e *Editor) insertTab() {
-	e.insertRune(' ')
-	e.insertRune(' ')
-	e.insertRune(' ')
-	e.insertRune(' ')
-}
-
-func (e *Editor) deleteBackward() {
-	e.clearGoal()
-	if e.cursor.Col > 0 {
-		cursorBefore := e.cursor
-		lineBytes, err := e.buf.Line(e.cursor.Line)
-		if err != nil {
-			return
-		}
-		runes := []rune(string(lineBytes))
-		ri := rendering.ColToRuneIdx(runes, e.cursor.Col)
-		if ri > 0 {
-			ch := runes[ri-1]
-			chVisW := rendering.StringWidth(string(ch))
-			start := Position{Line: e.cursor.Line, Col: e.cursor.Col - chVisW}
-			end := e.cursor
-
-			e.buf.Delete(start, end)
-			e.cursor.Col -= chVisW
-			e.modified = true
-
-			e.recordChange(Change{
-				Type:         ActDelete,
-				Text:         []byte(string(ch)),
-				StartPos:     start,
-				EndPos:       end,
-				CursorBefore: cursorBefore,
-			})
-		}
-	} else if e.cursor.Line > 0 {
-		cursorBefore := e.cursor
-		prevLine := e.cursor.Line - 1
-		prevLineVisW := e.lineVisualWidth(prevLine)
-
-		start := Position{Line: prevLine, Col: prevLineVisW}
-		end := Position{Line: e.cursor.Line, Col: 0}
-
-		e.buf.Delete(start, end)
-		e.cursor.Line = prevLine
-		e.cursor.Col = prevLineVisW
-		e.modified = true
-
-		e.recordChange(Change{
-			Type:         ActDelete,
-			Text:         []byte("\n"),
-			StartPos:     start,
-			EndPos:       end,
-			CursorBefore: cursorBefore,
-		})
-	}
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) deleteForward() {
-	e.clearGoal()
-	lineBytes, err := e.buf.Line(e.cursor.Line)
-	if err != nil {
-		return
-	}
-	runes := []rune(string(lineBytes))
-	lineVisW := rendering.StringWidth(string(runes))
-
-	if e.cursor.Col < lineVisW {
-		cursorBefore := e.cursor
-		ri := rendering.ColToRuneIdx(runes, e.cursor.Col)
-		if ri < len(runes) {
-			ch := runes[ri]
-			chVisW := rendering.StringWidth(string(ch))
-			start := e.cursor
-			end := Position{Line: e.cursor.Line, Col: e.cursor.Col + chVisW}
-
-			e.buf.Delete(start, end)
-			e.modified = true
-
-			e.recordChange(Change{
-				Type:         ActDelete,
-				Text:         []byte(string(ch)),
-				StartPos:     start,
-				EndPos:       end,
-				CursorBefore: cursorBefore,
-			})
-		}
-	} else if e.cursor.Line < e.buf.LineCount()-1 {
-		cursorBefore := e.cursor
-		start := e.cursor
-		end := Position{Line: e.cursor.Line + 1, Col: 0}
-
-		e.buf.Delete(start, end)
-		e.modified = true
-
-		e.recordChange(Change{
-			Type:         ActDelete,
-			Text:         []byte("\n"),
-			StartPos:     start,
-			EndPos:       end,
-			CursorBefore: cursorBefore,
-		})
-	}
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) recordChange(c Change) {
-	if e.changeIndex < len(e.changes) {
-		e.changes = e.changes[:e.changeIndex]
-	}
-	e.changes = append(e.changes, c)
-	if len(e.changes) > e.maxHistory {
-		e.changes = e.changes[len(e.changes)-e.maxHistory:]
-	}
-	e.changeIndex = len(e.changes)
-}
-
-func (e *Editor) undo() {
-	if e.changeIndex <= 0 {
-		return
-	}
-	e.changeIndex--
-	c := e.changes[e.changeIndex]
-
-	switch c.Type {
-	case ActInsert:
-		e.buf.Delete(c.StartPos, c.EndPos)
-		e.cursor = c.CursorBefore
-	case ActDelete:
-		e.buf.Insert(c.StartPos, c.Text)
-		e.cursor = c.CursorBefore
-	}
-	e.modified = true
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) redo() {
-	if e.changeIndex >= len(e.changes) {
-		return
-	}
-	c := e.changes[e.changeIndex]
-	e.changeIndex++
-
-	switch c.Type {
-	case ActInsert:
-		e.buf.Insert(c.StartPos, c.Text)
-		e.cursor = c.EndPos
-	case ActDelete:
-		e.buf.Delete(c.StartPos, c.EndPos)
-		e.cursor = c.EndPos
-	}
-	e.modified = true
-	e.ensureCursorVisible()
-}
-
-func (e *Editor) save() {
-	err := e.buf.Save(e.filePath)
-	if err == nil {
-		e.modified = false
-	}
-}
-
-func (e *Editor) ensureCursorVisible() {
-	sw := e.gutterWidth()
-	sbW := scrollbar.ScrollbarWidth
-	availW := e.viewW - sw - sbW
-	if availW < 1 {
-		availW = 1
-	}
-	availH := e.viewH
-	if availH < 1 {
-		availH = 1
-	}
-
-	margin := scrollMargin
-	if margin > availH/2 {
-		margin = availH / 2
-	}
-	if margin < 1 {
-		margin = 1
-	}
-
-	if e.cursor.Line < e.scrollY+margin {
-		e.scrollY = e.cursor.Line - margin
-	}
-	if e.cursor.Line >= e.scrollY+availH-margin {
-		e.scrollY = e.cursor.Line - availH + margin + 1
-	}
-	if e.scrollY < 0 {
-		e.scrollY = 0
-	}
-	maxScroll := e.buf.LineCount() - availH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if e.scrollY > maxScroll {
-		e.scrollY = maxScroll
-	}
-
-	hMargin := 5
-	if hMargin > availW/2 {
-		hMargin = availW / 2
-	}
-	if hMargin < 1 {
-		hMargin = 1
-	}
-
-	if e.cursor.Col < e.scrollX+hMargin {
-		e.scrollX = e.cursor.Col - hMargin
-	}
-	if e.cursor.Col >= e.scrollX+availW-hMargin {
-		e.scrollX = e.cursor.Col - availW + hMargin + 1
-	}
-	if e.scrollX < 0 {
-		e.scrollX = 0
-	}
-
-	lc := e.buf.LineCount()
-	e.sbTrackH = e.viewH
-	e.scrollbar.SetTrackHeight(e.viewH)
-	e.scrollbar.SetScrollInfo(lc, e.viewH, e.scrollY)
 }
