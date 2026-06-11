@@ -35,6 +35,7 @@ import (
 //   - Right-aligned git status decoration
 //   - Selection and cursor highlight (full-width background)
 //   - Vertical scrolling with VSCode-style context around cursor
+//   - Sticky breadcrumb header when scrolled deep into the tree
 type TreeRenderer struct {
 	model        *FileTreeModel
 	theme        *theme.TreeColors
@@ -50,6 +51,11 @@ type TreeRenderer struct {
 	sbTrackHeight    int // effective scrollbar track height (0 = use view height)
 	lastScrollOffset int // for scrollbar change detection
 	lastTotalNodes   int // for scrollbar change detection
+
+	breadcrumbActive bool // true when scrollOffset > 0, a breadcrumb line replaces the first content line
+
+	hscrollOffset int // horizontal scroll offset for deeply nested items
+	maxContentW   int // widest visible line for horizontal scroll tracking
 }
 
 // NewTreeRenderer creates a TreeRenderer with the given model and icon
@@ -72,6 +78,7 @@ func defaultTreeConfig() *theme.TreeConfig {
 		IndentWidth:   2,
 		ShowIcons:     true,
 		ShowGitStatus: true,
+		ShowDiagnostics: true,
 		ShowHidden:    false,
 		DefaultWidth:  30,
 		MinWidth:      20,
@@ -102,6 +109,9 @@ func defaultTreeColors() *theme.TreeColors {
 		IconFile:     lipgloss.Color("#8b949e"),
 		IconSymlink:  lipgloss.Color("#79c0ff"),
 		BorderFg:     lipgloss.Color("#30363d"),
+		DiagError:    lipgloss.Color("#ff7b72"),
+		DiagWarning:  lipgloss.Color("#d29922"),
+		DiagInfo:     lipgloss.Color("#8b949e"),
 	}
 }
 
@@ -224,8 +234,10 @@ func hasSiblingBelow(node *TreeNode, depth int) bool {
 // right-aligned git status into one styled string.
 //
 // width is the available column width; the returned string is padded or
-// truncated to fit.  isCursor and isSelected control background highlighting.
-func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor, isSelected bool) string {
+// truncated to fit.  hOff is the horizontal scroll offset — when > 0,
+// indent/connector columns are reduced and the name gets more room.
+// isCursor and isSelected control background highlighting.
+func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int, isCursor, isSelected bool) string {
 	if node == nil {
 		return strings.Repeat(" ", width)
 	}
@@ -258,7 +270,18 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 	noColorStyle := bgFn(lipgloss.NewStyle())
 	indentW := cfg.IndentWidth
 
+	remainingHOff := hOff
+
 	for d := 0; d < node.Depth; d++ {
+		colW := 1 + indentW
+		if remainingHOff >= colW {
+			remainingHOff -= colW
+			continue
+		}
+		if remainingHOff > 0 {
+			// Partially visible indent column — skip the remainder.
+			remainingHOff = 0
+		}
 		if hasSiblingBelow(node, d) {
 			b.WriteString(indentStyle.Render("│"))
 		} else {
@@ -269,26 +292,27 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 
 	// Connector at the current level.
 	if node.Depth >= 0 {
-		if isLastChild(node) {
-			b.WriteString(indentStyle.Render("└── "))
+		if remainingHOff >= 4 {
+			remainingHOff -= 4
 		} else {
-			b.WriteString(indentStyle.Render("├── "))
+			if remainingHOff > 0 {
+				remainingHOff = 0
+			}
+			if isLastChild(node) {
+				b.WriteString(indentStyle.Render("└── "))
+			} else {
+				b.WriteString(indentStyle.Render("├── "))
+			}
 		}
 	}
 
 	// ---- expand/collapse indicator ----
-	// When icons are enabled and the resolver is available, the file-type
-	// icon section below handles directory icons (including expand/collapse
-	// state) via ResolveIcon. Skip this section in that case to avoid
-	// rendering the directory icon twice.
 	if node.IsDir && !(cfg.ShowIcons && r.iconResolver != nil) {
 		var indicator string
 		if r.iconResolver != nil && r.iconResolver.UseNerdFont {
 			if node.IsExpanded {
-				//  (nf-md-folder_open)
 				indicator = "\uf07c"
 			} else {
-				//  (nf-md-folder)
 				indicator = "\uf07b"
 			}
 		} else {
@@ -298,14 +322,22 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 				indicator = "▸"
 			}
 		}
-		dirStyle := lipgloss.NewStyle().Foreground(colors.DirFg)
-		if isCursor {
-			dirStyle = dirStyle.Background(colors.CursorBg)
-		} else if isSelected {
-			dirStyle = dirStyle.Background(colors.SelectedBg)
+		indW := rendering.StringWidth(indicator)
+		if remainingHOff >= indW+1 {
+			remainingHOff -= indW + 1
+		} else {
+			if remainingHOff > 0 {
+				remainingHOff = 0
+			}
+			dirStyle := lipgloss.NewStyle().Foreground(colors.DirFg)
+			if isCursor {
+				dirStyle = dirStyle.Background(colors.CursorBg)
+			} else if isSelected {
+				dirStyle = dirStyle.Background(colors.SelectedBg)
+			}
+			b.WriteString(dirStyle.Render(indicator))
+			b.WriteString(noColorStyle.Render(" "))
 		}
-		b.WriteString(dirStyle.Render(indicator))
-		b.WriteString(noColorStyle.Render(" "))
 	}
 
 	// ---- file type icon ----
@@ -315,28 +347,51 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 		if iconCol == nil {
 			iconCol = colors.FileFg
 		}
-		iconStyle := lipgloss.NewStyle().Foreground(iconCol)
-		if isCursor {
-			iconStyle = iconStyle.Background(colors.CursorBg)
-		} else if isSelected {
-			iconStyle = iconStyle.Background(colors.SelectedBg)
-		}
 		if iconRes.Icon != "" {
-			b.WriteString(iconStyle.Render(iconRes.Icon))
-			b.WriteString(noColorStyle.Render(" "))
+			icW := rendering.StringWidth(iconRes.Icon)
+			if remainingHOff >= icW+1 {
+				remainingHOff -= icW + 1
+			} else {
+				if remainingHOff > 0 {
+					remainingHOff = 0
+				}
+				iconStyle := lipgloss.NewStyle().Foreground(iconCol)
+				if isCursor {
+					iconStyle = iconStyle.Background(colors.CursorBg)
+				} else if isSelected {
+					iconStyle = iconStyle.Background(colors.SelectedBg)
+				}
+				b.WriteString(iconStyle.Render(iconRes.Icon))
+				b.WriteString(noColorStyle.Render(" "))
+			}
 		}
 	}
 
 	// ---- file / directory name ----
-	// Truncate the name to prevent overflow beyond the allocated width.
-	// Measure what has already been written (indent, connector, icons)
-	// and reserve space for the git decoration.
 	usedW := rendering.StringWidth(rendering.StripAnsi(b.String()))
 	gitReserveW := 0
-	if cfg.ShowGitStatus && node.GitStatus != GitNone {
-		gitReserveW = rendering.StringWidth(StatusString(node.GitStatus)) + 2
+	if cfg.ShowGitStatus {
+		displayStatus := node.GitStatus
+		if node.IsDir && displayStatus == GitNone && node.AggregateStatus != GitNone {
+			displayStatus = node.AggregateStatus
+		}
+		if displayStatus != GitNone {
+			gitReserveW = rendering.StringWidth(StatusString(displayStatus)) + 2
+		}
 	}
-	nameMaxW := width - usedW - gitReserveW
+	diagReserveW := 0
+	if cfg.ShowDiagnostics && node.DiagnosticCount > 0 {
+		diagReserveW = 6 // " ✕N ⚠N" approximate, min space
+		if node.DiagErrors > 0 {
+			ew := rendering.StringWidth(itoa(node.DiagErrors))
+			diagReserveW += 1 + ew // "✕" + count
+		}
+		if node.DiagWarnings > 0 {
+			ww := rendering.StringWidth(itoa(node.DiagWarnings))
+			diagReserveW += 1 + ww // "⚠" + count
+		}
+	}
+	nameMaxW := width - usedW - gitReserveW - diagReserveW
 	if nameMaxW < 3 {
 		nameMaxW = 3
 	}
@@ -361,11 +416,15 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 	b.WriteString(nameStyle.Render(nameText))
 
 	// ---- git status decoration (right-aligned) ----
-	if cfg.ShowGitStatus && node.GitStatus != GitNone {
-		gitStr := StatusString(node.GitStatus)
+	displayStatus := node.GitStatus
+	if node.IsDir && displayStatus == GitNone && node.AggregateStatus != GitNone {
+		displayStatus = node.AggregateStatus
+	}
+	if cfg.ShowGitStatus && displayStatus != GitNone {
+		gitStr := StatusString(displayStatus)
 		if gitStr != "" {
 			var gitStyle lipgloss.Style
-			switch node.GitStatus {
+			switch displayStatus {
 			case GitModified:
 				gitStyle = lipgloss.NewStyle().Foreground(colors.GitModified)
 			case GitStaged:
@@ -387,19 +446,61 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 				gitStyle = gitStyle.Background(colors.SelectedBg)
 			}
 
-			// Calculate the column where the git indicator should start
-			// (right-aligned).
 			raw := b.String()
 			contentW := rendering.StringWidth(rendering.StripAnsi(raw))
 			gitW := rendering.StringWidth(gitStr)
 
-			// Leave at least 1 space of padding.
 			padNeeded := 1
 			gitStart := width - gitW - padNeeded
 			if gitStart > contentW {
 				pad := gitStart - contentW
 				b.WriteString(noColorStyle.Render(strings.Repeat(" ", pad)))
 				b.WriteString(gitStyle.Render(gitStr))
+			}
+		}
+	}
+
+	// ---- diagnostic count indicator (right-aligned) ----
+	if cfg.ShowDiagnostics && node.DiagnosticCount > 0 {
+		var diagParts []string
+		if node.DiagErrors > 0 {
+			errStyle := lipgloss.NewStyle().Foreground(colors.DiagError)
+			if isCursor {
+				errStyle = errStyle.Background(colors.CursorBg)
+			} else if isSelected {
+				errStyle = errStyle.Background(colors.SelectedBg)
+			}
+			diagParts = append(diagParts, errStyle.Render("✕"+itoa(node.DiagErrors)))
+		}
+		if node.DiagWarnings > 0 {
+			warnStyle := lipgloss.NewStyle().Foreground(colors.DiagWarning)
+			if isCursor {
+				warnStyle = warnStyle.Background(colors.CursorBg)
+			} else if isSelected {
+				warnStyle = warnStyle.Background(colors.SelectedBg)
+			}
+			diagParts = append(diagParts, warnStyle.Render("⚠"+itoa(node.DiagWarnings)))
+		}
+		if node.DiagHints > 0 {
+			infoStyle := lipgloss.NewStyle().Foreground(colors.DiagInfo)
+			if isCursor {
+				infoStyle = infoStyle.Background(colors.CursorBg)
+			} else if isSelected {
+				infoStyle = infoStyle.Background(colors.SelectedBg)
+			}
+			diagParts = append(diagParts, infoStyle.Render("ℹ"+itoa(node.DiagHints)))
+		}
+		if len(diagParts) > 0 {
+			diagStr := strings.Join(diagParts, " ")
+			raw := b.String()
+			contentW := rendering.StringWidth(rendering.StripAnsi(raw))
+			diagW := rendering.StringWidth(rendering.StripAnsi(diagStr))
+			padNeeded := 1
+			diagStart := width - diagW - padNeeded
+			if diagStart > contentW {
+				pad := diagStart - contentW
+				b.WriteString(noColorStyle.Render(strings.Repeat(" ", pad)))
+				b.WriteString(diagStr)
 			}
 		}
 	}
@@ -419,8 +520,47 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, isCursor
 // RenderToLines – ANSI string slice
 // ---------------------------------------------------------------------------
 
+// breadcrumbLine renders the sticky parent-hierarchy header shown when the
+// tree is scrolled past the root.  It displays the chain of ancestor directory
+// names leading to the first visible node, using '▸' as a separator.
+func (r *TreeRenderer) breadcrumbLine(width int) string {
+	nodes := r.model.VisibleNodes()
+	if r.scrollOffset <= 0 || r.scrollOffset >= len(nodes) {
+		return strings.Repeat(" ", width)
+	}
+
+	colors := r.theme
+	if colors == nil {
+		colors = defaultTreeColors()
+	}
+
+	first := nodes[r.scrollOffset]
+	var names []string
+	for p := first.Parent; p != nil; p = p.Parent {
+		names = append([]string{p.Name}, names...)
+	}
+	if len(names) == 0 {
+		return strings.Repeat(" ", width)
+	}
+
+	bc := strings.Join(names, " ▸ ")
+	style := lipgloss.NewStyle().Foreground(colors.DirFg).Bold(true)
+	rendered := style.Render(bc)
+	visW := rendering.StringWidth(rendering.StripAnsi(rendered))
+	if visW < width {
+		rendered += strings.Repeat(" ", width-visW)
+	}
+	if visW > width {
+		rendered = rendering.TruncateVisual(rendered, width, "…")
+	}
+	return rendered
+}
+
 // RenderToLines renders the visible portion of the tree (from scrollOffset
 // to scrollOffset+height) as a slice of ANSI strings.
+//
+// When scrollOffset > 0, the first rendered line is a sticky breadcrumb
+// header showing the parent-directory chain of the first visible node.
 //
 // This is the simpler rendering path, useful for debugging or for Bubble
 // Tea View() implementations that work with ANSI strings.  Each line is
@@ -448,6 +588,12 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 		r.scrollOffset = 0
 	}
 
+	// Show breadcrumb when scrolled past the root.
+	r.breadcrumbActive = r.scrollOffset > 0 && total > 0
+
+	// Sync horizontal scroll offset from model.
+	r.hscrollOffset = r.model.HScrollOffset()
+
 	// Update scrollbar state — only call SetScrollInfo when position or
 	// content size actually changes to avoid resetting the fade timer on
 	// every render frame.
@@ -468,17 +614,43 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 	sbView := r.sb.View()
 	sbLines := strings.Split(sbView, "\n")
 
+	bc := int(0)
+	if r.breadcrumbActive {
+		bc = 1
+	}
+
+	// Track maximum content width for horizontal scroll.
+	r.maxContentW = 0
+	iW := 2
+	if r.config != nil && r.config.IndentWidth > 0 {
+		iW = r.config.IndentWidth
+	}
+	for _, node := range nodes {
+		d := node.Depth
+		if d < 0 {
+			d = 0
+		}
+		w := d*(iW+1) + 4 + rendering.StringWidth(node.Name) + 3
+		if w > r.maxContentW {
+			r.maxContentW = w
+		}
+	}
+
 	lines := make([]string, height)
 	for i := 0; i < height; i++ {
-		nodeIdx := r.scrollOffset + i
 		var line string
-		if nodeIdx >= total {
-			line = strings.Repeat(" ", contentW)
+		if r.breadcrumbActive && i == 0 {
+			line = r.breadcrumbLine(contentW)
 		} else {
-			node := nodes[nodeIdx]
-			isCursor := nodeIdx == cursorIdx
-			isSelected := node.Path == selectedPath && !isCursor
-			line = r.formatLine(node, nodeIdx, contentW, isCursor, isSelected)
+			nodeIdx := r.scrollOffset + i - bc
+			if nodeIdx >= 0 && nodeIdx < total {
+				node := nodes[nodeIdx]
+				isCursor := nodeIdx == cursorIdx
+				isSelected := node.Path == selectedPath && !isCursor
+				line = r.formatLine(node, nodeIdx, contentW, r.hscrollOffset, isCursor, isSelected)
+			} else {
+				line = strings.Repeat(" ", contentW)
+			}
 		}
 		sbChar := " "
 		if i < len(sbLines) && sbLines[i] != "" {
@@ -647,11 +819,15 @@ func (r *TreeRenderer) Render(surf *surface.Surface, ctx *widget.RenderContext) 
 		x = buf.WriteString(x, y, node.Name, nameCellColor, bg, nameAttr)
 
 		// ---- git status decoration (right-aligned) ----
-		if cfg.ShowGitStatus && node.GitStatus != GitNone {
-			gitStr := StatusString(node.GitStatus)
+		displayStatus := node.GitStatus
+		if node.IsDir && displayStatus == GitNone && node.AggregateStatus != GitNone {
+			displayStatus = node.AggregateStatus
+		}
+		if cfg.ShowGitStatus && displayStatus != GitNone {
+			gitStr := StatusString(displayStatus)
 			if gitStr != "" {
 				var gitCellColor cell.Color
-				switch node.GitStatus {
+				switch displayStatus {
 				case GitModified:
 					gitCellColor = tc(colors.GitModified, cell.NewTrueColor(210, 153, 34))
 				case GitStaged:
@@ -729,8 +905,10 @@ func (r *TreeRenderer) ComputeLayout(width, height int) int {
 
 // ScrollToCursor adjusts scrollOffset so that the cursor item is visible.
 //
-// VSCode-style: keeps 3 lines of context above/below the cursor when
-// possible.  If the cursor is already visible, no adjustment is made.
+// Gentle edge-based scrolling: only scrolls when the cursor is strictly
+// outside the viewport — scroll up by 1 when cursor is above the top,
+// scroll down by 1 when cursor is below the bottom.  Page-sized movements
+// (HandleScrollbarMsg, GoToTop, etc.) set scrollOffset directly.
 func (r *TreeRenderer) ScrollToCursor() {
 	nodes := r.model.VisibleNodes()
 	if len(nodes) == 0 {
@@ -748,20 +926,15 @@ func (r *TreeRenderer) ScrollToCursor() {
 		cursorIdx = len(nodes) - 1
 	}
 
-	contextLines := 3
-
-	// If cursor is above the viewport, scroll up.
-	if cursorIdx < r.scrollOffset+contextLines {
-		r.scrollOffset = cursorIdx - contextLines
-		if r.scrollOffset < 0 {
-			r.scrollOffset = 0
-		}
+	// If cursor is strictly above the viewport, scroll up by 1.
+	if cursorIdx < r.scrollOffset {
+		r.scrollOffset = cursorIdx
 		return
 	}
 
-	// If cursor is below the viewport, scroll down.
-	if cursorIdx >= r.scrollOffset+r.height-contextLines {
-		r.scrollOffset = cursorIdx - r.height + contextLines + 1
+	// If cursor is strictly below the viewport, scroll down by 1.
+	if cursorIdx >= r.scrollOffset+r.height {
+		r.scrollOffset = cursorIdx - r.height + 1
 		if r.scrollOffset < 0 {
 			r.scrollOffset = 0
 		}
@@ -847,4 +1020,17 @@ func (r *TreeRenderer) String() string {
 	nodes := r.model.VisibleNodes()
 	return fmt.Sprintf("TreeRenderer{total=%d, offset=%d, h=%d, w=%d}",
 		len(nodes), r.scrollOffset, r.height, r.width)
+}
+
+// itoa converts an integer to a string. Avoids fmt.Sprintf overhead.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	s := ""
+	for n > 0 {
+		s = string(rune('0'+n%10)) + s
+		n /= 10
+	}
+	return s
 }

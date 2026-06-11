@@ -86,6 +86,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	cmd := m.editor.HandleEvent(msg)
+	m.updateDiagHoverPopupFromCursor()
 	if cmd != nil {
 		return m, cmd
 	}
@@ -93,6 +94,8 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	if msg.Code == tea.KeyEsc {
 		fw := m.windowManager.Focused()
 		if fw != nil {
@@ -104,7 +107,20 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		}
 		return m, nil
 	}
-	return m, nil
+
+	// Forward other keys to the focused window's content.
+	if fw := m.windowManager.Focused(); fw != nil {
+		switch fw.ID {
+		case "textoverlay":
+			return m.handleTextOverlayKey(msg, &cmds)
+		default:
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

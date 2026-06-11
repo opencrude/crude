@@ -34,6 +34,13 @@ const (
 // TreeNode
 // ---------------------------------------------------------------------------
 
+// DiagCounts holds LSP diagnostic counts for a single file.
+type DiagCounts struct {
+	Errors   int
+	Warnings int
+	Hints    int
+}
+
 // TreeNode represents a single entry in the file tree.
 type TreeNode struct {
 	// Name is the display name (filename without path).
@@ -64,6 +71,11 @@ type TreeNode struct {
 	// GitStatus carries the git status for this node.
 	GitStatus GitStatus
 
+	// AggregateStatus is the most severe git status among all descendants.
+	// Computed recursively after any tree mutation. GitNone if no descendant
+	// has any status. Only meaningful for directories.
+	AggregateStatus GitStatus
+
 	// Loading is true when children are being fetched (async).
 	Loading bool
 
@@ -75,6 +87,132 @@ type TreeNode struct {
 
 	// ModTime is the file modification time, used by SortByModified.
 	ModTime time.Time
+
+	// DiagnosticCount aggregates LSP diagnostic counts for this node.
+	// For files: the count of diagnostics on this file.
+	// For directories: the sum of all descendant diagnostic counts
+	// (computed by recomputeAggregateDiagnostics).
+	DiagnosticCount int
+	// DiagErrors is the count of error-level diagnostics.
+	DiagErrors int
+	// DiagWarnings is the count of warning-level diagnostics.
+	DiagWarnings int
+	// DiagHints is the count of info/hint-level diagnostics.
+	DiagHints int
+}
+
+// recomputeAggregateStatuses recomputes AggregateStatus for every loaded
+// directory node by scanning the flat git status map (which knows about ALL
+// files in the repo, not just expanded children) and propagating each status
+// up to the nearest loaded ancestor directory.
+//
+// This is O(git_statuses * depth) and scales to very large repos because it
+// never walks unloaded subtrees — it uses the git resolver's complete map.
+func (m *FileTreeModel) recomputeAggregateStatuses() {
+	if m.gitResolver == nil {
+		return
+	}
+
+	statuses := m.gitResolver.AllStatuses()
+	repoPath := m.gitResolver.RepoPath()
+
+	// Clear all existing aggregate statuses.
+	var clearAgg func(n *TreeNode)
+	clearAgg = func(n *TreeNode) {
+		n.AggregateStatus = GitNone
+		if n.IsDir {
+			for _, c := range n.Children {
+				clearAgg(c)
+			}
+		}
+	}
+	clearAgg(m.Root)
+
+	// For each git status entry, walk up the directory hierarchy until we
+	// find a loaded node in m.nodes, then propagate up to root.
+	for relPath, status := range statuses {
+		if status == GitNone {
+			continue
+		}
+		absPath := filepath.Join(repoPath, relPath)
+		dir := filepath.Dir(absPath)
+		for {
+			if node, ok := m.nodes[dir]; ok {
+				if status > node.AggregateStatus {
+					node.AggregateStatus = status
+				}
+				// Propagate up to root.
+				for p := node.Parent; p != nil; p = p.Parent {
+					if node.AggregateStatus > p.AggregateStatus {
+						p.AggregateStatus = node.AggregateStatus
+					}
+				}
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic aggregation
+// ---------------------------------------------------------------------------
+
+// SetDiagnostics updates the per-file diagnostic counts for the given path
+// and recomputes aggregates for all affected ancestor directories.
+// This method is safe for concurrent calls (it acquires the model's write lock).
+func (m *FileTreeModel) SetDiagnostics(path string, errors, warnings, hints int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.diagnosticResolver[path] = DiagCounts{Errors: errors, Warnings: warnings, Hints: hints}
+	m.recomputeAggregateDiagnostics()
+}
+
+// recomputeAggregateDiagnostics recomputes DiagnosticCount/DiagErrors/
+// DiagWarnings/DiagHints for every loaded directory node by scanning the
+// per-file diagnostic counts and propagating them up to root.
+func (m *FileTreeModel) recomputeAggregateDiagnostics() {
+	// Clear all existing aggregate diagnostic counts.
+	var clearDiag func(n *TreeNode)
+	clearDiag = func(n *TreeNode) {
+		n.DiagnosticCount = 0
+		n.DiagErrors = 0
+		n.DiagWarnings = 0
+		n.DiagHints = 0
+		if n.IsDir {
+			for _, c := range n.Children {
+				clearDiag(c)
+			}
+		}
+	}
+	clearDiag(m.Root)
+
+	// First pass: set file-level counts from the resolver.
+	for path, counts := range m.diagnosticResolver {
+		if node, ok := m.nodes[path]; ok {
+			node.DiagnosticCount = counts.Errors + counts.Warnings + counts.Hints
+			node.DiagErrors = counts.Errors
+			node.DiagWarnings = counts.Warnings
+			node.DiagHints = counts.Hints
+		}
+	}
+
+	// Second pass: propagate all counts up from files to root.
+	for path := range m.diagnosticResolver {
+		if node, ok := m.nodes[path]; ok {
+			for p := node.Parent; p != nil; p = p.Parent {
+				p.DiagnosticCount += node.DiagnosticCount
+				p.DiagErrors += node.DiagErrors
+				p.DiagWarnings += node.DiagWarnings
+				p.DiagHints += node.DiagHints
+			}
+		}
+	}
 }
 
 // IsLeaf returns true if this node is a file (not a directory).
@@ -140,6 +278,10 @@ type FileTreeModel struct {
 	// gitResolver resolves git status (may be nil).
 	gitResolver *GitStatusResolver
 
+	// diagnosticResolver stores per-file diagnostic counts (may be nil).
+	// The map key is the absolute file path.
+	diagnosticResolver map[string]DiagCounts
+
 	// watcher watches for file system changes (may be nil).
 	watcher *Watcher
 
@@ -154,6 +296,9 @@ type FileTreeModel struct {
 
 	// filterActive indicates whether filter input mode is active.
 	filterActive bool
+
+	// hscrollOffset is the horizontal scroll offset for deeply nested items.
+	hscrollOffset int
 
 	// mu protects all mutable state for thread-safe access.
 	mu sync.RWMutex
@@ -171,12 +316,13 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 	}
 
 	m := &FileTreeModel{
-		rootPath:     absPath,
-		nodes:        make(map[string]*TreeNode),
-		sortBy:       SortByType,
-		showHidden:   false,
-		iconResolver: NewIconResolver(),
-		gitResolver:  NewGitStatusResolver(absPath),
+		rootPath:           absPath,
+		nodes:              make(map[string]*TreeNode),
+		sortBy:             SortByType,
+		showHidden:         false,
+		iconResolver:       NewIconResolver(),
+		gitResolver:        NewGitStatusResolver(absPath),
+		diagnosticResolver: make(map[string]DiagCounts),
 	}
 
 	// Create the root node.
@@ -272,12 +418,15 @@ func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
 			}
 		}
 
-		// Re-use existing node if available (preserves git status, etc.).
+		// Re-use existing node if available (updates git status).
 		if existingNode, ok := existing[name]; ok {
 			existingNode.IsDir = isDir
 			existingNode.IsSymlink = isSymlink
 			existingNode.Hidden = isHidden
 			existingNode.ModTime = modTime
+			if m.gitResolver != nil {
+				existingNode.GitStatus = m.gitResolver.Resolve(childPath)
+			}
 			children = append(children, existingNode)
 			delete(existing, name)
 			continue
@@ -529,6 +678,8 @@ func (m *FileTreeModel) rebuildVisibleNodes() {
 	} else {
 		m.unfilteredWalk(m.Root)
 	}
+
+	m.recomputeAggregateStatuses()
 }
 
 // unfilteredWalk appends visible nodes depth-first with no active filter.
@@ -767,6 +918,9 @@ func (m *FileTreeModel) handleFileModified(path string) {
 	if m.gitResolver != nil {
 		node.GitStatus = m.gitResolver.Resolve(path)
 	}
+
+	// Recompute aggregate statuses from the git status map.
+	m.recomputeAggregateStatuses()
 }
 
 func (m *FileTreeModel) handleFileRenamed(oldPath, newPath string) {

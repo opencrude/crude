@@ -55,6 +55,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		e.blinkActive = false
 		e.lastActivity = time.Now()
 		e.handleMouseClick(msg)
+		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseMotionMsg:
 		if e.selecting {
 			pos, ok := e.mouseToPosition(msg.Mouse().X, msg.Mouse().Y)
@@ -62,6 +63,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 				e.selEnd = pos
 			}
 		}
+		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 		sb, cmd := e.scrollbar.Update(msg)
 		e.scrollbar = sb
 		if cmd != nil && sb.GetScrollY() != e.scrollY {

@@ -147,6 +147,49 @@ func StringWidth(s string) int {
 	return uniseg.StringWidth(s)
 }
 
+// SkipVisualPrefix strips the first n visual characters from an ANSI string,
+// preserving ANSI escape sequences. If n exceeds the string width, an empty
+// string is returned.
+func SkipVisualPrefix(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	plain := StripAnsi(s)
+	srcW := uniseg.StringWidth(plain)
+	if n >= srcW {
+		return ""
+	}
+
+	state := -1
+	skipped := 0
+	i := 0
+	runes := []rune(s)
+	for i < len(runes) && skipped < n {
+		if runes[i] == '\x1b' {
+			// Skip ANSI escape sequence
+			j := i + 1
+			for j < len(runes) && runes[j] != 'm' {
+				j++
+			}
+			if j < len(runes) {
+				i = j + 1
+			} else {
+				i = j
+			}
+			continue
+		}
+		cluster, _, _, newState := uniseg.StepString(string(runes[i:]), state)
+		state = newState
+		skipped += uniseg.StringWidth(cluster)
+		i += len([]rune(cluster))
+	}
+
+	if i >= len(runes) {
+		return ""
+	}
+	return string(runes[i:])
+}
+
 func TruncateVisual(s string, maxW int, tail string) string {
 	plain := StripAnsi(s)
 	if uniseg.StringWidth(plain) <= maxW {

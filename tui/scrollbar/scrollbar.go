@@ -184,7 +184,7 @@ func (s ScrollBar) ThumbBounds() (thumbTop, thumbHeight int) {
 }
 
 func (s ScrollBar) View() string {
-	if s.visibility == Hidden || s.trackH == 0 || s.visibleH == 0 || s.contentH == 0 {
+	if s.visibility == Hidden || s.trackH == 0 || s.visibleH == 0 || s.contentH == 0 || s.contentH <= s.visibleH {
 		return ""
 	}
 	thumbTop, thumbH := s.ThumbBounds()

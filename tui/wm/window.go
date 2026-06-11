@@ -50,6 +50,8 @@ type FloatingWindow struct {
 	state WindowState
 	// focused indicates whether this window has keyboard focus.
 	focused bool
+	// focusable controls whether the window can receive focus and mouse input.
+	focusable bool
 
 	// Decoration configuration.
 	borderStyle BorderStyle
@@ -60,13 +62,13 @@ type FloatingWindow struct {
 	contentW, contentH int
 
 	// Interaction state (transient, per-interaction).
-	dragging    bool
-	dragStartX  int
-	dragStartY  int
-	dragOffX    int
-	dragOffY    int
-	resizing    bool
-	resizeEdge  Edge
+	dragging     bool
+	dragStartX   int
+	dragStartY   int
+	dragOffX     int
+	dragOffY     int
+	resizing     bool
+	resizeEdge   Edge
 	resizeStartW int
 	resizeStartH int
 
@@ -102,6 +104,7 @@ func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts .
 		movable:      true, // movable by default
 		resizable:    true, // resizable by default
 		closable:     true, // closable by default
+		focusable:    true, // focusable by default
 		visible:      true,
 		state:        WindowNormal,
 		contentDirty: true, // needs initial render
