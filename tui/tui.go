@@ -156,6 +156,9 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		if _, err := program.Run(); err != nil {
 			lg.Error("TUI", "program_error", "error", err.Error())
 		}
+		if t.app != nil {
+			t.app.StopLSP()
+		}
 		if t.OnQuit != nil {
 			t.OnQuit()
 		}

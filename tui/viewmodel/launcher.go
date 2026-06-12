@@ -233,6 +233,7 @@ func (m *App) launcherSelect() tea.Cmd {
 	if sessionID == "" {
 		m.setMode(ModeChat)
 		m.launcher = nil
+		m.startLSPForWorkspace()
 		m.logger.Info("SESSION", "new_session_from_launcher")
 		return nil
 	}

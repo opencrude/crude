@@ -32,7 +32,7 @@ func (e *Editor) insertRune(r rune) {
 		CursorBefore: cursorBefore,
 	})
 	e.ensureCursorVisible()
-	e.syncLSP()
+	e.	notifyContentChanged()
 }
 
 func (e *Editor) insertText(s string) {
@@ -65,7 +65,7 @@ func (e *Editor) insertText(s string) {
 		CursorBefore: cursorBefore,
 	})
 	e.ensureCursorVisible()
-	e.syncLSP()
+	e.	notifyContentChanged()
 }
 
 func (e *Editor) insertNewline() {
@@ -124,7 +124,7 @@ func (e *Editor) deleteBackward() {
 		})
 	}
 	e.ensureCursorVisible()
-	e.syncLSP()
+	e.	notifyContentChanged()
 }
 
 func (e *Editor) deleteForward() {
@@ -174,7 +174,7 @@ func (e *Editor) deleteForward() {
 		})
 	}
 	e.ensureCursorVisible()
-	e.syncLSP()
+	e.	notifyContentChanged()
 }
 
 func (e *Editor) recordChange(c Change) {
@@ -206,7 +206,7 @@ func (e *Editor) undo() {
 	e.invalidateEditorCaches()
 	e.modified = true
 	e.ensureCursorVisible()
-	e.syncLSP()
+	e.	notifyContentChanged()
 }
 
 func (e *Editor) redo() {
@@ -227,7 +227,7 @@ func (e *Editor) redo() {
 	e.invalidateEditorCaches()
 	e.modified = true
 	e.ensureCursorVisible()
-	e.syncLSP()
+	e.	notifyContentChanged()
 }
 
 func (e *Editor) save() {
@@ -235,5 +235,5 @@ func (e *Editor) save() {
 	if err == nil {
 		e.modified = false
 	}
-	e.syncLSP()
+	e.	notifyContentChanged()
 }

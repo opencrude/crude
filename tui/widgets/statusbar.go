@@ -117,7 +117,7 @@ func (s *StatusBar) View() string {
 
 	diagParts := ""
 	if s.lspVisible {
-		if s.diagErrors > 0 || s.diagWarnings > 0 || s.diagHints > 0 {
+		if s.diagErrors > 0 || s.diagWarnings > 0 {
 			var parts []string
 			if s.diagErrors > 0 {
 				parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
@@ -125,24 +125,18 @@ func (s *StatusBar) View() string {
 			if s.diagWarnings > 0 {
 				parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
 			}
-			if s.diagHints > 0 {
-				parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Muted).Render(fmt.Sprintf("ℹ%d", s.diagHints)))
-			}
 			diagParts = " " + strings.Join(parts, " ")
 		} else if s.lspStatus != "" {
 			dimmed := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
 			diagParts = " " + dimmed.Render(s.lspStatus)
 		}
-	} else if s.diagErrors > 0 || s.diagWarnings > 0 || s.diagHints > 0 {
+	} else if s.diagErrors > 0 || s.diagWarnings > 0 {
 		var parts []string
 		if s.diagErrors > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
 		}
 		if s.diagWarnings > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
-		}
-		if s.diagHints > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Muted).Render(fmt.Sprintf("ℹ%d", s.diagHints)))
 		}
 		diagParts = " " + strings.Join(parts, " ")
 	}

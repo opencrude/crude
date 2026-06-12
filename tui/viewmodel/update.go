@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"crude/sessiondb"
 	"crude/provider"
+	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
@@ -146,20 +148,33 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	connected, status, errMsg := m.lspManager.Status()
+	statusbarLSP := connected || status == editor.LSPConnected || status == editor.LSPStarting || errMsg != ""
+
 	if m.activeEditorView != "" && m.editor.IsOpen() {
 		errs, warns, hints := m.editor.DiagnosticCounts()
 		m.statusbar.SetDiagnostics(errs, warns, hints)
 		m.statusbar.SetLSPVisible(true)
-		connected := m.editor.LSPConnected()
-		if connected {
+		if connected || status == editor.LSPConnected {
 			m.statusbar.SetLSPStatus("")
+		} else if errMsg != "" {
+			m.statusbar.SetLSPStatus("LSP: " + errMsg)
+		} else if status == editor.LSPStarting {
+			m.statusbar.SetLSPStatus("LSP: connecting…")
 		} else {
-			errMsg := m.editor.LSPError()
-			if errMsg != "" {
-				m.statusbar.SetLSPStatus("LSP: " + errMsg)
-			} else {
-				m.statusbar.SetLSPStatus("LSP: connecting…")
-			}
+			m.statusbar.SetLSPStatus("")
+		}
+	} else if statusbarLSP {
+		// No editor open, but LSP is running — show project-wide diagnostics.
+		errs, warns, hints := m.lspManager.ProjectDiagnosticCounts()
+		m.statusbar.SetDiagnostics(errs, warns, hints)
+		m.statusbar.SetLSPVisible(true)
+		if status == editor.LSPStarting {
+			m.statusbar.SetLSPStatus("LSP: connecting…")
+		} else if errMsg != "" {
+			m.statusbar.SetLSPStatus("LSP: " + errMsg)
+		} else {
+			m.statusbar.SetLSPStatus("")
 		}
 	} else {
 		m.statusbar.SetDiagnostics(0, 0, 0)
@@ -472,6 +487,12 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	}
 
 	if m.isEditorTabTitle(tab.Title) {
+		path := m.editorPathFromTabTitle(tab.Title)
+		if m.lspManager != nil {
+			lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			m.lspManager.CloseFile(lspCtx, path)
+		}
 		m.editor.Close()
 		m.activeEditorView = ""
 	}
@@ -601,10 +622,29 @@ func (m *App) handleTabSwitch() {
 	} else if m.isEditorTabTitle(activeTab.Title) {
 		m.activeAgentView = ""
 		path := m.editorPathFromTabTitle(activeTab.Title)
+		prevPath := m.activeEditorView
 		m.activeEditorView = path
 		if m.editor.FilePath() != path || !m.editor.IsOpen() {
 			if err := m.editor.Open(path); err != nil {
 				m.logger.Error("EDITOR", "reload_on_switch", "error", err.Error())
+			}
+			// Close the previous file on LSP, open the new one.
+			if prevPath != "" && prevPath != path && m.lspManager != nil {
+				lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				m.lspManager.CloseFile(lspCtx, prevPath)
+			}
+			if m.lspManager != nil {
+				lspCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				m.lspManager.OpenFile(lspCtx, path, m.editor.Value())
+			}
+			// Apply cached diagnostics immediately so the editor shows
+			// the last-known state while waiting for the server to respond.
+			if m.lspManager != nil {
+				if cached := m.lspManager.FileDiagnostics(path); len(cached) > 0 {
+					m.editor.SetDiagnostics(cached)
+				}
 			}
 		}
 	}

@@ -169,8 +169,37 @@ func (m *FileTreeModel) SetDiagnostics(path string, errors, warnings, hints int)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.diagnosticResolver[path] = DiagCounts{Errors: errors, Warnings: warnings, Hints: hints}
+	fp := filepath.Clean(path)
+	m.diagnosticResolver[fp] = DiagCounts{Errors: errors, Warnings: warnings, Hints: hints}
+
+	// If the tree node doesn't exist yet (file is in a collapsed directory),
+	// load the parent directory so the node becomes available.  The directory
+	// stays collapsed — we only materialise the tree node so its diagnostic
+	// counts are set and propagated upward for aggregate display.
+	if _, ok := m.nodes[fp]; !ok {
+		m.ensureDiagnosticsNode(fp)
+	}
+
 	m.recomputeAggregateDiagnostics()
+}
+
+// ensureDiagnosticsNode recursively loads parent directories until the
+// given file path has a node in m.nodes.  It does NOT expand any directory
+// — children are loaded but the dir remains collapsed.
+func (m *FileTreeModel) ensureDiagnosticsNode(fp string) {
+	parentPath := filepath.Dir(fp)
+	if parentPath == fp || parentPath == "." {
+		return // at filesystem root, can't go higher
+	}
+	parentNode, ok := m.nodes[parentPath]
+	if !ok {
+		// Grandparent not loaded yet — recurse.
+		m.ensureDiagnosticsNode(parentPath)
+		parentNode, ok = m.nodes[parentPath]
+	}
+	if ok && parentNode.Children == nil {
+		_ = m.loadDirectory(parentNode)
+	}
 }
 
 // recomputeAggregateDiagnostics recomputes DiagnosticCount/DiagErrors/
@@ -680,6 +709,7 @@ func (m *FileTreeModel) rebuildVisibleNodes() {
 	}
 
 	m.recomputeAggregateStatuses()
+	m.recomputeAggregateDiagnostics()
 }
 
 // unfilteredWalk appends visible nodes depth-first with no active filter.
