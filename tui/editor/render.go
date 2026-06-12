@@ -479,21 +479,18 @@ func (e *Editor) renderStatusLine(w int) string {
 	if e.modified {
 		left += " ●"
 	}
-	if e.lspConnected {
-		errs, warns, hints := e.DiagnosticCounts()
-		if errs > 0 || warns > 0 || hints > 0 {
-			var parts []string
-			if errs > 0 {
-				parts = append(parts, "✕"+e.itoa(errs))
-			}
-			if warns > 0 {
-				parts = append(parts, "⚠"+e.itoa(warns))
-			}
-			if hints > 0 {
-				parts = append(parts, "ℹ"+e.itoa(hints))
-			}
-			left += "  " + strings.Join(parts, " ")
+	if errs, warns, hints := e.DiagnosticCounts(); errs > 0 || warns > 0 || hints > 0 {
+		var parts []string
+		if errs > 0 {
+			parts = append(parts, "✕"+e.itoa(errs))
 		}
+		if warns > 0 {
+			parts = append(parts, "⚠"+e.itoa(warns))
+		}
+		if hints > 0 {
+			parts = append(parts, "ℹ"+e.itoa(hints))
+		}
+		left += "  " + strings.Join(parts, " ")
 	}
 	right := e.itoa(e.cursor.Line+1) + ":" + e.itoa(e.cursor.Col+1) + "  " + e.itoa(lc) + "L"
 	padding := w - rendering.VisibleWidth(left) - rendering.VisibleWidth(right) - 2

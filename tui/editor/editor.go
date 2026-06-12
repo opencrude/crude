@@ -1,11 +1,7 @@
 package editor
 
 import (
-	"context"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -81,21 +77,12 @@ type Editor struct {
 	watchChanged chan struct{}
 	watchDone    chan struct{}
 
-	lsp          *LSPIntegration
-	lspCtx       context.Context
-	lspCancel    context.CancelFunc
-	lspConnected bool
-	lspStatus    LSPStatus
-	lspError     string
-
 	diagMu      sync.RWMutex
 	diagnostics []LSPDiagnostic
 	diagByLine  map[int][]diagSpan
 
-	// onDiagnostics is called (asynchronously) whenever LSP diagnostics are
-	// updated. The callback receives the absolute file path and the new
-	// diagnostic counts (errors, warnings, hints).
-	onDiagnostics func(path string, errors, warnings, hints int)
+	// onContentChanged is called after every edit so the App can sync LSP.
+	onContentChanged func(filePath, text string)
 
 	// hover state for diagnostic tooltip popup.
 	hoverMessages []string
@@ -165,13 +152,11 @@ func (e *Editor) Open(path string) error {
 	e.invalidateEditorCaches()
 	e.initChroma()
 	e.startWatching()
-	e.startLSP()
 
 	return nil
 }
 
 func (e *Editor) Close() {
-	e.stopLSP()
 	e.stopWatching()
 	e.open = false
 	e.filePath = ""
@@ -196,7 +181,7 @@ func (e *Editor) Reload() error {
 	e.modified = false
 	e.chromaCache = nil
 	e.invalidateEditorCaches()
-	e.syncLSP()
+	e.notifyContentChanged()
 	return nil
 }
 
@@ -221,107 +206,82 @@ func (e *Editor) Value() string        { return string(e.buf.Bytes()) }
 func (e *Editor) CursorLine() int      { return e.cursor.Line }
 func (e *Editor) CursorCol() int       { return e.cursor.Col }
 func (e *Editor) LineCount() int       { return e.buf.LineCount() }
-func (e *Editor) LSPConnected() bool   { return e.lspConnected }
-func (e *Editor) LSPStatus() LSPStatus { return e.lspStatus }
-func (e *Editor) LSPError() string     { return e.lspError }
-func (e *Editor) resetLSPStatus() {
-	e.lspStatus = LSPIdle
-	e.lspError = ""
+func (e *Editor) notifyContentChanged() {
+	if e.onContentChanged != nil {
+		e.onContentChanged(e.filePath, string(e.buf.Bytes()))
+	}
 }
 
-func (e *Editor) startLSP() {
-	e.lspConnected = false
-	e.resetLSPStatus()
-	ext := strings.ToLower(filepath.Ext(e.filePath))
-	cfg, ok := lspServers[ext]
-	if !ok {
-		e.lspError = "no LSP server configured for " + ext
-		return
-	}
-	e.lspStatus = LSPStarting
-	if _, err := exec.LookPath(cfg.cmd); err != nil {
-		e.lspStatus = LSPFailed
-		e.lspError = cfg.cmd + " not found in PATH"
-		return
-	}
-	e.lspCtx, e.lspCancel = context.WithCancel(context.Background())
-	rootURI := e.lspRootURI()
-	e.lsp = NewLSPIntegration(cfg.cmd, cfg.args, rootURI)
-	e.lsp.onDiagnostics = e.setDiagnostics
-	if err := e.lsp.Start(e.lspCtx); err != nil {
-		e.lsp = nil
-		e.lspCancel()
-		e.lspStatus = LSPFailed
-		e.lspError = cfg.cmd + " failed to start: " + err.Error()
-		return
-	}
-	e.lspStatus = LSPConnected
-	e.lspConnected = true
-	langID := e.lspLanguageID(ext)
-	e.lsp.OpenFile(e.lspCtx, e.filePath, langID, string(e.buf.Bytes()))
-	e.syncLSP()
+// SetOnContentChanged registers a callback for text edits.
+func (e *Editor) SetOnContentChanged(fn func(filePath, text string)) {
+	e.onContentChanged = fn
 }
 
-func (e *Editor) stopLSP() {
-	if e.lsp == nil {
-		return
+// lspColToVisualCol converts a UTF-16 code unit offset from the start of a line
+// (as reported by LSP in Position.Character) to a visual column position,
+// accounting for tab expansion and wide characters.
+func lspColToVisualCol(rawLine []byte, lspCol int) int {
+	visCol := 0
+	utf16Units := 0
+	for _, r := range string(rawLine) {
+		if utf16Units >= lspCol {
+			break
+		}
+		// BMP (U+0000–U+FFFF) = 1 UTF-16 code unit,
+		// supplementary (U+10000+) = 2 code units (surrogate pair).
+		utf16Len := 1
+		if r > 0xFFFF {
+			utf16Len = 2
+		}
+		if utf16Units+utf16Len > lspCol {
+			break
+		}
+		visCol += runeVisualWidth(r)
+		utf16Units += utf16Len
 	}
-	e.lsp.CloseFile(e.lspCtx)
-	e.lsp.Stop()
-	e.lspCancel()
-	e.lsp = nil
+	return visCol
 }
 
-func (e *Editor) syncLSP() {
-	if e.lsp == nil {
-		return
-	}
-	e.lsp.UpdateFile(e.lspCtx, string(e.buf.Bytes()))
-}
-
-// SetOnDiagnostics registers a callback invoked when LSP diagnostics arrive.
-// The callback receives the file path and error/warning/hint counts.
-func (e *Editor) SetOnDiagnostics(fn func(path string, errors, warnings, hints int)) {
-	e.onDiagnostics = fn
-}
-
-func (e *Editor) setDiagnostics(diags []LSPDiagnostic) {
+// SetDiagnostics replaces the current diagnostics for the editor.
+func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 	e.diagMu.Lock()
-	e.diagnostics = diags
-	byLine := make(map[int][]diagSpan, len(diags))
-	errs, warns, hints := 0, 0, 0
-	for _, d := range diags {
+
+	// Convert LSP column offsets (UTF-16 code units from line start) to
+	// visual column offsets (tab-expanded, wide-char-aware). Must make a
+	// copy so we don't mutate the caller's slice (e.g. LSPManager cache).
+	converted := make([]LSPDiagnostic, len(diags))
+	copy(converted, diags)
+	for i, d := range converted {
+		rawLine, err := e.buf.Line(d.Line)
+		if err == nil {
+			converted[i].Col = lspColToVisualCol(rawLine, d.Col)
+			converted[i].EndCol = lspColToVisualCol(rawLine, d.EndCol)
+		}
+	}
+	e.diagnostics = converted
+
+	byLine := make(map[int][]diagSpan, len(converted))
+	for _, d := range converted {
+		startCol := d.Col
 		endCol := d.EndCol
-		if endCol <= d.Col {
+		if endCol <= startCol {
 			// LSP sometimes sends EndCol=0 for whole-line diagnostics.
-			// Fall back to the visual width of the line, same as diagnosticsAt.
+			// Fall back to the visual width of the line.
 			lw := e.lineVisualWidth(d.Line)
-			if lw > d.Col {
+			if lw > startCol {
 				endCol = lw
 			} else {
-				endCol = d.Col + 1
+				endCol = startCol + 1
 			}
 		}
 		byLine[d.Line] = append(byLine[d.Line], diagSpan{
-			startCol: d.Col,
+			startCol: startCol,
 			endCol:   endCol,
 			severity: d.Severity,
 		})
-		switch d.Severity {
-		case DiagError:
-			errs++
-		case DiagWarning:
-			warns++
-		default:
-			hints++
-		}
 	}
 	e.diagByLine = byLine
 	e.diagMu.Unlock()
-
-	if e.onDiagnostics != nil {
-		e.onDiagnostics(e.filePath, errs, warns, hints)
-	}
 }
 
 func (e *Editor) DiagnosticCounts() (errors, warnings, hints int) {
@@ -466,50 +426,4 @@ func (e *Editor) severityColor(severity int) string {
 	}
 }
 
-func (e *Editor) lspRootURI() string {
-	dir := filepath.Dir(e.filePath)
-	ext := strings.ToLower(filepath.Ext(e.filePath))
-	markers := []string{"go.mod", "package.json", "Cargo.toml", "pyproject.toml", "composer.json"}
-	preferred := map[string]string{
-		".go": "go.mod",
-		".rs": "Cargo.toml",
-		".py": "pyproject.toml",
-	}
-	if p, ok := preferred[ext]; ok {
-		markers = []string{p}
-	}
-	d := dir
-	for {
-		for _, m := range markers {
-			if _, err := os.Stat(filepath.Join(d, m)); err == nil {
-				return "file://" + d
-			}
-		}
-		parent := filepath.Dir(d)
-		if parent == d {
-			return "file://" + dir
-		}
-		d = parent
-	}
-}
 
-func (e *Editor) lspLanguageID(ext string) string {
-	switch ext {
-	case ".go":
-		return "go"
-	case ".rs":
-		return "rust"
-	case ".py":
-		return "python"
-	case ".ts", ".tsx":
-		return "typescript"
-	case ".js", ".jsx":
-		return "javascript"
-	case ".css":
-		return "css"
-	case ".json":
-		return "json"
-	default:
-		return ""
-	}
-}

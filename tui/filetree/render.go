@@ -384,11 +384,11 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 		diagReserveW = 6 // " ✕N ⚠N" approximate, min space
 		if node.DiagErrors > 0 {
 			ew := rendering.StringWidth(itoa(node.DiagErrors))
-			diagReserveW += 1 + ew // "✕" + count
+			diagReserveW += 1 + ew
 		}
 		if node.DiagWarnings > 0 {
 			ww := rendering.StringWidth(itoa(node.DiagWarnings))
-			diagReserveW += 1 + ww // "⚠" + count
+			diagReserveW += 1 + ww
 		}
 	}
 	nameMaxW := width - usedW - gitReserveW - diagReserveW
@@ -415,7 +415,10 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 	}
 	b.WriteString(nameStyle.Render(nameText))
 
-	// ---- git status decoration (right-aligned) ----
+	// ---- right-aligned decorations: git status + diagnostic counts ----
+	var decorations []string
+
+	// Git status.
 	displayStatus := node.GitStatus
 	if node.IsDir && displayStatus == GitNone && node.AggregateStatus != GitNone {
 		displayStatus = node.AggregateStatus
@@ -445,24 +448,12 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 			} else if isSelected {
 				gitStyle = gitStyle.Background(colors.SelectedBg)
 			}
-
-			raw := b.String()
-			contentW := rendering.StringWidth(rendering.StripAnsi(raw))
-			gitW := rendering.StringWidth(gitStr)
-
-			padNeeded := 1
-			gitStart := width - gitW - padNeeded
-			if gitStart > contentW {
-				pad := gitStart - contentW
-				b.WriteString(noColorStyle.Render(strings.Repeat(" ", pad)))
-				b.WriteString(gitStyle.Render(gitStr))
-			}
+			decorations = append(decorations, gitStyle.Render(gitStr))
 		}
 	}
 
-	// ---- diagnostic count indicator (right-aligned) ----
+	// Diagnostic counts (errors + warnings only; info/hints hidden).
 	if cfg.ShowDiagnostics && node.DiagnosticCount > 0 {
-		var diagParts []string
 		if node.DiagErrors > 0 {
 			errStyle := lipgloss.NewStyle().Foreground(colors.DiagError)
 			if isCursor {
@@ -470,7 +461,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 			} else if isSelected {
 				errStyle = errStyle.Background(colors.SelectedBg)
 			}
-			diagParts = append(diagParts, errStyle.Render("✕"+itoa(node.DiagErrors)))
+			decorations = append(decorations, errStyle.Render("✕"+itoa(node.DiagErrors)))
 		}
 		if node.DiagWarnings > 0 {
 			warnStyle := lipgloss.NewStyle().Foreground(colors.DiagWarning)
@@ -479,29 +470,20 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 			} else if isSelected {
 				warnStyle = warnStyle.Background(colors.SelectedBg)
 			}
-			diagParts = append(diagParts, warnStyle.Render("⚠"+itoa(node.DiagWarnings)))
+			decorations = append(decorations, warnStyle.Render("⚠"+itoa(node.DiagWarnings)))
 		}
-		if node.DiagHints > 0 {
-			infoStyle := lipgloss.NewStyle().Foreground(colors.DiagInfo)
-			if isCursor {
-				infoStyle = infoStyle.Background(colors.CursorBg)
-			} else if isSelected {
-				infoStyle = infoStyle.Background(colors.SelectedBg)
-			}
-			diagParts = append(diagParts, infoStyle.Render("ℹ"+itoa(node.DiagHints)))
-		}
-		if len(diagParts) > 0 {
-			diagStr := strings.Join(diagParts, " ")
-			raw := b.String()
-			contentW := rendering.StringWidth(rendering.StripAnsi(raw))
-			diagW := rendering.StringWidth(rendering.StripAnsi(diagStr))
-			padNeeded := 1
-			diagStart := width - diagW - padNeeded
-			if diagStart > contentW {
-				pad := diagStart - contentW
-				b.WriteString(noColorStyle.Render(strings.Repeat(" ", pad)))
-				b.WriteString(diagStr)
-			}
+	}
+
+	if len(decorations) > 0 {
+		decoStr := noColorStyle.Render(" ") + strings.Join(decorations, noColorStyle.Render(" "))
+		raw := b.String()
+		contentW := rendering.StringWidth(rendering.StripAnsi(raw))
+		decoW := rendering.StringWidth(rendering.StripAnsi(decoStr))
+		decoStart := width - decoW
+		if decoStart > contentW {
+			pad := decoStart - contentW
+			b.WriteString(noColorStyle.Render(strings.Repeat(" ", pad)))
+			b.WriteString(decoStr)
 		}
 	}
 

@@ -270,7 +270,7 @@ func TestSetDiagnostics_StoresAndCounts(t *testing.T) {
 		{Line: 2, Col: 0, EndCol: 1, Severity: DiagInfo, Message: "info1"},
 		{Line: 0, Col: 10, EndCol: 15, Severity: DiagHint, Message: "hint1"},
 	}
-	e.setDiagnostics(diags)
+	e.SetDiagnostics(diags)
 	errs, warns, hints := e.DiagnosticCounts()
 	assert.Equal(t, 1, errs)
 	assert.Equal(t, 1, warns)
@@ -279,7 +279,7 @@ func TestSetDiagnostics_StoresAndCounts(t *testing.T) {
 
 func TestSetDiagnostics_Empty(t *testing.T) {
 	e := editorWithTheme()
-	e.setDiagnostics(nil)
+	e.SetDiagnostics(nil)
 	errs, warns, hints := e.DiagnosticCounts()
 	assert.Equal(t, 0, errs)
 	assert.Equal(t, 0, warns)
@@ -292,7 +292,7 @@ func TestSetDiagnostics_MultipleSameLine(t *testing.T) {
 		{Line: 0, Col: 0, EndCol: 3, Severity: DiagError, Message: "e1"},
 		{Line: 0, Col: 5, EndCol: 8, Severity: DiagError, Message: "e2"},
 	}
-	e.setDiagnostics(diags)
+	e.SetDiagnostics(diags)
 	errs, warns, hints := e.DiagnosticCounts()
 	assert.Equal(t, 2, errs)
 	assert.Equal(t, 0, warns)
@@ -301,8 +301,8 @@ func TestSetDiagnostics_MultipleSameLine(t *testing.T) {
 
 func TestSetDiagnostics_ReplacesPrevious(t *testing.T) {
 	e := editorWithTheme()
-	e.setDiagnostics([]LSPDiagnostic{{Severity: DiagError, Message: "old"}})
-	e.setDiagnostics([]LSPDiagnostic{{Severity: DiagWarning, Message: "new"}})
+	e.SetDiagnostics([]LSPDiagnostic{{Severity: DiagError, Message: "old"}})
+	e.SetDiagnostics([]LSPDiagnostic{{Severity: DiagWarning, Message: "new"}})
 	errs, warns, _ := e.DiagnosticCounts()
 	assert.Equal(t, 0, errs, "old errors should be replaced")
 	assert.Equal(t, 1, warns, "new warning should be counted")
@@ -313,7 +313,7 @@ func TestSetDiagnostics_ThreadSafety(t *testing.T) {
 	done := make(chan bool)
 	go func() {
 		for i := 0; i < 100; i++ {
-			e.setDiagnostics([]LSPDiagnostic{
+			e.SetDiagnostics([]LSPDiagnostic{
 				{Line: 0, Col: 0, EndCol: 1, Severity: DiagError, Message: "race"},
 			})
 		}
@@ -330,11 +330,13 @@ func TestSetDiagnostics_ThreadSafety(t *testing.T) {
 
 func TestLineDiagnostics_ByLine(t *testing.T) {
 	e := editorWithTheme()
+	_, err := e.buf.Insert(Position{}, []byte("abcde\nabc\n"))
+	assert.NoError(t, err)
 	diags := []LSPDiagnostic{
 		{Line: 0, Col: 0, EndCol: 5, Severity: DiagError, Message: "e"},
 		{Line: 1, Col: 0, EndCol: 3, Severity: DiagWarning, Message: "w"},
 	}
-	e.setDiagnostics(diags)
+	e.SetDiagnostics(diags)
 	line0 := e.lineDiagnostics(0)
 	assert.Len(t, line0, 1)
 	assert.Equal(t, DiagError, line0[0].severity)
@@ -344,6 +346,8 @@ func TestLineDiagnostics_ByLine(t *testing.T) {
 	line1 := e.lineDiagnostics(1)
 	assert.Len(t, line1, 1)
 	assert.Equal(t, DiagWarning, line1[0].severity)
+	assert.Equal(t, 0, line1[0].startCol)
+	assert.Equal(t, 3, line1[0].endCol)
 
 	line2 := e.lineDiagnostics(2)
 	assert.Nil(t, line2, "line without diagnostics should return nil")
@@ -351,7 +355,9 @@ func TestLineDiagnostics_ByLine(t *testing.T) {
 
 func TestLineDiagnostics_Span(t *testing.T) {
 	e := editorWithTheme()
-	e.setDiagnostics([]LSPDiagnostic{
+	_, err := e.buf.Insert(Position{}, []byte("abcdefgh"))
+	assert.NoError(t, err)
+	e.SetDiagnostics([]LSPDiagnostic{
 		{Line: 0, Col: 3, EndCol: 7, Severity: DiagError},
 	})
 	spans := e.lineDiagnostics(0)
@@ -359,6 +365,27 @@ func TestLineDiagnostics_Span(t *testing.T) {
 	s := spans[0]
 	assert.Equal(t, 3, s.startCol)
 	assert.Equal(t, 7, s.endCol)
+}
+
+func TestLineDiagnostics_TabConversion(t *testing.T) {
+	e := editorWithTheme()
+	_, err := e.buf.Insert(Position{}, []byte("\t\tfoo\nbar"))
+	assert.NoError(t, err)
+	e.SetDiagnostics([]LSPDiagnostic{
+		{Line: 0, Col: 2, EndCol: 5, Severity: DiagError, Message: "on-foo"},
+		{Line: 1, Col: 1, EndCol: 4, Severity: DiagWarning, Message: "on-bar"},
+	})
+	spans := e.lineDiagnostics(0)
+	assert.Len(t, spans, 1)
+	s := spans[0]
+	assert.Equal(t, 8, s.startCol, "two tabs before 'foo' → visual col 8")
+	assert.Equal(t, 11, s.endCol, "visual end: foo spans cols 8-10 → endCol 11")
+
+	spans = e.lineDiagnostics(1)
+	assert.Len(t, spans, 1)
+	s = spans[0]
+	assert.Equal(t, 1, s.startCol, "bar starts at col 1")
+	assert.Equal(t, 3, s.endCol, "bar is 3 wide; EndCol=4 snapped to visual width 3")
 }
 
 // ── diagSeverityAtCol tests ────────────────────────────────────────
@@ -487,57 +514,47 @@ func TestLSPIntegration_New(t *testing.T) {
 
 func TestLSPIntegration_UpdateDiagnostics(t *testing.T) {
 	l := NewLSPIntegration("gopls", nil, "/test")
-	// Directly call the internal update method via diagnostics
+	// Open a file so that diagnostics for it are accepted.
 	l.mu.Lock()
-	l.fileURI = "file:///test.go"
+	l.openFiles["/tmp/test.go"] = &openFileState{uri: "file:///tmp/test.go"}
 	l.mu.Unlock()
 
-	// Manually append diagnostics (simulating updateDiagnostics)
-	l.mu.Lock()
-	l.diagnostics = append(l.diagnostics, LSPDiagnostic{
-		Line: 0, Col: 0, EndCol: 5, Severity: DiagError, Message: "test error",
+	var got []LSPDiagnostic
+	l.OnDiagnostics(func(fp string, diags []LSPDiagnostic) {
+		got = diags
 	})
-	out := make([]LSPDiagnostic, len(l.diagnostics))
-	copy(out, l.diagnostics)
-	l.mu.Unlock()
 
-	diags := l.Diagnostics()
-	assert.Len(t, diags, 1)
-	assert.Equal(t, "test error", diags[0].Message)
-	assert.Equal(t, DiagError, diags[0].Severity)
-}
-
-func TestLSPIntegration_DiagnosticsCopy(t *testing.T) {
-	l := NewLSPIntegration("gopls", nil, "/test")
+	// Simulate updateDiagnostics via callback.
 	l.mu.Lock()
-	l.diagnostics = append(l.diagnostics, LSPDiagnostic{Severity: DiagError})
+	cb := l.onDiagnostics
 	l.mu.Unlock()
+	if cb != nil {
+		cb("/tmp/test.go", []LSPDiagnostic{
+			{Line: 0, Col: 0, EndCol: 5, Severity: DiagError, Message: "test error"},
+		})
+	}
 
-	diags := l.Diagnostics()
-	l.mu.Lock()
-	l.diagnostics[0].Severity = DiagWarning
-	l.mu.Unlock()
-
-	assert.Equal(t, DiagError, diags[0].Severity, "returned copy should be independent")
+	assert.Len(t, got, 1)
+	assert.Equal(t, "test error", got[0].Message)
+	assert.Equal(t, DiagError, got[0].Severity)
 }
 
 func TestLSPIntegration_OnDiagnosticsCallback(t *testing.T) {
 	l := NewLSPIntegration("gopls", nil, "/test")
 	called := false
-	l.onDiagnostics = func(diags []LSPDiagnostic) {
+	l.OnDiagnostics(func(fp string, diags []LSPDiagnostic) {
 		called = true
 		assert.Len(t, diags, 1)
 		assert.Equal(t, DiagWarning, diags[0].Severity)
-	}
+	})
 
 	l.mu.Lock()
-	l.diagnostics = append(l.diagnostics, LSPDiagnostic{Severity: DiagWarning})
-	out := make([]LSPDiagnostic, len(l.diagnostics))
-	copy(out, l.diagnostics)
+	cb := l.onDiagnostics
 	l.mu.Unlock()
-
-	if l.onDiagnostics != nil {
-		l.onDiagnostics(out)
+	if cb != nil {
+		cb("/tmp/test.go", []LSPDiagnostic{
+			{Severity: DiagWarning},
+		})
 	}
 
 	assert.True(t, called, "onDiagnostics callback should have been called")
@@ -548,7 +565,7 @@ func TestLSPIntegration_OnDiagnosticsCallback(t *testing.T) {
 func TestLSPServers_Go(t *testing.T) {
 	cfg, ok := lspServers[".go"]
 	assert.True(t, ok)
-	assert.Equal(t, "gopls", cfg.cmd)
+	assert.Equal(t, "gopls", cfg.Cmd)
 }
 
 func TestLSPServers_Markdown(t *testing.T) {
@@ -559,13 +576,13 @@ func TestLSPServers_Markdown(t *testing.T) {
 func TestLSPServers_Rust(t *testing.T) {
 	cfg, ok := lspServers[".rs"]
 	assert.True(t, ok)
-	assert.Equal(t, "rust-analyzer", cfg.cmd)
+	assert.Equal(t, "rust-analyzer", cfg.Cmd)
 }
 
 func TestLSPServers_Python(t *testing.T) {
 	cfg, ok := lspServers[".py"]
 	assert.True(t, ok)
-	assert.Equal(t, "pyright-langserver", cfg.cmd)
+	assert.Equal(t, "pyright-langserver", cfg.Cmd)
 }
 
 func TestLSPServers_Ruby(t *testing.T) {
@@ -576,6 +593,38 @@ func TestLSPServers_Ruby(t *testing.T) {
 func TestLSPServers_Unknown(t *testing.T) {
 	_, ok := lspServers[".xyz"]
 	assert.False(t, ok)
+}
+
+func TestLSPServers_C(t *testing.T) {
+	for _, ext := range []string{".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".c++", ".h++"} {
+		cfg, ok := lspServers[ext]
+		assert.True(t, ok, ext)
+		assert.Equal(t, "clangd", cfg.Cmd, ext)
+	}
+}
+
+func TestLSPServers_CSharp(t *testing.T) {
+	cfg, ok := lspServers[".cs"]
+	assert.True(t, ok)
+	assert.Equal(t, "omnisharp", cfg.Cmd)
+}
+
+func TestLSPServers_Zig(t *testing.T) {
+	cfg, ok := lspServers[".zig"]
+	assert.True(t, ok)
+	assert.Equal(t, "zls", cfg.Cmd)
+}
+
+func TestLSPServers_Odin(t *testing.T) {
+	cfg, ok := lspServers[".odin"]
+	assert.True(t, ok)
+	assert.Equal(t, "ols", cfg.Cmd)
+}
+
+func TestLSPServers_Lua(t *testing.T) {
+	cfg, ok := lspServers[".lua"]
+	assert.True(t, ok)
+	assert.Equal(t, "lua-language-server", cfg.Cmd)
 }
 
 // ── Editor lifecycle tests ─────────────────────────────────────────
@@ -658,58 +707,19 @@ func TestBuildLineColorMap_MultipleFileTypes(t *testing.T) {
 	}
 }
 
-// ── LSP graceful-failure tests ────────────────────────────────────
 
-func TestStartLSP_ReportsStatus(t *testing.T) {
-	e := New(theme.DefaultDark())
-	e.filePath = "/tmp/test.go"
-	e.title = "test.go"
-	e.open = true
-	e.initChroma()
-	e.startLSP()
-	// LSP may connect if gopls is in PATH, or fail with a status message.
-	// Either way, must not panic and must report a status.
-	st := e.LSPStatus()
-	assert.NotEqual(t, LSPIdle, st, "startLSP should set a status")
-	if st == LSPFailed {
-		assert.NotEmpty(t, e.LSPError(), "should report error on failure")
-	}
-}
-
-func TestStartLSP_UnknownExtension(t *testing.T) {
-	e := New(theme.DefaultDark())
-	e.filePath = "/tmp/test.xyz"
-	e.title = "test.xyz"
-	e.open = true
-	e.initChroma()
-	e.startLSP()
-	assert.False(t, e.lspConnected, "should not connect for unsupported extension")
-	assert.Nil(t, e.lsp)
-}
-
-func TestStartLSP_AlreadyConnected(t *testing.T) {
-	e := New(theme.DefaultDark())
-	e.filePath = "/tmp/test.go"
-	e.open = true
-	e.initChroma()
-	// First call: will fail gracefully (no gopls)
-	e.startLSP()
-	// Simulate already-connected state
-	e.lsp = NewLSPIntegration("gopls", nil, "/tmp")
-	e.lspConnected = true
-	// Second call should not panic
-	e.startLSP()
-}
 
 func TestEditorDiagnosticPipeline(t *testing.T) {
 	e := editorWithTheme()
+	_, err := e.buf.Insert(Position{}, []byte("abcdefghijklmnopqrst\nabcdefgh\nabcde\n"))
+	assert.NoError(t, err)
 	diags := []LSPDiagnostic{
 		{Line: 0, Col: 0, EndCol: 10, Severity: DiagError, Message: "syntax error"},
+		{Line: 0, Col: 15, EndCol: 20, Severity: DiagHint, Message: "hint"},
 		{Line: 1, Col: 3, EndCol: 8, Severity: DiagWarning, Message: "unused variable"},
 		{Line: 2, Col: 0, EndCol: 5, Severity: DiagInfo, Message: "info"},
-		{Line: 0, Col: 15, EndCol: 20, Severity: DiagHint, Message: "hint"},
 	}
-	e.setDiagnostics(diags)
+	e.SetDiagnostics(diags)
 
 	errs, warns, hints := e.DiagnosticCounts()
 	assert.Equal(t, 1, errs)
@@ -737,15 +747,15 @@ func TestEditorDiagnosticPipeline(t *testing.T) {
 func TestEditorDiagnosticPipeline_Replace(t *testing.T) {
 	e := editorWithTheme()
 
-	e.setDiagnostics([]LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagError}})
+	e.SetDiagnostics([]LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagError}})
 	errs, _, _ := e.DiagnosticCounts()
 	assert.Equal(t, 1, errs)
 
-	e.setDiagnostics(nil)
+	e.SetDiagnostics(nil)
 	errs, _, _ = e.DiagnosticCounts()
 	assert.Equal(t, 0, errs)
 
-	e.setDiagnostics([]LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagWarning}})
+	e.SetDiagnostics([]LSPDiagnostic{{Line: 0, Col: 0, EndCol: 5, Severity: DiagWarning}})
 	_, warns, _ := e.DiagnosticCounts()
 	assert.Equal(t, 1, warns)
 }
@@ -765,8 +775,8 @@ func TestLSPIntegration_StartNotCalled(t *testing.T) {
 	l := NewLSPIntegration("gopls", nil, "/tmp")
 	ctx := t.Context()
 	l.OpenFile(ctx, "/tmp/test.go", "go", "package main")
-	l.UpdateFile(ctx, "package main\nfunc main() {}")
-	l.CloseFile(ctx)
+	l.UpdateFile(ctx, "/tmp/test.go", "package main\nfunc main() {}")
+	l.CloseFile(ctx, "/tmp/test.go")
 	diags := l.Diagnostics()
 	assert.Empty(t, diags)
 }
@@ -789,7 +799,7 @@ func TestLSPIntegration_StopTwice(t *testing.T) {
 func TestLSPIntegration_RequestCompletionsWithoutStart(t *testing.T) {
 	l := NewLSPIntegration("gopls", nil, "/tmp")
 	ctx := t.Context()
-	items := l.RequestCompletions(ctx, 0, 0)
+	items := l.RequestCompletions(ctx, "/tmp/test.go", 0, 0)
 	assert.Nil(t, items)
 }
 

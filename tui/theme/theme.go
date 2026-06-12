@@ -164,14 +164,15 @@ func DefaultDark() *Theme {
 	}
 
 	tc := TreeConfig{
-		IndentWidth:   2,
-		ShowIcons:     true,
-		ShowGitStatus: true,
-		ShowHidden:    false,
-		DefaultWidth:  30,
-		MinWidth:      20,
-		MaxWidth:      60,
-		UseNerdFont:   nil,
+		IndentWidth:     2,
+		ShowIcons:       true,
+		ShowGitStatus:   true,
+		ShowDiagnostics: true,
+		ShowHidden:      false,
+		DefaultWidth:    30,
+		MinWidth:        20,
+		MaxWidth:        60,
+		UseNerdFont:     nil,
 	}
 
 	st := Styles{

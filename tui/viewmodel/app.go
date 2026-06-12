@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"strings"
@@ -143,6 +144,8 @@ type App struct {
 	lastInteractionTime time.Time
 
 	diagPopupID string // ID of the diagnostic hover popup window
+
+	lspManager *LSPManager
 }
 
 type (
@@ -209,6 +212,8 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 
 	ed := editor.New(th)
 
+	lspMgr := NewLSPManager(lg)
+
 	app := &App{
 		theme:               th,
 		Mode:                initialMode,
@@ -245,6 +250,7 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 		logger:              lg,
 		launcher:            launcher,
 		mainViewDirty:       true,
+		lspManager:          lspMgr,
 		treeModel:           treeModel,
 		treeRenderer:        treeRenderer,
 		treeVisible:         true,
@@ -779,12 +785,22 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		return nil, err
 	}
 
-	// Wire up diagnostics to file tree.
-	m.editor.SetOnDiagnostics(func(p string, errs, warns, hints int) {
-		if m.treeModel != nil {
-			m.treeModel.SetDiagnostics(p, errs, warns, hints)
-		}
+	// Wire content changes to LSP manager.
+	m.editor.SetOnContentChanged(func(fp, text string) {
+		lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		m.lspManager.UpdateFile(lspCtx, fp, text)
 	})
+	// Open the file on the LSP server.
+	lspCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m.lspManager.OpenFile(lspCtx, path, m.editor.Value())
+
+	// Apply cached diagnostics immediately so the editor is never empty
+	// while waiting for the server to respond.
+	if cached := m.lspManager.FileDiagnostics(path); len(cached) > 0 {
+		m.editor.SetDiagnostics(cached)
+	}
 
 	displayTitle := m.editor.Title()
 
@@ -804,7 +820,8 @@ func (m *App) closeEditorTab() {
 	if m.activeEditorPath() == "" {
 		return
 	}
-	tabTitle := m.editorTabTitle(m.activeEditorPath())
+	path := m.activeEditorPath()
+	tabTitle := m.editorTabTitle(path)
 	if tab := m.win.TabByTitle(tabTitle); tab != nil {
 		m.win.CloseTabByID(tab.ID)
 	}
@@ -816,6 +833,9 @@ func (m *App) closeEditorTab() {
 		}
 	}
 	if !hasEditor {
+		lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		m.lspManager.CloseFile(lspCtx, path)
 		m.editor.Close()
 		m.activeEditorView = ""
 	}
@@ -827,7 +847,43 @@ func (m *App) activeEditorPath() string {
 }
 
 func (m *App) Init() tea.Cmd {
+	if m.Mode == ModeChat || m.Mode == ModeLauncher {
+		m.startLSPForWorkspace()
+	}
+	// Wire the permanent diagnostics callback so project-wide diagnostics
+	// (which arrive as soon as the LSP server connects) always update
+	// the file tree, even before any file is opened in the editor.
+	m.lspManager.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
+		if m.treeModel != nil {
+			errs, warns, hints := 0, 0, 0
+			for _, d := range diags {
+				switch d.Severity {
+				case editor.DiagError:
+					errs++
+				case editor.DiagWarning:
+					warns++
+				default:
+					hints++
+				}
+			}
+			m.treeModel.SetDiagnostics(fp, errs, warns, hints)
+		}
+		if fp == m.editor.FilePath() && m.editor.IsOpen() {
+			m.editor.SetDiagnostics(diags)
+		}
+	})
 	return tea.Batch(tickCmd())
+}
+
+// startLSPForWorkspace scans the working directory and starts LSP
+// servers for detected project roots.
+func (m *App) startLSPForWorkspace() {
+	wsDir, err := os.Getwd()
+	if err != nil {
+		wsDir = "."
+	}
+	m.logger.Debug("LSP", "starting_for_workspace", "dir", wsDir)
+	m.lspManager.StartForWorkspace(wsDir)
 }
 
 // openTextOverlayWindow opens the text overlay as a floating window.
@@ -886,6 +942,13 @@ func (m *App) openFilePickerWindow() {
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.windowManager.AddWindow(win)
+}
+
+// StopLSP shuts down all LSP server connections.
+func (m *App) StopLSP() {
+	if m.lspManager != nil {
+		m.lspManager.Stop()
+	}
 }
 
 // closeAllWindows removes all floating windows.
