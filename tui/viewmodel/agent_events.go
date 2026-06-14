@@ -33,7 +33,7 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 	}
 	agent.SubmitInput(text)
 	if m.statusbar != nil {
-		m.statusbar.SetThinking(true, false, false)
+		m.statusbar.SetThinkingForAgent(sessionID, true, false, false)
 	}
 	ch := m.sessionInputChans[sessionID]
 	return func() tea.Msg {
@@ -217,7 +217,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.input.ResetPrompt()
 			m.input.ClearInput()
 			m.statusbar.SetConfirming(false)
-			m.statusbar.SetThinking(true, false, false)
+			m.statusbar.SetThinkingForAgent(agentID, true, false, false)
 			m.closeOverlayTab("Confirm")
 			m.closeOverlayTab("Question")
 			m.closeAllOverlayTabs()
