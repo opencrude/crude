@@ -3,6 +3,7 @@ package widgets
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,18 +16,28 @@ import (
 )
 
 type agentStatus struct {
-	thinking  bool
-	streaming bool
-	blocking  bool
-	phase     string
+	thinking   bool
+	streaming  bool
+	blocking   bool
+	phase      string
 	statusLine string
+}
+
+type systemState struct {
+	anyStreaming bool
+	anyThinking  bool
+	anyBlocking  bool
+	activeCount  int
+	sleepingCnt  int
 }
 
 type StatusBar struct {
 	theme  *theme.Theme
 	width  int
 
-	agentStates map[string]*agentStatus
+	agentStates  map[string]*agentStatus
+	currentAgent string
+
 	thinking, streaming, blocking bool
 	isConfirming                   bool
 	spinner    components.Spinner
@@ -59,7 +70,7 @@ type StatusBar struct {
 	diagWarnings int
 	diagHints    int
 	lspVisible   bool
-	lspStatus    string // displayed when LSP is visible but disconnected or failed
+	lspStatus    string
 	lspError     string
 }
 
@@ -67,19 +78,81 @@ func NewStatusBar(t *theme.Theme) *StatusBar {
 	return &StatusBar{theme: t, spinner: components.NewSpinner(t), agentStates: make(map[string]*agentStatus)}
 }
 
+func (s *StatusBar) computeSystemState() systemState {
+	state := systemState{}
+	for _, a := range s.agentStates {
+		if a.streaming {
+			state.anyStreaming = true
+			state.activeCount++
+		} else if a.thinking {
+			state.anyThinking = true
+			state.activeCount++
+		} else {
+			state.sleepingCnt++
+		}
+		if a.blocking {
+			state.anyBlocking = true
+		}
+	}
+	if state.activeCount == 0 && state.sleepingCnt == 0 {
+		if s.streaming {
+			state.anyStreaming = true
+			state.activeCount = 1
+		}
+		if s.thinking {
+			state.anyThinking = true
+			if !state.anyStreaming {
+				state.activeCount = 1
+			}
+		}
+	}
+	return state
+}
+
+func (s *StatusBar) IsSystemBusy() bool {
+	st := s.computeSystemState()
+	return st.activeCount > 0 || s.blocking || s.isConfirming
+}
+
+func (s *StatusBar) ActiveAgentCount() int {
+	return s.computeSystemState().activeCount
+}
+
+func (s *StatusBar) SleepingAgentCount() int {
+	return s.computeSystemState().sleepingCnt
+}
+
+func (s *StatusBar) SetCurrentAgent(agentID string) {
+	s.currentAgent = agentID
+}
+
+func (s *StatusBar) currentAgentPhase() string {
+	if s.currentAgent == "" {
+		return ""
+	}
+	st := s.getAgentState(s.currentAgent)
+	if st == nil {
+		return ""
+	}
+	return st.phase
+}
+
+func (s *StatusBar) currentAgentStatusLine() string {
+	if s.currentAgent == "" {
+		return ""
+	}
+	st := s.getAgentState(s.currentAgent)
+	if st == nil {
+		return ""
+	}
+	return st.statusLine
+}
+
 func (s *StatusBar) View() string {
 	dim := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
 	pad := strings.Repeat(" ", s.theme.Spacing.PadLR)
-
-	activeAgents := 0
-	sleepingAgents := 0
-	for _, st := range s.agentStates {
-		if st.thinking || st.streaming {
-			activeAgents++
-		} else {
-			sleepingAgents++
-		}
-	}
+	sys := s.computeSystemState()
+	phaseTag := s.currentAgentPhase()
 
 	var left string
 	if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
@@ -88,49 +161,42 @@ func (s *StatusBar) View() string {
 	} else if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
 		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render(
 			rendering.TruncateLine(s.retryMsg, s.width/2))
-	} else if s.infoMsg != "" && time.Since(s.infoMsgTime) < 5*time.Second {
+	} else if s.infoMsg != "" && time.Since(s.infoMsgTime) < 5*time.Second && !sys.anyStreaming && !sys.anyThinking {
 		left = lipgloss.NewStyle().Foreground(s.theme.Colors.Success).Render(
 			rendering.TruncateLine(s.infoMsg, s.width/2))
-	} else if s.confirming() {
+	} else if s.isConfirming {
 		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ confirming")
 	} else if s.blocking {
 		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ awaiting input")
-	} else if s.streaming {
+	} else if sys.anyBlocking {
+		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ sub-agent waiting")
+	} else if sys.anyStreaming {
 		left = s.spinner.StreamAnimation()
-	} else if s.thinking {
+		if phaseTag != "" {
+			left += " " + dim.Render(phaseTag)
+		}
+	} else if sys.anyThinking {
 		left = s.spinner.WorkAnimation()
-	} else if sleepingAgents > 0 {
-		muted := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
-		left = muted.Render(fmt.Sprintf("💤 %d", sleepingAgents))
+		if phaseTag != "" {
+			left += " " + dim.Render(phaseTag)
+		}
+	} else if sys.sleepingCnt > 0 {
+		left = dim.Render(fmt.Sprintf("💤 %d", sys.sleepingCnt))
 		if s.btwCount > 0 {
-			btwLabel := fmt.Sprintf(" 📝 %d", s.btwCount)
-			left += muted.Render(btwLabel)
+			left += dim.Render(fmt.Sprintf(" 📝 %d", s.btwCount))
 		}
 	} else {
 		left = ""
 	}
 
-	if activeAgents > 0 && (s.thinking || s.streaming) {
-		agentStyle := lipgloss.NewStyle().Foreground(s.theme.Colors.Accent2)
-		left += " " + agentStyle.Render(fmt.Sprintf("⚡%d", activeAgents))
+	if sys.activeCount > 0 {
+		accent := lipgloss.NewStyle().Foreground(s.theme.Colors.Accent2)
+		left += " " + accent.Render("⚡"+strconv.Itoa(sys.activeCount))
 	}
 
-	diagParts := ""
-	if s.lspVisible {
-		if s.diagErrors > 0 || s.diagWarnings > 0 {
-			var parts []string
-			if s.diagErrors > 0 {
-				parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
-			}
-			if s.diagWarnings > 0 {
-				parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
-			}
-			diagParts = " " + strings.Join(parts, " ")
-		} else if s.lspStatus != "" {
-			dimmed := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
-			diagParts = " " + dimmed.Render(s.lspStatus)
-		}
-	} else if s.diagErrors > 0 || s.diagWarnings > 0 {
+	lspParts := ""
+	hasLSPDiag := s.diagErrors > 0 || s.diagWarnings > 0
+	if s.lspVisible && hasLSPDiag {
 		var parts []string
 		if s.diagErrors > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
@@ -138,11 +204,26 @@ func (s *StatusBar) View() string {
 		if s.diagWarnings > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
 		}
-		diagParts = " " + strings.Join(parts, " ")
+		lspParts = " " + strings.Join(parts, " ")
+	} else if s.lspVisible && s.lspStatus != "" {
+		lspParts = " " + dim.Render(s.lspStatus)
+	} else if hasLSPDiag {
+		var parts []string
+		if s.diagErrors > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
+		}
+		if s.diagWarnings > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
+		}
+		lspParts = " " + strings.Join(parts, " ")
 	}
-	left += diagParts
+	left += lspParts
 
 	right := ""
+	var rightParts []string
+	if s.btwCount > 0 {
+		rightParts = append(rightParts, fmt.Sprintf("📝%d", s.btwCount))
+	}
 	if s.tokenPrompt > 0 || s.tokenCompletion > 0 {
 		prefix := ""
 		if s.tokenEstimated {
@@ -151,20 +232,32 @@ func (s *StatusBar) View() string {
 		var parts []string
 		parts = append(parts, fmt.Sprintf("%s↑%s", prefix, rendering.FormatTokens(s.tokenPrompt)))
 		if s.tokenCached > 0 {
-			parts = append(parts, fmt.Sprintf("·%s", rendering.FormatTokens(s.tokenCached)))
+			parts = append(parts, rendering.FormatTokens(s.tokenCached))
 		}
 		parts = append(parts, fmt.Sprintf("↓%s", rendering.FormatTokens(s.tokenCompletion)))
-		percent := 0
 		if s.contextWindow > 0 {
-			percent = int(float64(s.contextUsed) / float64(s.contextWindow) * 100)
+			percent := int(float64(s.contextUsed) / float64(s.contextWindow) * 100)
 			parts = append(parts, fmt.Sprintf("%d%%", percent))
 		}
 		if s.sessionCost > 0 {
 			parts = append(parts, rendering.FormatCost(s.sessionCost))
 		}
-		right = dim.Render(strings.Join(parts, " "))
+		rightParts = append(rightParts, strings.Join(parts, " "))
+	}
+	if len(rightParts) > 0 {
+		right = dim.Render(strings.Join(rightParts, " │ "))
 	} else {
-		right = dim.Render("ready")
+		if sys.activeCount > 0 {
+			if sys.anyStreaming {
+				right = dim.Render("streaming")
+			} else if sys.anyThinking {
+				right = dim.Render("processing")
+			} else {
+				right = dim.Render("busy")
+			}
+		} else {
+			right = dim.Render("ready")
+		}
 	}
 
 	spacer := s.width - s.theme.Spacing.PadLR - rendering.VisibleWidth(left) - rendering.VisibleWidth(right) - s.theme.Spacing.PadLR

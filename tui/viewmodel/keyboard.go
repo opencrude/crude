@@ -257,7 +257,7 @@ func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model,
 		if a, ok := m.agents[m.activeAgentView]; ok {
 			a.Thinking = true
 		}
-		m.statusbar.SetThinking(true, false, false)
+		m.statusbar.SetThinkingForAgent(m.activeAgentView, true, false, false)
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(result)
 			m.logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
@@ -513,7 +513,7 @@ func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
 		if a, ok := m.agents[m.activeAgentView]; ok {
 			a.Thinking = true
 		}
-		m.statusbar.SetThinking(true, false, false)
+		m.statusbar.SetThinkingForAgent(m.activeAgentView, true, false, false)
 		if m.OnQuestionResult != nil {
 			m.OnQuestionResult(ttypes.QuestionResult(result))
 		}
@@ -530,7 +530,7 @@ func (m *App) finishQuestionResult(result ttypes.QuestionResult, cmds *[]tea.Cmd
 	if a, ok := m.agents[m.activeAgentView]; ok {
 		a.Thinking = true
 	}
-	m.statusbar.SetThinking(true, false, false)
+	m.statusbar.SetThinkingForAgent(m.activeAgentView, true, false, false)
 	if m.OnQuestionResult != nil {
 		m.OnQuestionResult(result)
 	}

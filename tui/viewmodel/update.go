@@ -124,6 +124,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	spinFrame := int(time.Now().UnixMilli())
 	m.spinFrame = spinFrame
 	m.statusbar.SetSpinFrame(spinFrame)
+	m.statusbar.SetCurrentAgent(m.activeAgentView)
 	m.input.SetSpinFrame(spinFrame)
 	m.statusbar.ClearExpired()
 	for _, a := range m.agents {
