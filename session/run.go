@@ -23,6 +23,7 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	s.sender = sender
 	if o.subAgentSup != nil {
 		o.subAgentSup.SetSender(sender)
+		o.subAgentSup.SetOrchestratorID(o.ID)
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -264,7 +265,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		}
 		agentID := evt.AgentID
 		if agentID == "" {
-			agentID = s.ID
+			agentID = o.ID
 		}
 		sender.SendAgentEventWithID(evt.Type, evt.Data, agentID)
 		s.updateDisplayFromEvent(evt, displayTracker)
