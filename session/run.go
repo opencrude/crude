@@ -17,17 +17,17 @@ import (
 	"crude/sessiondb"
 )
 
-func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan provider.UserInput) {
+func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	l := s.logger
-	l.Info("SESSION", "run_start", "session_id", s.sessionID)
+	l.Info("SESSION", "run_start", "orchestrator_id", o.ID)
 	s.sender = sender
-	if s.subAgentSup != nil {
-		s.subAgentSup.SetSender(sender)
+	if o.subAgentSup != nil {
+		o.subAgentSup.SetSender(sender)
 	}
 	defer func() {
 		if r := recover(); r != nil {
 			l.Error("SESSION", "panic", "error", fmt.Sprintf("%v", r))
-			sender.SendAgentEventWithID("error", fmt.Sprintf("Internal error: %v", r), "main")
+			sender.SendAgentEventWithID("error", fmt.Sprintf("Internal error: %v", r), o.ID)
 		}
 	}()
 
@@ -66,23 +66,23 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 
 	for {
 		select {
-		case userInput, ok := <-input.GetInputCh():
+		case userInput, ok := <-o.InputCh:
 			if !ok {
-				l.Info("SESSION", "run_exit_input_closed")
+				l.Info("SESSION", "run_exit_input_closed", "orchestrator_id", o.ID)
 				return
 			}
-			if atomic.LoadInt32(&s.closing) == 1 {
-				l.Info("SESSION", "run_exit_closing")
+			if o.closing.Load() {
+				l.Info("SESSION", "run_exit_closing", "orchestrator_id", o.ID)
 				return
 			}
 			if s.isHardCancelled() {
 				s.clearHardCancel()
 				s.drainWakeCh()
 			}
-			s.processTurn(userInput, sender, input, blockResolveCh, btwCh, l)
+			s.processTurnOrchestrator(userInput, o, sender, l)
 
 		case wake := <-s.wakeCh:
-			if atomic.LoadInt32(&s.closing) == 1 {
+			if o.closing.Load() {
 				return
 			}
 			if s.isHardCancelled() {
@@ -93,11 +93,6 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 			case WakeSubAgentDone:
 				l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
 
-				// Suppress the wake if the agent already consumed this sub-agent's result
-				// during an earlier turn (e.g. via poll_sub_agent while another turn was
-				// active). Without this, the agent gets woken up with a notification
-				// for a report it already read — a redundant turn that wastes tokens
-				// and may confuse the agent into re-reading the same report.
 				if s.IsAndClearReportConsumed(wake.SourceID) {
 					l.Info("SLEEP", "wake_suppressed_already_consumed", "source", wake.SourceID)
 					continue
@@ -113,7 +108,7 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 				if reportPath != "" {
 					wakeText += fmt.Sprintf("\nReport available at: %s", reportPath)
 				}
-				s.processTurn(provider.PlainInput(wakeText), sender, input, blockResolveCh, btwCh, l)
+				s.processTurnOrchestrator(provider.PlainInput(wakeText), o, sender, l)
 
 			case WakeShutdown:
 				l.Info("SLEEP", "wake_shutdown")
@@ -123,9 +118,8 @@ func (s *Session) Run(sender EventSender, input EventInput, blockResolveCh chan 
 	}
 }
 
-func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, input EventInput, blockResolveCh chan string, btwCh <-chan provider.UserInput, l *logger.Logger) {
-	// Make a local copy of cancelCh
-	cancelCh := input.GetCancelCh()
+func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orchestrator, sender EventSender, l *logger.Logger) {
+	cancelCh := o.CancelCh
 
 	// Drain any pending cancel signal
 	select {
@@ -134,7 +128,7 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 	default:
 	}
 
-	activeCfg := s.cfg.GetActiveMainCategory()
+	activeCfg := s.cfg.GetActiveDefaultCategory()
 	if activeCfg.APIKey == "" {
 		l.Warn("INPUT", "no_api_key")
 		sender.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
@@ -150,7 +144,7 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 		s.blockRespMu.Lock()
 		s.lastBlockResp = userInput.Text
 		s.blockRespMu.Unlock()
-		blockResolveCh <- userInput.Text
+		o.BlockResolveCh <- userInput.Text
 		return
 	}
 
@@ -191,9 +185,9 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 	provider.SetModelCap(activeCfg.Model, activeCfg.ModelSupportsVision, activeCfg.ModelSupportsTools)
 
 	ag := s.newAgent()
-	if s.subAgentSup != nil {
-		s.subAgentSup.SetParentToolFn(ag.ToolFn)
-		ag.SubAgentMgr = s.subAgentSup.Manager()
+	if o.subAgentSup != nil {
+		o.subAgentSup.SetParentToolFn(ag.ToolFn)
+		ag.SubAgentMgr = o.subAgentSup.Manager()
 	}
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
@@ -211,12 +205,12 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 			l.Debug("CANCEL", "ctx_cancelled", "msg_id", currentMsgID)
 			cancel()
 			select {
-			case blockResolveCh <- "deny":
+			case o.BlockResolveCh <- "deny":
 				l.Debug("CANCEL", "block_unblocked", "msg_id", currentMsgID)
 			default:
 			}
-			if s.subAgentSup != nil {
-				cancelled := s.subAgentSup.CancelAllActive()
+			if o.subAgentSup != nil {
+				cancelled := o.subAgentSup.CancelAllActive()
 				if len(cancelled) > 0 {
 					l.Info("CANCEL", "sub_agents_cancelled", "count", len(cancelled))
 				}
@@ -224,16 +218,13 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 		case <-ctx.Done():
 		}
 	}()
-	activeCfg = s.cfg.GetActiveMainCategory()
+	activeCfg = s.cfg.GetActiveDefaultCategory()
 
-	// Transform btwCh from provider.UserInput to provider.ChatMessage.
-	// This resolves references using buildBtwMessage (which calls
-	// buildUserMessage) and adds the urgent interruption prefix.
 	btwMsgCh := make(chan provider.ChatMessage, 8)
 	go func() {
 		for {
 			select {
-			case btwInput, ok := <-btwCh:
+			case btwInput, ok := <-o.BtwCh:
 				if !ok {
 					close(btwMsgCh)
 					return
@@ -261,7 +252,7 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 		}
 		if evt.Type == "blocking" {
 			data, _ := evt.Data.(map[string]string)
-			if s.handleBlockingEvent(data, evt, sender, blockResolveCh) {
+			if o.handleBlockingEvent(data, evt, sender) {
 				return
 			}
 		}
@@ -271,7 +262,11 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 			}
 			return
 		}
-		sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
+		agentID := evt.AgentID
+		if agentID == "" {
+			agentID = s.ID
+		}
+		sender.SendAgentEventWithID(evt.Type, evt.Data, agentID)
 		s.updateDisplayFromEvent(evt, displayTracker)
 		if evt.Type == "usage" {
 			s.processUsageEvent(evt.Data, activeCfg.Model)
@@ -287,7 +282,7 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 		}
 	}
 	ag.Emit = emit
-	agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, blockResolveCh, s.sm, s.sessionID, btwMsgCh)
+	agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, o.BlockResolveCh, s.sm, s.sessionID, btwMsgCh)
 	emitActive.Store(false)
 	s.toolCallSeq = ag.ToolCallSeq()
 
@@ -297,14 +292,15 @@ func (s *Session) processTurn(userInput provider.UserInput, sender EventSender, 
 	s.finalizeTurn(agentMsgs, displayTracker, finalContent, currentMsgID, activeCfg.Model)
 }
 
-func (s *Session) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender, blockResolveCh chan string) bool {
+func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender) bool {
+	s := o.session
 	if data != nil {
 		op := safety.CRUDEOp(data["operation"])
 		tool := data["tool"]
 		target := data["target"]
 		if s.permStore.IsAlwaysAllowed(op, tool, target) {
 			s.logger.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
-			blockResolveCh <- "allow"
+			o.BlockResolveCh <- "allow"
 			sender.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
 			return true
 		}
@@ -319,8 +315,12 @@ func (s *Session) handleBlockingEvent(data map[string]string, evt agent.AgentEve
 				sr := &safety.CommandSafetyResult{Risk: r, BaseCommand: data["tool"]}
 				if s.permStore.IsCommandAllowed(sr) {
 					s.logger.Debug("PERM", "command_auto_allowed", "risk", riskStr, "tool", data["tool"])
-					blockResolveCh <- "always"
-					sender.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
+					o.BlockResolveCh <- "always"
+			agentID := evt.AgentID
+			if agentID == "" {
+				agentID = o.ID
+			}
+			sender.SendAgentEventWithID("blocking_auto", evt.Data, agentID)
 					return true
 				}
 				break

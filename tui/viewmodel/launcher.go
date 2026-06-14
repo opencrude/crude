@@ -159,7 +159,7 @@ func (l *LauncherState) deleteSelected() string {
 	return sessionID
 }
 
-// handleLauncherKey processes key events in ModeLauncher.
+// handleLauncherKey processes key events when the launcher widget has focus.
 func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.lastInteractionTime = time.Now()
 	launcher := m.launcher
@@ -211,7 +211,9 @@ func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if launcher.selected > 0 { // can't delete "New Session"
 			sessionID := launcher.deleteSelected()
 			if sessionID != "" {
-				m.logger.Info("SESSION", "deleted_from_launcher", "id", sessionID)
+				if m.logger != nil {
+					m.logger.Info("SESSION", "deleted_from_launcher", "id", sessionID)
+				}
 				// Delete session DB file
 				if m.onDeleteSession != nil {
 					m.onDeleteSession(sessionID)
@@ -231,15 +233,23 @@ func (m *App) launcherSelect() tea.Cmd {
 	sessionID := launcher.SelectedSessionID()
 
 	if sessionID == "" {
-		m.setMode(ModeChat)
-		m.launcher = nil
 		m.startLSPForWorkspace()
-		m.logger.Info("SESSION", "new_session_from_launcher")
+		if m.logger != nil {
+			m.logger.Info("SESSION", "new_session_from_launcher")
+		}
+		if m.OnNewSession != nil {
+			result := m.OnNewSession()
+			if result != nil {
+				m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
+			}
+		}
 		return nil
 	}
 
 	// Resume existing session
-	m.logger.Info("SESSION", "resume_selected", "id", sessionID)
+	if m.logger != nil {
+		m.logger.Info("SESSION", "resume_selected", "id", sessionID)
+	}
 	if m.OnResumeSession != nil {
 		m.OnResumeSession(sessionID)
 	}

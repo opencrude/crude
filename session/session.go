@@ -38,6 +38,7 @@ type EventInput interface {
 }
 
 type Session struct {
+	ID  string
 	cfg *Config
 	mu  sync.Mutex
 
@@ -88,6 +89,9 @@ type Session struct {
 	wakeCh        chan WakeEvent
 	sender        EventSender
 	subAgentSup   *SubAgentRunner
+	orchestrators map[string]*Orchestrator
+	orchMu        sync.Mutex
+	orchNextID    atomic.Int64
 
 	// consumedReports tracks sub-agent IDs whose results the main agent has already
 	// consumed during an active turn (typically via poll_sub_agent). When a WakeSubAgentDone
@@ -97,8 +101,8 @@ type Session struct {
 	consumedReportsMu sync.Mutex
 }
 
-func New(cfg *Config, homeDir string) (*Session, error) {
-	mainCat := cfg.GetActiveMainCategory()
+func New(id string, cfg *Config, homeDir string) (*Session, error) {
+	mainCat := cfg.GetActiveDefaultCategory()
 	p := provider.FromPreset(mainCat.Provider, mainCat.APIKey, mainCat.ProviderURL)
 	p.Model = mainCat.Model
 	p.SetThinkingEffort(mainCat.ThinkingEffort)
@@ -194,6 +198,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 	}
 
 	sess := &Session{
+		ID:              id,
 		cfg:             cfg,
 		provider:        p,
 		exec:            exec,
@@ -212,6 +217,7 @@ func New(cfg *Config, homeDir string) (*Session, error) {
 		dbPath:          dbPath,
 		writeBuf:        make([]taggedMessage, 0, 64),
 		consumedReports: make(map[string]bool),
+		orchestrators:   make(map[string]*Orchestrator),
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
@@ -283,7 +289,7 @@ func (s *Session) Editor() *fileio.Editor { return s.editor }
 func (s *Session) Config() *Config { return s.cfg }
 
 func (s *Session) ModelName() string {
-	return s.cfg.GetActiveMainCategory().Model
+	return s.cfg.GetActiveDefaultCategory().Model
 }
 
 func (s *Session) SessionID() string {
@@ -375,5 +381,41 @@ func (s *Session) drainWakeCh() {
 		default:
 			return
 		}
+	}
+}
+
+func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
+	nextID := s.orchNextID.Add(1)
+	o := NewOrchestrator(fmt.Sprintf("%s_orch_%d", s.ID, nextID), s)
+
+	if s.subAgentSup == nil && s.cfg.IsMultiAgentEnabled() {
+		s.subAgentSup = NewSubAgentRunner(s, s.cfg.Agents.MaxConcurrent)
+	}
+	if s.subAgentSup != nil {
+		s.subAgentSup.SetSender(sender)
+		o.subAgentSup = s.subAgentSup
+	}
+
+	s.orchMu.Lock()
+	if s.orchestrators == nil {
+		s.orchestrators = make(map[string]*Orchestrator)
+	}
+	s.orchestrators[o.ID] = o
+	s.orchMu.Unlock()
+
+	go s.RunOrchestrator(o, sender)
+
+	return o, nil
+}
+
+func (s *Session) CloseOrchestrator(id string) {
+	s.orchMu.Lock()
+	o, ok := s.orchestrators[id]
+	delete(s.orchestrators, id)
+	s.orchMu.Unlock()
+	if ok {
+		o.closing.Store(true)
+		close(o.InputCh)
+		close(o.BtwCh)
 	}
 }

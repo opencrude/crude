@@ -14,7 +14,7 @@ const (
 )
 
 func (m *App) focusTarget() FocusTarget {
-	if m.Mode == ModeLauncher {
+	if len(m.agents) == 0 && m.activeEditorView == "" {
 		return FocusLauncher
 	}
 	if m.windowManager != nil && m.windowManager.Focused() != nil {

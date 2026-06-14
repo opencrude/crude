@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -10,7 +9,9 @@ import (
 )
 
 func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
-	now := time.Now()
+	if len(m.agents) == 0 && m.activeEditorView == "" {
+		return nil
+	}
 
 	if m.Mode == ModeSettings {
 		m.settings.RestoreSnapshot()
@@ -33,9 +34,11 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
-		select {
-		case m.cancelCh <- struct{}{}:
-		default:
+		if ch, ok := m.sessionCancelChans[m.activeAgentView]; ok {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
 		}
 		m.statusbar.SetInfo("cancelling...")
 		return nil
@@ -54,7 +57,7 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	if m.activeAgentView != "" && m.activeAgentView != MainAgentID {
+	if m.activeAgentView != "" {
 		if agent, ok := m.agents[m.activeAgentView]; ok && !agent.Completed && agent.IsActive() {
 			if m.OnCancelSubAgent != nil {
 				go m.OnCancelSubAgent(m.activeAgentView)
@@ -67,9 +70,11 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if m.anyActive() {
-		select {
-		case m.cancelCh <- struct{}{}:
-		default:
+		if ch, ok := m.sessionCancelChans[m.activeAgentView]; ok {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
 		}
 		if m.OnHardCancel != nil {
 			m.OnHardCancel()
@@ -85,11 +90,5 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	if now.Sub(m.lastCancelTime) < 2*time.Second {
-		m.Quit = true
-		return tea.Quit
-	}
-	m.lastCancelTime = now
-	m.statusbar.SetError("press ctrl+c or esc again to exit")
 	return nil
 }

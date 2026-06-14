@@ -239,6 +239,8 @@ func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool
 
 func (m Model) InputSelecting() bool { return m.input.HasActiveSelection() || m.input.IsSelecting() }
 
+func (m Model) SelectedText() string { return m.input.SelectedText() }
+
 func (m Model) InputSelectionRange() (start, end int) {
 	return m.input.SelectionRange()
 }

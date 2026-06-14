@@ -117,7 +117,7 @@ func buildRootForm(t *theme.Theme, agents types.AgentsSettings, turnLogs, defaul
 		profileLabel = "default"
 	}
 
-	mainCat := agents.Categories["main"]
+	mainCat := agents.Categories["default"]
 	mainModel := mainCat.Model
 	if mainModel == "" {
 		mainModel = defaultModel
@@ -260,7 +260,7 @@ func (m *Model) loadProfile(name string) bool {
 			if m.turnLogs == "" {
 				m.turnLogs = "on"
 			}
-			mainCat := p.Categories["main"]
+			mainCat := p.Categories["default"]
 			if mainCat.Provider == "" {
 				m.providerID = ""
 			}
@@ -299,7 +299,7 @@ func (m Model) updateRoot(msg tea.Msg) (Model, tea.Cmd, Event) {
 
 	if m.agentsSettings.Enabled && len(m.agentsSettings.Categories) == 0 {
 		m.agentsSettings.MaxConcurrent = 4
-		m.agentsSettings.Categories["main"] = types.CategorySettings{}
+		m.agentsSettings.Categories["default"] = types.CategorySettings{}
 		m.agentsSettings.Categories["researcher"] = types.CategorySettings{}
 		m.agentsSettings.Categories["crafter"] = types.CategorySettings{}
 		m.agentsSettings.Categories["aeron"] = types.CategorySettings{}
@@ -700,7 +700,7 @@ func (m Model) ToSettings() types.Settings {
 }
 
 func (m Model) toSettings() types.Settings {
-	mainCat := m.agentsSettings.Categories["main"]
+	mainCat := m.agentsSettings.Categories["default"]
 	providerID := mainCat.Provider
 	apiKey := mainCat.APIKey
 	providerURL := mainCat.ProviderURL
@@ -735,16 +735,16 @@ func (m *Model) openProfiles() {
 
 func (m *Model) OpenCategory(catKey string) {
 	cat := m.agentsSettings.Categories[catKey]
-	if cat.Provider == "" && catKey == "main" {
+	if cat.Provider == "" && catKey == "default" {
 		cat.Provider = m.providerID
 	}
 	m.categoryKey = catKey
-	m.categoryForm = buildCategoryForm(m.theme, catKey, cat, m.activePresets, catKey == "main")
+	m.categoryForm = buildCategoryForm(m.theme, catKey, cat, m.activePresets, catKey == "default")
 	m.page = pageCategory
 }
 
 func (m *Model) OpenDefaultProfileEdit() {
-	m.OpenCategory("main")
+	m.OpenCategory("default")
 }
 
 func (m *Model) saveCategoryForm() {
@@ -771,7 +771,7 @@ func (m *Model) saveCategoryForm() {
 
 	m.agentsSettings.Categories[m.categoryKey] = cat
 
-	if m.categoryKey == "main" {
+	if m.categoryKey == "default" {
 		m.providerID = cat.Provider
 	}
 }
@@ -871,7 +871,7 @@ func (m *Model) autofillFromExistingProvider(providerID string) {
 }
 
 func (m *Model) updateProviderFields(newProvider string) {
-	if m.categoryKey == "main" {
+	if m.categoryKey == "default" {
 		m.providerID = newProvider
 	}
 

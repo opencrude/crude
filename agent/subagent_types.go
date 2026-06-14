@@ -27,7 +27,6 @@ const (
 )
 
 const (
-	CatMain       = "main"
 	CatResearcher = "researcher"
 	CatCrafter    = "crafter"
 	CatAeron      = "aeron"

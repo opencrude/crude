@@ -23,16 +23,15 @@ import (
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	m.mainViewDirty = true
+	m.dirty = true
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
 		m.width = msg.Width
 		m.height = msg.Height
-		m.mainMsgList.SetSize(msg.Width, msg.Height)
 		for _, a := range m.agents {
-			if a.MsgList != m.mainMsgList {
+			if a.MsgList != nil {
 				a.MsgList.SetSize(msg.Width, msg.Height)
 			}
 		}
@@ -70,16 +69,20 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.dispatchMouseRelease(msg)
 
 	case ttypes.SelectionTickMsg:
-		_, cmd := m.mainMsgList.Update(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+		if ml := m.activeMsgList(); ml != nil {
+			_, cmd := ml.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 
 	case scrollbar.FadeTickMsg, scrollbar.HideTickMsg:
 		cmds = append(cmds, m.dispatchEditorTick(msg)...)
-		cmd := m.mainMsgList.HandleScrollbarTick(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+		if ml := m.activeMsgList(); ml != nil {
+			cmd := ml.HandleScrollbarTick(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 		if m.treeVisible && m.treeRenderer != nil {
 			treeCmd := m.treeRenderer.HandleScrollbarTick(msg)
@@ -137,7 +140,9 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 					agent.LastTokenTime = time.Now()
 				}
 			}
-			m.mainMsgList.InvalidateSubPane(sp.ID)
+			if ml := m.activeMsgList(); ml != nil {
+				ml.InvalidateSubPane(sp.ID)
+			}
 		}
 	}
 	if m.activeEditorView != "" && m.editor.IsOpen() && m.editor.DiskChanged() {
@@ -182,7 +187,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		m.statusbar.SetLSPStatus("")
 	}
 
-	if m.anyActive() || m.Mode == ModeLauncher {
+	if m.anyActive() {
 		return m, streamingTickCmd()
 	}
 	return m, tickCmd()
@@ -202,11 +207,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case ttypes.UpdateModelMsg:
 		m.modelName = string(msg)
 		m.logger.Debug("UI", "model_update", "model", string(msg))
-		m.mainMsgList.SetModelName(string(msg))
 		for _, a := range m.agents {
-			if a.MsgList != m.mainMsgList {
+			if a.MsgList != nil {
 				a.MsgList.SetModelName(string(msg))
 			}
+		}
+		if ml := m.activeMsgList(); ml != nil {
+			ml.SetModelName(string(msg))
 		}
 	case ttypes.OpenSettingsMsg:
 		m.logger.Info("UI", "open_settings")
@@ -240,19 +247,22 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.logger.Error("JOURNAL", "undo_error", "error", msg.Error)
 			m.statusbar.SetError(msg.Error)
 		}
-		if msg.Desc != "" {
-			m.logger.Info("JOURNAL", "undo_result", "desc", msg.Desc)
-			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: msg.Desc,
-				Time:    time.Now(),
-			})
+		if msg.Desc != "" && m.activeAgentView != "" {
+			if ml := m.activeMsgList(); ml != nil {
+				ml.AppendMessage(ttypes.ChatMessage{
+					Role:    ttypes.RoleAssistant,
+					Content: msg.Desc,
+					Time:    time.Now(),
+				})
+			}
 		}
 	case ttypes.HistoryMessagesMsg:
-		for _, hm := range msg {
-			m.mainMsgList.AppendMessage(hm)
+		if ml := m.activeMsgList(); ml != nil {
+			for _, hm := range msg {
+				ml.AppendMessage(hm)
+			}
+			ml.ScrollToBottom()
 		}
-		m.mainMsgList.ScrollToBottom()
 	case widgets.FilePickerSelectMsg:
 		m.addFileReference(msg.Path)
 		m.windowManager.RemoveWindow("filepicker")
@@ -297,7 +307,7 @@ func (m *App) ToggleSidebar() {
 	} else {
 		m.treeFocused = false
 	}
-	m.mainViewDirty = true
+	m.dirty = true
 }
 
 func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg {
@@ -422,7 +432,11 @@ func (m *App) routeMouseToInlinePane(msg tea.Msg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
-	paneLineMap := m.mainMsgList.PaneLineMap()
+	ml := m.activeMsgList()
+	if ml == nil {
+		return false, nil
+	}
+	paneLineMap := ml.PaneLineMap()
 	y2 := y - layout.ChatAreaTop
 	if y2 < 0 || y2 >= len(paneLineMap) {
 		return false, nil
@@ -441,12 +455,12 @@ func (m *App) routeMouseToInlinePane(msg tea.Msg) (bool, tea.Cmd) {
 	if sp.CanScrollCompact() {
 		if wheelUp {
 			sp.ScrollCompactUp()
-			m.mainMsgList.InvalidateSubPane(sp.ID)
+			ml.InvalidateSubPane(sp.ID)
 			return true, nil
 		}
 		if wheelDown {
 			sp.ScrollCompactDown()
-			m.mainMsgList.InvalidateSubPane(sp.ID)
+			ml.InvalidateSubPane(sp.ID)
 			return true, nil
 		}
 		return true, nil
@@ -475,14 +489,22 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)
-		m.completeSubAgent(agentID)
-		if agentID != MainAgentID && agentID != "" {
-			if m.OnCancelSubAgent != nil {
-				cancelFn := m.OnCancelSubAgent
-				go cancelFn(agentID)
-			}
+		m.win.CloseTab(index)
+		delete(m.agents, agentID)
+		m.activeAgentView = ""
+		if m.OnCancelSubAgent != nil {
+			go m.OnCancelSubAgent(agentID)
 		}
 		m.handleTabSwitch()
+		if len(m.agents) == 0 && m.activeEditorView == "" {
+			if m.onListSessions != nil {
+				m.launcher = NewLauncherState(m.onListSessions())
+				m.lastInteractionTime = time.Now()
+			}
+			m.dirty = true
+			return nil
+		}
+		m.dirty = true
 		return nil
 	}
 
@@ -499,6 +521,12 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	m.win.CloseTab(index)
 	m.handleTabSwitch()
+	if len(m.agents) == 0 && m.activeEditorView == "" {
+		if m.onListSessions != nil {
+			m.launcher = NewLauncherState(m.onListSessions())
+			m.lastInteractionTime = time.Now()
+		}
+	}
 	return nil
 }
 
@@ -516,7 +544,9 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 		m.settings.RestoreSnapshot()
 		m.overlay.CloseTab(index)
 		m.syncOverlayMode()
-		m.mainMsgList.InvalidateCache()
+		if ml := m.activeMsgList(); ml != nil {
+			ml.InvalidateCache()
+		}
 	case "Confirm":
 		m.confirm.Dismiss()
 		m.blocking = false
@@ -565,7 +595,9 @@ func (m *App) closeOverlayTab(title string) {
 		m.overlay.CloseTabByID(tab.ID)
 	}
 	m.syncOverlayMode()
-	m.mainMsgList.InvalidateCache()
+	if ml := m.activeMsgList(); ml != nil {
+		ml.InvalidateCache()
+	}
 }
 
 func (m *App) syncQuestionInputPrompt() {
@@ -607,14 +639,8 @@ func (m *App) handleTabSwitch() {
 
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
-		if agentID != m.activeAgentView && agentID != "" {
+		if agentID != m.activeAgentView {
 			m.activeAgentView = agentID
-			if agentID == MainAgentID {
-				m.activeAgentView = ""
-			}
-			if m.mainMsgList != nil {
-				m.mainMsgList.InvalidateAllMessages()
-			}
 			if agent, ok := m.agents[agentID]; ok && agent.MsgList != nil {
 				agent.MsgList.InvalidateAllMessages()
 			}

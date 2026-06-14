@@ -90,10 +90,17 @@ func NewList(t *theme.Theme, pageSize int) List {
 func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
 	m.action = ListActionNone
 
-	keyMsg, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		return m, nil
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		return m.updateKey(msg)
+	case tea.MouseClickMsg:
+		return m.updateMouseClick(msg)
 	}
+
+	return m, nil
+}
+
+func (m List) updateKey(keyMsg tea.KeyPressMsg) (List, tea.Cmd) {
 
 	switch keyMsg.Code {
 	case tea.KeyEsc:
@@ -163,6 +170,23 @@ func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
 				}
 			}
 		}
+	}
+
+	return m, nil
+}
+
+func (m List) updateMouseClick(msg tea.MouseClickMsg) (List, tea.Cmd) {
+	if len(m.filtered) == 0 {
+		return m, nil
+	}
+
+	clickY := msg.Y
+	idx := m.offset + clickY
+
+	if idx >= 0 && idx < len(m.filtered) {
+		m.idx = idx
+		m.action = ListActionSelect
+		return m, nil
 	}
 
 	return m, nil

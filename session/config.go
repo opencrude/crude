@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	CategoryMain       = "main"
+	CategoryDefault    = "default"
 	CategoryResearcher = "researcher"
 	CategoryCrafter    = "crafter"
 	CategoryAeron      = "aeron"
@@ -175,15 +175,20 @@ func (c *Config) IsMultiAgentEnabled() bool {
 	return c.Agents.Enabled
 }
 
-func (c *Config) GetActiveMainCategory() CategoryConfig {
+func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 	prof, _ := activeProfileCfg(c)
-	if mainCat, ok := prof.Categories[CategoryMain]; ok {
-		c.resolveCategoryDefaults(&mainCat)
-		return mainCat
+	// Try "default" first, then backward-compat "main"
+	if cat, ok := prof.Categories[CategoryDefault]; ok {
+		c.resolveCategoryDefaults(&cat)
+		return cat
 	}
-	mainCat := CategoryConfig{Provider: c.EffectiveProviderID()}
-	c.resolveCategoryDefaults(&mainCat)
-	return mainCat
+	if cat, ok := prof.Categories["main"]; ok {
+		c.resolveCategoryDefaults(&cat)
+		return cat
+	}
+	cat := CategoryConfig{Provider: c.EffectiveProviderID()}
+	c.resolveCategoryDefaults(&cat)
+	return cat
 }
 
 func (c *Config) GetCategoryConfig(category string) CategoryConfig {
@@ -192,7 +197,7 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 		c.resolveCategoryDefaults(&cat)
 		return cat
 	}
-	return c.GetActiveMainCategory()
+	return c.GetActiveDefaultCategory()
 }
 
 func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
@@ -280,7 +285,7 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 func boolPtr(b bool) *bool { return &b }
 
 func ConfigToSettings(cfg *Config) ttypes.Settings {
-	mainCat := cfg.GetActiveMainCategory()
+	mainCat := cfg.GetActiveDefaultCategory()
 
 	providerURL := mainCat.ProviderURL
 	if providerURL == "" {
@@ -319,8 +324,8 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		agentsSettings.Categories[k] = catConfigToSettings(resolved)
 	}
 
-	if _, hasMain := agentsSettings.Categories["main"]; !hasMain {
-		agentsSettings.Categories["main"] = catConfigToSettings(mainCat)
+	if _, hasDefault := agentsSettings.Categories[CategoryDefault]; !hasDefault {
+		agentsSettings.Categories[CategoryDefault] = catConfigToSettings(mainCat)
 	}
 
 	for name, p := range cfg.Agents.Profiles {
@@ -408,7 +413,14 @@ func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 		providerID = base.EffectiveProviderID()
 	}
 
-	mainCat := activeProf.Categories["main"]
+	// Backward compat: migrate "main" to "default"
+	if _, ok := activeProf.Categories[CategoryDefault]; !ok {
+		if mc, ok := activeProf.Categories["main"]; ok {
+			activeProf.Categories[CategoryDefault] = mc
+			delete(activeProf.Categories, "main")
+		}
+	}
+	mainCat := activeProf.Categories[CategoryDefault]
 	prov := mainCat.Provider
 	if prov == "" {
 		prov = providerID
@@ -452,7 +464,7 @@ func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 	if mainCat.ThinkingEffort == "" {
 		mainCat.ThinkingEffort = pEffort
 	}
-	activeProf.Categories["main"] = mainCat
+	activeProf.Categories[CategoryDefault] = mainCat
 	profiles[activeProfile] = activeProf
 
 	providers := make(map[string]ProviderConfig, len(base.Providers))

@@ -33,7 +33,7 @@ func isSubAgentRequest(params map[string]any) bool {
 }
 
 func (s *Session) newAgent() *agent.Agent {
-	mainCat := s.cfg.GetActiveMainCategory()
+	mainCat := s.cfg.GetActiveDefaultCategory()
 
 	p := s.provider
 	p.Model = mainCat.Model
@@ -47,11 +47,11 @@ func (s *Session) newAgent() *agent.Agent {
 	multiAgent := s.cfg.IsMultiAgentEnabled()
 
 	if multiAgent {
-		a.FilteredTools = agent.ApplyMainAgentOverrides(
-			agent.FilterTools(tools.AgentTools, nil, []string{"write_report"}, agent.CatMain, false),
+		a.FilteredTools = agent.ApplyOrchestratorOverrides(
+			agent.FilterTools(tools.AgentTools, nil, []string{"write_report"}, "", false),
 		)
 	} else {
-		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, []string{"write_report", "run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents"}, agent.CatMain, false)
+		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, []string{"write_report", "run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents"}, "", false)
 	}
 	a.Policy = safety.DefaultPolicy()
 
