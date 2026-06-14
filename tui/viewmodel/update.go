@@ -191,6 +191,9 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	if m.anyActive() {
 		return m, streamingTickCmd()
 	}
+	if len(m.agents) == 0 && m.activeEditorView == "" {
+		return m, streamingTickCmd()
+	}
 	return m, tickCmd()
 }
 

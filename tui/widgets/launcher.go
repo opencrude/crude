@@ -78,22 +78,21 @@ func BuildLauncherGroups(sessions []sessiondb.SessionMeta) []LauncherGroup {
 // Returns a slice of lines (without padding — caller applies padding).
 // selected is 0-based: 0 = "New Session", 1..n = sessions in visible order.
 func RenderLauncher(sessions []sessiondb.SessionMeta, selected int, filterActive bool, filterText string, th *theme.Theme, width, height, spinFrame int, idleSeconds float64) []string {
-	innerW := width - th.Spacing.PadLR*2
-	if innerW < 20 {
-		innerW = 20
+	if width < 20 {
+		width = 20
 	}
 
 	lines := make([]string, 0, height)
 
 	// "New Session" entry (always first, index 0)
-	newSessionLines := RenderNewSessionEntry(selected == 0, th, innerW, spinFrame, idleSeconds)
+	newSessionLines := RenderNewSessionEntry(selected == 0, th, width, spinFrame, idleSeconds)
 	for _, l := range newSessionLines {
 		lines = append(lines, l)
 	}
 
 	if len(sessions) > 0 {
 		// A visual transition to the past sessions list
-		transitionLine := th.Styles.DimLabel.Render(strings.Repeat(" ", innerW/2 - 12) + "↓ or continue a past session ↓")
+		transitionLine := th.Styles.DimLabel.Render(strings.Repeat(" ", width/2 - 12) + "↓ or continue a past session ↓")
 		lines = append(lines, transitionLine)
 		lines = append(lines, "")
 	} else {
@@ -106,10 +105,10 @@ func RenderLauncher(sessions []sessiondb.SessionMeta, selected int, filterActive
 
 	for _, g := range groups {
 		// Date separator
-		lines = append(lines, renderLauncherDateSep(g.Label, innerW, th))
+		lines = append(lines, renderLauncherDateSep(g.Label, width, th))
 		for _, s := range g.Sessions {
 			isSelected := flatIdx == selected
-			lines = append(lines, renderLauncherSessionLine(s, isSelected, innerW, th))
+			lines = append(lines, renderLauncherSessionLine(s, isSelected, width, th))
 			flatIdx++
 		}
 	}
@@ -118,75 +117,16 @@ func RenderLauncher(sessions []sessiondb.SessionMeta, selected int, filterActive
 		lines = append(lines, th.Styles.DimLabel.Render("No past sessions found."))
 	}
 
+	// Pad every line to width so no gap appears on the right, matching
+	// how chat/editor content fills the full content width.
+	for i, l := range lines {
+		lw := rendering.VisibleWidth(l)
+		if lw < width {
+			lines[i] = l + strings.Repeat(" ", width-lw)
+		}
+	}
+
 	return lines
-}
-
-// RenderLauncherHints renders the keybinding hints bar.
-func RenderLauncherHints(filterActive bool, filterText string, th *theme.Theme, width int) string {
-	if filterActive {
-		filterDisplay := "/" + filterText
-		return th.Styles.DimLabel.Render("[ ") +
-			th.Styles.Body.Render(filterDisplay) +
-			th.Styles.DimLabel.Render(" · esc: cancel · enter: select · ↑↓: navigate ]")
-	}
-	return th.Styles.DimLabel.Render("[ ↑↓: navigate · enter: select · /: filter · d: delete · q: quit ]")
-}
-
-// RenderLauncherPreviewHints renders a single combined line with session preview and keybinding hints.
-func RenderLauncherPreviewHints(preview string, filterActive bool, filterText string, th *theme.Theme, width int) string {
-	innerW := width - th.Spacing.PadLR*2
-	if innerW < 20 {
-		innerW = 20
-	}
-
-	if preview == "" {
-		return th.Styles.DimLabel.Render("[ ") +
-			th.Styles.Body.Render("Start a new conversation") +
-			th.Styles.DimLabel.Render(" · ↑↓: navigate · enter: select ]")
-	}
-
-	previewRendered := th.Styles.Body.Render(preview)
-
-	var hints string
-	if filterActive {
-		filterDisplay := "/" + filterText
-		hints = th.Styles.Body.Render(filterDisplay) +
-			th.Styles.DimLabel.Render(" · esc: cancel · enter: select · ↑↓: navigate")
-	} else {
-		hints = th.Styles.DimLabel.Render("↑↓: navigate · enter: select · /: filter · d: delete · q: quit")
-	}
-
-	previewW := rendering.VisibleWidth(previewRendered)
-	dotW := rendering.VisibleWidth(th.Styles.DimLabel.Render(" · "))
-	bracketW := rendering.VisibleWidth(th.Styles.DimLabel.Render("[ ") + th.Styles.DimLabel.Render(" ]"))
-	availForHints := innerW - bracketW - dotW - previewW
-	hintsRendered := hints
-
-	if rendering.VisibleWidth(hintsRendered) > availForHints && availForHints > 0 {
-		hintsRendered = hints
-		for rendering.VisibleWidth(hintsRendered) > availForHints {
-			hintsRendered = hintsRendered[:len(hintsRendered)-1]
-		}
-	}
-
-	return th.Styles.DimLabel.Render("[ ") + previewRendered + th.Styles.DimLabel.Render(" · ") + hintsRendered + th.Styles.DimLabel.Render(" ]")
-}
-
-// RenderLauncherPreview renders the preview pane for the selected session.
-func RenderLauncherPreview(previewLines []string, th *theme.Theme, width int) []string {
-	innerW := width - th.Spacing.PadLR*2
-	if innerW < 20 {
-		innerW = 20
-	}
-
-	var result []string
-	for _, line := range previewLines {
-		if rendering.VisibleWidth(line) > innerW {
-			line = line[:innerW-1] + "…"
-		}
-		result = append(result, th.Styles.DimLabel.Render(line))
-	}
-	return result
 }
 
 var sparkleFrames = []string{"✨", "🌟", "✨", "💫", "✨", "⭐"}
