@@ -12,7 +12,9 @@ import (
 )
 
 func (m *App) executeSlashCommand(cmd string) tea.Cmd {
-	m.logger.Info("INPUT", "slash_command", "cmd", cmd)
+	if m.logger != nil {
+		m.logger.Info("INPUT", "slash_command", "cmd", cmd)
+	}
 
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {

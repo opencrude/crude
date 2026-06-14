@@ -26,16 +26,17 @@ import (
 )
 
 type SubAgentRunner struct {
-	session       *Session
-	mgr           *agent.SubAgentManager
-	fileOwnership *agent.FileOwnership
-	rateLimiter   *agent.RateLimiter
-	sender        EventSender
-	parentToolFn  func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
-	wg            sync.WaitGroup
-	wakeCh        chan<- WakeEvent
-	sessionCtx    context.Context
-	sessionCancel context.CancelFunc
+	session         *Session
+	orchestratorID  string
+	mgr             *agent.SubAgentManager
+	fileOwnership   *agent.FileOwnership
+	rateLimiter     *agent.RateLimiter
+	sender          EventSender
+	parentToolFn    func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	wg              sync.WaitGroup
+	wakeCh          chan<- WakeEvent
+	sessionCtx      context.Context
+	sessionCancel   context.CancelFunc
 }
 
 func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
@@ -84,6 +85,10 @@ func (r *SubAgentRunner) SetSender(sender EventSender) {
 	r.sender = sender
 }
 
+func (r *SubAgentRunner) SetOrchestratorID(id string) {
+	r.orchestratorID = id
+}
+
 func (r *SubAgentRunner) SetParentToolFn(fn func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)) {
 	r.parentToolFn = fn
 }
@@ -109,7 +114,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		PolicyName:  getStrParam(params, "policy"),
 		MaxSteps:    getIntParam(params, "max_steps"),
 		Depth:       1,
-		ParentID:    agent.AgentID(r.session.ID),
+		ParentID:    agent.AgentID(r.orchestratorID),
 	}
 
 	if raw, ok := params["allowed_tools"]; ok {
@@ -600,7 +605,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"model":      handle.Spec.Model,
 			"provider":   handle.Spec.Provider,
 			"task":       handle.Spec.Description,
-			"parent_id":  r.session.ID,
+			"parent_id":  r.orchestratorID,
 		}, string(handle.Spec.ID))
 	}
 

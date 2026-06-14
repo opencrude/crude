@@ -32,7 +32,9 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 		OnHistorySave(m.history)
 	}
 	agent.SubmitInput(text)
-	m.statusbar.SetThinking(true, false, false)
+	if m.statusbar != nil {
+		m.statusbar.SetThinking(true, false, false)
+	}
 	ch := m.sessionInputChans[sessionID]
 	return func() tea.Msg {
 		select {
@@ -63,7 +65,9 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 	if OnHistorySave != nil {
 		OnHistorySave(m.history)
 	}
-	m.statusbar.SetBtwCount(m.statusbar.BtwCount() + 1)
+	if m.statusbar != nil {
+		m.statusbar.SetBtwCount(m.statusbar.BtwCount() + 1)
+	}
 	ch := m.sessionBtwChans[sessionID]
 	return func() tea.Msg {
 		select {

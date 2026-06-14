@@ -466,10 +466,13 @@ func (m *App) SetReferences(refs []sessiondb.Reference) {
 }
 
 func (m *App) activeMessageList() *widgets.MessageList {
-	if m.activeAgentView != "" {
-		if agent, ok := m.agents[m.activeAgentView]; ok && agent.MsgList != nil {
-			return agent.MsgList
-		}
+	activeML := m.activeMsgList()
+	if activeML != nil {
+		return activeML
+	}
+	// Fallback: use any available agent's MsgList
+	for _, a := range m.agents {
+		return a.MsgList
 	}
 	return nil
 }
@@ -966,9 +969,11 @@ func (m *App) StopLSP() {
 // handleQuit implements hierarchical quit: close tab first, quit if no tabs.
 func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 	// First, close any focused floating window
-	if fw := m.windowManager.Focused(); fw != nil {
-		m.windowManager.RemoveWindow(fw.ID)
-		return m, nil
+	if m.windowManager != nil {
+		if fw := m.windowManager.Focused(); fw != nil {
+			m.windowManager.RemoveWindow(fw.ID)
+			return m, nil
+		}
 	}
 
 	// If there's an active overlay tab, close it first

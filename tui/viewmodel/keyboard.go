@@ -402,7 +402,9 @@ func (m *App) handleFilePickerKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mod
 
 func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
-		m.logger.Debug("COPY", "ctrl_c", "mode", modeName(m.Mode))
+		if m.logger != nil {
+			m.logger.Debug("COPY", "ctrl_c", "mode", modeName(m.Mode))
+		}
 		if m.input.InputSelecting() {
 			selected := m.input.SelectedText()
 			if selected != "" {
@@ -412,7 +414,9 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m, nil
 	}
 	if msg.Code == tea.KeyEsc {
-		m.logger.Debug("CANCEL", "esc", "mode", modeName(m.Mode))
+		if m.logger != nil {
+			m.logger.Debug("CANCEL", "esc", "mode", modeName(m.Mode))
+		}
 		return m, m.handleCancel(msg)
 	}
 
