@@ -181,9 +181,9 @@ func (s *StatusBar) View() string {
 			left += " " + dim.Render(phaseTag)
 		}
 	} else if sys.sleepingCnt > 0 {
-		left = dim.Render(fmt.Sprintf("💤 %d", sys.sleepingCnt))
+		left = dim.Render(fmt.Sprintf("💤%d", sys.sleepingCnt))
 		if s.btwCount > 0 {
-			left += dim.Render(fmt.Sprintf(" 📝 %d", s.btwCount))
+			left += dim.Render(fmt.Sprintf(" 📝%d", s.btwCount))
 		}
 	} else {
 		left = ""

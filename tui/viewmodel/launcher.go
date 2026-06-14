@@ -1,12 +1,10 @@
 package viewmodel
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
 	"crude/sessiondb"
-	"crude/tui/widgets"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -255,53 +253,4 @@ func (m *App) launcherSelect() tea.Cmd {
 	}
 	m.Quit = true
 	return tea.Quit
-}
-
-// launcherPreviewLines returns preview text for the selected session.
-func (m *App) launcherPreviewLines() []string {
-	if m.launcher == nil {
-		return nil
-	}
-	s := m.launcher.SelectedSession()
-	if s == nil {
-		return []string{"Start a new conversation"}
-	}
-
-	var meta strings.Builder
-	meta.WriteString(widgets.FormatTurnCount(s.TurnCount))
-	meta.WriteString(" · ")
-	meta.WriteString(s.Model)
-	if s.CreatedAt > 0 {
-		t := time.Unix(0, s.CreatedAt)
-		elapsed := time.Since(t)
-		meta.WriteString(" · ")
-		meta.WriteString(formatElapsed(elapsed))
-	}
-
-	return []string{meta.String()}
-}
-
-func formatElapsed(d time.Duration) string {
-	if d < time.Minute {
-		return "just now"
-	}
-	if d < time.Hour {
-		mins := int(d.Minutes())
-		if mins == 1 {
-			return "1 min ago"
-		}
-		return fmt.Sprintf("%dm ago", mins)
-	}
-	if d < 24*time.Hour {
-		hours := int(d.Hours())
-		if hours == 1 {
-			return "1h ago"
-		}
-		return fmt.Sprintf("%dh ago", hours)
-	}
-	days := int(d.Hours() / 24)
-	if days == 1 {
-		return "1 day ago"
-	}
-	return fmt.Sprintf("%d days ago", days)
 }

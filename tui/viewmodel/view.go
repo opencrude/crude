@@ -112,7 +112,12 @@ func (m *App) buildMainView() string {
 		inputView = dim.Render(hint)
 	} else if len(m.agents) == 0 && m.activeEditorView == "" {
 		inputLineCount = 1
-		inputView = dim.Render("↑↓: navigate  ·  enter: open  ·  type to search sessions")
+		hint := "↑↓: navigate  ·  enter: open  ·  type to search sessions"
+		hintW := rendering.VisibleWidth(hint)
+		if hintW < innerW {
+			hint += strings.Repeat(" ", innerW-hintW)
+		}
+		inputView = dim.Render(hint)
 	} else if isEditorActive {
 		inputLineCount = 1
 		fileInfo := m.editor.Title()
@@ -701,135 +706,24 @@ func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 		visibleLines = sessionLines[scrollOffset:endIdx]
 	}
 
-	// Pad visible lines to fill the height
+	// Pad visible lines to fill the height and match the chat content wrapping
+	// (pad+inner+pad pattern from activeML.Render's no-scrollbar path).
+	padStr := strings.Repeat(" ", m.theme.Spacing.PadLR)
 	result := make([]string, chatH)
 	for i := 0; i < chatH; i++ {
 		if i < len(visibleLines) {
-			result[i] = visibleLines[i]
+			line := visibleLines[i]
+			lw := rendering.VisibleWidth(line)
+			padRight := innerW - lw
+			if padRight < 0 {
+				padRight = 0
+			}
+			result[i] = padStr + line + strings.Repeat(" ", padRight) + padStr
 		} else {
-			result[i] = ""
+			result[i] = strings.Repeat(" ", innerW + 2*m.theme.Spacing.PadLR)
 		}
 	}
 	return result
-}
-
-// renderLauncherView renders the full-screen session launcher.
-func (m *App) renderLauncherView() string {
-	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
-	innerW := m.width - m.theme.Spacing.PadLR*2
-	if innerW < 20 {
-		innerW = 20
-	}
-
-	lines := make([]string, 0, m.height)
-
-	// Line 1: blank
-	lines = append(lines, "")
-
-	// Line 2: header
-	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
-	lines = append(lines, pad+headerLine+pad)
-
-	// Line 3: separator
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
-
-	// Lines 4..n-5: session list
-	idleSeconds := time.Since(m.lastInteractionTime).Seconds()
-	visibleSessions := m.launcher.visibleSessions()
-	sessionLines := widgets.RenderLauncher(
-		visibleSessions,
-		m.launcher.selected,
-		m.launcher.filterActive,
-		m.launcher.filterText,
-		m.theme,
-		m.width,
-		m.height,
-		m.spinFrame,
-		idleSeconds,
-	)
-
-	// Calculate available space for session list
-	// Layout: blank + header + sep + [sessions] + sep + hints + sep + statusbar = 7 fixed lines
-	fixedLines := 7
-	availableH := m.height - fixedLines
-	if availableH < 3 {
-		availableH = 3
-	}
-
-	// Apply scroll offset for long lists
-	totalSessionLines := len(sessionLines)
-	scrollOffset := m.launcher.scrollOffset
-
-	// Auto-scroll to keep selection visible
-	// We need to figure out which line the selected item is on
-	selectedLineIdx := m.launcherSelectedLineIndex(sessionLines)
-	if selectedLineIdx >= scrollOffset+availableH {
-		scrollOffset = selectedLineIdx - availableH + 1
-	}
-	if selectedLineIdx < scrollOffset {
-		scrollOffset = selectedLineIdx
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
-	m.launcher.scrollOffset = scrollOffset
-
-	// Slice visible portion
-	endIdx := scrollOffset + availableH
-	if endIdx > totalSessionLines {
-		endIdx = totalSessionLines
-	}
-	visibleLines := sessionLines
-	if scrollOffset < totalSessionLines {
-		visibleLines = sessionLines[scrollOffset:endIdx]
-	} else {
-		visibleLines = nil
-	}
-
-	for _, line := range visibleLines {
-		visW := rendering.VisibleWidth(line)
-		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
-		if rightPad < 0 {
-			rightPad = 0
-		}
-		lines = append(lines, pad+line+strings.Repeat(" ", rightPad)+pad)
-	}
-
-	// Fill remaining space with empty lines
-	targetBeforeSep := 3 + availableH // blank + header + sep + session area
-	for len(lines) < targetBeforeSep {
-		lines = append(lines, strings.Repeat(" ", m.width))
-	}
-
-	// Separator before combined hints bar
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
-
-	// Combined preview + hints bar
-	previewLines := m.launcherPreviewLines()
-	previewText := ""
-	if len(previewLines) > 0 {
-		previewText = previewLines[0]
-	}
-	hintsLine := widgets.RenderLauncherPreviewHints(previewText, m.launcher.filterActive, m.launcher.filterText, m.theme, m.width)
-	visW := rendering.VisibleWidth(hintsLine)
-	rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
-	if rightPad < 0 {
-		rightPad = 0
-	}
-	lines = append(lines, pad+hintsLine+strings.Repeat(" ", rightPad)+pad)
-
-	// Separator before statusbar
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
-
-	// Status bar (same as main view)
-	statusView := m.statusbar.View()
-	lines = append(lines, pad+statusView)
-
-	if len(lines) > m.height {
-		lines = lines[:m.height]
-	}
-
-	return strings.Join(lines, "\n")
 }
 
 // launcherSelectedLineIndex finds which rendered line the selected item is on.
