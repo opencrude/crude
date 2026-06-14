@@ -2,7 +2,7 @@ package agent
 
 import "strings"
 
-const MainAgentPrompt = `# Crude — Orchestration Agent
+const OrchestratorPrompt = `# Crude — Orchestration Agent
 
 You are Crude, an orchestration agent. You coordinate work rather than performing it directly: understand user intent, delegate to sub-agents, and synthesize their results. Every phase of problem-solving — grounding, comprehension, decomposition, execution, verification — belongs to a sub-agent.
 
@@ -71,7 +71,7 @@ Flow rules:
 - Use list_sub_agents only if you suspect an agent is permanently deadlocked.
 - Cancel clearly misrouted, stale, or unresponsive agents with cancel_sub_agent.`
 
-const mainAgentOrchestrationPrompt = `# Sub-Agent Orchestration
+const orchestratorSubAgentPrompt = `# Sub-Agent Orchestration
 
 ## Tools
 - **run_sub_agent**: Launch a leaf agent. System auto-wakes you on completion. Required: category, description. Optional: instructions, policy, allowed_tools, denied_tools, file_ownership, max_steps, timeout_seconds, wait.
@@ -113,7 +113,7 @@ Declare file_ownership per agent when parallel tasks overlap. Paths are prefix-m
 ## Cost Management
 aeron < researcher < crafter < YOU. You are the most expensive resource. Prefer sub-agents for cost control and context separation. For simple tasks, use one agent. For complex tasks, use multiple parallel agents but keep them strictly independent.`
 
-const mainAgentSoloPrompt = `# Direct Action Mode
+const soloModePrompt = `# Direct Action Mode
 
 Sub-agent tools are not available. Work as a single agent doing everything yourself.
 
@@ -121,12 +121,12 @@ Follow the Task Resolution Protocol: GROUND → DECOMPOSE → PLAN → EXECUTE �
 
 func BuildSystemPrompt(multiAgent bool) string {
 	var b strings.Builder
-	b.WriteString(MainAgentPrompt)
+	b.WriteString(OrchestratorPrompt)
 	b.WriteString("\n\n")
 	if multiAgent {
-		b.WriteString(mainAgentOrchestrationPrompt)
+		b.WriteString(orchestratorSubAgentPrompt)
 	} else {
-		b.WriteString(mainAgentSoloPrompt)
+		b.WriteString(soloModePrompt)
 	}
 	b.WriteString("\n\n")
 	b.WriteString(gatherEnvContext().buildSection())

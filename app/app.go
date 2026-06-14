@@ -21,8 +21,7 @@ type App struct {
 	sessCfg         *session.Config
 	home            string
 	sessionsRoot    string
-	sess            *session.Session
-	blockResolveCh  chan string
+	sm              *session.SessionManager
 	isResuming      bool
 	openSettings    bool
 	resumeSessionID string
@@ -44,19 +43,19 @@ func New(opts Opts) (*App, error) {
 	home := opts.Home
 	sessionsRoot := opts.SessionsRoot
 
-	var sess *session.Session
-	var err error
+	sm := session.NewSessionManager()
 
+	var err error
 	if opts.IsResuming && opts.ResumeSessionID != "" {
 		dbPath := filepath.Join(sessionsRoot, opts.ResumeSessionID+".db")
-		sess, err = session.ResumeSession(dbPath, sessCfg, home)
+		_, err = sm.ResumeSession(dbPath, sessCfg, home)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to resume session %s: %v\n", opts.ResumeSessionID, err)
 			fmt.Fprintln(os.Stderr, "Starting new session instead.")
-			sess, err = session.New(sessCfg, home)
+			_, err = sm.NewSession(sessCfg, home)
 		}
 	} else {
-		sess, err = session.New(sessCfg, home)
+		_, err = sm.NewSession(sessCfg, home)
 	}
 
 	if err != nil {
@@ -68,8 +67,7 @@ func New(opts Opts) (*App, error) {
 		sessCfg:         sessCfg,
 		home:            home,
 		sessionsRoot:    sessionsRoot,
-		sess:            sess,
-		blockResolveCh:  make(chan string, 1),
+		sm:              sm,
 		isResuming:      opts.IsResuming,
 		openSettings:    opts.OpenSettings,
 		resumeSessionID: opts.ResumeSessionID,
@@ -77,12 +75,20 @@ func New(opts Opts) (*App, error) {
 }
 
 func (a *App) Session() *session.Session {
-	return a.sess
+	info := a.sm.First()
+	if info == nil {
+		return nil
+	}
+	return info.Session
 }
 
 func (a *App) Run() {
-	sess := a.sess
 	sessCfg := a.sessCfg
+	firstInfo := a.sm.First()
+	if firstInfo == nil {
+		return
+	}
+	sess := firstInfo.Session
 
 	username := session.ResolveUsername()
 	initial := session.ConfigToSettings(sessCfg)
@@ -102,24 +108,33 @@ func (a *App) Run() {
 		sessionMetas, _, _ = sessiondb.ListSessionsPaginated(a.sessionsRoot, sessiondb.ListSessionsOpts{Limit: 30, Offset: 0})
 	}
 
-	tuiInst, err := tui.Start(sessCfg.GetActiveMainCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), sessionMetas, sess.SessionID(), sess.SessionDir(), sess.DB())
+	tuiInst, err := tui.Start(sessCfg.GetActiveDefaultCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), sessionMetas, sess.SessionID(), sess.SessionDir(), sess.DB())
 	if err != nil {
 		sess.Logger().Error("SESSION", "tui_start_failed", "error", err.Error())
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		return
 	}
 
+	// For resumed sessions, start orchestrator immediately to display history.
+	// For new sessions, defer to OnNewSession callback (user clicks "New Session").
 	if a.isResuming {
-		a.hydrateTUI(tuiInst)
+		orch, err := a.sm.StartOrchestrator(firstInfo.ID, tuiInst)
+		if err != nil {
+			sess.Logger().Error("SESSION", "start_failed", "error", err.Error())
+		} else {
+			tuiInst.AddOrchestrator(orch.ID, orch.InputCh, orch.BtwCh, orch.CancelCh, orch.BlockResolveCh)
+		}
 	}
 
-	a.wireTUI(tuiInst)
+	if a.isResuming {
+		a.hydrateTUI(tuiInst, sess)
+	}
+
+	a.wireTUI(tuiInst, sess)
 
 	if a.openSettings || a.fc.Providers[a.fc.ActiveProvider].APIKey == "" {
 		tuiInst.OpenSettings()
 	}
-
-	go sess.Run(tuiInst, tuiInst, a.blockResolveCh, tuiInst.BtwCh)
 
 	tuiInst.Wait()
 
@@ -133,9 +148,7 @@ func (a *App) Run() {
 	}
 }
 
-func (a *App) wireTUI(tuiInst *tui.TUI) {
-	sess := a.sess
-
+func (a *App) wireTUI(tuiInst *tui.TUI, sess *session.Session) {
 	tuiInst.GetProviderConfigFn = func(providerID string) tui.ProviderConfig {
 		if cfg, ok := sess.Config().Providers[providerID]; ok {
 			return tui.ProviderConfig{
@@ -149,6 +162,26 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 	viewmodel.OnHistorySave = func(history []string) {
 		if err := SaveHistory(history); err != nil {
 			sess.Logger().Warn("HISTORY", "save_failed", "error", err.Error())
+		}
+	}
+
+	tuiInst.OnNewSession = func() *viewmodel.NewSessionResult {
+		firstInfo := a.sm.First()
+		if firstInfo == nil {
+			tuiInst.SetError("no session available")
+			return nil
+		}
+		orch, err := a.sm.StartOrchestrator(firstInfo.ID, tuiInst)
+		if err != nil {
+			tuiInst.SetError(err.Error())
+			return nil
+		}
+		return &viewmodel.NewSessionResult{
+			OrchID:         orch.ID,
+			InputCh:        orch.InputCh,
+			BtwCh:          orch.BtwCh,
+			CancelCh:       orch.CancelCh,
+			BlockResolveCh: orch.BlockResolveCh,
 		}
 	}
 
@@ -178,26 +211,9 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 		sess.SetYolo(enabled)
 	}
 
-	tuiInst.OnConfirmResult = func(result tui.ConfirmResult) {
-		switch result.Choice {
-		case tui.ConfirmAllow:
-			a.blockResolveCh <- "allow"
-		case tui.ConfirmAlways:
-			a.blockResolveCh <- "always"
-		case tui.ConfirmDeny:
-			a.blockResolveCh <- "deny"
-		default:
-			a.blockResolveCh <- "deny"
-		}
-	}
+	tuiInst.OnConfirmResult = func(result tui.ConfirmResult) {}
 
-	tuiInst.OnQuestionResult = func(result ttypes.QuestionResult) {
-		if result.Cancelled {
-			a.blockResolveCh <- "cancelled"
-		} else {
-			a.blockResolveCh <- formatQuestionAnswers(result)
-		}
-	}
+	tuiInst.OnQuestionResult = func(result ttypes.QuestionResult) {}
 
 	tuiInst.OnUndoCmd = func(cmd string) {
 		result := sess.HandleUndo(cmd)
@@ -231,15 +247,15 @@ func (a *App) wireTUI(tuiInst *tui.TUI) {
 	}
 }
 
-func (a *App) hydrateTUI(tuiInst *tui.TUI) {
-	msgs := a.sess.MessagesWithMeta()
+func (a *App) hydrateTUI(tuiInst *tui.TUI, sess *session.Session) {
+	msgs := sess.MessagesWithMeta()
 	if len(msgs) == 0 {
 		return
 	}
 	chatMsgs := convertMessagesForDisplay(msgs)
 	tuiInst.HydrateMessages(chatMsgs)
 
-	if db := a.sess.DB(); db != nil {
+	if db := sess.DB(); db != nil {
 		if refs, err := sessiondb.LoadPromptReferences(db); err == nil && len(refs) > 0 {
 			tuiInst.SetReferences(refs)
 		}
@@ -247,31 +263,36 @@ func (a *App) hydrateTUI(tuiInst *tui.TUI) {
 }
 
 func (a *App) runResumeSession(username string, initial ttypes.Settings, providerPresets []tui.ProviderPreset) {
-	a.sess.Close()
 	sessionID := a.resumeNextID
 
 	dbPath := filepath.Join(a.sessionsRoot, sessionID+".db")
-	sess, err := session.ResumeSession(dbPath, a.sessCfg, a.home)
+	info, err := a.sm.ResumeSession(dbPath, a.sessCfg, a.home)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to resume session %s: %v\n", sessionID, err)
 		return
 	}
-	a.sess = sess
+	sess := info.Session
 
-	tuiInst2, err2 := tui.Start(a.sessCfg.GetActiveMainCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), nil, sess.SessionID(), sess.SessionDir(), sess.DB())
-	if err2 != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err2)
+	tuiInst, err := tui.Start(sess.ModelName(), username, initial, providerPresets, LoadHistory(), sess.Logger(), nil, sess.SessionID(), sess.SessionDir(), sess.DB())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		return
 	}
 
-	a.hydrateTUI(tuiInst2)
-	a.wireTUI(tuiInst2)
-	tuiInst2.UpdateModelName(sess.ModelName())
+	orch, err := a.sm.StartOrchestrator(info.ID, tuiInst)
+	if err != nil {
+		sess.Logger().Error("SESSION", "start_failed", "error", err.Error())
+	} else {
+		tuiInst.AddOrchestrator(orch.ID, orch.InputCh, orch.BtwCh, orch.CancelCh, orch.BlockResolveCh)
+	}
+
+	a.hydrateTUI(tuiInst, sess)
+	a.wireTUI(tuiInst, sess)
+	tuiInst.UpdateModelName(sess.ModelName())
 
 	a.resumeNextID = ""
 
-	go sess.Run(tuiInst2, tuiInst2, a.blockResolveCh, tuiInst2.BtwCh)
-	tuiInst2.Wait()
+	tuiInst.Wait()
 
 	exitMsg := a.renderExitMessage()
 	if exitMsg != "" {
@@ -306,8 +327,8 @@ func formatQuestionAnswers(result ttypes.QuestionResult) string {
 }
 
 func (a *App) renderExitMessage() string {
-	sess := a.sess
-	if !sess.HasMessages() {
+	sess := a.Session()
+	if sess == nil || !sess.HasMessages() {
 		return ""
 	}
 	uptime := time.Since(sess.SessionStart()).Truncate(time.Second)

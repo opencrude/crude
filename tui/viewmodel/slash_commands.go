@@ -26,15 +26,27 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/settings":
 		m.logger.Info("INPUT", "slash", "command", "settings")
 		m.settings.SaveSnapshot()
+		// If viewing a sub-agent, open settings for that agent's category
+		if m.activeAgentView != "" {
+			if cat, ok := m.agentCategories[m.activeAgentView]; ok && cat != "" {
+				m.settingsCategory = cat
+				m.setMode(ModeSettings)
+				m.settings.OpenCategory(cat)
+				break
+			}
+		}
+		m.settingsCategory = ""
 		m.setMode(ModeSettings)
 	case "/provider":
 		m.logger.Info("INPUT", "slash", "command", "provider")
 		m.settings.SaveSnapshot()
+		m.settingsCategory = "main"
 		m.setMode(ModeSettings)
 		m.settings.OpenDefaultProfileEdit()
 	case "/api-key":
 		m.logger.Info("INPUT", "slash", "command", "api-key")
 		m.settings.SaveSnapshot()
+		m.settingsCategory = "main"
 		m.setMode(ModeSettings)
 		m.settings.OpenDefaultProfileEdit()
 	case "/sessions":
@@ -48,7 +60,6 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			if len(sessions) > 0 {
 				m.launcher = NewLauncherState(sessions)
 				m.lastInteractionTime = time.Now()
-				m.setMode(ModeLauncher)
 			} else {
 				m.statusbar.SetInfo("No past sessions found")
 			}
@@ -62,11 +73,15 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		for _, c := range input.AvailableCmds() {
 			b.WriteString(fmt.Sprintf("  %-16s %s\n", "/"+c.Label, c.Desc))
 		}
-		m.mainMsgList.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+		if ml := m.activeMsgList(); ml != nil {
+			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+		}
 	case "/yolo":
 		if m.yolo {
 			m.yolo = false
-			m.mainMsgList.ScrollToBottom()
+			if ml := m.activeMsgList(); ml != nil {
+				ml.ScrollToBottom()
+			}
 			m.statusbar.SetInfo("YOLO mode disabled. Safety checks restored.")
 			m.logger.Info("SAFETY", "yolo_disabled", "source", "slash")
 			if m.OnYoloCmd != nil {

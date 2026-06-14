@@ -96,10 +96,10 @@ func main() {
 		if prof.Categories == nil {
 			prof.Categories = make(map[string]session.CategoryConfig)
 		}
-		mainCat := prof.Categories[session.CategoryMain]
+		mainCat := prof.Categories[session.CategoryDefault]
 		mainCat.Model = *modelFlag
 		mainCat.Provider = providerID
-		prof.Categories[session.CategoryMain] = mainCat
+		prof.Categories[session.CategoryDefault] = mainCat
 		fc.Agents.Profiles[ap] = prof
 	}
 

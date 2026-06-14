@@ -35,7 +35,6 @@ const (
 	ModeConfirm
 	ModeQuestion
 	ModeYolo
-	ModeLauncher
 	ModeTextOverlay
 	ModeFilePicker
 )
@@ -55,7 +54,6 @@ type App struct {
 
 	agents       map[string]*AgentState
 	paneMgr      *PaneManager
-	mainMsgList  *widgets.MessageList
 	input        input.Model
 	statusbar    *widgets.StatusBar
 	settings     settings.Model
@@ -74,7 +72,7 @@ type App struct {
 	windowManager *wm.WindowManager
 	renderCtx     *widget.RenderContext
 	cachedOutput  string // last rendered ANSI output for View() throttling during drag
-	mainViewDirty bool   // true when main view content has changed and needs re-rendering
+	dirty         bool   // true when view content has changed and needs re-rendering
 
 	// File tree sidebar
 	treeModel            *filetree.FileTreeModel
@@ -98,12 +96,16 @@ type App struct {
 	agentModels           map[string]string
 	agentTabSnapshotCache string
 
-	inputCh  chan<- provider.UserInput
-	btwCh    chan<- provider.UserInput
-	cancelCh chan<- struct{}
+	sessionInputChans      map[string]chan<- provider.UserInput
+	sessionBtwChans        map[string]chan<- provider.UserInput
+	sessionCancelChans     map[string]chan<- struct{}
+	sessionBlockResolveCh  map[string]chan string
+	blockedSessionID       string
+	subAgentParents        map[string]string // sub-agent ID → parent orchestrator session ID
 
 	OnQuit              func()
 	OnExitMessage       func()
+	OnNewSession        func() *NewSessionResult
 	OnSettingsSave      func(ttypes.Settings) error
 	OnConfirmResult     func(ttypes.ConfirmResult)
 	OnQuestionResult    func(ttypes.QuestionResult)
@@ -143,9 +145,62 @@ type App struct {
 	onListSessions      func() []sessiondb.SessionMeta
 	lastInteractionTime time.Time
 
+	commandPaletteModel *commandPaletteModel
+
+	// Per-agent settings context
+	settingsCategory string        // "" = global, "main", "researcher", "crafter", "aeron" or agent ID
+	agentCategories  map[string]string // agentID → category name
+
 	diagPopupID string // ID of the diagnostic hover popup window
 
 	lspManager *LSPManager
+}
+
+func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
+	m.launcher = nil
+	m.sessionInputChans[orchID] = inputCh
+	m.sessionBtwChans[orchID] = btwCh
+	m.sessionCancelChans[orchID] = cancelCh
+	m.sessionBlockResolveCh[orchID] = blockResolveCh
+
+	ml := widgets.NewMessageList(m.theme)
+	ml.SetModelName(m.modelName)
+	ml.SetUsername(m.username)
+	ml.SetSubPaneContentFn(m.renderSubPaneContent)
+	agent := NewAgentState(orchID, ml, m.logger)
+	m.agents[orchID] = agent
+	m.activeAgentView = orchID
+	m.syncAgentWindowTabs()
+}
+
+func (m *App) RemoveOrchestrator(orchID string) {
+	delete(m.sessionInputChans, orchID)
+	delete(m.sessionBtwChans, orchID)
+	delete(m.sessionCancelChans, orchID)
+	delete(m.sessionBlockResolveCh, orchID)
+	delete(m.agents, orchID)
+	for id, parent := range m.subAgentParents {
+		if parent == orchID {
+			delete(m.subAgentParents, id)
+		}
+	}
+}
+
+func (m *App) activeMsgList() *widgets.MessageList {
+	if m.activeAgentView != "" {
+		if agent, ok := m.agents[m.activeAgentView]; ok && agent.MsgList != nil {
+			return agent.MsgList
+		}
+	}
+	return nil
+}
+
+type NewSessionResult struct {
+	OrchID         string
+	InputCh        chan<- provider.UserInput
+	BtwCh          chan<- provider.UserInput
+	CancelCh       chan<- struct{}
+	BlockResolveCh chan string
 }
 
 type (
@@ -161,12 +216,8 @@ type (
 	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) *App {
+func NewApp(modelName string, username string, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) *App {
 	th := theme.DefaultDark()
-	ml := widgets.NewMessageList(th)
-	ml.SetModelName(modelName)
-	ml.SetUsername(username)
-	mainAgent := NewAgentState(MainAgentID, ml, lg)
 	im := input.NewModel(th)
 	sb := widgets.NewStatusBar(th)
 	sm := settings.NewModel(th, initial, nil, getProviderConfigFn, fetchFn)
@@ -184,14 +235,10 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 	w := window.New(th)
 	ov := window.New(th)
 
-	// Initialize compositing engine
-	comp := compositor.NewCompositor(80, 24) // Will be resized on first WindowSizeMsg
+	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
 	rctx := widget.NewRenderContext(th)
 
-	// Initialize file tree sidebar.
-	// Root at the user's current working directory (the project they launched
-	// crude from), not the session storage directory.
 	wsDir, _ := os.Getwd()
 	if wsDir == "" {
 		wsDir = sessionDir
@@ -200,65 +247,56 @@ func NewApp(modelName string, username string, inputCh chan<- provider.UserInput
 	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())
 	treeRenderer.ApplyTheme(th)
 
-	hasSessions := len(sessions) > 0
-	var initialMode Mode
-	var launcher *LauncherState
-	if hasSessions {
-		initialMode = ModeLauncher
-		launcher = NewLauncherState(sessions)
-	} else {
-		initialMode = ModeChat
-	}
+	launcher := NewLauncherState(sessions)
 
 	ed := editor.New(th)
-
 	lspMgr := NewLSPManager(lg)
 
 	app := &App{
-		theme:               th,
-		Mode:                initialMode,
-		agents:              map[string]*AgentState{MainAgentID: mainAgent},
-		paneMgr:             pm,
-		win:                 w,
-		overlay:             ov,
-		compositor:          comp,
-		windowManager:       wmgr,
-		renderCtx:           rctx,
-		mainMsgList:         ml,
-		input:               im,
-		statusbar:           sb,
-		settings:            sm,
-		confirm:             cd,
-		questionForm:        qd,
-		yoloDlg:             yd,
-		textOverlay:         to,
-		filePicker:          fp,
-		refStore:            refs,
-		editor:              ed,
-		agentLabels:         make(map[string]string),
-		agentModels:         make(map[string]string),
-		inputCh:             inputCh,
-		btwCh:               btwCh,
-		cancelCh:            cancelCh,
-		modelName:           modelName,
-		username:            username,
-		startTime:           time.Now(),
-		lastCancelTime:      time.Now(),
-		lastInteractionTime: time.Now(),
-		lastSettings:        initial,
-		OnSettingsSave:      onSave,
-		logger:              lg,
-		launcher:            launcher,
-		mainViewDirty:       true,
-		lspManager:          lspMgr,
-		treeModel:           treeModel,
-		treeRenderer:        treeRenderer,
-		treeVisible:         true,
-		treeWidth:           th.Tree.Config.DefaultWidth,
-		treeYOffset:         3,
+		theme:                th,
+		Mode:                 ModeChat,
+		agents:               make(map[string]*AgentState),
+		paneMgr:              pm,
+		win:                  w,
+		overlay:              ov,
+		compositor:           comp,
+		windowManager:        wmgr,
+		renderCtx:            rctx,
+		input:                im,
+		statusbar:            sb,
+		settings:             sm,
+		confirm:              cd,
+		questionForm:         qd,
+		yoloDlg:              yd,
+		textOverlay:          to,
+		filePicker:           fp,
+		refStore:             refs,
+		editor:               ed,
+		agentLabels:          make(map[string]string),
+		agentModels:          make(map[string]string),
+		agentCategories:      make(map[string]string),
+		sessionInputChans:    make(map[string]chan<- provider.UserInput),
+		sessionBtwChans:      make(map[string]chan<- provider.UserInput),
+		sessionCancelChans:   make(map[string]chan<- struct{}),
+		sessionBlockResolveCh: make(map[string]chan string),
+		subAgentParents:       make(map[string]string),
+		modelName:            modelName,
+		username:             username,
+		startTime:            time.Now(),
+		lastCancelTime:       time.Now(),
+		lastInteractionTime:  time.Now(),
+		lastSettings:         initial,
+		OnSettingsSave:       onSave,
+		logger:               lg,
+		launcher:             launcher,
+		lspManager:           lspMgr,
+		treeModel:            treeModel,
+		treeRenderer:         treeRenderer,
+		treeVisible:          true,
+		treeWidth:            th.Tree.Config.DefaultWidth,
+		treeYOffset:          3,
 	}
 
-	ml.SetSubPaneContentFn(app.renderSubPaneContent)
 	app.input.SetReferenceStore(refs)
 
 	return app
@@ -278,13 +316,15 @@ func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []
 }
 
 func (m *App) completeSubAgent(agentID string) {
-	if agentID == MainAgentID || agentID == "" {
+	parentID := m.subAgentParents[agentID]
+	if parentID == "" {
 		return
 	}
+	parentAgent := m.agents[parentID]
 
 	agent, agentOK := m.agents[agentID]
 	if agentOK && agent.Completed {
-		return // idempotent: already completed
+		return
 	}
 
 	title := m.agentTabTitle(agentID)
@@ -293,15 +333,17 @@ func (m *App) completeSubAgent(agentID string) {
 		m.win.CloseTabByID(tab.ID)
 		if wasActive && m.activeAgentView == agentID {
 			m.activeAgentView = ""
-			if m.mainMsgList != nil {
-				m.mainMsgList.InvalidateAllMessages()
+			if parentAgent != nil && parentAgent.MsgList != nil {
+				parentAgent.MsgList.InvalidateAllMessages()
 			}
 		}
 	}
 
 	if sp := m.paneMgr.Get(agentID); sp != nil && !sp.Done {
 		sp.Collapse()
-		m.mainMsgList.InvalidateSubPane(agentID)
+		if parentAgent != nil && parentAgent.MsgList != nil {
+			parentAgent.MsgList.InvalidateSubPane(agentID)
+		}
 	}
 
 	if agentOK {
@@ -313,6 +355,7 @@ func (m *App) completeSubAgent(agentID string) {
 		}
 	}
 
+	delete(m.agentCategories, agentID)
 	m.statusbar.ClearAgentState(agentID)
 
 	if !m.win.IsOpen() {
@@ -320,10 +363,6 @@ func (m *App) completeSubAgent(agentID string) {
 	} else {
 		m.syncOverlayMode()
 	}
-}
-
-func (m *App) mainAgent() *AgentState {
-	return m.agents[MainAgentID]
 }
 
 func (m *App) anyActive() bool {
@@ -340,13 +379,6 @@ func (m *App) anyActive() bool {
 	return false
 }
 
-func (m *App) mainAgentActive() bool {
-	if ma, ok := m.agents[MainAgentID]; ok {
-		return !ma.Completed && ma.IsActive()
-	}
-	return false
-}
-
 func (m *App) SetProviderPresets(presets []ttypes.ProviderPreset) {
 	m.ProviderPresets = presets
 	m.settings.SetPresets(presets)
@@ -359,10 +391,14 @@ func (m *App) SetHistory(history []string) {
 
 func (m *App) setMode(newMode Mode) {
 	oldMode := m.Mode
-	m.logger.Debug("UI", "mode_switch", "from", modeName(oldMode), "to", modeName(newMode))
+	if m.logger != nil {
+		m.logger.Debug("UI", "mode_switch", "from", modeName(oldMode), "to", modeName(newMode))
+	}
 	m.Mode = newMode
-	m.mainMsgList.ClearSelection()
-	m.mainMsgList.InvalidateAllMessages()
+	if ml := m.activeMsgList(); ml != nil {
+		ml.ClearSelection()
+		ml.InvalidateAllMessages()
+	}
 	switch newMode {
 	case ModeSettings:
 		m.input.ClearInput()
@@ -379,8 +415,10 @@ func (m *App) setMode(newMode Mode) {
 		m.openFilePickerWindow()
 	case ModeChat:
 		m.formHint = ""
-		m.windowManager.RemoveWindow("textoverlay")
-		m.windowManager.RemoveWindow("filepicker")
+		if m.windowManager != nil {
+			m.windowManager.RemoveWindow("textoverlay")
+			m.windowManager.RemoveWindow("filepicker")
+		}
 	}
 }
 
@@ -396,8 +434,6 @@ func modeName(m Mode) string {
 		return "question"
 	case ModeYolo:
 		return "yolo"
-	case ModeLauncher:
-		return "launcher"
 	case ModeTextOverlay:
 		return "text-overlay"
 	case ModeFilePicker:
@@ -430,31 +466,31 @@ func (m *App) SetReferences(refs []sessiondb.Reference) {
 }
 
 func (m *App) activeMessageList() *widgets.MessageList {
-	if m.activeAgentView != "" && m.activeAgentView != MainAgentID {
+	if m.activeAgentView != "" {
 		if agent, ok := m.agents[m.activeAgentView]; ok && agent.MsgList != nil {
 			return agent.MsgList
 		}
 	}
-	return m.mainMsgList
+	return nil
 }
 
 func (m *App) agentForView() *AgentState {
-	if m.activeAgentView == "" || m.activeAgentView == MainAgentID {
-		return m.mainAgent()
+	if m.activeAgentView == "" {
+		for _, a := range m.agents {
+			return a
+		}
+		return nil
 	}
 	return m.agents[m.activeAgentView]
 }
 
 func (m *App) activeAgentID() string {
-	if m.activeAgentView == "" {
-		return MainAgentID
-	}
 	return m.activeAgentView
 }
 
 func (m *App) switchToAgentView(agentID string) {
 	prev := m.activeAgentView
-	if agentID == MainAgentID || agentID == "" {
+	if agentID == "" {
 		m.activeAgentView = ""
 	} else if a, ok := m.agents[agentID]; ok && !a.Completed {
 		m.activeAgentView = agentID
@@ -471,9 +507,6 @@ func (m *App) switchToAgentView(agentID string) {
 				agent.MsgList.InvalidateAllMessages()
 			}
 		}
-		if m.mainMsgList != nil {
-			m.mainMsgList.InvalidateAllMessages()
-		}
 	}
 
 	m.syncAgentWindowTabs()
@@ -483,7 +516,7 @@ func (m *App) switchToAgentView(agentID string) {
 // Uses the full agentID to guarantee uniqueness (no truncation).
 // Human-readable display names are set via DisplayTitle on the tab.
 func (m *App) agentTabTitle(agentID string) string {
-	if agentID == MainAgentID || agentID == "" {
+	if agentID == "" {
 		return "agent:main"
 	}
 	return "agent:" + agentID
@@ -500,74 +533,31 @@ func (m *App) agentIDFromTabTitle(title string) string {
 	if !m.isAgentTabTitle(title) {
 		return ""
 	}
-	id := title[6:]
-	if id == "main" {
-		return MainAgentID
-	}
-	return id
+	return title[6:]
 }
 
 // syncAgentWindowTabs creates/removes window tabs to match the current agent set.
-// Each agent gets its own window tab (like question tabs), so the window system's
-// vertical sidebar handles the ❯ markers, clicks, and ctrl+]/ctrl+[ natively.
+// Every agent gets its own tab.
+// Tabs are always shown when at least one agent or editor is open.
 func (m *App) syncAgentWindowTabs() {
 	// Don't switch away from editor tab
 	if m.activeEditorView != "" {
-		// But still purge stale agent tabs in the background
 		m.purgeStaleAgentTabs()
 		return
 	}
 
-	activeSubAgents := 0
-	for id, a := range m.agents {
-		if id != MainAgentID && !a.Completed {
-			activeSubAgents++
-		}
-	}
-
-	if activeSubAgents == 0 {
+	// If no agents exist, purge agent tabs and return
+	if len(m.agents) == 0 {
 		m.purgeAgentTabs()
 		m.agentTabSnapshotCache = ""
 		return
 	}
 
-	snapshot := m.agentTabSnapshot()
-	if snapshot == m.agentTabSnapshotCache {
-		m.ensureAgentTabActive()
-		m.purgeStaleAgentTabs()
-		return
-	}
-	m.agentTabSnapshotCache = snapshot
-
+	// Determine active agent ID
 	activeID := m.activeAgentView
-	if activeID == "" {
-		activeID = MainAgentID
-	}
 
-	// Main agent tab always first. It must be present whenever sub-agents are
-	// active so the user can switch back to the orchestrator. The main agent's
-	// Completed flag toggles between turns (true when idle, false when active);
-	// basing the tab on that flag causes the tab to flicker in and out of
-	// existence every turn boundary.
-	title := m.agentTabTitle(MainAgentID)
-	if m.win.TabByTitle(title) == nil {
-		m.win.OpenTab(title, "", false)
-	}
-	if tab := m.win.TabByTitle(title); tab != nil {
-		newIcon := m.agentTabIcon(MainAgentID)
-		if tab.Icon != newIcon {
-			m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), newIcon)
-		}
-		if tab.DisplayTitle != "main" {
-			m.win.SetTabDisplayTitleByIndex(m.win.IndexOf(tab.ID), "main")
-		}
-	}
-
-	// Sub-agent tabs in pane creation order (deterministic).
+	// Create tabs for sub-agents that have panes
 	for _, id := range m.paneMgr.paneOrder {
-		if id == MainAgentID {
-			continue
-		}
 		a, ok := m.agents[id]
 		if !ok || a.Completed {
 			continue
@@ -591,11 +581,41 @@ func (m *App) syncAgentWindowTabs() {
 		}
 	}
 
-	activeTitle := m.agentTabTitle(activeID)
-	if tab := m.win.TabByTitle(activeTitle); tab != nil {
-		targetIdx := m.win.IndexOf(tab.ID)
-		if m.win.ActiveIndex() != targetIdx {
-			m.win.SwitchTo(targetIdx)
+	// Create tabs for orchestrator agents (top-level agents without parent IDs)
+	for id, a := range m.agents {
+		if a.Completed {
+			continue
+		}
+		if _, isSubAgent := m.subAgentParents[id]; isSubAgent {
+			continue
+		}
+		title := m.agentTabTitle(id)
+		if m.win.TabByTitle(title) == nil {
+			m.win.OpenTab(title, "", true)
+		}
+		if tab := m.win.TabByTitle(title); tab != nil {
+			newIcon := m.agentTabIcon(id)
+			if tab.Icon != newIcon {
+				m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), newIcon)
+			}
+			displayLabel := id
+			if lbl, ok := m.agentLabels[id]; ok && lbl != "" {
+				displayLabel = lbl
+			}
+			if tab.DisplayTitle != displayLabel {
+				m.win.SetTabDisplayTitleByIndex(m.win.IndexOf(tab.ID), displayLabel)
+			}
+		}
+	}
+
+	// Activate the correct tab
+	if activeID != "" {
+		activeTitle := m.agentTabTitle(activeID)
+		if tab := m.win.TabByTitle(activeTitle); tab != nil {
+			targetIdx := m.win.IndexOf(tab.ID)
+			if m.win.ActiveIndex() != targetIdx {
+				m.win.SwitchTo(targetIdx)
+			}
 		}
 	}
 
@@ -605,9 +625,6 @@ func (m *App) syncAgentWindowTabs() {
 func (m *App) agentTabSnapshot() string {
 	var b strings.Builder
 	for _, id := range m.paneMgr.paneOrder {
-		if id == MainAgentID {
-			continue
-		}
 		a, ok := m.agents[id]
 		if !ok || a.Completed {
 			continue
@@ -627,7 +644,7 @@ func (m *App) agentTabSnapshot() string {
 func (m *App) ensureAgentTabActive() {
 	activeID := m.activeAgentView
 	if activeID == "" {
-		activeID = MainAgentID
+		return
 	}
 	activeTitle := m.agentTabTitle(activeID)
 	if tab := m.win.TabByTitle(activeTitle); tab != nil {
@@ -640,7 +657,7 @@ func (m *App) ensureAgentTabActive() {
 
 // agentTabIcon returns the status icon for an agent's window tab.
 func (m *App) agentTabIcon(id string) string {
-	if id == MainAgentID || id == "" {
+	if id == "" {
 		return "■"
 	}
 	agent, ok := m.agents[id]
@@ -676,19 +693,8 @@ func (m *App) purgeAgentTabs() {
 }
 
 // purgeStaleAgentTabs closes agent tabs for agents that no longer exist
-// or have completed. The main agent tab is never purged here as long as
-// at least one sub-agent is still active — the main agent is the
-// orchestrator and its tab must remain accessible between turns even when
-// the main agent is idle (Completed=true).
+// or have completed.
 func (m *App) purgeStaleAgentTabs() {
-	hasActiveSubs := false
-	for id, a := range m.agents {
-		if id != MainAgentID && !a.Completed {
-			hasActiveSubs = true
-			break
-		}
-	}
-
 	for i := m.win.TabCount() - 1; i >= 0; i-- {
 		tabs := m.win.Tabs()
 		if i >= len(tabs) {
@@ -696,10 +702,6 @@ func (m *App) purgeStaleAgentTabs() {
 		}
 		if m.isAgentTabTitle(tabs[i].Title) {
 			agentID := m.agentIDFromTabTitle(tabs[i].Title)
-			// Preserve the main agent tab while sub-agents are active.
-			if agentID == MainAgentID && hasActiveSubs {
-				continue
-			}
 			a, ok := m.agents[agentID]
 			if !ok || a.Completed {
 				m.win.CloseTabByID(tabs[i].ID)
@@ -840,6 +842,12 @@ func (m *App) closeEditorTab() {
 		m.activeEditorView = ""
 	}
 	m.handleTabSwitch()
+	if len(m.agents) == 0 && m.activeEditorView == "" {
+		if m.onListSessions != nil {
+			m.launcher = NewLauncherState(m.onListSessions())
+			m.lastInteractionTime = time.Now()
+		}
+	}
 }
 
 func (m *App) activeEditorPath() string {
@@ -847,7 +855,7 @@ func (m *App) activeEditorPath() string {
 }
 
 func (m *App) Init() tea.Cmd {
-	if m.Mode == ModeChat || m.Mode == ModeLauncher {
+	if m.Mode == ModeChat {
 		m.startLSPForWorkspace()
 	}
 	// Wire the permanent diagnostics callback so project-wide diagnostics
@@ -882,8 +890,12 @@ func (m *App) startLSPForWorkspace() {
 	if err != nil {
 		wsDir = "."
 	}
-	m.logger.Debug("LSP", "starting_for_workspace", "dir", wsDir)
-	m.lspManager.StartForWorkspace(wsDir)
+	if m.logger != nil {
+		m.logger.Debug("LSP", "starting_for_workspace", "dir", wsDir)
+	}
+	if m.lspManager != nil {
+		m.lspManager.StartForWorkspace(wsDir)
+	}
 }
 
 // openTextOverlayWindow opens the text overlay as a floating window.
@@ -949,6 +961,63 @@ func (m *App) StopLSP() {
 	if m.lspManager != nil {
 		m.lspManager.Stop()
 	}
+}
+
+// handleQuit implements hierarchical quit: close tab first, quit if no tabs.
+func (m *App) handleQuit() (tea.Model, tea.Cmd) {
+	// First, close any focused floating window
+	if fw := m.windowManager.Focused(); fw != nil {
+		m.windowManager.RemoveWindow(fw.ID)
+		return m, nil
+	}
+
+	// If there's an active overlay tab, close it first
+	if m.overlay.IsOpen() {
+		m.overlay.CloseAll()
+		if m.Mode != ModeChat {
+			m.Mode = ModeChat
+			m.input.ResetPrompt()
+			m.input.ClearInput()
+		}
+		return m, nil
+	}
+
+	// If there's an editor open, close it
+	if m.activeEditorView != "" {
+		m.closeEditorTab()
+		return m, nil
+	}
+
+	// If there are window tabs, close the active one
+	if m.win.IsOpen() && m.win.TabCount() > 0 {
+		activeIdx := m.win.ActiveIndex()
+		if activeIdx >= 0 {
+			tab := m.win.Tabs()[activeIdx]
+			action := m.win.CloseTab(activeIdx)
+			if action == window.CloseNone {
+				return m, nil
+			}
+			// If the tab was an agent tab, remove the agent from the map
+			if m.isAgentTabTitle(tab.Title) {
+				agentID := m.agentIDFromTabTitle(tab.Title)
+				delete(m.agents, agentID)
+				m.activeAgentView = ""
+			}
+			m.dirty = true
+			// If no tabs left, show launcher
+			if len(m.agents) == 0 && m.activeEditorView == "" && !m.win.IsOpen() {
+				if m.onListSessions != nil {
+					m.launcher = NewLauncherState(m.onListSessions())
+					m.lastInteractionTime = time.Now()
+				}
+				return m, nil
+			}
+		}
+	}
+
+	// No tabs left and no sessions — quit
+	m.Quit = true
+	return m, tea.Quit
 }
 
 // closeAllWindows removes all floating windows.

@@ -299,7 +299,7 @@ func (s *StatusBar) RecordActivityForAgent(agentID string) {
 }
 
 func (s *StatusBar) getAgentState(agentID string) *agentStatus {
-	if agentID == "" || agentID == "main" {
+	if agentID == "" {
 		return nil
 	}
 	if s.agentStates == nil {
@@ -314,7 +314,7 @@ func (s *StatusBar) getAgentState(agentID string) *agentStatus {
 }
 
 func (s *StatusBar) AgentStatusView(agentID string) string {
-	if agentID == "" || agentID == "main" {
+	if agentID == "" {
 		return ""
 	}
 	st := s.getAgentState(agentID)

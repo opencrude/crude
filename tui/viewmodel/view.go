@@ -20,13 +20,6 @@ func (m *App) View() tea.View {
 		return tea.NewView("")
 	}
 
-	if m.Mode == ModeLauncher && m.launcher != nil {
-		v := tea.NewView(m.renderLauncherView())
-		v.AltScreen = true
-		v.MouseMode = tea.MouseModeAllMotion
-		return v
-	}
-
 	isDragging := m.windowManager.IsDragging()
 	wmNeedsRender := m.windowManager.NeedsRender()
 
@@ -40,8 +33,8 @@ func (m *App) View() tea.View {
 	}
 
 	// Skip rendering if nothing changed since the last render.
-	// mainViewDirty is set in Update() whenever view content changes.
-	if !m.mainViewDirty && m.cachedOutput != "" {
+	// dirty is set in Update() whenever view content changes.
+	if !m.dirty && m.cachedOutput != "" {
 		v := tea.NewView(m.cachedOutput)
 		v.AltScreen = true
 		v.MouseMode = tea.MouseModeAllMotion
@@ -69,7 +62,7 @@ func (m *App) View() tea.View {
 
 	// Generate ANSI output and present
 	output := m.compositor.Present()
-	m.mainViewDirty = false
+	m.dirty = false
 	m.cachedOutput = output
 
 	v := tea.NewView(output)
@@ -85,7 +78,7 @@ func (m *App) View() tea.View {
 func (m *App) buildMainView() string {
 	// Account for file tree sidebar when visible.
 	sidebarW := 0
-	sidebarVisible := m.treeVisible && m.treeModel != nil && m.treeRenderer != nil && m.Mode != ModeLauncher
+	sidebarVisible := m.treeVisible && m.treeModel != nil && m.treeRenderer != nil
 	if sidebarVisible {
 		sidebarW = m.treeWidth + 1 // +1 for divider
 	}
@@ -117,6 +110,9 @@ func (m *App) buildMainView() string {
 			hint = " "
 		}
 		inputView = dim.Render(hint)
+	} else if len(m.agents) == 0 && m.activeEditorView == "" {
+		inputLineCount = 1
+		inputView = dim.Render("↑↓: navigate  ·  enter: open  ·  type to search sessions")
 	} else if isEditorActive {
 		inputLineCount = 1
 		fileInfo := m.editor.Title()
@@ -137,7 +133,7 @@ func (m *App) buildMainView() string {
 
 	agentTabBarLine := ""
 	agentTabBarVisible := false
-	if m.win.IsOpen() && m.win.TabCount() >= 2 {
+	if m.win.IsOpen() && m.win.TabCount() >= 1 {
 		agentTabBarLine = m.win.RenderTabBar()
 		agentTabBarVisible = agentTabBarLine != ""
 	}
@@ -174,6 +170,14 @@ func (m *App) buildMainView() string {
 		}
 		chatVisible = m.editor.View(contentW, chatH, editorPadL, editorPadR)
 		totalSBW = 0
+	} else if len(m.agents) == 0 && m.activeEditorView == "" {
+		if m.launcher != nil {
+			launcherLines := m.renderLauncherMainView(innerW, chatH)
+			chatVisible = launcherLines
+		} else {
+			chatVisible = []string{""}
+		}
+		totalSBW = 0
 	} else {
 		activeML := m.activeMessageList()
 		activeAgent := m.agentForView()
@@ -184,10 +188,10 @@ func (m *App) buildMainView() string {
 
 		nestingLevel := m.paneMgr.ScrollbarNestingLevel()
 		paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
-		ma := m.mainAgent()
-		ma.MsgList.SetPaneScrollbarWidth(paneSBW)
-
-		if activeML != ma.MsgList {
+		if activeAgent := m.agents[m.activeAgentView]; activeAgent != nil && activeAgent.MsgList != nil {
+			activeAgent.MsgList.SetPaneScrollbarWidth(paneSBW)
+		}
+		if activeML != nil {
 			activeML.SetPaneScrollbarWidth(0)
 		}
 		activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
@@ -365,7 +369,7 @@ func (m *App) buildMainView() string {
 	lines = append(lines, "")
 
 	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
-	if m.activeAgentView != "" && m.activeAgentView != MainAgentID {
+	if m.activeAgentView != "" {
 		agentLabel := m.activeAgentView
 		if lbl, ok := m.agentLabels[m.activeAgentView]; ok && lbl != "" {
 			agentLabel = lbl
@@ -544,7 +548,7 @@ func (m *App) renderOverlayArea() []string {
 
 	// Compute content width accounting for sidebar
 	sidebarW := 0
-	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil && m.Mode != ModeLauncher {
+	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil {
 		sidebarW = m.treeWidth + 1
 	}
 	contentW := m.width - sidebarW
@@ -583,7 +587,7 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 
 	// Compute content width accounting for sidebar
 	sidebarW := 0
-	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil && m.Mode != ModeLauncher {
+	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil {
 		sidebarW = m.treeWidth + 1
 	}
 	overlayContentW := m.width - sidebarW - 2*m.theme.Spacing.PadLR
@@ -645,6 +649,65 @@ func (m *App) syncFormHint() {
 	default:
 		m.formHint = ""
 	}
+}
+
+// renderLauncherMainView renders the launcher in the main content area.
+// Renders launcher session content (same pattern as buildMainView but replaces chat
+// area with launcher session list). Sidebar support is inherited from buildMainView.
+func (m *App) renderLauncherMainView(innerW, chatH int) []string {
+	if m.launcher == nil || innerW < 20 || chatH < 3 {
+		return []string{""}
+	}
+
+	idleSeconds := time.Since(m.lastInteractionTime).Seconds()
+	visibleSessions := m.launcher.visibleSessions()
+	sessionLines := widgets.RenderLauncher(
+		visibleSessions,
+		m.launcher.selected,
+		m.launcher.filterActive,
+		m.launcher.filterText,
+		m.theme,
+		innerW,
+		chatH,
+		m.spinFrame,
+		idleSeconds,
+	)
+
+	// Apply scroll offset for long lists
+	totalSessionLines := len(sessionLines)
+	scrollOffset := m.launcher.scrollOffset
+
+	selectedLineIdx := m.launcherSelectedLineIndex(sessionLines)
+	if selectedLineIdx >= scrollOffset+chatH {
+		scrollOffset = selectedLineIdx - chatH + 1
+	}
+	if selectedLineIdx < scrollOffset {
+		scrollOffset = selectedLineIdx
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+	m.launcher.scrollOffset = scrollOffset
+
+	endIdx := scrollOffset + chatH
+	if endIdx > totalSessionLines {
+		endIdx = totalSessionLines
+	}
+	var visibleLines []string
+	if scrollOffset < totalSessionLines {
+		visibleLines = sessionLines[scrollOffset:endIdx]
+	}
+
+	// Pad visible lines to fill the height
+	result := make([]string, chatH)
+	for i := 0; i < chatH; i++ {
+		if i < len(visibleLines) {
+			result[i] = visibleLines[i]
+		} else {
+			result[i] = ""
+		}
+	}
+	return result
 }
 
 // renderLauncherView renders the full-screen session launcher.

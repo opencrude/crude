@@ -109,7 +109,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		PolicyName:  getStrParam(params, "policy"),
 		MaxSteps:    getIntParam(params, "max_steps"),
 		Depth:       1,
-		ParentID:    agent.AgentID("main"),
+		ParentID:    agent.AgentID(r.session.ID),
 	}
 
 	if raw, ok := params["allowed_tools"]; ok {
@@ -480,7 +480,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	resolvedThinkingEffort := spec.ThinkingEffort
 
 	if resolvedProvider == "" {
-		mainCat := r.session.cfg.GetActiveMainCategory()
+		mainCat := r.session.cfg.GetActiveDefaultCategory()
 		resolvedProvider = mainCat.Provider
 	}
 	if resolvedAPIKey == "" || resolvedURL == "" {
@@ -492,7 +492,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 				resolvedURL = prov.ProviderURL
 			}
 		} else {
-			mainCat := r.session.cfg.GetActiveMainCategory()
+			mainCat := r.session.cfg.GetActiveDefaultCategory()
 			if resolvedAPIKey == "" {
 				resolvedAPIKey = mainCat.APIKey
 			}
@@ -502,11 +502,11 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		}
 	}
 	if resolvedModelName == "" {
-		mainCat := r.session.cfg.GetActiveMainCategory()
+		mainCat := r.session.cfg.GetActiveDefaultCategory()
 		resolvedModelName = mainCat.Model
 	}
 	if resolvedThinkingEffort == "" {
-		mainCat := r.session.cfg.GetActiveMainCategory()
+		mainCat := r.session.cfg.GetActiveDefaultCategory()
 		resolvedThinkingEffort = mainCat.ThinkingEffort
 	}
 
@@ -600,6 +600,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"model":      handle.Spec.Model,
 			"provider":   handle.Spec.Provider,
 			"task":       handle.Spec.Description,
+			"parent_id":  r.session.ID,
 		}, string(handle.Spec.ID))
 	}
 
@@ -1030,7 +1031,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 
 		resolvedProvider := spec.Provider
 		if resolvedProvider == "" {
-			resolvedProvider = r.session.cfg.GetActiveMainCategory().Provider
+			resolvedProvider = r.session.cfg.GetActiveDefaultCategory().Provider
 		}
 		if err := r.rateLimiter.Wait(ctx, resolvedProvider); err != nil {
 			return tools.ToolResult{}, fmt.Errorf("Rate limit exceeded for provider %q", resolvedProvider)
@@ -1193,7 +1194,7 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		}
 	}
 	if spec.Model == "" || spec.Provider == "" || spec.APIKey == "" || spec.ProviderURL == "" {
-		mainCat := r.session.cfg.GetActiveMainCategory()
+		mainCat := r.session.cfg.GetActiveDefaultCategory()
 		if spec.Model == "" {
 			spec.Model = mainCat.Model
 		}

@@ -12,9 +12,12 @@ import (
 	"crude/tui/widgets"
 )
 
-func (m *App) submitInput(text string, refIDs []string) tea.Cmd {
-	ma := m.mainAgent()
-	ma.MsgList.AppendMessage(ttypes.ChatMessage{
+func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
+	agent, ok := m.agents[sessionID]
+	if !ok {
+		return nil
+	}
+	agent.MsgList.AppendMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleUser,
 		Content: text,
 		Time:    time.Now(),
@@ -28,9 +31,9 @@ func (m *App) submitInput(text string, refIDs []string) tea.Cmd {
 	if OnHistorySave != nil {
 		OnHistorySave(m.history)
 	}
-	ma.SubmitInput(text)
+	agent.SubmitInput(text)
 	m.statusbar.SetThinking(true, false, false)
-	ch := m.inputCh
+	ch := m.sessionInputChans[sessionID]
 	return func() tea.Msg {
 		select {
 		case ch <- provider.InputWithRefs(text, refIDs):
@@ -41,9 +44,12 @@ func (m *App) submitInput(text string, refIDs []string) tea.Cmd {
 	}
 }
 
-func (m *App) submitBtw(text string, refIDs []string) tea.Cmd {
-	ma := m.mainAgent()
-	ma.MsgList.AppendMessage(ttypes.ChatMessage{
+func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
+	agent, ok := m.agents[sessionID]
+	if !ok {
+		return nil
+	}
+	agent.MsgList.AppendMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleUser,
 		Content: text,
 		Time:    time.Now(),
@@ -58,7 +64,7 @@ func (m *App) submitBtw(text string, refIDs []string) tea.Cmd {
 		OnHistorySave(m.history)
 	}
 	m.statusbar.SetBtwCount(m.statusbar.BtwCount() + 1)
-	ch := m.btwCh
+	ch := m.sessionBtwChans[sessionID]
 	return func() tea.Msg {
 		select {
 		case ch <- provider.InputWithRefs(text, refIDs):
@@ -70,23 +76,59 @@ func (m *App) submitBtw(text string, refIDs []string) tea.Cmd {
 }
 
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
-	if m.Mode == ModeLauncher {
+	if evt.Type == "async_command_status" || evt.Type == "retry" {
+		switch evt.Type {
+		case "async_command_status":
+			if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
+				m.statusbar.SetAsyncCommands(cmds)
+			}
+			m.syncAgentWindowTabs()
+			return nil
+		case "retry":
+			switch d := evt.Data.(type) {
+			case map[string]any:
+				attempt := 0
+				switch a := d["attempt"].(type) {
+				case float64:
+					attempt = int(a)
+				case int:
+					attempt = a
+				}
+				backoff, _ := d["backoff"].(float64)
+				m.statusbar.SetRetry(fmt.Sprintf("⚠ retrying in %.0fs... (attempt %d)", backoff, attempt))
+			case string:
+				m.statusbar.SetRetry(d)
+			}
+		}
+		m.syncAgentWindowTabs()
 		return nil
 	}
 
 	agentID := evt.AgentID
 	if agentID == "" {
-		agentID = MainAgentID
+		m.syncAgentWindowTabs()
+		return nil
 	}
 
-	// Ensure agent state exists before processing event-specific logic.
-	// This must happen before the switch so that syncAgentWindowTabs()
-	// (called at the end of this function) can find the agent in m.agents.
 	agent, ok := m.agents[agentID]
 	if !ok {
-		if agentID == MainAgentID {
-			agent = NewAgentState(agentID, m.mainMsgList, m.logger)
+		// Check if this is an orchestrator (no parent) or a sub-agent
+		evtData, _ := evt.Data.(map[string]string)
+		parentID := evtData["parent_id"]
+
+		if parentID == "" {
+			// Orchestrator: create top-level agent with its own MsgList
+			m.launcher = nil
+			ml := widgets.NewMessageList(m.theme)
+			ml.SetModelName(m.modelName)
+			ml.SetUsername(m.username)
+			ml.SetSubPaneContentFn(m.renderSubPaneContent)
+			agent = NewAgentState(agentID, ml, m.logger)
+			m.agents[agentID] = agent
+			m.activeAgentView = agentID
+			m.syncAgentWindowTabs()
 		} else {
+			// Sub-agent: create sub-pane
 			sp := m.paneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.theme)
 			subModel := m.modelName
 			if am, ok := m.agentModels[agentID]; ok && am != "" {
@@ -95,14 +137,16 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			sp.MsgList.SetModelName(subModel)
 			sp.MsgList.SetUsername(m.username)
 			agent = NewAgentState(agentID, sp.MsgList, m.logger)
-			m.mainMsgList.AppendMessage(ttypes.ChatMessage{
-				Role:      ttypes.RoleTool,
-				Content:   agentID,
-				SubPaneID: agentID,
-				Time:      time.Now(),
-			})
+			if parent, ok := m.agents[parentID]; ok && parent.MsgList != nil {
+				parent.MsgList.AppendMessage(ttypes.ChatMessage{
+					Role:      ttypes.RoleTool,
+					Content:   agentID,
+					SubPaneID: agentID,
+					Time:      time.Now(),
+				})
+			}
+			m.agents[agentID] = agent
 		}
-		m.agents[agentID] = agent
 	} else if agent.Completed {
 		if evt.Type == "done" || evt.Type == "error" {
 			m.handleSubPaneCompletion(agentID)
@@ -121,38 +165,24 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	case "file_claim":
 		m.handleFileClaim(evt)
 	case "stream_token", "thinking", "tool_call", "tool_call_streaming", "tool_result", "tool_progress":
-		if agentID == MainAgentID {
-			m.statusbar.RecordActivity()
-		} else {
-			m.statusbar.RecordActivityForAgent(agentID)
-		}
+		m.statusbar.RecordActivityForAgent(agentID)
 	case "phase":
-		if agentID == MainAgentID {
-			m.statusbar.RecordActivity()
-		} else {
-			m.statusbar.RecordActivityForAgent(agentID)
-			if phase, ok := evt.Data.(string); ok {
-				m.statusbar.SetPhaseForAgent(agentID, phase)
-			}
+		m.statusbar.RecordActivityForAgent(agentID)
+		if phase, ok := evt.Data.(string); ok {
+			m.statusbar.SetPhaseForAgent(agentID, phase)
 		}
 	}
 
 	thinkingTarget := m.getThinkingTarget(agentID, agent)
 
+	hasThinking := agent != nil && agent.ThinkingPaneID != ""
+
 	cmd := agent.HandleEvent(evt, thinkingTarget,
 		func(statusLine string) {
-			if agentID == MainAgentID {
-				m.statusbar.SetStatusLine(statusLine)
-			} else {
-				m.statusbar.SetStatusLineForAgent(agentID, statusLine)
-			}
+			m.statusbar.SetStatusLineForAgent(agentID, statusLine)
 		},
 		func(thinking, streaming, blocking bool) {
-			if agentID == MainAgentID {
-				m.statusbar.SetThinking(thinking, streaming, blocking)
-			} else {
-				m.statusbar.SetThinkingForAgent(agentID, thinking, streaming, blocking)
-			}
+			m.statusbar.SetThinkingForAgent(agentID, thinking, streaming, blocking)
 		},
 		func() {
 			m.blocking = true
@@ -190,11 +220,11 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		},
 	)
 
-	if evt.Type == "thinking" && agentID == MainAgentID {
-		m.checkThinkingPromotion()
+	if evt.Type == "thinking" && hasThinking {
+		m.checkThinkingPromotion(agent)
 	}
 
-	if agentID == MainAgentID && m.mainAgent().ThinkingPaneID != "" {
+	if hasThinking && agent.ThinkingPaneID != "" {
 		switch evt.Type {
 		case "stream_token", "tool_call", "tool_call_streaming":
 			m.handleSubPaneCompletion(agentID)
@@ -203,36 +233,12 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 	if evt.Type == "done" || evt.Type == "error" {
 		m.handleSubPaneCompletion(agentID)
-		if agentID == MainAgentID {
-			m.statusbar.SetBtwCount(0)
-			m.statusbar.ResetActivity()
-		} else {
-			m.statusbar.ClearAgentState(agentID)
-		}
+		m.statusbar.ClearAgentState(agentID)
 	}
 
 	switch evt.Type {
 	case "usage":
 		m.handleUsageData(evt.Data, agentID)
-	case "retry":
-		switch d := evt.Data.(type) {
-		case map[string]any:
-			attempt := 0
-			switch a := d["attempt"].(type) {
-			case float64:
-				attempt = int(a)
-			case int:
-				attempt = a
-			}
-			backoff, _ := d["backoff"].(float64)
-			m.statusbar.SetRetry(fmt.Sprintf("⚠ retrying in %.0fs... (attempt %d)", backoff, attempt))
-		case string:
-			m.statusbar.SetRetry(d)
-		}
-	case "async_command_status":
-		if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
-			m.statusbar.SetAsyncCommands(cmds)
-		}
 	}
 
 	// Sync window tabs after all state mutations to ensure tab state
@@ -244,12 +250,8 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 }
 
 func (m *App) getThinkingTarget(agentID string, agent *AgentState) *widgets.MessageList {
-	if agentID != MainAgentID {
-		if m.paneMgr.Has(agentID) {
-			return m.paneMgr.Get(agentID).MsgList
-		}
-		sp := m.paneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.theme)
-		return sp.MsgList
+	if m.paneMgr.Has(agentID) {
+		return m.paneMgr.Get(agentID).MsgList
 	}
 
 	if agent.ThinkingPaneID != "" {
@@ -258,12 +260,13 @@ func (m *App) getThinkingTarget(agentID string, agent *AgentState) *widgets.Mess
 		}
 		agent.ThinkingPaneID = ""
 	}
-	return nil
+
+	sp := m.paneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.theme)
+	return sp.MsgList
 }
 
-func (m *App) checkThinkingPromotion() {
-	ma := m.mainAgent()
-	if !ma.Thinking || ma.ThinkingPaneID != "" {
+func (m *App) checkThinkingPromotion(agent *AgentState) {
+	if agent == nil || !agent.Thinking || agent.ThinkingPaneID != "" {
 		return
 	}
 
@@ -277,16 +280,19 @@ func (m *App) checkThinkingPromotion() {
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
-	lineCount := m.mainMsgList.ActiveThinkingLineCount(contentWidth)
+	lineCount := agent.MsgList.ActiveThinkingLineCount(contentWidth)
 
 	if lineCount > threshold {
-		m.promoteThinkingToPane(ma)
+		m.promoteThinkingToPane(agent)
 	}
 }
 
 func (m *App) promoteThinkingToPane(agent *AgentState) {
+	if agent == nil || agent.MsgList == nil {
+		return
+	}
 	paneID := "thinking-" + time.Now().Format("150405")
-	content := m.mainMsgList.RemoveActiveThinking()
+	content := agent.MsgList.RemoveActiveThinking()
 
 	sp := m.paneMgr.GetOrCreate(paneID, PaneThinking, "Thinking", m.theme)
 	sp.MsgList.SetModelName(m.modelName)
@@ -299,7 +305,7 @@ func (m *App) promoteThinkingToPane(agent *AgentState) {
 
 	agent.ThinkingPaneID = paneID
 
-	m.mainMsgList.AppendMessage(ttypes.ChatMessage{
+	agent.MsgList.AppendMessage(ttypes.ChatMessage{
 		Role:      ttypes.RoleTool,
 		Content:   "Thinking",
 		SubPaneID: paneID,
@@ -308,16 +314,29 @@ func (m *App) promoteThinkingToPane(agent *AgentState) {
 }
 
 func (m *App) handleSubPaneCompletion(agentID string) {
-	if agentID == MainAgentID {
-		ma := m.mainAgent()
-		if ma.ThinkingPaneID != "" {
-			sp := m.paneMgr.Get(ma.ThinkingPaneID)
-			if sp != nil {
-				sp.Collapse()
-				m.mainMsgList.InvalidateSubPane(ma.ThinkingPaneID)
-			}
-			ma.ThinkingPaneID = ""
+	parentID := m.subAgentParents[agentID]
+	var parentML *widgets.MessageList
+	if parentID != "" {
+		if parent, ok := m.agents[parentID]; ok && parent.MsgList != nil {
+			parentML = parent.MsgList
 		}
+	}
+	if parentML == nil {
+		if a, ok := m.agents[m.activeAgentView]; ok && a.MsgList != nil {
+			parentML = a.MsgList
+		}
+	}
+
+	agent, ok := m.agents[agentID]
+	if ok && agent.ThinkingPaneID != "" {
+		sp := m.paneMgr.Get(agent.ThinkingPaneID)
+		if sp != nil {
+			sp.Collapse()
+			if parentML != nil {
+				parentML.InvalidateSubPane(agent.ThinkingPaneID)
+			}
+		}
+		agent.ThinkingPaneID = ""
 		return
 	}
 
@@ -326,7 +345,9 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 		return
 	}
 	sp.Collapse()
-	m.mainMsgList.InvalidateSubPane(agentID)
+	if parentML != nil {
+		parentML.InvalidateSubPane(agentID)
+	}
 }
 
 func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
@@ -337,25 +358,16 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 		msg := cmd()
 		switch result := msg.(type) {
 		case agentDoneResultMsg:
-			if result.AgentID != MainAgentID {
-				return nil
-			}
 			if result.Reason == "completed" {
 				m.statusbar.SetInfo("✓ done")
 			} else if result.Reason != "" {
 				m.statusbar.SetError("⚠ " + result.Reason)
 			}
 		case agentErrorResultMsg:
-			if result.AgentID != MainAgentID {
-				return nil
-			}
 			m.statusbar.SetError(result.Err)
 			m.statusbar.ClearRetry()
 			m.statusbar.SetStatusLine("")
 		case agentRetryResultMsg:
-			if result.AgentID != MainAgentID {
-				return nil
-			}
 			m.statusbar.SetRetry(result.Msg)
 		}
 		return nil
@@ -373,31 +385,27 @@ func (m *App) handleUsageData(data any, agentID string) {
 		ctxUsed := toInt(d["context_used"])
 		estimated, _ := d["estimated"].(bool)
 		m.sessionCost += cost
-		if agentID == MainAgentID || agentID == "" {
-			m.tokenPrompt = int(prompt)
-			m.tokenCompletion = int(completion)
-			m.tokenCached = int(cached)
-			m.tokenEstimated = estimated
-			if int(ctxWindow) > 0 {
-				m.contextWindow = int(ctxWindow)
-				if int(ctxUsed) > 0 {
-					m.contextUsed = int(ctxUsed)
-				} else {
-					m.contextUsed = int(prompt)
-				}
+		m.tokenPrompt = int(prompt)
+		m.tokenCompletion = int(completion)
+		m.tokenCached = int(cached)
+		m.tokenEstimated = estimated
+		if int(ctxWindow) > 0 {
+			m.contextWindow = int(ctxWindow)
+			if int(ctxUsed) > 0 {
+				m.contextUsed = int(ctxUsed)
+			} else {
+				m.contextUsed = int(prompt)
 			}
 		}
 		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed, m.tokenEstimated)
 	case map[string]int:
 		m.sessionCost += 0
-		if agentID == MainAgentID || agentID == "" {
-			m.tokenCached = d["prompt_cached"]
-			m.tokenCompletion = d["completion"]
-			m.tokenPrompt = d["prompt"]
-			if cw := d["context_window"]; cw > 0 {
-				m.contextWindow = cw
-				m.contextUsed = d["prompt"]
-			}
+		m.tokenCached = d["prompt_cached"]
+		m.tokenCompletion = d["completion"]
+		m.tokenPrompt = d["prompt"]
+		if cw := d["context_window"]; cw > 0 {
+			m.contextWindow = cw
+			m.contextUsed = d["prompt"]
 		}
 		m.statusbar.UpdateUsage(m.tokenPrompt, m.tokenCompletion, m.tokenCached, m.sessionCost, m.contextWindow, m.contextUsed, false)
 	}
@@ -427,11 +435,13 @@ func (m *App) handleSubAgentQuestion(evt ttypes.AgentEventMsg) {
 		return
 	}
 	content := fmt.Sprintf("[%s:%s] asks: %s", category, agentName, question)
-	m.mainMsgList.AppendMessage(ttypes.ChatMessage{
-		Role:    ttypes.RoleTool,
-		Content: content,
-		Time:    time.Now(),
-	})
+	if ml := m.activeMsgList(); ml != nil {
+		ml.AppendMessage(ttypes.ChatMessage{
+			Role:    ttypes.RoleTool,
+			Content: content,
+			Time:    time.Now(),
+		})
+	}
 }
 
 func (m *App) handleFileClaim(evt ttypes.AgentEventMsg) {
@@ -467,6 +477,12 @@ func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
 		if sp := m.paneMgr.Get(agentID); sp != nil {
 			sp.MsgList.SetModelName(model)
 		}
+	}
+	if category := data["category"]; category != "" {
+		m.agentCategories[agentID] = category
+	}
+	if parentID := data["parent_id"]; parentID != "" {
+		m.subAgentParents[agentID] = parentID
 	}
 }
 

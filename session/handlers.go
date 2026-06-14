@@ -89,11 +89,11 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	defer s.mu.Unlock()
 
 	oldProvider := s.cfg.ActiveProvider
-	oldModel := s.cfg.GetActiveMainCategory().Model
+	oldModel := s.cfg.GetActiveDefaultCategory().Model
 	l.Info("CONFIG", "save_begin", "old_provider", oldProvider, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
 
 	newCfg := settingsToConfig(tuiSettings, s.cfg)
-	mainCat := newCfg.GetActiveMainCategory()
+	mainCat := newCfg.GetActiveDefaultCategory()
 	if mainCat.APIKey == "" {
 		l.Warn("CONFIG", "save_blocked", "reason", "empty_api_key")
 		return fmt.Errorf("API key cannot be empty — settings not saved")

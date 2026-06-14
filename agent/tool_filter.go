@@ -100,8 +100,8 @@ func FilterTools(allTools []tools.ToolDef, specAllowed []string, specDenied []st
 	return filtered
 }
 
-func ApplyMainAgentOverrides(filtered []tools.ToolDef) []tools.ToolDef {
-	descs := mainAgentToolDescriptions()
+func ApplyOrchestratorOverrides(filtered []tools.ToolDef) []tools.ToolDef {
+	descs := orchestratorToolDescriptions()
 	result := make([]tools.ToolDef, len(filtered))
 	for i, t := range filtered {
 		if desc, ok := descs[t.Function.Name]; ok {
@@ -114,7 +114,7 @@ func ApplyMainAgentOverrides(filtered []tools.ToolDef) []tools.ToolDef {
 	return result
 }
 
-func mainAgentToolDescriptions() map[string]string {
+func orchestratorToolDescriptions() map[string]string {
 	return map[string]string{
 		"read_file": "Only for reading agent reports, or as a limited fallback for the orchestrator. " +
 			"Delegate ALL file reading to a researcher sub-agent. " +

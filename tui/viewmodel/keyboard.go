@@ -9,6 +9,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/input"
+	"crude/tui/rendering"
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
@@ -17,8 +18,24 @@ import (
 func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	if m.mainMsgList.HasActiveSelection() {
-		m.mainMsgList.ClearSelection()
+	// Global keybindings checked first — before any routing
+
+	// Ctrl+Shift+P → Command Palette
+	if msg.Mod.Contains(tea.ModCtrl) && msg.Mod.Contains(tea.ModShift) && msg.Code == 'P' {
+		return m.toggleCommandPalette()
+	}
+	// Fallback: Ctrl+P alone also opens palette (for terminals that eat Ctrl+Shift)
+	if msg.String() == "ctrl+p" {
+		return m.toggleCommandPalette()
+	}
+
+	// Ctrl+Q → close current tab, or quit if no tabs
+	if msg.String() == "ctrl+q" {
+		return m.handleQuit()
+	}
+
+	if ml := m.activeMsgList(); ml != nil && ml.HasActiveSelection() {
+		ml.ClearSelection()
 		return m, nil
 	}
 
@@ -53,16 +70,14 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
-		m.Quit = true
-		return m, tea.Quit
+		return m, nil
 	}
 	if msg.Code == tea.KeyEsc {
 		if m.launcher != nil && m.launcher.filterActive {
 			m.launcher.deactivateFilter()
 			return m, nil
 		}
-		m.Quit = true
-		return m, tea.Quit
+		return m, nil
 	}
 	return m.handleLauncherKey(msg)
 }
@@ -77,11 +92,16 @@ func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc {
-		m.closeEditorTab()
+	if msg.String() == "ctrl+c" {
+		if m.editor.HasSelection() {
+			selected := m.editor.SelectedText()
+			if selected != "" {
+				return m, rendering.CopyToClipboardCmd(selected)
+			}
+		}
 		return m, nil
 	}
-	if msg.String() == "ctrl+c" {
+	if msg.Code == tea.KeyEsc {
 		m.closeEditorTab()
 		return m, nil
 	}
@@ -96,24 +116,36 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	if msg.Code == tea.KeyEsc {
-		fw := m.windowManager.Focused()
-		if fw != nil {
-			if fw.ID == "textoverlay" {
-				m.textOverlay.Close()
-			}
-			m.windowManager.RemoveWindow(fw.ID)
-			m.setMode(ModeChat)
-		}
-		return m, nil
-	}
-
-	// Forward other keys to the focused window's content.
 	if fw := m.windowManager.Focused(); fw != nil {
 		switch fw.ID {
+		case "command-palette":
+			if msg.Code == tea.KeyEsc {
+				m.windowManager.RemoveWindow("command-palette")
+				return m, nil
+			}
+			if m.commandPaletteModel != nil {
+				cmd := m.commandPaletteModel.Update(msg)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				if fw := m.windowManager.Window("command-palette"); fw != nil {
+					fw.MarkContentDirty()
+				}
+			}
+			return m, tea.Batch(cmds...)
+
 		case "textoverlay":
 			return m.handleTextOverlayKey(msg, &cmds)
+
 		default:
+			if msg.Code == tea.KeyEsc {
+				if fw.ID == "textoverlay" {
+					m.textOverlay.Close()
+				}
+				m.windowManager.RemoveWindow(fw.ID)
+				m.setMode(ModeChat)
+				return m, nil
+			}
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -124,11 +156,6 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 }
 
 func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
-		m.tabBarFocused = false
-		m.logger.Debug("CANCEL", "ctrl_c", "mode", modeName(m.Mode))
-		return m, m.handleCancel(msg)
-	}
 	switch msg.Code {
 	case tea.KeyLeft:
 		m.win.Prev()
@@ -152,7 +179,7 @@ func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) dispatchOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	isCancel := msg.Code == tea.KeyEsc || msg.String() == "ctrl+c"
+	isCancel := msg.Code == tea.KeyEsc
 
 	if keyMsg, ok := any(msg).(tea.KeyPressMsg); ok && m.overlay.TabCount() >= 2 {
 		switch keyMsg.String() {
@@ -197,7 +224,7 @@ func (m *App) handleSettingsKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 	switch e := evt.(type) {
 	case settings.SaveEvent:
 		s := e.Settings
-		m.logger.Info("CONFIG", "settings_save", "provider", s.ProviderID, "model", s.Model)
+		m.logger.Info("CONFIG", "settings_save", "provider", s.ProviderID, "model", s.Model, "category", m.settingsCategory)
 		if m.OnSettingsSave != nil {
 			m.statusbar.SetInfo("saving...")
 			onSave := m.OnSettingsSave
@@ -210,10 +237,12 @@ func (m *App) handleSettingsKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 			m.lastSettings = s
 			m.closeOverlayTab("Settings")
 		}
+		m.settingsCategory = ""
 	case settings.CancelEvent:
 		m.logger.Info("CONFIG", "settings_cancel")
 		m.settings.RestoreSnapshot()
 		m.closeOverlayTab("Settings")
+		m.settingsCategory = ""
 	}
 	return m, tea.Batch(*cmds...)
 }
@@ -225,21 +254,26 @@ func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model,
 	if done {
 		m.statusbar.SetConfirming(false)
 		m.blocking = false
-		ma := m.mainAgent()
-		ma.Thinking = true
+		if a, ok := m.agents[m.activeAgentView]; ok {
+			a.Thinking = true
+		}
 		m.statusbar.SetThinking(true, false, false)
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(result)
 			m.logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
 		}
-		switch result.Choice {
-		case ttypes.ConfirmAllow:
-			ma.pendingPermTag = "allowed"
-		case ttypes.ConfirmAlways:
-			ma.pendingPermTag = "always"
-		case ttypes.ConfirmDeny:
-			ma.pendingPermTag = "denied"
-			m.mainMsgList.SetToolPermTag(result.Tool, "", "denied")
+		if a, ok := m.agents[m.activeAgentView]; ok {
+			switch result.Choice {
+			case ttypes.ConfirmAllow:
+				a.pendingPermTag = "allowed"
+			case ttypes.ConfirmAlways:
+				a.pendingPermTag = "always"
+			case ttypes.ConfirmDeny:
+				a.pendingPermTag = "denied"
+				if ml := m.activeMsgList(); ml != nil {
+				ml.SetToolPermTag(result.Tool, "", "denied")
+			}
+			}
 		}
 		m.closeOverlayTab("Confirm")
 	}
@@ -250,7 +284,7 @@ func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 	m.statusbar.SetConfirming(true)
 
 	inTextMode := m.questionForm.IsTextQuestion(m.questionForm.Focused())
-	isCancel := msg.Code == tea.KeyEsc || msg.String() == "ctrl+c"
+	isCancel := msg.Code == tea.KeyEsc
 
 	if inTextMode {
 		if isCancel {
@@ -323,11 +357,13 @@ func (m *App) handleYoloKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, te
 			content = "YOLO mode cancelled. Safety checks remain active."
 			m.logger.Info("SAFETY", "yolo_disabled")
 		}
-		m.mainMsgList.AppendMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
-			Content: content,
-			Time:    time.Now(),
-		})
+		if ml := m.activeMsgList(); ml != nil {
+			ml.AppendMessage(ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
+				Content: content,
+				Time:    time.Now(),
+			})
+		}
 		if m.OnYoloCmd != nil {
 			m.OnYoloCmd(enabled)
 		}
@@ -366,8 +402,14 @@ func (m *App) handleFilePickerKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mod
 
 func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
-		m.logger.Debug("CANCEL", "ctrl_c", "mode", modeName(m.Mode))
-		return m, m.handleCancel(msg)
+		m.logger.Debug("COPY", "ctrl_c", "mode", modeName(m.Mode))
+		if m.input.InputSelecting() {
+			selected := m.input.SelectedText()
+			if selected != "" {
+				return m, rendering.CopyToClipboardCmd(selected)
+			}
+		}
+		return m, nil
 	}
 	if msg.Code == tea.KeyEsc {
 		m.logger.Debug("CANCEL", "esc", "mode", modeName(m.Mode))
@@ -377,9 +419,11 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	if m.anyActive() && !m.blocking {
 		switch msg.Code {
 		case tea.KeyHome, tea.KeyEnd:
-			_, cmd := m.mainMsgList.Update(msg)
-			if cmd != nil {
-				*cmds = append(*cmds, cmd)
+			if ml := m.activeMsgList(); ml != nil {
+				_, cmd := ml.Update(msg)
+				if cmd != nil {
+					*cmds = append(*cmds, cmd)
+				}
 			}
 			return m, tea.Batch(*cmds...)
 		}
@@ -397,7 +441,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 			return m, nil
 		}
 	case "ctrl+t":
-		if m.win.IsOpen() && m.win.TabCount() >= 2 {
+		if m.win.IsOpen() && m.win.TabCount() >= 1 {
 			m.setFocusTabBar()
 			return m, nil
 		}
@@ -412,16 +456,22 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m.dispatchEditorKey(msg)
 	}
 
-	updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+	canType := false
+	if a, ok := m.agents[m.activeAgentView]; ok {
+		canType = !a.Completed && a.IsActive()
+	}
+	updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 	m.input = updated
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
 	*cmds = append(*cmds, m.handleInputEvent(evt)...)
 
-	_, mlCmd := m.mainMsgList.Update(msg)
-	if mlCmd != nil {
-		*cmds = append(*cmds, mlCmd)
+	if ml := m.activeMsgList(); ml != nil {
+		_, mlCmd := ml.Update(msg)
+		if mlCmd != nil {
+			*cmds = append(*cmds, mlCmd)
+		}
 	}
 
 	return m, tea.Batch(*cmds...)
@@ -431,9 +481,9 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 	var cmds []tea.Cmd
 	switch e := evt.(type) {
 	case input.SubmitEvent:
-		cmds = append(cmds, m.submitInput(e.Text, e.ReferenceIDs))
+		cmds = append(cmds, m.submitInput(m.activeAgentView, e.Text, e.ReferenceIDs))
 	case input.BtwSubmitEvent:
-		cmds = append(cmds, m.submitBtw(e.Text, e.ReferenceIDs))
+		cmds = append(cmds, m.submitBtw(m.activeAgentView, e.Text, e.ReferenceIDs))
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
 	case input.SettingsOpenEvent:
@@ -456,8 +506,9 @@ func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
 		result := m.questionForm.BuildResult()
 		m.statusbar.SetConfirming(false)
 		m.blocking = false
-		ma := m.mainAgent()
-		ma.Thinking = true
+		if a, ok := m.agents[m.activeAgentView]; ok {
+			a.Thinking = true
+		}
 		m.statusbar.SetThinking(true, false, false)
 		if m.OnQuestionResult != nil {
 			m.OnQuestionResult(ttypes.QuestionResult(result))
@@ -472,8 +523,9 @@ func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
 func (m *App) finishQuestionResult(result ttypes.QuestionResult, cmds *[]tea.Cmd) tea.Model {
 	m.statusbar.SetConfirming(false)
 	m.blocking = false
-	ma := m.mainAgent()
-	ma.Thinking = true
+	if a, ok := m.agents[m.activeAgentView]; ok {
+		a.Thinking = true
+	}
 	m.statusbar.SetThinking(true, false, false)
 	if m.OnQuestionResult != nil {
 		m.OnQuestionResult(result)
@@ -511,7 +563,11 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		cmd := m.editor.HandleEvent(msg)
 		return m, cmd
 	default:
-		updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+		canType := false
+		if a, ok := m.agents[m.activeAgentView]; ok {
+			canType = !a.Completed && a.IsActive()
+		}
+		updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 		m.input = updated
 		if cmd != nil {
 			cmds = append(cmds, cmd)

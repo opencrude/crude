@@ -96,7 +96,7 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 
 	sm := statemachine.NewConversationStateMachine(lg)
 
-	activeCfg := cfg.GetActiveMainCategory()
+	activeCfg := cfg.GetActiveDefaultCategory()
 	p := provider.FromPreset(activeCfg.Provider, activeCfg.APIKey, activeCfg.ProviderURL)
 	p.Model = activeCfg.Model
 	p.SetThinkingEffort(activeCfg.ThinkingEffort)
@@ -153,6 +153,7 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		wakeCh:           make(chan WakeEvent, WakeChBufSize),
 		writeBuf:         make([]taggedMessage, 0, 64),
 		consumedReports:  make(map[string]bool),
+		orchestrators:    make(map[string]*Orchestrator),
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)

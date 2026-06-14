@@ -195,7 +195,6 @@ func (b *AgentTabBar) statusSymbol(tab AgentTab, spinFrame int) string {
 		return lipgloss.NewStyle().Foreground(b.theme.Colors.Warning).Render("!")
 
 	default:
-		// "main" tab or unknown — use ■
 		if tab.IsActive {
 			return lipgloss.NewStyle().Foreground(b.theme.Colors.Accent).Render("■")
 		}

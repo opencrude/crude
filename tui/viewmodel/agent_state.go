@@ -12,8 +12,6 @@ import (
 	"crude/tui/widgets"
 )
 
-const MainAgentID = "main"
-
 type AgentState struct {
 	ID            string
 	MsgList       *widgets.MessageList

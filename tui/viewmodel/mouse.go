@@ -48,7 +48,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		return regionSidebar
 	}
 
-	if !isWheel && m.win.IsOpen() && m.win.TabCount() >= 2 && y == 3 {
+	if !isWheel && m.win.IsOpen() && m.win.TabCount() >= 1 && y == 3 {
 		return regionTabBar
 	}
 
@@ -56,7 +56,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 
 	if m.overlay.IsOpen() && !isWheel {
 		overlayStartLine := m.chatAreaHeight + 3
-		if m.win.IsOpen() && m.win.TabCount() >= 2 {
+		if m.win.IsOpen() && m.win.TabCount() >= 1 {
 			overlayStartLine += 2
 		}
 		if y >= overlayStartLine {
@@ -70,9 +70,13 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		}
 	}
 
+	if len(m.agents) == 0 && m.activeEditorView == "" {
+		return regionInput
+	}
+
 	if m.Mode == ModeChat {
 		tabBarExtra := 0
-		if m.win.IsOpen() && m.win.TabCount() >= 2 {
+		if m.win.IsOpen() && m.win.TabCount() >= 1 {
 			tabBarExtra = 2
 		}
 		overlayExtra := 0
@@ -85,11 +89,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		}
 	}
 
-	if m.Mode != ModeLauncher {
-		return regionChat
-	}
-
-	return regionNone
+	return regionChat
 }
 
 func (m *App) routeEditorMouse(msg tea.Msg) tea.Cmd {
@@ -136,9 +136,13 @@ func (m *App) breadcrumbOffset() int {
 func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []tea.Cmd {
 	var cmds []tea.Cmd
 	activeML := m.activeMessageList()
+	canType := false
+	if a, ok := m.agents[m.activeAgentView]; ok {
+		canType = !a.Completed && a.IsActive()
+	}
 
 	if m.input.InputSelecting() {
-		updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+		updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 		m.input = updated
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -149,7 +153,7 @@ func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []t
 		if paneCmd != nil {
 			cmds = append(cmds, paneCmd)
 		}
-		if !handled {
+		if !handled && activeML != nil {
 			_, cmd := activeML.Update(msg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
@@ -161,7 +165,11 @@ func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []t
 
 func (m *App) routeInputMouse(msg tea.Msg) []tea.Cmd {
 	var cmds []tea.Cmd
-	updated, cmd, evt := m.input.Update(msg, m.mainAgentActive() && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+	canType := false
+	if a, ok := m.agents[m.activeAgentView]; ok {
+		canType = !a.Completed && a.IsActive()
+	}
+	updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 	m.input = updated
 	if cmd != nil {
 		cmds = append(cmds, cmd)
@@ -291,7 +299,7 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 	mouse := msg.Mouse()
 
 	overlayStartLine := m.chatAreaHeight + 3
-	if m.win.IsOpen() && m.win.TabCount() >= 2 {
+	if m.win.IsOpen() && m.win.TabCount() >= 1 {
 		overlayStartLine += 2
 	}
 
@@ -374,14 +382,16 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 	case regionChat:
 		activeML := m.activeMessageList()
-		_, cmd := activeML.Update(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+		if activeML != nil {
+			_, cmd := activeML.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 		return m, tea.Batch(cmds...)
 
 	default:
-		if m.Mode == ModeLauncher && m.launcher != nil {
+		if len(m.agents) == 0 && m.launcher != nil {
 			m.lastInteractionTime = time.Now()
 			if msg.Button == tea.MouseWheelUp {
 				m.launcher.moveUp()
@@ -420,7 +430,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 		m.treeWidth = newWidth
 		m.treeModel.Update(filetree.TreeWidthMsg{Width: newWidth})
-		m.mainViewDirty = true
+		m.dirty = true
 		return m, nil
 	}
 
@@ -450,7 +460,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 
 	if m.Mode == ModeChat {
 		activeML := m.activeMessageList()
-		if activeML.IsScrollbarDragging() {
+		if activeML != nil && activeML.IsScrollbarDragging() {
 			_, cmd := activeML.Update(msg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
@@ -512,7 +522,7 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 
 	case regionChat:
 		activeML := m.activeMessageList()
-		if activeML.IsScrollbarDragging() {
+		if activeML != nil && activeML.IsScrollbarDragging() {
 			_, cmd := activeML.Update(msg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)

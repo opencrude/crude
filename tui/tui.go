@@ -14,15 +14,13 @@ import (
 type TUI struct {
 	app     *viewmodel.App
 	Program *tea.Program
-	InputCh <-chan provider.UserInput
-	BtwCh   <-chan provider.UserInput
 	doneCh  chan struct{}
-
-	CancelCh chan struct{}
 
 	OnQuit func()
 
 	OnExitMessage func()
+
+	OnNewSession func() *viewmodel.NewSessionResult
 
 	OnResumeSession func(string)
 
@@ -51,6 +49,10 @@ type TUI struct {
 	ProviderPresets []ProviderPreset
 }
 
+func (t *TUI) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
+	t.app.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh)
+}
+
 var global *TUI
 
 func Start(modelName string, username string, initial Settings, presets []ProviderPreset, history []string, lg interface {
@@ -59,14 +61,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	Error(tag, msg string, pairs ...any)
 	Debug(tag, msg string, pairs ...any)
 }, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) (*TUI, error) {
-	inputCh := make(chan provider.UserInput, 8)
-	btwCh := make(chan provider.UserInput, 8)
-	cancelCh := make(chan struct{}, 1)
-
 	t := &TUI{
-		InputCh:         inputCh,
-		BtwCh:           btwCh,
-		CancelCh:        cancelCh,
 		doneCh:          make(chan struct{}),
 		ProviderPresets: presets,
 	}
@@ -99,7 +94,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		return ProviderConfig{}
 	}
 
-	a := viewmodel.NewApp(modelName, username, inputCh, btwCh, cancelCh, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions, sessionID, sessionDir, db)
+	a := viewmodel.NewApp(modelName, username, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions, sessionID, sessionDir, db)
 	a.SetProviderPresets(t.ProviderPresets)
 	a.SetHistory(history)
 	a.OnConfirmResult = func(result ConfirmResult) {
@@ -126,6 +121,12 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		if t.OnResumeSession != nil {
 			t.OnResumeSession(sessionID)
 		}
+	}
+	a.OnNewSession = func() *viewmodel.NewSessionResult {
+		if t.OnNewSession != nil {
+			return t.OnNewSession()
+		}
+		return nil
 	}
 	a.OnCancelSubAgent = func(agentID string) {
 		if t.OnCancelSubAgent != nil {
@@ -194,19 +195,11 @@ func (t *TUI) ReleaseTerminal() {
 }
 
 func (t *TUI) SendAgentEvent(typ string, data any) {
-	t.SendAgentEventWithID(typ, data, "main")
+	t.SendAgentEventWithID(typ, data, "")
 }
 
 func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
 	t.Program.Send(types.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
-}
-
-func (t *TUI) GetInputCh() <-chan provider.UserInput {
-	return t.InputCh
-}
-
-func (t *TUI) GetCancelCh() <-chan struct{} {
-	return t.CancelCh
 }
 
 func (t *TUI) SetError(err string) {
