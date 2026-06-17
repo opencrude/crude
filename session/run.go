@@ -132,7 +132,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	activeCfg := s.cfg.GetActiveDefaultCategory()
 	if activeCfg.APIKey == "" {
 		l.Warn("INPUT", "no_api_key")
-		sender.SendAgentEvent("error", "No API key configured. Press Ctrl+S to open settings.")
+		sender.SendAgentEventWithID("error", "No API key configured. Press Ctrl+S to open settings.", o.ID)
 		return
 	}
 
@@ -302,7 +302,11 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 		if s.permStore.IsAlwaysAllowed(op, tool, target) {
 			s.logger.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
 			o.BlockResolveCh <- "allow"
-			sender.SendAgentEventWithID("blocking_auto", evt.Data, evt.AgentID)
+			agentID := evt.AgentID
+			if agentID == "" {
+				agentID = o.ID
+			}
+			sender.SendAgentEventWithID("blocking_auto", evt.Data, agentID)
 			return true
 		}
 	}
@@ -332,7 +336,11 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 	s.blockMu.Lock()
 	s.pendingBlock = true
 	s.blockMu.Unlock()
-	sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
+	agentID := evt.AgentID
+	if agentID == "" {
+		agentID = o.ID
+	}
+	sender.SendAgentEventWithID(evt.Type, evt.Data, agentID)
 	return true
 }
 

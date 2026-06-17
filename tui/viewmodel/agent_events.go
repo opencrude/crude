@@ -135,8 +135,8 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			// Sub-agent: create sub-pane
 			sp := m.paneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.theme)
 			subModel := m.modelName
-			if am, ok := m.agentModels[agentID]; ok && am != "" {
-				subModel = am
+			if model, ok := evtData["model"]; ok && model != "" {
+				subModel = model
 			}
 			sp.MsgList.SetModelName(subModel)
 			sp.MsgList.SetUsername(m.username)
