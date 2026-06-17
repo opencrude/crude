@@ -494,8 +494,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)
 		m.win.CloseTab(index)
-		delete(m.agents, agentID)
-		m.activeAgentView = ""
+		m.cleanupAgent(agentID)
 		if m.OnCancelSubAgent != nil {
 			go m.OnCancelSubAgent(agentID)
 		}

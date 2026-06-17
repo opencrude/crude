@@ -167,6 +167,12 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 	ml.SetModelName(m.modelName)
 	ml.SetUsername(m.username)
 	ml.SetSubPaneContentFn(m.renderSubPaneContent)
+
+	sp := m.paneMgr.GetOrCreate(orchID, PaneAgent, orchID, m.theme)
+	sp.MsgList = ml
+	sp.MsgList.SetModelName(m.modelName)
+	sp.MsgList.SetUsername(m.username)
+
 	agent := NewAgentState(orchID, ml, m.logger)
 	m.agents[orchID] = agent
 	m.activeAgentView = orchID
@@ -174,15 +180,31 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 }
 
 func (m *App) RemoveOrchestrator(orchID string) {
-	delete(m.sessionInputChans, orchID)
-	delete(m.sessionBtwChans, orchID)
-	delete(m.sessionCancelChans, orchID)
-	delete(m.sessionBlockResolveCh, orchID)
-	delete(m.agents, orchID)
+	m.cleanupAgent(orchID)
+}
+
+// cleanupAgent removes all state for a given agent orchestrator or sub-agent.
+func (m *App) cleanupAgent(agentID string) {
+	delete(m.sessionInputChans, agentID)
+	delete(m.sessionBtwChans, agentID)
+	delete(m.sessionCancelChans, agentID)
+	delete(m.sessionBlockResolveCh, agentID)
+	delete(m.agents, agentID)
+	delete(m.agentLabels, agentID)
+	delete(m.agentModels, agentID)
+	delete(m.agentCategories, agentID)
 	for id, parent := range m.subAgentParents {
-		if parent == orchID {
+		if parent == agentID {
 			delete(m.subAgentParents, id)
 		}
+	}
+	delete(m.subAgentParents, agentID)
+	m.paneMgr.Remove(agentID)
+	if m.statusbar != nil {
+		m.statusbar.ClearAgentState(agentID)
+	}
+	if m.activeAgentView == agentID {
+		m.activeAgentView = ""
 	}
 }
 
@@ -1002,12 +1024,11 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 			if action == window.CloseNone {
 				return m, nil
 			}
-			// If the tab was an agent tab, remove the agent from the map
-			if m.isAgentTabTitle(tab.Title) {
-				agentID := m.agentIDFromTabTitle(tab.Title)
-				delete(m.agents, agentID)
-				m.activeAgentView = ""
-			}
+		// If the tab was an agent tab, clean up
+		if m.isAgentTabTitle(tab.Title) {
+			agentID := m.agentIDFromTabTitle(tab.Title)
+			m.cleanupAgent(agentID)
+		}
 			m.dirty = true
 			// If no tabs left, show launcher
 			if len(m.agents) == 0 && m.activeEditorView == "" && !m.win.IsOpen() {

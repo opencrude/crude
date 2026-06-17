@@ -439,6 +439,16 @@ func (pm *PaneManager) CollapsePane(id string) {
 	}
 }
 
+func (pm *PaneManager) Remove(id string) {
+	delete(pm.panes, id)
+	for i, pid := range pm.paneOrder {
+		if pid == id {
+			pm.paneOrder = append(pm.paneOrder[:i], pm.paneOrder[i+1:]...)
+			break
+		}
+	}
+}
+
 func (pm *PaneManager) TickAll(spinFrame int) {
 	for _, sp := range pm.panes {
 		if !sp.Done && sp.MsgList != nil {
