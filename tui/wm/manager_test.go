@@ -893,14 +893,14 @@ func TestHandleMouseResizeEdgeTracking(t *testing.T) {
 	fw.SetPosition(10, 10)
 	mgr.AddWindow(fw)
 
-	// Click on right edge
-	msg := tea.MouseClickMsg{X: 19, Y: 12}
+	// Click on bottom edge (LShape has left+bottom borders)
+	msg := tea.MouseClickMsg{X: 14, Y: 15}
 	clicked := mgr.HandleMouse(msg)
 	if clicked != fw {
-		t.Error("right edge click should return window")
+		t.Error("bottom edge click should return window")
 	}
-	if fw.ResizeEdge() != EdgeRight {
-		t.Errorf("resize edge = %v, want EdgeRight", fw.ResizeEdge())
+	if fw.ResizeEdge() != EdgeBottom {
+		t.Errorf("resize edge = %v, want EdgeBottom", fw.ResizeEdge())
 	}
 }
 

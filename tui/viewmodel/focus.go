@@ -14,11 +14,11 @@ const (
 )
 
 func (m *App) focusTarget() FocusTarget {
-	if len(m.agents) == 0 && m.activeEditorView == "" {
-		return FocusLauncher
-	}
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
+	}
+	if len(m.agents) == 0 && m.activeEditorView == "" {
+		return FocusLauncher
 	}
 	if m.treeFocused && m.treeModel != nil && m.treeVisible {
 		return FocusTree

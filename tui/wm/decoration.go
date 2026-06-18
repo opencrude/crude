@@ -21,10 +21,10 @@ type windowColors struct {
 func collectWindowColors(fw *FloatingWindow, t *theme.Theme) windowColors {
 	if fw.focused {
 		return windowColors{
-			borderFg: rendering.ThemeColorToCell(t.Colors.Accent),
+			borderFg: rendering.ThemeColorToCell(t.Colors.Border),
 			borderBg: cell.NoColor,
 			titleFg:  rendering.ThemeColorToCell(t.Colors.Fg),
-			titleBg:  rendering.ThemeColorToCell(t.Colors.Selection),
+			titleBg:  rendering.ThemeColorToCell(t.Colors.SubPaneBg),
 			bodyBg:   rendering.ThemeColorToCell(t.Colors.SubPaneBg),
 			closeFg:  rendering.ThemeColorToCell(t.Colors.Error),
 		}
