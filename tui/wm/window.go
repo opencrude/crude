@@ -100,6 +100,7 @@ func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts .
 		Content:      content,
 		w:            w,
 		h:            h,
+		borderStyle:  BorderLShape,
 		decorated:    true, // decorated by default
 		movable:      true, // movable by default
 		resizable:    true, // resizable by default

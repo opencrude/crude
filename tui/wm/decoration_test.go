@@ -305,10 +305,15 @@ func TestRenderDecorationFocusedColors(t *testing.T) {
 
 	buf := surf.Buffer()
 
-	expectedBorderFg := rendering.ThemeColorToCell(th.Colors.Accent)
+	expectedBorderFg := rendering.ThemeColorToCell(th.Colors.Border)
 	topLeft := buf.Get(0, 0)
 	if !topLeft.FG.Equal(expectedBorderFg) {
 		t.Errorf("focused border FG = %v, want %v", topLeft.FG, expectedBorderFg)
+	}
+
+	expectedTitleFg := rendering.ThemeColorToCell(th.Colors.Fg)
+	if title := buf.Get(2, 0); !title.FG.Equal(expectedTitleFg) {
+		t.Errorf("focused title FG = %v, want %v", title.FG, expectedTitleFg)
 	}
 }
 
@@ -405,9 +410,13 @@ func TestCollectWindowColorsFocused(t *testing.T) {
 	th := testTheme()
 	wc := collectWindowColors(fw, th)
 
-	expectedAccent := rendering.ThemeColorToCell(th.Colors.Accent)
-	if !wc.borderFg.Equal(expectedAccent) {
-		t.Error("focused borderFg should be accent color")
+	expectedBorder := rendering.ThemeColorToCell(th.Colors.Border)
+	if !wc.borderFg.Equal(expectedBorder) {
+		t.Error("focused borderFg should be border color (same as unfocused)")
+	}
+	expectedFg := rendering.ThemeColorToCell(th.Colors.Fg)
+	if !wc.titleFg.Equal(expectedFg) {
+		t.Error("focused titleFg should be Fg")
 	}
 }
 

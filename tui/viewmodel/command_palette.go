@@ -121,12 +121,7 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 
 	fw := wm.NewFloatingWindow("command-palette", "Command Palette", ansiWidget,
 		65, 22,
-		wm.WithDecoration(true),
-		wm.WithMovable(true),
 		wm.WithResizable(false),
-		wm.WithClosable(true),
-		wm.WithFocusable(true),
-		wm.WithBorderStyle(wm.BorderRounded),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.windowManager.AddWindow(fw)

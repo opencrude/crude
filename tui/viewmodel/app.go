@@ -958,11 +958,6 @@ func (m *App) openTextOverlayWindow() {
 
 	win := wm.NewFloatingWindow("textoverlay", "Edit", textWidget,
 		72, 30,
-		wm.WithDecoration(true),
-		wm.WithMovable(true),
-		wm.WithResizable(true),
-		wm.WithClosable(true),
-		wm.WithBorderStyle(wm.BorderRounded),
 		wm.WithMinSize(32, 8),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
@@ -975,11 +970,6 @@ func (m *App) openFilePickerWindow() {
 
 	win := wm.NewFloatingWindow("filepicker", "File Picker", &m.filePicker,
 		60, 20,
-		wm.WithDecoration(true),
-		wm.WithMovable(true),
-		wm.WithResizable(true),
-		wm.WithClosable(true),
-		wm.WithBorderStyle(wm.BorderRounded),
 		wm.WithMinSize(32, 10),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
@@ -1071,12 +1061,6 @@ func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
 
 	fw := wm.NewFloatingWindow("composer", "Composer", ansiWidget,
 		72, 24,
-		wm.WithDecoration(true),
-		wm.WithMovable(true),
-		wm.WithResizable(true),
-		wm.WithClosable(true),
-		wm.WithFocusable(true),
-		wm.WithBorderStyle(wm.BorderRounded),
 		wm.WithMinSize(40, 10),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)

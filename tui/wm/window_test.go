@@ -68,8 +68,8 @@ func TestNewFloatingWindowDefaults(t *testing.T) {
 	if fw.Focused() {
 		t.Error("should not be focused by default")
 	}
-	if fw.borderStyle != BorderNone {
-		t.Errorf("borderStyle = %v, want BorderNone", fw.borderStyle)
+	if fw.borderStyle != BorderLShape {
+		t.Errorf("borderStyle = %v, want BorderLShape", fw.borderStyle)
 	}
 	if fw.titleAlign != AlignLeft {
 		t.Errorf("titleAlign = %v, want AlignLeft", fw.titleAlign)
@@ -186,7 +186,8 @@ func TestComputeContentAreaBorderRounded(t *testing.T) {
 }
 
 func TestComputeContentAreaBorderNone(t *testing.T) {
-	fw := NewFloatingWindow("ca-bn", "CA", testWidget{}, 20, 10)
+	fw := NewFloatingWindow("ca-bn", "CA", testWidget{}, 20, 10,
+		WithBorderStyle(BorderNone))
 	b := fw.ContentBounds()
 	if b.X != 0 || b.Y != 1 || b.W != 20 || b.H != 9 {
 		t.Errorf("BorderNone content = (%d,%d,%d,%d), want (0,1,20,9)",
@@ -284,7 +285,8 @@ func TestHitTestEdgeBorderSingle(t *testing.T) {
 }
 
 func TestHitTestEdgeBorderNone(t *testing.T) {
-	fw := NewFloatingWindow("hte-bn", "HTE", testWidget{}, 10, 6)
+	fw := NewFloatingWindow("hte-bn", "HTE", testWidget{}, 10, 6,
+		WithBorderStyle(BorderNone))
 	fw.SetPosition(0, 0)
 
 	tests := []struct {
@@ -378,7 +380,8 @@ func TestIsOnTitleBarBorderSingle(t *testing.T) {
 }
 
 func TestIsOnTitleBarBorderNone(t *testing.T) {
-	fw := NewFloatingWindow("tb-bn", "TB", testWidget{}, 10, 6)
+	fw := NewFloatingWindow("tb-bn", "TB", testWidget{}, 10, 6,
+		WithBorderStyle(BorderNone))
 	fw.SetPosition(0, 0)
 
 	tests := []struct {
