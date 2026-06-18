@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -28,6 +29,11 @@ const (
 	pageRoot = iota
 	pageProfiles
 	pageCategory
+	pageTheme
+	pageEditor
+	pageLSP
+	pageUI
+	pageFont
 )
 
 type Model struct {
@@ -56,12 +62,31 @@ type Model struct {
 
 	agentsSettings types.AgentsSettings
 	turnLogs      string
+
+	// Extended settings
+	themeSettings types.ThemeSettings
+	editorSettings types.EditorSettings
+	lspSettings    types.LSPSettings
+	uiSettings     types.UISettings
+	fontSettings   types.FontSettings
+
+	// Forms for extended pages
+	themeForm form.Form
+	editorForm form.Form
+	lspForm    form.Form
+	uiForm     form.Form
+	fontForm   form.Form
 }
 
 type settingsSnapshot struct {
 	providerID      string
 	agentsSettings  types.AgentsSettings
 	turnLogs        string
+	themeSettings   types.ThemeSettings
+	editorSettings  types.EditorSettings
+	lspSettings     types.LSPSettings
+	uiSettings      types.UISettings
+	fontSettings    types.FontSettings
 }
 
 func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPreset, getProviderConfigFn func(string) types.ProviderConfig, fetchModelsFn func(string, string, string) tea.Cmd) Model {
@@ -78,6 +103,42 @@ func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPr
 		turnLogs = "on"
 	}
 
+	themeCfg := initial.Theme
+	if themeCfg.Preset == "" {
+		themeCfg.Preset = "dark"
+	}
+
+	editorCfg := initial.Editor
+	if editorCfg.TabSize == 0 {
+		editorCfg.TabSize = 4
+	}
+	if editorCfg.SyntaxTheme == "" {
+		editorCfg.SyntaxTheme = "catppuccin"
+	}
+	if editorCfg.RenderWhitespace == "" {
+		editorCfg.RenderWhitespace = "none"
+	}
+
+	lspCfg := initial.LSP
+	if !lspCfg.Enabled && !lspCfg.AutoDetect {
+		lspCfg.Enabled = true
+		lspCfg.AutoDetect = true
+		lspCfg.Diagnostics = true
+	}
+
+	uiCfg := initial.UI
+	if uiCfg.SidebarWidth == 0 {
+		uiCfg.SidebarWidth = 30
+	}
+	uiCfg.ShowIcons = true
+	uiCfg.ShowGitStatus = true
+	uiCfg.ShowDiagnostics = true
+
+	fontCfg := initial.Font
+	if fontCfg.Size == 0 {
+		fontCfg.Size = 12
+	}
+
 	return Model{
 		theme:               t,
 		page:                pageRoot,
@@ -88,6 +149,11 @@ func NewModel(t *theme.Theme, initial types.Settings, presets []types.ProviderPr
 		fetchModelsFn:       fetchModelsFn,
 		agentsSettings:      agents,
 		turnLogs:            turnLogs,
+		themeSettings:       themeCfg,
+		editorSettings:      editorCfg,
+		lspSettings:         lspCfg,
+		uiSettings:          uiCfg,
+		fontSettings:        fontCfg,
 	}
 }
 
@@ -143,6 +209,12 @@ func buildRootForm(t *theme.Theme, agents types.AgentsSettings, turnLogs, defaul
 		form.NewNavItem(t, "Aeron", catDetail(t, agents.Categories["aeron"], agents.Enabled), "dumb mechanical labor", "cat:aeron"),
 		form.NewCycleItem(t, "Multi agent", []string{"on", "off"}, boolStr(agents.Enabled)),
 		form.NewCycleItem(t, "Turn Logs", []string{"on", "off"}, turnLogs),
+		form.NewSeparatorItem(t),
+		form.NewNavItem(t, "Appearance", "Theme & colors", "customize theme, colors, border", "theme"),
+		form.NewNavItem(t, "Editor", "Built-in editor", "tab size, syntax, line numbers", "editor"),
+		form.NewNavItem(t, "LSP", "Language servers", "enable/disable, diagnostics", "lsp"),
+		form.NewNavItem(t, "Interface", "Sidebar & display", "sidebar width, icons, file tree", "ui"),
+		form.NewNavItem(t, "Font", "Terminal font hints", "family, size, ligatures", "font"),
 	}
 
 	return form.NewFormWithButtons(t, "Settings",
@@ -190,6 +262,89 @@ func buildCategoryForm(t *theme.Theme, catKey string, cat types.CategorySettings
 		providerItem, baseURLItem, apiKeyItem, modelItem, effortItem)
 }
 
+func buildThemeForm(t *theme.Theme, cfg types.ThemeSettings) form.Form {
+	presetItem := form.NewCycleItem(t, "preset",
+		[]string{"dark", "light", "custom"}, cfg.Preset)
+	bgItem := form.NewTextItem(t, "background", cfg.Bg, false)
+	fgItem := form.NewTextItem(t, "foreground", cfg.Fg, false)
+	accentItem := form.NewTextItem(t, "accent", cfg.Accent, false)
+	accent2Item := form.NewTextItem(t, "accent2", cfg.Accent2, false)
+	subpaneBgItem := form.NewTextItem(t, "subpane bg", cfg.SubPaneBg, false)
+	borderItem := form.NewTextItem(t, "border", cfg.Border, false)
+
+	return form.NewFormWithButtons(t, "Appearance",
+		"enter: edit · esc: back",
+		[]form.Button{
+			{Label: "Save", Key: "s", Color: t.Colors.Success},
+			{Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true},
+		},
+		presetItem, bgItem, fgItem, accentItem, accent2Item, subpaneBgItem, borderItem)
+}
+
+func buildEditorForm(t *theme.Theme, cfg types.EditorSettings) form.Form {
+	tabSizeItem := form.NewTextItem(t, "tab size", fmt.Sprintf("%d", cfg.TabSize), false)
+	wordWrapItem := form.NewCycleItem(t, "word wrap", []string{"on", "off"}, boolStr(cfg.WordWrap))
+	lineNumItem := form.NewCycleItem(t, "line numbers", []string{"on", "off"}, boolStr(cfg.LineNumbers))
+	syntaxItem := form.NewCycleItem(t, "syntax theme",
+		[]string{"catppuccin", "dracula", "github", "monokai", "solarized"}, cfg.SyntaxTheme)
+	whitespaceItem := form.NewCycleItem(t, "render whitespace",
+		[]string{"none", "boundary", "all"}, cfg.RenderWhitespace)
+	autoSaveItem := form.NewTextItem(t, "auto-save (ms)", fmt.Sprintf("%d", cfg.AutoSaveDelay), false)
+
+	return form.NewFormWithButtons(t, "Editor",
+		"enter: edit · esc: back",
+		[]form.Button{
+			{Label: "Save", Key: "s", Color: t.Colors.Success},
+			{Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true},
+		},
+		tabSizeItem, wordWrapItem, lineNumItem, syntaxItem, whitespaceItem, autoSaveItem)
+}
+
+func buildLSPForm(t *theme.Theme, cfg types.LSPSettings) form.Form {
+	enabledItem := form.NewCycleItem(t, "enabled", []string{"on", "off"}, boolStr(cfg.Enabled))
+	autoItem := form.NewCycleItem(t, "auto-detect", []string{"on", "off"}, boolStr(cfg.AutoDetect))
+	diagItem := form.NewCycleItem(t, "diagnostics", []string{"on", "off"}, boolStr(cfg.Diagnostics))
+
+	return form.NewFormWithButtons(t, "LSP",
+		"enter: edit · esc: back",
+		[]form.Button{
+			{Label: "Save", Key: "s", Color: t.Colors.Success},
+			{Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true},
+		},
+		enabledItem, autoItem, diagItem)
+}
+
+func buildUIForm(t *theme.Theme, cfg types.UISettings) form.Form {
+	sidebarItem := form.NewTextItem(t, "sidebar width", fmt.Sprintf("%d", cfg.SidebarWidth), false)
+	hiddenItem := form.NewCycleItem(t, "show hidden", []string{"on", "off"}, boolStr(cfg.ShowHiddenFiles))
+	iconsItem := form.NewCycleItem(t, "show icons", []string{"on", "off"}, boolStr(cfg.ShowIcons))
+	nerdFontItem := form.NewCycleItem(t, "nerd font", []string{"on", "off"}, boolStr(cfg.UseNerdFont))
+	gitItem := form.NewCycleItem(t, "git status", []string{"on", "off"}, boolStr(cfg.ShowGitStatus))
+	diagItem := form.NewCycleItem(t, "diagnostics", []string{"on", "off"}, boolStr(cfg.ShowDiagnostics))
+
+	return form.NewFormWithButtons(t, "Interface",
+		"enter: edit · esc: back",
+		[]form.Button{
+			{Label: "Save", Key: "s", Color: t.Colors.Success},
+			{Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true},
+		},
+		sidebarItem, hiddenItem, iconsItem, nerdFontItem, gitItem, diagItem)
+}
+
+func buildFontForm(t *theme.Theme, cfg types.FontSettings) form.Form {
+	familyItem := form.NewTextItem(t, "family", cfg.Family, false)
+	sizeItem := form.NewTextItem(t, "size", fmt.Sprintf("%d", cfg.Size), false)
+	ligItem := form.NewCycleItem(t, "ligatures", []string{"on", "off"}, boolStr(cfg.Ligatures))
+
+	return form.NewFormWithButtons(t, "Font",
+		"enter: edit · esc: back",
+		[]form.Button{
+			{Label: "Save", Key: "s", Color: t.Colors.Success},
+			{Label: "Cancel", Key: "c", Color: t.Colors.Error, Cancel: true},
+		},
+		familyItem, sizeItem, ligItem)
+}
+
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && !m.isEditing() {
 		switch keyMsg.String() {
@@ -207,6 +362,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m.updateProfiles(msg)
 	case pageCategory:
 		return m.updateCategory(msg)
+	case pageTheme:
+		return m.updateTheme(msg)
+	case pageEditor:
+		return m.updateEditor(msg)
+	case pageLSP:
+		return m.updateLSP(msg)
+	case pageUI:
+		return m.updateUI(msg)
+	case pageFont:
+		return m.updateFont(msg)
 	}
 
 	return m, nil, nil
@@ -220,6 +385,16 @@ func (m Model) isEditing() bool {
 		return m.creatingProfile
 	case pageCategory:
 		return m.categoryForm.IsEditing()
+	case pageTheme:
+		return m.themeForm.IsEditing()
+	case pageEditor:
+		return m.editorForm.IsEditing()
+	case pageLSP:
+		return m.lspForm.IsEditing()
+	case pageUI:
+		return m.uiForm.IsEditing()
+	case pageFont:
+		return m.fontForm.IsEditing()
 	}
 	return false
 }
@@ -288,6 +463,16 @@ func (m Model) updateRoot(msg tea.Msg) (Model, tea.Cmd, Event) {
 				m.openProfiles()
 			case strings.HasPrefix(target, "cat:"):
 				m.OpenCategory(strings.TrimPrefix(target, "cat:"))
+			case target == "theme":
+				m.openThemePage()
+			case target == "editor":
+				m.openEditorPage()
+			case target == "lsp":
+				m.openLSPPage()
+			case target == "ui":
+				m.openUIPage()
+			case target == "font":
+				m.openFontPage()
 			}
 		}
 		return m, cmd, nil
@@ -516,6 +701,112 @@ func (m Model) updateCategory(msg tea.Msg) (Model, tea.Cmd, Event) {
 	return m, cmd, nil
 }
 
+func (m Model) updateGenericForm(msg tea.Msg, formField *form.Form, saveFn func(), targetPage int) (Model, tea.Cmd, Event) {
+	updated, cmd, action := (*formField).Update(msg)
+	*formField = updated
+
+	switch action {
+	case form.FormActionSave:
+		saveFn()
+		m.rebuildRootForm()
+		m.page = pageRoot
+		return m, nil, nil
+	case form.FormActionBack, form.FormActionCancel:
+		m.page = pageRoot
+		return m, nil, nil
+	}
+
+	return m, cmd, nil
+}
+
+func (m Model) updateTheme(msg tea.Msg) (Model, tea.Cmd, Event) {
+	return m.updateGenericForm(msg, &m.themeForm, func() {
+		m.themeSettings.Preset = m.themeForm.ItemValue(0)
+		m.themeSettings.Bg = m.themeForm.ItemValue(1)
+		m.themeSettings.Fg = m.themeForm.ItemValue(2)
+		m.themeSettings.Accent = m.themeForm.ItemValue(3)
+		m.themeSettings.Accent2 = m.themeForm.ItemValue(4)
+		m.themeSettings.SubPaneBg = m.themeForm.ItemValue(5)
+		m.themeSettings.Border = m.themeForm.ItemValue(6)
+	}, pageTheme)
+}
+
+func (m Model) updateEditor(msg tea.Msg) (Model, tea.Cmd, Event) {
+	return m.updateGenericForm(msg, &m.editorForm, func() {
+		tabSize := parseInt(m.editorForm.ItemValue(0), 4)
+		m.editorSettings.TabSize = tabSize
+		m.editorSettings.WordWrap = m.editorForm.ItemValue(1) == "on"
+		m.editorSettings.LineNumbers = m.editorForm.ItemValue(2) == "on"
+		m.editorSettings.SyntaxTheme = m.editorForm.ItemValue(3)
+		m.editorSettings.RenderWhitespace = m.editorForm.ItemValue(4)
+		autoSave := parseInt(m.editorForm.ItemValue(5), 0)
+		m.editorSettings.AutoSaveDelay = autoSave
+	}, pageEditor)
+}
+
+func (m Model) updateLSP(msg tea.Msg) (Model, tea.Cmd, Event) {
+	return m.updateGenericForm(msg, &m.lspForm, func() {
+		m.lspSettings.Enabled = m.lspForm.ItemValue(0) == "on"
+		m.lspSettings.AutoDetect = m.lspForm.ItemValue(1) == "on"
+		m.lspSettings.Diagnostics = m.lspForm.ItemValue(2) == "on"
+	}, pageLSP)
+}
+
+func (m Model) updateUI(msg tea.Msg) (Model, tea.Cmd, Event) {
+	return m.updateGenericForm(msg, &m.uiForm, func() {
+		m.uiSettings.SidebarWidth = parseInt(m.uiForm.ItemValue(0), 30)
+		m.uiSettings.ShowHiddenFiles = m.uiForm.ItemValue(1) == "on"
+		m.uiSettings.ShowIcons = m.uiForm.ItemValue(2) == "on"
+		m.uiSettings.UseNerdFont = m.uiForm.ItemValue(3) == "on"
+		m.uiSettings.ShowGitStatus = m.uiForm.ItemValue(4) == "on"
+		m.uiSettings.ShowDiagnostics = m.uiForm.ItemValue(5) == "on"
+	}, pageUI)
+}
+
+func (m Model) updateFont(msg tea.Msg) (Model, tea.Cmd, Event) {
+	return m.updateGenericForm(msg, &m.fontForm, func() {
+		m.fontSettings.Family = m.fontForm.ItemValue(0)
+		m.fontSettings.Size = parseInt(m.fontForm.ItemValue(1), 12)
+		m.fontSettings.Ligatures = m.fontForm.ItemValue(2) == "on"
+	}, pageFont)
+}
+
+func (m *Model) openThemePage() {
+	m.themeForm = buildThemeForm(m.theme, m.themeSettings)
+	m.page = pageTheme
+}
+
+func (m *Model) openEditorPage() {
+	m.editorForm = buildEditorForm(m.theme, m.editorSettings)
+	m.page = pageEditor
+}
+
+func (m *Model) openLSPPage() {
+	m.lspForm = buildLSPForm(m.theme, m.lspSettings)
+	m.page = pageLSP
+}
+
+func (m *Model) openUIPage() {
+	m.uiForm = buildUIForm(m.theme, m.uiSettings)
+	m.page = pageUI
+}
+
+func (m *Model) openFontPage() {
+	m.fontForm = buildFontForm(m.theme, m.fontSettings)
+	m.page = pageFont
+}
+
+func parseInt(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	var n int
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return defaultVal
+	}
+	return n
+}
+
 func (m Model) View(spinFrame int) string {
 	switch m.page {
 	case pageRoot:
@@ -524,6 +815,16 @@ func (m Model) View(spinFrame int) string {
 		return "\n" + m.viewProfiles(70, spinFrame)
 	case pageCategory:
 		return m.categoryForm.View(70, spinFrame)
+	case pageTheme:
+		return m.themeForm.View(70, spinFrame)
+	case pageEditor:
+		return m.editorForm.View(70, spinFrame)
+	case pageLSP:
+		return m.lspForm.View(70, spinFrame)
+	case pageUI:
+		return m.uiForm.View(70, spinFrame)
+	case pageFont:
+		return m.fontForm.View(70, spinFrame)
 	}
 	return ""
 }
@@ -536,6 +837,16 @@ func (m Model) Hint() string {
 		return m.profileHint()
 	case pageCategory:
 		return m.categoryForm.Hint()
+	case pageTheme:
+		return m.themeForm.Hint()
+	case pageEditor:
+		return m.editorForm.Hint()
+	case pageLSP:
+		return m.lspForm.Hint()
+	case pageUI:
+		return m.uiForm.Hint()
+	case pageFont:
+		return m.fontForm.Hint()
 	}
 	return ""
 }
@@ -674,6 +985,11 @@ func (m *Model) SaveSnapshot() {
 		providerID:      m.providerID,
 		agentsSettings:  m.agentsSettings,
 		turnLogs:        m.turnLogs,
+		themeSettings:   m.themeSettings,
+		editorSettings:  m.editorSettings,
+		lspSettings:     m.lspSettings,
+		uiSettings:      m.uiSettings,
+		fontSettings:    m.fontSettings,
 	}
 }
 
@@ -682,6 +998,11 @@ func (m *Model) RestoreSnapshot() {
 		m.providerID = m.snapshot.providerID
 		m.agentsSettings = m.snapshot.agentsSettings
 		m.turnLogs = m.snapshot.turnLogs
+		m.themeSettings = m.snapshot.themeSettings
+		m.editorSettings = m.snapshot.editorSettings
+		m.lspSettings = m.snapshot.lspSettings
+		m.uiSettings = m.snapshot.uiSettings
+		m.fontSettings = m.snapshot.fontSettings
 	}
 	m.rootForm.RestoreSnapshot()
 	m.rebuildRootForm()
@@ -716,6 +1037,11 @@ func (m Model) toSettings() types.Settings {
 		ThinkingEffort:  thinkingEffort,
 		TurnLogsEnabled: m.turnLogs,
 		Agents:          m.agentsSettings,
+		Theme:           m.themeSettings,
+		Editor:          m.editorSettings,
+		LSP:             m.lspSettings,
+		UI:              m.uiSettings,
+		Font:            m.fontSettings,
 	}
 }
 

@@ -9,7 +9,9 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"crude/tui/rendering"
+	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/widget"
 )
 
 type QuestionItem struct {
@@ -343,6 +345,15 @@ func (m *QuestionForm) Dismiss() {
 	m.optionCursor = nil
 	m.textMode = nil
 	m.focused = 0
+}
+
+func (m *QuestionForm) Render(surf *surface.Surface, ctx *widget.RenderContext) {
+	ansi := m.View(ctx.SpinFrame, surf.Width())
+	rendering.RenderToSurface(surf, ansi)
+}
+
+func (m *QuestionForm) Measure(availW, availH int) (int, int) {
+	return availW, availH
 }
 
 func (m *QuestionForm) View(spinFrame int, width int) string {

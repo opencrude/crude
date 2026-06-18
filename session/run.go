@@ -129,7 +129,9 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	default:
 	}
 
-	activeCfg := s.cfg.GetActiveDefaultCategory()
+	// Use per-orchestrator effective config from runtime profile.
+	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
+	activeCfg := effectiveCfg.GetActiveDefaultCategory()
 	if activeCfg.APIKey == "" {
 		l.Warn("INPUT", "no_api_key")
 		sender.SendAgentEventWithID("error", "No API key configured. Press Ctrl+S to open settings.", o.ID)
@@ -192,7 +194,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	}
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
-	var prompt string = agent.BuildSystemPrompt(s.cfg.IsMultiAgentEnabled())
+	var prompt string = agent.BuildSystemPrompt(effectiveCfg.IsMultiAgentEnabled())
 
 	displayTracker := &displayMetaTracker{
 		metas: make(map[string]*sessiondb.DisplayMeta),
@@ -219,7 +221,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		case <-ctx.Done():
 		}
 	}()
-	activeCfg = s.cfg.GetActiveDefaultCategory()
+	activeCfg = effectiveCfg.GetActiveDefaultCategory()
 
 	btwMsgCh := make(chan provider.ChatMessage, 8)
 	go func() {

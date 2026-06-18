@@ -114,6 +114,7 @@ type App struct {
 	OnResumeSession     func(string)
 	OnCancelSubAgent    func(agentID string)
 	OnHardCancel        func()
+	OnOrchestratorReset func(orchID string)
 	FetchModelsFn       func(string, string, string) ([]ttypes.ModelEntry, error)
 	GetProviderConfigFn func(string) ttypes.ProviderConfig
 	ProviderPresets     []ttypes.ProviderPreset
@@ -154,6 +155,8 @@ type App struct {
 	diagPopupID string // ID of the diagnostic hover popup window
 
 	lspManager *LSPManager
+
+	composer *widgets.Composer
 }
 
 func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
@@ -273,6 +276,7 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 
 	ed := editor.New(th)
 	lspMgr := NewLSPManager(lg)
+	composerWidget := widgets.NewComposer(th)
 
 	app := &App{
 		theme:                th,
@@ -283,6 +287,7 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 		overlay:              ov,
 		compositor:           comp,
 		windowManager:        wmgr,
+		composer:             composerWidget,
 		renderCtx:            rctx,
 		input:                im,
 		statusbar:            sb,
@@ -957,7 +962,7 @@ func (m *App) openTextOverlayWindow() {
 		wm.WithMovable(true),
 		wm.WithResizable(true),
 		wm.WithClosable(true),
-		wm.WithBorderStyle(wm.BorderLShape),
+		wm.WithBorderStyle(wm.BorderRounded),
 		wm.WithMinSize(32, 8),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
@@ -974,7 +979,7 @@ func (m *App) openFilePickerWindow() {
 		wm.WithMovable(true),
 		wm.WithResizable(true),
 		wm.WithClosable(true),
-		wm.WithBorderStyle(wm.BorderLShape),
+		wm.WithBorderStyle(wm.BorderRounded),
 		wm.WithMinSize(32, 10),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
@@ -1044,6 +1049,63 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 	// No tabs left and no sessions — quit
 	m.Quit = true
 	return m, tea.Quit
+}
+
+// toggleComposer opens or closes the composer floating window.
+func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
+	if m.windowManager.Window("composer") != nil {
+		m.windowManager.RemoveWindow("composer")
+		return m, nil
+	}
+
+	m.composer.Open("")
+	viewFn := func() string {
+		w, h := m.width, m.height
+		if fw := m.windowManager.Window("composer"); fw != nil {
+			b := fw.ContentBounds()
+			w, h = b.W, b.H
+		}
+		return m.composer.View(w, h)
+	}
+	ansiWidget := rendering.NewANSIAdapter(viewFn)
+
+	fw := wm.NewFloatingWindow("composer", "Composer", ansiWidget,
+		72, 24,
+		wm.WithDecoration(true),
+		wm.WithMovable(true),
+		wm.WithResizable(true),
+		wm.WithClosable(true),
+		wm.WithFocusable(true),
+		wm.WithBorderStyle(wm.BorderRounded),
+		wm.WithMinSize(40, 10),
+	)
+	wm.CenterOnScreen(fw, m.width, m.height)
+	m.windowManager.AddWindow(fw)
+	return m, nil
+}
+
+// openOrchestratorSettings opens the settings to the current orchestrator's
+// category settings, allowing per-orchestrator model/provider overrides.
+func (m *App) openOrchestratorSettings() {
+	m.settings.SaveSnapshot()
+	m.settings.OpenCategory("default")
+	m.setMode(ModeSettings)
+}
+
+// resetOrchestratorOverrides clears all runtime overrides for the current orchestrator.
+func (m *App) resetOrchestratorOverrides() {
+	id := m.activeAgentView
+	if id == "" {
+		id = m.activeEditorView
+		if id == "" {
+			m.statusbar.SetInfo("No active orchestrator to reset")
+			return
+		}
+	}
+	if m.OnOrchestratorReset != nil {
+		go m.OnOrchestratorReset(id)
+		m.statusbar.SetInfo("Orchestrator overrides reset")
+	}
 }
 
 // closeAllWindows removes all floating windows.

@@ -306,6 +306,31 @@ func (m *SelectItem) Restore(snap FormItem) {
 	}
 }
 
+// SeparatorItem renders a horizontal line separator in a form.
+type SeparatorItem struct {
+	theme *theme.Theme
+}
+
+func NewSeparatorItem(t *theme.Theme) *SeparatorItem {
+	return &SeparatorItem{theme: t}
+}
+
+func (s *SeparatorItem) View(focused bool, spinFrame int, labelWidth int) string {
+	dim := s.theme.Styles.DimLabel
+	return dim.Render(strings.Repeat("─", 60))
+}
+
+func (s *SeparatorItem) HandleKey(msg tea.KeyPressMsg) (item FormItem, cmd tea.Cmd, action FormItemAction, handled bool) {
+	return s, nil, FormItemActionNone, false
+}
+
+func (s *SeparatorItem) Label() string        { return "" }
+func (s *SeparatorItem) InlineLabel() string   { return "" }
+func (s *SeparatorItem) Value() string         { return "" }
+func (s *SeparatorItem) SetValue(v string)     {}
+func (s *SeparatorItem) Snapshot() FormItem    { return NewSeparatorItem(s.theme) }
+func (s *SeparatorItem) Restore(item FormItem) {}
+
 type CycleItem struct {
 	theme  *theme.Theme
 	label  string

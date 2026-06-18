@@ -14,16 +14,21 @@ import (
 	"crude/tui/wm"
 )
 
+
+
 var paletteCommands = []components.ListItem{
-	{ID: "settings", Label: "Settings: Open settings", Detail: "Configure provider, model, agent profiles"},
-	{ID: "sessions", Label: "Sessions: Browse past sessions", Detail: "View and resume past conversations"},
-	{ID: "help", Label: "Help: Show available commands", Detail: "Display all slash commands and keybindings"},
-	{ID: "undo", Label: "Undo: Last file operation", Detail: "Revert the most recent file change"},
-	{ID: "yolo", Label: "YOLO: Toggle safety checks", Detail: "Disable all safety checks (dangerous)"},
-	{ID: "toggle-sidebar", Label: "Toggle Sidebar", Detail: "Show or hide the file tree (Ctrl+B)"},
-	{ID: "attach-file", Label: "Attach File", Detail: "Add a file reference to the prompt (Ctrl+O)"},
-	{ID: "toggle-multiagent", Label: "Toggle Multi-Agent mode", Detail: "Enable or disable sub-agent orchestration"},
-	{ID: "quit", Label: "Quit crude", Detail: "Exit the application (Ctrl+Q)"},
+	{ID: "composer", Label: "Composer", Detail: "compose a detailed prompt"},
+	{ID: "settings", Label: "Settings", Detail: "configure provider, model, theme"},
+	{ID: "sessions", Label: "Sessions", Detail: "browse past sessions"},
+	{ID: "help", Label: "Help", Detail: "show commands and shortcuts"},
+	{ID: "undo", Label: "Undo", Detail: "revert last file change"},
+	{ID: "yolo", Label: "YOLO Mode", Detail: "toggle safety checks"},
+	{ID: "toggle-sidebar", Label: "Sidebar", Detail: "toggle file tree"},
+	{ID: "attach-file", Label: "Attach File", Detail: "add file reference"},
+	{ID: "toggle-multiagent", Label: "Multi-Agent", Detail: "toggle sub-agent orchestration"},
+	{ID: "orchestrator-settings", Label: "Orchestrator", Detail: "override model/provider"},
+	{ID: "reset-orchestrator", Label: "Reset Overrides", Detail: "clear orchestrator overrides"},
+	{ID: "quit", Label: "Quit", Detail: "exit the application"},
 }
 
 // commandPaletteModel manages the command palette's state for rendering and events.
@@ -35,6 +40,12 @@ type commandPaletteModel struct {
 func newCommandPaletteModel(th *theme.Theme, callback func(cmdID string) tea.Cmd) *commandPaletteModel {
 	list := components.NewList(th, 10)
 	list.SetRenderMode(components.ListRenderPopup)
+	list.SetConfig(components.ListConfig{
+		ShowFilter: true,
+		ShowFooter: false,
+		ShowCount:  true,
+		Floating:   true,
+	})
 	list.SetItems(paletteCommands)
 	list.FilterMatchFn = func(item components.ListItem, filter string) bool {
 		lower := strings.ToLower(filter)
@@ -88,11 +99,13 @@ func (m *commandPaletteModel) Update(msg tea.Msg) tea.Cmd {
 func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 	if m.windowManager.Window("command-palette") != nil {
 		m.windowManager.RemoveWindow("command-palette")
+		m.commandPaletteModel = nil
 		return m, nil
 	}
 
 	model := newCommandPaletteModel(m.theme, func(cmdID string) tea.Cmd {
 		m.windowManager.RemoveWindow("command-palette")
+		m.commandPaletteModel = nil
 		return m.executePaletteCommand(cmdID)
 	})
 
@@ -102,12 +115,12 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 			b := fw.ContentBounds()
 			w = b.W
 		}
-		return model.View(w - 4) // Account for window border
+		return model.View(w - 4)
 	}
 	ansiWidget := rendering.NewANSIAdapter(viewFn)
 
 	fw := wm.NewFloatingWindow("command-palette", "Command Palette", ansiWidget,
-		56, 22,
+		65, 22,
 		wm.WithDecoration(true),
 		wm.WithMovable(true),
 		wm.WithResizable(false),
@@ -118,7 +131,6 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.windowManager.AddWindow(fw)
 
-	// Store the model so we can forward events to it
 	m.commandPaletteModel = model
 	return m, nil
 }
@@ -127,9 +139,19 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch cmdID {
+	case "composer":
+		m.toggleComposer()
+		return nil
+
 	case "settings":
 		m.settings.SaveSnapshot()
 		m.setMode(ModeSettings)
+
+	case "orchestrator-settings":
+		m.openOrchestratorSettings()
+
+	case "reset-orchestrator":
+		m.resetOrchestratorOverrides()
 
 	case "sessions":
 		if m.anyActive() {
@@ -154,6 +176,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 		b.WriteString("\nKeyboard Shortcuts:\n")
 		b.WriteString("  Ctrl+Shift+P  - Command Palette\n")
+		b.WriteString("  Ctrl+P        - Command Palette (fallback)\n")
+		b.WriteString("  Alt+C         - Open Composer\n")
 		b.WriteString("  Ctrl+B        - Toggle Sidebar\n")
 		b.WriteString("  Ctrl+O        - Attach File\n")
 		b.WriteString("  Ctrl+S        - Open Settings\n")

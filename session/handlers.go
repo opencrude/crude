@@ -103,6 +103,11 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	modelChanged := mainCat.Model != oldModel
 
 	s.cfg = newCfg
+	// Update the runtime profile's base config so per-orchestrator overrides
+	// continue to work on top of the new saved config.
+	if s.runtimeProfile != nil {
+		s.runtimeProfile.UpdateBase(newCfg)
+	}
 
 	// If multi-agent was just enabled, create the sub-agent runner if missing
 	if s.cfg.IsMultiAgentEnabled() && s.subAgentSup == nil {

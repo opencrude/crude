@@ -28,6 +28,8 @@ type TUI struct {
 
 	OnHardCancel func()
 
+	OnOrchestratorReset func(orchID string)
+
 	OnDeleteSession func(string)
 
 	OnListSessions func() []sessiondb.SessionMeta
@@ -136,6 +138,11 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	a.OnHardCancel = func() {
 		if t.OnHardCancel != nil {
 			t.OnHardCancel()
+		}
+	}
+	a.OnOrchestratorReset = func(orchID string) {
+		if t.OnOrchestratorReset != nil {
+			t.OnOrchestratorReset(orchID)
 		}
 	}
 	a.SetDeleteSessionFn(func(sessionID string) {

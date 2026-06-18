@@ -83,6 +83,18 @@ type Spacing struct {
 	FormTitlePad int
 }
 
+type WindowStyles struct {
+	Border         lipgloss.Style
+	Title          lipgloss.Style
+	TitleFocused   lipgloss.Style
+	TitleBg        lipgloss.Style
+	TitleBgFocused lipgloss.Style
+	BodyBg         lipgloss.Style
+	CloseBtn       lipgloss.Style
+	CloseBtnFocused lipgloss.Style
+	BorderFocused  lipgloss.Style
+}
+
 type Styles struct {
 	Header, Separator, DimLabel, AccentLabel     lipgloss.Style
 	Body, Button, ButtonFocus, ButtonDim, DialogBg lipgloss.Style
@@ -90,6 +102,7 @@ type Styles struct {
 	ThinkingLine, UserLabel, AsstLabel            lipgloss.Style
 	ErrorText, StatusBar, InputPrompt, InputText  lipgloss.Style
 	Highlight, DangerText, RetryText, AwaitText     lipgloss.Style
+	Window                                         WindowStyles
 }
 
 func DefaultDark() *Theme {
@@ -175,6 +188,29 @@ func DefaultDark() *Theme {
 		UseNerdFont:     nil,
 	}
 
+	ws := WindowStyles{
+		Border: lipgloss.NewStyle().
+			Foreground(c.Border),
+		Title: lipgloss.NewStyle().
+			Foreground(c.Muted),
+		TitleFocused: lipgloss.NewStyle().
+			Foreground(c.Fg).
+			Bold(true),
+		TitleBg: lipgloss.NewStyle().
+			Background(c.SubPaneBg),
+		TitleBgFocused: lipgloss.NewStyle().
+			Background(c.Selection),
+		BodyBg: lipgloss.NewStyle().
+			Background(c.SubPaneBg),
+		CloseBtn: lipgloss.NewStyle().
+			Foreground(c.Muted),
+		CloseBtnFocused: lipgloss.NewStyle().
+			Foreground(c.Error).
+			Bold(true),
+		BorderFocused: lipgloss.NewStyle().
+			Foreground(c.Accent),
+	}
+
 	st := Styles{
 		Header: lipgloss.NewStyle().
 			Foreground(c.Accent).
@@ -237,6 +273,7 @@ func DefaultDark() *Theme {
 			Foreground(lipgloss.Color("#ffaa00")),
 		AwaitText: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ffaa00")),
+		Window: ws,
 	}
 
 	ts := TreeStyles{

@@ -93,6 +93,24 @@ func (a *App) Run() {
 	username := session.ResolveUsername()
 	initial := session.ConfigToSettings(sessCfg)
 
+	// Merge UI-level settings from FileConfig (Theme, Editor, LSP, UI, Font)
+	// into the initial Settings. These are TUI-level, not session-level.
+	if a.fc.Theme != nil {
+		initial.Theme = *a.fc.Theme
+	}
+	if a.fc.Editor != nil {
+		initial.Editor = *a.fc.Editor
+	}
+	if a.fc.LSP != nil {
+		initial.LSP = *a.fc.LSP
+	}
+	if a.fc.UI != nil {
+		initial.UI = *a.fc.UI
+	}
+	if a.fc.Font != nil {
+		initial.Font = *a.fc.Font
+	}
+
 	var providerPresets []tui.ProviderPreset
 	for _, p := range provider.Presets {
 		providerPresets = append(providerPresets, tui.ProviderPreset{
@@ -196,6 +214,12 @@ func (a *App) wireTUI(tuiInst *tui.TUI, sess *session.Session) {
 			return err
 		}
 		newFC := SessionToFileConfig(sess.Config())
+		// Preserve UI-level settings from the save data.
+		newFC.Theme = &s.Theme
+		newFC.Editor = &s.Editor
+		newFC.LSP = &s.LSP
+		newFC.UI = &s.UI
+		newFC.Font = &s.Font
 		if err := SaveFileConfig(newFC); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
 		}
@@ -233,6 +257,11 @@ func (a *App) wireTUI(tuiInst *tui.TUI, sess *session.Session) {
 
 	tuiInst.OnHardCancel = func() {
 		sess.HardCancel()
+	}
+
+	tuiInst.OnOrchestratorReset = func(orchID string) {
+		sess.RuntimeProfile().RemoveOverride(orchID)
+		sess.Logger().Info("RUNTIME", "orchestrator_reset", "id", orchID)
 	}
 
 	tuiInst.OnDeleteSession = func(sessionID string) {

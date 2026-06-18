@@ -28,6 +28,7 @@ import (
 type SubAgentRunner struct {
 	session         *Session
 	orchestratorID  string
+	effectiveCfg    *Config // per-orchestrator effective config (nil = use base)
 	mgr             *agent.SubAgentManager
 	fileOwnership   *agent.FileOwnership
 	rateLimiter     *agent.RateLimiter
@@ -87,6 +88,14 @@ func (r *SubAgentRunner) SetSender(sender EventSender) {
 
 func (r *SubAgentRunner) SetOrchestratorID(id string) {
 	r.orchestratorID = id
+	// Resolve the effective config for this orchestrator.
+	if id != "" && r.session != nil && r.session.runtimeProfile != nil {
+		r.effectiveCfg = r.session.runtimeProfile.GetEffectiveConfig(id)
+	}
+}
+
+func (r *SubAgentRunner) SetEffectiveConfig(cfg *Config) {
+	r.effectiveCfg = cfg
 }
 
 func (r *SubAgentRunner) SetParentToolFn(fn func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)) {
@@ -484,12 +493,17 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	resolvedModelName := spec.Model
 	resolvedThinkingEffort := spec.ThinkingEffort
 
+	cfg := r.session.cfg
+	if r.effectiveCfg != nil {
+		cfg = r.effectiveCfg
+	}
+
 	if resolvedProvider == "" {
-		mainCat := r.session.cfg.GetActiveDefaultCategory()
+		mainCat := cfg.GetActiveDefaultCategory()
 		resolvedProvider = mainCat.Provider
 	}
 	if resolvedAPIKey == "" || resolvedURL == "" {
-		if prov, ok := r.session.cfg.Providers[resolvedProvider]; ok {
+		if prov, ok := cfg.Providers[resolvedProvider]; ok {
 			if resolvedAPIKey == "" {
 				resolvedAPIKey = prov.APIKey
 			}
@@ -497,7 +511,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 				resolvedURL = prov.ProviderURL
 			}
 		} else {
-			mainCat := r.session.cfg.GetActiveDefaultCategory()
+			mainCat := cfg.GetActiveDefaultCategory()
 			if resolvedAPIKey == "" {
 				resolvedAPIKey = mainCat.APIKey
 			}
@@ -507,11 +521,11 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		}
 	}
 	if resolvedModelName == "" {
-		mainCat := r.session.cfg.GetActiveDefaultCategory()
+		mainCat := cfg.GetActiveDefaultCategory()
 		resolvedModelName = mainCat.Model
 	}
 	if resolvedThinkingEffort == "" {
-		mainCat := r.session.cfg.GetActiveDefaultCategory()
+		mainCat := cfg.GetActiveDefaultCategory()
 		resolvedThinkingEffort = mainCat.ThinkingEffort
 	}
 
@@ -1036,7 +1050,11 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 
 		resolvedProvider := spec.Provider
 		if resolvedProvider == "" {
-			resolvedProvider = r.session.cfg.GetActiveDefaultCategory().Provider
+			cfg := r.session.cfg
+			if r.effectiveCfg != nil {
+				cfg = r.effectiveCfg
+			}
+			resolvedProvider = cfg.GetActiveDefaultCategory().Provider
 		}
 		if err := r.rateLimiter.Wait(ctx, resolvedProvider); err != nil {
 			return tools.ToolResult{}, fmt.Errorf("Rate limit exceeded for provider %q", resolvedProvider)
@@ -1092,11 +1110,16 @@ func (r *SubAgentRunner) persistResult(result agent.SubAgentResult) {
 }
 
 func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agent.SubAgentSpec) string {
-	activeProfile := r.session.cfg.Agents.ActiveProfile
+	// Use effective config if available, otherwise fall back to base config.
+	cfg := r.session.cfg
+	if r.effectiveCfg != nil {
+		cfg = r.effectiveCfg
+	}
+	activeProfile := cfg.Agents.ActiveProfile
 	if activeProfile == "" {
 		activeProfile = "default"
 	}
-	profiles := r.session.cfg.Agents.Profiles
+	profiles := cfg.Agents.Profiles
 	if profiles == nil {
 		return ""
 	}
@@ -1188,6 +1211,10 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 }
 
 func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
+	cfg := r.session.cfg
+	if r.effectiveCfg != nil {
+		cfg = r.effectiveCfg
+	}
 	if spec.MaxSteps == 0 {
 		switch spec.Category {
 		case agent.CatResearcher:
@@ -1199,7 +1226,7 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		}
 	}
 	if spec.Model == "" || spec.Provider == "" || spec.APIKey == "" || spec.ProviderURL == "" {
-		mainCat := r.session.cfg.GetActiveDefaultCategory()
+		mainCat := cfg.GetActiveDefaultCategory()
 		if spec.Model == "" {
 			spec.Model = mainCat.Model
 		}
