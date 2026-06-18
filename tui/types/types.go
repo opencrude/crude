@@ -78,6 +78,63 @@ type Settings struct {
 	ThinkingEffort  string
 	TurnLogsEnabled string
 	Agents          AgentsSettings
+	Theme           ThemeSettings       `json:"theme,omitempty"`
+	Editor          EditorSettings      `json:"editor,omitempty"`
+	LSP             LSPSettings         `json:"lsp,omitempty"`
+	UI              UISettings          `json:"ui,omitempty"`
+	Font            FontSettings        `json:"font,omitempty"`
+}
+
+// ThemeSettings controls the visual appearance of the TUI.
+type ThemeSettings struct {
+	Preset     string `json:"preset,omitempty"`      // "dark", "light", "custom"
+	Bg         string `json:"bg,omitempty"`          // hex color
+	Fg         string `json:"fg,omitempty"`          // hex color
+	Accent     string `json:"accent,omitempty"`      // hex color
+	Accent2    string `json:"accent2,omitempty"`     // hex color
+	SubPaneBg  string `json:"subpane_bg,omitempty"`  // hex color
+	Border     string `json:"border,omitempty"`      // hex color
+	Selection  string `json:"selection,omitempty"`   // hex color
+}
+
+// EditorSettings controls the built-in text editor.
+type EditorSettings struct {
+	TabSize       int    `json:"tab_size,omitempty"`
+	WordWrap      bool   `json:"word_wrap,omitempty"`
+	LineNumbers   bool   `json:"line_numbers,omitempty"`
+	SyntaxTheme   string `json:"syntax_theme,omitempty"`   // "catppuccin", "dracula", "github", etc.
+	Minimap       bool   `json:"minimap,omitempty"`
+	AutoSaveDelay int    `json:"auto_save_delay,omitempty"` // ms, 0 = disabled
+	RenderWhitespace string `json:"render_whitespace,omitempty"` // "none", "boundary", "all"
+}
+
+// LSPSettings controls the Language Server Protocol integration.
+type LSPSettings struct {
+	Enabled     bool                `json:"enabled,omitempty"`
+	AutoDetect  bool                `json:"auto_detect,omitempty"`
+	Servers     map[string]string   `json:"servers,omitempty"`      // language -> server command
+	ServerArgs  map[string][]string `json:"server_args,omitempty"`  // language -> server args
+	Diagnostics bool                `json:"diagnostics,omitempty"`
+}
+
+// UISettings controls general interface appearance and behavior.
+type UISettings struct {
+	SidebarWidth      int  `json:"sidebar_width,omitempty"`
+	ShowHiddenFiles   bool `json:"show_hidden_files,omitempty"`
+	ShowIcons         bool `json:"show_icons,omitempty"`
+	UseNerdFont       bool `json:"use_nerd_font,omitempty"`
+	ShowGitStatus     bool `json:"show_git_status,omitempty"`
+	ShowDiagnostics   bool `json:"show_diagnostics,omitempty"`
+	CompactMode       bool `json:"compact_mode,omitempty"`
+	MessageDelay      int  `json:"message_delay,omitempty"` // ms
+	AnimationsEnabled bool `json:"animations_enabled,omitempty"`
+}
+
+// FontSettings controls terminal font rendering hints.
+type FontSettings struct {
+	Family    string `json:"family,omitempty"`
+	Size      int    `json:"size,omitempty"`
+	Ligatures bool   `json:"ligatures,omitempty"`
 }
 
 type ModelEntry struct {

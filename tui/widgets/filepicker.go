@@ -229,54 +229,6 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 	return m, "", FilePickerNone, cmd
 }
 
-func (m FilePicker) View(width, height, spinFrame int) []string {
-	boxW := width * 72 / 100
-	if boxW > 100 {
-		boxW = 100
-	}
-	if boxW < 32 {
-		boxW = 32
-	}
-	innerW := boxW - 4
-	bodyH := height*68/100 - 4
-	if bodyH < 4 {
-		bodyH = 4
-	}
-	entries := m.visibleEntries()
-	entryPageSize := bodyH - 2 // body includes 2 header lines (path + filter)
-	if entryPageSize < 1 {
-		entryPageSize = 1
-	}
-	start := 0
-	if m.selected >= entryPageSize {
-		start = m.selected - entryPageSize + 1
-	}
-	end := start + entryPageSize
-	if end > len(entries) {
-		end = len(entries)
-	}
-	var body []string
-	pathLine := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(m.current, innerW))
-	body = append(body, pathLine)
-	filter := "/ " + m.filter
-	body = append(body, lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Render(rendering.TruncateLine(filter, innerW)))
-	for i := start; i < end; i++ {
-		entry := entries[i]
-		icon := "  "
-		if entry.IsDir {
-			icon = "▸ "
-		}
-		name := icon + entry.Name
-		if i == m.selected {
-			name = lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Selection).Render(rendering.TruncateLine(name, innerW))
-		} else {
-			name = lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(name, innerW))
-		}
-		body = append(body, name)
-	}
-	return RenderFloatingBox(m.th, "Select file", body, "enter select · esc cancel · type filter", width, height)
-}
-
 // ViewInner renders the file picker content for embedding inside a container
 // (e.g., a FloatingWindow). Unlike View(), which wraps content in a centered
 // RenderFloatingBox with its own border, ViewInner renders the content directly

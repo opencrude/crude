@@ -18,19 +18,26 @@ import (
 func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	// Global keybindings checked first — before any routing
-
-	// Ctrl+Shift+P → Command Palette
-	if msg.Mod.Contains(tea.ModCtrl) && msg.Mod.Contains(tea.ModShift) && msg.Code == 'P' {
+	// Global keybindings — checked first, before focus routing.
+	// These must work everywhere including the launcher/welcome screen.
+	keyStr := msg.String()
+	keyStrLower := strings.ToLower(keyStr)
+	// Try exact match first, then case-insensitive, then Mod-based fallback.
+	// ctrl+shift+p may arrive as "ctrl+shift+P" (enhanced protocol) or just
+	// "ctrl+p" (legacy terminals where Shift is invisible).
+	isCommandPalette := keyStr == "ctrl+shift+p" ||
+		keyStr == "ctrl+shift+P" ||
+		keyStr == "ctrl+p" ||
+		(msg.Mod.Contains(tea.ModCtrl) && msg.Mod.Contains(tea.ModShift) && msg.Code == 'P')
+	switch {
+	case isCommandPalette:
 		return m.toggleCommandPalette()
-	}
-	// Fallback: Ctrl+P alone also opens palette (for terminals that eat Ctrl+Shift)
-	if msg.String() == "ctrl+p" {
-		return m.toggleCommandPalette()
+	case keyStrLower == "alt+c":
+		return m.toggleComposer()
 	}
 
-	// Ctrl+Q → close current tab, or quit if no tabs
-	if msg.String() == "ctrl+q" {
+	// Ctrl+Q always works — close active tab/window or quit
+	if keyStr == "ctrl+q" {
 		return m.handleQuit()
 	}
 
@@ -39,7 +46,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if msg.String() == "ctrl+b" {
+	if keyStr == "ctrl+b" {
 		m.ToggleSidebar()
 		return m, nil
 	}
@@ -121,6 +128,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		case "command-palette":
 			if msg.Code == tea.KeyEsc {
 				m.windowManager.RemoveWindow("command-palette")
+				m.commandPaletteModel = nil
 				return m, nil
 			}
 			if m.commandPaletteModel != nil {
@@ -131,6 +139,34 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 				if fw := m.windowManager.Window("command-palette"); fw != nil {
 					fw.MarkContentDirty()
 				}
+			}
+			return m, tea.Batch(cmds...)
+
+		case "composer":
+			if msg.Code == tea.KeyEsc {
+				m.composer.Close()
+				m.windowManager.RemoveWindow("composer")
+				return m, nil
+			}
+			updated, cmd, action := m.composer.Update(msg)
+			m.composer = updated
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			switch action {
+			case widgets.ComposerCancel:
+				m.composer.Close()
+				m.windowManager.RemoveWindow("composer")
+			case widgets.ComposerSubmit:
+				text := m.composer.Value()
+				m.composer.Close()
+				m.windowManager.RemoveWindow("composer")
+				if text != "" && m.activeAgentView != "" {
+					cmds = append(cmds, m.submitInput(m.activeAgentView, text, nil))
+				}
+			}
+			if fw := m.windowManager.Window("composer"); fw != nil {
+				fw.MarkContentDirty()
 			}
 			return m, tea.Batch(cmds...)
 

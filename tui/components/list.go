@@ -203,9 +203,32 @@ func (m List) viewPopup(width int) string {
 	accent := m.theme.Styles.InputPrompt
 	dim := m.theme.Styles.DimLabel
 	highlight := m.theme.Styles.Highlight
+	fg := m.theme.Colors.Fg
+	muted := m.theme.Colors.Muted
 
+	if m.config.ShowFilter {
+		var b strings.Builder
+		promptStyle := lipgloss.NewStyle().Foreground(muted)
+		textStyle := lipgloss.NewStyle().Foreground(fg)
+		cursorStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
+		b.WriteString(promptStyle.Render("/ "))
+		b.WriteString(textStyle.Render(m.filter))
+		b.WriteString(cursorStyle.Render("█"))
+		var lines []string
+		lines = append(lines, b.String())
+		lines = append(lines, dim.Render(strings.Repeat("─", width)))
+		items := m.viewPopupItems(width, accent, dim, highlight)
+		lines = append(lines, items...)
+		return strings.Join(lines, "\n")
+	}
+
+	items := m.viewPopupItems(width, accent, dim, highlight)
+	return strings.Join(items, "\n")
+}
+
+func (m List) viewPopupItems(width int, accent, dim, highlight lipgloss.Style) []string {
 	if len(m.filtered) == 0 {
-		return ""
+		return []string{dim.Render("no matches")}
 	}
 
 	end := m.offset + m.pageSize
@@ -215,25 +238,43 @@ func (m List) viewPopup(width int) string {
 	aboveCount := m.offset
 	belowCount := len(m.filtered) - end
 
+	maxLabelW := 0
+	for _, item := range m.filtered {
+		lw := rendering.StringWidth(item.Label)
+		if lw > maxLabelW {
+			maxLabelW = lw
+		}
+	}
+	gap := 3
+	detailColW := width - maxLabelW - gap - 2
+	if detailColW < 10 {
+		detailColW = 10
+	}
+
 	var lines []string
 	if aboveCount > 0 {
 		lines = append(lines, dim.Render(fmt.Sprintf("  ... %d above", aboveCount)))
 	}
 	for i := m.offset; i < end; i++ {
 		item := m.filtered[i]
+		labelW := rendering.StringWidth(item.Label)
+		pad := strings.Repeat(" ", maxLabelW-labelW+gap)
+
 		if i == m.idx {
 			marker := accent.Render("❯")
 			label := highlight.Render(item.Label)
 			detail := ""
 			if item.Detail != "" {
-				detail = " " + dim.Render(item.Detail)
+				d := rendering.TruncateLine(item.Detail, detailColW)
+				detail = pad + dim.Render(d)
 			}
 			lines = append(lines, marker+" "+label+detail)
 		} else {
 			label := dim.Render(item.Label)
 			detail := ""
 			if item.Detail != "" {
-				detail = " " + dim.Render(item.Detail)
+				d := rendering.TruncateLine(item.Detail, detailColW)
+				detail = pad + dim.Render(d)
 			}
 			lines = append(lines, "  "+label+detail)
 		}
@@ -242,7 +283,7 @@ func (m List) viewPopup(width int) string {
 		lines = append(lines, dim.Render(fmt.Sprintf("  ... %d below", belowCount)))
 	}
 
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 func (m List) viewPanel(width int) string {

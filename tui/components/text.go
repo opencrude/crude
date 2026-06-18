@@ -18,17 +18,6 @@ type AtomicRange struct {
 	End   int
 }
 
-type TextToken struct {
-	Text      string
-	RefID     string
-	Start     int
-	End       int
-	Atomic    bool
-	Cursor    bool
-	CursorEnd bool
-	Selected  bool
-}
-
 type SubmitEvent struct {
 	Text string
 }

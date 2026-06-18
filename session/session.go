@@ -99,6 +99,10 @@ type Session struct {
 	// redundant turn where the agent would see the same report/notification again.
 	consumedReports   map[string]bool
 	consumedReportsMu sync.Mutex
+
+	// runtimeProfile holds ephemeral per-orchestrator config overrides
+	// that never persist to disk.
+	runtimeProfile *RuntimeProfile
 }
 
 func New(id string, cfg *Config, homeDir string) (*Session, error) {
@@ -218,6 +222,7 @@ func New(id string, cfg *Config, homeDir string) (*Session, error) {
 		writeBuf:        make([]taggedMessage, 0, 64),
 		consumedReports: make(map[string]bool),
 		orchestrators:   make(map[string]*Orchestrator),
+		runtimeProfile:  NewRuntimeProfile(cfg),
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
@@ -287,6 +292,8 @@ func (s *Session) DB() *sql.DB { return s.db }
 func (s *Session) Editor() *fileio.Editor { return s.editor }
 
 func (s *Session) Config() *Config { return s.cfg }
+
+func (s *Session) RuntimeProfile() *RuntimeProfile { return s.runtimeProfile }
 
 func (s *Session) ModelName() string {
 	return s.cfg.GetActiveDefaultCategory().Model
@@ -388,6 +395,10 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 	nextID := s.orchNextID.Add(1)
 	o := NewOrchestrator(fmt.Sprintf("%s_orch_%d", s.ID, nextID), s)
 
+	// Initialize a runtime profile override for this orchestrator.
+	// This is a fresh, empty override that starts from base config.
+	s.runtimeProfile.GetOrCreateOverride(o.ID)
+
 	if s.subAgentSup == nil && s.cfg.IsMultiAgentEnabled() {
 		s.subAgentSup = NewSubAgentRunner(s, s.cfg.Agents.MaxConcurrent)
 	}
@@ -418,4 +429,6 @@ func (s *Session) CloseOrchestrator(id string) {
 		close(o.InputCh)
 		close(o.BtwCh)
 	}
+	// Clean up the runtime profile override for this orchestrator.
+	s.runtimeProfile.RemoveOverride(id)
 }

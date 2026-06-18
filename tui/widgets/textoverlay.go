@@ -8,7 +8,9 @@ import (
 
 	"crude/tui/components"
 	"crude/tui/rendering"
+	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/widget"
 )
 
 type TextOverlayAction int
@@ -63,61 +65,20 @@ func (m TextOverlay) Update(msg tea.Msg) (TextOverlay, tea.Cmd, TextOverlayActio
 	return m, cmd, TextOverlayNone
 }
 
-func (m *TextOverlay) View(width, height, spinFrame int) []string {
-	m.width = width
-	m.height = height
-	boxW := width * 72 / 100
-	if boxW > 100 {
-		boxW = 100
+func (m *TextOverlay) Render(surf *surface.Surface, ctx *widget.RenderContext) {
+	lines := m.ViewInner(surf.Width(), surf.Height(), ctx.SpinFrame)
+	if len(lines) == 0 {
+		return
 	}
-	if boxW < 32 {
-		boxW = 32
-	}
-	innerW := boxW - 4
-	if innerW < 1 {
-		innerW = 1
-	}
-	m.input.SetTextWidth(innerW)
-	view := m.input.View(boxW, spinFrame, false)
-	lines := strings.Split(view, "\n")
-	maxBody := height*68/100 - 4
-	if maxBody < 3 {
-		maxBody = 3
-	}
-	if len(lines) > maxBody {
-		cursorLine := m.input.CursorVisualLine()
-		if cursorLine < m.scroll {
-			m.scroll = cursorLine
-		}
-		if cursorLine >= m.scroll+maxBody {
-			m.scroll = cursorLine - maxBody + 1
-		}
-		if m.scroll < 0 {
-			m.scroll = 0
-		}
-		if m.scroll > len(lines)-maxBody {
-			m.scroll = len(lines) - maxBody
-		}
-		lines = lines[m.scroll : m.scroll+maxBody]
-	}
-	for i, line := range lines {
-		lines[i] = rendering.TruncateLine(line, innerW)
-	}
-	title := m.title
-	if title == "" {
-		title = "Edit reference"
-	}
-	title = lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Bold(true).Render(title)
-	return RenderFloatingBox(m.th, rendering.StripAnsi(title), lines, "ctrl+s save · esc cancel", width, height)
+	rendering.RenderToSurface(surf, strings.Join(lines, "\n"))
+}
+
+func (m *TextOverlay) Measure(availW, availH int) (int, int) {
+	return availW, availH
 }
 
 // ViewInner renders the text overlay content for embedding inside a container
-// (e.g., a FloatingWindow). Unlike View(), which wraps content in a centered
-// RenderFloatingBox with its own border, ViewInner renders the content directly
-// to fill the available area. The container provides the border and title bar.
-//
-// Use View() for standalone rendering (with border/centering).
-// Use ViewInner() for embedded rendering inside a container (without border).
+// (e.g., a FloatingWindow).
 func (m *TextOverlay) ViewInner(width, height, spinFrame int) []string {
 	m.width = width
 	m.height = height
@@ -174,4 +135,12 @@ func (m *TextOverlay) ViewInner(width, height, spinFrame int) []string {
 	}
 
 	return result
+}
+
+func padRight(s string, width int) string {
+	pad := rendering.VisibleWidth(s)
+	if pad >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-pad)
 }

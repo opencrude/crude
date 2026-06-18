@@ -7,6 +7,7 @@ import (
 
 	"crude/buildinfo"
 	"crude/session"
+	ttypes "crude/tui/types"
 )
 
 type FileConfig struct {
@@ -14,6 +15,11 @@ type FileConfig struct {
 	Providers       map[string]session.ProviderConfig `json:"providers"`
 	TurnLogsEnabled *bool                             `json:"turn_logs_enabled,omitempty"`
 	Agents          *session.AgentsConfig             `json:"agents,omitempty"`
+	Theme           *ttypes.ThemeSettings             `json:"theme,omitempty"`
+	Editor          *ttypes.EditorSettings            `json:"editor,omitempty"`
+	LSP             *ttypes.LSPSettings               `json:"lsp,omitempty"`
+	UI              *ttypes.UISettings                `json:"ui,omitempty"`
+	Font            *ttypes.FontSettings              `json:"font,omitempty"`
 }
 
 func (c *FileConfig) IsTurnLogsEnabled() bool {

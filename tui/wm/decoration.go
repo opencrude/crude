@@ -7,6 +7,38 @@ import (
 	"crude/tui/theme"
 )
 
+// windowColors holds all color decisions for a single decoration pass.
+// It is populated from the theme before rendering begins.
+type windowColors struct {
+	borderFg   cell.Color
+	borderBg   cell.Color
+	titleFg    cell.Color
+	titleBg    cell.Color
+	bodyBg     cell.Color
+	closeFg    cell.Color
+}
+
+func collectWindowColors(fw *FloatingWindow, t *theme.Theme) windowColors {
+	if fw.focused {
+		return windowColors{
+			borderFg: rendering.ThemeColorToCell(t.Colors.Accent),
+			borderBg: cell.NoColor,
+			titleFg:  rendering.ThemeColorToCell(t.Colors.Fg),
+			titleBg:  rendering.ThemeColorToCell(t.Colors.Selection),
+			bodyBg:   rendering.ThemeColorToCell(t.Colors.SubPaneBg),
+			closeFg:  rendering.ThemeColorToCell(t.Colors.Error),
+		}
+	}
+	return windowColors{
+		borderFg: rendering.ThemeColorToCell(t.Colors.Border),
+		borderBg: cell.NoColor,
+		titleFg:  rendering.ThemeColorToCell(t.Colors.Muted),
+		titleBg:  rendering.ThemeColorToCell(t.Colors.SubPaneBg),
+		bodyBg:   rendering.ThemeColorToCell(t.Colors.SubPaneBg),
+		closeFg:  rendering.ThemeColorToCell(t.Colors.Muted),
+	}
+}
+
 // RenderDecoration draws background, title bar, and close button into the
 // window surface. This is called by FloatingWindow.Render when the window
 // is decorated.
@@ -23,51 +55,30 @@ func RenderDecoration(fw *FloatingWindow, surf *surface.Surface, t *theme.Theme)
 		return
 	}
 
-	// Determine colors from the theme.
-	var borderFg, borderBg, titleFg, titleBg, bodyBg cell.Color
-
-	// Unfocused: subtle, muted — blend into the background.
-	borderFg = rendering.ThemeColorToCell(t.Colors.Border) // #30363d subtle gray
-	borderBg = cell.NoColor
-	titleFg = rendering.ThemeColorToCell(t.Colors.Muted)    // #8b949e muted gray
-	titleBg = rendering.ThemeColorToCell(t.Colors.SubPaneBg) // #1c2333 very dark blue-gray
-	bodyBg = rendering.ThemeColorToCell(t.Colors.SubPaneBg) // #1c2333 matches sub-pane bg
-
-	if fw.focused {
-		// Focused: accent color border with a distinct title bar.
-		borderFg = rendering.ThemeColorToCell(t.Colors.Accent)   // #f0883e orange accent
-		borderBg = cell.NoColor
-		titleFg = rendering.ThemeColorToCell(t.Colors.Fg)       // #e6edf3 bright foreground
-		titleBg = rendering.ThemeColorToCell(t.Colors.Selection) // #1e2a3a dark selection blue
-		bodyBg = rendering.ThemeColorToCell(t.Colors.SubPaneBg)  // #1c2333 same bg, focus in title
-	}
+	wc := collectWindowColors(fw, t)
 
 	// For BorderNone: fill the entire window surface with background color.
 	// The background IS the visual boundary — no border chars needed.
 	switch fw.borderStyle {
 	case BorderNone:
-		DrawBackground(surf.Buffer(), bodyBg)
+		DrawBackground(surf.Buffer(), wc.bodyBg)
 	case BorderLShape:
-		DrawBackground(surf.Buffer(), bodyBg)
+		DrawBackground(surf.Buffer(), wc.bodyBg)
 		// L-border uses body bg for both fg and bg — the border lines are
 		// structural only (column/row reserved for layout), not visually colored.
 		// The background fill IS the visual boundary.
-		DrawLBorder(surf.Buffer(), bodyBg, bodyBg)
+		DrawLBorder(surf.Buffer(), wc.bodyBg, wc.bodyBg)
 	default:
 		// For bordered windows, draw the border around the perimeter.
-		DrawBorder(surf.Buffer(), fw.borderStyle, borderFg, borderBg)
+		DrawBorder(surf.Buffer(), fw.borderStyle, wc.borderFg, wc.borderBg)
 	}
 
 	// Draw the title bar text in the top row.
-	DrawTitleBar(surf.Buffer(), fw.Title, fw.titleAlign, fw.closable, titleFg, titleBg, fw.w, fw.borderStyle)
+	DrawTitleBar(surf.Buffer(), fw.Title, fw.titleAlign, fw.closable, wc.titleFg, wc.titleBg, fw.w, fw.borderStyle)
 
 	// If closable, draw the close button.
 	if fw.closable {
-		closeFg := titleFg
-		if fw.focused {
-			closeFg = rendering.ThemeColorToCell(t.Colors.Error) // #ff7b72 red for focused close
-		}
-		DrawCloseButton(surf.Buffer(), fw.w, closeFg, titleBg, fw.borderStyle)
+		DrawCloseButton(surf.Buffer(), fw.w, wc.closeFg, wc.titleBg, fw.borderStyle)
 	}
 }
 
