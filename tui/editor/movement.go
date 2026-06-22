@@ -162,7 +162,7 @@ func runeVisualWidth(r rune) int {
 	if r == '\t' {
 		return tabWidth
 	}
-	return rendering.StringWidth(string(r))
+	return rendering.VisibleWidth(string(r))
 }
 
 func lineVisualWidthFromRunes(runes []rune) int {

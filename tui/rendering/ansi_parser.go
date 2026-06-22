@@ -4,7 +4,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 
-	"github.com/rivo/uniseg"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // RenderToSurface parses an ANSI string and writes the cells into a surface.
@@ -20,7 +20,7 @@ import (
 // The parser maintains a current style state (fg, bg, attrs) that is updated
 // by SGR sequences. All subsequent characters are rendered with the current style
 // until a new SGR sequence changes it.
-func RenderToSurface(surf *surface.Surface, ansi string) {
+func RenderToSurface(surf *surface.Surface, ansiStr string) {
 	buf := surf.Buffer()
 	curX, curY := 0, 0
 	w, h := buf.Width(), buf.Height()
@@ -31,20 +31,20 @@ func RenderToSurface(surf *surface.Surface, ansi string) {
 	curAttr := cell.Attrs(0)
 
 	i := 0
-	for i < len(ansi) {
+	for i < len(ansiStr) {
 		// Check for escape sequence
-		if ansi[i] == '\x1b' && i+1 < len(ansi) && ansi[i+1] == '[' {
+		if ansiStr[i] == '\x1b' && i+1 < len(ansiStr) && ansiStr[i+1] == '[' {
 			// Find the end of the sequence (terminated by a letter)
 			j := i + 2
-			for j < len(ansi) && (ansi[j] >= '0' && ansi[j] <= '9' || ansi[j] == ';' || ansi[j] == ':') {
+			for j < len(ansiStr) && (ansiStr[j] >= '0' && ansiStr[j] <= '9' || ansiStr[j] == ';' || ansiStr[j] == ':') {
 				j++
 			}
-			if j < len(ansi) {
-				// ansi[j] is the final character (e.g., 'm' for SGR, 'H' for CUP)
-				switch ansi[j] {
+			if j < len(ansiStr) {
+				// ansiStr[j] is the final character (e.g., 'm' for SGR, 'H' for CUP)
+				switch ansiStr[j] {
 				case 'm':
 					// SGR sequence
-					parseSGR(ansi[i+2:j], &curFG, &curBG, &curAttr)
+					parseSGR(ansiStr[i+2:j], &curFG, &curBG, &curAttr)
 				case 'H':
 					// Cursor position (CUP) — for future use
 				}
@@ -54,7 +54,7 @@ func RenderToSurface(surf *surface.Surface, ansi string) {
 		}
 
 		// Check for newline
-		if ansi[i] == '\n' {
+		if ansiStr[i] == '\n' {
 			curY++
 			curX = 0
 			i++
@@ -62,22 +62,21 @@ func RenderToSurface(surf *surface.Surface, ansi string) {
 		}
 
 		// Check for carriage return
-		if ansi[i] == '\r' {
+		if ansiStr[i] == '\r' {
 			curX = 0
 			i++
 			continue
 		}
 
 		// Regular character — handle grapheme clusters properly
-		clusterStart := i
-		gr := uniseg.NewGraphemes(ansi[i:])
-		gr.Next()
-		cluster := gr.Str()
-		i = clusterStart + len(cluster)
+		cluster, dw := ansi.FirstGraphemeCluster(ansiStr[i:], ansi.GraphemeWidth)
+		if len(cluster) == 0 {
+			i++
+			continue
+		}
+		i += len(cluster)
 
-		// Skip zero-width clusters (combining characters, etc.)
-		displayWidth := uniseg.StringWidth(cluster)
-		if displayWidth == 0 {
+		if dw == 0 {
 			continue
 		}
 
@@ -87,7 +86,7 @@ func RenderToSurface(surf *surface.Surface, ansi string) {
 		}
 
 		r := []rune(cluster)[0]
-		if displayWidth == 2 {
+		if dw == 2 {
 			if curX+1 >= w {
 				// Wide char would be split, skip
 				curX++

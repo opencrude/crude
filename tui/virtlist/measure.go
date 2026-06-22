@@ -52,19 +52,19 @@ func WrapText(text string, width int) []string {
 			result = append(result, "")
 			continue
 		}
-		if rendering.StringWidth(para) <= width {
+		if rendering.VisibleWidth(para) <= width {
 			result = append(result, para)
 			continue
 		}
 		words := strings.Fields(para)
 		var cur string
 		for _, word := range words {
-			wordWidth := rendering.StringWidth(word)
+			wordWidth := rendering.VisibleWidth(word)
 			if cur == "" {
 				cur = word
 				continue
 			}
-			if rendering.StringWidth(cur)+1+wordWidth <= width {
+			if rendering.VisibleWidth(cur)+1+wordWidth <= width {
 				cur += " " + word
 			} else {
 				result = append(result, cur)

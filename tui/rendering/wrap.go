@@ -5,7 +5,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/rivo/uniseg"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func SanitizeForTerminal(s string) string {
@@ -85,7 +85,7 @@ func WrapText(text string, width int) []string {
 	}
 	var result []string
 	for _, para := range strings.Split(text, "\n") {
-		if uniseg.StringWidth(para) <= width {
+		if VisibleWidth(para) <= width {
 			result = append(result, para)
 			continue
 		}
@@ -96,7 +96,7 @@ func WrapText(text string, width int) []string {
 		}
 		current := words[0]
 		for _, w := range words[1:] {
-			if uniseg.StringWidth(current)+1+uniseg.StringWidth(w) <= width {
+			if VisibleWidth(current)+1+VisibleWidth(w) <= width {
 				current += " " + w
 			} else {
 				result = append(result, current)
@@ -119,10 +119,9 @@ func HardWrap(s string, maxWidth int) []string {
 	var cur strings.Builder
 	curW := 0
 	rest := s
-	state := -1
+	var state byte
 	for len(rest) > 0 {
-		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := uniseg.StringWidth(cluster)
+		cluster, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
 		if curW+cw > maxWidth && curW > 0 {
 			result = append(result, cur.String())
 			cur.Reset()
@@ -130,7 +129,7 @@ func HardWrap(s string, maxWidth int) []string {
 		}
 		cur.WriteString(cluster)
 		curW += cw
-		rest = newRest
+		rest = rest[len(cluster):]
 		state = newState
 	}
 	if cur.Len() > 0 || len(result) == 0 {
@@ -143,7 +142,7 @@ func WordWrap(s string, maxWidth int) []string {
 	if maxWidth <= 0 {
 		return []string{s}
 	}
-	if uniseg.StringWidth(s) <= maxWidth {
+	if VisibleWidth(s) <= maxWidth {
 		return []string{s}
 	}
 
@@ -153,11 +152,11 @@ func WordWrap(s string, maxWidth int) []string {
 	}
 	var clusters []cluster
 	rest := s
-	state := -1
+	var state byte
 	for len(rest) > 0 {
-		c, newRest, _, newState := uniseg.StepString(rest, state)
-		clusters = append(clusters, cluster{str: c, width: uniseg.StringWidth(c)})
-		rest = newRest
+		c, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
+		clusters = append(clusters, cluster{str: c, width: cw})
+		rest = rest[len(c):]
 		state = newState
 	}
 	n := len(clusters)
@@ -228,10 +227,10 @@ func WordWrap(s string, maxWidth int) []string {
 
 func TruncateLine(s string, max int) string {
 	plain := StripAnsi(s)
-	if uniseg.StringWidth(plain) <= max {
+	if VisibleWidth(plain) <= max {
 		return s
 	}
-	tailW := uniseg.StringWidth("…")
+	tailW := VisibleWidth("…")
 	target := max - tailW
 	if target < 0 {
 		target = 0
@@ -239,16 +238,15 @@ func TruncateLine(s string, max int) string {
 	rest := plain
 	var result strings.Builder
 	w := 0
-	state := -1
+	var state byte
 	for len(rest) > 0 {
-		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := uniseg.StringWidth(cluster)
+		cluster, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
 		if w+cw > target {
 			break
 		}
 		result.WriteString(cluster)
 		w += cw
-		rest = newRest
+		rest = rest[len(cluster):]
 		state = newState
 	}
 	result.WriteString("…")
@@ -269,19 +267,19 @@ func FindSegmentStart(logLine []rune, textW int, segmentIdx int) int {
 	}
 	var clusters []cluster
 	rest := s
-	state := -1
+	var state byte
 	runePos := 0
 	for len(rest) > 0 {
-		c, newRest, _, newState := uniseg.StepString(rest, state)
+		c, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
 		cRunes := len([]rune(c))
 		clusters = append(clusters, cluster{
 			runeStart: runePos,
 			runeEnd:   runePos + cRunes,
-			width:     uniseg.StringWidth(c),
+			width:     cw,
 			str:       c,
 		})
 		runePos += cRunes
-		rest = newRest
+		rest = rest[len(c):]
 		state = newState
 	}
 	n := len(clusters)

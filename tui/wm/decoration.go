@@ -67,14 +67,14 @@ func RenderDecoration(fw *FloatingWindow, surf *surface.Surface, t *theme.Theme)
 		// L-border uses body bg for both fg and bg — the border lines are
 		// structural only (column/row reserved for layout), not visually colored.
 		// The background fill IS the visual boundary.
-		DrawLBorder(surf.Buffer(), wc.bodyBg, wc.bodyBg)
+		DrawLBorder(surf.Buffer(), wc.bodyBg, wc.bodyBg, fw.x)
 	default:
 		// For bordered windows, draw the border around the perimeter.
-		DrawBorder(surf.Buffer(), fw.borderStyle, wc.borderFg, wc.borderBg)
+		DrawBorder(surf.Buffer(), fw.borderStyle, wc.borderFg, wc.borderBg, fw.x)
 	}
 
 	// Draw the title bar text in the top row.
-	DrawTitleBar(surf.Buffer(), fw.Title, fw.titleAlign, fw.closable, wc.titleFg, wc.titleBg, fw.w, fw.borderStyle)
+	DrawTitleBar(surf.Buffer(), fw.Title, fw.titleAlign, fw.closable, wc.titleFg, wc.titleBg, fw.w, fw.borderStyle, fw.x)
 
 	// If closable, draw the close button.
 	if fw.closable {
@@ -101,13 +101,16 @@ func DrawBackground(buf *surface.CellBuffer, bg cell.Color) {
 // The left vertical goes from row 1 to row h-2 (between title bar and bottom).
 // The bottom horizontal spans the full width. Corners are drawn at bottom-left
 // and bottom-right.
-func DrawLBorder(buf *surface.CellBuffer, fg, bg cell.Color) {
+func DrawLBorder(buf *surface.CellBuffer, fg, bg cell.Color, screenX int) {
 	w := buf.Width()
 	h := buf.Height()
 
 	if w < 2 || h < 3 {
 		return // Too small for L-border + title bar
 	}
+
+	rendering.Log("DrawLBorder screenCols: left=%d bottomRight=%d w=%d h=%d",
+		screenX, screenX+w-1, w, h)
 
 	// Bottom-left corner
 	buf.Set(0, h-1, cell.NewCell('└', fg, bg, 0))
@@ -137,7 +140,7 @@ func DrawLBorder(buf *surface.CellBuffer, fg, bg cell.Color) {
 //   - Corners at (0,0), (w-1,0), (0,h-1), (w-1,h-1)
 //   - Horizontal borders on rows 0 and h-1
 //   - Vertical borders on columns 0 and w-1
-func DrawBorder(buf *surface.CellBuffer, style BorderStyle, fg, bg cell.Color) {
+func DrawBorder(buf *surface.CellBuffer, style BorderStyle, fg, bg cell.Color, screenX int) {
 	if style == BorderNone {
 		return // No border chars drawn — background fill is the visual boundary
 	}
@@ -145,6 +148,9 @@ func DrawBorder(buf *surface.CellBuffer, style BorderStyle, fg, bg cell.Color) {
 	chars := BorderCharsFor(style)
 	w := buf.Width()
 	h := buf.Height()
+
+	rendering.Log("DrawBorder style=%v screenCols: left=%d top=%d right=%d bottom=%d w=%d h=%d",
+		style, screenX, screenX, screenX+w-1, screenX+h-1, w, h)
 
 	if w < 2 || h < 2 {
 		// Too small to draw a border; just set corners if possible.
@@ -187,11 +193,23 @@ func DrawBorder(buf *surface.CellBuffer, style BorderStyle, fg, bg cell.Color) {
 //
 // If the title is too long for the available space, it is truncated with "…".
 // The title row is filled with the title bar background color.
-func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closable bool, fg, bg cell.Color, titleW int, borderStyle BorderStyle) {
+func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closable bool, fg, bg cell.Color, titleW int, borderStyle BorderStyle, screenX int) {
 	// If titleW is too small, skip title drawing.
 	if titleW < 4 {
 		return
 	}
+
+	screenStartX := screenX
+	switch borderStyle {
+	case BorderNone:
+		screenStartX = screenX + 0
+	case BorderLShape:
+		screenStartX = screenX + 1
+	default:
+		screenStartX = screenX + 1
+	}
+	rendering.Log("DrawTitleBar title=%q titleW=%d borderStyle=%v closable=%v screenStartX=%d",
+		title, titleW, borderStyle, closable, screenStartX)
 
 	var startX, endX int // title bar fill range (inclusive)
 	var textStartX int  // where title text begins (after left pad)
@@ -231,6 +249,9 @@ func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closab
 		return
 	}
 
+	rendering.Log("DrawTitleBar layout screenStartX=%d screenEndX=%d textScreenStartX=%d titleAreaW=%d closable=%v borderStyle=%v",
+		screenX+startX, screenX+endX, screenX+textStartX, titleAreaW, closable, borderStyle)
+
 	// Fill the title row with the title bar background color.
 	for x := startX; x <= endX; x++ {
 		buf.Set(x, 0, cell.NewCell(' ', fg, bg, 0))
@@ -238,31 +259,19 @@ func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closab
 
 	// Truncate title if too long.
 	titleText := title
-	titleRunes := []rune(titleText)
-	if len(titleRunes) > titleAreaW {
-		if titleAreaW > 1 {
-			titleRunes = titleRunes[:titleAreaW-1]
-			titleText = string(titleRunes) + "…"
-		} else {
-			titleText = "…"
-		}
-		titleRunes = []rune(titleText)
-	}
-
-	// Ensure title fits.
-	if len(titleRunes) > titleAreaW {
-		titleRunes = titleRunes[:titleAreaW]
-		titleText = string(titleRunes)
+	titleRW := rendering.VisibleWidth(titleText)
+	if titleRW > titleAreaW {
+		titleText = rendering.TruncateLine(titleText, titleAreaW)
 	}
 
 	// Calculate title start position based on alignment (with left padding offset).
-	titleLen := len(titleRunes)
+	titleRW = rendering.VisibleWidth(titleText)
 	var titleX int
 	switch align {
 	case AlignCenter:
-		titleX = textStartX + (titleAreaW-titleLen)/2
+		titleX = textStartX + (titleAreaW-titleRW)/2
 	case AlignRight:
-		titleX = textStartX + titleAreaW - titleLen
+		titleX = textStartX + titleAreaW - titleRW
 	default: // AlignLeft
 		titleX = textStartX
 	}
@@ -284,12 +293,23 @@ func DrawTitleBar(buf *surface.CellBuffer, title string, align TextAlign, closab
 		}
 	}
 
-	// Draw the title text.
-	for i, r := range titleRunes {
-		x := titleX + i
+	rendering.Log("DrawTitleBar render title=%q screenTitleX=%d screenTextEndX=%d titleRW=%d screenStartX=%d screenEndX=%d",
+		titleText, screenX+titleX, screenX+textEndX, titleRW, screenX+startX, screenX+endX)
+
+	// Draw the title text, advancing by each character's visual width.
+	x := titleX
+	for _, r := range titleText {
+		if x > textEndX {
+			break
+		}
+		rw := rendering.VisibleWidth(string(r))
 		if x >= startX && x <= textEndX {
 			buf.Set(x, 0, cell.NewCell(r, fg, bg, cell.AttrBold))
+			if rw == 2 {
+				buf.Set(x+1, 0, cell.Cell{Char: 0, Width: 0, FG: fg, BG: bg, Attr: cell.AttrBold})
+			}
 		}
+		x += rw
 	}
 }
 

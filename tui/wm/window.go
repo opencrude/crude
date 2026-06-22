@@ -2,6 +2,7 @@ package wm
 
 import (
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/widget"
 )
@@ -175,6 +176,9 @@ func (fw *FloatingWindow) computeContentArea() {
 	if fw.contentH < 1 {
 		fw.contentH = 1
 	}
+
+	rendering.Log("computeContentArea fw=%q x=%d y=%d w=%d h=%d contentX=%d contentY=%d contentW=%d contentH=%d decorated=%v borderStyle=%v",
+		fw.ID, fw.x, fw.y, fw.w, fw.h, fw.contentX, fw.contentY, fw.contentW, fw.contentH, fw.decorated, fw.borderStyle)
 }
 
 // ContentBounds returns the inner content area (excluding decorations)
@@ -352,6 +356,9 @@ func (fw *FloatingWindow) Render(ctx *widget.RenderContext) {
 		// Clear previous frame's children to prevent accumulation.
 		fw.surf.RemoveAllChildren()
 
+		rendering.Log("Render fw=%q screenPos=(%d,%d) screenContent: colStart=%d colEnd=%d contentW=%d contentH=%d focused=%v",
+			fw.ID, fw.x, fw.y, fw.x+fw.contentX, fw.x+fw.contentX+fw.contentW-1, fw.contentW, fw.contentH, fw.focused)
+
 		// Draw decorations if the window is decorated.
 		if fw.decorated {
 			RenderDecoration(fw, fw.surf, ctx.Theme)
@@ -374,11 +381,6 @@ func (fw *FloatingWindow) Render(ctx *widget.RenderContext) {
 			// Render the content widget with the appropriate focus state.
 			contentCtx := ctx.WithFocus(fw.focused)
 			fw.Content.Render(fw.contentSurf, contentCtx)
-
-			// Make cells with default/NoColor background transparent so the window's
-			// background fill shows through. Without this, NoColor cells are opaque
-			// and overwrite the window's SubPaneBg during Blit compositing.
-			makeNoColorBgTransparent(fw.contentSurf.Buffer())
 
 			// Attach the content surface as a child of the window surface.
 			fw.surf.AddChild(fw.contentSurf)
@@ -536,25 +538,3 @@ func (fw *FloatingWindow) MarkContentDirty() { fw.contentDirty = true }
 
 // IsContentDirty reports whether the window's content needs re-rendering.
 func (fw *FloatingWindow) IsContentDirty() bool { return fw.contentDirty }
-
-// makeNoColorBgTransparent replaces blank cells with NoColor background with
-// transparent cells. This ensures that content widgets that don't set explicit
-// background colors don't overwrite the window's background fill during Blit
-// compositing.
-//
-// Only BLANK cells (spaces and continuation cells) are made transparent.
-// Text cells with NoColor BG must remain opaque so their characters are
-// visible during Blit compositing — the window's body background is already
-// painted on the parent surface, so NoColor BG cells compositing over it
-// looks correct (default bg ≈ body bg).
-func makeNoColorBgTransparent(buf *surface.CellBuffer) {
-	cells := buf.Cells()
-	for i := range cells {
-		c := &cells[i]
-		if c.BG.Type == cell.ColorDefault && !c.Transparent && c.IsBlank() {
-			// Blank cell with no explicit background — make it transparent
-			// so the window's background fill shows through.
-			c.Transparent = true
-		}
-	}
-}

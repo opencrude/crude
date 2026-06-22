@@ -322,7 +322,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 				indicator = "▸"
 			}
 		}
-		indW := rendering.StringWidth(indicator)
+		indW := rendering.VisibleWidth(indicator)
 		if remainingHOff >= indW+1 {
 			remainingHOff -= indW + 1
 		} else {
@@ -348,7 +348,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 			iconCol = colors.FileFg
 		}
 		if iconRes.Icon != "" {
-			icW := rendering.StringWidth(iconRes.Icon)
+			icW := rendering.VisibleWidth(iconRes.Icon)
 			if remainingHOff >= icW+1 {
 				remainingHOff -= icW + 1
 			} else {
@@ -368,7 +368,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 	}
 
 	// ---- file / directory name ----
-	usedW := rendering.StringWidth(rendering.StripAnsi(b.String()))
+	usedW := rendering.VisibleWidth(rendering.StripAnsi(b.String()))
 	gitReserveW := 0
 	if cfg.ShowGitStatus {
 		displayStatus := node.GitStatus
@@ -376,18 +376,18 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 			displayStatus = node.AggregateStatus
 		}
 		if displayStatus != GitNone {
-			gitReserveW = rendering.StringWidth(StatusString(displayStatus)) + 2
+			gitReserveW = rendering.VisibleWidth(StatusString(displayStatus)) + 2
 		}
 	}
 	diagReserveW := 0
 	if cfg.ShowDiagnostics && node.DiagnosticCount > 0 {
 		diagReserveW = 6 // " ✕N ⚠N" approximate, min space
 		if node.DiagErrors > 0 {
-			ew := rendering.StringWidth(itoa(node.DiagErrors))
+			ew := rendering.VisibleWidth(itoa(node.DiagErrors))
 			diagReserveW += 1 + ew
 		}
 		if node.DiagWarnings > 0 {
-			ww := rendering.StringWidth(itoa(node.DiagWarnings))
+			ww := rendering.VisibleWidth(itoa(node.DiagWarnings))
 			diagReserveW += 1 + ww
 		}
 	}
@@ -396,7 +396,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 		nameMaxW = 3
 	}
 	nameText := node.Name
-	if rendering.StringWidth(node.Name) > nameMaxW {
+	if rendering.VisibleWidth(node.Name) > nameMaxW {
 		nameText = rendering.TruncateVisual(node.Name, nameMaxW, "…")
 	}
 
@@ -477,8 +477,8 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 	if len(decorations) > 0 {
 		decoStr := noColorStyle.Render(" ") + strings.Join(decorations, noColorStyle.Render(" "))
 		raw := b.String()
-		contentW := rendering.StringWidth(rendering.StripAnsi(raw))
-		decoW := rendering.StringWidth(rendering.StripAnsi(decoStr))
+		contentW := rendering.VisibleWidth(rendering.StripAnsi(raw))
+		decoW := rendering.VisibleWidth(rendering.StripAnsi(decoStr))
 		decoStart := width - decoW
 		if decoStart > contentW {
 			pad := decoStart - contentW
@@ -489,7 +489,7 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 
 	// ---- ensure total width ----
 	raw := b.String()
-	visibleW := rendering.StringWidth(rendering.StripAnsi(raw))
+	visibleW := rendering.VisibleWidth(rendering.StripAnsi(raw))
 	if visibleW < width {
 		pad := noColorStyle.Render(strings.Repeat(" ", width-visibleW))
 		b.WriteString(pad)
@@ -528,7 +528,7 @@ func (r *TreeRenderer) breadcrumbLine(width int) string {
 	bc := strings.Join(names, " ▸ ")
 	style := lipgloss.NewStyle().Foreground(colors.DirFg).Bold(true)
 	rendered := style.Render(bc)
-	visW := rendering.StringWidth(rendering.StripAnsi(rendered))
+	visW := rendering.VisibleWidth(rendering.StripAnsi(rendered))
 	if visW < width {
 		rendered += strings.Repeat(" ", width-visW)
 	}
@@ -612,7 +612,7 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 		if d < 0 {
 			d = 0
 		}
-		w := d*(iW+1) + 4 + rendering.StringWidth(node.Name) + 3
+		w := d*(iW+1) + 4 + rendering.VisibleWidth(node.Name) + 3
 		if w > r.maxContentW {
 			r.maxContentW = w
 		}
@@ -827,7 +827,7 @@ func (r *TreeRenderer) Render(surf *surface.Surface, ctx *widget.RenderContext) 
 				}
 
 				// Compute right-aligned position.
-				gitW := len([]rune(gitStr))
+				gitW := rendering.VisibleWidth(gitStr)
 				gitX := w - gitW - 1 // one space of right padding
 				if gitX > x {
 					// Fill gap between name and git indicator.

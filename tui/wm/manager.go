@@ -1,6 +1,7 @@
 package wm
 
 import (
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/widget"
 
@@ -444,8 +445,12 @@ func (wm *WindowManager) Render(rootSurf *surface.Surface, ctx *widget.RenderCon
 			continue
 		}
 
+		x, y := fw.Position()
+		rendering.Log("WindowManager.Render fw=%q screenPos=(%d,%d) surfW=%d surfH=%d screenCols: left=%d right=%d zOrder=%d",
+			fw.ID, x, y, fw.w, fw.h, x, x+fw.w-1, i)
+
 		// Position the window surface at the window's screen coordinates.
-		winSurf.SetPosition(fw.Position())
+		winSurf.SetPosition(x, y)
 
 		// Set z-order to match the window's position in the stack.
 		winSurf.SetZOrder(i)

@@ -314,9 +314,9 @@ func (w *Window) VTabBarWidth() int {
 		if titleForWidth == "" {
 			titleForWidth = t.Title
 		}
-		itemW := rendering.StringWidth(titleForWidth)
+		itemW := rendering.VisibleWidth(titleForWidth)
 		if t.Icon != "" {
-			itemW += rendering.StringWidth(t.Icon) + 1 // icon + trailing space
+			itemW += rendering.VisibleWidth(t.Icon) + 1 // icon + trailing space
 		}
 		if itemW > maxItemW {
 			maxItemW = itemW
@@ -444,7 +444,7 @@ func (w *Window) computeTabWidths() []int {
 		if titleForWidth == "" {
 			titleForWidth = t.Title
 		}
-		titleW := rendering.StringWidth(titleForWidth)
+		titleW := rendering.VisibleWidth(titleForWidth)
 		closeW := 0
 		if t.Closable {
 			closeW = closeBtnWidth
@@ -555,7 +555,7 @@ func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool) string {
 		availForTitle = 1
 	}
 
-	titleRW := rendering.StringWidth(titleText)
+	titleRW := rendering.VisibleWidth(titleText)
 	if titleRW > availForTitle {
 		titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
 	}
@@ -693,7 +693,7 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if t.Icon != "" {
 			iconStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Success)
 			iconStr = iconStyle.Render(t.Icon) + " "
-			iconW = rendering.StringWidth(t.Icon) + 1
+			iconW = rendering.VisibleWidth(t.Icon) + 1
 		}
 		availForTitle := width - usedW - closeW - iconW
 		if availForTitle < 1 {
@@ -703,7 +703,7 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if titleText == "" {
 			titleText = t.Title
 		}
-		titleRW := rendering.StringWidth(titleText)
+		titleRW := rendering.VisibleWidth(titleText)
 		if titleRW > availForTitle {
 			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
 		}
@@ -732,7 +732,7 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if t.Icon != "" {
 			iconStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
 			iconStr = iconStyle.Render(t.Icon) + " "
-			iconW = rendering.StringWidth(t.Icon) + 1
+			iconW = rendering.VisibleWidth(t.Icon) + 1
 		}
 		availForTitle := width - usedW - closeW - iconW
 		if availForTitle < 1 {
@@ -742,7 +742,7 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		if titleText == "" {
 			titleText = t.Title
 		}
-		titleRW := rendering.StringWidth(titleText)
+		titleRW := rendering.VisibleWidth(titleText)
 		if titleRW > availForTitle {
 			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
 		}
@@ -891,7 +891,7 @@ func (w *Window) DisplayTitles(maxLen int) []string {
 			for _, idx := range indices {
 				if w.tabs[idx].Icon != "" {
 					disambig := fmt.Sprintf("%s — %s", titles[idx], w.tabs[idx].Icon)
-					rw := rendering.StringWidth(disambig)
+					rw := rendering.VisibleWidth(disambig)
 					if rw > maxLen {
 						disambig = rendering.TruncateVisual(disambig, maxLen-1, "…")
 					}
@@ -902,7 +902,7 @@ func (w *Window) DisplayTitles(maxLen int) []string {
 	}
 
 	for i, s := range result {
-		rw := rendering.StringWidth(s)
+		rw := rendering.VisibleWidth(s)
 		if rw > maxLen {
 			result[i] = rendering.TruncateVisual(s, maxLen-1, "…")
 		}
