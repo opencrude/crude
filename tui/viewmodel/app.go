@@ -910,6 +910,20 @@ func (m *App) Init() tea.Cmd {
 			m.editor.SetDiagnostics(diags)
 		}
 	})
+
+	// Hook file tree watcher events into the LSP server so it learns about
+	// disk changes (git checkout, external edits, etc.).
+	if m.treeModel != nil {
+		m.treeModel.SetOnFileChanged(func(filePath string, changeType int) {
+			if m.lspManager != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				m.lspManager.NotifyWatchedFilesChanged(ctx, filePath, changeType)
+			}
+		})
+		_ = m.treeModel.StartWatcher()
+	}
+
 	return tea.Batch(tickCmd())
 }
 

@@ -106,13 +106,39 @@ After the width fix, a "hole before scrollbar" remained — a visual gap where t
 
 ### Ultimate Impasse
 
-The real problem: `ansi.StringWidth` (used by both our `VisibleWidth` and ultraviolet's parser) returns width=2 for East Asian Ambiguous (EAW=A) characters like ☰ (U+2630) and ▶ (U+25B6). But most non-East-Asian terminals (Kitty, Alacritty, etc.) render these at width=1.
+The real problem: `displaywidth` (used by `ansi.StringWidth` via `GraphemeWidth` mode) classifies ☰ (U+2630) as `_Wide` in its trie data. This is **correct according to Unicode** — the Unicode Character Database classifies ☰ (U+2630 TRIGRAM FOR HEAVEN) as `East Asian Width: Wide (W)`. The `displaywidth` package follows this classification.
 
-This creates an **inescapable mismatch**:
-- If our width matches UV (width=2), the terminal renders at width=1 — layout is 1 column off
-- If our width matches the terminal (width=1), UV's diff compares wrong columns — stale characters persist
+**However, terminals are split on how to handle this:**
 
-**Resolution**: Removed the `catView` items from the command palette that used these ambiguous-width icons (▶ for "Sessions", ☰ for "Toggle Sidebar"). All remaining items use icons with unambiguous widths.
+| Terminal | ☰ width | Approach |
+|----------|---------|----------|
+| Kitty | 1 | Overrides Unicode, treats as narrow |
+| Alacritty | 1 | Overrides Unicode, treats as narrow |
+| Ghostty | 1 | Overrides Unicode, treats as narrow |
+| WezTerm | 1 | Overrides Unicode, treats as narrow |
+| **Windows Terminal** | **2** | **Follows Unicode standard** |
+| iTerm2 | varies | Font-dependent |
+
+The charmbracelet team is aware of this general class of issues (see [lipgloss#562](https://github.com/charmbracelet/lipgloss/issues/562)) and their position is: "this is a known terminal emulators issue and terminals calculate widths differently" — pointing to [jeffquast.com](https://www.jeffquast.com/post/ucs-detect-test-results/) and [mitchellh.com](https://mitchellh.com/writing/grapheme-clusters-in-terminals) research.
+
+**This is actually correct**: terminals DO calculate widths differently. The major terminals are split — Kitty/Alacritty/Ghostty/WezTerm override Unicode and render ☰ as width=1, while Windows Terminal follows Unicode and renders ☰ as width=2. The `displaywidth` package is correct according to Unicode; the terminals that render width=1 are the ones deviating from the standard.
+
+The `EastAsianWidth` option in `displaywidth`/`go-runewidth` controls EAW=A characters (ambiguous width, like box-drawing and geometric symbols). ☰ is NOT in this category — it's classified as `_Wide` (unconditional), which is a different classification. ▶ (U+25B6) returns width=1 in both modes and was never problematic.
+
+Verified empirically:
+- `ansi.StringWidth("☰")` → 2 (via displaywidth, `_Wide` classification — matches Unicode)
+- `ansi.WcWidth.StringWidth("☰")` → 2 (via go-runewidth, same result)
+- Both `GraphemeWidth` and `WcWidth` modes agree on width=2 for ☰
+- Windows Terminal renders ☰ as width=2 (follows Unicode)
+- Kitty/Alacritty/Ghostty/WezTerm render ☰ as width=1 (override Unicode)
+
+The width calculation doesn't need to match every terminal — it needs to match ultraviolet's diff system, which it does. Both `displaywidth` and `go-runewidth` return width=2 for ☰, and ultraviolet uses the same library, so our layout matches UV's cell buffer.
+
+This creates a **terminal-dependent visual mismatch**:
+- On Windows Terminal: layout is correct (width=2 matches terminal rendering)
+- On Kitty/Alacritty/Ghostty/WezTerm: layout is 1 column off (width=2 but terminal renders width=1)
+
+**Resolution**: Removed the `catView` items from the command palette that used ☰ (U+2630). This eliminates the visual mismatch on all terminals. The alternative — changing our width to match Kitty/Alacritty — would break ultraviolet's diff system and cause stale character artifacts on all terminals including Windows Terminal.
 
 ---
 
@@ -187,7 +213,7 @@ const (
 )
 ```
 
-Previously had `catView` (removed due to ambiguous-width icons).
+Previously had `catView` (removed due to ☰ being classified as `_Wide` by displaywidth, causing width mismatch on some terminals).
 
 ### Layout Formula (renderItem)
 
@@ -237,5 +263,5 @@ Order matters:
 
 1. **Consistency > correctness**: Our width calculation doesn't need to match what the terminal does — it needs to match what ultraviolet does. Even if both are "wrong" relative to the terminal, as long as they agree, the diff system works correctly.
 2. **Transparency is dangerous**: Making cells transparent in a composited surface tree creates invisible state that can leak stale characters. Opaque cells are safer.
-3. **EAW=A characters are unreliable**: Avoid them in TUI layouts where positional accuracy matters. Use characters with unambiguous widths (ASCII, or explicitly wide CJK).
+3. **`_Wide` classification is unreliable for cross-terminal compatibility**: Characters that `displaywidth` classifies as `_Wide` (like ☰ U+2630) follow Unicode's East Asian Width classification, but terminals are split — some follow Unicode (Windows Terminal renders as width=2), others override it (Kitty/Alacritty render as width=1). Avoid these characters in TUI layouts where positional accuracy matters across terminals. Use characters with unambiguous widths (ASCII, or explicitly wide CJK). Note: This is different from EAW=A characters (controlled by `EastAsianWidth` option) — `_Wide` classification is unconditional.
 4. **Server-side width probing is fragile**: The DSR-based probe was slow, unreliable (some terminals don't respond), and produced different results on different terminals. Removing it eliminated a source of inconsistency.

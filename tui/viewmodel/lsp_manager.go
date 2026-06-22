@@ -466,6 +466,16 @@ func (m *LSPManager) HasActiveFile() bool {
 	return m.activeFilePath != ""
 }
 
+// NotifyWatchedFilesChanged sends workspace/didChangeWatchedFiles to the LSP
+// server for a file that changed on disk. changeType matches LSP FileChangeType:
+// 1=Created, 2=Changed, 3=Deleted.
+func (m *LSPManager) NotifyWatchedFilesChanged(ctx context.Context, filePath string, changeType int) {
+	client := m.clientForFile(filePath)
+	if client != nil {
+		client.NotifyWatchedFilesChanged(ctx, filePath, changeType)
+	}
+}
+
 func (m *LSPManager) Stop() {
 	m.mu.Lock()
 	clients := make([]*editor.LSPIntegration, 0, len(m.clients))

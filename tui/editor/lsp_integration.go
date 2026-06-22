@@ -191,6 +191,28 @@ func (l *LSPIntegration) Stop() {
 	}
 }
 
+// NotifyWatchedFilesChanged sends workspace/didChangeWatchedFiles to the LSP
+// server for files that changed on disk (outside the editor).
+func (l *LSPIntegration) NotifyWatchedFilesChanged(ctx context.Context, filePath string, changeType int) {
+	l.mu.Lock()
+	client := l.client
+	l.mu.Unlock()
+
+	if client == nil {
+		return
+	}
+
+	fp := filepath.Clean(filePath)
+	uri := string(protocol.URIFromPath(fp))
+
+	_ = client.NotifyDidChangeWatchedFiles(ctx, []protocol.FileEvent{
+		{
+			URI:  protocol.DocumentURI(uri),
+			Type: protocol.FileChangeType(changeType),
+		},
+	})
+}
+
 func (l *LSPIntegration) Diagnostics() []LSPDiagnostic {
 	return nil // per-file diagnostics are not stored centrally; routed via callback
 }
@@ -206,15 +228,6 @@ func (l *LSPIntegration) uriToPath(uri protocol.DocumentURI) string {
 func (l *LSPIntegration) updateDiagnostics(uri protocol.DocumentURI, diags []protocol.Diagnostic) {
 	filePath := l.uriToPath(uri)
 
-	l.mu.Lock()
-	_, known := l.openFiles[filePath]
-	if !known {
-		// Diagnostics for a file we don't track — skip.
-		l.mu.Unlock()
-		return
-	}
-	l.mu.Unlock()
-
 	out := make([]LSPDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		out = append(out, LSPDiagnostic{
@@ -227,8 +240,12 @@ func (l *LSPIntegration) updateDiagnostics(uri protocol.DocumentURI, diags []pro
 		})
 	}
 
-	if l.onDiagnostics != nil {
-		l.onDiagnostics(filePath, out)
+	l.mu.Lock()
+	cb := l.onDiagnostics
+	l.mu.Unlock()
+
+	if cb != nil {
+		cb(filePath, out)
 	}
 }
 
