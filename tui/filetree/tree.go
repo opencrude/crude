@@ -329,6 +329,10 @@ type FileTreeModel struct {
 	// hscrollOffset is the horizontal scroll offset for deeply nested items.
 	hscrollOffset int
 
+	// onFileChanged is called when a file changes on disk via the watcher.
+	// The viewmodel sets this to forward events to the LSP server.
+	onFileChanged func(filePath string, changeType int)
+
 	// mu protects all mutable state for thread-safe access.
 	mu sync.RWMutex
 }
@@ -899,6 +903,30 @@ func (m *FileTreeModel) ProcessWatcherEvent(evt FileChangeEvent) {
 	case FileRenamed:
 		m.handleFileRenamed(evt.OldPath, evt.Path)
 	}
+
+	// Notify the LSP server about disk changes.
+	if m.onFileChanged != nil {
+		// Map FileEvent to LSP FileChangeType: 1=Created, 2=Changed, 3=Deleted.
+		var changeType int
+		switch evt.Type {
+		case FileCreated:
+			changeType = 1
+		case FileModified:
+			changeType = 2
+		case FileDeleted, FileRenamed:
+			changeType = 3
+		}
+		if changeType > 0 {
+			m.onFileChanged(evt.Path, changeType)
+		}
+	}
+}
+
+// SetOnFileChanged sets the callback invoked when a file changes on disk.
+func (m *FileTreeModel) SetOnFileChanged(fn func(filePath string, changeType int)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onFileChanged = fn
 }
 
 func (m *FileTreeModel) handleFileCreated(path string) {

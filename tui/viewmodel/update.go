@@ -154,6 +154,12 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if m.activeEditorView != "" && m.editor.IsOpen() && m.editor.DiskChanged() {
+		// Notify the LSP server that the file changed on disk.
+		if m.lspManager != nil {
+			lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			m.lspManager.NotifyWatchedFilesChanged(lspCtx, m.editor.FilePath(), 2) // 2 = Changed
+			cancel()
+		}
 		if !m.editor.Modified() {
 			if err := m.editor.Reload(); err != nil {
 				m.logger.Error("EDITOR", "reload_error", "error", err.Error())
