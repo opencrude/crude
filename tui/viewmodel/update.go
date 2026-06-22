@@ -90,6 +90,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, treeCmd)
 			}
 		}
+		if m.commandPaletteModel != nil {
+			updated, sbCmd := m.commandPaletteModel.sb.Update(msg)
+			m.commandPaletteModel.sb = updated
+			if sbCmd != nil {
+				cmds = append(cmds, sbCmd)
+			}
+		}
 		for _, sp := range m.paneMgr.panes {
 			if !sp.Done {
 				if sp.MsgList != nil {

@@ -276,7 +276,7 @@ func truncateLineToWidth(line string, maxDisplayWidth int) string {
 	if maxDisplayWidth <= 0 {
 		return line
 	}
-	if rendering.StringWidth(line) <= maxDisplayWidth {
+	if rendering.VisibleWidth(line) <= maxDisplayWidth {
 		return line
 	}
 	return rendering.TruncateVisual(line, maxDisplayWidth, "…")

@@ -282,7 +282,7 @@ func renderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme, skipHea
 		maxNumWidth := 3
 		for _, rl := range renderLines {
 			if rl.lineNum > 0 {
-				w := rendering.StringWidth(strconv.Itoa(rl.lineNum))
+				w := rendering.VisibleWidth(strconv.Itoa(rl.lineNum))
 				if w > maxNumWidth {
 					maxNumWidth = w
 				}
@@ -331,7 +331,7 @@ func renderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme, skipHea
 				contentWidth = 10
 			}
 
-			if rendering.StringWidth(content) <= contentWidth {
+			if rendering.VisibleWidth(content) <= contentWidth {
 				sb.WriteString(mutedStyle.Render(paddedNum))
 				sb.WriteString(sepStyle.Render(" │ "))
 				sb.WriteString(indStyle.Render(indicator + " "))

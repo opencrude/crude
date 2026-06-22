@@ -3,8 +3,7 @@ package surface
 import (
 	"crude/tui/cell"
 
-	"github.com/clipperhouse/displaywidth"
-	"github.com/rivo/uniseg"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // CellBuffer is a 2D grid of Cells. It is the fundamental rendering target
@@ -118,17 +117,20 @@ func (b *CellBuffer) Resize(w, h int) {
 //   - Wide chars (width=2) write the char at column N and a continuation cell at N+1
 //   - If a wide char would be split across the buffer edge, it is truncated
 //
-// Uses uniseg for grapheme cluster iteration and width measurement.
+// Uses charmbracelet/x/ansi for grapheme cluster iteration and width measurement.
 // Returns the x position after the last written cell.
 func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr cell.Attrs) int {
 	if y < 0 || y >= b.height {
 		return x
 	}
 	curX := x
-	gr := uniseg.NewGraphemes(text)
-	for gr.Next() {
-		cluster := gr.Str()
-		w := displaywidth.String(cluster)
+	rest := text
+	for len(rest) > 0 {
+		cluster, w := ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
+		if len(cluster) == 0 {
+			break
+		}
+		rest = rest[len(cluster):]
 		if w == 0 {
 			// Skip zero-width combining characters visually
 			continue

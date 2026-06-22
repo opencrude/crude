@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/rivo/uniseg"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var invalidUTF8Logger atomic.Pointer[func(tag, msg string, pairs ...any)]
@@ -139,12 +139,10 @@ func StripAnsi(s string) string {
 	return buf.String()
 }
 
+// VisibleWidth is the single point of truth for terminal column width.
+// Strips ANSI escape sequences, then measures visual width.
 func VisibleWidth(s string) int {
-	return uniseg.StringWidth(StripAnsi(s))
-}
-
-func StringWidth(s string) int {
-	return uniseg.StringWidth(s)
+	return ansi.StringWidth(StripAnsi(s))
 }
 
 // SkipVisualPrefix strips the first n visual characters from an ANSI string,
@@ -155,12 +153,12 @@ func SkipVisualPrefix(s string, n int) string {
 		return s
 	}
 	plain := StripAnsi(s)
-	srcW := uniseg.StringWidth(plain)
+	srcW := VisibleWidth(plain)
 	if n >= srcW {
 		return ""
 	}
 
-	state := -1
+	var state byte
 	skipped := 0
 	i := 0
 	runes := []rune(s)
@@ -178,9 +176,9 @@ func SkipVisualPrefix(s string, n int) string {
 			}
 			continue
 		}
-		cluster, _, _, newState := uniseg.StepString(string(runes[i:]), state)
+		cluster, _, _, newState := ansi.DecodeSequence(string(runes[i:]), state, nil)
 		state = newState
-		skipped += uniseg.StringWidth(cluster)
+		skipped += VisibleWidth(cluster)
 		i += len([]rune(cluster))
 	}
 
@@ -192,10 +190,10 @@ func SkipVisualPrefix(s string, n int) string {
 
 func TruncateVisual(s string, maxW int, tail string) string {
 	plain := StripAnsi(s)
-	if uniseg.StringWidth(plain) <= maxW {
+	if VisibleWidth(plain) <= maxW {
 		return s
 	}
-	tailW := uniseg.StringWidth(tail)
+	tailW := VisibleWidth(tail)
 	target := maxW - tailW
 	if target < 0 {
 		target = 0
@@ -203,16 +201,15 @@ func TruncateVisual(s string, maxW int, tail string) string {
 	rest := plain
 	var result strings.Builder
 	w := 0
-	state := -1
+	var state byte
 	for len(rest) > 0 {
-		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := uniseg.StringWidth(cluster)
+		cluster, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
 		if w+cw > target {
 			break
 		}
 		result.WriteString(cluster)
 		w += cw
-		rest = newRest
+		rest = rest[len(cluster):]
 		state = newState
 	}
 	result.WriteString(tail)
@@ -276,8 +273,7 @@ func ApplySelection(line string, startCol, endCol int) string {
 		}
 
 		segment := line[i:]
-		cluster, newSegment, _, newState := uniseg.StepString(segment, -1)
-		cw := uniseg.StringWidth(cluster)
+		cluster, cw, n, _ := ansi.DecodeSequence(segment, 0, nil)
 		nextCol := col + cw
 
 		shouldSelect := col >= startCol || nextCol > startCol
@@ -297,9 +293,7 @@ func ApplySelection(line string, startCol, endCol int) string {
 
 		buf.WriteString(cluster)
 		col = nextCol
-		i += len(cluster)
-		_ = newSegment
-		_ = newState
+		i += n
 		_ = shouldNotSelect
 	}
 
@@ -314,10 +308,9 @@ func ExtractVisibleRange(s string, startCol, endCol int) string {
 	var buf strings.Builder
 	col := 0
 	rest := s
-	state := -1
+	var state byte
 	for len(rest) > 0 {
-		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := uniseg.StringWidth(cluster)
+		cluster, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
 		if endCol >= 0 && col >= endCol {
 			break
 		}
@@ -326,7 +319,7 @@ func ExtractVisibleRange(s string, startCol, endCol int) string {
 			buf.WriteString(cluster)
 		}
 		col = nextCol
-		rest = newRest
+		rest = rest[len(cluster):]
 		state = newState
 	}
 	return buf.String()
@@ -368,7 +361,7 @@ func RuneIdxToCol(runes []rune, idx int) int {
 	if idx >= len(runes) {
 		idx = len(runes)
 	}
-	return uniseg.StringWidth(string(runes[:idx]))
+	return VisibleWidth(string(runes[:idx]))
 }
 
 func ColToRuneIdx(runes []rune, col int) int {
@@ -378,16 +371,15 @@ func ColToRuneIdx(runes []rune, col int) int {
 	rest := string(runes)
 	runeIdx := 0
 	curCol := 0
-	state := -1
+	var state byte
 	for len(rest) > 0 {
-		cluster, newRest, _, newState := uniseg.StepString(rest, state)
-		cw := uniseg.StringWidth(cluster)
+		cluster, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
 		if curCol+cw > col {
 			return runeIdx
 		}
 		curCol += cw
 		runeIdx += len([]rune(cluster))
-		rest = newRest
+		rest = rest[len(cluster):]
 		state = newState
 	}
 	return runeIdx

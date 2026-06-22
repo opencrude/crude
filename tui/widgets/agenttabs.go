@@ -65,7 +65,7 @@ func (b *AgentTabBar) computeWidth() int {
 	for _, t := range b.tabs {
 		// symbol(1) + space(1) + label + space(1) + elapsed
 		elapsed := formatElapsed(t.Elapsed)
-		content := 1 + 1 + rendering.StringWidth(t.Label) + 1 + rendering.StringWidth(elapsed)
+		content := 1 + 1 + rendering.VisibleWidth(t.Label) + 1 + rendering.VisibleWidth(elapsed)
 		if content > maxContent {
 			maxContent = content
 		}
@@ -123,7 +123,7 @@ func (b *AgentTabBar) renderTabLine(tab AgentTab, totalWidth, spinFrame int, bor
 	elapsed := formatElapsed(tab.Elapsed)
 
 	// Available space for label: totalWidth - "│"(1) - " "(1) - symbol_visual(1) - " "(1) - elapsed - "│"(1)
-	elapsedWidth := rendering.StringWidth(elapsed)
+	elapsedWidth := rendering.VisibleWidth(elapsed)
 	// inner = totalWidth - 2 (for the two │ chars)
 	inner := totalWidth - 2
 	// inner layout: " " + symbol(1) + " " + label + " " + elapsed
@@ -134,12 +134,12 @@ func (b *AgentTabBar) renderTabLine(tab AgentTab, totalWidth, spinFrame int, bor
 	}
 
 	label := tab.Label
-	if rendering.StringWidth(label) > labelSpace {
+	if rendering.VisibleWidth(label) > labelSpace {
 		label = rendering.TruncateVisual(label, labelSpace, "")
 	}
 
 	// Pad label to fill the space
-	labelPad := labelSpace - rendering.StringWidth(label)
+	labelPad := labelSpace - rendering.VisibleWidth(label)
 	if labelPad < 0 {
 		labelPad = 0
 	}

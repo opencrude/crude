@@ -1,98 +1,413 @@
 package viewmodel
 
 import (
+	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
-	"crude/tui/components"
 	"crude/tui/input"
 	"crude/tui/rendering"
+	"crude/tui/scrollbar"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/wm"
 )
 
+type cmdCategory string
 
+const (
+	catFile    cmdCategory = "file"
+	catTools   cmdCategory = "tools"
+	catSystem  cmdCategory = "system"
+	catHelp    cmdCategory = "help"
+	catAgent   cmdCategory = "agent"
+)
 
-var paletteCommands = []components.ListItem{
-	{ID: "composer", Label: "Composer", Detail: "compose a detailed prompt"},
-	{ID: "settings", Label: "Settings", Detail: "configure provider, model, theme"},
-	{ID: "sessions", Label: "Sessions", Detail: "browse past sessions"},
-	{ID: "help", Label: "Help", Detail: "show commands and shortcuts"},
-	{ID: "undo", Label: "Undo", Detail: "revert last file change"},
-	{ID: "yolo", Label: "YOLO Mode", Detail: "toggle safety checks"},
-	{ID: "toggle-sidebar", Label: "Sidebar", Detail: "toggle file tree"},
-	{ID: "attach-file", Label: "Attach File", Detail: "add file reference"},
-	{ID: "toggle-multiagent", Label: "Multi-Agent", Detail: "toggle sub-agent orchestration"},
-	{ID: "orchestrator-settings", Label: "Orchestrator", Detail: "override model/provider"},
-	{ID: "reset-orchestrator", Label: "Reset Overrides", Detail: "clear orchestrator overrides"},
-	{ID: "quit", Label: "Quit", Detail: "exit the application"},
+type cmdEntry struct {
+	ID       string
+	Label    string
+	Detail   string
+	Category cmdCategory
+	Icon     string
 }
 
-// commandPaletteModel manages the command palette's state for rendering and events.
+var paletteCommands = []cmdEntry{
+	{ID: "composer", Label: "Composer", Detail: "compose a detailed prompt", Category: catTools, Icon: "\u270f"},
+	{ID: "settings", Label: "Settings", Detail: "configure provider, model, theme", Category: catTools, Icon: "\u2699"},
+	{ID: "attach-file", Label: "Attach File", Detail: "add a file reference", Category: catFile, Icon: "\u29c9"},
+	{ID: "orchestrator-settings", Label: "Orchestrator Settings", Detail: "override model and provider", Category: catAgent, Icon: "\u2699"},
+	{ID: "reset-orchestrator", Label: "Reset Overrides", Detail: "clear orchestrator overrides", Category: catAgent, Icon: "\u21ba"},
+	{ID: "toggle-multiagent", Label: "Toggle Multi-Agent", Detail: "enable or disable sub-agents", Category: catAgent, Icon: "\u2606"},
+	{ID: "yolo", Label: "YOLO Mode", Detail: "toggle safety checks", Category: catTools, Icon: "\u2620"},
+	{ID: "undo", Label: "Undo", Detail: "revert last file change", Category: catSystem, Icon: "\u21a9"},
+	{ID: "help", Label: "Help", Detail: "show commands and shortcuts", Category: catHelp, Icon: "?"},
+	{ID: "quit", Label: "Quit", Detail: "exit the application", Category: catSystem, Icon: "\u2716"},
+}
+
 type commandPaletteModel struct {
-	list     components.List
+	th       *theme.Theme
+	items    []cmdEntry
+	filtered []cmdEntry
+	groups   []cmdGroup
+	filter   string
+	idx      int
+	scroll   int
+	sb       scrollbar.ScrollBar
 	callback func(cmdID string) tea.Cmd
+	width    int
+	height   int
+	screenX  int
+}
+
+type cmdGroup struct {
+	Category cmdCategory
+	Label    string
+	Start    int
+	Count    int
+}
+
+func categoryLabel(c cmdCategory) string {
+	switch c {
+	case catFile:
+		return "File"
+	case catTools:
+		return "Tools"
+	case catAgent:
+		return "Agent"
+	case catSystem:
+		return "System"
+	case catHelp:
+		return "Help"
+	}
+	return string(c)
 }
 
 func newCommandPaletteModel(th *theme.Theme, callback func(cmdID string) tea.Cmd) *commandPaletteModel {
-	list := components.NewList(th, 10)
-	list.SetRenderMode(components.ListRenderPopup)
-	list.SetConfig(components.ListConfig{
-		ShowFilter: true,
-		ShowFooter: false,
-		ShowCount:  true,
-		Floating:   true,
-	})
-	list.SetItems(paletteCommands)
-	list.FilterMatchFn = func(item components.ListItem, filter string) bool {
-		lower := strings.ToLower(filter)
-		return strings.Contains(strings.ToLower(item.ID), lower) ||
-			strings.Contains(strings.ToLower(item.Label), lower) ||
-			strings.Contains(strings.ToLower(item.Detail), lower)
-	}
-	return &commandPaletteModel{
-		list:     list,
+	m := &commandPaletteModel{
+		th:       th,
+		items:    paletteCommands,
 		callback: callback,
+		sb:       scrollbar.New(0),
+	}
+	m.applyFilter()
+	return m
+}
+
+func (m *commandPaletteModel) applyFilter() {
+	if m.filter == "" {
+		m.filtered = append([]cmdEntry(nil), m.items...)
+	} else {
+		m.filtered = nil
+		lower := strings.ToLower(m.filter)
+		for _, item := range m.items {
+			if fuzzyMatch(item, lower) {
+				m.filtered = append(m.filtered, item)
+			}
+		}
+	}
+	m.buildGroups()
+	if m.idx >= len(m.filtered) {
+		m.idx = 0
+	}
+	m.clampScroll()
+}
+
+func fuzzyMatch(item cmdEntry, filter string) bool {
+	return fuzzyContains(item.Label, filter) ||
+		fuzzyContains(item.Detail, filter) ||
+		fuzzyContains(item.ID, filter)
+}
+
+func fuzzyContains(text, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	lower := strings.ToLower(text)
+	fi := 0
+	for _, r := range lower {
+		if fi < len(filter) && byte(r) == filter[fi] {
+			fi++
+		}
+	}
+	return fi == len(filter)
+}
+
+func (m *commandPaletteModel) buildGroups() {
+	m.groups = nil
+	var current cmdCategory
+	var start int
+	for i, item := range m.filtered {
+		if item.Category != current {
+			if i > start {
+				m.groups = append(m.groups, cmdGroup{Category: current, Start: start, Count: i - start})
+			}
+			current = item.Category
+			start = i
+		}
+	}
+	if len(m.filtered) > start {
+		m.groups = append(m.groups, cmdGroup{Category: current, Start: start, Count: len(m.filtered) - start})
 	}
 }
 
+func (m *commandPaletteModel) clampScroll() {
+	if m.idx < 0 {
+		m.idx = 0
+	}
+	if m.idx >= len(m.filtered) {
+		m.idx = len(m.filtered) - 1
+	}
+}
+
+func (m *commandPaletteModel) visibleHeight() int {
+	if m.height < 3 {
+		return 3
+	}
+	vh := m.height - 2
+	if vh < 1 {
+		vh = 1
+	}
+	return vh
+}
+
+// buildContentLines renders all items with category headers into flat line slices
+// and returns a parallel slice mapping each line to its item index (-1 for non-item lines).
+func (m *commandPaletteModel) buildContentLines(width int, dim, accent, highlight lipgloss.Style) ([]string, []int) {
+	var lines []string
+	var mapIdx []int
+
+	for gi, g := range m.groups {
+		if g.Count <= 0 {
+			continue
+		}
+		if gi > 0 {
+			lines = append(lines, dim.Render(strings.Repeat("\u2500", width)))
+			mapIdx = append(mapIdx, -1)
+		}
+		lines = append(lines, dim.Render(fmt.Sprintf("  %s", categoryLabel(g.Category))))
+		mapIdx = append(mapIdx, -1)
+
+		for i := g.Start; i < g.Start+g.Count; i++ {
+			lines = append(lines, m.renderItem(m.filtered[i], i == m.idx, width, dim, accent, highlight))
+			mapIdx = append(mapIdx, i)
+		}
+	}
+	return lines, mapIdx
+}
+
 func (m *commandPaletteModel) View(width int) string {
-	return m.list.View(width)
+	m.width = width
+	m.clampScroll()
+	vh := m.visibleHeight()
+
+	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
+	accent := m.th.Styles.InputPrompt
+	highlight := m.th.Styles.Highlight
+	fg := m.th.Colors.Fg
+	bgPad := lipgloss.NewStyle().Background(m.th.Colors.SubPaneBg)
+
+	padLine := func(s string) string {
+		visW := rendering.VisibleWidth(s)
+		if visW < width {
+			return s + bgPad.Render(strings.Repeat(" ", width-visW))
+		}
+		return s
+	}
+
+	var out []string
+
+	promptStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
+	textStyle := lipgloss.NewStyle().Foreground(fg)
+	cursorStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent)
+	out = append(out, padLine(promptStyle.Render("> ")+textStyle.Render(m.filter)+cursorStyle.Render("\u2588")))
+	out = append(out, padLine(dim.Render(strings.Repeat("\u2500", width))))
+
+	if len(m.filtered) == 0 {
+		out = append(out, padLine(dim.Render("  no matching commands")))
+		for len(out) < vh+2 {
+			out = append(out, padLine(""))
+		}
+		return strings.Join(out, "\n")
+	}
+
+	contentLines, mapIdx := m.buildContentLines(width, dim, accent, highlight)
+
+	selLine := -1
+	for cl, itemIdx := range mapIdx {
+		if itemIdx == m.idx {
+			selLine = cl
+			break
+		}
+	}
+
+	if vh > 0 {
+		if selLine < m.scroll {
+			m.scroll = selLine
+		}
+		if selLine >= m.scroll+vh {
+			m.scroll = selLine - vh + 1
+		}
+	}
+	if m.scroll > len(contentLines)-vh {
+		m.scroll = len(contentLines) - vh
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+
+	sbW := 0
+	var sbLines []string
+	if len(contentLines) > vh && vh > 0 {
+		m.sb.SetTrackHeight(vh)
+		m.sb.SetScrollInfo(len(contentLines), vh, m.scroll)
+		if sbv := m.sb.View(); sbv != "" {
+			sbLines = strings.Split(sbv, "\n")
+			sbW = scrollbar.ScrollbarWidth
+		}
+	}
+
+	renderW := width - sbW
+	if renderW < 10 {
+		renderW = 10
+	}
+
+	contentLines, _ = m.buildContentLines(renderW, dim, accent, highlight)
+
+	end := m.scroll + vh
+	if end > len(contentLines) {
+		end = len(contentLines)
+	}
+	visible := contentLines[m.scroll:end]
+
+	for li, line := range visible {
+		lw := rendering.VisibleWidth(line)
+		if lw < renderW {
+			line += bgPad.Render(strings.Repeat(" ", renderW-lw))
+		}
+		if sbW > 0 && li < len(sbLines) && sbLines[li] != "" {
+			line += sbLines[li]
+		}
+		out = append(out, padLine(line))
+	}
+
+	for len(out) < vh+2 {
+		out = append(out, padLine(""))
+	}
+
+	return strings.Join(out, "\n")
+}
+
+func (m *commandPaletteModel) renderItem(item cmdEntry, selected bool, width int, dim, accent, highlight lipgloss.Style) string {
+	icon := " "
+	if item.Icon != "" {
+		icon = item.Icon
+	}
+	detailStr := item.Detail
+	gap := 3
+
+	iconW := rendering.VisibleWidth(icon)
+	detailW := rendering.VisibleWidth(detailStr)
+	availForLabel := width - 2 - iconW - 1 - gap - detailW
+	if availForLabel < 6 {
+		availForLabel = width - 2 - iconW - 1
+		detailStr = ""
+	}
+	label := rendering.TruncateLine(item.Label, availForLabel)
+
+	rest := icon + " " + label
+	if detailStr != "" {
+		paddedW := width - 2 - iconW - 1 - gap - rendering.VisibleWidth(label)
+		if paddedW < 0 {
+			paddedW = 0
+		}
+		rest += strings.Repeat(" ", gap) + rendering.TruncateLine(detailStr, paddedW)
+	}
+
+	if selected {
+		return accent.Render("\u276f") + " " + highlight.Render(rest)
+	}
+	return dim.Render("  " + rest)
 }
 
 func (m *commandPaletteModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		updated, cmd := m.list.Update(msg)
-		m.list = updated
+		return m.updateKey(msg)
 
-		switch m.list.Action() {
-		case components.ListActionSelect:
-			if item, ok := m.list.Selected(); ok {
-				if m.callback != nil {
-					return m.callback(item.ID)
-				}
-			}
-		case components.ListActionCancel:
-			return nil
-		}
-		return cmd
-
-	case tea.MouseClickMsg:
-		updated, cmd := m.list.Update(msg)
-		m.list = updated
-		if m.list.Action() == components.ListActionSelect {
-			if item, ok := m.list.Selected(); ok {
-				if m.callback != nil {
-					return m.callback(item.ID)
-				}
-			}
+	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		updated, cmd := m.sb.Update(msg)
+		m.sb = updated
+		if m.sb.ConsumeScrollChanged() {
+			m.scroll = m.sb.GetScrollY()
+			m.clampScroll()
 		}
 		return cmd
 	}
+	return nil
+}
+
+func (m *commandPaletteModel) updateKey(keyMsg tea.KeyPressMsg) tea.Cmd {
+	switch keyMsg.Code {
+	case tea.KeyEsc:
+		return nil
+
+	case tea.KeyEnter:
+		if len(m.filtered) > 0 && m.idx >= 0 && m.idx < len(m.filtered) {
+			item := m.filtered[m.idx]
+			if m.callback != nil {
+				return m.callback(item.ID)
+			}
+		}
+		return nil
+
+	case tea.KeyUp:
+		if m.idx > 0 {
+			m.idx--
+			m.clampScroll()
+		}
+
+	case tea.KeyDown:
+		if m.idx < len(m.filtered)-1 {
+			m.idx++
+			m.clampScroll()
+		}
+
+	case tea.KeyPgUp:
+		vh := m.visibleHeight()
+		m.idx -= vh
+		if m.idx < 0 {
+			m.idx = 0
+		}
+		m.clampScroll()
+
+	case tea.KeyPgDown:
+		vh := m.visibleHeight()
+		m.idx += vh
+		if m.idx >= len(m.filtered) {
+			m.idx = len(m.filtered) - 1
+		}
+		m.clampScroll()
+
+	case tea.KeyBackspace:
+		if len(m.filter) > 0 {
+			runes := []rune(m.filter)
+			m.filter = string(runes[:len(runes)-1])
+			m.applyFilter()
+		}
+
+	default:
+		for _, r := range keyMsg.Text {
+			if unicode.IsPrint(r) {
+				m.filter += string(r)
+				m.applyFilter()
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -109,21 +424,41 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 		return m.executePaletteCommand(cmdID)
 	})
 
+	palW := m.width * 50 / 100
+	if palW < 50 {
+		palW = 50
+	}
+	if palW > 80 {
+		palW = 80
+	}
+
+	palH := 14
+	if palH > m.height-8 {
+		palH = m.height - 8
+	}
+	if palH < 6 {
+		palH = 6
+	}
+
 	viewFn := func() string {
-		w := m.width
 		if fw := m.windowManager.Window("command-palette"); fw != nil {
 			b := fw.ContentBounds()
-			w = b.W
+			model.width = b.W
+			model.height = b.H
+			sx, _ := fw.Position()
+			model.screenX = sx
 		}
-		return model.View(w - 4)
+		return model.View(model.width)
 	}
 	ansiWidget := rendering.NewANSIAdapter(viewFn)
 
-	fw := wm.NewFloatingWindow("command-palette", "Command Palette", ansiWidget,
-		65, 22,
+	fw := wm.NewFloatingWindow("command-palette", "", ansiWidget,
+		palW, palH,
+		wm.WithDecoration(true),
 		wm.WithResizable(false),
+		wm.WithClosable(true),
 	)
-	wm.CenterOnScreen(fw, m.width, m.height)
+	fw.SetPosition((m.width-palW)/2, 2)
 	m.windowManager.AddWindow(fw)
 
 	m.commandPaletteModel = model

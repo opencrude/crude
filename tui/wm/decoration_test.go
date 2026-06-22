@@ -30,7 +30,7 @@ func TestDrawBorderSingle(t *testing.T) {
 	buf := surface.NewCellBuffer(6, 4)
 	fg := cell.NewTrueColor(255, 0, 0)
 	bg := cell.NoColor
-	DrawBorder(buf, BorderSingle, fg, bg)
+	DrawBorder(buf, BorderSingle, fg, bg, 0)
 
 	chars := BorderCharsFor(BorderSingle)
 	// Corners
@@ -70,7 +70,7 @@ func TestDrawBorderRounded(t *testing.T) {
 	buf := surface.NewCellBuffer(6, 4)
 	fg := cell.NewTrueColor(255, 0, 0)
 	bg := cell.NoColor
-	DrawBorder(buf, BorderRounded, fg, bg)
+	DrawBorder(buf, BorderRounded, fg, bg, 0)
 
 	chars := BorderCharsFor(BorderRounded)
 	if c := buf.Get(0, 0); c.Char != chars.TopLeft {
@@ -86,7 +86,7 @@ func TestDrawBorderLShape(t *testing.T) {
 	fg := cell.NewTrueColor(100, 100, 100)
 	bg := cell.NoColor
 
-	DrawLBorder(buf, fg, bg)
+	DrawLBorder(buf, fg, bg, 0)
 
 	// Bottom-left corner
 	if c := buf.Get(0, 3); c.Char != '└' {
@@ -110,7 +110,7 @@ func TestDrawBorderNone(t *testing.T) {
 	buf := surface.NewCellBuffer(6, 4)
 	fg := cell.NewTrueColor(255, 0, 0)
 	bg := cell.NoColor
-	DrawBorder(buf, BorderNone, fg, bg)
+	DrawBorder(buf, BorderNone, fg, bg, 0)
 
 	// BorderNone should be a no-op
 	for y := 0; y < 4; y++ {
@@ -127,7 +127,7 @@ func TestDrawBorderTooSmall(t *testing.T) {
 	buf := surface.NewCellBuffer(1, 1)
 	fg := cell.NewTrueColor(255, 0, 0)
 	bg := cell.NoColor
-	DrawBorder(buf, BorderSingle, fg, bg)
+	DrawBorder(buf, BorderSingle, fg, bg, 0)
 
 	chars := BorderCharsFor(BorderSingle)
 	if c := buf.Get(0, 0); c.Char != chars.TopLeft {
@@ -140,7 +140,7 @@ func TestDrawTitleBarBorderSingle(t *testing.T) {
 	t.Cleanup(func() {})
 	fg := cell.NewTrueColor(200, 200, 200)
 	bg := cell.NewTrueColor(50, 50, 50)
-	DrawTitleBar(buf, "Test", AlignLeft, true, fg, bg, 10, BorderSingle)
+	DrawTitleBar(buf, "Test", AlignLeft, true, fg, bg, 10, BorderSingle, 0)
 
 	// Title bar between border chars (x=1 to x=8), text starts at x=2
 	// Close button at x=6,7,8 (w-4, w-3, w-2)
@@ -163,7 +163,7 @@ func TestDrawTitleBarAlignCenter(t *testing.T) {
 	buf := surface.NewCellBuffer(12, 5)
 	fg := cell.NewTrueColor(200, 200, 200)
 	bg := cell.NewTrueColor(50, 50, 50)
-	DrawTitleBar(buf, "Title", AlignCenter, false, fg, bg, 12, BorderSingle)
+	DrawTitleBar(buf, "Title", AlignCenter, false, fg, bg, 12, BorderSingle, 0)
 
 	// Title sits between x=1 and x=10, left pad at x=2
 	// Available width: 10 (12-2), closeW=0, titleAreaW = 10-1 = 9
@@ -177,7 +177,7 @@ func TestDrawTitleBarAlignRight(t *testing.T) {
 	buf := surface.NewCellBuffer(14, 5)
 	fg := cell.NewTrueColor(200, 200, 200)
 	bg := cell.NewTrueColor(50, 50, 50)
-	DrawTitleBar(buf, "Name", AlignRight, false, fg, bg, 14, BorderSingle)
+	DrawTitleBar(buf, "Name", AlignRight, false, fg, bg, 14, BorderSingle, 0)
 
 	// Title sits between x=1 and x=12, left pad at x=2, availW=12, titleAreaW=11
 	// "Name" has 4 chars, right-aligned: starts at 2 + 11 - 4 = 9
@@ -190,7 +190,7 @@ func TestDrawTitleBarTruncated(t *testing.T) {
 	buf := surface.NewCellBuffer(8, 5)
 	fg := cell.NewTrueColor(200, 200, 200)
 	bg := cell.NewTrueColor(50, 50, 50)
-	DrawTitleBar(buf, "VeryLongTitle", AlignLeft, true, fg, bg, 8, BorderSingle)
+	DrawTitleBar(buf, "VeryLongTitle", AlignLeft, true, fg, bg, 8, BorderSingle, 0)
 
 	// titleW=8, availW=6 (8-2 for borders), closeW=3, titleAreaW = 6-3-1 = 2
 	// Should be truncated to "…" or "V…"
@@ -209,7 +209,7 @@ func TestDrawTitleBarBorderNone(t *testing.T) {
 	buf := surface.NewCellBuffer(10, 5)
 	fg := cell.NewTrueColor(200, 200, 200)
 	bg := cell.NewTrueColor(50, 50, 50)
-	DrawTitleBar(buf, "Test", AlignLeft, true, fg, bg, 10, BorderNone)
+	DrawTitleBar(buf, "Test", AlignLeft, true, fg, bg, 10, BorderNone, 0)
 
 	// For BorderNone: title bar spans full width (0-9), text starts at x=1
 	// Close button at x=7,8,9 (w-3, w-2, w-1)
@@ -222,7 +222,7 @@ func TestDrawTitleBarBorderLShape(t *testing.T) {
 	buf := surface.NewCellBuffer(10, 5)
 	fg := cell.NewTrueColor(200, 200, 200)
 	bg := cell.NewTrueColor(50, 50, 50)
-	DrawTitleBar(buf, "Test", AlignLeft, true, fg, bg, 10, BorderLShape)
+	DrawTitleBar(buf, "Test", AlignLeft, true, fg, bg, 10, BorderLShape, 0)
 
 	// For LShape: title bar from x=1 to x=9, text starts at x=2
 	// Close button at x=7,8,9 (w-3, w-2, w-1)
@@ -235,7 +235,7 @@ func TestDrawTitleBarTooSmall(t *testing.T) {
 	buf := surface.NewCellBuffer(3, 5)
 	fg := cell.NewTrueColor(200, 200, 200)
 	bg := cell.NewTrueColor(50, 50, 50)
-	DrawTitleBar(buf, "X", AlignLeft, false, fg, bg, 3, BorderSingle)
+	DrawTitleBar(buf, "X", AlignLeft, false, fg, bg, 3, BorderSingle, 0)
 
 	// titleW < 4, should be no-op
 	for x := 0; x < 3; x++ {
@@ -435,7 +435,7 @@ func TestDrawLBorderTooSmall(t *testing.T) {
 	buf := surface.NewCellBuffer(1, 2)
 	fg := cell.NewTrueColor(100, 100, 100)
 	bg := cell.NoColor
-	DrawLBorder(buf, fg, bg)
+	DrawLBorder(buf, fg, bg, 0)
 
 	for y := 0; y < 2; y++ {
 		for x := 0; x < 1; x++ {
@@ -451,7 +451,7 @@ func TestDrawTitleBarNoCloseButton(t *testing.T) {
 	buf := surface.NewCellBuffer(10, 5)
 	fg := cell.NewTrueColor(200, 200, 200)
 	bg := cell.NewTrueColor(50, 50, 50)
-	DrawTitleBar(buf, "Hello", AlignLeft, false, fg, bg, 10, BorderSingle)
+	DrawTitleBar(buf, "Hello", AlignLeft, false, fg, bg, 10, BorderSingle, 0)
 
 	// Without close button, title has more space
 	// textStartX = 2, titleAreaW = 10-2-1 = 7

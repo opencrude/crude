@@ -240,7 +240,7 @@ func (m List) viewPopupItems(width int, accent, dim, highlight lipgloss.Style) [
 
 	maxLabelW := 0
 	for _, item := range m.filtered {
-		lw := rendering.StringWidth(item.Label)
+		lw := rendering.VisibleWidth(item.Label)
 		if lw > maxLabelW {
 			maxLabelW = lw
 		}
@@ -257,7 +257,7 @@ func (m List) viewPopupItems(width int, accent, dim, highlight lipgloss.Style) [
 	}
 	for i := m.offset; i < end; i++ {
 		item := m.filtered[i]
-		labelW := rendering.StringWidth(item.Label)
+		labelW := rendering.VisibleWidth(item.Label)
 		pad := strings.Repeat(" ", maxLabelW-labelW+gap)
 
 		if i == m.idx {
@@ -342,8 +342,8 @@ func (m List) viewPanel(width int) string {
 		maxLabelW := 0
 		maxDetailW := 0
 		for _, item := range m.filtered {
-			lw := rendering.StringWidth(item.Label)
-			dw := rendering.StringWidth(item.Detail)
+			lw := rendering.VisibleWidth(item.Label)
+			dw := rendering.VisibleWidth(item.Detail)
 			if lw > maxLabelW {
 				maxLabelW = lw
 			}
@@ -367,7 +367,7 @@ func (m List) viewPanel(width int) string {
 			item := m.filtered[i]
 
 			label := rendering.TruncateLine(item.Label, labelColW)
-			labelPad := labelColW - rendering.StringWidth(label)
+			labelPad := labelColW - rendering.VisibleWidth(label)
 			if labelPad < 0 {
 				labelPad = 0
 			}

@@ -3,6 +3,7 @@ package scrollbar
 import (
 	"time"
 
+	"crude/tui/rendering"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -180,6 +181,10 @@ func (s ScrollBar) ThumbBounds() (thumbTop, thumbHeight int) {
 	}
 	availableTrack := s.trackH - thumbHeight
 	thumbTop = s.scrollY * availableTrack / maxScroll
+
+	rendering.Log("ScrollBar.ThumbBounds trackH=%d contentH=%d visibleH=%d scrollY=%d maxScroll=%d thumbTop=%d thumbH=%d (rows within content area)",
+		s.trackH, s.contentH, s.visibleH, s.scrollY, maxScroll, thumbTop, thumbHeight)
+
 	return thumbTop, thumbHeight
 }
 
@@ -188,6 +193,8 @@ func (s ScrollBar) View() string {
 		return ""
 	}
 	thumbTop, thumbH := s.ThumbBounds()
+	rendering.Log("ScrollBar.View trackH=%d contentH=%d visibleH=%d scrollY=%d thumbTop=%d thumbH=%d visibility=%v (rows within content area)",
+		s.trackH, s.contentH, s.visibleH, s.scrollY, thumbTop, thumbH, s.visibility)
 	activeThumbStyle := s.thumbStyle
 	if s.visibility == Fading {
 		activeThumbStyle = s.fadeThumbStyle

@@ -390,7 +390,7 @@ func (m *QuestionForm) viewSingle(spinFrame int, width int) string {
 	if maxLabelW < 20 {
 		maxLabelW = 20
 	}
-	if rendering.StringWidth(headerLabel) > maxLabelW {
+	if rendering.VisibleWidth(headerLabel) > maxLabelW {
 		headerLabel = rendering.TruncateVisual(headerLabel, maxLabelW-1, "…")
 	}
 
@@ -472,7 +472,7 @@ func (m *QuestionForm) ComputeSidebarWidth(availableWidth int) int {
 			label = rendering.TruncateVisual(label, 19, "…")
 		}
 		title := fmt.Sprintf("%d. %s", i+1, label)
-		w := rendering.StringWidth(title)
+		w := rendering.VisibleWidth(title)
 		if w > maxItemW {
 			maxItemW = w
 		}
@@ -527,7 +527,7 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 		if availForTitle < 1 {
 			availForTitle = 1
 		}
-		titleRW := rendering.StringWidth(titleText)
+		titleRW := rendering.VisibleWidth(titleText)
 		if titleRW > availForTitle {
 			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
 		}
@@ -540,13 +540,13 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 			iconStyle := lipgloss.NewStyle().Foreground(iconColor)
 			iconStr := iconStyle.Render(icon) + " "
 			b.WriteString(iconStr)
-			usedW := 3 + rendering.StringWidth(icon) + 1
+			usedW := 3 + rendering.VisibleWidth(icon) + 1
 			availW := sidebarW - usedW - 1
 			if availW < 1 {
 				availW = 1
 			}
 			displayTitle := titleText
-			if rendering.StringWidth(displayTitle) > availW {
+			if rendering.VisibleWidth(displayTitle) > availW {
 				displayTitle = rendering.TruncateVisual(displayTitle, availW-1, "…")
 			}
 			titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Bold(true)
@@ -560,13 +560,13 @@ func (m *QuestionForm) buildSidebarLines(sidebarW int) []string {
 			iconStyle := lipgloss.NewStyle().Foreground(iconColor)
 			iconStr := iconStyle.Render(icon) + " "
 			b.WriteString(iconStr)
-			usedW := 3 + rendering.StringWidth(icon) + 1
+			usedW := 3 + rendering.VisibleWidth(icon) + 1
 			availW := sidebarW - usedW - 1
 			if availW < 1 {
 				availW = 1
 			}
 			displayTitle := titleText
-			if rendering.StringWidth(displayTitle) > availW {
+			if rendering.VisibleWidth(displayTitle) > availW {
 				displayTitle = rendering.TruncateVisual(displayTitle, availW-1, "…")
 			}
 			titleStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
@@ -607,7 +607,7 @@ func (m *QuestionForm) renderQuestionContent(contentW int) string {
 	if maxLabelW < 20 {
 		maxLabelW = 20
 	}
-	if rendering.StringWidth(headerLabel) > maxLabelW {
+	if rendering.VisibleWidth(headerLabel) > maxLabelW {
 		headerLabel = rendering.TruncateVisual(headerLabel, maxLabelW-1, "…")
 	}
 
@@ -666,7 +666,7 @@ func (m *QuestionForm) renderOptions(b *strings.Builder, q QuestionItem, idx int
 		answerText := m.answers[idx]
 		if answerText != "" {
 			displayText := answerText
-			if rendering.StringWidth(displayText) > sepW-6 {
+			if rendering.VisibleWidth(displayText) > sepW-6 {
 				displayText = rendering.TruncateVisual(displayText, sepW-7, "…")
 			}
 			b.WriteString(marker + " " + textStyle.Render(displayText) + " " + checkStyle.Render("✓"))
@@ -677,7 +677,7 @@ func (m *QuestionForm) renderOptions(b *strings.Builder, q QuestionItem, idx int
 		answerText := m.answers[idx]
 		if answerText != "" {
 			displayText := answerText
-			if rendering.StringWidth(displayText) > sepW-6 {
+			if rendering.VisibleWidth(displayText) > sepW-6 {
 				displayText = rendering.TruncateVisual(displayText, sepW-7, "…")
 			}
 			b.WriteString("  " + dim.Render(displayText) + " " + checkStyle.Render("✓"))

@@ -209,6 +209,11 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 					m.setMode(ModeChat)
 				}
 				hitWin.MarkContentDirty()
+			} else if hitWin.ID == "command-palette" && m.commandPaletteModel != nil {
+				if cmd := m.commandPaletteModel.Update(msg); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				hitWin.MarkContentDirty()
 			} else {
 				if cmd := m.forwardEventToWindowContent(hitWin, msg); cmd != nil {
 					cmds = append(cmds, cmd)
@@ -416,6 +421,12 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		if m.windowManager.IsDragging() {
 			return m, tea.Batch(cmds...)
 		}
+		if fw := m.windowManager.Focused(); fw != nil && fw.ID == "command-palette" && m.commandPaletteModel != nil {
+			if cmd := m.commandPaletteModel.Update(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
 	}
 
 	if m.treeResizing {
@@ -485,7 +496,11 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		// early when IsDragging()), so forwarding a stray release would confuse it.
 		if released == nil {
 			if fw := m.windowManager.Focused(); fw != nil {
-				if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				if fw.ID == "command-palette" && m.commandPaletteModel != nil {
+					if cmd := m.commandPaletteModel.Update(msg); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				} else if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}

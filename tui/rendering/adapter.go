@@ -27,13 +27,25 @@ func NewANSIAdapter(viewFn ViewFunc) *ANSIAdapter {
 }
 
 // Render implements Widget. Calls the view function, parses the ANSI string,
-// and writes cells into the surface.
+// and writes cells into the surface.  Blank cells with NoColor background are
+// filled with SubPaneBg so makeNoColorBgTransparent cannot create transparent
+// holes that leak background content through the floating window.
 func (a *ANSIAdapter) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 	if a.viewFn == nil {
 		return
 	}
 	view := a.viewFn()
 	RenderToSurface(surf, view)
+	if ctx != nil && ctx.Theme != nil {
+		bg := ThemeColorToCell(ctx.Theme.Colors.SubPaneBg)
+		buf := surf.Buffer()
+		for i := range buf.Cells() {
+			c := &buf.Cells()[i]
+			if c.BG.IsDefault() && c.IsBlank() {
+				c.BG = bg
+			}
+		}
+	}
 }
 
 // Measure implements Widget. Returns the surface dimensions as the preferred size.
@@ -60,6 +72,16 @@ func NewModelAdapter(model interface{ View() string }) *ModelAdapter {
 func (m *ModelAdapter) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 	view := m.Model.View()
 	RenderToSurface(surf, view)
+	if ctx != nil && ctx.Theme != nil {
+		bg := ThemeColorToCell(ctx.Theme.Colors.SubPaneBg)
+		buf := surf.Buffer()
+		for i := range buf.Cells() {
+			c := &buf.Cells()[i]
+			if c.BG.IsDefault() && c.IsBlank() {
+				c.BG = bg
+			}
+		}
+	}
 }
 
 // Measure implements Widget.

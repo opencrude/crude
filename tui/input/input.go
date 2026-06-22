@@ -217,7 +217,7 @@ func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool
 				if col < 0 {
 					col = 0
 				}
-				segW := rendering.StringWidth(seg)
+				segW := rendering.VisibleWidth(seg)
 				if col > segW {
 					col = segW
 				}

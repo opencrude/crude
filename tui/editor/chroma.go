@@ -44,11 +44,11 @@ func (e *Editor) buildLineColorMap(lineStr string, lineVisW int) []string {
 	for tk := it(); tk != chroma.EOF; tk = it() {
 		clr := e.chromaTokenColor(tk.Type)
 		if clr == "" {
-			col += rendering.StringWidth(tk.Value)
+			col += rendering.VisibleWidth(tk.Value)
 			continue
 		}
 		for _, r := range tk.Value {
-			w := rendering.StringWidth(string(r))
+			w := rendering.VisibleWidth(string(r))
 			for c := col; c < col+w && c < lineVisW; c++ {
 				cm[c] = clr
 			}

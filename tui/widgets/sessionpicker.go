@@ -126,15 +126,15 @@ func renderSessionLine(s sessiondb.SessionMeta, selected bool, focused bool, wid
 	if maxPrompt < 8 {
 		maxPrompt = 8
 	}
-	if len(firstPrompt) > maxPrompt {
-		firstPrompt = firstPrompt[:maxPrompt-1] + "…"
+	if rendering.VisibleWidth(firstPrompt) > maxPrompt {
+		firstPrompt = rendering.TruncateLine(firstPrompt, maxPrompt)
 	}
 
 	nameStr := projectName
-	if len(nameStr) > projectWidth {
-		nameStr = nameStr[:projectWidth-1] + "…"
+	if rendering.VisibleWidth(nameStr) > projectWidth {
+		nameStr = rendering.TruncateLine(nameStr, projectWidth)
 	}
-	for len(nameStr) < projectWidth {
+	for rendering.VisibleWidth(nameStr) < projectWidth {
 		nameStr += " "
 	}
 
