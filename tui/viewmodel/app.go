@@ -915,13 +915,25 @@ func (m *App) Init() tea.Cmd {
 	// disk changes (git checkout, external edits, etc.).
 	if m.treeModel != nil {
 		m.treeModel.SetOnFileChanged(func(filePath string, changeType int) {
-			if m.lspManager != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				m.lspManager.NotifyWatchedFilesChanged(ctx, filePath, changeType)
+			if m.lspManager == nil {
+				return
 			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			// Send the standard workspace/didChangeWatchedFiles notification.
+			m.lspManager.NotifyWatchedFilesChanged(ctx, filePath, changeType)
+			// Also push the new disk content via didChange so the server
+			// re-analyzes files that were bulk-opened via openProjectFiles.
+			// The active editor file is excluded — it's handled by the
+			// editor's own Reload + UpdateFile path to avoid clobbering
+			// unsaved edits.
+			m.lspManager.SyncFileFromDisk(ctx, filePath, m.editor.FilePath(), changeType)
 		})
-		_ = m.treeModel.StartWatcher()
+		if err := m.treeModel.StartWatcher(); err != nil {
+			if m.logger != nil {
+				m.logger.Warn("FILETREE", "watcher_start_failed", "error", err.Error())
+			}
+		}
 	}
 
 	return tea.Batch(tickCmd())

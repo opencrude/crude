@@ -2,9 +2,16 @@ package editor
 
 import (
 	"path/filepath"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
+
+// saveSuppressWindow is the grace period after an editor-initiated save during
+// which fsnotify events for the saved file are treated as self-triggered and
+// ignored. fsnotify latency is typically <50ms on Linux; 200ms provides a
+// comfortable margin without risking missed external writes.
+const saveSuppressWindow = 200 * time.Millisecond
 
 func (e *Editor) DiskChanged() bool {
 	if e.watchChanged == nil {
@@ -58,11 +65,19 @@ func (e *Editor) watchLoop() {
 			if !ok {
 				return
 			}
-			if filepath.Base(event.Name) == filename {
-				select {
-				case e.watchChanged <- struct{}{}:
-				default:
-				}
+			if filepath.Base(event.Name) != filename {
+				continue
+			}
+			// Suppress self-triggered events from our own save(). Without
+			// this, every editor save fires fsnotify → watchChanged →
+			// tick → Reload(), which needlessly rebuilds the buffer and
+			// can clobber rapid typing between save and the next tick.
+			if !e.lastSaveTime.IsZero() && time.Since(e.lastSaveTime) < saveSuppressWindow {
+				continue
+			}
+			select {
+			case e.watchChanged <- struct{}{}:
+			default:
 			}
 		case _, ok := <-e.watcher.Errors:
 			if !ok {

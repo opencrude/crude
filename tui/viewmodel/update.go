@@ -153,16 +153,29 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	if m.activeEditorView != "" && m.editor.IsOpen() && m.editor.DiskChanged() {
-		// Notify the LSP server that the file changed on disk.
+	if m.editor.IsOpen() && m.editor.DiskChanged() {
+		// Notify the LSP server that the file changed on disk. This fires
+		// regardless of which tab is active — the LSP needs disk-change
+		// notifications even when the user is in the file tree or chat.
 		if m.lspManager != nil {
 			lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			m.lspManager.NotifyWatchedFilesChanged(lspCtx, m.editor.FilePath(), 2) // 2 = Changed
 			cancel()
 		}
+		// Only auto-reload when the editor has no unsaved (dirty) changes;
+		// otherwise the user's in-progress edits would be lost.
 		if !m.editor.Modified() {
 			if err := m.editor.Reload(); err != nil {
 				m.logger.Error("EDITOR", "reload_error", "error", err.Error())
+			} else if m.lspManager != nil {
+				// Push the reloaded content to the LSP server. The LSP
+				// treats open files as in-memory documents (fed via
+				// didChange) and ignores disk changes for them, so
+				// without this the server's document stays stale and it
+				// never re-analyzes the externally-modified file.
+				lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				m.lspManager.UpdateFile(lspCtx, m.editor.FilePath(), m.editor.Value())
+				cancel()
 			}
 		}
 	}
