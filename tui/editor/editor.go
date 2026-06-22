@@ -77,6 +77,11 @@ type Editor struct {
 	watchChanged chan struct{}
 	watchDone    chan struct{}
 
+	// lastSaveTime records when the editor last wrote to disk. The watcher
+	// suppresses fsnotify events that arrive within a short window of our own
+	// save to avoid self-triggering a Reload + redundant LSP notification.
+	lastSaveTime time.Time
+
 	diagMu      sync.RWMutex
 	diagnostics []LSPDiagnostic
 	diagByLine  map[int][]diagSpan

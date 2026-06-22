@@ -2,6 +2,7 @@ package editor
 
 import (
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -32,7 +33,7 @@ func (e *Editor) insertRune(r rune) {
 		CursorBefore: cursorBefore,
 	})
 	e.ensureCursorVisible()
-	e.	notifyContentChanged()
+	e.notifyContentChanged()
 }
 
 func (e *Editor) insertText(s string) {
@@ -65,7 +66,7 @@ func (e *Editor) insertText(s string) {
 		CursorBefore: cursorBefore,
 	})
 	e.ensureCursorVisible()
-	e.	notifyContentChanged()
+	e.notifyContentChanged()
 }
 
 func (e *Editor) insertNewline() {
@@ -124,7 +125,7 @@ func (e *Editor) deleteBackward() {
 		})
 	}
 	e.ensureCursorVisible()
-	e.	notifyContentChanged()
+	e.notifyContentChanged()
 }
 
 func (e *Editor) deleteForward() {
@@ -174,7 +175,7 @@ func (e *Editor) deleteForward() {
 		})
 	}
 	e.ensureCursorVisible()
-	e.	notifyContentChanged()
+	e.notifyContentChanged()
 }
 
 func (e *Editor) recordChange(c Change) {
@@ -206,7 +207,7 @@ func (e *Editor) undo() {
 	e.invalidateEditorCaches()
 	e.modified = true
 	e.ensureCursorVisible()
-	e.	notifyContentChanged()
+	e.notifyContentChanged()
 }
 
 func (e *Editor) redo() {
@@ -227,13 +228,14 @@ func (e *Editor) redo() {
 	e.invalidateEditorCaches()
 	e.modified = true
 	e.ensureCursorVisible()
-	e.	notifyContentChanged()
+	e.notifyContentChanged()
 }
 
 func (e *Editor) save() {
 	err := e.buf.Save(e.filePath)
 	if err == nil {
 		e.modified = false
+		e.lastSaveTime = time.Now()
 	}
-	e.	notifyContentChanged()
+	e.notifyContentChanged()
 }

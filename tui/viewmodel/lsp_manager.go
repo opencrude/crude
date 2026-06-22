@@ -476,6 +476,30 @@ func (m *LSPManager) NotifyWatchedFilesChanged(ctx context.Context, filePath str
 	}
 }
 
+// SyncFileFromDisk re-reads a file from disk and pushes the new content to the
+// LSP server. This is the mechanism that makes background diagnostics react to
+// external edits (e.g. nano, git checkout) with zero user interaction — like
+// VSCode and JetBrains.
+//
+// Per the LSP spec, files opened via didOpen are tracked in-memory by the
+// server, and didChangeWatchedFiles is ignored for them. Since we bulk-open
+// all project files at startup (openProjectFiles), the only way to make the
+// server re-analyze after an external edit is to push the new content via
+// didChange (or didOpen for newly-created files).
+//
+// excludeFilePath should be set to the active editor file path (if any) so
+// that the editor's own Reload + UpdateFile path handles it instead. This
+// avoids clobbering the editor's unsaved edits.
+func (m *LSPManager) SyncFileFromDisk(ctx context.Context, filePath, excludeFilePath string, changeType int) {
+	if filePath == excludeFilePath {
+		return
+	}
+	client := m.clientForFile(filePath)
+	if client != nil {
+		client.SyncFileFromDisk(ctx, filePath, changeType)
+	}
+}
+
 func (m *LSPManager) Stop() {
 	m.mu.Lock()
 	clients := make([]*editor.LSPIntegration, 0, len(m.clients))

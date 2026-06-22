@@ -213,6 +213,55 @@ func (l *LSPIntegration) NotifyWatchedFilesChanged(ctx context.Context, filePath
 	})
 }
 
+// SyncFileFromDisk re-reads the file from disk and pushes the content to the
+// LSP server via didChange. This is needed for files that were bulk-opened via
+// openProjectFiles (didOpen) but are NOT open in the editor UI. Per the LSP
+// spec, once a file is "open" the server's in-memory document is the source of
+// truth and didChangeWatchedFiles is ignored for it — so the only way to make
+// the server re-analyze after an external edit is to push the new content via
+// didChange.
+//
+// For deleted files, the file is closed via didClose so the server clears its
+// diagnostics.
+//
+// The caller must exclude the active editor file (which is handled by the
+// editor's own Reload + UpdateFile path) to avoid clobbering unsaved edits.
+func (l *LSPIntegration) SyncFileFromDisk(ctx context.Context, filePath string, changeType int) {
+	fp := filepath.Clean(filePath)
+
+	if changeType == 3 { // Deleted
+		l.CloseFile(ctx, fp)
+		return
+	}
+
+	// Read the new content from disk.
+	data, err := os.ReadFile(fp)
+	if err != nil {
+		// File may have been deleted between the fsnotify event and now.
+		l.CloseFile(ctx, fp)
+		return
+	}
+
+	l.mu.Lock()
+	_, isOpen := l.openFiles[fp]
+	l.mu.Unlock()
+
+	if !isOpen {
+		// File is not open in the LSP server. Send didOpen so the server
+		// starts tracking it and publishes diagnostics.
+		ext := strings.ToLower(filepath.Ext(fp))
+		langID := LanguageID(ext)
+		if langID == "" {
+			return
+		}
+		l.OpenFile(ctx, fp, langID, string(data))
+		return
+	}
+
+	// File is already open in the LSP — push the new content via didChange.
+	l.UpdateFile(ctx, fp, string(data))
+}
+
 func (l *LSPIntegration) Diagnostics() []LSPDiagnostic {
 	return nil // per-file diagnostics are not stored centrally; routed via callback
 }
