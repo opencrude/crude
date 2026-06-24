@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ const (
 	regionEditor
 	regionInput
 	regionChat
+	regionStatusBar
 	regionNone
 )
 
@@ -39,6 +41,14 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 				return regionFloatingWindow
 			}
 		}
+	}
+
+	// Status bar is always the last visible row. Treat it as its
+	// own region so right-click can offer LSP/session controls.
+	// Placed after the floating-window check so a popup covering
+	// the status bar (e.g. command palette) wins.
+	if m.height > 0 && y == m.height-1 {
+		return regionStatusBar
 	}
 
 	if m.treeVisible && m.treeModel != nil && x < m.treeWidth {
@@ -96,6 +106,7 @@ func (m *App) routeEditorMouse(msg tea.Msg) tea.Cmd {
 	layout := m.computeLayout()
 	translated := translateMouseY(msg, -layout.ChatAreaTop)
 	translated = translateMouseX(translated, -layout.SidebarW)
+	translated = translateMouseX(translated, -m.editor.PadL)
 	return m.editor.HandleEvent(translated)
 }
 
@@ -181,6 +192,13 @@ func (m *App) routeInputMouse(msg tea.Msg) []tea.Cmd {
 func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	mouse := msg.Mouse()
+
+	// Right-click is handled separately: it always shows a context
+	// menu (or dismisses an existing one) and never affects the
+	// focus or current selection state.
+	if msg.Button == tea.MouseRight {
+		return m.dispatchMouseRightClick(msg)
+	}
 
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
@@ -290,6 +308,12 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	case regionOverlay:
 		return m.dispatchOverlayMouseClick(msg)
+
+	case regionStatusBar:
+		// Left-click on the status bar is a no-op (it's a passive
+		// display, not an interactive region). Right-click goes
+		// through dispatchMouseRightClick instead.
+		return m, nil
 	}
 
 	if m.treeFocused && mouse.X >= m.treeWidth {
@@ -563,57 +587,106 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 		return
 	}
 
-	// Build popup content lines with minimal styling.
-	title := fmt.Sprintf(" %s:%d:%d", m.editor.Title(), state.Line+1, state.Col+1)
-	body := make([]string, 0, len(state.Messages))
-	maxLineW := 0
+	severityLabels := map[int]string{
+		1: "Error",   // DiagError
+		2: "Warning", // DiagWarning
+		3: "Info",    // DiagInfo
+		4: "Hint",    // DiagHint
+	}
+	severityIcons := map[int]string{
+		1: "✕", // DiagError
+		2: "⚠", // DiagWarning
+		3: "ℹ", // DiagInfo
+		4: "ℹ", // DiagHint
+	}
+	severityIconColors := map[int]color.Color{
+		1: m.theme.Colors.Error,
+		2: m.theme.Colors.Warning,
+		3: m.theme.Colors.Muted,
+		4: m.theme.Colors.Muted,
+	}
+	sevColor, _ := severityIconColors[state.Severity]
+	sevLabel, ok := severityLabels[state.Severity]
+	if !ok {
+		sevLabel = "Info"
+	}
+	sevIcon, ok := severityIcons[state.Severity]
+	if !ok {
+		sevIcon = "ℹ"
+	}
+
+	titleStr := fmt.Sprintf("%s:%d:%d", m.editor.Title(), state.Line+1, state.Col+1)
+	sourceLine := strings.TrimRight(m.editor.LineText(state.Line), "\n\r ")
+
+	// Compute max width across all content.
+	maxLineW := rendering.VisibleWidth(titleStr)
+	if w := rendering.VisibleWidth(sourceLine); w > maxLineW {
+		maxLineW = w
+	}
 	for _, msg := range state.Messages {
-		body = append(body, msg)
-		if rendering.VisibleWidth(msg) > maxLineW {
-			maxLineW = rendering.VisibleWidth(msg)
+		if w := rendering.VisibleWidth(msg); w > maxLineW {
+			maxLineW = w
 		}
 	}
 
 	// Compute popup dimensions.
-	boxW := maxLineW + 4 // 2 padding + 2 border
-	if boxW < 40 {
-		boxW = 40
+	// boxW = 2 (side borders) + 4 (inner padding: 2 left + 2 right) + maxLineW
+	boxW := maxLineW + 6
+	if boxW < 44 {
+		boxW = 44
 	}
 	if boxW > m.width-4 {
 		boxW = m.width - 4
 	}
-	innerW := boxW - 4
+	innerW := boxW - 6 // 2 left pad + 2 right pad + 2 side borders (1 each)
 
-	// Render each message line wrapped to fit.
-	bodyStyled := make([]string, 0, len(body))
-	border := lipgloss.NewStyle().Foreground(m.theme.Colors.Border)
-	bodyStyle := lipgloss.NewStyle().Background(m.theme.Colors.Code.Bg).Foreground(m.theme.Colors.Fg)
-	for _, msg := range body {
-		if rendering.VisibleWidth(msg) > innerW {
-			msg = rendering.TruncateLine(msg, innerW)
+	// Styles.
+	mutedStyle := lipgloss.NewStyle().Background(m.theme.Colors.PopupBg).Foreground(m.theme.Colors.Muted)
+	titleStyle := lipgloss.NewStyle().Background(m.theme.Colors.PopupBg).Foreground(m.theme.Colors.Accent).Bold(true)
+	sourceStyle := lipgloss.NewStyle().Background(m.theme.Colors.PopupBg).Foreground(m.theme.Colors.Fg)
+	bodyStyle := lipgloss.NewStyle().Background(m.theme.Colors.PopupBg).Foreground(m.theme.Colors.Fg)
+
+	// Build inner content lines.
+	var content []string
+	// Title row: file:line:col — Accent bold.
+	content = append(content, widgets.PadRightANSI(titleStr, innerW, m.theme, titleStyle))
+	if sourceLine != "" {
+		content = append(content, widgets.PadRightANSI(sourceLine, innerW, m.theme, sourceStyle))
+	}
+	// Divider.
+	content = append(content, widgets.PadRightANSI(strings.Repeat("─", innerW), innerW, m.theme, mutedStyle))
+	// Body lines (word-wrapped).
+	hasBody := false
+	for _, msg := range state.Messages {
+		for _, segment := range strings.Split(msg, "\n") {
+			for _, line := range rendering.WordWrap(segment, innerW) {
+				content = append(content, widgets.PadRightANSI(line, innerW, m.theme, bodyStyle))
+				hasBody = true
+			}
 		}
-		bodyStyled = append(bodyStyled, border.Render("│ ")+bodyStyle.Render(padRight(msg, innerW))+border.Render(" │"))
+	}
+	if !hasBody {
+		content = append(content, widgets.PadRightANSI(strings.Repeat(" ", innerW), innerW, m.theme, bodyStyle))
 	}
 
-	// Title line.
-	titleRendered := border.Render("│ ") + lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Bold(true).Render(padRight(title, innerW)) + border.Render(" │")
-	// Top and bottom borders.
-	top := border.Render("╭" + strings.Repeat("─", boxW-2) + "╮")
-	bottom := border.Render("╰" + strings.Repeat("─", boxW-2) + "╯")
+	// Wrap in unified chrome. The border is tinted with the severity
+	// color, the title is the severity label.
+	lines := widgets.PopupChromeLines(m.theme, widgets.PopupChromeConfig{
+		Title:       sevLabel,
+		TitleIcon:   sevIcon,
+		Width:       boxW,
+		Focused:     false,
+		BorderAccent: sevColor,
+		TitleAccent:  sevColor,
+	}, content)
 
-	popupLines := make([]string, 0, 2+len(bodyStyled)+1)
-	popupLines = append(popupLines, top)
-	popupLines = append(popupLines, titleRendered)
-	popupLines = append(popupLines, bodyStyled...)
-	popupLines = append(popupLines, bottom)
-
-	popupH := len(popupLines)
+	popupH := len(lines)
 	popupX, popupY := m.diagPopupPosition(screenX, screenY, boxW, popupH)
 
 	// Create or update the popup window.
 	if m.diagPopupID != "" {
 		if existing := m.windowManager.Window(m.diagPopupID); existing != nil {
-			existing.Content = widgets.NewPopupContent(popupLines)
+			existing.Content = widgets.NewPopupContent(lines)
 			existing.SetSize(boxW, popupH)
 			existing.SetPosition(popupX, popupY)
 			existing.MarkContentDirty()
@@ -621,7 +694,7 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 		}
 	}
 
-	popupContent := widgets.NewPopupContent(popupLines)
+	popupContent := widgets.NewPopupContent(lines)
 	fw := wm.NewFloatingWindow(
 		"diag-hover",
 		"",
@@ -680,4 +753,110 @@ func padRight(s string, width int) string {
 		pad = 0
 	}
 	return s + strings.Repeat(" ", pad)
+}
+
+// dispatchMouseRightClick shows a context menu appropriate to the
+// region the user clicked. If a context menu is already open, the
+// second right-click closes it (so the user can dismiss with the
+// same gesture). Otherwise the menu opens at the cursor with
+// region-aware items.
+func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	mouse := msg.Mouse()
+
+	// If a context menu is already open, close it and return.
+	if m.windowManager != nil {
+		if fw := m.windowManager.Window("context-menu"); fw != nil {
+			m.windowManager.RemoveWindow("context-menu")
+			m.dirty = true
+			return m, nil
+		}
+	}
+
+	// If a different floating window was hit (composer, command
+	// palette, find/replace, etc.), let it handle its own context
+	// menu if any. For now, the find/replace popup also gets a
+	// dismiss-on-right-click behavior.
+	if m.windowManager != nil {
+		if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
+			// Right-click on a floating window: do nothing for now.
+			return m, nil
+		}
+	}
+
+	region := m.classifyMouse(mouse.X, mouse.Y, false)
+	var st *widgets.ContextMenuState
+	switch region {
+	case regionEditor:
+		st = m.buildEditorContextMenu(mouse)
+	case regionSidebar:
+		st = m.buildSidebarContextMenu(mouse)
+	case regionTabBar:
+		st = m.buildTabBarContextMenu(mouse)
+	case regionInput:
+		st = m.buildInputContextMenu(mouse)
+	case regionChat:
+		st = m.buildChatContextMenu(mouse)
+	case regionStatusBar:
+		st = m.buildStatusBarContextMenu(mouse)
+	case regionOverlay:
+		// No menu for overlay regions; they're modal anyway.
+		return m, nil
+	default:
+		return m, nil
+	}
+	if st == nil || len(st.Sections) == 0 {
+		return m, nil
+	}
+	st.Build()
+	if len(st.FlatItems) == 0 {
+		return m, nil
+	}
+
+	// Position the popup near the cursor without going off-screen.
+	w := widgets.ContextMenuPopupWidth(st)
+	h := widgets.ContextMenuPopupHeight(st)
+	x, y := clampPopupPosition(mouse.X, mouse.Y, w, h, m.width, m.height)
+
+	lines := widgets.ContextMenuLines(m.theme, st)
+	pop := widgets.NewPopupContent(lines)
+	// ContextMenuLines now self-renders the unified popup chrome
+	// (border, title, padding). The FloatingWindow is just a
+	// positioned box with no decoration.
+	fw := wm.NewFloatingWindow("context-menu", "", pop, w, h,
+		wm.WithDecoration(false),
+		wm.WithMovable(false),
+		wm.WithResizable(false),
+		wm.WithClosable(false),
+		wm.WithModal(true),
+		wm.WithFocusable(true),
+	)
+	fw.SetPosition(x, y)
+	if m.windowManager != nil {
+		m.windowManager.AddWindow(fw)
+	}
+	m.lastContextMenu = st
+	m.dirty = true
+	return m, nil
+}
+
+// clampPopupPosition returns a (x, y) for the popup that anchors at
+// the cursor but stays within the screen bounds. The popup is
+// positioned so its top-left is at (mx, my); if it would extend past
+// the right or bottom, it's pulled back.
+func clampPopupPosition(mx, my, w, h, screenW, screenH int) (int, int) {
+	x := mx
+	y := my
+	if x+w > screenW {
+		x = screenW - w
+	}
+	if y+h > screenH {
+		y = screenH - h
+	}
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return x, y
 }

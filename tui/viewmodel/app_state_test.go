@@ -205,6 +205,60 @@ func TestHandleQuit_LastTabRefreshesLauncher(t *testing.T) {
 	// but this test verifies no panic occurs.
 }
 
+// TestHandleTabSwitch_ClearsStaleViewOnLastClose is a regression
+// test for the bug where closing the last editor tab left
+// activeEditorView pointing at the now-closed path. The stale
+// value caused (a) the renderer to fall through to the input
+// widget branch instead of the launcher, and (b) Ctrl+Q to attempt
+// a no-op close of the stale path instead of quitting the app.
+//
+// handleTabSwitch is the single source of truth for these view
+// fields, so it must clear them whenever the underlying tab is
+// gone — not just when the active tab transitions between types.
+func TestHandleTabSwitch_ClearsStaleViewOnLastClose(t *testing.T) {
+	app := newTestApp(t)
+
+	// No tab → both views empty.
+	app.handleTabSwitch()
+	if app.activeEditorView != "" {
+		t.Fatalf("expected activeEditorView=\"\" with no tab, got %q", app.activeEditorView)
+	}
+	if app.activeAgentView != "" {
+		t.Fatalf("expected activeAgentView=\"\" with no tab, got %q", app.activeAgentView)
+	}
+}
+
+// TestHandleQuit_AfterLastEditorCloses_Quits is a regression test
+// for the Ctrl+Q doesn't quit bug. Before the fix, closing the
+// last editor tab left activeEditorView stale, so handleQuit saw
+// an "open" editor and tried to close it again (no-op), never
+// reaching the Quit path.
+func TestHandleQuit_AfterLastEditorCloses_Quits(t *testing.T) {
+	app := newTestApp(t)
+
+	// Simulate "had an editor open, then closed it" by populating
+	// the views as if a tab existed, then calling handleTabSwitch
+	// with no tab to force the reset path.
+	app.activeEditorView = "/tmp/foo.go"
+	app.activeAgentView = ""
+
+	app.handleTabSwitch()
+
+	if app.activeEditorView != "" {
+		t.Fatalf("setup: handleTabSwitch should have cleared activeEditorView")
+	}
+
+	// Now Ctrl+Q should quit since there's no editor, no agent, no
+	// floating window, no overlay.
+	_, cmd := app.handleQuit()
+	if cmd == nil {
+		t.Fatal("expected Quit cmd after closing last editor tab and pressing Ctrl+Q")
+	}
+	if !app.Quit {
+		t.Fatal("expected Quit flag to be set")
+	}
+}
+
 func TestHandleQuit_ClosesOverlayFirst(t *testing.T) {
 	app := newTestApp(t)
 	app.overlay.OpenTab("Settings", "", true)

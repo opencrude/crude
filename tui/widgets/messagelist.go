@@ -1009,6 +1009,40 @@ func (ml *MessageList) ExtractSelectedText(startLine, startCol, endLine, endCol 
 	return rendering.ExtractSelectedText(allLines, startLine, startCol, endLine, endCol)
 }
 
+// SelectedText returns the text inside the current mouse-selection
+// range, or "" if no selection is active. Used by the right-click
+// context menu.
+func (ml *MessageList) SelectedText() string {
+	if !ml.selecting {
+		return ""
+	}
+	sLine, sCol, eLine, eCol := ml.normalizedSelection()
+	return ml.ExtractSelectedText(sLine, sCol, eLine, eCol)
+}
+
+// normalizedSelection returns selAnchor..selEnd in start-before-end
+// order, regardless of which direction the user dragged.
+func (ml *MessageList) normalizedSelection() (int, int, int, int) {
+	if ml.selAnchorLine < ml.selEndLine ||
+		(ml.selAnchorLine == ml.selEndLine && ml.selAnchorCol <= ml.selEndCol) {
+		return ml.selAnchorLine, ml.selAnchorCol, ml.selEndLine, ml.selEndCol
+	}
+	return ml.selEndLine, ml.selEndCol, ml.selAnchorLine, ml.selAnchorCol
+}
+
+// LastAssistantText returns the content of the most recent
+// assistant message, or "" if there isn't one. Used by the
+// right-click "Copy last assistant" item.
+func (ml *MessageList) LastAssistantText() string {
+	for i := len(ml.messages) - 1; i >= 0; i-- {
+		msg := ml.messages[i]
+		if msg.Role == "assistant" && msg.Content != "" {
+			return msg.Content
+		}
+	}
+	return ""
+}
+
 // buildAllLinesForSelection produces the line array that selection
 // coordinates index into. It reads directly from VL item Rendered data
 // populated by ForceUpdateHeights, guaranteeing structural consistency

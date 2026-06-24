@@ -138,6 +138,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 					}
 				}
 
+				// Determine search highlight for this cell. The
+				// current match is rendered with a stronger
+				// background; other matches get a softer tint.
+				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, vCol)
+
 				if ri < len(runes) && vCol < visCol+widths[ri] && vCol < lineVisW {
 					if vCol == visCol {
 						switch {
@@ -145,6 +150,20 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 							buf.Set(cx, bufY, cell.NewCell(runes[ri], e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
 						case e.isSelected(lineIdx, vCol):
 							buf.Set(cx, bufY, cell.NewCell(runes[ri], e.cellColor(e.th.Colors.Fg), selBgColor, 0))
+						case searchMatchIdx >= 0:
+							hlBg := e.searchHighlightBg(searchIsCurrent)
+							fg := e.cellColor(e.th.Colors.Fg)
+							if vCol < len(colorMap) && colorMap[vCol] != "" {
+								fg = e.cellColor(lipgloss.Color(colorMap[vCol]))
+							}
+							if sev > 0 {
+								fg = diagFg
+							}
+							attr := diagAttr
+							if searchIsCurrent {
+								attr |= cell.AttrReverse
+							}
+							buf.Set(cx, bufY, cell.NewCell(runes[ri], fg, hlBg, attr))
 						default:
 							fg := e.cellColor(e.th.Colors.Fg)
 							if vCol < len(colorMap) && colorMap[vCol] != "" {
@@ -161,6 +180,17 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 							buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
 						case e.isSelected(lineIdx, vCol):
 							buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Fg), selBgColor, 0))
+						case searchMatchIdx >= 0:
+							hlBg := e.searchHighlightBg(searchIsCurrent)
+							fg := e.cellColor(e.th.Colors.Fg)
+							if sev > 0 {
+								fg = diagFg
+							}
+							attr := diagAttr
+							if searchIsCurrent {
+								attr |= cell.AttrReverse
+							}
+							buf.Set(cx, bufY, cell.NewCell(' ', fg, hlBg, attr))
 						default:
 							fg := bgColor
 							if sev > 0 {
@@ -175,6 +205,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
 					case e.isSelected(lineIdx, vCol):
 						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Fg), selBgColor, 0))
+					case searchMatchIdx >= 0:
+						hlBg := e.searchHighlightBg(searchIsCurrent)
+						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Muted), hlBg, 0))
 					default:
 						buf.Set(cx, bufY, blankCell)
 					}
@@ -546,6 +579,58 @@ func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]rune, int, []int, [
 
 func (e *Editor) cellColor(c color.Color) cell.Color {
 	return rendering.ThemeColorToCell(c)
+}
+
+// searchHighlightAt returns the match index covering (line, col) or
+// -1 if no match covers that position. The second return value is
+// true when the match is the current selection in the search state.
+//
+// Matches that span multiple lines have a Start and End with
+// different line numbers; the highlight extends from Start to
+// EndCol on Start.Line, and from Col=0 to EndCol on End.Line.
+func (e *Editor) searchHighlightAt(line, col int) (int, bool) {
+	if e.search == nil || !e.search.Open {
+		return -1, false
+	}
+	matches := e.search.Matches
+	current := e.search.CurrentIdx
+	for i, m := range matches {
+		if line < m.Start.Line || line > m.End.Line {
+			continue
+		}
+		if line == m.Start.Line && line == m.End.Line {
+			// Single-line match
+			if col >= m.Start.Col && col < m.End.Col {
+				return i, i == current
+			}
+			continue
+		}
+		if line == m.Start.Line {
+			if col >= m.Start.Col {
+				return i, i == current
+			}
+			continue
+		}
+		if line == m.End.Line {
+			if col < m.End.Col {
+				return i, i == current
+			}
+			continue
+		}
+		// Multi-line interior: all columns match.
+		return i, i == current
+	}
+	return -1, false
+}
+
+// searchHighlightBg returns the background color used for search
+// match highlights. The current match uses a saturated accent; other
+// matches use a softer selection tint.
+func (e *Editor) searchHighlightBg(isCurrent bool) cell.Color {
+	if isCurrent {
+		return e.cellColor(e.th.Colors.Accent2)
+	}
+	return e.cellColor(e.th.Colors.Selection)
 }
 
 func (e *Editor) lineVisualWidth(lineIdx int) int {

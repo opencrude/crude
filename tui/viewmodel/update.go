@@ -183,35 +183,22 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	connected, status, errMsg := m.lspManager.Status()
 	statusbarLSP := connected || status == editor.LSPConnected || status == editor.LSPStarting || errMsg != ""
 
-	if m.activeEditorView != "" && m.editor.IsOpen() {
-		errs, warns, hints := m.editor.DiagnosticCounts()
-		m.statusbar.SetDiagnostics(errs, warns, hints)
-		m.statusbar.SetLSPVisible(true)
-		if connected || status == editor.LSPConnected {
-			m.statusbar.SetLSPStatus("")
-		} else if errMsg != "" {
-			m.statusbar.SetLSPStatus("LSP: " + errMsg)
-		} else if status == editor.LSPStarting {
-			m.statusbar.SetLSPStatus("LSP: connecting…")
-		} else {
-			m.statusbar.SetLSPStatus("")
-		}
-	} else if statusbarLSP {
-		// No editor open, but LSP is running — show project-wide diagnostics.
-		errs, warns, hints := m.lspManager.ProjectDiagnosticCounts()
-		m.statusbar.SetDiagnostics(errs, warns, hints)
-		m.statusbar.SetLSPVisible(true)
-		if status == editor.LSPStarting {
-			m.statusbar.SetLSPStatus("LSP: connecting…")
-		} else if errMsg != "" {
-			m.statusbar.SetLSPStatus("LSP: " + errMsg)
-		} else {
-			m.statusbar.SetLSPStatus("")
-		}
+	// Status bar is EXCLUSIVELY for whole-project insights.
+	// Per-file diagnostics are shown in the editor (gutter + hover popup +
+	// editor's own status line at the bottom of the editor body).
+	if statusbarLSP {
+		ins := m.lspManager.ProjectInsights()
+		m.statusbar.SetProjectInsights(ins)
 	} else {
-		m.statusbar.SetDiagnostics(0, 0, 0)
-		m.statusbar.SetLSPVisible(false)
-		m.statusbar.SetLSPStatus("")
+		m.statusbar.SetProjectInsights(editor.ProjectInsights{})
+	}
+
+	// Mark dirty when the status bar has active animations (heartbeat dot,
+	// streaming spinner, expiring toasts, or the AnimGrace period after
+	// the LSP last did work). Without this the view cache returns stale
+	// output and the dot looks frozen.
+	if m.statusbar.HasAnimation() {
+		m.dirty = true
 	}
 
 	if m.anyActive() {
@@ -231,6 +218,16 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
+	case lspDefinitionResultMsg:
+		m.handleDefinitionResult(msg)
+	case lspReferencesResultMsg:
+		m.handleReferencesResult(msg)
+	case lspDocumentSymbolsResultMsg:
+		m.handleDocumentSymbolsResult(msg)
+	case lspRenameResultMsg:
+		m.handleRenameResult(msg)
+	case lspCompletionResultMsg:
+		m.handleCompletionResult(msg)
 	case ttypes.ErrorMsg:
 		m.logger.Debug("UI", "error", "msg", string(msg))
 		m.statusbar.SetError(string(msg))
@@ -539,13 +536,18 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	if m.isEditorTabTitle(tab.Title) {
 		path := m.editorPathFromTabTitle(tab.Title)
-		if m.lspManager != nil {
-			lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			m.lspManager.CloseFile(lspCtx, path)
+		// If the tab has unsaved edits, prompt before destroying the
+		// buffer. Otherwise close immediately.
+		ed := m.editor
+		if t, ok := m.editorTabs[path]; ok {
+			ed = t.Editor
 		}
-		m.editor.Close()
-		m.activeEditorView = ""
+		if ed != nil && ed.Modified() && m.Mode == ModeChat {
+			m.showDirtyClosePrompt(path)
+			return nil
+		}
+		m.closeEditorTabForce(path)
+		return nil
 	}
 
 	m.win.CloseTab(index)
@@ -658,50 +660,55 @@ func (m *App) syncQuestionInputPrompt() {
 	}
 }
 
+// handleTabSwitch re-derives the active editor/agent view from the
+// current window tab. Called on every tab change (open, close,
+// switch). Both activeEditorView and activeAgentView are *always*
+// cleared at the start so that closing the last tab correctly falls
+// back to the launcher view — leaving them stale when no tab is
+// active would break the renderer's region classification and cause
+// Ctrl+Q to attempt a no-op close instead of quitting.
 func (m *App) handleTabSwitch() {
+	// Always reset before re-deriving. This is the single source of
+	// truth for which view is active.
+	m.activeEditorView = ""
+	m.activeAgentView = ""
+
 	activeTab := m.win.ActiveTab()
 	if activeTab == nil {
 		return
 	}
 
-	m.activeEditorView = ""
-
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
-		if agentID != m.activeAgentView {
-			m.activeAgentView = agentID
-			if agent, ok := m.agents[agentID]; ok && agent.MsgList != nil {
-				agent.MsgList.InvalidateAllMessages()
-			}
+		m.activeAgentView = agentID
+		if agent, ok := m.agents[agentID]; ok && agent.MsgList != nil {
+			agent.MsgList.InvalidateAllMessages()
 		}
-	} else if m.isEditorTabTitle(activeTab.Title) {
-		m.activeAgentView = ""
+		return
+	}
+
+	if m.isEditorTabTitle(activeTab.Title) {
 		path := m.editorPathFromTabTitle(activeTab.Title)
-		prevPath := m.activeEditorView
-		m.activeEditorView = path
-		if m.editor.FilePath() != path || !m.editor.IsOpen() {
-			if err := m.editor.Open(path); err != nil {
-				m.logger.Error("EDITOR", "reload_on_switch", "error", err.Error())
+		// Look up the tab's pre-loaded Editor. We DO NOT call
+		// editor.Open() here — that would reload the file from disk
+		// and destroy cursor, scroll, undo, and any unsaved edits.
+		// The Editor was created and loaded once in openEditorTab and
+		// lives in the editorTabs map for the lifetime of the tab.
+		tab, ok := m.editorTabs[path]
+		if !ok {
+			// Tab entry is missing (shouldn't normally happen, but be
+			// defensive). Re-open to recover.
+			if m.logger != nil {
+				m.logger.Warn("EDITOR", "tab_missing_on_switch", "path", path)
 			}
-			// Close the previous file on LSP, open the new one.
-			if prevPath != "" && prevPath != path && m.lspManager != nil {
-				lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				m.lspManager.CloseFile(lspCtx, prevPath)
+			_, err := m.openEditorTab(path)
+			if err != nil && m.logger != nil {
+				m.logger.Error("EDITOR", "reopen_failed", "error", err.Error())
 			}
-			if m.lspManager != nil {
-				lspCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				m.lspManager.OpenFile(lspCtx, path, m.editor.Value())
-			}
-			// Apply cached diagnostics immediately so the editor shows
-			// the last-known state while waiting for the server to respond.
-			if m.lspManager != nil {
-				if cached := m.lspManager.FileDiagnostics(path); len(cached) > 0 {
-					m.editor.SetDiagnostics(cached)
-				}
-			}
+			return
 		}
+		m.activeEditorView = path
+		m.editor = tab.Editor
 	}
 }
 

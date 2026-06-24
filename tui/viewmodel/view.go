@@ -173,6 +173,7 @@ func (m *App) buildMainView() string {
 		if sidebarVisible {
 			editorPadL = 0
 		}
+		m.editor.SetPadding(editorPadL)
 		chatVisible = m.editor.View(contentW, chatH, editorPadL, editorPadR)
 		totalSBW = 0
 	} else if len(m.agents) == 0 && m.activeEditorView == "" {

@@ -23,6 +23,21 @@ type Colors struct {
 	Bg, Fg, Muted, Accent, Accent2  color.Color
 	Success, Error, Warning, Border color.Color
 	Selection, SubPaneBg            color.Color
+	// Popup chrome colors. All popups (context menu, find/replace,
+	// save dialog, text prompt, file picker, diagnostic) use a
+	// unified design system — see widgets.PopupChromeConfig.
+	// - PopupBg: the body fill of every popup (typically == Code.Bg)
+	// - PopupBorder: the border color when unfocused
+	// - PopupBorderFocused: the border color when the popup has focus
+	// - PopupTitle: title text color (unfocused)
+	// - PopupTitleFocused: title text color (focused)
+	// - PopupDivider: subtle separator line color
+	// - PopupSubtleBg: hover/selection background for items in a list
+	// - PopupButtonBg: filled button background (primary action)
+	// - PopupButtonFg: filled button foreground
+	PopupBg, PopupBorder, PopupBorderFocused, PopupTitle, PopupTitleFocused color.Color
+	PopupDivider, PopupSubtleBg                                             color.Color
+	PopupButtonBg, PopupButtonFg                                             color.Color
 	Code                            CodeColors
 	Spinner                         SpinnerColors
 	Diff                            DiffColors
@@ -118,6 +133,19 @@ func DefaultDark() *Theme {
 		Border:   lipgloss.Color("#30363d"),
 		Selection: lipgloss.Color("#1e2a3a"),
 		SubPaneBg: lipgloss.Color("#1c2333"),
+		// Popup chrome — unified design across all popups.
+		// Code.Bg provides the "card on editor" feel used by the
+		// diagnostic hover popup. PopupBorder is intentionally
+		// dim so the title color carries the visual weight.
+		PopupBg:            lipgloss.Color("#161b22"),
+		PopupBorder:        lipgloss.Color("#3a4250"),
+		PopupBorderFocused: lipgloss.Color("#a5d6ff"),
+		PopupTitle:         lipgloss.Color("#8b949e"),
+		PopupTitleFocused:  lipgloss.Color("#a5d6ff"),
+		PopupDivider:       lipgloss.Color("#2a313c"),
+		PopupSubtleBg:      lipgloss.Color("#1e2a3a"),
+		PopupButtonBg:      lipgloss.Color("#a5d6ff"),
+		PopupButtonFg:      lipgloss.Color("#0d1117"),
 		Code: CodeColors{
 			Keyword:  lipgloss.Color("#ff7b72"),
 			String:   lipgloss.Color("#a5d6ff"),

@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -36,7 +37,28 @@ type LSPManager struct {
 	activeError     string
 	activeStatus    editor.LSPStatus
 
-	fileDiagnostics map[string][]editor.LSPDiagnostic // cached diagnostics per file; survives tab close
+	// Project-wide state
+	fileDiagnostics map[string][]editor.LSPDiagnostic // cached per file; survives tab close
+	docSymbols      map[string][]editor.LSPSymbol     // per-file document outline cache
+	fileLastSync    map[string]int64                  // per-file last diagnostic update (unix nanos)
+	issueCount      map[string]int                    // diagnostic message -> occurrence count, for "top issue"
+	symbolsCached   bool                              // true once at least one file has been outlined
+
+	// syncing is true while the server is doing a bulk operation (e.g. opening
+	// every project file after startup, or processing a flurry of didChange
+	// notifications). The status bar shows the dot animating while this is
+	// true so the user can see "the LSP is working" without waiting for a
+	// specific request to be in flight.
+	syncing bool
+
+	// lastBusyAt is the UnixNano of the most recent non-idle event
+	// (starting, syncing, busy, new diagnostics). The status bar uses
+	// this to keep the dot animated for AnimGrace after the last
+	// activity, even if the instantaneous state is "ready".
+	lastBusyAt int64
+
+	// In-flight request tracking (drives the busy indicator on the status bar).
+	inflight int
 }
 
 func NewLSPManager(logger Logger) *LSPManager {
@@ -45,6 +67,9 @@ func NewLSPManager(logger Logger) *LSPManager {
 		logger:          logger,
 		pendingText:     make(map[string]string),
 		fileDiagnostics: make(map[string][]editor.LSPDiagnostic),
+		docSymbols:      make(map[string][]editor.LSPSymbol),
+		fileLastSync:    make(map[string]int64),
+		issueCount:      make(map[string]int),
 	}
 }
 
@@ -139,6 +164,7 @@ func (m *LSPManager) startServerForRoot(rootURI string) {
 		m.clients[key] = client
 		m.activeStatus = editor.LSPStarting
 		m.activeRootURI = rootURI
+		m.lastBusyAt = time.Now().UnixNano()
 		m.mu.Unlock()
 
 		go m.startClient(client, entry.cmd)
@@ -294,12 +320,17 @@ func (m *LSPManager) startClient(client *editor.LSPIntegration, cmd string) {
 	m.activeStatus = editor.LSPConnected
 	m.activeConnected = true
 	m.activeError = ""
+	m.lastBusyAt = time.Now().UnixNano()
 	rootURI := m.activeRootURI
 	m.mu.Unlock()
 
 	// Open every source file in the project so the server reports
-	// diagnostics for the entire workspace, not just open tabs.
+	// diagnostics for the entire workspace, not just open tabs. The
+	// syncing flag tells the status bar to animate the dot while the
+	// server is chewing through hundreds of didOpen notifications.
+	m.setSyncing(true)
 	m.openProjectFiles(rootURI, cmd)
+	m.setSyncing(false)
 }
 
 // openProjectFiles scans the project root for files handled by the given
@@ -441,6 +472,68 @@ func (m *LSPManager) Status() (connected bool, status editor.LSPStatus, errMsg s
 	return m.activeConnected, m.activeStatus, m.activeError
 }
 
+// ServerReady returns true when at least one LSP client has reached
+// the connected state. Used by the right-click context menu to
+// enable LSP-backed items.
+func (m *LSPManager) ServerReady() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.activeConnected && m.activeStatus == editor.LSPConnected
+}
+
+// IsConfigured returns true if StartForWorkspace has been called and
+// produced a client (or attempted to). Distinguishes "never tried"
+// (LSPIdle, no clients) from "configured but not connected" (e.g.
+// LSPStarting, LSPFailed, or LSPConnected with activeConnected=true
+// but no successful client). Used to enable "Restart LSP" only when
+// there's actually something to restart.
+func (m *LSPManager) IsConfigured() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.clients) > 0 {
+		return true
+	}
+	return m.activeStatus != editor.LSPIdle
+}
+
+// AllDiagnostics returns a snapshot of every cached diagnostic across
+// all files the LSP server has reported on. The returned map is a
+// copy — mutating it does not affect internal state. Used by the
+// status bar's "Goto first error" action and similar cross-file
+// navigation features.
+func (m *LSPManager) AllDiagnostics() map[string][]editor.LSPDiagnostic {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string][]editor.LSPDiagnostic, len(m.fileDiagnostics))
+	for k, v := range m.fileDiagnostics {
+		out[k] = v
+	}
+	return out
+}
+
+// ClearDiagnostics removes all cached diagnostics, document symbols,
+// per-file sync timestamps, and the top-issue tally. Call this when
+// a server restart should produce a clean slate rather than showing
+// stale results from the previous session.
+func (m *LSPManager) ClearDiagnostics() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fileDiagnostics = make(map[string][]editor.LSPDiagnostic)
+	m.docSymbols = make(map[string][]editor.LSPSymbol)
+	m.fileLastSync = make(map[string]int64)
+	m.issueCount = make(map[string]int)
+	m.symbolsCached = false
+}
+
+// FileLastSync returns the UnixNano timestamp of the most recent
+// diagnostic publish for the given file, or 0 if the server has
+// never reported on it. Lets navigation features skip stale entries.
+func (m *LSPManager) FileLastSync(filePath string) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.fileLastSync[filepath.Clean(filePath)]
+}
+
 // ProjectDiagnosticCounts aggregates diagnostics across all tracked files.
 func (m *LSPManager) ProjectDiagnosticCounts() (errors, warnings, hints int) {
 	m.mu.Lock()
@@ -458,6 +551,103 @@ func (m *LSPManager) ProjectDiagnosticCounts() (errors, warnings, hints int) {
 		}
 	}
 	return
+}
+
+// ProjectInsights returns a whole-project snapshot suitable for the bottom-left
+// status bar. Always reflects the state of every file the LSP server knows
+// about, regardless of which file (if any) is open in the editor.
+func (m *LSPManager) ProjectInsights() editor.ProjectInsights {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ins := editor.ProjectInsights{
+		ServerName:     m.activeServerNameLocked(),
+		ServerReady:    m.activeStatus == editor.LSPConnected && !m.isFailedLocked() && !m.syncing,
+		ServerBusy:     m.inflight > 0,
+		ServerStarting: m.activeStatus == editor.LSPStarting,
+		ServerSyncing:  m.syncing,
+		ServerFailed:   m.isFailedLocked(),
+		ServerError:    m.activeError,
+		FilesTracked:   len(m.fileDiagnostics),
+		LastSync:       m.lastSyncLocked(),
+		LastBusyAt:     m.lastBusyAt,
+	}
+
+	for _, diags := range m.fileDiagnostics {
+		if len(diags) > 0 {
+			ins.FilesAffected++
+		}
+		for _, d := range diags {
+			switch d.Severity {
+			case editor.DiagError:
+				ins.Errors++
+			case editor.DiagWarning:
+				ins.Warnings++
+			case editor.DiagInfo:
+				ins.Info++
+			default:
+				ins.Hints++
+			}
+		}
+	}
+
+	for _, syms := range m.docSymbols {
+		ins.SymbolsCount += len(syms)
+	}
+
+	// Find the most common diagnostic message.
+	ins.TopIssue = m.topIssueLocked()
+	return ins
+}
+
+func (m *LSPManager) activeServerNameLocked() string {
+	for _, c := range m.clients {
+		return c.ServerCmd()
+	}
+	return ""
+}
+
+func (m *LSPManager) isFailedLocked() bool {
+	return m.activeStatus == editor.LSPFailed || (m.activeError != "" && m.activeStatus != editor.LSPConnected)
+}
+
+func (m *LSPManager) lastSyncLocked() int64 {
+	var latest int64
+	for _, t := range m.fileLastSync {
+		if t > latest {
+			latest = t
+		}
+	}
+	return latest
+}
+
+func (m *LSPManager) topIssueLocked() string {
+	var (
+		bestMsg string
+		bestCnt int
+	)
+	for msg, cnt := range m.issueCount {
+		if cnt > bestCnt {
+			bestCnt = cnt
+			bestMsg = msg
+		}
+	}
+	if bestMsg == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s (×%d)", truncateForTop(bestMsg, 40), bestCnt)
+}
+
+func truncateForTop(s string, max int) string {
+	// Trim multi-line messages to their first line — the status bar is
+	// single-line so a multi-line error would break layout.
+	if idx := strings.IndexAny(s, "\r\n"); idx >= 0 {
+		s = s[:idx]
+	}
+	if len(s) > max {
+		s = s[:max-1] + "…"
+	}
+	return s
 }
 
 func (m *LSPManager) HasActiveFile() bool {
@@ -507,6 +697,17 @@ func (m *LSPManager) Stop() {
 		clients = append(clients, c)
 	}
 	m.clients = make(map[string]*editor.LSPIntegration)
+	// Reset lifecycle state so the status bar and other consumers
+	// don't keep reporting a server that's been intentionally
+	// stopped. Cached diagnostics, symbols, and sync timestamps
+	// are intentionally NOT cleared here — ClearDiagnostics() does
+	// that explicitly when the caller wants a fully clean state.
+	m.activeConnected = false
+	m.activeStatus = editor.LSPIdle
+	m.activeError = ""
+	m.syncing = false
+	m.inflight = 0
+	m.lastBusyAt = time.Now().UnixNano()
 	m.mu.Unlock()
 
 	for _, c := range clients {
@@ -531,14 +732,50 @@ func (m *LSPManager) removeClient(client *editor.LSPIntegration) {
 	}
 }
 
+// setSyncing flips the syncing flag. The status bar reads it to decide
+// whether to show the animated dot for the project-wide "LSP working"
+// indicator. Held briefly under m.mu.
+func (m *LSPManager) setSyncing(v bool) {
+	m.mu.Lock()
+	if v {
+		m.lastBusyAt = time.Now().UnixNano()
+	}
+	m.syncing = v
+	m.mu.Unlock()
+}
+
 func (m *LSPManager) setFileDiagnostics(filePath string, diags []editor.LSPDiagnostic) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	fp := filepath.Clean(filePath)
+
+	// Subtract the old diagnostic messages from the global issue counter so
+	// the "top issue" only reflects the current snapshot. Skipping this
+	// would let stale messages keep "winning" the top slot forever.
+	if prev, ok := m.fileDiagnostics[fp]; ok {
+		for _, d := range prev {
+			if msg := strings.TrimSpace(d.Message); msg != "" {
+				if c := m.issueCount[msg]; c <= 1 {
+					delete(m.issueCount, msg)
+				} else {
+					m.issueCount[msg] = c - 1
+				}
+			}
+		}
+	}
+
 	if diags == nil {
 		delete(m.fileDiagnostics, fp)
+		delete(m.fileLastSync, fp)
 	} else {
 		m.fileDiagnostics[fp] = diags
+		m.fileLastSync[fp] = time.Now().UnixNano()
+		m.lastBusyAt = time.Now().UnixNano()
+		for _, d := range diags {
+			if msg := strings.TrimSpace(d.Message); msg != "" {
+				m.issueCount[msg]++
+			}
+		}
 	}
 }
 
@@ -553,4 +790,166 @@ func (m *LSPManager) HasFileDiagnostics(filePath string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.fileDiagnostics[filepath.Clean(filePath)]
 	return ok
+}
+
+// InflightRequests returns the number of LSP requests currently in flight.
+// The status bar uses this to show the busy indicator.
+func (m *LSPManager) InflightRequests() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.inflight
+}
+
+// ─── Request routing ────────────────────────────────────────────────────────
+//
+// The methods below route a request to the correct LSP client (chosen by file
+// extension + project root) and track in-flight counts for the busy indicator.
+// All routes share the same bookkeeping helpers to keep the busy state
+// accurate even when a request fails or panics.
+
+// trackInflight increments the in-flight counter for the duration of fn.
+func (m *LSPManager) trackInflight(fn func() error) error {
+	m.mu.Lock()
+	m.inflight++
+	m.lastBusyAt = time.Now().UnixNano()
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.inflight--
+		if m.inflight < 0 {
+			m.inflight = 0
+		}
+		m.mu.Unlock()
+	}()
+	return fn()
+}
+
+// RequestDefinition routes a "go to definition" request to the right client.
+func (m *LSPManager) RequestDefinition(ctx context.Context, filePath string, line, col int) []editor.LSPLocation {
+	var out []editor.LSPLocation
+	_ = m.trackInflight(func() error {
+		client := m.clientForFile(filePath)
+		if client == nil {
+			return nil
+		}
+		out = client.RequestDefinition(ctx, filePath, line, col)
+		return nil
+	})
+	return out
+}
+
+// FindReferences routes a "find references" request to the right client.
+func (m *LSPManager) FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []editor.LSPLocation {
+	var out []editor.LSPLocation
+	_ = m.trackInflight(func() error {
+		client := m.clientForFile(filePath)
+		if client == nil {
+			return nil
+		}
+		out = client.FindReferences(ctx, filePath, line, col, includeDeclaration)
+		return nil
+	})
+	return out
+}
+
+// RequestDocumentSymbols routes a "document symbols" request to the right
+// client and caches the result for the document outline panel.
+func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string) []editor.LSPSymbol {
+	var out []editor.LSPSymbol
+	_ = m.trackInflight(func() error {
+		client := m.clientForFile(filePath)
+		if client == nil {
+			return nil
+		}
+		out = client.RequestDocumentSymbols(ctx, filePath)
+		if out != nil {
+			m.mu.Lock()
+			m.docSymbols[filepath.Clean(filePath)] = out
+			m.symbolsCached = true
+			m.mu.Unlock()
+		}
+		return nil
+	})
+	return out
+}
+
+// DocumentSymbols returns the cached document outline for a file, if any.
+// Callers should not assume the cache is fresh — refresh via
+// RequestDocumentSymbols when the file's content has changed materially.
+func (m *LSPManager) DocumentSymbols(filePath string) []editor.LSPSymbol {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.docSymbols[filepath.Clean(filePath)]
+}
+
+// AllDocumentSymbols returns the cached outlines for every file. Used by the
+// workspace symbols fuzzy search so we can search across the whole project
+// without hitting the LSP server again.
+func (m *LSPManager) AllDocumentSymbols() map[string][]editor.LSPSymbol {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string][]editor.LSPSymbol, len(m.docSymbols))
+	for k, v := range m.docSymbols {
+		out[k] = v
+	}
+	return out
+}
+
+// RequestHover routes a hover request to the right client.
+func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, col int) (string, error) {
+	var (
+		out string
+		err error
+	)
+	_ = m.trackInflight(func() error {
+		client := m.clientForFile(filePath)
+		if client == nil {
+			return fmt.Errorf("no LSP client for %s", filePath)
+		}
+		out, err = client.RequestHover(ctx, filePath, line, col)
+		return nil
+	})
+	return out, err
+}
+
+// RequestRename routes a rename request to the right client.
+func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (interface{}, error) {
+	var (
+		out interface{}
+		err error
+	)
+	_ = m.trackInflight(func() error {
+		client := m.clientForFile(filePath)
+		if client == nil {
+			return fmt.Errorf("no LSP client for %s", filePath)
+		}
+		out, err = client.RequestRename(ctx, filePath, line, col, newName)
+		return nil
+	})
+	return out, err
+}
+
+// RequestCompletions routes a completion request to the right client.
+func (m *LSPManager) RequestCompletions(ctx context.Context, filePath string, line, col int) []editor.CompletionItem {
+	var out []editor.CompletionItem
+	_ = m.trackInflight(func() error {
+		client := m.clientForFile(filePath)
+		if client == nil {
+			return nil
+		}
+		out = client.RequestCompletions(ctx, filePath, line, col)
+		return nil
+	})
+	return out
+}
+
+// InvalidateFile removes all cached state for a file. Call this when a file
+// is deleted, renamed, or its content has been replaced wholesale.
+func (m *LSPManager) InvalidateFile(filePath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	fp := filepath.Clean(filePath)
+	delete(m.fileDiagnostics, fp)
+	delete(m.fileLastSync, fp)
+	delete(m.docSymbols, fp)
 }

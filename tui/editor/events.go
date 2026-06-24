@@ -304,7 +304,7 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	default:
 		switch key.String() {
 		case "ctrl+s":
-			e.save()
+			e.Save()
 		case "ctrl+z":
 			e.undo()
 		case "ctrl+y":

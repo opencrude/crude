@@ -229,22 +229,21 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 	return m, "", FilePickerNone, cmd
 }
 
-// ViewInner renders the file picker content for embedding inside a container
-// (e.g., a FloatingWindow). Unlike View(), which wraps content in a centered
-// RenderFloatingBox with its own border, ViewInner renders the content directly
-// to fill the available area. The container provides the border and title bar.
+// ViewInner renders the file picker content for embedding inside a
+// container (e.g., a FloatingWindow). The output is the INNER content
+// only — no border, no padding. The caller is expected to wrap the
+// output in PopupChromeLines (or any other container).
 //
-// ViewInner is also called by Render() (widget.Widget interface) to produce
-// the cell content that is written to the surface.
-//
-// Use View() for standalone rendering (with border/centering).
-// Use ViewInner() for embedded rendering inside a container (without border).
+// width and height are the SURFACE dimensions (the popup total size
+// when used with the new chrome). The inner content area is width-6
+// (chrome overhead: 2 border + 4 padding).
 func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 	if width < 10 || height < 4 {
 		return nil
 	}
 
-	innerW := width - 4
+	// Subtract chrome overhead (2 border + 4 padding).
+	innerW := width - 6
 	if innerW < 1 {
 		innerW = 1
 	}
@@ -289,11 +288,19 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 		contentW = 1
 	}
 
+	mutedStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.PopupBg)
+	filterStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Background(m.th.Colors.PopupBg)
+	selectedStyle := lipgloss.NewStyle().
+		Foreground(m.th.Colors.Fg).
+		Background(m.th.Colors.PopupSubtleBg).
+		Bold(true)
+	entryStyle := mutedStyle
+
 	var body []string
-	pathLine := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(m.current, contentW))
+	pathLine := mutedStyle.Render(rendering.TruncateLine(m.current, contentW))
 	body = append(body, pathLine)
 	filter := "/ " + m.filter
-	body = append(body, lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Render(rendering.TruncateLine(filter, contentW)))
+	body = append(body, filterStyle.Render(rendering.TruncateLine(filter, contentW)))
 	for i := start; i < end; i++ {
 		entry := entries[i]
 		icon := "  "
@@ -302,9 +309,9 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 		}
 		name := icon + entry.Name
 		if i == m.selected {
-			name = lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Selection).Render(rendering.TruncateLine(name, contentW))
+			name = selectedStyle.Render(rendering.TruncateLine(name, contentW))
 		} else {
-			name = lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Render(rendering.TruncateLine(name, contentW))
+			name = entryStyle.Render(rendering.TruncateLine(name, contentW))
 		}
 		body = append(body, name)
 	}
@@ -318,11 +325,9 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 		}
 	}
 
-	dim := lipgloss.NewStyle().Foreground(m.th.Colors.Muted)
-
 	result := make([]string, 0, height)
 	for i, line := range body {
-		padded := "  " + padRight(line, contentW) + "  "
+		padded := line + strings.Repeat(" ", contentW-rendering.VisibleWidth(line))
 		// Append scrollbar character for entry lines (i >= 2), otherwise blank
 		if sbW > 0 {
 			if i >= 2 && i-2 < len(sbLines) {
@@ -334,8 +339,13 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 		result = append(result, padded)
 	}
 
-	hint := "enter select · esc cancel · type filter"
-	hintLine := "  " + dim.Render(padRight(rendering.TruncateLine(hint, contentW), contentW)) + "  "
+	// Hint line using the unified HintLine component.
+	hint := PopupHintLine(m.th, []HintSegment{
+		{Key: "enter", Desc: "select"},
+		{Key: "esc", Desc: "cancel"},
+		{Key: "type", Desc: "filter"},
+	})
+	hintLine := hint + strings.Repeat(" ", contentW-rendering.VisibleWidth(hint))
 	if sbW > 0 {
 		hintLine = hintLine + strings.Repeat(" ", sbW)
 	}
@@ -343,17 +353,35 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 
 	// Fill remaining lines with blanks to cover the content area.
 	for len(result) < height {
-		blank := strings.Repeat(" ", width)
+		blank := strings.Repeat(" ", width-6)
 		result = append(result, blank)
 	}
 
 	return result
 }
 
-// Render implements widget.Widget. Calls ViewInner to get the rendered
-// lines, joins them, and writes the cells into the surface.
+// Render implements widget.Widget. Calls ViewInner to get the inner
+// content, wraps it in the unified popup chrome (border, title,
+// padding), and writes the cells into the surface.
+//
+// The surface is the popup's full size (no FloatingWindow chrome —
+// the FilePicker draws its own border/title).
 func (m *FilePicker) Render(surf *surface.Surface, ctx *widget.RenderContext) {
-	lines := m.ViewInner(surf.Width(), surf.Height(), ctx.SpinFrame)
+	w, h := surf.Width(), surf.Height()
+	if w < 10 || h < 4 {
+		return
+	}
+	content := m.ViewInner(w, h, ctx.SpinFrame)
+	if len(content) == 0 {
+		return
+	}
+	cfg := PopupChromeConfig{
+		Title:   "File Picker",
+		TitleIcon: "▤",
+		Width:   w,
+		Focused: true,
+	}
+	lines := PopupChromeLines(m.th, cfg, content)
 	if len(lines) == 0 {
 		return
 	}
