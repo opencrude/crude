@@ -291,6 +291,14 @@ func (fw *FloatingWindow) SetPosition(x, y int) {
 
 // SetSize resizes the window (clamped to min/max size) and recomputes
 // the content area.
+// SetContent replaces the content widget and forces a re-render. Used
+// when a popup's content changes (e.g. focus shift in a confirm
+// dialog) without needing to close and reopen the window.
+func (fw *FloatingWindow) SetContent(c widget.Widget) {
+	fw.Content = c
+	fw.contentDirty = true
+}
+
 func (fw *FloatingWindow) SetSize(w, h int) {
 	fw.w = w
 	fw.h = h

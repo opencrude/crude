@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/tui/editor"
 	"crude/tui/theme"
 )
 
@@ -249,8 +250,12 @@ func TestStatusBar_LSPDiagnostics(t *testing.T) {
 	sb := newTestSB()
 	setWidth(sb)
 
-	sb.SetLSPVisible(true)
-	sb.SetDiagnostics(2, 1, 0)
+	sb.SetProjectInsights(editor.ProjectInsights{
+		ServerName:  "gopls",
+		ServerReady: true,
+		Errors:      2,
+		Warnings:    1,
+	})
 
 	v := sb.View()
 	if !strings.Contains(v, "✕2") {
@@ -258,6 +263,9 @@ func TestStatusBar_LSPDiagnostics(t *testing.T) {
 	}
 	if !strings.Contains(v, "⚠1") {
 		t.Fatalf("expected '⚠1' in view, got: %q", v)
+	}
+	if !strings.Contains(v, "gopls") {
+		t.Fatalf("expected 'gopls' server name in view, got: %q", v)
 	}
 }
 

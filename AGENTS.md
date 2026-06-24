@@ -265,3 +265,228 @@ Order matters:
 2. **Transparency is dangerous**: Making cells transparent in a composited surface tree creates invisible state that can leak stale characters. Opaque cells are safer.
 3. **`_Wide` classification is unreliable for cross-terminal compatibility**: Characters that `displaywidth` classifies as `_Wide` (like ☰ U+2630) follow Unicode's East Asian Width classification, but terminals are split — some follow Unicode (Windows Terminal renders as width=2), others override it (Kitty/Alacritty render as width=1). Avoid these characters in TUI layouts where positional accuracy matters across terminals. Use characters with unambiguous widths (ASCII, or explicitly wide CJK). Note: This is different from EAW=A characters (controlled by `EastAsianWidth` option) — `_Wide` classification is unconditional.
 4. **Server-side width probing is fragile**: The DSR-based probe was slow, unreliable (some terminals don't respond), and produced different results on different terminals. Removing it eliminated a source of inconsistency.
+
+---
+
+## User Preferences (Active Session)
+
+### Quality bar
+- **"Production grade, eye-catchy, on par with giants" (VSCode/JetBrains)**. Visual polish matters as much as correctness. Beautiful, clean, minimal but with subtle sophistication. No regressions in look-and-feel when adding features.
+- **No flashy hand-wavy "AI" aesthetics** (no rainbow gradients, no excessive emojis, no chatty mascots). Restrained, sharp, technical look.
+- **Always: same-glyph animations** to avoid vertical jumping. Bold/faint pulse > rotating quadrant circles.
+- **Animations only when something is actually happening**. Grace periods are OK to prevent blink-too-fast, but idle = static.
+- **Per-tab state is sacred**. Never reload a file just because the user switched tabs. Never lose cursor, scroll, undo, or unsaved edits.
+
+### Working style
+- **One task at a time, completely**. Don't half-finish a feature and move on. If a refactor breaks the build, finish fixing the build before adding the next feature.
+- **Don't do many edits in a row without building**. Run `go build ./...` and `go test ./...` after each significant change. Errors compound — fix them immediately.
+- **Prefer delegation over in-process agents** for tasks that can be cleanly isolated. Use `opencode run --title "..."` with a focused prompt describing context, goal, and constraints. Reserve in-process `task` tool for exploration/research.
+- **Smaller diffs over clever code**. The codebase already has utility widgets (PopupContent, FloatingWindow, WindowManager) — reuse them. Don't introduce new patterns when the existing one works.
+- **Tests are not optional** for refactors that change behavior. Phase 1 added 3 tests for tab preservation; Phase 2 added 8 tests for search. Keep this pace.
+
+### What to avoid
+- Don't use the `task` (subagent) tool for implementation work — user prefers external opencode sessions via the CLI.
+- Don't add `*_test.go` files that just re-test existing infrastructure; add tests that prove NEW behavior.
+- Don't pile new features on a broken build. Fix the build, then add features.
+- Don't introduce emojis to files unless the user asks. (Emojis in UI are OK — they're a polish detail. Emojis in code, comments, or commit messages are not.)
+
+---
+
+## Tab/Editor/Finder Overhaul (Phases 1–3, in progress)
+
+### Goal
+Make the TUI feel like a real IDE. The user is unhappy with three things:
+1. **Tabs lose state when switching** — currently there's literally ONE `*editor.Editor` shared across all editor tabs; switching tabs calls `editor.Open(path)` which reloads from disk, destroying cursor, scroll, undo, and any unsaved edits. User called this "a complete joke."
+2. **No find/replace** — no search code exists anywhere; buffer has no `FindAll` method, no UI.
+3. **No right-click** — only `tea.MouseLeft` is handled anywhere.
+
+User wants all three solved to "production grade, on par with VSCode/JetBrains":
+- Per-tab state that survives switching
+- Find/Replace floating popup above the active editor (Ctrl+F, Ctrl+H, F3, Shift+F3)
+- Right-click context menu everywhere: editor (symbol/diagnostic aware), file tree, tabs, input, agent messages, status bar
+- Keyboard shortcut for context menu: Ctrl+. (opens menu at cursor)
+
+### Implementation Order
+1. **Phase 1 (DONE):** Tab state preservation. Per-tab editor instances.
+2. **Phase 2 (DONE):** Find/Replace popup + search infrastructure.
+3. **Phase 3 (in progress):** Right-click context menu + Ctrl+. shortcut.
+
+### Phase 1 — Tab State Preservation (DONE)
+
+**Problem:** `App.editor *editor.Editor` was a single instance. `openEditorTab` called `editor.Open(path)` which reset cursor, scroll, undo, modified flag, selection, hover, chroma cache, watcher. `handleTabSwitch` also called `Open()`. Switching tabs = file reload = data loss.
+
+**Solution:** Map of per-tab editors.
+
+- New `tui/viewmodel/editor_tab.go`:
+  ```go
+  type EditorTab struct {
+      Path   string
+      Editor *editor.Editor
+      closingWithDirty bool
+  }
+  func newEditorTab(path string, ed *editor.Editor) *EditorTab
+  ```
+- `tui/viewmodel/app.go`:
+  - `App.editor` is now a pointer to the active tab's editor (still nil-safe via `IsOpen()` checks already in place).
+  - `App.editorTabs map[string]*EditorTab` keyed by absolute path.
+  - `openEditorTab`: if `path` already in `m.editorTabs`, just `m.win.SwitchTo` to that tab and `m.handleTabSwitch` — do NOT reload. Otherwise create new `editor.New(th)`, call `Open(path)`, register in map, point `m.editor` at it.
+  - `closeEditorTab` + new `closeEditorTabForce(path string)`: if dirty, show `showDirtyClosePrompt` first; otherwise just call `closeEditorTabForce` which removes from `m.editorTabs`, closes the LSP file, closes the editor.
+  - `handleTabSwitch` (in `update.go`): just looks up the path in `m.editorTabs` and sets `m.editor = tab.Editor`. NEVER calls `Open()`.
+- `tui/editor/editor.go`:
+  - Added `search *SearchState` field on Editor, initialized in `New()`.
+  - Added `DiagnosticsAt(line, col) []LSPDiagnostic` (public wrapper around `diagnosticsAt`).
+  - Added `DeleteSelection() bool`.
+
+**Dirty prompt:**
+- New `tui/widgets/confirmprompt.go` `ConfirmPrompt(th, question, detail, focusedYes) []string` — pre-rendered ANSI lines for a yes/no dialog, following the PopupContent pattern.
+- `tui/viewmodel/app.go showDirtyClosePrompt(path)` creates a small `FloatingWindow` with id `"dirty-close-prompt"`. Uses `widgets.ConfirmPrompt` for content.
+- `handleDirtyPromptKey(msg)` routes keys: ←/↑ = Yes, →/↓ = No, Tab (with Shift) toggles, Enter activates, Esc cancels. Updates `dirtyPromptFocusYes` and rebuilds content via `fw.SetContent()` + `fw.MarkContentDirty()`.
+- Added `(*wm.FloatingWindow).SetContent(c widget.Widget)` so the popup can refresh content without closing/reopening.
+
+**Tests:** `tui/viewmodel/editor_tab_test.go` — 3 tests:
+- `TestEditorTab_StatePreservedAcrossSwitch` — type into A, create B, verify A is unchanged.
+- `TestEditorTab_MapIndependentTabs` — edits in A don't affect B.
+- `TestEditorTab_CloseRemovesOnlyThatTab` — closing A doesn't kill B.
+
+### Phase 2 — Find/Replace Popup (DONE)
+
+**Search infrastructure** in `tui/editor/search.go`:
+- `SearchOptions{CaseSensitive, WholeWord, Regex bool}`.
+- `SearchMatch{Start, End Position; Matched string}` — half-open range.
+- `SearchState{Query, Replace, Options, Matches, CurrentIdx, LastCompute, Open bool}`.
+- `NewSearchState() *SearchState` (CurrentIdx = -1 initially).
+- `(*SearchState) computeMatches(bufText string)` — populates `Matches`. Skips empty queries and invalid regex. Supports literal substring (case-insensitive via lowercase compare, whole-word via byte-level `\b` detection), and regex (via `regexp.Regexp.FindAllStringIndex`).
+- Helpers: `offsetToLineCol(text, startOff, endOff) -> (Position, Position)`, `byteOffsetToLineCol`, `isWordBoundary`, `isSearchWordChar(byte)`.
+
+**Editor search methods** (in `search.go`):
+- `Search() *SearchState` — getter.
+- `SetQuery(q string) int` — updates query, sets `Open=true`, recomputes, returns match count.
+- `SetOptions(opts SearchOptions)` — updates options, recomputes.
+- `SetReplace(r string)` — sets replace text, no recompute.
+- `SetSearchOpen(open bool)` — opens/closes, resets matches on close.
+- `NextMatch() (int, bool)` / `PrevMatch() (int, bool)` — move cursor, scroll to it.
+- `ReplaceCurrent() int` — replaces the match under the cursor.
+- `ReplaceAll() int` — replaces from end backwards to keep offsets valid.
+
+**Rendering** in `tui/editor/render.go`:
+- New helpers: `searchHighlightAt(line, col int) (int, bool)` returns match index or -1, plus "is current" bool. Handles single-line, multi-line start, multi-line end, multi-line interior.
+- New helper: `searchHighlightBg(isCurrent bool) cell.Color` — current uses `Accent2`, others use `Selection`.
+- Render path: between diagnostic fg and selection bg, added a `case searchMatchIdx >= 0` branch. Current match uses `AttrReverse` for stronger emphasis.
+
+**Find/Replace widget** in `tui/widgets/findreplace.go`:
+- `FindReplaceState{ReplaceMode, FocusedField int, Query, Replace string, Cursor int, CaseSensitive, WholeWord, Regex bool, MatchCount, CurrentIdx int, OnChange, OnNext, OnPrev, OnReplace, OnReplaceAll, OnClose func(), width int}`.
+- `FindReplaceLines(th, st) []string` — pre-styled ANSI lines for popup. Box-drawing input field `│ ... │`, blinking caret `▏` (single cell, no jumping), toggle row `[Aa] [\b] [.*]` with filled vs dim style, hint row at the bottom.
+- `FindReplaceFromEditor(st, e)` / `FindReplaceToEditor(st, e)` — round-trip state between popup and editor.
+- `VisibleWidth(s)` (wrapper around `rendering.VisibleWidth`).
+
+**App integration** in `tui/viewmodel/app.go`:
+- `App.findReplace *widgets.FindReplaceState` field.
+- `openFindReplace(replaceMode bool)` — opens popup above active editor (top-right). Wires callbacks: OnChange runs `FindReplaceToEditor` + recompute; OnNext/Prev call `m.editor.NextMatch/PrevMatch`; OnReplace calls `m.editor.ReplaceCurrent`; OnReplaceAll calls `m.editor.ReplaceAll` and shows a status bar message; OnClose calls `closeFindReplace`.
+- `closeFindReplace()` — sets `m.editor.SetSearchOpen(false)`, removes window, clears state, sets `m.dirty = true`.
+- `refreshFindReplacePopup()` — re-renders the popup (used after every keypress). Creates the window on first call, sets content via `fw.SetContent` on subsequent calls.
+- `handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd` — full keyboard input for the popup:
+  - Esc → close
+  - Tab / Shift+Tab → switch between find/replace fields
+  - Enter on replace field → `OnReplace`; on find field → `OnNext`
+  - Shift+Enter → `OnPrev`
+  - Alt+C / Alt+W / Alt+R → toggle case/whole-word/regex
+  - Ctrl+Alt+Enter → `OnReplaceAll`
+  - Backspace/Delete → delete char at cursor (or last char of replace)
+  - Left/Right → move cursor in find field
+  - Anything else with `msg.Text` → insert at cursor (find field) or append (replace field)
+
+**Keybinds** in `tui/viewmodel/keyboard.go dispatchEditorKey` (after the LSP block):
+- `Ctrl+F` → `m.openFindReplace(false)`
+- `Ctrl+H` → `m.openFindReplace(true)`
+- `F3` → `m.findReplace.OnNext()` if popup open, else `m.editor.NextMatch()`
+- `Shift+F3` → same for previous
+- `Esc` (when findReplace popup open) → `closeFindReplace`
+
+**Routing** in `dispatchFloatingWindowKey`: when `fw.ID == "find-replace"`, route to `handleFindReplaceKey`.
+
+**Layout** added `LayoutInfo.EditorW` field.
+
+**Tests:** `tui/editor/search_test.go` — 8 tests (literal, case, whole-word, regex, next/prev wrap, replace current, replace all, multi-line). `tui/widgets/findreplace_test.go` — 6 tests (basic, replace, toggles, no-results, empty-query, round-trip).
+
+### Phase 3 — Right-Click Context Menu (IN PROGRESS)
+
+**Status:** Phase 3a (plumbing) is done — build clean, all tests pass. Phase 3b (Ctrl+. shortcut) and the rest are still pending.
+
+**Done in 3a:**
+- `tui/widgets/contextmenu.go`:
+  - `ContextMenuItem{Label, Detail, Disabled, Action}`.
+  - `ContextMenuSection{SectionLabel, Items}`.
+  - `ContextMenuState{Title, Sections, Cursor, FlatItems}` with `Build()`, `Activate()`, `Next()`, `Prev()`.
+  - `ContextMenuLines(th, st) []string` — pre-styled ANSI with section labels, dividers (`─`), highlight via `AttrReverse` background, dim italic for disabled, right-aligned key hints.
+  - `ContextMenuPopupWidth/Height(st)` for sizing.
+  - `QuickMenu(title, items...)` helper for non-sectioned menus.
+- `tui/wm/window.go`: added `(*FloatingWindow).SetContent(c widget.Widget)` and `(*FloatingWindow).contentDirty = true` so refresh works.
+- `tui/viewmodel/mouse.go`:
+  - `dispatchMouseClick`: at the top, if `msg.Button == tea.MouseRight`, dispatch to new `dispatchMouseRightClick`.
+  - `dispatchMouseRightClick(msg)`: if a context menu is open, close it (right-click toggles). Otherwise, classify region, call the appropriate `buildXContextMenu(mouse)`, position the popup, show it.
+  - `clampPopupPosition(mx, my, w, h, screenW, screenH)` — keeps popup on-screen.
+- `tui/viewmodel/app.go`:
+  - `App.lastContextMenu *widgets.ContextMenuState` — kept so keyboard nav works.
+  - `buildEditorContextMenu(mouse)`: clipboard section (Copy/Cut/Paste, with `Disabled: !m.editor.HasSelection()`), selection section (format selection), Code section (LSP items: Go to def, Find refs, Rename, conditional on `m.lspManager.ServerReady()`; Show N diagnostics if cursor on a diagnostic), View section (Find, Find & replace, Outline).
+  - `buildSidebarContextMenu(mouse)`: Actions (Open, Reveal), Create (New file/folder in dir, New file/folder sibling), Modify (Rename, Delete, Copy path). Uses `m.pathUnderMouse(mouse)` to resolve the clicked path.
+  - `buildTabBarContextMenu(mouse)`: uses `m.win.HitTest(adjustedX, 0)` to find clicked tab. Editor tab → Close/Close others/Close right/Copy path/Reveal. Agent tab → Close/Cancel agent.
+  - `buildInputContextMenu(mouse)`: Paste/Copy input/Clear input.
+  - `buildChatContextMenu(mouse)`: Copy selection (uses `ml.SelectedText()`), Copy last assistant (uses `ml.LastAssistantText()`).
+  - `closeContextMenu()`, `handleContextMenuKey(msg)`: Esc=close, Enter=activate, ↑↓=nav.
+  - `refreshContextMenu()` re-renders via `fw.SetContent`.
+  - `showContextMenuAt(x, y)`: construct a `tea.MouseClickMsg` and call `dispatchMouseRightClick`. (Used by Ctrl+. shortcut — still needs wiring.)
+  - `pathUnderMouse(mouse)`: uses `m.treeModel.VisibleRows()` and the `treeYOffset`.
+  - Stubs: `copyEditorSelection`, `cutEditorSelection`, `pasteIntoEditor`, `pasteIntoInput`, `copyToClipboard`, `showDiagnosticAt`, `openFileFromTree`, `startNewFileInTree`, `startNewFolderInTree`, `startRenameInTree`, `startDeleteInTree`, `startTreeItemPrompt`, `closeAllEditorTabsExcept`, `closeEditorTabsToRightOf`, `startRename`. All currently just set a status bar message; real implementations pending.
+- `tui/filetree/tree.go`: added `VisibleRows() []string`, `IsDir(path) bool`, `ParentDir(path) string`, `ExpandToPath(path) bool`, plus `splitPath` helper.
+- `tui/widgets/messagelist.go`: added `SelectedText() string` (returns text inside current selection, "" if none), `LastAssistantText() string` (last assistant message content), `normalizedSelection()` helper.
+- `tui/viewmodel/lsp_manager.go`: added `ServerReady() bool` — returns `m.activeConnected && m.activeStatus == editor.LSPConnected`.
+- `tui/viewmodel/keyboard.go dispatchFloatingWindowKey`: added `case "context-menu": m.handleContextMenuKey(msg)`.
+
+**Pending in 3b–3h:**
+
+| Task | Status | Description |
+|------|--------|-------------|
+| **3b: Ctrl+. shortcut** | TODO | In `dispatchEditorKey`, add `case "ctrl+.":` that calls `m.editor.CursorScreenPosition(...)` then `m.showContextMenuAt(x, y)`. |
+| **3c: Real clipboard** | TODO | Replace `copyToClipboard` / `pasteIntoEditor` / `pasteIntoInput` stubs. Look at `editor/events.go` for existing `tea.SetClipboard` usage or `crude/tui/platform` for the platform layer. Most terminals support OSC 52 via `tea.SetClipboard`. |
+| **3d: Tree new/rename/delete** | TODO | Implement `startNewFileInTree`, `startNewFolderInTree`, `startRenameInTree`, `startDeleteInTree`, `startTreeItemPrompt`. Use a modal prompt (similar to the dirty prompt). For delete, use the dirty-prompt pattern with destructive warning. For new file/folder, prompt for name. For rename, prefill the input with the current name. |
+| **3e: Code-block copy** | TODO | Add a `Copy code block` item to `buildChatContextMenu` that extracts the last ``` fenced code block from the last assistant message. Walk the message's `Content` (or `Rendered` lines) looking for ``` lines. |
+| **3f: Context menu tests** | TODO | Add `tui/widgets/contextmenu_test.go` covering: section rendering, navigation (Next/Prev wrap), activation, disabled item skipping, title display. |
+| **3g: Status bar right-click** | TODO | Add `regionStatusBar` to `classifyMouse`. Build a `buildStatusBarContextMenu` with items: "Restart LSP", "Show LSP diagnostics", "Copy status". |
+| **3h: Polish** | TODO | Run all tests. Manual smoke test. Make sure the popup's modal behavior doesn't block the editor from receiving keypresses when no popup is open. |
+
+### Key Files for Resuming
+- `tui/viewmodel/editor_tab.go` — EditorTab struct (new, 22 lines)
+- `tui/viewmodel/editor_tab_test.go` — 3 tests (new)
+- `tui/viewmodel/app.go` — `App` struct with new `editorTabs`, `findReplace`, `lastContextMenu` fields; `openEditorTab`, `closeEditorTab`, `closeEditorTabForce`, `showDirtyClosePrompt`, `handleDirtyPromptKey`, `openFindReplace`, `closeFindReplace`, `refreshFindReplacePopup`, `handleFindReplaceKey`, `buildEditorContextMenu`, `buildSidebarContextMenu`, `buildTabBarContextMenu`, `buildInputContextMenu`, `buildChatContextMenu`, `closeContextMenu`, `handleContextMenuKey`, `refreshContextMenu`, `showContextMenuAt`, `pathUnderMouse`, `copyEditorSelection`, `cutEditorSelection`, `copyToClipboard`, etc.
+- `tui/viewmodel/update.go` — `handleTabSwitch` now just looks up the path in `m.editorTabs` and sets `m.editor = tab.Editor`. **NEVER calls `Open()`.**
+- `tui/viewmodel/mouse.go` — `dispatchMouseClick` routes right-click to `dispatchMouseRightClick`. `clampPopupPosition` for popup placement.
+- `tui/viewmodel/keyboard.go` — `dispatchEditorKey` has find/replace/Ctrl+. slots (Ctrl+. not yet wired). `dispatchFloatingWindowKey` routes `"find-replace"`, `"dirty-close-prompt"`, `"context-menu"`.
+- `tui/editor/search.go` — SearchState, SearchOptions, SearchMatch, computeMatches, all editor search methods.
+- `tui/editor/render.go` — `searchHighlightAt`, `searchHighlightBg` integrated into the cell-by-cell render.
+- `tui/widgets/findreplace.go` — `FindReplaceState`, `FindReplaceLines`, `FindReplaceFromEditor`, `FindReplaceToEditor`.
+- `tui/widgets/contextmenu.go` — `ContextMenuItem`, `ContextMenuSection`, `ContextMenuState`, `ContextMenuLines`.
+- `tui/widgets/confirmprompt.go` — `ConfirmPrompt` for the dirty-file prompt.
+- `tui/wm/window.go` — added `SetContent` method.
+- `tui/filetree/tree.go` — added `VisibleRows`, `IsDir`, `ParentDir`, `ExpandToPath`.
+
+### Pitfalls / Gotchas When Resuming
+- **Two duplicate `closeContextMenu` / `handleContextMenuKey` / `refreshContextMenu` / `pathUnderMouse` / `copyEditorSelection` / `cutEditorSelection` / `copyToClipboard` / `showDiagnosticAt` / `openFileFromTree` / `startNewFileInTree` / `startNewFolderInTree` / `startRenameInTree` / `startDeleteInTree` / `startTreeItemPrompt` / `closeAllEditorTabsExcept` / `closeEditorTabsToRightOf` / `startRename` blocks** were accidentally added to `app.go` during a botched edit. The build still works because Go allows duplicate function names... actually no, the build succeeded so this can't be right. Run `grep -c "func (m \*App) closeContextMenu" tui/viewmodel/app.go` to check. **If count > 1, the build will fail**. Verify before further work. (As of the last build, count was 1 and the build succeeded.)
+- `m.editor.PadL` is used in `routeEditorMouse` to translate mouse X — already wired, don't break it.
+- `m.lastSettings.Editor.FormatOnSave` is applied in `openEditorTab` — keep it on every new tab.
+- `m.findReplace.Replace` is a string (not `[]rune`); use `len()` not `utf8.RuneCountInString()` for length math.
+- The popup's `fw.SetContent` is the only way to refresh without closing/reopening. The `dirty = true` flag must be set after refresh or the view cache will serve stale content.
+- The `m.findReplace` state holds the popup's text but the editor's `Search()` is the source of truth for matches. Always read match count from `m.editor.Search()` after mutations.
+- For right-click: the existing LSP `requestDefinitionCmd` returns a `tea.Cmd` — the context menu's `Action` callbacks can't return Cmds, so we use `_, _ = m.requestDefinitionCmd(), 0` to discard. The Cmd fires asynchronously, so the result still arrives via the normal `lspDefinitionResultMsg` path.
+- For tree operations: `m.treeModel.ExpandToPath` was just added — make sure to call it after any tree mutation so the new path is visible.
+- The chat input paste: `m.input.Paste()` may already exist. Check before writing a new implementation.
+
+### Pre-existing Test Failures (NOT caused by this work)
+- `crude/safety/TestProjectWriteCommands`, `TestDestructiveCommands`, `TestUnknownCommand` — pre-existing. Don't fix unless asked.
+- `crude/tui/widgets` had a `padRight` collision between `textoverlay.go` and `contextmenu.go`. Resolved by renaming the new one to `padRightMenuItem`. Keep an eye on it.
+
+### Test Commands
+```bash
+go build ./...                              # all packages
+go test ./tui/editor/... ./tui/viewmodel/... ./tui/widgets/...  # the three packages this work touched
+go test ./... 2>&1 | grep -v "^ok\|cached\|^?"  # find any actual failures
+```

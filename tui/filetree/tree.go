@@ -1015,6 +1015,112 @@ func (m *FileTreeModel) VisibleNodes() []*TreeNode {
 	return m.visibleNodes
 }
 
+// VisibleRows returns the paths of currently visible nodes in
+// display order. Convenience for callers that need a list of strings
+// (e.g. the right-click context menu resolving a click Y to a path).
+func (m *FileTreeModel) VisibleRows() []string {
+	nodes := m.VisibleNodes()
+	out := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		out = append(out, n.Path)
+	}
+	return out
+}
+
+// IsDir reports whether the given path is a known directory in the
+// tree. Returns false for unknown paths.
+func (m *FileTreeModel) IsDir(path string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n, ok := m.nodes[path]
+	if !ok {
+		return false
+	}
+	return n.IsDir
+}
+
+// ParentDir returns the parent directory of the given path, or ""
+// for top-level entries.
+func (m *FileTreeModel) ParentDir(path string) string {
+	if path == "" {
+		return ""
+	}
+	// Find the last separator.
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' {
+			parent := path[:i]
+			if parent == "" {
+				return "/"
+			}
+			return parent
+		}
+	}
+	return ""
+}
+
+// ExpandToPath walks the tree and ensures all ancestors of the
+// given path are expanded so the path is visible. Returns true if
+// the path is now visible.
+func (m *FileTreeModel) ExpandToPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Walk up the path components and expand each ancestor dir.
+	parts := splitPath(path)
+	current := ""
+	for i, p := range parts {
+		if i > 0 {
+			current += "/"
+		}
+		current += p
+		if i == len(parts)-1 {
+			// Leaf: just check it exists.
+			_, ok := m.nodes[current]
+			return ok
+		}
+		// Ancestor: must be expanded.
+		n, ok := m.nodes[current]
+		if !ok {
+			return false
+		}
+		if n.IsDir && !n.IsExpanded {
+			n.IsExpanded = true
+		}
+	}
+	// Rebuild visible nodes.
+	m.rebuildVisibleNodes()
+	return true
+}
+
+// splitPath is a small helper to break a path on /.
+func splitPath(p string) []string {
+	if p == "" {
+		return nil
+	}
+	out := []string{}
+	cur := ""
+	for _, r := range p {
+		if r == '/' {
+			if cur != "" {
+				out = append(out, cur)
+				cur = ""
+			}
+		} else {
+			cur += string(r)
+		}
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	return out
+}
+
 // NodeByPath looks up a TreeNode by its absolute path. Returns nil if not
 // found.
 func (m *FileTreeModel) NodeByPath(path string) *TreeNode {

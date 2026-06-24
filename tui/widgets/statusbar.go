@@ -9,6 +9,7 @@ import (
 
 	"crude/fileio"
 	"crude/tui/components"
+	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 
@@ -66,6 +67,11 @@ type StatusBar struct {
 	spinFrame     int
 	activityStep  int
 
+	// Whole-project LSP insights. The bottom-left is reserved for these:
+	// diagnostic counts, files affected, symbol count, server health.
+	// Per-file diagnostics live in the editor (gutter + hover + status line).
+	project editor.ProjectInsights
+	// Legacy fields kept for backwards compatibility with older callers.
 	diagErrors   int
 	diagWarnings int
 	diagHints    int
@@ -157,13 +163,13 @@ func (s *StatusBar) View() string {
 	var left string
 	if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
 		left = s.theme.Styles.ErrorText.Render(
-			rendering.TruncateLine(s.lastError, s.width/2))
+			rendering.TruncateLine(s.lastError, s.width/3))
 	} else if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
 		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render(
-			rendering.TruncateLine(s.retryMsg, s.width/2))
+			rendering.TruncateLine(s.retryMsg, s.width/3))
 	} else if s.infoMsg != "" && time.Since(s.infoMsgTime) < 5*time.Second && !sys.anyStreaming && !sys.anyThinking {
 		left = lipgloss.NewStyle().Foreground(s.theme.Colors.Success).Render(
-			rendering.TruncateLine(s.infoMsg, s.width/2))
+			rendering.TruncateLine(s.infoMsg, s.width/3))
 	} else if s.isConfirming {
 		left = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Render("⚠ confirming")
 	} else if s.blocking {
@@ -194,30 +200,19 @@ func (s *StatusBar) View() string {
 		left += " " + accent.Render("⚡"+strconv.Itoa(sys.activeCount))
 	}
 
-	lspParts := ""
-	hasLSPDiag := s.diagErrors > 0 || s.diagWarnings > 0
-	if s.lspVisible && hasLSPDiag {
-		var parts []string
-		if s.diagErrors > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
+	// ── Whole-project LSP insights (bottom-left) ─────────────────────────
+	lspView := s.renderLSPInsights()
+
+	// Compose left side: agent activity, separator, LSP insights.
+	// The LSP section is preserved for project-wide insight only — per-file
+	// diagnostics live in the editor (gutter, hover popup, status line).
+	if lspView != "" {
+		if left != "" {
+			left += "  " + dim.Render("│") + "  " + lspView
+		} else {
+			left = lspView
 		}
-		if s.diagWarnings > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
-		}
-		lspParts = " " + strings.Join(parts, " ")
-	} else if s.lspVisible && s.lspStatus != "" {
-		lspParts = " " + dim.Render(s.lspStatus)
-	} else if hasLSPDiag {
-		var parts []string
-		if s.diagErrors > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Render(fmt.Sprintf("✕%d", s.diagErrors)))
-		}
-		if s.diagWarnings > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Warning).Render(fmt.Sprintf("⚠%d", s.diagWarnings)))
-		}
-		lspParts = " " + strings.Join(parts, " ")
 	}
-	left += lspParts
 
 	right := ""
 	var rightParts []string
@@ -273,6 +268,121 @@ func pluralS(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// renderLSPInsights renders the whole-project LSP section of the status bar.
+//
+// Layout:  ● gopls  ✕5 ⚠12 ℹ3  ·  8 files  ·  247 symbols
+//
+// The dot's color and animation reflect server health: solid green when
+// ready, fast pulse when busy, alternating halves when starting, red cross
+// when failed.
+//
+// IMPORTANT: The animation always lasts at least AnimGrace after the last
+// busines event, even if the instantaneous state is "ready". This prevents
+// the common case where the LSP boots and syncs between 400ms ticks —
+// without the grace period the user would never see any blink.
+func (s *StatusBar) renderLSPInsights() string {
+	if s.project.ServerName == "" && !s.project.ServerFailed && !s.project.ServerStarting {
+		// No LSP server configured for this workspace.
+		return ""
+	}
+
+	// Determine whether to show an animated dot. The instantaneous state
+	// takes priority, but if it's "ready" we still animate for AnimGrace
+	// after the last busy event so the user doesn't miss the blink.
+	showAnimation := s.project.ServerStarting || s.project.ServerBusy || s.project.ServerSyncing
+	if !showAnimation && s.project.LastBusyAt > 0 {
+		elapsed := time.Since(time.Unix(0, s.project.LastBusyAt))
+		showAnimation = elapsed < editor.AnimGrace
+	}
+
+	var (
+		dotColor = s.theme.Colors.Success
+		dotState = "ready"
+	)
+	switch {
+	case s.project.ServerFailed:
+		dotColor = s.theme.Colors.Error
+		dotState = "failed"
+	case s.project.ServerStarting:
+		dotColor = s.theme.Colors.Warning
+		dotState = "starting"
+	case s.project.ServerBusy:
+		dotColor = s.theme.Colors.Accent
+		dotState = "busy"
+	case s.project.ServerSyncing:
+		dotColor = s.theme.Colors.Accent2
+		dotState = "syncing"
+	case showAnimation:
+		// Grace period: the LSP is currently "ready" but was busy recently.
+		// Keep the syncing animation alive for AnimGrace after the last
+		// activity so the user sees the blink even though the server
+		// transitioned to idle between ticks.
+		dotColor = s.theme.Colors.Accent2
+		dotState = "syncing"
+	default:
+		dotColor = s.theme.Colors.Success
+		dotState = "ready"
+	}
+	dot := components.HeartbeatDot(s.spinFrame, dotState, dotColor)
+
+	dim := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
+	sep := dim.Render("·")
+
+	// Error message overrides everything else when the server failed.
+	if s.project.ServerFailed && s.project.ServerError != "" {
+		return dot + " " + lipgloss.NewStyle().Foreground(s.theme.Colors.Error).Bold(true).Render(s.project.ServerError)
+	}
+
+	var parts []string
+	parts = append(parts, dot)
+
+	// Server name (skip if none configured).
+	if s.project.ServerName != "" {
+		parts = append(parts, lipgloss.NewStyle().Foreground(s.theme.Colors.Fg).Bold(true).Render(s.project.ServerName))
+	}
+
+	// Diagnostic counts (only if at least one).
+	if s.project.Errors+s.project.Warnings+s.project.Info+s.project.Hints > 0 {
+		parts = append(parts, renderDiagCounts(s.project, s.theme))
+	}
+
+	// Files affected (only when there are diagnostics).
+	if s.project.FilesAffected > 0 {
+		parts = append(parts, dim.Render(fmt.Sprintf("%d file%s", s.project.FilesAffected, pluralS(s.project.FilesAffected))))
+	}
+
+	// Symbol count (only if we've actually indexed something).
+	if s.project.SymbolsCount > 0 {
+		parts = append(parts, dim.Render(fmt.Sprintf("%d %s", s.project.SymbolsCount, pluralSym(s.project.SymbolsCount))))
+	}
+
+	return strings.Join(parts, " "+sep+" ")
+}
+
+func renderDiagCounts(p editor.ProjectInsights, t *theme.Theme) string {
+	var parts []string
+	if p.Errors > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(t.Colors.Error).Render(fmt.Sprintf("✕%d", p.Errors)))
+	}
+	if p.Warnings > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(t.Colors.Warning).Render(fmt.Sprintf("⚠%d", p.Warnings)))
+	}
+	if p.Info > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(t.Colors.Accent2).Render(fmt.Sprintf("ℹ%d", p.Info)))
+	}
+	if p.Hints > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(t.Colors.Muted).Render(fmt.Sprintf("·%d", p.Hints)))
+	}
+	return strings.Join(parts, " ")
+}
+
+func pluralSym(n int) string {
+	if n == 1 {
+		return "symbol"
+	}
+	return "symbols"
 }
 
 func randInt(n int) int {
@@ -477,4 +587,56 @@ func (s *StatusBar) SetLSPVisible(v bool) {
 
 func (s *StatusBar) SetLSPStatus(status string) {
 	s.lspStatus = status
+}
+
+// SetProjectInsights updates the whole-project LSP snapshot rendered in the
+// bottom-left of the status bar. This is the canonical entry point — the
+// legacy SetDiagnostics/SetLSPVisible/SetLSPStatus methods are kept only for
+// compatibility with older callers and are NOT consulted by View() once this
+// method has been called at least once.
+func (s *StatusBar) SetProjectInsights(p editor.ProjectInsights) {
+	s.project = p
+}
+
+// HasAnimation reports whether the current state contains an element that
+// must be re-rendered every tick. The view-cache uses this to decide
+// whether to invalidate the cached output for a status-bar update.
+//
+// Returns true when the spinner is showing streaming/thinking work, when
+// the LSP heartbeat dot is in an animated state or its AnimGrace period is
+// still running, or when an info/retry/error toast is still on its display
+// timer.
+func (s *StatusBar) HasAnimation() bool {
+	sys := s.computeSystemState()
+	if sys.anyStreaming || sys.anyThinking {
+		return true
+	}
+	// Heartbeat dot animates for these states; everything else is static.
+	switch {
+	case s.project.ServerStarting,
+		s.project.ServerBusy,
+		s.project.ServerSyncing:
+		return true
+	}
+	// Grace period: even if the LSP is "ready", the dot animates for
+	// AnimGrace after the last busy event. Without this, fast LSP
+	// transitions between 400ms ticks would be invisible.
+	if s.project.LastBusyAt > 0 {
+		elapsed := time.Since(time.Unix(0, s.project.LastBusyAt))
+		if elapsed < editor.AnimGrace {
+			return true
+		}
+	}
+	// Time-bounded toasts must be re-checked every tick to clear at
+	// expiry; if any is still in its display window, the bar changed.
+	if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
+		return true
+	}
+	if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
+		return true
+	}
+	if s.infoMsg != "" && time.Since(s.infoMsgTime) < 5*time.Second {
+		return true
+	}
+	return false
 }

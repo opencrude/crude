@@ -65,6 +65,22 @@ func (pt *PieceTable) Load(filePath string) error {
 	return nil
 }
 
+// ReplaceAll discards the current buffer contents and replaces them with
+// the supplied text. The cursor is reset to (0, 0) and the modified flag
+// is cleared. Used after a successful formatter run to push the new
+// content into the editor without round-tripping through disk.
+//
+// We keep the filePath unchanged so the editor stays bound to the same
+// file. The "didChange" notification must be fired by the caller — this
+// function only touches the buffer.
+func (pt *PieceTable) ReplaceAll(text string) {
+	pt.original = []byte(text)
+	pt.add = []byte{}
+	pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: len(text)}}
+	pt.modified = false
+	pt.invalidateCache()
+}
+
 func (pt *PieceTable) ensureCache() {
 	if pt.cacheValid {
 		return

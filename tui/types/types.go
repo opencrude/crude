@@ -106,6 +106,7 @@ type EditorSettings struct {
 	Minimap       bool   `json:"minimap,omitempty"`
 	AutoSaveDelay int    `json:"auto_save_delay,omitempty"` // ms, 0 = disabled
 	RenderWhitespace string `json:"render_whitespace,omitempty"` // "none", "boundary", "all"
+	FormatOnSave  bool   `json:"format_on_save,omitempty"` // run gofmt/rustfmt/black on save
 }
 
 // LSPSettings controls the Language Server Protocol integration.

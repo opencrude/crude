@@ -55,6 +55,71 @@ func SpinnerPhase(frame int) string {
 	return "○"
 }
 
+// HeartbeatDot renders a single dot that animates only while the server is
+// actually doing work. When idle, the dot is a static colored shape — the
+// eye should not be drawn to it, so a still dot reads as "everything is
+// fine" rather than "something is happening right now".
+//
+// Visual design notes:
+//
+//   - The glyph never changes. All animation is rendered with the SAME
+//     character (●), in the SAME cell, with the SAME baseline. The
+//     animation is a brightness pulse (bold ↔ faint), never a shape
+//     change. This guarantees zero vertical jumping — the dot stays
+//     pinned to the same line as the surrounding text.
+//
+//   - Earlier iterations used quartered-circle / half-circle glyphs that
+//     rotated the filled portion around the cell. While smooth in
+//     well-tuned fonts, those glyphs cause the visual center of mass to
+//     shift between frames (a top-filled quadrant reads as "higher" than
+//     a bottom-filled one), which the eye reads as jitter. Using a
+//     single fixed glyph with a brightness pulse is the only way to
+//     guarantee pixel-stable animation across all terminals.
+//
+//   - The pace distinguishes the states. Busy pulses fastest because
+//     the user expects an active request to feel urgent; syncing
+//     pulses slowest because background indexing should feel calm;
+//     starting falls in the middle.
+//
+//	ready   (idle):     ●  static
+//	busy    (working):  ●  bold ↔ faint,  ~200ms pulse
+//	syncing (loading):  ●  bold ↔ faint,  ~600ms pulse
+//	starting (booting): ●  bold ↔ faint,  ~400ms pulse
+//	failed  (broken):   ✕  static red
+//
+// `state` is one of "ready", "busy", "syncing", "starting", "failed". The
+// frame argument is ignored for static states.
+func HeartbeatDot(frame int, state string, clr color.Color) string {
+	switch state {
+	case "busy":
+		// Fast pulse — the user is waiting for a request, so the
+		// activity should feel urgent.
+		if (frame/200)%2 == 0 {
+			return lipgloss.NewStyle().Foreground(clr).Bold(true).Render("●")
+		}
+		return lipgloss.NewStyle().Foreground(clr).Faint(true).Render("●")
+	case "syncing":
+		// Slow pulse — the server is doing background work (bulk-open,
+		// re-analyze) that the user shouldn't feel pressured by.
+		if (frame/600)%2 == 0 {
+			return lipgloss.NewStyle().Foreground(clr).Bold(true).Render("●")
+		}
+		return lipgloss.NewStyle().Foreground(clr).Faint(true).Render("●")
+	case "starting":
+		// Medium pulse — the LSP is negotiating the handshake. Not as
+		// urgent as a request in flight, but more active than quiet
+		// syncing.
+		if (frame/400)%2 == 0 {
+			return lipgloss.NewStyle().Foreground(clr).Bold(true).Render("●")
+		}
+		return lipgloss.NewStyle().Foreground(clr).Faint(true).Render("●")
+	case "failed":
+		return lipgloss.NewStyle().Foreground(clr).Render("✕")
+	default: // "ready" — static dot, no animation
+		return lipgloss.NewStyle().Foreground(clr).Render("●")
+	}
+}
+
 type Phase string
 
 const (

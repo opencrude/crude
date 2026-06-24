@@ -3,6 +3,7 @@ package editor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,7 +155,9 @@ func (l *LSPIntegration) CloseFile(ctx context.Context, filePath string) {
 	_ = client.NotifyDidCloseTextDocument(ctx, uri)
 }
 
-func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string, line, col int) []protocol.CompletionItem {
+// RequestCompletions returns a flat list of completion items at (line, col).
+// Returns nil if the request fails or the file is not open in the LSP server.
+func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string, line, col int) []CompletionItem {
 	l.mu.Lock()
 	fp := filepath.Clean(filePath)
 	state, ok := l.openFiles[fp]
@@ -172,7 +175,245 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string
 	if err != nil || result == nil {
 		return nil
 	}
-	return result.Items
+	out := make([]CompletionItem, 0, len(result.Items))
+	for _, it := range result.Items {
+		out = append(out, CompletionItem{
+			Label:         it.Label,
+			Detail:        it.Detail,
+			Documentation: documentationOf(it),
+			Kind:          int(it.Kind),
+			InsertText:    insertTextOf(it),
+		})
+	}
+	return out
+}
+
+// CompletionItem is a flat, viewmodel-friendly representation of a single
+// completion result returned by the LSP server.
+type CompletionItem struct {
+	Label         string
+	Detail        string
+	Documentation string
+	Kind          int
+	InsertText    string
+}
+
+func insertTextOf(it protocol.CompletionItem) string {
+	// it.TextEdit is a tagged union; if present, it carries the actual
+	// replacement text. Fall back to the simpler InsertText when the server
+	// doesn't supply a text edit.
+	if it.TextEdit != nil {
+		switch t := it.TextEdit.Value.(type) {
+		case protocol.TextEdit:
+			return t.NewText
+		case *protocol.TextEdit:
+			return t.NewText
+		}
+	}
+	return it.InsertText
+}
+
+func documentationOf(it protocol.CompletionItem) string {
+	if it.Documentation == nil {
+		return ""
+	}
+	switch v := it.Documentation.Value.(type) {
+	case string:
+		return v
+	case protocol.MarkupContent:
+		return v.Value
+	}
+	return ""
+}
+
+// RequestDefinition returns the definition location(s) for the symbol at
+// (line, col) in filePath. Returns nil if the request fails or the client is
+// not connected. Multiple locations can be returned for symbols defined in
+// multiple places (interfaces, generics).
+func (l *LSPIntegration) RequestDefinition(ctx context.Context, filePath string, line, col int) []LSPLocation {
+	l.mu.Lock()
+	client := l.client
+	fp := filepath.Clean(filePath)
+	_, ok := l.openFiles[fp]
+	l.mu.Unlock()
+
+	if client == nil || !ok {
+		return nil
+	}
+	results, err := client.RequestDefinition(ctx, fp, line, col)
+	if err != nil {
+		return nil
+	}
+	return l.toLSPLocations(results)
+}
+
+// FindReferences returns all references to the symbol at (line, col) in
+// filePath, optionally including the declaration site. includeDeclaration=true
+// is the typical UX (VSCode/JetBrains include it by default).
+func (l *LSPIntegration) FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []LSPLocation {
+	l.mu.Lock()
+	client := l.client
+	fp := filepath.Clean(filePath)
+	_, ok := l.openFiles[fp]
+	l.mu.Unlock()
+
+	if client == nil || !ok {
+		return nil
+	}
+	results, err := client.FindReferences(ctx, fp, line, col, includeDeclaration)
+	if err != nil {
+		return nil
+	}
+	return l.toLSPLocations(results)
+}
+
+// RequestDocumentSymbols returns a hierarchical outline (functions, types,
+// variables) for the given file. Children of nested symbols are preserved.
+func (l *LSPIntegration) RequestDocumentSymbols(ctx context.Context, filePath string) []LSPSymbol {
+	l.mu.Lock()
+	client := l.client
+	fp := filepath.Clean(filePath)
+	_, ok := l.openFiles[fp]
+	l.mu.Unlock()
+
+	if client == nil || !ok {
+		return nil
+	}
+	results, err := client.RequestDocumentSymbols(ctx, fp)
+	if err != nil {
+		return nil
+	}
+	out := make([]LSPSymbol, 0, len(results))
+	for _, r := range results {
+		out = append(out, l.convertDocSymbol(r, 0)...)
+	}
+	return out
+}
+
+// RequestHover returns the hover information (markup content + range) for the
+// symbol at (line, col). Returns nil if no hover info is available.
+func (l *LSPIntegration) RequestHover(ctx context.Context, filePath string, line, col int) (string, error) {
+	l.mu.Lock()
+	fp := filepath.Clean(filePath)
+	state, ok := l.openFiles[fp]
+	if l.client == nil || !ok {
+		l.mu.Unlock()
+		return "", fmt.Errorf("file not open in LSP")
+	}
+	uri := state.uri
+	l.mu.Unlock()
+
+	hover, err := l.client.RequestHover(ctx, uri, protocol.Position{
+		Line:      uint32(line),
+		Character: uint32(col),
+	})
+	if err != nil {
+		return "", err
+	}
+	if hover == nil || hover.Contents.Value == "" {
+		return "", nil
+	}
+	// Hover.Contents can be a string, MarkupContent, or MarkedString.
+	// protocol normalizes it to a single string in our usage; strip basic
+	// markdown noise for terminal display.
+	return stripMarkdown(hover.Contents.Value), nil
+}
+
+// RequestRename returns the workspace edit that would rename the symbol at
+// (line, col) to newName. The caller is responsible for applying the edit.
+func (l *LSPIntegration) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (*protocol.WorkspaceEdit, error) {
+	l.mu.Lock()
+	client := l.client
+	fp := filepath.Clean(filePath)
+	_, ok := l.openFiles[fp]
+	l.mu.Unlock()
+
+	if client == nil || !ok {
+		return nil, fmt.Errorf("file not open in LSP")
+	}
+	return client.RequestRename(ctx, fp, line, col, newName)
+}
+
+// ServerCmd returns the command used to launch the LSP server, e.g. "gopls".
+func (l *LSPIntegration) ServerCmd() string {
+	return l.serverCmd
+}
+
+func (l *LSPIntegration) toLSPLocations(locs []protocol.Location) []LSPLocation {
+	out := make([]LSPLocation, 0, len(locs))
+	for _, p := range locs {
+		uri := string(p.URI)
+		out = append(out, LSPLocation{
+			URI:     uri,
+			Path:    l.uriToPath(p.URI),
+			Line:    int(p.Range.Start.Line),
+			Col:     int(p.Range.Start.Character),
+			EndLine: int(p.Range.End.Line),
+			EndCol:  int(p.Range.End.Character),
+		})
+	}
+	return out
+}
+
+// convertDocSymbol flattens a DocumentSymbolResult (which can be either
+// DocumentSymbol or SymbolInformation) into our LSPSymbol type. The depth
+// parameter caps recursion to avoid pathological trees in the UI.
+func (l *LSPIntegration) convertDocSymbol(r protocol.DocumentSymbolResult, depth int) []LSPSymbol {
+	if depth > 6 {
+		return nil
+	}
+	switch v := r.(type) {
+	case *protocol.DocumentSymbol:
+		sym := LSPSymbol{
+			Name:     v.Name,
+			Detail:   v.Detail,
+			Kind:     int(v.Kind),
+			KindName: SymbolKindName(int(v.Kind)),
+			Line:     int(v.Range.Start.Line),
+			Col:      int(v.Range.Start.Character),
+			EndLine:  int(v.Range.End.Line),
+			EndCol:   int(v.Range.End.Character),
+		}
+		if len(v.Children) > 0 {
+			sym.Children = make([]LSPSymbol, 0, len(v.Children))
+			for i := range v.Children {
+				kids := l.convertDocSymbol(&v.Children[i], depth+1)
+				sym.Children = append(sym.Children, kids...)
+			}
+		}
+		return []LSPSymbol{sym}
+	case *protocol.SymbolInformation:
+		return []LSPSymbol{{
+			Name:     v.Name,
+			Detail:   "", // SymbolInformation has no detail field
+			Kind:     int(v.Kind),
+			KindName: SymbolKindName(int(v.Kind)),
+			Line:     int(v.Location.Range.Start.Line),
+			Col:      int(v.Location.Range.Start.Character),
+			EndLine:  int(v.Location.Range.End.Line),
+			EndCol:   int(v.Location.Range.End.Character),
+		}}
+	}
+	return nil
+}
+
+// stripMarkdown removes common markdown noise that doesn't render well in a
+// terminal popup: fenced code blocks' ``` fences, heading #'s, and bold/italic
+// markers. Code spans are preserved as-is.
+func stripMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "```", "")
+	s = strings.ReplaceAll(s, "`", "")
+	// Drop leading "## ", "### ", etc. from start of lines.
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		ln = strings.TrimLeft(ln, " \t")
+		for strings.HasPrefix(ln, "#") {
+			ln = strings.TrimPrefix(ln, "#")
+			ln = strings.TrimLeft(ln, " \t")
+		}
+		lines[i] = ln
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func (l *LSPIntegration) Stop() {

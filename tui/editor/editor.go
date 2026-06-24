@@ -1,7 +1,10 @@
 package editor
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +65,8 @@ type Editor struct {
 	selAnchor Position
 	selEnd    Position
 
+	PadL int // left padding applied by the app layout
+
 	chromaStyle *chroma.Style
 	chromaLexer chroma.Lexer
 	chromaCache map[string][]string
@@ -89,17 +94,35 @@ type Editor struct {
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
 
+	// formatOnSave, when true, runs the file's language-specific formatter
+	// (gofmt/rustfmt/black) right after Save() succeeds. Set via
+	// SetFormatOnSave(). Defaults to false to keep save behavior predictable
+	// for users who don't want surprise reformatting.
+	formatOnSave bool
+
 	// hover state for diagnostic tooltip popup.
 	hoverMessages []string
+	hoverSeverity int
 	hoverLine     int
 	hoverCol      int
 	hoverScreenX  int
 	hoverScreenY  int
+
+	// search is the per-editor find/replace state. Owned by the
+	// Editor (not the tab wrapper) so the renderer can read it
+	// directly when drawing highlights. Each tab has its own Editor
+	// so this is automatically per-tab.
+	search *SearchState
+}
+
+func (e *Editor) SetPadding(padL int) {
+	e.PadL = padL
 }
 
 // HoverState is the current diagnostic hover state.
 type HoverState struct {
 	Messages []string
+	Severity int
 	Line     int
 	Col      int
 	ScreenX  int
@@ -122,6 +145,7 @@ func New(th *theme.Theme) *Editor {
 		cursorVisible: true,
 		diagnostics:   make([]LSPDiagnostic, 0),
 		diagByLine:    make(map[int][]diagSpan),
+		search:        NewSearchState(),
 	}
 	e.ClearSelection()
 	return e
@@ -154,6 +178,7 @@ func (e *Editor) Open(path string) error {
 	e.blinkActive = false
 	e.lastActivity = time.Now()
 	e.ClearSelection()
+	e.ClearHover()
 	e.invalidateEditorCaches()
 	e.initChroma()
 	e.startWatching()
@@ -186,6 +211,7 @@ func (e *Editor) Reload() error {
 	e.modified = false
 	e.chromaCache = nil
 	e.invalidateEditorCaches()
+	e.ClearHover()
 	e.notifyContentChanged()
 	return nil
 }
@@ -211,6 +237,13 @@ func (e *Editor) Value() string        { return string(e.buf.Bytes()) }
 func (e *Editor) CursorLine() int      { return e.cursor.Line }
 func (e *Editor) CursorCol() int       { return e.cursor.Col }
 func (e *Editor) LineCount() int       { return e.buf.LineCount() }
+func (e *Editor) LineText(line int) string {
+	b, err := e.buf.Line(line)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(string(b), "\n")
+}
 func (e *Editor) notifyContentChanged() {
 	if e.onContentChanged != nil {
 		e.onContentChanged(e.filePath, string(e.buf.Bytes()))
@@ -220,6 +253,12 @@ func (e *Editor) notifyContentChanged() {
 // SetOnContentChanged registers a callback for text edits.
 func (e *Editor) SetOnContentChanged(fn func(filePath, text string)) {
 	e.onContentChanged = fn
+}
+
+// SetFormatOnSave controls whether the editor runs the file's
+// language-specific formatter (gofmt, rustfmt, black) after Save().
+func (e *Editor) SetFormatOnSave(v bool) {
+	e.formatOnSave = v
 }
 
 // lspColToVisualCol converts a UTF-16 code unit offset from the start of a line
@@ -314,6 +353,126 @@ func (e *Editor) lineDiagnostics(lineIdx int) []diagSpan {
 	return e.diagByLine[lineIdx]
 }
 
+// DiagnosticsAt returns all LSPDiagnostics covering the given
+// position. Public version of diagnosticsAt for use by external
+// callers (e.g. the right-click context menu).
+func (e *Editor) DiagnosticsAt(line, col int) []LSPDiagnostic {
+	return e.diagnosticsAt(line, col)
+}
+
+// Diagnostics returns a snapshot of every LSP diagnostic for the
+// current file, sorted by line then column. Used by navigation
+// features (F8/Shift+F8, status-bar "Goto first error") that need
+// to walk the diagnostic list in order. The returned slice is a
+// copy — modifying it does not affect the editor.
+func (e *Editor) Diagnostics() []LSPDiagnostic {
+	e.diagMu.RLock()
+	defer e.diagMu.RUnlock()
+	out := make([]LSPDiagnostic, len(e.diagnostics))
+	copy(out, e.diagnostics)
+	return out
+}
+
+// SetSelection programmatically creates a selection from
+// (startLine, startCol) to (endLine, endCol). Use this to highlight
+// a diagnostic range after navigating to it (e.g. "Goto first
+// error"). Coordinates are clamped to non-negative values; a
+// backwards single-line range is normalized. Setting a selection is
+// purely visual — it does not move the cursor.
+func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
+	if startLine < 0 {
+		startLine = 0
+	}
+	if startCol < 0 {
+		startCol = 0
+	}
+	if endLine < startLine {
+		endLine = startLine
+	}
+	if endCol < 0 {
+		endCol = 0
+	}
+	start := Position{Line: startLine, Col: startCol}
+	end := Position{Line: endLine, Col: endCol}
+	if end.Col < start.Col && end.Line == start.Line {
+		// Normalize a backwards single-line range.
+		start, end = end, start
+	}
+	e.selAnchor = start
+	e.selEnd = end
+	e.selecting = true
+}
+
+// NextError returns the first diagnostic in the current file with
+// line strictly greater than fromLine (or with line == fromLine and
+// col > fromCol). Returns nil if there is no such error. The
+// returned diagnostic is a pointer into the editor's diagnostic
+// slice — do not retain across edits.
+func (e *Editor) NextError(fromLine, fromCol int) *LSPDiagnostic {
+	e.diagMu.RLock()
+	defer e.diagMu.RUnlock()
+	for i := range e.diagnostics {
+		d := &e.diagnostics[i]
+		if d.Severity != DiagError {
+			continue
+		}
+		if d.Line > fromLine || (d.Line == fromLine && d.Col > fromCol) {
+			return d
+		}
+	}
+	return nil
+}
+
+// PrevError returns the last diagnostic in the current file with
+// line strictly less than fromLine (or with line == fromLine and
+// col < fromCol). Returns nil if there is no such error.
+func (e *Editor) PrevError(fromLine, fromCol int) *LSPDiagnostic {
+	e.diagMu.RLock()
+	defer e.diagMu.RUnlock()
+	for i := len(e.diagnostics) - 1; i >= 0; i-- {
+		d := &e.diagnostics[i]
+		if d.Severity != DiagError {
+			continue
+		}
+		if d.Line < fromLine || (d.Line == fromLine && d.Col < fromCol) {
+			return d
+		}
+	}
+	return nil
+}
+
+// FirstError returns the first error diagnostic in the current
+// file (sorted by line/col), or nil if there are none. Used by
+// project-wide "Goto first error" when the file is already open.
+func (e *Editor) FirstError() *LSPDiagnostic {
+	e.diagMu.RLock()
+	defer e.diagMu.RUnlock()
+	for i := range e.diagnostics {
+		d := &e.diagnostics[i]
+		if d.Severity == DiagError {
+			return d
+		}
+	}
+	return nil
+}
+
+// DeleteSelection removes the current selection (if any) and
+// returns true if anything was deleted.
+func (e *Editor) DeleteSelection() bool {
+	if !e.HasSelection() {
+		return false
+	}
+	sLine, sCol, eLine, eCol := e.SelectionRange()
+	start := Position{Line: sLine, Col: sCol}
+	end := Position{Line: eLine, Col: eCol}
+	e.buf.Delete(start, end)
+	e.modified = true
+	e.invalidateEditorCaches()
+	e.ClearSelection()
+	e.notifyContentChanged()
+	return true
+}
+
 // diagnosticsAt returns all LSPDiagnostics covering the given position.
 func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
 	e.diagMu.RLock()
@@ -342,23 +501,26 @@ func (e *Editor) diagnosticsAt(line, col int) []LSPDiagnostic {
 }
 
 // SetHover sets the hover diagnostic state for a tooltip popup.
-func (e *Editor) SetHover(screenX, screenY, line, col int, msgs []string) {
+func (e *Editor) SetHover(screenX, screenY, line, col int, severity int, msgs []string) {
 	e.hoverScreenX = screenX
 	e.hoverScreenY = screenY
 	e.hoverLine = line
 	e.hoverCol = col
+	e.hoverSeverity = severity
 	e.hoverMessages = msgs
 }
 
 // ClearHover clears the hover diagnostic state.
 func (e *Editor) ClearHover() {
 	e.hoverMessages = nil
+	e.hoverSeverity = 0
 }
 
 // HoverState returns the current hover diagnostics state.
 func (e *Editor) HoverState() HoverState {
 	return HoverState{
 		Messages: e.hoverMessages,
+		Severity: e.hoverSeverity,
 		Line:     e.hoverLine,
 		Col:      e.hoverCol,
 		ScreenX:  e.hoverScreenX,
@@ -379,25 +541,33 @@ func (e *Editor) refreshMouseHover(screenX, screenY int) {
 		return
 	}
 	msgs := make([]string, 0, len(diags))
+	highestSev := 0
 	for _, d := range diags {
 		msgs = append(msgs, d.Message)
+		if d.Severity > highestSev {
+			highestSev = d.Severity
+		}
 	}
-	e.SetHover(screenX, screenY, pos.Line, pos.Col, msgs)
+	e.SetHover(screenX, screenY, pos.Line, pos.Col, highestSev, msgs)
 }
 
 // refreshCursorHover updates hover diagnostics for the keyboard cursor.
-func (e *Editor) refreshCursorHover(sidebarW, chatAreaTop int) {
+func (e *Editor) RefreshCursorHover(sidebarW, chatAreaTop int) {
 	diags := e.diagnosticsAt(e.cursor.Line, e.cursor.Col)
 	if len(diags) == 0 {
 		e.ClearHover()
 		return
 	}
 	msgs := make([]string, 0, len(diags))
+	highestSev := 0
 	for _, d := range diags {
 		msgs = append(msgs, d.Message)
+		if d.Severity > highestSev {
+			highestSev = d.Severity
+		}
 	}
 	screenX, screenY := e.CursorScreenPosition(sidebarW, chatAreaTop)
-	e.SetHover(screenX, screenY, e.cursor.Line, e.cursor.Col, msgs)
+	e.SetHover(screenX, screenY, e.cursor.Line, e.cursor.Col, highestSev, msgs)
 }
 
 // CursorScreenPosition returns the approximate absolute screen cell of the cursor.
@@ -417,7 +587,80 @@ func (e *Editor) CursorScreenPosition(sidebarW, chatAreaTop int) (int, int) {
 	if colOff < 0 {
 		colOff = 0
 	}
-	return sidebarW + e.gutterWidth() + colOff, chatAreaTop + lineOff
+	return sidebarW + e.PadL + e.gutterWidth() + colOff, chatAreaTop + lineOff
+}
+
+// SetCursorPosition jumps the cursor to (line, col) clamping to the buffer's
+// valid range. Use this from LSP navigations ("go to definition", "go to
+// reference", "find symbol") so the cursor lands precisely where the server
+// pointed.
+func (e *Editor) SetCursorPosition(line, col int) {
+	lc := e.buf.LineCount()
+	if lc <= 0 {
+		e.cursor.Line = 0
+		e.cursor.Col = 0
+		return
+	}
+	if line < 0 {
+		line = 0
+	}
+	if line >= lc {
+		line = lc - 1
+	}
+	e.cursor.Line = line
+	lineBytes, _ := e.buf.Line(line)
+	maxCol := displayWidthOf(string(lineBytes))
+	if col < 0 {
+		col = 0
+	}
+	if col > maxCol {
+		col = maxCol
+	}
+	e.cursor.Col = col
+	e.invalidateEditorCaches()
+}
+
+// ScrollToCursor adjusts the scroll offsets so the cursor is visible. After
+// a SetCursorPosition this brings the line into view.
+func (e *Editor) ScrollToCursor() {
+	bodyH := e.viewH - 1 // reserve a row for the status line
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	if e.cursor.Line < e.scrollY {
+		e.scrollY = e.cursor.Line
+	} else if e.cursor.Line >= e.scrollY+bodyH {
+		e.scrollY = e.cursor.Line - bodyH + 1
+	}
+	if e.cursor.Col < e.scrollX {
+		e.scrollX = e.cursor.Col
+	} else if e.cursor.Col >= e.scrollX+80 {
+		e.scrollX = e.cursor.Col - 80 + 1
+	}
+	e.invalidateEditorCaches()
+}
+
+func displayWidthOf(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
+// LineTextFromPath returns the trimmed content of the file at the given path.
+// Used by the references popup to show a preview of the matching line. The
+// path is read fresh from disk; for the active editor use LineText() instead.
+func (e *Editor) LineTextFromPath(filePath string, lineIdx int) (string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(data), "\n")
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return "", fmt.Errorf("line %d out of range", lineIdx)
+	}
+	return strings.TrimRight(lines[lineIdx], "\r"), nil
 }
 
 func (e *Editor) severityColor(severity int) string {

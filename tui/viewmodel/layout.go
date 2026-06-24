@@ -4,6 +4,7 @@ type LayoutInfo struct {
 	SidebarW    int
 	ContentW    int
 	InnerW      int
+	EditorW     int // width of the editor pane (ContentW - PadLR*2)
 	ChatAreaTop int
 	ChatH       int
 	PadLR       int
@@ -21,9 +22,13 @@ func (m *App) computeLayout() LayoutInfo {
 	if innerW < 20 {
 		innerW = 20
 	}
+	editorW := contentW - padLR*2
+	if editorW < 20 {
+		editorW = 20
+	}
 
 	chatAreaTop := 3
-	if m.win.IsOpen() && m.win.TabCount() >= 2 {
+	if m.win.IsOpen() && m.win.TabCount() >= 1 {
 		chatAreaTop += 2
 	}
 
@@ -31,6 +36,7 @@ func (m *App) computeLayout() LayoutInfo {
 		SidebarW:    sidebarW,
 		ContentW:    contentW,
 		InnerW:      innerW,
+		EditorW:     editorW,
 		ChatAreaTop: chatAreaTop,
 		PadLR:       padLR,
 	}
