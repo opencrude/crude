@@ -54,6 +54,18 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Esc always closes the topmost popup first, regardless of focus.
+	// This mirrors VSCode/JetBrains behavior: Esc dismisses layers
+	// before reaching the underlying editor/tab.
+	if msg.Code == tea.KeyEsc && m.windowManager != nil {
+		if topWin := m.windowManager.TopWindow(); topWin != nil && topWin.Focusable() {
+			if topWin.ClickOutsideBehavior() != wm.ClickOutsideIgnore {
+				m.closePopupWindowByID(topWin.ID)
+				return m, nil
+			}
+		}
+	}
+
 	if keyStr == "ctrl+b" {
 		m.ToggleSidebar()
 		return m, nil
@@ -1317,6 +1329,7 @@ func (m *App) showReferencesPopup(rows []refRow) {
 			wm.WithClosable(true),
 			wm.WithModal(true),
 			wm.WithFocusable(true),
+			wm.WithClickOutside(wm.ClickOutsideCloseRoute),
 		)
 		fw.SetPosition(popupX, popupY)
 		m.windowManager.AddWindow(fw)
@@ -1495,6 +1508,7 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 			wm.WithClosable(true),
 			wm.WithModal(false),
 			wm.WithFocusable(true),
+			wm.WithClickOutside(wm.ClickOutsideCloseRoute),
 		)
 		fw.SetPosition(popupX, popupY)
 		m.windowManager.AddWindow(fw)
@@ -1627,6 +1641,7 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 			wm.WithClosable(true),
 			wm.WithModal(false),
 			wm.WithFocusable(true),
+			wm.WithClickOutside(wm.ClickOutsideCloseRoute),
 		)
 		fw.SetPosition(popupX, popupY)
 		m.windowManager.AddWindow(fw)

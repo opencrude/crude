@@ -78,6 +78,10 @@ type FloatingWindow struct {
 	// contentSurf is the reusable content surface (prevents per-frame allocation).
 	contentSurf *surface.Surface
 
+	// clickOutside defines what happens when the user clicks outside
+	// this window. Default is CloseRoute (close + route click through).
+	clickOutside ClickOutsideBehavior
+
 	// contentDirty tracks whether the window's content needs re-rendering.
 	// Position-only changes (drag) do not mark content dirty.
 	contentDirty bool
@@ -110,6 +114,7 @@ func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts .
 		visible:      true,
 		state:        WindowNormal,
 		contentDirty: true, // needs initial render
+		clickOutside: ClickOutsideCloseRoute, // default: close + route
 	}
 
 	for _, opt := range opts {
@@ -438,6 +443,15 @@ func (fw *FloatingWindow) Resizable() bool { return fw.resizable }
 
 // Closable reports whether the window has a close button.
 func (fw *FloatingWindow) Closable() bool { return fw.closable }
+
+// ClickOutsideBehavior returns what happens when the user clicks outside this window.
+func (fw *FloatingWindow) ClickOutsideBehavior() ClickOutsideBehavior { return fw.clickOutside }
+
+// SetClickOutsideBehavior sets the click-outside behavior for this window.
+func (fw *FloatingWindow) SetClickOutsideBehavior(b ClickOutsideBehavior) { fw.clickOutside = b }
+
+// Focusable reports whether the window can receive focus and mouse input.
+func (fw *FloatingWindow) Focusable() bool { return fw.focusable }
 
 // State returns the current window state.
 func (fw *FloatingWindow) State() WindowState { return fw.state }
