@@ -457,6 +457,7 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 		wm.WithDecoration(true),
 		wm.WithResizable(false),
 		wm.WithClosable(true),
+		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	fw.SetPosition((m.width-palW)/2, 2)
 	m.windowManager.AddWindow(fw)

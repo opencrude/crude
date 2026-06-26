@@ -200,6 +200,12 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m.dispatchMouseRightClick(msg)
 	}
 
+	// Click-outside handling for all popups. Check every open popup:
+	// if the click missed it, act based on its click-outside behavior.
+	if m.handlePopupClickOutside(msg) {
+		return m, nil // modal popup — suppress the click entirely
+	}
+
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
 			if hitWin.Closable() && hitWin.IsOnCloseButton(mouse.X, mouse.Y) {
@@ -232,11 +238,11 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, cmd)
 				}
 				hitWin.MarkContentDirty()
-			} else {
-				if cmd := m.forwardEventToWindowContent(hitWin, msg); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+			} else if cmd := m.handlePopupContentClick(hitWin, msg); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
+			// Mark popup content dirty so the click effect is rendered.
+			hitWin.MarkContentDirty()
 			return m, tea.Batch(cmds...)
 		}
 	}
@@ -450,6 +456,20 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 			return m, tea.Batch(cmds...)
+		}
+
+		// Popup hover pre-selection: if the mouse is over a focusable
+		// popup, update its hover state and return (don't route motion
+		// to the underlying editor/tree). Iterate top-to-bottom.
+		for i := len(m.windowManager.Windows()) - 1; i >= 0; i-- {
+			fw := m.windowManager.Windows()[i]
+			if !fw.Visible() || !fw.Focusable() {
+				continue
+			}
+			if fw.ContainsPoint(mouse.X, mouse.Y) {
+				m.handlePopupContentHover(fw, mouse.X, mouse.Y)
+				return m, tea.Batch(cmds...)
+			}
 		}
 	}
 
@@ -817,7 +837,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	h := widgets.ContextMenuPopupHeight(st)
 	x, y := clampPopupPosition(mouse.X, mouse.Y, w, h, m.width, m.height)
 
-	lines := widgets.ContextMenuLines(m.theme, st)
+	lines := widgets.ContextMenuLines(m.theme, st, 0)
 	pop := widgets.NewPopupContent(lines)
 	// ContextMenuLines now self-renders the unified popup chrome
 	// (border, title, padding). The FloatingWindow is just a
@@ -835,6 +855,9 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		m.windowManager.AddWindow(fw)
 	}
 	m.lastContextMenu = st
+	// Record when the menu opened so we can drive the slide-in
+	// animation. Without this, the menu would just pop in.
+	m.contextMenuOpenedAt = time.Now()
 	m.dirty = true
 	return m, nil
 }

@@ -265,6 +265,152 @@ Order matters:
 2. **Transparency is dangerous**: Making cells transparent in a composited surface tree creates invisible state that can leak stale characters. Opaque cells are safer.
 3. **`_Wide` classification is unreliable for cross-terminal compatibility**: Characters that `displaywidth` classifies as `_Wide` (like ☰ U+2630) follow Unicode's East Asian Width classification, but terminals are split — some follow Unicode (Windows Terminal renders as width=2), others override it (Kitty/Alacritty render as width=1). Avoid these characters in TUI layouts where positional accuracy matters across terminals. Use characters with unambiguous widths (ASCII, or explicitly wide CJK). Note: This is different from EAW=A characters (controlled by `EastAsianWidth` option) — `_Wide` classification is unconditional.
 4. **Server-side width probing is fragile**: The DSR-based probe was slow, unreliable (some terminals don't respond), and produced different results on different terminals. Removing it eliminated a source of inconsistency.
+5. **State lifecycle — clear before early return**: When a function is the single source of truth for state variables (like `handleTabSwitch` for `activeEditorView`/`activeAgentView`), always reset those variables at the top of the function, BEFORE any early return paths. The bug was: `handleTabSwitch` set `activeEditorView = ""` AFTER the `if activeTab == nil { return }` guard, so closing the last tab left the view variable stale. This caused the renderer to fall through to the wrong branch (input widget instead of launcher), and Ctrl+Q to attempt a no-op close instead of quitting. Fix: `activeEditorView = ""; activeAgentView = ""` goes first, THEN check for active tab.
+6. **Popup chrome is cleaner when self-drawn**: Popups that draw their own border+title (like the diagnostic hover popup) look more cohesive than those relying on FloatingWindow's generic title-bar decoration. The self-drawn approach: `BorderNone` + `decorated=false` on the FloatingWindow, then the widget renders `╭─ Title ─╮ ... │ body │ ... ╰──────╯` internally via `PopupChromeLines`. All popups (context menu, find/replace, save dialog, text prompt, file picker, diagnostic) now use this unified chrome.
+7. **Context menu design rules**: (a) No title — the top border is just `╭───╮` with continuous dashes when there's no title/icon. (b) Disabled items must have the SAME leading indent as enabled items — no extra spaces. (c) Disabled items should be dim (Muted), NOT italic — italic looks like placeholder text, not disabled. (d) Height must be exact content + chrome — no extra bottom padding. (e) Click-outside-to-dismiss on left-click. (f) Left-click on a menu item activates it immediately. (g) Brief slide-in animation (80ms reveal top-to-bottom) makes it feel responsive.
+8. **`buildTopBorder` width formulas must enumerate every title/icon combination independently**: The formula has different cases for (no title, no icon), (icon only), (title only), and (title + icon). Each case has a different fixed width due to the presence or absence of spaces between segments. Trying to use a single unified formula with conditionals for the spacer is fragile — recompute the fixed width from scratch per case.
+9. **Testing ANSI-rendered strings — strip first, then search**: When asserting the content of an ANSI-styled string, NEVER use `strings.Index(rawLine, label)` — the label text can false-match inside ANSI escape codes (e.g., `"Off"` false-matching in an ANSI code that happens to contain the byte sequence). Always `stripAnsi` first, then search the plain text. Also, box-drawing characters like `│` are 3 UTF-8 bytes — byte-position assertions must account for this (e.g., label at byte-position 6 after `│` + 2 pad + 1 indent, not position 4).
+
+---
+
+## Unified Popup Design System
+
+### Architecture
+
+All popups in the TUI go through `tui/widgets/popupchrome.go`. The chrome is drawn by the widget itself (not by FloatingWindow):
+
+```
+╭─ Title ────────────────────────────────╮
+│  body content line 1                   │
+│  body content line 2                   │
+╰────────────────────────────────────────╯
+```
+
+**Visual rules:**
+- Border: rounded (`╭ ╮ ╰ ╯`), 1 cell wide
+- Padding: 2 cells horizontal, 0 vertical
+- Title: integrated into top border, bold. No title for context menus.
+- Background: `theme.Colors.PopupBg` (`#161b22`, same as Code.Bg)
+- Focused: border becomes PopupBorderFocused, title becomes PopupTitleFocused
+- No close X button on most popups (Esc to close)
+- FloatingWindow is always `WithDecoration(false)` + no title — it's just a positioned box
+
+**Shared components** (all produce inner content lines, padded to `innerW`):
+- `PopupInputField` — `<label>: <value>` with blinking cursor. No more `│` box-drawing field borders.
+- `PopupToggle` / `PopupToggleRow` — filled pill when on (` Aa `), dim outline when off. No more `[Aa]`.
+- `PopupButton` / `PopupButtonRow` — filled bg when focused (` Yes `), dim when not. No more `[ Yes ]`.
+- `PopupSectionLabel` — italic Muted, no background color (was: Selection-bg-heavy).
+- `PopupDivider` — thin `─` in PopupDivider color.
+- `PopupHintLine` — `<key> <desc> · <key> <desc>` with bold keys.
+- `PopupEmptyLine` — blank with PopupBg background.
+
+**Sizing:**
+- `PopupContentWidth(innerW)` → total width: `innerW + 6` (2 border + 4 pad)
+- `PopupContentHeight(contentRows)` → total height: `contentRows + 2`
+
+### Theme colors
+
+```go
+PopupBg, PopupBorder, PopupBorderFocused, PopupTitle, PopupTitleFocused
+PopupDivider, PopupSubtleBg, PopupButtonBg, PopupButtonFg
+```
+
+### Popups migrated
+
+| Popup | File | Title | Unique features |
+|-------|------|-------|-----------------|
+| Find/Replace | `findreplace.go` | Find (with ⌕ icon) | Focused input field, pill toggles |
+| Save dialog | `confirmprompt.go` | Unsaved changes (severity-tinted) | Severity-colored title/border, Yes/No buttons |
+| Context menu | `contextmenu.go` | None | Section labels, dividers, key hint detail, slide-in animation |
+| Text prompt | `textprompt.go` | Dynamic (with Kind icon) | Input field, hint row |
+| File picker | `filepicker.go` | File Picker (with ▤ icon) | Scrollbar, directory listing |
+| Diagnostic hover | `mouse.go:updateDiagHoverPopup` | Severity label (border tinted) | Severity-colored border, code source line |
+| Diagnostic context | `app.go:showDiagnosticAt` | Diagnostic (with ℹ icon) | Click-triggered, centered |
+
+---
+
+## Popup Mouse Support (click + hover + focus restoration)
+
+Every popup responds to mouse clicks, mouse hover, and click-outside. Keyboard focus flows naturally: when a popup closes (via click-outside or Esc), the underlying widget regains keyboard focus because focus booleans persist.
+
+### ClickOutsideBehavior
+
+Each `FloatingWindow` has a `ClickOutsideBehavior` that determines what happens when the user clicks outside it:
+
+```go
+const (
+    ClickOutsideCloseRoute ClickOutsideBehavior = iota  // close + route click
+    ClickOutsideKeepRoute                               // keep open, route click
+    ClickOutsideIgnore                                  // modal — suppress click
+)
+```
+
+| Popup ID | Behavior | Rationale |
+|----------|----------|-----------|
+| `context-menu`, `references-popup`, `completion-popup`, `outline-popup`, `diag-context` | CloseRoute | Right-click / LSP popups close on outside click |
+| `find-replace`, `filepicker`, `composer`, `command-palette`, `textoverlay` | KeepRoute | Tool popups stay open; click routes to editor |
+| `dirty-close-prompt`, `tree-prompt`, `tree-delete-confirm` | Ignore | True modal — Esc or buttons required |
+
+Set at creation time via `wm.WithClickOutside(wm.ClickOutsideIgnore)`.
+
+### Architecture
+
+- `tui/wm/window.go` — `FloatingWindow` has `clickOutside` field, `ClickOutsideBehavior()` getter, `SetClickOutsideBehavior()` setter.
+- `tui/viewmodel/popupmouse.go` — All popup mouse dispatch lives here. Functions:
+  - `handlePopupClickOutside(msg)` — top of `dispatchMouseClick`, before WM hit-test
+  - `handlePopupContentClick(fw, msg)` — routes click on popup content to per-popup handler
+  - `handlePopupContentHover(fw, screenX, screenY)` — routes motion events to per-popup hover handler
+  - `closePopupWindowByID(id)` — close dispatch by ID
+- `tui/viewmodel/mouse.go` — `dispatchMouseClick` calls the above. `dispatchMouseMotion` calls `handlePopupContentHover`.
+
+### Pre-selection (hover highlight)
+
+For each popup with selectable items (context-menu, find-replace toggles, confirm buttons, references, completion, outline), the cursor/highlight follows the mouse cursor. The mouse leaving the popup does NOT reset the cursor to 0 (matches real-system behavior).
+
+Per-popup state for pre-selection:
+- `ContextMenuState.Cursor` — item index
+- `FindReplaceState.HoveredToggle` — 0=Aa, 1=\b, 2=.*, -1=none
+- `dirtyPromptFocusYes` — true if mouse over Yes, false if over No
+- `refCursor`, `completionCursor`, `outlineCursor` — same fields used for keyboard nav
+
+### Focus restoration
+
+The existing focus system uses orthogonal booleans (`treeFocused`, `tabBarFocused`, `activeEditorView`, `activeAgentView`). These persist through popup open/close — the popup just sits on top in `wm.focused`. When the popup closes, `focusTarget()` re-derives from the booleans, which still match the user's pre-popup state.
+
+**Click-outside flow:**
+1. User clicks at (X, Y) outside popup P
+2. `handlePopupClickOutside` calls `closePopupWindowByID("P")` (for CloseRoute) or returns true (for Ignore)
+3. The click continues to the region handler in `dispatchMouseClick`
+4. Region handler sets booleans: `treeFocused = true` for sidebar click, `m.unfocus()` + editor click, etc.
+5. `focusTarget()` returns the new focus
+
+**Find-replace + click-editor flow:**
+1. User clicks the editor while find-replace is open
+2. `handlePopupClickOutside` sees click is outside find-replace, but find-replace has KeepRoute → falls through
+3. WM.HandleMouse returns nil (click missed the popup)
+4. classifyMouse → regionEditor
+5. Editor handles click. WM's HandleMouse also unfocuses the popup (line 306-311 of manager.go)
+6. focusTarget() returns FocusEditor
+7. Subsequent keyboard goes to the editor, not find-replace
+
+### Tests
+
+`tui/viewmodel/popupmouse_test.go` — 19 tests:
+- `TestClickOutside_*` (5) — context menu, confirm prompt, find/replace, right-click, inside-click
+- `TestClickContextMenu_*` (2) — activates item, disabled item no-op
+- `TestHoverContextMenu_MovesCursor`
+- `TestClickDirtyPrompt_*` (2) — Yes/No button clicks
+- `TestFocusRestoration_*` (5) — editor focus, tree focus, chained popups, find-replace stays open, mouse click routes to region
+- `TestHoverFindReplace_ToggleHover`
+- `TestClickFindReplace_*` (2) — focus field, toggle Aa
+
+### Pitfalls
+
+- **The `Modal()` flag in the WM only blocks clicks to OTHER floating windows**, not to root content (editor, tree). The `ClickOutsideBehavior == Ignore` mechanism is the additional layer that blocks root clicks for true modals.
+- **Button position detection is approximate**: I use rough X ranges (e.g., "X<8 = Yes, X>=8 = No") because exact button positions vary with content. For pixel-precise detection, the chrome components would need to expose their hit-test rectangles.
+- **Keyboard nav and mouse nav share state**: the `Cursor` field is set by both. When the user presses an arrow key, the cursor moves; when the mouse hovers, the cursor follows. The `st.Cursor` is the source of truth.
+- **The `lastContextMenu` field is cleared on close**: previously leaked. The animation completed before close, so no flicker.
+- **Disabled items are clickable for cursor movement but not for activation**: hover can land on disabled items (just shows the label), but click is a no-op.
 
 ---
 
@@ -331,7 +477,7 @@ User wants all three solved to "production grade, on par with VSCode/JetBrains":
   - `App.editorTabs map[string]*EditorTab` keyed by absolute path.
   - `openEditorTab`: if `path` already in `m.editorTabs`, just `m.win.SwitchTo` to that tab and `m.handleTabSwitch` — do NOT reload. Otherwise create new `editor.New(th)`, call `Open(path)`, register in map, point `m.editor` at it.
   - `closeEditorTab` + new `closeEditorTabForce(path string)`: if dirty, show `showDirtyClosePrompt` first; otherwise just call `closeEditorTabForce` which removes from `m.editorTabs`, closes the LSP file, closes the editor.
-  - `handleTabSwitch` (in `update.go`): just looks up the path in `m.editorTabs` and sets `m.editor = tab.Editor`. NEVER calls `Open()`.
+   - `handleTabSwitch` (in `update.go`): clears `activeEditorView`/`activeAgentView` BEFORE the early return, then re-derives from the active tab. NEVER calls `Open()`.
 - `tui/editor/editor.go`:
   - Added `search *SearchState` field on Editor, initialized in `New()`.
   - Added `DiagnosticsAt(line, col) []LSPDiagnostic` (public wrapper around `diagnosticsAt`).
@@ -408,59 +554,43 @@ User wants all three solved to "production grade, on par with VSCode/JetBrains":
 
 **Tests:** `tui/editor/search_test.go` — 8 tests (literal, case, whole-word, regex, next/prev wrap, replace current, replace all, multi-line). `tui/widgets/findreplace_test.go` — 6 tests (basic, replace, toggles, no-results, empty-query, round-trip).
 
-### Phase 3 — Right-Click Context Menu (IN PROGRESS)
+### Phase 3 — Right-Click Context Menu (DONE)
 
-**Status:** Phase 3a (plumbing) is done — build clean, all tests pass. Phase 3b (Ctrl+. shortcut) and the rest are still pending.
+**Status:** All tasks complete. 11 new tests in `contextmenu_test.go`, 9 new tests in `contextmenu_v2_test.go`, all passing.
 
-**Done in 3a:**
-- `tui/widgets/contextmenu.go`:
-  - `ContextMenuItem{Label, Detail, Disabled, Action}`.
-  - `ContextMenuSection{SectionLabel, Items}`.
-  - `ContextMenuState{Title, Sections, Cursor, FlatItems}` with `Build()`, `Activate()`, `Next()`, `Prev()`.
-  - `ContextMenuLines(th, st) []string` — pre-styled ANSI with section labels, dividers (`─`), highlight via `AttrReverse` background, dim italic for disabled, right-aligned key hints.
-  - `ContextMenuPopupWidth/Height(st)` for sizing.
-  - `QuickMenu(title, items...)` helper for non-sectioned menus.
-- `tui/wm/window.go`: added `(*FloatingWindow).SetContent(c widget.Widget)` and `(*FloatingWindow).contentDirty = true` so refresh works.
-- `tui/viewmodel/mouse.go`:
-  - `dispatchMouseClick`: at the top, if `msg.Button == tea.MouseRight`, dispatch to new `dispatchMouseRightClick`.
-  - `dispatchMouseRightClick(msg)`: if a context menu is open, close it (right-click toggles). Otherwise, classify region, call the appropriate `buildXContextMenu(mouse)`, position the popup, show it.
-  - `clampPopupPosition(mx, my, w, h, screenW, screenH)` — keeps popup on-screen.
-- `tui/viewmodel/app.go`:
-  - `App.lastContextMenu *widgets.ContextMenuState` — kept so keyboard nav works.
-  - `buildEditorContextMenu(mouse)`: clipboard section (Copy/Cut/Paste, with `Disabled: !m.editor.HasSelection()`), selection section (format selection), Code section (LSP items: Go to def, Find refs, Rename, conditional on `m.lspManager.ServerReady()`; Show N diagnostics if cursor on a diagnostic), View section (Find, Find & replace, Outline).
-  - `buildSidebarContextMenu(mouse)`: Actions (Open, Reveal), Create (New file/folder in dir, New file/folder sibling), Modify (Rename, Delete, Copy path). Uses `m.pathUnderMouse(mouse)` to resolve the clicked path.
-  - `buildTabBarContextMenu(mouse)`: uses `m.win.HitTest(adjustedX, 0)` to find clicked tab. Editor tab → Close/Close others/Close right/Copy path/Reveal. Agent tab → Close/Cancel agent.
-  - `buildInputContextMenu(mouse)`: Paste/Copy input/Clear input.
-  - `buildChatContextMenu(mouse)`: Copy selection (uses `ml.SelectedText()`), Copy last assistant (uses `ml.LastAssistantText()`).
-  - `closeContextMenu()`, `handleContextMenuKey(msg)`: Esc=close, Enter=activate, ↑↓=nav.
-  - `refreshContextMenu()` re-renders via `fw.SetContent`.
-  - `showContextMenuAt(x, y)`: construct a `tea.MouseClickMsg` and call `dispatchMouseRightClick`. (Used by Ctrl+. shortcut — still needs wiring.)
-  - `pathUnderMouse(mouse)`: uses `m.treeModel.VisibleRows()` and the `treeYOffset`.
-  - Stubs: `copyEditorSelection`, `cutEditorSelection`, `pasteIntoEditor`, `pasteIntoInput`, `copyToClipboard`, `showDiagnosticAt`, `openFileFromTree`, `startNewFileInTree`, `startNewFolderInTree`, `startRenameInTree`, `startDeleteInTree`, `startTreeItemPrompt`, `closeAllEditorTabsExcept`, `closeEditorTabsToRightOf`, `startRename`. All currently just set a status bar message; real implementations pending.
-- `tui/filetree/tree.go`: added `VisibleRows() []string`, `IsDir(path) bool`, `ParentDir(path) string`, `ExpandToPath(path) bool`, plus `splitPath` helper.
-- `tui/widgets/messagelist.go`: added `SelectedText() string` (returns text inside current selection, "" if none), `LastAssistantText() string` (last assistant message content), `normalizedSelection()` helper.
-- `tui/viewmodel/lsp_manager.go`: added `ServerReady() bool` — returns `m.activeConnected && m.activeStatus == editor.LSPConnected`.
-- `tui/viewmodel/keyboard.go dispatchFloatingWindowKey`: added `case "context-menu": m.handleContextMenuKey(msg)`.
+**Context menu widget changes (contextmenu.go):**
+- `ContextMenuItem{Label, Detail, Disabled, Action}`.
+- `ContextMenuSection{SectionLabel, Items}`.
+- `ContextMenuState{Title, Sections, Cursor, FlatItems}` with `Build()`, `Activate()`, `Next()`, `Prev()`.
+- `ContextMenuLines(th, st, openDurationMs) []string` — uses unified chrome, no title, section dividers, full-row SubtleBg highlight. Supports slide-in animation via `ContextMenuLinesReveal`.
+- `FlatItemAt(i)` accessor for external navigation.
+- `ContextMenuPopupWidth/Height` for sizing (tight: height = content + 2 chrome rows only).
+- `QuickMenu(title, items...)` helper for non-sectioned menus.
 
-**Pending in 3b–3h:**
+**Design rules enforced:**
+- No title — top border is continuous dashes `╭───╮`.
+- Disabled items: same indent as enabled, dim foreground, NO italic.
+- Height: exact content + chrome — no extra bottom padding.
+- Click-outside-to-dismiss: dispatchMouseClick checks `"context-menu"` containment.
+- Click-on-item activation: `activateContextMenuAt()` resolves screen Y to item row.
+- Slide-in animation: 80ms top-to-bottom reveal via `contextMenuOpenedAt` timestamp.
 
-| Task | Status | Description |
-|------|--------|-------------|
-| **3b: Ctrl+. shortcut** | TODO | In `dispatchEditorKey`, add `case "ctrl+.":` that calls `m.editor.CursorScreenPosition(...)` then `m.showContextMenuAt(x, y)`. |
-| **3c: Real clipboard** | TODO | Replace `copyToClipboard` / `pasteIntoEditor` / `pasteIntoInput` stubs. Look at `editor/events.go` for existing `tea.SetClipboard` usage or `crude/tui/platform` for the platform layer. Most terminals support OSC 52 via `tea.SetClipboard`. |
-| **3d: Tree new/rename/delete** | TODO | Implement `startNewFileInTree`, `startNewFolderInTree`, `startRenameInTree`, `startDeleteInTree`, `startTreeItemPrompt`. Use a modal prompt (similar to the dirty prompt). For delete, use the dirty-prompt pattern with destructive warning. For new file/folder, prompt for name. For rename, prefill the input with the current name. |
-| **3e: Code-block copy** | TODO | Add a `Copy code block` item to `buildChatContextMenu` that extracts the last ``` fenced code block from the last assistant message. Walk the message's `Content` (or `Rendered` lines) looking for ``` lines. |
-| **3f: Context menu tests** | TODO | Add `tui/widgets/contextmenu_test.go` covering: section rendering, navigation (Next/Prev wrap), activation, disabled item skipping, title display. |
-| **3g: Status bar right-click** | TODO | Add `regionStatusBar` to `classifyMouse`. Build a `buildStatusBarContextMenu` with items: "Restart LSP", "Show LSP diagnostics", "Copy status". |
-| **3h: Polish** | TODO | Run all tests. Manual smoke test. Make sure the popup's modal behavior doesn't block the editor from receiving keypresses when no popup is open. |
+**WM/mouse/app integration:**
+- `mouse.go:dispatchMouseClick`: right-click→`dispatchMouseRightClick`, left-click-outside→close menu, left-click-on-item→activate.
+- `mouse.go:dispatchMouseRightClick`: right-click toggles close; otherwise builds region-specific menu.
+- `mouse.go:clampPopupPosition()`: keeps popup on-screen.
+- `app.go:lastContextMenu`, `contextMenuOpenedAt` fields for animation.
+- `app.go:activateContextMenuAt(sx, sy)`: resolves screen Y to menu item, activates it.
+- `app.go:contextMenuLinesForFrame()`: returns animated lines for first 80ms, full menu after.
+- `keyboard.go`: Ctrl+. wired via `showContextMenuAt` (Phase 3b).
 
 ### Key Files for Resuming
 - `tui/viewmodel/editor_tab.go` — EditorTab struct (new, 22 lines)
 - `tui/viewmodel/editor_tab_test.go` — 3 tests (new)
 - `tui/viewmodel/app.go` — `App` struct with new `editorTabs`, `findReplace`, `lastContextMenu` fields; `openEditorTab`, `closeEditorTab`, `closeEditorTabForce`, `showDirtyClosePrompt`, `handleDirtyPromptKey`, `openFindReplace`, `closeFindReplace`, `refreshFindReplacePopup`, `handleFindReplaceKey`, `buildEditorContextMenu`, `buildSidebarContextMenu`, `buildTabBarContextMenu`, `buildInputContextMenu`, `buildChatContextMenu`, `closeContextMenu`, `handleContextMenuKey`, `refreshContextMenu`, `showContextMenuAt`, `pathUnderMouse`, `copyEditorSelection`, `cutEditorSelection`, `copyToClipboard`, etc.
-- `tui/viewmodel/update.go` — `handleTabSwitch` now just looks up the path in `m.editorTabs` and sets `m.editor = tab.Editor`. **NEVER calls `Open()`.**
-- `tui/viewmodel/mouse.go` — `dispatchMouseClick` routes right-click to `dispatchMouseRightClick`. `clampPopupPosition` for popup placement.
-- `tui/viewmodel/keyboard.go` — `dispatchEditorKey` has find/replace/Ctrl+. slots (Ctrl+. not yet wired). `dispatchFloatingWindowKey` routes `"find-replace"`, `"dirty-close-prompt"`, `"context-menu"`.
+- `tui/viewmodel/update.go` — `handleTabSwitch` now clears `activeEditorView`/`activeAgentView` BEFORE the early return. **Always resets state, then derives from the active tab.**
+- `tui/viewmodel/mouse.go` — `dispatchMouseClick` routes right-click to `dispatchMouseRightClick`. `clampPopupPosition` for popup placement. `activateContextMenuAt` for click-on-item.
+- `tui/viewmodel/keyboard.go` — `dispatchEditorKey` has find/replace/Ctrl+. slots (Ctrl+. now wired via `showContextMenuAt`). `dispatchFloatingWindowKey` routes `"find-replace"`, `"dirty-close-prompt"`, `"context-menu"`, `"tree-prompt"`, `"tree-delete-confirm"`.
 - `tui/editor/search.go` — SearchState, SearchOptions, SearchMatch, computeMatches, all editor search methods.
 - `tui/editor/render.go` — `searchHighlightAt`, `searchHighlightBg` integrated into the cell-by-cell render.
 - `tui/widgets/findreplace.go` — `FindReplaceState`, `FindReplaceLines`, `FindReplaceFromEditor`, `FindReplaceToEditor`.
@@ -470,7 +600,7 @@ User wants all three solved to "production grade, on par with VSCode/JetBrains":
 - `tui/filetree/tree.go` — added `VisibleRows`, `IsDir`, `ParentDir`, `ExpandToPath`.
 
 ### Pitfalls / Gotchas When Resuming
-- **Two duplicate `closeContextMenu` / `handleContextMenuKey` / `refreshContextMenu` / `pathUnderMouse` / `copyEditorSelection` / `cutEditorSelection` / `copyToClipboard` / `showDiagnosticAt` / `openFileFromTree` / `startNewFileInTree` / `startNewFolderInTree` / `startRenameInTree` / `startDeleteInTree` / `startTreeItemPrompt` / `closeAllEditorTabsExcept` / `closeEditorTabsToRightOf` / `startRename` blocks** were accidentally added to `app.go` during a botched edit. The build still works because Go allows duplicate function names... actually no, the build succeeded so this can't be right. Run `grep -c "func (m \*App) closeContextMenu" tui/viewmodel/app.go` to check. **If count > 1, the build will fail**. Verify before further work. (As of the last build, count was 1 and the build succeeded.)
+- **Two duplicate function blocks** were accidentally added to `app.go` during a botched edit. If the build fails with "redeclared in this block", run `grep -n "func (m \*App) closeContextMenu" tui/viewmodel/app.go | sort -k2` to find duplicates.
 - `m.editor.PadL` is used in `routeEditorMouse` to translate mouse X — already wired, don't break it.
 - `m.lastSettings.Editor.FormatOnSave` is applied in `openEditorTab` — keep it on every new tab.
 - `m.findReplace.Replace` is a string (not `[]rune`); use `len()` not `utf8.RuneCountInString()` for length math.
@@ -479,6 +609,9 @@ User wants all three solved to "production grade, on par with VSCode/JetBrains":
 - For right-click: the existing LSP `requestDefinitionCmd` returns a `tea.Cmd` — the context menu's `Action` callbacks can't return Cmds, so we use `_, _ = m.requestDefinitionCmd(), 0` to discard. The Cmd fires asynchronously, so the result still arrives via the normal `lspDefinitionResultMsg` path.
 - For tree operations: `m.treeModel.ExpandToPath` was just added — make sure to call it after any tree mutation so the new path is visible.
 - The chat input paste: `m.input.Paste()` may already exist. Check before writing a new implementation.
+- **ANSI search false-matches**: NEVER use `strings.Index(rawLine, label)` on an ANSI-styled string — the label text can match inside escape codes (e.g., `"Off"` in an ANSI code). Always `stripAnsi` first, then search plain text.
+- **UTF-8 byte positions**: Box-drawing chars like `│` (U+2502) are 3 bytes. Byte-position assertions break if you count them as 1. Use `len([]rune(s))` for char count, or account for the 3-byte offset.
+- **`buildTopBorder` has 4 separate cases** (no title/icon, icon only, title only, both). Each case has a unique fixed-width formula. Changing one case without updating the others creates off-by-ones. Always recompute from scratch per case — do NOT use a single unified formula with conditionals for the spacer.
 
 ### Pre-existing Test Failures (NOT caused by this work)
 - `crude/safety/TestProjectWriteCommands`, `TestDestructiveCommands`, `TestUnknownCommand` — pre-existing. Don't fix unless asked.

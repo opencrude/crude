@@ -115,6 +115,29 @@ func BorderCharsFor(style BorderStyle) BorderChars {
 	}
 }
 
+// ClickOutsideBehavior defines what happens when the user clicks outside
+// this window. This is a critical UX distinction: context menus close,
+// find/replace stays open but routes the click, modals ignore outside clicks.
+type ClickOutsideBehavior int
+
+const (
+	// ClickOutsideCloseRoute closes the window and routes the click
+	// to the underlying widget. Used for context menus, hover popups.
+	ClickOutsideCloseRoute ClickOutsideBehavior = iota
+	// ClickOutsideKeepRoute keeps the window open and routes the click
+	// to the underlying widget. Used for find/replace, file picker.
+	ClickOutsideKeepRoute
+	// ClickOutsideIgnore does nothing — the window stays focused and
+	// the click has no effect. Used for modal dialogs (save confirm,
+	// text prompt, tree delete confirm).
+	ClickOutsideIgnore
+)
+
+// WithClickOutside sets the click-outside behavior for this window.
+func WithClickOutside(b ClickOutsideBehavior) WindowOption {
+	return func(fw *FloatingWindow) { fw.clickOutside = b }
+}
+
 // WindowOption configures a FloatingWindow during creation.
 type WindowOption func(*FloatingWindow)
 

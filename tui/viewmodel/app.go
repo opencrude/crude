@@ -194,6 +194,10 @@ type App struct {
 	// keypress.
 	lastContextMenu *widgets.ContextMenuState
 
+	// contextMenuOpenedAt is the wall-clock time the context menu
+	// was opened. Used to drive the brief slide-in animation.
+	contextMenuOpenedAt time.Time
+
 	// treePrompt drives the small name-input popup used by the
 	// file tree's New / Rename actions. The popup lives in the
 	// windowManager under ID "tree-prompt"; the App owns the
@@ -1094,6 +1098,16 @@ func (m *App) closeEditorTab() {
 // Used both for the normal close path and after the user confirms a
 // close-with-unsaved-changes prompt.
 func (m *App) closeEditorTabForce(path string) {
+	// Close any popups associated with this editor before closing the tab.
+	m.closeFindReplace()
+	m.closeReferencesPopup()
+	m.closeCompletionPopup()
+	m.closeOutlinePopup()
+	m.clearDiagHoverPopup()
+	if m.windowManager != nil {
+		m.windowManager.RemoveWindow("diag-context")
+	}
+
 	tabTitle := m.editorTabTitle(path)
 	if tab := m.win.TabByTitle(tabTitle); tab != nil {
 		m.win.CloseTabByID(tab.ID)
@@ -1235,6 +1249,7 @@ func (m *App) refreshFindReplacePopup() {
 		wm.WithClosable(false),
 		wm.WithModal(false), // not modal — user can still click editor
 		wm.WithFocusable(true),
+		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	// Position in the top-right of the editor area, with margin.
 	x := layout.SidebarW + m.editor.PadL + (layout.EditorW - w) - 2
@@ -1282,6 +1297,7 @@ func (m *App) showDirtyClosePrompt(path string) {
 		wm.WithClosable(false),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
+		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.windowManager.AddWindow(fw)
@@ -1803,7 +1819,21 @@ func (m *App) closeContextMenu() {
 	if m.windowManager != nil {
 		m.windowManager.RemoveWindow("context-menu")
 	}
+	m.lastContextMenu = nil
 	m.dirty = true
+}
+
+// findFlatItemIndex returns the index in FlatItems for the item at
+// (sectionIdx, itemIdx). Returns false if the item is disabled (and
+// therefore not in FlatItems).
+func findFlatItemIndex(st *widgets.ContextMenuState, sectionIdx, itemIdx int) (int, bool) {
+	for i := 0; i < len(st.FlatItems); i++ {
+		si, ii, ok := st.FlatItemAt(i)
+		if ok && si == sectionIdx && ii == itemIdx {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // handleContextMenuKey routes keypresses to the context menu. Up/
@@ -1851,7 +1881,7 @@ func (m *App) refreshContextMenu() {
 	if fw == nil || m.lastContextMenu == nil {
 		return
 	}
-	lines := widgets.ContextMenuLines(m.theme, m.lastContextMenu)
+	lines := widgets.ContextMenuLines(m.theme, m.lastContextMenu, 0)
 	pop := widgets.NewPopupContent(lines)
 	fw.SetContent(pop)
 	fw.MarkContentDirty()
@@ -2291,6 +2321,7 @@ func (m *App) startDeleteInTree(path string) {
 		wm.WithClosable(false),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
+		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
 	if m.windowManager != nil {
@@ -2333,6 +2364,7 @@ func (m *App) openTreeTextPrompt(kind widgets.TextPromptKind, title, prompt, dir
 		wm.WithClosable(false),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
+		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
 	if m.windowManager != nil {
@@ -2687,6 +2719,7 @@ func (m *App) openTextOverlayWindow() {
 	win := wm.NewFloatingWindow("textoverlay", "Edit", textWidget,
 		72, 30,
 		wm.WithMinSize(32, 8),
+		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.windowManager.AddWindow(win)
@@ -2706,6 +2739,7 @@ func (m *App) openFilePickerWindow() {
 		wm.WithModal(true),
 		wm.WithFocusable(true),
 		wm.WithMinSize(32, 10),
+		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.windowManager.AddWindow(win)
@@ -2797,6 +2831,7 @@ func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
 	fw := wm.NewFloatingWindow("composer", "Composer", ansiWidget,
 		72, 24,
 		wm.WithMinSize(40, 10),
+		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.windowManager.AddWindow(fw)
