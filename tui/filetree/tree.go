@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"crude/tui/widget"
 )
 
 // ---------------------------------------------------------------------------
@@ -289,6 +291,13 @@ type FileTreeModel struct {
 	// cursorIndex is the current cursor position in the visibleNodes slice.
 	cursorIndex int
 
+	// Hover tracks which visible node the mouse cursor is currently
+	// pointing at. -1 means no node is hovered (mouse off-tree or
+	// over the scrollbar). Index is in the same space as cursorIndex
+	// — i.e. an index into visibleNodes — so render code can compare
+	// it directly to the loop variable.
+	Hover widget.Hover
+
 	// visibleNodes is a flattened, depth-first list of currently visible nodes.
 	visibleNodes []*TreeNode
 
@@ -356,6 +365,7 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 		iconResolver:       NewIconResolver(),
 		gitResolver:        NewGitStatusResolver(absPath),
 		diagnosticResolver: make(map[string]DiagCounts),
+		Hover:              widget.NewHover(),
 	}
 
 	// Create the root node.

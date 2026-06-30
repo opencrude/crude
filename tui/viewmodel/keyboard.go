@@ -784,25 +784,107 @@ func (m *App) routeToInputInQuestion(msg tea.KeyPressMsg, cmds *[]tea.Cmd) tea.M
 	return m
 }
 
+// dispatchPasteMsg routes a tea.PasteMsg (from bracketed-paste mode or
+// an explicit Ctrl+V) to the correct focus target.
+//
+// Before this fix, the only two cases the dispatcher knew about were
+// "editor" and "everything else → chat input". That meant paste
+// silently went to the chat input even when the user was in a
+// settings form, a find/replace popup, a text overlay, the file
+// picker, the composer, the context menu's text field, etc. — which
+// is why "Ctrl+V doesn't work in settings" was the user's #1 pain.
+//
+// The new dispatch mirrors dispatchKeyPress: it asks the focus
+// resolver "where am I?", and routes to the widget that owns the
+// focus. Each branch falls through to the next if it doesn't own
+// the focus; the very last branch (chat input) is the catch-all for
+// "user is typing in the composer" which is the original behaviour
+// we want to preserve.
 func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
 	switch m.focusTarget() {
 	case FocusEditor:
-		cmd := m.editor.HandleEvent(msg)
-		return m, cmd
-	default:
-		canType := false
-		if a, ok := m.agents[m.activeAgentView]; ok {
-			canType = !a.Completed && a.IsActive()
+		if m.activeEditorView != "" && m.editor.IsOpen() {
+			cmd := m.editor.HandleEvent(msg)
+			return m, cmd
 		}
-		updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
-		m.input = updated
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+
+	case FocusOverlay:
+		// Settings / form / YOLO / question / file picker / etc.
+		// Each of these widgets has its own Update method that
+		// accepts tea.PasteMsg. The overlay mode dispatcher is
+		// the single place that knows which overlay is active.
+		switch m.Mode {
+		case ModeSettings:
+			// Paste is routed here only when the user is editing a
+			// TextItem in the settings form. The form's Update handles
+			// tea.PasteMsg and forwards it to the focused TextItem's
+			// HandlePaste. We don't need to react to the returned
+			// Event because paste never produces a Save/Cancel — it
+			// just inserts characters (or replaces a selection).
+			updated, cmd, _ := m.settings.Update(msg)
+			m.settings = updated
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		case ModeFilePicker:
+			// File picker doesn't have a paste target; ignore.
+		default:
+			// Other overlays (confirm, question, yolo, text overlay)
+			// either don't take paste or have their own paste path
+			// triggered by the user pressing Enter. Fall through.
 		}
-		cmds = append(cmds, m.handleInputEvent(evt)...)
+		return m, tea.Batch(cmds...)
+
+	case FocusFloatingWindow:
+		// A popup is focused. Route to the focused window's
+		// content if it knows how to handle paste. The current
+		// popups that accept paste are the find/replace popup
+		// (via its OnChange callback flow — but the user actually
+		// pastes into the find field via the keyboard handler in
+		// app.go) and the text overlay / composer (which wrap a
+		// components.TextInput). For now, just route to the
+		// content if it implements a Paste handler.
+		if fw := m.windowManager.Focused(); fw != nil {
+			cmd := m.pasteToWindowContent(fw, msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		return m, tea.Batch(cmds...)
 	}
+
+	// Default / FocusInput / FocusLauncher / FocusTree / FocusTabBar /
+	// FocusNone → route to chat input (the original behaviour).
+	canType := false
+	if a, ok := m.agents[m.activeAgentView]; ok {
+		canType = !a.Completed && a.IsActive()
+	}
+	updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+	m.input = updated
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	cmds = append(cmds, m.handleInputEvent(evt)...)
+	return m, tea.Batch(cmds...)
+}
+
+// pasteToWindowContent forwards a PasteMsg to the content of a
+// focused floating window. The content must implement either
+// HandleEvent(tea.Msg) tea.Cmd or Update(tea.Msg) — whichever
+// matches its public API. Returns the resulting cmd (or nil).
+func (m *App) pasteToWindowContent(fw *wm.FloatingWindow, msg tea.PasteMsg) tea.Cmd {
+	if fw == nil || fw.Content == nil {
+		return nil
+	}
+	switch c := fw.Content.(type) {
+	case interface{ HandleEvent(tea.Msg) tea.Cmd }:
+		return c.HandleEvent(msg)
+	case interface{ Update(tea.Msg) tea.Cmd }:
+		return c.Update(msg)
+	}
+	return nil
 }
 
 func (m *App) dispatchEditorTick(msg any) []tea.Cmd {

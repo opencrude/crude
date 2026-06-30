@@ -11,6 +11,7 @@ import (
 
 	"crude/tui/filetree"
 	"crude/tui/rendering"
+	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 )
@@ -380,6 +381,78 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 			}
 		}
 	}
+
+	// Confirm dialog mouse: forward clicks to the confirm widget.
+	// The Confirm widget wraps a components.Dialog whose only
+	// interactive element is a components.ButtonGroup. Forwarding
+	// the click lets the user click buttons instead of using the
+	// keyboard. The X coordinate translation (raw screen X →
+	// button-local X) is approximate — it assumes the button row
+	// starts at the dialog's left padding. The common case
+	// (button row at the left edge) works perfectly; the rare
+	// case (button row indented by the dialog body) will be
+	// slightly off but still functional because the ButtonGroup's
+	// hit-test uses the actual rendered width of each button.
+	if activeTab != nil && activeTab.Title == "Confirm" {
+		adjustedX := mouse.X
+		if m.treeVisible && m.treeModel != nil {
+			adjustedX -= m.treeWidth + 1
+		}
+		adjustedX -= m.theme.Spacing.PadLR
+		if adjustedX < 0 {
+			adjustedX = 0
+		}
+		// Forward the click to the confirm widget. The confirm
+		// widget is a components.Dialog which has its own
+		// Update() that handles mouse clicks via the ButtonGroup.
+		adjustedMsg := tea.MouseClickMsg{X: adjustedX, Y: 0, Button: msg.Button}
+		updated, result, done := m.confirm.Update(adjustedMsg)
+		m.confirm = updated
+		if done {
+			return m.handleConfirmResult(result)
+		}
+	}
+
+	return m, nil
+}
+
+// handleConfirmResult is the mouse equivalent of the keyboard's
+// "user pressed Enter on a confirm button" path. It takes the
+// ConfirmResult struct (the ConfirmDialog's Update already
+// resolves "which button was clicked" → ConfirmResult) and runs
+// the same flow the keyboard path runs — invokes the result
+// callback, updates the agent's pending permission tag, and
+// closes the overlay tab.
+//
+// Lives here rather than in app.go so the mouse dispatcher can
+// call it without crossing the keyboard↔mouse boundary twice.
+// The implementation is kept in lockstep with
+// handleConfirmKey in keyboard.go.
+func (m *App) handleConfirmResult(result ttypes.ConfirmResult) (tea.Model, tea.Cmd) {
+	m.statusbar.SetConfirming(false)
+	m.blocking = false
+	if a, ok := m.agents[m.activeAgentView]; ok {
+		a.Thinking = true
+	}
+	m.statusbar.SetThinkingForAgent(m.activeAgentView, true, false, false)
+	if m.OnConfirmResult != nil {
+		m.OnConfirmResult(result)
+		m.logger.Info("BLOCK", "resolved_mouse", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
+	}
+	if a, ok := m.agents[m.activeAgentView]; ok {
+		switch result.Choice {
+		case ttypes.ConfirmAllow:
+			a.pendingPermTag = "allowed"
+		case ttypes.ConfirmAlways:
+			a.pendingPermTag = "always"
+		case ttypes.ConfirmDeny:
+			a.pendingPermTag = "denied"
+			if ml := m.activeMsgList(); ml != nil {
+				ml.SetToolPermTag(result.Tool, "", "denied")
+			}
+		}
+	}
+	m.closeOverlayTab("Confirm")
 	return m, nil
 }
 
@@ -496,6 +569,77 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 		cmd := m.routeSidebarMouse(msg)
 		return m, cmd
+	}
+
+	// Mouse is outside the tree — if the tree was previously hovered,
+	// clear the hover state so the row doesn't keep the hover background
+	// after the cursor has moved away. This matches the behaviour of
+	// every GUI tree view: hover is "live" and tied to mouse position.
+	if m.treeModel != nil && m.treeModel.Hover.Clear() {
+		m.dirty = true
+	}
+
+	// Tab bar hover: update the hover state when the mouse moves over
+	// the horizontal tab bar (row 3). Use HitTest to find the tab under
+	// the cursor, with the same X-adjustment used in dispatchMouseClick.
+	if m.win.IsOpen() && m.win.TabCount() >= 1 && mouse.Y == 3 {
+		adjustedX := mouse.X
+		if m.treeVisible && m.treeModel != nil {
+			adjustedX -= m.treeWidth + 1
+		}
+		adjustedX -= m.theme.Spacing.PadLR
+		if adjustedX < 0 {
+			adjustedX = 0
+		}
+		hit := m.win.HitTest(adjustedX, 0)
+		if hit.TabIndex >= 0 {
+			if m.win.Hover.Set(hit.TabIndex) {
+				m.dirty = true
+			}
+			return m, tea.Batch(cmds...)
+		}
+	}
+
+	// Mouse is outside the tab bar — clear the hover state.
+	if m.win.Hover.Clear() {
+		m.dirty = true
+	}
+
+	// Overlay hover: forward mouse motion to the active overlay's
+	// interactive element (currently only the Confirm dialog's
+	// ButtonGroup). This is what gives the confirm dialog buttons
+	// the "live" hover background that makes the rest of the app
+	// feel like a real GUI.
+	//
+	// Only fire this when the mouse is actually inside the overlay
+	// region — the classifyMouse() call would also be expensive
+	// for every motion event, so we use a cheap bounds check first.
+	if m.overlay.IsOpen() {
+		overlayStartLine := m.chatAreaHeight + 3
+		if m.win.IsOpen() && m.win.TabCount() >= 1 {
+			overlayStartLine += 2
+		}
+		if mouse.Y >= overlayStartLine {
+			activeTab := m.overlay.ActiveTab()
+			if activeTab != nil && activeTab.Title == "Confirm" {
+				adjustedX := mouse.X
+				if m.treeVisible && m.treeModel != nil {
+					adjustedX -= m.treeWidth + 1
+				}
+				adjustedX -= m.theme.Spacing.PadLR
+				if adjustedX < 0 {
+					adjustedX = 0
+				}
+				// Forward the motion to the confirm widget. The
+				// ButtonGroup inside it will update its Hover
+				// field; the render will show the highlight on
+				// the next frame.
+				adjustedMsg := tea.MouseMotionMsg{X: adjustedX, Y: 0, Button: msg.Button}
+				updated, _, _ := m.confirm.Update(adjustedMsg)
+				m.confirm = updated
+				m.dirty = true
+			}
+		}
 	}
 
 	if m.activeEditorView != "" && m.editor.IsOpen() {

@@ -94,13 +94,12 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 		return m, nil, FormActionNone
 	}
 
-	if keyMsg.String() == "ctrl+c" {
-		if m.expanded >= 0 {
-			m.expanded = -1
-			return m, nil, FormActionNone
-		}
-		return m, nil, FormActionBack
-	}
+	// Ctrl+C used to mean "go back" here, but that clobbered the
+	// standard edit shortcut (copy) and left the user with no way
+	// to copy text out of a settings field. The "back" affordance
+	// is now Esc-only — see the case for tea.KeyEsc below. Ctrl+Q
+	// (when intercepted by the viewmodel's handleCancel) closes the
+	// overlay entirely.
 
 	if m.expanded >= 0 {
 		return m.updateExpanded(keyMsg)
