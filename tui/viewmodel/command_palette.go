@@ -13,6 +13,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/theme"
+	"crude/tui/widget"
 	ttypes "crude/tui/types"
 	"crude/tui/wm"
 )
@@ -61,6 +62,13 @@ type commandPaletteModel struct {
 	width    int
 	height   int
 	screenX  int
+	screenY  int
+
+	Hover widget.Hover
+
+	// lineToItem maps rendered content line indices to item indices.
+	// -1 means the line is a section header or divider.
+	lineToItem []int
 }
 
 type cmdGroup struct {
@@ -92,6 +100,7 @@ func newCommandPaletteModel(th *theme.Theme, callback func(cmdID string) tea.Cmd
 		items:    paletteCommands,
 		callback: callback,
 		sb:       scrollbar.New(0),
+		Hover:    widget.NewHover(),
 	}
 	m.applyFilter()
 	return m
@@ -201,6 +210,7 @@ func (m *commandPaletteModel) buildContentLines(width int, dim, accent, highligh
 
 func (m *commandPaletteModel) View(width int) string {
 	m.width = width
+	m.lineToItem = nil
 	m.clampScroll()
 	vh := m.visibleHeight()
 
@@ -227,6 +237,7 @@ func (m *commandPaletteModel) View(width int) string {
 	out = append(out, padLine(dim.Render(strings.Repeat("\u2500", width))))
 
 	if len(m.filtered) == 0 {
+		m.lineToItem = nil
 		out = append(out, padLine(dim.Render("  no matching commands")))
 		for len(out) < vh+2 {
 			out = append(out, padLine(""))
@@ -275,7 +286,7 @@ func (m *commandPaletteModel) View(width int) string {
 		renderW = 10
 	}
 
-	contentLines, _ = m.buildContentLines(renderW, dim, accent, highlight)
+	contentLines, m.lineToItem = m.buildContentLines(renderW, dim, accent, highlight)
 
 	end := m.scroll + vh
 	if end > len(contentLines) {
@@ -333,12 +344,48 @@ func (m *commandPaletteModel) renderItem(item cmdEntry, selected bool, width int
 	return dim.Render("  " + rest)
 }
 
+func (m *commandPaletteModel) handleMouseMotion(msg tea.MouseMotionMsg) {
+	mouse := msg.Mouse()
+	localX := mouse.X - m.screenX
+	localY := mouse.Y - m.screenY
+
+	if localX < 0 || localX >= m.width || localY < 0 || localY >= m.height {
+		return
+	}
+
+	// Content area starts at contentY=1 (BorderLShape decoration).
+	// First 2 content lines are the prompt row and divider row.
+	visLine := localY - 1 - 2
+	if visLine < 0 || len(m.lineToItem) == 0 {
+		return
+	}
+
+	contentLine := m.scroll + visLine
+	if contentLine < 0 || contentLine >= len(m.lineToItem) {
+		return
+	}
+
+	if itemIdx := m.lineToItem[contentLine]; itemIdx >= 0 {
+		m.idx = itemIdx
+	}
+}
+
 func (m *commandPaletteModel) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return m.updateKey(msg)
 
-	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+	case tea.MouseMotionMsg:
+		m.handleMouseMotion(msg)
+		updated, cmd := m.sb.Update(msg)
+		m.sb = updated
+		if m.sb.ConsumeScrollChanged() {
+			m.scroll = m.sb.GetScrollY()
+			m.clampScroll()
+		}
+		return cmd
+
+	case tea.MouseClickMsg, tea.MouseReleaseMsg:
 		updated, cmd := m.sb.Update(msg)
 		m.sb = updated
 		if m.sb.ConsumeScrollChanged() {
@@ -445,8 +492,9 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 			b := fw.ContentBounds()
 			model.width = b.W
 			model.height = b.H
-			sx, _ := fw.Position()
+			sx, sy := fw.Position()
 			model.screenX = sx
+			model.screenY = sy
 		}
 		return model.View(model.width)
 	}

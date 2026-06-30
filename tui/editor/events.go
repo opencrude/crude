@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/clipboard"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 )
@@ -311,6 +312,38 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.redo()
 		case "ctrl+a":
 			e.selectAll()
+		case "ctrl+x":
+			// Cut: copy the current selection to the clipboard
+			// and delete it. If there's no selection, do nothing
+			// (cut on empty buffer is a no-op — matches VSCode /
+			// JetBrains and avoids accidentally clearing the
+			// whole file when the user hits Ctrl+X with no
+			// selection).
+			if e.HasSelection() {
+				text := e.SelectedText()
+				e.DeleteSelection()
+				return rendering.CopyToClipboardCmd(text)
+			}
+		case "ctrl+v":
+			// Paste: read from the system clipboard and insert.
+			// Bubble Tea's bracketed-paste mode fires a
+			// tea.PasteMsg that gets routed here via HandleEvent
+			// (see events.go line ~43), but terminals without
+			// bracketed paste send Ctrl+V as a KeyPressMsg —
+			// handle both paths uniformly.
+			//
+			// We use a closure (not rendering.ReadFromClipboardCmd
+			// directly) so the editor can re-insert the read text
+			// via its own HandleEvent(tea.PasteMsg) path — this
+			// keeps the insert/selection-deletion logic in a
+			// single place.
+			return func() tea.Msg {
+				data := clipboard.Read(clipboard.FmtText)
+				if len(data) == 0 {
+					return rendering.ClipboardErrorMsg("clipboard is empty or unavailable")
+				}
+				return tea.PasteMsg{Content: string(data)}
+			}
 		default:
 			if len(key.Text) > 0 {
 				for _, r := range key.Text {

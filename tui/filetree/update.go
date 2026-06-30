@@ -278,8 +278,8 @@ func (m *FileTreeModel) handleKeyString(key tea.KeyPressMsg) tea.Cmd {
 // handleMouse — mouse interaction
 // ---------------------------------------------------------------------------
 
-// handleMouse processes mouse events (click, scroll, etc.) and translates
-// them into tree actions.
+// handleMouse processes mouse events (click, scroll, motion, etc.) and
+// translates them into tree actions.
 //
 // Coordinate layout:
 //
@@ -292,9 +292,36 @@ func (m *FileTreeModel) handleMouse(msg tea.Msg) tea.Cmd {
 
 	case tea.MouseWheelMsg:
 		return m.handleMouseWheel(mm)
+
+	case tea.MouseMotionMsg:
+		m.handleMouseMotion(mm)
+		return nil
 	}
 
 	return nil
+}
+
+// handleMouseMotion updates the hover state when the mouse moves over
+// the tree. The hover index is in visible-node space (same as
+// cursorIndex), so render code can compare it directly to the loop
+// variable. Returns true if the hover state changed — the caller uses
+// this to decide whether to mark the view as dirty.
+//
+// Indices outside the visible range map to -1 (no hover), which is
+// the convention used by every other hover-capable widget — see
+// widget.Hover for the rationale.
+func (m *FileTreeModel) handleMouseMotion(msg tea.MouseMotionMsg) bool {
+	m.mu.RLock()
+	so := m.scrollOffset
+	visH := m.visibleHeight
+	m.mu.RUnlock()
+
+	nodes := m.VisibleNodes()
+	idx := msg.Y + so
+	if idx < 0 || idx >= len(nodes) || msg.Y >= visH {
+		return m.Hover.Clear()
+	}
+	return m.Hover.Set(idx)
 }
 
 // handleMouseClick processes a mouse click event.

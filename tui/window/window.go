@@ -12,6 +12,7 @@ import (
 	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	"crude/tui/widget"
 )
 
 var nextTabID uint64
@@ -75,12 +76,14 @@ type Window struct {
 	width  int
 	layout TabLayout
 
-	hint string
+	hint  string
+	Hover widget.Hover
 }
 
 func New(th *theme.Theme) *Window {
 	return &Window{
 		theme: th,
+		Hover: widget.NewHover(),
 	}
 }
 
@@ -516,8 +519,9 @@ func (w *Window) renderHorizontalTabBar() string {
 	for i, t := range w.tabs {
 		tw := tabWidths[i]
 		isActive := i == w.active
+		isHovered := i == w.Hover.Index
 
-		tabStr := w.renderHorizontalTabItem(t, tw, isActive)
+		tabStr := w.renderHorizontalTabItem(t, tw, isActive, isHovered)
 
 		b.WriteString(tabStr)
 
@@ -536,7 +540,7 @@ func (w *Window) renderHorizontalTabBar() string {
 	return b.String()
 }
 
-func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool) string {
+func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool, isHovered bool) string {
 	var titleBuilder strings.Builder
 
 	titleText := t.DisplayTitle
@@ -585,6 +589,11 @@ func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool) string {
 	if t.Closable {
 		closeStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
 		result += closeStyle.Render(" ×")
+	}
+
+	if isHovered && !isActive {
+		hoverStyle := lipgloss.NewStyle().Background(w.theme.Colors.Hover)
+		result = hoverStyle.Render(result)
 	}
 
 	return result
@@ -642,7 +651,7 @@ func (w *Window) RenderVerticalSidebar(contentLines []string) []string {
 
 		var tabLine string
 		if tabLineIdx < tabCount {
-			tabLine = w.renderVerticalTabItem(w.tabs[tabLineIdx], tabLineIdx == w.active, tabBarW)
+			tabLine = w.renderVerticalTabItem(w.tabs[tabLineIdx], tabLineIdx == w.active, tabLineIdx == w.Hover.Index, tabBarW)
 			tabLineIdx++
 			if tabLineIdx < tabCount && i+1 < totalLines {
 				result[i] = paddedContent + tabLine
@@ -672,7 +681,7 @@ func (w *Window) RenderVerticalSidebar(contentLines []string) []string {
 	return result
 }
 
-func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
+func (w *Window) renderVerticalTabItem(t Tab, isActive bool, isHovered bool, width int) string {
 	sepStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Border)
 	sep := sepStyle.Render("│")
 
@@ -761,7 +770,12 @@ func (w *Window) renderVerticalTabItem(t Tab, isActive bool, width int) string {
 		}
 	}
 
-	return b.String()
+	result := b.String()
+	if isHovered && !isActive {
+		hoverStyle := lipgloss.NewStyle().Background(w.theme.Colors.Hover)
+		result = hoverStyle.Render(result)
+	}
+	return result
 }
 
 func (w *Window) renderVerticalTabSeparator(width int) string {

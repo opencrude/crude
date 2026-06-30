@@ -99,6 +99,7 @@ func defaultTreeColors() *theme.TreeColors {
 		SelectedFg:   lipgloss.Color("#e6edf3"),
 		CursorBg:     lipgloss.Color("#2d4f4f"),
 		CursorFg:     lipgloss.Color("#e6edf3"),
+		Hover:        lipgloss.Color("#21262d"),
 		IndentLine:   lipgloss.Color("#30363d"),
 		GitModified:  lipgloss.Color("#d29922"),
 		GitAdded:     lipgloss.Color("#7ee787"),
@@ -237,7 +238,7 @@ func hasSiblingBelow(node *TreeNode, depth int) bool {
 // truncated to fit.  hOff is the horizontal scroll offset — when > 0,
 // indent/connector columns are reduced and the name gets more room.
 // isCursor and isSelected control background highlighting.
-func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int, isCursor, isSelected bool) string {
+func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int, isCursor, isSelected, isHovered bool) string {
 	if node == nil {
 		return strings.Repeat(" ", width)
 	}
@@ -255,11 +256,25 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 	}
 
 	// ---- background style for indent/connector cells ----
+	//
+	// Background priority (highest → lowest):
+	//   1. cursor (the keyboard-focused row)         — CursorBg
+	//   2. selected (multi-select highlight)         — SelectedBg
+	//   3. hovered (mouse cursor over the row)       — Hover
+	//   4. none                                       — transparent
+	//
+	// Hover is the weakest emphasis layer — it just tells the user
+	// "if you click here, this is what you'll get". Cursor and
+	// selected both win over hover because they're the active
+	// "this is what you're working on" indicators.
 	bgFn := func(s lipgloss.Style) lipgloss.Style {
-		if isCursor {
+		switch {
+		case isCursor:
 			return s.Background(colors.CursorBg)
-		} else if isSelected {
+		case isSelected:
 			return s.Background(colors.SelectedBg)
+		case isHovered:
+			return s.Background(colors.Hover)
 		}
 		return s
 	}
@@ -330,10 +345,13 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 				remainingHOff = 0
 			}
 			dirStyle := lipgloss.NewStyle().Foreground(colors.DirFg)
-			if isCursor {
+			switch {
+			case isCursor:
 				dirStyle = dirStyle.Background(colors.CursorBg)
-			} else if isSelected {
+			case isSelected:
 				dirStyle = dirStyle.Background(colors.SelectedBg)
+			case isHovered:
+				dirStyle = dirStyle.Background(colors.Hover)
 			}
 			b.WriteString(dirStyle.Render(indicator))
 			b.WriteString(noColorStyle.Render(" "))
@@ -355,13 +373,16 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 				if remainingHOff > 0 {
 					remainingHOff = 0
 				}
-				iconStyle := lipgloss.NewStyle().Foreground(iconCol)
-				if isCursor {
-					iconStyle = iconStyle.Background(colors.CursorBg)
-				} else if isSelected {
-					iconStyle = iconStyle.Background(colors.SelectedBg)
-				}
-				b.WriteString(iconStyle.Render(iconRes.Icon))
+			iconStyle := lipgloss.NewStyle().Foreground(iconCol)
+			switch {
+			case isCursor:
+				iconStyle = iconStyle.Background(colors.CursorBg)
+			case isSelected:
+				iconStyle = iconStyle.Background(colors.SelectedBg)
+			case isHovered:
+				iconStyle = iconStyle.Background(colors.Hover)
+			}
+			b.WriteString(iconStyle.Render(iconRes.Icon))
 				b.WriteString(noColorStyle.Render(" "))
 			}
 		}
@@ -408,10 +429,13 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 	} else {
 		nameStyle = lipgloss.NewStyle().Foreground(colors.FileFg)
 	}
-	if isCursor {
+	switch {
+	case isCursor:
 		nameStyle = nameStyle.Background(colors.CursorBg)
-	} else if isSelected {
+	case isSelected:
 		nameStyle = nameStyle.Background(colors.SelectedBg)
+	case isHovered:
+		nameStyle = nameStyle.Background(colors.Hover)
 	}
 	b.WriteString(nameStyle.Render(nameText))
 
@@ -443,10 +467,13 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 			default:
 				gitStyle = lipgloss.NewStyle().Foreground(colors.GitModified)
 			}
-			if isCursor {
+			switch {
+			case isCursor:
 				gitStyle = gitStyle.Background(colors.CursorBg)
-			} else if isSelected {
+			case isSelected:
 				gitStyle = gitStyle.Background(colors.SelectedBg)
+			case isHovered:
+				gitStyle = gitStyle.Background(colors.Hover)
 			}
 			decorations = append(decorations, gitStyle.Render(gitStr))
 		}
@@ -456,19 +483,25 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 	if cfg.ShowDiagnostics && node.DiagnosticCount > 0 {
 		if node.DiagErrors > 0 {
 			errStyle := lipgloss.NewStyle().Foreground(colors.DiagError)
-			if isCursor {
+			switch {
+			case isCursor:
 				errStyle = errStyle.Background(colors.CursorBg)
-			} else if isSelected {
+			case isSelected:
 				errStyle = errStyle.Background(colors.SelectedBg)
+			case isHovered:
+				errStyle = errStyle.Background(colors.Hover)
 			}
 			decorations = append(decorations, errStyle.Render("✕"+itoa(node.DiagErrors)))
 		}
 		if node.DiagWarnings > 0 {
 			warnStyle := lipgloss.NewStyle().Foreground(colors.DiagWarning)
-			if isCursor {
+			switch {
+			case isCursor:
 				warnStyle = warnStyle.Background(colors.CursorBg)
-			} else if isSelected {
+			case isSelected:
 				warnStyle = warnStyle.Background(colors.SelectedBg)
+			case isHovered:
+				warnStyle = warnStyle.Background(colors.Hover)
 			}
 			decorations = append(decorations, warnStyle.Render("⚠"+itoa(node.DiagWarnings)))
 		}
@@ -618,6 +651,7 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 		}
 	}
 
+	hoverIdx := r.model.Hover.Index
 	lines := make([]string, height)
 	for i := 0; i < height; i++ {
 		var line string
@@ -629,7 +663,8 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 				node := nodes[nodeIdx]
 				isCursor := nodeIdx == cursorIdx
 				isSelected := node.Path == selectedPath && !isCursor
-				line = r.formatLine(node, nodeIdx, contentW, r.hscrollOffset, isCursor, isSelected)
+				isHovered := nodeIdx == hoverIdx
+				line = r.formatLine(node, nodeIdx, contentW, r.hscrollOffset, isCursor, isSelected, isHovered)
 			} else {
 				line = strings.Repeat(" ", contentW)
 			}
@@ -690,6 +725,7 @@ func (r *TreeRenderer) Render(surf *surface.Surface, ctx *widget.RenderContext) 
 	}
 
 	// ---- render loop ----
+	hoverIdx := r.model.Hover.Index
 	for i := 0; i < h; i++ {
 		nodeIdx := r.scrollOffset + i
 		if nodeIdx >= len(nodes) {
@@ -702,15 +738,20 @@ func (r *TreeRenderer) Render(surf *surface.Surface, ctx *widget.RenderContext) 
 		node := nodes[nodeIdx]
 		isCursor := nodeIdx == cursorIdx
 		isSelected := node.Path == selectedPath && !isCursor
+		isHovered := nodeIdx == hoverIdx
 
 		// Determine background colour for this row.
+		// Priority: cursor > selected > hovered. See formatLine for
+		// the rationale behind this ordering.
 		bg := cell.NoColor
-		if isCursor {
+		switch {
+		case isCursor:
 			bg = tc(colors.CursorBg, cell.Color{Type: cell.ColorPalette, Palette: 236})
-		} else if isSelected {
+		case isSelected:
 			bg = tc(colors.SelectedBg, cell.Color{Type: cell.ColorPalette, Palette: 235})
+		case isHovered:
+			bg = tc(colors.Hover, cell.Color{Type: cell.ColorPalette, Palette: 237})
 		}
-		_ = bg // used when writing cells
 
 		x := 0
 		y := i

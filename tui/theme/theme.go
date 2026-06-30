@@ -23,6 +23,14 @@ type Colors struct {
 	Bg, Fg, Muted, Accent, Accent2  color.Color
 	Success, Error, Warning, Border color.Color
 	Selection, SubPaneBg            color.Color
+	// Hover is the background color for interactive elements (file tree
+	// rows, tabs, command palette items, settings rows, etc.) when the
+	// mouse cursor is over them but they aren't selected. Slightly dimmer
+	// than Selection so the keyboard cursor still reads as the strongest
+	// emphasis layer. Used uniformly across all hover-capable widgets so
+	// the app feels like one coherent GUI rather than a collection of
+	// panels that each have their own idea of what "hover" looks like.
+	Hover color.Color
 	// Popup chrome colors. All popups (context menu, find/replace,
 	// save dialog, text prompt, file picker, diagnostic) use a
 	// unified design system — see widgets.PopupChromeConfig.
@@ -62,6 +70,10 @@ type TreeColors struct {
 	DirFg, FileFg, SymlinkFg                  color.Color
 	SelectedBg, SelectedFg                     color.Color
 	CursorBg, CursorFg                         color.Color
+	// Hover is the background colour for the row under the mouse
+	// cursor. Falls below SelectedBg and CursorBg in priority — see
+	// filetree.render.formatLine for the ordering rules.
+	Hover                                      color.Color
 	IndentLine                                 color.Color
 	GitModified, GitAdded, GitDeleted          color.Color
 	GitUntracked, GitConflicted                color.Color
@@ -132,6 +144,7 @@ func DefaultDark() *Theme {
 		Warning:  lipgloss.Color("#d29922"),
 		Border:   lipgloss.Color("#30363d"),
 		Selection: lipgloss.Color("#1e2a3a"),
+		Hover:     lipgloss.Color("#21262d"),
 		SubPaneBg: lipgloss.Color("#1c2333"),
 		// Popup chrome — unified design across all popups.
 		// Code.Bg provides the "card on editor" feel used by the
@@ -181,6 +194,7 @@ func DefaultDark() *Theme {
 			SelectedFg:   lipgloss.Color("#e6edf3"),
 			CursorBg:     lipgloss.Color("#2d4f4f"),
 			CursorFg:     lipgloss.Color("#e6edf3"),
+			Hover:        lipgloss.Color("#21262d"),
 			IndentLine:   lipgloss.Color("#30363d"),
 			GitModified:  lipgloss.Color("#d29922"),
 			GitAdded:     lipgloss.Color("#7ee787"),

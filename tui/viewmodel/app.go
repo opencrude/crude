@@ -2451,6 +2451,32 @@ func (m *App) refreshDirtyPrompt() {
 	fw.MarkContentDirty()
 }
 
+// pasteIntoFindReplace reads the system clipboard and inserts the
+// content into the focused find/replace field. Returns the cmd to
+// copy (no-op here — the read happens eagerly, not via a cmd, to
+// keep the popup's response synchronous and the cursor position
+// updateable on the same frame as the keypress).
+func (m *App) pasteIntoFindReplace(fr *widgets.FindReplaceState) tea.Cmd {
+	if fr == nil {
+		return nil
+	}
+	data := clipboard.Read(clipboard.FmtText)
+	if len(data) == 0 {
+		return nil
+	}
+	text := string(data)
+	if fr.FocusedField == 0 {
+		fr.Query = fr.Query[:fr.Cursor] + text + fr.Query[fr.Cursor:]
+		fr.Cursor += len(text)
+	} else {
+		fr.Replace += text
+	}
+	if fr.OnChange != nil {
+		fr.OnChange()
+	}
+	return nil
+}
+
 // handleFindReplaceKey routes keypresses when the find/replace popup
 // is focused. Most keys are text input or navigation; Esc closes.
 func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -2572,6 +2598,59 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.refreshFindReplacePopup()
 		}
 		return nil
+	}
+
+	// MS Edit shortcuts. The find/replace popup's text fields
+	// (Query and Replace) are full Microsoft-style input fields —
+	// copy, cut, paste, and select-all all work here, matching the
+	// behaviour of VSCode/JetBrains' find dialog.
+	switch msg.String() {
+	case "ctrl+c":
+		// Copy the active field's text to the clipboard. We
+		// always copy the whole field (no selection state) — that
+		// matches how the VSCode find dialog works.
+		var text string
+		if fr.FocusedField == 0 {
+			text = fr.Query
+		} else {
+			text = fr.Replace
+		}
+		return rendering.CopyToClipboardCmd(text)
+	case "ctrl+x":
+		// Cut: copy and clear the active field.
+		var text string
+		if fr.FocusedField == 0 {
+			text = fr.Query
+			fr.Query = ""
+			fr.Cursor = 0
+		} else {
+			text = fr.Replace
+			fr.Replace = ""
+		}
+		if fr.OnChange != nil {
+			fr.OnChange()
+		}
+		return rendering.CopyToClipboardCmd(text)
+	case "ctrl+a":
+		// Select all — the popup doesn't show a visual selection
+		// yet, but the next copy will copy the whole field
+		// (since we always copy the whole field, this is
+		// effectively a no-op; included for keyboard parity
+		// with every other text input in the app).
+		return nil
+	case "ctrl+v":
+		// Paste from the system clipboard into the active field.
+		// We use the same closure-based approach as the editor
+		// (see editor/events.go) so the popup gets the content
+		// back as a tea.PasteMsg, which then routes through
+		// dispatchPasteMsg → focus target → this handler. The
+		// recursion is broken because the PasteMsg handler
+		// below checks for the find-replace popup explicitly
+		// rather than re-dispatching via the key path.
+		//
+		// Actually simpler: just read the clipboard here and
+		// insert. No need to re-enter the dispatcher.
+		return m.pasteIntoFindReplace(fr)
 	}
 
 	// Regular character input. Bubble Tea gives us the rune in msg.Text

@@ -23,6 +23,26 @@ func NewDialog(t *theme.Theme, title, icon string, buttons ButtonGroup) Dialog {
 }
 
 func (m Dialog) Update(msg tea.Msg) (Dialog, int, bool) {
+	// Forward all messages to the ButtonGroup. The ButtonGroup
+	// knows how to handle mouse motion (hover update) and mouse
+	// click (activate button), in addition to keyboard navigation.
+	// This is the "single source of truth" approach: the dialog
+	// doesn't need to know about mouse vs keyboard — it just
+	// forwards to the only interactive element (the buttons).
+	//
+	// Coordinate translation: the ButtonGroup's X axis starts at
+	// the dialog's left padding, not at the screen origin. The
+	// dialog is responsible for offsetting the X coordinate before
+	// passing it on. But because the dialog has no real way to
+	// know the screen X of its own body (it's rendered inline in
+	// the agent's overlay, with whatever padding the parent uses),
+	// we forward the raw X and rely on the caller (the overlay
+	// tab dispatcher) to translate. The dialog's only X-dependent
+	// operation is the ButtonGroup hover, which uses the raw X
+	// relative to the button row's own start — that offset is
+	// already applied by the time the dialog sees the message
+	// in practice, because the parent translates screen X to
+	// dialog-local X before calling Update.
 	updated, btnIdx, done := m.buttons.Update(msg)
 	m.buttons = updated
 	return m, btnIdx, done
