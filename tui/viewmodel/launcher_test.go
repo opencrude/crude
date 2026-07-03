@@ -24,21 +24,22 @@ func newTestAppWithLauncher(t *testing.T) *App {
 	th := theme.DefaultDark()
 	app := &App{
 		Workspace: &Workspace{
-			theme:        th,
-			overlayState: NewOverlayState(),
-			agentMgr:     NewAgentManager(),
-			paneMgr:      NewPaneManager(),
-			startTime:    time.Now(),
-			launcher:     NewLauncherState(nil),
-			input:        input.NewModel(th),
-			statusbar:    widgets.NewStatusBar(th),
-			spinFrame:    0,
-			lspPopup:     NewLSPPopupState(),
-			editorState:  NewEditorState(),
+			Theme:         th,
+			OverlayState:  NewOverlayState(),
+			AgentMgr:      NewAgentManager(),
+			PaneMgr:       NewPaneManager(),
+			StartTime:     time.Now(),
+			Input:         input.NewModel(th),
+			StatusBar:     widgets.NewStatusBar(th),
+			SpinFrame:     0,
+			LSPPopup:      NewLSPPopupState(),
+			EditorState:   NewEditorState(),
+			ActiveSession: &Session{},
 		},
+		launcher: NewLauncherState(nil),
 	}
-	app.win = window.New(th)
-	app.overlay = window.New(th)
+	app.Win = window.New(th)
+	app.Overlay = window.New(th)
 	return app
 }
 
@@ -73,15 +74,15 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 	if app.launcher != nil {
 		t.Fatal("launcher should be cleared by AddOrchestrator")
 	}
-	n := app.agentMgr.Get("ses_1_orch_1")
+	n := app.AgentMgr.Get("ses_1_orch_1")
 	if n == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
 	if n.State == nil || n.State.MsgList == nil {
 		t.Fatal("orchestrator should have its own MsgList")
 	}
-	if app.agentMgr.ActiveID() != "ses_1_orch_1" {
-		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.agentMgr.ActiveID())
+	if app.AgentMgr.ActiveID() != "ses_1_orch_1" {
+		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.AgentMgr.ActiveID())
 	}
 	if n.InputChan == nil {
 		t.Fatal("input channel should be wired")
@@ -118,11 +119,11 @@ func TestLauncher_NewSession_CreatesOrchestrator(t *testing.T) {
 	if app.launcher != nil {
 		t.Fatal("launcher should be cleared after creating orchestrator")
 	}
-	if app.agentMgr.Get("ses_1_orch_1") == nil {
+	if app.AgentMgr.Get("ses_1_orch_1") == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
-	if app.agentMgr.ActiveID() != "ses_1_orch_1" {
-		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.agentMgr.ActiveID())
+	if app.AgentMgr.ActiveID() != "ses_1_orch_1" {
+		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.AgentMgr.ActiveID())
 	}
 }
 
@@ -152,7 +153,7 @@ func TestLauncher_FileOpen_NoSessionCreated(t *testing.T) {
 	if app.launcher == nil {
 		t.Fatal("launcher should not be cleared by non-session events")
 	}
-	if app.agentMgr.Count() != 0 {
+	if app.AgentMgr.Count() != 0 {
 		t.Fatal("no agents should be created by file-open events")
 	}
 }
@@ -206,14 +207,14 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 	}
 	app.handleAgentEvent(subEvt)
 
-	subAgent := app.agentMgr.Get("ses_1_orch_1_sub_abc")
+	subAgent := app.AgentMgr.Get("ses_1_orch_1_sub_abc")
 	if subAgent == nil {
 		t.Fatal("sub-agent should exist")
 	}
 	if subAgent.State == nil || subAgent.State.MsgList == nil {
 		t.Fatal("sub-agent should have a MsgList")
 	}
-	sp := app.paneMgr.Get("ses_1_orch_1_sub_abc")
+	sp := app.PaneMgr.Get("ses_1_orch_1_sub_abc")
 	if sp == nil {
 		t.Fatal("sub-agent should have a pane in paneMgr")
 	}
@@ -233,23 +234,23 @@ func TestMultipleOrchestrators(t *testing.T) {
 	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, brCh)
 
 	// Add a sub-agent via the manager (simulating handleAgentEvent flow)
-	app.agentMgr.AddSubAgent("ses_1_sub_abc", "ses_1_orch_1", "helper", "", "", &AgentState{})
+	app.AgentMgr.AddSubAgent("ses_1_sub_abc", "ses_1_orch_1", "helper", "", "", &AgentState{})
 	app.syncAgentWindowTabs()
 
-	if app.agentMgr.Count() != 2 {
-		t.Fatalf("expected 2 agents (orchestrator + sub), got %d", app.agentMgr.Count())
+	if app.AgentMgr.Count() != 2 {
+		t.Fatalf("expected 2 agents (orchestrator + sub), got %d", app.AgentMgr.Count())
 	}
-	if app.agentMgr.Get("ses_1_orch_1") == nil {
+	if app.AgentMgr.Get("ses_1_orch_1") == nil {
 		t.Fatal("orchestrator should exist")
 	}
-	if app.agentMgr.Get("ses_1_sub_abc") == nil {
+	if app.AgentMgr.Get("ses_1_sub_abc") == nil {
 		t.Fatal("sub-agent should exist")
 	}
 
 	// Switch between available agents (sub-agent first, then orchestrator)
 	app.switchToAgentView("ses_1_sub_abc")
-	if app.agentMgr.ActiveID() != "ses_1_sub_abc" {
-		t.Fatalf("expected active agent ses_1_sub_abc, got %q", app.agentMgr.ActiveID())
+	if app.AgentMgr.ActiveID() != "ses_1_sub_abc" {
+		t.Fatalf("expected active agent ses_1_sub_abc, got %q", app.AgentMgr.ActiveID())
 	}
 }
 

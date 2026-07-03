@@ -248,7 +248,7 @@ func (l *LauncherState) totalRenderedLines() int {
 	return n
 }
 func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	m.lastInteractionTime = time.Now()
+	m.LastInteractionTime = time.Now()
 	launcher := m.launcher
 
 	// Filter mode input handling
@@ -298,12 +298,12 @@ func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if launcher.selected > 0 { // can't delete "New Session"
 			sessionID := launcher.deleteSelected()
 			if sessionID != "" {
-				if m.logger != nil {
-					m.logger.Info("SESSION", "deleted_from_launcher", "id", sessionID)
+				if m.Logger != nil {
+					m.Logger.Info("SESSION", "deleted_from_launcher", "id", sessionID)
 				}
 				// Delete session DB file
-				if m.onDeleteSession != nil {
-					m.onDeleteSession(sessionID)
+				if m.OnDeleteSession != nil {
+					m.OnDeleteSession(sessionID)
 				}
 			}
 		}
@@ -334,7 +334,7 @@ func (m *App) handleLauncherClick(screenX, screenY int) (tea.Model, tea.Cmd) {
 	layout := m.computeLayout()
 	// The launcher content area is the chat area when the launcher
 	// is the main view.
-	if screenY < layout.ChatAreaTop || screenY >= layout.ChatAreaTop+m.chatAreaHeight {
+	if screenY < layout.ChatAreaTop || screenY >= layout.ChatAreaTop+m.ChatAreaHeight {
 		return m, nil
 	}
 	// Translate screen Y to the rendered-line index (0-based within
@@ -371,7 +371,7 @@ func (m *App) handleLauncherHover(screenX, screenY int) {
 		return
 	}
 	layout := m.computeLayout()
-	if screenY < layout.ChatAreaTop || screenY >= layout.ChatAreaTop+m.chatAreaHeight {
+	if screenY < layout.ChatAreaTop || screenY >= layout.ChatAreaTop+m.ChatAreaHeight {
 		return
 	}
 	visibleLine := screenY - layout.ChatAreaTop
@@ -394,8 +394,8 @@ func (m *App) launcherSelect() tea.Cmd {
 
 	if sessionID == "" {
 		m.startLSPForWorkspace()
-		if m.logger != nil {
-			m.logger.Info("SESSION", "new_session_from_launcher")
+		if m.Logger != nil {
+			m.Logger.Info("SESSION", "new_session_from_launcher")
 		}
 		if m.OnNewSession != nil {
 			result := m.OnNewSession()
@@ -407,8 +407,8 @@ func (m *App) launcherSelect() tea.Cmd {
 	}
 
 	// Resume existing session
-	if m.logger != nil {
-		m.logger.Info("SESSION", "resume_selected", "id", sessionID)
+	if m.Logger != nil {
+		m.Logger.Info("SESSION", "resume_selected", "id", sessionID)
 	}
 	if m.OnResumeSession != nil {
 		m.OnResumeSession(sessionID)

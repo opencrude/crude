@@ -42,11 +42,11 @@ func (m *App) View() tea.View {
 	// The launcher is also fast to render and has animations (spin
 	// frame, filter typing, scrolling), so it always gets a full
 	// re-render — no caching.
-	isLauncherMain := m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" && m.launcher != nil
+	isLauncherMain := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
 	useCached := !isLauncherMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
 
 	m.compositor.BeginFrame()
-	m.renderCtx.SpinFrame = m.spinFrame
+	m.renderCtx.SpinFrame = m.SpinFrame
 	m.syncRenderFocus()
 	m.resizeLayerSurfaces()
 
@@ -59,7 +59,7 @@ func (m *App) View() tea.View {
 	if m.mainSidebarSurf != nil {
 		root.AddChild(m.mainSidebarSurf)
 		m.mainSidebarSurf.SetZOrder(1)
-		m.mainSidebarSurf.SetVisible(m.tree.Visible)
+		m.mainSidebarSurf.SetVisible(m.Tree.Visible)
 	}
 	if m.mainStatusbarSurf != nil {
 		root.AddChild(m.mainStatusbarSurf)
@@ -84,7 +84,7 @@ func (m *App) View() tea.View {
 
 	// Cheap layers: always re-render (surface fill + ANSI render).
 	m.renderHeaderToSurface()
-	if m.tree.Visible {
+	if m.Tree.Visible {
 		m.renderSidebarToSurface()
 	}
 	m.renderStatusbarToSurface()
@@ -114,26 +114,26 @@ func (m *App) View() tea.View {
 func (m *App) buildMainView() string {
 	// Account for file tree sidebar when visible.
 	sidebarW := 0
-	sidebarVisible := m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil
+	sidebarVisible := m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil
 	if sidebarVisible {
-		sidebarW = m.tree.Width + 1 // +1 for divider
+		sidebarW = m.Tree.Width + 1 // +1 for divider
 	}
 
-	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR - sidebarW)
-	m.overlay.SetWidth(m.width - 2*m.theme.Spacing.PadLR - sidebarW)
+	m.Win.SetWidth(m.width - 2*m.Theme.Spacing.PadLR - sidebarW)
+	m.Overlay.SetWidth(m.width - 2*m.Theme.Spacing.PadLR - sidebarW)
 
-	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
+	pad := strings.Repeat(" ", m.Theme.Spacing.PadLR)
 	contentW := m.width - sidebarW
-	innerW := contentW - m.theme.Spacing.PadLR*2
+	innerW := contentW - m.Theme.Spacing.PadLR*2
 	if innerW < 20 {
 		innerW = 20
 	}
 
-	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
+	dim := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted)
 
-	isSpecialMode := m.overlayState.IsOverlay()
-	showMainInputForQuestion := m.overlayState.Is(ModeQuestion) && m.questionForm.IsTextQuestion(m.questionForm.Focused())
-	isEditorActive := m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen()
+	isSpecialMode := m.OverlayState.IsOverlay()
+	showMainInputForQuestion := m.OverlayState.Is(ModeQuestion) && m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused())
+	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
 
 	m.syncFormHint()
 
@@ -141,12 +141,12 @@ func (m *App) buildMainView() string {
 	var inputLineCount int
 	if isSpecialMode && !showMainInputForQuestion {
 		inputLineCount = 1
-		hint := m.formHint
+		hint := m.FormHint
 		if hint == "" {
 			hint = " "
 		}
 		inputView = dim.Render(hint)
-	} else if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
+	} else if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		inputLineCount = 1
 		hint := "↑↓: navigate  ·  enter: open  ·  type to search sessions"
 		hintW := rendering.VisibleWidth(hint)
@@ -156,30 +156,30 @@ func (m *App) buildMainView() string {
 		inputView = dim.Render(hint)
 	} else if isEditorActive {
 		inputLineCount = 1
-		fileInfo := m.editorState.Editor.Title()
-		cursorInfo := fmt.Sprintf("%d:%d", m.editorState.Editor.CursorLine()+1, m.editorState.Editor.CursorCol()+1)
-		lineCount := m.editorState.Editor.LineCount()
+		fileInfo := m.EditorState.Editor.Title()
+		cursorInfo := fmt.Sprintf("%d:%d", m.EditorState.Editor.CursorLine()+1, m.EditorState.Editor.CursorCol()+1)
+		lineCount := m.EditorState.Editor.LineCount()
 		hintText := fmt.Sprintf("[ %s  %s  %dL  ·  ctrl+s save  ctrl+z undo  ctrl+y redo  esc close ]", fileInfo, cursorInfo, lineCount)
 		inputView = dim.Render(hintText)
 	} else {
-		inputView = m.input.View(contentW, m.height, false, false, m.spinFrame)
+		inputView = m.Input.View(contentW, m.height, false, false, m.SpinFrame)
 		inputLineCount = len(strings.Split(inputView, "\n"))
 		if inputLineCount < 1 {
 			inputLineCount = 1
 		}
 	}
 
-	asyncBarLines := m.statusbar.RenderAsyncBar()
+	asyncBarLines := m.StatusBar.RenderAsyncBar()
 	asyncLineCount := len(asyncBarLines)
 
 	agentTabBarLine := ""
 	agentTabBarVisible := false
-	if m.win.IsOpen() && m.win.TabCount() >= 1 {
-		agentTabBarLine = m.win.RenderTabBar()
+	if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
+		agentTabBarLine = m.Win.RenderTabBar()
 		agentTabBarVisible = agentTabBarLine != ""
 	}
-	if m.focusStack.Top() == FocusTabBar && agentTabBarVisible {
-		focusStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
+	if m.FocusStack.Top() == FocusTabBar && agentTabBarVisible {
+		focusStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent)
 		agentTabBarLine = focusStyle.Render(agentTabBarLine)
 	}
 
@@ -198,21 +198,21 @@ func (m *App) buildMainView() string {
 	if chatH < 1 {
 		chatH = 1
 	}
-	m.chatAreaHeight = chatH
+	m.ChatAreaHeight = chatH
 
 	var chatVisible []string
 	var totalSBW int
 
 	if isEditorActive {
-		editorPadL := m.theme.Spacing.PadLR
-		editorPadR := m.theme.Spacing.PadLR
+		editorPadL := m.Theme.Spacing.PadLR
+		editorPadR := m.Theme.Spacing.PadLR
 		if sidebarVisible {
 			editorPadL = 0
 		}
-		m.editorState.Editor.SetPadding(editorPadL)
-		chatVisible = m.editorState.Editor.View(contentW, chatH, editorPadL, editorPadR)
+		m.EditorState.Editor.SetPadding(editorPadL)
+		chatVisible = m.EditorState.Editor.View(contentW, chatH, editorPadL, editorPadR)
 		totalSBW = 0
-	} else if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
+	} else if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		if m.launcher != nil {
 			launcherLines := m.renderLauncherMainView(innerW, chatH)
 			chatVisible = launcherLines
@@ -231,18 +231,18 @@ func (m *App) buildMainView() string {
 			chatVisible = []string{""}
 			totalSBW = 0
 		} else {
-			nestingLevel := m.paneMgr.ScrollbarNestingLevel()
+			nestingLevel := m.PaneMgr.ScrollbarNestingLevel()
 			paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
-			if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil && n.State.MsgList != nil {
+			if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && n.State.MsgList != nil {
 				n.State.MsgList.SetPaneScrollbarWidth(paneSBW)
 			}
 			if activeML != nil {
 				activeML.SetPaneScrollbarWidth(0)
 			}
 			activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
-			activeML.SetSpinFrame(m.spinFrame)
+			activeML.SetSpinFrame(m.SpinFrame)
 			activeML.SetActiveTyping(activeTyping)
-			activeML.SetPhase(m.statusbar.Phase())
+			activeML.SetPhase(m.StatusBar.Phase())
 			chatAreaTop := 3
 			if agentTabBarVisible {
 				chatAreaTop += 2
@@ -281,7 +281,7 @@ func (m *App) buildMainView() string {
 				for _, info := range paneLineMap {
 					if info.PaneID != "" {
 						if _, ok := paneSBViews[info.PaneID]; !ok {
-							sp := m.paneMgr.Get(info.PaneID)
+							sp := m.PaneMgr.Get(info.PaneID)
 							if sp != nil {
 								view := sp.ScrollbarView()
 								paneSBViews[info.PaneID] = strings.Split(view, "\n")
@@ -293,7 +293,7 @@ func (m *App) buildMainView() string {
 
 			subPaneBgSeq := ""
 			{
-				s := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Render(" ")
+				s := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg).Render(" ")
 				idx := strings.Index(s, " ")
 				if idx > 0 {
 					subPaneBgSeq = s[:idx]
@@ -317,7 +317,7 @@ func (m *App) buildMainView() string {
 				isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
 				hasBg := false
 				if isPaneLine {
-					sp := m.paneMgr.Get(paneLineMap[i].PaneID)
+					sp := m.PaneMgr.Get(paneLineMap[i].PaneID)
 					hasBg = sp != nil && sp.Type == PaneAgent
 				}
 
@@ -431,11 +431,11 @@ func (m *App) buildMainView() string {
 
 	if agentTabBarVisible {
 		lines = append(lines, pad+agentTabBarLine+pad)
-		if m.focusStack.Top() == FocusTabBar {
-			accentSepStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
+		if m.FocusStack.Top() == FocusTabBar {
+			accentSepStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent)
 			lines = append(lines, accentSepStyle.Render(strings.Repeat("━", contentW)))
 		} else {
-			lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
+			lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
 		}
 	}
 
@@ -462,10 +462,10 @@ func (m *App) buildMainView() string {
 
 	if asyncLineCount > 0 {
 		lines = append(lines, "")
-		lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
+		lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
 		for _, al := range asyncBarLines {
 			visW := rendering.VisibleWidth(al)
-			rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
+			rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
 			if rightPad < 0 {
 				rightPad = 0
 			}
@@ -473,18 +473,18 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
+	lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
 
 	if isSpecialMode && !isEditorActive {
 		visW := rendering.VisibleWidth(inputView)
-		rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
+		rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
 		if rightPad < 0 {
 			rightPad = 0
 		}
 		lines = append(lines, pad+inputView+strings.Repeat(" ", rightPad)+pad)
 	} else if isEditorActive {
 		visW := rendering.VisibleWidth(inputView)
-		rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
+		rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
 		if rightPad < 0 {
 			rightPad = 0
 		}
@@ -494,7 +494,7 @@ func (m *App) buildMainView() string {
 		if len(refChips) > 0 {
 			for _, rc := range refChips {
 				visW := rendering.VisibleWidth(rc)
-				rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
+				rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
 				if rightPad < 0 {
 					rightPad = 0
 				}
@@ -503,7 +503,7 @@ func (m *App) buildMainView() string {
 		}
 		for _, il := range strings.Split(inputView, "\n") {
 			visW := rendering.VisibleWidth(il)
-			rightPad := contentW - 2*m.theme.Spacing.PadLR - visW
+			rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
 			if rightPad < 0 {
 				rightPad = 0
 			}
@@ -517,15 +517,15 @@ func (m *App) buildMainView() string {
 
 	// The sidebar is rendered into its own layer surface
 	// (mainSidebarSurf). Update tree height/scroll state for it.
-	if m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil {
+	if m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil {
 		treeStart := 3
-		m.tree.YOffset = treeStart
+		m.Tree.YOffset = treeStart
 		sidebarH := contentH - treeStart
 		if sidebarH < 0 {
 			sidebarH = 0
 		}
-		m.tree.Model.Update(filetree.TreeHeightMsg{Height: sidebarH})
-		m.tree.Renderer.SetScrollbarContentHeight(sidebarH)
+		m.Tree.Model.Update(filetree.TreeHeightMsg{Height: sidebarH})
+		m.Tree.Renderer.SetScrollbarContentHeight(sidebarH)
 	}
 
 	if len(lines) > contentH {
@@ -536,25 +536,25 @@ func (m *App) buildMainView() string {
 }
 
 func (m *App) renderOverlayArea() []string {
-	if !m.overlay.IsOpen() {
+	if !m.Overlay.IsOpen() {
 		return nil
 	}
 
-	activeTab := m.overlay.ActiveTab()
+	activeTab := m.Overlay.ActiveTab()
 	if activeTab == nil {
 		return nil
 	}
 
 	// Compute content width accounting for sidebar
 	sidebarW := 0
-	if m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil {
-		sidebarW = m.tree.Width + 1
+	if m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil {
+		sidebarW = m.Tree.Width + 1
 	}
 	contentW := m.width - sidebarW
 
-	m.overlay.SetWidth(contentW - 2*m.theme.Spacing.PadLR)
+	m.Overlay.SetWidth(contentW - 2*m.Theme.Spacing.PadLR)
 
-	tabBarLine := m.overlay.RenderTabBar()
+	tabBarLine := m.Overlay.RenderTabBar()
 
 	contentLines := m.getOverlayContentLines(activeTab.Title)
 
@@ -572,10 +572,10 @@ func (m *App) renderOverlayArea() []string {
 	contentLines = stripLeadingTrailingEmpty(contentLines)
 
 	var lines []string
-	lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
-	if m.overlay.TabCount() >= 2 {
+	lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
+	if m.Overlay.TabCount() >= 2 {
 		lines = append(lines, tabBarLine)
-		lines = append(lines, widgets.RenderSep(contentW, m.theme.Colors.Border))
+		lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
 	}
 	lines = append(lines, contentLines...)
 	return lines
@@ -586,34 +586,34 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 
 	// Compute content width accounting for sidebar
 	sidebarW := 0
-	if m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil {
-		sidebarW = m.tree.Width + 1
+	if m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil {
+		sidebarW = m.Tree.Width + 1
 	}
-	overlayContentW := m.width - sidebarW - 2*m.theme.Spacing.PadLR
+	overlayContentW := m.width - sidebarW - 2*m.Theme.Spacing.PadLR
 	if overlayContentW < 20 {
 		overlayContentW = 20
 	}
 
 	switch {
 	case tabTitle == "Settings":
-		settingsView := m.settings.View(m.spinFrame)
+		settingsView := m.Settings.View(m.SpinFrame)
 		for _, sl := range strings.Split(settingsView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(sl, overlayContentW))
 		}
 	case tabTitle == "Confirm":
-		m.confirm.SetWidth(overlayContentW)
-		confirmView := m.confirm.View(m.spinFrame)
+		m.ActiveSession.Confirm.SetWidth(overlayContentW)
+		confirmView := m.ActiveSession.Confirm.View(m.SpinFrame)
 		for _, cl := range strings.Split(confirmView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(cl, overlayContentW))
 		}
 	case tabTitle == "Question":
-		questionView := m.questionForm.View(m.spinFrame, overlayContentW)
+		questionView := m.ActiveSession.QuestionForm.View(m.SpinFrame, overlayContentW)
 		for _, ql := range strings.Split(questionView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(ql, overlayContentW))
 		}
 	case tabTitle == "YOLO":
-		m.yoloDlg.SetWidth(overlayContentW)
-		yoloView := m.yoloDlg.View()
+		m.ActiveSession.YoloDlg.SetWidth(overlayContentW)
+		yoloView := m.ActiveSession.YoloDlg.View()
 		for _, yl := range strings.Split(yoloView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(yl, overlayContentW))
 		}
@@ -623,30 +623,30 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 }
 
 func (m *App) syncFormHint() {
-	if m.focusStack.Top() == FocusTabBar {
-		m.formHint = "[ tab bar focused · ← →: navigate · enter: select · esc: unfocus ]"
+	if m.FocusStack.Top() == FocusTabBar {
+		m.FormHint = "[ tab bar focused · ← →: navigate · enter: select · esc: unfocus ]"
 		return
 	}
-	if !m.overlay.IsOpen() {
-		m.formHint = ""
+	if !m.Overlay.IsOpen() {
+		m.FormHint = ""
 		return
 	}
-	activeTab := m.overlay.ActiveTab()
+	activeTab := m.Overlay.ActiveTab()
 	if activeTab == nil {
-		m.formHint = ""
+		m.FormHint = ""
 		return
 	}
 	switch {
 	case activeTab.Title == "Settings":
-		m.formHint = m.settings.Hint()
+		m.FormHint = m.Settings.Hint()
 	case activeTab.Title == "Confirm":
-		m.formHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
+		m.FormHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
 	case activeTab.Title == "YOLO":
-		m.formHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
+		m.FormHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
 	case activeTab.Title == "Question":
-		m.formHint = m.questionForm.Hint()
+		m.FormHint = m.ActiveSession.QuestionForm.Hint()
 	default:
-		m.formHint = ""
+		m.FormHint = ""
 	}
 }
 
@@ -658,17 +658,17 @@ func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 		return []string{""}
 	}
 
-	idleSeconds := time.Since(m.lastInteractionTime).Seconds()
+	idleSeconds := time.Since(m.LastInteractionTime).Seconds()
 	visibleSessions := m.launcher.visibleSessions()
 	sessionLines := widgets.RenderLauncher(
 		visibleSessions,
 		m.launcher.selected,
 		m.launcher.filterActive,
 		m.launcher.filterText,
-		m.theme,
+		m.Theme,
 		innerW,
 		chatH,
-		m.spinFrame,
+		m.SpinFrame,
 		idleSeconds,
 	)
 
@@ -699,7 +699,7 @@ func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 
 	// Pad visible lines to fill the height and match the chat content wrapping
 	// (pad+inner+pad pattern from activeML.Render's no-scrollbar path).
-	padStr := strings.Repeat(" ", m.theme.Spacing.PadLR)
+	padStr := strings.Repeat(" ", m.Theme.Spacing.PadLR)
 	result := make([]string, chatH)
 	for i := 0; i < chatH; i++ {
 		if i < len(visibleLines) {
@@ -711,7 +711,7 @@ func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 			}
 			result[i] = padStr + line + strings.Repeat(" ", padRight) + padStr
 		} else {
-			result[i] = strings.Repeat(" ", innerW + 2*m.theme.Spacing.PadLR)
+			result[i] = strings.Repeat(" ", innerW + 2*m.Theme.Spacing.PadLR)
 		}
 	}
 	return result
@@ -734,11 +734,11 @@ func (m *App) launcherSelectedLineIndex(sessionLines []string) int {
 	visibleSessions := m.launcher.visibleSessions()
 	groups := widgets.BuildLauncherGroups(visibleSessions)
 
-	innerW := m.width - m.theme.Spacing.PadLR*2
+	innerW := m.width - m.Theme.Spacing.PadLR*2
 	if innerW < 20 {
 		innerW = 20
 	}
-	newSessionLines := widgets.RenderNewSessionEntry(0 == m.launcher.selected, m.theme, innerW, m.spinFrame, 0)
+	newSessionLines := widgets.RenderNewSessionEntry(0 == m.launcher.selected, m.Theme, innerW, m.SpinFrame, 0)
 	transitionLines := 0
 	if len(visibleSessions) > 0 {
 		transitionLines = 2
@@ -760,7 +760,7 @@ func (m *App) launcherSelectedLineIndex(sessionLines []string) int {
 }
 
 func (m *App) renderReferenceChips() []string {
-	refs := m.input.PromptReferences()
+	refs := m.Input.PromptReferences()
 	if len(refs) == 0 {
 		return nil
 	}
@@ -771,10 +771,10 @@ func (m *App) renderReferenceChips() []string {
 		}
 		label := ref.DisplayName()
 		chipStyle := lipgloss.NewStyle().
-			Foreground(m.theme.Colors.Accent2).
-			Background(m.theme.Colors.Selection).
+			Foreground(m.Theme.Colors.Accent2).
+			Background(m.Theme.Colors.Selection).
 			Padding(0, 1)
-		closeStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Error).Bold(true)
+		closeStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Error).Bold(true)
 		chip := chipStyle.Render(label) + closeStyle.Render(" ×")
 		chips = append(chips, chip)
 	}

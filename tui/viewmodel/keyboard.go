@@ -20,6 +20,7 @@ import (
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
+	"crude/tui/workspace"
 	wm "crude/tui/wm"
 )
 
@@ -111,19 +112,19 @@ func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.Code == tea.KeyEsc || msg.String() == "ctrl+c" {
-		if m.focusStack.Top() == FocusTree {
-			m.focusStack.Pop()
+		if m.FocusStack.Top() == FocusTree {
+			m.FocusStack.Pop()
 		}
 		return m, nil
 	}
-	cmd := m.tree.Model.Update(filetree.TreeKeyPressMsg{Key: msg})
+	cmd := m.Tree.Model.Update(filetree.TreeKeyPressMsg{Key: msg})
 	return m, cmd
 }
 
 func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
-		if m.editorState.Editor.HasSelection() {
-			selected := m.editorState.Editor.SelectedText()
+		if m.EditorState.Editor.HasSelection() {
+			selected := m.EditorState.Editor.SelectedText()
 			if selected != "" {
 				return m, rendering.CopyToClipboardCmd(selected)
 			}
@@ -131,16 +132,16 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Code == tea.KeyEsc {
-		if m.lspPopup.RenameArmed {
-			m.lspPopup.RenameArmed = false
-			m.statusbar.SetInfo("Rename cancelled")
+		if m.LSPPopup.RenameArmed {
+			m.LSPPopup.RenameArmed = false
+			m.StatusBar.SetInfo("Rename cancelled")
 			return m, nil
 		}
-		if m.lspPopup.ReferencesID != "" {
+		if m.LSPPopup.ReferencesID != "" {
 			m.closeReferencesPopup()
 			return m, nil
 		}
-		if m.lspPopup.CompletionID != "" {
+		if m.LSPPopup.CompletionID != "" {
 			m.closeCompletionPopup()
 			return m, nil
 		}
@@ -153,23 +154,23 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// References popup: intercept navigation keys while it's open.
-	if m.lspPopup.ReferencesID != "" {
+	if m.LSPPopup.ReferencesID != "" {
 		switch msg.String() {
 		case "down":
-			if m.lspPopup.RefCursor < len(m.lspPopup.RefRows)-1 {
-				m.lspPopup.RefCursor++
+			if m.LSPPopup.RefCursor < len(m.LSPPopup.RefRows)-1 {
+				m.LSPPopup.RefCursor++
 				m.refreshReferencesPopup()
 			}
 			return m, nil
 		case "up":
-			if m.lspPopup.RefCursor > 0 {
-				m.lspPopup.RefCursor--
+			if m.LSPPopup.RefCursor > 0 {
+				m.LSPPopup.RefCursor--
 				m.refreshReferencesPopup()
 			}
 			return m, nil
 		case "enter":
-			if m.lspPopup.RefCursor >= 0 && m.lspPopup.RefCursor < len(m.lspPopup.RefRows) {
-				r := m.lspPopup.RefRows[m.lspPopup.RefCursor]
+			if m.LSPPopup.RefCursor >= 0 && m.LSPPopup.RefCursor < len(m.LSPPopup.RefRows) {
+				r := m.LSPPopup.RefRows[m.LSPPopup.RefCursor]
 				m.jumpToReference(r)
 				m.closeReferencesPopup()
 			}
@@ -177,44 +178,44 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	// Outline popup: intercept navigation keys while it's open.
-	if m.lspPopup.OutlineOpen && m.windowManager != nil && m.windowManager.Window(outlinePopupID) != nil {
+	if m.LSPPopup.OutlineOpen && m.windowManager != nil && m.windowManager.Window(outlinePopupID) != nil {
 		switch msg.String() {
 		case "down":
-			if m.lspPopup.OutlineCursor < len(m.lspPopup.OutlineRows)-1 {
-				m.lspPopup.OutlineCursor++
-				m.showOutlinePopup(m.lspManager.DocumentSymbols(m.editorState.Editor.FilePath()))
+			if m.LSPPopup.OutlineCursor < len(m.LSPPopup.OutlineRows)-1 {
+				m.LSPPopup.OutlineCursor++
+				m.showOutlinePopup(m.LSPMgr.DocumentSymbols(m.EditorState.Editor.FilePath()))
 			}
 			return m, nil
 		case "up":
-			if m.lspPopup.OutlineCursor > 0 {
-				m.lspPopup.OutlineCursor--
-				m.showOutlinePopup(m.lspManager.DocumentSymbols(m.editorState.Editor.FilePath()))
+			if m.LSPPopup.OutlineCursor > 0 {
+				m.LSPPopup.OutlineCursor--
+				m.showOutlinePopup(m.LSPMgr.DocumentSymbols(m.EditorState.Editor.FilePath()))
 			}
 			return m, nil
 		case "enter":
-			if m.lspPopup.OutlineCursor >= 0 && m.lspPopup.OutlineCursor < len(m.lspPopup.OutlineRows) {
-				sym := m.lspPopup.OutlineRows[m.lspPopup.OutlineCursor].sym
-				m.editorState.Editor.SetCursorPosition(sym.Line, sym.Col)
-				m.editorState.Editor.ScrollToCursor()
+			if m.LSPPopup.OutlineCursor >= 0 && m.LSPPopup.OutlineCursor < len(m.LSPPopup.OutlineRows) {
+				sym := m.LSPPopup.OutlineRows[m.LSPPopup.OutlineCursor].Sym
+				m.EditorState.Editor.SetCursorPosition(sym.Line, sym.Col)
+				m.EditorState.Editor.ScrollToCursor()
 				layout := m.computeLayout()
-				m.editorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+				m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 			}
 			return m, nil
 		}
 	}
 	// Completion popup: intercept navigation keys while it's open.
-	if m.lspPopup.CompletionID != "" {
+	if m.LSPPopup.CompletionID != "" {
 		switch msg.String() {
 		case "down":
-			if m.lspPopup.CompletionCursor < len(m.lspPopup.CompletionItems)-1 {
-				m.lspPopup.CompletionCursor++
-				m.showCompletionPopup(m.lspPopup.CompletionItems)
+			if m.LSPPopup.CompletionCursor < len(m.LSPPopup.CompletionItems)-1 {
+				m.LSPPopup.CompletionCursor++
+				m.showCompletionPopup(m.LSPPopup.CompletionItems)
 			}
 			return m, nil
 		case "up":
-			if m.lspPopup.CompletionCursor > 0 {
-				m.lspPopup.CompletionCursor--
-				m.showCompletionPopup(m.lspPopup.CompletionItems)
+			if m.LSPPopup.CompletionCursor > 0 {
+				m.LSPPopup.CompletionCursor--
+				m.showCompletionPopup(m.LSPPopup.CompletionItems)
 			}
 			return m, nil
 		case "tab", "enter":
@@ -223,7 +224,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	// LSP keybinds (only when a file is open and the LSP is up).
-	if m.editorState.Editor.IsOpen() && m.lspManager != nil {
+	if m.EditorState.Editor.IsOpen() && m.LSPMgr != nil {
 		switch msg.String() {
 		case "alt+.": // gd (go to definition) — Alt+. is widely used in TUI editors
 			return m, m.requestDefinitionCmd()
@@ -236,7 +237,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+space": // LSP completion
 			return m, m.requestCompletionCmd()
 		case "f8": // next error (or first error in project on first press)
-			if m.editorState.Editor.CursorLine() == 0 && m.editorState.Editor.CursorCol() == 0 && m.editorState.Editor.FirstError() != nil {
+			if m.EditorState.Editor.CursorLine() == 0 && m.EditorState.Editor.CursorCol() == 0 && m.EditorState.Editor.FirstError() != nil {
 				// Cursor at the very top: jump to first project error.
 				m.gotoFirstDiagnostic()
 			} else {
@@ -249,7 +250,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	// Find/Replace keybinds (work even without LSP).
-	if m.editorState.Editor.IsOpen() {
+	if m.EditorState.Editor.IsOpen() {
 		switch msg.String() {
 		case "ctrl+f":
 			m.openFindReplace(false)
@@ -260,36 +261,36 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.dirty = true
 			return m, nil
 		case "f3":
-			if m.findReplace != nil {
-				m.findReplace.OnNext()
-			} else if m.editorState.Editor.Search().HasMatches() {
-				m.editorState.Editor.NextMatch()
+			if m.FindReplace != nil {
+				m.FindReplace.OnNext()
+			} else if m.EditorState.Editor.Search().HasMatches() {
+				m.EditorState.Editor.NextMatch()
 			}
 			m.dirty = true
 			return m, nil
 		case "shift+f3":
-			if m.findReplace != nil {
-				m.findReplace.OnPrev()
-			} else if m.editorState.Editor.Search().HasMatches() {
-				m.editorState.Editor.PrevMatch()
+			if m.FindReplace != nil {
+				m.FindReplace.OnPrev()
+			} else if m.EditorState.Editor.Search().HasMatches() {
+				m.EditorState.Editor.PrevMatch()
 			}
 			m.dirty = true
 			return m, nil
 		case "ctrl+.":
 			layout := m.computeLayout()
-			cx, cy := m.editorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
+			cx, cy := m.EditorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
 			m.showContextMenuAt(cx, cy)
 			return m, nil
 		case "esc":
-			if m.findReplace != nil {
+			if m.FindReplace != nil {
 				m.closeFindReplace()
 				return m, nil
 			}
 		}
 	}
-	cmd := m.editorState.Editor.HandleEvent(msg)
+	cmd := m.EditorState.Editor.HandleEvent(msg)
 	layout := m.computeLayout()
-	m.editorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 	m.updateDiagHoverPopupFromCursor()
 	if cmd != nil {
 		return m, cmd
@@ -332,29 +333,29 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		case "composer":
 			// Ctrl+C with a selection: copy (don't close the
 			// composer — matches the chat input's behavior).
-			if msg.String() == "ctrl+c" && m.composer.HasActiveSelection() {
-				return m, rendering.CopyToClipboardCmd(m.composer.SelectedText())
+			if msg.String() == "ctrl+c" && m.ActiveSession.Composer.HasActiveSelection() {
+				return m, rendering.CopyToClipboardCmd(m.ActiveSession.Composer.SelectedText())
 			}
 			if msg.Code == tea.KeyEsc {
-				m.composer.Close()
+				m.ActiveSession.Composer.Close()
 				m.windowManager.RemoveWindow("composer")
 				return m, nil
 			}
-			updated, cmd, action := m.composer.Update(msg)
-			m.composer = updated
+			updated, cmd, action := m.ActiveSession.Composer.Update(msg)
+			m.ActiveSession.Composer = updated
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			switch action {
 			case widgets.ComposerCancel:
-				m.composer.Close()
+				m.ActiveSession.Composer.Close()
 				m.windowManager.RemoveWindow("composer")
 			case widgets.ComposerSubmit:
-				text := m.composer.Value()
-				m.composer.Close()
+				text := m.ActiveSession.Composer.Value()
+				m.ActiveSession.Composer.Close()
 				m.windowManager.RemoveWindow("composer")
-				if text != "" && m.agentMgr.ActiveID() != "" {
-					cmds = append(cmds, m.submitInput(m.agentMgr.ActiveID(), text, nil))
+				if text != "" && m.AgentMgr.ActiveID() != "" {
+					cmds = append(cmds, m.submitInput(m.AgentMgr.ActiveID(), text, nil))
 				}
 			}
 			if fw := m.windowManager.Window("composer"); fw != nil {
@@ -368,7 +369,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		default:
 			if msg.Code == tea.KeyEsc {
 				if fw.ID == "textoverlay" {
-					m.textOverlay.Close()
+					m.ActiveSession.TextOverlay.Close()
 				}
 				m.windowManager.RemoveWindow(fw.ID)
 				m.setMode(ModeChat)
@@ -386,27 +387,27 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.Code {
 	case tea.KeyLeft:
-		m.win.Prev()
+		m.Win.Prev()
 		m.handleTabSwitch()
 		return m, nil
 	case tea.KeyRight:
-		m.win.Next()
+		m.Win.Next()
 		m.handleTabSwitch()
 		return m, nil
 	case tea.KeyEnter:
-		if m.focusStack.Top() == FocusTabBar {
-			m.focusStack.Pop()
+		if m.FocusStack.Top() == FocusTabBar {
+			m.FocusStack.Pop()
 		}
 		m.handleTabSwitch()
 		return m, nil
 	case tea.KeyEsc:
-		if m.focusStack.Top() == FocusTabBar {
-			m.focusStack.Pop()
+		if m.FocusStack.Top() == FocusTabBar {
+			m.FocusStack.Pop()
 		}
 		return m, nil
 	default:
-		if m.focusStack.Top() == FocusTabBar {
-			m.focusStack.Pop()
+		if m.FocusStack.Top() == FocusTabBar {
+			m.FocusStack.Pop()
 		}
 	}
 	return m, nil
@@ -415,20 +416,20 @@ func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m *App) dispatchOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	isCancel := msg.Code == tea.KeyEsc
 
-	if keyMsg, ok := any(msg).(tea.KeyPressMsg); ok && m.overlay.TabCount() >= 2 {
+	if keyMsg, ok := any(msg).(tea.KeyPressMsg); ok && m.Overlay.TabCount() >= 2 {
 		switch keyMsg.String() {
 		case "ctrl+]":
-			m.overlay.Next()
+			m.Overlay.Next()
 			m.syncOverlayMode()
 			return m, nil
 		case "ctrl+[":
-			m.overlay.Prev()
+			m.Overlay.Prev()
 			m.syncOverlayMode()
 			return m, nil
 		}
 	}
 
-	switch m.overlayState.Current() {
+	switch m.OverlayState.Current() {
 	case ModeSettings:
 		return m.handleSettingsKey(msg, cmds)
 	case ModeConfirm:
@@ -450,60 +451,60 @@ func (m *App) dispatchOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mode
 }
 
 func (m *App) handleSettingsKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	updated, cmd, evt := m.settings.Update(msg)
-	m.settings = updated
+	updated, cmd, evt := m.Settings.Update(msg)
+	m.Settings = updated
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
 	switch e := evt.(type) {
 	case settings.SaveEvent:
 		s := e.Settings
-		m.logger.Info("CONFIG", "settings_save", "provider", s.ProviderID, "model", s.Model, "category", m.overlayState.GetSettingsCategory())
+		m.Logger.Info("CONFIG", "settings_save", "provider", s.ProviderID, "model", s.Model, "category", m.OverlayState.GetSettingsCategory())
 		if m.OnSettingsSave != nil {
-			m.statusbar.SetInfo("saving...")
+			m.StatusBar.SetInfo("saving...")
 			onSave := m.OnSettingsSave
 			*cmds = append(*cmds, func() tea.Msg {
 				err := onSave(s)
 				return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
 			})
 		} else {
-			m.modelName = s.Model
-			m.lastSettings = s
+			m.ModelName = s.Model
+			m.LastSettings = s
 			m.closeOverlayTab("Settings")
 		}
-		m.overlayState.SetSettingsCategory("")
+		m.OverlayState.SetSettingsCategory("")
 	case settings.CancelEvent:
-		m.logger.Info("CONFIG", "settings_cancel")
-		m.settings.RestoreSnapshot()
+		m.Logger.Info("CONFIG", "settings_cancel")
+		m.Settings.RestoreSnapshot()
 		m.closeOverlayTab("Settings")
-		m.overlayState.SetSettingsCategory("")
+		m.OverlayState.SetSettingsCategory("")
 	}
 	return m, tea.Batch(*cmds...)
 }
 
 func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	m.statusbar.SetConfirming(true)
-	updated, result, done := m.confirm.Update(msg)
-	m.confirm = updated
+	m.StatusBar.SetConfirming(true)
+	updated, result, done := m.ActiveSession.Confirm.Update(msg)
+	m.ActiveSession.Confirm = updated
 	if done {
-		m.statusbar.SetConfirming(false)
-		m.overlayState.SetBlocking(false)
-		if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		m.StatusBar.SetConfirming(false)
+		m.OverlayState.SetBlocking(false)
+		if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 			n.State.Thinking = true
 		}
-		m.statusbar.SetThinkingForAgent(m.agentMgr.ActiveID(), true, false, false)
-		if m.OnConfirmResult != nil {
-			m.OnConfirmResult(result)
-			m.logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
+		m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
+		if m.ActiveSession.OnConfirmResult != nil {
+			m.ActiveSession.OnConfirmResult(result)
+			m.Logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
 		}
-		if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 			switch result.Choice {
 			case ttypes.ConfirmAllow:
-				n.State.pendingPermTag = "allowed"
+				n.State.PendingPermTag = "allowed"
 			case ttypes.ConfirmAlways:
-				n.State.pendingPermTag = "always"
+				n.State.PendingPermTag = "always"
 			case ttypes.ConfirmDeny:
-				n.State.pendingPermTag = "denied"
+				n.State.PendingPermTag = "denied"
 				if ml := m.activeMsgList(); ml != nil {
 					ml.SetToolPermTag(result.Tool, "", "denied")
 				}
@@ -515,30 +516,30 @@ func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model,
 }
 
 func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	m.statusbar.SetConfirming(true)
+	m.StatusBar.SetConfirming(true)
 
-	inTextMode := m.questionForm.IsTextQuestion(m.questionForm.Focused())
+	inTextMode := m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused())
 	isCancel := msg.Code == tea.KeyEsc
 
 	if inTextMode {
 		if isCancel {
-			m.questionForm.ExitTextMode(m.questionForm.Focused())
-			m.input.ClearInput()
+			m.ActiveSession.QuestionForm.ExitTextMode(m.ActiveSession.QuestionForm.Focused())
+			m.Input.ClearInput()
 			m.syncQuestionInputPrompt()
 			return m, nil
 		}
 		if msg.String() == "ctrl+s" {
-			text := trimAndSubmit(m.input.Value())
+			text := trimAndSubmit(m.Input.Value())
 			if text != "" {
-				m.questionForm.SetAnswer(m.questionForm.Focused(), text)
+				m.ActiveSession.QuestionForm.SetAnswer(m.ActiveSession.QuestionForm.Focused(), text)
 			}
 			return m.finishQuestionIfNeeded(cmds), nil
 		}
 		if msg.Code == tea.KeyTab {
 			if msg.Mod.Contains(tea.ModShift) {
-				m.questionForm.FocusPrev()
+				m.ActiveSession.QuestionForm.FocusPrev()
 			} else {
-				m.questionForm.FocusNext()
+				m.ActiveSession.QuestionForm.FocusNext()
 			}
 			m.syncQuestionInputPrompt()
 			return m, nil
@@ -547,26 +548,26 @@ func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 	}
 
 	if isCancel {
-		m.questionForm.Dismiss()
-		m.overlayState.SetBlocking(false)
-		m.statusbar.SetConfirming(false)
-		m.input.ResetPrompt()
-		m.input.ClearInput()
+		m.ActiveSession.QuestionForm.Dismiss()
+		m.OverlayState.SetBlocking(false)
+		m.StatusBar.SetConfirming(false)
+		m.Input.ResetPrompt()
+		m.Input.ClearInput()
 		m.closeAllQuestionOverlayTabs()
-		if m.OnQuestionResult != nil {
-			m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
+		if m.ActiveSession.OnQuestionResult != nil {
+			m.ActiveSession.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
 		}
 		return m, nil
 	}
 
-	updated, result, done := m.questionForm.Update(msg)
-	m.questionForm = updated
-	if !done && m.questionForm.IsTextQuestion(m.questionForm.Focused()) {
-		existing := m.questionForm.Answer(m.questionForm.Focused())
+	updated, result, done := m.ActiveSession.QuestionForm.Update(msg)
+	m.ActiveSession.QuestionForm = updated
+	if !done && m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused()) {
+		existing := m.ActiveSession.QuestionForm.Answer(m.ActiveSession.QuestionForm.Focused())
 		if existing != "" {
-			m.input.SetInput(existing)
+			m.Input.SetInput(existing)
 		} else {
-			m.input.ClearInput()
+			m.Input.ClearInput()
 		}
 	}
 	m.syncQuestionInputPrompt()
@@ -577,19 +578,19 @@ func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 }
 
 func (m *App) handleYoloKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	m.statusbar.SetConfirming(true)
-	updated, enabled, done := m.yoloDlg.Update(msg)
-	m.yoloDlg = updated
+	m.StatusBar.SetConfirming(true)
+	updated, enabled, done := m.ActiveSession.YoloDlg.Update(msg)
+	m.ActiveSession.YoloDlg = updated
 	if done {
-		m.statusbar.SetConfirming(false)
-		m.overlayState.SetYolo(enabled)
+		m.StatusBar.SetConfirming(false)
+		m.OverlayState.SetYolo(enabled)
 		var content string
 		if enabled {
 			content = "⚠ YOLO mode ACTIVE — all safety checks disabled. Use /yolo again to restore."
-			m.logger.Warn("SAFETY", "yolo_enabled")
+			m.Logger.Warn("SAFETY", "yolo_enabled")
 		} else {
 			content = "YOLO mode cancelled. Safety checks remain active."
-			m.logger.Info("SAFETY", "yolo_disabled")
+			m.Logger.Info("SAFETY", "yolo_disabled")
 		}
 		if ml := m.activeMsgList(); ml != nil {
 			ml.AppendMessage(ttypes.ChatMessage{
@@ -611,11 +612,11 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 	// is the cancel shortcut (the original behavior — Esc is also
 	// bound to cancel). This matches the chat input's "Ctrl+C is
 	// never cancel" rule.
-	if msg.String() == "ctrl+c" && m.textOverlay.HasActiveSelection() {
-		return m, rendering.CopyToClipboardCmd(m.textOverlay.SelectedText())
+	if msg.String() == "ctrl+c" && m.ActiveSession.TextOverlay.HasActiveSelection() {
+		return m, rendering.CopyToClipboardCmd(m.ActiveSession.TextOverlay.SelectedText())
 	}
-	updated, cmd, action := m.textOverlay.Update(msg)
-	m.textOverlay = updated
+	updated, cmd, action := m.ActiveSession.TextOverlay.Update(msg)
+	m.ActiveSession.TextOverlay = updated
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
@@ -623,7 +624,7 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 	case widgets.TextOverlaySave:
 		m.saveReferenceFromOverlay()
 	case widgets.TextOverlayCancel:
-		m.textOverlay.Close()
+		m.ActiveSession.TextOverlay.Close()
 		m.setMode(ModeChat)
 	}
 	if fw := m.windowManager.Focused(); fw != nil {
@@ -643,11 +644,11 @@ func (m *App) handleFilePickerKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mod
 
 func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
-		if m.logger != nil {
-			m.logger.Debug("COPY", "ctrl_c", "mode", m.overlayState.Name())
+		if m.Logger != nil {
+			m.Logger.Debug("COPY", "ctrl_c", "mode", m.OverlayState.Name())
 		}
-		if m.input.InputSelecting() {
-			selected := m.input.SelectedText()
+		if m.Input.InputSelecting() {
+			selected := m.Input.SelectedText()
 			if selected != "" {
 				return m, rendering.CopyToClipboardCmd(selected)
 			}
@@ -655,13 +656,13 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m, nil
 	}
 	if msg.Code == tea.KeyEsc {
-		if m.logger != nil {
-			m.logger.Debug("CANCEL", "esc", "mode", m.overlayState.Name())
+		if m.Logger != nil {
+			m.Logger.Debug("CANCEL", "esc", "mode", m.OverlayState.Name())
 		}
 		return m, m.handleCancel(msg)
 	}
 
-	if m.anyActive() && !m.overlayState.IsBlocking() {
+	if m.anyActive() && !m.OverlayState.IsBlocking() {
 		switch msg.Code {
 		case tea.KeyHome, tea.KeyEnd:
 			if ml := m.activeMsgList(); ml != nil {
@@ -676,42 +677,42 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 
 	switch msg.String() {
 	case "ctrl+]", "ctrl+[":
-		if m.win.IsOpen() {
+		if m.Win.IsOpen() {
 			if msg.String() == "ctrl+]" {
-				m.win.Next()
+				m.Win.Next()
 			} else {
-				m.win.Prev()
+				m.Win.Prev()
 			}
 			m.handleTabSwitch()
 			return m, nil
 		}
 	case "ctrl+t":
-		if m.win.IsOpen() && m.win.TabCount() >= 1 {
+		if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
 			m.setFocusTabBar()
 			return m, nil
 		}
 	case "ctrl+1":
-		if m.tree.Model != nil && m.tree.Visible {
-			if m.focusStack.Top() == FocusTree {
-				m.focusStack.Pop()
+		if m.Tree.Model != nil && m.Tree.Visible {
+			if m.FocusStack.Top() == FocusTree {
+				m.FocusStack.Pop()
 			} else {
-				m.focusStack.Clear()
-				m.focusStack.Push(FocusTree)
+				m.FocusStack.Clear()
+				m.FocusStack.Push(FocusTree)
 			}
 			return m, nil
 		}
 	}
 
-	if m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen() {
+	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
 		return m.dispatchEditorKey(msg)
 	}
 
 	canType := false
-	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
-	updated, cmd, evt := m.input.Update(msg, canType && !m.overlayState.IsBlocking(), m.overlayState.IsBlocking(), m.chatAreaHeight, m.input.ShowHint())
-	m.input = updated
+	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
+	m.Input = updated
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
@@ -734,18 +735,18 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 		// Rename arming overrides the normal submit — the user typed a
 		// new symbol name after F2. We consume the text and fire the
 		// rename request instead of sending it as a chat message.
-		if m.lspPopup.RenameArmed {
-			m.lspPopup.RenameArmed = false
+		if m.LSPPopup.RenameArmed {
+			m.LSPPopup.RenameArmed = false
 			cmds = append(cmds, m.submitRename(e.Text))
 			return cmds
 		}
-		cmds = append(cmds, m.submitInput(m.agentMgr.ActiveID(), e.Text, e.ReferenceIDs))
+		cmds = append(cmds, m.submitInput(m.AgentMgr.ActiveID(), e.Text, e.ReferenceIDs))
 	case input.BtwSubmitEvent:
-		cmds = append(cmds, m.submitBtw(m.agentMgr.ActiveID(), e.Text, e.ReferenceIDs))
+		cmds = append(cmds, m.submitBtw(m.AgentMgr.ActiveID(), e.Text, e.ReferenceIDs))
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
 	case input.SettingsOpenEvent:
-		m.settings.SaveSnapshot()
+		m.Settings.SaveSnapshot()
 		m.setMode(ModeSettings)
 	case input.RefOpenEvent:
 		m.openReferenceOverlay(e.ID)
@@ -760,54 +761,54 @@ func trimAndSubmit(val string) string {
 }
 
 func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
-	if m.questionForm.AllAnswered() {
-		result := m.questionForm.BuildResult()
-		m.statusbar.SetConfirming(false)
-		m.overlayState.SetBlocking(false)
-		if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+	if m.ActiveSession.QuestionForm.AllAnswered() {
+		result := m.ActiveSession.QuestionForm.BuildResult()
+		m.StatusBar.SetConfirming(false)
+		m.OverlayState.SetBlocking(false)
+		if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 			n.State.Thinking = true
 		}
-		m.statusbar.SetThinkingForAgent(m.agentMgr.ActiveID(), true, false, false)
-		if m.OnQuestionResult != nil {
-			m.OnQuestionResult(ttypes.QuestionResult(result))
+		m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
+		if m.ActiveSession.OnQuestionResult != nil {
+			m.ActiveSession.OnQuestionResult(ttypes.QuestionResult(result))
 		}
 		m.closeAllQuestionOverlayTabs()
-		m.input.ResetPrompt()
-		m.input.ClearInput()
+		m.Input.ResetPrompt()
+		m.Input.ClearInput()
 	}
 	return m
 }
 
 func (m *App) finishQuestionResult(result ttypes.QuestionResult, cmds *[]tea.Cmd) tea.Model {
-	m.statusbar.SetConfirming(false)
-	m.overlayState.SetBlocking(false)
-	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+	m.StatusBar.SetConfirming(false)
+	m.OverlayState.SetBlocking(false)
+	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		n.State.Thinking = true
 	}
-	m.statusbar.SetThinkingForAgent(m.agentMgr.ActiveID(), true, false, false)
-	if m.OnQuestionResult != nil {
-		m.OnQuestionResult(result)
+	m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
+	if m.ActiveSession.OnQuestionResult != nil {
+		m.ActiveSession.OnQuestionResult(result)
 	}
 	m.closeAllQuestionOverlayTabs()
-	m.input.ResetPrompt()
-	m.input.ClearInput()
+	m.Input.ResetPrompt()
+	m.Input.ClearInput()
 	return m
 }
 
 func (m *App) routeToInputInQuestion(msg tea.KeyPressMsg, cmds *[]tea.Cmd) tea.Model {
-	updated, cmd, evt := m.input.Update(msg, false, false, m.chatAreaHeight, false)
-	m.input = updated
+	updated, cmd, evt := m.Input.Update(msg, false, false, m.ChatAreaHeight, false)
+	m.Input = updated
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
 	switch e := evt.(type) {
 	case input.SubmitEvent:
-		m.questionForm.SetAnswer(m.questionForm.Focused(), e.Text)
-		m.input.ClearInput()
-		if m.questionForm.AllAnswered() {
+		m.ActiveSession.QuestionForm.SetAnswer(m.ActiveSession.QuestionForm.Focused(), e.Text)
+		m.Input.ClearInput()
+		if m.ActiveSession.QuestionForm.AllAnswered() {
 			m.finishQuestionIfNeeded(cmds)
 		} else {
-			m.questionForm.FocusNext()
+			m.ActiveSession.QuestionForm.FocusNext()
 			m.syncQuestionInputPrompt()
 		}
 	}
@@ -835,8 +836,8 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 
 	switch m.focusTarget() {
 	case FocusEditor:
-		if m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen() {
-			cmd := m.editorState.Editor.HandleEvent(msg)
+		if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
+			cmd := m.EditorState.Editor.HandleEvent(msg)
 			return m, cmd
 		}
 
@@ -845,7 +846,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		// Each of these widgets has its own Update method that
 		// accepts tea.PasteMsg. The overlay mode dispatcher is
 		// the single place that knows which overlay is active.
-		switch m.overlayState.Current() {
+		switch m.OverlayState.Current() {
 		case ModeSettings:
 			// Paste is routed here only when the user is editing a
 			// TextItem in the settings form. The form's Update handles
@@ -853,8 +854,8 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 			// HandlePaste. We don't need to react to the returned
 			// Event because paste never produces a Save/Cancel — it
 			// just inserts characters (or replaces a selection).
-			updated, cmd, _ := m.settings.Update(msg)
-			m.settings = updated
+			updated, cmd, _ := m.Settings.Update(msg)
+			m.Settings = updated
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -888,11 +889,11 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	// Default / FocusInput / FocusLauncher / FocusTree / FocusTabBar /
 	// FocusNone → route to chat input (the original behaviour).
 	canType := false
-	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
-	updated, cmd, evt := m.input.Update(msg, canType && !m.overlayState.IsBlocking(), m.overlayState.IsBlocking(), m.chatAreaHeight, m.input.ShowHint())
-	m.input = updated
+	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
+	m.Input = updated
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -919,8 +920,8 @@ func (m *App) pasteToWindowContent(fw *wm.FloatingWindow, msg tea.PasteMsg) tea.
 
 func (m *App) dispatchEditorTick(msg any) []tea.Cmd {
 	var cmds []tea.Cmd
-	if m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen() {
-		cmd := m.editorState.Editor.HandleEvent(msg)
+	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
+		cmd := m.EditorState.Editor.HandleEvent(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -981,17 +982,17 @@ type lspCompletionResultMsg struct {
 
 // requestDefinitionCmd fires a "go to definition" request at the cursor.
 func (m *App) requestDefinitionCmd() tea.Cmd {
-	if !m.editorState.Editor.IsOpen() || m.lspManager == nil {
+	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
 		return nil
 	}
-	filePath := m.editorState.Editor.FilePath()
-	line, col := m.editorState.Editor.CursorLine(), m.editorState.Editor.CursorCol()
-	conn, status, _ := m.lspManager.Status()
+	filePath := m.EditorState.Editor.FilePath()
+	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
+	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.statusbar.SetInfo("LSP not ready")
+		m.StatusBar.SetInfo("LSP not ready")
 		return nil
 	}
-	lspMgr := m.lspManager
+	lspMgr := m.LSPMgr
 	return tea.Cmd(func() tea.Msg {
 		locs := lspMgr.RequestDefinition(context.Background(), filePath, line, col)
 		return lspDefinitionResultMsg{filePath: filePath, locations: locs}
@@ -1000,17 +1001,17 @@ func (m *App) requestDefinitionCmd() tea.Cmd {
 
 // requestReferencesCmd fires a "find references" request at the cursor.
 func (m *App) requestReferencesCmd() tea.Cmd {
-	if !m.editorState.Editor.IsOpen() || m.lspManager == nil {
+	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
 		return nil
 	}
-	filePath := m.editorState.Editor.FilePath()
-	line, col := m.editorState.Editor.CursorLine(), m.editorState.Editor.CursorCol()
-	conn, status, _ := m.lspManager.Status()
+	filePath := m.EditorState.Editor.FilePath()
+	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
+	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.statusbar.SetInfo("LSP not ready")
+		m.StatusBar.SetInfo("LSP not ready")
 		return nil
 	}
-	lspMgr := m.lspManager
+	lspMgr := m.LSPMgr
 	return tea.Cmd(func() tea.Msg {
 		locs := lspMgr.FindReferences(context.Background(), filePath, line, col, true)
 		return lspReferencesResultMsg{filePath: filePath, locations: locs}
@@ -1020,16 +1021,16 @@ func (m *App) requestReferencesCmd() tea.Cmd {
 // requestDocumentSymbolsCmd refreshes the document outline for the current
 // file and shows it in the outline panel.
 func (m *App) requestDocumentSymbolsCmd() tea.Cmd {
-	if !m.editorState.Editor.IsOpen() || m.lspManager == nil {
+	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
 		return nil
 	}
-	filePath := m.editorState.Editor.FilePath()
-	conn, status, _ := m.lspManager.Status()
+	filePath := m.EditorState.Editor.FilePath()
+	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.statusbar.SetInfo("LSP not ready")
+		m.StatusBar.SetInfo("LSP not ready")
 		return nil
 	}
-	lspMgr := m.lspManager
+	lspMgr := m.LSPMgr
 	return tea.Cmd(func() tea.Msg {
 		syms := lspMgr.RequestDocumentSymbols(context.Background(), filePath)
 		return lspDocumentSymbolsResultMsg{filePath: filePath, symbols: syms}
@@ -1040,32 +1041,32 @@ func (m *App) requestDocumentSymbolsCmd() tea.Cmd {
 // the cursor. The actual rename request fires when the user confirms the new
 // name in the input.
 func (m *App) startRenameCmd() tea.Cmd {
-	if !m.editorState.Editor.IsOpen() || m.lspManager == nil {
+	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
 		return nil
 	}
-	conn, status, _ := m.lspManager.Status()
+	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.statusbar.SetInfo("LSP not ready")
+		m.StatusBar.SetInfo("LSP not ready")
 		return nil
 	}
 	// Arm rename mode: the next text submitted through the input is
 	// treated as the new symbol name. Esc cancels. The status bar
 	// explains what's happening.
-	m.lspPopup.RenameArmed = true
-	m.statusbar.SetInfo("Rename: type new name and press Enter (Esc to cancel)")
+	m.LSPPopup.RenameArmed = true
+	m.StatusBar.SetInfo("Rename: type new name and press Enter (Esc to cancel)")
 	return nil
 }
 
 // submitRename fires the actual rename request once the user has typed a
 // new name. Called from the input handler when renameArmed is true.
 func (m *App) submitRename(newName string) tea.Cmd {
-	m.lspPopup.RenameArmed = false
-	if !m.editorState.Editor.IsOpen() || m.lspManager == nil || newName == "" {
+	m.LSPPopup.RenameArmed = false
+	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil || newName == "" {
 		return nil
 	}
-	filePath := m.editorState.Editor.FilePath()
-	line, col := m.editorState.Editor.CursorLine(), m.editorState.Editor.CursorCol()
-	lspMgr := m.lspManager
+	filePath := m.EditorState.Editor.FilePath()
+	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
+	lspMgr := m.LSPMgr
 	return tea.Cmd(func() tea.Msg {
 		edit, err := lspMgr.RequestRename(context.Background(), filePath, line, col, newName)
 		return lspRenameResultMsg{filePath: filePath, newName: newName, edit: edit, err: err}
@@ -1074,17 +1075,17 @@ func (m *App) submitRename(newName string) tea.Cmd {
 
 // requestCompletionCmd fires a completion request at the cursor.
 func (m *App) requestCompletionCmd() tea.Cmd {
-	if !m.editorState.Editor.IsOpen() || m.lspManager == nil {
+	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
 		return nil
 	}
-	filePath := m.editorState.Editor.FilePath()
-	line, col := m.editorState.Editor.CursorLine(), m.editorState.Editor.CursorCol()
-	conn, status, _ := m.lspManager.Status()
+	filePath := m.EditorState.Editor.FilePath()
+	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
+	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.statusbar.SetInfo("LSP not ready")
+		m.StatusBar.SetInfo("LSP not ready")
 		return nil
 	}
-	lspMgr := m.lspManager
+	lspMgr := m.LSPMgr
 	return tea.Cmd(func() tea.Msg {
 		items := lspMgr.RequestCompletions(context.Background(), filePath, line, col)
 		return lspCompletionResultMsg{filePath: filePath, line: line, col: col, items: items}
@@ -1099,26 +1100,26 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 // total count.
 func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
 	if len(msg.locations) == 0 {
-		m.statusbar.SetInfo("No definition found")
+		m.StatusBar.SetInfo("No definition found")
 		return
 	}
 	loc := msg.locations[0]
 	if loc.Path == "" {
-		m.statusbar.SetInfo("Definition in unindexed location")
+		m.StatusBar.SetInfo("Definition in unindexed location")
 		return
 	}
-	if loc.Path != m.editorState.Editor.FilePath() {
+	if loc.Path != m.EditorState.Editor.FilePath() {
 		if err := m.openFileInEditor(loc.Path); err != nil {
-			m.statusbar.SetError("Cannot open " + loc.Path)
+			m.StatusBar.SetError("Cannot open " + loc.Path)
 			return
 		}
 	}
-	m.editorState.Editor.SetCursorPosition(loc.Line, loc.Col)
-	m.editorState.Editor.ScrollToCursor()
+	m.EditorState.Editor.SetCursorPosition(loc.Line, loc.Col)
+	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
-	m.editorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 	if len(msg.locations) > 1 {
-		m.statusbar.SetInfo(fmt.Sprintf("Definition: %d locations", len(msg.locations)))
+		m.StatusBar.SetInfo(fmt.Sprintf("Definition: %d locations", len(msg.locations)))
 	}
 }
 
@@ -1126,16 +1127,16 @@ func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
 // user presses Enter on a row, the editor jumps to that location.
 func (m *App) handleReferencesResult(msg lspReferencesResultMsg) {
 	if len(msg.locations) == 0 {
-		m.statusbar.SetInfo("No references found")
+		m.StatusBar.SetInfo("No references found")
 		return
 	}
 	rows := make([]refRow, 0, len(msg.locations))
 	for _, loc := range msg.locations {
 		preview := ""
-		if line, err := m.editorState.Editor.LineTextFromPath(loc.Path, loc.Line); err == nil {
+		if line, err := m.EditorState.Editor.LineTextFromPath(loc.Path, loc.Line); err == nil {
 			preview = line
 		}
-		rows = append(rows, refRow{file: loc.Path, line: loc.Line, col: loc.Col, preview: preview})
+		rows = append(rows, refRow{File: loc.Path, Line: loc.Line, Col: loc.Col, Preview: preview})
 	}
 	m.showReferencesPopup(rows)
 }
@@ -1144,13 +1145,13 @@ func (m *App) handleReferencesResult(msg lspReferencesResultMsg) {
 // opens it. Empty result closes the outline.
 func (m *App) handleDocumentSymbolsResult(msg lspDocumentSymbolsResultMsg) {
 	if len(msg.symbols) == 0 {
-		m.statusbar.SetInfo("No symbols in file")
-		m.lspPopup.OutlineOpen = false
+		m.StatusBar.SetInfo("No symbols in file")
+		m.LSPPopup.OutlineOpen = false
 		m.closeOutlinePopup()
 		return
 	}
-	m.lspPopup.OutlineOpen = true
-	m.statusbar.SetInfo(fmt.Sprintf("Outline: %d symbols", countSymbols(msg.symbols)))
+	m.LSPPopup.OutlineOpen = true
+	m.StatusBar.SetInfo(fmt.Sprintf("Outline: %d symbols", countSymbols(msg.symbols)))
 	m.showOutlinePopup(msg.symbols)
 }
 
@@ -1159,7 +1160,7 @@ func (m *App) handleDocumentSymbolsResult(msg lspDocumentSymbolsResultMsg) {
 // selected item's text at the cursor.
 func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
 	if len(msg.items) == 0 {
-		m.statusbar.SetInfo("No completions")
+		m.StatusBar.SetInfo("No completions")
 		return
 	}
 	// Limit to a reasonable number of items for the popup.
@@ -1177,12 +1178,12 @@ func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
 // form is left as a TODO; the rename UX is still useful without it.
 func (m *App) handleRenameResult(msg lspRenameResultMsg) {
 	if msg.err != nil {
-		m.statusbar.SetError("Rename failed: " + msg.err.Error())
+		m.StatusBar.SetError("Rename failed: " + msg.err.Error())
 		return
 	}
 	edit, ok := msg.edit.(*protocol.WorkspaceEdit)
 	if !ok || edit == nil {
-		m.statusbar.SetInfo("Rename: no changes")
+		m.StatusBar.SetInfo("Rename: no changes")
 		return
 	}
 	applied := 0
@@ -1190,31 +1191,31 @@ func (m *App) handleRenameResult(msg lspRenameResultMsg) {
 		fp := uriToPath(string(uri))
 		data, err := os.ReadFile(fp)
 		if err != nil {
-			m.logger.Warn("LSP", "rename_read", "file", fp, "error", err.Error())
+			m.Logger.Warn("LSP", "rename_read", "file", fp, "error", err.Error())
 			continue
 		}
 		updated, err := applyTextEdits(string(data), edits)
 		if err != nil {
-			m.logger.Warn("LSP", "rename_apply", "file", fp, "error", err.Error())
+			m.Logger.Warn("LSP", "rename_apply", "file", fp, "error", err.Error())
 			continue
 		}
 		if err := os.WriteFile(fp, []byte(updated), 0o644); err != nil {
-			m.logger.Warn("LSP", "rename_write", "file", fp, "error", err.Error())
+			m.Logger.Warn("LSP", "rename_write", "file", fp, "error", err.Error())
 			continue
 		}
 		applied++
 		// If the changed file is currently open in the editor, refresh it.
-		if m.editorState.Editor.IsOpen() && m.editorState.Editor.FilePath() == fp {
-			if err := m.editorState.Editor.Reload(); err != nil {
-				m.logger.Warn("LSP", "rename_reload", "file", fp, "error", err.Error())
+		if m.EditorState.Editor.IsOpen() && m.EditorState.Editor.FilePath() == fp {
+			if err := m.EditorState.Editor.Reload(); err != nil {
+				m.Logger.Warn("LSP", "rename_reload", "file", fp, "error", err.Error())
 			}
 		}
 	}
 	if applied == 0 {
-		m.statusbar.SetInfo("Rename: no changes applied")
+		m.StatusBar.SetInfo("Rename: no changes applied")
 		return
 	}
-	m.statusbar.SetInfo(fmt.Sprintf("Renamed in %d file%s", applied, pluralFile(applied)))
+	m.StatusBar.SetInfo(fmt.Sprintf("Renamed in %d file%s", applied, pluralFile(applied)))
 }
 
 // countSymbols returns the total number of symbols in a tree, including
@@ -1331,12 +1332,7 @@ func applyTextEdits(text string, edits []protocol.TextEdit) (string, error) {
 // showReferencesPopup displays the list of references in a floating window.
 // The list is selectable — pressing Enter on a row jumps the editor to that
 // location and closes the popup.
-type refRow struct {
-	file    string
-	line    int
-	col     int
-	preview string
-}
+type refRow = workspace.RefRow
 
 func (m *App) showReferencesPopup(rows []refRow) {
 	if m.windowManager == nil {
@@ -1352,13 +1348,13 @@ func (m *App) showReferencesPopup(rows []refRow) {
 	}
 	items := make([]listItem, 0, len(rows))
 	for _, r := range rows {
-		short := r.preview
+		short := r.Preview
 		if len([]rune(short)) > maxPreview {
 			short = string([]rune(short)[:maxPreview]) + "…"
 		}
 		items = append(items, listItem{
 			row:  r,
-			text: fmt.Sprintf("%s:%d:%d  %s", filepath.Base(r.file), r.line+1, r.col+1, short),
+			text: fmt.Sprintf("%s:%d:%d  %s", filepath.Base(r.File), r.Line+1, r.Col+1, short),
 		})
 	}
 
@@ -1381,31 +1377,31 @@ func (m *App) showReferencesPopup(rows []refRow) {
 	}
 
 	// Render the list.
-	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
-	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Bold(true)
-	mutedBg := lipgloss.NewStyle().Background(m.theme.Colors.Code.Bg)
-	headerBg := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted)
+	accent := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent).Bold(true)
+	mutedBg := lipgloss.NewStyle().Background(m.Theme.Colors.Code.Bg)
+	headerBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg).Bold(true)
 
 	header := headerBg.Render(padRow(fmt.Sprintf(" References (%d) ", len(items)), boxW-2))
 	body := make([]string, 0, len(items)+2)
 	body = append(body, header)
 	for i, it := range items {
 		line := padRow(it.text, boxW-2)
-		if i == m.lspPopup.RefCursor {
+		if i == m.LSPPopup.RefCursor {
 			line = accent.Render(line)
 		} else {
 			line = dim.Render(line)
 		}
 		body = append(body, mutedBg.Render(line))
 	}
-	if m.lspPopup.RefCursor >= len(items) {
-		m.lspPopup.RefCursor = 0
+	if m.LSPPopup.RefCursor >= len(items) {
+		m.LSPPopup.RefCursor = 0
 	}
 	footer := dim.Render(padRow(" ↑/↓ select · enter jump · esc close ", boxW-2))
 	body = append(body, footer)
 
 	// Wrap in box drawing characters for a clean panel look.
-	border := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
+	border := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent)
 	popLines := make([]string, 0, len(body)+2)
 	popLines = append(popLines, border.Render("╭"+strings.Repeat("─", boxW-2)+"╮"))
 	for _, l := range body {
@@ -1445,13 +1441,13 @@ func (m *App) showReferencesPopup(rows []refRow) {
 		)
 		fw.SetPosition(popupX, popupY)
 		m.windowManager.AddWindow(fw)
-		m.lspPopup.ReferencesID = id
+		m.LSPPopup.ReferencesID = id
 	}
 
 	// Stash rows for the key handler.
-	m.lspPopup.RefRows = make([]refRow, 0, len(items))
+	m.LSPPopup.RefRows = make([]refRow, 0, len(items))
 	for _, it := range items {
-		m.lspPopup.RefRows = append(m.lspPopup.RefRows, it.row)
+		m.LSPPopup.RefRows = append(m.LSPPopup.RefRows, it.row)
 	}
 }
 
@@ -1464,49 +1460,46 @@ func padRow(s string, w int) string {
 
 // closeReferencesPopup removes the references results popup, if any.
 func (m *App) closeReferencesPopup() {
-	if m.lspPopup.ReferencesID != "" && m.windowManager != nil {
-		m.windowManager.RemoveWindow(m.lspPopup.ReferencesID)
+	if m.LSPPopup.ReferencesID != "" && m.windowManager != nil {
+		m.windowManager.RemoveWindow(m.LSPPopup.ReferencesID)
 	}
-	m.lspPopup.ReferencesID = ""
-	m.lspPopup.RefRows = nil
-	m.lspPopup.RefCursor = 0
+	m.LSPPopup.ReferencesID = ""
+	m.LSPPopup.RefRows = nil
+	m.LSPPopup.RefCursor = 0
 }
 
 // refreshReferencesPopup re-renders the references popup in place. Called
 // when the user moves the selection so the highlight follows the cursor.
 func (m *App) refreshReferencesPopup() {
-	if m.lspPopup.ReferencesID == "" || len(m.lspPopup.RefRows) == 0 {
+	if m.LSPPopup.ReferencesID == "" || len(m.LSPPopup.RefRows) == 0 {
 		return
 	}
-	m.showReferencesPopup(m.lspPopup.RefRows)
+	m.showReferencesPopup(m.LSPPopup.RefRows)
 }
 
 // jumpToReference opens the file containing the given reference (switching
 // tabs if it's already open) and moves the cursor to the matching line/col.
 func (m *App) jumpToReference(r refRow) {
-	if r.file == "" {
+	if r.File == "" {
 		return
 	}
-	if r.file != m.editorState.Editor.FilePath() {
-		if err := m.openFileInEditor(r.file); err != nil {
-			m.statusbar.SetError("Cannot open " + r.file)
+	if r.File != m.EditorState.Editor.FilePath() {
+		if err := m.openFileInEditor(r.File); err != nil {
+			m.StatusBar.SetError("Cannot open " + r.File)
 			return
 		}
 	}
-	m.editorState.Editor.SetCursorPosition(r.line, r.col)
-	m.editorState.Editor.ScrollToCursor()
+	m.EditorState.Editor.SetCursorPosition(r.Line, r.Col)
+	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
-	m.editorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 }
 
 // ─── Outline popup ──────────────────────────────────────────────────────────
 
 const outlinePopupID = "outline-popup"
 
-type outlineRow struct {
-	sym   editor.LSPSymbol
-	depth int
-}
+type outlineRow = workspace.OutlineRow
 
 func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	if m.windowManager == nil {
@@ -1518,7 +1511,7 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	var walk func(syms []editor.LSPSymbol, depth int)
 	walk = func(syms []editor.LSPSymbol, depth int) {
 		for _, s := range syms {
-			flat = append(flat, outlineRow{sym: s, depth: depth})
+			flat = append(flat, outlineRow{Sym: s, Depth: depth})
 			walk(s.Children, depth+1)
 		}
 	}
@@ -1531,7 +1524,7 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	)
 	boxW := minW
 	for _, r := range flat {
-		text := strings.Repeat("  ", r.depth) + editor.SymbolKindIcon(r.sym.Kind) + " " + r.sym.Name
+		text := strings.Repeat("  ", r.Depth) + editor.SymbolKindIcon(r.Sym.Kind) + " " + r.Sym.Name
 		if w := rendering.VisibleWidth(text) + 4; w > boxW {
 			boxW = w
 		}
@@ -1551,13 +1544,13 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	}
 
 	// Render.
-	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
-	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Bold(true)
-	kindStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent2)
-	nameStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Fg)
-	mutedBg := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg)
-	headerBg := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Bold(true)
-	border := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent2)
+	dim := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted)
+	accent := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent).Bold(true)
+	kindStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent2)
+	nameStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Fg)
+	mutedBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg)
+	headerBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg).Bold(true)
+	border := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent2)
 
 	header := headerBg.Render(padRow(fmt.Sprintf(" Outline · %d ", len(flat)), boxW-2))
 
@@ -1565,22 +1558,22 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	body = append(body, header)
 	maxRows := boxH - 2
 	start := 0
-	if m.lspPopup.OutlineCursor >= maxRows {
-		start = m.lspPopup.OutlineCursor - maxRows + 1
+	if m.LSPPopup.OutlineCursor >= maxRows {
+		start = m.LSPPopup.OutlineCursor - maxRows + 1
 	}
 	for i := start; i < len(flat) && i < start+maxRows; i++ {
 		r := flat[i]
-		indent := strings.Repeat("  ", r.depth)
-		text := indent + editor.SymbolKindIcon(r.sym.Kind) + " " + r.sym.Name
+		indent := strings.Repeat("  ", r.Depth)
+		text := indent + editor.SymbolKindIcon(r.Sym.Kind) + " " + r.Sym.Name
 		text = padRow(text, boxW-2)
 		// Apply per-character coloring.
-		styled := kindStyle.Render(editor.SymbolKindIcon(r.sym.Kind)) + " " +
-			dim.Render(indent) + nameStyle.Render(r.sym.Name)
+		styled := kindStyle.Render(editor.SymbolKindIcon(r.Sym.Kind)) + " " +
+			dim.Render(indent) + nameStyle.Render(r.Sym.Name)
 		// Pad the styled string back to width — the visible width may be less
 		// than the raw text because of style escape codes. We re-pad with
 		// the raw text to keep alignment consistent.
 		_ = styled
-		if i == m.lspPopup.OutlineCursor {
+		if i == m.LSPPopup.OutlineCursor {
 			body = append(body, mutedBg.Render(accent.Render(text)))
 		} else {
 			body = append(body, mutedBg.Render(text))
@@ -1627,16 +1620,16 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	}
 
 	// Stash for key handler.
-	m.lspPopup.OutlineRows = flat
+	m.LSPPopup.OutlineRows = flat
 }
 
 func (m *App) closeOutlinePopup() {
 	if m.windowManager != nil {
 		m.windowManager.RemoveWindow(outlinePopupID)
 	}
-	m.lspPopup.OutlineOpen = false
-	m.lspPopup.OutlineRows = nil
-	m.lspPopup.OutlineCursor = 0
+	m.LSPPopup.OutlineOpen = false
+	m.LSPPopup.OutlineRows = nil
+	m.LSPPopup.OutlineCursor = 0
 }
 
 // ─── Completion popup ──────────────────────────────────────────────────────
@@ -1675,13 +1668,13 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 	}
 
 	// Render.
-	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
-	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Bold(true)
-	kindStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent2)
-	nameStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Fg)
-	mutedBg := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg)
-	headerBg := lipgloss.NewStyle().Background(m.theme.Colors.SubPaneBg).Bold(true)
-	border := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
+	dim := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted)
+	accent := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent).Bold(true)
+	kindStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent2)
+	nameStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Fg)
+	mutedBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg)
+	headerBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg).Bold(true)
+	border := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent)
 
 	header := headerBg.Render(padRow(fmt.Sprintf(" Completions · %d ", len(items)), boxW-2))
 
@@ -1701,7 +1694,7 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 		text = padRow(text, boxW-2)
 		_ = kindStyle
 		_ = nameStyle
-		if i == m.lspPopup.CompletionCursor {
+		if i == m.LSPPopup.CompletionCursor {
 			body = append(body, mutedBg.Render(accent.Render(text)))
 		} else {
 			body = append(body, mutedBg.Render(text))
@@ -1720,7 +1713,7 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 	popupContent := widgets.NewPopupContent(popLines)
 	// Position the popup near the cursor's screen position.
 	layout := m.computeLayout()
-	cx, cy := m.editorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
+	cx, cy := m.EditorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
 	popupX := cx
 	popupY := cy + 1
 	if popupX+boxW >= m.width {
@@ -1759,25 +1752,25 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 		m.windowManager.AddWindow(fw)
 	}
 
-	m.lspPopup.CompletionID = completionPopupID
-	m.lspPopup.CompletionItems = items
+	m.LSPPopup.CompletionID = completionPopupID
+	m.LSPPopup.CompletionItems = items
 }
 
 func (m *App) closeCompletionPopup() {
 	if m.windowManager != nil {
 		m.windowManager.RemoveWindow(completionPopupID)
 	}
-	m.lspPopup.CompletionID = ""
-	m.lspPopup.CompletionItems = nil
-	m.lspPopup.CompletionCursor = 0
+	m.LSPPopup.CompletionID = ""
+	m.LSPPopup.CompletionItems = nil
+	m.LSPPopup.CompletionCursor = 0
 }
 
 func (m *App) acceptCompletion() {
-	if m.lspPopup.CompletionCursor < 0 || m.lspPopup.CompletionCursor >= len(m.lspPopup.CompletionItems) {
+	if m.LSPPopup.CompletionCursor < 0 || m.LSPPopup.CompletionCursor >= len(m.LSPPopup.CompletionItems) {
 		m.closeCompletionPopup()
 		return
 	}
-	item := m.lspPopup.CompletionItems[m.lspPopup.CompletionCursor]
+	item := m.LSPPopup.CompletionItems[m.LSPPopup.CompletionCursor]
 	insert := item.InsertText
 	if insert == "" {
 		insert = item.Label
@@ -1785,11 +1778,11 @@ func (m *App) acceptCompletion() {
 	// Insert the text at the cursor. The editor's insertRune handles
 	// multi-byte characters; we go rune-by-rune to keep it simple.
 	for _, r := range insert {
-		m.editorState.Editor.InsertRune(r)
+		m.EditorState.Editor.InsertRune(r)
 	}
 	m.closeCompletionPopup()
 	layout := m.computeLayout()
-	m.editorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 }
 
 // completionKindIcon returns a single-character icon for a CompletionItemKind

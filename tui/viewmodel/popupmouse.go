@@ -114,7 +114,7 @@ func (m *App) closePopupWindowByID(id string) {
 		if m.windowManager != nil {
 			m.windowManager.RemoveWindow("dirty-close-prompt")
 		}
-		m.dirtyPromptPath = ""
+		m.DirtyPromptPath = ""
 		m.dirty = true
 	case "tree-prompt":
 		m.closeTreePrompt()
@@ -122,7 +122,7 @@ func (m *App) closePopupWindowByID(id string) {
 		if m.windowManager != nil {
 			m.windowManager.RemoveWindow("tree-delete-confirm")
 		}
-		m.treeDeletePending = ""
+		m.TreeDeletePending = ""
 		m.dirty = true
 	case "references-popup":
 		m.closeReferencesPopup()
@@ -142,7 +142,7 @@ func (m *App) closePopupWindowByID(id string) {
 		if m.windowManager != nil {
 			m.windowManager.RemoveWindow("composer")
 		}
-		m.composer.Close()
+		m.ActiveSession.Composer.Close()
 		m.dirty = true
 	case "command-palette":
 		if m.windowManager != nil {
@@ -180,10 +180,10 @@ func (m *App) closePopupWindowByID(id string) {
 // =============================================================================
 
 func (m *App) clickContextMenu(localX, localY int) tea.Cmd {
-	if m.lastContextMenu == nil {
+	if m.LastContextMenu == nil {
 		return nil
 	}
-	st := m.lastContextMenu
+	st := m.LastContextMenu
 
 	// Row 0 = top border. Content starts at row 1.
 	contentRow := localY - 1
@@ -225,10 +225,10 @@ func (m *App) clickContextMenu(localX, localY int) tea.Cmd {
 }
 
 func (m *App) hoverContextMenu(localX, localY int) {
-	if m.lastContextMenu == nil {
+	if m.LastContextMenu == nil {
 		return
 	}
-	st := m.lastContextMenu
+	st := m.LastContextMenu
 	if st.FlatItems == nil {
 		st.Build()
 	}
@@ -328,10 +328,10 @@ func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, input *com
 }
 
 func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
-	if m.findReplace == nil {
+	if m.FindReplace == nil {
 		return nil
 	}
-	fr := m.findReplace
+	fr := m.FindReplace
 
 	contentRow := localY - 1
 	if contentRow < 0 {
@@ -399,10 +399,10 @@ func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 }
 
 func (m *App) hoverFindReplace(localX, localY int) {
-	if m.findReplace == nil {
+	if m.FindReplace == nil {
 		return
 	}
-	fr := m.findReplace
+	fr := m.FindReplace
 
 	contentRow := localY - 1
 	if contentRow < 0 {
@@ -470,7 +470,7 @@ func (m *App) hoverFindReplace(localX, localY int) {
 // =============================================================================
 
 func (m *App) clickDirtyPrompt(localX, localY int) tea.Cmd {
-	if m.dirtyPromptPath == "" {
+	if m.DirtyPromptPath == "" {
 		return nil
 	}
 	fw := m.windowManager.Window("dirty-close-prompt")
@@ -488,17 +488,17 @@ func (m *App) clickDirtyPrompt(localX, localY int) tea.Cmd {
 		if choice < 0 {
 			return nil
 		}
-		m.dirtyPromptChoice = choice
+		m.DirtyPromptChoice = choice
 		return m.activateDirtyPromptButton(choice)
 	}
 	return nil
 }
 
 func (m *App) activateDirtyPromptButton(choice int) tea.Cmd {
-	if m.dirtyPromptPath == "" {
+	if m.DirtyPromptPath == "" {
 		return nil
 	}
-	m.dirtyPromptChoice = choice
+	m.DirtyPromptChoice = choice
 	switch choice {
 	case 0:
 		m.dirtyPromptSave()
@@ -529,8 +529,8 @@ func (m *App) hoverDirtyPrompt(localX, localY int) {
 	if choice < 0 {
 		return
 	}
-	if m.dirtyPromptChoice != choice {
-		m.dirtyPromptChoice = choice
+	if m.DirtyPromptChoice != choice {
+		m.DirtyPromptChoice = choice
 		m.refreshDirtyPrompt()
 	}
 }
@@ -573,7 +573,7 @@ func dirtyPromptButtonAtX(localX int) int {
 // =============================================================================
 
 func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
-	if m.treeDeletePending == "" {
+	if m.TreeDeletePending == "" {
 		return nil
 	}
 	fw := m.windowManager.Window("tree-delete-confirm")
@@ -608,7 +608,7 @@ func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
 // =============================================================================
 
 func (m *App) clickTreePrompt(localX, localY int) tea.Cmd {
-	if m.treePrompt == nil {
+	if m.TreePrompt == nil {
 		return nil
 	}
 	contentRow := localY - 1
@@ -620,10 +620,10 @@ func (m *App) clickTreePrompt(localX, localY int) tea.Cmd {
 		if charX < 0 {
 			charX = 0
 		}
-		if charX > len(m.treePrompt.Value) {
-			charX = len(m.treePrompt.Value)
+		if charX > len(m.TreePrompt.Value) {
+			charX = len(m.TreePrompt.Value)
 		}
-		m.treePrompt.Cursor = charX
+		m.TreePrompt.Cursor = charX
 		m.refreshTreePrompt()
 	}
 	return nil
@@ -636,13 +636,13 @@ func (m *App) clickTreePrompt(localX, localY int) tea.Cmd {
 // =============================================================================
 
 func (m *App) clickReferences(localX, localY int) tea.Cmd {
-	if m.lspPopup.ReferencesID == "" || m.lspPopup.RefRows == nil {
+	if m.LSPPopup.ReferencesID == "" || m.LSPPopup.RefRows == nil {
 		return nil
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.lspPopup.RefRows) {
-		m.lspPopup.RefCursor = contentRow
-		r := m.lspPopup.RefRows[m.lspPopup.RefCursor]
+	if contentRow >= 0 && contentRow < len(m.LSPPopup.RefRows) {
+		m.LSPPopup.RefCursor = contentRow
+		r := m.LSPPopup.RefRows[m.LSPPopup.RefCursor]
 		m.jumpToReference(r)
 		m.closeReferencesPopup()
 	}
@@ -650,12 +650,12 @@ func (m *App) clickReferences(localX, localY int) tea.Cmd {
 }
 
 func (m *App) hoverReferences(localX, localY int) {
-	if m.lspPopup.RefRows == nil {
+	if m.LSPPopup.RefRows == nil {
 		return
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.lspPopup.RefRows) && contentRow != m.lspPopup.RefCursor {
-		m.lspPopup.RefCursor = contentRow
+	if contentRow >= 0 && contentRow < len(m.LSPPopup.RefRows) && contentRow != m.LSPPopup.RefCursor {
+		m.LSPPopup.RefCursor = contentRow
 		m.refreshReferencesPopup()
 	}
 }
@@ -665,24 +665,24 @@ func (m *App) hoverReferences(localX, localY int) {
 // =============================================================================
 
 func (m *App) clickCompletion(localX, localY int) tea.Cmd {
-	if m.lspPopup.CompletionItems == nil {
+	if m.LSPPopup.CompletionItems == nil {
 		return nil
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.lspPopup.CompletionItems) {
-		m.lspPopup.CompletionCursor = contentRow
+	if contentRow >= 0 && contentRow < len(m.LSPPopup.CompletionItems) {
+		m.LSPPopup.CompletionCursor = contentRow
 		m.acceptCompletion()
 	}
 	return nil
 }
 
 func (m *App) hoverCompletion(localX, localY int) {
-	if m.lspPopup.CompletionItems == nil {
+	if m.LSPPopup.CompletionItems == nil {
 		return
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.lspPopup.CompletionItems) && contentRow != m.lspPopup.CompletionCursor {
-		m.lspPopup.CompletionCursor = contentRow
+	if contentRow >= 0 && contentRow < len(m.LSPPopup.CompletionItems) && contentRow != m.LSPPopup.CompletionCursor {
+		m.LSPPopup.CompletionCursor = contentRow
 		m.dirty = true
 	}
 }
@@ -692,29 +692,29 @@ func (m *App) hoverCompletion(localX, localY int) {
 // =============================================================================
 
 func (m *App) clickOutline(localX, localY int) tea.Cmd {
-	if !m.lspPopup.OutlineOpen || m.lspPopup.OutlineRows == nil {
+	if !m.LSPPopup.OutlineOpen || m.LSPPopup.OutlineRows == nil {
 		return nil
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.lspPopup.OutlineRows) {
-		m.lspPopup.OutlineCursor = contentRow
-		sym := m.lspPopup.OutlineRows[m.lspPopup.OutlineCursor].sym
-		m.editorState.Editor.SetCursorPosition(sym.Line, sym.Col)
-		m.editorState.Editor.ScrollToCursor()
+	if contentRow >= 0 && contentRow < len(m.LSPPopup.OutlineRows) {
+		m.LSPPopup.OutlineCursor = contentRow
+		sym := m.LSPPopup.OutlineRows[m.LSPPopup.OutlineCursor].Sym
+		m.EditorState.Editor.SetCursorPosition(sym.Line, sym.Col)
+		m.EditorState.Editor.ScrollToCursor()
 		layout := m.computeLayout()
-		m.editorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+		m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 		m.closeOutlinePopup()
 	}
 	return nil
 }
 
 func (m *App) hoverOutline(localX, localY int) {
-	if m.lspPopup.OutlineRows == nil {
+	if m.LSPPopup.OutlineRows == nil {
 		return
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.lspPopup.OutlineRows) && contentRow != m.lspPopup.OutlineCursor {
-		m.lspPopup.OutlineCursor = contentRow
+	if contentRow >= 0 && contentRow < len(m.LSPPopup.OutlineRows) && contentRow != m.LSPPopup.OutlineCursor {
+		m.LSPPopup.OutlineCursor = contentRow
 		m.dirty = true
 	}
 }

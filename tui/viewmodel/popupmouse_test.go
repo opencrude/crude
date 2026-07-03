@@ -124,10 +124,10 @@ func TestClickContextMenu_ActivatesItem(t *testing.T) {
 		},
 	}
 	st.Build()
-	app.lastContextMenu = st
+	app.LastContextMenu = st
 
 	// Create the floating window.
-	pop := widgets.NewPopupContent(widgets.ContextMenuLines(app.theme, st, 0))
+	pop := widgets.NewPopupContent(widgets.ContextMenuLines(app.Theme, st, 0))
 	fw := wm.NewFloatingWindow("context-menu", "", pop, 30, 5,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -159,9 +159,9 @@ func TestClickContextMenu_DisabledItem_DoesNotActivate(t *testing.T) {
 		},
 	}
 	st.Build()
-	app.lastContextMenu = st
+	app.LastContextMenu = st
 
-	pop := widgets.NewPopupContent(widgets.ContextMenuLines(app.theme, st, 0))
+	pop := widgets.NewPopupContent(widgets.ContextMenuLines(app.Theme, st, 0))
 	fw := wm.NewFloatingWindow("context-menu", "", pop, 30, 5,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -194,7 +194,7 @@ func TestHoverContextMenu_MovesCursor(t *testing.T) {
 		},
 	}
 	st.Build()
-	app.lastContextMenu = st
+	app.LastContextMenu = st
 
 	// Hover over item 2 (row 2 in chrome: row 0 = border, row 1 = A, row 2 = B).
 	app.hoverContextMenu(5, 2)
@@ -215,10 +215,10 @@ func TestHoverContextMenu_MovesCursor(t *testing.T) {
 
 func TestClickDirtyPrompt_CancelButtonCancels(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.dirtyPromptPath = "/tmp/foo.go"
+	app.DirtyPromptPath = "/tmp/foo.go"
 
 	pop := widgets.NewPopupContent(widgets.ConfirmPrompt3Button(
-		app.theme, "Unsaved", "What to do?", "Detail here",
+		app.Theme, "Unsaved", "What to do?", "Detail here",
 		widgets.ConfirmPromptWarning, 2, 62,
 	))
 	fw := wm.NewFloatingWindow("dirty-close-prompt", "", pop, 62, 7,
@@ -233,7 +233,7 @@ func TestClickDirtyPrompt_CancelButtonCancels(t *testing.T) {
 	// = innerH - 2 = 5 - 2 = 3, in chrome row = 4.
 	app.clickDirtyPrompt(25, 4)
 
-	if app.dirtyPromptPath != "" {
+	if app.DirtyPromptPath != "" {
 		t.Fatal("dirtyPromptPath should be cleared after Cancel click")
 	}
 }
@@ -244,23 +244,23 @@ func TestClickDirtyPrompt_CancelButtonCancels(t *testing.T) {
 // "closing a tab seems to hang" bug.
 func TestDirtyPromptKey_CancelBreaksEscLoop(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.editorState.ActiveView = "/tmp/foo.go"
-	app.dirtyPromptPath = "/tmp/foo.go"
-	app.dirtyPromptChoice = 2 // start focused on Cancel
+	app.EditorState.ActiveView = "/tmp/foo.go"
+	app.DirtyPromptPath = "/tmp/foo.go"
+	app.DirtyPromptChoice = 2 // start focused on Cancel
 
 	// Hit Esc: must call dirtyPromptCancel, clearing the path.
 	_ = app.handleDirtyPromptKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 
-	if app.dirtyPromptPath != "" {
+	if app.DirtyPromptPath != "" {
 		t.Fatal("Esc on dirty-prompt should clear the path (Cancel)")
 	}
 	if app.windowManager.Window("dirty-close-prompt") != nil {
 		t.Fatal("Esc on dirty-prompt should remove the popup")
 	}
-	// Crucially: app.editorState.ActiveView is preserved — the tab is
+	// Crucially: app.EditorState.ActiveView is preserved — the tab is
 	// still there, the editor is still modified, and a second Esc
 	// (e.g. routed to dispatchEditorKey) must NOT reopen the prompt.
-	if app.editorState.ActiveView != "/tmp/foo.go" {
+	if app.EditorState.ActiveView != "/tmp/foo.go" {
 		t.Fatal("Esc on dirty-prompt must preserve the active editor")
 	}
 }
@@ -270,7 +270,7 @@ func TestDirtyPromptKey_CancelBreaksEscLoop(t *testing.T) {
 // Esc loop on dirty files); Ctrl+W is the single source of truth
 // for "close this tab".
 func TestDispatchEditorKey_CtrlWClosesTab(t *testing.T) {
-	th := newTestAppForPopupMouse(t).theme
+	th := newTestAppForPopupMouse(t).Theme
 	_ = th
 	// We can't easily construct a full App with an open editor tab
 	// in this test (the test helper doesn't open files), so we just
@@ -288,7 +288,7 @@ func TestDispatchEditorKey_CtrlWClosesTab(t *testing.T) {
 
 func TestFocusRestoration_AfterPopupClose_EditorKeepsFocus(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.editorState.ActiveView = "/tmp/foo.go"
+	app.EditorState.ActiveView = "/tmp/foo.go"
 
 	// Simulate popup open: treeFocused/tabBarFocused unchanged, but
 	// windowManager.Focused is now the popup.
@@ -327,9 +327,9 @@ func TestFocusRestoration_AfterPopupClose_EditorKeepsFocus(t *testing.T) {
 
 func TestFocusRestoration_AfterPopupClose_TreeKeepsFocus(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.editorState.ActiveView = "/tmp/foo.go"
-	app.focusStack.Push(FocusTree)
-	app.tree.Visible = true
+	app.EditorState.ActiveView = "/tmp/foo.go"
+	app.FocusStack.Push(FocusTree)
+	app.Tree.Visible = true
 
 	// Open and close a popup.
 	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -341,17 +341,17 @@ func TestFocusRestoration_AfterPopupClose_TreeKeepsFocus(t *testing.T) {
 	app.closeContextMenu()
 
 	// The stack must be preserved through popup open/close.
-	if app.focusStack.Top() != FocusTree {
+	if app.FocusStack.Top() != FocusTree {
 		t.Fatal("treeFocused must be preserved through popup close")
 	}
-	if app.focusStack.Top() == FocusTabBar {
+	if app.FocusStack.Top() == FocusTabBar {
 		t.Fatal("FocusTabBar must not be in stack")
 	}
 }
 
 func TestFocusRestoration_ChainedPopups(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.editorState.ActiveView = "/tmp/foo.go"
+	app.EditorState.ActiveView = "/tmp/foo.go"
 
 	// Open popup A.
 	popA := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -396,7 +396,7 @@ func TestFocusRestoration_FindReplaceOpen_EditorClickFocusesEditor(t *testing.T)
 	// When find-replace is open and the user clicks the editor,
 	// find-replace stays open (KeepRoute), but the editor gains focus.
 	app := newTestAppForPopupMouse(t)
-	app.editorState.ActiveView = "/tmp/foo.go"
+	app.EditorState.ActiveView = "/tmp/foo.go"
 
 	// Open find-replace popup.
 	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -431,9 +431,9 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 	// underlying booleans (treeFocused/etc) are preserved so that
 	// focus can route to the underlying widget.
 	app := newTestAppForPopupMouse(t)
-	app.editorState.ActiveView = "/tmp/foo.go"
-	app.focusStack.Push(FocusTree)
-	app.tree.Visible = true
+	app.EditorState.ActiveView = "/tmp/foo.go"
+	app.FocusStack.Push(FocusTree)
+	app.Tree.Visible = true
 
 	// Open a context menu.
 	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -457,7 +457,7 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 	}
 
 	// The stack is preserved — region handler will update focus.
-	if app.focusStack.Top() != FocusTree {
+	if app.FocusStack.Top() != FocusTree {
 		t.Fatal("treeFocused must be preserved through popup close")
 	}
 }
@@ -468,7 +468,7 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 
 func TestHoverFindReplace_ToggleHover(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.findReplace = &widgets.FindReplaceState{HoveredToggle: -1}
+	app.FindReplace = &widgets.FindReplaceState{HoveredToggle: -1}
 
 	// Register a find-replace popup window so hover/click can
 	// compute toggle positions from its size.
@@ -498,20 +498,20 @@ func TestHoverFindReplace_ToggleHover(t *testing.T) {
 
 	// Hover band 0 (Aa) at X=e0-1.
 	app.hoverFindReplace(e0-1, 3)
-	if app.findReplace.HoveredToggle != 0 {
-		t.Fatalf("expected HoveredToggle=0 after hovering Aa, got %d", app.findReplace.HoveredToggle)
+	if app.FindReplace.HoveredToggle != 0 {
+		t.Fatalf("expected HoveredToggle=0 after hovering Aa, got %d", app.FindReplace.HoveredToggle)
 	}
 
 	// Hover band 2 (.*) at X=s2+1.
 	app.hoverFindReplace(s2+1, 3)
-	if app.findReplace.HoveredToggle != 2 {
-		t.Fatalf("expected HoveredToggle=2 after hovering .*, got %d", app.findReplace.HoveredToggle)
+	if app.FindReplace.HoveredToggle != 2 {
+		t.Fatalf("expected HoveredToggle=2 after hovering .*, got %d", app.FindReplace.HoveredToggle)
 	}
 
 	// Hover off the toggles (X=10, not in any band).
 	app.hoverFindReplace(10, 3)
-	if app.findReplace.HoveredToggle != -1 {
-		t.Fatalf("expected HoveredToggle=-1 after hovering away, got %d", app.findReplace.HoveredToggle)
+	if app.FindReplace.HoveredToggle != -1 {
+		t.Fatalf("expected HoveredToggle=-1 after hovering away, got %d", app.FindReplace.HoveredToggle)
 	}
 
 	// Sanity: the bands don't overlap, the test isn't degenerate.
@@ -521,10 +521,10 @@ func TestHoverFindReplace_ToggleHover(t *testing.T) {
 
 func TestClickFindReplace_FocusesFindField(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.findReplace = &widgets.FindReplaceState{
+	app.FindReplace = &widgets.FindReplaceState{
 		FocusedField: 1, // currently focused on replace
 	}
-	app.findReplace.SetQuery("hello")
+	app.FindReplace.SetQuery("hello")
 
 	// Register a popup window so the click can run.
 	pop := widgets.NewPopupContent([]string{"line"})
@@ -539,14 +539,14 @@ func TestClickFindReplace_FocusesFindField(t *testing.T) {
 	// Click on the find field (content row 0 = first content row).
 	// In chrome: localY=1.
 	app.clickFindReplace(5, 1)
-	if app.findReplace.FocusedField != 0 {
-		t.Fatalf("expected FocusedField=0 after clicking find field, got %d", app.findReplace.FocusedField)
+	if app.FindReplace.FocusedField != 0 {
+		t.Fatalf("expected FocusedField=0 after clicking find field, got %d", app.FindReplace.FocusedField)
 	}
 }
 
 func TestClickFindReplace_TogglesCaseSensitive(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.findReplace = &widgets.FindReplaceState{
+	app.FindReplace = &widgets.FindReplaceState{
 		CaseSensitive: false,
 		HoveredToggle: -1,
 	}
@@ -564,13 +564,13 @@ func TestClickFindReplace_TogglesCaseSensitive(t *testing.T) {
 
 	// Click on Aa toggle.
 	app.clickFindReplace(28, 3)
-	if !app.findReplace.CaseSensitive {
+	if !app.FindReplace.CaseSensitive {
 		t.Fatal("CaseSensitive should be true after clicking Aa")
 	}
 
 	// Click again to toggle off.
 	app.clickFindReplace(28, 3)
-	if app.findReplace.CaseSensitive {
+	if app.FindReplace.CaseSensitive {
 		t.Fatal("CaseSensitive should be false after second click on Aa")
 	}
 }
@@ -585,12 +585,12 @@ func newTestAppForPopupMouse(t *testing.T) *App {
 	app.windowManager = wm.NewWindowManager()
 	// Create a stub editor and open a temp file so focusTarget() recognizes
 	// the editor as open.
-	ed := editor.New(app.theme)
+	ed := editor.New(app.Theme)
 	tmpFile := t.TempDir() + "/foo.go"
 	if err := ed.Open(tmpFile); err != nil {
 		t.Fatalf("open tmp file: %v", err)
 	}
-	app.editorState.Editor = ed
+	app.EditorState.Editor = ed
 	return app
 }
 

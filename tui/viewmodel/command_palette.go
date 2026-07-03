@@ -465,7 +465,7 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	model := newCommandPaletteModel(m.theme, func(cmdID string) tea.Cmd {
+	model := newCommandPaletteModel(m.Theme, func(cmdID string) tea.Cmd {
 		m.windowManager.RemoveWindow("command-palette")
 		m.commandPaletteModel = nil
 		return m.executePaletteCommand(cmdID)
@@ -523,7 +523,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return nil
 
 	case "settings":
-		m.settings.SaveSnapshot()
+		m.Settings.SaveSnapshot()
 		m.setMode(ModeSettings)
 
 	case "orchestrator-settings":
@@ -534,16 +534,16 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "sessions":
 		if m.anyActive() {
-			m.statusbar.SetError("Cannot switch sessions while agent is running")
+			m.StatusBar.SetError("Cannot switch sessions while agent is running")
 			return nil
 		}
-		if m.onListSessions != nil {
-			sessions := m.onListSessions()
+		if m.OnListSessions != nil {
+			sessions := m.OnListSessions()
 			if len(sessions) > 0 {
 				m.launcher = NewLauncherState(sessions)
-				m.lastInteractionTime = time.Now()
+				m.LastInteractionTime = time.Now()
 			} else {
-				m.statusbar.SetInfo("No past sessions found")
+				m.StatusBar.SetInfo("No past sessions found")
 			}
 		}
 
@@ -572,14 +572,14 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 
 	case "yolo":
-		if m.overlayState.IsYolo() {
-			m.overlayState.SetYolo(false)
-			m.statusbar.SetInfo("YOLO mode disabled")
+		if m.OverlayState.IsYolo() {
+			m.OverlayState.SetYolo(false)
+			m.StatusBar.SetInfo("YOLO mode disabled")
 			if m.OnYoloCmd != nil {
 				go m.OnYoloCmd(false)
 			}
 		} else {
-			m.yoloDlg.Reset()
+			m.ActiveSession.YoloDlg.Reset()
 			m.setMode(ModeYolo)
 		}
 
@@ -591,10 +591,10 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "toggle-multiagent":
 		if m.OnSettingsSave != nil {
-			m.settings.SaveSnapshot()
-			s := m.settings.ToSettings()
+			m.Settings.SaveSnapshot()
+			s := m.Settings.ToSettings()
 			s.Agents.Enabled = !s.Agents.Enabled
-			m.statusbar.SetInfo("Toggling multi-agent mode...")
+			m.StatusBar.SetInfo("Toggling multi-agent mode...")
 			onSave := m.OnSettingsSave
 			cmds = append(cmds, func() tea.Msg {
 				err := onSave(s)

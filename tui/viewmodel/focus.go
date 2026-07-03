@@ -1,53 +1,55 @@
 package viewmodel
 
-type FocusTarget int
+import "crude/tui/workspace"
+
+type FocusTarget = workspace.FocusTarget
 
 const (
-	FocusNone FocusTarget = iota
-	FocusTree
-	FocusEditor
-	FocusTabBar
-	FocusInput
-	FocusOverlay
-	FocusFloatingWindow
-	FocusLauncher
+	FocusNone           = workspace.FocusNone
+	FocusTree           = workspace.FocusTree
+	FocusEditor         = workspace.FocusEditor
+	FocusTabBar         = workspace.FocusTabBar
+	FocusInput          = workspace.FocusInput
+	FocusOverlay        = workspace.FocusOverlay
+	FocusFloatingWindow = workspace.FocusFloatingWindow
+	FocusLauncher       = workspace.FocusLauncher
 )
 
 func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
 	}
-	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
+	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		return FocusLauncher
 	}
-	top := m.focusStack.Top()
-	if top == FocusTree && m.tree.Model != nil && m.tree.Visible {
+	top := m.FocusStack.Top()
+	if top == FocusTree && m.Tree.Model != nil && m.Tree.Visible {
 		return FocusTree
 	}
 	if top == FocusTabBar {
 		return FocusTabBar
 	}
-	if m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen() {
+	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
 		return FocusEditor
 	}
-	if m.overlayState.IsOverlay() {
+	if m.OverlayState.IsOverlay() {
 		return FocusOverlay
 	}
 	return FocusInput
 }
 
 func (m *App) unfocus() {
-	m.focusStack.Clear()
+	m.FocusStack.Clear()
 }
 
 func (m *App) setFocusTree() {
-	m.focusStack.Clear()
-	m.focusStack.Push(FocusTree)
+	m.FocusStack.Clear()
+	m.FocusStack.Push(FocusTree)
 }
 
 func (m *App) setFocusTabBar() {
-	m.focusStack.Clear()
-	m.focusStack.Push(FocusTabBar)
+	m.FocusStack.Clear()
+	m.FocusStack.Push(FocusTabBar)
 }
 
 func (m *App) syncRenderFocus() {

@@ -1,4 +1,4 @@
-package viewmodel
+package workspace
 
 import (
 	"database/sql"
@@ -34,7 +34,7 @@ func TestReferenceStore_CreateReference(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	ref, err := store.CreateReference(sessiondb.CreateRequest{
 		Kind:    sessiondb.KindPastedText,
@@ -59,7 +59,7 @@ func TestReferenceStore_CreateReference_TextFile(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	ref, err := store.CreateReference(sessiondb.CreateRequest{
 		Kind:    sessiondb.KindPastedTextFile,
@@ -91,7 +91,7 @@ func TestReferenceStore_CreateReference_Image(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	imgData := []byte("fake image")
 	b64 := base64.StdEncoding.EncodeToString(imgData)
@@ -126,7 +126,7 @@ func TestReferenceStore_CreateReference_LabelCollision(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	// Create a ref, then add it as existing to simulate session resume
 	ref1, err := store.CreateReference(sessiondb.CreateRequest{
@@ -138,7 +138,7 @@ func TestReferenceStore_CreateReference_LabelCollision(t *testing.T) {
 	}
 
 	// Simulate resume: re-add the existing ref
-	store2 := newReferenceStore("sess1", dir, db)
+	store2 := NewReferenceStore("sess1", dir, db)
 	store2.AddExisting(ref1)
 
 	// Create new ref — should NOT collide
@@ -161,7 +161,7 @@ func TestReferenceStore_CreateReference_CustomLabelCollision(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	// Create a ref with auto label
 	_, err := store.CreateReference(sessiondb.CreateRequest{
@@ -194,7 +194,7 @@ func TestReferenceStore_ListReferences_FiltersDeleted(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	ref1, _ := store.CreateReference(sessiondb.CreateRequest{
 		Kind:    sessiondb.KindPastedText,
@@ -238,7 +238,7 @@ func TestReferenceStore_AddExisting_UpdatesCounter(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	// Add an existing ref with a high index label
 	ref := sessiondb.Reference{
@@ -268,7 +268,7 @@ func TestReferenceStore_AddExisting_ImageMigration(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	// Create base64 image content
 	imgData := []byte("fake image data")
@@ -308,7 +308,7 @@ func TestReferenceStore_AddExisting_ImageMigration_DBPersist(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	// Insert the legacy reference into DB first
 	imgData := []byte("fake image data for DB test")
@@ -401,7 +401,7 @@ func TestLabelExists(t *testing.T) {
 	db, dir := setupRefStoreDB(t)
 	defer db.Close()
 
-	store := newReferenceStore("sess1", dir, db)
+	store := NewReferenceStore("sess1", dir, db)
 
 	// No refs yet
 	if store.labelExists("[Pasted Text1]") {

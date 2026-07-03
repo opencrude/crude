@@ -18,6 +18,7 @@ import (
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 	"crude/tui/wm"
+	"crude/tui/workspace"
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -32,19 +33,19 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
+		m.Logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
 		m.dirty = true
 		m.contentDirty = true
 		m.width = msg.Width
 		m.height = msg.Height
-		for _, n := range m.agentMgr.AllNodes() {
+		for _, n := range m.AgentMgr.AllNodes() {
 			if n.State != nil && n.State.MsgList != nil {
 				n.State.MsgList.SetSize(msg.Width, msg.Height)
 			}
 		}
-		m.paneMgr.SetSize(msg.Width, msg.Height)
-		m.input.SetWidth(msg.Width)
-		m.statusbar.SetWidth(msg.Width)
+		m.PaneMgr.SetSize(msg.Width, msg.Height)
+		m.Input.SetWidth(msg.Width)
+		m.StatusBar.SetWidth(msg.Width)
 		if m.compositor != nil {
 			m.compositor.Resize(msg.Width, msg.Height)
 		}
@@ -68,13 +69,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		m.dirty = true
 		m.contentDirty = true
-		m.logger.Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
+		m.Logger.Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseClick(msg)
 
 	case tea.MouseWheelMsg:
 		m.dirty = true
 		m.contentDirty = true
-		m.logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
+		m.Logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseWheel(msg)
 
 	case tea.MouseMotionMsg:
@@ -87,7 +88,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseReleaseMsg:
 		// Same as MouseMotionMsg: let the release handler set
 		// dirty when it actually does something visible.
-		m.logger.Debug("UI", "mouse", "release", "x", msg.Mouse().X, "y", msg.Mouse().Y)
+		m.Logger.Debug("UI", "mouse", "release", "x", msg.Mouse().X, "y", msg.Mouse().Y)
 		return m.dispatchMouseRelease(msg)
 
 	case ttypes.SelectionTickMsg:
@@ -108,8 +109,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
-		if m.tree.Visible && m.tree.Renderer != nil {
-			treeCmd := m.tree.Renderer.HandleScrollbarTick(msg)
+		if m.Tree.Visible && m.Tree.Renderer != nil {
+			treeCmd := m.Tree.Renderer.HandleScrollbarTick(msg)
 			if treeCmd != nil {
 				cmds = append(cmds, treeCmd)
 			}
@@ -121,7 +122,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, sbCmd)
 			}
 		}
-		for _, sp := range m.paneMgr.panes {
+		for _, sp := range m.PaneMgr.Panes() {
 			if !sp.Done {
 				if sp.MsgList != nil {
 					paneCmd := sp.MsgList.HandleScrollbarTick(msg)
@@ -146,9 +147,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// changes. During the 530ms solid-cursor window after
 			// any activity, the blink tick is a no-op — setting
 			// dirty would waste a full frame render for nothing.
-			cursorBefore := m.editorState.Editor != nil && m.editorState.Editor.CursorVisible()
+			cursorBefore := m.EditorState.Editor != nil && m.EditorState.Editor.CursorVisible()
 			cmds = append(cmds, m.dispatchEditorTick(msg)...)
-			cursorAfter := m.editorState.Editor != nil && m.editorState.Editor.CursorVisible()
+			cursorAfter := m.EditorState.Editor != nil && m.EditorState.Editor.CursorVisible()
 			if cursorBefore != cursorAfter {
 				m.dirty = true
 				m.contentDirty = true
@@ -163,21 +164,21 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	spinFrame := int(time.Now().UnixMilli())
-	m.spinFrame = spinFrame
-	m.statusbar.SetSpinFrame(spinFrame)
-	m.statusbar.SetCurrentAgent(m.agentMgr.ActiveID())
-	m.input.SetSpinFrame(spinFrame)
-	m.statusbar.ClearExpired()
-	for _, n := range m.agentMgr.AllNodes() {
+	m.SpinFrame = spinFrame
+	m.StatusBar.SetSpinFrame(spinFrame)
+	m.StatusBar.SetCurrentAgent(m.AgentMgr.ActiveID())
+	m.Input.SetSpinFrame(spinFrame)
+	m.StatusBar.ClearExpired()
+	for _, n := range m.AgentMgr.AllNodes() {
 		if n.State != nil {
 			n.State.Tick(spinFrame)
 		}
 	}
-	m.paneMgr.TickAll(spinFrame)
+	m.PaneMgr.TickAll(spinFrame)
 	m.syncAgentWindowTabs()
-	for _, sp := range m.paneMgr.panes {
+	for _, sp := range m.PaneMgr.Panes() {
 		if !sp.Done && sp.MsgList != nil {
-			if n := m.agentMgr.Get(sp.ID); n != nil && n.State != nil {
+			if n := m.AgentMgr.Get(sp.ID); n != nil && n.State != nil {
 				if n.State.TokenBuf != "" {
 					sp.MsgList.AppendToken(n.State.TokenBuf)
 					n.State.TokenBuf = ""
@@ -189,58 +190,58 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	if m.editorState.Editor.IsOpen() && m.editorState.Editor.DiskChanged() {
+	if m.EditorState.Editor.IsOpen() && m.EditorState.Editor.DiskChanged() {
 		// Notify the LSP server that the file changed on disk. This fires
 		// regardless of which tab is active — the LSP needs disk-change
 		// notifications even when the user is in the file tree or chat.
-		if m.lspManager != nil {
+		if m.LSPMgr != nil {
 			lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			m.lspManager.NotifyWatchedFilesChanged(lspCtx, m.editorState.Editor.FilePath(), 2) // 2 = Changed
+			m.LSPMgr.NotifyWatchedFilesChanged(lspCtx, m.EditorState.Editor.FilePath(), 2) // 2 = Changed
 			cancel()
 		}
 		// Only auto-reload when the editor has no unsaved (dirty) changes;
 		// otherwise the user's in-progress edits would be lost.
-		if !m.editorState.Editor.Modified() {
-			if err := m.editorState.Editor.Reload(); err != nil {
-				m.logger.Error("EDITOR", "reload_error", "error", err.Error())
-			} else if m.lspManager != nil {
+		if !m.EditorState.Editor.Modified() {
+			if err := m.EditorState.Editor.Reload(); err != nil {
+				m.Logger.Error("EDITOR", "reload_error", "error", err.Error())
+			} else if m.LSPMgr != nil {
 				// Push the reloaded content to the LSP server. The LSP
 				// treats open files as in-memory documents (fed via
 				// didChange) and ignores disk changes for them, so
 				// without this the server's document stays stale and it
 				// never re-analyzes the externally-modified file.
 				lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				m.lspManager.UpdateFile(lspCtx, m.editorState.Editor.FilePath(), m.editorState.Editor.Value())
+				m.LSPMgr.UpdateFile(lspCtx, m.EditorState.Editor.FilePath(), m.EditorState.Editor.Value())
 				cancel()
 			}
 		}
 	}
 
-	connected, status, errMsg := m.lspManager.Status()
+	connected, status, errMsg := m.LSPMgr.Status()
 	statusbarLSP := connected || status == editor.LSPConnected || status == editor.LSPStarting || errMsg != ""
 
 	// Status bar is EXCLUSIVELY for whole-project insights.
 	// Per-file diagnostics are shown in the editor (gutter + hover popup +
 	// editor's own status line at the bottom of the editor body).
 	if statusbarLSP {
-		ins := m.lspManager.ProjectInsights()
-		m.statusbar.SetProjectInsights(ins)
+		ins := m.LSPMgr.ProjectInsights()
+		m.StatusBar.SetProjectInsights(ins)
 	} else {
-		m.statusbar.SetProjectInsights(editor.ProjectInsights{})
+		m.StatusBar.SetProjectInsights(editor.ProjectInsights{})
 	}
 
 	// Mark dirty every tick — cheap layers (header, status bar, sidebar)
 	// re-render on every frame anyway, and the launcher needs animation
 	// ticks to drive its spin frame and scroll effects.
-	isLauncher := m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" && m.launcher != nil
-	if m.statusbar.HasAnimation() || isLauncher {
+	isLauncher := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
+	if m.StatusBar.HasAnimation() || isLauncher {
 		m.dirty = true
 	}
 
 	if m.anyActive() {
 		return m, streamingTickCmd()
 	}
-	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
+	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		return m, streamingTickCmd()
 	}
 	return m, tickCmd()
@@ -254,9 +255,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
-	case lspDiagnosticsMsg:
+	case workspace.LSPDiagnosticsMsg:
 		m.handleLSPDiagnosticsUpdate(msg)
-	case fileWatcherMsg:
+	case workspace.FileWatcherMsg:
 		m.handleFileWatcherEvent(msg)
 	case lspDefinitionResultMsg:
 		m.handleDefinitionResult(msg)
@@ -269,12 +270,12 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case lspCompletionResultMsg:
 		m.handleCompletionResult(msg)
 	case ttypes.ErrorMsg:
-		m.logger.Debug("UI", "error", "msg", string(msg))
-		m.statusbar.SetError(string(msg))
+		m.Logger.Debug("UI", "error", "msg", string(msg))
+		m.StatusBar.SetError(string(msg))
 	case ttypes.UpdateModelMsg:
-		m.modelName = string(msg)
-		m.logger.Debug("UI", "model_update", "model", string(msg))
-		for _, n := range m.agentMgr.AllNodes() {
+		m.ModelName = string(msg)
+		m.Logger.Debug("UI", "model_update", "model", string(msg))
+		for _, n := range m.AgentMgr.AllNodes() {
 			if n.State != nil && n.State.MsgList != nil {
 				n.State.MsgList.SetModelName(string(msg))
 			}
@@ -283,38 +284,38 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			ml.SetModelName(string(msg))
 		}
 	case ttypes.OpenSettingsMsg:
-		m.logger.Info("UI", "open_settings")
-		m.settings.SaveSnapshot()
+		m.Logger.Info("UI", "open_settings")
+		m.Settings.SaveSnapshot()
 		m.setMode(ModeSettings)
 	case ttypes.ModelsListMsg:
-		m.logger.Info("MODEL", "list_received", "count", len(msg))
-		m.settings.SetModels([]ttypes.ModelEntry(msg))
+		m.Logger.Info("MODEL", "list_received", "count", len(msg))
+		m.Settings.SetModels([]ttypes.ModelEntry(msg))
 	case ttypes.ModelsErrorMsg:
-		m.logger.Error("MODEL", "list_error", "error", string(msg))
-		m.settings.SetModelsError(string(msg))
+		m.Logger.Error("MODEL", "list_error", "error", string(msg))
+		m.Settings.SetModelsError(string(msg))
 	case ttypes.SettingsSaveResultMsg:
 		if msg.Err != nil {
-			m.logger.Error("CONFIG", "save_error", "error", msg.Err.Error())
-			m.statusbar.SetError(msg.Err.Error())
+			m.Logger.Error("CONFIG", "save_error", "error", msg.Err.Error())
+			m.StatusBar.SetError(msg.Err.Error())
 		} else {
-			m.logger.Info("CONFIG", "saved")
-			m.modelName = msg.Settings.Model
-			m.lastSettings = msg.Settings
+			m.Logger.Info("CONFIG", "saved")
+			m.ModelName = msg.Settings.Model
+			m.LastSettings = msg.Settings
 			m.closeOverlayTab("Settings")
-			m.statusbar.SetInfo("settings saved")
+			m.StatusBar.SetInfo("settings saved")
 		}
 	case rendering.ClipboardCopiedMsg:
-		m.logger.Debug("CLIPBOARD", "copied")
-		m.statusbar.SetInfo("copied to clipboard")
+		m.Logger.Debug("CLIPBOARD", "copied")
+		m.StatusBar.SetInfo("copied to clipboard")
 	case rendering.ClipboardErrorMsg:
-		m.logger.Error("CLIPBOARD", "error", "error", string(msg))
-		m.statusbar.SetError(string(msg))
+		m.Logger.Error("CLIPBOARD", "error", "error", string(msg))
+		m.StatusBar.SetError(string(msg))
 	case ttypes.UndoResultMsg:
 		if msg.Error != "" {
-			m.logger.Error("JOURNAL", "undo_error", "error", msg.Error)
-			m.statusbar.SetError(msg.Error)
+			m.Logger.Error("JOURNAL", "undo_error", "error", msg.Error)
+			m.StatusBar.SetError(msg.Error)
 		}
-		if msg.Desc != "" && m.agentMgr.ActiveID() != "" {
+		if msg.Desc != "" && m.AgentMgr.ActiveID() != "" {
 			if ml := m.activeMsgList(); ml != nil {
 				ml.AppendMessage(ttypes.ChatMessage{
 					Role:    ttypes.RoleAssistant,
@@ -338,10 +339,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.windowManager.RemoveWindow("filepicker")
 		m.setMode(ModeChat)
 	case filetree.FileSelectedMsg:
-		m.logger.Info("TREE", "file_selected", "path", msg.Path)
+		m.Logger.Info("TREE", "file_selected", "path", msg.Path)
 		cmd, err := m.openEditorTab(msg.Path)
 		if err != nil {
-			m.logger.Error("TREE", "open_editor_error", "error", err.Error())
+			m.Logger.Error("TREE", "open_editor_error", "error", err.Error())
 		}
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -349,13 +350,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.unfocus()
 		m.syncRenderFocus()
 	case filetree.EnterFilterModeMsg:
-		m.logger.Debug("TREE", "enter_filter_mode")
-		m.focusStack.Clear()
-		m.focusStack.Push(FocusTree)
+		m.Logger.Debug("TREE", "enter_filter_mode")
+		m.FocusStack.Clear()
+		m.FocusStack.Push(FocusTree)
 	case filetree.TreeRefreshDoneMsg:
 		if msg.Err != nil {
-			m.logger.Error("TREE", "refresh_error", "error", msg.Err.Error())
-			m.statusbar.SetError("tree refresh error: " + msg.Err.Error())
+			m.Logger.Error("TREE", "refresh_error", "error", msg.Err.Error())
+			m.StatusBar.SetError("tree refresh error: " + msg.Err.Error())
 		}
 	}
 
@@ -363,19 +364,19 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 }
 
 func (m *App) ToggleSidebar() {
-	if m.tree.Model == nil {
+	if m.Tree.Model == nil {
 		return
 	}
-	m.tree.Visible = !m.tree.Visible
-	if m.tree.Visible {
-		if m.editorState.ActiveView == "" {
-			m.focusStack.Clear()
-			m.focusStack.Push(FocusTree)
+	m.Tree.Visible = !m.Tree.Visible
+	if m.Tree.Visible {
+		if m.EditorState.ActiveView == "" {
+			m.FocusStack.Clear()
+			m.FocusStack.Push(FocusTree)
 		}
-		m.tree.Model.Update(filetree.TreeWidthMsg{Width: m.tree.Width})
+		m.Tree.Model.Update(filetree.TreeWidthMsg{Width: m.Tree.Width})
 	} else {
-		if m.focusStack.Top() == FocusTree {
-			m.focusStack.Pop()
+		if m.FocusStack.Top() == FocusTree {
+			m.FocusStack.Pop()
 		}
 	}
 	m.dirty = true
@@ -407,7 +408,7 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 }
 
 func (m *App) translateToTreeMouse(msg tea.Msg) tea.Msg {
-	offsetY := m.tree.YOffset
+	offsetY := m.Tree.YOffset
 	bcOff := m.breadcrumbOffset()
 	switch mm := msg.(type) {
 	case tea.MouseClickMsg:
@@ -518,7 +519,7 @@ func (m *App) routeMouseToInlinePane(msg tea.Msg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
-	sp := m.paneMgr.Get(info.PaneID)
+	sp := m.PaneMgr.Get(info.PaneID)
 	if sp == nil || sp.Done {
 		return false, nil
 	}
@@ -550,26 +551,26 @@ func (m *App) routeMouseToInlinePane(msg tea.Msg) (bool, tea.Cmd) {
 }
 
 func (m *App) handleAgentTabClose(index int) tea.Cmd {
-	if index < 0 || index >= m.win.TabCount() {
+	if index < 0 || index >= m.Win.TabCount() {
 		return nil
 	}
-	tab := m.win.Tabs()[index]
+	tab := m.Win.Tabs()[index]
 	if !tab.Closable {
 		return nil
 	}
 
 	if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)
-		m.win.CloseTab(index)
+		m.Win.CloseTab(index)
 		m.cleanupAgent(agentID)
-		if m.OnCancelSubAgent != nil {
-			go m.OnCancelSubAgent(agentID)
+		if m.ActiveSession.OnCancelSubAgent != nil {
+			go m.ActiveSession.OnCancelSubAgent(agentID)
 		}
 		m.handleTabSwitch()
-		if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
-			if m.onListSessions != nil {
-				m.launcher = NewLauncherState(m.onListSessions())
-				m.lastInteractionTime = time.Now()
+		if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+			if m.OnListSessions != nil {
+				m.launcher = NewLauncherState(m.OnListSessions())
+				m.LastInteractionTime = time.Now()
 			}
 			m.dirty = true
 			return nil
@@ -582,11 +583,11 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		path := m.editorPathFromTabTitle(tab.Title)
 		// If the tab has unsaved edits, prompt before destroying the
 		// buffer. Otherwise close immediately.
-		ed := m.editorState.Editor 
-		if t, ok := m.editorState.Tabs[path]; ok {
+		ed := m.EditorState.Editor 
+		if t, ok := m.EditorState.Tabs[path]; ok {
 			ed = t.Editor
 		}
-		if ed != nil && ed.Modified() && m.overlayState.IsChat() {
+		if ed != nil && ed.Modified() && m.OverlayState.IsChat() {
 			m.showDirtyClosePrompt(path)
 			return nil
 		}
@@ -594,61 +595,61 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		return nil
 	}
 
-	m.win.CloseTab(index)
+	m.Win.CloseTab(index)
 	m.handleTabSwitch()
-	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
-		if m.onListSessions != nil {
-			m.launcher = NewLauncherState(m.onListSessions())
-			m.lastInteractionTime = time.Now()
+	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+		if m.OnListSessions != nil {
+			m.launcher = NewLauncherState(m.OnListSessions())
+			m.LastInteractionTime = time.Now()
 		}
 	}
 	return nil
 }
 
 func (m *App) handleOverlayTabClose(index int) tea.Cmd {
-	if index < 0 || index >= m.overlay.TabCount() {
+	if index < 0 || index >= m.Overlay.TabCount() {
 		return nil
 	}
-	tab := m.overlay.Tabs()[index]
+	tab := m.Overlay.Tabs()[index]
 	if !tab.Closable {
 		return nil
 	}
 
 	switch tab.Title {
 	case "Settings":
-		m.settings.RestoreSnapshot()
-		m.overlay.CloseTab(index)
+		m.Settings.RestoreSnapshot()
+		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
 		if ml := m.activeMsgList(); ml != nil {
 			ml.InvalidateCache()
 		}
 	case "Confirm":
-		m.confirm.Dismiss()
-		m.overlayState.SetBlocking(false)
-		m.statusbar.SetConfirming(false)
-		m.overlay.CloseTab(index)
+		m.ActiveSession.Confirm.Dismiss()
+		m.OverlayState.SetBlocking(false)
+		m.StatusBar.SetConfirming(false)
+		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
-		if m.OnConfirmResult != nil {
-			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
+		if m.ActiveSession.OnConfirmResult != nil {
+			m.ActiveSession.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
 	case "Question":
-		m.questionForm.Dismiss()
-		m.overlayState.SetBlocking(false)
-		m.statusbar.SetConfirming(false)
-		m.input.ResetPrompt()
-		m.input.ClearInput()
-		m.overlay.CloseTab(index)
+		m.ActiveSession.QuestionForm.Dismiss()
+		m.OverlayState.SetBlocking(false)
+		m.StatusBar.SetConfirming(false)
+		m.Input.ResetPrompt()
+		m.Input.ClearInput()
+		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
-		if m.OnQuestionResult != nil {
-			m.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
+		if m.ActiveSession.OnQuestionResult != nil {
+			m.ActiveSession.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
 		}
 	case "YOLO":
-		m.yoloDlg.Dismiss()
-		m.statusbar.SetConfirming(false)
-		m.overlay.CloseTab(index)
+		m.ActiveSession.YoloDlg.Dismiss()
+		m.StatusBar.SetConfirming(false)
+		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
 	default:
-		m.overlay.CloseTab(index)
+		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
 	}
 
@@ -660,14 +661,14 @@ func (m *App) closeAllQuestionOverlayTabs() {
 }
 
 func (m *App) purgeQuestionOverlayTabs() {
-	if tab := m.overlay.TabByTitle("Question"); tab != nil {
-		m.overlay.CloseTabByID(tab.ID)
+	if tab := m.Overlay.TabByTitle("Question"); tab != nil {
+		m.Overlay.CloseTabByID(tab.ID)
 	}
 }
 
 func (m *App) closeOverlayTab(title string) {
-	if tab := m.overlay.TabByTitle(title); tab != nil {
-		m.overlay.CloseTabByID(tab.ID)
+	if tab := m.Overlay.TabByTitle(title); tab != nil {
+		m.Overlay.CloseTabByID(tab.ID)
 	}
 	m.syncOverlayMode()
 	if ml := m.activeMsgList(); ml != nil {
@@ -676,16 +677,16 @@ func (m *App) closeOverlayTab(title string) {
 }
 
 func (m *App) syncQuestionInputPrompt() {
-	if !m.overlayState.Is(ModeQuestion) {
-		m.input.ResetPrompt()
-		m.input.ClearInput()
+	if !m.OverlayState.Is(ModeQuestion) {
+		m.Input.ResetPrompt()
+		m.Input.ClearInput()
 		return
 	}
-	if tab := m.overlay.TabByTitle("Question"); tab != nil {
-		m.overlay.SetTabIconByIndex(m.overlay.IndexOf(tab.ID), m.questionForm.FocusedIcon())
+	if tab := m.Overlay.TabByTitle("Question"); tab != nil {
+		m.Overlay.SetTabIconByIndex(m.Overlay.IndexOf(tab.ID), m.ActiveSession.QuestionForm.FocusedIcon())
 	}
-	if m.questionForm.IsTextQuestion(m.questionForm.Focused()) {
-		q, _ := m.questionForm.FocusedItem()
+	if m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused()) {
+		q, _ := m.ActiveSession.QuestionForm.FocusedItem()
 		label := q.Header
 		if label == "" {
 			label = q.Question
@@ -693,14 +694,14 @@ func (m *App) syncQuestionInputPrompt() {
 				label = rendering.TruncateVisual(label, 16, "…")
 			}
 		}
-		m.input.SetPrompt(fmt.Sprintf("Q%d %s", m.questionForm.Focused()+1, label))
-		existing := m.questionForm.Answer(m.questionForm.Focused())
+		m.Input.SetPrompt(fmt.Sprintf("Q%d %s", m.ActiveSession.QuestionForm.Focused()+1, label))
+		existing := m.ActiveSession.QuestionForm.Answer(m.ActiveSession.QuestionForm.Focused())
 		if existing != "" {
-			m.input.SetInput(existing)
+			m.Input.SetInput(existing)
 		}
 	} else {
-		m.input.ResetPrompt()
-		m.input.ClearInput()
+		m.Input.ResetPrompt()
+		m.Input.ClearInput()
 	}
 }
 
@@ -714,18 +715,18 @@ func (m *App) syncQuestionInputPrompt() {
 func (m *App) handleTabSwitch() {
 	// Always reset before re-deriving. This is the single source of
 	// truth for which view is active.
-	m.editorState.ActiveView = ""
-	m.agentMgr.ClearActive()
+	m.EditorState.ActiveView = ""
+	m.AgentMgr.ClearActive()
 
-	activeTab := m.win.ActiveTab()
+	activeTab := m.Win.ActiveTab()
 	if activeTab == nil {
 		return
 	}
 
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
-		m.agentMgr.SetActive(agentID)
-		if n := m.agentMgr.Get(agentID); n != nil && n.State != nil && n.State.MsgList != nil {
+		m.AgentMgr.SetActive(agentID)
+		if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil && n.State.MsgList != nil {
 			n.State.MsgList.InvalidateAllMessages()
 		}
 		return
@@ -738,29 +739,29 @@ func (m *App) handleTabSwitch() {
 		// and destroy cursor, scroll, undo, and any unsaved edits.
 		// The Editor was created and loaded once in openEditorTab and
 		// lives in the editorTabs map for the lifetime of the tab.
-		tab, ok := m.editorState.Tabs[path]
+		tab, ok := m.EditorState.Tabs[path]
 		if !ok {
 			// Tab entry is missing (shouldn't normally happen, but be
 			// defensive). Re-open to recover.
-			if m.logger != nil {
-				m.logger.Warn("EDITOR", "tab_missing_on_switch", "path", path)
+			if m.Logger != nil {
+				m.Logger.Warn("EDITOR", "tab_missing_on_switch", "path", path)
 			}
 			_, err := m.openEditorTab(path)
-			if err != nil && m.logger != nil {
-				m.logger.Error("EDITOR", "reopen_failed", "error", err.Error())
+			if err != nil && m.Logger != nil {
+				m.Logger.Error("EDITOR", "reopen_failed", "error", err.Error())
 			}
 			return
 		}
-		m.editorState.ActiveView = path
-		m.editorState.Editor = tab.Editor
+		m.EditorState.ActiveView = path
+		m.EditorState.Editor = tab.Editor
 	}
 }
 
 func (m *App) openReferenceOverlay(refID string) {
-	if m.refStore == nil {
+	if m.RefStore() == nil {
 		return
 	}
-	ref, ok := m.refStore.GetReference(refID)
+	ref, ok := m.RefStore().GetReference(refID)
 	if !ok || !ref.Active() {
 		return
 	}
@@ -768,28 +769,28 @@ func (m *App) openReferenceOverlay(refID string) {
 	if title == "" {
 		title = ref.ID
 	}
-	m.textOverlay.Open(refID, title, ref.Content)
+	m.ActiveSession.TextOverlay.Open(refID, title, ref.Content)
 	m.setMode(ModeTextOverlay)
 }
 
 func (m *App) saveReferenceFromOverlay() {
-	refID := m.textOverlay.RefID()
-	content := m.textOverlay.Value()
-	m.textOverlay.Close()
-	if m.refStore != nil && refID != "" {
-		_ = m.refStore.UpdateReferenceContent(refID, content)
+	refID := m.ActiveSession.TextOverlay.RefID()
+	content := m.ActiveSession.TextOverlay.Value()
+	m.ActiveSession.TextOverlay.Close()
+	if m.RefStore() != nil && refID != "" {
+		_ = m.RefStore().UpdateReferenceContent(refID, content)
 	}
 	m.setMode(ModeChat)
 }
 
 func (m *App) openFilePicker() {
 	root, _ := m.workingDir()
-	m.filePicker.Open(root)
+	m.FilePicker.Open(root)
 	m.setMode(ModeFilePicker)
 }
 
 func (m *App) addFileReference(path string) {
-	if m.refStore == nil || path == "" {
+	if m.RefStore() == nil || path == "" {
 		return
 	}
 	mime, isImage := provider.ImageMimeFromExt(filepath.Ext(path))
@@ -799,7 +800,7 @@ func (m *App) addFileReference(path string) {
 	} else {
 		mime = "text/plain"
 	}
-	ref, err := m.refStore.CreateReference(sessiondb.CreateRequest{
+	ref, err := m.RefStore().CreateReference(sessiondb.CreateRequest{
 		Kind:     kind,
 		Title:    filepath.Base(path),
 		Mime:     mime,
@@ -807,10 +808,10 @@ func (m *App) addFileReference(path string) {
 		Inline:   false,
 	})
 	if err != nil {
-		m.statusbar.SetError("Failed to add file reference")
+		m.StatusBar.SetError("Failed to add file reference")
 		return
 	}
-	m.input.InsertReference(ref)
+	m.Input.InsertReference(ref)
 }
 
 func (m *App) workingDir() (string, error) {
@@ -818,13 +819,9 @@ func (m *App) workingDir() (string, error) {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(400*time.Millisecond, func(t time.Time) tea.Msg {
-		return ttypes.TickMsg(t)
-	})
+	return TickCmd()
 }
 
 func streamingTickCmd() tea.Cmd {
-	return tea.Tick(16*time.Millisecond, func(t time.Time) tea.Msg {
-		return ttypes.TickMsg(t)
-	})
+	return StreamingTickCmd()
 }
