@@ -37,9 +37,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.contentDirty = true
 		m.width = msg.Width
 		m.height = msg.Height
-		for _, a := range m.agents {
-			if a.MsgList != nil {
-				a.MsgList.SetSize(msg.Width, msg.Height)
+		for _, n := range m.agentMgr.AllNodes() {
+			if n.State != nil && n.State.MsgList != nil {
+				n.State.MsgList.SetSize(msg.Width, msg.Height)
 			}
 		}
 		m.paneMgr.SetSize(msg.Width, msg.Height)
@@ -165,21 +165,23 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	spinFrame := int(time.Now().UnixMilli())
 	m.spinFrame = spinFrame
 	m.statusbar.SetSpinFrame(spinFrame)
-	m.statusbar.SetCurrentAgent(m.activeAgentView)
+	m.statusbar.SetCurrentAgent(m.agentMgr.ActiveID())
 	m.input.SetSpinFrame(spinFrame)
 	m.statusbar.ClearExpired()
-	for _, a := range m.agents {
-		a.Tick(spinFrame)
+	for _, n := range m.agentMgr.AllNodes() {
+		if n.State != nil {
+			n.State.Tick(spinFrame)
+		}
 	}
 	m.paneMgr.TickAll(spinFrame)
 	m.syncAgentWindowTabs()
 	for _, sp := range m.paneMgr.panes {
 		if !sp.Done && sp.MsgList != nil {
-			if agent, ok := m.agents[sp.ID]; ok {
-				if agent.TokenBuf != "" {
-					sp.MsgList.AppendToken(agent.TokenBuf)
-					agent.TokenBuf = ""
-					agent.LastTokenTime = time.Now()
+			if n := m.agentMgr.Get(sp.ID); n != nil && n.State != nil {
+				if n.State.TokenBuf != "" {
+					sp.MsgList.AppendToken(n.State.TokenBuf)
+					n.State.TokenBuf = ""
+					n.State.LastTokenTime = time.Now()
 				}
 			}
 			if ml := m.activeMsgList(); ml != nil {
@@ -230,7 +232,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	// Mark dirty every tick — cheap layers (header, status bar, sidebar)
 	// re-render on every frame anyway, and the launcher needs animation
 	// ticks to drive its spin frame and scroll effects.
-	isLauncher := len(m.agents) == 0 && m.activeEditorView == "" && m.launcher != nil
+	isLauncher := m.agentMgr.Count() == 0 && m.activeEditorView == "" && m.launcher != nil
 	if m.statusbar.HasAnimation() || isLauncher {
 		m.dirty = true
 	}
@@ -238,7 +240,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	if m.anyActive() {
 		return m, streamingTickCmd()
 	}
-	if len(m.agents) == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		return m, streamingTickCmd()
 	}
 	return m, tickCmd()
@@ -272,9 +274,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case ttypes.UpdateModelMsg:
 		m.modelName = string(msg)
 		m.logger.Debug("UI", "model_update", "model", string(msg))
-		for _, a := range m.agents {
-			if a.MsgList != nil {
-				a.MsgList.SetModelName(string(msg))
+		for _, n := range m.agentMgr.AllNodes() {
+			if n.State != nil && n.State.MsgList != nil {
+				n.State.MsgList.SetModelName(string(msg))
 			}
 		}
 		if ml := m.activeMsgList(); ml != nil {
@@ -312,7 +314,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.logger.Error("JOURNAL", "undo_error", "error", msg.Error)
 			m.statusbar.SetError(msg.Error)
 		}
-		if msg.Desc != "" && m.activeAgentView != "" {
+		if msg.Desc != "" && m.agentMgr.ActiveID() != "" {
 			if ml := m.activeMsgList(); ml != nil {
 				ml.AppendMessage(ttypes.ChatMessage{
 					Role:    ttypes.RoleAssistant,
@@ -560,7 +562,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 			go m.OnCancelSubAgent(agentID)
 		}
 		m.handleTabSwitch()
-		if len(m.agents) == 0 && m.activeEditorView == "" {
+		if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 			if m.onListSessions != nil {
 				m.launcher = NewLauncherState(m.onListSessions())
 				m.lastInteractionTime = time.Now()
@@ -590,7 +592,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	m.win.CloseTab(index)
 	m.handleTabSwitch()
-	if len(m.agents) == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		if m.onListSessions != nil {
 			m.launcher = NewLauncherState(m.onListSessions())
 			m.lastInteractionTime = time.Now()
@@ -709,7 +711,7 @@ func (m *App) handleTabSwitch() {
 	// Always reset before re-deriving. This is the single source of
 	// truth for which view is active.
 	m.activeEditorView = ""
-	m.activeAgentView = ""
+	m.agentMgr.ClearActive()
 
 	activeTab := m.win.ActiveTab()
 	if activeTab == nil {
@@ -718,9 +720,9 @@ func (m *App) handleTabSwitch() {
 
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
-		m.activeAgentView = agentID
-		if agent, ok := m.agents[agentID]; ok && agent.MsgList != nil {
-			agent.MsgList.InvalidateAllMessages()
+		m.agentMgr.SetActive(agentID)
+		if n := m.agentMgr.Get(agentID); n != nil && n.State != nil && n.State.MsgList != nil {
+			n.State.MsgList.InvalidateAllMessages()
 		}
 		return
 	}

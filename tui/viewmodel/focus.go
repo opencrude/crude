@@ -17,7 +17,7 @@ func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
 	}
-	if len(m.agents) == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		return FocusLauncher
 	}
 	if m.treeFocused && m.treeModel != nil && m.treeVisible {

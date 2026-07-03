@@ -29,13 +29,11 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.logger.Info("INPUT", "slash", "command", "settings")
 		m.settings.SaveSnapshot()
 		// If viewing a sub-agent, open settings for that agent's category
-		if m.activeAgentView != "" {
-			if cat, ok := m.agentCategories[m.activeAgentView]; ok && cat != "" {
-				m.settingsCategory = cat
-				m.setMode(ModeSettings)
-				m.settings.OpenCategory(cat)
-				break
-			}
+		if n := m.agentMgr.ActiveNode(); n != nil && n.Category != "" {
+			m.settingsCategory = n.Category
+			m.setMode(ModeSettings)
+			m.settings.OpenCategory(n.Category)
+			break
 		}
 		m.settingsCategory = ""
 		m.setMode(ModeSettings)

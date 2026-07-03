@@ -9,7 +9,7 @@ import (
 )
 
 func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
-	if len(m.agents) == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		return nil
 	}
 
@@ -34,9 +34,9 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		}
-		if ch, ok := m.sessionCancelChans[m.activeAgentView]; ok {
+		if n := m.agentMgr.ActiveNode(); n != nil {
 			select {
-			case ch <- struct{}{}:
+			case n.CancelChan <- struct{}{}:
 			default:
 			}
 		}
@@ -57,22 +57,20 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	if m.activeAgentView != "" {
-		if agent, ok := m.agents[m.activeAgentView]; ok && !agent.Completed && agent.IsActive() {
-			if m.OnCancelSubAgent != nil {
-				go m.OnCancelSubAgent(m.activeAgentView)
-			}
-			agent.Streaming = false
-			agent.Thinking = false
-			m.statusbar.SetInfo("cancelling sub-agent...")
-			return nil
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil && !n.State.Completed && n.State.IsActive() {
+		if m.OnCancelSubAgent != nil {
+			go m.OnCancelSubAgent(n.ID)
 		}
+		n.State.Streaming = false
+		n.State.Thinking = false
+		m.statusbar.SetInfo("cancelling sub-agent...")
+		return nil
 	}
 
 	if m.anyActive() {
-		if ch, ok := m.sessionCancelChans[m.activeAgentView]; ok {
+		if n := m.agentMgr.ActiveNode(); n != nil {
 			select {
-			case ch <- struct{}{}:
+			case n.CancelChan <- struct{}{}:
 			default:
 			}
 		}

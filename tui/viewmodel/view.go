@@ -42,7 +42,7 @@ func (m *App) View() tea.View {
 	// The launcher is also fast to render and has animations (spin
 	// frame, filter typing, scrolling), so it always gets a full
 	// re-render — no caching.
-	isLauncherMain := len(m.agents) == 0 && m.activeEditorView == "" && m.launcher != nil
+	isLauncherMain := m.agentMgr.Count() == 0 && m.activeEditorView == "" && m.launcher != nil
 	useCached := !isLauncherMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
 
 	m.compositor.BeginFrame()
@@ -146,7 +146,7 @@ func (m *App) buildMainView() string {
 			hint = " "
 		}
 		inputView = dim.Render(hint)
-	} else if len(m.agents) == 0 && m.activeEditorView == "" {
+	} else if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		inputLineCount = 1
 		hint := "↑↓: navigate  ·  enter: open  ·  type to search sessions"
 		hintW := rendering.VisibleWidth(hint)
@@ -212,7 +212,7 @@ func (m *App) buildMainView() string {
 		m.editor.SetPadding(editorPadL)
 		chatVisible = m.editor.View(contentW, chatH, editorPadL, editorPadR)
 		totalSBW = 0
-	} else if len(m.agents) == 0 && m.activeEditorView == "" {
+	} else if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		if m.launcher != nil {
 			launcherLines := m.renderLauncherMainView(innerW, chatH)
 			chatVisible = launcherLines
@@ -233,8 +233,8 @@ func (m *App) buildMainView() string {
 		} else {
 			nestingLevel := m.paneMgr.ScrollbarNestingLevel()
 			paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
-			if activeAgent := m.agents[m.activeAgentView]; activeAgent != nil && activeAgent.MsgList != nil {
-				activeAgent.MsgList.SetPaneScrollbarWidth(paneSBW)
+			if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil && n.State.MsgList != nil {
+				n.State.MsgList.SetPaneScrollbarWidth(paneSBW)
 			}
 			if activeML != nil {
 				activeML.SetPaneScrollbarWidth(0)

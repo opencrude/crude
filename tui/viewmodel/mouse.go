@@ -89,7 +89,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 	// regions below — the launcher must NOT steal those clicks.
 	// The file tree (sidebar) is already handled above (regionSidebar
 	// check), so the launcher never interferes with it.
-	if len(m.agents) == 0 && m.activeEditorView == "" && m.launcher != nil {
+	if m.agentMgr.Count() == 0 && m.activeEditorView == "" && m.launcher != nil {
 		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.chatAreaHeight {
 			return regionLauncher
 		}
@@ -97,7 +97,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		// region (so the user can still type / to filter).
 	}
 
-	if len(m.agents) == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		return regionInput
 	}
 
@@ -165,8 +165,8 @@ func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []t
 	var cmds []tea.Cmd
 	activeML := m.activeMessageList()
 	canType := false
-	if a, ok := m.agents[m.activeAgentView]; ok {
-		canType = !a.Completed && a.IsActive()
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		canType = !n.State.Completed && n.State.IsActive()
 	}
 
 	if m.input.InputSelecting() {
@@ -194,8 +194,8 @@ func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []t
 func (m *App) routeInputMouse(msg tea.Msg) []tea.Cmd {
 	var cmds []tea.Cmd
 	canType := false
-	if a, ok := m.agents[m.activeAgentView]; ok {
-		canType = !a.Completed && a.IsActive()
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		canType = !n.State.Completed && n.State.IsActive()
 	}
 	updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 	m.input = updated
@@ -479,22 +479,22 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 func (m *App) handleConfirmResult(result ttypes.ConfirmResult) (tea.Model, tea.Cmd) {
 	m.statusbar.SetConfirming(false)
 	m.blocking = false
-	if a, ok := m.agents[m.activeAgentView]; ok {
-		a.Thinking = true
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		n.State.Thinking = true
 	}
-	m.statusbar.SetThinkingForAgent(m.activeAgentView, true, false, false)
+	m.statusbar.SetThinkingForAgent(m.agentMgr.ActiveID(), true, false, false)
 	if m.OnConfirmResult != nil {
 		m.OnConfirmResult(result)
 		m.logger.Info("BLOCK", "resolved_mouse", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
 	}
-	if a, ok := m.agents[m.activeAgentView]; ok {
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
 		switch result.Choice {
 		case ttypes.ConfirmAllow:
-			a.pendingPermTag = "allowed"
+			n.State.pendingPermTag = "allowed"
 		case ttypes.ConfirmAlways:
-			a.pendingPermTag = "always"
+			n.State.pendingPermTag = "always"
 		case ttypes.ConfirmDeny:
-			a.pendingPermTag = "denied"
+			n.State.pendingPermTag = "denied"
 			if ml := m.activeMsgList(); ml != nil {
 				ml.SetToolPermTag(result.Tool, "", "denied")
 			}
@@ -547,7 +547,7 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	default:
-		if len(m.agents) == 0 && m.launcher != nil {
+		if m.agentMgr.Count() == 0 && m.launcher != nil {
 			m.lastInteractionTime = time.Now()
 			if msg.Button == tea.MouseWheelUp {
 				m.launcher.moveUp()
@@ -622,7 +622,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// Before returning, clear tree and tab-bar hover state so the
 	// stale highlight doesn't persist when the mouse leaves those
 	// areas for the launcher.
-	if m.launcher != nil && len(m.agents) == 0 && m.activeEditorView == "" {
+	if m.launcher != nil && m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		// Mouse is over the file tree — route there instead.
 		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
 			cmd := m.routeSidebarMouse(msg)
