@@ -30,23 +30,23 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.settings.SaveSnapshot()
 		// If viewing a sub-agent, open settings for that agent's category
 		if n := m.agentMgr.ActiveNode(); n != nil && n.Category != "" {
-			m.settingsCategory = n.Category
+			m.overlayState.SetSettingsCategory(n.Category)
 			m.setMode(ModeSettings)
 			m.settings.OpenCategory(n.Category)
 			break
 		}
-		m.settingsCategory = ""
+		m.overlayState.SetSettingsCategory("")
 		m.setMode(ModeSettings)
 	case "/provider":
 		m.logger.Info("INPUT", "slash", "command", "provider")
 		m.settings.SaveSnapshot()
-		m.settingsCategory = "main"
+		m.overlayState.SetSettingsCategory("main")
 		m.setMode(ModeSettings)
 		m.settings.OpenDefaultProfileEdit()
 	case "/api-key":
 		m.logger.Info("INPUT", "slash", "command", "api-key")
 		m.settings.SaveSnapshot()
-		m.settingsCategory = "main"
+		m.overlayState.SetSettingsCategory("main")
 		m.setMode(ModeSettings)
 		m.settings.OpenDefaultProfileEdit()
 	case "/sessions":
@@ -77,8 +77,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 	case "/yolo":
-		if m.yolo {
-			m.yolo = false
+		if m.overlayState.IsYolo() {
+			m.overlayState.SetYolo(false)
 			if ml := m.activeMsgList(); ml != nil {
 				ml.ScrollToBottom()
 			}

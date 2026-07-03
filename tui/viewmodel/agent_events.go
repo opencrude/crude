@@ -220,7 +220,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.statusbar.SetThinkingForAgent(agentID, thinking, streaming, blocking)
 		},
 		func() {
-			m.blocking = true
+			m.overlayState.SetBlocking(true)
 			m.statusbar.SetStatusLine("")
 		},
 		func(question, operation, tool, target, risk, reason, suggestion string) {
@@ -242,7 +242,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.syncQuestionInputPrompt()
 		},
 		func() {
-			m.blocking = false
+			m.overlayState.SetBlocking(false)
 			m.confirm.Dismiss()
 			m.questionForm.Dismiss()
 			m.input.ResetPrompt()

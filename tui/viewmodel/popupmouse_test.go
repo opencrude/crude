@@ -244,7 +244,7 @@ func TestClickDirtyPrompt_CancelButtonCancels(t *testing.T) {
 // "closing a tab seems to hang" bug.
 func TestDirtyPromptKey_CancelBreaksEscLoop(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.activeEditorView = "/tmp/foo.go"
+	app.editorState.ActiveView = "/tmp/foo.go"
 	app.dirtyPromptPath = "/tmp/foo.go"
 	app.dirtyPromptChoice = 2 // start focused on Cancel
 
@@ -257,10 +257,10 @@ func TestDirtyPromptKey_CancelBreaksEscLoop(t *testing.T) {
 	if app.windowManager.Window("dirty-close-prompt") != nil {
 		t.Fatal("Esc on dirty-prompt should remove the popup")
 	}
-	// Crucially: app.activeEditorView is preserved — the tab is
+	// Crucially: app.editorState.ActiveView is preserved — the tab is
 	// still there, the editor is still modified, and a second Esc
 	// (e.g. routed to dispatchEditorKey) must NOT reopen the prompt.
-	if app.activeEditorView != "/tmp/foo.go" {
+	if app.editorState.ActiveView != "/tmp/foo.go" {
 		t.Fatal("Esc on dirty-prompt must preserve the active editor")
 	}
 }
@@ -288,7 +288,7 @@ func TestDispatchEditorKey_CtrlWClosesTab(t *testing.T) {
 
 func TestFocusRestoration_AfterPopupClose_EditorKeepsFocus(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.activeEditorView = "/tmp/foo.go"
+	app.editorState.ActiveView = "/tmp/foo.go"
 
 	// Simulate popup open: treeFocused/tabBarFocused unchanged, but
 	// windowManager.Focused is now the popup.
@@ -327,9 +327,9 @@ func TestFocusRestoration_AfterPopupClose_EditorKeepsFocus(t *testing.T) {
 
 func TestFocusRestoration_AfterPopupClose_TreeKeepsFocus(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.activeEditorView = "/tmp/foo.go"
-	app.treeFocused = true
-	app.treeVisible = true
+	app.editorState.ActiveView = "/tmp/foo.go"
+	app.focusStack.Push(FocusTree)
+	app.tree.Visible = true
 
 	// Open and close a popup.
 	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -340,18 +340,18 @@ func TestFocusRestoration_AfterPopupClose_TreeKeepsFocus(t *testing.T) {
 	app.windowManager.AddWindow(fw)
 	app.closeContextMenu()
 
-	// The booleans must be preserved through popup open/close.
-	if !app.treeFocused {
+	// The stack must be preserved through popup open/close.
+	if app.focusStack.Top() != FocusTree {
 		t.Fatal("treeFocused must be preserved through popup close")
 	}
-	if app.tabBarFocused {
-		t.Fatal("tabBarFocused must remain false")
+	if app.focusStack.Top() == FocusTabBar {
+		t.Fatal("FocusTabBar must not be in stack")
 	}
 }
 
 func TestFocusRestoration_ChainedPopups(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.activeEditorView = "/tmp/foo.go"
+	app.editorState.ActiveView = "/tmp/foo.go"
 
 	// Open popup A.
 	popA := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -396,7 +396,7 @@ func TestFocusRestoration_FindReplaceOpen_EditorClickFocusesEditor(t *testing.T)
 	// When find-replace is open and the user clicks the editor,
 	// find-replace stays open (KeepRoute), but the editor gains focus.
 	app := newTestAppForPopupMouse(t)
-	app.activeEditorView = "/tmp/foo.go"
+	app.editorState.ActiveView = "/tmp/foo.go"
 
 	// Open find-replace popup.
 	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -431,9 +431,9 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 	// underlying booleans (treeFocused/etc) are preserved so that
 	// focus can route to the underlying widget.
 	app := newTestAppForPopupMouse(t)
-	app.activeEditorView = "/tmp/foo.go"
-	app.treeFocused = true
-	app.treeVisible = true
+	app.editorState.ActiveView = "/tmp/foo.go"
+	app.focusStack.Push(FocusTree)
+	app.tree.Visible = true
 
 	// Open a context menu.
 	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -456,8 +456,8 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 		t.Fatal("context-menu should be closed after outside click")
 	}
 
-	// The booleans are preserved — region handler will update focus.
-	if !app.treeFocused {
+	// The stack is preserved — region handler will update focus.
+	if app.focusStack.Top() != FocusTree {
 		t.Fatal("treeFocused must be preserved through popup close")
 	}
 }
@@ -590,7 +590,7 @@ func newTestAppForPopupMouse(t *testing.T) *App {
 	if err := ed.Open(tmpFile); err != nil {
 		t.Fatalf("open tmp file: %v", err)
 	}
-	app.editor = ed
+	app.editorState.Editor = ed
 	return app
 }
 

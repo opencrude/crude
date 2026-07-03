@@ -572,8 +572,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 
 	case "yolo":
-		if m.yolo {
-			m.yolo = false
+		if m.overlayState.IsYolo() {
+			m.overlayState.SetYolo(false)
 			m.statusbar.SetInfo("YOLO mode disabled")
 			if m.OnYoloCmd != nil {
 				go m.OnYoloCmd(false)

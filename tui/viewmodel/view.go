@@ -42,7 +42,7 @@ func (m *App) View() tea.View {
 	// The launcher is also fast to render and has animations (spin
 	// frame, filter typing, scrolling), so it always gets a full
 	// re-render — no caching.
-	isLauncherMain := m.agentMgr.Count() == 0 && m.activeEditorView == "" && m.launcher != nil
+	isLauncherMain := m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" && m.launcher != nil
 	useCached := !isLauncherMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
 
 	m.compositor.BeginFrame()
@@ -59,7 +59,7 @@ func (m *App) View() tea.View {
 	if m.mainSidebarSurf != nil {
 		root.AddChild(m.mainSidebarSurf)
 		m.mainSidebarSurf.SetZOrder(1)
-		m.mainSidebarSurf.SetVisible(m.treeVisible)
+		m.mainSidebarSurf.SetVisible(m.tree.Visible)
 	}
 	if m.mainStatusbarSurf != nil {
 		root.AddChild(m.mainStatusbarSurf)
@@ -84,7 +84,7 @@ func (m *App) View() tea.View {
 
 	// Cheap layers: always re-render (surface fill + ANSI render).
 	m.renderHeaderToSurface()
-	if m.treeVisible {
+	if m.tree.Visible {
 		m.renderSidebarToSurface()
 	}
 	m.renderStatusbarToSurface()
@@ -114,9 +114,9 @@ func (m *App) View() tea.View {
 func (m *App) buildMainView() string {
 	// Account for file tree sidebar when visible.
 	sidebarW := 0
-	sidebarVisible := m.treeVisible && m.treeModel != nil && m.treeRenderer != nil
+	sidebarVisible := m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil
 	if sidebarVisible {
-		sidebarW = m.treeWidth + 1 // +1 for divider
+		sidebarW = m.tree.Width + 1 // +1 for divider
 	}
 
 	m.win.SetWidth(m.width - 2*m.theme.Spacing.PadLR - sidebarW)
@@ -131,9 +131,9 @@ func (m *App) buildMainView() string {
 
 	dim := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
 
-	isSpecialMode := m.Mode != ModeChat
-	showMainInputForQuestion := m.Mode == ModeQuestion && m.questionForm.IsTextQuestion(m.questionForm.Focused())
-	isEditorActive := m.activeEditorView != "" && m.editor.IsOpen()
+	isSpecialMode := m.overlayState.IsOverlay()
+	showMainInputForQuestion := m.overlayState.Is(ModeQuestion) && m.questionForm.IsTextQuestion(m.questionForm.Focused())
+	isEditorActive := m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen()
 
 	m.syncFormHint()
 
@@ -146,7 +146,7 @@ func (m *App) buildMainView() string {
 			hint = " "
 		}
 		inputView = dim.Render(hint)
-	} else if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+	} else if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 		inputLineCount = 1
 		hint := "↑↓: navigate  ·  enter: open  ·  type to search sessions"
 		hintW := rendering.VisibleWidth(hint)
@@ -156,9 +156,9 @@ func (m *App) buildMainView() string {
 		inputView = dim.Render(hint)
 	} else if isEditorActive {
 		inputLineCount = 1
-		fileInfo := m.editor.Title()
-		cursorInfo := fmt.Sprintf("%d:%d", m.editor.CursorLine()+1, m.editor.CursorCol()+1)
-		lineCount := m.editor.LineCount()
+		fileInfo := m.editorState.Editor.Title()
+		cursorInfo := fmt.Sprintf("%d:%d", m.editorState.Editor.CursorLine()+1, m.editorState.Editor.CursorCol()+1)
+		lineCount := m.editorState.Editor.LineCount()
 		hintText := fmt.Sprintf("[ %s  %s  %dL  ·  ctrl+s save  ctrl+z undo  ctrl+y redo  esc close ]", fileInfo, cursorInfo, lineCount)
 		inputView = dim.Render(hintText)
 	} else {
@@ -178,7 +178,7 @@ func (m *App) buildMainView() string {
 		agentTabBarLine = m.win.RenderTabBar()
 		agentTabBarVisible = agentTabBarLine != ""
 	}
-	if m.tabBarFocused && agentTabBarVisible {
+	if m.focusStack.Top() == FocusTabBar && agentTabBarVisible {
 		focusStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
 		agentTabBarLine = focusStyle.Render(agentTabBarLine)
 	}
@@ -209,10 +209,10 @@ func (m *App) buildMainView() string {
 		if sidebarVisible {
 			editorPadL = 0
 		}
-		m.editor.SetPadding(editorPadL)
-		chatVisible = m.editor.View(contentW, chatH, editorPadL, editorPadR)
+		m.editorState.Editor.SetPadding(editorPadL)
+		chatVisible = m.editorState.Editor.View(contentW, chatH, editorPadL, editorPadR)
 		totalSBW = 0
-	} else if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+	} else if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 		if m.launcher != nil {
 			launcherLines := m.renderLauncherMainView(innerW, chatH)
 			chatVisible = launcherLines
@@ -431,7 +431,7 @@ func (m *App) buildMainView() string {
 
 	if agentTabBarVisible {
 		lines = append(lines, pad+agentTabBarLine+pad)
-		if m.tabBarFocused {
+		if m.focusStack.Top() == FocusTabBar {
 			accentSepStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
 			lines = append(lines, accentSepStyle.Render(strings.Repeat("━", contentW)))
 		} else {
@@ -517,15 +517,15 @@ func (m *App) buildMainView() string {
 
 	// The sidebar is rendered into its own layer surface
 	// (mainSidebarSurf). Update tree height/scroll state for it.
-	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil {
+	if m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil {
 		treeStart := 3
-		m.treeYOffset = treeStart
+		m.tree.YOffset = treeStart
 		sidebarH := contentH - treeStart
 		if sidebarH < 0 {
 			sidebarH = 0
 		}
-		m.treeModel.Update(filetree.TreeHeightMsg{Height: sidebarH})
-		m.treeRenderer.SetScrollbarContentHeight(sidebarH)
+		m.tree.Model.Update(filetree.TreeHeightMsg{Height: sidebarH})
+		m.tree.Renderer.SetScrollbarContentHeight(sidebarH)
 	}
 
 	if len(lines) > contentH {
@@ -547,8 +547,8 @@ func (m *App) renderOverlayArea() []string {
 
 	// Compute content width accounting for sidebar
 	sidebarW := 0
-	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil {
-		sidebarW = m.treeWidth + 1
+	if m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil {
+		sidebarW = m.tree.Width + 1
 	}
 	contentW := m.width - sidebarW
 
@@ -586,8 +586,8 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 
 	// Compute content width accounting for sidebar
 	sidebarW := 0
-	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil {
-		sidebarW = m.treeWidth + 1
+	if m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil {
+		sidebarW = m.tree.Width + 1
 	}
 	overlayContentW := m.width - sidebarW - 2*m.theme.Spacing.PadLR
 	if overlayContentW < 20 {
@@ -623,7 +623,7 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 }
 
 func (m *App) syncFormHint() {
-	if m.tabBarFocused {
+	if m.focusStack.Top() == FocusTabBar {
 		m.formHint = "[ tab bar focused · ← →: navigate · enter: select · esc: unfocus ]"
 		return
 	}

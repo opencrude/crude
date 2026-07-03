@@ -53,8 +53,8 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		return regionStatusBar
 	}
 
-	if m.treeVisible && m.treeModel != nil && x < m.treeWidth {
-		if x == m.treeWidth {
+	if m.tree.Visible && m.tree.Model != nil && x < m.tree.Width {
+		if x == m.tree.Width {
 			return regionSidebarDivider
 		}
 		return regionSidebar
@@ -76,7 +76,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		}
 	}
 
-	if m.activeEditorView != "" && m.editor.IsOpen() {
+	if m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen() {
 		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.chatAreaHeight {
 			return regionEditor
 		}
@@ -89,7 +89,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 	// regions below — the launcher must NOT steal those clicks.
 	// The file tree (sidebar) is already handled above (regionSidebar
 	// check), so the launcher never interferes with it.
-	if m.agentMgr.Count() == 0 && m.activeEditorView == "" && m.launcher != nil {
+	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" && m.launcher != nil {
 		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.chatAreaHeight {
 			return regionLauncher
 		}
@@ -97,11 +97,11 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		// region (so the user can still type / to filter).
 	}
 
-	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 		return regionInput
 	}
 
-	if m.Mode == ModeChat {
+	if m.overlayState.IsChat() {
 		tabBarExtra := 0
 		if m.win.IsOpen() && m.win.TabCount() >= 1 {
 			tabBarExtra = 2
@@ -123,13 +123,13 @@ func (m *App) routeEditorMouse(msg tea.Msg) tea.Cmd {
 	layout := m.computeLayout()
 	translated := translateMouseY(msg, -layout.ChatAreaTop)
 	translated = translateMouseX(translated, -layout.SidebarW)
-	translated = translateMouseX(translated, -m.editor.PadL)
-	return m.editor.HandleEvent(translated)
+	translated = translateMouseX(translated, -m.editorState.Editor.PadL)
+	return m.editorState.Editor.HandleEvent(translated)
 }
 
 func (m *App) routeSidebarMouse(msg tea.Msg) tea.Cmd {
 	translated := m.translateToTreeMouse(msg)
-	return m.treeModel.Update(filetree.TreeMouseMsg{Mouse: translated})
+	return m.tree.Model.Update(filetree.TreeMouseMsg{Mouse: translated})
 }
 
 // routeTreeScrollbarMsg translates a mouse event from screen coordinates to
@@ -141,21 +141,21 @@ func (m *App) routeTreeScrollbarMsg(msg tea.Msg) tea.Cmd {
 	switch mm := msg.(type) {
 	case tea.MouseClickMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseClickMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - bcOff, Button: mm.Button}
+		adjusted = tea.MouseClickMsg{X: mm.X, Y: mouse.Y - m.tree.YOffset - bcOff, Button: mm.Button}
 	case tea.MouseMotionMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseMotionMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - bcOff, Button: mm.Button}
+		adjusted = tea.MouseMotionMsg{X: mm.X, Y: mouse.Y - m.tree.YOffset - bcOff, Button: mm.Button}
 	case tea.MouseReleaseMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseReleaseMsg{X: mm.X, Y: mouse.Y - m.treeYOffset - bcOff, Button: mm.Button}
+		adjusted = tea.MouseReleaseMsg{X: mm.X, Y: mouse.Y - m.tree.YOffset - bcOff, Button: mm.Button}
 	}
-	return m.treeRenderer.HandleScrollbarMsg(adjusted)
+	return m.tree.Renderer.HandleScrollbarMsg(adjusted)
 }
 
 // breadcrumbOffset returns 1 when the tree is scrolled (breadcrumb visible),
 // 0 otherwise.
 func (m *App) breadcrumbOffset() int {
-	if m.treeModel.ScrollOffset() > 0 {
+	if m.tree.Model.ScrollOffset() > 0 {
 		return 1
 	}
 	return 0
@@ -170,7 +170,7 @@ func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []t
 	}
 
 	if m.input.InputSelecting() {
-		updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+	updated, cmd, evt := m.input.Update(msg, canType && !m.overlayState.IsBlocking(), m.overlayState.IsBlocking(), m.chatAreaHeight, m.input.ShowHint())
 		m.input = updated
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -197,7 +197,7 @@ func (m *App) routeInputMouse(msg tea.Msg) []tea.Cmd {
 	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
-	updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
+	updated, cmd, evt := m.input.Update(msg, canType && !m.overlayState.IsBlocking(), m.overlayState.IsBlocking(), m.chatAreaHeight, m.input.ShowHint())
 	m.input = updated
 	if cmd != nil {
 		cmds = append(cmds, cmd)
@@ -236,7 +236,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			if m.windowManager.IsDragging() {
 				return m, tea.Batch(cmds...)
 			}
-			if m.Mode == ModeTextOverlay {
+			if m.overlayState.Is(ModeTextOverlay) {
 				updated, cmd, action := m.textOverlay.Update(msg)
 				m.textOverlay = updated
 				if cmd != nil {
@@ -268,10 +268,11 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	switch region {
 	case regionSidebar:
-		m.treeFocused = true
-		localY := mouse.Y - m.treeYOffset
+		m.focusStack.Clear()
+		m.focusStack.Push(FocusTree)
+		localY := mouse.Y - m.tree.YOffset
 		if localY >= 0 {
-			if mouse.X == m.treeWidth-1 {
+			if mouse.X == m.tree.Width-1 {
 				cmd := m.routeTreeScrollbarMsg(msg)
 				return m, cmd
 			}
@@ -282,18 +283,18 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	case regionSidebarDivider:
 		if msg.Button == tea.MouseLeft {
-			m.treeResizing = true
-			m.treeResizeStartX = mouse.X
-			m.treeResizeStartWidth = m.treeWidth
+			m.tree.Resizing = true
+			m.tree.ResizeStartX = mouse.X
+			m.tree.ResizeStartWidth = m.tree.Width
 		}
 		return m, nil
 
 	case regionTabBar:
-		m.unfocus()
-		m.tabBarFocused = true
+		m.focusStack.Clear()
+		m.focusStack.Push(FocusTabBar)
 		adjustedX := mouse.X
-		if m.treeVisible && m.treeModel != nil {
-			adjustedX -= m.treeWidth + 1
+		if m.tree.Visible && m.tree.Model != nil {
+			adjustedX -= m.tree.Width + 1
 		}
 		adjustedX -= m.theme.Spacing.PadLR
 		if adjustedX < 0 {
@@ -349,8 +350,8 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m.handleLauncherClick(mouse.X, mouse.Y)
 	}
 
-	if m.treeFocused && mouse.X >= m.treeWidth {
-		m.treeFocused = false
+	if m.focusStack.Top() == FocusTree && mouse.X >= m.tree.Width {
+		m.focusStack.Pop()
 	}
 
 	return m, nil
@@ -367,8 +368,8 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 
 		if m.overlay.TabCount() >= 2 && mouse.Y == overlayStartLine+1 {
 		adjustedX := mouse.X
-		if m.treeVisible && m.treeModel != nil {
-			adjustedX -= m.treeWidth + 1
+		if m.tree.Visible && m.tree.Model != nil {
+			adjustedX -= m.tree.Width + 1
 		}
 		adjustedX -= m.theme.Spacing.PadLR
 		if adjustedX < 0 {
@@ -421,8 +422,8 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 	// hit-test uses the actual rendered width of each button.
 	if activeTab != nil && activeTab.Title == "Confirm" {
 		adjustedX := mouse.X
-		if m.treeVisible && m.treeModel != nil {
-			adjustedX -= m.treeWidth + 1
+		if m.tree.Visible && m.tree.Model != nil {
+			adjustedX -= m.tree.Width + 1
 		}
 		adjustedX -= m.theme.Spacing.PadLR
 		if adjustedX < 0 {
@@ -478,7 +479,7 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 // handleConfirmKey in keyboard.go.
 func (m *App) handleConfirmResult(result ttypes.ConfirmResult) (tea.Model, tea.Cmd) {
 	m.statusbar.SetConfirming(false)
-	m.blocking = false
+	m.overlayState.SetBlocking(false)
 	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
 		n.State.Thinking = true
 	}
@@ -509,7 +510,7 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouseWheel(msg); hitWin != nil {
-			if m.Mode == ModeTextOverlay {
+			if m.overlayState.Is(ModeTextOverlay) {
 				updated, cmd, _ := m.textOverlay.Update(msg)
 				m.textOverlay = updated
 				if cmd != nil {
@@ -533,7 +534,7 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case regionEditor:
-		m.editor.HandleEvent(msg)
+		m.editorState.Editor.HandleEvent(msg)
 		return m, nil
 
 	case regionChat:
@@ -594,9 +595,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.treeResizing {
-		deltaX := mouse.X - m.treeResizeStartX
-		newWidth := m.treeResizeStartWidth + deltaX
+	if m.tree.Resizing {
+		deltaX := mouse.X - m.tree.ResizeStartX
+		newWidth := m.tree.ResizeStartWidth + deltaX
 		minW := 12
 		if newWidth < minW {
 			newWidth = minW
@@ -604,8 +605,8 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		if newWidth > m.width/2 {
 			newWidth = m.width / 2
 		}
-		m.treeWidth = newWidth
-		m.treeModel.Update(filetree.TreeWidthMsg{Width: newWidth})
+		m.tree.Width = newWidth
+		m.tree.Model.Update(filetree.TreeWidthMsg{Width: newWidth})
 		m.dirty = true
 		return m, nil
 	}
@@ -622,14 +623,14 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// Before returning, clear tree and tab-bar hover state so the
 	// stale highlight doesn't persist when the mouse leaves those
 	// areas for the launcher.
-	if m.launcher != nil && m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+	if m.launcher != nil && m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 		// Mouse is over the file tree — route there instead.
-		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
+		if m.tree.Visible && m.tree.Model != nil && mouse.X < m.tree.Width {
 			cmd := m.routeSidebarMouse(msg)
 			return m, cmd
 		}
 		// Clear tree hover (mouse left the tree area).
-		if m.treeModel != nil && m.treeModel.Hover.Clear() {
+		if m.tree.Model != nil && m.tree.Model.Hover.Clear() {
 			m.dirty = true
 		}
 		// Clear tab bar hover (mouse left the tab row).
@@ -640,8 +641,8 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
-	if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
-		if mouse.X == m.treeWidth-1 {
+	if m.tree.Visible && m.tree.Model != nil && mouse.X < m.tree.Width {
+		if mouse.X == m.tree.Width-1 {
 			cmd := m.routeTreeScrollbarMsg(msg)
 			return m, cmd
 		}
@@ -654,7 +655,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// clear the hover state so the row doesn't keep the hover background
 	// after the cursor has moved away. This matches the behaviour of
 	// every GUI tree view: hover is "live" and tied to mouse position.
-	if m.treeModel != nil && m.treeModel.Hover.Clear() {
+	if m.tree.Model != nil && m.tree.Model.Hover.Clear() {
 		m.dirty = true
 	}
 
@@ -663,8 +664,8 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// the cursor, with the same X-adjustment used in dispatchMouseClick.
 	if m.win.IsOpen() && m.win.TabCount() >= 1 && mouse.Y == 3 {
 		adjustedX := mouse.X
-		if m.treeVisible && m.treeModel != nil {
-			adjustedX -= m.treeWidth + 1
+		if m.tree.Visible && m.tree.Model != nil {
+			adjustedX -= m.tree.Width + 1
 		}
 		adjustedX -= m.theme.Spacing.PadLR
 		if adjustedX < 0 {
@@ -702,8 +703,8 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			activeTab := m.overlay.ActiveTab()
 			if activeTab != nil && activeTab.Title == "Confirm" {
 				adjustedX := mouse.X
-				if m.treeVisible && m.treeModel != nil {
-					adjustedX -= m.treeWidth + 1
+				if m.tree.Visible && m.tree.Model != nil {
+					adjustedX -= m.tree.Width + 1
 				}
 				adjustedX -= m.theme.Spacing.PadLR
 				if adjustedX < 0 {
@@ -721,7 +722,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.activeEditorView != "" && m.editor.IsOpen() {
+	if m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen() {
 		// Cheap Y-bounds check instead of full classifyMouse:
 		// classifyMouse checks WM, sidebar, tab bar, overlay, editor,
 		// launcher, input, and chat — but all those except "editor
@@ -746,7 +747,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// Mouse moved away from editor — clear any diagnostic popup.
 	m.clearDiagHoverPopup()
 
-	if m.Mode == ModeChat {
+	if m.overlayState.IsChat() {
 		activeML := m.activeMessageList()
 		if activeML != nil && activeML.IsScrollbarDragging() {
 			_, cmd := activeML.Update(msg)
@@ -788,13 +789,13 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		}
 	}
 
-	if m.treeResizing {
-		m.treeResizing = false
+	if m.tree.Resizing {
+		m.tree.Resizing = false
 		return m, nil
 	}
 
-	if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
-		if mouse.X == m.treeWidth-1 {
+	if m.tree.Visible && m.tree.Model != nil && mouse.X < m.tree.Width {
+		if mouse.X == m.tree.Width-1 {
 			cmd := m.routeTreeScrollbarMsg(msg)
 			return m, cmd
 		}
@@ -843,10 +844,10 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 // updateDiagHoverPopup checks the editor's hover state and shows/updates a
 // floating popup window with diagnostic messages at the hovered position.
 func (m *App) updateDiagHoverPopup(screenX, screenY int) {
-	if m.windowManager == nil || !m.editor.IsOpen() {
+	if m.windowManager == nil || !m.editorState.Editor.IsOpen() {
 		return
 	}
-	state := m.editor.HoverState()
+	state := m.editorState.Editor.HoverState()
 	if len(state.Messages) == 0 {
 		m.clearDiagHoverPopup()
 		return
@@ -880,8 +881,8 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 		sevIcon = "ℹ"
 	}
 
-	titleStr := fmt.Sprintf("%s:%d:%d", m.editor.Title(), state.Line+1, state.Col+1)
-	sourceLine := strings.TrimRight(m.editor.LineText(state.Line), "\n\r ")
+	titleStr := fmt.Sprintf("%s:%d:%d", m.editorState.Editor.Title(), state.Line+1, state.Col+1)
+	sourceLine := strings.TrimRight(m.editorState.Editor.LineText(state.Line), "\n\r ")
 
 	// Compute max width across all content.
 	maxLineW := rendering.VisibleWidth(titleStr)
@@ -981,7 +982,7 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 // keyboard cursor position.
 func (m *App) updateDiagHoverPopupFromCursor() {
 	layout := m.computeLayout()
-	screenX, screenY := m.editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
+	screenX, screenY := m.editorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
 	m.updateDiagHoverPopup(screenX, screenY)
 }
 

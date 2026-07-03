@@ -17,37 +17,37 @@ func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
 	}
-	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 		return FocusLauncher
 	}
-	if m.treeFocused && m.treeModel != nil && m.treeVisible {
+	top := m.focusStack.Top()
+	if top == FocusTree && m.tree.Model != nil && m.tree.Visible {
 		return FocusTree
 	}
-	if m.tabBarFocused {
+	if top == FocusTabBar {
 		return FocusTabBar
 	}
-	if m.activeEditorView != "" && m.editor.IsOpen() {
+	if m.editorState.ActiveView != "" && m.editorState.Editor.IsOpen() {
 		return FocusEditor
 	}
-	if m.Mode != ModeChat {
+	if m.overlayState.IsOverlay() {
 		return FocusOverlay
 	}
 	return FocusInput
 }
 
 func (m *App) unfocus() {
-	m.treeFocused = false
-	m.tabBarFocused = false
+	m.focusStack.Clear()
 }
 
 func (m *App) setFocusTree() {
-	m.unfocus()
-	m.treeFocused = true
+	m.focusStack.Clear()
+	m.focusStack.Push(FocusTree)
 }
 
 func (m *App) setFocusTabBar() {
-	m.unfocus()
-	m.tabBarFocused = true
+	m.focusStack.Clear()
+	m.focusStack.Push(FocusTabBar)
 }
 
 func (m *App) syncRenderFocus() {

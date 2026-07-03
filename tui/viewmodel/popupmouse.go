@@ -636,13 +636,13 @@ func (m *App) clickTreePrompt(localX, localY int) tea.Cmd {
 // =============================================================================
 
 func (m *App) clickReferences(localX, localY int) tea.Cmd {
-	if m.referencesID == "" || m.refRows == nil {
+	if m.lspPopup.ReferencesID == "" || m.lspPopup.RefRows == nil {
 		return nil
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.refRows) {
-		m.refCursor = contentRow
-		r := m.refRows[m.refCursor]
+	if contentRow >= 0 && contentRow < len(m.lspPopup.RefRows) {
+		m.lspPopup.RefCursor = contentRow
+		r := m.lspPopup.RefRows[m.lspPopup.RefCursor]
 		m.jumpToReference(r)
 		m.closeReferencesPopup()
 	}
@@ -650,12 +650,12 @@ func (m *App) clickReferences(localX, localY int) tea.Cmd {
 }
 
 func (m *App) hoverReferences(localX, localY int) {
-	if m.refRows == nil {
+	if m.lspPopup.RefRows == nil {
 		return
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.refRows) && contentRow != m.refCursor {
-		m.refCursor = contentRow
+	if contentRow >= 0 && contentRow < len(m.lspPopup.RefRows) && contentRow != m.lspPopup.RefCursor {
+		m.lspPopup.RefCursor = contentRow
 		m.refreshReferencesPopup()
 	}
 }
@@ -665,24 +665,24 @@ func (m *App) hoverReferences(localX, localY int) {
 // =============================================================================
 
 func (m *App) clickCompletion(localX, localY int) tea.Cmd {
-	if m.completionItems == nil {
+	if m.lspPopup.CompletionItems == nil {
 		return nil
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.completionItems) {
-		m.completionCursor = contentRow
+	if contentRow >= 0 && contentRow < len(m.lspPopup.CompletionItems) {
+		m.lspPopup.CompletionCursor = contentRow
 		m.acceptCompletion()
 	}
 	return nil
 }
 
 func (m *App) hoverCompletion(localX, localY int) {
-	if m.completionItems == nil {
+	if m.lspPopup.CompletionItems == nil {
 		return
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.completionItems) && contentRow != m.completionCursor {
-		m.completionCursor = contentRow
+	if contentRow >= 0 && contentRow < len(m.lspPopup.CompletionItems) && contentRow != m.lspPopup.CompletionCursor {
+		m.lspPopup.CompletionCursor = contentRow
 		m.dirty = true
 	}
 }
@@ -692,29 +692,29 @@ func (m *App) hoverCompletion(localX, localY int) {
 // =============================================================================
 
 func (m *App) clickOutline(localX, localY int) tea.Cmd {
-	if !m.outlineOpen || m.outlineRows == nil {
+	if !m.lspPopup.OutlineOpen || m.lspPopup.OutlineRows == nil {
 		return nil
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.outlineRows) {
-		m.outlineCursor = contentRow
-		sym := m.outlineRows[m.outlineCursor].sym
-		m.editor.SetCursorPosition(sym.Line, sym.Col)
-		m.editor.ScrollToCursor()
+	if contentRow >= 0 && contentRow < len(m.lspPopup.OutlineRows) {
+		m.lspPopup.OutlineCursor = contentRow
+		sym := m.lspPopup.OutlineRows[m.lspPopup.OutlineCursor].sym
+		m.editorState.Editor.SetCursorPosition(sym.Line, sym.Col)
+		m.editorState.Editor.ScrollToCursor()
 		layout := m.computeLayout()
-		m.editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+		m.editorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 		m.closeOutlinePopup()
 	}
 	return nil
 }
 
 func (m *App) hoverOutline(localX, localY int) {
-	if m.outlineRows == nil {
+	if m.lspPopup.OutlineRows == nil {
 		return
 	}
 	contentRow := localY - 1
-	if contentRow >= 0 && contentRow < len(m.outlineRows) && contentRow != m.outlineCursor {
-		m.outlineCursor = contentRow
+	if contentRow >= 0 && contentRow < len(m.lspPopup.OutlineRows) && contentRow != m.lspPopup.OutlineCursor {
+		m.lspPopup.OutlineCursor = contentRow
 		m.dirty = true
 	}
 }

@@ -23,15 +23,19 @@ func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
 	th := theme.DefaultDark()
 	app := &App{
-		theme:     th,
-		Mode:      ModeChat,
-		agentMgr:  NewAgentManager(),
-		paneMgr:   NewPaneManager(),
-		startTime: time.Now(),
-		launcher:  NewLauncherState(nil),
-		input:     input.NewModel(th),
-		statusbar: widgets.NewStatusBar(th),
-		spinFrame: 0,
+		Workspace: &Workspace{
+			theme:        th,
+			overlayState: NewOverlayState(),
+			agentMgr:     NewAgentManager(),
+			paneMgr:      NewPaneManager(),
+			startTime:    time.Now(),
+			launcher:     NewLauncherState(nil),
+			input:        input.NewModel(th),
+			statusbar:    widgets.NewStatusBar(th),
+			spinFrame:    0,
+			lspPopup:     NewLSPPopupState(),
+			editorState:  NewEditorState(),
+		},
 	}
 	app.win = window.New(th)
 	app.overlay = window.New(th)
