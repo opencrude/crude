@@ -453,7 +453,9 @@ func (wm *WindowManager) Render(rootSurf *surface.Surface, ctx *widget.RenderCon
 		winSurf.SetPosition(x, y)
 
 		// Set z-order to match the window's position in the stack.
-		winSurf.SetZOrder(i)
+		// Offset by 10 so floating windows are always above the persistent
+		// layer surfaces (main-content=0, sidebar=1, statusbar=2).
+		winSurf.SetZOrder(i + 10)
 
 		// Add the window surface as a child of the root surface.
 		rootSurf.AddChild(winSurf)

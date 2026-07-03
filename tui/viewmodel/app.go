@@ -11,16 +11,19 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/clipboard"
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/settings"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/widget"
@@ -79,6 +82,15 @@ type App struct {
 	dirty              bool   // true when view content has changed and needs re-rendering
 	contentDirty       bool   // true when the main view (editor/chat/launcher) needs re-rendering — separate from chrome (tree/tabs/popups) so hover changes don't trigger expensive chroma/glamour re-renders
 	mainContentCached  string // last rendered main-view ANSI string — reused when only chrome changed (hover on tree, tabs, popups, etc.)
+
+	// Layer surfaces for differential rendering. Cheap layers (sidebar,
+	// header, status bar) are always re-rendered every frame. The main
+	// content surface uses contentDirty to skip expensive chroma/glamour
+	// when only the editor content changed.
+	mainContentSurf   *surface.Surface // editor/chat/launcher content
+	mainSidebarSurf   *surface.Surface // file tree sidebar + divider
+	mainStatusbarSurf *surface.Surface // status bar separator + content
+	mainHeaderSurf    *surface.Surface // header line + separator
 
 	// File tree sidebar
 	treeModel            *filetree.FileTreeModel
@@ -320,6 +332,22 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 	wmgr := wm.NewWindowManager()
 	rctx := widget.NewRenderContext(th)
 
+	// Create persistent layer surfaces. The main content covers the whole
+	// screen minus the header and status bar; sidebar, header, and status
+	// bar are overlays that update independently.
+	contentSurf := surface.NewSurface("main-content", 80, 24, cell.TransparentBlank())
+	sidebarSurf := surface.NewSurface("main-sidebar", th.Tree.Config.DefaultWidth, 1, cell.TransparentBlank())
+	statusbarSurf := surface.NewSurface("main-statusbar", 80, 1, cell.TransparentBlank())
+	headerSurf := surface.NewSurface("main-header", 80, 2, cell.TransparentBlank())
+	comp.Root().AddChild(contentSurf)
+	comp.Root().AddChild(sidebarSurf)
+	comp.Root().AddChild(statusbarSurf)
+	comp.Root().AddChild(headerSurf)
+	contentSurf.SetZOrder(0)
+	sidebarSurf.SetZOrder(1)
+	statusbarSurf.SetZOrder(2)
+	headerSurf.SetZOrder(3)
+
 	wsDir, _ := os.Getwd()
 	if wsDir == "" {
 		wsDir = sessionDir
@@ -379,11 +407,173 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 		treeVisible:          true,
 		treeWidth:            th.Tree.Config.DefaultWidth,
 		treeYOffset:          3,
+		mainContentSurf:      contentSurf,
+		mainSidebarSurf:      sidebarSurf,
+		mainStatusbarSurf:    statusbarSurf,
+		mainHeaderSurf:       headerSurf,
 	}
 
 	app.input.SetReferenceStore(refs)
 
 	return app
+}
+
+// resizeLayerSurfaces resizes and repositions the persistent layer surfaces.
+// When the sidebar is visible, the main content surface is shifted right by
+// sidebarW and narrowed so it does not render underneath the sidebar. The
+// sidebar, header, and status bar are overlays that update independently.
+func (m *App) resizeLayerSurfaces() {
+	if m.mainContentSurf == nil {
+		return
+	}
+
+	sidebarW := 0
+	if m.treeVisible {
+		sidebarW = m.treeWidth + 1 // tree content + divider column
+	}
+
+	// Status bar is 2 rows: a blank separator row and the status content.
+	statusH := 2
+	if m.mainStatusbarSurf == nil {
+		m.mainStatusbarSurf = surface.NewSurface("main-statusbar", m.width, statusH, cell.TransparentBlank())
+		m.compositor.Root().AddChild(m.mainStatusbarSurf)
+		m.mainStatusbarSurf.SetZOrder(2)
+	} else {
+		m.mainStatusbarSurf.Resize(m.width, statusH)
+	}
+	m.mainStatusbarSurf.SetPosition(0, m.height-statusH)
+
+	// Content and sidebar stop above the status bar.
+	endContent := m.height - statusH
+	contentX := sidebarW
+	contentW := m.width - sidebarW
+	if contentW < 1 {
+		contentW = 1
+	}
+	contentH := endContent - 0
+	if contentH < 1 {
+		contentH = 1
+	}
+	m.mainContentSurf.Resize(contentW, contentH)
+	m.mainContentSurf.SetPosition(contentX, 0)
+
+	sidebarH := contentH - m.treeYOffset
+	if sidebarH < 1 {
+		sidebarH = 1
+	}
+	if m.mainSidebarSurf == nil {
+		m.mainSidebarSurf = surface.NewSurface("main-sidebar", sidebarW, sidebarH, cell.TransparentBlank())
+		m.compositor.Root().AddChild(m.mainSidebarSurf)
+		m.mainSidebarSurf.SetZOrder(1)
+	} else if sidebarW > 0 {
+		m.mainSidebarSurf.Resize(sidebarW, sidebarH)
+	}
+	m.mainSidebarSurf.SetPosition(0, m.treeYOffset)
+
+	if m.mainHeaderSurf == nil {
+		m.mainHeaderSurf = surface.NewSurface("main-header", m.width, 2, cell.TransparentBlank())
+		m.compositor.Root().AddChild(m.mainHeaderSurf)
+		m.mainHeaderSurf.SetZOrder(3)
+	} else {
+		m.mainHeaderSurf.Resize(m.width, 2)
+	}
+	// Header surface starts at Y=1 to leave room for the padding row
+	// (row 0) which appears at the very top of the app.
+	m.mainHeaderSurf.SetPosition(0, 1)
+}
+
+// renderSidebarToSurface draws the file tree (plus its right-hand divider)
+// into the sidebar layer surface. Uses RenderToLines — the same path as the
+// original buildMainView — so scrollbar and LSP diagnostic indicators work.
+func (m *App) renderSidebarToSurface() {
+	if m.mainSidebarSurf == nil || m.treeRenderer == nil {
+		return
+	}
+
+	sidebarH := m.mainSidebarSurf.Height()
+	// Fill with theme background so the surface is fully opaque
+	// (the default cell is transparent, which would let the back
+	// buffer show through and create visual gaps).
+	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.theme.Colors.Bg), 0)
+	m.mainSidebarSurf.Buffer().Fill(bgCell)
+
+	// Update tree state before rendering so diagnostics, scrollbar
+	// and hover use the current viewport size.
+	m.treeModel.Update(filetree.TreeHeightMsg{Height: sidebarH})
+	m.treeRenderer.SetSize(m.treeWidth, sidebarH)
+	m.treeRenderer.SetScrollbarContentHeight(sidebarH)
+
+	treeLines := m.treeRenderer.RenderToLines(m.treeWidth, sidebarH)
+	dividerStyle := lipgloss.NewStyle().Foreground(m.theme.Tree.Colors.BorderFg)
+	divider := dividerStyle.Render("│")
+
+	var full strings.Builder
+	for i, line := range treeLines {
+		if i > 0 {
+			full.WriteByte('\n')
+		}
+		full.WriteString(line)
+		full.WriteString(divider)
+	}
+	rendering.RenderToSurface(m.mainSidebarSurf, full.String())
+}
+
+// renderStatusbarToSurface draws the status bar (2 rows: blank separator +
+// status content) into its own layer surface.
+func (m *App) renderStatusbarToSurface() {
+	if m.mainStatusbarSurf == nil {
+		return
+	}
+	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.theme.Colors.Bg), 0)
+	m.mainStatusbarSurf.Buffer().Fill(bgCell)
+
+	// Row 0: separator line (─).
+	// Row 1: status content with the standard left/right padding.
+	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
+	statusView := m.statusbar.View()
+	visW := rendering.VisibleWidth(statusView)
+	rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
+	if rightPad < 0 {
+		rightPad = 0
+	}
+	full := widgets.RenderSep(m.width, m.theme.Colors.Border) + "\n" + pad + statusView + strings.Repeat(" ", rightPad) + pad
+	rendering.RenderToSurface(m.mainStatusbarSurf, full)
+}
+
+// renderHeaderToSurface draws the header line (crude + model + uptime + agent
+// label) and the separator below it into the header layer surface.
+func (m *App) renderHeaderToSurface() {
+	if m.mainHeaderSurf == nil {
+		return
+	}
+	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.theme.Colors.Bg), 0)
+	m.mainHeaderSurf.Buffer().Fill(bgCell)
+
+	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
+
+	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
+	if m.activeAgentView != "" {
+		agentLabel := m.activeAgentView
+		if lbl, ok := m.agentLabels[m.activeAgentView]; ok && lbl != "" {
+			agentLabel = lbl
+		}
+		sp := m.paneMgr.Get(m.activeAgentView)
+		catLabel := ""
+		if sp != nil {
+			catLabel = string(sp.Type)
+		}
+		viewLabel := agentLabel
+		if catLabel != "" {
+			viewLabel = catLabel + ":" + agentLabel
+		}
+		accentStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Bold(true)
+		headerLine += " " + accentStyle.Render("⟨"+viewLabel+"⟩")
+	}
+
+	// Row 0: header line
+	// Row 1: separator
+	full := pad + headerLine + pad + "\n" + widgets.RenderSep(m.width, m.theme.Colors.Border)
+	rendering.RenderToSurface(m.mainHeaderSurf, full)
 }
 
 func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []string {

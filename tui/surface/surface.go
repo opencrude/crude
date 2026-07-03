@@ -37,6 +37,12 @@ type Surface struct {
 	alpha    float32    // 0.0 (invisible) to 1.0 (opaque)
 	baseCell cell.Cell  // Default fill cell (background color)
 	dirty    bool       // Whether this surface needs re-rendering
+	dirtyRects []Rect   // Specific regions that changed (empty = whole surface)
+
+	// lastScreenBounds tracks where this surface was composited last frame.
+	// Used by the compositor to clear leftover pixels when a surface moves,
+	// resizes, or is hidden.
+	lastScreenBounds Rect
 }
 
 // NewSurface creates a new surface with the given dimensions and base cell.
@@ -232,10 +238,24 @@ func (s *Surface) Height() int {
 
 // MarkDirty marks this surface and walks up all ancestors as needing re-render.
 func (s *Surface) MarkDirty() {
+	if s.dirty {
+		return
+	}
 	s.dirty = true
 	if s.parent != nil {
 		s.parent.MarkDirty()
 	}
+}
+
+// MarkDirtyRect marks a specific sub-region of this surface as changed.
+// The region is clipped to the surface bounds. Ancestors are marked dirty.
+func (s *Surface) MarkDirtyRect(r Rect) {
+	r = r.Intersect(s.Bounds())
+	if r.Empty() {
+		return
+	}
+	s.MarkDirty()
+	s.dirtyRects = append(s.dirtyRects, r)
 }
 
 // IsDirty reports whether this surface needs re-rendering.
@@ -243,16 +263,28 @@ func (s *Surface) IsDirty() bool {
 	return s.dirty
 }
 
-// ClearDirty clears the dirty flag on this surface.
+// DirtyRects returns the list of dirty regions for this surface.
+// If empty, the whole surface should be considered dirty.
+func (s *Surface) DirtyRects() []Rect {
+	return s.dirtyRects
+}
+
+// HasDirtyRects reports whether specific dirty regions were tracked.
+func (s *Surface) HasDirtyRects() bool {
+	return len(s.dirtyRects) > 0
+}
+
+// ClearDirty clears the dirty flag on this surface and its dirty regions.
 // It does NOT clear ancestors' dirty flags.
 func (s *Surface) ClearDirty() {
 	s.dirty = false
+	s.dirtyRects = s.dirtyRects[:0]
 }
 
 // ClearDirtyTree clears the dirty flag on this surface and all descendants.
 // Called at the end of each frame's Composite() to reset dirty state.
 func (s *Surface) ClearDirtyTree() {
-	s.dirty = false
+	s.ClearDirty()
 	for _, child := range s.children {
 		child.ClearDirtyTree()
 	}
@@ -317,4 +349,21 @@ func (s *Surface) Bounds() Rect {
 func (s *Surface) ScreenBounds() Rect {
 	ax, ay := s.AbsolutePosition()
 	return Rect{X: ax, Y: ay, W: s.Width(), H: s.Height()}
+}
+
+// LastScreenBounds returns the screen bounds recorded during the previous
+// composite pass. Used by the compositor to clear leftover pixels.
+func (s *Surface) LastScreenBounds() Rect {
+	return s.lastScreenBounds
+}
+
+// SetLastScreenBounds records the screen bounds used during the current
+// composite pass for the next frame.
+func (s *Surface) SetLastScreenBounds(r Rect) {
+	s.lastScreenBounds = r
+}
+
+// Parent returns the immediate parent surface, or nil for the root.
+func (s *Surface) Parent() *Surface {
+	return s.parent
 }

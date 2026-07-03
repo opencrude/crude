@@ -479,32 +479,29 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 		}
 	}
 
-	// Diagnostic counts (errors + warnings only; info/hints hidden).
-	if cfg.ShowDiagnostics && node.DiagnosticCount > 0 {
-		if node.DiagErrors > 0 {
-			errStyle := lipgloss.NewStyle().Foreground(colors.DiagError)
-			switch {
-			case isCursor:
-				errStyle = errStyle.Background(colors.CursorBg)
-			case isSelected:
-				errStyle = errStyle.Background(colors.SelectedBg)
-			case isHovered:
-				errStyle = errStyle.Background(colors.Hover)
-			}
-			decorations = append(decorations, errStyle.Render("✕"+itoa(node.DiagErrors)))
+	// Fake LSP diagnostic decoration for every line — determines whether
+	// the issue is a presentation bug or a data-flow problem.
+	{
+		warnStyle := lipgloss.NewStyle().Foreground(colors.DiagWarning)
+		switch {
+		case isCursor:
+			warnStyle = warnStyle.Background(colors.CursorBg)
+		case isSelected:
+			warnStyle = warnStyle.Background(colors.SelectedBg)
+		case isHovered:
+			warnStyle = warnStyle.Background(colors.Hover)
 		}
-		if node.DiagWarnings > 0 {
-			warnStyle := lipgloss.NewStyle().Foreground(colors.DiagWarning)
-			switch {
-			case isCursor:
-				warnStyle = warnStyle.Background(colors.CursorBg)
-			case isSelected:
-				warnStyle = warnStyle.Background(colors.SelectedBg)
-			case isHovered:
-				warnStyle = warnStyle.Background(colors.Hover)
-			}
-			decorations = append(decorations, warnStyle.Render("⚠"+itoa(node.DiagWarnings)))
+		decorations = append(decorations, warnStyle.Render("⚠1"))
+		errStyle := lipgloss.NewStyle().Foreground(colors.DiagError)
+		switch {
+		case isCursor:
+			errStyle = errStyle.Background(colors.CursorBg)
+		case isSelected:
+			errStyle = errStyle.Background(colors.SelectedBg)
+		case isHovered:
+			errStyle = errStyle.Background(colors.Hover)
 		}
+		decorations = append(decorations, errStyle.Render("✕1"))
 	}
 
 	if len(decorations) > 0 {
@@ -1000,6 +997,17 @@ func (r *TreeRenderer) HandleScrollbarTick(msg tea.Msg) tea.Cmd {
 // Pass 0 to reset to the view height.
 func (r *TreeRenderer) SetScrollbarContentHeight(h int) {
 	r.sbTrackHeight = h
+}
+
+// SetSize updates the renderer's allocated width and height before rendering.
+// This is used by the differential compositor when the sidebar surface is
+// resized independently of the rest of the screen.
+func (r *TreeRenderer) SetSize(width, height int) {
+	if width != r.width || height != r.height {
+		r.width = width
+		r.height = height
+		r.lastScrollOffset = -1 // force scrollbar recalculation
+	}
 }
 
 // ---------------------------------------------------------------------------
