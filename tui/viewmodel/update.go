@@ -252,6 +252,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
+	case lspDiagnosticsMsg:
+		m.handleLSPDiagnosticsUpdate(msg)
+	case fileWatcherMsg:
+		m.handleFileWatcherEvent(msg)
 	case lspDefinitionResultMsg:
 		m.handleDefinitionResult(msg)
 	case lspReferencesResultMsg:

@@ -159,6 +159,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	program := tea.NewProgram(a)
 	t.app = a
 	t.Program = program
+	a.SetProgram(program)
 
 	go func() {
 		if _, err := program.Run(); err != nil {
