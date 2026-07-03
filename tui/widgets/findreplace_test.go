@@ -11,13 +11,12 @@ import (
 func TestFindReplaceLines_BasicFind(t *testing.T) {
 	th := theme.DefaultDark()
 	st := &FindReplaceState{
-		ReplaceMode: false,
+		ReplaceMode:  false,
 		FocusedField: 0,
-		Query:       "hello",
-		Cursor:      5,
-		MatchCount:  3,
-		CurrentIdx:  0,
+		MatchCount:   3,
+		CurrentIdx:   0,
 	}
+	st.SetQuery("hello")
 	lines := FindReplaceLines(th, st)
 	if len(lines) == 0 {
 		t.Fatal("no lines")
@@ -40,11 +39,11 @@ func TestFindReplaceLines_WithReplace(t *testing.T) {
 	st := &FindReplaceState{
 		ReplaceMode:  true,
 		FocusedField: 1,
-		Query:        "foo",
-		Replace:      "bar",
 		MatchCount:   2,
 		CurrentIdx:   0,
 	}
+	st.SetQuery("foo")
+	st.SetReplace("bar")
 	lines := FindReplaceLines(th, st)
 	if len(lines) < 4 {
 		t.Fatalf("expected at least 4 lines, got %d", len(lines))
@@ -64,14 +63,14 @@ func TestFindReplaceLines_WithReplace(t *testing.T) {
 func TestFindReplaceLines_TogglesRender(t *testing.T) {
 	th := theme.DefaultDark()
 	st := &FindReplaceState{
-		ReplaceMode:    false,
-		Query:          "x",
-		CaseSensitive:  true,
-		WholeWord:      true,
-		Regex:          false,
-		MatchCount:     1,
-		CurrentIdx:     0,
+		ReplaceMode:   false,
+		CaseSensitive: true,
+		WholeWord:     true,
+		Regex:         false,
+		MatchCount:    1,
+		CurrentIdx:    0,
 	}
+	st.SetQuery("x")
 	lines := FindReplaceLines(th, st)
 	all := strings.Join(lines, "\n")
 	// New design uses pill-style toggles (" Aa ") not brackets ("[Aa]").
@@ -90,10 +89,10 @@ func TestFindReplaceLines_NoResults(t *testing.T) {
 	th := theme.DefaultDark()
 	st := &FindReplaceState{
 		ReplaceMode: false,
-		Query:       "nothere",
 		MatchCount:  0,
 		CurrentIdx:  -1,
 	}
+	st.SetQuery("nothere")
 	lines := FindReplaceLines(th, st)
 	all := strings.Join(lines, "\n")
 	if !strings.Contains(all, "no results") {
@@ -103,7 +102,7 @@ func TestFindReplaceLines_NoResults(t *testing.T) {
 
 func TestFindReplaceLines_EmptyQuery(t *testing.T) {
 	th := theme.DefaultDark()
-	st := &FindReplaceState{ReplaceMode: false, Query: ""}
+	st := &FindReplaceState{ReplaceMode: false}
 	lines := FindReplaceLines(th, st)
 	all := strings.Join(lines, "\n")
 	if !strings.Contains(all, "type to search") {
@@ -122,11 +121,11 @@ func TestFindReplaceFromEditor_PushAndPull(t *testing.T) {
 	st := &FindReplaceState{}
 	FindReplaceFromEditor(st, ed)
 
-	if st.Query != "hello" {
-		t.Errorf("Query: got %q, want %q", st.Query, "hello")
+	if st.Query() != "hello" {
+		t.Errorf("Query: got %q, want %q", st.Query(), "hello")
 	}
-	if st.Replace != "world" {
-		t.Errorf("Replace: got %q, want %q", st.Replace, "world")
+	if st.Replace() != "world" {
+		t.Errorf("Replace: got %q, want %q", st.Replace(), "world")
 	}
 	if !st.CaseSensitive {
 		t.Errorf("CaseSensitive should be true")
@@ -136,14 +135,33 @@ func TestFindReplaceFromEditor_PushAndPull(t *testing.T) {
 	}
 
 	// Round-trip: change via popup, push back.
-	st.Query = "goodbye"
-	st.Replace = "farewell"
+	st.SetQuery("goodbye")
+	st.SetReplace("farewell")
 	FindReplaceToEditor(st, ed)
 	if got := ed.Search().Query; got != "goodbye" {
 		t.Errorf("editor query after push: got %q, want %q", got, "goodbye")
 	}
 	if got := ed.Search().Replace; got != "farewell" {
 		t.Errorf("editor replace after push: got %q, want %q", got, "farewell")
+	}
+}
+
+// TestFindReplace_RuneSafeCursor verifies that the new
+// TextInput-backed find/replace correctly handles multi-byte
+// input (CJK, emoji) without panicking or corrupting the cursor.
+// Regression test for the byte-offset bug in the old hand-rolled
+// state where typing a 3-byte CJK char would advance the cursor
+// by 3 positions and could panic on the next byte slice.
+func TestFindReplace_RuneSafeCursor(t *testing.T) {
+	_ = theme.DefaultDark()
+	st := &FindReplaceState{}
+	st.SetQuery("日本語")
+	// Cursor should be at rune-position 3, not byte-position 9.
+	if got := st.FindInput().CursorFlat(); got != 3 {
+		t.Errorf("expected cursor at rune 3 after typing 3 CJK chars, got %d", got)
+	}
+	if st.Query() != "日本語" {
+		t.Errorf("Query corrupted: got %q, want %q", st.Query(), "日本語")
 	}
 }
 

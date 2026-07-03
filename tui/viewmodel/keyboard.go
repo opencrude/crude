@@ -142,6 +142,11 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.closeCompletionPopup()
 			return m, nil
 		}
+		// Esc cancels pending close and closes the tab. If the user
+		// just dismissed a dirty-prompt with Cancel, the next Esc
+		// closes the tab directly — no loop because the prompt is
+		// already gone. (The 3-button prompt handles Save/Don't Save/
+		// Cancel cleanly.)
 		m.closeEditorTab()
 		return m, nil
 	}
@@ -323,6 +328,11 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, tea.Batch(cmds...)
 
 		case "composer":
+			// Ctrl+C with a selection: copy (don't close the
+			// composer — matches the chat input's behavior).
+			if msg.String() == "ctrl+c" && m.composer.HasActiveSelection() {
+				return m, rendering.CopyToClipboardCmd(m.composer.SelectedText())
+			}
 			if msg.Code == tea.KeyEsc {
 				m.composer.Close()
 				m.windowManager.RemoveWindow("composer")
@@ -589,6 +599,13 @@ func (m *App) handleYoloKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, te
 }
 
 func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
+	// Ctrl+C with a selection: copy. Without a selection, Ctrl+C
+	// is the cancel shortcut (the original behavior — Esc is also
+	// bound to cancel). This matches the chat input's "Ctrl+C is
+	// never cancel" rule.
+	if msg.String() == "ctrl+c" && m.textOverlay.HasActiveSelection() {
+		return m, rendering.CopyToClipboardCmd(m.textOverlay.SelectedText())
+	}
 	updated, cmd, action := m.textOverlay.Update(msg)
 	m.textOverlay = updated
 	if cmd != nil {

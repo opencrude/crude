@@ -75,8 +75,10 @@ type App struct {
 	compositor    *compositor.Compositor
 	windowManager *wm.WindowManager
 	renderCtx     *widget.RenderContext
-	cachedOutput  string // last rendered ANSI output for View() throttling during drag
-	dirty         bool   // true when view content has changed and needs re-rendering
+	cachedOutput       string // last rendered ANSI output for View() throttling during drag
+	dirty              bool   // true when view content has changed and needs re-rendering
+	contentDirty       bool   // true when the main view (editor/chat/launcher) needs re-rendering — separate from chrome (tree/tabs/popups) so hover changes don't trigger expensive chroma/glamour re-renders
+	mainContentCached  string // last rendered main-view ANSI string — reused when only chrome changed (hover on tree, tabs, popups, etc.)
 
 	// File tree sidebar
 	treeModel            *filetree.FileTreeModel
@@ -180,7 +182,10 @@ type App struct {
 	// "dirty close" dialog is open and keyboard input is routed
 	// through dirtyPromptKey().
 	dirtyPromptPath string
-	dirtyPromptFocusYes bool
+	// dirtyPromptChoice tracks which button is focused in the 3-button
+	// dirty prompt: 0=Save, 1=Don't Save, 2=Cancel. The default is 2
+	// (Cancel) so an accidental Enter keeps the user's work safe.
+	dirtyPromptChoice int
 
 	// Find/Replace popup state. The popup lives in the windowManager
 	// under ID "find-replace"; the App owns the state struct so
@@ -1144,16 +1149,18 @@ func (m *App) openFindReplace(replaceMode bool) {
 		return
 	}
 	if m.findReplace == nil {
-		m.findReplace = &widgets.FindReplaceState{}
+		m.findReplace = &widgets.FindReplaceState{
+			HoveredToggle: -1, // no toggle hovered initially
+		}
 	}
 	m.findReplace.ReplaceMode = replaceMode
 	// Pull current search state from the editor so the popup opens
 	// with the existing query if the user already had one typed.
 	widgets.FindReplaceFromEditor(m.findReplace, m.editor)
 	m.findReplace.FocusedField = 0
-	if m.findReplace.Cursor < 0 {
-		m.findReplace.Cursor = len(m.findReplace.Query)
-	}
+	// Move the find input cursor to the end of the query (the
+	// standard "open the popup, ready to append" UX). The replace
+	// input's cursor is wherever it was last left.
 
 	// Wire callbacks to mutate the editor.
 	fr := m.findReplace
@@ -1261,9 +1268,12 @@ func (m *App) refreshFindReplacePopup() {
 	m.windowManager.AddWindow(fw)
 }
 
-// showDirtyClosePrompt pops up a small yes/no dialog asking whether
-// to discard unsaved changes for the given tab. Calls
-// closeEditorTabForce on Yes, dismisses on No.
+// showDirtyClosePrompt pops up a 3-button dialog asking what to do with
+// unsaved changes for the given tab: Save (saves and closes),
+// Don't Save (discards and closes), Cancel (keeps the tab open).
+// The 3-button design matches VSCode/JetBrains and eliminates the
+// "Esc loop" trap where dismissing a 2-button prompt with Esc would
+// re-trigger the close on the next Esc.
 func (m *App) showDirtyClosePrompt(path string) {
 	if m.windowManager == nil {
 		// No floating-window support? Just close and lose the data.
@@ -1275,22 +1285,22 @@ func (m *App) showDirtyClosePrompt(path string) {
 		return
 	}
 	filename := tab.Editor.Title()
-	detail := fmt.Sprintf("'%s' has unsaved changes.\nClosing will discard them.", filename)
-	// ConfirmPrompt now renders its own border+title (unified design).
-	// The FloatingWindow is just a positioned box with no decoration.
-	lines := widgets.ConfirmPrompt(m.theme,
+	detail := fmt.Sprintf("'%s' has unsaved changes.", filename)
+	// Default focus is "Cancel" (index 2) so an accidental Enter keeps
+	// the user's work safe.
+	lines := widgets.ConfirmPrompt3Button(m.theme,
 		"Unsaved changes",
-		"Discard unsaved changes?",
+		"What do you want to do with the unsaved changes?",
 		detail,
 		widgets.ConfirmPromptWarning,
-		false,
-		56,
+		m.dirtyPromptChoice,
+		62,
 	)
 
 	const id = "dirty-close-prompt"
 	m.windowManager.RemoveWindow(id)
 	pop := widgets.NewPopupContent(lines)
-	fw := wm.NewFloatingWindow(id, "", pop, 56, len(lines),
+	fw := wm.NewFloatingWindow(id, "", pop, 62, len(lines),
 		wm.WithDecoration(false),
 		wm.WithMovable(false),
 		wm.WithResizable(false),
@@ -1302,6 +1312,8 @@ func (m *App) showDirtyClosePrompt(path string) {
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.windowManager.AddWindow(fw)
 	m.dirtyPromptPath = path
+	// Reset choice to Cancel (safe default) on open.
+	m.dirtyPromptChoice = 2
 }
 
 func popLongestLine(lines []string) string {
@@ -1335,9 +1347,41 @@ func stripANSI(s string) string {
 	return out.String()
 }
 
-// dirtyPromptYes is called when the user confirms closing a dirty
-// editor tab. Routes through closeEditorTabForce.
-func (m *App) dirtyPromptYes() {
+// dirtyPromptSave is called when the user picks "Save" in the
+// dirty-close prompt. Saves the file (if it has a path) and then
+// closes the tab. If save fails, the popup stays open so the user
+// can pick "Don't Save" or "Cancel".
+func (m *App) dirtyPromptSave() {
+	path := m.dirtyPromptPath
+	if path == "" {
+		return
+	}
+	tab, ok := m.editorTabs[path]
+	if !ok {
+		// Tab was already closed somehow; just dismiss.
+		m.dirtyPromptPath = ""
+		if m.windowManager != nil {
+			m.windowManager.RemoveWindow("dirty-close-prompt")
+		}
+		return
+	}
+	// Save (synchronous). The editor's Save() returns an error; on
+	// failure, surface it in the status bar and keep the popup open.
+	if err := tab.Editor.Save(); err != nil {
+		m.statusbar.SetError(fmt.Sprintf("Save failed: %v", err))
+		return
+	}
+	// Saved successfully — close the tab.
+	m.dirtyPromptPath = ""
+	if m.windowManager != nil {
+		m.windowManager.RemoveWindow("dirty-close-prompt")
+	}
+	m.closeEditorTabForce(path)
+}
+
+// dirtyPromptDiscard is called when the user picks "Don't Save" in
+// the dirty-close prompt. Closes the tab without saving.
+func (m *App) dirtyPromptDiscard() {
 	path := m.dirtyPromptPath
 	m.dirtyPromptPath = ""
 	if m.windowManager != nil {
@@ -1348,9 +1392,9 @@ func (m *App) dirtyPromptYes() {
 	}
 }
 
-// dirtyPromptNo is called when the user cancels closing a dirty
-// editor tab.
-func (m *App) dirtyPromptNo() {
+// dirtyPromptCancel is called when the user picks "Cancel" in the
+// dirty-close prompt. Dismisses the popup and keeps the tab open.
+func (m *App) dirtyPromptCancel() {
 	m.dirtyPromptPath = ""
 	if m.windowManager != nil {
 		m.windowManager.RemoveWindow("dirty-close-prompt")
@@ -1358,41 +1402,56 @@ func (m *App) dirtyPromptNo() {
 }
 
 // handleDirtyPromptKey routes keypresses when the dirty-close dialog
-// is open. Updates focus, re-renders the popup, and dispatches
-// confirm/cancel.
+// is open. Cycles focus between Save / Don't Save / Cancel and
+// dispatches the chosen action.
 func (m *App) handleDirtyPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.dirtyPromptPath == "" {
 		return nil
 	}
 	switch msg.Code {
 	case tea.KeyLeft, tea.KeyUp:
-		m.dirtyPromptFocusYes = true
+		m.dirtyPromptChoice = (m.dirtyPromptChoice + 2) % 3 // -1 mod 3
 		m.refreshDirtyPrompt()
 		return nil
 	case tea.KeyRight, tea.KeyDown:
-		m.dirtyPromptFocusYes = false
+		m.dirtyPromptChoice = (m.dirtyPromptChoice + 1) % 3
 		m.refreshDirtyPrompt()
 		return nil
 	case tea.KeyTab:
-		// Shift+Tab moves focus left (Yes), plain Tab moves right (No).
-		m.dirtyPromptFocusYes = msg.Mod.Contains(tea.ModShift)
+		// Shift+Tab moves focus left, plain Tab moves focus right.
+		if msg.Mod.Contains(tea.ModShift) {
+			m.dirtyPromptChoice = (m.dirtyPromptChoice + 2) % 3
+		} else {
+			m.dirtyPromptChoice = (m.dirtyPromptChoice + 1) % 3
+		}
 		m.refreshDirtyPrompt()
 		return nil
 	case tea.KeyEnter:
-		m.dirtyPromptYes()
+		switch m.dirtyPromptChoice {
+		case 0:
+			m.dirtyPromptSave()
+		case 1:
+			m.dirtyPromptDiscard()
+		default:
+			m.dirtyPromptCancel()
+		}
 		return nil
 	case tea.KeyEsc:
-		m.dirtyPromptNo()
+		m.dirtyPromptCancel()
 		return nil
 	}
 	switch msg.String() {
-	case "y", "Y":
-		m.dirtyPromptFocusYes = true
-		m.dirtyPromptYes()
+	case "s", "S":
+		m.dirtyPromptChoice = 0
+		m.dirtyPromptSave()
 		return nil
-	case "n", "N":
-		m.dirtyPromptFocusYes = false
-		m.dirtyPromptNo()
+	case "d", "D":
+		m.dirtyPromptChoice = 1
+		m.dirtyPromptDiscard()
+		return nil
+	case "c", "C":
+		m.dirtyPromptChoice = 2
+		m.dirtyPromptCancel()
 		return nil
 	}
 	return nil
@@ -2436,26 +2495,27 @@ func (m *App) refreshDirtyPrompt() {
 		return
 	}
 	filename := tab.Editor.Title()
-	detail := fmt.Sprintf("'%s' has unsaved changes.\nClosing will discard them.", filename)
-	lines := widgets.ConfirmPrompt(m.theme,
+	detail := fmt.Sprintf("'%s' has unsaved changes.", filename)
+	lines := widgets.ConfirmPrompt3Button(m.theme,
 		"Unsaved changes",
-		"Discard unsaved changes?",
+		"What do you want to do with the unsaved changes?",
 		detail,
 		widgets.ConfirmPromptWarning,
-		m.dirtyPromptFocusYes,
-		56,
+		m.dirtyPromptChoice,
+		62,
 	)
 	pop := widgets.NewPopupContent(lines)
-	fw.SetSize(56, len(lines))
+	fw.SetSize(62, len(lines))
 	fw.SetContent(pop)
 	fw.MarkContentDirty()
 }
 
 // pasteIntoFindReplace reads the system clipboard and inserts the
-// content into the focused find/replace field. Returns the cmd to
-// copy (no-op here — the read happens eagerly, not via a cmd, to
-// keep the popup's response synchronous and the cursor position
-// updateable on the same frame as the keypress).
+// content into the focused find/replace field. The text is inserted
+// at the cursor position (or replaces the active selection if any).
+// Returns nil (the read happens eagerly to keep the popup's response
+// synchronous and the cursor position updateable on the same frame
+// as the keypress).
 func (m *App) pasteIntoFindReplace(fr *widgets.FindReplaceState) tea.Cmd {
 	if fr == nil {
 		return nil
@@ -2465,12 +2525,16 @@ func (m *App) pasteIntoFindReplace(fr *widgets.FindReplaceState) tea.Cmd {
 		return nil
 	}
 	text := string(data)
-	if fr.FocusedField == 0 {
-		fr.Query = fr.Query[:fr.Cursor] + text + fr.Query[fr.Cursor:]
-		fr.Cursor += len(text)
-	} else {
-		fr.Replace += text
+	input := fr.ActiveInput()
+	if input == nil {
+		return nil
 	}
+	// If there's a selection, replace it; otherwise insert at cursor.
+	if input.HasActiveSelection() {
+		s, e := input.SelectionRange()
+		input.DeleteRange(s, e)
+	}
+	input.InsertString(text)
 	if fr.OnChange != nil {
 		fr.OnChange()
 	}
@@ -2478,7 +2542,13 @@ func (m *App) pasteIntoFindReplace(fr *widgets.FindReplaceState) tea.Cmd {
 }
 
 // handleFindReplaceKey routes keypresses when the find/replace popup
-// is focused. Most keys are text input or navigation; Esc closes.
+// is focused. The text-editing keys (characters, Backspace, Delete,
+// Left/Right, Home/End, Ctrl+Left/Right, Ctrl+A/E/U/K/W) are
+// delegated to the embedded components.TextInput — so all the
+// features that work in the chat input work here too (real selection,
+// rune-safe cursor, word motion, etc.). The popup-level keys
+// (Esc, Tab, Enter, Alt+C/W/R, Ctrl+Alt+Enter, Shift+Enter, Ctrl+C/V)
+// are handled here.
 func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.findReplace == nil {
 		return nil
@@ -2545,129 +2615,82 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	// Backspace
-	if msg.Code == tea.KeyBackspace {
-		if fr.FocusedField == 0 {
-			if fr.Cursor > 0 && fr.Cursor <= len(fr.Query) {
-				fr.Query = fr.Query[:fr.Cursor-1] + fr.Query[fr.Cursor:]
-				fr.Cursor--
-				if fr.OnChange != nil {
-					fr.OnChange()
-				}
-			}
-		} else if fr.FocusedField == 1 {
-			if len(fr.Replace) > 0 {
-				fr.Replace = fr.Replace[:len(fr.Replace)-1]
-				if fr.OnChange != nil {
-					fr.OnChange()
-				}
-			}
-		}
-		return nil
-	}
-	if msg.Code == tea.KeyDelete {
-		if fr.FocusedField == 0 {
-			if fr.Cursor < len(fr.Query) {
-				fr.Query = fr.Query[:fr.Cursor] + fr.Query[fr.Cursor+1:]
-				if fr.OnChange != nil {
-					fr.OnChange()
-				}
-			}
-		} else if fr.FocusedField == 1 {
-			if len(fr.Replace) > 0 {
-				fr.Replace = fr.Replace[:len(fr.Replace)-1]
-				if fr.OnChange != nil {
-					fr.OnChange()
-				}
-			}
-		}
-		return nil
-	}
-
-	// Arrow keys for cursor movement within the find field.
-	if msg.Code == tea.KeyLeft {
-		if fr.FocusedField == 0 && fr.Cursor > 0 {
-			fr.Cursor--
-			m.refreshFindReplacePopup()
-		}
-		return nil
-	}
-	if msg.Code == tea.KeyRight {
-		if fr.FocusedField == 0 && fr.Cursor < len(fr.Query) {
-			fr.Cursor++
-			m.refreshFindReplacePopup()
-		}
-		return nil
-	}
-
-	// MS Edit shortcuts. The find/replace popup's text fields
-	// (Query and Replace) are full Microsoft-style input fields —
-	// copy, cut, paste, and select-all all work here, matching the
-	// behaviour of VSCode/JetBrains' find dialog.
+	// MS Edit shortcuts. Now that the popup uses real TextInput
+	// (with selection state), these work the same as in every
+	// other text field in the app: Ctrl+C copies the selection (or
+	// the whole field if no selection), Ctrl+X cuts, Ctrl+A
+	// selects all, Ctrl+V pastes.
 	switch msg.String() {
 	case "ctrl+c":
-		// Copy the active field's text to the clipboard. We
-		// always copy the whole field (no selection state) — that
-		// matches how the VSCode find dialog works.
-		var text string
-		if fr.FocusedField == 0 {
-			text = fr.Query
-		} else {
-			text = fr.Replace
+		// Copy: if there's a selection, copy that. Otherwise, copy
+		// the whole field (matches VSCode's find-dialog behavior).
+		input := fr.ActiveInput()
+		if input == nil {
+			return nil
 		}
-		return rendering.CopyToClipboardCmd(text)
-	case "ctrl+x":
-		// Cut: copy and clear the active field.
 		var text string
-		if fr.FocusedField == 0 {
-			text = fr.Query
-			fr.Query = ""
-			fr.Cursor = 0
+		if input.HasActiveSelection() {
+			text = input.SelectedText()
 		} else {
-			text = fr.Replace
-			fr.Replace = ""
+			text = input.Value()
+		}
+		if text != "" {
+			return rendering.CopyToClipboardCmd(text)
+		}
+		return nil
+	case "ctrl+x":
+		// Cut: copy selection (or whole field) and delete it.
+		input := fr.ActiveInput()
+		if input == nil {
+			return nil
+		}
+		var text string
+		if input.HasActiveSelection() {
+			text = input.SelectedText()
+			s, e := input.SelectionRange()
+			input.DeleteRange(s, e)
+		} else {
+			text = input.Value()
+			input.Clear()
 		}
 		if fr.OnChange != nil {
 			fr.OnChange()
 		}
-		return rendering.CopyToClipboardCmd(text)
+		if text != "" {
+			return rendering.CopyToClipboardCmd(text)
+		}
+		return nil
 	case "ctrl+a":
-		// Select all — the popup doesn't show a visual selection
-		// yet, but the next copy will copy the whole field
-		// (since we always copy the whole field, this is
-		// effectively a no-op; included for keyboard parity
-		// with every other text input in the app).
+		// Select all: anchor=0, end=length. TextInput handles this
+		// via the default key handler (Ctrl+A moves to col 0), so
+		// we route it explicitly to set a real selection.
+		input := fr.ActiveInput()
+		if input != nil {
+			input.SetSelection(0, input.Len())
+		}
+		m.refreshFindReplacePopup()
 		return nil
 	case "ctrl+v":
-		// Paste from the system clipboard into the active field.
-		// We use the same closure-based approach as the editor
-		// (see editor/events.go) so the popup gets the content
-		// back as a tea.PasteMsg, which then routes through
-		// dispatchPasteMsg → focus target → this handler. The
-		// recursion is broken because the PasteMsg handler
-		// below checks for the find-replace popup explicitly
-		// rather than re-dispatching via the key path.
-		//
-		// Actually simpler: just read the clipboard here and
-		// insert. No need to re-enter the dispatcher.
+		// Paste: read clipboard, insert at cursor (replacing
+		// selection if present). Synchronous read keeps the
+		// popup's response on the same frame as the keypress.
 		return m.pasteIntoFindReplace(fr)
 	}
 
-	// Regular character input. Bubble Tea gives us the rune in msg.Text
-	// (preferred) or msg.Code (fallback for special keys).
-	if msg.Text != "" {
-		if fr.FocusedField == 0 {
-			fr.Query = fr.Query[:fr.Cursor] + msg.Text + fr.Query[fr.Cursor:]
-			fr.Cursor += len(msg.Text)
-		} else {
-			fr.Replace += msg.Text
-		}
-		if fr.OnChange != nil {
+	// All other keys: delegate to the focused input's TextInput.
+	// This gives us character insertion, Backspace, Delete, Left/Right,
+	// Home/End, Ctrl+Left/Right (word motion), Ctrl+E/U/K/W (line ops),
+	// Up/Down (history-like, harmless for single-line fields), etc.
+	input := fr.ActiveInput()
+	if input != nil {
+		oldVal := input.Value()
+		updated, cmd := input.Update(msg, false)
+		*input = updated
+		if input.Value() != oldVal && fr.OnChange != nil {
 			fr.OnChange()
 		}
-		return nil
+		return cmd
 	}
-
 	return nil
 }
 

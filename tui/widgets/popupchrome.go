@@ -258,6 +258,20 @@ func PadRightANSI(s string, width int, th *theme.Theme, style lipgloss.Style) st
 // Focused controls whether the label is PopupTitleFocused (focused) or
 // Muted (unfocused), and whether the cursor is visible.
 func PopupInputField(th *theme.Theme, label, value, placeholder string, cursor int, focused bool) string {
+	return PopupInputFieldWithSelection(th, label, value, placeholder, cursor, false, 0, 0, focused)
+}
+
+// PopupInputFieldWithSelection is the selection-aware variant of
+// PopupInputField. It accepts:
+//   - selection: whether the field has an active selection
+//   - selStart, selEnd: the half-open selection range in the value
+//     (selStart < selEnd). The selection is rendered with the
+//     PopupSubtleBg highlight to match the chat input's selection
+//     visual.
+//
+// The cursor and selection are RUNE positions, matching the
+// TextInput.CursorFlat() and TextInput.SelectionRange() APIs.
+func PopupInputFieldWithSelection(th *theme.Theme, label, value, placeholder string, cursor int, selection bool, selStart, selEnd int, focused bool) string {
 	labelStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted).Background(th.Colors.PopupBg)
 	if focused {
 		labelStyle = labelStyle.Foreground(th.Colors.PopupTitleFocused)
@@ -267,12 +281,16 @@ func PopupInputField(th *theme.Theme, label, value, placeholder string, cursor i
 		Foreground(th.Colors.Muted).
 		Background(th.Colors.PopupBg).
 		Italic(true)
+	selStyle := lipgloss.NewStyle().
+		Foreground(th.Colors.Fg).
+		Background(th.Colors.PopupSubtleBg).
+		Bold(false)
 
 	if cursor < 0 {
 		cursor = 0
 	}
-	if cursor > len(value) {
-		cursor = len(value)
+	if cursor > runeLen(value) {
+		cursor = runeLen(value)
 	}
 
 	labelPart := ""
@@ -284,12 +302,55 @@ func PopupInputField(th *theme.Theme, label, value, placeholder string, cursor i
 	switch {
 	case value == "" && placeholder != "":
 		valuePart = placeholderStyle.Render(placeholder)
-	case focused:
-		caret := lipgloss.NewStyle().
-			Foreground(th.Colors.PopupBg).
-			Background(th.Colors.PopupTitleFocused).
-			Render("▏")
-		valuePart = textStyle.Render(value[:cursor]) + caret + textStyle.Render(value[cursor:])
+	case focused || selection:
+		// Render with cursor + selection highlight.
+		// Rune-safe: convert value to []rune for slicing.
+		runes := []rune(value)
+		if cursor > len(runes) {
+			cursor = len(runes)
+		}
+		if selection && selStart >= 0 && selEnd <= len(runes) && selStart < selEnd {
+			// Clamp cursor inside or outside the selection; the
+			// rendering puts the cursor on whichever side it's on.
+			pre := string(runes[:cursor])
+			midStart := cursor
+			midEnd := cursor
+			post := ""
+			if midStart > len(runes) {
+				midStart = len(runes)
+			}
+			_ = midEnd
+			post = string(runes[midStart:])
+			// Pre-cursor chunk (from value start to cursor).
+			// Mid chunk (cursor cell, single char or empty).
+			// Post-cursor chunk (from cursor to value end).
+			// Apply selection background to the part that overlaps
+			// the selection range.
+			preStart, preEnd := 0, min(cursor, len(runes))
+			postStart, postEnd := cursor, len(runes)
+			preSel := applySelBg(th, pre, preStart, preEnd, selStart, selEnd, textStyle, selStyle)
+			postSel := applySelBg(th, post, postStart, postEnd, selStart, selEnd, textStyle, selStyle)
+			caretRune := ""
+			if cursor < len(runes) {
+				caretRune = string(runes[cursor])
+			} else {
+				caretRune = "▏"
+			}
+			caretStyle := lipgloss.NewStyle().
+				Foreground(th.Colors.PopupBg).
+				Background(th.Colors.PopupTitleFocused)
+			valuePart = preSel + caretStyle.Render(caretRune) + postSel
+		} else {
+			runes := []rune(value)
+			if cursor > len(runes) {
+				cursor = len(runes)
+			}
+			caret := lipgloss.NewStyle().
+				Foreground(th.Colors.PopupBg).
+				Background(th.Colors.PopupTitleFocused).
+				Render("▏")
+			valuePart = textStyle.Render(string(runes[:cursor])) + caret + textStyle.Render(string(runes[cursor:]))
+		}
 	default:
 		valuePart = textStyle.Render(value)
 	}
@@ -301,6 +362,61 @@ func PopupInputField(th *theme.Theme, label, value, placeholder string, cursor i
 		return labelPart
 	}
 	return labelPart + " " + valuePart
+}
+
+// applySelBg splits a chunk of the value (between chunkStart and
+// chunkEnd in rune positions) into "before selection" / "in selection"
+// / "after selection" segments and applies the selection background
+// to the in-selection portion.
+func applySelBg(th *theme.Theme, chunk string, chunkStart, chunkEnd, selStart, selEnd int, base, sel lipgloss.Style) string {
+	if chunk == "" {
+		return ""
+	}
+	if selEnd <= chunkStart || selStart >= chunkEnd {
+		// No overlap.
+		return base.Render(chunk)
+	}
+	// Compute overlap on rune boundaries.
+	runes := []rune(chunk)
+	relSelStart := selStart - chunkStart
+	relSelEnd := selEnd - chunkStart
+	if relSelStart < 0 {
+		relSelStart = 0
+	}
+	if relSelEnd > len(runes) {
+		relSelEnd = len(runes)
+	}
+	before := string(runes[:relSelStart])
+	in := string(runes[relSelStart:relSelEnd])
+	after := string(runes[relSelEnd:])
+	out := ""
+	if before != "" {
+		out += base.Render(before)
+	}
+	if in != "" {
+		out += sel.Render(in)
+	}
+	if after != "" {
+		out += base.Render(after)
+	}
+	return out
+}
+
+// runeLen returns the rune count of a string. Used for clamping
+// cursor/selection positions to valid rune boundaries.
+func runeLen(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // PopupToggleSpec describes one toggle in PopupToggleRow.

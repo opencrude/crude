@@ -23,11 +23,18 @@ import (
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	m.dirty = true
+	// Dirty is set selectively per message type, NOT unconditionally.
+	// The full render pipeline (chroma syntax highlighting, glamour
+	// markdown, compositor, ANSI generation) runs only when dirty
+	// is true. Without this guard, every MouseMotionMsg (120-200/sec)
+	// triggers a complete frame rebuild from scratch, causing 100%
+	// CPU usage.
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
+		m.dirty = true
+		m.contentDirty = true
 		m.width = msg.Width
 		m.height = msg.Height
 		for _, a := range m.agents {
@@ -47,28 +54,42 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTick(msg)
 
 	case tea.KeyPressMsg:
+		m.dirty = true
+		m.contentDirty = true
 		return m.dispatchKeyPress(msg)
 
 	case tea.PasteMsg:
+		m.dirty = true
+		m.contentDirty = true
 		return m.dispatchPasteMsg(msg)
 
 	case tea.MouseClickMsg:
+		m.dirty = true
+		m.contentDirty = true
 		m.logger.Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseClick(msg)
 
 	case tea.MouseWheelMsg:
+		m.dirty = true
+		m.contentDirty = true
 		m.logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseWheel(msg)
 
 	case tea.MouseMotionMsg:
-		m.logger.Debug("UI", "mouse", "motion", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
+		// Do NOT set dirty here — the motion handler itself sets
+		// m.dirty = true when hover state or other visual state
+		// actually changes. Without this guard, every pixel of
+		// mouse movement triggers a full frame rebuild.
 		return m.dispatchMouseMotion(msg)
 
 	case tea.MouseReleaseMsg:
+		// Same as MouseMotionMsg: let the release handler set
+		// dirty when it actually does something visible.
 		m.logger.Debug("UI", "mouse", "release", "x", msg.Mouse().X, "y", msg.Mouse().Y)
 		return m.dispatchMouseRelease(msg)
 
 	case ttypes.SelectionTickMsg:
+		m.dirty = true
 		if ml := m.activeMsgList(); ml != nil {
 			_, cmd := ml.Update(msg)
 			if cmd != nil {
@@ -77,6 +98,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case scrollbar.FadeTickMsg, scrollbar.HideTickMsg:
+		m.dirty = true
 		cmds = append(cmds, m.dispatchEditorTick(msg)...)
 		if ml := m.activeMsgList(); ml != nil {
 			cmd := ml.HandleScrollbarTick(msg)
@@ -118,7 +140,17 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	default:
 		if m.isEditorMsg(msg) {
+			// Only set dirty when the cursor visibility actually
+			// changes. During the 530ms solid-cursor window after
+			// any activity, the blink tick is a no-op — setting
+			// dirty would waste a full frame render for nothing.
+			cursorBefore := m.editor != nil && m.editor.CursorVisible()
 			cmds = append(cmds, m.dispatchEditorTick(msg)...)
+			cursorAfter := m.editor != nil && m.editor.CursorVisible()
+			if cursorBefore != cursorAfter {
+				m.dirty = true
+				m.contentDirty = true
+			}
 		}
 	}
 

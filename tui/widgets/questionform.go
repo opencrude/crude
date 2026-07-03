@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -33,7 +34,15 @@ type QuestionForm struct {
 	answers      []string
 	optionCursor []int
 	textMode     []bool
-	focused      int
+	// textInputs is a per-question TextInput used when the user
+	// picks "Type your own answer" (textMode[i]=true). Each input
+	// has its own cursor, selection, and word motion — same mature
+	// component that powers the chat input. The previous design
+	// dropped keystrokes in text mode (the Update handler
+	// early-returned before doing anything), so questions without
+	// options or with "Other" picked were silently broken.
+	textInputs []components.TextInput
+	focused    int
 }
 
 func NewQuestionForm(th *theme.Theme) QuestionForm {
@@ -45,6 +54,7 @@ func (m *QuestionForm) Reset(questionsJSON string) int {
 	m.answers = nil
 	m.optionCursor = nil
 	m.textMode = nil
+	m.textInputs = nil
 	m.focused = 0
 
 	if questionsJSON == "" {
@@ -58,6 +68,10 @@ func (m *QuestionForm) Reset(questionsJSON string) int {
 	m.answers = make([]string, len(items))
 	m.optionCursor = make([]int, len(items))
 	m.textMode = make([]bool, len(items))
+	m.textInputs = make([]components.TextInput, len(items))
+	for i := range m.textInputs {
+		m.textInputs[i] = components.NewTextInput(m.th)
+	}
 	for i, q := range items {
 		if len(q.Options) == 0 {
 			m.textMode[i] = true
@@ -218,10 +232,26 @@ func (m QuestionForm) Update(msg tea.Msg) (QuestionForm, QuestionFormResult, boo
 	}
 
 	if m.textMode[idx] {
+		// Text mode: route the keypress to the per-question TextInput.
+		// Esc cancels the whole form; Enter confirms the answer and
+		// moves to the next question (or submits if all are
+		// answered). All other keys are delegated to the TextInput,
+		// which handles character insertion, Backspace, Delete, arrow
+		// keys, Home/End, Ctrl+Left/Right (word motion), etc.
 		switch keyMsg.Code {
 		case tea.KeyEsc:
 			return m, QuestionFormResult{Cancelled: true}, true
+		case tea.KeyEnter:
+			m.answers[idx] = m.textInputs[idx].Value()
+			m.textMode[idx] = false
+			if m.AllAnswered() {
+				return m, m.BuildResult(), true
+			}
+			m.FocusNext()
+			return m, QuestionFormResult{}, false
 		}
+		updated, _ := m.textInputs[idx].Update(keyMsg, false)
+		m.textInputs[idx] = updated
 		return m, QuestionFormResult{}, false
 	}
 
@@ -663,9 +693,20 @@ func (m *QuestionForm) renderOptions(b *strings.Builder, q QuestionItem, idx int
 
 	if isTextActive || (!isTextActive && cursor == ownRow) {
 		marker := accent.Render("❯")
-		answerText := m.answers[idx]
-		if answerText != "" {
-			displayText := answerText
+		// In text mode, render the actual TextInput so the user
+		// sees the cursor, selection, and any characters they've
+		// typed. Without this, the "Type your own answer" row
+		// would just show a static placeholder — the keystrokes
+		// would be silently absorbed (the bug we're fixing).
+		if isTextActive {
+			textW := sepW - 6
+			if textW < 1 {
+				textW = 1
+			}
+			inputLine := m.textInputs[idx].View(textW, 0, true)
+			b.WriteString(marker + " " + inputLine)
+		} else if m.answers[idx] != "" {
+			displayText := m.answers[idx]
 			if rendering.VisibleWidth(displayText) > sepW-6 {
 				displayText = rendering.TruncateVisual(displayText, sepW-7, "…")
 			}

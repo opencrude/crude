@@ -226,6 +226,12 @@ func (e *Editor) invalidateEditorCaches() {
 
 func (e *Editor) IsOpen() bool     { return e.open }
 func (e *Editor) FilePath() string { return e.filePath }
+
+// CursorVisible returns true when the cursor should be drawn as visible
+// (solid or blinking-visible phase). Used by the viewmodel to avoid
+// re-rendering on blink ticks that don't change the cursor state.
+func (e *Editor) CursorVisible() bool { return e.cursorVisible }
+
 func (e *Editor) Title() string {
 	if e.modified {
 		return e.title + " ●"

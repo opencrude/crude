@@ -41,17 +41,33 @@ func (m *App) View() tea.View {
 		return v
 	}
 
-	// Always do a full frame: build the main view, render windows,
-	// composite, and present. This ensures the background is always
-	// live (streaming text, animations update in real-time, even during
-	// drag). Window content efficiency is handled by FloatingWindow's
-	// contentDirty flag — windows only re-render their content when
-	// it actually changes (not on every position update during drag).
-	m.compositor.BeginFrame()
-	m.renderCtx.SpinFrame = m.spinFrame
-	m.syncRenderFocus()
-	mainContent := m.buildMainView()
-	rendering.RenderToSurface(m.compositor.Root(), mainContent)
+	// Two-tier dirty: only the main view (editor/chat/launcher) is
+	// expensive (chroma syntax highlighting, glamour markdown). Hover
+	// changes on the tree/tabs/popups only need the chrome
+	// re-rendered, not the main view. Skip the expensive main-view
+	// re-build when only chrome changed.
+	//
+	// The launcher render is fast, so when the launcher is the
+	// main view we always do a full re-render (no need for the
+	// chrome-only optimization there).
+	isLauncherMain := len(m.agents) == 0 && m.activeEditorView == "" && m.launcher != nil
+	if !m.contentDirty && m.mainContentCached != "" && !isLauncherMain {
+		// Chrome-only update: reuse cached main content.
+		m.compositor.BeginFrame()
+		m.renderCtx.SpinFrame = m.spinFrame
+		m.syncRenderFocus()
+		rendering.RenderToSurface(m.compositor.Root(), m.mainContentCached)
+	} else {
+		// Full re-render: rebuild the main view (chroma/glamour).
+		m.compositor.BeginFrame()
+		m.renderCtx.SpinFrame = m.spinFrame
+		m.syncRenderFocus()
+		mainContent := m.buildMainView()
+		m.mainContentCached = mainContent
+		m.contentDirty = false
+		rendering.RenderToSurface(m.compositor.Root(), mainContent)
+	}
+
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
 	if isDragging {
 		m.windowManager.ClearNeedsRender()
@@ -64,6 +80,15 @@ func (m *App) View() tea.View {
 	output := m.compositor.Present()
 	m.dirty = false
 	m.cachedOutput = output
+	// contentDirty is the "main view needs re-render" flag.
+	// It is set to true by keypress/click/wheel handlers (anything
+	// that changes the editor/chat/launcher). On the next View call,
+	// if dirty is set but contentDirty is not, we skip the expensive
+	// main-view rebuild and reuse the cached main content (chrome-
+	// only updates like popup hover or status bar changes).
+	// We always reset it to false at the end of View; the next state-
+	// changing event will set it back to true.
+	m.contentDirty = false
 
 	v := tea.NewView(output)
 	v.AltScreen = true

@@ -47,6 +47,23 @@ func (m *TextOverlay) Value() string { return m.input.Value() }
 func (m *TextOverlay) IsOpen() bool  { return m.refID != "" }
 func (m *TextOverlay) Close()        { m.refID = ""; m.title = ""; m.input.Clear(); m.scroll = 0 }
 
+// Selecting returns true if the user is currently selecting text
+// (mouse drag in progress). Used by the viewmodel to suppress
+// global key handling while a selection is being made.
+func (m *TextOverlay) Selecting() bool { return m.input.IsSelecting() }
+
+// SelectedText returns the currently selected text, or "" if no
+// selection. The viewmodel uses this for the Ctrl+C copy action.
+func (m *TextOverlay) SelectedText() string { return m.input.SelectedText() }
+
+// SelectionRange returns the (start, end) flat rune indices of the
+// selection. (-1, -1) if no selection.
+func (m *TextOverlay) SelectionRange() (int, int) { return m.input.SelectionRange() }
+
+// HasActiveSelection returns true if there is a non-empty selection
+// (even if the user is no longer dragging).
+func (m *TextOverlay) HasActiveSelection() bool { return m.input.HasActiveSelection() }
+
 func (m TextOverlay) Update(msg tea.Msg) (TextOverlay, tea.Cmd, TextOverlayAction) {
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if ok {
