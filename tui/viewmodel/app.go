@@ -59,7 +59,7 @@ type App struct {
 	width  int
 	height int
 
-	agents       map[string]*AgentState
+	agentMgr     *AgentManager
 	paneMgr      *PaneManager
 	input        input.Model
 	statusbar    *widgets.StatusBar
@@ -107,20 +107,12 @@ type App struct {
 	yolo          bool
 	tabBarFocused bool
 
-	activeAgentView       string
 	activeEditorView      string
 	editor                *editor.Editor  // pointer to the active tab's editor; nil if no editor tab
 	editorTabs            map[string]*EditorTab // all open editor tabs keyed by absolute path
-	agentLabels           map[string]string
-	agentModels           map[string]string
 	agentTabSnapshotCache string
 
-	sessionInputChans      map[string]chan<- provider.UserInput
-	sessionBtwChans        map[string]chan<- provider.UserInput
-	sessionCancelChans     map[string]chan<- struct{}
-	sessionBlockResolveCh  map[string]chan string
 	blockedSessionID       string
-	subAgentParents        map[string]string // sub-agent ID → parent orchestrator session ID
 
 	OnQuit              func()
 	OnExitMessage       func()
@@ -168,8 +160,7 @@ type App struct {
 	commandPaletteModel *commandPaletteModel
 
 	// Per-agent settings context
-	settingsCategory string        // "" = global, "main", "researcher", "crafter", "aeron" or agent ID
-	agentCategories  map[string]string // agentID → category name
+	settingsCategory string
 
 	diagPopupID string // ID of the diagnostic hover popup window
 
@@ -231,10 +222,6 @@ type App struct {
 
 func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
 	m.launcher = nil
-	m.sessionInputChans[orchID] = inputCh
-	m.sessionBtwChans[orchID] = btwCh
-	m.sessionCancelChans[orchID] = cancelCh
-	m.sessionBlockResolveCh[orchID] = blockResolveCh
 
 	ml := widgets.NewMessageList(m.theme)
 	ml.SetModelName(m.modelName)
@@ -247,8 +234,7 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 	sp.MsgList.SetUsername(m.username)
 
 	agent := NewAgentState(orchID, ml, m.logger)
-	m.agents[orchID] = agent
-	m.activeAgentView = orchID
+	m.agentMgr.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh, agent)
 	m.syncAgentWindowTabs()
 }
 
@@ -258,34 +244,16 @@ func (m *App) RemoveOrchestrator(orchID string) {
 
 // cleanupAgent removes all state for a given agent orchestrator or sub-agent.
 func (m *App) cleanupAgent(agentID string) {
-	delete(m.sessionInputChans, agentID)
-	delete(m.sessionBtwChans, agentID)
-	delete(m.sessionCancelChans, agentID)
-	delete(m.sessionBlockResolveCh, agentID)
-	delete(m.agents, agentID)
-	delete(m.agentLabels, agentID)
-	delete(m.agentModels, agentID)
-	delete(m.agentCategories, agentID)
-	for id, parent := range m.subAgentParents {
-		if parent == agentID {
-			delete(m.subAgentParents, id)
-		}
-	}
-	delete(m.subAgentParents, agentID)
+	m.agentMgr.Remove(agentID)
 	m.paneMgr.Remove(agentID)
 	if m.statusbar != nil {
 		m.statusbar.ClearAgentState(agentID)
 	}
-	if m.activeAgentView == agentID {
-		m.activeAgentView = ""
-	}
 }
 
 func (m *App) activeMsgList() *widgets.MessageList {
-	if m.activeAgentView != "" {
-		if agent, ok := m.agents[m.activeAgentView]; ok && agent.MsgList != nil {
-			return agent.MsgList
-		}
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil && n.State.MsgList != nil {
+		return n.State.MsgList
 	}
 	return nil
 }
@@ -368,7 +336,7 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 	app := &App{
 		theme:                th,
 		Mode:                 ModeChat,
-		agents:               make(map[string]*AgentState),
+		agentMgr:             NewAgentManager(),
 		paneMgr:              pm,
 		win:                  w,
 		overlay:              ov,
@@ -388,14 +356,6 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 		refStore:             refs,
 		editor:               ed,
 		editorTabs:           make(map[string]*EditorTab),
-		agentLabels:          make(map[string]string),
-		agentModels:          make(map[string]string),
-		agentCategories:      make(map[string]string),
-		sessionInputChans:    make(map[string]chan<- provider.UserInput),
-		sessionBtwChans:      make(map[string]chan<- provider.UserInput),
-		sessionCancelChans:   make(map[string]chan<- struct{}),
-		sessionBlockResolveCh: make(map[string]chan string),
-		subAgentParents:       make(map[string]string),
 		modelName:            modelName,
 		username:             username,
 		startTime:            time.Now(),
@@ -556,12 +516,12 @@ func (m *App) renderHeaderToSurface() {
 	pad := strings.Repeat(" ", m.theme.Spacing.PadLR)
 
 	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
-	if m.activeAgentView != "" {
-		agentLabel := m.activeAgentView
-		if lbl, ok := m.agentLabels[m.activeAgentView]; ok && lbl != "" {
-			agentLabel = lbl
+	if node := m.agentMgr.ActiveNode(); node != nil {
+		agentLabel := node.ID
+		if node.Label != "" {
+			agentLabel = node.Label
 		}
-		sp := m.paneMgr.Get(m.activeAgentView)
+		sp := m.paneMgr.Get(node.ID)
 		catLabel := ""
 		if sp != nil {
 			catLabel = string(sp.Type)
@@ -585,55 +545,59 @@ func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []
 	if sp == nil {
 		return []string{"", "● unknown pane"}
 	}
-	if agent, ok := m.agents[paneID]; ok {
-		sp.MsgList.SetStreaming(agent.Streaming)
-		sp.MsgList.SetActiveTyping(agent.ComputeActiveTyping())
+	if n := m.agentMgr.Get(paneID); n != nil && n.State != nil {
+		sp.MsgList.SetStreaming(n.State.Streaming)
+		sp.MsgList.SetActiveTyping(n.State.ComputeActiveTyping())
 	}
 	result := sp.Render(width, maxH, spinFrame)
 	return result.Lines
 }
 
 func (m *App) completeSubAgent(agentID string) {
-	parentID := m.subAgentParents[agentID]
-	if parentID == "" {
+	n := m.agentMgr.Get(agentID)
+	if n == nil || n.State == nil {
 		return
 	}
-	parentAgent := m.agents[parentID]
-
-	agent, agentOK := m.agents[agentID]
-	if agentOK && agent.Completed {
+	if n.State.Completed {
 		return
+	}
+
+	parentID := ""
+	if n.Parent != nil {
+		parentID = n.Parent.ID
+	}
+	parentNode := m.agentMgr.Get(parentID)
+	var parentML *widgets.MessageList
+	if parentNode != nil && parentNode.State != nil {
+		parentML = parentNode.State.MsgList
 	}
 
 	title := m.agentTabTitle(agentID)
 	if tab := m.win.TabByTitle(title); tab != nil {
 		wasActive := m.win.IndexOf(tab.ID) == m.win.ActiveIndex()
 		m.win.CloseTabByID(tab.ID)
-		if wasActive && m.activeAgentView == agentID {
-			m.activeAgentView = ""
-			if parentAgent != nil && parentAgent.MsgList != nil {
-				parentAgent.MsgList.InvalidateAllMessages()
+		if wasActive && m.agentMgr.ActiveID() == agentID {
+			m.agentMgr.ClearActive()
+			if parentML != nil {
+				parentML.InvalidateAllMessages()
 			}
 		}
 	}
 
 	if sp := m.paneMgr.Get(agentID); sp != nil && !sp.Done {
 		sp.Collapse()
-		if parentAgent != nil && parentAgent.MsgList != nil {
-			parentAgent.MsgList.InvalidateSubPane(agentID)
+		if parentML != nil {
+			parentML.InvalidateSubPane(agentID)
 		}
 	}
 
-	if agentOK {
-		agent.Completed = true
-		agent.Streaming = false
-		agent.Thinking = false
-		if agent.Status == "" || agent.Status == "running" {
-			agent.Status = "completed"
-		}
+	n.State.Completed = true
+	n.State.Streaming = false
+	n.State.Thinking = false
+	if n.State.Status == "" || n.State.Status == "running" {
+		n.State.Status = "completed"
 	}
 
-	delete(m.agentCategories, agentID)
 	m.statusbar.ClearAgentState(agentID)
 
 	if !m.win.IsOpen() {
@@ -644,10 +608,8 @@ func (m *App) completeSubAgent(agentID string) {
 }
 
 func (m *App) anyActive() bool {
-	for _, a := range m.agents {
-		if !a.Completed && a.IsActive() {
-			return true
-		}
+	if m.agentMgr.AnyActive() {
+		return true
 	}
 	for _, sp := range m.paneMgr.panes {
 		if !sp.Done {
@@ -749,43 +711,48 @@ func (m *App) activeMessageList() *widgets.MessageList {
 		return activeML
 	}
 	// Fallback: use any available agent's MsgList
-	for _, a := range m.agents {
-		return a.MsgList
+	for _, n := range m.agentMgr.AllNodes() {
+		if n.State != nil && n.State.MsgList != nil {
+			return n.State.MsgList
+		}
 	}
 	return nil
 }
 
 func (m *App) agentForView() *AgentState {
-	if m.activeAgentView == "" {
-		for _, a := range m.agents {
-			return a
-		}
-		return nil
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		return n.State
 	}
-	return m.agents[m.activeAgentView]
+	for _, n := range m.agentMgr.AllNodes() {
+		if n.State != nil {
+			return n.State
+		}
+	}
+	return nil
 }
 
 func (m *App) activeAgentID() string {
-	return m.activeAgentView
+	return m.agentMgr.ActiveID()
 }
 
 func (m *App) switchToAgentView(agentID string) {
-	prev := m.activeAgentView
+	prev := m.agentMgr.ActiveID()
 	if agentID == "" {
-		m.activeAgentView = ""
-	} else if a, ok := m.agents[agentID]; ok && !a.Completed {
-		m.activeAgentView = agentID
+		m.agentMgr.ClearActive()
+	} else if n := m.agentMgr.Get(agentID); n != nil && n.State != nil && !n.State.Completed {
+		m.agentMgr.SetActive(agentID)
 	}
 
-	if prev != m.activeAgentView {
+	curr := m.agentMgr.ActiveID()
+	if prev != curr {
 		if prev != "" {
-			if agent, ok := m.agents[prev]; ok && agent.MsgList != nil {
-				agent.MsgList.InvalidateAllMessages()
+			if n := m.agentMgr.Get(prev); n != nil && n.State != nil && n.State.MsgList != nil {
+				n.State.MsgList.InvalidateAllMessages()
 			}
 		}
-		if m.activeAgentView != "" {
-			if agent, ok := m.agents[m.activeAgentView]; ok && agent.MsgList != nil {
-				agent.MsgList.InvalidateAllMessages()
+		if curr != "" {
+			if n := m.agentMgr.Get(curr); n != nil && n.State != nil && n.State.MsgList != nil {
+				n.State.MsgList.InvalidateAllMessages()
 			}
 		}
 	}
@@ -828,19 +795,19 @@ func (m *App) syncAgentWindowTabs() {
 	}
 
 	// If no agents exist, purge agent tabs and return
-	if len(m.agents) == 0 {
+	if m.agentMgr.Count() == 0 {
 		m.purgeAgentTabs()
 		m.agentTabSnapshotCache = ""
 		return
 	}
 
 	// Determine active agent ID
-	activeID := m.activeAgentView
+	activeID := m.agentMgr.ActiveID()
 
 	// Create tabs for sub-agents that have panes
 	for _, id := range m.paneMgr.paneOrder {
-		a, ok := m.agents[id]
-		if !ok || a.Completed {
+		n := m.agentMgr.Get(id)
+		if n == nil || (n.State != nil && n.State.Completed) {
 			continue
 		}
 		title := m.agentTabTitle(id)
@@ -853,8 +820,8 @@ func (m *App) syncAgentWindowTabs() {
 				m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), newIcon)
 			}
 			displayLabel := id
-			if lbl, ok := m.agentLabels[id]; ok && lbl != "" {
-				displayLabel = lbl
+			if n.Label != "" {
+				displayLabel = n.Label
 			}
 			if tab.DisplayTitle != displayLabel {
 				m.win.SetTabDisplayTitleByIndex(m.win.IndexOf(tab.ID), displayLabel)
@@ -863,13 +830,14 @@ func (m *App) syncAgentWindowTabs() {
 	}
 
 	// Create tabs for orchestrator agents (top-level agents without parent IDs)
-	for id, a := range m.agents {
-		if a.Completed {
+	for _, n := range m.agentMgr.AllNodes() {
+		if n.State != nil && n.State.Completed {
 			continue
 		}
-		if _, isSubAgent := m.subAgentParents[id]; isSubAgent {
+		if n.Parent != nil {
 			continue
 		}
+		id := n.ID
 		title := m.agentTabTitle(id)
 		if m.win.TabByTitle(title) == nil {
 			m.win.OpenTab(title, "", true)
@@ -880,8 +848,8 @@ func (m *App) syncAgentWindowTabs() {
 				m.win.SetTabIconByIndex(m.win.IndexOf(tab.ID), newIcon)
 			}
 			displayLabel := id
-			if lbl, ok := m.agentLabels[id]; ok && lbl != "" {
-				displayLabel = lbl
+			if n.Label != "" {
+				displayLabel = n.Label
 			}
 			if tab.DisplayTitle != displayLabel {
 				m.win.SetTabDisplayTitleByIndex(m.win.IndexOf(tab.ID), displayLabel)
@@ -906,16 +874,16 @@ func (m *App) syncAgentWindowTabs() {
 func (m *App) agentTabSnapshot() string {
 	var b strings.Builder
 	for _, id := range m.paneMgr.paneOrder {
-		a, ok := m.agents[id]
-		if !ok || a.Completed {
+		n := m.agentMgr.Get(id)
+		if n == nil || n.State == nil || n.State.Completed {
 			continue
 		}
 		b.WriteString(id)
 		b.WriteByte('|')
-		b.WriteString(a.Status)
+		b.WriteString(n.State.Status)
 		b.WriteByte('|')
-		if lbl := m.agentLabels[id]; lbl != "" {
-			b.WriteString(lbl)
+		if n.Label != "" {
+			b.WriteString(n.Label)
 		}
 		b.WriteByte('|')
 	}
@@ -923,7 +891,7 @@ func (m *App) agentTabSnapshot() string {
 }
 
 func (m *App) ensureAgentTabActive() {
-	activeID := m.activeAgentView
+	activeID := m.agentMgr.ActiveID()
 	if activeID == "" {
 		return
 	}
@@ -941,11 +909,11 @@ func (m *App) agentTabIcon(id string) string {
 	if id == "" {
 		return "■"
 	}
-	agent, ok := m.agents[id]
-	if !ok || agent.Status == "" {
+	n := m.agentMgr.Get(id)
+	if n == nil || n.State == nil || n.State.Status == "" {
 		return "●"
 	}
-	status := agent.Status
+	status := n.State.Status
 	switch {
 	case status == "running":
 		return "●"
@@ -983,8 +951,8 @@ func (m *App) purgeStaleAgentTabs() {
 		}
 		if m.isAgentTabTitle(tabs[i].Title) {
 			agentID := m.agentIDFromTabTitle(tabs[i].Title)
-			a, ok := m.agents[agentID]
-			if !ok || a.Completed {
+			n := m.agentMgr.Get(agentID)
+			if n == nil || (n.State != nil && n.State.Completed) {
 				m.win.CloseTabByID(tabs[i].ID)
 			}
 		}
@@ -1326,7 +1294,7 @@ func (m *App) closeEditorTabForce(path string) {
 	// handleTabSwitch() will look up the new active path in the map.
 	m.handleTabSwitch()
 
-	if len(m.agents) == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
 		if m.onListSessions != nil {
 			m.launcher = NewLauncherState(m.onListSessions())
 			m.lastInteractionTime = time.Now()
@@ -3109,7 +3077,7 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 		}
 			m.dirty = true
 			// If no tabs left, show launcher
-			if len(m.agents) == 0 && m.activeEditorView == "" && !m.win.IsOpen() {
+			if m.agentMgr.Count() == 0 && m.activeEditorView == "" && !m.win.IsOpen() {
 				if m.onListSessions != nil {
 					m.launcher = NewLauncherState(m.onListSessions())
 					m.lastInteractionTime = time.Now()
@@ -3162,7 +3130,7 @@ func (m *App) openOrchestratorSettings() {
 
 // resetOrchestratorOverrides clears all runtime overrides for the current orchestrator.
 func (m *App) resetOrchestratorOverrides() {
-	id := m.activeAgentView
+	id := m.agentMgr.ActiveID()
 	if id == "" {
 		id = m.activeEditorView
 		if id == "" {

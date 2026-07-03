@@ -13,10 +13,11 @@ import (
 )
 
 func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
-	agent, ok := m.agents[sessionID]
-	if !ok {
+	n := m.agentMgr.Get(sessionID)
+	if n == nil || n.State == nil {
 		return nil
 	}
+	agent := n.State
 	agent.MsgList.AppendMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleUser,
 		Content: text,
@@ -35,7 +36,7 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 	if m.statusbar != nil {
 		m.statusbar.SetThinkingForAgent(sessionID, true, false, false)
 	}
-	ch := m.sessionInputChans[sessionID]
+	ch := n.InputChan
 	return func() tea.Msg {
 		select {
 		case ch <- provider.InputWithRefs(text, refIDs):
@@ -47,10 +48,11 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 }
 
 func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
-	agent, ok := m.agents[sessionID]
-	if !ok {
+	n := m.agentMgr.Get(sessionID)
+	if n == nil || n.State == nil {
 		return nil
 	}
+	agent := n.State
 	agent.MsgList.AppendMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleUser,
 		Content: text,
@@ -68,7 +70,7 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 	if m.statusbar != nil {
 		m.statusbar.SetBtwCount(m.statusbar.BtwCount() + 1)
 	}
-	ch := m.sessionBtwChans[sessionID]
+	ch := n.BtwChan
 	return func() tea.Msg {
 		select {
 		case ch <- provider.InputWithRefs(text, refIDs):
@@ -114,8 +116,13 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		return nil
 	}
 
-	agent, ok := m.agents[agentID]
-	if !ok {
+	agentNode := m.agentMgr.Get(agentID)
+	var agent *AgentState
+	if agentNode != nil {
+		agent = agentNode.State
+	}
+
+	if agentNode == nil || agent == nil {
 		// Check if this is an orchestrator (no parent) or a sub-agent
 		evtData, _ := evt.Data.(map[string]string)
 		parentID := evtData["parent_id"]
@@ -128,8 +135,15 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			ml.SetUsername(m.username)
 			ml.SetSubPaneContentFn(m.renderSubPaneContent)
 			agent = NewAgentState(agentID, ml, m.logger)
-			m.agents[agentID] = agent
-			m.activeAgentView = agentID
+			// Agent node should already exist from AddOrchestrator; update its state
+			if existing := m.agentMgr.Get(agentID); existing != nil {
+				existing.State = agent
+				agentNode = existing
+			} else {
+				// Fallback: shouldn't happen in normal flow
+				agentNode = m.agentMgr.AddOrchestrator(agentID, nil, nil, nil, nil, agent)
+			}
+			m.agentMgr.SetActive(agentID)
 			m.syncAgentWindowTabs()
 		} else {
 			// Sub-agent: create sub-pane
@@ -141,15 +155,32 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			sp.MsgList.SetModelName(subModel)
 			sp.MsgList.SetUsername(m.username)
 			agent = NewAgentState(agentID, sp.MsgList, m.logger)
-			if parent, ok := m.agents[parentID]; ok && parent.MsgList != nil {
-				parent.MsgList.AppendMessage(ttypes.ChatMessage{
+			// Get label/model/category from event data
+			label := ""
+			if l, ok := evtData["agent_name"]; ok {
+				label = l
+				if len(label) > 16 {
+					label = label[:16]
+				}
+			}
+			modelStr := m.modelName
+			if md, ok := evtData["model"]; ok && md != "" {
+				modelStr = md
+			}
+			cat := ""
+			if c, ok := evtData["category"]; ok {
+				cat = c
+			}
+			agentNode = m.agentMgr.AddSubAgent(agentID, parentID, label, modelStr, cat, agent)
+			_ = agentNode
+			if parent := m.agentMgr.Get(parentID); parent != nil && parent.State != nil && parent.State.MsgList != nil {
+				parent.State.MsgList.AppendMessage(ttypes.ChatMessage{
 					Role:      ttypes.RoleTool,
 					Content:   agentID,
 					SubPaneID: agentID,
 					Time:      time.Now(),
 				})
 			}
-			m.agents[agentID] = agent
 		}
 	} else if agent.Completed {
 		if evt.Type == "done" || evt.Type == "error" {
@@ -318,29 +349,26 @@ func (m *App) promoteThinkingToPane(agent *AgentState) {
 }
 
 func (m *App) handleSubPaneCompletion(agentID string) {
-	parentID := m.subAgentParents[agentID]
+	n := m.agentMgr.Get(agentID)
 	var parentML *widgets.MessageList
-	if parentID != "" {
-		if parent, ok := m.agents[parentID]; ok && parent.MsgList != nil {
-			parentML = parent.MsgList
-		}
+	if n != nil && n.Parent != nil && n.Parent.State != nil {
+		parentML = n.Parent.State.MsgList
 	}
 	if parentML == nil {
-		if a, ok := m.agents[m.activeAgentView]; ok && a.MsgList != nil {
-			parentML = a.MsgList
+		if active := m.agentMgr.ActiveNode(); active != nil && active.State != nil {
+			parentML = active.State.MsgList
 		}
 	}
 
-	agent, ok := m.agents[agentID]
-	if ok && agent.ThinkingPaneID != "" {
-		sp := m.paneMgr.Get(agent.ThinkingPaneID)
+	if n.State != nil && n.State.ThinkingPaneID != "" {
+		sp := m.paneMgr.Get(n.State.ThinkingPaneID)
 		if sp != nil {
 			sp.Collapse()
 			if parentML != nil {
-				parentML.InvalidateSubPane(agent.ThinkingPaneID)
+				parentML.InvalidateSubPane(n.State.ThinkingPaneID)
 			}
 		}
-		agent.ThinkingPaneID = ""
+		n.State.ThinkingPaneID = ""
 		return
 	}
 
@@ -472,22 +500,26 @@ func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
 	if len(label) > 16 {
 		label = label[:16]
 	}
-	m.agentLabels[agentID] = label
-	if agent, ok := m.agents[agentID]; ok {
-		agent.Status = "running"
+	if n := m.agentMgr.Get(agentID); n != nil {
+		n.Label = label
+		if n.State != nil {
+			n.State.Status = "running"
+		}
 	}
 	if model := data["model"]; model != "" {
-		m.agentModels[agentID] = model
+		if n := m.agentMgr.Get(agentID); n != nil {
+			n.Model = model
+		}
 		if sp := m.paneMgr.Get(agentID); sp != nil {
 			sp.MsgList.SetModelName(model)
 		}
 	}
 	if category := data["category"]; category != "" {
-		m.agentCategories[agentID] = category
+		if n := m.agentMgr.Get(agentID); n != nil {
+			n.Category = category
+		}
 	}
-	if parentID := data["parent_id"]; parentID != "" {
-		m.subAgentParents[agentID] = parentID
-	}
+	_ = data["parent_id"] // parent relationship already set by AddSubAgent
 }
 
 func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
@@ -501,8 +533,8 @@ func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
 		return
 	}
 
-	if agent, aok := m.agents[agentID]; aok {
-		agent.Status = status
+	if n := m.agentMgr.Get(agentID); n != nil && n.State != nil {
+		n.State.Status = status
 	}
 
 	if status == "running" {

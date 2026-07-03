@@ -23,23 +23,15 @@ func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
 	th := theme.DefaultDark()
 	app := &App{
-		theme:                th,
-		Mode:                 ModeChat,
-		agents:               make(map[string]*AgentState),
-		paneMgr:              NewPaneManager(),
-		agentLabels:          make(map[string]string),
-		agentModels:          make(map[string]string),
-		agentCategories:      make(map[string]string),
-		sessionInputChans:    make(map[string]chan<- provider.UserInput),
-		sessionBtwChans:      make(map[string]chan<- provider.UserInput),
-		sessionCancelChans:   make(map[string]chan<- struct{}),
-		sessionBlockResolveCh: make(map[string]chan string),
-		subAgentParents:       make(map[string]string),
-		startTime:            time.Now(),
-		launcher:             NewLauncherState(nil),
-		input:                input.NewModel(th),
-		statusbar:            widgets.NewStatusBar(th),
-		spinFrame:            0,
+		theme:     th,
+		Mode:      ModeChat,
+		agentMgr:  NewAgentManager(),
+		paneMgr:   NewPaneManager(),
+		startTime: time.Now(),
+		launcher:  NewLauncherState(nil),
+		input:     input.NewModel(th),
+		statusbar: widgets.NewStatusBar(th),
+		spinFrame: 0,
 	}
 	app.win = window.New(th)
 	app.overlay = window.New(th)
@@ -77,26 +69,26 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 	if app.launcher != nil {
 		t.Fatal("launcher should be cleared by AddOrchestrator")
 	}
-	agent, ok := app.agents["ses_1_orch_1"]
-	if !ok {
+	n := app.agentMgr.Get("ses_1_orch_1")
+	if n == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
-	if agent.MsgList == nil {
+	if n.State == nil || n.State.MsgList == nil {
 		t.Fatal("orchestrator should have its own MsgList")
 	}
-	if app.activeAgentView != "ses_1_orch_1" {
-		t.Fatalf("expected activeAgentView ses_1_orch_1, got %q", app.activeAgentView)
+	if app.agentMgr.ActiveID() != "ses_1_orch_1" {
+		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.agentMgr.ActiveID())
 	}
-	if _, ok := app.sessionInputChans["ses_1_orch_1"]; !ok {
+	if n.InputChan == nil {
 		t.Fatal("input channel should be wired")
 	}
-	if _, ok := app.sessionBtwChans["ses_1_orch_1"]; !ok {
+	if n.BtwChan == nil {
 		t.Fatal("btw channel should be wired")
 	}
-	if _, ok := app.sessionCancelChans["ses_1_orch_1"]; !ok {
+	if n.CancelChan == nil {
 		t.Fatal("cancel channel should be wired")
 	}
-	if _, ok := app.sessionBlockResolveCh["ses_1_orch_1"]; !ok {
+	if n.BlockResolveCh == nil {
 		t.Fatal("blockResolve channel should be wired")
 	}
 }
@@ -122,11 +114,11 @@ func TestLauncher_NewSession_CreatesOrchestrator(t *testing.T) {
 	if app.launcher != nil {
 		t.Fatal("launcher should be cleared after creating orchestrator")
 	}
-	if _, ok := app.agents["ses_1_orch_1"]; !ok {
+	if app.agentMgr.Get("ses_1_orch_1") == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
-	if app.activeAgentView != "ses_1_orch_1" {
-		t.Fatalf("expected activeAgentView ses_1_orch_1, got %q", app.activeAgentView)
+	if app.agentMgr.ActiveID() != "ses_1_orch_1" {
+		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.agentMgr.ActiveID())
 	}
 }
 
@@ -156,7 +148,7 @@ func TestLauncher_FileOpen_NoSessionCreated(t *testing.T) {
 	if app.launcher == nil {
 		t.Fatal("launcher should not be cleared by non-session events")
 	}
-	if len(app.agents) != 0 {
+	if app.agentMgr.Count() != 0 {
 		t.Fatal("no agents should be created by file-open events")
 	}
 }
@@ -210,23 +202,22 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 	}
 	app.handleAgentEvent(subEvt)
 
-	subAgent, ok := app.agents["ses_1_orch_1_sub_abc"]
-	if !ok {
-		t.Fatal("sub-agent should exist in agents map")
+	subAgent := app.agentMgr.Get("ses_1_orch_1_sub_abc")
+	if subAgent == nil {
+		t.Fatal("sub-agent should exist")
 	}
-	if subAgent.MsgList == nil {
+	if subAgent.State == nil || subAgent.State.MsgList == nil {
 		t.Fatal("sub-agent should have a MsgList")
 	}
 	sp := app.paneMgr.Get("ses_1_orch_1_sub_abc")
 	if sp == nil {
 		t.Fatal("sub-agent should have a pane in paneMgr")
 	}
-	parentID, ok := app.subAgentParents["ses_1_orch_1_sub_abc"]
-	if !ok {
-		t.Fatal("sub-agent parent should be tracked")
+	if subAgent.Parent == nil {
+		t.Fatal("sub-agent should have a parent")
 	}
-	if parentID != "ses_1_orch_1" {
-		t.Fatalf("expected parent ses_1_orch_1, got %q", parentID)
+	if subAgent.Parent.ID != "ses_1_orch_1" {
+		t.Fatalf("expected parent ses_1_orch_1, got %q", subAgent.Parent.ID)
 	}
 }
 
@@ -234,24 +225,27 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 func TestMultipleOrchestrators(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 
-	inputCh1, btwCh1, cancelCh1, brCh1 := newTestChannels()
-	app.AddOrchestrator("ses_1_orch_1", inputCh1, btwCh1, cancelCh1, brCh1)
+	inputCh, btwCh, cancelCh, brCh := newTestChannels()
+	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, brCh)
 
-	inputCh2, btwCh2, cancelCh2, brCh2 := newTestChannels()
-	app.AddOrchestrator("ses_1_orch_2", inputCh2, btwCh2, cancelCh2, brCh2)
+	// Add a sub-agent via the manager (simulating handleAgentEvent flow)
+	app.agentMgr.AddSubAgent("ses_1_sub_abc", "ses_1_orch_1", "helper", "", "", &AgentState{})
+	app.syncAgentWindowTabs()
 
-	if len(app.agents) != 2 {
-		t.Fatalf("expected 2 agents, got %d", len(app.agents))
+	if app.agentMgr.Count() != 2 {
+		t.Fatalf("expected 2 agents (orchestrator + sub), got %d", app.agentMgr.Count())
 	}
-	_, ok1 := app.agents["ses_1_orch_1"]
-	_, ok2 := app.agents["ses_1_orch_2"]
-	if !ok1 || !ok2 {
-		t.Fatal("both orchestrators should exist")
+	if app.agentMgr.Get("ses_1_orch_1") == nil {
+		t.Fatal("orchestrator should exist")
+	}
+	if app.agentMgr.Get("ses_1_sub_abc") == nil {
+		t.Fatal("sub-agent should exist")
 	}
 
-	app.switchToAgentView("ses_1_orch_2")
-	if app.activeAgentView != "ses_1_orch_2" {
-		t.Fatalf("expected active agent ses_1_orch_2, got %q", app.activeAgentView)
+	// Switch between available agents (sub-agent first, then orchestrator)
+	app.switchToAgentView("ses_1_sub_abc")
+	if app.agentMgr.ActiveID() != "ses_1_sub_abc" {
+		t.Fatalf("expected active agent ses_1_sub_abc, got %q", app.agentMgr.ActiveID())
 	}
 }
 

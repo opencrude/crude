@@ -351,8 +351,8 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 				text := m.composer.Value()
 				m.composer.Close()
 				m.windowManager.RemoveWindow("composer")
-				if text != "" && m.activeAgentView != "" {
-					cmds = append(cmds, m.submitInput(m.activeAgentView, text, nil))
+				if text != "" && m.agentMgr.ActiveID() != "" {
+					cmds = append(cmds, m.submitInput(m.agentMgr.ActiveID(), text, nil))
 				}
 			}
 			if fw := m.windowManager.Window("composer"); fw != nil {
@@ -480,25 +480,25 @@ func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model,
 	if done {
 		m.statusbar.SetConfirming(false)
 		m.blocking = false
-		if a, ok := m.agents[m.activeAgentView]; ok {
-			a.Thinking = true
+		if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+			n.State.Thinking = true
 		}
-		m.statusbar.SetThinkingForAgent(m.activeAgentView, true, false, false)
+		m.statusbar.SetThinkingForAgent(m.agentMgr.ActiveID(), true, false, false)
 		if m.OnConfirmResult != nil {
 			m.OnConfirmResult(result)
 			m.logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
 		}
-		if a, ok := m.agents[m.activeAgentView]; ok {
+		if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
 			switch result.Choice {
 			case ttypes.ConfirmAllow:
-				a.pendingPermTag = "allowed"
+				n.State.pendingPermTag = "allowed"
 			case ttypes.ConfirmAlways:
-				a.pendingPermTag = "always"
+				n.State.pendingPermTag = "always"
 			case ttypes.ConfirmDeny:
-				a.pendingPermTag = "denied"
+				n.State.pendingPermTag = "denied"
 				if ml := m.activeMsgList(); ml != nil {
-				ml.SetToolPermTag(result.Tool, "", "denied")
-			}
+					ml.SetToolPermTag(result.Tool, "", "denied")
+				}
 			}
 		}
 		m.closeOverlayTab("Confirm")
@@ -694,8 +694,8 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	}
 
 	canType := false
-	if a, ok := m.agents[m.activeAgentView]; ok {
-		canType = !a.Completed && a.IsActive()
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		canType = !n.State.Completed && n.State.IsActive()
 	}
 	updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 	m.input = updated
@@ -726,9 +726,9 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 			cmds = append(cmds, m.submitRename(e.Text))
 			return cmds
 		}
-		cmds = append(cmds, m.submitInput(m.activeAgentView, e.Text, e.ReferenceIDs))
+		cmds = append(cmds, m.submitInput(m.agentMgr.ActiveID(), e.Text, e.ReferenceIDs))
 	case input.BtwSubmitEvent:
-		cmds = append(cmds, m.submitBtw(m.activeAgentView, e.Text, e.ReferenceIDs))
+		cmds = append(cmds, m.submitBtw(m.agentMgr.ActiveID(), e.Text, e.ReferenceIDs))
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
 	case input.SettingsOpenEvent:
@@ -751,10 +751,10 @@ func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
 		result := m.questionForm.BuildResult()
 		m.statusbar.SetConfirming(false)
 		m.blocking = false
-		if a, ok := m.agents[m.activeAgentView]; ok {
-			a.Thinking = true
+		if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+			n.State.Thinking = true
 		}
-		m.statusbar.SetThinkingForAgent(m.activeAgentView, true, false, false)
+		m.statusbar.SetThinkingForAgent(m.agentMgr.ActiveID(), true, false, false)
 		if m.OnQuestionResult != nil {
 			m.OnQuestionResult(ttypes.QuestionResult(result))
 		}
@@ -768,10 +768,10 @@ func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
 func (m *App) finishQuestionResult(result ttypes.QuestionResult, cmds *[]tea.Cmd) tea.Model {
 	m.statusbar.SetConfirming(false)
 	m.blocking = false
-	if a, ok := m.agents[m.activeAgentView]; ok {
-		a.Thinking = true
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		n.State.Thinking = true
 	}
-	m.statusbar.SetThinkingForAgent(m.activeAgentView, true, false, false)
+	m.statusbar.SetThinkingForAgent(m.agentMgr.ActiveID(), true, false, false)
 	if m.OnQuestionResult != nil {
 		m.OnQuestionResult(result)
 	}
@@ -875,8 +875,8 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	// Default / FocusInput / FocusLauncher / FocusTree / FocusTabBar /
 	// FocusNone → route to chat input (the original behaviour).
 	canType := false
-	if a, ok := m.agents[m.activeAgentView]; ok {
-		canType = !a.Completed && a.IsActive()
+	if n := m.agentMgr.ActiveNode(); n != nil && n.State != nil {
+		canType = !n.State.Completed && n.State.IsActive()
 	}
 	updated, cmd, evt := m.input.Update(msg, canType && !m.blocking, m.blocking, m.chatAreaHeight, m.input.ShowHint())
 	m.input = updated

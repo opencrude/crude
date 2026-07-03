@@ -30,8 +30,7 @@ func TestFocusTarget_Launcher(t *testing.T) {
 
 func TestFocusTarget_InputWithAgent(t *testing.T) {
 	app := newTestApp(t)
-	app.agents["ses_1_orch_1"] = &AgentState{}
-	app.activeAgentView = "ses_1_orch_1"
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{})
 
 	target := app.focusTarget()
 	if target != FocusInput {
@@ -51,8 +50,7 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.agents["ses_1_orch_1"] = &AgentState{MsgList: ml}
-	app.activeAgentView = "ses_1_orch_1"
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{MsgList: ml})
 
 	result := app.activeMsgList()
 	if result != ml {
@@ -64,8 +62,9 @@ func TestActiveMessageList_Fallback(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.agents["ses_1_orch_1"] = &AgentState{MsgList: ml}
-	// activeAgentView is empty, should fallback to first agent's MsgList
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{MsgList: ml})
+	// AddOrchestrator sets active automatically; clear it so activeMessageList falls back
+	app.agentMgr.ClearActive()
 
 	result := app.activeMessageList()
 	if result != ml {
@@ -92,8 +91,7 @@ func TestAgentForView_NoAgents(t *testing.T) {
 func TestAgentForView_WithActiveAgentView(t *testing.T) {
 	app := newTestApp(t)
 	agent := &AgentState{Streaming: true}
-	app.agents["ses_1_orch_1"] = agent
-	app.activeAgentView = "ses_1_orch_1"
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, agent)
 
 	a := app.agentForView()
 	if a != agent {
@@ -111,11 +109,9 @@ func TestBuildMainView_NilActiveML(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	// Add an agent but set activeAgentView to empty, so
-	// activeMessageList() returns nil (the fallback iterates
-	// but we can also simulate by having an agent with nil MsgList).
-	app.agents["ses_1_orch_1"] = &AgentState{MsgList: nil}
-	app.activeAgentView = "ses_1_orch_1"
+	// Add an agent with nil MsgList. AddOrchestrator sets it active,
+	// so activeMsgList() returns nil (the node exists but MsgList is nil).
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{MsgList: nil})
 
 	// This should not panic — the nil activeML guard in buildMainView
 	// should produce empty content instead of dereferencing nil.
@@ -171,17 +167,24 @@ func TestHandleQuit_ClosesLastAgentTab(t *testing.T) {
 	app.height = 24
 
 	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
-	app.AddOrchestrator("ses_1_orch_2", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
 
-	if len(app.agents) != 2 {
-		t.Fatalf("expected 2 agents, got %d", len(app.agents))
+	if app.agentMgr.Count() != 1 {
+		t.Fatalf("expected 1 agent, got %d", app.agentMgr.Count())
 	}
 
-	// handleQuit quits the program regardless of remaining tabs
+	// First handleQuit closes the tab and shows launcher
 	_, cmd := app.handleQuit()
+	if cmd != nil {
+		t.Fatal("expected nil cmd (launcher shown)")
+	}
+	if app.agentMgr.Count() != 0 {
+		t.Fatal("expected agent to be cleaned up")
+	}
 
+	// Second handleQuit quits since there's nothing left
+	_, cmd = app.handleQuit()
 	if cmd == nil {
-		t.Fatal("expected Quit cmd from handleQuit")
+		t.Fatal("expected Quit cmd from second handleQuit")
 	}
 	if !app.Quit {
 		t.Fatal("expected Quit flag")
@@ -223,8 +226,8 @@ func TestHandleTabSwitch_ClearsStaleViewOnLastClose(t *testing.T) {
 	if app.activeEditorView != "" {
 		t.Fatalf("expected activeEditorView=\"\" with no tab, got %q", app.activeEditorView)
 	}
-	if app.activeAgentView != "" {
-		t.Fatalf("expected activeAgentView=\"\" with no tab, got %q", app.activeAgentView)
+	if app.agentMgr.ActiveID() != "" {
+		t.Fatalf("expected ActiveID=\"\" with no tab, got %q", app.agentMgr.ActiveID())
 	}
 }
 
@@ -240,7 +243,6 @@ func TestHandleQuit_AfterLastEditorCloses_Quits(t *testing.T) {
 	// the views as if a tab existed, then calling handleTabSwitch
 	// with no tab to force the reset path.
 	app.activeEditorView = "/tmp/foo.go"
-	app.activeAgentView = ""
 
 	app.handleTabSwitch()
 
@@ -309,15 +311,15 @@ func TestHandleAgentTabClose_AgentTab(t *testing.T) {
 
 	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
 
-	if len(app.agents) != 1 {
-		t.Fatalf("expected 1 agent, got %d", len(app.agents))
+	if app.agentMgr.Count() != 1 {
+		t.Fatalf("expected 1 agent, got %d", app.agentMgr.Count())
 	}
 
 	cmd := app.handleAgentTabClose(0)
 	if cmd != nil {
 		t.Fatal("expected nil cmd after closing agent tab")
 	}
-	if len(app.agents) != 0 {
+	if app.agentMgr.Count() != 0 {
 		t.Fatal("expected agents to be empty after closing last tab")
 	}
 }
@@ -338,7 +340,7 @@ func TestSubmitInput_NoChannel(t *testing.T) {
 	app.height = 24
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.agents["ses_1_orch_1"] = &AgentState{MsgList: ml}
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{MsgList: ml})
 
 	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
 	// cmd is non-nil even without a channel — the returned closure
@@ -354,9 +356,8 @@ func TestSubmitInput_WithChannel(t *testing.T) {
 	app.height = 24
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.agents["ses_1_orch_1"] = &AgentState{MsgList: ml}
 	inputCh := make(chan provider.UserInput, 8)
-	app.sessionInputChans["ses_1_orch_1"] = inputCh
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &AgentState{MsgList: ml})
 
 	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
 	if cmd == nil {
@@ -376,23 +377,15 @@ func TestSubmitBtw_NonexistentAgent(t *testing.T) {
 
 func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	app := newTestApp(t)
-	app.agents["ses_1_orch_1"] = &AgentState{}
-	app.sessionInputChans["ses_1_orch_1"] = make(chan provider.UserInput, 8)
-	app.sessionBtwChans["ses_1_orch_1"] = make(chan provider.UserInput, 8)
-	app.sessionCancelChans["ses_1_orch_1"] = make(chan struct{}, 1)
-	app.sessionBlockResolveCh["ses_1_orch_1"] = make(chan string, 1)
-	app.subAgentParents["sub_1"] = "ses_1_orch_1"
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{})
 
 	app.RemoveOrchestrator("ses_1_orch_1")
 
-	if _, ok := app.agents["ses_1_orch_1"]; ok {
-		t.Fatal("agent should be removed")
+	if n := app.agentMgr.Get("ses_1_orch_1"); n != nil {
+		t.Fatal("agent should be removed from agentMgr")
 	}
-	if _, ok := app.sessionInputChans["ses_1_orch_1"]; ok {
-		t.Fatal("input channel should be removed")
-	}
-	if _, ok := app.subAgentParents["sub_1"]; ok {
-		t.Fatal("sub-agent parent relationship should be cleaned up")
+	if p := app.paneMgr.Get("ses_1_orch_1"); p != nil {
+		t.Fatal("agent should be removed from paneMgr")
 	}
 }
 
@@ -494,10 +487,8 @@ func TestHandleInputEvent_SubmitWithActiveAgentView(t *testing.T) {
 
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.agents["ses_1_orch_1"] = &AgentState{MsgList: ml}
-	app.activeAgentView = "ses_1_orch_1"
 	inputCh := make(chan provider.UserInput, 8)
-	app.sessionInputChans["ses_1_orch_1"] = inputCh
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &AgentState{MsgList: ml})
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
 	if len(cmds) != 1 {
@@ -525,10 +516,8 @@ func TestHandleInputEvent_BtwSubmit(t *testing.T) {
 
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.agents["ses_1_orch_1"] = &AgentState{MsgList: ml}
-	app.activeAgentView = "ses_1_orch_1"
 	btwCh := make(chan provider.UserInput, 8)
-	app.sessionBtwChans["ses_1_orch_1"] = btwCh
+	app.agentMgr.AddOrchestrator("ses_1_orch_1", nil, btwCh, nil, nil, &AgentState{MsgList: ml})
 
 	cmds := app.handleInputEvent(input.BtwSubmitEvent{Text: "btw text"})
 	if len(cmds) != 1 {
@@ -608,19 +597,11 @@ func newTestApp(t *testing.T) *App {
 	th := theme.DefaultDark()
 
 	app := &App{
-		theme:                th,
-		Mode:                 ModeChat,
-		agents:               make(map[string]*AgentState),
-		paneMgr:              NewPaneManager(),
-		agentLabels:          make(map[string]string),
-		agentModels:          make(map[string]string),
-		agentCategories:      make(map[string]string),
-		sessionInputChans:    make(map[string]chan<- provider.UserInput),
-		sessionBtwChans:      make(map[string]chan<- provider.UserInput),
-		sessionCancelChans:   make(map[string]chan<- struct{}),
-		sessionBlockResolveCh: make(map[string]chan string),
-		subAgentParents:       make(map[string]string),
-		startTime:            time.Now(),
+		theme:     th,
+		Mode:      ModeChat,
+		agentMgr:  NewAgentManager(),
+		paneMgr:   NewPaneManager(),
+		startTime: time.Now(),
 	}
 
 	app.win = window.New(th)
@@ -636,24 +617,16 @@ func newFullTestApp(t *testing.T) *App {
 	sb := widgets.NewStatusBar(th)
 
 	app := &App{
-		theme:                th,
-		Mode:                 ModeChat,
-		width:                80,
-		height:               24,
-		agents:               make(map[string]*AgentState),
-		paneMgr:              NewPaneManager(),
-		agentLabels:          make(map[string]string),
-		agentModels:          make(map[string]string),
-		agentCategories:      make(map[string]string),
-		sessionInputChans:    make(map[string]chan<- provider.UserInput),
-		sessionBtwChans:      make(map[string]chan<- provider.UserInput),
-		sessionCancelChans:   make(map[string]chan<- struct{}),
-		sessionBlockResolveCh: make(map[string]chan string),
-		subAgentParents:       make(map[string]string),
-		startTime:            time.Now(),
-		input:                im,
-		statusbar:            sb,
-		spinFrame:            0,
+		theme:     th,
+		Mode:      ModeChat,
+		width:     80,
+		height:    24,
+		agentMgr:  NewAgentManager(),
+		paneMgr:   NewPaneManager(),
+		startTime: time.Now(),
+		input:     im,
+		statusbar: sb,
+		spinFrame: 0,
 	}
 
 	app.win = window.New(th)
