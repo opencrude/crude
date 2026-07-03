@@ -361,11 +361,11 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 	mouse := msg.Mouse()
 
 	overlayStartLine := m.chatAreaHeight + 3
-	if m.win.IsOpen() && m.win.TabCount() >= 1 {
-		overlayStartLine += 2
-	}
+		if m.win.IsOpen() && m.win.TabCount() >= 1 {
+			overlayStartLine += 2
+		}
 
-	if m.overlay.TabCount() >= 2 && mouse.Y == overlayStartLine+1 {
+		if m.overlay.TabCount() >= 2 && mouse.Y == overlayStartLine+1 {
 		adjustedX := mouse.X
 		if m.treeVisible && m.treeModel != nil {
 			adjustedX -= m.treeWidth + 1
@@ -646,6 +646,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		cmd := m.routeSidebarMouse(msg)
+		m.dirty = true
 		return m, cmd
 	}
 
@@ -655,7 +656,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// every GUI tree view: hover is "live" and tied to mouse position.
 	if m.treeModel != nil && m.treeModel.Hover.Clear() {
 		m.dirty = true
-		m.contentDirty = true // tree is part of the main view
 	}
 
 	// Tab bar hover: update the hover state when the mouse moves over
@@ -674,7 +674,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		if hit.TabIndex >= 0 {
 			if m.win.Hover.Set(hit.TabIndex) {
 				m.dirty = true
-				m.contentDirty = true // tab bar is part of the main view
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -683,7 +682,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// Mouse is outside the tab bar — clear the hover state.
 	if m.win.Hover.Clear() {
 		m.dirty = true
-		m.contentDirty = true // tab bar is part of the main view
 	}
 
 	// Overlay hover: forward mouse motion to the active overlay's

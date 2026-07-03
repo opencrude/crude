@@ -48,6 +48,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.compositor != nil {
 			m.compositor.Resize(msg.Width, msg.Height)
 		}
+		// Resize all layer surfaces so they match the new dimensions.
+		m.resizeLayerSurfaces()
 		return m, nil
 
 	case ttypes.TickMsg:
@@ -225,11 +227,11 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		m.statusbar.SetProjectInsights(editor.ProjectInsights{})
 	}
 
-	// Mark dirty when the status bar has active animations (heartbeat dot,
-	// streaming spinner, expiring toasts, or the AnimGrace period after
-	// the LSP last did work). Without this the view cache returns stale
-	// output and the dot looks frozen.
-	if m.statusbar.HasAnimation() {
+	// Mark dirty every tick — cheap layers (header, status bar, sidebar)
+	// re-render on every frame anyway, and the launcher needs animation
+	// ticks to drive its spin frame and scroll effects.
+	isLauncher := len(m.agents) == 0 && m.activeEditorView == "" && m.launcher != nil
+	if m.statusbar.HasAnimation() || isLauncher {
 		m.dirty = true
 	}
 

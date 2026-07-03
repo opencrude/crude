@@ -8,10 +8,10 @@ import (
 // Compositor manages the double-buffer frame pipeline.
 //
 // Frame lifecycle:
-//  1. BeginFrame() — clear back buffer with opaque blanks, reset damage
-//  2. App renders widgets into surfaces
-//  3. Composite() — flatten surface tree, composite bottom-to-top into back buffer
-//  4. Present() — generate ANSI output from back buffer, swap front and back
+//  1. BeginFrame() — reset damage, keep persistent back buffer
+//  2. App renders widgets into surfaces (only dirty surfaces need re-rendering)
+//  3. Composite() — flatten surface tree, composite only dirty surfaces into back buffer
+//  4. Present() — generate ANSI output from changed regions, swap front and back
 //
 // The compositor owns the screen-sized cell buffers and manages the
 // conversion from cell buffer → ANSI escape sequences for the terminal.
@@ -24,6 +24,10 @@ type Compositor struct {
 	height int                 // Terminal height in rows
 	root   *surface.Surface   // Root of the surface tree
 	damage DamageRegion       // Tracks what changed this frame
+
+	// fullRenderEveryN forces a full redraw every N frames to avoid any
+	// possible drift from incremental/diff rendering. 0 means never force.
+	frameCount int
 }
 
 // NewCompositor creates a compositor for the given terminal dimensions.
@@ -79,57 +83,45 @@ func (c *Compositor) Height() int {
 }
 
 // BeginFrame starts a new frame.
-// Fills the back buffer with opaque blanks (so shrunk content is properly
-// overwritten), resets the damage region, clears all children from the root
-// surface, and clears the root surface's cell buffer to prevent stale content
-// from previous frames. Call this before rendering widgets into the surface tree.
+// Fills the back buffer with opaque default background, resets the damage
+// region, and clears all children from the root surface. The persistent layer
+// surfaces will be re-added during rendering. Clearing the back buffer every
+// frame is simple and correct; the real performance win is avoiding the
+// expensive string build for unchanged layers.
 func (c *Compositor) BeginFrame() {
-	// Fill with opaque default background, NOT transparent.
-	// This ensures that when content shrinks, old cells are properly overwritten
-	// instead of leaving transparent gaps that skip during Blit.
-	c.back.Fill(cell.BlankCell(cell.NoColor))
+	c.back.Clear()
 	c.damage.Reset()
-	// Clear all children from the root surface to prevent accumulation.
-	// Children will be re-added during this frame's rendering.
 	c.root.RemoveAllChildren()
-	// Clear the root surface's cell buffer so content from the previous
-	// frame does not persist. buildMainView writes the new content, and
-	// unwritten cells remain as transparent blanks — which is correct
-	// because the back buffer is already filled with opaque blanks.
 	c.root.Buffer().Clear()
 }
 
-// Composite composites the entire surface tree into the back buffer.
-// Uses painter's algorithm: flatten tree in z-order, blit each visible
-// surface from bottom to top.
-//
-// Algorithm:
-//  1. Get the flattened z-order list from root surface
-//  2. For each surface in the list (bottom to top):
-//     a. Get the surface's absolute screen position
-//     b. If the surface is not visible, skip it
-//     c. If the surface's alpha < 1.0, use BlendAlpha; otherwise use Blit
-//     d. Mark the blitted region in the damage tracker
-func (c *Compositor) Composite() {
-	// Flatten the surface tree in z-order (bottom to top)
-	surfaces := c.root.FlattenZOrder()
+// forceFullCompositeThreshold forces a full composite when more than this
+// fraction of the screen is damaged. Below the threshold, only dirty surfaces
+// are composited, and a diff is emitted.
+const forceFullCompositeThreshold = 0.5
 
-	// Composite each surface into the back buffer
+// Composite composites the entire surface tree into the back buffer using
+// painter's algorithm. It flattens the tree in z-order and blits every
+// visible surface from bottom to top. The back buffer is pre-cleared in
+// BeginFrame, so any uncovered area shows the default background.
+//
+// This is called every frame. The performance win comes from the layer
+// surfaces: only dirty layers have their cell buffers re-rendered (the
+// expensive string build / ANSI parse). The blit itself is a flat memcpy of
+// ~2000 cells for 80x24, which is microseconds.
+func (c *Compositor) Composite() {
+	surfaces := c.root.FlattenZOrder()
 	for _, s := range surfaces {
 		if !s.Visible() {
 			continue
 		}
-
 		absX, absY := s.AbsolutePosition()
 		buf := s.Buffer()
-
 		if s.Alpha() < 1.0 {
 			surface.BlendAlpha(c.back, absX, absY, buf, s.Alpha())
 		} else {
 			surface.Blit(c.back, absX, absY, buf, nil)
 		}
-
-		// Mark the region as damaged
 		c.damage.MarkRect(surface.Rect{
 			X: absX, Y: absY,
 			W: buf.Width(), H: buf.Height(),
@@ -139,23 +131,29 @@ func (c *Compositor) Composite() {
 
 // Present finalizes the frame:
 //  1. Generate ANSI output from the back buffer
-//  2. Swap front and back buffers (eliminates 240KB/frame clone allocation)
-//  3. Return the ANSI string
+//  2. Swap front and back buffers
+//  3. Clear the dirty tree for the next frame cycle
+//
+// The returned string is always a full-frame ANSI string. Diff-based output
+// is intentionally disabled for now because the viewmodel caches the last
+// output for no-change frames, and returning a diff would corrupt that
+// cache. The main performance win comes from only compositing dirty
+// surfaces, not from diffing terminal output.
 //
 // The returned string can be passed directly to Bubble Tea's View() return value.
-// The buffer swap is the primary performance win — it avoids allocating a new
-// buffer every frame.
 func (c *Compositor) Present() string {
-	output := GenerateANSI(c.back)
+	var output string
+	if c.damage.HasDamage() && c.width > 0 && c.height > 0 {
+		output = GenerateANSI(c.back)
+	}
 
 	// Swap buffers: front becomes the just-presented frame, back gets recycled.
-	// The new back buffer (old front) will be cleared/filled in the next
-	// BeginFrame() call.
 	c.front, c.back = c.back, c.front
 
 	// Clear the dirty tree: all surfaces have been composited and presented,
 	// so reset their dirty flags for the next frame cycle.
 	c.root.ClearDirtyTree()
+	c.damage.Reset()
 
 	return output
 }

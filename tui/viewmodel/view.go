@@ -32,62 +32,73 @@ func (m *App) View() tea.View {
 		return v
 	}
 
-	// Skip rendering if nothing changed since the last render.
-	// dirty is set in Update() whenever view content changes.
-	if !m.dirty && m.cachedOutput != "" {
-		v := tea.NewView(m.cachedOutput)
-		v.AltScreen = true
-		v.MouseMode = tea.MouseModeAllMotion
-		return v
+	// Cheap layers (sidebar, header, status bar) are always re-rendered
+	// every frame — they're fast surface fills + ANSI renders. The
+	// expensive part is the main content (editor with chroma/glamour).
+	// contentDirty tracks whether the editor tab's content actually
+	// changed (keypress, scroll, cursor blink). When false, we reuse
+	// the cached main content string.
+	//
+	// The launcher is also fast to render and has animations (spin
+	// frame, filter typing, scrolling), so it always gets a full
+	// re-render — no caching.
+	isLauncherMain := len(m.agents) == 0 && m.activeEditorView == "" && m.launcher != nil
+	useCached := !isLauncherMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
+
+	m.compositor.BeginFrame()
+	m.renderCtx.SpinFrame = m.spinFrame
+	m.syncRenderFocus()
+	m.resizeLayerSurfaces()
+
+	// Re-add persistent layer surfaces (BeginFrame clears children).
+	root := m.compositor.Root()
+	if m.mainContentSurf != nil {
+		root.AddChild(m.mainContentSurf)
+		m.mainContentSurf.SetZOrder(0)
+	}
+	if m.mainSidebarSurf != nil {
+		root.AddChild(m.mainSidebarSurf)
+		m.mainSidebarSurf.SetZOrder(1)
+		m.mainSidebarSurf.SetVisible(m.treeVisible)
+	}
+	if m.mainStatusbarSurf != nil {
+		root.AddChild(m.mainStatusbarSurf)
+		m.mainStatusbarSurf.SetZOrder(2)
+	}
+	if m.mainHeaderSurf != nil {
+		root.AddChild(m.mainHeaderSurf)
+		m.mainHeaderSurf.SetZOrder(3)
 	}
 
-	// Two-tier dirty: only the main view (editor/chat/launcher) is
-	// expensive (chroma syntax highlighting, glamour markdown). Hover
-	// changes on the tree/tabs/popups only need the chrome
-	// re-rendered, not the main view. Skip the expensive main-view
-	// re-build when only chrome changed.
-	//
-	// The launcher render is fast, so when the launcher is the
-	// main view we always do a full re-render (no need for the
-	// chrome-only optimization there).
-	isLauncherMain := len(m.agents) == 0 && m.activeEditorView == "" && m.launcher != nil
-	if !m.contentDirty && m.mainContentCached != "" && !isLauncherMain {
-		// Chrome-only update: reuse cached main content.
-		m.compositor.BeginFrame()
-		m.renderCtx.SpinFrame = m.spinFrame
-		m.syncRenderFocus()
-		rendering.RenderToSurface(m.compositor.Root(), m.mainContentCached)
+	// Main content surface stays transparent — only ANSI-rendered cells
+	// set explicit backgrounds. Transparent cells (like the top padding
+	// row) show the terminal default, matching the original behaviour.
+	if useCached {
+		rendering.RenderToSurface(m.mainContentSurf, m.mainContentCached)
 	} else {
-		// Full re-render: rebuild the main view (chroma/glamour).
-		m.compositor.BeginFrame()
-		m.renderCtx.SpinFrame = m.spinFrame
-		m.syncRenderFocus()
 		mainContent := m.buildMainView()
 		m.mainContentCached = mainContent
 		m.contentDirty = false
-		rendering.RenderToSurface(m.compositor.Root(), mainContent)
+		rendering.RenderToSurface(m.mainContentSurf, mainContent)
 	}
+
+	// Cheap layers: always re-render (surface fill + ANSI render).
+	m.renderHeaderToSurface()
+	if m.treeVisible {
+		m.renderSidebarToSurface()
+	}
+	m.renderStatusbarToSurface()
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
 	if isDragging {
 		m.windowManager.ClearNeedsRender()
 	}
 
-	// Composite all surfaces into back buffer
 	m.compositor.Composite()
 
-	// Generate ANSI output and present
 	output := m.compositor.Present()
 	m.dirty = false
 	m.cachedOutput = output
-	// contentDirty is the "main view needs re-render" flag.
-	// It is set to true by keypress/click/wheel handlers (anything
-	// that changes the editor/chat/launcher). On the next View call,
-	// if dirty is set but contentDirty is not, we skip the expensive
-	// main-view rebuild and reuse the cached main content (chrome-
-	// only updates like popup hover or status bar changes).
-	// We always reset it to false at the end of View; the next state-
-	// changing event will set it back to true.
 	m.contentDirty = false
 
 	v := tea.NewView(output)
@@ -175,7 +186,7 @@ func (m *App) buildMainView() string {
 	overlayLines := m.renderOverlayArea()
 	overlayLineCount := len(overlayLines)
 
-	nonChat := 6 + inputLineCount + overlayLineCount
+	nonChat := 4 + inputLineCount + overlayLineCount
 	if agentTabBarVisible {
 		nonChat += 2
 	}
@@ -183,7 +194,7 @@ func (m *App) buildMainView() string {
 		nonChat += 2 + asyncLineCount
 	}
 
-	chatH := m.height - nonChat
+	chatH := m.height - 2 - nonChat
 	if chatH < 1 {
 		chatH = 1
 	}
@@ -399,29 +410,24 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	lines := make([]string, 0, m.height)
+	// The main content surface is m.height - 2 rows (status bar is a
+	// separate 2-row layer). Header and header separator are rendered
+	// into the header layer surface (mainHeaderSurf) at position (0, 1)
+	// and overlaid on top. Row 0 of the main content is the padding
+	// row — it appears at the very top of the app.
+	contentH := m.height - 2
+	lines := make([]string, 0, contentH)
+
+	// Top padding row (visible at the very top of the app).
 	lines = append(lines, "")
 
-	headerLine := widgets.RenderHeader(m.theme, m.modelName, m.yolo, m.startTime, m.width)
-	if m.activeAgentView != "" {
-		agentLabel := m.activeAgentView
-		if lbl, ok := m.agentLabels[m.activeAgentView]; ok && lbl != "" {
-			agentLabel = lbl
-		}
-		sp := m.paneMgr.Get(m.activeAgentView)
-		catLabel := ""
-		if sp != nil {
-			catLabel = string(sp.Type)
-		}
-		viewLabel := agentLabel
-		if catLabel != "" {
-			viewLabel = catLabel + ":" + agentLabel
-		}
-		accentStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent).Bold(true)
-		headerLine += " " + accentStyle.Render("⟨"+viewLabel+"⟩")
-	}
-	lines = append(lines, pad+headerLine+pad)
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+	// Header placeholder row — blank space where the header overlay
+	// surface (z=3) renders the header line.
+	lines = append(lines, strings.Repeat(" ", contentW))
+
+	// Header separator placeholder — blank space where the header
+	// overlay renders the separator.
+	lines = append(lines, strings.Repeat(" ", contentW))
 
 	if agentTabBarVisible {
 		lines = append(lines, pad+agentTabBarLine+pad)
@@ -505,66 +511,25 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	lines = append(lines, widgets.RenderSep(m.width, m.theme.Colors.Border))
+	// The separator after the input and the status bar below are now
+	// rendered into the status bar layer surface (mainStatusbarSurf).
+	// Do NOT append them here.
 
-	statusView := m.statusbar.View()
-	{
-		visW := rendering.VisibleWidth(statusView)
-		rightPad := m.width - 2*m.theme.Spacing.PadLR - visW
-		if rightPad < 0 {
-			rightPad = 0
-		}
-		lines = append(lines, pad+statusView+strings.Repeat(" ", rightPad)+pad)
-	}
-
-	// If the file tree sidebar is visible, render it on the left of the
-	// content column (chat + overlay + input). Header, separators, and
-	// status bar span the full app width. Non-tree lines are right-padded
-	// to m.width so the screen does not have an empty gap on the right.
-	if sidebarVisible {
-		// Tree covers everything from the first sep to just before the last
-		// separator+status line.
+	// The sidebar is rendered into its own layer surface
+	// (mainSidebarSurf). Update tree height/scroll state for it.
+	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil {
 		treeStart := 3
 		m.treeYOffset = treeStart
-		treeEnd := len(lines) - 2
-		if treeEnd < treeStart {
-			treeEnd = treeStart
+		sidebarH := contentH - treeStart
+		if sidebarH < 0 {
+			sidebarH = 0
 		}
-		contentH := treeEnd - treeStart
-		if contentH < 0 {
-			contentH = 0
-		}
-		m.treeModel.Update(filetree.TreeHeightMsg{Height: contentH})
-		m.treeRenderer.SetScrollbarContentHeight(contentH)
-
-		treeLines := m.treeRenderer.RenderToLines(m.treeWidth, m.height)
-		dividerStyle := lipgloss.NewStyle().Foreground(m.theme.Tree.Colors.BorderFg)
-		divider := dividerStyle.Render("│")
-		for i := treeStart; i < treeEnd; i++ {
-			idx := i - treeStart
-			var treePart string
-			if idx < len(treeLines) {
-				treePart = treeLines[idx]
-			} else {
-				treePart = strings.Repeat(" ", m.treeWidth)
-			}
-			lines[i] = treePart + divider + lines[i]
-		}
-		// Right-pad non-tree lines (header, first sep, tab bar, last
-		// sep, status bar) to fill the full screen width.
-		for i := range lines {
-			if i >= treeStart && i < treeEnd {
-				continue
-			}
-			visW := rendering.VisibleWidth(lines[i])
-			if visW < m.width {
-				lines[i] += strings.Repeat(" ", m.width-visW)
-			}
-		}
+		m.treeModel.Update(filetree.TreeHeightMsg{Height: sidebarH})
+		m.treeRenderer.SetScrollbarContentHeight(sidebarH)
 	}
 
-	if len(lines) > m.height {
-		lines = lines[:m.height]
+	if len(lines) > contentH {
+		lines = lines[:contentH]
 	}
 
 	return strings.Join(lines, "\n")
