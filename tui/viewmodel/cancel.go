@@ -9,26 +9,26 @@ import (
 )
 
 func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
-	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 		return nil
 	}
 
-	if m.Mode == ModeSettings {
+	if m.overlayState.Is(ModeSettings) {
 		m.settings.RestoreSnapshot()
 		m.closeOverlayTab("Settings")
 		return nil
 	}
 
-	if m.Mode == ModeYolo {
+	if m.overlayState.Is(ModeYolo) {
 		m.yoloDlg.Dismiss()
 		m.statusbar.SetConfirming(false)
 		m.closeOverlayTab("YOLO")
 		return nil
 	}
 
-	if m.Mode == ModeConfirm {
+	if m.overlayState.Is(ModeConfirm) {
 		m.confirm.Dismiss()
-		m.blocking = false
+		m.overlayState.SetBlocking(false)
 		m.statusbar.SetConfirming(false)
 		m.closeOverlayTab("Confirm")
 		if m.OnConfirmResult != nil {
@@ -44,9 +44,9 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	if m.Mode == ModeQuestion {
+	if m.overlayState.Is(ModeQuestion) {
 		m.questionForm.Dismiss()
-		m.blocking = false
+		m.overlayState.SetBlocking(false)
 		m.statusbar.SetConfirming(false)
 		m.input.ResetPrompt()
 		m.input.ClearInput()

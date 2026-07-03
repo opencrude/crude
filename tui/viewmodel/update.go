@@ -108,8 +108,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
-		if m.treeVisible && m.treeRenderer != nil {
-			treeCmd := m.treeRenderer.HandleScrollbarTick(msg)
+		if m.tree.Visible && m.tree.Renderer != nil {
+			treeCmd := m.tree.Renderer.HandleScrollbarTick(msg)
 			if treeCmd != nil {
 				cmds = append(cmds, treeCmd)
 			}
@@ -146,9 +146,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// changes. During the 530ms solid-cursor window after
 			// any activity, the blink tick is a no-op — setting
 			// dirty would waste a full frame render for nothing.
-			cursorBefore := m.editor != nil && m.editor.CursorVisible()
+			cursorBefore := m.editorState.Editor != nil && m.editorState.Editor.CursorVisible()
 			cmds = append(cmds, m.dispatchEditorTick(msg)...)
-			cursorAfter := m.editor != nil && m.editor.CursorVisible()
+			cursorAfter := m.editorState.Editor != nil && m.editorState.Editor.CursorVisible()
 			if cursorBefore != cursorAfter {
 				m.dirty = true
 				m.contentDirty = true
@@ -189,19 +189,19 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	if m.editor.IsOpen() && m.editor.DiskChanged() {
+	if m.editorState.Editor.IsOpen() && m.editorState.Editor.DiskChanged() {
 		// Notify the LSP server that the file changed on disk. This fires
 		// regardless of which tab is active — the LSP needs disk-change
 		// notifications even when the user is in the file tree or chat.
 		if m.lspManager != nil {
 			lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			m.lspManager.NotifyWatchedFilesChanged(lspCtx, m.editor.FilePath(), 2) // 2 = Changed
+			m.lspManager.NotifyWatchedFilesChanged(lspCtx, m.editorState.Editor.FilePath(), 2) // 2 = Changed
 			cancel()
 		}
 		// Only auto-reload when the editor has no unsaved (dirty) changes;
 		// otherwise the user's in-progress edits would be lost.
-		if !m.editor.Modified() {
-			if err := m.editor.Reload(); err != nil {
+		if !m.editorState.Editor.Modified() {
+			if err := m.editorState.Editor.Reload(); err != nil {
 				m.logger.Error("EDITOR", "reload_error", "error", err.Error())
 			} else if m.lspManager != nil {
 				// Push the reloaded content to the LSP server. The LSP
@@ -210,7 +210,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 				// without this the server's document stays stale and it
 				// never re-analyzes the externally-modified file.
 				lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				m.lspManager.UpdateFile(lspCtx, m.editor.FilePath(), m.editor.Value())
+				m.lspManager.UpdateFile(lspCtx, m.editorState.Editor.FilePath(), m.editorState.Editor.Value())
 				cancel()
 			}
 		}
@@ -232,7 +232,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	// Mark dirty every tick — cheap layers (header, status bar, sidebar)
 	// re-render on every frame anyway, and the launcher needs animation
 	// ticks to drive its spin frame and scroll effects.
-	isLauncher := m.agentMgr.Count() == 0 && m.activeEditorView == "" && m.launcher != nil
+	isLauncher := m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" && m.launcher != nil
 	if m.statusbar.HasAnimation() || isLauncher {
 		m.dirty = true
 	}
@@ -240,7 +240,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	if m.anyActive() {
 		return m, streamingTickCmd()
 	}
-	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 		return m, streamingTickCmd()
 	}
 	return m, tickCmd()
@@ -350,7 +350,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.syncRenderFocus()
 	case filetree.EnterFilterModeMsg:
 		m.logger.Debug("TREE", "enter_filter_mode")
-		m.treeFocused = true
+		m.focusStack.Clear()
+		m.focusStack.Push(FocusTree)
 	case filetree.TreeRefreshDoneMsg:
 		if msg.Err != nil {
 			m.logger.Error("TREE", "refresh_error", "error", msg.Err.Error())
@@ -362,17 +363,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 }
 
 func (m *App) ToggleSidebar() {
-	if m.treeModel == nil {
+	if m.tree.Model == nil {
 		return
 	}
-	m.treeVisible = !m.treeVisible
-	if m.treeVisible {
-		if m.activeEditorView == "" {
-			m.treeFocused = true
+	m.tree.Visible = !m.tree.Visible
+	if m.tree.Visible {
+		if m.editorState.ActiveView == "" {
+			m.focusStack.Clear()
+			m.focusStack.Push(FocusTree)
 		}
-		m.treeModel.Update(filetree.TreeWidthMsg{Width: m.treeWidth})
+		m.tree.Model.Update(filetree.TreeWidthMsg{Width: m.tree.Width})
 	} else {
-		m.treeFocused = false
+		if m.focusStack.Top() == FocusTree {
+			m.focusStack.Pop()
+		}
 	}
 	m.dirty = true
 }
@@ -403,7 +407,7 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 }
 
 func (m *App) translateToTreeMouse(msg tea.Msg) tea.Msg {
-	offsetY := m.treeYOffset
+	offsetY := m.tree.YOffset
 	bcOff := m.breadcrumbOffset()
 	switch mm := msg.(type) {
 	case tea.MouseClickMsg:
@@ -562,7 +566,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 			go m.OnCancelSubAgent(agentID)
 		}
 		m.handleTabSwitch()
-		if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+		if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 			if m.onListSessions != nil {
 				m.launcher = NewLauncherState(m.onListSessions())
 				m.lastInteractionTime = time.Now()
@@ -578,11 +582,11 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		path := m.editorPathFromTabTitle(tab.Title)
 		// If the tab has unsaved edits, prompt before destroying the
 		// buffer. Otherwise close immediately.
-		ed := m.editor
-		if t, ok := m.editorTabs[path]; ok {
+		ed := m.editorState.Editor 
+		if t, ok := m.editorState.Tabs[path]; ok {
 			ed = t.Editor
 		}
-		if ed != nil && ed.Modified() && m.Mode == ModeChat {
+		if ed != nil && ed.Modified() && m.overlayState.IsChat() {
 			m.showDirtyClosePrompt(path)
 			return nil
 		}
@@ -592,7 +596,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	m.win.CloseTab(index)
 	m.handleTabSwitch()
-	if m.agentMgr.Count() == 0 && m.activeEditorView == "" {
+	if m.agentMgr.Count() == 0 && m.editorState.ActiveView == "" {
 		if m.onListSessions != nil {
 			m.launcher = NewLauncherState(m.onListSessions())
 			m.lastInteractionTime = time.Now()
@@ -620,7 +624,7 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 		}
 	case "Confirm":
 		m.confirm.Dismiss()
-		m.blocking = false
+		m.overlayState.SetBlocking(false)
 		m.statusbar.SetConfirming(false)
 		m.overlay.CloseTab(index)
 		m.syncOverlayMode()
@@ -629,7 +633,7 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 		}
 	case "Question":
 		m.questionForm.Dismiss()
-		m.blocking = false
+		m.overlayState.SetBlocking(false)
 		m.statusbar.SetConfirming(false)
 		m.input.ResetPrompt()
 		m.input.ClearInput()
@@ -672,7 +676,7 @@ func (m *App) closeOverlayTab(title string) {
 }
 
 func (m *App) syncQuestionInputPrompt() {
-	if m.Mode != ModeQuestion {
+	if !m.overlayState.Is(ModeQuestion) {
 		m.input.ResetPrompt()
 		m.input.ClearInput()
 		return
@@ -710,7 +714,7 @@ func (m *App) syncQuestionInputPrompt() {
 func (m *App) handleTabSwitch() {
 	// Always reset before re-deriving. This is the single source of
 	// truth for which view is active.
-	m.activeEditorView = ""
+	m.editorState.ActiveView = ""
 	m.agentMgr.ClearActive()
 
 	activeTab := m.win.ActiveTab()
@@ -734,7 +738,7 @@ func (m *App) handleTabSwitch() {
 		// and destroy cursor, scroll, undo, and any unsaved edits.
 		// The Editor was created and loaded once in openEditorTab and
 		// lives in the editorTabs map for the lifetime of the tab.
-		tab, ok := m.editorTabs[path]
+		tab, ok := m.editorState.Tabs[path]
 		if !ok {
 			// Tab entry is missing (shouldn't normally happen, but be
 			// defensive). Re-open to recover.
@@ -747,8 +751,8 @@ func (m *App) handleTabSwitch() {
 			}
 			return
 		}
-		m.activeEditorView = path
-		m.editor = tab.Editor
+		m.editorState.ActiveView = path
+		m.editorState.Editor = tab.Editor
 	}
 }
 

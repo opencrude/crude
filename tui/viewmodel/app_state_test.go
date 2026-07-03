@@ -223,8 +223,8 @@ func TestHandleTabSwitch_ClearsStaleViewOnLastClose(t *testing.T) {
 
 	// No tab → both views empty.
 	app.handleTabSwitch()
-	if app.activeEditorView != "" {
-		t.Fatalf("expected activeEditorView=\"\" with no tab, got %q", app.activeEditorView)
+	if app.editorState.ActiveView != "" {
+		t.Fatalf("expected activeEditorView=\"\" with no tab, got %q", app.editorState.ActiveView)
 	}
 	if app.agentMgr.ActiveID() != "" {
 		t.Fatalf("expected ActiveID=\"\" with no tab, got %q", app.agentMgr.ActiveID())
@@ -242,11 +242,11 @@ func TestHandleQuit_AfterLastEditorCloses_Quits(t *testing.T) {
 	// Simulate "had an editor open, then closed it" by populating
 	// the views as if a tab existed, then calling handleTabSwitch
 	// with no tab to force the reset path.
-	app.activeEditorView = "/tmp/foo.go"
+	app.editorState.ActiveView = "/tmp/foo.go"
 
 	app.handleTabSwitch()
 
-	if app.activeEditorView != "" {
+	if app.editorState.ActiveView != "" {
 		t.Fatalf("setup: handleTabSwitch should have cleared activeEditorView")
 	}
 
@@ -264,13 +264,13 @@ func TestHandleQuit_AfterLastEditorCloses_Quits(t *testing.T) {
 func TestHandleQuit_ClosesOverlayFirst(t *testing.T) {
 	app := newTestApp(t)
 	app.overlay.OpenTab("Settings", "", true)
-	app.Mode = ModeSettings
+	app.overlayState.Set(ModeSettings)
 
 	_, cmd := app.handleQuit()
 	if cmd != nil {
 		t.Fatal("expected nil cmd after closing overlay")
 	}
-	if app.Mode != ModeChat {
+	if !app.overlayState.IsChat() {
 		t.Fatal("expected ModeChat after closing overlay")
 	}
 }
@@ -555,7 +555,7 @@ func TestHandleInputEvent_SettingsOpen(t *testing.T) {
 	if len(cmds) != 0 {
 		t.Fatalf("expected 0 cmds, got %d", len(cmds))
 	}
-	if app.Mode != ModeSettings {
+	if !app.overlayState.Is(ModeSettings) {
 		t.Fatal("expected ModeSettings after SettingsOpenEvent")
 	}
 }
@@ -597,11 +597,17 @@ func newTestApp(t *testing.T) *App {
 	th := theme.DefaultDark()
 
 	app := &App{
-		theme:     th,
-		Mode:      ModeChat,
-		agentMgr:  NewAgentManager(),
-		paneMgr:   NewPaneManager(),
-		startTime: time.Now(),
+		Workspace: &Workspace{
+			theme:        th,
+			overlayState: NewOverlayState(),
+			agentMgr:     NewAgentManager(),
+			paneMgr:      NewPaneManager(),
+			tree:         NewTreeState(nil, nil, 30),
+			focusStack:   NewFocusStack(),
+			startTime:    time.Now(),
+			lspPopup:     NewLSPPopupState(),
+			editorState:  NewEditorState(),
+		},
 	}
 
 	app.win = window.New(th)
@@ -617,16 +623,22 @@ func newFullTestApp(t *testing.T) *App {
 	sb := widgets.NewStatusBar(th)
 
 	app := &App{
-		theme:     th,
-		Mode:      ModeChat,
-		width:     80,
-		height:    24,
-		agentMgr:  NewAgentManager(),
-		paneMgr:   NewPaneManager(),
-		startTime: time.Now(),
-		input:     im,
-		statusbar: sb,
-		spinFrame: 0,
+		Workspace: &Workspace{
+			theme:        th,
+			overlayState: NewOverlayState(),
+			agentMgr:     NewAgentManager(),
+			paneMgr:      NewPaneManager(),
+			tree:         NewTreeState(nil, nil, 30),
+			focusStack:   NewFocusStack(),
+			startTime:    time.Now(),
+			input:        im,
+			statusbar:    sb,
+			spinFrame:    0,
+			lspPopup:     NewLSPPopupState(),
+			editorState:  NewEditorState(),
+		},
+		width:  80,
+		height: 24,
 	}
 
 	app.win = window.New(th)

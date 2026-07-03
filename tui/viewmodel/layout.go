@@ -12,8 +12,8 @@ type LayoutInfo struct {
 
 func (m *App) computeLayout() LayoutInfo {
 	sidebarW := 0
-	if m.treeVisible && m.treeModel != nil && m.treeRenderer != nil {
-		sidebarW = m.treeWidth + 1
+	if m.tree.Visible && m.tree.Model != nil && m.tree.Renderer != nil {
+		sidebarW = m.tree.Width + 1
 	}
 
 	contentW := m.width - sidebarW

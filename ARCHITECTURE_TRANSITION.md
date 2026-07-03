@@ -1356,19 +1356,41 @@ each manager is one file, one concern, independently testable.
 
 ---
 
-## Phase Sequence Summary
+## Progress Update (July 2026)
 
-| Phase | What | Est | Depends on |
-|-------|------|-----|------------|
-| 1 | EventBus | 30m | nothing |
-| 2 | AgentManager | 2h | Phase 1 (uses EventBus for events) |
-| 3 | BufferManager | 3h | Phase 1 |
-| 4 | God Settings | 1.5h | Phase 1 |
-| 5 | Clean Orchestrator Settings | 2h | Phase 4 (God Settings must exist before stripping overlay) |
-| 6 | FocusStack | 1h | Phase 2 (uses agentMgr in focusTarget) |
-| 7 | Workspace extraction | 2h | Phases 1-6 |
+| Phase | What | Est | Status | Notes |
+|-------|------|-----|--------|-------|
+| 1 | EventBus | 30m | ✅ DONE | Ring-buffer event log for LSP + file watcher |
+| — | **OverlayState** | — | ✅ DONE | Extracted Mode/blocking/yolo/blockedSessionID/settingsCategory into struct with accessors. Not in original plan — discovered during work. |
+| — | **TreeState** | — | ✅ DONE | Grouped 8 file tree fields (treeModel→YOffset) into struct. Not in original plan. |
+| — | **EditorState** | — | ✅ DONE | Grouped activeEditorView/editor/editorTabs into struct (180 ref sites). Not in original plan. |
+| — | **LSPPopupState** | — | ✅ DONE | Grouped 10 LSP popup fields (outline/references/completion). Not in original plan. |
+| 2 | AgentManager | 2h | ✅ DONE | Collapsed 9 parallel agent maps into AgentManager tree |
+| 6 | FocusStack | 1h | ✅ DONE | Replaced treeFocused/tabBarFocused booleans with FocusStack |
+| 7 | Workspace extraction | 2h | ✅ DONE | App struct shrunk from ~150 to 27 lines. All state in embedded `*Workspace`. All managers + widgets + callbacks under Workspace. Go embedding promotes fields so no `m.ws.` prefix needed. |
+| 3 | BufferManager | 3h | ⏳ NEXT | Separate PieceTable (data) from Editor (view). Enable shared buffers, scratch buffers, per-buffer settings. |
+| 4 | God Settings | 1.5h | ❌ | Floating all-mighty settings panel (Ctrl+,). Zed/JetBrains style. |
+| 5 | Clean Orchestrator Settings | 2h | ❌ | Strip app-level stuff from overlay settings. Keep only per-orchestrator config. Requires Phase 4. |
 
-Total: ~12 hours of focused work.
+## What remains after Workspace extraction
+
+### Phase 3: BufferManager — separate data from view
+
+**Goal:** The `PieceTable` (text + file path) becomes a shareable `Buffer`. The `Editor` becomes a view into a buffer (cursor, scroll, selection, undo). Enables scratch buffers, diff views, split views, and per-buffer settings.
+
+**New file:** `tui/editor/buffer_manager.go`
+
+**Key change:** `Editor.buf *PieceTable` → `Editor.buffer *Buffer`. `Buffer` owns the PieceTable, file path, dirty flag, and diagnostics. Multiple Editors can share one Buffer.
+
+**Estimated: 3h**
+
+### Phase 4: God Settings
+
+Floating window that configures the entire app: providers, profiles, agent system, theme, editor, LSP, UI, font. Uses Ctrl+, to open. Reuses existing `settings.Model` forms.
+
+### Phase 5: Clean Orchestrator Settings
+
+Strip theme/editor/LSP/UI/font pages from the overlay settings. Keep only per-orchestrator config (provider, model, thinking, policy, max steps). Those pages now live in God Settings only.
 
 ## After the transition
 
