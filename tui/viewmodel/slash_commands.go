@@ -12,8 +12,8 @@ import (
 )
 
 func (m *App) executeSlashCommand(cmd string) tea.Cmd {
-	if m.logger != nil {
-		m.logger.Info("INPUT", "slash_command", "cmd", cmd)
+	if m.Logger != nil {
+		m.Logger.Info("INPUT", "slash_command", "cmd", cmd)
 	}
 
 	parts := strings.Fields(cmd)
@@ -26,48 +26,48 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 
 	switch cmdName {
 	case "/settings":
-		m.logger.Info("INPUT", "slash", "command", "settings")
-		m.settings.SaveSnapshot()
+		m.Logger.Info("INPUT", "slash", "command", "settings")
+		m.Settings.SaveSnapshot()
 		// If viewing a sub-agent, open settings for that agent's category
-		if n := m.agentMgr.ActiveNode(); n != nil && n.Category != "" {
-			m.overlayState.SetSettingsCategory(n.Category)
+		if n := m.AgentMgr.ActiveNode(); n != nil && n.Category != "" {
+			m.OverlayState.SetSettingsCategory(n.Category)
 			m.setMode(ModeSettings)
-			m.settings.OpenCategory(n.Category)
+			m.Settings.OpenCategory(n.Category)
 			break
 		}
-		m.overlayState.SetSettingsCategory("")
+		m.OverlayState.SetSettingsCategory("")
 		m.setMode(ModeSettings)
 	case "/provider":
-		m.logger.Info("INPUT", "slash", "command", "provider")
-		m.settings.SaveSnapshot()
-		m.overlayState.SetSettingsCategory("main")
+		m.Logger.Info("INPUT", "slash", "command", "provider")
+		m.Settings.SaveSnapshot()
+		m.OverlayState.SetSettingsCategory("main")
 		m.setMode(ModeSettings)
-		m.settings.OpenDefaultProfileEdit()
+		m.Settings.OpenDefaultProfileEdit()
 	case "/api-key":
-		m.logger.Info("INPUT", "slash", "command", "api-key")
-		m.settings.SaveSnapshot()
-		m.overlayState.SetSettingsCategory("main")
+		m.Logger.Info("INPUT", "slash", "command", "api-key")
+		m.Settings.SaveSnapshot()
+		m.OverlayState.SetSettingsCategory("main")
 		m.setMode(ModeSettings)
-		m.settings.OpenDefaultProfileEdit()
+		m.Settings.OpenDefaultProfileEdit()
 	case "/sessions":
-		m.logger.Info("INPUT", "slash", "command", "sessions")
+		m.Logger.Info("INPUT", "slash", "command", "sessions")
 		if m.anyActive() {
-			m.statusbar.SetError("Cannot switch sessions while agent is running — press ctrl+c to cancel first")
+			m.StatusBar.SetError("Cannot switch sessions while agent is running — press ctrl+c to cancel first")
 			return nil
 		}
-		if m.onListSessions != nil {
-			sessions := m.onListSessions()
+		if m.OnListSessions != nil {
+			sessions := m.OnListSessions()
 			if len(sessions) > 0 {
 				m.launcher = NewLauncherState(sessions)
-				m.lastInteractionTime = time.Now()
+				m.LastInteractionTime = time.Now()
 			} else {
-				m.statusbar.SetInfo("No past sessions found")
+				m.StatusBar.SetInfo("No past sessions found")
 			}
 		} else {
-			m.statusbar.SetError("Session browser not available")
+			m.StatusBar.SetError("Session browser not available")
 		}
 	case "/help":
-		m.logger.Info("INPUT", "slash", "command", "help")
+		m.Logger.Info("INPUT", "slash", "command", "help")
 		var b strings.Builder
 		b.WriteString("Available commands:\n")
 		for _, c := range input.AvailableCmds() {
@@ -77,29 +77,29 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 	case "/yolo":
-		if m.overlayState.IsYolo() {
-			m.overlayState.SetYolo(false)
+		if m.OverlayState.IsYolo() {
+			m.OverlayState.SetYolo(false)
 			if ml := m.activeMsgList(); ml != nil {
 				ml.ScrollToBottom()
 			}
-			m.statusbar.SetInfo("YOLO mode disabled. Safety checks restored.")
-			m.logger.Info("SAFETY", "yolo_disabled", "source", "slash")
+			m.StatusBar.SetInfo("YOLO mode disabled. Safety checks restored.")
+			m.Logger.Info("SAFETY", "yolo_disabled", "source", "slash")
 			if m.OnYoloCmd != nil {
 				go m.OnYoloCmd(false)
 			}
 		} else {
-			m.yoloDlg.Reset()
+			m.ActiveSession.YoloDlg.Reset()
 			m.setMode(ModeYolo)
-			m.logger.Info("SAFETY", "yolo_prompt", "source", "slash")
+			m.Logger.Info("SAFETY", "yolo_prompt", "source", "slash")
 		}
 	case "/undo", "/undo-n", "/undo-all", "/changes":
-		m.logger.Info("INPUT", "slash", "command", cmd)
+		m.Logger.Info("INPUT", "slash", "command", cmd)
 		if m.OnUndoCmd != nil {
 			go m.OnUndoCmd(cmd)
 		}
 	default:
-		m.logger.Warn("INPUT", "slash_unknown", "cmd", cmdName)
-		m.statusbar.SetError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))
+		m.Logger.Warn("INPUT", "slash_unknown", "cmd", cmdName)
+		m.StatusBar.SetError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))
 	}
 
 	if len(cmds) > 0 {

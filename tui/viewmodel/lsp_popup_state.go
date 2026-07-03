@@ -1,22 +1,9 @@
 package viewmodel
 
-import (
-	"crude/tui/editor"
-)
+import "crude/tui/workspace"
 
-type LSPPopupState struct {
-	RenameArmed       bool
-	OutlineOpen       bool
-	OutlineRows       []outlineRow
-	OutlineCursor     int
-	ReferencesID      string
-	RefRows           []refRow
-	RefCursor         int
-	CompletionID      string
-	CompletionItems   []editor.CompletionItem
-	CompletionCursor  int
-}
+type LSPPopupState = workspace.LSPPopupState
 
 func NewLSPPopupState() *LSPPopupState {
-	return &LSPPopupState{}
+	return workspace.NewLSPPopupState()
 }

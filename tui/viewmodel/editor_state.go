@@ -1,18 +1,9 @@
 package viewmodel
 
-import (
-	"crude/tui/editor"
-)
+import "crude/tui/workspace"
 
-type EditorState struct {
-	ActiveView       string
-	Editor           *editor.Editor
-	Tabs             map[string]*EditorTab
-	TabSnapshotCache string
-}
+type EditorState = workspace.EditorState
 
 func NewEditorState() *EditorState {
-	return &EditorState{
-		Tabs: make(map[string]*EditorTab),
-	}
+	return workspace.NewEditorState()
 }

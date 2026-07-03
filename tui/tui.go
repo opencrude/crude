@@ -99,12 +99,12 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 	a := viewmodel.NewApp(modelName, username, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions, sessionID, sessionDir, db)
 	a.SetProviderPresets(t.ProviderPresets)
 	a.SetHistory(history)
-	a.OnConfirmResult = func(result ConfirmResult) {
+	a.ActiveSession.OnConfirmResult = func(result ConfirmResult) {
 		if t.OnConfirmResult != nil {
 			t.OnConfirmResult(result)
 		}
 	}
-	a.OnQuestionResult = func(result types.QuestionResult) {
+	a.ActiveSession.OnQuestionResult = func(result types.QuestionResult) {
 		if t.OnQuestionResult != nil {
 			t.OnQuestionResult(result)
 		}
@@ -130,7 +130,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 		}
 		return nil
 	}
-	a.OnCancelSubAgent = func(agentID string) {
+	a.ActiveSession.OnCancelSubAgent = func(agentID string) {
 		if t.OnCancelSubAgent != nil {
 			t.OnCancelSubAgent(agentID)
 		}
@@ -140,7 +140,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 			t.OnHardCancel()
 		}
 	}
-	a.OnOrchestratorReset = func(orchID string) {
+	a.ActiveSession.OnOrchestratorReset = func(orchID string) {
 		if t.OnOrchestratorReset != nil {
 			t.OnOrchestratorReset(orchID)
 		}

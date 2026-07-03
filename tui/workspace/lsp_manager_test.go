@@ -1,4 +1,4 @@
-package viewmodel
+package workspace
 
 import (
 	"context"
