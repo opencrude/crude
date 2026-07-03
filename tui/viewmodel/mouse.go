@@ -28,6 +28,7 @@ const (
 	regionInput
 	regionChat
 	regionStatusBar
+	regionLauncher
 	regionNone
 )
 
@@ -79,6 +80,21 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.chatAreaHeight {
 			return regionEditor
 		}
+	}
+
+	// Launcher screen: no agents, no editor, but a launcher is active.
+	// The launcher fills the main content area (same Y range as the
+	// editor/chat area). Clicks OUTSIDE this Y range (e.g. on the
+	// input bar at the bottom) fall through to the input/chat
+	// regions below — the launcher must NOT steal those clicks.
+	// The file tree (sidebar) is already handled above (regionSidebar
+	// check), so the launcher never interferes with it.
+	if len(m.agents) == 0 && m.activeEditorView == "" && m.launcher != nil {
+		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.chatAreaHeight {
+			return regionLauncher
+		}
+		// Fall through: clicks below the chat area go to the input
+		// region (so the user can still type / to filter).
 	}
 
 	if len(m.agents) == 0 && m.activeEditorView == "" {
@@ -321,6 +337,16 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		// display, not an interactive region). Right-click goes
 		// through dispatchMouseRightClick instead.
 		return m, nil
+
+	case regionLauncher:
+		// Launcher click: hit-test the screen Y to find the rendered
+		// line, then translate that to a flat item index. Single-click
+		// selects the item; double-click activates it. We use the
+		// standard "click to select" UX, then the user can press Enter
+		// or click again to activate. (Single-click activating is too
+		// aggressive — a misclick on the New Session box would lose
+		// any in-flight context.)
+		return m.handleLauncherClick(mouse.X, mouse.Y)
 	}
 
 	if m.treeFocused && mouse.X >= m.treeWidth {
@@ -410,6 +436,28 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 		m.confirm = updated
 		if done {
 			return m.handleConfirmResult(result)
+		}
+	}
+
+	// Settings overlay: clicks on form items focus that item.
+	// TextItems additionally enter edit mode (so the user can
+	// start typing). Non-TextItems (Select/Cycle/Nav) just focus.
+	// This is the fix for "click on a settings field does nothing".
+	if activeTab != nil && activeTab.Title == "Settings" {
+		form := m.settings.Form()
+		if form == nil {
+			return m, nil
+		}
+		contentY := mouse.Y - contentStartLine
+		hit := form.HitTest(contentY)
+		if hit.ItemIndex >= 0 {
+			form.FocusItem(hit.ItemIndex)
+			// If the focused item is a TextItem, click → edit mode.
+			if ti := form.FocusedTextItem(); ti != nil {
+				ti.StartEditing()
+			}
+			m.dirty = true
+			return m, nil
 		}
 	}
 
@@ -562,6 +610,36 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Launcher: when the launcher screen is active (no agents, no
+	// editor), route motion directly to the launcher hover handler
+	// and return. This is a critical performance fix: without this
+	// early return, every mouse-motion event over the launcher
+	// would fall through to the tree-hover-clear, tab-bar-hover-
+	// clear, clearDiagHoverPopup, and routeChatMouse paths — each
+	// of which does non-trivial work on every pixel of mouse
+	// movement.
+	//
+	// Before returning, clear tree and tab-bar hover state so the
+	// stale highlight doesn't persist when the mouse leaves those
+	// areas for the launcher.
+	if m.launcher != nil && len(m.agents) == 0 && m.activeEditorView == "" {
+		// Mouse is over the file tree — route there instead.
+		if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
+			cmd := m.routeSidebarMouse(msg)
+			return m, cmd
+		}
+		// Clear tree hover (mouse left the tree area).
+		if m.treeModel != nil && m.treeModel.Hover.Clear() {
+			m.dirty = true
+		}
+		// Clear tab bar hover (mouse left the tab row).
+		if m.win.Hover.Clear() {
+			m.dirty = true
+		}
+		m.handleLauncherHover(mouse.X, mouse.Y)
+		return m, tea.Batch(cmds...)
+	}
+
 	if m.treeVisible && m.treeModel != nil && mouse.X < m.treeWidth {
 		if mouse.X == m.treeWidth-1 {
 			cmd := m.routeTreeScrollbarMsg(msg)
@@ -577,6 +655,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// every GUI tree view: hover is "live" and tied to mouse position.
 	if m.treeModel != nil && m.treeModel.Hover.Clear() {
 		m.dirty = true
+		m.contentDirty = true // tree is part of the main view
 	}
 
 	// Tab bar hover: update the hover state when the mouse moves over
@@ -595,6 +674,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		if hit.TabIndex >= 0 {
 			if m.win.Hover.Set(hit.TabIndex) {
 				m.dirty = true
+				m.contentDirty = true // tab bar is part of the main view
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -603,6 +683,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// Mouse is outside the tab bar — clear the hover state.
 	if m.win.Hover.Clear() {
 		m.dirty = true
+		m.contentDirty = true // tab bar is part of the main view
 	}
 
 	// Overlay hover: forward mouse motion to the active overlay's
@@ -643,10 +724,20 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.activeEditorView != "" && m.editor.IsOpen() {
-		region := m.classifyMouse(mouse.X, mouse.Y, false)
-		if region == regionEditor {
+		// Cheap Y-bounds check instead of full classifyMouse:
+		// classifyMouse checks WM, sidebar, tab bar, overlay, editor,
+		// launcher, input, and chat — but all those except "editor
+		// vs chat" have already been handled above (tree, tabs,
+		// overlay, etc.). We only need to know: is the mouse in
+		// the editor's Y range?
+		layout := m.computeLayout()
+		if mouse.Y >= layout.ChatAreaTop && mouse.Y < layout.ChatAreaTop+m.chatAreaHeight && mouse.X >= layout.SidebarW {
 			cmd := m.routeEditorMouse(msg)
+			// updateDiagHoverPopup re-checks the editor's hover
+			// state; it returns immediately if nothing changed.
 			m.updateDiagHoverPopup(mouse.X, mouse.Y)
+			m.dirty = true
+			m.contentDirty = true
 			if cmd != nil {
 				return m, cmd
 			}
@@ -664,9 +755,13 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+			m.dirty = true
+			m.contentDirty = true
 			return m, tea.Batch(cmds...)
 		}
 		cmds = append(cmds, m.routeChatMouse(msg, mouse, false)...)
+		m.dirty = true
+		m.contentDirty = true
 		return m, tea.Batch(cmds...)
 	}
 
@@ -721,6 +816,14 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 
 	case regionInput:
 		cmds = append(cmds, m.routeInputMouse(msg)...)
+		return m, tea.Batch(cmds...)
+
+	case regionLauncher:
+		// Launcher hover: pre-select the item under the cursor so
+		// the user can click to confirm. (Single-click already
+		// selects via handleLauncherClick; this gives a "click-to-
+		// select, click-again-to-activate" UX with hover preview.)
+		m.handleLauncherHover(mouse.X, mouse.Y)
 		return m, tea.Batch(cmds...)
 
 	case regionChat:

@@ -411,9 +411,48 @@ func TestClassifyMouse_NoAgents_NoEditor(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
+	// With no launcher (e.g. during the very first frame before the
+	// launcher is created), classifyMouse falls through to regionInput
+	// — same as the old behavior, so we don't regress.
 	region := app.classifyMouse(10, 10, false)
 	if region != regionInput {
-		t.Fatalf("expected regionInput with no agents, got %v", region)
+		t.Fatalf("expected regionInput with no agents and no launcher, got %v", region)
+	}
+}
+
+// TestClassifyMouse_NoAgents_NoEditor_WithLauncher verifies the new
+// behavior: when the launcher is on-screen, clicks in the main area
+// are classified as regionLauncher (not regionInput). This is the
+// fix for "click on New Session doesn't work".
+func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width = 80
+	app.height = 24
+	app.chatAreaHeight = 17
+	app.launcher = NewLauncherState(nil)
+
+	region := app.classifyMouse(10, 10, false)
+	if region != regionLauncher {
+		t.Fatalf("expected regionLauncher with launcher present, got %v", region)
+	}
+}
+
+// TestLauncherState_HitTest exercises the launcher's hit-test for
+// the New Session entry. Line 0 = top border, line 1 = content
+// (clickable), line 2 = bottom border, line 3+ = transition/sessions.
+func TestLauncherState_HitTest(t *testing.T) {
+	st := NewLauncherState(nil)
+	// New Session box = 4 lines (top border, 2 content, bottom border).
+	// ALL FOUR lines are clickable (item 0) — the whole bordered box
+	// is one button.
+	for line := 0; line <= 3; line++ {
+		if got := st.HitTest(line); got != 0 {
+			t.Errorf("line %d should map to item 0, got %d", line, got)
+		}
+	}
+	// Out of range.
+	if got := st.HitTest(100); got != -1 {
+		t.Errorf("line 100 (out of range) should not be clickable, got %d", got)
 	}
 }
 

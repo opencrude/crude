@@ -427,3 +427,36 @@ func TestQuestionForm_ExitTextMode(t *testing.T) {
 		t.Error("expected textMode[2]=false after ExitTextMode")
 	}
 }
+
+// TestQuestionForm_TextMode_AcceptsKeystrokes verifies the fix for
+// the "Type your own answer" bug. Previously, when textMode[i]=true
+// the Update handler early-returned before doing anything, so
+// keystrokes were silently dropped. Now the per-question TextInput
+// receives the keys and the answer is captured on Enter.
+func TestQuestionForm_TextMode_AcceptsKeystrokes(t *testing.T) {
+	th := testTheme()
+	f := NewQuestionForm(th)
+	// Reset with a question that has no options (forces textMode[0]=true).
+	f.Reset(`[{"question":"What's your name?","header":"Name"}]`)
+	if !f.textMode[0] {
+		t.Fatal("expected textMode[0]=true for option-less question")
+	}
+	// Type characters one at a time. The TextInput reads msg.Text
+	// for character insertion (not msg.Code), so we put the rune
+	// in the Text field.
+	for _, r := range "Alice" {
+		f, _, _ = f.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	// Sanity check: the per-question input should now contain "Alice".
+	if got := f.textInputs[0].Value(); got != "Alice" {
+		t.Fatalf("expected input value 'Alice', got %q", got)
+	}
+	// Enter the question to confirm.
+	f, result, done := f.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !done {
+		t.Fatal("expected done=true after Enter on text-mode question")
+	}
+	if result.Answers["1"] != "Alice" {
+		t.Errorf("expected answer 'Alice', got %q", result.Answers["1"])
+	}
+}

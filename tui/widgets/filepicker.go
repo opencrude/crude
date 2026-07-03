@@ -16,6 +16,9 @@ import (
 	"crude/tui/widget"
 )
 
+// FilePickerAction is returned by Update to tell the caller what
+// the user did. The popup dispatcher uses this to route the result
+// (Select → file chosen, Cancel → close).
 type FilePickerAction int
 
 const (
@@ -23,6 +26,60 @@ const (
 	FilePickerSelect
 	FilePickerCancel
 )
+
+// FilePickerHitTest returns the index of the entry under the given
+// popup-local (X, Y), or -1 if the click missed an entry (e.g. on
+// the path/filter header lines, the scrollbar, or below the entry
+// list). Used by the popup mouse dispatcher to wire up click-on-
+// entry, matching the file tree's "click selects" behavior.
+//
+// The popup renders these lines in order:
+//   localY 0: top border (handled by chrome)
+//   localY 1: current path
+//   localY 2: filter row ("/ ...")
+//   localY 3..3+entryPageSize-1: entry rows
+//   localY last: hint line
+func (m FilePicker) HitTest(localX, localY int) int {
+	if !m.active {
+		return -1
+	}
+	// Subtract the chrome's top border (1 line).
+	contentY := localY - 1
+	// Path is contentY=0, filter is contentY=1, entries start at
+	// contentY=2 (popup localY=3).
+	if contentY < 2 {
+		return -1
+	}
+	entryRow := contentY - 2
+	entries := m.visibleEntries()
+	entryPageSize := m.lastEntryPageSize
+	if entryPageSize < 1 {
+		entryPageSize = 1
+	}
+	if entryRow >= entryPageSize {
+		return -1
+	}
+	start := 0
+	if m.selected >= entryPageSize {
+		start = m.selected - entryPageSize + 1
+	}
+	idx := start + entryRow
+	if idx < 0 || idx >= len(entries) {
+		return -1
+	}
+	// Skip the click if it's on the scrollbar column. The scrollbar
+	// takes the rightmost scrollbar.ScrollbarWidth cells of the
+	// content area. We use a conservative default for the popup
+	// width because the popup size isn't passed to HitTest.
+	sbW := 0
+	if m.scrollbar.IsVisible() && len(entries) > entryPageSize {
+		sbW = scrollbar.ScrollbarWidth
+	}
+	if sbW > 0 && localX >= 50-sbW {
+		return -1
+	}
+	return idx
+}
 
 type FilePicker struct {
 	th                  *theme.Theme
@@ -138,6 +195,30 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 		}
 
 	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		// Handle entry clicks: if the user clicks on an entry row,
+		// select it. A second click on the same row (or Enter)
+		// activates it via the keyboard path. This matches the
+		// file tree's "click selects" UX.
+		if clickMsg, ok := msg.(tea.MouseClickMsg); ok {
+			mouse := clickMsg.Mouse()
+			if clickMsg.Button == tea.MouseLeft {
+				idx := m.HitTest(mouse.X, mouse.Y)
+				if idx >= 0 {
+					m.selected = idx
+					// Update scrollbar to follow the new selection.
+					entries := m.visibleEntries()
+					entryPageSize := m.scrollPageSize()
+					if entryPageSize < 1 {
+						entryPageSize = 1
+					}
+					scrollStart := 0
+					if m.selected >= entryPageSize {
+						scrollStart = m.selected - entryPageSize + 1
+					}
+					cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
+				}
+			}
+		}
 		// Forward mouse events to the scrollbar for thumb dragging.
 		// Translate mouse Y from screen-absolute to track-relative
 		// coordinates, since the scrollbar expects Y relative to the

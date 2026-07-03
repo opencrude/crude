@@ -361,6 +361,8 @@ func (m Form) Hint() string {
 	return h
 }
 
+// IsEditing returns true if the currently focused item is a TextItem
+// in edit mode.
 func (m Form) IsEditing() bool {
 	if m.focusZone != 0 {
 		return false
@@ -371,6 +373,66 @@ func (m Form) IsEditing() bool {
 	return false
 }
 
+// FormLayout is the result of a HitTest on a Form's rendered output.
+// It tells the dispatcher which item (if any) the user clicked, and
+// whether the click landed on the button row instead of an item.
+type FormLayout struct {
+	// ItemIndex is the index of the clicked item, or -1 if the click
+	// landed on a non-item line (title, separator, button row, or
+	// out of range).
+	ItemIndex int
+	// InButtonRow is true when the click landed on the button row.
+	// In that case, the caller should hit-test X to find the
+	// specific button (FocusedBtn is left at -1 by HitTest).
+	InButtonRow bool
+	// FocusedBtn is set to the button index for a button-row click
+	// when X-based hit-test resolves the ambiguity. HitTest itself
+	// leaves this at -1; the dispatcher fills it in.
+	FocusedBtn int
+}
+
+// HitTest maps a rendered-line index (0-based, within the form's
+// rendered output) to either an item index, a button-row hit, or
+// neither. Used by the mouse dispatcher to wire click-on-form-field
+// to focus + (for TextItem) edit mode.
+//
+// Layout reminder (from form.View):
+//   Line 0: empty (the leading "\n")
+//   Line 1: title
+//   Line 2: separator
+//   Line 3..3+N-1: items, one per line
+//   Optional blank line + button row (when hasButtons)
+func (m Form) HitTest(renderedLine int) FormLayout {
+	// Items start at line 3.
+	if renderedLine >= 3 && renderedLine < 3+len(m.items) {
+		return FormLayout{ItemIndex: renderedLine - 3, FocusedBtn: -1}
+	}
+	// Button row: optional blank line at 3+N, then buttons at 3+N+1.
+	if m.hasButtons {
+		buttonRow := 3 + len(m.items) + 1
+		if renderedLine == buttonRow {
+			// We don't have per-button Y info — the caller will
+			// further hit-test the X coordinate. Return the row
+			// indicator with FocusedBtn=-1 to signal "use X-test".
+			return FormLayout{ItemIndex: -1, InButtonRow: true, FocusedBtn: -1}
+		}
+	}
+	return FormLayout{ItemIndex: -1, FocusedBtn: -1}
+}
+
+// FocusItem sets the focus to the given item index. Used by the
+// mouse dispatcher when the user clicks a form field. Also moves
+// focus to the items zone (not the button row).
+func (m *Form) FocusItem(idx int) {
+	if idx >= 0 && idx < len(m.items) {
+		m.focused = idx
+		m.focusZone = 0
+		m.expanded = -1
+	}
+}
+
+// FocusedItem returns the currently focused item index, or -1 if
+// focus is on the button row. Used by tests and the dispatcher.
 func (m Form) FocusedItem() int {
 	if m.focusZone == 0 {
 		return m.focused
@@ -378,12 +440,18 @@ func (m Form) FocusedItem() int {
 	return -1
 }
 
-func (m *Form) FocusItem(idx int) {
-	if idx >= 0 && idx < len(m.items) {
-		m.focused = idx
-		m.focusZone = 0
-		m.expanded = -1
+// FocusedTextItem returns the focused item as a *TextItem (with
+// edit-mode helpers) if it is one, or nil otherwise. Used by the
+// mouse dispatcher to put a TextItem into edit mode on click.
+// Caller must not mutate; the returned pointer is into m.items.
+func (m Form) FocusedTextItem() *TextItem {
+	if m.focusZone != 0 || m.focused < 0 || m.focused >= len(m.items) {
+		return nil
 	}
+	if ti, ok := m.items[m.focused].(*TextItem); ok {
+		return ti
+	}
+	return nil
 }
 
 func (m Form) ExpandedIndex() int {

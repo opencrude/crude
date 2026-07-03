@@ -130,3 +130,76 @@ func ConfirmPrompt(th *theme.Theme, title, question, detail string, severity Con
 	}
 	return PopupChromeLines(th, cfg, lines)
 }
+
+// ConfirmPrompt3Button builds a 3-button confirm dialog: Save | Don't Save | Cancel.
+// Used for the dirty-close prompt so the user can save-and-close in a single
+// action (matches VSCode/JetBrains behavior).
+//
+//	buttons[0] = "Save" (saves the file then closes the tab)
+//	buttons[1] = "Don't Save" (discards unsaved changes, closes the tab)
+//	buttons[2] = "Cancel" (dismisses the popup, leaves the tab open)
+//
+// focusedIndex is 0/1/2.
+func ConfirmPrompt3Button(th *theme.Theme, title, question, detail string, severity ConfirmPromptSeverity, focusedIndex, width int) []string {
+	if width < 50 {
+		width = 50
+	}
+	if width > 78 {
+		width = 78
+	}
+	innerW := width - 6
+
+	mutedStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted).Background(th.Colors.PopupBg)
+	fgStyle := lipgloss.NewStyle().Foreground(th.Colors.Fg).Background(th.Colors.PopupBg)
+	accentColor := severity.accent(th)
+	accentStyle := lipgloss.NewStyle().Foreground(accentColor).Background(th.Colors.PopupBg).Bold(true)
+
+	var lines []string
+
+	// Question row.
+	q := padVisibleToWidth(
+		accentStyle.Render(severity.icon()+" ")+fgStyle.Render(question),
+		innerW)
+	lines = append(lines, q)
+
+	// Detail body.
+	if detail != "" {
+		lines = append(lines, PopupEmptyLine(th))
+		for _, l := range strings.Split(detail, "\n") {
+			if l == "" {
+				lines = append(lines, PopupEmptyLine(th))
+			} else {
+				lines = append(lines, padVisibleToWidth(mutedStyle.Render(l), innerW))
+			}
+		}
+		lines = append(lines, PopupEmptyLine(th))
+	}
+
+	// Spacer.
+	lines = append(lines, PopupEmptyLine(th))
+
+	// 3-button row: Save | Don't Save | Cancel.
+	buttons := []PopupButtonSpec{
+		{Label: "Save", Focused: focusedIndex == 0},
+		{Label: "Don't Save", Focused: focusedIndex == 1},
+		{Label: "Cancel", Focused: focusedIndex == 2},
+	}
+	lines = append(lines, padVisibleToWidth(PopupButtonRow(th, buttons), innerW))
+
+	// Hint row.
+	lines = append(lines, padVisibleToWidth(
+		PopupHintLine(th, []HintSegment{
+			{Key: "← →", Desc: "switch"},
+			{Key: "enter", Desc: "confirm"},
+			{Key: "esc", Desc: "cancel"},
+		}),
+		innerW))
+
+	cfg := PopupChromeConfig{
+		Title:       title,
+		Width:       width,
+		Focused:     true,
+		TitleAccent: severity.accent(th),
+	}
+	return PopupChromeLines(th, cfg, lines)
+}

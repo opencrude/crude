@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"crude/sessiondb"
+	"crude/tui/widgets"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -18,12 +19,18 @@ type LauncherState struct {
 	filterText   string
 	filtered     []int // indices into sessions matching the filter
 	scrollOffset int
+	// lastClickIndex tracks the most recently clicked item, so a
+	// second click on the same item activates it (the "double-click"
+	// UX in terminals that don't emit a double-click message). -1
+	// means "no recent click" (e.g. just opened, or just activated).
+	lastClickIndex int
 }
 
 func NewLauncherState(sessions []sessiondb.SessionMeta) *LauncherState {
 	return &LauncherState{
-		sessions: sessions,
-		selected: 0,
+		sessions:       sessions,
+		selected:       0,
+		lastClickIndex: -1,
 	}
 }
 
@@ -157,7 +164,89 @@ func (l *LauncherState) deleteSelected() string {
 	return sessionID
 }
 
-// handleLauncherKey processes key events when the launcher widget has focus.
+// HitTest maps a rendered line index (0-based, within the launcher's
+// rendered output) to a flat item index. Returns -1 if the line is
+// not on a selectable item (e.g. a date separator, blank line, or
+// out of range).
+//
+// The rendered layout is:
+//   - New Session box: RenderNewSessionEntry (4 lines: top border,
+//     2 content lines, bottom border). ALL 4 lines map to item 0 —
+//     the whole bordered box is one clickable button.
+//   - If sessions exist: 1 transition line + 1 blank line (not clickable).
+//   - For each group: 1 date separator (not clickable) + N session lines
+//     (each clickable, flat indices 1..N).
+//
+// Performance: the common case (mouse over the New Session box,
+// lines 0-3) returns immediately without building date groups. Group
+// building is deferred to the session-row path only. This keeps the
+// hover handler cheap even when called on every mouse-motion event.
+func (l *LauncherState) HitTest(renderedLine int) int {
+	if l == nil {
+		return -1
+	}
+	// New Session box = 4 lines (0..3). ALL 4 lines are clickable
+	// — the whole bordered box is one button. This is the fast
+	// path: no group building needed.
+	if renderedLine >= 0 && renderedLine <= 3 {
+		return 0
+	}
+	if renderedLine < 4 {
+		return -1
+	}
+	visible := l.visibleSessions()
+	if len(visible) == 0 {
+		// After the box: 1 blank line + 1 "No past sessions" message.
+		return -1
+	}
+	// Transition line (line 4) + blank line (line 5), both non-clickable.
+	if renderedLine <= 5 {
+		return -1
+	}
+	// Session rows start at line 6. Build groups to find which
+	// session the click landed on. This is the slow path, but it
+	// only runs when the mouse is actually over a session row.
+	idx := 6
+	groups := widgets.BuildLauncherGroups(visible)
+	for _, g := range groups {
+		if renderedLine == idx {
+			return -1 // date separator
+		}
+		idx++
+		for si := range g.Sessions {
+			if renderedLine == idx {
+				return 1 + si
+			}
+			idx++
+		}
+	}
+	return -1
+}
+
+// totalRenderedLines returns the number of lines the launcher's
+// render function will produce. Useful for sanity-checking the
+// view-height and for clamping scroll offsets.
+func (l *LauncherState) totalRenderedLines() int {
+	if l == nil {
+		return 0
+	}
+	// New Session box: 3 lines.
+	n := 3
+	visible := l.visibleSessions()
+	if len(visible) > 0 {
+		// Transition + blank.
+		n += 2
+		// Groups: 1 date sep + N session lines.
+		groups := widgets.BuildLauncherGroups(visible)
+		for _, g := range groups {
+			n++ // date separator
+			n += len(g.Sessions)
+		}
+	} else {
+		n++ // "No past sessions found." line
+	}
+	return n
+}
 func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.lastInteractionTime = time.Now()
 	launcher := m.launcher
@@ -223,6 +312,79 @@ func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// handleLauncherClick translates a screen (X, Y) into a flat item
+// index in the launcher's list, and acts on it. Single-click selects
+// the item (matches the keyboard behavior — Up/Down moves the
+// selection, Enter activates it). The user can then press Enter or
+// click again to activate. We deliberately don't activate on
+// single-click to avoid misclicks silently starting a new session.
+//
+// Screen coordinates are translated to rendered-line index using the
+// same layout that widgets.RenderLauncher produces:
+//   - chatAreaTop is the first row of the main content area
+//   - chatAreaHeight is the height of that area
+//   - launcher.scrollOffset is the offset of the first visible line
+//     within the launcher's full rendered output
+func (m *App) handleLauncherClick(screenX, screenY int) (tea.Model, tea.Cmd) {
+	if m.launcher == nil {
+		return m, nil
+	}
+	layout := m.computeLayout()
+	// The launcher content area is the chat area when the launcher
+	// is the main view.
+	if screenY < layout.ChatAreaTop || screenY >= layout.ChatAreaTop+m.chatAreaHeight {
+		return m, nil
+	}
+	// Translate screen Y to the rendered-line index (0-based within
+	// the launcher's full render output).
+	visibleLine := screenY - layout.ChatAreaTop
+	renderedLine := visibleLine + m.launcher.scrollOffset
+	flatIdx := m.launcher.HitTest(renderedLine)
+	if flatIdx < 0 {
+		return m, nil
+	}
+	// Update the selection to the clicked item.
+	m.launcher.selected = flatIdx
+	// "Click again to activate" pattern: if the user clicks the same
+	// item twice in a row, treat it as a double-click and activate.
+	// This gives a double-click-equivalent UX in terminals that don't
+	// emit a double-click event.
+	if m.launcher.lastClickIndex == flatIdx {
+		m.launcher.lastClickIndex = -1
+		return m, m.launcherSelect()
+	}
+	m.launcher.lastClickIndex = flatIdx
+	m.dirty = true
+	m.contentDirty = true // launcher IS the main view
+	return m, nil
+}
+
+// handleLauncherHover translates a screen (X, Y) into a flat item
+// index and updates the launcher's selection for visual feedback.
+// No-op for the launcher since the render already shows the selected
+// item. (We could add hover highlighting in a follow-up; for now the
+// click-to-select UX matches the keyboard model.)
+func (m *App) handleLauncherHover(screenX, screenY int) {
+	if m.launcher == nil {
+		return
+	}
+	layout := m.computeLayout()
+	if screenY < layout.ChatAreaTop || screenY >= layout.ChatAreaTop+m.chatAreaHeight {
+		return
+	}
+	visibleLine := screenY - layout.ChatAreaTop
+	renderedLine := visibleLine + m.launcher.scrollOffset
+	flatIdx := m.launcher.HitTest(renderedLine)
+	if flatIdx < 0 {
+		return
+	}
+	if m.launcher.selected != flatIdx {
+		m.launcher.selected = flatIdx
+		m.dirty = true
+		m.contentDirty = true // launcher IS the main view
+	}
 }
 
 // launcherSelect handles enter key in the launcher.

@@ -35,7 +35,19 @@ type TextInput struct {
 	lastInputTime time.Time
 	frame         int
 	textWidth     int
-	atomicRanges []AtomicRange
+	atomicRanges  []AtomicRange
+	// multiLine controls Enter behavior. When true, Enter inserts
+	// a newline (use Alt+Enter to submit). When false (default for
+	// popups), Enter triggers OnSubmit if set, otherwise emits
+	// SubmitEvent as a tea.Cmd.
+	multiLine bool
+	// placeholder is shown in italic muted style when the buffer
+	// is empty. Used by popups to hint at the expected input.
+	placeholder string
+	// onSubmit is called when Enter is pressed in single-line mode.
+	// If nil, the Enter key falls through to the default SubmitEvent
+	// behavior (caller receives the event via the returned Cmd).
+	onSubmit func()
 }
 
 func NewTextInput(t *theme.Theme) TextInput {
@@ -54,11 +66,32 @@ func (m TextInput) Update(msg tea.Msg, disabled bool) (TextInput, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.Code {
 		case tea.KeyEnter:
-			if msg.Mod.Contains(tea.ModAlt) {
+			if m.multiLine {
+				// Multi-line mode: Enter always inserts newline.
+				// (In single-line mode, Alt+Enter would also work
+				// if multiLine is true, but the popups using
+				// TextInput are typically single-line.)
 				m.splitLineAt(m.curLine, m.curCol)
 				m.curLine++
 				m.curCol = 0
+				m.frame++
+				m.lastInputTime = time.Now()
+			} else if msg.Mod.Contains(tea.ModAlt) {
+				// Single-line mode + Alt+Enter → insert newline
+				// anyway (some popups want this).
+				m.splitLineAt(m.curLine, m.curCol)
+				m.curLine++
+				m.curCol = 0
+				m.frame++
+				m.lastInputTime = time.Now()
+			} else if m.onSubmit != nil {
+				// Single-line mode + onSubmit set → invoke callback
+				// synchronously and return nil (no SubmitEvent).
+				m.onSubmit()
+				m.lastInputTime = time.Now()
+				m.frame++
 			} else {
+				// Default: emit SubmitEvent for the caller to handle.
 				return m, func() tea.Msg {
 					return SubmitEvent{Text: m.Value()}
 				}
@@ -681,6 +714,9 @@ func (m TextInput) flatToLineCol(pos int) (line, col int) {
 }
 
 func (m TextInput) lineColToFlat(line, col int) int {
+	if len(m.buf) == 0 {
+		return 0
+	}
 	if line < 0 {
 		line = 0
 	}

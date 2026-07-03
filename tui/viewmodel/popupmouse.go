@@ -2,7 +2,10 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"github.com/mattn/go-runewidth"
 
+	"crude/tui/components"
+	"crude/tui/widgets"
 	"crude/tui/wm"
 )
 
@@ -277,6 +280,53 @@ func (m *App) hoverContextMenu(localX, localY int) {
 //   Row N: ╰──────────╯
 // =============================================================================
 
+// positionFindReplaceCursor translates a popup-local X coordinate
+// into a rune position within the given find/replace field, and
+// sets the input's cursor (and clears any selection). This gives
+// the user click-to-position-cursor on the find/replace input,
+// matching the chat input's behavior.
+//
+// The label parameter tells us the label prefix width (e.g. "Find: "
+// is 6 cells; "Replace: " is 9 cells). The chrome adds "│ " on the
+// left (2 cells of padding around the left border). We account for
+// both when translating local X to visible column within the value.
+func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, input *components.TextInput, localX int, label string) {
+	if fr == nil || input == nil {
+		return
+	}
+	// Chrome contributes: "│" border (1) + " " pad (1) + " " pad (1)
+	// = 3 cells on the left. Then "Label: " is rendered.
+	chromeW := 3
+	labelW := len(label) + 2 // "Label" + ": "
+	valueStartX := chromeW + labelW
+	if localX < valueStartX {
+		input.SetCursorFlat(0)
+	} else {
+		// Translate visible X to rune index in the value.
+		// localX is in the popup's local coordinates; we count
+		// from valueStartX into the value's visible-width position.
+		relX := localX - valueStartX
+		value := input.Value()
+		runes := []rune(value)
+		// Walk runes accumulating visible width until we exceed relX.
+		pos := 0
+		acc := 0
+		for i, r := range runes {
+			w := runewidth.RuneWidth(r)
+			if acc+w > relX {
+				pos = i
+				goto done
+			}
+			acc += w
+			pos = i + 1
+		}
+		pos = len(runes)
+	done:
+		input.SetCursorFlat(pos)
+	}
+	input.ClearSelection()
+}
+
 func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 	if m.findReplace == nil {
 		return nil
@@ -291,6 +341,7 @@ func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 	// Row 0: Find input field
 	if contentRow == 0 {
 		fr.FocusedField = 0
+		m.positionFindReplaceCursor(fr, fr.FindInput(), localX, "Find")
 		m.refreshFindReplacePopup()
 		return nil
 	}
@@ -300,6 +351,7 @@ func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 	if fr.ReplaceMode {
 		if contentRow == 1 {
 			fr.FocusedField = 1
+			m.positionFindReplaceCursor(fr, fr.ReplaceInput(), localX, "Replace")
 			m.refreshFindReplacePopup()
 			return nil
 		}
@@ -310,64 +362,28 @@ func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 	// "matches <N>/<M>" or "type to search" or "no results"
 	// Then "   " separator, then " Aa  \b  .* "
 	if contentRow == nextRow+1 {
-		// Toggles are at: Aa (cols ~25-29), \b (~30-34), .* (~35-39)
-		// We use the inner content X, which starts after the chrome's │ + pad
-		// (approx 3 cells). For undecorated, the chrome is rendered as part of
-		// the content, so localX=0 is the left │ character.
-		//
-		// The match status text varies in width. We estimate:
-		//   "matches 1/10" = 14 chars. "   " = 3. Total before toggles ≈ 17.
-		//   But we pad to innerW. The actual offset depends on innerW.
-		//
-		// Simple approach: the three toggles are roughly in the
-		// right third of the popup. The popup is ~50 cols wide.
-		// Toggle positions relative to left edge of padded content:
-		//   Aa: innerW-24 .. innerW-20 (varies by innerW)
-		//   \b: innerW-19 .. innerW-15
-		//   .*: innerW-14 .. innerW-10
-		// We'll use simpler area-based detection.
+		// Compute the toggle X positions from the actual popup width.
+		// The toggle group is right-aligned within the inner content
+		// (innerW = fw.w - 6). Toggle group width: " Aa  \b  .* " = 14.
+		chromePad := 3 // │ + 2 spaces
+		fw := m.windowManager.Window("find-replace")
+		if fw == nil {
+			return nil
+		}
+		w, _ := fw.Size()
+		innerW := w - 6
+		toggleGroupW := 14
+		toggleStartX := chromePad + innerW - toggleGroupW
+		toggleBandW := toggleGroupW / 3 // ~5 cells per band (4 toggle + 1 separator)
+
 		toggleSpecs := []*bool{
 			&fr.CaseSensitive,
 			&fr.WholeWord,
 			&fr.Regex,
 		}
-		// Toggle labels for reference: Aa, \b, .*
-		// Each toggle is 4 visible cells: " Aa ", " \b ", " .* "
-		// Separated by 1 space: " Aa  \b  .* " = 4 + 1 + 4 + 1 + 4 = 14
-		//
-		// The toggle row is right-aligned within the inner content.
-		// From the right edge: toggles start at ~innerW - 14.
-		// In local coords (including chrome), we need to account
-		// for the chrome offset (│ + 2 pad = 3 cols).
-		//
-		// For simplicity: content between toggleStartX and toggleEndX.
-		// toggleStartX = 3 + innerW - 14 = innerW - 11
-		// toggleEndX   = 3 + innerW = innerW + 3
-
-		chromePad := 3 // │ + 2 spaces
-		toggleRowStart := chromePad // leftmost char of inner content in local coords
-
-		// Compute the start of the toggle group in local X.
-		// innerW = fw.w - 6 (total minus chrome overhead)
-		// But fw.w might not be known here. Use a heuristic:
-		// the toggles are in the right part of the popup.
-		// A popup is typically ~50 cols. The right portion
-		// starting from col ~30 contains the toggles.
-		//
-		// Simpler: divide the toggle row into 3 bands.
-		toggleGroupWidth := 14 // " Aa  \b  .* "
-		// Rough toggle start: right quarter
-		_ = toggleRowStart
-		_ = toggleGroupWidth
-
-		// Band-based: each toggle is 4+1 = 5 cols including separator.
 		for i, ptr := range toggleSpecs {
-			// Each toggle band is roughly 5 cols wide.
-			// Band i starts at: toggleStartX + i*5
-			// We don't know toggleStartX exactly, so use the right quarter.
-			// Click must be past the label area (left half of popup).
-			bandStart := 30 + i*5
-			bandEnd := bandStart + 5
+			bandStart := toggleStartX + i*toggleBandW
+			bandEnd := bandStart + toggleBandW
 			if localX >= bandStart && localX < bandEnd {
 				*ptr = !*ptr
 				if fr.OnChange != nil {
@@ -400,9 +416,20 @@ func (m *App) hoverFindReplace(localX, localY int) {
 
 	if contentRow == nextRow+1 {
 		// Same band logic as click.
+		fw := m.windowManager.Window("find-replace")
+		if fw == nil {
+			return
+		}
+		w, _ := fw.Size()
+		innerW := w - 6
+		chromePad := 3
+		toggleGroupW := 14
+		toggleStartX := chromePad + innerW - toggleGroupW
+		toggleBandW := toggleGroupW / 3
+
 		for i := range []int{0, 1, 2} {
-			bandStart := 30 + i*5
-			bandEnd := bandStart + 5
+			bandStart := toggleStartX + i*toggleBandW
+			bandEnd := bandStart + toggleBandW
 			if localX >= bandStart && localX < bandEnd {
 				if fr.HoveredToggle != i {
 					fr.HoveredToggle = i
@@ -423,18 +450,23 @@ func (m *App) hoverFindReplace(localX, localY int) {
 // =============================================================================
 // Confirm prompt (dirty-close-prompt): click & hover
 //
-// Layout (from ConfirmPrompt):
+// Layout (from ConfirmPrompt3Button):
 //   Row 0: ╭─ Unsaved ─╮
-//   Row 1: │ i Discard │     (question)
-//   Row 2: │           │     (empty/detail)
+//   Row 1: │ i What do │     (question)
+//   Row 2: │           │     (empty)
 //   Row 3: │ detail    │
 //   Row 4: │           │     (empty)
-//   Row 5: │  Yes  No  │     (buttons)
+//   Row 5: │  Save Don't │  (3-button row)
 //   Row 6: │ ← → ..   │     (hints)
 //   Row N: ╰───────────╯
 //
 // Button row is at contentRow = innerH - 2 (second-to-last content row)
 // (where innerH is the total window height minus 2 rows of chrome).
+//
+// The 3 buttons (Save | Don't Save | Cancel) live in the same row. We
+// hit-test by approximating button widths — button widths are derived
+// from the rendered label lengths, not hard-coded constants, so the
+// detection stays correct if the labels ever change.
 // =============================================================================
 
 func (m *App) clickDirtyPrompt(localX, localY int) tea.Cmd {
@@ -452,36 +484,30 @@ func (m *App) clickDirtyPrompt(localX, localY int) tea.Cmd {
 	// Button row is at the second-to-last content row.
 	buttonRow := innerH - 2
 	if contentRow == buttonRow {
-		// " Yes  No " — buttons are left-aligned in the padded content.
-		// After chrome: "│  Yes  No  │"
-		// Buttons span: Yes at localX 3..7, No at localX 8..12
-		if localX >= 3 && localX < 8 {
-			return m.activateDirtyPromptButton(true)
+		choice := dirtyPromptButtonAtX(localX)
+		if choice < 0 {
+			return nil
 		}
-		if localX >= 8 && localX < 13 {
-			return m.activateDirtyPromptButton(false)
-		}
+		m.dirtyPromptChoice = choice
+		return m.activateDirtyPromptButton(choice)
 	}
 	return nil
 }
 
-func (m *App) activateDirtyPromptButton(isYes bool) tea.Cmd {
-	if m.dirtyPromptPath != "" {
-		if isYes {
-			m.dirtyPromptFocusYes = true
-			if m.windowManager != nil {
-				m.windowManager.RemoveWindow("dirty-close-prompt")
-			}
-			m.closeEditorTabForce(m.dirtyPromptPath)
-		} else {
-			m.dirtyPromptFocusYes = false
-			if m.windowManager != nil {
-				m.windowManager.RemoveWindow("dirty-close-prompt")
-			}
-		}
-		m.dirtyPromptPath = ""
-		m.dirty = true
+func (m *App) activateDirtyPromptButton(choice int) tea.Cmd {
+	if m.dirtyPromptPath == "" {
+		return nil
 	}
+	m.dirtyPromptChoice = choice
+	switch choice {
+	case 0:
+		m.dirtyPromptSave()
+	case 1:
+		m.dirtyPromptDiscard()
+	default:
+		m.dirtyPromptCancel()
+	}
+	m.dirty = true
 	return nil
 }
 
@@ -499,14 +525,45 @@ func (m *App) hoverDirtyPrompt(localX, localY int) {
 		return
 	}
 
-	wasYes := m.dirtyPromptFocusYes
-	if localX < 8 {
-		m.dirtyPromptFocusYes = true
-	} else {
-		m.dirtyPromptFocusYes = false
+	choice := dirtyPromptButtonAtX(localX)
+	if choice < 0 {
+		return
 	}
-	if m.dirtyPromptFocusYes != wasYes {
+	if m.dirtyPromptChoice != choice {
+		m.dirtyPromptChoice = choice
 		m.refreshDirtyPrompt()
+	}
+}
+
+// dirtyPromptButtonAtX maps a local-X coordinate (within the dirty-prompt
+// popup, including the chrome's left border) to the 0-indexed button
+// the user is hovering/clicking. Returns -1 if the X is not over any
+// button (e.g. on the left padding).
+//
+// The buttons are rendered left-aligned as " Save  Don't Save  Cancel "
+// inside the chrome-padded content. The chrome occupies the first
+// `chromePad` columns; the first button starts there.
+//
+// Button labels: 0=Save (4 chars), 1=Don't Save (11 chars), 2=Cancel (6 chars).
+// Each button (focused or not) renders as " Label " — 2 extra cells of padding
+// per button. Separators are single spaces.
+func dirtyPromptButtonAtX(localX int) int {
+	chromePad := 3 // "│  " — left border + 2 pad cells
+	// Total layout: " " + "Save" + " " + " " + "Don't Save" + " " + " " + "Cancel" + " "
+	// = 1+4+1+1+11+1+1+6+1 = 27 cells inside the content area.
+	// In local coords, the first button starts at column chromePad.
+	// Approximate button start positions: Save at 4, Don't Save at 10, Cancel at 22.
+	if localX < chromePad+1 || localX >= chromePad+27 {
+		return -1
+	}
+	relX := localX - chromePad
+	switch {
+	case relX >= 0 && relX < 7: // " Save " (1+4+1+1 padding space)
+		return 0
+	case relX >= 7 && relX < 19: // " Don't Save " (1+11+1 = 13)
+		return 1
+	default:
+		return 2
 	}
 }
 

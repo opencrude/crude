@@ -829,6 +829,33 @@ func (m Model) View(spinFrame int) string {
 	return ""
 }
 
+// Form returns the form currently displayed in the Settings overlay.
+// Used by the mouse dispatcher to hit-test clicks on settings fields
+// — the dispatcher maps a screen Y to a form item index, then calls
+// Form().FocusItem() to focus the clicked field.
+//
+// Returns nil if the current page is not a form (e.g. the profiles
+// list page, which has its own widget).
+func (m Model) Form() *form.Form {
+	switch m.page {
+	case pageRoot:
+		return &m.rootForm
+	case pageCategory:
+		return &m.categoryForm
+	case pageTheme:
+		return &m.themeForm
+	case pageEditor:
+		return &m.editorForm
+	case pageLSP:
+		return &m.lspForm
+	case pageUI:
+		return &m.uiForm
+	case pageFont:
+		return &m.fontForm
+	}
+	return nil
+}
+
 func (m Model) Hint() string {
 	switch m.page {
 	case pageRoot:

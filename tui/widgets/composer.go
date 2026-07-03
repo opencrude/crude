@@ -57,6 +57,23 @@ func (c *Composer) Value() string { return c.input.Value() }
 
 func (c *Composer) SetValue(s string) { c.input.SetValue(s) }
 
+// Selecting returns true if the user is currently selecting text
+// (mouse drag in progress). Used by the viewmodel to suppress
+// global key handling while a selection is being made.
+func (c *Composer) Selecting() bool { return c.input.IsSelecting() }
+
+// SelectedText returns the currently selected text, or "" if no
+// selection. The viewmodel uses this for the Ctrl+C copy action.
+func (c *Composer) SelectedText() string { return c.input.SelectedText() }
+
+// SelectionRange returns the (start, end) flat rune indices of the
+// selection. -1, -1 if no selection.
+func (c *Composer) SelectionRange() (int, int) { return c.input.SelectionRange() }
+
+// HasActiveSelection returns true if there is a non-empty selection
+// (even if the user is no longer dragging).
+func (c *Composer) HasActiveSelection() bool { return c.input.HasActiveSelection() }
+
 // View returns the rendered composer content for display inside a floating window.
 // It shows the current text with scroll indicators and the hint line.
 func (c *Composer) View(availW, availH int) string {
