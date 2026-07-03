@@ -175,6 +175,8 @@ type App struct {
 
 	lspManager *LSPManager
 
+	eventBus *EventBus
+
 	composer *widgets.Composer
 
 	// LSP interaction state.
@@ -361,6 +363,7 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 	ed := editor.New(th)
 	lspMgr := NewLSPManager(lg)
 	composerWidget := widgets.NewComposer(th)
+	eb := NewEventBus()
 
 	app := &App{
 		theme:                th,
@@ -371,6 +374,7 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 		overlay:              ov,
 		compositor:           comp,
 		windowManager:        wmgr,
+		eventBus:             eb,
 		composer:             composerWidget,
 		renderCtx:            rctx,
 		input:                im,
@@ -2888,6 +2892,12 @@ func (m *App) activeEditorPath() string {
 	return m.activeEditorView
 }
 
+func (m *App) SetProgram(p *tea.Program) {
+	if m.eventBus != nil {
+		m.eventBus.SetProgram(p)
+	}
+}
+
 func (m *App) Init() tea.Cmd {
 	if m.Mode == ModeChat {
 		m.startLSPForWorkspace()
@@ -2896,22 +2906,8 @@ func (m *App) Init() tea.Cmd {
 	// (which arrive as soon as the LSP server connects) always update
 	// the file tree, even before any file is opened in the editor.
 	m.lspManager.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
-		if m.treeModel != nil {
-			errs, warns, hints := 0, 0, 0
-			for _, d := range diags {
-				switch d.Severity {
-				case editor.DiagError:
-					errs++
-				case editor.DiagWarning:
-					warns++
-				default:
-					hints++
-				}
-			}
-			m.treeModel.SetDiagnostics(fp, errs, warns, hints)
-		}
-		if fp == m.editor.FilePath() && m.editor.IsOpen() {
-			m.editor.SetDiagnostics(diags)
+		if m.eventBus != nil {
+			m.eventBus.Send(lspDiagnosticsMsg{filePath: fp, diagnostics: diags})
 		}
 	})
 
@@ -2919,19 +2915,9 @@ func (m *App) Init() tea.Cmd {
 	// disk changes (git checkout, external edits, etc.).
 	if m.treeModel != nil {
 		m.treeModel.SetOnFileChanged(func(filePath string, changeType int) {
-			if m.lspManager == nil {
-				return
+			if m.eventBus != nil {
+				m.eventBus.Send(fileWatcherMsg{filePath: filePath, changeType: changeType})
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			// Send the standard workspace/didChangeWatchedFiles notification.
-			m.lspManager.NotifyWatchedFilesChanged(ctx, filePath, changeType)
-			// Also push the new disk content via didChange so the server
-			// re-analyzes files that were bulk-opened via openProjectFiles.
-			// The active editor file is excluded — it's handled by the
-			// editor's own Reload + UpdateFile path to avoid clobbering
-			// unsaved edits.
-			m.lspManager.SyncFileFromDisk(ctx, filePath, m.editor.FilePath(), changeType)
 		})
 		if err := m.treeModel.StartWatcher(); err != nil {
 			if m.logger != nil {
@@ -2941,6 +2927,42 @@ func (m *App) Init() tea.Cmd {
 	}
 
 	return tea.Batch(tickCmd())
+}
+
+// handleLSPDiagnosticsUpdate processes a diagnostics update that arrived
+// through the EventBus from the LSP server's reader goroutine. Runs on the
+// main Bubble Tea goroutine, so it can safely update the tree model and editor.
+func (m *App) handleLSPDiagnosticsUpdate(msg lspDiagnosticsMsg) {
+	if m.treeModel != nil {
+		errs, warns, hints := 0, 0, 0
+		for _, d := range msg.diagnostics {
+			switch d.Severity {
+			case editor.DiagError:
+				errs++
+			case editor.DiagWarning:
+				warns++
+			default:
+				hints++
+			}
+		}
+		m.treeModel.SetDiagnostics(msg.filePath, errs, warns, hints)
+	}
+	if msg.filePath == m.editor.FilePath() && m.editor.IsOpen() {
+		m.editor.SetDiagnostics(msg.diagnostics)
+	}
+}
+
+// handleFileWatcherEvent processes a file system change that arrived through
+// the EventBus from the file watcher goroutine. Forwards the change to the
+// LSP server for re-analysis.
+func (m *App) handleFileWatcherEvent(msg fileWatcherMsg) {
+	if m.lspManager == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	m.lspManager.NotifyWatchedFilesChanged(ctx, msg.filePath, msg.changeType)
+	m.lspManager.SyncFileFromDisk(ctx, msg.filePath, m.editor.FilePath(), msg.changeType)
 }
 
 // startLSPForWorkspace scans the working directory and starts LSP
