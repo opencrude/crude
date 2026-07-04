@@ -62,6 +62,10 @@ type Workspace struct {
 	// Sub-panes are rendered inline in the parent agent's message list.
 	PaneMgr *PaneManager
 
+	// BufferMgr owns all open file buffers (PieceTable data). Multiple
+	// editor views can share the same buffer for split/diff views.
+	BufferMgr *editor.BufferManager
+
 	// LSPMgr owns all LSP server connections for this workspace's root
 	// directory. One LSPManager per workspace (rooted at RootPath).
 	LSPMgr *LSPManager
@@ -70,15 +74,10 @@ type Workspace struct {
 	// window or clicking the tree pushes focus; closing pops back.
 	FocusStack *FocusStack
 
-	// ── File tree (workspace-scoped, rooted at RootPath) ──────────────
-
+	// Tree owns the file tree model, renderer, and layout state.
+	// The model and renderer are data (file system contents); the layout
+	// fields are display state used by the viewmodel render pipeline.
 	Tree *TreeState
-
-	// ── Editor tabs (workspace-scoped) ────────────────────────────────
-	//
-	// EditorState holds the map of open editor tabs + the active editor.
-	// Each tab wraps an *editor.Editor with per-tab cursor/scroll/undo.
-	EditorState *EditorState
 
 	// ── Tab bars (workspace-scoped) ───────────────────────────────────
 	//
@@ -86,20 +85,6 @@ type Workspace struct {
 	// Overlay is the overlay tab bar (settings/confirm/question/yolo tabs).
 	Win     *window.Window
 	Overlay *window.Window
-
-	// ── Overlay mode (workspace-scoped) ───────────────────────────────
-	//
-	// OverlayState tracks which overlay mode is active (chat, settings,
-	// confirm, question, yolo, text overlay, file picker). This is
-	// workspace-scoped because the overlay renders on top of the
-	// workspace's main view.
-	OverlayState *OverlayState
-
-	// ── LSP popup state (workspace-scoped) ────────────────────────────
-	//
-	// LSPPopup tracks the state of LSP popups (references, outline,
-	// completion, rename) for the active editor in this workspace.
-	LSPPopup *LSPPopupState
 
 	// ── Workspace-scoped popups & prompts ─────────────────────────────
 	//
@@ -249,24 +234,6 @@ type Workspace struct {
 	// FormHint is the current form hint text shown in the overlay.
 	FormHint string
 
-	// TokenPrompt/TokenCompletion/TokenCached are the token usage counters
-	// for the active session's last LLM call. Displayed in the status bar.
-	// Will move to Session when fully wired.
-	TokenPrompt     int
-	TokenCompletion int
-	TokenCached     int
-
-	// SessionCost is the cumulative cost (USD) for the active session.
-	// Will move to Session.
-	SessionCost float64
-
-	// ContextWindow/ContextUsed track the context window usage.
-	// Will move to Session.
-	ContextWindow int
-	ContextUsed   int
-
-	// TokenEstimated is true when the token count is an estimate.
-	TokenEstimated bool
 }
 
 // NewWorkspace creates a workspace rooted at the given directory.
@@ -320,14 +287,12 @@ func NewWorkspace(
 		Theme:         th,
 		AgentMgr:      NewAgentManager(),
 		PaneMgr:       NewPaneManager(),
+		BufferMgr:     editor.NewBufferManager(),
 		LSPMgr:        lspMgr,
 		FocusStack:    NewFocusStack(),
 		Tree:          NewTreeState(treeModel, treeRenderer, th.Tree.Config.DefaultWidth),
-		EditorState:   NewEditorState(),
 		Win:           window.New(th),
 		Overlay:       window.New(th),
-		OverlayState:  NewOverlayState(),
-		LSPPopup:      NewLSPPopupState(),
 		FilePicker:    widgets.NewFilePicker(th),
 		SessionsByID:  make(map[string]*Session),
 		Settings:      sm,
@@ -341,10 +306,6 @@ func NewWorkspace(
 		OnSettingsSave: onSave,
 		GetProviderConfigFn: getProviderConfigFn,
 	}
-
-	// The editor singleton — created once, reused as the active editor.
-	// Per-tab editors are created in openEditorTab and stored in EditorState.Tabs.
-	ws.EditorState.Editor = editor.New(th)
 
 	// Create the initial (singleton) session with the given persistence handles.
 	// This session holds the reference store and the per-agent dialogs.

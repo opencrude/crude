@@ -11,6 +11,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/widgets"
 	"crude/tui/window"
+	"crude/tui/workspace"
 )
 
 func TestModeName_Chat(t *testing.T) {
@@ -30,7 +31,7 @@ func TestFocusTarget_Launcher(t *testing.T) {
 
 func TestFocusTarget_InputWithAgent(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{})
 
 	target := app.focusTarget()
 	if target != FocusInput {
@@ -50,7 +51,7 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{MsgList: ml})
 
 	result := app.activeMsgList()
 	if result != ml {
@@ -62,7 +63,7 @@ func TestActiveMessageList_Fallback(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{MsgList: ml})
 	// AddOrchestrator sets active automatically; clear it so activeMessageList falls back
 	app.AgentMgr.ClearActive()
 
@@ -90,7 +91,7 @@ func TestAgentForView_NoAgents(t *testing.T) {
 
 func TestAgentForView_WithActiveAgentView(t *testing.T) {
 	app := newTestApp(t)
-	agent := &AgentState{Streaming: true}
+	agent := &workspace.AgentState{Streaming: true}
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, agent)
 
 	a := app.agentForView()
@@ -111,7 +112,7 @@ func TestBuildMainView_NilActiveML(t *testing.T) {
 
 	// Add an agent with nil MsgList. AddOrchestrator sets it active,
 	// so activeMsgList() returns nil (the node exists but MsgList is nil).
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{MsgList: nil})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{MsgList: nil})
 
 	// This should not panic — the nil activeML guard in buildMainView
 	// should produce empty content instead of dereferencing nil.
@@ -340,7 +341,7 @@ func TestSubmitInput_NoChannel(t *testing.T) {
 	app.height = 24
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{MsgList: ml})
 
 	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
 	// cmd is non-nil even without a channel — the returned closure
@@ -357,7 +358,7 @@ func TestSubmitInput_WithChannel(t *testing.T) {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	inputCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{MsgList: ml})
 
 	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
 	if cmd == nil {
@@ -377,7 +378,7 @@ func TestSubmitBtw_NonexistentAgent(t *testing.T) {
 
 func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &AgentState{})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{})
 
 	app.RemoveOrchestrator("ses_1_orch_1")
 
@@ -488,7 +489,7 @@ func TestHandleInputEvent_SubmitWithActiveAgentView(t *testing.T) {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	inputCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{MsgList: ml})
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
 	if len(cmds) != 1 {
@@ -517,7 +518,7 @@ func TestHandleInputEvent_BtwSubmit(t *testing.T) {
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
 	btwCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, btwCh, nil, nil, &AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, btwCh, nil, nil, &workspace.AgentState{MsgList: ml})
 
 	cmds := app.handleInputEvent(input.BtwSubmitEvent{Text: "btw text"})
 	if len(cmds) != 1 {
@@ -597,18 +598,18 @@ func newTestApp(t *testing.T) *App {
 	th := theme.DefaultDark()
 
 	app := &App{
-		Workspace: &Workspace{
+		Workspace: &workspace.Workspace{
 			Theme:         th,
-			OverlayState:  NewOverlayState(),
-			AgentMgr:      NewAgentManager(),
-			PaneMgr:       NewPaneManager(),
+			AgentMgr:      workspace.NewAgentManager(),
+			PaneMgr:       workspace.NewPaneManager(),
 			Tree:          NewTreeState(nil, nil, 30),
-			FocusStack:    NewFocusStack(),
+			FocusStack:    workspace.NewFocusStack(),
 			StartTime:     time.Now(),
-			LSPPopup:      NewLSPPopupState(),
-			EditorState:   NewEditorState(),
-			ActiveSession: &Session{},
+			ActiveSession: &workspace.Session{},
 		},
+		OverlayState: NewOverlayState(),
+		LSPPopup:     NewLSPPopupState(),
+		EditorState:  NewEditorState(),
 	}
 
 	app.Win = window.New(th)
@@ -624,23 +625,23 @@ func newFullTestApp(t *testing.T) *App {
 	sb := widgets.NewStatusBar(th)
 
 	app := &App{
-		Workspace: &Workspace{
+		Workspace: &workspace.Workspace{
 			Theme:         th,
-			OverlayState:  NewOverlayState(),
-			AgentMgr:      NewAgentManager(),
-			PaneMgr:       NewPaneManager(),
+			AgentMgr:      workspace.NewAgentManager(),
+			PaneMgr:       workspace.NewPaneManager(),
 			Tree:          NewTreeState(nil, nil, 30),
-			FocusStack:    NewFocusStack(),
+			FocusStack:    workspace.NewFocusStack(),
 			StartTime:     time.Now(),
 			Input:         im,
 			StatusBar:     sb,
 			SpinFrame:     0,
-			LSPPopup:      NewLSPPopupState(),
-			EditorState:   NewEditorState(),
-			ActiveSession: &Session{},
+			ActiveSession: &workspace.Session{},
 		},
-		width:  80,
-		height: 24,
+		OverlayState: NewOverlayState(),
+		LSPPopup:     NewLSPPopupState(),
+		EditorState:  NewEditorState(),
+		width:        80,
+		height:       24,
 	}
 
 	app.Win = window.New(th)

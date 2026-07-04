@@ -20,7 +20,6 @@ import (
 	"crude/tui/settings"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
-	"crude/tui/workspace"
 	wm "crude/tui/wm"
 )
 
@@ -1332,7 +1331,7 @@ func applyTextEdits(text string, edits []protocol.TextEdit) (string, error) {
 // showReferencesPopup displays the list of references in a floating window.
 // The list is selectable — pressing Enter on a row jumps the editor to that
 // location and closes the popup.
-type refRow = workspace.RefRow
+type refRow = RefRow
 
 func (m *App) showReferencesPopup(rows []refRow) {
 	if m.windowManager == nil {
@@ -1499,7 +1498,7 @@ func (m *App) jumpToReference(r refRow) {
 
 const outlinePopupID = "outline-popup"
 
-type outlineRow = workspace.OutlineRow
+type outlineRow = OutlineRow
 
 func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	if m.windowManager == nil {

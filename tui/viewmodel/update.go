@@ -819,9 +819,9 @@ func (m *App) workingDir() (string, error) {
 }
 
 func tickCmd() tea.Cmd {
-	return TickCmd()
+	return workspace.TickCmd()
 }
 
 func streamingTickCmd() tea.Cmd {
-	return StreamingTickCmd()
+	return workspace.StreamingTickCmd()
 }

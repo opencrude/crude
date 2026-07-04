@@ -104,6 +104,23 @@ type Session struct {
 	// CreatedAt is when this session was created (for display).
 	CreatedAt time.Time
 
+	// TokenPrompt, TokenCompletion, TokenCached track the last LLM call's
+	// token counts for this session. Displayed in the status bar.
+	TokenPrompt     int
+	TokenCompletion int
+	TokenCached     int
+
+	// SessionCost is the cumulative cost (USD) for this session.
+	SessionCost float64
+
+	// ContextWindow, ContextUsed track the context window usage for the
+	// last LLM call in this session.
+	ContextWindow int
+	ContextUsed   int
+
+	// TokenEstimated is true when the token count is an estimate.
+	TokenEstimated bool
+
 	// theme is a reference to the workspace's theme (for creating widgets).
 	theme *theme.Theme
 }

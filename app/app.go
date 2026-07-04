@@ -14,6 +14,7 @@ import (
 	"crude/tui/rendering"
 	ttypes "crude/tui/types"
 	"crude/tui/viewmodel"
+	"crude/tui/workspace"
 )
 
 type App struct {
@@ -183,7 +184,7 @@ func (a *App) wireTUI(tuiInst *tui.TUI, sess *session.Session) {
 		}
 	}
 
-	tuiInst.OnNewSession = func() *viewmodel.NewSessionResult {
+	tuiInst.OnNewSession = func() *workspace.NewSessionResult {
 		firstInfo := a.sm.First()
 		if firstInfo == nil {
 			tuiInst.SetError("no session available")
@@ -194,7 +195,7 @@ func (a *App) wireTUI(tuiInst *tui.TUI, sess *session.Session) {
 			tuiInst.SetError(err.Error())
 			return nil
 		}
-		return &viewmodel.NewSessionResult{
+		return &workspace.NewSessionResult{
 			OrchID:         orch.ID,
 			InputCh:        orch.InputCh,
 			BtwCh:          orch.BtwCh,

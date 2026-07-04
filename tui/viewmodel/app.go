@@ -47,7 +47,13 @@ const (
 type Logger = workspace.Logger
 type App struct {
 	*workspace.Workspace
-	eventBus *EventBus
+
+	// Display state (owned by viewmodel — tracks what's visible/active)
+	EditorState  *EditorState
+	OverlayState *OverlayState
+	LSPPopup     *LSPPopupState
+
+	eventBus *workspace.EventBus
 	width     int
 	height    int
 
@@ -90,12 +96,12 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 	ml.SetUsername(m.Username)
 	ml.SetSubPaneContentFn(m.renderSubPaneContent)
 
-	sp := m.PaneMgr.GetOrCreate(orchID, PaneAgent, orchID, m.Theme)
+	sp := m.PaneMgr.GetOrCreate(orchID, workspace.PaneAgent, orchID, m.Theme)
 	sp.MsgList = ml
 	sp.MsgList.SetModelName(m.ModelName)
 	sp.MsgList.SetUsername(m.Username)
 
-	agent := NewAgentState(orchID, ml, m.Logger)
+	agent := workspace.NewAgentState(orchID, ml, m.Logger)
 	m.AgentMgr.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh, agent)
 	m.syncAgentWindowTabs()
 }
@@ -139,7 +145,7 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
 	rctx := widget.NewRenderContext(ws.Theme)
-	eb := NewEventBus()
+	eb := workspace.NewEventBus()
 
 	// Create persistent layer surfaces. The main content covers the whole
 	// screen minus the header and status bar; sidebar, header, and status
@@ -157,8 +163,14 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 	statusbarSurf.SetZOrder(2)
 	headerSurf.SetZOrder(3)
 
+	edState := NewEditorState()
+	edState.Editor = editor.New(ws.Theme)
+
 	app := &App{
 		Workspace:          ws,
+		EditorState:        edState,
+		OverlayState:       NewOverlayState(),
+		LSPPopup:           NewLSPPopupState(),
 		launcher:           NewLauncherState(sessions),
 		compositor:         comp,
 		windowManager:      wmgr,
@@ -490,7 +502,7 @@ func (m *App) activeMessageList() *widgets.MessageList {
 	return nil
 }
 
-func (m *App) agentForView() *AgentState {
+func (m *App) agentForView() *workspace.AgentState {
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		return n.State
 	}
@@ -810,15 +822,21 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		return nil, nil
 	}
 
-	// Create a fresh Editor for this tab. Per-tab state lives inside
-	// the Editor (cursor, scroll, undo, selection, buffer, chroma
-	// cache, diagnostics, search state). Switching to another tab and
-	// back will give back the same Editor instance with all state
-	// intact.
-	ed := editor.New(m.Theme)
-	if err := ed.Open(path); err != nil {
+	// Get or create the shared buffer via BufferManager. Multiple tabs
+	// viewing the same file share one Buffer (PieceTable + dirty flag +
+	// diagnostics). The Editor wraps this buffer with view-specific state
+	// (cursor, scroll, selection, undo history).
+	buf, err := m.BufferMgr.OpenFile(path)
+	if err != nil {
 		return nil, err
 	}
+
+	// Create a fresh Editor for this tab and open the shared buffer.
+	// Per-tab view state (cursor, scroll, undo, selection, chroma cache,
+	// search) lives inside the Editor. Switching to another tab and back
+	// gives back the same Editor instance with all state intact.
+	ed := editor.New(m.Theme)
+	ed.OpenBuffer(buf)
 
 	// Wire content changes to LSP manager.
 	ed.SetOnContentChanged(func(fp, text string) {
@@ -1715,7 +1733,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
 func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
 	st := &widgets.ContextMenuState{Title: "Status Bar"}
 
-	// LSP section. Always shown when an LSPManager exists; items
+	// LSP section. Always shown when an workspace.LSPManager exists; items
 	// disable themselves when not applicable.
 	if m.LSPMgr != nil {
 		var lspItems []widgets.ContextMenuItem
@@ -2669,7 +2687,7 @@ func (m *App) Init() tea.Cmd {
 }
 
 // handleLSPDiagnosticsUpdate processes a diagnostics update that arrived
-// through the EventBus from the LSP server's reader goroutine. Runs on the
+// through the workspace.EventBus from the LSP server's reader goroutine. Runs on the
 // main Bubble Tea goroutine, so it can safely update the tree model and editor.
 func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 	if m.Tree.Model != nil {
@@ -2692,7 +2710,7 @@ func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 }
 
 // handleFileWatcherEvent processes a file system change that arrived through
-// the EventBus from the file watcher goroutine. Forwards the change to the
+// the workspace.EventBus from the file watcher goroutine. Forwards the change to the
 // LSP server for re-analysis.
 func (m *App) handleFileWatcherEvent(msg workspace.FileWatcherMsg) {
 	if m.LSPMgr == nil {

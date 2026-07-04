@@ -8,6 +8,7 @@ import (
 
 	"crude/fileio"
 	"crude/provider"
+	"crude/tui/workspace"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 )
@@ -117,7 +118,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	}
 
 	agentNode := m.AgentMgr.Get(agentID)
-	var agent *AgentState
+	var agent *workspace.AgentState
 	if agentNode != nil {
 		agent = agentNode.State
 	}
@@ -134,7 +135,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			ml.SetModelName(m.ModelName)
 			ml.SetUsername(m.Username)
 			ml.SetSubPaneContentFn(m.renderSubPaneContent)
-			agent = NewAgentState(agentID, ml, m.Logger)
+			agent = workspace.NewAgentState(agentID, ml, m.Logger)
 			// Agent node should already exist from AddOrchestrator; update its state
 			if existing := m.AgentMgr.Get(agentID); existing != nil {
 				existing.State = agent
@@ -147,14 +148,14 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.syncAgentWindowTabs()
 		} else {
 			// Sub-agent: create sub-pane
-			sp := m.PaneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.Theme)
+			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID, m.Theme)
 			subModel := m.ModelName
 			if model, ok := evtData["model"]; ok && model != "" {
 				subModel = model
 			}
 			sp.MsgList.SetModelName(subModel)
 			sp.MsgList.SetUsername(m.Username)
-			agent = NewAgentState(agentID, sp.MsgList, m.Logger)
+			agent = workspace.NewAgentState(agentID, sp.MsgList, m.Logger)
 			// Get label/model/category from event data
 			label := ""
 			if l, ok := evtData["agent_name"]; ok {
@@ -284,7 +285,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	return m.processAgentResults(cmd)
 }
 
-func (m *App) getThinkingTarget(agentID string, agent *AgentState) *widgets.MessageList {
+func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *widgets.MessageList {
 	if m.PaneMgr.Has(agentID) {
 		return m.PaneMgr.Get(agentID).MsgList
 	}
@@ -296,11 +297,11 @@ func (m *App) getThinkingTarget(agentID string, agent *AgentState) *widgets.Mess
 		agent.ThinkingPaneID = ""
 	}
 
-	sp := m.PaneMgr.GetOrCreate(agentID, PaneAgent, agentID, m.Theme)
+	sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID, m.Theme)
 	return sp.MsgList
 }
 
-func (m *App) checkThinkingPromotion(agent *AgentState) {
+func (m *App) checkThinkingPromotion(agent *workspace.AgentState) {
 	if agent == nil || !agent.Thinking || agent.ThinkingPaneID != "" {
 		return
 	}
@@ -322,14 +323,14 @@ func (m *App) checkThinkingPromotion(agent *AgentState) {
 	}
 }
 
-func (m *App) promoteThinkingToPane(agent *AgentState) {
+func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 	if agent == nil || agent.MsgList == nil {
 		return
 	}
 	paneID := "thinking-" + time.Now().Format("150405")
 	content := agent.MsgList.RemoveActiveThinking()
 
-	sp := m.PaneMgr.GetOrCreate(paneID, PaneThinking, "Thinking", m.Theme)
+	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking", m.Theme)
 	sp.MsgList.SetModelName(m.ModelName)
 	sp.MsgList.SetUsername(m.Username)
 
@@ -389,17 +390,17 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 	return func() tea.Msg {
 		msg := cmd()
 		switch result := msg.(type) {
-		case agentDoneResultMsg:
+		case workspace.AgentDoneResultMsg:
 			if result.Reason == "completed" {
 				m.StatusBar.SetInfo("✓ done")
 			} else if result.Reason != "" {
 				m.StatusBar.SetError("⚠ " + result.Reason)
 			}
-		case agentErrorResultMsg:
+		case workspace.AgentErrorResultMsg:
 			m.StatusBar.SetError(result.Err)
 			m.StatusBar.ClearRetry()
 			m.StatusBar.SetStatusLine("")
-		case agentRetryResultMsg:
+		case workspace.AgentRetryResultMsg:
 			m.StatusBar.SetRetry(result.Msg)
 		}
 		return nil
@@ -407,6 +408,10 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 }
 
 func (m *App) handleUsageData(data any, agentID string) {
+	s := m.ActiveSession
+	if s == nil {
+		return
+	}
 	switch d := data.(type) {
 	case map[string]any:
 		prompt := toInt(d["prompt"])
@@ -416,30 +421,29 @@ func (m *App) handleUsageData(data any, agentID string) {
 		ctxWindow := toInt(d["context_window"])
 		ctxUsed := toInt(d["context_used"])
 		estimated, _ := d["estimated"].(bool)
-		m.SessionCost += cost
-		m.TokenPrompt = int(prompt)
-		m.TokenCompletion = int(completion)
-		m.TokenCached = int(cached)
-		m.TokenEstimated = estimated
+		s.SessionCost += cost
+		s.TokenPrompt = int(prompt)
+		s.TokenCompletion = int(completion)
+		s.TokenCached = int(cached)
+		s.TokenEstimated = estimated
 		if int(ctxWindow) > 0 {
-			m.ContextWindow = int(ctxWindow)
+			s.ContextWindow = int(ctxWindow)
 			if int(ctxUsed) > 0 {
-				m.ContextUsed = int(ctxUsed)
+				s.ContextUsed = int(ctxUsed)
 			} else {
-				m.ContextUsed = int(prompt)
+				s.ContextUsed = int(prompt)
 			}
 		}
-		m.StatusBar.UpdateUsage(m.TokenPrompt, m.TokenCompletion, m.TokenCached, m.SessionCost, m.ContextWindow, m.ContextUsed, m.TokenEstimated)
+		m.StatusBar.UpdateUsage(s.TokenPrompt, s.TokenCompletion, s.TokenCached, s.SessionCost, s.ContextWindow, s.ContextUsed, s.TokenEstimated)
 	case map[string]int:
-		m.SessionCost += 0
-		m.TokenCached = d["prompt_cached"]
-		m.TokenCompletion = d["completion"]
-		m.TokenPrompt = d["prompt"]
+		s.TokenCached = d["prompt_cached"]
+		s.TokenCompletion = d["completion"]
+		s.TokenPrompt = d["prompt"]
 		if cw := d["context_window"]; cw > 0 {
-			m.ContextWindow = cw
-			m.ContextUsed = d["prompt"]
+			s.ContextWindow = cw
+			s.ContextUsed = d["prompt"]
 		}
-		m.StatusBar.UpdateUsage(m.TokenPrompt, m.TokenCompletion, m.TokenCached, m.SessionCost, m.ContextWindow, m.ContextUsed, false)
+		m.StatusBar.UpdateUsage(s.TokenPrompt, s.TokenCompletion, s.TokenCached, s.SessionCost, s.ContextWindow, s.ContextUsed, false)
 	}
 }
 

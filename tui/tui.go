@@ -9,6 +9,7 @@ import (
 	"crude/sessiondb"
 	"crude/tui/types"
 	"crude/tui/viewmodel"
+	"crude/tui/workspace"
 )
 
 type TUI struct {
@@ -20,7 +21,7 @@ type TUI struct {
 
 	OnExitMessage func()
 
-	OnNewSession func() *viewmodel.NewSessionResult
+	OnNewSession func() *workspace.NewSessionResult
 
 	OnResumeSession func(string)
 
@@ -124,7 +125,7 @@ func Start(modelName string, username string, initial Settings, presets []Provid
 			t.OnResumeSession(sessionID)
 		}
 	}
-	a.OnNewSession = func() *viewmodel.NewSessionResult {
+	a.OnNewSession = func() *workspace.NewSessionResult {
 		if t.OnNewSession != nil {
 			return t.OnNewSession()
 		}
