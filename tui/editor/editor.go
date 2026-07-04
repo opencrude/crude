@@ -36,6 +36,13 @@ type Editor struct {
 	filePath string
 	title    string
 
+	// buffer is the shared Buffer from BufferManager. When set, the Editor
+	// delegates all text access (Value, LineCount, LineText, Save, etc.)
+	// to the buffer instead of the local PieceTable. This enables buffer
+	// sharing across multiple editor views (split view, diff view).
+	// nil when the Editor was opened via the legacy Open() path.
+	buffer *Buffer
+
 	cursor  Position
 	scrollX int
 	scrollY int
@@ -165,6 +172,7 @@ func (e *Editor) Open(path string) error {
 		return err
 	}
 	e.buf = buf
+	e.buffer = nil
 
 	e.cursor = Position{Line: 0, Col: 0}
 	e.scrollX = 0
@@ -184,6 +192,35 @@ func (e *Editor) Open(path string) error {
 	e.startWatching()
 
 	return nil
+}
+
+// OpenBuffer opens the editor on a shared Buffer, bypassing direct file
+// loading. The Editor delegates all text access to the buffer. Call this
+// instead of Open() when using the BufferManager.
+func (e *Editor) OpenBuffer(buf *Buffer) {
+	e.buffer = buf
+	e.filePath = buf.Path
+	e.title = buf.Title
+	e.buf = buf.buf
+
+	e.cursor = Position{Line: 0, Col: 0}
+	e.scrollX = 0
+	e.scrollY = 0
+	e.modified = false
+	e.changes = nil
+	e.changeIndex = 0
+	e.scrollbar = scrollbar.New(0)
+	e.open = true
+	e.cursorVisible = true
+	e.blinkActive = false
+	e.lastActivity = time.Now()
+	e.ClearSelection()
+	e.ClearHover()
+	e.invalidateEditorCaches()
+	e.initChroma()
+	if e.filePath != "" {
+		e.startWatching()
+	}
 }
 
 func (e *Editor) Close() {

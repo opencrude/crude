@@ -13,6 +13,7 @@ import (
 	"crude/tui/types"
 	"crude/tui/widgets"
 	"crude/tui/window"
+	"crude/tui/workspace"
 )
 
 func newTestChannels() (chan<- provider.UserInput, chan<- provider.UserInput, chan<- struct{}, chan string) {
@@ -23,20 +24,20 @@ func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
 	th := theme.DefaultDark()
 	app := &App{
-		Workspace: &Workspace{
+		Workspace: &workspace.Workspace{
 			Theme:         th,
-			OverlayState:  NewOverlayState(),
-			AgentMgr:      NewAgentManager(),
-			PaneMgr:       NewPaneManager(),
+			AgentMgr:      workspace.NewAgentManager(),
+			PaneMgr:       workspace.NewPaneManager(),
 			StartTime:     time.Now(),
 			Input:         input.NewModel(th),
 			StatusBar:     widgets.NewStatusBar(th),
 			SpinFrame:     0,
-			LSPPopup:      NewLSPPopupState(),
-			EditorState:   NewEditorState(),
-			ActiveSession: &Session{},
+			ActiveSession: &workspace.Session{},
 		},
-		launcher: NewLauncherState(nil),
+		OverlayState: NewOverlayState(),
+		LSPPopup:     NewLSPPopupState(),
+		EditorState:  NewEditorState(),
+		launcher:     NewLauncherState(nil),
 	}
 	app.Win = window.New(th)
 	app.Overlay = window.New(th)
@@ -48,7 +49,7 @@ func newTestAppWithLauncher(t *testing.T) *App {
 func TestLauncher_NewSession_CallsOnNewSession(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	called := false
-	app.OnNewSession = func() *NewSessionResult {
+	app.OnNewSession = func() *workspace.NewSessionResult {
 		called = true
 		return nil
 	}
@@ -104,8 +105,8 @@ func TestLauncher_NewSession_CreatesOrchestrator(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	inputCh, btwCh, cancelCh, blockResolveCh := newTestChannels()
 
-	app.OnNewSession = func() *NewSessionResult {
-		return &NewSessionResult{
+	app.OnNewSession = func() *workspace.NewSessionResult {
+		return &workspace.NewSessionResult{
 			OrchID:         "ses_1_orch_1",
 			InputCh:        inputCh,
 			BtwCh:          btwCh,
@@ -234,7 +235,7 @@ func TestMultipleOrchestrators(t *testing.T) {
 	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, brCh)
 
 	// Add a sub-agent via the manager (simulating handleAgentEvent flow)
-	app.AgentMgr.AddSubAgent("ses_1_sub_abc", "ses_1_orch_1", "helper", "", "", &AgentState{})
+	app.AgentMgr.AddSubAgent("ses_1_sub_abc", "ses_1_orch_1", "helper", "", "", &workspace.AgentState{})
 	app.syncAgentWindowTabs()
 
 	if app.AgentMgr.Count() != 2 {

@@ -99,7 +99,7 @@ func TestEditorTab_MapIndependentTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tabs := map[string]*EditorTab{}
+	tabs := map[string]*workspace.EditorTab{}
 	for _, p := range []string{pathA, pathB} {
 		ed := editor.New(th)
 		if err := ed.Open(p); err != nil {
@@ -138,7 +138,7 @@ func TestEditorTab_CloseRemovesOnlyThatTab(t *testing.T) {
 		}
 	}
 
-	tabs := map[string]*EditorTab{}
+	tabs := map[string]*workspace.EditorTab{}
 	for _, p := range []string{pathA, pathB} {
 		ed := editor.New(th)
 		if err := ed.Open(p); err != nil {

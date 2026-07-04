@@ -13,6 +13,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/widgets"
+	"crude/tui/workspace"
 )
 
 func (m *App) View() tea.View {
@@ -318,7 +319,7 @@ func (m *App) buildMainView() string {
 				hasBg := false
 				if isPaneLine {
 					sp := m.PaneMgr.Get(paneLineMap[i].PaneID)
-					hasBg = sp != nil && sp.Type == PaneAgent
+					hasBg = sp != nil && sp.Type == workspace.PaneAgent
 				}
 
 				var trimmed string
