@@ -77,6 +77,9 @@ func (b *Buffer) Save() error {
 	return nil
 }
 
+// MarkDirty marks the buffer as having unsaved changes.
+func (b *Buffer) MarkDirty() { b.dirty = true }
+
 // IsDirty returns true if the buffer has unsaved changes.
 func (b *Buffer) IsDirty() bool { return b.dirty }
 

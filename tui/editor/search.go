@@ -353,6 +353,9 @@ func (e *Editor) ReplaceCurrent() int {
 		e.buf.Insert(m.Start, []byte(repl))
 	}
 	e.modified = true
+	if e.buffer != nil {
+		e.buffer.MarkDirty()
+	}
 	e.notifyContentChanged()
 	e.invalidateEditorCaches()
 
@@ -392,6 +395,9 @@ func (e *Editor) ReplaceAll() int {
 		count++
 	}
 	e.modified = true
+	if e.buffer != nil {
+		e.buffer.MarkDirty()
+	}
 	e.notifyContentChanged()
 	e.invalidateEditorCaches()
 	e.recomputeMatches()
