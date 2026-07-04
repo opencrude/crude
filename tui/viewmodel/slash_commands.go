@@ -76,6 +76,26 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		if ml := m.activeMsgList(); ml != nil {
 			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
+	case "/debug-lsp":
+		var b strings.Builder
+		b.WriteString("LSP Debug:\n")
+		if m.LSPMgr != nil {
+			conn, status, errMsg := m.LSPMgr.Status()
+			b.WriteString(fmt.Sprintf("  connected=%v  status=%d  error=%q\n", conn, status, errMsg))
+			ins := m.LSPMgr.ProjectInsights()
+			b.WriteString(fmt.Sprintf("  server=%s  ready=%v  files=%d  err=%d  warn=%d  hints=%d\n",
+				ins.ServerName, ins.ServerReady, ins.FilesAffected, ins.Errors, ins.Warnings, ins.Hints))
+		}
+		if m.eventBus != nil {
+			b.WriteString("  Recent events:\n")
+			for _, e := range m.eventBus.RecentEvents(20) {
+				b.WriteString(fmt.Sprintf("    %s\n", e))
+			}
+		}
+		if ml := m.activeMsgList(); ml != nil {
+			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+		}
+
 	case "/yolo":
 		if m.OverlayState.IsYolo() {
 			m.OverlayState.SetYolo(false)
