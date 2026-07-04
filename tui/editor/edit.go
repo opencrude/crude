@@ -29,6 +29,9 @@ func (e *Editor) insertRune(r rune) {
 	}
 	e.cursor = cursorAfter
 	e.modified = true
+	if e.buffer != nil {
+		e.buffer.MarkDirty()
+	}
 
 	e.recordChange(Change{
 		Type:         ActInsert,
@@ -69,6 +72,9 @@ func (e *Editor) insertText(s string) {
 	e.invalidateEditorCaches()
 	e.cursor = cursorAfter
 	e.modified = true
+	if e.buffer != nil {
+		e.buffer.MarkDirty()
+	}
 
 	e.recordChange(Change{
 		Type:         ActInsert,
@@ -105,6 +111,9 @@ func (e *Editor) deleteBackward() {
 			e.invalidateEditorCaches()
 			e.cursor.Col -= chVisW
 			e.modified = true
+			if e.buffer != nil {
+				e.buffer.MarkDirty()
+			}
 
 			e.recordChange(Change{
 				Type:         ActDelete,
@@ -127,6 +136,9 @@ func (e *Editor) deleteBackward() {
 		e.cursor.Line = prevLine
 		e.cursor.Col = prevLineVisW
 		e.modified = true
+		if e.buffer != nil {
+			e.buffer.MarkDirty()
+		}
 
 		e.recordChange(Change{
 			Type:         ActDelete,
@@ -160,6 +172,9 @@ func (e *Editor) deleteForward() {
 			e.buf.Delete(start, end)
 			e.invalidateEditorCaches()
 			e.modified = true
+			if e.buffer != nil {
+				e.buffer.MarkDirty()
+			}
 
 			e.recordChange(Change{
 				Type:         ActDelete,
@@ -177,6 +192,9 @@ func (e *Editor) deleteForward() {
 		e.buf.Delete(start, end)
 		e.invalidateEditorCaches()
 		e.modified = true
+		if e.buffer != nil {
+			e.buffer.MarkDirty()
+		}
 
 		e.recordChange(Change{
 			Type:         ActDelete,
@@ -218,6 +236,9 @@ func (e *Editor) undo() {
 	}
 	e.invalidateEditorCaches()
 	e.modified = true
+	if e.buffer != nil {
+		e.buffer.MarkDirty()
+	}
 	e.ensureCursorVisible()
 	e.notifyContentChanged()
 }
@@ -239,6 +260,9 @@ func (e *Editor) redo() {
 	}
 	e.invalidateEditorCaches()
 	e.modified = true
+	if e.buffer != nil {
+		e.buffer.MarkDirty()
+	}
 	e.ensureCursorVisible()
 	e.notifyContentChanged()
 }
@@ -250,7 +274,12 @@ func (e *Editor) redo() {
 // language-specific formatter runs immediately after a successful save and
 // the buffer is reloaded to reflect any changes the formatter made.
 func (e *Editor) Save() error {
-	err := e.buf.Save(e.filePath)
+	var err error
+	if e.buffer != nil {
+		err = e.buffer.Save()
+	} else {
+		err = e.buf.Save(e.filePath)
+	}
 	if err == nil {
 		e.modified = false
 		e.lastSaveTime = time.Now()

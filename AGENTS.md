@@ -1,8 +1,70 @@
-# Crude Architecture & Debugging Journal
+# Crude Architecture & Working Knowledge
 
-## Project Overview
+## Architecture Vision: `workspace/` vs `viewmodel/`
 
-Crude is a TUI (Terminal User Interface) AI agent client built in Go using Bubble Tea v2 and the compositing engine architecture. It features floating windows, a compositing surface tree, and cell-buffer-based rendering via the `ultraviolet` parser.
+The codebase has a strict two-layer separation:
+
+### `workspace/` — DATA LAYER ("what IS")
+Pure data structures, managers, and state machines. No Bubble Tea model methods (no Update/View/Init). No rendering logic.
+
+```
+Belongs here:
+├── Manager files   → agent_manager, pane_manager, buffer_manager, lsp_manager
+│                     (owns things that exist: agents, panes, buffers, LSP)
+├── Data structs    → session, agent_state, editor_tab, subpane, focus_stack
+│                     (what the data looks like — fields, not display)
+├── Stores          → references.go (ReferenceStore: persists to SQLite)
+├── Infrastructure  → foundation.go (EventBus, Logger, enums: Mode, FocusTarget)
+└── workspace.go    → Workspace struct (composition root: holds all managers)
+```
+
+**Litmus test:** "Would I put this in a database?" → `workspace/`. A session, an agent, a buffer, an LSP connection, a reference store — these have identity and lifetime independent of display.
+
+### `viewmodel/` — CONTROLLER LAYER ("what's VISIBLE and what HAPPENS")
+Display state, Bubble Tea event handling, and the render pipeline.
+
+```
+Belongs here:
+├── app.go          → App struct (embeds workspace, owns compositor/WM/surfaces)
+├── update.go       → tea.Model.Update()
+├── view.go         → tea.Model.View() + render pipeline + surface renders
+├── keyboard.go     → ALL key dispatch
+├── mouse.go        → ALL mouse dispatch + popup mouse
+├── agent_events.go → agent event handlers
+├── *state.go       → editor_state, overlay_state, lsp_popup_state
+│                     (which tab is active? what mode? where's the cursor?)
+├── *_tabs.go       → agent_tabs, editor_tabs (tab lifecycle)
+├── *_handlers.go   → findreplace_handler, lsp_handlers, dirty_prompt
+├── *_builders.go   → context_menu_builders
+├── *_operations.go → tree_operations, clipboard
+├── layout.go, cancel.go, launcher.go, command_palette.go, slash_commands.go
+└── focus.go        → focusTarget() + unfocus() + focus helpers
+```
+
+**Litmus test:** "Is this about what's visible right now or what the user does?" → `viewmodel/`. Which tab is active, which mode is shown, what's hovered, popup cursor position, keyboard/mouse event routing.
+
+### File naming convention:
+| Pattern | Examples |
+|---------|----------|
+| `*_manager.go` | `agent_manager.go`, `buffer_manager.go`, `lsp_manager.go` |
+| `*_state.go` | `editor_state.go`, `overlay_state.go`, `lsp_popup_state.go` |
+| `*.go` (data) | `session.go`, `agent_state.go`, `subpane.go` |
+| `*.go` (handlers) | `keyboard.go`, `mouse.go`, `agent_events.go` |
+| `*_tabs.go` | `agent_tabs.go`, `editor_tabs.go` |
+| `*_handlers.go` | `findreplace_handler.go`, `lsp_handlers.go`, `dirty_prompt.go` |
+| `*_builders.go` | `context_menu_builders.go` |
+| `*_operations.go` | `tree_operations.go`, `clipboard.go` |
+
+### What goes where — clear rules:
+
+| Lives in `workspace/` | Lives in `viewmodel/` |
+|---|---|
+| What EXISTS (managers, data, state machines) | What's VISIBLE (active tab, mode, popups) |
+| AgentManager, BufferManager, PaneManager, LSPManager | EditorState, OverlayState, LSPPopupState |
+| AgentNode, AgentState, Session | TreeState display fields (Visible, Width) |
+| ReferenceStore, FocusStack | LauncherState, command palette |
+| Enums (Mode, FocusTarget, PaneType) | Event handlers (keyboard, mouse) |
+| EventBus, Logger | Render pipeline (view.go, update.go) |
 
 ---
 
@@ -13,7 +75,6 @@ Crude is a TUI (Terminal User Interface) AI agent client built in Go using Bubbl
 The compositor uses a tree of `Surface` nodes. Each `Surface` has a `CellBuffer` (flat `[]cell.Cell` array) and can have child surfaces with z-ordering.
 
 **Composition pipeline:**
-
 1. `BeginFrame()` — clears root children + back buffer
 2. Background renders into root surface
 3. Window manager renders floating windows (each window has its own surface with a child content surface)
@@ -53,388 +114,137 @@ Each `FloatingWindow` has:
 
 ---
 
-## The Scrollbar Artifact Bug
+## Key File Organization
 
-### Symptoms
+### `tui/viewmodel/` (21 files)
+| File | Role | Methods |
+|---|---|---|
+| `app.go` | App struct + NewApp + thin callbacks | 13 |
+| `update.go` | tea.Model.Update + message dispatch | 23 |
+| `view.go` | tea.Model.View + render pipeline + surface renders | 8+4 |
+| `keyboard.go` | ALL key dispatch + LSP commands | 34 |
+| `mouse.go` | ALL mouse dispatch + popup mouse | 18 |
+| `agent_events.go` | Agent event handlers | 13 |
+| `agent_tabs.go` | Agent lifecycle, tab sync, setMode | 23 |
+| `editor_tabs.go` | Editor tab open/close/switch | 15 |
+| `findreplace_handler.go` | Find/replace popup | 5 |
+| `context_menu_builders.go` | 6 context menu builders | 10 |
+| `lsp_handlers.go` | LSP events + navigation | 7 |
+| `tree_operations.go` | Tree rename/delete/create prompts | 13 |
+| `clipboard.go` | Copy/cut/paste helpers | 5 |
+| `dirty_prompt.go` | Dirty-close save/discard dialog | 8 |
+| + editor_state.go, overlay_state.go, lsp_popup_state.go, launcher.go, command_palette.go, focus.go, layout.go, cancel.go, popupmouse.go, slash_commands.go |
 
-Stale characters appearing at the right edge (scrollbar column) of the command palette's view section when scrolling. The artifacts were small fragments/squares that persisted after the scrollbar moved.
+### `tui/workspace/` (14 files)
+| File | Role |
+|---|---|
+| `workspace.go` | Workspace struct (composition root: managers + callbacks + references) |
+| `foundation.go` | Mode/FocusTarget/PaneType enums, Logger, EventBus |
+| `agent_manager.go` | AgentNode/AgentManager (tree + flat index) |
+| `session.go` | Session struct (dialogs, refs, token metrics) |
+| `agent_state.go` | AgentState streaming/thinking state + HandleEvent |
+| `agent_state_events.go` | Tool handling sub-methods on AgentState |
+| `editor_tab.go` | EditorTab wrapper (path + editor + dirty flag) |
+| `focus_stack.go` | FocusStack LIFO |
+| `lsp_manager.go` | LSPManager (connections, diagnostics cache) |
+| `lsp_popup_state.go` | LSPPopupState (refs/outline/completion/rename state) |
+| `overlay_state.go` | OverlayState (mode + blocking + yolo flags) |
+| `pane_manager.go` | SubPane + PaneManager |
+| `references.go` | ReferenceStore (SQLite-backed @references) |
+| `tree_state.go` | TreeState (file tree model + renderer + layout) |
 
-### Root Cause
-
-**Width calculation mismatch** between our `VisibleWidth` function and ultraviolet's parser.
-
-#### Discovery Chain
-
-**Phase 1: Terminal Probe**
-
-The codebase had a `ProbeTerminal()` function in `tui/rendering/terminal_probe.go` that would send individual Unicode characters to the terminal, query cursor position via DSR (`\x1b[6n`), and probe whether the terminal rendered each character at width 1 or 2. This was called at startup in `main.go` and took ~200ms (12 probes × 80ms timeout each).
-
-The probed widths fed `isWideCJK()` which used `uniseg.StringWidth` with a special case: if the probe said a character was wide, force width=2; otherwise use uniseg's default.
-
-**Phase 2: Mismatch Discovery**
-
-The artifact appeared as a stale scrollbar character. The scrollbar column is at position `renderW` (the rightmost content column). When scrolling, old scrollbar characters at previous positions should be overwritten by new content + padding.
-
-Diagnosis steps:
-1. Ruled out content surface cell issues (transparent blanks, AnsiAdapter fills)
-2. Ruled out compositing pipeline (Blit semantics, surface tree order)
-3. Ruled out Bubble Tea's diff system (ultraviolet's `putRange` zero-width skip at `terminal_renderer.go:681`)
-4. Ruled out ultraviolet's `putAttrCell` placeholder skip
-5. **Found**: `VisibleWidth` used `uniseg.StringWidth` which returned width=1 for ☰ (U+2630), but ultraviolet's parser uses `github.com/charmbracelet/x/ansi.StringWidth` which returns width=2 for the same character
-
-This 1-column offset between our cell buffer layout and ultraviolet's cell buffer made ultraviolet's diff compare mismatched columns and see "no change" at the old scrollbar position, never overwriting it.
-
-**Phase 3: The Fix**
-
-Replaced `VisibleWidth` with `ansi.StringWidth(StripAnsi(s))` — matching ultraviolet's calculation exactly.
-
-```go
-// Before
-func VisibleWidth(s string) int {
-    return uniseg.StringWidth(s)
-}
-
-// After
-func VisibleWidth(s string) int {
-    return ansi.StringWidth(StripAnsi(s))
-}
-```
-
-**Phase 4: Residual Artifact**
-
-After the width fix, a "hole before scrollbar" remained — a visual gap where the old Width=1 assumption in `renderItem`'s layout formula left extra space. This was a layout calculation issue, not a stale character issue.
-
-### Ultimate Impasse
-
-The real problem: `displaywidth` (used by `ansi.StringWidth` via `GraphemeWidth` mode) classifies ☰ (U+2630) as `_Wide` in its trie data. This is **correct according to Unicode** — the Unicode Character Database classifies ☰ (U+2630 TRIGRAM FOR HEAVEN) as `East Asian Width: Wide (W)`. The `displaywidth` package follows this classification.
-
-**However, terminals are split on how to handle this:**
-
-| Terminal | ☰ width | Approach |
-|----------|---------|----------|
-| Kitty | 1 | Overrides Unicode, treats as narrow |
-| Alacritty | 1 | Overrides Unicode, treats as narrow |
-| Ghostty | 1 | Overrides Unicode, treats as narrow |
-| WezTerm | 1 | Overrides Unicode, treats as narrow |
-| **Windows Terminal** | **2** | **Follows Unicode standard** |
-| iTerm2 | varies | Font-dependent |
-
-The charmbracelet team is aware of this general class of issues (see [lipgloss#562](https://github.com/charmbracelet/lipgloss/issues/562)) and their position is: "this is a known terminal emulators issue and terminals calculate widths differently" — pointing to [jeffquast.com](https://www.jeffquast.com/post/ucs-detect-test-results/) and [mitchellh.com](https://mitchellh.com/writing/grapheme-clusters-in-terminals) research.
-
-**This is actually correct**: terminals DO calculate widths differently. The major terminals are split — Kitty/Alacritty/Ghostty/WezTerm override Unicode and render ☰ as width=1, while Windows Terminal follows Unicode and renders ☰ as width=2. The `displaywidth` package is correct according to Unicode; the terminals that render width=1 are the ones deviating from the standard.
-
-The `EastAsianWidth` option in `displaywidth`/`go-runewidth` controls EAW=A characters (ambiguous width, like box-drawing and geometric symbols). ☰ is NOT in this category — it's classified as `_Wide` (unconditional), which is a different classification. ▶ (U+25B6) returns width=1 in both modes and was never problematic.
-
-Verified empirically:
-- `ansi.StringWidth("☰")` → 2 (via displaywidth, `_Wide` classification — matches Unicode)
-- `ansi.WcWidth.StringWidth("☰")` → 2 (via go-runewidth, same result)
-- Both `GraphemeWidth` and `WcWidth` modes agree on width=2 for ☰
-- Windows Terminal renders ☰ as width=2 (follows Unicode)
-- Kitty/Alacritty/Ghostty/WezTerm render ☰ as width=1 (override Unicode)
-
-The width calculation doesn't need to match every terminal — it needs to match ultraviolet's diff system, which it does. Both `displaywidth` and `go-runewidth` return width=2 for ☰, and ultraviolet uses the same library, so our layout matches UV's cell buffer.
-
-This creates a **terminal-dependent visual mismatch**:
-- On Windows Terminal: layout is correct (width=2 matches terminal rendering)
-- On Kitty/Alacritty/Ghostty/WezTerm: layout is 1 column off (width=2 but terminal renders width=1)
-
-**Resolution**: Removed the `catView` items from the command palette that used ☰ (U+2630). This eliminates the visual mismatch on all terminals. The alternative — changing our width to match Kitty/Alacritty — would break ultraviolet's diff system and cause stale character artifacts on all terminals including Windows Terminal.
+### `tui/editor/` (core editor engine)
+| File | Role |
+|---|---|
+| `editor.go` | Editor struct (cursor, scroll, undo, selection, buffer view) |
+| `buffer.go` | PieceTable (text data) |
+| `buffer_manager.go` | **NEW** Buffer + BufferManager (shared buffers across tabs) |
+| `events.go`, `render.go`, `search.go`, `movement.go`, `edit.go`, `selection.go` | Editor subsystems |
 
 ---
 
-## Width Calculation Migration
+## Progress & Next Steps
 
-### Before
+| What | Status | Notes |
+|---|---|---|
+| EventBus (Phase 1) | ✅ DONE | Ring-buffer event log for LSP + file watcher |
+| AgentManager (Phase 2) | ✅ DONE | Collapsed 9 parallel maps into tree |
+| FocusStack (Phase 6) | ✅ DONE | Replaced booleans with LIFO stack |
+| Workspace extraction (Phase 7) | ✅ DONE | App shrunk from 150→27 fields. All state in Workspace |
+| **Architecture cleanup** | ✅ DONE | Moved display state to viewmodel, deleted 11 alias files, extracted app.go 82→13 methods |
+| **BufferManager (Phase 3)** | ⏳ **INFRA DONE** | Buffer + BufferManager created, Editor.OpenBuffer added, shared buffers across tabs. **Full Editor migration (delegate all text access to Buffer) still pending** |
+| God Settings (Phase 4) | ❌ | Floating settings panel (Ctrl+,) |
+| Clean Orchestrator Settings (Phase 5) | ❌ | Strip app-level stuff from overlay settings |
+| Dialog Stack (Phase 2.2–2.8) | ❌ | Per-agent dialog popup system |
+| More hover widgets (Phase 1.4–1.9) | ❌ | File picker, launcher, message list, status bar, form items, input |
 
-Three different width calculation sources:
-1. `github.com/rivo/uniseg` — grapheme cluster iteration + StringWidth
-2. `github.com/mattn/go-runewidth` — used in `fileio/exec.go`
-3. `github.com/clipperhouse/displaywidth` — used in `tui/surface/buffer.go`
+### Are we ready for Phase 3? **Yes and no.**
 
-Plus a custom `isWideCJK()` function with terminal probing.
+**Infrastructure is done:** `BufferManager`, `Buffer`, `Editor.OpenBuffer()`, sharing buffers across tabs. The editor tabs now use BufferManager to get/create shared buffers.
 
-### After
+**Full migration is NOT done:** The `Editor` struct still has legacy `buf *PieceTable` and `filePath string` fields. Many Editor methods (Value, LineCount, LineText, Save, Modified) still access the local PieceTable instead of delegating to `e.buffer`. The full delegation is the remaining work.
 
-Single source of truth: `github.com/charmbracelet/x/ansi`
-- `ansi.StringWidth()` — replaces `uniseg.StringWidth`, `runewidth.StringWidth`, and `displaywidth.String`
-- `ansi.DecodeSequence()` — replaces `uniseg.StepString` for grapheme cluster iteration (also returns display width directly, eliminating redundant `VisibleWidth` calls in loops)
-- `ansi.FirstGraphemeCluster()` — replaces `uniseg.NewGraphemes().Next()` pattern
-- `ansi.Truncate()` — replaces `runewidth.Truncate`
+Before starting Phase 3 completion, consider whether the current shared-buffer behavior is sufficient for your immediate needs. The Editor works correctly with shared buffers via `OpenBuffer()` — each tab gets the same `Buffer` from BufferManager. The remaining work is purely internal cleanup (removing the legacy direct PieceTable access).
 
-### Files Changed
+### What's next (in priority order):
 
-| File | Change |
-|------|--------|
-| `tui/rendering/ansi.go` | Removed `uniseg` import, replaced all `StepString` with `DecodeSequence`, removed `isWideCJK` |
-| `tui/rendering/wrap.go` | Removed `uniseg` import, replaced all `StepString` with `DecodeSequence` |
-| `tui/rendering/ansi_parser.go` | Removed `uniseg` import, replaced `NewGraphemes` with `FirstGraphemeCluster` |
-| `tui/surface/buffer.go` | Removed `uniseg` + `displaywidth` imports, replaced with `FirstGraphemeCluster` |
-| `fileio/exec.go` | Removed `runewidth` import, replaced with `ansi.StringWidth` + `ansi.Truncate` |
-| `tui/rendering/terminal_probe.go` | **Deleted** — entire file no longer needed |
-| `main.go` | Removed `ProbeTerminal()` call and `rendering` import |
-| `go.mod` / `go.sum` | `go mod tidy` removed unused dependencies |
-
-### Deleted Functions
-
-- `isWideCJK()` — custom CJK width logic with terminal probing
-- `ProbeTerminal()` — slow terminal emoji width probe (12 DSR queries, ~200ms)
-- `probedWide()` — lookup into probed ranges
-- `makeNoColorBgTransparent()` — made blank cells transparent, causing stale characters to leak through
+1. **Complete BufferManager migration** — make Editor delegate ALL text access to `e.buffer`, remove legacy `e.buf`/`e.filePath`/`e.modified` fields
+2. **Dialog Stack** — per-agent dialog popup system (user's highest-priority feature request)
+3. **God Settings** — floating all-mighty settings panel
+4. **Clean Orchestrator Settings** — strip app-level stuff from overlay
+5. **More hover widgets** — file picker, launcher, message list
 
 ---
 
-## Transparency & Blit Bug
+## Historical Debugging Journal (Scrollbar Artifact Bug)
+
+*Kept for reference — the root cause and fix remain relevant for future width-sensitive rendering issues.*
 
 ### Problem
+Stale characters at the right edge (scrollbar column) of the command palette when scrolling.
 
-`makeNoColorBgTransparent()` in `tui/wm/window.go` made blank cells with `NoColor` background transparent. When the content surface had transparent cells at the scrollbar column (from padding spaces), `Blit()` skipped them. The window surface's old scrollbar characters from previous frames persisted.
-
-Even though the window surface was cleared when `contentDirty=true`, on subsequent frames with `contentDirty=false` the window surface wasn't cleared and retained old characters. The transparent content cells didn't overwrite them.
+### Root Cause
+`VisibleWidth` used `uniseg.StringWidth` (width=1 for ☰ U+2630) but ultraviolet's parser uses `ansi.StringWidth` (width=2). This 1-column mismatch made ultraviolet's diff see "no change" at the old scrollbar position.
 
 ### Fix
+`VisibleWidth` → `ansi.StringWidth(StripAnsi(s))` — matching ultraviolet exactly.
 
-Removed `makeNoColorBgTransparent()` entirely. The content surface is now fully opaque. Cells with `NoColor` BG inherit the destination's background color during Blit (via the `BG.IsDefault()` → inherit logic), which produces the same visual result without creating transparent holes.
-
-Additionally, all padding in the command palette's `View()` method now uses `lipgloss.NewStyle().Background(SubPaneBg).Render(strings.Repeat(" ", n))` instead of raw `strings.Repeat(" ", n)` — giving padding cells an explicit background color so they're always opaque.
-
----
-
-## Command Palette Sections
-
-The command palette groups items by `cmdCategory`:
-
-```
-const (
-    catFile    cmdCategory = "file"
-    catTools   cmdCategory = "tools"
-    catSystem  cmdCategory = "system"
-    catHelp    cmdCategory = "help"
-    catAgent   cmdCategory = "agent"
-)
-```
-
-Previously had `catView` (removed due to ☰ being classified as `_Wide` by displaywidth, causing width mismatch on some terminals).
-
-### Layout Formula (renderItem)
-
-```
-availForLabel := width - 2 - iconW - 1 - gap - detailW
-```
-
-Where:
-- `width` = `renderW` (content width minus scrollbar)
-- `2` = selection marker prefix (`"> "` or `"  "`)
-- `iconW` = `VisibleWidth(icon)` — width of icon character
-- `1` = space between icon and label
-- `gap` = space between label and detail (3)
-- `detailW` = width of detail string
-
-### Padding in View
-
-```go
-for li, line := range visible {
-    lw := rendering.VisibleWidth(line)
-    if lw < renderW {
-        line += bgPad.Render(strings.Repeat(" ", renderW-lw))
-    }
-    if sbW > 0 && li < len(sbLines) && sbLines[li] != "" {
-        line += sbLines[li]
-    }
-    out = append(out, padLine(line))
-}
-```
-
-Order matters:
-1. **Pad content to `renderW`** — ensures the scrollbar starts at the correct column
-2. **Append scrollbar character** — goes at column `renderW`
-3. **Pad total to `width`** — handles any remaining gap (should be no-op since content + scrollbar = `renderW + sbW = width`)
-
----
-
-## Key Debugging Techniques Used
-
-1. **Grep for width functions** — found all `uniseg.StepString`, `StringWidth`, `RuneWidth` calls across the codebase
-2. **Trace rendering pipeline** — followed the path from command palette `View()` → `RenderToSurface()` → `Blit()` → terminal output
-3. **Test width calculations** — ran `ansi.StringWidth` on individual characters to compare with `uniseg.StringWidth`
-4. **Vendor inspection** — read ultraviolet's `terminal_renderer.go` to understand `putAttrCell` and `putRange`
-5. **Eliminate variables** — tested `cw--` (force width 0) and `cw++` (force width 2) to confirm width mismatch was the mechanism
-
-## Lessons Learned
-
-1. **Consistency > correctness**: Our width calculation doesn't need to match what the terminal does — it needs to match what ultraviolet does. Even if both are "wrong" relative to the terminal, as long as they agree, the diff system works correctly.
-2. **Transparency is dangerous**: Making cells transparent in a composited surface tree creates invisible state that can leak stale characters. Opaque cells are safer.
-3. **`_Wide` classification is unreliable for cross-terminal compatibility**: Characters that `displaywidth` classifies as `_Wide` (like ☰ U+2630) follow Unicode's East Asian Width classification, but terminals are split — some follow Unicode (Windows Terminal renders as width=2), others override it (Kitty/Alacritty render as width=1). Avoid these characters in TUI layouts where positional accuracy matters across terminals. Use characters with unambiguous widths (ASCII, or explicitly wide CJK). Note: This is different from EAW=A characters (controlled by `EastAsianWidth` option) — `_Wide` classification is unconditional.
-4. **Server-side width probing is fragile**: The DSR-based probe was slow, unreliable (some terminals don't respond), and produced different results on different terminals. Removing it eliminated a source of inconsistency.
-5. **State lifecycle — clear before early return**: When a function is the single source of truth for state variables (like `handleTabSwitch` for `activeEditorView`/`activeAgentView`), always reset those variables at the top of the function, BEFORE any early return paths. The bug was: `handleTabSwitch` set `activeEditorView = ""` AFTER the `if activeTab == nil { return }` guard, so closing the last tab left the view variable stale. This caused the renderer to fall through to the wrong branch (input widget instead of launcher), and Ctrl+Q to attempt a no-op close instead of quitting. Fix: `activeEditorView = ""; activeAgentView = ""` goes first, THEN check for active tab.
-6. **Popup chrome is cleaner when self-drawn**: Popups that draw their own border+title (like the diagnostic hover popup) look more cohesive than those relying on FloatingWindow's generic title-bar decoration. The self-drawn approach: `BorderNone` + `decorated=false` on the FloatingWindow, then the widget renders `╭─ Title ─╮ ... │ body │ ... ╰──────╯` internally via `PopupChromeLines`. All popups (context menu, find/replace, save dialog, text prompt, file picker, diagnostic) now use this unified chrome.
-7. **Context menu design rules**: (a) No title — the top border is just `╭───╮` with continuous dashes when there's no title/icon. (b) Disabled items must have the SAME leading indent as enabled items — no extra spaces. (c) Disabled items should be dim (Muted), NOT italic — italic looks like placeholder text, not disabled. (d) Height must be exact content + chrome — no extra bottom padding. (e) Click-outside-to-dismiss on left-click. (f) Left-click on a menu item activates it immediately. (g) Brief slide-in animation (80ms reveal top-to-bottom) makes it feel responsive.
-8. **`buildTopBorder` width formulas must enumerate every title/icon combination independently**: The formula has different cases for (no title, no icon), (icon only), (title only), and (title + icon). Each case has a different fixed width due to the presence or absence of spaces between segments. Trying to use a single unified formula with conditionals for the spacer is fragile — recompute the fixed width from scratch per case.
-9. **Testing ANSI-rendered strings — strip first, then search**: When asserting the content of an ANSI-styled string, NEVER use `strings.Index(rawLine, label)` — the label text can false-match inside ANSI escape codes (e.g., `"Off"` false-matching in an ANSI code that happens to contain the byte sequence). Always `stripAnsi` first, then search the plain text. Also, box-drawing characters like `│` are 3 UTF-8 bytes — byte-position assertions must account for this (e.g., label at byte-position 6 after `│` + 2 pad + 1 indent, not position 4).
+### Deleted: `terminal_probe.go`, `isWideCJK()`, `probedWide()`, `makeNoColorBgTransparent()`
 
 ---
 
 ## Unified Popup Design System
 
-### Architecture
-
-All popups in the TUI go through `tui/widgets/popupchrome.go`. The chrome is drawn by the widget itself (not by FloatingWindow):
-
+All popups use `tui/widgets/popupchrome.go`:
 ```
 ╭─ Title ────────────────────────────────╮
 │  body content line 1                   │
 │  body content line 2                   │
 ╰────────────────────────────────────────╯
 ```
+- `PopupContentWidth(innerW)` → total: `innerW + 6`
+- `PopupContentHeight(contentRows)` → total: `contentRows + 2`
+- FloatingWindow is always `WithDecoration(false)` — just a positioned box
+- Chrome is self-drawn by the widget
 
-**Visual rules:**
-- Border: rounded (`╭ ╮ ╰ ╯`), 1 cell wide
-- Padding: 2 cells horizontal, 0 vertical
-- Title: integrated into top border, bold. No title for context menus.
-- Background: `theme.Colors.PopupBg` (`#161b22`, same as Code.Bg)
-- Focused: border becomes PopupBorderFocused, title becomes PopupTitleFocused
-- No close X button on most popups (Esc to close)
-- FloatingWindow is always `WithDecoration(false)` + no title — it's just a positioned box
-
-**Shared components** (all produce inner content lines, padded to `innerW`):
-- `PopupInputField` — `<label>: <value>` with blinking cursor. No more `│` box-drawing field borders.
-- `PopupToggle` / `PopupToggleRow` — filled pill when on (` Aa `), dim outline when off. No more `[Aa]`.
-- `PopupButton` / `PopupButtonRow` — filled bg when focused (` Yes `), dim when not. No more `[ Yes ]`.
-- `PopupSectionLabel` — italic Muted, no background color (was: Selection-bg-heavy).
-- `PopupDivider` — thin `─` in PopupDivider color.
-- `PopupHintLine` — `<key> <desc> · <key> <desc>` with bold keys.
-- `PopupEmptyLine` — blank with PopupBg background.
-
-**Sizing:**
-- `PopupContentWidth(innerW)` → total width: `innerW + 6` (2 border + 4 pad)
-- `PopupContentHeight(contentRows)` → total height: `contentRows + 2`
-
-### Theme colors
-
-```go
-PopupBg, PopupBorder, PopupBorderFocused, PopupTitle, PopupTitleFocused
-PopupDivider, PopupSubtleBg, PopupButtonBg, PopupButtonFg
-```
-
-### Popups migrated
-
-| Popup | File | Title | Unique features |
-|-------|------|-------|-----------------|
-| Find/Replace | `findreplace.go` | Find (with ⌕ icon) | Focused input field, pill toggles |
-| Save dialog | `confirmprompt.go` | Unsaved changes (severity-tinted) | Severity-colored title/border, Yes/No buttons |
-| Context menu | `contextmenu.go` | None | Section labels, dividers, key hint detail, slide-in animation |
-| Text prompt | `textprompt.go` | Dynamic (with Kind icon) | Input field, hint row |
-| File picker | `filepicker.go` | File Picker (with ▤ icon) | Scrollbar, directory listing |
-| Diagnostic hover | `mouse.go:updateDiagHoverPopup` | Severity label (border tinted) | Severity-colored border, code source line |
-| Diagnostic context | `app.go:showDiagnosticAt` | Diagnostic (with ℹ icon) | Click-triggered, centered |
+### Popup Click-Outside Behaviors
+| Behavior | Meaning |
+|----------|---------|
+| `CloseRoute` | Close + route click through |
+| `KeepRoute` | Keep open, route click to editor |
+| `Ignore` | True modal — suppress click entirely |
 
 ---
 
-## Popup Mouse Support (click + hover + focus restoration)
+## Pre-existing Test Failures (NOT caused by our work)
+- `crude/safety/TestProjectWriteCommands`, `TestDestructiveCommands`, `TestUnknownCommand`
 
-Every popup responds to mouse clicks, mouse hover, and click-outside. Keyboard focus flows naturally: when a popup closes (via click-outside or Esc), the underlying widget regains keyboard focus because focus booleans persist.
-
-### ClickOutsideBehavior
-
-Each `FloatingWindow` has a `ClickOutsideBehavior` that determines what happens when the user clicks outside it:
-
-```go
-const (
-    ClickOutsideCloseRoute ClickOutsideBehavior = iota  // close + route click
-    ClickOutsideKeepRoute                               // keep open, route click
-    ClickOutsideIgnore                                  // modal — suppress click
-)
+## Test Commands
+```bash
+go build ./...
+go test ./tui/editor/... ./tui/viewmodel/... ./tui/workspace/...
+go test ./... 2>&1 | grep -v "^ok\|cached\|^?"
 ```
-
-| Popup ID | Behavior | Rationale |
-|----------|----------|-----------|
-| `context-menu`, `references-popup`, `completion-popup`, `outline-popup`, `diag-context` | CloseRoute | Right-click / LSP popups close on outside click |
-| `find-replace`, `filepicker`, `composer`, `command-palette`, `textoverlay` | KeepRoute | Tool popups stay open; click routes to editor |
-| `dirty-close-prompt`, `tree-prompt`, `tree-delete-confirm` | Ignore | True modal — Esc or buttons required |
-
-Set at creation time via `wm.WithClickOutside(wm.ClickOutsideIgnore)`.
-
-### Architecture
-
-- `tui/wm/window.go` — `FloatingWindow` has `clickOutside` field, `ClickOutsideBehavior()` getter, `SetClickOutsideBehavior()` setter.
-- `tui/viewmodel/popupmouse.go` — All popup mouse dispatch lives here. Functions:
-  - `handlePopupClickOutside(msg)` — top of `dispatchMouseClick`, before WM hit-test
-  - `handlePopupContentClick(fw, msg)` — routes click on popup content to per-popup handler
-  - `handlePopupContentHover(fw, screenX, screenY)` — routes motion events to per-popup hover handler
-  - `closePopupWindowByID(id)` — close dispatch by ID
-- `tui/viewmodel/mouse.go` — `dispatchMouseClick` calls the above. `dispatchMouseMotion` calls `handlePopupContentHover`.
-
-### Pre-selection (hover highlight)
-
-For each popup with selectable items (context-menu, find-replace toggles, confirm buttons, references, completion, outline), the cursor/highlight follows the mouse cursor. The mouse leaving the popup does NOT reset the cursor to 0 (matches real-system behavior).
-
-Per-popup state for pre-selection:
-- `ContextMenuState.Cursor` — item index
-- `FindReplaceState.HoveredToggle` — 0=Aa, 1=\b, 2=.*, -1=none
-- `dirtyPromptFocusYes` — true if mouse over Yes, false if over No
-- `refCursor`, `completionCursor`, `outlineCursor` — same fields used for keyboard nav
-
-### Focus restoration
-
-The existing focus system uses orthogonal booleans (`treeFocused`, `tabBarFocused`, `activeEditorView`, `activeAgentView`). These persist through popup open/close — the popup just sits on top in `wm.focused`. When the popup closes, `focusTarget()` re-derives from the booleans, which still match the user's pre-popup state.
-
-**Click-outside flow:**
-1. User clicks at (X, Y) outside popup P
-2. `handlePopupClickOutside` calls `closePopupWindowByID("P")` (for CloseRoute) or returns true (for Ignore)
-3. The click continues to the region handler in `dispatchMouseClick`
-4. Region handler sets booleans: `treeFocused = true` for sidebar click, `m.unfocus()` + editor click, etc.
-5. `focusTarget()` returns the new focus
-
-**Find-replace + click-editor flow:**
-1. User clicks the editor while find-replace is open
-2. `handlePopupClickOutside` sees click is outside find-replace, but find-replace has KeepRoute → falls through
-3. WM.HandleMouse returns nil (click missed the popup)
-4. classifyMouse → regionEditor
-5. Editor handles click. WM's HandleMouse also unfocuses the popup (line 306-311 of manager.go)
-6. focusTarget() returns FocusEditor
-7. Subsequent keyboard goes to the editor, not find-replace
-
-### Tests
-
-`tui/viewmodel/popupmouse_test.go` — 19 tests:
-- `TestClickOutside_*` (5) — context menu, confirm prompt, find/replace, right-click, inside-click
-- `TestClickContextMenu_*` (2) — activates item, disabled item no-op
-- `TestHoverContextMenu_MovesCursor`
-- `TestClickDirtyPrompt_*` (2) — Yes/No button clicks
-- `TestFocusRestoration_*` (5) — editor focus, tree focus, chained popups, find-replace stays open, mouse click routes to region
-- `TestHoverFindReplace_ToggleHover`
-- `TestClickFindReplace_*` (2) — focus field, toggle Aa
-
-### Pitfalls
-
-- **The `Modal()` flag in the WM only blocks clicks to OTHER floating windows**, not to root content (editor, tree). The `ClickOutsideBehavior == Ignore` mechanism is the additional layer that blocks root clicks for true modals.
-- **Button position detection is approximate**: I use rough X ranges (e.g., "X<8 = Yes, X>=8 = No") because exact button positions vary with content. For pixel-precise detection, the chrome components would need to expose their hit-test rectangles.
-- **Keyboard nav and mouse nav share state**: the `Cursor` field is set by both. When the user presses an arrow key, the cursor moves; when the mouse hovers, the cursor follows. The `st.Cursor` is the source of truth.
-- **The `lastContextMenu` field is cleared on close**: previously leaked. The animation completed before close, so no flicker.
-- **Disabled items are clickable for cursor movement but not for activation**: hover can land on disabled items (just shows the label), but click is a no-op.
-
----
-
-## User Preferences (Active Session)
-
-### Quality bar
-- **"Production grade, eye-catchy, on par with giants" (VSCode/JetBrains)**. Visual polish matters as much as correctness. Beautiful, clean, minimal but with subtle sophistication. No regressions in look-and-feel when adding features.
-- **No flashy hand-wavy "AI" aesthetics** (no rainbow gradients, no excessive emojis, no chatty mascots). Restrained, sharp, technical look.
-- **Always: same-glyph animations** to avoid vertical jumping. Bold/faint pulse > rotating quadrant circles.
-- **Animations only when something is actually happening**. Grace periods are OK to prevent blink-too-fast, but idle = static.
-- **Per-tab state is sacred**. Never reload a file just because the user switched tabs. Never lose cursor, scroll, undo, or unsaved edits.
-
-### Working style
-- **One task at a time, completely**. Don't half-finish a feature and move on. If a refactor breaks the build, finish fixing the build before adding the next feature.
-- **Don't do many edits in a row without building**. Run `go build ./...` and `go test ./...` after each significant change. Errors compound — fix them immediately.
-- **Prefer delegation over in-process agents** for tasks that can be cleanly isolated. Use `opencode run --title "..."` with a focused prompt describing context, goal, and constraints. Reserve in-process `task` tool for exploration/research.
-- **Smaller diffs over clever code**. The codebase already has utility widgets (PopupContent, FloatingWindow, WindowManager) — reuse them. Don't introduce new patterns when the existing one works.
-- **Tests are not optional** for refactors that change behavior. Phase 1 added 3 tests for tab preservation; Phase 2 added 8 tests for search. Keep this pace.
-
-### What to avoid
-- Don't use the `task` (subagent) tool for implementation work — user prefers external opencode sessions via the CLI.
-- Don't add `*_test.go` files that just re-test existing infrastructure; add tests that prove NEW behavior.
-- Don't pile new features on a broken build. Fix the build, then add features.
-- Don't introduce emojis to files unless the user asks. (Emojis in UI are OK — they're a polish detail. Emojis in code, comments, or commit messages are not.)
 
 ---
 

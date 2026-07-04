@@ -228,6 +228,7 @@ func (e *Editor) Close() {
 	e.open = false
 	e.filePath = ""
 	e.title = ""
+	e.buffer = nil
 	e.ClearSelection()
 	e.diagMu.Lock()
 	e.diagnostics = nil
@@ -270,17 +271,35 @@ func (e *Editor) FilePath() string { return e.filePath }
 func (e *Editor) CursorVisible() bool { return e.cursorVisible }
 
 func (e *Editor) Title() string {
-	if e.modified {
+	if e.Modified() {
 		return e.title + " ●"
 	}
 	return e.title
 }
-func (e *Editor) Modified() bool       { return e.modified }
-func (e *Editor) Value() string        { return string(e.buf.Bytes()) }
+func (e *Editor) Modified() bool {
+	if e.buffer != nil {
+		return e.buffer.IsDirty()
+	}
+	return e.modified
+}
+func (e *Editor) Value() string {
+	if e.buffer != nil {
+		return string(e.buffer.Bytes())
+	}
+	return string(e.buf.Bytes())
+}
 func (e *Editor) CursorLine() int      { return e.cursor.Line }
 func (e *Editor) CursorCol() int       { return e.cursor.Col }
-func (e *Editor) LineCount() int       { return e.buf.LineCount() }
+func (e *Editor) LineCount() int {
+	if e.buffer != nil {
+		return e.buffer.LineCount()
+	}
+	return e.buf.LineCount()
+}
 func (e *Editor) LineText(line int) string {
+	if e.buffer != nil {
+		return e.buffer.Line(line)
+	}
 	b, err := e.buf.Line(line)
 	if err != nil {
 		return ""
@@ -369,6 +388,10 @@ func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 	}
 	e.diagByLine = byLine
 	e.diagMu.Unlock()
+
+	if e.buffer != nil {
+		e.buffer.SetDiagnostics(diags)
+	}
 }
 
 func (e *Editor) DiagnosticCounts() (errors, warnings, hints int) {
@@ -510,6 +533,9 @@ func (e *Editor) DeleteSelection() bool {
 	end := Position{Line: eLine, Col: eCol}
 	e.buf.Delete(start, end)
 	e.modified = true
+	if e.buffer != nil {
+		e.buffer.MarkDirty()
+	}
 	e.invalidateEditorCaches()
 	e.ClearSelection()
 	e.notifyContentChanged()
