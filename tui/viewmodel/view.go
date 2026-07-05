@@ -100,7 +100,6 @@ func (m *App) View() tea.View {
 	m.compositor.Composite()
 
 	output := m.compositor.Present()
-	m.dirty = false
 	m.cachedOutput = output
 	m.contentDirty = false
 

@@ -422,7 +422,6 @@ func (m *App) closeContextMenu() {
 		m.windowManager.RemoveWindow("context-menu")
 	}
 	m.LastContextMenu = nil
-	m.dirty = true
 }
 
 // findFlatItemIndex returns the index in FlatItems for the item at
@@ -487,7 +486,6 @@ func (m *App) refreshContextMenu() {
 	pop := widgets.NewPopupContent(lines)
 	fw.SetContent(pop)
 	fw.MarkContentDirty()
-	m.dirty = true
 }
 
 func (m *App) showContextMenuAt(x, y int) {

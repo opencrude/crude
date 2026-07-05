@@ -134,7 +134,6 @@ func (m *App) startRenameInTree(path string) {
 				m.EditorState.ActiveView = newPath
 			}
 			m.StatusBar.SetInfo(fmt.Sprintf("Renamed to %s", value))
-			m.dirty = true
 			return nil
 		})
 }
@@ -183,7 +182,6 @@ func (m *App) startDeleteInTree(path string) {
 		m.windowManager.AddWindow(fw)
 	}
 	m.TreeDeletePending = path
-	m.dirty = true
 }
 
 // openTreeTextPrompt opens the focused text-input popup used by
@@ -226,7 +224,6 @@ func (m *App) openTreeTextPrompt(kind widgets.TextPromptKind, title, prompt, dir
 		m.windowManager.AddWindow(fw)
 	}
 	m.TreePrompt = st
-	m.dirty = true
 }
 
 func (m *App) handleTreePromptKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -245,7 +242,6 @@ func (m *App) handleTreePromptKey(msg tea.KeyPressMsg) tea.Cmd {
 		if st.OnSubmit != nil {
 			if err := st.OnSubmit(st.Value); err != nil {
 				m.StatusBar.SetError(err.Error())
-				m.dirty = true
 				return nil
 			}
 		}
@@ -298,7 +294,6 @@ func (m *App) closeTreePrompt() {
 		m.windowManager.RemoveWindow("tree-prompt")
 	}
 	m.TreePrompt = nil
-	m.dirty = true
 }
 
 func (m *App) refreshTreePrompt() {
@@ -313,7 +308,6 @@ func (m *App) refreshTreePrompt() {
 	pop := widgets.NewPopupContent(lines)
 	fw.SetContent(pop)
 	fw.MarkContentDirty()
-	m.dirty = true
 }
 
 // handleTreeDeleteConfirmKey is the keyboard handler for the
@@ -363,7 +357,6 @@ func (m *App) confirmTreeDelete() {
 	}
 	if err != nil {
 		m.StatusBar.SetError("delete " + filepath.Base(path) + ": " + err.Error())
-		m.dirty = true
 		return
 	}
 	m.Tree.Model.ProcessWatcherEvent(filetree.FileChangeEvent{
@@ -374,7 +367,6 @@ func (m *App) confirmTreeDelete() {
 		m.closeEditorTabForce(tab.Path)
 	}
 	m.StatusBar.SetInfo("Deleted " + filepath.Base(path))
-	m.dirty = true
 }
 
 func (m *App) cancelTreeDelete() {
@@ -382,5 +374,4 @@ func (m *App) cancelTreeDelete() {
 	if m.windowManager != nil {
 		m.windowManager.RemoveWindow("tree-delete-confirm")
 	}
-	m.dirty = true
 }

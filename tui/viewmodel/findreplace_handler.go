@@ -84,7 +84,6 @@ func (m *App) closeFindReplace() {
 		m.windowManager.RemoveWindow("find-replace")
 	}
 	m.FindReplace = nil
-	m.dirty = true
 }
 
 // refreshFindReplacePopup rebuilds the floating window's content

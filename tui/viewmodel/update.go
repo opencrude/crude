@@ -34,7 +34,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.Logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
-		m.dirty = true
 		m.contentDirty = true
 		m.width = msg.Width
 		m.height = msg.Height
@@ -57,32 +56,27 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTick(msg)
 
 	case tea.KeyPressMsg:
-		m.dirty = true
 		m.contentDirty = true
 		return m.dispatchKeyPress(msg)
 
 	case tea.PasteMsg:
-		m.dirty = true
 		m.contentDirty = true
 		return m.dispatchPasteMsg(msg)
 
 	case tea.MouseClickMsg:
-		m.dirty = true
 		m.contentDirty = true
 		m.Logger.Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseClick(msg)
 
 	case tea.MouseWheelMsg:
-		m.dirty = true
 		m.contentDirty = true
 		m.Logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseWheel(msg)
 
 	case tea.MouseMotionMsg:
-		// Do NOT set dirty here — the motion handler itself sets
-		// m.dirty = true when hover state or other visual state
-		// actually changes. Without this guard, every pixel of
-		// mouse movement triggers a full frame rebuild.
+		// Motion handlers set contentDirty when hover state or other
+		// visual state actually changes. Without this guard, every
+		// pixel of mouse movement triggers a full frame rebuild.
 		return m.dispatchMouseMotion(msg)
 
 	case tea.MouseReleaseMsg:
@@ -92,7 +86,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.dispatchMouseRelease(msg)
 
 	case ttypes.SelectionTickMsg:
-		m.dirty = true
 		if ml := m.activeMsgList(); ml != nil {
 			_, cmd := ml.Update(msg)
 			if cmd != nil {
@@ -101,7 +94,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case scrollbar.FadeTickMsg, scrollbar.HideTickMsg:
-		m.dirty = true
 		cmds = append(cmds, m.dispatchEditorTick(msg)...)
 		if ml := m.activeMsgList(); ml != nil {
 			cmd := ml.HandleScrollbarTick(msg)
@@ -151,7 +143,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.dispatchEditorTick(msg)...)
 			cursorAfter := m.EditorState.Editor != nil && m.EditorState.Editor.CursorVisible()
 			if cursorBefore != cursorAfter {
-				m.dirty = true
 				m.contentDirty = true
 			}
 		}
@@ -176,6 +167,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	m.PaneMgr.TickAll(spinFrame)
 	m.syncAgentWindowTabs()
+	contentChanged := false
 	for _, sp := range m.PaneMgr.Panes() {
 		if !sp.Done && sp.MsgList != nil {
 			if n := m.AgentMgr.Get(sp.ID); n != nil && n.State != nil {
@@ -183,6 +175,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 					sp.MsgList.AppendToken(n.State.TokenBuf)
 					n.State.TokenBuf = ""
 					n.State.LastTokenTime = time.Now()
+					contentChanged = true
 				}
 			}
 			if ml := m.activeMsgList(); ml != nil {
@@ -230,12 +223,17 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		m.StatusBar.SetProjectInsights(editor.ProjectInsights{})
 	}
 
-	// Mark dirty every tick — cheap layers (header, status bar, sidebar)
-	// re-render on every frame anyway, and the launcher needs animation
-	// ticks to drive its spin frame and scroll effects.
+	// When content changed (agent tokens flushed), invalidate the main
+	// view cache so the new tokens appear in the next frame.
+	if contentChanged {
+		m.contentDirty = true
+	}
+
+	// Status bar animations and launcher spin frames need their
+	// own content re-rendered even when main content hasn't changed.
 	isLauncher := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
 	if m.StatusBar.HasAnimation() || isLauncher {
-		m.dirty = true
+		m.contentDirty = true
 	}
 
 	if m.anyActive() {
@@ -379,7 +377,6 @@ func (m *App) ToggleSidebar() {
 			m.FocusStack.Pop()
 		}
 	}
-	m.dirty = true
 }
 
 func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg {
@@ -572,10 +569,8 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 				m.launcher = NewLauncherState(m.OnListSessions())
 				m.LastInteractionTime = time.Now()
 			}
-			m.dirty = true
 			return nil
 		}
-		m.dirty = true
 		return nil
 	}
 

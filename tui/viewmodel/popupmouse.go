@@ -115,7 +115,6 @@ func (m *App) closePopupWindowByID(id string) {
 			m.windowManager.RemoveWindow("dirty-close-prompt")
 		}
 		m.DirtyPromptPath = ""
-		m.dirty = true
 	case "tree-prompt":
 		m.closeTreePrompt()
 	case "tree-delete-confirm":
@@ -123,7 +122,6 @@ func (m *App) closePopupWindowByID(id string) {
 			m.windowManager.RemoveWindow("tree-delete-confirm")
 		}
 		m.TreeDeletePending = ""
-		m.dirty = true
 	case "references-popup":
 		m.closeReferencesPopup()
 	case "completion-popup":
@@ -135,7 +133,6 @@ func (m *App) closePopupWindowByID(id string) {
 			m.windowManager.RemoveWindow("filepicker")
 		}
 		m.setMode(ModeChat)
-		m.dirty = true
 	case "diag-hover":
 		m.clearDiagHoverPopup()
 	case "composer":
@@ -143,13 +140,11 @@ func (m *App) closePopupWindowByID(id string) {
 			m.windowManager.RemoveWindow("composer")
 		}
 		m.ActiveSession.Composer.Close()
-		m.dirty = true
 	case "command-palette":
 		if m.windowManager != nil {
 			m.windowManager.RemoveWindow("command-palette")
 		}
 		m.commandPaletteModel = nil
-		m.dirty = true
 	default:
 		if m.windowManager != nil {
 			m.windowManager.RemoveWindow(id)
@@ -255,10 +250,9 @@ func (m *App) hoverContextMenu(localX, localY int) {
 		for ii, item := range sec.Items {
 			if rowIdx == contentRow {
 				if !item.Disabled {
-					if fwItem, ok := findFlatItemIndex(st, si, ii); ok && st.Cursor != fwItem {
-						st.Cursor = fwItem
-						m.dirty = true
-					}
+				if fwItem, ok := findFlatItemIndex(st, si, ii); ok && st.Cursor != fwItem {
+					st.Cursor = fwItem
+				}
 				}
 				return
 			}
@@ -433,7 +427,6 @@ func (m *App) hoverFindReplace(localX, localY int) {
 			if localX >= bandStart && localX < bandEnd {
 				if fr.HoveredToggle != i {
 					fr.HoveredToggle = i
-					m.dirty = true
 				}
 				return
 			}
@@ -443,7 +436,6 @@ func (m *App) hoverFindReplace(localX, localY int) {
 	// Not over a toggle — clear hover.
 	if fr.HoveredToggle != -1 {
 		fr.HoveredToggle = -1
-		m.dirty = true
 	}
 }
 
@@ -507,7 +499,6 @@ func (m *App) activateDirtyPromptButton(choice int) tea.Cmd {
 	default:
 		m.dirtyPromptCancel()
 	}
-	m.dirty = true
 	return nil
 }
 
@@ -683,7 +674,6 @@ func (m *App) hoverCompletion(localX, localY int) {
 	contentRow := localY - 1
 	if contentRow >= 0 && contentRow < len(m.LSPPopup.CompletionItems) && contentRow != m.LSPPopup.CompletionCursor {
 		m.LSPPopup.CompletionCursor = contentRow
-		m.dirty = true
 	}
 }
 
@@ -715,6 +705,5 @@ func (m *App) hoverOutline(localX, localY int) {
 	contentRow := localY - 1
 	if contentRow >= 0 && contentRow < len(m.LSPPopup.OutlineRows) && contentRow != m.LSPPopup.OutlineCursor {
 		m.LSPPopup.OutlineCursor = contentRow
-		m.dirty = true
 	}
 }

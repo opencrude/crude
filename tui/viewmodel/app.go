@@ -51,7 +51,6 @@ type App struct {
 	windowManager *wm.WindowManager
 	renderCtx     *widget.RenderContext
 	cachedOutput       string // last rendered ANSI output for View() throttling during drag
-	dirty              bool   // true when view content has changed and needs re-rendering
 	contentDirty       bool   // true when the main view (editor/chat/launcher) needs re-rendering — separate from chrome (tree/tabs/popups) so hover changes don't trigger expensive chroma/glamour re-renders
 	mainContentCached  string // last rendered main-view ANSI string — reused when only chrome changed (hover on tree, tabs, popups, etc.)
 
@@ -317,7 +316,6 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 			agentID := m.agentIDFromTabTitle(tab.Title)
 			m.cleanupAgent(agentID)
 		}
-			m.dirty = true
 			// If no tabs left, show launcher
 			if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && !m.Win.IsOpen() {
 				if m.OnListSessions != nil {

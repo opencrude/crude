@@ -21,7 +21,7 @@ func (m *App) cutEditorSelection() {
 	}
 	m.copyToClipboard(m.EditorState.Editor.SelectedText())
 	m.EditorState.Editor.DeleteSelection()
-	m.dirty = true
+	m.contentDirty = true
 }
 
 func (m *App) pasteIntoEditor() {
@@ -36,7 +36,7 @@ func (m *App) pasteIntoEditor() {
 	content := string(data)
 	m.EditorState.Editor.HandleEvent(tea.PasteMsg{Content: content})
 	m.StatusBar.SetInfo(fmt.Sprintf("Pasted %d chars", len(content)))
-	m.dirty = true
+	m.contentDirty = true
 }
 
 func (m *App) pasteIntoInput() {
@@ -51,7 +51,7 @@ func (m *App) pasteIntoInput() {
 		canType, m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
 	m.Input = updated
 	m.StatusBar.SetInfo(fmt.Sprintf("Pasted %d chars into input", len(content)))
-	m.dirty = true
+	m.contentDirty = true
 }
 
 func (m *App) copyToClipboard(s string) {
