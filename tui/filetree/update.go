@@ -562,7 +562,6 @@ func (m *FileTreeModel) expandOrMoveIn() tea.Cmd {
 			m.Select(nodes[i].Path)
 			return nil
 		}
-		break
 	}
 
 	return nil

@@ -457,7 +457,6 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 			if ti := form.FocusedTextItem(); ti != nil {
 				ti.StartEditing()
 			}
-			m.dirty = true
 			return m, nil
 		}
 	}
@@ -607,7 +606,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 		m.Tree.Width = newWidth
 		m.Tree.Model.Update(filetree.TreeWidthMsg{Width: newWidth})
-		m.dirty = true
 		return m, nil
 	}
 
@@ -630,13 +628,11 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		// Clear tree hover (mouse left the tree area).
-		if m.Tree.Model != nil && m.Tree.Model.Hover.Clear() {
-			m.dirty = true
+		if m.Tree.Model != nil {
+			m.Tree.Model.Hover.Clear()
 		}
 		// Clear tab bar hover (mouse left the tab row).
-		if m.Win.Hover.Clear() {
-			m.dirty = true
-		}
+		m.Win.Hover.Clear()
 		m.handleLauncherHover(mouse.X, mouse.Y)
 		return m, tea.Batch(cmds...)
 	}
@@ -647,16 +643,12 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		cmd := m.routeSidebarMouse(msg)
-		m.dirty = true
 		return m, cmd
 	}
 
-	// Mouse is outside the tree — if the tree was previously hovered,
-	// clear the hover state so the row doesn't keep the hover background
-	// after the cursor has moved away. This matches the behaviour of
-	// every GUI tree view: hover is "live" and tied to mouse position.
-	if m.Tree.Model != nil && m.Tree.Model.Hover.Clear() {
-		m.dirty = true
+	// Mouse is outside the tree — clear the hover state.
+	if m.Tree.Model != nil {
+		m.Tree.Model.Hover.Clear()
 	}
 
 	// Tab bar hover: update the hover state when the mouse moves over
@@ -673,17 +665,13 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 		hit := m.Win.HitTest(adjustedX, 0)
 		if hit.TabIndex >= 0 {
-			if m.Win.Hover.Set(hit.TabIndex) {
-				m.dirty = true
-			}
+			m.Win.Hover.Set(hit.TabIndex)
 			return m, tea.Batch(cmds...)
 		}
 	}
 
 	// Mouse is outside the tab bar — clear the hover state.
-	if m.Win.Hover.Clear() {
-		m.dirty = true
-	}
+	m.Win.Hover.Clear()
 
 	// Overlay hover: forward mouse motion to the active overlay's
 	// interactive element (currently only the Confirm dialog's
@@ -717,7 +705,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 				adjustedMsg := tea.MouseMotionMsg{X: adjustedX, Y: 0, Button: msg.Button}
 				updated, _, _ := m.ActiveSession.Confirm.Update(adjustedMsg)
 				m.ActiveSession.Confirm = updated
-				m.dirty = true
 			}
 		}
 	}
@@ -732,10 +719,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		layout := m.computeLayout()
 		if mouse.Y >= layout.ChatAreaTop && mouse.Y < layout.ChatAreaTop+m.ChatAreaHeight && mouse.X >= layout.SidebarW {
 			cmd := m.routeEditorMouse(msg)
-			// updateDiagHoverPopup re-checks the editor's hover
-			// state; it returns immediately if nothing changed.
 			m.updateDiagHoverPopup(mouse.X, mouse.Y)
-			m.dirty = true
 			m.contentDirty = true
 			if cmd != nil {
 				return m, cmd
@@ -754,12 +738,10 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			m.dirty = true
 			m.contentDirty = true
 			return m, tea.Batch(cmds...)
 		}
 		cmds = append(cmds, m.routeChatMouse(msg, mouse, false)...)
-		m.dirty = true
 		m.contentDirty = true
 		return m, tea.Batch(cmds...)
 	}
@@ -1033,7 +1015,6 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	if m.windowManager != nil {
 		if fw := m.windowManager.Window("context-menu"); fw != nil {
 			m.windowManager.RemoveWindow("context-menu")
-			m.dirty = true
 			return m, nil
 		}
 	}
@@ -1104,7 +1085,6 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	// Record when the menu opened so we can drive the slide-in
 	// animation. Without this, the menu would just pop in.
 	m.ContextMenuOpenedAt = time.Now()
-	m.dirty = true
 	return m, nil
 }
 

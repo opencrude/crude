@@ -253,11 +253,9 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+f":
 			m.openFindReplace(false)
-			m.dirty = true
 			return m, nil
 		case "ctrl+h":
 			m.openFindReplace(true)
-			m.dirty = true
 			return m, nil
 		case "f3":
 			if m.FindReplace != nil {
@@ -265,7 +263,6 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			} else if m.EditorState.Editor.Search().HasMatches() {
 				m.EditorState.Editor.NextMatch()
 			}
-			m.dirty = true
 			return m, nil
 		case "shift+f3":
 			if m.FindReplace != nil {
@@ -273,7 +270,6 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			} else if m.EditorState.Editor.Search().HasMatches() {
 				m.EditorState.Editor.PrevMatch()
 			}
-			m.dirty = true
 			return m, nil
 		case "ctrl+.":
 			layout := m.computeLayout()
