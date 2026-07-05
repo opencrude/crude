@@ -738,11 +738,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			m.contentDirty = true
 			return m, tea.Batch(cmds...)
 		}
 		cmds = append(cmds, m.routeChatMouse(msg, mouse, false)...)
-		m.contentDirty = true
 		return m, tea.Batch(cmds...)
 	}
 

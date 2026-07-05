@@ -277,11 +277,6 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		m.handleUsageData(evt.Data, agentID)
 	}
 
-	// Mark content dirty so the main view cache is invalidated — agent
-	// events modify message list content (messages, tokens, thinking, tool
-	// calls) that needs to appear on screen immediately.
-	m.contentDirty = true
-
 	// Sync window tabs after all state mutations to ensure tab state
 	// matches agent state. This was previously called in View() which
 	// caused flickering by mutating render state every frame.

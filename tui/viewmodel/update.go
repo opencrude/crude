@@ -167,7 +167,6 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	m.PaneMgr.TickAll(spinFrame)
 	m.syncAgentWindowTabs()
-	contentChanged := false
 	for _, sp := range m.PaneMgr.Panes() {
 		if !sp.Done && sp.MsgList != nil {
 			if n := m.AgentMgr.Get(sp.ID); n != nil && n.State != nil {
@@ -175,7 +174,6 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 					sp.MsgList.AppendToken(n.State.TokenBuf)
 					n.State.TokenBuf = ""
 					n.State.LastTokenTime = time.Now()
-					contentChanged = true
 				}
 			}
 			if ml := m.activeMsgList(); ml != nil {
@@ -223,19 +221,8 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		m.StatusBar.SetProjectInsights(editor.ProjectInsights{})
 	}
 
-	// When content changed (agent tokens flushed), invalidate the main
-	// view cache so the new tokens appear in the next frame.
-	if contentChanged {
-		m.contentDirty = true
-	}
-
 	// Status bar animations and launcher spin frames need their
 	// own content re-rendered even when main content hasn't changed.
-	isLauncher := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
-	if m.StatusBar.HasAnimation() || isLauncher {
-		m.contentDirty = true
-	}
-
 	if m.anyActive() {
 		return m, streamingTickCmd()
 	}
