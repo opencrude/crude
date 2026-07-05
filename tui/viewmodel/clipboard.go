@@ -51,7 +51,6 @@ func (m *App) pasteIntoInput() {
 		canType, m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
 	m.Input = updated
 	m.StatusBar.SetInfo(fmt.Sprintf("Pasted %d chars into input", len(content)))
-	m.contentDirty = true
 }
 
 func (m *App) copyToClipboard(s string) {

@@ -356,7 +356,6 @@ func (m *App) handleLauncherClick(screenX, screenY int) (tea.Model, tea.Cmd) {
 		return m, m.launcherSelect()
 	}
 	m.launcher.lastClickIndex = flatIdx
-	m.contentDirty = true // launcher IS the main view
 	return m, nil
 }
 
@@ -381,7 +380,6 @@ func (m *App) handleLauncherHover(screenX, screenY int) {
 	}
 	if m.launcher.selected != flatIdx {
 		m.launcher.selected = flatIdx
-		m.contentDirty = true // launcher IS the main view
 	}
 }
 

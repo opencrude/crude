@@ -112,6 +112,27 @@ Each `FloatingWindow` has:
 - Wide cells (Width=2) write their continuation cell automatically
 - Continuation cells (Width=0) are skipped
 
+### Main Content Cache Rule (CRITICAL)
+
+The `m.contentDirty` flag gates the `buildMainView()` call in `view.go`. **The cache is ONLY used when the editor is the active view** — chroma syntax highlighting is expensive:
+
+```go
+isEditorMain := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
+useCached := isEditorMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
+```
+
+Agent tabs and the launcher ALWAYS call `buildMainView()` fresh every frame. They use cheap ANSI rendering and need every frame for cursor blink, hover highlights, and streaming tokens.
+
+**RULES:**
+- `m.contentDirty = true` must be set ONLY in paths that modify editor content or cursor position. The only valid places are:
+  - `update.go` Update-level: WindowSize, KeyPress, PasteMsg, MouseClick, MouseWheel, cursor-blink tick
+  - `mouse.go`: editor mouse motion (MouseMotion path)
+  - `clipboard.go`: cut/paste into editor
+  - `editor_tabs.go`: diagnostic cursor navigation
+- Do NOT set `m.contentDirty` for agent events, launcher operations, tree operations, floating windows, context menus, or any other non-editor path — the cache is never read there.
+- The old `m.dirty bool` field was dead code (set 60+ times, never read) and was removed. Do not reintroduce it.
+- `m.contentDirty` is reset to `false` at the end of `View()`. Any `contentDirty = true` set during Update() causes a single full re-render of the main view.
+
 ---
 
 ## Key File Organization

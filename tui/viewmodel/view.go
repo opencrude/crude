@@ -35,18 +35,12 @@ func (m *App) View() tea.View {
 		return v
 	}
 
-	// Cheap layers (sidebar, header, status bar) are always re-rendered
-	// every frame — they're fast surface fills + ANSI renders. The
-	// expensive part is the main content (editor with chroma/glamour).
-	// contentDirty tracks whether the editor tab's content actually
-	// changed (keypress, scroll, cursor blink). When false, we reuse
-	// the cached main content string.
-	//
-	// The launcher is also fast to render and has animations (spin
-	// frame, filter typing, scrolling), so it always gets a full
-	// re-render — no caching.
-	isLauncherMain := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
-	useCached := !isLauncherMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
+	// Only cache the main content when the editor is the active view —
+	// chroma syntax highlighting is expensive. Agent tabs and the
+	// launcher use cheap ANSI rendering and need every frame to stay
+	// responsive (cursor blink, hover highlights, streaming tokens).
+	isEditorMain := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
+	useCached := isEditorMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
 
 	m.compositor.BeginFrame()
 	m.renderCtx.SpinFrame = m.SpinFrame
