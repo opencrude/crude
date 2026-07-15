@@ -14,8 +14,8 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if m.OverlayState.Is(ModeSettings) {
-		m.Settings.RestoreSnapshot()
-		m.closeOverlayTab("Settings")
+		m.SessionSettings.RestoreSnapshot()
+		m.closeOverlayTab("Session Settings")
 		return nil
 	}
 
@@ -31,9 +31,7 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		m.OverlayState.SetBlocking(false)
 		m.StatusBar.SetConfirming(false)
 		m.closeOverlayTab("Confirm")
-		if m.ActiveSession.OnConfirmResult != nil {
-			m.ActiveSession.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
-		}
+		m.ActiveSession.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
 		if n := m.AgentMgr.ActiveNode(); n != nil {
 			select {
 			case n.CancelChan <- struct{}{}:
@@ -51,16 +49,12 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		m.Input.ResetPrompt()
 		m.Input.ClearInput()
 		m.closeAllQuestionOverlayTabs()
-		if m.ActiveSession.OnQuestionResult != nil {
-			m.ActiveSession.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
-		}
+		m.ActiveSession.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
 		return nil
 	}
 
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && !n.State.Completed && n.State.IsActive() {
-		if m.ActiveSession.OnCancelSubAgent != nil {
-			go m.ActiveSession.OnCancelSubAgent(n.ID)
-		}
+		go m.CancelSubAgent(n.ID)
 		n.State.Streaming = false
 		n.State.Thinking = false
 		m.StatusBar.SetInfo("cancelling sub-agent...")
@@ -74,9 +68,7 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 			default:
 			}
 		}
-		if m.OnHardCancel != nil {
-			m.OnHardCancel()
-		}
+		m.HardCancel()
 		m.StatusBar.SetInfo("cancelling...")
 		return nil
 	}

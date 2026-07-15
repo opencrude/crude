@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	"crude/tui/editor"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 // EditorState holds the per-editor-tab display state for the TUI. The active

@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"database/sql"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,9 +13,10 @@ import (
 	"crude/tui/surface"
 	ttypes "crude/tui/types"
 	"crude/tui/widget"
+	"crude/tui/widgets"
 	"crude/tui/window"
 	"crude/tui/wm"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 var OnHistorySave func([]string)
@@ -43,16 +43,16 @@ type App struct {
 	LSPPopup     *LSPPopupState
 
 	eventBus *workspace.EventBus
-	width     int
-	height    int
+	width    int
+	height   int
 
 	// Compositing engine
-	compositor    *compositor.Compositor
-	windowManager *wm.WindowManager
-	renderCtx     *widget.RenderContext
-	cachedOutput       string // last rendered ANSI output for View() throttling during drag
-	contentDirty       bool   // true when the main view (editor/chat/launcher) needs re-rendering — separate from chrome (tree/tabs/popups) so hover changes don't trigger expensive chroma/glamour re-renders
-	mainContentCached  string // last rendered main-view ANSI string — reused when only chrome changed (hover on tree, tabs, popups, etc.)
+	compositor        *compositor.Compositor
+	windowManager     *wm.WindowManager
+	renderCtx         *widget.RenderContext
+	cachedOutput      string // last rendered ANSI output for View() throttling during drag
+	contentDirty      bool   // true when the main view (editor/chat/launcher) needs re-rendering — separate from chrome (tree/tabs/popups) so hover changes don't trigger expensive chroma/glamour re-renders
+	mainContentCached string // last rendered main-view ANSI string — reused when only chrome changed (hover on tree, tabs, popups, etc.)
 
 	// Layer surfaces for differential rendering. Cheap layers (sidebar,
 	// header, status bar) are always re-rendered every frame. The main
@@ -66,11 +66,10 @@ type App struct {
 	// App-scoped fields (not on workspace.Workspace)
 	launcher            *LauncherState
 	commandPaletteModel *commandPaletteModel
+	providerPresets     []ttypes.ProviderPreset
 
 	OnQuit        func()
 	OnExitMessage func()
-	OnYoloCmd     func(bool)
-	OnUndoCmd     func(string)
 
 	Quit           bool
 	lastCancelTime time.Time
@@ -89,9 +88,7 @@ type (
 	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
 )
 
-func NewApp(modelName string, username string, initial ttypes.Settings, onSave func(ttypes.Settings) error, fetchFn func(providerID, baseURL, apiKey string) tea.Cmd, getProviderConfigFn func(string) ttypes.ProviderConfig, lg Logger, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) *App {
-	ws := workspace.NewWorkspace("", modelName, username, initial, onSave, getProviderConfigFn, lg, sessions, sessionID, sessionDir, db)
-
+func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
 	rctx := widget.NewRenderContext(ws.Theme)
@@ -116,29 +113,26 @@ func NewApp(modelName string, username string, initial ttypes.Settings, onSave f
 	edState := NewEditorState()
 	edState.Editor = editor.New(ws.Theme)
 
-	app := &App{
-		Workspace:          ws,
-		EditorState:        edState,
-		OverlayState:       NewOverlayState(),
-		LSPPopup:           NewLSPPopupState(),
-		launcher:           NewLauncherState(sessions),
-		compositor:         comp,
-		windowManager:      wmgr,
-		eventBus:           eb,
-		renderCtx:          rctx,
-		lastCancelTime:     time.Now(),
-		mainContentSurf:    contentSurf,
-		mainSidebarSurf:    sidebarSurf,
-		mainStatusbarSurf:  statusbarSurf,
-		mainHeaderSurf:     headerSurf,
+	// Start on the unified welcome launcher (actions + workspaces + sessions).
+	launcher := NewLauncherState(ws.RootPath, ws.ListSessions())
+
+	return &App{
+		Workspace:         ws,
+		EditorState:       edState,
+		OverlayState:      NewOverlayState(),
+		LSPPopup:          NewLSPPopupState(),
+		launcher:          launcher,
+		providerPresets:   presets,
+		compositor:        comp,
+		windowManager:     wmgr,
+		eventBus:          eb,
+		renderCtx:         rctx,
+		lastCancelTime:    time.Now(),
+		mainContentSurf:   contentSurf,
+		mainSidebarSurf:   sidebarSurf,
+		mainStatusbarSurf: statusbarSurf,
+		mainHeaderSurf:    headerSurf,
 	}
-
-	return app
-}
-
-func (m *App) SetProviderPresets(presets []ttypes.ProviderPreset) {
-	m.ProviderPresets = presets
-	m.Settings.SetPresets(presets)
 }
 
 func (m *App) SetHistory(history []string) {
@@ -148,14 +142,6 @@ func (m *App) SetHistory(history []string) {
 
 func modeName(m Mode) string {
 	return workspace.ModeName(m)
-}
-
-func (m *App) SetDeleteSessionFn(fn func(string)) {
-	m.OnDeleteSession = fn
-}
-
-func (m *App) SetListSessionsFn(fn func() []sessiondb.SessionMeta) {
-	m.OnListSessions = fn
 }
 
 func (m *App) SetReferences(refs []sessiondb.Reference) {
@@ -261,18 +247,108 @@ func (m *App) openTextOverlayWindow() {
 func (m *App) openFilePickerWindow() {
 	m.windowManager.RemoveWindow("filepicker")
 
-	win := wm.NewFloatingWindow("filepicker", "", &m.FilePicker,
-		60, 20,
-		wm.WithDecoration(false),
-		wm.WithClosable(false),
+	w, h := fitFloatingSize(m.width, m.height, 72, 24, 36, 12)
+	title := "Attach File"
+	if m.FilePicker.Mode() == widgets.FilePickerModeFolder {
+		title = "Open Folder"
+	}
+	win := wm.NewFloatingWindow("filepicker", title, &m.FilePicker,
+		w, h,
+		wm.WithDecoration(true),
+		wm.WithBorderStyle(wm.BorderNone),
+		wm.WithMovable(true),
+		wm.WithClosable(true),
 		wm.WithResizable(false),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
-		wm.WithMinSize(32, 10),
-		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
+		wm.WithMinSize(minInt(36, w), minInt(12, h)),
+		wm.WithMaxSize(w, h),
+		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.windowManager.AddWindow(win)
+}
+
+// openWorkspaceSettings opens the JetBrains-style workspace settings as a floating window.
+func (m *App) openWorkspaceSettings() {
+	m.windowManager.RemoveWindow("workspace-settings")
+
+	appSets := m.LoadAppSettings()
+	if len(appSets.Agents.Categories) == 0 {
+		appSets.Agents = m.WorkspaceAgentDefaults()
+	}
+	// Prefer live keys from the session config map.
+	if providers := m.AllProviderConfigs(); len(providers) > 0 {
+		appSets.Providers = providers
+	}
+	if appSets.ActiveProvider == "" {
+		appSets.ActiveProvider = m.LastSettings.ProviderID
+	}
+	if appSets.ActiveProvider == "" {
+		// Fall back to whatever ProviderConfig resolves for openrouter.
+		appSets.ActiveProvider = "openrouter"
+	}
+	if pc := m.ProviderConfig(appSets.ActiveProvider); (pc.APIKey != "" || pc.ProviderURL != "") && appSets.Providers != nil {
+		appSets.Providers[appSets.ActiveProvider] = pc
+	}
+
+	wsWidget := widgets.NewWorkspaceSettings(m.Theme, appSets, m.providerPresets)
+
+	w, h := fitFloatingSize(m.width, m.height, 96, 34, 56, 18)
+	win := wm.NewFloatingWindow("workspace-settings", "Settings", wsWidget,
+		w, h,
+		wm.WithDecoration(true),
+		wm.WithBorderStyle(wm.BorderNone),
+		wm.WithMovable(true),
+		wm.WithResizable(true),
+		wm.WithClosable(true),
+		wm.WithFocusable(true),
+		wm.WithModal(true),
+		wm.WithMinSize(minInt(56, w), minInt(18, h)),
+		wm.WithMaxSize(maxInt(w, m.width-2), maxInt(h, m.height-2)),
+		wm.WithClickOutside(wm.ClickOutsideIgnore),
+	)
+	wm.CenterOnScreen(win, m.width, m.height)
+	m.windowManager.AddWindow(win)
+}
+
+func fitFloatingSize(screenW, screenH, preferredW, preferredH, minW, minH int) (int, int) {
+	maxW := screenW - 4
+	maxH := screenH - 4
+	if maxW < 10 {
+		maxW = screenW
+	}
+	if maxH < 6 {
+		maxH = screenH
+	}
+	w, h := preferredW, preferredH
+	if w > maxW {
+		w = maxW
+	}
+	if h > maxH {
+		h = maxH
+	}
+	if w < minW && maxW >= minW {
+		w = minW
+	}
+	if h < minH && maxH >= minH {
+		h = minH
+	}
+	return w, h
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // handleQuit implements hierarchical quit: close tab first, quit if no tabs.
@@ -311,17 +387,14 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 			if action == window.CloseNone {
 				return m, nil
 			}
-		// If the tab was an agent tab, clean up
-		if m.isAgentTabTitle(tab.Title) {
-			agentID := m.agentIDFromTabTitle(tab.Title)
-			m.cleanupAgent(agentID)
-		}
-			// If no tabs left, show launcher
+			// If the tab was an agent tab, clean up
+			if m.isAgentTabTitle(tab.Title) {
+				agentID := m.agentIDFromTabTitle(tab.Title)
+				m.cleanupAgent(agentID)
+			}
+			// If no tabs left, show welcome launcher
 			if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && !m.Win.IsOpen() {
-				if m.OnListSessions != nil {
-					m.launcher = NewLauncherState(m.OnListSessions())
-					m.LastInteractionTime = time.Now()
-				}
+				m.openLauncher()
 				return m, nil
 			}
 		}
@@ -362,10 +435,17 @@ func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
 
 // openOrchestratorSettings opens the settings to the current orchestrator's
 // category settings, allowing per-orchestrator model/provider overrides.
-func (m *App) openOrchestratorSettings() {
-	m.Settings.SaveSnapshot()
-	m.Settings.OpenCategory("default")
+func (m *App) openSessionSettings() {
+	if m.SessionSettings == nil {
+		return
+	}
+	m.SessionSettings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
+	m.SessionSettings.SaveSnapshot()
 	m.setMode(ModeSettings)
+}
+
+func (m *App) openOrchestratorSettings() {
+	m.openSessionSettings()
 }
 
 // resetOrchestratorOverrides clears all runtime overrides for the current orchestrator.
@@ -378,10 +458,6 @@ func (m *App) resetOrchestratorOverrides() {
 			return
 		}
 	}
-	if m.ActiveSession.OnOrchestratorReset != nil {
-		go m.ActiveSession.OnOrchestratorReset(id)
-		m.StatusBar.SetInfo("Orchestrator overrides reset")
-	}
+	m.ResetOrchestratorOverrides(id)
+	m.StatusBar.SetInfo("Session overrides reset to workspace defaults")
 }
-
-

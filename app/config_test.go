@@ -163,6 +163,11 @@ func TestFileConfigLoadsMissingFileGracefully(t *testing.T) {
 }
 
 func TestSessionToFileConfigPreservesNewSettings(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
 	sc := &session.Config{
 		ActiveProvider:  "openai",
 		TurnLogsEnabled: true,
@@ -174,7 +179,7 @@ func TestSessionToFileConfigPreservesNewSettings(t *testing.T) {
 		t.Errorf("expected 'openai', got %q", fc.ActiveProvider)
 	}
 	if fc.Theme != nil {
-		t.Error("SessionToFileConfig should not set Theme")
+		t.Error("SessionToFileConfig should not invent Theme when none on disk")
 	}
 }
 

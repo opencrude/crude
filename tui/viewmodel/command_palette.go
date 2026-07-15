@@ -38,7 +38,7 @@ type cmdEntry struct {
 
 var paletteCommands = []cmdEntry{
 	{ID: "composer", Label: "Composer", Detail: "compose a detailed prompt", Category: catTools, Icon: "\u270f"},
-	{ID: "settings", Label: "Settings", Detail: "configure provider, model, theme", Category: catTools, Icon: "\u2699"},
+	{ID: "settings", Label: "Settings", Detail: "workspace settings: theme, editor, LSP, UI, font", Category: catTools, Icon: "\u2699"},
 	{ID: "attach-file", Label: "Attach File", Detail: "add a file reference", Category: catFile, Icon: "\u29c9"},
 	{ID: "orchestrator-settings", Label: "Orchestrator Settings", Detail: "override model and provider", Category: catAgent, Icon: "\u2699"},
 	{ID: "reset-orchestrator", Label: "Reset Overrides", Detail: "clear orchestrator overrides", Category: catAgent, Icon: "\u21ba"},
@@ -46,7 +46,8 @@ var paletteCommands = []cmdEntry{
 	{ID: "yolo", Label: "YOLO Mode", Detail: "toggle safety checks", Category: catTools, Icon: "\u2620"},
 	{ID: "undo", Label: "Undo", Detail: "revert last file change", Category: catSystem, Icon: "\u21a9"},
 	{ID: "help", Label: "Help", Detail: "show commands and shortcuts", Category: catHelp, Icon: "?"},
-	{ID: "quit", Label: "Quit", Detail: "exit the application", Category: catSystem, Icon: "\u2716"},
+	{ID: "quit", Label: "Quit", Detail: "exit immediately (does not close tabs first)", Category: catSystem, Icon: "\u2716"},
+	{ID: "sessions", Label: "Welcome / Sessions", Detail: "open the welcome launcher", Category: catSystem, Icon: "\u2630"},
 }
 
 type commandPaletteModel struct {
@@ -523,8 +524,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return nil
 
 	case "settings":
-		m.Settings.SaveSnapshot()
-		m.setMode(ModeSettings)
+		m.openWorkspaceSettings()
 
 	case "orchestrator-settings":
 		m.openOrchestratorSettings()
@@ -537,15 +537,13 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 			m.StatusBar.SetError("Cannot switch sessions while agent is running")
 			return nil
 		}
-		if m.OnListSessions != nil {
-			sessions := m.OnListSessions()
-			if len(sessions) > 0 {
-				m.launcher = NewLauncherState(sessions)
-				m.LastInteractionTime = time.Now()
-			} else {
-				m.StatusBar.SetInfo("No past sessions found")
-			}
+		// Open the unified welcome launcher (sessions + workspaces + exit).
+		// Requires no open agent tabs so focus can move to the launcher.
+		if m.AgentMgr.Count() > 0 || m.EditorState.ActiveView != "" {
+			m.StatusBar.SetInfo("Close open tabs first, or use Quit to exit")
+			return nil
 		}
+		m.openLauncher()
 
 	case "help":
 		var b strings.Builder
@@ -560,24 +558,21 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		b.WriteString("  Ctrl+B        - Toggle Sidebar\n")
 		b.WriteString("  Ctrl+O        - Attach File\n")
 		b.WriteString("  Ctrl+S        - Open Settings\n")
-		b.WriteString("  Ctrl+Q        - Quit\n")
-		b.WriteString("  Esc           - Cancel\n")
+		b.WriteString("  Ctrl+Q        - Close focused tab\n")
+		b.WriteString("  Esc           - Cancel operation / dismiss popup\n")
+		b.WriteString("  Quit command  - Exit app immediately\n")
 		if ml := m.activeMsgList(); ml != nil {
 			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 
 	case "undo":
-		if m.OnUndoCmd != nil {
-			go m.OnUndoCmd("/undo")
-		}
+		go m.HandleUndo("/undo")
 
 	case "yolo":
 		if m.OverlayState.IsYolo() {
 			m.OverlayState.SetYolo(false)
 			m.StatusBar.SetInfo("YOLO mode disabled")
-			if m.OnYoloCmd != nil {
-				go m.OnYoloCmd(false)
-			}
+			go m.SetYolo(false)
 		} else {
 			m.ActiveSession.YoloDlg.Reset()
 			m.setMode(ModeYolo)
@@ -590,17 +585,13 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.openFilePicker()
 
 	case "toggle-multiagent":
-		if m.OnSettingsSave != nil {
-			m.Settings.SaveSnapshot()
-			s := m.Settings.ToSettings()
-			s.Agents.Enabled = !s.Agents.Enabled
-			m.StatusBar.SetInfo("Toggling multi-agent mode...")
-			onSave := m.OnSettingsSave
-			cmds = append(cmds, func() tea.Msg {
-				err := onSave(s)
-				return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
-			})
-		}
+		s := m.LastSettings
+		s.Agents.Enabled = !s.Agents.Enabled
+		m.StatusBar.SetInfo("Toggling multi-agent mode...")
+		cmds = append(cmds, func() tea.Msg {
+			err := m.HandleSettingsSave(s)
+			return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
+		})
 
 	case "quit":
 		m.Quit = true

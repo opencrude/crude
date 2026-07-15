@@ -140,9 +140,10 @@ func StripAnsi(s string) string {
 }
 
 // VisibleWidth is the single point of truth for terminal column width.
-// Strips ANSI escape sequences, then measures visual width.
+// Strips ANSI escape sequences, then measures with WidthMethod (GraphemeWidth).
+// Must match Bubble Tea / ultraviolet's cellbuf.Method exactly.
 func VisibleWidth(s string) int {
-	return ansi.StringWidth(StripAnsi(s))
+	return WidthMethod.StringWidth(StripAnsi(s))
 }
 
 // SkipVisualPrefix strips the first n visual characters from an ANSI string,

@@ -8,7 +8,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/widgets"
 	"crude/tui/wm"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 // showDiagnosticAt displays a floating popup with diagnostics at the

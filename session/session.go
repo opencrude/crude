@@ -103,9 +103,29 @@ type Session struct {
 	// runtimeProfile holds ephemeral per-orchestrator config overrides
 	// that never persist to disk.
 	runtimeProfile *RuntimeProfile
+
+	// workspaceCfg is the inherited workspace baseline. s.cfg is the effective
+	// per-session config after applying overrides loaded from this session's DB.
+	workspaceCfg     *Config
+	sessionOverrides map[string]sessiondb.AgentSettingOverride
 }
 
+// New creates a backend session in the global sessions directory.
+// It is a thin wrapper around NewWithSessionDir using the legacy
+// ~/.crude/sessions/ root. New workspaces should use NewWithSessionDir
+// to place session data under the workspace folder.
 func New(id string, cfg *Config, homeDir string) (*Session, error) {
+	sessionsRoot, _ := SessionsRoot()
+	return NewWithSessionDir(id, cfg, homeDir, sessionsRoot)
+}
+
+// NewWithSessionDir creates a backend session with an explicit session
+// directory. All session artifacts (logs, DB, reports) live under that
+// directory. Used by workspace/ to keep sessions inside the workspace
+// folder.
+func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Session, error) {
+	workspaceCfg := copyConfig(cfg)
+	cfg = copyConfig(cfg)
 	mainCat := cfg.GetActiveDefaultCategory()
 	p := provider.FromPreset(mainCat.Provider, mainCat.APIKey, mainCat.ProviderURL)
 	p.Model = mainCat.Model
@@ -121,17 +141,15 @@ func New(id string, cfg *Config, homeDir string) (*Session, error) {
 		})
 	}
 
-	sessionsRoot, _ := SessionsRoot()
-	if sessionsRoot != "" {
-		os.MkdirAll(sessionsRoot, 0700)
-		sessiondb.CleanOldSessions(sessionsRoot)
+	if sessionDir != "" {
+		os.MkdirAll(sessionDir, 0700)
 	}
-	fileio.SetSessionsRootFn(SessionsRoot)
+	fileio.SetSessionsRootFn(func() (string, error) { return sessionDir, nil })
 
 	lg, err := logger.New(logger.Options{
 		HomeDir:        homeDir,
 		TurnLogEnabled: cfg.TurnLogsEnabled,
-		SessionsDir:    sessionsRoot,
+		SessionsDir:    sessionDir,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("logger: %w", err)
@@ -156,8 +174,8 @@ func New(id string, cfg *Config, homeDir string) (*Session, error) {
 	fileio.SetSafetyLogger(lg)
 
 	var editor *fileio.Editor
-	if sessionsRoot != "" {
-		if ed, edErr := fileio.NewEditorWithSessionDir(sessionID, sessionsRoot, lg); edErr != nil {
+	if sessionDir != "" {
+		if ed, edErr := fileio.NewEditorWithSessionDir(sessionID, sessionDir, lg); edErr != nil {
 			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
 		} else {
 			editor = ed
@@ -176,8 +194,8 @@ func New(id string, cfg *Config, homeDir string) (*Session, error) {
 
 	var db *sql.DB
 	var dbPath string
-	if sessionsRoot != "" {
-		dbPath = filepath.Join(sessionsRoot, sessionID+".db")
+	if sessionDir != "" {
+		dbPath = filepath.Join(sessionDir, sessionID+".db")
 		openDB, dbErr := sessiondb.OpenAndMigrate(dbPath)
 		if dbErr != nil {
 			lg.Warn("SESSION", "db_open_error", "error", fmt.Sprintf("%v", dbErr))
@@ -202,27 +220,29 @@ func New(id string, cfg *Config, homeDir string) (*Session, error) {
 	}
 
 	sess := &Session{
-		ID:              id,
-		cfg:             cfg,
-		provider:        p,
-		exec:            exec,
-		editor:          editor,
-		logger:          lg,
-		permStore:       permStore,
-		sm:              sm,
-		asyncMgr:        fileio.NewAsyncCommandManagerWithLogger(lg),
-		subAgentSup:     nil,
-		sessionID:       sessionID,
-		sessionStart:    time.Now(),
-		wakeCh:          make(chan WakeEvent, WakeChBufSize),
-		cost:            NewCostAccumulator(lg),
-		tokens:          NewTokenTracker(lg),
-		db:              db,
-		dbPath:          dbPath,
-		writeBuf:        make([]taggedMessage, 0, 64),
-		consumedReports: make(map[string]bool),
-		orchestrators:   make(map[string]*Orchestrator),
-		runtimeProfile:  NewRuntimeProfile(cfg),
+		ID:               id,
+		cfg:              cfg,
+		provider:         p,
+		exec:             exec,
+		editor:           editor,
+		logger:           lg,
+		permStore:        permStore,
+		sm:               sm,
+		asyncMgr:         fileio.NewAsyncCommandManagerWithLogger(lg),
+		subAgentSup:      nil,
+		sessionID:        sessionID,
+		sessionStart:     time.Now(),
+		wakeCh:           make(chan WakeEvent, WakeChBufSize),
+		cost:             NewCostAccumulator(lg),
+		tokens:           NewTokenTracker(lg),
+		db:               db,
+		dbPath:           dbPath,
+		writeBuf:         make([]taggedMessage, 0, 64),
+		consumedReports:  make(map[string]bool),
+		orchestrators:    make(map[string]*Orchestrator),
+		runtimeProfile:   NewRuntimeProfile(cfg),
+		workspaceCfg:     workspaceCfg,
+		sessionOverrides: make(map[string]sessiondb.AgentSettingOverride),
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)

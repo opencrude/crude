@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/editor"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 func (m *App) editorTabTitle(path string) string {
@@ -309,10 +309,8 @@ func (m *App) closeEditorTabForce(path string) {
 	m.handleTabSwitch()
 
 	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		if m.OnListSessions != nil {
-			m.launcher = NewLauncherState(m.OnListSessions())
-			m.LastInteractionTime = time.Now()
-		}
+		m.openLauncher()
+		m.LastInteractionTime = time.Now()
 	}
 }
 

@@ -1,395 +1,197 @@
+// Package app is the IDE shell and workspace lifecycle manager.
+//
+// Following the JetBrains model, app/ is the outermost layer that:
+//   - Owns the app config (crude.json / config.json)
+//   - Manages workspace lifecycle (create, list, resume, delete)
+//   - Handles CLI flags and dispatching
+//
+// app/ does NOT know about:
+//   - Session internals (that's workspace/ + session/)
+//   - LSP connections (that's workspace/)
+//   - Agent orchestration (that's session/)
+//   - TUI wiring or callbacks (that's tui/ ↔ workspace/)
+//   - Rendering or input handling (that's tui/)
+//
+// The app creates a workspace (the IDE instance) and hands it to the TUI.
+// The workspace owns all business state; the TUI owns all rendering.
 package app
 
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
 	"crude/tui"
-	"crude/tui/rendering"
-	ttypes "crude/tui/types"
-	"crude/tui/viewmodel"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
+// App is the IDE shell — the outermost layer of the three-layer architecture.
+//
+// It owns the app config and workspace lifecycle, but delegates all IDE
+// business logic (sessions, LSP, agents, editor state) to the workspace.
 type App struct {
-	fc              FileConfig
-	sessCfg         *session.Config
-	home            string
-	sessionsRoot    string
-	sm              *session.SessionManager
-	isResuming      bool
-	openSettings    bool
-	resumeSessionID string
-	resumeNextID    string
+	// fc is the app-level config (crude.json). Contains provider keys,
+	// theme preferences, editor settings, and other app-wide configuration.
+	fc FileConfig
+
+	// home is the user's home directory (~).
+	home string
+
+	// projectDir is the project directory for this IDE instance.
+	projectDir string
+
+	// sessionsRoot is the base directory for session databases.
+	// Layout: ~/.crude/sessions/ (legacy) — new sessions live under workspaces.
+	sessionsRoot string
+
+	// resumeID is an optional session ID from --resume.
+	resumeID string
 }
 
+// Opts configures the App. Passed to New() during initialization.
 type Opts struct {
-	FC              FileConfig
-	SessCfg         *session.Config
-	Home            string
-	SessionsRoot    string
-	ResumeSessionID string
-	IsResuming      bool
-	OpenSettings    bool
+	FC           FileConfig
+	Home         string
+	SessionsRoot string
+	ProjectDir   string // project directory (defaults to cwd)
+	ResumeID     string // optional session to resume at startup
 }
 
+// New creates the IDE shell. Resolves paths and stores config.
+// Does NOT create sessions or start the TUI — that happens in Run().
 func New(opts Opts) (*App, error) {
-	sessCfg := opts.SessCfg
 	home := opts.Home
-	sessionsRoot := opts.SessionsRoot
-
-	sm := session.NewSessionManager()
-
-	var err error
-	if opts.IsResuming && opts.ResumeSessionID != "" {
-		dbPath := filepath.Join(sessionsRoot, opts.ResumeSessionID+".db")
-		_, err = sm.ResumeSession(dbPath, sessCfg, home)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to resume session %s: %v\n", opts.ResumeSessionID, err)
-			fmt.Fprintln(os.Stderr, "Starting new session instead.")
-			_, err = sm.NewSession(sessCfg, home)
-		}
-	} else {
-		_, err = sm.NewSession(sessCfg, home)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+	if home == "" {
+		home, _ = os.UserHomeDir()
 	}
 
 	return &App{
-		fc:              opts.FC,
-		sessCfg:         sessCfg,
-		home:            home,
-		sessionsRoot:    sessionsRoot,
-		sm:              sm,
-		isResuming:      opts.IsResuming,
-		openSettings:    opts.OpenSettings,
-		resumeSessionID: opts.ResumeSessionID,
+		fc:           opts.FC,
+		home:         home,
+		projectDir:   opts.ProjectDir,
+		sessionsRoot: opts.SessionsRoot,
+		resumeID:     opts.ResumeID,
 	}, nil
 }
 
-func (a *App) Session() *session.Session {
-	info := a.sm.First()
-	if info == nil {
-		return nil
+// Run starts the IDE. This is the main entry point that:
+//  1. Creates a workspace (the IDE instance)
+//  2. Optionally resumes a session from --resume
+//  3. Starts the TUI with the workspace (launcher = workspace selector)
+//  4. Enters the main event loop
+//
+// When the TUI exits, Run() returns.
+func (a *App) Run() {
+	lg := &appLogger{}
+
+	// 1. Create the workspace shell (no session until launcher/resume picks one).
+	ws := workspace.NewWorkspace(
+		a.projectDir,
+		a.fc.ActiveProvider, // model name (will be overridden by session)
+		session.ResolveUsername(),
+		a.initialSettings(),
+		lg,
+	)
+
+	// 2. Convert app config to session config.
+	sessCfg := FileConfigToSession(a.fc)
+	ws.SetBackendConfig(sessCfg, a.home)
+
+	// Persist provider credentials back to config.json when settings save.
+	ws.OnConfigSave = func(cfg *session.Config) error {
+		a.fc = SessionToFileConfig(cfg)
+		// Preserve visual app-level prefs already on FileConfig.
+		return SaveFileConfig(a.fc)
 	}
-	return info.Session
+
+	// 3. Optional --resume: bootstrap that session now (launcher still available
+	//    for multi-session after the TUI starts).
+	if a.resumeID != "" {
+		if _, err := ws.Bootstrap(sessCfg, a.home, a.resumeID); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to resume session: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// 4. Start the TUI with provider presets for app settings.
+	history := LoadHistory()
+	presets := providerPresets()
+	t, err := tui.Start(ws, presets, history, lg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 5. Store the EventSender on the workspace for orchestrator creation.
+	if g := tui.GetGlobal(); g != nil {
+		ws.SetEventSender(g)
+	}
+
+	// 6. If --resume, start orchestrator + hydrate into TUI.
+	if a.resumeID != "" && ws.ActiveSession != nil {
+		if g := tui.GetGlobal(); g != nil {
+			orch, orchErr := ws.StartOrchestrator(g)
+			if orchErr == nil && orch != nil {
+				t.AddOrchestrator(orch.ID, orch.InputCh, orch.BtwCh, orch.CancelCh, orch.BlockResolveCh)
+			}
+		}
+		ws.Hydrate()
+		if msgs := ws.ActiveSession.HydratedMessages(); len(msgs) > 0 {
+			t.HydrateMessages(msgs)
+		}
+		if refs := ws.ActiveSession.HydratedRefs(); len(refs) > 0 {
+			t.SetReferences(refs)
+		}
+	}
+
+	// 7. Wait for exit.
+	t.Wait()
+	ws.CloseAllSessions()
+	ws.Close()
 }
 
-func (a *App) Run() {
-	sessCfg := a.sessCfg
-	firstInfo := a.sm.First()
-	if firstInfo == nil {
-		return
-	}
-	sess := firstInfo.Session
-
-	username := session.ResolveUsername()
-	initial := session.ConfigToSettings(sessCfg)
-
-	// Merge UI-level settings from FileConfig (Theme, Editor, LSP, UI, Font)
-	// into the initial Settings. These are TUI-level, not session-level.
-	if a.fc.Theme != nil {
-		initial.Theme = *a.fc.Theme
-	}
-	if a.fc.Editor != nil {
-		initial.Editor = *a.fc.Editor
-	}
-	if a.fc.LSP != nil {
-		initial.LSP = *a.fc.LSP
-	}
-	if a.fc.UI != nil {
-		initial.UI = *a.fc.UI
-	}
-	if a.fc.Font != nil {
-		initial.Font = *a.fc.Font
-	}
-
-	var providerPresets []tui.ProviderPreset
+func providerPresets() []tui.ProviderPreset {
+	out := make([]tui.ProviderPreset, 0, len(provider.Presets))
 	for _, p := range provider.Presets {
-		providerPresets = append(providerPresets, tui.ProviderPreset{
-			ID:       p.ID,
-			Name:     p.Name,
-			HelpText: p.HelpText,
-			BaseURL:  p.BaseURL,
+		out = append(out, tui.ProviderPreset{
+			ID: p.ID, Name: p.Name, HelpText: p.HelpText, BaseURL: p.BaseURL,
 		})
 	}
-
-	var sessionMetas []sessiondb.SessionMeta
-	if a.sessionsRoot != "" && !a.isResuming {
-		sessionMetas, _, _ = sessiondb.ListSessionsPaginated(a.sessionsRoot, sessiondb.ListSessionsOpts{Limit: 30, Offset: 0})
-	}
-
-	tuiInst, err := tui.Start(sessCfg.GetActiveDefaultCategory().Model, username, initial, providerPresets, LoadHistory(), sess.Logger(), sessionMetas, sess.SessionID(), sess.SessionDir(), sess.DB())
-	if err != nil {
-		sess.Logger().Error("SESSION", "tui_start_failed", "error", err.Error())
-		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
-		return
-	}
-
-	// For resumed sessions, start orchestrator immediately to display history.
-	// For new sessions, defer to OnNewSession callback (user clicks "New Session").
-	if a.isResuming {
-		orch, err := a.sm.StartOrchestrator(firstInfo.ID, tuiInst)
-		if err != nil {
-			sess.Logger().Error("SESSION", "start_failed", "error", err.Error())
-		} else {
-			tuiInst.AddOrchestrator(orch.ID, orch.InputCh, orch.BtwCh, orch.CancelCh, orch.BlockResolveCh)
-		}
-	}
-
-	if a.isResuming {
-		a.hydrateTUI(tuiInst, sess)
-	}
-
-	a.wireTUI(tuiInst, sess)
-
-	if a.openSettings || a.fc.Providers[a.fc.ActiveProvider].APIKey == "" {
-		tuiInst.OpenSettings()
-	}
-
-	tuiInst.Wait()
-
-	exitMsg := a.renderExitMessage()
-	if exitMsg != "" {
-		fmt.Fprint(os.Stderr, exitMsg)
-	}
-
-	if a.resumeNextID != "" {
-		a.runResumeSession(username, initial, providerPresets)
-	}
+	return out
 }
 
-func (a *App) wireTUI(tuiInst *tui.TUI, sess *session.Session) {
-	tuiInst.GetProviderConfigFn = func(providerID string) tui.ProviderConfig {
-		if cfg, ok := sess.Config().Providers[providerID]; ok {
-			return tui.ProviderConfig{
-				APIKey:      cfg.APIKey,
-				ProviderURL: cfg.ProviderURL,
-			}
-		}
-		return tui.ProviderConfig{}
+// initialSettings builds the initial settings snapshot from the app config.
+func (a *App) initialSettings() tui.Settings {
+	settings := tui.Settings{
+		ProviderID:      a.fc.ActiveProvider,
+		TurnLogsEnabled: boolStr(a.fc.IsTurnLogsEnabled()),
 	}
-
-	viewmodel.OnHistorySave = func(history []string) {
-		if err := SaveHistory(history); err != nil {
-			sess.Logger().Warn("HISTORY", "save_failed", "error", err.Error())
-		}
+	if pc, ok := a.fc.Providers[a.fc.ActiveProvider]; ok {
+		settings.APIKey = pc.APIKey
+		settings.ProviderAPIKey = pc.APIKey
+		settings.ProviderURL = pc.ProviderURL
+		settings.Model = pc.Model
+		settings.ThinkingEffort = pc.ThinkingEffort
 	}
-
-	tuiInst.OnNewSession = func() *workspace.NewSessionResult {
-		firstInfo := a.sm.First()
-		if firstInfo == nil {
-			tuiInst.SetError("no session available")
-			return nil
-		}
-		orch, err := a.sm.StartOrchestrator(firstInfo.ID, tuiInst)
-		if err != nil {
-			tuiInst.SetError(err.Error())
-			return nil
-		}
-		return &workspace.NewSessionResult{
-			OrchID:         orch.ID,
-			InputCh:        orch.InputCh,
-			BtwCh:          orch.BtwCh,
-			CancelCh:       orch.CancelCh,
-			BlockResolveCh: orch.BlockResolveCh,
-		}
-	}
-
-	tuiInst.OnQuit = func() {
-		sess.Close()
-	}
-
-	tuiInst.OnExitMessage = func() {}
-
-	tuiInst.OnSettingsSave = func(s tui.Settings) error {
-		if err := sess.HandleSettingsSave(s); err != nil {
-			return err
-		}
-		newFC := SessionToFileConfig(sess.Config())
-		// Preserve UI-level settings from the save data.
-		newFC.Theme = &s.Theme
-		newFC.Editor = &s.Editor
-		newFC.LSP = &s.LSP
-		newFC.UI = &s.UI
-		newFC.Font = &s.Font
-		if err := SaveFileConfig(newFC); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
-		}
-		tuiInst.UpdateModelName(sess.ModelName())
-		return nil
-	}
-
-	tuiInst.FetchModelsFn = func(providerID, baseURL, apiKey string) ([]tui.ModelEntry, error) {
-		return sess.HandleFetchModels(providerID, baseURL, apiKey)
-	}
-
-	tuiInst.OnYoloCmd = func(enabled bool) {
-		sess.SetYolo(enabled)
-	}
-
-	tuiInst.OnConfirmResult = func(result tui.ConfirmResult) {}
-
-	tuiInst.OnQuestionResult = func(result ttypes.QuestionResult) {}
-
-	tuiInst.OnUndoCmd = func(cmd string) {
-		result := sess.HandleUndo(cmd)
-		tuiInst.Program.Send(result)
-	}
-
-	tuiInst.OnResumeSession = func(sessionID string) {
-		a.resumeNextID = sessionID
-	}
-
-	tuiInst.OnCancelSubAgent = func(agentID string) {
-		runner := sess.SubAgentRunner()
-		if runner != nil {
-			runner.CancelSubAgent(map[string]any{"handle_id": agentID})
-		}
-	}
-
-	tuiInst.OnHardCancel = func() {
-		sess.HardCancel()
-	}
-
-	tuiInst.OnOrchestratorReset = func(orchID string) {
-		sess.RuntimeProfile().RemoveOverride(orchID)
-		sess.Logger().Info("RUNTIME", "orchestrator_reset", "id", orchID)
-	}
-
-	tuiInst.OnDeleteSession = func(sessionID string) {
-		if err := sessiondb.DeleteSession(a.sessionsRoot, sessionID); err != nil {
-			sess.Logger().Warn("SESSION", "delete_failed", "id", sessionID, "error", err.Error())
-		}
-	}
-
-	tuiInst.OnListSessions = func() []sessiondb.SessionMeta {
-		metas, _, _ := sessiondb.ListSessionsPaginated(a.sessionsRoot, sessiondb.ListSessionsOpts{Limit: 30, Offset: 0})
-		return metas
-	}
+	return settings
 }
 
-func (a *App) hydrateTUI(tuiInst *tui.TUI, sess *session.Session) {
-	msgs := sess.MessagesWithMeta()
-	if len(msgs) == 0 {
-		return
+func boolStr(b bool) string {
+	if b {
+		return "on"
 	}
-	chatMsgs := convertMessagesForDisplay(msgs)
-	tuiInst.HydrateMessages(chatMsgs)
-
-	if db := sess.DB(); db != nil {
-		if refs, err := sessiondb.LoadPromptReferences(db); err == nil && len(refs) > 0 {
-			tuiInst.SetReferences(refs)
-		}
-	}
+	return "off"
 }
 
-func (a *App) runResumeSession(username string, initial ttypes.Settings, providerPresets []tui.ProviderPreset) {
-	sessionID := a.resumeNextID
+// ── CLI Commands ──────────────────────────────────────────────────────
+//
+// These functions are called directly from main.go for CLI-only operations
+// (list, delete) that don't start the TUI.
 
-	dbPath := filepath.Join(a.sessionsRoot, sessionID+".db")
-	info, err := a.sm.ResumeSession(dbPath, a.sessCfg, a.home)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to resume session %s: %v\n", sessionID, err)
-		return
-	}
-	sess := info.Session
-
-	tuiInst, err := tui.Start(sess.ModelName(), username, initial, providerPresets, LoadHistory(), sess.Logger(), nil, sess.SessionID(), sess.SessionDir(), sess.DB())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
-		return
-	}
-
-	orch, err := a.sm.StartOrchestrator(info.ID, tuiInst)
-	if err != nil {
-		sess.Logger().Error("SESSION", "start_failed", "error", err.Error())
-	} else {
-		tuiInst.AddOrchestrator(orch.ID, orch.InputCh, orch.BtwCh, orch.CancelCh, orch.BlockResolveCh)
-	}
-
-	a.hydrateTUI(tuiInst, sess)
-	a.wireTUI(tuiInst, sess)
-	tuiInst.UpdateModelName(sess.ModelName())
-
-	a.resumeNextID = ""
-
-	tuiInst.Wait()
-
-	exitMsg := a.renderExitMessage()
-	if exitMsg != "" {
-		fmt.Fprint(os.Stderr, exitMsg)
-	}
-
-	if a.resumeNextID != "" {
-		a.runResumeSession(username, initial, providerPresets)
-	}
-}
-
-func formatQuestionAnswers(result ttypes.QuestionResult) string {
-	if len(result.Answers) == 0 {
-		return "No answers provided"
-	}
-	n := len(result.Answers)
-	var b strings.Builder
-	for i := 1; i <= n; i++ {
-		key := fmt.Sprintf("%d", i)
-		question := result.Questions[key]
-		answer := result.Answers[key]
-		if question != "" {
-			b.WriteString(fmt.Sprintf("Q%d: %s\nA%d: %s", i, question, i, answer))
-		} else {
-			b.WriteString(fmt.Sprintf("A%d: %s", i, answer))
-		}
-		if i < n {
-			b.WriteString("\n\n")
-		}
-	}
-	return b.String()
-}
-
-func (a *App) renderExitMessage() string {
-	sess := a.Session()
-	if sess == nil || !sess.HasMessages() {
-		return ""
-	}
-	uptime := time.Since(sess.SessionStart()).Truncate(time.Second)
-	costSnap := sess.CostSnapshot()
-
-	var b strings.Builder
-	m1 := uptime.String()
-	m2 := sess.ModelName()
-	m3 := ""
-	if costSnap.TotalCost > 0 || costSnap.TotalPromptTokens > 0 {
-		m3 = rendering.FormatCost(costSnap.TotalCost)
-		if costSnap.TotalPromptTokens > 0 {
-			m3 += fmt.Sprintf(" (%s↑ %s↓", rendering.FormatTokens(costSnap.TotalPromptTokens), rendering.FormatTokens(costSnap.TotalCompletionTokens))
-			if costSnap.TotalCachedTokens > 0 {
-				m3 += fmt.Sprintf(" %s cached", rendering.FormatTokens(costSnap.TotalCachedTokens))
-			}
-			m3 += ")"
-		}
-	}
-
-	b.WriteString("\n")
-	b.WriteString("  ·  ·  ·    " + m1 + "\n")
-	b.WriteString(" · · C · ·   " + m2 + "\n")
-	b.WriteString("  ·  ·  ·    " + m3 + "\n")
-	b.WriteString("\n")
-	b.WriteString("crude --resume " + sess.SessionID() + "\n")
-	b.WriteString(fmt.Sprintf("%s\n", filepath.Join(sess.SessionDir(), "session.log")))
-
-	return b.String()
-}
-
+// ListSessions prints all sessions to stdout. Used by `crude --list-sessions`.
 func ListSessions(sessionsRoot string, limit, offset int) {
 	metas, total, err := sessiondb.ListSessionsPaginated(sessionsRoot, sessiondb.ListSessionsOpts{
 		Limit:  limit,
@@ -423,6 +225,7 @@ func ListSessions(sessionsRoot string, limit, offset int) {
 	}
 }
 
+// DeleteSession deletes a session by ID. Used by `crude --delete-session`.
 func DeleteSession(sessionsRoot, sessionID string) {
 	if err := sessiondb.DeleteSession(sessionsRoot, sessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "Error deleting session: %v\n", err)
@@ -431,6 +234,8 @@ func DeleteSession(sessionsRoot, sessionID string) {
 	fmt.Printf("Session %s deleted.\n", sessionID)
 }
 
+// ResolveResumeID resolves the --resume flag to a session ID.
+// Supports "last", "true", or an explicit session ID.
 func ResolveResumeID(sessionsRoot, resumeFlag string) (string, error) {
 	if resumeFlag == "" {
 		return "", nil
@@ -444,3 +249,16 @@ func ResolveResumeID(sessionsRoot, resumeFlag string) (string, error) {
 	}
 	return resumeFlag, nil
 }
+
+// appLogger is a minimal logger that discards everything.
+// The session package creates its own logger for turn logs.
+// The workspace logger is only for workspace-level debug events.
+type appLogger struct{}
+
+func (l *appLogger) Info(tag, msg string, pairs ...any)  {}
+func (l *appLogger) Warn(tag, msg string, pairs ...any)  {}
+func (l *appLogger) Error(tag, msg string, pairs ...any) {}
+func (l *appLogger) Debug(tag, msg string, pairs ...any) {}
+
+// Ensure appLogger satisfies workspace.Logger.
+var _ workspace.Logger = (*appLogger)(nil)

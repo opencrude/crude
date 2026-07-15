@@ -115,6 +115,16 @@ CREATE TABLE IF NOT EXISTS prompt_references (
 );
 
 CREATE INDEX IF NOT EXISTS idx_prompt_refs_session ON prompt_references(session_id, deleted_at, created_at);
+
+CREATE TABLE IF NOT EXISTS session_agent_settings (
+    session_id      TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    provider        TEXT,
+    model           TEXT,
+    thinking_effort TEXT,
+    PRIMARY KEY (session_id, category),
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
 `
 
 func Open(dbPath string) (*sql.DB, error) {

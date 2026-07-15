@@ -1,163 +1,62 @@
 package tui
 
 import (
-	"database/sql"
-
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/types"
 	"crude/tui/viewmodel"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
+// TUI is the terminal UI layer. It holds the Bubble Tea program and
+// provides methods for the app layer to send events into the TUI.
+//
+// The TUI does NOT own business state — it delegates everything to the
+// workspace via the embedded viewmodel.App.
 type TUI struct {
 	app     *viewmodel.App
 	Program *tea.Program
 	doneCh  chan struct{}
 
+	// OnQuit is called when the TUI program exits.
 	OnQuit func()
 
+	// OnExitMessage is called after OnQuit to display a farewell message.
 	OnExitMessage func()
-
-	OnNewSession func() *workspace.NewSessionResult
-
-	OnResumeSession func(string)
-
-	OnCancelSubAgent func(agentID string)
-
-	OnHardCancel func()
-
-	OnOrchestratorReset func(orchID string)
-
-	OnDeleteSession func(string)
-
-	OnListSessions func() []sessiondb.SessionMeta
-
-	OnSettingsSave func(Settings) error
-
-	OnConfirmResult func(ConfirmResult)
-
-	OnQuestionResult func(types.QuestionResult)
-
-	OnYoloCmd func(enabled bool)
-
-	OnUndoCmd func(cmd string)
-
-	FetchModelsFn func(providerID, baseURL, apiKey string) ([]ModelEntry, error)
-
-	GetProviderConfigFn func(providerID string) ProviderConfig
-
-	ProviderPresets []ProviderPreset
 }
 
+// AddOrchestrator wires a backend orchestrator's channels into the TUI.
+// Called by the app layer after the workspace creates a new orchestrator.
 func (t *TUI) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
 	t.app.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh)
 }
 
 var global *TUI
 
-func Start(modelName string, username string, initial Settings, presets []ProviderPreset, history []string, lg interface {
+// Start creates and starts the terminal UI for the given workspace.
+//
+// The workspace must already be initialized. The app layer is responsible
+// for setting workspace callbacks (OnNewSession, OnResumeSession) before
+// calling Start.
+func Start(ws *workspace.Workspace, presets []ProviderPreset, history []string, lg interface {
 	Info(tag, msg string, pairs ...any)
 	Warn(tag, msg string, pairs ...any)
 	Error(tag, msg string, pairs ...any)
 	Debug(tag, msg string, pairs ...any)
-}, sessions []sessiondb.SessionMeta, sessionID, sessionDir string, db *sql.DB) (*TUI, error) {
+}) (*TUI, error) {
 	t := &TUI{
-		doneCh:          make(chan struct{}),
-		ProviderPresets: presets,
+		doneCh: make(chan struct{}),
 	}
 	global = t
 
-	onSave := func(s Settings) error {
-		if t.OnSettingsSave != nil {
-			return t.OnSettingsSave(s)
-		}
-		return nil
-	}
-
-	fetchFn := func(providerID, baseURL, apiKey string) tea.Cmd {
-		return func() tea.Msg {
-			if t.FetchModelsFn == nil {
-				return types.ModelsErrorMsg("no fetch function configured")
-			}
-			models, err := t.FetchModelsFn(providerID, baseURL, apiKey)
-			if err != nil {
-				return types.ModelsErrorMsg(err.Error())
-			}
-			return types.ModelsListMsg(models)
-		}
-	}
-
-	getProviderCfgFn := func(providerID string) ProviderConfig {
-		if t.GetProviderConfigFn != nil {
-			return t.GetProviderConfigFn(providerID)
-		}
-		return ProviderConfig{}
-	}
-
-	a := viewmodel.NewApp(modelName, username, initial, onSave, fetchFn, getProviderCfgFn, lg, sessions, sessionID, sessionDir, db)
-	a.SetProviderPresets(t.ProviderPresets)
+	a := viewmodel.NewApp(ws, presets)
 	a.SetHistory(history)
-	a.ActiveSession.OnConfirmResult = func(result ConfirmResult) {
-		if t.OnConfirmResult != nil {
-			t.OnConfirmResult(result)
-		}
-	}
-	a.ActiveSession.OnQuestionResult = func(result types.QuestionResult) {
-		if t.OnQuestionResult != nil {
-			t.OnQuestionResult(result)
-		}
-	}
-	a.OnYoloCmd = func(enabled bool) {
-		if t.OnYoloCmd != nil {
-			t.OnYoloCmd(enabled)
-		}
-	}
-	a.OnUndoCmd = func(cmd string) {
-		if t.OnUndoCmd != nil {
-			t.OnUndoCmd(cmd)
-		}
-	}
-	a.OnResumeSession = func(sessionID string) {
-		if t.OnResumeSession != nil {
-			t.OnResumeSession(sessionID)
-		}
-	}
-	a.OnNewSession = func() *workspace.NewSessionResult {
-		if t.OnNewSession != nil {
-			return t.OnNewSession()
-		}
-		return nil
-	}
-	a.ActiveSession.OnCancelSubAgent = func(agentID string) {
-		if t.OnCancelSubAgent != nil {
-			t.OnCancelSubAgent(agentID)
-		}
-	}
-	a.OnHardCancel = func() {
-		if t.OnHardCancel != nil {
-			t.OnHardCancel()
-		}
-	}
-	a.ActiveSession.OnOrchestratorReset = func(orchID string) {
-		if t.OnOrchestratorReset != nil {
-			t.OnOrchestratorReset(orchID)
-		}
-	}
-	a.SetDeleteSessionFn(func(sessionID string) {
-		if t.OnDeleteSession != nil {
-			t.OnDeleteSession(sessionID)
-		}
-	})
-	a.SetListSessionsFn(func() []sessiondb.SessionMeta {
-		if t.OnListSessions != nil {
-			return t.OnListSessions()
-		}
-		return nil
-	})
-	program := tea.NewProgram(a)
+	// Force UV cellbuf onto GraphemeWidth so it matches rendering.WidthMethod
+	// (layout). Without this, UV defaults to WcWidth and emoji/ZWJ pad drift.
+	program := tea.NewProgram(a, tea.WithWidthMethod(ansi.GraphemeWidth))
 	t.app = a
 	t.Program = program
 	a.SetProgram(program)

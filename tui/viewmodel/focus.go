@@ -1,6 +1,6 @@
 package viewmodel
 
-import "crude/tui/workspace"
+import "crude/workspace"
 
 type FocusTarget = workspace.FocusTarget
 

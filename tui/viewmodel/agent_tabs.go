@@ -5,7 +5,7 @@ import (
 
 	"crude/provider"
 	"crude/tui/widgets"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
@@ -125,7 +125,7 @@ func (m *App) setMode(newMode Mode) {
 	switch newMode {
 	case ModeSettings:
 		m.Input.ClearInput()
-		m.Overlay.OpenTab("Settings", "", true)
+		m.Overlay.OpenTab("Session Settings", "", true)
 	case ModeConfirm:
 		m.Overlay.OpenTab("Confirm", "", true)
 	case ModeQuestion:
@@ -181,6 +181,7 @@ func (m *App) switchToAgentView(agentID string) {
 		m.AgentMgr.ClearActive()
 	} else if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil && !n.State.Completed {
 		m.AgentMgr.SetActive(agentID)
+		m.ActivateSessionByAgent(agentID)
 	}
 
 	curr := m.AgentMgr.ActiveID()
@@ -431,7 +432,7 @@ func (m *App) syncOverlayMode() {
 		return
 	}
 	switch {
-	case activeTab.Title == "Settings":
+	case activeTab.Title == "Session Settings":
 		m.OverlayState.Set(ModeSettings)
 	case activeTab.Title == "Confirm":
 		m.OverlayState.Set(ModeConfirm)

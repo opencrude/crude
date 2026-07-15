@@ -126,6 +126,7 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 	curX := x
 	rest := text
 	for len(rest) > 0 {
+		// Must match rendering.WidthMethod (GraphemeWidth) and UV cellbuf.
 		cluster, w := ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
 		if len(cluster) == 0 {
 			break

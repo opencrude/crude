@@ -103,6 +103,9 @@ func buildSystemPrefixes() []string {
 
 func isPathUnderPrefix(path string, prefix string) bool {
 	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		return false
+	}
 	abs, err := filepath.Abs(cleaned)
 	if err != nil {
 		abs = cleaned
