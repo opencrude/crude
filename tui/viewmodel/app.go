@@ -247,10 +247,10 @@ func (m *App) openTextOverlayWindow() {
 func (m *App) openFilePickerWindow() {
 	m.windowManager.RemoveWindow("filepicker")
 
-	w, h := fitFloatingSize(m.width, m.height, 72, 24, 36, 12)
+	w, h := fitFloatingSize(m.width, m.height, 68, 20, 42, 12)
 	title := "Attach File"
 	if m.FilePicker.Mode() == widgets.FilePickerModeFolder {
-		title = "Open Folder"
+		title = "New Workspace"
 	}
 	win := wm.NewFloatingWindow("filepicker", title, &m.FilePicker,
 		w, h,
@@ -261,7 +261,7 @@ func (m *App) openFilePickerWindow() {
 		wm.WithResizable(false),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
-		wm.WithMinSize(minInt(36, w), minInt(12, h)),
+		wm.WithMinSize(minInt(42, w), minInt(12, h)),
 		wm.WithMaxSize(w, h),
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
@@ -294,7 +294,7 @@ func (m *App) openWorkspaceSettings() {
 
 	wsWidget := widgets.NewWorkspaceSettings(m.Theme, appSets, m.providerPresets)
 
-	w, h := fitFloatingSize(m.width, m.height, 96, 34, 56, 18)
+	w, h := fitFloatingSize(m.width, m.height, 86, 22, 60, 18)
 	win := wm.NewFloatingWindow("workspace-settings", "Settings", wsWidget,
 		w, h,
 		wm.WithDecoration(true),
@@ -304,7 +304,7 @@ func (m *App) openWorkspaceSettings() {
 		wm.WithClosable(true),
 		wm.WithFocusable(true),
 		wm.WithModal(true),
-		wm.WithMinSize(minInt(56, w), minInt(18, h)),
+		wm.WithMinSize(minInt(60, w), minInt(18, h)),
 		wm.WithMaxSize(maxInt(w, m.width-2), maxInt(h, m.height-2)),
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)

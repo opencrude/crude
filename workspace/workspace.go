@@ -136,7 +136,7 @@ type Workspace struct {
 	// confirmation. Empty when no delete is pending.
 	TreeDeletePending string
 
-	// FilePicker is the file picker widget (attach file + open folder modes).
+	// FilePicker is the file picker widget (attach file + new workspace modes).
 	// It's a value, not a pointer — the widget manages its own internal state.
 	FilePicker widgets.FilePicker
 
@@ -233,7 +233,7 @@ type Workspace struct {
 	// LastSettings is the last-applied settings snapshot.
 	LastSettings ttypes.Settings
 
-	// FormHint is the current form hint text shown in the overlay.
+	// FormHint is the current contextual form hint shown in the status bar.
 	FormHint string
 }
 

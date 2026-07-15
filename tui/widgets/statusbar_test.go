@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"crude/tui/editor"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 )
 
@@ -284,6 +285,43 @@ func TestStatusBar_TokenUsage(t *testing.T) {
 	}
 	if !strings.Contains(v, "50%") {
 		t.Fatalf("expected context usage percentage in view, got: %q", v)
+	}
+}
+
+func TestStatusBarSplitsActivityFromHeaderUsage(t *testing.T) {
+	sb := newTestSB()
+	setWidth(sb)
+
+	if got := stripAnsi(sb.ActivityView()); strings.Contains(got, "ready") {
+		t.Fatalf("bottom activity view should not contain readiness: %q", got)
+	}
+	if got := stripAnsi(sb.UsageView()); !strings.Contains(got, "ready") {
+		t.Fatalf("header usage view should contain readiness: %q", got)
+	}
+
+	sb.UpdateUsage(1200, 300, 0, 0.02, 4000, 1500, false)
+	usage := stripAnsi(sb.UsageView())
+	if !strings.Contains(usage, "↑1.2K") || !strings.Contains(usage, "$0.0200") {
+		t.Fatalf("header usage should carry token and cost state: %q", usage)
+	}
+	if got := stripAnsi(sb.ActivityView()); strings.Contains(got, "↑1.2K") || strings.Contains(got, "$0.0200") {
+		t.Fatalf("bottom activity view should not duplicate usage: %q", got)
+	}
+}
+
+func TestRenderHeaderPlacesUsageBeforeClock(t *testing.T) {
+	th := theme.DefaultDark()
+	header := RenderHeader(th, "openrouter/model", false, time.Now().Add(-time.Hour), "ready", "", 90)
+	plain := stripAnsi(header)
+	usageAt := strings.Index(plain, "ready")
+	clockAt := strings.LastIndex(plain, "1h")
+	if usageAt < 0 || clockAt < 0 || usageAt >= clockAt {
+		t.Fatalf("expected usage before elapsed clock, got %q", plain)
+	}
+
+	narrow := RenderHeader(th, strings.Repeat("model", 20), true, time.Now().Add(-time.Hour), strings.Repeat("usage ", 20), strings.Repeat("agent", 20), 50)
+	if got, maxWidth := rendering.VisibleWidth(narrow), 50-th.Spacing.PadLR*2; got > maxWidth {
+		t.Fatalf("header overflow: width=%d max=%d line=%q", got, maxWidth, stripAnsi(narrow))
 	}
 }
 

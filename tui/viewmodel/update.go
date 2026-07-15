@@ -155,6 +155,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
+	var diskSyncCmd tea.Cmd
 	spinFrame := int(time.Now().UnixMilli())
 	m.SpinFrame = spinFrame
 	m.StatusBar.SetSpinFrame(spinFrame)
@@ -183,28 +184,32 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if m.EditorState.Editor.IsOpen() && m.EditorState.Editor.DiskChanged() {
-		// Notify the LSP server that the file changed on disk. This fires
-		// regardless of which tab is active — the LSP needs disk-change
-		// notifications even when the user is in the file tree or chat.
-		if m.LSPMgr != nil {
-			lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			m.LSPMgr.NotifyWatchedFilesChanged(lspCtx, m.EditorState.Editor.FilePath(), 2) // 2 = Changed
-			cancel()
-		}
+		filePath := m.EditorState.Editor.FilePath()
+		var reloadedText string
+		updateOpenFile := false
 		// Only auto-reload when the editor has no unsaved (dirty) changes;
 		// otherwise the user's in-progress edits would be lost.
 		if !m.EditorState.Editor.Modified() {
 			if err := m.EditorState.Editor.Reload(); err != nil {
 				m.Logger.Error("EDITOR", "reload_error", "error", err.Error())
-			} else if m.LSPMgr != nil {
-				// Push the reloaded content to the LSP server. The LSP
-				// treats open files as in-memory documents (fed via
-				// didChange) and ignores disk changes for them, so
-				// without this the server's document stays stale and it
-				// never re-analyzes the externally-modified file.
+			} else {
+				reloadedText = m.EditorState.Editor.Value()
+				updateOpenFile = true
+				m.contentDirty = true
+			}
+		}
+		// LSP writes can wait on a subprocess pipe. Keep them off Bubble Tea's
+		// update goroutine so an external edit cannot stall input or rendering.
+		if m.LSPMgr != nil {
+			lspMgr := m.LSPMgr
+			diskSyncCmd = func() tea.Msg {
 				lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				m.LSPMgr.UpdateFile(lspCtx, m.EditorState.Editor.FilePath(), m.EditorState.Editor.Value())
-				cancel()
+				defer cancel()
+				lspMgr.NotifyWatchedFilesChanged(lspCtx, filePath, 2) // 2 = Changed
+				if updateOpenFile {
+					lspMgr.UpdateFile(lspCtx, filePath, reloadedText)
+				}
+				return nil
 			}
 		}
 	}
@@ -225,12 +230,12 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	// Status bar animations and launcher spin frames need their
 	// own content re-rendered even when main content hasn't changed.
 	if m.anyActive() {
-		return m, streamingTickCmd()
+		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
 	}
 	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		return m, streamingTickCmd()
+		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
 	}
-	return m, tickCmd()
+	return m, tea.Batch(diskSyncCmd, tickCmd())
 }
 
 func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
@@ -244,7 +249,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case workspace.LSPDiagnosticsMsg:
 		m.handleLSPDiagnosticsUpdate(msg)
 	case workspace.FileWatcherMsg:
-		m.handleFileWatcherEvent(msg)
+		if cmd := m.handleFileWatcherEvent(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case lspDefinitionResultMsg:
 		m.handleDefinitionResult(msg)
 	case lspReferencesResultMsg:
@@ -318,7 +325,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				_ = m.launcherOpenFolder(msg.Path)
 			} else if err := m.SwitchProject(msg.Path); err != nil {
 				if m.StatusBar != nil {
-					m.StatusBar.SetError("Failed to open folder: " + err.Error())
+					m.StatusBar.SetError("Failed to open workspace: " + err.Error())
 				}
 			} else if m.StatusBar != nil {
 				m.StatusBar.SetInfo("Opened " + msg.Path)

@@ -276,6 +276,10 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 				cmd := m.routeTreeScrollbarMsg(msg)
 				return m, cmd
 			}
+			if mouse.X >= m.Tree.Width-1-filetree.ScrollbarGutterWidth {
+				m.Tree.Model.Hover.Clear()
+				return m, nil
+			}
 			cmd := m.routeSidebarMouse(msg)
 			return m, cmd
 		}
@@ -552,9 +556,11 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	default:
-		// Smooth content scroll on the welcome launcher (not selection step).
-		if m.AgentMgr.Count() == 0 && m.launcher != nil {
+	case regionLauncher:
+		layout := m.computeLayout()
+		x := msg.X - layout.SidebarW - layout.PadLR
+		y := msg.Y - layout.ChatAreaTop
+		if m.launcher != nil && m.launcher.workspacePaneContains(x, y) {
 			m.LastInteractionTime = time.Now()
 			delta := 0
 			if msg.Button == tea.MouseWheelUp {
@@ -563,10 +569,12 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 				delta = 3
 			}
 			if delta != 0 {
-				m.launcher.scrollBy(delta, m.ChatAreaHeight)
-				return m, nil
+				m.launcher.scrollBy(delta, m.launcher.workspaceViewportH)
 			}
 		}
+		return m, nil
+
+	default:
 	}
 
 	return m, nil
@@ -597,7 +605,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 				continue
 			}
 			if fw.ContainsPoint(mouse.X, mouse.Y) {
-				m.handlePopupContentHover(fw, mouse.X, mouse.Y)
+				m.handlePopupContentHover(fw, mouse.X, mouse.Y, mouse.Button)
 				return m, tea.Batch(cmds...)
 			}
 		}
@@ -633,6 +641,14 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	if m.launcher != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		// Mouse is over the file tree — route there instead.
 		if m.Tree.Visible && m.Tree.Model != nil && mouse.X < m.Tree.Width {
+			if mouse.X == m.Tree.Width-1 {
+				cmd := m.routeTreeScrollbarMsg(msg)
+				return m, cmd
+			}
+			if mouse.X >= m.Tree.Width-1-filetree.ScrollbarGutterWidth {
+				m.Tree.Model.Hover.Clear()
+				return m, nil
+			}
 			cmd := m.routeSidebarMouse(msg)
 			return m, cmd
 		}
@@ -650,6 +666,10 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		if mouse.X == m.Tree.Width-1 {
 			cmd := m.routeTreeScrollbarMsg(msg)
 			return m, cmd
+		}
+		if mouse.X >= m.Tree.Width-1-filetree.ScrollbarGutterWidth {
+			m.Tree.Model.Hover.Clear()
+			return m, nil
 		}
 		cmd := m.routeSidebarMouse(msg)
 		return m, cmd
@@ -787,6 +807,10 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		if mouse.X == m.Tree.Width-1 {
 			cmd := m.routeTreeScrollbarMsg(msg)
 			return m, cmd
+		}
+		if mouse.X >= m.Tree.Width-1-filetree.ScrollbarGutterWidth {
+			m.Tree.Model.Hover.Clear()
+			return m, nil
 		}
 		cmd := m.routeSidebarMouse(msg)
 		return m, cmd

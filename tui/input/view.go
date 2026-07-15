@@ -14,17 +14,6 @@ func (m Model) View(width, chatAreaHeight int, settingsActive, confirmActive boo
 		return b.String()
 	}
 
-	if m.showHint && m.input.Value() == "" {
-		var hint string
-		if m.thinking && !m.blocking {
-			hint = "[ type to send a note to the agent · enter: send · esc: cancel ]"
-		} else {
-			hint = "[ enter: send · alt+enter|alt+\\: new line · ctrl+o: attach file · ↑↓: history · ctrl+s: settings · esc: exit ]"
-		}
-		b.WriteString(m.theme.Styles.DimLabel.Render(hint))
-		b.WriteByte('\n')
-	}
-
 	b.WriteString(m.input.View(width, spinFrame, m.thinking))
 
 	inputVal := m.input.Value()

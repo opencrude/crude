@@ -6,8 +6,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"crude/tui/theme"
 )
 
@@ -46,6 +48,7 @@ type Form struct {
 	focused   int
 	focusZone int
 	expanded  int
+	hovered   int
 
 	snapshot *formSnapshot
 }
@@ -62,6 +65,7 @@ func NewForm(t *theme.Theme, title, hint string, items ...FormItem) Form {
 		items:    items,
 		focused:  0,
 		expanded: -1,
+		hovered:  -1,
 	}
 }
 
@@ -75,6 +79,7 @@ func NewFormWithButtons(t *theme.Theme, title, hint string, buttons []Button, it
 		hasButtons: true,
 		focused:    0,
 		expanded:   -1,
+		hovered:    -1,
 	}
 }
 
@@ -90,6 +95,17 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 	}
 	if mouseMsg, ok := msg.(tea.MouseClickMsg); ok {
 		return m.updateMouseClick(mouseMsg)
+	}
+	if motionMsg, ok := msg.(tea.MouseMotionMsg); ok && m.expanded >= 0 {
+		if si, ok := m.items[m.expanded].(*SelectItem); ok {
+			const firstOptionRow = 5
+			if motionMsg.Y >= firstOptionRow {
+				translated := tea.MouseMotionMsg{X: motionMsg.X, Y: motionMsg.Y - firstOptionRow, Button: motionMsg.Button}
+				updated, cmd := si.List().Update(translated)
+				*si.List() = updated
+				return m, cmd, FormActionNone
+			}
+		}
 	}
 	if wheelMsg, ok := msg.(tea.MouseWheelMsg); ok && m.expanded >= 0 {
 		if si, ok := m.items[m.expanded].(*SelectItem); ok {
@@ -526,6 +542,65 @@ func (m Form) View(width int, spinFrame int) string {
 	}
 
 	return b.String()
+}
+
+// ViewSettings renders the denser IDE-settings variant of a form. It keeps
+// the same item order and interaction state while adding a descriptive header
+// and full-row focus/hover treatment.
+func (m Form) ViewSettings(width, spinFrame int, description string, active bool) string {
+	if m.expanded >= 0 {
+		return m.View(width, spinFrame)
+	}
+	if width < 20 {
+		width = 20
+	}
+	fit := func(s string) string {
+		s = ansi.Truncate(s, width, "")
+		if n := width - rendering.VisibleWidth(s); n > 0 {
+			s += strings.Repeat(" ", n)
+		}
+		return s
+	}
+	titleStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Fg).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Muted)
+	ruleStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupDivider)
+	rowFocus := lipgloss.NewStyle().Background(m.theme.Colors.PopupSubtleBg)
+	rowHover := lipgloss.NewStyle().Background(m.theme.Colors.Hover)
+
+	lines := []string{
+		fit(titleStyle.Render(m.title)),
+		fit(descStyle.Render(description)),
+		fit(ruleStyle.Render(strings.Repeat("─", width))),
+		strings.Repeat(" ", width),
+	}
+	labelWidth := m.calcLabelWidth()
+	for i, item := range m.items {
+		focused := active && m.focusZone == 0 && m.focused == i
+		line := fit(item.View(focused, spinFrame, labelWidth))
+		if focused {
+			line = rowFocus.Render(line)
+		} else if m.hovered == i {
+			line = rowHover.Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// SettingsHitTest maps a ViewSettings row to a form item.
+func (m Form) SettingsHitTest(row int) FormLayout {
+	const firstItemRow = 4
+	if row >= firstItemRow && row < firstItemRow+len(m.items) {
+		return FormLayout{ItemIndex: row - firstItemRow, FocusedBtn: -1}
+	}
+	return FormLayout{ItemIndex: -1, FocusedBtn: -1}
+}
+
+func (m *Form) SetHoveredItem(idx int) {
+	if idx < 0 || idx >= len(m.items) {
+		idx = -1
+	}
+	m.hovered = idx
 }
 
 func (m Form) Hint() string {

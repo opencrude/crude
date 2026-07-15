@@ -282,7 +282,9 @@ func (e *Editor) Save() error {
 	}
 	if err == nil {
 		e.modified = false
+		e.watchMu.Lock()
 		e.lastSaveTime = time.Now()
+		e.watchMu.Unlock()
 	}
 	e.notifyContentChanged()
 	if err == nil && e.formatOnSave {

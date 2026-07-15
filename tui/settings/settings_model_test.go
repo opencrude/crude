@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -48,15 +49,40 @@ func TestSettingsViewAndMouseNavigation(t *testing.T) {
 			t.Fatalf("line %d width = %d, want 90", i, width)
 		}
 	}
+	plain := rendering.StripAnsi(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "Search settings") || !strings.Contains(plain, "AI") || !strings.Contains(plain, "IDE") {
+		t.Fatalf("settings navigation is missing search/groups:\n%s", plain)
+	}
+	if strings.Contains(plain, "01  Providers") {
+		t.Fatal("settings navigation should not use numbered slab rows")
+	}
 
-	updated, _ := m.handleMouseClick(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
+	updated, _ := m.handleMouseClick(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
 	if updated.selected != 1 || updated.pane != 0 {
 		t.Fatalf("category click selected=%d pane=%d, want 1/0", updated.selected, updated.pane)
 	}
 	updated.View(90, 28)
 	x := updated.lastLayout.formX + 2
-	updated, _ = updated.handleMouseClick(tea.MouseClickMsg{X: x, Y: 3, Button: tea.MouseLeft})
+	updated, _ = updated.handleMouseClick(tea.MouseClickMsg{X: x, Y: 5, Button: tea.MouseLeft})
 	if updated.pane != 1 || !updated.currentForm().IsExpanded() {
 		t.Fatal("provider field click should focus form pane and expand selector")
+	}
+}
+
+func TestSettingsSearchFiltersGroupedNavigation(t *testing.T) {
+	m := New(theme.DefaultDark(), types.AppSettings{}, nil)
+	_, _ = m.handleKey(tea.KeyPressMsg{Code: '/', Text: "/"})
+	for _, r := range "font" {
+		_, _ = m.handleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if !m.searchActive || m.selected != catFont {
+		t.Fatalf("search active=%v selected=%d, want font", m.searchActive, m.selected)
+	}
+	plain := rendering.StripAnsi(strings.Join(m.View(80, 24), "\n"))
+	if !strings.Contains(plain, "font█") || !strings.Contains(plain, "Font") {
+		t.Fatalf("filtered settings search not rendered:\n%s", plain)
+	}
+	if strings.Contains(plain, "Providers") {
+		t.Fatalf("unmatched category remained visible:\n%s", plain)
 	}
 }

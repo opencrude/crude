@@ -69,9 +69,14 @@ func NewTextItem(t *theme.Theme, label, value string, masked bool) *TextItem {
 
 func (m *TextItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
-	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupTitleFocused)
+	accent := m.theme.Styles.InputPrompt
 	textStyle := m.theme.Styles.InputText
 	selStyle := m.theme.Styles.Highlight
+	if focused {
+		dim = dim.Background(m.theme.Colors.PopupSubtleBg)
+		accent = accent.Background(m.theme.Colors.PopupSubtleBg)
+		textStyle = textStyle.Background(m.theme.Colors.PopupSubtleBg)
+	}
 
 	val := string(m.value)
 	if m.masked && val != "" {
@@ -612,8 +617,13 @@ func NewSelectItem(t *theme.Theme, label, value string, pageSize int) *SelectIte
 
 func (m *SelectItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
-	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupTitleFocused)
+	accent := m.theme.Styles.InputPrompt
 	textStyle := m.theme.Styles.InputText
+	if focused {
+		dim = dim.Background(m.theme.Colors.PopupSubtleBg)
+		accent = accent.Background(m.theme.Colors.PopupSubtleBg)
+		textStyle = textStyle.Background(m.theme.Colors.PopupSubtleBg)
+	}
 
 	prefix := "  "
 	if focused {
@@ -720,8 +730,13 @@ func NewCycleItem(t *theme.Theme, label string, values []string, current string)
 
 func (m *CycleItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
-	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupTitleFocused)
+	accent := m.theme.Styles.InputPrompt
 	textStyle := m.theme.Styles.InputText
+	if focused {
+		dim = dim.Background(m.theme.Colors.PopupSubtleBg)
+		accent = accent.Background(m.theme.Colors.PopupSubtleBg)
+		textStyle = textStyle.Background(m.theme.Colors.PopupSubtleBg)
+	}
 
 	prefix := "  "
 	if focused {
@@ -796,7 +811,11 @@ func (m *NavItem) Desc() string { return m.desc }
 
 func (m *NavItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
-	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupTitleFocused)
+	accent := m.theme.Styles.InputPrompt
+	if focused {
+		dim = dim.Background(m.theme.Colors.PopupSubtleBg)
+		accent = accent.Background(m.theme.Colors.PopupSubtleBg)
+	}
 
 	prefix := "  "
 	if focused {

@@ -13,9 +13,9 @@ import (
 )
 
 // LauncherState holds the two-column welcome launcher.
-// Selectable: New Session, Open Folder, workspaces..., sessions...
+// Selectable: New Session, New Workspace, workspaces...
 // Hits use rectangular bounds so whole rows are clickable.
-// sessionScroll only scrolls the right-hand Sessions pane.
+// workspaceScroll only scrolls the right-hand workspace viewport.
 type LauncherState struct {
 	cwdPath      string
 	sessions     []sessiondb.SessionMeta
@@ -25,17 +25,21 @@ type LauncherState struct {
 	filterActive bool
 	filterText   string
 	filtered     []int
-	// sessionScroll: first visible line index inside the sessions pane.
-	sessionScroll int
+	// workspaceScroll is the first visible workspace row.
+	workspaceScroll int
 	// scrollOffset kept for compatibility; welcome fills the viewport.
 	scrollOffset int
 	lineToItem   []int
 	hits         []widgets.LauncherHit
 	selectedLine int
 	totalLines   int
-	// Session pane geometry from last paint (content coords).
-	sessionPaneY0, sessionPaneY1, sessionPaneX0 int
-	sessionScrollMax                            int
+	// Workspace pane geometry from last paint (content coords).
+	workspacePaneY0, workspacePaneY1       int
+	workspacePaneX0, workspacePaneX1       int
+	workspaceSearchY                       int
+	workspaceListY0, workspaceListY1       int
+	workspaceViewportH, workspaceItemCount int
+	workspaceScrollMax                     int
 }
 
 // NewLauncherState creates a unified welcome launcher.
@@ -51,7 +55,7 @@ func NewLauncherState(cwd string, sessions []sessiondb.SessionMeta) *LauncherSta
 		if info.ProjectDir != "" {
 			abs, _ := filepath.Abs(info.ProjectDir)
 			if abs == cwdAbs {
-				continue // current folder is the Open Folder action
+				continue // current folder is represented by New Session
 			}
 		}
 		filtered = append(filtered, info)
@@ -80,61 +84,31 @@ func (l *LauncherState) rebuildItems() {
 			SessionCount: w.SessionCount,
 		})
 	}
-	all := widgets.BuildLauncherItems(wsEntries, l.sessions)
-	if l.filterActive && l.filterText != "" {
-		lower := strings.ToLower(l.filterText)
-		l.filtered = nil
-		l.items = nil
-		for i, it := range all {
-			if itemMatches(it, lower) {
-				l.filtered = append(l.filtered, i)
-				l.items = append(l.items, it)
-			}
+	l.items = widgets.BuildLauncherItems(wsEntries, l.sessions)
+	l.filtered = nil
+	for i, it := range l.items {
+		if it.Kind == widgets.LauncherItemWorkspace && it.Workspace != nil && widgets.WorkspaceEntryMatches(*it.Workspace, l.filterText) {
+			l.filtered = append(l.filtered, i)
 		}
-		// Always keep Start actions visible even when filter is active.
-		if len(l.items) == 0 && len(all) >= 2 {
-			l.items = all[:2]
-			l.filtered = []int{0, 1}
-		}
-	} else {
-		l.filtered = nil
-		l.items = all
 	}
 	if l.selected >= len(l.items) {
 		l.selected = len(l.items) - 1
 	}
-	if l.selected < 0 {
+	if l.selected < 0 && len(l.items) > 0 {
 		l.selected = 0
+	}
+	if l.filterActive && !l.workspaceVisible(l.selected) {
+		if len(l.filtered) > 0 {
+			l.selected = l.filtered[0]
+		}
 	}
 }
 
-func itemMatches(it widgets.LauncherItem, lower string) bool {
-	switch it.Kind {
-	case widgets.LauncherItemNewSession:
-		return strings.Contains("new session", lower)
-	case widgets.LauncherItemOpenFolder:
-		return strings.Contains("open folder", lower)
-	case widgets.LauncherItemWorkspace:
-		if it.Workspace == nil {
-			return false
-		}
-		return strings.Contains(strings.ToLower(it.Workspace.Name), lower) ||
-			strings.Contains(strings.ToLower(it.Workspace.Path), lower)
-	case widgets.LauncherItemSession:
-		if it.Session == nil {
-			return false
-		}
-		s := it.Session
-		if strings.Contains(strings.ToLower(s.ProjectName), lower) {
+func (l *LauncherState) workspaceVisible(itemIdx int) bool {
+	for _, i := range l.filtered {
+		if i == itemIdx {
 			return true
 		}
-		if s.FirstPrompt.Valid && strings.Contains(strings.ToLower(s.FirstPrompt.String), lower) {
-			return true
-		}
-		if s.LastPrompt.Valid && strings.Contains(strings.ToLower(s.LastPrompt.String), lower) {
-			return true
-		}
-		return strings.Contains(strings.ToLower(s.ProjectPath), lower)
 	}
 	return false
 }
@@ -189,28 +163,56 @@ func (l *LauncherState) SelectedWorkspace() *workspace.WorkspaceInfo {
 	}
 	// Fallback synthetic info from the display entry.
 	return &workspace.WorkspaceInfo{
-		ProjectDir:  path,
-		ProjectName: it.Workspace.Name,
+		ProjectDir:   path,
+		ProjectName:  it.Workspace.Name,
 		SessionCount: it.Workspace.SessionCount,
 	}
 }
 
 func (l *LauncherState) moveUp() {
-	if l.selected > 0 {
-		l.selected--
-	}
+	l.moveSelection(-1)
 }
 
 func (l *LauncherState) moveDown() {
-	if l.selected < l.TotalItems()-1 {
-		l.selected++
+	l.moveSelection(1)
+}
+
+func (l *LauncherState) moveSelection(delta int) {
+	indices := l.selectableIndices()
+	if len(indices) == 0 {
+		return
 	}
+	pos := 0
+	for i, idx := range indices {
+		if idx == l.selected {
+			pos = i
+			break
+		}
+	}
+	pos = clampInt(pos+delta, 0, len(indices)-1)
+	l.selected = indices[pos]
+	l.ensureSelectedVisible(l.workspaceViewportH)
+}
+
+func (l *LauncherState) selectableIndices() []int {
+	if l.filterActive {
+		return append([]int(nil), l.filtered...)
+	}
+	indices := make([]int, len(l.items))
+	for i := range l.items {
+		indices[i] = i
+	}
+	return indices
 }
 
 func (l *LauncherState) activateFilter() {
 	l.filterActive = true
 	l.filterText = ""
-	l.filtered = nil
+	l.rebuildItems()
+	if len(l.filtered) > 0 {
+		l.selected = l.filtered[0]
+	}
+	l.workspaceScroll = 0
 }
 
 func (l *LauncherState) deactivateFilter() {
@@ -218,47 +220,58 @@ func (l *LauncherState) deactivateFilter() {
 	l.filterText = ""
 	l.filtered = nil
 	l.rebuildItems()
-	l.selected = 0
-	l.scrollOffset = 0
+	l.workspaceScroll = 0
 }
 
 func (l *LauncherState) updateFilter(text string) {
 	l.filterText = text
 	l.rebuildItems()
+	l.workspaceScroll = 0
 }
 
-// scrollSessions scrolls only the right-hand sessions list.
-func (l *LauncherState) scrollSessions(delta int) {
+// scrollWorkspaces scrolls only the right-hand workspace list.
+func (l *LauncherState) scrollWorkspaces(delta int) {
 	if l == nil {
 		return
 	}
-	l.sessionScroll += delta
-	if l.sessionScroll < 0 {
-		l.sessionScroll = 0
+	l.workspaceScroll += delta
+	if l.workspaceScroll < 0 {
+		l.workspaceScroll = 0
 	}
-	if l.sessionScroll > l.sessionScrollMax {
-		l.sessionScroll = l.sessionScrollMax
+	if l.workspaceScroll > l.workspaceScrollMax {
+		l.workspaceScroll = l.workspaceScrollMax
 	}
 }
 
 // scrollBy is an alias used by the mouse wheel path.
 func (l *LauncherState) scrollBy(delta, viewportH int) {
 	_ = viewportH
-	l.scrollSessions(delta)
+	l.scrollWorkspaces(delta)
 }
 
 func (l *LauncherState) ensureSelectedVisible(viewportH int) {
-	_ = viewportH
-	// Sessions auto-scroll when selection moves into the right pane.
 	if l == nil {
 		return
 	}
-	it := l.SelectedItem()
-	if it == nil || it.Kind != widgets.LauncherItemSession {
+	if viewportH <= 0 {
+		viewportH = l.workspaceViewportH
+	}
+	if viewportH <= 0 || !l.workspaceVisible(l.selected) {
 		return
 	}
-	// Nudge session scroll so selection stays roughly in view.
-	// Exact line math is paint-dependent; keep selection index stable.
+	row := 0
+	for i, itemIdx := range l.filtered {
+		if itemIdx == l.selected {
+			row = i
+			break
+		}
+	}
+	if row < l.workspaceScroll {
+		l.workspaceScroll = row
+	} else if row >= l.workspaceScroll+viewportH {
+		l.workspaceScroll = row - viewportH + 1
+	}
+	l.workspaceScroll = clampInt(l.workspaceScroll, 0, l.workspaceScrollMax)
 }
 
 // SetPaint stores hit-map metadata from the latest render.
@@ -270,13 +283,61 @@ func (l *LauncherState) SetPaint(paint widgets.LauncherPaint) {
 	l.hits = paint.Hits
 	l.selectedLine = paint.SelectedLine
 	l.totalLines = len(paint.Lines)
-	l.sessionPaneY0 = paint.SessionPaneY0
-	l.sessionPaneY1 = paint.SessionPaneY1
-	l.sessionPaneX0 = paint.SessionPaneX0
-	l.sessionScrollMax = paint.SessionScrollMax
-	if l.sessionScroll > l.sessionScrollMax {
-		l.sessionScroll = l.sessionScrollMax
+	l.workspacePaneY0 = paint.WorkspacePaneY0
+	l.workspacePaneY1 = paint.WorkspacePaneY1
+	l.workspacePaneX0 = paint.WorkspacePaneX0
+	l.workspacePaneX1 = paint.WorkspacePaneX1
+	l.workspaceSearchY = paint.WorkspaceSearchY
+	l.workspaceListY0 = paint.WorkspaceListY0
+	l.workspaceListY1 = paint.WorkspaceListY1
+	l.workspaceViewportH = paint.WorkspaceViewportH
+	l.workspaceItemCount = paint.WorkspaceVisibleCount
+	l.workspaceScrollMax = paint.WorkspaceScrollMax
+	if l.workspaceScroll > l.workspaceScrollMax {
+		l.workspaceScroll = l.workspaceScrollMax
 	}
+}
+
+// HelpView is rendered in the bottom-right status region while welcome is open.
+func (l *LauncherState) HelpView() string {
+	if l != nil && l.filterActive {
+		return "type search  ·  ↑↓ select  ·  enter open  ·  esc clear"
+	}
+	return "↑↓ navigate  ·  enter open  ·  / search  ·  d remove  ·  ctrl+shift+p palette"
+}
+
+func (l *LauncherState) workspacePaneContains(x, y int) bool {
+	return l != nil && x >= l.workspacePaneX0 && x <= l.workspacePaneX1 && y >= l.workspacePaneY0 && y <= l.workspacePaneY1
+}
+
+func (l *LauncherState) workspaceSearchContains(x, y int) bool {
+	return l != nil && x >= l.workspacePaneX0 && x <= l.workspacePaneX1 && y == l.workspaceSearchY
+}
+
+func (l *LauncherState) workspaceScrollbarContains(x, y int) bool {
+	return l != nil && l.workspaceItemCount > l.workspaceViewportH && x == l.workspacePaneX1 && y >= l.workspaceListY0 && y <= l.workspaceListY1
+}
+
+func (l *LauncherState) scrollWorkspaceTo(y int) {
+	if l == nil || l.workspaceViewportH <= 0 || l.workspaceScrollMax <= 0 {
+		return
+	}
+	row := clampInt(y-l.workspaceListY0, 0, l.workspaceViewportH-1)
+	if l.workspaceViewportH == 1 {
+		l.workspaceScroll = 0
+		return
+	}
+	l.workspaceScroll = row * l.workspaceScrollMax / (l.workspaceViewportH - 1)
+}
+
+func clampInt(v, low, high int) int {
+	if v < low {
+		return low
+	}
+	if v > high {
+		return high
+	}
+	return v
 }
 
 // HitTest maps a rendered line index to a flat item index (Y-only fallback).
@@ -358,10 +419,13 @@ func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			launcher.deactivateFilter()
 			return m, nil
 		case tea.KeyEnter:
-			return m, m.launcherSelect()
+			if launcher.workspaceVisible(launcher.selected) {
+				return m, m.launcherSelect()
+			}
+			return m, nil
 		case tea.KeyBackspace:
-			if len(launcher.filterText) > 0 {
-				launcher.filterText = launcher.filterText[:len(launcher.filterText)-1]
+			if runes := []rune(launcher.filterText); len(runes) > 0 {
+				launcher.filterText = string(runes[:len(runes)-1])
 				launcher.updateFilter(launcher.filterText)
 			} else {
 				launcher.deactivateFilter()
@@ -426,12 +490,15 @@ func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				launcher.moveDown()
 			}
 		case "home":
-			launcher.selected = 0
+			if indices := launcher.selectableIndices(); len(indices) > 0 {
+				launcher.selected = indices[0]
+			}
 		case "end":
-			if n := launcher.TotalItems(); n > 0 {
-				launcher.selected = n - 1
+			if indices := launcher.selectableIndices(); len(indices) > 0 {
+				launcher.selected = indices[len(indices)-1]
 			}
 		}
+		launcher.ensureSelectedVisible(launcher.workspaceViewportH)
 	}
 	return m, nil
 }
@@ -447,6 +514,14 @@ func (m *App) handleLauncherClick(screenX, screenY int) (tea.Model, tea.Cmd) {
 	}
 	x := screenX - layout.SidebarW - layout.PadLR
 	y := screenY - layout.ChatAreaTop
+	if m.launcher.workspaceSearchContains(x, y) {
+		m.launcher.activateFilter()
+		return m, nil
+	}
+	if m.launcher.workspaceScrollbarContains(x, y) {
+		m.launcher.scrollWorkspaceTo(y)
+		return m, nil
+	}
 	flatIdx := m.launcher.HitTestXY(x, y)
 	if flatIdx < 0 {
 		return m, nil
@@ -525,7 +600,7 @@ func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
 	}
 	if err := m.SwitchProject(projectDir); err != nil {
 		if m.StatusBar != nil {
-			m.StatusBar.SetError("Failed to open folder: " + err.Error())
+			m.StatusBar.SetError("Failed to open workspace: " + err.Error())
 		}
 		return nil
 	}

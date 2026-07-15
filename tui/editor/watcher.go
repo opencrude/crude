@@ -14,11 +14,14 @@ import (
 const saveSuppressWindow = 200 * time.Millisecond
 
 func (e *Editor) DiskChanged() bool {
-	if e.watchChanged == nil {
+	e.watchMu.Lock()
+	changed := e.watchChanged
+	e.watchMu.Unlock()
+	if changed == nil {
 		return false
 	}
 	select {
-	case <-e.watchChanged:
+	case <-changed:
 		return true
 	default:
 		return false
@@ -39,29 +42,38 @@ func (e *Editor) startWatching() {
 		w.Close()
 		return
 	}
+	changed := make(chan struct{}, 1)
+	done := make(chan struct{})
+	e.watchMu.Lock()
 	e.watcher = w
 	e.watchDir = dir
-	e.watchChanged = make(chan struct{}, 1)
-	e.watchDone = make(chan struct{})
-	go e.watchLoop()
+	e.watchChanged = changed
+	e.watchDone = done
+	e.lastSaveTime = time.Time{}
+	e.watchMu.Unlock()
+	go e.watchLoop(w, done, changed, filepath.Base(e.filePath))
 }
 
 func (e *Editor) stopWatching() {
-	if e.watcher == nil {
-		return
-	}
-	close(e.watchDone)
-	e.watcher.Close()
+	e.watchMu.Lock()
+	w := e.watcher
+	done := e.watchDone
 	e.watcher = nil
 	e.watchDir = ""
 	e.watchChanged = nil
+	e.watchDone = nil
+	e.watchMu.Unlock()
+	if w == nil {
+		return
+	}
+	close(done)
+	_ = w.Close()
 }
 
-func (e *Editor) watchLoop() {
-	filename := filepath.Base(e.filePath)
+func (e *Editor) watchLoop(w *fsnotify.Watcher, done <-chan struct{}, changed chan<- struct{}, filename string) {
 	for {
 		select {
-		case event, ok := <-e.watcher.Events:
+		case event, ok := <-w.Events:
 			if !ok {
 				return
 			}
@@ -72,18 +84,21 @@ func (e *Editor) watchLoop() {
 			// this, every editor save fires fsnotify → watchChanged →
 			// tick → Reload(), which needlessly rebuilds the buffer and
 			// can clobber rapid typing between save and the next tick.
-			if !e.lastSaveTime.IsZero() && time.Since(e.lastSaveTime) < saveSuppressWindow {
+			e.watchMu.Lock()
+			lastSaveTime := e.lastSaveTime
+			e.watchMu.Unlock()
+			if !lastSaveTime.IsZero() && time.Since(lastSaveTime) < saveSuppressWindow {
 				continue
 			}
 			select {
-			case e.watchChanged <- struct{}{}:
+			case changed <- struct{}{}:
 			default:
 			}
-		case _, ok := <-e.watcher.Errors:
+		case _, ok := <-w.Errors:
 			if !ok {
 				return
 			}
-		case <-e.watchDone:
+		case <-done:
 			return
 		}
 	}

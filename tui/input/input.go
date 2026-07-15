@@ -115,6 +115,18 @@ func (m *Model) ShowHint() bool {
 	return m.showHint
 }
 
+// ContextHint returns composer guidance for the shared bottom status region.
+// The input view itself only renders editable content and slash results.
+func (m *Model) ContextHint() string {
+	if !m.showHint || m.input.Value() != "" {
+		return ""
+	}
+	if m.thinking && !m.blocking {
+		return "type to send a note to the agent · enter send · esc cancel"
+	}
+	return "enter send · alt+enter new line · ctrl+o attach file · ↑↓ history · ctrl+s settings · esc exit"
+}
+
 func (m *Model) DismissHint() {
 	m.showHint = false
 }
@@ -185,11 +197,10 @@ func (m Model) InputTextWidth() int {
 }
 
 func (m Model) FirstLineY(chatAreaHeight int, showHint, thinking bool, inputLen int) int {
-	y := chatAreaHeight + 4
-	if showHint && inputLen == 0 {
-		y++
-	}
-	return y
+	_ = showHint
+	_ = thinking
+	_ = inputLen
+	return chatAreaHeight + 4
 }
 
 func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool) (runeIdx int, ok bool) {

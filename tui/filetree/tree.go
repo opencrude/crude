@@ -901,7 +901,6 @@ func (m *FileTreeModel) refreshNode(path string) {
 //   - FileRenamed: removes the old entry and adds the new one.
 func (m *FileTreeModel) ProcessWatcherEvent(evt FileChangeEvent) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	switch evt.Type {
 	case FileCreated:
@@ -913,9 +912,13 @@ func (m *FileTreeModel) ProcessWatcherEvent(evt FileChangeEvent) {
 	case FileRenamed:
 		m.handleFileRenamed(evt.OldPath, evt.Path)
 	}
+	onFileChanged := m.onFileChanged
+	m.mu.Unlock()
 
-	// Notify the LSP server about disk changes.
-	if m.onFileChanged != nil {
+	// Never invoke external code while holding the tree lock. EventBus.Send can
+	// wait for Bubble Tea, whose render path reads this model; calling it under
+	// the write lock deadlocks the watcher and renderer against each other.
+	if onFileChanged != nil {
 		// Map FileEvent to LSP FileChangeType: 1=Created, 2=Changed, 3=Deleted.
 		var changeType int
 		switch evt.Type {
@@ -927,7 +930,7 @@ func (m *FileTreeModel) ProcessWatcherEvent(evt FileChangeEvent) {
 			changeType = 3
 		}
 		if changeType > 0 {
-			m.onFileChanged(evt.Path, changeType)
+			onFileChanged(evt.Path, changeType)
 		}
 	}
 }
@@ -1199,14 +1202,34 @@ func (m *FileTreeModel) GitResolver() *GitStatusResolver {
 // StartWatcher creates and starts a file system watcher for the tree's root
 // path. Events are delivered to ProcessWatcherEvent in a background goroutine.
 func (m *FileTreeModel) StartWatcher() error {
-	w := NewWatcher(m.rootPath)
+	m.mu.RLock()
+	rootPath := m.rootPath
+	alreadyStarted := m.watcher != nil
+	m.mu.RUnlock()
+	if alreadyStarted {
+		return nil
+	}
+
+	w := NewWatcher(rootPath)
 	if err := w.Start(); err != nil {
 		return fmt.Errorf("failed to start file watcher: %w", err)
 	}
+	m.mu.Lock()
+	if m.watcher != nil {
+		m.mu.Unlock()
+		w.Stop()
+		return nil
+	}
 	m.watcher = w
+	m.mu.Unlock()
 	go func() {
-		for evt := range w.Events() {
-			m.ProcessWatcherEvent(evt)
+		for {
+			select {
+			case <-w.Done():
+				return
+			case evt := <-w.Events():
+				m.ProcessWatcherEvent(evt)
+			}
 		}
 	}()
 	return nil
@@ -1214,8 +1237,11 @@ func (m *FileTreeModel) StartWatcher() error {
 
 // StopWatcher stops the file system watcher if one is active.
 func (m *FileTreeModel) StopWatcher() {
-	if m.watcher != nil {
-		m.watcher.Stop()
-		m.watcher = nil
+	m.mu.Lock()
+	w := m.watcher
+	m.watcher = nil
+	m.mu.Unlock()
+	if w != nil {
+		w.Stop()
 	}
 }

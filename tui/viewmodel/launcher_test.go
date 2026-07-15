@@ -1,6 +1,8 @@
 package viewmodel
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,7 +148,7 @@ func TestLauncher_ResumeSession(t *testing.T) {
 		{ID: "ses_test_1", ProjectName: "test-project"},
 	}
 	app.launcher.rebuildItems()
-	// Select the session item (after New Session, Open Folder, Exit).
+	// Select the session item if compatibility callers provide one.
 	for i, it := range app.launcher.items {
 		if it.Kind == widgets.LauncherItemSession {
 			app.launcher.selected = i
@@ -246,6 +248,99 @@ func TestLauncher_NoSessions_StartActionsOnly(t *testing.T) {
 	it := app.launcher.SelectedItem()
 	if it == nil || it.Kind != widgets.LauncherItemNewSession {
 		t.Fatal("default selection should be New Session")
+	}
+}
+
+func TestLauncherWorkspaceSearchKeepsActionsFixed(t *testing.T) {
+	launcher := &LauncherState{
+		cwdPath: "/projects/current",
+		workspaces: []workspace.WorkspaceInfo{
+			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
+			{ProjectName: "beta", ProjectDir: "/projects/beta"},
+		},
+		selected: 0,
+	}
+	launcher.rebuildItems()
+	launcher.activateFilter()
+	launcher.updateFilter("beta")
+
+	if launcher.TotalItems() != 4 {
+		t.Fatalf("search should not remove fixed actions, got %d items", launcher.TotalItems())
+	}
+	if len(launcher.filtered) != 1 || launcher.items[launcher.filtered[0]].Workspace.Name != "beta" {
+		t.Fatalf("expected only beta in workspace results, got indices %v", launcher.filtered)
+	}
+	if !launcher.workspaceVisible(launcher.selected) {
+		t.Fatalf("selection should move into filtered workspace results, selected=%d", launcher.selected)
+	}
+	if !strings.Contains(launcher.HelpView(), "type search") {
+		t.Fatalf("active search help missing: %q", launcher.HelpView())
+	}
+}
+
+func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
+	app := newTestAppWithLauncher(t)
+	app.width = 120
+	app.height = 30
+	app.ChatAreaHeight = 20
+	app.Tree = &workspace.TreeState{}
+	app.launcher.workspaces = make([]workspace.WorkspaceInfo, 30)
+	for i := range app.launcher.workspaces {
+		app.launcher.workspaces[i] = workspace.WorkspaceInfo{
+			ProjectName: fmt.Sprintf("workspace-%02d", i),
+			ProjectDir:  fmt.Sprintf("/projects/workspace-%02d", i),
+		}
+	}
+	app.launcher.rebuildItems()
+	layout := app.computeLayout()
+	paint := widgets.RenderWelcomeLauncher(
+		app.launcher.cwdPath,
+		app.launcher.items,
+		app.launcher.selected,
+		0,
+		false,
+		"",
+		app.Theme,
+		layout.InnerW,
+		app.ChatAreaHeight,
+		0,
+		0,
+	)
+	app.launcher.SetPaint(paint)
+
+	rightX := layout.SidebarW + layout.PadLR + paint.WorkspacePaneX0 + 1
+	searchY := layout.ChatAreaTop + paint.WorkspaceSearchY
+	app.handleLauncherClick(rightX, searchY)
+	if !app.launcher.filterActive {
+		t.Fatal("clicking the workspace search row should focus search")
+	}
+
+	listY := layout.ChatAreaTop + paint.WorkspaceListY0
+	app.dispatchMouseWheel(tea.MouseWheelMsg{X: rightX, Y: listY, Button: tea.MouseWheelDown})
+	if app.launcher.workspaceScroll == 0 {
+		t.Fatal("wheel inside workspace viewport should scroll results")
+	}
+
+	app.launcher.workspaceScroll = 0
+	leftX := layout.SidebarW + layout.PadLR + 1
+	app.dispatchMouseWheel(tea.MouseWheelMsg{X: leftX, Y: listY, Button: tea.MouseWheelDown})
+	if app.launcher.workspaceScroll != 0 {
+		t.Fatal("wheel over fixed left help/actions must not scroll workspace results")
+	}
+}
+
+func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width = 100
+	app.height = 30
+	app.launcher = NewLauncherState(".", nil)
+
+	view := app.buildMainView()
+	if strings.Contains(view, "↑↓ navigate") {
+		t.Fatalf("launcher help should not consume a main-pane row:\n%s", view)
+	}
+	if app.ChatAreaHeight != 25 {
+		t.Fatalf("launcher should receive reclaimed separator/help rows: height=%d, want 25", app.ChatAreaHeight)
 	}
 }
 

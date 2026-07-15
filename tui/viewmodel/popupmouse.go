@@ -79,7 +79,7 @@ func (m *App) handlePopupContentClick(fw *wm.FloatingWindow, msg tea.MouseClickM
 
 // handlePopupContentHover updates pre-selection when the mouse moves
 // over a popup. Called from dispatchMouseMotion.
-func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY int) {
+func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY int, button tea.MouseButton) {
 	if fw == nil || !fw.Focusable() {
 		return
 	}
@@ -88,6 +88,8 @@ func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY in
 	localY := screenY - fy
 
 	switch fw.ID {
+	case "filepicker", "workspace-settings":
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
 	case "context-menu":
 		m.hoverContextMenu(localX, localY)
 	case "find-replace":
@@ -251,9 +253,9 @@ func (m *App) hoverContextMenu(localX, localY int) {
 		for ii, item := range sec.Items {
 			if rowIdx == contentRow {
 				if !item.Disabled {
-				if fwItem, ok := findFlatItemIndex(st, si, ii); ok && st.Cursor != fwItem {
-					st.Cursor = fwItem
-				}
+					if fwItem, ok := findFlatItemIndex(st, si, ii); ok && st.Cursor != fwItem {
+						st.Cursor = fwItem
+					}
 				}
 				return
 			}

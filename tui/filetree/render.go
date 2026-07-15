@@ -21,6 +21,10 @@ import (
 	"crude/tui/widget"
 )
 
+// ScrollbarGutterWidth keeps tree labels and decorations visually separate
+// from the scrollbar while preserving the scrollbar as the final column.
+const ScrollbarGutterWidth = 1
+
 // ---------------------------------------------------------------------------
 // TreeRenderer
 // ---------------------------------------------------------------------------
@@ -75,15 +79,15 @@ func NewTreeRenderer(model *FileTreeModel, iconResolver *IconResolver) *TreeRend
 // is provided.
 func defaultTreeConfig() *theme.TreeConfig {
 	return &theme.TreeConfig{
-		IndentWidth:   2,
-		ShowIcons:     true,
-		ShowGitStatus: true,
+		IndentWidth:     2,
+		ShowIcons:       true,
+		ShowGitStatus:   true,
 		ShowDiagnostics: true,
-		ShowHidden:    false,
-		DefaultWidth:  30,
-		MinWidth:      20,
-		MaxWidth:      60,
-		UseNerdFont:   nil,
+		ShowHidden:      false,
+		DefaultWidth:    30,
+		MinWidth:        20,
+		MaxWidth:        60,
+		UseNerdFont:     nil,
 	}
 }
 
@@ -92,27 +96,27 @@ func defaultTreeColors() *theme.TreeColors {
 	// These match the DefaultDark theme but are hard-coded so the renderer
 	// works without any theme at all.
 	return &theme.TreeColors{
-		DirFg:        lipgloss.Color("#79c0ff"),
-		FileFg:       lipgloss.Color("#e6edf3"),
-		SymlinkFg:    lipgloss.Color("#a0a8b7"),
-		SelectedBg:   lipgloss.Color("#264040"),
-		SelectedFg:   lipgloss.Color("#e6edf3"),
-		CursorBg:     lipgloss.Color("#2d4f4f"),
-		CursorFg:     lipgloss.Color("#e6edf3"),
-		Hover:        lipgloss.Color("#21262d"),
-		IndentLine:   lipgloss.Color("#30363d"),
-		GitModified:  lipgloss.Color("#d29922"),
-		GitAdded:     lipgloss.Color("#7ee787"),
-		GitDeleted:   lipgloss.Color("#ff7b72"),
-		GitUntracked: lipgloss.Color("#636d83"),
+		DirFg:         lipgloss.Color("#79c0ff"),
+		FileFg:        lipgloss.Color("#e6edf3"),
+		SymlinkFg:     lipgloss.Color("#a0a8b7"),
+		SelectedBg:    lipgloss.Color("#264040"),
+		SelectedFg:    lipgloss.Color("#e6edf3"),
+		CursorBg:      lipgloss.Color("#2d4f4f"),
+		CursorFg:      lipgloss.Color("#e6edf3"),
+		Hover:         lipgloss.Color("#21262d"),
+		IndentLine:    lipgloss.Color("#30363d"),
+		GitModified:   lipgloss.Color("#d29922"),
+		GitAdded:      lipgloss.Color("#7ee787"),
+		GitDeleted:    lipgloss.Color("#ff7b72"),
+		GitUntracked:  lipgloss.Color("#636d83"),
 		GitConflicted: lipgloss.Color("#ff7b72"),
-		IconDir:      lipgloss.Color("#f0883e"),
-		IconFile:     lipgloss.Color("#8b949e"),
-		IconSymlink:  lipgloss.Color("#79c0ff"),
-		BorderFg:     lipgloss.Color("#30363d"),
-		DiagError:    lipgloss.Color("#ff7b72"),
-		DiagWarning:  lipgloss.Color("#d29922"),
-		DiagInfo:     lipgloss.Color("#8b949e"),
+		IconDir:       lipgloss.Color("#f0883e"),
+		IconFile:      lipgloss.Color("#8b949e"),
+		IconSymlink:   lipgloss.Color("#79c0ff"),
+		BorderFg:      lipgloss.Color("#30363d"),
+		DiagError:     lipgloss.Color("#ff7b72"),
+		DiagWarning:   lipgloss.Color("#d29922"),
+		DiagInfo:      lipgloss.Color("#8b949e"),
 	}
 }
 
@@ -120,13 +124,13 @@ func defaultTreeColors() *theme.TreeColors {
 func defaultTreeStyles() *theme.TreeStyles {
 	tc := defaultTreeColors()
 	return &theme.TreeStyles{
-		DirStyle:         lipgloss.NewStyle().Foreground(tc.DirFg).Bold(true),
-		FileStyle:        lipgloss.NewStyle().Foreground(tc.FileFg),
-		SelectedStyle:    lipgloss.NewStyle().Foreground(tc.SelectedFg).Background(tc.SelectedBg),
-		CursorStyle:      lipgloss.NewStyle().Foreground(tc.CursorFg).Background(tc.CursorBg),
-		GitModifiedStyle: lipgloss.NewStyle().Foreground(tc.GitModified),
-		GitAddedStyle:    lipgloss.NewStyle().Foreground(tc.GitAdded),
-		GitDeletedStyle:  lipgloss.NewStyle().Foreground(tc.GitDeleted),
+		DirStyle:          lipgloss.NewStyle().Foreground(tc.DirFg).Bold(true),
+		FileStyle:         lipgloss.NewStyle().Foreground(tc.FileFg),
+		SelectedStyle:     lipgloss.NewStyle().Foreground(tc.SelectedFg).Background(tc.SelectedBg),
+		CursorStyle:       lipgloss.NewStyle().Foreground(tc.CursorFg).Background(tc.CursorBg),
+		GitModifiedStyle:  lipgloss.NewStyle().Foreground(tc.GitModified),
+		GitAddedStyle:     lipgloss.NewStyle().Foreground(tc.GitAdded),
+		GitDeletedStyle:   lipgloss.NewStyle().Foreground(tc.GitDeleted),
 		GitUntrackedStyle: lipgloss.NewStyle().Foreground(tc.GitUntracked).Italic(true),
 	}
 }
@@ -373,16 +377,16 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 				if remainingHOff > 0 {
 					remainingHOff = 0
 				}
-			iconStyle := lipgloss.NewStyle().Foreground(iconCol)
-			switch {
-			case isCursor:
-				iconStyle = iconStyle.Background(colors.CursorBg)
-			case isSelected:
-				iconStyle = iconStyle.Background(colors.SelectedBg)
-			case isHovered:
-				iconStyle = iconStyle.Background(colors.Hover)
-			}
-			b.WriteString(iconStyle.Render(iconRes.Icon))
+				iconStyle := lipgloss.NewStyle().Foreground(iconCol)
+				switch {
+				case isCursor:
+					iconStyle = iconStyle.Background(colors.CursorBg)
+				case isSelected:
+					iconStyle = iconStyle.Background(colors.SelectedBg)
+				case isHovered:
+					iconStyle = iconStyle.Background(colors.Hover)
+				}
+				b.WriteString(iconStyle.Render(iconRes.Icon))
 				b.WriteString(noColorStyle.Render(" "))
 			}
 		}
@@ -613,7 +617,12 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 	// content size actually changes to avoid resetting the fade timer on
 	// every render frame.
 	sbW := scrollbar.ScrollbarWidth
-	contentW := width - sbW
+	gutterW := ScrollbarGutterWidth
+	contentW := width - sbW - gutterW
+	if contentW < 1 {
+		contentW = 1
+		gutterW = max(0, width-sbW-contentW)
+	}
 	trackH := r.sbTrackHeight
 	if trackH <= 0 {
 		trackH = height
@@ -673,7 +682,7 @@ func (r *TreeRenderer) RenderToLines(width, height int) []string {
 		if i < len(sbLines) && sbLines[i] != "" {
 			sbChar = sbLines[i]
 		}
-		lines[i] = line + sbChar
+		lines[i] = line + strings.Repeat(" ", gutterW) + sbChar
 	}
 
 	return lines
