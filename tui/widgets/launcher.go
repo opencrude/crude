@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"crude/sessiondb"
+	"crude/tui/filetree"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 
@@ -54,17 +56,23 @@ type LauncherHit struct {
 }
 
 // LauncherPaint is the fully rendered welcome view plus hit geometry.
-// Hits cover full card bounds (not just title text). SessionScrollMax is
-// the max first-visible index for the right-column session list.
+// Hits cover full card bounds (not just title text). The workspace geometry
+// describes the independently scrollable right-hand viewport.
 type LauncherPaint struct {
-	Lines            []string
-	Hits             []LauncherHit
-	LineToItem       []int // legacy Y-only map; -1 = non-selectable
-	SelectedLine     int
-	SessionPaneY0    int
-	SessionPaneY1    int
-	SessionPaneX0    int
-	SessionScrollMax int
+	Lines                 []string
+	Hits                  []LauncherHit
+	LineToItem            []int // legacy Y-only map; -1 = non-selectable
+	SelectedLine          int
+	WorkspacePaneY0       int
+	WorkspacePaneY1       int
+	WorkspacePaneX0       int
+	WorkspacePaneX1       int
+	WorkspaceSearchY      int
+	WorkspaceListY0       int
+	WorkspaceListY1       int
+	WorkspaceViewportH    int
+	WorkspaceVisibleCount int
+	WorkspaceScrollMax    int
 }
 
 // LauncherGroup is a date-grouped set of sessions (kept for grouping helpers).
@@ -119,7 +127,7 @@ func BuildLauncherGroups(sessions []sessiondb.SessionMeta) []LauncherGroup {
 }
 
 // BuildLauncherItems builds the flat selectable list for the welcome screen.
-// Order: New Session, Open Folder, workspaces...
+// Order: New Session, New Workspace, workspaces...
 // Sessions are not listed on the welcome screen (workspaces only on the right).
 func BuildLauncherItems(workspaces []WorkspaceEntry, sessions []sessiondb.SessionMeta) []LauncherItem {
 	_ = sessions
@@ -138,10 +146,10 @@ func BuildLauncherItems(workspaces []WorkspaceEntry, sessions []sessiondb.Sessio
 
 // RenderWelcomeLauncher paints the welcome screen that fills height.
 //
-//   [ full-width New Session card — hero ]
-//   [ left: Open Folder + shortcuts | right: recent workspaces ]
+//	[ full-width New Session card — hero ]
+//	[ left: New Workspace + shortcuts | right: searchable workspace viewport ]
 //
-// No in-content footer — nav help lives in the status input row only.
+// No in-content footer; navigation help lives in the persistent bottom status row.
 // listScroll is the first visible line in the right workspaces pane.
 func RenderWelcomeLauncher(
 	cwdPath string,
@@ -228,7 +236,7 @@ func RenderWelcomeLauncher(
 	}
 
 	left := buildWelcomeLeftBody(items, openFolderIdx, selected, leftW, bodyH, spinFrame, idleSeconds, th)
-	right, rightHits, scrollMax := buildWelcomeRightWorkspaces(
+	right, rightHits, rightMeta := buildWelcomeRightWorkspaces(
 		items, wsIdx, selected, listScroll, rightW, bodyH, filterActive, filterText, th,
 	)
 	bodyY0 := len(lines)
@@ -273,7 +281,7 @@ func RenderWelcomeLauncher(
 		}
 	}
 
-	// No content footer — status input owns help text.
+	// No content footer; the app status surface owns help text.
 	for len(lines) < height {
 		lines = append(lines, padLine("", width))
 		lineToItem = append(lineToItem, -1)
@@ -284,14 +292,20 @@ func RenderWelcomeLauncher(
 	}
 
 	return LauncherPaint{
-		Lines:            lines,
-		Hits:             hits,
-		LineToItem:       lineToItem,
-		SelectedLine:     selectedLine,
-		SessionPaneY0:    bodyY0,
-		SessionPaneY1:    bodyY0 + bodyH - 1,
-		SessionPaneX0:    rightX0,
-		SessionScrollMax: scrollMax,
+		Lines:                 lines,
+		Hits:                  hits,
+		LineToItem:            lineToItem,
+		SelectedLine:          selectedLine,
+		WorkspacePaneY0:       bodyY0,
+		WorkspacePaneY1:       bodyY0 + bodyH - 1,
+		WorkspacePaneX0:       rightX0,
+		WorkspacePaneX1:       rightX0 + rightW - 1,
+		WorkspaceSearchY:      bodyY0,
+		WorkspaceListY0:       bodyY0 + rightMeta.listY0,
+		WorkspaceListY1:       bodyY0 + rightMeta.listY1,
+		WorkspaceViewportH:    rightMeta.viewportH,
+		WorkspaceVisibleCount: rightMeta.visibleCount,
+		WorkspaceScrollMax:    rightMeta.scrollMax,
 	}
 }
 
@@ -301,7 +315,7 @@ type welcomeCol struct {
 	hits     []LauncherHit
 }
 
-// buildWelcomeLeftBody: Open Folder card + shortcuts (New Session is full-width hero above).
+// buildWelcomeLeftBody: New Workspace card + shortcuts (New Session is full-width hero above).
 func buildWelcomeLeftBody(
 	items []LauncherItem,
 	openFolderIdx, selected, leftW, bodyH, spinFrame int,
@@ -318,8 +332,8 @@ func buildWelcomeLeftBody(
 		y0 := len(col.lines)
 		block := renderActionCard(
 			selected == openFolderIdx,
-			"📁 Open Folder",
-			"Browse and open a project",
+			"📁 New Workspace",
+			"Open a folder as a workspace",
 			"enter ↵",
 			th, leftW, spinFrame, idleSeconds, false,
 		)
@@ -361,12 +375,20 @@ func welcomeShortcuts() [][2]string {
 		{"Alt+C", "Composer"},
 		{"Ctrl+Q", "Close tab"},
 		{"Esc", "Cancel / dismiss"},
-		{"/", "Filter welcome"},
+		{"/", "Search workspaces"},
 		{"d", "Delete item"},
 	}
 }
 
-// buildWelcomeRightWorkspaces: scrollable recent workspaces on the right.
+type workspacePaneMeta struct {
+	listY0, listY1 int
+	viewportH      int
+	visibleCount   int
+	scrollMax      int
+}
+
+// buildWelcomeRightWorkspaces renders a fixed search/header region and a
+// virtual one-line workspace list. Only the result rows participate in scroll.
 func buildWelcomeRightWorkspaces(
 	items []LauncherItem,
 	wsIdx []int,
@@ -374,74 +396,91 @@ func buildWelcomeRightWorkspaces(
 	filterActive bool,
 	filterText string,
 	th *theme.Theme,
-) (lines []string, hits []LauncherHit, scrollMax int) {
+) (lines []string, hits []LauncherHit, meta workspacePaneMeta) {
 	push := func(s string) {
 		lines = append(lines, padLine(s, rightW))
 	}
 
-	header := sectionHeader("Recent Workspaces", rightW, th)
+	searchStyle := lipgloss.NewStyle().Foreground(th.Colors.Fg)
+	mutedStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted)
+	accentStyle := lipgloss.NewStyle().Foreground(th.Colors.Accent).Bold(true)
+	searchValue := mutedStyle.Render("Search workspaces")
 	if filterActive {
-		header = th.Styles.DimLabel.Render("filter ") + th.Styles.Body.Render(filterText+"▌")
+		searchValue = searchStyle.Render(filterText) + accentStyle.Render("█")
 	}
-	push(header)
+	push(mutedStyle.Render("> ") + searchValue)
 
-	listH := bodyH - 1
-	if listH < 3 {
-		listH = 3
+	type workspaceRow struct {
+		item int
+		ws   *WorkspaceEntry
 	}
-
-	type flat struct {
-		line    string
-		item    int
-		isFirst bool
-	}
-	var flatRows []flat
+	var rows []workspaceRow
 	for _, i := range wsIdx {
 		it := items[i]
-		if it.Workspace == nil {
+		if it.Workspace == nil || !WorkspaceEntryMatches(*it.Workspace, filterText) {
 			continue
 		}
-		name := it.Workspace.Name
-		if name == "" {
-			name = "untitled"
-		}
-		path := it.Workspace.Path
-		meta := sessionCountLabel(it.Workspace.SessionCount)
-		block := renderCompactRow(selected == i, "▸ "+name+"  "+meta, path, th, rightW, 0, 0)
-		for j, ln := range block {
-			flatRows = append(flatRows, flat{line: ln, item: i, isFirst: j == 0})
-		}
+		rows = append(rows, workspaceRow{item: i, ws: it.Workspace})
 	}
 
-	scrollMax = len(flatRows) - listH
-	if scrollMax < 0 {
-		scrollMax = 0
+	countLabel := fmt.Sprintf("%d", len(rows))
+	if len(rows) == 1 {
+		countLabel += " workspace"
+	} else {
+		countLabel += " workspaces"
 	}
-	if listScroll > scrollMax {
-		listScroll = scrollMax
+	headerW := rightW - rendering.VisibleWidth(countLabel) - 1
+	if headerW < 8 {
+		headerW = 8
+	}
+	header := sectionHeader("Recent Workspaces", headerW, th) + " " + mutedStyle.Render(countLabel)
+	push(header)
+
+	meta.listY0 = 2
+	meta.viewportH = bodyH - meta.listY0
+	if meta.viewportH < 1 {
+		meta.viewportH = 1
+	}
+	meta.listY1 = meta.listY0 + meta.viewportH - 1
+	meta.visibleCount = len(rows)
+	meta.scrollMax = len(rows) - meta.viewportH
+	if meta.scrollMax < 0 {
+		meta.scrollMax = 0
 	}
 	if listScroll < 0 {
 		listScroll = 0
 	}
+	if listScroll > meta.scrollMax {
+		listScroll = meta.scrollMax
+	}
+	showScrollbar := len(rows) > meta.viewportH
+	rowW := rightW
+	if showScrollbar {
+		rowW--
+	}
+	icons := filetree.NewIconResolver()
+	icons.ApplyTheme(&th.Colors.Tree)
 
-	if len(flatRows) == 0 {
-		push(th.Styles.DimLabel.Render("  no other workspaces yet"))
+	if len(rows) == 0 {
+		empty := "No recent workspaces"
+		if strings.TrimSpace(filterText) != "" {
+			empty = "No workspaces match \"" + filterText + "\""
+		}
+		push(mutedStyle.Render("  " + rendering.TruncateLine(empty, rightW-2)))
 	} else {
-		end := listScroll + listH
-		if end > len(flatRows) {
-			end = len(flatRows)
+		end := listScroll + meta.viewportH
+		if end > len(rows) {
+			end = len(rows)
 		}
 		for i := listScroll; i < end; i++ {
-			fr := flatRows[i]
+			row := rows[i]
 			y0 := len(lines)
-			push(fr.line)
-			if fr.item >= 0 && fr.isFirst {
-				y1 := y0
-				for k := i + 1; k < end && flatRows[k].item == fr.item && !flatRows[k].isFirst; k++ {
-					y1++
-				}
-				hits = append(hits, LauncherHit{X0: 0, Y0: y0, X1: rightW - 1, Y1: y1, ItemIdx: fr.item})
+			line := renderWorkspaceRow(selected == row.item, *row.ws, icons, th, rowW)
+			if showScrollbar {
+				line += renderWorkspaceScrollbarCell(i-listScroll, len(rows), meta.viewportH, listScroll, th)
 			}
+			push(line)
+			hits = append(hits, LauncherHit{X0: 0, Y0: y0, X1: rowW - 1, Y1: y0, ItemIdx: row.item})
 		}
 	}
 
@@ -451,7 +490,100 @@ func buildWelcomeRightWorkspaces(
 	if len(lines) > bodyH {
 		lines = lines[:bodyH]
 	}
-	return lines, hits, scrollMax
+	return lines, hits, meta
+}
+
+// WorkspaceEntryMatches applies the welcome search to workspace identity only.
+func WorkspaceEntryMatches(ws WorkspaceEntry, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(ws.Name), query) ||
+		strings.Contains(strings.ToLower(ws.Path), query)
+}
+
+func renderWorkspaceRow(selected bool, ws WorkspaceEntry, icons *filetree.IconResolver, th *theme.Theme, width int) string {
+	if width < 8 {
+		return strings.Repeat(" ", max(0, width))
+	}
+	name := ws.Name
+	if name == "" {
+		name = filepath.Base(ws.Path)
+	}
+	if name == "" || name == "." {
+		name = "untitled"
+	}
+	meta := sessionCountLabel(ws.SessionCount)
+	icon := icons.ResolveIcon(filepath.Base(ws.Path), true, false, false)
+	bg := th.Colors.Bg
+	if selected {
+		bg = th.Colors.Hover
+	}
+	base := lipgloss.NewStyle().Background(bg)
+	accent := lipgloss.NewStyle().Foreground(th.Colors.Accent).Background(bg).Bold(true)
+	iconStyle := lipgloss.NewStyle().Foreground(icon.Color).Background(bg)
+	nameStyle := lipgloss.NewStyle().Foreground(th.Colors.Fg).Background(bg).Bold(true)
+	pathStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted).Background(bg)
+	metaStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted).Background(bg)
+
+	prefix := base.Render("  ")
+	if selected {
+		prefix = accent.Render("❯ ")
+	}
+	fixedW := 2 + rendering.VisibleWidth(icon.Icon) + 1 + 1 + 2 + rendering.VisibleWidth(meta)
+	available := width - fixedW
+	if available < 2 {
+		available = 2
+	}
+	nameW := rendering.VisibleWidth(name)
+	maxNameW := max(8, width/4)
+	if nameW > maxNameW {
+		nameW = maxNameW
+	}
+	if nameW > available {
+		nameW = available
+	}
+	displayName := rendering.TruncateLine(name, nameW)
+	pathW := available - rendering.VisibleWidth(displayName) - 3
+	path := ""
+	if pathW > 4 {
+		path = " · " + rendering.TruncateLine(ws.Path, pathW)
+	}
+	left := prefix + iconStyle.Render(icon.Icon) + base.Render(" ") + nameStyle.Render(displayName) + pathStyle.Render(path)
+	gap := width - rendering.VisibleWidth(left) - rendering.VisibleWidth(meta) - 2
+	if gap < 1 {
+		gap = 1
+	}
+	line := left + base.Render(strings.Repeat(" ", gap)) + metaStyle.Render(meta) + base.Render("  ")
+	return padStyledLine(line, width, base)
+}
+
+func renderWorkspaceScrollbarCell(row, total, visible, scroll int, th *theme.Theme) string {
+	if total <= visible || visible <= 0 {
+		return " "
+	}
+	thumbH := visible * visible / total
+	if thumbH < 1 {
+		thumbH = 1
+	}
+	track := visible - thumbH
+	maxScroll := total - visible
+	thumbTop := 0
+	if track > 0 && maxScroll > 0 {
+		thumbTop = scroll * track / maxScroll
+	}
+	if row >= thumbTop && row < thumbTop+thumbH {
+		return lipgloss.NewStyle().Foreground(th.Colors.Accent).Render("┃")
+	}
+	return lipgloss.NewStyle().Foreground(th.Colors.Border).Render("│")
+}
+
+func padStyledLine(line string, width int, style lipgloss.Style) string {
+	if n := width - rendering.VisibleWidth(line); n > 0 {
+		line += style.Render(strings.Repeat(" ", n))
+	}
+	return line
 }
 
 // renderCompactRow: accent bar when selected — never a filled Selection bg
@@ -483,7 +615,7 @@ func renderSessionRow(selected bool, title, sub, meta string, th *theme.Theme, w
 func rotatingTip(spinFrame int) string {
 	tips := []string{
 		"Ctrl+Shift+P opens the command palette — quit lives there too.",
-		"Open Folder launches a browser; pick any project root.",
+		"New Workspace opens any project folder in Crude.",
 		"Sessions stay with their workspace — resume any thread.",
 		"Ctrl+B toggles the file tree without losing focus.",
 		"Esc cancels — it never quits the app.",
@@ -745,7 +877,7 @@ func RenderLauncher(sessions []sessiondb.SessionMeta, selected int, filterActive
 	items := BuildLauncherItems(nil, sessions)
 	mapped := selected
 	if selected > 0 {
-		mapped = selected + 1 // skip open folder
+		mapped = selected + 1 // skip New Workspace
 	}
 	paint := RenderWelcomeLauncher("", items, mapped, 0, filterActive, filterText, th, width, height, spinFrame, idleSeconds)
 	return paint.Lines

@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/tui/filetree"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/surface"
@@ -104,8 +106,13 @@ type FilePicker struct {
 	lastHeight        int
 	actionX0          int
 	actionX1          int
+	cancelX0          int
+	cancelX1          int
 	lastClickIdx      int // double-click to enter/select
 	lastClickTime     time.Time
+	icons             *filetree.IconResolver
+	Hover             widget.Hover
+	hoveredAction     int // 0 none, 1 primary, 2 cancel
 }
 
 type fileEntry struct {
@@ -115,10 +122,14 @@ type fileEntry struct {
 }
 
 func NewFilePicker(th *theme.Theme) FilePicker {
+	icons := filetree.NewIconResolver()
+	icons.ApplyTheme(&th.Colors.Tree)
 	return FilePicker{
 		th:           th,
 		scrollbar:    scrollbar.New(0),
 		lastClickIdx: -1,
+		icons:        icons,
+		Hover:        widget.NewHover(),
 	}
 }
 
@@ -126,7 +137,7 @@ func (m *FilePicker) Open(root string) {
 	m.open(root, FilePickerModeFile)
 }
 
-// OpenFolder opens the picker in folder-select mode (welcome "Open Folder").
+// OpenFolder opens the picker in folder-select mode for New Workspace.
 func (m *FilePicker) OpenFolder(root string) {
 	m.open(root, FilePickerModeFolder)
 }
@@ -146,6 +157,7 @@ func (m *FilePicker) open(root string, mode FilePickerMode) {
 	m.active = true
 	m.mode = mode
 	m.lastClickIdx = -1
+	m.Hover.Clear()
 	m.loadEntries()
 }
 
@@ -182,6 +194,7 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 		cmd = m.scrollbar.SetScrollInfo(len(entries), entryPageSize, scrollStart)
 
 	case tea.KeyPressMsg:
+		m.Hover.Clear()
 		switch msg.Code {
 		case tea.KeyEsc:
 			return m, "", FilePickerCancel, nil
@@ -246,6 +259,20 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 		}
 
 	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		if motionMsg, ok := msg.(tea.MouseMotionMsg); ok {
+			m.hoveredAction = 0
+			if motionMsg.Y == m.lastHeight-1 && motionMsg.X >= m.actionX0 && motionMsg.X <= m.actionX1 {
+				m.hoveredAction = 1
+				m.Hover.Clear()
+			} else if motionMsg.Y == m.lastHeight-1 && motionMsg.X >= m.cancelX0 && motionMsg.X <= m.cancelX1 {
+				m.hoveredAction = 2
+				m.Hover.Clear()
+			} else if idx := m.HitTest(motionMsg.X, motionMsg.Y); idx >= 0 {
+				m.Hover.Set(idx)
+			} else {
+				m.Hover.Clear()
+			}
+		}
 		// Handle entry clicks: if the user clicks on an entry row,
 		// select it. A second click on the same row (or Enter)
 		// activates it via the keyboard path. This matches the
@@ -253,8 +280,19 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 		if clickMsg, ok := msg.(tea.MouseClickMsg); ok {
 			mouse := clickMsg.Mouse()
 			if clickMsg.Button == tea.MouseLeft {
-				if m.mode == FilePickerModeFolder && mouse.Y == m.lastHeight-1 && mouse.X >= m.actionX0 && mouse.X <= m.actionX1 {
-					return m, m.current, FilePickerSelect, nil
+				if mouse.Y == m.lastHeight-1 {
+					if mouse.X >= m.cancelX0 && mouse.X <= m.cancelX1 {
+						return m, "", FilePickerCancel, nil
+					}
+					if mouse.X >= m.actionX0 && mouse.X <= m.actionX1 {
+						if m.mode == FilePickerModeFolder {
+							return m, m.current, FilePickerSelect, nil
+						}
+						entries := m.visibleEntries()
+						if m.selected >= 0 && m.selected < len(entries) && !entries[m.selected].IsDir {
+							return m, entries[m.selected].Path, FilePickerSelect, nil
+						}
+					}
 				}
 				idx := m.HitTest(mouse.X, mouse.Y)
 				if idx >= 0 {
@@ -387,7 +425,7 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 	}
 
 	entries := m.visibleEntries()
-	entryPageSize := height - 4 // location, filter, divider, and action row
+	entryPageSize := height - 5 // search, rule, breadcrumb, footer rule, actions
 	if entryPageSize < 1 {
 		entryPageSize = 1
 	}
@@ -426,14 +464,9 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 
 	bgStyle := lipgloss.NewStyle().Background(m.th.Colors.SubPaneBg)
 	mutedStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
-	labelStyle := lipgloss.NewStyle().Foreground(m.th.Colors.PopupTitleFocused).Background(m.th.Colors.SubPaneBg).Bold(true)
 	filterStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.SubPaneBg)
-	entryStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.SubPaneBg)
-	dirStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Background(m.th.Colors.SubPaneBg)
-	selectedStyle := lipgloss.NewStyle().
-		Foreground(m.th.Colors.Fg).
-		Background(m.th.Colors.PopupSubtleBg).
-		Bold(true)
+	accentStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Background(m.th.Colors.SubPaneBg).Bold(true)
+	highlightStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Selection).Bold(true)
 	dividerStyle := lipgloss.NewStyle().Foreground(m.th.Colors.PopupDivider).Background(m.th.Colors.SubPaneBg)
 
 	padTo := func(s string, w int) string {
@@ -448,41 +481,50 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 	}
 
 	var body []string
-	pathLabel := "Location  "
-	pathW := contentW - rendering.VisibleWidth(pathLabel)
-	if pathW < 1 {
-		pathW = 1
+	filterValue := filterStyle.Render(m.filter)
+	if m.filter == "" {
+		placeholder := "Search files"
+		if m.mode == FilePickerModeFolder {
+			placeholder = "Search folders"
+		}
+		filterValue = mutedStyle.Render(placeholder)
 	}
-	pathLine := labelStyle.Render(pathLabel) + mutedStyle.Render(ansi.Truncate(m.current, pathW, "..."))
-	body = append(body, padTo(pathLine, contentW))
-	filterValue := m.filter
-	if filterValue == "" {
-		filterValue = "Type to filter"
-		filterValue = mutedStyle.Render(filterValue)
-	} else {
-		filterValue = filterStyle.Render(filterValue)
-	}
-	body = append(body, padTo(labelStyle.Render("Filter    ")+filterValue, contentW))
+	body = append(body, padTo(mutedStyle.Render("> ")+filterValue+accentStyle.Render("█"), contentW))
 	body = append(body, dividerStyle.Render(strings.Repeat("─", contentW)))
+	body = append(body, padTo(m.renderBreadcrumb(contentW, len(entries)), contentW))
 
 	for i := start; i < end; i++ {
 		entry := entries[i]
-		marker := "  "
 		name := entry.Name
-		if entry.IsDir {
-			if entry.Name == ".." {
-				name = "../  Parent folder"
-			} else {
-				name += "/"
-			}
+		icon := m.icons.ResolveIcon(entry.Name, entry.IsDir, false, false)
+		if entry.Name == ".." {
+			name = "Parent folder"
+			icon.Icon = "↰"
+			icon.Color = m.th.Colors.Muted
 		}
+		iconStyle := lipgloss.NewStyle().Foreground(icon.Color).Background(m.th.Colors.SubPaneBg)
+		nameStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Tree.FileFg).Background(m.th.Colors.SubPaneBg)
+		if entry.IsDir {
+			nameStyle = nameStyle.Foreground(m.th.Colors.Tree.DirFg).Bold(true)
+		}
+		rest := iconStyle.Render(icon.Icon) + bgStyle.Render(" ") + nameStyle.Render(name)
 		if i == m.selected {
-			marker = "› "
-			name = selectedStyle.Render(padTo(marker+name, contentW))
-		} else if entry.IsDir {
-			name = padTo(marker+dirStyle.Render(name), contentW)
+			plainRest := icon.Icon + " " + name
+			name = accentStyle.Render("❯") + bgStyle.Render(" ") + highlightStyle.Render(ansi.Truncate(plainRest, contentW-2, ""))
+		} else if m.Hover.Index == i {
+			hoverFill := lipgloss.NewStyle().Background(m.th.Colors.Hover)
+			hoverIcon := lipgloss.NewStyle().Foreground(icon.Color).Background(m.th.Colors.Hover)
+			hoverName := lipgloss.NewStyle().Foreground(m.th.Colors.Tree.FileFg).Background(m.th.Colors.Hover)
+			if entry.IsDir {
+				hoverName = hoverName.Foreground(m.th.Colors.Tree.DirFg).Bold(true)
+			}
+			hoverLine := hoverFill.Render("  ") + hoverIcon.Render(icon.Icon) + hoverFill.Render(" ") + hoverName.Render(name)
+			if n := contentW - rendering.VisibleWidth(hoverLine); n > 0 {
+				hoverLine += hoverFill.Render(strings.Repeat(" ", n))
+			}
+			name = hoverLine
 		} else {
-			name = padTo(marker+entryStyle.Render(name), contentW)
+			name = padTo("  "+rest, contentW)
 		}
 		body = append(body, name)
 	}
@@ -509,10 +551,10 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 	result := make([]string, 0, height)
 	for i, line := range body {
 		padded := padTo(line, contentW)
-		// Append scrollbar character for entry lines (i >= 2), otherwise blank
+		// Append scrollbar character for entry lines only.
 		if sbW > 0 {
-			if i >= 2 && i-2 < len(sbLines) {
-				padded = padded + sbLines[i-2]
+			if i >= 3 && i-3 < len(sbLines) {
+				padded = padded + sbLines[i-3]
 			} else {
 				padded = padded + strings.Repeat(" ", sbW)
 			}
@@ -520,34 +562,43 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 		result = append(result, padded)
 	}
 
+	result = append(result, dividerStyle.Render(strings.Repeat("─", contentW))+strings.Repeat(" ", sbW))
+
 	keyStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.SubPaneBg).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
 	hintSegment := func(key, desc string) string {
 		return keyStyle.Render(key) + hintStyle.Render(" "+desc)
 	}
-	var hint string
+	actionLabel := "Attach"
+	actionEnabled := false
 	if m.mode == FilePickerModeFolder {
-		action := lipgloss.NewStyle().
-			Foreground(m.th.Colors.PopupButtonFg).
-			Background(m.th.Colors.PopupButtonBg).
-			Bold(true).
-			Render(" Open this folder ")
-		m.actionX0 = 0
-		m.actionX1 = rendering.VisibleWidth(action) - 1
-		if m.actionX1 >= contentW {
-			m.actionX1 = contentW - 1
-		}
-		hint = action + hintStyle.Render("  ") + strings.Join([]string{
-			hintSegment("enter", "browse"),
-			hintSegment("esc", "close"),
-		}, hintStyle.Render("  ·  "))
-	} else {
-		m.actionX0, m.actionX1 = -1, -1
-		hint = strings.Join([]string{
-			hintSegment("enter", "select"),
-			hintSegment("esc", "close"),
-		}, hintStyle.Render("  ·  "))
+		actionLabel = "Create workspace"
+		actionEnabled = true
+	} else if m.selected >= 0 && m.selected < len(entries) {
+		actionEnabled = !entries[m.selected].IsDir
 	}
+	actionStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
+	if actionEnabled {
+		actionStyle = lipgloss.NewStyle().Foreground(m.th.Colors.PopupButtonFg).Background(m.th.Colors.PopupButtonBg).Bold(true)
+	} else if m.hoveredAction == 1 {
+		actionStyle = lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Hover)
+	}
+	action := actionStyle.Render(" " + actionLabel + " ")
+	cancelHovered := m.hoveredAction == 2
+	cancelStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
+	if cancelHovered {
+		cancelStyle = cancelStyle.Foreground(m.th.Colors.Fg).Background(m.th.Colors.Hover)
+	}
+	cancel := cancelStyle.Render(" Cancel ")
+	m.actionX0 = 0
+	m.actionX1 = rendering.VisibleWidth(action) - 1
+	m.cancelX0 = m.actionX1 + 2
+	m.cancelX1 = m.cancelX0 + rendering.VisibleWidth(cancel) - 1
+	hints := strings.Join([]string{
+		hintSegment("↑↓", "navigate"),
+		hintSegment("enter", "open"),
+	}, hintStyle.Render("  ·  "))
+	hint := action + bgStyle.Render(" ") + cancel + bgStyle.Render("   ") + hints
 	hintLine := padTo(hint, contentW)
 	if sbW > 0 {
 		hintLine = hintLine + strings.Repeat(" ", sbW)
@@ -558,6 +609,38 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 		result = append(result, bgStyle.Render(strings.Repeat(" ", width)))
 	}
 	return result[:height]
+}
+
+func (m *FilePicker) renderBreadcrumb(width, count int) string {
+	path := filepath.Clean(m.current)
+	if home, err := os.UserHomeDir(); err == nil {
+		if path == home {
+			path = "~"
+		} else if strings.HasPrefix(path, home+string(filepath.Separator)) {
+			path = "~" + strings.TrimPrefix(path, home)
+		}
+	}
+	path = strings.ReplaceAll(path, string(filepath.Separator), " ▸ ")
+	icon := m.icons.ResolveIcon(filepath.Base(m.current), true, false, true)
+	countText := fmt.Sprintf("%d item", count)
+	if count != 1 {
+		countText += "s"
+	}
+	countW := rendering.VisibleWidth(countText)
+	plainW := width - rendering.VisibleWidth(icon.Icon) - countW - 3
+	if plainW < 1 {
+		plainW = 1
+	}
+	path = ansi.Truncate(path, plainW, "…")
+	iconStyle := lipgloss.NewStyle().Foreground(icon.Color).Background(m.th.Colors.SubPaneBg)
+	pathStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Tree.DirFg).Background(m.th.Colors.SubPaneBg).Bold(true)
+	muted := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
+	left := iconStyle.Render(icon.Icon) + " " + pathStyle.Render(path)
+	gap := width - rendering.VisibleWidth(left) - countW
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + muted.Render(countText)
 }
 
 // Render implements widget.Widget. The window manager draws the flat,

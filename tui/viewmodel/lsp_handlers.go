@@ -5,6 +5,8 @@ import (
 	"os"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/editor"
 	"crude/tui/widgets"
 	"crude/tui/wm"
@@ -77,14 +79,22 @@ func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 // handleFileWatcherEvent processes a file system change that arrived through
 // the workspace.EventBus from the file watcher goroutine. Forwards the change to the
 // LSP server for re-analysis.
-func (m *App) handleFileWatcherEvent(msg workspace.FileWatcherMsg) {
+func (m *App) handleFileWatcherEvent(msg workspace.FileWatcherMsg) tea.Cmd {
 	if m.LSPMgr == nil {
-		return
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	m.LSPMgr.NotifyWatchedFilesChanged(ctx, msg.FilePath, msg.ChangeType)
-	m.LSPMgr.SyncFileFromDisk(ctx, msg.FilePath, m.EditorState.Editor.FilePath(), msg.ChangeType)
+	lspMgr := m.LSPMgr
+	activeFilePath := ""
+	if m.EditorState.Editor != nil {
+		activeFilePath = m.EditorState.Editor.FilePath()
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		lspMgr.NotifyWatchedFilesChanged(ctx, msg.FilePath, msg.ChangeType)
+		lspMgr.SyncFileFromDisk(ctx, msg.FilePath, activeFilePath, msg.ChangeType)
+		return nil
+	}
 }
 
 // startLSPForWorkspace scans the working directory and starts LSP

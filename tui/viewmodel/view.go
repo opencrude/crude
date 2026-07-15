@@ -125,43 +125,17 @@ func (m *App) buildMainView() string {
 		innerW = 20
 	}
 
-	dim := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted)
-
 	isSpecialMode := m.OverlayState.IsOverlay()
 	showMainInputForQuestion := m.OverlayState.Is(ModeQuestion) && m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused())
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
+	isLauncherActive := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
+	showMainInput := !isLauncherActive && !isEditorActive && (!isSpecialMode || showMainInputForQuestion)
 
 	m.syncFormHint()
 
 	var inputView string
 	var inputLineCount int
-	if isSpecialMode && !showMainInputForQuestion {
-		inputLineCount = 1
-		hint := m.FormHint
-		if hint == "" {
-			hint = " "
-		}
-		inputView = dim.Render(hint)
-	} else if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		// Welcome screen: status input is the exclusive key-hint strip.
-		inputLineCount = 1
-		hint := "↑↓ navigate  ·  enter open  ·  / filter  ·  d delete  ·  ctrl+shift+p palette"
-		if m.launcher != nil && m.launcher.filterActive {
-			hint = "filter: " + m.launcher.filterText + "▌  ·  esc clear"
-		}
-		hintW := rendering.VisibleWidth(hint)
-		if hintW < innerW {
-			hint += strings.Repeat(" ", innerW-hintW)
-		}
-		inputView = dim.Render(hint)
-	} else if isEditorActive {
-		inputLineCount = 1
-		fileInfo := m.EditorState.Editor.Title()
-		cursorInfo := fmt.Sprintf("%d:%d", m.EditorState.Editor.CursorLine()+1, m.EditorState.Editor.CursorCol()+1)
-		lineCount := m.EditorState.Editor.LineCount()
-		hintText := fmt.Sprintf("[ %s  %s  %dL  ·  ctrl+s save  ctrl+z undo  ctrl+y redo  esc close ]", fileInfo, cursorInfo, lineCount)
-		inputView = dim.Render(hintText)
-	} else {
+	if showMainInput {
 		inputView = m.Input.View(contentW, m.height, false, false, m.SpinFrame)
 		inputLineCount = len(strings.Split(inputView, "\n"))
 		if inputLineCount < 1 {
@@ -186,7 +160,10 @@ func (m *App) buildMainView() string {
 	overlayLines := m.renderOverlayArea()
 	overlayLineCount := len(overlayLines)
 
-	nonChat := 4 + inputLineCount + overlayLineCount
+	nonChat := 3 + inputLineCount + overlayLineCount
+	if showMainInput {
+		nonChat++ // separator above the actual composer
+	}
 	if agentTabBarVisible {
 		nonChat += 2
 	}
@@ -473,23 +450,11 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
+	if showMainInput {
+		lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
+	}
 
-	if isSpecialMode && !isEditorActive {
-		visW := rendering.VisibleWidth(inputView)
-		rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
-		if rightPad < 0 {
-			rightPad = 0
-		}
-		lines = append(lines, pad+inputView+strings.Repeat(" ", rightPad)+pad)
-	} else if isEditorActive {
-		visW := rendering.VisibleWidth(inputView)
-		rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
-		if rightPad < 0 {
-			rightPad = 0
-		}
-		lines = append(lines, pad+inputView+strings.Repeat(" ", rightPad)+pad)
-	} else {
+	if showMainInput {
 		refChips := m.renderReferenceChips()
 		if len(refChips) > 0 {
 			for _, rc := range refChips {
@@ -511,9 +476,7 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	// The separator after the input and the status bar below are now
-	// rendered into the status bar layer surface (mainStatusbarSurf).
-	// Do NOT append them here.
+	// The status separator below is rendered by mainStatusbarSurf.
 
 	// The sidebar is rendered into its own layer surface
 	// (mainSidebarSurf). Update tree height/scroll state for it.
@@ -662,7 +625,7 @@ func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 		m.launcher.cwdPath,
 		m.launcher.items,
 		m.launcher.selected,
-		m.launcher.sessionScroll,
+		m.launcher.workspaceScroll,
 		m.launcher.filterActive,
 		m.launcher.filterText,
 		m.Theme,
@@ -829,14 +792,68 @@ func (m *App) renderStatusbarToSurface() {
 	// Row 0: separator line (─).
 	// Row 1: status content with the standard left/right padding.
 	pad := strings.Repeat(" ", m.Theme.Spacing.PadLR)
-	statusView := m.StatusBar.View()
-	visW := rendering.VisibleWidth(statusView)
-	rightPad := m.width - 2*m.Theme.Spacing.PadLR - visW
+	left := m.StatusBar.ActivityView()
+	m.syncFormHint()
+	right := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted).Render(m.contextualHelpView())
+	leftW := rendering.VisibleWidth(left)
+	rightW := rendering.VisibleWidth(right)
+	available := m.width - 2*m.Theme.Spacing.PadLR
+	if available < 0 {
+		available = 0
+	}
+	if rightW > available {
+		right = rendering.TruncateLine(right, available)
+		rightW = rendering.VisibleWidth(right)
+	}
+	if leftW+rightW+2 > available {
+		left = rendering.TruncateLine(left, max(0, available-rightW-2))
+		leftW = rendering.VisibleWidth(left)
+	}
+	rightPad := available - leftW - rightW
 	if rightPad < 0 {
 		rightPad = 0
 	}
-	full := widgets.RenderSep(m.width, m.Theme.Colors.Border) + "\n" + pad + statusView + strings.Repeat(" ", rightPad) + pad
+	full := widgets.RenderSep(m.width, m.Theme.Colors.Border) + "\n" + pad + left + strings.Repeat(" ", rightPad) + right + pad
 	rendering.RenderToSurface(m.mainStatusbarSurf, full)
+}
+
+func (m *App) contextualHelpView() string {
+	if m.launcher != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+		return m.launcher.HelpView()
+	}
+	if m.FocusStack != nil && m.FocusStack.Top() == FocusTabBar {
+		return compactStatusHint(m.FormHint)
+	}
+	if m.OverlayState.IsOverlay() {
+		return compactStatusHint(m.FormHint)
+	}
+	if m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
+		return fmt.Sprintf(
+			"%s  %d:%d  %dL  ·  ctrl+s save  ·  ctrl+z undo  ·  ctrl+y redo  ·  esc close",
+			m.EditorState.Editor.Title(),
+			m.EditorState.Editor.CursorLine()+1,
+			m.EditorState.Editor.CursorCol()+1,
+			m.EditorState.Editor.LineCount(),
+		)
+	}
+	return m.Input.ContextHint()
+}
+
+func compactStatusHint(hint string) string {
+	hint = strings.TrimSpace(hint)
+	if !strings.HasPrefix(hint, "[") {
+		return hint
+	}
+	end := strings.Index(hint, "]")
+	if end < 0 {
+		return strings.TrimSpace(strings.TrimPrefix(hint, "["))
+	}
+	main := strings.TrimSpace(hint[1:end])
+	rest := strings.TrimSpace(hint[end+1:])
+	if rest != "" {
+		return main + "  ·  " + rest
+	}
+	return main
 }
 
 // renderHeaderToSurface draws the header line (crude + model + uptime + agent
@@ -850,7 +867,7 @@ func (m *App) renderHeaderToSurface() {
 
 	pad := strings.Repeat(" ", m.Theme.Spacing.PadLR)
 
-	headerLine := widgets.RenderHeader(m.Theme, m.ModelName, m.OverlayState.IsYolo(), m.StartTime, m.width)
+	viewLabel := ""
 	if node := m.AgentMgr.ActiveNode(); node != nil {
 		agentLabel := node.ID
 		if node.Label != "" {
@@ -861,18 +878,23 @@ func (m *App) renderHeaderToSurface() {
 		if sp != nil {
 			catLabel = string(sp.Type)
 		}
-		viewLabel := agentLabel
+		viewLabel = agentLabel
 		if catLabel != "" {
 			viewLabel = catLabel + ":" + agentLabel
 		}
-		accentStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent).Bold(true)
-		headerLine += " " + accentStyle.Render("⟨"+viewLabel+"⟩")
 	}
+	headerLine := widgets.RenderHeader(
+		m.Theme,
+		m.ModelName,
+		m.OverlayState.IsYolo(),
+		m.StartTime,
+		m.StatusBar.UsageView(),
+		viewLabel,
+		m.width,
+	)
 
 	// Row 0: header line
 	// Row 1: separator
 	full := pad + headerLine + pad + "\n" + widgets.RenderSep(m.width, m.Theme.Colors.Border)
 	rendering.RenderToSurface(m.mainHeaderSurf, full)
 }
-
-

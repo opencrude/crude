@@ -33,27 +33,27 @@ type systemState struct {
 }
 
 type StatusBar struct {
-	theme  *theme.Theme
-	width  int
+	theme *theme.Theme
+	width int
 
 	agentStates  map[string]*agentStatus
 	currentAgent string
 
 	thinking, streaming, blocking bool
-	isConfirming                   bool
-	spinner    components.Spinner
-	statusLine string
-	statusPhase string
-	btwCount   int
+	isConfirming                  bool
+	spinner                       components.Spinner
+	statusLine                    string
+	statusPhase                   string
+	btwCount                      int
 
 	lastLabelChange time.Time
 	nextLabelMinGap time.Duration
 
 	tokenPrompt, tokenCompletion, tokenCached int
-	sessionCost   float64
-	contextWindow int
-	contextUsed   int
-	tokenEstimated bool
+	sessionCost                               float64
+	contextWindow                             int
+	contextUsed                               int
+	tokenEstimated                            bool
 
 	lastError   string
 	errorTime   time.Time
@@ -64,8 +64,8 @@ type StatusBar struct {
 
 	asyncCommands []fileio.AsyncCmdInfo
 
-	spinFrame     int
-	activityStep  int
+	spinFrame    int
+	activityStep int
 
 	// Whole-project LSP insights. The bottom-left is reserved for these:
 	// diagnostic counts, files affected, symbol count, server health.
@@ -155,8 +155,29 @@ func (s *StatusBar) currentAgentStatusLine() string {
 }
 
 func (s *StatusBar) View() string {
-	dim := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
+	left, right := s.viewParts()
 	pad := strings.Repeat(" ", s.theme.Spacing.PadLR)
+	spacer := s.width - s.theme.Spacing.PadLR - rendering.VisibleWidth(left) - rendering.VisibleWidth(right) - s.theme.Spacing.PadLR
+	if spacer < 0 {
+		spacer = 0
+	}
+	return left + strings.Repeat(" ", spacer) + right + pad
+}
+
+// ActivityView is the left-hand project and agent state shown in the bottom bar.
+func (s *StatusBar) ActivityView() string {
+	left, _ := s.viewParts()
+	return left
+}
+
+// UsageView is the compact readiness/token/cost state shown in the header.
+func (s *StatusBar) UsageView() string {
+	_, right := s.viewParts()
+	return right
+}
+
+func (s *StatusBar) viewParts() (string, string) {
+	dim := lipgloss.NewStyle().Foreground(s.theme.Colors.Muted)
 	sys := s.computeSystemState()
 	phaseTag := s.currentAgentPhase()
 
@@ -255,12 +276,7 @@ func (s *StatusBar) View() string {
 		}
 	}
 
-	spacer := s.width - s.theme.Spacing.PadLR - rendering.VisibleWidth(left) - rendering.VisibleWidth(right) - s.theme.Spacing.PadLR
-	if spacer < 0 {
-		spacer = 0
-	}
-
-	return left + strings.Repeat(" ", spacer) + right + pad
+	return left, right
 }
 
 func pluralS(n int) string {

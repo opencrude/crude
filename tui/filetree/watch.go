@@ -71,14 +71,15 @@ type FileChangeEvent struct {
 // Watcher monitors a directory tree for file system changes and emits
 // debounced FileChangeEvent values on a channel.
 type Watcher struct {
-	watcher   *fsnotify.Watcher
-	events    chan FileChangeEvent
-	done      chan struct{}
-	rootPath  string
+	watcher  *fsnotify.Watcher
+	events   chan FileChangeEvent
+	done     chan struct{}
+	rootPath string
 
-	mu           sync.Mutex
-	watchedDirs  map[string]bool
-	debounceMs   int
+	mu          sync.Mutex
+	watchedDirs map[string]bool
+	debounceMs  int
+	stopOnce    sync.Once
 
 	debounceTimer *time.Timer
 	pendingEvents map[string]FileChangeEvent
@@ -136,27 +137,33 @@ func (w *Watcher) Start() error {
 // then cleans up the fsnotify watcher. Does not close the events channel
 // to avoid panic from flushPendingEvents writing after close.
 func (w *Watcher) Stop() {
-	// Signal event loop to exit first
-	close(w.done)
+	w.stopOnce.Do(func() {
+		// Signal event loop to exit first.
+		close(w.done)
 
-	w.mu.Lock()
-	if w.debounceTimer != nil {
-		w.debounceTimer.Stop()
-		w.debounceTimer = nil
-	}
-	w.mu.Unlock()
+		w.mu.Lock()
+		if w.debounceTimer != nil {
+			w.debounceTimer.Stop()
+			w.debounceTimer = nil
+		}
+		w.mu.Unlock()
 
-	// Close fsnotify watcher (unblocks event loop select)
-	if w.watcher != nil {
-		w.watcher.Close()
-	}
-	// Don't close w.events — let it be garbage collected.
-	// This avoids panic from flushPendingEvents writing after close.
+		// Close fsnotify watcher (unblocks event loop select).
+		if w.watcher != nil {
+			_ = w.watcher.Close()
+		}
+		// Don't close w.events: a debounce callback may already be flushing.
+	})
 }
 
 // Events returns a read-only channel of debounced file change events.
 func (w *Watcher) Events() <-chan FileChangeEvent {
 	return w.events
+}
+
+// Done is closed when the watcher stops.
+func (w *Watcher) Done() <-chan struct{} {
+	return w.done
 }
 
 // AddWatch adds a directory to the watch list. This is useful when a new

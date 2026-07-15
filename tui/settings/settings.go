@@ -3,6 +3,7 @@ package settings
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -44,23 +45,28 @@ type ModelsErrorMsg struct {
 
 // Category defines one settings section in the left panel.
 type Category struct {
-	Name string
-	Icon string
-	Form *form.Form
+	Name        string
+	Group       string
+	Description string
+	Form        *form.Form
 }
 
 // Model is the workspace settings window state.
 type Model struct {
-	th         *theme.Theme
-	categories []Category
-	selected   int
-	pane       int // 0: category rail, 1: form
-	snapshot   *modelSnapshot
-	lastLayout settingsLayout
-	presets    []types.ProviderPreset
-	providers  map[string]types.ProviderConfig
-	providerID string
-	models     map[string][]types.ModelEntry
+	th            *theme.Theme
+	categories    []Category
+	selected      int
+	pane          int // 0: category rail, 1: form
+	snapshot      *modelSnapshot
+	lastLayout    settingsLayout
+	presets       []types.ProviderPreset
+	providers     map[string]types.ProviderConfig
+	providerID    string
+	models        map[string][]types.ModelEntry
+	search        string
+	searchActive  bool
+	hoverCategory int
+	hoverButton   int // 0 none, 1 save, 2 cancel
 }
 
 type modelSnapshot struct {
@@ -76,6 +82,8 @@ type settingsLayout struct {
 	formX, formY       int
 	saveX0, saveX1     int
 	cancelX0, cancelX1 int
+	categoryAtY        []int
+	searchY            int
 }
 
 // New creates a workspace settings model from current AppSettings.
@@ -136,19 +144,19 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 
 	m := &Model{
 		th: th, presets: presets, providers: providers, providerID: active,
-		models: make(map[string][]types.ModelEntry),
+		models: make(map[string][]types.ModelEntry), hoverCategory: -1,
 	}
 	m.categories = []Category{
-		{Name: "Providers", Form: m.buildProvidersForm()},
-		{Name: "Main Agent", Form: m.buildAgentForm("Main Agent", current.Agents.Categories["default"])},
-		{Name: "Researcher", Form: m.buildAgentForm("Researcher", current.Agents.Categories["researcher"])},
-		{Name: "Crafter", Form: m.buildAgentForm("Crafter", current.Agents.Categories["crafter"])},
-		{Name: "Aeron", Form: m.buildAgentForm("Aeron", current.Agents.Categories["aeron"])},
-		{Name: "Appearance", Form: m.buildAppearanceForm(appearance)},
-		{Name: "Editor", Form: m.buildEditorForm(editor)},
-		{Name: "Language Servers", Form: m.buildLSPForm(lsp)},
-		{Name: "Interface", Form: m.buildUIForm(ui)},
-		{Name: "Font", Form: m.buildFontForm(font)},
+		{Name: "Providers", Group: "AI", Description: "Connections, credentials, and provider defaults.", Form: m.buildProvidersForm()},
+		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm("Main Agent", current.Agents.Categories["default"])},
+		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm("Researcher", current.Agents.Categories["researcher"])},
+		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm("Crafter", current.Agents.Categories["crafter"])},
+		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm("Aeron", current.Agents.Categories["aeron"])},
+		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: m.buildAppearanceForm(appearance)},
+		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: m.buildEditorForm(editor)},
+		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: m.buildLSPForm(lsp)},
+		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: m.buildUIForm(ui)},
+		{Name: "Font", Group: "IDE", Description: "Terminal font hints and ligatures.", Form: m.buildFontForm(font)},
 	}
 	return m
 }
@@ -370,6 +378,9 @@ func (m *Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 		updated, cmd, action := f.Update(keyMsg)
 		return *m, m.processFormUpdate(oldProvider, updated, cmd, action)
 	}
+	if m.searchActive {
+		return m.handleSearchKey(keyMsg)
+	}
 
 	s := keyMsg.String()
 	if s == "ctrl+s" || s == "s" {
@@ -380,6 +391,10 @@ func (m *Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	if m.pane == 0 {
+		if s == "/" {
+			m.searchActive = true
+			return *m, nil
+		}
 		if s == "j" {
 			keyMsg = tea.KeyPressMsg{Code: tea.KeyDown}
 		} else if s == "k" {
@@ -389,13 +404,9 @@ func (m *Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 		case tea.KeyEsc:
 			return *m, m.cancelCmd()
 		case tea.KeyUp:
-			if m.selected > 0 {
-				m.selected--
-			}
+			m.moveCategory(-1)
 		case tea.KeyDown:
-			if m.selected < len(m.categories)-1 {
-				m.selected++
-			}
+			m.moveCategory(1)
 		case tea.KeyRight, tea.KeyEnter, tea.KeyTab:
 			m.pane = 1
 		}
@@ -409,6 +420,85 @@ func (m *Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 	oldProvider := m.formProviderBefore()
 	updated, cmd, action := f.Update(keyMsg)
 	return *m, m.processFormUpdate(oldProvider, updated, cmd, action)
+}
+
+func (m *Model) handleSearchKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch keyMsg.Code {
+	case tea.KeyEsc:
+		if m.search != "" {
+			m.search = ""
+			m.ensureVisibleSelection()
+		} else {
+			m.searchActive = false
+		}
+	case tea.KeyEnter:
+		m.searchActive = false
+		m.pane = 1
+	case tea.KeyUp:
+		m.moveCategory(-1)
+	case tea.KeyDown:
+		m.moveCategory(1)
+	case tea.KeyBackspace:
+		if m.search != "" {
+			runes := []rune(m.search)
+			m.search = string(runes[:len(runes)-1])
+			m.ensureVisibleSelection()
+		}
+	default:
+		for _, r := range keyMsg.Text {
+			if unicode.IsPrint(r) {
+				m.search += string(r)
+			}
+		}
+		m.ensureVisibleSelection()
+	}
+	return *m, nil
+}
+
+func (m *Model) visibleCategoryIndices() []int {
+	query := strings.ToLower(strings.TrimSpace(m.search))
+	indices := make([]int, 0, len(m.categories))
+	for i, category := range m.categories {
+		if query == "" || strings.Contains(strings.ToLower(category.Name), query) || strings.Contains(strings.ToLower(category.Group), query) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func (m *Model) ensureVisibleSelection() {
+	visible := m.visibleCategoryIndices()
+	if len(visible) == 0 {
+		return
+	}
+	for _, idx := range visible {
+		if idx == m.selected {
+			return
+		}
+	}
+	m.selected = visible[0]
+}
+
+func (m *Model) moveCategory(delta int) {
+	visible := m.visibleCategoryIndices()
+	if len(visible) == 0 {
+		return
+	}
+	position := 0
+	for i, idx := range visible {
+		if idx == m.selected {
+			position = i
+			break
+		}
+	}
+	position += delta
+	if position < 0 {
+		position = 0
+	}
+	if position >= len(visible) {
+		position = len(visible) - 1
+	}
+	m.selected = visible[position]
 }
 
 func (m *Model) processFormUpdate(oldProvider string, updated form.Form, cmd tea.Cmd, action form.FormAction) tea.Cmd {
@@ -482,6 +572,11 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	x, y := msg.Mouse().X, msg.Mouse().Y
 
 	layout := m.lastLayout
+	if x >= 0 && x < layout.leftW && y == layout.searchY {
+		m.searchActive = true
+		m.pane = 0
+		return *m, nil
+	}
 	if y == layout.height-1 {
 		if x >= layout.saveX0 && x <= layout.saveX1 {
 			return *m, m.saveCmd()
@@ -492,19 +587,29 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	}
 
 	if x >= 0 && x < layout.leftW {
-		idx := y - layout.categoryY
-		if idx >= 0 && idx < len(m.categories) {
+		if y >= 0 && y < len(layout.categoryAtY) {
+			idx := layout.categoryAtY[y]
+			if idx < 0 {
+				return *m, nil
+			}
 			m.selected = idx
 			m.pane = 0
 			return *m, nil
 		}
 	}
 
-	if x >= layout.formX && y >= layout.formY && y < layout.height-3 {
-		m.pane = 1
+	if x >= layout.formX && y >= layout.formY && y < layout.height-2 {
 		f := m.currentForm()
 		oldProvider := m.formProviderBefore()
-		local := tea.MouseClickMsg{X: x - layout.formX, Y: y - layout.formY, Button: msg.Button}
+		localY := y - layout.formY
+		if !f.IsExpanded() {
+			if f.SettingsHitTest(localY).ItemIndex < 0 {
+				return *m, nil
+			}
+			localY-- // ViewSettings items begin one row after Form.View items.
+		}
+		m.pane = 1
+		local := tea.MouseClickMsg{X: x - layout.formX, Y: localY, Button: msg.Button}
 		updated, cmd, action := f.Update(local)
 		return *m, m.processFormUpdate(oldProvider, updated, cmd, action)
 	}
@@ -513,98 +618,178 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 }
 
 func (m *Model) handleMouseMotion(msg tea.MouseMotionMsg) {
+	x, y := msg.X, msg.Y
+	layout := m.lastLayout
+	m.hoverCategory = -1
+	m.hoverButton = 0
+	m.currentForm().SetHoveredItem(-1)
+	if x >= 0 && x < layout.leftW && y >= 0 && y < len(layout.categoryAtY) {
+		m.hoverCategory = layout.categoryAtY[y]
+	}
+	if y == layout.height-1 {
+		if x >= layout.saveX0 && x <= layout.saveX1 {
+			m.hoverButton = 1
+		} else if x >= layout.cancelX0 && x <= layout.cancelX1 {
+			m.hoverButton = 2
+		}
+	}
+	if x >= layout.formX && y >= layout.formY && y < layout.height-2 && !m.currentForm().IsExpanded() {
+		hit := m.currentForm().SettingsHitTest(y - layout.formY)
+		m.currentForm().SetHoveredItem(hit.ItemIndex)
+	} else if x >= layout.formX && y >= layout.formY && y < layout.height-2 && m.currentForm().IsExpanded() {
+		local := tea.MouseMotionMsg{X: x - layout.formX, Y: y - layout.formY, Button: msg.Button}
+		updated, _, _ := m.currentForm().Update(local)
+		m.setForm(updated)
+	}
 }
 
-// View renders the two-column settings window. Returns lines.
+// View renders a compact IDE settings surface using the same search, grouping,
+// selection, and rule language as the command palette.
 func (m *Model) View(width, height int) []string {
-	if width < 42 {
-		width = 42
+	if width < 48 {
+		width = 48
 	}
-	if height < 12 {
-		height = 12
+	if height < 16 {
+		height = 16
 	}
-	leftW := 18
-	for _, cat := range m.categories {
-		lw := 5 + rendering.VisibleWidth(cat.Name)
-		if lw > leftW {
-			leftW = lw
+	leftW := 21
+	for _, category := range m.categories {
+		if w := rendering.VisibleWidth(category.Name) + 4; w > leftW {
+			leftW = w
 		}
 	}
 	if leftW > width/3 {
 		leftW = width / 3
 	}
 	rightW := width - leftW - 1
-	formX := leftW + 3
+	formX, formY := leftW+3, 1
 	formW := rightW - 4
-	f := m.currentForm()
-	formView := f.View(formW, 0)
+	category := m.categories[m.selected]
+	formView := m.currentForm().ViewSettings(formW, 0, category.Description, m.pane == 1)
 	formLines := strings.Split(formView, "\n")
-	railStyle := lipgloss.NewStyle().Background(m.th.Colors.SubPaneBg).Foreground(m.th.Colors.Muted)
-	bodyStyle := lipgloss.NewStyle().Background(m.th.Colors.PopupBg).Foreground(m.th.Colors.Fg)
-	selectedStyle := lipgloss.NewStyle().Background(m.th.Colors.PopupSubtleBg).Foreground(m.th.Colors.Fg).Bold(true)
-	accentStyle := lipgloss.NewStyle().Background(m.th.Colors.PopupSubtleBg).Foreground(m.th.Colors.PopupTitleFocused).Bold(true)
-	sep := lipgloss.NewStyle().Background(m.th.Colors.PopupBg).Foreground(m.th.Colors.PopupDivider).Render("│")
-	fit := func(s string, w int, style lipgloss.Style) string {
-		if w < 1 {
-			return ""
-		}
+
+	railBg := lipgloss.NewStyle().Background(m.th.Colors.PopupBg)
+	bodyBg := lipgloss.NewStyle().Background(m.th.Colors.SubPaneBg)
+	mutedRail := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.PopupBg)
+	accentRail := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Background(m.th.Colors.PopupBg).Bold(true)
+	fgRail := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.PopupBg).Bold(true)
+	highlightRail := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Selection).Bold(true)
+	ruleRail := lipgloss.NewStyle().Foreground(m.th.Colors.PopupDivider).Background(m.th.Colors.PopupBg)
+	ruleBody := lipgloss.NewStyle().Foreground(m.th.Colors.PopupDivider).Background(m.th.Colors.SubPaneBg)
+	separator := lipgloss.NewStyle().Foreground(m.th.Colors.Border).Background(m.th.Colors.SubPaneBg).Render("│")
+
+	pad := func(s string, w int, fill lipgloss.Style) string {
 		s = ansi.Truncate(s, w, "")
-		if pad := w - rendering.VisibleWidth(s); pad > 0 {
-			s += strings.Repeat(" ", pad)
+		if n := w - rendering.VisibleWidth(s); n > 0 {
+			s += fill.Render(strings.Repeat(" ", n))
 		}
-		return style.Render(s)
+		return s
 	}
 
-	categoryY := 1
-	footerDividerY := height - 3
-	hintY := height - 2
-	buttonY := height - 1
-	result := make([]string, height)
+	left := make([]string, height)
+	right := make([]string, height)
 	for y := 0; y < height; y++ {
-		leftText := ""
-		idx := y - categoryY
-		leftStyle := railStyle
-		if idx >= 0 && idx < len(m.categories) {
-			leftText = fmt.Sprintf(" %02d  %s", idx+1, m.categories[idx].Name)
-			if idx == m.selected {
-				leftText = " ▌" + leftText[2:]
-				if m.pane == 0 {
-					leftStyle = accentStyle
-				} else {
-					leftStyle = selectedStyle
-				}
+		left[y] = railBg.Render(strings.Repeat(" ", leftW))
+		right[y] = bodyBg.Render(strings.Repeat(" ", rightW))
+	}
+	categoryAtY := make([]int, height)
+	for i := range categoryAtY {
+		categoryAtY[i] = -1
+	}
+
+	query := m.search
+	searchText := mutedRail.Render("Search settings")
+	if query != "" {
+		searchText = fgRail.Render(query)
+	}
+	cursor := ""
+	if m.searchActive {
+		cursor = accentRail.Render("█")
+	}
+	left[0] = pad(mutedRail.Render("> ")+searchText+cursor, leftW, railBg)
+	left[1] = ruleRail.Render(strings.Repeat("─", leftW))
+
+	y := 2
+	lastGroup := ""
+	visible := m.visibleCategoryIndices()
+	for _, idx := range visible {
+		cat := m.categories[idx]
+		if cat.Group != lastGroup {
+			if lastGroup != "" && y < height-2 {
+				left[y] = ruleRail.Render(strings.Repeat("─", leftW))
+				y++
 			}
-		}
-		rightText := ""
-		if y < footerDividerY && y < len(formLines) {
-			rightText = "  " + formLines[y]
-		}
-		if y == footerDividerY {
-			rightText = strings.Repeat("─", rightW)
-		}
-		if y == hintY {
-			hint := "Tab next  ·  Enter choose/edit  ·  Esc categories"
-			if m.pane == 0 {
-				hint = "↑↓ category  ·  Enter open  ·  Esc close"
+			if y < height-2 {
+				left[y] = pad(mutedRail.Render("  "+cat.Group), leftW, railBg)
+				y++
 			}
-			rightText = "  " + hint
+			lastGroup = cat.Group
 		}
-		if y == buttonY {
-			save := " Save changes "
-			cancel := " Cancel "
-			rightText = "  " + lipgloss.NewStyle().Background(m.th.Colors.PopupButtonBg).Foreground(m.th.Colors.PopupButtonFg).Bold(true).Render(save) + "  " + lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.PopupBg).Render(cancel)
+		if y >= height-2 {
+			break
 		}
-		result[y] = fit(leftText, leftW, leftStyle) + sep + fit(rightText, rightW, bodyStyle)
+		categoryAtY[y] = idx
+		label := cat.Name
+		switch {
+		case idx == m.selected && m.pane == 0:
+			left[y] = pad(accentRail.Render("❯")+railBg.Render(" ")+highlightRail.Render(label), leftW, railBg)
+		case idx == m.selected:
+			left[y] = pad(railBg.Render("  ")+fgRail.Render(label), leftW, railBg)
+		case idx == m.hoverCategory:
+			hover := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Hover)
+			left[y] = hover.Render(pad("  "+label, leftW, lipgloss.NewStyle().Background(m.th.Colors.Hover)))
+		default:
+			left[y] = pad(mutedRail.Render("  "+label), leftW, railBg)
+		}
+		y++
+	}
+	if len(visible) == 0 && y < height-2 {
+		left[y] = pad(mutedRail.Render("  No matching settings"), leftW, railBg)
+	}
+
+	for i, line := range formLines {
+		row := formY + i
+		if row >= height-2 {
+			break
+		}
+		right[row] = pad(bodyBg.Render("  ")+line, rightW, bodyBg)
+	}
+	right[height-2] = ruleBody.Render(strings.Repeat("─", rightW))
+
+	button := func(label string, primary, hovered bool) string {
+		style := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
+		if primary {
+			style = lipgloss.NewStyle().Foreground(m.th.Colors.PopupButtonFg).Background(m.th.Colors.PopupButtonBg).Bold(true)
+		} else if hovered {
+			style = lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Hover).Bold(true)
+		}
+		return style.Render(" " + label + " ")
+	}
+	save := button("Save", true, m.hoverButton == 1)
+	cancel := button("Cancel", false, m.hoverButton == 2)
+	hint := "↑↓ navigate  ·  / search  ·  enter open"
+	if m.searchActive {
+		hint = "type to filter  ·  enter open  ·  esc clear"
+	} else if m.pane == 1 {
+		hint = "tab/↑↓ move  ·  enter edit  ·  esc categories"
+	}
+	hintStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
+	right[height-1] = pad(bodyBg.Render("  ")+save+bodyBg.Render(" ")+cancel+bodyBg.Render("   ")+hintStyle.Render(hint), rightW, bodyBg)
+
+	result := make([]string, height)
+	for row := 0; row < height; row++ {
+		result[row] = left[row] + separator + right[row]
 	}
 
 	saveX0 := leftW + 1 + 2
-	saveX1 := saveX0 + rendering.VisibleWidth(" Save changes ") - 1
-	cancelX0 := saveX1 + 3
+	saveX1 := saveX0 + rendering.VisibleWidth(" Save ") - 1
+	cancelX0 := saveX1 + 2
 	m.lastLayout = settingsLayout{
-		width: width, height: height, leftW: leftW, categoryY: categoryY,
-		formX: formX, formY: 0,
+		width: width, height: height, leftW: leftW, categoryY: 2,
+		formX: formX, formY: formY,
 		saveX0: saveX0, saveX1: saveX1,
 		cancelX0: cancelX0, cancelX1: cancelX0 + rendering.VisibleWidth(" Cancel ") - 1,
+		categoryAtY: categoryAtY, searchY: 0,
 	}
 	return result
 }
@@ -812,7 +997,7 @@ func (m *Model) Snapshot() {
 	for i, cat := range m.categories {
 		snap := *cat.Form
 		snap.SaveSnapshot()
-		catSnaps[i] = Category{Name: cat.Name, Icon: cat.Icon, Form: &snap}
+		catSnaps[i] = Category{Name: cat.Name, Group: cat.Group, Description: cat.Description, Form: &snap}
 	}
 	m.snapshot = &modelSnapshot{
 		categories: catSnaps,

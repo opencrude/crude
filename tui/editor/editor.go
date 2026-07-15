@@ -88,6 +88,7 @@ type Editor struct {
 	watchDir     string
 	watchChanged chan struct{}
 	watchDone    chan struct{}
+	watchMu      sync.Mutex
 
 	// lastSaveTime records when the editor last wrote to disk. The watcher
 	// suppresses fsnotify events that arrive within a short window of our own
@@ -288,8 +289,8 @@ func (e *Editor) Value() string {
 	}
 	return string(e.buf.Bytes())
 }
-func (e *Editor) CursorLine() int      { return e.cursor.Line }
-func (e *Editor) CursorCol() int       { return e.cursor.Col }
+func (e *Editor) CursorLine() int { return e.cursor.Line }
+func (e *Editor) CursorCol() int  { return e.cursor.Col }
 func (e *Editor) LineCount() int {
 	if e.buffer != nil {
 		return e.buffer.LineCount()
@@ -742,5 +743,3 @@ func (e *Editor) severityColor(severity int) string {
 		return "#8b949e"
 	}
 }
-
-
