@@ -41,23 +41,23 @@ type ProfileConfig struct {
 }
 
 type AgentsConfig struct {
-	Enabled       bool                      `json:"enabled,omitempty"`
-	ActiveProfile string                    `json:"active_profile,omitempty"`
-	MaxConcurrent int                       `json:"max_concurrent,omitempty"`
-	Profiles      map[string]ProfileConfig  `json:"profiles,omitempty"`
+	Enabled       bool                          `json:"enabled,omitempty"`
+	ActiveProfile string                        `json:"active_profile,omitempty"`
+	MaxConcurrent int                           `json:"max_concurrent,omitempty"`
+	Profiles      map[string]ProfileConfig      `json:"profiles,omitempty"`
 	AgentProfiles map[string]AgentProfileConfig `json:"agent_profiles,omitempty"`
 }
 
 type AgentProfileConfig struct {
-	Category       string   `json:"category,omitempty"`
-	Description    string   `json:"description,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	Provider       string   `json:"provider,omitempty"`
-	Instructions   string   `json:"instructions,omitempty"`
-	AllowedTools   []string `json:"allowed_tools,omitempty"`
-	DeniedTools    []string `json:"denied_tools,omitempty"`
-	FileOwnership  []string `json:"file_ownership,omitempty"`
-	MaxSteps       int      `json:"max_steps,omitempty"`
+	Category      string   `json:"category,omitempty"`
+	Description   string   `json:"description,omitempty"`
+	Model         string   `json:"model,omitempty"`
+	Provider      string   `json:"provider,omitempty"`
+	Instructions  string   `json:"instructions,omitempty"`
+	AllowedTools  []string `json:"allowed_tools,omitempty"`
+	DeniedTools   []string `json:"denied_tools,omitempty"`
+	FileOwnership []string `json:"file_ownership,omitempty"`
+	MaxSteps      int      `json:"max_steps,omitempty"`
 }
 
 func DefaultAgentsConfig() AgentsConfig {
@@ -80,18 +80,18 @@ func DefaultAgentsConfig() AgentsConfig {
 						DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
 					},
 					CategoryCrafter: {
-						Model:        "qwen/qwen3.5-235b-a22b",
-						Policy:       "no-delete",
-						MaxSteps:     1000,
-						Description:  "Implementer — writes code, edits files, runs tests",
-						DeniedTools:  []string{"delete_file"},
+						Model:       "qwen/qwen3.5-235b-a22b",
+						Policy:      "no-delete",
+						MaxSteps:    1000,
+						Description: "Implementer — writes code, edits files, runs tests",
+						DeniedTools: []string{"delete_file"},
 					},
 					CategoryAeron: {
-						Model:        "google/gemini-2.0-flash-exp:free",
-						Policy:       "read-only",
-						MaxSteps:     1000,
-						Description:  "Grunt — formatting, linting, boilerplate, monitoring",
-						DeniedTools:  []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
+						Model:       "google/gemini-2.0-flash-exp:free",
+						Policy:      "read-only",
+						MaxSteps:    1000,
+						Description: "Grunt — formatting, linting, boilerplate, monitoring",
+						DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
 					},
 				},
 			},
@@ -139,8 +139,10 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	APIKey      string `json:"api_key,omitempty"`
-	ProviderURL string `json:"provider_url,omitempty"`
+	APIKey         string `json:"api_key,omitempty"`
+	ProviderURL    string `json:"provider_url,omitempty"`
+	Model          string `json:"model,omitempty"`
+	ThinkingEffort string `json:"thinking_effort,omitempty"`
 }
 
 func (c *Config) GetActiveProviderConfig() ProviderConfig {
@@ -204,7 +206,7 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 	if cat.Provider == "" {
 		cat.Provider = c.EffectiveProviderID()
 	}
-	if cat.APIKey == "" || cat.ProviderURL == "" {
+	if cat.APIKey == "" || cat.ProviderURL == "" || cat.Model == "" || cat.ThinkingEffort == "" {
 		if prov, ok := c.Providers[cat.Provider]; ok {
 			if cat.APIKey == "" {
 				cat.APIKey = prov.APIKey
@@ -212,12 +214,24 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 			if cat.ProviderURL == "" {
 				cat.ProviderURL = prov.ProviderURL
 			}
+			if cat.Model == "" {
+				cat.Model = prov.Model
+			}
+			if cat.ThinkingEffort == "" {
+				cat.ThinkingEffort = prov.ThinkingEffort
+			}
 		} else if prov, ok := c.Providers[c.EffectiveProviderID()]; ok {
 			if cat.APIKey == "" {
 				cat.APIKey = prov.APIKey
 			}
 			if cat.ProviderURL == "" {
 				cat.ProviderURL = prov.ProviderURL
+			}
+			if cat.Model == "" {
+				cat.Model = prov.Model
+			}
+			if cat.ThinkingEffort == "" {
+				cat.ThinkingEffort = prov.ThinkingEffort
 			}
 		}
 	}
@@ -364,6 +378,32 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 	}
 }
 
+// ApplyWorkspaceAgentDefaults overlays workspace-scoped agent defaults onto
+// the active profile. Provider credentials remain app-global; new sessions
+// inherit these role defaults unless their own DB contains an override.
+func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
+	if cfg == nil || len(agents.Categories) == 0 {
+		return
+	}
+	if cfg.Agents.Profiles == nil {
+		cfg.Agents.Profiles = make(map[string]ProfileConfig)
+	}
+	profileName := cfg.Agents.ActiveProfile
+	if profileName == "" {
+		profileName = "default"
+		cfg.Agents.ActiveProfile = profileName
+	}
+	profile := cfg.Agents.Profiles[profileName]
+	if profile.Categories == nil {
+		profile.Categories = make(map[string]CategoryConfig)
+	}
+	for category, value := range agents.Categories {
+		existing := profile.Categories[category]
+		profile.Categories[category] = mergeCategoryConfig(existing, catSettingsToConfig(value))
+	}
+	cfg.Agents.Profiles[profileName] = profile
+}
+
 func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 	activeProfile := s.Agents.ActiveProfile
 	if activeProfile == "" {
@@ -473,8 +513,10 @@ func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 	}
 
 	providers[prov] = ProviderConfig{
-		APIKey:      aKey,
-		ProviderURL: pURL,
+		APIKey:         aKey,
+		ProviderURL:    pURL,
+		Model:          pModel,
+		ThinkingEffort: pEffort,
 	}
 
 	agents := AgentsConfig{
@@ -486,8 +528,8 @@ func settingsToConfig(s ttypes.Settings, base *Config) *Config {
 
 	return &Config{
 		ActiveProvider:  prov,
-		Providers:      providers,
+		Providers:       providers,
 		TurnLogsEnabled: tlOn,
-		Agents:         agents,
+		Agents:          agents,
 	}
 }

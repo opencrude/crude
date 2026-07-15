@@ -36,12 +36,12 @@ type FormItem interface {
 }
 
 type TextItem struct {
-	theme         *theme.Theme
-	label         string
-	value         []rune
-	masked        bool
-	editing       bool
-	editCursor    int
+	theme      *theme.Theme
+	label      string
+	value      []rune
+	masked     bool
+	editing    bool
+	editCursor int
 	// selStart/selEnd describe a half-open byte range in the value
 	// slice that the user has selected. Both equal -1 means no
 	// selection; otherwise the range is [min, max). Following the
@@ -69,7 +69,7 @@ func NewTextItem(t *theme.Theme, label, value string, masked bool) *TextItem {
 
 func (m *TextItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
-	accent := m.theme.Styles.InputPrompt
+	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupTitleFocused)
 	textStyle := m.theme.Styles.InputText
 	selStyle := m.theme.Styles.Highlight
 
@@ -393,12 +393,12 @@ func (m *TextItem) HandleKey(msg tea.KeyPressMsg) (FormItem, tea.Cmd, FormItemAc
 	return m, nil, FormItemActionNone, false
 }
 
-func (m *TextItem) Label() string        { return m.label }
-func (m *TextItem) InlineLabel() string  { return m.label }
-func (m *TextItem) Value() string        { return string(m.value) }
-func (m *TextItem) SetValue(s string)     { m.value = []rune(s) }
-func (m *TextItem) IsEditing() bool      { return m.editing }
-func (m *TextItem) StartEditing()        { m.editing = true; m.editCursor = len(m.value) }
+func (m *TextItem) Label() string       { return m.label }
+func (m *TextItem) InlineLabel() string { return m.label }
+func (m *TextItem) Value() string       { return string(m.value) }
+func (m *TextItem) SetValue(s string)   { m.value = []rune(s) }
+func (m *TextItem) IsEditing() bool     { return m.editing }
+func (m *TextItem) StartEditing()       { m.editing = true; m.editCursor = len(m.value) }
 
 // Selection API. These are public so the form (and the viewmodel) can
 // read/modify the selection without poking at the private fields.
@@ -612,7 +612,7 @@ func NewSelectItem(t *theme.Theme, label, value string, pageSize int) *SelectIte
 
 func (m *SelectItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
-	accent := m.theme.Styles.InputPrompt
+	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupTitleFocused)
 	textStyle := m.theme.Styles.InputText
 
 	prefix := "  "
@@ -643,7 +643,7 @@ func (m *SelectItem) HandleKey(msg tea.KeyPressMsg) (FormItem, tea.Cmd, FormItem
 func (m *SelectItem) Label() string       { return m.label }
 func (m *SelectItem) InlineLabel() string { return m.label }
 func (m *SelectItem) Value() string       { return m.value }
-func (m *SelectItem) SetValue(s string)    { m.value = s }
+func (m *SelectItem) SetValue(s string)   { m.value = s }
 
 func (m *SelectItem) SetOptions(items []components.ListItem) {
 	m.list.SetItems(items)
@@ -658,11 +658,11 @@ func (m *SelectItem) SetLoading(loading bool, msg string) {
 	m.list.SetFetching(loading)
 }
 
-func (m *SelectItem) IsLoading() bool                   { return m.loading }
-func (m *SelectItem) LoadMsg() string                   { return m.loadMsg }
-func (m *SelectItem) Options() []components.ListItem     { return m.list.Items() }
-func (m *SelectItem) List() *components.List             { return &m.list }
-func (m *SelectItem) SetFetchError(err string)           { m.list.SetFetchError(err) }
+func (m *SelectItem) IsLoading() bool                { return m.loading }
+func (m *SelectItem) LoadMsg() string                { return m.loadMsg }
+func (m *SelectItem) Options() []components.ListItem { return m.list.Items() }
+func (m *SelectItem) List() *components.List         { return &m.list }
+func (m *SelectItem) SetFetchError(err string)       { m.list.SetFetchError(err) }
 
 func (m *SelectItem) Snapshot() FormItem {
 	return &SelectItem{theme: m.theme, label: m.label, value: m.value, list: m.list, loading: m.loading, loadMsg: m.loadMsg}
@@ -693,7 +693,7 @@ func (s *SeparatorItem) HandleKey(msg tea.KeyPressMsg) (item FormItem, cmd tea.C
 	return s, nil, FormItemActionNone, false
 }
 
-func (s *SeparatorItem) Label() string        { return "" }
+func (s *SeparatorItem) Label() string         { return "" }
 func (s *SeparatorItem) InlineLabel() string   { return "" }
 func (s *SeparatorItem) Value() string         { return "" }
 func (s *SeparatorItem) SetValue(v string)     {}
@@ -720,7 +720,7 @@ func NewCycleItem(t *theme.Theme, label string, values []string, current string)
 
 func (m *CycleItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
-	accent := m.theme.Styles.InputPrompt
+	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupTitleFocused)
 	textStyle := m.theme.Styles.InputText
 
 	prefix := "  "
@@ -796,7 +796,7 @@ func (m *NavItem) Desc() string { return m.desc }
 
 func (m *NavItem) View(focused bool, spinFrame int, labelWidth int) string {
 	dim := m.theme.Styles.DimLabel
-	accent := m.theme.Styles.InputPrompt
+	accent := lipgloss.NewStyle().Foreground(m.theme.Colors.PopupTitleFocused)
 
 	prefix := "  "
 	if focused {
@@ -817,10 +817,10 @@ func (m *NavItem) HandleKey(msg tea.KeyPressMsg) (FormItem, tea.Cmd, FormItemAct
 }
 
 func (m *NavItem) Label() string       { return m.label }
-func (m *NavItem) InlineLabel() string  { return m.label }
-func (m *NavItem) Value() string        { return m.target }
-func (m *NavItem) SetValue(string)      {}
-func (m *NavItem) Target() string       { return m.target }
+func (m *NavItem) InlineLabel() string { return m.label }
+func (m *NavItem) Value() string       { return m.target }
+func (m *NavItem) SetValue(string)     {}
+func (m *NavItem) Target() string      { return m.target }
 
 func (m *NavItem) Snapshot() FormItem {
 	return &NavItem{theme: m.theme, label: m.label, detail: m.detail, desc: m.desc, target: m.target}

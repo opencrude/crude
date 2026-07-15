@@ -3,8 +3,6 @@ package rendering
 import (
 	"crude/tui/cell"
 	"crude/tui/surface"
-
-	"github.com/charmbracelet/x/ansi"
 )
 
 // RenderToSurface parses an ANSI string and writes the cells into a surface.
@@ -69,7 +67,7 @@ func RenderToSurface(surf *surface.Surface, ansiStr string) {
 		}
 
 		// Regular character — handle grapheme clusters properly
-		cluster, dw := ansi.FirstGraphemeCluster(ansiStr[i:], ansi.GraphemeWidth)
+		cluster, dw := FirstGrapheme(ansiStr[i:])
 		if len(cluster) == 0 {
 			i++
 			continue

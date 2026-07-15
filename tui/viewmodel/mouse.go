@@ -170,7 +170,7 @@ func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []t
 	}
 
 	if m.Input.InputSelecting() {
-	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
+		updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
 		m.Input = updated
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -362,11 +362,11 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 	mouse := msg.Mouse()
 
 	overlayStartLine := m.ChatAreaHeight + 3
-		if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
-			overlayStartLine += 2
-		}
+	if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
+		overlayStartLine += 2
+	}
 
-		if m.Overlay.TabCount() >= 2 && mouse.Y == overlayStartLine+1 {
+	if m.Overlay.TabCount() >= 2 && mouse.Y == overlayStartLine+1 {
 		adjustedX := mouse.X
 		if m.Tree.Visible && m.Tree.Model != nil {
 			adjustedX -= m.Tree.Width + 1
@@ -440,25 +440,24 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 		}
 	}
 
-	// Settings overlay: clicks on form items focus that item.
-	// TextItems additionally enter edit mode (so the user can
-	// start typing). Non-TextItems (Select/Cycle/Nav) just focus.
-	// This is the fix for "click on a settings field does nothing".
-	if activeTab != nil && activeTab.Title == "Settings" {
-		form := m.Settings.Form()
-		if form == nil {
+	// Session settings overlay: clicks on form items focus that item.
+	if activeTab != nil && activeTab.Title == "Session Settings" {
+		if m.SessionSettings == nil {
 			return m, nil
 		}
-		contentY := mouse.Y - contentStartLine
-		hit := form.HitTest(contentY)
-		if hit.ItemIndex >= 0 {
-			form.FocusItem(hit.ItemIndex)
-			// If the focused item is a TextItem, click → edit mode.
-			if ti := form.FocusedTextItem(); ti != nil {
-				ti.StartEditing()
-			}
-			return m, nil
+		sidebarW := 0
+		if m.Tree.Visible && m.Tree.Model != nil {
+			sidebarW = m.Tree.Width + 1
 		}
+		local := tea.MouseClickMsg{
+			X: mouse.X - sidebarW - m.Theme.Spacing.PadLR,
+			// Overlay rendering strips Form.View's leading blank row.
+			Y:      mouse.Y - contentStartLine + 1,
+			Button: msg.Button,
+		}
+		updated, cmd := m.SessionSettings.Update(local)
+		m.SessionSettings = updated
+		return m, cmd
 	}
 
 	return m, nil
@@ -524,6 +523,13 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
+	if m.Overlay.IsOpen() {
+		if activeTab := m.Overlay.ActiveTab(); activeTab != nil && activeTab.Title == "Session Settings" && m.SessionSettings != nil {
+			updated, cmd := m.SessionSettings.Update(msg)
+			m.SessionSettings = updated
+			return m, cmd
+		}
+	}
 
 	region := m.classifyMouse(msg.X, msg.Y, true)
 
@@ -547,14 +553,17 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	default:
+		// Smooth content scroll on the welcome launcher (not selection step).
 		if m.AgentMgr.Count() == 0 && m.launcher != nil {
 			m.LastInteractionTime = time.Now()
+			delta := 0
 			if msg.Button == tea.MouseWheelUp {
-				m.launcher.moveUp()
-				return m, nil
+				delta = -3
+			} else if msg.Button == tea.MouseWheelDown {
+				delta = 3
 			}
-			if msg.Button == tea.MouseWheelDown {
-				m.launcher.moveDown()
+			if delta != 0 {
+				m.launcher.scrollBy(delta, m.ChatAreaHeight)
 				return m, nil
 			}
 		}
@@ -918,10 +927,10 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 	// Wrap in unified chrome. The border is tinted with the severity
 	// color, the title is the severity label.
 	lines := widgets.PopupChromeLines(m.Theme, widgets.PopupChromeConfig{
-		Title:       sevLabel,
-		TitleIcon:   sevIcon,
-		Width:       boxW,
-		Focused:     false,
+		Title:        sevLabel,
+		TitleIcon:    sevIcon,
+		Width:        boxW,
+		Focused:      false,
 		BorderAccent: sevColor,
 		TitleAccent:  sevColor,
 	}, content)

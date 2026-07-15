@@ -9,16 +9,17 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
 	"crude/provider"
+	"crude/sessiondb"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
+	settingsui "crude/tui/settings"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 	"crude/tui/wm"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -269,15 +270,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			ml.SetModelName(string(msg))
 		}
 	case ttypes.OpenSettingsMsg:
-		m.Logger.Info("UI", "open_settings")
-		m.Settings.SaveSnapshot()
-		m.setMode(ModeSettings)
-	case ttypes.ModelsListMsg:
-		m.Logger.Info("MODEL", "list_received", "count", len(msg))
-		m.Settings.SetModels([]ttypes.ModelEntry(msg))
-	case ttypes.ModelsErrorMsg:
-		m.Logger.Error("MODEL", "list_error", "error", string(msg))
-		m.Settings.SetModelsError(string(msg))
+		m.Logger.Info("UI", "open_session_settings")
+		m.openSessionSettings()
 	case ttypes.SettingsSaveResultMsg:
 		if msg.Err != nil {
 			m.Logger.Error("CONFIG", "save_error", "error", msg.Err.Error())
@@ -286,7 +280,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Logger.Info("CONFIG", "saved")
 			m.ModelName = msg.Settings.Model
 			m.LastSettings = msg.Settings
-			m.closeOverlayTab("Settings")
+			m.closeOverlayTab("Session Settings")
 			m.StatusBar.SetInfo("settings saved")
 		}
 	case rendering.ClipboardCopiedMsg:
@@ -317,12 +311,103 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			ml.ScrollToBottom()
 		}
 	case widgets.FilePickerSelectMsg:
-		m.addFileReference(msg.Path)
 		m.windowManager.RemoveWindow("filepicker")
 		m.setMode(ModeChat)
+		if msg.Folder {
+			if m.launcher != nil {
+				_ = m.launcherOpenFolder(msg.Path)
+			} else if err := m.SwitchProject(msg.Path); err != nil {
+				if m.StatusBar != nil {
+					m.StatusBar.SetError("Failed to open folder: " + err.Error())
+				}
+			} else if m.StatusBar != nil {
+				m.StatusBar.SetInfo("Opened " + msg.Path)
+			}
+		} else {
+			m.addFileReference(msg.Path)
+		}
 	case widgets.FilePickerCancelMsg:
 		m.windowManager.RemoveWindow("filepicker")
 		m.setMode(ModeChat)
+	case widgets.WorkspaceSettingsSaveMsg:
+		m.Logger.Info("CONFIG", "workspace_settings_save")
+		appSets := msg.Settings
+		if m.Logger != nil {
+			m.Logger.Info("WORKSPACE", "save_app_settings", "theme_preset", appSets.Theme.Preset, "provider", appSets.ActiveProvider)
+		}
+		err := m.SaveAppSettings(appSets)
+		if err != nil {
+			m.StatusBar.SetError("Failed to save workspace settings: " + err.Error())
+		} else {
+			// Persist provider credentials to app config + live session config.
+			if err := m.SaveProviderSettings(appSets.ActiveProvider, appSets.Providers); err != nil {
+				m.StatusBar.SetError("Failed to save providers: " + err.Error())
+			} else {
+				m.StatusBar.SetInfo("Workspace settings saved")
+			}
+		}
+		m.windowManager.RemoveWindow("workspace-settings")
+	case widgets.WorkspaceSettingsCancelMsg:
+		m.windowManager.RemoveWindow("workspace-settings")
+	case settingsui.FetchModelsMsg:
+		request := msg
+		cmds = append(cmds, func() tea.Msg {
+			models, err := m.HandleFetchModels(request.ProviderID, request.BaseURL, request.APIKey)
+			if err != nil {
+				return settingsui.ModelsErrorMsg{ProviderID: request.ProviderID, Error: err.Error()}
+			}
+			return settingsui.ModelsMsg{ProviderID: request.ProviderID, Models: models}
+		})
+	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg:
+		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
+			if settingsWidget, ok := fw.Content.(*widgets.WorkspaceSettings); ok {
+				if cmd := settingsWidget.HandleEvent(msg); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				fw.MarkContentDirty()
+			}
+		}
+	case widgets.SessionSettingsSaveMsg:
+		m.Logger.Info("CONFIG", "session_settings_save")
+		m.StatusBar.SetInfo("saving...")
+		s := msg.Settings
+		sessionID := ""
+		if m.ActiveSession != nil {
+			sessionID = m.ActiveSession.SessionID
+		}
+		cmds = append(cmds, func() tea.Msg {
+			err := m.HandleSettingsSaveForSession(sessionID, s)
+			return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
+		})
+	case widgets.SessionSettingsCancelMsg:
+		m.Logger.Info("CONFIG", "session_settings_cancel")
+		m.SessionSettings.RestoreSnapshot()
+		m.closeOverlayTab("Session Settings")
+		m.OverlayState.SetSettingsCategory("")
+	case widgets.SessionSettingsResetMsg:
+		if err := m.ResetSessionSettings(); err != nil {
+			m.StatusBar.SetError("Failed to reset session settings: " + err.Error())
+		} else {
+			m.StatusBar.SetInfo("Session settings now inherit workspace defaults")
+		}
+		m.closeOverlayTab("Session Settings")
+		m.OverlayState.SetSettingsCategory("")
+	case widgets.SessionSettingsFetchModelsMsg:
+		request := msg
+		cmds = append(cmds, func() tea.Msg {
+			models, err := m.HandleFetchModels(request.ProviderID, request.BaseURL, request.APIKey)
+			if err != nil {
+				return widgets.SessionSettingsModelsErrorMsg{ProviderID: request.ProviderID, Error: err.Error()}
+			}
+			return widgets.SessionSettingsModelsMsg{ProviderID: request.ProviderID, Models: models}
+		})
+	case widgets.SessionSettingsModelsMsg, widgets.SessionSettingsModelsErrorMsg:
+		if m.SessionSettings != nil {
+			_, cmd := m.SessionSettings.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	case filetree.FileSelectedMsg:
 		m.Logger.Info("TREE", "file_selected", "path", msg.Path)
 		cmd, err := m.openEditorTab(msg.Path)
@@ -547,15 +632,11 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		agentID := m.agentIDFromTabTitle(tab.Title)
 		m.Win.CloseTab(index)
 		m.cleanupAgent(agentID)
-		if m.ActiveSession.OnCancelSubAgent != nil {
-			go m.ActiveSession.OnCancelSubAgent(agentID)
-		}
+		m.CancelSubAgent(agentID)
 		m.handleTabSwitch()
 		if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-			if m.OnListSessions != nil {
-				m.launcher = NewLauncherState(m.OnListSessions())
-				m.LastInteractionTime = time.Now()
-			}
+			m.openLauncher()
+			m.LastInteractionTime = time.Now()
 			return nil
 		}
 		return nil
@@ -565,7 +646,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		path := m.editorPathFromTabTitle(tab.Title)
 		// If the tab has unsaved edits, prompt before destroying the
 		// buffer. Otherwise close immediately.
-		ed := m.EditorState.Editor 
+		ed := m.EditorState.Editor
 		if t, ok := m.EditorState.Tabs[path]; ok {
 			ed = t.Editor
 		}
@@ -580,10 +661,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	m.Win.CloseTab(index)
 	m.handleTabSwitch()
 	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		if m.OnListSessions != nil {
-			m.launcher = NewLauncherState(m.OnListSessions())
-			m.LastInteractionTime = time.Now()
-		}
+		m.openLauncher()
 	}
 	return nil
 }
@@ -598,8 +676,8 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 	}
 
 	switch tab.Title {
-	case "Settings":
-		m.Settings.RestoreSnapshot()
+	case "Session Settings":
+		m.SessionSettings.RestoreSnapshot()
 		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
 		if ml := m.activeMsgList(); ml != nil {

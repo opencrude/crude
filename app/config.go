@@ -113,12 +113,12 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 }
 
 func SessionToFileConfig(sc *session.Config) FileConfig {
+	// Start from existing file config so visual prefs are preserved.
+	fc := LoadFileConfig()
 	tl := sc.TurnLogsEnabled
-	fc := FileConfig{
-		ActiveProvider:  sc.ActiveProvider,
-		Providers:       sc.Providers,
-		TurnLogsEnabled: &tl,
-	}
+	fc.ActiveProvider = sc.ActiveProvider
+	fc.Providers = sc.Providers
+	fc.TurnLogsEnabled = &tl
 	fc.Agents = &sc.Agents
 	return fc
 }

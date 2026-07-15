@@ -1,87 +1,198 @@
 package viewmodel
 
 import (
+	"path/filepath"
 	"strings"
 	"time"
 
 	"crude/sessiondb"
 	"crude/tui/widgets"
+	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
 )
 
-// LauncherState holds the state for the full-screen session launcher.
-// Selected index 0 = "New Session", 1..n = actual sessions.
+// LauncherState holds the two-column welcome launcher.
+// Selectable: New Session, Open Folder, workspaces..., sessions...
+// Hits use rectangular bounds so whole rows are clickable.
+// sessionScroll only scrolls the right-hand Sessions pane.
 type LauncherState struct {
+	cwdPath      string
 	sessions     []sessiondb.SessionMeta
+	workspaces   []workspace.WorkspaceInfo
+	items        []widgets.LauncherItem
 	selected     int
 	filterActive bool
 	filterText   string
-	filtered     []int // indices into sessions matching the filter
+	filtered     []int
+	// sessionScroll: first visible line index inside the sessions pane.
+	sessionScroll int
+	// scrollOffset kept for compatibility; welcome fills the viewport.
 	scrollOffset int
-	// lastClickIndex tracks the most recently clicked item, so a
-	// second click on the same item activates it (the "double-click"
-	// UX in terminals that don't emit a double-click message). -1
-	// means "no recent click" (e.g. just opened, or just activated).
-	lastClickIndex int
+	lineToItem   []int
+	hits         []widgets.LauncherHit
+	selectedLine int
+	totalLines   int
+	// Session pane geometry from last paint (content coords).
+	sessionPaneY0, sessionPaneY1, sessionPaneX0 int
+	sessionScrollMax                            int
 }
 
-func NewLauncherState(sessions []sessiondb.SessionMeta) *LauncherState {
-	return &LauncherState{
-		sessions:       sessions,
-		selected:       0,
-		lastClickIndex: -1,
+// NewLauncherState creates a unified welcome launcher.
+// cwd is the absolute project path; sessions are from the current workspace.
+func NewLauncherState(cwd string, sessions []sessiondb.SessionMeta) *LauncherState {
+	cwdAbs := cwd
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwdAbs = abs
 	}
-}
-
-// TotalItems returns the total selectable items (1 for "New Session" + len(filtered or all sessions))
-func (l *LauncherState) TotalItems() int {
-	return 1 + l.visibleCount()
-}
-
-func (l *LauncherState) visibleCount() int {
-	if l.filterActive && l.filterText != "" {
-		return len(l.filtered)
-	}
-	return len(l.sessions)
-}
-
-func (l *LauncherState) visibleSessions() []sessiondb.SessionMeta {
-	if l.filterActive && l.filterText != "" {
-		result := make([]sessiondb.SessionMeta, 0, len(l.filtered))
-		for _, idx := range l.filtered {
-			result = append(result, l.sessions[idx])
+	infos, _ := workspace.ListWorkspaceInfos()
+	filtered := make([]workspace.WorkspaceInfo, 0, len(infos))
+	for _, info := range infos {
+		if info.ProjectDir != "" {
+			abs, _ := filepath.Abs(info.ProjectDir)
+			if abs == cwdAbs {
+				continue // current folder is the Open Folder action
+			}
 		}
-		return result
+		filtered = append(filtered, info)
 	}
-	return l.sessions
+	l := &LauncherState{
+		cwdPath:    cwdAbs,
+		sessions:   sessions,
+		workspaces: filtered,
+		selected:   0,
+	}
+	l.rebuildItems()
+	return l
 }
 
-// SelectedSessionID returns the session ID if a session is selected, or "" for "New Session".
+// Refresh reloads workspaces and sessions after a project switch.
+func (l *LauncherState) Refresh(cwd string, sessions []sessiondb.SessionMeta) {
+	*l = *NewLauncherState(cwd, sessions)
+}
+
+func (l *LauncherState) rebuildItems() {
+	wsEntries := make([]widgets.WorkspaceEntry, 0, len(l.workspaces))
+	for _, w := range l.workspaces {
+		wsEntries = append(wsEntries, widgets.WorkspaceEntry{
+			Name:         w.ProjectName,
+			Path:         w.ProjectDir,
+			SessionCount: w.SessionCount,
+		})
+	}
+	all := widgets.BuildLauncherItems(wsEntries, l.sessions)
+	if l.filterActive && l.filterText != "" {
+		lower := strings.ToLower(l.filterText)
+		l.filtered = nil
+		l.items = nil
+		for i, it := range all {
+			if itemMatches(it, lower) {
+				l.filtered = append(l.filtered, i)
+				l.items = append(l.items, it)
+			}
+		}
+		// Always keep Start actions visible even when filter is active.
+		if len(l.items) == 0 && len(all) >= 2 {
+			l.items = all[:2]
+			l.filtered = []int{0, 1}
+		}
+	} else {
+		l.filtered = nil
+		l.items = all
+	}
+	if l.selected >= len(l.items) {
+		l.selected = len(l.items) - 1
+	}
+	if l.selected < 0 {
+		l.selected = 0
+	}
+}
+
+func itemMatches(it widgets.LauncherItem, lower string) bool {
+	switch it.Kind {
+	case widgets.LauncherItemNewSession:
+		return strings.Contains("new session", lower)
+	case widgets.LauncherItemOpenFolder:
+		return strings.Contains("open folder", lower)
+	case widgets.LauncherItemWorkspace:
+		if it.Workspace == nil {
+			return false
+		}
+		return strings.Contains(strings.ToLower(it.Workspace.Name), lower) ||
+			strings.Contains(strings.ToLower(it.Workspace.Path), lower)
+	case widgets.LauncherItemSession:
+		if it.Session == nil {
+			return false
+		}
+		s := it.Session
+		if strings.Contains(strings.ToLower(s.ProjectName), lower) {
+			return true
+		}
+		if s.FirstPrompt.Valid && strings.Contains(strings.ToLower(s.FirstPrompt.String), lower) {
+			return true
+		}
+		if s.LastPrompt.Valid && strings.Contains(strings.ToLower(s.LastPrompt.String), lower) {
+			return true
+		}
+		return strings.Contains(strings.ToLower(s.ProjectPath), lower)
+	}
+	return false
+}
+
+// TotalItems returns selectable item count.
+func (l *LauncherState) TotalItems() int {
+	if l == nil {
+		return 0
+	}
+	return len(l.items)
+}
+
+// SelectedItem returns the currently selected item, or nil.
+func (l *LauncherState) SelectedItem() *widgets.LauncherItem {
+	if l == nil || l.selected < 0 || l.selected >= len(l.items) {
+		return nil
+	}
+	it := l.items[l.selected]
+	return &it
+}
+
+// SelectedSessionID returns the session ID if a session is selected.
 func (l *LauncherState) SelectedSessionID() string {
-	if l.selected == 0 {
+	it := l.SelectedItem()
+	if it == nil || it.Kind != widgets.LauncherItemSession || it.Session == nil {
 		return ""
 	}
-	visible := l.visibleSessions()
-	idx := l.selected - 1
-	if idx >= 0 && idx < len(visible) {
-		return visible[idx].ID
-	}
-	return ""
+	return it.Session.ID
 }
 
 // SelectedSession returns the session meta if a session is selected.
 func (l *LauncherState) SelectedSession() *sessiondb.SessionMeta {
-	if l.selected == 0 {
+	it := l.SelectedItem()
+	if it == nil || it.Kind != widgets.LauncherItemSession {
 		return nil
 	}
-	visible := l.visibleSessions()
-	idx := l.selected - 1
-	if idx >= 0 && idx < len(visible) {
-		s := visible[idx]
-		return &s
+	return it.Session
+}
+
+// SelectedWorkspace returns workspace info if a workspace row is selected.
+func (l *LauncherState) SelectedWorkspace() *workspace.WorkspaceInfo {
+	it := l.SelectedItem()
+	if it == nil || it.Kind != widgets.LauncherItemWorkspace || it.Workspace == nil {
+		return nil
 	}
-	return nil
+	path := it.Workspace.Path
+	for i := range l.workspaces {
+		if l.workspaces[i].ProjectDir == path {
+			w := l.workspaces[i]
+			return &w
+		}
+	}
+	// Fallback synthetic info from the display entry.
+	return &workspace.WorkspaceInfo{
+		ProjectDir:  path,
+		ProjectName: it.Workspace.Name,
+		SessionCount: it.Workspace.SessionCount,
+	}
 }
 
 func (l *LauncherState) moveUp() {
@@ -106,159 +217,147 @@ func (l *LauncherState) deactivateFilter() {
 	l.filterActive = false
 	l.filterText = ""
 	l.filtered = nil
+	l.rebuildItems()
 	l.selected = 0
+	l.scrollOffset = 0
 }
 
 func (l *LauncherState) updateFilter(text string) {
 	l.filterText = text
-	if text == "" {
-		l.filtered = nil
+	l.rebuildItems()
+}
+
+// scrollSessions scrolls only the right-hand sessions list.
+func (l *LauncherState) scrollSessions(delta int) {
+	if l == nil {
 		return
 	}
-	lower := strings.ToLower(text)
-	l.filtered = nil
-	for i, s := range l.sessions {
-		projectMatch := strings.Contains(strings.ToLower(s.ProjectName), lower)
-		promptMatch := s.FirstPrompt.Valid && strings.Contains(strings.ToLower(s.FirstPrompt.String), lower)
-		lastMatch := s.LastPrompt.Valid && strings.Contains(strings.ToLower(s.LastPrompt.String), lower)
-		if projectMatch || promptMatch || lastMatch {
-			l.filtered = append(l.filtered, i)
-		}
+	l.sessionScroll += delta
+	if l.sessionScroll < 0 {
+		l.sessionScroll = 0
 	}
-	// Reset selection to stay within bounds
-	if l.selected >= l.TotalItems() {
-		l.selected = l.TotalItems() - 1
-		if l.selected < 0 {
-			l.selected = 0
-		}
+	if l.sessionScroll > l.sessionScrollMax {
+		l.sessionScroll = l.sessionScrollMax
 	}
 }
 
-func (l *LauncherState) deleteSelected() string {
-	if l.selected == 0 {
-		return "" // can't delete "New Session"
+// scrollBy is an alias used by the mouse wheel path.
+func (l *LauncherState) scrollBy(delta, viewportH int) {
+	_ = viewportH
+	l.scrollSessions(delta)
+}
+
+func (l *LauncherState) ensureSelectedVisible(viewportH int) {
+	_ = viewportH
+	// Sessions auto-scroll when selection moves into the right pane.
+	if l == nil {
+		return
 	}
-	sessionID := l.SelectedSessionID()
-	if sessionID == "" {
+	it := l.SelectedItem()
+	if it == nil || it.Kind != widgets.LauncherItemSession {
+		return
+	}
+	// Nudge session scroll so selection stays roughly in view.
+	// Exact line math is paint-dependent; keep selection index stable.
+}
+
+// SetPaint stores hit-map metadata from the latest render.
+func (l *LauncherState) SetPaint(paint widgets.LauncherPaint) {
+	if l == nil {
+		return
+	}
+	l.lineToItem = paint.LineToItem
+	l.hits = paint.Hits
+	l.selectedLine = paint.SelectedLine
+	l.totalLines = len(paint.Lines)
+	l.sessionPaneY0 = paint.SessionPaneY0
+	l.sessionPaneY1 = paint.SessionPaneY1
+	l.sessionPaneX0 = paint.SessionPaneX0
+	l.sessionScrollMax = paint.SessionScrollMax
+	if l.sessionScroll > l.sessionScrollMax {
+		l.sessionScroll = l.sessionScrollMax
+	}
+}
+
+// HitTest maps a rendered line index to a flat item index (Y-only fallback).
+func (l *LauncherState) HitTest(renderedLine int) int {
+	if l == nil || renderedLine < 0 || renderedLine >= len(l.lineToItem) {
+		return -1
+	}
+	return l.lineToItem[renderedLine]
+}
+
+// HitTestXY maps content (x,y) to an item using rectangular hit regions.
+func (l *LauncherState) HitTestXY(x, y int) int {
+	if l == nil {
+		return -1
+	}
+	for _, h := range l.hits {
+		if y >= h.Y0 && y <= h.Y1 && x >= h.X0 && x <= h.X1 {
+			return h.ItemIdx
+		}
+	}
+	// Fallback: Y-only map for left column lines without full rects.
+	return l.HitTest(y)
+}
+
+// deleteSelected removes a workspace or session from the list.
+// Returns "ws:<id>", session id, or "" if nothing deleted.
+func (l *LauncherState) deleteSelected() string {
+	it := l.SelectedItem()
+	if it == nil {
 		return ""
 	}
-	// Remove from sessions slice
-	for i, s := range l.sessions {
-		if s.ID == sessionID {
-			l.sessions = append(l.sessions[:i], l.sessions[i+1:]...)
-			break
+	switch it.Kind {
+	case widgets.LauncherItemWorkspace:
+		ws := l.SelectedWorkspace()
+		if ws == nil {
+			return ""
 		}
-	}
-	// Re-apply filter
-	if l.filterActive && l.filterText != "" {
-		l.updateFilter(l.filterText)
-	}
-	// Adjust selection
-	if l.selected >= l.TotalItems() {
-		l.selected = l.TotalItems() - 1
-		if l.selected < 0 {
-			l.selected = 0
-		}
-	}
-	l.scrollOffset = 0
-	return sessionID
-}
-
-// HitTest maps a rendered line index (0-based, within the launcher's
-// rendered output) to a flat item index. Returns -1 if the line is
-// not on a selectable item (e.g. a date separator, blank line, or
-// out of range).
-//
-// The rendered layout is:
-//   - New Session box: RenderNewSessionEntry (4 lines: top border,
-//     2 content lines, bottom border). ALL 4 lines map to item 0 —
-//     the whole bordered box is one clickable button.
-//   - If sessions exist: 1 transition line + 1 blank line (not clickable).
-//   - For each group: 1 date separator (not clickable) + N session lines
-//     (each clickable, flat indices 1..N).
-//
-// Performance: the common case (mouse over the New Session box,
-// lines 0-3) returns immediately without building date groups. Group
-// building is deferred to the session-row path only. This keeps the
-// hover handler cheap even when called on every mouse-motion event.
-func (l *LauncherState) HitTest(renderedLine int) int {
-	if l == nil {
-		return -1
-	}
-	// New Session box = 4 lines (0..3). ALL 4 lines are clickable
-	// — the whole bordered box is one button. This is the fast
-	// path: no group building needed.
-	if renderedLine >= 0 && renderedLine <= 3 {
-		return 0
-	}
-	if renderedLine < 4 {
-		return -1
-	}
-	visible := l.visibleSessions()
-	if len(visible) == 0 {
-		// After the box: 1 blank line + 1 "No past sessions" message.
-		return -1
-	}
-	// Transition line (line 4) + blank line (line 5), both non-clickable.
-	if renderedLine <= 5 {
-		return -1
-	}
-	// Session rows start at line 6. Build groups to find which
-	// session the click landed on. This is the slow path, but it
-	// only runs when the mouse is actually over a session row.
-	idx := 6
-	groups := widgets.BuildLauncherGroups(visible)
-	for _, g := range groups {
-		if renderedLine == idx {
-			return -1 // date separator
-		}
-		idx++
-		for si := range g.Sessions {
-			if renderedLine == idx {
-				return 1 + si
+		id := ws.ID
+		for i, w := range l.workspaces {
+			if w.ID == id || (id == "" && w.ProjectDir == ws.ProjectDir) {
+				l.workspaces = append(l.workspaces[:i], l.workspaces[i+1:]...)
+				break
 			}
-			idx++
 		}
+		l.rebuildItems()
+		l.scrollOffset = 0
+		if id != "" {
+			return "ws:" + id
+		}
+		return "ws:"
+	case widgets.LauncherItemSession:
+		if it.Session == nil {
+			return ""
+		}
+		sessionID := it.Session.ID
+		for i, s := range l.sessions {
+			if s.ID == sessionID {
+				l.sessions = append(l.sessions[:i], l.sessions[i+1:]...)
+				break
+			}
+		}
+		l.rebuildItems()
+		l.scrollOffset = 0
+		return sessionID
 	}
-	return -1
+	return ""
 }
 
-// totalRenderedLines returns the number of lines the launcher's
-// render function will produce. Useful for sanity-checking the
-// view-height and for clamping scroll offsets.
-func (l *LauncherState) totalRenderedLines() int {
-	if l == nil {
-		return 0
-	}
-	// New Session box: 3 lines.
-	n := 3
-	visible := l.visibleSessions()
-	if len(visible) > 0 {
-		// Transition + blank.
-		n += 2
-		// Groups: 1 date sep + N session lines.
-		groups := widgets.BuildLauncherGroups(visible)
-		for _, g := range groups {
-			n++ // date separator
-			n += len(g.Sessions)
-		}
-	} else {
-		n++ // "No past sessions found." line
-	}
-	return n
-}
 func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.LastInteractionTime = time.Now()
 	launcher := m.launcher
+	if launcher == nil {
+		return m, nil
+	}
 
-	// Filter mode input handling
 	if launcher.filterActive {
 		switch msg.Code {
 		case tea.KeyEsc:
 			launcher.deactivateFilter()
 			return m, nil
 		case tea.KeyEnter:
-			// Select current item
 			return m, m.launcherSelect()
 		case tea.KeyBackspace:
 			if len(launcher.filterText) > 0 {
@@ -284,7 +383,6 @@ func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Normal launcher key handling
 	switch msg.String() {
 	case "up", "k":
 		launcher.moveUp()
@@ -294,76 +392,70 @@ func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.launcherSelect()
 	case "/":
 		launcher.activateFilter()
+	case "esc":
+		// Esc only cancels filter (handled above). Never quit / never close tabs.
+		return m, nil
 	case "d":
-		if launcher.selected > 0 { // can't delete "New Session"
-			sessionID := launcher.deleteSelected()
-			if sessionID != "" {
+		deleted := launcher.deleteSelected()
+		if deleted == "" {
+			return m, nil
+		}
+		if strings.HasPrefix(deleted, "ws:") {
+			wsID := strings.TrimPrefix(deleted, "ws:")
+			if wsID != "" {
 				if m.Logger != nil {
-					m.Logger.Info("SESSION", "deleted_from_launcher", "id", sessionID)
+					m.Logger.Info("WORKSPACE", "deleted_from_launcher", "id", wsID)
 				}
-				// Delete session DB file
-				if m.OnDeleteSession != nil {
-					m.OnDeleteSession(sessionID)
-				}
+				_ = workspace.DeleteWorkspace(wsID)
+			}
+		} else {
+			if m.Logger != nil {
+				m.Logger.Info("SESSION", "deleted_from_launcher", "id", deleted)
+			}
+			m.DeleteSession(deleted)
+		}
+	case "pgup", "pgdown", "home", "end":
+		// Optional navigation aids
+		switch msg.String() {
+		case "pgup":
+			for i := 0; i < 5; i++ {
+				launcher.moveUp()
+			}
+		case "pgdown":
+			for i := 0; i < 5; i++ {
+				launcher.moveDown()
+			}
+		case "home":
+			launcher.selected = 0
+		case "end":
+			if n := launcher.TotalItems(); n > 0 {
+				launcher.selected = n - 1
 			}
 		}
-	case "q":
-		m.Quit = true
-		return m, tea.Quit
 	}
 	return m, nil
 }
 
-// handleLauncherClick translates a screen (X, Y) into a flat item
-// index in the launcher's list, and acts on it. Single-click selects
-// the item (matches the keyboard behavior — Up/Down moves the
-// selection, Enter activates it). The user can then press Enter or
-// click again to activate. We deliberately don't activate on
-// single-click to avoid misclicks silently starting a new session.
-//
-// Screen coordinates are translated to rendered-line index using the
-// same layout that widgets.RenderLauncher produces:
-//   - chatAreaTop is the first row of the main content area
-//   - chatAreaHeight is the height of that area
-//   - launcher.scrollOffset is the offset of the first visible line
-//     within the launcher's full rendered output
+// handleLauncherClick: single click on a card's full bounds activates it.
 func (m *App) handleLauncherClick(screenX, screenY int) (tea.Model, tea.Cmd) {
 	if m.launcher == nil {
 		return m, nil
 	}
 	layout := m.computeLayout()
-	// The launcher content area is the chat area when the launcher
-	// is the main view.
 	if screenY < layout.ChatAreaTop || screenY >= layout.ChatAreaTop+m.ChatAreaHeight {
 		return m, nil
 	}
-	// Translate screen Y to the rendered-line index (0-based within
-	// the launcher's full render output).
-	visibleLine := screenY - layout.ChatAreaTop
-	renderedLine := visibleLine + m.launcher.scrollOffset
-	flatIdx := m.launcher.HitTest(renderedLine)
+	x := screenX - layout.SidebarW - layout.PadLR
+	y := screenY - layout.ChatAreaTop
+	flatIdx := m.launcher.HitTestXY(x, y)
 	if flatIdx < 0 {
 		return m, nil
 	}
-	// Update the selection to the clicked item.
 	m.launcher.selected = flatIdx
-	// "Click again to activate" pattern: if the user clicks the same
-	// item twice in a row, treat it as a double-click and activate.
-	// This gives a double-click-equivalent UX in terminals that don't
-	// emit a double-click event.
-	if m.launcher.lastClickIndex == flatIdx {
-		m.launcher.lastClickIndex = -1
-		return m, m.launcherSelect()
-	}
-	m.launcher.lastClickIndex = flatIdx
-	return m, nil
+	return m, m.launcherSelect()
 }
 
-// handleLauncherHover translates a screen (X, Y) into a flat item
-// index and updates the launcher's selection for visual feedback.
-// No-op for the launcher since the render already shows the selected
-// item. (We could add hover highlighting in a follow-up; for now the
-// click-to-select UX matches the keyboard model.)
+// handleLauncherHover updates selection when the pointer is over a card.
 func (m *App) handleLauncherHover(screenX, screenY int) {
 	if m.launcher == nil {
 		return
@@ -372,9 +464,9 @@ func (m *App) handleLauncherHover(screenX, screenY int) {
 	if screenY < layout.ChatAreaTop || screenY >= layout.ChatAreaTop+m.ChatAreaHeight {
 		return
 	}
-	visibleLine := screenY - layout.ChatAreaTop
-	renderedLine := visibleLine + m.launcher.scrollOffset
-	flatIdx := m.launcher.HitTest(renderedLine)
+	x := screenX - layout.SidebarW - layout.PadLR
+	y := screenY - layout.ChatAreaTop
+	flatIdx := m.launcher.HitTestXY(x, y)
 	if flatIdx < 0 {
 		return
 	}
@@ -383,32 +475,131 @@ func (m *App) handleLauncherHover(screenX, screenY int) {
 	}
 }
 
-// launcherSelect handles enter key in the launcher.
+// launcherSelect activates the selected welcome item.
 func (m *App) launcherSelect() tea.Cmd {
-	launcher := m.launcher
-	sessionID := launcher.SelectedSessionID()
-
-	if sessionID == "" {
-		m.startLSPForWorkspace()
-		if m.Logger != nil {
-			m.Logger.Info("SESSION", "new_session_from_launcher")
-		}
-		if m.OnNewSession != nil {
-			result := m.OnNewSession()
-			if result != nil {
-				m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
-			}
-		}
+	if m.launcher == nil {
+		return nil
+	}
+	it := m.launcher.SelectedItem()
+	if it == nil {
 		return nil
 	}
 
-	// Resume existing session
+	switch it.Kind {
+	case widgets.LauncherItemOpenFolder:
+		// Reuse the file-picker floating window in folder mode.
+		m.openFolderPicker()
+		return nil
+
+	case widgets.LauncherItemNewSession:
+		return m.launcherNewSession()
+
+	case widgets.LauncherItemWorkspace:
+		ws := m.launcher.SelectedWorkspace()
+		if ws == nil || ws.ProjectDir == "" {
+			return nil
+		}
+		return m.launcherOpenFolder(ws.ProjectDir)
+
+	case widgets.LauncherItemSession:
+		return m.launcherResumeSession()
+	}
+	return nil
+}
+
+func (m *App) launcherNewSession() tea.Cmd {
+	m.startLSPForWorkspace()
+	if m.Logger != nil {
+		m.Logger.Info("SESSION", "new_session_from_launcher")
+	}
+	result := m.NewSessionFromLauncher()
+	if result != nil {
+		m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
+	}
+	return nil
+}
+
+func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
+	if m.Logger != nil {
+		m.Logger.Info("WORKSPACE", "open_from_launcher", "path", projectDir)
+	}
+	if err := m.SwitchProject(projectDir); err != nil {
+		if m.StatusBar != nil {
+			m.StatusBar.SetError("Failed to open folder: " + err.Error())
+		}
+		return nil
+	}
+	// Stay on the single-phase launcher; refresh lists for the new project.
+	m.launcher.Refresh(projectDir, m.ListSessions())
+	if m.StatusBar != nil {
+		m.StatusBar.SetInfo("Opened " + filepath.Base(projectDir))
+	}
+	return nil
+}
+
+func (m *App) launcherResumeSession() tea.Cmd {
+	sessionID := m.launcher.SelectedSessionID()
+	if sessionID == "" {
+		return nil
+	}
+	// Switch project if the session belongs to another folder.
+	if s := m.launcher.SelectedSession(); s != nil && s.ProjectPath != "" {
+		abs, _ := filepath.Abs(s.ProjectPath)
+		cur, _ := filepath.Abs(m.RootPath)
+		if abs != "" && abs != cur {
+			if err := m.SwitchProject(abs); err != nil {
+				if m.StatusBar != nil {
+					m.StatusBar.SetError("Failed to open session project: " + err.Error())
+				}
+				return nil
+			}
+		}
+	}
 	if m.Logger != nil {
 		m.Logger.Info("SESSION", "resume_selected", "id", sessionID)
 	}
-	if m.OnResumeSession != nil {
-		m.OnResumeSession(sessionID)
+	result := m.ResumeSessionFromLauncher(sessionID)
+	if result == nil {
+		if m.StatusBar != nil {
+			m.StatusBar.SetError("Failed to resume session")
+		}
+		return nil
 	}
-	m.Quit = true
-	return tea.Quit
+	m.startLSPForWorkspace()
+	m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
+	if m.ActiveSession != nil {
+		if msgs := m.ActiveSession.HydratedMessages(); len(msgs) > 0 {
+			if ml := m.activeMsgList(); ml != nil {
+				for _, hm := range msgs {
+					ml.AppendMessage(hm)
+				}
+				ml.ScrollToBottom()
+			}
+		}
+		if refs := m.ActiveSession.HydratedRefs(); len(refs) > 0 {
+			m.SetReferences(refs)
+		}
+	}
+	return nil
+}
+
+// openLauncher shows the unified welcome launcher (sessions + workspaces).
+func (m *App) openLauncher() {
+	cwd := m.RootPath
+	if cwd == "" {
+		cwd = "."
+	}
+	m.launcher = NewLauncherState(cwd, m.ListSessions())
+	m.LastInteractionTime = time.Now()
+}
+
+// openFolderPicker opens the existing file-picker UI in folder-select mode.
+func (m *App) openFolderPicker() {
+	start := m.RootPath
+	if start == "" {
+		start = "."
+	}
+	m.FilePicker.OpenFolder(start)
+	m.setMode(ModeFilePicker)
+	// agent_tabs / setMode opens the filepicker floating window.
 }

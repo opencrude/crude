@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/theme"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 // TestEditorTab_StatePreservedAcrossSwitch is the regression test for

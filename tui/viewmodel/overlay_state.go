@@ -1,6 +1,6 @@
 package viewmodel
 
-import "crude/tui/workspace"
+import "crude/workspace"
 
 // OverlayState manages the current overlay mode and related display state.
 // This consolidates the Mode enum, blocking/yolo flags, and blockedSessionID

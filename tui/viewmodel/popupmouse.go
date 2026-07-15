@@ -2,9 +2,9 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/mattn/go-runewidth"
 
 	"crude/tui/components"
+	"crude/tui/rendering"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 )
@@ -132,6 +132,7 @@ func (m *App) closePopupWindowByID(id string) {
 		if m.windowManager != nil {
 			m.windowManager.RemoveWindow("filepicker")
 		}
+		m.FilePicker.Close()
 		m.setMode(ModeChat)
 	case "diag-hover":
 		m.clearDiagHoverPopup()
@@ -306,7 +307,8 @@ func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, input *com
 		pos := 0
 		acc := 0
 		for i, r := range runes {
-			w := runewidth.RuneWidth(r)
+			// Use grapheme-aware width (same as layout + UV), not per-rune wcwidth.
+			w := rendering.PlainWidth(string(r))
 			if acc+w > relX {
 				pos = i
 				goto done

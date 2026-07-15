@@ -95,6 +95,17 @@ func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
 		return m.updateKey(msg)
 	case tea.MouseClickMsg:
 		return m.updateMouseClick(msg)
+	case tea.MouseWheelMsg:
+		if len(m.filtered) == 0 {
+			return m, nil
+		}
+		if msg.Button == tea.MouseWheelUp && m.idx > 0 {
+			m.idx--
+		} else if msg.Button == tea.MouseWheelDown && m.idx < len(m.filtered)-1 {
+			m.idx++
+		}
+		m.clampOffset()
+		return m, nil
 	}
 
 	return m, nil

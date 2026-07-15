@@ -13,12 +13,19 @@ import (
 	"crude/tui/types"
 	"crude/tui/widgets"
 	"crude/tui/window"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 func newTestChannels() (chan<- provider.UserInput, chan<- provider.UserInput, chan<- struct{}, chan string) {
 	return make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1)
 }
+
+type testLogger struct{}
+
+func (l *testLogger) Info(tag, msg string, pairs ...any)  {}
+func (l *testLogger) Warn(tag, msg string, pairs ...any)  {}
+func (l *testLogger) Error(tag, msg string, pairs ...any) {}
+func (l *testLogger) Debug(tag, msg string, pairs ...any) {}
 
 func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
@@ -33,31 +40,27 @@ func newTestAppWithLauncher(t *testing.T) *App {
 			StatusBar:     widgets.NewStatusBar(th),
 			SpinFrame:     0,
 			ActiveSession: &workspace.Session{},
+			Logger:        &testLogger{},
 		},
 		OverlayState: NewOverlayState(),
 		LSPPopup:     NewLSPPopupState(),
 		EditorState:  NewEditorState(),
-		launcher:     NewLauncherState(nil),
+		launcher:     NewLauncherState(".", nil),
 	}
 	app.Win = window.New(th)
 	app.Overlay = window.New(th)
 	return app
 }
 
-// TestLauncher_NewSession_CallsOnNewSession verifies that launcherSelect()
-// invokes the OnNewSession callback.
-func TestLauncher_NewSession_CallsOnNewSession(t *testing.T) {
+// TestLauncher_NewSession_NoBackendConfig verifies that launcherSelect()
+// does not clear the launcher when no backend config is set.
+func TestLauncher_NewSession_NoBackendConfig(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	called := false
-	app.OnNewSession = func() *workspace.NewSessionResult {
-		called = true
-		return nil
-	}
 
 	cmd := app.launcherSelect()
 
-	if !called {
-		t.Fatal("OnNewSession was not called")
+	if app.launcher == nil {
+		t.Fatal("launcher should still be present when no backend config")
 	}
 	if cmd != nil {
 		t.Fatal("expected nil cmd from launcherSelect")
@@ -99,47 +102,22 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 	}
 }
 
-// TestLauncher_NewSession_CreatesOrchestrator verifies that launcherSelect()
-// with OnNewSession returning a result creates the orchestrator agent.
-func TestLauncher_NewSession_CreatesOrchestrator(t *testing.T) {
+// TestLauncher_AddOrchestrator_ClearsLauncher verifies that AddOrchestrator
+// clears the launcher and creates the agent.
+func TestLauncher_AddOrchestrator_ClearsLauncher(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	inputCh, btwCh, cancelCh, blockResolveCh := newTestChannels()
 
-	app.OnNewSession = func() *workspace.NewSessionResult {
-		return &workspace.NewSessionResult{
-			OrchID:         "ses_1_orch_1",
-			InputCh:        inputCh,
-			BtwCh:          btwCh,
-			CancelCh:       cancelCh,
-			BlockResolveCh: blockResolveCh,
-		}
-	}
-
-	app.launcherSelect()
+	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, blockResolveCh)
 
 	if app.launcher != nil {
-		t.Fatal("launcher should be cleared after creating orchestrator")
+		t.Fatal("launcher should be cleared by AddOrchestrator")
 	}
 	if app.AgentMgr.Get("ses_1_orch_1") == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
 	if app.AgentMgr.ActiveID() != "ses_1_orch_1" {
 		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.AgentMgr.ActiveID())
-	}
-}
-
-// TestLauncher_NewSession_WithoutOnNewSession verifies graceful fallback.
-func TestLauncher_NewSession_WithoutOnNewSession(t *testing.T) {
-	app := newTestAppWithLauncher(t)
-	app.OnNewSession = nil
-
-	cmd := app.launcherSelect()
-
-	if app.launcher == nil {
-		t.Fatal("launcher should still be present when no callback")
-	}
-	if cmd != nil {
-		t.Fatal("expected nil cmd when OnNewSession is nil")
 	}
 }
 
@@ -160,31 +138,29 @@ func TestLauncher_FileOpen_NoSessionCreated(t *testing.T) {
 }
 
 // TestLauncher_ResumeSession verifies that selecting an existing session
-// calls OnResumeSession and triggers quit.
+// resumes in-place (does NOT quit the process).
 func TestLauncher_ResumeSession(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 
 	app.launcher.sessions = []sessiondb.SessionMeta{
 		{ID: "ses_test_1", ProjectName: "test-project"},
 	}
-	app.launcher.selected = 1
-
-	resumeCalled := false
-	app.OnResumeSession = func(id string) {
-		resumeCalled = true
-		if id != "ses_test_1" {
-			t.Fatalf("expected resume ID ses_test_1, got %q", id)
+	app.launcher.rebuildItems()
+	// Select the session item (after New Session, Open Folder, Exit).
+	for i, it := range app.launcher.items {
+		if it.Kind == widgets.LauncherItemSession {
+			app.launcher.selected = i
+			break
 		}
 	}
 
 	cmd := app.launcherSelect()
 
-	if !resumeCalled {
-		t.Fatal("OnResumeSession should be called for existing session")
+	// Without a real backend the resume fails gracefully — but must not quit.
+	if app.Quit {
+		t.Fatal("launcherSelect must not quit for in-place resume")
 	}
-	if cmd == nil || !app.Quit {
-		t.Fatal("launcherSelect should trigger quit for resume")
-	}
+	_ = cmd
 }
 
 // TestSubAgentStarted_SubAgentWithParent verifies that sub_agent_started
@@ -255,17 +231,21 @@ func TestMultipleOrchestrators(t *testing.T) {
 	}
 }
 
-// TestLauncher_NoSessions_NewSessionOnly verifies the launcher shows
-// "Create Orchestrator" even when there are no existing sessions.
-func TestLauncher_NoSessions_NewSessionOnly(t *testing.T) {
+// TestLauncher_NoSessions_StartActionsOnly verifies the welcome launcher
+// always has Start actions even with no sessions/workspaces.
+func TestLauncher_NoSessions_StartActionsOnly(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	app.launcher = NewLauncherState(nil)
+	app.launcher = NewLauncherState(".", nil)
 
-	if app.launcher.TotalItems() != 1 {
-		t.Fatalf("expected 1 item (New Session), got %d", app.launcher.TotalItems())
+	if app.launcher.TotalItems() < 2 {
+		t.Fatalf("expected at least 2 start items, got %d", app.launcher.TotalItems())
 	}
 	if app.launcher.SelectedSessionID() != "" {
-		t.Fatal("SelectedSessionID should be empty for 'New Session'")
+		t.Fatal("SelectedSessionID should be empty for default selection")
+	}
+	it := app.launcher.SelectedItem()
+	if it == nil || it.Kind != widgets.LauncherItemNewSession {
+		t.Fatal("default selection should be New Session")
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 
 	"crude/fileio"
 	"crude/provider"
-	"crude/tui/workspace"
+	"crude/workspace"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 )

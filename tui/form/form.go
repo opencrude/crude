@@ -88,6 +88,20 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 		}
 		return m, nil, FormActionNone
 	}
+	if mouseMsg, ok := msg.(tea.MouseClickMsg); ok {
+		return m.updateMouseClick(mouseMsg)
+	}
+	if wheelMsg, ok := msg.(tea.MouseWheelMsg); ok && m.expanded >= 0 {
+		if si, ok := m.items[m.expanded].(*SelectItem); ok {
+			updated, cmd := si.List().Update(wheelMsg)
+			*si.List() = updated
+			return m, cmd, FormActionNone
+		}
+	}
+
+	if clickMsg, ok := msg.(tea.MouseClickMsg); ok {
+		return m.handleMouseClick(clickMsg)
+	}
 
 	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
@@ -157,19 +171,97 @@ func (m Form) Update(msg tea.Msg) (Form, tea.Cmd, FormAction) {
 		}
 	case tea.KeyTab:
 		if keyMsg.Mod.Contains(tea.ModShift) {
-			if m.hasButtons {
+			if m.focused > 0 {
+				m.focused--
+			} else if m.hasButtons {
 				m.focusZone = 1
 				m.focusedBtn = len(m.buttons) - 1
 			} else {
-				if m.focused > 0 {
-					m.focused--
-				} else {
-					m.focused = len(m.items) - 1
-				}
+				m.focused = len(m.items) - 1
 			}
+		} else if m.focused < len(m.items)-1 {
+			m.focused++
 		} else if m.hasButtons {
 			m.focusZone = 1
 			m.focusedBtn = 0
+		} else {
+			m.focused = 0
+		}
+	}
+
+	return m, nil, FormActionNone
+}
+
+func (m Form) updateMouseClick(msg tea.MouseClickMsg) (Form, tea.Cmd, FormAction) {
+	if msg.Button != tea.MouseLeft {
+		return m, nil, FormActionNone
+	}
+
+	if m.expanded >= 0 {
+		si, ok := m.items[m.expanded].(*SelectItem)
+		if !ok {
+			return m, nil, FormActionNone
+		}
+		// Form.View adds one blank line. A panel list then renders title,
+		// separator, filter, and separator before its first option.
+		const firstOptionRow = 5
+		if msg.Y < firstOptionRow {
+			return m, nil, FormActionNone
+		}
+		listMsg := tea.MouseClickMsg{X: msg.X, Y: msg.Y - firstOptionRow, Button: msg.Button}
+		updated, cmd := si.List().Update(listMsg)
+		*si.List() = updated
+		if updated.Action() == components.ListActionSelect {
+			if selected, ok := updated.Selected(); ok {
+				si.SetValue(selected.ID)
+			}
+			m.expanded = -1
+		}
+		return m, cmd, FormActionNone
+	}
+
+	hit := m.HitTest(msg.Y)
+	if hit.ItemIndex >= 0 {
+		m.FocusItem(hit.ItemIndex)
+		item := m.items[hit.ItemIndex]
+		switch it := item.(type) {
+		case *TextItem:
+			it.StartEditing()
+		case *CycleItem:
+			updated, cmd, action, _ := it.HandleKey(tea.KeyPressMsg{Code: tea.KeyRight})
+			m.items[hit.ItemIndex] = updated
+			if action == FormItemActionNavigate {
+				return m, cmd, FormActionNavigate
+			}
+			return m, cmd, FormActionNone
+		case *SelectItem:
+			m.expanded = hit.ItemIndex
+			if it.List().SelectedID() != it.Value() {
+				it.List().SetSelectedID(it.Value())
+			}
+			return m, nil, FormActionExpand
+		case *NavItem:
+			return m, nil, FormActionNavigate
+		}
+		return m, nil, FormActionNone
+	}
+
+	if hit.InButtonRow {
+		x := msg.X
+		for i, btn := range m.buttons {
+			buttonW := len([]rune(btn.Label)) + 6 // "  [ label ]" / "❯ [ label ]"
+			if x >= 0 && x < buttonW {
+				m.focusZone = 1
+				m.focusedBtn = i
+				if btn.Reset {
+					return m, nil, FormActionReset
+				}
+				if btn.Cancel || i > 0 {
+					return m, nil, FormActionCancel
+				}
+				return m, nil, FormActionSave
+			}
+			x -= buttonW + 2
 		}
 	}
 
@@ -265,6 +357,104 @@ func (m Form) updateButtons(keyMsg tea.KeyPressMsg) (Form, tea.Cmd, FormAction) 
 	return m, nil, FormActionNone
 }
 
+func (m Form) handleMouseClick(msg tea.MouseClickMsg) (Form, tea.Cmd, FormAction) {
+	if msg.Button != tea.MouseLeft {
+		return m, nil, FormActionNone
+	}
+	y := msg.Y
+	x := msg.X
+
+	// Expanded mode: route click to the SelectItem's List.
+	// The rendered layout is:
+	//   Line 0: leading blank
+	//   Line 1: title (breadcrumb)
+	//   Line 2: separator
+	//   Line 3: filter prompt
+	//   Line 4: separator
+	//   Line 5+: items or status text
+	// Items start at form line 5 → listY = formY - 5.
+	if m.expanded >= 0 {
+		if si, ok := m.items[m.expanded].(*SelectItem); ok {
+			listY := y - 5
+			if listY >= 0 {
+				listMsg := tea.MouseClickMsg{X: x, Y: listY, Button: msg.Button}
+				updated, cmd := si.List().Update(listMsg)
+				*si.List() = updated
+				if si.List().Action() == components.ListActionSelect {
+					if selected, ok := si.List().Selected(); ok {
+						si.SetValue(selected.ID)
+					}
+					m.expanded = -1
+					m.focusZone = 0
+				}
+				return m, cmd, FormActionNone
+			}
+		}
+		return m, nil, FormActionNone
+	}
+
+	// Non-expanded mode: use HitTest to find the clicked line.
+	hit := m.HitTest(y)
+	if hit.ItemIndex >= 0 {
+		m.FocusItem(hit.ItemIndex)
+		idx := hit.ItemIndex
+		switch item := m.items[idx].(type) {
+		case *TextItem:
+			item.StartEditing()
+		case *CycleItem:
+			item.idx++
+			if item.idx >= len(item.values) {
+				item.idx = 0
+			}
+		case *SelectItem:
+			m.expanded = idx
+			return m, nil, FormActionExpand
+		case *NavItem:
+			return m, nil, FormActionNavigate
+		}
+		return m, nil, FormActionNone
+	}
+
+	if hit.InButtonRow {
+		btnIdx := m.hitTestButtonRow(x)
+		if btnIdx >= 0 {
+			m.focusedBtn = btnIdx
+			m.focusZone = 1
+			btn := m.buttons[btnIdx]
+			if btn.Reset {
+				return m, nil, FormActionReset
+			}
+			if btnIdx == 0 {
+				return m, nil, FormActionSave
+			}
+			return m, nil, FormActionCancel
+		}
+	}
+
+	return m, nil, FormActionNone
+}
+
+// hitTestButtonRow maps the X coordinate (visible cell column) to a
+// button index. Buttons are rendered as:
+//
+//	❯ [ Label ]  ❯ [ Label2 ]
+//	^---width---^  ^---width---^
+//
+// Each button's visible width is 6 + len(label), and buttons are
+// joined with "  " (2-cell gap). Focused and unfocused buttons
+// have the same visible width — the "❯" is always 1 cell.
+func (m Form) hitTestButtonRow(x int) int {
+	cumX := 0
+	for i, btn := range m.buttons {
+		btnWidth := 6 + len([]rune(btn.Label))
+		if x >= cumX && x < cumX+btnWidth {
+			return i
+		}
+		cumX += btnWidth + 2
+	}
+	return -1
+}
+
 func (m Form) calcLabelWidth() int {
 	maxW := 0
 	for _, item := range m.items {
@@ -294,8 +484,7 @@ func (m Form) View(width int, spinFrame int) string {
 		return b.String()
 	}
 
-	dim := m.theme.Styles.DimLabel
-	accent := m.theme.Colors.Accent
+	accent := m.theme.Colors.PopupTitleFocused
 
 	sepWidth := width
 	if sepWidth < 20 {
@@ -305,7 +494,7 @@ func (m Form) View(width int, spinFrame int) string {
 	titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
 	b.WriteString(titleStyle.Render(m.title))
 	b.WriteString("\n")
-	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)))
+	b.WriteString(lipgloss.NewStyle().Foreground(m.theme.Colors.PopupDivider).Render(strings.Repeat("─", sepWidth)))
 	b.WriteString("\n")
 
 	labelWidth := m.calcLabelWidth()
@@ -397,11 +586,12 @@ type FormLayout struct {
 // to focus + (for TextItem) edit mode.
 //
 // Layout reminder (from form.View):
-//   Line 0: empty (the leading "\n")
-//   Line 1: title
-//   Line 2: separator
-//   Line 3..3+N-1: items, one per line
-//   Optional blank line + button row (when hasButtons)
+//
+//	Line 0: empty (the leading "\n")
+//	Line 1: title
+//	Line 2: separator
+//	Line 3..3+N-1: items, one per line
+//	Optional blank line + button row (when hasButtons)
 func (m Form) HitTest(renderedLine int) FormLayout {
 	// Items start at line 3.
 	if renderedLine >= 3 && renderedLine < 3+len(m.items) {

@@ -13,20 +13,20 @@ const (
 )
 
 const (
-	ToolStatusCalling    = "calling"
-	ToolStatusStreaming  = "streaming"
-	ToolStatusSuccess    = "success"
-	ToolStatusError      = "error"
-	ToolStatusCancelled  = "cancelled"
+	ToolStatusCalling   = "calling"
+	ToolStatusStreaming = "streaming"
+	ToolStatusSuccess   = "success"
+	ToolStatusError     = "error"
+	ToolStatusCancelled = "cancelled"
 )
 
 const (
-	RoleUser           = "user"
-	RoleAssistant      = "assistant"
-	RoleThinking       = "thinking"
-	RoleTool           = "tool"
-	RoleError          = "error"
-	RoleSessionPicker  = "sessionpicker"
+	RoleUser          = "user"
+	RoleAssistant     = "assistant"
+	RoleThinking      = "thinking"
+	RoleTool          = "tool"
+	RoleError         = "error"
+	RoleSessionPicker = "sessionpicker"
 )
 
 const (
@@ -78,43 +78,98 @@ type Settings struct {
 	ThinkingEffort  string
 	TurnLogsEnabled string
 	Agents          AgentsSettings
-	Theme           ThemeSettings       `json:"theme,omitempty"`
-	Editor          EditorSettings      `json:"editor,omitempty"`
-	LSP             LSPSettings         `json:"lsp,omitempty"`
-	UI              UISettings          `json:"ui,omitempty"`
-	Font            FontSettings        `json:"font,omitempty"`
+	// SessionOverrides contains only explicit per-session agent overrides.
+	// A non-nil empty map means "clear all and inherit workspace defaults".
+	SessionOverrides map[string]CategorySettings `json:"-"`
+	Theme            ThemeSettings               `json:"theme,omitempty"`
+	Editor           EditorSettings              `json:"editor,omitempty"`
+	LSP              LSPSettings                 `json:"lsp,omitempty"`
+	UI               UISettings                  `json:"ui,omitempty"`
+	Font             FontSettings                `json:"font,omitempty"`
+}
+
+// AppSettings holds visual/tooling preferences that are workspace-scoped,
+// plus app-level provider credentials (active provider + API keys).
+// Visual fields are persisted to workspace.db; provider fields go to config.json.
+type AppSettings struct {
+	Theme          ThemeSettings             `json:"theme,omitempty"`
+	Editor         EditorSettings            `json:"editor,omitempty"`
+	LSP            LSPSettings               `json:"lsp,omitempty"`
+	UI             UISettings                `json:"ui,omitempty"`
+	Font           FontSettings              `json:"font,omitempty"`
+	ActiveProvider string                    `json:"active_provider,omitempty"`
+	Providers      map[string]ProviderConfig `json:"providers,omitempty"`
+	Agents         AgentsSettings            `json:"agents,omitempty"`
+}
+
+// SessionSettings holds AI behavior settings that are session-scoped.
+// Persisted to session DB. Inherited from workspace config.
+type SessionSettings struct {
+	APIKey          string         `json:"api_key,omitempty"`
+	Model           string         `json:"model,omitempty"`
+	ProviderID      string         `json:"provider_id,omitempty"`
+	ProviderURL     string         `json:"provider_url,omitempty"`
+	ProviderAPIKey  string         `json:"provider_api_key,omitempty"`
+	ThinkingEffort  string         `json:"thinking_effort,omitempty"`
+	TurnLogsEnabled string         `json:"turn_logs_enabled,omitempty"`
+	Agents          AgentsSettings `json:"agents,omitempty"`
+}
+
+// AppPart extracts the app-level settings from a combined Settings.
+func (s Settings) AppPart() AppSettings {
+	return AppSettings{
+		Theme:  s.Theme,
+		Editor: s.Editor,
+		LSP:    s.LSP,
+		UI:     s.UI,
+		Font:   s.Font,
+	}
+}
+
+// SessionPart extracts the session-level settings from a combined Settings.
+func (s Settings) SessionPart() SessionSettings {
+	return SessionSettings{
+		APIKey:          s.APIKey,
+		Model:           s.Model,
+		ProviderID:      s.ProviderID,
+		ProviderURL:     s.ProviderURL,
+		ProviderAPIKey:  s.ProviderAPIKey,
+		ThinkingEffort:  s.ThinkingEffort,
+		TurnLogsEnabled: s.TurnLogsEnabled,
+		Agents:          s.Agents,
+	}
 }
 
 // ThemeSettings controls the visual appearance of the TUI.
 type ThemeSettings struct {
-	Preset     string `json:"preset,omitempty"`      // "dark", "light", "custom"
-	Bg         string `json:"bg,omitempty"`          // hex color
-	Fg         string `json:"fg,omitempty"`          // hex color
-	Accent     string `json:"accent,omitempty"`      // hex color
-	Accent2    string `json:"accent2,omitempty"`     // hex color
-	SubPaneBg  string `json:"subpane_bg,omitempty"`  // hex color
-	Border     string `json:"border,omitempty"`      // hex color
-	Selection  string `json:"selection,omitempty"`   // hex color
+	Preset    string `json:"preset,omitempty"`     // "dark", "light", "custom"
+	Bg        string `json:"bg,omitempty"`         // hex color
+	Fg        string `json:"fg,omitempty"`         // hex color
+	Accent    string `json:"accent,omitempty"`     // hex color
+	Accent2   string `json:"accent2,omitempty"`    // hex color
+	SubPaneBg string `json:"subpane_bg,omitempty"` // hex color
+	Border    string `json:"border,omitempty"`     // hex color
+	Selection string `json:"selection,omitempty"`  // hex color
 }
 
 // EditorSettings controls the built-in text editor.
 type EditorSettings struct {
-	TabSize       int    `json:"tab_size,omitempty"`
-	WordWrap      bool   `json:"word_wrap,omitempty"`
-	LineNumbers   bool   `json:"line_numbers,omitempty"`
-	SyntaxTheme   string `json:"syntax_theme,omitempty"`   // "catppuccin", "dracula", "github", etc.
-	Minimap       bool   `json:"minimap,omitempty"`
-	AutoSaveDelay int    `json:"auto_save_delay,omitempty"` // ms, 0 = disabled
+	TabSize          int    `json:"tab_size,omitempty"`
+	WordWrap         bool   `json:"word_wrap,omitempty"`
+	LineNumbers      bool   `json:"line_numbers,omitempty"`
+	SyntaxTheme      string `json:"syntax_theme,omitempty"` // "catppuccin", "dracula", "github", etc.
+	Minimap          bool   `json:"minimap,omitempty"`
+	AutoSaveDelay    int    `json:"auto_save_delay,omitempty"`   // ms, 0 = disabled
 	RenderWhitespace string `json:"render_whitespace,omitempty"` // "none", "boundary", "all"
-	FormatOnSave  bool   `json:"format_on_save,omitempty"` // run gofmt/rustfmt/black on save
+	FormatOnSave     bool   `json:"format_on_save,omitempty"`    // run gofmt/rustfmt/black on save
 }
 
 // LSPSettings controls the Language Server Protocol integration.
 type LSPSettings struct {
 	Enabled     bool                `json:"enabled,omitempty"`
 	AutoDetect  bool                `json:"auto_detect,omitempty"`
-	Servers     map[string]string   `json:"servers,omitempty"`      // language -> server command
-	ServerArgs  map[string][]string `json:"server_args,omitempty"`  // language -> server args
+	Servers     map[string]string   `json:"servers,omitempty"`     // language -> server command
+	ServerArgs  map[string][]string `json:"server_args,omitempty"` // language -> server args
 	Diagnostics bool                `json:"diagnostics,omitempty"`
 }
 
@@ -152,8 +207,10 @@ type ModelEntry struct {
 }
 
 type ProviderConfig struct {
-	APIKey      string
-	ProviderURL string
+	APIKey         string `json:"api_key,omitempty"`
+	ProviderURL    string `json:"provider_url,omitempty"`
+	Model          string `json:"model,omitempty"`
+	ThinkingEffort string `json:"thinking_effort,omitempty"`
 }
 
 type ProviderPreset struct {

@@ -19,7 +19,17 @@ import (
 	"crude/statemachine"
 )
 
+// ResumeSession loads a backend session from a database file in the
+// global sessions directory. New code should use ResumeSessionWithDir.
 func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error) {
+	sessionsRoot, _ := SessionsRoot()
+	return ResumeSessionWithDir(dbPath, cfg, homeDir, sessionsRoot)
+}
+
+// ResumeSessionWithDir loads a backend session from a database file and
+// places all runtime artifacts under the provided sessionDir. Used by
+// workspace/ to keep resumed sessions inside the workspace folder.
+func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string) (*Session, error) {
 	db, err := sessiondb.OpenAndMigrate(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("resume: open db: %w", err)
@@ -50,14 +60,13 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 		}
 	}
 
-	sessionsRoot, _ := SessionsRoot()
-	fileio.SetSessionsRootFn(SessionsRoot)
+	fileio.SetSessionsRootFn(func() (string, error) { return sessionDir, nil })
 
 	lg, err := logger.New(logger.Options{
 		HomeDir:        homeDir,
 		TurnLogEnabled: cfg.TurnLogsEnabled,
 		SessionID:      meta.ID,
-		SessionsDir:    sessionsRoot,
+		SessionsDir:    sessionDir,
 	})
 	if err != nil {
 		db.Close()
@@ -79,8 +88,8 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 	fileio.SetSafetyLogger(lg)
 
 	var editor *fileio.Editor
-	if sessionsRoot != "" {
-		if ed, edErr := fileio.NewEditorWithSessionDir(meta.ID, sessionsRoot, lg); edErr != nil {
+	if sessionDir != "" {
+		if ed, edErr := fileio.NewEditorWithSessionDir(meta.ID, sessionDir, lg); edErr != nil {
 			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
 		} else {
 			editor = ed
@@ -96,6 +105,13 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 
 	sm := statemachine.NewConversationStateMachine(lg)
 
+	workspaceCfg := copyConfig(cfg)
+	overrides, err := sessiondb.LoadAgentSettingOverrides(db, meta.ID)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load session settings: %w", err)
+	}
+	cfg = configWithSessionOverrides(workspaceCfg, overrides)
 	activeCfg := cfg.GetActiveDefaultCategory()
 	p := provider.FromPreset(activeCfg.Provider, activeCfg.APIKey, activeCfg.ProviderURL)
 	p.Model = activeCfg.Model
@@ -129,31 +145,34 @@ func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error)
 	}
 
 	sess := &Session{
-		cfg:          cfg,
-		provider:     p,
-		exec:         exec,
-		editor:       editor,
-		logger:       lg,
-		permStore:    permStore,
-		sm:           sm,
-		asyncMgr:     fileio.NewAsyncCommandManagerWithLogger(lg),
-		sessionID:    meta.ID,
-		sessionStart: time.Now(),
-		cost:         NewCostAccumulator(lg),
-		tokens:       NewTokenTracker(lg),
-		db:           db,
-		dbPath:       dbPath,
-		turnNumber:   resumeTurnNumber,
-		seqNum:       len(msgs),
-		msgCounter:   len(msgs),
-		msgs:         msgs,
-		msgTurns:     msgTurns,
-		displayMetas: displayMetas,
-		createdAts:   createdAts,
+		cfg:              cfg,
+		provider:         p,
+		exec:             exec,
+		editor:           editor,
+		logger:           lg,
+		permStore:        permStore,
+		sm:               sm,
+		asyncMgr:         fileio.NewAsyncCommandManagerWithLogger(lg),
+		sessionID:        meta.ID,
+		sessionStart:     time.Now(),
+		cost:             NewCostAccumulator(lg),
+		tokens:           NewTokenTracker(lg),
+		db:               db,
+		dbPath:           dbPath,
+		turnNumber:       resumeTurnNumber,
+		seqNum:           len(msgs),
+		msgCounter:       len(msgs),
+		msgs:             msgs,
+		msgTurns:         msgTurns,
+		displayMetas:     displayMetas,
+		createdAts:       createdAts,
 		wakeCh:           make(chan WakeEvent, WakeChBufSize),
 		writeBuf:         make([]taggedMessage, 0, 64),
 		consumedReports:  make(map[string]bool),
 		orchestrators:    make(map[string]*Orchestrator),
+		runtimeProfile:   NewRuntimeProfile(cfg),
+		workspaceCfg:     workspaceCfg,
+		sessionOverrides: overrides,
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)

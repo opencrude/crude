@@ -15,7 +15,7 @@ import (
 	"crude/tui/scrollbar"
 	"crude/tui/surface"
 	"crude/tui/widgets"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 func (m *App) View() tea.View {
@@ -143,8 +143,12 @@ func (m *App) buildMainView() string {
 		}
 		inputView = dim.Render(hint)
 	} else if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+		// Welcome screen: status input is the exclusive key-hint strip.
 		inputLineCount = 1
-		hint := "↑↓: navigate  ·  enter: open  ·  type to search sessions"
+		hint := "↑↓ navigate  ·  enter open  ·  / filter  ·  d delete  ·  ctrl+shift+p palette"
+		if m.launcher != nil && m.launcher.filterActive {
+			hint = "filter: " + m.launcher.filterText + "▌  ·  esc clear"
+		}
 		hintW := rendering.VisibleWidth(hint)
 		if hintW < innerW {
 			hint += strings.Repeat(" ", innerW-hintW)
@@ -591,8 +595,8 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 	}
 
 	switch {
-	case tabTitle == "Settings":
-		settingsView := m.Settings.View(m.SpinFrame)
+	case tabTitle == "Session Settings":
+		settingsView := m.SessionSettings.View(m.SpinFrame)
 		for _, sl := range strings.Split(settingsView, "\n") {
 			rawLines = append(rawLines, rendering.TruncateLine(sl, overlayContentW))
 		}
@@ -633,8 +637,8 @@ func (m *App) syncFormHint() {
 		return
 	}
 	switch {
-	case activeTab.Title == "Settings":
-		m.FormHint = m.Settings.Hint()
+	case activeTab.Title == "Session Settings":
+		m.FormHint = m.SessionSettings.Hint()
 	case activeTab.Title == "Confirm":
 		m.FormHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
 	case activeTab.Title == "YOLO":
@@ -646,19 +650,19 @@ func (m *App) syncFormHint() {
 	}
 }
 
-// renderLauncherMainView renders the launcher in the main content area.
-// Renders launcher session content (same pattern as buildMainView but replaces chat
-// area with launcher session list). Sidebar support is inherited from buildMainView.
+// renderLauncherMainView paints the single-phase welcome launcher and stores
+// the hit map so mouse clicks cover entire card bounds.
 func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 	if m.launcher == nil || innerW < 20 || chatH < 3 {
 		return []string{""}
 	}
 
 	idleSeconds := time.Since(m.LastInteractionTime).Seconds()
-	visibleSessions := m.launcher.visibleSessions()
-	sessionLines := widgets.RenderLauncher(
-		visibleSessions,
+	paint := widgets.RenderWelcomeLauncher(
+		m.launcher.cwdPath,
+		m.launcher.items,
 		m.launcher.selected,
+		m.launcher.sessionScroll,
 		m.launcher.filterActive,
 		m.launcher.filterText,
 		m.Theme,
@@ -667,39 +671,14 @@ func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 		m.SpinFrame,
 		idleSeconds,
 	)
+	m.launcher.SetPaint(paint)
+	m.launcher.ensureSelectedVisible(chatH)
 
-	// Apply scroll offset for long lists
-	totalSessionLines := len(sessionLines)
-	scrollOffset := m.launcher.scrollOffset
-
-	selectedLineIdx := m.launcherSelectedLineIndex(sessionLines)
-	if selectedLineIdx >= scrollOffset+chatH {
-		scrollOffset = selectedLineIdx - chatH + 1
-	}
-	if selectedLineIdx < scrollOffset {
-		scrollOffset = selectedLineIdx
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
-	m.launcher.scrollOffset = scrollOffset
-
-	endIdx := scrollOffset + chatH
-	if endIdx > totalSessionLines {
-		endIdx = totalSessionLines
-	}
-	var visibleLines []string
-	if scrollOffset < totalSessionLines {
-		visibleLines = sessionLines[scrollOffset:endIdx]
-	}
-
-	// Pad visible lines to fill the height and match the chat content wrapping
-	// (pad+inner+pad pattern from activeML.Render's no-scrollbar path).
 	padStr := strings.Repeat(" ", m.Theme.Spacing.PadLR)
 	result := make([]string, chatH)
 	for i := 0; i < chatH; i++ {
-		if i < len(visibleLines) {
-			line := visibleLines[i]
+		if i < len(paint.Lines) {
+			line := paint.Lines[i]
 			lw := rendering.VisibleWidth(line)
 			padRight := innerW - lw
 			if padRight < 0 {
@@ -707,52 +686,10 @@ func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 			}
 			result[i] = padStr + line + strings.Repeat(" ", padRight) + padStr
 		} else {
-			result[i] = strings.Repeat(" ", innerW + 2*m.Theme.Spacing.PadLR)
+			result[i] = strings.Repeat(" ", innerW+2*m.Theme.Spacing.PadLR)
 		}
 	}
 	return result
-}
-
-// launcherSelectedLineIndex finds which rendered line the selected item is on.
-func (m *App) launcherSelectedLineIndex(sessionLines []string) int {
-	if m.launcher == nil {
-		return 0
-	}
-	// The selected index maps to rendered lines:
-	// Index 0 = "New Session" = line 0
-	// Then date separators and session lines follow.
-	// We need to find which line corresponds to the selected item.
-	if m.launcher.selected == 0 {
-		return 0
-	}
-
-	// Walk through the groups to find the line
-	visibleSessions := m.launcher.visibleSessions()
-	groups := widgets.BuildLauncherGroups(visibleSessions)
-
-	innerW := m.width - m.Theme.Spacing.PadLR*2
-	if innerW < 20 {
-		innerW = 20
-	}
-	newSessionLines := widgets.RenderNewSessionEntry(0 == m.launcher.selected, m.Theme, innerW, m.SpinFrame, 0)
-	transitionLines := 0
-	if len(visibleSessions) > 0 {
-		transitionLines = 2
-	}
-	lineIdx := len(newSessionLines) + transitionLines
-	flatIdx := 1
-
-	for _, g := range groups {
-		lineIdx++ // date separator
-		for range g.Sessions {
-			if flatIdx == m.launcher.selected {
-				return lineIdx
-			}
-			lineIdx++
-			flatIdx++
-		}
-	}
-	return 0
 }
 
 func (m *App) renderReferenceChips() []string {

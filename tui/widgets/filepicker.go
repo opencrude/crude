@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
@@ -33,24 +35,21 @@ const (
 // list). Used by the popup mouse dispatcher to wire up click-on-
 // entry, matching the file tree's "click selects" behavior.
 //
-// The popup renders these lines in order:
-//   localY 0: top border (handled by chrome)
-//   localY 1: current path
-//   localY 2: filter row ("/ ...")
-//   localY 3..3+entryPageSize-1: entry rows
-//   localY last: hint line
+// The flat window content renders these lines in order:
+//
+//	localY 0: current path
+//	localY 1: filter row
+//	localY 2: divider
+//	localY 3..3+entryPageSize-1: entry rows
+//	localY last: hint line
 func (m FilePicker) HitTest(localX, localY int) int {
 	if !m.active {
 		return -1
 	}
-	// Subtract the chrome's top border (1 line).
-	contentY := localY - 1
-	// Path is contentY=0, filter is contentY=1, entries start at
-	// contentY=2 (popup localY=3).
-	if contentY < 2 {
+	if localY < 3 {
 		return -1
 	}
-	entryRow := contentY - 2
+	entryRow := localY - 3
 	entries := m.visibleEntries()
 	entryPageSize := m.lastEntryPageSize
 	if entryPageSize < 1 {
@@ -69,28 +68,44 @@ func (m FilePicker) HitTest(localX, localY int) int {
 	}
 	// Skip the click if it's on the scrollbar column. The scrollbar
 	// takes the rightmost scrollbar.ScrollbarWidth cells of the
-	// content area. We use a conservative default for the popup
-	// width because the popup size isn't passed to HitTest.
+	// content area, cached during the last render.
 	sbW := 0
 	if m.scrollbar.IsVisible() && len(entries) > entryPageSize {
 		sbW = scrollbar.ScrollbarWidth
 	}
-	if sbW > 0 && localX >= 50-sbW {
+	if sbW > 0 && localX >= m.lastContentWidth {
 		return -1
 	}
 	return idx
 }
 
+// FilePickerMode selects attach-file vs open-folder behavior.
+type FilePickerMode int
+
+const (
+	// FilePickerModeFile: pick a file (attach reference). Enter on dir navigates; Enter on file selects.
+	FilePickerModeFile FilePickerMode = iota
+	// FilePickerModeFolder: pick a directory. Only dirs listed; Enter navigates; confirm opens current dir.
+	FilePickerModeFolder
+)
+
 type FilePicker struct {
-	th                  *theme.Theme
-	root                string
-	current             string
-	entries             []fileEntry
-	selected            int
-	filter              string
-	active              bool
-	scrollbar           scrollbar.ScrollBar
-	lastEntryPageSize   int // cached from last ViewInner render
+	th                *theme.Theme
+	root              string
+	current           string
+	entries           []fileEntry
+	selected          int
+	filter            string
+	active            bool
+	mode              FilePickerMode
+	scrollbar         scrollbar.ScrollBar
+	lastEntryPageSize int // cached from last ViewInner render
+	lastContentWidth  int
+	lastHeight        int
+	actionX0          int
+	actionX1          int
+	lastClickIdx      int // double-click to enter/select
+	lastClickTime     time.Time
 }
 
 type fileEntry struct {
@@ -101,12 +116,22 @@ type fileEntry struct {
 
 func NewFilePicker(th *theme.Theme) FilePicker {
 	return FilePicker{
-		th:        th,
-		scrollbar: scrollbar.New(0),
+		th:           th,
+		scrollbar:    scrollbar.New(0),
+		lastClickIdx: -1,
 	}
 }
 
 func (m *FilePicker) Open(root string) {
+	m.open(root, FilePickerModeFile)
+}
+
+// OpenFolder opens the picker in folder-select mode (welcome "Open Folder").
+func (m *FilePicker) OpenFolder(root string) {
+	m.open(root, FilePickerModeFolder)
+}
+
+func (m *FilePicker) open(root string, mode FilePickerMode) {
 	if root == "" {
 		root, _ = os.Getwd()
 	}
@@ -119,10 +144,14 @@ func (m *FilePicker) Open(root string) {
 	m.selected = 0
 	m.filter = ""
 	m.active = true
+	m.mode = mode
+	m.lastClickIdx = -1
 	m.loadEntries()
 }
 
-func (m *FilePicker) Close() { m.active = false }
+func (m FilePicker) Mode() FilePickerMode { return m.mode }
+
+func (m *FilePicker) Close()      { m.active = false }
 func (m FilePicker) IsOpen() bool { return m.active }
 
 func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, tea.Cmd) {
@@ -161,35 +190,57 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 				m.selected--
 			}
 		case tea.KeyDown:
-			if m.selected < len(m.entries)-1 {
+			if m.selected < len(m.visibleEntries())-1 {
 				m.selected++
 			}
 		case tea.KeyBackspace:
 			if m.filter != "" {
 				r := []rune(m.filter)
 				m.filter = string(r[:len(r)-1])
-			} else if m.current != m.root {
-				m.current = filepath.Dir(m.current)
+				m.selected = 0
+			} else if m.mode == FilePickerModeFolder || m.current != m.root {
+				parent := filepath.Dir(m.current)
+				if parent == m.current {
+					break
+				}
+				m.current = parent
 				m.selected = 0
 				m.loadEntries()
 			}
 		case tea.KeyEnter:
-			if len(m.entries) == 0 || m.selected < 0 || m.selected >= len(m.entries) {
+			// Folder mode: ctrl+o / empty list → confirm current dir.
+			if m.mode == FilePickerModeFolder && (msg.String() == "ctrl+o" || len(m.visibleEntries()) == 0) {
+				return m, m.current, FilePickerSelect, nil
+			}
+			entries := m.visibleEntries()
+			if len(entries) == 0 || m.selected < 0 || m.selected >= len(entries) {
+				if m.mode == FilePickerModeFolder {
+					return m, m.current, FilePickerSelect, nil
+				}
 				return m, "", FilePickerNone, nil
 			}
-			entry := m.entries[m.selected]
+			entry := entries[m.selected]
 			if entry.IsDir {
 				m.current = entry.Path
 				m.selected = 0
 				m.filter = ""
+				m.lastClickIdx = -1
 				m.loadEntries()
+				return m, "", FilePickerNone, nil
+			}
+			if m.mode == FilePickerModeFolder {
+				// Should not list files in folder mode; treat as no-op.
 				return m, "", FilePickerNone, nil
 			}
 			return m, entry.Path, FilePickerSelect, nil
 		default:
+			if msg.String() == "ctrl+o" && m.mode == FilePickerModeFolder {
+				return m, m.current, FilePickerSelect, nil
+			}
 			for _, r := range msg.Text {
 				if r >= 32 {
 					m.filter += string(r)
+					m.selected = 0
 				}
 			}
 		}
@@ -202,11 +253,29 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 		if clickMsg, ok := msg.(tea.MouseClickMsg); ok {
 			mouse := clickMsg.Mouse()
 			if clickMsg.Button == tea.MouseLeft {
+				if m.mode == FilePickerModeFolder && mouse.Y == m.lastHeight-1 && mouse.X >= m.actionX0 && mouse.X <= m.actionX1 {
+					return m, m.current, FilePickerSelect, nil
+				}
 				idx := m.HitTest(mouse.X, mouse.Y)
 				if idx >= 0 {
-					m.selected = idx
-					// Update scrollbar to follow the new selection.
 					entries := m.visibleEntries()
+					// Double-click same row: enter dir or select file.
+					if m.lastClickIdx == idx && time.Since(m.lastClickTime) <= 500*time.Millisecond && idx < len(entries) {
+						m.lastClickIdx = -1
+						e := entries[idx]
+						if e.IsDir {
+							m.current = e.Path
+							m.selected = 0
+							m.filter = ""
+							m.loadEntries()
+						} else if m.mode == FilePickerModeFile {
+							return m, e.Path, FilePickerSelect, nil
+						}
+						return m, "", FilePickerNone, nil
+					}
+					m.selected = idx
+					m.lastClickIdx = idx
+					m.lastClickTime = time.Now()
 					entryPageSize := m.scrollPageSize()
 					if entryPageSize < 1 {
 						entryPageSize = 1
@@ -229,21 +298,21 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 			mouse := mm.Mouse()
 			translatedMsg = tea.MouseClickMsg{
 				X:      mouse.X,
-				Y:      mouse.Y - 2,
+				Y:      mouse.Y - 3,
 				Button: mm.Button,
 			}
 		case tea.MouseMotionMsg:
 			mouse := mm.Mouse()
 			translatedMsg = tea.MouseMotionMsg{
 				X:      mouse.X,
-				Y:      mouse.Y - 2,
+				Y:      mouse.Y - 3,
 				Button: mm.Button,
 			}
 		case tea.MouseReleaseMsg:
 			mouse := mm.Mouse()
 			translatedMsg = tea.MouseReleaseMsg{
 				X:      mouse.X,
-				Y:      mouse.Y - 2,
+				Y:      mouse.Y - 3,
 				Button: mm.Button,
 			}
 		}
@@ -310,31 +379,15 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 	return m, "", FilePickerNone, cmd
 }
 
-// ViewInner renders the file picker content for embedding inside a
-// container (e.g., a FloatingWindow). The output is the INNER content
-// only — no border, no padding. The caller is expected to wrap the
-// output in PopupChromeLines (or any other container).
-//
-// width and height are the SURFACE dimensions (the popup total size
-// when used with the new chrome). The inner content area is width-6
-// (chrome overhead: 2 border + 4 padding).
+// ViewInner renders the flat file-picker body. The FloatingWindow owns the
+// draggable title bar; this widget deliberately draws no border or chrome.
 func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
-	if width < 10 || height < 4 {
+	if width < 10 || height < 5 {
 		return nil
 	}
 
-	// Subtract chrome overhead (2 border + 4 padding).
-	innerW := width - 6
-	if innerW < 1 {
-		innerW = 1
-	}
-	bodyH := height - 1 // reserve 1 line for hint
-	if bodyH < 4 {
-		bodyH = 4
-	}
-
 	entries := m.visibleEntries()
-	entryPageSize := bodyH - 2 // body includes 2 header lines (path + filter)
+	entryPageSize := height - 4 // location, filter, divider, and action row
 	if entryPageSize < 1 {
 		entryPageSize = 1
 	}
@@ -364,37 +417,84 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 	if m.scrollbar.IsVisible() && len(entries) > entryPageSize {
 		sbW = scrollbar.ScrollbarWidth
 	}
-	contentW := innerW - sbW
+	contentW := width - sbW
 	if contentW < 1 {
 		contentW = 1
 	}
+	m.lastContentWidth = contentW
+	m.lastHeight = height
 
-	mutedStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.PopupBg)
-	filterStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Background(m.th.Colors.PopupBg)
+	bgStyle := lipgloss.NewStyle().Background(m.th.Colors.SubPaneBg)
+	mutedStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
+	labelStyle := lipgloss.NewStyle().Foreground(m.th.Colors.PopupTitleFocused).Background(m.th.Colors.SubPaneBg).Bold(true)
+	filterStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.SubPaneBg)
+	entryStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.SubPaneBg)
+	dirStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent2).Background(m.th.Colors.SubPaneBg)
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(m.th.Colors.Fg).
 		Background(m.th.Colors.PopupSubtleBg).
 		Bold(true)
-	entryStyle := mutedStyle
+	dividerStyle := lipgloss.NewStyle().Foreground(m.th.Colors.PopupDivider).Background(m.th.Colors.SubPaneBg)
+
+	padTo := func(s string, w int) string {
+		if w < 1 {
+			return ""
+		}
+		s = ansi.Truncate(s, w, "")
+		if n := w - rendering.VisibleWidth(s); n > 0 {
+			s += strings.Repeat(" ", n)
+		}
+		return s
+	}
 
 	var body []string
-	pathLine := mutedStyle.Render(rendering.TruncateLine(m.current, contentW))
-	body = append(body, pathLine)
-	filter := "/ " + m.filter
-	body = append(body, filterStyle.Render(rendering.TruncateLine(filter, contentW)))
+	pathLabel := "Location  "
+	pathW := contentW - rendering.VisibleWidth(pathLabel)
+	if pathW < 1 {
+		pathW = 1
+	}
+	pathLine := labelStyle.Render(pathLabel) + mutedStyle.Render(ansi.Truncate(m.current, pathW, "..."))
+	body = append(body, padTo(pathLine, contentW))
+	filterValue := m.filter
+	if filterValue == "" {
+		filterValue = "Type to filter"
+		filterValue = mutedStyle.Render(filterValue)
+	} else {
+		filterValue = filterStyle.Render(filterValue)
+	}
+	body = append(body, padTo(labelStyle.Render("Filter    ")+filterValue, contentW))
+	body = append(body, dividerStyle.Render(strings.Repeat("─", contentW)))
+
 	for i := start; i < end; i++ {
 		entry := entries[i]
-		icon := "  "
+		marker := "  "
+		name := entry.Name
 		if entry.IsDir {
-			icon = "▸ "
+			if entry.Name == ".." {
+				name = "../  Parent folder"
+			} else {
+				name += "/"
+			}
 		}
-		name := icon + entry.Name
 		if i == m.selected {
-			name = selectedStyle.Render(rendering.TruncateLine(name, contentW))
+			marker = "› "
+			name = selectedStyle.Render(padTo(marker+name, contentW))
+		} else if entry.IsDir {
+			name = padTo(marker+dirStyle.Render(name), contentW)
 		} else {
-			name = entryStyle.Render(rendering.TruncateLine(name, contentW))
+			name = padTo(marker+entryStyle.Render(name), contentW)
 		}
 		body = append(body, name)
+	}
+	if len(entries) == 0 {
+		empty := "No matching folders"
+		if m.mode == FilePickerModeFile {
+			empty = "No matching files"
+		}
+		body = append(body, mutedStyle.Render("  "+empty))
+	}
+	for len(body) < 3+entryPageSize {
+		body = append(body, bgStyle.Render(strings.Repeat(" ", contentW)))
 	}
 
 	// Build scrollbar lines aligned with the entry area
@@ -408,7 +508,7 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 
 	result := make([]string, 0, height)
 	for i, line := range body {
-		padded := line + strings.Repeat(" ", contentW-rendering.VisibleWidth(line))
+		padded := padTo(line, contentW)
 		// Append scrollbar character for entry lines (i >= 2), otherwise blank
 		if sbW > 0 {
 			if i >= 2 && i-2 < len(sbLines) {
@@ -420,49 +520,54 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 		result = append(result, padded)
 	}
 
-	// Hint line using the unified HintLine component.
-	hint := PopupHintLine(m.th, []HintSegment{
-		{Key: "enter", Desc: "select"},
-		{Key: "esc", Desc: "cancel"},
-		{Key: "type", Desc: "filter"},
-	})
-	hintLine := hint + strings.Repeat(" ", contentW-rendering.VisibleWidth(hint))
+	keyStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.SubPaneBg).Bold(true)
+	hintStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
+	hintSegment := func(key, desc string) string {
+		return keyStyle.Render(key) + hintStyle.Render(" "+desc)
+	}
+	var hint string
+	if m.mode == FilePickerModeFolder {
+		action := lipgloss.NewStyle().
+			Foreground(m.th.Colors.PopupButtonFg).
+			Background(m.th.Colors.PopupButtonBg).
+			Bold(true).
+			Render(" Open this folder ")
+		m.actionX0 = 0
+		m.actionX1 = rendering.VisibleWidth(action) - 1
+		if m.actionX1 >= contentW {
+			m.actionX1 = contentW - 1
+		}
+		hint = action + hintStyle.Render("  ") + strings.Join([]string{
+			hintSegment("enter", "browse"),
+			hintSegment("esc", "close"),
+		}, hintStyle.Render("  ·  "))
+	} else {
+		m.actionX0, m.actionX1 = -1, -1
+		hint = strings.Join([]string{
+			hintSegment("enter", "select"),
+			hintSegment("esc", "close"),
+		}, hintStyle.Render("  ·  "))
+	}
+	hintLine := padTo(hint, contentW)
 	if sbW > 0 {
 		hintLine = hintLine + strings.Repeat(" ", sbW)
 	}
 	result = append(result, hintLine)
 
-	// Fill remaining lines with blanks to cover the content area.
 	for len(result) < height {
-		blank := strings.Repeat(" ", width-6)
-		result = append(result, blank)
+		result = append(result, bgStyle.Render(strings.Repeat(" ", width)))
 	}
-
-	return result
+	return result[:height]
 }
 
-// Render implements widget.Widget. Calls ViewInner to get the inner
-// content, wraps it in the unified popup chrome (border, title,
-// padding), and writes the cells into the surface.
-//
-// The surface is the popup's full size (no FloatingWindow chrome —
-// the FilePicker draws its own border/title).
+// Render implements widget.Widget. The window manager draws the flat,
+// draggable title bar; this renders only the content surface.
 func (m *FilePicker) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 	w, h := surf.Width(), surf.Height()
 	if w < 10 || h < 4 {
 		return
 	}
-	content := m.ViewInner(w, h, ctx.SpinFrame)
-	if len(content) == 0 {
-		return
-	}
-	cfg := PopupChromeConfig{
-		Title:   "File Picker",
-		TitleIcon: "▤",
-		Width:   w,
-		Focused: true,
-	}
-	lines := PopupChromeLines(m.th, cfg, content)
+	lines := m.ViewInner(w, h, ctx.SpinFrame)
 	if len(lines) == 0 {
 		return
 	}
@@ -483,18 +588,33 @@ func (m *FilePicker) loadEntries() {
 		return
 	}
 	m.entries = m.entries[:0]
+	// Parent dir when not at filesystem root (folder mode always; file mode when not at open root).
+	if filepath.Dir(m.current) != m.current {
+		if m.mode == FilePickerModeFolder || m.current != m.root {
+			m.entries = append(m.entries, fileEntry{Name: "..", Path: filepath.Dir(m.current), IsDir: true})
+		}
+	}
 	for _, entry := range entries {
 		name := entry.Name()
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		m.entries = append(m.entries, fileEntry{Name: name, Path: filepath.Join(m.current, name), IsDir: entry.IsDir()})
-	}
-	sort.Slice(m.entries, func(i, j int) bool {
-		if m.entries[i].IsDir != m.entries[j].IsDir {
-			return m.entries[i].IsDir
+		isDir := entry.IsDir()
+		if m.mode == FilePickerModeFolder && !isDir {
+			continue
 		}
-		return strings.ToLower(m.entries[i].Name) < strings.ToLower(m.entries[j].Name)
+		m.entries = append(m.entries, fileEntry{Name: name, Path: filepath.Join(m.current, name), IsDir: isDir})
+	}
+	start := 0
+	if len(m.entries) > 0 && m.entries[0].Name == ".." {
+		start = 1
+	}
+	rest := m.entries[start:]
+	sort.Slice(rest, func(i, j int) bool {
+		if rest[i].IsDir != rest[j].IsDir {
+			return rest[i].IsDir
+		}
+		return strings.ToLower(rest[i].Name) < strings.ToLower(rest[j].Name)
 	})
 }
 
@@ -541,8 +661,12 @@ func (m *FilePicker) UpdateScrollbar(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// FilePickerSelectMsg is sent when the user selects a file in the picker.
-type FilePickerSelectMsg struct{ Path string }
+// FilePickerSelectMsg is sent when the user selects a file or folder.
+// Folder is true when the picker was opened with OpenFolder.
+type FilePickerSelectMsg struct {
+	Path   string
+	Folder bool
+}
 
 // FilePickerCancelMsg is sent when the user cancels the file picker.
 type FilePickerCancelMsg struct{}
@@ -560,8 +684,9 @@ func (m *FilePicker) HandleEvent(msg tea.Msg) tea.Cmd {
 	*m = updated
 	switch action {
 	case FilePickerSelect:
+		folder := m.mode == FilePickerModeFolder
 		m.Close()
-		selectCmd := func() tea.Msg { return FilePickerSelectMsg{Path: path} }
+		selectCmd := func() tea.Msg { return FilePickerSelectMsg{Path: path, Folder: folder} }
 		if cmd != nil {
 			return tea.Batch(cmd, selectCmd)
 		}

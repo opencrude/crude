@@ -93,3 +93,17 @@ func TestFilePicker_ClickSelectsEntry(t *testing.T) {
 		t.Errorf("expected selected=1 after clicking row 2, got %d", updated.selected)
 	}
 }
+
+func TestFolderPicker_MouseActionSelectsCurrentFolder(t *testing.T) {
+	fp := NewFilePicker(theme.DefaultDark())
+	dir := t.TempDir()
+	fp.OpenFolder(dir)
+	_ = fp.ViewInner(60, 18, 0)
+
+	_, path, action, _ := fp.Update(tea.MouseClickMsg{
+		X: fp.actionX0, Y: fp.lastHeight - 1, Button: tea.MouseLeft,
+	})
+	if action != FilePickerSelect || path != dir {
+		t.Fatalf("mouse action = (%v, %q), want select %q", action, path, dir)
+	}
+}

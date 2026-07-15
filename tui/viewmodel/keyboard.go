@@ -17,7 +17,6 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
-	"crude/tui/settings"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 	wm "crude/tui/wm"
@@ -446,33 +445,12 @@ func (m *App) dispatchOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mode
 }
 
 func (m *App) handleSettingsKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	updated, cmd, evt := m.Settings.Update(msg)
-	m.Settings = updated
+	updated, cmd := m.SessionSettings.Update(msg)
+	if updated != nil {
+		m.SessionSettings = updated
+	}
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
-	}
-	switch e := evt.(type) {
-	case settings.SaveEvent:
-		s := e.Settings
-		m.Logger.Info("CONFIG", "settings_save", "provider", s.ProviderID, "model", s.Model, "category", m.OverlayState.GetSettingsCategory())
-		if m.OnSettingsSave != nil {
-			m.StatusBar.SetInfo("saving...")
-			onSave := m.OnSettingsSave
-			*cmds = append(*cmds, func() tea.Msg {
-				err := onSave(s)
-				return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
-			})
-		} else {
-			m.ModelName = s.Model
-			m.LastSettings = s
-			m.closeOverlayTab("Settings")
-		}
-		m.OverlayState.SetSettingsCategory("")
-	case settings.CancelEvent:
-		m.Logger.Info("CONFIG", "settings_cancel")
-		m.Settings.RestoreSnapshot()
-		m.closeOverlayTab("Settings")
-		m.OverlayState.SetSettingsCategory("")
 	}
 	return m, tea.Batch(*cmds...)
 }
@@ -594,9 +572,7 @@ func (m *App) handleYoloKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, te
 				Time:    time.Now(),
 			})
 		}
-		if m.OnYoloCmd != nil {
-			m.OnYoloCmd(enabled)
-		}
+		m.SetYolo(enabled)
 		m.closeOverlayTab("YOLO")
 	}
 	return m, nil
@@ -741,7 +717,7 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
 	case input.SettingsOpenEvent:
-		m.Settings.SaveSnapshot()
+		m.SessionSettings.SaveSnapshot()
 		m.setMode(ModeSettings)
 	case input.RefOpenEvent:
 		m.openReferenceOverlay(e.ID)
@@ -843,14 +819,11 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		// the single place that knows which overlay is active.
 		switch m.OverlayState.Current() {
 		case ModeSettings:
-			// Paste is routed here only when the user is editing a
-			// TextItem in the settings form. The form's Update handles
-			// tea.PasteMsg and forwards it to the focused TextItem's
-			// HandlePaste. We don't need to react to the returned
-			// Event because paste never produces a Save/Cancel — it
-			// just inserts characters (or replaces a selection).
-			updated, cmd, _ := m.Settings.Update(msg)
-			m.Settings = updated
+			// Route paste to session settings form
+			updated, cmd := m.SessionSettings.Update(msg)
+			if updated != nil {
+				m.SessionSettings = updated
+			}
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}

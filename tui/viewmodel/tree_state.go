@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	"crude/tui/filetree"
-	"crude/tui/workspace"
+	"crude/workspace"
 )
 
 type TreeState = workspace.TreeState

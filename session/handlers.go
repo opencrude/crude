@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"crude/provider"
+	"crude/sessiondb"
 	ttypes "crude/tui/types"
 )
 
@@ -92,7 +93,8 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	oldModel := s.cfg.GetActiveDefaultCategory().Model
 	l.Info("CONFIG", "save_begin", "old_provider", oldProvider, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
 
-	newCfg := settingsToConfig(tuiSettings, s.cfg)
+	overrides := settingsToSessionOverrides(tuiSettings)
+	newCfg := configWithSessionOverrides(s.workspaceCfg, overrides)
 	mainCat := newCfg.GetActiveDefaultCategory()
 	if mainCat.APIKey == "" {
 		l.Warn("CONFIG", "save_blocked", "reason", "empty_api_key")
@@ -101,8 +103,14 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 
 	providerChanged := s.cfg.ActiveProvider != newCfg.ActiveProvider
 	modelChanged := mainCat.Model != oldModel
+	if s.db != nil {
+		if err := sessiondb.SaveAgentSettingOverrides(s.db, s.sessionID, overrides); err != nil {
+			return fmt.Errorf("save session settings: %w", err)
+		}
+	}
 
 	s.cfg = newCfg
+	s.sessionOverrides = overrides
 	// Update the runtime profile's base config so per-orchestrator overrides
 	// continue to work on top of the new saved config.
 	if s.runtimeProfile != nil {
@@ -144,6 +152,153 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	}
 	l.Info("CONFIG", "save_complete", "provider", newCfg.ActiveProvider, "model", mainCat.Model, "turn_logs", s.cfg.TurnLogsEnabled)
 	return nil
+}
+
+func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.AgentSettingOverride {
+	overrides := make(map[string]sessiondb.AgentSettingOverride)
+	if settings.SessionOverrides != nil {
+		for category, cfg := range settings.SessionOverrides {
+			overrides[category] = sessiondb.AgentSettingOverride{
+				Provider: cfg.Provider, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
+			}
+		}
+		return overrides
+	}
+	for category, cfg := range settings.Agents.Categories {
+		overrides[category] = sessiondb.AgentSettingOverride{
+			Provider: cfg.Provider, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
+		}
+	}
+	if _, ok := overrides[CategoryDefault]; !ok {
+		overrides[CategoryDefault] = sessiondb.AgentSettingOverride{
+			Provider: settings.ProviderID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort,
+		}
+	}
+	return overrides
+}
+
+func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.AgentSettingOverride) *Config {
+	if base == nil {
+		base = &Config{ActiveProvider: "openrouter"}
+	}
+	cfg := copyConfig(base)
+	if cfg.Agents.Profiles == nil {
+		cfg.Agents.Profiles = make(map[string]ProfileConfig)
+	}
+	profileName := cfg.Agents.ActiveProfile
+	if profileName == "" {
+		profileName = "default"
+		cfg.Agents.ActiveProfile = profileName
+	}
+	profile := cfg.Agents.Profiles[profileName]
+	if profile.Categories == nil {
+		profile.Categories = make(map[string]CategoryConfig)
+	}
+	for category, override := range overrides {
+		current := profile.Categories[category]
+		if override.Provider != "" {
+			if current.Provider != override.Provider {
+				current.APIKey = ""
+				current.ProviderURL = ""
+			}
+			current.Provider = override.Provider
+		}
+		if override.Model != "" {
+			current.Model = override.Model
+		}
+		if override.ThinkingEffort != "" {
+			current.ThinkingEffort = override.ThinkingEffort
+		}
+		profile.Categories[category] = current
+	}
+	cfg.Agents.Profiles[profileName] = profile
+	if main := cfg.GetActiveDefaultCategory(); main.Provider != "" {
+		cfg.ActiveProvider = main.Provider
+	}
+	return cfg
+}
+
+// SettingsSnapshot returns the current effective session settings.
+func (s *Session) SettingsSnapshot() ttypes.Settings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return ConfigToSettings(s.cfg)
+}
+
+// WorkspaceSettingsSnapshot returns the inherited workspace baseline without
+// this session's persisted overrides.
+func (s *Session) WorkspaceSettingsSnapshot() ttypes.Settings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return ConfigToSettings(s.workspaceCfg)
+}
+
+// SessionOverridesSnapshot returns only explicit DB-backed overrides.
+func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]ttypes.CategorySettings, len(s.sessionOverrides))
+	for category, override := range s.sessionOverrides {
+		out[category] = ttypes.CategorySettings{
+			Provider: override.Provider, Model: override.Model, ThinkingEffort: override.ThinkingEffort,
+		}
+	}
+	return out
+}
+
+// ResetSessionSettings removes persisted overrides and immediately restores
+// the workspace defaults for this session.
+func (s *Session) ResetSessionSettings() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		if err := sessiondb.ClearAgentSettingOverrides(s.db, s.sessionID); err != nil {
+			return err
+		}
+	}
+	s.cfg = configWithSessionOverrides(s.workspaceCfg, nil)
+	s.sessionOverrides = make(map[string]sessiondb.AgentSettingOverride)
+	if s.runtimeProfile != nil {
+		s.runtimeProfile.UpdateBase(s.cfg)
+	}
+	main := s.cfg.GetActiveDefaultCategory()
+	s.provider = provider.FromPreset(main.Provider, main.APIKey, main.ProviderURL)
+	s.provider.Model = main.Model
+	s.provider.SetThinkingEffort(main.ThinkingEffort)
+	return nil
+}
+
+// UpdateWorkspaceDefaults refreshes the inherited baseline while preserving
+// this session's explicit DB-backed overrides.
+func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.workspaceCfg == nil {
+		s.workspaceCfg = &Config{ActiveProvider: "openrouter"}
+	}
+	if settings.ActiveProvider != "" {
+		s.workspaceCfg.ActiveProvider = settings.ActiveProvider
+	}
+	if len(settings.Providers) > 0 {
+		if s.workspaceCfg.Providers == nil {
+			s.workspaceCfg.Providers = make(map[string]ProviderConfig)
+		}
+		for id, cfg := range settings.Providers {
+			s.workspaceCfg.Providers[id] = ProviderConfig{
+				APIKey: cfg.APIKey, ProviderURL: cfg.ProviderURL,
+				Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
+			}
+		}
+	}
+	ApplyWorkspaceAgentDefaults(s.workspaceCfg, settings.Agents)
+	s.cfg = configWithSessionOverrides(s.workspaceCfg, s.sessionOverrides)
+	if s.runtimeProfile != nil {
+		s.runtimeProfile.UpdateBase(s.cfg)
+	}
+	main := s.cfg.GetActiveDefaultCategory()
+	s.provider = provider.FromPreset(main.Provider, main.APIKey, main.ProviderURL)
+	s.provider.Model = main.Model
+	s.provider.SetThinkingEffort(main.ThinkingEffort)
 }
 
 func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]ttypes.ModelEntry, error) {

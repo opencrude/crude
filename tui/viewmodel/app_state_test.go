@@ -9,9 +9,11 @@ import (
 	"crude/provider"
 	"crude/tui/input"
 	"crude/tui/theme"
+	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 	"crude/tui/window"
-	"crude/tui/workspace"
+	"crude/tui/wm"
+	"crude/workspace"
 )
 
 func TestModeName_Chat(t *testing.T) {
@@ -143,7 +145,7 @@ func TestBuildMainView_LauncherFallback(t *testing.T) {
 	app.height = 24
 
 	// Launcher present, no agents → launcher content shown
-	app.launcher = NewLauncherState(nil)
+	app.launcher = NewLauncherState(".", nil)
 
 	out := app.buildMainView()
 	if out == "" {
@@ -264,7 +266,7 @@ func TestHandleQuit_AfterLastEditorCloses_Quits(t *testing.T) {
 
 func TestHandleQuit_ClosesOverlayFirst(t *testing.T) {
 	app := newTestApp(t)
-	app.Overlay.OpenTab("Settings", "", true)
+	app.Overlay.OpenTab("Session Settings", "", true)
 	app.OverlayState.Set(ModeSettings)
 
 	_, cmd := app.handleQuit()
@@ -423,7 +425,7 @@ func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 	app.width = 80
 	app.height = 24
 	app.ChatAreaHeight = 17
-	app.launcher = NewLauncherState(nil)
+	app.launcher = NewLauncherState(".", nil)
 
 	region := app.classifyMouse(10, 10, false)
 	if region != regionLauncher {
@@ -431,22 +433,31 @@ func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 	}
 }
 
-// TestLauncherState_HitTest exercises the launcher's hit-test for
-// the New Session entry. Line 0 = top border, line 1 = content
-// (clickable), line 2 = bottom border, line 3+ = transition/sessions.
+// TestLauncherState_HitTest exercises full-card hit testing on the
+// welcome launcher. Every line of a bordered card maps to the same item.
 func TestLauncherState_HitTest(t *testing.T) {
-	st := NewLauncherState(nil)
-	// New Session box = 4 lines (top border, 2 content, bottom border).
-	// ALL FOUR lines are clickable (item 0) — the whole bordered box
-	// is one button.
-	for line := 0; line <= 3; line++ {
-		if got := st.HitTest(line); got != 0 {
-			t.Errorf("line %d should map to item 0, got %d", line, got)
+	st := NewLauncherState(".", nil)
+	th := theme.DefaultDark()
+	paint := widgets.RenderWelcomeLauncher(
+		st.cwdPath, st.items, 0, 0, false, "", th, 80, 24, 0, 0,
+	)
+	st.SetPaint(paint)
+
+	// New Session should have at least one rectangular hit region.
+	found := 0
+	for _, h := range st.hits {
+		if h.ItemIdx == 0 {
+			found++
+			if got := st.HitTestXY((h.X0+h.X1)/2, (h.Y0+h.Y1)/2); got != 0 {
+				t.Errorf("hit center should map to item 0, got %d", got)
+			}
 		}
 	}
-	// Out of range.
-	if got := st.HitTest(100); got != -1 {
-		t.Errorf("line 100 (out of range) should not be clickable, got %d", got)
+	if found < 1 {
+		t.Fatalf("expected New Session hit region, got %d", found)
+	}
+	if got := st.HitTest(10000); got != -1 {
+		t.Errorf("out of range should not be clickable, got %d", got)
 	}
 }
 
@@ -599,13 +610,14 @@ func newTestApp(t *testing.T) *App {
 
 	app := &App{
 		Workspace: &workspace.Workspace{
-			Theme:         th,
-			AgentMgr:      workspace.NewAgentManager(),
-			PaneMgr:       workspace.NewPaneManager(),
-			Tree:          NewTreeState(nil, nil, 30),
-			FocusStack:    workspace.NewFocusStack(),
-			StartTime:     time.Now(),
-			ActiveSession: &workspace.Session{},
+			Theme:           th,
+			AgentMgr:        workspace.NewAgentManager(),
+			PaneMgr:         workspace.NewPaneManager(),
+			Tree:            NewTreeState(nil, nil, 30),
+			FocusStack:      workspace.NewFocusStack(),
+			StartTime:       time.Now(),
+			ActiveSession:   &workspace.Session{},
+			SessionSettings: widgets.NewSessionSettings(th, ttypes.Settings{}),
 		},
 		OverlayState: NewOverlayState(),
 		LSPPopup:     NewLSPPopupState(),
@@ -626,16 +638,17 @@ func newFullTestApp(t *testing.T) *App {
 
 	app := &App{
 		Workspace: &workspace.Workspace{
-			Theme:         th,
-			AgentMgr:      workspace.NewAgentManager(),
-			PaneMgr:       workspace.NewPaneManager(),
-			Tree:          NewTreeState(nil, nil, 30),
-			FocusStack:    workspace.NewFocusStack(),
-			StartTime:     time.Now(),
-			Input:         im,
-			StatusBar:     sb,
-			SpinFrame:     0,
-			ActiveSession: &workspace.Session{},
+			Theme:           th,
+			AgentMgr:        workspace.NewAgentManager(),
+			PaneMgr:         workspace.NewPaneManager(),
+			Tree:            NewTreeState(nil, nil, 30),
+			FocusStack:      workspace.NewFocusStack(),
+			StartTime:       time.Now(),
+			Input:           im,
+			StatusBar:       sb,
+			SpinFrame:       0,
+			ActiveSession:   &workspace.Session{},
+			SessionSettings: widgets.NewSessionSettings(th, ttypes.Settings{}),
 		},
 		OverlayState: NewOverlayState(),
 		LSPPopup:     NewLSPPopupState(),
@@ -651,3 +664,28 @@ func newFullTestApp(t *testing.T) *App {
 }
 
 var _ tea.Model = (*App)(nil)
+
+func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
+	app := newFullTestApp(t)
+	app.windowManager = wm.NewWindowManager()
+	app.FilePicker = widgets.NewFilePicker(app.Theme)
+	app.FilePicker.OpenFolder(t.TempDir())
+
+	app.openFilePickerWindow()
+	fileWindow := app.windowManager.Window("filepicker")
+	if fileWindow == nil || !fileWindow.Decorated() || !fileWindow.Movable() {
+		t.Fatal("file picker should have a draggable title bar")
+	}
+	if fileWindow.BorderStyle() != wm.BorderNone || fileWindow.Resizable() {
+		t.Fatal("file picker should be flat, borderless, and fixed-size")
+	}
+
+	app.openWorkspaceSettings()
+	settingsWindow := app.windowManager.Window("workspace-settings")
+	if settingsWindow == nil || !settingsWindow.Decorated() || !settingsWindow.Movable() {
+		t.Fatal("workspace settings should be a draggable IDE window")
+	}
+	if settingsWindow.BorderStyle() != wm.BorderNone || !settingsWindow.Resizable() {
+		t.Fatal("workspace settings should be flat, borderless, and resizable")
+	}
+}

@@ -3,6 +3,9 @@ package form
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/components"
 	"crude/tui/theme"
 )
 
@@ -94,5 +97,52 @@ func TestForm_FocusItem_FromClick(t *testing.T) {
 	}
 	if ti.Label() != "B" {
 		t.Errorf("expected label 'B', got %q", ti.Label())
+	}
+}
+
+func TestForm_MouseClickCycleAdvances(t *testing.T) {
+	th := theme.DefaultDark()
+	f := NewForm(th, "Title", "hint",
+		NewCycleItem(th, "Mode", []string{"one", "two"}, "one"),
+	)
+
+	updated, _, _ := f.Update(tea.MouseClickMsg{X: 4, Y: 3, Button: tea.MouseLeft})
+	if got := updated.ItemValue(0); got != "two" {
+		t.Fatalf("cycle value after click = %q, want two", got)
+	}
+}
+
+func TestForm_MouseClickSelectOption(t *testing.T) {
+	th := theme.DefaultDark()
+	selectItem := NewSelectItem(th, "Provider", "a", 5)
+	selectItem.SetOptions([]components.ListItem{
+		{ID: "a", Label: "A"},
+		{ID: "b", Label: "B"},
+	})
+	f := NewForm(th, "Title", "hint", selectItem)
+
+	updated, _, action := f.Update(tea.MouseClickMsg{X: 4, Y: 3, Button: tea.MouseLeft})
+	if action != FormActionExpand || !updated.IsExpanded() {
+		t.Fatal("clicking select field should expand its list")
+	}
+	updated, _, _ = updated.Update(tea.MouseClickMsg{X: 4, Y: 6, Button: tea.MouseLeft})
+	if got := updated.ItemValue(0); got != "b" {
+		t.Fatalf("selected value after option click = %q, want b", got)
+	}
+	if updated.IsExpanded() {
+		t.Fatal("select list should collapse after option click")
+	}
+}
+
+func TestForm_MouseClickButton(t *testing.T) {
+	th := theme.DefaultDark()
+	f := NewFormWithButtons(th, "Title", "hint",
+		[]Button{{Label: "Save"}, {Label: "Cancel", Cancel: true}},
+		NewTextItem(th, "Field", "value", false),
+	)
+
+	_, _, action := f.Update(tea.MouseClickMsg{X: 13, Y: 5, Button: tea.MouseLeft})
+	if action != FormActionCancel {
+		t.Fatalf("button click action = %v, want cancel", action)
 	}
 }
