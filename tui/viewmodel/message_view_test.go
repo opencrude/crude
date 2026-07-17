@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"crude/provider"
+	ttypes "crude/tui/types"
 	"crude/workspace"
 )
 
@@ -40,5 +42,31 @@ func TestChatMessagesFromViewsProjectsDataWithoutPresentationState(t *testing.T)
 	}
 	if msg.CachedLines != nil || msg.StreamCompletedLines != nil || msg.SessionPickerSessions != nil {
 		t.Fatal("workspace hydration populated frontend presentation state")
+	}
+}
+
+func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator(
+		"agent",
+		make(chan provider.UserInput, 1),
+		make(chan provider.UserInput, 1),
+		make(chan struct{}, 1),
+		make(chan string, 1),
+	)
+
+	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "hello", Time: time.Unix(1, 0)})
+
+	node := app.AgentMgr.Get("agent")
+	if node == nil || node.State == nil {
+		t.Fatal("agent state was not created")
+	}
+	domain := node.State.Messages.Messages()
+	if len(domain) != 1 || domain[0].Content != "hello" {
+		t.Fatalf("unexpected conversation state: %#v", domain)
+	}
+	pane := app.PaneMgr.Get("agent")
+	if pane == nil || len(pane.MsgList.Messages()) != 1 || pane.MsgList.Messages()[0].Content != "hello" {
+		t.Fatalf("projection did not synchronize: %#v", pane)
 	}
 }

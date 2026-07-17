@@ -3,17 +3,11 @@ package workspace
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
-
-	"crude/tui/rendering"
-	"crude/tui/tools"
-	ttypes "crude/tui/types"
-	"crude/tui/widgets"
 )
 
-func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
 	origData, ok := evt.Data.(map[string]any)
 	if !ok {
 		return nil
@@ -37,7 +31,7 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 
 	var tgt string
 	if name == "grep_files" && pattern != "" {
-		tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(pattern, 30))
+		tgt = fmt.Sprintf("\"%s\"", TruncateLine(pattern, 30))
 		if path != "" && path != "." {
 			tgt += " in " + path
 		}
@@ -62,7 +56,7 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 		}
 		if tgt == "" && handle != "" {
 			if command != "" {
-				tgt = rendering.TruncateLine(command, 40) + " [" + handle + "]"
+				tgt = TruncateLine(command, 40) + " [" + handle + "]"
 			} else {
 				tgt = handle
 			}
@@ -104,11 +98,11 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 				}
 			case "execute_command", "async_execute_command":
 				if c := extractJSONStringValue(rawArgs, "command"); c != "" {
-					tgt = rendering.TruncateLine(c, 50)
+					tgt = TruncateLine(c, 50)
 				}
 			case "web_search", "arxiv_search":
 				if q := extractJSONStringValue(rawArgs, "query"); q != "" {
-					tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(q, 40))
+					tgt = fmt.Sprintf("\"%s\"", TruncateLine(q, 40))
 				}
 			case "web_fetch":
 				if u := extractJSONStringValue(rawArgs, "url"); u != "" {
@@ -116,7 +110,7 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 				}
 			case "grep_files":
 				if p := extractJSONStringValue(rawArgs, "pattern"); p != "" {
-					tgt = fmt.Sprintf("\"%s\"", rendering.TruncateLine(p, 30))
+					tgt = fmt.Sprintf("\"%s\"", TruncateLine(p, 30))
 				}
 			case "write_report":
 				if r := extractJSONStringValue(rawArgs, "report"); r != "" {
@@ -159,7 +153,7 @@ func (a *AgentState) handleToolCallStreaming(evt ttypes.AgentEventMsg, target *w
 	return nil
 }
 
-func (a *AgentState) handleToolCall(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
 		internalID, _ := data["internal_id"].(string)
@@ -168,8 +162,8 @@ func (a *AgentState) handleToolCall(evt ttypes.AgentEventMsg, target *widgets.Me
 			return nil
 		}
 		args, _ := data["args"].(string)
-		argsCompact := tools.SummarizeToolArgs(name, args)
-		onStatusLine(rendering.ToolLabel(name, argsCompact))
+		argsCompact := SummarizeToolArgs(name, args)
+		onStatusLine(ToolLabel(name, argsCompact))
 		target.UpdateToolCall(toolID, internalID, name, argsCompact)
 		if a.PendingPermTag != "" && (a.PendingPermTool == "" || a.PendingPermTool == name) {
 			target.SetToolPermTag(toolID, internalID, a.PendingPermTag)
@@ -180,7 +174,7 @@ func (a *AgentState) handleToolCall(evt ttypes.AgentEventMsg, target *widgets.Me
 	return nil
 }
 
-func (a *AgentState) handleToolProgress(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleToolProgress(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
 		internalID, _ := data["internal_id"].(string)
@@ -205,7 +199,7 @@ func (a *AgentState) handleToolProgress(evt ttypes.AgentEventMsg, target *widget
 	return nil
 }
 
-func (a *AgentState) handleToolResult(evt ttypes.AgentEventMsg, target *widgets.MessageList, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
 		internalID, _ := data["internal_id"].(string)
@@ -225,7 +219,7 @@ func (a *AgentState) handleToolResult(evt ttypes.AgentEventMsg, target *widgets.
 	return nil
 }
 
-func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList, onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(questionsJSON string)) tea.Cmd {
+func (a *AgentState) handleBlocking(evt AgentEvent, target *Conversation, thinkTarget *Conversation, onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(questionsJSON string)) tea.Cmd {
 	var data map[string]string
 	questionsJSON := ""
 	if d, ok := evt.Data.(map[string]any); ok {
@@ -273,7 +267,7 @@ func (a *AgentState) handleBlocking(evt ttypes.AgentEventMsg, target *widgets.Me
 // previously chose "Always Allow". It stores a compact permission tag that will
 // be applied to the next matching tool_call message, instead of showing a
 // separate verbose message.
-func (a *AgentState) handleBlockingAuto(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList) tea.Cmd {
+func (a *AgentState) handleBlockingAuto(evt AgentEvent, target *Conversation, thinkTarget *Conversation) tea.Cmd {
 	var data map[string]string
 	if d, ok := evt.Data.(map[string]any); ok {
 		data = make(map[string]string, len(d))
@@ -296,7 +290,7 @@ func (a *AgentState) handleBlockingAuto(evt ttypes.AgentEventMsg, target *widget
 	return nil
 }
 
-func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.MessageList, thinkTarget *widgets.MessageList, onThinking func(thinking, streaming, blocking bool), onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, thinkTarget *Conversation, onThinking func(thinking, streaming, blocking bool), onStatusLine func(string)) tea.Cmd {
 	if a.TokenBuf != "" {
 		target.AppendToken(a.TokenBuf)
 		a.TokenBuf = ""
@@ -347,79 +341,7 @@ func (a *AgentState) handleDone(evt ttypes.AgentEventMsg, target *widgets.Messag
 	onThinking(false, false, false)
 	onStatusLine("")
 
-	for _, msg := range target.Messages() {
-		msg.CachedLines = nil
-		msg.StreamCompletedLines = nil
-		msg.StreamCompletedLen = 0
-	}
-	target.InvalidateAllMessages()
-	if thinkTarget != target {
-		for _, msg := range thinkTarget.Messages() {
-			msg.CachedLines = nil
-			msg.StreamCompletedLines = nil
-			msg.StreamCompletedLen = 0
-		}
-		thinkTarget.InvalidateAllMessages()
-	}
-
-	isIncomplete := reason != "" && reason != "completed"
-	incompleteLabel := reason
-	if reason == "cancelled" {
-		incompleteLabel = "operation cancelled by user"
-	}
-
-	if content != "" && !isIncomplete {
-		msgs := target.Messages()
-		merged := false
-		if wasStreaming && len(msgs) > 0 {
-			last := msgs[len(msgs)-1]
-			if last.Role == ttypes.RoleAssistant {
-				if last.Content == "" {
-					last.Content = content
-				}
-				last.CursorLine = -1
-				merged = true
-			}
-		}
-		if !merged {
-			target.AppendMessage(ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: content,
-				Time:    time.Now(),
-			})
-		} else {
-			target.RebuildItems()
-		}
-	}
-
-	if isIncomplete {
-		msgs := target.Messages()
-		marked := false
-		for i := len(msgs) - 1; i >= 0; i-- {
-			last := msgs[i]
-			if last.Role == ttypes.RoleAssistant || last.Role == ttypes.RoleThinking {
-				last.Incomplete = true
-				last.IncompleteReason = incompleteLabel
-				last.CursorLine = -1
-				last.CachedLines = nil
-				last.StreamCompletedLines = nil
-				last.StreamCompletedLen = 0
-				marked = true
-				break
-			}
-		}
-		if !marked {
-			target.AppendMessage(ttypes.ChatMessage{
-				Role:            ttypes.RoleAssistant,
-				Incomplete:      true,
-				IncompleteReason: incompleteLabel,
-				Time:            time.Now(),
-			})
-		}
-		target.RebuildItems()
-	}
-
-	target.ScrollToBottom()
+	target.Finish(content, reason, wasStreaming)
 
 	return DoneResultCmd(a.ID, reason)
 }

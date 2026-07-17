@@ -52,8 +52,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		for _, c := range input.AvailableCmds() {
 			b.WriteString(fmt.Sprintf("  %-16s %s\n", "/"+c.Label, c.Desc))
 		}
-		if ml := m.activeMsgList(); ml != nil {
-			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+		if m.AgentMgr.ActiveID() != "" {
+			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 	case "/debug-lsp":
 		var b strings.Builder
@@ -71,8 +71,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 				b.WriteString(fmt.Sprintf("    %s\n", e))
 			}
 		}
-		if ml := m.activeMsgList(); ml != nil {
-			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+		if m.AgentMgr.ActiveID() != "" {
+			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 
 	case "/yolo":

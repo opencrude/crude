@@ -26,7 +26,7 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 	sp.MsgList.SetModelName(m.ModelName)
 	sp.MsgList.SetUsername(m.Username)
 
-	agent := workspace.NewAgentState(orchID, ml, m.Logger)
+	agent := workspace.NewAgentState(orchID, sp.Messages, m.Logger)
 	m.AgentMgr.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh, agent)
 	m.syncAgentWindowTabs()
 }
@@ -46,8 +46,12 @@ func (m *App) cleanupAgent(agentID string) {
 }
 
 func (m *App) activeMsgList() *widgets.MessageList {
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && n.State.MsgList != nil {
-		return n.State.MsgList
+	n := m.AgentMgr.ActiveNode()
+	if n == nil {
+		return nil
+	}
+	if sp := m.PaneMgr.Get(n.ID); sp != nil {
+		return sp.MsgList
 	}
 	return nil
 }
@@ -65,11 +69,6 @@ func (m *App) completeSubAgent(agentID string) {
 	if n.Parent != nil {
 		parentID = n.Parent.ID
 	}
-	parentNode := m.AgentMgr.Get(parentID)
-	var parentML *widgets.MessageList
-	if parentNode != nil && parentNode.State != nil {
-		parentML = parentNode.State.MsgList
-	}
 
 	title := m.agentTabTitle(agentID)
 	if tab := m.Win.TabByTitle(title); tab != nil {
@@ -77,16 +76,16 @@ func (m *App) completeSubAgent(agentID string) {
 		m.Win.CloseTabByID(tab.ID)
 		if wasActive && m.AgentMgr.ActiveID() == agentID {
 			m.AgentMgr.ClearActive()
-			if parentML != nil {
-				parentML.InvalidateAllMessages()
+			if parentSP := m.PaneMgr.Get(parentID); parentSP != nil {
+				parentSP.MsgList.InvalidateAllMessages()
 			}
 		}
 	}
 
 	if sp := m.PaneMgr.Get(agentID); sp != nil && !sp.Done {
 		sp.Collapse()
-		if parentML != nil {
-			parentML.InvalidateSubPane(agentID)
+		if parentSP := m.PaneMgr.Get(parentID); parentSP != nil {
+			parentSP.MsgList.InvalidateSubPane(agentID)
 		}
 	}
 
@@ -154,10 +153,10 @@ func (m *App) activeMessageList() *widgets.MessageList {
 	if activeML != nil {
 		return activeML
 	}
-	// Fallback: use any available agent's MsgList
+	// Fallback: use any available agent's SubPane MsgList
 	for _, n := range m.AgentMgr.AllNodes() {
-		if n.State != nil && n.State.MsgList != nil {
-			return n.State.MsgList
+		if sp := m.PaneMgr.Get(n.ID); sp != nil {
+			return sp.MsgList
 		}
 	}
 	return nil
@@ -191,13 +190,13 @@ func (m *App) switchToAgentView(agentID string) {
 	curr := m.AgentMgr.ActiveID()
 	if prev != curr {
 		if prev != "" {
-			if n := m.AgentMgr.Get(prev); n != nil && n.State != nil && n.State.MsgList != nil {
-				n.State.MsgList.InvalidateAllMessages()
+			if pane := m.PaneMgr.Get(prev); pane != nil && pane.MsgList != nil {
+				pane.MsgList.InvalidateAllMessages()
 			}
 		}
 		if curr != "" {
-			if n := m.AgentMgr.Get(curr); n != nil && n.State != nil && n.State.MsgList != nil {
-				n.State.MsgList.InvalidateAllMessages()
+			if pane := m.PaneMgr.Get(curr); pane != nil && pane.MsgList != nil {
+				pane.MsgList.InvalidateAllMessages()
 			}
 			if usage, ok := m.AgentUsage(curr); ok && m.StatusBar != nil {
 				m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated)

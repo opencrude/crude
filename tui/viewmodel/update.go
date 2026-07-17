@@ -39,11 +39,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.contentDirty = true
 		m.width = msg.Width
 		m.height = msg.Height
-		for _, n := range m.AgentMgr.AllNodes() {
-			if n.State != nil && n.State.MsgList != nil {
-				n.State.MsgList.SetSize(msg.Width, msg.Height)
-			}
-		}
 		m.PaneMgr.SetSize(msg.Width, msg.Height)
 		m.Input.SetWidth(msg.Width)
 		m.StatusBar.SetWidth(msg.Width)
@@ -159,19 +154,13 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	for _, n := range m.AgentMgr.AllNodes() {
 		if n.State != nil {
 			n.State.Tick(spinFrame)
+			m.syncAgentMessages(n.ID, false)
 		}
 	}
 	m.PaneMgr.TickAll(spinFrame)
 	m.syncAgentWindowTabs()
 	for _, sp := range m.PaneMgr.Panes() {
 		if !sp.Done && sp.MsgList != nil {
-			if n := m.AgentMgr.Get(sp.ID); n != nil && n.State != nil {
-				if n.State.TokenBuf != "" {
-					sp.MsgList.AppendToken(n.State.TokenBuf)
-					n.State.TokenBuf = ""
-					n.State.LastTokenTime = time.Now()
-				}
-			}
 			if ml := m.activeMsgList(); ml != nil {
 				ml.InvalidateSubPane(sp.ID)
 			}
@@ -295,9 +284,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case ttypes.UpdateModelMsg:
 		m.ModelName = string(msg)
 		m.Logger.Debug("UI", "model_update", "model", string(msg))
-		for _, n := range m.AgentMgr.AllNodes() {
-			if n.State != nil && n.State.MsgList != nil {
-				n.State.MsgList.SetModelName(string(msg))
+		for _, node := range m.AgentMgr.AllNodes() {
+			if pane := m.PaneMgr.Get(node.ID); pane != nil && pane.MsgList != nil {
+				pane.MsgList.SetModelName(string(msg))
 			}
 		}
 		if ml := m.activeMsgList(); ml != nil {
@@ -329,20 +318,17 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.StatusBar.SetError(msg.Error)
 		}
 		if msg.Desc != "" && m.AgentMgr.ActiveID() != "" {
-			if ml := m.activeMsgList(); ml != nil {
-				ml.AppendMessage(ttypes.ChatMessage{
-					Role:    ttypes.RoleAssistant,
-					Content: msg.Desc,
-					Time:    time.Now(),
-				})
-			}
+			m.appendActiveMessage(ttypes.ChatMessage{
+				Role:    ttypes.RoleAssistant,
+				Content: msg.Desc,
+				Time:    time.Now(),
+			})
 		}
 	case ttypes.HistoryMessagesMsg:
-		if ml := m.activeMsgList(); ml != nil {
+		if m.AgentMgr.ActiveID() != "" {
 			for _, hm := range msg {
-				ml.AppendMessage(hm)
+				m.appendActiveMessage(hm)
 			}
-			ml.ScrollToBottom()
 		}
 	case widgets.FilePickerSelectMsg:
 		m.overlayHost.Close(ui.OverlayFilePicker)
@@ -821,8 +807,8 @@ func (m *App) handleTabSwitch() {
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
 		m.AgentMgr.SetActive(agentID)
-		if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil && n.State.MsgList != nil {
-			n.State.MsgList.InvalidateAllMessages()
+		if pane := m.PaneMgr.Get(agentID); pane != nil && pane.MsgList != nil {
+			pane.MsgList.InvalidateAllMessages()
 		}
 		return
 	}
@@ -914,9 +900,29 @@ func (m *App) workingDir() (string, error) {
 }
 
 func tickCmd() tea.Cmd {
-	return workspace.TickCmd()
+	cmd := workspace.TickCmd()
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg := cmd()
+		if tick, ok := msg.(workspace.TickMsg); ok {
+			return ttypes.TickMsg(tick)
+		}
+		return msg
+	}
 }
 
 func streamingTickCmd() tea.Cmd {
-	return workspace.StreamingTickCmd()
+	cmd := workspace.StreamingTickCmd()
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg := cmd()
+		if tick, ok := msg.(workspace.TickMsg); ok {
+			return ttypes.TickMsg(tick)
+		}
+		return msg
+	}
 }

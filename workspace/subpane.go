@@ -17,9 +17,12 @@ import (
 )
 
 type SubPane struct {
-	ID         string
-	Title      string
-	Type       PaneType
+	ID    string
+	Title string
+	Type  PaneType
+	// Messages is canonical workspace data. MsgList is the temporary retained
+	// TUI projection and must not be mutated as a second message source.
+	Messages   *Conversation
 	MsgList    *widgets.MessageList
 	Done       bool
 	StartTime  time.Time
@@ -45,6 +48,7 @@ func NewSubPane(id string, paneType PaneType, title string, th *theme.Theme) *Su
 		ID:                id,
 		Title:             title,
 		Type:              paneType,
+		Messages:          NewConversation(),
 		MsgList:           ml,
 		Done:              false,
 		StartTime:         time.Now(),

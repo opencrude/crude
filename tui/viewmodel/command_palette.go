@@ -494,8 +494,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 				b.WriteString("- " + a.Label + "\n")
 			}
 		}
-		if ml := m.activeMsgList(); ml != nil {
-			ml.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
+		if m.AgentMgr.ActiveID() != "" {
+			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 
 	case "system.undo":

@@ -210,8 +210,8 @@ func (m *App) buildMainView() string {
 		} else {
 			nestingLevel := m.PaneMgr.ScrollbarNestingLevel()
 			paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
-			if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && n.State.MsgList != nil {
-				n.State.MsgList.SetPaneScrollbarWidth(paneSBW)
+			if sp := m.PaneMgr.Get(m.AgentMgr.ActiveID()); sp != nil && sp.MsgList != nil {
+				sp.MsgList.SetPaneScrollbarWidth(paneSBW)
 			}
 			if activeML != nil {
 				activeML.SetPaneScrollbarWidth(0)

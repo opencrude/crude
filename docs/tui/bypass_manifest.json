@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only.",
   "rules": [
     {
@@ -81,7 +81,7 @@
       "crude/tui/scrollbar",
       "crude/tui/ui"
     ],
-    "status": "phases 0-2 done; 3-10 partial; numeric performance baselines recorded; WindowFrame is sole product chrome; OverlayHost owns popup lifecycle; workspace owns project search, file operations, agent lifecycle routing, and persisted-message hydration view data"
+    "status": "phases 0-2 done; 3-10 partial; numeric baselines recorded; WindowFrame and OverlayHost own product chrome/lifecycle; workspace owns project search, file operations, agent routing, persisted hydration, and canonical live Conversation message data"
   },
   "ui_package": {
     "path": "tui/ui/",

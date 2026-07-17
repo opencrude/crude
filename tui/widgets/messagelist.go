@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,14 +27,15 @@ type PaneLineInfo struct {
 }
 
 type MessageList struct {
-	vl        virtlist.VirtualList
-	scroll    virtlist.ScrollState
-	scrollbar scrollbar.ScrollBar
-	theme     *theme.Theme
-	messages  []*types.ChatMessage
-	msgIDSeq  uint64
-	msgByID   map[string]*types.ChatMessage
-	version   uint64
+	vl            virtlist.VirtualList
+	scroll        virtlist.ScrollState
+	scrollbar     scrollbar.ScrollBar
+	theme         *theme.Theme
+	messages      []*types.ChatMessage
+	msgIDSeq      uint64
+	msgByID       map[string]*types.ChatMessage
+	version       uint64
+	sourceVersion uint64
 
 	selecting     bool
 	selAnchorLine int
@@ -641,6 +643,128 @@ func (ml *MessageList) IsAtBottom() bool {
 
 func (ml *MessageList) Messages() []*types.ChatMessage {
 	return ml.messages
+}
+
+func (ml *MessageList) SourceVersion() uint64 {
+	return ml.sourceVersion
+}
+
+// SyncMessages updates the retained TUI projection from workspace-owned
+// message data. Stable IDs preserve unchanged render caches and scroll state.
+func (ml *MessageList) SyncMessages(messages []types.ChatMessage, sourceVersion uint64) {
+	if sourceVersion == ml.sourceVersion {
+		return
+	}
+
+	previous := ml.msgByID
+	previousMessages := ml.messages
+	previousLen := len(previousMessages)
+	next := make([]*types.ChatMessage, 0, len(messages))
+	nextByID := make(map[string]*types.ChatMessage, len(messages)*2)
+	changedIDs := make([]string, 0)
+	structureChanged := len(messages) < previousLen
+	pureAppend := len(messages) >= previousLen
+
+	for index := range messages {
+		incoming := messages[index]
+		if incoming.InternalID == "" {
+			incoming.InternalID = ml.nextMsgID()
+		}
+		ml.trackMessageID(incoming.InternalID)
+
+		message := previous[incoming.InternalID]
+		if message == nil {
+			copy := incoming
+			message = &copy
+			structureChanged = true
+			changedIDs = append(changedIDs, message.InternalID)
+		} else if !sameMessageData(message, &incoming) {
+			cachedLines := message.CachedLines
+			cursorLine := message.CursorLine
+			streamLines := message.StreamCompletedLines
+			streamLen := message.StreamCompletedLen
+			*message = incoming
+			message.CachedLines = cachedLines
+			message.CursorLine = cursorLine
+			message.StreamCompletedLines = streamLines
+			message.StreamCompletedLen = streamLen
+			message.CachedLines = nil
+			if strings.Contains(message.Content, "\n") {
+				message.StreamCompletedLines = nil
+				message.StreamCompletedLen = 0
+			}
+			changedIDs = append(changedIDs, message.InternalID)
+		}
+		if index < previousLen && previousMessages[index].InternalID != message.InternalID {
+			structureChanged = true
+			pureAppend = false
+		}
+		next = append(next, message)
+		nextByID[message.InternalID] = message
+		if message.ToolID != "" {
+			nextByID[message.ToolID] = message
+		}
+	}
+
+	ml.messages = next
+	ml.msgByID = nextByID
+	ml.sourceVersion = sourceVersion
+	ml.bumpVersion()
+	if pureAppend && len(messages) > previousLen {
+		for index := previousLen; index < len(ml.messages); index++ {
+			ml.vl.AppendItem(ml.messageToItem(index))
+		}
+		for _, id := range changedIDs {
+			if previous[id] != nil {
+				ml.vl.InvalidateItem(id)
+			}
+		}
+		return
+	}
+	if structureChanged {
+		ml.RebuildItems()
+		return
+	}
+	for _, id := range changedIDs {
+		ml.vl.InvalidateItem(id)
+	}
+}
+
+func sameMessageData(current, incoming *types.ChatMessage) bool {
+	return current.InternalID == incoming.InternalID &&
+		current.Role == incoming.Role &&
+		current.Content == incoming.Content &&
+		current.Time.Equal(incoming.Time) &&
+		current.ToolName == incoming.ToolName &&
+		current.ToolArgs == incoming.ToolArgs &&
+		current.ToolID == incoming.ToolID &&
+		current.ToolStatus == incoming.ToolStatus &&
+		current.ToolIndex == incoming.ToolIndex &&
+		current.ToolProgressPhase == incoming.ToolProgressPhase &&
+		current.ToolProgressMessage == incoming.ToolProgressMessage &&
+		current.ToolProgressLabel == incoming.ToolProgressLabel &&
+		current.ToolPreviewPhase == incoming.ToolPreviewPhase &&
+		current.ToolEstTokens == incoming.ToolEstTokens &&
+		current.ToolLivedAdded == incoming.ToolLivedAdded &&
+		current.ToolLivedRemoved == incoming.ToolLivedRemoved &&
+		current.ToolStartTime.Equal(incoming.ToolStartTime) &&
+		current.ToolDuration == incoming.ToolDuration &&
+		current.ThinkingActive == incoming.ThinkingActive &&
+		current.ThinkingInterrupted == incoming.ThinkingInterrupted &&
+		current.Incomplete == incoming.Incomplete &&
+		current.IncompleteReason == incoming.IncompleteReason &&
+		current.SubPaneID == incoming.SubPaneID &&
+		current.PermTag == incoming.PermTag
+}
+
+func (ml *MessageList) trackMessageID(id string) {
+	if !strings.HasPrefix(id, "msg-") {
+		return
+	}
+	value, err := strconv.ParseUint(strings.TrimPrefix(id, "msg-"), 10, 64)
+	if err == nil && value > ml.msgIDSeq {
+		ml.msgIDSeq = value
+	}
 }
 
 func (ml *MessageList) RemoveMessage(idx int) {

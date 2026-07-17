@@ -13,18 +13,19 @@ import (
 // Session is the frontend state for one agent conversation. It is the TUI
 // counterpart to the backend session.Session (in crude/session/) — the
 // backend runs the agent loop, the LLM calls, the tool execution; the
-// frontend Session owns the message list, the chat input draft, the
+// frontend Session owns conversation data, the chat input draft, the
 // per-agent dialogs (confirm, question, yolo, text overlay, composer),
 // the reference store, and the cost/token tracking.
 //
 // One Session per orchestrator. Sub-agents do NOT get their own Session —
-// they get a SubPane (owned by PaneMgr) which has its own MessageList but
-// shares the orchestrator's Session for dialogs and references.
+// they get a SubPane (owned by PaneMgr) with conversation data and a temporary
+// MessageList projection, and share the orchestrator's Session for dialogs and
+// references.
 //
 // The Session is created when an orchestrator is added (via
 // AgentManager.AddOrchestrator) and destroyed when the orchestrator is
 // removed (via AgentManager.Remove). The AgentNode.State field points to
-// the Session's AgentState (streaming, thinking, message list, etc.).
+// the Session's AgentState (streaming, thinking, conversation data, etc.).
 //
 // Persistence: each Session owns a sessionID, sessionDir, and *sql.DB.
 // These are the SQLite handles for this conversation's messages, cost
@@ -54,7 +55,7 @@ type Session struct {
 	// store because references are tied to a specific conversation.
 	RefStore *ReferenceStore
 
-	// AgentState holds the streaming/thinking state and the message list
+	// AgentState holds the streaming/thinking state and live conversation data
 	// for this session's orchestrator. This is what AgentNode.State points to.
 	AgentState *AgentState
 
@@ -156,18 +157,6 @@ func NewSession(th *theme.Theme, sessionID, sessionDir string, db *sql.DB, lg Lo
 		theme:        th,
 	}
 	_ = lg // logger is used by AgentState, not Session itself
-	return s
-}
-
-// NewSessionWithAgentState creates a session AND its AgentState (with a
-// fresh message list). Used when an orchestrator is added — the AgentState
-// is what gets stored in AgentNode.State.
-func NewSessionWithAgentState(th *theme.Theme, sessionID, sessionDir string, db *sql.DB, lg Logger, modelName, username string) *Session {
-	s := NewSession(th, sessionID, sessionDir, db, lg)
-	ml := widgets.NewMessageList(th)
-	ml.SetModelName(modelName)
-	ml.SetUsername(username)
-	s.AgentState = NewAgentState(sessionID, ml, lg)
 	return s
 }
 

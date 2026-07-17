@@ -6,23 +6,23 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-
-	"crude/tui/rendering"
-	ttypes "crude/tui/types"
-	"crude/tui/widgets"
 )
 
 func TickCmd() tea.Cmd {
 	return tea.Tick(400*time.Millisecond, func(t time.Time) tea.Msg {
-		return ttypes.TickMsg(t)
+		return TickMsg(t)
 	})
 }
 
 func StreamingTickCmd() tea.Cmd {
 	return tea.Tick(16*time.Millisecond, func(t time.Time) tea.Msg {
-		return ttypes.TickMsg(t)
+		return TickMsg(t)
 	})
 }
+
+// TickMsg is the workspace-owned tick message. The TUI converts it to
+// ttypes.TickMsg at the boundary.
+type TickMsg time.Time
 
 type AgentDoneResultMsg struct {
 	Reason  string
@@ -59,7 +59,7 @@ func RetryResultCmd(agentID, msg string) tea.Cmd {
 
 type AgentState struct {
 	ID            string
-	MsgList       *widgets.MessageList
+	Messages      *Conversation
 	Streaming     bool
 	Thinking      bool
 	TokenBuf      string
@@ -86,22 +86,24 @@ type AgentState struct {
 	PendingPermTool string
 }
 
-func NewAgentState(id string, msgList *widgets.MessageList, lg Logger) *AgentState {
+func NewAgentState(id string, messages *Conversation, lg Logger) *AgentState {
+	if messages == nil {
+		messages = NewConversation()
+	}
 	return &AgentState{
-		ID:      id,
-		MsgList: msgList,
-		Logger:  lg,
+		ID:       id,
+		Messages: messages,
+		Logger:   lg,
 	}
 }
 
 func (a *AgentState) Tick(spinFrame int) tea.Cmd {
 	if a.TokenBuf != "" {
-		a.MsgList.AppendToken(a.TokenBuf)
+		a.Messages.AppendToken(a.TokenBuf)
 		a.TokenBuf = ""
 		a.LastTokenTime = time.Now()
 	}
 	a.SpinFrame = spinFrame
-	a.MsgList.InvalidateCache()
 	if a.Streaming || a.Thinking {
 		return StreamingTickCmd()
 	}
@@ -112,8 +114,8 @@ func (a *AgentState) ComputeActiveTyping() bool {
 	return (a.Streaming || a.Thinking) && !a.LastTokenTime.IsZero() && time.Since(a.LastTokenTime) < 400*time.Millisecond
 }
 
-func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widgets.MessageList, onStatusLine func(string), onThinking func(thinking, streaming, blocking bool), onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(questionsJSON string), onConfirmDismiss func()) tea.Cmd {
-	target := a.MsgList
+func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, onStatusLine func(string), onThinking func(thinking, streaming, blocking bool), onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(questionsJSON string), onConfirmDismiss func()) tea.Cmd {
+	target := a.Messages
 	thinkTarget := thinkingTarget
 	if thinkTarget == nil {
 		thinkTarget = target
@@ -139,7 +141,7 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 	case "thinking":
 		if s, ok := evt.Data.(string); ok && s != "" {
 			a.logIfInvalidUTF8("thinking", s)
-			thinkTarget.AppendThinking(rendering.SanitizeForTerminal(s))
+			thinkTarget.AppendThinking(SanitizeForTerminal(s))
 			a.Thinking = true
 			a.LastTokenTime = time.Now()
 			onThinking(true, false, false)
@@ -148,7 +150,7 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 	case "stream_token":
 		if s, ok := evt.Data.(string); ok && s != "" {
 			a.logIfInvalidUTF8("stream_token", s)
-			s = rendering.SanitizeForTerminal(s)
+			s = SanitizeForTerminal(s)
 			if !a.Streaming {
 				target.MarkAllThinkingDone()
 				if thinkTarget != target {
@@ -158,14 +160,7 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 			a.TokenBuf += s
 			a.Streaming = true
 			onThinking(true, true, false)
-			msgs := target.Messages()
-			if len(msgs) == 0 || msgs[len(msgs)-1].Role != ttypes.RoleAssistant {
-				target.AppendMessage(ttypes.ChatMessage{
-					Role:    ttypes.RoleAssistant,
-					Content: "",
-					Time:    time.Now(),
-				})
-			}
+			target.EnsureAssistant()
 		}
 
 	case "tool_call_streaming":
@@ -175,10 +170,8 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 				a.TokenBuf = ""
 			}
 			target.MarkAllThinkingDone()
-			target.EndStreamingCursor()
 			if thinkTarget != target {
 				thinkTarget.MarkAllThinkingDone()
-				thinkTarget.EndStreamingCursor()
 			}
 			a.Streaming = false
 		}
@@ -191,10 +184,8 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 				a.TokenBuf = ""
 			}
 			target.MarkAllThinkingDone()
-			target.EndStreamingCursor()
 			if thinkTarget != target {
 				thinkTarget.MarkAllThinkingDone()
-				thinkTarget.EndStreamingCursor()
 			}
 			a.Streaming = false
 		}
@@ -234,35 +225,13 @@ func (a *AgentState) HandleEvent(evt ttypes.AgentEventMsg, thinkingTarget *widge
 			thinkTarget.MarkStreamingToolsCancelled()
 		}
 		errMsg := FormatErr(evt.Data)
-		msgs := target.Messages()
-		if len(msgs) > 0 {
-			last := msgs[len(msgs)-1]
-			if last.Role == ttypes.RoleAssistant && last.Content != "" {
-				last.Incomplete = true
-				last.IncompleteReason = errMsg
-				last.CursorLine = -1
-				last.CachedLines = nil
-				last.StreamCompletedLines = nil
-				last.StreamCompletedLen = 0
-				for _, msg := range msgs {
-					if msg != last {
-						msg.CachedLines = nil
-					}
-				}
-				target.RebuildItems()
-			} else {
-				target.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
-			}
-		} else {
-			target.AppendMessage(ttypes.ChatMessage{Role: ttypes.RoleError, Content: errMsg, Time: time.Now()})
-		}
+		target.MarkError(errMsg)
 		a.Thinking = false
 		a.Streaming = false
 		a.PendingPermTag = ""
 		a.PendingPermTool = ""
 		a.BlockingMsgIdx = -1
 		onThinking(false, false, false)
-		target.ScrollToBottom()
 		return ErrorResultCmd(a.ID, errMsg)
 	}
 
@@ -276,7 +245,6 @@ func (a *AgentState) SubmitInput(text string) {
 	a.PendingPermTag = ""
 	a.PendingPermTool = ""
 	a.BlockingMsgIdx = -1
-	a.MsgList.ScrollToBottom()
 }
 
 func (a *AgentState) IsActive() bool {

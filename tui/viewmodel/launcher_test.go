@@ -86,7 +86,7 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 	if n == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
-	if n.State == nil || n.State.MsgList == nil {
+	if n.State == nil || n.State.Messages == nil {
 		t.Fatal("orchestrator should have its own MsgList")
 	}
 	if app.AgentMgr.ActiveID() != "ses_1_orch_1" {
@@ -192,7 +192,7 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 	if subAgent == nil {
 		t.Fatal("sub-agent should exist")
 	}
-	if subAgent.State == nil || subAgent.State.MsgList == nil {
+	if subAgent.State == nil || subAgent.State.Messages == nil {
 		t.Fatal("sub-agent should have a MsgList")
 	}
 	sp := app.PaneMgr.Get("ses_1_orch_1_sub_abc")
