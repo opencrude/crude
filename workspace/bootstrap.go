@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"crude/provider"
@@ -357,13 +358,188 @@ func (w *Workspace) HardCancel() {
 
 // CancelSubAgent cancels a specific sub-agent by ID.
 func (w *Workspace) CancelSubAgent(agentID string) {
-	b := w.BackendSession()
-	if b == nil {
+	sess := w.sessionForAgent(agentID)
+	if sess == nil || sess.backend == nil {
 		return
 	}
-	runner := b.SubAgentRunner()
+	runner := sess.backend.SubAgentRunner()
 	if runner != nil {
 		runner.CancelSubAgent(map[string]any{"handle_id": agentID})
+	}
+}
+
+// CancelAgent routes cancellation to the orchestrator or sub-agent that owns
+// agentID, independent of which session is currently visible.
+func (w *Workspace) CancelAgent(agentID string) {
+	node := w.AgentMgr.Get(agentID)
+	if node == nil {
+		return
+	}
+	if node.Parent != nil {
+		w.CancelSubAgent(agentID)
+		return
+	}
+	if node.CancelChan != nil {
+		select {
+		case node.CancelChan <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// CloseAgent stops backend work for agentID before the TUI removes its state.
+func (w *Workspace) CloseAgent(agentID string) {
+	node := w.AgentMgr.Get(agentID)
+	if node == nil {
+		return
+	}
+	if node.Parent != nil {
+		w.CancelSubAgent(agentID)
+		return
+	}
+
+	w.CancelAgent(agentID)
+	sess := w.sessionForAgent(agentID)
+	if sess != nil && sess.backend != nil {
+		sess.backend.CloseOrchestrator(agentID)
+	}
+	delete(w.SessionsByAgent, agentID)
+	if sess != nil && sess.AgentID == agentID {
+		sess.AgentID = ""
+	}
+}
+
+// ResolveConfirmation sends a permission response to the owning orchestrator.
+func (w *Workspace) ResolveConfirmation(agentID, choice string) bool {
+	switch choice {
+	case "allow", "always", "deny":
+	default:
+		choice = "deny"
+	}
+	return w.resolveAgentBlock(agentID, choice)
+}
+
+// ResolveQuestion sends formatted question answers to the owning orchestrator.
+func (w *Workspace) ResolveQuestion(agentID string, answers, questions map[string]string, cancelled bool) bool {
+	if cancelled {
+		return w.resolveAgentBlock(agentID, "cancelled")
+	}
+	if len(answers) == 0 {
+		return w.resolveAgentBlock(agentID, "No answers provided")
+	}
+
+	var response strings.Builder
+	for i := 1; i <= len(answers); i++ {
+		key := fmt.Sprintf("%d", i)
+		if question := questions[key]; question != "" {
+			fmt.Fprintf(&response, "Q%d: %s\nA%d: %s", i, question, i, answers[key])
+		} else {
+			fmt.Fprintf(&response, "A%d: %s", i, answers[key])
+		}
+		if i < len(answers) {
+			response.WriteString("\n\n")
+		}
+	}
+	return w.resolveAgentBlock(agentID, response.String())
+}
+
+func (w *Workspace) resolveAgentBlock(agentID, response string) bool {
+	root := w.AgentMgr.OrchestratorFor(agentID)
+	if root == nil || root.BlockResolveCh == nil {
+		return false
+	}
+	select {
+	case root.BlockResolveCh <- response:
+		return true
+	default:
+		return false
+	}
+}
+
+func (w *Workspace) sessionForAgent(agentID string) *Session {
+	if w.AgentMgr != nil {
+		if root := w.AgentMgr.OrchestratorFor(agentID); root != nil {
+			agentID = root.ID
+		}
+	}
+	if sess := w.SessionsByAgent[agentID]; sess != nil {
+		return sess
+	}
+	for _, sess := range w.Sessions {
+		if sess != nil && sess.AgentID == agentID {
+			return sess
+		}
+	}
+	return nil
+}
+
+// UsageSnapshot is the workspace-owned token/cost state for one session.
+type UsageSnapshot struct {
+	Prompt        int
+	Completion    int
+	Cached        int
+	Cost          float64
+	ContextWindow int
+	ContextUsed   int
+	Estimated     bool
+}
+
+// RecordAgentUsage applies a provider usage event to its owning session rather
+// than whichever session happens to be visible.
+func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, bool) {
+	sess := w.sessionForAgent(agentID)
+	if sess == nil {
+		return UsageSnapshot{}, false
+	}
+	switch usage := data.(type) {
+	case map[string]any:
+		sess.TokenPrompt = toInt(usage["prompt"])
+		sess.TokenCompletion = toInt(usage["completion"])
+		sess.TokenCached = toInt(usage["prompt_cached"])
+		cost, _ := usage["cost"].(float64)
+		sess.SessionCost += cost
+		sess.TokenEstimated, _ = usage["estimated"].(bool)
+		if contextWindow := toInt(usage["context_window"]); contextWindow > 0 {
+			sess.ContextWindow = contextWindow
+			if contextUsed := toInt(usage["context_used"]); contextUsed > 0 {
+				sess.ContextUsed = contextUsed
+			} else {
+				sess.ContextUsed = sess.TokenPrompt
+			}
+		}
+	case map[string]int:
+		sess.TokenPrompt = usage["prompt"]
+		sess.TokenCompletion = usage["completion"]
+		sess.TokenCached = usage["prompt_cached"]
+		sess.TokenEstimated = false
+		if contextWindow := usage["context_window"]; contextWindow > 0 {
+			sess.ContextWindow = contextWindow
+			sess.ContextUsed = usage["prompt"]
+		}
+	default:
+		return UsageSnapshot{}, false
+	}
+	return usageSnapshot(sess), true
+}
+
+// AgentUsage returns the latest usage state for the session owning agentID.
+func (w *Workspace) AgentUsage(agentID string) (UsageSnapshot, bool) {
+	sess := w.sessionForAgent(agentID)
+	if sess == nil {
+		return UsageSnapshot{}, false
+	}
+	return usageSnapshot(sess), true
+}
+
+func usageSnapshot(sess *Session) UsageSnapshot {
+	return UsageSnapshot{
+		Prompt:        sess.TokenPrompt,
+		Completion:    sess.TokenCompletion,
+		Cached:        sess.TokenCached,
+		Cost:          sess.SessionCost,
+		ContextWindow: sess.ContextWindow,
+		ContextUsed:   sess.ContextUsed,
+		Estimated:     sess.TokenEstimated,
 	}
 }
 
@@ -567,17 +743,20 @@ func (w *Workspace) StartOrchestrator(sender session.EventSender) (*session.Orch
 	orch, err := b.NewOrchestrator(sender)
 	if err == nil && orch != nil && w.ActiveSession != nil {
 		w.ActiveSession.AgentID = orch.ID
+		if w.SessionsByAgent == nil {
+			w.SessionsByAgent = make(map[string]*Session)
+		}
+		w.SessionsByAgent[orch.ID] = w.ActiveSession
 	}
 	return orch, err
 }
 
 // ── Message Conversion
 
-// ConvertMessagesForDisplay converts backend session messages into the
-// TUI display format. This is a workspace concern because it transforms
-// session persistence data into the format the TUI layer expects.
-func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMessage {
-	var result []ttypes.ChatMessage
+// ConvertMessagesForDisplay converts persisted backend messages into the
+// workspace-owned view data consumed by frontends.
+func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageView {
+	var result []ChatMessageView
 
 	toolNameByCallID := buildToolNameIndex(msgs)
 
@@ -594,28 +773,28 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 
 		switch role {
 		case "user":
-			result = append(result, ttypes.ChatMessage{
-				Role:    ttypes.RoleUser,
+			result = append(result, ChatMessageView{
+				Role:    "user",
 				Content: mm.Msg.Content.ContentDescription(),
 				Time:    msgTime,
 			})
 
 		case "assistant":
-			result = append(result, ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
+			result = append(result, ChatMessageView{
+				Role:    "assistant",
 				Content: mm.Msg.Content.String(),
 				Time:    msgTime,
 			})
 
 		case "thinking":
-			result = append(result, ttypes.ChatMessage{
-				Role:    ttypes.RoleThinking,
+			result = append(result, ChatMessageView{
+				Role:    "thinking",
 				Content: mm.Msg.ReasoningContent,
 				Time:    msgTime,
 			})
 			if mm.Msg.Content.String() != "" {
-				result = append(result, ttypes.ChatMessage{
-					Role:    ttypes.RoleAssistant,
+				result = append(result, ChatMessageView{
+					Role:    "assistant",
 					Content: mm.Msg.Content.String(),
 					Time:    msgTime,
 				})
@@ -640,8 +819,8 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 				content = toolName + " " + argsCompact
 			}
 
-			chatMsg := ttypes.ChatMessage{
-				Role:              ttypes.RoleTool,
+			chatMsg := ChatMessageView{
+				Role:              "tool",
 				Content:           content,
 				Time:              msgTime,
 				ToolName:          toolName,
@@ -650,7 +829,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 				ToolStatus:        toolStatus,
 				ToolProgressLabel: mm.Meta.ProgressLabel,
 				PermTag:           mm.Meta.PermTag,
-				ToolPreviewPhase:  ttypes.ToolPreviewDone,
+				ToolPreviewPhase:  "done",
 			}
 
 			if mm.Meta.DurationMs > 0 {
@@ -660,8 +839,8 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 				chatMsg.ToolEstTokens = mm.Meta.EstTokens
 			}
 			if mm.Meta.LinesAdded > 0 || mm.Meta.LinesRemoved > 0 {
-				chatMsg.ToolLivedAdded = mm.Meta.LinesAdded
-				chatMsg.ToolLivedRemoved = mm.Meta.LinesRemoved
+				chatMsg.ToolLinesAdded = mm.Meta.LinesAdded
+				chatMsg.ToolLinesRemoved = mm.Meta.LinesRemoved
 			}
 			if mm.Meta.SubPaneID != "" {
 				chatMsg.SubPaneID = mm.Meta.SubPaneID
@@ -671,7 +850,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ttypes.ChatMe
 
 		default:
 			if mm.Msg.Content.String() != "" {
-				result = append(result, ttypes.ChatMessage{
+				result = append(result, ChatMessageView{
 					Role:    role,
 					Content: mm.Msg.Content.String(),
 					Time:    msgTime,

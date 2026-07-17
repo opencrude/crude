@@ -189,6 +189,10 @@ type Workspace struct {
 	// SessionsByID indexes sessions by their session ID.
 	SessionsByID map[string]*Session
 
+	// SessionsByAgent maps every live orchestrator to its frontend session.
+	// A session may own more than one orchestrator over its lifetime.
+	SessionsByAgent map[string]*Session
+
 	// ActiveSession is the currently-active frontend session.
 	ActiveSession *Session
 
@@ -324,6 +328,7 @@ func NewWorkspace(
 		FilePicker:      widgets.NewFilePicker(th),
 		Sessions:        make([]*Session, 0),
 		SessionsByID:    make(map[string]*Session),
+		SessionsByAgent: make(map[string]*Session),
 		SessionSettings: widgets.NewSessionSettings(th, initial),
 		StatusBar:       sb,
 		Logger:          lg,
@@ -406,6 +411,7 @@ func (w *Workspace) CloseAllSessions() {
 	}
 	w.Sessions = w.Sessions[:0]
 	w.SessionsByID = make(map[string]*Session)
+	w.SessionsByAgent = make(map[string]*Session)
 	w.ActiveSession = nil
 }
 
@@ -589,13 +595,22 @@ func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResul
 		return nil
 	}
 
-	// Already open: switch ActiveSession and start a new orchestrator tab.
+	// Already open: activate its existing orchestrator when it still has one.
 	if existing, ok := w.SessionsByID[sessionID]; ok && existing != nil {
 		w.ActiveSession = existing
 		if existing.Settings != nil {
 			w.SessionSettings = existing.Settings
 		}
 		w.Input.SetReferenceStore(existing.RefStore)
+		if node := w.AgentMgr.Get(existing.AgentID); node != nil {
+			return &NewSessionResult{
+				OrchID:         node.ID,
+				InputCh:        node.InputChan,
+				BtwCh:          node.BtwChan,
+				CancelCh:       node.CancelChan,
+				BlockResolveCh: node.BlockResolveCh,
+			}
+		}
 	} else {
 		_, err := w.ResumeSession(sessionID, w.sessionCfg, w.homeDir)
 		if err != nil {
@@ -629,16 +644,24 @@ func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResul
 // ActivateSessionByAgent switches the workspace business context to the
 // session backing an orchestrator tab.
 func (w *Workspace) ActivateSessionByAgent(agentID string) {
+	if sess := w.sessionForAgent(agentID); sess != nil {
+		w.activateSession(sess)
+		return
+	}
 	for _, sess := range w.Sessions {
 		if sess != nil && sess.AgentID == agentID {
-			w.ActiveSession = sess
-			if sess.Settings != nil {
-				w.SessionSettings = sess.Settings
-			}
-			if sess.RefStore != nil {
-				w.Input.SetReferenceStore(sess.RefStore)
-			}
+			w.activateSession(sess)
 			return
 		}
+	}
+}
+
+func (w *Workspace) activateSession(sess *Session) {
+	w.ActiveSession = sess
+	if sess.Settings != nil {
+		w.SessionSettings = sess.Settings
+	}
+	if sess.RefStore != nil {
+		w.Input.SetReferenceStore(sess.RefStore)
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"crude/session"
 	"crude/sessiondb"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 )
 
@@ -87,24 +86,6 @@ type Session struct {
 	// It is intentionally per session so tabs never leak overrides.
 	Settings *widgets.SessionSettings
 
-	// ── Per-session callbacks ──
-	//
-	// These bridge the TUI to the backend for session-specific actions.
-
-	// OnConfirmResult is called when the user responds to a tool confirmation.
-	OnConfirmResult func(ttypes.ConfirmResult)
-
-	// OnQuestionResult is called when the user submits answers to a question form.
-	OnQuestionResult func(ttypes.QuestionResult)
-
-	// OnCancelSubAgent is called when the user requests cancellation of a
-	// specific sub-agent.
-	OnCancelSubAgent func(agentID string)
-
-	// OnOrchestratorReset is called when the user resets this orchestrator's
-	// per-session config overrides.
-	OnOrchestratorReset func(orchID string)
-
 	// ── Per-session cost/token tracking ─
 	//
 	// These are updated by agent events (usage, done) and displayed in
@@ -146,7 +127,7 @@ type Session struct {
 
 	// hydratedMessages stores converted messages from session resume.
 	// Set by Workspace.Hydrate(), consumed by the TUI layer on startup.
-	hydratedMessages []ttypes.ChatMessage
+	hydratedMessages []ChatMessageView
 
 	// hydratedRefs stores prompt references from session resume.
 	hydratedRefs []sessiondb.Reference
@@ -190,14 +171,16 @@ func NewSessionWithAgentState(th *theme.Theme, sessionID, sessionDir string, db 
 	return s
 }
 
-// HydratedMessages returns the messages loaded from a resumed session's DB.
-// Consumed by the TUI layer on startup.
-func (s *Session) HydratedMessages() []ttypes.ChatMessage {
-	return s.hydratedMessages
+// TakeHydratedMessages returns and clears messages loaded during resume.
+func (s *Session) TakeHydratedMessages() []ChatMessageView {
+	messages := s.hydratedMessages
+	s.hydratedMessages = nil
+	return messages
 }
 
-// HydratedRefs returns the prompt references loaded from a resumed session's DB.
-// Consumed by the TUI layer on startup.
-func (s *Session) HydratedRefs() []sessiondb.Reference {
-	return s.hydratedRefs
+// TakeHydratedRefs returns and clears references loaded during resume.
+func (s *Session) TakeHydratedRefs() []sessiondb.Reference {
+	refs := s.hydratedRefs
+	s.hydratedRefs = nil
+	return refs
 }

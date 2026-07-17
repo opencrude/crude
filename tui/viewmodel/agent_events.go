@@ -8,9 +8,9 @@ import (
 
 	"crude/fileio"
 	"crude/provider"
-	"crude/workspace"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
+	"crude/workspace"
 )
 
 func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
@@ -129,20 +129,22 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		parentID := evtData["parent_id"]
 
 		if parentID == "" {
-			// Orchestrator: create top-level agent with its own MsgList
-			m.launcher = nil
-			ml := widgets.NewMessageList(m.Theme)
-			ml.SetModelName(m.ModelName)
-			ml.SetUsername(m.Username)
-			ml.SetSubPaneContentFn(m.renderSubPaneContent)
-			agent = workspace.NewAgentState(agentID, ml, m.Logger)
-			// Agent node should already exist from AddOrchestrator; update its state
+			// Orchestrator nodes are registered with their live channels before
+			// normal events arrive. Never manufacture a channel-less fallback for
+			// stale events after a tab has closed.
 			if existing := m.AgentMgr.Get(agentID); existing != nil {
+				ml := widgets.NewMessageList(m.Theme)
+				ml.SetModelName(m.ModelName)
+				ml.SetUsername(m.Username)
+				ml.SetSubPaneContentFn(m.renderSubPaneContent)
+				agent = workspace.NewAgentState(agentID, ml, m.Logger)
 				existing.State = agent
 				agentNode = existing
 			} else {
-				// Fallback: shouldn't happen in normal flow
-				agentNode = m.AgentMgr.AddOrchestrator(agentID, nil, nil, nil, nil, agent)
+				if m.Logger != nil {
+					m.Logger.Warn("AGENT", "event_for_unknown_orchestrator", "id", agentID, "type", evt.Type)
+				}
+				return nil
 			}
 			m.AgentMgr.SetActive(agentID)
 			m.syncAgentWindowTabs()
@@ -189,6 +191,12 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 		}
 		m.syncAgentWindowTabs()
 		return nil
+	}
+	if agent == nil {
+		return nil
+	}
+	if evt.Type == "blocking" && m.AgentMgr.ActiveID() != agentID {
+		m.switchToAgentView(agentID)
 	}
 
 	switch evt.Type {
@@ -351,8 +359,11 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 
 func (m *App) handleSubPaneCompletion(agentID string) {
 	n := m.AgentMgr.Get(agentID)
+	if n == nil {
+		return
+	}
 	var parentML *widgets.MessageList
-	if n != nil && n.Parent != nil && n.Parent.State != nil {
+	if n.Parent != nil && n.Parent.State != nil {
 		parentML = n.Parent.State.MsgList
 	}
 	if parentML == nil {
@@ -408,55 +419,11 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 }
 
 func (m *App) handleUsageData(data any, agentID string) {
-	s := m.ActiveSession
-	if s == nil {
+	usage, ok := m.RecordAgentUsage(agentID, data)
+	if !ok || m.AgentMgr.ActiveID() != agentID {
 		return
 	}
-	switch d := data.(type) {
-	case map[string]any:
-		prompt := toInt(d["prompt"])
-		completion := toInt(d["completion"])
-		cached := toInt(d["prompt_cached"])
-		cost, _ := d["cost"].(float64)
-		ctxWindow := toInt(d["context_window"])
-		ctxUsed := toInt(d["context_used"])
-		estimated, _ := d["estimated"].(bool)
-		s.SessionCost += cost
-		s.TokenPrompt = int(prompt)
-		s.TokenCompletion = int(completion)
-		s.TokenCached = int(cached)
-		s.TokenEstimated = estimated
-		if int(ctxWindow) > 0 {
-			s.ContextWindow = int(ctxWindow)
-			if int(ctxUsed) > 0 {
-				s.ContextUsed = int(ctxUsed)
-			} else {
-				s.ContextUsed = int(prompt)
-			}
-		}
-		m.StatusBar.UpdateUsage(s.TokenPrompt, s.TokenCompletion, s.TokenCached, s.SessionCost, s.ContextWindow, s.ContextUsed, s.TokenEstimated)
-	case map[string]int:
-		s.TokenCached = d["prompt_cached"]
-		s.TokenCompletion = d["completion"]
-		s.TokenPrompt = d["prompt"]
-		if cw := d["context_window"]; cw > 0 {
-			s.ContextWindow = cw
-			s.ContextUsed = d["prompt"]
-		}
-		m.StatusBar.UpdateUsage(s.TokenPrompt, s.TokenCompletion, s.TokenCached, s.SessionCost, s.ContextWindow, s.ContextUsed, false)
-	}
-}
-
-func toInt(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case float64:
-		return int(n)
-	case int64:
-		return int(n)
-	}
-	return 0
+	m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated)
 }
 
 func (m *App) handleSubAgentQuestion(evt ttypes.AgentEventMsg) {

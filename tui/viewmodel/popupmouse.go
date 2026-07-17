@@ -782,13 +782,9 @@ func (m *App) clickCommandPalette(fw *wm.FloatingWindow, localX, localY int) tea
 	if host == nil {
 		return nil
 	}
-	// Convert local coords to screen for Host dispatch.
-	sx, sy := fw.Position()
-	screenX := sx + localX
-	screenY := sy + localY
 	res := host.Handle(tea.MouseClickMsg{
-		X:      screenX,
-		Y:      screenY,
+		X:      localX,
+		Y:      localY,
 		Button: tea.MouseLeft,
 	})
 	// Check if the click activated a list item.
@@ -819,9 +815,6 @@ func (m *App) hoverCommandPalette(fw *wm.FloatingWindow, localX, localY int) {
 	if host == nil {
 		return
 	}
-	sx, sy := fw.Position()
-	screenX := sx + localX
-	screenY := sy + localY
-	host.Handle(tea.MouseMotionMsg{X: screenX, Y: screenY})
+	host.Handle(tea.MouseMotionMsg{X: localX, Y: localY})
 	fw.MarkContentDirty()
 }

@@ -245,11 +245,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 					m.setMode(ModeChat)
 				}
 				hitWin.MarkContentDirty()
-			} else if hitWin.ID == "command-palette" && m.commandPaletteModel != nil {
-				if cmd := m.commandPaletteModel.Update(msg); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				hitWin.MarkContentDirty()
 			} else if cmd := m.handlePopupContentClick(hitWin, msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -481,8 +476,7 @@ func (m *App) handleConfirmResult(result ttypes.ConfirmResult) (tea.Model, tea.C
 		n.State.Thinking = true
 	}
 	m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
-	if m.ActiveSession.OnConfirmResult != nil {
-		m.ActiveSession.OnConfirmResult(result)
+	if m.ResolveConfirmation(m.AgentMgr.ActiveID(), result.Choice) && m.Logger != nil {
 		m.Logger.Info("BLOCK", "resolved_mouse", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
 	}
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
@@ -584,13 +578,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		if m.windowManager.IsDragging() {
 			return m, tea.Batch(cmds...)
 		}
-		if fw := m.windowManager.Focused(); fw != nil && fw.ID == "command-palette" && m.commandPaletteModel != nil {
-			if cmd := m.commandPaletteModel.Update(msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-		}
-
 		// Popup hover pre-selection: if the mouse is over a focusable
 		// popup, update its hover state and return (don't route motion
 		// to the underlying editor/tree). Iterate top-to-bottom.
@@ -782,11 +769,7 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		// early when IsDragging()), so forwarding a stray release would confuse it.
 		if released == nil {
 			if fw := m.windowManager.Focused(); fw != nil {
-				if fw.ID == "command-palette" && m.commandPaletteModel != nil {
-					if cmd := m.commandPaletteModel.Update(msg); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-				} else if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}

@@ -118,8 +118,8 @@ func (t *TUI) UpdateModelName(name string) {
 	t.Program.Send(types.UpdateModelMsg(name))
 }
 
-func (t *TUI) HydrateMessages(msgs []types.ChatMessage) {
-	t.Program.Send(types.HistoryMessagesMsg(msgs))
+func (t *TUI) HydrateMessages(msgs []workspace.ChatMessageView) {
+	t.Program.Send(types.HistoryMessagesMsg(viewmodel.ChatMessagesFromViews(msgs)))
 }
 
 func (t *TUI) OpenSettings() {

@@ -11,6 +11,10 @@ import (
 
 func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
 	m.launcher = nil
+	if m.AgentMgr.Get(orchID) != nil {
+		m.switchToAgentView(orchID)
+		return
+	}
 
 	ml := widgets.NewMessageList(m.Theme)
 	ml.SetModelName(m.ModelName)
@@ -33,6 +37,7 @@ func (m *App) RemoveOrchestrator(orchID string) {
 
 // cleanupAgent removes all state for a given agent orchestrator or sub-agent.
 func (m *App) cleanupAgent(agentID string) {
+	m.CloseAgent(agentID)
 	m.AgentMgr.Remove(agentID)
 	m.PaneMgr.Remove(agentID)
 	if m.StatusBar != nil {
@@ -193,6 +198,9 @@ func (m *App) switchToAgentView(agentID string) {
 		if curr != "" {
 			if n := m.AgentMgr.Get(curr); n != nil && n.State != nil && n.State.MsgList != nil {
 				n.State.MsgList.InvalidateAllMessages()
+			}
+			if usage, ok := m.AgentUsage(curr); ok && m.StatusBar != nil {
+				m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated)
 			}
 		}
 	}

@@ -47,14 +47,14 @@ type FocusContext string
 // which is the event emitted by a control when the user activates
 // it. ActionDef is the metadata definition; Action is the event.
 type ActionDef struct {
-	ID          ActionID
-	Label       string      // display label (e.g. "Find in Files")
-	Description  string      // short description for palette/help
-	Icon        string      // optional icon glyph
-	Category    string      // grouping label (e.g. "File", "Tools")
-	Bindings    []KeyBinding
+	ID           ActionID
+	Label        string // display label (e.g. "Find in Files")
+	Description  string // short description for palette/help
+	Icon         string // optional icon glyph
+	Category     string // grouping label (e.g. "File", "Tools")
+	Bindings     []KeyBinding
 	FocusContext FocusContext // empty = global
-	HintKey     string      // shortcut label for hints (e.g. "Ctrl+Alt+F")
+	HintKey      string       // shortcut label for hints (e.g. "Ctrl+Alt+F")
 }
 
 // ActionRegistry holds the set of registered actions. It is the
@@ -251,7 +251,6 @@ var defaultActions = []*ActionDef{
 		Description: "workspace settings: theme, editor, LSP, UI, font",
 		Icon:        "⚙",
 		Category:    "Tools",
-		HintKey:     "Ctrl+Alt+P → Settings",
 	},
 	{
 		ID:          "file.attach",

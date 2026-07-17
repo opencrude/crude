@@ -35,11 +35,12 @@ func (n *AgentNode) IsCompleted() bool {
 	return n.State != nil && n.State.Completed
 }
 
-// AgentManager owns the agent tree and the flat ID index. It is the single
-// source of truth for "which agents exist" and "what is the active agent".
+// AgentManager owns the agent forest and the flat ID index. Each orchestrator
+// is a root so multiple workspace sessions remain independently reachable.
+// It is the single source of truth for which agents exist and which is active.
 // All methods assume single-goroutine use (Bubble Tea main goroutine).
 type AgentManager struct {
-	root   *AgentNode
+	roots  []*AgentNode
 	byID   map[string]*AgentNode
 	active string
 }
@@ -51,7 +52,7 @@ func NewAgentManager() *AgentManager {
 	}
 }
 
-// AddOrchestrator creates the root node and registers it.
+// AddOrchestrator creates a root node and registers it.
 func (m *AgentManager) AddOrchestrator(
 	id string,
 	inputCh, btwCh chan<- provider.UserInput,
@@ -67,7 +68,10 @@ func (m *AgentManager) AddOrchestrator(
 		CancelChan:     cancelCh,
 		BlockResolveCh: blockResolveCh,
 	}
-	m.root = node
+	if existing := m.byID[id]; existing != nil {
+		m.Remove(id)
+	}
+	m.roots = append(m.roots, node)
 	m.byID[id] = node
 	m.active = id
 	return node
@@ -103,16 +107,26 @@ func (m *AgentManager) Remove(id string) {
 	if node == nil {
 		return
 	}
-	for _, child := range node.Children {
-		m.removeNode(child)
+	m.removeTree(node)
+	if node.Parent == nil {
+		for i, root := range m.roots {
+			if root == node {
+				m.roots = append(m.roots[:i], m.roots[i+1:]...)
+				break
+			}
+		}
 	}
-	m.removeNode(node)
-	if m.root == node {
-		m.root = nil
-	}
-	if m.active == id {
+	if m.active == id || m.byID[m.active] == nil {
 		m.active = ""
 	}
+}
+
+func (m *AgentManager) removeTree(node *AgentNode) {
+	children := append([]*AgentNode(nil), node.Children...)
+	for _, child := range children {
+		m.removeTree(child)
+	}
+	m.removeNode(node)
 }
 
 func (m *AgentManager) removeNode(node *AgentNode) {
@@ -148,9 +162,9 @@ func (m *AgentManager) SetActive(id string) {
 // ClearActive unsets the active agent.
 func (m *AgentManager) ClearActive() { m.active = "" }
 
-// AllNodes returns every node in the tree (root + all descendants).
+// AllNodes returns every node in the forest (roots + all descendants).
 func (m *AgentManager) AllNodes() []*AgentNode {
-	if m.root == nil {
+	if len(m.roots) == 0 {
 		return nil
 	}
 	var out []*AgentNode
@@ -161,19 +175,48 @@ func (m *AgentManager) AllNodes() []*AgentNode {
 			walk(c)
 		}
 	}
-	walk(m.root)
+	for _, root := range m.roots {
+		walk(root)
+	}
 	return out
 }
 
-// Orchestrator returns the root node (nil if no orchestrator exists).
-func (m *AgentManager) Orchestrator() *AgentNode { return m.root }
-
-// SubAgents returns the direct children of the orchestrator (nil if none).
-func (m *AgentManager) SubAgents() []*AgentNode {
-	if m.root == nil {
+// Orchestrator returns the active agent's root, or the latest root when no
+// agent is active.
+func (m *AgentManager) Orchestrator() *AgentNode {
+	if node := m.ActiveNode(); node != nil {
+		for node.Parent != nil {
+			node = node.Parent
+		}
+		return node
+	}
+	if len(m.roots) == 0 {
 		return nil
 	}
-	return m.root.Children
+	return m.roots[len(m.roots)-1]
+}
+
+// OrchestratorFor returns the root orchestrator that owns id.
+func (m *AgentManager) OrchestratorFor(id string) *AgentNode {
+	node := m.byID[id]
+	for node != nil && node.Parent != nil {
+		node = node.Parent
+	}
+	return node
+}
+
+// Orchestrators returns all root orchestrators in creation order.
+func (m *AgentManager) Orchestrators() []*AgentNode {
+	return append([]*AgentNode(nil), m.roots...)
+}
+
+// SubAgents returns the direct children of every orchestrator.
+func (m *AgentManager) SubAgents() []*AgentNode {
+	var out []*AgentNode
+	for _, root := range m.roots {
+		out = append(out, root.Children...)
+	}
+	return out
 }
 
 // AnyActive returns true if any agent in the tree is streaming or thinking.
@@ -188,10 +231,7 @@ func (m *AgentManager) AnyActive() bool {
 
 // Count returns the total number of agents (orchestrator + sub-agents).
 func (m *AgentManager) Count() int {
-	if m.root == nil {
-		return 0
-	}
-	return len(m.AllNodes())
+	return len(m.byID)
 }
 
 // TabOrder returns the agent IDs in the order they should appear as tabs:
@@ -203,8 +243,8 @@ func (m *AgentManager) TabOrder() []string {
 			out = append(out, child.ID)
 		}
 	}
-	if m.root != nil {
-		out = append(out, m.root.ID)
+	for _, root := range m.roots {
+		out = append(out, root.ID)
 	}
 	return out
 }

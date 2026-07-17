@@ -347,6 +347,19 @@ func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 	}
 }
 
+func TestLauncherShortcutsOnlyShowReachableBindings(t *testing.T) {
+	app := newTestAppWithLauncher(t)
+	shortcuts := app.launcherShortcuts()
+	for _, shortcut := range shortcuts {
+		if shortcut[1] == "Settings" {
+			t.Fatalf("palette-only Settings action must not claim a direct launcher shortcut: %q", shortcut[0])
+		}
+		if shortcut[1] != "" && strings.Contains(strings.ToLower(shortcut[0]), strings.ToLower(shortcut[1])) {
+			t.Fatalf("shortcut %q embeds its label %q", shortcut[0], shortcut[1])
+		}
+	}
+}
+
 // TestLauncher_GlobalEvent_HandledWithoutMode verifies global events
 // (empty agentID) are handled even with no agents.
 func TestLauncher_GlobalEvent_HandledWithoutMode(t *testing.T) {

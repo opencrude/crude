@@ -381,7 +381,8 @@ func TestSubmitBtw_NonexistentAgent(t *testing.T) {
 
 func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{})
+	cancelCh := make(chan struct{}, 1)
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, cancelCh, nil, &workspace.AgentState{})
 
 	app.RemoveOrchestrator("ses_1_orch_1")
 
@@ -390,6 +391,55 @@ func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	}
 	if p := app.PaneMgr.Get("ses_1_orch_1"); p != nil {
 		t.Fatal("agent should be removed from paneMgr")
+	}
+	select {
+	case <-cancelCh:
+	default:
+		t.Fatal("orchestrator should be cancelled before UI cleanup")
+	}
+}
+
+func TestAddOrchestratorKeepsExistingSessionReachable(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("first", make(chan provider.UserInput, 1), nil, nil, nil)
+	app.AddOrchestrator("second", make(chan provider.UserInput, 1), nil, nil, nil)
+
+	if app.AgentMgr.Get("first") == nil || app.AgentMgr.Get("second") == nil {
+		t.Fatal("adding a second session hid the first orchestrator")
+	}
+	if got := app.AgentMgr.Count(); got != 2 {
+		t.Fatalf("agent count = %d, want 2", got)
+	}
+}
+
+func TestHandleAgentEventDropsUnknownOrchestrator(t *testing.T) {
+	app := newFullTestApp(t)
+	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "done", AgentID: "stale", Data: "done"})
+	if app.AgentMgr.Get("stale") != nil {
+		t.Fatal("stale event created an orchestrator without live channels")
+	}
+}
+
+func TestHandleSubPaneCompletionIgnoresRemovedAgent(t *testing.T) {
+	app := newFullTestApp(t)
+	app.handleSubPaneCompletion("removed")
+}
+
+func TestHandleCancelConfirmResolvesDenyWithoutCallback(t *testing.T) {
+	app := newFullTestApp(t)
+	blockCh := make(chan string, 1)
+	app.AgentMgr.AddOrchestrator("agent", nil, nil, nil, blockCh, &workspace.AgentState{})
+	app.OverlayState.Set(ModeConfirm)
+
+	app.handleCancel(tea.KeyPressMsg{Code: tea.KeyEsc})
+
+	select {
+	case got := <-blockCh:
+		if got != "deny" {
+			t.Fatalf("confirmation response = %q, want deny", got)
+		}
+	default:
+		t.Fatal("cancel did not resolve the backend confirmation")
 	}
 }
 

@@ -316,3 +316,27 @@ func TestResumedSessionOrchestrators(t *testing.T) {
 		t.Fatal("orchestrator should be stored in map")
 	}
 }
+
+func TestCloseOrchestratorSignalsStopWithoutClosingInputChannels(t *testing.T) {
+	sess := &Session{
+		orchestrators:  make(map[string]*Orchestrator),
+		runtimeProfile: NewRuntimeProfile(testConfig()),
+	}
+	orch := NewOrchestrator("orch", sess)
+	sess.orchestrators[orch.ID] = orch
+	sess.runtimeProfile.GetOrCreateOverride(orch.ID)
+
+	sess.CloseOrchestrator(orch.ID)
+	sess.CloseOrchestrator(orch.ID)
+
+	select {
+	case <-orch.stopCh:
+	default:
+		t.Fatal("CloseOrchestrator() did not close the private stop channel")
+	}
+
+	// These channels are owned by senders outside session. They must remain
+	// open so an already-scheduled Bubble Tea command cannot panic on send.
+	orch.InputCh <- provider.PlainInput("late input")
+	orch.BtwCh <- provider.PlainInput("late btw")
+}

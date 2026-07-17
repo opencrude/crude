@@ -256,9 +256,11 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			if m.commandPaletteModel != nil {
 				// Route text-editing keys to the search field; navigation/enter
 				// to the list. The model handles the filter callback.
-				if m.handleCommandPaletteKey(msg) {
+				refresh, cmd := m.handleCommandPaletteKey(msg)
+				if refresh {
 					m.refreshCommandPaletteFrame()
 				}
+				return m, cmd
 			}
 			return m, nil
 
@@ -403,8 +405,7 @@ func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model,
 			n.State.Thinking = true
 		}
 		m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
-		if m.ActiveSession.OnConfirmResult != nil {
-			m.ActiveSession.OnConfirmResult(result)
+		if m.ResolveConfirmation(m.AgentMgr.ActiveID(), result.Choice) && m.Logger != nil {
 			m.Logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
 		}
 		if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
@@ -464,9 +465,7 @@ func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 		m.Input.ResetPrompt()
 		m.Input.ClearInput()
 		m.closeAllQuestionOverlayTabs()
-		if m.ActiveSession.OnQuestionResult != nil {
-			m.ActiveSession.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
-		}
+		m.ResolveQuestion(m.AgentMgr.ActiveID(), nil, nil, true)
 		return m, nil
 	}
 
@@ -677,9 +676,8 @@ func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
 			n.State.Thinking = true
 		}
 		m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
-		if m.ActiveSession.OnQuestionResult != nil {
-			m.ActiveSession.OnQuestionResult(ttypes.QuestionResult(result))
-		}
+		questionResult := ttypes.QuestionResult(result)
+		m.ResolveQuestion(m.AgentMgr.ActiveID(), questionResult.Answers, questionResult.Questions, questionResult.Cancelled)
 		m.closeAllQuestionOverlayTabs()
 		m.Input.ResetPrompt()
 		m.Input.ClearInput()
@@ -694,9 +692,7 @@ func (m *App) finishQuestionResult(result ttypes.QuestionResult, cmds *[]tea.Cmd
 		n.State.Thinking = true
 	}
 	m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
-	if m.ActiveSession.OnQuestionResult != nil {
-		m.ActiveSession.OnQuestionResult(result)
-	}
+	m.ResolveQuestion(m.AgentMgr.ActiveID(), result.Answers, result.Questions, result.Cancelled)
 	m.closeAllQuestionOverlayTabs()
 	m.Input.ResetPrompt()
 	m.Input.ClearInput()

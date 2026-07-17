@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -38,7 +39,7 @@ func TestActionRegistry_RegisterReplaces(t *testing.T) {
 func TestActionRegistry_MatchGlobal(t *testing.T) {
 	r := NewActionRegistry()
 	r.Register(&ActionDef{
-		ID:   "palette.open",
+		ID: "palette.open",
 		Bindings: []KeyBinding{
 			{Key: "ctrl+alt+p"},
 			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'p'},
@@ -58,9 +59,9 @@ func TestActionRegistry_MatchGlobal(t *testing.T) {
 func TestActionRegistry_MatchGlobalSkipsContextActions(t *testing.T) {
 	r := NewActionRegistry()
 	r.Register(&ActionDef{
-		ID:          "editor.save",
+		ID:           "editor.save",
 		FocusContext: "editor",
-		Bindings:    []KeyBinding{{Key: "ctrl+s"}},
+		Bindings:     []KeyBinding{{Key: "ctrl+s"}},
 	})
 	// editor.save is context-scoped, so global match returns nil.
 	got := r.MatchGlobal(tea.KeyPressMsg{Code: 0})
@@ -72,9 +73,9 @@ func TestActionRegistry_MatchGlobalSkipsContextActions(t *testing.T) {
 func TestActionRegistry_MatchContext(t *testing.T) {
 	r := NewActionRegistry()
 	r.Register(&ActionDef{
-		ID:          "editor.save",
+		ID:           "editor.save",
 		FocusContext: "editor",
-		Bindings:    []KeyBinding{{Key: "ctrl+s"}},
+		Bindings:     []KeyBinding{{Key: "ctrl+s"}},
 	})
 	// String-based matching via Key field.
 	got := r.MatchContext("editor", tea.KeyPressMsg{})
@@ -133,6 +134,18 @@ func TestDefaultRegistry_HasGlobalActions(t *testing.T) {
 	a := r.Get("app.quit")
 	if len(a.Bindings) == 0 {
 		t.Fatal("app.quit should have bindings")
+	}
+}
+
+func TestDefaultRegistry_HintsContainOnlyShortcutText(t *testing.T) {
+	r := DefaultRegistry()
+	for _, action := range r.All() {
+		if strings.Contains(action.HintKey, "→") {
+			t.Errorf("action %q embeds navigation text in HintKey %q", action.ID, action.HintKey)
+		}
+		if action.HintKey != "" && strings.Contains(strings.ToLower(action.HintKey), strings.ToLower(action.Label)) {
+			t.Errorf("action %q embeds label in HintKey %q", action.ID, action.HintKey)
+		}
 	}
 }
 

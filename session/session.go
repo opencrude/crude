@@ -91,6 +91,7 @@ type Session struct {
 	subAgentSup   *SubAgentRunner
 	orchestrators map[string]*Orchestrator
 	orchMu        sync.Mutex
+	orchWg        sync.WaitGroup
 	orchNextID    atomic.Int64
 
 	// consumedReports tracks sub-agent IDs whose results the main agent has already
@@ -258,6 +259,16 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 func (s *Session) Close() {
 	atomic.StoreInt32(&s.closing, 1)
 	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
+	s.orchMu.Lock()
+	orchIDs := make([]string, 0, len(s.orchestrators))
+	for id := range s.orchestrators {
+		orchIDs = append(orchIDs, id)
+	}
+	s.orchMu.Unlock()
+	for _, id := range orchIDs {
+		s.CloseOrchestrator(id)
+	}
+	s.orchWg.Wait()
 
 	s.flushWg.Wait()
 	s.flushWriteBufSync()
@@ -412,6 +423,9 @@ func (s *Session) drainWakeCh() {
 }
 
 func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
+	if atomic.LoadInt32(&s.closing) == 1 {
+		return nil, fmt.Errorf("session is closing")
+	}
 	nextID := s.orchNextID.Add(1)
 	o := NewOrchestrator(fmt.Sprintf("%s_orch_%d", s.ID, nextID), s)
 
@@ -428,13 +442,22 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 	}
 
 	s.orchMu.Lock()
+	if atomic.LoadInt32(&s.closing) == 1 {
+		s.orchMu.Unlock()
+		s.runtimeProfile.RemoveOverride(o.ID)
+		return nil, fmt.Errorf("session is closing")
+	}
 	if s.orchestrators == nil {
 		s.orchestrators = make(map[string]*Orchestrator)
 	}
 	s.orchestrators[o.ID] = o
+	s.orchWg.Add(1)
 	s.orchMu.Unlock()
 
-	go s.RunOrchestrator(o, sender)
+	go func() {
+		defer s.orchWg.Done()
+		s.RunOrchestrator(o, sender)
+	}()
 
 	return o, nil
 }
@@ -444,10 +467,8 @@ func (s *Session) CloseOrchestrator(id string) {
 	o, ok := s.orchestrators[id]
 	delete(s.orchestrators, id)
 	s.orchMu.Unlock()
-	if ok {
-		o.closing.Store(true)
-		close(o.InputCh)
-		close(o.BtwCh)
+	if ok && o.closing.CompareAndSwap(false, true) {
+		close(o.stopCh)
 	}
 	// Clean up the runtime profile override for this orchestrator.
 	s.runtimeProfile.RemoveOverride(id)

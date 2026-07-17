@@ -4,8 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-
-	ttypes "crude/tui/types"
 )
 
 func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
@@ -31,14 +29,8 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		m.OverlayState.SetBlocking(false)
 		m.StatusBar.SetConfirming(false)
 		m.closeOverlayTab("Confirm")
-		m.ActiveSession.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
-		if n := m.AgentMgr.ActiveNode(); n != nil {
-			select {
-			case n.CancelChan <- struct{}{}:
-			default:
-			}
-		}
-		m.StatusBar.SetInfo("cancelling...")
+		m.ResolveConfirmation(m.AgentMgr.ActiveID(), "deny")
+		m.StatusBar.SetInfo("denied")
 		return nil
 	}
 
@@ -49,15 +41,15 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		m.Input.ResetPrompt()
 		m.Input.ClearInput()
 		m.closeAllQuestionOverlayTabs()
-		m.ActiveSession.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
+		m.ResolveQuestion(m.AgentMgr.ActiveID(), nil, nil, true)
 		return nil
 	}
 
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && !n.State.Completed && n.State.IsActive() {
-		go m.CancelSubAgent(n.ID)
+		go m.CancelAgent(n.ID)
 		n.State.Streaming = false
 		n.State.Thinking = false
-		m.StatusBar.SetInfo("cancelling sub-agent...")
+		m.StatusBar.SetInfo("cancelling agent...")
 		return nil
 	}
 

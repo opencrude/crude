@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,18 @@ import (
 // multiple LSP servers (one per language) in the same project root.
 func clientKey(rootURI, cmd string) string { return rootURI + "|" + cmd }
 
+// workspaceBootstrapExtensions are languages worth starting from the workspace
+// scan alone. JSON is intentionally on-demand: repositories contain many config
+// and metadata JSON files that do not justify starting an optional JSON server.
+var workspaceBootstrapExtensions = []string{".go", ".rs", ".py", ".ts", ".js", ".tsx", ".jsx", ".css"}
+
+type lspClientState struct {
+	rootURI string
+	cmd     string
+	status  editor.LSPStatus
+	err     string
+}
+
 // LSPManager owns all LSP server connections for the application.
 // It lives for the full app lifetime, maintains diagnostics for every
 // file in the project (not just open tabs), and routes them to the
@@ -25,6 +38,7 @@ func clientKey(rootURI, cmd string) string { return rootURI + "|" + cmd }
 type LSPManager struct {
 	mu      sync.Mutex
 	clients map[string]*editor.LSPIntegration // keyed by clientKey(rootURI, cmd)
+	states  map[string]lspClientState         // retained even when a client fails to start
 	logger  Logger
 
 	activeFilePath string
@@ -65,6 +79,7 @@ type LSPManager struct {
 func NewLSPManager(logger Logger) *LSPManager {
 	return &LSPManager{
 		clients:         make(map[string]*editor.LSPIntegration),
+		states:          make(map[string]lspClientState),
 		logger:          logger,
 		pendingText:     make(map[string]string),
 		updateTimers:    make(map[string]*time.Timer),
@@ -113,7 +128,7 @@ func (m *LSPManager) startServerForRoot(rootURI string) {
 	}
 
 	// Scan the project once to find which extensions actually exist.
-	allExts := []string{".go", ".rs", ".py", ".ts", ".js", ".tsx", ".jsx", ".css", ".json"}
+	allExts := workspaceBootstrapExtensions
 	present := scanPresentExtensions(rootPath, allExts)
 
 	// Build reverse map: cmd -> extensions it handles.
@@ -149,28 +164,43 @@ func (m *LSPManager) startServerForRoot(rootURI string) {
 			continue
 		}
 
-		client := editor.NewLSPIntegration(entry.cmd, entry.args, rootURI)
-		client.OnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
-			m.setFileDiagnostics(fp, diags)
-			if cb := m.captureOnDiagnostics(); cb != nil {
-				cb(fp, diags)
-			}
-		})
-
-		key := clientKey(rootURI, entry.cmd)
-		m.mu.Lock()
-		if _, exists := m.clients[key]; exists {
-			m.mu.Unlock()
-			continue
-		}
-		m.clients[key] = client
-		m.activeStatus = editor.LSPStarting
-		m.activeRootURI = rootURI
-		m.lastBusyAt = time.Now().UnixNano()
-		m.mu.Unlock()
-
-		go m.startClient(client, entry.cmd)
+		m.ensureServer(rootURI, entry.cmd, entry.args)
 	}
+}
+
+// ensureServer registers and asynchronously starts one server. It is used both
+// by workspace bootstrap and by OpenFile for on-demand languages such as JSON.
+func (m *LSPManager) ensureServer(rootURI, cmd string, args []string) *editor.LSPIntegration {
+	key := clientKey(rootURI, cmd)
+	m.mu.Lock()
+	if existing := m.clients[key]; existing != nil {
+		m.mu.Unlock()
+		return existing
+	}
+	m.mu.Unlock()
+
+	client := editor.NewLSPIntegration(cmd, args, rootURI)
+	client.OnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
+		m.setFileDiagnostics(fp, diags)
+		if cb := m.captureOnDiagnostics(); cb != nil {
+			cb(fp, diags)
+		}
+	})
+
+	m.mu.Lock()
+	if existing := m.clients[key]; existing != nil {
+		m.mu.Unlock()
+		return existing
+	}
+	m.clients[key] = client
+	m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, status: editor.LSPStarting}
+	m.activeRootURI = rootURI
+	m.lastBusyAt = time.Now().UnixNano()
+	m.recomputeActiveStatusLocked()
+	m.mu.Unlock()
+
+	go m.startClient(key, client, rootURI, cmd)
+	return client
 }
 
 // scanPresentExtensions walks rootPath and returns a set of file extensions
@@ -268,25 +298,28 @@ func (m *LSPManager) SetOnDiagnostics(fn func(filePath string, diags []editor.LS
 	m.onDiagnostics = fn
 }
 
-// OpenFile registers a file with the LSP server.  The server must already
-// be running (StartForWorkspace should have been called).
+// OpenFile registers a file with its LSP server. Languages omitted from the
+// workspace bootstrap scan, such as JSON, start on demand here.
 func (m *LSPManager) OpenFile(ctx context.Context, filePath string, text string) {
-	m.mu.Lock()
-	m.activeFilePath = filePath
-	m.pendingText[filePath] = text
 	ext := strings.ToLower(filepath.Ext(filePath))
 	rootURI := editor.RootURIForFile(filePath)
-
-	client := m.clients[clientKey(rootURI, editor.MustServerCmd(ext))]
-	if client == nil {
-		m.mu.Unlock()
+	cmd, args, ok := editor.ServerConfigForExt(ext)
+	if !ok {
 		return
 	}
 
+	m.mu.Lock()
+	m.activeFilePath = filePath
+	m.pendingText[filePath] = text
 	m.activeRootURI = rootURI
-	m.activeError = ""
+	client := m.clients[clientKey(rootURI, cmd)]
+	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
 
+	if client == nil {
+		m.ensureServer(rootURI, cmd, args)
+		return
+	}
 	langID := editor.LanguageID(ext)
 	client.OpenFile(ctx, filePath, langID, text)
 }
@@ -294,16 +327,15 @@ func (m *LSPManager) OpenFile(ctx context.Context, filePath string, text string)
 // startClient creates its own context so the caller's short-lived context
 // (which may already be cancelled) does not kill the LSP handshake.
 // After the server connects it opens every source file in the project.
-func (m *LSPManager) startClient(client *editor.LSPIntegration, cmd string) {
+func (m *LSPManager) startClient(key string, client *editor.LSPIntegration, rootURI, cmd string) {
 	startCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	if _, err := exec.LookPath(cmd); err != nil {
 		m.removeClient(client)
 		m.mu.Lock()
-		m.activeStatus = editor.LSPFailed
-		m.activeError = cmd + " not found in PATH"
-		m.activeConnected = false
+		m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, status: editor.LSPFailed, err: cmd + " not found in PATH"}
+		m.recomputeActiveStatusLocked()
 		m.mu.Unlock()
 		return
 	}
@@ -311,19 +343,16 @@ func (m *LSPManager) startClient(client *editor.LSPIntegration, cmd string) {
 	if err := client.Start(startCtx); err != nil {
 		m.removeClient(client)
 		m.mu.Lock()
-		m.activeStatus = editor.LSPFailed
-		m.activeError = cmd + " failed to start: " + err.Error()
-		m.activeConnected = false
+		m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, status: editor.LSPFailed, err: cmd + " failed to start: " + err.Error()}
+		m.recomputeActiveStatusLocked()
 		m.mu.Unlock()
 		return
 	}
 
 	m.mu.Lock()
-	m.activeStatus = editor.LSPConnected
-	m.activeConnected = true
-	m.activeError = ""
+	m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, status: editor.LSPConnected}
+	m.recomputeActiveStatusLocked()
 	m.lastBusyAt = time.Now().UnixNano()
-	rootURI := m.activeRootURI
 	m.mu.Unlock()
 
 	// Open every source file in the project so the server reports
@@ -454,6 +483,7 @@ func (m *LSPManager) CloseFile(ctx context.Context, filePath string) {
 		timer.Stop()
 		delete(m.updateTimers, filePath)
 	}
+	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
 
 	for _, client := range m.clients {
@@ -511,6 +541,71 @@ func (m *LSPManager) Status() (connected bool, status editor.LSPStatus, errMsg s
 	return m.activeConnected, m.activeStatus, m.activeError
 }
 
+func (m *LSPManager) recomputeActiveStatusLocked() {
+	if state, ok := m.activeFileStateLocked(); ok {
+		m.applyAggregateStateLocked(state)
+		return
+	}
+
+	keys := make([]string, 0, len(m.states))
+	for key := range m.states {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var firstStarting, firstFailed *lspClientState
+	for _, key := range keys {
+		state := m.states[key]
+		switch state.status {
+		case editor.LSPConnected:
+			m.applyAggregateStateLocked(state)
+			return
+		case editor.LSPStarting:
+			if firstStarting == nil {
+				copy := state
+				firstStarting = &copy
+			}
+		case editor.LSPFailed:
+			if firstFailed == nil {
+				copy := state
+				firstFailed = &copy
+			}
+		}
+	}
+	if firstStarting != nil {
+		m.applyAggregateStateLocked(*firstStarting)
+		return
+	}
+	if firstFailed != nil {
+		m.applyAggregateStateLocked(*firstFailed)
+		return
+	}
+	m.applyAggregateStateLocked(lspClientState{status: editor.LSPIdle})
+}
+
+func (m *LSPManager) activeFileStateLocked() (lspClientState, bool) {
+	if m.activeFilePath == "" {
+		return lspClientState{}, false
+	}
+	ext := strings.ToLower(filepath.Ext(m.activeFilePath))
+	cmd, _, ok := editor.ServerConfigForExt(ext)
+	if !ok {
+		return lspClientState{}, false
+	}
+	rootURI := editor.RootURIForFile(m.activeFilePath)
+	state, ok := m.states[clientKey(rootURI, cmd)]
+	return state, ok
+}
+
+func (m *LSPManager) applyAggregateStateLocked(state lspClientState) {
+	m.activeStatus = state.status
+	m.activeConnected = state.status == editor.LSPConnected
+	m.activeError = state.err
+	if state.rootURI != "" {
+		m.activeRootURI = state.rootURI
+	}
+}
+
 // ServerReady returns true when at least one LSP client has reached
 // the connected state. Used by the right-click context menu to
 // enable LSP-backed items.
@@ -529,7 +624,7 @@ func (m *LSPManager) ServerReady() bool {
 func (m *LSPManager) IsConfigured() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.clients) > 0 {
+	if len(m.clients) > 0 || len(m.states) > 0 {
 		return true
 	}
 	return m.activeStatus != editor.LSPIdle
@@ -640,8 +735,21 @@ func (m *LSPManager) ProjectInsights() editor.ProjectInsights {
 }
 
 func (m *LSPManager) activeServerNameLocked() string {
-	for _, c := range m.clients {
-		return c.ServerCmd()
+	if state, ok := m.activeFileStateLocked(); ok {
+		return state.cmd
+	}
+	keys := make([]string, 0, len(m.states))
+	for key := range m.states {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if state := m.states[key]; state.status == editor.LSPConnected {
+			return state.cmd
+		}
+	}
+	for _, key := range keys {
+		return m.states[key].cmd
 	}
 	return ""
 }
@@ -740,6 +848,7 @@ func (m *LSPManager) Stop() {
 		clients = append(clients, c)
 	}
 	m.clients = make(map[string]*editor.LSPIntegration)
+	m.states = make(map[string]lspClientState)
 	// Reset lifecycle state so the status bar and other consumers
 	// don't keep reporting a server that's been intentionally
 	// stopped. Cached diagnostics, symbols, and sync timestamps

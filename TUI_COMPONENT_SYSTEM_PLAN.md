@@ -1,8 +1,8 @@
 # TUI Component System and Design Language Plan
 
-Status: Implementation in progress — aligned to this document as of 2026-07-16
+Status: Implementation in progress — aligned to this document as of 2026-07-17
 
-Date: 2026-07-16 (progress last reconciled after WM chrome unification + light theme + project search seam)
+Date: 2026-07-17 (progress last reconciled after performance baselines + agent lifecycle + message hydration seam)
 
 Scope: The complete `tui/` layer and every program boundary that supplies data to,
 or receives actions from, the TUI.
@@ -26,7 +26,7 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 
 | Phase | Status | Notes |
 |------|--------|-------|
-| 0 Evidence freeze | PARTIAL | Docs + audit script + manifest landed; **canonical visual baselines landed** (80x24, 80x30, 120x40, 200x50 dark/light + runtime switch + WindowFrame/TextField/List/Button/Label cell assertions); perf baselines still missing |
+| 0 Evidence freeze | DONE | Docs + audit + manifest; canonical dark/light visual baselines at 80x24 through 200x50; checked-in render/allocation/interaction benchmarks with recorded numeric targets |
 | 1 Rendering foundations | DONE | cell/surface/compositor/scrollbar tests + benches |
 | 2 Component host | DONE | `tui/ui` Host + controls; not yet wired as viewmodel root |
 | 3 Theme engine | PARTIAL | TokenSet + state precedence; dark/light themes; two-theme state gallery + runtime switch; no HC/hot reload |
@@ -36,7 +36,7 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 7 Collections / scrollbar | PARTIAL | List (header/sep/disabled), VirtualList, ScrollModel, ScrollbarControl + ANSI bridge |
 | 8 Form system | PARTIAL | form.TextItem uses TextEdit; form shell still legacy lipgloss |
 | 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
-| 10 Domain seams | PARTIAL | Workspace ProjectSearchService owns Find in Files execution, cancellation, request identity, and stale-result rejection; **workspace FileOpsService owns all filesystem mutations** (create file/folder, rename, delete, LSP workspace edit); TUI tree operations + LSP rename migrated to workspace methods; EventBus integration for all file ops |
+| 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace methods now resolve/cancel/close agents without session callbacks; multi-session orchestrators remain reachable; persisted chat hydration uses workspace-owned `ChatMessageView` projected at the TUI boundary |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
 | 12 Structured migrations | PARTIAL | Filter engines + shared filter paint; Find in Files domain search moved to workspace; full surfaces still legacy |
 | 13 Shell migrations | OPEN | |
@@ -887,16 +887,15 @@ allowlist but rejects additions unless the plan itself is explicitly revised.
 
 ## 19. Detailed Phases
 
-### Phase 0: Evidence freeze and no-new-debt gate 🔄 PARTIAL
+### Phase 0: Evidence freeze and no-new-debt gate ✅ DONE
 
 Landed:
 - `docs/tui/SURFACE_CATALOG.md`, `CONTROL_USAGE.md`, `INTERACTION_MATRIX.md`, `DESIGN_TOKEN_BYPASSES.md`
 - `docs/tui/bypass_manifest.json` (v2; control_bypasses shrink only)
 - `scripts/tui_design_audit.sh` (no-new-debt gate; currently passes)
 - **Canonical visual baselines** (`tui/ui/visual_baseline_test.go`): 80x24, 80x30, 120x40, 200x50 under dark and light themes; runtime theme switch verification; WindowFrame close glyph, border cells, content fill; TextField cursor/placeholder; List selected row; Button disabled; Label color roles; ellipsis truncation; continuation cell integrity; render/key benchmarks
-
-Still open for full Phase 0 exit:
-- Baseline render, allocation, and interaction benchmarks with recorded numeric targets
+- **Checked-in numeric performance baseline** (`docs/tui/PERFORMANCE_BASELINES.md`): reproducible environment/command, five-sample observed ranges, allocation counts, expected review ceilings, and interpretation rules
+- Real Go benchmarks in `tui/ui/benchmark_test.go` cover gallery paint at 80x24 and 120x40 plus the TextEdit key cycle; existing Surface/compositor hot paths are recorded alongside them
 
 Objectives:
 
@@ -1282,9 +1281,22 @@ Landed:
 - **Comprehensive tests**: 25+ service tests (create/rename/delete/edit, validation,
   edge cases) + 15+ viewmodel integration tests (routing, EventBus publication,
   validation enforcement)
+- **Agent lifecycle boundary:** `AgentManager` is an orchestrator forest rather than a
+  single replaceable root; workspace tracks orchestrator-to-session ownership and
+  exposes direct confirmation, question, cancellation, and close methods
+- Dead per-session TUI callbacks were deleted; stale events no longer manufacture
+  channel-less orchestrators; backend orchestrators stop through a private close signal
+  without closing channels still owned by scheduled frontend commands
+- Usage events update their owning session even when another tab is active; switching
+  tabs restores that session's token/cost snapshot
+- **First message view-data seam:** persisted hydration is stored as workspace-owned
+  `ChatMessageView`; the TUI projects it into `types.ChatMessage`, so
+  `workspace/session.go` no longer imports `tui/types` or stores rendering caches;
+  hydration data is consumed once so reselecting an open session cannot duplicate it
 
 Remaining:
-- Introduce view-data seams for messages, subpanes, tree rows, tabs, and status
+- Replace live `AgentState.MsgList` and `SubPane.MsgList` presentation ownership;
+  introduce view-data seams for subpanes, tree rows, tabs, and status
 - Remove workspace ownership/imports of TUI presentation objects
 
 Objectives:
@@ -1439,10 +1451,10 @@ Exit criteria:
 | Launcher | Responsive layout + actions + SearchField + workspace collection | 12 | filter TextEdit + RenderFilterLine + scrollbar ANSI |
 | Header | Row layout + text/status primitives | 13 | open |
 | Status bar | Segmented row + action-derived hints | 13 | open |
-| Tabs | Tabs control + close actions + status indicators | 13 | open |
+| Tabs | Tabs control + close actions + status indicators | 13 | Multi-session agent roots/lifecycle fixed; component/data-view migration open |
 | File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | filter string still on model |
 | Chat input | TextArea + reference chips + action hints | 13 | still components.TextInput |
-| Message list | VirtualList + message delegates + selection | 13 | open |
+| Message list | VirtualList + message delegates + selection | 13 | Persisted hydration uses workspace `ChatMessageView`; live `AgentState.MsgList` ownership remains open |
 | Subpanes | Panel + VirtualList + nested viewport | 13 | open |
 | Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | open |
 
@@ -1580,7 +1592,7 @@ This program is complete only when all statements are true:
 
 ### Completed foundation blocks
 
-1. Phase 0 artifacts + `scripts/tui_design_audit.sh` (screenshots/baselines still open).
+1. Phase 0 artifacts + `scripts/tui_design_audit.sh` + canonical visual and numeric performance baselines.
 2. Phase 1 cell/surface/compositor/scrollbar tests.
 3. Phase 2 `tui/ui` Host + first controls.
 4. Early Phase 6/7/9 foundations: TextEdit, TextField, List, VirtualList, WindowFrame,
@@ -1693,19 +1705,36 @@ This program is complete only when all statements are true:
     - LSP rename migrated: `handleRenameResult` collects edits, calls `ApplyWorkspaceEdit`
     - 25+ service tests + 15+ viewmodel integration tests
 
+25. Phase 0 numeric performance closeout:
+    - `tui/ui/benchmark_test.go` contains real gallery paint and TextEdit event benchmarks
+    - `docs/tui/PERFORMANCE_BASELINES.md` records five-sample timings, allocations,
+      review ceilings, environment, reproduction command, and comparison rules
+
+26. Agent lifecycle and reachability correction:
+    - AgentManager supports multiple orchestrator roots without orphaning prior sessions
+    - Workspace owns orchestrator-to-session routing for resolve/cancel/close methods
+    - Background usage is recorded against its owning session and restored on tab switch
+    - Session callbacks for confirmation/question/sub-agent cancellation/reset deleted
+    - Safe private orchestrator stop signal replaces closing externally-owned input channels
+    - Unknown late events are dropped; nil completion paths and context-menu cancellation fixed
+
+27. Phase 10 persisted-message view-data seam:
+    - Workspace stores hydration as presentation-neutral `ChatMessageView`
+    - TUI boundary projects views into frontend `types.ChatMessage` values
+    - `workspace/session.go` no longer imports `tui/types`; hydration snapshots are one-shot
+
 ### Next slices (priority order — stay on plan)
 
-  1. **Phase 0 closeout:** checked-in performance baselines with recorded numeric targets.
-  2. **Phase 10:** start view-data seams for messages, subpanes, tree rows, tabs, and
-     status. Begin removing workspace ownership/imports of TUI presentation objects.
-  3. **Phase 12:** structured-surface migration (settings, question form, YOLO,
+  1. **Phase 10:** replace live `AgentState.MsgList` / `SubPane.MsgList` presentation
+     ownership, then add tree-row, tab, and status view-data seams.
+  2. **Phase 12:** structured-surface migration (settings, question form, YOLO,
      picker, Find in Files, composer, text overlay, launcher). Use FileOpsService
      for any file picker filesystem operations.
-  4. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
+  3. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
      and live config hot-reload.
-  5. **Phase 13:** persistent-shell and core-view migration.
-  6. **Phase 14:** package-boundary completion and deletion.
-  7. **Phase 15:** stabilization and permanent enforcement.
+  4. **Phase 13:** persistent-shell and core-view migration.
+  5. **Phase 14:** package-boundary completion and deletion.
+  6. **Phase 15:** stabilization and permanent enforcement.
 
 ### Anti-drift checks
 
