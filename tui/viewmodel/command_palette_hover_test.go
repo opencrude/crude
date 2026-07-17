@@ -9,6 +9,31 @@ import (
 	"crude/tui/widgets"
 )
 
+func openCommandPaletteForInteractionTest(t *testing.T, callback func(string) tea.Cmd) (*App, *ui.ComponentWidget) {
+	t.Helper()
+	app := newFullTestApp(t)
+	app.registerOverlayHandlers()
+	if _, cmd := app.toggleCommandPalette(); cmd != nil {
+		t.Fatal("opening command palette returned an unexpected command")
+	}
+	if app.commandPaletteModel == nil {
+		t.Fatal("command palette model was not created")
+	}
+	app.commandPaletteModel.callback = callback
+	fw := app.overlayHost.Window(ui.OverlayCommandPalette)
+	if fw == nil {
+		t.Fatal("command palette window was not opened")
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil {
+		t.Fatalf("command palette content is %T, want *ui.ComponentWidget", fw.Content)
+	}
+	w, h := fw.Size()
+	cw.Host().Resize(w, h)
+	cw.Host().Layout()
+	return app, cw
+}
+
 // TestCommandPalette_HoverViaHost tests that mouse motion over the
 // command palette frame updates the list hover through the Host
 // event routing (replacing the old handleMouseMotion/lineToItem path).
@@ -121,5 +146,68 @@ func TestCommandPalette_ListNavigationUpDown(t *testing.T) {
 	afterUp := list.SelectedIndex()
 	if afterUp >= afterDown {
 		t.Errorf("Up should retreat selection: %d -> %d", afterDown, afterUp)
+	}
+}
+
+func TestCommandPalette_AppKeyboardNavigationPersistsAfterRefresh(t *testing.T) {
+	app, cw := openCommandPaletteForInteractionTest(t, nil)
+	list := widgets.CommandPaletteList(cw)
+	initial := list.SelectedIndex()
+
+	if _, cmd := app.dispatchFloatingWindowKey(tea.KeyPressMsg{Code: tea.KeyDown}); cmd != nil {
+		t.Fatal("Down returned an unexpected command")
+	}
+	if got := list.SelectedIndex(); got <= initial {
+		t.Fatalf("Down selection=%d, want greater than %d", got, initial)
+	}
+}
+
+func TestCommandPalette_AppKeyboardTypingAndEnter(t *testing.T) {
+	var called string
+	app, cw := openCommandPaletteForInteractionTest(t, func(id string) tea.Cmd {
+		called = id
+		return nil
+	})
+
+	if _, cmd := app.dispatchFloatingWindowKey(tea.KeyPressMsg{Code: 's', Text: "sett"}); cmd != nil {
+		t.Fatal("typing returned an unexpected command")
+	}
+	search := widgets.CommandPaletteSearch(cw)
+	if got := search.Value(); got != "sett" {
+		t.Fatalf("search value=%q, want sett", got)
+	}
+	if _, cmd := app.dispatchFloatingWindowKey(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil {
+		cmd()
+	}
+	if called == "" {
+		t.Fatal("Enter did not activate the filtered command")
+	}
+}
+
+func TestCommandPalette_AppMouseHoverAndClickUseWindowLocalCoordinates(t *testing.T) {
+	var called string
+	app, cw := openCommandPaletteForInteractionTest(t, func(id string) tea.Cmd {
+		called = id
+		return nil
+	})
+	fw := app.overlayHost.Window(ui.OverlayCommandPalette)
+	frame, ok := cw.Root().(*ui.WindowFrame)
+	if !ok {
+		t.Fatalf("command palette root is %T, want *ui.WindowFrame", cw.Root())
+	}
+	list := widgets.CommandPaletteList(cw)
+	selectedRow := list.SelectedIndex() - list.Scroll().Offset()
+	localX := frame.ContentBounds().X + 1
+	localY := frame.ContentBounds().Y + list.Bounds().Y + selectedRow
+	sx, sy := fw.Position()
+
+	app.dispatchMouseMotion(tea.MouseMotionMsg{X: sx + localX, Y: sy + localY})
+	if got := cw.Host().Hovered(); got != widgets.CPList {
+		t.Fatalf("hovered component=%q, want %q", got, widgets.CPList)
+	}
+
+	app.dispatchMouseClick(tea.MouseClickMsg{X: sx + localX, Y: sy + localY, Button: tea.MouseLeft})
+	if called == "" {
+		t.Fatal("mouse click did not activate the selected command")
 	}
 }

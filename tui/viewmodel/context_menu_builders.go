@@ -240,9 +240,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 					_ = m.handleAgentTabClose(hit.TabIndex)
 				}},
 				{Label: "Cancel agent", Action: func() {
-					if m.ActiveSession.OnCancelSubAgent != nil {
-						go m.ActiveSession.OnCancelSubAgent(agentID)
-					}
+					go m.CancelAgent(agentID)
 				}},
 			},
 		})

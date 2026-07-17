@@ -446,6 +446,61 @@ func TestScanPresentExtensions_NoMatches(t *testing.T) {
 	}
 }
 
+func TestWorkspaceBootstrapExtensionsExcludeJSONMetadata(t *testing.T) {
+	for _, ext := range workspaceBootstrapExtensions {
+		if ext == ".json" {
+			t.Fatal("JSON metadata must not start vscode-json-language-server during workspace bootstrap")
+		}
+	}
+}
+
+func TestLSPManager_AggregateConnectedServerIgnoresBackgroundFailure(t *testing.T) {
+	m := NewLSPManager(testLogger{})
+	m.mu.Lock()
+	m.states[clientKey("file:///project", "gopls")] = lspClientState{
+		rootURI: "file:///project",
+		cmd:     "gopls",
+		status:  editor.LSPConnected,
+	}
+	m.states[clientKey("file:///project", "vscode-json-language-server")] = lspClientState{
+		rootURI: "file:///project",
+		cmd:     "vscode-json-language-server",
+		status:  editor.LSPFailed,
+		err:     "vscode-json-language-server not found in PATH",
+	}
+	m.recomputeActiveStatusLocked()
+	m.mu.Unlock()
+
+	connected, status, errMsg := m.Status()
+	if !connected || status != editor.LSPConnected || errMsg != "" {
+		t.Fatalf("aggregate status connected=%v status=%v error=%q", connected, status, errMsg)
+	}
+}
+
+func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
+	m := NewLSPManager(testLogger{})
+	m.mu.Lock()
+	m.activeFilePath = "/project/data.json"
+	m.states[clientKey("file:///project", "gopls")] = lspClientState{
+		rootURI: "file:///project",
+		cmd:     "gopls",
+		status:  editor.LSPConnected,
+	}
+	m.states[clientKey("file:///project", "vscode-json-language-server")] = lspClientState{
+		rootURI: "file:///project",
+		cmd:     "vscode-json-language-server",
+		status:  editor.LSPFailed,
+		err:     "vscode-json-language-server not found in PATH",
+	}
+	m.recomputeActiveStatusLocked()
+	m.mu.Unlock()
+
+	connected, status, errMsg := m.Status()
+	if connected || status != editor.LSPFailed || errMsg == "" {
+		t.Fatalf("active JSON status connected=%v status=%v error=%q", connected, status, errMsg)
+	}
+}
+
 func TestScanProjectFiles_SkipNodeModules(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir+"/node_modules/pkg", 0755); err != nil {

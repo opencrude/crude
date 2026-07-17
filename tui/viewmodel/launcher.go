@@ -703,15 +703,15 @@ func (m *App) launcherResumeSession() tea.Cmd {
 	m.startLSPForWorkspace()
 	m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
 	if m.ActiveSession != nil {
-		if msgs := m.ActiveSession.HydratedMessages(); len(msgs) > 0 {
+		if msgs := m.ActiveSession.TakeHydratedMessages(); len(msgs) > 0 {
 			if ml := m.activeMsgList(); ml != nil {
-				for _, hm := range msgs {
+				for _, hm := range ChatMessagesFromViews(msgs) {
 					ml.AppendMessage(hm)
 				}
 				ml.ScrollToBottom()
 			}
 		}
-		if refs := m.ActiveSession.HydratedRefs(); len(refs) > 0 {
+		if refs := m.ActiveSession.TakeHydratedRefs(); len(refs) > 0 {
 			m.SetReferences(refs)
 		}
 	}

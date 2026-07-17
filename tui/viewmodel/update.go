@@ -672,7 +672,6 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		agentID := m.agentIDFromTabTitle(tab.Title)
 		m.Win.CloseTab(index)
 		m.cleanupAgent(agentID)
-		m.CancelSubAgent(agentID)
 		m.handleTabSwitch()
 		if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 			m.openLauncher()
@@ -729,9 +728,7 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 		m.StatusBar.SetConfirming(false)
 		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
-		if m.ActiveSession.OnConfirmResult != nil {
-			m.ActiveSession.OnConfirmResult(ttypes.ConfirmResult{Choice: ttypes.ConfirmDeny})
-		}
+		m.ResolveConfirmation(m.AgentMgr.ActiveID(), ttypes.ConfirmDeny)
 	case "Question":
 		m.ActiveSession.QuestionForm.Dismiss()
 		m.OverlayState.SetBlocking(false)
@@ -740,9 +737,7 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 		m.Input.ClearInput()
 		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
-		if m.ActiveSession.OnQuestionResult != nil {
-			m.ActiveSession.OnQuestionResult(ttypes.QuestionResult{Cancelled: true})
-		}
+		m.ResolveQuestion(m.AgentMgr.ActiveID(), nil, nil, true)
 	case "YOLO":
 		m.ActiveSession.YoloDlg.Dismiss()
 		m.StatusBar.SetConfirming(false)

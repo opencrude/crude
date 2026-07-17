@@ -292,10 +292,11 @@ func buildWelcomeLeftBody(
 	push(sectionHeader("Shortcuts", leftW, th), -1)
 	for _, sc := range shortcuts {
 		key := sc[0]
-		for rendering.VisibleWidth(key) < 14 {
-			key += " "
+		gap := 14 - rendering.VisibleWidth(key)
+		if gap < 2 {
+			gap = 2
 		}
-		line := "  " + th.Styles.Body.Render(key) + th.Styles.DimLabel.Render(sc[1])
+		line := "  " + th.Styles.Body.Render(key) + strings.Repeat(" ", gap) + th.Styles.DimLabel.Render(sc[1])
 		push(line, -1)
 	}
 

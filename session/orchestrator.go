@@ -15,6 +15,7 @@ type Orchestrator struct {
 	BlockResolveCh chan string
 	subAgentSup    *SubAgentRunner
 	closing        atomic.Bool
+	stopCh         chan struct{}
 }
 
 func NewOrchestrator(id string, s *Session) *Orchestrator {
@@ -25,5 +26,6 @@ func NewOrchestrator(id string, s *Session) *Orchestrator {
 		BtwCh:          make(chan provider.UserInput, 8),
 		CancelCh:       make(chan struct{}, 1),
 		BlockResolveCh: make(chan string, 1),
+		stopCh:         make(chan struct{}),
 	}
 }

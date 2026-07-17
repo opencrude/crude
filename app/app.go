@@ -139,10 +139,10 @@ func (a *App) Run() {
 			}
 		}
 		ws.Hydrate()
-		if msgs := ws.ActiveSession.HydratedMessages(); len(msgs) > 0 {
+		if msgs := ws.ActiveSession.TakeHydratedMessages(); len(msgs) > 0 {
 			t.HydrateMessages(msgs)
 		}
-		if refs := ws.ActiveSession.HydratedRefs(); len(refs) > 0 {
+		if refs := ws.ActiveSession.TakeHydratedRefs(); len(refs) > 0 {
 			t.SetReferences(refs)
 		}
 	}

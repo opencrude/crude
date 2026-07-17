@@ -84,3 +84,11 @@ func TestWelcomeLauncherWorkspaceSearch(t *testing.T) {
 		t.Fatalf("search must remain fixed above scrolling rows: search=%d list=%d", paint.WorkspaceSearchY, paint.WorkspaceListY0)
 	}
 }
+
+func TestWelcomeLauncherShortcutKeepsGapAfterLongKey(t *testing.T) {
+	col := buildWelcomeLeftBody(nil, -1, -1, 50, 4, 0, 0, theme.DefaultDark(), [][2]string{{"Ctrl+Alt+VeryLong", "Action"}})
+	plain := stripAnsi(strings.Join(col.lines, "\n"))
+	if !strings.Contains(plain, "Ctrl+Alt+VeryLong  Action") {
+		t.Fatalf("long shortcut must retain a visible label gap:\n%s", plain)
+	}
+}

@@ -67,6 +67,9 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 
 	for {
 		select {
+		case <-o.stopCh:
+			l.Info("SESSION", "run_exit_closed", "orchestrator_id", o.ID)
+			return
 		case userInput, ok := <-o.InputCh:
 			if !ok {
 				l.Info("SESSION", "run_exit_input_closed", "orchestrator_id", o.ID)
@@ -218,6 +221,16 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 					l.Info("CANCEL", "sub_agents_cancelled", "count", len(cancelled))
 				}
 			}
+		case <-o.stopCh:
+			l.Debug("CANCEL", "ctx_closed", "msg_id", currentMsgID)
+			cancel()
+			select {
+			case o.BlockResolveCh <- "deny":
+			default:
+			}
+			if o.subAgentSup != nil {
+				o.subAgentSup.CancelAllActive()
+			}
 		case <-ctx.Done():
 		}
 	}()
@@ -227,6 +240,9 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	go func() {
 		for {
 			select {
+			case <-o.stopCh:
+				close(btwMsgCh)
+				return
 			case btwInput, ok := <-o.BtwCh:
 				if !ok {
 					close(btwMsgCh)
@@ -323,11 +339,11 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 				if s.permStore.IsCommandAllowed(sr) {
 					s.logger.Debug("PERM", "command_auto_allowed", "risk", riskStr, "tool", data["tool"])
 					o.BlockResolveCh <- "always"
-			agentID := evt.AgentID
-			if agentID == "" {
-				agentID = o.ID
-			}
-			sender.SendAgentEventWithID("blocking_auto", evt.Data, agentID)
+					agentID := evt.AgentID
+					if agentID == "" {
+						agentID = o.ID
+					}
+					sender.SendAgentEventWithID("blocking_auto", evt.Data, agentID)
 					return true
 				}
 				break

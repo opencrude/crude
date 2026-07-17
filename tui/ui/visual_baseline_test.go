@@ -3,8 +3,6 @@ package ui
 import (
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -281,7 +279,7 @@ func TestVisualBaseline_WindowFrame_BorderCells(t *testing.T) {
 	frame.Paint(buf, 0, 0, PaintContext{Theme: th})
 
 	// Top-left corner should be ╭ (U+256D).
- topLeft := buf.Get(0, 0)
+	topLeft := buf.Get(0, 0)
 	if topLeft.Char != '╭' {
 		t.Errorf("top-left corner: got %U, want ╭", topLeft.Char)
 	}
@@ -326,7 +324,7 @@ func TestVisualBaseline_TextField_CursorBlock(t *testing.T) {
 	// The cursor should be at position after "hello" (position 6, accounting
 	// for prompt "❯" + space). The cursor cell should have different colors
 	// from the surrounding text.
-	promptWidth := 2 // "❯" + space
+	promptWidth := 2           // "❯" + space
 	cursorX := promptWidth + 5 // after "hello"
 	if cursorX < 30 {
 		cursorCell := buf.Get(cursorX, 0)
@@ -531,86 +529,6 @@ func TestVisualBaseline_Label_Ellipsis(t *testing.T) {
 	if lastCell.Char != '…' {
 		t.Errorf("last cell: got %U, want …", lastCell.Char)
 	}
-}
-
-// TestVisualBaseline_Benchmark_Render_80x24 measures render performance
-// at 80x24 under the dark theme.
-func TestVisualBaseline_Benchmark_Render_80x24(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping benchmark in short mode")
-	}
-	th := theme.DefaultDark()
-	host := DemoGallery(th)
-	host.Resize(80, 24)
-	buf := surface.NewCellBuffer(80, 24)
-
-	// Warm up.
-	for i := 0; i < 10; i++ {
-		host.Paint(buf)
-	}
-
-	// Measure allocations.
-	allocs := testing.AllocsPerRun(100, func() {
-		host.Paint(buf)
-	})
-
-	t.Logf("80x24 dark: %.0f allocs/paint", allocs)
-
-	// Measure time.
-	b := testing.B{}
-	for i := 0; i < b.N; i++ {
-		host.Paint(buf)
-	}
-}
-
-// TestVisualBaseline_Benchmark_Render_120x40 measures render performance
-// at 120x40 under the dark theme.
-func TestVisualBaseline_Benchmark_Render_120x40(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping benchmark in short mode")
-	}
-	th := theme.DefaultDark()
-	host := DemoGallery(th)
-	host.Resize(120, 40)
-	buf := surface.NewCellBuffer(120, 40)
-
-	// Warm up.
-	for i := 0; i < 10; i++ {
-		host.Paint(buf)
-	}
-
-	// Measure allocations.
-	allocs := testing.AllocsPerRun(100, func() {
-		host.Paint(buf)
-	})
-
-	t.Logf("120x40 dark: %.0f allocs/paint", allocs)
-}
-
-// TestVisualBaseline_Benchmark_HandleKeyEvent measures key event
-// handling performance.
-func TestVisualBaseline_Benchmark_HandleKeyEvent(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping benchmark in short mode")
-	}
-	th := theme.DefaultDark()
-	host := DemoGallery(th)
-	host.Resize(80, 24)
-
-	// Focus the first text field.
-	host.Focus(NewID(RootID, "tf-default"))
-
-	// Warm up.
-	for i := 0; i < 10; i++ {
-		host.Handle(tea.KeyPressMsg{Code: 'a', Text: "a"})
-	}
-
-	// Measure allocations.
-	allocs := testing.AllocsPerRun(1000, func() {
-		host.Handle(tea.KeyPressMsg{Code: 'a', Text: "a"})
-	})
-
-	t.Logf("key event: %.0f allocs/handle", allocs)
 }
 
 // ── helpers ──

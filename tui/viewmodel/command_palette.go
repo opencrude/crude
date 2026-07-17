@@ -333,8 +333,9 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// refreshCommandPaletteFrame mutates the List content in the existing
-// command-palette floating window without rebuilding the frame.
+// refreshCommandPaletteFrame repaints the existing command-palette frame.
+// Filtering updates List items at the mutation site; navigation must not call
+// SetItems here because that resets selection to the first selectable row.
 func (m *App) refreshCommandPaletteFrame() {
 	if m.windowManager == nil || m.commandPaletteModel == nil {
 		return
@@ -343,33 +344,29 @@ func (m *App) refreshCommandPaletteFrame() {
 	if fw == nil {
 		return
 	}
-	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		if list := widgets.CommandPaletteList(cw); list != nil {
-			list.SetItems(m.commandPaletteModel.listItems())
-			fw.MarkContentDirty()
-		}
-	}
+	fw.MarkContentDirty()
 }
 
 // handleCommandPaletteKey routes a keypress to the command palette frame.
 // Text-editing keys go to the search TextField; navigation/Enter go to the List.
-// Returns true if the frame should be refreshed.
-func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) bool {
+// Returns whether the frame should be refreshed and any command emitted by an
+// activated palette action.
+func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	if m.commandPaletteModel == nil {
-		return false
+		return false, nil
 	}
 	fw := m.windowManager.Window("command-palette")
 	if fw == nil {
-		return false
+		return false, nil
 	}
 	cw, ok := fw.Content.(*ui.ComponentWidget)
 	if !ok || cw == nil {
-		return false
+		return false, nil
 	}
 	search := widgets.CommandPaletteSearch(cw)
 	list := widgets.CommandPaletteList(cw)
 	if search == nil || list == nil {
-		return false
+		return false, nil
 	}
 
 	// Navigation keys → List
@@ -377,43 +374,42 @@ func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) bool {
 	case tea.KeyUp:
 		list.Handle(ui.EventContext{}, msg)
 		m.syncPaletteModelFromList(list)
-		return true
+		return true, nil
 	case tea.KeyDown:
 		list.Handle(ui.EventContext{}, msg)
 		m.syncPaletteModelFromList(list)
-		return true
+		return true, nil
 	case tea.KeyPgUp:
 		list.Handle(ui.EventContext{}, msg)
 		m.syncPaletteModelFromList(list)
-		return true
+		return true, nil
 	case tea.KeyPgDown:
 		list.Handle(ui.EventContext{}, msg)
 		m.syncPaletteModelFromList(list)
-		return true
+		return true, nil
 	case tea.KeyHome:
 		list.Handle(ui.EventContext{}, msg)
 		m.syncPaletteModelFromList(list)
-		return true
+		return true, nil
 	case tea.KeyEnd:
 		list.Handle(ui.EventContext{}, msg)
 		m.syncPaletteModelFromList(list)
-		return true
+		return true, nil
 	case tea.KeyEnter:
 		// Activate the selected command
 		item, ok := list.Selected()
 		if !ok || !item.Selectable() {
-			return false
+			return false, nil
 		}
 		entry, isEntry := item.Payload.(cmdEntry)
 		if !isEntry {
-			return false
+			return false, nil
 		}
 		cb := m.commandPaletteModel.callback
-		m.overlayHost.Close(ui.OverlayCommandPalette)
 		if cb != nil {
-			cb(entry.ID)
+			return false, cb(entry.ID)
 		}
-		return false
+		return false, nil
 	}
 
 	// All other keys (text editing, Backspace, etc.) → search field
@@ -423,9 +419,9 @@ func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) bool {
 		m.commandPaletteModel.setFilter(search.Value())
 		m.commandPaletteModel.applyFilter()
 		list.SetItems(m.commandPaletteModel.listItems())
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // syncPaletteModelFromList updates m.idx from the List selection.
