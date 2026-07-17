@@ -1,0 +1,271 @@
+package ui
+
+import (
+	"unicode"
+	"unicode/utf8"
+)
+
+// TextEdit is the shared grapheme/rune-safe editing model for all non-document
+// text inputs (TextField, SearchField, FilterField, PromptField, form fields).
+//
+// Cursor and selection indices are rune offsets into Value runes — never bytes.
+type TextEdit struct {
+	runes     []rune
+	cursor    int // rune index [0, len]
+	selAnchor int // -1 = no selection; otherwise selection is [min,max) with cursor
+	selActive bool
+}
+
+// NewTextEdit creates an empty editor.
+func NewTextEdit() *TextEdit {
+	return &TextEdit{selAnchor: -1}
+}
+
+// SetValue replaces content and places the cursor at the end.
+func (e *TextEdit) SetValue(s string) {
+	e.runes = []rune(s)
+	e.cursor = len(e.runes)
+	e.ClearSelection()
+}
+
+// Value returns the current text.
+func (e *TextEdit) Value() string {
+	return string(e.runes)
+}
+
+// Len returns rune count.
+func (e *TextEdit) Len() int { return len(e.runes) }
+
+// Cursor returns the rune cursor index.
+func (e *TextEdit) Cursor() int { return e.cursor }
+
+// SetCursor sets the cursor, clearing selection unless extend is true.
+func (e *TextEdit) SetCursor(i int, extend bool) {
+	if i < 0 {
+		i = 0
+	}
+	if i > len(e.runes) {
+		i = len(e.runes)
+	}
+	if extend {
+		if !e.selActive {
+			e.selAnchor = e.cursor
+			e.selActive = true
+		}
+	} else {
+		e.ClearSelection()
+	}
+	e.cursor = i
+}
+
+// ClearSelection drops the selection.
+func (e *TextEdit) ClearSelection() {
+	e.selActive = false
+	e.selAnchor = -1
+}
+
+// HasSelection reports an active non-empty selection.
+func (e *TextEdit) HasSelection() bool {
+	if !e.selActive {
+		return false
+	}
+	a, b := e.SelectionRange()
+	return a != b
+}
+
+// SelectionRange returns [start, end) rune indices.
+func (e *TextEdit) SelectionRange() (int, int) {
+	if !e.selActive {
+		return e.cursor, e.cursor
+	}
+	a, b := e.selAnchor, e.cursor
+	if a > b {
+		a, b = b, a
+	}
+	return a, b
+}
+
+// SelectedText returns the selected substring.
+func (e *TextEdit) SelectedText() string {
+	a, b := e.SelectionRange()
+	if a == b {
+		return ""
+	}
+	return string(e.runes[a:b])
+}
+
+// Insert inserts s at the cursor, replacing any selection.
+func (e *TextEdit) Insert(s string) {
+	if e.HasSelection() {
+		e.deleteSelection()
+	}
+	r := []rune(s)
+	// filter non-printable except newline/tab if present — single-line callers
+	// should strip newlines before insert.
+	if len(r) == 0 {
+		return
+	}
+	out := make([]rune, 0, len(e.runes)+len(r))
+	out = append(out, e.runes[:e.cursor]...)
+	out = append(out, r...)
+	out = append(out, e.runes[e.cursor:]...)
+	e.runes = out
+	e.cursor += len(r)
+	e.ClearSelection()
+}
+
+// InsertRunes inserts only printable runes (and space).
+func (e *TextEdit) InsertRunes(s string) {
+	var clean []rune
+	for _, r := range s {
+		if r == '\n' || r == '\t' {
+			continue
+		}
+		if unicode.IsPrint(r) {
+			clean = append(clean, r)
+		}
+	}
+	if len(clean) == 0 {
+		return
+	}
+	e.Insert(string(clean))
+}
+
+// Backspace deletes before cursor or the selection.
+func (e *TextEdit) Backspace() {
+	if e.HasSelection() {
+		e.deleteSelection()
+		return
+	}
+	if e.cursor == 0 {
+		return
+	}
+	e.runes = append(e.runes[:e.cursor-1], e.runes[e.cursor:]...)
+	e.cursor--
+}
+
+// Delete deletes after cursor or the selection.
+func (e *TextEdit) Delete() {
+	if e.HasSelection() {
+		e.deleteSelection()
+		return
+	}
+	if e.cursor >= len(e.runes) {
+		return
+	}
+	e.runes = append(e.runes[:e.cursor], e.runes[e.cursor+1:]...)
+}
+
+func (e *TextEdit) deleteSelection() {
+	a, b := e.SelectionRange()
+	e.runes = append(e.runes[:a], e.runes[b:]...)
+	e.cursor = a
+	e.ClearSelection()
+}
+
+// MoveLeft moves one rune left.
+func (e *TextEdit) MoveLeft(extend bool) {
+	e.SetCursor(e.cursor-1, extend)
+}
+
+// MoveRight moves one rune right.
+func (e *TextEdit) MoveRight(extend bool) {
+	e.SetCursor(e.cursor+1, extend)
+}
+
+// MoveHome moves to start.
+func (e *TextEdit) MoveHome(extend bool) {
+	e.SetCursor(0, extend)
+}
+
+// MoveEnd moves to end.
+func (e *TextEdit) MoveEnd(extend bool) {
+	e.SetCursor(len(e.runes), extend)
+}
+
+// MoveWordLeft moves to previous word boundary.
+func (e *TextEdit) MoveWordLeft(extend bool) {
+	i := e.cursor
+	if i == 0 {
+		e.SetCursor(0, extend)
+		return
+	}
+	i--
+	// skip spaces
+	for i > 0 && unicode.IsSpace(e.runes[i]) {
+		i--
+	}
+	// skip word chars
+	for i > 0 && !unicode.IsSpace(e.runes[i-1]) {
+		i--
+	}
+	e.SetCursor(i, extend)
+}
+
+// MoveWordRight moves to next word boundary.
+func (e *TextEdit) MoveWordRight(extend bool) {
+	i := e.cursor
+	n := len(e.runes)
+	for i < n && !unicode.IsSpace(e.runes[i]) {
+		i++
+	}
+	for i < n && unicode.IsSpace(e.runes[i]) {
+		i++
+	}
+	e.SetCursor(i, extend)
+}
+
+// SelectAll selects entire content.
+func (e *TextEdit) SelectAll() {
+	e.selAnchor = 0
+	e.selActive = true
+	e.cursor = len(e.runes)
+}
+
+// DeleteToLineStart deletes from line start to cursor (Ctrl+U).
+func (e *TextEdit) DeleteToLineStart() {
+	if e.HasSelection() {
+		e.deleteSelection()
+		return
+	}
+	e.runes = e.runes[e.cursor:]
+	e.cursor = 0
+}
+
+// DeleteToLineEnd deletes from cursor to end (Ctrl+K).
+func (e *TextEdit) DeleteToLineEnd() {
+	if e.HasSelection() {
+		e.deleteSelection()
+		return
+	}
+	e.runes = e.runes[:e.cursor]
+}
+
+// DeleteWordBack deletes previous word (Ctrl+W).
+func (e *TextEdit) DeleteWordBack() {
+	if e.HasSelection() {
+		e.deleteSelection()
+		return
+	}
+	if e.cursor == 0 {
+		return
+	}
+	end := e.cursor
+	e.MoveWordLeft(false)
+	start := e.cursor
+	e.runes = append(e.runes[:start], e.runes[end:]...)
+	e.cursor = start
+}
+
+// RuneAt returns the rune at index or 0.
+func (e *TextEdit) RuneAt(i int) rune {
+	if i < 0 || i >= len(e.runes) {
+		return 0
+	}
+	return e.runes[i]
+}
+
+// EnsureUTF8 validates that SetValue paths stay valid (helper for tests).
+func EnsureUTF8(s string) bool {
+	return utf8.ValidString(s)
+}

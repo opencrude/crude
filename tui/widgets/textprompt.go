@@ -4,6 +4,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 // TextPromptKind drives the prompt's appearance and behavior.
@@ -21,20 +22,74 @@ const (
 // TextPromptState holds the data for a single text-input popup. The
 // App owns this and re-renders the popup content on every change
 // (the same lifecycle as the dirty-close and find-replace popups).
+//
+// Editing is backed by ui.TextEdit (shared rune-safe engine). The
+// Value/Cursor fields are derived accessors for render compatibility.
 type TextPromptState struct {
 	Title        string         // popup window title (e.g. "New file")
 	Prompt       string         // short instruction, e.g. "Create new file in <dir>:"
 	Kind         TextPromptKind // drives the icon and the hint row
 	InitialValue string         // pre-filled value (for rename)
-	Value        string         // mutable, the user types into this
-	Cursor       int            // position within Value (0..len(Value))
-	Focused      bool           // currently always true; reserved for future use
+	// Edit is the shared text engine. Never nil after NewTextPromptState.
+	Edit *ui.TextEdit
+	// Value and Cursor are kept for callers/tests that still read fields.
+	// Prefer ValueText()/CursorPos() and Edit methods for new code.
+	Value   string
+	Cursor  int
+	Focused bool
 	// OnSubmit is called with the final value when the user presses
 	// Enter. Returning a non-nil error surfaces in the status bar
 	// without closing the popup (so the user can fix the name).
 	OnSubmit func(value string) error
 	// OnCancel is called on Esc. Optional.
 	OnCancel func()
+}
+
+// NewTextPromptState constructs a prompt with a shared TextEdit engine.
+func NewTextPromptState(kind TextPromptKind, title, prompt, initial string) *TextPromptState {
+	ed := ui.NewTextEdit()
+	ed.SetValue(initial)
+	return &TextPromptState{
+		Title:        title,
+		Prompt:       prompt,
+		Kind:         kind,
+		InitialValue: initial,
+		Edit:         ed,
+		Value:        initial,
+		Cursor:       ed.Cursor(),
+		Focused:      true,
+	}
+}
+
+// SyncFromEdit copies Edit state into Value/Cursor for renderers.
+func (st *TextPromptState) SyncFromEdit() {
+	if st == nil || st.Edit == nil {
+		return
+	}
+	st.Value = st.Edit.Value()
+	st.Cursor = st.Edit.Cursor()
+}
+
+// ValueText returns the current value from the edit engine.
+func (st *TextPromptState) ValueText() string {
+	if st == nil {
+		return ""
+	}
+	if st.Edit != nil {
+		return st.Edit.Value()
+	}
+	return st.Value
+}
+
+// CursorPos returns the rune cursor index.
+func (st *TextPromptState) CursorPos() int {
+	if st == nil {
+		return 0
+	}
+	if st.Edit != nil {
+		return st.Edit.Cursor()
+	}
+	return st.Cursor
 }
 
 // TextPromptPopupWidth computes the popup total width.
@@ -61,12 +116,13 @@ func TextPromptPopupHeight(st *TextPromptState) int {
 // ANSI lines including the popup's own border, title, and padding
 // (unified design). Pass to widgets.NewPopupContent.
 func TextPromptLines(th *theme.Theme, st *TextPromptState) []string {
+	st.SyncFromEdit()
 	mutedStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted).Background(th.Colors.PopupBg)
 	cfg := PopupChromeConfig{
-		Title:    st.Title,
+		Title:     st.Title,
 		TitleIcon: kindIcon(st.Kind),
-		Width:    TextPromptPopupWidth(st),
-		Focused:  true,
+		Width:     TextPromptPopupWidth(st),
+		Focused:   true,
 	}
 	innerW := cfg.InnerWidth()
 
@@ -87,13 +143,13 @@ func TextPromptLines(th *theme.Theme, st *TextPromptState) []string {
 		placeholder = "new name"
 	}
 
-	// Input field with cursor.
-	cursor := st.Cursor
-	value := st.Value
-	if value == "" && st.InitialValue != "" {
-		// Prefill the value on the first render.
+	value := st.ValueText()
+	cursor := st.CursorPos()
+	if value == "" && st.InitialValue != "" && st.Edit != nil && st.Edit.Len() == 0 {
+		// Prefill once if Edit was empty but InitialValue set.
+		st.Edit.SetValue(st.InitialValue)
 		value = st.InitialValue
-		cursor = len(value)
+		cursor = st.Edit.Cursor()
 	}
 	content = append(content, padVisibleToWidth(
 		PopupInputField(th, "", value, placeholder, cursor, true),

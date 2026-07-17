@@ -10,7 +10,7 @@ import (
 	"crude/tui/editor"
 )
 
-// ─── Mode enum ──────────────────────────────────────────────────────────────
+//  ─ Mode enum
 
 type Mode int
 
@@ -45,7 +45,7 @@ func ModeName(m Mode) string {
 	}
 }
 
-// ─── Logger interface ───────────────────────────────────────────────────────
+//  Logger interface ─
 
 type Logger interface {
 	Info(tag, msg string, pairs ...any)
@@ -54,7 +54,7 @@ type Logger interface {
 	Debug(tag, msg string, pairs ...any)
 }
 
-// ─── FocusTarget enum ───────────────────────────────────────────────────────
+//  FocusTarget enum ─
 
 type FocusTarget int
 
@@ -69,7 +69,7 @@ const (
 	FocusLauncher
 )
 
-// ─── PaneType enum ──────────────────────────────────────────────────────────
+//  PaneType enum ─
 
 // PaneType distinguishes subpane variants. Only PaneAgent gets background color
 // applied in view.go; PaneThinking (the thinking indicator) has no background.
@@ -80,7 +80,7 @@ const (
 	PaneAgent    PaneType = "agent"
 )
 
-// ─── External event message types ─────────────────────────────────────────
+//  External event message types ──
 //
 // These messages originate from goroutines outside the Bubble Tea event loop
 // (LSP server process, file watcher, background tasks). They are sent through
@@ -104,7 +104,7 @@ type FileWatcherMsg struct {
 	ChangeType int
 }
 
-// ─── EventBus ──────────────────────────────────────────────────────────────
+//  EventBus ──
 
 const eventLogCapacity = 200
 
@@ -202,6 +202,8 @@ func msgDetail(msg tea.Msg) string {
 		return fmt.Sprintf("file=%s diags=%d", m.FilePath, len(m.Diagnostics))
 	case FileWatcherMsg:
 		return fmt.Sprintf("file=%s change=%d", m.FilePath, m.ChangeType)
+	case ProjectSearchCompletedMsg:
+		return fmt.Sprintf("request=%d matches=%d", m.Result.RequestID, len(m.Result.Matches))
 	default:
 		return ""
 	}
@@ -209,3 +211,4 @@ func msgDetail(msg tea.Msg) string {
 
 var _ tea.Msg = LSPDiagnosticsMsg{}
 var _ tea.Msg = FileWatcherMsg{}
+var _ tea.Msg = ProjectSearchCompletedMsg{}

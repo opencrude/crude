@@ -43,10 +43,10 @@ func TestFilePicker_HitTest_EntryClick(t *testing.T) {
 	_ = fp.ViewInner(50, 20, 0)
 
 	// Layout (after render):
-	//   localY 0: top border
-	//   localY 1: path
-	//   localY 2: filter
-	//   localY 3..3+pageSize-1: entry rows
+	// localY 0: top border
+	// localY 1: path
+	// localY 2: filter
+	// localY 3..3+pageSize-1: entry rows
 	// Hit-test localY=3 (first entry).
 	idx := fp.HitTest(5, 3)
 	if idx < 0 {

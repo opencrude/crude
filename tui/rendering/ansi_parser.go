@@ -10,10 +10,10 @@ import (
 // compositing engine's cell buffer model.
 //
 // Handles:
-//   - SGR (Select Graphic Rendition) sequences: \x1b[...m
-//   - Regular characters → cells
-//   - Wide characters → wide cells + continuation
-//   - Newlines → row advancement
+// - SGR (Select Graphic Rendition) sequences: \x1b[...m
+// - Regular characters → cells
+// - Wide characters → wide cells + continuation
+// - Newlines → row advancement
 //
 // The parser maintains a current style state (fg, bg, attrs) that is updated
 // by SGR sequences. All subsequent characters are rendered with the current style

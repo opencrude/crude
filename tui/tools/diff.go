@@ -11,7 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// ── Structured diff types ──────────────────────────────────────────
+// Structured diff types
 
 type diffLineType int
 
@@ -22,24 +22,24 @@ const (
 )
 
 type diffLine struct {
-	Type      diffLineType
+	Type       diffLineType
 	NewLineNum int    // 0 for deletions (no position in new file)
-	Content   string // the line body (without +/- prefix)
+	Content    string // the line body (without +/- prefix)
 }
 
 type diffHunk struct {
-	StartLine int        // new-file start line from @@ header
+	StartLine int // new-file start line from @@ header
 	Lines     []diffLine
 }
 
 type diffFile struct {
-	Path       string
-	AddCount   int
-	DelCount   int
-	Hunks      []diffHunk
+	Path     string
+	AddCount int
+	DelCount int
+	Hunks    []diffHunk
 }
 
-// ── Unified diff parser ────────────────────────────────────────────
+// Unified diff parser
 
 var hunkRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
@@ -152,7 +152,7 @@ func parseUnifiedDiff(raw string) []diffFile {
 				content = content[1:]
 			}
 			currentHunk.Lines = append(currentHunk.Lines, diffLine{
-				Type: lineContext,
+				Type:    lineContext,
 				Content: content,
 			})
 		}
@@ -185,13 +185,13 @@ func parseUnifiedDiff(raw string) []diffFile {
 	return files
 }
 
-// ── Rendering constants ────────────────────────────────────────────
+// Rendering constants       ──
 
 const (
 	compactContextLines = 2 // context lines around change groups in compact mode
 )
 
-// ── RenderDiff — the single unified diff renderer ──────────────────
+// ── RenderDiff — the single unified diff renderer
 
 // RenderDiff produces a professional, line-numbered diff presentation.
 // maxLines controls how many output lines are available (from terminal height);
@@ -366,13 +366,13 @@ func renderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme, skipHea
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// ── Render line helpers ────────────────────────────────────────────
+// ── Render line helpers ──
 
 type renderLine struct {
-	lineNum   int
-	lineType  diffLineType
-	content   string
-	ellipsis  bool
+	lineNum  int
+	lineType diffLineType
+	content  string
+	ellipsis bool
 }
 
 func buildRenderLines(hunks []diffHunk) []renderLine {

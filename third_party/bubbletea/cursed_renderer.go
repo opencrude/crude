@@ -509,19 +509,19 @@ func (s *cursedRenderer) flush(closing bool) error {
 	//
 	// Here, we have two scenarios:
 	// 1. Synchronized output updates are supported. In this case, we want to
-	//    wrap all updates, unless it's just a cursor visibility change, in
-	//    synchronized output mode. This is because synchronized output mode
-	//    takes care of rendering the updates atomically. In the case of
-	//    just a cursor visibility change, we don't need to enter
-	//    synchronized output mode because it's just a single sequence to
-	//    flush out to the terminal.
+	//  wrap all updates, unless it's just a cursor visibility change, in
+	//  synchronized output mode. This is because synchronized output mode
+	//  takes care of rendering the updates atomically. In the case of
+	//  just a cursor visibility change, we don't need to enter
+	//  synchronized output mode because it's just a single sequence to
+	//  flush out to the terminal.
 	//
 	// 2. We don't have synchronized output updates support. In this case, and
-	//    if the cursor is visible or should be visible, we wrap the updates
-	//    with hide/show cursor sequences to try and mitigate cursor
-	//    flickering. This is terminal dependent and may still result in
-	//    flickering in some terminals. It's the best effort we can do instead
-	//    of showing the cursor flying around the screen during updates.
+	//  if the cursor is visible or should be visible, we wrap the updates
+	//  with hide/show cursor sequences to try and mitigate cursor
+	//  flickering. This is terminal dependent and may still result in
+	//  flickering in some terminals. It's the best effort we can do instead
+	//  of showing the cursor flying around the screen during updates.
 
 	var buf bytes.Buffer
 	if shouldUpdateAltScreen {

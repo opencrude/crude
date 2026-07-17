@@ -201,12 +201,12 @@ func (k KeyPressMsg) String() string {
 // convenient and readable to use this method when matching against keys.
 //
 // Note that modifier keys are always printed in the following order:
-//   - ctrl
-//   - alt
-//   - shift
-//   - meta
-//   - hyper
-//   - super
+// - ctrl
+// - alt
+// - shift
+// - meta
+// - hyper
+// - super
 //
 // For example, you'll always see "ctrl+shift+alt+a" and never
 // "shift+ctrl+alt+a".
@@ -234,12 +234,12 @@ func (k KeyReleaseMsg) String() string {
 // convenient and readable to use this method when matching against keys.
 //
 // Note that modifier keys are always printed in the following order:
-//   - ctrl
-//   - alt
-//   - shift
-//   - meta
-//   - hyper
-//   - super
+// - ctrl
+// - alt
+// - shift
+// - meta
+// - hyper
+// - super
 //
 // For example, you'll always see "ctrl+shift+alt+a" and never
 // "shift+ctrl+alt+a".
@@ -357,12 +357,12 @@ func (k Key) String() string {
 // convenient and readable to use this method when matching against keys.
 //
 // Note that modifier keys are always printed in the following order:
-//   - ctrl
-//   - alt
-//   - shift
-//   - meta
-//   - hyper
-//   - super
+// - ctrl
+// - alt
+// - shift
+// - meta
+// - hyper
+// - super
 //
 // For example, you'll always see "ctrl+shift+alt+a" and never
 // "shift+ctrl+alt+a".

@@ -68,7 +68,6 @@ func TestTextItem_SelectionClearsOnArrowWithoutShift(t *testing.T) {
 func TestTextItem_BackspaceDeletesSelection(t *testing.T) {
 	ti := newTestTextItem("hello world")
 	ti.StartEditing()
-	ti.editCursor = 11 // end
 	ti.SetSelection(6, 11)
 	if ti.SelectedText() != "world" {
 		t.Fatalf("setup: selection = %q, want %q", ti.SelectedText(), "world")
@@ -89,7 +88,6 @@ func TestTextItem_BackspaceDeletesSelection(t *testing.T) {
 func TestTextItem_PasteReplacesSelection(t *testing.T) {
 	ti := newTestTextItem("hello world")
 	ti.StartEditing()
-	ti.editCursor = 11
 	ti.SetSelection(0, 5) // select "hello"
 	ti.HandlePaste("bye")
 	if ti.Value() != "bye world" {
@@ -100,7 +98,6 @@ func TestTextItem_PasteReplacesSelection(t *testing.T) {
 func TestTextItem_CtrlXDeletesAndCopies(t *testing.T) {
 	ti := newTestTextItem("hello world")
 	ti.StartEditing()
-	ti.editCursor = 11
 	ti.SetSelection(0, 5)
 
 	_, cmd, _, handled := ti.HandleKey(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
@@ -115,10 +112,11 @@ func TestTextItem_CtrlXDeletesAndCopies(t *testing.T) {
 	}
 }
 
-func TestTextItem_CtrlUClearsValue(t *testing.T) {
+func TestTextItem_CtrlUClearsToLineStart(t *testing.T) {
 	ti := newTestTextItem("hello world")
 	ti.StartEditing()
-	ti.editCursor = 5
+	// Cursor at end → Ctrl+U deletes entire line.
+	ti.ensureEdit().SetCursor(ti.ensureEdit().Len(), false)
 
 	_, _, _, handled := ti.HandleKey(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	if !handled {
@@ -127,15 +125,14 @@ func TestTextItem_CtrlUClearsValue(t *testing.T) {
 	if ti.Value() != "" {
 		t.Fatalf("after Ctrl+U, value = %q, want empty", ti.Value())
 	}
-	if ti.editCursor != 0 {
-		t.Fatalf("after Ctrl+U, cursor = %d, want 0", ti.editCursor)
+	if ti.ensureEdit().Cursor() != 0 {
+		t.Fatalf("after Ctrl+U, cursor = %d, want 0", ti.ensureEdit().Cursor())
 	}
 }
 
 func TestTextItem_InsertReplacesSelection(t *testing.T) {
 	ti := newTestTextItem("hello world")
 	ti.StartEditing()
-	ti.editCursor = 11
 	ti.SetSelection(6, 11) // select "world"
 
 	// Type 'X' — should replace selection, not insert.
@@ -146,8 +143,8 @@ func TestTextItem_InsertReplacesSelection(t *testing.T) {
 	if ti.Value() != "hello X" {
 		t.Fatalf("after insert-with-selection, value = %q, want %q", ti.Value(), "hello X")
 	}
-	if ti.editCursor != 7 {
-		t.Fatalf("after insert, cursor = %d, want 7", ti.editCursor)
+	if ti.ensureEdit().Cursor() != 7 {
+		t.Fatalf("after insert, cursor = %d, want 7", ti.ensureEdit().Cursor())
 	}
 }
 
@@ -165,7 +162,6 @@ func TestTextItem_ViewWithSelectionContainsHighlight(t *testing.T) {
 	ti := newTestTextItem("hello world")
 	th := ti.theme
 	ti.StartEditing()
-	ti.editCursor = 11
 	ti.SetSelection(0, 5)
 
 	view := ti.View(true, 0, 6)

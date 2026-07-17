@@ -17,12 +17,12 @@ type KeyboardEnhancementsMsg struct {
 	//  ```go
 	//  // The hard way
 	//  if msg.Flags&ansi.KittyReportEventTypes != 0 {
-	//     // Terminal supports reporting different key event types
+	//   // Terminal supports reporting different key event types
 	//  }
 	//
 	//  // The easy way
 	//  if msg.SupportsEventTypes() {
-	//     // Terminal supports reporting different key event types
+	//   // Terminal supports reporting different key event types
 	//  }
 	//  ```
 	Flags int

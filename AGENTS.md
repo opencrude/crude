@@ -3,26 +3,26 @@
 ## Target Architecture: Three-Layer IDE
 
 ```
-┌─────────────────────────────────────────────────────┐
+┌──┐
 │  app/  — IDE Shell, workspace manager               │
 │  Owns: app config (theme, font, UI prefs),          │
 │        workspace list/create/resume/delete, CLI      │
 │  ~/.crude/app.db, ~/.crude/config.json               │
 │  NO session/agent/orchestrator knowledge             │
-└────────────────┬────────────────────────────────────┘
+└─┬┘
                  │ creates, owns, persists
                  ▼
-┌─────────────────────────────────────────────────────┐
+┌──┐
 │  workspace/  — Per-project state machine             │
 │  Owns: orchestrators, sessions, LSP connections,     │
 │        editor buffers, file tree, TUI layout prefs,  │
 │        workspace settings (inherits app config)       │
 │  ~/.crude/workspaces/<id>/workspace.db               │
 │  NO rendering or input handling logic                │
-└────────────────┬────────────────────────────────────┘
+└─┬┘
                  │ method calls ← → event bus
                  ▼
-┌─────────────────────────────────────────────────────┐
+┌──┐
 │  tui/  — Dumb renderer + input router                │
 │  Does: render surfaces, route key/mouse/paste,       │
 │        window compositing, widget rendering          │
@@ -30,7 +30,7 @@
 │            manage orchestrators, resolve settings    │
 │  Litmus test: swap Bubble Tea for web UI →           │
 │  workspace/ and app/ stay unchanged                  │
-└─────────────────────────────────────────────────────┘
+└──┘
 ```
 
 ### Communication Rules
@@ -154,20 +154,20 @@ with z-ordering.
 ### Floating Window Rendering
 
 Each `FloatingWindow` has:
-- A main surface (`fw.surf`) — sized `w x h`, contains background
-  fill, border decorations, title bar
-- A child content surface (`fw.contentSurf`) — sized `contentW x
-  contentH`, positioned at `(contentX, contentY)`
+- A main surface (`fw.surf`) sized `w x h`; WM owns placement and z-order only
+- A full-size child content surface (`fw.contentSurf`)
+- Frame interaction geometry for focus, close, title drag, and resize hit testing
+- `ui.WindowFrame` content for visual background, border, title, and close chrome
 
-**Render flow (for LShape border):**
+**Render flow:**
 1. `fw.surf.Buffer().Clear()` — transparent blanks
-2. `DrawBackground()` — fills entire buffer with `SubPaneBg`
-3. `DrawLBorder()` — draws left vertical + bottom horizontal border
-4. `DrawTitleBar()` — draws title text in top row
-5. `fw.contentSurf.Buffer().Clear()` — transparent blanks
-6. `fw.Content.Render(fw.contentSurf, ctx)` — widget renders ANSI
-7. Content surface added as child of window surface
-8. Compositor blits window surface then content surface onto back buffer
+2. `fw.contentSurf.Buffer().Clear()` — transparent blanks
+3. `fw.Content.Render(fw.contentSurf, ctx)` — normally ComponentWidget paints WindowFrame + body
+4. Content surface added as child of window surface
+5. Compositor blits window surface then content surface onto back buffer
+
+WM must never paint borders, titles, backgrounds, or close glyphs. All product
+floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
 
 ### Cell Types
 
@@ -213,10 +213,10 @@ blink, hover highlights, and streaming tokens.
 
 All popups use `tui/widgets/popupchrome.go`:
 ```
-╭─ Title ────────────────────────────────╮
+╭─ Title ──╮
 │  body content line 1                   │
 │  body content line 2                   │
-╰────────────────────────────────────────╯
+╰─╯
 ```
 - `PopupContentWidth(innerW)` → total: `innerW + 6`
 - `PopupContentHeight(contentRows)` → total: `contentRows + 2`

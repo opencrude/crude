@@ -23,7 +23,7 @@ func testWorkspaceEntries(count int) []WorkspaceEntry {
 
 func TestWelcomeLauncherWorkspaceViewport(t *testing.T) {
 	items := BuildLauncherItems(testWorkspaceEntries(24), nil)
-	paint := RenderWelcomeLauncher("/projects/current", items, 2, 0, false, "", theme.DefaultDark(), 110, 16, 0, 0)
+	paint := RenderWelcomeLauncher("/projects/current", items, 2, 0, false, "", theme.DefaultDark(), 110, 16, 0, 0, nil)
 	plain := stripAnsi(strings.Join(paint.Lines, "\n"))
 
 	if !strings.Contains(plain, "New Workspace") {
@@ -63,7 +63,7 @@ func TestWelcomeLauncherWorkspaceViewport(t *testing.T) {
 		t.Fatalf("expected %d visible workspace hits, got %d", paint.WorkspaceViewportH, workspaceHits)
 	}
 
-	last := RenderWelcomeLauncher("/projects/current", items, 2, 999, false, "", theme.DefaultDark(), 110, 16, 0, 0)
+	last := RenderWelcomeLauncher("/projects/current", items, 2, 999, false, "", theme.DefaultDark(), 110, 16, 0, 0, nil)
 	if plainLast := stripAnsi(strings.Join(last.Lines, "\n")); !strings.Contains(plainLast, "workspace-23") {
 		t.Fatalf("expected final workspace after scrolling, got:\n%s", plainLast)
 	}
@@ -71,7 +71,7 @@ func TestWelcomeLauncherWorkspaceViewport(t *testing.T) {
 
 func TestWelcomeLauncherWorkspaceSearch(t *testing.T) {
 	items := BuildLauncherItems(testWorkspaceEntries(24), nil)
-	paint := RenderWelcomeLauncher("/projects/current", items, 25, 0, true, "workspace-23", theme.DefaultDark(), 110, 16, 0, 0)
+	paint := RenderWelcomeLauncher("/projects/current", items, 25, 0, true, "workspace-23", theme.DefaultDark(), 110, 16, 0, 0, nil)
 	plain := stripAnsi(strings.Join(paint.Lines, "\n"))
 
 	if paint.WorkspaceVisibleCount != 1 {

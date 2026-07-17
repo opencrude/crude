@@ -14,16 +14,16 @@ import (
 // databases (which store per-conversation data), the workspace database
 // stores project-scoped metadata that persists across sessions:
 //
-//   - Workspace settings (theme overrides, editor preferences, etc.)
-//   - List of all AI sessions that have run in this workspace
-//   - Workspace-level analytics and usage statistics
+// - Workspace settings (theme overrides, editor preferences, etc.)
+// - List of all AI sessions that have run in this workspace
+// - Workspace-level analytics and usage statistics
 //
 // The workspace DB is separate from session DBs to keep the data model
 // clean: a workspace contains many sessions, each with their own DB.
 type WorkspaceDB struct {
-	DB    *sql.DB
-	Path  string
-	Dir   string
+	DB         *sql.DB
+	Path       string
+	Dir        string
 	ProjectDir string
 }
 

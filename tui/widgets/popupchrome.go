@@ -22,22 +22,22 @@ import (
 //
 // Layout reference:
 //
-//   ╭─ Title ────────────────────────────────╮
-//   │  body content ...                       │
-//   │  body content ...                       │
-//   │  ─────────────────────────────────────  │
-//   │  hint text                              │
-//   ╰─────────────────────────────────────────╯
+// ╭─ Title                 ╮
+// │  body content ...                       │
+// │  body content ...                       │
+// │                    ─  │
+// │  hint text                              │
+// ╰              ─╯
 //
 // Visual rules:
-//   - Border: rounded (╭ ╮ ╰ ╯), 1 cell wide
-//   - Padding: 2 cells horizontal, 0 vertical
-//   - Title: integrated into top border, bold
-//   - Background: theme.Colors.PopupBg (== Code.Bg)
-//   - Focused: border becomes PopupBorderFocused, title PopupTitleFocused
-//   - No close X button on most popups (Esc to close)
-//   - Components: PopupInputField, PopupToggle, PopupButton, PopupDivider,
-//     PopupHintLine, PopupSectionLabel, PopupEmptyLine
+// - Border: rounded (╭ ╮ ╰ ╯), 1 cell wide
+// - Padding: 2 cells horizontal, 0 vertical
+// - Title: integrated into top border, bold
+// - Background: theme.Colors.PopupBg (== Code.Bg)
+// - Focused: border becomes PopupBorderFocused, title PopupTitleFocused
+// - No close X button on most popups (Esc to close)
+// - Components: PopupInputField, PopupToggle, PopupButton, PopupDivider,
+//   PopupHintLine, PopupSectionLabel, PopupEmptyLine
 //
 // All components produce content lines that are exactly `InnerWidth` chars
 // wide. The chrome wraps them. If your component output is narrower, pad
@@ -89,9 +89,9 @@ func (c PopupChromeConfig) InnerWidth() int {
 // before passing in, or pass plain lines — the wrapper pads them).
 //
 // Returns a slice of length `len(content) + 2`:
-//   - line 0: top border (╭─ Title ─...─╮)
-//   - lines 1..len(content): padded content rows
-//   - last line: bottom border (╰─...─╯)
+// - line 0: top border (╭─ Title ─...─╮)
+// - lines 1..len(content): padded content rows
+// - last line: bottom border (╰─...─╯)
 func PopupChromeLines(th *theme.Theme, cfg PopupChromeConfig, content []string) []string {
 	if cfg.Width < 7 {
 		cfg.Width = 7
@@ -136,10 +136,11 @@ func PopupChromeLines(th *theme.Theme, cfg PopupChromeConfig, content []string) 
 // buildTopBorder assembles the top border with the title embedded.
 //
 // Cases:
-//   Title+icon: ╭─ i Title ─...─╮   k = Width - 6 - iconW - titleW
-//   Icon only:  ╭─ i ─...─╮        k = Width - 6 - iconW
-//   Title only: ╭─ Title ─...─╮     k = Width - 6 - titleW
-//   No title:   ╭────...───╮        k = Width - 3
+//
+//	Title+icon: ╭─ i Title ─...─╮   k = Width - 6 - iconW - titleW
+//	Icon only:  ╭─ i ─...─╮        k = Width - 6 - iconW
+//	Title only: ╭─ Title ─...─╮     k = Width - 6 - titleW
+//	No title:   ╭─...╮        k = Width - 3
 //
 // k = trailing dashes. All are 1 corner + initial run + k dashes +
 // 1 corner = Width.
@@ -161,13 +162,13 @@ func buildTopBorder(th *theme.Theme, cfg PopupChromeConfig, borderStyle, titleSt
 	// the icon, the title, and the spaces between them.
 	//
 	// Layout when hasIcon||hasTitle:
-	//   "─ " + icon + " " + title + " "
-	//   PreDash  + iconW+1 + titleW + post
-	//   = preDashW + iconW + 1 + titleW + postDashW
+	// "─ " + icon + " " + title + " "
+	// PreDash  + iconW+1 + titleW + post
+	// = preDashW + iconW + 1 + titleW + postDashW
 	//
 	// Layout when no icon and no title:
-	//   "─" only (single dash, no spaces)
-	//   = 1
+	// "─" only (single dash, no spaces)
+	// = 1
 	preDashW := 1 // minimum: one dash
 	iconSpace := 0
 	postDashW := 0

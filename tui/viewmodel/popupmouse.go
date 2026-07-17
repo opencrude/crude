@@ -5,6 +5,7 @@ import (
 
 	"crude/tui/components"
 	"crude/tui/rendering"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 )
@@ -17,12 +18,16 @@ import (
 // handlePopupClickOutside checks all open popups for click-outside behavior.
 // Called at the TOP of dispatchMouseClick, before WM hit-testing.
 // Returns true to suppress the click entirely (modal block).
+// Routes through the OverlayHost when available; falls back to direct WM
+// iteration for popups not yet opened through the host.
 func (m *App) handlePopupClickOutside(msg tea.MouseClickMsg) bool {
 	if m.windowManager == nil || msg.Button != tea.MouseLeft {
 		return false
 	}
 	mouse := msg.Mouse()
-
+	if m.overlayHost != nil {
+		return m.overlayHost.HandleClickOutside(mouse.X, mouse.Y)
+	}
 	for i := len(m.windowManager.Windows()) - 1; i >= 0; i-- {
 		fw := m.windowManager.Windows()[i]
 		if !fw.Visible() || !fw.Focusable() {
@@ -43,224 +48,146 @@ func (m *App) handlePopupClickOutside(msg tea.MouseClickMsg) bool {
 }
 
 // handlePopupContentClick routes a left-click that landed inside a popup
-// to the correct content handler. localX/localY are relative to the window.
+// to the correct content handler. Prefers OverlayHost dispatch; falls back
+// to the legacy switch for popups not yet managed by the host.
 func (m *App) handlePopupContentClick(fw *wm.FloatingWindow, msg tea.MouseClickMsg) tea.Cmd {
 	if fw == nil {
 		return nil
 	}
-	mouse := msg.Mouse()
-	fx, fy := fw.Position()
-	localX := mouse.X - fx
-	localY := mouse.Y - fy
+	if m.overlayHost != nil && m.overlayHost.HasContentHandler(ui.OverlayID(fw.ID)) {
+		return m.overlayHost.DispatchContentClick(fw, msg)
+	}
 
 	switch fw.ID {
-	case "context-menu":
-		return m.clickContextMenu(localX, localY)
-	case "find-replace":
-		return m.clickFindReplace(localX, localY)
-	case "dirty-close-prompt":
-		return m.clickDirtyPrompt(localX, localY)
-	case "tree-prompt":
-		return m.clickTreePrompt(localX, localY)
-	case "tree-delete-confirm":
-		return m.clickTreeDeleteConfirm(localX, localY)
 	case "filepicker":
 		return m.forwardEventToWindowContent(fw, msg)
-	case "references-popup":
-		return m.clickReferences(localX, localY)
-	case "completion-popup":
-		return m.clickCompletion(localX, localY)
-	case "outline-popup":
-		return m.clickOutline(localX, localY)
 	default:
 		return m.forwardEventToWindowContent(fw, msg)
 	}
 }
 
 // handlePopupContentHover updates pre-selection when the mouse moves
-// over a popup. Called from dispatchMouseMotion.
+// over a popup. Prefers OverlayHost dispatch; falls back to the legacy
+// switch for popups not yet managed by the host.
 func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY int, button tea.MouseButton) {
 	if fw == nil || !fw.Focusable() {
 		return
 	}
-	fx, fy := fw.Position()
-	localX := screenX - fx
-	localY := screenY - fy
+	if m.overlayHost != nil && m.overlayHost.HasHoverHandler(ui.OverlayID(fw.ID)) {
+		m.overlayHost.DispatchContentHover(fw, screenX, screenY, button)
+		return
+	}
 
 	switch fw.ID {
-	case "filepicker", "workspace-settings":
+	case "filepicker", "workspace-settings", "find-in-files":
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
-	case "context-menu":
-		m.hoverContextMenu(localX, localY)
-	case "find-replace":
-		m.hoverFindReplace(localX, localY)
-	case "dirty-close-prompt", "tree-delete-confirm":
-		m.hoverDirtyPrompt(localX, localY)
-	case "references-popup":
-		m.hoverReferences(localX, localY)
-	case "completion-popup":
-		m.hoverCompletion(localX, localY)
-	case "outline-popup":
-		m.hoverOutline(localX, localY)
 	}
 }
 
-// closePopupWindowByID routes close by popup ID to the correct cleanup function.
+// closePopupWindowByID routes close by popup ID to the OverlayHost.
+// All cleanup logic lives in the OnClose callback registered at open time.
 func (m *App) closePopupWindowByID(id string) {
-	switch id {
-	case "context-menu":
-		m.closeContextMenu()
-	case "find-replace":
-		m.closeFindReplace()
-	case "dirty-close-prompt":
-		if m.windowManager != nil {
-			m.windowManager.RemoveWindow("dirty-close-prompt")
-		}
-		m.DirtyPromptPath = ""
-	case "tree-prompt":
-		m.closeTreePrompt()
-	case "tree-delete-confirm":
-		if m.windowManager != nil {
-			m.windowManager.RemoveWindow("tree-delete-confirm")
-		}
-		m.TreeDeletePending = ""
-	case "references-popup":
-		m.closeReferencesPopup()
-	case "completion-popup":
-		m.closeCompletionPopup()
-	case "outline-popup":
-		m.closeOutlinePopup()
-	case "filepicker":
-		if m.windowManager != nil {
-			m.windowManager.RemoveWindow("filepicker")
-		}
-		m.FilePicker.Close()
-		m.setMode(ModeChat)
-	case "diag-hover":
-		m.clearDiagHoverPopup()
-	case "composer":
-		if m.windowManager != nil {
-			m.windowManager.RemoveWindow("composer")
-		}
-		m.ActiveSession.Composer.Close()
-	case "command-palette":
-		if m.windowManager != nil {
-			m.windowManager.RemoveWindow("command-palette")
-		}
-		m.commandPaletteModel = nil
-	default:
-		if m.windowManager != nil {
-			m.windowManager.RemoveWindow(id)
-		}
-	}
+	m.overlayHost.Close(ui.OverlayID(id))
 }
 
 // popupClickOutsideBehavior is a reference: which popup ID has which behavior.
 // The actual values are set at popup-creation time via wm.WithClickOutside.
-//   CloseRoute:  context-menu, references-popup, completion-popup,
-//                outline-popup, diag-context
-//   KeepRoute:   find-replace, filepicker, composer, command-palette,
-//                textoverlay
-//   Ignore:      dirty-close-prompt, tree-prompt, tree-delete-confirm
+// CloseRoute:  context-menu, references-popup, completion-popup,
+//              outline-popup, diag-context
+// KeepRoute:   find-replace, filepicker, composer, command-palette,
+//              textoverlay
+// Ignore:      dirty-close-prompt, tree-prompt, tree-delete-confirm
 
 // =============================================================================
 // Context menu: click & hover
 //
 // Layout (after PopupChromeLines):
-//   Row 0: ╭──────────╮  (top border)
-//   Row 1: │ first item│  (first content line)
-//   Row 2: │ second    │
-//   ...
-//   Row N: ╰──────────╯  (bottom border)
+// Row 0: ╭     ╮  (top border)
+// Row 1: │ first item│  (first content line)
+// Row 2: │ second    │
+// ...
+// Row N: ╰     ╯  (bottom border)
 //
 // Row 1 is contentY=1 (0-indexed). So contentRow = contentY - 1 for the
 // first content item. We do this conversion consistently.
 // =============================================================================
 
 func (m *App) clickContextMenu(localX, localY int) tea.Cmd {
-	if m.LastContextMenu == nil {
+	if m.LastContextMenu == nil || m.windowManager == nil {
+		return nil
+	}
+	fw := m.windowManager.Window("context-menu")
+	if fw == nil {
+		return nil
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil || cw.Host() == nil {
+		return nil
+	}
+	ww, hh := fw.Size()
+	cw.Host().Resize(ww, hh)
+	cw.Host().Layout()
+	res := cw.Host().Handle(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
+	if res.Action == nil || res.Action.ID != widgets.ContextMenuActivate {
+		return nil
+	}
+	item, ok := res.Action.Payload.(ui.ListItem)
+	if !ok || item.Disabled {
+		return nil
+	}
+	p, ok := item.Payload.(widgets.ContextMenuPayload)
+	if !ok {
 		return nil
 	}
 	st := m.LastContextMenu
-
-	// Row 0 = top border. Content starts at row 1.
-	contentRow := localY - 1
-	if contentRow < 0 {
-		return nil
+	if p.FlatIdx >= 0 {
+		st.Cursor = p.FlatIdx
 	}
-	_ = localX // all items full-width
-
-	rowIdx := 0
-	for si, sec := range st.Sections {
-		if si > 0 {
-			if rowIdx == contentRow {
-				return nil
-			}
-			rowIdx++
-		}
-		if sec.SectionLabel != "" {
-			if rowIdx == contentRow {
-				return nil
-			}
-			rowIdx++
-		}
-		for ii, item := range sec.Items {
-			if rowIdx == contentRow {
-				if item.Disabled {
-					return nil
-				}
-				if fwItem, ok := findFlatItemIndex(st, si, ii); ok {
-					st.Cursor = fwItem
-				}
-				st.Activate()
-				m.closeContextMenu()
-				return nil
-			}
-			rowIdx++
-		}
-	}
+	st.Activate()
+	m.closeContextMenu()
 	return nil
 }
 
 func (m *App) hoverContextMenu(localX, localY int) {
-	if m.LastContextMenu == nil {
+	if m.LastContextMenu == nil || m.windowManager == nil {
 		return
 	}
 	st := m.LastContextMenu
 	if st.FlatItems == nil {
 		st.Build()
 	}
-
-	contentRow := localY - 1
-	if contentRow < 0 {
+	fw := m.windowManager.Window("context-menu")
+	if fw == nil {
 		return
 	}
-
-	rowIdx := 0
-	for si, sec := range st.Sections {
-		if si > 0 {
-			if rowIdx == contentRow {
-				return
-			}
-			rowIdx++
-		}
-		if sec.SectionLabel != "" {
-			if rowIdx == contentRow {
-				return
-			}
-			rowIdx++
-		}
-		for ii, item := range sec.Items {
-			if rowIdx == contentRow {
-				if !item.Disabled {
-					if fwItem, ok := findFlatItemIndex(st, si, ii); ok && st.Cursor != fwItem {
-						st.Cursor = fwItem
-					}
-				}
-				return
-			}
-			rowIdx++
-		}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil || cw.Host() == nil {
+		return
+	}
+	ww, hh := fw.Size()
+	cw.Host().Resize(ww, hh)
+	cw.Host().Layout()
+	list := widgets.ContextMenuList(cw)
+	if list == nil {
+		return
+	}
+	// FramePopover content starts at Y=1 (title/border row).
+	contentY := localY - 1
+	if contentY < 0 {
+		return
+	}
+	idx := list.Scroll().Offset() + contentY
+	if idx < 0 || idx >= len(list.Items()) {
+		return
+	}
+	it := list.Items()[idx]
+	if !it.Selectable() {
+		return
+	}
+	if list.SelectedIndex() != idx {
+		list.SelectIndex(idx)
+		widgets.SyncContextMenuCursor(cw, st)
+		fw.MarkContentDirty()
 	}
 }
 
@@ -268,13 +195,13 @@ func (m *App) hoverContextMenu(localX, localY int) {
 // Find/Replace: click
 //
 // Layout (after PopupChromeLines, undecorated):
-//   Row 0: ╭─ Find ───╮
-//   Row 1: │ Find: xxx│
-//   Row 2: │ ⌕ 3/10   │ (or Replace if ReplaceMode)
-//   Row 3: │          │
-//   Row 4: │ matches  │ Aa \b .*
-//   Row 5: │ enter n..│
-//   Row N: ╰──────────╯
+// Row 0: ╭─ Find  ─╮
+// Row 1: │ Find: xxx│
+// Row 2: │ ⌕ 3/10   │ (or Replace if ReplaceMode)
+// Row 3: │          │
+// Row 4: │ matches  │ Aa \b .*
+// Row 5: │ enter n..│
+// Row N: ╰     ╯
 // =============================================================================
 
 // positionFindReplaceCursor translates a popup-local X coordinate
@@ -445,24 +372,7 @@ func (m *App) hoverFindReplace(localX, localY int) {
 
 // =============================================================================
 // Confirm prompt (dirty-close-prompt): click & hover
-//
-// Layout (from ConfirmPrompt3Button):
-//   Row 0: ╭─ Unsaved ─╮
-//   Row 1: │ i What do │     (question)
-//   Row 2: │           │     (empty)
-//   Row 3: │ detail    │
-//   Row 4: │           │     (empty)
-//   Row 5: │  Save Don't │  (3-button row)
-//   Row 6: │ ← → ..   │     (hints)
-//   Row N: ╰───────────╯
-//
-// Button row is at contentRow = innerH - 2 (second-to-last content row)
-// (where innerH is the total window height minus 2 rows of chrome).
-//
-// The 3 buttons (Save | Don't Save | Cancel) live in the same row. We
-// hit-test by approximating button widths — button widths are derived
-// from the rendered label lengths, not hard-coded constants, so the
-// detection stays correct if the labels ever change.
+// WindowFrame + ui.Button row — hit-test via Host.
 // =============================================================================
 
 func (m *App) clickDirtyPrompt(localX, localY int) tea.Cmd {
@@ -473,21 +383,12 @@ func (m *App) clickDirtyPrompt(localX, localY int) tea.Cmd {
 	if fw == nil {
 		return nil
 	}
-	_, h := fw.Size()
-	innerH := h - 2 // subtract chrome
-	contentRow := localY - 1
-
-	// Button row is at the second-to-last content row.
-	buttonRow := innerH - 2
-	if contentRow == buttonRow {
-		choice := dirtyPromptButtonAtX(localX)
-		if choice < 0 {
-			return nil
-		}
-		m.DirtyPromptChoice = choice
-		return m.activateDirtyPromptButton(choice)
+	choice := confirmFrameButtonAt(fw, localX, localY)
+	if choice < 0 {
+		return nil
 	}
-	return nil
+	m.DirtyPromptChoice = choice
+	return m.activateDirtyPromptButton(choice)
 }
 
 func (m *App) activateDirtyPromptButton(choice int) tea.Cmd {
@@ -511,16 +412,7 @@ func (m *App) hoverDirtyPrompt(localX, localY int) {
 	if fw == nil {
 		return
 	}
-	_, h := fw.Size()
-	innerH := h - 2
-	contentRow := localY - 1
-	buttonRow := innerH - 2
-
-	if contentRow != buttonRow {
-		return
-	}
-
-	choice := dirtyPromptButtonAtX(localX)
+	choice := confirmFrameButtonAt(fw, localX, localY)
 	if choice < 0 {
 		return
 	}
@@ -530,41 +422,8 @@ func (m *App) hoverDirtyPrompt(localX, localY int) {
 	}
 }
 
-// dirtyPromptButtonAtX maps a local-X coordinate (within the dirty-prompt
-// popup, including the chrome's left border) to the 0-indexed button
-// the user is hovering/clicking. Returns -1 if the X is not over any
-// button (e.g. on the left padding).
-//
-// The buttons are rendered left-aligned as " Save  Don't Save  Cancel "
-// inside the chrome-padded content. The chrome occupies the first
-// `chromePad` columns; the first button starts there.
-//
-// Button labels: 0=Save (4 chars), 1=Don't Save (11 chars), 2=Cancel (6 chars).
-// Each button (focused or not) renders as " Label " — 2 extra cells of padding
-// per button. Separators are single spaces.
-func dirtyPromptButtonAtX(localX int) int {
-	chromePad := 3 // "│  " — left border + 2 pad cells
-	// Total layout: " " + "Save" + " " + " " + "Don't Save" + " " + " " + "Cancel" + " "
-	// = 1+4+1+1+11+1+1+6+1 = 27 cells inside the content area.
-	// In local coords, the first button starts at column chromePad.
-	// Approximate button start positions: Save at 4, Don't Save at 10, Cancel at 22.
-	if localX < chromePad+1 || localX >= chromePad+27 {
-		return -1
-	}
-	relX := localX - chromePad
-	switch {
-	case relX >= 0 && relX < 7: // " Save " (1+4+1+1 padding space)
-		return 0
-	case relX >= 7 && relX < 19: // " Don't Save " (1+11+1 = 13)
-		return 1
-	default:
-		return 2
-	}
-}
-
 // =============================================================================
-// Tree delete confirm: click
-// Same layout as dirty-close-prompt (ConfirmPrompt).
+// Tree delete confirm: click — WindowFrame + Yes/No buttons.
 // =============================================================================
 
 func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
@@ -575,17 +434,15 @@ func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
 	if fw == nil {
 		return nil
 	}
-	_, h := fw.Size()
-	innerH := h - 2
-	contentRow := localY - 1
-	buttonRow := innerH - 2
-
-	if contentRow == buttonRow {
-		if localX >= 3 && localX < 8 {
-			m.confirmTreeDelete()
-		} else {
-			m.cancelTreeDelete()
-		}
+	choice := confirmFrameButtonAt(fw, localX, localY)
+	if choice < 0 {
+		return nil
+	}
+	m.TreeDeleteChoice = choice
+	if choice == 0 {
+		m.confirmTreeDelete()
+	} else {
+		m.cancelTreeDelete()
 	}
 	return nil
 }
@@ -594,12 +451,12 @@ func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
 // Tree prompt: click
 //
 // Layout (from TextPromptLines):
-//   Row 0: ╭─ New File ─╮
-//   Row 1: │ prompt text│
-//   Row 2: │ <value>    │  (input)
-//   Row 3: │            │  (empty)
-//   Row 4: │ enter:cre..│  (hints)
-//   Row N: ╰────────────╯
+// Row 0: ╭─ New File ─╮
+// Row 1: │ prompt text│
+// Row 2: │ <value>    │  (input)
+// Row 3: │            │  (empty)
+// Row 4: │ enter:cre..│  (hints)
+// Row N: ╰    ─╯
 // =============================================================================
 
 func (m *App) clickTreePrompt(localX, localY int) tea.Cmd {
@@ -615,10 +472,18 @@ func (m *App) clickTreePrompt(localX, localY int) tea.Cmd {
 		if charX < 0 {
 			charX = 0
 		}
-		if charX > len(m.TreePrompt.Value) {
-			charX = len(m.TreePrompt.Value)
+		if m.TreePrompt.Edit != nil {
+			if charX > m.TreePrompt.Edit.Len() {
+				charX = m.TreePrompt.Edit.Len()
+			}
+			m.TreePrompt.Edit.SetCursor(charX, false)
+			m.TreePrompt.SyncFromEdit()
+		} else {
+			if charX > len(m.TreePrompt.Value) {
+				charX = len(m.TreePrompt.Value)
+			}
+			m.TreePrompt.Cursor = charX
 		}
-		m.TreePrompt.Cursor = charX
 		m.refreshTreePrompt()
 	}
 	return nil
@@ -631,9 +496,45 @@ func (m *App) clickTreePrompt(localX, localY int) tea.Cmd {
 // =============================================================================
 
 func (m *App) clickReferences(localX, localY int) tea.Cmd {
-	if m.LSPPopup.ReferencesID == "" || m.LSPPopup.RefRows == nil {
+	if m.LSPPopup.ReferencesID == "" || m.LSPPopup.RefRows == nil || m.windowManager == nil {
 		return nil
 	}
+	fw := m.windowManager.Window(m.LSPPopup.ReferencesID)
+	if fw == nil {
+		return nil
+	}
+	// WindowFrame path: activate via Host + List.
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil && cw.Host() != nil {
+		ww, hh := fw.Size()
+		cw.Host().Resize(ww, hh)
+		cw.Host().Layout()
+		// Prefer frame Handle so close button is checked before content.
+		if root := cw.Root(); root != nil {
+			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
+			if res.Action != nil && res.Action.ID == "window.close" {
+				m.closeReferencesPopup()
+				return nil
+			}
+			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
+				if item, ok := res.Action.Payload.(ui.ListItem); ok {
+					idx := -1
+					if i, ok := item.Payload.(int); ok {
+						idx = i
+					} else {
+						idx = m.listPopupSelectedIndex(cw)
+					}
+					if idx >= 0 && idx < len(m.LSPPopup.RefRows) {
+						m.LSPPopup.RefCursor = idx
+						m.jumpToReference(m.LSPPopup.RefRows[idx])
+						m.closeReferencesPopup()
+					}
+				}
+				return nil
+			}
+		}
+		return nil
+	}
+	// Legacy fallback (hand-drawn chrome).
 	contentRow := localY - 1
 	if contentRow >= 0 && contentRow < len(m.LSPPopup.RefRows) {
 		m.LSPPopup.RefCursor = contentRow
@@ -645,7 +546,35 @@ func (m *App) clickReferences(localX, localY int) tea.Cmd {
 }
 
 func (m *App) hoverReferences(localX, localY int) {
-	if m.LSPPopup.RefRows == nil {
+	if m.LSPPopup.RefRows == nil || m.windowManager == nil {
+		return
+	}
+	fw := m.windowManager.Window(m.LSPPopup.ReferencesID)
+	if fw == nil {
+		return
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+		list := widgets.ListPopupList(cw)
+		if list == nil {
+			return
+		}
+		// Frame content starts at Y=1.
+		contentY := localY - 1
+		if contentY < 0 {
+			return
+		}
+		idx := list.Scroll().Offset() + contentY
+		if idx < 0 || idx >= len(list.Items()) {
+			return
+		}
+		if !list.Items()[idx].Selectable() {
+			return
+		}
+		if list.SelectedIndex() != idx {
+			list.SelectIndex(idx)
+			m.LSPPopup.RefCursor = idx
+			fw.MarkContentDirty()
+		}
 		return
 	}
 	contentRow := localY - 1
@@ -655,14 +584,56 @@ func (m *App) hoverReferences(localX, localY int) {
 	}
 }
 
+// listPopupSelectedIndex returns the selected row index from a list popup frame.
+func (m *App) listPopupSelectedIndex(cw *ui.ComponentWidget) int {
+	list := widgets.ListPopupList(cw)
+	if list == nil {
+		return -1
+	}
+	return list.SelectedIndex()
+}
+
 // =============================================================================
 // Completion popup: click & hover
 // =============================================================================
 
 func (m *App) clickCompletion(localX, localY int) tea.Cmd {
-	if m.LSPPopup.CompletionItems == nil {
+	if m.LSPPopup.CompletionItems == nil || m.windowManager == nil {
 		return nil
 	}
+	fw := m.windowManager.Window(m.LSPPopup.CompletionID)
+	if fw == nil {
+		return nil
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil && cw.Host() != nil {
+		ww, hh := fw.Size()
+		cw.Host().Resize(ww, hh)
+		cw.Host().Layout()
+		if root := cw.Root(); root != nil {
+			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
+			if res.Action != nil && res.Action.ID == "window.close" {
+				m.closeCompletionPopup()
+				return nil
+			}
+			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
+				if item, ok := res.Action.Payload.(ui.ListItem); ok {
+					idx := -1
+					if i, ok := item.Payload.(int); ok {
+						idx = i
+					} else {
+						idx = m.listPopupSelectedIndex(cw)
+					}
+					if idx >= 0 && idx < len(m.LSPPopup.CompletionItems) {
+						m.LSPPopup.CompletionCursor = idx
+						m.acceptCompletion()
+					}
+				}
+				return nil
+			}
+		}
+		return nil
+	}
+	// Legacy fallback.
 	contentRow := localY - 1
 	if contentRow >= 0 && contentRow < len(m.LSPPopup.CompletionItems) {
 		m.LSPPopup.CompletionCursor = contentRow
@@ -672,7 +643,34 @@ func (m *App) clickCompletion(localX, localY int) tea.Cmd {
 }
 
 func (m *App) hoverCompletion(localX, localY int) {
-	if m.LSPPopup.CompletionItems == nil {
+	if m.LSPPopup.CompletionItems == nil || m.windowManager == nil {
+		return
+	}
+	fw := m.windowManager.Window(m.LSPPopup.CompletionID)
+	if fw == nil {
+		return
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+		list := widgets.ListPopupList(cw)
+		if list == nil {
+			return
+		}
+		contentY := localY - 1
+		if contentY < 0 {
+			return
+		}
+		idx := list.Scroll().Offset() + contentY
+		if idx < 0 || idx >= len(list.Items()) {
+			return
+		}
+		if !list.Items()[idx].Selectable() {
+			return
+		}
+		if list.SelectedIndex() != idx {
+			list.SelectIndex(idx)
+			m.LSPPopup.CompletionCursor = idx
+			fw.MarkContentDirty()
+		}
 		return
 	}
 	contentRow := localY - 1
@@ -686,28 +684,144 @@ func (m *App) hoverCompletion(localX, localY int) {
 // =============================================================================
 
 func (m *App) clickOutline(localX, localY int) tea.Cmd {
-	if !m.LSPPopup.OutlineOpen || m.LSPPopup.OutlineRows == nil {
+	if !m.LSPPopup.OutlineOpen || m.LSPPopup.OutlineRows == nil || m.windowManager == nil {
 		return nil
 	}
+	fw := m.windowManager.Window(outlinePopupID)
+	if fw == nil {
+		return nil
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil && cw.Host() != nil {
+		ww, hh := fw.Size()
+		cw.Host().Resize(ww, hh)
+		cw.Host().Layout()
+		if root := cw.Root(); root != nil {
+			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
+			if res.Action != nil && res.Action.ID == "window.close" {
+				m.closeOutlinePopup()
+				return nil
+			}
+			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
+				if item, ok := res.Action.Payload.(ui.ListItem); ok {
+					idx := -1
+					if i, ok := item.Payload.(int); ok {
+						idx = i
+					} else {
+						idx = m.listPopupSelectedIndex(cw)
+					}
+					if idx >= 0 && idx < len(m.LSPPopup.OutlineRows) {
+						m.LSPPopup.OutlineCursor = idx
+						m.jumpToOutline(idx)
+						m.closeOutlinePopup()
+					}
+				}
+				return nil
+			}
+		}
+		return nil
+	}
+	// Legacy fallback.
 	contentRow := localY - 1
 	if contentRow >= 0 && contentRow < len(m.LSPPopup.OutlineRows) {
 		m.LSPPopup.OutlineCursor = contentRow
-		sym := m.LSPPopup.OutlineRows[m.LSPPopup.OutlineCursor].Sym
-		m.EditorState.Editor.SetCursorPosition(sym.Line, sym.Col)
-		m.EditorState.Editor.ScrollToCursor()
-		layout := m.computeLayout()
-		m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+		m.jumpToOutline(contentRow)
 		m.closeOutlinePopup()
 	}
 	return nil
 }
 
 func (m *App) hoverOutline(localX, localY int) {
-	if m.LSPPopup.OutlineRows == nil {
+	if m.LSPPopup.OutlineRows == nil || m.windowManager == nil {
+		return
+	}
+	fw := m.windowManager.Window(outlinePopupID)
+	if fw == nil {
+		return
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+		list := widgets.ListPopupList(cw)
+		if list == nil {
+			return
+		}
+		contentY := localY - 1
+		if contentY < 0 {
+			return
+		}
+		idx := list.Scroll().Offset() + contentY
+		if idx < 0 || idx >= len(list.Items()) {
+			return
+		}
+		if !list.Items()[idx].Selectable() {
+			return
+		}
+		if list.SelectedIndex() != idx {
+			list.SelectIndex(idx)
+			m.LSPPopup.OutlineCursor = idx
+			fw.MarkContentDirty()
+		}
 		return
 	}
 	contentRow := localY - 1
 	if contentRow >= 0 && contentRow < len(m.LSPPopup.OutlineRows) && contentRow != m.LSPPopup.OutlineCursor {
 		m.LSPPopup.OutlineCursor = contentRow
 	}
+}
+
+// ─── Command palette mouse ─────────────────────────────────────────────
+
+func (m *App) clickCommandPalette(fw *wm.FloatingWindow, localX, localY int) tea.Cmd {
+	if fw == nil {
+		return nil
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil {
+		return nil
+	}
+	// Route via Host hit-test + Handle (same as filepicker/find-in-files).
+	host := cw.Host()
+	if host == nil {
+		return nil
+	}
+	// Convert local coords to screen for Host dispatch.
+	sx, sy := fw.Position()
+	screenX := sx + localX
+	screenY := sy + localY
+	res := host.Handle(tea.MouseClickMsg{
+		X:      screenX,
+		Y:      screenY,
+		Button: tea.MouseLeft,
+	})
+	// Check if the click activated a list item.
+	if res.Action != nil && res.Action.ID == widgets.CPActivate {
+		if entry, ok := res.Action.Payload.(ui.ListItem); ok {
+			if ce, ok := entry.Payload.(cmdEntry); ok {
+				cb := m.commandPaletteModel.callback
+				m.overlayHost.Close(ui.OverlayCommandPalette)
+				if cb != nil {
+					return cb(ce.ID)
+				}
+			}
+		}
+	}
+	fw.MarkContentDirty()
+	return nil
+}
+
+func (m *App) hoverCommandPalette(fw *wm.FloatingWindow, localX, localY int) {
+	if fw == nil {
+		return
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil {
+		return
+	}
+	host := cw.Host()
+	if host == nil {
+		return
+	}
+	sx, sy := fw.Position()
+	screenX := sx + localX
+	screenY := sy + localY
+	host.Handle(tea.MouseMotionMsg{X: screenX, Y: screenY})
+	fw.MarkContentDirty()
 }

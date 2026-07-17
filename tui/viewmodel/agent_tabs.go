@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"crude/provider"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/workspace"
 )
@@ -138,10 +139,8 @@ func (m *App) setMode(newMode Mode) {
 		m.openFilePickerWindow()
 	case ModeChat:
 		m.FormHint = ""
-		if m.windowManager != nil {
-			m.windowManager.RemoveWindow("textoverlay")
-			m.windowManager.RemoveWindow("filepicker")
-		}
+		m.overlayHost.Close(ui.OverlayTextOverlay)
+		m.overlayHost.Close(ui.OverlayFilePicker)
 	}
 }
 

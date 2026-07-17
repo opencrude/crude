@@ -59,7 +59,7 @@ type Session struct {
 	// for this session's orchestrator. This is what AgentNode.State points to.
 	AgentState *AgentState
 
-	// ── Per-session dialogs ───────────────────────────────────────────
+	// Per-session dialogs ─
 	//
 	// These are the tool-confirmation and user-interaction dialogs. Each
 	// is a singleton within the session — only one can be active at a time.
@@ -87,7 +87,7 @@ type Session struct {
 	// It is intentionally per session so tabs never leak overrides.
 	Settings *widgets.SessionSettings
 
-	// ── Per-session callbacks ─────────────────────────────────────────
+	// ── Per-session callbacks ──
 	//
 	// These bridge the TUI to the backend for session-specific actions.
 
@@ -105,7 +105,7 @@ type Session struct {
 	// per-session config overrides.
 	OnOrchestratorReset func(orchID string)
 
-	// ── Per-session cost/token tracking ───────────────────────────────
+	// ── Per-session cost/token tracking ─
 	//
 	// These are updated by agent events (usage, done) and displayed in
 	// the status bar. They are per-session because each agent conversation
@@ -134,7 +134,7 @@ type Session struct {
 	// theme is a reference to the workspace's theme (for creating widgets).
 	theme *theme.Theme
 
-	// ── Backend session (owned by this frontend session) ───────────────
+	// ── Backend session (owned by this frontend session)
 	//
 	// The backend session (session.Session) is the heavy lifter — it owns
 	// the provider connection, tool executor, permission store, and message
@@ -157,9 +157,9 @@ type Session struct {
 // theme. The reference store is created from the session's DB.
 //
 // Parameters:
-//   - th: the workspace's theme (shared, not owned).
-//   - sessionID, sessionDir, db: persistence handles for this session.
-//   - lg: the logger (shared, not owned).
+// - th: the workspace's theme (shared, not owned).
+// - sessionID, sessionDir, db: persistence handles for this session.
+// - lg: the logger (shared, not owned).
 func NewSession(th *theme.Theme, sessionID, sessionDir string, db *sql.DB, lg Logger) *Session {
 	s := &Session{
 		SessionID:    sessionID,

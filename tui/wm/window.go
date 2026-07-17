@@ -7,17 +7,16 @@ import (
 	"crude/tui/widget"
 )
 
-// FloatingWindow is a decorated, interactive surface that floats above
-// other content in the window manager.
+// FloatingWindow is an interactive surface that floats above other content.
 //
 // A FloatingWindow has:
-//   - A content widget (the actual UI inside the window)
-//   - Decorations (border, title bar, close button) drawn around the content
-//   - Interaction state (drag, resize, focus)
-//   - Z-order position among other windows
+// - A content widget (the actual UI inside the window)
+// - Frame interaction regions (title bar, close button, resize edges)
+// - Interaction state (drag, resize, focus)
+// - Z-order position among other windows
 //
-// The window surface includes both the decoration and content areas.
-// The decoration occupies the border rows/columns; the content is the inner area.
+// Visual chrome is owned by ui.WindowFrame and is rendered as part of Content.
+// The WM owns only placement and interaction; Content fills the complete surface.
 type FloatingWindow struct {
 	// ID is the unique identifier for this window.
 	ID string
@@ -28,14 +27,15 @@ type FloatingWindow struct {
 
 	// Position (screen coordinates).
 	x, y int
-	// Size (including decorations).
+	// Size of the complete WindowFrame content surface.
 	w, h int
 	// Minimum size constraints.
 	minW, minH int
 	// Maximum size constraints (0 = unlimited).
 	maxW, maxH int
 
-	// decorated controls whether the window has a border and title bar.
+	// decorated controls whether standard WindowFrame interaction regions are active.
+	// It does not cause the WM to paint chrome.
 	decorated bool
 	// movable controls whether the window can be dragged.
 	movable bool
@@ -54,11 +54,8 @@ type FloatingWindow struct {
 	// focusable controls whether the window can receive focus and mouse input.
 	focusable bool
 
-	// Decoration configuration.
-	borderStyle BorderStyle
-	titleAlign  TextAlign
-
-	// Content area (computed from w/h minus decorations).
+	// Content area. WindowFrame owns its own inner chrome/content layout, so the
+	// WM content area is always the complete floating-window surface.
 	contentX, contentY int
 	contentW, contentH int
 
@@ -90,14 +87,8 @@ type FloatingWindow struct {
 // NewFloatingWindow creates a new floating window with the given dimensions
 // and options.
 //
-// The window is visible by default. All options are applied before the
-// content area is computed. The content area depends on border style:
-//   - BorderNone: (0,1) with size (w, h-1)
-//   - BorderLShape: (1,1) with size (w-1, h-2)
-//   - Other borders: (1,1) with size (w-2, h-2)
-//   - Undecorated: (0,0) with size (w, h)
-//
-// A minimum content size of 1×1 is enforced.
+// The window is visible and has standard frame interaction regions by default.
+// Content is expected to include ui.WindowFrame when visual chrome is wanted.
 func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts ...WindowOption) *FloatingWindow {
 	fw := &FloatingWindow{
 		ID:           id,
@@ -105,15 +96,14 @@ func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts .
 		Content:      content,
 		w:            w,
 		h:            h,
-		borderStyle:  BorderLShape,
-		decorated:    true, // decorated by default
+		decorated:    true, // standard frame interactions by default
 		movable:      true, // movable by default
 		resizable:    true, // resizable by default
 		closable:     true, // closable by default
 		focusable:    true, // focusable by default
 		visible:      true,
 		state:        WindowNormal,
-		contentDirty: true, // needs initial render
+		contentDirty: true,                   // needs initial render
 		clickOutside: ClickOutsideCloseRoute, // default: close + route
 	}
 
@@ -129,50 +119,13 @@ func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts .
 	return fw
 }
 
-// computeContentArea calculates the content area based on the window size,
-// decoration state, and border style.
-//
-// For decorated windows with BorderNone: content starts at column 0, row 1
-// (after the title bar), with full width and height-1.
-//
-// For decorated windows with BorderLShape: content starts at column 1, row 1
-// (after left border + title bar), with width-1 and height-2.
-// Left column is the border, bottom row is the border.
-//
-// For decorated windows with border chars: content starts at column 1, row 1
-// (inside the border), with width-2 and height-2.
-//
-// For undecorated windows: content fills the entire window.
+// computeContentArea assigns the complete window to its content. Visual frame
+// insets are calculated once by ui.WindowFrame, not duplicated by the WM.
 func (fw *FloatingWindow) computeContentArea() {
-	if fw.decorated {
-		switch fw.borderStyle {
-		case BorderNone:
-			// No border chars: content starts at column 0, row 1 (after title bar).
-			fw.contentX = 0
-			fw.contentY = 1
-			fw.contentW = fw.w
-			fw.contentH = fw.h - 1
-		case BorderLShape:
-			// Left+bottom border: content starts at column 1, row 1.
-			// Left column (x=0) is border, bottom row (y=h-1) is border.
-			// No right border — content extends to the right edge.
-			fw.contentX = 1
-			fw.contentY = 1
-			fw.contentW = fw.w - 1
-			fw.contentH = fw.h - 2
-		default:
-			// Full border chars: content starts at column 1, row 1 (inside border).
-			fw.contentX = 1
-			fw.contentY = 1
-			fw.contentW = fw.w - 2
-			fw.contentH = fw.h - 2
-		}
-	} else {
-		fw.contentX = 0
-		fw.contentY = 0
-		fw.contentW = fw.w
-		fw.contentH = fw.h
-	}
+	fw.contentX = 0
+	fw.contentY = 0
+	fw.contentW = fw.w
+	fw.contentH = fw.h
 
 	// Ensure minimum content size of 1×1.
 	if fw.contentW < 1 {
@@ -182,12 +135,12 @@ func (fw *FloatingWindow) computeContentArea() {
 		fw.contentH = 1
 	}
 
-	rendering.Log("computeContentArea fw=%q x=%d y=%d w=%d h=%d contentX=%d contentY=%d contentW=%d contentH=%d decorated=%v borderStyle=%v",
-		fw.ID, fw.x, fw.y, fw.w, fw.h, fw.contentX, fw.contentY, fw.contentW, fw.contentH, fw.decorated, fw.borderStyle)
+	rendering.Log("computeContentArea fw=%q x=%d y=%d w=%d h=%d contentX=%d contentY=%d contentW=%d contentH=%d framed=%v",
+		fw.ID, fw.x, fw.y, fw.w, fw.h, fw.contentX, fw.contentY, fw.contentW, fw.contentH, fw.decorated)
 }
 
-// ContentBounds returns the inner content area (excluding decorations)
-// as a Rect in window-local coordinates.
+// ContentBounds returns the full content surface in window-local coordinates.
+// ui.WindowFrame owns its inner body bounds.
 func (fw *FloatingWindow) ContentBounds() surface.Rect {
 	return surface.Rect{
 		X: fw.contentX,
@@ -202,17 +155,8 @@ func (fw *FloatingWindow) Position() (int, int) {
 	return fw.x, fw.y
 }
 
-// HitTestEdge returns which edge or corner a screen coordinate hits.
-// Returns EdgeNone if the coordinate is not on an edge or if the window
-// is not decorated.
-//
-// For BorderNone: the top row is the title bar (for dragging), not a resize
-// handle. Only bottom and side edges are detected for resize.
-//
-// For BorderLShape: only left and bottom edges are detected. The top row is
-// the title bar, and the right side has no border (scrollbar area).
-//
-// For fully bordered windows: all edges and corners are detected.
+// HitTestEdge returns which standard WindowFrame edge or corner a screen
+// coordinate hits. Visual border style is irrelevant to WM interaction.
 func (fw *FloatingWindow) HitTestEdge(screenX, screenY int) Edge {
 	if !fw.decorated {
 		return EdgeNone
@@ -227,32 +171,7 @@ func (fw *FloatingWindow) HitTestEdge(screenX, screenY int) Edge {
 		return EdgeNone
 	}
 
-	if fw.borderStyle == BorderNone || fw.borderStyle == BorderLShape {
-		// For BorderNone and BorderLShape: top row is the title bar (drag),
-		// not a resize handle. Only detect edges on bottom and left sides.
-		if ly == fw.h-1 {
-			// Bottom edge + corners.
-			if lx == 0 {
-				return EdgeBottomLeft
-			}
-			if lx == fw.w-1 {
-				return EdgeBottomRight
-			}
-			return EdgeBottom
-		}
-		if ly > 0 {
-			// Left edge only (no right border for BorderNone/LShape).
-			if lx == 0 {
-				return EdgeLeft
-			}
-			if fw.borderStyle == BorderNone && lx == fw.w-1 {
-				return EdgeRight
-			}
-		}
-		return EdgeNone
-	}
-
-	// Fully bordered windows: all edges and corners.
+	// WindowFrame uses a complete one-cell outer frame.
 	if lx == 0 && ly == 0 {
 		return EdgeTopLeft
 	}
@@ -344,15 +263,14 @@ func (fw *FloatingWindow) ApplyMove(dx, dy int) {
 	fw.y += dy
 }
 
-// Render draws the window (decorations + content) into the window's
-// surface. It creates or resizes the window's surface as needed.
+// Render draws the window content into the window's surface. Visual chrome is
+// part of Content (normally ui.WindowFrame); WM never paints decorations.
 //
 // Steps:
 //  1. Create/resize the window's surface to (fw.w, fw.h)
 //  2. Fill with transparent blanks (so uncovered areas show through)
-//  3. If decorated, draw decorations (border, title bar, close button)
-//  4. Create a child surface for the content area
-//  5. Call fw.Content.Render(contentSurf, ctx)
+//  3. Create a child surface covering the complete window
+//  4. Call fw.Content.Render(contentSurf, ctx)
 func (fw *FloatingWindow) Render(ctx *widget.RenderContext) {
 	// Always create/resize the window's surface.
 	if fw.surf == nil {
@@ -371,11 +289,6 @@ func (fw *FloatingWindow) Render(ctx *widget.RenderContext) {
 
 		rendering.Log("Render fw=%q screenPos=(%d,%d) screenContent: colStart=%d colEnd=%d contentW=%d contentH=%d focused=%v",
 			fw.ID, fw.x, fw.y, fw.x+fw.contentX, fw.x+fw.contentX+fw.contentW-1, fw.contentW, fw.contentH, fw.focused)
-
-		// Draw decorations if the window is decorated.
-		if fw.decorated {
-			RenderDecoration(fw, fw.surf, ctx.Theme)
-		}
 
 		// Create or reuse a child surface for the content area and render the content.
 		if fw.Content != nil && fw.contentW > 0 && fw.contentH > 0 {
@@ -411,13 +324,13 @@ func (fw *FloatingWindow) Surface() *surface.Surface {
 // Focus marks this window as having keyboard focus.
 func (fw *FloatingWindow) Focus() {
 	fw.focused = true
-	fw.contentDirty = true // decoration colors change
+	fw.contentDirty = true // WindowFrame focus colors change
 }
 
 // Unfocus removes keyboard focus from this window.
 func (fw *FloatingWindow) Unfocus() {
 	fw.focused = false
-	fw.contentDirty = true // decoration colors change
+	fw.contentDirty = true // WindowFrame focus colors change
 }
 
 // Focused reports whether this window has keyboard focus.
@@ -432,7 +345,8 @@ func (fw *FloatingWindow) Visible() bool { return fw.visible }
 // Modal reports whether this is a modal window (blocks input to others).
 func (fw *FloatingWindow) Modal() bool { return fw.modal }
 
-// Decorated reports whether the window has border decorations.
+// Decorated reports whether standard frame interaction regions are active.
+// Visual chrome is always supplied by Content.
 func (fw *FloatingWindow) Decorated() bool { return fw.decorated }
 
 // Movable reports whether the window can be dragged.
@@ -458,12 +372,6 @@ func (fw *FloatingWindow) State() WindowState { return fw.state }
 
 // Size returns the window's current dimensions (width, height).
 func (fw *FloatingWindow) Size() (int, int) { return fw.w, fw.h }
-
-// BorderStyle returns the window's border style.
-func (fw *FloatingWindow) BorderStyle() BorderStyle { return fw.borderStyle }
-
-// TitleAlign returns the title text alignment.
-func (fw *FloatingWindow) TitleAlign() TextAlign { return fw.titleAlign }
 
 // IsDragging reports whether the window is currently being dragged.
 func (fw *FloatingWindow) IsDragging() bool { return fw.dragging }
@@ -503,12 +411,8 @@ func (fw *FloatingWindow) ResizeStartSize() (int, int) {
 	return fw.resizeStartW, fw.resizeStartH
 }
 
-// IsOnTitleBar reports whether a screen coordinate is on the title bar
-// (the top row of the window).
-//
-// For BorderNone: the entire top row (x=0 to x=w-1) is the title bar.
-// For BorderLShape: the top row from x=1 to x=w-1 (left column is border).
-// For fully bordered windows: the top row between border corners (x=1 to x=w-2).
+// IsOnTitleBar reports whether a screen coordinate is on WindowFrame's title
+// border. Corner cells remain resize targets; the close region is checked first.
 func (fw *FloatingWindow) IsOnTitleBar(screenX, screenY int) bool {
 	if !fw.decorated {
 		return false
@@ -518,25 +422,13 @@ func (fw *FloatingWindow) IsOnTitleBar(screenX, screenY int) bool {
 	if ly != 0 {
 		return false
 	}
-	switch fw.borderStyle {
-	case BorderNone:
-		// Entire top row is title bar (no border corners to exclude).
-		return lx >= 0 && lx < fw.w
-	case BorderLShape:
-		// Title bar from x=1 to x=w-1 (left column x=0 is border).
-		return lx >= 1 && lx < fw.w
-	default:
-		// With full borders: exclude corner cells.
-		return lx > 0 && lx < fw.w-1
-	}
+	return lx > 0 && lx < fw.w-1
 }
 
 // IsOnCloseButton reports whether a screen coordinate hits the close button
 // area in the title bar.
 //
-// For BorderNone and BorderLShape: the close button occupies positions
-// (w-3, w-2, w-1) — flush with right edge, aligned with scrollbar column.
-// For fully bordered windows: the close button occupies positions (w-4, w-3, w-2).
+// WindowFrame reserves the final three cells of the top border for close.
 func (fw *FloatingWindow) IsOnCloseButton(screenX, screenY int) bool {
 	if !fw.closable || !fw.decorated {
 		return false
@@ -546,12 +438,7 @@ func (fw *FloatingWindow) IsOnCloseButton(screenX, screenY int) bool {
 	if ly != 0 {
 		return false
 	}
-	if fw.borderStyle == BorderNone || fw.borderStyle == BorderLShape {
-		// Close button at w-3, w-2, w-1 (right edge, aligned with scrollbar).
-		return lx >= fw.w-3 && lx <= fw.w-1
-	}
-	// With full borders: close button at w-4, w-3, w-2 (leaving w-1 for border).
-	return lx >= fw.w-4 && lx <= fw.w-2
+	return lx >= fw.w-3 && lx < fw.w
 }
 
 // MarkContentDirty flags the window's content as needing re-rendering.

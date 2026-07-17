@@ -31,8 +31,8 @@ func ThemeColorToCell(c color.Color) cell.Color {
 // LipglossColorToCell converts a lipgloss color string to cell.Color.
 // Lipgloss colors are strings in one of two formats:
 //
-//   - Hex: "#RRGGBB" (7 characters) → TrueColor
-//   - Palette index: "0"-"255" → PaletteColor
+// - Hex: "#RRGGBB" (7 characters) → TrueColor
+// - Palette index: "0"-"255" → PaletteColor
 //
 // Returns cell.NoColor for empty or unrecognizable strings.
 func LipglossColorToCell(s string) cell.Color {

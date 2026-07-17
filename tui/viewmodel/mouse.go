@@ -2,16 +2,15 @@ package viewmodel
 
 import (
 	"fmt"
-	"image/color"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"crude/tui/filetree"
 	"crude/tui/rendering"
 	ttypes "crude/tui/types"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 )
@@ -226,11 +225,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
 			if hitWin.Closable() && hitWin.IsOnCloseButton(mouse.X, mouse.Y) {
-				m.windowManager.RemoveWindow(hitWin.ID)
-				if hitWin.ID == "textoverlay" {
-					m.ActiveSession.TextOverlay.Close()
-				}
-				m.setMode(ModeChat)
+				m.closePopupWindowByID(hitWin.ID)
 				return m, nil
 			}
 			if m.windowManager.IsDragging() {
@@ -878,13 +873,6 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 		3: "ℹ", // DiagInfo
 		4: "ℹ", // DiagHint
 	}
-	severityIconColors := map[int]color.Color{
-		1: m.Theme.Colors.Error,
-		2: m.Theme.Colors.Warning,
-		3: m.Theme.Colors.Muted,
-		4: m.Theme.Colors.Muted,
-	}
-	sevColor, _ := severityIconColors[state.Severity]
 	sevLabel, ok := severityLabels[state.Severity]
 	if !ok {
 		sevLabel = "Info"
@@ -897,7 +885,20 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 	titleStr := fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.Title(), state.Line+1, state.Col+1)
 	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(state.Line), "\n\r ")
 
-	// Compute max width across all content.
+	// Build structured content lines.
+	var diagLines []widgets.DiagLine
+	diagLines = append(diagLines, widgets.DiagLine{
+		Text: titleStr,
+		Kind: widgets.DiagLineTitle,
+	})
+	if sourceLine != "" {
+		diagLines = append(diagLines, widgets.DiagLine{
+			Text: sourceLine,
+			Kind: widgets.DiagLineSource,
+		})
+	}
+
+	// Compute width from content.
 	maxLineW := rendering.VisibleWidth(titleStr)
 	if w := rendering.VisibleWidth(sourceLine); w > maxLineW {
 		maxLineW = w
@@ -907,9 +908,6 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 			maxLineW = w
 		}
 	}
-
-	// Compute popup dimensions.
-	// boxW = 2 (side borders) + 4 (inner padding: 2 left + 2 right) + maxLineW
 	boxW := maxLineW + 6
 	if boxW < 44 {
 		boxW = 44
@@ -917,55 +915,47 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 	if boxW > m.width-4 {
 		boxW = m.width - 4
 	}
-	innerW := boxW - 6 // 2 left pad + 2 right pad + 2 side borders (1 each)
+	innerW := boxW - 6
 
-	// Styles.
-	mutedStyle := lipgloss.NewStyle().Background(m.Theme.Colors.PopupBg).Foreground(m.Theme.Colors.Muted)
-	titleStyle := lipgloss.NewStyle().Background(m.Theme.Colors.PopupBg).Foreground(m.Theme.Colors.Accent).Bold(true)
-	sourceStyle := lipgloss.NewStyle().Background(m.Theme.Colors.PopupBg).Foreground(m.Theme.Colors.Fg)
-	bodyStyle := lipgloss.NewStyle().Background(m.Theme.Colors.PopupBg).Foreground(m.Theme.Colors.Fg)
+	// Divider
+	diagLines = append(diagLines, widgets.DiagLine{
+		Text: widgets.DiagLineDividerText(innerW),
+		Kind: widgets.DiagLineDivider,
+	})
 
-	// Build inner content lines.
-	var content []string
-	// Title row: file:line:col — Accent bold.
-	content = append(content, widgets.PadRightANSI(titleStr, innerW, m.Theme, titleStyle))
-	if sourceLine != "" {
-		content = append(content, widgets.PadRightANSI(sourceLine, innerW, m.Theme, sourceStyle))
-	}
-	// Divider.
-	content = append(content, widgets.PadRightANSI(strings.Repeat("─", innerW), innerW, m.Theme, mutedStyle))
 	// Body lines (word-wrapped).
-	hasBody := false
 	for _, msg := range state.Messages {
-		for _, segment := range strings.Split(msg, "\n") {
-			for _, line := range rendering.WordWrap(segment, innerW) {
-				content = append(content, widgets.PadRightANSI(line, innerW, m.Theme, bodyStyle))
-				hasBody = true
-			}
-		}
-	}
-	if !hasBody {
-		content = append(content, widgets.PadRightANSI(strings.Repeat(" ", innerW), innerW, m.Theme, bodyStyle))
+		diagLines = append(diagLines, widgets.DiagLine{
+			Text: msg,
+			Kind: widgets.DiagLineBody,
+		})
 	}
 
-	// Wrap in unified chrome. The border is tinted with the severity
-	// color, the title is the severity label.
-	lines := widgets.PopupChromeLines(m.Theme, widgets.PopupChromeConfig{
-		Title:        sevLabel,
-		TitleIcon:    sevIcon,
-		Width:        boxW,
-		Focused:      false,
-		BorderAccent: sevColor,
-		TitleAccent:  sevColor,
-	}, content)
+	// Map severity to DiagSeverity for the frame.
+	diagSev := widgets.DiagSevInfo
+	switch state.Severity {
+	case 1:
+		diagSev = widgets.DiagSevError
+	case 2:
+		diagSev = widgets.DiagSevWarning
+	}
 
-	popupH := len(lines)
+	popupH := len(diagLines) + 2
 	popupX, popupY := m.diagPopupPosition(screenX, screenY, boxW, popupH)
+
+	frame := widgets.BuildDiagnosticFrame(m.Theme, widgets.DiagFrameSpec{
+		Title:    sevLabel,
+		Icon:     sevIcon,
+		Severity: diagSev,
+		Lines:    diagLines,
+		Width:    boxW,
+		Height:   popupH,
+	})
 
 	// Create or update the popup window.
 	if m.DiagPopupID != "" {
 		if existing := m.windowManager.Window(m.DiagPopupID); existing != nil {
-			existing.Content = widgets.NewPopupContent(lines)
+			existing.SetContent(frame)
 			existing.SetSize(boxW, popupH)
 			existing.SetPosition(popupX, popupY)
 			existing.MarkContentDirty()
@@ -973,11 +963,10 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 		}
 	}
 
-	popupContent := widgets.NewPopupContent(lines)
 	fw := wm.NewFloatingWindow(
-		"diag-hover",
+		string(ui.OverlayDiagHover),
 		"",
-		popupContent,
+		frame,
 		boxW, popupH,
 		wm.WithDecoration(false),
 		wm.WithMovable(false),
@@ -987,7 +976,9 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 		wm.WithFocusable(false),
 	)
 	fw.SetPosition(popupX, popupY)
-	m.windowManager.AddWindow(fw)
+	m.overlayHost.Open(ui.OverlayDiagHover, fw, ui.PopoverPolicy(false), func() {
+		m.DiagPopupID = ""
+	})
 	m.DiagPopupID = "diag-hover"
 }
 
@@ -1019,10 +1010,7 @@ func (m *App) diagPopupPosition(screenX, screenY, w, h int) (int, int) {
 
 // clearDiagHoverPopup removes the diagnostic hover popup, if any.
 func (m *App) clearDiagHoverPopup() {
-	if m.DiagPopupID != "" && m.windowManager != nil {
-		m.windowManager.RemoveWindow(m.DiagPopupID)
-		m.DiagPopupID = ""
-	}
+	m.overlayHost.Close(ui.OverlayDiagHover)
 }
 
 // padRight pads a string to the given visible width with spaces on the right.
@@ -1045,7 +1033,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	// If a context menu is already open, close it and return.
 	if m.windowManager != nil {
 		if fw := m.windowManager.Window("context-menu"); fw != nil {
-			m.windowManager.RemoveWindow("context-menu")
+			m.overlayHost.Close(ui.OverlayContextMenu)
 			return m, nil
 		}
 	}
@@ -1091,30 +1079,34 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	}
 
 	// Position the popup near the cursor without going off-screen.
-	w := widgets.ContextMenuPopupWidth(st)
-	h := widgets.ContextMenuPopupHeight(st)
+	// WindowFrame + ui.List (no PopupChrome).
+	frame := widgets.BuildContextMenuFrame(m.Theme, st)
+	w, h := frame.Measure(60, 40)
+	// Prefer computed chrome sizes from state for tight menus.
+	if cw := widgets.ContextMenuPopupWidth(st); cw > 0 {
+		w = cw
+	}
+	if ch := widgets.ContextMenuPopupHeight(st); ch > 0 {
+		h = ch
+	}
 	x, y := clampPopupPosition(mouse.X, mouse.Y, w, h, m.width, m.height)
 
-	lines := widgets.ContextMenuLines(m.Theme, st, 0)
-	pop := widgets.NewPopupContent(lines)
-	// ContextMenuLines now self-renders the unified popup chrome
-	// (border, title, padding). The FloatingWindow is just a
-	// positioned box with no decoration.
-	fw := wm.NewFloatingWindow("context-menu", "", pop, w, h,
+	fw := wm.NewFloatingWindow(string(ui.OverlayContextMenu), "", frame, w, h,
 		wm.WithDecoration(false),
 		wm.WithMovable(false),
 		wm.WithResizable(false),
 		wm.WithClosable(false),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
+		wm.WithClickOutside(wm.ClickOutsideCloseRoute),
 	)
 	fw.SetPosition(x, y)
-	if m.windowManager != nil {
-		m.windowManager.AddWindow(fw)
-	}
+	m.overlayHost.Open(ui.OverlayContextMenu, fw, ui.PopoverPolicy(true), func() {
+		m.LastContextMenu = nil
+	})
 	m.LastContextMenu = st
-	// Record when the menu opened so we can drive the slide-in
-	// animation. Without this, the menu would just pop in.
+	// OpenedAt retained for any remaining animation consumers; WindowFrame
+	// path does not animate reveal.
 	m.ContextMenuOpenedAt = time.Now()
 	return m, nil
 }

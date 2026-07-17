@@ -2,12 +2,15 @@ package viewmodel
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/editor"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 	"crude/workspace"
@@ -20,20 +23,50 @@ func (m *App) showDiagnosticAt(line, col int) {
 	if len(diags) == 0 {
 		return
 	}
-	// Build inner content: one row per diagnostic message.
-	var content []string
-	for _, d := range diags {
-		content = append(content, d.Message)
+	// Build structured content lines.
+	var lines []widgets.DiagLine
+	lines = append(lines, widgets.DiagLine{
+		Text: fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.Title(), line+1, col),
+		Kind: widgets.DiagLineTitle,
+	})
+	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(line), "\n\r ")
+	if sourceLine != "" {
+		lines = append(lines, widgets.DiagLine{
+			Text: sourceLine,
+			Kind: widgets.DiagLineSource,
+		})
 	}
-	// Wrap in unified chrome.
-	lines := widgets.PopupChromeLines(m.Theme, widgets.PopupChromeConfig{
-		Title:     "Diagnostic",
-		TitleIcon: "ℹ",
-		Width:     60,
-		Focused:   true,
-	}, content)
-	pop := widgets.NewPopupContent(lines)
-	fw := wm.NewFloatingWindow("diag-context", "", pop, 60, len(lines),
+	lines = append(lines, widgets.DiagLine{
+		Text: widgets.DiagLineDividerText(54),
+		Kind: widgets.DiagLineDivider,
+	})
+	for _, d := range diags {
+		lines = append(lines, widgets.DiagLine{
+			Text: d.Message,
+			Kind: widgets.DiagLineBody,
+		})
+	}
+
+	// Determine severity from the first diagnostic.
+	sev := widgets.DiagSevInfo
+	if len(diags) > 0 {
+		switch diags[0].Severity {
+		case 1:
+			sev = widgets.DiagSevError
+		case 2:
+			sev = widgets.DiagSevWarning
+		}
+	}
+
+	frame := widgets.BuildDiagnosticFrame(m.Theme, widgets.DiagFrameSpec{
+		Title:    "Diagnostic",
+		Icon:     "ℹ",
+		Severity: sev,
+		Lines:    lines,
+		Width:    60,
+		Height:   len(lines) + 2,
+	})
+	fw := wm.NewFloatingWindow(string(ui.OverlayDiagContext), "", frame, 60, len(lines)+2,
 		wm.WithDecoration(false),
 		wm.WithMovable(false),
 		wm.WithResizable(false),
@@ -42,10 +75,7 @@ func (m *App) showDiagnosticAt(line, col int) {
 		wm.WithFocusable(true),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow("diag-context")
-		m.windowManager.AddWindow(fw)
-	}
+	m.overlayHost.Open(ui.OverlayDiagContext, fw, ui.PopoverPolicy(true), nil)
 }
 
 // startRename arms rename mode in the LSP popup state.

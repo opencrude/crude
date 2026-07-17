@@ -81,7 +81,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 		}
 
 		numW := sw - 2 // reserve 1 column for diagnostic icon
-		numStr := e.formatLineNum(lineIdx+1, numW)
+		numStr := e.formatLineNum(lineIdx+1+e.lineNumberOffset, numW)
 
 		// Determine highest severity diagnostic on this line for the gutter icon.
 		lineSev := 0
@@ -293,7 +293,7 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 			ri++
 		}
 
-		numStr := e.formatLineNum(lineIdx+1, sw-1)
+		numStr := e.formatLineNum(lineIdx+1+e.lineNumberOffset, sw-1)
 		numPadded := strings.Repeat(" ", sw-1-len(numStr)) + numStr
 		gutter := gutterStyle.Render(numPadded)
 		// Diagnostic gutter icon.
@@ -475,7 +475,7 @@ func diagSeverityAtCol(diags []diagSpan, col int) int {
 }
 
 func (e *Editor) gutterWidth() int {
-	lineCount := e.buf.LineCount()
+	lineCount := e.buf.LineCount() + e.lineNumberOffset
 	digits := 1
 	for n := lineCount; n >= 10; n /= 10 {
 		digits++

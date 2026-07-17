@@ -9,8 +9,8 @@ type requestCapabilityMsg string
 //
 // Bubble Tea recognizes the following capabilities and will use them to
 // upgrade the program's color profile:
-//   - "RGB" Xterm direct color
-//   - "Tc" True color support
+// - "RGB" Xterm direct color
+// - "Tc" True color support
 //
 // Note: that some terminal's like Apple's Terminal.app do not support this and
 // will send the wrong response to the terminal breaking the program's output.

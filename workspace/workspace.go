@@ -35,16 +35,16 @@ type NewSessionResult struct {
 //
 // One Workspace per project directory, inspired by JetBrains' project model.
 // Each workspace gets:
-//   - A dedicated folder under ~/.crude/workspaces/<hash>/ (hash of project dir)
-//   - Its own SQLite database for workspace-level metadata
-//   - Its own file tree, LSP connections, editor tabs, agent sessions
+// - A dedicated folder under ~/.crude/workspaces/<hash>/ (hash of project dir)
+// - Its own SQLite database for workspace-level metadata
+// - Its own file tree, LSP connections, editor tabs, agent sessions
 //
 // The workspace owns ALL business state for one IDE instance:
-//   - AI agent sessions and orchestrators
-//   - Editor buffers and tab state
-//   - LSP server connections and diagnostics cache
-//   - File tree model
-//   - Workspace-specific settings (inheriting from app config)
+// - AI agent sessions and orchestrators
+// - Editor buffers and tab state
+// - LSP server connections and diagnostics cache
+// - File tree model
+// - Workspace-specific settings (inheriting from app config)
 //
 // The App struct (in tui/viewmodel) embeds *Workspace and delegates to it.
 // Multiple workspaces can coexist for multi-project support.
@@ -53,12 +53,15 @@ type NewSessionResult struct {
 // tracking) lives on Session, one per agent conversation. The Workspace
 // holds the agent tree (AgentManager) which links to Sessions via AgentNode.State.
 type Workspace struct {
+	// eventBus publishes workspace-originated events to the active frontend.
+	eventBus *EventBus
+
 	// RootPath is the absolute path to the project directory this workspace
 	// is rooted at. The file tree, LSP manager, and file watcher all key
 	// off this path.
 	RootPath string
 
-	// ── Workspace-level persistence ───────────────────────────────────
+	// Workspace-level persistence            ─
 	//
 	// Each workspace has its own SQLite database for project-scoped
 	// metadata that persists across sessions: workspace settings,
@@ -74,7 +77,7 @@ type Workspace struct {
 	// Layout: ~/.crude/workspaces/<hash>/
 	WorkspaceDir string
 
-	// ── Managers (workspace-scoped) ───────────────────────────────────
+	// ── Managers (workspace-scoped) ──
 	//
 	// Each manager is the single source of truth for its concern. All are
 	// created in NewWorkspace and live for the workspace's lifetime.
@@ -95,6 +98,15 @@ type Workspace struct {
 	// directory. One LSPManager per workspace (rooted at RootPath).
 	LSPMgr *LSPManager
 
+	// ProjectSearch owns Find in Files execution identity and cancellation.
+	// The TUI owns query/result presentation only.
+	ProjectSearch *ProjectSearchService
+
+	// FileOps owns all filesystem mutations for this workspace.
+	// Every file creation, deletion, rename, and LSP workspace edit
+	// goes through this service. Results are published through EventBus.
+	FileOps *FileOpsService
+
 	// FocusStack manages keyboard focus as a stack. Pushing a floating
 	// window or clicking the tree pushes focus; closing pops back.
 	FocusStack *FocusStack
@@ -104,14 +116,14 @@ type Workspace struct {
 	// fields are display state used by the viewmodel render pipeline.
 	Tree *TreeState
 
-	// ── Tab bars (workspace-scoped) ───────────────────────────────────
+	// ── Tab bars (workspace-scoped) ──
 	//
 	// Win is the main tab bar (editor tabs + agent tabs).
 	// Overlay is the overlay tab bar (settings/confirm/question/yolo tabs).
 	Win     *window.Window
 	Overlay *window.Window
 
-	// ── Workspace-scoped popups & prompts ─────────────────────────────
+	// ── Workspace-scoped popups & prompts ──
 	//
 	// These are transient UI elements tied to the workspace's editors and
 	// file tree. They live on the workspace, not the session.
@@ -135,6 +147,10 @@ type Workspace struct {
 	// TreeDeletePending is the path of the file/folder pending deletion
 	// confirmation. Empty when no delete is pending.
 	TreeDeletePending string
+
+	// TreeDeleteChoice is the focused button on the tree-delete dialog
+	// (0 = Yes, 1 = No). Defaults to No for safety.
+	TreeDeleteChoice int
 
 	// FilePicker is the file picker widget (attach file + new workspace modes).
 	// It's a value, not a pointer — the widget manages its own internal state.
@@ -160,7 +176,7 @@ type Workspace struct {
 	// this workspace (used for the launcher timeout).
 	LastInteractionTime time.Time
 
-	// ── Sessions ──────────────────────────────────────────────────────
+	// ── Sessions
 	//
 	// The workspace owns all AI conversations for this project. Sessions
 	// is the canonical list; SessionsByID indexes by session ID for fast
@@ -176,7 +192,7 @@ type Workspace struct {
 	// ActiveSession is the currently-active frontend session.
 	ActiveSession *Session
 
-	// ── Backend session config (set by app layer) ────────────────────────
+	// ── Backend session config (set by app layer)
 	//
 	// These carry the backend knowledge needed to create/resume sessions
 	// without callback indirection. Set once during app.Run().
@@ -195,7 +211,7 @@ type Workspace struct {
 	// layer can persist them to config.json. Optional.
 	OnConfigSave func(cfg *session.Config) error
 
-	// ── Shared state (references, not owned) ───────────────────────────
+	// ── Shared state (references, not owned)
 	//
 	// These are references to objects shared with the TUI layer.
 
@@ -235,6 +251,14 @@ type Workspace struct {
 
 	// FormHint is the current contextual form hint shown in the status bar.
 	FormHint string
+}
+
+// SetEventBus connects workspace services to the workspace-to-frontend event path.
+func (w *Workspace) SetEventBus(bus *EventBus) {
+	w.eventBus = bus
+	if w.FileOps != nil {
+		w.FileOps.eventBus = bus
+	}
 }
 
 // NewWorkspace creates an empty workspace rooted at the given directory.
@@ -291,6 +315,8 @@ func NewWorkspace(
 		PaneMgr:         NewPaneManager(),
 		BufferMgr:       editor.NewBufferManager(),
 		LSPMgr:          lspMgr,
+		ProjectSearch:   NewProjectSearchService(),
+		FileOps:         NewFileOpsService(rootPath, nil, lg),
 		FocusStack:      NewFocusStack(),
 		Tree:            NewTreeState(treeModel, treeRenderer, th.Tree.Config.DefaultWidth),
 		Win:             window.New(th),
@@ -358,6 +384,7 @@ func (w *Workspace) ReportPath() string {
 // Called when the IDE instance is shutting down.
 func (w *Workspace) Close() {
 	w.CloseAllSessions()
+	w.CancelProjectSearch()
 	if w.LSPMgr != nil {
 		w.LSPMgr.Stop()
 	}
@@ -380,6 +407,63 @@ func (w *Workspace) CloseAllSessions() {
 	w.Sessions = w.Sessions[:0]
 	w.SessionsByID = make(map[string]*Session)
 	w.ActiveSession = nil
+}
+
+// ── File operation methods ──
+//
+// These methods delegate to FileOpsService and publish results through
+// EventBus. The TUI calls these instead of performing filesystem mutations
+// directly.
+
+// CreateFile creates an empty file at the given path.
+// The path must be absolute and under the workspace root.
+// Results are published through EventBus as FileOperationResultMsg.
+func (w *Workspace) CreateFile(path string) FileOperationResultMsg {
+	if w.FileOps == nil {
+		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
+	}
+	return w.FileOps.CreateFile(path)
+}
+
+// CreateFolder creates a directory (and parents) at the given path.
+// The path must be absolute and under the workspace root.
+// Results are published through EventBus as FileOperationResultMsg.
+func (w *Workspace) CreateFolder(path string) FileOperationResultMsg {
+	if w.FileOps == nil {
+		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
+	}
+	return w.FileOps.CreateFolder(path)
+}
+
+// RenamePath renames a file or folder from oldPath to newPath.
+// Both paths must be absolute and under the workspace root.
+// Results are published through EventBus as FileOperationResultMsg.
+func (w *Workspace) RenamePath(oldPath, newPath string) FileOperationResultMsg {
+	if w.FileOps == nil {
+		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
+	}
+	return w.FileOps.RenamePath(oldPath, newPath)
+}
+
+// DeletePath removes a file or directory at the given path.
+// Directories are removed recursively.
+// The path must be absolute and under the workspace root.
+// Results are published through EventBus as FileOperationResultMsg.
+func (w *Workspace) DeletePath(path string) FileOperationResultMsg {
+	if w.FileOps == nil {
+		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
+	}
+	return w.FileOps.DeletePath(path)
+}
+
+// ApplyWorkspaceEdit applies a set of text edits to files on disk.
+// This is used for LSP rename/refactor operations that modify multiple files.
+// Results are published through EventBus as FileOperationResultMsg.
+func (w *Workspace) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResultMsg {
+	if w.FileOps == nil {
+		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
+	}
+	return w.FileOps.ApplyWorkspaceEdit(edits)
 }
 
 // SwitchProject re-roots this workspace at a new project directory.

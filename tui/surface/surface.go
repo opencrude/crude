@@ -12,32 +12,32 @@ import (
 // and can have child surfaces positioned relative to itself.
 //
 // Hierarchy model (like Notcurses ncplanes):
-//   - Each surface has a position (X, Y) relative to its parent
-//   - Children are composited on top of their parent in z-order
-//   - Moving a parent moves all children with it
-//   - A surface clips its children to its own bounds
+// - Each surface has a position (X, Y) relative to its parent
+// - Children are composited on top of their parent in z-order
+// - Moving a parent moves all children with it
+// - A surface clips its children to its own bounds
 //
 // Z-Order model:
-//   - Children with higher ZOrder are rendered on top
-//   - Within the same ZOrder, later children are on top (append order)
-//   - The compositor flattens the tree into a z-sorted list for compositing
+// - Children with higher ZOrder are rendered on top
+// - Within the same ZOrder, later children are on top (append order)
+// - The compositor flattens the tree into a z-sorted list for compositing
 //
 // Transparency model:
-//   - A cell with Transparent=true does not overwrite the cell below
-//   - A surface with Alpha < 1.0 blends its cells over the parent
+// - A cell with Transparent=true does not overwrite the cell below
+// - A surface with Alpha < 1.0 blends its cells over the parent
 type Surface struct {
-	id       string
-	buffer   *CellBuffer
-	x        int        // Position relative to parent
-	y        int
-	zOrder   int        // Z-axis position (higher = on top among siblings)
-	parent   *Surface
-	children []*Surface // Ordered by z-order
-	visible  bool
-	alpha    float32    // 0.0 (invisible) to 1.0 (opaque)
-	baseCell cell.Cell  // Default fill cell (background color)
-	dirty    bool       // Whether this surface needs re-rendering
-	dirtyRects []Rect   // Specific regions that changed (empty = whole surface)
+	id         string
+	buffer     *CellBuffer
+	x          int // Position relative to parent
+	y          int
+	zOrder     int // Z-axis position (higher = on top among siblings)
+	parent     *Surface
+	children   []*Surface // Ordered by z-order
+	visible    bool
+	alpha      float32   // 0.0 (invisible) to 1.0 (opaque)
+	baseCell   cell.Cell // Default fill cell (background color)
+	dirty      bool      // Whether this surface needs re-rendering
+	dirtyRects []Rect    // Specific regions that changed (empty = whole surface)
 
 	// lastScreenBounds tracks where this surface was composited last frame.
 	// Used by the compositor to clear leftover pixels when a surface moves,

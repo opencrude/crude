@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/editor"
+	"crude/tui/ui"
 	"crude/workspace"
 )
 
@@ -29,6 +30,11 @@ func (m *App) editorPathFromTabTitle(title string) string {
 }
 
 func (m *App) openEditorTab(path string) (tea.Cmd, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	path = filepath.Clean(absPath)
 	tabTitle := m.editorTabTitle(path)
 
 	// If the tab is already open, just activate it. Crucially, do NOT
@@ -65,9 +71,9 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 
 	// Wire content changes to LSP manager.
 	ed.SetOnContentChanged(func(fp, text string) {
-		lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		m.LSPMgr.UpdateFile(lspCtx, fp, text)
+		if m.LSPMgr != nil {
+			m.LSPMgr.QueueFileUpdate(fp, text)
+		}
 	})
 	// Apply format-on-save preference from user settings. Defaults to off.
 	if m.LastSettings.Editor.FormatOnSave {
@@ -75,15 +81,26 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 	} else {
 		ed.SetFormatOnSave(false)
 	}
-	// Open the file on the LSP server.
-	lspCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	m.LSPMgr.OpenFile(lspCtx, path, ed.Value())
+	// Open the file on the LSP server asynchronously. didOpen can block on the
+	// server pipe; editor tabs must become interactive immediately.
+	var lspOpenCmd tea.Cmd
+	if m.LSPMgr != nil {
+		lspMgr := m.LSPMgr
+		text := ed.Value()
+		lspOpenCmd = func() tea.Msg {
+			lspCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			lspMgr.OpenFile(lspCtx, path, text)
+			return nil
+		}
+	}
 
 	// Apply cached diagnostics immediately so the editor is never empty
 	// while waiting for the server to respond.
-	if cached := m.LSPMgr.FileDiagnostics(path); len(cached) > 0 {
-		ed.SetDiagnostics(cached)
+	if m.LSPMgr != nil {
+		if cached := m.LSPMgr.FileDiagnostics(path); len(cached) > 0 {
+			ed.SetDiagnostics(cached)
+		}
 	}
 
 	displayTitle := ed.Title()
@@ -102,7 +119,7 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		m.handleTabSwitch()
 	}
 
-	return ed.BlinkCmd(), nil
+	return tea.Batch(ed.BlinkCmd(), lspOpenCmd), nil
 }
 
 // jumpToDiagnostic opens the file containing the given diagnostic
@@ -285,9 +302,7 @@ func (m *App) closeEditorTabForce(path string) {
 	m.closeCompletionPopup()
 	m.closeOutlinePopup()
 	m.clearDiagHoverPopup()
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow("diag-context")
-	}
+	m.overlayHost.Close(ui.OverlayDiagContext)
 
 	tabTitle := m.editorTabTitle(path)
 	if tab := m.Win.TabByTitle(tabTitle); tab != nil {
@@ -344,7 +359,5 @@ func (m *App) closeEditorTabsToRightOf(idx int) {
 }
 
 func (m *App) closeAllWindows() {
-	for _, w := range m.windowManager.Windows() {
-		m.windowManager.RemoveWindow(w.ID)
-	}
+	m.overlayHost.CloseAll()
 }

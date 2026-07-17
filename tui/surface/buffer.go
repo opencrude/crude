@@ -13,10 +13,10 @@ import (
 // Access pattern: buffer.cells[y * buffer.width + x]
 //
 // Operations on CellBuffer:
-//   - Set/Get individual cells
-//   - Fill a region with a base cell
-//   - Write a string of text into a row
-//   - Resize (reallocates the buffer, preserving existing content)
+// - Set/Get individual cells
+// - Fill a region with a base cell
+// - Write a string of text into a row
+// - Resize (reallocates the buffer, preserving existing content)
 type CellBuffer struct {
 	cells  []cell.Cell
 	width  int
@@ -114,8 +114,8 @@ func (b *CellBuffer) Resize(w, h int) {
 
 // WriteString writes a string of text starting at position (x, y) using the
 // given style. Handles wide characters correctly:
-//   - Wide chars (width=2) write the char at column N and a continuation cell at N+1
-//   - If a wide char would be split across the buffer edge, it is truncated
+// - Wide chars (width=2) write the char at column N and a continuation cell at N+1
+// - If a wide char would be split across the buffer edge, it is truncated
 //
 // Uses charmbracelet/x/ansi for grapheme cluster iteration and width measurement.
 // Returns the x position after the last written cell.

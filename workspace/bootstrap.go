@@ -3,10 +3,10 @@ package workspace
 // bootstrap.go handles the backend session lifecycle for a workspace.
 //
 // The workspace owns all sessions for one project. This file provides:
-//   - Backend session creation and resumption
-//   - Conversation history hydration into the TUI
-//   - Message format conversion (sessiondb → TUI display format)
-//   - Workspace-scoped session listing and deletion
+// - Backend session creation and resumption
+// - Conversation history hydration into the TUI
+// - Message format conversion (sessiondb → TUI display format)
+// - Workspace-scoped session listing and deletion
 //
 // The app layer creates a workspace and starts the TUI. It never touches
 // session internals directly.
@@ -181,7 +181,7 @@ func (w *Workspace) Hydrate() {
 	}
 }
 
-// ── Backend Session Accessors ──────────────────────────────────────────
+// ── Backend Session Accessors
 
 // BackendSession returns the underlying backend session for the active
 // frontend session.
@@ -469,7 +469,7 @@ func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 	return ttypes.ProviderConfig{}
 }
 
-// ── Session List / Delete (workspace-scoped) ───────────────────────────
+// ── Session List / Delete (workspace-scoped)
 
 // ListSessions returns session metadata for this workspace only.
 func (w *Workspace) ListSessions() []sessiondb.SessionMeta {
@@ -571,7 +571,7 @@ func (w *Workspace) StartOrchestrator(sender session.EventSender) (*session.Orch
 	return orch, err
 }
 
-// ── Message Conversion ────────────────────────────────────────────────
+// ── Message Conversion
 
 // ConvertMessagesForDisplay converts backend session messages into the
 // TUI display format. This is a workspace concern because it transforms

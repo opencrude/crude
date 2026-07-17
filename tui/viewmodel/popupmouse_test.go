@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/editor"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 )
@@ -16,7 +17,7 @@ import (
 
 func TestClickOutside_ContextMenu_ClosesAndRoutes(t *testing.T) {
 	app := setupTestAppWithPopup(t, "context-menu", wm.ClickOutsideCloseRoute)
-	defer app.windowManager.RemoveWindow("context-menu")
+	defer app.overlayHost.Close(ui.OverlayContextMenu)
 
 	if app.windowManager.Window("context-menu") == nil {
 		t.Fatal("test setup: context-menu not found")
@@ -35,7 +36,7 @@ func TestClickOutside_ContextMenu_ClosesAndRoutes(t *testing.T) {
 
 func TestClickOutside_ConfirmPrompt_SuppressesClick(t *testing.T) {
 	app := setupTestAppWithPopup(t, "dirty-close-prompt", wm.ClickOutsideIgnore)
-	defer app.windowManager.RemoveWindow("dirty-close-prompt")
+	defer app.overlayHost.Close(ui.OverlayDirtyClose)
 
 	if app.windowManager.Window("dirty-close-prompt") == nil {
 		t.Fatal("test setup: dirty-close-prompt not found")
@@ -54,7 +55,7 @@ func TestClickOutside_ConfirmPrompt_SuppressesClick(t *testing.T) {
 
 func TestClickOutside_FindReplace_KeepsOpenAndRoutes(t *testing.T) {
 	app := setupTestAppWithPopup(t, "find-replace", wm.ClickOutsideKeepRoute)
-	defer app.windowManager.RemoveWindow("find-replace")
+	defer app.overlayHost.Close(ui.OverlayFindReplace)
 
 	if app.windowManager.Window("find-replace") == nil {
 		t.Fatal("test setup: find-replace not found")
@@ -73,7 +74,7 @@ func TestClickOutside_FindReplace_KeepsOpenAndRoutes(t *testing.T) {
 
 func TestClickOutside_RightClick_DoesNothing(t *testing.T) {
 	app := setupTestAppWithPopup(t, "dirty-close-prompt", wm.ClickOutsideIgnore)
-	defer app.windowManager.RemoveWindow("dirty-close-prompt")
+	defer app.overlayHost.Close(ui.OverlayDirtyClose)
 
 	// Right-click — should be passed through to dispatchMouseRightClick
 	// and NOT considered for click-outside suppression.
@@ -86,7 +87,7 @@ func TestClickOutside_RightClick_DoesNothing(t *testing.T) {
 
 func TestClickOutside_InsidePopup_DoesNothing(t *testing.T) {
 	app := setupTestAppWithPopup(t, "context-menu", wm.ClickOutsideCloseRoute)
-	defer app.windowManager.RemoveWindow("context-menu")
+	defer app.overlayHost.Close(ui.OverlayContextMenu)
 
 	// Click INSIDE the popup — should not trigger click-outside.
 	fw := app.windowManager.Window("context-menu")
@@ -126,16 +127,24 @@ func TestClickContextMenu_ActivatesItem(t *testing.T) {
 	st.Build()
 	app.LastContextMenu = st
 
-	// Create the floating window.
-	pop := widgets.NewPopupContent(widgets.ContextMenuLines(app.Theme, st, 0))
-	fw := wm.NewFloatingWindow("context-menu", "", pop, 30, 5,
+	// WindowFrame + ui.List product path.
+	frame := widgets.BuildContextMenuFrame(app.Theme, st)
+	w, h := frame.Measure(60, 40)
+	if cw := widgets.ContextMenuPopupWidth(st); cw > 0 {
+		w = cw
+	}
+	if ch := widgets.ContextMenuPopupHeight(st); ch > 0 {
+		h = ch
+	}
+	fw := wm.NewFloatingWindow("context-menu", "", frame, w, h,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
 	fw.SetPosition(0, 0)
-	app.windowManager.AddWindow(fw)
+	app.overlayHost.Open(ui.OverlayContextMenu, fw, ui.PopoverPolicy(true), nil)
 
 	// Click the first item (row 1 = first content row, since row 0 is top border).
+	// Content pad for FramePopover: X starts at 3.
 	app.clickContextMenu(5, 1)
 
 	if !activated {
@@ -148,7 +157,7 @@ func TestClickContextMenu_ActivatesItem(t *testing.T) {
 
 func TestClickContextMenu_DisabledItem_DoesNotActivate(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	defer app.closeContextMenu()
+	defer app.overlayHost.Close(ui.OverlayContextMenu)
 
 	activated := false
 	st := &widgets.ContextMenuState{
@@ -161,13 +170,20 @@ func TestClickContextMenu_DisabledItem_DoesNotActivate(t *testing.T) {
 	st.Build()
 	app.LastContextMenu = st
 
-	pop := widgets.NewPopupContent(widgets.ContextMenuLines(app.Theme, st, 0))
-	fw := wm.NewFloatingWindow("context-menu", "", pop, 30, 5,
+	frame := widgets.BuildContextMenuFrame(app.Theme, st)
+	w, h := frame.Measure(60, 40)
+	if cw := widgets.ContextMenuPopupWidth(st); cw > 0 {
+		w = cw
+	}
+	if ch := widgets.ContextMenuPopupHeight(st); ch > 0 {
+		h = ch
+	}
+	fw := wm.NewFloatingWindow("context-menu", "", frame, w, h,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
 	fw.SetPosition(0, 0)
-	app.windowManager.AddWindow(fw)
+	app.overlayHost.Open(ui.OverlayContextMenu, fw, ui.PopoverPolicy(true), nil)
 
 	// Click the disabled item.
 	app.clickContextMenu(5, 1)
@@ -182,7 +198,7 @@ func TestClickContextMenu_DisabledItem_DoesNotActivate(t *testing.T) {
 
 func TestHoverContextMenu_MovesCursor(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	defer app.closeContextMenu()
+	defer app.overlayHost.Close(ui.OverlayContextMenu)
 
 	st := &widgets.ContextMenuState{
 		Sections: []widgets.ContextMenuSection{
@@ -195,6 +211,21 @@ func TestHoverContextMenu_MovesCursor(t *testing.T) {
 	}
 	st.Build()
 	app.LastContextMenu = st
+
+	frame := widgets.BuildContextMenuFrame(app.Theme, st)
+	w, h := frame.Measure(60, 40)
+	if cw := widgets.ContextMenuPopupWidth(st); cw > 0 {
+		w = cw
+	}
+	if ch := widgets.ContextMenuPopupHeight(st); ch > 0 {
+		h = ch
+	}
+	fw := wm.NewFloatingWindow("context-menu", "", frame, w, h,
+		wm.WithDecoration(false),
+		wm.WithFocusable(true),
+	)
+	fw.SetPosition(0, 0)
+	app.overlayHost.Open(ui.OverlayContextMenu, fw, ui.PopoverPolicy(true), nil)
 
 	// Hover over item 2 (row 2 in chrome: row 0 = border, row 1 = A, row 2 = B).
 	app.hoverContextMenu(5, 2)
@@ -216,22 +247,39 @@ func TestHoverContextMenu_MovesCursor(t *testing.T) {
 func TestClickDirtyPrompt_CancelButtonCancels(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	app.DirtyPromptPath = "/tmp/foo.go"
+	app.DirtyPromptChoice = 2
 
-	pop := widgets.NewPopupContent(widgets.ConfirmPrompt3Button(
-		app.Theme, "Unsaved", "What to do?", "Detail here",
-		widgets.ConfirmPromptWarning, 2, 62,
-	))
-	fw := wm.NewFloatingWindow("dirty-close-prompt", "", pop, 62, 7,
+	frame := widgets.BuildDirtyCloseFrame(app.Theme, "foo.go", 2)
+	w, h := frame.Measure(80, 40)
+	fw := wm.NewFloatingWindow("dirty-close-prompt", "", frame, w, h,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
 	fw.SetPosition(0, 0)
-	app.windowManager.AddWindow(fw)
+	app.overlayHost.Open(ui.OverlayDirtyClose, fw, ui.ModalDialogPolicy(), func() {
+		app.DirtyPromptPath = ""
+	})
 
-	// Click on the Cancel button (3rd of 3). With localX in cancel range
-	// (22-29 in our layout), localY in button row. Button row contentRow
-	// = innerH - 2 = 5 - 2 = 3, in chrome row = 4.
-	app.clickDirtyPrompt(25, 4)
+	// Hit-test Cancel button via Host geometry.
+	host := frame.Host()
+	host.Resize(w, h)
+	host.Layout()
+	cancelID := widgets.ConfirmButtonID(2)
+	// Find a point inside the Cancel button from the host screen map via Focus+Handle.
+	// Click using Host hit-test coordinates by scanning.
+	clicked := false
+	for y := 0; y < h && !clicked; y++ {
+		for x := 0; x < w; x++ {
+			if host.HitTest(x, y) == cancelID {
+				app.clickDirtyPrompt(x, y)
+				clicked = true
+				break
+			}
+		}
+	}
+	if !clicked {
+		t.Fatal("could not find Cancel button hit region")
+	}
 
 	if app.DirtyPromptPath != "" {
 		t.Fatal("dirtyPromptPath should be cleared after Cancel click")
@@ -247,6 +295,15 @@ func TestDirtyPromptKey_CancelBreaksEscLoop(t *testing.T) {
 	app.EditorState.ActiveView = "/tmp/foo.go"
 	app.DirtyPromptPath = "/tmp/foo.go"
 	app.DirtyPromptChoice = 2 // start focused on Cancel
+	frame := widgets.BuildDirtyCloseFrame(app.Theme, "foo.go", 2)
+	w, h := frame.Measure(80, 40)
+	fw := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", frame, w, h,
+		wm.WithDecoration(false),
+		wm.WithFocusable(true),
+	)
+	app.overlayHost.Open(ui.OverlayDirtyClose, fw, ui.ModalDialogPolicy(), func() {
+		app.DirtyPromptPath = ""
+	})
 
 	// Hit Esc: must call dirtyPromptCancel, clearing the path.
 	_ = app.handleDirtyPromptKey(tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -304,7 +361,7 @@ func TestFocusRestoration_AfterPopupClose_EditorKeepsFocus(t *testing.T) {
 		wm.WithFocusable(true),
 	)
 	fw.SetPosition(20, 5)
-	app.windowManager.AddWindow(fw)
+	app.overlayHost.Open(ui.OverlayContextMenu, fw, ui.PopoverPolicy(true), nil)
 
 	// While popup is open, focus routes to it.
 	if app.windowManager.Focused() == nil {
@@ -316,7 +373,7 @@ func TestFocusRestoration_AfterPopupClose_EditorKeepsFocus(t *testing.T) {
 	}
 
 	// Close the popup.
-	app.closeContextMenu()
+	app.overlayHost.Close(ui.OverlayContextMenu)
 
 	// After close, focus should be back to FocusEditor.
 	postTarget := app.focusTarget()
@@ -337,8 +394,8 @@ func TestFocusRestoration_AfterPopupClose_TreeKeepsFocus(t *testing.T) {
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
-	app.windowManager.AddWindow(fw)
-	app.closeContextMenu()
+	app.overlayHost.Open(ui.OverlayContextMenu, fw, ui.PopoverPolicy(true), nil)
+	app.overlayHost.Close(ui.OverlayContextMenu)
 
 	// The stack must be preserved through popup open/close.
 	if app.FocusStack.Top() != FocusTree {
@@ -359,7 +416,7 @@ func TestFocusRestoration_ChainedPopups(t *testing.T) {
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
-	app.windowManager.AddWindow(fwA)
+	app.overlayHost.Open(ui.OverlayContextMenu, fwA, ui.PopoverPolicy(true), nil)
 
 	// Open popup B on top.
 	popB := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
@@ -367,7 +424,7 @@ func TestFocusRestoration_ChainedPopups(t *testing.T) {
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
-	app.windowManager.AddWindow(fwB)
+	app.overlayHost.Open(ui.OverlayFindReplace, fwB, ui.DefaultOverlayPolicy(), nil)
 
 	// WM.Focused should be B (topmost).
 	if app.windowManager.Focused().ID != "find-replace" {
@@ -375,13 +432,13 @@ func TestFocusRestoration_ChainedPopups(t *testing.T) {
 	}
 
 	// Close B. WM.Focused reverts to A.
-	app.closeFindReplace()
+	app.overlayHost.Close(ui.OverlayFindReplace)
 	if app.windowManager.Focused() == nil || app.windowManager.Focused().ID != "context-menu" {
 		t.Fatalf("after closing B, focus should revert to A, got %v", app.windowManager.Focused())
 	}
 
 	// Close A. No popup focused. focusTarget returns FocusEditor.
-	app.closeContextMenu()
+	app.overlayHost.Close(ui.OverlayContextMenu)
 	postTarget := app.focusTarget()
 	if postTarget != FocusEditor {
 		t.Fatalf("after closing all popups, focus should be FocusEditor, got %v", postTarget)
@@ -406,7 +463,7 @@ func TestFocusRestoration_FindReplaceOpen_EditorClickFocusesEditor(t *testing.T)
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	fw.SetPosition(0, 0)
-	app.windowManager.AddWindow(fw)
+	app.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), nil)
 
 	// Verify find-replace is focused.
 	if app.windowManager.Focused() == nil || app.windowManager.Focused().ID != "find-replace" {
@@ -442,7 +499,7 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 		wm.WithFocusable(true),
 	)
 	fw.SetPosition(0, 0)
-	app.windowManager.AddWindow(fw)
+	app.overlayHost.Open(ui.OverlayContextMenu, fw, ui.PopoverPolicy(true), nil)
 
 	// Simulate click outside the popup.
 	msg := tea.MouseClickMsg{X: 50, Y: 50, Button: tea.MouseLeft}
@@ -480,8 +537,8 @@ func TestHoverFindReplace_ToggleHover(t *testing.T) {
 		wm.WithFocusable(true),
 	)
 	fw.SetPosition(0, 0)
-	app.windowManager.AddWindow(fw)
-	defer app.windowManager.RemoveWindow("find-replace")
+	app.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), nil)
+	defer app.overlayHost.Close(ui.OverlayFindReplace)
 
 	// Toggle layout: chromePad=3, innerW=44-6=38, toggleGroupW=14,
 	// toggleStartX = 3 + 38 - 14 = 27, toggleBandW = 14/3 = 4.
@@ -533,8 +590,8 @@ func TestClickFindReplace_FocusesFindField(t *testing.T) {
 		wm.WithFocusable(true),
 	)
 	fw.SetPosition(0, 0)
-	app.windowManager.AddWindow(fw)
-	defer app.windowManager.RemoveWindow("find-replace")
+	app.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), nil)
+	defer app.overlayHost.Close(ui.OverlayFindReplace)
 
 	// Click on the find field (content row 0 = first content row).
 	// In chrome: localY=1.
@@ -559,8 +616,8 @@ func TestClickFindReplace_TogglesCaseSensitive(t *testing.T) {
 		wm.WithFocusable(true),
 	)
 	fw.SetPosition(0, 0)
-	app.windowManager.AddWindow(fw)
-	defer app.windowManager.RemoveWindow("find-replace")
+	app.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), nil)
+	defer app.overlayHost.Close(ui.OverlayFindReplace)
 
 	// Click on Aa toggle.
 	app.clickFindReplace(28, 3)
@@ -583,6 +640,7 @@ func newTestAppForPopupMouse(t *testing.T) *App {
 	t.Helper()
 	app := newTestApp(t)
 	app.windowManager = wm.NewWindowManager()
+	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	// Create a stub editor and open a temp file so focusTarget() recognizes
 	// the editor as open.
 	ed := editor.New(app.Theme)
@@ -599,9 +657,9 @@ func setupTestAppWithPopup(t *testing.T, id string, behavior wm.ClickOutsideBeha
 	app := newTestAppForPopupMouse(t)
 
 	pop := widgets.NewPopupContent([]string{
-		"╭───╮",
+		"╭ ─╮",
 		"│ x │",
-		"╰───╯",
+		"╰ ─╯",
 	})
 	// Use 5x3 chrome-wrapped content. Position somewhere central.
 	fw := wm.NewFloatingWindow(id, "", pop, 5, 3,
@@ -610,6 +668,16 @@ func setupTestAppWithPopup(t *testing.T, id string, behavior wm.ClickOutsideBeha
 		wm.WithClickOutside(behavior),
 	)
 	fw.SetPosition(10, 5)
-	app.windowManager.AddWindow(fw)
+	// Map wm behavior to overlay policy.
+	var policy ui.OverlayPolicy
+	switch behavior {
+	case wm.ClickOutsideIgnore:
+		policy = ui.ModalDialogPolicy()
+	case wm.ClickOutsideKeepRoute:
+		policy = ui.DefaultOverlayPolicy()
+	default:
+		policy = ui.PopoverPolicy(true)
+	}
+	app.overlayHost.Open(ui.OverlayID(id), fw, policy, nil)
 	return app
 }

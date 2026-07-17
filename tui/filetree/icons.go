@@ -66,9 +66,9 @@ type IconResolver struct {
 // callers can override by setting r.UseNerdFont after construction.
 func NewIconResolver() *IconResolver {
 	return &IconResolver{
-		UseNerdFont: DetectNerdFont(),
-		DirColor:    iconColorDir,
-		FileColor:   iconColorFile,
+		UseNerdFont:  DetectNerdFont(),
+		DirColor:     iconColorDir,
+		FileColor:    iconColorFile,
 		SymlinkColor: iconColorSymlink,
 	}
 }
@@ -284,80 +284,80 @@ var (
 // These are checked before extension-based lookups.
 var exactNameIcons = map[string]string{
 	// Container/runtime files.
-	"Dockerfile":           "\uf308",
-	"Dockerfile.dev":       "\uf308",
-	"Dockerfile.prod":      "\uf308",
-	"Dockerfile.test":      "\uf308",
-	"Makefile":            "\ue771",
-	"makefile":            "\ue771",
-	"GNUmakefile":         "\ue771",
-	"Rakefile":            "\ue791",
-	"Justfile":            "\ue771",
-	"Taskfile.yml":        "\ue771",
-	"Taskfile.yaml":       "\ue771",
+	"Dockerfile":      "\uf308",
+	"Dockerfile.dev":  "\uf308",
+	"Dockerfile.prod": "\uf308",
+	"Dockerfile.test": "\uf308",
+	"Makefile":        "\ue771",
+	"makefile":        "\ue771",
+	"GNUmakefile":     "\ue771",
+	"Rakefile":        "\ue791",
+	"Justfile":        "\ue771",
+	"Taskfile.yml":    "\ue771",
+	"Taskfile.yaml":   "\ue771",
 
 	// License and documentation.
-	"LICENSE":              "\uf09d",
-	"LICENSE.md":           "\uf09d",
-	"LICENSE.txt":          "\uf09d",
-	"LICENSE_MIT":          "\uf09d",
-	"LICENSE_APACHE":       "\uf09d",
-	"LICENSE_GPL":          "\uf09d",
-	"README":               "\uf48a",
-	"README.md":            "\uf48a",
-	"README.rst":           "\uf48a",
-	"README.txt":           "\uf48a",
-	"README.org":           "\uf48a",
-	"CHANGELOG":            "\uf48a",
-	"CHANGELOG.md":         "\uf48a",
-	"CONTRIBUTING.md":      "\uf48a",
+	"LICENSE":         "\uf09d",
+	"LICENSE.md":      "\uf09d",
+	"LICENSE.txt":     "\uf09d",
+	"LICENSE_MIT":     "\uf09d",
+	"LICENSE_APACHE":  "\uf09d",
+	"LICENSE_GPL":     "\uf09d",
+	"README":          "\uf48a",
+	"README.md":       "\uf48a",
+	"README.rst":      "\uf48a",
+	"README.txt":      "\uf48a",
+	"README.org":      "\uf48a",
+	"CHANGELOG":       "\uf48a",
+	"CHANGELOG.md":    "\uf48a",
+	"CONTRIBUTING.md": "\uf48a",
 
 	// Go module files.
-	"go.mod":              "\ue627",
-	"go.sum":              "\ue627",
+	"go.mod": "\ue627",
+	"go.sum": "\ue627",
 
 	// Node.js files.
-	"package.json":        "\ue718",
-	"package-lock.json":   "\uf023",
-	"yarn.lock":           "\uf023",
-	"pnpm-lock.yaml":      "\uf023",
-	".npmrc":              "\ue718",
-	".yarnrc":             "\ue718",
-	"tsconfig.json":       "\ue628",
-	".eslintrc":           "\ue74e",
-	".eslintrc.json":      "\ue74e",
-	".eslintrc.js":        "\ue74e",
-	".prettierrc":         "\ue74e",
-	".babelrc":            "\ue74e",
+	"package.json":      "\ue718",
+	"package-lock.json": "\uf023",
+	"yarn.lock":         "\uf023",
+	"pnpm-lock.yaml":    "\uf023",
+	".npmrc":            "\ue718",
+	".yarnrc":           "\ue718",
+	"tsconfig.json":     "\ue628",
+	".eslintrc":         "\ue74e",
+	".eslintrc.json":    "\ue74e",
+	".eslintrc.js":      "\ue74e",
+	".prettierrc":       "\ue74e",
+	".babelrc":          "\ue74e",
 
 	// Rust files.
 	"Cargo.toml":          "\ue7a8",
 	"Cargo.lock":          "\uf023",
 	"rust-toolchain.toml": "\ue7a8",
-	"rust-toolchain":     "\ue7a8",
+	"rust-toolchain":      "\ue7a8",
 	"clippy.toml":         "\ue7a8",
 
 	// Python files.
-	"setup.py":            "\ue73c",
-	"setup.cfg":           "\ue73c",
-	"pyproject.toml":      "\ue73c",
-	"requirements.txt":    "\ue73c",
-	"Pipfile":             "\ue73c",
-	"Pipfile.lock":        "\uf023",
-	"tox.ini":             "\ue73c",
+	"setup.py":         "\ue73c",
+	"setup.cfg":        "\ue73c",
+	"pyproject.toml":   "\ue73c",
+	"requirements.txt": "\ue73c",
+	"Pipfile":          "\ue73c",
+	"Pipfile.lock":     "\uf023",
+	"tox.ini":          "\ue73c",
 
 	// Ruby files.
-	"Gemfile":             "\ue791",
-	"Gemfile.lock":        "\uf023",
+	"Gemfile":      "\ue791",
+	"Gemfile.lock": "\uf023",
 
 	// PHP files.
-	"composer.json":       "\ue73d",
-	"composer.lock":       "\uf023",
+	"composer.json": "\ue73d",
+	"composer.lock": "\uf023",
 
 	// Shell/CI files.
-	".shellcheckrc":       "\ue795",
-	".gitattributes":      "\uf402",
-	".editorconfig":       "\uf402",
+	".shellcheckrc":  "\ue795",
+	".gitattributes": "\uf402",
+	".editorconfig":  "\uf402",
 }
 
 // matchExactNamePrefix handles names that have a dot-variant or suffix,
@@ -382,27 +382,27 @@ func matchExactNamePrefix(name string) (string, bool) {
 // extensionIcons maps lowercase file extensions to their NerdFont codepoints.
 var extensionIcons = map[string]string{
 	// Go
-	".go":   "\ue627",
+	".go": "\ue627",
 
 	// Rust
-	".rs":   "\ue7a8",
+	".rs": "\ue7a8",
 
 	// Python
-	".py":   "\ue73c",
-	".pyc":  "\ue73c",
-	".pyo":  "\ue73c",
-	".pyd":  "\ue73c",
+	".py":    "\ue73c",
+	".pyc":   "\ue73c",
+	".pyo":   "\ue73c",
+	".pyd":   "\ue73c",
 	".ipynb": "\ue73c",
 
 	// JavaScript / TypeScript
-	".js":    "\ue74e",
-	".mjs":   "\ue74e",
-	".cjs":   "\ue74e",
-	".jsx":   "\ue7ba",
-	".ts":    "\ue628",
-	".tsx":   "\ue7ba",
-	".d.ts":  "\ue628",
-	".vue":   "\ue7ba",
+	".js":     "\ue74e",
+	".mjs":    "\ue74e",
+	".cjs":    "\ue74e",
+	".jsx":    "\ue7ba",
+	".ts":     "\ue628",
+	".tsx":    "\ue7ba",
+	".d.ts":   "\ue628",
+	".vue":    "\ue7ba",
 	".svelte": "\ue7ba",
 
 	// Java
@@ -411,18 +411,18 @@ var extensionIcons = map[string]string{
 	".jar":   "\ue738",
 
 	// C / C++
-	".c":     "\ue618",
-	".cpp":   "\ue61d",
-	".cc":    "\ue61d",
-	".cxx":   "\ue61d",
-	".h":     "\ue618",
-	".hpp":   "\ue61d",
-	".hxx":   "\ue61d",
+	".c":   "\ue618",
+	".cpp": "\ue61d",
+	".cc":  "\ue61d",
+	".cxx": "\ue61d",
+	".h":   "\ue618",
+	".hpp": "\ue61d",
+	".hxx": "\ue61d",
 
 	// Ruby
-	".rb":    "\ue791",
-	".erb":   "\ue791",
-	".rbs":   "\ue791",
+	".rb":  "\ue791",
+	".erb": "\ue791",
+	".rbs": "\ue791",
 
 	// PHP
 	".php":   "\ue73d",
@@ -435,45 +435,45 @@ var extensionIcons = map[string]string{
 	".swift": "\ue755",
 
 	// Kotlin
-	".kt":    "\ue634",
-	".ktm":   "\ue634",
-	".kts":   "\ue634",
+	".kt":  "\ue634",
+	".ktm": "\ue634",
+	".kts": "\ue634",
 
 	// Scala
 	".scala": "\ue737",
 	".sc":    "\ue737",
 
 	// Lua
-	".lua":   "\ue624",
+	".lua": "\ue624",
 
 	// Shell
-	".sh":    "\ue795",
-	".bash":  "\ue795",
-	".zsh":   "\ue795",
-	".fish":  "\ue795",
-	".ksh":   "\ue795",
+	".sh":   "\ue795",
+	".bash": "\ue795",
+	".zsh":  "\ue795",
+	".fish": "\ue795",
+	".ksh":  "\ue795",
 
 	// SQL
-	".sql":   "\ue706",
+	".sql": "\ue706",
 
 	// Config / data files
-	".json":   "\ue602",
-	".yaml":   "\ue602",
-	".yml":    "\ue602",
-	".toml":   "\ue602",
-	".xml":    "\ue602",
-	".csv":    "\ue64a",
-	".tsv":    "\ue64a",
+	".json": "\ue602",
+	".yaml": "\ue602",
+	".yml":  "\ue602",
+	".toml": "\ue602",
+	".xml":  "\ue602",
+	".csv":  "\ue64a",
+	".tsv":  "\ue64a",
 
 	// Documentation
-	".md":    "\ue73e",
+	".md":       "\ue73e",
 	".markdown": "\ue73e",
-	".rst":   "\ue73e",
-	".org":   "\ue73e",
-	".txt":   "\uf0c9",
+	".rst":      "\ue73e",
+	".org":      "\ue73e",
+	".txt":      "\uf0c9",
 
 	// Lock files
-	".lock":  "\uf023",
+	".lock": "\uf023",
 
 	// Images
 	".png":  "\uf1c5",
@@ -487,61 +487,61 @@ var extensionIcons = map[string]string{
 	".avif": "\uf1c5",
 
 	// Archives
-	".zip":  "\uf410",
-	".tar":  "\uf410",
-	".gz":   "\uf410",
-	".bz2":  "\uf410",
-	".xz":   "\uf410",
-	".rar":  "\uf410",
-	".7z":   "\uf410",
-	".tgz":  "\uf410",
-	".zst":  "\uf410",
+	".zip": "\uf410",
+	".tar": "\uf410",
+	".gz":  "\uf410",
+	".bz2": "\uf410",
+	".xz":  "\uf410",
+	".rar": "\uf410",
+	".7z":  "\uf410",
+	".tgz": "\uf410",
+	".zst": "\uf410",
 
 	// Binaries
-	".exe":   "\uf471",
-	".bin":   "\uf471",
-	".so":    "\uf471",
-	".dylib": "\uf471",
-	".wasm":  "\uf471",
+	".exe":      "\uf471",
+	".bin":      "\uf471",
+	".so":       "\uf471",
+	".dylib":    "\uf471",
+	".wasm":     "\uf471",
 	".appimage": "\uf471",
-	".deb":   "\uf471",
-	".rpm":   "\uf471",
+	".deb":      "\uf471",
+	".rpm":      "\uf471",
 }
 
 // dotfileNameIcons maps dotfiles (like .gitignore, .env) to NerdFont codepoints.
 var dotfileNameIcons = map[string]string{
-	".gitignore":       "\uf402",
-	".gitkeep":         "\uf402",
-	".gitattributes":   "\uf402",
-	".gitmodules":      "\uf402",
-	".gitconfig":       "\uf402",
+	".gitignore":     "\uf402",
+	".gitkeep":       "\uf402",
+	".gitattributes": "\uf402",
+	".gitmodules":    "\uf402",
+	".gitconfig":     "\uf402",
 
-	".env":             "\uf462",
-	".env.example":     "\uf462",
-	".env.local":       "\uf462",
-	".env.dev":         "\uf462",
-	".env.prod":        "\uf462",
-	".env.test":        "\uf462",
+	".env":         "\uf462",
+	".env.example": "\uf462",
+	".env.local":   "\uf462",
+	".env.dev":     "\uf462",
+	".env.prod":    "\uf462",
+	".env.test":    "\uf462",
 
-	".dockerignore":    "\uf308",
-	".editorconfig":    "\uf402",
-	".prettierrc":      "\ue74e",
-	".eslintrc":        "\ue74e",
-	".eslintignore":    "\ue74e",
-	".prettierignore":  "\ue74e",
-	".stylelintrc":     "\ue74e",
-	".shellcheckrc":    "\ue795",
-	".npmrc":           "\ue718",
-	".yarnrc":          "\ue718",
-	".nvmrc":           "\ue718",
-	".node-version":    "\ue718",
+	".dockerignore":   "\uf308",
+	".editorconfig":   "\uf402",
+	".prettierrc":     "\ue74e",
+	".eslintrc":       "\ue74e",
+	".eslintignore":   "\ue74e",
+	".prettierignore": "\ue74e",
+	".stylelintrc":    "\ue74e",
+	".shellcheckrc":   "\ue795",
+	".npmrc":          "\ue718",
+	".yarnrc":         "\ue718",
+	".nvmrc":          "\ue718",
+	".node-version":   "\ue718",
 
-	".rustfmt.toml":    "\ue7a8",
-	".clippy.toml":     "\ue7a8",
+	".rustfmt.toml": "\ue7a8",
+	".clippy.toml":  "\ue7a8",
 
-	".python-version":  "\ue73c",
-	".flake8":          "\ue73c",
-	".pylintrc":        "\ue73c",
+	".python-version": "\ue73c",
+	".flake8":         "\ue73c",
+	".pylintrc":       "\ue73c",
 }
 
 // fileExtension returns the file extension from the given name,

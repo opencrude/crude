@@ -10,8 +10,8 @@ type ClipboardMsg struct {
 // Clipboard returns the clipboard selection type. This will be one of the
 // following values:
 //
-//   - c: System clipboard.
-//   - p: Primary clipboard (X11/Wayland only).
+// - c: System clipboard.
+// - p: Primary clipboard (X11/Wayland only).
 func (e ClipboardMsg) Clipboard() byte {
 	return e.Selection
 }

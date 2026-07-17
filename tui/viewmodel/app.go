@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +13,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	ttypes "crude/tui/types"
+	"crude/tui/ui"
 	"crude/tui/widget"
 	"crude/tui/widgets"
 	"crude/tui/window"
@@ -63,9 +65,15 @@ type App struct {
 	mainStatusbarSurf *surface.Surface // status bar separator + content
 	mainHeaderSurf    *surface.Surface // header line + separator
 
+	actionRegistry *ui.ActionRegistry
+	overlayHost    *ui.OverlayHost
+
 	// App-scoped fields (not on workspace.Workspace)
 	launcher            *LauncherState
 	commandPaletteModel *commandPaletteModel
+	findInFiles         *widgets.FindInFiles
+	findInFilesRequest  uint64
+	findInFilesGen      int
 	providerPresets     []ttypes.ProviderPreset
 
 	OnQuit        func()
@@ -93,6 +101,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	wmgr := wm.NewWindowManager()
 	rctx := widget.NewRenderContext(ws.Theme)
 	eb := workspace.NewEventBus()
+	ws.SetEventBus(eb)
 
 	// Create persistent layer surfaces. The main content covers the whole
 	// screen minus the header and status bar; sidebar, header, and status
@@ -113,10 +122,13 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	edState := NewEditorState()
 	edState.Editor = editor.New(ws.Theme)
 
+	registry := ui.DefaultRegistry()
+	overlay := ui.NewOverlayHost(wmgr)
+
 	// Start on the unified welcome launcher (actions + workspaces + sessions).
 	launcher := NewLauncherState(ws.RootPath, ws.ListSessions())
 
-	return &App{
+	app := &App{
 		Workspace:         ws,
 		EditorState:       edState,
 		OverlayState:      NewOverlayState(),
@@ -132,7 +144,13 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		mainSidebarSurf:   sidebarSurf,
 		mainStatusbarSurf: statusbarSurf,
 		mainHeaderSurf:    headerSurf,
+		actionRegistry:    registry,
+		overlayHost:       overlay,
 	}
+
+	app.registerOverlayHandlers()
+
+	return app
 }
 
 func (m *App) SetHistory(history []string) {
@@ -206,56 +224,61 @@ func (m *App) Init() tea.Cmd {
 
 // openTextOverlayWindow opens the text overlay as a floating window.
 func (m *App) openTextOverlayWindow() {
-	m.windowManager.RemoveWindow("textoverlay")
+	m.overlayHost.Close(ui.OverlayTextOverlay)
 
-	textViewFn := func() string {
-		// Use the floating window's content area dimensions, not the full
-		// screen dimensions. ViewInner renders content directly (no
-		// RenderFloatingBox wrapper) since the FloatingWindow already
-		// provides its own border and title bar.
-		w, h := m.width, m.height
-		if fw := m.windowManager.Window("textoverlay"); fw != nil {
-			b := fw.ContentBounds()
-			w, h = b.W, b.H
-		}
+	textBody := ui.NewANSIViewFunc(ui.NewID(ui.RootID, "textoverlay-body"), func(w, h int) string {
 		lines := m.ActiveSession.TextOverlay.ViewInner(w, h, m.SpinFrame)
-		// Join lines into a single string
-		result := ""
-		for i, l := range lines {
-			if i > 0 {
-				result += "\n"
-			}
-			result += l
-		}
-		return result
-	}
+		return strings.Join(lines, "\n")
+	})
+	textWidget := ui.NewWindowFrameWidget(
+		m.Theme,
+		ui.NewID(ui.RootID, "textoverlay-frame"),
+		ui.FrameWindow,
+		"Edit",
+		textBody,
+		nil,
+		true,
+		72,
+		30,
+	)
 
-	textWidget := rendering.NewANSIAdapter(textViewFn)
-
-	win := wm.NewFloatingWindow("textoverlay", "Edit", textWidget,
+	win := wm.NewFloatingWindow(string(ui.OverlayTextOverlay), "Edit", textWidget,
 		72, 30,
 		wm.WithMinSize(32, 8),
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
-	m.windowManager.AddWindow(win)
+	m.overlayHost.Open(ui.OverlayTextOverlay, win, ui.DefaultOverlayPolicy(), func() {
+		m.ActiveSession.TextOverlay.Close()
+		m.setMode(ModeChat)
+	})
 }
 
 // openFilePickerWindow opens the file picker as a floating window.
-// The file picker now draws its own border/title (unified chrome),
-// so the FloatingWindow is undecorated.
+// WindowFrame owns the file picker's visual chrome; WM owns its interactions.
 func (m *App) openFilePickerWindow() {
-	m.windowManager.RemoveWindow("filepicker")
+	m.overlayHost.Close(ui.OverlayFilePicker)
 
 	w, h := fitFloatingSize(m.width, m.height, 68, 20, 42, 12)
 	title := "Attach File"
 	if m.FilePicker.Mode() == widgets.FilePickerModeFolder {
 		title = "New Workspace"
 	}
-	win := wm.NewFloatingWindow("filepicker", title, &m.FilePicker,
+	body := ui.NewLegacyWidget(ui.NewID(ui.RootID, "filepicker-body"), &m.FilePicker)
+	frame := ui.NewWindowFrameWidget(
+		m.Theme,
+		ui.NewID(ui.RootID, "filepicker-frame"),
+		ui.FrameDialog,
+		title,
+		body,
+		&m.FilePicker,
+		true,
+		w,
+		h,
+	)
+	win := wm.NewFloatingWindow(string(ui.OverlayFilePicker), title, frame,
 		w, h,
 		wm.WithDecoration(true),
-		wm.WithBorderStyle(wm.BorderNone),
 		wm.WithMovable(true),
 		wm.WithClosable(true),
 		wm.WithResizable(false),
@@ -266,18 +289,20 @@ func (m *App) openFilePickerWindow() {
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
-	m.windowManager.AddWindow(win)
+	m.overlayHost.Open(ui.OverlayFilePicker, win, ui.ModalDialogPolicy(), func() {
+		m.FilePicker.Close()
+		m.setMode(ModeChat)
+	})
 }
 
 // openWorkspaceSettings opens the JetBrains-style workspace settings as a floating window.
 func (m *App) openWorkspaceSettings() {
-	m.windowManager.RemoveWindow("workspace-settings")
+	m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 
 	appSets := m.LoadAppSettings()
 	if len(appSets.Agents.Categories) == 0 {
 		appSets.Agents = m.WorkspaceAgentDefaults()
 	}
-	// Prefer live keys from the session config map.
 	if providers := m.AllProviderConfigs(); len(providers) > 0 {
 		appSets.Providers = providers
 	}
@@ -285,7 +310,6 @@ func (m *App) openWorkspaceSettings() {
 		appSets.ActiveProvider = m.LastSettings.ProviderID
 	}
 	if appSets.ActiveProvider == "" {
-		// Fall back to whatever ProviderConfig resolves for openrouter.
 		appSets.ActiveProvider = "openrouter"
 	}
 	if pc := m.ProviderConfig(appSets.ActiveProvider); (pc.APIKey != "" || pc.ProviderURL != "") && appSets.Providers != nil {
@@ -295,10 +319,21 @@ func (m *App) openWorkspaceSettings() {
 	wsWidget := widgets.NewWorkspaceSettings(m.Theme, appSets, m.providerPresets)
 
 	w, h := fitFloatingSize(m.width, m.height, 86, 22, 60, 18)
-	win := wm.NewFloatingWindow("workspace-settings", "Settings", wsWidget,
+	body := ui.NewLegacyWidget(ui.NewID(ui.RootID, "workspace-settings-body"), wsWidget)
+	frame := ui.NewWindowFrameWidget(
+		m.Theme,
+		ui.NewID(ui.RootID, "workspace-settings-frame"),
+		ui.FrameWindow,
+		"Settings",
+		body,
+		wsWidget,
+		true,
+		w,
+		h,
+	)
+	win := wm.NewFloatingWindow(string(ui.OverlayWorkspaceSettings), "Settings", frame,
 		w, h,
 		wm.WithDecoration(true),
-		wm.WithBorderStyle(wm.BorderNone),
 		wm.WithMovable(true),
 		wm.WithResizable(true),
 		wm.WithClosable(true),
@@ -309,7 +344,7 @@ func (m *App) openWorkspaceSettings() {
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
-	m.windowManager.AddWindow(win)
+	m.overlayHost.Open(ui.OverlayWorkspaceSettings, win, ui.ModalDialogPolicy(), nil)
 }
 
 func fitFloatingSize(screenW, screenH, preferredW, preferredH, minW, minH int) (int, int) {
@@ -356,7 +391,7 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 	// First, close any focused floating window
 	if m.windowManager != nil {
 		if fw := m.windowManager.Focused(); fw != nil {
-			m.windowManager.RemoveWindow(fw.ID)
+			m.overlayHost.Close(ui.OverlayID(fw.ID))
 			return m, nil
 		}
 	}
@@ -407,29 +442,36 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 
 // toggleComposer opens or closes the composer floating window.
 func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
-	if m.windowManager.Window("composer") != nil {
-		m.windowManager.RemoveWindow("composer")
+	if m.overlayHost.IsOpen(ui.OverlayComposer) {
+		m.overlayHost.Close(ui.OverlayComposer)
 		return m, nil
 	}
 
 	m.ActiveSession.Composer.Open("")
-	viewFn := func() string {
-		w, h := m.width, m.height
-		if fw := m.windowManager.Window("composer"); fw != nil {
-			b := fw.ContentBounds()
-			w, h = b.W, b.H
-		}
+	body := ui.NewANSIViewFunc(ui.NewID(ui.RootID, "composer-body"), func(w, h int) string {
 		return m.ActiveSession.Composer.View(w, h)
-	}
-	ansiWidget := rendering.NewANSIAdapter(viewFn)
+	})
+	frame := ui.NewWindowFrameWidget(
+		m.Theme,
+		ui.NewID(ui.RootID, "composer-frame"),
+		ui.FrameWindow,
+		"Composer",
+		body,
+		nil,
+		true,
+		72,
+		24,
+	)
 
-	fw := wm.NewFloatingWindow("composer", "Composer", ansiWidget,
+	fw := wm.NewFloatingWindow(string(ui.OverlayComposer), "Composer", frame,
 		72, 24,
 		wm.WithMinSize(40, 10),
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
-	m.windowManager.AddWindow(fw)
+	m.overlayHost.Open(ui.OverlayComposer, fw, ui.DefaultOverlayPolicy(), func() {
+		m.ActiveSession.Composer.Close()
+	})
 	return m, nil
 }
 
@@ -460,4 +502,91 @@ func (m *App) resetOrchestratorOverrides() {
 	}
 	m.ResetOrchestratorOverrides(id)
 	m.StatusBar.SetInfo("Session overrides reset to workspace defaults")
+}
+
+// registerOverlayHandlers registers per-overlay content-click and hover
+// handlers on the OverlayHost. Each handler delegates to the existing App
+// method for that popup type, replacing the bespoke switch statements in
+// popupmouse.go.
+func (m *App) registerOverlayHandlers() {
+	if m.overlayHost == nil {
+		return
+	}
+	oh := m.overlayHost
+
+	oh.RegisterContentHandler(ui.OverlayContextMenu, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickContextMenu(localX, localY)
+	})
+	oh.RegisterHoverHandler(ui.OverlayContextMenu, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		m.hoverContextMenu(localX, localY)
+	})
+
+	oh.RegisterContentHandler(ui.OverlayFindReplace, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickFindReplace(localX, localY)
+	})
+	oh.RegisterHoverHandler(ui.OverlayFindReplace, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		m.hoverFindReplace(localX, localY)
+	})
+
+	oh.RegisterContentHandler(ui.OverlayDirtyClose, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickDirtyPrompt(localX, localY)
+	})
+	oh.RegisterHoverHandler(ui.OverlayDirtyClose, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		m.hoverDirtyPrompt(localX, localY)
+	})
+
+	oh.RegisterContentHandler(ui.OverlayTreePrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickTreePrompt(localX, localY)
+	})
+
+	oh.RegisterContentHandler(ui.OverlayTreeDelete, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickTreeDeleteConfirm(localX, localY)
+	})
+	oh.RegisterHoverHandler(ui.OverlayTreeDelete, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		m.hoverDirtyPrompt(localX, localY)
+	})
+
+	oh.RegisterContentHandler(ui.OverlayFilePicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.forwardEventToWindowContent(fw, msg)
+	})
+	oh.RegisterHoverHandler(ui.OverlayFilePicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
+	})
+	oh.RegisterHoverHandler(ui.OverlayWorkspaceSettings, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
+	})
+	oh.RegisterHoverHandler(ui.OverlayFindInFiles, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
+	})
+
+	oh.RegisterContentHandler(ui.OverlayReferences, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickReferences(localX, localY)
+	})
+	oh.RegisterHoverHandler(ui.OverlayReferences, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		m.hoverReferences(localX, localY)
+	})
+
+	oh.RegisterContentHandler(ui.OverlayCompletion, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickCompletion(localX, localY)
+	})
+	oh.RegisterHoverHandler(ui.OverlayCompletion, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		m.hoverCompletion(localX, localY)
+	})
+
+	oh.RegisterContentHandler(ui.OverlayOutline, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickOutline(localX, localY)
+	})
+	oh.RegisterHoverHandler(ui.OverlayOutline, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		m.hoverOutline(localX, localY)
+	})
+
+	oh.RegisterContentHandler(ui.OverlayCommandPalette, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.clickCommandPalette(fw, localX, localY)
+	})
+	oh.RegisterHoverHandler(ui.OverlayCommandPalette, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		m.hoverCommandPalette(fw, localX, localY)
+	})
 }

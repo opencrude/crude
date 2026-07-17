@@ -46,30 +46,30 @@ These are not edge cases — they dominate issue trackers for long-running codin
 ## 2. Conceptual Model: The OS Analogy
 
 ```
-┌────────────────────────────────────┐
+┌                  ┐
 │  WORKING MEMORY (Context Window)   │  ← RAM: fast, scarce, volatile
 │                                    │
 │  What the LLM "sees" right now.    │
 │  Managed by the harness via        │
 │  paging decisions.                 │
-└────────────────┬───────────────────┘
+└        ┬         ─┘
                  │ page in/out
                  ▼
-┌────────────────────────────────────┐
+┌                  ┐
 │  RECALL STORE (Recent History)     │  ← Disk cache: fast search
 │                                    │
 │  Recent messages + tool calls.     │
 │  FTS5-indexed, auto-pruned.       │
-└────────────────┬───────────────────┘
+└        ┬         ─┘
                  │ promote to durable
                  ▼
-┌────────────────────────────────────┐
+┌                  ┐
 │  ARCHIVAL STORE (Long-term Memory) │  ← Disk: durable, unlimited
 │                                    │
 │  Decisions, patterns, bugs,        │
 │  session summaries, preferences.   │
 │  SQLite + FTS5.                    │
-└────────────────────────────────────┘
+└                  ┘
 ```
 
 **Key insight from MemGPT:** The agent itself pages data between tiers via explicit tool calls, just as an OS pages between RAM and disk. The harness enforces invariants (ClawVM) — the agent drives upgrades.
@@ -83,13 +83,13 @@ These are not edge cases — they dominate issue trackers for long-running codin
 The LLM's context window. Everything here is visible to the model on every turn.
 
 ```
-┌──────────────────────────────────────────────┐
+┌                       ┐
 │ RESERVED (cannot be used for paged state):   │
 │  • System prompt              ~400 tokens    │
 │  • Tool schemas               ~200 tokens    │
 │  • Output budget              ~4000 tokens   │
 │  • Safety margin              ~400 tokens    │
-├──────────────────────────────────────────────┤
+├                       ┤
 │ PAGED STATE (managed by harness):            │
 │  • Hard-pinned pages (must fit)              │
 │    - Bootstrap: system instructions          │
@@ -100,7 +100,7 @@ The LLM's context window. Everything here is visible to the model on every turn.
 │    - Conversation: last N turns              │
 │    - Context injection: relevant memories    │
 │  • Free budget: remaining for model output   │
-└──────────────────────────────────────────────┘
+└                       ┘
 ```
 
 **Budget management:** At each prompt assembly, the harness:
@@ -491,15 +491,15 @@ Returns:
 
 ```
 memory/
-├── store.go          # SQLite init, migrations, open/close
-├── pages.go          # Page table operations (CRUD, degrade, pin)
-├── memories.go       # Memory store operations (memorize, recall)
-├── messages.go       # Message log operations (append, search)
-├── lifecycle.go      # Lifecycle hooks (start, pressure, end, reset)
-├── journal.go        # Writeback journal (stage, validate, commit)
-├── policy.go         # Budget calculation, upgrade policy
-├── fault.go          # Observable fault types and reporting
-└── types.go          # Shared types (Page, Memory, Resolution, etc.)
+├  store.go          # SQLite init, migrations, open/close
+├  pages.go          # Page table operations (CRUD, degrade, pin)
+├  memories.go       # Memory store operations (memorize, recall)
+├  messages.go       # Message log operations (append, search)
+├  lifecycle.go      # Lifecycle hooks (start, pressure, end, reset)
+├  journal.go        # Writeback journal (stage, validate, commit)
+├  policy.go         # Budget calculation, upgrade policy
+├  fault.go          # Observable fault types and reporting
+└  types.go          # Shared types (Page, Memory, Resolution, etc.)
 ```
 
 ### Integration Points in Existing Code

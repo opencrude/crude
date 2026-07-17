@@ -4,13 +4,13 @@
 // compositor, widget, wm) depend on the types defined here.
 //
 // Core types:
-//   - Color: terminal color (default, 256-palette, 24-bit truecolor)
-//   - Attrs: text rendering attributes as a bitmask (bold, italic, etc.)
-//   - Cell: the atomic unit of compositing — a single terminal cell
+// - Color: terminal color (default, 256-palette, 24-bit truecolor)
+// - Attrs: text rendering attributes as a bitmask (bold, italic, etc.)
+// - Cell: the atomic unit of compositing — a single terminal cell
 //
 // Pool types (pool.go):
-//   - CharPool: interns frequently-used runes to reduce memory
-//   - StylePool: interns color+attribute combinations to reduce per-cell overhead
+// - CharPool: interns frequently-used runes to reduce memory
+// - StylePool: interns color+attribute combinations to reduce per-cell overhead
 package cell
 
 import (
@@ -139,9 +139,9 @@ func (c Color) IsDefault() bool {
 // Blend performs Porter-Duff alpha compositing of this color over another.
 //
 // The semantics are: result = over * alpha + this * (1-alpha).
-//   - If over.IsDefault(), return this (the bottom color is unchanged).
-//   - If alpha >= 1.0, return over (fully opaque overlay).
-//   - If the bottom (this) color is default, treat it as black (0,0,0) for blending.
+// - If over.IsDefault(), return this (the bottom color is unchanged).
+// - If alpha >= 1.0, return over (fully opaque overlay).
+// - If the bottom (this) color is default, treat it as black (0,0,0) for blending.
 //
 // Blend always returns a TrueColor result when actual blending occurs,
 // since palette indices cannot represent blended values.
@@ -330,8 +330,8 @@ func (a Attrs) Has(mask Attrs) bool {
 //
 // Each cell occupies one or more columns on the terminal grid.
 // A wide character (CJK, emoji) occupies 2 columns and produces:
-//   - Cell{Char: '界', Width: 2} at column N
-//   - Cell{Char: 0, Width: 0} at column N+1 (continuation cell)
+// - Cell{Char: '界', Width: 2} at column N
+// - Cell{Char: 0, Width: 0} at column N+1 (continuation cell)
 //
 // A Transparent cell does not overwrite the cell below during compositing.
 // This is how "holes" in floating windows let background content show through.

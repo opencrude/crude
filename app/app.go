@@ -1,16 +1,16 @@
 // Package app is the IDE shell and workspace lifecycle manager.
 //
 // Following the JetBrains model, app/ is the outermost layer that:
-//   - Owns the app config (crude.json / config.json)
-//   - Manages workspace lifecycle (create, list, resume, delete)
-//   - Handles CLI flags and dispatching
+// - Owns the app config (crude.json / config.json)
+// - Manages workspace lifecycle (create, list, resume, delete)
+// - Handles CLI flags and dispatching
 //
 // app/ does NOT know about:
-//   - Session internals (that's workspace/ + session/)
-//   - LSP connections (that's workspace/)
-//   - Agent orchestration (that's session/)
-//   - TUI wiring or callbacks (that's tui/ ↔ workspace/)
-//   - Rendering or input handling (that's tui/)
+// - Session internals (that's workspace/ + session/)
+// - LSP connections (that's workspace/)
+// - Agent orchestration (that's session/)
+// - TUI wiring or callbacks (that's tui/ ↔ workspace/)
+// - Rendering or input handling (that's tui/)
 //
 // The app creates a workspace (the IDE instance) and hands it to the TUI.
 // The workspace owns all business state; the TUI owns all rendering.
@@ -108,7 +108,7 @@ func (a *App) Run() {
 	}
 
 	// 3. Optional --resume: bootstrap that session now (launcher still available
-	//    for multi-session after the TUI starts).
+	//  for multi-session after the TUI starts).
 	if a.resumeID != "" {
 		if _, err := ws.Bootstrap(sessCfg, a.home, a.resumeID); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to resume session: %v\n", err)
@@ -186,7 +186,7 @@ func boolStr(b bool) string {
 	return "off"
 }
 
-// ── CLI Commands ──────────────────────────────────────────────────────
+// CLI Commands
 //
 // These functions are called directly from main.go for CLI-only operations
 // (list, delete) that don't start the TUI.

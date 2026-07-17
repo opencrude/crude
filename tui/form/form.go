@@ -382,12 +382,12 @@ func (m Form) handleMouseClick(msg tea.MouseClickMsg) (Form, tea.Cmd, FormAction
 
 	// Expanded mode: route click to the SelectItem's List.
 	// The rendered layout is:
-	//   Line 0: leading blank
-	//   Line 1: title (breadcrumb)
-	//   Line 2: separator
-	//   Line 3: filter prompt
-	//   Line 4: separator
-	//   Line 5+: items or status text
+	// Line 0: leading blank
+	// Line 1: title (breadcrumb)
+	// Line 2: separator
+	// Line 3: filter prompt
+	// Line 4: separator
+	// Line 5+: items or status text
 	// Items start at form line 5 → listY = formY - 5.
 	if m.expanded >= 0 {
 		if si, ok := m.items[m.expanded].(*SelectItem); ok {

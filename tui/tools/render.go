@@ -136,37 +136,37 @@ func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, inn
 					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(firstLine))
 				}
 			} else {
-			toolLineWidth := width - th.Spacing.PadLR*2 - 6
-			if toolLineWidth < 20 {
-				toolLineWidth = 20
-			}
-			var wrappedLines []string
-			for _, rl := range strings.Split(resultContent, "\n") {
-				// Trim all whitespace including tabs, not just spaces
-				trimmed := strings.TrimSpace(rl)
-				if trimmed == "" {
-					// Preserve empty lines to maintain output structure
-					// (paragraph breaks between sections, etc.)
-					wrappedLines = append(wrappedLines, dim.Render("│   "))
-					continue
+				toolLineWidth := width - th.Spacing.PadLR*2 - 6
+				if toolLineWidth < 20 {
+					toolLineWidth = 20
 				}
-				// Sanitize the content to prevent TUI breakage
-				sanitized := rendering.SanitizeForTerminal(trimmed)
-				for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
-					if seg != "" {
-						wrappedLines = append(wrappedLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(seg))
+				var wrappedLines []string
+				for _, rl := range strings.Split(resultContent, "\n") {
+					// Trim all whitespace including tabs, not just spaces
+					trimmed := strings.TrimSpace(rl)
+					if trimmed == "" {
+						// Preserve empty lines to maintain output structure
+						// (paragraph breaks between sections, etc.)
+						wrappedLines = append(wrappedLines, dim.Render("│   "))
+						continue
+					}
+					// Sanitize the content to prevent TUI breakage
+					sanitized := rendering.SanitizeForTerminal(trimmed)
+					for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
+						if seg != "" {
+							wrappedLines = append(wrappedLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(seg))
+						}
 					}
 				}
-			}
-			maxRes := TerminalResultHeight(height)
-			for i, wl := range wrappedLines {
-				if i >= maxRes-1 {
-					remaining := len(wrappedLines) - i
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))))
-					break
+				maxRes := TerminalResultHeight(height)
+				for i, wl := range wrappedLines {
+					if i >= maxRes-1 {
+						remaining := len(wrappedLines) - i
+						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))))
+						break
+					}
+					msgLines = append(msgLines, wl)
 				}
-				msgLines = append(msgLines, wl)
-			}
 			}
 		}
 	} else if msg.ToolStatus == "error" || msg.ToolStatus == "cancelled" {
@@ -290,10 +290,10 @@ func TerminalResultHeight(height int) int {
 	return h
 }
 
-// ─────────────────────────────────────────────────────────────
+//                    ─
 // Result summary functions — all use " — " as the consistent
 // separator between the action+target and the result gist.
-// ─────────────────────────────────────────────────────────────
+// ─
 
 // resultSummary dispatches to the appropriate tool-specific
 // summary function. Returns "" when no summary is available
@@ -357,7 +357,7 @@ func resultSummary(tool, content, target, dur string) string {
 	}
 }
 
-// ── read_file ──────────────────────────────────────────────
+// ── read_file ─
 
 func readResultSummary(content, path, duration string) string {
 	if path == "" {
@@ -408,7 +408,7 @@ func readResultSummary(content, path, duration string) string {
 	return label
 }
 
-// ── grep_files ──────────────────────────────────────────────
+// ── grep_files ─
 
 func grepResultSummary(content, target, duration string) string {
 	// "No matches for ..."
@@ -447,7 +447,7 @@ func grepResultSummary(content, target, duration string) string {
 	return "" // fallback to default
 }
 
-// ── list_directory ──────────────────────────────────────────
+// ── list_directory
 
 func listDirResultSummary(content, target, duration string) string {
 	if strings.Contains(content, "is empty") {
@@ -481,7 +481,7 @@ func listDirResultSummary(content, target, duration string) string {
 	return label
 }
 
-// ── glob_files ──────────────────────────────────────────────
+// ── glob_files ─────────────────────────────────────
 
 func globResultSummary(content, target, duration string) string {
 	if strings.HasPrefix(content, "No files matching") {
@@ -630,7 +630,6 @@ func webFetchResultSummary(content, target, duration string) string {
 	}
 	return label
 }
-
 
 // ── run_javascript ──────────────────────────────────────────
 

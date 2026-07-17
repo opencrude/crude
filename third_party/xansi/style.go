@@ -652,13 +652,13 @@ func underlineColorString(c Color) string {
 // color parameters following the ITU T.416 standard.
 //
 // It supports reading the following color types:
-//   - 0: implementation defined
-//   - 1: transparent
-//   - 2: RGB direct color
-//   - 3: CMY direct color
-//   - 4: CMYK direct color
-//   - 5: indexed color
-//   - 6: RGBA direct color (WezTerm extension)
+// - 0: implementation defined
+// - 1: transparent
+// - 2: RGB direct color
+// - 3: CMY direct color
+// - 4: CMYK direct color
+// - 5: indexed color
+// - 6: RGBA direct color (WezTerm extension)
 //
 // The parameters can be separated by semicolons (;) or colons (:). Mixing
 // separators is not allowed.

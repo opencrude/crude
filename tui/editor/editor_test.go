@@ -11,7 +11,7 @@ import (
 	"crude/tui/theme"
 )
 
-// ── chroma style tests ──────────────────────────────────────────────
+// chroma style tests
 
 func TestBuildChromaStyle_KeyTokensMapped(t *testing.T) {
 	th := theme.DefaultDark()
@@ -69,7 +69,7 @@ func TestBuildChromaStyle_StyleReuse(t *testing.T) {
 	assert.Equal(t, s1.Get(chroma.Keyword).Colour.String(), s2.Get(chroma.Keyword).Colour.String())
 }
 
-// ── chroma token color tests ────────────────────────────────────────
+// chroma token color tests
 
 func TestChromaTokenColor_Hit(t *testing.T) {
 	e := editorWithTheme()
@@ -94,7 +94,7 @@ func TestChromaTokenColor_DifferentTokens(t *testing.T) {
 	assert.NotEqual(t, kw, cm, "Keyword and Comment should have different colours")
 }
 
-// ── buildLineColorMap tests ─────────────────────────────────────────
+// buildLineColorMap tests       ──
 
 func editorWithTheme() *Editor {
 	e := New(theme.DefaultDark())
@@ -181,7 +181,7 @@ func TestBuildLineColorMap_NilLexer(t *testing.T) {
 	assert.Nil(t, cm)
 }
 
-// ── buildLineColorMapWithRunes tests ───────────────────────────────
+// ── buildLineColorMapWithRunes tests ─
 
 func TestBuildLineColorMapWithRunes(t *testing.T) {
 	e := editorWithTheme()
@@ -221,7 +221,7 @@ func TestBuildLineColorMapWithRunes_Empty(t *testing.T) {
 	assert.Nil(t, cm)
 }
 
-// ── Markdown-specific chroma tests ─────────────────────────────────
+// ── Markdown-specific chroma tests
 
 func TestBuildLineColorMap_MarkdownHeading(t *testing.T) {
 	e := New(theme.DefaultDark())
@@ -260,7 +260,7 @@ func TestBuildLineColorMap_MarkdownBold(t *testing.T) {
 	assert.NotNil(t, cm)
 }
 
-// ── diagnostics tests ──────────────────────────────────────────────
+// ── diagnostics tests ─
 
 func TestSetDiagnostics_StoresAndCounts(t *testing.T) {
 	e := editorWithTheme()
@@ -326,7 +326,7 @@ func TestSetDiagnostics_ThreadSafety(t *testing.T) {
 	<-done
 }
 
-// ── lineDiagnostics tests ──────────────────────────────────────────
+// ── lineDiagnostics tests
 
 func TestLineDiagnostics_ByLine(t *testing.T) {
 	e := editorWithTheme()
@@ -388,7 +388,7 @@ func TestLineDiagnostics_TabConversion(t *testing.T) {
 	assert.Equal(t, 3, s.endCol, "bar is 3 wide; EndCol=4 snapped to visual width 3")
 }
 
-// ── diagSeverityAtCol tests ────────────────────────────────────────
+// ── diagSeverityAtCol tests ─
 
 func TestDiagSeverityAtCol_Inside(t *testing.T) {
 	spans := []diagSpan{{startCol: 2, endCol: 5, severity: DiagError}}
@@ -419,7 +419,7 @@ func TestDiagSeverityAtCol_MultipleSpans(t *testing.T) {
 	assert.Equal(t, 0, diagSeverityAtCol(spans, 4))
 }
 
-// ── utility function tests ─────────────────────────────────────────
+// ── utility function tests ──────────────────────────────────────
 
 func TestRuneVisualWidth(t *testing.T) {
 	tests := []struct {
@@ -706,8 +706,6 @@ func TestBuildLineColorMap_MultipleFileTypes(t *testing.T) {
 		})
 	}
 }
-
-
 
 func TestEditorDiagnosticPipeline(t *testing.T) {
 	e := editorWithTheme()

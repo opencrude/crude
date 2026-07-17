@@ -32,14 +32,14 @@ const ScrollbarGutterWidth = 1
 // TreeRenderer renders a FileTreeModel into a Surface or ANSI string lines.
 //
 // It handles:
-//   - Indentation with tree connectors (│, ├──, └──)
-//   - Expand/collapse indicators (▸/▾ or NerdFont folder icons)
-//   - File type icons via IconResolver
-//   - File/directory name styling (bold for dirs, symlink colours)
-//   - Right-aligned git status decoration
-//   - Selection and cursor highlight (full-width background)
-//   - Vertical scrolling with VSCode-style context around cursor
-//   - Sticky breadcrumb header when scrolled deep into the tree
+// - Indentation with tree connectors (│, ├ , └ )
+// - Expand/collapse indicators (▸/▾ or NerdFont folder icons)
+// - File type icons via IconResolver
+// - File/directory name styling (bold for dirs, symlink colours)
+// - Right-aligned git status decoration
+// - Selection and cursor highlight (full-width background)
+// - Vertical scrolling with VSCode-style context around cursor
+// - Sticky breadcrumb header when scrolled deep into the tree
 type TreeRenderer struct {
 	model        *FileTreeModel
 	theme        *theme.TreeColors
@@ -262,10 +262,10 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 	// ---- background style for indent/connector cells ----
 	//
 	// Background priority (highest → lowest):
-	//   1. cursor (the keyboard-focused row)         — CursorBg
-	//   2. selected (multi-select highlight)         — SelectedBg
-	//   3. hovered (mouse cursor over the row)       — Hover
-	//   4. none                                       — transparent
+	// 1. cursor (the keyboard-focused row)         — CursorBg
+	// 2. selected (multi-select highlight)         — SelectedBg
+	// 3. hovered (mouse cursor over the row)       — Hover
+	// 4. none                                       — transparent
 	//
 	// Hover is the weakest emphasis layer — it just tells the user
 	// "if you click here, this is what you'll get". Cursor and
@@ -318,9 +318,9 @@ func (r *TreeRenderer) formatLine(node *TreeNode, index int, width int, hOff int
 				remainingHOff = 0
 			}
 			if isLastChild(node) {
-				b.WriteString(indentStyle.Render("└── "))
+				b.WriteString(indentStyle.Render("└  "))
 			} else {
-				b.WriteString(indentStyle.Render("├── "))
+				b.WriteString(indentStyle.Render("├  "))
 			}
 		}
 	}

@@ -488,8 +488,8 @@ func (m *FileTreeModel) updateScrollOffset() {
 // ---------------------------------------------------------------------------
 
 // ToggleExpandOrSelect performs the "activate" action on the current node:
-//   - Directory: toggles its expanded state.
-//   - File: returns a FileSelectedMsg command for the parent app.
+// - Directory: toggles its expanded state.
+// - File: returns a FileSelectedMsg command for the parent app.
 func (m *FileTreeModel) ToggleExpandOrSelect() tea.Cmd {
 	node := m.SelectedNode()
 	if node == nil {
@@ -512,8 +512,8 @@ func (m *FileTreeModel) ToggleExpandOrSelect() tea.Cmd {
 }
 
 // CollapseOrParent performs the "back" action on the current node:
-//   - Expanded directory: collapses it.
-//   - Collapsed directory or file: moves cursor to the parent directory.
+// - Expanded directory: collapses it.
+// - Collapsed directory or file: moves cursor to the parent directory.
 //
 // This matches VSCode's Left arrow behaviour.
 func (m *FileTreeModel) CollapseOrParent() tea.Cmd {
@@ -535,9 +535,9 @@ func (m *FileTreeModel) CollapseOrParent() tea.Cmd {
 }
 
 // expandOrMoveIn is the counterpart for the Right arrow:
-//   - Expanded directory: moves into the first child (if any).
-//   - Collapsed directory: expands it.
-//   - File: no-op (select already on file).
+// - Expanded directory: moves into the first child (if any).
+// - Collapsed directory: expands it.
+// - File: no-op (select already on file).
 func (m *FileTreeModel) expandOrMoveIn() tea.Cmd {
 	node := m.SelectedNode()
 	if node == nil {

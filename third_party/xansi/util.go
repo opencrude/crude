@@ -47,10 +47,10 @@ func shift[T shiftable](x T) T {
 // provides a similar interface to the XParseColor function in Xlib. It
 // supports the following formats:
 //
-//   - #RGB
-//   - #RRGGBB
-//   - rgb:RRRR/GGGG/BBBB
-//   - rgba:RRRR/GGGG/BBBB/AAAA
+// - #RGB
+// - #RRGGBB
+// - rgb:RRRR/GGGG/BBBB
+// - rgba:RRRR/GGGG/BBBB/AAAA
 //
 // If the string is not a valid color, nil is returned.
 //
