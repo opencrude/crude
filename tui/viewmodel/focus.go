@@ -19,6 +19,12 @@ func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
 	}
+	// Inline overlays own keyboard input regardless of the pane that remains
+	// visible behind them. Routing launcher/tree/editor first makes form fields
+	// appear focused while their keystrokes mutate the underlying surface.
+	if m.OverlayState.IsOverlay() {
+		return FocusOverlay
+	}
 	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		return FocusLauncher
 	}
@@ -31,9 +37,6 @@ func (m *App) focusTarget() FocusTarget {
 	}
 	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
 		return FocusEditor
-	}
-	if m.OverlayState.IsOverlay() {
-		return FocusOverlay
 	}
 	return FocusInput
 }

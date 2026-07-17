@@ -5,6 +5,7 @@ import (
 
 	"charm.land/bubbletea/v2"
 
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 )
@@ -20,22 +21,13 @@ func (m *App) showDirtyClosePrompt(path string) {
 		return
 	}
 	filename := tab.Editor.Title()
-	detail := fmt.Sprintf("'%s' has unsaved changes.", filename)
 	// Default focus is "Cancel" (index 2) so an accidental Enter keeps
 	// the user's work safe.
-	lines := widgets.ConfirmPrompt3Button(m.Theme,
-		"Unsaved changes",
-		"What do you want to do with the unsaved changes?",
-		detail,
-		widgets.ConfirmPromptWarning,
-		m.DirtyPromptChoice,
-		62,
-	)
+	m.DirtyPromptChoice = 2
+	frame := widgets.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
+	w, h := frame.Measure(80, 40)
 
-	const id = "dirty-close-prompt"
-	m.windowManager.RemoveWindow(id)
-	pop := widgets.NewPopupContent(lines)
-	fw := wm.NewFloatingWindow(id, "", pop, 62, len(lines),
+	fw := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", frame, w, h,
 		wm.WithDecoration(false),
 		wm.WithMovable(false),
 		wm.WithResizable(false),
@@ -45,10 +37,10 @@ func (m *App) showDirtyClosePrompt(path string) {
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
-	m.windowManager.AddWindow(fw)
+	m.overlayHost.Open(ui.OverlayDirtyClose, fw, ui.ModalDialogPolicy(), func() {
+		m.DirtyPromptPath = ""
+	})
 	m.DirtyPromptPath = path
-	// Reset choice to Cancel (safe default) on open.
-	m.DirtyPromptChoice = 2
 }
 
 // dirtyPromptSave is called when the user picks "Save" in the
@@ -63,10 +55,7 @@ func (m *App) dirtyPromptSave() {
 	tab, ok := m.EditorState.Tabs[path]
 	if !ok {
 		// Tab was already closed somehow; just dismiss.
-		m.DirtyPromptPath = ""
-		if m.windowManager != nil {
-			m.windowManager.RemoveWindow("dirty-close-prompt")
-		}
+		m.overlayHost.Close(ui.OverlayDirtyClose)
 		return
 	}
 	// Save (synchronous). The editor's Save() returns an error; on
@@ -76,10 +65,7 @@ func (m *App) dirtyPromptSave() {
 		return
 	}
 	// Saved successfully — close the tab.
-	m.DirtyPromptPath = ""
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow("dirty-close-prompt")
-	}
+	m.overlayHost.Close(ui.OverlayDirtyClose)
 	m.closeEditorTabForce(path)
 }
 
@@ -87,10 +73,7 @@ func (m *App) dirtyPromptSave() {
 // the dirty-close prompt. Closes the tab without saving.
 func (m *App) dirtyPromptDiscard() {
 	path := m.DirtyPromptPath
-	m.DirtyPromptPath = ""
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow("dirty-close-prompt")
-	}
+	m.overlayHost.Close(ui.OverlayDirtyClose)
 	if path != "" {
 		m.closeEditorTabForce(path)
 	}
@@ -99,10 +82,7 @@ func (m *App) dirtyPromptDiscard() {
 // dirtyPromptCancel is called when the user picks "Cancel" in the
 // dirty-close prompt. Dismisses the popup and keeps the tab open.
 func (m *App) dirtyPromptCancel() {
-	m.DirtyPromptPath = ""
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow("dirty-close-prompt")
-	}
+	m.overlayHost.Close(ui.OverlayDirtyClose)
 }
 
 // handleDirtyPromptKey routes keypresses when the dirty-close dialog
@@ -174,17 +154,28 @@ func (m *App) refreshDirtyPrompt() {
 		return
 	}
 	filename := tab.Editor.Title()
-	detail := fmt.Sprintf("'%s' has unsaved changes.", filename)
-	lines := widgets.ConfirmPrompt3Button(m.Theme,
-		"Unsaved changes",
-		"What do you want to do with the unsaved changes?",
-		detail,
-		widgets.ConfirmPromptWarning,
-		m.DirtyPromptChoice,
-		62,
-	)
-	pop := widgets.NewPopupContent(lines)
-	fw.SetSize(62, len(lines))
-	fw.SetContent(pop)
+	frame := widgets.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
+	w, h := frame.Measure(80, 40)
+	fw.SetSize(w, h)
+	fw.SetContent(frame)
 	fw.MarkContentDirty()
+}
+
+// confirmFrameButtonAt maps content-local mouse coords to a confirm button index
+// using the Host hit tree (WindowFrame product path).
+func confirmFrameButtonAt(fw *wm.FloatingWindow, localX, localY int) int {
+	if fw == nil {
+		return -1
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil || cw.Host() == nil {
+		return -1
+	}
+	// Ensure layout matches painted size.
+	ww, hh := fw.Size()
+	// Undecorated WindowFrame is painted into the full floating window size.
+	cw.Host().Resize(ww, hh)
+	cw.Host().Layout()
+	id := cw.Host().HitTest(localX, localY)
+	return widgets.ConfirmButtonIndexFromID(id)
 }

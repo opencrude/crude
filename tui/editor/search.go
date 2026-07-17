@@ -28,9 +28,9 @@ type SearchMatch struct {
 // show its UI.
 type SearchState struct {
 	// UI text
-	Query      string
-	Replace    string
-	Options    SearchOptions
+	Query   string
+	Replace string
+	Options SearchOptions
 
 	// Computed matches for the current Query + Options. Updated
 	// whenever the user types a character in the find input. Matches

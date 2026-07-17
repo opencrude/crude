@@ -81,11 +81,11 @@ func SpinnerPhase(frame int) string {
 //     pulses slowest because background indexing should feel calm;
 //     starting falls in the middle.
 //
-//	ready   (idle):     ●  static
-//	busy    (working):  ●  bold ↔ faint,  ~200ms pulse
-//	syncing (loading):  ●  bold ↔ faint,  ~600ms pulse
-//	starting (booting): ●  bold ↔ faint,  ~400ms pulse
-//	failed  (broken):   ✕  static red
+//     ready   (idle):     ●  static
+//     busy    (working):  ●  bold ↔ faint,  ~200ms pulse
+//     syncing (loading):  ●  bold ↔ faint,  ~600ms pulse
+//     starting (booting): ●  bold ↔ faint,  ~400ms pulse
+//     failed  (broken):   ✕  static red
 //
 // `state` is one of "ready", "busy", "syncing", "starting", "failed". The
 // frame argument is ignored for static states.

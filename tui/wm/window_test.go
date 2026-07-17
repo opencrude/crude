@@ -68,12 +68,6 @@ func TestNewFloatingWindowDefaults(t *testing.T) {
 	if fw.Focused() {
 		t.Error("should not be focused by default")
 	}
-	if fw.borderStyle != BorderLShape {
-		t.Errorf("borderStyle = %v, want BorderLShape", fw.borderStyle)
-	}
-	if fw.titleAlign != AlignLeft {
-		t.Errorf("titleAlign = %v, want AlignLeft", fw.titleAlign)
-	}
 	x, y := fw.Position()
 	if x != 0 || y != 0 {
 		t.Errorf("position = (%d,%d), want (0,0)", x, y)
@@ -92,10 +86,8 @@ func TestNewFloatingWindowOptions(t *testing.T) {
 		WithClosable(false),
 		WithModal(true),
 		WithFocusable(false),
-		WithBorderStyle(BorderRounded),
 		WithMinSize(10, 5),
 		WithMaxSize(100, 50),
-		WithTitleAlign(AlignCenter),
 	)
 
 	if fw.decorated {
@@ -115,12 +107,6 @@ func TestNewFloatingWindowOptions(t *testing.T) {
 	}
 	if fw.focusable {
 		t.Error("focusable should be false")
-	}
-	if fw.borderStyle != BorderRounded {
-		t.Errorf("borderStyle = %v, want BorderRounded", fw.borderStyle)
-	}
-	if fw.titleAlign != AlignCenter {
-		t.Errorf("titleAlign = %v, want AlignCenter", fw.titleAlign)
 	}
 	if fw.minW != 10 || fw.minH != 5 {
 		t.Errorf("minSize = (%d,%d), want (10,5)", fw.minW, fw.minH)
@@ -165,42 +151,11 @@ func TestSetSizeClampsToMax(t *testing.T) {
 	}
 }
 
-func TestComputeContentAreaBorderSingle(t *testing.T) {
-	fw := NewFloatingWindow("ca-bs", "CA", testWidget{}, 20, 10,
-		WithBorderStyle(BorderSingle))
+func TestContentAreaFillsFramedWindow(t *testing.T) {
+	fw := NewFloatingWindow("ca", "CA", testWidget{}, 20, 10)
 	b := fw.ContentBounds()
-	if b.X != 1 || b.Y != 1 || b.W != 18 || b.H != 8 {
-		t.Errorf("BorderSingle content = (%d,%d,%d,%d), want (1,1,18,8)",
-			b.X, b.Y, b.W, b.H)
-	}
-}
-
-func TestComputeContentAreaBorderRounded(t *testing.T) {
-	fw := NewFloatingWindow("ca-br", "CA", testWidget{}, 20, 10,
-		WithBorderStyle(BorderRounded))
-	b := fw.ContentBounds()
-	if b.X != 1 || b.Y != 1 || b.W != 18 || b.H != 8 {
-		t.Errorf("BorderRounded content = (%d,%d,%d,%d), want (1,1,18,8)",
-			b.X, b.Y, b.W, b.H)
-	}
-}
-
-func TestComputeContentAreaBorderNone(t *testing.T) {
-	fw := NewFloatingWindow("ca-bn", "CA", testWidget{}, 20, 10,
-		WithBorderStyle(BorderNone))
-	b := fw.ContentBounds()
-	if b.X != 0 || b.Y != 1 || b.W != 20 || b.H != 9 {
-		t.Errorf("BorderNone content = (%d,%d,%d,%d), want (0,1,20,9)",
-			b.X, b.Y, b.W, b.H)
-	}
-}
-
-func TestComputeContentAreaBorderLShape(t *testing.T) {
-	fw := NewFloatingWindow("ca-bl", "CA", testWidget{}, 20, 10,
-		WithBorderStyle(BorderLShape))
-	b := fw.ContentBounds()
-	if b.X != 1 || b.Y != 1 || b.W != 19 || b.H != 8 {
-		t.Errorf("BorderLShape content = (%d,%d,%d,%d), want (1,1,19,8)",
+	if b.X != 0 || b.Y != 0 || b.W != 20 || b.H != 10 {
+		t.Errorf("framed content = (%d,%d,%d,%d), want (0,0,20,10)",
 			b.X, b.Y, b.W, b.H)
 	}
 }
@@ -224,14 +179,13 @@ func TestComputeContentAreaMinSize1x1(t *testing.T) {
 }
 
 func TestContainsPoint(t *testing.T) {
-	fw := NewFloatingWindow("hit", "Hit", testWidget{}, 10, 5,
-		WithBorderStyle(BorderSingle))
+	fw := NewFloatingWindow("hit", "Hit", testWidget{}, 10, 5)
 	fw.SetPosition(5, 5)
 
 	tests := []struct {
-		name     string
-		x, y     int
-		want     bool
+		name string
+		x, y int
+		want bool
 	}{
 		{"top-left corner", 5, 5, true},
 		{"top-right corner", 14, 5, true},
@@ -253,9 +207,8 @@ func TestContainsPoint(t *testing.T) {
 	}
 }
 
-func TestHitTestEdgeBorderSingle(t *testing.T) {
-	fw := NewFloatingWindow("hte", "HTE", testWidget{}, 10, 6,
-		WithBorderStyle(BorderSingle))
+func TestHitTestWindowFrameEdges(t *testing.T) {
+	fw := NewFloatingWindow("hte", "HTE", testWidget{}, 10, 6)
 	fw.SetPosition(0, 0)
 
 	tests := []struct {
@@ -284,64 +237,6 @@ func TestHitTestEdgeBorderSingle(t *testing.T) {
 	}
 }
 
-func TestHitTestEdgeBorderNone(t *testing.T) {
-	fw := NewFloatingWindow("hte-bn", "HTE", testWidget{}, 10, 6,
-		WithBorderStyle(BorderNone))
-	fw.SetPosition(0, 0)
-
-	tests := []struct {
-		name string
-		x, y int
-		want Edge
-	}{
-		{"top row (not edge)", 5, 0, EdgeNone},
-		{"bottom edge", 5, 5, EdgeBottom},
-		{"bottom-left corner", 0, 5, EdgeBottomLeft},
-		{"bottom-right corner", 9, 5, EdgeBottomRight},
-		{"left edge", 0, 3, EdgeLeft},
-		{"right edge", 9, 3, EdgeRight},
-		{"center", 5, 3, EdgeNone},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := fw.HitTestEdge(tc.x, tc.y)
-			if got != tc.want {
-				t.Errorf("HitTestEdge(%d,%d) = %v, want %v", tc.x, tc.y, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestHitTestEdgeBorderLShape(t *testing.T) {
-	fw := NewFloatingWindow("hte-bl", "HTE", testWidget{}, 10, 6,
-		WithBorderStyle(BorderLShape))
-	fw.SetPosition(0, 0)
-
-	tests := []struct {
-		name string
-		x, y int
-		want Edge
-	}{
-		{"top row (not edge)", 5, 0, EdgeNone},
-		{"bottom edge", 5, 5, EdgeBottom},
-		{"bottom-left corner", 0, 5, EdgeBottomLeft},
-		{"bottom-right corner", 9, 5, EdgeBottomRight},
-		{"left edge", 0, 3, EdgeLeft},
-		{"right edge (no border)", 9, 3, EdgeNone},
-		{"center", 5, 3, EdgeNone},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := fw.HitTestEdge(tc.x, tc.y)
-			if got != tc.want {
-				t.Errorf("HitTestEdge(%d,%d) = %v, want %v", tc.x, tc.y, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestHitTestEdgeUndecorated(t *testing.T) {
 	fw := NewFloatingWindow("hte-undec", "HTE", testWidget{}, 10, 6,
 		WithDecoration(false))
@@ -353,9 +248,8 @@ func TestHitTestEdgeUndecorated(t *testing.T) {
 	}
 }
 
-func TestIsOnTitleBarBorderSingle(t *testing.T) {
-	fw := NewFloatingWindow("tb-s", "TB", testWidget{}, 10, 6,
-		WithBorderStyle(BorderSingle))
+func TestIsOnWindowFrameTitleBar(t *testing.T) {
+	fw := NewFloatingWindow("tb", "TB", testWidget{}, 10, 6)
 	fw.SetPosition(5, 5)
 
 	tests := []struct {
@@ -379,32 +273,6 @@ func TestIsOnTitleBarBorderSingle(t *testing.T) {
 	}
 }
 
-func TestIsOnTitleBarBorderNone(t *testing.T) {
-	fw := NewFloatingWindow("tb-bn", "TB", testWidget{}, 10, 6,
-		WithBorderStyle(BorderNone))
-	fw.SetPosition(0, 0)
-
-	tests := []struct {
-		name string
-		x, y int
-		want bool
-	}{
-		{"title bar full width", 0, 0, true},
-		{"title bar right edge", 9, 0, true},
-		{"title bar middle", 5, 0, true},
-		{"below title bar", 5, 1, false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := fw.IsOnTitleBar(tc.x, tc.y)
-			if got != tc.want {
-				t.Errorf("IsOnTitleBar(%d,%d) = %v, want %v", tc.x, tc.y, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestIsOnTitleBarUndecorated(t *testing.T) {
 	fw := NewFloatingWindow("tb-undec", "TB", testWidget{}, 10, 6,
 		WithDecoration(false))
@@ -414,37 +282,8 @@ func TestIsOnTitleBarUndecorated(t *testing.T) {
 	}
 }
 
-func TestIsOnCloseButtonBorderSingle(t *testing.T) {
-	fw := NewFloatingWindow("cb-s", "CB", testWidget{}, 10, 6,
-		WithBorderStyle(BorderSingle))
-	fw.SetPosition(0, 0)
-
-	tests := []struct {
-		name string
-		x, y int
-		want bool
-	}{
-		{"close button (w-4)", 6, 0, true},
-		{"close button (w-3)", 7, 0, true},
-		{"close button (w-2)", 8, 0, true},
-		{"left border", 0, 0, false},
-		{"right border", 9, 0, false},
-		{"below title bar", 7, 1, false},
-		{"too far left", 5, 0, false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := fw.IsOnCloseButton(tc.x, tc.y)
-			if got != tc.want {
-				t.Errorf("IsOnCloseButton(%d,%d) = %v, want %v", tc.x, tc.y, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestIsOnCloseButtonBorderNone(t *testing.T) {
-	fw := NewFloatingWindow("cb-bn", "CB", testWidget{}, 10, 6)
+func TestIsOnWindowFrameCloseButton(t *testing.T) {
+	fw := NewFloatingWindow("cb", "CB", testWidget{}, 10, 6)
 	fw.SetPosition(0, 0)
 
 	tests := []struct {
@@ -714,21 +553,10 @@ func TestSetVisible(t *testing.T) {
 }
 
 func TestContentBounds(t *testing.T) {
-	fw := NewFloatingWindow("cb", "CB", testWidget{}, 20, 10,
-		WithBorderStyle(BorderSingle))
+	fw := NewFloatingWindow("cb", "CB", testWidget{}, 20, 10)
 	b := fw.ContentBounds()
-	if b.X != 1 || b.Y != 1 || b.W != 18 || b.H != 8 {
-		t.Errorf("ContentBounds = (%d,%d,%d,%d), want (1,1,18,8)",
-			b.X, b.Y, b.W, b.H)
-	}
-}
-
-func TestNewFloatingWindowWithBorderLShape(t *testing.T) {
-	fw := NewFloatingWindow("lshape", "LShape", testWidget{}, 20, 10,
-		WithBorderStyle(BorderLShape))
-	b := fw.ContentBounds()
-	if b.X != 1 || b.Y != 1 || b.W != 19 || b.H != 8 {
-		t.Errorf("LShape content = (%d,%d,%d,%d), want (1,1,19,8)",
+	if b.X != 0 || b.Y != 0 || b.W != 20 || b.H != 10 {
+		t.Errorf("ContentBounds = (%d,%d,%d,%d), want (0,0,20,10)",
 			b.X, b.Y, b.W, b.H)
 	}
 }

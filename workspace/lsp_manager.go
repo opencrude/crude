@@ -29,6 +29,7 @@ type LSPManager struct {
 
 	activeFilePath string
 	pendingText    map[string]string // latest text for files pending async start
+	updateTimers   map[string]*time.Timer
 
 	onDiagnostics func(filePath string, diags []editor.LSPDiagnostic)
 
@@ -66,6 +67,7 @@ func NewLSPManager(logger Logger) *LSPManager {
 		clients:         make(map[string]*editor.LSPIntegration),
 		logger:          logger,
 		pendingText:     make(map[string]string),
+		updateTimers:    make(map[string]*time.Timer),
 		fileDiagnostics: make(map[string][]editor.LSPDiagnostic),
 		docSymbols:      make(map[string][]editor.LSPSymbol),
 		fileLastSync:    make(map[string]int64),
@@ -180,19 +182,19 @@ func scanPresentExtensions(rootPath string, candidates []string) map[string]bool
 	}
 
 	skipDirs := map[string]bool{
-		".git":              true,
-		"node_modules":      true,
-		"target":            true,
-		"vendor":            true,
-		".venv":             true,
-		"venv":              true,
-		"__pycache__":       true,
-		".next":             true,
-		"dist":              true,
-		"build":             true,
-		".cache":            true,
-		".terraform":        true,
-		"bower_components":  true,
+		".git":             true,
+		"node_modules":     true,
+		"target":           true,
+		"vendor":           true,
+		".venv":            true,
+		"venv":             true,
+		"__pycache__":      true,
+		".next":            true,
+		"dist":             true,
+		"build":            true,
+		".cache":           true,
+		".terraform":       true,
+		"bower_components": true,
 	}
 
 	_ = filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
@@ -411,19 +413,19 @@ func scanProjectFiles(rootPath string, extSet map[string]bool) []string {
 
 	// Directories we never descend into.
 	skipDirs := map[string]bool{
-		".git":              true,
-		"node_modules":      true,
-		"target":            true,
-		"vendor":            true,
-		".venv":             true,
-		"venv":              true,
-		"__pycache__":       true,
-		".next":             true,
-		"dist":              true,
-		"build":             true,
-		".cache":            true,
-		".terraform":        true,
-		"bower_components":  true,
+		".git":             true,
+		"node_modules":     true,
+		"target":           true,
+		"vendor":           true,
+		".venv":            true,
+		"venv":             true,
+		"__pycache__":      true,
+		".next":            true,
+		"dist":             true,
+		"build":            true,
+		".cache":           true,
+		".terraform":       true,
+		"bower_components": true,
 	}
 
 	_ = filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
@@ -448,6 +450,10 @@ func (m *LSPManager) CloseFile(ctx context.Context, filePath string) {
 	m.mu.Lock()
 	m.activeFilePath = ""
 	delete(m.pendingText, filePath)
+	if timer := m.updateTimers[filePath]; timer != nil {
+		timer.Stop()
+		delete(m.updateTimers, filePath)
+	}
 	m.mu.Unlock()
 
 	for _, client := range m.clients {
@@ -464,6 +470,39 @@ func (m *LSPManager) UpdateFile(ctx context.Context, filePath, text string) {
 	if client != nil {
 		client.UpdateFile(ctx, filePath, text)
 	}
+}
+
+// QueueFileUpdate coalesces rapid editor changes and performs the LSP write
+// away from Bubble Tea's input goroutine. This keeps typing responsive even
+// when a language server's stdin pipe is temporarily back-pressured.
+func (m *LSPManager) QueueFileUpdate(filePath, text string) {
+	const debounce = 60 * time.Millisecond
+	m.mu.Lock()
+	m.pendingText[filePath] = text
+	if timer := m.updateTimers[filePath]; timer != nil {
+		timer.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(debounce, func() {
+		m.mu.Lock()
+		if m.updateTimers[filePath] != timer {
+			m.mu.Unlock()
+			return
+		}
+		latest := m.pendingText[filePath]
+		delete(m.updateTimers, filePath)
+		m.mu.Unlock()
+
+		client := m.clientForFile(filePath)
+		if client == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		client.UpdateFile(ctx, filePath, latest)
+	})
+	m.updateTimers[filePath] = timer
+	m.mu.Unlock()
 }
 
 func (m *LSPManager) Status() (connected bool, status editor.LSPStatus, errMsg string) {
@@ -692,6 +731,10 @@ func (m *LSPManager) SyncFileFromDisk(ctx context.Context, filePath, excludeFile
 
 func (m *LSPManager) Stop() {
 	m.mu.Lock()
+	for path, timer := range m.updateTimers {
+		timer.Stop()
+		delete(m.updateTimers, path)
+	}
 	clients := make([]*editor.LSPIntegration, 0, len(m.clients))
 	for _, c := range m.clients {
 		clients = append(clients, c)
@@ -800,7 +843,7 @@ func (m *LSPManager) InflightRequests() int {
 	return m.inflight
 }
 
-// ─── Request routing ────────────────────────────────────────────────────────
+//  ─ Request routing ──
 //
 // The methods below route a request to the correct LSP client (chosen by file
 // extension + project root) and track in-flight counts for the busy indicator.

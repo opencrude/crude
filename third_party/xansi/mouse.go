@@ -79,18 +79,18 @@ func (b MouseButton) String() string {
 //     2 = right button, wheel left, or button no. 10
 //     3 = release event, wheel right, or button no. 11
 //
-//   - The third bit indicates whether the shift key was pressed.
+// - The third bit indicates whether the shift key was pressed.
 //
-//   - The fourth bit indicates the alt key was pressed.
+// - The fourth bit indicates the alt key was pressed.
 //
-//   - The fifth bit indicates the control key was pressed.
+// - The fifth bit indicates the control key was pressed.
 //
 //   - The sixth bit indicates motion events. Combined with button number 3, i.e.
 //     release event, it represents a drag event.
 //
-//   - The seventh bit indicates a wheel event.
+// - The seventh bit indicates a wheel event.
 //
-//   - The eighth bit indicates additional buttons.
+// - The eighth bit indicates additional buttons.
 //
 // If button is [MouseNone], and motion is false, this returns a release event.
 // If button is undefined, this function returns 0xff.

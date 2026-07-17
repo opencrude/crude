@@ -24,7 +24,9 @@ func EstimateTokens(text string, model string) int {
 	ratio := tokenRatioForModel(model)
 	estimated := estimateTokensWithRatio(text, ratio)
 	if estimated > 0 {
-		logIf(func(lg *logger.Logger) { lg.Debug("TOKENS", "estimate", "model", model, "ratio", ratio, "chars", len(text), "estimated", estimated) })
+		logIf(func(lg *logger.Logger) {
+			lg.Debug("TOKENS", "estimate", "model", model, "ratio", ratio, "chars", len(text), "estimated", estimated)
+		})
 	}
 	return estimated
 }
@@ -88,14 +90,16 @@ func tokenRatioForModel(model string) float64 {
 		family = "default"
 	}
 
-	logIf(func(lg *logger.Logger) { lg.Debug("TOKENS", "token_ratio", "model", model, "family", family, "ratio", ratio) })
+	logIf(func(lg *logger.Logger) {
+		lg.Debug("TOKENS", "token_ratio", "model", model, "family", family, "ratio", ratio)
+	})
 	return ratio
 }
 
 // estimateTokensWithRatio does the actual estimation using a
 // character-to-token ratio. It uses a blended approach:
-//   - Code-heavy content (many symbols, brackets, operators) → use the ratio directly
-//   - Prose-heavy content (mostly words) → use ratio * 1.2 (prose tokenizes less densely)
+// - Code-heavy content (many symbols, brackets, operators) → use the ratio directly
+// - Prose-heavy content (mostly words) → use ratio * 1.2 (prose tokenizes less densely)
 //
 // This avoids the worst case of the old `*4` constant which severely
 // overestimated tokens for code and moderately underestimated for prose.

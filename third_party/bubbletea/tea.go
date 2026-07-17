@@ -106,20 +106,20 @@ type View struct {
 	//  content := "Hello, World!"
 	//  v := tea.NewView(content)
 	//  v.OnMouse = func(msg tea.MouseMsg) tea.Cmd {
-	//      return func() tea.Msg {
-	//        m := msg.Mouse()
-	//        // Check if the mouse is within the bounds of "World!"
-	//        start := strings.Index(content, "World!")
-	//        end := start + len("World!")
-	//        if m.Y == 0 && m.X >= start && m.X < end {
-	//          // Mouse is over "World!"
-	//          return MyCustomMsg{
-	//            MouseMsg: msg,
-	//          }
+	//    return func() tea.Msg {
+	//      m := msg.Mouse()
+	//      // Check if the mouse is within the bounds of "World!"
+	//      start := strings.Index(content, "World!")
+	//      end := start + len("World!")
+	//      if m.Y == 0 && m.X >= start && m.X < end {
+	//        // Mouse is over "World!"
+	//        return MyCustomMsg{
+	//          MouseMsg: msg,
+	//        }
 	//		  }
-	//      }
 	//    }
-	//    return nil
+	//  }
+	//  return nil
 	//  }
 	//  return v
 	//  ```
@@ -180,8 +180,8 @@ type View struct {
 	// Tea should request from the terminal.
 	//
 	// Bubble Tea supports requesting the following keyboard enhancement features:
-	//   - ReportEventTypes: requests the terminal to report key repeat and
-	//     release events.
+	// - ReportEventTypes: requests the terminal to report key repeat and
+	//   release events.
 	//
 	// If the terminal supports any of these features, your program will
 	// receive  a [KeyboardEnhancementsMsg] that indicates which features are
@@ -970,10 +970,10 @@ func (p *Program) execBatchMsg(msg BatchMsg) {
 // known-good terminal like Windows Terminal.
 //
 // The function returns true for:
-//   - Terminals without TERM_PROGRAM set and not in SSH sessions
-//   - Windows Terminal (WT_SESSION is set)
-//   - Terminals with TERM_PROGRAM set (except Apple Terminal) and not in SSH sessions
-//   - Specific terminal types: ghostty, wezterm, alacritty, kitty, rio
+// - Terminals without TERM_PROGRAM set and not in SSH sessions
+// - Windows Terminal (WT_SESSION is set)
+// - Terminals with TERM_PROGRAM set (except Apple Terminal) and not in SSH sessions
+// - Specific terminal types: ghostty, wezterm, alacritty, kitty, rio
 func shouldQuerySynchronizedOutput(environ uv.Environ) bool {
 	termType := environ.Getenv("TERM")
 	termProg, okTermProg := environ.LookupEnv("TERM_PROGRAM")

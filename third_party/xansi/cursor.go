@@ -568,13 +568,13 @@ func DECSCUSR(style int) string {
 // Where Pt is the pointer shape name. The name can be anything that the
 // operating system can understand. Some common names are:
 //
-//   - copy
-//   - crosshair
-//   - default
-//   - ew-resize
-//   - n-resize
-//   - text
-//   - wait
+// - copy
+// - crosshair
+// - default
+// - ew-resize
+// - n-resize
+// - text
+// - wait
 //
 // See: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Operating-System-Commands
 func SetPointerShape(shape string) string {

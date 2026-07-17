@@ -9,11 +9,11 @@ import (
 //
 // Widgets render into a Surface (cell buffer) rather than returning
 // ANSI strings. This enables:
-//   - Compositing at the cell level
-//   - Overlapping widgets
-//   - Transparency
-//   - Proper clipping
-//   - Damage tracking
+// - Compositing at the cell level
+// - Overlapping widgets
+// - Transparency
+// - Proper clipping
+// - Damage tracking
 //
 // Event handling is managed separately through the existing Bubble Tea
 // model system. The Widget interface is purely for rendering/compositing.

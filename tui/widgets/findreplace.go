@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"charm.land/lipgloss/v2"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"crude/tui/components"
 	"crude/tui/editor"
@@ -339,13 +339,13 @@ func FindReplaceToEditor(st *FindReplaceState, e *editor.Editor) {
 // HandleKey routes a keypress to the focused input in the popup.
 // The find/replace popup's keybinds are split into two layers:
 //
-//   1. The viewmodel's handleFindReplaceKey intercepts popup-level
-//      keys (Esc closes, Tab switches field, Alt+C/W/R toggles,
-//      Ctrl+Alt+Enter replaces all, Shift+Enter goes to prev match).
-//   2. Everything else is forwarded to the focused input's
-//      TextInput.Update, which handles all the text-editing keys:
-//      character insertion, Backspace, Delete, Left/Right, Home/End,
-//      Ctrl+Left/Right (word motion), Ctrl+A/E/U/K/W (line ops).
+//  1. The viewmodel's handleFindReplaceKey intercepts popup-level
+//     keys (Esc closes, Tab switches field, Alt+C/W/R toggles,
+//     Ctrl+Alt+Enter replaces all, Shift+Enter goes to prev match).
+//  2. Everything else is forwarded to the focused input's
+//     TextInput.Update, which handles all the text-editing keys:
+//     character insertion, Backspace, Delete, Left/Right, Home/End,
+//     Ctrl+Left/Right (word motion), Ctrl+A/E/U/K/W (line ops).
 //
 // This is the same pattern the chat input and the composer use, so
 // all the popup's text fields now have the same feature set as the

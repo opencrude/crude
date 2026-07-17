@@ -74,6 +74,10 @@ type Editor struct {
 
 	PadL int // left padding applied by the app layout
 
+	// lineNumberOffset is added to rendered line numbers for read-only excerpt
+	// editors such as Find in Files previews. Normal editors keep it at zero.
+	lineNumberOffset int
+
 	chromaStyle *chroma.Style
 	chromaLexer chroma.Lexer
 	chromaCache map[string][]string
@@ -156,6 +160,22 @@ func New(th *theme.Theme) *Editor {
 		search:        NewSearchState(),
 	}
 	e.ClearSelection()
+	return e
+}
+
+// NewPreview creates a read-only, watcher-free editor over an in-memory
+// excerpt. firstLine is the 1-based source line represented by text line 1.
+func NewPreview(th *theme.Theme, path, text string, firstLine int) *Editor {
+	e := New(th)
+	e.filePath = path
+	e.title = filepath.Base(path)
+	e.buf.ReplaceAll(text)
+	e.open = true
+	e.cursorVisible = false
+	if firstLine > 1 {
+		e.lineNumberOffset = firstLine - 1
+	}
+	e.initChroma()
 	return e
 }
 

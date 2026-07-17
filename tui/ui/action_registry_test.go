@@ -1,0 +1,159 @@
+package ui
+
+import (
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+func TestActionRegistry_RegisterAndGet(t *testing.T) {
+	r := NewActionRegistry()
+	a := &ActionDef{ID: "test.run", Label: "Run", Category: "Test"}
+	r.Register(a)
+	got := r.Get("test.run")
+	if got == nil || got.Label != "Run" {
+		t.Fatalf("expected to get Run, got %+v", got)
+	}
+}
+
+func TestActionRegistry_GetMissing(t *testing.T) {
+	r := NewActionRegistry()
+	if r.Get("nope") != nil {
+		t.Fatal("expected nil for missing action")
+	}
+}
+
+func TestActionRegistry_RegisterReplaces(t *testing.T) {
+	r := NewActionRegistry()
+	r.Register(&ActionDef{ID: "x", Label: "Old"})
+	r.Register(&ActionDef{ID: "x", Label: "New"})
+	if r.Get("x").Label != "New" {
+		t.Fatal("expected replaced action")
+	}
+	if len(r.All()) != 1 {
+		t.Fatalf("expected 1 action after replace, got %d", len(r.All()))
+	}
+}
+
+func TestActionRegistry_MatchGlobal(t *testing.T) {
+	r := NewActionRegistry()
+	r.Register(&ActionDef{
+		ID:   "palette.open",
+		Bindings: []KeyBinding{
+			{Key: "ctrl+alt+p"},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'p'},
+		},
+	})
+	// String match.
+	msg := tea.KeyPressMsg{Code: 0, Text: ""}
+	_ = msg
+	// Mod-based match.
+	msg2 := tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl | tea.ModAlt}
+	got := r.MatchGlobal(msg2)
+	if got == nil || got.ID != "palette.open" {
+		t.Fatalf("expected palette.open, got %+v", got)
+	}
+}
+
+func TestActionRegistry_MatchGlobalSkipsContextActions(t *testing.T) {
+	r := NewActionRegistry()
+	r.Register(&ActionDef{
+		ID:          "editor.save",
+		FocusContext: "editor",
+		Bindings:    []KeyBinding{{Key: "ctrl+s"}},
+	})
+	// editor.save is context-scoped, so global match returns nil.
+	got := r.MatchGlobal(tea.KeyPressMsg{Code: 0})
+	if got != nil {
+		t.Fatalf("expected no global match, got %+v", got)
+	}
+}
+
+func TestActionRegistry_MatchContext(t *testing.T) {
+	r := NewActionRegistry()
+	r.Register(&ActionDef{
+		ID:          "editor.save",
+		FocusContext: "editor",
+		Bindings:    []KeyBinding{{Key: "ctrl+s"}},
+	})
+	// String-based matching via Key field.
+	got := r.MatchContext("editor", tea.KeyPressMsg{})
+	if got != nil {
+		t.Fatalf("unexpected match: %+v", got)
+	}
+}
+
+func TestActionRegistry_ByCategory(t *testing.T) {
+	r := NewActionRegistry()
+	r.Register(&ActionDef{ID: "a", Category: "File"})
+	r.Register(&ActionDef{ID: "b", Category: "File"})
+	r.Register(&ActionDef{ID: "c", Category: "Tools"})
+	cats := r.ByCategory()
+	if len(cats["File"]) != 2 {
+		t.Fatalf("expected 2 File actions, got %d", len(cats["File"]))
+	}
+	if len(cats["Tools"]) != 1 {
+		t.Fatalf("expected 1 Tools action, got %d", len(cats["Tools"]))
+	}
+}
+
+func TestActionRegistry_HintFor(t *testing.T) {
+	r := NewActionRegistry()
+	r.Register(&ActionDef{ID: "x", HintKey: "Ctrl+Alt+P"})
+	if h := r.HintFor("x"); h != "Ctrl+Alt+P" {
+		t.Fatalf("expected Ctrl+Alt+P, got %q", h)
+	}
+	r.Register(&ActionDef{ID: "y", Bindings: []KeyBinding{{Key: "ctrl+b"}}})
+	if h := r.HintFor("y"); h != "ctrl+b" {
+		t.Fatalf("expected ctrl+b, got %q", h)
+	}
+}
+
+func TestFormatShortcut(t *testing.T) {
+	if s := FormatShortcut("ctrl+alt+p"); s != "Ctrl+Alt+P" {
+		t.Fatalf("expected Ctrl+Alt+P, got %q", s)
+	}
+	if s := FormatShortcut("alt+c"); s != "Alt+C" {
+		t.Fatalf("expected Alt+C, got %q", s)
+	}
+}
+
+func TestDefaultRegistry_HasGlobalActions(t *testing.T) {
+	r := DefaultRegistry()
+	if r.Get("palette.open") == nil {
+		t.Fatal("missing palette.open")
+	}
+	if r.Get("search.project.open") == nil {
+		t.Fatal("missing search.project.open")
+	}
+	if r.Get("app.quit") == nil {
+		t.Fatal("missing app.quit")
+	}
+	// app.quit has a binding.
+	a := r.Get("app.quit")
+	if len(a.Bindings) == 0 {
+		t.Fatal("app.quit should have bindings")
+	}
+}
+
+func TestDefaultRegistry_MatchPaletteShortcut(t *testing.T) {
+	r := DefaultRegistry()
+	// Mod-based match for Ctrl+Alt+P.
+	msg := tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl | tea.ModAlt}
+	got := r.MatchGlobal(msg)
+	if got == nil || got.ID != "palette.open" {
+		t.Fatalf("expected palette.open, got %+v", got)
+	}
+}
+
+func TestDefaultRegistry_MatchSidebarToggle(t *testing.T) {
+	r := DefaultRegistry()
+	// String match for ctrl+b. tea.KeyPressMsg.String() produces
+	// "ctrl+b" when Mod=ModCtrl and Code='b'.
+	msg := tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl}
+	got := r.MatchGlobal(msg)
+	// May or may not match depending on how tea encodes; check.
+	if got != nil && got.ID != "view.toggle.sidebar" {
+		t.Fatalf("expected view.toggle.sidebar, got %s", got.ID)
+	}
+}

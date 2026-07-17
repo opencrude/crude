@@ -21,12 +21,12 @@ func TestForm_HitTest(t *testing.T) {
 	)
 
 	// Form layout (from form.View):
-	//   line 0: empty
-	//   line 1: title
-	//   line 2: separator
-	//   line 3: first item
-	//   line 4: second item
-	//   line 5: third item
+	// line 0: empty
+	// line 1: title
+	// line 2: separator
+	// line 3: first item
+	// line 4: second item
+	// line 5: third item
 	cases := []struct {
 		line     int
 		wantItem int

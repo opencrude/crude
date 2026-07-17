@@ -869,10 +869,9 @@ func TestHandleMouseInsideWindowFocuses(t *testing.T) {
 	}
 }
 
-func TestHandleMouseEdgeClickWithDifferentBorders(t *testing.T) {
+func TestHandleMouseWindowFrameEdgeClick(t *testing.T) {
 	mgr := NewWindowManager()
-	fw := NewFloatingWindow("w", "W", testWidget{}, 10, 6,
-		WithBorderStyle(BorderRounded))
+	fw := NewFloatingWindow("w", "W", testWidget{}, 10, 6)
 	fw.SetPosition(0, 0)
 	mgr.AddWindow(fw)
 
@@ -880,7 +879,7 @@ func TestHandleMouseEdgeClickWithDifferentBorders(t *testing.T) {
 	msg := tea.MouseClickMsg{X: 5, Y: 5}
 	clicked := mgr.HandleMouse(msg)
 	if clicked != fw {
-		t.Error("edge click on rounded border should return window")
+		t.Error("edge click on WindowFrame should return window")
 	}
 	if !fw.IsResizing() {
 		t.Error("should start resize on edge click")
@@ -893,7 +892,7 @@ func TestHandleMouseResizeEdgeTracking(t *testing.T) {
 	fw.SetPosition(10, 10)
 	mgr.AddWindow(fw)
 
-	// Click on bottom edge (LShape has left+bottom borders)
+	// Click on the bottom WindowFrame edge.
 	msg := tea.MouseClickMsg{X: 14, Y: 15}
 	clicked := mgr.HandleMouse(msg)
 	if clicked != fw {

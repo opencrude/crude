@@ -3,7 +3,6 @@ package settings
 import (
 	"fmt"
 	"strings"
-	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -15,6 +14,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
+	"crude/tui/ui"
 )
 
 // SaveMsg is returned as a tea.Msg on save.
@@ -63,10 +63,18 @@ type Model struct {
 	providers     map[string]types.ProviderConfig
 	providerID    string
 	models        map[string][]types.ModelEntry
-	search        string
+	searchEd      *ui.TextEdit // shared rune-safe category search
 	searchActive  bool
 	hoverCategory int
 	hoverButton   int // 0 none, 1 save, 2 cancel
+}
+
+// searchText returns the current category filter query.
+func (m *Model) searchText() string {
+	if m == nil || m.searchEd == nil {
+		return ""
+	}
+	return m.searchEd.Value()
 }
 
 type modelSnapshot struct {
@@ -393,6 +401,9 @@ func (m *Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.pane == 0 {
 		if s == "/" {
 			m.searchActive = true
+			if m.searchEd == nil {
+				m.searchEd = ui.NewTextEdit()
+			}
 			return *m, nil
 		}
 		if s == "j" {
@@ -423,10 +434,13 @@ func (m *Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func (m *Model) handleSearchKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.searchEd == nil {
+		m.searchEd = ui.NewTextEdit()
+	}
 	switch keyMsg.Code {
 	case tea.KeyEsc:
-		if m.search != "" {
-			m.search = ""
+		if m.searchEd.Len() > 0 {
+			m.searchEd.SetValue("")
 			m.ensureVisibleSelection()
 		} else {
 			m.searchActive = false
@@ -438,25 +452,16 @@ func (m *Model) handleSearchKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.moveCategory(-1)
 	case tea.KeyDown:
 		m.moveCategory(1)
-	case tea.KeyBackspace:
-		if m.search != "" {
-			runes := []rune(m.search)
-			m.search = string(runes[:len(runes)-1])
+	default:
+		if ui.HandleFilterKey(m.searchEd, keyMsg) {
 			m.ensureVisibleSelection()
 		}
-	default:
-		for _, r := range keyMsg.Text {
-			if unicode.IsPrint(r) {
-				m.search += string(r)
-			}
-		}
-		m.ensureVisibleSelection()
 	}
 	return *m, nil
 }
 
 func (m *Model) visibleCategoryIndices() []int {
-	query := strings.ToLower(strings.TrimSpace(m.search))
+	query := strings.ToLower(strings.TrimSpace(m.searchText()))
 	indices := make([]int, 0, len(m.categories))
 	for i, category := range m.categories {
 		if query == "" || strings.Contains(strings.ToLower(category.Name), query) || strings.Contains(strings.ToLower(category.Group), query) {
@@ -574,6 +579,9 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	layout := m.lastLayout
 	if x >= 0 && x < layout.leftW && y == layout.searchY {
 		m.searchActive = true
+		if m.searchEd == nil {
+			m.searchEd = ui.NewTextEdit()
+		}
 		m.pane = 0
 		return *m, nil
 	}
@@ -697,16 +705,17 @@ func (m *Model) View(width, height int) []string {
 		categoryAtY[i] = -1
 	}
 
-	query := m.search
-	searchText := mutedRail.Render("Search settings")
-	if query != "" {
-		searchText = fgRail.Render(query)
+	if m.searchEd == nil {
+		m.searchEd = ui.NewTextEdit()
 	}
-	cursor := ""
-	if m.searchActive {
-		cursor = accentRail.Render("█")
-	}
-	left[0] = pad(mutedRail.Render("> ")+searchText+cursor, leftW, railBg)
+	searchLine := ui.RenderFilterLine(m.th, m.searchEd, ui.FilterPaintOptions{
+		Prompt:      "> ",
+		Placeholder: "Search settings",
+		Width:       leftW,
+		Focused:     m.searchActive,
+		BG:          m.th.Colors.PopupBg,
+	})
+	left[0] = pad(searchLine, leftW, railBg)
 	left[1] = ruleRail.Render(strings.Repeat("─", leftW))
 
 	y := 2

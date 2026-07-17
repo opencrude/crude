@@ -614,11 +614,11 @@ func (m benchModel) Update(msg Msg) (Model, Cmd) {
 
 func (m benchModel) View() View {
 	view := strings.Join([]string{
-		" \x1b[38;5;63m╭─────────────────────────╮\x1b[m",
+		" \x1b[38;5;63m╭            ─╮\x1b[m",
 		" \x1b[38;5;63m│\x1b[m\x1b[25X\x1b[28G\x1b[38;5;63m│\x1b[m",
 		" \x1b[38;5;63m│\x1b[m    \x1b[38;5;231mHello There!\x1b[m    \x1b[38;5;63m│\x1b[m",
 		" \x1b[38;5;63m│\x1b[m\x1b[25X\x1b[28G\x1b[38;5;63m│\x1b[m",
-		" \x1b[38;5;63m╰─────────────────────────╯\x1b[m",
+		" \x1b[38;5;63m╰            ─╯\x1b[m",
 	}, "\n")
 
 	return NewView(view)

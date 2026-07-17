@@ -78,7 +78,7 @@ func TestSetDiagnostics_UncleanedPath(t *testing.T) {
 
 	// Set diagnostics with an UNCLEANED path (e.g. what LSP might send).
 	tree.SetDiagnostics(mainGo+"/./.", 1, 0, 0)
-	//                                        ^^^^  filepath.Clean("/home/.../main.go/./.") = "/home/.../main.go"
+	//                                      ^^^^  filepath.Clean("/home/.../main.go/./.") = "/home/.../main.go"
 
 	node := tree.NodeByPath(cleaned)
 	if node == nil {

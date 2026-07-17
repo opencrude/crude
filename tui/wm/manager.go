@@ -11,12 +11,12 @@ import (
 // WindowManager manages all floating windows.
 //
 // Responsibilities:
-//   - Maintain z-ordered list of windows
-//   - Route keyboard input to the focused window
-//   - Route mouse input to the correct window (hit-testing)
-//   - Handle drag and resize interactions
-//   - Manage focus chain (Tab / Shift+Tab between windows)
-//   - Render all windows into the compositor's surface tree
+// - Maintain z-ordered list of windows
+// - Route keyboard input to the focused window
+// - Route mouse input to the correct window (hit-testing)
+// - Handle drag and resize interactions
+// - Manage focus chain (Tab / Shift+Tab between windows)
+// - Render all windows into the compositor's surface tree
 //
 // The WindowManager does NOT depend on the compositor package.
 // It renders windows into surfaces; the compositor composites those surfaces.
@@ -234,11 +234,11 @@ func (wm *WindowManager) ClearNeedsRender() { wm.needsRender = false }
 // Returns the window that consumed the event (if any).
 //
 // This handles:
-//   - Click on close button → returns the window (caller should remove it)
-//   - Click on title bar → starts drag, focuses window
-//   - Click on edge → starts resize
-//   - Click inside window → focuses window
-//   - Click outside all windows → unfocuses all
+// - Click on close button → returns the window (caller should remove it)
+// - Click on title bar → starts drag, focuses window
+// - Click on edge → starts resize
+// - Click inside window → focuses window
+// - Click outside all windows → unfocuses all
 func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 	m := msg.Mouse()
 

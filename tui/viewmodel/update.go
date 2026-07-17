@@ -17,6 +17,7 @@ import (
 	"crude/tui/scrollbar"
 	settingsui "crude/tui/settings"
 	ttypes "crude/tui/types"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 	"crude/workspace"
@@ -106,13 +107,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			treeCmd := m.Tree.Renderer.HandleScrollbarTick(msg)
 			if treeCmd != nil {
 				cmds = append(cmds, treeCmd)
-			}
-		}
-		if m.commandPaletteModel != nil {
-			updated, sbCmd := m.commandPaletteModel.sb.Update(msg)
-			m.commandPaletteModel.sb = updated
-			if sbCmd != nil {
-				cmds = append(cmds, sbCmd)
 			}
 		}
 		for _, sp := range m.PaneMgr.Panes() {
@@ -252,6 +246,39 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if cmd := m.handleFileWatcherEvent(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case widgets.FindInFilesSearchRequestMsg:
+		if m.findInFiles != nil && m.findInFiles.AcceptsSearch(msg.Owner, msg.Generation) {
+			m.findInFilesRequest = m.StartProjectSearch(msg.Query, msg.Options)
+			m.findInFilesGen = msg.Generation
+			if fw := m.windowManager.Window(findInFilesWindowID); fw != nil {
+				fw.MarkContentDirty()
+			}
+		}
+	case widgets.FindInFilesSearchCancelMsg:
+		if m.findInFiles == msg.Owner {
+			m.CancelProjectSearch()
+			m.findInFilesRequest = 0
+			m.findInFilesGen = 0
+		}
+	case workspace.ProjectSearchCompletedMsg:
+		if m.findInFiles != nil && msg.Result.RequestID == m.findInFilesRequest {
+			m.findInFiles.ApplySearchResults(
+				m.findInFilesGen,
+				msg.Result.Matches,
+				msg.Result.Err,
+				msg.Result.Duration,
+			)
+			if fw := m.windowManager.Window(findInFilesWindowID); fw != nil {
+				fw.MarkContentDirty()
+			}
+			m.findInFilesRequest = 0
+		}
+	case widgets.FindInFilesOpenMsg:
+		if cmd := m.openFindInFilesResult(msg.Match); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case widgets.FindInFilesCloseMsg:
+		m.closeFindInFiles()
 	case lspDefinitionResultMsg:
 		m.handleDefinitionResult(msg)
 	case lspReferencesResultMsg:
@@ -318,8 +345,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			ml.ScrollToBottom()
 		}
 	case widgets.FilePickerSelectMsg:
-		m.windowManager.RemoveWindow("filepicker")
-		m.setMode(ModeChat)
+		m.overlayHost.Close(ui.OverlayFilePicker)
 		if msg.Folder {
 			if m.launcher != nil {
 				_ = m.launcherOpenFolder(msg.Path)
@@ -334,8 +360,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.addFileReference(msg.Path)
 		}
 	case widgets.FilePickerCancelMsg:
-		m.windowManager.RemoveWindow("filepicker")
-		m.setMode(ModeChat)
+		m.overlayHost.Close(ui.OverlayFilePicker)
 	case widgets.WorkspaceSettingsSaveMsg:
 		m.Logger.Info("CONFIG", "workspace_settings_save")
 		appSets := msg.Settings
@@ -353,9 +378,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				m.StatusBar.SetInfo("Workspace settings saved")
 			}
 		}
-		m.windowManager.RemoveWindow("workspace-settings")
+		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	case widgets.WorkspaceSettingsCancelMsg:
-		m.windowManager.RemoveWindow("workspace-settings")
+		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	case settingsui.FetchModelsMsg:
 		request := msg
 		cmds = append(cmds, func() tea.Msg {
@@ -367,7 +392,15 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		})
 	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg:
 		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
-			if settingsWidget, ok := fw.Content.(*widgets.WorkspaceSettings); ok {
+			if framed, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+				legacy, ok := framed.Body().(*ui.LegacyWidget)
+				if !ok {
+					break
+				}
+				settingsWidget, ok := legacy.Inner().(*widgets.WorkspaceSettings)
+				if !ok {
+					break
+				}
 				if cmd := settingsWidget.HandleEvent(msg); cmd != nil {
 					cmds = append(cmds, cmd)
 				}

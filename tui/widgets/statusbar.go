@@ -221,7 +221,7 @@ func (s *StatusBar) viewParts() (string, string) {
 		left += " " + accent.Render("⚡"+strconv.Itoa(sys.activeCount))
 	}
 
-	// ── Whole-project LSP insights (bottom-left) ─────────────────────────
+	// Whole-project LSP insights (bottom-left)             ─
 	lspView := s.renderLSPInsights()
 
 	// Compose left side: agent activity, separator, LSP insights.

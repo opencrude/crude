@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"crude/sessiondb"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/workspace"
 
@@ -23,7 +24,7 @@ type LauncherState struct {
 	items        []widgets.LauncherItem
 	selected     int
 	filterActive bool
-	filterText   string
+	filterEd     *ui.TextEdit // shared rune-safe filter engine
 	filtered     []int
 	// workspaceScroll is the first visible workspace row.
 	workspaceScroll int
@@ -86,8 +87,9 @@ func (l *LauncherState) rebuildItems() {
 	}
 	l.items = widgets.BuildLauncherItems(wsEntries, l.sessions)
 	l.filtered = nil
+	ft := l.filterText()
 	for i, it := range l.items {
-		if it.Kind == widgets.LauncherItemWorkspace && it.Workspace != nil && widgets.WorkspaceEntryMatches(*it.Workspace, l.filterText) {
+		if it.Kind == widgets.LauncherItemWorkspace && it.Workspace != nil && widgets.WorkspaceEntryMatches(*it.Workspace, ft) {
 			l.filtered = append(l.filtered, i)
 		}
 	}
@@ -205,9 +207,16 @@ func (l *LauncherState) selectableIndices() []int {
 	return indices
 }
 
+func (l *LauncherState) filterText() string {
+	if l == nil || l.filterEd == nil {
+		return ""
+	}
+	return l.filterEd.Value()
+}
+
 func (l *LauncherState) activateFilter() {
 	l.filterActive = true
-	l.filterText = ""
+	l.filterEd = ui.NewTextEdit()
 	l.rebuildItems()
 	if len(l.filtered) > 0 {
 		l.selected = l.filtered[0]
@@ -217,14 +226,17 @@ func (l *LauncherState) activateFilter() {
 
 func (l *LauncherState) deactivateFilter() {
 	l.filterActive = false
-	l.filterText = ""
+	l.filterEd = nil
 	l.filtered = nil
 	l.rebuildItems()
 	l.workspaceScroll = 0
 }
 
 func (l *LauncherState) updateFilter(text string) {
-	l.filterText = text
+	if l.filterEd == nil {
+		l.filterEd = ui.NewTextEdit()
+	}
+	l.filterEd.SetValue(text)
 	l.rebuildItems()
 	l.workspaceScroll = 0
 }
@@ -299,11 +311,18 @@ func (l *LauncherState) SetPaint(paint widgets.LauncherPaint) {
 }
 
 // HelpView is rendered in the bottom-right status region while welcome is open.
-func (l *LauncherState) HelpView() string {
+func (l *LauncherState) HelpView(registry *ui.ActionRegistry) string {
 	if l != nil && l.filterActive {
 		return "type search  ·  ↑↓ select  ·  enter open  ·  esc clear"
 	}
-	return "↑↓ navigate  ·  enter open  ·  / search  ·  d remove  ·  ctrl+shift+p palette"
+	hint := ""
+	if registry != nil {
+		hint = registry.HintFor("palette.open")
+	}
+	if hint == "" {
+		hint = "Ctrl+Alt+P"
+	}
+	return "↑↓ navigate  ·  enter open  ·  / search  ·  d remove  ·  " + hint + " palette"
 }
 
 func (l *LauncherState) workspacePaneContains(x, y int) bool {
@@ -338,6 +357,42 @@ func clampInt(v, low, high int) int {
 		return high
 	}
 	return v
+}
+
+func (m *App) launcherShortcuts() [][2]string {
+	if m.actionRegistry == nil {
+		return nil
+	}
+	ids := []ui.ActionID{
+		"palette.open",
+		"search.project.open",
+		"view.toggle.sidebar",
+		"settings.open",
+		"file.attach",
+		"composer.toggle",
+		"app.quit",
+	}
+	out := make([][2]string, 0, len(ids)+3)
+	for _, id := range ids {
+		a := m.actionRegistry.Get(id)
+		if a == nil {
+			continue
+		}
+		hint := m.actionRegistry.HintFor(id)
+		if hint == "" && len(a.Bindings) > 0 {
+			hint = a.Bindings[0].Key
+		}
+		if hint == "" {
+			continue
+		}
+		out = append(out, [2]string{ui.FormatShortcut(hint), a.Label})
+	}
+	out = append(out,
+		[2]string{"Esc", "Cancel / dismiss"},
+		[2]string{"/", "Search workspaces"},
+		[2]string{"d", "Delete item"},
+	)
+	return out
 }
 
 // HitTest maps a rendered line index to a flat item index (Y-only fallback).
@@ -423,24 +478,29 @@ func (m *App) handleLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.launcherSelect()
 			}
 			return m, nil
-		case tea.KeyBackspace:
-			if runes := []rune(launcher.filterText); len(runes) > 0 {
-				launcher.filterText = string(runes[:len(runes)-1])
-				launcher.updateFilter(launcher.filterText)
-			} else {
-				launcher.deactivateFilter()
-			}
-			return m, nil
 		case tea.KeyUp:
 			launcher.moveUp()
 			return m, nil
 		case tea.KeyDown:
 			launcher.moveDown()
 			return m, nil
+		case tea.KeyBackspace:
+			if launcher.filterEd == nil || launcher.filterEd.Len() == 0 {
+				launcher.deactivateFilter()
+				return m, nil
+			}
+			if ui.HandleFilterKey(launcher.filterEd, msg) {
+				launcher.rebuildItems()
+				launcher.workspaceScroll = 0
+			}
+			return m, nil
 		default:
-			if len(msg.Text) > 0 {
-				launcher.filterText += msg.Text
-				launcher.updateFilter(launcher.filterText)
+			if launcher.filterEd == nil {
+				launcher.filterEd = ui.NewTextEdit()
+			}
+			if ui.HandleFilterKey(launcher.filterEd, msg) {
+				launcher.rebuildItems()
+				launcher.workspaceScroll = 0
 				return m, nil
 			}
 		}

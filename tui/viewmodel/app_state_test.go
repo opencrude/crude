@@ -10,6 +10,7 @@ import (
 	"crude/tui/input"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/window"
 	"crude/tui/wm"
@@ -439,7 +440,7 @@ func TestLauncherState_HitTest(t *testing.T) {
 	st := NewLauncherState(".", nil)
 	th := theme.DefaultDark()
 	paint := widgets.RenderWelcomeLauncher(
-		st.cwdPath, st.items, 0, 0, false, "", th, 80, 24, 0, 0,
+		st.cwdPath, st.items, 0, 0, false, "", th, 80, 24, 0, 0, nil,
 	)
 	st.SetPaint(paint)
 
@@ -607,6 +608,7 @@ func TestDispatchChatKey_CtrlC(t *testing.T) {
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	th := theme.DefaultDark()
+	wmgr := wm.NewWindowManager()
 
 	app := &App{
 		Workspace: &workspace.Workspace{
@@ -619,9 +621,12 @@ func newTestApp(t *testing.T) *App {
 			ActiveSession:   &workspace.Session{},
 			SessionSettings: widgets.NewSessionSettings(th, ttypes.Settings{}),
 		},
-		OverlayState: NewOverlayState(),
-		LSPPopup:     NewLSPPopupState(),
-		EditorState:  NewEditorState(),
+		OverlayState:   NewOverlayState(),
+		LSPPopup:       NewLSPPopupState(),
+		EditorState:    NewEditorState(),
+		actionRegistry: ui.DefaultRegistry(),
+		windowManager:  wmgr,
+		overlayHost:    ui.NewOverlayHost(wmgr),
 	}
 
 	app.Win = window.New(th)
@@ -635,6 +640,7 @@ func newFullTestApp(t *testing.T) *App {
 	th := theme.DefaultDark()
 	im := input.NewModel(th)
 	sb := widgets.NewStatusBar(th)
+	wmgr := wm.NewWindowManager()
 
 	app := &App{
 		Workspace: &workspace.Workspace{
@@ -650,11 +656,14 @@ func newFullTestApp(t *testing.T) *App {
 			ActiveSession:   &workspace.Session{},
 			SessionSettings: widgets.NewSessionSettings(th, ttypes.Settings{}),
 		},
-		OverlayState: NewOverlayState(),
-		LSPPopup:     NewLSPPopupState(),
-		EditorState:  NewEditorState(),
-		width:        80,
-		height:       24,
+		OverlayState:   NewOverlayState(),
+		LSPPopup:       NewLSPPopupState(),
+		EditorState:    NewEditorState(),
+		width:          80,
+		height:         24,
+		actionRegistry: ui.DefaultRegistry(),
+		windowManager:  wmgr,
+		overlayHost:    ui.NewOverlayHost(wmgr),
 	}
 
 	app.Win = window.New(th)
@@ -668,6 +677,7 @@ var _ tea.Model = (*App)(nil)
 func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
 	app := newFullTestApp(t)
 	app.windowManager = wm.NewWindowManager()
+	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.FilePicker = widgets.NewFilePicker(app.Theme)
 	app.FilePicker.OpenFolder(t.TempDir())
 
@@ -676,8 +686,11 @@ func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
 	if fileWindow == nil || !fileWindow.Decorated() || !fileWindow.Movable() {
 		t.Fatal("file picker should have a draggable title bar")
 	}
-	if fileWindow.BorderStyle() != wm.BorderNone || fileWindow.Resizable() {
-		t.Fatal("file picker should be flat, borderless, and fixed-size")
+	if fileWindow.Resizable() {
+		t.Fatal("file picker should use unified chrome and remain fixed-size")
+	}
+	if _, ok := fileWindow.Content.(*ui.WindowFrameWidget); !ok {
+		t.Fatal("file picker should use ui.WindowFrame chrome")
 	}
 
 	app.openWorkspaceSettings()
@@ -685,7 +698,10 @@ func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
 	if settingsWindow == nil || !settingsWindow.Decorated() || !settingsWindow.Movable() {
 		t.Fatal("workspace settings should be a draggable IDE window")
 	}
-	if settingsWindow.BorderStyle() != wm.BorderNone || !settingsWindow.Resizable() {
-		t.Fatal("workspace settings should be flat, borderless, and resizable")
+	if !settingsWindow.Resizable() {
+		t.Fatal("workspace settings should use unified chrome and remain resizable")
+	}
+	if _, ok := settingsWindow.Content.(*ui.WindowFrameWidget); !ok {
+		t.Fatal("workspace settings should use ui.WindowFrame chrome")
 	}
 }

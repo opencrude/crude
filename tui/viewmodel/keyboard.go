@@ -10,7 +10,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	"crude/tui/editor"
@@ -18,34 +17,34 @@ import (
 	"crude/tui/input"
 	"crude/tui/rendering"
 	ttypes "crude/tui/types"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	wm "crude/tui/wm"
+	"crude/workspace"
 )
 
 func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	// Global keybindings — checked first, before focus routing.
-	// These must work everywhere including the launcher/welcome screen.
-	keyStr := msg.String()
-	keyStrLower := strings.ToLower(keyStr)
-	// Try exact match first, then case-insensitive, then Mod-based fallback.
-	// ctrl+shift+p may arrive as "ctrl+shift+P" (enhanced protocol) or just
-	// "ctrl+p" (legacy terminals where Shift is invisible).
-	isCommandPalette := keyStr == "ctrl+shift+p" ||
-		keyStr == "ctrl+shift+P" ||
-		keyStr == "ctrl+p" ||
-		(msg.Mod.Contains(tea.ModCtrl) && msg.Mod.Contains(tea.ModShift) && msg.Code == 'P')
-	switch {
-	case isCommandPalette:
-		return m.toggleCommandPalette()
-	case keyStrLower == "alt+c":
-		return m.toggleComposer()
-	}
-
-	// Ctrl+Q always works — close active tab/window or quit
-	if keyStr == "ctrl+q" {
-		return m.handleQuit()
+	// Global keybindings from the action registry — checked first,
+	// before focus routing. These must work everywhere including the
+	// launcher/welcome screen.
+	if m.actionRegistry != nil {
+		if match := m.actionRegistry.MatchGlobal(msg); match != nil {
+			switch match.ID {
+			case "palette.open":
+				return m.toggleCommandPalette()
+			case "search.project.open":
+				return m.toggleFindInFiles()
+			case "composer.toggle":
+				return m.toggleComposer()
+			case "app.quit":
+				return m.handleQuit()
+			case "view.toggle.sidebar":
+				m.ToggleSidebar()
+				return m, nil
+			}
+		}
 	}
 
 	if ml := m.activeMsgList(); ml != nil && ml.HasActiveSelection() {
@@ -54,8 +53,6 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Esc always closes the topmost popup first, regardless of focus.
-	// This mirrors VSCode/JetBrains behavior: Esc dismisses layers
-	// before reaching the underlying editor/tab.
 	if msg.Code == tea.KeyEsc && m.windowManager != nil {
 		if topWin := m.windowManager.TopWindow(); topWin != nil && topWin.Focusable() {
 			if topWin.ClickOutsideBehavior() != wm.ClickOutsideIgnore {
@@ -63,11 +60,6 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-	}
-
-	if keyStr == "ctrl+b" {
-		m.ToggleSidebar()
-		return m, nil
 	}
 
 	switch m.focusTarget() {
@@ -151,75 +143,18 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.closeEditorTab()
 		return m, nil
 	}
-	// References popup: intercept navigation keys while it's open.
+	// References popup: fallback when popup is open but editor still has focus.
 	if m.LSPPopup.ReferencesID != "" {
-		switch msg.String() {
-		case "down":
-			if m.LSPPopup.RefCursor < len(m.LSPPopup.RefRows)-1 {
-				m.LSPPopup.RefCursor++
-				m.refreshReferencesPopup()
-			}
-			return m, nil
-		case "up":
-			if m.LSPPopup.RefCursor > 0 {
-				m.LSPPopup.RefCursor--
-				m.refreshReferencesPopup()
-			}
-			return m, nil
-		case "enter":
-			if m.LSPPopup.RefCursor >= 0 && m.LSPPopup.RefCursor < len(m.LSPPopup.RefRows) {
-				r := m.LSPPopup.RefRows[m.LSPPopup.RefCursor]
-				m.jumpToReference(r)
-				m.closeReferencesPopup()
-			}
-			return m, nil
-		}
+		return m, m.handleReferencesPopupKey(msg)
 	}
-	// Outline popup: intercept navigation keys while it's open.
+	// Outline/completion navigation is handled when the floating window is
+	// focused (dispatchFloatingWindowKey). Keep editor-path fallbacks only
+	// when the popup exists but somehow did not take focus.
 	if m.LSPPopup.OutlineOpen && m.windowManager != nil && m.windowManager.Window(outlinePopupID) != nil {
-		switch msg.String() {
-		case "down":
-			if m.LSPPopup.OutlineCursor < len(m.LSPPopup.OutlineRows)-1 {
-				m.LSPPopup.OutlineCursor++
-				m.showOutlinePopup(m.LSPMgr.DocumentSymbols(m.EditorState.Editor.FilePath()))
-			}
-			return m, nil
-		case "up":
-			if m.LSPPopup.OutlineCursor > 0 {
-				m.LSPPopup.OutlineCursor--
-				m.showOutlinePopup(m.LSPMgr.DocumentSymbols(m.EditorState.Editor.FilePath()))
-			}
-			return m, nil
-		case "enter":
-			if m.LSPPopup.OutlineCursor >= 0 && m.LSPPopup.OutlineCursor < len(m.LSPPopup.OutlineRows) {
-				sym := m.LSPPopup.OutlineRows[m.LSPPopup.OutlineCursor].Sym
-				m.EditorState.Editor.SetCursorPosition(sym.Line, sym.Col)
-				m.EditorState.Editor.ScrollToCursor()
-				layout := m.computeLayout()
-				m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-			}
-			return m, nil
-		}
+		return m, m.handleOutlinePopupKey(msg)
 	}
-	// Completion popup: intercept navigation keys while it's open.
 	if m.LSPPopup.CompletionID != "" {
-		switch msg.String() {
-		case "down":
-			if m.LSPPopup.CompletionCursor < len(m.LSPPopup.CompletionItems)-1 {
-				m.LSPPopup.CompletionCursor++
-				m.showCompletionPopup(m.LSPPopup.CompletionItems)
-			}
-			return m, nil
-		case "up":
-			if m.LSPPopup.CompletionCursor > 0 {
-				m.LSPPopup.CompletionCursor--
-				m.showCompletionPopup(m.LSPPopup.CompletionItems)
-			}
-			return m, nil
-		case "tab", "enter":
-			m.acceptCompletion()
-			return m, nil
-		}
+		return m, m.handleCompletionPopupKey(msg)
 	}
 	// LSP keybinds (only when a file is open and the LSP is up).
 	if m.EditorState.Editor.IsOpen() && m.LSPMgr != nil {
@@ -307,20 +242,29 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleTreePromptKey(msg)
 		case "tree-delete-confirm":
 			return m, m.handleTreeDeleteConfirmKey(msg)
+		case "references-popup":
+			return m, m.handleReferencesPopupKey(msg)
+		case "completion-popup":
+			return m, m.handleCompletionPopupKey(msg)
+		case "outline-popup":
+			return m, m.handleOutlinePopupKey(msg)
 		case "command-palette":
 			if msg.Code == tea.KeyEsc {
-				m.windowManager.RemoveWindow("command-palette")
-				m.commandPaletteModel = nil
+				m.overlayHost.Close(ui.OverlayCommandPalette)
 				return m, nil
 			}
 			if m.commandPaletteModel != nil {
-				cmd := m.commandPaletteModel.Update(msg)
-				if cmd != nil {
-					cmds = append(cmds, cmd)
+				// Route text-editing keys to the search field; navigation/enter
+				// to the list. The model handles the filter callback.
+				if m.handleCommandPaletteKey(msg) {
+					m.refreshCommandPaletteFrame()
 				}
-				if fw := m.windowManager.Window("command-palette"); fw != nil {
-					fw.MarkContentDirty()
-				}
+			}
+			return m, nil
+
+		case "find-in-files":
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 			return m, tea.Batch(cmds...)
 
@@ -331,8 +275,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 				return m, rendering.CopyToClipboardCmd(m.ActiveSession.Composer.SelectedText())
 			}
 			if msg.Code == tea.KeyEsc {
-				m.ActiveSession.Composer.Close()
-				m.windowManager.RemoveWindow("composer")
+				m.overlayHost.Close(ui.OverlayComposer)
 				return m, nil
 			}
 			updated, cmd, action := m.ActiveSession.Composer.Update(msg)
@@ -342,12 +285,10 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			}
 			switch action {
 			case widgets.ComposerCancel:
-				m.ActiveSession.Composer.Close()
-				m.windowManager.RemoveWindow("composer")
+				m.overlayHost.Close(ui.OverlayComposer)
 			case widgets.ComposerSubmit:
 				text := m.ActiveSession.Composer.Value()
-				m.ActiveSession.Composer.Close()
-				m.windowManager.RemoveWindow("composer")
+				m.overlayHost.Close(ui.OverlayComposer)
 				if text != "" && m.AgentMgr.ActiveID() != "" {
 					cmds = append(cmds, m.submitInput(m.AgentMgr.ActiveID(), text, nil))
 				}
@@ -362,11 +303,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 
 		default:
 			if msg.Code == tea.KeyEsc {
-				if fw.ID == "textoverlay" {
-					m.ActiveSession.TextOverlay.Close()
-				}
-				m.windowManager.RemoveWindow(fw.ID)
-				m.setMode(ModeChat)
+				m.closePopupWindowByID(fw.ID)
 				return m, nil
 			}
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
@@ -902,7 +839,7 @@ func (m *App) isEditorMsg(msg any) bool {
 	return ok
 }
 
-// ─── LSP request commands ──────────────────────────────────────────────────
+//  ─ LSP request commands             ──
 //
 // The functions below return a tea.Cmd that fires the LSP request in a
 // goroutine and dispatches the result back into the app via a custom msg
@@ -1060,7 +997,7 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 	})
 }
 
-// ─── LSP result handlers ────────────────────────────────────────────────────
+//  LSP result handlers ─
 
 // handleDefinitionResult reacts to a "go to definition" response. If the
 // server returned a single location, the editor jumps straight to it. If
@@ -1154,7 +1091,10 @@ func (m *App) handleRenameResult(msg lspRenameResultMsg) {
 		m.StatusBar.SetInfo("Rename: no changes")
 		return
 	}
-	applied := 0
+
+	// Collect all edits into FileEdit structs for the workspace service.
+	var fileEdits []workspace.FileEdit
+	var filePaths []string
 	for uri, edits := range edit.Changes {
 		fp := uriToPath(string(uri))
 		data, err := os.ReadFile(fp)
@@ -1167,23 +1107,36 @@ func (m *App) handleRenameResult(msg lspRenameResultMsg) {
 			m.Logger.Warn("LSP", "rename_apply", "file", fp, "error", err.Error())
 			continue
 		}
-		if err := os.WriteFile(fp, []byte(updated), 0o644); err != nil {
-			m.Logger.Warn("LSP", "rename_write", "file", fp, "error", err.Error())
-			continue
-		}
-		applied++
-		// If the changed file is currently open in the editor, refresh it.
+		fileEdits = append(fileEdits, workspace.FileEdit{
+			Path:       fp,
+			OldContent: string(data),
+			NewContent: updated,
+		})
+		filePaths = append(filePaths, fp)
+	}
+
+	if len(fileEdits) == 0 {
+		m.StatusBar.SetInfo("Rename: no changes applied")
+		return
+	}
+
+	// Apply all edits through the workspace service.
+	result := m.ApplyWorkspaceEdit(fileEdits)
+	if !result.Succeeded() {
+		m.StatusBar.SetError("Rename: " + result.Error())
+		return
+	}
+
+	// Reload editors for changed files.
+	for _, fp := range filePaths {
 		if m.EditorState.Editor.IsOpen() && m.EditorState.Editor.FilePath() == fp {
 			if err := m.EditorState.Editor.Reload(); err != nil {
 				m.Logger.Warn("LSP", "rename_reload", "file", fp, "error", err.Error())
 			}
 		}
 	}
-	if applied == 0 {
-		m.StatusBar.SetInfo("Rename: no changes applied")
-		return
-	}
-	m.StatusBar.SetInfo(fmt.Sprintf("Renamed in %d file%s", applied, pluralFile(applied)))
+
+	m.StatusBar.SetInfo(fmt.Sprintf("Renamed in %d file%s", len(fileEdits), pluralFile(len(fileEdits))))
 }
 
 // countSymbols returns the total number of symbols in a tree, including
@@ -1234,11 +1187,11 @@ func applyTextEdits(text string, edits []protocol.TextEdit) (string, error) {
 	lines := strings.Split(text, "\n")
 
 	type editPos struct {
-		line     int
-		char     int
-		endLine  int
-		endChar  int
-		newText  string
+		line    int
+		char    int
+		endLine int
+		endChar int
+		newText string
 	}
 	positions := make([]editPos, 0, len(edits))
 	for _, e := range edits {
@@ -1308,78 +1261,64 @@ func (m *App) showReferencesPopup(rows []refRow) {
 	}
 	const id = "references-popup"
 
-	// Build the popup content.
 	const maxPreview = 60
-	type listItem struct {
-		row  refRow
-		text string
-	}
-	items := make([]listItem, 0, len(rows))
-	for _, r := range rows {
+	listItems := make([]ui.ListItem, 0, len(rows))
+	for i, r := range rows {
 		short := r.Preview
 		if len([]rune(short)) > maxPreview {
 			short = string([]rune(short)[:maxPreview]) + "…"
 		}
-		items = append(items, listItem{
-			row:  r,
-			text: fmt.Sprintf("%s:%d:%d  %s", filepath.Base(r.File), r.Line+1, r.Col+1, short),
+		label := fmt.Sprintf("%s:%d:%d", filepath.Base(r.File), r.Line+1, r.Col+1)
+		listItems = append(listItems, ui.ListItem{
+			ID:      fmt.Sprintf("%d", i),
+			Label:   label,
+			Detail:  short,
+			Payload: i, // index into RefRows
 		})
 	}
 
 	// Pick a width that fits the widest row, capped to the screen.
 	boxW := 30
-	for _, it := range items {
-		if w := rendering.VisibleWidth(it.text) + 4; w > boxW {
+	for _, it := range listItems {
+		text := it.Label
+		if it.Detail != "" {
+			text += "  " + it.Detail
+		}
+		if w := rendering.VisibleWidth(text) + 8; w > boxW {
 			boxW = w
 		}
 	}
 	if boxW > m.width-4 {
 		boxW = m.width - 4
 	}
-	boxH := len(items) + 4
+	// chrome (2) + rows; min 6
+	boxH := len(listItems) + 2
 	if boxH > m.height-4 {
 		boxH = m.height - 4
 	}
 	if boxH < 6 {
 		boxH = 6
 	}
-
-	// Render the list.
-	dim := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted)
-	accent := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent).Bold(true)
-	mutedBg := lipgloss.NewStyle().Background(m.Theme.Colors.Code.Bg)
-	headerBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg).Bold(true)
-
-	header := headerBg.Render(padRow(fmt.Sprintf(" References (%d) ", len(items)), boxW-2))
-	body := make([]string, 0, len(items)+2)
-	body = append(body, header)
-	for i, it := range items {
-		line := padRow(it.text, boxW-2)
-		if i == m.LSPPopup.RefCursor {
-			line = accent.Render(line)
-		} else {
-			line = dim.Render(line)
-		}
-		body = append(body, mutedBg.Render(line))
-	}
-	if m.LSPPopup.RefCursor >= len(items) {
+	if m.LSPPopup.RefCursor >= len(listItems) {
 		m.LSPPopup.RefCursor = 0
 	}
-	footer := dim.Render(padRow(" ↑/↓ select · enter jump · esc close ", boxW-2))
-	body = append(body, footer)
-
-	// Wrap in box drawing characters for a clean panel look.
-	border := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent)
-	popLines := make([]string, 0, len(body)+2)
-	popLines = append(popLines, border.Render("╭"+strings.Repeat("─", boxW-2)+"╮"))
-	for _, l := range body {
-		popLines = append(popLines, border.Render("│")+l+border.Render("│"))
+	if m.LSPPopup.RefCursor < 0 && len(listItems) > 0 {
+		m.LSPPopup.RefCursor = 0
 	}
-	popLines = append(popLines, border.Render("╰"+strings.Repeat("─", boxW-2)+"╯"))
 
-	popupContent := widgets.NewPopupContent(popLines)
+	title := fmt.Sprintf("References (%d)", len(listItems))
+	frame := widgets.BuildListPopupFrame(m.Theme, widgets.ListPopupSpec{
+		ID:       id,
+		Title:    title,
+		Items:    listItems,
+		Selected: m.LSPPopup.RefCursor,
+		Width:    boxW,
+		Height:   boxH,
+		Closable: true,
+	})
+
 	popupX := m.width/2 - boxW/2
-	popupY := m.height/2 - len(popLines)/2
+	popupY := m.height/2 - boxH/2
 	if popupX < 0 {
 		popupX = 0
 	}
@@ -1387,53 +1326,56 @@ func (m *App) showReferencesPopup(rows []refRow) {
 		popupY = 0
 	}
 
-	// Replace existing references popup or create a new one.
 	if existing := m.windowManager.Window(id); existing != nil {
-		existing.Content = popupContent
-		existing.SetSize(boxW, len(popLines))
-		existing.SetPosition(popupX, popupY)
-		existing.MarkContentDirty()
+		// Prefer mutating selection when content is already a ComponentWidget.
+		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
+			if list := widgets.ListPopupList(cw); list != nil {
+				list.SetItems(listItems)
+				list.SelectIndex(m.LSPPopup.RefCursor)
+				existing.SetSize(boxW, boxH)
+				existing.SetPosition(popupX, popupY)
+				existing.MarkContentDirty()
+			} else {
+				existing.Content = frame
+				existing.SetSize(boxW, boxH)
+				existing.SetPosition(popupX, popupY)
+				existing.MarkContentDirty()
+			}
+		} else {
+			existing.Content = frame
+			existing.SetSize(boxW, boxH)
+			existing.SetPosition(popupX, popupY)
+			existing.MarkContentDirty()
+		}
 	} else {
 		fw := wm.NewFloatingWindow(
 			id,
-			"References",
-			popupContent,
-			boxW, len(popLines),
+			"",
+			frame,
+			boxW, boxH,
 			wm.WithDecoration(false),
 			wm.WithMovable(false),
 			wm.WithResizable(false),
-			wm.WithClosable(true),
+			wm.WithClosable(false),
 			wm.WithModal(true),
 			wm.WithFocusable(true),
 			wm.WithClickOutside(wm.ClickOutsideCloseRoute),
 		)
 		fw.SetPosition(popupX, popupY)
-		m.windowManager.AddWindow(fw)
+		m.overlayHost.Open(ui.OverlayReferences, fw, ui.PopoverPolicy(true), func() {
+			m.LSPPopup.ReferencesID = ""
+			m.LSPPopup.RefRows = nil
+			m.LSPPopup.RefCursor = 0
+		})
 		m.LSPPopup.ReferencesID = id
 	}
 
-	// Stash rows for the key handler.
-	m.LSPPopup.RefRows = make([]refRow, 0, len(items))
-	for _, it := range items {
-		m.LSPPopup.RefRows = append(m.LSPPopup.RefRows, it.row)
-	}
-}
-
-func padRow(s string, w int) string {
-	if len(s) >= w {
-		return s
-	}
-	return s + strings.Repeat(" ", w-len(s))
+	m.LSPPopup.RefRows = rows
 }
 
 // closeReferencesPopup removes the references results popup, if any.
 func (m *App) closeReferencesPopup() {
-	if m.LSPPopup.ReferencesID != "" && m.windowManager != nil {
-		m.windowManager.RemoveWindow(m.LSPPopup.ReferencesID)
-	}
-	m.LSPPopup.ReferencesID = ""
-	m.LSPPopup.RefRows = nil
-	m.LSPPopup.RefCursor = 0
+	m.overlayHost.Close(ui.OverlayReferences)
 }
 
 // refreshReferencesPopup re-renders the references popup in place. Called
@@ -1443,6 +1385,25 @@ func (m *App) refreshReferencesPopup() {
 		return
 	}
 	m.showReferencesPopup(m.LSPPopup.RefRows)
+}
+
+// syncReferencesListCursor updates the WindowFrame list selection without a full rebuild.
+func (m *App) syncReferencesListCursor() {
+	if m.windowManager == nil || m.LSPPopup.ReferencesID == "" {
+		return
+	}
+	fw := m.windowManager.Window(m.LSPPopup.ReferencesID)
+	if fw == nil {
+		return
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+		if list := widgets.ListPopupList(cw); list != nil {
+			list.SelectIndex(m.LSPPopup.RefCursor)
+			fw.MarkContentDirty()
+			return
+		}
+	}
+	m.refreshReferencesPopup()
 }
 
 // jumpToReference opens the file containing the given reference (switching
@@ -1485,15 +1446,26 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	}
 	walk(syms, 0)
 
-	// Layout dimensions.
+	listItems := make([]ui.ListItem, 0, len(flat))
+	for i, r := range flat {
+		// Indent via Icon prefix so WindowFrame+List owns row paint.
+		icon := strings.Repeat("  ", r.Depth) + editor.SymbolKindIcon(r.Sym.Kind)
+		listItems = append(listItems, ui.ListItem{
+			ID:      fmt.Sprintf("%d", i),
+			Icon:    icon,
+			Label:   r.Sym.Name,
+			Payload: i,
+		})
+	}
+
 	const (
 		minW = 28
 		maxW = 50
 	)
 	boxW := minW
-	for _, r := range flat {
-		text := strings.Repeat("  ", r.Depth) + editor.SymbolKindIcon(r.Sym.Kind) + " " + r.Sym.Name
-		if w := rendering.VisibleWidth(text) + 4; w > boxW {
+	for _, it := range listItems {
+		text := it.Icon + " " + it.Label
+		if w := rendering.VisibleWidth(text) + 8; w > boxW {
 			boxW = w
 		}
 	}
@@ -1503,101 +1475,148 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	if boxW > m.width-4 {
 		boxW = m.width - 4
 	}
-	boxH := len(flat) + 3
+	// chrome (2) + rows
+	boxH := len(listItems) + 2
 	if boxH > m.height-4 {
 		boxH = m.height - 4
 	}
 	if boxH < 6 {
 		boxH = 6
 	}
-
-	// Render.
-	dim := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted)
-	accent := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent).Bold(true)
-	kindStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent2)
-	nameStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Fg)
-	mutedBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg)
-	headerBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg).Bold(true)
-	border := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent2)
-
-	header := headerBg.Render(padRow(fmt.Sprintf(" Outline · %d ", len(flat)), boxW-2))
-
-	body := make([]string, 0, boxH)
-	body = append(body, header)
-	maxRows := boxH - 2
-	start := 0
-	if m.LSPPopup.OutlineCursor >= maxRows {
-		start = m.LSPPopup.OutlineCursor - maxRows + 1
+	if m.LSPPopup.OutlineCursor >= len(listItems) {
+		m.LSPPopup.OutlineCursor = 0
 	}
-	for i := start; i < len(flat) && i < start+maxRows; i++ {
-		r := flat[i]
-		indent := strings.Repeat("  ", r.Depth)
-		text := indent + editor.SymbolKindIcon(r.Sym.Kind) + " " + r.Sym.Name
-		text = padRow(text, boxW-2)
-		// Apply per-character coloring.
-		styled := kindStyle.Render(editor.SymbolKindIcon(r.Sym.Kind)) + " " +
-			dim.Render(indent) + nameStyle.Render(r.Sym.Name)
-		// Pad the styled string back to width — the visible width may be less
-		// than the raw text because of style escape codes. We re-pad with
-		// the raw text to keep alignment consistent.
-		_ = styled
-		if i == m.LSPPopup.OutlineCursor {
-			body = append(body, mutedBg.Render(accent.Render(text)))
-		} else {
-			body = append(body, mutedBg.Render(text))
-		}
+	if m.LSPPopup.OutlineCursor < 0 && len(listItems) > 0 {
+		m.LSPPopup.OutlineCursor = 0
 	}
-	footer := dim.Render(padRow(" ↑/↓ · enter jump · esc close ", boxW-2))
-	body = append(body, footer)
 
-	popLines := make([]string, 0, len(body)+2)
-	popLines = append(popLines, border.Render("╭"+strings.Repeat("─", boxW-2)+"╮"))
-	for _, l := range body {
-		popLines = append(popLines, border.Render("│")+l+border.Render("│"))
-	}
-	popLines = append(popLines, border.Render("╰"+strings.Repeat("─", boxW-2)+"╯"))
+	title := fmt.Sprintf("Outline · %d", len(listItems))
+	frame := widgets.BuildListPopupFrame(m.Theme, widgets.ListPopupSpec{
+		ID:       outlinePopupID,
+		Title:    title,
+		Items:    listItems,
+		Selected: m.LSPPopup.OutlineCursor,
+		Width:    boxW,
+		Height:   boxH,
+		Closable: true,
+	})
 
-	popupContent := widgets.NewPopupContent(popLines)
 	popupX := m.width - boxW - 2
 	popupY := 4
 	if popupX < 0 {
 		popupX = 0
 	}
+	if popupY < 0 {
+		popupY = 0
+	}
 
 	if existing := m.windowManager.Window(outlinePopupID); existing != nil {
-		existing.Content = popupContent
-		existing.SetSize(boxW, len(popLines))
-		existing.SetPosition(popupX, popupY)
-		existing.MarkContentDirty()
+		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
+			if list := widgets.ListPopupList(cw); list != nil {
+				list.SetItems(listItems)
+				list.SelectIndex(m.LSPPopup.OutlineCursor)
+				existing.SetSize(boxW, boxH)
+				existing.SetPosition(popupX, popupY)
+				existing.MarkContentDirty()
+			} else {
+				existing.Content = frame
+				existing.SetSize(boxW, boxH)
+				existing.SetPosition(popupX, popupY)
+				existing.MarkContentDirty()
+			}
+		} else {
+			existing.Content = frame
+			existing.SetSize(boxW, boxH)
+			existing.SetPosition(popupX, popupY)
+			existing.MarkContentDirty()
+		}
 	} else {
 		fw := wm.NewFloatingWindow(
 			outlinePopupID,
-			"Outline",
-			popupContent,
-			boxW, len(popLines),
+			"",
+			frame,
+			boxW, boxH,
 			wm.WithDecoration(false),
 			wm.WithMovable(false),
 			wm.WithResizable(false),
-			wm.WithClosable(true),
+			wm.WithClosable(false),
 			wm.WithModal(false),
 			wm.WithFocusable(true),
 			wm.WithClickOutside(wm.ClickOutsideCloseRoute),
 		)
 		fw.SetPosition(popupX, popupY)
-		m.windowManager.AddWindow(fw)
+		m.overlayHost.Open(ui.OverlayOutline, fw, ui.PopoverPolicy(true), func() {
+			m.LSPPopup.OutlineOpen = false
+			m.LSPPopup.OutlineRows = nil
+			m.LSPPopup.OutlineCursor = 0
+		})
 	}
 
-	// Stash for key handler.
 	m.LSPPopup.OutlineRows = flat
+	m.LSPPopup.OutlineOpen = true
 }
 
 func (m *App) closeOutlinePopup() {
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow(outlinePopupID)
+	m.overlayHost.Close(ui.OverlayOutline)
+}
+
+func (m *App) syncOutlineListCursor() {
+	if m.windowManager == nil {
+		return
 	}
-	m.LSPPopup.OutlineOpen = false
-	m.LSPPopup.OutlineRows = nil
-	m.LSPPopup.OutlineCursor = 0
+	fw := m.windowManager.Window(outlinePopupID)
+	if fw == nil {
+		return
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+		if list := widgets.ListPopupList(cw); list != nil {
+			list.SelectIndex(m.LSPPopup.OutlineCursor)
+			fw.MarkContentDirty()
+			return
+		}
+	}
+	// Rebuild only if frame is missing list content.
+	if m.LSPMgr != nil && m.EditorState.Editor != nil {
+		m.showOutlinePopup(m.LSPMgr.DocumentSymbols(m.EditorState.Editor.FilePath()))
+	}
+}
+
+func (m *App) handleOutlinePopupKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "down":
+		if m.LSPPopup.OutlineCursor < len(m.LSPPopup.OutlineRows)-1 {
+			m.LSPPopup.OutlineCursor++
+			m.syncOutlineListCursor()
+		}
+	case "up":
+		if m.LSPPopup.OutlineCursor > 0 {
+			m.LSPPopup.OutlineCursor--
+			m.syncOutlineListCursor()
+		}
+	case "enter":
+		if m.LSPPopup.OutlineCursor >= 0 && m.LSPPopup.OutlineCursor < len(m.LSPPopup.OutlineRows) {
+			sym := m.LSPPopup.OutlineRows[m.LSPPopup.OutlineCursor].Sym
+			m.EditorState.Editor.SetCursorPosition(sym.Line, sym.Col)
+			m.EditorState.Editor.ScrollToCursor()
+			layout := m.computeLayout()
+			m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
+			// Keep outline open (keyboard jump); mouse activation closes.
+		}
+	case "esc":
+		m.closeOutlinePopup()
+	}
+	return nil
+}
+
+func (m *App) jumpToOutline(idx int) {
+	if idx < 0 || idx >= len(m.LSPPopup.OutlineRows) {
+		return
+	}
+	sym := m.LSPPopup.OutlineRows[idx].Sym
+	m.EditorState.Editor.SetCursorPosition(sym.Line, sym.Col)
+	m.EditorState.Editor.ScrollToCursor()
+	layout := m.computeLayout()
+	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 }
 
 // ─── Completion popup ──────────────────────────────────────────────────────
@@ -1609,15 +1628,25 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 		return
 	}
 
-	// Layout dimensions.
+	listItems := make([]ui.ListItem, 0, len(items))
+	for i, it := range items {
+		listItems = append(listItems, ui.ListItem{
+			ID:      fmt.Sprintf("%d", i),
+			Icon:    completionKindIcon(it.Kind),
+			Label:   it.Label,
+			Detail:  it.Detail,
+			Payload: i,
+		})
+	}
+
 	const maxW = 50
 	boxW := 30
-	for _, it := range items {
-		text := it.Label
+	for _, it := range listItems {
+		text := it.Icon + " " + it.Label
 		if it.Detail != "" {
-			text = it.Label + "  " + it.Detail
+			text += "  " + it.Detail
 		}
-		if w := rendering.VisibleWidth(text) + 4; w > boxW {
+		if w := rendering.VisibleWidth(text) + 8; w > boxW {
 			boxW = w
 		}
 	}
@@ -1627,59 +1656,31 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 	if boxW > m.width-4 {
 		boxW = m.width - 4
 	}
-	boxH := len(items) + 3
+	boxH := len(listItems) + 2
 	if boxH > m.height-4 {
 		boxH = m.height - 4
 	}
 	if boxH < 6 {
 		boxH = 6
 	}
-
-	// Render.
-	dim := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted)
-	accent := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent).Bold(true)
-	kindStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent2)
-	nameStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Fg)
-	mutedBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg)
-	headerBg := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg).Bold(true)
-	border := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent)
-
-	header := headerBg.Render(padRow(fmt.Sprintf(" Completions · %d ", len(items)), boxW-2))
-
-	body := make([]string, 0, boxH)
-	body = append(body, header)
-	visible := boxH - 2
-	if visible > len(items) {
-		visible = len(items)
+	if m.LSPPopup.CompletionCursor >= len(listItems) {
+		m.LSPPopup.CompletionCursor = 0
 	}
-	for i := 0; i < visible; i++ {
-		it := items[i]
-		icon := completionKindIcon(it.Kind)
-		text := icon + " " + it.Label
-		if it.Detail != "" {
-			text = icon + " " + it.Label + "  " + dim.Render(truncateStr(it.Detail, boxW-len([]rune(text))-4))
-		}
-		text = padRow(text, boxW-2)
-		_ = kindStyle
-		_ = nameStyle
-		if i == m.LSPPopup.CompletionCursor {
-			body = append(body, mutedBg.Render(accent.Render(text)))
-		} else {
-			body = append(body, mutedBg.Render(text))
-		}
+	if m.LSPPopup.CompletionCursor < 0 && len(listItems) > 0 {
+		m.LSPPopup.CompletionCursor = 0
 	}
-	footer := dim.Render(padRow(" ↑/↓ · enter insert · esc cancel ", boxW-2))
-	body = append(body, footer)
 
-	popLines := make([]string, 0, len(body)+2)
-	popLines = append(popLines, border.Render("╭"+strings.Repeat("─", boxW-2)+"╮"))
-	for _, l := range body {
-		popLines = append(popLines, border.Render("│")+l+border.Render("│"))
-	}
-	popLines = append(popLines, border.Render("╰"+strings.Repeat("─", boxW-2)+"╯"))
+	title := fmt.Sprintf("Completions · %d", len(listItems))
+	frame := widgets.BuildListPopupFrame(m.Theme, widgets.ListPopupSpec{
+		ID:       completionPopupID,
+		Title:    title,
+		Items:    listItems,
+		Selected: m.LSPPopup.CompletionCursor,
+		Width:    boxW,
+		Height:   boxH,
+		Closable: true,
+	})
 
-	popupContent := widgets.NewPopupContent(popLines)
-	// Position the popup near the cursor's screen position.
 	layout := m.computeLayout()
 	cx, cy := m.EditorState.Editor.CursorScreenPosition(layout.SidebarW, layout.ChatAreaTop)
 	popupX := cx
@@ -1687,8 +1688,8 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 	if popupX+boxW >= m.width {
 		popupX = m.width - boxW - 1
 	}
-	if popupY+len(popLines) >= m.height {
-		popupY = cy - len(popLines) - 1
+	if popupY+boxH >= m.height {
+		popupY = cy - boxH - 1
 	}
 	if popupX < 0 {
 		popupX = 0
@@ -1698,26 +1699,45 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 	}
 
 	if existing := m.windowManager.Window(completionPopupID); existing != nil {
-		existing.Content = popupContent
-		existing.SetSize(boxW, len(popLines))
-		existing.SetPosition(popupX, popupY)
-		existing.MarkContentDirty()
+		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
+			if list := widgets.ListPopupList(cw); list != nil {
+				list.SetItems(listItems)
+				list.SelectIndex(m.LSPPopup.CompletionCursor)
+				existing.SetSize(boxW, boxH)
+				existing.SetPosition(popupX, popupY)
+				existing.MarkContentDirty()
+			} else {
+				existing.Content = frame
+				existing.SetSize(boxW, boxH)
+				existing.SetPosition(popupX, popupY)
+				existing.MarkContentDirty()
+			}
+		} else {
+			existing.Content = frame
+			existing.SetSize(boxW, boxH)
+			existing.SetPosition(popupX, popupY)
+			existing.MarkContentDirty()
+		}
 	} else {
 		fw := wm.NewFloatingWindow(
 			completionPopupID,
-			"Completion",
-			popupContent,
-			boxW, len(popLines),
+			"",
+			frame,
+			boxW, boxH,
 			wm.WithDecoration(false),
 			wm.WithMovable(false),
 			wm.WithResizable(false),
-			wm.WithClosable(true),
+			wm.WithClosable(false),
 			wm.WithModal(false),
 			wm.WithFocusable(true),
 			wm.WithClickOutside(wm.ClickOutsideCloseRoute),
 		)
 		fw.SetPosition(popupX, popupY)
-		m.windowManager.AddWindow(fw)
+		m.overlayHost.Open(ui.OverlayCompletion, fw, ui.PopoverPolicy(true), func() {
+			m.LSPPopup.CompletionID = ""
+			m.LSPPopup.CompletionItems = nil
+			m.LSPPopup.CompletionCursor = 0
+		})
 	}
 
 	m.LSPPopup.CompletionID = completionPopupID
@@ -1725,12 +1745,69 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 }
 
 func (m *App) closeCompletionPopup() {
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow(completionPopupID)
+	m.overlayHost.Close(ui.OverlayCompletion)
+}
+
+func (m *App) syncCompletionListCursor() {
+	if m.windowManager == nil || m.LSPPopup.CompletionID == "" {
+		return
 	}
-	m.LSPPopup.CompletionID = ""
-	m.LSPPopup.CompletionItems = nil
-	m.LSPPopup.CompletionCursor = 0
+	fw := m.windowManager.Window(m.LSPPopup.CompletionID)
+	if fw == nil {
+		return
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+		if list := widgets.ListPopupList(cw); list != nil {
+			list.SelectIndex(m.LSPPopup.CompletionCursor)
+			fw.MarkContentDirty()
+			return
+		}
+	}
+	m.showCompletionPopup(m.LSPPopup.CompletionItems)
+}
+
+func (m *App) handleCompletionPopupKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "down":
+		if m.LSPPopup.CompletionCursor < len(m.LSPPopup.CompletionItems)-1 {
+			m.LSPPopup.CompletionCursor++
+			m.syncCompletionListCursor()
+		}
+	case "up":
+		if m.LSPPopup.CompletionCursor > 0 {
+			m.LSPPopup.CompletionCursor--
+			m.syncCompletionListCursor()
+		}
+	case "tab", "enter":
+		m.acceptCompletion()
+	case "esc":
+		m.closeCompletionPopup()
+	}
+	return nil
+}
+
+func (m *App) handleReferencesPopupKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "down":
+		if m.LSPPopup.RefCursor < len(m.LSPPopup.RefRows)-1 {
+			m.LSPPopup.RefCursor++
+			m.syncReferencesListCursor()
+		}
+	case "up":
+		if m.LSPPopup.RefCursor > 0 {
+			m.LSPPopup.RefCursor--
+			m.syncReferencesListCursor()
+		}
+	case "enter":
+		if m.LSPPopup.RefCursor >= 0 && m.LSPPopup.RefCursor < len(m.LSPPopup.RefRows) {
+			r := m.LSPPopup.RefRows[m.LSPPopup.RefCursor]
+			m.jumpToReference(r)
+			m.closeReferencesPopup()
+		}
+	case "esc":
+		m.closeReferencesPopup()
+	}
+	return nil
 }
 
 func (m *App) acceptCompletion() {
@@ -1784,14 +1861,4 @@ func completionKindIcon(kind int) string {
 	default:
 		return "·"
 	}
-}
-
-func truncateStr(s string, max int) string {
-	if max < 1 {
-		return ""
-	}
-	if len([]rune(s)) <= max {
-		return s
-	}
-	return string([]rune(s)[:max-1]) + "…"
 }

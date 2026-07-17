@@ -4,101 +4,25 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/rendering"
 	"crude/tui/theme"
 )
 
-// TestContextMenu_DisabledAlignment: disabled items must have the
-// same leading indent as enabled items. Previously they were
-// rendered with an extra space ("  Copy" vs " Copy"), which made
-// the menu visually shift between enabled and disabled rows.
+// Visual contract tests migrated to BuildContextMenuFrame + cell-buffer
+// assertions in contextmenu_frame_test.go:
+//   - TestContextMenu_DisabledAlignment → TestBuildContextMenuFrame_DisabledAlignment
+//   - TestContextMenu_DisabledNotItalic → TestBuildContextMenuFrame_DisabledNotItalic
+//   - TestContextMenu_NoTitle → TestBuildContextMenuFrame_NoTitleInBorder
+//   - TestContextMenu_TightHeight → TestBuildContextMenuFrame_TightHeight
+//   - TestContextMenu_AllLinesSameWidth → TestBuildContextMenuFrame_AllLinesSameWidth
 //
-// We strip ANSI from the body lines and look for each label. The
-// label must appear at the same character index in every line,
-// proving the indent is consistent across enabled and disabled items.
-func TestContextMenu_DisabledAlignment(t *testing.T) {
-	th := theme.DefaultDark()
-	st := &ContextMenuState{
-		Sections: []ContextMenuSection{{Items: []ContextMenuItem{
-			{Label: "Enabled"},
-			{Label: "Off", Disabled: true},
-			{Label: "On"},
-		}}},
-	}
-	lines := ContextMenuLines(th, st, 0)
-	// Body lines are at indices 1, 2, 3. Strip ANSI and find the
-	// character index of each label. They must all have the same
-	// leading columns (i.e. same position).
-	// Print stripped lines to understand the structure.
-	for i := 0; i < 3; i++ {
-		plain := stripAnsi(lines[i+1])
-		t.Logf("line %d stripped: %q (len=%d)", i, plain, len(plain))
-	}
-	var cols []int
-	for i, label := range []string{"Enabled", "Off", "On"} {
-		plain := stripAnsi(lines[i+1])
-		idx := strings.Index(plain, label)
-		if idx < 0 {
-			t.Fatalf("line %d missing label %q in plain text: %q",
-				i, label, plain)
-		}
-		cols = append(cols, idx)
-	}
-	if cols[0] != cols[1] || cols[1] != cols[2] {
-		t.Fatalf("label positions differ: enabled=%d off=%d on=%d (all should be same)",
-			cols[0], cols[1], cols[2])
-	}
-	// Each body line has the structure: │ (3 UTF-8 bytes) + 2 pad +
-	// 1 indent + label. So the label starts at byte index 6.
-	if cols[0] != 6 {
-		t.Fatalf("label position = %d, want 6 (│ = 3 byte-positions)", cols[0])
-	}
-}
-
-// TestContextMenu_DisabledNotItalic: disabled items must NOT be
-// rendered in italic. The user feedback was: "why they even are
-// italic". Just dim them.
-func TestContextMenu_DisabledNotItalic(t *testing.T) {
-	th := theme.DefaultDark()
-	st := &ContextMenuState{
-		Sections: []ContextMenuSection{{Items: []ContextMenuItem{
-			{Label: "Off", Disabled: true},
-		}}},
-	}
-	lines := ContextMenuLines(th, st, 0)
-	// Italic in lipgloss is \x1b[3m. The disabled line should
-	// not contain it.
-	for _, l := range lines {
-		if strings.Contains(l, "\x1b[3m") {
-			t.Errorf("italic ANSI found in line: %q", l)
-		}
-	}
-}
-
-// TestContextMenu_NoTitle: right-click context menus should have
-// no title in the top border. The top border becomes pure dashes
-// with no embedded text.
-func TestContextMenu_NoTitle(t *testing.T) {
-	th := theme.DefaultDark()
-	st := &ContextMenuState{
-		Title: "This should not appear",
-		Sections: []ContextMenuSection{{Items: []ContextMenuItem{
-			{Label: "Item"},
-		}}},
-	}
-	lines := ContextMenuLines(th, st, 0)
-	plain := stripAnsi(lines[0])
-	if strings.Contains(plain, "This should not appear") {
-		t.Errorf("title leaked into top border: %q", plain)
-	}
-	// Top border is just dashes between corners.
-	if !strings.HasPrefix(plain, "╭") || !strings.HasSuffix(plain, "╮") {
-		t.Errorf("bad top border shape: %q", plain)
-	}
-}
+// The reveal animation tests below remain testing ContextMenuLinesReveal
+// directly; the reveal feature is pending WindowFrame animation support
+// (Phase 3+). ContextMenuLines/Reveal remain as a shrinking bypass for
+// animation only — see docs/tui/bypass_manifest.json.
 
 // TestContextMenu_TightHeight: the popup height should be exactly
 // content + chrome (2 border rows). No extra bottom padding.
+// Kept as a state-level assertion (not rendering).
 func TestContextMenu_TightHeight(t *testing.T) {
 	st := &ContextMenuState{
 		Sections: []ContextMenuSection{{Items: []ContextMenuItem{
@@ -196,29 +120,5 @@ func TestContextMenuLinesReveal_CompleteImmediately(t *testing.T) {
 	plain := stripAnsi(lines[1])
 	if !strings.Contains(plain, "x") {
 		t.Errorf("expected item visible: %q", plain)
-	}
-}
-
-// TestContextMenu_AllLinesSameWidth: chrome wrapping must produce
-// a uniformly-wide popup (no jagged right edge).
-func TestContextMenu_AllLinesSameWidth(t *testing.T) {
-	th := theme.DefaultDark()
-	st := &ContextMenuState{
-		Sections: []ContextMenuSection{
-			{SectionLabel: "A", Items: []ContextMenuItem{
-				{Label: "item 1"},
-				{Label: "item 2", Disabled: true},
-			}},
-		},
-	}
-	lines := ContextMenuLines(th, st, 0)
-	if len(lines) == 0 {
-		t.Fatal("no lines")
-	}
-	w0 := rendering.VisibleWidth(lines[0])
-	for i, l := range lines {
-		if w := rendering.VisibleWidth(l); w != w0 {
-			t.Errorf("line %d width = %d, want %d", i, w, w0)
-		}
 	}
 }

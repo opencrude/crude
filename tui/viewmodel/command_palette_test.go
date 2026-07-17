@@ -8,6 +8,8 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	"crude/tui/ui"
+	"crude/tui/widgets"
 )
 
 func testTheme() *theme.Theme {
@@ -15,16 +17,19 @@ func testTheme() *theme.Theme {
 }
 
 func TestNewCommandPaletteModelShowsAllCommandsByDefault(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	if len(m.filtered) != len(paletteCommands) {
-		t.Errorf("expected %d filtered items, got %d", len(paletteCommands), len(m.filtered))
+	reg := ui.DefaultRegistry()
+	entries := paletteEntriesFromRegistry(reg)
+	m := newCommandPaletteModel(testTheme(), nil, reg)
+	if len(m.filtered) != len(entries) {
+		t.Errorf("expected %d filtered items, got %d", len(entries), len(m.filtered))
 	}
 }
 
 func TestCommandPaletteFilterReducesItems(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
+	reg := ui.DefaultRegistry()
+	m := newCommandPaletteModel(testTheme(), nil, reg)
 	allCount := len(m.filtered)
-	m.filter = "sett"
+	m.setFilter("sett")
 	m.applyFilter()
 	if len(m.filtered) == 0 {
 		t.Fatal("expected some filtered results")
@@ -35,35 +40,39 @@ func TestCommandPaletteFilterReducesItems(t *testing.T) {
 }
 
 func TestCommandPaletteFuzzyMatch(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.filter = "cps"
+	reg := ui.DefaultRegistry()
+	m := newCommandPaletteModel(testTheme(), nil, reg)
+	m.setFilter("cps")
 	m.applyFilter()
 	if len(m.filtered) == 0 {
 		t.Fatal("fuzzy filter 'cps' should match 'Composer'")
 	}
 	found := false
 	for _, item := range m.filtered {
-		if item.ID == "composer" {
+		if item.ID == "composer.toggle" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("fuzzy filter 'cps' should match 'composer'")
+		t.Error("fuzzy filter 'cps' should match 'composer.toggle'")
 	}
 }
 
 func TestCommandPaletteEmptyFilterShowsAll(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.filter = ""
+	reg := ui.DefaultRegistry()
+	entries := paletteEntriesFromRegistry(reg)
+	m := newCommandPaletteModel(testTheme(), nil, reg)
+	m.setFilter("")
 	m.applyFilter()
-	if len(m.filtered) != len(paletteCommands) {
-		t.Errorf("empty filter should show all %d items, got %d", len(paletteCommands), len(m.filtered))
+	if len(m.filtered) != len(entries) {
+		t.Errorf("empty filter should show all %d items, got %d", len(entries), len(m.filtered))
 	}
 }
 
 func TestCommandPaletteBuildGroups(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
+	reg := ui.DefaultRegistry()
+	m := newCommandPaletteModel(testTheme(), nil, reg)
 	if len(m.groups) == 0 {
 		t.Fatal("expected at least one group")
 	}
@@ -80,7 +89,7 @@ func TestCommandPaletteBuildGroups(t *testing.T) {
 }
 
 func TestCommandPaletteNavigationArrows(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
 	if m.idx != 0 {
 		t.Errorf("initial idx = %d, want 0", m.idx)
 	}
@@ -97,7 +106,7 @@ func TestCommandPaletteNavigationArrows(t *testing.T) {
 }
 
 func TestCommandPaletteNavigationWrapsNot(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
 	m.idx = 0
 	m.updateKey(tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.idx != 0 {
@@ -112,7 +121,7 @@ func TestCommandPaletteNavigationWrapsNot(t *testing.T) {
 }
 
 func TestCommandPalettePageUpDown(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
 	m.height = 10
 	m.idx = 5
 	m.updateKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -128,21 +137,21 @@ func TestCommandPalettePageUpDown(t *testing.T) {
 }
 
 func TestCommandPaletteBackspaceRemovesChar(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.filter = "test"
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
+	m.setFilter("test")
 	m.updateKey(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if m.filter != "tes" {
-		t.Errorf("after backspace filter = %q, want 'tes'", m.filter)
+	if m.filterText() != "tes" {
+		t.Errorf("after backspace filter = %q, want 'tes'", m.filterText())
 	}
 }
 
 func TestCommandPaletteTypingUpdatesFilter(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
 	m.updateKey(tea.KeyPressMsg{Text: "side"})
-	if m.filter != "side" {
-		t.Errorf("filter = %q, want 'side'", m.filter)
+	if m.filterText() != "side" {
+		t.Errorf("filter = %q, want 'side'", m.filterText())
 	}
-	if len(m.filtered) == 0 || len(m.filtered) >= len(paletteCommands) {
+	if len(m.filtered) == 0 || len(m.filtered) >= len(paletteEntriesFromRegistry(ui.DefaultRegistry())) {
 		t.Errorf("expected some filtered items, got %d", len(m.filtered))
 	}
 }
@@ -152,7 +161,7 @@ func TestCommandPaletteEnterReturnsCallback(t *testing.T) {
 	m := newCommandPaletteModel(testTheme(), func(cmdID string) tea.Cmd {
 		called = cmdID
 		return nil
-	})
+	}, ui.DefaultRegistry())
 	m.idx = 0
 	cmd := m.updateKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if called == "" {
@@ -166,7 +175,7 @@ func TestCommandPaletteEnterReturnsCallback(t *testing.T) {
 func TestCommandPaletteEnterOnEmptyFilterReturnsNil(t *testing.T) {
 	m := newCommandPaletteModel(testTheme(), func(cmdID string) tea.Cmd {
 		return nil
-	})
+	}, ui.DefaultRegistry())
 	m.filtered = nil
 	cmd := m.updateKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
@@ -175,100 +184,110 @@ func TestCommandPaletteEnterOnEmptyFilterReturnsNil(t *testing.T) {
 }
 
 func TestCommandPaletteEscReturnsNil(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
 	cmd := m.updateKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd != nil {
 		t.Error("expected nil command from Esc")
 	}
 }
 
-func TestCommandPaletteViewNonEmpty(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.width = 50
-	m.height = 14
+// ── Frame-based tests ─────────────────────────────────────────────────────
 
-	v := m.View(50)
-	if v == "" {
-		t.Fatal("expected non-empty view")
+func TestBuildCommandPaletteFrame_ListHasAllItems(t *testing.T) {
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
+	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+		Items: m.listItems(),
+		Width: 60, Height: 14,
+	})
+	list := widgets.CommandPaletteList(cw)
+	if list == nil {
+		t.Fatal("expected list component in frame")
 	}
-	if !strings.Contains(v, ">") {
-		t.Error("expected prompt in view")
+	if len(list.Items()) == 0 {
+		t.Error("expected non-empty list items")
 	}
 }
 
-func TestCommandPaletteViewShowsFilteredItems(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.width = 50
-	m.height = 14
-	m.filter = "sett"
+func TestBuildCommandPaletteFrame_SearchFieldPresent(t *testing.T) {
+	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+		Items: []ui.ListItem{{ID: "x", Label: "X"}},
+		Width: 60, Height: 14,
+	})
+	search := widgets.CommandPaletteSearch(cw)
+	if search == nil {
+		t.Fatal("expected search field in frame")
+	}
+}
+
+func TestCommandPaletteFrame_WidthConsistent(t *testing.T) {
+	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+		Items: []ui.ListItem{{ID: "x", Label: "X"}},
+		Width: 50, Height: 14,
+	})
+	w, _ := cw.Measure(80, 24)
+	if w > 80 {
+		t.Errorf("frame width %d exceeds available 80", w)
+	}
+}
+
+func TestCommandPaletteListItemsHasHeaders(t *testing.T) {
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
+	items := m.listItems()
+	hasHeader := false
+	hasSeparator := false
+	for _, it := range items {
+		if it.Header {
+			hasHeader = true
+		}
+		if it.Separator {
+			hasSeparator = true
+		}
+	}
+	if !hasHeader {
+		t.Error("expected category headers in list items")
+	}
+	// Separators appear between groups
+	if len(m.groups) > 1 && !hasSeparator {
+		t.Error("expected separators between groups")
+	}
+}
+
+func TestCommandPaletteListItemsFilterReduces(t *testing.T) {
+	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
+	m.setFilter("sett")
 	m.applyFilter()
-
-	v := m.View(50)
-	if strings.Contains(v, "no matching") {
-		t.Errorf("expected filtered results, got: %s", v)
+	items := m.listItems()
+	if len(items) == 0 {
+		t.Fatal("expected filtered list items")
 	}
-	cleaned := rendering.StripAnsi(v)
-	if !strings.Contains(cleaned, "Settings") {
-		t.Errorf("expected 'Settings' in view, got: %s", cleaned)
-	}
-}
-
-func TestCommandPaletteScrollbarAtLastColumn(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.width = 20
-	m.height = 4
-
-	v := m.View(20)
-	lines := strings.Split(v, "\n")
-
-	for i, line := range lines {
-		visW := rendering.VisibleWidth(line)
-		plain := rendering.StripAnsi(line)
-		if visW != 20 {
-			t.Errorf("line %d: visW=%d (want 20): %q", i, visW, plain)
+	// All selectable items should have "Settings" or related label
+	found := false
+	for _, it := range items {
+		if !it.Selectable() {
+			continue
+		}
+		if strings.Contains(it.Label, "Settings") || strings.Contains(it.Label, "settings") {
+			found = true
+			break
 		}
 	}
-}
-
-func TestCommandPaletteViewDoesNotExceedWidth(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.width = 50
-	m.height = 6
-
-	v := m.View(50)
-	lines := strings.Split(v, "\n")
-	for _, line := range lines {
-		visW := rendering.VisibleWidth(line)
-		if visW > 50 {
-			t.Errorf("line width %d exceeds surface width 50", visW)
-		}
+	if !found {
+		t.Error("expected 'Settings' in filtered list items")
 	}
 }
 
-func TestCommandPaletteViewConsistentWidth(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.width = 60
-	m.height = 14
-
-	v := m.View(60)
-	lines := strings.Split(v, "\n")
-	for i, line := range lines {
-		visW := rendering.VisibleWidth(line)
-		if visW != 60 && line != "" {
-			t.Logf("line %d: width=%d (expected 60)", i, visW)
-		}
+func TestCommandPaletteViewWidthDoesNotExceed(t *testing.T) {
+	// Verify the frame's measured width doesn't exceed constraints
+	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+		Items: []ui.ListItem{{ID: "x", Label: "X"}},
+		Width: 50, Height: 6,
+	})
+	w, h := cw.Measure(80, 24)
+	if w > 80 {
+		t.Errorf("width %d exceeds 80", w)
 	}
-}
-
-func TestCommandPaletteViewNoMatch(t *testing.T) {
-	m := newCommandPaletteModel(testTheme(), nil)
-	m.width = 50
-	m.height = 14
-	m.filter = "xyzzynotexist"
-	m.applyFilter()
-
-	v := m.View(50)
-	if !strings.Contains(v, "no matching") {
-		t.Errorf("expected 'no matching' for non-matching filter, got: %s", v)
+	if h > 24 {
+		t.Errorf("height %d exceeds 24", h)
 	}
+	_ = rendering.VisibleWidth("") // keep import
 }

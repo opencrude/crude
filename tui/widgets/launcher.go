@@ -6,23 +6,15 @@ import (
 	"math"
 	"path/filepath"
 	"strings"
-	"time"
+
+	"charm.land/lipgloss/v2"
 
 	"crude/sessiondb"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-
-	"charm.land/lipgloss/v2"
+	"crude/tui/ui"
 )
-
-// FormatTurnCount formats a turn count for display.
-func FormatTurnCount(turns int) string {
-	if turns == 1 {
-		return "1 turn"
-	}
-	return fmt.Sprintf("%d turns", turns)
-}
 
 // LauncherItemKind identifies a selectable row in the welcome launcher.
 type LauncherItemKind int
@@ -75,57 +67,6 @@ type LauncherPaint struct {
 	WorkspaceScrollMax    int
 }
 
-// LauncherGroup is a date-grouped set of sessions (kept for grouping helpers).
-type LauncherGroup struct {
-	Label    string
-	Sessions []sessiondb.SessionMeta
-}
-
-// BuildLauncherGroups groups sessions by date for display.
-func BuildLauncherGroups(sessions []sessiondb.SessionMeta) []LauncherGroup {
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	yesterday := today.AddDate(0, 0, -1)
-
-	var groups []LauncherGroup
-	var currentKey string
-	var currentLabel string
-	var currentSessions []sessiondb.SessionMeta
-
-	for _, s := range sessions {
-		var key, label string
-		if s.CreatedAt > 0 {
-			t := time.Unix(0, s.CreatedAt)
-			day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-			key = day.Format("2006-01-02")
-			if day.Equal(today) {
-				label = "today"
-			} else if day.Equal(yesterday) {
-				label = "yesterday"
-			} else {
-				label = day.Format("Mon Jan 2, 2006")
-			}
-		} else {
-			key = "unknown"
-			label = "unknown"
-		}
-
-		if key != currentKey {
-			if len(currentSessions) > 0 {
-				groups = append(groups, LauncherGroup{Label: currentLabel, Sessions: currentSessions})
-			}
-			currentKey = key
-			currentLabel = label
-			currentSessions = nil
-		}
-		currentSessions = append(currentSessions, s)
-	}
-	if len(currentSessions) > 0 {
-		groups = append(groups, LauncherGroup{Label: currentLabel, Sessions: currentSessions})
-	}
-	return groups
-}
-
 // BuildLauncherItems builds the flat selectable list for the welcome screen.
 // Order: New Session, New Workspace, workspaces...
 // Sessions are not listed on the welcome screen (workspaces only on the right).
@@ -162,6 +103,7 @@ func RenderWelcomeLauncher(
 	width, height int,
 	spinFrame int,
 	idleSeconds float64,
+	shortcuts [][2]string,
 ) LauncherPaint {
 	if width < 40 {
 		width = 40
@@ -188,7 +130,7 @@ func RenderWelcomeLauncher(
 	var hits []LauncherHit
 	selectedLine := 0
 
-	// ── Full-width New Session hero ────────────────────────────────────
+	// Full-width New Session hero
 	if newSessionIdx >= 0 {
 		path := cwdPath
 		if rendering.VisibleWidth(path) > width-10 {
@@ -214,7 +156,7 @@ func RenderWelcomeLauncher(
 	lines = append(lines, padLine("", width))
 	lineToItem = append(lineToItem, -1)
 
-	// ── Two-column body ────────────────────────────────────────────────
+	// Two-column body
 	gap := 3
 	leftW := width * 40 / 100
 	if leftW < 24 {
@@ -235,7 +177,7 @@ func RenderWelcomeLauncher(
 		bodyH = 6
 	}
 
-	left := buildWelcomeLeftBody(items, openFolderIdx, selected, leftW, bodyH, spinFrame, idleSeconds, th)
+	left := buildWelcomeLeftBody(items, openFolderIdx, selected, leftW, bodyH, spinFrame, idleSeconds, th, shortcuts)
 	right, rightHits, rightMeta := buildWelcomeRightWorkspaces(
 		items, wsIdx, selected, listScroll, rightW, bodyH, filterActive, filterText, th,
 	)
@@ -300,7 +242,7 @@ func RenderWelcomeLauncher(
 		WorkspacePaneY1:       bodyY0 + bodyH - 1,
 		WorkspacePaneX0:       rightX0,
 		WorkspacePaneX1:       rightX0 + rightW - 1,
-		WorkspaceSearchY:      bodyY0,
+		WorkspaceSearchY:      bodyY0 + 1,
 		WorkspaceListY0:       bodyY0 + rightMeta.listY0,
 		WorkspaceListY1:       bodyY0 + rightMeta.listY1,
 		WorkspaceViewportH:    rightMeta.viewportH,
@@ -321,6 +263,7 @@ func buildWelcomeLeftBody(
 	openFolderIdx, selected, leftW, bodyH, spinFrame int,
 	idleSeconds float64,
 	th *theme.Theme,
+	shortcuts [][2]string,
 ) welcomeCol {
 	var col welcomeCol
 	push := func(s string, item int) {
@@ -347,7 +290,7 @@ func buildWelcomeLeftBody(
 	}
 
 	push(sectionHeader("Shortcuts", leftW, th), -1)
-	for _, sc := range welcomeShortcuts() {
+	for _, sc := range shortcuts {
 		key := sc[0]
 		for rendering.VisibleWidth(key) < 14 {
 			key += " "
@@ -364,20 +307,6 @@ func buildWelcomeLeftBody(
 		col.lineItem = col.lineItem[:bodyH]
 	}
 	return col
-}
-
-func welcomeShortcuts() [][2]string {
-	return [][2]string{
-		{"Ctrl+Shift+P", "Command palette"},
-		{"Ctrl+B", "Toggle sidebar"},
-		{"Ctrl+S", "Settings"},
-		{"Ctrl+O", "Attach file"},
-		{"Alt+C", "Composer"},
-		{"Ctrl+Q", "Close tab"},
-		{"Esc", "Cancel / dismiss"},
-		{"/", "Search workspaces"},
-		{"d", "Delete item"},
-	}
 }
 
 type workspacePaneMeta struct {
@@ -401,14 +330,7 @@ func buildWelcomeRightWorkspaces(
 		lines = append(lines, padLine(s, rightW))
 	}
 
-	searchStyle := lipgloss.NewStyle().Foreground(th.Colors.Fg)
 	mutedStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	accentStyle := lipgloss.NewStyle().Foreground(th.Colors.Accent).Bold(true)
-	searchValue := mutedStyle.Render("Search workspaces")
-	if filterActive {
-		searchValue = searchStyle.Render(filterText) + accentStyle.Render("█")
-	}
-	push(mutedStyle.Render("> ") + searchValue)
 
 	type workspaceRow struct {
 		item int
@@ -435,6 +357,25 @@ func buildWelcomeRightWorkspaces(
 	}
 	header := sectionHeader("Recent Workspaces", headerW, th) + " " + mutedStyle.Render(countLabel)
 	push(header)
+
+	// Shared filter paint (TextEdit engine when active).
+	var searchLine string
+	if filterActive {
+		ed := ui.NewTextEdit()
+		ed.SetValue(filterText)
+		// Cursor at end for display (launcher keeps engine in viewmodel; paint uses value).
+		ed.SetCursor(len([]rune(filterText)), false)
+		searchLine = ui.RenderFilterLine(th, ed, ui.FilterPaintOptions{
+			Prompt:      "> ",
+			Placeholder: "Search workspaces",
+			Width:       rightW,
+			Focused:     true,
+			BG:          th.Colors.SubPaneBg,
+		})
+	} else {
+		searchLine = mutedStyle.Render("> ") + mutedStyle.Render("Search workspaces")
+	}
+	push(searchLine)
 
 	meta.listY0 = 2
 	meta.viewportH = bodyH - meta.listY0
@@ -472,12 +413,13 @@ func buildWelcomeRightWorkspaces(
 		if end > len(rows) {
 			end = len(rows)
 		}
+		scrollM := ui.SyncScrollModel(nil, len(rows), meta.viewportH, listScroll)
 		for i := listScroll; i < end; i++ {
 			row := rows[i]
 			y0 := len(lines)
 			line := renderWorkspaceRow(selected == row.item, *row.ws, icons, th, rowW)
 			if showScrollbar {
-				line += renderWorkspaceScrollbarCell(i-listScroll, len(rows), meta.viewportH, listScroll, th)
+				line += ui.ScrollbarCellANSI(th, scrollM, i-listScroll)
 			}
 			push(line)
 			hits = append(hits, LauncherHit{X0: 0, Y0: y0, X1: rowW - 1, Y1: y0, ItemIdx: row.item})
@@ -559,26 +501,6 @@ func renderWorkspaceRow(selected bool, ws WorkspaceEntry, icons *filetree.IconRe
 	return padStyledLine(line, width, base)
 }
 
-func renderWorkspaceScrollbarCell(row, total, visible, scroll int, th *theme.Theme) string {
-	if total <= visible || visible <= 0 {
-		return " "
-	}
-	thumbH := visible * visible / total
-	if thumbH < 1 {
-		thumbH = 1
-	}
-	track := visible - thumbH
-	maxScroll := total - visible
-	thumbTop := 0
-	if track > 0 && maxScroll > 0 {
-		thumbTop = scroll * track / maxScroll
-	}
-	if row >= thumbTop && row < thumbTop+thumbH {
-		return lipgloss.NewStyle().Foreground(th.Colors.Accent).Render("┃")
-	}
-	return lipgloss.NewStyle().Foreground(th.Colors.Border).Render("│")
-}
-
 func padStyledLine(line string, width int, style lipgloss.Style) string {
 	if n := width - rendering.VisibleWidth(line); n > 0 {
 		line += style.Render(strings.Repeat(" ", n))
@@ -586,111 +508,11 @@ func padStyledLine(line string, width int, style lipgloss.Style) string {
 	return line
 }
 
-// renderCompactRow: accent bar when selected — never a filled Selection bg
-// (filled bg leaves black residual holes under ultraviolet reparse).
-func renderCompactRow(selected bool, title, sub string, th *theme.Theme, width, spinFrame int, idleSeconds float64) []string {
-	_ = spinFrame
-	_ = idleSeconds
-	bar := "  "
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(th.Colors.Fg)
-	if selected {
-		bar = lipgloss.NewStyle().Foreground(th.Colors.Accent).Render("▌ ")
-		titleStyle = titleStyle.Foreground(th.Colors.Accent)
-	}
-	t := rendering.TruncateLine(title, width-4)
-	s := rendering.TruncateLine(sub, width-4)
-	line1 := bar + titleStyle.Render(t)
-	line2 := "  " + th.Styles.DimLabel.Render(s)
-	return []string{padLine(line1, width), padLine(line2, width)}
-}
-
-func renderSessionRow(selected bool, title, sub, meta string, th *theme.Theme, width int) []string {
-	metaPart := ""
-	if meta != "" {
-		metaPart = "  " + meta
-	}
-	return renderCompactRow(selected, title+metaPart, sub, th, width, 0, 0)
-}
-
-func rotatingTip(spinFrame int) string {
-	tips := []string{
-		"Ctrl+Shift+P opens the command palette — quit lives there too.",
-		"New Workspace opens any project folder in Crude.",
-		"Sessions stay with their workspace — resume any thread.",
-		"Ctrl+B toggles the file tree without losing focus.",
-		"Esc cancels — it never quits the app.",
-		"Hover a card, click anywhere on it to open.",
-	}
-	return tips[(spinFrame/8000)%len(tips)]
-}
-
-func wrapPlain(s string, width int) []string {
-	if width < 8 {
-		width = 8
-	}
-	words := strings.Fields(s)
-	if len(words) == 0 {
-		return []string{""}
-	}
-	var lines []string
-	cur := words[0]
-	for _, w := range words[1:] {
-		if rendering.VisibleWidth(cur+" "+w) <= width {
-			cur += " " + w
-		} else {
-			lines = append(lines, cur)
-			cur = w
-		}
-	}
-	lines = append(lines, cur)
-	return lines
-}
-
 func sessionCountLabel(n int) string {
 	if n == 1 {
 		return "1 session"
 	}
 	return fmt.Sprintf("%d sessions", n)
-}
-
-func sessionDateLabel(s sessiondb.SessionMeta) string {
-	if s.CreatedAt <= 0 {
-		return "unknown"
-	}
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	yesterday := today.AddDate(0, 0, -1)
-	t := time.Unix(0, s.CreatedAt)
-	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-	if day.Equal(today) {
-		return "today"
-	}
-	if day.Equal(yesterday) {
-		return "yesterday"
-	}
-	return day.Format("Mon Jan 2, 2006")
-}
-
-func sessionCardText(s sessiondb.SessionMeta) (title, sub, meta string) {
-	title = s.ProjectName
-	if title == "" {
-		title = "untitled"
-	}
-	sub = ""
-	if s.FirstPrompt.Valid {
-		sub = s.FirstPrompt.String
-	}
-	if sub == "" && s.LastPrompt.Valid {
-		sub = s.LastPrompt.String
-	}
-	if sub == "" {
-		sub = s.ProjectPath
-	}
-	meta = FormatTurnCount(s.TurnCount)
-	if s.Model != "" {
-		meta += " · " + s.Model
-	}
-	return title, sub, meta
 }
 
 func sectionHeader(label string, width int, th *theme.Theme) string {
@@ -702,19 +524,7 @@ func sectionHeader(label string, width int, th *theme.Theme) string {
 	}
 	left := 0
 	right := remain
-	return th.Styles.Separator.Render(strings.Repeat("─", left) + content + strings.Repeat("─", right))
-}
-
-func renderLauncherDateSep(label string, width int, th *theme.Theme) string {
-	content := " " + label + " "
-	cw := rendering.VisibleWidth(content)
-	remain := width - cw
-	if remain < 0 {
-		remain = 0
-	}
-	left := remain / 2
-	right := remain - left
-	return th.Styles.Separator.Render(strings.Repeat("─", left) + content + strings.Repeat("─", right))
+	return th.Styles.Header.Render(strings.Repeat("─", left) + content + strings.Repeat("─", right))
 }
 
 // renderActionCard draws a full-width bordered card (4 lines). Every line is
@@ -851,45 +661,4 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// Legacy helpers kept for any external references during transition.
-
-// RenderPrimaryEntry draws a bordered primary action box.
-func RenderPrimaryEntry(selected bool, title, tagline, hint string, th *theme.Theme, width int, idleSeconds float64) []string {
-	return renderActionCard(selected, title, tagline, hint, th, width, 0, idleSeconds, false)
-}
-
-// RenderNewSessionEntry is kept for compatibility with older call sites/tests.
-func RenderNewSessionEntry(selected bool, th *theme.Theme, width int, spinFrame int, idleSeconds float64) []string {
-	return renderActionCard(
-		selected,
-		sparkle(spinFrame/10000)+" New Session",
-		"Start a blank canvas and explore new ideas...",
-		"enter ↵",
-		th, width, spinFrame, idleSeconds, true,
-	)
-}
-
-// RenderLauncher is a thin wrapper that renders sessions-only (no workspaces).
-// Prefer RenderWelcomeLauncher for the full welcome screen.
-func RenderLauncher(sessions []sessiondb.SessionMeta, selected int, filterActive bool, filterText string, th *theme.Theme, width, height, spinFrame int, idleSeconds float64) []string {
-	items := BuildLauncherItems(nil, sessions)
-	mapped := selected
-	if selected > 0 {
-		mapped = selected + 1 // skip New Workspace
-	}
-	paint := RenderWelcomeLauncher("", items, mapped, 0, filterActive, filterText, th, width, height, spinFrame, idleSeconds)
-	return paint.Lines
-}
-
-// RenderWorkspaceLauncher is retained for compatibility; prefer RenderWelcomeLauncher.
-func RenderWorkspaceLauncher(cwdName, cwdPath string, workspaces []WorkspaceEntry, selected int, filterActive bool, filterText string, th *theme.Theme, width, height, spinFrame int, idleSeconds float64) []string {
-	items := BuildLauncherItems(workspaces, nil)
-	mapped := selected
-	if selected > 0 {
-		mapped = selected + 1
-	}
-	paint := RenderWelcomeLauncher(cwdPath, items, mapped, 0, filterActive, filterText, th, width, height, spinFrame, idleSeconds)
-	return paint.Lines
 }

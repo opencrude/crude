@@ -17,6 +17,7 @@ import (
 	"crude/tui/scrollbar"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/ui"
 	"crude/tui/widget"
 )
 
@@ -97,7 +98,7 @@ type FilePicker struct {
 	current           string
 	entries           []fileEntry
 	selected          int
-	filter            string
+	filterEd          *ui.TextEdit // shared rune-safe filter engine
 	active            bool
 	mode              FilePickerMode
 	scrollbar         scrollbar.ScrollBar
@@ -153,12 +154,20 @@ func (m *FilePicker) open(root string, mode FilePickerMode) {
 	m.root = root
 	m.current = root
 	m.selected = 0
-	m.filter = ""
+	m.filterEd = ui.NewTextEdit()
 	m.active = true
 	m.mode = mode
 	m.lastClickIdx = -1
 	m.Hover.Clear()
 	m.loadEntries()
+}
+
+// filterText returns the current filter query.
+func (m FilePicker) filterText() string {
+	if m.filterEd == nil {
+		return ""
+	}
+	return m.filterEd.Value()
 }
 
 func (m FilePicker) Mode() FilePickerMode { return m.mode }
@@ -207,10 +216,10 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 				m.selected++
 			}
 		case tea.KeyBackspace:
-			if m.filter != "" {
-				r := []rune(m.filter)
-				m.filter = string(r[:len(r)-1])
-				m.selected = 0
+			if m.filterEd != nil && m.filterEd.Len() > 0 {
+				if ui.HandleFilterKey(m.filterEd, msg) {
+					m.selected = 0
+				}
 			} else if m.mode == FilePickerModeFolder || m.current != m.root {
 				parent := filepath.Dir(m.current)
 				if parent == m.current {
@@ -236,7 +245,7 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 			if entry.IsDir {
 				m.current = entry.Path
 				m.selected = 0
-				m.filter = ""
+				m.filterEd = ui.NewTextEdit()
 				m.lastClickIdx = -1
 				m.loadEntries()
 				return m, "", FilePickerNone, nil
@@ -250,11 +259,11 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 			if msg.String() == "ctrl+o" && m.mode == FilePickerModeFolder {
 				return m, m.current, FilePickerSelect, nil
 			}
-			for _, r := range msg.Text {
-				if r >= 32 {
-					m.filter += string(r)
-					m.selected = 0
-				}
+			if m.filterEd == nil {
+				m.filterEd = ui.NewTextEdit()
+			}
+			if ui.HandleFilterKey(m.filterEd, msg) {
+				m.selected = 0
 			}
 		}
 
@@ -304,7 +313,7 @@ func (m FilePicker) Update(msg tea.Msg) (FilePicker, string, FilePickerAction, t
 						if e.IsDir {
 							m.current = e.Path
 							m.selected = 0
-							m.filter = ""
+							m.filterEd = ui.NewTextEdit()
 							m.loadEntries()
 						} else if m.mode == FilePickerModeFile {
 							return m, e.Path, FilePickerSelect, nil
@@ -464,7 +473,6 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 
 	bgStyle := lipgloss.NewStyle().Background(m.th.Colors.SubPaneBg)
 	mutedStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Muted).Background(m.th.Colors.SubPaneBg)
-	filterStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.SubPaneBg)
 	accentStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Accent).Background(m.th.Colors.SubPaneBg).Bold(true)
 	highlightStyle := lipgloss.NewStyle().Foreground(m.th.Colors.Fg).Background(m.th.Colors.Selection).Bold(true)
 	dividerStyle := lipgloss.NewStyle().Foreground(m.th.Colors.PopupDivider).Background(m.th.Colors.SubPaneBg)
@@ -481,15 +489,21 @@ func (m *FilePicker) ViewInner(width, height, spinFrame int) []string {
 	}
 
 	var body []string
-	filterValue := filterStyle.Render(m.filter)
-	if m.filter == "" {
-		placeholder := "Search files"
-		if m.mode == FilePickerModeFolder {
-			placeholder = "Search folders"
-		}
-		filterValue = mutedStyle.Render(placeholder)
+	placeholder := "Search files"
+	if m.mode == FilePickerModeFolder {
+		placeholder = "Search folders"
 	}
-	body = append(body, padTo(mutedStyle.Render("> ")+filterValue+accentStyle.Render("█"), contentW))
+	if m.filterEd == nil {
+		m.filterEd = ui.NewTextEdit()
+	}
+	filterLine := ui.RenderFilterLine(m.th, m.filterEd, ui.FilterPaintOptions{
+		Prompt:      "> ",
+		Placeholder: placeholder,
+		Width:       contentW,
+		Focused:     true,
+		BG:          m.th.Colors.SubPaneBg,
+	})
+	body = append(body, padTo(filterLine, contentW))
 	body = append(body, dividerStyle.Render(strings.Repeat("─", contentW)))
 	body = append(body, padTo(m.renderBreadcrumb(contentW, len(entries)), contentW))
 
@@ -702,10 +716,11 @@ func (m *FilePicker) loadEntries() {
 }
 
 func (m FilePicker) visibleEntries() []fileEntry {
-	if m.filter == "" {
+	ft := m.filterText()
+	if ft == "" {
 		return m.entries
 	}
-	filter := strings.ToLower(m.filter)
+	filter := strings.ToLower(ft)
 	var out []fileEntry
 	for _, entry := range m.entries {
 		if strings.Contains(strings.ToLower(entry.Name), filter) {

@@ -3,13 +3,13 @@ package components
 import (
 	"fmt"
 	"strings"
-	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 type ListItem struct {
@@ -65,7 +65,7 @@ type List struct {
 	title      string
 	items      []ListItem
 	filtered   []ListItem
-	filter     string
+	filterEd   *ui.TextEdit // shared rune-safe filter engine
 	idx        int
 	offset     int
 	pageSize   int
@@ -84,7 +84,22 @@ type List struct {
 }
 
 func NewList(t *theme.Theme, pageSize int) List {
-	return List{theme: t, pageSize: pageSize}
+	return List{theme: t, pageSize: pageSize, filterEd: ui.NewTextEdit()}
+}
+
+func (m *List) ensureFilterEd() *ui.TextEdit {
+	if m.filterEd == nil {
+		m.filterEd = ui.NewTextEdit()
+	}
+	return m.filterEd
+}
+
+// filterText returns the current filter string.
+func (m List) filterText() string {
+	if m.filterEd == nil {
+		return ""
+	}
+	return m.filterEd.Value()
 }
 
 func (m List) Update(msg tea.Msg) (List, tea.Cmd) {
@@ -127,7 +142,7 @@ func (m List) updateKey(keyMsg tea.KeyPressMsg) (List, tea.Cmd) {
 			m.action = ListActionCancel
 			return m, nil
 		}
-		m.filter = ""
+		m.ensureFilterEd().SetValue("")
 		m.filtered = nil
 		m.idx = 0
 		m.offset = 0
@@ -174,19 +189,11 @@ func (m List) updateKey(keyMsg tea.KeyPressMsg) (List, tea.Cmd) {
 			m.idx = len(m.filtered) - 1
 		}
 		m.clampOffset()
-	case tea.KeyBackspace, tea.KeyDelete:
-		if m.config.ShowFilter && len(m.filter) > 0 {
-			runes := []rune(m.filter)
-			m.filter = string(runes[:len(runes)-1])
-			m.applyFilter()
-		}
 	default:
 		if m.config.ShowFilter {
-			for _, r := range keyMsg.Text {
-				if unicode.IsPrint(r) {
-					m.filter += string(r)
-					m.applyFilter()
-				}
+			ed := m.ensureFilterEd()
+			if ui.HandleFilterKey(ed, keyMsg) {
+				m.applyFilter()
 			}
 		}
 	}
@@ -222,19 +229,20 @@ func (m List) viewPopup(width int) string {
 	accent := m.theme.Styles.InputPrompt
 	dim := m.theme.Styles.DimLabel
 	highlight := m.theme.Styles.Highlight
-	fg := m.theme.Colors.Fg
-	muted := m.theme.Colors.Muted
 
 	if m.config.ShowFilter {
-		var b strings.Builder
-		promptStyle := lipgloss.NewStyle().Foreground(muted)
-		textStyle := lipgloss.NewStyle().Foreground(fg)
-		cursorStyle := lipgloss.NewStyle().Foreground(m.theme.Colors.Accent)
-		b.WriteString(promptStyle.Render("/ "))
-		b.WriteString(textStyle.Render(m.filter))
-		b.WriteString(cursorStyle.Render("█"))
+		ed := m.filterEd
+		if ed == nil {
+			ed = ui.NewTextEdit()
+		}
+		filterLine := ui.RenderFilterLine(m.theme, ed, ui.FilterPaintOptions{
+			Prompt:  "/ ",
+			Width:   width,
+			Focused: true,
+			BG:      m.theme.Colors.Bg,
+		})
 		var lines []string
-		lines = append(lines, b.String())
+		lines = append(lines, filterLine)
 		lines = append(lines, dim.Render(strings.Repeat("─", width)))
 		items := m.viewPopupItems(width, accent, dim, highlight)
 		lines = append(lines, items...)
@@ -327,13 +335,16 @@ func (m List) viewPanel(width int) string {
 	if m.fetchError != "" {
 		b.WriteString(m.theme.Styles.ErrorText.Render("✗ "+m.fetchError) + "\n")
 	} else if m.config.ShowFilter {
-		filterPrompt := lipgloss.NewStyle().Foreground(muted).Render("/ ")
-		searchText := lipgloss.NewStyle().Foreground(fg).Render(m.filter)
-		cursor := " "
-		if BlinkOn(m.spinFrame) {
-			cursor = lipgloss.NewStyle().Foreground(accent).Render("█")
+		ed := m.filterEd
+		if ed == nil {
+			ed = ui.NewTextEdit()
 		}
-		b.WriteString(filterPrompt + searchText + cursor + "\n")
+		b.WriteString(ui.RenderFilterLine(m.theme, ed, ui.FilterPaintOptions{
+			Prompt:  "/ ",
+			Width:   width,
+			Focused: true,
+			BG:      m.theme.Colors.Bg,
+		}) + "\n")
 	}
 
 	b.WriteString(dim.Render(strings.Repeat("─", sepWidth)) + "\n")
@@ -343,7 +354,7 @@ func (m List) viewPanel(width int) string {
 		spinnerStyle := lipgloss.NewStyle().Foreground(accent)
 		b.WriteString(spinnerStyle.Render(spinner) + " " + dim.Render("waiting for models...") + "\n")
 	} else if len(m.filtered) == 0 {
-		if m.filter != "" {
+		if m.filterText() != "" {
 			b.WriteString(dim.Render("no matches — press enter to use typed value") + "\n")
 		} else if m.fetchError != "" {
 		} else {
@@ -460,8 +471,13 @@ func (m *List) SetFetchError(err string) {
 }
 
 func (m *List) SetFilter(s string) {
-	m.filter = s
+	m.ensureFilterEd().SetValue(s)
 	m.applyFilter()
+}
+
+// Filter returns the current filter text.
+func (m List) Filter() string {
+	return m.filterText()
 }
 
 func (m *List) SetSpinFrame(frame int) {
@@ -492,7 +508,7 @@ func (m List) Hint() string {
 	} else if m.fetching {
 		h = "fetching... · esc cancel"
 	} else if len(m.filtered) == 0 {
-		if m.filter != "" {
+		if m.filterText() != "" {
 			h = "no matches · enter: use typed value · esc cancel"
 		} else {
 			h = "esc cancel"
@@ -523,7 +539,7 @@ func (m List) Selected() (ListItem, bool) {
 
 func (m List) TypedValue() string {
 	if len(m.filtered) == 0 {
-		return m.filter
+		return m.filterText()
 	}
 	return ""
 }
@@ -536,7 +552,7 @@ func (m *List) applyFilter() {
 	m.filtered = nil
 	m.idx = 0
 	m.offset = 0
-	s := strings.ToLower(m.filter)
+	s := strings.ToLower(m.filterText())
 	for _, item := range m.items {
 		if m.FilterMatchFn != nil {
 			if m.FilterMatchFn(item, s) {

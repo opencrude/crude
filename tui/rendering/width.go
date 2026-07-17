@@ -8,11 +8,11 @@ import (
 // Crude layout, surface cell packing, and (via Bubble Tea) ultraviolet.
 //
 // Strategy (Kitty, Ghostty, WezTerm, Contour, foot, Windows Terminal grapheme mode):
-//   - Grapheme clusters (UAX #29), not per-codepoint wcwidth
-//   - Width ∈ {0, 1, 2} only (WT/Ghostty/foot cap)
-//   - Emoji / ZWJ / VS16 → 2
-//   - VS15 text presentation → 1
-//   - Symbol exceptions (☰ U+2630–2637) → 1 where tables say 2 but terminals advance 1
+// - Grapheme clusters (UAX #29), not per-codepoint wcwidth
+// - Width ∈ {0, 1, 2} only (WT/Ghostty/foot cap)
+// - Emoji / ZWJ / VS16 → 2
+// - VS15 text presentation → 1
+// - Symbol exceptions (☰ U+2630–2637) → 1 where tables say 2 but terminals advance 1
 //
 // Vendored x/ansi applies correctClusterWidth inside FirstGraphemeCluster so
 // layout and UV always share one number. Never mix bare runewidth/uniseg.

@@ -627,12 +627,13 @@ func (m *App) renderLauncherMainView(innerW, chatH int) []string {
 		m.launcher.selected,
 		m.launcher.workspaceScroll,
 		m.launcher.filterActive,
-		m.launcher.filterText,
+		m.launcher.filterText(),
 		m.Theme,
 		innerW,
 		chatH,
 		m.SpinFrame,
 		idleSeconds,
+		m.launcherShortcuts(),
 	)
 	m.launcher.SetPaint(paint)
 	m.launcher.ensureSelectedVisible(chatH)
@@ -818,8 +819,13 @@ func (m *App) renderStatusbarToSurface() {
 }
 
 func (m *App) contextualHelpView() string {
+	if m.windowManager != nil {
+		if fw := m.windowManager.Focused(); fw != nil && fw.ID == findInFilesWindowID {
+			return "type to search  ·  ↑↓ preview  ·  enter open  ·  double-click open  ·  ctrl+r regex  ·  esc close"
+		}
+	}
 	if m.launcher != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		return m.launcher.HelpView()
+		return m.launcher.HelpView(m.actionRegistry)
 	}
 	if m.FocusStack != nil && m.FocusStack.Top() == FocusTabBar {
 		return compactStatusHint(m.FormHint)

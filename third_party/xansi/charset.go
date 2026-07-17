@@ -7,20 +7,20 @@ package ansi
 //
 // Where Ps is the G-set character designator, and Pd is the identifier.
 // For 94-character sets, the designator can be one of:
-//   - ( G0
-//   - ) G1
-//   - * G2
-//   - + G3
+// - ( G0
+// - ) G1
+// - * G2
+// - + G3
 //
 // For 96-character sets, the designator can be one of:
-//   - - G1
-//   - . G2
-//   - / G3
+// - - G1
+// - . G2
+// - / G3
 //
 // Some common 94-character sets are:
-//   - 0 DEC Special Drawing Set
-//   - A United Kingdom (UK)
-//   - B United States (USASCII)
+// - 0 DEC Special Drawing Set
+// - A United Kingdom (UK)
+// - B United States (USASCII)
 //
 // Examples:
 //

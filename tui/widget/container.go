@@ -283,9 +283,9 @@ func (c *Container) Render(surf *surface.Surface, ctx *RenderContext) {
 
 // Measure implements Widget. It returns the size needed by the container's
 // children according to the layout strategy:
-//   - StackLayout: sum of child sizes along the stack axis, max on the other
-//   - OverlayLayout: max of all child sizes on both axes
-//   - FreeLayout: the full available space (children are manually positioned)
+// - StackLayout: sum of child sizes along the stack axis, max on the other
+// - OverlayLayout: max of all child sizes on both axes
+// - FreeLayout: the full available space (children are manually positioned)
 func (c *Container) Measure(availW, availH int) (int, int) {
 	if len(c.children) == 0 {
 		return availW, availH

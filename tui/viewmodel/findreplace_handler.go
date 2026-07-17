@@ -7,6 +7,7 @@ import (
 
 	"crude/clipboard"
 	"crude/tui/rendering"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
 )
@@ -77,61 +78,83 @@ func (m *App) openFindReplace(replaceMode bool) {
 // but highlights stop rendering because Open is set to false on the
 // editor's SearchState.
 func (m *App) closeFindReplace() {
-	if m.EditorState.Editor != nil {
-		m.EditorState.Editor.SetSearchOpen(false)
-	}
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow("find-replace")
-	}
-	m.FindReplace = nil
+	m.overlayHost.Close(ui.OverlayFindReplace)
 }
 
 // refreshFindReplacePopup rebuilds the floating window's content
-// lines. Called when the user types, toggles an option, or
-// navigates.
+// using a WindowFrame popover. Called when the user types, toggles,
+// or navigates.
 func (m *App) refreshFindReplacePopup() {
 	if m.windowManager == nil || m.FindReplace == nil {
 		return
 	}
-	lines := widgets.FindReplaceLines(m.Theme, m.FindReplace)
-	pop := widgets.NewPopupContent(lines)
-
-	// FindReplaceLines now self-renders the unified popup chrome.
-	// Use the popup's own width/height functions.
-	w := widgets.FindReplacePopupWidth(m.FindReplace)
-	h := len(lines)
+	fr := m.FindReplace
+	w := widgets.FindReplacePopupWidth(fr)
+	h := widgets.FindReplacePopupHeight(fr)
 
 	if fw := m.windowManager.Window("find-replace"); fw != nil {
-		// Just refresh the content. Don't re-center, since the
-		// user may have moved it.
+		// Mutate existing frame content
+		if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+			find := widgets.FindReplaceFrameFindField(cw)
+			if find != nil && find.Value() != fr.Query() {
+				find.SetValue(fr.Query())
+			}
+			if fr.ReplaceMode {
+				replace := widgets.FindReplaceFrameReplaceField(cw)
+				if replace != nil && replace.Value() != fr.Replace() {
+					replace.SetValue(fr.Replace())
+				}
+			}
+			fw.SetSize(w, h)
+			fw.MarkContentDirty()
+			return
+		}
+		// Fallback: rebuild frame
+		frame := widgets.BuildFindReplaceFrame(m.Theme, widgets.FindReplaceFrameSpec{
+			FindValue:    fr.Query(),
+			ReplaceValue: fr.Replace(),
+			ReplaceMode:  fr.ReplaceMode,
+			FocusedField: fr.FocusedField,
+			Width:        w,
+			Height:       h,
+		})
+		fw.SetContent(frame)
 		fw.SetSize(w, h)
-		fw.SetContent(pop)
 		fw.MarkContentDirty()
 		return
 	}
 
 	// First time: create and position above the active editor.
 	layout := m.computeLayout()
-
-	// The chrome is self-rendered. The FloatingWindow is a plain
-	// positioned box.
-	fw := wm.NewFloatingWindow("find-replace", "", pop, w, h,
+	frame := widgets.BuildFindReplaceFrame(m.Theme, widgets.FindReplaceFrameSpec{
+		FindValue:    fr.Query(),
+		ReplaceValue: fr.Replace(),
+		ReplaceMode:  fr.ReplaceMode,
+		FocusedField: fr.FocusedField,
+		Width:        w,
+		Height:       h,
+	})
+	fw := wm.NewFloatingWindow(string(ui.OverlayFindReplace), "", frame, w, h,
 		wm.WithDecoration(false),
 		wm.WithMovable(false),
 		wm.WithResizable(false),
 		wm.WithClosable(false),
-		wm.WithModal(false), // not modal — user can still click editor
+		wm.WithModal(false),
 		wm.WithFocusable(true),
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
-	// Position in the top-right of the editor area, with margin.
 	x := layout.SidebarW + m.EditorState.Editor.PadL + (layout.EditorW - w) - 2
 	if x < layout.SidebarW {
 		x = layout.SidebarW + 2
 	}
 	y := layout.ChatAreaTop + 1
 	fw.SetPosition(x, y)
-	m.windowManager.AddWindow(fw)
+	m.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), func() {
+		if m.EditorState.Editor != nil {
+			m.EditorState.Editor.SetSearchOpen(false)
+		}
+		m.FindReplace = nil
+	})
 }
 
 // pasteIntoFindReplace reads the system clipboard and inserts the
@@ -298,19 +321,46 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.pasteIntoFindReplace(fr)
 	}
 
-	// All other keys: delegate to the focused input's TextInput.
-	// This gives us character insertion, Backspace, Delete, Left/Right,
-	// Home/End, Ctrl+Left/Right (word motion), Ctrl+E/U/K/W (line ops),
-	// Up/Down (history-like, harmless for single-line fields), etc.
+	// All other keys: delegate to the focused input's TextInput,
+	// then sync the value to the frame's TextField for paint.
 	input := fr.ActiveInput()
 	if input != nil {
 		oldVal := input.Value()
 		updated, cmd := input.Update(msg, false)
 		*input = updated
-		if input.Value() != oldVal && fr.OnChange != nil {
-			fr.OnChange()
+		if input.Value() != oldVal {
+			if fr.OnChange != nil {
+				fr.OnChange()
+			}
+			// Sync to frame TextField
+			m.syncFindReplaceFrameFromState()
 		}
 		return cmd
 	}
 	return nil
+}
+
+// syncFindReplaceFrameFromState copies the FindReplaceState's TextInput
+// values to the frame's TextField for paint.
+func (m *App) syncFindReplaceFrameFromState() {
+	if m.windowManager == nil || m.FindReplace == nil {
+		return
+	}
+	fw := m.windowManager.Window("find-replace")
+	if fw == nil {
+		return
+	}
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+		find := widgets.FindReplaceFrameFindField(cw)
+		if find != nil {
+			find.SetValue(m.FindReplace.Query())
+		}
+		if m.FindReplace.ReplaceMode {
+			replace := widgets.FindReplaceFrameReplaceField(cw)
+			if replace != nil {
+				replace.SetValue(m.FindReplace.Replace())
+			}
+		}
+		fw.MarkContentDirty()
+	}
 }

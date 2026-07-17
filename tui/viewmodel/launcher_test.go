@@ -13,6 +13,7 @@ import (
 	"crude/tui/input"
 	"crude/tui/theme"
 	"crude/tui/types"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/window"
 	"crude/workspace"
@@ -44,10 +45,11 @@ func newTestAppWithLauncher(t *testing.T) *App {
 			ActiveSession: &workspace.Session{},
 			Logger:        &testLogger{},
 		},
-		OverlayState: NewOverlayState(),
-		LSPPopup:     NewLSPPopupState(),
-		EditorState:  NewEditorState(),
-		launcher:     NewLauncherState(".", nil),
+		OverlayState:   NewOverlayState(),
+		LSPPopup:       NewLSPPopupState(),
+		EditorState:    NewEditorState(),
+		launcher:       NewLauncherState(".", nil),
+		actionRegistry: ui.DefaultRegistry(),
 	}
 	app.Win = window.New(th)
 	app.Overlay = window.New(th)
@@ -273,8 +275,8 @@ func TestLauncherWorkspaceSearchKeepsActionsFixed(t *testing.T) {
 	if !launcher.workspaceVisible(launcher.selected) {
 		t.Fatalf("selection should move into filtered workspace results, selected=%d", launcher.selected)
 	}
-	if !strings.Contains(launcher.HelpView(), "type search") {
-		t.Fatalf("active search help missing: %q", launcher.HelpView())
+	if !strings.Contains(launcher.HelpView(nil), "type search") {
+		t.Fatalf("active search help missing: %q", launcher.HelpView(nil))
 	}
 }
 
@@ -305,6 +307,7 @@ func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
 		app.ChatAreaHeight,
 		0,
 		0,
+		nil,
 	)
 	app.launcher.SetPaint(paint)
 

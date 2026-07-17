@@ -14,28 +14,28 @@ Build a production-grade multi-window compositing engine for the Crude TUI that:
 ## 2. Architecture Layers
 
 ```
-┌──────────────────────────────────────────────────────────┐
+┌                             ┐
 │  Layer 4: Application                                    │
 │  (viewmodel, App, mode routing, existing business logic)  │
-├──────────────────────────────────────────────────────────┤
+├                             ┤
 │  Layer 3: Window Manager (tui/wm/)                      │
-│  (FloatingWindow, WindowManager, decorations, focus,     │
+│  (FloatingWindow, WindowManager, focus, frame hit-test,  │
 │   z-order, drag, resize, hit-testing)                    │
-├──────────────────────────────────────────────────────────┤
+├                             ┤
 │  Layer 2.5: Widget Interface (tui/widget/)              │
 │  (Widget, RenderContext, Container, adapters)            │
-├──────────────────────────────────────────────────────────┤
+├                             ┤
 │  Layer 2: Compositor (tui/compositor/)                   │
 │  (Compositor, double-buffer, damage tracking, cell diff, │
 │   ANSI output generation)                                │
-├──────────────────────────────────────────────────────────┤
+├                             ┤
 │  Layer 1: Surface System (tui/surface/)                  │
 │  (CellBuffer, Surface hierarchy, Rect, ClipStack,       │
 │   compositing operations: blit, blend, merge)            │
-├──────────────────────────────────────────────────────────┤
+├                             ┤
 │  Layer 0: Cell Primitives (tui/cell/)                    │
 │  (Cell type, Color, Attributes, pool-based interning)    │
-└──────────────────────────────────────────────────────────┘
+└                             ┘
 ```
 
 Each layer depends ONLY on the layer directly below it. No upward dependencies.
@@ -44,28 +44,30 @@ Each layer depends ONLY on the layer directly below it. No upward dependencies.
 
 ```
 tui/
-├── cell/                    # Layer 0: Cell primitives
-│   ├── cell.go             # Cell, Color, Attributes types
-│   └── pool.go             # CharPool, StylePool (internment)
-├── surface/                 # Layer 1: Surface system
-│   ├── buffer.go           # CellBuffer (2D cell array, operations)
-│   ├── surface.go          # Surface (buffer + position + hierarchy)
-│   ├── rect.go             # Rect, geometry utilities
-│   ├── clip.go             # ClipStack (scissor clipping)
-│   └── compose.go          # Blit, blend, merge operations
-├── compositor/              # Layer 2: Compositing engine
-│   ├── compositor.go       # Compositor (frame pipeline, double-buffer)
-│   ├── damage.go           # DamageRegion tracking
-│   ├── diff.go             # Cell diff between front/back buffers
-│   └── output.go           # ANSI output generation from cell buffer
-├── wm/                      # Layer 3: Window manager
-│   ├── window.go           # FloatingWindow struct and lifecycle
-│   ├── manager.go          # WindowManager (focus, z-order, hit-test)
-│   ├── decoration.go       # Window chrome (borders, title bar, buttons)
-│   └── interaction.go      # Drag, resize, mouse handling
-├── widget/                  # Layer 2.5: Widget interface
-│   ├── widget.go           # Widget interface, RenderContext
-│   └── container.go        # Container widget (holds children, layout)
+├  cell/                    # Layer 0: Cell primitives
+│   ├  cell.go             # Cell, Color, Attributes types
+│   └  pool.go             # CharPool, StylePool (internment)
+├  surface/                 # Layer 1: Surface system
+│   ├  buffer.go           # CellBuffer (2D cell array, operations)
+│   ├  surface.go          # Surface (buffer + position + hierarchy)
+│   ├  rect.go             # Rect, geometry utilities
+│   ├  clip.go             # ClipStack (scissor clipping)
+│   └  compose.go          # Blit, blend, merge operations
+├  compositor/              # Layer 2: Compositing engine
+│   ├  compositor.go       # Compositor (frame pipeline, double-buffer)
+│   ├  damage.go           # DamageRegion tracking
+│   ├  diff.go             # Cell diff between front/back buffers
+│   └  output.go           # ANSI output generation from cell buffer
+├  wm/                      # Layer 3: Window manager
+│   ├  window.go           # FloatingWindow struct and lifecycle
+│   ├  manager.go          # WindowManager (focus, z-order, hit-test)
+│   └  interaction.go      # Drag, resize, mouse handling
+├  ui/                      # Retained components and unified visual chrome
+│   ├  window_frame.go     # Window/Dialog/Popover border, title, close paint
+│   └  component_widget.go # Component/WindowFrame bridge into FloatingWindow
+├  widget/                  # Layer 2.5: Widget interface
+│   ├  widget.go           # Widget interface, RenderContext
+│   └  container.go        # Container widget (holds children, layout)
 ```
 
 ## 4. Layer 0: Cell Primitives (tui/cell/)
@@ -157,8 +159,8 @@ func (a Attrs) Has(mask Attrs) bool { return a&mask == mask }
 //
 // Each cell occupies one or more columns on the terminal grid.
 // A wide character (CJK, emoji) occupies 2 columns and produces:
-//   - Cell{Char: '界', Width: 2} at column N
-//   - Cell{Char: 0, Width: 0} at column N+1 (continuation cell)
+// - Cell{Char: '界', Width: 2} at column N
+// - Cell{Char: 0, Width: 0} at column N+1 (continuation cell)
 //
 // A Transparent cell does not overwrite the cell below during compositing.
 // This is how "holes" in floating windows let background content show through.
@@ -292,10 +294,10 @@ func FullRect(w, h int) Rect { return Rect{0, 0, w, h} }
 // Access pattern: buffer.cells[y * buffer.width + x]
 //
 // Operations on CellBuffer:
-//   - Set/Get individual cells
-//   - Fill a region with a base cell
-//   - Write a string of text into a row
-//   - Resize (reallocates the buffer)
+// - Set/Get individual cells
+// - Fill a region with a base cell
+// - Write a string of text into a row
+// - Resize (reallocates the buffer)
 type CellBuffer struct {
     cells  []cell.Cell
     width  int
@@ -331,8 +333,8 @@ func (b *CellBuffer) Resize(w, h int) { ... }
 
 // WriteString writes a string of text starting at position (x, y)
 // using the given style. Handles wide characters correctly:
-//   - Wide chars (width=2) write the char at column N and a continuation at N+1
-//   - If a wide char would be split across the buffer edge, it is truncated
+// - Wide chars (width=2) write the char at column N and a continuation at N+1
+// - If a wide char would be split across the buffer edge, it is truncated
 func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr cell.Attrs) int {
     // Uses uniseg.GraphemeClusterCount for proper grapheme iteration
     // Uses uniseg.StringWidth for width calculation
@@ -364,20 +366,20 @@ func (b *CellBuffer) Row(y int) []cell.Cell { ... }
 // and can have child surfaces positioned relative to itself.
 //
 // Hierarchy model (like Notcurses ncplanes):
-//   - Each surface has a position (X, Y) relative to its parent
-//   - Children are composited on top of their parent in z-order
-//   - Moving a parent moves all children with it
-//   - A surface clips its children to its own bounds
+// - Each surface has a position (X, Y) relative to its parent
+// - Children are composited on top of their parent in z-order
+// - Moving a parent moves all children with it
+// - A surface clips its children to its own bounds
 //
 // Z-Order model:
-//   - Children with higher ZOrder are rendered on top
-//   - Within the same ZOrder, later children are on top (append order)
-//   - The compositor flattens the tree into a z-sorted list for compositing
+// - Children with higher ZOrder are rendered on top
+// - Within the same ZOrder, later children are on top (append order)
+// - The compositor flattens the tree into a z-sorted list for compositing
 //
 // Transparency model:
-//   - A cell with Transparent=true does not overwrite the cell below
-//   - Empty (blank) cells can be transparent or opaque (depending on BG color)
-//   - A surface with Alpha < 1.0 blends its cells over the parent
+// - A cell with Transparent=true does not overwrite the cell below
+// - Empty (blank) cells can be transparent or opaque (depending on BG color)
+// - A surface with Alpha < 1.0 blends its cells over the parent
 type Surface struct {
     id       string
     buffer   *CellBuffer
@@ -545,10 +547,10 @@ package compositor
 // Compositor manages the double-buffer frame pipeline.
 //
 // Frame lifecycle:
-//   1. BeginFrame() — clear back buffer, reset damage
-//   2. App renders widgets into surfaces
-//   3. Composite() — flatten surface tree, composite bottom-to-top into back buffer
-//   4. Present() — diff back vs front, generate ANSI output, swap buffers
+// 1. BeginFrame() — clear back buffer, reset damage
+// 2. App renders widgets into surfaces
+// 3. Composite() — flatten surface tree, composite bottom-to-top into back buffer
+// 4. Present() — diff back vs front, generate ANSI output, swap buffers
 //
 // The compositor owns the screen-sized cell buffers and manages the
 // conversion from cell buffer → ANSI escape sequences for the terminal.
@@ -600,10 +602,10 @@ func (c *Compositor) BeginFrame() { ... }
 func (c *Compositor) Composite() { ... }
 
 // Present finalizes the frame:
-//   1. Diffs back buffer vs front buffer (within damage region)
-//   2. Generates optimized ANSI output for changed cells
-//   3. Swaps front and back buffers
-//   4. Returns the ANSI output string
+// 1. Diffs back buffer vs front buffer (within damage region)
+// 2. Generates optimized ANSI output for changed cells
+// 3. Swaps front and back buffers
+// 4. Returns the ANSI output string
 //
 // The returned string can be passed directly to Bubble Tea's View() return value.
 func (c *Compositor) Present() string { ... }
@@ -695,10 +697,10 @@ func DiffRow(front, back *surface.CellBuffer, y int, minX, maxX int) []CellChang
 // ANSI SGR (Select Graphic Rendition) sequences for colors and attributes.
 //
 // Optimization strategy:
-//   1. Track the "current style" cursor (fg, bg, attrs)
-//   2. Only emit SGR sequences when the style changes
-//   3. Group consecutive cells with the same style
-//   4. For diff-based output: only emit changed rows/cells
+// 1. Track the "current style" cursor (fg, bg, attrs)
+// 2. Only emit SGR sequences when the style changes
+// 3. Group consecutive cells with the same style
+// 4. For diff-based output: only emit changed rows/cells
 //
 // Performance note: this function is called every frame (16ms when streaming).
 // The inner loop must be tight. Avoid string concatenation in the hot path;
@@ -735,11 +737,11 @@ package widget
 // This replaces the informal "has a View() string" pattern used currently.
 // Widgets now render into a Surface (cell buffer) rather than returning
 // ANSI strings. This enables:
-//   - Compositing at the cell level
-//   - Overlapping widgets
-//   - Transparency
-//   - Proper clipping
-//   - Damage tracking
+// - Compositing at the cell level
+// - Overlapping widgets
+// - Transparency
+// - Proper clipping
+// - Damage tracking
 //
 // A Widget is also a tea.Model — it can receive Bubble Tea messages
 // and return commands. This integrates with the existing event system.
@@ -803,8 +805,8 @@ func (ctx *RenderContext) WithFocus(focused bool) *RenderContext { ... }
 // onto the container's own surface.
 //
 // This enables virtually infinite nesting:
-//   App → Container → FloatingWindow → Container → TabBar + Content
-//     → Container → SplitPane → Container → Widget
+// App → Container → FloatingWindow → Container → TabBar + Content
+//   → Container → SplitPane → Container → Widget
 type Container struct {
     id       string
     children []ChildWidget
@@ -860,26 +862,26 @@ func (c *Container) Measure(availW, availH int) (int, int) { ... }
 ```go
 package wm
 
-// FloatingWindow is a decorated, interactive surface that floats above other content.
+// FloatingWindow is an interactive surface that floats above other content.
 //
 // A FloatingWindow has:
-//   - A content surface (where the widget renders)
-//   - Decorations (border, title bar, close button) drawn by the window manager
-//   - Interaction state (drag, resize, focus)
-//   - Z-order position among other windows
+// - A full-size content surface (where ui.WindowFrame + body render)
+// - Frame interaction geometry used by the window manager
+// - Interaction state (drag, resize, focus)
+// - Z-order position among other windows
 //
-// The window surface includes both the decoration and content areas.
-// The decoration occupies the border rows/columns; the content is the inner area.
+// The WM never paints visual chrome. ui.WindowFrame owns border, background,
+// title, close glyph, padding, and the inner content rectangle.
 type FloatingWindow struct {
     ID         string
     Title      string
     content    widget.Widget      // The widget inside this window
-    surf       *surface.Surface   // This window's rendering surface (decoration + content)
+    surf       *surface.Surface   // This window's placement/z-order surface
     x, y       int                // Position (screen coordinates)
-    w, h       int                // Size (including decorations)
+    w, h       int                // Full WindowFrame size
     minW, minH int                // Minimum size
     maxW, maxH int                // Maximum size (0 = unlimited)
-    decorated  bool               // Has border + title bar
+    decorated  bool               // Enables WindowFrame-aligned hit regions
     movable    bool               // Can be dragged
     resizable  bool               // Can be resized
     closable   bool               // Has close button
@@ -899,11 +901,7 @@ type FloatingWindow struct {
     resizeStartW int
     resizeStartH int
 
-    // Decoration config
-    borderStyle  BorderStyle
-    titleAlign   TextAlign
-
-    // Content area (inner bounds, excluding decorations)
+    // Full content surface; WindowFrame calculates visual insets once.
     contentX, contentY int
     contentW, contentH int
 }
@@ -931,25 +929,6 @@ const (
     EdgeBottomRight
 )
 
-type BorderStyle int
-
-const (
-    BorderNone    BorderStyle = iota // No border
-    BorderSingle                     // ┌─┐│└─┘
-    BorderDouble                     // ╔═╗║╚═╝
-    BorderRounded                    // ╭─╮│╰─╯
-    BorderThick                      // ┏━┓┃┗━┛
-    BorderASCII                     // +-+|
-)
-
-type TextAlign int
-
-const (
-    AlignLeft TextAlign = iota
-    AlignCenter
-    AlignRight
-)
-
 // NewFloatingWindow creates a new floating window.
 func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts ...WindowOption) *FloatingWindow { ... }
 
@@ -961,15 +940,14 @@ func WithMovable(movable bool) WindowOption { ... }
 func WithResizable(resizable bool) WindowOption { ... }
 func WithClosable(closable bool) WindowOption { ... }
 func WithModal(modal bool) WindowOption { ... }
-func WithBorderStyle(style BorderStyle) WindowOption { ... }
 func WithMinSize(w, h int) WindowOption { ... }
 func WithMaxSize(w, h int) WindowOption { ... }
 
-// Render draws the window decorations and content into the window's surface.
+// Render draws full-size content into the window's surface.
 // Then the surface is composited onto the screen by the WindowManager.
 func (fw *FloatingWindow) Render(ctx *widget.RenderContext) { ... }
 
-// ContentBounds returns the inner content area (excluding decorations).
+// ContentBounds returns the full WM surface. WindowFrame owns inner bounds.
 func (fw *FloatingWindow) ContentBounds() surface.Rect { ... }
 
 // HitTestEdge returns which edge/corner a screen coordinate hits.
@@ -991,8 +969,6 @@ func (fw *FloatingWindow) ApplyResize(edge Edge, dx, dy int) { ... }
 // Move adjusts the window position based on a drag offset.
 func (fw *FloatingWindow) ApplyMove(dx, dy int) { ... }
 
-// RenderDecoration draws borders, title bar, and buttons into the surface.
-func (fw *FloatingWindow) RenderDecoration() { ... }
 ```
 
 ### 8.2 WindowManager
@@ -1001,12 +977,12 @@ func (fw *FloatingWindow) RenderDecoration() { ... }
 // WindowManager manages all floating windows.
 //
 // Responsibilities:
-//   - Maintain z-ordered list of windows
-//   - Route keyboard input to the focused window
-//   - Route mouse input to the correct window (hit-testing)
-//   - Handle drag and resize interactions
-//   - Manage focus chain (Tab / Shift+Tab between windows)
-//   - Compositing: render all windows into the compositor's surface tree
+// - Maintain z-ordered list of windows
+// - Route keyboard input to the focused window
+// - Route mouse input to the correct window (hit-testing)
+// - Handle drag and resize interactions
+// - Manage focus chain (Tab / Shift+Tab between windows)
+// - Compositing: render all windows into the compositor's surface tree
 type WindowManager struct {
     windows    []*FloatingWindow  // All windows (creation order)
     zOrder     []*FloatingWindow  // Windows sorted by z-order (bottom to top)
@@ -1070,34 +1046,14 @@ func (wm *WindowManager) Render(ctx *widget.RenderContext) { ... }
 func (wm *WindowManager) SetBackground(w widget.Widget) { ... }
 ```
 
-### 8.3 Window Decorations (decoration.go)
+### 8.3 Unified Window Chrome (`tui/ui/window_frame.go`)
 
-```go
-// DrawBorder draws a border around the perimeter of a surface.
-// The border occupies the outermost row/column of the surface.
-// The content area starts at (1,1) and has size (w-2, h-2).
-func DrawBorder(surf *surface.Surface, style BorderStyle, fg, bg cell.Color) { ... }
-
-// DrawTitleBar draws a title bar in the top row of the surface.
-// The title is drawn between the left and right border characters.
-// Title text is truncated with ellipsis if too long.
-func DrawTitleBar(surf *surface.Surface, title string, align TextAlign, fg, bg cell.Color) { ... }
-
-// DrawCloseButton draws a close button (e.g., " ✕ " or " [X] ") in the title bar.
-func DrawCloseButton(surf *surface.Surface, fg, bg cell.Color) { ... }
-
-// DrawResizeHandle draws a resize indicator in the bottom-right corner.
-func DrawResizeHandle(surf *surface.Surface, style BorderStyle, fg, bg cell.Color) { ... }
-
-// BorderCharacters returns the set of characters for a given border style.
-type BorderChars struct {
-    TopLeft, TopRight, BottomLeft, BottomRight rune
-    Horizontal, Vertical                        rune
-    LeftT, RightT, TopT, BottomT               rune // T-junctions (for future split panes)
-}
-
-func BorderCharsFor(style BorderStyle) BorderChars { ... }
-```
+`ui.WindowFrame` is the only visual chrome implementation. It paints semantic
+theme tokens for background, rounded border, title, focus state, and close action,
+and computes the body content rectangle. `ui.WindowFrameWidget` mounts native or
+legacy bodies into FloatingWindow's full-size content surface and translates legacy
+pointer events into that content rectangle. WM retains close/title/edge hit testing,
+drag, resize, focus, placement, and z-order without drawing cells.
 
 ### 8.4 Window Interaction (interaction.go)
 
@@ -1255,11 +1211,11 @@ sequences from a string and writes cells into a surface:
 ```go
 // RenderToSurface parses an ANSI string and writes the cells into a surface.
 // Handles:
-//   - SGR (color/attribute) sequences: \x1b[...m
-//   - Regular characters → cells
-//   - Wide characters → wide cells + continuation
-//   - Newlines → row advancement
-//   - Cursor positioning sequences (for future diff-based output)
+// - SGR (color/attribute) sequences: \x1b[...m
+// - Regular characters → cells
+// - Wide characters → wide cells + continuation
+// - Newlines → row advancement
+// - Cursor positioning sequences (for future diff-based output)
 func RenderToSurface(surf *surface.Surface, ansi string) { ... }
 ```
 

@@ -11,7 +11,7 @@ import (
 	"crude/tui/filetree"
 )
 
-// ── Logger ──────────────────────────────────────────────────────────
+// Logger
 
 type testLogger struct{}
 
@@ -284,6 +284,32 @@ func TestLSPManager_UpdateFile_NoClient(t *testing.T) {
 	m.UpdateFile(ctx, "/tmp/test.go", "package main\nfunc main() {}")
 }
 
+func TestLSPManager_QueueFileUpdateCoalescesWithoutBlocking(t *testing.T) {
+	m := NewLSPManager(nil)
+	path := "/tmp/queued.go"
+	m.QueueFileUpdate(path, "first")
+	m.QueueFileUpdate(path, "latest")
+
+	m.mu.Lock()
+	queued := m.pendingText[path]
+	timerCount := len(m.updateTimers)
+	m.mu.Unlock()
+	if queued != "latest" {
+		t.Fatalf("queued text=%q", queued)
+	}
+	if timerCount != 1 {
+		t.Fatalf("expected one coalesced timer, got %d", timerCount)
+	}
+
+	m.Stop()
+	m.mu.Lock()
+	remaining := len(m.updateTimers)
+	m.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("Stop should cancel queued updates, got %d", remaining)
+	}
+}
+
 func TestLSPManager_CloseFile_NoClient(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 
@@ -548,7 +574,7 @@ func TestCloseFile_WrongClient(t *testing.T) {
 	m.CloseFile(ctx, "/tmp/test.go")
 }
 
-// ── Integration: LSPManager callback → FileTreeModel ──────────────
+// ── Integration: LSPManager callback → FileTreeModel ──
 
 func TestLSPManager_TreeDiagnosticsIntegration(t *testing.T) {
 	dir := t.TempDir()
@@ -577,8 +603,8 @@ func TestLSPManager_TreeDiagnosticsIntegration(t *testing.T) {
 	})
 
 	// Simulate the exact callback chain from startServerForRoot:
-	//   m.setFileDiagnostics(fp, diags)
-	//   if cb := m.captureOnDiagnostics(); cb != nil { cb(fp, diags) }
+	// m.setFileDiagnostics(fp, diags)
+	// if cb := m.captureOnDiagnostics(); cb != nil { cb(fp, diags) }
 	mgr.setFileDiagnostics(mainGo, []editor.LSPDiagnostic{
 		{Severity: editor.DiagError, Message: "test1"},
 	})

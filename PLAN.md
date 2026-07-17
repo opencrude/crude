@@ -1,5 +1,15 @@
 # Crude IDE — Architecture Plan & Progress
 
+The canonical TUI component-system and design-language migration plan is
+[`TUI_COMPONENT_SYSTEM_PLAN.md`](./TUI_COMPONENT_SYSTEM_PLAN.md).
+
+**Component-system progress (2026-07-16):**
+- Phase 0 evidence freeze + `scripts/tui_design_audit.sh` ✅
+- Phase 1 foundation tests (`cell`, `surface`, `compositor`, `scrollbar`) ✅
+- Phase 2 host + first controls (`tui/ui/`) ✅ — Host, TokenSet, TextEdit/TextField, List, Selection/Scroll
+- Phase 3/6/7 partial (tokens, text engine, list models) 🔄
+- Run: `./scripts/tui_design_audit.sh && go test -race ./tui/cell/ ./tui/surface/ ./tui/compositor/ ./tui/scrollbar/ ./tui/ui/`
+
 ## Architecture: Three Layers
 
 ```
@@ -22,16 +32,16 @@ Communication: TUI → Workspace via method calls. Workspace → TUI via event b
 
 ```
 ~/.crude/
-├── config.json                    ← app config (FileConfig)
-├── history.json                   ← input history
-└── workspaces/
-    ├── <hash-of-project-dir>/
-    │   ├── workspace.db           ← workspace-level DB (settings + session registry)
-    │   └── sessions/
-    │       ├── <session-id>.db    ← session DB
-    │       └── <session-id>/      ← session logs, reports, turns
-    └── <hash-of-another-project>/
-        ├── workspace.db
+├  config.json                    ← app config (FileConfig)
+├  history.json                   ← input history
+└  workspaces/
+    ├  <hash-of-project-dir>/
+    │   ├  workspace.db           ← workspace-level DB (settings + session registry)
+    │   └  sessions/
+    │       ├  <session-id>.db    ← session DB
+    │       └  <session-id>/      ← session logs, reports, turns
+    └  <hash-of-another-project>/
+        ├  workspace.db
         └── sessions/
 ```
 
@@ -89,7 +99,7 @@ Communication: TUI → Workspace via method calls. Workspace → TUI via event b
 - [x] /settings form has two sections (Session + Preferences) — UI polish for later
 - [x] New JetBrains-style workspace settings window (two-column, mouse-enabled)
 - [x] Session settings form (provider/model/thinking) as overlay
-- [x] Ctrl+P "Settings" opens workspace settings
+- [x] Ctrl+Alt+P command palette "Settings" opens workspace settings
 - [x] /settings opens session settings
 
 ## Key Decisions

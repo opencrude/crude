@@ -7,6 +7,7 @@ import (
 
 	"crude/clipboard"
 	"crude/tui/rendering"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 )
 
@@ -418,10 +419,7 @@ func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuSta
 
 // closeContextMenu removes the open context menu, if any.
 func (m *App) closeContextMenu() {
-	if m.windowManager != nil {
-		m.windowManager.RemoveWindow("context-menu")
-	}
-	m.LastContextMenu = nil
+	m.overlayHost.Close(ui.OverlayContextMenu)
 }
 
 // findFlatItemIndex returns the index in FlatItems for the item at
@@ -473,7 +471,7 @@ func (m *App) handleContextMenuKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 // refreshContextMenu re-renders the context menu popup after the
-// cursor moved.
+// cursor moved (WindowFrame + ui.List).
 func (m *App) refreshContextMenu() {
 	if m.windowManager == nil {
 		return
@@ -482,9 +480,22 @@ func (m *App) refreshContextMenu() {
 	if fw == nil || m.LastContextMenu == nil {
 		return
 	}
-	lines := widgets.ContextMenuLines(m.Theme, m.LastContextMenu, 0)
-	pop := widgets.NewPopupContent(lines)
-	fw.SetContent(pop)
+	// Prefer mutating selection on the existing frame when possible.
+	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+		widgets.ApplyContextMenuCursor(cw, m.LastContextMenu)
+		fw.MarkContentDirty()
+		return
+	}
+	frame := widgets.BuildContextMenuFrame(m.Theme, m.LastContextMenu)
+	w, h := frame.Measure(60, 40)
+	if cw := widgets.ContextMenuPopupWidth(m.LastContextMenu); cw > 0 {
+		w = cw
+	}
+	if ch := widgets.ContextMenuPopupHeight(m.LastContextMenu); ch > 0 {
+		h = ch
+	}
+	fw.SetSize(w, h)
+	fw.SetContent(frame)
 	fw.MarkContentDirty()
 }
 
