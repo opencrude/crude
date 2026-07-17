@@ -9,7 +9,6 @@ import (
 	"crude/fileio"
 	"crude/provider"
 	ttypes "crude/tui/types"
-	"crude/tui/widgets"
 	"crude/workspace"
 )
 
@@ -19,7 +18,7 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 		return nil
 	}
 	agent := n.State
-	agent.MsgList.AppendMessage(ttypes.ChatMessage{
+	agent.Messages.AppendMessage(workspace.Message{
 		Role:    ttypes.RoleUser,
 		Content: text,
 		Time:    time.Now(),
@@ -34,6 +33,7 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 		OnHistorySave(m.History)
 	}
 	agent.SubmitInput(text)
+	m.syncAgentMessages(sessionID, true)
 	if m.StatusBar != nil {
 		m.StatusBar.SetThinkingForAgent(sessionID, true, false, false)
 	}
@@ -54,7 +54,7 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 		return nil
 	}
 	agent := n.State
-	agent.MsgList.AppendMessage(ttypes.ChatMessage{
+	agent.Messages.AppendMessage(workspace.Message{
 		Role:    ttypes.RoleUser,
 		Content: text,
 		Time:    time.Now(),
@@ -71,6 +71,7 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 	if m.StatusBar != nil {
 		m.StatusBar.SetBtwCount(m.StatusBar.BtwCount() + 1)
 	}
+	m.syncAgentMessages(sessionID, true)
 	ch := n.BtwChan
 	return func() tea.Msg {
 		select {
@@ -83,6 +84,14 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 }
 
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
+	return m.handleAgentDomainEvent(workspace.AgentEvent{
+		Type:    evt.Type,
+		Data:    evt.Data,
+		AgentID: evt.AgentID,
+	})
+}
+
+func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	if evt.Type == "async_command_status" || evt.Type == "retry" {
 		switch evt.Type {
 		case "async_command_status":
@@ -133,11 +142,11 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			// normal events arrive. Never manufacture a channel-less fallback for
 			// stale events after a tab has closed.
 			if existing := m.AgentMgr.Get(agentID); existing != nil {
-				ml := widgets.NewMessageList(m.Theme)
-				ml.SetModelName(m.ModelName)
-				ml.SetUsername(m.Username)
-				ml.SetSubPaneContentFn(m.renderSubPaneContent)
-				agent = workspace.NewAgentState(agentID, ml, m.Logger)
+				sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID, m.Theme)
+				sp.MsgList.SetModelName(m.ModelName)
+				sp.MsgList.SetUsername(m.Username)
+				sp.MsgList.SetSubPaneContentFn(m.renderSubPaneContent)
+				agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
 				existing.State = agent
 				agentNode = existing
 			} else {
@@ -157,7 +166,7 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			}
 			sp.MsgList.SetModelName(subModel)
 			sp.MsgList.SetUsername(m.Username)
-			agent = workspace.NewAgentState(agentID, sp.MsgList, m.Logger)
+			agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
 			// Get label/model/category from event data
 			label := ""
 			if l, ok := evtData["agent_name"]; ok {
@@ -176,13 +185,14 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			}
 			agentNode = m.AgentMgr.AddSubAgent(agentID, parentID, label, modelStr, cat, agent)
 			_ = agentNode
-			if parent := m.AgentMgr.Get(parentID); parent != nil && parent.State != nil && parent.State.MsgList != nil {
-				parent.State.MsgList.AppendMessage(ttypes.ChatMessage{
+			if parent := m.AgentMgr.Get(parentID); parent != nil && parent.State != nil && parent.State.Messages != nil {
+				parent.State.Messages.AppendMessage(workspace.Message{
 					Role:      ttypes.RoleTool,
 					Content:   agentID,
 					SubPaneID: agentID,
 					Time:      time.Now(),
 				})
+				m.syncAgentMessages(parentID, false)
 			}
 		}
 	} else if agent.Completed {
@@ -263,6 +273,8 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 			m.closeAllOverlayTabs()
 		},
 	)
+	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")
+	m.syncConversationMessages(thinkingTarget, evt.Type == "done" || evt.Type == "error")
 
 	if evt.Type == "thinking" && hasThinking {
 		m.checkThinkingPromotion(agent)
@@ -293,20 +305,20 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	return m.processAgentResults(cmd)
 }
 
-func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *widgets.MessageList {
+func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *workspace.Conversation {
 	if m.PaneMgr.Has(agentID) {
-		return m.PaneMgr.Get(agentID).MsgList
+		return m.PaneMgr.Get(agentID).Messages
 	}
 
 	if agent.ThinkingPaneID != "" {
 		if sp := m.PaneMgr.Get(agent.ThinkingPaneID); sp != nil {
-			return sp.MsgList
+			return sp.Messages
 		}
 		agent.ThinkingPaneID = ""
 	}
 
 	sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID, m.Theme)
-	return sp.MsgList
+	return sp.Messages
 }
 
 func (m *App) checkThinkingPromotion(agent *workspace.AgentState) {
@@ -324,7 +336,11 @@ func (m *App) checkThinkingPromotion(agent *workspace.AgentState) {
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
-	lineCount := agent.MsgList.ActiveThinkingLineCount(contentWidth)
+	pane := m.PaneMgr.Get(agent.ID)
+	if pane == nil || pane.MsgList == nil {
+		return
+	}
+	lineCount := pane.MsgList.ActiveThinkingLineCount(contentWidth)
 
 	if lineCount > threshold {
 		m.promoteThinkingToPane(agent)
@@ -332,29 +348,30 @@ func (m *App) checkThinkingPromotion(agent *workspace.AgentState) {
 }
 
 func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
-	if agent == nil || agent.MsgList == nil {
+	if agent == nil || agent.Messages == nil {
 		return
 	}
 	paneID := "thinking-" + time.Now().Format("150405")
-	content := agent.MsgList.RemoveActiveThinking()
+	content := agent.Messages.RemoveActiveThinking()
 
 	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking", m.Theme)
 	sp.MsgList.SetModelName(m.ModelName)
 	sp.MsgList.SetUsername(m.Username)
 
 	if content != "" {
-		sp.MsgList.AppendThinking(content)
-		sp.MsgList.Messages()[len(sp.MsgList.Messages())-1].ThinkingActive = true
+		sp.Messages.AppendThinking(content)
 	}
 
 	agent.ThinkingPaneID = paneID
 
-	agent.MsgList.AppendMessage(ttypes.ChatMessage{
+	agent.Messages.AppendMessage(workspace.Message{
 		Role:      ttypes.RoleTool,
 		Content:   "Thinking",
 		SubPaneID: paneID,
 		Time:      time.Now(),
 	})
+	m.syncAgentMessages(agent.ID, false)
+	m.syncPaneMessages(paneID, false)
 }
 
 func (m *App) handleSubPaneCompletion(agentID string) {
@@ -362,22 +379,20 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 	if n == nil {
 		return
 	}
-	var parentML *widgets.MessageList
-	if n.Parent != nil && n.Parent.State != nil {
-		parentML = n.Parent.State.MsgList
-	}
-	if parentML == nil {
-		if active := m.AgentMgr.ActiveNode(); active != nil && active.State != nil {
-			parentML = active.State.MsgList
-		}
+	// Find the parent agent's concrete MessageList for InvalidateSubPane.
+	var parentID string
+	if n.Parent != nil {
+		parentID = n.Parent.ID
+	} else if active := m.AgentMgr.ActiveNode(); active != nil {
+		parentID = active.ID
 	}
 
 	if n.State != nil && n.State.ThinkingPaneID != "" {
 		sp := m.PaneMgr.Get(n.State.ThinkingPaneID)
 		if sp != nil {
 			sp.Collapse()
-			if parentML != nil {
-				parentML.InvalidateSubPane(n.State.ThinkingPaneID)
+			if parentSP := m.PaneMgr.Get(parentID); parentSP != nil {
+				parentSP.MsgList.InvalidateSubPane(n.State.ThinkingPaneID)
 			}
 		}
 		n.State.ThinkingPaneID = ""
@@ -389,8 +404,8 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 		return
 	}
 	sp.Collapse()
-	if parentML != nil {
-		parentML.InvalidateSubPane(agentID)
+	if parentSP := m.PaneMgr.Get(parentID); parentSP != nil {
+		parentSP.MsgList.InvalidateSubPane(agentID)
 	}
 }
 
@@ -426,7 +441,7 @@ func (m *App) handleUsageData(data any, agentID string) {
 	m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated)
 }
 
-func (m *App) handleSubAgentQuestion(evt ttypes.AgentEventMsg) {
+func (m *App) handleSubAgentQuestion(evt workspace.AgentEvent) {
 	data, ok := evt.Data.(map[string]string)
 	if !ok {
 		return
@@ -438,8 +453,8 @@ func (m *App) handleSubAgentQuestion(evt ttypes.AgentEventMsg) {
 		return
 	}
 	content := fmt.Sprintf("[%s:%s] asks: %s", category, agentName, question)
-	if ml := m.activeMsgList(); ml != nil {
-		ml.AppendMessage(ttypes.ChatMessage{
+	if m.AgentMgr.ActiveID() != "" {
+		m.appendActiveMessage(ttypes.ChatMessage{
 			Role:    ttypes.RoleTool,
 			Content: content,
 			Time:    time.Now(),
@@ -447,7 +462,7 @@ func (m *App) handleSubAgentQuestion(evt ttypes.AgentEventMsg) {
 	}
 }
 
-func (m *App) handleFileClaim(evt ttypes.AgentEventMsg) {
+func (m *App) handleFileClaim(evt workspace.AgentEvent) {
 	data, ok := evt.Data.(map[string]string)
 	if !ok {
 		return
@@ -457,7 +472,7 @@ func (m *App) handleFileClaim(evt ttypes.AgentEventMsg) {
 	_ = data["path"]
 }
 
-func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
+func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
 	data, ok := evt.Data.(map[string]string)
 	if !ok {
 		return
@@ -493,7 +508,7 @@ func (m *App) handleSubAgentStarted(evt ttypes.AgentEventMsg) {
 	_ = data["parent_id"] // parent relationship already set by AddSubAgent
 }
 
-func (m *App) handleSubAgentCompleted(evt ttypes.AgentEventMsg) {
+func (m *App) handleSubAgentCompleted(evt workspace.AgentEvent) {
 	data, ok := evt.Data.(map[string]string)
 	if !ok {
 		return

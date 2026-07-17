@@ -2,7 +2,7 @@
 
 Status: Implementation in progress — aligned to this document as of 2026-07-17
 
-Date: 2026-07-17 (progress last reconciled after performance baselines + agent lifecycle + message hydration seam)
+Date: 2026-07-17 (progress last reconciled after performance baselines + agent lifecycle + live Conversation seam)
 
 Scope: The complete `tui/` layer and every program boundary that supplies data to,
 or receives actions from, the TUI.
@@ -36,7 +36,7 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 7 Collections / scrollbar | PARTIAL | List (header/sep/disabled), VirtualList, ScrollModel, ScrollbarControl + ANSI bridge |
 | 8 Form system | PARTIAL | form.TextItem uses TextEdit; form shell still legacy lipgloss |
 | 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
-| 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace methods now resolve/cancel/close agents without session callbacks; multi-session orchestrators remain reachable; persisted chat hydration uses workspace-owned `ChatMessageView` projected at the TUI boundary |
+| 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
 | 12 Structured migrations | PARTIAL | Filter engines + shared filter paint; Find in Files domain search moved to workspace; full surfaces still legacy |
 | 13 Shell migrations | OPEN | |
@@ -1293,10 +1293,19 @@ Landed:
   `ChatMessageView`; the TUI projects it into `types.ChatMessage`, so
   `workspace/session.go` no longer imports `tui/types` or stores rendering caches;
   hydration data is consumed once so reselecting an open session cannot duplicate it
+- **Live message-data seam:** `AgentState` owns workspace `Conversation`/`Message`
+  data with no rendering caches, scrolling, selection, or widget methods. The TUI
+  projects snapshots into `MessageList` by stable message ID and source version,
+  preserving unchanged retained caches and invalidating only changed items
+- `workspace/agent_state.go` and `agent_state_events.go` no longer import or own
+  `tui/widgets.MessageList`; the rejected callback-style `MessageSink` adapter was removed
 
 Remaining:
-- Replace live `AgentState.MsgList` and `SubPane.MsgList` presentation ownership;
+- Replace `SubPane.MsgList` presentation ownership (rendering, layout, scrollbar
+  methods still on the concrete `*widgets.MessageList` accessed through `SubPane.MsgList`);
   introduce view-data seams for subpanes, tree rows, tabs, and status
+- Move AgentState event/result types and display normalization out of `tui/types`,
+  `tui/rendering`, and `tui/tools` dependencies
 - Remove workspace ownership/imports of TUI presentation objects
 
 Objectives:
@@ -1454,8 +1463,8 @@ Exit criteria:
 | Tabs | Tabs control + close actions + status indicators | 13 | Multi-session agent roots/lifecycle fixed; component/data-view migration open |
 | File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | filter string still on model |
 | Chat input | TextArea + reference chips + action hints | 13 | still components.TextInput |
-| Message list | VirtualList + message delegates + selection | 13 | Persisted hydration uses workspace `ChatMessageView`; live `AgentState.MsgList` ownership remains open |
-| Subpanes | Panel + VirtualList + nested viewport | 13 | open |
+| Message list | VirtualList + message delegates + selection | 13 | Persisted hydration uses `ChatMessageView`; live data uses workspace `Conversation`; retained MessageList projection preserves caches by stable ID/version |
+| Subpanes | Panel + VirtualList + nested viewport | 13 | `SubPane.Messages` is canonical data; temporary concrete `MsgList` projection still owns rendering/layout/scrollbar |
 | Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | open |
 
 ## 21. Test Strategy
@@ -1723,10 +1732,24 @@ This program is complete only when all statements are true:
     - TUI boundary projects views into frontend `types.ChatMessage` values
     - `workspace/session.go` no longer imports `tui/types`; hydration snapshots are one-shot
 
+28. Phase 10 live-message Conversation seam:
+    - `workspace.Conversation` is the canonical mutable live-message store;
+      `workspace.Message` contains domain/view data but no TUI caches or interaction state
+    - `AgentState.Messages` replaces concrete `*widgets.MessageList` ownership
+    - The callback-style `MessageSink` experiment was removed rather than retained as
+      a widget-shaped interface
+    - TUI projection converts snapshots to `types.ChatMessage` and synchronizes
+      `MessageList` by stable ID/version, retaining unchanged caches and scroll state
+    - All agent/user/help/hydration append paths update Conversation first
+    - Tests cover streaming, tool lifecycle, cancellation, immutable snapshots,
+      presentation-field exclusion, retained-cache preservation, item invalidation,
+      and removal synchronization
+
 ### Next slices (priority order — stay on plan)
 
-  1. **Phase 10:** replace live `AgentState.MsgList` / `SubPane.MsgList` presentation
-     ownership, then add tree-row, tab, and status view-data seams.
+  1. **Phase 10:** remove the temporary `SubPane.MsgList` projection from workspace
+     ownership and replace AgentState's remaining TUI event/rendering imports, then add
+     tree-row, tab, and status view-data seams.
   2. **Phase 12:** structured-surface migration (settings, question form, YOLO,
      picker, Find in Files, composer, text overlay, launcher). Use FileOpsService
      for any file picker filesystem operations.

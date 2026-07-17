@@ -501,8 +501,8 @@ func (m *App) handleYoloKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, te
 			content = "YOLO mode cancelled. Safety checks remain active."
 			m.Logger.Info("SAFETY", "yolo_disabled")
 		}
-		if ml := m.activeMsgList(); ml != nil {
-			ml.AppendMessage(ttypes.ChatMessage{
+		if m.AgentMgr.ActiveID() != "" {
+			m.appendActiveMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: content,
 				Time:    time.Now(),

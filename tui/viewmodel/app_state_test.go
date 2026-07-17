@@ -54,7 +54,9 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{MsgList: ml})
+	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1", th)
+	sp.MsgList = ml
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: sp.Messages})
 
 	result := app.activeMsgList()
 	if result != ml {
@@ -66,7 +68,9 @@ func TestActiveMessageList_Fallback(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{MsgList: ml})
+	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1", th)
+	sp.MsgList = ml
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: sp.Messages})
 	// AddOrchestrator sets active automatically; clear it so activeMessageList falls back
 	app.AgentMgr.ClearActive()
 
@@ -115,7 +119,7 @@ func TestBuildMainView_NilActiveML(t *testing.T) {
 
 	// Add an agent with nil MsgList. AddOrchestrator sets it active,
 	// so activeMsgList() returns nil (the node exists but MsgList is nil).
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{MsgList: nil})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: nil})
 
 	// This should not panic — the nil activeML guard in buildMainView
 	// should produce empty content instead of dereferencing nil.
@@ -342,9 +346,7 @@ func TestSubmitInput_NoChannel(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	th := theme.DefaultDark()
-	ml := widgets.NewMessageList(th)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
 	// cmd is non-nil even without a channel — the returned closure
@@ -358,10 +360,8 @@ func TestSubmitInput_WithChannel(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	th := theme.DefaultDark()
-	ml := widgets.NewMessageList(th)
 	inputCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
 	if cmd == nil {
@@ -548,10 +548,8 @@ func TestHandleInputEvent_SubmitWithActiveAgentView(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	th := theme.DefaultDark()
-	ml := widgets.NewMessageList(th)
 	inputCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
 	if len(cmds) != 1 {
@@ -577,10 +575,8 @@ func TestHandleInputEvent_BtwSubmit(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	th := theme.DefaultDark()
-	ml := widgets.NewMessageList(th)
 	btwCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, btwCh, nil, nil, &workspace.AgentState{MsgList: ml})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, btwCh, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmds := app.handleInputEvent(input.BtwSubmitEvent{Text: "btw text"})
 	if len(cmds) != 1 {
