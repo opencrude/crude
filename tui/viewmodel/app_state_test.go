@@ -54,8 +54,9 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1", th)
-	sp.MsgList = ml
+	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
+	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
+	proj.msgList = ml
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: sp.Messages})
 
 	result := app.activeMsgList()
@@ -68,8 +69,9 @@ func TestActiveMessageList_Fallback(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := widgets.NewMessageList(th)
-	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1", th)
-	sp.MsgList = ml
+	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
+	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
+	proj.msgList = ml
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: sp.Messages})
 	// AddOrchestrator sets active automatically; clear it so activeMessageList falls back
 	app.AgentMgr.ClearActive()
@@ -667,12 +669,13 @@ func newTestApp(t *testing.T) *App {
 			ActiveSession:   &workspace.Session{},
 			SessionSettings: widgets.NewSessionSettings(th, ttypes.Settings{}),
 		},
-		OverlayState:   NewOverlayState(),
-		LSPPopup:       NewLSPPopupState(),
-		EditorState:    NewEditorState(),
-		actionRegistry: ui.DefaultRegistry(),
-		windowManager:  wmgr,
-		overlayHost:    ui.NewOverlayHost(wmgr),
+		OverlayState:      NewOverlayState(),
+		LSPPopup:          NewLSPPopupState(),
+		EditorState:       NewEditorState(),
+		actionRegistry:    ui.DefaultRegistry(),
+		windowManager:     wmgr,
+		overlayHost:       ui.NewOverlayHost(wmgr),
+		subPaneProjections: newSubPaneProjectionRegistry(th),
 	}
 
 	app.Win = window.New(th)
@@ -702,14 +705,15 @@ func newFullTestApp(t *testing.T) *App {
 			ActiveSession:   &workspace.Session{},
 			SessionSettings: widgets.NewSessionSettings(th, ttypes.Settings{}),
 		},
-		OverlayState:   NewOverlayState(),
-		LSPPopup:       NewLSPPopupState(),
-		EditorState:    NewEditorState(),
-		width:          80,
-		height:         24,
-		actionRegistry: ui.DefaultRegistry(),
-		windowManager:  wmgr,
-		overlayHost:    ui.NewOverlayHost(wmgr),
+		OverlayState:      NewOverlayState(),
+		LSPPopup:          NewLSPPopupState(),
+		EditorState:       NewEditorState(),
+		width:             80,
+		height:            24,
+		actionRegistry:    ui.DefaultRegistry(),
+		windowManager:     wmgr,
+		overlayHost:       ui.NewOverlayHost(wmgr),
+		subPaneProjections: newSubPaneProjectionRegistry(th),
 	}
 
 	app.Win = window.New(th)

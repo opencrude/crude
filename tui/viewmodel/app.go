@@ -65,8 +65,9 @@ type App struct {
 	mainStatusbarSurf *surface.Surface // status bar separator + content
 	mainHeaderSurf    *surface.Surface // header line + separator
 
-	actionRegistry *ui.ActionRegistry
-	overlayHost    *ui.OverlayHost
+	actionRegistry      *ui.ActionRegistry
+	overlayHost         *ui.OverlayHost
+	subPaneProjections  *subPaneProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
 	launcher            *LauncherState
@@ -124,6 +125,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 
 	registry := ui.DefaultRegistry()
 	overlay := ui.NewOverlayHost(wmgr)
+	subPaneProjections := newSubPaneProjectionRegistry(ws.Theme)
 
 	// Start on the unified welcome launcher (actions + workspaces + sessions).
 	launcher := NewLauncherState(ws.RootPath, ws.ListSessions())
@@ -144,8 +146,9 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		mainSidebarSurf:   sidebarSurf,
 		mainStatusbarSurf: statusbarSurf,
 		mainHeaderSurf:    headerSurf,
-		actionRegistry:    registry,
-		overlayHost:       overlay,
+		actionRegistry:     registry,
+		overlayHost:        overlay,
+		subPaneProjections: subPaneProjections,
 	}
 
 	app.registerOverlayHandlers()

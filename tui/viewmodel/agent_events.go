@@ -142,10 +142,12 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			// normal events arrive. Never manufacture a channel-less fallback for
 			// stale events after a tab has closed.
 			if existing := m.AgentMgr.Get(agentID); existing != nil {
-				sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID, m.Theme)
-				sp.MsgList.SetModelName(m.ModelName)
-				sp.MsgList.SetUsername(m.Username)
-				sp.MsgList.SetSubPaneContentFn(m.renderSubPaneContent)
+				sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
+				_ = sp
+				proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
+				proj.msgList.SetModelName(m.ModelName)
+				proj.msgList.SetUsername(m.Username)
+				proj.msgList.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 				agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
 				existing.State = agent
 				agentNode = existing
@@ -159,13 +161,14 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.syncAgentWindowTabs()
 		} else {
 			// Sub-agent: create sub-pane
-			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID, m.Theme)
+			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
 			subModel := m.ModelName
 			if model, ok := evtData["model"]; ok && model != "" {
 				subModel = model
 			}
-			sp.MsgList.SetModelName(subModel)
-			sp.MsgList.SetUsername(m.Username)
+			proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
+			proj.msgList.SetModelName(subModel)
+			proj.msgList.SetUsername(m.Username)
 			agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
 			// Get label/model/category from event data
 			label := ""
@@ -317,7 +320,7 @@ func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *wo
 		agent.ThinkingPaneID = ""
 	}
 
-	sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID, m.Theme)
+	sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
 	return sp.Messages
 }
 
@@ -337,10 +340,13 @@ func (m *App) checkThinkingPromotion(agent *workspace.AgentState) {
 		contentWidth = 10
 	}
 	pane := m.PaneMgr.Get(agent.ID)
-	if pane == nil || pane.MsgList == nil {
+	if pane == nil {
 		return
 	}
-	lineCount := pane.MsgList.ActiveThinkingLineCount(contentWidth)
+	if !m.subPaneProjections.Has(agent.ID) {
+		return
+	}
+	lineCount := m.subPaneProjections.ActiveThinkingLineCount(agent.ID, contentWidth)
 
 	if lineCount > threshold {
 		m.promoteThinkingToPane(agent)
@@ -354,9 +360,10 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 	paneID := "thinking-" + time.Now().Format("150405")
 	content := agent.Messages.RemoveActiveThinking()
 
-	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking", m.Theme)
-	sp.MsgList.SetModelName(m.ModelName)
-	sp.MsgList.SetUsername(m.Username)
+	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking")
+	proj := m.subPaneProjections.Get(paneID, workspace.PaneThinking)
+	proj.msgList.SetModelName(m.ModelName)
+	proj.msgList.SetUsername(m.Username)
 
 	if content != "" {
 		sp.Messages.AppendThinking(content)
@@ -391,8 +398,8 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 		sp := m.PaneMgr.Get(n.State.ThinkingPaneID)
 		if sp != nil {
 			sp.Collapse()
-			if parentSP := m.PaneMgr.Get(parentID); parentSP != nil {
-				parentSP.MsgList.InvalidateSubPane(n.State.ThinkingPaneID)
+			if parentID != "" {
+				m.subPaneProjections.InvalidateSubPane(parentID, n.State.ThinkingPaneID)
 			}
 		}
 		n.State.ThinkingPaneID = ""
@@ -404,8 +411,8 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 		return
 	}
 	sp.Collapse()
-	if parentSP := m.PaneMgr.Get(parentID); parentSP != nil {
-		parentSP.MsgList.InvalidateSubPane(agentID)
+	if parentID != "" {
+		m.subPaneProjections.InvalidateSubPane(parentID, agentID)
 	}
 }
 
@@ -496,8 +503,8 @@ func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
 		if n := m.AgentMgr.Get(agentID); n != nil {
 			n.Model = model
 		}
-		if sp := m.PaneMgr.Get(agentID); sp != nil {
-			sp.MsgList.SetModelName(model)
+		if p := m.subPaneProjections.GetExisting(agentID); p != nil {
+			p.msgList.SetModelName(model)
 		}
 	}
 	if category := data["category"]; category != "" {
