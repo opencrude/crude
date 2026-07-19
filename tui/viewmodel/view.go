@@ -208,10 +208,10 @@ func (m *App) buildMainView() string {
 			chatVisible = []string{""}
 			totalSBW = 0
 		} else {
-			nestingLevel := m.PaneMgr.ScrollbarNestingLevel()
+			nestingLevel := m.subPaneProjections.ScrollbarNestingLevel(m.paneDoneMap())
 			paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
-			if sp := m.PaneMgr.Get(m.AgentMgr.ActiveID()); sp != nil && sp.MsgList != nil {
-				sp.MsgList.SetPaneScrollbarWidth(paneSBW)
+			if sp := m.PaneMgr.Get(m.AgentMgr.ActiveID()); sp != nil && m.subPaneProjections.Has(sp.ID) {
+				m.subPaneProjections.SetPaneScrollbarWidth(sp.ID, paneSBW)
 			}
 			if activeML != nil {
 				activeML.SetPaneScrollbarWidth(0)
@@ -260,7 +260,7 @@ func (m *App) buildMainView() string {
 						if _, ok := paneSBViews[info.PaneID]; !ok {
 							sp := m.PaneMgr.Get(info.PaneID)
 							if sp != nil {
-								view := sp.ScrollbarView()
+								view := m.subPaneProjections.ScrollbarView(info.PaneID, sp)
 								paneSBViews[info.PaneID] = strings.Split(view, "\n")
 							}
 						}

@@ -19,10 +19,17 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 	ml := widgets.NewMessageList(m.Theme)
 	ml.SetModelName(m.ModelName)
 	ml.SetUsername(m.Username)
-	ml.SetSubPaneContentFn(m.renderSubPaneContent)
+	ml.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 
 	sp := m.PaneMgr.GetOrCreate(orchID, workspace.PaneAgent, orchID)
-	_ = ml // projection wiring deferred to next slice
+	proj := m.subPaneProjections.Get(orchID, workspace.PaneAgent)
+	// Replace the projection's auto-created MessageList with the one
+	// already configured above (carrying SetSubPaneContentFn). This
+	// preserves the existing AddOrchestrator contract while keeping the
+	// MessageList ownership on the TUI projection side.
+	proj.msgList = ml
+	proj.msgList.SetModelName(m.ModelName)
+	proj.msgList.SetUsername(m.Username)
 
 	agent := workspace.NewAgentState(orchID, sp.Messages, m.Logger)
 	m.AgentMgr.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh, agent)
@@ -48,8 +55,8 @@ func (m *App) activeMsgList() *widgets.MessageList {
 	if n == nil {
 		return nil
 	}
-	if sp := m.PaneMgr.Get(n.ID); sp != nil {
-		return sp.MsgList
+	if p := m.subPaneProjections.GetExisting(n.ID); p != nil {
+		return p.msgList
 	}
 	return nil
 }
@@ -74,16 +81,16 @@ func (m *App) completeSubAgent(agentID string) {
 		m.Win.CloseTabByID(tab.ID)
 		if wasActive && m.AgentMgr.ActiveID() == agentID {
 			m.AgentMgr.ClearActive()
-			if parentSP := m.PaneMgr.Get(parentID); parentSP != nil {
-				parentSP.MsgList.InvalidateAllMessages()
+			if parentID != "" {
+				m.subPaneProjections.InvalidateAllMessages(parentID)
 			}
 		}
 	}
 
 	if sp := m.PaneMgr.Get(agentID); sp != nil && !sp.Done {
 		sp.Collapse()
-		if parentSP := m.PaneMgr.Get(parentID); parentSP != nil {
-			parentSP.MsgList.InvalidateSubPane(agentID)
+		if parentID != "" {
+			m.subPaneProjections.InvalidateSubPane(parentID, agentID)
 		}
 	}
 
@@ -151,10 +158,10 @@ func (m *App) activeMessageList() *widgets.MessageList {
 	if activeML != nil {
 		return activeML
 	}
-	// Fallback: use any available agent's SubPane MsgList
+	// Fallback: use any available agent's projection MessageList
 	for _, n := range m.AgentMgr.AllNodes() {
-		if sp := m.PaneMgr.Get(n.ID); sp != nil {
-			return sp.MsgList
+		if p := m.subPaneProjections.GetExisting(n.ID); p != nil {
+			return p.msgList
 		}
 	}
 	return nil
@@ -188,13 +195,13 @@ func (m *App) switchToAgentView(agentID string) {
 	curr := m.AgentMgr.ActiveID()
 	if prev != curr {
 		if prev != "" {
-			if pane := m.PaneMgr.Get(prev); pane != nil && pane.MsgList != nil {
-				pane.MsgList.InvalidateAllMessages()
+			if m.subPaneProjections.Has(prev) {
+				m.subPaneProjections.InvalidateAllMessages(prev)
 			}
 		}
 		if curr != "" {
-			if pane := m.PaneMgr.Get(curr); pane != nil && pane.MsgList != nil {
-				pane.MsgList.InvalidateAllMessages()
+			if m.subPaneProjections.Has(curr) {
+				m.subPaneProjections.InvalidateAllMessages(curr)
 			}
 			if usage, ok := m.AgentUsage(curr); ok && m.StatusBar != nil {
 				m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated)
@@ -456,9 +463,8 @@ func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []
 		return []string{"", "● unknown pane"}
 	}
 	if n := m.AgentMgr.Get(paneID); n != nil && n.State != nil {
-		sp.MsgList.SetStreaming(n.State.Streaming)
-		sp.MsgList.SetActiveTyping(n.State.ComputeActiveTyping())
+		m.subPaneProjections.SetStreaming(paneID, n.State.Streaming)
+		m.subPaneProjections.SetActiveTyping(paneID, n.State.ComputeActiveTyping())
 	}
-	result := sp.Render(width, maxH, spinFrame)
-	return result.Lines
+	return m.subPaneProjections.Render(paneID, sp, width, maxH, spinFrame)
 }

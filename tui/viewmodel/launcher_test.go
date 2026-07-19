@@ -45,11 +45,12 @@ func newTestAppWithLauncher(t *testing.T) *App {
 			ActiveSession: &workspace.Session{},
 			Logger:        &testLogger{},
 		},
-		OverlayState:   NewOverlayState(),
-		LSPPopup:       NewLSPPopupState(),
-		EditorState:    NewEditorState(),
-		launcher:       NewLauncherState(".", nil),
-		actionRegistry: ui.DefaultRegistry(),
+		OverlayState:      NewOverlayState(),
+		LSPPopup:          NewLSPPopupState(),
+		EditorState:       NewEditorState(),
+		launcher:          NewLauncherState(".", nil),
+		actionRegistry:    ui.DefaultRegistry(),
+		subPaneProjections: newSubPaneProjectionRegistry(th),
 	}
 	app.Win = window.New(th)
 	app.Overlay = window.New(th)

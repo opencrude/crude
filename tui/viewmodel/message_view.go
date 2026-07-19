@@ -103,31 +103,39 @@ func (m *App) syncAgentMessages(agentID string, scroll bool) {
 		return
 	}
 	sp := m.PaneMgr.Get(agentID)
-	if sp == nil || sp.MsgList == nil {
+	if sp == nil {
 		return
 	}
-	if node.State.Messages == nil || sp.MsgList.SourceVersion() == node.State.Messages.Version() {
+	proj := m.subPaneProjections.GetExisting(agentID)
+	if proj == nil {
+		return
+	}
+	if node.State.Messages == nil || proj.msgList.SourceVersion() == node.State.Messages.Version() {
 		return
 	}
 	messages, version := chatMessagesFromConversation(node.State.Messages)
-	sp.MsgList.SyncMessages(messages, version)
+	proj.msgList.SyncMessages(messages, version)
 	if scroll {
-		sp.MsgList.ScrollToBottom()
+		proj.msgList.ScrollToBottom()
 	}
 }
 
 func (m *App) syncPaneMessages(paneID string, scroll bool) {
 	sp := m.PaneMgr.Get(paneID)
-	if sp == nil || sp.MsgList == nil {
+	if sp == nil {
 		return
 	}
-	if sp.Messages == nil || sp.MsgList.SourceVersion() == sp.Messages.Version() {
+	proj := m.subPaneProjections.GetExisting(paneID)
+	if proj == nil {
+		return
+	}
+	if sp.Messages == nil || proj.msgList.SourceVersion() == sp.Messages.Version() {
 		return
 	}
 	messages, version := chatMessagesFromConversation(sp.Messages)
-	sp.MsgList.SyncMessages(messages, version)
+	proj.msgList.SyncMessages(messages, version)
 	if scroll {
-		sp.MsgList.ScrollToBottom()
+		proj.msgList.ScrollToBottom()
 	}
 }
 

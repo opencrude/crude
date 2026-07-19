@@ -359,13 +359,14 @@ func newTestAppWithFileOpsAndBus(t *testing.T, dir string, bus *workspace.EventB
 	}
 
 	app := &App{
-		Workspace:      ws,
-		OverlayState:   NewOverlayState(),
-		LSPPopup:       NewLSPPopupState(),
-		EditorState:    NewEditorState(),
-		actionRegistry: ui.DefaultRegistry(),
-		windowManager:  wmgr,
-		overlayHost:    ui.NewOverlayHost(wmgr),
+		Workspace:         ws,
+		OverlayState:      NewOverlayState(),
+		LSPPopup:          NewLSPPopupState(),
+		EditorState:       NewEditorState(),
+		actionRegistry:    ui.DefaultRegistry(),
+		windowManager:     wmgr,
+		overlayHost:       ui.NewOverlayHost(wmgr),
+		subPaneProjections: newSubPaneProjectionRegistry(th),
 	}
 
 	app.Win = window.New(th)

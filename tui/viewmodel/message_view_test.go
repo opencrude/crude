@@ -66,7 +66,11 @@ func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
 		t.Fatalf("unexpected conversation state: %#v", domain)
 	}
 	pane := app.PaneMgr.Get("agent")
-	if pane == nil || len(pane.MsgList.Messages()) != 1 || pane.MsgList.Messages()[0].Content != "hello" {
-		t.Fatalf("projection did not synchronize: %#v", pane)
+	if pane == nil {
+		t.Fatal("pane was not created")
+	}
+	proj := app.subPaneProjections.GetExisting("agent")
+	if proj == nil || len(proj.msgList.Messages()) != 1 || proj.msgList.Messages()[0].Content != "hello" {
+		t.Fatalf("projection did not synchronize: %#v", proj)
 	}
 }

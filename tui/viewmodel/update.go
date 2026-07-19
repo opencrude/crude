@@ -39,7 +39,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.contentDirty = true
 		m.width = msg.Width
 		m.height = msg.Height
-		m.PaneMgr.SetSize(msg.Width, msg.Height)
+		m.subPaneProjections.SetSize(msg.Width, msg.Height)
 		m.Input.SetWidth(msg.Width)
 		m.StatusBar.SetWidth(msg.Width)
 		if m.compositor != nil {
@@ -106,13 +106,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for _, sp := range m.PaneMgr.Panes() {
 			if !sp.Done {
-				if sp.MsgList != nil {
-					paneCmd := sp.MsgList.HandleScrollbarTick(msg)
-					if paneCmd != nil {
-						cmds = append(cmds, paneCmd)
-					}
+				isCompact := sp.Type == workspace.PaneAgent
+				paneCmd := m.subPaneProjections.HandleScrollbarTick(sp.ID, msg, isCompact)
+				if paneCmd != nil {
+					cmds = append(cmds, paneCmd)
 				}
-				sp.HandleScrollbarTick(msg)
 			}
 		}
 		for _, w := range m.windowManager.Windows() {
@@ -157,10 +155,10 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			m.syncAgentMessages(n.ID, false)
 		}
 	}
-	m.PaneMgr.TickAll(spinFrame)
+	m.subPaneProjections.TickAll(spinFrame)
 	m.syncAgentWindowTabs()
 	for _, sp := range m.PaneMgr.Panes() {
-		if !sp.Done && sp.MsgList != nil {
+		if !sp.Done && m.subPaneProjections.Has(sp.ID) {
 			if ml := m.activeMsgList(); ml != nil {
 				ml.InvalidateSubPane(sp.ID)
 			}
@@ -285,8 +283,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.ModelName = string(msg)
 		m.Logger.Debug("UI", "model_update", "model", string(msg))
 		for _, node := range m.AgentMgr.AllNodes() {
-			if pane := m.PaneMgr.Get(node.ID); pane != nil && pane.MsgList != nil {
-				pane.MsgList.SetModelName(string(msg))
+			if m.subPaneProjections.Has(node.ID) {
+				m.subPaneProjections.Get(node.ID, workspace.PaneAgent).msgList.SetModelName(string(msg))
 			}
 		}
 		if ml := m.activeMsgList(); ml != nil {
@@ -619,29 +617,30 @@ func (m *App) routeMouseToInlinePane(msg tea.Msg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
-	if sp.CanScrollCompact() {
+	if m.subPaneProjections.CanScrollCompact(sp.ID) {
 		if wheelUp {
-			sp.ScrollCompactUp()
+			m.subPaneProjections.ScrollCompactUp(sp.ID)
 			ml.InvalidateSubPane(sp.ID)
 			return true, nil
 		}
 		if wheelDown {
-			sp.ScrollCompactDown()
+			m.subPaneProjections.ScrollCompactDown(sp.ID)
 			ml.InvalidateSubPane(sp.ID)
 			return true, nil
 		}
 		return true, nil
 	}
 
-	if sp.MsgList == nil {
+	proj := m.subPaneProjections.GetExisting(sp.ID)
+	if proj == nil {
 		return false, nil
 	}
 
-	if isWheel && !sp.MsgList.CanScroll() {
+	if isWheel && !proj.msgList.CanScroll() {
 		return false, nil
 	}
 
-	_, cmd := sp.MsgList.Update(msg)
+	_, cmd := proj.msgList.Update(msg)
 	return true, cmd
 }
 
@@ -807,8 +806,8 @@ func (m *App) handleTabSwitch() {
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
 		m.AgentMgr.SetActive(agentID)
-		if pane := m.PaneMgr.Get(agentID); pane != nil && pane.MsgList != nil {
-			pane.MsgList.InvalidateAllMessages()
+		if m.subPaneProjections.Has(agentID) {
+			m.subPaneProjections.InvalidateAllMessages(agentID)
 		}
 		return
 	}

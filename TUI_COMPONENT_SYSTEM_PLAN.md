@@ -1299,14 +1299,27 @@ Landed:
   preserving unchanged retained caches and invalidating only changed items
 - `workspace/agent_state.go` and `agent_state_events.go` no longer import or own
   `tui/widgets.MessageList`; the rejected callback-style `MessageSink` adapter was removed
+- **SubPane seam (this slice):** `SubPane` no longer owns a `*widgets.MessageList`,
+  theme reference, scrollbar widget, or any ANSI rendering. `workspace/subpane.go`
+  has zero `crude/tui/*` imports. `SubPane.View()` returns a presentation-neutral
+  `SubPaneView` (header, tool-lines, summary, Messages pointer). The TUI owns a
+  `subPaneProjectionRegistry` that holds the concrete MessageList per pane and
+  synchronizes by stable message ID + Conversation version (same pattern as
+  `AgentState.Messages`). Compact-agent scroll/cache state moved to the TUI
+  projection. `PaneManager` dropped `TickAll`/`SetSize`/`HasAnyScrollbarVisible`/
+  `ScrollbarNestingLevel` (those touch TUI state and now live on the registry).
+  `NewSubPane` and `PaneManager.GetOrCreate` drop the `*theme.Theme` parameter.
+  9 new TUI projection tests + the prior 9 workspace view tests cover the seam.
 
 Remaining:
-- Replace `SubPane.MsgList` presentation ownership (rendering, layout, scrollbar
-  methods still on the concrete `*widgets.MessageList` accessed through `SubPane.MsgList`);
-  introduce view-data seams for subpanes, tree rows, tabs, and status
 - Move AgentState event/result types and display normalization out of `tui/types`,
   `tui/rendering`, and `tui/tools` dependencies
-- Remove workspace ownership/imports of TUI presentation objects
+- Remove workspace ownership/imports of TUI presentation objects from
+  `workspace/session.go` (dialogs), `workspace/bootstrap.go` (tui/tools, tui/widgets,
+  tui/types), `workspace/workspace.go` (tui/widgets, tui/window, tui/input,
+  tui/rendering, tui/filetree, tui/editor, tui/theme, tui/types), and
+  `workspace/tree_state.go` (tui/filetree)
+- `workspace/subpane.go` is DONE (zero tui/ imports as of this slice)
 
 Objectives:
 
@@ -1464,7 +1477,7 @@ Exit criteria:
 | File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | filter string still on model |
 | Chat input | TextArea + reference chips + action hints | 13 | still components.TextInput |
 | Message list | VirtualList + message delegates + selection | 13 | Persisted hydration uses `ChatMessageView`; live data uses workspace `Conversation`; retained MessageList projection preserves caches by stable ID/version |
-| Subpanes | Panel + VirtualList + nested viewport | 13 | `SubPane.Messages` is canonical data; temporary concrete `MsgList` projection still owns rendering/layout/scrollbar |
+| Subpanes | Panel + VirtualList + nested viewport | 13 | `SubPane.Messages` is canonical data; TUI owns `*widgets.MessageList` projection via `subPaneProjectionRegistry` keyed by paneID + Conversation version (same pattern as `AgentState.Messages`); `workspace/subpane.go` has ZERO `tui/` imports; `SubPane.View()` returns presentation-neutral `SubPaneView` (header/tool-lines/summary/Messages pointer) |
 | Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | open |
 
 ## 21. Test Strategy
@@ -1747,9 +1760,11 @@ This program is complete only when all statements are true:
 
 ### Next slices (priority order — stay on plan)
 
-  1. **Phase 10:** remove the temporary `SubPane.MsgList` projection from workspace
-     ownership and replace AgentState's remaining TUI event/rendering imports, then add
-     tree-row, tab, and status view-data seams.
+  1. **Phase 10:** ✅ `SubPane.MsgList` projection removed from workspace ownership.
+     `workspace/subpane.go` has zero `tui/` imports. NEXT: remove the remaining
+     `workspace/` → `tui/` imports (session.go dialogs, bootstrap.go tui/tools,
+     workspace.go tui/widgets/window/input/rendering/filetree/editor, tree_state.go
+     tui/filetree), then add tree-row, tab, and status view-data seams.
   2. **Phase 12:** structured-surface migration (settings, question form, YOLO,
      picker, Find in Files, composer, text overlay, launcher). Use FileOpsService
      for any file picker filesystem operations.
