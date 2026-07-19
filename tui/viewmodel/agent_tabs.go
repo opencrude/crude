@@ -21,10 +21,8 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 	ml.SetUsername(m.Username)
 	ml.SetSubPaneContentFn(m.renderSubPaneContent)
 
-	sp := m.PaneMgr.GetOrCreate(orchID, workspace.PaneAgent, orchID, m.Theme)
-	sp.MsgList = ml
-	sp.MsgList.SetModelName(m.ModelName)
-	sp.MsgList.SetUsername(m.Username)
+	sp := m.PaneMgr.GetOrCreate(orchID, workspace.PaneAgent, orchID)
+	_ = ml // projection wiring deferred to next slice
 
 	agent := workspace.NewAgentState(orchID, sp.Messages, m.Logger)
 	m.AgentMgr.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh, agent)
