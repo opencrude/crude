@@ -22,7 +22,6 @@ import (
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
-	"crude/tui/tools"
 	ttypes "crude/tui/types"
 	"crude/tui/widgets"
 )
@@ -813,7 +812,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				}
 			}
 
-			argsCompact := tools.SummarizeToolArgs(toolName, toolArgs)
+			argsCompact := SummarizeToolArgs(toolName, toolArgs)
 			content := toolName
 			if argsCompact != "" {
 				content = toolName + " " + argsCompact
