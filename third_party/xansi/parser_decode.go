@@ -1,6 +1,7 @@
 package ansi
 
 import (
+	"runtime"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi/parser"
@@ -478,6 +479,10 @@ func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 // ultraviolet (via the same x/ansi) always agree — required on all platforms
 // including Windows Terminal.
 func correctClusterWidth(cluster string, w int) int {
+	return correctClusterWidthForPlatform(cluster, w, runtime.GOOS)
+}
+
+func correctClusterWidthForPlatform(cluster string, w int, goos string) int {
 	if cluster == "" {
 		return 0
 	}
@@ -528,7 +533,18 @@ func correctClusterWidth(cluster string, w int) int {
 	if isEastAsianWide(base) {
 		return 2
 	}
+	// Linux terminals commonly still use Unicode 15 width tables, where the
+	// trigrams were neutral (one cell). Windows Terminal uses Unicode 16,
+	// where they are wide. Keep the platform decision here so every consumer
+	// of x/ansi measures the same number.
+	if goos == "linux" && isUnicode15Narrow(base) {
+		return 1
+	}
 	return w
+}
+
+func isUnicode15Narrow(r rune) bool {
+	return r >= 0x2630 && r <= 0x2637
 }
 
 // isEmojiBase reports code points that default to emoji presentation or live

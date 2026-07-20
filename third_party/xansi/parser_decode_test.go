@@ -7,6 +7,20 @@ import (
 	"github.com/charmbracelet/x/ansi/parser"
 )
 
+func TestTrigramWidthPlatformPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		goos string
+		want int
+	}{
+		{goos: "linux", want: 1},
+		{goos: "windows", want: 2},
+	} {
+		if got := correctClusterWidthForPlatform("☰", 2, tc.goos); got != tc.want {
+			t.Errorf("%s: trigram width = %d, want %d", tc.goos, got, tc.want)
+		}
+	}
+}
+
 func TestDecodeSequence(t *testing.T) {
 	type expectedSequence struct {
 		seq    []byte
