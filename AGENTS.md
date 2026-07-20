@@ -243,8 +243,8 @@ Summary:
   + `tui/rendering.WidthMethod = GraphemeWidth`).
 - `third_party/bubbletea` forces UV `cellbuf.Method = GraphemeWidth` from
   frame 0 (upstream defaults to WcWidth until mode 2027).
-- Width is always 0/1/2; emoji/ZWJ → 2; ☰ (U+2630–2637) → 1 (terminal
-  reality vs Unicode 16 tables).
+- Width is always 0/1/2; emoji/ZWJ → 2; ☰ (U+2630–2637) → 2 under
+  Unicode 16 and current Windows Terminal.
 - Never use `uniseg` / `runewidth` for column layout. Never probe only one
   side of the pipeline.
 

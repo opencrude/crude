@@ -47,13 +47,9 @@ func newCursedRenderer(w io.Writer, env []string, width, height int) (s *cursedR
 	// Crude (and modern terminals: Kitty, Ghostty, WezTerm, Contour, foot,
 	// Windows Terminal grapheme mode) measure layout with grapheme clusters.
 	// UV defaults to WcWidth which disagrees on emoji/ZWJ and causes
-	// scrollbar/padding artifacts. Use the active width profile method so
-	// layout and UV agree on every frame: Modern → GraphemeWidth (with
-	// correctClusterWidth applied to ☰, VS15, emoji, ZWJ, flags, etc.),
-	// Windows Terminal (WT_SESSION set) → WcWidth with per-codepoint
-	// measurement (the same path xansi.FirstGraphemeCluster takes). Do NOT
-	// wait for mode 2027 negotiation — Windows Terminal may never flip it.
-	s.cellbuf.Method = ansi.ActiveMethod()
+	// scrollbar/padding artifacts. Lock both sides to GraphemeWidth from
+	// frame 0; do not wait for mode 2027 negotiation.
+	s.cellbuf.Method = ansi.GraphemeWidth
 	reset(s)
 	return
 }
@@ -707,15 +703,7 @@ func (s *cursedRenderer) setSyncdUpdates(syncd bool) {
 // setWidthMethod implements renderer.
 func (s *cursedRenderer) setWidthMethod(method ansi.Method) {
 	s.mu.Lock()
-	// Honor the active WidthProfile, not just the caller's argument.
-	// Crude's tui.Start passes ansi.ActiveMethod() so the call and the
-	// profile always agree; this guard makes the renderer robust to
-	// WithWidthMethod being called with a stale value too.
-	effective := method
-	if method == ansi.GraphemeWidth && ansi.ActiveMethod() == ansi.WcWidth {
-		effective = ansi.WcWidth
-	}
-	if effective == ansi.GraphemeWidth {
+	if method == ansi.GraphemeWidth {
 		// Turn on Unicode mode (2027) for accurate grapheme width calculation.
 		// This is needed for proper rendering of wide characters and emojis.
 		_, _ = s.scr.WriteString(ansi.SetModeUnicodeCore)
@@ -725,7 +713,7 @@ func (s *cursedRenderer) setWidthMethod(method ansi.Method) {
 		// in Unicode mode and render characters incorrectly.
 		_, _ = s.scr.WriteString(ansi.ResetModeUnicodeCore)
 	}
-	s.cellbuf.Method = effective
+	s.cellbuf.Method = method
 	s.mu.Unlock()
 }
 

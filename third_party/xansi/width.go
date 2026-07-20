@@ -80,31 +80,6 @@ func stringWidth(m Method, s string) int {
 		return 0
 	}
 
-	// Windows Terminal profile: per-codepoint, no grapheme clustering.
-	// FirstGraphemeCluster is profile-aware and dispatches to wtRuneWidth,
-	// so we can share the loop body — only the inner measurement differs.
-	if activeWidthProfile == WidthProfileWindowsTerminal {
-		var (
-			pstate = parser.GroundState
-			width  int
-		)
-		for i := 0; i < len(s); i++ {
-			state, action := parser.Table.Transition(pstate, s[i])
-			if action == parser.PrintAction || state == parser.Utf8State {
-				cluster, w := FirstGraphemeCluster(s[i:], m)
-				width += w
-				i += len(cluster) - 1
-				pstate = parser.GroundState
-				continue
-			}
-			if action == parser.PrintAction {
-				width++
-			}
-			pstate = state
-		}
-		return width
-	}
-
 	var (
 		pstate = parser.GroundState // initial state
 		width  int

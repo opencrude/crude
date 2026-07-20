@@ -12,10 +12,10 @@ import (
 // cursor advance of a Draw call is the sum of the widths of cells placed,
 // which is exactly what we need to compare against xansi.StringWidth.
 type recordingScreen struct {
-	bounds   Rectangle
-	method   WidthMethod
-	placed   []placedCell
-	maxX     int
+	bounds Rectangle
+	method WidthMethod
+	placed []placedCell
+	maxX   int
 }
 
 type placedCell struct {
@@ -24,9 +24,9 @@ type placedCell struct {
 	width int
 }
 
-func (s *recordingScreen) Bounds() Rectangle            { return s.bounds }
-func (s *recordingScreen) WidthMethod() WidthMethod      { return s.method }
-func (s *recordingScreen) CellAt(x, y int) *Cell         { return &EmptyCell }
+func (s *recordingScreen) Bounds() Rectangle        { return s.bounds }
+func (s *recordingScreen) WidthMethod() WidthMethod { return s.method }
+func (s *recordingScreen) CellAt(x, y int) *Cell    { return &EmptyCell }
 func (s *recordingScreen) SetCell(x, y int, c *Cell) {
 	// StyledString.Draw first clears the whole area with nil cells; we
 	// ignore those — only real content placements count toward cursor
@@ -53,16 +53,13 @@ func (s *recordingScreen) SetCell(x, y int, c *Cell) {
 // guards the ghost-artifact class of bugs. For every glyph class that
 // matters, uv.NewStyledString(s).Draw into a recording Screen must
 // advance the cursor by exactly as many columns as x/ansi reports via
-// StringWidth / FirstGraphemeCluster / ActiveMethod().StringWidth —
-// which is also what the layout layer (rendering.VisibleWidth) computes.
+// StringWidth / FirstGraphemeCluster / GraphemeWidth.StringWidth — which is
+// also what the layout layer (rendering.VisibleWidth) computes.
 //
 // If any row disagrees, the compositor emits one column count while UV
 // advances another, and a vertical "ghost" of stale cells appears at
 // the right edge of every line containing the offending glyph. This is
 // the exact artifact that forced vendoring ultraviolet.
-//
-// Both width profiles are exercised; the profile is set explicitly so
-// the test is hermetic regardless of WT_SESSION.
 func TestCellbufMatchesXansiWidths(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -100,66 +97,53 @@ func TestCellbufMatchesXansiWidths(t *testing.T) {
 		{"long ascii", strings.Repeat("x", 40)},
 	}
 
-	for _, profile := range []struct {
-		name string
-		p    ansi.WidthProfile
-	}{
-		{"Modern", ansi.WidthProfileModern},
-		{"WindowsTerminal", ansi.WidthProfileWindowsTerminal},
-	} {
-		t.Run(profile.name, func(t *testing.T) {
-			prev := ansi.SetWidthProfile(profile.p)
-			defer ansi.SetWidthProfile(prev)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := ansi.StringWidth(tc.input)
+			if w2 := ansi.GraphemeWidth.StringWidth(tc.input); w2 != want {
+				t.Fatalf("%q: xansi self-inconsistency: StringWidth=%d, GraphemeWidth.StringWidth=%d",
+					tc.input, want, w2)
+			}
 
-			for _, tc := range cases {
-				t.Run(tc.name, func(t *testing.T) {
-					want := ansi.StringWidth(tc.input)
-					if w2 := ansi.ActiveMethod().StringWidth(tc.input); w2 != want {
-						t.Fatalf("%q: xansi self-inconsistency: StringWidth=%d, ActiveMethod().StringWidth=%d",
-							tc.input, want, w2)
-					}
+			// Width large enough that no wrap occurs.
+			width := want + 20
+			if width < 40 {
+				width = 40
+			}
+			scr := &recordingScreen{
+				bounds: Rect(0, 0, width, 1),
+				method: ansi.GraphemeWidth,
+			}
+			NewStyledString(tc.input).Draw(scr, Rect(0, 0, width, 1))
 
-					// Width large enough that no wrap occurs.
-					width := want + 20
-					if width < 40 {
-						width = 40
-					}
-					scr := &recordingScreen{
-						bounds: Rect(0, 0, width, 1),
-						method: ansi.ActiveMethod(),
-					}
-					NewStyledString(tc.input).Draw(scr, Rect(0, 0, width, 1))
+			// maxX is the cursor advance — the rightmost column
+			// UV reached. This is exactly what the terminal will
+			// advance and what layout must match.
+			got := scr.maxX
+			if got != want {
+				// Detail: also count cells placed, to catch the
+				// case where UV placed too few cells (underflow) vs
+				// placed cells at wrong x positions (overflow).
+				placed := 0
+				for _, p := range scr.placed {
+					placed += p.width
+				}
+				t.Errorf("%q: UV advanced to x=%d (cells placed sum=%d), xansi says %d — ghost artifact risk",
+					tc.input, got, placed, want)
+			}
 
-					// maxX is the cursor advance — the rightmost column
-					// UV reached. This is exactly what the terminal will
-					// advance and what layout must match.
-					got := scr.maxX
-					if got != want {
-						// Detail: also count cells placed, to catch the
-						// case where UV placed too few cells (underflow) vs
-						// placed cells at wrong x positions (overflow).
-						placed := 0
-						for _, p := range scr.placed {
-							placed += p.width
-						}
-						t.Errorf("%q: UV advanced to x=%d (cells placed sum=%d), xansi says %d — ghost artifact risk",
-							tc.input, got, placed, want)
-					}
-
-					// Continuity check: cells must be placed at contiguous
-					// x positions starting at 0. A gap means UV skipped a
-					// column (leaving a stale cell from a prior frame) —
-					// the literal cause of the right-edge │ ghost column.
-					x := 0
-					for _, p := range scr.placed {
-						if p.x != x {
-							t.Errorf("%q: UV placed a cell at x=%d but expected x=%d (gap/overlap) — ghost column",
-								tc.input, p.x, x)
-							break
-						}
-						x += p.width
-					}
-				})
+			// Continuity check: cells must be placed at contiguous
+			// x positions starting at 0. A gap means UV skipped a
+			// column (leaving a stale cell from a prior frame) —
+			// the literal cause of the right-edge │ ghost column.
+			x := 0
+			for _, p := range scr.placed {
+				if p.x != x {
+					t.Errorf("%q: UV placed a cell at x=%d but expected x=%d (gap/overlap) — ghost column",
+						tc.input, p.x, x)
+					break
+				}
+				x += p.width
 			}
 		})
 	}
