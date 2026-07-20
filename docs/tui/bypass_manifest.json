@@ -1,5 +1,5 @@
 {
-  "version": 13,
+  "version": 14,
   "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only.",
   "rules": [
     {
@@ -63,6 +63,7 @@
     {"id": "confirm-prompt-ansi-legacy", "path": "tui/widgets/confirmprompt.go", "status": "deleted", "note": "ConfirmPrompt/ConfirmPrompt3Button DELETED; ConfirmPromptSeverity moved to confirm_frame.go; BuildConfirmFrame is the only path"},
     {"id": "ansi-filter-paint-bridge", "path": "tui/ui/filter_paint.go", "status": "open", "note": "Temporary ANSI bridge for legacy View() paths; delete when surfaces use TextField.Paint"},
     {"id": "ansi-scrollbar-bridge", "path": "tui/ui/scrollbar_ansi.go", "status": "open", "note": "Temporary ANSI bridge; delete when all lists use ScrollbarControl"},
+    {"id": "workspace-settings-legacy-form-body", "path": "tui/settings/surface.go", "status": "open", "note": "Workspace settings outer shell uses native TextField/List/Button controls; form body remains behind ui.LegacyWidget until the shared Form and ActionBar migration"},
     {"id": "popupchrome-parallel", "path": "tui/widgets/popupchrome.go", "status": "open", "note": "WindowFrame owns all product surfaces. PopupChrome remaining consumers: ContextMenuLines/Reveal (reveal animation tests only, pending WindowFrame reveal) + findreplace content (toggle/hint ANSI bridge). ConfirmPrompt legacy DELETED."},
     {"id": "context-menu-chrome", "path": "tui/widgets/contextmenu.go", "status": "migrated", "note": "Product path BuildContextMenuFrame WindowFrame+ui.List; ContextMenuLines/Reveal retained for reveal-animation tests only (pending WindowFrame reveal support); static visual tests migrated to contextmenu_frame_test.go cell-buffer assertions"},
     {"id": "lsp-handdrawn-borders", "path": "tui/viewmodel/keyboard.go", "status": "migrated", "note": "references, completion, outline all use BuildListPopupFrame; no hand-drawn ╭─╮ in keyboard.go for these IDs"},

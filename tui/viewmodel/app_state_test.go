@@ -8,6 +8,7 @@ import (
 
 	"crude/provider"
 	"crude/tui/input"
+	"crude/tui/settings"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
@@ -753,5 +754,9 @@ func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
 	}
 	if _, ok := settingsWindow.Content.(*ui.WindowFrameWidget); !ok {
 		t.Fatal("workspace settings should use ui.WindowFrame chrome")
+	}
+	framed := settingsWindow.Content.(*ui.WindowFrameWidget)
+	if _, ok := framed.Body().(*settings.WorkspaceSettingsSurface); !ok {
+		t.Fatal("workspace settings should use the native structured shell")
 	}
 }

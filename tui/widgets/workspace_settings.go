@@ -1,65 +1,42 @@
 package widgets
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/rendering"
 	"crude/tui/settings"
-	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
-	"crude/tui/widget"
+	"crude/tui/ui"
 )
 
-type WorkspaceSettingsSaveMsg struct {
-	Settings ttypes.AppSettings
-}
-
-type WorkspaceSettingsCancelMsg struct{}
-
 type WorkspaceSettings struct {
-	model *settings.Model
-	th    *theme.Theme
+	model   *settings.Model
+	surface *settings.WorkspaceSettingsSurface
 }
 
 func NewWorkspaceSettings(th *theme.Theme, appSets ttypes.AppSettings, presets []ttypes.ProviderPreset) *WorkspaceSettings {
+	model := settings.New(th, appSets, presets)
 	return &WorkspaceSettings{
-		model: settings.New(th, appSets, presets),
-		th:    th,
+		model:   model,
+		surface: settings.NewSurface(th, model),
 	}
 }
+
+func (ws *WorkspaceSettings) Component() ui.Component { return ws.surface }
+
+func (ws *WorkspaceSettings) SetFocusHandler(fn func(ui.ComponentID)) {
+	ws.surface.SetFocusHandler(fn)
+}
+
+func (ws *WorkspaceSettings) FocusSearch() { ws.surface.FocusSearch() }
 
 func (ws *WorkspaceSettings) HandleEvent(msg tea.Msg) tea.Cmd {
+	oldPane := ws.model.Pane()
 	updated, cmd := ws.model.Update(msg)
 	ws.model = &updated
-	if cmd == nil {
-		return nil
+	ws.surface.SetModel(ws.model)
+	if oldPane == 1 && ws.model.Pane() == 0 {
+		ws.surface.FocusCategories()
 	}
-	return func() tea.Msg {
-		result := cmd()
-		switch r := result.(type) {
-		case *settings.SaveMsg:
-			return WorkspaceSettingsSaveMsg{Settings: r.AppSettings}
-		case *settings.CancelMsg:
-			return WorkspaceSettingsCancelMsg{}
-		}
-		return result
-	}
-}
-
-func (ws *WorkspaceSettings) Render(surf *surface.Surface, ctx *widget.RenderContext) {
-	w, h := surf.Width(), surf.Height()
-	if w < 30 || h < 10 {
-		return
-	}
-
-	lines := ws.model.View(w, h)
-	result := strings.Join(lines, "\n")
-	rendering.RenderToSurface(surf, result)
-}
-
-func (ws *WorkspaceSettings) Measure(availW, availH int) (int, int) {
-	return availW, availH
+	return cmd
 }

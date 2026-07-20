@@ -345,9 +345,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case widgets.FilePickerCancelMsg:
 		m.overlayHost.Close(ui.OverlayFilePicker)
-	case widgets.WorkspaceSettingsSaveMsg:
+	case settingsui.SaveMsg:
 		m.Logger.Info("CONFIG", "workspace_settings_save")
-		appSets := msg.Settings
+		appSets := msg.AppSettings
 		if m.Logger != nil {
 			m.Logger.Info("WORKSPACE", "save_app_settings", "theme_preset", appSets.Theme.Preset, "provider", appSets.ActiveProvider)
 		}
@@ -364,7 +364,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 		}
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
-	case widgets.WorkspaceSettingsCancelMsg:
+	case settingsui.CancelMsg:
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	case settingsui.FetchModelsMsg:
 		request := msg
@@ -377,19 +377,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		})
 	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg:
 		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
-			if framed, ok := fw.Content.(*ui.WindowFrameWidget); ok {
-				legacy, ok := framed.Body().(*ui.LegacyWidget)
-				if !ok {
-					break
-				}
-				settingsWidget, ok := legacy.Inner().(*widgets.WorkspaceSettings)
-				if !ok {
-					break
-				}
-				if cmd := settingsWidget.HandleEvent(msg); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				fw.MarkContentDirty()
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 	case widgets.SessionSettingsSaveMsg:
