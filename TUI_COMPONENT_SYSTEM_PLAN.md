@@ -1310,16 +1310,34 @@ Landed:
   `ScrollbarNestingLevel` (those touch TUI state and now live on the registry).
   `NewSubPane` and `PaneManager.GetOrCreate` drop the `*theme.Theme` parameter.
   9 new TUI projection tests + the prior 9 workspace view tests cover the seam.
+- **Session presentation seam:** `workspace.Session` retains only
+  presentation-neutral `SessionSettingsState`; confirmation, question, YOLO,
+  text-overlay, composer, and settings widgets are retained by a TUI-owned
+  per-session projection registry keyed by stable `*workspace.Session` identity.
+  Settings saves and resets update the domain snapshot and refresh the matching
+  projection without sharing interaction state between tabs.
+- **Neutral contract extraction:** settings, message/event, and LSP value types
+  are owned by `crude/types`; `tui/types` is now a compatibility alias package.
+  `session/` and `workspace/` consume the neutral package rather than importing
+  `tui/types`.
+- **Workspace presentation ownership removal:** workspace no longer owns theme,
+  input, status bar, windows, file picker, popup state, file-tree renderer/model,
+  buffer manager, editor-tab wrappers, or dialog widgets. These are initialized
+  and retained by the TUI host. `TreeState.ViewData()` exposes neutral tree rows;
+  `Workspace.AgentTabViews()` and `Workspace.StatusView()` expose neutral tab and
+  status snapshots consumed by the TUI.
+- **LSP boundary:** `workspace.LSPManager` now owns neutral LSP lifecycle/value
+  contracts and receives a runtime/client adapter from `tui/viewmodel`; it no
+  longer imports `tui/editor`. Editor LSP value types alias `crude/types`.
 
 Remaining:
-- Move AgentState event/result types and display normalization out of `tui/types`,
-  `tui/rendering`, and `tui/tools` dependencies
-- Remove workspace ownership/imports of TUI presentation objects from
-  `workspace/session.go` (dialogs), `workspace/bootstrap.go` (tui/tools, tui/widgets,
-  tui/types), `workspace/workspace.go` (tui/widgets, tui/window, tui/input,
-  tui/rendering, tui/filetree, tui/editor, tui/theme, tui/types), and
-  `workspace/tree_state.go` (tui/filetree)
-- `workspace/subpane.go` is DONE (zero tui/ imports as of this slice)
+- Two legacy workspace test fixtures still import `tui/editor`/`tui/filetree` for
+  direct LSP/file-tree integration assertions; production workspace code has zero
+  `crude/tui/*` imports. Move those fixtures to TUI-side integration tests before
+  claiming the package-boundary exit criterion.
+- Full tree control migration and filter-engine cutover remain under Phases 6,
+  7, and 13; `TreeState.ViewData()` is the data seam, not a claim that the old
+  file-tree control has been deleted.
 
 Objectives:
 
@@ -1472,9 +1490,9 @@ Exit criteria:
 | Text overlay | Window + TextArea + ActionBar | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
 | Launcher | Responsive layout + actions + SearchField + workspace collection | 12 | filter TextEdit + RenderFilterLine + scrollbar ANSI |
 | Header | Row layout + text/status primitives | 13 | open |
-| Status bar | Segmented row + action-derived hints | 13 | open |
-| Tabs | Tabs control + close actions + status indicators | 13 | Multi-session agent roots/lifecycle fixed; component/data-view migration open |
-| File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | filter string still on model |
+| Status bar | Segmented row + action-derived hints | 13 | `Workspace.StatusView()` supplies neutral durable status/usage data; shell migration open |
+| Tabs | Tabs control + close actions + status indicators | 13 | `Workspace.AgentTabViews()` supplies neutral agent tab data; component migration open |
+| File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | `TreeState.ViewData()` exposes neutral `TreeRowView`; filter string still on TUI model |
 | Chat input | TextArea + reference chips + action hints | 13 | still components.TextInput |
 | Message list | VirtualList + message delegates + selection | 13 | Persisted hydration uses `ChatMessageView`; live data uses workspace `Conversation`; retained MessageList projection preserves caches by stable ID/version |
 | Subpanes | Panel + VirtualList + nested viewport | 13 | `SubPane.Messages` is canonical data; TUI owns `*widgets.MessageList` projection via `subPaneProjectionRegistry` keyed by paneID + Conversation version (same pattern as `AgentState.Messages`); `workspace/subpane.go` has ZERO `tui/` imports; `SubPane.View()` returns presentation-neutral `SubPaneView` (header/tool-lines/summary/Messages pointer) |
@@ -1760,11 +1778,12 @@ This program is complete only when all statements are true:
 
 ### Next slices (priority order — stay on plan)
 
-  1. **Phase 10:** ✅ `SubPane.MsgList` projection removed from workspace ownership.
-     `workspace/subpane.go` has zero `tui/` imports. NEXT: remove the remaining
-     `workspace/` → `tui/` imports (session.go dialogs, bootstrap.go tui/tools,
-     workspace.go tui/widgets/window/input/rendering/filetree/editor, tree_state.go
-     tui/filetree), then add tree-row, tab, and status view-data seams.
+   1. **Phase 10:** ✅ workspace presentation ownership and view-data seam slice.
+      `workspace/` production code has zero `tui/` imports; session dialog state,
+      neutral settings/LSP contracts, editor-tab ownership, tree rows, agent tabs,
+      and status snapshots now cross through TUI projections. NEXT: move the two
+      remaining workspace test fixtures to TUI-side integration tests, then proceed
+      to the structured-surface migration.
   2. **Phase 12:** structured-surface migration (settings, question form, YOLO,
      picker, Find in Files, composer, text overlay, launcher). Use FileOpsService
      for any file picker filesystem operations.

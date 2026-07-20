@@ -12,25 +12,20 @@ import (
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
+
+	model "crude/types"
 )
 
-type LSPDiagnostic struct {
-	Line     int
-	Col      int
-	Message  string
-	Severity int
-	EndLine  int
-	EndCol   int
-}
+type LSPDiagnostic = model.LSPDiagnostic
 
 // LSPIntegration manages a single LSP server connection for one project root.
 // Multiple files within the same root can be opened simultaneously.
 type LSPIntegration struct {
-	mu        sync.Mutex
-	client    *lsp.Client
-	serverCmd string
+	mu         sync.Mutex
+	client     *lsp.Client
+	serverCmd  string
 	serverArgs []string
-	rootURI   string
+	rootURI    string
 
 	openFiles      map[string]*openFileState // filePath -> state
 	versionCounter int
@@ -190,13 +185,7 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string
 
 // CompletionItem is a flat, viewmodel-friendly representation of a single
 // completion result returned by the LSP server.
-type CompletionItem struct {
-	Label         string
-	Detail        string
-	Documentation string
-	Kind          int
-	InsertText    string
-}
+type CompletionItem = model.CompletionItem
 
 func insertTextOf(it protocol.CompletionItem) string {
 	// it.TextEdit is a tagged union; if present, it carries the actual

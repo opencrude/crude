@@ -22,8 +22,7 @@ import (
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
-	ttypes "crude/tui/types"
-	"crude/tui/widgets"
+	ttypes "crude/types"
 )
 
 // Bootstrap creates or resumes a backend session for this workspace.
@@ -73,11 +72,10 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 		return nil, fmt.Errorf("new backend session: %w", err)
 	}
 
-	fs := NewSession(w.Theme, bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
+	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
 	fs.backend = bs
 	fs.SessionDir = bs.SessionDir()
-	fs.Settings = widgets.NewSessionSettingsWithInheritance(
-		w.Theme,
+	fs.Settings = NewSessionSettingsState(
 		bs.SettingsSnapshot(),
 		bs.WorkspaceSettingsSnapshot(),
 		bs.SessionOverridesSnapshot(),
@@ -124,11 +122,10 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 		return nil, fmt.Errorf("resume backend session: %w", err)
 	}
 
-	fs := NewSession(w.Theme, bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
+	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
 	fs.backend = bs
 	fs.SessionDir = bs.SessionDir()
-	fs.Settings = widgets.NewSessionSettingsWithInheritance(
-		w.Theme,
+	fs.Settings = NewSessionSettingsState(
 		bs.SettingsSnapshot(),
 		bs.WorkspaceSettingsSnapshot(),
 		bs.SessionOverridesSnapshot(),
@@ -154,10 +151,6 @@ func (w *Workspace) addSession(fs *Session) {
 	w.Sessions = append(w.Sessions, fs)
 	w.SessionsByID[fs.SessionID] = fs
 	w.ActiveSession = fs
-	if fs.Settings != nil {
-		w.SessionSettings = fs.Settings
-	}
-	w.Input.SetReferenceStore(fs.RefStore)
 }
 
 // Hydrate loads conversation history from the active backend session into
@@ -196,7 +189,14 @@ func (w *Workspace) BackendSession() *session.Session {
 // Workspace defaults are persisted separately through SaveAppSettings.
 func (w *Workspace) HandleSettingsSave(s ttypes.Settings) error {
 	if b := w.BackendSession(); b != nil {
-		return b.HandleSettingsSave(s)
+		if err := b.HandleSettingsSave(s); err != nil {
+			return err
+		}
+		if w.ActiveSession != nil && w.ActiveSession.Settings != nil {
+			w.ActiveSession.Settings.Effective = s
+			w.ActiveSession.Settings.Overrides = copyCategoryMap(s.SessionOverrides)
+		}
+		return nil
 	}
 	return nil
 }
@@ -208,7 +208,14 @@ func (w *Workspace) HandleSettingsSaveForSession(sessionID string, settings ttyp
 	if frontendSession == nil || frontendSession.backend == nil {
 		return fmt.Errorf("session %q is not active", sessionID)
 	}
-	return frontendSession.backend.HandleSettingsSave(settings)
+	if err := frontendSession.backend.HandleSettingsSave(settings); err != nil {
+		return err
+	}
+	if frontendSession.Settings != nil {
+		frontendSession.Settings.Effective = settings
+		frontendSession.Settings.Overrides = copyCategoryMap(settings.SessionOverrides)
+	}
+	return nil
 }
 
 // SaveAppSettings persists visual/tooling settings (theme, editor, LSP, UI, font)
@@ -568,7 +575,6 @@ func (w *Workspace) ResetSessionSettings() error {
 	}
 	if w.ActiveSession != nil && w.ActiveSession.Settings != nil {
 		w.ActiveSession.Settings.ResetToWorkspace(b.WorkspaceSettingsSnapshot())
-		w.SessionSettings = w.ActiveSession.Settings
 	}
 	return nil
 }

@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/window"
 	"crude/tui/wm"
 	"crude/workspace"
@@ -343,29 +341,28 @@ func newTestAppWithFileOpsAndBus(t *testing.T, dir string, bus *workspace.EventB
 	wmgr := wm.NewWindowManager()
 
 	ws := &workspace.Workspace{
-		RootPath:        dir,
-		Theme:           th,
-		AgentMgr:        workspace.NewAgentManager(),
-		PaneMgr:         workspace.NewPaneManager(),
-		Tree:            NewTreeState(nil, nil, 30),
-		FocusStack:      workspace.NewFocusStack(),
-		StartTime:       time.Now(),
-		ActiveSession:   &workspace.Session{},
-		SessionSettings: widgets.NewSessionSettings(th, ttypes.Settings{}),
-		FileOps:         workspace.NewFileOpsService(dir, bus, &testLogger{}),
+		RootPath:      dir,
+		AgentMgr:      workspace.NewAgentManager(),
+		PaneMgr:       workspace.NewPaneManager(),
+		FocusStack:    workspace.NewFocusStack(),
+		StartTime:     time.Now(),
+		ActiveSession: &workspace.Session{},
+		FileOps:       workspace.NewFileOpsService(dir, bus, &testLogger{}),
 	}
 	if bus != nil {
 		ws.SetEventBus(bus)
 	}
 
 	app := &App{
-		Workspace:         ws,
-		OverlayState:      NewOverlayState(),
-		LSPPopup:          NewLSPPopupState(),
-		EditorState:       NewEditorState(),
-		actionRegistry:    ui.DefaultRegistry(),
-		windowManager:     wmgr,
-		overlayHost:       ui.NewOverlayHost(wmgr),
+		Workspace:          ws,
+		Theme:              th,
+		Tree:               NewTreeState(nil, nil, 30),
+		OverlayState:       NewOverlayState(),
+		LSPPopup:           NewLSPPopupState(),
+		EditorState:        NewEditorState(),
+		actionRegistry:     ui.DefaultRegistry(),
+		windowManager:      wmgr,
+		overlayHost:        ui.NewOverlayHost(wmgr),
 		subPaneProjections: newSubPaneProjectionRegistry(th),
 	}
 

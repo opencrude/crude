@@ -271,17 +271,21 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, tea.Batch(cmds...)
 
 		case "composer":
+			composer := m.sessionComposer()
+			if composer == nil {
+				return m, nil
+			}
 			// Ctrl+C with a selection: copy (don't close the
 			// composer — matches the chat input's behavior).
-			if msg.String() == "ctrl+c" && m.ActiveSession.Composer.HasActiveSelection() {
-				return m, rendering.CopyToClipboardCmd(m.ActiveSession.Composer.SelectedText())
+			if msg.String() == "ctrl+c" && composer.HasActiveSelection() {
+				return m, rendering.CopyToClipboardCmd(composer.SelectedText())
 			}
 			if msg.Code == tea.KeyEsc {
 				m.overlayHost.Close(ui.OverlayComposer)
 				return m, nil
 			}
-			updated, cmd, action := m.ActiveSession.Composer.Update(msg)
-			m.ActiveSession.Composer = updated
+			updated, cmd, action := composer.Update(msg)
+			composer = updated
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -289,7 +293,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			case widgets.ComposerCancel:
 				m.overlayHost.Close(ui.OverlayComposer)
 			case widgets.ComposerSubmit:
-				text := m.ActiveSession.Composer.Value()
+				text := composer.Value()
 				m.overlayHost.Close(ui.OverlayComposer)
 				if text != "" && m.AgentMgr.ActiveID() != "" {
 					cmds = append(cmds, m.submitInput(m.AgentMgr.ActiveID(), text, nil))
@@ -384,9 +388,15 @@ func (m *App) dispatchOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mode
 }
 
 func (m *App) handleSettingsKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	updated, cmd := m.SessionSettings.Update(msg)
+	settings := m.sessionSettings()
+	if settings == nil {
+		return m, tea.Batch(*cmds...)
+	}
+	updated, cmd := settings.Update(msg)
 	if updated != nil {
-		m.SessionSettings = updated
+		if projection := m.activeSessionProjection(); projection != nil {
+			projection.settings = updated
+		}
 	}
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
@@ -396,8 +406,12 @@ func (m *App) handleSettingsKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 
 func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	m.StatusBar.SetConfirming(true)
-	updated, result, done := m.ActiveSession.Confirm.Update(msg)
-	m.ActiveSession.Confirm = updated
+	confirm := m.sessionConfirm()
+	if confirm == nil {
+		return m, nil
+	}
+	updated, result, done := confirm.Update(msg)
+	*confirm = updated
 	if done {
 		m.StatusBar.SetConfirming(false)
 		m.OverlayState.SetBlocking(false)
@@ -428,13 +442,17 @@ func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model,
 
 func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	m.StatusBar.SetConfirming(true)
+	questionForm := m.sessionQuestionForm()
+	if questionForm == nil {
+		return m, nil
+	}
 
-	inTextMode := m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused())
+	inTextMode := questionForm.IsTextQuestion(questionForm.Focused())
 	isCancel := msg.Code == tea.KeyEsc
 
 	if inTextMode {
 		if isCancel {
-			m.ActiveSession.QuestionForm.ExitTextMode(m.ActiveSession.QuestionForm.Focused())
+			questionForm.ExitTextMode(questionForm.Focused())
 			m.Input.ClearInput()
 			m.syncQuestionInputPrompt()
 			return m, nil
@@ -442,15 +460,15 @@ func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 		if msg.String() == "ctrl+s" {
 			text := trimAndSubmit(m.Input.Value())
 			if text != "" {
-				m.ActiveSession.QuestionForm.SetAnswer(m.ActiveSession.QuestionForm.Focused(), text)
+				questionForm.SetAnswer(questionForm.Focused(), text)
 			}
 			return m.finishQuestionIfNeeded(cmds), nil
 		}
 		if msg.Code == tea.KeyTab {
 			if msg.Mod.Contains(tea.ModShift) {
-				m.ActiveSession.QuestionForm.FocusPrev()
+				questionForm.FocusPrev()
 			} else {
-				m.ActiveSession.QuestionForm.FocusNext()
+				questionForm.FocusNext()
 			}
 			m.syncQuestionInputPrompt()
 			return m, nil
@@ -459,7 +477,7 @@ func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 	}
 
 	if isCancel {
-		m.ActiveSession.QuestionForm.Dismiss()
+		questionForm.Dismiss()
 		m.OverlayState.SetBlocking(false)
 		m.StatusBar.SetConfirming(false)
 		m.Input.ResetPrompt()
@@ -469,10 +487,10 @@ func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 		return m, nil
 	}
 
-	updated, result, done := m.ActiveSession.QuestionForm.Update(msg)
-	m.ActiveSession.QuestionForm = updated
-	if !done && m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused()) {
-		existing := m.ActiveSession.QuestionForm.Answer(m.ActiveSession.QuestionForm.Focused())
+	updated, result, done := questionForm.Update(msg)
+	*questionForm = updated
+	if !done && questionForm.IsTextQuestion(questionForm.Focused()) {
+		existing := questionForm.Answer(questionForm.Focused())
 		if existing != "" {
 			m.Input.SetInput(existing)
 		} else {
@@ -488,8 +506,12 @@ func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model
 
 func (m *App) handleYoloKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	m.StatusBar.SetConfirming(true)
-	updated, enabled, done := m.ActiveSession.YoloDlg.Update(msg)
-	m.ActiveSession.YoloDlg = updated
+	dialog := m.sessionYoloDialog()
+	if dialog == nil {
+		return m, nil
+	}
+	updated, enabled, done := dialog.Update(msg)
+	*dialog = updated
 	if done {
 		m.StatusBar.SetConfirming(false)
 		m.OverlayState.SetYolo(enabled)
@@ -519,11 +541,15 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 	// is the cancel shortcut (the original behavior — Esc is also
 	// bound to cancel). This matches the chat input's "Ctrl+C is
 	// never cancel" rule.
-	if msg.String() == "ctrl+c" && m.ActiveSession.TextOverlay.HasActiveSelection() {
-		return m, rendering.CopyToClipboardCmd(m.ActiveSession.TextOverlay.SelectedText())
+	overlay := m.sessionTextOverlay()
+	if overlay == nil {
+		return m, nil
 	}
-	updated, cmd, action := m.ActiveSession.TextOverlay.Update(msg)
-	m.ActiveSession.TextOverlay = updated
+	if msg.String() == "ctrl+c" && overlay.HasActiveSelection() {
+		return m, rendering.CopyToClipboardCmd(overlay.SelectedText())
+	}
+	updated, cmd, action := overlay.Update(msg)
+	*overlay = updated
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
@@ -531,7 +557,7 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 	case widgets.TextOverlaySave:
 		m.saveReferenceFromOverlay()
 	case widgets.TextOverlayCancel:
-		m.ActiveSession.TextOverlay.Close()
+		overlay.Close()
 		m.setMode(ModeChat)
 	}
 	if fw := m.windowManager.Focused(); fw != nil {
@@ -653,7 +679,9 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
 	case input.SettingsOpenEvent:
-		m.SessionSettings.SaveSnapshot()
+		if settings := m.sessionSettings(); settings != nil {
+			settings.SaveSnapshot()
+		}
 		m.setMode(ModeSettings)
 	case input.RefOpenEvent:
 		m.openReferenceOverlay(e.ID)
@@ -668,8 +696,9 @@ func trimAndSubmit(val string) string {
 }
 
 func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
-	if m.ActiveSession.QuestionForm.AllAnswered() {
-		result := m.ActiveSession.QuestionForm.BuildResult()
+	questionForm := m.sessionQuestionForm()
+	if questionForm != nil && questionForm.AllAnswered() {
+		result := questionForm.BuildResult()
 		m.StatusBar.SetConfirming(false)
 		m.OverlayState.SetBlocking(false)
 		if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
@@ -707,12 +736,16 @@ func (m *App) routeToInputInQuestion(msg tea.KeyPressMsg, cmds *[]tea.Cmd) tea.M
 	}
 	switch e := evt.(type) {
 	case input.SubmitEvent:
-		m.ActiveSession.QuestionForm.SetAnswer(m.ActiveSession.QuestionForm.Focused(), e.Text)
+		questionForm := m.sessionQuestionForm()
+		if questionForm == nil {
+			return m
+		}
+		questionForm.SetAnswer(questionForm.Focused(), e.Text)
 		m.Input.ClearInput()
-		if m.ActiveSession.QuestionForm.AllAnswered() {
+		if questionForm.AllAnswered() {
 			m.finishQuestionIfNeeded(cmds)
 		} else {
-			m.ActiveSession.QuestionForm.FocusNext()
+			questionForm.FocusNext()
 			m.syncQuestionInputPrompt()
 		}
 	}
@@ -753,12 +786,16 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		switch m.OverlayState.Current() {
 		case ModeSettings:
 			// Route paste to session settings form
-			updated, cmd := m.SessionSettings.Update(msg)
-			if updated != nil {
-				m.SessionSettings = updated
-			}
-			if cmd != nil {
-				cmds = append(cmds, cmd)
+			if settings := m.sessionSettings(); settings != nil {
+				updated, cmd := settings.Update(msg)
+				if updated != nil {
+					if projection := m.activeSessionProjection(); projection != nil {
+						projection.settings = updated
+					}
+				}
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		case ModeFilePicker:
 			// File picker doesn't have a paste target; ignore.

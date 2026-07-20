@@ -359,6 +359,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			if err := m.SaveProviderSettings(appSets.ActiveProvider, appSets.Providers); err != nil {
 				m.StatusBar.SetError("Failed to save providers: " + err.Error())
 			} else {
+				m.refreshAllSessionSettingsProjections()
 				m.StatusBar.SetInfo("Workspace settings saved")
 			}
 		}
@@ -405,13 +406,16 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		})
 	case widgets.SessionSettingsCancelMsg:
 		m.Logger.Info("CONFIG", "session_settings_cancel")
-		m.SessionSettings.RestoreSnapshot()
+		if settings := m.sessionSettings(); settings != nil {
+			settings.RestoreSnapshot()
+		}
 		m.closeOverlayTab("Session Settings")
 		m.OverlayState.SetSettingsCategory("")
 	case widgets.SessionSettingsResetMsg:
 		if err := m.ResetSessionSettings(); err != nil {
 			m.StatusBar.SetError("Failed to reset session settings: " + err.Error())
 		} else {
+			m.refreshSessionSettingsProjection(m.ActiveSession)
 			m.StatusBar.SetInfo("Session settings now inherit workspace defaults")
 		}
 		m.closeOverlayTab("Session Settings")
@@ -426,8 +430,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			return widgets.SessionSettingsModelsMsg{ProviderID: request.ProviderID, Models: models}
 		})
 	case widgets.SessionSettingsModelsMsg, widgets.SessionSettingsModelsErrorMsg:
-		if m.SessionSettings != nil {
-			_, cmd := m.SessionSettings.Update(msg)
+		if settings := m.sessionSettings(); settings != nil {
+			_, cmd := settings.Update(msg)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -701,21 +705,27 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 
 	switch tab.Title {
 	case "Session Settings":
-		m.SessionSettings.RestoreSnapshot()
+		if settings := m.sessionSettings(); settings != nil {
+			settings.RestoreSnapshot()
+		}
 		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
 		if ml := m.activeMsgList(); ml != nil {
 			ml.InvalidateCache()
 		}
 	case "Confirm":
-		m.ActiveSession.Confirm.Dismiss()
+		if confirm := m.sessionConfirm(); confirm != nil {
+			confirm.Dismiss()
+		}
 		m.OverlayState.SetBlocking(false)
 		m.StatusBar.SetConfirming(false)
 		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
 		m.ResolveConfirmation(m.AgentMgr.ActiveID(), ttypes.ConfirmDeny)
 	case "Question":
-		m.ActiveSession.QuestionForm.Dismiss()
+		if questionForm := m.sessionQuestionForm(); questionForm != nil {
+			questionForm.Dismiss()
+		}
 		m.OverlayState.SetBlocking(false)
 		m.StatusBar.SetConfirming(false)
 		m.Input.ResetPrompt()
@@ -724,7 +734,9 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 		m.syncOverlayMode()
 		m.ResolveQuestion(m.AgentMgr.ActiveID(), nil, nil, true)
 	case "YOLO":
-		m.ActiveSession.YoloDlg.Dismiss()
+		if dialog := m.sessionYoloDialog(); dialog != nil {
+			dialog.Dismiss()
+		}
 		m.StatusBar.SetConfirming(false)
 		m.Overlay.CloseTab(index)
 		m.syncOverlayMode()
@@ -763,10 +775,13 @@ func (m *App) syncQuestionInputPrompt() {
 		return
 	}
 	if tab := m.Overlay.TabByTitle("Question"); tab != nil {
-		m.Overlay.SetTabIconByIndex(m.Overlay.IndexOf(tab.ID), m.ActiveSession.QuestionForm.FocusedIcon())
+		if questionForm := m.sessionQuestionForm(); questionForm != nil {
+			m.Overlay.SetTabIconByIndex(m.Overlay.IndexOf(tab.ID), questionForm.FocusedIcon())
+		}
 	}
-	if m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused()) {
-		q, _ := m.ActiveSession.QuestionForm.FocusedItem()
+	questionForm := m.sessionQuestionForm()
+	if questionForm != nil && questionForm.IsTextQuestion(questionForm.Focused()) {
+		q, _ := questionForm.FocusedItem()
 		label := q.Header
 		if label == "" {
 			label = q.Question
@@ -774,8 +789,8 @@ func (m *App) syncQuestionInputPrompt() {
 				label = rendering.TruncateVisual(label, 16, "…")
 			}
 		}
-		m.Input.SetPrompt(fmt.Sprintf("Q%d %s", m.ActiveSession.QuestionForm.Focused()+1, label))
-		existing := m.ActiveSession.QuestionForm.Answer(m.ActiveSession.QuestionForm.Focused())
+		m.Input.SetPrompt(fmt.Sprintf("Q%d %s", questionForm.Focused()+1, label))
+		existing := questionForm.Answer(questionForm.Focused())
 		if existing != "" {
 			m.Input.SetInput(existing)
 		}
@@ -849,14 +864,20 @@ func (m *App) openReferenceOverlay(refID string) {
 	if title == "" {
 		title = ref.ID
 	}
-	m.ActiveSession.TextOverlay.Open(refID, title, ref.Content)
+	if overlay := m.sessionTextOverlay(); overlay != nil {
+		overlay.Open(refID, title, ref.Content)
+	}
 	m.setMode(ModeTextOverlay)
 }
 
 func (m *App) saveReferenceFromOverlay() {
-	refID := m.ActiveSession.TextOverlay.RefID()
-	content := m.ActiveSession.TextOverlay.Value()
-	m.ActiveSession.TextOverlay.Close()
+	overlay := m.sessionTextOverlay()
+	if overlay == nil {
+		return
+	}
+	refID := overlay.RefID()
+	content := overlay.Value()
+	overlay.Close()
 	if m.RefStore() != nil && refID != "" {
 		_ = m.RefStore().UpdateReferenceContent(refID, content)
 	}

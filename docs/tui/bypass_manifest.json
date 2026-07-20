@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 12,
   "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only.",
   "rules": [
     {
@@ -82,6 +82,31 @@
       "crude/tui/ui"
     ],
     "status": "phases 0-2 done; 3-10 partial; numeric baselines recorded; WindowFrame and OverlayHost own product chrome/lifecycle; workspace owns project search, file operations, agent routing, persisted hydration, and canonical live Conversation message data"
+  },
+  "architecture_boundaries": {
+    "workspace_production_tui_imports": {
+      "status": "removed",
+      "neutral_contracts": [
+        "crude/types",
+        "workspace.SessionSettingsState",
+        "workspace.TreeRowView",
+        "workspace.TabView",
+        "workspace.StatusView",
+        "workspace.LSPRuntime"
+      ],
+      "tui_projections": [
+        "tui/viewmodel/session_projection.go",
+        "tui/viewmodel/tree_state.go",
+        "tui/viewmodel/editor_state.go",
+        "tui/viewmodel/lsp_runtime.go",
+        "tui/viewmodel/status_projection.go"
+      ],
+      "test_only_residual_imports": [
+        "workspace/lsp_manager_test.go",
+        "workspace/lsp_manager_api_test.go"
+      ],
+      "note": "Production workspace code must remain free of crude/tui imports; move the two test fixtures before Phase 14 boundary completion."
+    }
   },
   "ui_package": {
     "path": "tui/ui/",

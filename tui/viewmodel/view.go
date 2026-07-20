@@ -84,6 +84,7 @@ func (m *App) View() tea.View {
 	if m.Tree.Visible {
 		m.renderSidebarToSurface()
 	}
+	m.syncWorkspaceStatusView()
 	m.renderStatusbarToSurface()
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
@@ -126,7 +127,8 @@ func (m *App) buildMainView() string {
 	}
 
 	isSpecialMode := m.OverlayState.IsOverlay()
-	showMainInputForQuestion := m.OverlayState.Is(ModeQuestion) && m.ActiveSession.QuestionForm.IsTextQuestion(m.ActiveSession.QuestionForm.Focused())
+	questionForm := m.sessionQuestionForm()
+	showMainInputForQuestion := m.OverlayState.Is(ModeQuestion) && questionForm != nil && questionForm.IsTextQuestion(questionForm.Focused())
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
 	isLauncherActive := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
 	showMainInput := !isLauncherActive && !isEditorActive && (!isSpecialMode || showMainInputForQuestion)
@@ -559,26 +561,34 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 
 	switch {
 	case tabTitle == "Session Settings":
-		settingsView := m.SessionSettings.View(m.SpinFrame)
-		for _, sl := range strings.Split(settingsView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(sl, overlayContentW))
+		if settings := m.sessionSettings(); settings != nil {
+			settingsView := settings.View(m.SpinFrame)
+			for _, sl := range strings.Split(settingsView, "\n") {
+				rawLines = append(rawLines, rendering.TruncateLine(sl, overlayContentW))
+			}
 		}
 	case tabTitle == "Confirm":
-		m.ActiveSession.Confirm.SetWidth(overlayContentW)
-		confirmView := m.ActiveSession.Confirm.View(m.SpinFrame)
-		for _, cl := range strings.Split(confirmView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(cl, overlayContentW))
+		if confirm := m.sessionConfirm(); confirm != nil {
+			confirm.SetWidth(overlayContentW)
+			confirmView := confirm.View(m.SpinFrame)
+			for _, cl := range strings.Split(confirmView, "\n") {
+				rawLines = append(rawLines, rendering.TruncateLine(cl, overlayContentW))
+			}
 		}
 	case tabTitle == "Question":
-		questionView := m.ActiveSession.QuestionForm.View(m.SpinFrame, overlayContentW)
-		for _, ql := range strings.Split(questionView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(ql, overlayContentW))
+		if questionForm := m.sessionQuestionForm(); questionForm != nil {
+			questionView := questionForm.View(m.SpinFrame, overlayContentW)
+			for _, ql := range strings.Split(questionView, "\n") {
+				rawLines = append(rawLines, rendering.TruncateLine(ql, overlayContentW))
+			}
 		}
 	case tabTitle == "YOLO":
-		m.ActiveSession.YoloDlg.SetWidth(overlayContentW)
-		yoloView := m.ActiveSession.YoloDlg.View()
-		for _, yl := range strings.Split(yoloView, "\n") {
-			rawLines = append(rawLines, rendering.TruncateLine(yl, overlayContentW))
+		if dialog := m.sessionYoloDialog(); dialog != nil {
+			dialog.SetWidth(overlayContentW)
+			yoloView := dialog.View()
+			for _, yl := range strings.Split(yoloView, "\n") {
+				rawLines = append(rawLines, rendering.TruncateLine(yl, overlayContentW))
+			}
 		}
 	}
 
@@ -601,13 +611,21 @@ func (m *App) syncFormHint() {
 	}
 	switch {
 	case activeTab.Title == "Session Settings":
-		m.FormHint = m.SessionSettings.Hint()
+		if settings := m.sessionSettings(); settings != nil {
+			m.FormHint = settings.Hint()
+		} else {
+			m.FormHint = ""
+		}
 	case activeTab.Title == "Confirm":
 		m.FormHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
 	case activeTab.Title == "YOLO":
 		m.FormHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
 	case activeTab.Title == "Question":
-		m.FormHint = m.ActiveSession.QuestionForm.Hint()
+		if questionForm := m.sessionQuestionForm(); questionForm != nil {
+			m.FormHint = questionForm.Hint()
+		} else {
+			m.FormHint = ""
+		}
 	default:
 		m.FormHint = ""
 	}

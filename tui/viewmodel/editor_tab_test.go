@@ -7,7 +7,6 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/theme"
-	"crude/workspace"
 )
 
 // TestEditorTab_StatePreservedAcrossSwitch is the regression test for
@@ -99,13 +98,13 @@ func TestEditorTab_MapIndependentTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tabs := map[string]*workspace.EditorTab{}
+	tabs := map[string]*EditorTab{}
 	for _, p := range []string{pathA, pathB} {
 		ed := editor.New(th)
 		if err := ed.Open(p); err != nil {
 			t.Fatal(err)
 		}
-		tabs[p] = workspace.NewEditorTab(p, ed)
+		tabs[p] = NewEditorTab(p, ed)
 	}
 
 	// Edit tab A.
@@ -138,13 +137,13 @@ func TestEditorTab_CloseRemovesOnlyThatTab(t *testing.T) {
 		}
 	}
 
-	tabs := map[string]*workspace.EditorTab{}
+	tabs := map[string]*EditorTab{}
 	for _, p := range []string{pathA, pathB} {
 		ed := editor.New(th)
 		if err := ed.Open(p); err != nil {
 			t.Fatal(err)
 		}
-		tabs[p] = workspace.NewEditorTab(p, ed)
+		tabs[p] = NewEditorTab(p, ed)
 	}
 
 	// Close tab A.

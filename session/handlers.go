@@ -7,7 +7,7 @@ import (
 
 	"crude/provider"
 	"crude/sessiondb"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 )
 
 func (s *Session) SetYolo(enabled bool) {

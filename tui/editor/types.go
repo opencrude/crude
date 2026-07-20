@@ -1,6 +1,10 @@
 package editor
 
-import "time"
+import (
+	"time"
+
+	model "crude/types"
+)
 
 type Position struct {
 	Line int
@@ -30,31 +34,24 @@ type diagSpan struct {
 }
 
 const (
-	DiagError   = 1
-	DiagWarning = 2
-	DiagInfo    = 3
-	DiagHint    = 4
+	DiagError   = model.DiagError
+	DiagWarning = model.DiagWarning
+	DiagInfo    = model.DiagInfo
+	DiagHint    = model.DiagHint
 )
 
 // LSPStatus tracks the lifecycle state of the LSP connection for UI feedback.
-type LSPStatus int
+type LSPStatus = model.LSPStatus
 
 const (
-	LSPIdle        LSPStatus = iota // no LSP server configured for this file type
-	LSPStarting                     // attempting to start the LSP server
-	LSPConnected                    // LSP server is running and initialized
-	LSPFailed                       // LSP server failed to start or crashed
+	LSPIdle      = model.LSPIdle
+	LSPStarting  = model.LSPStarting
+	LSPConnected = model.LSPConnected
+	LSPFailed    = model.LSPFailed
 )
 
 // LSPLocation is a flat, viewmodel-friendly representation of an LSP Location.
-type LSPLocation struct {
-	URI      string
-	Path     string // file system path (decoded from URI)
-	Line     int
-	Col      int
-	EndLine  int
-	EndCol   int
-}
+type LSPLocation = model.LSPLocation
 
 // LSPSymbol is a flat, viewmodel-friendly representation of a document symbol.
 // Mirrors LSP SymbolKind values (1=File, 2=Module, 3=Namespace, 4=Package,
@@ -62,50 +59,12 @@ type LSPLocation struct {
 // 12=Function, 13=Variable, 14=Constant, 15=String, 16=Number, 17=Boolean,
 // 18=Array, 19=Object, 20=Key, 21=Null, 22=EnumMember, 23=Struct, 24=Event,
 // 25=Operator, 26=TypeParameter).
-type LSPSymbol struct {
-	Name     string
-	Detail   string
-	Kind     int    // LSP SymbolKind
-	KindName string // human-friendly ("function", "type", "var", …)
-	Line     int
-	Col      int
-	EndLine  int
-	EndCol   int
-	Children []LSPSymbol
-}
+type LSPSymbol = model.LSPSymbol
 
 // ProjectInsights is the whole-project snapshot rendered in the bottom-left
 // status bar. It is independent of any single file — it reflects the state of
 // every file known to the LSPManager.
-type ProjectInsights struct {
-	ServerName     string // "gopls", "rust-analyzer", "" (none)
-	ServerReady    bool   // connected and idle
-	ServerBusy     bool   // currently processing a request
-	ServerStarting bool   // in startup phase (handshake not done)
-	ServerSyncing  bool   // connected but bulk-opening project files / didChange in flight
-	ServerFailed   bool   // startup or runtime failure
-	ServerError    string // human-readable error message
-
-	Errors   int
-	Warnings int
-	Info     int
-	Hints    int
-
-	FilesAffected int    // files with ≥1 diagnostic
-	FilesTracked  int    // total files open in the LSP server
-	SymbolsCount  int    // total document symbols indexed
-	TopIssue      string // "undefined: foo (×3)" or "" if no diagnostics
-	LastSync      int64  // unix nanos; 0 if never synced
-
-	// LastBusyAt is the most recent time (UnixNano) the LSP was in a
-	// non-idle state (starting, syncing, busy, or receiving diagnostics).
-	// The status bar uses this to keep the heartbeat dot animated for a
-	// minimum of AnimGrace period after the last activity, even if the
-	// instantaneous state is "ready". This ensures the user sees the
-	// animation even when the LSP transitions through idle states
-	// between the 400ms ticks.
-	LastBusyAt int64 `json:"-"`
-}
+type ProjectInsights = model.ProjectInsights
 
 // AnimGrace is the minimum time the heartbeat dot stays animated after the
 // last LSP activity. Prevents the blink from turning solid before the user
@@ -119,16 +78,16 @@ type lspServerConfig struct {
 
 var lspServers = map[string]lspServerConfig{
 	// Go
-	".go":   {Cmd: "gopls"},
+	".go": {Cmd: "gopls"},
 	// Rust
-	".rs":   {Cmd: "rust-analyzer"},
+	".rs": {Cmd: "rust-analyzer"},
 	// Python
-	".py":   {Cmd: "pyright-langserver", Args: []string{"--stdio"}},
+	".py": {Cmd: "pyright-langserver", Args: []string{"--stdio"}},
 	// TypeScript / JavaScript
-	".ts":   {Cmd: "typescript-language-server", Args: []string{"--stdio"}},
-	".js":   {Cmd: "typescript-language-server", Args: []string{"--stdio"}},
-	".tsx":  {Cmd: "typescript-language-server", Args: []string{"--stdio"}},
-	".jsx":  {Cmd: "typescript-language-server", Args: []string{"--stdio"}},
+	".ts":  {Cmd: "typescript-language-server", Args: []string{"--stdio"}},
+	".js":  {Cmd: "typescript-language-server", Args: []string{"--stdio"}},
+	".tsx": {Cmd: "typescript-language-server", Args: []string{"--stdio"}},
+	".jsx": {Cmd: "typescript-language-server", Args: []string{"--stdio"}},
 	// CSS / JSON
 	".css":  {Cmd: "vscode-css-language-server", Args: []string{"--stdio"}},
 	".json": {Cmd: "vscode-json-language-server", Args: []string{"--stdio"}},
@@ -144,7 +103,7 @@ var lspServers = map[string]lspServerConfig{
 	".c++": {Cmd: "clangd"},
 	".h++": {Cmd: "clangd"},
 	// C#
-	".cs":  {Cmd: "omnisharp", Args: []string{"--languageserver"}},
+	".cs": {Cmd: "omnisharp", Args: []string{"--languageserver"}},
 	// Zig
 	".zig": {Cmd: "zls"},
 	// Odin

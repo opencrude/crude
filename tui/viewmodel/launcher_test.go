@@ -35,22 +35,23 @@ func newTestAppWithLauncher(t *testing.T) *App {
 	th := theme.DefaultDark()
 	app := &App{
 		Workspace: &workspace.Workspace{
-			Theme:         th,
 			AgentMgr:      workspace.NewAgentManager(),
 			PaneMgr:       workspace.NewPaneManager(),
 			StartTime:     time.Now(),
-			Input:         input.NewModel(th),
-			StatusBar:     widgets.NewStatusBar(th),
-			SpinFrame:     0,
 			ActiveSession: &workspace.Session{},
 			Logger:        &testLogger{},
 		},
-		OverlayState:      NewOverlayState(),
-		LSPPopup:          NewLSPPopupState(),
-		EditorState:       NewEditorState(),
-		launcher:          NewLauncherState(".", nil),
-		actionRegistry:    ui.DefaultRegistry(),
+		Theme:              th,
+		Input:              input.NewModel(th),
+		StatusBar:          widgets.NewStatusBar(th),
+		SpinFrame:          0,
+		OverlayState:       NewOverlayState(),
+		LSPPopup:           NewLSPPopupState(),
+		EditorState:        NewEditorState(),
+		launcher:           NewLauncherState(".", nil),
+		actionRegistry:     ui.DefaultRegistry(),
 		subPaneProjections: newSubPaneProjectionRegistry(th),
+		sessionProjections: newSessionProjectionRegistry(th),
 	}
 	app.Win = window.New(th)
 	app.Overlay = window.New(th)
@@ -286,7 +287,7 @@ func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
 	app.width = 120
 	app.height = 30
 	app.ChatAreaHeight = 20
-	app.Tree = &workspace.TreeState{}
+	app.Tree = &TreeState{}
 	app.launcher.workspaces = make([]workspace.WorkspaceInfo, 30)
 	for i := range app.launcher.workspaces {
 		app.launcher.workspaces[i] = workspace.WorkspaceInfo{

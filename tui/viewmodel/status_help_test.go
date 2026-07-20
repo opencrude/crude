@@ -48,7 +48,7 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app.width = 100
 	app.height = 30
 	app.launcher = nil
-	app.ActiveSession = workspace.NewSession(app.Theme, "", "", nil, nil)
+	app.ActiveSession = workspace.NewSession("", "", nil, nil)
 	app.setMode(ModeSettings)
 
 	overlayLines := app.renderOverlayArea()

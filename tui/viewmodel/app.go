@@ -10,8 +10,11 @@ import (
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/editor"
+	"crude/tui/filetree"
+	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/surface"
+	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/widget"
@@ -39,6 +42,32 @@ type Logger = workspace.Logger
 type App struct {
 	*workspace.Workspace
 
+	// TUI-owned presentation state. Workspace retains only domain data and
+	// services; these controls and render projections are owned by the host.
+	Theme               *theme.Theme
+	Input               input.Model
+	StatusBar           *widgets.StatusBar
+	Win                 *window.Window
+	Overlay             *window.Window
+	BufferMgr           *editor.BufferManager
+	Tree                *TreeState
+	FindReplace         *widgets.FindReplaceState
+	LastContextMenu     *widgets.ContextMenuState
+	ContextMenuOpenedAt time.Time
+	TreePrompt          *widgets.TextPromptState
+	TreeDeletePending   string
+	TreeDeleteChoice    int
+	FilePicker          widgets.FilePicker
+	DiagPopupID         string
+	DirtyPromptPath     string
+	DirtyPromptChoice   int
+	ChatAreaHeight      int
+	LastInteractionTime time.Time
+	SpinFrame           int
+	History             []string
+	LastSettings        ttypes.Settings
+	FormHint            string
+
 	// Display state (owned by viewmodel — tracks what's visible/active)
 	EditorState  *EditorState
 	OverlayState *OverlayState
@@ -65,9 +94,10 @@ type App struct {
 	mainStatusbarSurf *surface.Surface // status bar separator + content
 	mainHeaderSurf    *surface.Surface // header line + separator
 
-	actionRegistry      *ui.ActionRegistry
-	overlayHost         *ui.OverlayHost
-	subPaneProjections  *subPaneProjectionRegistry
+	actionRegistry     *ui.ActionRegistry
+	overlayHost        *ui.OverlayHost
+	subPaneProjections *subPaneProjectionRegistry
+	sessionProjections *sessionProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
 	launcher            *LauncherState
@@ -98,17 +128,31 @@ type (
 )
 
 func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
+	th := theme.DefaultDark()
+	im := input.NewModel(th)
+	sb := widgets.NewStatusBar(th)
+	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) {
+		if ws.Logger != nil {
+			ws.Logger.Warn(tag, msg, pairs...)
+		}
+	})
+	treeModel := filetree.NewFileTreeModel(ws.RootPath)
+	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())
+	treeRenderer.ApplyTheme(th)
+	tree := NewTreeState(treeModel, treeRenderer, th.Tree.Config.DefaultWidth)
+	bufferMgr := editor.NewBufferManager()
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
-	rctx := widget.NewRenderContext(ws.Theme)
+	rctx := widget.NewRenderContext(th)
 	eb := workspace.NewEventBus()
 	ws.SetEventBus(eb)
+	ws.LSPMgr.SetRuntime(newEditorLSPRuntime())
 
 	// Create persistent layer surfaces. The main content covers the whole
 	// screen minus the header and status bar; sidebar, header, and status
 	// bar are overlays that update independently.
 	contentSurf := surface.NewSurface("main-content", 80, 24, cell.TransparentBlank())
-	sidebarSurf := surface.NewSurface("main-sidebar", ws.Theme.Tree.Config.DefaultWidth, 1, cell.TransparentBlank())
+	sidebarSurf := surface.NewSurface("main-sidebar", th.Tree.Config.DefaultWidth, 1, cell.TransparentBlank())
 	statusbarSurf := surface.NewSurface("main-statusbar", 80, 1, cell.TransparentBlank())
 	headerSurf := surface.NewSurface("main-header", 80, 2, cell.TransparentBlank())
 	comp.Root().AddChild(contentSurf)
@@ -121,39 +165,69 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	headerSurf.SetZOrder(3)
 
 	edState := NewEditorState()
-	edState.Editor = editor.New(ws.Theme)
+	edState.Editor = editor.New(th)
 
 	registry := ui.DefaultRegistry()
 	overlay := ui.NewOverlayHost(wmgr)
-	subPaneProjections := newSubPaneProjectionRegistry(ws.Theme)
+	subPaneProjections := newSubPaneProjectionRegistry(th)
+	sessionProjections := newSessionProjectionRegistry(th)
 
 	// Start on the unified welcome launcher (actions + workspaces + sessions).
 	launcher := NewLauncherState(ws.RootPath, ws.ListSessions())
 
 	app := &App{
-		Workspace:         ws,
-		EditorState:       edState,
-		OverlayState:      NewOverlayState(),
-		LSPPopup:          NewLSPPopupState(),
-		launcher:          launcher,
-		providerPresets:   presets,
-		compositor:        comp,
-		windowManager:     wmgr,
-		eventBus:          eb,
-		renderCtx:         rctx,
-		lastCancelTime:    time.Now(),
-		mainContentSurf:   contentSurf,
-		mainSidebarSurf:   sidebarSurf,
-		mainStatusbarSurf: statusbarSurf,
-		mainHeaderSurf:    headerSurf,
+		Workspace:          ws,
+		Theme:              th,
+		Input:              im,
+		StatusBar:          sb,
+		Win:                window.New(th),
+		Overlay:            window.New(th),
+		BufferMgr:          bufferMgr,
+		Tree:               tree,
+		FilePicker:         widgets.NewFilePicker(th),
+		LastSettings:       ws.InitialSettings,
+		EditorState:        edState,
+		OverlayState:       NewOverlayState(),
+		LSPPopup:           NewLSPPopupState(),
+		launcher:           launcher,
+		providerPresets:    presets,
+		compositor:         comp,
+		windowManager:      wmgr,
+		eventBus:           eb,
+		renderCtx:          rctx,
+		lastCancelTime:     time.Now(),
+		mainContentSurf:    contentSurf,
+		mainSidebarSurf:    sidebarSurf,
+		mainStatusbarSurf:  statusbarSurf,
+		mainHeaderSurf:     headerSurf,
 		actionRegistry:     registry,
 		overlayHost:        overlay,
 		subPaneProjections: subPaneProjections,
+		sessionProjections: sessionProjections,
 	}
 
 	app.registerOverlayHandlers()
 
 	return app
+}
+
+// SwitchProject performs the workspace domain switch, then rebuilds the TUI
+// projections that are rooted in the old project directory. Workspace does
+// not construct file-tree renderers or editor controls.
+func (m *App) SwitchProject(projectDir string) error {
+	if err := m.Workspace.SwitchProject(projectDir); err != nil {
+		return err
+	}
+	treeModel := filetree.NewFileTreeModel(m.RootPath)
+	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())
+	treeRenderer.ApplyTheme(m.Theme)
+	m.Tree = NewTreeState(treeModel, treeRenderer, m.Theme.Tree.Config.DefaultWidth)
+	m.BufferMgr = editor.NewBufferManager()
+	m.EditorState = NewEditorState()
+	m.EditorState.Editor = editor.New(m.Theme)
+	m.LSPMgr.SetRuntime(newEditorLSPRuntime())
+	m.launcher = NewLauncherState(m.RootPath, m.ListSessions())
+	return nil
 }
 
 func (m *App) SetHistory(history []string) {
@@ -228,9 +302,13 @@ func (m *App) Init() tea.Cmd {
 // openTextOverlayWindow opens the text overlay as a floating window.
 func (m *App) openTextOverlayWindow() {
 	m.overlayHost.Close(ui.OverlayTextOverlay)
+	p := m.activeSessionProjection()
+	if p == nil {
+		return
+	}
 
 	textBody := ui.NewANSIViewFunc(ui.NewID(ui.RootID, "textoverlay-body"), func(w, h int) string {
-		lines := m.ActiveSession.TextOverlay.ViewInner(w, h, m.SpinFrame)
+		lines := p.textOverlay.ViewInner(w, h, m.SpinFrame)
 		return strings.Join(lines, "\n")
 	})
 	textWidget := ui.NewWindowFrameWidget(
@@ -252,7 +330,7 @@ func (m *App) openTextOverlayWindow() {
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayTextOverlay, win, ui.DefaultOverlayPolicy(), func() {
-		m.ActiveSession.TextOverlay.Close()
+		p.textOverlay.Close()
 		m.setMode(ModeChat)
 	})
 }
@@ -450,9 +528,13 @@ func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.ActiveSession.Composer.Open("")
+	p := m.activeSessionProjection()
+	if p == nil {
+		return m, nil
+	}
+	p.composer.Open("")
 	body := ui.NewANSIViewFunc(ui.NewID(ui.RootID, "composer-body"), func(w, h int) string {
-		return m.ActiveSession.Composer.View(w, h)
+		return p.composer.View(w, h)
 	})
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
@@ -473,7 +555,7 @@ func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayComposer, fw, ui.DefaultOverlayPolicy(), func() {
-		m.ActiveSession.Composer.Close()
+		p.composer.Close()
 	})
 	return m, nil
 }
@@ -481,11 +563,12 @@ func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
 // openOrchestratorSettings opens the settings to the current orchestrator's
 // category settings, allowing per-orchestrator model/provider overrides.
 func (m *App) openSessionSettings() {
-	if m.SessionSettings == nil {
+	p := m.activeSessionProjection()
+	if p == nil || p.settings == nil {
 		return
 	}
-	m.SessionSettings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
-	m.SessionSettings.SaveSnapshot()
+	p.settings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
+	p.settings.SaveSnapshot()
 	m.setMode(ModeSettings)
 }
 
@@ -504,6 +587,7 @@ func (m *App) resetOrchestratorOverrides() {
 		}
 	}
 	m.ResetOrchestratorOverrides(id)
+	m.refreshSessionSettingsProjection(m.ActiveSession)
 	m.StatusBar.SetInfo("Session overrides reset to workspace defaults")
 }
 

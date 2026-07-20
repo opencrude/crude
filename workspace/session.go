@@ -6,8 +6,7 @@ import (
 
 	"crude/session"
 	"crude/sessiondb"
-	"crude/tui/theme"
-	"crude/tui/widgets"
+	"crude/types"
 )
 
 // Session is the frontend state for one agent conversation. It is the TUI
@@ -59,33 +58,10 @@ type Session struct {
 	// for this session's orchestrator. This is what AgentNode.State points to.
 	AgentState *AgentState
 
-	// Per-session dialogs ─
-	//
-	// These are the tool-confirmation and user-interaction dialogs. Each
-	// is a singleton within the session — only one can be active at a time.
-	// The overlay mode (OverlayState.Mode) determines which is rendered.
-
-	// Confirm is the tool-confirmation dialog ("Allow write to foo.go?").
-	Confirm widgets.ConfirmDialog
-
-	// QuestionForm is the multi-question form (when the agent asks the
-	// user questions via the "question" tool).
-	QuestionForm widgets.QuestionForm
-
-	// YoloDlg is the YOLO confirmation dialog (when the user toggles
-	// auto-approve mode).
-	YoloDlg widgets.YoloDialog
-
-	// TextOverlay is the file-edit overlay (when the agent proposes an
-	// edit and the user reviews it in a full-screen overlay).
-	TextOverlay widgets.TextOverlay
-
-	// Composer is the multi-line composer popup (for drafting long messages).
-	Composer *widgets.Composer
-
-	// Settings is this conversation's provider/model/thinking override editor.
-	// It is intentionally per session so tabs never leak overrides.
-	Settings *widgets.SessionSettings
+	// Settings is the domain snapshot for this conversation's provider/model/
+	// thinking overrides. The TUI creates a retained presentation projection
+	// from this data; workspace never owns the settings form or dialog widgets.
+	Settings *SessionSettingsState
 
 	// ── Per-session cost/token tracking ─
 	//
@@ -113,9 +89,6 @@ type Session struct {
 	// TokenEstimated is true when the token count is an estimate.
 	TokenEstimated bool
 
-	// theme is a reference to the workspace's theme (for creating widgets).
-	theme *theme.Theme
-
 	// ── Backend session (owned by this frontend session)
 	//
 	// The backend session (session.Session) is the heavy lifter — it owns
@@ -135,29 +108,71 @@ type Session struct {
 }
 
 // NewSession creates a frontend session with the given persistence handles.
-// The dialogs (Confirm, QuestionForm, etc.) are created with the workspace's
-// theme. The reference store is created from the session's DB.
+// Presentation widgets are created by the TUI projection layer. The reference
+// store is created from the session's DB.
 //
 // Parameters:
-// - th: the workspace's theme (shared, not owned).
 // - sessionID, sessionDir, db: persistence handles for this session.
 // - lg: the logger (shared, not owned).
-func NewSession(th *theme.Theme, sessionID, sessionDir string, db *sql.DB, lg Logger) *Session {
+func NewSession(sessionID, sessionDir string, db *sql.DB, lg Logger) *Session {
 	s := &Session{
-		SessionID:    sessionID,
-		SessionDir:   sessionDir,
-		DB:           db,
-		RefStore:     NewReferenceStore(sessionID, sessionDir, db),
-		Confirm:      widgets.NewConfirmDialog(th),
-		QuestionForm: widgets.NewQuestionForm(th),
-		YoloDlg:      widgets.NewYoloDialog(th),
-		TextOverlay:  widgets.NewTextOverlay(th),
-		Composer:     widgets.NewComposer(th),
-		CreatedAt:    time.Now(),
-		theme:        th,
+		SessionID:  sessionID,
+		SessionDir: sessionDir,
+		DB:         db,
+		RefStore:   NewReferenceStore(sessionID, sessionDir, db),
+		CreatedAt:  time.Now(),
 	}
 	_ = lg // logger is used by AgentState, not Session itself
 	return s
+}
+
+// SessionSettingsState is presentation-neutral settings state for one
+// conversation. Effective is the result of applying Overrides to Base.
+type SessionSettingsState struct {
+	Effective types.Settings
+	Base      types.Settings
+	Overrides map[string]types.CategorySettings
+}
+
+func NewSessionSettingsState(effective, base types.Settings, overrides map[string]types.CategorySettings) *SessionSettingsState {
+	return &SessionSettingsState{
+		Effective: cloneSettings(effective),
+		Base:      cloneSettings(base),
+		Overrides: copyCategoryMap(overrides),
+	}
+}
+
+func (s *SessionSettingsState) SetInheritance(effective, base types.Settings, overrides map[string]types.CategorySettings) {
+	if s == nil {
+		return
+	}
+	s.Effective = cloneSettings(effective)
+	s.Base = cloneSettings(base)
+	s.Overrides = copyCategoryMap(overrides)
+}
+
+func (s *SessionSettingsState) ResetToWorkspace(base types.Settings) {
+	if s == nil {
+		return
+	}
+	s.Base = cloneSettings(base)
+	s.Effective = cloneSettings(base)
+	s.Overrides = make(map[string]types.CategorySettings)
+}
+
+func cloneSettings(src types.Settings) types.Settings {
+	dst := src
+	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
+	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
+	return dst
+}
+
+func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.CategorySettings {
+	dst := make(map[string]types.CategorySettings, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 // TakeHydratedMessages returns and clears messages loaded during resume.
