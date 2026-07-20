@@ -6,12 +6,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestActiveMethodIsGrapheme(t *testing.T) {
-	// The testmain_test.go pin forces WidthProfileModern for this suite,
-	// so ActiveMethod() must resolve to GraphemeWidth. Production code
-	// follows the live profile (Modern ↔ Windows Terminal).
-	if got := ansi.ActiveMethod(); got != ansi.GraphemeWidth {
-		t.Fatalf("ActiveMethod must be GraphemeWidth under WidthProfileModern, got %v", got)
+func TestWidthMethodIsGrapheme(t *testing.T) {
+	if WidthMethod != ansi.GraphemeWidth {
+		t.Fatalf("WidthMethod = %v, want GraphemeWidth", WidthMethod)
 	}
 }
 
@@ -40,8 +37,8 @@ func TestEmojiGraphemeWidth(t *testing.T) {
 		if v := VisibleWidth(tc.s); v != tc.want {
 			t.Errorf("VisibleWidth(%q) = %d, want %d", tc.s, v, tc.want)
 		}
-		if m := ansi.ActiveMethod().StringWidth(tc.s); m != tc.want {
-			t.Errorf("ActiveMethod().StringWidth(%q) = %d, want %d", tc.s, m, tc.want)
+		if m := WidthMethod.StringWidth(tc.s); m != tc.want {
+			t.Errorf("WidthMethod.StringWidth(%q) = %d, want %d", tc.s, m, tc.want)
 		}
 	}
 }
@@ -56,11 +53,12 @@ func TestFirstGraphemeClusterEmoji(t *testing.T) {
 	}
 }
 
-func TestTrigramBurgerIsSingleCell(t *testing.T) {
-	// U+2630 ☰: Unicode 16 tables say 2; Kitty/WT advance 1.
+func TestTrigramsAreWide(t *testing.T) {
+	// Unicode 16 classifies U+2630..U+2637 as wide; current Windows
+	// Terminal and the shared xansi table both advance them by two cells.
 	for _, s := range []string{"☰", "\u2630", "\u2637"} {
-		if got := PlainWidth(s); got != 1 {
-			t.Errorf("PlainWidth(%q) = %d, want 1", s, got)
+		if got := PlainWidth(s); got != 2 {
+			t.Errorf("PlainWidth(%q) = %d, want 2", s, got)
 		}
 	}
 }

@@ -54,12 +54,9 @@ func Start(ws *workspace.Workspace, presets []ProviderPreset, history []string, 
 
 	a := viewmodel.NewApp(ws, presets)
 	a.SetHistory(history)
-	// Force UV cellbuf to follow ansi.ActiveMethod() (the same source the
-	// vendored x/ansi and Crude layout read) so layout, surface packing,
-	// and ultraviolet all stay in lockstep. The active method itself is
-	// driven by the WidthProfile (Modern vs Windows Terminal), which is
-	// detected at init from WT_SESSION. See TERMINAL_WIDTH.md §5.
-	program := tea.NewProgram(a, tea.WithWidthMethod(ansi.ActiveMethod()))
+	// Force UV to use the same grapheme-width method as Crude layout and
+	// surface packing. See TERMINAL_WIDTH.md.
+	program := tea.NewProgram(a, tea.WithWidthMethod(ansi.GraphemeWidth))
 	t.app = a
 	t.Program = program
 	a.SetProgram(program)
