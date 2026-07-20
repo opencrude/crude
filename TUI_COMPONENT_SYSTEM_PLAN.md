@@ -36,7 +36,7 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 7 Collections / scrollbar | PARTIAL | List (header/sep/disabled), VirtualList, ScrollModel, ScrollbarControl + ANSI bridge |
 | 8 Form system | PARTIAL | form.TextItem uses TextEdit; form shell still legacy lipgloss |
 | 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
-| 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version |
+| 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
 | 12 Structured migrations | PARTIAL | Filter engines + shared filter paint; Find in Files domain search moved to workspace; full surfaces still legacy |
 | 13 Shell migrations | OPEN | |
@@ -1329,12 +1329,12 @@ Landed:
 - **LSP boundary:** `workspace.LSPManager` now owns neutral LSP lifecycle/value
   contracts and receives a runtime/client adapter from `tui/viewmodel`; it no
   longer imports `tui/editor`. Editor LSP value types alias `crude/types`.
+- **Workspace test boundary:** LSP/file-tree integration fixtures moved from
+  `workspace/` to `tui/filetree/`, where they exercise the public
+  `workspace.LSPManager` runtime/client and diagnostics callback contracts using
+  neutral `crude/types` diagnostics.
 
 Remaining:
-- Two legacy workspace test fixtures still import `tui/editor`/`tui/filetree` for
-  direct LSP/file-tree integration assertions; production workspace code has zero
-  `crude/tui/*` imports. Move those fixtures to TUI-side integration tests before
-  claiming the package-boundary exit criterion.
 - Full tree control migration and filter-engine cutover remain under Phases 6,
   7, and 13; `TreeState.ViewData()` is the data seam, not a claim that the old
   file-tree control has been deleted.
@@ -1497,6 +1497,7 @@ Exit criteria:
 | Message list | VirtualList + message delegates + selection | 13 | Persisted hydration uses `ChatMessageView`; live data uses workspace `Conversation`; retained MessageList projection preserves caches by stable ID/version |
 | Subpanes | Panel + VirtualList + nested viewport | 13 | `SubPane.Messages` is canonical data; TUI owns `*widgets.MessageList` projection via `subPaneProjectionRegistry` keyed by paneID + Conversation version (same pattern as `AgentState.Messages`); `workspace/subpane.go` has ZERO `tui/` imports; `SubPane.View()` returns presentation-neutral `SubPaneView` (header/tool-lines/summary/Messages pointer) |
 | Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | open |
+| Workspace/TUI boundary | Neutral workspace data + TUI projections and integration seams | 10 | ✅ Workspace production and test code has no `tui/` imports; LSP/file-tree callback fixtures live under `tui/filetree/` |
 
 ## 21. Test Strategy
 
@@ -1776,14 +1777,23 @@ This program is complete only when all statements are true:
       presentation-field exclusion, retained-cache preservation, item invalidation,
       and removal synchronization
 
+29. Phase 10 workspace test boundary:
+    - `workspace/lsp_manager_test.go` and `workspace/lsp_manager_api_test.go` now
+      use `crude/types` rather than importing `tui/editor`
+    - LSP/file-tree integration assertions moved to
+      `tui/filetree/lsp_diagnostics_integration_test.go`
+    - The TUI-side fixture drives `workspace.LSPManager` through its public
+      `LSPRuntime`, `LSPClient`, and `SetOnDiagnostics` contracts and retains
+      single-file, unclean-path, multi-file, and delayed-tree-expansion coverage
+
 ### Next slices (priority order — stay on plan)
 
-   1. **Phase 10:** ✅ workspace presentation ownership and view-data seam slice.
-      `workspace/` production code has zero `tui/` imports; session dialog state,
-      neutral settings/LSP contracts, editor-tab ownership, tree rows, agent tabs,
-      and status snapshots now cross through TUI projections. NEXT: move the two
-      remaining workspace test fixtures to TUI-side integration tests, then proceed
-      to the structured-surface migration.
+   1. **Phase 10:** ✅ workspace presentation ownership, view-data, and package-boundary
+      seam slice. `workspace/` production and test code has zero `tui/` imports;
+      session dialog state, neutral settings/LSP contracts, editor-tab ownership,
+      tree rows, agent tabs, status snapshots, and LSP/file-tree integration seams
+      now cross through neutral contracts and TUI projections. NEXT: proceed to the
+      structured-surface migration.
   2. **Phase 12:** structured-surface migration (settings, question form, YOLO,
      picker, Find in Files, composer, text overlay, launcher). Use FileOpsService
      for any file picker filesystem operations.
