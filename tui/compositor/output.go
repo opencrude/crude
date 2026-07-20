@@ -74,8 +74,17 @@ func GenerateANSI(buf *surface.CellBuffer) string {
 			// Emit style change if needed
 			setStyle(&sb, targetFG, targetBG, targetAttr, &cur)
 
-			// Write the character
-			if c.Char == 0 {
+			// Write the character(s). Prefer the full grapheme-cluster
+			// text in Content (populated by RenderToSurface) so multi-rune
+			// clusters (♻️ = ♻ + FE0F, 👨‍👩‍👧‍👦, 🇯🇵) survive the
+			// ANSI lossy step. Fall back to the single rune in Char for
+			// cells created without Content (NewCell / NewWideCell callers).
+			// Emitting only the first rune of a cluster made ultraviolet
+			// re-parse a truncated glyph and compute a different width,
+			// shifting every subsequent column → right-edge ghost artifacts.
+			if c.Content != "" {
+				sb.WriteString(c.Content)
+			} else if c.Char == 0 {
 				sb.WriteByte(' ')
 			} else {
 				sb.WriteRune(c.Char)

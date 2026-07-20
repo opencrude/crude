@@ -337,6 +337,7 @@ func (a Attrs) Has(mask Attrs) bool {
 // This is how "holes" in floating windows let background content show through.
 type Cell struct {
 	Char        rune  // The character to display (0 for continuation cells)
+	Content     string // Full grapheme cluster text (Char is just the first rune)
 	Width       uint8 // Display width: 0 (continuation), 1 (normal), 2 (wide)
 	FG          Color // Foreground color
 	BG          Color // Background color
@@ -346,13 +347,31 @@ type Cell struct {
 
 // NewCell creates a normal-width cell with the given character and style.
 func NewCell(ch rune, fg, bg Color, attr Attrs) Cell {
-	return Cell{Char: ch, Width: 1, FG: fg, BG: bg, Attr: attr}
+	return Cell{Char: ch, Content: string(ch), Width: 1, FG: fg, BG: bg, Attr: attr}
 }
 
 // NewWideCell creates a wide (2-column) cell.
 // The caller is responsible for placing a ContinuationCell at the next column.
 func NewWideCell(ch rune, fg, bg Color, attr Attrs) Cell {
-	return Cell{Char: ch, Width: 2, FG: fg, BG: bg, Attr: attr}
+	return Cell{Char: ch, Content: string(ch), Width: 2, FG: fg, BG: bg, Attr: attr}
+}
+
+// NewClusterCell creates a cell whose visible glyph is a full grapheme
+// cluster (e.g. ♻️ = ♻ + FE0F, 👨‍👩‍👧‍👦, 🇯🇵). Storing the cluster text in
+// Content keeps the ANSI lossy step lossless — GenerateANSI emits every
+// rune, so ultraviolet re-parses the same cluster and computes the same
+// width. width is the terminal advance for the whole cluster (0, 1 or 2).
+func NewClusterCell(cluster string, width int, fg, bg Color, attr Attrs) Cell {
+	r := firstRune(cluster)
+	return Cell{Char: r, Content: cluster, Width: uint8(width), FG: fg, BG: bg, Attr: attr}
+}
+
+// firstRune returns the first rune of s, or 0 if empty.
+func firstRune(s string) rune {
+	for _, r := range s {
+		return r
+	}
+	return 0
 }
 
 // ContinuationCell is the placeholder for the second column of a wide character.

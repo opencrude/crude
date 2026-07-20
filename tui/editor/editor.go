@@ -11,6 +11,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/fsnotify/fsnotify"
 
+	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/theme"
 )
@@ -699,7 +700,7 @@ func (e *Editor) SetCursorPosition(line, col int) {
 	}
 	e.cursor.Line = line
 	lineBytes, _ := e.buf.Line(line)
-	maxCol := displayWidthOf(string(lineBytes))
+	maxCol := rendering.VisibleWidth(string(lineBytes))
 	if col < 0 {
 		col = 0
 	}
@@ -728,14 +729,6 @@ func (e *Editor) ScrollToCursor() {
 		e.scrollX = e.cursor.Col - 80 + 1
 	}
 	e.invalidateEditorCaches()
-}
-
-func displayWidthOf(s string) int {
-	n := 0
-	for range s {
-		n++
-	}
-	return n
 }
 
 // LineTextFromPath returns the trimmed content of the file at the given path.

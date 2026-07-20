@@ -293,8 +293,18 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 			ri++
 		}
 
-		numStr := e.formatLineNum(lineIdx+1+e.lineNumberOffset, sw-1)
-		numPadded := strings.Repeat(" ", sw-1-len(numStr)) + numStr
+		// The gutter area is `sw` cells: line number (sw-2) + diagnostic
+		// icon (1) + column guide (1). The Render() path at line 95 uses
+		// `x < sw-2` for the line number, so the line number must fit in
+		// `sw-2` cells — not `sw-1` as the previous code did. The +1
+		// inflated `gutter` to sw-1 cells, so `gutter + sep` (icon + │)
+		// totaled sw+1 cells, and every View() line came out one cell
+		// wider than the surface: the cellbuf then had a stray column
+		// past the column guide that bubbletea never tracked and the
+		// terminal could not clear (the "+1 ghost" on lines after a
+		// certain scroll position).
+		numStr := e.formatLineNum(lineIdx+1+e.lineNumberOffset, sw-2)
+		numPadded := strings.Repeat(" ", sw-2-len(numStr)) + numStr
 		gutter := gutterStyle.Render(numPadded)
 		// Diagnostic gutter icon.
 		lineSev := 0
@@ -397,27 +407,9 @@ func (e *Editor) View(width, height int, padLeft, padRight int) []string {
 							textPart.WriteString(fgStyle.Render(ch))
 						}
 					}
-				} else {
-					switch {
-					case vCol == e.cursor.Col && isCursorLine:
-						textPart.WriteString(cursorFg.Render(" "))
-					case e.isSelected(lineIdx, vCol):
-						textPart.WriteString(selStyle.Render(" "))
-					case sev > 0:
-						switch sev {
-						case DiagError:
-							textPart.WriteString(errUnderline)
-						case DiagWarning:
-							textPart.WriteString(warnUnderline)
-						default:
-							textPart.WriteString(infoUnderline)
-						}
-						textPart.WriteString(" ")
-						textPart.WriteString(diagUnderlineReset)
-					default:
-						textPart.WriteString(blankStyle.Render(" "))
-					}
 				}
+				// A width-2 glyph already advances across its continuation cell.
+				// Emitting a space here would make this ANSI row one column wider.
 			} else {
 				sev := diagSeverityAtCol(diags, vCol)
 				switch {
@@ -483,7 +475,12 @@ func (e *Editor) gutterWidth() int {
 	if digits < 2 {
 		digits = 2
 	}
-	return digits + 1
+	// The gutter is: line number (digits) + diagnostic icon (1) +
+	// column guide (1). Returning digits+1 left the line number with
+	// only (digits-1) cells of room, which made the View() path emit
+	// one extra cell per line — the +1 ghost column the terminal
+	// could not clear.
+	return digits + 2
 }
 
 func (e *Editor) formatLineNum(n int, width int) string {
