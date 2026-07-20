@@ -400,18 +400,19 @@ func (m *App) openWorkspaceSettings() {
 	wsWidget := widgets.NewWorkspaceSettings(m.Theme, appSets, m.providerPresets)
 
 	w, h := fitFloatingSize(m.width, m.height, 86, 22, 60, 18)
-	body := ui.NewLegacyWidget(ui.NewID(ui.RootID, "workspace-settings-body"), wsWidget)
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "workspace-settings-frame"),
 		ui.FrameWindow,
 		"Settings",
-		body,
+		wsWidget.Component(),
 		wsWidget,
 		true,
 		w,
 		h,
 	)
+	wsWidget.SetFocusHandler(frame.Focus)
+	wsWidget.FocusSearch()
 	win := wm.NewFloatingWindow(string(ui.OverlayWorkspaceSettings), "Settings", frame,
 		w, h,
 		wm.WithDecoration(true),

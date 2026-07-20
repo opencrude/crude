@@ -38,7 +38,7 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
-| 12 Structured migrations | PARTIAL | Filter engines + shared filter paint; Find in Files domain search moved to workspace; full surfaces still legacy |
+| 12 Structured migrations | PARTIAL | Filter engines + shared filter paint; Find in Files domain search moved to workspace; workspace settings now use native TextField/List/Button shell with a legacy form-body bridge |
 | 13 Shell migrations | OPEN | |
 | 14 Deletion | OPEN | Dual systems still present by design |
 | 15 Stabilization | OPEN | |
@@ -1388,7 +1388,7 @@ when find/replace switches fully to TextEdit engine.
 
 Order:
 
-1. Workspace settings. PARTIAL (category search TextEdit + RenderFilterLine)
+1. Workspace settings. PARTIAL (WindowFrameWidget + OverlayHost; native TextField/List/Button shell; legacy form body remains)
 2. Session settings. OPEN (form TextItem engine only)
 3. Question form. OPEN
 4. Tool confirmation. OPEN
@@ -1480,7 +1480,7 @@ Exit criteria:
 | Tree text prompt | Dialog + PromptField + ActionBar | 11 | ✅ **WindowFrame + TextField + TextEdit** |
 | Dirty/tree delete prompts | Dialog + ActionBar | 11 | ✅ **WindowFrame + ui.Button** (`BuildDirtyCloseFrame`/`BuildTreeDeleteFrame`); ConfirmPrompt/3Button **DELETED** |
 | Diagnostic popup | Popover + Label + severity accent | 11 | ✅ **WindowFrame + ui.Label + severity border/title accent** (`BuildDiagnosticFrame`); `diag-context` + `diag-hover` both migrated |
-| Workspace settings | Window + navigation list + Form + ActionBar | 12 | **WindowFrameWidget + OverlayHost**; search TextEdit + RenderFilterLine; legacy body |
+| Workspace settings | Window + navigation list + Form + ActionBar | 12 | **WindowFrameWidget + OverlayHost + native TextField/List/Button shell**; category filtering and action messages use retained components; legacy form body remains behind `ui.LegacyWidget` pending shared Form migration |
 | Session settings | Panel/Dialog + nested Form pages | 12 | TextItem TextEdit only |
 | Question form | Form + option collection + TextField + ActionBar | 12 | open |
 | YOLO/confirmation | Dialog + severity content + ActionBar | 12 | open |
@@ -1786,6 +1786,18 @@ This program is complete only when all statements are true:
       `LSPRuntime`, `LSPClient`, and `SetOnDiagnostics` contracts and retains
       single-file, unclean-path, multi-file, and delayed-tree-expansion coverage
 
+30. Phase 12 workspace settings structured shell:
+    - Deleted the old workspace settings `View()` rail/button renderer and its
+      hand-maintained category/button hit geometry
+    - `tui/settings/WorkspaceSettingsSurface` now composes native `TextField`,
+      `List`, and `Button` controls with stable component IDs and a single
+      `ui.LegacyWidget` bridge for the existing form body
+    - Workspace settings save/cancel messages now use `tui/settings` contracts
+      directly; model-list results route through the framed window event target
+    - Cell-buffer, search/filter, category navigation, action-bar, and product
+      window-mount tests cover the structured shell; shared form migration remains
+      under Phase 8/12
+
 ### Next slices (priority order — stay on plan)
 
    1. **Phase 10:** ✅ workspace presentation ownership, view-data, and package-boundary
@@ -1794,9 +1806,11 @@ This program is complete only when all statements are true:
       tree rows, agent tabs, status snapshots, and LSP/file-tree integration seams
       now cross through neutral contracts and TUI projections. NEXT: proceed to the
       structured-surface migration.
-  2. **Phase 12:** structured-surface migration (settings, question form, YOLO,
-     picker, Find in Files, composer, text overlay, launcher). Use FileOpsService
-     for any file picker filesystem operations.
+   2. **Phase 12:** structured-surface migration. Workspace settings outer shell is
+      native; NEXT: replace its remaining legacy form body with the shared Form and
+      ActionBar system, then continue with question form, YOLO, picker, Find in
+      Files, composer, text overlay, and launcher. Use FileOpsService for any file
+      picker filesystem operations.
   3. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
      and live config hot-reload.
   4. **Phase 13:** persistent-shell and core-view migration.

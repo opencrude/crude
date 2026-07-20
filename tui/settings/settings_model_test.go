@@ -1,14 +1,16 @@
 package settings
 
 import (
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/rendering"
+	"crude/tui/cell"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/types"
+	"crude/tui/ui"
+	"crude/tui/widget"
 )
 
 func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
@@ -38,51 +40,91 @@ func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
 	}
 }
 
-func TestSettingsViewAndMouseNavigation(t *testing.T) {
-	m := New(theme.DefaultDark(), types.AppSettings{}, nil)
-	lines := m.View(90, 28)
-	if len(lines) != 28 {
-		t.Fatalf("line count = %d, want 28", len(lines))
-	}
-	for i, line := range lines {
-		if width := rendering.VisibleWidth(line); width != 90 {
-			t.Fatalf("line %d width = %d, want 90", i, width)
+func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{}, nil)
+	surfaceRoot := NewSurface(th, m)
+	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
+	surfaceRoot.SetFocusHandler(cw.Focus)
+	surfaceRoot.FocusSearch()
+	surf := surface.NewSurface("settings-test", 90, 28, cell.TransparentBlank())
+	cw.Render(surf, &widget.RenderContext{Theme: th})
+
+	for _, text := range []string{"Search settings", "AI", "IDE", "Save", "Cancel"} {
+		if !bufferContains(surf.Buffer(), text) {
+			t.Fatalf("settings surface is missing %q", text)
 		}
 	}
-	plain := rendering.StripAnsi(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "Search settings") || !strings.Contains(plain, "AI") || !strings.Contains(plain, "IDE") {
-		t.Fatalf("settings navigation is missing search/groups:\n%s", plain)
-	}
-	if strings.Contains(plain, "01  Providers") {
-		t.Fatal("settings navigation should not use numbered slab rows")
+
+	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
+	if m.SelectedCategory() != catMain || m.Pane() != 0 {
+		t.Fatalf("category click selected=%d pane=%d, want %d/0", m.SelectedCategory(), m.Pane(), catMain)
 	}
 
-	updated, _ := m.handleMouseClick(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
-	if updated.selected != 1 || updated.pane != 0 {
-		t.Fatalf("category click selected=%d pane=%d, want 1/0", updated.selected, updated.pane)
-	}
-	updated.View(90, 28)
-	x := updated.lastLayout.formX + 2
-	updated, _ = updated.handleMouseClick(tea.MouseClickMsg{X: x, Y: 5, Button: tea.MouseLeft})
-	if updated.pane != 1 || !updated.currentForm().IsExpanded() {
+	updated, _ := m.Update(tea.MouseClickMsg{X: 25, Y: 4, Button: tea.MouseLeft})
+	*m = updated
+	surfaceRoot.SetModel(m)
+	if m.Pane() != 1 || !m.currentForm().IsExpanded() {
 		t.Fatal("provider field click should focus form pane and expand selector")
 	}
 }
 
 func TestSettingsSearchFiltersGroupedNavigation(t *testing.T) {
-	m := New(theme.DefaultDark(), types.AppSettings{}, nil)
-	_, _ = m.handleKey(tea.KeyPressMsg{Code: '/', Text: "/"})
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{}, nil)
+	surfaceRoot := NewSurface(th, m)
+	cw := ui.NewComponentWidget(th, surfaceRoot, 80, 24)
+	surfaceRoot.SetFocusHandler(cw.Focus)
+	surfaceRoot.FocusSearch()
 	for _, r := range "font" {
-		_, _ = m.handleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+		cw.Host().Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	if !m.searchActive || m.selected != catFont {
-		t.Fatalf("search active=%v selected=%d, want font", m.searchActive, m.selected)
+	if !m.searchActive || m.SelectedCategory() != catFont {
+		t.Fatalf("search active=%v selected=%d, want font", m.searchActive, m.SelectedCategory())
 	}
-	plain := rendering.StripAnsi(strings.Join(m.View(80, 24), "\n"))
-	if !strings.Contains(plain, "font█") || !strings.Contains(plain, "Font") {
-		t.Fatalf("filtered settings search not rendered:\n%s", plain)
+	if items := m.CategoryItems(); len(items) != 2 || items[1].Label != "Font" {
+		t.Fatalf("filtered category items = %#v, want only Font", items)
 	}
-	if strings.Contains(plain, "Providers") {
-		t.Fatalf("unmatched category remained visible:\n%s", plain)
+
+	surf := surface.NewSurface("settings-search-test", 80, 24, cell.TransparentBlank())
+	cw.Render(surf, &widget.RenderContext{Theme: th})
+	if !bufferContains(surf.Buffer(), "Font") || bufferContains(surf.Buffer(), "Providers") {
+		t.Fatal("filtered settings categories were not rendered")
 	}
+}
+
+func TestSettingsSurfaceActionBarEmitsMessages(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{}, nil)
+	surfaceRoot := NewSurface(th, m)
+	cw := ui.NewComponentWidget(th, surfaceRoot, 80, 24)
+	surfaceRoot.SetFocusHandler(cw.Focus)
+	cw.Focus(WorkspaceSettingsSaveID)
+	result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Cmd == nil {
+		t.Fatal("save button did not emit a command")
+	}
+	msg := result.Cmd()
+	if _, ok := msg.(SaveMsg); !ok {
+		t.Fatalf("save command message = %T, want SaveMsg", msg)
+	}
+}
+
+func bufferContains(buf *surface.CellBuffer, want string) bool {
+	runes := []rune(want)
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x <= buf.Width()-len(runes); x++ {
+			matched := true
+			for i, r := range runes {
+				if buf.Get(x+i, y).Char != r {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
+			}
+		}
+	}
+	return false
 }
