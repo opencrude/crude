@@ -51,13 +51,13 @@ capability negotiation completes.
 | ASCII, box drawing, `◆` | 1 |
 | VS15 text presentation | 1 |
 | CJK and fullwidth text | 2 |
-| `☰` and U+2630-U+2637 trigrams | 2 |
+| `☰` and U+2630-U+2637 trigrams | 1 on Linux, 2 on Windows |
 | Emoji, VS16 emoji, flags, ZWJ emoji | 2 |
 | A combining mark attached to a base | 0 additional cells |
 
-Unicode 16 changed U+2630-U+2637 from neutral to wide. Current Windows
-Terminal and the shared table advance `☰` by two cells. Do not add a local
-one-cell exception for it.
+Unicode 16 changed U+2630-U+2637 from neutral to wide. Crude uses the
+Unicode 15 width for this range on Linux and Unicode 16 on Windows. The
+decision lives in vendored `x/ansi`, keeping layout and ultraviolet aligned.
 
 Windows Terminal 1.22+ defaults to grapheme measurement. `WT_SESSION` only
 identifies the host; it does not imply legacy Console or `wcswidth`
@@ -112,7 +112,7 @@ Key coverage:
 | Test | Protects |
 |------|----------|
 | `tui/rendering/TestEmojiGraphemeWidth` | basic grapheme widths |
-| `tui/rendering/TestTrigramsAreWide` | U+2630-U+2637 width |
+| `tui/rendering/TestTrigramWidthMatchesPlatformPolicy` | U+2630-U+2637 width |
 | `tui/compositor/TestEndToEndWidthAgreement` | compositor and UV agreement |
 | `tui/editor/TestViewWideGlyphsKeepScrollbarColumn` | wide glyphs cannot shift the editor scrollbar |
 | `third_party/ultraviolet/TestCellbufMatchesXansiWidths` | UV and x/ansi agreement |

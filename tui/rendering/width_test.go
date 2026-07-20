@@ -1,6 +1,7 @@
 package rendering
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -53,12 +54,14 @@ func TestFirstGraphemeClusterEmoji(t *testing.T) {
 	}
 }
 
-func TestTrigramsAreWide(t *testing.T) {
-	// Unicode 16 classifies U+2630..U+2637 as wide; current Windows
-	// Terminal and the shared xansi table both advance them by two cells.
+func TestTrigramWidthMatchesPlatformPolicy(t *testing.T) {
+	want := 2
+	if runtime.GOOS == "linux" {
+		want = 1
+	}
 	for _, s := range []string{"☰", "\u2630", "\u2637"} {
-		if got := PlainWidth(s); got != 2 {
-			t.Errorf("PlainWidth(%q) = %d, want 2", s, got)
+		if got := PlainWidth(s); got != want {
+			t.Errorf("PlainWidth(%q) = %d, want %d", s, got, want)
 		}
 	}
 }
