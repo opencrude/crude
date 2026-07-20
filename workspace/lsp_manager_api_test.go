@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"crude/tui/editor"
+	model "crude/types"
 )
 
 func TestLSPManager_IsConfigured_FreshManager(t *testing.T) {
@@ -23,24 +23,24 @@ func TestLSPManager_AllDiagnostics_Empty(t *testing.T) {
 func TestLSPManager_AllDiagnostics_ReturnsCopy(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 	// Seed some diagnostics directly via the internal setter.
-	m.setFileDiagnostics("/tmp/foo.go", []editor.LSPDiagnostic{
-		{Line: 1, Col: 2, Severity: editor.DiagError, Message: "boom"},
+	m.setFileDiagnostics("/tmp/foo.go", []model.LSPDiagnostic{
+		{Line: 1, Col: 2, Severity: model.DiagError, Message: "boom"},
 	})
 	got := m.AllDiagnostics()
 	assert.Len(t, got, 1)
 
 	// Mutating the returned map must not affect internal state.
-	got["/tmp/other.go"] = []editor.LSPDiagnostic{{Message: "injected"}}
+	got["/tmp/other.go"] = []model.LSPDiagnostic{{Message: "injected"}}
 	assert.Empty(t, m.AllDiagnostics()["/tmp/other.go"])
 }
 
 func TestLSPManager_ClearDiagnostics(t *testing.T) {
 	m := NewLSPManager(testLogger{})
-	m.setFileDiagnostics("/tmp/a.go", []editor.LSPDiagnostic{
-		{Line: 0, Severity: editor.DiagError, Message: "x"},
+	m.setFileDiagnostics("/tmp/a.go", []model.LSPDiagnostic{
+		{Line: 0, Severity: model.DiagError, Message: "x"},
 	})
-	m.setFileDiagnostics("/tmp/b.go", []editor.LSPDiagnostic{
-		{Line: 0, Severity: editor.DiagError, Message: "y"},
+	m.setFileDiagnostics("/tmp/b.go", []model.LSPDiagnostic{
+		{Line: 0, Severity: model.DiagError, Message: "y"},
 	})
 	assert.Len(t, m.AllDiagnostics(), 2)
 
@@ -52,13 +52,13 @@ func TestLSPManager_Stop_ResetsState(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 	// Simulate a server having been started and connected.
 	m.activeConnected = true
-	m.activeStatus = editor.LSPConnected
+	m.activeStatus = model.LSPConnected
 	m.activeError = "fake"
 
 	m.Stop()
 
 	assert.False(t, m.activeConnected, "Stop should reset activeConnected")
-	assert.Equal(t, editor.LSPIdle, m.activeStatus, "Stop should reset status to LSPIdle")
+	assert.Equal(t, model.LSPIdle, m.activeStatus, "Stop should reset status to LSPIdle")
 	assert.Empty(t, m.activeError, "Stop should clear error")
 	assert.Equal(t, 0, m.inflight, "Stop should reset in-flight count")
 	assert.False(t, m.syncing, "Stop should clear syncing flag")

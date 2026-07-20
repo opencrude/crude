@@ -3,12 +3,10 @@ package workspace
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"crude/tui/editor"
-	"crude/tui/filetree"
+	model "crude/types"
 )
 
 // Logger
@@ -43,7 +41,7 @@ func TestLSPManager_New(t *testing.T) {
 	if conn {
 		t.Error("new manager should not be connected")
 	}
-	if status != editor.LSPIdle {
+	if status != model.LSPIdle {
 		t.Errorf("new manager status = %d, want LSPIdle", status)
 	}
 	if errMsg != "" {
@@ -59,7 +57,7 @@ func TestLSPManager_StartForWorkspace_NotFound(t *testing.T) {
 	if conn {
 		t.Error("should not be connected without a valid server in PATH")
 	}
-	if status == editor.LSPConnected {
+	if status == model.LSPConnected {
 		t.Error("status should not be LSPConnected for a temp dir")
 	}
 	_ = errMsg
@@ -77,7 +75,7 @@ func TestLSPManager_FileDiagnostics(t *testing.T) {
 		t.Error("HasFileDiagnostics should be false for unknown file")
 	}
 
-	m.setFileDiagnostics("/tmp/test.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/test.go", []model.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: 1, Message: "test"},
 	})
 
@@ -98,7 +96,7 @@ func TestLSPManager_FileDiagnostics_PersistAfterSet(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 
 	// Simulate a file being opened, receiving diagnostics, then closed.
-	m.setFileDiagnostics("/tmp/test.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/test.go", []model.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: 1, Message: "error"},
 	})
 
@@ -119,12 +117,12 @@ func TestLSPManager_FileDiagnostics_PersistAfterSet(t *testing.T) {
 func TestLSPManager_FileDiagnostics_ReplaceOnUpdate(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 
-	m.setFileDiagnostics("/tmp/test.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/test.go", []model.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: 1, Message: "old error"},
 	})
 
 	// Replace with new diagnostics (simulates server re-sending after edit).
-	m.setFileDiagnostics("/tmp/test.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/test.go", []model.LSPDiagnostic{
 		{Line: 1, Col: 0, Severity: 2, Message: "new warning"},
 	})
 
@@ -156,13 +154,13 @@ func TestLSPManager_FileDiagnostics_EmptyFile(t *testing.T) {
 func TestLSPManager_FileDiagnostics_MultipleFiles(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 
-	m.setFileDiagnostics("/tmp/a.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/a.go", []model.LSPDiagnostic{
 		{Line: 0, Severity: 1, Message: "a error"},
 	})
-	m.setFileDiagnostics("/tmp/b.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/b.go", []model.LSPDiagnostic{
 		{Line: 0, Severity: 2, Message: "b warning"},
 	})
-	m.setFileDiagnostics("/tmp/c.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/c.go", []model.LSPDiagnostic{
 		{Line: 0, Severity: 3, Message: "c info"},
 	})
 
@@ -181,12 +179,12 @@ func TestLSPManager_Status_Lifecycle(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 
 	conn, status, errMsg := m.Status()
-	if conn || status != editor.LSPIdle || errMsg != "" {
+	if conn || status != model.LSPIdle || errMsg != "" {
 		t.Errorf("initial: connected=%v status=%d errMsg=%q", conn, status, errMsg)
 	}
 
 	// Simulate diagnostics callback setting cached data.
-	m.setFileDiagnostics("/tmp/test.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/test.go", []model.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: 1, Message: "test diag"},
 	})
 
@@ -215,8 +213,8 @@ func TestLSPManager_OnDiagnosticsCallback(t *testing.T) {
 
 	called := false
 	var gotFP string
-	var gotDiags []editor.LSPDiagnostic
-	m.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
+	var gotDiags []model.LSPDiagnostic
+	m.SetOnDiagnostics(func(fp string, diags []model.LSPDiagnostic) {
 		called = true
 		gotFP = fp
 		gotDiags = diags
@@ -227,7 +225,7 @@ func TestLSPManager_OnDiagnosticsCallback(t *testing.T) {
 	if cb == nil {
 		t.Fatal("captureOnDiagnostics returned nil")
 	}
-	cb("/tmp/test.go", []editor.LSPDiagnostic{
+	cb("/tmp/test.go", []model.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: 1, Message: "from server"},
 	})
 
@@ -245,11 +243,11 @@ func TestLSPManager_OnDiagnosticsCallback(t *testing.T) {
 func TestLSPManager_OnDiagnosticsCallback_SetsDiagnosticsStore(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 
-	m.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {})
+	m.SetOnDiagnostics(func(fp string, diags []model.LSPDiagnostic) {})
 
 	// The callback in startServerForRoot calls setFileDiagnostics BEFORE captureOnDiagnostics.
 	// Test that both the store and the callback receive the data.
-	m.setFileDiagnostics("/tmp/test.go", []editor.LSPDiagnostic{
+	m.setFileDiagnostics("/tmp/test.go", []model.LSPDiagnostic{
 		{Line: 0, Severity: 1, Message: "stored"},
 	})
 
@@ -460,19 +458,19 @@ func TestLSPManager_AggregateConnectedServerIgnoresBackgroundFailure(t *testing.
 	m.states[clientKey("file:///project", "gopls")] = lspClientState{
 		rootURI: "file:///project",
 		cmd:     "gopls",
-		status:  editor.LSPConnected,
+		status:  model.LSPConnected,
 	}
 	m.states[clientKey("file:///project", "vscode-json-language-server")] = lspClientState{
 		rootURI: "file:///project",
 		cmd:     "vscode-json-language-server",
-		status:  editor.LSPFailed,
+		status:  model.LSPFailed,
 		err:     "vscode-json-language-server not found in PATH",
 	}
 	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
 
 	connected, status, errMsg := m.Status()
-	if !connected || status != editor.LSPConnected || errMsg != "" {
+	if !connected || status != model.LSPConnected || errMsg != "" {
 		t.Fatalf("aggregate status connected=%v status=%v error=%q", connected, status, errMsg)
 	}
 }
@@ -484,19 +482,19 @@ func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
 	m.states[clientKey("file:///project", "gopls")] = lspClientState{
 		rootURI: "file:///project",
 		cmd:     "gopls",
-		status:  editor.LSPConnected,
+		status:  model.LSPConnected,
 	}
 	m.states[clientKey("file:///project", "vscode-json-language-server")] = lspClientState{
 		rootURI: "file:///project",
 		cmd:     "vscode-json-language-server",
-		status:  editor.LSPFailed,
+		status:  model.LSPFailed,
 		err:     "vscode-json-language-server not found in PATH",
 	}
 	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
 
 	connected, status, errMsg := m.Status()
-	if connected || status != editor.LSPFailed || errMsg == "" {
+	if connected || status != model.LSPFailed || errMsg == "" {
 		t.Fatalf("active JSON status connected=%v status=%v error=%q", connected, status, errMsg)
 	}
 }
@@ -550,15 +548,15 @@ func TestProjectDiagnosticCounts_Empty(t *testing.T) {
 func TestProjectDiagnosticCounts_Aggregates(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 
-	m.setFileDiagnostics("/tmp/a.go", []editor.LSPDiagnostic{
-		{Severity: editor.DiagError},
-		{Severity: editor.DiagError},
-		{Severity: editor.DiagWarning},
+	m.setFileDiagnostics("/tmp/a.go", []model.LSPDiagnostic{
+		{Severity: model.DiagError},
+		{Severity: model.DiagError},
+		{Severity: model.DiagWarning},
 	})
-	m.setFileDiagnostics("/tmp/b.go", []editor.LSPDiagnostic{
-		{Severity: editor.DiagWarning},
-		{Severity: editor.DiagInfo},
-		{Severity: editor.DiagHint},
+	m.setFileDiagnostics("/tmp/b.go", []model.LSPDiagnostic{
+		{Severity: model.DiagWarning},
+		{Severity: model.DiagInfo},
+		{Severity: model.DiagHint},
 	})
 
 	errs, warns, hints := m.ProjectDiagnosticCounts()
@@ -576,8 +574,8 @@ func TestProjectDiagnosticCounts_Aggregates(t *testing.T) {
 func TestProjectDiagnosticCounts_AfterClear(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 
-	m.setFileDiagnostics("/tmp/a.go", []editor.LSPDiagnostic{
-		{Severity: editor.DiagError},
+	m.setFileDiagnostics("/tmp/a.go", []model.LSPDiagnostic{
+		{Severity: model.DiagError},
 	})
 	m.setFileDiagnostics("/tmp/a.go", nil) // clear
 
@@ -627,214 +625,4 @@ func TestCloseFile_WrongClient(t *testing.T) {
 
 	// CloseFile for a file whose root has no client — should not panic.
 	m.CloseFile(ctx, "/tmp/test.go")
-}
-
-// ── Integration: LSPManager callback → FileTreeModel ──
-
-func TestLSPManager_TreeDiagnosticsIntegration(t *testing.T) {
-	dir := t.TempDir()
-	mainGo := filepath.Join(dir, "main.go")
-	createFile(t, mainGo, "package main")
-
-	tree := filetree.NewFileTreeModel(dir)
-	mgr := NewLSPManager(testLogger{})
-
-	// Same callback that App.Init() sets.
-	treeUpdated := false
-	mgr.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
-		treeUpdated = true
-		errs, warns, hints := 0, 0, 0
-		for _, d := range diags {
-			switch d.Severity {
-			case editor.DiagError:
-				errs++
-			case editor.DiagWarning:
-				warns++
-			default:
-				hints++
-			}
-		}
-		tree.SetDiagnostics(fp, errs, warns, hints)
-	})
-
-	// Simulate the exact callback chain from startServerForRoot:
-	// m.setFileDiagnostics(fp, diags)
-	// if cb := m.captureOnDiagnostics(); cb != nil { cb(fp, diags) }
-	mgr.setFileDiagnostics(mainGo, []editor.LSPDiagnostic{
-		{Severity: editor.DiagError, Message: "test1"},
-	})
-	if cb := mgr.captureOnDiagnostics(); cb != nil {
-		cb(mainGo, []editor.LSPDiagnostic{
-			{Severity: editor.DiagError, Message: "test1"},
-		})
-	}
-
-	if !treeUpdated {
-		t.Fatal("tree update callback was not invoked")
-	}
-
-	node := tree.NodeByPath(mainGo)
-	if node == nil {
-		t.Fatalf("node not found at %q", mainGo)
-	}
-	if node.DiagErrors != 1 {
-		t.Errorf("node DiagErrors = %d, want 1", node.DiagErrors)
-	}
-	if node.DiagnosticCount != 1 {
-		t.Errorf("node DiagnosticCount = %d, want 1", node.DiagnosticCount)
-	}
-	if tree.Root.DiagErrors != 1 {
-		t.Errorf("root DiagErrors = %d, want 1", tree.Root.DiagErrors)
-	}
-	t.Logf("node: errors=%d warnings=%d hints=%d total=%d",
-		node.DiagErrors, node.DiagWarnings, node.DiagHints, node.DiagnosticCount)
-	t.Logf("root: errors=%d warnings=%d hints=%d total=%d",
-		tree.Root.DiagErrors, tree.Root.DiagWarnings, tree.Root.DiagHints, tree.Root.DiagnosticCount)
-}
-
-func TestLSPManager_TreeDiagnostics_UncleanedPath(t *testing.T) {
-	dir := t.TempDir()
-	mainGo := filepath.Join(dir, "main.go")
-	createFile(t, mainGo, "package main")
-
-	tree := filetree.NewFileTreeModel(dir)
-	mgr := NewLSPManager(testLogger{})
-
-	mgr.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
-		errs, warns, hints := 0, 0, 0
-		for _, d := range diags {
-			switch d.Severity {
-			case editor.DiagError:
-				errs++
-			case editor.DiagWarning:
-				warns++
-			default:
-				hints++
-			}
-		}
-		tree.SetDiagnostics(fp, errs, warns, hints)
-	})
-
-	// Simulate LSP server sending a URI with trailing junk
-	// e.g. "file:///home/user/project/./main.go" → uriToPath → "/home/user/project/./main.go"
-	uncleanPath := mainGo + "/./."
-	if cb := mgr.captureOnDiagnostics(); cb != nil {
-		cb(uncleanPath, []editor.LSPDiagnostic{
-			{Severity: editor.DiagError, Message: "uncleaned"},
-		})
-	}
-
-	node := tree.NodeByPath(mainGo)
-	if node == nil {
-		t.Fatalf("node not found at %q", mainGo)
-	}
-	if node.DiagErrors != 1 {
-		t.Errorf("node DiagErrors = %d, want 1 (uncleaned path)", node.DiagErrors)
-	}
-}
-
-func TestLSPManager_TreeDiagnostics_MultipleFiles(t *testing.T) {
-	dir := t.TempDir()
-	a := filepath.Join(dir, "a.go")
-	b := filepath.Join(dir, "b.go")
-	createFile(t, a, "package a")
-	createFile(t, b, "package b")
-
-	tree := filetree.NewFileTreeModel(dir)
-	mgr := NewLSPManager(testLogger{})
-
-	mgr.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
-		errs, warns, hints := 0, 0, 0
-		for _, d := range diags {
-			switch d.Severity {
-			case editor.DiagError:
-				errs++
-			case editor.DiagWarning:
-				warns++
-			default:
-				hints++
-			}
-		}
-		tree.SetDiagnostics(fp, errs, warns, hints)
-	})
-
-	mgr.setFileDiagnostics(a, []editor.LSPDiagnostic{{Severity: editor.DiagError}})
-	mgr.setFileDiagnostics(b, []editor.LSPDiagnostic{{Severity: editor.DiagWarning}, {Severity: editor.DiagHint}})
-	if cb := mgr.captureOnDiagnostics(); cb != nil {
-		cb(a, []editor.LSPDiagnostic{{Severity: editor.DiagError}})
-		cb(b, []editor.LSPDiagnostic{{Severity: editor.DiagWarning}, {Severity: editor.DiagHint}})
-	}
-
-	na := tree.NodeByPath(a)
-	nb := tree.NodeByPath(b)
-	if na == nil || nb == nil {
-		t.Fatal("nodes not found")
-	}
-	if na.DiagErrors != 1 {
-		t.Errorf("a.go DiagErrors = %d, want 1", na.DiagErrors)
-	}
-	if nb.DiagWarnings != 1 {
-		t.Errorf("b.go DiagWarnings = %d, want 1", nb.DiagWarnings)
-	}
-	if nb.DiagHints != 1 {
-		t.Errorf("b.go DiagHints = %d, want 1", nb.DiagHints)
-	}
-	if tree.Root.DiagnosticCount != 3 {
-		t.Errorf("root DiagnosticCount = %d, want 3", tree.Root.DiagnosticCount)
-	}
-}
-
-func TestLSPManager_TreeDiagnostics_AfterExpand(t *testing.T) {
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "sub")
-	mkdir(t, sub)
-	deepGo := filepath.Join(sub, "deep.go")
-	createFile(t, deepGo, "package deep")
-
-	tree := filetree.NewFileTreeModel(dir)
-	mgr := NewLSPManager(testLogger{})
-
-	mgr.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
-		errs, warns, hints := 0, 0, 0
-		for _, d := range diags {
-			switch d.Severity {
-			case editor.DiagError:
-				errs++
-			case editor.DiagWarning:
-				warns++
-			default:
-				hints++
-			}
-		}
-		tree.SetDiagnostics(fp, errs, warns, hints)
-	})
-
-	// Send diagnostics for deep.go BEFORE expanding sub/.
-	mgr.setFileDiagnostics(deepGo, []editor.LSPDiagnostic{{Severity: editor.DiagError}})
-	if cb := mgr.captureOnDiagnostics(); cb != nil {
-		cb(deepGo, []editor.LSPDiagnostic{{Severity: editor.DiagError}})
-	}
-
-	// Node should not exist yet (sub/ not expanded).
-	if node := tree.NodeByPath(deepGo); node != nil {
-		t.Log("deep.go node exists before expand (unexpected but OK)")
-	}
-
-	// Now expand sub/ directory.
-	tree.Expand(sub)
-
-	node := tree.NodeByPath(deepGo)
-	if node == nil {
-		t.Fatal("deep.go node not found after expand")
-	}
-	if node.DiagErrors != 1 {
-		t.Errorf("deep.go DiagErrors after expand = %d, want 1", node.DiagErrors)
-	}
-	subNode := tree.NodeByPath(sub)
-	if subNode == nil {
-		t.Fatal("sub node not found")
-	}
-	if subNode.DiagnosticCount != 1 {
-		t.Errorf("sub DiagnosticCount after expand = %d, want 1", subNode.DiagnosticCount)
-	}
 }

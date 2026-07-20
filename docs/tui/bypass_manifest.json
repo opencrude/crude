@@ -1,5 +1,5 @@
 {
-  "version": 12,
+  "version": 13,
   "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only.",
   "rules": [
     {
@@ -101,11 +101,11 @@
         "tui/viewmodel/lsp_runtime.go",
         "tui/viewmodel/status_projection.go"
       ],
-      "test_only_residual_imports": [
-        "workspace/lsp_manager_test.go",
-        "workspace/lsp_manager_api_test.go"
+      "test_only_residual_imports": [],
+      "migrated_test_fixtures": [
+        "tui/filetree/lsp_diagnostics_integration_test.go"
       ],
-      "note": "Production workspace code must remain free of crude/tui imports; move the two test fixtures before Phase 14 boundary completion."
+      "note": "Workspace production and test code are free of crude/tui imports; TUI-side integration fixtures exercise the public workspace contracts."
     }
   },
   "ui_package": {
