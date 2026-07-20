@@ -246,16 +246,24 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.StatusBar.SetStatusLine("")
 		},
 		func(question, operation, tool, target, risk, reason, suggestion string) {
+			confirm := m.sessionConfirm()
+			if confirm == nil {
+				return
+			}
 			if risk != "" {
-				m.ActiveSession.Confirm.ResetWithDetails(question, operation, tool, target, risk, reason, suggestion)
+				confirm.ResetWithDetails(question, operation, tool, target, risk, reason, suggestion)
 			} else {
-				m.ActiveSession.Confirm.Reset(question, operation, tool, target)
+				confirm.Reset(question, operation, tool, target)
 			}
 			m.setMode(ModeConfirm)
 		},
 		func(questionsJSON string) {
+			questionForm := m.sessionQuestionForm()
+			if questionForm == nil {
+				return
+			}
 			m.purgeQuestionOverlayTabs()
-			n := m.ActiveSession.QuestionForm.Reset(questionsJSON)
+			n := questionForm.Reset(questionsJSON)
 			if n == 0 {
 				return
 			}
@@ -264,9 +272,15 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.syncQuestionInputPrompt()
 		},
 		func() {
+			confirm := m.sessionConfirm()
+			questionForm := m.sessionQuestionForm()
 			m.OverlayState.SetBlocking(false)
-			m.ActiveSession.Confirm.Dismiss()
-			m.ActiveSession.QuestionForm.Dismiss()
+			if confirm != nil {
+				confirm.Dismiss()
+			}
+			if questionForm != nil {
+				questionForm.Dismiss()
+			}
 			m.Input.ResetPrompt()
 			m.Input.ClearInput()
 			m.StatusBar.SetConfirming(false)

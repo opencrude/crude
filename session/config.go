@@ -2,7 +2,7 @@ package session
 
 import (
 	"crude/provider"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 )
 
 const (

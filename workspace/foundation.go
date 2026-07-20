@@ -6,8 +6,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-
-	"crude/tui/editor"
 )
 
 //  ─ Mode enum
@@ -93,7 +91,7 @@ const (
 // the file tree and active editor on the main goroutine.
 type LSPDiagnosticsMsg struct {
 	FilePath    string
-	Diagnostics []editor.LSPDiagnostic
+	Diagnostics []LSPDiagnostic
 }
 
 // FileWatcherMsg carries a file system watcher event. The file tree's watcher

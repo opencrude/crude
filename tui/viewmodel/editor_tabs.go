@@ -11,7 +11,6 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/workspace"
 )
 
 func (m *App) editorTabTitle(path string) string {
@@ -106,7 +105,7 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 	displayTitle := ed.Title()
 
 	// Store the tab and point m.EditorState.Editor at it.
-	m.EditorState.Tabs[path] = workspace.NewEditorTab(path, ed)
+	m.EditorState.Tabs[path] = NewEditorTab(path, ed)
 	m.EditorState.Editor = ed
 	m.EditorState.ActiveView = path
 

@@ -232,8 +232,12 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(cmds...)
 			}
 			if m.OverlayState.Is(ModeTextOverlay) {
-				updated, cmd, action := m.ActiveSession.TextOverlay.Update(msg)
-				m.ActiveSession.TextOverlay = updated
+				overlay := m.sessionTextOverlay()
+				if overlay == nil {
+					return m, tea.Batch(cmds...)
+				}
+				updated, cmd, action := overlay.Update(msg)
+				*overlay = updated
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -241,7 +245,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 				case widgets.TextOverlaySave:
 					m.saveReferenceFromOverlay()
 				case widgets.TextOverlayCancel:
-					m.ActiveSession.TextOverlay.Close()
+					overlay.Close()
 					m.setMode(ModeChat)
 				}
 				hitWin.MarkContentDirty()
@@ -388,15 +392,16 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 	contentStartLine := overlayStartLine + overlayContentOffset
 
 	activeTab := m.Overlay.ActiveTab()
-	if activeTab != nil && activeTab.Title == "Question" && m.ActiveSession.QuestionForm.Count() > 1 && mouse.Y >= contentStartLine {
+	questionForm := m.sessionQuestionForm()
+	if activeTab != nil && activeTab.Title == "Question" && questionForm != nil && questionForm.Count() > 1 && mouse.Y >= contentStartLine {
 		contentY := mouse.Y - contentStartLine
 		innerW := m.width - 2*m.Theme.Spacing.PadLR
-		sidebarW := m.ActiveSession.QuestionForm.ComputeSidebarWidth(innerW)
+		sidebarW := questionForm.ComputeSidebarWidth(innerW)
 		sidebarStartX := m.Theme.Spacing.PadLR + innerW - sidebarW
 		if mouse.X >= sidebarStartX {
 			itemIdx := contentY / 2
-			if itemIdx >= 0 && itemIdx < m.ActiveSession.QuestionForm.Count() {
-				m.ActiveSession.QuestionForm.SetFocused(itemIdx)
+			if itemIdx >= 0 && itemIdx < questionForm.Count() {
+				questionForm.SetFocused(itemIdx)
 				m.syncQuestionInputPrompt()
 				return m, nil
 			}
@@ -427,16 +432,19 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 		// widget is a components.Dialog which has its own
 		// Update() that handles mouse clicks via the ButtonGroup.
 		adjustedMsg := tea.MouseClickMsg{X: adjustedX, Y: 0, Button: msg.Button}
-		updated, result, done := m.ActiveSession.Confirm.Update(adjustedMsg)
-		m.ActiveSession.Confirm = updated
-		if done {
-			return m.handleConfirmResult(result)
+		if confirm := m.sessionConfirm(); confirm != nil {
+			updated, result, done := confirm.Update(adjustedMsg)
+			*confirm = updated
+			if done {
+				return m.handleConfirmResult(result)
+			}
 		}
 	}
 
 	// Session settings overlay: clicks on form items focus that item.
 	if activeTab != nil && activeTab.Title == "Session Settings" {
-		if m.SessionSettings == nil {
+		settings := m.sessionSettings()
+		if settings == nil {
 			return m, nil
 		}
 		sidebarW := 0
@@ -449,8 +457,10 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 			Y:      mouse.Y - contentStartLine + 1,
 			Button: msg.Button,
 		}
-		updated, cmd := m.SessionSettings.Update(local)
-		m.SessionSettings = updated
+		updated, cmd := settings.Update(local)
+		if projection := m.activeSessionProjection(); projection != nil {
+			projection.settings = updated
+		}
 		return m, cmd
 	}
 
@@ -502,10 +512,12 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouseWheel(msg); hitWin != nil {
 			if m.OverlayState.Is(ModeTextOverlay) {
-				updated, cmd, _ := m.ActiveSession.TextOverlay.Update(msg)
-				m.ActiveSession.TextOverlay = updated
-				if cmd != nil {
-					cmds = append(cmds, cmd)
+				if overlay := m.sessionTextOverlay(); overlay != nil {
+					updated, cmd, _ := overlay.Update(msg)
+					*overlay = updated
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 				hitWin.MarkContentDirty()
 			} else {
@@ -517,10 +529,14 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if m.Overlay.IsOpen() {
-		if activeTab := m.Overlay.ActiveTab(); activeTab != nil && activeTab.Title == "Session Settings" && m.SessionSettings != nil {
-			updated, cmd := m.SessionSettings.Update(msg)
-			m.SessionSettings = updated
-			return m, cmd
+		if activeTab := m.Overlay.ActiveTab(); activeTab != nil && activeTab.Title == "Session Settings" {
+			if settings := m.sessionSettings(); settings != nil {
+				updated, cmd := settings.Update(msg)
+				if projection := m.activeSessionProjection(); projection != nil {
+					projection.settings = updated
+				}
+				return m, cmd
+			}
 		}
 	}
 
@@ -714,8 +730,10 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 				// field; the render will show the highlight on
 				// the next frame.
 				adjustedMsg := tea.MouseMotionMsg{X: adjustedX, Y: 0, Button: msg.Button}
-				updated, _, _ := m.ActiveSession.Confirm.Update(adjustedMsg)
-				m.ActiveSession.Confirm = updated
+				if confirm := m.sessionConfirm(); confirm != nil {
+					updated, _, _ := confirm.Update(adjustedMsg)
+					*confirm = updated
+				}
 			}
 		}
 	}

@@ -10,14 +10,7 @@ import (
 
 	"crude/provider"
 	"crude/session"
-	"crude/tui/editor"
-	"crude/tui/filetree"
-	"crude/tui/input"
-	"crude/tui/rendering"
-	"crude/tui/theme"
-	ttypes "crude/tui/types"
-	"crude/tui/widgets"
-	"crude/tui/window"
+	ttypes "crude/types"
 )
 
 // NewSessionResult carries the orchestrator's channels after a new session
@@ -90,10 +83,6 @@ type Workspace struct {
 	// Sub-panes are rendered inline in the parent agent's message list.
 	PaneMgr *PaneManager
 
-	// BufferMgr owns all open file buffers (PieceTable data). Multiple
-	// editor views can share the same buffer for split/diff views.
-	BufferMgr *editor.BufferManager
-
 	// LSPMgr owns all LSP server connections for this workspace's root
 	// directory. One LSPManager per workspace (rooted at RootPath).
 	LSPMgr *LSPManager
@@ -110,71 +99,6 @@ type Workspace struct {
 	// FocusStack manages keyboard focus as a stack. Pushing a floating
 	// window or clicking the tree pushes focus; closing pops back.
 	FocusStack *FocusStack
-
-	// Tree owns the file tree model, renderer, and layout state.
-	// The model and renderer are data (file system contents); the layout
-	// fields are display state used by the viewmodel render pipeline.
-	Tree *TreeState
-
-	// ── Tab bars (workspace-scoped) ──
-	//
-	// Win is the main tab bar (editor tabs + agent tabs).
-	// Overlay is the overlay tab bar (settings/confirm/question/yolo tabs).
-	Win     *window.Window
-	Overlay *window.Window
-
-	// ── Workspace-scoped popups & prompts ──
-	//
-	// These are transient UI elements tied to the workspace's editors and
-	// file tree. They live on the workspace, not the session.
-
-	// FindReplace is the find/replace popup state for the active editor.
-	// nil when the popup is closed.
-	FindReplace *widgets.FindReplaceState
-
-	// LastContextMenu is the current right-click context menu state.
-	// nil when no context menu is open.
-	LastContextMenu *widgets.ContextMenuState
-
-	// ContextMenuOpenedAt is the timestamp when the context menu was
-	// opened, used for the slide-in animation.
-	ContextMenuOpenedAt time.Time
-
-	// TreePrompt is the file-tree text prompt (new file, rename, etc.).
-	// nil when no prompt is open.
-	TreePrompt *widgets.TextPromptState
-
-	// TreeDeletePending is the path of the file/folder pending deletion
-	// confirmation. Empty when no delete is pending.
-	TreeDeletePending string
-
-	// TreeDeleteChoice is the focused button on the tree-delete dialog
-	// (0 = Yes, 1 = No). Defaults to No for safety.
-	TreeDeleteChoice int
-
-	// FilePicker is the file picker widget (attach file + new workspace modes).
-	// It's a value, not a pointer — the widget manages its own internal state.
-	FilePicker widgets.FilePicker
-
-	// DiagPopupID is the ID of the diagnostic hover popup's floating window.
-	// Empty when no diagnostic popup is open.
-	DiagPopupID string
-
-	// DirtyPromptPath is the path of the editor tab pending dirty-close
-	// confirmation. Empty when no dirty prompt is open.
-	DirtyPromptPath string
-
-	// DirtyPromptChoice tracks the user's selection in the dirty-close
-	// prompt (0 = No/discard, 1 = Yes/save).
-	DirtyPromptChoice int
-
-	// ChatAreaHeight is the height of the chat area in the current layout.
-	// Used by message list rendering to size the chat view.
-	ChatAreaHeight int
-
-	// LastInteractionTime tracks the last time the user interacted with
-	// this workspace (used for the launcher timeout).
-	LastInteractionTime time.Time
 
 	// ── Sessions
 	//
@@ -219,42 +143,22 @@ type Workspace struct {
 	//
 	// These are references to objects shared with the TUI layer.
 
-	// Theme is the global color/style theme.
-	Theme *theme.Theme
-
-	// SessionSettings is the session-scoped AI settings model.
-	SessionSettings *widgets.SessionSettings
-
-	// StatusBar is the global status bar.
-	StatusBar *widgets.StatusBar
-
 	// Logger is the global logger.
 	Logger Logger
-
-	// Input is the chat input bar.
-	Input input.Model
 
 	// ModelName is the display name of the active model.
 	// Set during workspace creation, updated by the TUI layer.
 	ModelName string
+
+	// InitialSettings is the neutral settings snapshot supplied by the app
+	// layer. The TUI may use it to initialize its presentation state.
+	InitialSettings ttypes.Settings
 
 	// Username is the resolved username (for message attribution).
 	Username string
 
 	// StartTime is when this workspace was created.
 	StartTime time.Time
-
-	// SpinFrame is the current spinner animation frame.
-	SpinFrame int
-
-	// History is the input command history.
-	History []string
-
-	// LastSettings is the last-applied settings snapshot.
-	LastSettings ttypes.Settings
-
-	// FormHint is the current contextual form hint shown in the status bar.
-	FormHint string
 }
 
 // SetEventBus connects workspace services to the workspace-to-frontend event path.
@@ -283,19 +187,9 @@ func NewWorkspace(
 	initial ttypes.Settings,
 	lg Logger,
 ) *Workspace {
-	th := theme.DefaultDark()
-	im := input.NewModel(th)
-	sb := widgets.NewStatusBar(th)
-
-	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) { lg.Warn(tag, msg, pairs...) })
-
 	if rootPath == "" {
 		rootPath, _ = os.Getwd()
 	}
-
-	treeModel := filetree.NewFileTreeModel(rootPath)
-	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())
-	treeRenderer.ApplyTheme(th)
 
 	lspMgr := NewLSPManager(lg)
 
@@ -314,29 +208,20 @@ func NewWorkspace(
 		RootPath:        rootPath,
 		WorkspaceDir:    wsDir,
 		WorkspaceDB:     wsDB,
-		Theme:           th,
 		AgentMgr:        NewAgentManager(),
 		PaneMgr:         NewPaneManager(),
-		BufferMgr:       editor.NewBufferManager(),
 		LSPMgr:          lspMgr,
 		ProjectSearch:   NewProjectSearchService(),
 		FileOps:         NewFileOpsService(rootPath, nil, lg),
 		FocusStack:      NewFocusStack(),
-		Tree:            NewTreeState(treeModel, treeRenderer, th.Tree.Config.DefaultWidth),
-		Win:             window.New(th),
-		Overlay:         window.New(th),
-		FilePicker:      widgets.NewFilePicker(th),
 		Sessions:        make([]*Session, 0),
 		SessionsByID:    make(map[string]*Session),
 		SessionsByAgent: make(map[string]*Session),
-		SessionSettings: widgets.NewSessionSettings(th, initial),
-		StatusBar:       sb,
 		Logger:          lg,
-		Input:           im,
 		ModelName:       modelName,
+		InitialSettings: initial,
 		Username:        username,
 		StartTime:       time.Now(),
-		LastSettings:    initial,
 	}
 
 	return ws
@@ -511,13 +396,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	}
 	w.WorkspaceDB = wsDB
 
-	treeModel := filetree.NewFileTreeModel(abs)
-	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())
-	treeRenderer.ApplyTheme(w.Theme)
-	w.Tree = NewTreeState(treeModel, treeRenderer, w.Theme.Tree.Config.DefaultWidth)
-
 	w.LSPMgr = NewLSPManager(w.Logger)
-	w.BufferMgr = editor.NewBufferManager()
 	w.AgentMgr = NewAgentManager()
 	w.PaneMgr = NewPaneManager()
 
@@ -598,10 +477,6 @@ func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResul
 	// Already open: activate its existing orchestrator when it still has one.
 	if existing, ok := w.SessionsByID[sessionID]; ok && existing != nil {
 		w.ActiveSession = existing
-		if existing.Settings != nil {
-			w.SessionSettings = existing.Settings
-		}
-		w.Input.SetReferenceStore(existing.RefStore)
 		if node := w.AgentMgr.Get(existing.AgentID); node != nil {
 			return &NewSessionResult{
 				OrchID:         node.ID,
@@ -658,10 +533,4 @@ func (w *Workspace) ActivateSessionByAgent(agentID string) {
 
 func (w *Workspace) activateSession(sess *Session) {
 	w.ActiveSession = sess
-	if sess.Settings != nil {
-		w.SessionSettings = sess.Settings
-	}
-	if sess.RefStore != nil {
-		w.Input.SetReferenceStore(sess.RefStore)
-	}
 }

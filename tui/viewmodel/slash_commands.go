@@ -85,7 +85,9 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.Logger.Info("SAFETY", "yolo_disabled", "source", "slash")
 			m.SetYolo(false)
 		} else {
-			m.ActiveSession.YoloDlg.Reset()
+			if dialog := m.sessionYoloDialog(); dialog != nil {
+				dialog.Reset()
+			}
 			m.setMode(ModeYolo)
 			m.Logger.Info("SAFETY", "yolo_prompt", "source", "slash")
 		}

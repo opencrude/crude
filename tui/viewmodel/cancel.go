@@ -12,20 +12,26 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if m.OverlayState.Is(ModeSettings) {
-		m.SessionSettings.RestoreSnapshot()
+		if settings := m.sessionSettings(); settings != nil {
+			settings.RestoreSnapshot()
+		}
 		m.closeOverlayTab("Session Settings")
 		return nil
 	}
 
 	if m.OverlayState.Is(ModeYolo) {
-		m.ActiveSession.YoloDlg.Dismiss()
+		if dialog := m.sessionYoloDialog(); dialog != nil {
+			dialog.Dismiss()
+		}
 		m.StatusBar.SetConfirming(false)
 		m.closeOverlayTab("YOLO")
 		return nil
 	}
 
 	if m.OverlayState.Is(ModeConfirm) {
-		m.ActiveSession.Confirm.Dismiss()
+		if confirm := m.sessionConfirm(); confirm != nil {
+			confirm.Dismiss()
+		}
 		m.OverlayState.SetBlocking(false)
 		m.StatusBar.SetConfirming(false)
 		m.closeOverlayTab("Confirm")
@@ -35,7 +41,9 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if m.OverlayState.Is(ModeQuestion) {
-		m.ActiveSession.QuestionForm.Dismiss()
+		if questionForm := m.sessionQuestionForm(); questionForm != nil {
+			questionForm.Dismiss()
+		}
 		m.OverlayState.SetBlocking(false)
 		m.StatusBar.SetConfirming(false)
 		m.Input.ResetPrompt()

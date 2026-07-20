@@ -255,11 +255,20 @@ func (m *App) syncAgentWindowTabs() {
 
 	// Determine active agent ID
 	activeID := m.AgentMgr.ActiveID()
+	tabViews := m.AgentTabViews()
+	viewByID := make(map[string]workspace.TabView, len(tabViews))
+	for _, view := range tabViews {
+		viewByID[view.ID] = view
+	}
 
 	// Create tabs for sub-agents that have panes
 	for _, id := range m.PaneMgr.PaneOrder() {
 		n := m.AgentMgr.Get(id)
 		if n == nil || (n.State != nil && n.State.Completed) {
+			continue
+		}
+		view, ok := viewByID[id]
+		if !ok {
 			continue
 		}
 		title := m.agentTabTitle(id)
@@ -271,10 +280,7 @@ func (m *App) syncAgentWindowTabs() {
 			if tab.Icon != newIcon {
 				m.Win.SetTabIconByIndex(m.Win.IndexOf(tab.ID), newIcon)
 			}
-			displayLabel := id
-			if n.Label != "" {
-				displayLabel = n.Label
-			}
+			displayLabel := view.DisplayTitle
 			if tab.DisplayTitle != displayLabel {
 				m.Win.SetTabDisplayTitleByIndex(m.Win.IndexOf(tab.ID), displayLabel)
 			}
@@ -290,6 +296,10 @@ func (m *App) syncAgentWindowTabs() {
 			continue
 		}
 		id := n.ID
+		view, ok := viewByID[id]
+		if !ok {
+			continue
+		}
 		title := m.agentTabTitle(id)
 		if m.Win.TabByTitle(title) == nil {
 			m.Win.OpenTab(title, "", true)
@@ -299,10 +309,7 @@ func (m *App) syncAgentWindowTabs() {
 			if tab.Icon != newIcon {
 				m.Win.SetTabIconByIndex(m.Win.IndexOf(tab.ID), newIcon)
 			}
-			displayLabel := id
-			if n.Label != "" {
-				displayLabel = n.Label
-			}
+			displayLabel := view.DisplayTitle
 			if tab.DisplayTitle != displayLabel {
 				m.Win.SetTabDisplayTitleByIndex(m.Win.IndexOf(tab.ID), displayLabel)
 			}
@@ -325,18 +332,15 @@ func (m *App) syncAgentWindowTabs() {
 
 func (m *App) agentTabSnapshot() string {
 	var b strings.Builder
-	for _, id := range m.PaneMgr.PaneOrder() {
-		n := m.AgentMgr.Get(id)
-		if n == nil || n.State == nil || n.State.Completed {
+	for _, view := range m.AgentTabViews() {
+		if view.Kind != "sub-agent" || view.State == "completed" {
 			continue
 		}
-		b.WriteString(id)
+		b.WriteString(view.ID)
 		b.WriteByte('|')
-		b.WriteString(n.State.Status)
+		b.WriteString(view.State)
 		b.WriteByte('|')
-		if n.Label != "" {
-			b.WriteString(n.Label)
-		}
+		b.WriteString(view.DisplayTitle)
 		b.WriteByte('|')
 	}
 	return b.String()
@@ -361,11 +365,11 @@ func (m *App) agentTabIcon(id string) string {
 	if id == "" {
 		return "■"
 	}
-	n := m.AgentMgr.Get(id)
-	if n == nil || n.State == nil || n.State.Status == "" {
+	view, ok := m.agentTabView(id)
+	if !ok || view.State == "" {
 		return "●"
 	}
-	status := n.State.Status
+	status := view.State
 	switch {
 	case status == "running":
 		return "●"
@@ -378,6 +382,15 @@ func (m *App) agentTabIcon(id string) string {
 	default:
 		return "■"
 	}
+}
+
+func (m *App) agentTabView(id string) (workspace.TabView, bool) {
+	for _, view := range m.AgentTabViews() {
+		if view.ID == id {
+			return view, true
+		}
+	}
+	return workspace.TabView{}, false
 }
 
 // purgeAgentTabs closes all agent window tabs in a single pass.
