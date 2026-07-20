@@ -432,7 +432,30 @@ func HasEscPrefix[T string | []byte](b T) bool {
 
 // FirstGraphemeCluster returns the first grapheme cluster in the given string
 // or byte slice, and its monospace display width.
+//
+// On WidthProfileModern (Kitty/Ghostty/foot/WezTerm/Alacritty and Windows
+// Terminal with UAX 2027 negotiated ON) it returns the first UAX #29
+// grapheme cluster and runs correctClusterWidth to cap at 2 and reconcile
+// the table with what the terminal actually advances (☰ → 1, emoji → 2,
+// VS15 → 1, etc.).
+//
+// On WidthProfileWindowsTerminal (WT_SESSION set, UAX 2027 OFF) the
+// terminal still performs UAX #29 clustering (flags, ZWJ families, VS16
+// sequences are one cluster) but it does NOT advance the cursor for the
+// joining format codepoints inside the cluster. So the cluster width is
+// the SUM of the per-codepoint WT widths with VS15/VS16/ZWJ/combining
+// and the 2nd…Nth regional indicator all returning 0. Aggregated
+// examples that match the terminal cursor advance: 🧑‍🌾=2, 🇯🇵=2,
+// ♻️=1, ⚡️=2. Layout and ultraviolet must both go through this path or
+// the dual-source rule (layout_width == uv_cell_width == terminal_advance)
+// is violated and every later column shifts by 1+ — the exact artifact
+// reported on Windows (lines with emojis end up one or more cells short,
+// UV cannot reconcile because the cellbuf was filled with content where
+// the terminal has no advance).
 func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
+	if activeWidthProfile == WidthProfileWindowsTerminal {
+		return firstWtCluster[T](b)
+	}
 	switch b := any(b).(type) {
 	case string:
 		cluster := graphemes.FromString(b).First()
@@ -456,6 +479,120 @@ func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 	panic("unreachable")
 }
 
+// firstWtCluster returns the first UAX #29 grapheme cluster in b and its
+// Windows Terminal cell advance. WT clusters as a unit (flag = one
+// cluster, ZWJ family = one cluster, VS16-qualified glyph = one
+// cluster) but only the base codepoints advance the cursor; VS15, VS16,
+// ZWJ, combining marks, and the 2nd…Nth regional indicator all advance 0.
+func firstWtCluster[T string | []byte](b T) (T, int) {
+	var cluster string
+	switch b := any(b).(type) {
+	case string:
+		cluster = graphemes.FromString(b).First()
+	case []byte:
+		cluster = string(graphemes.FromBytes(b).First())
+	default:
+		panic("unreachable")
+	}
+	if len(cluster) == 0 {
+		var zero T
+		return zero, 0
+	}
+	return T(cluster), wtClusterWidth(cluster)
+}
+
+// wtClusterWidth returns the cursor advance for a single UAX #29 cluster
+// on Windows Terminal. It sums per-codepoint widths with format chars and
+// the 2nd…Nth regional indicator contributing 0, and caps the result at 2
+// (the documented WT/Ghostty/foot cap).
+func wtClusterWidth(cluster string) int {
+	width := 0
+	riSeen := 0
+	for i, r := range cluster {
+		w := 0
+		switch {
+		case r == 0x200D, r == 0xFE0E, r == 0xFE0F:
+			// ZWJ, VS15, VS16: never advance under WT (the cluster
+			// base already consumed the cursor).
+			w = 0
+		case r >= 0x1F1E6 && r <= 0x1F1FF:
+			// Regional indicator: WT renders the first RI of a pair as
+			// 2 cells; the 2nd RI merges into the flag glyph with no
+			// additional advance. Treat subsequent RIs as 0.
+			if riSeen == 0 {
+				w = 2
+			}
+			riSeen++
+		case isWtCombining(r):
+			// Combining marks advance 0 once they're attached to a
+			// base; a standalone combining mark still occupies a cell
+			// but our caller is iterating cluster codepoints where the
+			// base is always present (UAX #29 attaches it).
+			w = 0
+		default:
+			w = wtRuneWidth(r)
+		}
+		_ = i
+		width += w
+	}
+	if width > 2 {
+		width = 2
+	}
+	return width
+}
+
+// isWtCombining reports whether r is a combining mark that does not
+// advance the cursor on Windows Terminal once attached to a base.
+func isWtCombining(r rune) bool {
+	// Common combining ranges; the exact table is in runewidth but for
+	// layout we only care that attached combining marks contribute 0.
+	switch {
+	case r >= 0x0300 && r <= 0x036F: // Combining Diacritical Marks
+		return true
+	case r >= 0x1AB0 && r <= 0x1AFF: // Combining Diacritical Marks Extended
+		return true
+	case r >= 0x1DC0 && r <= 0x1DFF: // Combining Diacritical Marks Supplement
+		return true
+	case r >= 0x20D0 && r <= 0x20FF: // Combining Diacritical Marks for Symbols
+		return true
+	case r >= 0xFE20 && r <= 0xFE2F: // Combining Half Marks
+		return true
+	}
+	return false
+}
+
+// firstWtCodepoint returns the first UTF-8 codepoint of b and its
+// Windows Terminal cell advance. It does not perform grapheme
+// clustering; the caller iterates by repeatedly calling FirstGraphemeCluster.
+func firstWtCodepoint[T string | []byte](b T) (T, int) {
+	var (
+		n, w int
+	)
+	switch b := any(b).(type) {
+	case string:
+		_, n, w = decodeFirstWtCodepoint(b)
+	case []byte:
+		_, n, w = decodeFirstWtCodepointByte(b)
+	default:
+		panic("unreachable")
+	}
+	if n == 0 {
+		return b, 0
+	}
+	return any(b[:n]).(T), w
+}
+
+func decodeFirstWtCodepointByte(b []byte) (rune, int, int) {
+	if len(b) == 0 {
+		return 0, 0, 0
+	}
+	r, size := utf8.DecodeRune(b)
+	if r == utf8.RuneError && size == 1 {
+		return r, 1, 1
+	}
+	return r, size, wtRuneWidth(r)
+}
+
 // correctClusterWidth implements the modern-terminal width consensus used by
 // Ghostty, foot, Windows Terminal (grapheme mode), and Kitty (post–Unicode
 // Core / text-sizing work):
@@ -464,12 +601,15 @@ func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 //  2. Final cell width is only 0, 1, or 2 (never 3+).
 //  3. Real emoji (emoji presentation / ZWJ sequences / VS16) stay 2.
 //  4. Text presentation (VS15) forces 1.
-//  5. A few symbol ranges Unicode 16 marked Wide still advance 1 in practice
-//     (e.g. trigrams ☰ U+2630–U+2637) — match terminals, not the table.
 //
 // This runs for every FirstGraphemeCluster call, so Crude layout and
 // ultraviolet (via the same x/ansi) always agree — required on all platforms
 // including Windows Terminal.
+//
+// Note: the previous "trigrams ☰ U+2630..U+2637 → 1" override was deleted
+// because real Windows Terminal advances 2 for those glyphs (confirmed on
+// the user's WT 1.20+ session), and the override was making the cellbuf
+// 1 cell short per line containing a trigram.
 func correctClusterWidth(cluster string, w int) int {
 	if cluster == "" {
 		return 0
@@ -520,12 +660,6 @@ func correctClusterWidth(cluster string, w int) int {
 	// CJK / fullwidth / Hangul / kana — always wide.
 	if isEastAsianWide(base) {
 		return 2
-	}
-	// Unicode 16 marked trigrams Wide; Kitty and most Latin terminals still
-	// advance 1 (uniseg agrees). Same for a few other symbol ranges that
-	// are not emoji but tables report 2.
-	if isTerminalNarrowSymbol(base) {
-		return 1
 	}
 	return w
 }
@@ -611,17 +745,6 @@ func isEastAsianWide(r rune) bool {
 	case r >= 0xFFE0 && r <= 0xFFE6:
 		return true
 	case r >= 0x20000 && r <= 0x3FFFD: // CJK ext
-		return true
-	}
-	return false
-}
-
-// isTerminalNarrowSymbol is symbols Unicode tables may call Wide (esp. U16+)
-// but Kitty / Ghostty / WT still advance as 1 in Latin locales.
-func isTerminalNarrowSymbol(r rune) bool {
-	switch {
-	// Trigrams including ☰ burger menu
-	case r >= 0x2630 && r <= 0x2637:
 		return true
 	}
 	return false

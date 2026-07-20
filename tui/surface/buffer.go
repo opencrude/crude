@@ -126,8 +126,10 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 	curX := x
 	rest := text
 	for len(rest) > 0 {
-		// Must match rendering.WidthMethod (GraphemeWidth) and UV cellbuf.
-		cluster, w := ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
+		// Must match UV cellbuf (set by bubbletea from the same active
+		// profile). See tui/rendering/width.go and
+		// third_party/xansi/width_profile.go.
+		cluster, w := ansi.FirstGraphemeCluster(rest, ansi.ActiveMethod())
 		if len(cluster) == 0 {
 			break
 		}

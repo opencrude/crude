@@ -83,18 +83,22 @@ func RenderToSurface(surf *surface.Surface, ansiStr string) {
 			continue
 		}
 
-		r := []rune(cluster)[0]
 		if dw == 2 {
 			if curX+1 >= w {
 				// Wide char would be split, skip
 				curX++
 				continue
 			}
-			buf.Set(curX, curY, cell.Cell{Char: r, Width: 2, FG: curFG, BG: curBG, Attr: curAttr})
+			// Store the full cluster text in Content so GenerateANSI emits
+			// every rune (e.g. ♻️ = ♻ + FE0F, ⚡️ = ⚡ + FE0F). Without it,
+			// ultraviolet re-parses a truncated glyph and computes the
+			// wrong width — every later column shifts, producing the ghost
+			// artifacts reported on Windows.
+			buf.Set(curX, curY, cell.NewClusterCell(cluster, 2, curFG, curBG, curAttr))
 			buf.Set(curX+1, curY, cell.Cell{Char: 0, Width: 0, FG: curFG, BG: curBG, Attr: curAttr})
 			curX += 2
 		} else {
-			buf.Set(curX, curY, cell.Cell{Char: r, Width: 1, FG: curFG, BG: curBG, Attr: curAttr})
+			buf.Set(curX, curY, cell.NewClusterCell(cluster, 1, curFG, curBG, curAttr))
 			curX++
 		}
 	}

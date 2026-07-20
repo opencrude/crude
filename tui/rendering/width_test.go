@@ -6,9 +6,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestWidthMethodIsGrapheme(t *testing.T) {
-	if WidthMethod != ansi.GraphemeWidth {
-		t.Fatalf("WidthMethod must be GraphemeWidth for modern terminals, got %v", WidthMethod)
+func TestActiveMethodIsGrapheme(t *testing.T) {
+	// The testmain_test.go pin forces WidthProfileModern for this suite,
+	// so ActiveMethod() must resolve to GraphemeWidth. Production code
+	// follows the live profile (Modern ↔ Windows Terminal).
+	if got := ansi.ActiveMethod(); got != ansi.GraphemeWidth {
+		t.Fatalf("ActiveMethod must be GraphemeWidth under WidthProfileModern, got %v", got)
 	}
 }
 
@@ -37,8 +40,8 @@ func TestEmojiGraphemeWidth(t *testing.T) {
 		if v := VisibleWidth(tc.s); v != tc.want {
 			t.Errorf("VisibleWidth(%q) = %d, want %d", tc.s, v, tc.want)
 		}
-		if m := WidthMethod.StringWidth(tc.s); m != tc.want {
-			t.Errorf("WidthMethod.StringWidth(%q) = %d, want %d", tc.s, m, tc.want)
+		if m := ansi.ActiveMethod().StringWidth(tc.s); m != tc.want {
+			t.Errorf("ActiveMethod().StringWidth(%q) = %d, want %d", tc.s, m, tc.want)
 		}
 	}
 }
