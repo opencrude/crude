@@ -2,6 +2,7 @@ package ui
 
 import (
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 )
@@ -62,7 +63,7 @@ func (l *Label) SetColorRole(role SemanticColor) {
 
 // Measure prefers text width x 1 row, clamped.
 func (l *Label) Measure(_ LayoutContext, cs Constraints) Size {
-	w := len([]rune(l.text))
+	w := rendering.VisibleWidth(l.text)
 	if w < 1 {
 		w = 0
 	}
@@ -88,19 +89,12 @@ func (l *Label) Paint(buf *surface.CellBuffer, originX, originY int, _ PaintCont
 	y := originY + b.Y
 	maxW := b.W
 	// Truncate with ellipsis if needed
-	runes := []rune(l.text)
-	if len(runes) > maxW && maxW > 0 {
-		if maxW == 1 {
-			runes = []rune("…")
-		} else {
-			runes = append(runes[:maxW-1], '…')
-		}
-	}
+	text := rendering.TruncateLine(l.text, maxW)
 	fg := l.fg
 	if l.semanticColor && l.tokens != nil {
 		fg = l.tokens.Color(l.colorRole)
 	}
-	buf.WriteString(x, y, string(runes), fg, l.bg, l.attr)
+	buf.WriteString(x, y, text, fg, l.bg, l.attr)
 }
 
 // Semantics returns label semantics.

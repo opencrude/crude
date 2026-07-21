@@ -47,8 +47,14 @@ func (t *TextField) SetPrompt(s string) { t.prompt = s }
 // SetSubmitAction sets the action ID emitted on Enter.
 func (t *TextField) SetSubmitAction(id string) { t.submitID = id }
 
-// SetReadOnly toggles read-only mode.
-func (t *TextField) SetReadOnly(v bool) { t.readOnly = v }
+// SetReadOnly toggles read-only mode. Read-only values display from their
+// beginning rather than tracking the editing cursor at end-of-value.
+func (t *TextField) SetReadOnly(v bool) {
+	t.readOnly = v
+	if v {
+		t.viewStart = 0
+	}
+}
 
 // SetDisabled toggles disabled mode.
 func (t *TextField) SetDisabled(v bool) { t.disabled = v }
@@ -75,7 +81,11 @@ func (t *TextField) Measure(_ LayoutContext, cs Constraints) Size {
 
 func (t *TextField) Layout(_ LayoutContext, r Rect) {
 	t.SetBounds(r)
-	t.ensureCursorVisible()
+	if t.readOnly {
+		t.viewStart = 0
+	} else {
+		t.ensureCursorVisible()
+	}
 }
 
 func (t *TextField) contentX() int {

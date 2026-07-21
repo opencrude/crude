@@ -85,10 +85,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.Logger.Info("SAFETY", "yolo_disabled", "source", "slash")
 			m.SetYolo(false)
 		} else {
-			if dialog := m.sessionYoloDialog(); dialog != nil {
-				dialog.Reset()
-			}
-			m.setMode(ModeYolo)
+			m.openSessionYoloPanel()
 			m.Logger.Info("SAFETY", "yolo_prompt", "source", "slash")
 		}
 	case "/undo", "/undo-n", "/undo-all", "/changes":

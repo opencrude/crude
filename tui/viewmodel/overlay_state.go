@@ -2,12 +2,11 @@ package viewmodel
 
 import "crude/workspace"
 
-// OverlayState manages the current overlay mode and related display state.
-// This consolidates the Mode enum, blocking/yolo flags, and blockedSessionID
-// into one place.
+// OverlayState tracks floating-window input modes and durable safety state.
 //
 // This is DISPLAY state — it tracks which UI mode is visible right now
-// (chat, settings, confirm, question, yolo, text overlay, file picker).
+// (chat, text overlay, and file picker). Session settings and blocking prompts
+// are retained by the per-session PanelDeck rather than represented as modes.
 // The Mode enum itself is defined in workspace (workspace.Mode).
 type OverlayState struct {
 	Mode             workspace.Mode

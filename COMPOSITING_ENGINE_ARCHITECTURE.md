@@ -1174,11 +1174,12 @@ Floating windows are rendered on top of this background.
 
 ### 9.4 Replacement of Overlay System
 
-The current overlay system (Settings, Confirm, Question, YOLO dialogs) will be
-replaced by FloatingWindows:
+This historical section is superseded by `TUI_COMPONENT_SYSTEM_PLAN.md`.
+Floating surfaces use `OverlayHost` and `WindowFrame`; session-bound structured
+surfaces use the per-session docked `PanelDeck` between messages and chat input.
 
 ```go
-// Instead of m.setMode(ModeSettings), which currently opens an overlay tab:
+// Historical example only; current product opens through OverlayHost:
 func (m *App) openSettings() {
     settingsWidget := newSettingsWidget(m.settings)
     win := wm.NewFloatingWindow("settings", "Settings", settingsWidget,
@@ -1195,13 +1196,15 @@ func (m *App) openSettings() {
 }
 ```
 
-Each modal dialog becomes a FloatingWindow:
-- Settings → FloatingWindow with settings form widget
-- Confirm → FloatingWindow with confirm dialog widget
-- Question → FloatingWindow with question form widget
-- YOLO → FloatingWindow with YOLO dialog widget
-- FilePicker → FloatingWindow with file picker widget
-- TextOverlay → FloatingWindow with text editor widget
+Current migration direction:
+- Workspace settings → `OverlayHost` FloatingWindow with native form content.
+- Session settings → native per-session `PanelDeck` forms.
+- Confirmation, questions, and YOLO → native blocking per-session PanelDeck screens.
+- Background command details → native passive per-session PanelDeck Form; events
+  update the owning session without focus steal and no longer render status-bar rows.
+- FilePicker → native TextField/List/ScrollbarControl/ActionBar body in its retained
+  `OverlayHost` FloatingWindow; workspace owns neutral directory enumeration.
+- TextOverlay → `OverlayHost` FloatingWindow pending body migration.
 
 ### 9.5 ANSI Parser for Adapter (New File)
 

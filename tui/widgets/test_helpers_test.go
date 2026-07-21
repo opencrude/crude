@@ -1,24 +1,34 @@
 package widgets
 
-// stripAnsi removes ANSI escape codes from s for assertion-level
-// checks in widget unit tests. Shared across widget test files.
+import (
+	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/theme"
+)
+
+func testTheme() *theme.Theme { return theme.DefaultDark() }
+
+func keyMsg(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
+
+func keyStr(text string) tea.KeyPressMsg { return tea.KeyPressMsg{Text: text} }
+
+// stripAnsi removes ANSI escape codes for assertion-level widget tests.
 func stripAnsi(s string) string {
-	var b []byte
-	inEsc := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == 0x1b {
-			inEsc = true
+	var out []byte
+	inEscape := false
+	for index := 0; index < len(s); index++ {
+		char := s[index]
+		if char == 0x1b {
+			inEscape = true
 			continue
 		}
-		if inEsc {
-			// ESC sequences end at the first letter (e.g. 'm', 'K', 'H').
-			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-				inEsc = false
+		if inEscape {
+			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') {
+				inEscape = false
 			}
 			continue
 		}
-		b = append(b, c)
+		out = append(out, char)
 	}
-	return string(b)
+	return string(out)
 }

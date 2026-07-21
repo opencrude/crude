@@ -52,3 +52,30 @@ func TestActionBarPaintsSemanticVariants(t *testing.T) {
 		t.Fatalf("danger action background=%v, want error %v", got, want)
 	}
 }
+
+func TestFormMultiSelectTogglesChoicesWithoutLosingCursor(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	value := StringsValue(nil)
+	model.AddField(&FieldState{
+		ID: "choices", Label: "Choices", Type: FieldMultiSelect, Value: value, Initial: value, Required: true,
+		Options: []FormOption{{ID: "one", Label: "One"}, {ID: "two", Label: "Two"}},
+	})
+	form := NewForm("form", model, "Form", "Multiple answers", tokens)
+	host := NewHost(theme.DefaultDark(), form)
+	host.Resize(60, 10)
+	host.Layout()
+	host.Focus(form.ID())
+
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	values := model.Field("choices").Value.Strings()
+	if len(values) != 2 || values[0] != "one" || values[1] != "two" {
+		t.Fatalf("multi-select values=%v", values)
+	}
+	if selected, ok := form.Field("choices").selectList.Selected(); !ok || selected.ID != "two" {
+		t.Fatalf("multi-select cursor=%#v", selected)
+	}
+}

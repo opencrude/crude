@@ -507,10 +507,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 			m.StatusBar.SetInfo("YOLO mode disabled")
 			go m.SetYolo(false)
 		} else {
-			if dialog := m.sessionYoloDialog(); dialog != nil {
-				dialog.Reset()
-			}
-			m.setMode(ModeYolo)
+			m.openSessionYoloPanel()
 		}
 
 	case "view.toggle.sidebar":

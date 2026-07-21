@@ -258,16 +258,12 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 			}
 			line += string(spaces) + item.Detail
 		}
-		// truncate
-		runes := []rune(line)
-		if len(runes) > r.W {
-			runes = runes[:r.W]
-		}
+		line = rendering.TruncateLine(line, r.W)
 		attr := cell.Attrs(0)
 		if idx == l.sel.Index() && item.Selectable() {
 			attr = cell.AttrBold
 		}
-		buf.WriteString(x, y, string(runes), fg, bg, attr)
+		buf.WriteString(x, y, line, fg, bg, attr)
 	}
 }
 

@@ -9,7 +9,6 @@ import (
 
 	"crude/tui/filetree"
 	"crude/tui/rendering"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
@@ -23,7 +22,6 @@ const (
 	regionSidebarDivider
 	regionTabBar
 	regionSessionDeck
-	regionOverlay
 	regionEditor
 	regionInput
 	regionChat
@@ -43,6 +41,9 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 				return regionFloatingWindow
 			}
 		}
+	}
+	if m.sessionDeckBlocking() {
+		return regionSessionDeck
 	}
 
 	// Status bar is always the last visible row. Treat it as its
@@ -67,16 +68,6 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 	layout := m.computeLayout()
 	if m.sessionDeckRect.Contains(x, y) {
 		return regionSessionDeck
-	}
-
-	if m.Overlay.IsOpen() && !isWheel {
-		overlayStartLine := m.ChatAreaHeight + 3 + m.sessionDeckRect.H
-		if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
-			overlayStartLine += 2
-		}
-		if y >= overlayStartLine {
-			return regionOverlay
-		}
 	}
 
 	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
@@ -109,11 +100,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
 			tabBarExtra = 2
 		}
-		overlayExtra := 0
-		if m.Overlay.IsOpen() {
-			overlayExtra = len(m.renderOverlayArea())
-		}
-		inputStartLine := m.ChatAreaHeight + 4 + tabBarExtra + m.sessionDeckRect.H + overlayExtra
+		inputStartLine := m.ChatAreaHeight + 4 + tabBarExtra + m.sessionDeckRect.H
 		if y >= inputStartLine {
 			return regionInput
 		}
@@ -339,9 +326,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.setSessionDeckFocused(true)
 		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
 
-	case regionOverlay:
-		return m.dispatchOverlayMouseClick(msg)
-
 	case regionStatusBar:
 		m.setSessionDeckFocused(false)
 		// Left-click on the status bar is a no-op (it's a passive
@@ -365,134 +349,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.FocusStack.Pop()
 	}
 
-	return m, nil
-}
-
-func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-	mouse := msg.Mouse()
-
-	overlayStartLine := m.ChatAreaHeight + 3 + m.sessionDeckRect.H
-	if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
-		overlayStartLine += 2
-	}
-
-	if m.Overlay.TabCount() >= 2 && mouse.Y == overlayStartLine+1 {
-		adjustedX := mouse.X
-		if m.Tree.Visible && m.Tree.Model != nil {
-			adjustedX -= m.Tree.Width + 1
-		}
-		adjustedX -= m.Theme.Spacing.PadLR
-		if adjustedX < 0 {
-			adjustedX = 0
-		}
-		hit := m.Overlay.HitTest(adjustedX, 0)
-		if hit.TabIndex >= 0 {
-			if hit.IsClose {
-				cmds = append(cmds, m.handleOverlayTabClose(hit.TabIndex))
-				return m, tea.Batch(cmds...)
-			}
-			m.Overlay.SwitchTo(hit.TabIndex)
-			m.syncOverlayMode()
-			return m, nil
-		}
-	}
-
-	overlayContentOffset := 1
-	if m.Overlay.TabCount() >= 2 {
-		overlayContentOffset = 3
-	}
-	contentStartLine := overlayStartLine + overlayContentOffset
-
-	activeTab := m.Overlay.ActiveTab()
-	questionForm := m.sessionQuestionForm()
-	if activeTab != nil && activeTab.Title == "Question" && questionForm != nil && questionForm.Count() > 1 && mouse.Y >= contentStartLine {
-		contentY := mouse.Y - contentStartLine
-		innerW := m.width - 2*m.Theme.Spacing.PadLR
-		sidebarW := questionForm.ComputeSidebarWidth(innerW)
-		sidebarStartX := m.Theme.Spacing.PadLR + innerW - sidebarW
-		if mouse.X >= sidebarStartX {
-			itemIdx := contentY / 2
-			if itemIdx >= 0 && itemIdx < questionForm.Count() {
-				questionForm.SetFocused(itemIdx)
-				m.syncQuestionInputPrompt()
-				return m, nil
-			}
-		}
-	}
-
-	// Confirm dialog mouse: forward clicks to the confirm widget.
-	// The Confirm widget wraps a components.Dialog whose only
-	// interactive element is a components.ButtonGroup. Forwarding
-	// the click lets the user click buttons instead of using the
-	// keyboard. The X coordinate translation (raw screen X →
-	// button-local X) is approximate — it assumes the button row
-	// starts at the dialog's left padding. The common case
-	// (button row at the left edge) works perfectly; the rare
-	// case (button row indented by the dialog body) will be
-	// slightly off but still functional because the ButtonGroup's
-	// hit-test uses the actual rendered width of each button.
-	if activeTab != nil && activeTab.Title == "Confirm" {
-		adjustedX := mouse.X
-		if m.Tree.Visible && m.Tree.Model != nil {
-			adjustedX -= m.Tree.Width + 1
-		}
-		adjustedX -= m.Theme.Spacing.PadLR
-		if adjustedX < 0 {
-			adjustedX = 0
-		}
-		// Forward the click to the confirm widget. The confirm
-		// widget is a components.Dialog which has its own
-		// Update() that handles mouse clicks via the ButtonGroup.
-		adjustedMsg := tea.MouseClickMsg{X: adjustedX, Y: 0, Button: msg.Button}
-		if confirm := m.sessionConfirm(); confirm != nil {
-			updated, result, done := confirm.Update(adjustedMsg)
-			*confirm = updated
-			if done {
-				return m.handleConfirmResult(result)
-			}
-		}
-	}
-
-	return m, nil
-}
-
-// handleConfirmResult is the mouse equivalent of the keyboard's
-// "user pressed Enter on a confirm button" path. It takes the
-// ConfirmResult struct (the ConfirmDialog's Update already
-// resolves "which button was clicked" → ConfirmResult) and runs
-// the same flow the keyboard path runs — invokes the result
-// callback, updates the agent's pending permission tag, and
-// closes the overlay tab.
-//
-// Lives here rather than in app.go so the mouse dispatcher can
-// call it without crossing the keyboard↔mouse boundary twice.
-// The implementation is kept in lockstep with
-// handleConfirmKey in keyboard.go.
-func (m *App) handleConfirmResult(result ttypes.ConfirmResult) (tea.Model, tea.Cmd) {
-	m.StatusBar.SetConfirming(false)
-	m.OverlayState.SetBlocking(false)
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
-		n.State.Thinking = true
-	}
-	m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
-	if m.ResolveConfirmation(m.AgentMgr.ActiveID(), result.Choice) && m.Logger != nil {
-		m.Logger.Info("BLOCK", "resolved_mouse", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
-	}
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
-		switch result.Choice {
-		case ttypes.ConfirmAllow:
-			n.State.PendingPermTag = "allowed"
-		case ttypes.ConfirmAlways:
-			n.State.PendingPermTag = "always"
-		case ttypes.ConfirmDeny:
-			n.State.PendingPermTag = "denied"
-			if ml := m.activeMsgList(); ml != nil {
-				ml.SetToolPermTag(result.Tool, "", "denied")
-			}
-		}
-	}
-	m.closeOverlayTab("Confirm")
 	return m, nil
 }
 
@@ -693,35 +549,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// Only fire this when the mouse is actually inside the overlay
 	// region — the classifyMouse() call would also be expensive
 	// for every motion event, so we use a cheap bounds check first.
-	if m.Overlay.IsOpen() {
-		overlayStartLine := m.ChatAreaHeight + 3 + m.sessionDeckRect.H
-		if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
-			overlayStartLine += 2
-		}
-		if mouse.Y >= overlayStartLine {
-			activeTab := m.Overlay.ActiveTab()
-			if activeTab != nil && activeTab.Title == "Confirm" {
-				adjustedX := mouse.X
-				if m.Tree.Visible && m.Tree.Model != nil {
-					adjustedX -= m.Tree.Width + 1
-				}
-				adjustedX -= m.Theme.Spacing.PadLR
-				if adjustedX < 0 {
-					adjustedX = 0
-				}
-				// Forward the motion to the confirm widget. The
-				// ButtonGroup inside it will update its Hover
-				// field; the render will show the highlight on
-				// the next frame.
-				adjustedMsg := tea.MouseMotionMsg{X: adjustedX, Y: 0, Button: msg.Button}
-				if confirm := m.sessionConfirm(); confirm != nil {
-					updated, _, _ := confirm.Update(adjustedMsg)
-					*confirm = updated
-				}
-			}
-		}
-	}
-
 	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
 		// Cheap Y-bounds check instead of full classifyMouse:
 		// classifyMouse checks WM, sidebar, tab bar, overlay, editor,
@@ -1052,9 +879,6 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		st = m.buildChatContextMenu(mouse)
 	case regionStatusBar:
 		st = m.buildStatusBarContextMenu(mouse)
-	case regionOverlay:
-		// No menu for overlay regions; they're modal anyway.
-		return m, nil
 	default:
 		return m, nil
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"crude/sessiondb"
+	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/workspace"
@@ -733,7 +734,6 @@ func (m *App) openFolderPicker() {
 	if start == "" {
 		start = "."
 	}
-	m.FilePicker.OpenFolder(start)
-	m.setMode(ModeFilePicker)
+	m.openPicker(start, filepickerscreen.ModeFolder)
 	// agent_tabs / setMode opens the filepicker floating window.
 }

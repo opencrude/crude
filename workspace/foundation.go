@@ -14,9 +14,6 @@ type Mode int
 
 const (
 	ModeChat Mode = iota
-	ModeConfirm
-	ModeQuestion
-	ModeYolo
 	ModeTextOverlay
 	ModeFilePicker
 )
@@ -25,12 +22,6 @@ func ModeName(m Mode) string {
 	switch m {
 	case ModeChat:
 		return "chat"
-	case ModeConfirm:
-		return "confirm"
-	case ModeQuestion:
-		return "question"
-	case ModeYolo:
-		return "yolo"
 	case ModeTextOverlay:
 		return "text-overlay"
 	case ModeFilePicker:
@@ -59,7 +50,6 @@ const (
 	FocusEditor
 	FocusTabBar
 	FocusInput
-	FocusOverlay
 	FocusFloatingWindow
 	FocusLauncher
 )

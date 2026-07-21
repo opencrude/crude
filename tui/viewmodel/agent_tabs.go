@@ -105,8 +105,6 @@ func (m *App) completeSubAgent(agentID string) {
 
 	if !m.Win.IsOpen() {
 		m.setMode(ModeChat)
-	} else {
-		m.syncOverlayMode()
 	}
 }
 
@@ -133,12 +131,6 @@ func (m *App) setMode(newMode Mode) {
 		ml.InvalidateAllMessages()
 	}
 	switch newMode {
-	case ModeConfirm:
-		m.Overlay.OpenTab("Confirm", "", true)
-	case ModeQuestion:
-		m.Overlay.OpenTab("Question", "", true)
-	case ModeYolo:
-		m.Overlay.OpenTab("YOLO", "", true)
 	case ModeTextOverlay:
 		m.openTextOverlayWindow()
 	case ModeFilePicker:
@@ -418,50 +410,6 @@ func (m *App) purgeStaleAgentTabs() {
 				m.Win.CloseTabByID(tabs[i].ID)
 			}
 		}
-	}
-}
-
-// closeAllOverlayTabs closes all overlay tabs and returns to chat mode.
-func (m *App) closeAllOverlayTabs() {
-	m.Overlay.CloseAll()
-	if m.OverlayState.IsOverlay() {
-		m.OverlayState.Set(ModeChat)
-		m.FormHint = ""
-		m.Input.ResetPrompt()
-		m.Input.ClearInput()
-	}
-}
-
-func (m *App) syncOverlayMode() {
-	if !m.Overlay.IsOpen() {
-		if m.OverlayState.IsOverlay() {
-			m.OverlayState.Set(ModeChat)
-			m.FormHint = ""
-			m.Input.ResetPrompt()
-			m.Input.ClearInput()
-		}
-		return
-	}
-	activeTab := m.Overlay.ActiveTab()
-	if activeTab == nil {
-		if m.OverlayState.IsOverlay() {
-			m.OverlayState.Set(ModeChat)
-			m.FormHint = ""
-			m.Input.ResetPrompt()
-			m.Input.ClearInput()
-		}
-		return
-	}
-	switch {
-	case activeTab.Title == "Confirm":
-		m.OverlayState.Set(ModeConfirm)
-	case activeTab.Title == "YOLO":
-		m.OverlayState.Set(ModeYolo)
-	case activeTab.Title == "Question":
-		m.OverlayState.Set(ModeQuestion)
-	default:
-		m.OverlayState.Set(ModeChat)
-		m.FormHint = ""
 	}
 }
 

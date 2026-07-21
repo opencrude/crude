@@ -124,7 +124,6 @@ func (m *App) buildMainView() string {
 	}
 
 	m.Win.SetWidth(m.width - 2*m.Theme.Spacing.PadLR - sidebarW)
-	m.Overlay.SetWidth(m.width - 2*m.Theme.Spacing.PadLR - sidebarW)
 
 	pad := strings.Repeat(" ", m.Theme.Spacing.PadLR)
 	contentW := m.width - sidebarW
@@ -133,12 +132,9 @@ func (m *App) buildMainView() string {
 		innerW = 20
 	}
 
-	isSpecialMode := m.OverlayState.IsOverlay()
-	questionForm := m.sessionQuestionForm()
-	showMainInputForQuestion := m.OverlayState.Is(ModeQuestion) && questionForm != nil && questionForm.IsTextQuestion(questionForm.Focused())
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
 	isLauncherActive := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
-	showMainInput := !isLauncherActive && !isEditorActive && (!isSpecialMode || showMainInputForQuestion)
+	showMainInput := !isLauncherActive && !isEditorActive && !m.OverlayState.IsOverlay()
 
 	m.syncFormHint()
 
@@ -152,9 +148,6 @@ func (m *App) buildMainView() string {
 		}
 	}
 
-	asyncBarLines := m.StatusBar.RenderAsyncBar()
-	asyncLineCount := len(asyncBarLines)
-
 	agentTabBarLine := ""
 	agentTabBarVisible := false
 	if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
@@ -166,18 +159,12 @@ func (m *App) buildMainView() string {
 		agentTabBarLine = focusStyle.Render(agentTabBarLine)
 	}
 
-	overlayLines := m.renderOverlayArea()
-	overlayLineCount := len(overlayLines)
-
-	baseNonChat := 3 + inputLineCount + overlayLineCount
+	baseNonChat := 3 + inputLineCount
 	if showMainInput {
 		baseNonChat++ // separator above the actual composer
 	}
 	if agentTabBarVisible {
 		baseNonChat += 2
-	}
-	if asyncLineCount > 0 {
-		baseNonChat += 2 + asyncLineCount
 	}
 	deckAvailable := m.height - 2 - baseNonChat - 1
 	deckLineCount := m.sessionDeckHeight(max(0, deckAvailable))
@@ -445,36 +432,6 @@ func (m *App) buildMainView() string {
 		lines = append(lines, strings.Repeat(" ", contentW))
 	}
 
-	// Overlay area (settings, confirm, question, yolo) rendered inline.
-	// TextOverlay and FilePicker remain floating windows.
-	if overlayLineCount > 0 {
-		for _, ol := range overlayLines {
-			visW := rendering.VisibleWidth(ol)
-			if visW > innerW {
-				lines = append(lines, ol)
-			} else {
-				rightPad := innerW - visW
-				if rightPad < 0 {
-					rightPad = 0
-				}
-				lines = append(lines, pad+ol+strings.Repeat(" ", rightPad)+pad)
-			}
-		}
-	}
-
-	if asyncLineCount > 0 {
-		lines = append(lines, "")
-		lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
-		for _, al := range asyncBarLines {
-			visW := rendering.VisibleWidth(al)
-			rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
-			if rightPad < 0 {
-				rightPad = 0
-			}
-			lines = append(lines, pad+al+strings.Repeat(" ", rightPad)+pad)
-		}
-	}
-
 	if showMainInput {
 		lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
 	}
@@ -544,122 +501,12 @@ func (m *App) renderSessionDeckToSurface() {
 	projection.deckHost.Paint(m.mainSessionDeckSurf.Buffer())
 }
 
-func (m *App) renderOverlayArea() []string {
-	if !m.Overlay.IsOpen() {
-		return nil
-	}
-
-	activeTab := m.Overlay.ActiveTab()
-	if activeTab == nil {
-		return nil
-	}
-
-	// Compute content width accounting for sidebar
-	sidebarW := 0
-	if m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil {
-		sidebarW = m.Tree.Width + 1
-	}
-	contentW := m.width - sidebarW
-
-	m.Overlay.SetWidth(contentW - 2*m.Theme.Spacing.PadLR)
-
-	tabBarLine := m.Overlay.RenderTabBar()
-
-	contentLines := m.getOverlayContentLines(activeTab.Title)
-
-	stripLeadingTrailingEmpty := func(ss []string) []string {
-		start := 0
-		for start < len(ss) && ss[start] == "" {
-			start++
-		}
-		end := len(ss)
-		for end > start && ss[end-1] == "" {
-			end--
-		}
-		return ss[start:end]
-	}
-	contentLines = stripLeadingTrailingEmpty(contentLines)
-
-	var lines []string
-	lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
-	if m.Overlay.TabCount() >= 2 {
-		lines = append(lines, tabBarLine)
-		lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
-	}
-	lines = append(lines, contentLines...)
-	return lines
-}
-
-func (m *App) getOverlayContentLines(tabTitle string) []string {
-	var rawLines []string
-
-	// Compute content width accounting for sidebar
-	sidebarW := 0
-	if m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil {
-		sidebarW = m.Tree.Width + 1
-	}
-	overlayContentW := m.width - sidebarW - 2*m.Theme.Spacing.PadLR
-	if overlayContentW < 20 {
-		overlayContentW = 20
-	}
-
-	switch {
-	case tabTitle == "Confirm":
-		if confirm := m.sessionConfirm(); confirm != nil {
-			confirm.SetWidth(overlayContentW)
-			confirmView := confirm.View(m.SpinFrame)
-			for _, cl := range strings.Split(confirmView, "\n") {
-				rawLines = append(rawLines, rendering.TruncateLine(cl, overlayContentW))
-			}
-		}
-	case tabTitle == "Question":
-		if questionForm := m.sessionQuestionForm(); questionForm != nil {
-			questionView := questionForm.View(m.SpinFrame, overlayContentW)
-			for _, ql := range strings.Split(questionView, "\n") {
-				rawLines = append(rawLines, rendering.TruncateLine(ql, overlayContentW))
-			}
-		}
-	case tabTitle == "YOLO":
-		if dialog := m.sessionYoloDialog(); dialog != nil {
-			dialog.SetWidth(overlayContentW)
-			yoloView := dialog.View()
-			for _, yl := range strings.Split(yoloView, "\n") {
-				rawLines = append(rawLines, rendering.TruncateLine(yl, overlayContentW))
-			}
-		}
-	}
-
-	return rawLines
-}
-
 func (m *App) syncFormHint() {
 	if m.FocusStack.Top() == FocusTabBar {
 		m.FormHint = "[ tab bar focused · ← →: navigate · enter: select · esc: unfocus ]"
 		return
 	}
-	if !m.Overlay.IsOpen() {
-		m.FormHint = ""
-		return
-	}
-	activeTab := m.Overlay.ActiveTab()
-	if activeTab == nil {
-		m.FormHint = ""
-		return
-	}
-	switch {
-	case activeTab.Title == "Confirm":
-		m.FormHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
-	case activeTab.Title == "YOLO":
-		m.FormHint = "[ yolo mode confirmation · ← →: choose · enter: select · y/n: quick select · esc: cancel ]"
-	case activeTab.Title == "Question":
-		if questionForm := m.sessionQuestionForm(); questionForm != nil {
-			m.FormHint = questionForm.Hint()
-		} else {
-			m.FormHint = ""
-		}
-	default:
-		m.FormHint = ""
-	}
+	m.FormHint = ""
 }
 
 // renderLauncherMainView paints the single-phase welcome launcher and stores

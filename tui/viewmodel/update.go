@@ -14,7 +14,11 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
+	"crude/tui/screens/confirmation"
+	filepickerscreen "crude/tui/screens/filepicker"
+	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
+	"crude/tui/screens/yolo"
 	"crude/tui/scrollbar"
 	settingsui "crude/tui/settings"
 	ttypes "crude/tui/types"
@@ -150,6 +154,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	m.StatusBar.SetCurrentAgent(m.AgentMgr.ActiveID())
 	m.Input.SetSpinFrame(spinFrame)
 	m.StatusBar.ClearExpired()
+	m.refreshSessionBackgroundJobs(time.Now())
 	for _, n := range m.AgentMgr.AllNodes() {
 		if n.State != nil {
 			n.State.Tick(spinFrame)
@@ -328,7 +333,23 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				m.appendActiveMessage(hm)
 			}
 		}
-	case widgets.FilePickerSelectMsg:
+	case filepickerscreen.NavigateMsg:
+		if msg.Target != m.FilePicker {
+			break
+		}
+		listing, err := m.BrowseDirectory(msg.Path)
+		if err != nil {
+			msg.Target.SetError(err)
+			if m.StatusBar != nil {
+				m.StatusBar.SetError(err.Error())
+			}
+			break
+		}
+		msg.Target.SetDirectory(listing.Path, pickerEntries(listing.Entries))
+	case filepickerscreen.SelectMsg:
+		if msg.Target != m.FilePicker {
+			break
+		}
 		m.overlayHost.Close(ui.OverlayFilePicker)
 		if msg.Folder {
 			if m.launcher != nil {
@@ -343,8 +364,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		} else {
 			m.addFileReference(msg.Path)
 		}
-	case widgets.FilePickerCancelMsg:
-		m.overlayHost.Close(ui.OverlayFilePicker)
+	case filepickerscreen.CancelMsg:
+		if msg.Target == m.FilePicker {
+			m.overlayHost.Close(ui.OverlayFilePicker)
+		}
 	case settingsui.SaveMsg:
 		m.Logger.Info("CONFIG", "workspace_settings_save")
 		appSets := msg.AppSettings
@@ -444,6 +467,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 			projection.deckHost.MarkLayout()
 		}
+	case question.ResultMsg:
+		m.resolveSessionQuestion(msg.Target, msg.Result, false)
+	case question.CancelMsg:
+		m.resolveSessionQuestion(msg.Target, question.Result{}, true)
+	case confirmation.ResultMsg:
+		m.resolveSessionConfirmation(msg.Target, msg.Choice)
+	case yolo.ResultMsg:
+		m.resolveSessionYolo(msg.Target, msg.Enabled)
 	case filetree.FileSelectedMsg:
 		m.Logger.Info("TREE", "file_selected", "path", msg.Path)
 		cmd, err := m.openEditorTab(msg.Path)
@@ -702,103 +733,6 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	return nil
 }
 
-func (m *App) handleOverlayTabClose(index int) tea.Cmd {
-	if index < 0 || index >= m.Overlay.TabCount() {
-		return nil
-	}
-	tab := m.Overlay.Tabs()[index]
-	if !tab.Closable {
-		return nil
-	}
-
-	switch tab.Title {
-	case "Confirm":
-		if confirm := m.sessionConfirm(); confirm != nil {
-			confirm.Dismiss()
-		}
-		m.OverlayState.SetBlocking(false)
-		m.StatusBar.SetConfirming(false)
-		m.Overlay.CloseTab(index)
-		m.syncOverlayMode()
-		m.ResolveConfirmation(m.AgentMgr.ActiveID(), ttypes.ConfirmDeny)
-	case "Question":
-		if questionForm := m.sessionQuestionForm(); questionForm != nil {
-			questionForm.Dismiss()
-		}
-		m.OverlayState.SetBlocking(false)
-		m.StatusBar.SetConfirming(false)
-		m.Input.ResetPrompt()
-		m.Input.ClearInput()
-		m.Overlay.CloseTab(index)
-		m.syncOverlayMode()
-		m.ResolveQuestion(m.AgentMgr.ActiveID(), nil, nil, true)
-	case "YOLO":
-		if dialog := m.sessionYoloDialog(); dialog != nil {
-			dialog.Dismiss()
-		}
-		m.StatusBar.SetConfirming(false)
-		m.Overlay.CloseTab(index)
-		m.syncOverlayMode()
-	default:
-		m.Overlay.CloseTab(index)
-		m.syncOverlayMode()
-	}
-
-	return nil
-}
-
-func (m *App) closeAllQuestionOverlayTabs() {
-	m.closeOverlayTab("Question")
-}
-
-func (m *App) purgeQuestionOverlayTabs() {
-	if tab := m.Overlay.TabByTitle("Question"); tab != nil {
-		m.Overlay.CloseTabByID(tab.ID)
-	}
-}
-
-func (m *App) closeOverlayTab(title string) {
-	if tab := m.Overlay.TabByTitle(title); tab != nil {
-		m.Overlay.CloseTabByID(tab.ID)
-	}
-	m.syncOverlayMode()
-	if ml := m.activeMsgList(); ml != nil {
-		ml.InvalidateCache()
-	}
-}
-
-func (m *App) syncQuestionInputPrompt() {
-	if !m.OverlayState.Is(ModeQuestion) {
-		m.Input.ResetPrompt()
-		m.Input.ClearInput()
-		return
-	}
-	if tab := m.Overlay.TabByTitle("Question"); tab != nil {
-		if questionForm := m.sessionQuestionForm(); questionForm != nil {
-			m.Overlay.SetTabIconByIndex(m.Overlay.IndexOf(tab.ID), questionForm.FocusedIcon())
-		}
-	}
-	questionForm := m.sessionQuestionForm()
-	if questionForm != nil && questionForm.IsTextQuestion(questionForm.Focused()) {
-		q, _ := questionForm.FocusedItem()
-		label := q.Header
-		if label == "" {
-			label = q.Question
-			if rendering.VisibleWidth(label) > 16 {
-				label = rendering.TruncateVisual(label, 16, "…")
-			}
-		}
-		m.Input.SetPrompt(fmt.Sprintf("Q%d %s", questionForm.Focused()+1, label))
-		existing := questionForm.Answer(questionForm.Focused())
-		if existing != "" {
-			m.Input.SetInput(existing)
-		}
-	} else {
-		m.Input.ResetPrompt()
-		m.Input.ClearInput()
-	}
-}
-
 // handleTabSwitch re-derives the active editor/agent view from the
 // current window tab. Called on every tab change (open, close,
 // switch). Both activeEditorView and activeAgentView are *always*
@@ -885,8 +819,32 @@ func (m *App) saveReferenceFromOverlay() {
 
 func (m *App) openFilePicker() {
 	root, _ := m.workingDir()
-	m.FilePicker.Open(root)
+	m.openPicker(root, filepickerscreen.ModeFile)
+}
+
+func (m *App) openPicker(root string, mode filepickerscreen.Mode) {
+	if m.FilePicker == nil {
+		m.FilePicker = filepickerscreen.New(m.Theme)
+	}
+	listing, err := m.BrowseDirectory(root)
+	if err != nil {
+		m.FilePicker.Open(root, mode, nil)
+		m.FilePicker.SetError(err)
+		if m.StatusBar != nil {
+			m.StatusBar.SetError(err.Error())
+		}
+	} else {
+		m.FilePicker.Open(listing.Path, mode, pickerEntries(listing.Entries))
+	}
 	m.setMode(ModeFilePicker)
+}
+
+func pickerEntries(entries []workspace.DirectoryEntry) []filepickerscreen.Entry {
+	result := make([]filepickerscreen.Entry, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, filepickerscreen.Entry{Name: entry.Name, Path: entry.Path, IsDir: entry.IsDir})
+	}
+	return result
 }
 
 func (m *App) addFileReference(path string) {

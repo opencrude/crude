@@ -1,7 +1,11 @@
 package viewmodel
 
 import (
+	"crude/tui/screens/backgroundjobs"
+	"crude/tui/screens/confirmation"
+	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
+	"crude/tui/screens/yolo"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/widgets"
@@ -14,16 +18,20 @@ import (
 // projections are keyed by the stable Session object so switching tabs cannot
 // leak dialog, form, or text-input state between conversations.
 type sessionProjection struct {
-	confirm      widgets.ConfirmDialog
-	questionForm widgets.QuestionForm
-	yoloDlg      widgets.YoloDialog
-	textOverlay  widgets.TextOverlay
-	composer     *widgets.Composer
-	settings     *sessionsettings.Screen
-	deck         *ui.PanelDeck
-	deckHost     *ui.Host
-	deckFocused  bool
-	deckFocus    ui.ComponentID
+	backgroundJobs      *backgroundjobs.Screen
+	confirmation        *confirmation.Screen
+	confirmationAgentID string
+	question            *question.Screen
+	questionAgentID     string
+	yolo                *yolo.Screen
+	yoloAgentID         string
+	textOverlay         widgets.TextOverlay
+	composer            *widgets.Composer
+	settings            *sessionsettings.Screen
+	deck                *ui.PanelDeck
+	deckHost            *ui.Host
+	deckFocused         bool
+	deckFocus           ui.ComponentID
 }
 
 type sessionProjectionRegistry struct {
@@ -50,17 +58,36 @@ func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProj
 	settings := sessionsettings.New(r.theme, effective, base, sessionSettingsOverrides(session))
 	deck := ui.NewPanelDeck("session-deck", ui.NewTokenSet(r.theme))
 	projection := &sessionProjection{
-		confirm:      widgets.NewConfirmDialog(r.theme),
-		questionForm: widgets.NewQuestionForm(r.theme),
-		yoloDlg:      widgets.NewYoloDialog(r.theme),
-		textOverlay:  widgets.NewTextOverlay(r.theme),
-		composer:     widgets.NewComposer(r.theme),
-		settings:     settings,
-		deck:         deck,
-		deckHost:     ui.NewHost(r.theme, deck),
+		backgroundJobs: backgroundjobs.New(r.theme),
+		confirmation:   confirmation.New(r.theme),
+		question:       question.New(r.theme),
+		yolo:           yolo.New(r.theme),
+		textOverlay:    widgets.NewTextOverlay(r.theme),
+		composer:       widgets.NewComposer(r.theme),
+		settings:       settings,
+		deck:           deck,
+		deckHost:       ui.NewHost(r.theme, deck),
 	}
 	r.items[session] = projection
 	return projection
+}
+
+func (m *App) sessionProjectionForAgent(agentID string) (*workspace.Session, *sessionProjection) {
+	if m == nil || m.AgentMgr == nil || agentID == "" {
+		return nil, nil
+	}
+	orchestrator := m.AgentMgr.OrchestratorFor(agentID)
+	if orchestrator == nil {
+		return nil, nil
+	}
+	session := m.SessionsByAgent[orchestrator.ID]
+	if session == nil {
+		return nil, nil
+	}
+	if m.sessionProjections == nil {
+		m.sessionProjections = newSessionProjectionRegistry(m.Theme)
+	}
+	return session, m.sessionProjections.Get(session)
 }
 
 func (m *App) activeSessionProjection() *sessionProjection {
@@ -73,25 +100,13 @@ func (m *App) activeSessionProjection() *sessionProjection {
 	return m.sessionProjections.Get(m.ActiveSession)
 }
 
-func (m *App) sessionConfirm() *widgets.ConfirmDialog {
-	if projection := m.activeSessionProjection(); projection != nil {
-		return &projection.confirm
+func (r *sessionProjectionRegistry) projectionForConfirmation(screen *confirmation.Screen) (*workspace.Session, *sessionProjection) {
+	for session, projection := range r.items {
+		if projection != nil && projection.confirmation == screen {
+			return session, projection
+		}
 	}
-	return nil
-}
-
-func (m *App) sessionQuestionForm() *widgets.QuestionForm {
-	if projection := m.activeSessionProjection(); projection != nil {
-		return &projection.questionForm
-	}
-	return nil
-}
-
-func (m *App) sessionYoloDialog() *widgets.YoloDialog {
-	if projection := m.activeSessionProjection(); projection != nil {
-		return &projection.yoloDlg
-	}
-	return nil
+	return nil, nil
 }
 
 func (m *App) sessionTextOverlay() *widgets.TextOverlay {
@@ -139,6 +154,30 @@ func (r *sessionProjectionRegistry) projectionForSettings(screen *sessionsetting
 	}
 	for session, projection := range r.items {
 		if projection != nil && projection.settings == screen {
+			return session, projection
+		}
+	}
+	return nil, nil
+}
+
+func (r *sessionProjectionRegistry) projectionForQuestion(screen *question.Screen) (*workspace.Session, *sessionProjection) {
+	if r == nil || screen == nil {
+		return nil, nil
+	}
+	for session, projection := range r.items {
+		if projection != nil && projection.question == screen {
+			return session, projection
+		}
+	}
+	return nil, nil
+}
+
+func (r *sessionProjectionRegistry) projectionForYolo(screen *yolo.Screen) (*workspace.Session, *sessionProjection) {
+	if r == nil || screen == nil {
+		return nil, nil
+	}
+	for session, projection := range r.items {
+		if projection != nil && projection.yolo == screen {
 			return session, projection
 		}
 	}

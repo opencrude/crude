@@ -1,0 +1,44 @@
+package workspace
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// DirectoryEntry is presentation-neutral metadata for one browser row.
+type DirectoryEntry struct {
+	Name  string
+	Path  string
+	IsDir bool
+}
+
+// DirectoryListing is a canonical directory path and its immediate children.
+type DirectoryListing struct {
+	Path    string
+	Entries []DirectoryEntry
+}
+
+// BrowseDirectory reads one directory for a TUI or other workspace client.
+// Filtering, sorting, selection, and rendering remain presentation concerns.
+func (w *Workspace) BrowseDirectory(path string) (DirectoryListing, error) {
+	if path == "" {
+		path = w.RootPath
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return DirectoryListing{}, fmt.Errorf("resolve directory %q: %w", path, err)
+	}
+	abs = filepath.Clean(abs)
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return DirectoryListing{Path: abs}, fmt.Errorf("read directory %q: %w", abs, err)
+	}
+	listing := DirectoryListing{Path: abs, Entries: make([]DirectoryEntry, 0, len(entries))}
+	for _, entry := range entries {
+		listing.Entries = append(listing.Entries, DirectoryEntry{
+			Name: entry.Name(), Path: filepath.Join(abs, entry.Name()), IsDir: entry.IsDir(),
+		})
+	}
+	return listing, nil
+}

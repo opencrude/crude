@@ -59,7 +59,6 @@ allow_hex=(
   'tui/filetree/render.go'
   'tui/widgets/statusbar.go'
   'tui/widgets/chatmessage.go'
-  'tui/widgets/confirmdialog.go'
   'tui/tools/'
   'tui/window/'
   'tui/xchroma/'

@@ -13,6 +13,7 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
+	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -30,9 +31,6 @@ type Mode = workspace.Mode
 
 const (
 	ModeChat        = workspace.ModeChat
-	ModeConfirm     = workspace.ModeConfirm
-	ModeQuestion    = workspace.ModeQuestion
-	ModeYolo        = workspace.ModeYolo
 	ModeTextOverlay = workspace.ModeTextOverlay
 	ModeFilePicker  = workspace.ModeFilePicker
 )
@@ -47,7 +45,6 @@ type App struct {
 	Input               input.Model
 	StatusBar           *widgets.StatusBar
 	Win                 *window.Window
-	Overlay             *window.Window
 	BufferMgr           *editor.BufferManager
 	Tree                *TreeState
 	FindReplace         *widgets.FindReplaceState
@@ -56,7 +53,7 @@ type App struct {
 	TreePrompt          *widgets.TextPromptState
 	TreeDeletePending   string
 	TreeDeleteChoice    int
-	FilePicker          widgets.FilePicker
+	FilePicker          *filepickerscreen.Screen
 	DiagPopupID         string
 	DirtyPromptPath     string
 	DirtyPromptChoice   int
@@ -189,10 +186,9 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		Input:               im,
 		StatusBar:           sb,
 		Win:                 window.New(th),
-		Overlay:             window.New(th),
 		BufferMgr:           bufferMgr,
 		Tree:                tree,
-		FilePicker:          widgets.NewFilePicker(th),
+		FilePicker:          filepickerscreen.New(th),
 		LastSettings:        ws.InitialSettings,
 		EditorState:         edState,
 		OverlayState:        NewOverlayState(),
@@ -351,21 +347,22 @@ func (m *App) openFilePickerWindow() {
 
 	w, h := fitFloatingSize(m.width, m.height, 68, 20, 42, 12)
 	title := "Attach File"
-	if m.FilePicker.Mode() == widgets.FilePickerModeFolder {
+	if m.FilePicker.Mode() == filepickerscreen.ModeFolder {
 		title = "New Workspace"
 	}
-	body := ui.NewLegacyWidget(ui.NewID(ui.RootID, "filepicker-body"), &m.FilePicker)
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "filepicker-frame"),
 		ui.FrameDialog,
 		title,
-		body,
-		&m.FilePicker,
+		m.FilePicker,
+		nil,
 		true,
 		w,
 		h,
 	)
+	m.FilePicker.SetFocusHandler(frame.Focus)
+	m.FilePicker.FocusFilter()
 	win := wm.NewFloatingWindow(string(ui.OverlayFilePicker), title, frame,
 		w, h,
 		wm.WithDecoration(true),
@@ -493,17 +490,6 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 		projection.deck.CloseActive()
 		projection.deckHost.MarkLayout()
 		projection.deckFocused = projection.deck.IsOpen()
-		return m, nil
-	}
-
-	// If there's an active overlay tab, close it first
-	if m.Overlay.IsOpen() {
-		m.Overlay.CloseAll()
-		if m.OverlayState.IsOverlay() {
-			m.OverlayState.Set(ModeChat)
-			m.Input.ResetPrompt()
-			m.Input.ClearInput()
-		}
 		return m, nil
 	}
 

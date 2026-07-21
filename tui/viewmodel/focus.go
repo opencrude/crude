@@ -10,7 +10,6 @@ const (
 	FocusEditor         = workspace.FocusEditor
 	FocusTabBar         = workspace.FocusTabBar
 	FocusInput          = workspace.FocusInput
-	FocusOverlay        = workspace.FocusOverlay
 	FocusFloatingWindow = workspace.FocusFloatingWindow
 	FocusLauncher       = workspace.FocusLauncher
 )
@@ -18,12 +17,6 @@ const (
 func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
-	}
-	// Inline overlays own keyboard input regardless of the pane that remains
-	// visible behind them. Routing launcher/tree/editor first makes form fields
-	// appear focused while their keystrokes mutate the underlying surface.
-	if m.OverlayState.IsOverlay() {
-		return FocusOverlay
 	}
 	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		return FocusLauncher
