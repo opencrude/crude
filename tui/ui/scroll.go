@@ -2,9 +2,9 @@ package ui
 
 // ScrollModel tracks viewport offset for a 1-line-per-item collection.
 type ScrollModel struct {
-	offset    int
-	viewport  int // visible rows
-	content   int // total rows
+	offset   int
+	viewport int // visible rows
+	content  int // total rows
 }
 
 // NewScrollModel creates a scroll model.

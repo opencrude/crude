@@ -41,7 +41,7 @@ func (m *App) View() tea.View {
 	// launcher use cheap ANSI rendering and need every frame to stay
 	// responsive (cursor blink, hover highlights, streaming tokens).
 	isEditorMain := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
-	useCached := isEditorMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
+	useCached := isEditorMain && m.sessionDeckHeight(m.height) == 0 && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
 
 	m.compositor.BeginFrame()
 	m.renderCtx.SpinFrame = m.SpinFrame
@@ -54,18 +54,23 @@ func (m *App) View() tea.View {
 		root.AddChild(m.mainContentSurf)
 		m.mainContentSurf.SetZOrder(0)
 	}
+	if m.mainSessionDeckSurf != nil {
+		root.AddChild(m.mainSessionDeckSurf)
+		m.mainSessionDeckSurf.SetZOrder(1)
+		m.mainSessionDeckSurf.SetVisible(m.sessionDeckHeight(m.height) > 0)
+	}
 	if m.mainSidebarSurf != nil {
 		root.AddChild(m.mainSidebarSurf)
-		m.mainSidebarSurf.SetZOrder(1)
+		m.mainSidebarSurf.SetZOrder(2)
 		m.mainSidebarSurf.SetVisible(m.Tree.Visible)
 	}
 	if m.mainStatusbarSurf != nil {
 		root.AddChild(m.mainStatusbarSurf)
-		m.mainStatusbarSurf.SetZOrder(2)
+		m.mainStatusbarSurf.SetZOrder(3)
 	}
 	if m.mainHeaderSurf != nil {
 		root.AddChild(m.mainHeaderSurf)
-		m.mainHeaderSurf.SetZOrder(3)
+		m.mainHeaderSurf.SetZOrder(4)
 	}
 
 	// Main content surface stays transparent — only ANSI-rendered cells
@@ -79,6 +84,7 @@ func (m *App) View() tea.View {
 		m.contentDirty = false
 		rendering.RenderToSurface(m.mainContentSurf, mainContent)
 	}
+	m.renderSessionDeckToSurface()
 
 	// Cheap layers: always re-render (surface fill + ANSI render).
 	m.renderHeaderToSurface()
@@ -163,22 +169,34 @@ func (m *App) buildMainView() string {
 	overlayLines := m.renderOverlayArea()
 	overlayLineCount := len(overlayLines)
 
-	nonChat := 3 + inputLineCount + overlayLineCount
+	baseNonChat := 3 + inputLineCount + overlayLineCount
 	if showMainInput {
-		nonChat++ // separator above the actual composer
+		baseNonChat++ // separator above the actual composer
 	}
 	if agentTabBarVisible {
-		nonChat += 2
+		baseNonChat += 2
 	}
 	if asyncLineCount > 0 {
-		nonChat += 2 + asyncLineCount
+		baseNonChat += 2 + asyncLineCount
 	}
+	deckAvailable := m.height - 2 - baseNonChat - 1
+	deckLineCount := m.sessionDeckHeight(max(0, deckAvailable))
+	nonChat := baseNonChat + deckLineCount
 
 	chatH := m.height - 2 - nonChat
 	if chatH < 1 {
 		chatH = 1
 	}
 	m.ChatAreaHeight = chatH
+	deckY := 3 + chatH
+	if agentTabBarVisible {
+		deckY += 2
+	}
+	if deckLineCount > 0 {
+		m.sessionDeckRect = ui.Rect{X: sidebarW + m.Theme.Spacing.PadLR, Y: deckY, W: innerW, H: deckLineCount}
+	} else {
+		m.sessionDeckRect = ui.Rect{}
+	}
 
 	var chatVisible []string
 	var totalSBW int
@@ -423,6 +441,10 @@ func (m *App) buildMainView() string {
 		lines = append(lines, line)
 	}
 
+	for range deckLineCount {
+		lines = append(lines, strings.Repeat(" ", contentW))
+	}
+
 	// Overlay area (settings, confirm, question, yolo) rendered inline.
 	// TextOverlay and FilePicker remain floating windows.
 	if overlayLineCount > 0 {
@@ -501,6 +523,27 @@ func (m *App) buildMainView() string {
 	return strings.Join(lines, "\n")
 }
 
+func (m *App) renderSessionDeckToSurface() {
+	if m.mainSessionDeckSurf == nil {
+		return
+	}
+	projection := m.activeSessionDeck()
+	r := m.sessionDeckRect
+	if projection == nil || !projection.deck.IsOpen() || r.Empty() {
+		m.mainSessionDeckSurf.SetVisible(false)
+		return
+	}
+	m.mainSessionDeckSurf.SetVisible(true)
+	m.sessionProjections.SetTheme(m.Theme)
+	m.mainSessionDeckSurf.Resize(r.W, r.H)
+	m.mainSessionDeckSurf.SetPosition(r.X, r.Y)
+	m.mainSessionDeckSurf.Buffer().Clear()
+	projection.deckHost.Resize(r.W, r.H)
+	projection.deckHost.Layout()
+	m.focusSessionDeckAfterLayout()
+	projection.deckHost.Paint(m.mainSessionDeckSurf.Buffer())
+}
+
 func (m *App) renderOverlayArea() []string {
 	if !m.Overlay.IsOpen() {
 		return nil
@@ -561,13 +604,6 @@ func (m *App) getOverlayContentLines(tabTitle string) []string {
 	}
 
 	switch {
-	case tabTitle == "Session Settings":
-		if settings := m.sessionSettings(); settings != nil {
-			settingsView := settings.View(m.SpinFrame)
-			for _, sl := range strings.Split(settingsView, "\n") {
-				rawLines = append(rawLines, rendering.TruncateLine(sl, overlayContentW))
-			}
-		}
 	case tabTitle == "Confirm":
 		if confirm := m.sessionConfirm(); confirm != nil {
 			confirm.SetWidth(overlayContentW)
@@ -611,12 +647,6 @@ func (m *App) syncFormHint() {
 		return
 	}
 	switch {
-	case activeTab.Title == "Session Settings":
-		if settings := m.sessionSettings(); settings != nil {
-			m.FormHint = settings.Hint()
-		} else {
-			m.FormHint = ""
-		}
 	case activeTab.Title == "Confirm":
 		m.FormHint = "[ confirmation required · ← →: choose · enter: select · y/a/n: quick select · esc: deny ]"
 	case activeTab.Title == "YOLO":
@@ -719,7 +749,7 @@ func (m *App) resizeLayerSurfaces() {
 	if m.mainStatusbarSurf == nil {
 		m.mainStatusbarSurf = surface.NewSurface("main-statusbar", m.width, statusH, cell.TransparentBlank())
 		m.compositor.Root().AddChild(m.mainStatusbarSurf)
-		m.mainStatusbarSurf.SetZOrder(2)
+		m.mainStatusbarSurf.SetZOrder(3)
 	} else {
 		m.mainStatusbarSurf.Resize(m.width, statusH)
 	}
@@ -746,7 +776,7 @@ func (m *App) resizeLayerSurfaces() {
 	if m.mainSidebarSurf == nil {
 		m.mainSidebarSurf = surface.NewSurface("main-sidebar", sidebarW, sidebarH, cell.TransparentBlank())
 		m.compositor.Root().AddChild(m.mainSidebarSurf)
-		m.mainSidebarSurf.SetZOrder(1)
+		m.mainSidebarSurf.SetZOrder(2)
 	} else if sidebarW > 0 {
 		m.mainSidebarSurf.Resize(sidebarW, sidebarH)
 	}
@@ -755,7 +785,7 @@ func (m *App) resizeLayerSurfaces() {
 	if m.mainHeaderSurf == nil {
 		m.mainHeaderSurf = surface.NewSurface("main-header", m.width, 2, cell.TransparentBlank())
 		m.compositor.Root().AddChild(m.mainHeaderSurf)
-		m.mainHeaderSurf.SetZOrder(3)
+		m.mainHeaderSurf.SetZOrder(4)
 	} else {
 		m.mainHeaderSurf.Resize(m.width, 2)
 	}
@@ -842,6 +872,9 @@ func (m *App) contextualHelpView() string {
 		if fw := m.windowManager.Focused(); fw != nil && fw.ID == findInFilesWindowID {
 			return "type to search  ·  ↑↓ preview  ·  enter open  ·  double-click open  ·  ctrl+r regex  ·  esc close"
 		}
+	}
+	if m.sessionDeckFocused() {
+		return "tab next  ·  shift+tab previous  ·  ctrl+[ ] switch panels  ·  esc back"
 	}
 	if m.launcher != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		return m.launcher.HelpView(m.actionRegistry)

@@ -274,15 +274,18 @@ func TestHandleQuit_AfterLastEditorCloses_Quits(t *testing.T) {
 
 func TestHandleQuit_ClosesOverlayFirst(t *testing.T) {
 	app := newTestApp(t)
-	app.Overlay.OpenTab("Session Settings", "", true)
-	app.OverlayState.Set(ModeSettings)
+	app.openSessionSettings()
+	projection := app.activeSessionDeck()
+	if projection == nil || !projection.deck.IsOpen() {
+		t.Fatal("session settings deck did not open")
+	}
 
 	_, cmd := app.handleQuit()
 	if cmd != nil {
 		t.Fatal("expected nil cmd after closing overlay")
 	}
-	if !app.OverlayState.IsChat() {
-		t.Fatal("expected ModeChat after closing overlay")
+	if projection.deck.IsOpen() {
+		t.Fatal("expected session deck to close")
 	}
 }
 
@@ -617,8 +620,9 @@ func TestHandleInputEvent_SettingsOpen(t *testing.T) {
 	if len(cmds) != 0 {
 		t.Fatalf("expected 0 cmds, got %d", len(cmds))
 	}
-	if !app.OverlayState.Is(ModeSettings) {
-		t.Fatal("expected ModeSettings after SettingsOpenEvent")
+	projection := app.activeSessionDeck()
+	if projection == nil || !projection.deck.IsOpen() || !projection.deckFocused {
+		t.Fatal("expected focused session panel after SettingsOpenEvent")
 	}
 }
 

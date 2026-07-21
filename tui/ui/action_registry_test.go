@@ -179,13 +179,13 @@ func TestActionRegistry_HintLabelFor(t *testing.T) {
 		HintKey: "Ctrl+S",
 	})
 	r.Register(&ActionDef{
-		ID:    "edit.undo",
-		Label: "Undo",
+		ID:       "edit.undo",
+		Label:    "Undo",
 		Bindings: []KeyBinding{{Key: "ctrl+z"}},
 	})
 	r.Register(&ActionDef{
-		ID:     "no.bindings",
-		Label:  "No Bindings",
+		ID:    "no.bindings",
+		Label: "No Bindings",
 	})
 
 	if got := r.HintLabelFor("file.save"); got != "Ctrl+S save" {

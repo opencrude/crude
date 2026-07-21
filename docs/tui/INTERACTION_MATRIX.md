@@ -19,7 +19,8 @@ preserve or intentionally improve.
 ## Focus precedence (current)
 
 1. Floating window (WM)
-2. Overlay mode
+2. Session Panel Deck (when focused)
+3. Inline overlay mode (Confirm/Question/YOLO legacy)
 3. Launcher
 4. File tree
 5. Tab bar

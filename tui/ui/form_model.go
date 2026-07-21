@@ -6,7 +6,7 @@ import "fmt"
 type FieldType int
 
 const (
-	FieldText      FieldType = iota
+	FieldText FieldType = iota
 	FieldPassword
 	FieldSelect
 	FieldCycle
@@ -24,7 +24,7 @@ type FieldValue struct {
 	strings []string
 }
 
-func StringValue(s string) FieldValue    { return FieldValue{kind: FieldText, str: s} }
+func StringValue(s string) FieldValue     { return FieldValue{kind: FieldText, str: s} }
 func BoolValue(b bool) FieldValue         { return FieldValue{kind: FieldToggle, b: b} }
 func StringsValue(ss []string) FieldValue { return FieldValue{kind: FieldSelect, strings: ss} }
 
@@ -105,24 +105,26 @@ type FormOption struct {
 
 // FieldState tracks the current state of a single field.
 type FieldState struct {
-	ID          string
-	Label       string
-	Description string
-	Type        FieldType
-	Value       FieldValue
-	Initial     FieldValue
-	Default     FieldValue
-	Errors      []string
-	Dirty       bool
-	Touched     bool
-	Disabled    bool
-	ReadOnly    bool
-	Required    bool
-	Inherited   bool
+	ID            string
+	Label         string
+	Description   string
+	Type          FieldType
+	Value         FieldValue
+	Initial       FieldValue
+	Default       FieldValue
+	Errors        []string
+	Dirty         bool
+	Touched       bool
+	Disabled      bool
+	ReadOnly      bool
+	Loading       bool
+	LoadMessage   string
+	Required      bool
+	Inherited     bool
 	InheritedFrom string
-	Options     []FormOption
-	Validator   func(value FieldValue) []string
-	Target      string // for FieldNav: target page/focus ID
+	Options       []FormOption
+	Validator     func(value FieldValue) []string
+	Target        string // for FieldNav: target page/focus ID
 }
 
 func (f *FieldState) HasErrors() bool { return len(f.Errors) > 0 }
@@ -220,7 +222,6 @@ func (m *FormModel) Reset() {
 	for _, f := range m.fields {
 		f.Value = f.Initial
 		f.Dirty = false
-		f.Errors = nil
 	}
-	_ = m.ValidateAll
+	m.ValidateAll()
 }

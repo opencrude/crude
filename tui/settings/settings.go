@@ -7,8 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
-	"crude/tui/components"
-	"crude/tui/form"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
@@ -16,9 +14,7 @@ import (
 )
 
 // SaveMsg is returned as a tea.Msg on save.
-type SaveMsg struct {
-	AppSettings types.AppSettings
-}
+type SaveMsg struct{ AppSettings types.AppSettings }
 
 // CancelMsg is returned as a tea.Msg on cancel.
 type CancelMsg struct{}
@@ -41,123 +37,53 @@ type ModelsErrorMsg struct {
 	Error      string
 }
 
-// Category defines one settings section in the left panel.
+// Category is a presentation-neutral settings section backed by the shared
+// form model. It deliberately has no legacy tui/form state.
 type Category struct {
 	Name        string
 	Group       string
 	Description string
-	Form        *form.Form
+	Form        *ui.FormModel
 }
 
-// Model is the workspace settings window state.
+type categorySnapshot struct{ values map[string]ui.FieldValue }
+
+type modelSnapshot struct {
+	categories []categorySnapshot
+	selected   int
+	pane       int
+	providerID string
+}
+
+// Model is the workspace settings screen state.
 type Model struct {
 	th           *theme.Theme
 	categories   []Category
 	selected     int
 	pane         int // 0: category rail, 1: form
 	snapshot     *modelSnapshot
-	lastLayout   settingsLayout
 	presets      []types.ProviderPreset
 	providers    map[string]types.ProviderConfig
 	providerID   string
 	models       map[string][]types.ModelEntry
-	searchEd     *ui.TextEdit // shared rune-safe category search
+	searchEd     *ui.TextEdit
 	searchActive bool
 }
 
-// searchText returns the current category filter query.
-func (m *Model) searchText() string {
-	if m == nil || m.searchEd == nil {
-		return ""
-	}
-	return m.searchEd.Value()
-}
-
-// SetSearchQuery keeps the domain-facing settings model synchronized with the
-// native search field used by the structured surface.
-func (m *Model) SetSearchQuery(query string) {
-	if m.searchEd == nil {
-		m.searchEd = ui.NewTextEdit()
-	}
-	m.searchEd.SetValue(query)
-	m.ensureVisibleSelection()
-}
-
-func (m *Model) SetSearchActive(active bool) { m.searchActive = active }
-
-func (m *Model) SelectCategory(index int) {
-	if index < 0 || index >= len(m.categories) {
-		return
-	}
-	m.selected = index
-	m.pane = 0
-}
-
-func (m *Model) SelectedCategory() int { return m.selected }
-
-func (m *Model) EnterForm() {
-	m.searchActive = false
-	m.pane = 1
-}
-
-func (m *Model) Pane() int { return m.pane }
-
-func (m *Model) FormView(width, spinFrame int) string {
-	if m == nil || len(m.categories) == 0 {
-		return ""
-	}
-	category := m.categories[m.selected]
-	return m.currentForm().ViewSettings(width, spinFrame, category.Description, m.pane == 1)
-}
-
-func (m *Model) SetSurfaceLayout(layout settingsLayout) {
-	m.lastLayout = layout
-}
-
-// CategoryItems projects the filtered settings categories into the shared list
-// control. Group rows are non-selectable headers owned by the list model.
-func (m *Model) CategoryItems() []ui.ListItem {
-	visible := m.visibleCategoryIndices()
-	items := make([]ui.ListItem, 0, len(visible)*2)
-	lastGroup := ""
-	for _, index := range visible {
-		category := m.categories[index]
-		if category.Group != lastGroup {
-			items = append(items, ui.ListItem{
-				ID:     "settings/group/" + strings.ToLower(category.Group),
-				Label:  category.Group,
-				Header: true,
-			})
-			lastGroup = category.Group
-		}
-		items = append(items, ui.ListItem{
-			ID:      fmt.Sprintf("settings/category/%d", index),
-			Label:   category.Name,
-			Payload: index,
-		})
-	}
-	return items
-}
-
-type modelSnapshot struct {
-	categories []Category
-	selected   int
-	pane       int
-}
-
-type settingsLayout struct {
-	height       int
-	formX, formY int
-}
+const (
+	fieldProvider       = "provider"
+	fieldModel          = "model"
+	fieldAPIKey         = "api-key"
+	fieldBaseURL        = "base-url"
+	fieldThinkingEffort = "thinking-effort"
+)
 
 // New creates a workspace settings model from current AppSettings.
-// presets is the known provider list (from provider.Presets); may be nil.
 func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPreset) *Model {
 	appearance := current.Theme
 	if appearance.Preset == "" {
 		appearance.Preset = "dark"
 	}
-
 	editor := current.Editor
 	if editor.TabSize == 0 {
 		editor.TabSize = 4
@@ -168,32 +94,23 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 	if editor.RenderWhitespace == "" {
 		editor.RenderWhitespace = "none"
 	}
-
 	lsp := current.LSP
 	if !lsp.Enabled && !lsp.AutoDetect {
-		lsp.Enabled = true
-		lsp.AutoDetect = true
-		lsp.Diagnostics = true
+		lsp.Enabled, lsp.AutoDetect, lsp.Diagnostics = true, true, true
 	}
-
-	ui := current.UI
-	if ui.SidebarWidth == 0 {
-		ui.SidebarWidth = 30
+	uiSettings := current.UI
+	if uiSettings.SidebarWidth == 0 {
+		uiSettings.SidebarWidth = 30
 	}
-
 	font := current.Font
 	if font.Size == 0 {
 		font.Size = 12
 	}
-
 	if len(presets) == 0 {
-		for _, p := range provider.PresetList() {
-			presets = append(presets, types.ProviderPreset{
-				ID: p.ID, Name: p.Name, HelpText: p.HelpText, BaseURL: p.BaseURL,
-			})
+		for _, preset := range provider.PresetList() {
+			presets = append(presets, types.ProviderPreset{ID: preset.ID, Name: preset.Name, HelpText: preset.HelpText, BaseURL: preset.BaseURL})
 		}
 	}
-
 	providers := make(map[string]types.ProviderConfig, len(current.Providers))
 	for id, cfg := range current.Providers {
 		providers[id] = cfg
@@ -205,38 +122,90 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 	if _, ok := providers[active]; !ok {
 		providers[active] = types.ProviderConfig{}
 	}
-
-	m := &Model{
-		th: th, presets: presets, providers: providers, providerID: active,
-		models: make(map[string][]types.ModelEntry),
-	}
+	m := &Model{th: th, presets: presets, providers: providers, providerID: active, models: make(map[string][]types.ModelEntry)}
 	m.categories = []Category{
 		{Name: "Providers", Group: "AI", Description: "Connections, credentials, and provider defaults.", Form: m.buildProvidersForm()},
-		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm("Main Agent", current.Agents.Categories["default"])},
-		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm("Researcher", current.Agents.Categories["researcher"])},
-		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm("Crafter", current.Agents.Categories["crafter"])},
-		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm("Aeron", current.Agents.Categories["aeron"])},
-		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: m.buildAppearanceForm(appearance)},
-		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: m.buildEditorForm(editor)},
-		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: m.buildLSPForm(lsp)},
-		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: m.buildUIForm(ui)},
-		{Name: "Font", Group: "IDE", Description: "Terminal font hints and ligatures.", Form: m.buildFontForm(font)},
+		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"])},
+		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"])},
+		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"])},
+		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"])},
+		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(
+			cycleField("preset", "preset", []string{"dark", "light", "custom"}, appearance.Preset),
+			textField("background", "background", appearance.Bg, false), textField("foreground", "foreground", appearance.Fg, false),
+			textField("accent", "accent", appearance.Accent, false), textField("accent2", "accent2", appearance.Accent2, false),
+			textField("subpane-bg", "subpane bg", appearance.SubPaneBg, false), textField("border", "border", appearance.Border, false), textField("selection", "selection", appearance.Selection, false),
+		)},
+		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
+			textField("tab-size", "tab size", fmt.Sprintf("%d", editor.TabSize), false), cycleField("word-wrap", "word wrap", []string{"on", "off"}, boolStr(editor.WordWrap)),
+			cycleField("line-numbers", "line numbers", []string{"on", "off"}, boolStr(editor.LineNumbers)), cycleField("syntax-theme", "syntax theme", []string{"catppuccin", "dracula", "github", "monokai", "solarized"}, editor.SyntaxTheme),
+			cycleField("render-whitespace", "render whitespace", []string{"none", "boundary", "all"}, editor.RenderWhitespace), textField("auto-save-delay", "auto-save (ms)", fmt.Sprintf("%d", editor.AutoSaveDelay), false),
+		)},
+		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: formModel(
+			cycleField("enabled", "enabled", []string{"on", "off"}, boolStr(lsp.Enabled)), cycleField("auto-detect", "auto-detect", []string{"on", "off"}, boolStr(lsp.AutoDetect)), cycleField("diagnostics", "diagnostics", []string{"on", "off"}, boolStr(lsp.Diagnostics)),
+		)},
+		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: formModel(
+			textField("sidebar-width", "sidebar width", fmt.Sprintf("%d", uiSettings.SidebarWidth), false), cycleField("show-hidden", "show hidden", []string{"on", "off"}, boolStr(uiSettings.ShowHiddenFiles)),
+			cycleField("show-icons", "show icons", []string{"on", "off"}, boolStr(uiSettings.ShowIcons)), cycleField("nerd-font", "nerd font", []string{"on", "off"}, boolStr(uiSettings.UseNerdFont)),
+			cycleField("git-status", "git status", []string{"on", "off"}, boolStr(uiSettings.ShowGitStatus)), cycleField("diagnostics", "diagnostics", []string{"on", "off"}, boolStr(uiSettings.ShowDiagnostics)),
+		)},
+		{Name: "Font", Group: "IDE", Description: "Terminal font hints and ligatures.", Form: formModel(
+			textField("family", "family", font.Family, false), textField("size", "size", fmt.Sprintf("%d", font.Size), false), cycleField("ligatures", "ligatures", []string{"on", "off"}, boolStr(font.Ligatures)),
+		)},
+	}
+	for index := range m.categories {
+		category := index
+		m.categories[index].Form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
 	}
 	return m
 }
 
-func (m *Model) buildAgentForm(title string, cfg types.CategorySettings) *form.Form {
+func formModel(fields ...*ui.FieldState) *ui.FormModel {
+	m := ui.NewFormModel()
+	for _, field := range fields {
+		m.AddField(field)
+	}
+	return m
+}
+
+func textField(id, label, value string, password bool) *ui.FieldState {
+	kind := ui.FieldText
+	if password {
+		kind = ui.FieldPassword
+	}
+	v := ui.StringValue(value)
+	return &ui.FieldState{ID: id, Label: label, Type: kind, Value: v, Initial: v}
+}
+
+func cycleField(id, label string, values []string, current string) *ui.FieldState {
+	options := make([]ui.FormOption, len(values))
+	for i, value := range values {
+		options[i] = ui.FormOption{ID: value, Label: value}
+	}
+	v := ui.StringValue(current)
+	return &ui.FieldState{ID: id, Label: label, Type: ui.FieldCycle, Value: v, Initial: v, Options: options}
+}
+
+func selectField(id, label, value string, options []ui.FormOption) *ui.FieldState {
+	v := ui.StringValue(value)
+	return &ui.FieldState{ID: id, Label: label, Type: ui.FieldSelect, Value: v, Initial: v, Options: options}
+}
+
+func (m *Model) buildProvidersForm() *ui.FormModel {
+	cfg := m.providers[m.providerID]
+	baseURL := cfg.ProviderURL
+	if baseURL == "" {
+		if preset := provider.GetPreset(m.providerID); preset != nil {
+			baseURL = preset.BaseURL
+		}
+	}
+	return formModel(selectField(fieldProvider, "provider", m.providerID, m.providerOptions()), selectField(fieldModel, "default model", cfg.Model, modelOptions(m.models[m.providerID])), textField(fieldAPIKey, "api key", cfg.APIKey, true), textField(fieldBaseURL, "base url", baseURL, false), cycleField(fieldThinkingEffort, "thinking level", []string{"none", "low", "medium", "high", "xhigh"}, cfg.ThinkingEffort))
+}
+
+func (m *Model) buildAgentForm(cfg types.CategorySettings) *ui.FormModel {
 	providerID := cfg.Provider
 	if providerID == "" {
 		providerID = m.providerID
 	}
-	providerItem := form.NewSelectItem(m.th, "provider", providerID, 10)
-	options := make([]components.ListItem, 0, len(m.presets))
-	for _, preset := range m.presets {
-		options = append(options, components.ListItem{ID: preset.ID, Label: preset.Name, Detail: preset.HelpText})
-	}
-	providerItem.SetOptions(options)
-
 	providerCfg := m.providers[providerID]
 	model := cfg.Model
 	if model == "" {
@@ -246,271 +215,213 @@ func (m *Model) buildAgentForm(title string, cfg types.CategorySettings) *form.F
 	if thinking == "" {
 		thinking = providerCfg.ThinkingEffort
 	}
-	modelItem := form.NewSelectItem(m.th, "model", model, 12)
-	modelItem.SetOptions(modelListItems(m.models[providerID]))
-
-	f := form.NewForm(m.th, title,
-		"workspace default \u00B7 tab next \u00B7 enter choose",
-		providerItem,
-		modelItem,
-		form.NewCycleItem(m.th, "thinking level", []string{"none", "low", "medium", "high", "xhigh"}, thinking),
-	)
-	return &f
+	return formModel(selectField(fieldProvider, "provider", providerID, m.providerOptions()), selectField(fieldModel, "model", model, modelOptions(m.models[providerID])), cycleField(fieldThinkingEffort, "thinking level", []string{"none", "low", "medium", "high", "xhigh"}, thinking))
 }
 
-func boolStr(b bool) string {
-	if b {
-		return "on"
+func (m *Model) providerOptions() []ui.FormOption {
+	options := make([]ui.FormOption, 0, len(m.presets))
+	for _, preset := range m.presets {
+		options = append(options, ui.FormOption{ID: preset.ID, Label: preset.Name, Detail: preset.HelpText})
 	}
-	return "off"
+	return options
 }
 
-func parseOpt(s string, defaultVal int) int {
-	if s == "" {
-		return defaultVal
-	}
-	var n int
-	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
-		return defaultVal
-	}
-	return n
-}
-
-func (m *Model) buildProvidersForm() *form.Form {
-	providerItem := form.NewSelectItem(m.th, "provider", m.providerID, 10)
-	providerOptions := make([]components.ListItem, 0, len(m.presets))
-	for _, p := range m.presets {
-		providerOptions = append(providerOptions, components.ListItem{
-			ID: p.ID, Label: p.Name, Detail: p.HelpText,
-		})
-	}
-	providerItem.SetOptions(providerOptions)
-
-	cfg := m.providers[m.providerID]
-	baseURL := cfg.ProviderURL
-	if baseURL == "" {
-		if p := provider.GetPreset(m.providerID); p != nil {
-			baseURL = p.BaseURL
-		}
-	}
-	modelItem := form.NewSelectItem(m.th, "default model", cfg.Model, 12)
-	modelItem.SetOptions(modelListItems(m.models[m.providerID]))
-
-	f := form.NewForm(m.th, "Providers",
-		"tab next \u00B7 enter choose/edit \u00B7 esc categories",
-		providerItem,
-		modelItem,
-		form.NewTextItem(m.th, "api key", cfg.APIKey, true),
-		form.NewTextItem(m.th, "base url", baseURL, false),
-		form.NewCycleItem(m.th, "thinking level", []string{"none", "low", "medium", "high", "xhigh"}, cfg.ThinkingEffort),
-	)
-	return &f
-}
-
-func modelListItems(models []types.ModelEntry) []components.ListItem {
-	items := make([]components.ListItem, 0, len(models))
+func modelOptions(models []types.ModelEntry) []ui.FormOption {
+	options := make([]ui.FormOption, 0, len(models))
 	for _, model := range models {
-		name := model.Name
-		if name == "" {
-			name = model.ID
+		label := model.Name
+		if label == "" {
+			label = model.ID
 		}
 		detail := ""
 		if model.ContextWindow > 0 {
 			detail = rendering.FormatTokens(model.ContextWindow)
 		}
-		items = append(items, components.ListItem{ID: model.ID, Label: name, Detail: detail})
+		options = append(options, ui.FormOption{ID: model.ID, Label: label, Detail: detail})
 	}
-	return items
+	return options
 }
 
-func (m *Model) buildAppearanceForm(cfg types.ThemeSettings) *form.Form {
-	f := form.NewForm(m.th, "Appearance",
-		"tab next \u00B7 enter edit \u00B7 \u2190\u2192 change",
-		form.NewCycleItem(m.th, "preset", []string{"dark", "light", "custom"}, cfg.Preset),
-		form.NewTextItem(m.th, "background", cfg.Bg, false),
-		form.NewTextItem(m.th, "foreground", cfg.Fg, false),
-		form.NewTextItem(m.th, "accent", cfg.Accent, false),
-		form.NewTextItem(m.th, "accent2", cfg.Accent2, false),
-		form.NewTextItem(m.th, "subpane bg", cfg.SubPaneBg, false),
-		form.NewTextItem(m.th, "border", cfg.Border, false),
-		form.NewTextItem(m.th, "selection", cfg.Selection, false),
-	)
-	return &f
+func boolStr(value bool) string {
+	if value {
+		return "on"
+	}
+	return "off"
 }
 
-func (m *Model) buildEditorForm(cfg types.EditorSettings) *form.Form {
-	f := form.NewForm(m.th, "Editor",
-		"tab next \u00B7 enter edit \u00B7 \u2190\u2192 change",
-		form.NewTextItem(m.th, "tab size", fmt.Sprintf("%d", cfg.TabSize), false),
-		form.NewCycleItem(m.th, "word wrap", []string{"on", "off"}, boolStr(cfg.WordWrap)),
-		form.NewCycleItem(m.th, "line numbers", []string{"on", "off"}, boolStr(cfg.LineNumbers)),
-		form.NewCycleItem(m.th, "syntax theme", []string{"catppuccin", "dracula", "github", "monokai", "solarized"}, cfg.SyntaxTheme),
-		form.NewCycleItem(m.th, "render whitespace", []string{"none", "boundary", "all"}, cfg.RenderWhitespace),
-		form.NewTextItem(m.th, "auto-save (ms)", fmt.Sprintf("%d", cfg.AutoSaveDelay), false),
-	)
-	return &f
+func parseOpt(value string, defaultVal int) int {
+	if value == "" {
+		return defaultVal
+	}
+	if _, err := fmt.Sscanf(value, "%d", &defaultVal); err != nil {
+		return defaultVal
+	}
+	return defaultVal
 }
 
-func (m *Model) buildLSPForm(cfg types.LSPSettings) *form.Form {
-	f := form.NewForm(m.th, "Language Servers",
-		"tab next \u00B7 enter edit \u00B7 \u2190\u2192 change",
-		form.NewCycleItem(m.th, "enabled", []string{"on", "off"}, boolStr(cfg.Enabled)),
-		form.NewCycleItem(m.th, "auto-detect", []string{"on", "off"}, boolStr(cfg.AutoDetect)),
-		form.NewCycleItem(m.th, "diagnostics", []string{"on", "off"}, boolStr(cfg.Diagnostics)),
-	)
-	return &f
-}
-
-func (m *Model) buildUIForm(cfg types.UISettings) *form.Form {
-	f := form.NewForm(m.th, "Interface",
-		"tab next \u00B7 enter edit \u00B7 \u2190\u2192 change",
-		form.NewTextItem(m.th, "sidebar width", fmt.Sprintf("%d", cfg.SidebarWidth), false),
-		form.NewCycleItem(m.th, "show hidden", []string{"on", "off"}, boolStr(cfg.ShowHiddenFiles)),
-		form.NewCycleItem(m.th, "show icons", []string{"on", "off"}, boolStr(cfg.ShowIcons)),
-		form.NewCycleItem(m.th, "nerd font", []string{"on", "off"}, boolStr(cfg.UseNerdFont)),
-		form.NewCycleItem(m.th, "git status", []string{"on", "off"}, boolStr(cfg.ShowGitStatus)),
-		form.NewCycleItem(m.th, "diagnostics", []string{"on", "off"}, boolStr(cfg.ShowDiagnostics)),
-	)
-	return &f
-}
-
-func (m *Model) buildFontForm(cfg types.FontSettings) *form.Form {
-	f := form.NewForm(m.th, "Font",
-		"tab next \u00B7 enter edit \u00B7 \u2190\u2192 change",
-		form.NewTextItem(m.th, "family", cfg.Family, false),
-		form.NewTextItem(m.th, "size", fmt.Sprintf("%d", cfg.Size), false),
-		form.NewCycleItem(m.th, "ligatures", []string{"on", "off"}, boolStr(cfg.Ligatures)),
-	)
-	return &f
-}
-
-func (m *Model) currentForm() *form.Form {
+func (m *Model) currentForm() *ui.FormModel {
+	if m == nil || m.selected < 0 || m.selected >= len(m.categories) {
+		return nil
+	}
 	return m.categories[m.selected].Form
 }
 
-func (m *Model) setForm(f form.Form) {
-	m.categories[m.selected].Form = &f
+func (m *Model) value(category int, fieldID string) string {
+	if category < 0 || category >= len(m.categories) || m.categories[category].Form == nil {
+		return ""
+	}
+	field := m.categories[category].Form.Field(fieldID)
+	if field == nil {
+		return ""
+	}
+	return field.Value.String()
 }
 
-// Update handles keyboard and mouse input. Returns updated model and optional command.
+func (m *Model) handleFieldChanged(category int, fieldID string) {
+	if category == catProviders && fieldID == fieldProvider {
+		providerID := m.value(catProviders, fieldProvider)
+		if providerID != "" && providerID != m.providerID {
+			m.storeProviderForm(m.providerID)
+			m.loadProviderForm(providerID)
+		}
+		return
+	}
+	if m.isAgentCategory(category) && fieldID == fieldProvider {
+		providerID := m.value(category, fieldProvider)
+		cfg := m.providers[providerID]
+		form := m.categories[category].Form
+		form.SetValue(fieldModel, ui.StringValue(cfg.Model))
+		form.SetValue(fieldThinkingEffort, ui.StringValue(cfg.ThinkingEffort))
+		if field := form.Field(fieldModel); field != nil {
+			field.Options = modelOptions(m.models[providerID])
+			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
+		}
+	}
+}
+
+// Update accepts asynchronous workspace results. User interaction is owned by
+// the mounted component tree rather than a parallel legacy form event loop.
 func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		return m.handleKey(msg)
-	case tea.MouseClickMsg:
-		return m.handleMouseClick(msg)
-	case tea.MouseMotionMsg:
-		m.handleMouseMotion(msg)
-		return *m, nil
-	case tea.MouseWheelMsg:
-		f := m.currentForm()
-		updated, cmd, action := f.Update(msg)
-		return *m, m.processFormUpdate(m.formProviderBefore(), updated, cmd, action)
 	case ModelsMsg:
 		m.setModels(msg.ProviderID, msg.Models)
-		return *m, nil
 	case ModelsErrorMsg:
-		if (m.selected == catProviders && m.providerID == msg.ProviderID) ||
-			(m.isAgentCategory() && m.currentForm().ItemValue(0) == msg.ProviderID) {
-			m.currentForm().SetItemLoading(1, false, "")
-			m.currentForm().SetItemFetchError(1, msg.Error)
-		}
-		return *m, nil
+		m.setModelsError(msg.ProviderID, msg.Error)
 	}
-	// Route non-key/mouse events to the form (e.g. PasteMsg)
-	f := m.currentForm()
-	oldProvider := m.formProviderBefore()
-	updated, cmd, action := f.Update(msg)
-	return *m, m.processFormUpdate(oldProvider, updated, cmd, action)
+	return *m, nil
 }
 
-func (m *Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
-	f := m.currentForm()
-	if f.IsEditing() || f.IsExpanded() {
-		oldProvider := m.formProviderBefore()
-		updated, cmd, action := f.Update(keyMsg)
-		return *m, m.processFormUpdate(oldProvider, updated, cmd, action)
+func (m *Model) OpenSelect(fieldID string) tea.Cmd {
+	if fieldID != fieldModel || m.currentForm() == nil {
+		return nil
 	}
-	if m.searchActive {
-		return m.handleSearchKey(keyMsg)
+	field := m.currentForm().Field(fieldModel)
+	if field == nil || len(field.Options) > 0 {
+		return nil
 	}
+	field.Loading, field.LoadMessage = true, "Fetching models..."
+	if m.selected == catProviders {
+		return m.fetchModelsCmd()
+	}
+	if m.isAgentCategory(m.selected) {
+		return m.fetchModelsForProviderCmd(m.value(m.selected, fieldProvider))
+	}
+	return nil
+}
 
-	s := keyMsg.String()
-	if s == "ctrl+s" || s == "s" {
-		return *m, m.saveCmd()
+func (m *Model) fetchModelsCmd() tea.Cmd {
+	return func() tea.Msg {
+		return FetchModelsMsg{ProviderID: m.providerID, BaseURL: m.value(catProviders, fieldBaseURL), APIKey: m.value(catProviders, fieldAPIKey)}
 	}
-	if s == "c" && m.pane == 0 {
-		return *m, m.cancelCmd()
-	}
+}
 
-	if m.pane == 0 {
-		if s == "/" {
-			m.searchActive = true
-			if m.searchEd == nil {
-				m.searchEd = ui.NewTextEdit()
+func (m *Model) fetchModelsForProviderCmd(providerID string) tea.Cmd {
+	cfg := m.providers[providerID]
+	baseURL := cfg.ProviderURL
+	if baseURL == "" {
+		if preset := provider.GetPreset(providerID); preset != nil {
+			baseURL = preset.BaseURL
+		}
+	}
+	return func() tea.Msg { return FetchModelsMsg{ProviderID: providerID, BaseURL: baseURL, APIKey: cfg.APIKey} }
+}
+
+func (m *Model) setModels(providerID string, models []types.ModelEntry) {
+	m.models[providerID] = models
+	for index := range m.categories {
+		if index == catProviders && m.providerID != providerID {
+			continue
+		}
+		if m.isAgentCategory(index) && m.value(index, fieldProvider) != providerID {
+			continue
+		}
+		if field := m.categories[index].Form.Field(fieldModel); field != nil {
+			field.Options = modelOptions(models)
+			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
+		}
+	}
+}
+
+func (m *Model) setModelsError(providerID, message string) {
+	for index := range m.categories {
+		if (index == catProviders && m.providerID == providerID) || (m.isAgentCategory(index) && m.value(index, fieldProvider) == providerID) {
+			if field := m.categories[index].Form.Field(fieldModel); field != nil {
+				field.Errors, field.Loading, field.LoadMessage = []string{message}, false, ""
 			}
-			return *m, nil
 		}
-		if s == "j" {
-			keyMsg = tea.KeyPressMsg{Code: tea.KeyDown}
-		} else if s == "k" {
-			keyMsg = tea.KeyPressMsg{Code: tea.KeyUp}
-		}
-		switch keyMsg.Code {
-		case tea.KeyEsc:
-			return *m, m.cancelCmd()
-		case tea.KeyUp:
-			m.moveCategory(-1)
-		case tea.KeyDown:
-			m.moveCategory(1)
-		case tea.KeyRight, tea.KeyEnter, tea.KeyTab:
-			m.pane = 1
-		}
-		return *m, nil
 	}
-
-	if keyMsg.Code == tea.KeyEsc {
-		m.pane = 0
-		return *m, nil
-	}
-	oldProvider := m.formProviderBefore()
-	updated, cmd, action := f.Update(keyMsg)
-	return *m, m.processFormUpdate(oldProvider, updated, cmd, action)
 }
 
-func (m *Model) handleSearchKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
+func (m *Model) searchText() string {
+	if m == nil || m.searchEd == nil {
+		return ""
+	}
+	return m.searchEd.Value()
+}
+
+func (m *Model) SetSearchQuery(query string) {
 	if m.searchEd == nil {
 		m.searchEd = ui.NewTextEdit()
 	}
-	switch keyMsg.Code {
-	case tea.KeyEsc:
-		if m.searchEd.Len() > 0 {
-			m.searchEd.SetValue("")
-			m.ensureVisibleSelection()
-		} else {
-			m.searchActive = false
-		}
-	case tea.KeyEnter:
-		m.searchActive = false
-		m.pane = 1
-	case tea.KeyUp:
-		m.moveCategory(-1)
-	case tea.KeyDown:
-		m.moveCategory(1)
-	default:
-		if ui.HandleFilterKey(m.searchEd, keyMsg) {
-			m.ensureVisibleSelection()
-		}
+	m.searchEd.SetValue(query)
+	m.ensureVisibleSelection()
+}
+
+func (m *Model) SetSearchActive(active bool) { m.searchActive = active }
+func (m *Model) SelectedCategory() int       { return m.selected }
+func (m *Model) Pane() int                   { return m.pane }
+
+func (m *Model) SelectCategory(index int) {
+	if index >= 0 && index < len(m.categories) {
+		m.selected, m.pane = index, 0
 	}
-	return *m, nil
+}
+
+func (m *Model) EnterForm() {
+	m.searchActive, m.pane = false, 1
+}
+
+func (m *Model) CategoryItems() []ui.ListItem {
+	visible := m.visibleCategoryIndices()
+	items := make([]ui.ListItem, 0, len(visible)*2)
+	lastGroup := ""
+	for _, index := range visible {
+		category := m.categories[index]
+		if category.Group != lastGroup {
+			items = append(items, ui.ListItem{ID: "settings/group/" + strings.ToLower(category.Group), Label: category.Group, Header: true})
+			lastGroup = category.Group
+		}
+		items = append(items, ui.ListItem{ID: fmt.Sprintf("settings/category/%d", index), Label: category.Name, Payload: index})
+	}
+	return items
 }
 
 func (m *Model) visibleCategoryIndices() []int {
 	query := strings.ToLower(strings.TrimSpace(m.searchText()))
 	indices := make([]int, 0, len(m.categories))
-	for i, category := range m.categories {
+	for index, category := range m.categories {
 		if query == "" || strings.Contains(strings.ToLower(category.Name), query) || strings.Contains(strings.ToLower(category.Group), query) {
-			indices = append(indices, i)
+			indices = append(indices, index)
 		}
 	}
 	return indices
@@ -521,207 +432,48 @@ func (m *Model) ensureVisibleSelection() {
 	if len(visible) == 0 {
 		return
 	}
-	for _, idx := range visible {
-		if idx == m.selected {
+	for _, index := range visible {
+		if index == m.selected {
 			return
 		}
 	}
 	m.selected = visible[0]
 }
 
-func (m *Model) moveCategory(delta int) {
-	visible := m.visibleCategoryIndices()
-	if len(visible) == 0 {
-		return
-	}
-	position := 0
-	for i, idx := range visible {
-		if idx == m.selected {
-			position = i
-			break
-		}
-	}
-	position += delta
-	if position < 0 {
-		position = 0
-	}
-	if position >= len(visible) {
-		position = len(visible) - 1
-	}
-	m.selected = visible[position]
-}
-
-func (m *Model) processFormUpdate(oldProvider string, updated form.Form, cmd tea.Cmd, action form.FormAction) tea.Cmd {
-	m.setForm(updated)
-	if m.selected == catProviders {
-		newProvider := updated.ItemValue(0)
-		if newProvider != "" && newProvider != oldProvider {
-			m.storeProviderForm(oldProvider)
-			m.loadProviderForm(newProvider)
-		}
-		if action == form.FormActionExpand && updated.ExpandedIndex() == 1 && m.currentForm().ItemOptionCount(1) == 0 {
-			m.currentForm().SetItemLoading(1, true, "fetching models...")
-			request := m.fetchModelsCmd()
-			if cmd != nil {
-				return tea.Batch(cmd, request)
-			}
-			return request
-		}
-	} else if m.isAgentCategory() {
-		newProvider := updated.ItemValue(0)
-		if newProvider != "" && newProvider != oldProvider {
-			providerCfg := m.providers[newProvider]
-			m.currentForm().SetItemValue(1, providerCfg.Model)
-			m.currentForm().SetItemValue(2, providerCfg.ThinkingEffort)
-			m.currentForm().SetItemSelectOptions(1, modelListItems(m.models[newProvider]))
-		}
-		if action == form.FormActionExpand && updated.ExpandedIndex() == 1 && m.currentForm().ItemOptionCount(1) == 0 {
-			m.currentForm().SetItemLoading(1, true, "fetching models...")
-			request := m.fetchModelsForProviderCmd(m.currentForm().ItemValue(0))
-			if cmd != nil {
-				return tea.Batch(cmd, request)
-			}
-			return request
-		}
-	}
-	if action == form.FormActionBack {
-		m.pane = 0
-		return nil
-	}
-	return cmd
-}
-
-func (m *Model) formProviderBefore() string {
-	if m.selected >= catProviders && m.selected <= catAeron {
-		return m.currentForm().ItemValue(0)
-	}
-	return ""
-}
-
-func (m *Model) isAgentCategory() bool {
-	return m.selected >= catMain && m.selected <= catAeron
-}
-
-func (m *Model) saveCmd() tea.Cmd {
-	m.storeProviderForm(m.providerID)
-	return func() tea.Msg {
-		return SaveMsg{AppSettings: m.AppSettings()}
-	}
-}
-
-func (m *Model) cancelCmd() tea.Cmd {
-	return func() tea.Msg {
-		return CancelMsg{}
-	}
-}
-
-func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
-	if msg.Button != tea.MouseLeft {
-		return *m, nil
-	}
-	x, y := msg.Mouse().X, msg.Mouse().Y
-
-	layout := m.lastLayout
-	if x >= layout.formX && y >= layout.formY && y < layout.height-2 {
-		f := m.currentForm()
-		oldProvider := m.formProviderBefore()
-		localY := y - layout.formY
-		if !f.IsExpanded() {
-			if f.SettingsHitTest(localY).ItemIndex < 0 {
-				return *m, nil
-			}
-			localY-- // ViewSettings items begin one row after Form.View items.
-		}
-		m.pane = 1
-		local := tea.MouseClickMsg{X: x - layout.formX, Y: localY, Button: msg.Button}
-		updated, cmd, action := f.Update(local)
-		return *m, m.processFormUpdate(oldProvider, updated, cmd, action)
-	}
-
-	return *m, nil
-}
-
-func (m *Model) handleMouseMotion(msg tea.MouseMotionMsg) {
-	x, y := msg.X, msg.Y
-	layout := m.lastLayout
-	m.currentForm().SetHoveredItem(-1)
-	if x >= layout.formX && y >= layout.formY && y < layout.height-2 && !m.currentForm().IsExpanded() {
-		hit := m.currentForm().SettingsHitTest(y - layout.formY)
-		m.currentForm().SetHoveredItem(hit.ItemIndex)
-	} else if x >= layout.formX && y >= layout.formY && y < layout.height-2 && m.currentForm().IsExpanded() {
-		local := tea.MouseMotionMsg{X: x - layout.formX, Y: y - layout.formY, Button: msg.Button}
-		updated, _, _ := m.currentForm().Update(local)
-		m.setForm(updated)
-	}
-}
-
-// category indices after Providers was added as index 0.
 const (
-	catProviders  = 0
-	catMain       = 1
-	catResearcher = 2
-	catCrafter    = 3
-	catAeron      = 4
-	catAppearance = 5
-	catEditor     = 6
-	catLSP        = 7
-	catUI         = 8
-	catFont       = 9
+	catProviders = iota
+	catMain
+	catResearcher
+	catCrafter
+	catAeron
+	catAppearance
+	catEditor
+	catLSP
+	catUI
+	catFont
 )
 
-// AppSettings returns the current values as an AppSettings struct.
+func (m *Model) isAgentCategory(index int) bool { return index >= catMain && index <= catAeron }
+
+// AppSettings returns the values held by the shared form models.
 func (m *Model) AppSettings() types.AppSettings {
-	var s types.AppSettings
-	m.collectProviders(&s)
-	m.collectAgents(&s.Agents)
-	m.collectAppearance(&s.Theme)
-	m.collectEditor(&s.Editor)
-	m.collectLSP(&s.LSP)
-	m.collectUI(&s.UI)
-	m.collectFont(&s.Font)
-	return s
+	var settings types.AppSettings
+	m.collectProviders(&settings)
+	m.collectAgents(&settings.Agents)
+	m.collectAppearance(&settings.Theme)
+	m.collectEditor(&settings.Editor)
+	m.collectLSP(&settings.LSP)
+	m.collectUI(&settings.UI)
+	m.collectFont(&settings.Font)
+	return settings
 }
 
-func (m *Model) collectAgents(agents *types.AgentsSettings) {
-	if agents.Categories == nil {
-		agents.Categories = make(map[string]types.CategorySettings)
-	}
-	for _, entry := range []struct {
-		index int
-		key   string
-	}{
-		{catMain, "default"},
-		{catResearcher, "researcher"},
-		{catCrafter, "crafter"},
-		{catAeron, "aeron"},
-	} {
-		f := m.categories[entry.index].Form
-		category := types.CategorySettings{
-			Provider: f.ItemValue(0), Model: f.ItemValue(1), ThinkingEffort: f.ItemValue(2),
-		}
-		for _, model := range m.models[category.Provider] {
-			if model.ID == category.Model {
-				category.ModelContextWindow = model.ContextWindow
-				category.ModelInputPrice = model.InputPrice
-				category.ModelOutputPrice = model.OutputPrice
-				category.ModelCachePrice = model.CacheReadPrice
-				category.ModelSupportsVision = model.SupportsVision
-				category.ModelSupportsTools = model.SupportsTools
-				category.ModelMaxOutput = model.MaxOutput
-				category.ModelAttachment = model.Attachment
-				break
-			}
-		}
-		agents.Categories[entry.key] = category
-	}
-}
-
-func (m *Model) collectProviders(s *types.AppSettings) {
+func (m *Model) collectProviders(settings *types.AppSettings) {
 	m.storeProviderForm(m.providerID)
-	s.ActiveProvider = m.providerID
-	s.Providers = make(map[string]types.ProviderConfig, len(m.providers))
+	settings.ActiveProvider = m.providerID
+	settings.Providers = make(map[string]types.ProviderConfig, len(m.providers))
 	for id, cfg := range m.providers {
-		s.Providers[id] = cfg
+		settings.Providers[id] = cfg
 	}
 }
 
@@ -729,13 +481,7 @@ func (m *Model) storeProviderForm(providerID string) {
 	if providerID == "" || len(m.categories) == 0 {
 		return
 	}
-	f := m.categories[catProviders].Form
-	m.providers[providerID] = types.ProviderConfig{
-		Model:          f.ItemValue(1),
-		APIKey:         f.ItemValue(2),
-		ProviderURL:    f.ItemValue(3),
-		ThinkingEffort: f.ItemValue(4),
-	}
+	m.providers[providerID] = types.ProviderConfig{Model: m.value(catProviders, fieldModel), APIKey: m.value(catProviders, fieldAPIKey), ProviderURL: m.value(catProviders, fieldBaseURL), ThinkingEffort: m.value(catProviders, fieldThinkingEffort)}
 }
 
 func (m *Model) loadProviderForm(providerID string) {
@@ -750,134 +496,86 @@ func (m *Model) loadProviderForm(providerID string) {
 			baseURL = preset.BaseURL
 		}
 	}
-	f := m.categories[catProviders].Form
-	f.SetItemValue(0, providerID)
-	f.SetItemValue(1, cfg.Model)
-	f.SetItemValue(2, cfg.APIKey)
-	f.SetItemValue(3, baseURL)
-	f.SetItemValue(4, cfg.ThinkingEffort)
-	f.SetItemSelectOptions(1, modelListItems(m.models[providerID]))
-}
-
-func (m *Model) fetchModelsCmd() tea.Cmd {
-	f := m.categories[catProviders].Form
-	providerID := m.providerID
-	baseURL := f.ItemValue(3)
-	apiKey := f.ItemValue(2)
-	return func() tea.Msg {
-		return FetchModelsMsg{ProviderID: providerID, BaseURL: baseURL, APIKey: apiKey}
+	form := m.categories[catProviders].Form
+	form.SetValue(fieldProvider, ui.StringValue(providerID))
+	form.SetValue(fieldModel, ui.StringValue(cfg.Model))
+	form.SetValue(fieldAPIKey, ui.StringValue(cfg.APIKey))
+	form.SetValue(fieldBaseURL, ui.StringValue(baseURL))
+	form.SetValue(fieldThinkingEffort, ui.StringValue(cfg.ThinkingEffort))
+	if field := form.Field(fieldModel); field != nil {
+		field.Options = modelOptions(m.models[providerID])
+		field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 	}
 }
 
-func (m *Model) fetchModelsForProviderCmd(providerID string) tea.Cmd {
-	cfg := m.providers[providerID]
-	baseURL := cfg.ProviderURL
-	if baseURL == "" {
-		if preset := provider.GetPreset(providerID); preset != nil {
-			baseURL = preset.BaseURL
+func (m *Model) collectAgents(agents *types.AgentsSettings) {
+	if agents.Categories == nil {
+		agents.Categories = make(map[string]types.CategorySettings)
+	}
+	for _, entry := range []struct {
+		index int
+		key   string
+	}{{catMain, "default"}, {catResearcher, "researcher"}, {catCrafter, "crafter"}, {catAeron, "aeron"}} {
+		category := types.CategorySettings{Provider: m.value(entry.index, fieldProvider), Model: m.value(entry.index, fieldModel), ThinkingEffort: m.value(entry.index, fieldThinkingEffort)}
+		for _, model := range m.models[category.Provider] {
+			if model.ID == category.Model {
+				category.ModelContextWindow, category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = model.ContextWindow, model.InputPrice, model.OutputPrice, model.CacheReadPrice
+				category.ModelSupportsVision, category.ModelSupportsTools, category.ModelMaxOutput, category.ModelAttachment = model.SupportsVision, model.SupportsTools, model.MaxOutput, model.Attachment
+				break
+			}
 		}
-	}
-	return func() tea.Msg {
-		return FetchModelsMsg{ProviderID: providerID, BaseURL: baseURL, APIKey: cfg.APIKey}
-	}
-}
-
-func (m *Model) setModels(providerID string, models []types.ModelEntry) {
-	m.models[providerID] = models
-	if m.providerID == providerID {
-		f := m.categories[catProviders].Form
-		f.SetItemSelectOptions(1, modelListItems(models))
-		f.SetItemLoading(1, false, "")
-	}
-	for _, idx := range []int{catMain, catResearcher, catCrafter, catAeron} {
-		f := m.categories[idx].Form
-		if f.ItemValue(0) == providerID {
-			f.SetItemSelectOptions(1, modelListItems(models))
-			f.SetItemLoading(1, false, "")
-		}
+		agents.Categories[entry.key] = category
 	}
 }
 
 func (m *Model) collectAppearance(cfg *types.ThemeSettings) {
-	*cfg = types.ThemeSettings{
-		Preset:    m.categories[catAppearance].Form.ItemValue(0),
-		Bg:        m.categories[catAppearance].Form.ItemValue(1),
-		Fg:        m.categories[catAppearance].Form.ItemValue(2),
-		Accent:    m.categories[catAppearance].Form.ItemValue(3),
-		Accent2:   m.categories[catAppearance].Form.ItemValue(4),
-		SubPaneBg: m.categories[catAppearance].Form.ItemValue(5),
-		Border:    m.categories[catAppearance].Form.ItemValue(6),
-		Selection: m.categories[catAppearance].Form.ItemValue(7),
-	}
+	*cfg = types.ThemeSettings{Preset: m.value(catAppearance, "preset"), Bg: m.value(catAppearance, "background"), Fg: m.value(catAppearance, "foreground"), Accent: m.value(catAppearance, "accent"), Accent2: m.value(catAppearance, "accent2"), SubPaneBg: m.value(catAppearance, "subpane-bg"), Border: m.value(catAppearance, "border"), Selection: m.value(catAppearance, "selection")}
 }
 
 func (m *Model) collectEditor(cfg *types.EditorSettings) {
-	*cfg = types.EditorSettings{
-		TabSize:          parseOpt(m.categories[catEditor].Form.ItemValue(0), 4),
-		WordWrap:         m.categories[catEditor].Form.ItemValue(1) == "on",
-		LineNumbers:      m.categories[catEditor].Form.ItemValue(2) == "on",
-		SyntaxTheme:      m.categories[catEditor].Form.ItemValue(3),
-		RenderWhitespace: m.categories[catEditor].Form.ItemValue(4),
-		AutoSaveDelay:    parseOpt(m.categories[catEditor].Form.ItemValue(5), 0),
-	}
+	*cfg = types.EditorSettings{TabSize: parseOpt(m.value(catEditor, "tab-size"), 4), WordWrap: m.value(catEditor, "word-wrap") == "on", LineNumbers: m.value(catEditor, "line-numbers") == "on", SyntaxTheme: m.value(catEditor, "syntax-theme"), RenderWhitespace: m.value(catEditor, "render-whitespace"), AutoSaveDelay: parseOpt(m.value(catEditor, "auto-save-delay"), 0)}
 }
 
 func (m *Model) collectLSP(cfg *types.LSPSettings) {
-	*cfg = types.LSPSettings{
-		Enabled:     m.categories[catLSP].Form.ItemValue(0) == "on",
-		AutoDetect:  m.categories[catLSP].Form.ItemValue(1) == "on",
-		Diagnostics: m.categories[catLSP].Form.ItemValue(2) == "on",
-	}
+	*cfg = types.LSPSettings{Enabled: m.value(catLSP, "enabled") == "on", AutoDetect: m.value(catLSP, "auto-detect") == "on", Diagnostics: m.value(catLSP, "diagnostics") == "on"}
 }
 
 func (m *Model) collectUI(cfg *types.UISettings) {
-	*cfg = types.UISettings{
-		SidebarWidth:    parseOpt(m.categories[catUI].Form.ItemValue(0), 30),
-		ShowHiddenFiles: m.categories[catUI].Form.ItemValue(1) == "on",
-		ShowIcons:       m.categories[catUI].Form.ItemValue(2) == "on",
-		UseNerdFont:     m.categories[catUI].Form.ItemValue(3) == "on",
-		ShowGitStatus:   m.categories[catUI].Form.ItemValue(4) == "on",
-		ShowDiagnostics: m.categories[catUI].Form.ItemValue(5) == "on",
-	}
+	*cfg = types.UISettings{SidebarWidth: parseOpt(m.value(catUI, "sidebar-width"), 30), ShowHiddenFiles: m.value(catUI, "show-hidden") == "on", ShowIcons: m.value(catUI, "show-icons") == "on", UseNerdFont: m.value(catUI, "nerd-font") == "on", ShowGitStatus: m.value(catUI, "git-status") == "on", ShowDiagnostics: m.value(catUI, "diagnostics") == "on"}
 }
 
 func (m *Model) collectFont(cfg *types.FontSettings) {
-	*cfg = types.FontSettings{
-		Family:    m.categories[catFont].Form.ItemValue(0),
-		Size:      parseOpt(m.categories[catFont].Form.ItemValue(1), 12),
-		Ligatures: m.categories[catFont].Form.ItemValue(2) == "on",
-	}
+	*cfg = types.FontSettings{Family: m.value(catFont, "family"), Size: parseOpt(m.value(catFont, "size"), 12), Ligatures: m.value(catFont, "ligatures") == "on"}
 }
 
-func (m *Model) saveCurrentForm() {
-}
-
-// Snapshot saves the current state for cancel/restore.
+// Snapshot records values without retaining component interaction state.
 func (m *Model) Snapshot() {
-	catSnaps := make([]Category, len(m.categories))
-	for i, cat := range m.categories {
-		snap := *cat.Form
-		snap.SaveSnapshot()
-		catSnaps[i] = Category{Name: cat.Name, Group: cat.Group, Description: cat.Description, Form: &snap}
+	snapshot := &modelSnapshot{categories: make([]categorySnapshot, len(m.categories)), selected: m.selected, pane: m.pane, providerID: m.providerID}
+	for index, category := range m.categories {
+		values := make(map[string]ui.FieldValue, category.Form.FieldCount())
+		for _, field := range category.Form.Fields() {
+			values[field.ID] = field.Value
+		}
+		snapshot.categories[index] = categorySnapshot{values: values}
 	}
-	m.snapshot = &modelSnapshot{
-		categories: catSnaps,
-		selected:   m.selected,
-		pane:       m.pane,
-	}
+	m.snapshot = snapshot
 }
 
-// Restore restores from snapshot.
 func (m *Model) Restore() {
 	if m.snapshot == nil {
 		return
 	}
-	for i, snap := range m.snapshot.categories {
-		if i < len(m.categories) {
-			snap.Form.RestoreSnapshot()
-			m.categories[i] = snap
+	for index, snapshot := range m.snapshot.categories {
+		if index >= len(m.categories) {
+			break
+		}
+		for fieldID, value := range snapshot.values {
+			field := m.categories[index].Form.Field(fieldID)
+			if field != nil {
+				field.Value, field.Dirty = value, false
+				field.Validate()
+			}
 		}
 	}
-	m.selected = m.snapshot.selected
-	m.pane = m.snapshot.pane
+	m.selected, m.pane, m.providerID = m.snapshot.selected, m.snapshot.pane, m.snapshot.providerID
 }

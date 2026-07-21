@@ -61,11 +61,10 @@ func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
 		t.Fatalf("category click selected=%d pane=%d, want %d/0", m.SelectedCategory(), m.Pane(), catMain)
 	}
 
-	updated, _ := m.Update(tea.MouseClickMsg{X: 25, Y: 4, Button: tea.MouseLeft})
-	*m = updated
-	surfaceRoot.SetModel(m)
-	if m.Pane() != 1 || !m.currentForm().IsExpanded() {
-		t.Fatal("provider field click should focus form pane and expand selector")
+	surfaceRoot.FocusForm()
+	result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !result.Handled || !surfaceRoot.form.Field(fieldProvider).SelectOpen() {
+		t.Fatal("native provider field should open its shared select control")
 	}
 }
 
@@ -99,7 +98,9 @@ func TestSettingsSurfaceActionBarEmitsMessages(t *testing.T) {
 	surfaceRoot := NewSurface(th, m)
 	cw := ui.NewComponentWidget(th, surfaceRoot, 80, 24)
 	surfaceRoot.SetFocusHandler(cw.Focus)
-	cw.Focus(WorkspaceSettingsSaveID)
+	surf := surface.NewSurface("settings-action-bar", 80, 24, cell.TransparentBlank())
+	cw.Render(surf, &widget.RenderContext{Theme: th})
+	cw.Focus(WorkspaceSettingsActionID)
 	result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if result.Cmd == nil {
 		t.Fatal("save button did not emit a command")
@@ -107,6 +108,73 @@ func TestSettingsSurfaceActionBarEmitsMessages(t *testing.T) {
 	msg := result.Cmd()
 	if _, ok := msg.(SaveMsg); !ok {
 		t.Fatalf("save command message = %T, want SaveMsg", msg)
+	}
+}
+
+func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{}, nil)
+	surfaceRoot := NewSurface(th, m)
+	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
+	surfaceRoot.SetFocusHandler(cw.Focus)
+	surf := surface.NewSurface("settings-native-form", 90, 28, cell.TransparentBlank())
+	cw.Render(surf, &widget.RenderContext{Theme: th})
+
+	// The Editor category follows the AI group and Appearance rows.
+	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 10, Button: tea.MouseLeft})
+	if m.SelectedCategory() != catEditor {
+		t.Fatalf("selected category=%d, want editor", m.SelectedCategory())
+	}
+	if got := surfaceRoot.form.Field("tab-size").FieldState().ID; got != "tab-size" {
+		t.Fatalf("form was not rebuilt for Editor, first field=%q", got)
+	}
+
+	surfaceRoot.FocusForm()
+	cw.Host().Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	cw.Host().Handle(tea.KeyPressMsg{Code: '8', Text: "8"})
+	if got := m.AppSettings().Editor.TabSize; got != 8 {
+		t.Fatalf("native text edit saved tab size %d, want 8", got)
+	}
+
+	surfaceRoot.FocusActions()
+	result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Cmd == nil {
+		t.Fatal("native action bar save did not emit a command")
+	}
+	msg, ok := result.Cmd().(SaveMsg)
+	if !ok || msg.AppSettings.Editor.TabSize != 8 {
+		t.Fatalf("save message=%#v, want tab size 8", msg)
+	}
+}
+
+func TestSettingsSurfaceNativeSelectCommitsProvider(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{ActiveProvider: "openrouter", Providers: map[string]types.ProviderConfig{
+		"openrouter": {ProviderURL: "https://router"},
+		"openai":     {ProviderURL: "https://openai"},
+	}}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
+	surfaceRoot := NewSurface(th, m)
+	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
+	surfaceRoot.SetFocusHandler(cw.Focus)
+	surf := surface.NewSurface("settings-native-select", 90, 28, cell.TransparentBlank())
+	cw.Render(surf, &widget.RenderContext{Theme: th})
+
+	surfaceRoot.FocusForm()
+	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := m.AppSettings().ActiveProvider; got != "openai" {
+		t.Fatalf("native select saved provider %q, want openai", got)
+	}
+
+	// Provider selection updates retained text controls before the user edits them.
+	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyTab})
+	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyTab})
+	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyTab})
+	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnd})
+	cw.Host().Handle(tea.KeyPressMsg{Code: '2', Text: "2"})
+	if got := m.AppSettings().Providers["openai"].ProviderURL; got != "https://openai2" {
+		t.Fatalf("programmatic provider synchronization saved base URL %q", got)
 	}
 }
 

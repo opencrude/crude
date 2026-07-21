@@ -30,12 +30,12 @@ func (it ListItem) Selectable() bool {
 // List is a uniform-height selectable list with shared Selection + Scroll models.
 type List struct {
 	Base
-	items     []ListItem
-	sel       *SelectionModel
-	scroll    *ScrollModel
-	tokens    *TokenSet
-	activate  string // action ID on Enter/click
-	hoverIdx  int
+	items    []ListItem
+	sel      *SelectionModel
+	scroll   *ScrollModel
+	tokens   *TokenSet
+	activate string // action ID on Enter/click
+	hoverIdx int
 }
 
 // NewList creates a list (clamp navigation, not wrap).

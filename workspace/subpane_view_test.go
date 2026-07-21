@@ -101,20 +101,20 @@ func TestSubPaneViewSummaryTokenFormatting(t *testing.T) {
 func TestSubPaneViewToolLinesForAgentPane(t *testing.T) {
 	sp := NewSubPane("agent-1", PaneAgent, "my-agent")
 	sp.Messages.AppendMessage(Message{
-		Role:           "tool",
-		ToolName:       "read_file",
-		ToolArgs:       "main.go",
-		ToolStatus:     "success",
+		Role:             "tool",
+		ToolName:         "read_file",
+		ToolArgs:         "main.go",
+		ToolStatus:       "success",
 		ToolPreviewPhase: "done",
-		Time:           time.Now(),
+		Time:             time.Now(),
 	})
 	sp.Messages.AppendMessage(Message{
-		Role:           "tool",
-		ToolName:       "write_file",
-		ToolArgs:       "out.go",
-		ToolStatus:     "streaming",
+		Role:             "tool",
+		ToolName:         "write_file",
+		ToolArgs:         "out.go",
+		ToolStatus:       "streaming",
 		ToolPreviewPhase: "streaming",
-		Time:           time.Now(),
+		Time:             time.Now(),
 	})
 
 	view := sp.View()
@@ -141,10 +141,10 @@ func TestSubPaneViewToolLinesForAgentPane(t *testing.T) {
 func TestSubPaneViewToolLinesNilForThinking(t *testing.T) {
 	sp := NewSubPane("think-1", PaneThinking, "Thinking")
 	sp.Messages.AppendMessage(Message{
-		Role:           "tool",
-		ToolName:       "read_file",
-		ToolStatus:     "success",
-		Time:           time.Now(),
+		Role:       "tool",
+		ToolName:   "read_file",
+		ToolStatus: "success",
+		Time:       time.Now(),
 	})
 
 	view := sp.View()

@@ -24,17 +24,17 @@ func NewOverlayState() *OverlayState {
 	}
 }
 
-func (o *OverlayState) Set(m workspace.Mode)                      { o.Mode = m }
-func (o *OverlayState) Is(m workspace.Mode) bool                  { return o.Mode == m }
-func (o *OverlayState) Current() workspace.Mode                   { return o.Mode }
-func (o *OverlayState) IsChat() bool                              { return o.Mode == workspace.ModeChat }
-func (o *OverlayState) IsOverlay() bool                           { return o.Mode != workspace.ModeChat }
-func (o *OverlayState) Name() string                              { return workspace.ModeName(o.Mode) }
-func (o *OverlayState) SetBlocking(v bool)                        { o.Blocking = v }
-func (o *OverlayState) IsBlocking() bool                          { return o.Blocking }
-func (o *OverlayState) SetYolo(v bool)                            { o.Yolo = v }
-func (o *OverlayState) IsYolo() bool                              { return o.Yolo }
-func (o *OverlayState) SetBlockedSessionID(id string)             { o.BlockedSessionID = id }
-func (o *OverlayState) GetBlockedSessionID() string               { return o.BlockedSessionID }
-func (o *OverlayState) SetSettingsCategory(cat string)            { o.SettingsCategory = cat }
-func (o *OverlayState) GetSettingsCategory() string               { return o.SettingsCategory }
+func (o *OverlayState) Set(m workspace.Mode)           { o.Mode = m }
+func (o *OverlayState) Is(m workspace.Mode) bool       { return o.Mode == m }
+func (o *OverlayState) Current() workspace.Mode        { return o.Mode }
+func (o *OverlayState) IsChat() bool                   { return o.Mode == workspace.ModeChat }
+func (o *OverlayState) IsOverlay() bool                { return o.Mode != workspace.ModeChat }
+func (o *OverlayState) Name() string                   { return workspace.ModeName(o.Mode) }
+func (o *OverlayState) SetBlocking(v bool)             { o.Blocking = v }
+func (o *OverlayState) IsBlocking() bool               { return o.Blocking }
+func (o *OverlayState) SetYolo(v bool)                 { o.Yolo = v }
+func (o *OverlayState) IsYolo() bool                   { return o.Yolo }
+func (o *OverlayState) SetBlockedSessionID(id string)  { o.BlockedSessionID = id }
+func (o *OverlayState) GetBlockedSessionID() string    { return o.BlockedSessionID }
+func (o *OverlayState) SetSettingsCategory(cat string) { o.SettingsCategory = cat }
+func (o *OverlayState) GetSettingsCategory() string    { return o.SettingsCategory }

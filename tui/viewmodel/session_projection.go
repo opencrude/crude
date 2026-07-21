@@ -1,7 +1,9 @@
 package viewmodel
 
 import (
+	"crude/tui/screens/sessionsettings"
 	"crude/tui/theme"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/types"
 	"crude/workspace"
@@ -17,7 +19,11 @@ type sessionProjection struct {
 	yoloDlg      widgets.YoloDialog
 	textOverlay  widgets.TextOverlay
 	composer     *widgets.Composer
-	settings     *widgets.SessionSettings
+	settings     *sessionsettings.Screen
+	deck         *ui.PanelDeck
+	deckHost     *ui.Host
+	deckFocused  bool
+	deckFocus    ui.ComponentID
 }
 
 type sessionProjectionRegistry struct {
@@ -41,13 +47,17 @@ func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProj
 	}
 
 	var effective, base = sessionSettingsSnapshot(session)
+	settings := sessionsettings.New(r.theme, effective, base, sessionSettingsOverrides(session))
+	deck := ui.NewPanelDeck("session-deck", ui.NewTokenSet(r.theme))
 	projection := &sessionProjection{
 		confirm:      widgets.NewConfirmDialog(r.theme),
 		questionForm: widgets.NewQuestionForm(r.theme),
 		yoloDlg:      widgets.NewYoloDialog(r.theme),
 		textOverlay:  widgets.NewTextOverlay(r.theme),
 		composer:     widgets.NewComposer(r.theme),
-		settings:     widgets.NewSessionSettingsWithInheritance(r.theme, effective, base, sessionSettingsOverrides(session)),
+		settings:     settings,
+		deck:         deck,
+		deckHost:     ui.NewHost(r.theme, deck),
 	}
 	r.items[session] = projection
 	return projection
@@ -98,7 +108,7 @@ func (m *App) sessionComposer() *widgets.Composer {
 	return nil
 }
 
-func (m *App) sessionSettings() *widgets.SessionSettings {
+func (m *App) sessionSettings() *sessionsettings.Screen {
 	if projection := m.activeSessionProjection(); projection != nil {
 		return projection.settings
 	}
@@ -109,6 +119,30 @@ func (r *sessionProjectionRegistry) Remove(session *workspace.Session) {
 	if session != nil {
 		delete(r.items, session)
 	}
+}
+
+func (r *sessionProjectionRegistry) SetTheme(th *theme.Theme) {
+	if r == nil || th == nil || r.theme == th {
+		return
+	}
+	r.theme = th
+	for _, projection := range r.items {
+		if projection != nil && projection.deckHost != nil {
+			projection.deckHost.SetTheme(th)
+		}
+	}
+}
+
+func (r *sessionProjectionRegistry) projectionForSettings(screen *sessionsettings.Screen) (*workspace.Session, *sessionProjection) {
+	if r == nil || screen == nil {
+		return nil, nil
+	}
+	for session, projection := range r.items {
+		if projection != nil && projection.settings == screen {
+			return session, projection
+		}
+	}
+	return nil, nil
 }
 
 func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
@@ -123,12 +157,11 @@ func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
 		projection = m.sessionProjections.Get(session)
 	}
 	effective, base := sessionSettingsSnapshot(session)
-	projection.settings = widgets.NewSessionSettingsWithInheritance(
-		m.sessionProjections.theme,
-		effective,
-		base,
-		sessionSettingsOverrides(session),
-	)
+	projection.settings.SetInheritance(effective, base, sessionSettingsOverrides(session))
+	if projection.deck != nil && projection.deck.Activate(sessionSettingsPanelID) {
+		projection.deck.Open(sessionSettingsPanel(projection.settings))
+		projection.deckHost.MarkLayout()
+	}
 }
 
 func (m *App) refreshAllSessionSettingsProjections() {

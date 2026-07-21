@@ -216,6 +216,30 @@ func TestHost_FocusUnknown(t *testing.T) {
 	}
 }
 
+type actionCatchingStack struct {
+	*Stack
+	caught string
+}
+
+func (s *actionCatchingStack) HandleAction(_ EventContext, action Action) EventResult {
+	s.caught = action.ID
+	return EventResult{Handled: true}
+}
+
+func TestHostBubblesActionsToMountedParents(t *testing.T) {
+	button := NewButton("root/save", "Save", "settings.save")
+	root := &actionCatchingStack{Stack: NewStack("root", Vertical, 0, button)}
+	host := NewHost(theme.DefaultDark(), root)
+	host.Resize(30, 3)
+	host.Layout()
+	host.Focus(button.ID())
+
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !result.Handled || result.Action != nil || root.caught != "settings.save" {
+		t.Fatalf("bubbled result=%#v caught=%q", result, root.caught)
+	}
+}
+
 func TestRectContainsEmpty(t *testing.T) {
 	r := Rect{X: 1, Y: 1, W: 2, H: 2}
 	if !r.Contains(1, 1) || r.Contains(3, 1) {

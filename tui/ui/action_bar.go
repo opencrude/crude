@@ -3,6 +3,7 @@ package ui
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/rendering"
 	"crude/tui/surface"
 )
 
@@ -18,6 +19,7 @@ const (
 
 // ActionBarButton is a button in an ActionBar.
 type ActionBarButton struct {
+	ID      ComponentID
 	Label   string
 	Action  string
 	Variant ButtonVariant
@@ -30,6 +32,7 @@ type ActionBar struct {
 	buttons []actionBarBtn
 	tokens  *TokenSet
 	gap     int
+	focused int
 }
 
 type actionBarBtn struct {
@@ -49,12 +52,16 @@ func NewActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *Ac
 		buttons: make([]actionBarBtn, len(btns)),
 	}
 	for i, b := range btns {
-		bid := NewID(id, b.Label)
+		bid := b.ID
+		if bid == RootID {
+			bid = NewID(id, b.Label)
+		}
 		btn := NewButton(bid, b.Label, b.Action)
 		if tokens != nil {
 			btn.SetTokens(tokens)
 		}
 		btn.SetDisabled(!b.Enabled)
+		btn.SetVariant(b.Variant)
 		ab.buttons[i] = actionBarBtn{
 			label:   b.Label,
 			action:  b.Action,
@@ -74,11 +81,9 @@ func (ab *ActionBar) SetTokens(ts *TokenSet) {
 }
 
 func (ab *ActionBar) Children() []Component {
-	out := make([]Component, len(ab.buttons))
-	for i := range ab.buttons {
-		out[i] = ab.buttons[i].button
-	}
-	return out
+	// Buttons are retained by the bar so it can provide one focus scope and
+	// translate actions at the screen boundary.
+	return nil
 }
 
 func (ab *ActionBar) Measure(ctx LayoutContext, cs Constraints) Size {
@@ -95,28 +100,60 @@ func (ab *ActionBar) Measure(ctx LayoutContext, cs Constraints) Size {
 
 func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	ab.SetBounds(r)
-	x := r.X
+	x := 0
 	for i := range ab.buttons {
 		b := ab.buttons[i].button
-		bw := len([]rune(b.label)) + 4
-		b.Layout(ctx, Rect{X: x, Y: r.Y, W: bw, H: 1})
+		bw := rendering.VisibleWidth(b.label) + 4
+		b.Layout(ctx, Rect{X: x, Y: 0, W: bw, H: 1})
 		x += bw + ab.gap
 	}
 }
 
 func (ab *ActionBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
 	for i := range ab.buttons {
-		PaintTree(ab.buttons[i].button, buf, originX, originY, ctx)
+		buttonCtx := ctx
+		buttonCtx.Focused = ctx.Focused && i == ab.focused
+		ab.buttons[i].button.Paint(buf, originX+ab.Bounds().X, originY+ab.Bounds().Y, buttonCtx)
 	}
 }
 
 func (ab *ActionBar) Handle(ctx EventContext, msg tea.Msg) EventResult {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		switch key.Code {
+		case tea.KeyTab:
+			if key.Mod.Contains(tea.ModShift) {
+				if ab.focused == 0 {
+					return EventResult{Handled: true, Action: &Action{ID: "actionbar.exit.backward"}, Invalidate: InvalidateFocus | InvalidatePaint}
+				}
+				ab.focused--
+				return EventResult{Handled: true, Invalidate: InvalidatePaint}
+			}
+			if len(ab.buttons) > 0 && ab.focused == len(ab.buttons)-1 {
+				return EventResult{Handled: true, Action: &Action{ID: "actionbar.exit.forward"}, Invalidate: InvalidateFocus | InvalidatePaint}
+			}
+			ab.focused++
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		case tea.KeyLeft:
+			if len(ab.buttons) > 0 && ab.focused > 0 {
+				ab.focused--
+			}
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		case tea.KeyRight:
+			if len(ab.buttons) > 0 && ab.focused < len(ab.buttons)-1 {
+				ab.focused++
+			}
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		}
+	}
 	for i := range ab.buttons {
 		b := ab.buttons[i].button
 		br := b.Bounds()
+		if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft && br.Contains(ctx.LocalX, ctx.LocalY) {
+			ab.focused = i
+		}
 		childCtx := EventContext{
 			Theme:   ctx.Theme,
-			Focused: ctx.Focused && br.Contains(ctx.LocalX, ctx.LocalY),
+			Focused: ctx.Focused && i == ab.focused,
 			LocalX:  ctx.LocalX - br.X,
 			LocalY:  ctx.LocalY - br.Y,
 			ScreenX: ctx.ScreenX,
@@ -128,4 +165,3 @@ func (ab *ActionBar) Handle(ctx EventContext, msg tea.Msg) EventResult {
 	}
 	return EventResult{}
 }
-
