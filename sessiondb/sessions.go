@@ -97,6 +97,27 @@ func GetMeta(db *sql.DB) (SessionMeta, error) {
 	return m, nil
 }
 
+// GetCumulativeCost returns the cumulative USD cost recorded for the session
+// stored in this DB. Cost snapshots are written by session/cost.go on each
+// usage event; the latest snapshot's total_cost is the running cumulative.
+// Returns 0.0 (and no error) when no snapshots exist yet (e.g., a freshly
+// created session before any API call).
+func GetCumulativeCost(db *sql.DB) (float64, error) {
+	var totalCost float64
+	err := db.QueryRow(`
+		SELECT total_cost FROM cost_snapshots
+		ORDER BY snapshot_at DESC, id DESC
+		LIMIT 1
+	`).Scan(&totalCost)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0.0, nil
+		}
+		return 0.0, fmt.Errorf("sessiondb: get cumulative cost: %w", err)
+	}
+	return totalCost, nil
+}
+
 func InsertCostSnapshot(db *sql.DB, promptT, compT, cachedT int, totalCost float64, byModel map[string]json.RawMessage) error {
 	byModelJSON, _ := json.Marshal(byModel)
 	_, err := db.Exec(`

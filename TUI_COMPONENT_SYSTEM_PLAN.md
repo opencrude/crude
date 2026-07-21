@@ -31,14 +31,14 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 2 Component host | DONE | `tui/ui` Host + controls; not yet wired as viewmodel root |
 | 3 Theme engine | PARTIAL | TokenSet + state precedence; dark/light themes; two-theme state gallery + runtime switch; no HC/hot reload |
 | 4 Layout / hit tree | PARTIAL | Constraints, Stack, Host layout/hit; no Flex/Grid/Split/Viewport |
-| 5 Focus / actions / keymaps | PARTIAL | Keyboard dispatch wired to registry.MatchGlobal; palette entries from DefaultRegistry().All(); launcher shortcuts from registry; status hints from registry.HintFor; old global switch deleted; paletteCommands slice deleted; welcomeShortcuts() deleted |
+| 5 Focus / actions / keymaps | PARTIAL | Keyboard dispatch wired to registry.MatchGlobal; palette entries from DefaultRegistry().All(); launcher shortcuts from registry; status hints from registry.HintFor; editor context dispatch wired to registry.MatchContext for file.save/edit.undo/edit.redo; old global switch deleted; paletteCommands slice deleted; welcomeShortcuts() deleted |
 | 6 Input engine | PARTIAL | TextEdit + RenderFilterLine on palette/launcher/settings/filepicker/list/FIF; tree prompt TextField |
 | 7 Collections / scrollbar | PARTIAL | List (header/sep/disabled), VirtualList, ScrollModel, ScrollbarControl + ANSI bridge |
-| 8 Form system | PARTIAL | form.TextItem uses TextEdit; form shell still legacy lipgloss |
+| 8 Form system | PARTIAL | FormModel, FieldState, FormField (text/select/cycle/toggle/nav/separator), ActionBar with ButtonVariant; workspace settings form body migrated to FormBody Component; legacy form shell still used in some surfaces |
 | 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
-| 12 Structured migrations | PARTIAL | Filter engines + shared filter paint; Find in Files domain search moved to workspace; workspace settings now use native TextField/List/Button shell with a legacy form-body bridge |
+| 12 Structured migrations | PARTIAL | FormModel+FormField+ActionBar system built; workspace settings form body migrated to FormBody Component; session settings, question form, YOLO, tool confirmation, picker, FIF, composer, text overlay, launcher form bodies pending |
 | 13 Shell migrations | OPEN | |
 | 14 Deletion | OPEN | Dual systems still present by design |
 | 15 Stabilization | OPEN | |
@@ -1073,13 +1073,6 @@ Landed early:
   dispatch replacing bespoke popupmouse switches
 
 Remaining:
-- Wire product keyboard dispatch (`keyboard.go` global switch) to call
-  `registry.MatchGlobal` and route the matched action to its handler
-- Derive command palette entries from `DefaultRegistry().All()` instead
-  of the parallel `paletteCommands` slice
-- Derive launcher shortcut list from `registry` HintKey/Label
-- Derive status-bar help hints from `registry.HintFor` for the active
-  focus context
 - Normalized UI event types (still raw tea.Msg in places)
 - Focus scopes, modal trap/restore beyond WM
 - Mouse capture service
@@ -1668,14 +1661,14 @@ This program is complete only when all statements are true:
     `MatchGlobal`/`MatchContext`, `HintFor`, `FormatShortcut`,
     `DefaultRegistry` with all global actions + palette metadata; 12 tests.
 
-17. Phase 5/9 wiring this session:
-    - keyboard.go global switch replaced with registry.MatchGlobal
-    - command palette entries derived from DefaultRegistry().All() (paletteCommands deleted)
-    - launcher shortcuts from registry (welcomeShortcuts deleted)
-    - status-bar hints from registry.HintFor
-    - overlayHost + actionRegistry on App struct
-    - per-overlay content/hover handlers registered on overlayHost
-    - popupmouse outside-click/content/hover dispatch routed through overlayHost first
+17. Phase 5 wiring completed:
+     - keyboard.go global switch replaced with registry.MatchGlobal ✅
+     - command palette entries derived from DefaultRegistry().All() ✅ (paletteCommands deleted)
+     - launcher shortcuts from registry ✅ (welcomeShortcuts deleted)
+     - status-bar hints from registry.HintFor ✅ (editor + chat input contexts derive shortcuts and labels from registry; Input.Model context hint uses registry when available)
+     - overlayHost + actionRegistry on App struct ✅
+     - per-overlay content/hover handlers registered on overlayHost ✅
+     - popupmouse outside-click/content/hover dispatch routed through overlayHost first ✅
 
 18. Phase 9 wiring completed:
     - All 16 product popup opens routed through OverlayHost.Open:
@@ -1804,18 +1797,25 @@ This program is complete only when all statements are true:
       seam slice. `workspace/` production and test code has zero `tui/` imports;
       session dialog state, neutral settings/LSP contracts, editor-tab ownership,
       tree rows, agent tabs, status snapshots, and LSP/file-tree integration seams
-      now cross through neutral contracts and TUI projections. NEXT: proceed to the
-      structured-surface migration.
-   2. **Phase 12:** structured-surface migration. Workspace settings outer shell is
-      native; NEXT: replace its remaining legacy form body with the shared Form and
-      ActionBar system, then continue with question form, YOLO, picker, Find in
-      Files, composer, text overlay, and launcher. Use FileOpsService for any file
-      picker filesystem operations.
-  3. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
-     and live config hot-reload.
-  4. **Phase 13:** persistent-shell and core-view migration.
-  5. **Phase 14:** package-boundary completion and deletion.
-  6. **Phase 15:** stabilization and permanent enforcement.
+      now cross through neutral contracts and TUI projections.
+
+   2. **Phase 12:** ✅ FormModel+FormField+ActionBar shared form system built
+      (`tui/ui/form_model.go`, `form_field.go`, `action_bar.go`). Workspace settings
+      form body migrated to FormBody Component (replaces LegacyWidget/ANSI bridge).
+      ✅ Editor context dispatch wired to registry.MatchContext for file.save,
+      edit.undo, edit.redo. ✅ Provider presets encapsulated (unexported slice,
+      PresetList() accessor, tests). NEXT: migrate session settings, question form,
+      YOLO, tool confirmation, picker, FIF, composer, text overlay, launcher form
+      bodies.
+
+   3. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
+      and live config hot-reload.
+
+   4. **Phase 13:** persistent-shell and core-view migration.
+
+   5. **Phase 14:** package-boundary completion and deletion.
+
+   6. **Phase 15:** stabilization and permanent enforcement.
 
 ### Anti-drift checks
 

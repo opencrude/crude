@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -357,13 +358,13 @@ func TestLSPManager_DetectProjectRoots(t *testing.T) {
 func TestScanProjectFiles(t *testing.T) {
 	dir := t.TempDir()
 
-	createFile(t, dir+"/main.go", "package main")
-	createFile(t, dir+"/app.ts", "const x = 1")
-	createFile(t, dir+"/README.md", "# hi")
-	mkdir(t, dir+"/node_modules")
-	createFile(t, dir+"/node_modules/ignore.js", "ignored")
-	mkdir(t, dir+"/.git")
-	createFile(t, dir+"/.git/config", "ignored")
+	createFile(t, filepath.Join(dir, "main.go"), "package main")
+	createFile(t, filepath.Join(dir, "app.ts"), "const x = 1")
+	createFile(t, filepath.Join(dir, "README.md"), "# hi")
+	mkdir(t, filepath.Join(dir, "node_modules"))
+	createFile(t, filepath.Join(dir, "node_modules", "ignore.js"), "ignored")
+	mkdir(t, filepath.Join(dir, ".git"))
+	createFile(t, filepath.Join(dir, ".git", "config"), "ignored")
 
 	extSet := map[string]bool{".go": true, ".ts": true}
 	files := scanProjectFiles(dir, extSet)
@@ -372,12 +373,14 @@ func TestScanProjectFiles(t *testing.T) {
 		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
 	}
 
+	wantGo := filepath.Join(dir, "main.go")
+	wantTS := filepath.Join(dir, "app.ts")
 	hasGo, hasTS := false, false
 	for _, f := range files {
-		if f == dir+"/main.go" {
+		if f == wantGo {
 			hasGo = true
 		}
-		if f == dir+"/app.ts" {
+		if f == wantTS {
 			hasTS = true
 		}
 	}
@@ -479,13 +482,18 @@ func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 	m.mu.Lock()
 	m.activeFilePath = "/project/data.json"
-	m.states[clientKey("file:///project", "gopls")] = lspClientState{
-		rootURI: "file:///project",
+	// Compute the rootURI the same way the production code does so the
+	// state key matches regardless of platform (Linux: file:///project,
+	// Windows: file://<drive>:\project). The test is about aggregation
+	// precedence, not URI formatting.
+	rootURI := m.rootURIForFile(m.activeFilePath)
+	m.states[clientKey(rootURI, "gopls")] = lspClientState{
+		rootURI: rootURI,
 		cmd:     "gopls",
 		status:  model.LSPConnected,
 	}
-	m.states[clientKey("file:///project", "vscode-json-language-server")] = lspClientState{
-		rootURI: "file:///project",
+	m.states[clientKey(rootURI, "vscode-json-language-server")] = lspClientState{
+		rootURI: rootURI,
 		cmd:     "vscode-json-language-server",
 		status:  model.LSPFailed,
 		err:     "vscode-json-language-server not found in PATH",
@@ -501,39 +509,41 @@ func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
 
 func TestScanProjectFiles_SkipNodeModules(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(dir+"/node_modules/pkg", 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dir+"/node_modules/pkg/index.js", []byte("ignored"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "index.js"), []byte("ignored"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dir+"/index.js", []byte("not ignored"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "index.js"), []byte("not ignored"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	extSet := map[string]bool{".js": true}
 	files := scanProjectFiles(dir, extSet)
-	if len(files) != 1 || files[0] != dir+"/index.js" {
-		t.Fatalf("expected only index.js, got %v", files)
+	want := filepath.Join(dir, "index.js")
+	if len(files) != 1 || files[0] != want {
+		t.Fatalf("expected only %s, got %v", want, files)
 	}
 }
 
 func TestScanProjectFiles_SkipDotGit(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(dir+"/.git/objects", 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dir+"/.git/objects/pack.go", []byte("ignored"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".git", "objects", "pack.go"), []byte("ignored"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dir+"/work.go", []byte("real"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "work.go"), []byte("real"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	extSet := map[string]bool{".go": true}
 	files := scanProjectFiles(dir, extSet)
-	if len(files) != 1 || files[0] != dir+"/work.go" {
-		t.Fatalf("expected only work.go, got %v", files)
+	want := filepath.Join(dir, "work.go")
+	if len(files) != 1 || files[0] != want {
+		t.Fatalf("expected only %s, got %v", want, files)
 	}
 }
 

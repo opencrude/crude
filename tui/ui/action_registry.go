@@ -169,6 +169,22 @@ func (r *ActionRegistry) HintFor(id ActionID) string {
 	return a.Bindings[0].Key
 }
 
+// HintLabelFor returns a combined shortcut+label string suitable for
+// rendering in the status-bar contextual help section. The format is
+// "<Shortcut> <label>" (e.g. "Ctrl+S save", "Enter send"). Returns ""
+// if the action has no HintKey or Bindings.
+func (r *ActionRegistry) HintLabelFor(id ActionID) string {
+	a := r.Get(id)
+	if a == nil {
+		return ""
+	}
+	hint := r.HintFor(id)
+	if hint == "" {
+		return ""
+	}
+	return FormatShortcut(hint) + " " + strings.ToLower(a.Label)
+}
+
 // FormatShortcut returns a human-readable shortcut string from a
 // key string, normalizing for display (e.g. "ctrl+alt+p" → "Ctrl+Alt+P").
 func FormatShortcut(key string) string {
@@ -317,5 +333,55 @@ var defaultActions = []*ActionDef{
 		Description: "open the welcome launcher",
 		Icon:        "☰",
 		Category:    "System",
+	},
+
+	// ─── Editor context actions (FocusContext: "editor") ───
+	{
+		ID:           "file.save",
+		Label:        "Save",
+		Description:  "save current file",
+		Icon:         "⭿",
+		Category:     "File",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+s"}},
+		HintKey:      "Ctrl+S",
+	},
+	{
+		ID:           "edit.undo",
+		Label:        "Undo",
+		Description:  "undo last edit",
+		Icon:         "↩",
+		Category:     "Edit",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+z"}},
+		HintKey:      "Ctrl+Z",
+	},
+	{
+		ID:           "edit.redo",
+		Label:        "Redo",
+		Description:  "redo last undone edit",
+		Icon:         "↪",
+		Category:     "Edit",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+y"}},
+		HintKey:      "Ctrl+Y",
+	},
+
+	// ─── Chat input context actions (FocusContext: "chat") ───
+	{
+		ID:           "input.submit",
+		Label:        "Send",
+		Description:  "submit message to agent",
+		Category:     "Chat",
+		FocusContext: "chat",
+		HintKey:      "Enter",
+	},
+	{
+		ID:           "input.newline",
+		Label:        "New line",
+		Description:  "insert line break in input",
+		Category:     "Chat",
+		FocusContext: "chat",
+		HintKey:      "Alt+Enter",
 	},
 }

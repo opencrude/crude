@@ -29,13 +29,13 @@ func TestEditorHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app.EditorState.ActiveView = path
 
 	help := app.contextualHelpView()
-	for _, want := range []string{"handlers.go", "1:1", "4L", "ctrl+s save", "esc close"} {
+	for _, want := range []string{"handlers.go", "1:1", "4L", "Ctrl+S save", "esc close"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("editor status help missing %q: %q", want, help)
 		}
 	}
 	view := app.buildMainView()
-	if strings.Contains(view, "ctrl+s save") {
+	if strings.Contains(view, "Ctrl+S save") {
 		t.Fatalf("editor help must not render inside the main pane:\n%s", view)
 	}
 	if app.ChatAreaHeight != 25 {
@@ -130,5 +130,66 @@ func TestComposerHelpMovesToStatusWithoutRenderingInInput(t *testing.T) {
 	app.Input.DismissHint()
 	if got := app.contextualHelpView(); got != "" {
 		t.Fatalf("dismissed composer guidance should leave status context, got %q", got)
+	}
+}
+
+func TestEditorContextHelpDerivesShortcutsFromRegistry(t *testing.T) {
+	app := newFullTestApp(t)
+	app.launcher = nil
+	app.width = 100
+	app.height = 30
+
+	path := filepath.Join(t.TempDir(), "main.go")
+	if err := os.WriteFile(path, []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := editor.New(app.Theme)
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	app.EditorState.Editor = ed
+	app.EditorState.ActiveView = path
+
+	help := app.contextualHelpView()
+	for _, want := range []string{
+		"Ctrl+S save",
+		"Ctrl+Z undo",
+		"Ctrl+Y redo",
+		"esc close",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("editor help missing %q in: %q", want, help)
+		}
+	}
+}
+
+func TestEditorContextHelpFallsBackEmptyRegistry(t *testing.T) {
+	app := newFullTestApp(t)
+	app.launcher = nil
+	app.actionRegistry = nil
+	app.width = 100
+	app.height = 30
+
+	path := filepath.Join(t.TempDir(), "main.go")
+	if err := os.WriteFile(path, []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := editor.New(app.Theme)
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	app.EditorState.Editor = ed
+	app.EditorState.ActiveView = path
+
+	help := app.contextualHelpView()
+	// Without registry, still shows position info and esc close.
+	if !strings.Contains(help, "main.go") || !strings.Contains(help, "esc close") {
+		t.Fatalf("editor help missing basics (nil registry): %q", help)
+	}
+	// Should NOT have the "  ·  " extra separator when no registry actions.
+	if strings.Count(help, "  ·  esc close") < 1 {
+		t.Fatalf("editor help missing '  ·  esc close' suffix: %q", help)
 	}
 }

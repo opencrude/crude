@@ -14,6 +14,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/scrollbar"
 	"crude/tui/surface"
+	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/workspace"
 )
@@ -852,13 +853,24 @@ func (m *App) contextualHelpView() string {
 		return compactStatusHint(m.FormHint)
 	}
 	if m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
-		return fmt.Sprintf(
-			"%s  %d:%d  %dL  ·  ctrl+s save  ·  ctrl+z undo  ·  ctrl+y redo  ·  esc close",
+		info := fmt.Sprintf(
+			"%s  %d:%d  %dL",
 			m.EditorState.Editor.Title(),
 			m.EditorState.Editor.CursorLine()+1,
 			m.EditorState.Editor.CursorCol()+1,
 			m.EditorState.Editor.LineCount(),
 		)
+		editorHintIDs := []ui.ActionID{"file.save", "edit.undo", "edit.redo"}
+		hints := make([]string, 0, len(editorHintIDs)+1)
+		if m.actionRegistry != nil {
+			for _, id := range editorHintIDs {
+				if hl := m.actionRegistry.HintLabelFor(id); hl != "" {
+					hints = append(hints, hl)
+				}
+			}
+		}
+		hints = append(hints, "esc close")
+		return info + "  ·  " + strings.Join(hints, "  ·  ")
 	}
 	return m.Input.ContextHint()
 }

@@ -121,6 +121,24 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// Editor context actions from the registry (file.save, edit.undo, edit.redo).
+	// Dispatched here before the legacy handleKey path so the same bindings that
+	// power the status-bar hints are the ones that actually fire.
+	if m.actionRegistry != nil {
+		if match := m.actionRegistry.MatchContext("editor", msg); match != nil {
+			switch match.ID {
+			case "file.save":
+				m.EditorState.Editor.Save()
+				return m, nil
+			case "edit.undo":
+				m.EditorState.Editor.Undo()
+				return m, nil
+			case "edit.redo":
+				m.EditorState.Editor.Redo()
+				return m, nil
+			}
+		}
+	}
 	if msg.Code == tea.KeyEsc {
 		if m.LSPPopup.RenameArmed {
 			m.LSPPopup.RenameArmed = false

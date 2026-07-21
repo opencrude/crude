@@ -9,12 +9,29 @@ import (
 	ttypes "crude/tui/types"
 )
 
+// setTestHome redirects the home directory to a temp dir for the duration of
+// a test. Sets both HOME (Unix) and USERPROFILE (Windows) because
+// os.UserHomeDir() reads USERPROFILE on Windows and HOME on Unix — setting
+// only HOME leaves the real user's home reachable on Windows, which breaks
+// tests that assert "config should not exist yet" or "should not invent
+// Theme from disk". Returns a restore function.
+func setTestHome(t *testing.T, tmpDir string) func() {
+	t.Helper()
+	origHome := os.Getenv("HOME")
+	origProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpDir)
+	os.Setenv("USERPROFILE", tmpDir)
+	return func() {
+		os.Setenv("HOME", origHome)
+		os.Setenv("USERPROFILE", origProfile)
+	}
+}
+
 func TestFileConfigRoundTrip(t *testing.T) {
 	// Create a temporary directory for config.
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	restore := setTestHome(t, tmpDir)
+	defer restore()
 
 	// Build a FileConfig with all extended settings.
 	fc := FileConfig{
@@ -145,9 +162,8 @@ func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
 
 func TestFileConfigLoadsMissingFileGracefully(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	restore := setTestHome(t, tmpDir)
+	defer restore()
 
 	// Config path should not exist.
 	cfgPath := ConfigPath()
@@ -164,9 +180,8 @@ func TestFileConfigLoadsMissingFileGracefully(t *testing.T) {
 
 func TestSessionToFileConfigPreservesNewSettings(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	restore := setTestHome(t, tmpDir)
+	defer restore()
 
 	sc := &session.Config{
 		ActiveProvider:  "openai",
@@ -187,9 +202,8 @@ func boolPtr(b bool) *bool { return &b }
 
 func TestConfigPath(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	restore := setTestHome(t, tmpDir)
+	defer restore()
 
 	path := ConfigPath()
 	if path == "" {
@@ -202,9 +216,8 @@ func TestConfigPath(t *testing.T) {
 
 func TestHistoryPath(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	restore := setTestHome(t, tmpDir)
+	defer restore()
 
 	path := HistoryPath()
 	if path == "" {

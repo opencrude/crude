@@ -170,3 +170,66 @@ func TestDefaultRegistry_MatchSidebarToggle(t *testing.T) {
 		t.Fatalf("expected view.toggle.sidebar, got %s", got.ID)
 	}
 }
+
+func TestActionRegistry_HintLabelFor(t *testing.T) {
+	r := NewActionRegistry()
+	r.Register(&ActionDef{
+		ID:      "file.save",
+		Label:   "Save",
+		HintKey: "Ctrl+S",
+	})
+	r.Register(&ActionDef{
+		ID:    "edit.undo",
+		Label: "Undo",
+		Bindings: []KeyBinding{{Key: "ctrl+z"}},
+	})
+	r.Register(&ActionDef{
+		ID:     "no.bindings",
+		Label:  "No Bindings",
+	})
+
+	if got := r.HintLabelFor("file.save"); got != "Ctrl+S save" {
+		t.Fatalf("HintLabelFor(file.save) = %q, want %q", got, "Ctrl+S save")
+	}
+	if got := r.HintLabelFor("edit.undo"); got != "Ctrl+Z undo" {
+		t.Fatalf("HintLabelFor(edit.undo) = %q, want %q", got, "Ctrl+Z undo")
+	}
+	if got := r.HintLabelFor("no.bindings"); got != "" {
+		t.Fatalf("HintLabelFor(no.bindings) = %q, want empty (no HintKey)", got)
+	}
+	if got := r.HintLabelFor("missing"); got != "" {
+		t.Fatalf("HintLabelFor(missing) = %q, want empty", got)
+	}
+}
+
+func TestDefaultRegistry_HasEditorActions(t *testing.T) {
+	r := DefaultRegistry()
+	for _, id := range []ActionID{"file.save", "edit.undo", "edit.redo"} {
+		a := r.Get(id)
+		if a == nil {
+			t.Fatalf("missing editor action %q", id)
+		}
+		if a.FocusContext != "editor" {
+			t.Fatalf("action %q has FocusContext %q, want %q", id, a.FocusContext, "editor")
+		}
+		if r.HintLabelFor(id) == "" {
+			t.Fatalf("action %q has empty HintLabelFor", id)
+		}
+	}
+}
+
+func TestDefaultRegistry_HasInputActions(t *testing.T) {
+	r := DefaultRegistry()
+	for _, id := range []ActionID{"input.submit", "input.newline"} {
+		a := r.Get(id)
+		if a == nil {
+			t.Fatalf("missing input action %q", id)
+		}
+		if a.FocusContext != "chat" {
+			t.Fatalf("action %q has FocusContext %q, want %q", id, a.FocusContext, "chat")
+		}
+		if r.HintLabelFor(id) == "" {
+			t.Fatalf("action %q has empty HintLabelFor", id)
+		}
+	}
+}

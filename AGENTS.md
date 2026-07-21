@@ -298,8 +298,9 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 ---
 
 ## Pre-existing Test Failures (NOT caused by our work)
-- `crude/safety/TestProjectWriteCommands`, `TestDestructiveCommands`,
-  `TestUnknownCommand`
+None — all previously-failing cross-platform tests (LSP path separators,
+safety system-path detection on Windows, app config `HOME` vs
+`USERPROFILE`) have been fixed.
 
 ## Test Commands
 ```bash

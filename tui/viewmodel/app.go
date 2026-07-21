@@ -168,6 +168,10 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	edState.Editor = editor.New(th)
 
 	registry := ui.DefaultRegistry()
+	im.SetActionRegistry(input.ActionRegistryAdapter{
+		HintForFn: func(id string) string { return registry.HintFor(ui.ActionID(id)) },
+		HintLabelForFn: func(id string) string { return registry.HintLabelFor(ui.ActionID(id)) },
+	})
 	overlay := ui.NewOverlayHost(wmgr)
 	subPaneProjections := newSubPaneProjectionRegistry(th)
 	sessionProjections := newSessionProjectionRegistry(th)

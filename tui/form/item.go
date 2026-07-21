@@ -50,6 +50,8 @@ func NewTextItem(t *theme.Theme, label, value string, masked bool) *TextItem {
 	return &TextItem{theme: t, label: label, edit: ed, masked: masked}
 }
 
+func (m *TextItem) IsMasked() bool { return m.masked }
+
 func (m *TextItem) ensureEdit() *ui.TextEdit {
 	if m.edit == nil {
 		m.edit = ui.NewTextEdit()
@@ -470,6 +472,7 @@ func (m *CycleItem) HandleKey(msg tea.KeyPressMsg) (FormItem, tea.Cmd, FormItemA
 func (m *CycleItem) Label() string       { return m.label }
 func (m *CycleItem) InlineLabel() string { return m.label }
 func (m *CycleItem) Value() string       { return m.values[m.idx] }
+func (m *CycleItem) Values() []string    { return m.values }
 func (m *CycleItem) SetValue(s string) {
 	for i, v := range m.values {
 		if v == s {
