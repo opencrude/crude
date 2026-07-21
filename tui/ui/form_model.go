@@ -1,6 +1,9 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // FieldType identifies the kind of form field.
 type FieldType int
@@ -14,6 +17,7 @@ const (
 	FieldCheckbox
 	FieldNav
 	FieldSeparator
+	FieldMultiSelect
 )
 
 // FieldValue is a typed wrapper for field values.
@@ -26,12 +30,14 @@ type FieldValue struct {
 
 func StringValue(s string) FieldValue     { return FieldValue{kind: FieldText, str: s} }
 func BoolValue(b bool) FieldValue         { return FieldValue{kind: FieldToggle, b: b} }
-func StringsValue(ss []string) FieldValue { return FieldValue{kind: FieldSelect, strings: ss} }
+func StringsValue(ss []string) FieldValue { return FieldValue{kind: FieldMultiSelect, strings: ss} }
 
 func (v FieldValue) String() string {
 	switch v.kind {
 	case FieldText, FieldPassword:
 		return v.str
+	case FieldMultiSelect:
+		return strings.Join(v.strings, ", ")
 	case FieldToggle, FieldCheckbox:
 		if v.b {
 			return "true"
@@ -52,7 +58,7 @@ func (v FieldValue) Bool() bool {
 }
 
 func (v FieldValue) Strings() []string {
-	if v.kind == FieldSelect {
+	if v.kind == FieldMultiSelect {
 		return v.strings
 	}
 	return nil
@@ -64,7 +70,7 @@ func (v FieldValue) IsEmpty() bool {
 		return v.str == ""
 	case FieldToggle, FieldCheckbox:
 		return !v.b
-	case FieldSelect:
+	case FieldSelect, FieldMultiSelect:
 		return len(v.strings) == 0
 	default:
 		return true
@@ -80,7 +86,7 @@ func (v FieldValue) Equal(other FieldValue) bool {
 		return v.str == other.str
 	case FieldToggle, FieldCheckbox:
 		return v.b == other.b
-	case FieldSelect:
+	case FieldMultiSelect:
 		if len(v.strings) != len(other.strings) {
 			return false
 		}
@@ -119,6 +125,8 @@ type FieldState struct {
 	ReadOnly      bool
 	Loading       bool
 	LoadMessage   string
+	Placeholder   string
+	SubmitAction  string
 	Required      bool
 	Inherited     bool
 	InheritedFrom string

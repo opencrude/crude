@@ -35,12 +35,17 @@ func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *
 	if f.Type == FieldText || f.Type == FieldPassword {
 		ff.control = NewTextField(NewID(id, "input"), tokens)
 		ff.control.SetValue(f.Value.String())
+		ff.control.SetPlaceholder(f.Placeholder)
 		ff.control.SetPassword(f.Type == FieldPassword)
 		ff.control.SetReadOnly(f.ReadOnly)
 		ff.control.SetDisabled(f.Disabled)
-		ff.control.SetSubmitAction("form.next")
+		submitAction := f.SubmitAction
+		if submitAction == "" {
+			submitAction = "form.next"
+		}
+		ff.control.SetSubmitAction(submitAction)
 	}
-	if f.Type == FieldSelect {
+	if f.Type == FieldSelect || f.Type == FieldMultiSelect {
 		ff.selectList = NewList(NewID(id, "options"), tokens)
 		ff.selectList.SetActivateAction("form.select.commit")
 		ff.syncSelectItems()
@@ -67,6 +72,11 @@ func (ff *FormField) SelectOpen() bool        { return ff.selectOpen }
 func (ff *FormField) Sync() {
 	if ff.control != nil && ff.control.Value() != ff.field.Value.String() {
 		ff.control.SetValue(ff.field.Value.String())
+	}
+	if ff.control != nil {
+		ff.control.SetPlaceholder(ff.field.Placeholder)
+		ff.control.SetReadOnly(ff.field.ReadOnly)
+		ff.control.SetDisabled(ff.field.Disabled)
 	}
 	ff.syncSelectItems()
 }
@@ -221,6 +231,22 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 		} else {
 			text += " ▾"
 		}
+	case FieldMultiSelect:
+		labels := make([]string, 0, len(ff.field.Value.Strings()))
+		for _, selectedID := range ff.field.Value.Strings() {
+			for _, option := range ff.field.Options {
+				if option.ID == selectedID {
+					labels = append(labels, option.Label)
+					break
+				}
+			}
+		}
+		text = strings.Join(labels, ", ")
+		if ff.selectOpen {
+			text += " ▴"
+		} else {
+			text += " ▾"
+		}
 	case FieldCycle:
 		text = "← " + text + " →"
 	case FieldToggle, FieldCheckbox:
@@ -266,7 +292,7 @@ func (ff *FormField) Handle(ctx EventContext, msg tea.Msg) EventResult {
 			ff.setValue(StringValue(ff.control.Value()))
 		}
 		return result
-	case FieldSelect:
+	case FieldSelect, FieldMultiSelect:
 		return ff.handleSelect(ctx, msg)
 	case FieldCycle:
 		return ff.handleCycle(msg)
@@ -354,11 +380,30 @@ func (ff *FormField) handleSelect(ctx EventContext, msg tea.Msg) EventResult {
 	if result.Action != nil && result.Action.ID == "form.select.commit" {
 		if selected, ok := ff.selectList.Selected(); ok {
 			if id, ok := selected.Payload.(string); ok {
-				ff.setValue(StringValue(id))
+				if ff.field.Type == FieldMultiSelect {
+					values := append([]string(nil), ff.field.Value.Strings()...)
+					found := -1
+					for index, value := range values {
+						if value == id {
+							found = index
+							break
+						}
+					}
+					if found >= 0 {
+						values = append(values[:found], values[found+1:]...)
+					} else {
+						values = append(values, id)
+					}
+					ff.setValue(StringsValue(values))
+				} else {
+					ff.setValue(StringValue(id))
+				}
 			}
 		}
-		ff.selectOpen = false
-		result.Action = nil
+		if ff.field.Type == FieldSelect {
+			ff.selectOpen = false
+		}
+		result.Action = &Action{ID: "form.changed", Payload: ff.field.ID}
 		result.Invalidate |= InvalidateLayout | InvalidatePaint
 	}
 	return result
@@ -420,15 +465,35 @@ func (ff *FormField) syncSelectItems() {
 	if ff.selectList == nil {
 		return
 	}
+	selectedID := ""
+	if selected, ok := ff.selectList.Selected(); ok {
+		selectedID = selected.ID
+	}
 	items := make([]ListItem, 0, len(ff.field.Options))
 	for _, option := range ff.field.Options {
-		items = append(items, ListItem{ID: option.ID, Label: option.Label, Detail: option.Detail, Disabled: option.Disabled, Payload: option.ID})
+		icon := ""
+		if ff.field.Type == FieldMultiSelect {
+			icon = "[ ]"
+			for _, selectedID := range ff.field.Value.Strings() {
+				if selectedID == option.ID {
+					icon = "[x]"
+					break
+				}
+			}
+		}
+		items = append(items, ListItem{ID: option.ID, Label: option.Label, Detail: option.Detail, Icon: icon, Disabled: option.Disabled, Payload: option.ID})
 	}
 	changed := !sameFormOptions(ff.selectList.Items(), items)
 	if changed {
 		ff.selectList.SetItems(items)
+		for index, item := range items {
+			if item.ID == selectedID {
+				ff.selectList.SelectIndex(index)
+				break
+			}
+		}
 	}
-	if changed || !ff.selectOpen {
+	if ff.field.Type == FieldSelect && (changed || !ff.selectOpen) {
 		ff.selectList.SelectIndex(ff.selectedIndex())
 	}
 }
@@ -438,7 +503,7 @@ func sameFormOptions(current, next []ListItem) bool {
 		return false
 	}
 	for index := range current {
-		if current[index].ID != next[index].ID || current[index].Label != next[index].Label || current[index].Detail != next[index].Detail || current[index].Disabled != next[index].Disabled {
+		if current[index].ID != next[index].ID || current[index].Label != next[index].Label || current[index].Detail != next[index].Detail || current[index].Icon != next[index].Icon || current[index].Disabled != next[index].Disabled {
 			return false
 		}
 	}

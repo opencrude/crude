@@ -9,6 +9,7 @@ import (
 
 	"crude/fileio"
 	"crude/tui/editor"
+	"crude/tui/screens/confirmation"
 	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
@@ -87,40 +88,44 @@ func TestFindInFilesSearchRoutesThroughWorkspaceEvent(t *testing.T) {
 	}
 }
 
-func TestClosingFindInFilesPreservesInlineOverlayMode(t *testing.T) {
+func TestClosingFindInFilesPreservesBlockingSessionPanel(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 120
 	app.height = 36
 	app.RootPath = t.TempDir()
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
-	app.Overlay.OpenTab("Confirm", "", true)
-	app.OverlayState.Set(ModeConfirm)
+	projection := app.activeSessionProjection()
+	projection.confirmation.Reset(confirmation.Details{Question: "Continue?"})
+	projection.confirmationAgentID = "agent"
+	app.openSessionConfirmationPanel(projection)
 	app.toggleFindInFiles()
 
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if app.windowManager.Window(findInFilesWindowID) != nil || app.findInFiles != nil {
 		t.Fatal("Esc should close and clean up Find in Files")
 	}
-	if !app.OverlayState.Is(ModeConfirm) {
-		t.Fatalf("closing floating search changed underlying mode to %s", app.OverlayState.Name())
+	if !projection.deck.IsOpen() || projection.deck.Active().ID != sessionConfirmationPanelID || !app.sessionDeckBlocking() {
+		t.Fatal("closing floating search changed the underlying blocking session panel")
 	}
 }
 
-func TestInlineOverlayFocusWinsOverEditorTreeAndLauncher(t *testing.T) {
+func TestBlockingSessionPanelWinsOverEditorTreeAndLauncher(t *testing.T) {
 	app := newFullTestApp(t)
-	app.OverlayState.Set(ModeConfirm)
+	projection := app.activeSessionProjection()
+	projection.confirmation.Reset(confirmation.Details{Question: "Continue?"})
+	app.openSessionConfirmationPanel(projection)
 	app.FocusStack.Push(FocusTree)
 	app.EditorState.ActiveView = "/tmp/main.go"
 	app.EditorState.Editor = editor.NewPreview(app.Theme, "/tmp/main.go", "package main\n", 1)
-	if got := app.focusTarget(); got != FocusOverlay {
-		t.Fatalf("focusTarget=%v, want overlay", got)
+	if !app.sessionDeckCapturesInput() {
+		t.Fatal("blocking session panel did not capture input over editor/tree")
 	}
 
 	app.EditorState.ActiveView = ""
 	app.EditorState.Editor = nil
-	if got := app.focusTarget(); got != FocusOverlay {
-		t.Fatalf("overlay should also beat launcher focus, got %v", got)
+	if !app.sessionDeckCapturesInput() {
+		t.Fatal("blocking session panel did not capture input over launcher")
 	}
 }
 

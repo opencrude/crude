@@ -61,16 +61,28 @@ func (d *PanelDeck) Open(panel PanelEntry) {
 	if panel.ID == "" || panel.Content == nil {
 		return
 	}
+	blocking := d.Active()
+	blocksActivation := blocking != nil && blocking.Policy == PanelBlocking && blocking.ID != panel.ID
+	queuesPassive := blocking != nil && panel.Policy == PanelPassive && blocking.ID != panel.ID
+	if blocksActivation {
+		panel.Attention = true
+	} else if !queuesPassive {
+		panel.Attention = false
+	}
 	for i := range d.panels {
 		if d.panels[i].ID == panel.ID {
 			d.panels[i] = panel
-			d.active = i
+			if !blocksActivation && !queuesPassive {
+				d.active = i
+			}
 			d.syncTabs()
 			return
 		}
 	}
 	d.panels = append(d.panels, panel)
-	d.active = len(d.panels) - 1
+	if !blocksActivation && !queuesPassive {
+		d.active = len(d.panels) - 1
+	}
 	d.syncTabs()
 }
 
@@ -79,9 +91,18 @@ func (d *PanelDeck) Close(id string) bool {
 		if d.panels[i].ID != id {
 			continue
 		}
+		closedBlocking := i == d.active && d.panels[i].Policy == PanelBlocking
 		d.panels = append(d.panels[:i], d.panels[i+1:]...)
 		if len(d.panels) == 0 {
 			d.active = -1
+		} else if closedBlocking {
+			d.active = min(i, len(d.panels)-1)
+			for index := range d.panels {
+				if d.panels[index].Attention {
+					d.active = index
+					break
+				}
+			}
 		} else if i <= d.active {
 			d.active--
 			if d.active < 0 {
@@ -90,6 +111,9 @@ func (d *PanelDeck) Close(id string) bool {
 		}
 		if d.active >= len(d.panels) {
 			d.active = len(d.panels) - 1
+		}
+		if d.active >= 0 {
+			d.panels[d.active].Attention = false
 		}
 		d.syncTabs()
 		return true
@@ -105,9 +129,13 @@ func (d *PanelDeck) CloseActive() bool {
 }
 
 func (d *PanelDeck) Activate(id string) bool {
+	if panel := d.Active(); panel != nil && panel.Policy == PanelBlocking && panel.ID != id {
+		return false
+	}
 	for i := range d.panels {
 		if d.panels[i].ID == id {
 			d.active = i
+			d.panels[i].Attention = false
 			d.syncTabs()
 			return true
 		}
@@ -206,6 +234,9 @@ func (d *PanelDeck) HandleAction(_ EventContext, action Action) EventResult {
 	switch action.ID {
 	case "tabs.activate":
 		id, _ := action.Payload.(string)
+		if panel := d.Active(); panel != nil && panel.Policy == PanelBlocking && panel.ID != id {
+			return EventResult{Handled: true}
+		}
 		if d.Activate(id) {
 			return EventResult{Handled: true, Action: &Action{ID: "ui.focus", Payload: d.Active().Content.ID()}, Invalidate: InvalidateLayout | InvalidateFocus | InvalidatePaint}
 		}
@@ -214,6 +245,9 @@ func (d *PanelDeck) HandleAction(_ EventContext, action Action) EventResult {
 			return EventResult{Handled: true, Action: &Action{ID: "ui.focus", Payload: panel.Content.ID()}, Invalidate: InvalidateFocus | InvalidatePaint}
 		}
 	case "tabs.close":
+		if panel := d.Active(); panel != nil && panel.Policy == PanelBlocking {
+			return EventResult{Handled: true}
+		}
 		id, _ := action.Payload.(string)
 		if d.Close(id) {
 			if !d.IsOpen() {

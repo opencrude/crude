@@ -94,9 +94,10 @@ func (m *App) closePopupWindowByID(id string) {
 // The actual values are set at popup-creation time via wm.WithClickOutside.
 // CloseRoute:  context-menu, references-popup, completion-popup,
 //              outline-popup, diag-context
-// KeepRoute:   find-replace, filepicker, composer, command-palette,
+// KeepRoute:   find-replace, composer, command-palette,
 //              textoverlay
-// Ignore:      dirty-close-prompt, tree-prompt, tree-delete-confirm
+// Ignore:      dirty-close-prompt, tree-prompt, tree-delete-confirm, filepicker,
+//              workspace-settings
 
 // =============================================================================
 // Context menu: click & hover

@@ -15,7 +15,6 @@ entries until the list is empty.
 | `tui/filetree/render.go` | defaultTreeColors hex map |
 | `tui/widgets/statusbar.go` | `#ffaa00` warning literals |
 | `tui/widgets/chatmessage.go` | incomplete message bg `#3a1a1a` |
-| `tui/widgets/confirmdialog.go` | risk severity hex colors |
 | `tui/editor/render.go` | raw ANSI diagnostic underlines |
 
 ## Parallel style pipelines

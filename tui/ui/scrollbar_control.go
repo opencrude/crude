@@ -46,7 +46,7 @@ func (s *ScrollbarControl) Layout(_ LayoutContext, r Rect) {
 // Paint draws track and thumb.
 func (s *ScrollbarControl) Paint(buf *surface.CellBuffer, originX, originY int, _ PaintContext) {
 	r := s.Bounds()
-	if r.Empty() || s.scroll == nil {
+	if r.Empty() || s.scroll == nil || s.scroll.MaxOffset() <= 0 {
 		return
 	}
 	trackFG := cell.NewTrueColor(48, 48, 48)
@@ -72,7 +72,7 @@ func (s *ScrollbarControl) Paint(buf *surface.CellBuffer, originX, originY int, 
 func (s *ScrollbarControl) Handle(ctx EventContext, msg tea.Msg) EventResult {
 	switch m := msg.(type) {
 	case tea.MouseClickMsg:
-		if m.Button != tea.MouseLeft {
+		if m.Button != tea.MouseLeft || s.scroll == nil || s.scroll.MaxOffset() <= 0 {
 			return EventResult{}
 		}
 		s.ScrollToLocalY(ctx.LocalY)

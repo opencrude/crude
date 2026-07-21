@@ -367,7 +367,6 @@ func newTestAppWithFileOpsAndBus(t *testing.T, dir string, bus *workspace.EventB
 	}
 
 	app.Win = window.New(th)
-	app.Overlay = window.New(th)
 
 	return app
 }

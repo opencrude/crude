@@ -54,7 +54,6 @@ func newTestAppWithLauncher(t *testing.T) *App {
 		sessionProjections: newSessionProjectionRegistry(th),
 	}
 	app.Win = window.New(th)
-	app.Overlay = window.New(th)
 	return app
 }
 

@@ -141,6 +141,8 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "form.select.open":
 		fieldID, _ := action.Payload.(string)
 		return ui.EventResult{Handled: true, Cmd: s.openSelect(fieldID), Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+	case "form.changed":
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	case "form.exit.backward":
 		if s.page == rolePage {
 			s.openRoot()

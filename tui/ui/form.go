@@ -132,6 +132,9 @@ func (f *Form) Handle(ctx EventContext, msg tea.Msg) EventResult {
 	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
 		for index, field := range f.fields {
 			if field.Bounds().Contains(ctx.LocalX, ctx.LocalY) {
+				if field.FieldState().Disabled || field.FieldState().Type == FieldSeparator {
+					return EventResult{Handled: true}
+				}
 				f.focused = index
 				return f.handleField(index, f.fieldContext(ctx, field), msg)
 			}
@@ -185,25 +188,34 @@ func (f *Form) fieldContext(ctx EventContext, field *FormField) EventContext {
 }
 
 func (f *Form) moveFocus(delta int) EventResult {
-	next := f.focused + delta
-	if next < 0 {
+	for next := f.focused + delta; next >= 0 && next < len(f.fields); next += delta {
+		field := f.fields[next].FieldState()
+		if !field.Disabled && field.Type != FieldSeparator {
+			f.focused = next
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		}
+	}
+	if delta < 0 {
 		return EventResult{Handled: true, Action: &Action{ID: "form.exit.backward"}, Invalidate: InvalidateFocus | InvalidatePaint}
 	}
-	if next >= len(f.fields) {
-		return EventResult{Handled: true, Action: &Action{ID: "form.exit.forward"}, Invalidate: InvalidateFocus | InvalidatePaint}
-	}
-	f.focused = next
-	return EventResult{Handled: true, Invalidate: InvalidatePaint}
+	return EventResult{Handled: true, Action: &Action{ID: "form.exit.forward"}, Invalidate: InvalidateFocus | InvalidatePaint}
 }
 
 func (f *Form) FocusFirst() {
-	if len(f.fields) > 0 {
-		f.focused = 0
+	for index, field := range f.fields {
+		if !field.FieldState().Disabled && field.FieldState().Type != FieldSeparator {
+			f.focused = index
+			return
+		}
 	}
 }
 func (f *Form) FocusLast() {
-	if len(f.fields) > 0 {
-		f.focused = len(f.fields) - 1
+	for index := len(f.fields) - 1; index >= 0; index-- {
+		field := f.fields[index].FieldState()
+		if !field.Disabled && field.Type != FieldSeparator {
+			f.focused = index
+			return
+		}
 	}
 }
 

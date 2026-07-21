@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"crude/fileio"
 	"crude/tui/components"
 	"crude/tui/editor"
 	"crude/tui/rendering"
@@ -61,8 +60,6 @@ type StatusBar struct {
 	infoMsgTime time.Time
 	retryMsg    string
 	retryTime   time.Time
-
-	asyncCommands []fileio.AsyncCmdInfo
 
 	spinFrame    int
 	activityStep int

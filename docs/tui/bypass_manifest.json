@@ -1,5 +1,5 @@
 {
-  "version": 16,
+  "version": 20,
   "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only.",
   "rules": [
     {
@@ -13,7 +13,6 @@
         "tui/filetree/render.go",
         "tui/widgets/statusbar.go",
         "tui/widgets/chatmessage.go",
-        "tui/widgets/confirmdialog.go",
         "tui/tools/",
         "tui/window/",
         "tui/xchroma/"
@@ -53,7 +52,7 @@
     {"id": "palette-filter-string", "path": "tui/viewmodel/command_palette.go", "status": "migrated", "note": "TextEdit filter + WindowFrame+TextField+List via BuildCommandPaletteFrame; old View/scroll/hover deleted"},
     {"id": "launcher-filter-string", "path": "tui/viewmodel/launcher.go", "status": "migrated", "note": "TextEdit keys; paint via RenderFilterLine in widgets/launcher.go"},
     {"id": "settings-search-string", "path": "tui/settings/settings.go", "status": "migrated", "note": "TextEdit + RenderFilterLine"},
-    {"id": "filepicker-filter-string", "path": "tui/widgets/filepicker.go", "status": "migrated", "note": "TextEdit + RenderFilterLine"},
+    {"id": "filepicker-filter-string", "path": "tui/widgets/filepicker.go", "status": "deleted", "note": "Native tui/screens/filepicker TextField/List/ScrollbarControl/ActionBar body; legacy ANSI widget deleted"},
     {"id": "list-filter-string", "path": "tui/components/list.go", "status": "migrated", "note": "TextEdit + RenderFilterLine"},
     {"id": "find-in-files-custom-input-paint", "path": "tui/widgets/find_in_files.go", "status": "migrated", "note": "TextEdit + RenderFilterLine; not yet TextField surface paint"},
     {"id": "find-in-files-custom-scrollbar", "path": "tui/widgets/find_in_files.go", "status": "migrated", "note": "ui.ScrollbarCellANSI + ScrollModel; not yet ScrollbarControl surface"},
@@ -140,9 +139,10 @@
       "FormField",
       "Form",
       "ActionBar",
+      "FieldMultiSelect",
       "Tabs",
       "PanelDeck"
     ],
-    "note": "List supports header/separator/disabled; WindowFrame is the only product chrome, including structured legacy surfaces through WindowFrameWidget; dark/light reference themes; severity border/title accent"
+    "note": "List supports header/separator/disabled; WindowFrame is the only product chrome, including structured legacy surfaces through WindowFrameWidget; PanelDeck owns native blocking and passive per-session forms; dark/light reference themes; severity border/title accent"
   }
 }

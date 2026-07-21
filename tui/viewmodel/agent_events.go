@@ -8,6 +8,7 @@ import (
 
 	"crude/fileio"
 	"crude/provider"
+	"crude/tui/screens/confirmation"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -96,7 +97,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 		switch evt.Type {
 		case "async_command_status":
 			if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
-				m.StatusBar.SetAsyncCommands(cmds)
+				m.updateSessionBackgroundJobs(evt.AgentID, cmds, time.Now())
 			}
 			m.syncAgentWindowTabs()
 			return nil
@@ -246,48 +247,43 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.StatusBar.SetStatusLine("")
 		},
 		func(question, operation, tool, target, risk, reason, suggestion string) {
-			confirm := m.sessionConfirm()
-			if confirm == nil {
+			projection := m.activeSessionProjection()
+			if projection == nil || projection.confirmation == nil {
 				return
 			}
-			if risk != "" {
-				confirm.ResetWithDetails(question, operation, tool, target, risk, reason, suggestion)
-			} else {
-				confirm.Reset(question, operation, tool, target)
-			}
-			m.setMode(ModeConfirm)
+			projection.confirmation.Reset(confirmation.Details{Question: question, Operation: operation, Tool: tool, Target: target, Risk: risk, Reason: reason, Suggestion: suggestion})
+			projection.confirmationAgentID = agentID
+			m.openSessionConfirmationPanel(projection)
 		},
 		func(questionsJSON string) {
-			questionForm := m.sessionQuestionForm()
-			if questionForm == nil {
+			projection := m.activeSessionProjection()
+			if projection == nil || projection.question == nil {
 				return
 			}
-			m.purgeQuestionOverlayTabs()
-			n := questionForm.Reset(questionsJSON)
+			n := projection.question.Reset(questionsJSON)
 			if n == 0 {
+				m.StatusBar.SetError("Agent sent an invalid question request")
+				m.ResolveQuestion(agentID, nil, nil, true)
 				return
 			}
-			m.Overlay.OpenTab("Question", "", true)
-			m.setMode(ModeQuestion)
-			m.syncQuestionInputPrompt()
+			projection.questionAgentID = agentID
+			m.openSessionQuestionPanel(projection)
 		},
 		func() {
-			confirm := m.sessionConfirm()
-			questionForm := m.sessionQuestionForm()
+			projection := m.activeSessionProjection()
 			m.OverlayState.SetBlocking(false)
-			if confirm != nil {
-				confirm.Dismiss()
+			if projection != nil && projection.confirmation != nil {
+				projection.confirmation.Dismiss()
+				m.closeProjectionPanel(projection, sessionConfirmationPanelID)
 			}
-			if questionForm != nil {
-				questionForm.Dismiss()
+			if projection != nil && projection.question != nil {
+				projection.question.Dismiss()
+				m.closeProjectionPanel(projection, sessionQuestionPanelID)
 			}
 			m.Input.ResetPrompt()
 			m.Input.ClearInput()
 			m.StatusBar.SetConfirming(false)
 			m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
-			m.closeOverlayTab("Confirm")
-			m.closeOverlayTab("Question")
-			m.closeAllOverlayTabs()
 		},
 	)
 	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")

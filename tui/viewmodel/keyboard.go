@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -16,7 +15,6 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/widgets"
 	wm "crude/tui/wm"
@@ -51,7 +49,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		ml.ClearSelection()
 		return m, nil
 	}
-	if m.sessionDeckFocused() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
 		return m, m.handleSessionDeckEvent(msg)
 	}
 
@@ -80,9 +78,6 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case FocusTabBar:
 		return m.dispatchTabBarKey(msg)
-
-	case FocusOverlay:
-		return m.dispatchOverlayKey(msg, &cmds)
 
 	default:
 		return m.dispatchChatKey(msg, &cmds)
@@ -371,173 +366,6 @@ func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *App) dispatchOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	isCancel := msg.Code == tea.KeyEsc
-
-	if keyMsg, ok := any(msg).(tea.KeyPressMsg); ok && m.Overlay.TabCount() >= 2 {
-		switch keyMsg.String() {
-		case "ctrl+]":
-			m.Overlay.Next()
-			m.syncOverlayMode()
-			return m, nil
-		case "ctrl+[":
-			m.Overlay.Prev()
-			m.syncOverlayMode()
-			return m, nil
-		}
-	}
-
-	switch m.OverlayState.Current() {
-	case ModeConfirm:
-		return m.handleConfirmKey(msg, cmds)
-	case ModeQuestion:
-		return m.handleQuestionKey(msg, cmds)
-	case ModeYolo:
-		return m.handleYoloKey(msg, cmds)
-	case ModeTextOverlay:
-		return m.handleTextOverlayKey(msg, cmds)
-	case ModeFilePicker:
-		return m.handleFilePickerKey(msg, cmds)
-	}
-
-	if isCancel {
-		return m, m.handleCancel(msg)
-	}
-	return m, nil
-}
-
-func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	m.StatusBar.SetConfirming(true)
-	confirm := m.sessionConfirm()
-	if confirm == nil {
-		return m, nil
-	}
-	updated, result, done := confirm.Update(msg)
-	*confirm = updated
-	if done {
-		m.StatusBar.SetConfirming(false)
-		m.OverlayState.SetBlocking(false)
-		if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
-			n.State.Thinking = true
-		}
-		m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
-		if m.ResolveConfirmation(m.AgentMgr.ActiveID(), result.Choice) && m.Logger != nil {
-			m.Logger.Info("BLOCK", "resolved", "response", result.Choice, "operation", result.Operation, "tool", result.Tool)
-		}
-		if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
-			switch result.Choice {
-			case ttypes.ConfirmAllow:
-				n.State.PendingPermTag = "allowed"
-			case ttypes.ConfirmAlways:
-				n.State.PendingPermTag = "always"
-			case ttypes.ConfirmDeny:
-				n.State.PendingPermTag = "denied"
-				if ml := m.activeMsgList(); ml != nil {
-					ml.SetToolPermTag(result.Tool, "", "denied")
-				}
-			}
-		}
-		m.closeOverlayTab("Confirm")
-	}
-	return m, nil
-}
-
-func (m *App) handleQuestionKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	m.StatusBar.SetConfirming(true)
-	questionForm := m.sessionQuestionForm()
-	if questionForm == nil {
-		return m, nil
-	}
-
-	inTextMode := questionForm.IsTextQuestion(questionForm.Focused())
-	isCancel := msg.Code == tea.KeyEsc
-
-	if inTextMode {
-		if isCancel {
-			questionForm.ExitTextMode(questionForm.Focused())
-			m.Input.ClearInput()
-			m.syncQuestionInputPrompt()
-			return m, nil
-		}
-		if msg.String() == "ctrl+s" {
-			text := trimAndSubmit(m.Input.Value())
-			if text != "" {
-				questionForm.SetAnswer(questionForm.Focused(), text)
-			}
-			return m.finishQuestionIfNeeded(cmds), nil
-		}
-		if msg.Code == tea.KeyTab {
-			if msg.Mod.Contains(tea.ModShift) {
-				questionForm.FocusPrev()
-			} else {
-				questionForm.FocusNext()
-			}
-			m.syncQuestionInputPrompt()
-			return m, nil
-		}
-		return m.routeToInputInQuestion(msg, cmds), nil
-	}
-
-	if isCancel {
-		questionForm.Dismiss()
-		m.OverlayState.SetBlocking(false)
-		m.StatusBar.SetConfirming(false)
-		m.Input.ResetPrompt()
-		m.Input.ClearInput()
-		m.closeAllQuestionOverlayTabs()
-		m.ResolveQuestion(m.AgentMgr.ActiveID(), nil, nil, true)
-		return m, nil
-	}
-
-	updated, result, done := questionForm.Update(msg)
-	*questionForm = updated
-	if !done && questionForm.IsTextQuestion(questionForm.Focused()) {
-		existing := questionForm.Answer(questionForm.Focused())
-		if existing != "" {
-			m.Input.SetInput(existing)
-		} else {
-			m.Input.ClearInput()
-		}
-	}
-	m.syncQuestionInputPrompt()
-	if done {
-		return m.finishQuestionResult(ttypes.QuestionResult(result), cmds), nil
-	}
-	return m, nil
-}
-
-func (m *App) handleYoloKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	m.StatusBar.SetConfirming(true)
-	dialog := m.sessionYoloDialog()
-	if dialog == nil {
-		return m, nil
-	}
-	updated, enabled, done := dialog.Update(msg)
-	*dialog = updated
-	if done {
-		m.StatusBar.SetConfirming(false)
-		m.OverlayState.SetYolo(enabled)
-		var content string
-		if enabled {
-			content = "⚠ YOLO mode ACTIVE — all safety checks disabled. Use /yolo again to restore."
-			m.Logger.Warn("SAFETY", "yolo_enabled")
-		} else {
-			content = "YOLO mode cancelled. Safety checks remain active."
-			m.Logger.Info("SAFETY", "yolo_disabled")
-		}
-		if m.AgentMgr.ActiveID() != "" {
-			m.appendActiveMessage(ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: content,
-				Time:    time.Now(),
-			})
-		}
-		m.SetYolo(enabled)
-		m.closeOverlayTab("YOLO")
-	}
-	return m, nil
-}
-
 func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	// Ctrl+C with a selection: copy. Without a selection, Ctrl+C
 	// is the cancel shortcut (the original behavior — Esc is also
@@ -564,15 +392,6 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 	}
 	if fw := m.windowManager.Focused(); fw != nil {
 		fw.MarkContentDirty()
-	}
-	return m, tea.Batch(*cmds...)
-}
-
-func (m *App) handleFilePickerKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	if fw := m.windowManager.Focused(); fw != nil {
-		if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
-			*cmds = append(*cmds, cmd)
-		}
 	}
 	return m, tea.Batch(*cmds...)
 }
@@ -690,67 +509,6 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 	return cmds
 }
 
-func trimAndSubmit(val string) string {
-	return strings.TrimSpace(val)
-}
-
-func (m *App) finishQuestionIfNeeded(cmds *[]tea.Cmd) tea.Model {
-	questionForm := m.sessionQuestionForm()
-	if questionForm != nil && questionForm.AllAnswered() {
-		result := questionForm.BuildResult()
-		m.StatusBar.SetConfirming(false)
-		m.OverlayState.SetBlocking(false)
-		if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
-			n.State.Thinking = true
-		}
-		m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
-		questionResult := ttypes.QuestionResult(result)
-		m.ResolveQuestion(m.AgentMgr.ActiveID(), questionResult.Answers, questionResult.Questions, questionResult.Cancelled)
-		m.closeAllQuestionOverlayTabs()
-		m.Input.ResetPrompt()
-		m.Input.ClearInput()
-	}
-	return m
-}
-
-func (m *App) finishQuestionResult(result ttypes.QuestionResult, cmds *[]tea.Cmd) tea.Model {
-	m.StatusBar.SetConfirming(false)
-	m.OverlayState.SetBlocking(false)
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
-		n.State.Thinking = true
-	}
-	m.StatusBar.SetThinkingForAgent(m.AgentMgr.ActiveID(), true, false, false)
-	m.ResolveQuestion(m.AgentMgr.ActiveID(), result.Answers, result.Questions, result.Cancelled)
-	m.closeAllQuestionOverlayTabs()
-	m.Input.ResetPrompt()
-	m.Input.ClearInput()
-	return m
-}
-
-func (m *App) routeToInputInQuestion(msg tea.KeyPressMsg, cmds *[]tea.Cmd) tea.Model {
-	updated, cmd, evt := m.Input.Update(msg, false, false, m.ChatAreaHeight, false)
-	m.Input = updated
-	if cmd != nil {
-		*cmds = append(*cmds, cmd)
-	}
-	switch e := evt.(type) {
-	case input.SubmitEvent:
-		questionForm := m.sessionQuestionForm()
-		if questionForm == nil {
-			return m
-		}
-		questionForm.SetAnswer(questionForm.Focused(), e.Text)
-		m.Input.ClearInput()
-		if questionForm.AllAnswered() {
-			m.finishQuestionIfNeeded(cmds)
-		} else {
-			questionForm.FocusNext()
-			m.syncQuestionInputPrompt()
-		}
-	}
-	return m
-}
-
 // dispatchPasteMsg routes a tea.PasteMsg (from bracketed-paste mode or
 // an explicit Ctrl+V) to the correct focus target.
 //
@@ -769,7 +527,7 @@ func (m *App) routeToInputInQuestion(msg tea.KeyPressMsg, cmds *[]tea.Cmd) tea.M
 // we want to preserve.
 func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	if m.sessionDeckFocused() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
 		return m, m.handleSessionDeckEvent(msg)
 	}
 
@@ -779,21 +537,6 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 			cmd := m.EditorState.Editor.HandleEvent(msg)
 			return m, cmd
 		}
-
-	case FocusOverlay:
-		// Settings / form / YOLO / question / file picker / etc.
-		// Each of these widgets has its own Update method that
-		// accepts tea.PasteMsg. The overlay mode dispatcher is
-		// the single place that knows which overlay is active.
-		switch m.OverlayState.Current() {
-		case ModeFilePicker:
-			// File picker doesn't have a paste target; ignore.
-		default:
-			// Other overlays (confirm, question, yolo, text overlay)
-			// either don't take paste or have their own paste path
-			// triggered by the user pressing Enter. Fall through.
-		}
-		return m, tea.Batch(cmds...)
 
 	case FocusFloatingWindow:
 		// A popup is focused. Route to the focused window's

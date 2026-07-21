@@ -2,7 +2,7 @@
 
 Status: Implementation in progress — aligned to this document as of 2026-07-21
 
-Date: 2026-07-21 (progress reconciled after native per-session Panel Deck and session-settings cutover)
+Date: 2026-07-21 (progress reconciled after native per-session Panel Deck and all blocking-form cutovers)
 
 Scope: The complete `tui/` layer and every program boundary that supplies data to,
 or receives actions from, the TUI.
@@ -31,14 +31,14 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 2 Component host | DONE | `tui/ui` Host + controls; not yet wired as viewmodel root |
 | 3 Theme engine | PARTIAL | TokenSet + state precedence; dark/light themes; two-theme state gallery + runtime switch; no HC/hot reload |
 | 4 Layout / hit tree | PARTIAL | Constraints, Stack, Host layout/hit; native PanelDeck is measured below messages and shares Host geometry for paint/input; no Flex/Grid/Split/Viewport |
-| 5 Focus / actions / keymaps | PARTIAL | Host action bubbling replaces shared-form callbacks; keyboard dispatch wired to registry.MatchGlobal; palette/launcher/status hints derive from registry; editor context dispatch uses registry.MatchContext; per-session PanelDeck has one Host input/focus path |
-| 6 Input engine | PARTIAL | TextEdit + RenderFilterLine on palette/launcher/settings/filepicker/list/FIF; tree prompt TextField |
+| 5 Focus / actions / keymaps | PARTIAL | Host action bubbling replaces shared-form callbacks; ActionBar owns typed quick-key/Escape actions; keyboard dispatch wired to registry.MatchGlobal; palette/launcher/status hints derive from registry; editor context dispatch uses registry.MatchContext; per-session PanelDeck has one Host input/focus path |
+| 6 Input engine | PARTIAL | TextEdit + RenderFilterLine on palette/launcher/settings/list/FIF; file/workspace picker and tree prompt use native TextField paint |
 | 7 Collections / scrollbar | PARTIAL | List (header/sep/disabled), VirtualList, ScrollModel, ScrollbarControl + ANSI bridge |
-| 8 Form system | PARTIAL | FormModel, FieldState, retained Form/FormField (text/select/cycle/toggle/nav/separator), and ActionBar with ButtonVariant; workspace and session settings are native consumers; legacy form shells remain in other surfaces |
+| 8 Form system | PARTIAL | FormModel, FieldState, retained Form/FormField (text/select/multi-select/cycle/toggle/nav/separator), and ActionBar with variants/quick keys; workspace settings, session settings, questions, tool confirmation, YOLO, and background-job details are native consumers; legacy form shells remain elsewhere |
 | 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
-| 12 Structured migrations | PARTIAL | Workspace settings and per-session docked session settings are fully native; PanelDeck/Tabs preserve per-session inline panels below messages; question, YOLO, tool confirmation, background detail panels, picker, FIF, composer, text overlay, launcher pending |
+| 12 Structured migrations | PARTIAL | Workspace settings, all session blocking forms, passive background-job details, and file/workspace picker bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy `App.Overlay` tabs, global async rows, and picker widget are deleted; FIF, composer, text overlay, launcher pending |
 | 13 Shell migrations | OPEN | |
 | 14 Deletion | OPEN | Dual systems still present by design |
 | 15 Stabilization | OPEN | |
@@ -53,8 +53,7 @@ These are allowed only as shrinking adapters listed in `bypass_manifest.json`:
 - `ui.LegacyWidget` / `ANSIViewFunc` — old widget → Component adapters.
 - Flat `tui/ui/` package (plan target subdirs deferred until APIs stabilize).
 
-**Not done yet (do not claim as complete):** high-contrast/hot-reloaded themes; PopupChrome deletion (reveal animation consumers remain);
-workspace free of `tui/` imports; full TextField surface paint everywhere.
+**Not done yet (do not claim as complete):** high-contrast/hot-reloaded themes; PopupChrome deletion (reveal animation consumers remain); full TextField surface paint everywhere.
 
 ## 1. Objective
 
@@ -149,7 +148,7 @@ No migration phase may claim completeness without accounting for every surface b
 | File-tree sidebar | `tui/filetree/`, `tui/viewmodel/view.go` |
 | Sidebar divider and resize handle | `tui/viewmodel/mouse.go` |
 | Main tab bar | `tui/window/window.go`, `tui/viewmodel/view.go` |
-| Overlay tab bar | `tui/window/window.go`, `tui/viewmodel/view.go` |
+| Legacy inline overlay tab bar | deleted after Question/Confirmation/YOLO PanelDeck cutover |
 | Status bar | `tui/widgets/statusbar.go`, `tui/viewmodel/view.go` |
 | Contextual shortcut help | `tui/viewmodel/view.go`, feature `Hint()` methods |
 | Main content compositor surface | `tui/viewmodel/view.go` |
@@ -164,7 +163,7 @@ No migration phase may claim completeness without accounting for every surface b
 | Chat input | `tui/input/`, `tui/components/text.go` |
 | Agent and thinking subpanes | `workspace/subpane.go`, `tui/widgets/messagelist.go` |
 | Session picker | `tui/widgets/sessionpicker.go` |
-| Async command rows | `tui/widgets/asyncbar.go` |
+| Background command details | `tui/screens/backgroundjobs/background_jobs.go`, `tui/viewmodel/session_deck.go` |
 | Reference chips | `tui/input/references.go`, `tui/viewmodel/view.go` |
 
 ### 4.3 Floating windows and popups
@@ -175,7 +174,7 @@ No migration phase may claim completeness without accounting for every surface b
 | Find in Files | `tui/widgets/find_in_files.go`, `tui/viewmodel/find_in_files.go` |
 | Find and replace | `tui/widgets/findreplace.go`, `tui/viewmodel/findreplace_handler.go` |
 | Workspace settings | `tui/settings/settings.go`, `tui/widgets/workspace_settings.go` |
-| File picker and workspace picker | `tui/widgets/filepicker.go` |
+| File picker and workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` |
 | Composer | `tui/widgets/composer.go` |
 | Text/reference editor | `tui/widgets/textoverlay.go` |
 | Context menu | `tui/widgets/contextmenu.go`, context-menu builders |
@@ -191,10 +190,10 @@ No migration phase may claim completeness without accounting for every surface b
 
 | Surface | Current primary files |
 |---------|-----------------------|
-| Session settings | `tui/widgets/session_settings.go`, `tui/form/` |
-| Tool confirmation | `tui/widgets/confirmdialog.go` |
-| Agent question form | `tui/widgets/questionform.go` |
-| YOLO confirmation | `tui/widgets/yolodialog.go` |
+| Session settings | `tui/screens/sessionsettings/session_settings.go` |
+| Tool confirmation | `tui/screens/confirmation/confirmation.go` |
+| Agent question form | `tui/screens/question/question.go` |
+| YOLO confirmation | `tui/screens/yolo/yolo.go` |
 | Generic confirmation prompt | `tui/widgets/confirmprompt.go` |
 
 ### 4.5 Secondary interactive content
@@ -225,7 +224,8 @@ Current categories include:
 | Input engine with custom renderer | Find in Files query |
 | Independent form editor | `form.TextItem` |
 | Hand-built prompt editor | Tree create/rename prompt |
-| Append/backspace filter strings | Palette, launcher, settings, file picker, generic list |
+| Append/backspace filter strings | Palette, launcher, settings, generic list |
+| Native shared field | File/workspace picker |
 | Specialized document editor | `tui/editor/` |
 
 The target keeps one reusable input engine plus the specialized code editor. Search,
@@ -1197,9 +1197,11 @@ Landed early:
 - `form.TextItem` uses `ui.TextEdit` + `HandleTextEditKey` (selection/copy/cut/paste path)
 - Native `FormModel`/`Form`/`FormField`/`ActionBar` used by workspace settings
   and the nested per-session settings role pages
+- Native `FormModel`/`Form` option collection (single and multi-select), TextField,
+  and ActionBar used by blocking per-session agent questions
 
 Remaining:
-- Migrate question, confirmation, YOLO, and other structured surfaces off their legacy form shells
+- Migrate confirmation, YOLO, and other structured surfaces off their legacy form shells
 
 Objectives:
 
@@ -1406,11 +1408,11 @@ Order:
 1. Workspace settings. DONE (WindowFrameWidget + OverlayHost; native List + FormModel/Form/FormField + ActionBar; no `tui/form` bridge)
 2. Docked Session Panel foundation. DONE (per-session PanelDeck + native Tabs + Host action bubbling + compositor surface below messages)
 3. Session settings. DONE (native nested Form pages + ActionBar; retained per session; no legacy inline tab, ANSI View, ModeSettings, or `tui/form` dependency)
-4. Question form. OPEN
-5. Tool confirmation. OPEN
-6. YOLO confirmation. OPEN
-7. Background-job/detail panels. OPEN (non-blocking deck panels; no focus steal)
-8. File/workspace picker. PARTIAL (filter TextEdit + RenderFilterLine)
+4. Question form. DONE (native Form + shared option collection + TextField + ActionBar in blocking per-session PanelDeck; legacy ANSI widget, overlay tab, ModeQuestion, main-input dual route, and manual mouse geometry deleted)
+5. Tool confirmation. DONE (native passive metadata Form + ActionBar in blocking per-session PanelDeck; allow/always/deny quick keys and owner-specific resolution; legacy widget/mode/overlay/mouse paths deleted)
+6. YOLO confirmation. DONE (native passive warning Form + ActionBar in blocking per-session PanelDeck; enable/cancel quick keys; legacy widget/mode/overlay paths deleted)
+7. Background-job/detail panels. DONE (native read-only Form in a passive per-session PanelDeck panel; owner-safe inactive-session updates, failure attention, running-duration refresh, completion expiry, and no focus steal; global ANSI status-bar rows deleted)
+8. File/workspace picker. DONE (native TextField + Label breadcrumb + List + ScrollbarControl + ActionBar body inside the retained OverlayHost/FloatingWindow shell; workspace-owned neutral directory enumeration; file/folder modes, filtering, parent navigation, keyboard/mouse/paste/double-click, owner-targeted results; legacy widget/ANSI/manual geometry deleted)
 9. Find in Files. PARTIAL (query TextEdit + RenderFilterLine + shared scrollbar cell;
    search execution/cancellation moved to workspace.ProjectSearchService)
 10. Composer. OPEN
@@ -1432,7 +1434,7 @@ Order:
 3. Main application tabs (Session Panel Deck tabs already native under Phase 12).
 4. File tree and sidebar split pane.
 5. Chat input and reference chips.
-6. Session picker and async rows.
+6. Session picker.
 7. Message list and subpanes.
 8. Editor chrome, scrollbar, diagnostics, search paint, and status integration.
 
@@ -1500,9 +1502,11 @@ Exit criteria:
 | Workspace settings | Window + navigation list + Form + ActionBar | 12 | **WindowFrameWidget + OverlayHost + native List + FormModel/Form/FormField + ActionBar**; category filtering, select loading/commit, keyboard/mouse traversal, and save/cancel all use retained components; no legacy form bridge |
 | Session Panel Deck | DockedPanel + Tabs + active retained Component | 12 | **Native PanelDeck + Tabs + per-session Host**; cell surface below messages; one keyboard/mouse/paste route; inactive sessions retain state without focus steal |
 | Session settings | DockedPanel + nested Form pages + ActionBar | 12 | **Native shared Form system** retained in each session projection; model fetch/save/reset results route to the owning session; legacy widget/form/ModeSettings paths deleted |
-| Question form | Form + option collection + TextField + ActionBar | 12 | open |
-| YOLO/confirmation | Dialog + severity content + ActionBar | 12 | open |
-| File picker | Dialog + Breadcrumbs + SearchField + Tree/List + ActionBar | 12 | **WindowFrameWidget + OverlayHost**; filter TextEdit + RenderFilterLine; legacy body |
+| Question form | Form + option collection + TextField + ActionBar | 12 | **Native blocking PanelDeck screen**; single and multi-select options, custom TextField answer, validation, keyboard/mouse/paste parity, and owner-targeted result/cancel routing; legacy widget/form/overlay paths deleted |
+| Tool confirmation | Blocking Panel + severity Form + ActionBar | 12 | **Native blocking PanelDeck screen**; risk/operation/tool/target/reason/suggestion metadata, allow/always/deny, quick keys, mouse, Escape-deny, and owning-agent routing; legacy widget and overlay paths deleted |
+| YOLO confirmation | Blocking Panel + warning Form + ActionBar | 12 | **Native blocking PanelDeck screen**; complete safety warning, enable/cancel quick keys, mouse and Escape parity; legacy widget and overlay paths deleted |
+| Background-job details | Passive Panel + read-only Form | 12 | **Native passive PanelDeck screen**; commands, handles, status, duration, PID, exit, and errors project into their owning session without focus steal; failure attention and 15-second completion expiry; global ANSI async rows deleted |
+| File picker | Dialog + Breadcrumbs + SearchField + Tree/List + ActionBar | 12 | **Native WindowFrameWidget + OverlayHost body**; TextField, Label breadcrumb, List, ScrollbarControl, and ActionBar; workspace `BrowseDirectory` owns filesystem enumeration; legacy ANSI widget and manual geometry deleted |
 | Find in Files | Window + SearchField + toggles + VirtualList + editor preview | 12 | **WindowFrameWidget + OverlayHost**; TextEdit + shared bridges; domain execution/cancellation in workspace service |
 | Composer | Window + TextArea + ActionBar/Hint | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
 | Text overlay | Window + TextArea + ActionBar | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
@@ -1611,6 +1615,13 @@ feature duplication with an abstract but unusable framework.
 Adapters are one-way migration tools. New screens cannot depend on legacy adapters,
 and an adapter with no consumers is deleted immediately.
 
+Test files also require a deletion audit because all `_test.go` files in a Go package
+share package scope. Before deleting a legacy test, search package-wide consumers of
+every helper, fixture, constant, and builder it defines. Move genuinely shared test
+infrastructure to `test_helpers_test.go`; never restore deleted product code as a test
+compatibility shim. Targeted migration tests are followed by the complete package and
+repository suites so hidden helper ownership cannot survive the cutover.
+
 ## 24. Risks and Mitigations
 
 | Risk | Mitigation |
@@ -1657,7 +1668,8 @@ This program is complete only when all statements are true:
 4. Early Phase 6/7/9 foundations: TextEdit, TextField, List, VirtualList, WindowFrame,
    ScrollbarControl, ComponentWidget, filter/scrollbar ANSI bridges.
 5. Product filter engines on TextEdit (palette, launcher, settings, filepicker, list,
-   form TextItem, FIF query) + RenderFilterLine paint convergence.
+   form TextItem, FIF query); filepicker now paints through native TextField while
+   remaining legacy paths use the shrinking RenderFilterLine bridge.
 6. WindowFrame product surfaces: tree prompt, dirty-close, tree-delete
    (`BuildTextPromptFrame` / `BuildDirtyCloseFrame` / `BuildTreeDeleteFrame`).
 7. Context menu → `BuildContextMenuFrame` (WindowFrame + ui.List with section
@@ -1721,9 +1733,10 @@ This program is complete only when all statements are true:
 20. Phase 9 WM chrome unification:
     - FloatingWindow no longer draws borders, titles, backgrounds, or close glyphs
     - `wm/decoration.go` and parallel decoration tests deleted
-    - WindowFrameWidget mounts structured legacy bodies inside unified WindowFrame
-    - File picker, workspace settings, Find in Files, composer, and text overlay
-      migrated to WindowFrame visual chrome
+    - WindowFrameWidget mounts native components and shrinking structured legacy
+      bodies inside unified WindowFrame
+    - File picker now has a native body; workspace settings, Find in Files, composer,
+      and text overlay retain WindowFrame visual chrome at their current migration stage
     - WM retains frame-aligned close/title/edge hit testing, drag, resize, focus,
       placement, and z-order
     - BorderStyle/TextAlign visual APIs removed from WM
@@ -1846,6 +1859,62 @@ This program is complete only when all statements are true:
     - Removed `ModeSettings` from `workspace.Mode` enum; the per-session deck
       owns panel lifecycles without a global presentation mode
 
+33. Phase 8/12 native agent question form:
+    - Added shared `FieldMultiSelect` support backed by the retained List option
+      collection, preserving keyboard/mouse selection, validation, and cursor state
+    - Added `tui/screens/question`, composed only from Form, shared option
+      collection, TextField, and ActionBar; free-text answers use the native
+      TextEdit path and bracketed paste rather than the chat input
+    - Question screens are blocking, non-closable per-session PanelDeck panels;
+      they capture input, cannot be backgrounded, and explicit Cancel resolves
+      the owning agent request
+    - Result/cancel messages retain their originating screen owner, so inactive
+      session projections resolve and close without stealing the active session
+    - Deleted `tui/widgets/questionform.go`, ANSI paint/render methods, overlay
+      Question tab, ModeQuestion, manual sidebar hit testing, and dual main-input
+      question routing
+
+34. Phase 5/8/12 native tool confirmation, YOLO, and inline-overlay deletion:
+    - Added native `tui/screens/confirmation` and `tui/screens/yolo` screens with
+      passive shared-Form metadata/warnings and retained ActionBars
+    - ActionBar now supports typed quick-key and Escape actions; confirmation
+      preserves allow/always/deny and YOLO preserves enable/cancel keyboard/mouse parity
+    - Blocking screens are non-closable, cannot be backgrounded, and retain
+      attention when queued behind another blocking panel
+    - Confirmation results preserve originating agent ownership, permission tags,
+      tool-denial projection state, and operation/tool logging
+    - Deleted `ConfirmDialog`, `YoloDialog`, their ANSI/Lipgloss paint and tests,
+      ModeConfirm/ModeYolo, FocusOverlay, manual mouse forwarding, and all legacy
+      overlay-tab rendering/input/layout code
+    - Deleted `App.Overlay`; `OverlayHost` and its essential FloatingWindows remain
+      the exclusive path for workspace settings, pickers, search, composer, text
+      editing, menus, and other floating IDE surfaces
+
+35. Phase 8/12 native background-job details:
+    - Added `tui/screens/backgroundjobs`, composed from a read-only shared Form
+      and projected as a passive per-session PanelDeck panel
+    - Async command events resolve their originating orchestrator session, including
+      inactive sessions, without switching the active session or moving focus
+    - Passive deck updates do not displace active interactive panels; failed/killed
+      jobs request attention, running durations refresh, and completed rows expire
+      after the retained 15-second presentation window
+    - Deleted the global `StatusBar.asyncCommands`, `RenderAsyncBar`, ANSI/Lipgloss
+      async-row rendering, and its manual main-view height/layout path
+
+36. Phase 6/7/12 native file/workspace picker:
+    - Added `tui/screens/filepicker`, composed from native TextField, Label, List,
+      ScrollbarControl, and ActionBar components inside the existing
+      OverlayHost/FloatingWindow/WindowFrame shell
+    - Added presentation-neutral `Workspace.BrowseDirectory`; filesystem enumeration
+      no longer runs inside a TUI control, while filtering/sorting remain projection state
+    - Preserved attach-file and create-workspace modes, hidden-file policy, parent
+      navigation, keyboard/mouse/paste/double-click behavior, disabled primary actions,
+      owner-targeted typed results, dark/light themes, and narrow/wide layouts
+    - Corrected ActionBar keyboard/mouse dispatch so disabled or non-hit buttons cannot
+      activate another action; hover now resolves per button
+    - Deleted `tui/widgets/filepicker.go`, its ANSI/Lipgloss rendering, legacy adapter,
+      manual hit/button/hover/scrollbar geometry, and widget tests
+
 ### Next slices (priority order — stay on plan)
 
    1. **Phase 10:** ✅ workspace presentation ownership, view-data, and package-boundary
@@ -1854,12 +1923,13 @@ This program is complete only when all statements are true:
       tree rows, agent tabs, status snapshots, and LSP/file-tree integration seams
       now cross through neutral contracts and TUI projections.
 
-   2. **Phase 12:** Workspace and session settings are complete native shared-form
+   2. **Phase 12:** Workspace settings, session settings, agent questions, tool
+       confirmation, and YOLO are complete native shared-form
        consumers. The per-session PanelDeck is the canonical bottom-of-messages
        home for session-owned interactive/background surfaces; OverlayHost remains
-       exclusively floating. NEXT: migrate the question form, tool confirmation,
-       YOLO, and background-job detail panels into the deck, then picker, FIF,
-       composer, text overlay, and launcher form bodies.
+       exclusively floating. Background-job details are native passive deck forms,
+       and the file/workspace picker now has a native body in its retained floating
+       shell. NEXT: migrate FIF, composer, text overlay, and launcher form bodies.
 
    3. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
       and live config hot-reload.

@@ -73,29 +73,7 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	}
 }
 
-func TestContextualHelpCoversInlineModesAndTabFocus(t *testing.T) {
-	tests := []struct {
-		name string
-		mode Mode
-		tab  string
-		want string
-	}{
-		{name: "confirm", mode: ModeConfirm, tab: "Confirm", want: "confirmation required"},
-		{name: "yolo", mode: ModeYolo, tab: "YOLO", want: "yolo mode confirmation"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			app := newFullTestApp(t)
-			app.launcher = nil
-			app.Overlay.OpenTab(tt.tab, "", true)
-			app.OverlayState.Set(tt.mode)
-			app.syncFormHint()
-			if got := app.contextualHelpView(); !strings.Contains(got, tt.want) {
-				t.Fatalf("status help=%q, want %q", got, tt.want)
-			}
-		})
-	}
-
+func TestContextualHelpCoversTabFocus(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcher = nil
 	app.FocusStack.Push(FocusTabBar)
@@ -105,7 +83,7 @@ func TestContextualHelpCoversInlineModesAndTabFocus(t *testing.T) {
 	}
 }
 
-func TestCompactStatusHintPreservesQuestionContext(t *testing.T) {
+func TestCompactStatusHintPreservesSuffixContext(t *testing.T) {
 	hint := "[ enter: submit answer · esc: back ]  ❯ Q2 (Details)"
 	got := compactStatusHint(hint)
 	if got != "enter: submit answer · esc: back  ·  ❯ Q2 (Details)" {

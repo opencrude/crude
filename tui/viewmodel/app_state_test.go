@@ -8,6 +8,8 @@ import (
 
 	"crude/provider"
 	"crude/tui/input"
+	"crude/tui/screens/confirmation"
+	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/settings"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -435,9 +437,18 @@ func TestHandleCancelConfirmResolvesDenyWithoutCallback(t *testing.T) {
 	app := newFullTestApp(t)
 	blockCh := make(chan string, 1)
 	app.AgentMgr.AddOrchestrator("agent", nil, nil, nil, blockCh, &workspace.AgentState{})
-	app.OverlayState.Set(ModeConfirm)
-
-	app.handleCancel(tea.KeyPressMsg{Code: tea.KeyEsc})
+	projection := app.activeSessionProjection()
+	projection.confirmation.Reset(confirmation.Details{Question: "Continue?"})
+	projection.confirmationAgentID = "agent"
+	app.openSessionConfirmationPanel(projection)
+	projection.deckHost.Resize(80, 12)
+	projection.deckHost.Layout()
+	projection.deckHost.Focus(confirmation.ActionsID)
+	cmd := app.handleSessionDeckEvent(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("confirmation escape did not emit a result")
+	}
+	app.handleAppMessages(cmd())
 
 	select {
 	case got := <-blockCh:
@@ -684,7 +695,6 @@ func newTestApp(t *testing.T) *App {
 	}
 
 	app.Win = window.New(th)
-	app.Overlay = window.New(th)
 
 	return app
 }
@@ -722,7 +732,6 @@ func newFullTestApp(t *testing.T) *App {
 	}
 
 	app.Win = window.New(th)
-	app.Overlay = window.New(th)
 
 	return app
 }
@@ -733,8 +742,8 @@ func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
 	app := newFullTestApp(t)
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
-	app.FilePicker = widgets.NewFilePicker(app.Theme)
-	app.FilePicker.OpenFolder(t.TempDir())
+	app.FilePicker = filepickerscreen.New(app.Theme)
+	app.FilePicker.Open(t.TempDir(), filepickerscreen.ModeFolder, nil)
 
 	app.openFilePickerWindow()
 	fileWindow := app.windowManager.Window("filepicker")
@@ -746,6 +755,10 @@ func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
 	}
 	if _, ok := fileWindow.Content.(*ui.WindowFrameWidget); !ok {
 		t.Fatal("file picker should use ui.WindowFrame chrome")
+	}
+	fileFrame := fileWindow.Content.(*ui.WindowFrameWidget)
+	if fileFrame.Body() != app.FilePicker || fileFrame.Host().Focused() != filepickerscreen.FilterID {
+		t.Fatal("file picker should mount and focus its native component body")
 	}
 
 	app.openWorkspaceSettings()

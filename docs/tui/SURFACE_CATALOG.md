@@ -15,7 +15,7 @@ only against this catalog.
 | Sidebar divider | `tui/viewmodel/mouse.go` | Drag resize |
 | Main tab bar | `tui/window/window.go` | Editor + agent tabs |
 | Session Panel Deck tabs | `tui/ui/tabs.go`, `tui/ui/panel_deck.go`, `tui/viewmodel/session_deck.go` | Per-session native component panel region below messages |
-| Legacy inline panel tabs | `tui/window/window.go`, `tui/viewmodel/view.go` | Confirm/Question/YOLO only during migration |
+| Legacy inline panel tabs | deleted | Replaced by native per-session PanelDeck tabs; not the floating OverlayHost |
 | Status bar | `tui/widgets/statusbar.go` | Activity + contextual help |
 | Contextual help | `tui/viewmodel/view.go` | Action-derived hints (target) |
 | Main content surface | `tui/viewmodel/view.go` | Editor/chat/launcher compositor layer |
@@ -30,7 +30,7 @@ only against this catalog.
 | Chat input | `tui/input/`, `tui/components/text.go` |
 | Agent/thinking subpanes | `workspace/subpane.go`, message list |
 | Session picker | `tui/widgets/sessionpicker.go` |
-| Async command rows | `tui/widgets/asyncbar.go` |
+| Background command details | `tui/screens/backgroundjobs/background_jobs.go`, `tui/viewmodel/session_deck.go` | Native passive per-session PanelDeck Form; global status-bar rows deleted |
 | Reference chips | `tui/input/references.go` |
 
 ## Floating windows and popups
@@ -41,7 +41,7 @@ only against this catalog.
 | Find in Files | `tui/widgets/find_in_files.go` |
 | Find/replace | `tui/widgets/findreplace.go` |
 | Workspace settings | `tui/settings/settings.go` |
-| File/workspace picker | `tui/widgets/filepicker.go` |
+| File/workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` | Native TextField + breadcrumb Label + List + ScrollbarControl + ActionBar body in retained OverlayHost/FloatingWindow shell |
 | Composer | `tui/widgets/composer.go` |
 | Text/reference overlay | `tui/widgets/textoverlay.go` |
 | Context menu | `tui/widgets/contextmenu.go` |
@@ -58,9 +58,9 @@ only against this catalog.
 | Surface | Primary files |
 |---------|---------------|
 | Session settings | `tui/screens/sessionsettings/session_settings.go` | Native nested Form pages in per-session docked Panel Deck |
-| Tool confirmation | `tui/widgets/confirmdialog.go` |
-| Agent question form | `tui/widgets/questionform.go` |
-| YOLO confirmation | `tui/widgets/yolodialog.go` |
+| Tool confirmation | `tui/screens/confirmation/confirmation.go` | Native blocking metadata Form + ActionBar in the per-session Panel Deck |
+| Agent question form | `tui/screens/question/question.go` | Native blocking Form + option collection + TextField + ActionBar in the per-session Panel Deck |
+| YOLO confirmation | `tui/screens/yolo/yolo.go` | Native blocking warning Form + ActionBar in the per-session Panel Deck |
 | Generic confirm prompt | `tui/widgets/confirmprompt.go` |
 
 ## Secondary interactive content

@@ -169,6 +169,23 @@ Each `FloatingWindow` has:
 WM must never paint borders, titles, backgrounds, or close glyphs. All product
 floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
 
+### Floating vs Docked Overlay Ownership (CRITICAL)
+
+- `FloatingWindow` is the actual positioned compositor window. It owns its
+  window/content surfaces and supports focus, movement, resize, and close hit regions.
+- `OverlayHost` is the typed lifecycle and policy controller around
+  `WindowManager`/`FloatingWindow`. It is not a competing visual window type and
+  must not be removed when a floating window body migrates to native components.
+- Workspace settings, file/workspace picker, Find in Files, composer,
+  text/reference editor, palettes, menus, and LSP popups are essential floating IDE
+  surfaces. Keep their `OverlayHost` + `FloatingWindow` shell while migrating only
+  their legacy body content.
+- `PanelDeck` is exclusively for session-owned docked content between messages and
+  chat input: session settings, questions, tool confirmation, YOLO, and background
+  job details.
+- The old `App.Overlay` inline tab system is deleted. Never reintroduce it or route
+  floating windows through `PanelDeck` as a shortcut.
+
 ### Cell Types
 
 - `Cell.Char` — the rune
@@ -294,6 +311,18 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 - **`widget.Hover`** is the canonical hover type (`tui/widget/hoverable.go`).
 - **`theme.Colors.Hover`** (`#21262d`) is the canonical hover background.
 - **Priority: focused (keyboard) > selected > hovered > nothing.**
+
+### Test Helper Ownership
+- Go `_test.go` files in one package share package scope. A helper defined in a
+  feature-specific test file may silently serve unrelated tests.
+- Before deleting a legacy test file, search the whole package for every helper it
+  defines (`func`, test constants, fixtures, and builders), not just tests named
+  after that feature.
+- Move genuinely shared helpers to the package's neutral `test_helpers_test.go` in
+  the same change. Do not restore deleted production UI or add compatibility code
+  merely to make tests compile.
+- Run the complete package test and `go test ./...` after deletion; targeted screen
+  tests cannot detect missing package-wide helpers.
 
 ---
 
