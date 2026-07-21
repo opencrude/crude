@@ -594,6 +594,22 @@ func (w *Workspace) ResetSessionSettings() error {
 	return nil
 }
 
+// ResetSessionSettingsForSession clears the persisted overrides owned by a
+// specific frontend session without depending on which tab is currently active.
+func (w *Workspace) ResetSessionSettingsForSession(sessionID string) error {
+	frontendSession := w.SessionsByID[sessionID]
+	if frontendSession == nil || frontendSession.backend == nil {
+		return fmt.Errorf("session %q is not active", sessionID)
+	}
+	if err := frontendSession.backend.ResetSessionSettings(); err != nil {
+		return err
+	}
+	if frontendSession.Settings != nil {
+		frontendSession.Settings.ResetToWorkspace(frontendSession.backend.WorkspaceSettingsSnapshot())
+	}
+	return nil
+}
+
 // BackendModelName returns the display name of the active model.
 func (w *Workspace) BackendModelName() string {
 	if b := w.BackendSession(); b != nil {

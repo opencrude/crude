@@ -133,9 +133,6 @@ func (m *App) setMode(newMode Mode) {
 		ml.InvalidateAllMessages()
 	}
 	switch newMode {
-	case ModeSettings:
-		m.Input.ClearInput()
-		m.Overlay.OpenTab("Session Settings", "", true)
 	case ModeConfirm:
 		m.Overlay.OpenTab("Confirm", "", true)
 	case ModeQuestion:
@@ -456,8 +453,6 @@ func (m *App) syncOverlayMode() {
 		return
 	}
 	switch {
-	case activeTab.Title == "Session Settings":
-		m.OverlayState.Set(ModeSettings)
 	case activeTab.Title == "Confirm":
 		m.OverlayState.Set(ModeConfirm)
 	case activeTab.Title == "YOLO":

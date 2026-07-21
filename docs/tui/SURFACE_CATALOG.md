@@ -14,7 +14,8 @@ only against this catalog.
 | File-tree sidebar | `tui/filetree/`, `tui/viewmodel/view.go` | Icons, diagnostics, git, scrollbar |
 | Sidebar divider | `tui/viewmodel/mouse.go` | Drag resize |
 | Main tab bar | `tui/window/window.go` | Editor + agent tabs |
-| Overlay tab bar | `tui/window/window.go` | Settings/confirm/question/yolo tabs |
+| Session Panel Deck tabs | `tui/ui/tabs.go`, `tui/ui/panel_deck.go`, `tui/viewmodel/session_deck.go` | Per-session native component panel region below messages |
+| Legacy inline panel tabs | `tui/window/window.go`, `tui/viewmodel/view.go` | Confirm/Question/YOLO only during migration |
 | Status bar | `tui/widgets/statusbar.go` | Activity + contextual help |
 | Contextual help | `tui/viewmodel/view.go` | Action-derived hints (target) |
 | Main content surface | `tui/viewmodel/view.go` | Editor/chat/launcher compositor layer |
@@ -56,7 +57,7 @@ only against this catalog.
 
 | Surface | Primary files |
 |---------|---------------|
-| Session settings | `tui/widgets/session_settings.go`, `tui/form/` |
+| Session settings | `tui/screens/sessionsettings/session_settings.go` | Native nested Form pages in per-session docked Panel Deck |
 | Tool confirmation | `tui/widgets/confirmdialog.go` |
 | Agent question form | `tui/widgets/questionform.go` |
 | YOLO confirmation | `tui/widgets/yolodialog.go` |

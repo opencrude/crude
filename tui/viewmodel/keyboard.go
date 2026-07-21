@@ -51,6 +51,9 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		ml.ClearSelection()
 		return m, nil
 	}
+	if m.sessionDeckFocused() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+		return m, m.handleSessionDeckEvent(msg)
+	}
 
 	// Esc always closes the topmost popup first, regardless of focus.
 	if msg.Code == tea.KeyEsc && m.windowManager != nil {
@@ -385,8 +388,6 @@ func (m *App) dispatchOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mode
 	}
 
 	switch m.OverlayState.Current() {
-	case ModeSettings:
-		return m.handleSettingsKey(msg, cmds)
 	case ModeConfirm:
 		return m.handleConfirmKey(msg, cmds)
 	case ModeQuestion:
@@ -403,23 +404,6 @@ func (m *App) dispatchOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mode
 		return m, m.handleCancel(msg)
 	}
 	return m, nil
-}
-
-func (m *App) handleSettingsKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	settings := m.sessionSettings()
-	if settings == nil {
-		return m, tea.Batch(*cmds...)
-	}
-	updated, cmd := settings.Update(msg)
-	if updated != nil {
-		if projection := m.activeSessionProjection(); projection != nil {
-			projection.settings = updated
-		}
-	}
-	if cmd != nil {
-		*cmds = append(*cmds, cmd)
-	}
-	return m, tea.Batch(*cmds...)
 }
 
 func (m *App) handleConfirmKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
@@ -697,10 +681,7 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
 	case input.SettingsOpenEvent:
-		if settings := m.sessionSettings(); settings != nil {
-			settings.SaveSnapshot()
-		}
-		m.setMode(ModeSettings)
+		m.openSessionSettings()
 	case input.RefOpenEvent:
 		m.openReferenceOverlay(e.ID)
 	case input.AttachFilesEvent:
@@ -788,6 +769,9 @@ func (m *App) routeToInputInQuestion(msg tea.KeyPressMsg, cmds *[]tea.Cmd) tea.M
 // we want to preserve.
 func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	if m.sessionDeckFocused() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+		return m, m.handleSessionDeckEvent(msg)
+	}
 
 	switch m.focusTarget() {
 	case FocusEditor:
@@ -802,19 +786,6 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		// accepts tea.PasteMsg. The overlay mode dispatcher is
 		// the single place that knows which overlay is active.
 		switch m.OverlayState.Current() {
-		case ModeSettings:
-			// Route paste to session settings form
-			if settings := m.sessionSettings(); settings != nil {
-				updated, cmd := settings.Update(msg)
-				if updated != nil {
-					if projection := m.activeSessionProjection(); projection != nil {
-						projection.settings = updated
-					}
-				}
-				if cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
 		case ModeFilePicker:
 			// File picker doesn't have a paste target; ignore.
 		default:

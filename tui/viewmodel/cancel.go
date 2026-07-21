@@ -11,14 +11,6 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	if m.OverlayState.Is(ModeSettings) {
-		if settings := m.sessionSettings(); settings != nil {
-			settings.RestoreSnapshot()
-		}
-		m.closeOverlayTab("Session Settings")
-		return nil
-	}
-
 	if m.OverlayState.Is(ModeYolo) {
 		if dialog := m.sessionYoloDialog(); dialog != nil {
 			dialog.Dismiss()

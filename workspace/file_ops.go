@@ -36,7 +36,7 @@ type FileOperationResultMsg struct {
 type FileOperation int
 
 const (
-	FileOpCreate     FileOperation = iota
+	FileOpCreate FileOperation = iota
 	FileOpCreateFolder
 	FileOpRename
 	FileOpDelete

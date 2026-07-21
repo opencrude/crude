@@ -14,6 +14,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
+	"crude/tui/screens/sessionsettings"
 	"crude/tui/scrollbar"
 	settingsui "crude/tui/settings"
 	ttypes "crude/tui/types"
@@ -301,7 +302,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Logger.Info("CONFIG", "saved")
 			m.ModelName = msg.Settings.Model
 			m.LastSettings = msg.Settings
-			m.closeOverlayTab("Session Settings")
 			m.StatusBar.SetInfo("settings saved")
 		}
 	case rendering.ClipboardCopiedMsg:
@@ -381,49 +381,68 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
-	case widgets.SessionSettingsSaveMsg:
+	case sessionsettings.SaveMsg:
 		m.Logger.Info("CONFIG", "session_settings_save")
 		m.StatusBar.SetInfo("saving...")
 		s := msg.Settings
-		sessionID := ""
-		if m.ActiveSession != nil {
-			sessionID = m.ActiveSession.SessionID
+		session, _ := m.sessionProjections.projectionForSettings(msg.Target)
+		if session == nil {
+			m.StatusBar.SetError("Session settings owner is no longer available")
+			break
 		}
+		sessionID := session.SessionID
+		target := msg.Target
 		cmds = append(cmds, func() tea.Msg {
 			err := m.HandleSettingsSaveForSession(sessionID, s)
-			return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
+			return sessionSettingsSaveResultMsg{target: target, settings: s, err: err}
 		})
-	case widgets.SessionSettingsCancelMsg:
-		m.Logger.Info("CONFIG", "session_settings_cancel")
-		if settings := m.sessionSettings(); settings != nil {
-			settings.RestoreSnapshot()
+	case sessionSettingsSaveResultMsg:
+		_, projection := m.sessionProjections.projectionForSettings(msg.target)
+		if msg.err != nil {
+			m.Logger.Error("CONFIG", "save_error", "error", msg.err.Error())
+			m.StatusBar.SetError(msg.err.Error())
+		} else if projection != nil {
+			if msg.target == m.sessionSettings() {
+				m.ModelName = msg.settings.Model
+				m.LastSettings = msg.settings
+			}
+			m.closeProjectionPanel(projection, sessionSettingsPanelID)
+			m.StatusBar.SetInfo("settings saved")
 		}
-		m.closeOverlayTab("Session Settings")
-		m.OverlayState.SetSettingsCategory("")
-	case widgets.SessionSettingsResetMsg:
-		if err := m.ResetSessionSettings(); err != nil {
+	case sessionsettings.CancelMsg:
+		m.Logger.Info("CONFIG", "session_settings_cancel")
+		_, projection := m.sessionProjections.projectionForSettings(msg.Target)
+		if msg.Target != nil {
+			msg.Target.RestoreSnapshot()
+		}
+		m.closeProjectionPanel(projection, sessionSettingsPanelID)
+	case sessionsettings.ResetMsg:
+		session, projection := m.sessionProjections.projectionForSettings(msg.Target)
+		if session == nil {
+			m.StatusBar.SetError("Session settings owner is no longer available")
+		} else if err := m.ResetSessionSettingsForSession(session.SessionID); err != nil {
 			m.StatusBar.SetError("Failed to reset session settings: " + err.Error())
 		} else {
-			m.refreshSessionSettingsProjection(m.ActiveSession)
+			m.refreshSessionSettingsProjection(session)
 			m.StatusBar.SetInfo("Session settings now inherit workspace defaults")
 		}
-		m.closeOverlayTab("Session Settings")
-		m.OverlayState.SetSettingsCategory("")
-	case widgets.SessionSettingsFetchModelsMsg:
+		m.closeProjectionPanel(projection, sessionSettingsPanelID)
+	case sessionsettings.FetchModelsMsg:
 		request := msg
+		target := m.sessionSettings()
 		cmds = append(cmds, func() tea.Msg {
 			models, err := m.HandleFetchModels(request.ProviderID, request.BaseURL, request.APIKey)
-			if err != nil {
-				return widgets.SessionSettingsModelsErrorMsg{ProviderID: request.ProviderID, Error: err.Error()}
-			}
-			return widgets.SessionSettingsModelsMsg{ProviderID: request.ProviderID, Models: models}
+			return sessionSettingsModelsResultMsg{target: target, providerID: request.ProviderID, models: models, err: err}
 		})
-	case widgets.SessionSettingsModelsMsg, widgets.SessionSettingsModelsErrorMsg:
-		if settings := m.sessionSettings(); settings != nil {
-			_, cmd := settings.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
+	case sessionSettingsModelsResultMsg:
+		_, projection := m.sessionProjections.projectionForSettings(msg.target)
+		if projection != nil {
+			if msg.err != nil {
+				msg.target.ApplyModelsError(msg.providerID, msg.err.Error())
+			} else {
+				msg.target.ApplyModels(msg.providerID, msg.models)
 			}
+			projection.deckHost.MarkLayout()
 		}
 	case filetree.FileSelectedMsg:
 		m.Logger.Info("TREE", "file_selected", "path", msg.Path)
@@ -693,15 +712,6 @@ func (m *App) handleOverlayTabClose(index int) tea.Cmd {
 	}
 
 	switch tab.Title {
-	case "Session Settings":
-		if settings := m.sessionSettings(); settings != nil {
-			settings.RestoreSnapshot()
-		}
-		m.Overlay.CloseTab(index)
-		m.syncOverlayMode()
-		if ml := m.activeMsgList(); ml != nil {
-			ml.InvalidateCache()
-		}
 	case "Confirm":
 		if confirm := m.sessionConfirm(); confirm != nil {
 			confirm.Dismiss()

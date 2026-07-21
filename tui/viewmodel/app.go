@@ -30,7 +30,6 @@ type Mode = workspace.Mode
 
 const (
 	ModeChat        = workspace.ModeChat
-	ModeSettings    = workspace.ModeSettings
 	ModeConfirm     = workspace.ModeConfirm
 	ModeQuestion    = workspace.ModeQuestion
 	ModeYolo        = workspace.ModeYolo
@@ -89,10 +88,12 @@ type App struct {
 	// header, status bar) are always re-rendered every frame. The main
 	// content surface uses contentDirty to skip expensive chroma/glamour
 	// when only the editor content changed.
-	mainContentSurf   *surface.Surface // editor/chat/launcher content
-	mainSidebarSurf   *surface.Surface // file tree sidebar + divider
-	mainStatusbarSurf *surface.Surface // status bar separator + content
-	mainHeaderSurf    *surface.Surface // header line + separator
+	mainContentSurf     *surface.Surface // editor/chat/launcher content
+	mainSidebarSurf     *surface.Surface // file tree sidebar + divider
+	mainStatusbarSurf   *surface.Surface // status bar separator + content
+	mainHeaderSurf      *surface.Surface // header line + separator
+	mainSessionDeckSurf *surface.Surface // native per-session dock below messages
+	sessionDeckRect     ui.Rect
 
 	actionRegistry     *ui.ActionRegistry
 	overlayHost        *ui.OverlayHost
@@ -155,21 +156,24 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	sidebarSurf := surface.NewSurface("main-sidebar", th.Tree.Config.DefaultWidth, 1, cell.TransparentBlank())
 	statusbarSurf := surface.NewSurface("main-statusbar", 80, 1, cell.TransparentBlank())
 	headerSurf := surface.NewSurface("main-header", 80, 2, cell.TransparentBlank())
+	deckSurf := surface.NewSurface("session-deck", 80, 1, cell.TransparentBlank())
 	comp.Root().AddChild(contentSurf)
 	comp.Root().AddChild(sidebarSurf)
 	comp.Root().AddChild(statusbarSurf)
 	comp.Root().AddChild(headerSurf)
+	comp.Root().AddChild(deckSurf)
 	contentSurf.SetZOrder(0)
-	sidebarSurf.SetZOrder(1)
-	statusbarSurf.SetZOrder(2)
-	headerSurf.SetZOrder(3)
+	deckSurf.SetZOrder(1)
+	sidebarSurf.SetZOrder(2)
+	statusbarSurf.SetZOrder(3)
+	headerSurf.SetZOrder(4)
 
 	edState := NewEditorState()
 	edState.Editor = editor.New(th)
 
 	registry := ui.DefaultRegistry()
 	im.SetActionRegistry(input.ActionRegistryAdapter{
-		HintForFn: func(id string) string { return registry.HintFor(ui.ActionID(id)) },
+		HintForFn:      func(id string) string { return registry.HintFor(ui.ActionID(id)) },
 		HintLabelForFn: func(id string) string { return registry.HintLabelFor(ui.ActionID(id)) },
 	})
 	overlay := ui.NewOverlayHost(wmgr)
@@ -180,34 +184,35 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	launcher := NewLauncherState(ws.RootPath, ws.ListSessions())
 
 	app := &App{
-		Workspace:          ws,
-		Theme:              th,
-		Input:              im,
-		StatusBar:          sb,
-		Win:                window.New(th),
-		Overlay:            window.New(th),
-		BufferMgr:          bufferMgr,
-		Tree:               tree,
-		FilePicker:         widgets.NewFilePicker(th),
-		LastSettings:       ws.InitialSettings,
-		EditorState:        edState,
-		OverlayState:       NewOverlayState(),
-		LSPPopup:           NewLSPPopupState(),
-		launcher:           launcher,
-		providerPresets:    presets,
-		compositor:         comp,
-		windowManager:      wmgr,
-		eventBus:           eb,
-		renderCtx:          rctx,
-		lastCancelTime:     time.Now(),
-		mainContentSurf:    contentSurf,
-		mainSidebarSurf:    sidebarSurf,
-		mainStatusbarSurf:  statusbarSurf,
-		mainHeaderSurf:     headerSurf,
-		actionRegistry:     registry,
-		overlayHost:        overlay,
-		subPaneProjections: subPaneProjections,
-		sessionProjections: sessionProjections,
+		Workspace:           ws,
+		Theme:               th,
+		Input:               im,
+		StatusBar:           sb,
+		Win:                 window.New(th),
+		Overlay:             window.New(th),
+		BufferMgr:           bufferMgr,
+		Tree:                tree,
+		FilePicker:          widgets.NewFilePicker(th),
+		LastSettings:        ws.InitialSettings,
+		EditorState:         edState,
+		OverlayState:        NewOverlayState(),
+		LSPPopup:            NewLSPPopupState(),
+		launcher:            launcher,
+		providerPresets:     presets,
+		compositor:          comp,
+		windowManager:       wmgr,
+		eventBus:            eb,
+		renderCtx:           rctx,
+		lastCancelTime:      time.Now(),
+		mainContentSurf:     contentSurf,
+		mainSidebarSurf:     sidebarSurf,
+		mainStatusbarSurf:   statusbarSurf,
+		mainHeaderSurf:      headerSurf,
+		mainSessionDeckSurf: deckSurf,
+		actionRegistry:      registry,
+		overlayHost:         overlay,
+		subPaneProjections:  subPaneProjections,
+		sessionProjections:  sessionProjections,
 	}
 
 	app.registerOverlayHandlers()
@@ -481,6 +486,15 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	if projection := m.activeSessionDeck(); projection != nil && projection.deck.IsOpen() {
+		if panel := projection.deck.Active(); panel != nil && panel.ID == sessionSettingsPanelID && projection.settings != nil {
+			projection.settings.RestoreSnapshot()
+		}
+		projection.deck.CloseActive()
+		projection.deckHost.MarkLayout()
+		projection.deckFocused = projection.deck.IsOpen()
+		return m, nil
+	}
 
 	// If there's an active overlay tab, close it first
 	if m.Overlay.IsOpen() {
@@ -574,7 +588,7 @@ func (m *App) openSessionSettings() {
 	}
 	p.settings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
 	p.settings.SaveSnapshot()
-	m.setMode(ModeSettings)
+	m.openSessionSettingsPanel()
 }
 
 func (m *App) openOrchestratorSettings() {

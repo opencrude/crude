@@ -42,15 +42,18 @@ func (m *App) focusTarget() FocusTarget {
 }
 
 func (m *App) unfocus() {
+	m.setSessionDeckFocused(false)
 	m.FocusStack.Clear()
 }
 
 func (m *App) setFocusTree() {
+	m.setSessionDeckFocused(false)
 	m.FocusStack.Clear()
 	m.FocusStack.Push(FocusTree)
 }
 
 func (m *App) setFocusTabBar() {
+	m.setSessionDeckFocused(false)
 	m.FocusStack.Clear()
 	m.FocusStack.Push(FocusTabBar)
 }

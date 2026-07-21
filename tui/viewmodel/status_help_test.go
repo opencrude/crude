@@ -49,23 +49,22 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app.height = 30
 	app.launcher = nil
 	app.ActiveSession = workspace.NewSession("", "", nil, nil)
-	app.setMode(ModeSettings)
+	app.openSessionSettings()
 
-	overlayLines := app.renderOverlayArea()
-	app.syncFormHint()
+	view := app.buildMainView()
 	help := app.contextualHelpView()
-	if !strings.Contains(help, "provider, model, and thinking level") {
+	if !strings.Contains(help, "shift+tab previous") {
 		t.Fatalf("session settings help should move to status: %q", help)
 	}
 	if strings.HasPrefix(help, "[") || strings.HasSuffix(help, "]") {
 		t.Fatalf("status help should use compact status-bar chrome: %q", help)
 	}
 
-	view := app.buildMainView()
-	if strings.Contains(view, "provider, model, and thinking level") {
+	if strings.Contains(view, "shift+tab previous") {
 		t.Fatalf("session settings help must not render inside the main pane:\n%s", view)
 	}
-	wantHeight := app.height - 2 - 3 - len(overlayLines)
+	inputLines := len(strings.Split(app.Input.View(app.width, app.height, false, false, app.SpinFrame), "\n"))
+	wantHeight := app.height - 2 - 3 - app.sessionDeckRect.H - inputLines - 1
 	if wantHeight < 1 {
 		wantHeight = 1
 	}

@@ -25,6 +25,7 @@ type Host struct {
 	screen map[ComponentID]Rect
 	// depth per component (root = 0) for hit-test preference
 	depth    map[ComponentID]int
+	parent   map[ComponentID]ComponentID
 	needsLay bool
 	needsPnt bool
 }
@@ -38,6 +39,7 @@ func NewHost(th *theme.Theme, root Component) *Host {
 		registry: make(map[ComponentID]Component),
 		screen:   make(map[ComponentID]Rect),
 		depth:    make(map[ComponentID]int),
+		parent:   make(map[ComponentID]ComponentID),
 		needsLay: true,
 		needsPnt: true,
 	}
@@ -69,6 +71,7 @@ func (h *Host) SetRoot(root Component) {
 	h.registry = make(map[ComponentID]Component)
 	h.screen = make(map[ComponentID]Rect)
 	h.depth = make(map[ComponentID]int)
+	h.parent = make(map[ComponentID]ComponentID)
 	if root != nil {
 		h.registry[root.ID()] = root
 	}
@@ -135,19 +138,29 @@ func (h *Host) Layout() {
 	h.root.Layout(lctx, Rect{X: 0, Y: 0, W: h.width, H: h.height})
 	h.screen = make(map[ComponentID]Rect)
 	h.depth = make(map[ComponentID]int)
-	h.collectScreen(h.root, 0, 0, 0)
+	h.parent = make(map[ComponentID]ComponentID)
+	h.registry = map[ComponentID]Component{h.root.ID(): h.root}
+	h.collectScreen(h.root, RootID, 0, 0, 0)
+	if h.focused != RootID {
+		if _, ok := h.screen[h.focused]; !ok {
+			h.focused = h.root.ID()
+		}
+	}
 	h.needsLay = false
 }
 
-func (h *Host) collectScreen(c Component, ox, oy, depth int) {
+func (h *Host) collectScreen(c Component, parent ComponentID, ox, oy, depth int) {
 	b := c.Bounds()
 	h.screen[c.ID()] = Rect{X: ox + b.X, Y: oy + b.Y, W: b.W, H: b.H}
 	h.depth[c.ID()] = depth
+	if parent != RootID {
+		h.parent[c.ID()] = parent
+	}
 	if p, ok := c.(Parent); ok {
 		for _, ch := range p.Children() {
 			h.Register(ch)
 			// Child bounds are parent-local; screen = parent origin + child bounds
-			h.collectScreen(ch, ox+b.X, oy+b.Y, depth+1)
+			h.collectScreen(ch, c.ID(), ox+b.X, oy+b.Y, depth+1)
 		}
 	}
 }
@@ -267,6 +280,7 @@ func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {
 		ScreenY: sy,
 	}
 	res := c.Handle(ectx, msg)
+	res = h.bubbleAction(id, sx, sy, res)
 	if res.Invalidate&InvalidateLayout != 0 {
 		h.needsLay = true
 	}
@@ -276,7 +290,48 @@ func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {
 	if res.Invalidate&InvalidateFocus != 0 {
 		h.needsPnt = true
 	}
+	if res.Action != nil && res.Action.ID == "ui.focus" {
+		if h.needsLay {
+			h.Layout()
+		}
+		if focusID, ok := res.Action.Payload.(ComponentID); ok && h.Focus(focusID) {
+			res.Action = nil
+			res.Handled = true
+			res.Invalidate |= InvalidateFocus | InvalidatePaint
+		}
+	}
 	return res
+}
+
+func (h *Host) bubbleAction(source ComponentID, sx, sy int, result EventResult) EventResult {
+	action := result.Action
+	current := source
+	for action != nil {
+		parentID, ok := h.parent[current]
+		if !ok {
+			break
+		}
+		parent := h.registry[parentID]
+		handler, ok := parent.(ActionHandler)
+		if !ok {
+			current = parentID
+			continue
+		}
+		r := h.screen[parentID]
+		response := handler.HandleAction(EventContext{
+			Theme: h.theme, Focused: h.focused == parentID,
+			LocalX: sx - r.X, LocalY: sy - r.Y, ScreenX: sx, ScreenY: sy,
+		}, *action)
+		if !response.Handled {
+			current = parentID
+			continue
+		}
+		result = result.Merge(response)
+		result.Action = response.Action
+		action = response.Action
+		current = parentID
+	}
+	return result
 }
 
 // NeedsPaint reports whether a repaint is pending.

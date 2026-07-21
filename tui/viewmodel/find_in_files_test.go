@@ -94,22 +94,22 @@ func TestClosingFindInFilesPreservesInlineOverlayMode(t *testing.T) {
 	app.RootPath = t.TempDir()
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
-	app.Overlay.OpenTab("Session Settings", "", true)
-	app.OverlayState.Set(ModeSettings)
+	app.Overlay.OpenTab("Confirm", "", true)
+	app.OverlayState.Set(ModeConfirm)
 	app.toggleFindInFiles()
 
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if app.windowManager.Window(findInFilesWindowID) != nil || app.findInFiles != nil {
 		t.Fatal("Esc should close and clean up Find in Files")
 	}
-	if !app.OverlayState.Is(ModeSettings) {
+	if !app.OverlayState.Is(ModeConfirm) {
 		t.Fatalf("closing floating search changed underlying mode to %s", app.OverlayState.Name())
 	}
 }
 
 func TestInlineOverlayFocusWinsOverEditorTreeAndLauncher(t *testing.T) {
 	app := newFullTestApp(t)
-	app.OverlayState.Set(ModeSettings)
+	app.OverlayState.Set(ModeConfirm)
 	app.FocusStack.Push(FocusTree)
 	app.EditorState.ActiveView = "/tmp/main.go"
 	app.EditorState.Editor = editor.NewPreview(app.Theme, "/tmp/main.go", "package main\n", 1)

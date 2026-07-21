@@ -272,6 +272,6 @@ func TestRecordAgentUsageWithoutWorkspaceDBDoesNotPanic(t *testing.T) {
 type nopLogger struct{}
 
 func (nopLogger) Debug(tag, msg string, pairs ...any) {}
-func (nopLogger) Info(tag, msg string, pairs ...any)   {}
-func (nopLogger) Warn(tag, msg string, pairs ...any)   {}
-func (nopLogger) Error(tag, msg string, pairs ...any)  {}
+func (nopLogger) Info(tag, msg string, pairs ...any)  {}
+func (nopLogger) Warn(tag, msg string, pairs ...any)  {}
+func (nopLogger) Error(tag, msg string, pairs ...any) {}

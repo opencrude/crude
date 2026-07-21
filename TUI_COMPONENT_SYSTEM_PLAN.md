@@ -1,8 +1,8 @@
 # TUI Component System and Design Language Plan
 
-Status: Implementation in progress — aligned to this document as of 2026-07-17
+Status: Implementation in progress — aligned to this document as of 2026-07-21
 
-Date: 2026-07-17 (progress last reconciled after performance baselines + agent lifecycle + live Conversation seam)
+Date: 2026-07-21 (progress reconciled after native per-session Panel Deck and session-settings cutover)
 
 Scope: The complete `tui/` layer and every program boundary that supplies data to,
 or receives actions from, the TUI.
@@ -30,15 +30,15 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 1 Rendering foundations | DONE | cell/surface/compositor/scrollbar tests + benches |
 | 2 Component host | DONE | `tui/ui` Host + controls; not yet wired as viewmodel root |
 | 3 Theme engine | PARTIAL | TokenSet + state precedence; dark/light themes; two-theme state gallery + runtime switch; no HC/hot reload |
-| 4 Layout / hit tree | PARTIAL | Constraints, Stack, Host layout/hit; no Flex/Grid/Split/Viewport |
-| 5 Focus / actions / keymaps | PARTIAL | Keyboard dispatch wired to registry.MatchGlobal; palette entries from DefaultRegistry().All(); launcher shortcuts from registry; status hints from registry.HintFor; editor context dispatch wired to registry.MatchContext for file.save/edit.undo/edit.redo; old global switch deleted; paletteCommands slice deleted; welcomeShortcuts() deleted |
+| 4 Layout / hit tree | PARTIAL | Constraints, Stack, Host layout/hit; native PanelDeck is measured below messages and shares Host geometry for paint/input; no Flex/Grid/Split/Viewport |
+| 5 Focus / actions / keymaps | PARTIAL | Host action bubbling replaces shared-form callbacks; keyboard dispatch wired to registry.MatchGlobal; palette/launcher/status hints derive from registry; editor context dispatch uses registry.MatchContext; per-session PanelDeck has one Host input/focus path |
 | 6 Input engine | PARTIAL | TextEdit + RenderFilterLine on palette/launcher/settings/filepicker/list/FIF; tree prompt TextField |
 | 7 Collections / scrollbar | PARTIAL | List (header/sep/disabled), VirtualList, ScrollModel, ScrollbarControl + ANSI bridge |
-| 8 Form system | PARTIAL | FormModel, FieldState, FormField (text/select/cycle/toggle/nav/separator), ActionBar with ButtonVariant; workspace settings form body migrated to FormBody Component; legacy form shell still used in some surfaces |
+| 8 Form system | PARTIAL | FormModel, FieldState, retained Form/FormField (text/select/cycle/toggle/nav/separator), and ActionBar with ButtonVariant; workspace and session settings are native consumers; legacy form shells remain in other surfaces |
 | 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
-| 12 Structured migrations | PARTIAL | FormModel+FormField+ActionBar system built; workspace settings form body migrated to FormBody Component; session settings, question form, YOLO, tool confirmation, picker, FIF, composer, text overlay, launcher form bodies pending |
+| 12 Structured migrations | PARTIAL | Workspace settings and per-session docked session settings are fully native; PanelDeck/Tabs preserve per-session inline panels below messages; question, YOLO, tool confirmation, background detail panels, picker, FIF, composer, text overlay, launcher pending |
 | 13 Shell migrations | OPEN | |
 | 14 Deletion | OPEN | Dual systems still present by design |
 | 15 Stabilization | OPEN | |
@@ -800,6 +800,26 @@ IgnoreAndConsume
 Modal dialogs use `IgnoreAndConsume`. Menus generally use `CloseAndRoute` or
 `CloseAndConsume`. Persistent non-modal windows use `KeepAndRoute` where appropriate.
 
+### 15.4 Docked session panels
+
+`PanelDeck` is distinct from `OverlayHost`. `OverlayHost` owns floating windows,
+dialogs, popovers, and menus. `PanelDeck` owns session-bound surfaces laid out
+between the message viewport and chat input.
+
+Rules:
+
+- Every TUI session projection owns an independent retained deck and Host.
+- Switching sessions restores that session's open panels, active tab, focus,
+  field values, and scroll state.
+- Passive/background panels never steal focus. Attention and blocking are
+  explicit panel policies independent of docked placement.
+- Events for inactive sessions update their owning projection and attention
+  state without switching the active session.
+- Deck content is painted cell-natively into a compositor surface. No
+  component-to-ANSI conversion or feature-local mouse translation is allowed.
+- Tabs and content share Host geometry and typed action bubbling. Components do
+  not call workspace services or receive workspace/session pointers.
+
 ## 16. Architecture Boundary Corrections
 
 The component migration must also remove current layer leaks.
@@ -1071,6 +1091,9 @@ Landed early:
   sidebar, settings, quit) and command-palette metadata
 - OverlayHost `RegisterContentHandler` / `RegisterHoverHandler` typed
   dispatch replacing bespoke popupmouse switches
+- Host action bubbling through mounted `ActionHandler` parents; shared Form and
+  ActionBar controls emit typed actions instead of callback routing
+- Native per-session `PanelDeck` focus/input route below messages
 
 Remaining:
 - Normalized UI event types (still raw tea.Msg in places)
@@ -1172,12 +1195,11 @@ Exit criteria:
 
 Landed early:
 - `form.TextItem` uses `ui.TextEdit` + `HandleTextEditKey` (selection/copy/cut/paste path)
+- Native `FormModel`/`Form`/`FormField`/`ActionBar` used by workspace settings
+  and the nested per-session settings role pages
 
 Remaining:
-- FormModel/FieldState redesign under `tui/ui/form` (or evolved `tui/form`)
-- ActionBar standardization
-- Session/workspace settings still legacy form shell + lipgloss View
-- Question form still specialized widget
+- Migrate question, confirmation, YOLO, and other structured surfaces off their legacy form shells
 
 Objectives:
 
@@ -1381,17 +1403,19 @@ when find/replace switches fully to TextEdit engine.
 
 Order:
 
-1. Workspace settings. PARTIAL (WindowFrameWidget + OverlayHost; native TextField/List/Button shell; legacy form body remains)
-2. Session settings. OPEN (form TextItem engine only)
-3. Question form. OPEN
-4. Tool confirmation. OPEN
-5. YOLO confirmation. OPEN
-6. File/workspace picker. PARTIAL (filter TextEdit + RenderFilterLine)
-7. Find in Files. PARTIAL (query TextEdit + RenderFilterLine + shared scrollbar cell;
+1. Workspace settings. DONE (WindowFrameWidget + OverlayHost; native List + FormModel/Form/FormField + ActionBar; no `tui/form` bridge)
+2. Docked Session Panel foundation. DONE (per-session PanelDeck + native Tabs + Host action bubbling + compositor surface below messages)
+3. Session settings. DONE (native nested Form pages + ActionBar; retained per session; no legacy inline tab, ANSI View, ModeSettings, or `tui/form` dependency)
+4. Question form. OPEN
+5. Tool confirmation. OPEN
+6. YOLO confirmation. OPEN
+7. Background-job/detail panels. OPEN (non-blocking deck panels; no focus steal)
+8. File/workspace picker. PARTIAL (filter TextEdit + RenderFilterLine)
+9. Find in Files. PARTIAL (query TextEdit + RenderFilterLine + shared scrollbar cell;
    search execution/cancellation moved to workspace.ProjectSearchService)
-8. Composer. OPEN
-9. Text/reference editor. OPEN
-10. Launcher. PARTIAL (filter TextEdit + RenderFilterLine + shared scrollbar cell)
+10. Composer. OPEN
+11. Text/reference editor. OPEN
+12. Launcher. PARTIAL (filter TextEdit + RenderFilterLine + shared scrollbar cell)
 
 Exit criteria:
 
@@ -1405,7 +1429,7 @@ Order:
 
 1. Header and status segments.
 2. Contextual hints and shortcut rendering.
-3. Main and overlay tabs.
+3. Main application tabs (Session Panel Deck tabs already native under Phase 12).
 4. File tree and sidebar split pane.
 5. Chat input and reference chips.
 6. Session picker and async rows.
@@ -1473,8 +1497,9 @@ Exit criteria:
 | Tree text prompt | Dialog + PromptField + ActionBar | 11 | ✅ **WindowFrame + TextField + TextEdit** |
 | Dirty/tree delete prompts | Dialog + ActionBar | 11 | ✅ **WindowFrame + ui.Button** (`BuildDirtyCloseFrame`/`BuildTreeDeleteFrame`); ConfirmPrompt/3Button **DELETED** |
 | Diagnostic popup | Popover + Label + severity accent | 11 | ✅ **WindowFrame + ui.Label + severity border/title accent** (`BuildDiagnosticFrame`); `diag-context` + `diag-hover` both migrated |
-| Workspace settings | Window + navigation list + Form + ActionBar | 12 | **WindowFrameWidget + OverlayHost + native TextField/List/Button shell**; category filtering and action messages use retained components; legacy form body remains behind `ui.LegacyWidget` pending shared Form migration |
-| Session settings | Panel/Dialog + nested Form pages | 12 | TextItem TextEdit only |
+| Workspace settings | Window + navigation list + Form + ActionBar | 12 | **WindowFrameWidget + OverlayHost + native List + FormModel/Form/FormField + ActionBar**; category filtering, select loading/commit, keyboard/mouse traversal, and save/cancel all use retained components; no legacy form bridge |
+| Session Panel Deck | DockedPanel + Tabs + active retained Component | 12 | **Native PanelDeck + Tabs + per-session Host**; cell surface below messages; one keyboard/mouse/paste route; inactive sessions retain state without focus steal |
+| Session settings | DockedPanel + nested Form pages + ActionBar | 12 | **Native shared Form system** retained in each session projection; model fetch/save/reset results route to the owning session; legacy widget/form/ModeSettings paths deleted |
 | Question form | Form + option collection + TextField + ActionBar | 12 | open |
 | YOLO/confirmation | Dialog + severity content + ActionBar | 12 | open |
 | File picker | Dialog + Breadcrumbs + SearchField + Tree/List + ActionBar | 12 | **WindowFrameWidget + OverlayHost**; filter TextEdit + RenderFilterLine; legacy body |
@@ -1788,8 +1813,38 @@ This program is complete only when all statements are true:
     - Workspace settings save/cancel messages now use `tui/settings` contracts
       directly; model-list results route through the framed window event target
     - Cell-buffer, search/filter, category navigation, action-bar, and product
-      window-mount tests cover the structured shell; shared form migration remains
-      under Phase 8/12
+       window-mount tests cover the structured shell; shared form migration remains
+       under Phase 8/12
+
+31. Phase 8/12 workspace settings native form cutover:
+    - Replaced `tui/settings` use of `tui/form.Form`/`FormItem` with shared
+      `ui.FormModel`/`FieldState` data for every workspace settings category
+    - Added retained `ui.Form` focus scope and completed `FormField` text,
+      select, cycle, toggle, validation, loading, keyboard, and mouse behavior
+    - Replaced local Save/Cancel wrappers with `ui.ActionBar` primary/secondary
+      variants; action translation remains at the settings screen boundary
+    - Removed the `workspace-settings-legacy-form-body` bypass; settings now has
+      no `tui/form` import or ANSI/Lipgloss form paint path
+    - Added model-reset and product interaction coverage for category rebuild,
+      text persistence, select commit, and ActionBar save emission
+
+32. Phase 5/12 native Session Panel Deck and session settings:
+    - Added shared cell-native `Tabs` and `PanelDeck` controls with passive,
+      interactive, and blocking policies independent of placement
+    - Added Host action bubbling so Form, ActionBar, nested screens, and deck
+      composition use typed actions rather than reusable-control callbacks
+    - Every TUI session projection now owns an independent retained deck/Host;
+      switching sessions restores open panels and interaction state
+    - The compositor mounts the active deck below messages and above chat input;
+      message height is measured around the deck and mouse uses the same Host geometry
+    - Session settings moved to `tui/screens/sessionsettings` with native nested
+      role pages, inherited-value rows, selects, cycles, loading/errors, and ActionBars
+    - Model fetch, save, cancel, and reset results retain their originating
+      session owner even if the user switches sessions before completion
+    - Deleted `tui/widgets/session_settings.go`, its ANSI `View`, legacy
+      `tui/form` state, hand-translated mouse path, ModeSettings, and inline tab
+    - Removed `ModeSettings` from `workspace.Mode` enum; the per-session deck
+      owns panel lifecycles without a global presentation mode
 
 ### Next slices (priority order — stay on plan)
 
@@ -1799,14 +1854,12 @@ This program is complete only when all statements are true:
       tree rows, agent tabs, status snapshots, and LSP/file-tree integration seams
       now cross through neutral contracts and TUI projections.
 
-   2. **Phase 12:** ✅ FormModel+FormField+ActionBar shared form system built
-      (`tui/ui/form_model.go`, `form_field.go`, `action_bar.go`). Workspace settings
-      form body migrated to FormBody Component (replaces LegacyWidget/ANSI bridge).
-      ✅ Editor context dispatch wired to registry.MatchContext for file.save,
-      edit.undo, edit.redo. ✅ Provider presets encapsulated (unexported slice,
-      PresetList() accessor, tests). NEXT: migrate session settings, question form,
-      YOLO, tool confirmation, picker, FIF, composer, text overlay, launcher form
-      bodies.
+   2. **Phase 12:** Workspace and session settings are complete native shared-form
+       consumers. The per-session PanelDeck is the canonical bottom-of-messages
+       home for session-owned interactive/background surfaces; OverlayHost remains
+       exclusively floating. NEXT: migrate the question form, tool confirmation,
+       YOLO, and background-job detail panels into the deck, then picker, FIF,
+       composer, text overlay, and launcher form bodies.
 
    3. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
       and live config hot-reload.

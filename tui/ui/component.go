@@ -205,12 +205,12 @@ type PaintContext struct {
 
 // EventContext is passed to Handle.
 type EventContext struct {
-	Theme    *theme.Theme
-	Focused  bool
-	LocalX   int
-	LocalY   int
-	ScreenX  int
-	ScreenY  int
+	Theme   *theme.Theme
+	Focused bool
+	LocalX  int
+	LocalY  int
+	ScreenX int
+	ScreenY int
 }
 
 // Component is the atomic unit of the retained UI tree.
@@ -222,6 +222,13 @@ type Component interface {
 	Handle(ctx EventContext, msg tea.Msg) EventResult
 	Semantics() Semantics
 	Bounds() Rect
+}
+
+// ActionHandler is implemented by composite screens that translate actions
+// emitted by descendants. Host bubbles actions through mounted parents until
+// one consumes or replaces the action.
+type ActionHandler interface {
+	HandleAction(ctx EventContext, action Action) EventResult
 }
 
 // Base is an embeddable partial implementation.

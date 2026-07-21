@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 )
 
@@ -15,11 +16,13 @@ type Button struct {
 	disabled bool
 	tokens   *TokenSet
 	// fallback colors when tokens is nil
-	fg      cell.Color
-	bg      cell.Color
-	focusFG cell.Color
-	focusBG cell.Color
-	hoverBG cell.Color
+	fg         cell.Color
+	bg         cell.Color
+	focusFG    cell.Color
+	focusBG    cell.Color
+	hoverBG    cell.Color
+	variant    ButtonVariant
+	variantSet bool
 }
 
 // NewButton creates a button.
@@ -42,12 +45,15 @@ func (b *Button) SetTokens(ts *TokenSet) { b.tokens = ts }
 // SetDisabled enables/disables the button.
 func (b *Button) SetDisabled(d bool) { b.disabled = d }
 
+// SetVariant selects the semantic treatment used by ActionBar buttons.
+func (b *Button) SetVariant(v ButtonVariant) { b.variant, b.variantSet = v, true }
+
 // SetLabel updates the visible label.
 func (b *Button) SetLabel(s string) { b.label = s }
 
 // Measure: "[ label ]" width.
 func (b *Button) Measure(_ LayoutContext, cs Constraints) Size {
-	w := len([]rune(b.label)) + 4 // "[ " + label + " ]"
+	w := rendering.VisibleWidth(b.label) + 4 // "[ " + label + " ]"
 	return cs.ClampSize(Size{W: w, H: 1})
 }
 
@@ -65,6 +71,26 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 	attr := cell.Attrs(0)
 	if b.tokens != nil {
 		fg, bg = b.tokens.ButtonColors(st)
+		if st != StateDisabled && b.variantSet {
+			switch b.variant {
+			case VariantPrimary:
+				fg, bg = b.tokens.Color(ColorBg), b.tokens.Color(ColorAccent)
+			case VariantDanger:
+				fg, bg = b.tokens.Color(ColorBg), b.tokens.Color(ColorError)
+			case VariantGhost:
+				fg, bg = b.tokens.Color(ColorAccent), b.tokens.Color(ColorPopupBg)
+			}
+			if st == StateHovered {
+				bg = b.tokens.Color(ColorHover)
+			}
+			if st == StateFocused || st == StatePressed {
+				if b.variant == VariantDanger {
+					bg = b.tokens.Color(ColorError)
+				} else if b.variant != VariantGhost {
+					bg = b.tokens.Color(ColorAccent)
+				}
+			}
+		}
 	} else {
 		switch st {
 		case StateDisabled:
@@ -81,11 +107,7 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	text := "[ " + b.label + " ]"
-	runes := []rune(text)
-	if len(runes) > r.W && r.W > 0 {
-		runes = runes[:r.W]
-	}
-	buf.WriteString(originX+r.X, originY+r.Y, string(runes), fg, bg, attr)
+	buf.WriteString(originX+r.X, originY+r.Y, rendering.TruncateVisual(text, r.W, ""), fg, bg, attr)
 }
 
 func (b *Button) Handle(ctx EventContext, msg tea.Msg) EventResult {

@@ -1,11 +1,8 @@
 package settings
 
 import (
-	"fmt"
-
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/form"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -17,25 +14,22 @@ const (
 	WorkspaceSettingsSearchID  ui.ComponentID = "workspace-settings/search"
 	WorkspaceSettingsListID    ui.ComponentID = "workspace-settings/categories"
 	WorkspaceSettingsFormID    ui.ComponentID = "workspace-settings/form"
+	WorkspaceSettingsActionID  ui.ComponentID = "workspace-settings/actions"
 	WorkspaceSettingsSaveID    ui.ComponentID = "workspace-settings/save"
 	WorkspaceSettingsCancelID  ui.ComponentID = "workspace-settings/cancel"
 )
 
-// WorkspaceSettingsSurface composes the native settings shell around the
-// existing form body. The form body remains a deliberate Phase 8 bridge; the
-// search, category collection, and action bar are native retained controls.
+// WorkspaceSettingsSurface composes native category navigation, the shared
+// FormModel/Form controls, and the shared ActionBar without a legacy bridge.
 type WorkspaceSettingsSurface struct {
 	ui.Base
-	model  *Model
-	tokens *ui.TokenSet
-
+	model      *Model
+	tokens     *ui.TokenSet
 	search     *settingsSearchField
 	categories *settingsCategoryList
-	form       ui.Component
-	save       *settingsButton
-	cancel     *settingsButton
-
-	focus func(ui.ComponentID)
+	form       *ui.Form
+	actions    *ui.ActionBar
+	focus      func(ui.ComponentID)
 }
 
 func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
@@ -43,50 +37,31 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	s := &WorkspaceSettingsSurface{
-		Base:   ui.NewBase(WorkspaceSettingsSurfaceID),
-		model:  model,
-		tokens: tokens,
-	}
-	s.search = &settingsSearchField{
-		Base:  ui.NewBase(WorkspaceSettingsSearchID),
-		field: ui.NewTextField(WorkspaceSettingsSearchID, tokens),
-		owner: s,
-	}
+	s := &WorkspaceSettingsSurface{Base: ui.NewBase(WorkspaceSettingsSurfaceID), model: model, tokens: tokens}
+	s.search = &settingsSearchField{Base: ui.NewBase(WorkspaceSettingsSearchID), field: ui.NewTextField(WorkspaceSettingsSearchID, tokens), owner: s}
 	s.search.field.SetPrompt("> ")
 	s.search.field.SetPlaceholder("Search settings")
 	s.search.field.SetSubmitAction("")
-	s.categories = &settingsCategoryList{
-		Base:  ui.NewBase(WorkspaceSettingsListID),
-		list:  ui.NewList(WorkspaceSettingsListID, tokens),
-		owner: s,
-	}
+	s.categories = &settingsCategoryList{Base: ui.NewBase(WorkspaceSettingsListID), list: ui.NewList(WorkspaceSettingsListID, tokens), owner: s}
 	s.categories.list.SetActivateAction("settings.category.open")
-	s.form = NewFormBody(WorkspaceSettingsFormID, model)
-	s.save = newSettingsButton(s, WorkspaceSettingsSaveID, "Save", func() tea.Msg {
-		return SaveMsg{AppSettings: s.model.AppSettings()}
-	})
-	s.cancel = newSettingsButton(s, WorkspaceSettingsCancelID, "Cancel", func() tea.Msg {
-		return CancelMsg{}
-	})
+	s.form = ui.NewForm(WorkspaceSettingsFormID, nil, "", "", tokens)
+	s.actions = ui.NewActionBar(WorkspaceSettingsActionID, tokens,
+		ui.ActionBarButton{ID: WorkspaceSettingsSaveID, Label: "Save", Action: "settings.save", Variant: ui.VariantPrimary, Enabled: true},
+		ui.ActionBarButton{ID: WorkspaceSettingsCancelID, Label: "Cancel", Action: "settings.cancel", Variant: ui.VariantSecondary, Enabled: true},
+	)
 	s.syncModel()
 	return s
 }
 
 func (s *WorkspaceSettingsSurface) Children() []ui.Component {
-	return []ui.Component{s.search, s.categories, s.form, s.save, s.cancel}
+	return []ui.Component{s.search, s.categories, s.form, s.actions}
 }
-
-func (s *WorkspaceSettingsSurface) SetFocusHandler(fn func(ui.ComponentID)) {
-	s.focus = fn
-}
-
-func (s *WorkspaceSettingsSurface) FocusSearch() { s.focusID(WorkspaceSettingsSearchID) }
-func (s *WorkspaceSettingsSurface) FocusCategories() {
-	s.focusID(WorkspaceSettingsListID)
-}
-func (s *WorkspaceSettingsSurface) FocusForm() { s.focusID(WorkspaceSettingsFormID) }
-
+func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet)           { s.tokens = tokens }
+func (s *WorkspaceSettingsSurface) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
+func (s *WorkspaceSettingsSurface) FocusSearch()                            { s.focusID(WorkspaceSettingsSearchID) }
+func (s *WorkspaceSettingsSurface) FocusCategories()                        { s.focusID(WorkspaceSettingsListID) }
+func (s *WorkspaceSettingsSurface) FocusForm()                              { s.focusID(WorkspaceSettingsFormID) }
+func (s *WorkspaceSettingsSurface) FocusActions()                           { s.focusID(WorkspaceSettingsActionID) }
 func (s *WorkspaceSettingsSurface) focusID(id ui.ComponentID) {
 	if s.focus != nil {
 		s.focus(id)
@@ -95,215 +70,79 @@ func (s *WorkspaceSettingsSurface) focusID(id ui.ComponentID) {
 
 func (s *WorkspaceSettingsSurface) SetModel(model *Model) {
 	s.model = model
-	s.search.owner = s
-	s.categories.owner = s
-	if body, ok := s.form.(*FormBody); ok {
-		body.model = model
-	}
+	s.search.owner, s.categories.owner = s, s
 	s.syncModel()
 }
-
 func (s *WorkspaceSettingsSurface) syncModel() {
 	if s.model == nil {
 		return
 	}
 	s.search.field.SetValue(s.model.searchText())
 	s.categories.syncItems()
+	s.refreshForm()
+}
+func (s *WorkspaceSettingsSurface) refreshForm() {
+	if s.model == nil || s.model.selected < 0 || s.model.selected >= len(s.model.categories) {
+		s.form.SetForm(nil, "", "")
+		return
+	}
+	category := s.model.categories[s.model.selected]
+	s.form.SetForm(category.Form, category.Name, category.Description)
 }
 
 func (s *WorkspaceSettingsSurface) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
 }
-
 func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	leftW := 21
 	if s.model != nil {
 		for _, category := range s.model.categories {
-			if w := rendering.VisibleWidth(category.Name) + 4; w > leftW {
-				leftW = w
-			}
+			leftW = max(leftW, rendering.VisibleWidth(category.Name)+4)
 		}
 	}
 	if maxLeft := r.W / 3; maxLeft > 0 && leftW > maxLeft {
 		leftW = maxLeft
 	}
-	if leftW < 12 {
-		leftW = 12
-	}
-
-	formX := leftW + 3
-	formW := r.W - formX - 1
-	if formW < 1 {
-		formW = 1
-	}
-	formH := r.H - 2
-	if formH < 1 {
-		formH = 1
-	}
-	listH := r.H - 2
-	if listH < 1 {
-		listH = 1
-	}
-
+	leftW = max(12, leftW)
+	formX, formW := leftW+3, max(1, r.W-leftW-4)
 	s.search.Layout(ctx, ui.Rect{X: 0, Y: 0, W: leftW, H: 1})
-	s.categories.Layout(ctx, ui.Rect{X: 0, Y: 2, W: leftW, H: listH})
-	s.form.Layout(ctx, ui.Rect{X: formX, Y: 0, W: formW, H: formH})
-	s.save.Layout(ctx, ui.Rect{X: formX, Y: r.H - 1, W: 10, H: 1})
-	s.cancel.Layout(ctx, ui.Rect{X: formX + 12, Y: r.H - 1, W: 12, H: 1})
-
-	if s.model != nil {
-		s.model.SetSurfaceLayout(settingsLayout{
-			height: r.H, formX: formX, formY: 0,
-		})
-	}
+	s.categories.Layout(ctx, ui.Rect{X: 0, Y: 2, W: leftW, H: max(1, r.H-2)})
+	s.form.Layout(ctx, ui.Rect{X: formX, Y: 0, W: formW, H: max(1, r.H-2)})
+	s.actions.Layout(ctx, ui.Rect{X: formX, Y: max(0, r.H-1), W: formW, H: 1})
 }
-
 func (s *WorkspaceSettingsSurface) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
-
 func (s *WorkspaceSettingsSurface) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult {
 	return ui.EventResult{}
 }
-
+func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	switch action.ID {
+	case "form.select.open":
+		fieldID, _ := action.Payload.(string)
+		return ui.EventResult{Handled: true, Cmd: s.model.OpenSelect(fieldID)}
+	case "form.exit.backward":
+		s.FocusCategories()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	case "form.exit.forward":
+		s.FocusActions()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	case "actionbar.exit.backward":
+		s.form.FocusLast()
+		s.FocusForm()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	case "actionbar.exit.forward":
+		s.FocusSearch()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	case "settings.save":
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return SaveMsg{AppSettings: s.model.AppSettings()} }}
+	case "settings.cancel":
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
+	}
+	return ui.EventResult{Action: &action}
+}
 func (s *WorkspaceSettingsSurface) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Workspace settings"}
 }
-
-type FormBody struct {
-	ui.Base
-	model  *Model
-	tokens *ui.TokenSet
-	fields []*ui.FormField
-}
-
-func NewFormBody(id ui.ComponentID, model *Model) *FormBody {
-	fb := &FormBody{Base: ui.NewBase(id), model: model}
-	fb.rebuild()
-	return fb
-}
-
-func (fb *FormBody) rebuild() {
-	if fb.model == nil {
-		fb.fields = nil
-		return
-	}
-	f := fb.model.currentForm()
-	if f == nil {
-		fb.fields = nil
-		return
-	}
-	items := f.Items()
-	fb.fields = make([]*ui.FormField, len(items))
-	for i, item := range items {
-		if item == nil {
-			continue
-		}
-		fs := &ui.FieldState{
-			ID:    fmt.Sprintf("field-%d", i),
-			Label: item.Label(),
-		}
-		fs.Value = ui.StringValue(item.Value())
-		fs.Initial = fs.Value
-		switch ti := item.(type) {
-		case *form.TextItem:
-			if ti.IsMasked() {
-				fs.Type = ui.FieldPassword
-			} else {
-				fs.Type = ui.FieldText
-			}
-		case *form.SelectItem:
-			fs.Type = ui.FieldSelect
-			for _, o := range ti.Options() {
-				fs.Options = append(fs.Options, ui.FormOption{ID: o.ID, Label: o.Label, Detail: o.Detail})
-			}
-		case *form.CycleItem:
-			fs.Type = ui.FieldCycle
-			for _, v := range ti.Values() {
-				fs.Options = append(fs.Options, ui.FormOption{ID: v, Label: v})
-			}
-		default:
-			fs.Type = ui.FieldText
-		}
-		fb.fields[i] = ui.NewFormField(ui.NewID(fb.ID(), fs.ID), fs, fb.tokens)
-	}
-}
-
-func (fb *FormBody) SetTokens(ts *ui.TokenSet) {
-	fb.tokens = ts
-	for _, f := range fb.fields {
-		if f != nil {
-			f.SetTokens(ts)
-		}
-	}
-}
-
-func (fb *FormBody) Children() []ui.Component {
-	out := make([]ui.Component, 0, len(fb.fields))
-	for _, f := range fb.fields {
-		if f != nil {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-func (fb *FormBody) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
-}
-
-func (fb *FormBody) Layout(ctx ui.LayoutContext, r ui.Rect) {
-	fb.SetBounds(r)
-	y := r.Y
-	for _, f := range fb.fields {
-		if f == nil {
-			continue
-		}
-		h := 1
-		fs := f.FieldState()
-		if fs.Description != "" {
-			h++
-		}
-		if fs.HasErrors() {
-			h += len(fs.Errors)
-		}
-		if y+h > r.Y+r.H {
-			break
-		}
-		f.Layout(ctx, ui.Rect{X: r.X, Y: y, W: r.W, H: h})
-		y += h
-	}
-}
-
-func (fb *FormBody) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
-	for _, f := range fb.fields {
-		if f != nil {
-			ui.PaintTree(f, buf, originX, originY, ctx)
-		}
-	}
-}
-
-func (fb *FormBody) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
-	for _, f := range fb.fields {
-		if f == nil {
-			continue
-		}
-		br := f.Bounds()
-		cctx := ui.EventContext{
-			Theme:   ctx.Theme,
-			Focused: ctx.Focused && br.Contains(ctx.LocalX, ctx.LocalY),
-			LocalX:  ctx.LocalX - br.X,
-			LocalY:  ctx.LocalY - br.Y,
-			ScreenX: ctx.ScreenX,
-			ScreenY: ctx.ScreenY,
-		}
-		if r := f.Handle(cctx, msg); r.Handled {
-			return r
-		}
-	}
-	return ui.EventResult{}
-}
-
-var _ ui.Parent = (*FormBody)(nil)
 
 type settingsSearchField struct {
 	ui.Base
@@ -314,30 +153,27 @@ type settingsSearchField struct {
 func (s *settingsSearchField) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return s.field.Measure(ctx, cs)
 }
-
 func (s *settingsSearchField) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	s.field.Layout(ctx, r)
+	s.field.Layout(ctx, ui.Rect{W: r.W, H: r.H})
 }
-
-func (s *settingsSearchField) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
-	s.field.Paint(buf, originX, originY, ctx)
+func (s *settingsSearchField) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
+	s.field.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
 }
-
 func (s *settingsSearchField) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 	if s.owner == nil || s.owner.model == nil {
 		return s.field.Handle(ctx, msg)
 	}
 	result := s.field.Handle(ctx, msg)
 	s.owner.model.SetSearchActive(true)
-
-	switch key := msg.(type) {
-	case tea.KeyPressMsg:
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyEnter:
 			s.owner.model.SetSearchQuery(s.field.Value())
 			s.owner.model.EnterForm()
 			s.owner.categories.syncItems()
+			s.owner.refreshForm()
+			s.owner.form.FocusFirst()
 			s.owner.FocusForm()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
 		case tea.KeyTab:
@@ -345,6 +181,7 @@ func (s *settingsSearchField) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventR
 				s.owner.model.SetSearchQuery(s.field.Value())
 				s.owner.model.EnterForm()
 				s.owner.categories.syncItems()
+				s.owner.refreshForm()
 				s.owner.FocusForm()
 				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
 			}
@@ -353,18 +190,18 @@ func (s *settingsSearchField) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventR
 				s.field.SetValue("")
 				s.owner.model.SetSearchQuery("")
 				s.owner.categories.syncItems()
+				s.owner.refreshForm()
 				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 			}
 		}
-	case tea.MouseClickMsg, tea.PasteMsg:
-		// The value is synchronized below after the native edit handles the event.
 	}
 	s.owner.model.SetSearchQuery(s.field.Value())
 	s.owner.categories.syncItems()
+	s.owner.refreshForm()
 	return result
 }
-
-func (s *settingsSearchField) Semantics() ui.Semantics { return s.field.Semantics() }
+func (s *settingsSearchField) Semantics() ui.Semantics       { return s.field.Semantics() }
+func (s *settingsSearchField) SetTokens(tokens *ui.TokenSet) { s.field.SetTokens(tokens) }
 
 type settingsCategoryList struct {
 	ui.Base
@@ -375,90 +212,49 @@ type settingsCategoryList struct {
 func (s *settingsCategoryList) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return s.list.Measure(ctx, cs)
 }
-
 func (s *settingsCategoryList) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	s.list.Layout(ctx, r)
+	s.list.Layout(ctx, ui.Rect{W: r.W, H: r.H})
 }
-
-func (s *settingsCategoryList) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
-	s.list.Paint(buf, originX, originY, ctx)
+func (s *settingsCategoryList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
+	s.list.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
 }
-
 func (s *settingsCategoryList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 	result := s.list.Handle(ctx, msg)
 	if s.owner == nil || s.owner.model == nil {
 		return result
 	}
 	if selected, ok := s.list.Selected(); ok {
-		if index, ok := selected.Payload.(int); ok {
+		if index, ok := selected.Payload.(int); ok && index != s.owner.model.SelectedCategory() {
 			s.owner.model.SelectCategory(index)
+			s.owner.refreshForm()
 		}
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		if (key.Code == tea.KeyEnter || key.Code == tea.KeyTab || key.Code == tea.KeyRight) && !key.Mod.Contains(tea.ModShift) {
-			s.owner.model.EnterForm()
-			s.owner.FocusForm()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
-		}
+	if key, ok := msg.(tea.KeyPressMsg); ok && (key.Code == tea.KeyEnter || key.Code == tea.KeyTab || key.Code == tea.KeyRight) && !key.Mod.Contains(tea.ModShift) {
+		s.owner.model.EnterForm()
+		s.owner.refreshForm()
+		s.owner.form.FocusFirst()
+		s.owner.FocusForm()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
 	}
 	return result
 }
-
-func (s *settingsCategoryList) Semantics() ui.Semantics { return s.list.Semantics() }
-
+func (s *settingsCategoryList) Semantics() ui.Semantics       { return s.list.Semantics() }
+func (s *settingsCategoryList) SetTokens(tokens *ui.TokenSet) { s.list.SetTokens(tokens) }
 func (s *settingsCategoryList) syncItems() {
 	if s.owner == nil || s.owner.model == nil {
 		return
 	}
 	items := s.owner.model.CategoryItems()
 	s.list.SetItems(items)
-	selected := s.owner.model.SelectedCategory()
-	for i, item := range items {
-		if index, ok := item.Payload.(int); ok && index == selected {
-			s.list.SelectIndex(i)
+	for index, item := range items {
+		if selected, ok := item.Payload.(int); ok && selected == s.owner.model.SelectedCategory() {
+			s.list.SelectIndex(index)
 			break
 		}
 	}
 }
 
-type settingsButton struct {
-	ui.Base
-	button *ui.Button
-	msg    func() tea.Msg
-}
-
-func newSettingsButton(owner *WorkspaceSettingsSurface, id ui.ComponentID, label string, msg func() tea.Msg) *settingsButton {
-	button := ui.NewButton(id, label, string(id)+".activate")
-	button.SetTokens(owner.tokens)
-	return &settingsButton{Base: ui.NewBase(id), button: button, msg: msg}
-}
-
-func (s *settingsButton) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return s.button.Measure(ctx, cs)
-}
-
-func (s *settingsButton) Layout(ctx ui.LayoutContext, r ui.Rect) {
-	s.SetBounds(r)
-	s.button.Layout(ctx, r)
-}
-
-func (s *settingsButton) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
-	s.button.Paint(buf, originX, originY, ctx)
-}
-
-func (s *settingsButton) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
-	result := s.button.Handle(ctx, msg)
-	if result.Action == nil || s.msg == nil {
-		return result
-	}
-	result.Action = nil
-	result.Cmd = s.msg
-	return result
-}
-
-func (s *settingsButton) Semantics() ui.Semantics { return s.button.Semantics() }
-
 var _ ui.Component = (*WorkspaceSettingsSurface)(nil)
 var _ ui.Parent = (*WorkspaceSettingsSurface)(nil)
-var _ ui.Parent = (*FormBody)(nil)
+var _ ui.ActionHandler = (*WorkspaceSettingsSurface)(nil)

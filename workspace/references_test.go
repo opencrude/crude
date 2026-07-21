@@ -360,7 +360,7 @@ func TestExtractLabelIndex(t *testing.T) {
 		{"[Reference4]", 4},
 		{"[Custom Label]", 0},     // no trailing digits
 		{"", 0},                   // empty
-		{"[no-number]", 0},       // no number
+		{"[no-number]", 0},        // no number
 		{"[Pasted Text0]", 0},     // zero
 		{"[Pasted Text99]", 99},   // two-digit
 		{"[Pasted Text100]", 100}, // three-digit

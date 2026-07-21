@@ -14,7 +14,6 @@ type Mode int
 
 const (
 	ModeChat Mode = iota
-	ModeSettings
 	ModeConfirm
 	ModeQuestion
 	ModeYolo
@@ -26,8 +25,6 @@ func ModeName(m Mode) string {
 	switch m {
 	case ModeChat:
 		return "chat"
-	case ModeSettings:
-		return "settings"
 	case ModeConfirm:
 		return "confirm"
 	case ModeQuestion:

@@ -22,6 +22,7 @@ const (
 	regionSidebar
 	regionSidebarDivider
 	regionTabBar
+	regionSessionDeck
 	regionOverlay
 	regionEditor
 	regionInput
@@ -64,9 +65,12 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 	}
 
 	layout := m.computeLayout()
+	if m.sessionDeckRect.Contains(x, y) {
+		return regionSessionDeck
+	}
 
 	if m.Overlay.IsOpen() && !isWheel {
-		overlayStartLine := m.ChatAreaHeight + 3
+		overlayStartLine := m.ChatAreaHeight + 3 + m.sessionDeckRect.H
 		if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
 			overlayStartLine += 2
 		}
@@ -109,7 +113,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		if m.Overlay.IsOpen() {
 			overlayExtra = len(m.renderOverlayArea())
 		}
-		inputStartLine := m.ChatAreaHeight + 4 + tabBarExtra + overlayExtra
+		inputStartLine := m.ChatAreaHeight + 4 + tabBarExtra + m.sessionDeckRect.H + overlayExtra
 		if y >= inputStartLine {
 			return regionInput
 		}
@@ -262,6 +266,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	switch region {
 	case regionSidebar:
+		m.setSessionDeckFocused(false)
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTree)
 		localY := mouse.Y - m.Tree.YOffset
@@ -280,6 +285,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case regionSidebarDivider:
+		m.setSessionDeckFocused(false)
 		if msg.Button == tea.MouseLeft {
 			m.Tree.Resizing = true
 			m.Tree.ResizeStartX = mouse.X
@@ -288,6 +294,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case regionTabBar:
+		m.setSessionDeckFocused(false)
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTabBar)
 		adjustedX := mouse.X
@@ -328,16 +335,22 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.routeChatMouse(msg, mouse, msg.Button == tea.MouseLeft)...)
 		return m, tea.Batch(cmds...)
 
+	case regionSessionDeck:
+		m.setSessionDeckFocused(true)
+		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
+
 	case regionOverlay:
 		return m.dispatchOverlayMouseClick(msg)
 
 	case regionStatusBar:
+		m.setSessionDeckFocused(false)
 		// Left-click on the status bar is a no-op (it's a passive
 		// display, not an interactive region). Right-click goes
 		// through dispatchMouseRightClick instead.
 		return m, nil
 
 	case regionLauncher:
+		m.setSessionDeckFocused(false)
 		// Launcher click: hit-test the screen Y to find the rendered
 		// line, then translate that to a flat item index. Single-click
 		// selects the item; double-click activates it. We use the
@@ -359,7 +372,7 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 	var cmds []tea.Cmd
 	mouse := msg.Mouse()
 
-	overlayStartLine := m.ChatAreaHeight + 3
+	overlayStartLine := m.ChatAreaHeight + 3 + m.sessionDeckRect.H
 	if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
 		overlayStartLine += 2
 	}
@@ -441,29 +454,6 @@ func (m *App) dispatchOverlayMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 		}
 	}
 
-	// Session settings overlay: clicks on form items focus that item.
-	if activeTab != nil && activeTab.Title == "Session Settings" {
-		settings := m.sessionSettings()
-		if settings == nil {
-			return m, nil
-		}
-		sidebarW := 0
-		if m.Tree.Visible && m.Tree.Model != nil {
-			sidebarW = m.Tree.Width + 1
-		}
-		local := tea.MouseClickMsg{
-			X: mouse.X - sidebarW - m.Theme.Spacing.PadLR,
-			// Overlay rendering strips Form.View's leading blank row.
-			Y:      mouse.Y - contentStartLine + 1,
-			Button: msg.Button,
-		}
-		updated, cmd := settings.Update(local)
-		if projection := m.activeSessionProjection(); projection != nil {
-			projection.settings = updated
-		}
-		return m, cmd
-	}
-
 	return m, nil
 }
 
@@ -528,18 +518,6 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
-	if m.Overlay.IsOpen() {
-		if activeTab := m.Overlay.ActiveTab(); activeTab != nil && activeTab.Title == "Session Settings" {
-			if settings := m.sessionSettings(); settings != nil {
-				updated, cmd := settings.Update(msg)
-				if projection := m.activeSessionProjection(); projection != nil {
-					projection.settings = updated
-				}
-				return m, cmd
-			}
-		}
-	}
-
 	region := m.classifyMouse(msg.X, msg.Y, true)
 
 	switch region {
@@ -560,6 +538,9 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tea.Batch(cmds...)
+
+	case regionSessionDeck:
+		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
 
 	case regionLauncher:
 		layout := m.computeLayout()
@@ -699,6 +680,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 
 	// Mouse is outside the tab bar — clear the hover state.
 	m.Win.Hover.Clear()
+	if m.sessionDeckRect.Contains(mouse.X, mouse.Y) {
+		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
+	}
 
 	// Overlay hover: forward mouse motion to the active overlay's
 	// interactive element (currently only the Confirm dialog's
@@ -710,7 +694,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// region — the classifyMouse() call would also be expensive
 	// for every motion event, so we use a cheap bounds check first.
 	if m.Overlay.IsOpen() {
-		overlayStartLine := m.ChatAreaHeight + 3
+		overlayStartLine := m.ChatAreaHeight + 3 + m.sessionDeckRect.H
 		if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
 			overlayStartLine += 2
 		}
@@ -815,6 +799,9 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 	region := m.classifyMouse(mouse.X, mouse.Y, false)
 
 	switch region {
+	case regionSessionDeck:
+		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
+
 	case regionEditor:
 		cmd := m.routeEditorMouse(msg)
 		if cmd != nil {
