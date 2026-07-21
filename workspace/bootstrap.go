@@ -12,6 +12,7 @@ package workspace
 // session internals directly.
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -492,6 +493,13 @@ type UsageSnapshot struct {
 
 // RecordAgentUsage applies a provider usage event to its owning session rather
 // than whichever session happens to be visible.
+//
+// After updating the in-memory session cost, the cumulative cost is pushed
+// live to the workspace_sessions registry (the push path of Phase 2's
+// "UpdateSessionMeta for live updates"). The heavier full-row sync
+// (turn_count, message_count, prompts) happens at session close via
+// SyncSessionMeta — those fields are owned by the session DB and would
+// require re-opening it to read here.
 func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, bool) {
 	sess := w.sessionForAgent(agentID)
 	if sess == nil {
@@ -524,6 +532,13 @@ func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, b
 		}
 	default:
 		return UsageSnapshot{}, false
+	}
+	// Push cumulative cost to the workspace registry (live update).
+	if w.WorkspaceDB != nil && sess.SessionID != "" {
+		if err := w.WorkspaceDB.UpdateSessionCost(sess.SessionID, sess.SessionCost); err != nil {
+			w.Logger.Warn("WORKSPACE", "session_cost_sync_failed",
+				"id", sess.SessionID, "error", err.Error())
+		}
 	}
 	return usageSnapshot(sess), true
 }
@@ -709,6 +724,7 @@ func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.Session
 	if err != nil {
 		return r
 	}
+	totalCost, _ := sessiondb.GetCumulativeCost(db)
 	// Preserve the model/provider from the registry if the DB is empty.
 	if m.Model == "" {
 		m.Model = r.Model
@@ -716,6 +732,10 @@ func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.Session
 	if m.Provider == "" {
 		m.Provider = r.Provider
 	}
+	// Write enriched metadata back to workspace_sessions so the registry
+	// stays self-consistent without requiring enrichment on every list.
+	_ = w.WorkspaceDB.UpdateSessionMeta(r.ID, m.TurnCount, m.MessageCount,
+		nullStr(&m.FirstPrompt), nullStr(&m.LastPrompt), totalCost)
 	return m
 }
 
@@ -879,4 +899,11 @@ func buildToolNameIndex(msgs []sessiondb.MessageWithMeta) map[string]string {
 		}
 	}
 	return index
+}
+
+func nullStr(ns *sql.NullString) string {
+	if ns == nil || !ns.Valid {
+		return ""
+	}
+	return ns.String
 }

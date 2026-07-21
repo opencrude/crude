@@ -187,7 +187,7 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 	}
 
 	if len(presets) == 0 {
-		for _, p := range provider.Presets {
+		for _, p := range provider.PresetList() {
 			presets = append(presets, types.ProviderPreset{
 				ID: p.ID, Name: p.Name, HelpText: p.HelpText, BaseURL: p.BaseURL,
 			})

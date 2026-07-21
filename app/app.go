@@ -154,8 +154,8 @@ func (a *App) Run() {
 }
 
 func providerPresets() []tui.ProviderPreset {
-	out := make([]tui.ProviderPreset, 0, len(provider.Presets))
-	for _, p := range provider.Presets {
+	out := make([]tui.ProviderPreset, 0, len(provider.PresetList()))
+	for _, p := range provider.PresetList() {
 		out = append(out, tui.ProviderPreset{
 			ID: p.ID, Name: p.Name, HelpText: p.HelpText, BaseURL: p.BaseURL,
 		})

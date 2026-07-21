@@ -123,7 +123,7 @@ type Preset struct {
 	ExtraBody  map[string]any
 }
 
-var Presets = []Preset{
+var presets = []Preset{
 	{
 		ID:         "openrouter",
 		Name:       "OpenRouter",
@@ -232,8 +232,14 @@ var Presets = []Preset{
 	},
 }
 
+func PresetList() []Preset {
+	out := make([]Preset, len(presets))
+	copy(out, presets)
+	return out
+}
+
 func GetPreset(id string) *Preset {
-	for _, p := range Presets {
+	for _, p := range presets {
 		if p.ID == id {
 			return &p
 		}
@@ -279,16 +285,16 @@ func FromPreset(presetID, apiKey, customBaseURL string) *Provider {
 }
 
 func PresetNames() []string {
-	names := make([]string, len(Presets))
-	for i, p := range Presets {
+	names := make([]string, len(presets))
+	for i, p := range presets {
 		names[i] = p.Name
 	}
 	return names
 }
 
 func PresetIDs() []string {
-	ids := make([]string, len(Presets))
-	for i, p := range Presets {
+	ids := make([]string, len(presets))
+	for i, p := range presets {
 		ids[i] = p.ID
 	}
 	return ids

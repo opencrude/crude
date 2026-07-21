@@ -829,3 +829,12 @@ func (m Form) FocusedNavTarget() (string, bool) {
 	}
 	return "", false
 }
+
+func (m Form) Items() []FormItem { return m.items }
+
+func (m Form) ItemAt(idx int) FormItem {
+	if idx >= 0 && idx < len(m.items) {
+		return m.items[idx]
+	}
+	return nil
+}

@@ -304,21 +304,9 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 		return e.closeCmd()
 	default:
 		switch key.String() {
-		case "ctrl+s":
-			e.Save()
-		case "ctrl+z":
-			e.undo()
-		case "ctrl+y":
-			e.redo()
 		case "ctrl+a":
 			e.selectAll()
 		case "ctrl+x":
-			// Cut: copy the current selection to the clipboard
-			// and delete it. If there's no selection, do nothing
-			// (cut on empty buffer is a no-op — matches VSCode /
-			// JetBrains and avoids accidentally clearing the
-			// whole file when the user hits Ctrl+X with no
-			// selection).
 			if e.HasSelection() {
 				text := e.SelectedText()
 				e.DeleteSelection()

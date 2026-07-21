@@ -161,6 +161,17 @@ func (wdb *WorkspaceDB) UpdateSessionMeta(sessionID string, turnCount, messageCo
 	return err
 }
 
+// UpdateSessionCost performs a lightweight live update of the cumulative
+// session cost only. This is the push path: the workspace already tracks
+// SessionCost in memory (updated by RecordAgentUsage) and pushes it here
+// without re-opening the per-session database.
+func (wdb *WorkspaceDB) UpdateSessionCost(sessionID string, totalCost float64) error {
+	_, err := wdb.DB.Exec(`
+		UPDATE workspace_sessions SET total_cost = ? WHERE session_id = ?
+	`, totalCost, sessionID)
+	return err
+}
+
 // ListSessions returns all sessions registered in this workspace, most recent first.
 func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 	rows, err := wdb.DB.Query(`
@@ -188,6 +199,52 @@ func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 		metas = append(metas, m)
 	}
 	return metas, rows.Err()
+}
+
+// SyncSessionMeta reads metadata from the per-session DB and writes it back
+// to the workspace_sessions registry row, keeping the registry self-consistent
+// without requiring enrichment on every ListSessions call.
+//
+// This is the pull path: it reads the session DB (the source of truth for
+// turn_count, message_count, first/last prompt, and cumulative cost) and
+// mirrors the values into the workspace registry. Used at session close and
+// during enrichment. For live cost updates during a running session, prefer
+// UpdateSessionCost (the push path) to avoid re-opening the session DB.
+func (wdb *WorkspaceDB) SyncSessionMeta(projectDir, sessionID string) error {
+	if wdb == nil || wdb.DB == nil {
+		return nil
+	}
+	dbPath, err := SessionDBPath(projectDir, sessionID)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		return err
+	}
+	sdb, err := sessiondb.OpenAndMigrate(dbPath)
+	if err != nil {
+		return err
+	}
+	defer sdb.Close()
+	return wdb.syncSessionMetaFromDB(sdb, sessionID)
+}
+
+// syncSessionMetaFromDB is the testable core of SyncSessionMeta: it reads
+// metadata + cumulative cost from an already-open session DB and writes the
+// merged row back to the workspace_sessions registry. Split out so tests can
+// exercise the read/write contract without going through the workspace
+// folder layout.
+func (wdb *WorkspaceDB) syncSessionMetaFromDB(sdb *sql.DB, sessionID string) error {
+	meta, err := sessiondb.GetMeta(sdb)
+	if err != nil {
+		return err
+	}
+	totalCost, err := sessiondb.GetCumulativeCost(sdb)
+	if err != nil {
+		return err
+	}
+	return wdb.UpdateSessionMeta(sessionID, meta.TurnCount, meta.MessageCount,
+		nullStr(&meta.FirstPrompt), nullStr(&meta.LastPrompt), totalCost)
 }
 
 // Close shuts down the workspace database, flushing any pending writes.

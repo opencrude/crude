@@ -291,6 +291,7 @@ func (w *Workspace) CloseAllSessions() {
 			fs.backend.Close()
 		}
 		if w.WorkspaceDB != nil && fs != nil && fs.SessionID != "" {
+			_ = w.WorkspaceDB.SyncSessionMeta(w.RootPath, fs.SessionID)
 			_ = w.WorkspaceDB.CloseSession(fs.SessionID)
 		}
 	}

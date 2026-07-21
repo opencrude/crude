@@ -1,13 +1,15 @@
 package settings
 
 import (
+	"fmt"
+
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/form"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widget"
 )
 
 const (
@@ -29,7 +31,7 @@ type WorkspaceSettingsSurface struct {
 
 	search     *settingsSearchField
 	categories *settingsCategoryList
-	form       *ui.LegacyWidget
+	form       ui.Component
 	save       *settingsButton
 	cancel     *settingsButton
 
@@ -60,7 +62,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 		owner: s,
 	}
 	s.categories.list.SetActivateAction("settings.category.open")
-	s.form = ui.NewLegacyWidget(WorkspaceSettingsFormID, &settingsFormBody{model: model})
+	s.form = NewFormBody(WorkspaceSettingsFormID, model)
 	s.save = newSettingsButton(s, WorkspaceSettingsSaveID, "Save", func() tea.Msg {
 		return SaveMsg{AppSettings: s.model.AppSettings()}
 	})
@@ -95,7 +97,7 @@ func (s *WorkspaceSettingsSurface) SetModel(model *Model) {
 	s.model = model
 	s.search.owner = s
 	s.categories.owner = s
-	if body, ok := s.form.Inner().(*settingsFormBody); ok {
+	if body, ok := s.form.(*FormBody); ok {
 		body.model = model
 	}
 	s.syncModel()
@@ -167,22 +169,141 @@ func (s *WorkspaceSettingsSurface) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Workspace settings"}
 }
 
-type settingsFormBody struct {
-	model *Model
+type FormBody struct {
+	ui.Base
+	model  *Model
+	tokens *ui.TokenSet
+	fields []*ui.FormField
 }
 
-func (f *settingsFormBody) Measure(availW, availH int) (int, int) { return availW, availH }
+func NewFormBody(id ui.ComponentID, model *Model) *FormBody {
+	fb := &FormBody{Base: ui.NewBase(id), model: model}
+	fb.rebuild()
+	return fb
+}
 
-func (f *settingsFormBody) Render(surf *surface.Surface, ctx *widget.RenderContext) {
-	if f == nil || f.model == nil || surf == nil {
+func (fb *FormBody) rebuild() {
+	if fb.model == nil {
+		fb.fields = nil
 		return
 	}
-	spin := 0
-	if ctx != nil {
-		spin = ctx.SpinFrame
+	f := fb.model.currentForm()
+	if f == nil {
+		fb.fields = nil
+		return
 	}
-	rendering.RenderToSurface(surf, f.model.FormView(surf.Width(), spin))
+	items := f.Items()
+	fb.fields = make([]*ui.FormField, len(items))
+	for i, item := range items {
+		if item == nil {
+			continue
+		}
+		fs := &ui.FieldState{
+			ID:    fmt.Sprintf("field-%d", i),
+			Label: item.Label(),
+		}
+		fs.Value = ui.StringValue(item.Value())
+		fs.Initial = fs.Value
+		switch ti := item.(type) {
+		case *form.TextItem:
+			if ti.IsMasked() {
+				fs.Type = ui.FieldPassword
+			} else {
+				fs.Type = ui.FieldText
+			}
+		case *form.SelectItem:
+			fs.Type = ui.FieldSelect
+			for _, o := range ti.Options() {
+				fs.Options = append(fs.Options, ui.FormOption{ID: o.ID, Label: o.Label, Detail: o.Detail})
+			}
+		case *form.CycleItem:
+			fs.Type = ui.FieldCycle
+			for _, v := range ti.Values() {
+				fs.Options = append(fs.Options, ui.FormOption{ID: v, Label: v})
+			}
+		default:
+			fs.Type = ui.FieldText
+		}
+		fb.fields[i] = ui.NewFormField(ui.NewID(fb.ID(), fs.ID), fs, fb.tokens)
+	}
 }
+
+func (fb *FormBody) SetTokens(ts *ui.TokenSet) {
+	fb.tokens = ts
+	for _, f := range fb.fields {
+		if f != nil {
+			f.SetTokens(ts)
+		}
+	}
+}
+
+func (fb *FormBody) Children() []ui.Component {
+	out := make([]ui.Component, 0, len(fb.fields))
+	for _, f := range fb.fields {
+		if f != nil {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (fb *FormBody) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
+}
+
+func (fb *FormBody) Layout(ctx ui.LayoutContext, r ui.Rect) {
+	fb.SetBounds(r)
+	y := r.Y
+	for _, f := range fb.fields {
+		if f == nil {
+			continue
+		}
+		h := 1
+		fs := f.FieldState()
+		if fs.Description != "" {
+			h++
+		}
+		if fs.HasErrors() {
+			h += len(fs.Errors)
+		}
+		if y+h > r.Y+r.H {
+			break
+		}
+		f.Layout(ctx, ui.Rect{X: r.X, Y: y, W: r.W, H: h})
+		y += h
+	}
+}
+
+func (fb *FormBody) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
+	for _, f := range fb.fields {
+		if f != nil {
+			ui.PaintTree(f, buf, originX, originY, ctx)
+		}
+	}
+}
+
+func (fb *FormBody) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+	for _, f := range fb.fields {
+		if f == nil {
+			continue
+		}
+		br := f.Bounds()
+		cctx := ui.EventContext{
+			Theme:   ctx.Theme,
+			Focused: ctx.Focused && br.Contains(ctx.LocalX, ctx.LocalY),
+			LocalX:  ctx.LocalX - br.X,
+			LocalY:  ctx.LocalY - br.Y,
+			ScreenX: ctx.ScreenX,
+			ScreenY: ctx.ScreenY,
+		}
+		if r := f.Handle(cctx, msg); r.Handled {
+			return r
+		}
+	}
+	return ui.EventResult{}
+}
+
+var _ ui.Parent = (*FormBody)(nil)
 
 type settingsSearchField struct {
 	ui.Base
@@ -340,4 +461,4 @@ func (s *settingsButton) Semantics() ui.Semantics { return s.button.Semantics() 
 
 var _ ui.Component = (*WorkspaceSettingsSurface)(nil)
 var _ ui.Parent = (*WorkspaceSettingsSurface)(nil)
-var _ widget.Widget = (*settingsFormBody)(nil)
+var _ ui.Parent = (*FormBody)(nil)

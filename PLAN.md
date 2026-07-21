@@ -61,35 +61,35 @@ Communication: TUI → Workspace via method calls. Workspace → TUI via event b
 - [x] `go build ./...` passes
 - [x] `go test ./...` passes (safety test failures fixed)
 
-**Kept for Phase 4:** `OnNewSession` and `OnResumeSession` are still callback fields on Workspace. They carry backend knowledge (session.Config, homeDir, EventSender) that the viewmodel doesn't have.
+**Removed in Phase 4:** `OnNewSession` and `OnResumeSession` callbacks.
 
-### Phase 2 — Workspace-scoped session registry enrichment ⬜ TODO
-- [ ] Enrich `workspace_sessions` table: add project_name, turn_count, first_prompt, last_prompt, message_count
-- [ ] WorkspaceDB.RegisterSession stores richer metadata
-- [ ] WorkspaceDB.UpdateSessionMeta for live updates
-- [ ] Workspace.enrichSessionMeta reads from session DB for full metadata
+### Phase 2 — Workspace-scoped session registry enrichment ✅ DONE
+- [x] Enrich `workspace_sessions` table: project_name, turn_count, first_prompt, last_prompt, message_count (schema:83-107)
+- [x] WorkspaceDB.RegisterSession stores richer metadata (db.go:134)
+- [x] WorkspaceDB.UpdateSessionMeta wired for live updates (db.go:150 + SyncSessionMeta, CloseAllSessions, enrichSessionMeta)
+- [x] Workspace.enrichSessionMeta reads from session DB for full metadata + syncs back to registry (bootstrap.go:680)
 
-### Phase 3 — Session storage under workspace folder ⬜ TODO
-- [ ] Session DBs live under `~/.crude/workspaces/<hash>/sessions/`
-- [ ] Session logs/reports live under `~/.crude/workspaces/<hash>/sessions/<id>/`
-- [ ] Legacy fallback: if session DB not found in workspace, look in `~/.crude/sessions/`
-- [ ] New sessions always created under workspace folder
+### Phase 3 — Session storage under workspace folder ✅ DONE
+- [x] Session DBs live under `~/.crude/workspaces/<hash>/sessions/` (paths.go:88-109)
+- [x] Session logs/reports live under `~/.crude/workspaces/<hash>/sessions/<id>/` (SessionDir, paths.go:88-98)
+- [x] Legacy fallback: if session DB not found in workspace, look in `~/.crude/sessions/` (bootstrap.go:108-116)
+- [x] New sessions always created under workspace folder (bootstrap.go:69-70)
 
-### Phase 4 — TUI decoupling + launcher becomes workspace selector ✅ DONE (partial)
+### Phase 4 — TUI decoupling + launcher becomes workspace selector ✅ DONE
 - [x] Remove OnNewSession/OnResumeSession callbacks from Workspace
 - [x] Workspace stores sessionCfg, homeDir, sender (EventSender)
 - [x] Workspace.NewSessionFromLauncher() handles full flow
 - [x] Workspace.ResumeSessionFromLauncher() handles resume
 - [x] Launcher calls workspace methods directly
-- [ ] Launcher lists workspaces (not sessions) when no project dir specified
-- [ ] Launcher shows workspace-scoped sessions when inside a workspace
-- [ ] Resume session stays in same workspace (no quit/restart)
+- [x] Launcher lists workspaces when no project dir specified (launcher.go:53 ListWorkspaceInfos)
+- [x] Launcher shows workspace-scoped sessions when inside a workspace (launcher.go:48 sessions param from ws.ListSessions)
+- [x] Resume session stays in same workspace (no quit/restart) (workspace.go:471 ResumeSessionFromLauncher)
 
-### Phase 5 — App shell wiring ✅ DONE (basic)
+### Phase 5 — App shell wiring ✅ DONE
 - [x] app.Run() creates workspace and starts TUI
 - [x] main.go is functional (not yet ~50 lines but works)
 - [x] App stores session.Config for reuse via SetBackendConfig
-- [ ] Provider presets defined properly
+- [x] Provider presets defined properly
 
 ### Phase 6 — Config split and settings persistence ✅ DONE
 - [x] Split Settings into AppSettings + SessionSettings

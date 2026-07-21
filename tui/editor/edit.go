@@ -243,6 +243,8 @@ func (e *Editor) undo() {
 	e.notifyContentChanged()
 }
 
+func (e *Editor) Undo() { e.undo() }
+
 func (e *Editor) redo() {
 	if e.changeIndex >= len(e.changes) {
 		return
@@ -266,6 +268,8 @@ func (e *Editor) redo() {
 	e.ensureCursorVisible()
 	e.notifyContentChanged()
 }
+
+func (e *Editor) Redo() { e.redo() }
 
 // Save writes the editor's current buffer to its file. The modified flag
 // is cleared on success. Returns the underlying I/O error if the write fails.

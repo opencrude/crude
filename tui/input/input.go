@@ -92,6 +92,43 @@ type Model struct {
 	blocking  bool
 	spinFrame int
 	refStore  ReferenceStore
+
+	actionRegistry ActionRegistry
+}
+
+// ActionRegistry is the interface the input model needs to derive
+// shortcut labels. Pointer so the value-type Model can carry it.
+type ActionRegistry interface {
+	HintFor(id string) string
+	HintLabelFor(id string) string
+}
+
+// ActionRegistryAdapter bridges a concrete action registry (whose
+// methods take a typed ActionID parameter) to the input model's
+// string-based interface. Use it in the app layer where the concrete
+// type is already known.
+type ActionRegistryAdapter struct {
+	HintForFn      func(id string) string
+	HintLabelForFn func(id string) string
+}
+
+func (a ActionRegistryAdapter) HintFor(id string) string {
+	if a.HintForFn != nil {
+		return a.HintForFn(id)
+	}
+	return ""
+}
+
+func (a ActionRegistryAdapter) HintLabelFor(id string) string {
+	if a.HintLabelForFn != nil {
+		return a.HintLabelForFn(id)
+	}
+	return ""
+}
+
+// SetActionRegistry sets the action registry for shortcut derivation.
+func (m *Model) SetActionRegistry(r ActionRegistry) {
+	m.actionRegistry = r
 }
 
 func NewModel(t *theme.Theme) Model {
@@ -122,9 +159,30 @@ func (m *Model) ContextHint() string {
 		return ""
 	}
 	if m.thinking && !m.blocking {
-		return "type to send a note to the agent · enter send · esc cancel"
+		submit := "enter send"
+		if m.actionRegistry != nil {
+			if hl := m.actionRegistry.HintLabelFor("input.submit"); hl != "" {
+				submit = hl
+			}
+		}
+		return "type to send a note to the agent · " + submit + " · esc cancel"
 	}
-	return "enter send · alt+enter new line · ctrl+o attach file · ↑↓ history · ctrl+s settings · esc exit"
+	return m.buildChatHint()
+}
+
+func (m *Model) buildChatHint() string {
+	var parts []string
+	if m.actionRegistry != nil {
+		for _, id := range []string{"input.submit", "input.newline", "file.attach"} {
+			if hl := m.actionRegistry.HintLabelFor(id); hl != "" {
+				parts = append(parts, hl)
+			}
+		}
+	} else {
+		parts = append(parts, "enter send", "alt+enter new line", "ctrl+o attach file")
+	}
+	parts = append(parts, "↑↓ history", "esc exit")
+	return strings.Join(parts, " · ")
 }
 
 func (m *Model) DismissHint() {

@@ -613,3 +613,46 @@ func TestInsertCostSnapshot(t *testing.T) {
 		t.Fatalf("InsertCostSnapshot: %v", err)
 	}
 }
+
+func TestGetCumulativeCostEmpty(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	db, _ := OpenAndMigrate(dbPath)
+	defer db.Close()
+
+	got, err := GetCumulativeCost(db)
+	if err != nil {
+		t.Fatalf("GetCumulativeCost on empty DB: %v", err)
+	}
+	if got != 0.0 {
+		t.Errorf("GetCumulativeCost on empty DB: expected 0.0, got %v", got)
+	}
+}
+
+func TestGetCumulativeCostReturnsLatestSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	db, _ := OpenAndMigrate(dbPath)
+	defer db.Close()
+
+	// Simulate three API calls with cumulative cost growing.
+	if err := InsertCostSnapshot(db, 10, 5, 0, 0.01, nil); err != nil {
+		t.Fatalf("InsertCostSnapshot #1: %v", err)
+	}
+	if err := InsertCostSnapshot(db, 20, 10, 0, 0.025, nil); err != nil {
+		t.Fatalf("InsertCostSnapshot #2: %v", err)
+	}
+	if err := InsertCostSnapshot(db, 30, 15, 0, 0.042, nil); err != nil {
+		t.Fatalf("InsertCostSnapshot #3: %v", err)
+	}
+
+	got, err := GetCumulativeCost(db)
+	if err != nil {
+		t.Fatalf("GetCumulativeCost: %v", err)
+	}
+	// The latest snapshot's total_cost is the cumulative cost.
+	const want = 0.042
+	if got != want {
+		t.Errorf("GetCumulativeCost: expected %v, got %v", want, got)
+	}
+}

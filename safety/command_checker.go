@@ -103,7 +103,14 @@ func buildSystemPrefixes() []string {
 
 func isPathUnderPrefix(path string, prefix string) bool {
 	cleaned := filepath.Clean(path)
-	if !filepath.IsAbs(cleaned) {
+	// On Windows, filepath.IsAbs returns false for POSIX-style root-relative
+	// paths like \etc\config.conf (no drive letter). These are still "absolute"
+	// in the sense that they refer to fixed system locations from the current
+	// drive's root, and the Windows-specific block below handles them. Skip
+	// the IsAbs guard for paths anchored at a path separator so that block
+	// is reachable.
+	rootAnchored := strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "\\")
+	if !filepath.IsAbs(cleaned) && !rootAnchored {
 		return false
 	}
 	abs, err := filepath.Abs(cleaned)
@@ -117,11 +124,17 @@ func isPathUnderPrefix(path string, prefix string) bool {
 	}
 
 	if runtime.GOOS == "windows" {
-		if strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "\\") {
+		if rootAnchored {
+			// POSIX-style path on Windows (\etc\config.conf, \, etc.).
+			// Match against POSIX-style prefixes only — Windows drive
+			// prefixes (C:\Windows) don't apply to root-relative paths.
 			if cleanPrefix == "/" || cleanPrefix == "\\" {
 				return true
 			}
-			return strings.HasPrefix(cleaned, cleanPrefix)
+			if !strings.HasPrefix(cleaned, cleanPrefix) {
+				return false
+			}
+			return len(cleaned) == len(cleanPrefix) || cleaned[len(cleanPrefix)] == filepath.Separator
 		}
 		if len(abs) < len(absPrefix) {
 			return false
