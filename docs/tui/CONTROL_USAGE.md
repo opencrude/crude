@@ -8,7 +8,7 @@ target replacement under `tui/ui/`.
 | Category | Current implementations | Target |
 |----------|------------------------|--------|
 | Full input engine | `tui/components/text.go` via chat, composer, overlay, find/replace | `ui/control.TextField` / `TextArea` |
-| Input + custom paint | Find in Files query renderer | `SearchField` |
+| Project search query | native `ui.SearchField` in `tui/screens/findinfiles` | same |
 | Form field editor | `tui/form/item.go` TextItem; native workspace/session/question/background-detail fields | `ui/form` field over shared engine |
 | Hand-built prompt | `tui/widgets/textprompt.go` | `PromptField` |
 | Append/backspace filter | palette, launcher, settings, list filter | `FilterField` / `SearchField` |
@@ -36,7 +36,7 @@ target replacement under `tui/ui/`.
 | Context menu | `ui/overlay.ContextMenu` |
 | Tabs | `ui/control.Tabs` |
 | File picker entries | native `ui.List` |
-| Find in Files results | VirtualList |
+| Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
 | Launcher workspaces | List + SearchField |
 | LSP popup lists | List |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
@@ -49,6 +49,7 @@ target replacement under `tui/ui/`.
 | Find in Files inline glyphs | delete |
 | Launcher inline glyphs | delete |
 | File picker | native `ui.ScrollbarControl` |
+| Find in Files | native `ui.ScrollbarControl` over `ui.VirtualList` |
 
 ## Chrome
 

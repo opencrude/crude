@@ -16,6 +16,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
+	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/screens/yolo"
@@ -23,7 +24,6 @@ import (
 	settingsui "crude/tui/settings"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 	"crude/workspace"
 )
@@ -233,22 +233,28 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
+	case ui.SearchDebouncedMsg:
+		if m.findInFiles != nil {
+			if cmd := m.findInFiles.HandleSearchDebounced(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	case workspace.LSPDiagnosticsMsg:
 		m.handleLSPDiagnosticsUpdate(msg)
 	case workspace.FileWatcherMsg:
 		if cmd := m.handleFileWatcherEvent(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case widgets.FindInFilesSearchRequestMsg:
-		if m.findInFiles != nil && m.findInFiles.AcceptsSearch(msg.Owner, msg.Generation) {
+	case findinfiles.SearchRequestMsg:
+		if m.findInFiles != nil && m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
 			m.findInFilesRequest = m.StartProjectSearch(msg.Query, msg.Options)
 			m.findInFilesGen = msg.Generation
 			if fw := m.windowManager.Window(findInFilesWindowID); fw != nil {
 				fw.MarkContentDirty()
 			}
 		}
-	case widgets.FindInFilesSearchCancelMsg:
-		if m.findInFiles == msg.Owner {
+	case findinfiles.SearchCancelMsg:
+		if m.findInFiles == msg.Screen {
 			m.CancelProjectSearch()
 			m.findInFilesRequest = 0
 			m.findInFilesGen = 0
@@ -266,12 +272,17 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 			m.findInFilesRequest = 0
 		}
-	case widgets.FindInFilesOpenMsg:
+	case findinfiles.OpenMsg:
+		if m.findInFiles != msg.Screen {
+			break
+		}
 		if cmd := m.openFindInFilesResult(msg.Match); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case widgets.FindInFilesCloseMsg:
-		m.closeFindInFiles()
+	case findinfiles.CloseMsg:
+		if m.findInFiles == msg.Screen {
+			m.closeFindInFiles()
+		}
 	case lspDefinitionResultMsg:
 		m.handleDefinitionResult(msg)
 	case lspReferencesResultMsg:

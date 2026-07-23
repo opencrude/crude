@@ -38,7 +38,7 @@ only against this catalog.
 | Surface | Primary files |
 |---------|---------------|
 | Command palette | `tui/viewmodel/command_palette.go` |
-| Find in Files | `tui/widgets/find_in_files.go` |
+| Find in Files | `tui/screens/findinfiles/find_in_files.go`, `tui/viewmodel/find_in_files.go` | Native SearchField query + case/regex ToggleButtons + Label status + VirtualList + ScrollbarControl + editor preview adapter + Label hints; search execution/cancellation owned by workspace.ProjectSearchService |
 | Find/replace | `tui/widgets/findreplace.go` |
 | Workspace settings | `tui/settings/settings.go` |
 | File/workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` | Native TextField + breadcrumb Label + List + ScrollbarControl + ActionBar body in retained OverlayHost/FloatingWindow shell |
