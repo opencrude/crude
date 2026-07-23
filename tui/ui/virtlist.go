@@ -1,18 +1,23 @@
 package ui
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 )
 
 // VirtItem is a variable-height list item.
 type VirtItem struct {
-	ID     string
-	Height int // rows; min 1
-	Label  string
-	Detail string
+	ID      string
+	Height  int // rows; min 1
+	Label   string
+	Detail  string
+	Icon    string
+	Payload any
 }
 
 // VirtualList is a variable-height selectable list with shared Selection + Scroll.
@@ -57,6 +62,18 @@ func (v *VirtualList) SetItems(items []VirtItem) {
 
 // Items returns items.
 func (v *VirtualList) Items() []VirtItem { return v.items }
+
+// SetActivateAction sets the action ID emitted on activation.
+func (v *VirtualList) SetActivateAction(id string) { v.activate = id }
+
+// SelectIndex selects idx and ensures its rows are visible.
+func (v *VirtualList) SelectIndex(idx int) bool {
+	if !v.sel.SetIndex(idx) {
+		return false
+	}
+	v.ensureSelectedVisible()
+	return true
+}
 
 // SelectedIndex returns the selection.
 func (v *VirtualList) SelectedIndex() int { return v.sel.Index() }
@@ -184,16 +201,24 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		if idx == v.sel.Index() {
 			marker = "❯ "
 		}
-		line := marker + item.Label
-		runes := []rune(line)
-		if len(runes) > r.W {
-			runes = runes[:r.W]
+		line := marker
+		if item.Icon != "" {
+			line += item.Icon + " "
 		}
+		line += item.Label
+		if item.Detail != "" {
+			gap := r.W - rendering.VisibleWidth(line) - rendering.VisibleWidth(item.Detail) - 1
+			if gap < 1 {
+				gap = 1
+			}
+			line += strings.Repeat(" ", gap) + item.Detail
+		}
+		line = rendering.TruncateLine(line, r.W)
 		attr := cell.Attrs(0)
 		if idx == v.sel.Index() {
 			attr = cell.AttrBold
 		}
-		buf.WriteString(x, y, string(runes), fg, bg, attr)
+		buf.WriteString(x, y, line, fg, bg, attr)
 	}
 }
 

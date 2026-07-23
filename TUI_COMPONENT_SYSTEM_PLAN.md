@@ -38,7 +38,7 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
-| 12 Structured migrations | PARTIAL | Workspace settings, all session blocking forms, passive background-job details, and file/workspace picker bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy `App.Overlay` tabs, global async rows, and picker widget are deleted; FIF, composer, text overlay, launcher pending |
+| 12 Structured migrations | PARTIAL | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, and Find in Files bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy `App.Overlay` tabs, global async rows, picker widget, and FIF legacy widget are deleted; composer, text overlay, and launcher pending |
 | 13 Shell migrations | OPEN | |
 | 14 Deletion | OPEN | Dual systems still present by design |
 | 15 Stabilization | OPEN | |
@@ -171,7 +171,7 @@ No migration phase may claim completeness without accounting for every surface b
 | Surface | Current primary files |
 |---------|-----------------------|
 | Command palette | `tui/viewmodel/command_palette.go` |
-| Find in Files | `tui/widgets/find_in_files.go`, `tui/viewmodel/find_in_files.go` |
+| Find in Files | `tui/screens/findinfiles/find_in_files.go`, `tui/viewmodel/find_in_files.go` |
 | Find and replace | `tui/widgets/findreplace.go`, `tui/viewmodel/findreplace_handler.go` |
 | Workspace settings | `tui/settings/settings.go`, `tui/widgets/workspace_settings.go` |
 | File picker and workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` |
@@ -221,7 +221,7 @@ Current categories include:
 | Category | Examples |
 |----------|----------|
 | Full input engine | Chat input, composer, text overlay, find/replace |
-| Input engine with custom renderer | Find in Files query |
+| Shared search input | Find in Files query |
 | Independent form editor | `form.TextItem` |
 | Hand-built prompt editor | Tree create/rename prompt |
 | Append/backspace filter strings | Palette, launcher, settings, generic list |
@@ -1127,13 +1127,14 @@ Exit criteria:
 Landed:
 - `TextEdit` (rune-safe cursor, selection, word motion, line ops, paste filter)
 - `TextField` (prompt, placeholder, password, read-only, disabled, submit action, mouse cursor, horizontal viewport)
+- `SearchField` (TextField editing with shared debounce identity)
 - Inverse/block cursor paint path (TextField surface + `RenderFilterLine` ANSI bridge)
 - `HandleTextEditKey` / `HandleFilterKey` shared key routers
 - **Engine cutover (keys + value):** palette, launcher, settings search, file picker,
   `components.List` filter, form `TextItem`, tree prompt, Find in Files query
 
 Remaining:
-- TextArea multiline, SearchField debounce variant, FilterField collection link
+- TextArea multiline, FilterField collection link
 - Paint cutover: many filters still use ANSI bridges / ad-hoc View paint, not TextField.Paint
 - Chat input / composer / find-replace still `components.TextInput`
 - File tree model `filter string` still open
@@ -1413,8 +1414,7 @@ Order:
 6. YOLO confirmation. DONE (native passive warning Form + ActionBar in blocking per-session PanelDeck; enable/cancel quick keys; legacy widget/mode/overlay paths deleted)
 7. Background-job/detail panels. DONE (native read-only Form in a passive per-session PanelDeck panel; owner-safe inactive-session updates, failure attention, running-duration refresh, completion expiry, and no focus steal; global ANSI status-bar rows deleted)
 8. File/workspace picker. DONE (native TextField + Label breadcrumb + List + ScrollbarControl + ActionBar body inside the retained OverlayHost/FloatingWindow shell; workspace-owned neutral directory enumeration; file/folder modes, filtering, parent navigation, keyboard/mouse/paste/double-click, owner-targeted results; legacy widget/ANSI/manual geometry deleted)
-9. Find in Files. PARTIAL (query TextEdit + RenderFilterLine + shared scrollbar cell;
-   search execution/cancellation moved to workspace.ProjectSearchService)
+9. Find in Files. DONE (native SearchField query + case/regex ToggleButtons + Label status + VirtualList + ScrollbarControl + editor preview adapter + Label hints; debounced typed search/cancel intents route to workspace.ProjectSearchService; owner-screened debounce/Open/Close messages, clamped list navigation, double-click activation, and owner-targeted results; `tui/widgets/find_in_files.go` and its tests deleted)
 10. Composer. OPEN
 11. Text/reference editor. OPEN
 12. Launcher. PARTIAL (filter TextEdit + RenderFilterLine + shared scrollbar cell)
@@ -1507,7 +1507,7 @@ Exit criteria:
 | YOLO confirmation | Blocking Panel + warning Form + ActionBar | 12 | **Native blocking PanelDeck screen**; complete safety warning, enable/cancel quick keys, mouse and Escape parity; legacy widget and overlay paths deleted |
 | Background-job details | Passive Panel + read-only Form | 12 | **Native passive PanelDeck screen**; commands, handles, status, duration, PID, exit, and errors project into their owning session without focus steal; failure attention and 15-second completion expiry; global ANSI async rows deleted |
 | File picker | Dialog + Breadcrumbs + SearchField + Tree/List + ActionBar | 12 | **Native WindowFrameWidget + OverlayHost body**; TextField, Label breadcrumb, List, ScrollbarControl, and ActionBar; workspace `BrowseDirectory` owns filesystem enumeration; legacy ANSI widget and manual geometry deleted |
-| Find in Files | Window + SearchField + toggles + VirtualList + editor preview | 12 | **WindowFrameWidget + OverlayHost**; TextEdit + shared bridges; domain execution/cancellation in workspace service |
+| Find in Files | Window + SearchField + toggles + VirtualList + editor preview | 12 | **WindowFrameWidget + OverlayHost**; native SearchField query + ToggleButtons + Label status + VirtualList + ScrollbarControl + editor preview adapter + Label hints; debounced typed search/cancel intents route to `workspace.ProjectSearchService`; legacy widget and tests deleted |
 | Composer | Window + TextArea + ActionBar/Hint | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
 | Text overlay | Window + TextArea + ActionBar | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
 | Launcher | Responsive layout + actions + SearchField + workspace collection | 12 | filter TextEdit + RenderFilterLine + scrollbar ANSI |
@@ -1915,6 +1915,27 @@ This program is complete only when all statements are true:
     - Deleted `tui/widgets/filepicker.go`, its ANSI/Lipgloss rendering, legacy adapter,
       manual hit/button/hover/scrollbar geometry, and widget tests
 
+37. Phase 6/7/12 native Find in Files:
+    - Added `tui/screens/findinfiles`, composed from native SearchField query,
+      case/regex ToggleButtons, Label status, VirtualList, ScrollbarControl, editor
+      preview adapter, and Label hints inside the existing WindowFrameWidget/OverlayHost shell
+    - SearchField owns debounce identity; `AcceptsSearch` owner-screens search requests
+      by `Screen` identity, generation counter, and non-empty query. `OpenMsg` and
+      `CloseMsg` carry the originating screen pointer and the viewmodel rejects stale owners.
+    - Clamped VirtualList navigation (Up/Down/Page/Home/End) plus single-click select and
+      double-click activation preserve original semantics; typing or pasting from the
+      focused list focuses the query and routes through SearchField. Cc and .* toggle
+      case sensitivity and regex matching, with Ctrl+R as the regex shortcut.
+    - Editor preview uses `editor.NewPreview` (specialized DocumentEditor) with the
+      selected match's text and selection range, not a hand-rolled ANSI path
+    - Screen and viewmodel tests cover paint across themes/sizes, shared debouncing,
+      option toggles, first-key selection/preview synchronization, clamped navigation,
+      stale-owner rejection, double-click activation, status projection, and
+      list/preview/hints rectangle layout
+    - Deleted `tui/widgets/find_in_files.go` and `tui/widgets/find_in_files_test.go`
+    - Layout corrected so query sits on line 0, status on line 1, list on line 2
+      (previously the query and status overlapped at Y=0)
+
 ### Next slices (priority order — stay on plan)
 
    1. **Phase 10:** ✅ workspace presentation ownership, view-data, and package-boundary
@@ -1927,9 +1948,9 @@ This program is complete only when all statements are true:
        confirmation, and YOLO are complete native shared-form
        consumers. The per-session PanelDeck is the canonical bottom-of-messages
        home for session-owned interactive/background surfaces; OverlayHost remains
-       exclusively floating. Background-job details are native passive deck forms,
-       and the file/workspace picker now has a native body in its retained floating
-       shell. NEXT: migrate FIF, composer, text overlay, and launcher form bodies.
+       exclusively floating. Background-job details, the file/workspace picker,
+       and Find in Files now have native bodies in their retained floating shells.
+       NEXT: migrate composer, text overlay, and launcher form bodies.
 
    3. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
       and live config hot-reload.

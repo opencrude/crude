@@ -45,7 +45,7 @@ tab attention until the panel is activated or closed.
 | components.List | yes | yes | no | wrap | select |
 | Command palette | yes | yes | no | clamp | activate |
 | File picker | yes | yes | yes | clamp | open |
-| Find in Files | yes | yes | no | clamp | open |
+| Find in Files | yes | yes | yes | clamp | open; Cc click toggles case sensitivity, .* click or Ctrl+R toggles regex |
 | File tree | yes | custom | no | clamp | expand/open |
 | Context menu | yes | no | no | wrap | activate |
 | Launcher | yes | step | yes | clamp | activate |
@@ -54,7 +54,7 @@ tab attention until the panel is activated or closed.
 
 1. TextPrompt cursor is byte-offset naive.
 2. Form TextItem shift-selection incomplete.
-3. FindInFiles reimplements input paint.
+3. FindInFiles reimplements input paint. **FIXED**: native `tui/screens/findinfiles` uses `ui.SearchField` surface paint and debounce identity.
 4. Multiple filter strings without selection/word motion/paste.
 5. Scrollbar colors hard-coded outside theme.
 6. Three chrome systems disagree on padding and close buttons.

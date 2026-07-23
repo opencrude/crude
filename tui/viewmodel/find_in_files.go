@@ -7,8 +7,8 @@ import (
 
 	"crude/fileio"
 	"crude/tui/rendering"
+	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 )
 
@@ -27,7 +27,8 @@ func (m *App) toggleFindInFiles() (tea.Model, tea.Cmd) {
 	if root == "" {
 		root = "."
 	}
-	search := widgets.NewFindInFiles(m.Theme, root)
+	search := findinfiles.New(m.Theme)
+	search.Open(root)
 	w := max(68, min(m.width*84/100, 150))
 	h := max(20, min(m.height*78/100, 46))
 	if w > m.width-4 {
@@ -36,14 +37,13 @@ func (m *App) toggleFindInFiles() (tea.Model, tea.Cmd) {
 	if h > m.height-4 {
 		h = max(12, m.height-4)
 	}
-	body := ui.NewLegacyWidget(ui.NewID(ui.RootID, "find-in-files-body"), search)
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "find-in-files-frame"),
 		ui.FrameWindow,
 		"Find in Files",
-		body,
 		search,
+		nil,
 		true,
 		w,
 		h,
@@ -58,6 +58,8 @@ func (m *App) toggleFindInFiles() (tea.Model, tea.Cmd) {
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	wm.CenterOnScreen(fw, m.width, m.height)
+	search.SetFocusHandler(frame.Focus)
+	search.FocusQuery()
 	searchCopy := search
 	m.overlayHost.Open(ui.OverlayFindInFiles, fw, ui.DefaultOverlayPolicy(), func() {
 		m.CancelProjectSearch()

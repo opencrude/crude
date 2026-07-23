@@ -14,6 +14,7 @@ import (
 	"crude/tui/input"
 	"crude/tui/rendering"
 	filepickerscreen "crude/tui/screens/filepicker"
+	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -100,7 +101,7 @@ type App struct {
 	// App-scoped fields (not on workspace.Workspace)
 	launcher            *LauncherState
 	commandPaletteModel *commandPaletteModel
-	findInFiles         *widgets.FindInFiles
+	findInFiles         *findinfiles.Screen
 	findInFilesRequest  uint64
 	findInFilesGen      int
 	providerPresets     []ttypes.ProviderPreset

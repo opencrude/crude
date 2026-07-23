@@ -10,8 +10,8 @@ import (
 	"crude/fileio"
 	"crude/tui/editor"
 	"crude/tui/screens/confirmation"
+	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 	"crude/workspace"
 )
@@ -36,6 +36,9 @@ func TestFindInFilesShortcutRoutesTypingAndPaste(t *testing.T) {
 	if _, ok := fw.Content.(*ui.WindowFrameWidget); !ok {
 		t.Fatal("Find in Files should use ui.WindowFrame chrome")
 	}
+	if body, ok := fw.Content.(*ui.WindowFrameWidget).Body().(*findinfiles.Screen); !ok || body != app.findInFiles {
+		t.Fatal("Find in Files should mount its native component body")
+	}
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'n', Text: "needle"})
 	if got := app.findInFiles.Query(); got != "needle" {
 		t.Fatalf("focused search query=%q", got)
@@ -56,13 +59,24 @@ func TestFindInFilesSearchRoutesThroughWorkspaceEvent(t *testing.T) {
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.toggleFindInFiles()
 
-	debounce := app.findInFiles.HandleEvent(tea.KeyPressMsg{Code: 's', Text: "SearchTarget"})
+	search := app.findInFiles
+	search.SetQuery("SearchTarget")
+	search.SetSearchDebounce(0)
+	debounce := search.ScheduleSearch()
 	if debounce == nil {
-		t.Fatal("query edit should schedule a search intent")
+		t.Fatal("search schedule should return a debounce tick")
 	}
-	request, ok := debounce().(widgets.FindInFilesSearchRequestMsg)
+	debounced, ok := debounce().(ui.SearchDebouncedMsg)
 	if !ok {
 		t.Fatalf("debounce produced %T", debounce())
+	}
+	requestCmd := search.HandleSearchDebounced(debounced)
+	if requestCmd == nil {
+		t.Fatal("accepted debounce should produce a search request")
+	}
+	request, ok := requestCmd().(findinfiles.SearchRequestMsg)
+	if !ok {
+		t.Fatalf("search request produced %T", requestCmd())
 	}
 	cmds := app.handleAppMessages(request)
 	if len(cmds) != 0 {
@@ -85,6 +99,30 @@ func TestFindInFilesSearchRoutesThroughWorkspaceEvent(t *testing.T) {
 	}})
 	if got := app.findInFiles.Results(); len(got) != 1 || got[0].RelativePath != "target.go" {
 		t.Fatalf("workspace search results=%+v", got)
+	}
+}
+
+func TestFindInFilesIgnoresStaleOwnerMessages(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width = 120
+	app.height = 36
+	app.RootPath = t.TempDir()
+	app.windowManager = wm.NewWindowManager()
+	app.overlayHost = ui.NewOverlayHost(app.windowManager)
+	app.toggleFindInFiles()
+	stale := app.findInFiles
+	app.closeFindInFiles()
+	app.toggleFindInFiles()
+	current := app.findInFiles
+
+	app.handleAppMessages(findinfiles.CloseMsg{Screen: stale})
+	if app.findInFiles != current || app.windowManager.Window(findInFilesWindowID) == nil {
+		t.Fatal("stale close should not affect the current Find in Files screen")
+	}
+
+	app.handleAppMessages(findinfiles.OpenMsg{Screen: stale, Match: fileio.ProjectSearchMatch{Path: filepath.Join(app.RootPath, "stale.go")}})
+	if app.findInFiles != current || app.windowManager.Window(findInFilesWindowID) == nil {
+		t.Fatal("stale open should not affect the current Find in Files screen")
 	}
 }
 
