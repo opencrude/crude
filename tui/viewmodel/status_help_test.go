@@ -14,7 +14,8 @@ func TestEditorHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 100
 	app.height = 30
-	app.launcher = nil
+	app.launcherScreen = nil
+	app.launcherHost = nil
 
 	path := filepath.Join(t.TempDir(), "handlers.go")
 	if err := os.WriteFile(path, []byte("package sample\n\nfunc handle() {}\n"), 0o600); err != nil {
@@ -47,7 +48,8 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 100
 	app.height = 30
-	app.launcher = nil
+	app.launcherScreen = nil
+	app.launcherHost = nil
 	app.ActiveSession = workspace.NewSession("", "", nil, nil)
 	app.openSessionSettings()
 
@@ -75,7 +77,8 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 
 func TestContextualHelpCoversTabFocus(t *testing.T) {
 	app := newFullTestApp(t)
-	app.launcher = nil
+	app.launcherScreen = nil
+	app.launcherHost = nil
 	app.FocusStack.Push(FocusTabBar)
 	app.syncFormHint()
 	if got := app.contextualHelpView(); !strings.Contains(got, "tab bar focused") {
@@ -93,7 +96,8 @@ func TestCompactStatusHintPreservesSuffixContext(t *testing.T) {
 
 func TestComposerHelpMovesToStatusWithoutRenderingInInput(t *testing.T) {
 	app := newFullTestApp(t)
-	app.launcher = nil
+	app.launcherScreen = nil
+	app.launcherHost = nil
 
 	help := app.contextualHelpView()
 	if !strings.Contains(help, "enter send") || !strings.Contains(help, "ctrl+o attach file") {
@@ -112,7 +116,8 @@ func TestComposerHelpMovesToStatusWithoutRenderingInInput(t *testing.T) {
 
 func TestEditorContextHelpDerivesShortcutsFromRegistry(t *testing.T) {
 	app := newFullTestApp(t)
-	app.launcher = nil
+	app.launcherScreen = nil
+	app.launcherHost = nil
 	app.width = 100
 	app.height = 30
 
@@ -143,7 +148,8 @@ func TestEditorContextHelpDerivesShortcutsFromRegistry(t *testing.T) {
 
 func TestEditorContextHelpFallsBackEmptyRegistry(t *testing.T) {
 	app := newFullTestApp(t)
-	app.launcher = nil
+	app.launcherScreen = nil
+	app.launcherHost = nil
 	app.actionRegistry = nil
 	app.width = 100
 	app.height = 30

@@ -18,7 +18,7 @@ func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
 	}
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil {
 		return FocusLauncher
 	}
 	top := m.FocusStack.Top()

@@ -28,6 +28,7 @@ type Host struct {
 	parent   map[ComponentID]ComponentID
 	needsLay bool
 	needsPnt bool
+	frame    int
 }
 
 // NewHost creates a host with the given theme and optional root.
@@ -94,6 +95,9 @@ func (h *Host) Resize(w, hgt int) {
 	h.needsLay = true
 	h.needsPnt = true
 }
+
+// SetFrame sets the animation frame counter exposed to components in PaintContext.
+func (h *Host) SetFrame(frame int) { h.frame = frame }
 
 // Focus sets keyboard focus to id if registered.
 func (h *Host) Focus(id ComponentID) bool {
@@ -180,6 +184,7 @@ func (h *Host) Paint(buf *surface.CellBuffer) {
 		Theme:   h.theme,
 		Focused: h.focused == h.root.ID(),
 		Hovered: h.hovered == h.root.ID(),
+		Frame:   h.frame,
 	}
 	h.paintNode(h.root, buf, 0, 0, pctx)
 	h.needsPnt = false
@@ -189,6 +194,7 @@ func (h *Host) paintNode(c Component, buf *surface.CellBuffer, ox, oy int, base 
 	pctx := base
 	pctx.Focused = h.focused == c.ID()
 	pctx.Hovered = h.hovered == c.ID()
+	pctx.Frame = h.frame
 	c.Paint(buf, ox, oy, pctx)
 	if p, ok := c.(Parent); ok {
 		b := c.Bounds()
@@ -202,6 +208,9 @@ func (h *Host) paintNode(c Component, buf *surface.CellBuffer, ox, oy int, base 
 // Preference order: greater tree depth, then smaller area (more specific).
 func (h *Host) HitTest(x, y int) ComponentID {
 	h.Layout()
+	if h.root == nil || !h.root.Bounds().Contains(x, y) {
+		return RootID
+	}
 	var best ComponentID
 	bestDepth := -1
 	bestArea := int(^uint(0) >> 1)

@@ -24,7 +24,7 @@ only against this catalog.
 
 | Surface | Primary files |
 |---------|---------------|
-| Welcome launcher | `tui/widgets/launcher.go`, `tui/viewmodel/launcher.go` |
+| Welcome launcher | `tui/screens/launcher/launcher.go`, `tui/viewmodel/launcher.go` | Native hero + two-column component tree; SearchField, VirtualList, and scrollbar-aware pane viewport |
 | Editor | `tui/editor/` |
 | Agent chat message list | `tui/widgets/messagelist.go`, `tui/widgets/chatmessage.go` |
 | Chat input | `tui/input/`, `tui/components/text.go` |

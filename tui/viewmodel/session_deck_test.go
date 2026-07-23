@@ -110,7 +110,8 @@ func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T
 func TestSessionDeckReservesNativeRegionBelowMessages(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
-	app.launcher = nil
+	app.launcherScreen = nil
+	app.launcherHost = nil
 	app.ActiveSession = &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	app.openSessionSettings()
 

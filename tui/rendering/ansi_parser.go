@@ -19,7 +19,14 @@ import (
 // by SGR sequences. All subsequent characters are rendered with the current style
 // until a new SGR sequence changes it.
 func RenderToSurface(surf *surface.Surface, ansiStr string) {
+	if surf == nil {
+		return
+	}
 	buf := surf.Buffer()
+	// ANSI views describe a complete frame. Clear reused buffers first so
+	// cells from a previous page cannot leak through when the next view is
+	// shorter, transparent, or changes layout entirely.
+	buf.Clear()
 	curX, curY := 0, 0
 	w, h := buf.Width(), buf.Height()
 

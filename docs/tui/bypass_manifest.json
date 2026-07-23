@@ -1,5 +1,5 @@
 {
-  "version": 22,
+  "version": 23,
   "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only.",
   "rules": [
     {
@@ -50,13 +50,11 @@
     {"id": "textprompt-handrolled", "path": "tui/widgets/textprompt.go", "status": "migrated", "note": "Edit engine TextEdit; product open path uses BuildTextPromptFrame/WindowFrame. Legacy TextPromptLines still exists for tests."},
     {"id": "form-textitem-handrolled", "path": "tui/form/item.go", "status": "migrated", "note": "Uses ui.TextEdit engine; View still ANSI/lipgloss"},
     {"id": "palette-filter-string", "path": "tui/viewmodel/command_palette.go", "status": "migrated", "note": "TextEdit filter + WindowFrame+TextField+List via BuildCommandPaletteFrame; old View/scroll/hover deleted"},
-    {"id": "launcher-filter-string", "path": "tui/viewmodel/launcher.go", "status": "migrated", "note": "TextEdit keys; paint via RenderFilterLine in widgets/launcher.go"},
     {"id": "settings-search-string", "path": "tui/settings/settings.go", "status": "migrated", "note": "TextEdit + RenderFilterLine"},
     {"id": "filepicker-filter-string", "path": "tui/widgets/filepicker.go", "status": "deleted", "note": "Native tui/screens/filepicker TextField/List/ScrollbarControl/ActionBar body; legacy ANSI widget deleted"},
     {"id": "list-filter-string", "path": "tui/components/list.go", "status": "migrated", "note": "TextEdit + RenderFilterLine"},
     {"id": "find-in-files-custom-input-paint", "path": "tui/widgets/find_in_files.go", "status": "deleted", "note": "Native tui/screens/findinfiles SearchField owns shared TextEdit paint and debounce identity; legacy ANSI widget deleted"},
     {"id": "find-in-files-custom-scrollbar", "path": "tui/widgets/find_in_files.go", "status": "deleted", "note": "Native tui/screens/findinfiles uses ui.VirtualList + ui.ScrollbarControl over one ScrollModel; legacy widget deleted"},
-    {"id": "launcher-custom-scrollbar", "path": "tui/widgets/launcher.go", "status": "migrated", "note": "ui.ScrollbarCellANSI + ScrollModel; not yet ScrollbarControl surface"},
     {"id": "dirty-close-confirm-chrome", "path": "tui/viewmodel/dirty_prompt.go", "status": "migrated", "note": "BuildDirtyCloseFrame WindowFrame + ui.Button; Host hit-test"},
     {"id": "tree-delete-confirm-chrome", "path": "tui/viewmodel/tree_operations.go", "status": "migrated", "note": "BuildTreeDeleteFrame WindowFrame + ui.Button; Host hit-test"},
     {"id": "confirm-prompt-ansi-legacy", "path": "tui/widgets/confirmprompt.go", "status": "deleted", "note": "ConfirmPrompt/ConfirmPrompt3Button DELETED; ConfirmPromptSeverity moved to confirm_frame.go; BuildConfirmFrame is the only path"},

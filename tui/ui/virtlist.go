@@ -20,16 +20,21 @@ type VirtItem struct {
 	Payload any
 }
 
+// RowPainter is called for each visible item row instead of the default label paint.
+// It receives the full row bounds, resolved interactive state, and paint context.
+type RowPainter func(buf *surface.CellBuffer, x, y, width int, item VirtItem, state ControlState, ctx PaintContext, tokens *TokenSet)
+
 // VirtualList is a variable-height selectable list with shared Selection + Scroll.
 // Height is measured in rows; scroll offset is in rows (not item indices).
 type VirtualList struct {
 	Base
-	items    []VirtItem
-	sel      *SelectionModel
-	scroll   *ScrollModel // content = total rows
-	tokens   *TokenSet
-	activate string
-	hoverIdx int
+	items      []VirtItem
+	sel        *SelectionModel
+	scroll     *ScrollModel // content = total rows
+	tokens     *TokenSet
+	activate   string
+	hoverIdx   int
+	rowPainter RowPainter
 	// prefix[i] = starting row of item i; prefix[len] = total rows
 	prefix []int
 }
@@ -65,6 +70,10 @@ func (v *VirtualList) Items() []VirtItem { return v.items }
 
 // SetActivateAction sets the action ID emitted on activation.
 func (v *VirtualList) SetActivateAction(id string) { v.activate = id }
+
+// SetRowPainter replaces the default item label painting with a custom delegate.
+// Hit testing, selection, scrolling, and empty-state handling remain shared.
+func (v *VirtualList) SetRowPainter(fn RowPainter) { v.rowPainter = fn }
 
 // SelectIndex selects idx and ensures its rows are visible.
 func (v *VirtualList) SelectIndex(idx int) bool {
@@ -196,6 +205,10 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		}
 		if !bg.IsDefault() {
 			FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
+		}
+		if v.rowPainter != nil {
+			v.rowPainter(buf, x, y, r.W, item, st, ctx, v.tokens)
+			continue
 		}
 		marker := "  "
 		if idx == v.sel.Index() {

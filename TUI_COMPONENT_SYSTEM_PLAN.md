@@ -1417,7 +1417,7 @@ Order:
 9. Find in Files. DONE (native SearchField query + case/regex ToggleButtons + Label status + VirtualList + ScrollbarControl + editor preview adapter + Label hints; debounced typed search/cancel intents route to workspace.ProjectSearchService; owner-screened debounce/Open/Close messages, clamped list navigation, double-click activation, and owner-targeted results; `tui/widgets/find_in_files.go` and its tests deleted)
 10. Composer. OPEN
 11. Text/reference editor. OPEN
-12. Launcher. PARTIAL (filter TextEdit + RenderFilterLine + shared scrollbar cell)
+12. Launcher. DONE (native component screen with animated hero, two-column action/workspace composition, SearchField, shared VirtualList, fixed search row, and one-cell-inset/final-column scrollbar pane layout)
 
 Exit criteria:
 
@@ -1510,7 +1510,7 @@ Exit criteria:
 | Find in Files | Window + SearchField + toggles + VirtualList + editor preview | 12 | **WindowFrameWidget + OverlayHost**; native SearchField query + ToggleButtons + Label status + VirtualList + ScrollbarControl + editor preview adapter + Label hints; debounced typed search/cancel intents route to `workspace.ProjectSearchService`; legacy widget and tests deleted |
 | Composer | Window + TextArea + ActionBar/Hint | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
 | Text overlay | Window + TextArea + ActionBar | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
-| Launcher | Responsive layout + actions + SearchField + workspace collection | 12 | filter TextEdit + RenderFilterLine + scrollbar ANSI |
+| Launcher | Responsive layout + actions + SearchField + workspace collection | 12 | **Native `tui/screens/launcher`**; animated hero and New Workspace action cards, registry-derived shortcuts, SearchField, VirtualList workspace collection, fixed search row, owner-safe activation/deletion, and shared pane layout where content starts one column in and the scrollbar owns the final column |
 | Header | Row layout + text/status primitives | 13 | open |
 | Status bar | Segmented row + action-derived hints | 13 | `Workspace.StatusView()` supplies neutral durable status/usage data; shell migration open |
 | Tabs | Tabs control + close actions + status indicators | 13 | `Workspace.AgentTabViews()` supplies neutral agent tab data; component migration open |

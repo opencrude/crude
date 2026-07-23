@@ -16,12 +16,16 @@ type TextField struct {
 	edit        *TextEdit
 	placeholder string
 	prompt      string // optional leading prompt e.g. ">"
+	promptFG    cell.Color
+	promptFGSet bool
 	readOnly    bool
 	disabled    bool
 	password    bool
 	submitID    string // action ID on Enter; empty = no submit action
 	// horizontal viewport for long values
 	viewStart int
+	bg        cell.Color
+	bgSet     bool
 	tokens    *TokenSet
 }
 
@@ -43,6 +47,18 @@ func (t *TextField) SetPlaceholder(s string) { t.placeholder = s }
 
 // SetPrompt sets a leading prompt glyph/string (not part of value).
 func (t *TextField) SetPrompt(s string) { t.prompt = s }
+
+// SetPromptColor overrides the prompt foreground color.
+func (t *TextField) SetPromptColor(c cell.Color) { t.promptFG, t.promptFGSet = c, true }
+
+// ClearPromptColor restores the default prompt foreground.
+func (t *TextField) ClearPromptColor() { t.promptFG, t.promptFGSet = cell.NoColor, false }
+
+// SetBackgroundColor overrides the field background fill.
+func (t *TextField) SetBackgroundColor(c cell.Color) { t.bg, t.bgSet = c, true }
+
+// ClearBackgroundColor removes the background fill override.
+func (t *TextField) ClearBackgroundColor() { t.bg, t.bgSet = cell.NoColor, false }
 
 // SetSubmitAction sets the action ID emitted on Enter.
 func (t *TextField) SetSubmitAction(id string) { t.submitID = id }
@@ -142,6 +158,9 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 	if t.tokens != nil {
 		fg, bg, _ = t.tokens.InputColors(st)
 	}
+	if t.bgSet {
+		bg = t.bg
+	}
 	if !bg.IsDefault() {
 		FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	}
@@ -151,7 +170,9 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 	// Prompt
 	if t.prompt != "" {
 		pf := fg
-		if t.tokens != nil {
+		if t.promptFGSet {
+			pf = t.promptFG
+		} else if t.tokens != nil {
 			pf = t.tokens.Color(ColorAccent)
 		}
 		buf.WriteString(x, y, t.prompt, pf, bg, 0)

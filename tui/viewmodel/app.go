@@ -15,6 +15,7 @@ import (
 	"crude/tui/rendering"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/launcher"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -99,7 +100,9 @@ type App struct {
 	sessionProjections *sessionProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
-	launcher            *LauncherState
+	launcherScreen      *launcher.Screen
+	launcherHost        *ui.Host
+	mainLauncherSurf    *surface.Surface
 	commandPaletteModel *commandPaletteModel
 	findInFiles         *findinfiles.Screen
 	findInFilesRequest  uint64
@@ -149,18 +152,22 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 
 	// Create persistent layer surfaces. The main content covers the whole
 	// screen minus the header and status bar; sidebar, header, and status
-	// bar are overlays that update independently.
+	// bar are overlays that update independently. The launcher surface is
+	// the main content layer when no agents/editor are open.
 	contentSurf := surface.NewSurface("main-content", 80, 24, cell.TransparentBlank())
 	sidebarSurf := surface.NewSurface("main-sidebar", th.Tree.Config.DefaultWidth, 1, cell.TransparentBlank())
 	statusbarSurf := surface.NewSurface("main-statusbar", 80, 1, cell.TransparentBlank())
 	headerSurf := surface.NewSurface("main-header", 80, 2, cell.TransparentBlank())
 	deckSurf := surface.NewSurface("session-deck", 80, 1, cell.TransparentBlank())
+	launcherSurf := surface.NewSurface("main-launcher", 80, 24, cell.TransparentBlank())
 	comp.Root().AddChild(contentSurf)
 	comp.Root().AddChild(sidebarSurf)
 	comp.Root().AddChild(statusbarSurf)
 	comp.Root().AddChild(headerSurf)
 	comp.Root().AddChild(deckSurf)
+	comp.Root().AddChild(launcherSurf)
 	contentSurf.SetZOrder(0)
+	launcherSurf.SetZOrder(1)
 	deckSurf.SetZOrder(1)
 	sidebarSurf.SetZOrder(2)
 	statusbarSurf.SetZOrder(3)
@@ -179,7 +186,10 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	sessionProjections := newSessionProjectionRegistry(th)
 
 	// Start on the unified welcome launcher (actions + workspaces + sessions).
-	launcher := NewLauncherState(ws.RootPath, ws.ListSessions())
+	launcherScreen := launcher.New(th)
+	launcherScreen.Refresh(ws.RootPath, ws.ListSessions())
+	launcherHost := ui.NewHost(th, launcherScreen)
+	launcherScreen.SetFocusHandler(launcherHost.Focus)
 
 	app := &App{
 		Workspace:           ws,
@@ -194,7 +204,9 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		EditorState:         edState,
 		OverlayState:        NewOverlayState(),
 		LSPPopup:            NewLSPPopupState(),
-		launcher:            launcher,
+		launcherScreen:      launcherScreen,
+		launcherHost:        launcherHost,
+		mainLauncherSurf:    launcherSurf,
 		providerPresets:     presets,
 		compositor:          comp,
 		windowManager:       wmgr,
@@ -232,7 +244,9 @@ func (m *App) SwitchProject(projectDir string) error {
 	m.EditorState = NewEditorState()
 	m.EditorState.Editor = editor.New(m.Theme)
 	m.LSPMgr.SetRuntime(newEditorLSPRuntime())
-	m.launcher = NewLauncherState(m.RootPath, m.ListSessions())
+	if m.launcherScreen != nil {
+		m.launcherScreen.Refresh(m.RootPath, m.ListSessions())
+	}
 	return nil
 }
 

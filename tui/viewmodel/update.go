@@ -17,6 +17,7 @@ import (
 	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/launcher"
 	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/screens/yolo"
@@ -239,6 +240,19 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+		if m.launcherScreen != nil {
+			if cmd := m.launcherScreen.HandleSearchDebounced(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case launcher.ActivateMsg:
+		if m.launcherScreen == msg.Screen {
+			cmds = append(cmds, m.handleLauncherActivate(msg))
+		}
+	case launcher.DeleteMsg:
+		if m.launcherScreen == msg.Screen {
+			cmds = append(cmds, m.handleLauncherDelete(msg))
+		}
 	case workspace.LSPDiagnosticsMsg:
 		m.handleLSPDiagnosticsUpdate(msg)
 	case workspace.FileWatcherMsg:
@@ -363,7 +377,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		m.overlayHost.Close(ui.OverlayFilePicker)
 		if msg.Folder {
-			if m.launcher != nil {
+			if m.launcherScreen != nil {
 				_ = m.launcherOpenFolder(msg.Path)
 			} else if err := m.SwitchProject(msg.Path); err != nil {
 				if m.StatusBar != nil {

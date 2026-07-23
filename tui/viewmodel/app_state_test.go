@@ -10,6 +10,7 @@ import (
 	"crude/tui/input"
 	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
+	"crude/tui/screens/launcher"
 	"crude/tui/settings"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -141,7 +142,8 @@ func TestBuildMainView_NilActiveML_EmptyAgents(t *testing.T) {
 
 	// No agents, no editors, no launcher → the else-if for
 	// len(m.agents)==0 handles this, producing empty chat.
-	app.launcher = nil
+	app.launcherScreen = nil
+	app.launcherHost = nil
 
 	out := app.buildMainView()
 	if out == "" {
@@ -154,12 +156,22 @@ func TestBuildMainView_LauncherFallback(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	// Launcher present, no agents → launcher content shown
-	app.launcher = NewLauncherState(".", nil)
+	// Launcher present, no agents → launcher surface is active and the main
+	// content string only reserves blank chat rows.
+	app.launcherScreen = launcher.New(app.Theme)
+	app.launcherScreen.Refresh(".", nil)
+	app.launcherHost = ui.NewHost(app.Theme, app.launcherScreen)
+	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
-	out := app.buildMainView()
-	if out == "" {
-		t.Fatal("expected non-empty output from buildMainView with launcher")
+	_ = app.buildMainView()
+	if app.launcherScreen == nil {
+		t.Fatal("launcher screen should still be present")
+	}
+	if app.launcherHost == nil {
+		t.Fatal("launcher host should be present")
+	}
+	if app.launcherScreen.TotalItems() < 2 {
+		t.Fatalf("expected at least 2 launcher items, got %d", app.launcherScreen.TotalItems())
 	}
 }
 
@@ -210,15 +222,18 @@ func TestHandleQuit_LastTabRefreshesLauncher(t *testing.T) {
 	app.height = 24
 
 	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
-	app.launcher = nil // simulate launcher being cleared
+	app.launcherScreen = nil // simulate launcher being cleared
+	app.launcherHost = nil
 
 	// Close last tab
 	_, cmd := app.handleQuit()
 	if cmd != nil {
 		t.Fatal("expected nil cmd")
 	}
-	// launcher should be refreshed since onListSessions was not set,
-	// but this test verifies no panic occurs.
+	// openLauncher recreates the screen; this test verifies no panic occurs.
+	if app.launcherScreen == nil {
+		t.Fatal("expected launcher screen to be recreated")
+	}
 }
 
 // TestHandleTabSwitch_ClearsStaleViewOnLastClose is a regression
@@ -493,7 +508,10 @@ func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 	app.width = 80
 	app.height = 24
 	app.ChatAreaHeight = 17
-	app.launcher = NewLauncherState(".", nil)
+	app.launcherScreen = launcher.New(app.Theme)
+	app.launcherScreen.Refresh(".", nil)
+	app.launcherHost = ui.NewHost(app.Theme, app.launcherScreen)
+	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
 	region := app.classifyMouse(10, 10, false)
 	if region != regionLauncher {
@@ -502,30 +520,32 @@ func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 }
 
 // TestLauncherState_HitTest exercises full-card hit testing on the
-// welcome launcher. Every line of a bordered card maps to the same item.
+// native welcome launcher. The hero card bounds are registered in the
+// component host and clickable across all of its rows.
 func TestLauncherState_HitTest(t *testing.T) {
-	st := NewLauncherState(".", nil)
-	th := theme.DefaultDark()
-	paint := widgets.RenderWelcomeLauncher(
-		st.cwdPath, st.items, 0, 0, false, "", th, 80, 24, 0, 0, nil,
-	)
-	st.SetPaint(paint)
+	screen := launcher.New(theme.DefaultDark())
+	screen.Refresh(".", nil)
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	screen.SetFocusHandler(host.Focus)
+	host.Resize(80, 24)
+	host.Layout()
 
-	// New Session should have at least one rectangular hit region.
-	found := 0
-	for _, h := range st.hits {
-		if h.ItemIdx == 0 {
-			found++
-			if got := st.HitTestXY((h.X0+h.X1)/2, (h.Y0+h.Y1)/2); got != 0 {
-				t.Errorf("hit center should map to item 0, got %d", got)
-			}
-		}
+	id := host.HitTest(40, 1)
+	if id != launcher.HeroID {
+		t.Fatalf("expected hero card hit at (40,1), got %q", id)
 	}
-	if found < 1 {
-		t.Fatalf("expected New Session hit region, got %d", found)
+
+	// Clicking the hero card should activate it.
+	res := host.Handle(tea.MouseClickMsg{X: 40, Y: 1, Button: tea.MouseLeft})
+	if res.Cmd == nil {
+		t.Fatal("click on hero card should produce an activation command")
 	}
-	if got := st.HitTest(10000); got != -1 {
-		t.Errorf("out of range should not be clickable, got %d", got)
+	if _, ok := res.Cmd().(launcher.ActivateMsg); !ok {
+		t.Fatalf("expected ActivateMsg, got %#v", res.Cmd())
+	}
+
+	if id := host.HitTest(1000, 1); id != ui.RootID {
+		t.Fatalf("out of range should miss the component tree, got %q", id)
 	}
 }
 
@@ -695,6 +715,10 @@ func newTestApp(t *testing.T) *App {
 	}
 
 	app.Win = window.New(th)
+	app.launcherScreen = launcher.New(th)
+	app.launcherScreen.Refresh(".", nil)
+	app.launcherHost = ui.NewHost(th, app.launcherScreen)
+	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
 	return app
 }

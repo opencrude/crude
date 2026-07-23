@@ -48,7 +48,7 @@ tab attention until the panel is activated or closed.
 | Find in Files | yes | yes | yes | clamp | open; Cc click toggles case sensitivity, .* click or Ctrl+R toggles regex |
 | File tree | yes | custom | no | clamp | expand/open |
 | Context menu | yes | no | no | wrap | activate |
-| Launcher | yes | step | yes | clamp | activate |
+| Launcher | yes | step | yes | clamp | activate; fixed search row; workspace viewport scrolls independently |
 
 ## Known defects to fix during migration
 
