@@ -10,7 +10,8 @@ import (
 )
 
 func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
-	m.launcher = nil
+	m.launcherScreen = nil
+	m.launcherHost = nil
 	if m.AgentMgr.Get(orchID) != nil {
 		m.switchToAgentView(orchID)
 		return

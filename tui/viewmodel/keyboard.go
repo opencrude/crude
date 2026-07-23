@@ -85,17 +85,11 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
+	if m.launcherScreen == nil || m.launcherHost == nil {
 		return m, nil
 	}
-	if msg.Code == tea.KeyEsc {
-		if m.launcher != nil && m.launcher.filterActive {
-			m.launcher.deactivateFilter()
-			return m, nil
-		}
-		return m, nil
-	}
-	return m.handleLauncherKey(msg)
+	res := m.launcherHost.Handle(msg)
+	return m, res.Cmd
 }
 
 func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

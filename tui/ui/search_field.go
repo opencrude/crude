@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/surface"
 )
 
@@ -56,6 +57,21 @@ func (s *SearchField) Value() string { return s.field.Value() }
 
 // Edit exposes the shared editing model for advanced callers and tests.
 func (s *SearchField) Edit() *TextEdit { return s.field.Edit() }
+
+// Tokens returns the resolved token set.
+func (s *SearchField) Tokens() *TokenSet { return s.field.tokens }
+
+// SetBackgroundColor overrides the field background fill.
+func (s *SearchField) SetBackgroundColor(c cell.Color) { s.field.SetBackgroundColor(c) }
+
+// ClearBackgroundColor removes the background fill override.
+func (s *SearchField) ClearBackgroundColor() { s.field.ClearBackgroundColor() }
+
+// SetPromptColor overrides the prompt foreground color.
+func (s *SearchField) SetPromptColor(c cell.Color) { s.field.SetPromptColor(c) }
+
+// ClearPromptColor restores the default prompt foreground.
+func (s *SearchField) ClearPromptColor() { s.field.ClearPromptColor() }
 
 // SetDebounce changes the delay before SearchDebouncedMsg is emitted.
 func (s *SearchField) SetDebounce(delay time.Duration) { s.debounce = maxDuration(0, delay) }

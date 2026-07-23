@@ -37,7 +37,7 @@ target replacement under `tui/ui/`.
 | Tabs | `ui/control.Tabs` |
 | File picker entries | native `ui.List` |
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
-| Launcher workspaces | List + SearchField |
+| Launcher workspaces | VirtualList + SearchField + ScrollbarControl; shared pane viewport geometry |
 | LSP popup lists | List |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
 
@@ -47,7 +47,7 @@ target replacement under `tui/ui/`.
 |---------|--------|
 | `tui/scrollbar.ScrollBar` | `ui/collection.Scrollbar` (themeable) |
 | Find in Files inline glyphs | delete |
-| Launcher inline glyphs | delete |
+| Launcher inline glyphs | deleted; ScrollbarControl owns the final pane column |
 | File picker | native `ui.ScrollbarControl` |
 | Find in Files | native `ui.ScrollbarControl` over `ui.VirtualList` |
 

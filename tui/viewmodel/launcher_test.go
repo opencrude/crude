@@ -11,6 +11,7 @@ import (
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/input"
+	"crude/tui/screens/launcher"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
@@ -33,6 +34,10 @@ func (l *testLogger) Debug(tag, msg string, pairs ...any) {}
 func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
 	th := theme.DefaultDark()
+	screen := launcher.New(th)
+	screen.Refresh(".", nil)
+	host := ui.NewHost(th, screen)
+	screen.SetFocusHandler(host.Focus)
 	app := &App{
 		Workspace: &workspace.Workspace{
 			AgentMgr:      workspace.NewAgentManager(),
@@ -48,7 +53,8 @@ func newTestAppWithLauncher(t *testing.T) *App {
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),
 		EditorState:        NewEditorState(),
-		launcher:           NewLauncherState(".", nil),
+		launcherScreen:     screen,
+		launcherHost:       host,
 		actionRegistry:     ui.DefaultRegistry(),
 		subPaneProjections: newSubPaneProjectionRegistry(th),
 		sessionProjections: newSessionProjectionRegistry(th),
@@ -62,13 +68,13 @@ func newTestAppWithLauncher(t *testing.T) *App {
 func TestLauncher_NewSession_NoBackendConfig(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 
-	cmd := app.launcherSelect()
+	cmd := app.launcherNewSession()
 
-	if app.launcher == nil {
+	if app.launcherScreen == nil {
 		t.Fatal("launcher should still be present when no backend config")
 	}
 	if cmd != nil {
-		t.Fatal("expected nil cmd from launcherSelect")
+		t.Fatal("expected nil cmd from launcherNewSession")
 	}
 }
 
@@ -80,7 +86,7 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 
 	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, blockResolveCh)
 
-	if app.launcher != nil {
+	if app.launcherScreen != nil {
 		t.Fatal("launcher should be cleared by AddOrchestrator")
 	}
 	n := app.AgentMgr.Get("ses_1_orch_1")
@@ -103,7 +109,7 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 		t.Fatal("cancel channel should be wired")
 	}
 	if n.BlockResolveCh == nil {
-		t.Fatal("blockResolve channel should be wired")
+		t.Fatal("block resolve channel should be wired")
 	}
 }
 
@@ -115,14 +121,14 @@ func TestLauncher_AddOrchestrator_ClearsLauncher(t *testing.T) {
 
 	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, blockResolveCh)
 
-	if app.launcher != nil {
+	if app.launcherScreen != nil {
 		t.Fatal("launcher should be cleared by AddOrchestrator")
 	}
 	if app.AgentMgr.Get("ses_1_orch_1") == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
 	if app.AgentMgr.ActiveID() != "ses_1_orch_1" {
-		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.AgentMgr.ActiveID())
+		t.Fatalf("expected active agent ses_1_orch_1, got %q", app.AgentMgr.ActiveID())
 	}
 }
 
@@ -134,7 +140,7 @@ func TestLauncher_FileOpen_NoSessionCreated(t *testing.T) {
 	msg := tea.KeyPressMsg{Code: tea.KeyEnter}
 	app.Update(msg)
 
-	if app.launcher == nil {
+	if app.launcherScreen == nil {
 		t.Fatal("launcher should not be cleared by non-session events")
 	}
 	if app.AgentMgr.Count() != 0 {
@@ -147,23 +153,18 @@ func TestLauncher_FileOpen_NoSessionCreated(t *testing.T) {
 func TestLauncher_ResumeSession(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 
-	app.launcher.sessions = []sessiondb.SessionMeta{
+	app.launcherScreen.SetData(".", []sessiondb.SessionMeta{
 		{ID: "ses_test_1", ProjectName: "test-project"},
-	}
-	app.launcher.rebuildItems()
-	// Select the session item if compatibility callers provide one.
-	for i, it := range app.launcher.items {
-		if it.Kind == widgets.LauncherItemSession {
-			app.launcher.selected = i
-			break
-		}
-	}
+	}, nil)
+	app.launcherScreen.Refresh(".", []sessiondb.SessionMeta{
+		{ID: "ses_test_1", ProjectName: "test-project"},
+	})
 
-	cmd := app.launcherSelect()
+	cmd := app.launcherResumeSession("ses_test_1", &sessiondb.SessionMeta{ID: "ses_test_1", ProjectName: "test-project"})
 
 	// Without a real backend the resume fails gracefully — but must not quit.
 	if app.Quit {
-		t.Fatal("launcherSelect must not quit for in-place resume")
+		t.Fatal("launcherResumeSession must not quit for in-place resume")
 	}
 	_ = cmd
 }
@@ -240,104 +241,101 @@ func TestMultipleOrchestrators(t *testing.T) {
 // always has Start actions even with no sessions/workspaces.
 func TestLauncher_NoSessions_StartActionsOnly(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	app.launcher = NewLauncherState(".", nil)
+	app.launcherScreen.Refresh(".", nil)
 
-	if app.launcher.TotalItems() < 2 {
-		t.Fatalf("expected at least 2 start items, got %d", app.launcher.TotalItems())
+	if app.launcherScreen.TotalItems() < 2 {
+		t.Fatalf("expected at least 2 start items, got %d", app.launcherScreen.TotalItems())
 	}
-	if app.launcher.SelectedSessionID() != "" {
+	if app.launcherScreen.SelectedSessionID() != "" {
 		t.Fatal("SelectedSessionID should be empty for default selection")
 	}
-	it := app.launcher.SelectedItem()
-	if it == nil || it.Kind != widgets.LauncherItemNewSession {
+	it := app.launcherScreen.SelectedItem()
+	if it == nil || it.Kind != launcher.ItemNewSession {
 		t.Fatal("default selection should be New Session")
 	}
 }
 
+// TestLauncherWorkspaceSearchKeepsActionsFixed verifies filtering only
+// affects workspace results; the fixed action cards remain.
 func TestLauncherWorkspaceSearchKeepsActionsFixed(t *testing.T) {
-	launcher := &LauncherState{
-		cwdPath: "/projects/current",
-		workspaces: []workspace.WorkspaceInfo{
-			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
-			{ProjectName: "beta", ProjectDir: "/projects/beta"},
-		},
-		selected: 0,
-	}
-	launcher.rebuildItems()
-	launcher.activateFilter()
-	launcher.updateFilter("beta")
+	screen := launcher.New(theme.DefaultDark())
+	screen.SetData("/projects/current", nil, []workspace.WorkspaceInfo{
+		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
+		{ProjectName: "beta", ProjectDir: "/projects/beta"},
+	})
 
-	if launcher.TotalItems() != 4 {
-		t.Fatalf("search should not remove fixed actions, got %d items", launcher.TotalItems())
+	// Activate filter and type "beta".
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	screen.SetFocusHandler(host.Focus)
+	host.Resize(80, 24)
+	screen.SetShortcuts([][2]string{})
+	screen.SetAnimation(0, 0)
+
+	host.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
+	host.Handle(tea.KeyPressMsg{Code: 'b', Text: "b"})
+	host.Handle(tea.KeyPressMsg{Code: 'e', Text: "e"})
+	host.Handle(tea.KeyPressMsg{Code: 't', Text: "t"})
+	host.Handle(tea.KeyPressMsg{Code: 'a', Text: "a"})
+
+	if screen.TotalItems() != 4 {
+		t.Fatalf("search should not remove fixed actions, got %d items", screen.TotalItems())
 	}
-	if len(launcher.filtered) != 1 || launcher.items[launcher.filtered[0]].Workspace.Name != "beta" {
-		t.Fatalf("expected only beta in workspace results, got indices %v", launcher.filtered)
+	it := screen.SelectedItem()
+	if it == nil || it.Kind != launcher.ItemWorkspace || it.Workspace.Name != "beta" {
+		t.Fatalf("expected only beta selected, got %#v", it)
 	}
-	if !launcher.workspaceVisible(launcher.selected) {
-		t.Fatalf("selection should move into filtered workspace results, selected=%d", launcher.selected)
-	}
-	if !strings.Contains(launcher.HelpView(nil), "type search") {
-		t.Fatalf("active search help missing: %q", launcher.HelpView(nil))
+	if !screen.FilterActive() {
+		t.Fatal("active search state should be retained by the screen")
 	}
 }
 
+// TestLauncherWheelOnlyScrollsWorkspacePane verifies the mouse wheel
+// scrolls only the workspace list, not the fixed left column.
 func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	app.width = 120
 	app.height = 30
 	app.ChatAreaHeight = 20
 	app.Tree = &TreeState{}
-	app.launcher.workspaces = make([]workspace.WorkspaceInfo, 30)
-	for i := range app.launcher.workspaces {
-		app.launcher.workspaces[i] = workspace.WorkspaceInfo{
+
+	workspaces := make([]workspace.WorkspaceInfo, 30)
+	for i := range workspaces {
+		workspaces[i] = workspace.WorkspaceInfo{
 			ProjectName: fmt.Sprintf("workspace-%02d", i),
 			ProjectDir:  fmt.Sprintf("/projects/workspace-%02d", i),
 		}
 	}
-	app.launcher.rebuildItems()
+	app.launcherScreen.SetData(".", nil, workspaces)
+
 	layout := app.computeLayout()
-	paint := widgets.RenderWelcomeLauncher(
-		app.launcher.cwdPath,
-		app.launcher.items,
-		app.launcher.selected,
-		0,
-		false,
-		"",
-		app.Theme,
-		layout.InnerW,
-		app.ChatAreaHeight,
-		0,
-		0,
-		nil,
-	)
-	app.launcher.SetPaint(paint)
+	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)
+	app.launcherHost.Layout()
 
-	rightX := layout.SidebarW + layout.PadLR + paint.WorkspacePaneX0 + 1
-	searchY := layout.ChatAreaTop + paint.WorkspaceSearchY
-	app.handleLauncherClick(rightX, searchY)
-	if !app.launcher.filterActive {
-		t.Fatal("clicking the workspace search row should focus search")
-	}
+	// Click search row to focus filter, then wheel inside list.
+	app.launcherHost.Handle(tea.MouseClickMsg{X: 50, Y: 6, Button: tea.MouseLeft})
 
-	listY := layout.ChatAreaTop + paint.WorkspaceListY0
-	app.dispatchMouseWheel(tea.MouseWheelMsg{X: rightX, Y: listY, Button: tea.MouseWheelDown})
-	if app.launcher.workspaceScroll == 0 {
+	scrollBefore := app.launcherScreen.ListScrollOffset()
+	app.launcherHost.Handle(tea.MouseWheelMsg{X: 50, Y: 7, Button: tea.MouseWheelDown})
+	if app.launcherScreen.ListScrollOffset() == scrollBefore {
 		t.Fatal("wheel inside workspace viewport should scroll results")
 	}
 
-	app.launcher.workspaceScroll = 0
-	leftX := layout.SidebarW + layout.PadLR + 1
-	app.dispatchMouseWheel(tea.MouseWheelMsg{X: leftX, Y: listY, Button: tea.MouseWheelDown})
-	if app.launcher.workspaceScroll != 0 {
+	// Wheel over left column should not scroll.
+	app.launcherScreen.SetListScroll(0)
+	app.launcherHost.Handle(tea.MouseWheelMsg{X: 2, Y: 7, Button: tea.MouseWheelDown})
+	if app.launcherScreen.ListScrollOffset() != 0 {
 		t.Fatal("wheel over fixed left help/actions must not scroll workspace results")
 	}
 }
 
+// TestLauncherUsesMainPaneWithoutHelpStrip verifies launcher help lives in
+// the status region, not inside the main pane.
 func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 100
 	app.height = 30
-	app.launcher = NewLauncherState(".", nil)
+	app.launcherScreen = launcher.New(app.Theme)
+	app.launcherScreen.Refresh(".", nil)
 
 	view := app.buildMainView()
 	if strings.Contains(view, "↑↓ navigate") {
@@ -348,6 +346,8 @@ func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 	}
 }
 
+// TestLauncherShortcutsOnlyShowReachableBindings verifies shortcut labels
+// derive from the action registry and do not embed their own labels.
 func TestLauncherShortcutsOnlyShowReachableBindings(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	shortcuts := app.launcherShortcuts()

@@ -83,7 +83,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 	// regions below — the launcher must NOT steal those clicks.
 	// The file tree (sidebar) is already handled above (regionSidebar
 	// check), so the launcher never interferes with it.
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil {
+	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil {
 		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.ChatAreaHeight {
 			return regionLauncher
 		}
@@ -335,14 +335,19 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	case regionLauncher:
 		m.setSessionDeckFocused(false)
-		// Launcher click: hit-test the screen Y to find the rendered
-		// line, then translate that to a flat item index. Single-click
-		// selects the item; double-click activates it. We use the
-		// standard "click to select" UX, then the user can press Enter
-		// or click again to activate. (Single-click activating is too
-		// aggressive — a misclick on the New Session box would lose
-		// any in-flight context.)
-		return m.handleLauncherClick(mouse.X, mouse.Y)
+		// Launcher is a native component tree hosted by launcherHost.
+		// Translate screen coordinates to the launcher surface origin.
+		layout := m.computeLayout()
+		localX := mouse.X - layout.SidebarW - layout.PadLR
+		localY := mouse.Y - layout.ChatAreaTop
+		res := m.launcherHost.Handle(tea.MouseClickMsg{
+			X:      localX,
+			Y:      localY,
+			Button: mouse.Button,
+			Mod:    msg.Mod,
+		})
+		m.LastInteractionTime = time.Now()
+		return m, res.Cmd
 	}
 
 	if m.FocusStack.Top() == FocusTree && mouse.X >= m.Tree.Width {
@@ -400,21 +405,16 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 	case regionLauncher:
 		layout := m.computeLayout()
-		x := msg.X - layout.SidebarW - layout.PadLR
-		y := msg.Y - layout.ChatAreaTop
-		if m.launcher != nil && m.launcher.workspacePaneContains(x, y) {
-			m.LastInteractionTime = time.Now()
-			delta := 0
-			if msg.Button == tea.MouseWheelUp {
-				delta = -3
-			} else if msg.Button == tea.MouseWheelDown {
-				delta = 3
-			}
-			if delta != 0 {
-				m.launcher.scrollBy(delta, m.launcher.workspaceViewportH)
-			}
-		}
-		return m, nil
+		localX := msg.X - layout.SidebarW - layout.PadLR
+		localY := msg.Y - layout.ChatAreaTop
+		res := m.launcherHost.Handle(tea.MouseWheelMsg{
+			X:      localX,
+			Y:      localY,
+			Button: msg.Button,
+			Mod:    msg.Mod,
+		})
+		m.LastInteractionTime = time.Now()
+		return m, res.Cmd
 
 	default:
 	}
@@ -462,7 +462,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Launcher: when the launcher screen is active (no agents, no
-	// editor), route motion directly to the launcher hover handler
+	// editor), route motion directly to its native component host
 	// and return. This is a critical performance fix: without this
 	// early return, every mouse-motion event over the launcher
 	// would fall through to the tree-hover-clear, tab-bar-hover-
@@ -473,7 +473,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// Before returning, clear tree and tab-bar hover state so the
 	// stale highlight doesn't persist when the mouse leaves those
 	// areas for the launcher.
-	if m.launcher != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	if m.launcherScreen != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		// Mouse is over the file tree — route there instead.
 		if m.Tree.Visible && m.Tree.Model != nil && mouse.X < m.Tree.Width {
 			if mouse.X == m.Tree.Width-1 {
@@ -493,7 +493,19 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 		// Clear tab bar hover (mouse left the tab row).
 		m.Win.Hover.Clear()
-		m.handleLauncherHover(mouse.X, mouse.Y)
+		// Route motion to the launcher component host.
+		layout := m.computeLayout()
+		localX := mouse.X - layout.SidebarW - layout.PadLR
+		localY := mouse.Y - layout.ChatAreaTop
+		res := m.launcherHost.Handle(tea.MouseMotionMsg{
+			X:      localX,
+			Y:      localY,
+			Button: mouse.Button,
+			Mod:    msg.Mod,
+		})
+		if res.Cmd != nil {
+			cmds = append(cmds, res.Cmd)
+		}
 		return m, tea.Batch(cmds...)
 	}
 
@@ -641,11 +653,8 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 
 	case regionLauncher:
-		// Launcher hover: pre-select the item under the cursor so
-		// the user can click to confirm. (Single-click already
-		// selects via handleLauncherClick; this gives a "click-to-
-		// select, click-again-to-activate" UX with hover preview.)
-		m.handleLauncherHover(mouse.X, mouse.Y)
+		// Release events on the launcher need no special handling;
+		// activation happens on click via the component host.
 		return m, tea.Batch(cmds...)
 
 	case regionChat:

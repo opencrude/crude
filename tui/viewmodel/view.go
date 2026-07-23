@@ -37,9 +37,9 @@ func (m *App) View() tea.View {
 	}
 
 	// Only cache the main content when the editor is the active view —
-	// chroma syntax highlighting is expensive. Agent tabs and the
-	// launcher use cheap ANSI rendering and need every frame to stay
-	// responsive (cursor blink, hover highlights, streaming tokens).
+	// chroma syntax highlighting is expensive. Agent tabs use the fresh
+	// main-view path, while the native launcher surface is painted every
+	// frame so cursor, hover, scroll, and animation state stay responsive.
 	isEditorMain := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
 	useCached := isEditorMain && m.sessionDeckHeight(m.height) == 0 && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
 
@@ -58,6 +58,10 @@ func (m *App) View() tea.View {
 		root.AddChild(m.mainSessionDeckSurf)
 		m.mainSessionDeckSurf.SetZOrder(1)
 		m.mainSessionDeckSurf.SetVisible(m.sessionDeckHeight(m.height) > 0)
+	}
+	if m.mainLauncherSurf != nil {
+		root.AddChild(m.mainLauncherSurf)
+		m.mainLauncherSurf.SetZOrder(1)
 	}
 	if m.mainSidebarSurf != nil {
 		root.AddChild(m.mainSidebarSurf)
@@ -85,6 +89,7 @@ func (m *App) View() tea.View {
 		rendering.RenderToSurface(m.mainContentSurf, mainContent)
 	}
 	m.renderSessionDeckToSurface()
+	m.renderLauncherToSurface()
 
 	// Cheap layers: always re-render (surface fill + ANSI render).
 	m.renderHeaderToSurface()
@@ -133,7 +138,7 @@ func (m *App) buildMainView() string {
 	}
 
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
-	isLauncherActive := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcher != nil
+	isLauncherActive := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil
 	showMainInput := !isLauncherActive && !isEditorActive && !m.OverlayState.IsOverlay()
 
 	m.syncFormHint()
@@ -198,12 +203,9 @@ func (m *App) buildMainView() string {
 		chatVisible = m.EditorState.Editor.View(contentW, chatH, editorPadL, editorPadR)
 		totalSBW = 0
 	} else if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		if m.launcher != nil {
-			launcherLines := m.renderLauncherMainView(innerW, chatH)
-			chatVisible = launcherLines
-		} else {
-			chatVisible = []string{""}
-		}
+		// The native launcher screen paints into its own surface; the main
+		// content only needs to reserve the vertical space.
+		chatVisible = make([]string, chatH)
 		totalSBW = 0
 	} else {
 		activeML := m.activeMessageList()
@@ -509,47 +511,40 @@ func (m *App) syncFormHint() {
 	m.FormHint = ""
 }
 
-// renderLauncherMainView paints the single-phase welcome launcher and stores
-// the hit map so mouse clicks cover entire card bounds.
-func (m *App) renderLauncherMainView(innerW, chatH int) []string {
-	if m.launcher == nil || innerW < 20 || chatH < 3 {
-		return []string{""}
+// renderLauncherToSurface paints the native launcher component tree into its
+// dedicated layer. It is called every frame (no caching) so animations and
+// hover states stay responsive.
+func (m *App) renderLauncherToSurface() {
+	if m.mainLauncherSurf == nil {
+		return
+	}
+	active := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == ""
+	if !active || m.launcherScreen == nil || m.launcherHost == nil {
+		m.mainLauncherSurf.SetVisible(false)
+		return
 	}
 
-	idleSeconds := time.Since(m.LastInteractionTime).Seconds()
-	paint := widgets.RenderWelcomeLauncher(
-		m.launcher.cwdPath,
-		m.launcher.items,
-		m.launcher.selected,
-		m.launcher.workspaceScroll,
-		m.launcher.filterActive,
-		m.launcher.filterText(),
-		m.Theme,
-		innerW,
-		chatH,
-		m.SpinFrame,
-		idleSeconds,
-		m.launcherShortcuts(),
-	)
-	m.launcher.SetPaint(paint)
-	m.launcher.ensureSelectedVisible(chatH)
-
-	padStr := strings.Repeat(" ", m.Theme.Spacing.PadLR)
-	result := make([]string, chatH)
-	for i := 0; i < chatH; i++ {
-		if i < len(paint.Lines) {
-			line := paint.Lines[i]
-			lw := rendering.VisibleWidth(line)
-			padRight := innerW - lw
-			if padRight < 0 {
-				padRight = 0
-			}
-			result[i] = padStr + line + strings.Repeat(" ", padRight) + padStr
-		} else {
-			result[i] = strings.Repeat(" ", innerW+2*m.Theme.Spacing.PadLR)
-		}
+	layout := m.computeLayout()
+	innerW := layout.InnerW
+	chatH := m.ChatAreaHeight
+	if innerW < 20 || chatH < 3 {
+		m.mainLauncherSurf.SetVisible(false)
+		return
 	}
-	return result
+
+	m.launcherScreen.SetShortcuts(m.launcherShortcuts())
+	m.launcherScreen.SetAnimation(m.SpinFrame, time.Since(m.LastInteractionTime).Seconds())
+
+	m.mainLauncherSurf.SetVisible(true)
+	m.mainLauncherSurf.Resize(innerW, chatH)
+	m.mainLauncherSurf.SetPosition(layout.SidebarW+layout.PadLR, layout.ChatAreaTop)
+	m.mainLauncherSurf.Buffer().Clear()
+
+	m.launcherHost.Resize(innerW, chatH)
+	m.launcherHost.Layout()
+	m.launcherScreen.SyncFocus()
+	m.launcherHost.SetFrame(m.SpinFrame)
+	m.launcherHost.Paint(m.mainLauncherSurf.Buffer())
 }
 
 func (m *App) renderReferenceChips() []string {
@@ -723,8 +718,8 @@ func (m *App) contextualHelpView() string {
 	if m.sessionDeckFocused() {
 		return "tab next  ·  shift+tab previous  ·  ctrl+[ ] switch panels  ·  esc back"
 	}
-	if m.launcher != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		return m.launcher.HelpView(m.actionRegistry)
+	if m.launcherScreen != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+		return m.launcherHelpView()
 	}
 	if m.FocusStack != nil && m.FocusStack.Top() == FocusTabBar {
 		return compactStatusHint(m.FormHint)

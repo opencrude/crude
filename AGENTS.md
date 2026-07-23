@@ -212,9 +212,10 @@ isEditorMain := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
 useCached := isEditorMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
 ```
 
-Agent tabs and the launcher ALWAYS call `buildMainView()` fresh every
-frame. They use cheap ANSI rendering and need every frame for cursor
-blink, hover highlights, and streaming tokens.
+Agent tabs call `buildMainView()` fresh every frame. The launcher is a
+native component tree painted into `mainLauncherSurf` every frame, so its
+cursor, hover, scroll, and animation state remain responsive without using
+the main-view ANSI cache.
 
 **RULES:**
 - `m.contentDirty = true` must be set ONLY in paths that modify editor
