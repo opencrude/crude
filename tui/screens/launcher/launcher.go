@@ -20,22 +20,29 @@ import (
 )
 
 const (
-	ScreenID           ui.ComponentID = "launcher"
-	HeroID                            = "launcher/hero"
-	NewWorkspaceID                    = "launcher/new-workspace"
-	ShortcutsID                       = "launcher/shortcuts"
-	DividerID                         = "launcher/divider"
-	WorkspacesHeaderID                = "launcher/workspaces-header"
-	SearchID                          = "launcher/search"
-	WorkspaceListID                   = "launcher/workspace-list"
-	ScrollbarID                       = "launcher/scrollbar"
-	EmptyID                           = "launcher/empty"
+	ScreenID           = "launcher"
+	HeroID             = "launcher/hero"
+	NewWorkspaceID     = "launcher/new-workspace"
+	ShortcutsID        = "launcher/shortcuts"
+	DividerID          = "launcher/divider"
+	WorkspacesHeaderID = "launcher/workspaces-header"
+	SearchID           = "launcher/search"
+	WorkspaceListID    = "launcher/workspace-list"
+	ScrollbarID        = "launcher/scrollbar"
+	EmptyID            = "launcher/empty"
 )
 
 // paneContentInset is the shared left rail for dense pane content. A pane has
 // no matching right inset: content reaches the final column unless the
 // scrollbar owns that column.
 const paneContentInset = 1
+
+// rowInset is the indent used for section body content (search field, list
+// items, shortcut entries) so it sits one column past the section header text.
+// The shortcuts header still hardcodes this offset directly because its
+// shortcut list is hand-laid out without a pane; the workspaces section
+// consumes the same offset via paneLayout.bodyRect.
+const rowInset = paneContentInset + 1
 
 // paneLayout is the single geometry contract for a dense pane. Header, search,
 // empty state, and collection all consume Content; Scrollbar is either empty
@@ -70,6 +77,15 @@ func newPaneLayout(bounds ui.Rect, hasScrollbar bool) paneLayout {
 
 func (p paneLayout) contentRect(y, h int) ui.Rect {
 	return ui.Rect{X: p.Content.X, Y: y, W: p.Content.W, H: maxInt(0, h)}
+}
+
+// bodyRect returns the content rect indented one column inward, so body rows
+// (search field, list items) sit one column past their section header.
+func (p paneLayout) bodyRect(y, h int) ui.Rect {
+	if p.Content.W <= 1 {
+		return p.contentRect(y, h)
+	}
+	return ui.Rect{X: p.Content.X + 1, Y: y, W: p.Content.W - 1, H: maxInt(0, h)}
 }
 
 func (p paneLayout) scrollbarRect(y, h int) ui.Rect {
@@ -803,10 +819,10 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.header.Set("Recent Workspaces", countLabel)
 	s.divider.Layout(ctx, ui.Rect{X: leftW, Y: bodyY, W: gap, H: bodyH})
 	s.header.Layout(ctx, pane.contentRect(bodyY, 1))
-	s.search.Layout(ctx, pane.contentRect(bodyY+1, 1))
-	s.list.Layout(ctx, pane.contentRect(listY, listH))
+	s.search.Layout(ctx, pane.bodyRect(bodyY+1, 1))
+	s.list.Layout(ctx, pane.bodyRect(listY, listH))
 	s.scrollbar.Layout(ctx, pane.scrollbarRect(listY, listH))
-	s.empty.Layout(ctx, pane.contentRect(listY, listH))
+	s.empty.Layout(ctx, pane.bodyRect(listY, listH))
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
@@ -1027,14 +1043,16 @@ func (sl *shortcutList) Paint(buf *surface.CellBuffer, originX, originY int, ctx
 		if gap < 2 {
 			gap = 2
 		}
-		row := strings.Repeat(" ", paneContentInset) + key + strings.Repeat(" ", gap) + label
-		row = rendering.TruncateLine(row, r.W)
-		// key in fg, label in muted — write in two parts.
-		keyX := ox + paneContentInset
-		buf.WriteString(ox, y, strings.Repeat(" ", paneContentInset), fg, cell.NoColor, 0)
+		keyX := ox + rowInset
+		buf.WriteString(ox, y, strings.Repeat(" ", rowInset), fg, cell.NoColor, 0)
 		buf.WriteString(keyX, y, key, fg, cell.NoColor, 0)
 		buf.WriteString(keyX+rendering.VisibleWidth(key), y, strings.Repeat(" ", gap), fg, cell.NoColor, 0)
 		buf.WriteString(keyX+rendering.VisibleWidth(key)+gap, y, label, muted, cell.NoColor, 0)
+		// fill any trailing whitespace
+		fill := ox + r.W - (keyX + rendering.VisibleWidth(key) + gap + rendering.VisibleWidth(label))
+		if fill > 0 {
+			buf.WriteString(keyX+rendering.VisibleWidth(key)+gap+rendering.VisibleWidth(label), y, strings.Repeat(" ", fill), fg, cell.NoColor, 0)
+		}
 	}
 	// Fill remaining rows
 	for y := oy + 1 + len(sl.owner.shortcuts); y < oy+r.H; y++ {
@@ -1445,13 +1463,12 @@ func (wl *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, it
 	xpos = buf.WriteString(xpos, y, path, pathFG, bg, 0)
 
 	leftW := xpos - x
-	gap := width - leftW - rendering.VisibleWidth(meta) - 2
+	gap := width - leftW - rendering.VisibleWidth(meta)
 	if gap < 1 {
 		gap = 1
 	}
 	xpos = buf.WriteString(xpos, y, strings.Repeat(" ", gap), nameFG, bg, 0)
-	xpos = buf.WriteString(xpos, y, meta, metaFG, bg, 0)
-	buf.WriteString(xpos, y, "  ", nameFG, bg, 0)
+	buf.WriteString(xpos, y, meta, metaFG, bg, 0)
 }
 
 func (wl *workspaceList) workspaceFor(item ui.VirtItem) *WorkspaceEntry {
