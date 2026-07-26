@@ -14,6 +14,8 @@ func (m Model) View(width, chatAreaHeight int, settingsActive, confirmActive boo
 		return b.String()
 	}
 
+	// Render via the legacy ANSI View() bridge. The TextArea owns the
+	// engine; View returns the same ANSI string the legacy component did.
 	b.WriteString(m.input.View(width, spinFrame, m.thinking))
 
 	inputVal := m.input.Value()

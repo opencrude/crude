@@ -7,6 +7,7 @@ import (
 	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 const slashPageSize = 8
@@ -77,7 +78,7 @@ func cmdsToItems(cmds []CmdInfo) []components.ListItem {
 
 type Model struct {
 	theme                 *theme.Theme
-	input                 components.TextInput
+	input                 *ui.TextArea
 	history               []string
 	histIdx               int
 	histDraft, histPrefix string
@@ -139,9 +140,10 @@ func NewModel(t *theme.Theme) Model {
 		return strings.HasPrefix(strings.ToLower(item.ID), filter) || strings.Contains(strings.ToLower(item.Detail), filter)
 	}
 
+	tokens := ui.NewTokenSet(t)
 	return Model{
 		theme:     t,
-		input:     components.NewTextInput(t),
+		input:     ui.NewTextArea("input/chat", tokens, true),
 		slashList: slashList,
 		histIdx:   -1,
 		showHint:  true,
@@ -236,14 +238,7 @@ func (m *Model) ResetPrompt() {
 }
 
 func (m Model) Height() int {
-	textW := m.textWidth
-	if textW < 1 {
-		textW = m.width - m.theme.Spacing.PadLR*2 - 2
-		if textW < 1 {
-			textW = 1
-		}
-	}
-	return m.input.Height(textW)
+	return m.input.Height()
 }
 
 func (m Model) InputTextWidth() int {

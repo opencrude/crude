@@ -82,13 +82,18 @@ func TestScreenPaintPreservesWelcomeHierarchy(t *testing.T) {
 	if rows[6][0] != '│' || rows[6][39] != '│' || rows[7][0] != '│' || rows[7][39] != '│' {
 		t.Fatalf("New Workspace side borders are not continuous: %q / %q", string(rows[6]), string(rows[7]))
 	}
-	// Header, search, and result rows share one right-column origin and
-	// terminate at the same edge when the scrollbar is unnecessary.
-	if s.header.Bounds().X != s.search.Bounds().X || s.search.Bounds().X != s.list.Bounds().X {
-		t.Fatalf("right-column origins drift: header=%+v search=%+v list=%+v", s.header.Bounds(), s.search.Bounds(), s.list.Bounds())
+	// The pane has two rails: the header sits on the content rail, and
+	// body rows (search, list) sit one column further in on the body rail.
+	// All body rows must share the same origin and width.
+	pane := s.workspacePane
+	if got := s.header.Bounds(); got.X != pane.Content.X || got.W != pane.Content.W {
+		t.Fatalf("header not on content rail: got=%+v content=%+v", got, pane.Content)
 	}
-	if s.header.Bounds().W != s.search.Bounds().W || s.search.Bounds().W != s.list.Bounds().W {
-		t.Fatalf("right-column widths drift without scrollbar: header=%+v search=%+v list=%+v", s.header.Bounds(), s.search.Bounds(), s.list.Bounds())
+	if s.search.Bounds().X != s.list.Bounds().X || s.search.Bounds().W != s.list.Bounds().W {
+		t.Fatalf("body rail drift: search=%+v list=%+v", s.search.Bounds(), s.list.Bounds())
+	}
+	if s.search.Bounds().X != pane.Content.X+1 {
+		t.Fatalf("body rail should start one column past content: search.X=%d content.X=%d", s.search.Bounds().X, pane.Content.X)
 	}
 }
 
@@ -185,9 +190,11 @@ func TestScreenRowsUseThemeAndSelectionState(t *testing.T) {
 	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	buf.Clear()
 	h.Paint(buf)
-	selectedBG := buf.Get(44, 7).BG
+	// The selected row is the first workspace row in the body rail.
+	lb := s.list.Bounds()
+	selectedBG := buf.Get(lb.X, lb.Y).BG
 	if selectedBG.IsDefault() || selectedBG.Equal(cell.NoColor) {
-		t.Fatalf("selected row has no explicit hover background: %#v", selectedBG)
+		t.Fatalf("selected row has no explicit hover background at (%d,%d): %#v", lb.X, lb.Y, selectedBG)
 	}
 	if got := s.SelectedItem(); got == nil || got.Workspace == nil {
 		t.Fatal("workspace should be selected")
@@ -209,20 +216,26 @@ func TestWorkspacePaneUsesOneColumnContentRailWithoutScrollbar(t *testing.T) {
 	if pane.Content.X+pane.Content.W != pane.Bounds.X+pane.Bounds.W {
 		t.Fatalf("content should reach pane edge without a scrollbar: pane=%+v content=%+v", pane.Bounds, pane.Content)
 	}
+	// Header sits on the content rail.
+	if got := s.header.Bounds(); got.X != pane.Content.X || got.W != pane.Content.W {
+		t.Fatalf("header escaped the content rail: got=%+v content=%+v", got, pane.Content)
+	}
+	// Body rows (search, list, empty) sit one column further in on the body rail.
+	bodyX := pane.Content.X + 1
+	bodyW := pane.Content.W - 1
 	for name, r := range map[string]ui.Rect{
-		"header": s.header.Bounds(),
 		"search": s.search.Bounds(),
 		"list":   s.list.Bounds(),
 		"empty":  s.empty.Bounds(),
 	} {
-		if r.X != pane.Content.X || r.W != pane.Content.W {
-			t.Fatalf("%s escaped the pane contract: got=%+v content=%+v", name, r, pane.Content)
+		if r.X != bodyX || r.W != bodyW {
+			t.Fatalf("%s escaped the body rail: got=%+v body=(X=%d W=%d)", name, r, bodyX, bodyW)
 		}
 	}
 
-	// Header and search begin on the same rail. Selecting the first workspace
-	// puts the row marker on that rail, while its background reaches the pane's
-	// final column without a compensating right gutter.
+	// Header and search begin on their respective rails. Selecting the first
+	// workspace puts the row marker on the body rail, while its background
+	// reaches the pane's final column without a compensating right gutter.
 	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	buf.Clear()
@@ -261,13 +274,19 @@ func TestWorkspacePaneReservesOnlyFinalColumnForScrollbar(t *testing.T) {
 	if pane.Content.X+pane.Content.W != pane.Scrollbar.X {
 		t.Fatalf("content must terminate immediately before scrollbar: content=%+v scrollbar=%+v", pane.Content, pane.Scrollbar)
 	}
+	// Header sits on the content rail; body rows (search, list) sit on the
+	// body rail, one column further in, terminating before the scrollbar.
+	if got := s.header.Bounds(); got.X != pane.Content.X || got.W != pane.Content.W {
+		t.Fatalf("header drifted from content rail: got=%+v content=%+v", got, pane.Content)
+	}
+	bodyX := pane.Content.X + 1
+	bodyW := pane.Content.W - 1
 	for name, r := range map[string]ui.Rect{
-		"header": s.header.Bounds(),
 		"search": s.search.Bounds(),
 		"list":   s.list.Bounds(),
 	} {
-		if r.X != pane.Content.X || r.W != pane.Content.W {
-			t.Fatalf("%s drifted from scrollbar-aware content rail: got=%+v content=%+v", name, r, pane.Content)
+		if r.X != bodyX || r.W != bodyW {
+			t.Fatalf("%s drifted from scrollbar-aware body rail: got=%+v body=(X=%d W=%d)", name, r, bodyX, bodyW)
 		}
 	}
 	if s.scrollbar.Bounds() != pane.scrollbarRect(s.list.Bounds().Y, s.list.Bounds().H) {

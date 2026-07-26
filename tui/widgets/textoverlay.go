@@ -6,10 +6,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/ui"
 	"crude/tui/widget"
 )
 
@@ -23,7 +23,7 @@ const (
 
 type TextOverlay struct {
 	th      *theme.Theme
-	input   components.TextInput
+	input   *ui.TextArea
 	title   string
 	refID   string
 	scroll  int
@@ -32,7 +32,8 @@ type TextOverlay struct {
 }
 
 func NewTextOverlay(th *theme.Theme) TextOverlay {
-	return TextOverlay{th: th, input: components.NewTextInput(th)}
+	tokens := ui.NewTokenSet(th)
+	return TextOverlay{th: th, input: ui.NewTextArea("textoverlay/input", tokens, true)}
 }
 
 func (m *TextOverlay) Open(refID, title, content string) {
@@ -77,8 +78,7 @@ func (m TextOverlay) Update(msg tea.Msg) (TextOverlay, tea.Cmd, TextOverlayActio
 			return m, nil, TextOverlayCancel
 		}
 	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg, false)
+	cmd := m.input.Update(msg, false)
 	return m, cmd, TextOverlayNone
 }
 

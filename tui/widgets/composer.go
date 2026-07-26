@@ -7,10 +7,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/ui"
 	"crude/tui/widget"
 )
 
@@ -24,15 +24,16 @@ const (
 
 type Composer struct {
 	th     *theme.Theme
-	input  components.TextInput
+	input  *ui.TextArea
 	open   bool
 	scroll int
 }
 
 func NewComposer(th *theme.Theme) *Composer {
+	tokens := ui.NewTokenSet(th)
 	return &Composer{
 		th:    th,
-		input: components.NewTextInput(th),
+		input: ui.NewTextArea("composer/input", tokens, true),
 	}
 }
 
@@ -159,8 +160,7 @@ func (c *Composer) Update(msg tea.Msg) (*Composer, tea.Cmd, ComposerAction) {
 		}
 	}
 
-	var cmd tea.Cmd
-	c.input, cmd = c.input.Update(msg, false)
+	cmd := c.input.Update(msg, false)
 	return c, cmd, ComposerNone
 }
 

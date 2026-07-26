@@ -707,6 +707,7 @@ func newTestApp(t *testing.T) *App {
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),
 		EditorState:        NewEditorState(),
+		Input:              input.NewModel(th),
 		actionRegistry:     ui.DefaultRegistry(),
 		windowManager:      wmgr,
 		overlayHost:        ui.NewOverlayHost(wmgr),
