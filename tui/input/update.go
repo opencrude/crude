@@ -41,16 +41,14 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 		// Alt+\ is a fallback newline shortcut that works on Windows Terminal,
 		// where Alt+Enter is intercepted as "toggle fullscreen".
 		if msg.Mod.Contains(tea.ModAlt) && msg.Code == '\\' {
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg, false)
+			cmd := m.input.Update(msg, false)
 			return m, cmd, nil
 		}
 
 		switch msg.Code {
 		case tea.KeyEnter:
 			if msg.Mod.Contains(tea.ModAlt) {
-				var cmd tea.Cmd
-				m.input, cmd = m.input.Update(msg, false)
+				cmd := m.input.Update(msg, false)
 				return m, cmd, nil
 			}
 			text := strings.TrimSpace(m.input.Value())
@@ -77,8 +75,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 				m.browseHistoryUp()
 				return m, nil, nil
 			}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg, false)
+			cmd := m.input.Update(msg, false)
 			return m, cmd, nil
 
 		case tea.KeyDown:
@@ -86,8 +83,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 				m.browseHistoryDown()
 				return m, nil, nil
 			}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg, false)
+			cmd := m.input.Update(msg, false)
 			return m, cmd, nil
 
 		case tea.KeyBackspace, tea.KeyDelete:
@@ -100,8 +96,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 				m.histDraft = m.input.Value()
 				m.histIdx = -1
 			}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg, false)
+			cmd := m.input.Update(msg, false)
 			m.syncSlashState()
 			return m, cmd, nil
 
@@ -119,8 +114,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, 
 				m.histDraft = m.input.Value()
 				m.histIdx = -1
 			}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg, false)
+			cmd := m.input.Update(msg, false)
 			m.applyReferenceRanges()
 			m.syncSlashState()
 			return m, cmd, nil
@@ -256,8 +250,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, cmd, nil
 
 	case tea.KeyBackspace, tea.KeyDelete:
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg, false)
+		cmd := m.input.Update(msg, false)
 		inputStr := m.input.Value()
 		if inputStr == "" || !strings.HasPrefix(inputStr, "/") || strings.Contains(inputStr, " ") || strings.Contains(inputStr, "\n") {
 			m.slashActive = false
@@ -267,8 +260,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, cmd, nil
 
 	default:
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg, false)
+		cmd := m.input.Update(msg, false)
 		inputStr := m.input.Value()
 		if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") && !strings.Contains(inputStr, "\n") {
 			m.slashList.SetFilter(strings.TrimPrefix(inputStr, "/"))

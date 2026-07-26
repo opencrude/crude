@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"crude/sessiondb"
-	"crude/tui/components"
+	"crude/tui/ui"
 )
 
 type ReferenceStore interface {
@@ -79,9 +79,9 @@ func (m *Model) SetValuePreserveReferences(text string) {
 
 func (m *Model) applyReferenceRanges() {
 	ranges := m.RefRanges()
-	atomic := make([]components.AtomicRange, len(ranges))
+	atomic := make([]ui.AtomicRange, len(ranges))
 	for i, rr := range ranges {
-		atomic[i] = components.AtomicRange{Start: rr.Start, End: rr.End, ID: rr.ID}
+		atomic[i] = ui.AtomicRange{Start: rr.Start, End: rr.End, ID: rr.ID}
 	}
 	m.input.SetAtomicRanges(atomic)
 	m.input.NormalizeCursorAtomic()

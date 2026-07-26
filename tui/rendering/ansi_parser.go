@@ -27,80 +27,79 @@ func RenderToSurface(surf *surface.Surface, ansiStr string) {
 	// cells from a previous page cannot leak through when the next view is
 	// shorter, transparent, or changes layout entirely.
 	buf.Clear()
-	curX, curY := 0, 0
+	RenderToBufferAt(buf, 0, 0, ansiStr)
+}
+
+// RenderToBufferAt parses an ANSI string and writes the cells into a
+// CellBuffer at the given origin offset (originX, originY), without
+// clearing the buffer first. Used by native components (e.g. ui.TextArea)
+// to bridge legacy ANSI View() output into a sub-rect of an existing buffer.
+// Characters that fall outside the buffer bounds are clipped. The cursor
+// starts at (originX, originY); newlines advance the row and reset the
+// column to originX.
+func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr string) {
+	if buf == nil {
+		return
+	}
+	curX, curY := originX, originY
 	w, h := buf.Width(), buf.Height()
 
-	// Current style state
 	curFG := cell.NoColor
 	curBG := cell.NoColor
 	curAttr := cell.Attrs(0)
 
 	i := 0
 	for i < len(ansiStr) {
-		// Check for escape sequence
 		if ansiStr[i] == '\x1b' && i+1 < len(ansiStr) && ansiStr[i+1] == '[' {
-			// Find the end of the sequence (terminated by a letter)
 			j := i + 2
 			for j < len(ansiStr) && (ansiStr[j] >= '0' && ansiStr[j] <= '9' || ansiStr[j] == ';' || ansiStr[j] == ':') {
 				j++
 			}
 			if j < len(ansiStr) {
-				// ansiStr[j] is the final character (e.g., 'm' for SGR, 'H' for CUP)
 				switch ansiStr[j] {
 				case 'm':
-					// SGR sequence
 					parseSGR(ansiStr[i+2:j], &curFG, &curBG, &curAttr)
 				case 'H':
-					// Cursor position (CUP) — for future use
+					// Cursor position (CUP) — reset to origin
+					curX = originX
+					curY = originY
 				}
 				i = j + 1
 				continue
 			}
 		}
 
-		// Check for newline
 		if ansiStr[i] == '\n' {
 			curY++
-			curX = 0
+			curX = originX
 			i++
 			continue
 		}
-
-		// Check for carriage return
 		if ansiStr[i] == '\r' {
-			curX = 0
+			curX = originX
 			i++
 			continue
 		}
 
-		// Regular character — handle grapheme clusters properly
 		cluster, dw := FirstGrapheme(ansiStr[i:])
 		if len(cluster) == 0 {
 			i++
 			continue
 		}
 		i += len(cluster)
-
 		if dw == 0 {
 			continue
 		}
 
-		// Skip if out of bounds
-		if curY >= h || curX >= w {
+		if curY < 0 || curY >= h || curX >= w {
 			continue
 		}
 
 		if dw == 2 {
 			if curX+1 >= w {
-				// Wide char would be split, skip
 				curX++
 				continue
 			}
-			// Store the full cluster text in Content so GenerateANSI emits
-			// every rune (e.g. ♻️ = ♻ + FE0F, ⚡️ = ⚡ + FE0F). Without it,
-			// ultraviolet re-parses a truncated glyph and computes the
-			// wrong width — every later column shifts, producing the ghost
-			// artifacts reported on Windows.
 			buf.Set(curX, curY, cell.NewClusterCell(cluster, 2, curFG, curBG, curAttr))
 			buf.Set(curX+1, curY, cell.Cell{Char: 0, Width: 0, FG: curFG, BG: curBG, Attr: curAttr})
 			curX += 2
