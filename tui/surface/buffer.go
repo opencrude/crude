@@ -146,12 +146,12 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 				// Wide char would be split at the buffer edge, truncate
 				break
 			}
-			b.Set(curX, y, cell.Cell{Char: r, Width: 2, FG: fg, BG: bg, Attr: attr})
+			b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: 2, FG: fg, BG: bg, Attr: attr})
 			b.Set(curX+1, y, cell.Cell{Char: 0, Width: 0, FG: fg, BG: bg, Attr: attr})
 			curX += 2
 		} else {
 			// Normal-width character (width=1)
-			b.Set(curX, y, cell.Cell{Char: r, Width: 1, FG: fg, BG: bg, Attr: attr})
+			b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: 1, FG: fg, BG: bg, Attr: attr})
 			curX++
 		}
 	}

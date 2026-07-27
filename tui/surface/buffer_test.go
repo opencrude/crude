@@ -125,9 +125,27 @@ func TestCellBuffer_WriteString_WideChar(t *testing.T) {
 	if c0.Width != 2 || c0.Char != '中' {
 		t.Fatalf("wide primary: %+v", c0)
 	}
+	if c0.Content != "中" {
+		t.Fatalf("wide content=%q want original grapheme", c0.Content)
+	}
 	c1 := b.Get(1, 0)
 	if c1.Width != 0 || c1.Char != 0 {
 		t.Fatalf("continuation: %+v", c1)
+	}
+}
+
+func TestCellBuffer_WriteString_PreservesGraphemeContent(t *testing.T) {
+	b := NewCellBuffer(4, 1)
+	cluster := "👩‍💻"
+	end := b.WriteString(0, 0, cluster, cell.NoColor, cell.NoColor, 0)
+	if end != 2 {
+		t.Fatalf("grapheme end=%d want 2", end)
+	}
+	if got := b.Get(0, 0).Content; got != cluster {
+		t.Fatalf("grapheme content=%q want %q", got, cluster)
+	}
+	if b.Get(0, 0).Width != 2 || b.Get(1, 0).Width != 0 {
+		t.Fatalf("grapheme cells=%+v/%+v", b.Get(0, 0), b.Get(1, 0))
 	}
 }
 

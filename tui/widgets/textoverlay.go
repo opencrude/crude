@@ -22,13 +22,13 @@ const (
 )
 
 type TextOverlay struct {
-	th      *theme.Theme
-	input   *ui.TextArea
-	title   string
-	refID   string
-	scroll  int
-	width   int
-	height  int
+	th     *theme.Theme
+	input  *ui.TextArea
+	title  string
+	refID  string
+	scroll int
+	width  int
+	height int
 }
 
 func NewTextOverlay(th *theme.Theme) TextOverlay {
@@ -72,9 +72,19 @@ func (m TextOverlay) Update(msg tea.Msg) (TextOverlay, tea.Cmd, TextOverlayActio
 		case "ctrl+s":
 			return m, nil, TextOverlaySave
 		case "ctrl+c":
+			// Ctrl+C with a selection copies (handled by the viewmodel).
+			// Without a selection, Ctrl+C cancels the overlay.
+			if m.input.HasActiveSelection() {
+				break // let the viewmodel handle copy
+			}
 			return m, nil, TextOverlayCancel
 		}
 		if keyMsg.Code == tea.KeyEsc {
+			// Esc with an active selection clears the selection instead of canceling.
+			if m.input.HasActiveSelection() {
+				m.input.ClearSelection()
+				return m, nil, TextOverlayNone
+			}
 			return m, nil, TextOverlayCancel
 		}
 	}
@@ -108,7 +118,6 @@ func (m *TextOverlay) ViewInner(width, height, spinFrame int) []string {
 	if innerW < 1 {
 		innerW = 1
 	}
-	m.input.SetTextWidth(innerW)
 	view := m.input.View(width, spinFrame, false)
 	lines := strings.Split(view, "\n")
 

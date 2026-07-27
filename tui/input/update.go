@@ -317,11 +317,9 @@ func (m Model) handleMouse(msg tea.MouseMsg, chatAreaHeight int, showHint bool) 
 
 	case tea.MouseReleaseMsg:
 		if m.input.IsSelecting() {
-			selected := m.input.SelectedText()
-			m.input.ClearSelection()
-			if selected != "" {
-				return m, rendering.CopyToClipboardCmd(selected), nil
-			}
+			// Keep the selection range so Ctrl+C can copy it; only
+			// clear the drag flag.
+			m.input.SetSelecting(false)
 		}
 	}
 
