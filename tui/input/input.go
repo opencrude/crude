@@ -277,6 +277,11 @@ func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool
 		segments := rendering.WordWrap(string(logLine), textW)
 		for si, seg := range segments {
 			if visIdx == relY {
+				// The TextArea renders a "❯ " prefix on the first visual
+				// row and a "  " continuation indent on wrapped rows.
+				// Both are exactly 2 cells wide. The theme's left padding
+				// (PadLR) is also rendered outside the TextArea. So the
+				// text column starts at PadLR + 2.
 				col := mouseX - m.theme.Spacing.PadLR - 2
 				if col < 0 {
 					col = 0

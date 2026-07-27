@@ -17,7 +17,7 @@ import (
 type ComposerAction int
 
 const (
-	ComposerNone   ComposerAction = iota
+	ComposerNone ComposerAction = iota
 	ComposerSubmit
 	ComposerCancel
 )
@@ -85,12 +85,6 @@ func (c *Composer) View(availW, availH int) string {
 		return ""
 	}
 
-	inputW := availW - 2
-	if inputW < 1 {
-		inputW = 1
-	}
-	c.input.SetTextWidth(inputW)
-
 	raw := c.input.View(availW, 0, false)
 	bodyLines := strings.Split(raw, "\n")
 
@@ -152,10 +146,12 @@ func (c *Composer) Update(msg tea.Msg) (*Composer, tea.Cmd, ComposerAction) {
 		switch {
 		case keyMsg.String() == "ctrl+enter":
 			return c, nil, ComposerSubmit
-		case keyMsg.Code == tea.KeyEnter:
-			c.input.InsertString("\n")
-			return c, nil, ComposerNone
 		case keyMsg.Code == tea.KeyEsc:
+			// Esc with an active selection clears the selection instead of canceling.
+			if c.input.HasActiveSelection() && !keyMsg.Mod.Contains(tea.ModShift) {
+				c.input.ClearSelection()
+				return c, nil, ComposerNone
+			}
 			return c, nil, ComposerCancel
 		}
 	}
@@ -177,12 +173,6 @@ func (c *Composer) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 	if w < 10 || h < 4 {
 		return
 	}
-
-	innerW := w - 4
-	if innerW < 1 {
-		innerW = 1
-	}
-	c.input.SetTextWidth(innerW)
 
 	view := c.input.View(w, ctx.SpinFrame, false)
 	bodyLines := strings.Split(view, "\n")

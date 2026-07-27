@@ -3,8 +3,11 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 )
@@ -57,6 +60,23 @@ func TestTextArea_EnterSubmitsInSingleLine(t *testing.T) {
 	res := ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if res.Action == nil || res.Action.ID != "submit" || res.Action.Payload != "hi" {
 		t.Fatalf("enter should submit: %+v", res.Action)
+	}
+}
+
+func TestTextArea_UpdateSingleLineEnterEmitsSubmitEvent(t *testing.T) {
+	ta := NewTextArea("test/area", nil, false)
+	ta.SetValue("submit me")
+	cmd := ta.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if cmd == nil {
+		t.Fatal("single-line Enter should return a submit command")
+	}
+	msg := cmd()
+	event, ok := msg.(TextAreaSubmitEvent)
+	if !ok || event.Text != "submit me" {
+		t.Fatalf("submit event=%T %#v", msg, msg)
+	}
+	if ta.Value() != "submit me" {
+		t.Fatalf("submit changed value=%q", ta.Value())
 	}
 }
 
@@ -184,12 +204,11 @@ func TestTextArea_PaintRendersTextIntoBuffer(t *testing.T) {
 	ta.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 20, H: 3})
 	buf := surface.NewCellBuffer(20, 3)
 	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
-	// First cell should be 'h'
-	if c := buf.Get(0, 0); c.Char != 'h' {
-		t.Fatalf("first cell=%q want 'h'", string(c.Char))
-	}
-	// Find 'e','l','l','o'
+	// Row 0 starts with "❯ " prompt prefix, then "hello"
 	row := rowText(buf, 0)
+	if !strings.HasPrefix(row, "❯") {
+		t.Fatalf("row 0=%q missing prompt glyph '❯'", row)
+	}
 	if !strings.Contains(row, "hello") {
 		t.Fatalf("row 0=%q missing 'hello'", row)
 	}
@@ -203,17 +222,143 @@ func TestTextArea_PaintHandlesNewlines(t *testing.T) {
 	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
 	t.Logf("row0=%q", rowText(buf, 0))
 	t.Logf("row1=%q", rowText(buf, 1))
-	if c := buf.Get(0, 0).Char; c != 'a' {
-		t.Fatalf("row0 col0=%q want 'a'", string(c))
+	// Row 0: "❯ ab" — prompt glyph at col 0, 'a' at col 2, 'b' at col 3
+	if c := buf.Get(0, 0).Char; c != '❯' {
+		t.Fatalf("row0 col0=%q want '❯' (prompt)", string(c))
 	}
-	if c := buf.Get(1, 0).Char; c != 'b' {
-		t.Fatalf("row0 col1=%q want 'b'", string(c))
+	if c := buf.Get(2, 0).Char; c != 'a' {
+		t.Fatalf("row0 col2=%q want 'a'", string(c))
 	}
-	if c := buf.Get(0, 1).Char; c != 'c' {
-		t.Fatalf("row1 col0=%q want 'c'", string(c))
+	if c := buf.Get(3, 0).Char; c != 'b' {
+		t.Fatalf("row0 col3=%q want 'b'", string(c))
 	}
-	if c := buf.Get(1, 1).Char; c != 'd' {
-		t.Fatalf("row1 col1=%q want 'd'", string(c))
+	// Row 1: "  cd" — continuation indent (2 spaces), 'c' at col 2, 'd' at col 3
+	if c := buf.Get(2, 1).Char; c != 'c' {
+		t.Fatalf("row1 col2=%q want 'c'", string(c))
+	}
+	if c := buf.Get(3, 1).Char; c != 'd' {
+		t.Fatalf("row1 col3=%q want 'd'", string(c))
+	}
+}
+
+func TestTextArea_ViewPreservesLegacyPromptAndWrapGeometry(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.SetValue("abcdefgh")
+	ta.lastInputTime = time.Now()
+
+	// DefaultDark uses two cells of horizontal padding. The two-cell
+	// "❯ " prefix leaves six text columns in a width-12 bridge view.
+	plain := rendering.StripAnsi(ta.View(12, 0, true))
+	lines := strings.Split(plain, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines=%d output=%q", len(lines), plain)
+	}
+	if lines[0] != "❯ abcdef" {
+		t.Fatalf("first line=%q want %q", lines[0], "❯ abcdef")
+	}
+	if !strings.HasPrefix(lines[1], "  gh") {
+		t.Fatalf("continuation=%q missing two-cell indent", lines[1])
+	}
+	if ta.textWidth != 6 {
+		t.Fatalf("text width=%d want 6", ta.textWidth)
+	}
+}
+
+func TestTextArea_SetPromptEmptyRestoresDefault(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.SetPrompt(">")
+	ta.SetPrompt("")
+	ta.SetValue("x")
+	plain := rendering.StripAnsi(ta.View(20, 0, true))
+	if !strings.HasPrefix(plain, "❯ x") {
+		t.Fatalf("prompt=%q want default prompt", plain)
+	}
+}
+
+func TestTextArea_ViewRendersSolidCursorStates(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.SetValue("abc")
+	ta.SetCursorFlat(1)
+	underChar := ta.View(20, 0, true)
+	if !strings.Contains(underChar, "\x1b[7m") {
+		t.Fatalf("cursor under character is not inverse video: %q", underChar)
+	}
+
+	ta.SetCursorFlat(3)
+	atEnd := ta.View(20, 0, true)
+	if !strings.Contains(rendering.StripAnsi(atEnd), "abc█") {
+		t.Fatalf("end cursor missing block: %q", rendering.StripAnsi(atEnd))
+	}
+}
+
+func TestTextArea_MouseCoordinatesAccountForPrompt(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.SetValue("abc")
+	ta.SetTextWidth(10)
+	// Column 2 is the first text cell after the two-cell "❯ " prefix.
+	if got := ta.MouseToFlatPos(2, 0); got != 0 {
+		t.Fatalf("mouse at first text cell=%d want 0", got)
+	}
+	if got := ta.MouseToFlatPos(3, 0); got != 1 {
+		t.Fatalf("mouse at second text cell=%d want 1", got)
+	}
+}
+
+func TestTextArea_PaintSelectionAndAtomicChipStyles(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	ta := NewTextArea("test/area", tokens, true)
+	ta.SetValue("abcdef")
+	ta.SetAtomicRanges([]AtomicRange{{ID: "ref", Start: 0, End: 3}})
+	ta.SetSelection(0, 2)
+	ta.SetCursorFlat(6)
+	ta.Layout(LayoutContext{}, Rect{W: 20, H: 2})
+	buf := surface.NewCellBuffer(20, 2)
+	ta.lastInputTime = time.Now()
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
+
+	// The chip begins after "❯ ", is bold, and selection covers its first
+	// two rune cells. The third chip cell remains chip-colored.
+	chipStart := 2
+	if !buf.Get(chipStart, 0).Attr.Has(cell.AttrBold) {
+		t.Fatalf("chip attr=%v missing bold", buf.Get(chipStart, 0).Attr)
+	}
+	if !buf.Get(chipStart, 0).BG.Equal(tokens.Color(ColorSelection)) {
+		t.Fatalf("selected chip bg=%v want %v", buf.Get(chipStart, 0).BG, tokens.Color(ColorSelection))
+	}
+	if buf.Get(chipStart+2, 0).BG.Equal(tokens.Color(ColorSelection)) {
+		t.Fatalf("unselected chip cell inherited selection background")
+	}
+}
+
+func TestTextArea_PaintPreservesGraphemeCells(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.SetValue("a👩‍💻b")
+	ta.Layout(LayoutContext{}, Rect{W: 12, H: 2})
+	buf := surface.NewCellBuffer(12, 2)
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: false})
+
+	// "❯ " occupies columns 0-1, then a at 2, the ZWJ emoji at 3-4,
+	// and b at 5. The full cluster must survive in Content.
+	if got := buf.Get(3, 0).Content; got != "👩‍💻" {
+		t.Fatalf("emoji content=%q want full grapheme", got)
+	}
+	if buf.Get(3, 0).Width != 2 || buf.Get(4, 0).Width != 0 {
+		t.Fatalf("emoji cells=%+v/%+v", buf.Get(3, 0), buf.Get(4, 0))
+	}
+	if got := buf.Get(5, 0).Char; got != 'b' {
+		t.Fatalf("text after emoji=%q want b", string(got))
+	}
+}
+
+func TestTextArea_MeasureUsesAvailableTextWidth(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.SetValue("abcdefgh")
+	size := ta.Measure(LayoutContext{}, Loose(6, 20))
+	// Native bounds have no legacy outer padding. Six cells minus the
+	// two-cell "❯ " prefix leaves four text columns, so eight characters
+	// require two rows.
+	if size.W != 6 || size.H != 2 {
+		t.Fatalf("measure=%+v want {W:6 H:2}", size)
 	}
 }
 
@@ -250,6 +395,33 @@ func TestTextArea_GoalColumnPreservedAcrossShorterLine(t *testing.T) {
 	// Goal column was 1 (from "x"), so we land at col 1
 	if ta.CurCol() != 1 {
 		t.Logf("goal col behavior: col=%d (goal=1)", ta.CurCol())
+	}
+}
+
+func TestTextArea_SetTextWidthUpdatesWrappedNavigation(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.SetTextWidth(4)
+	ta.SetValue("abcd efgh")
+	if got := ta.TotalVisualLines(); got != 2 {
+		t.Fatalf("visual lines=%d want 2", got)
+	}
+	if got := ta.CursorVisualLine(); got != 1 {
+		t.Fatalf("cursor visual line=%d want 1", got)
+	}
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyUp})
+	if ta.CurLine() != 0 || ta.CurCol() != 4 {
+		t.Fatalf("wrapped up cursor=(%d,%d) want (0,4)", ta.CurLine(), ta.CurCol())
+	}
+}
+
+func TestTextArea_LayoutKeepsEndCursorVisible(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.SetValue("one\ntwo\nthree")
+	ta.Layout(LayoutContext{}, Rect{W: 12, H: 2})
+	buf := surface.NewCellBuffer(12, 2)
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: false})
+	if got := rowText(buf, 0) + rowText(buf, 1); !strings.Contains(got, "three") {
+		t.Fatalf("visible rows=%q missing end line", got)
 	}
 }
 
@@ -330,4 +502,105 @@ func rowText(buf *surface.CellBuffer, y int) string {
 		b.WriteRune(ch)
 	}
 	return b.String()
+}
+
+func TestTextArea_ShiftArrowStartsSelection(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.SetValue("hello")
+	ta.SetCursorFlat(5) // end
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if !ta.HasActiveSelection() {
+		t.Fatal("shift+left should start selection")
+	}
+	s, e := ta.SelectionRange()
+	if s != 4 || e != 5 {
+		t.Fatalf("selection=[%d,%d) want [4,5)", s, e)
+	}
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	s2, e2 := ta.SelectionRange()
+	if s2 != 3 || e2 != 5 {
+		t.Fatalf("extended selection=[%d,%d) want [3,5)", s2, e2)
+	}
+}
+
+func TestTextArea_ShiftHomeEndSelectsLine(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.SetValue("hello world")
+	ta.SetCursorFlat(5) // at space
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModShift})
+	s, e := ta.SelectionRange()
+	if s != 0 || e != 5 {
+		t.Fatalf("shift+home selection=[%d,%d) want [0,5)", s, e)
+	}
+	// Shift+End extends from the anchor (5) to end, flipping the selection
+	// direction — this matches standard editor behavior.
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModShift})
+	s2, e2 := ta.SelectionRange()
+	if s2 != 5 || e2 != 11 {
+		t.Fatalf("shift+end selection=[%d,%d) want [5,11)", s2, e2)
+	}
+}
+
+func TestTextArea_PlainArrowClearsSelection(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.SetValue("hello")
+	ta.SetSelection(0, 3)
+	if !ta.HasActiveSelection() {
+		t.Fatal("selection should be active")
+	}
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if ta.HasActiveSelection() {
+		t.Fatal("plain left should clear selection")
+	}
+}
+
+func TestTextArea_CtrlASelectsAll(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.SetValue("hello\nworld")
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	if !ta.HasActiveSelection() {
+		t.Fatal("Ctrl+A should select all")
+	}
+	s, e := ta.SelectionRange()
+	if s != 0 || e != 11 {
+		t.Fatalf("select-all=[%d,%d) want [0,11)", s, e)
+	}
+}
+
+func TestTextArea_SelectionPersistsAfterStopSelecting(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.SetValue("hello")
+	ta.SetSelection(1, 4)
+	ta.SetSelecting(true)
+	// Simulate mouse release
+	ta.StopSelecting()
+	if !ta.HasActiveSelection() {
+		t.Fatal("selection should persist after stop-selecting")
+	}
+	if ta.SelectedText() != "ell" {
+		t.Fatalf("selected text=%q want 'ell'", ta.SelectedText())
+	}
+}
+
+func TestTextArea_BackspaceDeletesSelection(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.SetValue("hello world")
+	ta.SetSelection(0, 6)
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if ta.Value() != "world" {
+		t.Fatalf("backspace selection: value=%q want 'world'", ta.Value())
+	}
+	if ta.HasActiveSelection() {
+		t.Fatal("backspace should clear selection")
+	}
+}
+
+func TestTextArea_DeleteDeletesSelection(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.SetValue("hello world")
+	ta.SetSelection(0, 6)
+	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDelete})
+	if ta.Value() != "world" {
+		t.Fatalf("delete selection: value=%q want 'world'", ta.Value())
+	}
 }
