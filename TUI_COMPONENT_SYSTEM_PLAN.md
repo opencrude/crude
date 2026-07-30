@@ -39,9 +39,9 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
 | 12 Structured migrations | DONE | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, Find in Files, composer, text overlay, and launcher bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy overlay tabs, global async rows, and migrated legacy widgets deleted |
-| 13 Shell migrations | PARTIAL | Header/status/hints/tabs/tree/chat input/session picker/message list/editor chrome native; compact subpane headers/tools native (`PaintLine`); thinking subpane MessageList body + main chatprojection render still ANSI; open: root Host/compositor wiring, `contentDirty` cache removal |
-| 14 Deletion | PARTIAL | `tui/scrollbar` + ANSI nested gutter strings deleted; chat/subpane dual scroll models closed |
-| 15 Stabilization | IN PROGRESS | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests |
+| 13 Shell migrations | PARTIAL | Header/status/hints/tabs/tree/chat input/session picker/editor chrome native; message list Host+VirtualList native for structured rows, but markdown/thinking bodies still PreferANSI fallback; open: root Host/compositor wiring, `contentDirty` cache removal |
+| 14 Deletion | PARTIAL | `tui/scrollbar` + ANSI nested gutter strings deleted; dual chat/subpane scrollbar packages closed (only `ScrollbarControl` remains); bypass allowlist still non-empty (`docs/tui/bypass_manifest.json`) |
+| 15 Stabilization | IN PROGRESS | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests; suite green aside from known `jsonrepair` flake |
 
 ### Intentional bridges (not drift — temporary)
 
@@ -1133,9 +1133,9 @@ Landed:
 
 Remaining:
 - FilterField collection link
-- Paint cutover: many filters still use ANSI bridges / ad-hoc View paint, not TextField.Paint
-- File tree model `filter string` still open
-- Delete ANSI filter bridge and hand-rolled editors
+- Paint cutover for any remaining ad-hoc filter chrome outside TextField/TextEdit
+- File tree filter uses `ui.TextEdit` (`tui/filetree/tree.go`); ANSI `filter_paint.go` / `RenderFilterLine` **deleted**
+- Delete any residual hand-rolled editors outside DocumentEditor
 
 Objectives:
 
@@ -1169,8 +1169,8 @@ Landed:
 Remaining:
 - Tree, Table, Menu, Tabs collection controls
 - ~~Tree~~ ✅ `ui.Tree` + file-tree row painter landed (Phase 13 item 4)
-- Dual chat/subpane scrollbar paths still open (shellchat native ScrollbarControl + projection export seams)
-- Delete remaining ANSI scrollbar bridges when all consumers use ScrollbarControl
+- ~~Dual chat/subpane scrollbar paths~~ ✅ `tui/scrollbar` package **deleted**; only native `ui.ScrollbarControl` remains (shellchat main + nested gutters)
+- Delete remaining ANSI paint bridges when PreferANSI consumers reach zero
 
 Objectives:
 
@@ -1465,7 +1465,7 @@ Deliverables:
 Exit criteria:
 
 - There is no parallel widget system.
-- The bypass allowlist is empty.
+- The bypass allowlist shrinks toward empty (`docs/tui/bypass_manifest.json` still lists foundation + PreferANSI chat paths).
 - Dependency checks enforce the three-layer architecture.
 
 ### Phase 15: Stabilization and permanent enforcement
@@ -1485,7 +1485,7 @@ Exit criteria:
 - `go build ./...` passes.
 - `go test ./...` passes apart from explicitly documented external/pre-existing cases.
 - TUI race suites pass.
-- Static design-system and dependency checks pass with no allowlist.
+- Static design-system and dependency checks pass; remaining allowlist entries are intentional shrinking adapters in `docs/tui/bypass_manifest.json` (not an empty allowlist yet).
 - Runtime theme switching passes all gallery and product-screen tests.
 
 ## 20. Surface Migration Ledger
@@ -1514,9 +1514,9 @@ Exit criteria:
 | Header | Row layout + text/status primitives | 13 | **Native `tui/screens/shellheader`**; Host paint into `mainHeaderSurf`; legacy `widgets.RenderHeader` deleted |
 | Status bar | Segmented row + action-derived hints | 13 | **Native `tui/screens/shellstatus`** + **`ui.Hint`/`ui.KeyChord`**; Host paint; durable usage via `Workspace.StatusView()`; status contexts emit registry segments; legacy ANSI statusbar + `#ffaa00` bypass deleted |
 | Tabs | Tabs control + close actions + status indicators | 13 | **Native `tui/screens/shelltabs`** + **`ui.Tabs` shell chrome**; Host paint into `mainTabBarSurf`; `Window` tab state only; legacy `window.RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted |
-| File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | ✅ **Native `tui/screens/shelltree` + `ui.Tree` + `ScrollbarControl`**; `TreeState.ViewData()` seam; `filetree/render.go` (ANSI) **DELETED**; filter string still on TUI model |
+| File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | ✅ **Native `tui/screens/shelltree` + `ui.Tree` + `ScrollbarControl`**; `TreeState.ViewData()` seam; `filetree/render.go` (ANSI) **DELETED**; filter uses `ui.TextEdit` |
 | Chat input | TextArea + reference chips + action hints | 13 | **Native `tui/screens/shellinput`**; Host paint into `mainInputSurf`; `ui.TextArea` + chips + `ui.List` slash; ANSI composer embed removed from `buildMainView` |
-| Message list | VirtualList + message delegates + selection | 13 | ✅ **DONE:** `chatprojection.Renderer` owns sync/render/export/subpane gutter; `shellchat` owns scroll/selection/compose + paint goldens via `tui/ui.VirtualList`; main chat gutter via `ui.ScrollbarControl` only; legacy `widgets/messagelist.go`, `widgets/chatmessage.go` deleted; internal `chatprojection/item_list.go` for message-height indexing (not standalone `tui/virtlist/`) |
+| Message list | VirtualList + message delegates + selection | 13 | ⚠️ **PARTIAL:** `chatprojection.Renderer` + `shellchat` Host/`VirtualList` paint structured `PaintLine` rows natively; markdown/thinking bodies still take PreferANSI fallback (`message_render.go`, `semantic_rows.go`, `shellchat/messages.go`). Main gutter via `ScrollbarControl`; legacy `widgets/messagelist.go` deleted |
 | Subpanes | Panel + VirtualList + nested viewport | 13 | ✅ Composition via `shellchat.Compose`; projection `*chatprojection.Renderer` in `subPaneProjectionRegistry` |
 | Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | ✅ **Native `tui/screens/shelleditor`** Host → `mainEditorSurf`; `Editor.Render` + `ui.ScrollbarControl` (paint **and** mouse drag); shellstatus carries title/●/cursor/diag counts/actions. `Editor.View()` / `scrollbar_ansi` deleted; legacy `scrollbar.ScrollBar` removed from editor |
 | Session picker | Window + sectioned List | 13 | ✅ **DONE:** Native `tui/screens/sessionpicker` OverlayHost + paint goldens; legacy `widgets/sessionpicker.go` deleted |
@@ -1983,14 +1983,16 @@ This program is complete only when all statements are true:
       typography/metric token tables, config.json hot-reload).
 
    4. **Phase 13:** persistent-shell and core-view migration (PARTIAL —
-      shell surfaces largely native; open: subpane ANSI scrollbar paths,
-      root Host/compositor wiring, `contentDirty` cache removal).
+      shell surfaces largely native; message list PreferANSI for markdown/
+      thinking remains; open: root Host/compositor wiring, `contentDirty`
+      cache removal).
 
    5. **Phase 14:** package-boundary completion and deletion.
 
    6. **Phase 15:** stabilization and permanent enforcement (IN PROGRESS —
       see `docs/tui/PHASE15_CHECKLIST.md`; authoring doc, shell input/tabs
-      contracts, Host/WindowFrame fuzz added; allowlist empty + full lint still open).
+      contracts, Host/WindowFrame fuzz added; allowlist still non-empty +
+      full lint gate green separately).
 
 ### Anti-drift checks
 

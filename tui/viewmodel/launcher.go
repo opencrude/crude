@@ -32,6 +32,7 @@ func (m *App) launcherHelpSegments() []ui.HintSegment {
 		ui.ActionSeg("list.open"),
 		ui.ActionSeg("launcher.filter"),
 		ui.ActionSeg("launcher.delete"),
+		ui.ActionSeg("view.focus.sidebar"),
 	}
 	if m.actionRegistry != nil && m.actionRegistry.HintFor("palette.open") != "" {
 		segs = append(segs, ui.ActionSeg("palette.open"))
@@ -53,8 +54,10 @@ func (m *App) launcherShortcuts() [][2]string {
 	}
 	ids := []ui.ActionID{
 		"palette.open",
+		"app.sessions",
 		"search.project.open",
 		"view.toggle.sidebar",
+		"view.focus.sidebar",
 		"settings.open",
 		"file.attach",
 		"composer.toggle",
@@ -96,8 +99,6 @@ func (m *App) handleLauncherActivate(msg launcher.ActivateMsg) tea.Cmd {
 		return m.launcherNewSession()
 	case launcher.ItemWorkspace:
 		return m.launcherOpenFolder(msg.WorkspacePath)
-	case launcher.ItemSession:
-		return m.launcherResumeSession(msg.SessionID, msg.Session)
 	}
 	return nil
 }
@@ -114,13 +115,6 @@ func (m *App) handleLauncherDelete(msg launcher.DeleteMsg) tea.Cmd {
 				m.Logger.Info("WORKSPACE", "deleted_from_launcher", "id", msg.WorkspaceID)
 			}
 			_ = workspace.DeleteWorkspace(msg.WorkspaceID)
-		}
-	case launcher.ItemSession:
-		if msg.SessionID != "" {
-			if m.Logger != nil {
-				m.Logger.Info("SESSION", "deleted_from_launcher", "id", msg.SessionID)
-			}
-			m.DeleteSession(msg.SessionID)
 		}
 	}
 	return nil
@@ -154,7 +148,7 @@ func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
 		return nil
 	}
 	// Stay on the single-phase launcher; refresh lists for the new project.
-	m.launcherScreen.Refresh(projectDir, m.ListSessions())
+	m.launcherScreen.Refresh(projectDir)
 	if m.StatusBar != nil {
 		m.StatusBar.SetInfo("Opened " + filepath.Base(projectDir))
 	}
@@ -209,7 +203,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	return nil
 }
 
-// openLauncher shows the unified welcome launcher (sessions + workspaces).
+// openLauncher shows the workspace-centric welcome / start screen.
 func (m *App) openLauncher() {
 	cwd := m.RootPath
 	if cwd == "" {
@@ -220,7 +214,7 @@ func (m *App) openLauncher() {
 		m.launcherHost = ui.NewHost(m.Theme, m.launcherScreen)
 		m.launcherScreen.SetFocusHandler(m.launcherHost.Focus)
 	}
-	m.launcherScreen.Refresh(cwd, m.ListSessions())
+	m.launcherScreen.Refresh(cwd)
 	m.LastInteractionTime = time.Now()
 }
 

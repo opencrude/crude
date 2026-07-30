@@ -88,6 +88,11 @@ type App struct {
 	cachedOutput      string // last rendered ANSI output for View() throttling during drag
 	contentDirty      bool   // true when the main view (editor/chat/launcher) needs re-rendering — separate from chrome (tree/tabs/popups) so hover changes don't trigger expensive chroma/glamour re-renders
 	mainContentCached string // last rendered main-view ANSI string — reused when only chrome changed (hover on tree, tabs, popups, etc.)
+	// mainContentCacheKind / mainContentCacheEditorPath identify what the
+	// cached ANSI string was built for so View() can refuse a stale cache
+	// when the active main view changes (launcher→editor, editor tab switch).
+	mainContentCacheKind       mainViewKind
+	mainContentCacheEditorPath string
 
 	// Layer surfaces for differential rendering. Cheap layers (sidebar,
 	// header, status bar) are always re-rendered every frame. The main
@@ -240,7 +245,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 
 	// Start on the unified welcome launcher (actions + workspaces + sessions).
 	launcherScreen := launcher.New(th)
-	launcherScreen.Refresh(ws.RootPath, ws.ListSessions())
+	launcherScreen.Refresh(ws.RootPath)
 	launcherHost := ui.NewHost(th, launcherScreen)
 	launcherScreen.SetFocusHandler(launcherHost.Focus)
 
@@ -317,7 +322,7 @@ func (m *App) SwitchProject(projectDir string) error {
 	m.EditorState.Editor = editor.New(m.Theme)
 	m.LSPMgr.SetRuntime(newEditorLSPRuntime())
 	if m.launcherScreen != nil {
-		m.launcherScreen.Refresh(m.RootPath, m.ListSessions())
+		m.launcherScreen.Refresh(m.RootPath)
 	}
 	return nil
 }

@@ -20,7 +20,7 @@ func TestTreePaintAndActivate(t *testing.T) {
 	tree.SelectIndex(1)
 	tree.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 40, H: 10})
 	buf := surface.NewCellBuffer(40, 10)
-	tree.Paint(buf, 0, 0, PaintContext{})
+	tree.Paint(buf, 0, 0, PaintContext{Focused: true})
 	if buf.Get(0, 0).Char == 0 && buf.Get(2, 0).Char == 0 {
 		t.Fatal("expected painted cells")
 	}

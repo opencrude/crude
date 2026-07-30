@@ -491,6 +491,9 @@ func TestIsWordChar(t *testing.T) {
 	assert.True(t, isWordChar('a'))
 	assert.True(t, isWordChar('Z'))
 	assert.True(t, isWordChar('_'))
+	assert.True(t, isWordChar('é'))
+	assert.True(t, isWordChar('日'))
+	assert.True(t, isWordChar('3'))
 	assert.False(t, isWordChar(' '))
 	assert.False(t, isWordChar('('))
 	assert.False(t, isWordChar('.'))
@@ -879,7 +882,8 @@ func TestLineVisualWidthFromRunes_CJK(t *testing.T) {
 		{"cjk", "中文测试", 8},
 		{"mixed", "a文😀", 1 + 2 + 2},
 		{"tab", "\t\t", tabWidth * 2},
-		{"all", "ab文😀\t", 1 + 1 + 2 + 2 + tabWidth},
+		// ab=2 + 文=2 + 😀=2 = 6; tab at col 6 advances 2 to stop 8.
+		{"all", "ab文😀\t", 8},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

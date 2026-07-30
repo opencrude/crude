@@ -71,6 +71,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 
 	buf := surf.Buffer()
 	sbX := sw + textW
+	e.ensureChromaColors(e.scrollY, e.scrollY+bodyH)
 	for y := 0; y < bodyH; y++ {
 		bufY := y
 		if bufY >= h {
@@ -324,47 +325,45 @@ func (e *Editor) renderStatusLine(w int) string {
 	return " " + left + strings.Repeat(" ", padding) + right + " "
 }
 
-func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]rune, int, []int, []string) {
+func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []int) {
 	if lineIdx < 0 {
-		return nil, -1, nil, nil
+		return nil, 0, nil
 	}
 	b, err := e.buf.Line(lineIdx)
 	if err != nil {
-		return nil, -1, nil, nil
+		return nil, 0, nil
 	}
-	text := stringsReplaceTab(string(b))
-
-	if e.lineRenderCache != nil {
-		if cached := e.lineRenderCache[lineIdx]; cached != nil && cached.text == text && cached.scrollX == scrollX {
-			return cached.runes, cached.totalW, cached.widths, cached.colorMap
+	raw := string(b)
+	if e.lineGeomCache != nil {
+		if cached := e.lineGeomCache[lineIdx]; cached != nil && cached.raw == raw {
+			return cached.runes, cached.totalW, cached.widths
 		}
 	}
+	runes, widths, totalW = lineDisplayGeometry(raw, tabWidth)
+	if e.lineGeomCache == nil {
+		e.lineGeomCache = make(map[int]*lineGeomCache, 128)
+	}
+	if len(e.lineGeomCache) > 512 {
+		clear(e.lineGeomCache)
+	}
+	e.lineGeomCache[lineIdx] = &lineGeomCache{
+		raw:    raw,
+		runes:  runes,
+		widths: widths,
+		totalW: totalW,
+	}
+	return runes, totalW, widths
+}
 
-	runes := []rune(text)
-	widths := make([]int, len(runes))
-	totalW := 0
-	for i, r := range runes {
-		w := runeVisualWidth(r)
-		widths[i] = w
-		totalW += w
+func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]rune, int, []int, []string) {
+	runes, totalW, widths := e.lineGeomInfo(lineIdx)
+	if runes == nil && totalW == 0 && widths == nil && lineIdx >= 0 {
+		if _, err := e.buf.Line(lineIdx); err != nil {
+			return nil, -1, nil, nil
+		}
 	}
-	colorMap := e.buildLineColorMapWithRunes(text, totalW, runes, widths)
-
-	if e.lineRenderCache == nil {
-		e.lineRenderCache = make(map[int]*lineRenderCache, 128)
-	}
-	if len(e.lineRenderCache) > 256 {
-		clear(e.lineRenderCache)
-	}
-	e.lineRenderCache[lineIdx] = &lineRenderCache{
-		text:     text,
-		scrollX:  scrollX,
-		runes:    runes,
-		widths:   widths,
-		totalW:   totalW,
-		colorMap: colorMap,
-	}
-
+	_ = scrollX // geometry is scroll-independent; kept for call-site compat
+	colorMap := e.lineColorMap(lineIdx)
 	return runes, totalW, widths, colorMap
 }
 
@@ -425,15 +424,12 @@ func (e *Editor) searchHighlightBg(isCurrent bool) cell.Color {
 }
 
 func (e *Editor) lineVisualWidth(lineIdx int) int {
-	runes, width, _, _ := e.lineRenderInfo(lineIdx, 0)
-	if width >= 0 {
-		return width
-	}
-	return lineVisualWidthFromRunes(runes)
+	_, width, _ := e.lineGeomInfo(lineIdx)
+	return width
 }
 
 func (e *Editor) lineRunes(lineIdx int) []rune {
-	runes, _, _, _ := e.lineRenderInfo(lineIdx, 0)
+	runes, _, _ := e.lineGeomInfo(lineIdx)
 	return runes
 }
 
@@ -492,6 +488,8 @@ func (e *Editor) ensureCursorVisible() {
 	e.syncScrollChrome(availH)
 }
 
+// stringsReplaceTab expands tabs to spaces using tab stops. Kept as a
+// thin wrapper for call sites that still pass expanded display text.
 func stringsReplaceTab(s string) string {
-	return strings.ReplaceAll(s, "\t", "    ")
+	return ExpandTabs(s, tabWidth)
 }

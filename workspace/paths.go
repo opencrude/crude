@@ -37,6 +37,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// WorkspaceID returns the stable 16-hex workspace folder name for a project
+// directory (SHA-256 of the absolute path, first 8 bytes).
+func WorkspaceID(projectDir string) string {
+	return workspaceID(projectDir)
+}
+
 // workspaceID computes a stable, filesystem-safe identifier for a project
 // directory by taking the first 16 hex chars of its SHA-256 hash.
 // The same directory always produces the same ID, regardless of symlinks
@@ -116,9 +122,27 @@ func SessionDBPath(projectDir, sessionID string) (string, error) {
 type WorkspaceInfo struct {
 	ID           string // hash directory name
 	ProjectDir   string // absolute project path (best-effort)
-	ProjectName  string // display name (basename of project dir)
+	ProjectName  string // display name (basename of project dir); never the raw hash
 	SessionCount int
 	LastActive   int64 // unix nano of most recent session, 0 if unknown
+}
+
+// WorkspaceDisplayName returns a human-readable label for a workspace row.
+// Prefer a stored ProjectName, then the project directory basename. Never
+// returns the raw workspace hash id — empty/unknown metadata yields a
+// stable placeholder instead.
+func WorkspaceDisplayName(info WorkspaceInfo) string {
+	name := strings.TrimSpace(info.ProjectName)
+	if name != "" && name != info.ID {
+		return name
+	}
+	if dir := strings.TrimSpace(info.ProjectDir); dir != "" {
+		base := filepath.Base(dir)
+		if base != "" && base != "." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+	return "unnamed workspace"
 }
 
 // ListWorkspaces enumerates all workspace folders under ~/.crude/workspaces/
@@ -147,7 +171,8 @@ func ListWorkspaces() ([]string, error) {
 
 // ListWorkspaceInfos enumerates workspaces with display metadata for the
 // launcher. Best-effort: missing/corrupt/locked DBs still produce an entry
-// with the hash as the name and never block the UI for long.
+// and never block the UI for long. Display names are always human-readable
+// (path basename or "unnamed workspace") — never the raw hash id.
 func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 	ids, err := ListWorkspaces()
 	if err != nil {
@@ -159,15 +184,13 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 	}
 	infos := make([]WorkspaceInfo, 0, len(ids))
 	for _, id := range ids {
-		info := WorkspaceInfo{ID: id, ProjectName: id}
+		info := WorkspaceInfo{ID: id}
 		dbPath := filepath.Join(root, id, "workspace.db")
 		if meta := readWorkspaceMetaBounded(dbPath, 150*time.Millisecond); meta != nil {
 			info = *meta
 			info.ID = id
-			if info.ProjectName == "" {
-				info.ProjectName = id
-			}
 		}
+		info.ProjectName = WorkspaceDisplayName(info)
 		infos = append(infos, info)
 	}
 	return infos, nil
@@ -185,7 +208,33 @@ func readWorkspaceMetaBounded(dbPath string, limit time.Duration) *WorkspaceInfo
 	case r := <-ch:
 		return r.info
 	case <-time.After(limit):
+		// Timed out — try a metadata-only fast path that avoids scanning
+		// workspace_sessions (the usual stall under a live writer lock).
+		return readWorkspaceMetaLight(dbPath)
+	}
+}
+
+// readWorkspaceMetaLight reads only workspace_metadata.project_dir so the
+// launcher can still show a path-derived name when the full meta read stalls.
+func readWorkspaceMetaLight(dbPath string) *WorkspaceInfo {
+	if _, err := os.Stat(dbPath); err != nil {
 		return nil
+	}
+	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&_busy_timeout=1"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil
+	}
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+
+	var dir string
+	if err := db.QueryRow(`SELECT value FROM workspace_metadata WHERE key = 'project_dir'`).Scan(&dir); err != nil || dir == "" {
+		return nil
+	}
+	return &WorkspaceInfo{
+		ProjectDir:  dir,
+		ProjectName: filepath.Base(dir),
 	}
 }
 
@@ -198,7 +247,8 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 	}
 	// Short busy timeout + read-only: a live IDE holding the WAL must not stall
 	// the launcher (or unit tests) for the default 5s sessiondb busy wait.
-	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&immutable=1&_busy_timeout=1"
+	// Avoid immutable=1 so recent WAL-backed project_dir writes remain visible.
+	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&_busy_timeout=1"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil
@@ -247,7 +297,7 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 				if info.ProjectDir == "" {
 					info.ProjectDir = dir
 				}
-				if info.ProjectName == "" || info.ProjectName == info.ID {
+				if info.ProjectName == "" {
 					if name != "" {
 						info.ProjectName = name
 					} else if dir != "" {
@@ -264,9 +314,7 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 	} else {
 		_ = db.QueryRow(`SELECT COUNT(*) FROM workspace_sessions`).Scan(&info.SessionCount)
 	}
-	if info.ProjectName == "" {
-		info.ProjectName = info.ID
-	}
+	info.ProjectName = WorkspaceDisplayName(*info)
 	return info
 }
 

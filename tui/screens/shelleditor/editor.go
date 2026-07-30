@@ -138,6 +138,16 @@ func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult {
 	return ui.EventResult{}
 }
 
+// CancelPointerCapture ends an in-progress mouse selection drag (and
+// scrollbar thumb drag) without copying text. Implements
+// ui.PointerCaptureCanceller so Host.CancelPointerCapture clears editor
+// drag state when capture is torn down.
+func (s *Screen) CancelPointerCapture() {
+	if s.ed != nil {
+		s.ed.CancelPointerCapture()
+	}
+}
+
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleTextInput, Label: "Editor"}
 }

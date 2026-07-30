@@ -89,7 +89,9 @@ func PaintLineAt(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *
 			cellBG := spanBG
 			cellAttr := span.Attr
 			if selStart < selEnd && nextCol > selStart && col < selEnd && tokens != nil {
-				cellFG, cellBG = tokens.ListRowColors(ui.StateFocused)
+				// Text selection is not a focused list row — always Selection.
+				cellFG = tokens.Color(ui.ColorFg)
+				cellBG = tokens.Color(ui.ColorSelection)
 			}
 
 			curX = buf.WriteString(curX, y, cluster, cellFG, cellBG, cellAttr)
@@ -105,7 +107,8 @@ func PaintLineAt(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *
 			cellBG = tokens.Color(ui.ColorSubPaneBg)
 		}
 		if selStart < selEnd && col >= selStart && col < selEnd && tokens != nil {
-			cellFG, cellBG = tokens.ListRowColors(ui.StateFocused)
+			cellFG = tokens.Color(ui.ColorFg)
+			cellBG = tokens.Color(ui.ColorSelection)
 		}
 		curX = buf.WriteString(curX, y, " ", cellFG, cellBG, 0)
 		col++

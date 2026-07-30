@@ -29,7 +29,7 @@ func setupLauncherRoutingApp(t *testing.T, workspaces []workspace.WorkspaceInfo)
 		app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	}
 
-	app.launcherScreen.SetData(".", nil, workspaces)
+	app.launcherScreen.SetData(".", workspaces)
 	layout := app.computeLayout()
 	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)
 	app.launcherHost.Layout()

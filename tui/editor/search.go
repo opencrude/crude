@@ -221,35 +221,11 @@ func isSearchWordChar(b byte) bool {
 }
 
 // offsetToLineCol converts a byte offset pair (start, end) into
-// (startPos, endPos) using 1-byte per char accounting. Good enough for
-// ASCII buffers; for multi-byte content the column may slightly drift
-// from the visual editor column, but matches remain in the right
-// order. For multi-byte precision, callers should switch to rune-based
-// scanning (left as a future improvement).
+// (startPos, endPos) with visual columns (tab stops + grapheme widths).
 func offsetToLineCol(text string, startOff, endOff int) (Position, Position) {
-	startLine, startCol := byteOffsetToLineCol(text, startOff)
-	endLine, endCol := byteOffsetToLineCol(text, endOff)
+	startLine, startCol := ByteOffsetToLineCol(text, startOff, tabWidth)
+	endLine, endCol := ByteOffsetToLineCol(text, endOff, tabWidth)
 	return Position{Line: startLine, Col: startCol}, Position{Line: endLine, Col: endCol}
-}
-
-func byteOffsetToLineCol(text string, off int) (int, int) {
-	if off < 0 {
-		off = 0
-	}
-	if off > len(text) {
-		off = len(text)
-	}
-	line := 0
-	col := 0
-	for i := 0; i < off; i++ {
-		if text[i] == '\n' {
-			line++
-			col = 0
-		} else {
-			col++
-		}
-	}
-	return line, col
 }
 
 // Search returns the editor's SearchState. Callers can read Query,

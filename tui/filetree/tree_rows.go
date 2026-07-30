@@ -70,24 +70,18 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 		y := oy + rowY
 		x := ox
 		bg := cell.NoColor
-		selectedPath := ""
-		if model != nil {
-			if sel := model.SelectedNode(); sel != nil {
-				selectedPath = sel.Path
-			}
-		}
-		isSelected := node.Path == selectedPath && !st.Cursor
 		hovered := st.Hovered
 		if !hovered && model != nil && model.Hover.Index >= 0 {
 			if nodes := model.VisibleNodes(); model.Hover.Index < len(nodes) && nodes[model.Hover.Index] == node {
 				hovered = true
 			}
 		}
+		// Cursor/selection chrome is gated by st.Cursor (Host focus). Painting
+		// SelectedBg whenever the model selection matches made the tree look
+		// focused while the launcher owned keys.
 		switch {
 		case st.Cursor:
 			bg = tokens.TreeCursorBg()
-		case isSelected:
-			bg = tokens.TreeSelectedBg()
 		case hovered:
 			bg = tokens.TreeHoverBg()
 		}
@@ -210,10 +204,6 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 				nameFG = fg
 			}
 			nameAttr = cell.AttrBold
-		} else if isSelected {
-			if fg := tokens.TreeSelectedFg(); !fg.IsDefault() {
-				nameFG = fg
-			}
 		}
 		x = buf.WriteString(x, y, nameText, nameFG, bg, nameAttr)
 

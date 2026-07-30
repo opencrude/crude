@@ -45,7 +45,7 @@ func newTestAppWithLauncher(t *testing.T) *App {
 			SessionCount: 1,
 		}
 	}
-	screen.SetData(".", nil, workspaces)
+	screen.SetData(".", workspaces)
 	host := ui.NewHost(th, screen)
 	screen.SetFocusHandler(host.Focus)
 	app := &App{
@@ -163,9 +163,7 @@ func TestLauncher_FileOpen_NoSessionCreated(t *testing.T) {
 func TestLauncher_ResumeSession(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 
-	app.launcherScreen.SetData(".", []sessiondb.SessionMeta{
-		{ID: "ses_test_1", ProjectName: "test-project"},
-	}, nil)
+	app.launcherScreen.SetData(".", nil)
 
 	cmd := app.launcherResumeSession("ses_test_1", &sessiondb.SessionMeta{ID: "ses_test_1", ProjectName: "test-project"})
 
@@ -248,13 +246,10 @@ func TestMultipleOrchestrators(t *testing.T) {
 // always has Start actions even with no sessions/workspaces.
 func TestLauncher_NoSessions_StartActionsOnly(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	app.launcherScreen.SetData(".", nil, nil)
+	app.launcherScreen.SetData(".", nil)
 
 	if app.launcherScreen.TotalItems() < 2 {
 		t.Fatalf("expected at least 2 start items, got %d", app.launcherScreen.TotalItems())
-	}
-	if app.launcherScreen.SelectedSessionID() != "" {
-		t.Fatal("SelectedSessionID should be empty for default selection")
 	}
 	it := app.launcherScreen.SelectedItem()
 	if it == nil || it.Kind != launcher.ItemNewSession {
@@ -266,7 +261,7 @@ func TestLauncher_NoSessions_StartActionsOnly(t *testing.T) {
 // affects workspace results; the fixed action cards remain.
 func TestLauncherWorkspaceSearchKeepsActionsFixed(t *testing.T) {
 	screen := launcher.New(theme.DefaultDark())
-	screen.SetData("/projects/current", nil, []workspace.WorkspaceInfo{
+	screen.SetData("/projects/current", []workspace.WorkspaceInfo{
 		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		{ProjectName: "beta", ProjectDir: "/projects/beta"},
 	})
@@ -312,7 +307,7 @@ func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
 			ProjectDir:  fmt.Sprintf("/projects/workspace-%02d", i),
 		}
 	}
-	app.launcherScreen.SetData(".", nil, workspaces)
+	app.launcherScreen.SetData(".", workspaces)
 
 	layout := app.computeLayout()
 	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)
@@ -342,7 +337,7 @@ func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = launcher.New(app.Theme)
-	app.launcherScreen.SetData(".", nil, nil)
+	app.launcherScreen.SetData(".", nil)
 
 	view := app.buildMainView()
 	if strings.Contains(view, "↑↓ navigate") {

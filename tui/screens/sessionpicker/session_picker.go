@@ -19,6 +19,7 @@ import (
 const (
 	ScreenID    ui.ComponentID = "sessionpicker"
 	TitleID     ui.ComponentID = "sessionpicker/title"
+	SearchID    ui.ComponentID = "sessionpicker/search"
 	ListID      ui.ComponentID = "sessionpicker/list"
 	ScrollbarID ui.ComponentID = "sessionpicker/scrollbar"
 	EmptyID     ui.ComponentID = "sessionpicker/empty"
@@ -43,16 +44,20 @@ type CancelMsg struct{ Target *Screen }
 // Screen is the Host-ready session picker: sectioned List + scrollbar + empty/hints.
 type Screen struct {
 	ui.Base
-	th        *theme.Theme
-	tokens    *ui.TokenSet
-	sessions  []sessiondb.SessionMeta
-	active    bool
-	title     *ui.Label
-	list      *pickerList
-	scrollbar *ui.ScrollbarControl
-	empty     *ui.Label
-	hints     *ui.Label
-	focus     func(ui.ComponentID)
+	th         *theme.Theme
+	tokens     *ui.TokenSet
+	sessions   []sessiondb.SessionMeta
+	filtered   []sessiondb.SessionMeta
+	filterOn   bool
+	filterText string
+	active     bool
+	title      *ui.Label
+	search     *filterSearch
+	list       *pickerList
+	scrollbar  *ui.ScrollbarControl
+	empty      *ui.Label
+	hints      *ui.Label
+	focus      func(ui.ComponentID)
 }
 
 // New creates a closed session picker screen.
@@ -66,15 +71,21 @@ func New(th *theme.Theme) *Screen {
 	s.title = ui.NewLabel(TitleID, "Past sessions", th)
 	s.title.SetColorRole(ui.ColorFg)
 
+	search := ui.NewSearchField(SearchID, tokens)
+	search.SetPrompt("> ")
+	search.SetPlaceholder("Filter sessions")
+	search.SetSubmitAction("")
+	s.search = &filterSearch{Base: ui.NewBase(SearchID), field: search, owner: s}
+
 	list := ui.NewList(ListID, tokens)
 	list.SetActivateAction("sessionpicker.resume")
 	s.list = &pickerList{Base: ui.NewBase(ListID), list: list, owner: s, lastClick: -1}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
 
-	s.empty = ui.NewLabel(EmptyID, "No past sessions found. Type a message to start a new conversation.", th)
+	s.empty = ui.NewLabel(EmptyID, "No sessions yet — chat first, then Ctrl+Alt+S to resume.", th)
 	s.empty.SetColorRole(ui.ColorMuted)
 
-	s.hints = ui.NewLabel(HintsID, "↑↓/jk navigate  Enter resume  Esc close", th)
+	s.hints = ui.NewLabel(HintsID, "↑↓/jk navigate  / filter  Enter resume  Esc close", th)
 	s.hints.SetColorRole(ui.ColorMuted)
 	return s
 }
@@ -82,6 +93,11 @@ func New(th *theme.Theme) *Screen {
 // Open loads sessions and marks the picker active.
 func (s *Screen) Open(sessions []sessiondb.SessionMeta) {
 	s.sessions = append(s.sessions[:0], sessions...)
+	s.filterOn = false
+	s.filterText = ""
+	if s.search != nil && s.search.field != nil {
+		s.search.field.SetValue("")
+	}
 	s.active = true
 	s.list.lastClick = -1
 	s.list.lastClickTime = time.Time{}
@@ -140,15 +156,20 @@ func (s *Screen) focusID(id ui.ComponentID) {
 }
 
 func (s *Screen) Children() []ui.Component {
-	if len(s.sessions) == 0 {
-		return []ui.Component{s.title, s.empty, s.hints}
+	kids := []ui.Component{s.title, s.search}
+	if len(s.sessions) == 0 || len(s.filtered) == 0 {
+		kids = append(kids, s.empty)
+	} else {
+		kids = append(kids, s.list, s.scrollbar)
 	}
-	return []ui.Component{s.title, s.list, s.scrollbar, s.hints}
+	kids = append(kids, s.hints)
+	return kids
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.title.SetTokens(tokens)
+	s.search.SetTokens(tokens)
 	s.list.SetTokens(tokens)
 	s.scrollbar.SetTokens(tokens)
 	s.empty.SetTokens(tokens)
@@ -171,8 +192,16 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	s.title.Layout(ctx, ui.Rect{W: r.W, H: 1})
 	listY := 2
+	if s.filterOn && len(s.sessions) > 0 {
+		s.search.Layout(ctx, ui.Rect{Y: 1, W: r.W, H: 1})
+		listY = 2
+	} else {
+		// Keep search registered for focus, but give it an empty rect when idle.
+		s.search.Layout(ctx, ui.Rect{Y: 1, W: 0, H: 0})
+	}
 	listH := max(1, r.H-listY-1)
-	if len(s.sessions) == 0 {
+	showEmpty := len(s.sessions) == 0 || len(s.filtered) == 0
+	if showEmpty {
 		s.empty.Layout(ctx, ui.Rect{Y: listY, W: r.W, H: listH})
 	} else {
 		s.list.Layout(ctx, ui.Rect{X: 0, Y: listY, W: max(1, r.W-1), H: listH})
@@ -184,8 +213,18 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 
 func (s *Screen) Handle(_ ui.EventContext, msg tea.Msg) ui.EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEsc {
-		return s.cancel()
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Code == tea.KeyEsc:
+			if s.filterOn {
+				s.deactivateFilter()
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
+			}
+			return s.cancel()
+		case key.String() == "/" && !s.filterOn && len(s.sessions) > 0:
+			s.activateFilter()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
+		}
 	}
 	return ui.EventResult{}
 }
@@ -214,13 +253,26 @@ func (s *Screen) Semantics() ui.Semantics {
 }
 
 func (s *Screen) sync() {
+	s.filtered = s.filterSessions(s.sessions, s.filterText)
 	if len(s.sessions) == 0 {
 		s.list.list.SetItems(nil)
 		s.title.SetText("Past sessions")
+		s.empty.SetText("No sessions yet — chat first, then Ctrl+Alt+S to resume.")
 		return
 	}
-	groups := BuildSessionGroups(s.sessions)
-	items := make([]ui.ListItem, 0, len(s.sessions)+len(groups))
+	if len(s.filtered) == 0 {
+		s.list.list.SetItems(nil)
+		s.title.SetText(fmt.Sprintf("Past sessions (%d)", len(s.sessions)))
+		q := strings.TrimSpace(s.filterText)
+		if q == "" {
+			s.empty.SetText("No sessions to show.")
+		} else {
+			s.empty.SetText(fmt.Sprintf("No sessions match %q", q))
+		}
+		return
+	}
+	groups := BuildSessionGroups(s.filtered)
+	items := make([]ui.ListItem, 0, len(s.filtered)+len(groups))
 	for _, g := range groups {
 		items = append(items, ui.ListItem{
 			ID:     "header:" + g.Label,
@@ -238,6 +290,57 @@ func (s *Screen) sync() {
 	}
 	s.list.list.SetItems(items)
 	s.title.SetText(fmt.Sprintf("Past sessions (%d)", len(s.sessions)))
+}
+
+func (s *Screen) activateFilter() {
+	s.filterOn = true
+	s.filterText = ""
+	if s.search != nil && s.search.field != nil {
+		s.search.field.SetValue("")
+	}
+	s.sync()
+	s.focusID(SearchID)
+}
+
+func (s *Screen) deactivateFilter() {
+	if !s.filterOn {
+		return
+	}
+	s.filterOn = false
+	s.filterText = ""
+	if s.search != nil && s.search.field != nil {
+		s.search.field.SetValue("")
+	}
+	s.sync()
+	s.FocusList()
+}
+
+func (s *Screen) applyFilterValue(v string) {
+	s.filterText = v
+	s.sync()
+}
+
+func (s *Screen) filterSessions(all []sessiondb.SessionMeta, query string) []sessiondb.SessionMeta {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		out := make([]sessiondb.SessionMeta, len(all))
+		copy(out, all)
+		return out
+	}
+	var out []sessiondb.SessionMeta
+	for _, ses := range all {
+		hay := strings.ToLower(sessionLabel(ses) + " " + sessionDetail(ses) + " " + ses.ProjectName + " " + ses.Model + " " + ses.ID)
+		if ses.FirstPrompt.Valid {
+			hay += " " + strings.ToLower(ses.FirstPrompt.String)
+		}
+		if ses.LastPrompt.Valid {
+			hay += " " + strings.ToLower(ses.LastPrompt.String)
+		}
+		if strings.Contains(hay, query) {
+			out = append(out, ses)
+		}
+	}
+	return out
 }
 
 func (s *Screen) resume(meta sessiondb.SessionMeta) ui.EventResult {
@@ -302,23 +405,33 @@ func BuildSessionGroups(sessions []sessiondb.SessionMeta) []Group {
 }
 
 func sessionLabel(s sessiondb.SessionMeta) string {
-	name := s.ProjectName
-	if name == "" {
-		name = "untitled"
+	title := nullString(s.FirstPrompt)
+	if title == "" {
+		title = nullString(s.LastPrompt)
 	}
-	return rendering.TruncateLine(name, 18)
+	if title == "" {
+		title = s.ProjectName
+	}
+	if title == "" {
+		title = "untitled session"
+	}
+	title = strings.TrimSpace(strings.ReplaceAll(title, "\n", " "))
+	return rendering.TruncateLine(title, 36)
 }
 
 func sessionDetail(s sessiondb.SessionMeta) string {
-	prompt := nullString(s.FirstPrompt)
-	if prompt == "" {
-		prompt = nullString(s.LastPrompt)
+	when := ""
+	if s.CreatedAt > 0 {
+		when = time.Unix(0, s.CreatedAt).Format("15:04")
 	}
-	if prompt == "" {
-		prompt = "(no prompt)"
+	parts := []string{fmt.Sprintf("%d turns", s.TurnCount)}
+	if s.Model != "" {
+		parts = append(parts, s.Model)
 	}
-	prompt = rendering.TruncateLine(strings.ReplaceAll(prompt, "\n", " "), 40)
-	return fmt.Sprintf("%s  ·  %d turns · %s", prompt, s.TurnCount, s.Model)
+	if when != "" {
+		parts = append(parts, when)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func nullString(v sql.NullString) string {
@@ -353,7 +466,14 @@ func (p *pickerList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch {
 		case key.Code == tea.KeyEsc:
+			if p.owner.filterOn {
+				p.owner.deactivateFilter()
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
+			}
 			return p.owner.cancel()
+		case key.String() == "/" && !p.owner.filterOn:
+			p.owner.activateFilter()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
 		case key.String() == "k":
 			return p.list.Handle(ctx, tea.KeyPressMsg{Code: tea.KeyUp})
 		case key.String() == "j":
@@ -378,6 +498,38 @@ func (p *pickerList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 }
 func (p *pickerList) Semantics() ui.Semantics       { return p.list.Semantics() }
 func (p *pickerList) SetTokens(tokens *ui.TokenSet) { p.list.SetTokens(tokens) }
+
+// filterSearch paints/handles the search field and refreshes the list on each edit.
+type filterSearch struct {
+	ui.Base
+	field *ui.SearchField
+	owner *Screen
+}
+
+func (f *filterSearch) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return f.field.Measure(ctx, cs)
+}
+func (f *filterSearch) Layout(ctx ui.LayoutContext, r ui.Rect) {
+	f.SetBounds(r)
+	f.field.Layout(ctx, ui.Rect{W: r.W, H: r.H})
+}
+func (f *filterSearch) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
+	f.field.Paint(buf, ox+f.Bounds().X, oy+f.Bounds().Y, ctx)
+}
+func (f *filterSearch) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEsc {
+		f.owner.deactivateFilter()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
+	}
+	res := f.field.Handle(ctx, msg)
+	if f.owner != nil {
+		f.owner.applyFilterValue(f.field.Value())
+		res.Invalidate |= ui.InvalidatePaint | ui.InvalidateLayout
+	}
+	return res
+}
+func (f *filterSearch) Semantics() ui.Semantics       { return f.field.Semantics() }
+func (f *filterSearch) SetTokens(tokens *ui.TokenSet) { f.field.SetTokens(tokens) }
 
 var _ ui.Component = (*Screen)(nil)
 var _ ui.Parent = (*Screen)(nil)

@@ -19,6 +19,28 @@ import (
 	"crude/workspace"
 )
 
+// mainViewKind identifies which product surface the main-content ANSI cache
+// was built for. Used to refuse serving a launcher/chat cache while the
+// editor is active (and vice versa).
+type mainViewKind uint8
+
+const (
+	mainViewNone mainViewKind = iota
+	mainViewEditor
+	mainViewLauncher
+	mainViewChat
+)
+
+func (m *App) currentMainViewKind() mainViewKind {
+	if m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
+		return mainViewEditor
+	}
+	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+		return mainViewLauncher
+	}
+	return mainViewChat
+}
+
 func (m *App) View() tea.View {
 	if m.width == 0 || m.height == 0 {
 		return tea.NewView("")
@@ -41,7 +63,23 @@ func (m *App) View() tea.View {
 	// main-view path, while the native launcher surface is painted every
 	// frame so cursor, hover, scroll, and animation state stay responsive.
 	isEditorMain := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
-	useCached := isEditorMain && m.sessionDeckHeight(m.height) == 0 && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
+	currentKind := m.currentMainViewKind()
+	// Defensive: never sit on a blank/stale frame waiting for cursor blink.
+	// Force rebuild when editorRect was never laid out, the cache belongs to
+	// a different view kind, or the cached editor path is not the active tab.
+	forceMainRebuild := false
+	if isEditorMain && m.editorRect.Empty() {
+		forceMainRebuild = true
+	}
+	if m.mainContentCached != "" && m.mainContentCacheKind != currentKind {
+		forceMainRebuild = true
+	}
+	if isEditorMain && m.mainContentCacheKind == mainViewEditor &&
+		m.mainContentCacheEditorPath != "" &&
+		m.mainContentCacheEditorPath != m.EditorState.ActiveView {
+		forceMainRebuild = true
+	}
+	useCached := isEditorMain && m.sessionDeckHeight(m.height) == 0 && !m.contentDirty && !forceMainRebuild && m.mainContentCached != "" && m.mainContentSurf != nil
 
 	m.compositor.BeginFrame()
 	// Fill the root with the active theme background so uncovered cells
@@ -104,7 +142,7 @@ func (m *App) View() tea.View {
 
 	// Capture before buildMainView clears contentDirty — editor surface
 	// reuses its cell buffer when only chrome (tree/tabs) changed.
-	editorNeedsPaint := m.contentDirty || m.mainEditorSurf == nil
+	editorNeedsPaint := m.contentDirty || forceMainRebuild || m.mainEditorSurf == nil
 
 	// Main content surface stays transparent — only ANSI-rendered cells
 	// set explicit backgrounds. Transparent cells (like the top padding
@@ -114,6 +152,12 @@ func (m *App) View() tea.View {
 	} else {
 		mainContent := m.buildMainView()
 		m.mainContentCached = mainContent
+		m.mainContentCacheKind = currentKind
+		if currentKind == mainViewEditor {
+			m.mainContentCacheEditorPath = m.EditorState.ActiveView
+		} else {
+			m.mainContentCacheEditorPath = ""
+		}
 		m.contentDirty = false
 		rendering.RenderToSurface(m.mainContentSurf, mainContent)
 	}
@@ -618,7 +662,8 @@ func (m *App) resizeLayerSurfaces() {
 		m.mainTabBarSurf = surface.NewSurface("main-tabbar", contentW, 2, cell.TransparentBlank())
 		m.compositor.Root().AddChild(m.mainTabBarSurf)
 		m.mainTabBarSurf.SetZOrder(3)
-	} else if tabVisible {
+	}
+	if tabVisible {
 		layout := m.computeLayout()
 		m.mainTabBarSurf.Resize(layout.InnerW, 2)
 		m.mainTabBarSurf.SetPosition(layout.SidebarW+layout.PadLR, 3)
@@ -645,8 +690,12 @@ func (m *App) renderSidebarToSurface() {
 	m.sidebarHost.Resize(sidebarW, sidebarH)
 	m.sidebarHost.SetFrame(m.SpinFrame)
 	m.sidebarHost.Layout()
-	if m.FocusStack.Top() == FocusTree {
+	// Cursor chrome follows focusTarget so the tree does not look focused
+	// while the launcher (or editor) owns keys.
+	if m.focusTarget() == FocusTree {
 		m.sidebarHost.Focus(shelltree.TreeID)
+	} else {
+		m.sidebarHost.Focus(ui.RootID)
 	}
 	m.sidebarHost.Paint(m.mainSidebarSurf.Buffer())
 }
@@ -692,10 +741,26 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 			ui.ActionSeg("panel.close"),
 		}
 	}
-	if m.launcherScreen != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	switch m.focusTarget() {
+	case FocusTree:
+		if m.Tree != nil && m.Tree.Model != nil && m.Tree.Model.FilterActive() {
+			return "", []ui.HintSegment{
+				ui.TextSeg("filter files"),
+				ui.ActionSeg("list.navigate"),
+				ui.ActionSeg("list.open"),
+				ui.ActionSeg("launcher.filter.clear"),
+			}
+		}
+		return "", []ui.HintSegment{
+			ui.TextSeg("file tree"),
+			ui.ActionSeg("list.navigate"),
+			ui.ActionSeg("list.open"),
+			ui.ActionSeg("launcher.filter"),
+			ui.ActionSeg("view.focus.sidebar"),
+		}
+	case FocusLauncher:
 		return "", m.launcherHelpSegments()
-	}
-	if m.FocusStack != nil && m.FocusStack.Top() == FocusTabBar {
+	case FocusTabBar:
 		return "", []ui.HintSegment{
 			ui.TextSeg("tab bar focused"),
 			ui.ChordSeg("← →", "navigate"),

@@ -14,7 +14,7 @@ import (
 func launcherContractHost(t *testing.T, width, height int, workspaces []workspace.WorkspaceInfo) (*Screen, *ui.Host) {
 	t.Helper()
 	s := New(theme.DefaultDark())
-	s.SetData("/projects/current", nil, workspaces)
+	s.SetData("/projects/current", workspaces)
 	h := ui.NewHost(theme.DefaultDark(), s)
 	s.SetFocusHandler(h.Focus)
 	h.Resize(width, height)

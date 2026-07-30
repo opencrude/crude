@@ -27,7 +27,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if nonEmpty := countNonEmptyCells(buf); nonEmpty == 0 {
 		t.Fatal("session picker paint produced no non-empty cells")
 	}
-	for _, label := range []string{"Past sessions", "crude", "fix the picker", "3 turns"} {
+	for _, label := range []string{"Past sessions", "fix the picker", "3 turns"} {
 		if !strings.Contains(text, label) {
 			t.Fatalf("missing label %q:\n%s", label, text)
 		}
@@ -53,14 +53,40 @@ func countNonEmptyCells(buf *surface.CellBuffer) int {
 	return n
 }
 
+func TestSessionPickerFilterNarrowsList(t *testing.T) {
+	now := time.Now().UnixNano()
+	sessions := []sessiondb.SessionMeta{
+		{ID: "a", ProjectName: "crude", Model: "gpt", TurnCount: 1, CreatedAt: now,
+			FirstPrompt: sql.NullString{String: "alpha task", Valid: true}},
+		{ID: "b", ProjectName: "crude", Model: "claude", TurnCount: 2, CreatedAt: now,
+			FirstPrompt: sql.NullString{String: "beta work", Valid: true}},
+	}
+	screen, host := pickerHost(t, sessions)
+	host.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
+	host.Handle(tea.KeyPressMsg{Code: 'b', Text: "b"})
+	host.Handle(tea.KeyPressMsg{Code: 'e', Text: "e"})
+	host.Handle(tea.KeyPressMsg{Code: 't', Text: "t"})
+	host.Handle(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	host.Layout()
+	buf := paintHost(host, 72, 12)
+	text := bufferText(buf)
+	if !strings.Contains(text, "beta work") {
+		t.Fatalf("filter should keep beta:\n%s", text)
+	}
+	if strings.Contains(text, "alpha task") {
+		t.Fatalf("filter should hide alpha:\n%s", text)
+	}
+	_ = screen
+}
+
 func TestSessionPickerEmptyState(t *testing.T) {
 	screen, host := pickerHost(t, nil)
 	buf := paintHost(host, 72, 10)
 	text := bufferText(buf)
 	for _, want := range []string{
 		"Past sessions",
-		"No past sessions found.",
-		"start a new",
+		"No sessions yet",
+		"Ctrl+Alt+S",
 		"Enter resume",
 	} {
 		if !strings.Contains(text, want) {
@@ -111,10 +137,9 @@ func TestSessionPickerGroupedSessionsAndHighlight(t *testing.T) {
 		"Past sessions (3)",
 		"today",
 		"yesterday",
-		"crude",
-		"other",
-		"legacy",
 		"fix the picker",
+		"yesterday work",
+		"old session",
 		"3 turns",
 	} {
 		if !strings.Contains(text, want) {
