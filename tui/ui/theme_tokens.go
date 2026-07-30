@@ -33,6 +33,13 @@ const (
 	ColorPopupButtonBg
 	ColorPopupButtonFg
 	ColorIncompleteBg
+	// Diff colour roles mapped from theme.Colors.Diff so chat tool-body rows
+	// resolve through TokenSet and follow theme preset switches.
+	ColorDiffFile
+	ColorDiffHunk
+	ColorDiffContext
+	ColorDiffAddition
+	ColorDiffDeletion
 )
 
 // ControlState is the interactive state matrix used for token resolution.
@@ -129,6 +136,11 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorPopupButtonBg:      rendering.ThemeColorToCell(c.PopupButtonBg),
 		ColorPopupButtonFg:      rendering.ThemeColorToCell(c.PopupButtonFg),
 		ColorIncompleteBg:       rendering.ThemeColorToCell(c.IncompleteBg),
+		ColorDiffFile:           rendering.ThemeColorToCell(c.Diff.File),
+		ColorDiffHunk:           rendering.ThemeColorToCell(c.Diff.Hunk),
+		ColorDiffContext:        rendering.ThemeColorToCell(c.Diff.Context),
+		ColorDiffAddition:       rendering.ThemeColorToCell(c.Diff.Add),
+		ColorDiffDeletion:       rendering.ThemeColorToCell(c.Diff.Delete),
 	}
 }
 

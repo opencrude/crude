@@ -12,21 +12,13 @@ import (
 	"crude/tui/ui"
 )
 
-func TestBlankNativeVsANSIFallbackMarker(t *testing.T) {
+func TestBlankNativeSpacerNotANSIFallback(t *testing.T) {
 	blank := buildPlainBodyLine("")
 	if blank.PreferANSI() {
 		t.Fatal("blank native spacer must not PreferANSI")
 	}
 	if blank.IsZero() {
 		t.Fatal("blank native spacer must not be IsZero (empty-text span)")
-	}
-
-	fb := ansiFallbackLine("**rich**")
-	if !fb.PreferANSI() {
-		t.Fatal("ansiFallbackLine must PreferANSI")
-	}
-	if fb.IsZero() {
-		t.Fatal("ANSI fallback sentinel must not look like an absent header (IsZero)")
 	}
 
 	th := theme.DefaultDark()
@@ -59,26 +51,41 @@ func TestBlankNativeVsANSIFallbackMarker(t *testing.T) {
 		t.Fatalf("expected native blank among %#v / lines %#v", plain.native, plain.lines)
 	}
 
-	// Markdown/rich rows must route to ANSI fallback.
+	// Markdown/rich rows are now bridged to native PaintLines (no ANSI fallback).
+	// The bridge reuses the SGR parser and carries explicit colour overrides for
+	// Chroma syntax colours; known theme colours map back to roles.
 	md := rendering.MakeMdRenderer(80)
 	if md == nil {
 		t.Fatal("MakeMdRenderer returned nil")
 	}
 	ctx.mdRenderer = md
+	ctx.tokens = ui.NewTokenSet(th)
 	rich := renderAssistantMessage(types.ChatMessage{
 		Role:    types.RoleAssistant,
 		Content: "# Heading\n\nparagraph",
 		Time:    time.Now(),
 	}, ctx, true)
-	foundFallback := false
-	for _, pl := range rich.native {
+	for i, pl := range rich.native {
 		if pl.PreferANSI() {
-			foundFallback = true
+			t.Fatalf("row %d PreferANSI — markdown must bridge to native, got %#v", i, pl)
+		}
+	}
+	// The heading row must carry at least one span with explicit colour override
+	// (Glamour emits palette colours that don't map to theme roles).
+	foundOverride := false
+	for _, pl := range rich.native {
+		for _, s := range pl.Spans {
+			if s.FGSet {
+				foundOverride = true
+				break
+			}
+		}
+		if foundOverride {
 			break
 		}
 	}
-	if !foundFallback {
-		t.Fatalf("expected PreferANSI body rows, got %#v lines=%#v", rich.native, rich.lines)
+	if !foundOverride {
+		t.Fatalf("expected at least one bridged span with explicit FG override, got %#v", rich.native)
 	}
 
 	// Paint proof: blank native writes cells without needing the ANSI string path.

@@ -1,6 +1,8 @@
 package viewmodel
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,10 +20,15 @@ type cmdCategory string
 
 const (
 	catFile   cmdCategory = "file"
+	catEdit   cmdCategory = "edit"
+	catView   cmdCategory = "view"
+	catTabs   cmdCategory = "tabs"
 	catTools  cmdCategory = "tools"
 	catSystem cmdCategory = "system"
 	catHelp   cmdCategory = "help"
 	catAgent  cmdCategory = "agent"
+	catChat   cmdCategory = "chat"
+	catApp    cmdCategory = "app"
 )
 
 type cmdEntry struct {
@@ -36,7 +43,8 @@ func paletteEntriesFromRegistry(registry *ui.ActionRegistry) []cmdEntry {
 	all := registry.All()
 	entries := make([]cmdEntry, 0, len(all))
 	for _, a := range all {
-		if a.ID == "palette.open" {
+		// Skip self-reference and all display-only fragments (status-bar hints).
+		if a.ID == "palette.open" || a.DisplayOnly {
 			continue
 		}
 		icon := a.Icon
@@ -93,14 +101,24 @@ func categoryLabel(c cmdCategory) string {
 	switch c {
 	case catFile:
 		return "File"
+	case catEdit:
+		return "Edit"
+	case catView:
+		return "View"
+	case catTabs:
+		return "Tabs"
 	case catTools:
 		return "Tools"
-	case catAgent:
-		return "Agent"
 	case catSystem:
 		return "System"
 	case catHelp:
 		return "Help"
+	case catAgent:
+		return "Agent"
+	case catChat:
+		return "Chat"
+	case catApp:
+		return "App"
 	}
 	return string(c)
 }
@@ -292,17 +310,31 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 		return m.executePaletteCommand(cmdID)
 	}, m.actionRegistry)
 
-	palW := m.width * 50 / 100
-	if palW < 50 {
-		palW = 50
+	// 60 % of screen width, clamped to [60, 96]. Wider than the old
+	// 50 %/80 because detail strings ("expand the file tree to the
+	// active file", "search file names and contents", …) get
+	// truncated at the narrower bound.
+	palW := m.width * 60 / 100
+	if palW < 60 {
+		palW = 60
 	}
-	if palW > 80 {
-		palW = 80
+	if palW > 96 {
+		palW = 96
 	}
 
-	palH := 14
-	if palH > m.height-8 {
-		palH = m.height - 8
+	// Height scales with the number of registered commands so the
+	// palette is usable without a filter even when there are 30+
+	// entries. Chrome eats 4 rows (title + search + divider + a
+	// breath of margin), so 26 rows renders ~22 commands.
+	palH := 12 + len(model.items)
+	if palH < 16 {
+		palH = 16
+	}
+	if palH > 28 {
+		palH = 28
+	}
+	if palH > m.height-6 {
+		palH = m.height - 6
 	}
 	if palH < 6 {
 		palH = 6
@@ -448,6 +480,37 @@ func (m *App) syncPaletteModelFromList(list *ui.List) {
 	}
 }
 
+// cycleNextThemePreset advances the active theme to the next preset in
+// theme.AllPresetNames and persists the choice. Wraps around. The
+// applyThemePreset path also rewrites all chrome/host tokens and
+// invalidates content caches, so the UI repaints with the new palette
+// on the very next frame.
+func (m *App) cycleNextThemePreset() {
+	names := theme.AllPresetNames
+	if len(names) == 0 {
+		return
+	}
+	current := theme.PresetName(m.Theme)
+	idx := 0
+	for i, n := range names {
+		if n == current {
+			idx = i
+			break
+		}
+	}
+	next := names[(idx+1)%len(names)]
+	m.applyThemePreset(next)
+	// Persist the choice so the next launch uses the same preset.
+	s := m.LoadAppSettings()
+	s.Theme.Preset = next
+	if err := m.SaveAppSettings(s); err != nil && m.StatusBar != nil {
+		m.StatusBar.SetError("theme save failed: " + err.Error())
+	}
+	if m.StatusBar != nil {
+		m.StatusBar.SetInfo("Theme: " + next)
+	}
+}
+
 func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	var cmds []tea.Cmd
 
@@ -478,7 +541,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		if m.actionRegistry != nil {
 			for _, a := range m.actionRegistry.All() {
 				hint := m.actionRegistry.HintFor(a.ID)
-				if hint == "" || a.ID == "palette.open" {
+				if hint == "" || a.ID == "palette.open" || a.DisplayOnly {
 					continue
 				}
 				b.WriteString("  " + hint)
@@ -505,8 +568,135 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "view.toggle.sidebar":
 		m.ToggleSidebar()
 
+	case "view.focus.sidebar":
+		m.toggleFocusTree()
+
+	case "view.focus.editor":
+		// Real focus-editor path: only valid when an editor tab is open.
+		// Clearing the stack and pushing FocusEditor makes the intent
+		// explicit; focusTarget() returns FocusEditor.
+		if m.EditorState == nil || m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("No editor open")
+			}
+			return nil
+		}
+		m.setFocusEditor()
+
+	case "view.focus.chat":
+		// Real focus-chat path: push FocusInput so focusTarget() returns
+		// FocusInput even when an editor is open. This is the fix for the
+		// old behavior where "Focus Chat" was a no-op with an editor open.
+		m.setFocusInput()
+
 	case "file.attach":
 		m.openFilePicker()
+
+	case "file.new":
+		// startNewFileInTree requires a target directory. Prefer the
+		// active editor's parent so the new file lands next to the
+		// currently-open one. Fall back to the project root.
+		dir := m.RootPath
+		if m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
+			if fp := m.EditorState.Editor.FilePath(); fp != "" {
+				dir = filepath.Dir(fp)
+			}
+		}
+		m.startNewFileInTree(dir)
+
+	case "file.save":
+		if m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
+			// Save() returns an error on write failure; surface it in
+			// the status bar rather than silently dropping it. Mirrors
+			// the dirty-prompt save path (dirty_prompt.go:63).
+			if err := m.EditorState.Editor.Save(); err != nil {
+				if m.StatusBar != nil {
+					m.StatusBar.SetError(fmt.Sprintf("Save failed: %v", err))
+				}
+			} else if m.StatusBar != nil {
+				m.StatusBar.SetInfo("Saved")
+			}
+		} else if m.StatusBar != nil {
+			m.StatusBar.SetInfo("No file open to save")
+		}
+
+	case "file.close":
+		m.closeEditorTab()
+
+	case "file.revealInTree":
+		if m.Tree.Model != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
+			if fp := m.EditorState.Editor.FilePath(); fp != "" {
+				m.Tree.Model.ExpandToPath(fp)
+				if !m.Tree.Visible {
+					m.ToggleSidebar()
+				}
+			}
+		}
+
+	case "edit.find":
+		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("No file open to search")
+			}
+		} else {
+			m.openFindReplace(false)
+		}
+
+	case "edit.replace":
+		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("No file open for replace")
+			}
+		} else {
+			m.openFindReplace(true)
+		}
+
+	case "edit.undo":
+		// Editor undo — legitimate palette command when an editor is
+		// open. Mirrors the Ctrl+Z keyboard path (keyboard.go:146).
+		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("No file open to undo")
+			}
+		} else {
+			m.EditorState.Editor.Undo()
+		}
+
+	case "edit.redo":
+		// Editor redo — mirrors the Ctrl+Y keyboard path (keyboard.go:150).
+		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("No file open to redo")
+			}
+		} else {
+			m.EditorState.Editor.Redo()
+		}
+
+	case "lsp.outline":
+		return m.requestDocumentSymbolsCmd()
+
+	case "tabs.next":
+		if m.Win != nil && m.Win.IsOpen() && m.Win.TabCount() > 0 {
+			m.Win.Next()
+			m.handleTabSwitch()
+		}
+
+	case "tabs.previous":
+		if m.Win != nil && m.Win.IsOpen() && m.Win.TabCount() > 0 {
+			m.Win.Prev()
+			m.handleTabSwitch()
+		}
+
+	case "agent.cancel":
+		if id := m.AgentMgr.ActiveID(); id != "" {
+			go m.CancelAgent(id)
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("Cancelling agent " + id + "…")
+			}
+		}
+
+	case "agent.newSession":
+		return m.launcherNewSession()
 
 	case "search.project.open":
 		m.toggleFindInFiles()
@@ -519,6 +709,29 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 			err := m.HandleSettingsSave(s)
 			return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
 		})
+
+	case "app.toggleTheme":
+		m.cycleNextThemePreset()
+
+	case "app.copyLastAssistant":
+		ml := m.activeMsgList()
+		if ml == nil {
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("No active chat to copy from")
+			}
+			break
+		}
+		text := ml.LastAssistantText()
+		if text == "" {
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("No assistant message yet")
+			}
+			break
+		}
+		m.copyToClipboard(text)
+		if m.StatusBar != nil {
+			m.StatusBar.SetInfo(fmt.Sprintf("Copied %d chars", len(text)))
+		}
 
 	case "app.quit":
 		m.Quit = true

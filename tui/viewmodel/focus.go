@@ -28,11 +28,21 @@ const (
 //     Enter = New Session until the user moves focus.
 //  3. FocusLauncher — welcome screen with no agent/editor tabs open.
 //  4. FocusTabBar — explicit tab-strip focus (Ctrl+T / click).
-//  5. FocusEditor — an open editor tab is the main document.
-//  6. FocusInput — chat input (agent session without an editor tab).
+//  5. FocusInput — *explicitly* requested chat focus (view.focus.chat) — wins
+//     over the editor even when an editor tab is open, so the user can drive
+//     the chat input without closing the editor.
+//  6. FocusEditor — an open editor tab is the main document. Wins when no
+//     explicit FocusInput/FocusTabBar is on the stack.
+//  7. FocusInput — implicit chat input (agent session without an editor tab).
 //
 // Move focus to the file tree with Ctrl+1 (view.focus.sidebar); press Ctrl+1 or
 // Esc again to return. Status-bar hints must follow this same resolution.
+//
+// The FocusInput-on-stack check (step 5) is inserted between FocusTabBar and
+// the editor-or-input fallthrough so an explicit "Focus Chat" keeps working
+// while an editor is open. Without it, unfocus()/Clear() would let the natural
+// editor-open resolution win and "Focus Chat" would be a no-op — the exact bug
+// the palette cleanup fixed.
 func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
@@ -50,6 +60,11 @@ func (m *App) focusTarget() FocusTarget {
 	if top == FocusTabBar {
 		return FocusTabBar
 	}
+	// Explicit FocusInput on the stack wins over the editor. This lets
+	// view.focus.chat drive the chat input while an editor is open.
+	if top == FocusInput {
+		return FocusInput
+	}
 	if m.EditorState != nil && m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 		return FocusEditor
 	}
@@ -65,6 +80,33 @@ func (m *App) setFocusTree() {
 	m.setSessionDeckFocused(false)
 	m.FocusStack.Clear()
 	m.FocusStack.Push(FocusTree)
+}
+
+// setFocusInput explicitly moves keyboard focus to the chat input,
+// pushing FocusInput onto the stack so focusTarget() returns FocusInput
+// even when an editor tab is open. Used by view.focus.chat.
+func (m *App) setFocusInput() {
+	m.setSessionDeckFocused(false)
+	m.FocusStack.Clear()
+	m.FocusStack.Push(FocusInput)
+}
+
+// setFocusEditor explicitly moves keyboard focus to the editor pane.
+// Used by view.focus.editor. Only meaningful when an editor tab is open;
+// callers should check before calling (the palette handler emits a
+// status-bar message when no editor is open).
+//
+// Implementation: clear the stack so the natural focusTarget()
+// fallthrough returns FocusEditor. Pushing a FocusEditor token would be
+// dead weight — focusTarget() never consults the stack for FocusEditor
+// because launcherHostVisible() is false whenever an editor is open
+// (see host_capture.go:37), so the FocusTree/FocusLauncher/FocusTabBar
+// checks are skipped and the editor-open branch wins. Clearing the
+// stack also drops any stale FocusInput (from a prior view.focus.chat)
+// that would otherwise shadow the editor.
+func (m *App) setFocusEditor() {
+	m.setSessionDeckFocused(false)
+	m.FocusStack.Clear()
 }
 
 // toggleFocusTree explicitly moves keyboard focus to the file tree, or back

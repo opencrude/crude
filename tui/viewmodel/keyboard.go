@@ -134,20 +134,35 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	// Editor context actions from the registry (file.save, edit.undo, edit.redo).
-	// Dispatched here before the legacy handleKey path so the same bindings that
-	// power the status-bar hints are the ones that actually fire.
+	// Editor context actions from the registry (file.save, edit.undo,
+	// edit.redo, edit.find, edit.replace). Dispatched here before the
+	// legacy handleKey path so the same bindings that power the
+	// status-bar hints are the ones that actually fire. The legacy
+	// hardcoded ctrl+f/ctrl+h cases below are now unreachable for these
+	// bindings but retained as a fallback if the registry is absent.
 	if m.actionRegistry != nil {
 		if match := m.actionRegistry.MatchContext("editor", msg); match != nil {
 			switch match.ID {
 			case "file.save":
-				m.EditorState.Editor.Save()
+				if err := m.EditorState.Editor.Save(); err != nil {
+					if m.StatusBar != nil {
+						m.StatusBar.SetError(fmt.Sprintf("Save failed: %v", err))
+					}
+				} else if m.StatusBar != nil {
+					m.StatusBar.SetInfo("Saved")
+				}
 				return m, nil
 			case "edit.undo":
 				m.EditorState.Editor.Undo()
 				return m, nil
 			case "edit.redo":
 				m.EditorState.Editor.Redo()
+				return m, nil
+			case "edit.find":
+				m.openFindReplace(false)
+				return m, nil
+			case "edit.replace":
+				m.openFindReplace(true)
 				return m, nil
 			}
 		}

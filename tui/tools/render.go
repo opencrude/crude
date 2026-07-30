@@ -2,13 +2,10 @@ package tools
 
 import (
 	"crude/tui/rendering"
-	"crude/tui/theme"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode/utf8"
-
-	"charm.land/lipgloss/v2"
 )
 
 // isSummaryOnlyTool returns true for tools whose result is fully expressed
@@ -33,63 +30,6 @@ func IsSummaryOnlyTool(name string) bool {
 // ResultSummary returns a compact title-line summary for successful tool output.
 func ResultSummary(tool, content, target, dur string) string {
 	return resultSummary(tool, content, target, dur)
-}
-
-func RenderPlanBox(text string, maxWidth int, th *theme.Theme) string {
-	lines := strings.Split(text, "\n")
-	if len(lines) == 0 {
-		return ""
-	}
-
-	// The box has Padding(0,1) so content area is maxWidth-2 characters.
-	// Truncate long lines (especially step descriptions) to fit.
-	contentWidth := maxWidth - 2
-	if contentWidth < 20 {
-		contentWidth = 20
-	}
-
-	var styledLines []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			styledLines = append(styledLines, "")
-			continue
-		}
-
-		// Truncate the line to fit within contentWidth if needed.
-		// Step lines have format: "  [marker] [id]: [description]"
-		// We truncate the whole line rather than trying to split it.
-		line = truncateLineToWidth(line, contentWidth)
-
-		var styled string
-		switch {
-		case strings.HasPrefix(trimmed, "✓"):
-			styled = lipgloss.NewStyle().Foreground(th.Colors.Success).Render(line)
-		case strings.HasPrefix(trimmed, "→"):
-			styled = lipgloss.NewStyle().Foreground(th.Colors.Accent2).Render(line)
-		case strings.HasPrefix(trimmed, "✗"):
-			styled = lipgloss.NewStyle().Foreground(th.Colors.Error).Render(line)
-		case strings.HasPrefix(trimmed, "!"):
-			styled = lipgloss.NewStyle().Foreground(th.Colors.Warning).Render(line)
-		case strings.HasPrefix(trimmed, "☐"):
-			styled = lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(line)
-		case strings.HasPrefix(trimmed, "Plan:") || strings.HasPrefix(trimmed, "Goal:"):
-			styled = lipgloss.NewStyle().Foreground(th.Colors.Accent).Bold(true).Render(line)
-		case strings.HasPrefix(trimmed, "Suspended:"):
-			styled = lipgloss.NewStyle().Foreground(th.Colors.Warning).Render(line)
-		default:
-			styled = lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(line)
-		}
-		styledLines = append(styledLines, styled)
-	}
-
-	content := strings.Join(styledLines, "\n")
-
-	box := lipgloss.NewStyle().
-		Padding(0, 1).
-		Width(maxWidth)
-
-	return box.Render(content)
 }
 
 // truncateLineToWidth truncates a line to fit within maxDisplayWidth using

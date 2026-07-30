@@ -35,7 +35,18 @@ func TestShellChatScrollModelStickToBottom(t *testing.T) {
 	scroll.SetContent(20)
 	scroll.SetAutoScroll(true)
 
-	s.SetLines([]string{"a", "b", "c", "d", "e"})
+	rows := make([]chatprojection.MessageRow, 5)
+	for i := 0; i < 5; i++ {
+		ch := string(rune('a' + i))
+		rows[i] = chatprojection.MessageRow{
+			ID:    ch,
+			Lines: []string{ch},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: ch, Role: ui.ColorFg}}},
+			},
+		}
+	}
+	s.SetMessages(rows, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: 30, PadLR: th.Spacing.PadLR, Theme: th}})
 	if scroll.Offset() != scroll.MaxOffset() {
 		t.Fatalf("auto-scroll offset=%d want max=%d", scroll.Offset(), scroll.MaxOffset())
 	}

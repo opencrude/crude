@@ -51,3 +51,4 @@ debug.test
 # Build output (common patterns)
 dist/
 build/
+tmp/

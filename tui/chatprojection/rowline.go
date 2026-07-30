@@ -8,14 +8,25 @@ import (
 	"crude/tui/ui"
 )
 
-// RowSpan is one styled text run within a PaintLine. Colors resolve through
-// ui.SemanticColor at paint time — no ANSI or lipgloss in the projection path.
+// RowSpan is one styled text run within a PaintLine. Colors normally resolve
+// through ui.SemanticColor at paint time — no ANSI in the projection path. For bridged ANSI content that carries explicit colours
+// that do not correspond to a theme role (e.g. Chroma syntax-highlight
+// 24-bit colours), FGColor/BGColor provide an optional direct override that
+// is painted verbatim; when FGSet/BGSet is false, the Role/BgRole is resolved
+// through TokenSet as usual. Known theme colours are mapped back to their
+// SemanticColor role by the bridge so they follow theme preset switches.
 type RowSpan struct {
 	Text   string
 	Role   ui.SemanticColor
 	BgRole ui.SemanticColor
 	BgSet  bool
 	Attr   cell.Attrs
+	// FGColor, when FGSet is true, overrides Role at paint time.
+	FGColor cell.Color
+	FGSet    bool
+	// BGColor, when BGSet is true, overrides BgRole at paint time.
+	BGColor cell.Color
+	BGSet   bool
 }
 
 // PaintLine is a single terminal row of semantic spans with optional subpane
@@ -59,7 +70,9 @@ func (pl PaintLine) PreferANSI() bool {
 }
 
 // SubPaneLine is one row emitted by subpane projection. Native lines paint
-// directly into CellBuffer; Text holds ANSI fallback when Native is nil.
+// directly into CellBuffer; Text holds the plain-text mirror (set by
+// NativeLine) used by selection/copy. The legacy ANSI-only path (ANSILine)
+// has been removed — every row carries a Native PaintLine.
 type SubPaneLine struct {
 	Native *PaintLine
 	Text   string
@@ -70,19 +83,12 @@ func (sl SubPaneLine) PlainText() string {
 	if sl.Native != nil {
 		return sl.Native.PlainText()
 	}
-	if sl.Text == "" {
-		return ""
-	}
-	return rendering.StripAnsi(sl.Text)
+	return sl.Text
 }
 
-// NativeLine wraps a PaintLine for subpane callbacks.
+// NativeLine wraps a PaintLine for subpane callbacks. Text is set to the
+// plain-text mirror for selection/copy consumers.
 func NativeLine(pl PaintLine) SubPaneLine {
 	t := pl.PlainText()
 	return SubPaneLine{Native: &pl, Text: t}
-}
-
-// ANSILine wraps a legacy ANSI row (thinking MessageList content).
-func ANSILine(s string) SubPaneLine {
-	return SubPaneLine{Text: s}
 }

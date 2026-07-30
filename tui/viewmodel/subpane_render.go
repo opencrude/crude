@@ -383,7 +383,11 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 			if i < len(contentNative) && !contentNative[i].PreferANSI() {
 				lines = append(lines, chatprojection.NativeLine(contentNative[i]))
 			} else {
-				lines = append(lines, chatprojection.ANSILine(contentLines[i]))
+				// Fallback: thinking content is plain text (never Glamour),
+				// so emit a native plain body line rather than an ANSI row.
+				lines = append(lines, chatprojection.NativeLine(chatprojection.PaintLine{
+					Spans: []chatprojection.RowSpan{{Text: contentLines[i], Role: ui.ColorFg}},
+				}))
 			}
 		}
 	}
@@ -453,7 +457,7 @@ func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame i
 	sp := m.PaneMgr.Get(paneID)
 	if sp == nil {
 		return []chatprojection.SubPaneLine{
-			chatprojection.ANSILine(""),
+			chatprojection.NativeLine(chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: "", Role: ui.ColorFg}}}),
 			chatprojection.NativeLine(chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: "● unknown pane", Role: ui.ColorMuted}}}),
 		}
 	}

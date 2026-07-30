@@ -8,10 +8,13 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
+	"crude/tui/ui"
 )
 
-// messageLines is one render pass producing parallel plain/ANSI lines and native rows.
-// Native[i].PreferANSI() means shellchat must paint Lines[i] via ANSI fallback.
+// messageLines is one render pass producing parallel plain-text lines and
+// native rows. After the ANSI-fallback deletion, native rows are always real
+// PaintLines (never PreferANSI); lines is kept as a plain-text mirror for
+// selection/copy.
 type messageLines struct {
 	lines  []string
 	native []PaintLine
@@ -31,6 +34,7 @@ func (ml messageLines) withCursor(cursorIdx, spinFrame int, activeTyping bool) m
 
 type renderContext struct {
 	th           *theme.Theme
+	tokens       *ui.TokenSet
 	contentWidth int
 	innerW       int
 	width        int
@@ -43,6 +47,10 @@ type renderContext struct {
 	isLastMsg    bool
 	phase        string
 	mdRenderer   *glamour.TermRenderer
+	// streamNative holds the pre-bridged native rows for the completed portion
+	// of a streaming assistant message (built once per StreamCompletedLen change
+	// by the Renderer, never per frame). Set only for the streaming cursor.
+	streamNative []PaintLine
 }
 
 func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
@@ -57,8 +65,9 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 	if isMarkdown {
 		bodyLines := strings.Split(rendered, "\n")
 		for _, line := range bodyLines {
-			ml.lines = append(ml.lines, line)
-			ml.native = append(ml.native, ansiFallbackLine(line))
+			pl := BridgeAnsiLine(line, ctx.tokens)
+			ml.lines = append(ml.lines, pl.PlainText())
+			ml.native = append(ml.native, pl)
 		}
 	} else {
 		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
@@ -85,15 +94,16 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 	if ctx.streaming && ctx.isLastMsg {
 		updateStreamingCache(&msg, ctx.mdRenderer, ctx.contentWidth)
 		if len(msg.StreamCompletedLines) > 0 {
-			for _, line := range msg.StreamCompletedLines {
-				if strings.Contains(line, "\x1b[") {
-					bodyLines = append(bodyLines, line)
-					bodyNative = append(bodyNative, ansiFallbackLine(line))
+			native := ctx.streamNative
+			for i, line := range msg.StreamCompletedLines {
+				var pl PaintLine
+				if i < len(native) {
+					pl = native[i]
 				} else {
-					pl := buildPlainBodyLine(line)
-					bodyLines = append(bodyLines, line)
-					bodyNative = append(bodyNative, pl)
+					pl = BridgeAnsiLine(line, ctx.tokens)
 				}
+				bodyLines = append(bodyLines, pl.PlainText())
+				bodyNative = append(bodyNative, pl)
 			}
 		}
 		lastNL := strings.LastIndex(msg.Content, "\n")
@@ -117,8 +127,9 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 		if isMarkdown {
 			split := strings.Split(rendered, "\n")
 			for _, line := range split {
-				bodyLines = append(bodyLines, line)
-				bodyNative = append(bodyNative, ansiFallbackLine(line))
+				pl := BridgeAnsiLine(line, ctx.tokens)
+				bodyLines = append(bodyLines, pl.PlainText())
+				bodyNative = append(bodyNative, pl)
 			}
 		} else {
 			wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)

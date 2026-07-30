@@ -167,8 +167,3 @@ func buildErrorHeaderLine(line, timeLabel string, innerW int, first bool) PaintL
 		{Text: line, Role: ui.ColorError, Attr: cell.AttrBold},
 	}}
 }
-
-func ansiFallbackLine(s string) PaintLine {
-	_ = s
-	return PaintLine{ANSIFallback: true}
-}
