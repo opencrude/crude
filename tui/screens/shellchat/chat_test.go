@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"charm.land/lipgloss/v2"
-
 	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
@@ -18,21 +16,21 @@ func TestPaintGoldenSetMessagesVirtItems(t *testing.T) {
 	s := New(th)
 	padLR := th.Spacing.PadLR
 	innerW := 48
-	userLines := Compose(ComposeParams{
-		RawLines: []string{lipgloss.NewStyle().Foreground(th.Colors.Accent).Render("user message body")},
-		InnerW:   innerW,
-		PadLR:    padLR,
-		Theme:    th,
-	})
-	agentLines := Compose(ComposeParams{
-		RawLines: []string{lipgloss.NewStyle().Foreground(th.Colors.Accent2).Render("agent reply line")},
-		InnerW:   innerW,
-		PadLR:    padLR,
-		Theme:    th,
-	})
 	rows := []chatprojection.MessageRow{
-		{ID: "u1", Lines: userLines},
-		{ID: "a1", Lines: agentLines},
+		{
+			ID:    "u1",
+			Lines: []string{"user message body"},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "user message body", Role: ui.ColorAccent}}},
+			},
+		},
+		{
+			ID:    "a1",
+			Lines: []string{"agent reply line"},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "agent reply line", Role: ui.ColorAccent2}}},
+			},
+		},
 	}
 	s.SetMessages(rows, PaintParams{
 		Compose: ComposeParams{
@@ -43,7 +41,7 @@ func TestPaintGoldenSetMessagesVirtItems(t *testing.T) {
 	})
 
 	w := innerW + padLR*2
-	h := len(userLines) + len(agentLines)
+	h := len(rows[0].Lines) + len(rows[1].Lines)
 	buf := s.PaintTestBuffer(w, h)
 	if NonEmptyCellCount(buf) == 0 {
 		t.Fatal("SetMessages/VirtItems paint produced no cells")
@@ -91,7 +89,23 @@ func TestShellChatPaintsComposedMessageLines(t *testing.T) {
 	if len(composed) != 2 {
 		t.Fatalf("expected 2 composed lines, got %d", len(composed))
 	}
-	s.SetLines(composed)
+	rows := []chatprojection.MessageRow{
+		{
+			ID:    "m1",
+			Lines: raw,
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "Hello from agent", Role: ui.ColorFg}}},
+				{Spans: []chatprojection.RowSpan{{Text: "second line of reply", Role: ui.ColorFg}}},
+			},
+		},
+	}
+	s.SetMessages(rows, PaintParams{
+		Compose: ComposeParams{
+			InnerW: 40,
+			PadLR:  th.Spacing.PadLR,
+			Theme:  th,
+		},
+	})
 
 	w := 40 + th.Spacing.PadLR*2
 	h := 2
@@ -112,12 +126,22 @@ func TestShellChatPaintsComposedMessageLines(t *testing.T) {
 func TestShellChatHostPaintSurface(t *testing.T) {
 	th := theme.DefaultDark()
 	s := New(th)
-	s.SetLines(Compose(ComposeParams{
-		RawLines: []string{"stream token chunk"},
-		InnerW:   48,
-		PadLR:    1,
-		Theme:    th,
-	}))
+	rows := []chatprojection.MessageRow{
+		{
+			ID:    "m1",
+			Lines: []string{"stream token chunk"},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "stream token chunk", Role: ui.ColorFg}}},
+			},
+		},
+	}
+	s.SetMessages(rows, PaintParams{
+		Compose: ComposeParams{
+			InnerW: 48,
+			PadLR:  1,
+			Theme:  th,
+		},
+	})
 	host := ui.NewHost(th, s)
 	host.Resize(50, 1)
 	host.Layout()
@@ -173,12 +197,36 @@ func TestShellChatVirtualListRowPainter(t *testing.T) {
 	th := theme.DefaultDark()
 	s := New(th)
 	raw := []string{"line A", "line B", "line C"}
-	s.SetLines(Compose(ComposeParams{
-		RawLines: raw,
-		InnerW:   30,
-		PadLR:    th.Spacing.PadLR,
-		Theme:    th,
-	}))
+	rows := []chatprojection.MessageRow{
+		{
+			ID:    "m1",
+			Lines: []string{"line A"},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "line A", Role: ui.ColorFg}}},
+			},
+		},
+		{
+			ID:    "m2",
+			Lines: []string{"line B"},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "line B", Role: ui.ColorFg}}},
+			},
+		},
+		{
+			ID:    "m3",
+			Lines: []string{"line C"},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "line C", Role: ui.ColorFg}}},
+			},
+		},
+	}
+	s.SetMessages(rows, PaintParams{
+		Compose: ComposeParams{
+			InnerW: 30,
+			PadLR:  th.Spacing.PadLR,
+			Theme:  th,
+		},
+	})
 
 	list := s.VirtualList()
 	if got := len(list.Items()); got != 3 {
@@ -188,8 +236,8 @@ func TestShellChatVirtualListRowPainter(t *testing.T) {
 		if it.Height != 1 {
 			t.Fatalf("item[%d] height=%d want 1", i, it.Height)
 		}
-		if _, ok := it.Payload.(string); !ok {
-			t.Fatalf("item[%d] payload not string", i)
+		if _, ok := it.Payload.(chatprojection.MessageRow); !ok {
+			t.Fatalf("item[%d] payload not MessageRow", i)
 		}
 	}
 	if list.Scroll().Content() != len(raw) {

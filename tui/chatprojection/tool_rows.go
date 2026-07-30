@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/tools"
@@ -183,13 +181,12 @@ func (ml *messageLines) appendPlainToolBody(resultContent string, width, height 
 }
 
 func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent string, th *theme.Theme, contentWidth, innerW, height int) {
-	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
+	_ = th
 	if tools.IsPlanTool(msg.ToolName) {
-		planBox := tools.RenderPlanBox(resultContent, contentWidth-4, th)
-		for _, pl := range strings.Split(planBox, "\n") {
-			ansiLine := dim.Render("│ ") + pl
-			ml.lines = append(ml.lines, ansiLine)
-			ml.native = append(ml.native, ansiFallbackLine(ansiLine))
+		planRows := BuildPlanRows(resultContent, contentWidth)
+		for _, pl := range planRows {
+			ml.lines = append(ml.lines, pl.PlainText())
+			ml.native = append(ml.native, pl)
 		}
 		return
 	}
@@ -198,12 +195,11 @@ func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent 
 	if diffWidth < 20 {
 		diffWidth = 20
 	}
-	renderedDiff := tools.RenderDiffNoHeader(resultContent, maxRes, diffWidth, th)
-	if renderedDiff != "" {
-		for _, dl := range strings.Split(renderedDiff, "\n") {
-			ansiLine := dim.Render("│ ") + dl
-			ml.lines = append(ml.lines, ansiLine)
-			ml.native = append(ml.native, ansiFallbackLine(ansiLine))
+	diffRows := BuildDiffRows(resultContent, maxRes, diffWidth)
+	if len(diffRows) > 0 {
+		for _, pl := range diffRows {
+			ml.lines = append(ml.lines, pl.PlainText())
+			ml.native = append(ml.native, pl)
 		}
 	} else {
 		firstLine := strings.SplitN(resultContent, "\n", 2)[0]

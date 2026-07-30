@@ -41,15 +41,26 @@ type Renderer struct {
 	paneLineMap      []PaneLineInfo
 	paneScrollbarW   int
 	nativeCache      map[string][]PaintLine
+	tokens           *ui.TokenSet
+	// streamNative caches the bridged native rows for the completed portion of
+	// a streaming assistant message, keyed by InternalID. streamNativeLen
+	// records the StreamCompletedLen the cache was built from so it is only
+	// re-bridged when the completed length changes (once per invalidation,
+	// never per frame).
+	streamNative    map[string][]PaintLine
+	streamNativeLen map[string]int
 }
 
 func NewRenderer(t *theme.Theme) *Renderer {
 	r := &Renderer{
-		theme:       t,
-		vl:          *newItemList(),
-		sync:        NewMessageSync(),
-		nativeCache: make(map[string][]PaintLine),
+		theme:           t,
+		vl:              *newItemList(),
+		sync:            NewMessageSync(),
+		nativeCache:     make(map[string][]PaintLine),
+		streamNative:    make(map[string][]PaintLine),
+		streamNativeLen: make(map[string]int),
 	}
+	r.tokens = ui.NewTokenSet(t)
 	return r
 }
 
@@ -59,6 +70,26 @@ func (r *Renderer) invalidateMessageCache(msg *types.ChatMessage) {
 	}
 	msg.CachedLines = nil
 	delete(r.nativeCache, msg.InternalID)
+	delete(r.streamNative, msg.InternalID)
+	delete(r.streamNativeLen, msg.InternalID)
+}
+
+// streamNativeRows returns the bridged native rows for the completed portion
+// of a streaming message, re-bridging only when StreamCompletedLen changes.
+func (r *Renderer) streamNativeRows(msg *types.ChatMessage, tokens *ui.TokenSet) []PaintLine {
+	if msg == nil {
+		return nil
+	}
+	if cached, ok := r.streamNative[msg.InternalID]; ok && r.streamNativeLen[msg.InternalID] == msg.StreamCompletedLen {
+		return cached
+	}
+	var rows []PaintLine
+	for _, line := range msg.StreamCompletedLines {
+		rows = append(rows, BridgeAnsiLine(line, tokens))
+	}
+	r.streamNative[msg.InternalID] = rows
+	r.streamNativeLen[msg.InternalID] = msg.StreamCompletedLen
+	return rows
 }
 
 // BindScroll attaches the authoritative shellchat ScrollModel for main chat.
@@ -172,8 +203,25 @@ func (r *Renderer) PaneScrollbarWidth() int {
 func (r *Renderer) SetTheme(t *theme.Theme) {
 	if t != nil {
 		r.theme = t
+		if r.tokens == nil {
+			r.tokens = ui.NewTokenSet(t)
+		} else {
+			r.tokens.Rebuild(t)
+		}
 		r.InvalidateAllMessages()
 	}
+}
+
+// Tokens returns the renderer's resolved TokenSet, rebuilt on theme changes.
+// Used by the ANSI bridge to map known colours back to semantic roles.
+func (r *Renderer) Tokens() *ui.TokenSet {
+	if r == nil {
+		return nil
+	}
+	if r.tokens == nil && r.theme != nil {
+		r.tokens = ui.NewTokenSet(r.theme)
+	}
+	return r.tokens
 }
 
 func (r *Renderer) Theme() *theme.Theme {
@@ -204,6 +252,8 @@ func (r *Renderer) SetSize(w, h int) {
 			r.sync.Messages[i].StreamCompletedLines = nil
 			r.sync.Messages[i].StreamCompletedLen = 0
 		}
+		r.streamNative = make(map[string][]PaintLine)
+		r.streamNativeLen = make(map[string]int)
 		r.mdRenderer = nil
 		r.vl.InvalidateHeights()
 		r.vl.InvalidateAll()
@@ -998,8 +1048,11 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 				result = append(result, sl.PlainText())
 				native = append(native, *sl.Native)
 			} else {
-				result = append(result, sl.Text)
-				native = append(native, ansiFallbackLine(sl.Text))
+				// SubPaneLine with only Text: bridge to native so no row ever
+				// takes the ANSI paint path. Plain text becomes a ColorFg span.
+				pl := BridgeAnsiLine(sl.Text, r.Tokens())
+				result = append(result, pl.PlainText())
+				native = append(native, pl)
 			}
 		}
 		item.Native = native
@@ -1023,14 +1076,22 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		if len(cachedNative) == len(msg.CachedLines) {
 			native = append(native, cachedNative...)
 		} else {
+			// Native cache is stale or missing — re-render fresh so native
+			// rows are always real (never ANSI fallback). The fresh render
+			// bridges once and repopulates the cache.
 			ctx := r.buildRenderContext(msg, suppressHeader)
+			if r.streaming && r.isLastMessage(msg) && msg.Role == types.RoleAssistant {
+				ctx.streamNative = r.streamNativeRows(msg, r.Tokens())
+			}
 			fresh := renderMessageContent(*msg, ctx, suppressHeader)
 			if len(fresh.native) == len(msg.CachedLines) {
 				r.nativeCache[msg.InternalID] = fresh.native
 				native = append(native, fresh.native...)
 			} else {
-				for range msg.CachedLines {
-					native = append(native, ansiFallbackLine(""))
+				// Length mismatch (e.g. spacer difference) — rebuild plain
+				// body lines from cached text so every row stays native.
+				for _, tl := range msg.CachedLines {
+					native = append(native, buildPlainBodyLine(tl))
 				}
 			}
 		}
@@ -1073,6 +1134,7 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 	}
 	return renderContext{
 		th:           r.theme,
+		tokens:       r.Tokens(),
 		contentWidth: contentWidth,
 		innerW:       innerW,
 		width:        r.width,
@@ -1101,6 +1163,9 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	needsSpacer := !suppressHeader || r.needsThinkingSpacer(msgIdx) || r.needsPostThinkingSpacer(msgIdx)
 
 	ctx := r.buildRenderContext(origMsg, suppressHeader)
+	if r.streaming && r.isLastMessage(origMsg) && origMsg.Role == types.RoleAssistant {
+		ctx.streamNative = r.streamNativeRows(origMsg, r.Tokens())
+	}
 	ml := renderMessageContent(*msg, ctx, suppressHeader)
 
 	cursorIdx := -1

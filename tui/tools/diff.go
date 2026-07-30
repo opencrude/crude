@@ -189,6 +189,11 @@ func parseUnifiedDiff(raw string) []diffFile {
 
 const (
 	compactContextLines = 2 // context lines around change groups in compact mode
+
+	// CompactContextLines is the exported equivalent of compactContextLines,
+	// used by the native diff row builder to match the ANSI renderer's
+	// context-trimming behaviour.
+	CompactContextLines = compactContextLines
 )
 
 // ── RenderDiff — the single unified diff renderer
@@ -198,14 +203,12 @@ const (
 // 0 means unlimited. maxWidth controls horizontal space (from terminal width).
 // The function adapts context depth based on available space but always uses
 // the same visual language: clean header, numbered gutter, change indicators.
+//
+// Note: the chat tool-body path now renders diffs natively via
+// chatprojection.BuildDiffRows; this function is retained for the standalone
+// diff tests and any future ANSI-string consumers.
 func RenderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme) string {
 	return renderDiff(raw, maxLines, maxWidth, th, false)
-}
-
-// RenderDiffNoHeader renders a diff without the file header line (▌ path −X +Y).
-// Used when the title line already shows file path and change counts.
-func RenderDiffNoHeader(raw string, maxLines int, maxWidth int, th *theme.Theme) string {
-	return renderDiff(raw, maxLines, maxWidth, th, true)
 }
 
 func renderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme, skipHeader bool) string {

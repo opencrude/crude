@@ -466,7 +466,10 @@ func (vl *itemList) assembleNativeOutput(firstItem, lastItem, skipLines int) []P
 			if j < len(item.Native) {
 				output = append(output, item.Native[j])
 			} else {
-				output = append(output, ansiFallbackLine(lines[j]))
+				// Native rows should always be parallel to lines now; this
+				// fallback emits a native plain body line so no row ever takes
+				// the ANSI paint path.
+				output = append(output, buildPlainBodyLine(lines[j]))
 			}
 			accumulated++
 			if accumulated >= vl.viewportH {

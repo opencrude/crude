@@ -55,6 +55,11 @@ type ActionDef struct {
 	Bindings     []KeyBinding
 	FocusContext FocusContext // empty = global
 	HintKey      string       // shortcut label for hints (e.g. "Ctrl+Alt+F")
+	// DisplayOnly marks a registry entry that exists only to feed the
+	// status-bar HintFor / HintLabelFor helpers — it has no runnable
+	// command and MUST be hidden from the command palette. Status-bar
+	// hint fragments (Close, Next, Navigate, …) are DisplayOnly.
+	DisplayOnly bool
 }
 
 // ActionRegistry holds the set of registered actions. It is the
@@ -216,12 +221,25 @@ func DefaultRegistry() *ActionRegistry {
 // defaultActions is the canonical list of global actions and their
 // keybindings. Product code registers additional context-specific
 // actions at runtime, but these globals are always available.
+//
+// Categories (used as palette group headers, in order of definition):
+//   File, Edit, View, Tabs, Agent, Tools, System, Help, Chat, App.
+//
+// Hidden from the palette (excluded by paletteEntriesFromRegistry):
+//   - palette.open          (self-reference; opening it from itself is a no-op)
+//   - any entry with DisplayOnly: true (status-bar hint fragments)
+//
+// Icons are single-rune glyphs that render at display width 1 under
+// the shared grapheme-width path. Do NOT use emoji or ZWJ sequences
+// here; the layout math in tui/ui/list.go would break.
 var defaultActions = []*ActionDef{
+	// ─── Self-reference: hidden from the palette (palette.open is the
+	//     menu you launched the palette FROM; never shown as a result). ───
 	{
 		ID:          "palette.open",
 		Label:       "Command Palette",
 		Description: "search and run commands",
-		Icon:        "⌕",
+		Icon:        "⌘",
 		Category:    "System",
 		Bindings: []KeyBinding{
 			{Key: "ctrl+alt+p"},
@@ -230,6 +248,49 @@ var defaultActions = []*ActionDef{
 			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'P'},
 		},
 		HintKey: "Ctrl+Alt+P",
+	},
+
+	// ─── File ────────────────────────────────────────────────────────
+	{
+		ID:           "file.save",
+		Label:        "Save",
+		Description:  "save current file",
+		Icon:         "↓",
+		Category:     "File",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+s"}},
+		HintKey:      "Ctrl+S",
+	},
+	{
+		ID:          "file.attach",
+		Label:       "Attach File",
+		Description: "add a file reference",
+		Icon:        "⧉",
+		Category:    "File",
+		HintKey:     "Ctrl+O",
+	},
+	{
+		ID:          "file.new",
+		Label:       "New File",
+		Description: "create a new file in the workspace",
+		Icon:        "+",
+		Category:    "File",
+	},
+	{
+		ID:          "file.close",
+		Label:       "Close Tab",
+		Description: "close the active editor tab",
+		Icon:        "✕",
+		Category:    "File",
+		Bindings:    []KeyBinding{{Key: "ctrl+w"}},
+		HintKey:     "Ctrl+W",
+	},
+	{
+		ID:          "file.revealInTree",
+		Label:       "Reveal in Tree",
+		Description: "expand the file tree to the active file",
+		Icon:        "▸",
+		Category:    "File",
 	},
 	{
 		ID:          "search.project.open",
@@ -245,15 +306,50 @@ var defaultActions = []*ActionDef{
 		},
 		HintKey: "Ctrl+Alt+F",
 	},
+
+	// ─── Edit ────────────────────────────────────────────────────────
 	{
-		ID:          "composer.toggle",
-		Label:       "Composer",
-		Description: "compose a detailed prompt",
-		Icon:        "✏",
-		Category:    "Tools",
-		Bindings:    []KeyBinding{{Key: "alt+c"}},
-		HintKey:     "Alt+C",
+		ID:           "edit.undo",
+		Label:        "Undo Typing",
+		Description:  "undo the last editor edit",
+		Icon:         "↩",
+		Category:     "Edit",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+z"}},
+		HintKey:      "Ctrl+Z",
 	},
+	{
+		ID:           "edit.redo",
+		Label:        "Redo Typing",
+		Description:  "redo the last undone editor edit",
+		Icon:         "↪",
+		Category:     "Edit",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+y"}},
+		HintKey:      "Ctrl+Y",
+	},
+	{
+		ID:           "edit.find",
+		Label:        "Find",
+		Description:  "search within the current file",
+		Icon:         "≡",
+		Category:     "Edit",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+f"}},
+		HintKey:      "Ctrl+F",
+	},
+	{
+		ID:           "edit.replace",
+		Label:        "Replace",
+		Description:  "find and replace within the current file",
+		Icon:         "⇄",
+		Category:     "Edit",
+		FocusContext: "editor",
+		Bindings:     []KeyBinding{{Key: "ctrl+h"}},
+		HintKey:      "Ctrl+H",
+	},
+
+	// ─── View ────────────────────────────────────────────────────────
 	{
 		ID:          "view.toggle.sidebar",
 		Label:       "Toggle Sidebar",
@@ -266,8 +362,8 @@ var defaultActions = []*ActionDef{
 	{
 		ID:          "view.focus.sidebar",
 		Label:       "Focus File Tree",
-		Description: "move keyboard focus to the file tree (press again to return)",
-		Icon:        "☰",
+		Description: "move keyboard focus to the file tree",
+		Icon:        "▤",
 		Category:    "View",
 		Bindings: []KeyBinding{
 			{Key: "ctrl+1"},
@@ -276,25 +372,46 @@ var defaultActions = []*ActionDef{
 		HintKey: "Ctrl+1",
 	},
 	{
-		ID:          "settings.open",
-		Label:       "Settings",
-		Description: "workspace settings: theme, editor, LSP, UI, font",
-		Icon:        "⚙",
-		Category:    "Tools",
+		ID:          "view.focus.editor",
+		Label:       "Focus Editor",
+		Description: "move keyboard focus to the editor",
+		Icon:        "▥",
+		Category:    "View",
 	},
 	{
-		ID:          "file.attach",
-		Label:       "Attach File",
-		Description: "add a file reference",
-		Icon:        "⧉",
-		Category:    "File",
-		HintKey:     "Ctrl+O",
+		ID:          "view.focus.chat",
+		Label:       "Focus Chat",
+		Description: "move keyboard focus to the chat input",
+		Icon:        "▣",
+		Category:    "View",
 	},
+
+	// ─── Tabs ────────────────────────────────────────────────────────
+	{
+		ID:          "tabs.next",
+		Label:       "Next Tab",
+		Description: "switch to the next editor tab",
+		Icon:        "→",
+		Category:    "Tabs",
+		Bindings:    []KeyBinding{{Key: "ctrl+]"}},
+		HintKey:     "Ctrl+]",
+	},
+	{
+		ID:          "tabs.previous",
+		Label:       "Previous Tab",
+		Description: "switch to the previous editor tab",
+		Icon:        "←",
+		Category:    "Tabs",
+		Bindings:    []KeyBinding{{Key: "ctrl+["}},
+		HintKey:     "Ctrl+[",
+	},
+
+	// ─── Agent ───────────────────────────────────────────────────────
 	{
 		ID:          "agent.orchestrator.settings",
 		Label:       "Orchestrator Settings",
 		Description: "override model and provider",
-		Icon:        "⚙",
+		Icon:        "⛭",
 		Category:    "Agent",
 	},
 	{
@@ -312,40 +429,60 @@ var defaultActions = []*ActionDef{
 		Category:    "Agent",
 	},
 	{
+		ID:          "agent.cancel",
+		Label:       "Cancel Agent",
+		Description: "stop the running agent",
+		Icon:        "⊘",
+		Category:    "Agent",
+	},
+	{
+		ID:          "agent.newSession",
+		Label:       "New Session",
+		Description: "start a fresh session",
+		Icon:        "✦",
+		Category:    "Agent",
+	},
+
+	// ─── Tools (LSP, Composer, Settings, Safety) ─────────────────────
+	{
+		ID:          "composer.toggle",
+		Label:       "Composer",
+		Description: "compose a detailed prompt",
+		Icon:        "✏",
+		Category:    "Tools",
+		Bindings:    []KeyBinding{{Key: "alt+c"}},
+		HintKey:     "Alt+C",
+	},
+	{
+		ID:          "settings.open",
+		Label:       "Settings",
+		Description: "workspace settings: theme, editor, LSP, UI, font",
+		Icon:        "⚙",
+		Category:    "Tools",
+	},
+	{
+		ID:          "lsp.outline",
+		Label:       "Go to Symbol",
+		Description: "document outline — jump to any function or class",
+		Icon:        "§",
+		Category:    "Tools",
+		Bindings:    []KeyBinding{{Key: "alt+o"}},
+		HintKey:     "Alt+O",
+	},
+	{
 		ID:          "safety.yolo.toggle",
 		Label:       "YOLO Mode",
 		Description: "toggle safety checks",
 		Icon:        "☠",
 		Category:    "Tools",
 	},
-	{
-		ID:          "system.undo",
-		Label:       "Undo",
-		Description: "revert last file change",
-		Icon:        "↩",
-		Category:    "System",
-	},
-	{
-		ID:          "help.show",
-		Label:       "Help",
-		Description: "show commands and shortcuts",
-		Icon:        "?",
-		Category:    "Help",
-	},
-	{
-		ID:          "app.quit",
-		Label:       "Quit",
-		Description: "exit immediately (does not close tabs first)",
-		Icon:        "✖",
-		Category:    "System",
-		Bindings:    []KeyBinding{{Key: "ctrl+q"}},
-		HintKey:     "Ctrl+Q",
-	},
+
+	// ─── System (sessions, undo, theme, copy) ────────────────────────
 	{
 		ID:          "app.sessions",
 		Label:       "Sessions",
 		Description: "browse and resume past sessions",
-		Icon:        "☰",
+		Icon:        "⊟",
 		Category:    "System",
 		// Ctrl+Alt+S: free of collisions with palette (Ctrl+Alt+P), find
 		// (Ctrl+Alt+F), sidebar (Ctrl+B), composer (Alt+C), save (Ctrl+S
@@ -359,40 +496,53 @@ var defaultActions = []*ActionDef{
 		},
 		HintKey: "Ctrl+Alt+S",
 	},
+	{
+		ID:          "system.undo",
+		Label:       "Undo Agent File Change",
+		Description: "revert the last file change made by the agent",
+		Icon:        "⤺",
+		Category:    "System",
+	},
+	{
+		ID:          "app.toggleTheme",
+		Label:       "Toggle Theme",
+		Description: "cycle through theme presets",
+		Icon:        "◐",
+		Category:    "System",
+	},
+	{
+		ID:          "app.copyLastAssistant",
+		Label:       "Copy Last Assistant",
+		Description: "copy the last assistant message to clipboard",
+		Icon:        "⎘",
+		Category:    "System",
+	},
+	{
+		ID:          "app.quit",
+		Label:       "Quit",
+		Description: "exit immediately",
+		Icon:        "✖",
+		Category:    "System",
+		Bindings:    []KeyBinding{{Key: "ctrl+q"}},
+		HintKey:     "Ctrl+Q",
+	},
 
-	// ─── Editor context actions (FocusContext: "editor") ───
+	// ─── Help ────────────────────────────────────────────────────────
 	{
-		ID:           "file.save",
-		Label:        "Save",
-		Description:  "save current file",
-		Icon:         "⭿",
-		Category:     "File",
-		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "ctrl+s"}},
-		HintKey:      "Ctrl+S",
-	},
-	{
-		ID:           "edit.undo",
-		Label:        "Undo",
-		Description:  "undo last edit",
-		Icon:         "↩",
-		Category:     "Edit",
-		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "ctrl+z"}},
-		HintKey:      "Ctrl+Z",
-	},
-	{
-		ID:           "edit.redo",
-		Label:        "Redo",
-		Description:  "redo last undone edit",
-		Icon:         "↪",
-		Category:     "Edit",
-		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "ctrl+y"}},
-		HintKey:      "Ctrl+Y",
+		ID:          "help.show",
+		Label:       "Help",
+		Description: "show commands and shortcuts",
+		Icon:        "?",
+		Category:    "Help",
 	},
 
 	// ─── Chat input context actions (FocusContext: "chat") ───
+	// DisplayOnly: "Send" and "New line" are contextual hints for the
+	// status bar, not palette commands. They fire through the chat
+	// input's own key dispatch (dispatchChatKey → input.Update), not
+	// through executePaletteCommand. Marking them DisplayOnly keeps
+	// them out of the palette (where they would be inert dead entries)
+	// while HintLabelFor continues to surface them in the status bar.
 	{
 		ID:           "input.submit",
 		Label:        "Send",
@@ -400,6 +550,7 @@ var defaultActions = []*ActionDef{
 		Category:     "Chat",
 		FocusContext: "chat",
 		HintKey:      "Enter",
+		DisplayOnly:  true,
 	},
 	{
 		ID:           "input.newline",
@@ -408,122 +559,142 @@ var defaultActions = []*ActionDef{
 		Category:     "Chat",
 		FocusContext: "chat",
 		HintKey:      "Alt+Enter",
+		DisplayOnly:  true,
 	},
 
 	// ─── Contextual status-bar hints (display-first) ───
 	{
-		ID:       "editor.close",
-		Label:    "Close",
-		Category: "Editor",
-		HintKey:  "Esc",
+		ID:          "editor.close",
+		Label:       "Close",
+		Category:    "Editor",
+		HintKey:     "Esc",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "focus.tab.next",
-		Label:    "Next",
-		Category: "Focus",
-		HintKey:  "Tab",
+		ID:          "focus.tab.next",
+		Label:       "Next",
+		Category:    "Focus",
+		HintKey:     "Tab",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "focus.tab.previous",
-		Label:    "Previous",
-		Category: "Focus",
-		HintKey:  "Shift+Tab",
+		ID:          "focus.tab.previous",
+		Label:       "Previous",
+		Category:    "Focus",
+		HintKey:     "Shift+Tab",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "panel.previous",
-		Label:    "Prev panel",
-		Category: "Panel",
-		HintKey:  "Ctrl+[",
+		ID:          "panel.previous",
+		Label:       "Prev panel",
+		Category:    "Panel",
+		HintKey:     "Ctrl+[",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "panel.next",
-		Label:    "Next panel",
-		Category: "Panel",
-		HintKey:  "Ctrl+]",
+		ID:          "panel.next",
+		Label:       "Next panel",
+		Category:    "Panel",
+		HintKey:     "Ctrl+]",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "panel.close",
-		Label:    "Back",
-		Category: "Panel",
-		HintKey:  "Esc",
+		ID:          "panel.close",
+		Label:       "Back",
+		Category:    "Panel",
+		HintKey:     "Esc",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "tabbar.previous",
-		Label:    "Navigate",
-		Category: "Tabs",
-		HintKey:  "←",
+		ID:          "tabbar.previous",
+		Label:       "Navigate",
+		Category:    "Tabs",
+		HintKey:     "←",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "tabbar.next",
-		Label:    "Navigate",
-		Category: "Tabs",
-		HintKey:  "→",
+		ID:          "tabbar.next",
+		Label:       "Navigate",
+		Category:    "Tabs",
+		HintKey:     "→",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "tabbar.select",
-		Label:    "Select",
-		Category: "Tabs",
-		HintKey:  "Enter",
+		ID:          "tabbar.select",
+		Label:       "Select",
+		Category:    "Tabs",
+		HintKey:     "Enter",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "tabbar.unfocus",
-		Label:    "Unfocus",
-		Category: "Tabs",
-		HintKey:  "Esc",
+		ID:          "tabbar.unfocus",
+		Label:       "Unfocus",
+		Category:    "Tabs",
+		HintKey:     "Esc",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "list.open",
-		Label:    "Open",
-		Category: "List",
-		HintKey:  "Enter",
+		ID:          "list.open",
+		Label:       "Open",
+		Category:    "List",
+		HintKey:     "Enter",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "list.navigate",
-		Label:    "Navigate",
-		Category: "List",
-		HintKey:  "↑↓",
+		ID:          "list.navigate",
+		Label:       "Navigate",
+		Category:    "List",
+		HintKey:     "↑↓",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "list.preview.navigate",
-		Label:    "Preview",
-		Category: "Search",
-		HintKey:  "↑↓",
+		ID:          "list.preview.navigate",
+		Label:       "Preview",
+		Category:    "Search",
+		HintKey:     "↑↓",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "list.open.mouse",
-		Label:    "Open",
-		Category: "List",
-		HintKey:  "Double-click",
+		ID:          "list.open.mouse",
+		Label:       "Open",
+		Category:    "List",
+		HintKey:     "Double-click",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "overlay.close",
-		Label:    "Close",
-		Category: "Overlay",
-		HintKey:  "Esc",
+		ID:          "overlay.close",
+		Label:       "Close",
+		Category:    "Overlay",
+		HintKey:     "Esc",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "search.regex.toggle",
-		Label:    "Regex",
-		Category: "Search",
-		HintKey:  "Ctrl+R",
+		ID:          "search.regex.toggle",
+		Label:       "Regex",
+		Category:    "Search",
+		HintKey:     "Ctrl+R",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "launcher.filter",
-		Label:    "Search",
-		Category: "Launcher",
-		HintKey:  "/",
+		ID:          "launcher.filter",
+		Label:       "Search",
+		Category:    "Launcher",
+		HintKey:     "/",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "launcher.filter.clear",
-		Label:    "Clear",
-		Category: "Launcher",
-		HintKey:  "Esc",
+		ID:          "launcher.filter.clear",
+		Label:       "Clear",
+		Category:    "Launcher",
+		HintKey:     "Esc",
+		DisplayOnly: true,
 	},
 	{
-		ID:       "launcher.delete",
-		Label:    "Remove",
-		Category: "Launcher",
-		HintKey:  "D",
+		ID:          "launcher.delete",
+		Label:       "Remove",
+		Category:    "Launcher",
+		HintKey:     "D",
+		DisplayOnly: true,
 	},
 	{
 		ID:           "input.history",
@@ -531,6 +702,7 @@ var defaultActions = []*ActionDef{
 		Category:     "Chat",
 		FocusContext: "chat",
 		HintKey:      "↑↓",
+		DisplayOnly:  true,
 	},
 	{
 		ID:           "input.cancel",
@@ -538,5 +710,6 @@ var defaultActions = []*ActionDef{
 		Category:     "Chat",
 		FocusContext: "chat",
 		HintKey:      "Esc",
+		DisplayOnly:  true,
 	},
 }

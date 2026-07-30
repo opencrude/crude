@@ -4,13 +4,11 @@
 package shellchat
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/chatprojection"
-	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/types"
@@ -43,7 +41,6 @@ type Screen struct {
 	paneDrag   *paneGutterDrag
 	rows       []chatprojection.MessageRow
 	layout     chatLayout
-	lines      []string // legacy SetLines path (tests)
 	paintState messagePaintState
 	width      int
 	height     int
@@ -56,7 +53,6 @@ func New(th *theme.Theme) *Screen {
 	}
 	tokens := ui.NewTokenSet(th)
 	list := ui.NewVirtualList(AreaID, tokens)
-	list.SetRowPainter(paintComposedLine)
 	list.SetPointerPolicy(ui.PointerPolicyPassthrough)
 	list.SetSelectionAnchorsScroll(false)
 	list.Scroll().SetAutoScroll(true)
@@ -91,18 +87,6 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 		s.scrollbar.SetTokens(tokens)
 	}
 }
-
-// SetLines installs fully composed chat rows (pad + content + scrollbars) and
-// rebuilds the native VirtualList viewport items. Each row is one VirtItem
-// with Height=1; RowPainter writes ANSI into the cell buffer per row.
-func (s *Screen) SetLines(lines []string) {
-	s.lines = lines
-	s.rows = nil
-	s.syncListItems()
-}
-
-// Lines returns the current composed rows (test/diagnostic accessor).
-func (s *Screen) Lines() []string { return s.lines }
 
 // VirtualList exposes the native list for tests and scroll binding.
 func (s *Screen) VirtualList() *ui.VirtualList { return s.list }
@@ -239,9 +223,6 @@ func (s *Screen) scrollbarLayoutRect(r ui.Rect) ui.Rect {
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	h := s.list.Scroll().Content()
 	if h < 1 {
-		h = len(s.lines)
-	}
-	if h < 1 {
 		h = 1
 	}
 	if cs.MaxH > 0 && h > cs.MaxH {
@@ -343,33 +324,6 @@ func (s *Screen) syncScrollAfterUserScroll() {
 	} else {
 		scroll.SetAutoScroll(false)
 	}
-}
-
-func (s *Screen) syncListItems() {
-	items := make([]ui.VirtItem, len(s.lines))
-	for i, line := range s.lines {
-		items[i] = ui.VirtItem{
-			ID:      fmt.Sprintf("L%d", i),
-			Height:  1,
-			Payload: line,
-		}
-	}
-	s.list.SetRowPainter(paintComposedLine)
-	s.list.SetItems(items)
-	s.selection.Clear()
-}
-
-func paintComposedLine(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, _ ui.ControlState, _ ui.PaintContext, _ *ui.TokenSet) {
-	_ = width
-	_ = localRow
-	if buf == nil || item.Height < 1 {
-		return
-	}
-	line, _ := item.Payload.(string)
-	if line == "" {
-		return
-	}
-	rendering.RenderToBufferAt(buf, x, y, line)
 }
 
 // PaintTestBuffer lays out and paints into a fresh buffer for tests.

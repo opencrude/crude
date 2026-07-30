@@ -81,7 +81,10 @@ func flattenMessageLines(rows []chatprojection.MessageRow) []string {
 			continue
 		}
 		for i, line := range row.Lines {
-			if i < len(row.Native) && !row.Native[i].PreferANSI() {
+			// After the ANSI-fallback deletion, native rows are always real
+			// and parallel to Lines. Prefer the native plain text (grapheme
+			// space) so selection column coordinates match painted cells.
+			if i < len(row.Native) {
 				all = append(all, row.Native[i].PlainText())
 				continue
 			}

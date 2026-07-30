@@ -1,10 +1,7 @@
 package shellchat
 
 import (
-	"regexp"
 	"strings"
-
-	"charm.land/lipgloss/v2"
 
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
@@ -38,12 +35,10 @@ type ComposeParams struct {
 }
 
 type composeCtx struct {
-	pad            string
-	rowInnerW      int // InnerW minus external main gutter
-	paneSBW        int
-	nestingLevel   int
-	subPaneBgSeq   string
-	reapplySubPane func(string) string
+	pad          string
+	rowInnerW    int // InnerW minus external main gutter
+	paneSBW      int
+	nestingLevel int
 }
 
 func buildComposeCtx(p ComposeParams) composeCtx {
@@ -51,6 +46,7 @@ func buildComposeCtx(p ComposeParams) composeCtx {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
+	_ = th
 	innerW := p.InnerW
 	if innerW < 20 {
 		innerW = 20
@@ -67,26 +63,11 @@ func buildComposeCtx(p ComposeParams) composeCtx {
 	}
 	rowInnerW := innerW - mainGutter
 
-	subPaneBgSeq := ""
-	{
-		s := lipgloss.NewStyle().Background(th.Colors.SubPaneBg).Render(" ")
-		idx := strings.Index(s, " ")
-		if idx > 0 {
-			subPaneBgSeq = s[:idx]
-		}
-	}
-	reapplySubPaneBg := func(s string) string {
-		re := regexp.MustCompile(`\x1b\[(?:0?m|39m|49m)`)
-		return re.ReplaceAllString(s, "${0}"+subPaneBgSeq)
-	}
-
 	return composeCtx{
-		pad:            strings.Repeat(" ", p.PadLR),
-		rowInnerW:      rowInnerW,
-		paneSBW:        paneSBW,
-		nestingLevel:   nestingLevel,
-		subPaneBgSeq:   subPaneBgSeq,
-		reapplySubPane: reapplySubPaneBg,
+		pad:          strings.Repeat(" ", p.PadLR),
+		rowInnerW:    rowInnerW,
+		paneSBW:      paneSBW,
+		nestingLevel: nestingLevel,
 	}
 }
 
@@ -198,10 +179,9 @@ func composeOneRow(ctx composeCtx, p ComposeParams, _ int, _ int, line string, p
 			padRight = 0
 		}
 		// Reserve gap + one gutter column as spaces; native paint fills gutter cells.
+		// The subpane background is applied natively by PaintLineAt (subPaneBg flag),
+		// so no raw SGR background hack is emitted here.
 		inner := line + strings.Repeat(" ", padRight) + strings.Repeat(" ", paneGap+ui.ScrollbarWidth)
-		if hasBg && ctx.subPaneBgSeq != "" {
-			inner = ctx.subPaneBgSeq + ctx.reapplySubPane(inner) + "\x1b[0m"
-		}
 		return ctx.pad + inner + ctx.pad
 	}
 
@@ -210,15 +190,12 @@ func composeOneRow(ctx composeCtx, p ComposeParams, _ int, _ int, line string, p
 		padRight = 0
 	}
 	inner := line + strings.Repeat(" ", padRight)
-	if hasBg && ctx.subPaneBgSeq != "" {
-		inner = ctx.subPaneBgSeq + ctx.reapplySubPane(inner) + "\x1b[0m"
-	}
 	return ctx.pad + inner + ctx.pad
 }
 
 // Compose builds full-width chat rows with scrollbar gutters and subpane
-// backgrounds. Output rows feed legacy Screen.SetLines (tests); production
-// uses message-level VirtItems + ComposeRow at paint time.
+// backgrounds. Output rows are consumed by tests; production uses
+// message-level VirtItems via Screen.SetMessages and PaintLineAt at paint time.
 func Compose(p ComposeParams) []string {
 	if len(p.RawLines) == 0 {
 		return nil

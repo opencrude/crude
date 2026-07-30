@@ -3,7 +3,6 @@ package shellchat
 import (
 	"crude/tui/cell"
 	"crude/tui/chatprojection"
-	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
 )
@@ -100,37 +99,32 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	}
 
 	selStart, selEnd := selectionCols(s.paintState, globalLine)
-	useNative := localRow < len(row.Native) && !row.Native[localRow].PreferANSI()
 
-	if useNative {
-		pl := row.Native[localRow]
-		layout := LayoutRow(s.paintState.compose, pl.VisibleWidth(), paneInfo)
-		lineX := x + layout.PadLeft
-		chatprojection.PaintLineAt(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, layout.HasPaneBg)
-		drawn := pl.VisibleWidth()
-		if drawn > layout.ContentMax {
-			drawn = layout.ContentMax
-		}
-		col := drawn
-		padX := lineX + drawn
-		paintNativeSpaces(buf, padX, y, layout.PadRight, tokens, selStart, selEnd, layout.HasPaneBg, col)
-		col += layout.PadRight
-		if layout.GutterCols > ui.ScrollbarWidth {
-			gap := layout.GutterCols - ui.ScrollbarWidth
-			// Continue selection column tracking through the gutter gap so
-			// multi-column selections paint consistently across the row.
-			paintNativeSpaces(buf, padX+layout.PadRight, y, gap, tokens, selStart, selEnd, layout.HasPaneBg, col)
-		}
+	// Native rows are always real after the ANSI-fallback deletion. The
+	// PreferANSI branch is gone; if a row ever lacks a native entry we build
+	// a plain body line from the text so painting never touches the ANSI path.
+	var pl chatprojection.PaintLine
+	if localRow < len(row.Native) {
+		pl = row.Native[localRow]
 	} else {
-		raw := row.Lines[localRow]
-		if selStart < selEnd {
-			raw = rendering.ApplySelection(raw, selStart, selEnd)
-		}
-		line := ComposeRow(s.paintState.compose, vpRow, globalLine, raw, paneInfo)
-		if line == "" {
-			return
-		}
-		rendering.RenderToBufferAt(buf, x, y, line)
+		pl = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: row.Lines[localRow], Role: ui.ColorFg}}}
+	}
+	layout := LayoutRow(s.paintState.compose, pl.VisibleWidth(), paneInfo)
+	lineX := x + layout.PadLeft
+	chatprojection.PaintLineAt(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, layout.HasPaneBg)
+	drawn := pl.VisibleWidth()
+	if drawn > layout.ContentMax {
+		drawn = layout.ContentMax
+	}
+	col := drawn
+	padX := lineX + drawn
+	paintNativeSpaces(buf, padX, y, layout.PadRight, tokens, selStart, selEnd, layout.HasPaneBg, col)
+	col += layout.PadRight
+	if layout.GutterCols > ui.ScrollbarWidth {
+		gap := layout.GutterCols - ui.ScrollbarWidth
+		// Continue selection column tracking through the gutter gap so
+		// multi-column selections paint consistently across the row.
+		paintNativeSpaces(buf, padX+layout.PadRight, y, gap, tokens, selStart, selEnd, layout.HasPaneBg, col)
 	}
 
 	gx := NestedGutterX(s.paintState.compose, width)
