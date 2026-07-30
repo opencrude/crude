@@ -72,15 +72,44 @@ func TestPaintLineSelectionAndBackground(t *testing.T) {
 	buf := surface.NewCellBuffer(20, 1)
 	chatprojection.PaintLineAt(buf, 0, 0, 20, pl, tokens, 3, 7, true)
 	selBG := tokens.Color(ui.ColorSelection)
+	accentBG := tokens.Color(ui.ColorAccent)
 	subBG := tokens.Color(ui.ColorSubPaneBg)
 	if c := buf.Get(3, 0); c.BG != selBG {
 		t.Fatalf("col 3 bg=%v want selection", c.BG)
+	}
+	// Regression: text selection must never resolve to the focused-row Accent token.
+	if c := buf.Get(3, 0); c.BG.Equal(accentBG) {
+		t.Fatalf("col 3 bg is accent — text selection must use Selection, not ListRowColors(StateFocused)")
 	}
 	if c := buf.Get(0, 0); c.BG != subBG {
 		t.Fatalf("col 0 bg=%v want subpane bg", c.BG)
 	}
 	if c := buf.Get(15, 0); c.Char != ' ' || c.BG != subBG {
 		t.Fatalf("padding cell=%+v", c)
+	}
+}
+
+func TestPaintLineSelectionNeverUsesAccent(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := ui.NewTokenSet(th)
+	selBG := tokens.Color(ui.ColorSelection)
+	accentBG := tokens.Color(ui.ColorAccent)
+	if selBG.Equal(accentBG) {
+		t.Fatal("theme Selection and Accent are identical — cannot assert distinction")
+	}
+	pl := chatprojection.PaintLine{Spans: []chatprojection.RowSpan{
+		{Text: "selected text", Role: ui.ColorFg},
+	}}
+	buf := surface.NewCellBuffer(20, 1)
+	chatprojection.PaintLineAt(buf, 0, 0, 20, pl, tokens, 0, 8, false)
+	for col := 0; col < 8; col++ {
+		c := buf.Get(col, 0)
+		if c.BG.Equal(accentBG) {
+			t.Fatalf("col %d bg is accent; text selection must use Selection", col)
+		}
+		if !c.BG.Equal(selBG) {
+			t.Fatalf("col %d bg=%v want Selection", col, c.BG)
+		}
 	}
 }
 

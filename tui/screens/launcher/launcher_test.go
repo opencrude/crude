@@ -1,13 +1,11 @@
 package launcher
 
 import (
-	"database/sql"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -18,7 +16,7 @@ import (
 func testScreen(t *testing.T, width, height int, workspaces []workspace.WorkspaceInfo) (*Screen, *ui.Host, *surface.CellBuffer) {
 	t.Helper()
 	s := New(theme.DefaultDark())
-	s.SetData("/projects/current", nil, workspaces)
+	s.SetData("/projects/current", workspaces)
 	h := ui.NewHost(theme.DefaultDark(), s)
 	s.SetFocusHandler(h.Focus)
 	h.Resize(width, height)
@@ -171,11 +169,11 @@ func bufferRow(buf *surface.CellBuffer, y int) []rune {
 func TestScreenEmptyAndNoResultsStates(t *testing.T) {
 	s, h, buf := testScreen(t, 80, 20, nil)
 	h.Paint(buf)
-	if got := bufferText(buf); !strings.Contains(got, "No recent sessions or workspaces") {
+	if got := bufferText(buf); !strings.Contains(got, "No recent workspaces") {
 		t.Fatalf("empty state missing:\n%s", got)
 	}
 
-	s.SetData("/projects/current", nil, []workspace.WorkspaceInfo{
+	s.SetData("/projects/current", []workspace.WorkspaceInfo{
 		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 	})
 	h.MarkLayout()
@@ -186,7 +184,7 @@ func TestScreenEmptyAndNoResultsStates(t *testing.T) {
 	h.Layout()
 	buf.Clear()
 	h.Paint(buf)
-	if got := bufferText(buf); !strings.Contains(got, `No sessions or workspaces match "z"`) {
+	if got := bufferText(buf); !strings.Contains(got, `No workspaces match "z"`) {
 		t.Fatalf("no-results state missing:\n%s", got)
 	}
 }
@@ -368,18 +366,9 @@ func TestWorkspacePaneReservesOnlyFinalColumnForScrollbar(t *testing.T) {
 	}
 }
 
-func TestRebuildItemsEmitsSelectableSessions(t *testing.T) {
+func TestRebuildItemsEmitsWorkspacesOnly(t *testing.T) {
 	s := New(theme.DefaultDark())
-	s.SetData("/projects/current", []sessiondb.SessionMeta{
-		{
-			ID:          "ses_a",
-			ProjectName: "current",
-			ProjectPath: "/projects/current",
-			Model:       "test-model",
-			TurnCount:   3,
-			FirstPrompt: sql.NullString{String: "fix the flaky test", Valid: true},
-		},
-	}, []workspace.WorkspaceInfo{
+	s.SetData("/projects/current", []workspace.WorkspaceInfo{
 		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 1},
 	})
 
@@ -387,7 +376,7 @@ func TestRebuildItemsEmitsSelectableSessions(t *testing.T) {
 	for _, it := range s.items {
 		kinds = append(kinds, it.Kind)
 	}
-	want := []ItemKind{ItemNewSession, ItemOpenFolder, ItemSession, ItemWorkspace}
+	want := []ItemKind{ItemNewSession, ItemOpenFolder, ItemWorkspace}
 	if len(kinds) != len(want) {
 		t.Fatalf("items kinds=%v want %v", kinds, want)
 	}
@@ -396,13 +385,9 @@ func TestRebuildItemsEmitsSelectableSessions(t *testing.T) {
 			t.Fatalf("items[%d]=%v want %v (all=%v)", i, kinds[i], want[i], kinds)
 		}
 	}
-	if s.SelectedSessionID() != "" {
-		t.Fatalf("initial selection should not be a session")
-	}
-	// New Session (0) -> New Workspace (1) -> session (2)
 	s.selectFlat(2)
-	if got := s.SelectedSessionID(); got != "ses_a" {
-		t.Fatalf("SelectedSessionID=%q", got)
+	if got := s.SelectedWorkspacePath(); got != "/projects/alpha" {
+		t.Fatalf("SelectedWorkspacePath=%q", got)
 	}
 	cmd := s.activateSelected()
 	if cmd == nil {
@@ -410,7 +395,23 @@ func TestRebuildItemsEmitsSelectableSessions(t *testing.T) {
 	}
 	msg := cmd()
 	act, ok := msg.(ActivateMsg)
-	if !ok || act.Kind != ItemSession || act.SessionID != "ses_a" {
+	if !ok || act.Kind != ItemWorkspace || act.WorkspacePath != "/projects/alpha" {
 		t.Fatalf("ActivateMsg=%#v", msg)
+	}
+}
+
+func TestPaintWorkspaceRow_EmptyNameUsesPathBasename(t *testing.T) {
+	const hash = "84db4726b4a4528b"
+	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
+		{ID: hash, ProjectName: "", ProjectDir: "/home/lenovo/ocd/readable-ws", SessionCount: 0},
+	})
+	_ = s
+	_ = h
+	plain := bufferText(buf)
+	if !strings.Contains(plain, "readable-ws") {
+		t.Fatalf("painted row must show path-derived name, got:\n%s", plain)
+	}
+	if strings.Contains(plain, hash) {
+		t.Fatalf("painted row must not show raw workspace hash %q:\n%s", hash, plain)
 	}
 }

@@ -11,12 +11,18 @@ type Position struct {
 	Col  int
 }
 
-type lineRenderCache struct {
-	text     string
-	scrollX  int
-	runes    []rune
-	widths   []int
-	totalW   int
+// lineGeomCache holds tab-expanded, grapheme-collapsed geometry for one line.
+// Deliberately excludes chroma colour data so cursor motion never tokenises.
+type lineGeomCache struct {
+	raw    string
+	runes  []rune
+	widths []int
+	totalW int
+}
+
+// chromaLineEntry holds the syntax colour map for one line.
+type chromaLineEntry struct {
+	raw      string
 	colorMap []string
 }
 

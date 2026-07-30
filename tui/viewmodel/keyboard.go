@@ -36,10 +36,16 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m.toggleFindInFiles()
 			case "composer.toggle":
 				return m.toggleComposer()
+			case "app.sessions":
+				m.openSessionPicker()
+				return m, nil
 			case "app.quit":
 				return m.handleQuit()
 			case "view.toggle.sidebar":
 				m.ToggleSidebar()
+				return m, nil
+			case "view.focus.sidebar":
+				m.toggleFocusTree()
 				return m, nil
 			}
 		}
@@ -457,15 +463,9 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 			return m, nil
 		}
 	case "ctrl+1":
-		if m.Tree.Model != nil && m.Tree.Visible {
-			if m.FocusStack.Top() == FocusTree {
-				m.FocusStack.Pop()
-			} else {
-				m.FocusStack.Clear()
-				m.FocusStack.Push(FocusTree)
-			}
-			return m, nil
-		}
+		// Fallback when ActionRegistry has not registered view.focus.sidebar.
+		m.toggleFocusTree()
+		return m, nil
 	}
 
 	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {

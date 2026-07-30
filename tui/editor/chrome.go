@@ -96,7 +96,6 @@ func (e *Editor) SetTheme(th *theme.Theme) {
 	}
 	e.th = th
 	e.initChroma()
-	e.chromaCache = nil
 	e.invalidateEditorCaches()
 	if e.tokens != nil {
 		e.tokens.Rebuild(th)

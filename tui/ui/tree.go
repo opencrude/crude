@@ -181,7 +181,7 @@ func (t *Tree) Layout(_ LayoutContext, r Rect) {
 	t.scroll.EnsureVisible(t.sel.Index())
 }
 
-func (t *Tree) Paint(buf *surface.CellBuffer, ox, oy int, _ PaintContext) {
+func (t *Tree) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintContext) {
 	r := t.Bounds()
 	if r.Empty() || buf == nil {
 		return
@@ -204,14 +204,16 @@ func (t *Tree) Paint(buf *surface.CellBuffer, ox, oy int, _ PaintContext) {
 	end := min(n, start+visH)
 	for i := start; i < end; i++ {
 		rowY := contentY + (i - start)
+		cursor := ctx.Focused && (i == t.sel.Index() || (t.useRows && t.rows[i].Cursor))
+		hovered := i == t.hoverIdx || (t.useRows && t.rows[i].Hovered)
 		if t.useRows {
-			t.paintTreeRow(buf, ox+r.X, oy+r.Y+rowY, r.W, t.rows[i], i == t.sel.Index() || t.rows[i].Cursor, i == t.hoverIdx || t.rows[i].Hovered)
+			t.paintTreeRow(buf, ox+r.X, oy+r.Y+rowY, r.W, t.rows[i], cursor, hovered)
 			continue
 		}
 		item := t.items[i]
 		st := TreeRowState{
-			Cursor:  i == t.sel.Index(),
-			Hovered: i == t.hoverIdx,
+			Cursor:  cursor,
+			Hovered: hovered,
 		}
 		if t.painter != nil {
 			t.painter(buf, ox+r.X, oy+r.Y, rowY, r.W, item, st, t.tokens)

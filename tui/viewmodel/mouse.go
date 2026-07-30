@@ -527,9 +527,23 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		// the editor's Y range?
 		layout := m.computeLayout()
 		if mouse.Y >= layout.ChatAreaTop && mouse.Y < layout.ChatAreaTop+m.ChatAreaHeight && mouse.X >= layout.SidebarW {
+			ed := m.EditorState.Editor
+			sLine, sCol, eLine, eCol := ed.SelectionRange()
+			hadSel := ed.HasSelection()
+			scrollBefore := ed.ScrollY()
+			dragBefore := ed.IsMouseDragging() || ed.IsScrollbarDragging()
 			cmd := m.routeEditorMouse(msg)
 			m.updateDiagHoverPopup(mouse.X, mouse.Y)
-			m.contentDirty = true
+			nsLine, nsCol, neLine, neCol := ed.SelectionRange()
+			selChanged := hadSel != ed.HasSelection() ||
+				sLine != nsLine || sCol != nsCol || eLine != neLine || eCol != neCol
+			scrollChanged := ed.ScrollY() != scrollBefore
+			dragChanged := (ed.IsMouseDragging() || ed.IsScrollbarDragging()) != dragBefore
+			// Bare pointer motion with no selection/scroll/drag change must
+			// not force a chroma rebuild (was marking dirty on every motion).
+			if selChanged || scrollChanged || dragChanged {
+				m.contentDirty = true
+			}
 			if cmd != nil {
 				return m, cmd
 			}

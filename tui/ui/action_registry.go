@@ -264,6 +264,18 @@ var defaultActions = []*ActionDef{
 		HintKey:     "Ctrl+B",
 	},
 	{
+		ID:          "view.focus.sidebar",
+		Label:       "Focus File Tree",
+		Description: "move keyboard focus to the file tree (press again to return)",
+		Icon:        "☰",
+		Category:    "View",
+		Bindings: []KeyBinding{
+			{Key: "ctrl+1"},
+			{Mod: tea.ModCtrl, Code: '1'},
+		},
+		HintKey: "Ctrl+1",
+	},
+	{
 		ID:          "settings.open",
 		Label:       "Settings",
 		Description: "workspace settings: theme, editor, LSP, UI, font",
@@ -335,6 +347,17 @@ var defaultActions = []*ActionDef{
 		Description: "browse and resume past sessions",
 		Icon:        "☰",
 		Category:    "System",
+		// Ctrl+Alt+S: free of collisions with palette (Ctrl+Alt+P), find
+		// (Ctrl+Alt+F), sidebar (Ctrl+B), composer (Alt+C), save (Ctrl+S
+		// editor-only), and quit (Ctrl+Q). Available while tabs are open —
+		// the launcher is unreachable then.
+		Bindings: []KeyBinding{
+			{Key: "ctrl+alt+s"},
+			{Key: "ctrl+alt+S"},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 's'},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'S'},
+		},
+		HintKey: "Ctrl+Alt+S",
 	},
 
 	// ─── Editor context actions (FocusContext: "editor") ───

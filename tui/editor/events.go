@@ -62,7 +62,10 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 			return nil
 		}
-		if e.selecting {
+		// Only extend selection during an active mouse-button drag.
+		// Keyboard Shift+Arrow sets selecting without mouseDragging, so bare
+		// motion must not treat that as a drag (phantom-drag bug).
+		if e.mouseDragging {
 			pos, ok := e.mouseToPosition(msg.Mouse().X, msg.Mouse().Y)
 			if ok {
 				e.selEnd = pos
@@ -73,8 +76,8 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		if e.handleScrollbarEvent(msg, msg.Mouse().Y) {
 			return nil
 		}
-		if e.selecting {
-			e.selecting = false
+		if e.mouseDragging {
+			e.mouseDragging = false
 			if e.HasSelection() {
 				text := e.SelectedText()
 				e.ClearSelection()
@@ -164,6 +167,7 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 	e.selAnchor = pos
 	e.selEnd = pos
 	e.selecting = true
+	e.mouseDragging = true
 	e.ensureCursorVisible()
 }
 

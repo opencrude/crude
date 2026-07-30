@@ -9,7 +9,7 @@ target replacement under `tui/ui/`.
 |----------|------------------------|--------|
 | Full input engine | Chat via `shellinput` + `ui.TextArea`; composer + text overlay via `ui.TextArea` screens; find/replace via `ui.TextEdit` + `ui.TextField` (`BuildFindReplaceFrame`) | `ui.TextField` / `ui.TextArea` |
 | Project search query | native `ui.SearchField` in `tui/screens/findinfiles` | same |
-| Form field editor | native `ui.Form` / `FormField` / `TextField` (workspace/session/question/background); legacy `tui/form` **deleted** | `ui/form` field over shared engine |
+| Form field editor | native `ui.Form` / `FormField` / `TextField` (workspace/session/question/background); legacy `tui/form` **deleted** | `ui.Form` / `FormField` over shared TextEdit engine |
 | Hand-built prompt | `tui/widgets/textprompt.go` (product: TextEdit + WindowFrame) | `PromptField` |
 | Append/backspace filter | palette, launcher, settings | `FilterField` / `SearchField` |
 | File/workspace picker filter | native `ui.TextField` in `tui/screens/filepicker` | same |
@@ -30,7 +30,7 @@ target replacement under `tui/ui/`.
 |---------|--------|
 | Command palette list | sectioned VirtualList |
 | File tree | `ui.Tree` via `shelltree` |
-| Message list | **PR6 + Phase 13.7/14 DONE:** `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList` via `ComposeRow` (geometry only) + native nested/main gutter paint; per-pane `ScrollModel`; main `ScrollbarControl` drag + mouse text selection on `shellchat.Screen` |
+| Message list | **PARTIAL:** `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; structured rows native; markdown/thinking PreferANSI fallback remains; main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
 | Tabs | `ui.Tabs` via `shelltabs` |
 | File picker entries | native `ui.List` |

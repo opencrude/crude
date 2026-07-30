@@ -190,7 +190,7 @@ func newPaintableThemeApp(t *testing.T) *App {
 	sidebarScreen := shelltree.New(th, treeModel)
 	sidebarHost := ui.NewHost(th, sidebarScreen)
 	launcherScreen := launcher.New(th)
-	launcherScreen.SetData(t.TempDir(), nil, nil)
+	launcherScreen.SetData(t.TempDir(), nil)
 	launcherHost := ui.NewHost(th, launcherScreen)
 	launcherScreen.SetFocusHandler(launcherHost.Focus)
 

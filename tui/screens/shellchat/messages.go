@@ -117,7 +117,9 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		col += layout.PadRight
 		if layout.GutterCols > ui.ScrollbarWidth {
 			gap := layout.GutterCols - ui.ScrollbarWidth
-			paintNativeSpaces(buf, padX+layout.PadRight, y, gap, tokens, 0, 0, layout.HasPaneBg, 0)
+			// Continue selection column tracking through the gutter gap so
+			// multi-column selections paint consistently across the row.
+			paintNativeSpaces(buf, padX+layout.PadRight, y, gap, tokens, selStart, selEnd, layout.HasPaneBg, col)
 		}
 	} else {
 		raw := row.Lines[localRow]
@@ -165,7 +167,9 @@ func paintNativeSpaces(buf *surface.CellBuffer, x, y, count int, tokens *ui.Toke
 	for i := 0; i < count; i++ {
 		cf, cb := fg, bg
 		if selStart < selEnd && col >= selStart && col < selEnd && tokens != nil {
-			cf, cb = tokens.ListRowColors(ui.StateFocused)
+			// Text selection is not a focused list row — always Selection.
+			cf = tokens.Color(ui.ColorFg)
+			cb = tokens.Color(ui.ColorSelection)
 		}
 		buf.WriteString(x+i, y, " ", cf, cb, 0)
 		col++

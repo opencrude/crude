@@ -23,11 +23,26 @@ func (m *App) tabBarLocalX(screenX int) int {
 	return x
 }
 
+// ensureTabBarGeometry resizes/lays out the tab Host so hit-testing matches
+// the painted strip at production geometry (sidebar + PadLR inset).
+func (m *App) ensureTabBarGeometry() {
+	if m.tabHost == nil || m.tabScreen == nil {
+		return
+	}
+	layout := m.computeLayout()
+	m.tabHost.Resize(layout.InnerW, 2)
+	m.syncTabBarHost()
+	m.tabHost.Layout()
+	// SetItems may have changed labels without dirtying Host layout; force
+	// the Tabs control to recompute ranges against the current width.
+	m.tabScreen.Layout(ui.LayoutContext{}, ui.Rect{W: layout.InnerW, H: 2})
+}
+
 func (m *App) tabBarHitTest(screenX int) (tabIndex int, closeHit bool) {
 	if !m.tabBarVisible() || m.tabScreen == nil || m.tabHost == nil {
 		return -1, false
 	}
-	m.tabHost.Layout()
+	m.ensureTabBarGeometry()
 	return m.tabScreen.HitTest(m.tabBarLocalX(screenX))
 }
 
@@ -86,7 +101,7 @@ func (m *App) handleTabBarEvent(msg tea.Msg) tea.Cmd {
 	if !m.tabBarVisible() || m.tabHost == nil {
 		return nil
 	}
-	m.syncTabBarHost()
+	m.ensureTabBarGeometry()
 	m.tabHost.Focus(shelltabs.TabsID)
 	switch msg := msg.(type) {
 	case tea.MouseClickMsg:

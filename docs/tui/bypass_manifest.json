@@ -30,11 +30,9 @@
         "tui/compositor/",
         "tui/rendering/",
         "tui/editor/render.go",
-        "tui/viewmodel/view.go",
-        "tui/viewmodel/keyboard.go",
         "third_party/"
       ],
-      "note": "Feature code must not emit raw SGR"
+      "note": "Feature code must not emit raw SGR. viewmodel/view.go and keyboard.go removed — they contain no \\x1b[ literals."
     },
     {
       "id": "uniseg-import",

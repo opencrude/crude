@@ -11,7 +11,6 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/fsnotify/fsnotify"
 
-	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
@@ -75,9 +74,10 @@ type Editor struct {
 	lastToggle    time.Time
 	blinkActive   bool
 
-	selecting bool
-	selAnchor Position
-	selEnd    Position
+	selecting     bool // keyboard or mouse selection anchor is active
+	mouseDragging bool // true only while a mouse button drag is in progress
+	selAnchor     Position
+	selEnd        Position
 
 	PadL int // left padding applied by the app layout
 
@@ -87,13 +87,18 @@ type Editor struct {
 
 	chromaStyle *chroma.Style
 	chromaLexer chroma.Lexer
-	chromaCache map[string][]string
+	// chromaLineCache is per-line colour maps from windowed (state-carrying)
+	// tokenisation. Keyed by line index; invalidated from an edit line onward.
+	chromaLineCache map[int]*chromaLineEntry
+	// chromaDirtyFrom is the lowest line whose chroma cache may be stale
+	// after an edit. -1 means nothing is dirty.
+	chromaDirtyFrom int
 
 	lineRunesCacheValid bool
 	lineRunesCacheLine  int
 	lineRunesCache      []rune
 	lineRunesCacheWidth int
-	lineRenderCache     map[int]*lineRenderCache
+	lineGeomCache       map[int]*lineGeomCache
 
 	watcher      *fsnotify.Watcher
 	watchDir     string
@@ -152,7 +157,7 @@ const (
 	cursorBlinkInterval = 530 * time.Millisecond
 	tickInterval        = 100 * time.Millisecond
 	scrollMargin        = 3
-	tabWidth            = 4
+	tabWidth            = DefaultTabWidth
 )
 
 func New(th *theme.Theme) *Editor {
@@ -279,7 +284,8 @@ func (e *Editor) Reload() error {
 	}
 	e.buf = buf
 	e.modified = false
-	e.chromaCache = nil
+	e.chromaLineCache = nil
+	e.chromaDirtyFrom = 0
 	e.invalidateEditorCaches()
 	e.ClearHover()
 	e.notifyContentChanged()
@@ -291,11 +297,16 @@ func (e *Editor) invalidateEditorCaches() {
 	e.lineRunesCacheLine = -1
 	e.lineRunesCache = nil
 	e.lineRunesCacheWidth = 0
-	e.lineRenderCache = nil
+	e.lineGeomCache = nil
+	e.chromaLineCache = nil
+	e.chromaDirtyFrom = 0
 }
 
 func (e *Editor) IsOpen() bool     { return e.open }
 func (e *Editor) FilePath() string { return e.filePath }
+
+// ScrollY returns the first visible document line index.
+func (e *Editor) ScrollY() int { return e.scrollY }
 
 // CursorVisible returns true when the cursor should be drawn as visible
 // (solid or blinking-visible phase). Used by the viewmodel to avoid
@@ -355,45 +366,20 @@ func (e *Editor) SetFormatOnSave(v bool) {
 	e.formatOnSave = v
 }
 
-// lspColToVisualCol converts a UTF-16 code unit offset from the start of a line
-// (as reported by LSP in Position.Character) to a visual column position,
-// accounting for tab expansion and wide characters.
-func lspColToVisualCol(rawLine []byte, lspCol int) int {
-	visCol := 0
-	utf16Units := 0
-	for _, r := range string(rawLine) {
-		if utf16Units >= lspCol {
-			break
-		}
-		// BMP (U+0000–U+FFFF) = 1 UTF-16 code unit,
-		// supplementary (U+10000+) = 2 code units (surrogate pair).
-		utf16Len := 1
-		if r > 0xFFFF {
-			utf16Len = 2
-		}
-		if utf16Units+utf16Len > lspCol {
-			break
-		}
-		visCol += runeVisualWidth(r)
-		utf16Units += utf16Len
-	}
-	return visCol
-}
-
 // SetDiagnostics replaces the current diagnostics for the editor.
 func (e *Editor) SetDiagnostics(diags []LSPDiagnostic) {
 	e.diagMu.Lock()
 
 	// Convert LSP column offsets (UTF-16 code units from line start) to
-	// visual column offsets (tab-expanded, wide-char-aware). Must make a
+	// visual column offsets (tab-expanded, grapheme-aware). Must make a
 	// copy so we don't mutate the caller's slice (e.g. LSPManager cache).
 	converted := make([]LSPDiagnostic, len(diags))
 	copy(converted, diags)
 	for i, d := range converted {
 		rawLine, err := e.buf.Line(d.Line)
 		if err == nil {
-			converted[i].Col = lspColToVisualCol(rawLine, d.Col)
-			converted[i].EndCol = lspColToVisualCol(rawLine, d.EndCol)
+			converted[i].Col = UTF16ColToVisualCol(string(rawLine), d.Col, tabWidth)
+			converted[i].EndCol = UTF16ColToVisualCol(string(rawLine), d.EndCol, tabWidth)
 		}
 	}
 	e.diagnostics = converted
@@ -710,7 +696,7 @@ func (e *Editor) SetCursorPosition(line, col int) {
 	}
 	e.cursor.Line = line
 	lineBytes, _ := e.buf.Line(line)
-	maxCol := rendering.VisibleWidth(string(lineBytes))
+	maxCol := LineVisualWidth(string(lineBytes), tabWidth)
 	if col < 0 {
 		col = 0
 	}
@@ -724,18 +710,7 @@ func (e *Editor) SetCursorPosition(line, col int) {
 // ScrollToCursor adjusts the scroll offsets so the cursor is visible. After
 // a SetCursorPosition this brings the line into view.
 func (e *Editor) ScrollToCursor() {
-	bodyH := e.bodyHeight()
-	if e.cursor.Line < e.scrollY {
-		e.scrollY = e.cursor.Line
-	} else if e.cursor.Line >= e.scrollY+bodyH {
-		e.scrollY = e.cursor.Line - bodyH + 1
-	}
-	if e.cursor.Col < e.scrollX {
-		e.scrollX = e.cursor.Col
-	} else if e.cursor.Col >= e.scrollX+80 {
-		e.scrollX = e.cursor.Col - 80 + 1
-	}
-	e.syncScrollChrome(bodyH)
+	e.ensureCursorVisible()
 	e.invalidateEditorCaches()
 }
 

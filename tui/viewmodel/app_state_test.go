@@ -166,7 +166,7 @@ func TestBuildMainView_LauncherFallback(t *testing.T) {
 	// Launcher present, no agents → launcher surface is active and the main
 	// content string only reserves blank chat rows.
 	app.launcherScreen = launcher.New(app.Theme)
-	app.launcherScreen.SetData(".", nil, nil)
+	app.launcherScreen.SetData(".", nil)
 	app.launcherHost = ui.NewHost(app.Theme, app.launcherScreen)
 	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
@@ -525,7 +525,7 @@ func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 	app.height = 24
 	app.ChatAreaHeight = 17
 	app.launcherScreen = launcher.New(app.Theme)
-	app.launcherScreen.SetData(".", nil, nil)
+	app.launcherScreen.SetData(".", nil)
 	app.launcherHost = ui.NewHost(app.Theme, app.launcherScreen)
 	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
@@ -540,7 +540,7 @@ func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 // component host and clickable across all of its rows.
 func TestLauncherState_HitTest(t *testing.T) {
 	screen := launcher.New(theme.DefaultDark())
-	screen.SetData(".", nil, nil)
+	screen.SetData(".", nil)
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	screen.SetFocusHandler(host.Focus)
 	host.Resize(80, 24)
@@ -733,7 +733,7 @@ func newTestApp(t *testing.T) *App {
 
 	app.Win = window.New(th)
 	app.launcherScreen = launcher.New(th)
-	app.launcherScreen.SetData(".", nil, nil)
+	app.launcherScreen.SetData(".", nil)
 	app.launcherHost = ui.NewHost(th, app.launcherScreen)
 	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 

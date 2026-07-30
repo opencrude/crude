@@ -468,7 +468,7 @@ func TestDispatchMouseRelease_CapturedLauncherOutsideRegion(t *testing.T) {
 			ProjectDir:  fmt.Sprintf("/tmp/workspace-%02d", i),
 		}
 	}
-	app.launcherScreen.SetData(".", nil, workspaces)
+	app.launcherScreen.SetData(".", workspaces)
 
 	layout := app.computeLayout()
 	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)

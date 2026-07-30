@@ -546,7 +546,11 @@ func (m *App) ToggleSidebar() {
 	}
 	m.Tree.Visible = !m.Tree.Visible
 	if m.Tree.Visible {
-		if m.EditorState.ActiveView == "" {
+		// Revealing the sidebar must not steal launcher focus — Enter on the
+		// welcome screen remains New Session. Use Ctrl+1 (view.focus.sidebar)
+		// for an explicit tree-focus move. When an editor is already open and
+		// nothing else owns the stack, focusing the tree is a reasonable default.
+		if !m.launcherHostVisible() && m.EditorState.ActiveView != "" && m.FocusStack.Top() == FocusNone {
 			m.FocusStack.Clear()
 			m.FocusStack.Push(FocusTree)
 		}
@@ -699,6 +703,8 @@ func (m *App) handleTabSwitch() {
 
 	activeTab := m.Win.ActiveTab()
 	if activeTab == nil {
+		// Closing the last tab returns to launcher — main content must rebuild.
+		m.contentDirty = true
 		return
 	}
 
@@ -708,6 +714,7 @@ func (m *App) handleTabSwitch() {
 		if m.subPaneProjections.Has(agentID) {
 			m.subPaneProjections.InvalidateAllMessages(agentID)
 		}
+		m.contentDirty = true
 		return
 	}
 
@@ -729,10 +736,15 @@ func (m *App) handleTabSwitch() {
 			if err != nil && m.Logger != nil {
 				m.Logger.Error("EDITOR", "reopen_failed", "error", err.Error())
 			}
+			m.contentDirty = true
 			return
 		}
 		m.EditorState.ActiveView = path
 		m.EditorState.Editor = tab.Editor
+		// Opening a file / switching editor tabs changes editor content —
+		// contentDirty must flip so View() does not serve a stale cache
+		// (black first frame, or previous file until cursor blink).
+		m.contentDirty = true
 	}
 }
 

@@ -1,6 +1,9 @@
 package editor
 
-import "crude/tui/rendering"
+import (
+	"crude/tui/rendering"
+	"unicode"
+)
 
 func (e *Editor) moveUp() {
 	if e.cursor.Line <= 0 {
@@ -110,19 +113,29 @@ func (e *Editor) moveWordLeft() {
 				return
 			}
 		}
-		ri--
-		if ri < 0 {
-			continue
+		// Skip trailing whitespace first.
+		for ri > 0 && unicode.IsSpace(runes[ri-1]) {
+			ri--
 		}
-		r := runes[ri]
+		if ri <= 0 {
+			e.cursor.Col = 0
+			e.ensureCursorVisible()
+			return
+		}
+		r := runes[ri-1]
 		if isWordChar(r) {
 			for ri > 0 && isWordChar(runes[ri-1]) {
 				ri--
 			}
-			e.cursor.Col = runesToVisualCol(runes, ri)
-			e.ensureCursorVisible()
-			return
+		} else {
+			// Punctuation run — stop at its start (do not skip through to a word).
+			for ri > 0 && !isWordChar(runes[ri-1]) && !unicode.IsSpace(runes[ri-1]) {
+				ri--
+			}
 		}
+		e.cursor.Col = runesToVisualCol(runes, ri)
+		e.ensureCursorVisible()
+		return
 	}
 }
 
@@ -146,37 +159,67 @@ func (e *Editor) moveWordRight() {
 			for ri < len(runes) && isWordChar(runes[ri]) {
 				ri++
 			}
-			e.cursor.Col = runesToVisualCol(runes, ri)
-			e.ensureCursorVisible()
-			return
+		} else if unicode.IsSpace(r) {
+			for ri < len(runes) && unicode.IsSpace(runes[ri]) {
+				ri++
+			}
+			if ri >= len(runes) {
+				continue
+			}
+			if isWordChar(runes[ri]) {
+				for ri < len(runes) && isWordChar(runes[ri]) {
+					ri++
+				}
+			} else {
+				for ri < len(runes) && !isWordChar(runes[ri]) && !unicode.IsSpace(runes[ri]) {
+					ri++
+				}
+			}
+		} else {
+			// Punctuation run — stop at its end.
+			for ri < len(runes) && !isWordChar(runes[ri]) && !unicode.IsSpace(runes[ri]) {
+				ri++
+			}
 		}
-		ri++
+		e.cursor.Col = runesToVisualCol(runes, ri)
+		e.ensureCursorVisible()
+		return
 	}
 }
 
 func isWordChar(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 func runeVisualWidth(r rune) int {
 	if r == '\t' {
-		return tabWidth
+		// Lone-tab width at column 0; mid-line tabs go through ExpandTabs /
+		// TabStopAdvance in the coords module.
+		return TabStopAdvance(0, tabWidth)
 	}
 	return rendering.VisibleWidth(string(r))
 }
 
 func lineVisualWidthFromRunes(runes []rune) int {
-	w := 0
+	col := 0
 	for _, r := range runes {
-		w += runeVisualWidth(r)
+		if r == '\t' {
+			col += TabStopAdvance(col, tabWidth)
+		} else {
+			col += rendering.VisibleWidth(string(r))
+		}
 	}
-	return w
+	return col
 }
 
 func runesToVisualCol(runes []rune, ri int) int {
 	col := 0
 	for i := 0; i < ri && i < len(runes); i++ {
-		col += runeVisualWidth(runes[i])
+		if runes[i] == '\t' {
+			col += TabStopAdvance(col, tabWidth)
+		} else {
+			col += rendering.VisibleWidth(string(runes[i]))
+		}
 	}
 	return col
 }
@@ -184,7 +227,12 @@ func runesToVisualCol(runes []rune, ri int) int {
 func colToRuneIdx(runes []rune, col int) int {
 	visCol := 0
 	for i, r := range runes {
-		cw := runeVisualWidth(r)
+		var cw int
+		if r == '\t' {
+			cw = TabStopAdvance(visCol, tabWidth)
+		} else {
+			cw = rendering.VisibleWidth(string(r))
+		}
 		if visCol+cw > col {
 			return i
 		}
@@ -204,7 +252,7 @@ func (e *Editor) moveToLineStart() {
 		e.ensureCursorVisible()
 		return
 	}
-	expLine := stringsReplaceTab(string(b))
+	expLine := ExpandTabs(string(b), tabWidth)
 	if e.cursor.Col > 0 {
 		firstNonWS := 0
 		for _, r := range expLine {
@@ -229,7 +277,10 @@ func (e *Editor) moveToLineEnd() {
 }
 
 func (e *Editor) pageUp() {
-	e.clearGoal()
+	if !e.goalSet {
+		e.goalCol = e.cursor.Col
+		e.goalSet = true
+	}
 	pageSize := e.viewH - 2
 	if pageSize < 1 {
 		pageSize = 1
@@ -238,12 +289,15 @@ func (e *Editor) pageUp() {
 	if e.cursor.Line < 0 {
 		e.cursor.Line = 0
 	}
-	e.clampCol(e.cursor.Line)
+	e.applyGoalCol()
 	e.ensureCursorVisible()
 }
 
 func (e *Editor) pageDown() {
-	e.clearGoal()
+	if !e.goalSet {
+		e.goalCol = e.cursor.Col
+		e.goalSet = true
+	}
 	pageSize := e.viewH - 2
 	if pageSize < 1 {
 		pageSize = 1
@@ -256,7 +310,7 @@ func (e *Editor) pageDown() {
 	if e.cursor.Line >= lastLine {
 		e.cursor.Line = lastLine
 	}
-	e.clampCol(e.cursor.Line)
+	e.applyGoalCol()
 	e.ensureCursorVisible()
 }
 

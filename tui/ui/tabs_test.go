@@ -10,6 +10,49 @@ import (
 	"crude/tui/theme"
 )
 
+func TestTabsContentSizedCloseAdjacentToLabel(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := NewTokenSet(th)
+	tabs := NewTabs("test/tabs", tokens)
+	tabs.SetChrome(TabsShell)
+	tabs.SetItems([]TabItem{
+		{ID: "1", Label: "Main Agent", Closable: true},
+		{ID: "2", Label: "main.go", Closable: true},
+	}, "1")
+	tabs.Layout(LayoutContext{}, Rect{W: 80, H: 1})
+	buf := surface.NewCellBuffer(80, 1)
+	tabs.Paint(buf, 0, 0, PaintContext{})
+
+	for tabIdx := 0; tabIdx < 2; tabIdx++ {
+		closeX := tabs.CloseLocalX(tabIdx)
+		if closeX < 0 {
+			t.Fatalf("tab %d missing close geometry", tabIdx)
+		}
+		if buf.Get(closeX+1, 0).Char != '×' && buf.Get(closeX, 0).Char != '×' {
+			// close string is " ×" — glyph at closeStart+1
+			found := false
+			for x := closeX; x < closeX+3 && x < 80; x++ {
+				if buf.Get(x, 0).Char == '×' {
+					found = true
+					idx, hit := tabs.HitTest(x)
+					if idx != tabIdx || !hit {
+						t.Fatalf("painted × at %d: HitTest=(%d,%v) want (%d,true)", x, idx, hit, tabIdx)
+					}
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("tab %d: no × near closeStart=%d; row=%q", tabIdx, closeX, readTabRow(buf, 80))
+			}
+		}
+	}
+	// No long run of padding spaces between label and × on active tab.
+	row := readTabRow(buf, 80)
+	if strings.Contains(row, "Main Agent     ") {
+		t.Fatalf("active tab still padded like fixed-width slots: %q", row)
+	}
+}
+
 func TestTabsShellChromeOmitsIconAndPaintsActiveMarker(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := NewTokenSet(th)

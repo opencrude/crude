@@ -12,9 +12,9 @@ deliverable and exit criterion without watering down enforcement targets.
 | Criterion | Status | Notes |
 |-----------|--------|-------|
 | `go build ./...` | ✅ passing | Run in CI `.github/workflows/tui.yml` |
-| `go test ./...` | ⚠️ partial | Full suite in CI; document any external/pre-existing exceptions |
+| `go test ./...` | ✅ passing | Full suite green; `crude/jsonrepair TestConcurrentRepairStress` is a known flake (passes in isolation) |
 | TUI race suites | ✅ **expanded** | `make test-race-tui` — includes `./app/`, `./tui/viewmodel/` |
-| Static design checks, **no allowlist** | 🚧 shrunk | Control bypasses empty; hex allowlist = `tui/theme/` + `tui/diffview/` only (2 paths); raw-ansi still has foundation paths |
+| Static design checks, **no allowlist** | 🚧 shrunk | Hex allowlist = `tui/theme/` + `tui/diffview/` only; raw-ansi still lists foundation + PreferANSI chat paths in `bypass_manifest.json` (not empty) |
 | Runtime theme switching passes gallery + product tests | ⚠️ partial | Gallery done; product screens now have paint goldens for all shell chrome + FIF + palette |
 
 ## Deliverables
