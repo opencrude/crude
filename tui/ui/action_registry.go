@@ -187,14 +187,16 @@ func (r *ActionRegistry) HintLabelFor(id ActionID) string {
 
 // FormatShortcut returns a human-readable shortcut string from a
 // key string, normalizing for display (e.g. "ctrl+alt+p" → "Ctrl+Alt+P").
+// Capitalisation is rune-correct so multi-byte glyphs (↑↓, emoji) are
+// never split into invalid UTF-8 / U+FFFD replacement characters.
 func FormatShortcut(key string) string {
 	parts := strings.Split(key, "+")
 	for i, p := range parts {
-		if len(p) == 1 {
-			parts[i] = strings.ToUpper(p)
-		} else {
-			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		runes := []rune(p)
+		if len(runes) == 0 {
+			continue
 		}
+		parts[i] = strings.ToUpper(string(runes[0])) + string(runes[1:])
 	}
 	return strings.Join(parts, "+")
 }
@@ -329,8 +331,8 @@ var defaultActions = []*ActionDef{
 	},
 	{
 		ID:          "app.sessions",
-		Label:       "Welcome / Sessions",
-		Description: "open the welcome launcher",
+		Label:       "Sessions",
+		Description: "browse and resume past sessions",
 		Icon:        "☰",
 		Category:    "System",
 	},
@@ -383,5 +385,135 @@ var defaultActions = []*ActionDef{
 		Category:     "Chat",
 		FocusContext: "chat",
 		HintKey:      "Alt+Enter",
+	},
+
+	// ─── Contextual status-bar hints (display-first) ───
+	{
+		ID:       "editor.close",
+		Label:    "Close",
+		Category: "Editor",
+		HintKey:  "Esc",
+	},
+	{
+		ID:       "focus.tab.next",
+		Label:    "Next",
+		Category: "Focus",
+		HintKey:  "Tab",
+	},
+	{
+		ID:       "focus.tab.previous",
+		Label:    "Previous",
+		Category: "Focus",
+		HintKey:  "Shift+Tab",
+	},
+	{
+		ID:       "panel.previous",
+		Label:    "Prev panel",
+		Category: "Panel",
+		HintKey:  "Ctrl+[",
+	},
+	{
+		ID:       "panel.next",
+		Label:    "Next panel",
+		Category: "Panel",
+		HintKey:  "Ctrl+]",
+	},
+	{
+		ID:       "panel.close",
+		Label:    "Back",
+		Category: "Panel",
+		HintKey:  "Esc",
+	},
+	{
+		ID:       "tabbar.previous",
+		Label:    "Navigate",
+		Category: "Tabs",
+		HintKey:  "←",
+	},
+	{
+		ID:       "tabbar.next",
+		Label:    "Navigate",
+		Category: "Tabs",
+		HintKey:  "→",
+	},
+	{
+		ID:       "tabbar.select",
+		Label:    "Select",
+		Category: "Tabs",
+		HintKey:  "Enter",
+	},
+	{
+		ID:       "tabbar.unfocus",
+		Label:    "Unfocus",
+		Category: "Tabs",
+		HintKey:  "Esc",
+	},
+	{
+		ID:       "list.open",
+		Label:    "Open",
+		Category: "List",
+		HintKey:  "Enter",
+	},
+	{
+		ID:       "list.navigate",
+		Label:    "Navigate",
+		Category: "List",
+		HintKey:  "↑↓",
+	},
+	{
+		ID:       "list.preview.navigate",
+		Label:    "Preview",
+		Category: "Search",
+		HintKey:  "↑↓",
+	},
+	{
+		ID:       "list.open.mouse",
+		Label:    "Open",
+		Category: "List",
+		HintKey:  "Double-click",
+	},
+	{
+		ID:       "overlay.close",
+		Label:    "Close",
+		Category: "Overlay",
+		HintKey:  "Esc",
+	},
+	{
+		ID:       "search.regex.toggle",
+		Label:    "Regex",
+		Category: "Search",
+		HintKey:  "Ctrl+R",
+	},
+	{
+		ID:       "launcher.filter",
+		Label:    "Search",
+		Category: "Launcher",
+		HintKey:  "/",
+	},
+	{
+		ID:       "launcher.filter.clear",
+		Label:    "Clear",
+		Category: "Launcher",
+		HintKey:  "Esc",
+	},
+	{
+		ID:       "launcher.delete",
+		Label:    "Remove",
+		Category: "Launcher",
+		HintKey:  "D",
+	},
+	{
+		ID:           "input.history",
+		Label:        "History",
+		Category:     "Chat",
+		FocusContext: "chat",
+		HintKey:      "↑↓",
+	},
+	{
+		ID:           "input.cancel",
+		Label:        "Exit",
+		Category:     "Chat",
+		FocusContext: "chat",
+		HintKey:      "Esc",
 	},
 }

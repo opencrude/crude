@@ -9,10 +9,10 @@ import (
 
 func TestComposerHintIsStatusOnly(t *testing.T) {
 	m := NewModel(theme.DefaultDark())
-	if got := m.ContextHint(); !strings.Contains(got, "enter send") {
+	if got := m.ContextHint(); !strings.Contains(got, "Enter send") {
 		t.Fatalf("ContextHint()=%q", got)
 	}
-	if got := m.View(80, 20, false, false, 0); strings.Contains(got, "enter send") {
+	if got := m.View(80, 20, false, false, 0); strings.Contains(got, "Enter send") {
 		t.Fatalf("input view should not render status guidance: %q", got)
 	}
 	if got := m.FirstLineY(20, true, false, 0); got != 24 {

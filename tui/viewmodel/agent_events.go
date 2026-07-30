@@ -146,9 +146,9 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
 				_ = sp
 				proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
-				proj.msgList.SetModelName(m.ModelName)
-				proj.msgList.SetUsername(m.Username)
-				proj.msgList.SetSubPaneContentFn(m.renderSubPaneContentForApp)
+				proj.renderer.SetModelName(m.ModelName)
+				proj.renderer.SetUsername(m.Username)
+				proj.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 				agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
 				existing.State = agent
 				agentNode = existing
@@ -168,16 +168,13 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				subModel = model
 			}
 			proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
-			proj.msgList.SetModelName(subModel)
-			proj.msgList.SetUsername(m.Username)
+			proj.renderer.SetModelName(subModel)
+			proj.renderer.SetUsername(m.Username)
 			agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
 			// Get label/model/category from event data
 			label := ""
 			if l, ok := evtData["agent_name"]; ok {
-				label = l
-				if len(label) > 16 {
-					label = label[:16]
-				}
+				label = workspace.TruncateLine(l, 16)
 			}
 			modelStr := m.ModelName
 			if md, ok := evtData["model"]; ok && md != "" {
@@ -372,8 +369,8 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 
 	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking")
 	proj := m.subPaneProjections.Get(paneID, workspace.PaneThinking)
-	proj.msgList.SetModelName(m.ModelName)
-	proj.msgList.SetUsername(m.Username)
+	proj.renderer.SetModelName(m.ModelName)
+	proj.renderer.SetUsername(m.Username)
 
 	if content != "" {
 		sp.Messages.AppendThinking(content)
@@ -500,8 +497,8 @@ func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
 		return
 	}
 	label := agentName
-	if len(label) > 16 {
-		label = label[:16]
+	if label != "" {
+		label = workspace.TruncateLine(label, 16)
 	}
 	if n := m.AgentMgr.Get(agentID); n != nil {
 		n.Label = label
@@ -514,7 +511,7 @@ func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
 			n.Model = model
 		}
 		if p := m.subPaneProjections.GetExisting(agentID); p != nil {
-			p.msgList.SetModelName(model)
+			p.renderer.SetModelName(model)
 		}
 	}
 	if category := data["category"]; category != "" {

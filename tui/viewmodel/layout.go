@@ -12,7 +12,7 @@ type LayoutInfo struct {
 
 func (m *App) computeLayout() LayoutInfo {
 	sidebarW := 0
-	if m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil {
+	if m.Tree != nil && m.Tree.Visible && m.Tree.Model != nil && m.sidebarScreen != nil {
 		sidebarW = m.Tree.Width + 1
 	}
 
@@ -28,7 +28,7 @@ func (m *App) computeLayout() LayoutInfo {
 	}
 
 	chatAreaTop := 3
-	if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
+	if m.tabBarVisible() {
 		chatAreaTop += 2
 	}
 

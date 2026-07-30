@@ -49,6 +49,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 		ui.ActionBarButton{ID: WorkspaceSettingsSaveID, Label: "Save", Action: "settings.save", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{ID: WorkspaceSettingsCancelID, Label: "Cancel", Action: "settings.cancel", Variant: ui.VariantSecondary, Enabled: true},
 	)
+	s.actions.SetCancelAction("settings.cancel")
 	s.syncModel()
 	return s
 }
@@ -56,7 +57,21 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	return []ui.Component{s.search, s.categories, s.form, s.actions}
 }
-func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet)           { s.tokens = tokens }
+func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
+	s.tokens = tokens
+	if s.search != nil {
+		s.search.SetTokens(tokens)
+	}
+	if s.categories != nil {
+		s.categories.SetTokens(tokens)
+	}
+	if s.form != nil {
+		s.form.SetTokens(tokens)
+	}
+	if s.actions != nil {
+		s.actions.SetTokens(tokens)
+	}
+}
 func (s *WorkspaceSettingsSurface) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
 func (s *WorkspaceSettingsSurface) FocusSearch()                            { s.focusID(WorkspaceSettingsSearchID) }
 func (s *WorkspaceSettingsSurface) FocusCategories()                        { s.focusID(WorkspaceSettingsListID) }
@@ -112,11 +127,67 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.actions.Layout(ctx, ui.Rect{X: formX, Y: max(0, r.H-1), W: formW, H: 1})
 }
 func (s *WorkspaceSettingsSurface) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
-func (s *WorkspaceSettingsSurface) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult {
+
+// Handle receives keys bubbled from focused children (search TextField leaves
+// Up/Down/Esc unhandled).
+//
+// Region Tab order (documented + tested): search → categories → form →
+// actions → wrap. Shift+Tab reverses. Form Tab first walks fields, then
+// emits form.exit.forward/backward to leave the form region.
+//
+// Esc behaviour:
+//   - search with non-empty query: clear query (handled by search field)
+//   - form (no select open): leave form → categories (form.exit.backward)
+//   - categories / empty search / actions / surface: CancelMsg (close +
+//     revert live theme preview to the last saved preset)
+func (s *WorkspaceSettingsSurface) Handle(_ ui.EventContext, msg tea.Msg) ui.EventResult {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok || s.model == nil {
+		return ui.EventResult{}
+	}
+	switch key.Code {
+	case tea.KeyUp:
+		if s.model.MoveCategory(-1) {
+			s.categories.syncItems()
+			s.refreshForm()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+		}
+		return ui.EventResult{Handled: true}
+	case tea.KeyDown:
+		if s.model.MoveCategory(1) {
+			s.categories.syncItems()
+			s.refreshForm()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+		}
+		return ui.EventResult{Handled: true}
+	case tea.KeyTab:
+		if key.Mod.Contains(tea.ModShift) {
+			s.FocusActions()
+		} else {
+			s.model.SetSearchQuery(s.search.field.Value())
+			s.categories.syncItems()
+			s.refreshForm()
+			s.FocusCategories()
+		}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidateLayout | ui.InvalidatePaint}
+	case tea.KeyEsc:
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
+	}
 	return ui.EventResult{}
 }
+
 func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
+	case "form.changed":
+		fieldID, _ := action.Payload.(string)
+		if fieldID == "preset" {
+			preset := s.model.value(catAppearance, "preset")
+			return ui.EventResult{
+				Handled: true,
+				Cmd:     func() tea.Msg { return ThemePreviewMsg{Preset: preset} },
+			}
+		}
+		return ui.EventResult{Handled: true}
 	case "form.select.open":
 		fieldID, _ := action.Payload.(string)
 		return ui.EventResult{Handled: true, Cmd: s.model.OpenSelect(fieldID)}
@@ -175,15 +246,14 @@ func (s *settingsSearchField) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventR
 			s.owner.refreshForm()
 			s.owner.form.FocusFirst()
 			s.owner.FocusForm()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 		case tea.KeyTab:
 			if !key.Mod.Contains(tea.ModShift) {
 				s.owner.model.SetSearchQuery(s.field.Value())
-				s.owner.model.EnterForm()
 				s.owner.categories.syncItems()
 				s.owner.refreshForm()
-				s.owner.FocusForm()
-				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
+				s.owner.FocusCategories()
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 			}
 		case tea.KeyEsc:
 			if s.field.Edit().Len() > 0 {
@@ -191,13 +261,18 @@ func (s *settingsSearchField) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventR
 				s.owner.model.SetSearchQuery("")
 				s.owner.categories.syncItems()
 				s.owner.refreshForm()
-				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 			}
 		}
 	}
 	s.owner.model.SetSearchQuery(s.field.Value())
 	s.owner.categories.syncItems()
 	s.owner.refreshForm()
+	if result.Invalidate == 0 {
+		result.Invalidate = ui.InvalidateLayout | ui.InvalidatePaint
+	} else {
+		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
+	}
 	return result
 }
 func (s *settingsSearchField) Semantics() ui.Semantics       { return s.field.Semantics() }
@@ -228,14 +303,28 @@ func (s *settingsCategoryList) Handle(ctx ui.EventContext, msg tea.Msg) ui.Event
 		if index, ok := selected.Payload.(int); ok && index != s.owner.model.SelectedCategory() {
 			s.owner.model.SelectCategory(index)
 			s.owner.refreshForm()
+			result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
 		}
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok && (key.Code == tea.KeyEnter || key.Code == tea.KeyTab || key.Code == tea.KeyRight) && !key.Mod.Contains(tea.ModShift) {
-		s.owner.model.EnterForm()
-		s.owner.refreshForm()
-		s.owner.form.FocusFirst()
-		s.owner.FocusForm()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		switch key.Code {
+		case tea.KeyTab:
+			if key.Mod.Contains(tea.ModShift) {
+				s.owner.FocusSearch()
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
+			}
+			s.owner.model.EnterForm()
+			s.owner.refreshForm()
+			s.owner.form.FocusFirst()
+			s.owner.FocusForm()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		case tea.KeyEnter, tea.KeyRight:
+			s.owner.model.EnterForm()
+			s.owner.refreshForm()
+			s.owner.form.FocusFirst()
+			s.owner.FocusForm()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		}
 	}
 	return result
 }

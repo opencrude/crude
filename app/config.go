@@ -54,14 +54,22 @@ func HistoryPath() string {
 	return filepath.Join(home, buildinfo.DataDir(), "history.json")
 }
 
-func LoadFileConfig() FileConfig {
-	cfg := DefaultFileConfig()
-	data, err := os.ReadFile(ConfigPath())
+func loadFileConfigFrom(path string) (FileConfig, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return cfg
+		return FileConfig{}, err
 	}
+	cfg := DefaultFileConfig()
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg
+		return FileConfig{}, err
+	}
+	return cfg, nil
+}
+
+func LoadFileConfig() FileConfig {
+	cfg, err := loadFileConfigFrom(ConfigPath())
+	if err != nil {
+		return DefaultFileConfig()
 	}
 	return cfg
 }

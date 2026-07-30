@@ -9,6 +9,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/tui/widgets"
+	"crude/tui/window"
 )
 
 func (m *App) buildEditorContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
@@ -188,18 +189,11 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 	if m.Win == nil || m.Win.TabCount() == 0 {
 		return nil
 	}
-	adjustedX := mouse.X
-	if m.Tree.Visible && m.Tree.Model != nil {
-		adjustedX -= m.Tree.Width + 1
-	}
-	adjustedX -= m.Theme.Spacing.PadLR
-	if adjustedX < 0 {
-		adjustedX = 0
-	}
-	hit := m.Win.HitTest(adjustedX, 0)
-	if hit.TabIndex < 0 || hit.TabIndex >= m.Win.TabCount() {
+	hitIndex, _ := m.tabBarHitTest(mouse.X)
+	if hitIndex < 0 || hitIndex >= m.Win.TabCount() {
 		return nil
 	}
+	hit := window.TabHitResult{TabIndex: hitIndex}
 	tabs := m.Win.Tabs()
 	tab := tabs[hit.TabIndex]
 
@@ -276,9 +270,8 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
 	st.Sections = append(st.Sections, widgets.ContextMenuSection{
 		Items: []widgets.ContextMenuItem{
 			{Label: "Copy selection", Action: func() {
-				ml := m.activeMsgList()
-				if ml != nil {
-					text := ml.SelectedText()
+				if m.chatScreen != nil {
+					text := m.chatScreen.SelectedText()
 					if text != "" {
 						m.copyToClipboard(text)
 					}

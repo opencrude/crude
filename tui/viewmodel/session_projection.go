@@ -2,13 +2,14 @@ package viewmodel
 
 import (
 	"crude/tui/screens/backgroundjobs"
+	"crude/tui/screens/composer"
 	"crude/tui/screens/confirmation"
 	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
+	textoverlay "crude/tui/screens/textoverlay"
 	"crude/tui/screens/yolo"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/types"
 	"crude/workspace"
 )
@@ -25,8 +26,8 @@ type sessionProjection struct {
 	questionAgentID     string
 	yolo                *yolo.Screen
 	yoloAgentID         string
-	textOverlay         widgets.TextOverlay
-	composer            *widgets.Composer
+	textOverlay         *textoverlay.Screen
+	composer            *composer.Screen
 	settings            *sessionsettings.Screen
 	deck                *ui.PanelDeck
 	deckHost            *ui.Host
@@ -46,6 +47,13 @@ func newSessionProjectionRegistry(th *theme.Theme) *sessionProjectionRegistry {
 	}
 }
 
+func (r *sessionProjectionRegistry) Theme() *theme.Theme {
+	if r == nil {
+		return nil
+	}
+	return r.theme
+}
+
 func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProjection {
 	if session == nil {
 		return nil
@@ -62,8 +70,8 @@ func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProj
 		confirmation:   confirmation.New(r.theme),
 		question:       question.New(r.theme),
 		yolo:           yolo.New(r.theme),
-		textOverlay:    widgets.NewTextOverlay(r.theme),
-		composer:       widgets.NewComposer(r.theme),
+		textOverlay:    textoverlay.New(r.theme),
+		composer:       composer.New(r.theme),
 		settings:       settings,
 		deck:           deck,
 		deckHost:       ui.NewHost(r.theme, deck),
@@ -109,14 +117,14 @@ func (r *sessionProjectionRegistry) projectionForConfirmation(screen *confirmati
 	return nil, nil
 }
 
-func (m *App) sessionTextOverlay() *widgets.TextOverlay {
+func (m *App) sessionTextOverlay() *textoverlay.Screen {
 	if projection := m.activeSessionProjection(); projection != nil {
-		return &projection.textOverlay
+		return projection.textOverlay
 	}
 	return nil
 }
 
-func (m *App) sessionComposer() *widgets.Composer {
+func (m *App) sessionComposer() *composer.Screen {
 	if projection := m.activeSessionProjection(); projection != nil {
 		return projection.composer
 	}
@@ -141,9 +149,31 @@ func (r *sessionProjectionRegistry) SetTheme(th *theme.Theme) {
 		return
 	}
 	r.theme = th
+	tokens := ui.NewTokenSet(th)
 	for _, projection := range r.items {
-		if projection != nil && projection.deckHost != nil {
+		if projection == nil {
+			continue
+		}
+		if projection.deckHost != nil {
 			projection.deckHost.SetTheme(th)
+		}
+		if projection.composer != nil {
+			projection.composer.SetTokens(tokens)
+		}
+		if projection.textOverlay != nil {
+			projection.textOverlay.SetTokens(tokens)
+		}
+		if projection.settings != nil {
+			projection.settings.SetTokens(tokens)
+		}
+		if projection.confirmation != nil {
+			projection.confirmation.SetTokens(tokens)
+		}
+		if projection.yolo != nil {
+			projection.yolo.SetTokens(tokens)
+		}
+		if projection.backgroundJobs != nil {
+			projection.backgroundJobs.SetTokens(tokens)
 		}
 	}
 }

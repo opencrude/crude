@@ -6,11 +6,8 @@ import (
 )
 
 // TreeState is the retained TUI projection for the workspace file-tree data.
-// FileTreeModel and TreeRenderer contain selection, hover, scrolling, and
-// paint state, so they belong to the TUI rather than workspace business state.
 type TreeState struct {
 	Model            *filetree.FileTreeModel
-	Renderer         *filetree.TreeRenderer
 	Visible          bool
 	Width            int
 	Resizing         bool
@@ -20,9 +17,7 @@ type TreeState struct {
 }
 
 // ViewData converts the retained file-tree control state into neutral row
-// data. Rendering and pointer routing continue to use the same model, while
-// tests and future frontends can consume a stable snapshot without importing
-// filetree implementation types.
+// data for tests and future frontends.
 func (t *TreeState) ViewData() workspace.TreeView {
 	view := workspace.TreeView{}
 	if t == nil || t.Model == nil {
@@ -36,9 +31,7 @@ func (t *TreeState) ViewData() workspace.TreeView {
 	view.Filter = t.Model.Filter()
 	view.FilterActive = t.Model.FilterActive()
 	view.Width = t.Width
-	if t.Renderer != nil {
-		_, view.VisibleHeight, _ = t.Renderer.GetScrollbarInfo()
-	}
+	view.VisibleHeight = t.Model.VisibleHeight()
 	if selected != nil {
 		view.SelectedPath = selected.Path
 	}
@@ -69,11 +62,10 @@ func (t *TreeState) ViewData() workspace.TreeView {
 	return view
 }
 
-func NewTreeState(model *filetree.FileTreeModel, renderer *filetree.TreeRenderer, defaultWidth int) *TreeState {
+func NewTreeState(model *filetree.FileTreeModel, defaultWidth int) *TreeState {
 	return &TreeState{
-		Model:    model,
-		Renderer: renderer,
-		Visible:  true,
-		Width:    defaultWidth,
+		Model:   model,
+		Visible: true,
+		Width:   defaultWidth,
 	}
 }

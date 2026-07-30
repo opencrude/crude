@@ -66,12 +66,12 @@ func TestOpenTabWithLayout(t *testing.T) {
 	w := newTestWindow()
 	w.SetWidth(80)
 
-	tab := w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
-	if tab.Layout != TabVertical {
-		t.Errorf("expected TabVertical, got %d", tab.Layout)
+	tab := w.OpenTabWithLayout("Settings", "⚙", true, TabHorizontal)
+	if tab.Layout != TabHorizontal {
+		t.Errorf("expected TabHorizontal, got %d", tab.Layout)
 	}
-	if w.Layout() != TabVertical {
-		t.Errorf("expected window layout TabVertical, got %d", w.Layout())
+	if w.Layout() != TabHorizontal {
+		t.Errorf("expected window layout TabHorizontal, got %d", w.Layout())
 	}
 }
 
@@ -176,7 +176,7 @@ func TestSwitchToUpdatesLayout(t *testing.T) {
 	w := newTestWindow()
 	w.SetWidth(80)
 
-	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
+	w.OpenTabWithLayout("Settings", "⚙", true, TabHorizontal)
 	w.OpenTab("Confirm", "⚠", true)
 
 	if w.Layout() != TabHorizontal {
@@ -184,8 +184,8 @@ func TestSwitchToUpdatesLayout(t *testing.T) {
 	}
 
 	w.SwitchTo(0)
-	if w.Layout() != TabVertical {
-		t.Errorf("expected vertical after switching to Settings, got %d", w.Layout())
+	if w.Layout() != TabHorizontal {
+		t.Errorf("expected horizontal after switching to Settings, got %d", w.Layout())
 	}
 }
 
@@ -316,66 +316,6 @@ func TestHitTestNotClosable(t *testing.T) {
 	}
 }
 
-func TestHitTestVertical(t *testing.T) {
-	w := newTestWindow()
-	w.SetWidth(80)
-
-	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
-	w.OpenTabWithLayout("Confirm", "⚠", true, TabVertical)
-
-	tabBarW := w.VTabBarWidth()
-	contentWidth := w.width - tabBarW
-	tabX := contentWidth + 2
-
-	hit := w.HitTest(tabX, 0)
-	if hit.TabIndex != 0 {
-		t.Errorf("expected tab index 0, got %d", hit.TabIndex)
-	}
-	if hit.IsClose {
-		t.Error("expected no close hit in middle of tab item")
-	}
-
-	hit = w.HitTest(tabX, 2)
-	if hit.TabIndex != 1 {
-		t.Errorf("expected tab index 1, got %d", hit.TabIndex)
-	}
-
-	hit = w.HitTest(tabX, 1)
-	if hit.IsClose {
-		t.Error("expected no close hit on separator line")
-	}
-
-	hit = w.HitTest(0, 0)
-	if hit.TabIndex != -1 {
-		t.Error("expected no hit in content area")
-	}
-}
-
-func TestHitTestVerticalClose(t *testing.T) {
-	w := newTestWindow()
-	w.SetWidth(80)
-
-	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
-	w.OpenTabWithLayout("Confirm", "⚠", true, TabVertical)
-
-	tabBarW := w.VTabBarWidth()
-	contentWidth := w.width - tabBarW
-	closeStart := contentWidth + tabBarW - vCloseBtnWidth
-
-	hit := w.HitTest(closeStart, 0)
-	if hit.TabIndex != 0 {
-		t.Errorf("expected tab index 0, got %d", hit.TabIndex)
-	}
-	if !hit.IsClose {
-		t.Error("expected close hit")
-	}
-
-	hit = w.HitTest(closeStart, 1)
-	if hit.IsClose {
-		t.Error("expected no close hit on separator line")
-	}
-}
-
 func TestMoveTab(t *testing.T) {
 	w := newTestWindow()
 	w.SetWidth(80)
@@ -408,160 +348,6 @@ func TestMoveTabActiveTracking(t *testing.T) {
 	w.MoveTab(0, 2)
 	if w.ActiveIndex() != 2 {
 		t.Errorf("expected active 2 after moving active tab, got %d", w.ActiveIndex())
-	}
-}
-
-func TestRenderTabBar(t *testing.T) {
-	w := newTestWindow()
-	w.SetWidth(80)
-
-	if w.RenderTabBar() != "" {
-		t.Error("expected empty tab bar for closed window")
-	}
-
-	w.OpenTab("Settings", "⚙", true)
-	result := w.RenderTabBar()
-	if result == "" {
-		t.Error("expected non-empty tab bar")
-	}
-}
-
-func TestRenderTabBarVerticalReturnsEmpty(t *testing.T) {
-	w := newTestWindow()
-	w.SetWidth(80)
-
-	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
-	result := w.RenderTabBar()
-	if result != "" {
-		t.Error("expected empty tab bar for vertical layout")
-	}
-}
-
-func TestRenderSeparator(t *testing.T) {
-	w := newTestWindow()
-	w.SetWidth(80)
-
-	if w.RenderSeparator() != "" {
-		t.Error("expected empty separator for closed window")
-	}
-
-	w.OpenTab("Settings", "⚙", true)
-	result := w.RenderSeparator()
-	if result == "" {
-		t.Error("expected non-empty separator")
-	}
-}
-
-func TestRenderVerticalSidebar(t *testing.T) {
-	w := newTestWindow()
-	w.SetWidth(80)
-
-	contentLines := []string{"line1", "line2", "line3"}
-
-	result := w.RenderVerticalSidebar(contentLines)
-	if result != nil {
-		t.Error("expected nil for closed window")
-	}
-
-	w.OpenTab("Settings", "⚙", true)
-	result = w.RenderVerticalSidebar(contentLines)
-	if result != nil {
-		t.Error("expected nil for horizontal layout window")
-	}
-
-	w.CloseAll()
-	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
-	result = w.RenderVerticalSidebar(contentLines)
-	if result != nil {
-		t.Error("expected nil for single tab vertical layout")
-	}
-
-	w.CloseAll()
-	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
-	w.OpenTabWithLayout("Confirm", "⚠", true, TabVertical)
-	result = w.RenderVerticalSidebar(contentLines)
-	if result == nil {
-		t.Fatal("expected non-nil result for vertical layout with 2 tabs")
-	}
-	if len(result) < 3 {
-		t.Errorf("expected at least 3 lines (2 tabs + 1 separator), got %d", len(result))
-	}
-	sepLine := result[1]
-	if !contains(sepLine, "─") {
-		t.Errorf("expected separator line at index 1, got %q", sepLine)
-	}
-}
-
-func TestVerticalContentWidth(t *testing.T) {
-	w := newTestWindow()
-	w.SetWidth(80)
-
-	if w.VerticalContentWidth() != 80 {
-		t.Errorf("expected 80 for horizontal layout, got %d", w.VerticalContentWidth())
-	}
-
-	w.OpenTabWithLayout("Settings", "⚙", true, TabVertical)
-	if w.VerticalContentWidth() != 80 {
-		t.Errorf("expected 80 for single tab vertical layout, got %d", w.VerticalContentWidth())
-	}
-
-	w.OpenTabWithLayout("Confirm", "⚠", true, TabVertical)
-	expected := 80 - w.VTabBarWidth()
-	if w.VerticalContentWidth() != expected {
-		t.Errorf("expected %d for multi-tab vertical layout, got %d", expected, w.VerticalContentWidth())
-	}
-}
-
-func TestVTabBarWidthDynamic(t *testing.T) {
-	w := newTestWindow()
-	w.SetWidth(80)
-
-	// No tabs or single tab → 0
-	if w.VTabBarWidth() != 0 {
-		t.Errorf("expected 0 for no tabs, got %d", w.VTabBarWidth())
-	}
-	w.OpenTabWithLayout("A", "", true, TabVertical)
-	if w.VTabBarWidth() != 0 {
-		t.Errorf("expected 0 for single tab, got %d", w.VTabBarWidth())
-	}
-
-	// Two short tabs → should hit minimum (12)
-	w.OpenTabWithLayout("B", "", true, TabVertical)
-	got := w.VTabBarWidth()
-	if got < vTabBarMinWidth {
-		t.Errorf("expected >= %d for short tabs, got %d", vTabBarMinWidth, got)
-	}
-
-	// Tabs with long names → width should grow
-	w.CloseAll()
-	w.OpenTabWithLayout("1. Backend technology", "○", true, TabVertical)
-	w.OpenTabWithLayout("2. Database choice", "○", true, TabVertical)
-	wideGot := w.VTabBarWidth()
-	if wideGot <= vTabBarMinWidth {
-		t.Errorf("expected wider than %d for long titles, got %d", vTabBarMinWidth, wideGot)
-	}
-
-	// Content area must remain at least vMinContentWidth
-	contentW := 80 - wideGot
-	if contentW < vMinContentWidth {
-		t.Errorf("content area %d is below minimum %d", contentW, vMinContentWidth)
-	}
-
-	// Narrow terminal → tab bar capped, content preserved
-	w.SetWidth(50)
-	narrowGot := w.VTabBarWidth()
-	if 50-narrowGot < vMinContentWidth {
-		t.Errorf("narrow terminal: content area %d below minimum %d", 50-narrowGot, vMinContentWidth)
-	}
-
-	// Wide terminal → tab bar grows to show more, but stays ≤ max
-	w.SetWidth(200)
-	widerGot := w.VTabBarWidth()
-	if widerGot > vTabBarMaxAbsolute {
-		t.Errorf("expected <= %d on wide terminal, got %d", vTabBarMaxAbsolute, widerGot)
-	}
-	if widerGot < wideGot {
-		t.Errorf("wider terminal should not produce smaller tab bar: %d < %d", widerGot, wideGot)
 	}
 }
 

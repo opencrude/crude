@@ -2,6 +2,7 @@ package settings
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -18,6 +19,11 @@ type SaveMsg struct{ AppSettings types.AppSettings }
 
 // CancelMsg is returned as a tea.Msg on cancel.
 type CancelMsg struct{}
+
+// ThemePreviewMsg applies a theme preset immediately while Settings stays open.
+type ThemePreviewMsg struct {
+	Preset string
+}
 
 // FetchModelsMsg asks the workspace layer to load models for a provider.
 type FetchModelsMsg struct {
@@ -130,10 +136,9 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"])},
 		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"])},
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(
-			cycleField("preset", "preset", []string{"dark", "light", "custom"}, appearance.Preset),
-			textField("background", "background", appearance.Bg, false), textField("foreground", "foreground", appearance.Fg, false),
-			textField("accent", "accent", appearance.Accent, false), textField("accent2", "accent2", appearance.Accent2, false),
-			textField("subpane-bg", "subpane bg", appearance.SubPaneBg, false), textField("border", "border", appearance.Border, false), textField("selection", "selection", appearance.Selection, false),
+			append([]*ui.FieldState{
+				cycleField("preset", "preset", append([]string(nil), theme.AllPresetNames...), appearance.Preset),
+			}, appearanceColorFields(appearance.Preset, appearance)...)...,
 		)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
 			textField("tab-size", "tab size", fmt.Sprintf("%d", editor.TabSize), false), cycleField("word-wrap", "word wrap", []string{"on", "off"}, boolStr(editor.WordWrap)),
@@ -183,6 +188,37 @@ func cycleField(id, label string, values []string, current string) *ui.FieldStat
 	}
 	v := ui.StringValue(current)
 	return &ui.FieldState{ID: id, Label: label, Type: ui.FieldCycle, Value: v, Initial: v, Options: options}
+}
+
+// appearanceColorFields builds read-only hex+swatch rows reflecting the active
+// preset (or an explicit override string when set). They are not editable —
+// palette changes happen by cycling the preset.
+func appearanceColorFields(preset string, overrides types.ThemeSettings) []*ui.FieldState {
+	th := theme.FromPreset(preset)
+	resolve := func(override string, col color.Color) string {
+		if override != "" {
+			return override
+		}
+		return rendering.ThemeColorToHex(col)
+	}
+	c := th.Colors
+	return []*ui.FieldState{
+		readOnlyColorField("background", "background", resolve(overrides.Bg, c.Bg)),
+		readOnlyColorField("foreground", "foreground", resolve(overrides.Fg, c.Fg)),
+		readOnlyColorField("accent", "accent", resolve(overrides.Accent, c.Accent)),
+		readOnlyColorField("accent2", "accent2", resolve(overrides.Accent2, c.Accent2)),
+		readOnlyColorField("subpane-bg", "subpane bg", resolve(overrides.SubPaneBg, c.SubPaneBg)),
+		readOnlyColorField("border", "border", resolve(overrides.Border, c.Border)),
+		readOnlyColorField("selection", "selection", resolve(overrides.Selection, c.Selection)),
+	}
+}
+
+func readOnlyColorField(id, label, hex string) *ui.FieldState {
+	v := ui.StringValue(hex)
+	return &ui.FieldState{
+		ID: id, Label: label, Type: ui.FieldText,
+		Value: v, Initial: v, ReadOnly: true,
+	}
 }
 
 func selectField(id, label, value string, options []ui.FormOption) *ui.FieldState {
@@ -278,6 +314,10 @@ func (m *Model) value(category int, fieldID string) string {
 }
 
 func (m *Model) handleFieldChanged(category int, fieldID string) {
+	if category == catAppearance && fieldID == "preset" {
+		m.syncAppearanceColors()
+		return
+	}
 	if category == catProviders && fieldID == fieldProvider {
 		providerID := m.value(catProviders, fieldProvider)
 		if providerID != "" && providerID != m.providerID {
@@ -295,6 +335,22 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		if field := form.Field(fieldModel); field != nil {
 			field.Options = modelOptions(m.models[providerID])
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
+		}
+	}
+}
+
+// syncAppearanceColors refreshes read-only colour rows after a preset cycle.
+func (m *Model) syncAppearanceColors() {
+	if m == nil || catAppearance >= len(m.categories) || m.categories[catAppearance].Form == nil {
+		return
+	}
+	preset := m.value(catAppearance, "preset")
+	form := m.categories[catAppearance].Form
+	for _, field := range appearanceColorFields(preset, types.ThemeSettings{}) {
+		if f := form.Field(field.ID); f != nil {
+			f.Value = field.Value
+			f.Initial = field.Value
+			f.Dirty = false
 		}
 	}
 }
@@ -395,6 +451,34 @@ func (m *Model) SelectCategory(index int) {
 	if index >= 0 && index < len(m.categories) {
 		m.selected, m.pane = index, 0
 	}
+}
+
+// MoveCategory shifts the selected category by delta within the currently
+// visible (search-filtered) list. Returns false when nothing changed.
+func (m *Model) MoveCategory(delta int) bool {
+	visible := m.visibleCategoryIndices()
+	if len(visible) == 0 {
+		return false
+	}
+	pos := 0
+	for i, index := range visible {
+		if index == m.selected {
+			pos = i
+			break
+		}
+	}
+	next := pos + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(visible) {
+		next = len(visible) - 1
+	}
+	if visible[next] == m.selected {
+		return false
+	}
+	m.SelectCategory(visible[next])
+	return true
 }
 
 func (m *Model) EnterForm() {
@@ -529,7 +613,8 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 }
 
 func (m *Model) collectAppearance(cfg *types.ThemeSettings) {
-	*cfg = types.ThemeSettings{Preset: m.value(catAppearance, "preset"), Bg: m.value(catAppearance, "background"), Fg: m.value(catAppearance, "foreground"), Accent: m.value(catAppearance, "accent"), Accent2: m.value(catAppearance, "accent2"), SubPaneBg: m.value(catAppearance, "subpane-bg"), Border: m.value(catAppearance, "border"), Selection: m.value(catAppearance, "selection")}
+	// Colour rows are read-only preset reflections; only the preset name persists.
+	*cfg = types.ThemeSettings{Preset: m.value(catAppearance, "preset")}
 }
 
 func (m *Model) collectEditor(cfg *types.EditorSettings) {

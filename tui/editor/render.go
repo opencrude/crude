@@ -8,7 +8,6 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
-	"crude/tui/scrollbar"
 	"crude/tui/surface"
 	"crude/tui/widget"
 )
@@ -32,11 +31,19 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 	selBgColor := e.cellColor(e.th.Colors.Selection)
 	blankCell := cell.NewCell(' ', bgColor, bgColor, 0)
 	sw := e.gutterWidth()
-	textW := w - sw
+	sbW := e.scrollbarColWidth()
+	textW := w - sw - sbW
 	if textW < 1 {
 		textW = 1
 	}
-	bodyH := h - 1
+	bodyH := h
+	if e.statusChrome {
+		bodyH = h - 1
+	}
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	e.syncScrollChrome(bodyH)
 
 	errColor := e.cellColor(e.th.Colors.Error)
 	warnColor := e.cellColor(e.th.Colors.Warning)
@@ -63,6 +70,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 	}
 
 	buf := surf.Buffer()
+	sbX := sw + textW
 	for y := 0; y < bodyH; y++ {
 		bufY := y
 		if bufY >= h {
@@ -91,7 +99,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 			}
 		}
 
-		for x := 0; x < w; x++ {
+		for x := 0; x < sbX; x++ {
 			if x < sw-2 {
 				if x < len(numStr) {
 					buf.Set(x, bufY, cell.NewCell(rune(numStr[x]), e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Bg), 0))
@@ -111,7 +119,13 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 					buf.Set(x, bufY, blankCell)
 				}
 			} else if x == sw-1 {
-				buf.Set(x, bufY, cell.NewCell('│', e.cellColor(e.th.Colors.Border), bgColor, 0))
+				borderCh := '│'
+				if e.tokens != nil {
+					if g := e.tokens.Glyphs().BorderV; g != "" {
+						borderCh = []rune(g)[0]
+					}
+				}
+				buf.Set(x, bufY, cell.NewCell(borderCh, e.cellColor(e.th.Colors.Border), bgColor, 0))
 			} else {
 				cx := x
 				vCol := e.scrollX + (cx - sw)
@@ -216,242 +230,22 @@ func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
 		}
 	}
 
-	statusY := h - 1
-	if statusY >= 0 {
-		statusStr := e.renderStatusLine(w)
-		statusRunes := []rune(statusStr)
-		for x := 0; x < w; x++ {
-			if x < len(statusRunes) {
-				buf.Set(x, statusY, cell.NewCell(statusRunes[x], e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Border), 0))
-			} else {
-				buf.Set(x, statusY, blankCell)
-			}
-		}
-	}
-}
+	e.paintScrollbar(buf, sbX, bodyH)
 
-func (e *Editor) View(width, height int, padLeft, padRight int) []string {
-	if !e.open || width < 10 || height < 4 {
-		return nil
-	}
-	e.viewW = width - padLeft - padRight
-	e.viewH = height
-
-	sw := e.gutterWidth()
-	sbW := scrollbar.ScrollbarWidth
-	textW := e.viewW - sw - sbW
-	if textW < 1 {
-		textW = 1
-	}
-	bodyH := height
-
-	lc := e.buf.LineCount()
-	e.sbTrackH = bodyH
-	e.scrollbar.SetTrackHeight(bodyH)
-	maxScroll := lc - bodyH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	e.scrollbar.SetScrollInfo(lc, bodyH, e.scrollY)
-	sbView := e.scrollbar.View()
-	sbLines := strings.Split(sbView, "\n")
-
-	lines := make([]string, 0, bodyH)
-
-	padL := strings.Repeat(" ", padLeft)
-	padR := strings.Repeat(" ", padRight)
-	gutterStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Muted)
-	sepStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Border)
-	fgStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Fg)
-	showCursor := e.cursorVisible
-	cursorFg := lipgloss.NewStyle().Foreground(e.th.Colors.Bg).Background(e.th.Colors.Accent).Bold(true)
-	blankStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Muted)
-	sbBgStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Border)
-	selStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Fg).Background(e.th.Colors.Selection)
-	errIconStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Error)
-	warnIconStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Warning)
-	infoIconStyle := lipgloss.NewStyle().Foreground(e.th.Colors.Muted)
-
-	// For the ANSI View() path, we use raw ANSI escape sequences to support
-	// modern underline styles (wavy, dotted) via the ECMA-48 extended sequences.
-	// lipgloss only supports basic underline, so we wrap diagnostic spans in
-	// raw \x1b[...m sequences instead of lipgloss styles.
-	errUnderline := "\x1b[0;4;4:3;38;2;248;81;73m"   // straight + wavy underline, red
-	warnUnderline := "\x1b[0;4;4:4;38;2;210;153;34m" // straight + dotted underline, yellow
-	infoUnderline := "\x1b[0;4;38;2;139;148;158m"    // straight underline, gray
-	diagUnderlineReset := "\x1b[0m"
-
-	for y := 0; y < bodyH; y++ {
-		lineIdx := e.scrollY + y
-		runes, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, e.scrollX)
-		diags := e.lineDiagnostics(lineIdx)
-
-		ri := 0
-		visCol := 0
-		for ri < len(runes) && visCol+widths[ri] <= e.scrollX {
-			visCol += widths[ri]
-			ri++
-		}
-
-		// The gutter area is `sw` cells: line number (sw-2) + diagnostic
-		// icon (1) + column guide (1). The Render() path at line 95 uses
-		// `x < sw-2` for the line number, so the line number must fit in
-		// `sw-2` cells — not `sw-1` as the previous code did. The +1
-		// inflated `gutter` to sw-1 cells, so `gutter + sep` (icon + │)
-		// totaled sw+1 cells, and every View() line came out one cell
-		// wider than the surface: the cellbuf then had a stray column
-		// past the column guide that bubbletea never tracked and the
-		// terminal could not clear (the "+1 ghost" on lines after a
-		// certain scroll position).
-		numStr := e.formatLineNum(lineIdx+1+e.lineNumberOffset, sw-2)
-		numPadded := strings.Repeat(" ", sw-2-len(numStr)) + numStr
-		gutter := gutterStyle.Render(numPadded)
-		// Diagnostic gutter icon.
-		lineSev := 0
-		for _, d := range diags {
-			if d.severity > lineSev {
-				lineSev = d.severity
-			}
-		}
-		var iconPart string
-		switch lineSev {
-		case DiagError:
-			iconPart = errIconStyle.Render("✕")
-		case DiagWarning:
-			iconPart = warnIconStyle.Render("⚠")
-		case DiagInfo, DiagHint:
-			iconPart = infoIconStyle.Render("ℹ")
-		default:
-			iconPart = " "
-		}
-		sep := iconPart + sepStyle.Render("│")
-
-		isCursorLine := lineIdx == e.cursor.Line && showCursor
-
-		var textPart strings.Builder
-		hlCache := make(map[string]lipgloss.Style)
-		for i := 0; i < textW; i++ {
-			vCol := e.scrollX + i
-
-			if vCol >= lineVisW {
-				for j := i; j < textW; j++ {
-					cvCol := e.scrollX + j
-					sev := diagSeverityAtCol(diags, cvCol)
-					switch {
-					case cvCol == e.cursor.Col && isCursorLine:
-						textPart.WriteString(cursorFg.Render(" "))
-					case e.isSelected(lineIdx, cvCol):
-						textPart.WriteString(selStyle.Render(" "))
-					case sev > 0:
-						switch sev {
-						case DiagError:
-							textPart.WriteString(errUnderline)
-						case DiagWarning:
-							textPart.WriteString(warnUnderline)
-						default:
-							textPart.WriteString(infoUnderline)
-						}
-						textPart.WriteString(" ")
-						textPart.WriteString(diagUnderlineReset)
-					default:
-						textPart.WriteString(blankStyle.Render(" "))
-					}
-				}
-				break
-			}
-
-			for ri < len(runes) && vCol >= visCol+widths[ri] {
-				visCol += widths[ri]
-				ri++
-			}
-
-			if ri < len(runes) && vCol < visCol+widths[ri] && vCol < lineVisW {
-				sev := diagSeverityAtCol(diags, vCol)
-				if vCol == visCol {
-					ch := string(runes[ri])
-					switch {
-					case vCol == e.cursor.Col && isCursorLine:
-						textPart.WriteString(cursorFg.Render(ch))
-					case e.isSelected(lineIdx, vCol):
-						textPart.WriteString(selStyle.Render(ch))
-					case sev > 0:
-						var underlineSeq string
-						switch sev {
-						case DiagError:
-							underlineSeq = errUnderline
-						case DiagWarning:
-							underlineSeq = warnUnderline
-						default:
-							underlineSeq = infoUnderline
-						}
-						textPart.WriteString(underlineSeq)
-						if vCol < len(colorMap) && colorMap[vCol] != "" {
-							// Override foreground in the underline seq by
-							// appending the syntax-highlighted color after reset.
-							textPart.WriteString(ch)
-							textPart.WriteString(diagUnderlineReset)
-						} else {
-							textPart.WriteString(ch)
-						}
-						textPart.WriteString(diagUnderlineReset)
-					default:
-						if vCol < len(colorMap) && colorMap[vCol] != "" {
-							key := colorMap[vCol]
-							hlS, ok := hlCache[key]
-							if !ok {
-								hlS = lipgloss.NewStyle().Foreground(lipgloss.Color(key))
-								hlCache[key] = hlS
-							}
-							textPart.WriteString(hlS.Render(ch))
-						} else {
-							textPart.WriteString(fgStyle.Render(ch))
-						}
-					}
-				}
-				// A width-2 glyph already advances across its continuation cell.
-				// Emitting a space here would make this ANSI row one column wider.
-			} else {
-				sev := diagSeverityAtCol(diags, vCol)
-				switch {
-				case vCol == e.cursor.Col && isCursorLine:
-					textPart.WriteString(cursorFg.Render(" "))
-				case e.isSelected(lineIdx, vCol):
-					textPart.WriteString(selStyle.Render(" "))
-				case sev > 0:
-					switch sev {
-					case DiagError:
-						textPart.WriteString(errUnderline)
-					case DiagWarning:
-						textPart.WriteString(warnUnderline)
-					default:
-						textPart.WriteString(infoUnderline)
-					}
-					textPart.WriteString(" ")
-					textPart.WriteString(diagUnderlineReset)
-				default:
-					textPart.WriteString(blankStyle.Render(" "))
+	if e.statusChrome {
+		statusY := h - 1
+		if statusY >= 0 {
+			statusStr := e.renderStatusLine(w)
+			statusRunes := []rune(statusStr)
+			for x := 0; x < w; x++ {
+				if x < len(statusRunes) {
+					buf.Set(x, statusY, cell.NewCell(statusRunes[x], e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Border), 0))
+				} else {
+					buf.Set(x, statusY, blankCell)
 				}
 			}
 		}
-		textStr := textPart.String()
-
-		sbChar := " "
-		if y < len(sbLines) && sbLines[y] != "" {
-			sbChar = sbLines[y]
-		}
-		renderedSB := sbBgStyle.Render(sbChar)
-
-		innerLine := gutter + sep + textStr + renderedSB
-		innerVisW := rendering.VisibleWidth(innerLine)
-		rightPad := e.viewW - innerVisW
-		if rightPad < 0 {
-			rightPad = 0
-		}
-		line := padL + innerLine + strings.Repeat(" ", rightPad) + padR
-		lines = append(lines, line)
 	}
-
-	return lines
 }
 
 func diagSeverityAtCol(diags []diagSpan, col int) int {
@@ -645,15 +439,12 @@ func (e *Editor) lineRunes(lineIdx int) []rune {
 
 func (e *Editor) ensureCursorVisible() {
 	sw := e.gutterWidth()
-	sbW := scrollbar.ScrollbarWidth
+	sbW := e.scrollbarColWidth()
 	availW := e.viewW - sw - sbW
 	if availW < 1 {
 		availW = 1
 	}
-	availH := e.viewH
-	if availH < 1 {
-		availH = 1
-	}
+	availH := e.bodyHeight()
 
 	margin := scrollMargin
 	if margin > availH/2 {
@@ -698,10 +489,7 @@ func (e *Editor) ensureCursorVisible() {
 		e.scrollX = 0
 	}
 
-	lc := e.buf.LineCount()
-	e.sbTrackH = e.viewH
-	e.scrollbar.SetTrackHeight(e.viewH)
-	e.scrollbar.SetScrollInfo(lc, e.viewH, e.scrollY)
+	e.syncScrollChrome(availH)
 }
 
 func stringsReplaceTab(s string) string {

@@ -229,17 +229,19 @@ the main-view ANSI cache.
 
 ## Unified Popup Design System
 
-All popups use `tui/widgets/popupchrome.go`:
+All product floating windows use `ui.WindowFrame` (via `WindowFrameWidget` /
+frame builders under `tui/widgets/*_frame.go` and native screen packages):
 ```
 ╭─ Title ──╮
 │  body content line 1                   │
 │  body content line 2                   │
 ╰─╯
 ```
-- `PopupContentWidth(innerW)` → total: `innerW + 6`
-- `PopupContentHeight(contentRows)` → total: `contentRows + 2`
-- FloatingWindow is always `WithDecoration(false)` — just a positioned box
-- Chrome is self-drawn by the widget
+- `PopupContentWidth(innerW)` helpers live on frame builders where needed
+- FloatingWindow is always `WithDecoration(false)` — WM owns placement only
+- Chrome is self-drawn by WindowFrame / ComponentWidget bodies
+
+Legacy `tui/widgets/popupchrome.go` is **deleted**.
 
 ### Popup Click-Outside Behaviors
 | Behavior | Meaning |

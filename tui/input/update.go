@@ -7,8 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/sessiondb"
-	"crude/tui/components"
 	"crude/tui/rendering"
+	"crude/tui/ui"
 )
 
 const pasteInlineThreshold = 16 * 1024
@@ -188,9 +188,40 @@ func (m *Model) syncSlashState() {
 	inputStr := m.input.Value()
 	if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") && !strings.Contains(inputStr, "\n") {
 		m.slashActive = true
-		m.slashList.SetFilter(strings.TrimPrefix(inputStr, "/"))
+		m.setSlashFilter(strings.TrimPrefix(inputStr, "/"))
 	} else {
 		m.slashActive = false
+	}
+}
+
+func (m *Model) setSlashFilter(filter string) {
+	m.slashFilter = filter
+	filter = strings.ToLower(filter)
+	var items []ui.ListItem
+	for _, c := range availableCmds {
+		id := strings.ToLower(c.Name)
+		desc := strings.ToLower(c.Desc)
+		if filter == "" || strings.HasPrefix(id, filter) || strings.Contains(desc, filter) {
+			items = append(items, ui.ListItem{
+				ID:     c.Name,
+				Label:  c.Label,
+				Detail: c.Desc,
+				Icon:   c.Icon,
+			})
+		}
+	}
+	prevID := ""
+	if item, ok := m.slashList.Selected(); ok {
+		prevID = item.ID
+	}
+	m.slashList.SetItems(items)
+	if prevID != "" {
+		for i, it := range items {
+			if it.ID == prevID {
+				m.slashList.SelectIndex(i)
+				break
+			}
+		}
 	}
 }
 
@@ -213,8 +244,8 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 
 	case tea.KeyEnter:
-		m.slashList, _ = m.slashList.Update(msg)
-		if m.slashList.Action() == components.ListActionSelect {
+		res := m.slashList.Handle(ui.EventContext{}, msg)
+		if res.Action != nil && res.Action.ID == "slash.select" {
 			if item, ok := m.slashList.Selected(); ok {
 				cmd := "/" + item.ID
 				m.appendHistory(cmd)
@@ -240,14 +271,12 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 
 	case tea.KeyUp:
-		var cmd tea.Cmd
-		m.slashList, cmd = m.slashList.Update(msg)
-		return m, cmd, nil
+		res := m.slashList.Handle(ui.EventContext{}, msg)
+		return m, res.Cmd, nil
 
 	case tea.KeyDown:
-		var cmd tea.Cmd
-		m.slashList, cmd = m.slashList.Update(msg)
-		return m, cmd, nil
+		res := m.slashList.Handle(ui.EventContext{}, msg)
+		return m, res.Cmd, nil
 
 	case tea.KeyBackspace, tea.KeyDelete:
 		cmd := m.input.Update(msg, false)
@@ -255,7 +284,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		if inputStr == "" || !strings.HasPrefix(inputStr, "/") || strings.Contains(inputStr, " ") || strings.Contains(inputStr, "\n") {
 			m.slashActive = false
 		} else {
-			m.slashList.SetFilter(strings.TrimPrefix(inputStr, "/"))
+			m.setSlashFilter(strings.TrimPrefix(inputStr, "/"))
 		}
 		return m, cmd, nil
 
@@ -263,7 +292,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		cmd := m.input.Update(msg, false)
 		inputStr := m.input.Value()
 		if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") && !strings.Contains(inputStr, "\n") {
-			m.slashList.SetFilter(strings.TrimPrefix(inputStr, "/"))
+			m.setSlashFilter(strings.TrimPrefix(inputStr, "/"))
 		} else {
 			m.slashActive = false
 		}

@@ -466,15 +466,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.resetOrchestratorOverrides()
 
 	case "app.sessions":
-		if m.anyActive() {
-			m.StatusBar.SetError("Cannot switch sessions while agent is running")
-			return nil
-		}
-		if m.AgentMgr.Count() > 0 || m.EditorState.ActiveView != "" {
-			m.StatusBar.SetInfo("Close open tabs first, or use Quit to exit")
-			return nil
-		}
-		m.openLauncher()
+		m.openSessionPicker()
 
 	case "help.show":
 		var b strings.Builder

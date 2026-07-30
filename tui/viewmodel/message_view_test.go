@@ -70,7 +70,7 @@ func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
 		t.Fatal("pane was not created")
 	}
 	proj := app.subPaneProjections.GetExisting("agent")
-	if proj == nil || len(proj.msgList.Messages()) != 1 || proj.msgList.Messages()[0].Content != "hello" {
+	if proj == nil || len(proj.renderer.Messages()) != 1 || proj.renderer.Messages()[0].Content != "hello" {
 		t.Fatalf("projection did not synchronize: %#v", proj)
 	}
 }

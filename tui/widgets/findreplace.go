@@ -1,16 +1,13 @@
 package widgets
 
 import (
-	"fmt"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
-	"crude/tui/components"
 	"crude/tui/editor"
 	"crude/tui/rendering"
-	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 // FindReplaceState holds the live UI state of the find/replace popup
@@ -18,12 +15,9 @@ import (
 // each time it renders, so changes from the keyboard (typing a new
 // query, toggling an option) show up immediately on the next frame.
 //
-// As of the unification refactor, the underlying text input is a
-// `components.TextInput` (not a hand-rolled string+cursor state). This
-// gives the popup real selection, copy/paste, word motion, Home/End,
-// Ctrl+Left/Right, and a rune-safe cursor — all features the old
-// hand-rolled state either didn't have or had broken (the byte-offset
-// cursor used to panic on multi-byte input).
+// Editing is backed by ui.TextEdit (shared rune-safe engine). Paint
+// uses WindowFrame + ui.TextField via BuildFindReplaceFrame with
+// value/cursor sync from these editors.
 type FindReplaceState struct {
 	// ReplaceMode is true when the replace field is shown (Ctrl+H).
 	// When false, only the find field is visible — keeps the popup
@@ -34,12 +28,9 @@ type FindReplaceState struct {
 	// highlight around whichever field is currently active.
 	FocusedField int
 
-	// findInput and replaceInput are the underlying text inputs.
-	// We expose their value via the Query/Replace helpers below
-	// so the rest of the codebase doesn't need to know about
-	// the internal TextInput instances.
-	findInput    components.TextInput
-	replaceInput components.TextInput
+	// findEdit and replaceEdit are the underlying text engines.
+	findEdit    *ui.TextEdit
+	replaceEdit *ui.TextEdit
 
 	// Toggles
 	CaseSensitive bool
@@ -75,24 +66,40 @@ type FindReplaceState struct {
 	width int
 }
 
-// Query returns the current find query. Backed by the embedded
-// TextInput so the byte/rune cursor math is consistent.
+func (st *FindReplaceState) ensureFindEdit() *ui.TextEdit {
+	if st == nil {
+		return nil
+	}
+	if st.findEdit == nil {
+		st.findEdit = ui.NewTextEdit()
+	}
+	return st.findEdit
+}
+
+func (st *FindReplaceState) ensureReplaceEdit() *ui.TextEdit {
+	if st == nil {
+		return nil
+	}
+	if st.replaceEdit == nil {
+		st.replaceEdit = ui.NewTextEdit()
+	}
+	return st.replaceEdit
+}
+
+// Query returns the current find query.
 func (st *FindReplaceState) Query() string {
 	if st == nil {
 		return ""
 	}
-	return st.findInput.Value()
+	return st.ensureFindEdit().Value()
 }
 
-// Replace returns the current replace text. Backed by the embedded
-// TextInput (the replace field also has a real cursor now, unlike
-// the old hand-rolled state where the cursor was always pinned to
-// the end).
+// Replace returns the current replace text.
 func (st *FindReplaceState) Replace() string {
 	if st == nil {
 		return ""
 	}
-	return st.replaceInput.Value()
+	return st.ensureReplaceEdit().Value()
 }
 
 // SetQuery replaces the find query and moves the cursor to the end.
@@ -103,7 +110,7 @@ func (st *FindReplaceState) SetQuery(q string) {
 	if st == nil {
 		return
 	}
-	st.findInput.SetValue(q)
+	st.ensureFindEdit().SetValue(q)
 }
 
 // SetReplace replaces the replace text.
@@ -111,7 +118,7 @@ func (st *FindReplaceState) SetReplace(r string) {
 	if st == nil {
 		return
 	}
-	st.replaceInput.SetValue(r)
+	st.ensureReplaceEdit().SetValue(r)
 }
 
 // SetOptions updates the case/wholeword/regex flags. Recomputing
@@ -125,137 +132,28 @@ func (st *FindReplaceState) SetOptions(caseSensitive, wholeWord, regex bool) {
 	st.Regex = regex
 }
 
-// FindInput returns a pointer to the find field's TextInput. Used by
-// the viewmodel's key dispatcher to delegate text-editing keys
-// (Backspace, Delete, Left/Right, Home/End, characters, etc.) to
-// the same mature component that powers the chat input.
-func (st *FindReplaceState) FindInput() *components.TextInput {
-	if st == nil {
-		return nil
-	}
-	return &st.findInput
+// FindEdit returns the find field's TextEdit. Used by the viewmodel's
+// key dispatcher to delegate text-editing keys.
+func (st *FindReplaceState) FindEdit() *ui.TextEdit {
+	return st.ensureFindEdit()
 }
 
-// ReplaceInput returns a pointer to the replace field's TextInput.
-func (st *FindReplaceState) ReplaceInput() *components.TextInput {
-	if st == nil {
-		return nil
-	}
-	return &st.replaceInput
+// ReplaceEdit returns the replace field's TextEdit.
+func (st *FindReplaceState) ReplaceEdit() *ui.TextEdit {
+	return st.ensureReplaceEdit()
 }
 
-// ActiveInput returns the currently focused field's TextInput.
-// Returns the find input if no field is explicitly focused or if
+// ActiveEdit returns the currently focused field's TextEdit.
+// Returns the find edit if no field is explicitly focused or if
 // the replace field is hidden (ReplaceMode == false).
-func (st *FindReplaceState) ActiveInput() *components.TextInput {
+func (st *FindReplaceState) ActiveEdit() *ui.TextEdit {
 	if st == nil {
 		return nil
 	}
 	if st.FocusedField == 1 && st.ReplaceMode {
-		return &st.replaceInput
+		return st.ensureReplaceEdit()
 	}
-	return &st.findInput
-}
-
-// FindReplaceLines renders the find/replace popup into a slice of
-// pre-styled ANSI lines including the popup's own border, title, and
-// padding (unified design — see PopupChromeLines).
-//
-// Layout (inner content):
-//
-//	Find:   <value>                        <cursor>
-//	Replace: <value>                       <when ReplaceMode>
-//	                                        <spacer>
-//	3 matches  [ Aa ] [ \b ] [ .* ]         <toggles>
-//	enter next · ⇧enter prev · esc close   <hints>
-func FindReplaceLines(th *theme.Theme, st *FindReplaceState) []string {
-	content := findReplaceContent(th, st)
-	cfg := PopupChromeConfig{
-		Title:     "Find",
-		TitleIcon: "⌕",
-		Width:     FindReplacePopupWidth(st),
-		Focused:   true,
-	}
-	return PopupChromeLines(th, cfg, content)
-}
-
-// findReplaceContent builds the inner content lines (no border, no
-// padding). Each line is exactly `cfg.InnerWidth()` chars wide.
-func findReplaceContent(th *theme.Theme, st *FindReplaceState) []string {
-	cfg := PopupChromeConfig{Width: FindReplacePopupWidth(st)}
-	innerW := cfg.InnerWidth()
-
-	var lines []string
-
-	// Find input (always shown).
-	findSelStart, findSelEnd := st.findInput.SelectionRange()
-	lines = append(lines, padVisibleToWidth(
-		PopupInputFieldWithSelection(th, "Find", st.Query(), "type to search",
-			st.findInput.CursorFlat(), st.findInput.HasActiveSelection(),
-			findSelStart, findSelEnd,
-			st.FocusedField == 0),
-		innerW))
-
-	// Replace input (only if ReplaceMode).
-	if st.ReplaceMode {
-		repSelStart, repSelEnd := st.replaceInput.SelectionRange()
-		lines = append(lines, padVisibleToWidth(
-			PopupInputFieldWithSelection(th, "Replace", st.Replace(), "",
-				st.replaceInput.CursorFlat(), st.replaceInput.HasActiveSelection(),
-				repSelStart, repSelEnd,
-				st.FocusedField == 1),
-			innerW))
-	}
-
-	// Spacer.
-	lines = append(lines, PopupEmptyLine(th))
-
-	// Status row (match count) + toggle row.
-	var status string
-	switch {
-	case st.Query() == "":
-		status = mutedStyle(th).Render("type to search")
-	case st.MatchCount == 0:
-		status = lipgloss.NewStyle().Foreground(th.Colors.Warning).Background(th.Colors.PopupBg).Render("no results")
-	default:
-		// Bold the current/total numbers so the user can see them
-		// at a glance.
-		cur := fgStyle(th).Bold(true).Render(fmt.Sprintf("%d", st.CurrentIdx+1))
-		tot := fgStyle(th).Bold(true).Render(fmt.Sprintf("%d", st.MatchCount))
-		status = mutedStyle(th).Render("matches ") + cur + mutedStyle(th).Render(" / ") + tot
-	}
-	toggleRow := PopupToggleRow(th, "", []PopupToggleSpec{
-		{Glyph: "Aa", Active: st.CaseSensitive, Hovered: st.HoveredToggle == 0},
-		{Glyph: "\\b", Active: st.WholeWord, Hovered: st.HoveredToggle == 1},
-		{Glyph: ".*", Active: st.Regex, Hovered: st.HoveredToggle == 2},
-	})
-	lines = append(lines, padVisibleToWidth(status+"   "+toggleRow, innerW))
-
-	// Hint row.
-	hints := []HintSegment{
-		{Key: "enter", Desc: "next"},
-		{Key: "⇧enter", Desc: "prev"},
-	}
-	if st.ReplaceMode {
-		hints = append(hints, HintSegment{Key: "ctrl+alt+enter", Desc: "replace all"})
-	}
-	hints = append(hints, HintSegment{Key: "esc", Desc: "close"})
-	if st.ReplaceMode && st.FocusedField == 1 {
-		hints = append(hints, HintSegment{Key: "enter", Desc: "replace"})
-	}
-	lines = append(lines, padVisibleToWidth(PopupHintLine(th, hints), innerW))
-
-	return lines
-}
-
-// fgStyle returns the popup fg text style.
-func fgStyle(th *theme.Theme) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(th.Colors.Fg).Background(th.Colors.PopupBg)
-}
-
-// mutedStyle returns the muted style used throughout the popup.
-func mutedStyle(th *theme.Theme) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(th.Colors.Muted).Background(th.Colors.PopupBg)
+	return st.ensureFindEdit()
 }
 
 // FindReplacePopupWidth returns the suggested total width for the
@@ -337,51 +235,24 @@ func FindReplaceToEditor(st *FindReplaceState, e *editor.Editor) {
 }
 
 // HandleKey routes a keypress to the focused input in the popup.
-// The find/replace popup's keybinds are split into two layers:
+// Popup-level keys (Esc, Tab, Enter, toggles) are handled by the
+// viewmodel; this helper forwards text-editing keys to ui.TextEdit.
 //
-//  1. The viewmodel's handleFindReplaceKey intercepts popup-level
-//     keys (Esc closes, Tab switches field, Alt+C/W/R toggles,
-//     Ctrl+Alt+Enter replaces all, Shift+Enter goes to prev match).
-//  2. Everything else is forwarded to the focused input's
-//     TextInput.Update, which handles all the text-editing keys:
-//     character insertion, Backspace, Delete, Left/Right, Home/End,
-//     Ctrl+Left/Right (word motion), Ctrl+A/E/U/K/W (line ops).
-//
-// This is the same pattern the chat input and the composer use, so
-// all the popup's text fields now have the same feature set as the
-// chat input: real selection, word motion, Home/End, no byte-cursor
-// bugs.
-//
-// Returns the updated state, a tea.Cmd (if any), and a bool indicating
-// whether the input was actually changed (the caller can use this
-// to skip a redundant OnChange call).
-func HandleKey(st *FindReplaceState, msg tea.KeyMsg) (*FindReplaceState, tea.Cmd, bool) {
+// Returns the updated state, a tea.Cmd (always nil for TextEdit keys),
+// and a bool indicating whether the input value changed.
+func HandleKey(st *FindReplaceState, msg tea.KeyPressMsg) (*FindReplaceState, tea.Cmd, bool) {
 	if st == nil {
 		return st, nil, false
 	}
-	// Choose the input to route to.
-	var input *components.TextInput
-	if st.FocusedField == 1 && st.ReplaceMode {
-		input = &st.replaceInput
-	} else {
-		input = &st.findInput
+	ed := st.ActiveEdit()
+	if ed == nil {
+		return st, nil, false
 	}
-	oldVal := input.Value()
-	updated, cmd := input.Update(msg, false)
-	if updated.Value() != oldVal {
-		if st.FocusedField == 1 && st.ReplaceMode {
-			st.replaceInput = updated
-		} else {
-			st.findInput = updated
-		}
-		return st, cmd, true
+	oldVal := ed.Value()
+	if ui.HandleTextEditKey(ed, msg) {
+		return st, nil, ed.Value() != oldVal
 	}
-	if st.FocusedField == 1 && st.ReplaceMode {
-		st.replaceInput = updated
-	} else {
-		st.findInput = updated
-	}
-	return st, cmd, false
+	return st, nil, false
 }
 
 // runeCount returns the rune length of a string. Used internally

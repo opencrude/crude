@@ -54,14 +54,14 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		return regionStatusBar
 	}
 
-	if m.Tree.Visible && m.Tree.Model != nil && x < m.Tree.Width {
+	if m.Tree.Visible && m.Tree.Model != nil && x <= m.Tree.Width {
 		if x == m.Tree.Width {
 			return regionSidebarDivider
 		}
 		return regionSidebar
 	}
 
-	if !isWheel && m.Win.IsOpen() && m.Win.TabCount() >= 1 && y == 3 {
+	if !isWheel && m.tabBarVisible() && y == 3 {
 		return regionTabBar
 	}
 
@@ -96,8 +96,11 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 	}
 
 	if m.OverlayState.IsChat() {
+		if !m.inputRect.Empty() && y >= m.inputRect.Y {
+			return regionInput
+		}
 		tabBarExtra := 0
-		if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
+		if m.tabBarVisible() {
 			tabBarExtra = 2
 		}
 		inputStartLine := m.ChatAreaHeight + 4 + tabBarExtra + m.sessionDeckRect.H
@@ -118,42 +121,98 @@ func (m *App) routeEditorMouse(msg tea.Msg) tea.Cmd {
 }
 
 func (m *App) routeSidebarMouse(msg tea.Msg) tea.Cmd {
-	translated := m.translateToTreeMouse(msg)
-	return m.Tree.Model.Update(filetree.TreeMouseMsg{Mouse: translated})
+	if m.sidebarHost == nil {
+		return nil
+	}
+	translated := m.translateSidebarMouse(msg)
+	res := m.sidebarHost.Handle(translated)
+	return res.Cmd
 }
 
-// routeTreeScrollbarMsg translates a mouse event from screen coordinates to
-// scrollbar-relative coordinates (Y=0 at first tree content row) and forwards
-// it to the tree renderer's scrollbar handler.
-func (m *App) routeTreeScrollbarMsg(msg tea.Msg) tea.Cmd {
-	bcOff := m.breadcrumbOffset()
-	adjusted := msg
+func (m *App) translateSidebarMouse(msg tea.Msg) tea.Msg {
+	offY := m.Tree.YOffset
 	switch mm := msg.(type) {
 	case tea.MouseClickMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseClickMsg{X: mm.X, Y: mouse.Y - m.Tree.YOffset - bcOff, Button: mm.Button}
+		return tea.MouseClickMsg{X: mouse.X, Y: mouse.Y - offY, Button: mm.Button}
 	case tea.MouseMotionMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseMotionMsg{X: mm.X, Y: mouse.Y - m.Tree.YOffset - bcOff, Button: mm.Button}
+		return tea.MouseMotionMsg{X: mouse.X, Y: mouse.Y - offY, Button: mm.Button}
 	case tea.MouseReleaseMsg:
 		mouse := mm.Mouse()
-		adjusted = tea.MouseReleaseMsg{X: mm.X, Y: mouse.Y - m.Tree.YOffset - bcOff, Button: mm.Button}
+		return tea.MouseReleaseMsg{X: mouse.X, Y: mouse.Y - offY, Button: mm.Button}
+	case tea.MouseWheelMsg:
+		return tea.MouseWheelMsg{X: mm.X, Y: mm.Y - offY, Button: mm.Button}
 	}
-	return m.Tree.Renderer.HandleScrollbarMsg(adjusted)
+	return msg
 }
 
-// breadcrumbOffset returns 1 when the tree is scrolled (breadcrumb visible),
-// 0 otherwise.
-func (m *App) breadcrumbOffset() int {
-	if m.Tree.Model.ScrollOffset() > 0 {
-		return 1
+func (m *App) translateChatMouse(msg tea.Msg) tea.Msg {
+	if m.chatRect.Empty() {
+		return msg
 	}
-	return 0
+	dx := m.chatRect.X
+	dy := m.chatRect.Y
+	switch mm := msg.(type) {
+	case tea.MouseClickMsg:
+		mouse := mm.Mouse()
+		return tea.MouseClickMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseMotionMsg:
+		mouse := mm.Mouse()
+		return tea.MouseMotionMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseReleaseMsg:
+		mouse := mm.Mouse()
+		return tea.MouseReleaseMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseWheelMsg:
+		return tea.MouseWheelMsg{X: mm.X - dx, Y: mm.Y - dy, Button: mm.Button, Mod: mm.Mod}
+	}
+	return msg
+}
+
+func (m *App) translateLauncherMouse(msg tea.Msg) tea.Msg {
+	layout := m.computeLayout()
+	dx := layout.SidebarW + layout.PadLR
+	dy := layout.ChatAreaTop
+	switch mm := msg.(type) {
+	case tea.MouseClickMsg:
+		mouse := mm.Mouse()
+		return tea.MouseClickMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseMotionMsg:
+		mouse := mm.Mouse()
+		return tea.MouseMotionMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseReleaseMsg:
+		mouse := mm.Mouse()
+		return tea.MouseReleaseMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseWheelMsg:
+		return tea.MouseWheelMsg{X: mm.X - dx, Y: mm.Y - dy, Button: mm.Button, Mod: mm.Mod}
+	}
+	return msg
+}
+
+// capturedPersistentHost returns the visible product Host that owns pointer
+// capture, if any. Precedence when more than one reports capture: chat >
+// sidebar > launcher. Inactive Hosts are canceled before routing.
+func (m *App) capturedPersistentHost() (*ui.Host, func(tea.Msg) tea.Msg) {
+	m.syncPersistentHostCapture()
+	entries := m.persistentHostEntries()
+	var best *persistentHostEntry
+	for i := range entries {
+		e := &entries[i]
+		if !e.active || e.host == nil || !e.host.HasPointerCapture() {
+			continue
+		}
+		if best == nil || e.priority < best.priority {
+			best = e
+		}
+	}
+	if best == nil {
+		return nil, nil
+	}
+	return best.host, best.translate
 }
 
 func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []tea.Cmd {
 	var cmds []tea.Cmd
-	activeML := m.activeMessageList()
 	canType := false
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
@@ -167,14 +226,10 @@ func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []t
 		}
 		cmds = append(cmds, m.handleInputEvent(evt)...)
 	} else {
-		handled, paneCmd := m.routeMouseToInlinePane(msg)
-		if paneCmd != nil {
-			cmds = append(cmds, paneCmd)
-		}
-		if !handled && activeML != nil {
-			_, cmd := activeML.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
+		if m.chatHost != nil {
+			res := m.chatHost.Handle(m.translateChatMouse(msg))
+			if res.Cmd != nil {
+				cmds = append(cmds, res.Cmd)
 			}
 		}
 	}
@@ -222,25 +277,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			if m.windowManager.IsDragging() {
 				return m, tea.Batch(cmds...)
 			}
-			if m.OverlayState.Is(ModeTextOverlay) {
-				overlay := m.sessionTextOverlay()
-				if overlay == nil {
-					return m, tea.Batch(cmds...)
-				}
-				updated, cmd, action := overlay.Update(msg)
-				*overlay = updated
-				if cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				switch action {
-				case widgets.TextOverlaySave:
-					m.saveReferenceFromOverlay()
-				case widgets.TextOverlayCancel:
-					overlay.Close()
-					m.setMode(ModeChat)
-				}
-				hitWin.MarkContentDirty()
-			} else if cmd := m.handlePopupContentClick(hitWin, msg); cmd != nil {
+			if cmd := m.handlePopupContentClick(hitWin, msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			// Mark popup content dirty so the click effect is rendered.
@@ -256,16 +293,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.setSessionDeckFocused(false)
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTree)
-		localY := mouse.Y - m.Tree.YOffset
-		if localY >= 0 {
-			if mouse.X == m.Tree.Width-1 {
-				cmd := m.routeTreeScrollbarMsg(msg)
-				return m, cmd
-			}
-			if mouse.X >= m.Tree.Width-1-filetree.ScrollbarGutterWidth {
-				m.Tree.Model.Hover.Clear()
-				return m, nil
-			}
+		if mouse.Y-m.Tree.YOffset >= 0 {
 			cmd := m.routeSidebarMouse(msg)
 			return m, cmd
 		}
@@ -284,24 +312,8 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.setSessionDeckFocused(false)
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTabBar)
-		adjustedX := mouse.X
-		if m.Tree.Visible && m.Tree.Model != nil {
-			adjustedX -= m.Tree.Width + 1
-		}
-		adjustedX -= m.Theme.Spacing.PadLR
-		if adjustedX < 0 {
-			adjustedX = 0
-		}
-		hit := m.Win.HitTest(adjustedX, 0)
-		if hit.TabIndex >= 0 {
-			if hit.IsClose {
-				cmds = append(cmds, m.handleAgentTabClose(hit.TabIndex))
-				return m, tea.Batch(cmds...)
-			}
-			m.Win.SwitchTo(hit.TabIndex)
-			m.handleTabSwitch()
-			return m, nil
-		}
+		cmd := m.handleTabBarEvent(msg)
+		return m, cmd
 
 	case regionEditor:
 		m.unfocus()
@@ -335,17 +347,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	case regionLauncher:
 		m.setSessionDeckFocused(false)
-		// Launcher is a native component tree hosted by launcherHost.
-		// Translate screen coordinates to the launcher surface origin.
-		layout := m.computeLayout()
-		localX := mouse.X - layout.SidebarW - layout.PadLR
-		localY := mouse.Y - layout.ChatAreaTop
-		res := m.launcherHost.Handle(tea.MouseClickMsg{
-			X:      localX,
-			Y:      localY,
-			Button: mouse.Button,
-			Mod:    msg.Mod,
-		})
+		res := m.launcherHost.Handle(m.translateLauncherMouse(msg))
 		m.LastInteractionTime = time.Now()
 		return m, res.Cmd
 	}
@@ -362,20 +364,10 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouseWheel(msg); hitWin != nil {
-			if m.OverlayState.Is(ModeTextOverlay) {
-				if overlay := m.sessionTextOverlay(); overlay != nil {
-					updated, cmd, _ := overlay.Update(msg)
-					*overlay = updated
-					if cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-				}
-				hitWin.MarkContentDirty()
-			} else {
-				if cmd := m.forwardEventToWindowContent(hitWin, msg); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+			if cmd := m.forwardEventToWindowContent(hitWin, msg); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
+			hitWin.MarkContentDirty()
 			return m, tea.Batch(cmds...)
 		}
 	}
@@ -391,28 +383,19 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case regionChat:
-		activeML := m.activeMessageList()
-		if activeML != nil {
-			_, cmd := activeML.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
+		if m.chatHost != nil {
+			res := m.chatHost.Handle(m.translateChatMouse(msg))
+			if res.Handled {
+				return m, res.Cmd
 			}
 		}
-		return m, tea.Batch(cmds...)
+		return m, nil
 
 	case regionSessionDeck:
 		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
 
 	case regionLauncher:
-		layout := m.computeLayout()
-		localX := msg.X - layout.SidebarW - layout.PadLR
-		localY := msg.Y - layout.ChatAreaTop
-		res := m.launcherHost.Handle(tea.MouseWheelMsg{
-			X:      localX,
-			Y:      localY,
-			Button: msg.Button,
-			Mod:    msg.Mod,
-		})
+		res := m.launcherHost.Handle(m.translateLauncherMouse(msg))
 		m.LastInteractionTime = time.Now()
 		return m, res.Cmd
 
@@ -431,19 +414,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		if m.windowManager.IsDragging() {
 			return m, tea.Batch(cmds...)
 		}
-		// Popup hover pre-selection: if the mouse is over a focusable
-		// popup, update its hover state and return (don't route motion
-		// to the underlying editor/tree). Iterate top-to-bottom.
-		for i := len(m.windowManager.Windows()) - 1; i >= 0; i-- {
-			fw := m.windowManager.Windows()[i]
-			if !fw.Visible() || !fw.Focusable() {
-				continue
-			}
-			if fw.ContainsPoint(mouse.X, mouse.Y) {
-				m.handlePopupContentHover(fw, mouse.X, mouse.Y, mouse.Button)
-				return m, tea.Batch(cmds...)
-			}
-		}
 	}
 
 	if m.Tree.Resizing {
@@ -461,6 +431,26 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if host, translate := m.capturedPersistentHost(); host != nil {
+		return m, host.Handle(translate(msg)).Cmd
+	}
+
+	if m.windowManager != nil {
+		// Popup hover pre-selection: if the mouse is over a focusable
+		// popup, update its hover state and return (don't route motion
+		// to the underlying editor/tree). Iterate top-to-bottom.
+		for i := len(m.windowManager.Windows()) - 1; i >= 0; i-- {
+			fw := m.windowManager.Windows()[i]
+			if !fw.Visible() || !fw.Focusable() {
+				continue
+			}
+			if fw.ContainsPoint(mouse.X, mouse.Y) {
+				m.handlePopupContentHover(fw, mouse.X, mouse.Y, mouse.Button)
+				return m, tea.Batch(cmds...)
+			}
+		}
+	}
+
 	// Launcher: when the launcher screen is active (no agents, no
 	// editor), route motion directly to its native component host
 	// and return. This is a critical performance fix: without this
@@ -476,14 +466,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	if m.launcherScreen != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		// Mouse is over the file tree — route there instead.
 		if m.Tree.Visible && m.Tree.Model != nil && mouse.X < m.Tree.Width {
-			if mouse.X == m.Tree.Width-1 {
-				cmd := m.routeTreeScrollbarMsg(msg)
-				return m, cmd
-			}
-			if mouse.X >= m.Tree.Width-1-filetree.ScrollbarGutterWidth {
-				m.Tree.Model.Hover.Clear()
-				return m, nil
-			}
 			cmd := m.routeSidebarMouse(msg)
 			return m, cmd
 		}
@@ -493,16 +475,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 		// Clear tab bar hover (mouse left the tab row).
 		m.Win.Hover.Clear()
-		// Route motion to the launcher component host.
-		layout := m.computeLayout()
-		localX := mouse.X - layout.SidebarW - layout.PadLR
-		localY := mouse.Y - layout.ChatAreaTop
-		res := m.launcherHost.Handle(tea.MouseMotionMsg{
-			X:      localX,
-			Y:      localY,
-			Button: mouse.Button,
-			Mod:    msg.Mod,
-		})
+		res := m.launcherHost.Handle(m.translateLauncherMouse(msg))
 		if res.Cmd != nil {
 			cmds = append(cmds, res.Cmd)
 		}
@@ -510,14 +483,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.Tree.Visible && m.Tree.Model != nil && mouse.X < m.Tree.Width {
-		if mouse.X == m.Tree.Width-1 {
-			cmd := m.routeTreeScrollbarMsg(msg)
-			return m, cmd
-		}
-		if mouse.X >= m.Tree.Width-1-filetree.ScrollbarGutterWidth {
-			m.Tree.Model.Hover.Clear()
-			return m, nil
-		}
 		cmd := m.routeSidebarMouse(msg)
 		return m, cmd
 	}
@@ -527,23 +492,15 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		m.Tree.Model.Hover.Clear()
 	}
 
-	// Tab bar hover: update the hover state when the mouse moves over
-	// the horizontal tab bar (row 3). Use HitTest to find the tab under
-	// the cursor, with the same X-adjustment used in dispatchMouseClick.
-	if m.Win.IsOpen() && m.Win.TabCount() >= 1 && mouse.Y == 3 {
-		adjustedX := mouse.X
-		if m.Tree.Visible && m.Tree.Model != nil {
-			adjustedX -= m.Tree.Width + 1
-		}
-		adjustedX -= m.Theme.Spacing.PadLR
-		if adjustedX < 0 {
-			adjustedX = 0
-		}
-		hit := m.Win.HitTest(adjustedX, 0)
-		if hit.TabIndex >= 0 {
-			m.Win.Hover.Set(hit.TabIndex)
-			return m, tea.Batch(cmds...)
-		}
+	// Tab bar hover: update via native tab host when over row 3.
+	if m.tabBarVisible() && mouse.Y == 3 {
+		_ = m.handleTabBarEvent(tea.MouseMotionMsg{
+			X:      mouse.X,
+			Y:      0,
+			Button: mouse.Button,
+			Mod:    msg.Mod,
+		})
+		return m, tea.Batch(cmds...)
 	}
 
 	// Mouse is outside the tab bar — clear the hover state.
@@ -584,14 +541,6 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	m.clearDiagHoverPopup()
 
 	if m.OverlayState.IsChat() {
-		activeML := m.activeMessageList()
-		if activeML != nil && activeML.IsScrollbarDragging() {
-			_, cmd := activeML.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-		}
 		cmds = append(cmds, m.routeChatMouse(msg, mouse, false)...)
 		return m, tea.Batch(cmds...)
 	}
@@ -622,15 +571,15 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, nil
 	}
 
+	if host, translate := m.capturedPersistentHost(); host != nil {
+		res := host.Handle(translate(msg))
+		if res.Cmd != nil {
+			cmds = append(cmds, res.Cmd)
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	if m.Tree.Visible && m.Tree.Model != nil && mouse.X < m.Tree.Width {
-		if mouse.X == m.Tree.Width-1 {
-			cmd := m.routeTreeScrollbarMsg(msg)
-			return m, cmd
-		}
-		if mouse.X >= m.Tree.Width-1-filetree.ScrollbarGutterWidth {
-			m.Tree.Model.Hover.Clear()
-			return m, nil
-		}
 		cmd := m.routeSidebarMouse(msg)
 		return m, cmd
 	}
@@ -653,19 +602,14 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 
 	case regionLauncher:
-		// Release events on the launcher need no special handling;
-		// activation happens on click via the component host.
+		if m.launcherHostVisible() {
+			if cmd := m.launcherHost.Handle(m.translateLauncherMouse(msg)).Cmd; cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		return m, tea.Batch(cmds...)
 
 	case regionChat:
-		activeML := m.activeMessageList()
-		if activeML != nil && activeML.IsScrollbarDragging() {
-			_, cmd := activeML.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-		}
 		cmds = append(cmds, m.routeChatMouse(msg, mouse, false)...)
 		return m, tea.Batch(cmds...)
 	}

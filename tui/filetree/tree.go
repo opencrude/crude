@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"crude/tui/ui"
 	"crude/tui/widget"
 )
 
@@ -301,8 +302,8 @@ type FileTreeModel struct {
 	// visibleNodes is a flattened, depth-first list of currently visible nodes.
 	visibleNodes []*TreeNode
 
-	// filter is the current filter pattern (empty = no filter).
-	filter string
+	// filterEd holds the active filter pattern (empty = no filter).
+	filterEd *ui.TextEdit
 
 	// sortBy controls how children are ordered within a directory.
 	sortBy SortOption
@@ -366,6 +367,7 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 		gitResolver:        NewGitStatusResolver(absPath),
 		diagnosticResolver: make(map[string]DiagCounts),
 		Hover:              widget.NewHover(),
+		filterEd:           ui.NewTextEdit(),
 	}
 
 	// Create the root node.
@@ -716,7 +718,7 @@ func (m *FileTreeModel) SelectedNode() *TreeNode {
 func (m *FileTreeModel) rebuildVisibleNodes() {
 	m.visibleNodes = m.visibleNodes[:0] // reuse backing array
 
-	if m.filter != "" {
+	if m.filterPattern() != "" {
 		m.filteredWalk(m.Root, false)
 	} else {
 		m.unfilteredWalk(m.Root)
@@ -750,7 +752,7 @@ func (m *FileTreeModel) filteredWalk(node *TreeNode, parentVisible bool) bool {
 	// Does this node match the filter?
 	selfMatch := parentVisible || strings.Contains(
 		strings.ToLower(node.Name),
-		strings.ToLower(m.filter),
+		strings.ToLower(m.filterPattern()),
 	)
 
 	// If this is a directory, check children.
@@ -781,6 +783,13 @@ func (m *FileTreeModel) filteredWalk(node *TreeNode, parentVisible bool) bool {
 // Filtering
 // ---------------------------------------------------------------------------
 
+func (m *FileTreeModel) filterPattern() string {
+	if m.filterEd == nil {
+		return ""
+	}
+	return m.filterEd.Value()
+}
+
 // SetFilter sets a case-insensitive filter pattern and rebuilds the visible
 // nodes list.
 //
@@ -791,7 +800,10 @@ func (m *FileTreeModel) SetFilter(pattern string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.filter = pattern
+	if m.filterEd == nil {
+		m.filterEd = ui.NewTextEdit()
+	}
+	m.filterEd.SetValue(pattern)
 	m.rebuildVisibleNodes()
 
 	// Clamp cursor index to new visible list.
@@ -812,7 +824,7 @@ func (m *FileTreeModel) SetFilter(pattern string) {
 func (m *FileTreeModel) Filter() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.filter
+	return m.filterPattern()
 }
 
 // SetShowHidden controls whether dot-files (names starting with ".") are

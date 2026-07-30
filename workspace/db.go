@@ -75,6 +75,11 @@ func openWorkspaceDBAt(dbPath string) (*WorkspaceDB, error) {
 
 // migrateWorkspaceSchema adds workspace-level tables that don't belong in
 // the session database. This runs alongside the sessiondb migration.
+//
+// CREATE TABLE IF NOT EXISTS alone is not enough for additive evolution: an
+// existing table keeps its old column set. Missing columns are detected via
+// PRAGMA table_info and added with ALTER TABLE so legacy workspace DBs upgrade
+// idempotently.
 func migrateWorkspaceSchema(db *sql.DB) error {
 	// Workspace metadata: key-value store for workspace-level settings
 	_, err := db.Exec(`
@@ -103,10 +108,79 @@ func migrateWorkspaceSchema(db *sql.DB) error {
 			turn_count    INTEGER NOT NULL DEFAULT 0,
 			first_prompt  TEXT,
 			last_prompt   TEXT,
-			total_cost    REAL NOT NULL DEFAULT 0.0
+			total_cost    REAL NOT NULL DEFAULT 0.0,
+			db_missing    INTEGER NOT NULL DEFAULT 0
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	return ensureWorkspaceSessionColumns(db)
+}
+
+// workspaceSessionColumns is the additive column set for workspace_sessions.
+// Order matches the CREATE TABLE above; session_id/project_dir/created_at are
+// assumed present on any legacy registry table.
+var workspaceSessionColumns = []struct {
+	Name string
+	DDL  string
+}{
+	{"project_name", "TEXT NOT NULL DEFAULT ''"},
+	{"model", "TEXT NOT NULL DEFAULT ''"},
+	{"provider", "TEXT NOT NULL DEFAULT ''"},
+	{"closed_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"message_count", "INTEGER NOT NULL DEFAULT 0"},
+	{"turn_count", "INTEGER NOT NULL DEFAULT 0"},
+	{"first_prompt", "TEXT"},
+	{"last_prompt", "TEXT"},
+	{"total_cost", "REAL NOT NULL DEFAULT 0.0"},
+	// db_missing marks a registry row whose session .db was not found during
+	// enrichment. Rows are never DELETE'd on apparent absence — a path bug or
+	// transient condition must not destroy the user's index. Listings exclude
+	// db_missing=1; clearing the flag restores the row when the DB reappears.
+	{"db_missing", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+// ensureWorkspaceSessionColumns adds any missing columns on workspace_sessions.
+// Safe to run on brand-new, current, and legacy DBs (idempotent).
+func ensureWorkspaceSessionColumns(db *sql.DB) error {
+	existing, err := tableColumns(db, "workspace_sessions")
+	if err != nil {
+		return err
+	}
+	for _, col := range workspaceSessionColumns {
+		if existing[col.Name] {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE workspace_sessions ADD COLUMN %s %s", col.Name, col.DDL)
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("add column %s: %w", col.Name, err)
+		}
+	}
+	return nil
+}
+
+// tableColumns returns the set of column names for table via PRAGMA table_info.
+func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, rows.Err()
 }
 
 // GetSetting retrieves a workspace-level setting by key.
@@ -131,12 +205,21 @@ func (wdb *WorkspaceDB) SetSetting(key, value string) error {
 
 // RegisterSession records a new AI session in the workspace's session registry.
 // Called when a new session is created within this workspace.
+// Returns a non-nil error when the INSERT fails (e.g. legacy schema missing
+// columns). Callers must log/surface the error but must not treat it as fatal
+// for session creation — the session DB remains the source of truth.
 func (wdb *WorkspaceDB) RegisterSession(sessionID, projectPath, projectName, model, provider string) error {
+	if wdb == nil || wdb.DB == nil {
+		return fmt.Errorf("workspace db not open")
+	}
 	_, err := wdb.DB.Exec(`
 		INSERT OR IGNORE INTO workspace_sessions (session_id, project_dir, project_name, model, provider, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, sessionID, projectPath, projectName, model, provider, time.Now().UnixNano())
-	return err
+	if err != nil {
+		return fmt.Errorf("register session %s: %w", sessionID, err)
+	}
+	return nil
 }
 
 // CloseSession marks a session as closed in the workspace registry.
@@ -172,13 +255,15 @@ func (wdb *WorkspaceDB) UpdateSessionCost(sessionID string, totalCost float64) e
 	return err
 }
 
-// ListSessions returns all sessions registered in this workspace, most recent first.
+// ListSessions returns available sessions registered in this workspace, most
+// recent first. Rows marked db_missing are excluded (see MarkSessionDBMissing).
 func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 	rows, err := wdb.DB.Query(`
 		SELECT session_id, project_dir, project_name, model, provider,
 		       created_at, closed_at, message_count, turn_count,
 		       first_prompt, last_prompt
 		FROM workspace_sessions
+		WHERE db_missing = 0
 		ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -199,6 +284,23 @@ func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 		metas = append(metas, m)
 	}
 	return metas, rows.Err()
+}
+
+// MarkSessionDBMissing sets or clears the db_missing flag on a registry row.
+// missing=true excludes the row from ListSessions without deleting it;
+// missing=false restores the row when the session DB reappears.
+func (wdb *WorkspaceDB) MarkSessionDBMissing(sessionID string, missing bool) error {
+	if wdb == nil || wdb.DB == nil {
+		return fmt.Errorf("workspace db not open")
+	}
+	flag := 0
+	if missing {
+		flag = 1
+	}
+	_, err := wdb.DB.Exec(`
+		UPDATE workspace_sessions SET db_missing = ? WHERE session_id = ?
+	`, flag, sessionID)
+	return err
 }
 
 // SyncSessionMeta reads metadata from the per-session DB and writes it back

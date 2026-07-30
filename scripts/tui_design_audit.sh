@@ -53,15 +53,7 @@ fi
 # Allowlist directories/files from Phase 0 freeze
 allow_hex=(
   'tui/theme/'
-  'tui/scrollbar/style.go'
   'tui/diffview/'
-  'tui/filetree/icons.go'
-  'tui/filetree/render.go'
-  'tui/widgets/statusbar.go'
-  'tui/widgets/chatmessage.go'
-  'tui/tools/'
-  'tui/window/'
-  'tui/xchroma/'
 )
 
 hex_hits="$(rg -n 'lipgloss\.Color\("#' --glob '*.go' --glob '!*_test.go' tui/ || true)"
@@ -86,8 +78,38 @@ else
   echo "OK: no hard-coded lipgloss hex"
 fi
 
+# 4b) Raw truecolor / RGBA constructors outside theme + diffview (and tests).
+# These bypass TokenSet and survive theme preset switches as fixed RGB strips.
+allow_raw=(
+  'tui/theme/'
+  'tui/diffview/'
+  'tui/cell/'
+  'tui/rendering/'
+)
+raw_hits="$(rg -n 'NewTrueColor\(|color\.RGBA\{|cell\.Color\{[^}]*R:' --glob '*.go' --glob '!*_test.go' tui/ || true)"
+if [[ -n "$raw_hits" ]]; then
+  while IFS= read -r line; do
+    path="${line%%:*}"
+    allowed=0
+    for a in "${allow_raw[@]}"; do
+      case "$path" in
+        $a*) allowed=1; break ;;
+      esac
+    done
+    if [[ $allowed -eq 0 ]]; then
+      echo "FAIL: raw colour constructor outside allowlist: $line"
+      fail=1
+    fi
+  done <<< "$raw_hits"
+  if [[ $fail -eq 0 ]]; then
+    echo "OK: raw colour constructors only in allowlisted paths"
+  fi
+else
+  echo "OK: no raw colour constructors outside allowlist"
+fi
+
 # 5) Foundation packages must have tests
-for pkg in tui/cell tui/surface tui/compositor tui/scrollbar; do
+for pkg in tui/cell tui/surface tui/compositor tui/ui; do
   if ! ls "$pkg"/*_test.go >/dev/null 2>&1; then
     echo "FAIL: $pkg has no tests"
     fail=1
@@ -96,7 +118,63 @@ for pkg in tui/cell tui/surface tui/compositor tui/scrollbar; do
   fi
 done
 
-# 6) Manifest present
+# 7) Legacy scrollbar package must stay deleted
+if rg -n 'crude/tui/scrollbar' --glob '*.go' tui/ 2>/dev/null; then
+  echo "FAIL: crude/tui/scrollbar import in tui/"
+  fail=1
+else
+  echo "OK: no crude/tui/scrollbar imports"
+fi
+if [[ -d tui/scrollbar ]]; then
+  echo "FAIL: tui/scrollbar directory still exists"
+  fail=1
+else
+  echo "OK: tui/scrollbar package absent"
+fi
+if rg -n 'scrollbar_ansi' --glob '*.go' tui/ 2>/dev/null; then
+  echo "FAIL: deleted scrollbar_ansi reference in tui/ Go sources"
+  fail=1
+else
+  echo "OK: no scrollbar_ansi imports in tui/"
+fi
+
+# 7b) Legacy components package must stay deleted
+if rg -n 'crude/tui/components' --glob '*.go' tui/ 2>/dev/null; then
+  echo "FAIL: crude/tui/components import in tui/"
+  fail=1
+else
+  echo "OK: no crude/tui/components imports"
+fi
+if [[ -d tui/components ]]; then
+  echo "FAIL: tui/components directory still exists"
+  fail=1
+else
+  echo "OK: tui/components package absent"
+fi
+if rg -n 'RenderFilterLine|FilterPaintOptions' --glob '*.go' tui/ 2>/dev/null; then
+  echo "FAIL: deleted RenderFilterLine API still referenced in tui/"
+  fail=1
+else
+  echo "OK: no RenderFilterLine references in tui/"
+fi
+
+# 8) subpane_render.go must stay native (no lipgloss/raw SGR)
+if rg -n 'lipgloss|\\x1b\[' tui/viewmodel/subpane_render.go 2>/dev/null; then
+  echo "FAIL: lipgloss/raw SGR in subpane_render.go"
+  fail=1
+else
+  echo "OK: subpane_render.go native-only"
+fi
+
+# 9) deleted TabVertical APIs must stay gone
+if rg -n 'TabVertical|VTabBarWidth|hitTestVertical' --glob '*.go' tui/ 2>/dev/null; then
+  echo "FAIL: deleted vertical tab APIs still referenced in tui/"
+  fail=1
+else
+  echo "OK: TabVertical residue absent"
+fi
+
+# 10) Manifest present
 if [[ ! -f docs/tui/bypass_manifest.json ]]; then
   echo "FAIL: missing docs/tui/bypass_manifest.json"
   fail=1

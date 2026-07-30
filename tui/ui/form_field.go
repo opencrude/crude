@@ -32,7 +32,8 @@ func NewFormField(id ComponentID, f *FieldState, tokens *TokenSet) *FormField {
 // NewBoundFormField binds a control to the supplied form model.
 func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *TokenSet) *FormField {
 	ff := &FormField{Base: NewBase(id), model: model, field: f, tokens: tokens}
-	if f.Type == FieldText || f.Type == FieldPassword {
+	// Read-only hex colour reflections paint as swatches — no text editor.
+	if (f.Type == FieldText || f.Type == FieldPassword) && !(f.ReadOnly && isHexColor(f.Value.String())) {
 		ff.control = NewTextField(NewID(id, "input"), tokens)
 		ff.control.SetValue(f.Value.String())
 		ff.control.SetPlaceholder(f.Placeholder)
@@ -154,6 +155,14 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		errorFG = ff.tokens.Color(ColorError)
 		dividerFG = ff.tokens.Color(ColorPopupDivider)
 	}
+	// Keyboard-focused row uses Accent (same as focused list rows) so form
+	// focus cannot be confused with an unfocused region's Selection highlight.
+	focusedRow := ctx.Focused && !ff.field.Disabled && ff.field.Type != FieldSeparator
+	if focusedRow {
+		bg = ff.tokensColor(ColorAccent, bg)
+		labelFG = ff.tokensColor(ColorBg, labelFG)
+		mutedFG = labelFG
+	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	x, y := originX+r.X, originY+r.Y
 	if ff.field.Type == FieldSeparator {
@@ -170,15 +179,26 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		label += "*"
 	}
 	label = rendering.TruncateVisual(label, ff.labelWidth(), "")
-	if ff.field.Disabled || ff.field.ReadOnly {
+	if (ff.field.Disabled || ff.field.ReadOnly) && !focusedRow {
 		labelFG = mutedFG
 	}
 	buf.WriteString(x, y, label, labelFG, bg, 0)
 
-	if ff.field.Type == FieldText || ff.field.Type == FieldPassword {
-		fieldCtx := ctx
-		fieldCtx.Focused = ctx.Focused
-		ff.control.Paint(buf, originX+r.X, originY+r.Y, fieldCtx)
+	if ff.field.ReadOnly && isHexColor(ff.field.Value.String()) {
+		ff.paintColorValue(buf, x+ff.controlX(r.W), y, ff.controlWidth(r.W), labelFG, mutedFG, bg)
+	} else if ff.field.Type == FieldText || ff.field.Type == FieldPassword {
+		if ff.control != nil {
+			fieldCtx := ctx
+			fieldCtx.Focused = ctx.Focused
+			ff.control.Paint(buf, originX+r.X, originY+r.Y, fieldCtx)
+		} else {
+			text := ff.field.Value.String()
+			if text == "" {
+				text = "-"
+				labelFG = mutedFG
+			}
+			buf.WriteString(x+ff.controlX(r.W), y, rendering.TruncateVisual(text, ff.controlWidth(r.W), ""), labelFG, bg, 0)
+		}
 	} else {
 		ff.paintChoice(buf, x+ff.controlX(r.W), y, ff.controlWidth(r.W), ctx, labelFG, mutedFG, bg)
 	}
@@ -266,11 +286,40 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 		text = "-"
 		fg = muted
 	}
-	if ctx.Focused && !ff.field.Disabled {
-		bg = ff.tokensColor(ColorPopupSubtleBg, bg)
-	}
+	// Full-row focus fill already applied in Paint; keep value on same bg.
 	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
 	buf.WriteString(x, y, rendering.TruncateVisual(text, width, ""), fg, bg, 0)
+}
+
+func (ff *FormField) paintColorValue(buf *surface.CellBuffer, x, y, width int, fg, muted, bg cell.Color) {
+	if width < 1 {
+		return
+	}
+	hex := ff.field.Value.String()
+	swatchFG := rendering.LipglossColorToCell(hex)
+	if swatchFG.IsDefault() {
+		swatchFG = fg
+	}
+	swatch := "██"
+	rest := " " + hex + "  (preset)"
+	used := rendering.VisibleWidth(swatch)
+	buf.WriteString(x, y, rendering.TruncateVisual(swatch, width, ""), swatchFG, bg, 0)
+	if used < width {
+		buf.WriteString(x+used, y, rendering.TruncateVisual(rest, width-used, ""), muted, bg, 0)
+	}
+}
+
+func isHexColor(s string) bool {
+	if len(s) != 7 || s[0] != '#' {
+		return false
+	}
+	for i := 1; i < 7; i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 func (ff *FormField) tokensColor(role SemanticColor, fallback cell.Color) cell.Color {
@@ -281,7 +330,7 @@ func (ff *FormField) tokensColor(role SemanticColor, fallback cell.Color) cell.C
 }
 
 func (ff *FormField) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	if ff.field.Disabled {
+	if ff.field.Disabled || ff.field.ReadOnly {
 		return EventResult{}
 	}
 	switch ff.field.Type {
@@ -413,7 +462,11 @@ func (ff *FormField) handleCycle(msg tea.Msg) EventResult {
 	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft && len(ff.field.Options) > 0 {
 		idx := (ff.selectedIndex() + 1) % len(ff.field.Options)
 		ff.setValue(StringValue(ff.field.Options[idx].ID))
-		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		return EventResult{
+			Handled:    true,
+			Action:     &Action{ID: "form.changed", Payload: ff.field.ID},
+			Invalidate: InvalidatePaint,
+		}
 	}
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok || (key.Code != tea.KeyLeft && key.Code != tea.KeyRight && key.Code != tea.KeyEnter && key.Code != tea.KeySpace) || len(ff.field.Options) == 0 {
@@ -426,7 +479,11 @@ func (ff *FormField) handleCycle(msg tea.Msg) EventResult {
 		idx = (idx + 1) % len(ff.field.Options)
 	}
 	ff.setValue(StringValue(ff.field.Options[idx].ID))
-	return EventResult{Handled: true, Invalidate: InvalidatePaint}
+	return EventResult{
+		Handled:    true,
+		Action:     &Action{ID: "form.changed", Payload: ff.field.ID},
+		Invalidate: InvalidatePaint,
+	}
 }
 
 func (ff *FormField) handleToggle(msg tea.Msg) EventResult {

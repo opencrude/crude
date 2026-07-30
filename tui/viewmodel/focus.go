@@ -1,6 +1,9 @@
 package viewmodel
 
-import "crude/workspace"
+import (
+	"crude/tui/screens/shelltabs"
+	"crude/workspace"
+)
 
 type FocusTarget = workspace.FocusTarget
 
@@ -18,10 +21,13 @@ func (m *App) focusTarget() FocusTarget {
 	if m.windowManager != nil && m.windowManager.Focused() != nil {
 		return FocusFloatingWindow
 	}
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil {
+	if m.launcherHostVisible() {
 		return FocusLauncher
 	}
-	top := m.FocusStack.Top()
+	top := FocusNone
+	if m.FocusStack != nil {
+		top = m.FocusStack.Top()
+	}
 	if top == FocusTree && m.Tree.Model != nil && m.Tree.Visible {
 		return FocusTree
 	}
@@ -49,6 +55,9 @@ func (m *App) setFocusTabBar() {
 	m.setSessionDeckFocused(false)
 	m.FocusStack.Clear()
 	m.FocusStack.Push(FocusTabBar)
+	if m.tabHost != nil {
+		m.tabHost.Focus(shelltabs.TabsID)
+	}
 }
 
 func (m *App) syncRenderFocus() {

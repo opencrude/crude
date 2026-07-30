@@ -157,6 +157,13 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	}
 	exec := fileio.NewLocalExecWithLogger(lg)
 	sessionID := lg.SessionID()
+	// When callers pass an empty id (workspace CreateSession), reuse the
+	// logger-generated sessionID that already keys the session directory
+	// and SQLite file. This keeps Session.ID aligned with on-disk identity
+	// without inventing a second scheme.
+	if id == "" {
+		id = sessionID
+	}
 	lg.Info("SESSION", "start", "version", "1.0")
 	lg.Info("SESSION", "config", "provider", mainCat.Provider, "model", mainCat.Model)
 

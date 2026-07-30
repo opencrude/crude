@@ -7,15 +7,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
+	"crude/tui/chatprojection"
 	"crude/tui/input"
 	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"
+	"crude/tui/screens/shellstatus"
 	"crude/tui/settings"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/window"
 	"crude/tui/wm"
 	"crude/workspace"
@@ -29,10 +30,16 @@ func TestModeName_Chat(t *testing.T) {
 
 func TestFocusTarget_Launcher(t *testing.T) {
 	app := newTestApp(t)
+	app.width = 80
+	app.height = 30
+	_ = app.buildMainView()
+	if app.ChatAreaHeight < 3 {
+		t.Fatalf("launcher visibility setup: ChatAreaHeight=%d", app.ChatAreaHeight)
+	}
 
 	target := app.focusTarget()
 	if target != FocusLauncher {
-		t.Fatalf("expected FocusLauncher with no agents, got %v", target)
+		t.Fatalf("expected FocusLauncher with visible launcher, got %v", target)
 	}
 }
 
@@ -57,10 +64,10 @@ func TestActiveMsgList_Empty(t *testing.T) {
 func TestActiveMsgList_WithAgent(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
-	ml := widgets.NewMessageList(th)
+	ml := chatprojection.NewRenderer(th)
 	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
-	proj.msgList = ml
+	proj.renderer = ml
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: sp.Messages})
 
 	result := app.activeMsgList()
@@ -72,10 +79,10 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 func TestActiveMessageList_Fallback(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
-	ml := widgets.NewMessageList(th)
+	ml := chatprojection.NewRenderer(th)
 	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
-	proj.msgList = ml
+	proj.renderer = ml
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: sp.Messages})
 	// AddOrchestrator sets active automatically; clear it so activeMessageList falls back
 	app.AgentMgr.ClearActive()
@@ -159,7 +166,7 @@ func TestBuildMainView_LauncherFallback(t *testing.T) {
 	// Launcher present, no agents → launcher surface is active and the main
 	// content string only reserves blank chat rows.
 	app.launcherScreen = launcher.New(app.Theme)
-	app.launcherScreen.Refresh(".", nil)
+	app.launcherScreen.SetData(".", nil, nil)
 	app.launcherHost = ui.NewHost(app.Theme, app.launcherScreen)
 	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
@@ -406,6 +413,9 @@ func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	app := newTestApp(t)
 	cancelCh := make(chan struct{}, 1)
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, cancelCh, nil, &workspace.AgentState{})
+	app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
+	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
+	app.agentChatScroll["ses_1_orch_1"] = agentMainChatScrollSnapshot{Offset: 4, AutoScroll: false}
 
 	app.RemoveOrchestrator("ses_1_orch_1")
 
@@ -414,6 +424,12 @@ func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	}
 	if p := app.PaneMgr.Get("ses_1_orch_1"); p != nil {
 		t.Fatal("agent should be removed from paneMgr")
+	}
+	if app.subPaneProjections.Has("ses_1_orch_1") {
+		t.Fatal("subPane projection should be removed when orchestrator closes")
+	}
+	if _, ok := app.agentChatScrollSnapshotForTest("ses_1_orch_1"); ok {
+		t.Fatal("per-agent scroll snapshot should be removed when orchestrator closes")
 	}
 	select {
 	case <-cancelCh:
@@ -509,7 +525,7 @@ func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 	app.height = 24
 	app.ChatAreaHeight = 17
 	app.launcherScreen = launcher.New(app.Theme)
-	app.launcherScreen.Refresh(".", nil)
+	app.launcherScreen.SetData(".", nil, nil)
 	app.launcherHost = ui.NewHost(app.Theme, app.launcherScreen)
 	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
@@ -524,7 +540,7 @@ func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 // component host and clickable across all of its rows.
 func TestLauncherState_HitTest(t *testing.T) {
 	screen := launcher.New(theme.DefaultDark())
-	screen.Refresh(".", nil)
+	screen.SetData(".", nil, nil)
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	screen.SetFocusHandler(host.Focus)
 	host.Resize(80, 24)
@@ -703,7 +719,7 @@ func newTestApp(t *testing.T) *App {
 			ActiveSession: &workspace.Session{},
 		},
 		Theme:              th,
-		Tree:               NewTreeState(nil, nil, 30),
+		Tree:               NewTreeState(nil, 30),
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),
 		EditorState:        NewEditorState(),
@@ -717,7 +733,7 @@ func newTestApp(t *testing.T) *App {
 
 	app.Win = window.New(th)
 	app.launcherScreen = launcher.New(th)
-	app.launcherScreen.Refresh(".", nil)
+	app.launcherScreen.SetData(".", nil, nil)
 	app.launcherHost = ui.NewHost(th, app.launcherScreen)
 	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
@@ -728,7 +744,7 @@ func newFullTestApp(t *testing.T) *App {
 	t.Helper()
 	th := theme.DefaultDark()
 	im := input.NewModel(th)
-	sb := widgets.NewStatusBar(th)
+	sb := shellstatus.New(th)
 	wmgr := wm.NewWindowManager()
 
 	app := &App{
@@ -742,7 +758,7 @@ func newFullTestApp(t *testing.T) *App {
 		Theme:              th,
 		Input:              im,
 		StatusBar:          sb,
-		Tree:               NewTreeState(nil, nil, 30),
+		Tree:               NewTreeState(nil, 30),
 		SpinFrame:          0,
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),

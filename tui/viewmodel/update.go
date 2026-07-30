@@ -14,14 +14,16 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
+	"crude/tui/screens/composer"
 	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/question"
+	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/sessionsettings"
+	textoverlay "crude/tui/screens/textoverlay"
 	"crude/tui/screens/yolo"
-	"crude/tui/scrollbar"
 	settingsui "crude/tui/settings"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
@@ -31,6 +33,8 @@ import (
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	m.syncPersistentHostCapture()
 
 	// Dirty is set selectively per message type, NOT unconditionally.
 	// The full render pipeline (chroma syntax highlighting, glamour
@@ -89,41 +93,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.dispatchMouseRelease(msg)
 
 	case ttypes.SelectionTickMsg:
-		if ml := m.activeMsgList(); ml != nil {
-			_, cmd := ml.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-
-	case scrollbar.FadeTickMsg, scrollbar.HideTickMsg:
-		cmds = append(cmds, m.dispatchEditorTick(msg)...)
-		if ml := m.activeMsgList(); ml != nil {
-			cmd := ml.HandleScrollbarTick(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-		if m.Tree.Visible && m.Tree.Renderer != nil {
-			treeCmd := m.Tree.Renderer.HandleScrollbarTick(msg)
-			if treeCmd != nil {
-				cmds = append(cmds, treeCmd)
-			}
-		}
-		for _, sp := range m.PaneMgr.Panes() {
-			if !sp.Done {
-				isCompact := sp.Type == workspace.PaneAgent
-				paneCmd := m.subPaneProjections.HandleScrollbarTick(sp.ID, msg, isCompact)
-				if paneCmd != nil {
-					cmds = append(cmds, paneCmd)
-				}
-			}
-		}
-		for _, w := range m.windowManager.Windows() {
-			if handler, ok := w.Content.(interface{ HandleEvent(tea.Msg) tea.Cmd }); ok {
-				if tickCmd := handler.HandleEvent(msg); tickCmd != nil {
-					cmds = append(cmds, tickCmd)
-				}
+		if m.chatHost != nil {
+			res := m.chatHost.Handle(msg)
+			if res.Cmd != nil {
+				cmds = append(cmds, res.Cmd)
 			}
 		}
 
@@ -205,9 +178,9 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	connected, status, errMsg := m.LSPMgr.Status()
 	statusbarLSP := connected || status == editor.LSPConnected || status == editor.LSPStarting || errMsg != ""
 
-	// Status bar is EXCLUSIVELY for whole-project insights.
-	// Per-file diagnostics are shown in the editor (gutter + hover popup +
-	// editor's own status line at the bottom of the editor body).
+	// Status bar is EXCLUSIVELY for whole-project insights plus contextual
+	// help. Per-file diagnostics paint in the editor gutter/hover; counts and
+	// shortcuts for the active file appear in shellstatus editor context.
 	if statusbarLSP {
 		ins := m.LSPMgr.ProjectInsights()
 		m.StatusBar.SetProjectInsights(ins)
@@ -297,6 +270,40 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.findInFiles == msg.Screen {
 			m.closeFindInFiles()
 		}
+	case sessionpicker.SelectMsg:
+		if m.sessionPicker != nil && msg.Target == m.sessionPicker {
+			if cmd := m.handleSessionPickerSelect(msg.Session); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case sessionpicker.CancelMsg:
+		if m.sessionPicker != nil && msg.Target == m.sessionPicker {
+			m.closeSessionPicker()
+		}
+	case ttypes.ConfigReloadedMsg:
+		if msg.ThemePreset != "" {
+			m.applyThemePreset(msg.ThemePreset)
+		}
+	case composer.SubmitMsg:
+		if composerScreen := m.sessionComposer(); composerScreen == nil || msg.Target != composerScreen {
+			break
+		}
+		m.overlayHost.Close(ui.OverlayComposer)
+		if msg.Text != "" && m.AgentMgr.ActiveID() != "" {
+			cmds = append(cmds, m.submitInput(m.AgentMgr.ActiveID(), msg.Text, nil))
+		}
+	case composer.CancelMsg:
+		if composerScreen := m.sessionComposer(); composerScreen != nil && msg.Target == composerScreen {
+			m.overlayHost.Close(ui.OverlayComposer)
+		}
+	case textoverlay.SaveMsg:
+		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay {
+			m.saveReferenceFromOverlay()
+		}
+	case textoverlay.CancelMsg:
+		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay {
+			m.setMode(ModeChat)
+		}
 	case lspDefinitionResultMsg:
 		m.handleDefinitionResult(msg)
 	case lspReferencesResultMsg:
@@ -315,7 +322,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.Logger.Debug("UI", "model_update", "model", string(msg))
 		for _, node := range m.AgentMgr.AllNodes() {
 			if m.subPaneProjections.Has(node.ID) {
-				m.subPaneProjections.Get(node.ID, workspace.PaneAgent).msgList.SetModelName(string(msg))
+				m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetModelName(string(msg))
 			}
 		}
 		if ml := m.activeMsgList(); ml != nil {
@@ -403,6 +410,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if err != nil {
 			m.StatusBar.SetError("Failed to save workspace settings: " + err.Error())
 		} else {
+			m.applyThemePreset(themePresetFromSettings(appSets))
 			// Persist provider credentials to app config + live session config.
 			if err := m.SaveProviderSettings(appSets.ActiveProvider, appSets.Providers); err != nil {
 				m.StatusBar.SetError("Failed to save providers: " + err.Error())
@@ -413,7 +421,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	case settingsui.CancelMsg:
+		// Live preset cycling previews via ThemePreviewMsg without persisting.
+		// Cancel must restore the last saved palette across the whole UI.
+		m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
+	case settingsui.ThemePreviewMsg:
+		if msg.Preset != "" {
+			m.applyThemePreset(msg.Preset)
+		}
 	case settingsui.FetchModelsMsg:
 		request := msg
 		cmds = append(cmds, func() tea.Msg {
@@ -568,25 +583,6 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 	return msg
 }
 
-func (m *App) translateToTreeMouse(msg tea.Msg) tea.Msg {
-	offsetY := m.Tree.YOffset
-	bcOff := m.breadcrumbOffset()
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		mouse := mm.Mouse()
-		return tea.MouseClickMsg{X: mouse.X, Y: mouse.Y - offsetY - bcOff, Button: mm.Button}
-	case tea.MouseMotionMsg:
-		mouse := mm.Mouse()
-		return tea.MouseMotionMsg{X: mouse.X, Y: mouse.Y - offsetY - bcOff, Button: mm.Button}
-	case tea.MouseReleaseMsg:
-		mouse := mm.Mouse()
-		return tea.MouseReleaseMsg{X: mouse.X, Y: mouse.Y - offsetY - bcOff, Button: mm.Button}
-	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X, Y: mm.Y - offsetY - bcOff, Button: mm.Button}
-	}
-	return msg
-}
-
 func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) tea.Cmd {
 	if fw == nil || fw.Content == nil {
 		return nil
@@ -640,76 +636,6 @@ func (m *App) isMouseMsg(msg tea.Msg) bool {
 		return true
 	}
 	return false
-}
-
-func (m *App) routeMouseToInlinePane(msg tea.Msg) (bool, tea.Cmd) {
-	layout := m.computeLayout()
-
-	var y int
-	var isWheel bool
-	var wheelUp, wheelDown bool
-
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		y = mm.Mouse().Y
-	case tea.MouseWheelMsg:
-		y = mm.Y
-		isWheel = true
-		wheelUp = mm.Button == tea.MouseWheelUp
-		wheelDown = mm.Button == tea.MouseWheelDown
-	case tea.MouseMotionMsg:
-		y = mm.Mouse().Y
-	case tea.MouseReleaseMsg:
-		y = mm.Mouse().Y
-	default:
-		return false, nil
-	}
-
-	ml := m.activeMsgList()
-	if ml == nil {
-		return false, nil
-	}
-	paneLineMap := ml.PaneLineMap()
-	y2 := y - layout.ChatAreaTop
-	if y2 < 0 || y2 >= len(paneLineMap) {
-		return false, nil
-	}
-
-	info := paneLineMap[y2]
-	if info.PaneID == "" || info.LineIdx < 0 {
-		return false, nil
-	}
-
-	sp := m.PaneMgr.Get(info.PaneID)
-	if sp == nil || sp.Done {
-		return false, nil
-	}
-
-	if m.subPaneProjections.CanScrollCompact(sp.ID) {
-		if wheelUp {
-			m.subPaneProjections.ScrollCompactUp(sp.ID)
-			ml.InvalidateSubPane(sp.ID)
-			return true, nil
-		}
-		if wheelDown {
-			m.subPaneProjections.ScrollCompactDown(sp.ID)
-			ml.InvalidateSubPane(sp.ID)
-			return true, nil
-		}
-		return true, nil
-	}
-
-	proj := m.subPaneProjections.GetExisting(sp.ID)
-	if proj == nil {
-		return false, nil
-	}
-
-	if isWheel && !proj.msgList.CanScroll() {
-		return false, nil
-	}
-
-	_, cmd := proj.msgList.Update(msg)
-	return true, cmd
 }
 
 func (m *App) handleAgentTabClose(index int) tea.Cmd {

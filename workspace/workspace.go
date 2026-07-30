@@ -139,6 +139,10 @@ type Workspace struct {
 	// layer can persist them to config.json. Optional.
 	OnConfigSave func(cfg *session.Config) error
 
+	// OnAppSettingsSave mirrors visual/tooling settings into config.json for
+	// live hot-reload after workspace.db persistence. Optional.
+	OnAppSettingsSave func(s ttypes.AppSettings) error
+
 	// ── Shared state (references, not owned)
 	//
 	// These are references to objects shared with the TUI layer.
@@ -159,6 +163,12 @@ type Workspace struct {
 
 	// StartTime is when this workspace was created.
 	StartTime time.Time
+
+	// registryErr holds the most recent non-fatal workspace_sessions
+	// registry write failure (RegisterSession / SyncSessionMeta / CloseSession).
+	// Cleared on the next successful registry write. Session create/resume
+	// must not fail because of this — it is surfaced for logging/UI only.
+	registryErr error
 }
 
 // SetEventBus connects workspace services to the workspace-to-frontend event path.
@@ -223,6 +233,12 @@ func NewWorkspace(
 		Username:        username,
 		StartTime:       time.Now(),
 	}
+
+	// Self-heal the session registry from on-disk session DBs. Runs on
+	// workspace open (not the launcher workspace-list path, which is
+	// deliberately read-only and time-bounded). Typical session counts are
+	// small; each DB is opened read-only and corrupt files are skipped.
+	_ = ws.BackfillSessionRegistry()
 
 	return ws
 }
@@ -290,15 +306,74 @@ func (w *Workspace) CloseAllSessions() {
 		if fs != nil && fs.backend != nil {
 			fs.backend.Close()
 		}
-		if w.WorkspaceDB != nil && fs != nil && fs.SessionID != "" {
-			_ = w.WorkspaceDB.SyncSessionMeta(w.RootPath, fs.SessionID)
-			_ = w.WorkspaceDB.CloseSession(fs.SessionID)
+		if fs != nil && fs.SessionID != "" {
+			w.persistSessionRegistry(fs)
 		}
 	}
 	w.Sessions = w.Sessions[:0]
 	w.SessionsByID = make(map[string]*Session)
 	w.SessionsByAgent = make(map[string]*Session)
 	w.ActiveSession = nil
+}
+
+// LastRegistryError returns the most recent non-fatal session-registry write
+// failure, or nil. Callers may surface it in the status bar; it must not abort
+// session creation or agent teardown.
+func (w *Workspace) LastRegistryError() error {
+	if w == nil {
+		return nil
+	}
+	return w.registryErr
+}
+
+// noteRegistryErr records and logs a non-fatal registry persistence failure.
+func (w *Workspace) noteRegistryErr(op string, err error) {
+	if err == nil {
+		w.registryErr = nil
+		return
+	}
+	w.registryErr = err
+	if w.Logger != nil {
+		w.Logger.Error("WORKSPACE", op, "error", err.Error())
+	}
+}
+
+// persistSessionRegistry ensures the session is listed in workspace_sessions
+// with up-to-date metadata and a closed_at stamp. Reuses RegisterSession,
+// SyncSessionMeta / syncSessionMetaFromDB, and CloseSession. Never deletes the
+// session DB. Safe to call when the session was never registered (legacy).
+func (w *Workspace) persistSessionRegistry(fs *Session) {
+	if w == nil || w.WorkspaceDB == nil || fs == nil || fs.SessionID == "" {
+		return
+	}
+	model, provider := "", ""
+	if fs.backend != nil {
+		model = fs.backend.ModelName()
+		if cfg := fs.backend.Config(); cfg != nil {
+			provider = cfg.EffectiveProviderID()
+		}
+	}
+	projectName := filepath.Base(w.RootPath)
+	if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, provider); err != nil {
+		w.noteRegistryErr("session_register_failed", err)
+		// Still attempt meta sync / close stamp — Register may have failed for
+		// an unrelated reason while the row already exists.
+	} else {
+		w.noteRegistryErr("", nil)
+	}
+	if fs.DB != nil {
+		if err := w.WorkspaceDB.syncSessionMetaFromDB(fs.DB, fs.SessionID); err != nil {
+			w.noteRegistryErr("session_sync_failed", err)
+			if err := w.WorkspaceDB.SyncSessionMeta(w.RootPath, fs.SessionID); err != nil {
+				w.noteRegistryErr("session_sync_failed", err)
+			}
+		}
+	} else if err := w.WorkspaceDB.SyncSessionMeta(w.RootPath, fs.SessionID); err != nil {
+		w.noteRegistryErr("session_sync_failed", err)
+	}
+	if err := w.WorkspaceDB.CloseSession(fs.SessionID); err != nil {
+		w.noteRegistryErr("session_close_registry_failed", err)
+	}
 }
 
 // ── File operation methods ──
@@ -400,6 +475,9 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.LSPMgr = NewLSPManager(w.Logger)
 	w.AgentMgr = NewAgentManager()
 	w.PaneMgr = NewPaneManager()
+
+	// Same self-heal as NewWorkspace when switching projects.
+	_ = w.BackfillSessionRegistry()
 
 	return nil
 }

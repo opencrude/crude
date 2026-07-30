@@ -21,10 +21,13 @@ import (
 	"os"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
 	"crude/tui"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 
@@ -106,6 +109,19 @@ func (a *App) Run() {
 		// Preserve visual app-level prefs already on FileConfig.
 		return SaveFileConfig(a.fc)
 	}
+	ws.OnAppSettingsSave = func(s ttypes.AppSettings) error {
+		theme := s.Theme
+		editor := s.Editor
+		lsp := s.LSP
+		ui := s.UI
+		font := s.Font
+		a.fc.Theme = &theme
+		a.fc.Editor = &editor
+		a.fc.LSP = &lsp
+		a.fc.UI = &ui
+		a.fc.Font = &font
+		return SaveFileConfig(a.fc)
+	}
 
 	// 3. Optional --resume: bootstrap that session now (launcher still available
 	//  for multi-session after the TUI starts).
@@ -123,6 +139,28 @@ func (a *App) Run() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		os.Exit(1)
+	}
+
+	// 4b. Live-reload config.json (theme preset) without restarting.
+	if stopWatch, watchErr := WatchConfig(func(msg tea.Msg) {
+		if t.Program != nil {
+			t.Program.Send(msg)
+		}
+	}); watchErr == nil {
+		prevQuit := t.OnQuit
+		t.OnQuit = func() {
+			stopWatch()
+			if prevQuit != nil {
+				prevQuit()
+			}
+		}
+	} else {
+		lg.Warn("APP", "config_watch_unavailable", "error", watchErr.Error())
+	}
+
+	// Seed theme from config.json when workspace settings have no preset yet.
+	if ws.LoadAppSettings().Theme.Preset == "" && a.fc.Theme != nil && a.fc.Theme.Preset != "" {
+		t.ApplyThemePreset(a.fc.Theme.Preset)
 	}
 
 	// 5. Store the EventSender on the workspace for orchestrator creation.

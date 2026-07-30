@@ -389,11 +389,16 @@ func (s *Screen) SetListScroll(offset int) {
 }
 
 func (s *Screen) rebuildItems() {
-	items := make([]Item, 0, 2+len(s.workspaces))
+	items := make([]Item, 0, 2+len(s.sessions)+len(s.workspaces))
 	items = append(items,
 		Item{Kind: ItemNewSession},
 		Item{Kind: ItemOpenFolder},
 	)
+	for i := range s.sessions {
+		ses := s.sessions[i]
+		sc := ses
+		items = append(items, Item{Kind: ItemSession, Session: &sc})
+	}
 	for i := range s.workspaces {
 		w := s.workspaces[i]
 		wc := w
@@ -407,13 +412,20 @@ func (s *Screen) rebuildItems() {
 	}
 	s.filtered = nil
 	for i, it := range s.items {
-		if it.Kind == ItemWorkspace && it.Workspace != nil && s.workspaceMatches(*it.Workspace, ft) {
-			s.filtered = append(s.filtered, i)
+		switch it.Kind {
+		case ItemSession:
+			if it.Session != nil && s.sessionMatches(*it.Session, ft) {
+				s.filtered = append(s.filtered, i)
+			}
+		case ItemWorkspace:
+			if it.Workspace != nil && s.workspaceMatches(*it.Workspace, ft) {
+				s.filtered = append(s.filtered, i)
+			}
 		}
 	}
 
 	s.selected = clampInt(s.selected, 0, len(s.items)-1)
-	if s.filterOn && !s.workspaceVisible(s.selected) {
+	if s.filterOn && !s.listItemVisible(s.selected) {
 		if len(s.filtered) > 0 {
 			s.selected = s.filtered[0]
 		}
@@ -422,13 +434,17 @@ func (s *Screen) rebuildItems() {
 	s.ensureSelectedVisible()
 }
 
-func (s *Screen) workspaceVisible(itemIdx int) bool {
+func (s *Screen) listItemVisible(itemIdx int) bool {
 	for _, i := range s.filtered {
 		if i == itemIdx {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Screen) workspaceVisible(itemIdx int) bool {
+	return s.listItemVisible(itemIdx)
 }
 
 func (s *Screen) selectableIndices() []int {
@@ -449,20 +465,20 @@ func (s *Screen) syncList() {
 		for _, idx := range s.filtered {
 			it := s.items[idx]
 			items = append(items, ui.VirtItem{
-				ID:      fmt.Sprintf("ws-%d", idx),
+				ID:      fmt.Sprintf("row-%d", idx),
 				Height:  1,
-				Label:   it.Workspace.Name,
+				Label:   s.itemListLabel(it),
 				Payload: idx,
 			})
 		}
 	} else {
-		items = make([]ui.VirtItem, 0, len(s.workspaces))
+		items = make([]ui.VirtItem, 0, maxInt(0, len(s.items)-2))
 		for i := 2; i < len(s.items); i++ {
 			it := s.items[i]
 			items = append(items, ui.VirtItem{
-				ID:      fmt.Sprintf("ws-%d", i),
+				ID:      fmt.Sprintf("row-%d", i),
 				Height:  1,
-				Label:   it.Workspace.Name,
+				Label:   s.itemListLabel(it),
 				Payload: i,
 			})
 		}
@@ -474,6 +490,20 @@ func (s *Screen) syncList() {
 	} else {
 		s.list.list.SelectIndex(0)
 	}
+}
+
+func (s *Screen) itemListLabel(it Item) string {
+	switch it.Kind {
+	case ItemSession:
+		if it.Session != nil {
+			return sessionRowTitle(*it.Session)
+		}
+	case ItemWorkspace:
+		if it.Workspace != nil {
+			return it.Workspace.Name
+		}
+	}
+	return ""
 }
 
 func (s *Screen) listCursorFromSelected() int {
@@ -597,7 +627,7 @@ func (s *Screen) activateSelected() tea.Cmd {
 	if it == nil {
 		return nil
 	}
-	if s.filterOn && !s.workspaceVisible(s.selected) {
+	if s.filterOn && !s.listItemVisible(s.selected) {
 		return nil
 	}
 	msg := ActivateMsg{Screen: s, Kind: it.Kind}
@@ -663,6 +693,41 @@ func (s *Screen) workspaceMatches(ws WorkspaceEntry, query string) bool {
 	}
 	return strings.Contains(strings.ToLower(ws.Name), query) ||
 		strings.Contains(strings.ToLower(ws.Path), query)
+}
+
+func (s *Screen) sessionMatches(ses sessiondb.SessionMeta, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	hay := strings.ToLower(sessionRowTitle(ses) + " " + ses.ProjectName + " " + ses.ProjectPath + " " + ses.Model + " " + ses.ID)
+	if ses.FirstPrompt.Valid {
+		hay += " " + strings.ToLower(ses.FirstPrompt.String)
+	}
+	if ses.LastPrompt.Valid {
+		hay += " " + strings.ToLower(ses.LastPrompt.String)
+	}
+	return strings.Contains(hay, query)
+}
+
+func sessionRowTitle(ses sessiondb.SessionMeta) string {
+	if ses.FirstPrompt.Valid {
+		if p := strings.TrimSpace(strings.ReplaceAll(ses.FirstPrompt.String, "\n", " ")); p != "" {
+			return p
+		}
+	}
+	if ses.LastPrompt.Valid {
+		if p := strings.TrimSpace(strings.ReplaceAll(ses.LastPrompt.String, "\n", " ")); p != "" {
+			return p
+		}
+	}
+	if ses.ProjectName != "" {
+		return ses.ProjectName
+	}
+	if ses.ID != "" {
+		return ses.ID
+	}
+	return "untitled session"
 }
 
 func (s *Screen) cardIndex(kind ItemKind) int {
@@ -812,11 +877,34 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	pane := s.workspacePane
 
 	count := len(s.filtered)
-	countLabel := fmt.Sprintf("%d workspaces", count)
-	if count == 1 {
-		countLabel = "1 workspace"
+	nSessions, nWorkspaces := 0, 0
+	for _, idx := range s.filtered {
+		if idx < 0 || idx >= len(s.items) {
+			continue
+		}
+		switch s.items[idx].Kind {
+		case ItemSession:
+			nSessions++
+		case ItemWorkspace:
+			nWorkspaces++
+		}
 	}
-	s.header.Set("Recent Workspaces", countLabel)
+	countLabel := fmt.Sprintf("%d items", count)
+	switch {
+	case nSessions > 0 && nWorkspaces > 0:
+		countLabel = fmt.Sprintf("%d sessions · %d workspaces", nSessions, nWorkspaces)
+	case nSessions > 0:
+		if nSessions == 1 {
+			countLabel = "1 session"
+		} else {
+			countLabel = fmt.Sprintf("%d sessions", nSessions)
+		}
+	case nWorkspaces == 1:
+		countLabel = "1 workspace"
+	case nWorkspaces > 1:
+		countLabel = fmt.Sprintf("%d workspaces", nWorkspaces)
+	}
+	s.header.Set("Recent", countLabel)
 	s.divider.Layout(ctx, ui.Rect{X: leftW, Y: bodyY, W: gap, H: bodyH})
 	s.header.Layout(ctx, pane.contentRect(bodyY, 1))
 	s.search.Layout(ctx, pane.bodyRect(bodyY+1, 1))
@@ -981,14 +1069,9 @@ func (c *actionCard) Semantics() ui.Semantics {
 }
 
 func (c *actionCard) pulseColor(frame int, c1, c2 cell.Color) cell.Color {
-	r1, g1, b1 := colorToUint8(c1)
-	r2, g2, b2 := colorToUint8(c2)
 	phase := float64(frame%3000) / 3000.0
 	t := 0.5 - 0.5*math.Cos(2*math.Pi*phase)
-	r := lerpUint8(r1, r2, t)
-	g := lerpUint8(g1, g2, t)
-	b := lerpUint8(b1, b2, t)
-	return cell.NewTrueColor(r, g, b)
+	return c1.Blend(c2, float32(t))
 }
 
 // shortcutList renders the Shortcuts header and key/label rows in the left column.
@@ -1180,10 +1263,10 @@ func (e *workspaceEmpty) Paint(buf *surface.CellBuffer, originX, originY int, _ 
 	if r.Empty() {
 		return
 	}
-	text := "No recent workspaces"
+	text := "No recent sessions or workspaces"
 	query := strings.TrimSpace(e.owner.search.field.Value())
 	if e.owner.filterOn && query != "" {
-		text = fmt.Sprintf("No workspaces match %q", query)
+		text = fmt.Sprintf("No sessions or workspaces match %q", query)
 	}
 	text = rendering.TruncateLine(text, maxInt(0, r.W))
 	tokens := e.owner.tokens
@@ -1389,7 +1472,10 @@ func (wl *workspaceList) realIndex(listIdx int) int {
 	return listIdx + 2
 }
 
-func (wl *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, state ui.ControlState, ctx ui.PaintContext, tokens *ui.TokenSet) {
+func (wl *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, state ui.ControlState, ctx ui.PaintContext, tokens *ui.TokenSet) {
+	if localRow != 0 {
+		return
+	}
 	selected := false
 	if payload, ok := item.Payload.(int); ok && payload == wl.owner.selected {
 		selected = true
@@ -1399,6 +1485,14 @@ func (wl *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, it
 	if selected || state == ui.StateHovered {
 		bg = tokens.Color(ui.ColorHover)
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
+	}
+
+	if payload, ok := item.Payload.(int); ok && payload >= 0 && payload < len(wl.owner.items) {
+		it := wl.owner.items[payload]
+		if it.Kind == ItemSession && it.Session != nil {
+			wl.paintSessionRow(buf, x, y, width, *it.Session, selected, bg, tokens)
+			return
+		}
 	}
 
 	ws := wl.workspaceFor(item)
@@ -1461,6 +1555,42 @@ func (wl *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, it
 	xpos = buf.WriteString(xpos, y, " ", nameFG, bg, 0)
 	xpos = buf.WriteString(xpos, y, displayName, nameFG, bg, cell.AttrBold)
 	xpos = buf.WriteString(xpos, y, path, pathFG, bg, 0)
+
+	leftW := xpos - x
+	gap := width - leftW - rendering.VisibleWidth(meta)
+	if gap < 1 {
+		gap = 1
+	}
+	xpos = buf.WriteString(xpos, y, strings.Repeat(" ", gap), nameFG, bg, 0)
+	buf.WriteString(xpos, y, meta, metaFG, bg, 0)
+}
+
+func (wl *workspaceList) paintSessionRow(buf *surface.CellBuffer, x, y, width int, ses sessiondb.SessionMeta, selected bool, bg cell.Color, tokens *ui.TokenSet) {
+	prefix := "  "
+	prefixFG := tokens.Color(ui.ColorFg)
+	if selected {
+		prefix = "❯ "
+		prefixFG = tokens.Color(ui.ColorAccent)
+	}
+	title := sessionRowTitle(ses)
+	meta := fmt.Sprintf("%d turns", ses.TurnCount)
+	if ses.Model != "" {
+		meta = meta + " · " + ses.Model
+	}
+
+	fixedW := 2 + 2 + rendering.VisibleWidth(meta) + 2
+	available := width - fixedW
+	if available < 4 {
+		available = 4
+	}
+	display := rendering.TruncateLine(title, available)
+	nameFG := tokens.Color(ui.ColorFg)
+	metaFG := tokens.Color(ui.ColorMuted)
+
+	xpos := x
+	xpos = buf.WriteString(xpos, y, prefix, prefixFG, bg, cell.AttrBold)
+	xpos = buf.WriteString(xpos, y, "💬 ", tokens.Color(ui.ColorAccent), bg, 0)
+	xpos = buf.WriteString(xpos, y, display, nameFG, bg, cell.AttrBold)
 
 	leftW := xpos - x
 	gap := width - leftW - rendering.VisibleWidth(meta)

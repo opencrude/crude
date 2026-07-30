@@ -14,19 +14,26 @@ func (m Model) View(width, chatAreaHeight int, settingsActive, confirmActive boo
 		return b.String()
 	}
 
-	// Render via the legacy ANSI View() bridge. The TextArea owns the
-	// engine; View returns the same ANSI string the legacy component did.
+	// ANSI bridge for tests/layout callers that still measure via View.
+	// Product paint uses PaintShell into the Host surface.
+	_ = chatAreaHeight
 	b.WriteString(m.input.View(width, spinFrame, m.thinking))
 
-	inputVal := m.input.Value()
-	showSlash := m.slashActive &&
-		strings.HasPrefix(inputVal, "/") && !strings.Contains(inputVal, " ") && !strings.Contains(inputVal, "\n")
-
-	if showSlash {
-		popupView := m.slashList.View(width)
-		if popupView != "" {
+	if m.showSlashPopup() {
+		for i, item := range m.slashList.Items() {
+			if i >= slashPageSize {
+				break
+			}
+			marker := "  "
+			if i == m.slashList.SelectedIndex() {
+				marker = "❯ "
+			}
+			line := marker + item.Label
+			if item.Detail != "" {
+				line += "  " + item.Detail
+			}
 			b.WriteByte('\n')
-			b.WriteString(popupView)
+			b.WriteString(line)
 		}
 	}
 

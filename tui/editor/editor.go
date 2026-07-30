@@ -12,8 +12,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"crude/tui/rendering"
-	"crude/tui/scrollbar"
 	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 type ActionType int
@@ -51,10 +51,16 @@ type Editor struct {
 	goalCol int
 	goalSet bool
 
-	viewW     int
-	viewH     int
-	scrollbar scrollbar.ScrollBar
-	sbTrackH  int
+	viewW int
+	viewH int
+	// scrollModel + sbCtrl are the shared scrollbar chrome (paint + mouse drag).
+	// Kept in sync with scrollY via syncScrollChrome.
+	scrollModel *ui.ScrollModel
+	sbCtrl      *ui.ScrollbarControl
+	tokens      *ui.TokenSet
+	// statusChrome, when true, reserves the bottom row for a document footline.
+	// The main shell keeps this false — status lives in shellstatus.
+	statusChrome bool
 
 	modified bool
 
@@ -153,13 +159,15 @@ func New(th *theme.Theme) *Editor {
 	e := &Editor{
 		th:            th,
 		buf:           NewPieceTable(),
-		scrollbar:     scrollbar.New(0),
+		scrollModel:   ui.NewScrollModel(),
+		tokens:        ui.NewTokenSet(th),
 		maxHistory:    500,
 		cursorVisible: true,
 		diagnostics:   make([]LSPDiagnostic, 0),
 		diagByLine:    make(map[int][]diagSpan),
 		search:        NewSearchState(),
 	}
+	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
 	e.ClearSelection()
 	return e
 }
@@ -202,7 +210,8 @@ func (e *Editor) Open(path string) error {
 	e.modified = false
 	e.changes = nil
 	e.changeIndex = 0
-	e.scrollbar = scrollbar.New(0)
+	e.scrollModel = ui.NewScrollModel()
+	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
 	e.open = true
 	e.cursorVisible = true
 	e.blinkActive = false
@@ -231,7 +240,8 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 	e.modified = false
 	e.changes = nil
 	e.changeIndex = 0
-	e.scrollbar = scrollbar.New(0)
+	e.scrollModel = ui.NewScrollModel()
+	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
 	e.open = true
 	e.cursorVisible = true
 	e.blinkActive = false
@@ -714,10 +724,7 @@ func (e *Editor) SetCursorPosition(line, col int) {
 // ScrollToCursor adjusts the scroll offsets so the cursor is visible. After
 // a SetCursorPosition this brings the line into view.
 func (e *Editor) ScrollToCursor() {
-	bodyH := e.viewH - 1 // reserve a row for the status line
-	if bodyH < 1 {
-		bodyH = 1
-	}
+	bodyH := e.bodyHeight()
 	if e.cursor.Line < e.scrollY {
 		e.scrollY = e.cursor.Line
 	} else if e.cursor.Line >= e.scrollY+bodyH {
@@ -728,6 +735,7 @@ func (e *Editor) ScrollToCursor() {
 	} else if e.cursor.Col >= e.scrollX+80 {
 		e.scrollX = e.cursor.Col - 80 + 1
 	}
+	e.syncScrollChrome(bodyH)
 	e.invalidateEditorCaches()
 }
 

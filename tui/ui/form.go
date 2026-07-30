@@ -31,6 +31,12 @@ func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *Tok
 func (f *Form) SetForm(model *FormModel, title, detail string) {
 	f.model, f.title, f.detail = model, title, detail
 	f.rebuild()
+	// Rebuild replaces fields with empty bounds. Re-layout into the current
+	// form rect so the next paint shows fields without waiting for a host
+	// InvalidateLayout (category switches often only mark paint dirty).
+	if !f.Bounds().Empty() {
+		f.Layout(LayoutContext{}, f.Bounds())
+	}
 }
 
 func (f *Form) SetTokens(tokens *TokenSet) {
@@ -152,7 +158,7 @@ func (f *Form) Handle(ctx EventContext, msg tea.Msg) EventResult {
 			}
 			return f.moveFocus(1)
 		}
-		if (key.Code == tea.KeyUp || key.Code == tea.KeyDown) && !field.SelectOpen() && field.FieldState().Type != FieldText && field.FieldState().Type != FieldPassword {
+		if (key.Code == tea.KeyUp || key.Code == tea.KeyDown) && !field.SelectOpen() {
 			if key.Code == tea.KeyUp {
 				return f.moveFocus(-1)
 			}

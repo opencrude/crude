@@ -311,8 +311,8 @@ func (m *App) resolveSessionConfirmation(target *confirmation.Screen, choice str
 			node.State.PendingPermTag = "always"
 		case "deny":
 			node.State.PendingPermTag = "denied"
-			if projected := m.subPaneProjections.GetExisting(agentID); projected != nil && projected.msgList != nil {
-				projected.msgList.SetToolPermTag(details.Tool, "", "denied")
+			if projected := m.subPaneProjections.GetExisting(agentID); projected != nil && projected.renderer != nil {
+				projected.renderer.SetToolPermTag(details.Tool, "", "denied")
 			}
 		}
 	}

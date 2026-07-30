@@ -130,6 +130,14 @@ func (t *TUI) SetReferences(refs []sessiondb.Reference) {
 	t.app.SetReferences(refs)
 }
 
+// ApplyThemePreset hot-applies a reference theme by preset name.
+func (t *TUI) ApplyThemePreset(preset string) {
+	if t == nil || t.app == nil || preset == "" {
+		return
+	}
+	t.app.ApplyThemePreset(preset)
+}
+
 func GetGlobal() *TUI {
 	return global
 }

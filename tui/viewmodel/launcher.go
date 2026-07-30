@@ -13,23 +13,37 @@ import (
 	"crude/workspace"
 )
 
-// launcherHelpView is rendered in the bottom-right status region while the
+// launcherHelpSegments is rendered in the bottom-right status region while the
 // launcher is open.
-func (m *App) launcherHelpView() string {
+func (m *App) launcherHelpSegments() []ui.HintSegment {
 	if m.launcherScreen == nil {
-		return ""
+		return nil
 	}
 	if m.launcherScreen.FilterActive() {
-		return "type search  ·  ↑↓ select  ·  enter open  ·  esc clear"
+		return []ui.HintSegment{
+			ui.TextSeg("type search"),
+			ui.ActionSeg("list.navigate"),
+			ui.ActionSeg("list.open"),
+			ui.ActionSeg("launcher.filter.clear"),
+		}
 	}
-	hint := ""
-	if m.actionRegistry != nil {
-		hint = m.actionRegistry.HintFor("palette.open")
+	segs := []ui.HintSegment{
+		ui.ActionSeg("list.navigate"),
+		ui.ActionSeg("list.open"),
+		ui.ActionSeg("launcher.filter"),
+		ui.ActionSeg("launcher.delete"),
 	}
-	if hint == "" {
-		hint = "Ctrl+Alt+P"
+	if m.actionRegistry != nil && m.actionRegistry.HintFor("palette.open") != "" {
+		segs = append(segs, ui.ActionSeg("palette.open"))
 	}
-	return "↑↓ navigate  ·  enter open  ·  / search  ·  d remove  ·  " + hint + " palette"
+	return segs
+}
+
+// launcherHelpView is flattened launcher help for tests.
+func (m *App) launcherHelpView() string {
+	h := ui.NewHint("launcher-help", m.actionRegistry, nil)
+	h.SetSegments(m.launcherHelpSegments())
+	return h.PlainText()
 }
 
 // launcherShortcuts returns the key/label rows shown in the left column.
@@ -122,6 +136,9 @@ func (m *App) launcherNewSession() tea.Cmd {
 	if result != nil {
 		m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
 	}
+	if err := m.LastRegistryError(); err != nil && m.StatusBar != nil {
+		m.StatusBar.SetError("Session created but registry update failed: " + err.Error())
+	}
 	return nil
 }
 
@@ -174,6 +191,9 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	}
 	m.startLSPForWorkspace()
 	m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
+	if err := m.LastRegistryError(); err != nil && m.StatusBar != nil {
+		m.StatusBar.SetError("Session resumed but registry update failed: " + err.Error())
+	}
 	if m.ActiveSession != nil {
 		if msgs := m.ActiveSession.TakeHydratedMessages(); len(msgs) > 0 {
 			if m.AgentMgr.ActiveID() != "" {

@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,6 +15,14 @@ import (
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/screens/launcher"
+	sessionpicker "crude/tui/screens/sessionpicker"
+	"crude/tui/screens/shellchat"
+	"crude/tui/screens/shelleditor"
+	"crude/tui/screens/shellheader"
+	"crude/tui/screens/shellinput"
+	"crude/tui/screens/shellstatus"
+	"crude/tui/screens/shelltabs"
+	"crude/tui/screens/shelltree"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -45,7 +52,7 @@ type App struct {
 	// services; these controls and render projections are owned by the host.
 	Theme               *theme.Theme
 	Input               input.Model
-	StatusBar           *widgets.StatusBar
+	StatusBar           *shellstatus.Screen
 	Win                 *window.Window
 	BufferMgr           *editor.BufferManager
 	Tree                *TreeState
@@ -64,7 +71,6 @@ type App struct {
 	SpinFrame           int
 	History             []string
 	LastSettings        ttypes.Settings
-	FormHint            string
 
 	// Display state (owned by viewmodel — tracks what's visible/active)
 	EditorState  *EditorState
@@ -91,8 +97,15 @@ type App struct {
 	mainSidebarSurf     *surface.Surface // file tree sidebar + divider
 	mainStatusbarSurf   *surface.Surface // status bar separator + content
 	mainHeaderSurf      *surface.Surface // header line + separator
+	mainTabBarSurf      *surface.Surface // main application tab bar + separator
 	mainSessionDeckSurf *surface.Surface // native per-session dock below messages
+	mainInputSurf       *surface.Surface // chat input shell (sep + chips + textarea + slash)
+	mainChatSurf        *surface.Surface // agent chat message list
+	mainEditorSurf      *surface.Surface // DocumentEditor shell (cell-buffer chrome)
 	sessionDeckRect     ui.Rect
+	inputRect           ui.Rect
+	chatRect            ui.Rect
+	editorRect          ui.Rect
 
 	actionRegistry     *ui.ActionRegistry
 	overlayHost        *ui.OverlayHost
@@ -100,14 +113,31 @@ type App struct {
 	sessionProjections *sessionProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
-	launcherScreen      *launcher.Screen
-	launcherHost        *ui.Host
-	mainLauncherSurf    *surface.Surface
-	commandPaletteModel *commandPaletteModel
-	findInFiles         *findinfiles.Screen
-	findInFilesRequest  uint64
-	findInFilesGen      int
-	providerPresets     []ttypes.ProviderPreset
+	headerScreen           *shellheader.Screen
+	headerHost             *ui.Host
+	tabScreen              *shelltabs.Screen
+	tabHost                *ui.Host
+	sidebarScreen          *shelltree.Screen
+	sidebarHost            *ui.Host
+	statusHost             *ui.Host
+	inputScreen            *shellinput.Screen
+	inputHost              *ui.Host
+	chatScreen             *shellchat.Screen
+	chatHost               *ui.Host
+	agentChatScroll        map[string]agentMainChatScrollSnapshot
+	chatScrollAgent        string
+	chatScrollNeedsRestore bool
+	editorScreen           *shelleditor.Screen
+	editorHost             *ui.Host
+	launcherScreen         *launcher.Screen
+	launcherHost           *ui.Host
+	mainLauncherSurf       *surface.Surface
+	sessionPicker          *sessionpicker.Screen
+	commandPaletteModel    *commandPaletteModel
+	findInFiles            *findinfiles.Screen
+	findInFilesRequest     uint64
+	findInFilesGen         int
+	providerPresets        []ttypes.ProviderPreset
 
 	OnQuit        func()
 	OnExitMessage func()
@@ -130,18 +160,29 @@ type (
 )
 
 func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
-	th := theme.DefaultDark()
+	th := theme.FromPreset(themePresetFromSettings(ws.LoadAppSettings()))
 	im := input.NewModel(th)
-	sb := widgets.NewStatusBar(th)
+	sb := shellstatus.New(th)
+	statusHost := ui.NewHost(th, sb)
+	headerScreen := shellheader.New(th)
+	headerHost := ui.NewHost(th, headerScreen)
+	tabScreen := shelltabs.New(th)
+	tabHost := ui.NewHost(th, tabScreen)
+	inputScreen := shellinput.New(th)
+	inputHost := ui.NewHost(th, inputScreen)
+	chatScreen := shellchat.New(th)
+	chatHost := ui.NewHost(th, chatScreen)
+	editorScreen := shelleditor.New(th)
+	editorHost := ui.NewHost(th, editorScreen)
 	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) {
 		if ws.Logger != nil {
 			ws.Logger.Warn(tag, msg, pairs...)
 		}
 	})
 	treeModel := filetree.NewFileTreeModel(ws.RootPath)
-	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())
-	treeRenderer.ApplyTheme(th)
-	tree := NewTreeState(treeModel, treeRenderer, th.Tree.Config.DefaultWidth)
+	tree := NewTreeState(treeModel, th.Tree.Config.DefaultWidth)
+	sidebarScreen := shelltree.New(th, treeModel)
+	sidebarHost := ui.NewHost(th, sidebarScreen)
 	bufferMgr := editor.NewBufferManager()
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
@@ -158,20 +199,32 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	sidebarSurf := surface.NewSurface("main-sidebar", th.Tree.Config.DefaultWidth, 1, cell.TransparentBlank())
 	statusbarSurf := surface.NewSurface("main-statusbar", 80, 1, cell.TransparentBlank())
 	headerSurf := surface.NewSurface("main-header", 80, 2, cell.TransparentBlank())
+	tabBarSurf := surface.NewSurface("main-tabbar", 80, 2, cell.TransparentBlank())
 	deckSurf := surface.NewSurface("session-deck", 80, 1, cell.TransparentBlank())
+	inputSurf := surface.NewSurface("main-input", 80, 4, cell.TransparentBlank())
+	chatSurf := surface.NewSurface("main-chat", 80, 24, cell.TransparentBlank())
+	editorSurf := surface.NewSurface("main-editor", 80, 24, cell.TransparentBlank())
 	launcherSurf := surface.NewSurface("main-launcher", 80, 24, cell.TransparentBlank())
 	comp.Root().AddChild(contentSurf)
 	comp.Root().AddChild(sidebarSurf)
 	comp.Root().AddChild(statusbarSurf)
 	comp.Root().AddChild(headerSurf)
+	comp.Root().AddChild(tabBarSurf)
 	comp.Root().AddChild(deckSurf)
+	comp.Root().AddChild(chatSurf)
+	comp.Root().AddChild(editorSurf)
+	comp.Root().AddChild(inputSurf)
 	comp.Root().AddChild(launcherSurf)
 	contentSurf.SetZOrder(0)
 	launcherSurf.SetZOrder(1)
+	chatSurf.SetZOrder(1)
+	editorSurf.SetZOrder(1)
 	deckSurf.SetZOrder(1)
+	inputSurf.SetZOrder(2)
 	sidebarSurf.SetZOrder(2)
 	statusbarSurf.SetZOrder(3)
 	headerSurf.SetZOrder(4)
+	tabBarSurf.SetZOrder(3)
 
 	edState := NewEditorState()
 	edState.Editor = editor.New(th)
@@ -204,6 +257,19 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		EditorState:         edState,
 		OverlayState:        NewOverlayState(),
 		LSPPopup:            NewLSPPopupState(),
+		headerScreen:        headerScreen,
+		headerHost:          headerHost,
+		tabScreen:           tabScreen,
+		tabHost:             tabHost,
+		sidebarScreen:       sidebarScreen,
+		sidebarHost:         sidebarHost,
+		statusHost:          statusHost,
+		inputScreen:         inputScreen,
+		inputHost:           inputHost,
+		chatScreen:          chatScreen,
+		chatHost:            chatHost,
+		editorScreen:        editorScreen,
+		editorHost:          editorHost,
 		launcherScreen:      launcherScreen,
 		launcherHost:        launcherHost,
 		mainLauncherSurf:    launcherSurf,
@@ -217,11 +283,16 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		mainSidebarSurf:     sidebarSurf,
 		mainStatusbarSurf:   statusbarSurf,
 		mainHeaderSurf:      headerSurf,
+		mainTabBarSurf:      tabBarSurf,
 		mainSessionDeckSurf: deckSurf,
+		mainInputSurf:       inputSurf,
+		mainChatSurf:        chatSurf,
+		mainEditorSurf:      editorSurf,
 		actionRegistry:      registry,
 		overlayHost:         overlay,
 		subPaneProjections:  subPaneProjections,
 		sessionProjections:  sessionProjections,
+		agentChatScroll:     make(map[string]agentMainChatScrollSnapshot),
 	}
 
 	app.registerOverlayHandlers()
@@ -237,9 +308,10 @@ func (m *App) SwitchProject(projectDir string) error {
 		return err
 	}
 	treeModel := filetree.NewFileTreeModel(m.RootPath)
-	treeRenderer := filetree.NewTreeRenderer(treeModel, treeModel.IconResolver())
-	treeRenderer.ApplyTheme(m.Theme)
-	m.Tree = NewTreeState(treeModel, treeRenderer, m.Theme.Tree.Config.DefaultWidth)
+	m.Tree = NewTreeState(treeModel, m.Theme.Tree.Config.DefaultWidth)
+	if m.sidebarScreen != nil {
+		m.sidebarScreen.SetModel(treeModel)
+	}
 	m.BufferMgr = editor.NewBufferManager()
 	m.EditorState = NewEditorState()
 	m.EditorState.Editor = editor.New(m.Theme)
@@ -323,28 +395,31 @@ func (m *App) Init() tea.Cmd {
 func (m *App) openTextOverlayWindow() {
 	m.overlayHost.Close(ui.OverlayTextOverlay)
 	p := m.activeSessionProjection()
-	if p == nil {
+	if p == nil || p.textOverlay == nil {
 		return
 	}
 
-	textBody := ui.NewANSIViewFunc(ui.NewID(ui.RootID, "textoverlay-body"), func(w, h int) string {
-		lines := p.textOverlay.ViewInner(w, h, m.SpinFrame)
-		return strings.Join(lines, "\n")
-	})
-	textWidget := ui.NewWindowFrameWidget(
+	title := p.textOverlay.Title()
+	if title == "" {
+		title = "Edit"
+	}
+	w, h := 72, 30
+	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "textoverlay-frame"),
 		ui.FrameWindow,
-		"Edit",
-		textBody,
+		title,
+		p.textOverlay,
 		nil,
 		true,
-		72,
-		30,
+		w,
+		h,
 	)
+	p.textOverlay.SetFocusHandler(frame.Focus)
+	p.textOverlay.FocusInput()
 
-	win := wm.NewFloatingWindow(string(ui.OverlayTextOverlay), "Edit", textWidget,
-		72, 30,
+	win := wm.NewFloatingWindow(string(ui.OverlayTextOverlay), title, frame,
+		w, h,
 		wm.WithMinSize(32, 8),
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
@@ -549,24 +624,23 @@ func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
 	}
 
 	p := m.activeSessionProjection()
-	if p == nil {
+	if p == nil || p.composer == nil {
 		return m, nil
 	}
 	p.composer.Open("")
-	body := ui.NewANSIViewFunc(ui.NewID(ui.RootID, "composer-body"), func(w, h int) string {
-		return p.composer.View(w, h)
-	})
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "composer-frame"),
 		ui.FrameWindow,
 		"Composer",
-		body,
+		p.composer,
 		nil,
 		true,
 		72,
 		24,
 	)
+	p.composer.SetFocusHandler(frame.Focus)
+	p.composer.FocusInput()
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayComposer), "Composer", frame,
 		72, 24,
@@ -657,6 +731,27 @@ func (m *App) registerOverlayHandlers() {
 		return m.forwardEventToWindowContent(fw, msg)
 	})
 	oh.RegisterHoverHandler(ui.OverlayFilePicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
+	})
+	oh.RegisterContentHandler(ui.OverlaySessionPicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.forwardEventToWindowContent(fw, msg)
+	})
+	oh.RegisterHoverHandler(ui.OverlaySessionPicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
+	})
+	oh.RegisterContentHandler(ui.OverlayComposer, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.forwardEventToWindowContent(fw, msg)
+	})
+	oh.RegisterHoverHandler(ui.OverlayComposer, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
+	})
+	oh.RegisterContentHandler(ui.OverlayTextOverlay, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.forwardEventToWindowContent(fw, msg)
+	})
+	oh.RegisterHoverHandler(ui.OverlayTextOverlay, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		x, y := fw.Position()
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})

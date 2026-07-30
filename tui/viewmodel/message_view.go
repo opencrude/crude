@@ -110,13 +110,13 @@ func (m *App) syncAgentMessages(agentID string, scroll bool) {
 	if proj == nil {
 		return
 	}
-	if node.State.Messages == nil || proj.msgList.SourceVersion() == node.State.Messages.Version() {
+	if node.State.Messages == nil || proj.renderer.SourceVersion() == node.State.Messages.Version() {
 		return
 	}
 	messages, version := chatMessagesFromConversation(node.State.Messages)
-	proj.msgList.SyncMessages(messages, version)
+	proj.renderer.SyncMessages(messages, version)
 	if scroll {
-		proj.msgList.ScrollToBottom()
+		proj.renderer.ScrollToBottom()
 	}
 }
 
@@ -129,13 +129,13 @@ func (m *App) syncPaneMessages(paneID string, scroll bool) {
 	if proj == nil {
 		return
 	}
-	if sp.Messages == nil || proj.msgList.SourceVersion() == sp.Messages.Version() {
+	if sp.Messages == nil || proj.renderer.SourceVersion() == sp.Messages.Version() {
 		return
 	}
 	messages, version := chatMessagesFromConversation(sp.Messages)
-	proj.msgList.SyncMessages(messages, version)
+	proj.renderer.SyncMessages(messages, version)
 	if scroll {
-		proj.msgList.ScrollToBottom()
+		proj.renderer.ScrollToBottom()
 	}
 }
 

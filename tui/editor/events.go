@@ -7,7 +7,6 @@ import (
 
 	"crude/clipboard"
 	"crude/tui/rendering"
-	"crude/tui/scrollbar"
 )
 
 type CursorBlinkMsg time.Time
@@ -58,6 +57,11 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		e.handleMouseClick(msg)
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseMotionMsg:
+		if e.IsScrollbarDragging() {
+			e.handleScrollbarEvent(msg, msg.Mouse().Y)
+			e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
+			return nil
+		}
 		if e.selecting {
 			pos, ok := e.mouseToPosition(msg.Mouse().X, msg.Mouse().Y)
 			if ok {
@@ -65,19 +69,9 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			}
 		}
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
-		sb, cmd := e.scrollbar.Update(msg)
-		e.scrollbar = sb
-		if cmd != nil && sb.GetScrollY() != e.scrollY {
-			e.scrollY = sb.GetScrollY()
-		}
 	case tea.MouseReleaseMsg:
-		sb, cmd := e.scrollbar.Update(msg)
-		e.scrollbar = sb
-		if sb.GetScrollY() != e.scrollY {
-			e.scrollY = sb.GetScrollY()
-		}
-		if cmd != nil {
-			return cmd
+		if e.handleScrollbarEvent(msg, msg.Mouse().Y) {
+			return nil
 		}
 		if e.selecting {
 			e.selecting = false
@@ -94,10 +88,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 
 func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
 	scrollLines := 3
-	bodyH := e.viewH
-	if bodyH < 1 {
-		bodyH = 1
-	}
+	bodyH := e.bodyHeight()
 	switch msg.Button {
 	case tea.MouseWheelUp:
 		e.scrollY -= scrollLines
@@ -114,14 +105,12 @@ func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
 			e.scrollY = maxScroll
 		}
 	}
-	lc := e.buf.LineCount()
-	e.scrollbar.SetTrackHeight(bodyH)
-	e.scrollbar.SetScrollInfo(lc, bodyH, e.scrollY)
+	e.syncScrollChrome(bodyH)
 }
 
 func (e *Editor) mouseToPosition(mouseX, mouseY int) (Position, bool) {
 	sw := e.gutterWidth()
-	sbW := scrollbar.ScrollbarWidth
+	sbW := e.scrollbarColWidth()
 	textW := e.viewW - sw - sbW
 	if textW < 1 {
 		textW = 1
@@ -155,7 +144,7 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 	e.clearGoal()
 	mouse := msg.Mouse()
 	sw := e.gutterWidth()
-	sbW := scrollbar.ScrollbarWidth
+	sbW := e.scrollbarColWidth()
 	textW := e.viewW - sw - sbW
 	if textW < 1 {
 		textW = 1
@@ -163,13 +152,7 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 
 	sbX := sw + textW
 	if mouse.X >= sbX {
-		sb, cmd := e.scrollbar.Update(msg)
-		e.scrollbar = sb
-		if cmd != nil {
-			if sb.GetScrollY() != e.scrollY {
-				e.scrollY = sb.GetScrollY()
-			}
-		}
+		e.handleScrollbarEvent(msg, mouse.Y)
 		return
 	}
 

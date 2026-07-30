@@ -5,10 +5,10 @@ The canonical TUI component-system and design-language migration plan is
 
 **Component-system progress (2026-07-16):**
 - Phase 0 evidence freeze + `scripts/tui_design_audit.sh` ✅
-- Phase 1 foundation tests (`cell`, `surface`, `compositor`, `scrollbar`) ✅
+- Phase 1 foundation tests (`cell`, `surface`, `compositor`, `ui`) ✅
 - Phase 2 host + first controls (`tui/ui/`) ✅ — Host, TokenSet, TextEdit/TextField, List, Selection/Scroll
 - Phase 3/6/7 partial (tokens, text engine, list models) 🔄
-- Run: `./scripts/tui_design_audit.sh && go test -race ./tui/cell/ ./tui/surface/ ./tui/compositor/ ./tui/scrollbar/ ./tui/ui/`
+- Run: `./scripts/tui_design_audit.sh && go test -race ./tui/cell/ ./tui/surface/ ./tui/compositor/ ./tui/ui/`
 
 ## Architecture: Three Layers
 

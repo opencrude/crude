@@ -5,14 +5,17 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/surface"
+	"crude/tui/theme"
 )
 
 // ScrollbarControl paints a 1-column vertical scrollbar from a ScrollModel.
 // This is the single scrollbar paint path for ui collections.
 type ScrollbarControl struct {
 	Base
-	scroll *ScrollModel
-	tokens *TokenSet
+	scroll      *ScrollModel
+	tokens      *TokenSet
+	dragging    bool
+	dragOffsetY int
 }
 
 // NewScrollbarControl creates a scrollbar bound to scroll.
@@ -38,24 +41,37 @@ func (s *ScrollbarControl) Measure(_ LayoutContext, cs Constraints) Size {
 // Layout stores bounds and syncs viewport height to track height.
 func (s *ScrollbarControl) Layout(_ LayoutContext, r Rect) {
 	s.SetBounds(r)
-	if s.scroll != nil && r.H > 0 {
-		// Viewport for content is managed by the list; track height is r.H.
-	}
+	_ = s.scroll
+	_ = r.H // viewport height is owned by the list; track uses Layout bounds
 }
 
 // Paint draws track and thumb.
 func (s *ScrollbarControl) Paint(buf *surface.CellBuffer, originX, originY int, _ PaintContext) {
 	r := s.Bounds()
-	if r.Empty() || s.scroll == nil || s.scroll.MaxOffset() <= 0 {
+	if r.Empty() || s.scroll == nil {
 		return
 	}
-	trackFG := cell.NewTrueColor(48, 48, 48)
-	thumbFG := cell.NewTrueColor(118, 118, 118)
+	bg := cell.NoColor
+	trackFG := cell.NoColor
+	thumbFG := cell.NoColor
 	if s.tokens != nil {
+		bg = s.tokens.Color(ColorBg)
 		trackFG = s.tokens.Color(ColorBorder)
 		thumbFG = s.tokens.Color(ColorMuted)
+	} else {
+		fallback := NewTokenSet(theme.DefaultDark())
+		bg = fallback.Color(ColorBg)
+		trackFG = fallback.Color(ColorBorder)
+		thumbFG = fallback.Color(ColorMuted)
 	}
 	ox, oy := originX+r.X, originY+r.Y
+	if s.scroll.MaxOffset() <= 0 {
+		// Still fill the gutter so it doesn't show through as a light strip.
+		if !bg.IsDefault() {
+			FillRect(buf, 0, 0, Rect{X: ox, Y: oy, W: r.W, H: r.H}, cell.BlankCell(bg))
+		}
+		return
+	}
 	top, th := s.scroll.ThumbBounds(r.H)
 	for y := 0; y < r.H; y++ {
 		ch := '░'
@@ -64,18 +80,40 @@ func (s *ScrollbarControl) Paint(buf *surface.CellBuffer, originX, originY int, 
 			ch = '█'
 			fg = thumbFG
 		}
-		buf.Set(ox, oy+y, cell.NewCell(ch, fg, cell.NoColor, 0))
+		buf.Set(ox, oy+y, cell.NewCell(ch, fg, bg, 0))
 	}
 }
 
-// Handle maps click Y on the track to scroll position.
+// IsDragging reports whether the thumb is being dragged.
+func (s *ScrollbarControl) IsDragging() bool { return s.dragging }
+
+// CancelPointerCapture ends an in-progress thumb drag without applying scroll.
+func (s *ScrollbarControl) CancelPointerCapture() {
+	s.dragging = false
+	s.dragOffsetY = 0
+}
+
+// Handle maps click/drag on the track to scroll position.
 func (s *ScrollbarControl) Handle(ctx EventContext, msg tea.Msg) EventResult {
 	switch m := msg.(type) {
 	case tea.MouseClickMsg:
 		if m.Button != tea.MouseLeft || s.scroll == nil || s.scroll.MaxOffset() <= 0 {
 			return EventResult{}
 		}
-		s.ScrollToLocalY(ctx.LocalY)
+		s.beginDrag(ctx.LocalY)
+		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+	case tea.MouseMotionMsg:
+		if !s.dragging || s.scroll == nil {
+			return EventResult{}
+		}
+		s.dragToLocalY(ctx.LocalY)
+		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+	case tea.MouseReleaseMsg:
+		if !s.dragging {
+			return EventResult{}
+		}
+		s.dragging = false
+		s.dragOffsetY = 0
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	case tea.MouseWheelMsg:
 		if s.scroll == nil {
@@ -89,6 +127,52 @@ func (s *ScrollbarControl) Handle(ctx EventContext, msg tea.Msg) EventResult {
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	}
 	return EventResult{}
+}
+
+func (s *ScrollbarControl) beginDrag(localY int) {
+	r := s.Bounds()
+	if s.scroll == nil || r.H <= 0 || s.scroll.MaxOffset() <= 0 {
+		return
+	}
+	top, th := s.scroll.ThumbBounds(r.H)
+	if localY >= top && localY < top+th {
+		s.dragging = true
+		s.dragOffsetY = localY - top
+		return
+	}
+	s.ScrollToLocalY(localY)
+	top, _ = s.scroll.ThumbBounds(r.H)
+	s.dragging = true
+	s.dragOffsetY = localY - top
+	if s.dragOffsetY < 0 {
+		s.dragOffsetY = 0
+	}
+}
+
+func (s *ScrollbarControl) dragToLocalY(localY int) {
+	if s.scroll == nil {
+		return
+	}
+	r := s.Bounds()
+	maxOff := s.scroll.MaxOffset()
+	if maxOff <= 0 || r.H <= 0 {
+		return
+	}
+	_, th := s.scroll.ThumbBounds(r.H)
+	adjustedY := localY - s.dragOffsetY
+	if adjustedY < 0 {
+		adjustedY = 0
+	}
+	available := r.H - th
+	if available <= 0 {
+		s.scroll.ScrollTo(0)
+		return
+	}
+	if adjustedY > available {
+		adjustedY = available
+	}
+	off := adjustedY * maxOff / available
+	s.scroll.ScrollTo(off)
 }
 
 // ScrollToLocalY maps a local Y on the track to a content scroll offset.

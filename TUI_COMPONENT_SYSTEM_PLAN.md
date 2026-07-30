@@ -1,8 +1,8 @@
 # TUI Component System and Design Language Plan
 
-Status: Implementation in progress — aligned to this document as of 2026-07-21
+Status: Implementation in progress — Phase 12 structured migrations complete as of 2026-07-29
 
-Date: 2026-07-21 (progress reconciled after native per-session Panel Deck and all blocking-form cutovers)
+Date: 2026-07-29 (progress reconciled after native composer + text overlay cutovers)
 
 Scope: The complete `tui/` layer and every program boundary that supplies data to,
 or receives actions from, the TUI.
@@ -29,31 +29,29 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 0 Evidence freeze | DONE | Docs + audit + manifest; canonical dark/light visual baselines at 80x24 through 200x50; checked-in render/allocation/interaction benchmarks with recorded numeric targets |
 | 1 Rendering foundations | DONE | cell/surface/compositor/scrollbar tests + benches |
 | 2 Component host | DONE | `tui/ui` Host + controls; not yet wired as viewmodel root |
-| 3 Theme engine | PARTIAL | TokenSet + state precedence; dark/light themes; two-theme state gallery + runtime switch; no HC/hot reload |
+| 3 Theme engine | DONE | TokenSet + state precedence; dark/light/high-contrast themes; glyph/spacing/typography/metric token tables; ColorVersion vs MetricVersion; gallery + runtime switch; config.json hot-reload |
 | 4 Layout / hit tree | PARTIAL | Constraints, Stack, Host layout/hit; native PanelDeck is measured below messages and shares Host geometry for paint/input; no Flex/Grid/Split/Viewport |
 | 5 Focus / actions / keymaps | PARTIAL | Host action bubbling replaces shared-form callbacks; ActionBar owns typed quick-key/Escape actions; keyboard dispatch wired to registry.MatchGlobal; palette/launcher/status hints derive from registry; editor context dispatch uses registry.MatchContext; per-session PanelDeck has one Host input/focus path |
-| 6 Input engine | PARTIAL | TextEdit + RenderFilterLine on palette/launcher/settings/list/FIF; file/workspace picker and tree prompt use native TextField paint |
-| 7 Collections / scrollbar | PARTIAL | List (header/sep/disabled), VirtualList, ScrollModel, ScrollbarControl + ANSI bridge |
-| 8 Form system | PARTIAL | FormModel, FieldState, retained Form/FormField (text/select/multi-select/cycle/toggle/nav/separator), and ActionBar with variants/quick keys; workspace settings, session settings, questions, tool confirmation, YOLO, and background-job details are native consumers; legacy form shells remain elsewhere |
-| 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint deleted; OverlayHost owns all product popup lifecycle; reveal-only PopupChrome bridge remains |
+| 6 Input engine | PARTIAL | TextEdit on palette/launcher/settings/FIF; file/workspace picker and tree prompt use native TextField paint |
+| 7 Collections / scrollbar | PARTIAL | List, VirtualList, ScrollModel, ScrollbarControl; Phase 13.7/14 deleted `tui/scrollbar`; nested subpane gutters native in shellchat |
+| 8 Form system | PARTIAL | FormModel, FieldState, retained Form/FormField (text/select/multi-select/cycle/toggle/nav/separator), and ActionBar with variants/quick keys; workspace settings, session settings, questions, tool confirmation, YOLO, and background-job details are native consumers; remaining gaps are root Host wiring and non-form ANSI paint bridges |
+| 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint and PopupChrome deleted; OverlayHost owns all product popup lifecycle; WindowFrame reveal animation pending (ContextMenuLines/Reveal implementation deleted) |
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
-| 12 Structured migrations | PARTIAL | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, and Find in Files bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy `App.Overlay` tabs, global async rows, picker widget, and FIF legacy widget are deleted; composer, text overlay, and launcher pending |
-| 13 Shell migrations | OPEN | |
-| 14 Deletion | OPEN | Dual systems still present by design |
-| 15 Stabilization | OPEN | |
+| 12 Structured migrations | DONE | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, Find in Files, composer, text overlay, and launcher bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy overlay tabs, global async rows, and migrated legacy widgets deleted |
+| 13 Shell migrations | PARTIAL | Header/status/hints/tabs/tree/chat input/session picker/message list/editor chrome native; compact subpane headers/tools native (`PaintLine`); thinking subpane MessageList body + main chatprojection render still ANSI; open: root Host/compositor wiring, `contentDirty` cache removal |
+| 14 Deletion | PARTIAL | `tui/scrollbar` + ANSI nested gutter strings deleted; chat/subpane dual scroll models closed |
+| 15 Stabilization | IN PROGRESS | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests |
 
 ### Intentional bridges (not drift — temporary)
 
 These are allowed only as shrinking adapters listed in `bypass_manifest.json`:
 
-- `ui.RenderFilterLine` — ANSI paint for legacy `View()` paths using TextEdit.
-- `ui.ScrollbarCellANSI` — ANSI thumb/track from ScrollModel for legacy lists.
 - `ui.ComponentWidget` / `ui.WindowFrameWidget` — mount Component trees and unified chrome inside existing FloatingWindow.
-- `ui.LegacyWidget` / `ANSIViewFunc` — old widget → Component adapters.
+- ~~`ui.LegacyWidget` / `ANSIViewFunc`~~ — **DELETED** (Phase 14); temporary widget→Component adapters removed; tests use native fixtures.
 - Flat `tui/ui/` package (plan target subdirs deferred until APIs stabilize).
 
-**Not done yet (do not claim as complete):** high-contrast/hot-reloaded themes; PopupChrome deletion (reveal animation consumers remain); full TextField surface paint everywhere.
+**Not done yet (do not claim as complete):** WindowFrame reveal animation (ContextMenuLines/Reveal deleted; reveal tests pending); full TextField surface paint everywhere; product controls still gradually consuming Glyph/Metrics tokens; root Host as viewmodel compositor root; `contentDirty` subtree invalidation; bypass allowlist enforcement (hex still in `theme/` + `diffview/`).
 
 ## 1. Objective
 
@@ -144,12 +142,12 @@ No migration phase may claim completeness without accounting for every surface b
 
 | Surface | Current primary files |
 |---------|-----------------------|
-| Header | `tui/widgets/header.go`, `tui/viewmodel/view.go` |
-| File-tree sidebar | `tui/filetree/`, `tui/viewmodel/view.go` |
+| Header | `tui/screens/shellheader/`, `tui/viewmodel/view.go` |
+| File-tree sidebar | `tui/screens/shelltree/`, `tui/filetree/`, `tui/viewmodel/view.go` |
 | Sidebar divider and resize handle | `tui/viewmodel/mouse.go` |
-| Main tab bar | `tui/window/window.go`, `tui/viewmodel/view.go` |
+| Main tab bar | `tui/screens/shelltabs/`, `tui/window/window.go`, `tui/viewmodel/view.go` |
 | Legacy inline overlay tab bar | deleted after Question/Confirmation/YOLO PanelDeck cutover |
-| Status bar | `tui/widgets/statusbar.go`, `tui/viewmodel/view.go` |
+| Status bar | `tui/screens/shellstatus/`, `tui/viewmodel/view.go` |
 | Contextual shortcut help | `tui/viewmodel/view.go`, feature `Hint()` methods |
 | Main content compositor surface | `tui/viewmodel/view.go` |
 
@@ -157,12 +155,12 @@ No migration phase may claim completeness without accounting for every surface b
 
 | Surface | Current primary files |
 |---------|-----------------------|
-| Welcome launcher | `tui/widgets/launcher.go`, `tui/viewmodel/launcher.go` |
-| Editor | `tui/editor/`, `tui/viewmodel/editor_tabs.go` |
-| Agent chat | `tui/widgets/messagelist.go`, `tui/widgets/chatmessage.go` |
-| Chat input | `tui/input/`, `tui/components/text.go` |
-| Agent and thinking subpanes | `workspace/subpane.go`, `tui/widgets/messagelist.go` |
-| Session picker | `tui/widgets/sessionpicker.go` |
+| Welcome launcher | `tui/screens/launcher/`, `tui/viewmodel/launcher.go` |
+| Editor | `tui/screens/shelleditor/`, `tui/editor/`, `tui/viewmodel/editor_tabs.go` |
+| Agent chat | `tui/screens/shellchat/`, `tui/chatprojection/` |
+| Chat input | `tui/screens/shellinput/`, `tui/input/`, `tui/ui/text_area.go` |
+| Agent and thinking subpanes | `workspace/subpane.go`, `tui/chatprojection/`, `tui/screens/shellchat/compose.go` |
+| Session picker | `tui/screens/sessionpicker/`, `tui/viewmodel/session_picker.go` |
 | Background command details | `tui/screens/backgroundjobs/background_jobs.go`, `tui/viewmodel/session_deck.go` |
 | Reference chips | `tui/input/references.go`, `tui/viewmodel/view.go` |
 
@@ -175,8 +173,8 @@ No migration phase may claim completeness without accounting for every surface b
 | Find and replace | `tui/widgets/findreplace.go`, `tui/viewmodel/findreplace_handler.go` |
 | Workspace settings | `tui/settings/settings.go`, `tui/widgets/workspace_settings.go` |
 | File picker and workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` |
-| Composer | `tui/widgets/composer.go` |
-| Text/reference editor | `tui/widgets/textoverlay.go` |
+| Composer | `tui/screens/composer` |
+| Text/reference editor | `tui/screens/textoverlay` |
 | Context menu | `tui/widgets/contextmenu.go`, context-menu builders |
 | Dirty-close prompt | `tui/viewmodel/dirty_prompt.go` |
 | Tree create/rename prompt | `tui/widgets/textprompt.go`, tree operations |
@@ -212,9 +210,9 @@ component or is rendered by one.
 
 ### 5.1 Text and search
 
-The mature input implementation is currently `components.TextInput` in
-`tui/components/text.go`, but several surfaces bypass it or reimplement its paint
-path.
+The mature input implementation is `ui.TextEdit` / `ui.TextField` / `ui.TextArea`
+in `tui/ui/`. Legacy `components.TextInput` (`tui/components/text.go`) is **deleted**;
+remaining surfaces may still use ANSI `View()` bridges until paint cutover completes.
 
 Current categories include:
 
@@ -266,13 +264,13 @@ compose those models instead of reproducing them.
 
 The original TUI had:
 
-- `widgets.PopupChromeLines` and related helpers.
+- `widgets.PopupChromeLines` and related helpers (**deleted**).
 - WM decoration in `tui/wm/decoration.go` (deleted after WindowFrame cutover).
 - Hand-drawn borders in feature code.
 
 They disagreed on title placement, close buttons, background, inner padding, footer
-space, content bounds, and hit testing. Product windows now use `WindowFrame`; the
-remaining PopupChrome code is a shrinking reveal-animation bridge.
+space, content bounds, and hit testing. Product windows now use `WindowFrame` only;
+remaining work is WindowFrame reveal animation (ContextMenuLines/Reveal implementation deleted).
 
 ### 5.4 Visual styling
 
@@ -413,10 +411,10 @@ Existing packages are migration sources:
 | Existing package | Target disposition |
 |------------------|--------------------|
 | `tui/widget` | Replaced by `tui/ui` host contracts |
-| `tui/components` | Split into `control`, `collection`, and passive paint primitives |
+| `tui/components` | **DELETED** — spinner/cursor primitives moved to `tui/ui/spinner.go`; List/ButtonGroup/Dialog removed |
 | `tui/form` | Replaced by `tui/ui/form` |
 | `tui/scrollbar` | Replaced by collection viewport/scrollbar controls |
-| `tui/virtlist` | Retained algorithms moved behind collection APIs |
+| `tui/virtlist` | Legacy package (unreferenced); shellchat + collections use `tui/ui` VirtualList; chatprojection uses internal `item_list` |
 | `tui/widgets` | Reusable parts move to UI packages; features move to `screens` |
 | `tui/window` | Tab state and rendering move to a standard Tabs control |
 | `tui/wm` | Window placement and z-order retained; chrome and content use UI components |
@@ -983,7 +981,7 @@ Landed:
 - `Label`, `Button`, `Stack`, `TextField`, `List`
 - `TextEdit` grapheme/rune-safe shared editing model
 - `SelectionModel`, `ScrollModel` shared collection models
-- `LegacyWidget` + `ANSIViewFunc` temporary adapters
+- ~~`LegacyWidget` + `ANSIViewFunc` temporary adapters~~ **DELETED** (Phase 14)
 - Tests: unit + integration (`go test -race ./tui/ui/`)
 - `DemoGallery` non-product Host composition smoke test
 
@@ -1011,23 +1009,23 @@ Exit criteria:
 - Invalidating one leaf does not repaint unrelated siblings.
 - Resize and theme-version changes invalidate the correct scopes.
 
-### Phase 3: Theme engine and design specification 🔄 PARTIAL
+### Phase 3: Theme engine and design specification ✅ DONE
 
-Landed early:
+Landed:
 - `TokenSet` with semantic roles and `ButtonColors` / `InputColors` / `ListRowColors`
 - `ResolveControlState` precedence (disabled > focused > selected > pressed > hovered)
-- Host `SetTheme` rebuilds tokens and invalidates
-- **State gallery** (`tui/ui/demo.go`): all controls (TextField, Button, List,
-  Label, WindowFrame dialog/popover/window) rendered in all visual states
-  (default, focused, placeholder, disabled, selected, accent, muted, error,
-  success) at 80x30 under dark and light themes.
-- Complete light reference palette using the same semantic-style factory as dark
-- Runtime Host theme switch rebuilds component tokens without losing input state
+- Host `SetTheme` rebuilds tokens; layout invalidates only when MetricVersion changes
+- **State gallery** (`tui/ui/demo.go`): all controls rendered under dark, light, and
+  high-contrast themes; runtime switches preserve input state
+- Complete light and high-contrast reference palettes via the shared `newTheme` factory
+- Glyph, Spacing, Typography, and Metrics token tables on `theme.Theme` with
+  TokenSet accessors
+- `theme.FromPreset` / `ui.ThemeFromPreset` for dark/light/high-contrast
+- Live `config.json` hot-reload via fsnotify → `ConfigReloadedMsg` → ApplyThemePreset
+- Workspace settings save mirrors visual prefs into config.json for reload
 
-Remaining:
-- High-contrast reference theme
-- Glyph/spacing/typography token tables
-- Live config hot-reload
+Remaining residual (non-blocking):
+- Gradual product cutover of hardcoded glyphs onto Glyph tokens (Phase 13 surfaces)
 
 Objectives:
 
@@ -1128,15 +1126,14 @@ Landed:
 - `TextEdit` (rune-safe cursor, selection, word motion, line ops, paste filter)
 - `TextField` (prompt, placeholder, password, read-only, disabled, submit action, mouse cursor, horizontal viewport)
 - `SearchField` (TextField editing with shared debounce identity)
-- Inverse/block cursor paint path (TextField surface + `RenderFilterLine` ANSI bridge)
+- Inverse/block cursor paint path (TextField surface + `ui/spinner.go` block cursor helpers)
 - `HandleTextEditKey` / `HandleFilterKey` shared key routers
 - **Engine cutover (keys + value):** palette, launcher, settings search, file picker,
-  `components.List` filter, form `TextItem`, tree prompt, Find in Files query
+  tree prompt, Find in Files query
 
 Remaining:
-- TextArea multiline, FilterField collection link
+- FilterField collection link
 - Paint cutover: many filters still use ANSI bridges / ad-hoc View paint, not TextField.Paint
-- Chat input / composer / find-replace still `components.TextInput`
 - File tree model `filter string` still open
 - Delete ANSI filter bridge and hand-rolled editors
 
@@ -1166,13 +1163,14 @@ Landed:
 - `ScrollModel` (offset, ensure-visible, thumb bounds)
 - `List` (keyboard, mouse click, hover, wheel, activate action)
 - `VirtualList` (variable-height foundation)
-- `ScrollbarControl` (cell paint from ScrollModel)
-- `ScrollbarCellANSI` bridge; **launcher + Find in Files** no longer use bespoke `┃` glyphs
+- `ScrollbarControl` (cell paint from ScrollModel); `ui.ScrollbarCellANSI` and `tui/ui/scrollbar_ansi.go` **deleted**
+- **launcher + Find in Files** no longer use bespoke `┃` glyphs
 
 Remaining:
 - Tree, Table, Menu, Tabs collection controls
-- Product lists still mostly custom (palette, message list, file tree, etc.)
-- Delete ANSI scrollbar bridge when all consumers use ScrollbarControl
+- ~~Tree~~ ✅ `ui.Tree` + file-tree row painter landed (Phase 13 item 4)
+- Dual chat/subpane scrollbar paths still open (shellchat native ScrollbarControl + projection export seams)
+- Delete remaining ANSI scrollbar bridges when all consumers use ScrollbarControl
 
 Objectives:
 
@@ -1202,12 +1200,12 @@ Landed early:
   and ActionBar used by blocking per-session agent questions
 
 Remaining:
-- Migrate confirmation, YOLO, and other structured surfaces off their legacy form shells
+- Root Host/compositor wiring for form surfaces (forms themselves are native)
 
 Objectives:
 
-- Make settings, questions, confirmations, and structured editors use one field and
-  action model.
+- Unify settings, questions, confirmations, and structured editors on one field and
+  action model (native Form/FormField/ActionBar consumers landed in Phases 11–12).
 
 Deliverables:
 
@@ -1258,11 +1256,12 @@ Landed:
 
 Remaining:
 - Tree prompt still rebuilds frame on each keystroke (acceptable interim; prefer mutate field)
-- WindowFrame reveal animation before deleting the final ContextMenuLines/Reveal bridge
+- WindowFrame reveal animation (ContextMenuLines/Reveal implementation deleted; reveal tests pending)
 
 Objectives:
 
-- Replace PopupChrome, WM decoration, and hand-drawn feature borders with one frame.
+- Complete WindowFrame reveal animation (PopupChrome, WM decoration, hand-drawn
+  feature borders, and ContextMenuLines/Reveal already replaced/deleted).
 
 Deliverables:
 
@@ -1330,8 +1329,9 @@ Landed:
   9 new TUI projection tests + the prior 9 workspace view tests cover the seam.
 - **Session presentation seam:** `workspace.Session` retains only
   presentation-neutral `SessionSettingsState`; confirmation, question, YOLO,
-  text-overlay, composer, and settings widgets are retained by a TUI-owned
-  per-session projection registry keyed by stable `*workspace.Session` identity.
+  native composer/text-overlay screens, and settings screens are retained by a
+  TUI-owned per-session projection registry keyed by stable `*workspace.Session`
+  identity.
   Settings saves and resets update the domain snapshot and refresh the matching
   projection without sharing interaction state between tabs.
 - **Neutral contract extraction:** settings, message/event, and LSP value types
@@ -1383,12 +1383,12 @@ Order:
 2. Tree delete confirmation. ✅ **WindowFrame + ui.Button** (`BuildTreeDeleteFrame`); Host hit-test mouse
 3. Dirty-close prompt. ✅ **WindowFrame + ui.Button** (`BuildDirtyCloseFrame`); Host hit-test mouse
 4. Generic confirmation prompt. ✅ **ConfirmPrompt / ConfirmPrompt3Button DELETED**; `ConfirmPromptSeverity` moved to `confirm_frame.go`; `BuildConfirmFrame` is the only path
-5. Context menu. ✅ **WindowFrame + ui.List** (`BuildContextMenuFrame`); Host hit-test; **ContextMenuLines static tests migrated to BuildContextMenuFrame cell-buffer assertions** in `contextmenu_frame_test.go` (11 migrated tests); ContextMenuLines/Reveal retained for reveal-animation tests only (pending WindowFrame reveal support)
+5. Context menu. ✅ **WindowFrame + ui.List** (`BuildContextMenuFrame`); Host hit-test; **ContextMenuLines static tests migrated to BuildContextMenuFrame cell-buffer assertions** in `contextmenu_frame_test.go` (11 migrated tests); ContextMenuLines/Reveal **deleted** (reveal animation pending WindowFrame reveal support)
 6. Diagnostic popup. ✅ **WindowFrame + ui.Label + severity accent** (`BuildDiagnosticFrame`); `diag-context` + `diag-hover` both migrated; PopupChromeLines no longer used for diagnostics
 7. LSP references. ✅ **WindowFrame + ui.List** (`BuildListPopupFrame`); keys via floating-window dispatch
 8. LSP completion. ✅ **WindowFrame + ui.List** (`BuildListPopupFrame`); cursor mutate path
 9. LSP outline. ✅ **WindowFrame + ui.List** (depth indent in Icon); cursor mutate path
-10. Find and replace. ✅ **WindowFrame (FramePopover) + ui.TextField + Label** (`BuildFindReplaceFrame`); TextEdit bridge syncs from `components.TextInput`; toggle/hint still ANSI bridge
+10. Find and replace. ✅ **WindowFrame (FramePopover) + ui.TextField + Label** (`BuildFindReplaceFrame`); TextEdit engine via `FindReplaceState`; toggle/hint still ANSI bridge
 11. Command palette. ✅ **WindowFrame + ui.TextField (search) + ui.List** (`BuildCommandPaletteFrame`); filter via TextEdit; navigation/activate via List; Host hit-test mouse; old View/scroll/hover deleted
 
 Exit criteria:
@@ -1398,11 +1398,11 @@ Exit criteria:
 - Popup mouse switches for migrated content are removed rather than retained as a
   second routing layer.
 
-**Remaining for full Phase 11 exit:** delete ContextMenuLines/Reveal when WindowFrame
+**Remaining for full Phase 11 exit:** WindowFrame reveal animation (ContextMenuLines/Reveal
 reveal animation lands; delete find/replace TextEdit bridge
 when find/replace switches fully to TextEdit engine.
 
-### Phase 12: Structured-surface migration 🔄 PARTIAL
+### Phase 12: Structured-surface migration ✅ DONE
 
 Order:
 
@@ -1415,8 +1415,8 @@ Order:
 7. Background-job/detail panels. DONE (native read-only Form in a passive per-session PanelDeck panel; owner-safe inactive-session updates, failure attention, running-duration refresh, completion expiry, and no focus steal; global ANSI status-bar rows deleted)
 8. File/workspace picker. DONE (native TextField + Label breadcrumb + List + ScrollbarControl + ActionBar body inside the retained OverlayHost/FloatingWindow shell; workspace-owned neutral directory enumeration; file/folder modes, filtering, parent navigation, keyboard/mouse/paste/double-click, owner-targeted results; legacy widget/ANSI/manual geometry deleted)
 9. Find in Files. DONE (native SearchField query + case/regex ToggleButtons + Label status + VirtualList + ScrollbarControl + editor preview adapter + Label hints; debounced typed search/cancel intents route to workspace.ProjectSearchService; owner-screened debounce/Open/Close messages, clamped list navigation, double-click activation, and owner-targeted results; `tui/widgets/find_in_files.go` and its tests deleted)
-10. Composer. OPEN
-11. Text/reference editor. OPEN
+10. Composer. DONE (native TextArea + ActionBar body inside retained OverlayHost/WindowFrame; typed Submit/Cancel messages; legacy ANSI widget deleted)
+11. Text/reference editor. DONE (native TextArea + ActionBar body inside retained OverlayHost/WindowFrame; typed Save/Cancel messages; legacy ANSI widget deleted)
 12. Launcher. DONE (native component screen with animated hero, two-column action/workspace composition, SearchField, shared VirtualList, fixed search row, and one-cell-inset/final-column scrollbar pane layout)
 
 Exit criteria:
@@ -1493,7 +1493,7 @@ Exit criteria:
 | Current surface | Target composition | Phase | Progress |
 |-----------------|--------------------|-------|----------|
 | Command palette | Palette + SearchField + sectioned VirtualList | 11 | ✅ **WindowFrame + TextField + List** (`BuildCommandPaletteFrame`); TextEdit filter; Host mouse |
-| Find/replace | Popover + TextField(s) + ToggleButton group + Hint | 11 | ✅ **WindowFrame FramePopover + TextField + Label** (`BuildFindReplaceFrame`); TextEdit bridge |
+| Find/replace | Popover + TextField(s) + ToggleButton group + Hint | 11 | ✅ **WindowFrame FramePopover + TextField + Label** (`BuildFindReplaceFrame`); TextEdit engine |
 | Context menu | ContextMenu + Menu sections + Actions | 11 | ✅ **WindowFrame + ui.List** (headers/separators/disabled); static tests migrated to cell-buffer assertions |
 | LSP popups | Popover + List/Table + actions | 11 | ✅ **refs + completion + outline** WindowFrame+List; no hand-drawn ╭─╮ |
 | Tree text prompt | Dialog + PromptField + ActionBar | 11 | ✅ **WindowFrame + TextField + TextEdit** |
@@ -1508,17 +1508,18 @@ Exit criteria:
 | Background-job details | Passive Panel + read-only Form | 12 | **Native passive PanelDeck screen**; commands, handles, status, duration, PID, exit, and errors project into their owning session without focus steal; failure attention and 15-second completion expiry; global ANSI async rows deleted |
 | File picker | Dialog + Breadcrumbs + SearchField + Tree/List + ActionBar | 12 | **Native WindowFrameWidget + OverlayHost body**; TextField, Label breadcrumb, List, ScrollbarControl, and ActionBar; workspace `BrowseDirectory` owns filesystem enumeration; legacy ANSI widget and manual geometry deleted |
 | Find in Files | Window + SearchField + toggles + VirtualList + editor preview | 12 | **WindowFrameWidget + OverlayHost**; native SearchField query + ToggleButtons + Label status + VirtualList + ScrollbarControl + editor preview adapter + Label hints; debounced typed search/cancel intents route to `workspace.ProjectSearchService`; legacy widget and tests deleted |
-| Composer | Window + TextArea + ActionBar/Hint | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
-| Text overlay | Window + TextArea + ActionBar | 12 | **WindowFrameWidget + OverlayHost**; legacy ANSI body |
+| Composer | Window + TextArea + ActionBar/Hint | 12 | **Native `tui/screens/composer`**; WindowFrameWidget + OverlayHost; TextArea + ActionBar (Ctrl+Enter submit, Esc cancel/clear-selection); legacy ANSI widget deleted |
+| Text overlay | Window + TextArea + ActionBar | 12 | **Native `tui/screens/textoverlay`**; WindowFrameWidget + OverlayHost; TextArea + ActionBar (Ctrl+S save, Esc/Ctrl+C cancel); legacy ANSI widget deleted |
 | Launcher | Responsive layout + actions + SearchField + workspace collection | 12 | **Native `tui/screens/launcher`**; animated hero and New Workspace action cards, registry-derived shortcuts, SearchField, VirtualList workspace collection, fixed search row, owner-safe activation/deletion, and shared pane layout where content starts one column in and the scrollbar owns the final column |
-| Header | Row layout + text/status primitives | 13 | open |
-| Status bar | Segmented row + action-derived hints | 13 | `Workspace.StatusView()` supplies neutral durable status/usage data; shell migration open |
-| Tabs | Tabs control + close actions + status indicators | 13 | `Workspace.AgentTabViews()` supplies neutral agent tab data; component migration open |
-| File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | `TreeState.ViewData()` exposes neutral `TreeRowView`; filter string still on TUI model |
-| Chat input | TextArea + reference chips + action hints | 13 | still components.TextInput |
-| Message list | VirtualList + message delegates + selection | 13 | Persisted hydration uses `ChatMessageView`; live data uses workspace `Conversation`; retained MessageList projection preserves caches by stable ID/version |
-| Subpanes | Panel + VirtualList + nested viewport | 13 | `SubPane.Messages` is canonical data; TUI owns `*widgets.MessageList` projection via `subPaneProjectionRegistry` keyed by paneID + Conversation version (same pattern as `AgentState.Messages`); `workspace/subpane.go` has ZERO `tui/` imports; `SubPane.View()` returns presentation-neutral `SubPaneView` (header/tool-lines/summary/Messages pointer) |
-| Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | open |
+| Header | Row layout + text/status primitives | 13 | **Native `tui/screens/shellheader`**; Host paint into `mainHeaderSurf`; legacy `widgets.RenderHeader` deleted |
+| Status bar | Segmented row + action-derived hints | 13 | **Native `tui/screens/shellstatus`** + **`ui.Hint`/`ui.KeyChord`**; Host paint; durable usage via `Workspace.StatusView()`; status contexts emit registry segments; legacy ANSI statusbar + `#ffaa00` bypass deleted |
+| Tabs | Tabs control + close actions + status indicators | 13 | **Native `tui/screens/shelltabs`** + **`ui.Tabs` shell chrome**; Host paint into `mainTabBarSurf`; `Window` tab state only; legacy `window.RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted |
+| File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | ✅ **Native `tui/screens/shelltree` + `ui.Tree` + `ScrollbarControl`**; `TreeState.ViewData()` seam; `filetree/render.go` (ANSI) **DELETED**; filter string still on TUI model |
+| Chat input | TextArea + reference chips + action hints | 13 | **Native `tui/screens/shellinput`**; Host paint into `mainInputSurf`; `ui.TextArea` + chips + `ui.List` slash; ANSI composer embed removed from `buildMainView` |
+| Message list | VirtualList + message delegates + selection | 13 | ✅ **DONE:** `chatprojection.Renderer` owns sync/render/export/subpane gutter; `shellchat` owns scroll/selection/compose + paint goldens via `tui/ui.VirtualList`; main chat gutter via `ui.ScrollbarControl` only; legacy `widgets/messagelist.go`, `widgets/chatmessage.go` deleted; internal `chatprojection/item_list.go` for message-height indexing (not standalone `tui/virtlist/`) |
+| Subpanes | Panel + VirtualList + nested viewport | 13 | ✅ Composition via `shellchat.Compose`; projection `*chatprojection.Renderer` in `subPaneProjectionRegistry` |
+| Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | ✅ **Native `tui/screens/shelleditor`** Host → `mainEditorSurf`; `Editor.Render` + `ui.ScrollbarControl` (paint **and** mouse drag); shellstatus carries title/●/cursor/diag counts/actions. `Editor.View()` / `scrollbar_ansi` deleted; legacy `scrollbar.ScrollBar` removed from editor |
+| Session picker | Window + sectioned List | 13 | ✅ **DONE:** Native `tui/screens/sessionpicker` OverlayHost + paint goldens; legacy `widgets/sessionpicker.go` deleted |
 | Workspace/TUI boundary | Neutral workspace data + TUI projections and integration seams | 10 | ✅ Workspace production and test code has no `tui/` imports; LSP/file-tree callback fixtures live under `tui/filetree/` |
 
 ## 21. Test Strategy
@@ -1667,9 +1668,8 @@ This program is complete only when all statements are true:
 3. Phase 2 `tui/ui` Host + first controls.
 4. Early Phase 6/7/9 foundations: TextEdit, TextField, List, VirtualList, WindowFrame,
    ScrollbarControl, ComponentWidget, filter/scrollbar ANSI bridges.
-5. Product filter engines on TextEdit (palette, launcher, settings, filepicker, list,
-   form TextItem, FIF query); filepicker now paints through native TextField while
-   remaining legacy paths use the shrinking RenderFilterLine bridge.
+5. Product filter engines on TextEdit (palette, launcher, settings, filepicker,
+   FIF query); all product filter rows paint through native TextField.
 6. WindowFrame product surfaces: tree prompt, dirty-close, tree-delete
    (`BuildTextPromptFrame` / `BuildDirtyCloseFrame` / `BuildTreeDeleteFrame`).
 7. Context menu → `BuildContextMenuFrame` (WindowFrame + ui.List with section
@@ -1681,15 +1681,15 @@ This program is complete only when all statements are true:
 11. Command palette → `BuildCommandPaletteFrame` (WindowFrame + TextField + List);
     old View/scroll/hover path deleted; Host mouse routing.
 12. Find/replace → `BuildFindReplaceFrame` (WindowFrame FramePopover + TextField +
-    Label); TextEdit bridge syncs from components.TextInput; toggle/hint ANSI bridge.
+    Label); TextEdit engine via `FindReplaceState`; toggle/hint ANSI bridge.
 13. Diagnostic popup → `BuildDiagnosticFrame` (WindowFrame + Label + severity
     border/title accent); `diag-context` + `diag-hover` both migrated off
-    PopupChromeLines.
+    hand-drawn popup chrome.
 14. Phase 11 closeout: `ConfirmPrompt`/`ConfirmPrompt3Button` DELETED;
     `ConfirmPromptSeverity` moved to `confirm_frame.go`. ContextMenuLines
     static tests migrated to `BuildContextMenuFrame` cell-buffer assertions
-    (`contextmenu_frame_test.go`, 11 tests). ContextMenuLines/Reveal retained
-    for reveal-animation tests only.
+    (`contextmenu_frame_test.go`, 11 tests). ContextMenuLines/Reveal **deleted**
+    (reveal animation pending WindowFrame reveal support).
 15. Phase 9 OverlayHost: typed `OverlayID`, `OverlayPolicy`, `OverlayEntry`,
     `OverlayStack` (`Open`/`Close`/`CloseAll`/`Get`/`IsOpen`/`Top`/`All`),
     `HandleClickOutside`, `RegisterContentHandler`/`RegisterHoverHandler`,
@@ -1735,8 +1735,9 @@ This program is complete only when all statements are true:
     - `wm/decoration.go` and parallel decoration tests deleted
     - WindowFrameWidget mounts native components and shrinking structured legacy
       bodies inside unified WindowFrame
-    - File picker now has a native body; workspace settings, Find in Files, composer,
-      and text overlay retain WindowFrame visual chrome at their current migration stage
+    - File picker, Find in Files, composer, and text overlay now have native
+      bodies; WindowFrame remains the exclusive visual chrome for their
+      OverlayHost floating shells
     - WM retains frame-aligned close/title/edge hit testing, drag, resize, focus,
       placement, and z-order
     - BorderStyle/TextAlign visual APIs removed from WM
@@ -1936,6 +1937,37 @@ This program is complete only when all statements are true:
     - Layout corrected so query sits on line 0, status on line 1, list on line 2
       (previously the query and status overlapped at Y=0)
 
+38. Phase 6/7/12 native composer:
+    - Added `tui/screens/composer`, composed from native TextArea + ActionBar inside
+      the retained OverlayHost/WindowFrame shell
+    - Ctrl+Enter / ActionBar Submit emit owner-tagged `SubmitMsg`; Esc clears an
+      active selection first, then cancels; ActionBar Cancel and Esc without
+      selection emit `CancelMsg`
+    - Mouse selection, paste, Tab focus to ActionBar, theme/size paint, and
+      keyboard contracts covered by screen tests; viewmodel routes via Host
+    - Deleted `tui/widgets/composer.go` and its tests; ANSIViewFunc body removed
+
+39. Phase 6/7/12 native text/reference overlay:
+    - Added `tui/screens/textoverlay`, composed from native TextArea + ActionBar
+      inside the retained OverlayHost/WindowFrame shell
+    - Ctrl+S / ActionBar Save emit owner-tagged `SaveMsg`; Esc clears selection
+      then cancels; Ctrl+C without selection cancels; with selection the
+      viewmodel copies
+    - Theme/size paint, paste, mouse selection, and ActionBar keyboard covered
+    - Deleted `tui/widgets/textoverlay.go` and its tests; ANSIViewFunc body removed
+    - Phase 12 structured-surface migration is complete
+
+40. Phase 3 theme engine closeout:
+    - Added `theme.DefaultHighContrast` + `ui.HighContrastTheme` using the shared
+      `newTheme` factory (same metrics/glyphs/typography as dark/light)
+    - Added Glyphs, Typography, and Metrics token tables on `theme.Theme` with
+      TokenSet accessors; ColorVersion vs MetricVersion so Host.SetTheme paint-only
+      on color switches and layout-invalidates on metric changes
+    - `theme.FromPreset` resolves dark/light/high-contrast; gallery tests cover all three
+    - Live config hot-reload: fsnotify on config.json → ConfigReloadedMsg →
+      ApplyThemePreset; SaveAppSettings mirrors visual prefs into config.json
+    - Phase 3 exit criteria met; residual glyph hardcode cutover deferred to Phase 13
+
 ### Next slices (priority order — stay on plan)
 
    1. **Phase 10:** ✅ workspace presentation ownership, view-data, and package-boundary
@@ -1944,28 +1976,27 @@ This program is complete only when all statements are true:
       tree rows, agent tabs, status snapshots, and LSP/file-tree integration seams
       now cross through neutral contracts and TUI projections.
 
-   2. **Phase 12:** Workspace settings, session settings, agent questions, tool
-       confirmation, and YOLO are complete native shared-form
-       consumers. The per-session PanelDeck is the canonical bottom-of-messages
-       home for session-owned interactive/background surfaces; OverlayHost remains
-       exclusively floating. Background-job details, the file/workspace picker,
-       and Find in Files now have native bodies in their retained floating shells.
-       NEXT: migrate composer, text overlay, and launcher form bodies.
+   2. **Phase 12:** ✅ complete (composer, text overlay, launcher, and all prior
+       structured surfaces are native).
 
-   3. **Phase 3 closeout:** high-contrast reference theme, metric/glyph token tables,
-      and live config hot-reload.
+   3. **Phase 3 closeout:** ✅ complete (high-contrast theme, glyph/spacing/
+      typography/metric token tables, config.json hot-reload).
 
-   4. **Phase 13:** persistent-shell and core-view migration.
+   4. **Phase 13:** persistent-shell and core-view migration (PARTIAL —
+      shell surfaces largely native; open: subpane ANSI scrollbar paths,
+      root Host/compositor wiring, `contentDirty` cache removal).
 
    5. **Phase 14:** package-boundary completion and deletion.
 
-   6. **Phase 15:** stabilization and permanent enforcement.
+   6. **Phase 15:** stabilization and permanent enforcement (IN PROGRESS —
+      see `docs/tui/PHASE15_CHECKLIST.md`; authoring doc, shell input/tabs
+      contracts, Host/WindowFrame fuzz added; allowlist empty + full lint still open).
 
 ### Anti-drift checks
 
 - Do not invent a third chrome system.
 - Do not add new `filter string` key handlers; use TextEdit.
-- Do not add new scrollbar glyph math; use ScrollModel + ScrollbarControl/CellANSI.
+- Do not add new scrollbar glyph math; use ScrollModel + ScrollbarControl.
 - Do not claim a surface migrated until its old implementation is deleted or listed
   as a shrinking bypass with a removal phase.
 - Prefer mutating WindowFrame content over full rebuild on every keystroke once

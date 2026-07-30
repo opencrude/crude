@@ -36,15 +36,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.openWorkspaceSettings()
 	case "/sessions":
 		m.Logger.Info("INPUT", "slash", "command", "sessions")
-		if m.anyActive() {
-			m.StatusBar.SetError("Cannot switch sessions while agent is running — press ctrl+c to cancel first")
-			return nil
-		}
-		if m.AgentMgr.Count() > 0 || m.EditorState.ActiveView != "" {
-			m.StatusBar.SetInfo("Close open tabs first, or use Quit from the command palette to exit")
-			return nil
-		}
-		m.openLauncher()
+		m.openSessionPicker()
 	case "/help":
 		m.Logger.Info("INPUT", "slash", "command", "help")
 		var b strings.Builder
@@ -78,8 +70,10 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/yolo":
 		if m.OverlayState.IsYolo() {
 			m.OverlayState.SetYolo(false)
-			if ml := m.activeMsgList(); ml != nil {
-				ml.ScrollToBottom()
+			if m.chatScreen != nil {
+				scroll := m.chatScreen.ScrollModel()
+				scroll.SetAutoScroll(true)
+				scroll.StickToBottom()
 			}
 			m.StatusBar.SetInfo("YOLO mode disabled. Safety checks restored.")
 			m.Logger.Info("SAFETY", "yolo_disabled", "source", "slash")

@@ -12,10 +12,10 @@ import (
 	"crude/sessiondb"
 	"crude/tui/input"
 	"crude/tui/screens/launcher"
+	"crude/tui/screens/shellstatus"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/window"
 	"crude/workspace"
 )
@@ -35,7 +35,17 @@ func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
 	th := theme.DefaultDark()
 	screen := launcher.New(th)
-	screen.Refresh(".", nil)
+	// Seed enough list rows for pointer-capture geometry tests that click mid-list.
+	workspaces := make([]workspace.WorkspaceInfo, 12)
+	for i := range workspaces {
+		workspaces[i] = workspace.WorkspaceInfo{
+			ID:           fmt.Sprintf("ws%d", i),
+			ProjectName:  fmt.Sprintf("proj-%02d", i),
+			ProjectDir:   fmt.Sprintf("/tmp/proj-%02d", i),
+			SessionCount: 1,
+		}
+	}
+	screen.SetData(".", nil, workspaces)
 	host := ui.NewHost(th, screen)
 	screen.SetFocusHandler(host.Focus)
 	app := &App{
@@ -48,7 +58,7 @@ func newTestAppWithLauncher(t *testing.T) *App {
 		},
 		Theme:              th,
 		Input:              input.NewModel(th),
-		StatusBar:          widgets.NewStatusBar(th),
+		StatusBar:          shellstatus.New(th),
 		SpinFrame:          0,
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),
@@ -156,9 +166,6 @@ func TestLauncher_ResumeSession(t *testing.T) {
 	app.launcherScreen.SetData(".", []sessiondb.SessionMeta{
 		{ID: "ses_test_1", ProjectName: "test-project"},
 	}, nil)
-	app.launcherScreen.Refresh(".", []sessiondb.SessionMeta{
-		{ID: "ses_test_1", ProjectName: "test-project"},
-	})
 
 	cmd := app.launcherResumeSession("ses_test_1", &sessiondb.SessionMeta{ID: "ses_test_1", ProjectName: "test-project"})
 
@@ -241,7 +248,7 @@ func TestMultipleOrchestrators(t *testing.T) {
 // always has Start actions even with no sessions/workspaces.
 func TestLauncher_NoSessions_StartActionsOnly(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	app.launcherScreen.Refresh(".", nil)
+	app.launcherScreen.SetData(".", nil, nil)
 
 	if app.launcherScreen.TotalItems() < 2 {
 		t.Fatalf("expected at least 2 start items, got %d", app.launcherScreen.TotalItems())
@@ -335,7 +342,7 @@ func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = launcher.New(app.Theme)
-	app.launcherScreen.Refresh(".", nil)
+	app.launcherScreen.SetData(".", nil, nil)
 
 	view := app.buildMainView()
 	if strings.Contains(view, "↑↓ navigate") {

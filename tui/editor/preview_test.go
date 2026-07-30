@@ -4,27 +4,36 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/rendering"
+	"crude/tui/cell"
+	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/widget"
 )
 
 func TestPreviewUsesSourceLineNumbersAndChroma(t *testing.T) {
 	ed := NewPreview(theme.DefaultDark(), "/tmp/main.go", "func main() {\n\treturn\n}", 40)
 	ed.SetSelection(0, 0, 0, 4)
-	lines := ed.View(60, 4, 0, 0)
-	if len(lines) != 4 {
-		t.Fatalf("preview rendered %d lines", len(lines))
-	}
-	plain := rendering.StripAnsi(lines[0])
+	surf := surface.NewSurface("preview", 60, 4, cell.TransparentBlank())
+	ed.Render(surf, &widget.RenderContext{Theme: ed.th, Focused: true})
+	buf := surf.Buffer()
+	plain := plainRow(buf, 0, 60)
 	if !strings.Contains(plain, "40") || !strings.Contains(plain, "func main") {
 		t.Fatalf("preview first line=%q", plain)
 	}
-	if lines[0] == plain {
-		t.Fatal("preview should contain Chroma/selection ANSI styling")
+	foundHL := false
+	for x := 0; x < 59; x++ {
+		c := buf.Get(x, 0)
+		if c.Char == 'f' && !c.FG.IsDefault() {
+			foundHL = true
+			break
+		}
+	}
+	if !foundHL {
+		t.Fatal("preview should contain Chroma/selection styling in cell buffer")
 	}
 }
 
-func TestViewWideGlyphsKeepScrollbarColumn(t *testing.T) {
+func TestRenderWideGlyphsKeepScrollbarColumn(t *testing.T) {
 	const width = 60
 	ed := NewPreview(
 		theme.DefaultDark(),
@@ -32,18 +41,34 @@ func TestViewWideGlyphsKeepScrollbarColumn(t *testing.T) {
 		"single: ☰\nwide: 😀\ntwo wide: 😀 / ⚡\ncjk: 中文\nplain",
 		1,
 	)
-
-	for i, line := range ed.View(width, 4, 0, 0) {
-		if got := rendering.VisibleWidth(line); got != width {
-			t.Errorf("line %d rendered width = %d, want %d", i, got, width)
+	surf := surface.NewSurface("preview", width, 4, cell.TransparentBlank())
+	ed.Render(surf, &widget.RenderContext{Theme: ed.th, Focused: true})
+	buf := surf.Buffer()
+	for y := 0; y < 4; y++ {
+		scrollbarAt := -1
+		for x := width - 1; x >= 0; x-- {
+			ch := buf.Get(x, y).Char
+			if ch == '░' || ch == '█' {
+				scrollbarAt = x
+				break
+			}
 		}
-		plain := rendering.StripAnsi(line)
-		scrollbarAt := strings.LastIndexAny(plain, "░█")
 		if scrollbarAt < 0 {
-			t.Fatalf("line %d has no scrollbar: %q", i, plain)
+			t.Fatalf("line %d has no scrollbar column", y)
 		}
-		if got := rendering.PlainWidth(plain[:scrollbarAt]); got != width-1 {
-			t.Errorf("line %d scrollbar column = %d, want %d", i, got, width-1)
+		if scrollbarAt != width-1 {
+			t.Fatalf("line %d scrollbar column = %d, want %d", y, scrollbarAt, width-1)
 		}
 	}
+}
+
+func plainRow(buf *surface.CellBuffer, y, maxW int) string {
+	var b strings.Builder
+	for x := 0; x < maxW && x < buf.Width(); x++ {
+		c := buf.Get(x, y)
+		if c.Char != 0 {
+			b.WriteRune(c.Char)
+		}
+	}
+	return strings.TrimRight(b.String(), " ")
 }

@@ -6,6 +6,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
+	"crude/tui/theme"
 )
 
 // TextField is a single-line text input built on TextEdit.
@@ -86,6 +87,15 @@ func (t *TextField) SetValue(s string) {
 
 // Value returns the field value.
 func (t *TextField) Value() string { return t.edit.Value() }
+
+// SyncEditFrom copies value, cursor, and selection from ed into this field.
+func (t *TextField) SyncEditFrom(ed *TextEdit) {
+	if ed == nil {
+		return
+	}
+	ed.CopyStateTo(t.edit)
+	t.ensureCursorVisible()
+}
 
 // Edit exposes the underlying model for advanced callers/tests.
 func (t *TextField) Edit() *TextEdit { return t.edit }
@@ -229,26 +239,22 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 		}
 		// Inverse cursor on grapheme under cursor when focused
 		if ctx.Focused && !t.disabled && abs == t.edit.Cursor() && t.edit.Cursor() < t.edit.Len() {
-			cellFG, cellBG = bg, fg
-			if fg.IsDefault() {
-				cellFG = cell.NewTrueColor(13, 17, 23)
-			}
-			if bg.IsDefault() {
-				cellBG = cell.NewTrueColor(230, 237, 243)
-			}
-			// swap properly
-			cellFG, cellBG = cellBG, cellFG
-			if inSel {
-				// still invert
-			}
-			// Standard: cursor cell has reverse
+			// Reverse video: text bg becomes fg, text fg becomes bg.
 			cellFG = bg
-			if cellFG.IsDefault() {
-				cellFG = cell.NewTrueColor(13, 17, 23)
-			}
 			cellBG = fg
+			if cellFG.IsDefault() {
+				if t.tokens != nil {
+					cellFG = t.tokens.Color(ColorBg)
+				} else {
+					cellFG = NewTokenSet(theme.DefaultDark()).Color(ColorBg)
+				}
+			}
 			if cellBG.IsDefault() {
-				cellBG = cell.NewTrueColor(88, 166, 255)
+				if t.tokens != nil {
+					cellBG = t.tokens.Color(ColorAccent)
+				} else {
+					cellBG = NewTokenSet(theme.DefaultDark()).Color(ColorAccent)
+				}
 			}
 		}
 		buf.Set(x+col, y, cell.NewCell(rr, cellFG, cellBG, 0))
@@ -267,10 +273,11 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 }
 
 func (t *TextField) paintCursor(buf *surface.CellBuffer, x, y int, bg cell.Color) {
-	fg := cell.NewTrueColor(88, 166, 255)
-	if t.tokens != nil {
-		fg = t.tokens.Color(ColorAccent)
+	tokens := t.tokens
+	if tokens == nil {
+		tokens = NewTokenSet(theme.DefaultDark())
 	}
+	fg := tokens.Color(ColorAccent)
 	// Block cursor
 	cur := buf.Get(x, y)
 	ch := cur.Char
@@ -280,7 +287,7 @@ func (t *TextField) paintCursor(buf *surface.CellBuffer, x, y int, bg cell.Color
 	// Inverse: accent bg, contrasting fg
 	invFG := bg
 	if invFG.IsDefault() {
-		invFG = cell.NewTrueColor(13, 17, 23)
+		invFG = tokens.Color(ColorBg)
 	}
 	buf.Set(x, y, cell.NewCell(ch, invFG, fg, 0))
 }

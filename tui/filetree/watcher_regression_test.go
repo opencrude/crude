@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/tui/rendering"
+	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 func TestTreeScrollbarHasContentGutter(t *testing.T) {
@@ -21,23 +22,33 @@ func TestTreeScrollbarHasContentGutter(t *testing.T) {
 	}
 
 	model := NewFileTreeModel(dir)
-	renderer := NewTreeRenderer(model, model.IconResolver())
-	renderer.ApplyTheme(theme.DefaultDark())
-	renderer.SetScrollbarContentHeight(4)
-	lines := renderer.RenderToLines(30, 4)
-	if len(lines) != 4 {
-		t.Fatalf("RenderToLines returned %d lines", len(lines))
-	}
-	for i, line := range lines {
-		if got := rendering.VisibleWidth(line); got != 30 {
-			t.Fatalf("line %d width=%d, want 30", i, got)
+	th := theme.DefaultDark()
+	tokens := ui.NewTokenSet(th)
+	cfg := PaintConfigFromTheme(th)
+	tree := ui.NewTree("test-tree", tokens)
+	tree.SetRowPainter(NewTreeRowPainter(model, model.IconResolver(), cfg))
+	tree.SetItems(TreeItems(model))
+	model.Update(TreeHeightMsg{Height: 4})
+	SyncScrollModel(model, tree.Scroll(), 4)
+	scroll := ui.NewScrollbarControl("sb", tree.Scroll(), tokens)
+
+	panelW := 30
+	contentW := SidebarContentWidth(panelW)
+	tree.Layout(ui.LayoutContext{}, ui.Rect{W: contentW, H: 4})
+	scroll.Layout(ui.LayoutContext{}, ui.Rect{X: panelW - 1, Y: 0, W: 1, H: 4})
+
+	buf := surface.NewCellBuffer(panelW, 4)
+	tree.Paint(buf, 0, 0, ui.PaintContext{Focused: true})
+	scroll.Paint(buf, 0, 0, ui.PaintContext{})
+
+	for y := 0; y < 4; y++ {
+		gutter := buf.Get(contentW, y)
+		if gutter.Char != ' ' && gutter.Char != 0 {
+			t.Fatalf("row %d gutter col=%q, want blank", y, string(gutter.Char))
 		}
-		plain := []rune(rendering.StripAnsi(line))
-		if len(plain) < 2 || plain[len(plain)-2] != ' ' {
-			t.Fatalf("line %d missing gutter before scrollbar: %q", i, rendering.StripAnsi(line))
-		}
-		if plain[len(plain)-1] == ' ' {
-			t.Fatalf("line %d expected visible scrollbar in final column: %q", i, rendering.StripAnsi(line))
+		sb := buf.Get(contentW+1, y)
+		if sb.Char == ' ' || sb.Char == 0 {
+			t.Fatalf("row %d expected scrollbar glyph at col %d", y, contentW+1)
 		}
 	}
 }
@@ -54,8 +65,6 @@ func TestProcessWatcherEventCallsBackOutsideTreeLock(t *testing.T) {
 		if filePath != path || changeType != 2 {
 			t.Errorf("callback=(%q,%d), want (%q,2)", filePath, changeType, path)
 		}
-		// These accessors acquire the same tree lock. This used to deadlock
-		// because ProcessWatcherEvent invoked the callback under its write lock.
 		_ = model.VisibleNodes()
 		_ = model.RootPath()
 		close(callbackDone)

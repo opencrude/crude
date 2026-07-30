@@ -280,6 +280,12 @@ type AgentMsg AgentEventMsg
 
 type OpenSettingsMsg struct{}
 
+// ConfigReloadedMsg is emitted when ~/.crude/config.json changes on disk so
+// the TUI can hot-reload live preferences such as the theme preset.
+type ConfigReloadedMsg struct {
+	ThemePreset string
+}
+
 type FetchModelsMsg struct {
 	ProviderID string
 	BaseURL    string
