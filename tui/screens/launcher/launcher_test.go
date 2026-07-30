@@ -1,11 +1,13 @@
 package launcher
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/sessiondb"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -43,6 +45,64 @@ func bufferText(buf *surface.CellBuffer) string {
 	return strings.Join(rows, "\n")
 }
 
+func TestPaintGoldenCellBufferContract(t *testing.T) {
+	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
+		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2},
+	})
+	h.Paint(buf)
+
+	if nonEmpty := countNonEmptyCells(buf); nonEmpty == 0 {
+		t.Fatal("launcher paint produced no non-empty cells")
+	}
+	plain := bufferText(buf)
+		for _, label := range []string{"New Session", "RECENT", "alpha", "✨"} {
+		if !strings.Contains(plain, label) {
+			t.Fatalf("missing label %q:\n%s", label, plain)
+		}
+	}
+
+	// Brand uses theme accent on row 0.
+	wantAccent := ui.NewTokenSet(theme.DefaultDark()).Color(ui.ColorAccent)
+	if !bufferHasFG(buf, wantAccent) {
+		t.Fatal("launcher paint missing theme accent foreground")
+	}
+
+	// Selected workspace row uses theme hover background.
+	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	buf.Clear()
+	h.Paint(buf)
+	wantHover := ui.NewTokenSet(theme.DefaultDark()).Color(ui.ColorHover)
+	lb := s.list.Bounds()
+	if got := buf.Get(lb.X, lb.Y).BG; got.IsDefault() || !got.Equal(wantHover) {
+		t.Fatalf("selected row BG=%#v want hover %#v", got, wantHover)
+	}
+}
+
+func countNonEmptyCells(buf *surface.CellBuffer) int {
+	n := 0
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			c := buf.Get(x, y)
+			if c.Char != 0 && c.Width != 0 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func bufferHasFG(buf *surface.CellBuffer, want cell.Color) bool {
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			if fg := buf.Get(x, y).FG; !fg.IsDefault() && fg.Equal(want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func TestScreenPaintPreservesWelcomeHierarchy(t *testing.T) {
 	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
 		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2},
@@ -55,7 +115,7 @@ func TestScreenPaintPreservesWelcomeHierarchy(t *testing.T) {
 		"/projects/current",
 		"New Workspace",
 		"SHORTCUTS",
-		"RECENT WORKSPACES",
+		"RECENT",
 		"Search workspaces",
 		"alpha",
 		"beta",
@@ -111,7 +171,7 @@ func bufferRow(buf *surface.CellBuffer, y int) []rune {
 func TestScreenEmptyAndNoResultsStates(t *testing.T) {
 	s, h, buf := testScreen(t, 80, 20, nil)
 	h.Paint(buf)
-	if got := bufferText(buf); !strings.Contains(got, "No recent workspaces") {
+	if got := bufferText(buf); !strings.Contains(got, "No recent sessions or workspaces") {
 		t.Fatalf("empty state missing:\n%s", got)
 	}
 
@@ -126,7 +186,7 @@ func TestScreenEmptyAndNoResultsStates(t *testing.T) {
 	h.Layout()
 	buf.Clear()
 	h.Paint(buf)
-	if got := bufferText(buf); !strings.Contains(got, `No workspaces match "z"`) {
+	if got := bufferText(buf); !strings.Contains(got, `No sessions or workspaces match "z"`) {
 		t.Fatalf("no-results state missing:\n%s", got)
 	}
 }
@@ -305,5 +365,52 @@ func TestWorkspacePaneReservesOnlyFinalColumnForScrollbar(t *testing.T) {
 	h.Paint(buf)
 	if ch := buf.Get(pane.Scrollbar.X, s.list.Bounds().Y).Char; ch != '░' && ch != '█' {
 		t.Fatalf("scrollbar did not paint in final pane column: %q", ch)
+	}
+}
+
+func TestRebuildItemsEmitsSelectableSessions(t *testing.T) {
+	s := New(theme.DefaultDark())
+	s.SetData("/projects/current", []sessiondb.SessionMeta{
+		{
+			ID:          "ses_a",
+			ProjectName: "current",
+			ProjectPath: "/projects/current",
+			Model:       "test-model",
+			TurnCount:   3,
+			FirstPrompt: sql.NullString{String: "fix the flaky test", Valid: true},
+		},
+	}, []workspace.WorkspaceInfo{
+		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 1},
+	})
+
+	var kinds []ItemKind
+	for _, it := range s.items {
+		kinds = append(kinds, it.Kind)
+	}
+	want := []ItemKind{ItemNewSession, ItemOpenFolder, ItemSession, ItemWorkspace}
+	if len(kinds) != len(want) {
+		t.Fatalf("items kinds=%v want %v", kinds, want)
+	}
+	for i := range want {
+		if kinds[i] != want[i] {
+			t.Fatalf("items[%d]=%v want %v (all=%v)", i, kinds[i], want[i], kinds)
+		}
+	}
+	if s.SelectedSessionID() != "" {
+		t.Fatalf("initial selection should not be a session")
+	}
+	// New Session (0) -> New Workspace (1) -> session (2)
+	s.selectFlat(2)
+	if got := s.SelectedSessionID(); got != "ses_a" {
+		t.Fatalf("SelectedSessionID=%q", got)
+	}
+	cmd := s.activateSelected()
+	if cmd == nil {
+		t.Fatal("activateSelected returned nil")
+	}
+	msg := cmd()
+	act, ok := msg.(ActivateMsg)
+	if !ok || act.Kind != ItemSession || act.SessionID != "ses_a" {
+		t.Fatalf("ActivateMsg=%#v", msg)
 	}
 }

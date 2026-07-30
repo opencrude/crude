@@ -89,7 +89,10 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 		providerID := cfg.EffectiveProviderID()
 		projectName := filepath.Base(w.RootPath)
 		if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, providerID); err != nil {
-			w.Logger.Warn("WORKSPACE", "session_register_failed", "error", err.Error())
+			// Non-fatal: session DB exists; registry failure must not block create.
+			w.noteRegistryErr("session_register_failed", err)
+		} else {
+			w.noteRegistryErr("", nil)
 		}
 	}
 
@@ -140,7 +143,10 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 		providerID := cfg.EffectiveProviderID()
 		projectName := filepath.Base(w.RootPath)
 		if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, providerID); err != nil {
-			w.Logger.Warn("WORKSPACE", "session_register_failed", "error", err.Error())
+			// Non-fatal: resume still succeeds; surface via LastRegistryError.
+			w.noteRegistryErr("session_register_failed", err)
+		} else {
+			w.noteRegistryErr("", nil)
 		}
 	}
 
@@ -252,6 +258,12 @@ func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
 		data, _ := json.Marshal(visual)
 		if err := w.WorkspaceDB.SetSetting("app_settings", string(data)); err != nil {
 			w.Logger.Warn("WORKSPACE", "save_app_settings_failed", "error", err.Error())
+			return err
+		}
+	}
+	if w.OnAppSettingsSave != nil {
+		if err := w.OnAppSettingsSave(visual); err != nil {
+			w.Logger.Warn("WORKSPACE", "mirror_app_settings_failed", "error", err.Error())
 			return err
 		}
 	}
@@ -395,6 +407,9 @@ func (w *Workspace) CancelAgent(agentID string) {
 }
 
 // CloseAgent stops backend work for agentID before the TUI removes its state.
+// For root agents it also persists a recoverable registry record (Register +
+// SyncSessionMeta + CloseSession) so the closed session remains listable and
+// resumable. The session's own DB file is left intact.
 func (w *Workspace) CloseAgent(agentID string) {
 	node := w.AgentMgr.Get(agentID)
 	if node == nil {
@@ -409,6 +424,11 @@ func (w *Workspace) CloseAgent(agentID string) {
 	sess := w.sessionForAgent(agentID)
 	if sess != nil && sess.backend != nil {
 		sess.backend.CloseOrchestrator(agentID)
+	}
+	// Persist registry metadata while we still have the Session reference and
+	// (usually) an open session DB handle for SyncSessionMeta.
+	if sess != nil {
+		w.persistSessionRegistry(sess)
 	}
 	delete(w.SessionsByAgent, agentID)
 	if sess != nil && sess.AgentID == agentID {
@@ -708,24 +728,31 @@ func (w *Workspace) ListSessions() []sessiondb.SessionMeta {
 // enrichSessionMeta fills in fields that live in the session database.
 // Falls back to the legacy ~/.crude/sessions/ layout when the workspace-
 // local DB is missing.
+//
+// When neither path has a session DB, the registry row is marked db_missing
+// (not DELETE'd) so a path-construction bug or transient absence cannot
+// destroy the user's index. Reappearance clears the flag on a later enrich.
 func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.SessionMeta {
 	dbPath, err := SessionDBPath(w.RootPath, r.ID)
 	if err != nil {
 		return r
 	}
 	if _, err := os.Stat(dbPath); err != nil {
-		// Legacy fallback before dropping the registry entry.
+		// Legacy fallback before marking the registry entry unavailable.
 		if legacyRoot, legErr := session.SessionsRoot(); legErr == nil {
 			legacyPath := filepath.Join(legacyRoot, r.ID+".db")
 			if _, legStat := os.Stat(legacyPath); legStat == nil {
 				dbPath = legacyPath
 			} else {
-				// Session DB is gone; drop stale registry entry.
-				_, _ = w.WorkspaceDB.DB.Exec(`DELETE FROM workspace_sessions WHERE session_id = ?`, r.ID)
+				_ = w.WorkspaceDB.MarkSessionDBMissing(r.ID, true)
+				w.Logger.Warn("WORKSPACE", "session_db_missing",
+					"id", r.ID, "path", dbPath)
 				return sessiondb.SessionMeta{}
 			}
 		} else {
-			_, _ = w.WorkspaceDB.DB.Exec(`DELETE FROM workspace_sessions WHERE session_id = ?`, r.ID)
+			_ = w.WorkspaceDB.MarkSessionDBMissing(r.ID, true)
+			w.Logger.Warn("WORKSPACE", "session_db_missing",
+				"id", r.ID, "path", dbPath)
 			return sessiondb.SessionMeta{}
 		}
 	}
@@ -748,6 +775,8 @@ func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.Session
 	if m.Provider == "" {
 		m.Provider = r.Provider
 	}
+	// DB is present — clear any prior missing mark (reversible).
+	_ = w.WorkspaceDB.MarkSessionDBMissing(r.ID, false)
 	// Write enriched metadata back to workspace_sessions so the registry
 	// stays self-consistent without requiring enrichment on every list.
 	_ = w.WorkspaceDB.UpdateSessionMeta(r.ID, m.TurnCount, m.MessageCount,

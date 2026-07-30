@@ -175,3 +175,18 @@ func TestResolveControlState_Precedence(t *testing.T) {
 		t.Fatal("selected over pressed")
 	}
 }
+
+func TestListRowColors_FocusDistinctFromSelected(t *testing.T) {
+	ts := NewTokenSet(theme.DefaultDark())
+	_, focusBG := ts.ListRowColors(StateFocused)
+	_, selBG := ts.ListRowColors(StateSelected)
+	if focusBG.Equal(selBG) {
+		t.Fatal("focused and selected list rows must use different backgrounds")
+	}
+	if !focusBG.Equal(ts.Color(ColorAccent)) {
+		t.Fatal("focused list row should use Accent background")
+	}
+	if !selBG.Equal(ts.Color(ColorSelection)) {
+		t.Fatal("selected (unfocused) list row should use Selection background")
+	}
+}

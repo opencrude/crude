@@ -9,10 +9,72 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
+	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
+
+func TestPaintGoldenCellBufferContract(t *testing.T) {
+	screen, host := searchHost(t)
+	screen.SetQuery("needle")
+	screen.ScheduleSearch()
+	screen.ApplySearchResults(screen.generation, []fileio.ProjectSearchMatch{
+		{Path: "/root/a.go", RelativePath: "a.go", Line: 1, LineText: "needle alpha", NameOnly: false},
+		{Path: "/root/b.go", RelativePath: "b.go", Line: 2, LineText: "needle beta", NameOnly: false},
+	}, nil, 5*time.Millisecond)
+	host.Layout()
+	buf := surface.NewCellBuffer(80, 24)
+	host.Paint(buf)
+
+	if nonEmpty := countNonEmptyCells(buf); nonEmpty == 0 {
+		t.Fatal("find in files paint produced no non-empty cells")
+	}
+	painted := bufferText(buf)
+	for _, label := range []string{"needle", "a.go", "b.go", "results"} {
+		if !strings.Contains(painted, label) {
+			t.Fatalf("missing FIF label %q:\n%s", label, painted)
+		}
+	}
+	if !bufferHasNonDefaultFG(buf) {
+		t.Fatal("find in files paint missing themed foreground")
+	}
+}
+
+func countNonEmptyCells(buf *surface.CellBuffer) int {
+	n := 0
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			c := buf.Get(x, y)
+			if c.Char != 0 && c.Width != 0 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func bufferHasNonDefaultFG(buf *surface.CellBuffer) bool {
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			if fg := buf.Get(x, y).FG; !fg.IsDefault() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func bufferHasFG(buf *surface.CellBuffer, want cell.Color) bool {
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			if fg := buf.Get(x, y).FG; !fg.IsDefault() && fg.Equal(want) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func TestFindInFilesFilterPaintsQueryAndStatusAcrossThemes(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {

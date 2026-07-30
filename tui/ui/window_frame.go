@@ -6,6 +6,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
+	"crude/tui/theme"
 )
 
 // FrameRole selects chrome behavior for WindowFrame.
@@ -166,23 +167,26 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 	if !bg.IsDefault() {
 		FillRect(buf, 0, 0, Rect{X: ox, Y: oy, W: r.W, H: r.H}, cell.BlankCell(bg))
 	}
+	g := DefaultGlyphsFromTokens(f.tokens)
 	// Corners and edges (rounded)
 	// top-left, top-right, bottom-left, bottom-right
 	setRune := func(x, y int, ch rune) {
 		buf.Set(ox+x, oy+y, cell.NewCell(ch, borderFG, bg, 0))
 	}
 	if r.W >= 2 && r.H >= 2 {
-		setRune(0, 0, '╭')
-		setRune(r.W-1, 0, '╮')
-		setRune(0, r.H-1, '╰')
-		setRune(r.W-1, r.H-1, '╯')
+		setRune(0, 0, firstRune(g.CornerTL, '╭'))
+		setRune(r.W-1, 0, firstRune(g.CornerTR, '╮'))
+		setRune(0, r.H-1, firstRune(g.CornerBL, '╰'))
+		setRune(r.W-1, r.H-1, firstRune(g.CornerBR, '╯'))
+		hBorder := firstRune(g.BorderH, '─')
+		vBorder := firstRune(g.BorderV, '│')
 		for x := 1; x < r.W-1; x++ {
-			setRune(x, 0, '─')
-			setRune(x, r.H-1, '─')
+			setRune(x, 0, hBorder)
+			setRune(x, r.H-1, hBorder)
 		}
 		for y := 1; y < r.H-1; y++ {
-			setRune(0, y, '│')
-			setRune(r.W-1, y, '│')
+			setRune(0, y, vBorder)
+			setRune(r.W-1, y, vBorder)
 		}
 	}
 	// Title in top border
@@ -214,7 +218,11 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 	// Close button
 	if f.closable && !f.closeR.Empty() {
 		cx := ox + f.closeR.X
-		buf.WriteString(cx, oy, " ✕ ", titleFG, bg, 0)
+		closeGlyph := g.Close
+		if closeGlyph == "" {
+			closeGlyph = "✕"
+		}
+		buf.WriteString(cx, oy, " "+closeGlyph+" ", titleFG, bg, 0)
 	}
 	// Content is painted by Host via Children(); frame only draws chrome.
 	// When used without Host, callers should PaintTree(frame) or use ComponentWidget.
@@ -258,4 +266,21 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func DefaultGlyphsFromTokens(ts *TokenSet) theme.Glyphs {
+	if ts != nil {
+		return ts.Glyphs()
+	}
+	return theme.DefaultGlyphs()
+}
+
+func firstRune(s string, fallback rune) rune {
+	if s == "" {
+		return fallback
+	}
+	for _, r := range s {
+		return r
+	}
+	return fallback
 }

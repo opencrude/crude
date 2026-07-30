@@ -25,12 +25,16 @@ package workspace
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"crude/buildinfo"
+
+	_ "modernc.org/sqlite"
 )
 
 // workspaceID computes a stable, filesystem-safe identifier for a project
@@ -142,8 +146,8 @@ func ListWorkspaces() ([]string, error) {
 }
 
 // ListWorkspaceInfos enumerates workspaces with display metadata for the
-// launcher. Best-effort: missing/corrupt DBs still produce an entry with
-// the hash as the name.
+// launcher. Best-effort: missing/corrupt/locked DBs still produce an entry
+// with the hash as the name and never block the UI for long.
 func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 	ids, err := ListWorkspaces()
 	if err != nil {
@@ -157,26 +161,52 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 	for _, id := range ids {
 		info := WorkspaceInfo{ID: id, ProjectName: id}
 		dbPath := filepath.Join(root, id, "workspace.db")
-		if meta := readWorkspaceMeta(dbPath); meta != nil {
+		if meta := readWorkspaceMetaBounded(dbPath, 150*time.Millisecond); meta != nil {
 			info = *meta
 			info.ID = id
+			if info.ProjectName == "" {
+				info.ProjectName = id
+			}
 		}
 		infos = append(infos, info)
 	}
 	return infos, nil
 }
 
+// readWorkspaceMetaBounded is readWorkspaceMeta with a hard wall-clock limit so
+// a locked/corrupt workspace.db cannot stall the launcher or tests.
+func readWorkspaceMetaBounded(dbPath string, limit time.Duration) *WorkspaceInfo {
+	type result struct{ info *WorkspaceInfo }
+	ch := make(chan result, 1)
+	go func() {
+		ch <- result{info: readWorkspaceMeta(dbPath)}
+	}()
+	select {
+	case r := <-ch:
+		return r.info
+	case <-time.After(limit):
+		return nil
+	}
+}
+
 // readWorkspaceMeta opens a workspace.db read-only and extracts project info.
+// It must not migrate or otherwise write — listing known workspaces from the
+// launcher must not mutate ~/.crude (including other projects' DBs).
 func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
-	// Use a lightweight open — OpenAndMigrate is fine for existing DBs.
-	wdb, err := openWorkspaceDBAt(dbPath)
+	// Short busy timeout + read-only: a live IDE holding the WAL must not stall
+	// the launcher (or unit tests) for the default 5s sessiondb busy wait.
+	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&immutable=1&_busy_timeout=1"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil
 	}
-	defer wdb.Close()
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+
+	wdb := &WorkspaceDB{DB: db, Path: dbPath, Dir: filepath.Dir(dbPath)}
 
 	info := &WorkspaceInfo{}
 	// Prefer an explicit metadata key if present.
@@ -184,14 +214,31 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 		info.ProjectDir = p
 		info.ProjectName = filepath.Base(p)
 	}
-	// Fall back to the most recent session's project_dir.
-	rows, err := wdb.DB.Query(`
-		SELECT project_dir, project_name, created_at
-		FROM workspace_sessions
-		ORDER BY created_at DESC
-		LIMIT 1
-	`)
-	if err == nil {
+	// Fall back to the most recent session's project_dir. Prefer project_name
+	// when the column exists; legacy registries omit it.
+	cols, colErr := tableColumns(db, "workspace_sessions")
+	if colErr != nil {
+		// Locked/corrupt DB — still return a stub entry from the folder name.
+		return info
+	}
+	var rows *sql.Rows
+	var qerr error
+	if cols["project_name"] {
+		rows, qerr = db.Query(`
+			SELECT project_dir, project_name, created_at
+			FROM workspace_sessions
+			ORDER BY created_at DESC
+			LIMIT 1
+		`)
+	} else {
+		rows, qerr = db.Query(`
+			SELECT project_dir, '' AS project_name, created_at
+			FROM workspace_sessions
+			ORDER BY created_at DESC
+			LIMIT 1
+		`)
+	}
+	if qerr == nil {
 		defer rows.Close()
 		if rows.Next() {
 			var dir, name string
@@ -211,8 +258,12 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 			}
 		}
 	}
-	// Session count.
-	_ = wdb.DB.QueryRow(`SELECT COUNT(*) FROM workspace_sessions`).Scan(&info.SessionCount)
+	// Session count (exclude rows whose session DB was marked unavailable).
+	if cols["db_missing"] {
+		_ = db.QueryRow(`SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0`).Scan(&info.SessionCount)
+	} else {
+		_ = db.QueryRow(`SELECT COUNT(*) FROM workspace_sessions`).Scan(&info.SessionCount)
+	}
 	if info.ProjectName == "" {
 		info.ProjectName = info.ID
 	}

@@ -1,23 +1,17 @@
 package viewmodel
 
 import (
-	"fmt"
-	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
-
-	"crude/tui/components"
-	"crude/tui/rendering"
-	"crude/tui/scrollbar"
+	"crude/tui/chatprojection"
+	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
-	"crude/tui/widgets"
+	"crude/tui/ui"
 	"crude/workspace"
 )
 
 // subPaneProjection is the TUI-owned rendering and projection state for one
-// subpane. It owns the concrete *widgets.MessageList (the retained render
+// subpane. It owns the concrete *chatprojection.Renderer (the retained render
 // cache + selection + scrollbar) and the compact-agent scroll state that
 // the workspace used to own.
 //
@@ -26,8 +20,8 @@ import (
 // message ID and Conversation version — the same pattern used for
 // AgentState.Messages -> syncAgentMessages.
 type subPaneProjection struct {
-	paneID  string
-	msgList *widgets.MessageList
+	paneID   string
+	renderer *chatprojection.Renderer
 
 	// paneType mirrors the workspace SubPane.Type. The projection needs it
 	// to decide whether the compact scrollbar or the MessageList scrollbar
@@ -37,14 +31,10 @@ type subPaneProjection struct {
 
 	// compact-agent scroll state. The workspace SubPane no longer owns
 	// scrollbar/cursor state; this projection does.
-	compactSB         scrollbar.ScrollBar
-	compactScrollY    int
-	compactContentH   int
-	compactVisibleH   int
-	compactAutoScroll bool
+	scroll *ui.ScrollModel
 
-	// compact tool-line ANSI cache (keyed by source version + width + count).
-	compactToolLines  []string
+	// compact tool-line native cache (keyed by source version + width + count).
+	compactToolLines  []chatprojection.SubPaneLine
 	compactCacheWidth int
 	compactMsgVersion uint64
 	compactMsgCount   int
@@ -66,6 +56,20 @@ func newSubPaneProjectionRegistry(th *theme.Theme) *subPaneProjectionRegistry {
 
 func (reg *subPaneProjectionRegistry) Theme() *theme.Theme { return reg.theme }
 
+// SetTheme replaces the registry theme and pushes it to every existing
+// chatprojection.Renderer so open subpanes do not keep a stale palette.
+func (reg *subPaneProjectionRegistry) SetTheme(th *theme.Theme) {
+	if reg == nil || th == nil {
+		return
+	}
+	reg.theme = th
+	for _, p := range reg.projections {
+		if p != nil && p.renderer != nil {
+			p.renderer.SetTheme(th)
+		}
+	}
+}
+
 // Get returns the projection for paneID, creating it (with a fresh
 // MessageList) if missing. paneType is recorded on first creation so the
 // registry can later decide which scrollbar path is active. Callers must
@@ -79,12 +83,13 @@ func (reg *subPaneProjectionRegistry) Get(paneID string, paneType workspace.Pane
 		return p
 	}
 	p := &subPaneProjection{
-		paneID:            paneID,
-		paneType:          paneType,
-		msgList:           widgets.NewMessageList(reg.theme),
-		compactSB:         scrollbar.New(0),
-		compactAutoScroll: true,
+		paneID:   paneID,
+		paneType: paneType,
+		renderer: chatprojection.NewRenderer(reg.theme),
+		scroll:   ui.NewScrollModel(),
 	}
+	p.scroll.SetAutoScroll(true)
+	p.renderer.BindPaneScroll(p.scroll)
 	reg.projections[paneID] = p
 	return p
 }
@@ -108,14 +113,14 @@ func (reg *subPaneProjectionRegistry) Remove(paneID string) {
 // SetModelName propagates the model name to every projection's MessageList.
 func (reg *subPaneProjectionRegistry) SetModelName(name string) {
 	for _, p := range reg.projections {
-		p.msgList.SetModelName(name)
+		p.renderer.SetModelName(name)
 	}
 }
 
 // SetUsername propagates the username to every projection's MessageList.
 func (reg *subPaneProjectionRegistry) SetUsername(name string) {
 	for _, p := range reg.projections {
-		p.msgList.SetUsername(name)
+		p.renderer.SetUsername(name)
 	}
 }
 
@@ -127,7 +132,7 @@ func (reg *subPaneProjectionRegistry) SetSize(w, h int) {
 		maxH = 5
 	}
 	for _, p := range reg.projections {
-		p.msgList.SetSize(w, maxH)
+		p.renderer.SetSize(w, maxH)
 	}
 }
 
@@ -135,8 +140,8 @@ func (reg *subPaneProjectionRegistry) SetSize(w, h int) {
 // projection's MessageList — the prior PaneManager.TickAll behavior.
 func (reg *subPaneProjectionRegistry) TickAll(spinFrame int) {
 	for _, p := range reg.projections {
-		p.msgList.InvalidateCache()
-		p.msgList.SetSpinFrame(spinFrame)
+		p.renderer.InvalidateCache()
+		p.renderer.SetSpinFrame(spinFrame)
 	}
 }
 
@@ -148,12 +153,12 @@ func (reg *subPaneProjectionRegistry) HasAnyScrollbarVisible(done map[string]boo
 			continue
 		}
 		if p.paneType == workspace.PaneAgent {
-			if p.compactSB.IsVisible() && p.compactContentH > 0 {
+			if p.scroll.MaxOffset() > 0 {
 				return true
 			}
 			continue
 		}
-		if p.msgList.ScrollbarWidth() > 0 {
+		if p.renderer.PaneScrollMaxOffset() > 0 {
 			return true
 		}
 	}
@@ -173,14 +178,14 @@ func (reg *subPaneProjectionRegistry) ScrollbarNestingLevel(done map[string]bool
 // InvalidateSubPane forwards to the owning projection's MessageList.
 func (reg *subPaneProjectionRegistry) InvalidateSubPane(parentPaneID, subPaneID string) {
 	if p, ok := reg.projections[parentPaneID]; ok {
-		p.msgList.InvalidateSubPane(subPaneID)
+		p.renderer.InvalidateSubPane(subPaneID)
 	}
 }
 
 // InvalidateAllMessages forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) InvalidateAllMessages(paneID string) {
 	if p, ok := reg.projections[paneID]; ok {
-		p.msgList.InvalidateAllMessages()
+		p.renderer.InvalidateAllMessages()
 	}
 }
 
@@ -196,20 +201,20 @@ func (reg *subPaneProjectionRegistry) SyncFromWorkspace(paneID string, conversat
 	if conversation == nil {
 		return
 	}
-	if p.msgList.SourceVersion() == conversation.Version() {
+	if p.renderer.SourceVersion() == conversation.Version() {
 		return
 	}
 	messages, version := chatMessagesFromConversation(conversation)
-	p.msgList.SyncMessages(messages, version)
+	p.renderer.SyncMessages(messages, version)
 	if scroll {
-		p.msgList.ScrollToBottom()
+		p.renderer.ScrollToBottom()
 	}
 }
 
 // ActiveThinkingLineCount forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) ActiveThinkingLineCount(paneID string, contentWidth int) int {
 	if p, ok := reg.projections[paneID]; ok {
-		return p.msgList.ActiveThinkingLineCount(contentWidth)
+		return p.renderer.ActiveThinkingLineCount(contentWidth)
 	}
 	return 0
 }
@@ -217,95 +222,50 @@ func (reg *subPaneProjectionRegistry) ActiveThinkingLineCount(paneID string, con
 // SetStreaming forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) SetStreaming(paneID string, v bool) {
 	if p, ok := reg.projections[paneID]; ok {
-		p.msgList.SetStreaming(v)
+		p.renderer.SetStreaming(v)
 	}
 }
 
 // SetActiveTyping forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) SetActiveTyping(paneID string, v bool) {
 	if p, ok := reg.projections[paneID]; ok {
-		p.msgList.SetActiveTyping(v)
+		p.renderer.SetActiveTyping(v)
 	}
 }
 
 // SetPaneScrollbarWidth forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) SetPaneScrollbarWidth(paneID string, w int) {
 	if p, ok := reg.projections[paneID]; ok {
-		p.msgList.SetPaneScrollbarWidth(w)
+		p.renderer.SetPaneScrollbarWidth(w)
 	}
 }
 
-// HandleScrollbarTick forwards a scrollbar tick to both the projection's
-// MessageList and its compact scrollbar (for PaneAgent panes).
-func (reg *subPaneProjectionRegistry) HandleScrollbarTick(paneID string, msg tea.Msg, isCompactActive bool) tea.Cmd {
+// PaneGutterState returns native gutter paint/input metadata for shellchat.
+func (reg *subPaneProjectionRegistry) PaneGutterState(paneID string, sp *workspace.SubPane) shellchat.PaneGutterState {
 	p, ok := reg.projections[paneID]
-	if !ok {
-		return nil
+	if !ok || sp == nil || sp.Done {
+		return shellchat.PaneGutterState{}
 	}
-	var cmd tea.Cmd
-	if isCompactActive {
-		newSB, tickCmd := p.compactSB.Update(msg)
-		p.compactSB = newSB
-		// compact scrollbar tick does not itself return a cmd today,
-		// but keep the call shape for forward compatibility.
-		_ = tickCmd
-	} else {
-		cmd = p.msgList.HandleScrollbarTick(msg)
+	if sp.Type == workspace.PaneAgent {
+		return shellchat.PaneGutterState{
+			Scroll:  p.scroll,
+			TrackH:  p.scroll.Viewport(),
+			Visible: p.scroll.MaxOffset() > 0,
+		}
 	}
-	return cmd
-}
-
-// CanScrollCompact reports whether the compact-agent scroll is active.
-func (reg *subPaneProjectionRegistry) CanScrollCompact(paneID string) bool {
-	p, ok := reg.projections[paneID]
-	if !ok {
-		return false
-	}
-	return p.compactContentH > p.compactVisibleH && p.compactVisibleH > 0
-}
-
-// ScrollCompactUp scrolls the compact-agent view up.
-func (reg *subPaneProjectionRegistry) ScrollCompactUp(paneID string) {
-	p, ok := reg.projections[paneID]
-	if !ok {
-		return
-	}
-	p.compactAutoScroll = false
-	if p.compactScrollY > 0 {
-		p.compactScrollY--
+	return shellchat.PaneGutterState{
+		Scroll:  p.scroll,
+		TrackH:  p.scroll.Viewport(),
+		Visible: p.renderer.PaneScrollMaxOffset() > 0,
 	}
 }
 
-// ScrollCompactDown scrolls the compact-agent view down.
-func (reg *subPaneProjectionRegistry) ScrollCompactDown(paneID string) {
-	p, ok := reg.projections[paneID]
-	if !ok {
-		return
+// ScrollModel returns the per-pane scroll model.
+func (reg *subPaneProjectionRegistry) ScrollModel(paneID string) *ui.ScrollModel {
+	if p, ok := reg.projections[paneID]; ok {
+		return p.scroll
 	}
-	maxScroll := p.compactContentH - p.compactVisibleH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if p.compactScrollY < maxScroll {
-		p.compactScrollY++
-	}
-	if p.compactScrollY >= maxScroll {
-		p.compactAutoScroll = true
-	}
-}
-
-// ScrollbarView returns the scrollbar view for the pane. For PaneAgent
-// panes that are not Done, the compact scrollbar view is returned;
-// otherwise the MessageList scrollbar view is used.
-func (reg *subPaneProjectionRegistry) ScrollbarView(paneID string, sp *workspace.SubPane) string {
-	p, ok := reg.projections[paneID]
-	if !ok {
-		return ""
-	}
-	if sp.Type == workspace.PaneAgent && !sp.Done {
-		return p.compactSB.View()
-	}
-	return p.msgList.ScrollbarView()
+	return nil
 }
 
 // ScrollbarWidth returns the scrollbar column width for the pane.
@@ -315,12 +275,15 @@ func (reg *subPaneProjectionRegistry) ScrollbarWidth(paneID string, sp *workspac
 		return 0
 	}
 	if sp.Type == workspace.PaneAgent && !sp.Done {
-		if p.compactSB.IsVisible() && p.compactContentH > 0 {
-			return scrollbar.ScrollbarWidth
+		if p.scroll.MaxOffset() > 0 {
+			return ui.ScrollbarWidth
 		}
 		return 0
 	}
-	return p.msgList.ScrollbarWidth()
+	if p.renderer.PaneScrollMaxOffset() > 0 {
+		return ui.ScrollbarWidth
+	}
+	return 0
 }
 
 // ScrollbarLineCount returns the content height used by the scrollbar.
@@ -333,24 +296,43 @@ func (reg *subPaneProjectionRegistry) ScrollbarLineCount(paneID string, sp *work
 		return 0
 	}
 	if sp.Type == workspace.PaneAgent {
-		return p.compactContentH
+		return p.scroll.Content()
 	}
-	return p.msgList.ContentHeight()
+	return p.renderer.ContentHeight()
 }
 
-// Render produces the subpane lines to be embedded in the chat message
-// list. It reads the presentation-neutral SubPaneView from the workspace
-// and applies the same width contract as the prior SubPane.Render: the
-// caller already subtracted scrollbar columns and gaps; the projection
-// must not subtract PadLR or scrollbar space itself.
-func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPane, width, maxH, spinFrame int) []string {
+// BuildPaneGutters collects gutter state for all panes referenced in paneLineMap.
+func (reg *subPaneProjectionRegistry) BuildPaneGutters(paneLineMap []chatprojection.PaneLineInfo, paneMgr *workspace.PaneManager) map[string]shellchat.PaneGutterState {
+	out := make(map[string]shellchat.PaneGutterState)
+	for _, info := range paneLineMap {
+		if info.PaneID == "" {
+			continue
+		}
+		if _, ok := out[info.PaneID]; ok {
+			continue
+		}
+		sp := paneMgr.Get(info.PaneID)
+		if sp == nil {
+			continue
+		}
+		out[info.PaneID] = reg.PaneGutterState(info.PaneID, sp)
+	}
+	return out
+}
+
+// Render produces subpane rows for chatprojection embedding. Structured
+// native rows are returned for compact headers/tool lines and thinking-pane
+// MessageList content (which is already native from renderThinkingMessage).
+func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPane, width, maxH, spinFrame int) []chatprojection.SubPaneLine {
 	if width < 10 {
 		width = 10
 	}
 	view := sp.View()
 
 	if sp.Done {
-		return []string{renderSubPaneSummaryLine(reg.theme, view, width)}
+		return []chatprojection.SubPaneLine{
+			chatprojection.BuildSubPaneSummaryLine(reg.theme, view, width),
+		}
 	}
 
 	if sp.Type == workspace.PaneAgent {
@@ -358,19 +340,27 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	}
 
 	// PaneThinking: delegate to the MessageList projection, same as the
-	// prior SubPane.Render path.
+	// prior SubPane.Render path. Keep topPad/scroll arithmetic identical to
+	// the string path; only the per-row carrier changes (NativeLine).
 	p := reg.Get(paneID, sp.Type)
-	p.msgList.SetSize(width, maxH)
-	p.msgList.SetChatAreaBounds(0, maxH)
-	p.msgList.SetSpinFrame(spinFrame)
-	p.msgList.SetActiveTyping(!sp.Done)
-	p.msgList.SetPhase("")
+	p.renderer.SetSize(width, maxH)
+	p.renderer.SetChatAreaBounds(0, maxH)
+	p.renderer.SetSpinFrame(spinFrame)
+	p.renderer.SetActiveTyping(!sp.Done)
+	p.renderer.SetPhase("")
 
-	contentLines := p.msgList.Render(width)
-	actualH := p.msgList.ContentHeight()
+	contentLines, contentNative := p.renderer.RenderVisible(width)
+	actualH := p.renderer.ContentHeight()
 	visibleH := actualH
 	if visibleH > maxH {
 		visibleH = maxH
+	}
+	p.scroll.SetContent(actualH)
+	p.scroll.SetViewport(visibleH)
+	if p.scroll.AutoScroll() {
+		p.scroll.StickToBottom()
+	} else {
+		p.scroll.Clamp()
 	}
 	if visibleH > len(contentLines) {
 		visibleH = len(contentLines)
@@ -378,35 +368,38 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	if actualH <= maxH && actualH < len(contentLines) {
 		topPad := len(contentLines) - actualH
 		contentLines = contentLines[topPad:]
+		if topPad < len(contentNative) {
+			contentNative = contentNative[topPad:]
+		} else {
+			contentNative = nil
+		}
 	}
 
-	headerLine := renderSubPaneHeaderLine(reg.theme, view.Header, width, spinFrame)
-	lines := make([]string, 0, 1+visibleH)
+	headerLine := chatprojection.BuildSubPaneHeaderLine(reg.theme, view.Header, width, spinFrame)
+	lines := make([]chatprojection.SubPaneLine, 0, 1+visibleH)
 	lines = append(lines, headerLine)
 	for i := 0; i < visibleH; i++ {
 		if i < len(contentLines) {
-			lines = append(lines, contentLines[i])
+			if i < len(contentNative) && !contentNative[i].PreferANSI() {
+				lines = append(lines, chatprojection.NativeLine(contentNative[i]))
+			} else {
+				lines = append(lines, chatprojection.ANSILine(contentLines[i]))
+			}
 		}
 	}
 	return lines
 }
 
-// renderAgentCompact mirrors the prior SubPane.renderAgentCompact but
-// reads from the workspace SubPaneView and writes to projection-owned
-// scroll/cache state.
-func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *workspace.SubPane, view workspace.SubPaneView, width, maxH, spinFrame int) []string {
+func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *workspace.SubPane, view workspace.SubPaneView, width, maxH, spinFrame int) []chatprojection.SubPaneLine {
 	p := reg.Get(paneID, sp.Type)
-	th := reg.theme
-	borderStyle := lipgloss.NewStyle().Foreground(th.Colors.Border)
-	mutedStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted)
 
-	msgs := p.msgList.Messages()
-	var allToolLines []string
-	msgVersion := p.msgList.Version()
+	msgs := p.renderer.Messages()
+	var allToolLines []chatprojection.SubPaneLine
+	msgVersion := p.renderer.Version()
 	if p.compactToolLines != nil && p.compactMsgVersion == msgVersion && p.compactMsgCount == len(msgs) && p.compactCacheWidth == width {
 		allToolLines = p.compactToolLines
 	} else {
-		allToolLines = renderSubPaneToolLines(th, view, width)
+		allToolLines = chatprojection.BuildSubPaneToolLines(reg.theme, view, width)
 		p.compactToolLines = allToolLines
 		p.compactMsgVersion = msgVersion
 		p.compactMsgCount = len(msgs)
@@ -418,46 +411,26 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 		visibleH = 1
 	}
 
-	p.compactContentH = len(allToolLines)
-	p.compactVisibleH = visibleH
-
-	maxScroll := p.compactContentH - visibleH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if p.compactAutoScroll {
-		p.compactScrollY = maxScroll
-	}
-	if p.compactScrollY > maxScroll {
-		p.compactScrollY = maxScroll
-	}
-	if p.compactScrollY < 0 {
-		p.compactScrollY = 0
-	}
-
-	// Keep the workspace SubPane's compact scroll-intent fields mirrored,
-	// so CanScrollCompact/ScrollCompact* on the workspace still observe the
-	// same state. (These setters exist precisely for this boundary.)
-	sp.SetCompactContentH(p.compactContentH)
-	sp.SetCompactVisibleH(p.compactVisibleH)
-	sp.SetCompactScrollY(p.compactScrollY)
-	sp.SetCompactAutoScroll(p.compactAutoScroll)
-
-	var toolLines []string
-	if len(allToolLines) == 0 {
-		thinking := "Thinking..."
-		if p.msgList.ActiveThinkingLineCount(width) == 0 {
-			thinking = "Working..."
-		}
-		line := borderStyle.Render("│ ") + mutedStyle.Render("● "+thinking)
-		visW := rendering.VisibleWidth(line)
-		padR := width - visW
-		if padR < 0 {
-			padR = 0
-		}
-		toolLines = append(toolLines, line+strings.Repeat(" ", padR))
+	contentH := len(allToolLines)
+	p.scroll.SetContent(contentH)
+	p.scroll.SetViewport(visibleH)
+	if p.scroll.AutoScroll() {
+		p.scroll.StickToBottom()
 	} else {
-		start := p.compactScrollY
+		p.scroll.Clamp()
+	}
+
+	sp.SetCompactContentH(contentH)
+	sp.SetCompactVisibleH(visibleH)
+	sp.SetCompactScrollY(p.scroll.Offset())
+	sp.SetCompactAutoScroll(p.scroll.AutoScroll())
+
+	var toolLines []chatprojection.SubPaneLine
+	if len(allToolLines) == 0 {
+		thinking := p.renderer.ActiveThinkingLineCount(width) > 0
+		toolLines = append(toolLines, chatprojection.BuildCompactWorkingLine(reg.theme, thinking, width))
+	} else {
+		start := p.scroll.Offset()
 		end := start + visibleH
 		if end > len(allToolLines) {
 			end = len(allToolLines)
@@ -465,103 +438,10 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 		toolLines = allToolLines[start:end]
 	}
 
-	p.compactSB.SetTrackHeight(visibleH)
-	p.compactSB.SetScrollInfo(p.compactContentH, visibleH, p.compactScrollY)
-
-	headerLine := renderSubPaneHeaderLine(th, view.Header, width, spinFrame)
-	lines := make([]string, 0, 1+len(toolLines))
+	headerLine := chatprojection.BuildSubPaneHeaderLine(reg.theme, view.Header, width, spinFrame)
+	lines := make([]chatprojection.SubPaneLine, 0, 1+len(toolLines))
 	lines = append(lines, headerLine)
 	lines = append(lines, toolLines...)
-	return lines
-}
-
-// renderSubPaneHeaderLine renders the title bar ("│ ● agent-name 12s").
-// Pads to exactly `width` visible cells using VisibleWidth (not
-// lipgloss.Width) to avoid overflow from wide Unicode chars like │ and ●.
-func renderSubPaneHeaderLine(th *theme.Theme, header workspace.SubPaneHeaderView, width, spinFrame int) string {
-	borderPrefix := lipgloss.NewStyle().Foreground(th.Colors.Border).Render("│ ")
-	var styledTitle string
-	if !header.Done {
-		switch header.Type {
-		case workspace.PaneThinking:
-			dotIdx := components.ThinkingDotIndex(spinFrame)
-			// Pulse the thinking dot through four accent shades. The exact
-			// hex cycle is historical; using the theme Accent + a brightness
-			// ramp would be cleaner but is out of scope for the seam removal.
-			// Keep the cycle but route via the theme Spinner.Grounding base
-			// so a high-contrast theme can override it later.
-			base := th.Colors.Spinner.Grounding
-			if base == nil {
-				base = th.Colors.Accent
-			}
-			_ = dotIdx
-			dot := lipgloss.NewStyle().Foreground(base).Render("● ")
-			styledTitle = dot + lipgloss.NewStyle().Foreground(th.Colors.Accent).Bold(true).Render(header.Title)
-		default:
-			styledTitle = lipgloss.NewStyle().Foreground(th.Colors.Accent).Bold(true).Render("● " + header.Title)
-		}
-	} else {
-		styledTitle = lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("● " + header.Title)
-	}
-
-	meta := fmt.Sprintf("%.0fs", header.Elapsed.Seconds())
-	styledMeta := lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(meta)
-
-	full := borderPrefix + styledTitle + " " + styledMeta
-	visW := rendering.VisibleWidth(full)
-	padR := width - visW
-	if padR < 0 {
-		padR = 0
-	}
-	return full + strings.Repeat(" ", padR)
-}
-
-// renderSubPaneSummaryLine renders the collapsed summary ("│ ● agent for 5.0s").
-func renderSubPaneSummaryLine(th *theme.Theme, view workspace.SubPaneView, width int) string {
-	borderPrefix := lipgloss.NewStyle().Foreground(th.Colors.Border).Render("│ ")
-	summary := ""
-	if view.Summary != nil {
-		summary = view.Summary.Text
-	}
-	styled := lipgloss.NewStyle().Foreground(th.Colors.Muted).Render("● " + summary)
-	full := borderPrefix + styled
-	visW := rendering.VisibleWidth(full)
-	padR := width - visW
-	if padR < 0 {
-		padR = 0
-	}
-	return full + strings.Repeat(" ", padR)
-}
-
-// renderSubPaneToolLines builds the ANSI tool-line rows from the
-// presentation-neutral SubPaneView. Each row is padded to `width` visible
-// cells.
-func renderSubPaneToolLines(th *theme.Theme, view workspace.SubPaneView, width int) []string {
-	borderStyle := lipgloss.NewStyle().Foreground(th.Colors.Border)
-	var lines []string
-	for _, tl := range view.ToolLines {
-		if tl.Label == "" {
-			continue
-		}
-		var icon string
-		switch {
-		case tl.Status == "error" || tl.Phase == "error":
-			icon = lipgloss.NewStyle().Foreground(th.Colors.Error).Render("✗")
-		case tl.Phase == "done" || tl.Status == "success":
-			icon = lipgloss.NewStyle().Foreground(th.Colors.Success).Render("✓")
-		case tl.Phase == "streaming" || tl.Status == "streaming" || tl.Status == "calling":
-			icon = "●"
-		default:
-			icon = "○"
-		}
-		line := borderStyle.Render("│ ") + icon + " " + tl.Label
-		visW := rendering.VisibleWidth(line)
-		padR := width - visW
-		if padR < 0 {
-			padR = 0
-		}
-		lines = append(lines, line+strings.Repeat(" ", padR))
-	}
 	return lines
 }
 
@@ -569,10 +449,13 @@ func renderSubPaneToolLines(th *theme.Theme, view workspace.SubPaneView, width i
 // by MessageList.SetSubPaneContentFn. It is set on each projection's
 // MessageList so the parent's render path still calls back into the
 // registry.
-func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame int) []string {
+func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame int) []chatprojection.SubPaneLine {
 	sp := m.PaneMgr.Get(paneID)
 	if sp == nil {
-		return []string{"", "● unknown pane"}
+		return []chatprojection.SubPaneLine{
+			chatprojection.ANSILine(""),
+			chatprojection.NativeLine(chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: "● unknown pane", Role: ui.ColorMuted}}}),
+		}
 	}
 	if n := m.AgentMgr.Get(paneID); n != nil && n.State != nil {
 		m.subPaneProjections.SetStreaming(paneID, n.State.Streaming)

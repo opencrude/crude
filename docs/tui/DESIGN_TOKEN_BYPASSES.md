@@ -9,12 +9,9 @@ entries until the list is empty.
 | Location | Issue |
 |----------|-------|
 | `tui/theme/theme.go` | Some styles hard-code hex instead of Colors fields |
-| `tui/scrollbar/style.go` | Track/thumb colors not theme tokens |
 | `tui/diffview/style.go` | Full independent palette |
-| `tui/filetree/icons.go` | Fallback icon colors |
-| `tui/filetree/render.go` | defaultTreeColors hex map |
-| `tui/widgets/statusbar.go` | `#ffaa00` warning literals |
-| `tui/widgets/chatmessage.go` | incomplete message bg `#3a1a1a` |
+| `tui/filetree/icons.go` | Fallback icon colors (migrated to theme tokens; no longer on hex allowlist) |
+| `tui/chatprojection/` | message row paint uses theme tokens (replaces deleted `widgets/chatmessage.go`) |
 | `tui/editor/render.go` | raw ANSI diagnostic underlines |
 
 ## Parallel style pipelines

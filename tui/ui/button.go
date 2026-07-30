@@ -6,21 +6,16 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
+	"crude/tui/theme"
 )
 
 // Button is a focusable, clickable control that emits an Action on activate.
 type Button struct {
 	Base
-	label    string
-	actionID string
-	disabled bool
-	tokens   *TokenSet
-	// fallback colors when tokens is nil
-	fg         cell.Color
-	bg         cell.Color
-	focusFG    cell.Color
-	focusBG    cell.Color
-	hoverBG    cell.Color
+	label      string
+	actionID   string
+	disabled   bool
+	tokens     *TokenSet
 	variant    ButtonVariant
 	variantSet bool
 }
@@ -31,11 +26,6 @@ func NewButton(id ComponentID, label, actionID string) *Button {
 		Base:     NewBase(id),
 		label:    label,
 		actionID: actionID,
-		fg:       cell.NewTrueColor(230, 237, 243),
-		bg:       cell.NewTrueColor(33, 38, 45),
-		focusFG:  cell.NewTrueColor(13, 17, 23),
-		focusBG:  cell.NewTrueColor(88, 166, 255),
-		hoverBG:  cell.NewTrueColor(48, 54, 61),
 	}
 }
 
@@ -50,6 +40,13 @@ func (b *Button) SetVariant(v ButtonVariant) { b.variant, b.variantSet = v, true
 
 // SetLabel updates the visible label.
 func (b *Button) SetLabel(s string) { b.label = s }
+
+func (b *Button) tokenSet() *TokenSet {
+	if b.tokens != nil {
+		return b.tokens
+	}
+	return NewTokenSet(theme.DefaultDark())
+}
 
 // Measure: "[ label ]" width.
 func (b *Button) Measure(_ LayoutContext, cs Constraints) Size {
@@ -67,39 +64,32 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 		return
 	}
 	st := ResolveControlState(b.disabled, ctx.Focused, false, false, ctx.Hovered)
-	fg, bg := b.fg, b.bg
+	tokens := b.tokenSet()
+	fg, bg := tokens.ButtonColors(st)
 	attr := cell.Attrs(0)
-	if b.tokens != nil {
-		fg, bg = b.tokens.ButtonColors(st)
-		if st != StateDisabled && b.variantSet {
-			switch b.variant {
-			case VariantPrimary:
-				fg, bg = b.tokens.Color(ColorBg), b.tokens.Color(ColorAccent)
-			case VariantDanger:
-				fg, bg = b.tokens.Color(ColorBg), b.tokens.Color(ColorError)
-			case VariantGhost:
-				fg, bg = b.tokens.Color(ColorAccent), b.tokens.Color(ColorPopupBg)
-			}
-			if st == StateHovered {
-				bg = b.tokens.Color(ColorHover)
-			}
-			if st == StateFocused || st == StatePressed {
-				if b.variant == VariantDanger {
-					bg = b.tokens.Color(ColorError)
-				} else if b.variant != VariantGhost {
-					bg = b.tokens.Color(ColorAccent)
-				}
-			}
+	if st != StateDisabled && b.variantSet {
+		switch b.variant {
+		case VariantPrimary:
+			fg, bg = tokens.Color(ColorBg), tokens.Color(ColorAccent)
+		case VariantDanger:
+			fg, bg = tokens.Color(ColorBg), tokens.Color(ColorError)
+		case VariantGhost:
+			fg, bg = tokens.Color(ColorAccent), tokens.Color(ColorPopupBg)
+		case VariantSecondary:
+			fg, bg = tokens.Color(ColorPopupButtonFg), tokens.Color(ColorPopupButtonBg)
 		}
-	} else {
-		switch st {
-		case StateDisabled:
-			fg = cell.NewTrueColor(110, 118, 129)
-		case StateFocused, StatePressed:
-			fg, bg = b.focusFG, b.focusBG
+		if st == StateHovered {
+			bg = tokens.Color(ColorHover)
+			fg = tokens.Color(ColorFg)
+		}
+		if st == StateFocused || st == StatePressed {
+			// Keyboard focus: Accent fill + bold. Distinct from unfocused primary
+			// via bold, and from secondary via Accent vs PopupButtonBg.
+			fg, bg = tokens.Color(ColorBg), tokens.Color(ColorAccent)
+			if b.variant == VariantDanger {
+				bg = tokens.Color(ColorError)
+			}
 			attr = cell.AttrBold
-		case StateHovered:
-			bg = b.hoverBG
 		}
 	}
 	if st == StateFocused || st == StatePressed {

@@ -30,7 +30,7 @@ func TestEditorHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app.EditorState.ActiveView = path
 
 	help := app.contextualHelpView()
-	for _, want := range []string{"handlers.go", "1:1", "4L", "Ctrl+S save", "esc close"} {
+	for _, want := range []string{"handlers.go", "1:1", "4L", "Ctrl+S save", "Esc close"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("editor status help missing %q: %q", want, help)
 		}
@@ -55,14 +55,14 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 
 	view := app.buildMainView()
 	help := app.contextualHelpView()
-	if !strings.Contains(help, "shift+tab previous") {
+	if !strings.Contains(help, "Shift+Tab previous") {
 		t.Fatalf("session settings help should move to status: %q", help)
 	}
 	if strings.HasPrefix(help, "[") || strings.HasSuffix(help, "]") {
 		t.Fatalf("status help should use compact status-bar chrome: %q", help)
 	}
 
-	if strings.Contains(view, "shift+tab previous") {
+	if strings.Contains(view, "Shift+Tab previous") {
 		t.Fatalf("session settings help must not render inside the main pane:\n%s", view)
 	}
 	inputLines := len(strings.Split(app.Input.View(app.width, app.height, false, false, app.SpinFrame), "\n"))
@@ -80,17 +80,8 @@ func TestContextualHelpCoversTabFocus(t *testing.T) {
 	app.launcherScreen = nil
 	app.launcherHost = nil
 	app.FocusStack.Push(FocusTabBar)
-	app.syncFormHint()
 	if got := app.contextualHelpView(); !strings.Contains(got, "tab bar focused") {
 		t.Fatalf("tab-focus help should move to status: %q", got)
-	}
-}
-
-func TestCompactStatusHintPreservesSuffixContext(t *testing.T) {
-	hint := "[ enter: submit answer · esc: back ]  ❯ Q2 (Details)"
-	got := compactStatusHint(hint)
-	if got != "enter: submit answer · esc: back  ·  ❯ Q2 (Details)" {
-		t.Fatalf("compactStatusHint()=%q", got)
 	}
 }
 
@@ -100,11 +91,11 @@ func TestComposerHelpMovesToStatusWithoutRenderingInInput(t *testing.T) {
 	app.launcherHost = nil
 
 	help := app.contextualHelpView()
-	if !strings.Contains(help, "enter send") || !strings.Contains(help, "ctrl+o attach file") {
+	if !strings.Contains(help, "Enter send") || !strings.Contains(help, "Ctrl+O attach file") {
 		t.Fatalf("composer guidance should appear in status context: %q", help)
 	}
 	inputView := app.Input.View(100, 20, false, false, 0)
-	if strings.Contains(inputView, "enter send") || strings.Contains(inputView, "attach file") {
+	if strings.Contains(inputView, "Enter send") || strings.Contains(inputView, "attach file") {
 		t.Fatalf("composer guidance must not reserve an input row: %q", inputView)
 	}
 
@@ -138,7 +129,7 @@ func TestEditorContextHelpDerivesShortcutsFromRegistry(t *testing.T) {
 		"Ctrl+S save",
 		"Ctrl+Z undo",
 		"Ctrl+Y redo",
-		"esc close",
+		"Esc close",
 	} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("editor help missing %q in: %q", want, help)
@@ -167,12 +158,11 @@ func TestEditorContextHelpFallsBackEmptyRegistry(t *testing.T) {
 	app.EditorState.ActiveView = path
 
 	help := app.contextualHelpView()
-	// Without registry, still shows position info and esc close.
-	if !strings.Contains(help, "main.go") || !strings.Contains(help, "esc close") {
+	// Without registry, still shows position info and Esc close via chord fallbacks.
+	if !strings.Contains(help, "main.go") || !strings.Contains(help, "Esc close") {
 		t.Fatalf("editor help missing basics (nil registry): %q", help)
 	}
-	// Should NOT have the "  ·  " extra separator when no registry actions.
-	if strings.Count(help, "  ·  esc close") < 1 {
-		t.Fatalf("editor help missing '  ·  esc close' suffix: %q", help)
+	if !strings.Contains(help, "Ctrl+S save") {
+		t.Fatalf("editor help missing chord fallbacks (nil registry): %q", help)
 	}
 }

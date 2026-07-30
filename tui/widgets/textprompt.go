@@ -1,9 +1,6 @@
 package widgets
 
 import (
-	"charm.land/lipgloss/v2"
-
-	"crude/tui/theme"
 	"crude/tui/ui"
 )
 
@@ -110,82 +107,6 @@ func TextPromptPopupWidth(st *TextPromptState) int {
 // TextPromptPopupHeight is the popup total height (chrome + body).
 func TextPromptPopupHeight(st *TextPromptState) int {
 	return 7 // chrome (2) + prompt (1) + input (1) + hint (1) + 2 breathing
-}
-
-// TextPromptLines renders the prompt popup into a slice of styled
-// ANSI lines including the popup's own border, title, and padding
-// (unified design). Pass to widgets.NewPopupContent.
-func TextPromptLines(th *theme.Theme, st *TextPromptState) []string {
-	st.SyncFromEdit()
-	mutedStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted).Background(th.Colors.PopupBg)
-	cfg := PopupChromeConfig{
-		Title:     st.Title,
-		TitleIcon: kindIcon(st.Kind),
-		Width:     TextPromptPopupWidth(st),
-		Focused:   true,
-	}
-	innerW := cfg.InnerWidth()
-
-	var content []string
-	if st.Prompt != "" {
-		content = append(content, padVisibleToWidth(mutedStyle.Render(st.Prompt), innerW))
-	} else {
-		content = append(content, PopupEmptyLine(th))
-	}
-
-	placeholder := "name"
-	switch st.Kind {
-	case TextPromptNewFile:
-		placeholder = "filename"
-	case TextPromptNewFolder:
-		placeholder = "folder"
-	case TextPromptRename:
-		placeholder = "new name"
-	}
-
-	value := st.ValueText()
-	cursor := st.CursorPos()
-	if value == "" && st.InitialValue != "" && st.Edit != nil && st.Edit.Len() == 0 {
-		// Prefill once if Edit was empty but InitialValue set.
-		st.Edit.SetValue(st.InitialValue)
-		value = st.InitialValue
-		cursor = st.Edit.Cursor()
-	}
-	content = append(content, padVisibleToWidth(
-		PopupInputField(th, "", value, placeholder, cursor, true),
-		innerW))
-
-	content = append(content, PopupEmptyLine(th))
-	content = append(content, padVisibleToWidth(
-		PopupHintLine(th, textPromptHintSegments(st)),
-		innerW))
-
-	return PopupChromeLines(th, cfg, content)
-}
-
-func textPromptHintSegments(st *TextPromptState) []HintSegment {
-	switch st.Kind {
-	case TextPromptNewFile:
-		return []HintSegment{
-			{Key: "enter", Desc: "create"},
-			{Key: "esc", Desc: "cancel"},
-		}
-	case TextPromptNewFolder:
-		return []HintSegment{
-			{Key: "enter", Desc: "create"},
-			{Key: "esc", Desc: "cancel"},
-		}
-	case TextPromptRename:
-		return []HintSegment{
-			{Key: "enter", Desc: "rename"},
-			{Key: "esc", Desc: "cancel"},
-		}
-	default:
-		return []HintSegment{
-			{Key: "enter", Desc: "submit"},
-			{Key: "esc", Desc: "cancel"},
-		}
-	}
 }
 
 func kindIcon(k TextPromptKind) string {

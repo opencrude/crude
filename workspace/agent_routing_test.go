@@ -60,6 +60,48 @@ func TestCloseAgentCancelsBeforeRemovingSessionOwnership(t *testing.T) {
 	}
 }
 
+func TestCloseAgentPersistsRecoverableRegistryRow(t *testing.T) {
+	wdb := openTestWorkspaceDB(t)
+	sdb := openTestSessionDB(t, "sess-close-1")
+	mgr := NewAgentManager()
+	cancelCh := make(chan struct{}, 1)
+	mgr.AddOrchestrator("agent", nil, nil, cancelCh, nil, &AgentState{})
+	sess := &Session{
+		SessionID: "sess-close-1",
+		AgentID:   "agent",
+		DB:        sdb,
+	}
+	ws := &Workspace{
+		RootPath:        "/tmp/project",
+		AgentMgr:        mgr,
+		WorkspaceDB:     wdb,
+		Sessions:        []*Session{sess},
+		SessionsByID:    map[string]*Session{"sess-close-1": sess},
+		SessionsByAgent: map[string]*Session{"agent": sess},
+		Logger:          nopLogger{},
+	}
+
+	// Intentionally never registered — CloseAgent must Register + CloseSession.
+	ws.CloseAgent("agent")
+
+	metas, err := wdb.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(metas) != 1 || metas[0].ID != "sess-close-1" {
+		t.Fatalf("registry after close: %+v", metas)
+	}
+	var closedAt int64
+	if err := wdb.DB.QueryRow(
+		`SELECT closed_at FROM workspace_sessions WHERE session_id = ?`, "sess-close-1",
+	).Scan(&closedAt); err != nil {
+		t.Fatalf("closed_at read: %v", err)
+	}
+	if closedAt == 0 {
+		t.Fatal("closed_at was not stamped")
+	}
+}
+
 func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 	mgr := NewAgentManager()
 	mgr.AddOrchestrator("first", nil, nil, nil, nil, &AgentState{})

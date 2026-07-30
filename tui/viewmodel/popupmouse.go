@@ -3,7 +3,6 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/tui/widgets"
@@ -85,8 +84,12 @@ func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY in
 }
 
 // closePopupWindowByID routes close by popup ID to the OverlayHost.
-// All cleanup logic lives in the OnClose callback registered at open time.
+// Closing workspace settings also reverts any live theme preview so the X
+// button matches Cancel/Esc.
 func (m *App) closePopupWindowByID(id string) {
+	if id == string(ui.OverlayWorkspaceSettings) {
+		m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+	}
 	m.overlayHost.Close(ui.OverlayID(id))
 }
 
@@ -102,7 +105,7 @@ func (m *App) closePopupWindowByID(id string) {
 // =============================================================================
 // Context menu: click & hover
 //
-// Layout (after PopupChromeLines):
+// Layout (BuildContextMenuFrame / WindowFrame FramePopover):
 // Row 0: ╭     ╮  (top border)
 // Row 1: │ first item│  (first content line)
 // Row 2: │ second    │
@@ -195,7 +198,7 @@ func (m *App) hoverContextMenu(localX, localY int) {
 // =============================================================================
 // Find/Replace: click
 //
-// Layout (after PopupChromeLines, undecorated):
+// Layout (BuildFindReplaceFrame / WindowFrame FramePopover):
 // Row 0: ╭─ Find  ─╮
 // Row 1: │ Find: xxx│
 // Row 2: │ ⌕ 3/10   │ (or Replace if ReplaceMode)
@@ -215,8 +218,8 @@ func (m *App) hoverContextMenu(localX, localY int) {
 // is 6 cells; "Replace: " is 9 cells). The chrome adds "│ " on the
 // left (2 cells of padding around the left border). We account for
 // both when translating local X to visible column within the value.
-func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, input *components.TextInput, localX int, label string) {
-	if fr == nil || input == nil {
+func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, edit *ui.TextEdit, localX int, label string) {
+	if fr == nil || edit == nil {
 		return
 	}
 	// Chrome contributes: "│" border (1) + " " pad (1) + " " pad (1)
@@ -225,19 +228,15 @@ func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, input *com
 	labelW := len(label) + 2 // "Label" + ": "
 	valueStartX := chromeW + labelW
 	if localX < valueStartX {
-		input.SetCursorFlat(0)
+		edit.SetCursor(0, false)
 	} else {
 		// Translate visible X to rune index in the value.
-		// localX is in the popup's local coordinates; we count
-		// from valueStartX into the value's visible-width position.
 		relX := localX - valueStartX
-		value := input.Value()
+		value := edit.Value()
 		runes := []rune(value)
-		// Walk runes accumulating visible width until we exceed relX.
 		pos := 0
 		acc := 0
 		for i, r := range runes {
-			// Use grapheme-aware width (same as layout + UV), not per-rune wcwidth.
 			w := rendering.PlainWidth(string(r))
 			if acc+w > relX {
 				pos = i
@@ -248,9 +247,9 @@ func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, input *com
 		}
 		pos = len(runes)
 	done:
-		input.SetCursorFlat(pos)
+		edit.SetCursor(pos, false)
 	}
-	input.ClearSelection()
+	edit.ClearSelection()
 }
 
 func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
@@ -267,7 +266,7 @@ func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 	// Row 0: Find input field
 	if contentRow == 0 {
 		fr.FocusedField = 0
-		m.positionFindReplaceCursor(fr, fr.FindInput(), localX, "Find")
+		m.positionFindReplaceCursor(fr, fr.FindEdit(), localX, "Find")
 		m.refreshFindReplacePopup()
 		return nil
 	}
@@ -277,7 +276,7 @@ func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 	if fr.ReplaceMode {
 		if contentRow == 1 {
 			fr.FocusedField = 1
-			m.positionFindReplaceCursor(fr, fr.ReplaceInput(), localX, "Replace")
+			m.positionFindReplaceCursor(fr, fr.ReplaceEdit(), localX, "Replace")
 			m.refreshFindReplacePopup()
 			return nil
 		}
@@ -451,7 +450,7 @@ func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
 // =============================================================================
 // Tree prompt: click
 //
-// Layout (from TextPromptLines):
+// Layout (BuildTextPromptFrame / WindowFrame FrameDialog):
 // Row 0: ╭─ New File ─╮
 // Row 1: │ prompt text│
 // Row 2: │ <value>    │  (input)

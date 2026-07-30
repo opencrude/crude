@@ -12,9 +12,9 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	"crude/tui/editor"
-	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
+	"crude/tui/screens/shelltabs"
 	"crude/tui/ui"
 	"crude/tui/widgets"
 	wm "crude/tui/wm"
@@ -45,8 +45,11 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if ml := m.activeMsgList(); ml != nil && ml.HasActiveSelection() {
-		ml.ClearSelection()
+	if m.chatHost != nil && m.chatHost.HasPointerCapture() {
+		m.chatHost.CancelPointerCapture()
+	}
+	if m.chatScreen != nil && m.chatScreen.HasActiveSelection() {
+		m.chatScreen.ClearSelection()
 		return m, nil
 	}
 	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
@@ -93,14 +96,26 @@ func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Code == tea.KeyEsc || msg.String() == "ctrl+c" {
+	if msg.Code == tea.KeyEsc && !m.treeFilterBlocksEscPop() {
 		if m.FocusStack.Top() == FocusTree {
 			m.FocusStack.Pop()
 		}
 		return m, nil
 	}
-	cmd := m.Tree.Model.Update(filetree.TreeKeyPressMsg{Key: msg})
-	return m, cmd
+	if m.sidebarHost == nil {
+		return m, nil
+	}
+	res := m.sidebarHost.Handle(msg)
+	return m, res.Cmd
+}
+
+// treeFilterBlocksEscPop reports whether Esc should clear the tree filter
+// (via sidebarHost/model) instead of popping FocusTree from the stack.
+func (m *App) treeFilterBlocksEscPop() bool {
+	if m.Tree.Model == nil {
+		return false
+	}
+	return m.Tree.Model.FilterActive() || m.Tree.Model.Filter() != ""
 }
 
 func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -280,6 +295,14 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			}
 			return m, tea.Batch(cmds...)
 
+		case "workspace-settings":
+			// Must forward Esc into the surface so CancelMsg can revert a live
+			// theme preview. The default branch closes without CancelMsg.
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+
 		case "composer":
 			composer := m.sessionComposer()
 			if composer == nil {
@@ -290,24 +313,8 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			if msg.String() == "ctrl+c" && composer.HasActiveSelection() {
 				return m, rendering.CopyToClipboardCmd(composer.SelectedText())
 			}
-			if msg.Code == tea.KeyEsc {
-				m.overlayHost.Close(ui.OverlayComposer)
-				return m, nil
-			}
-			updated, cmd, action := composer.Update(msg)
-			composer = updated
-			if cmd != nil {
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 				cmds = append(cmds, cmd)
-			}
-			switch action {
-			case widgets.ComposerCancel:
-				m.overlayHost.Close(ui.OverlayComposer)
-			case widgets.ComposerSubmit:
-				text := composer.Value()
-				m.overlayHost.Close(ui.OverlayComposer)
-				if text != "" && m.AgentMgr.ActiveID() != "" {
-					cmds = append(cmds, m.submitInput(m.AgentMgr.ActiveID(), text, nil))
-				}
 			}
 			if fw := m.windowManager.Window("composer"); fw != nil {
 				fw.MarkContentDirty()
@@ -332,6 +339,19 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 }
 
 func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.tabBarVisible() && m.tabHost != nil {
+		m.syncTabBarHost()
+		m.tabHost.Focus(shelltabs.TabsID)
+		res := m.tabHost.Handle(msg)
+		cmd := m.handleTabBarHostResult(res)
+		if msg.Code == tea.KeyEsc && m.FocusStack.Top() == FocusTabBar {
+			m.FocusStack.Pop()
+			return m, cmd
+		}
+		if res.Handled {
+			return m, cmd
+		}
+	}
 	switch msg.Code {
 	case tea.KeyLeft:
 		m.Win.Prev()
@@ -362,9 +382,7 @@ func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
 	// Ctrl+C with a selection: copy. Without a selection, Ctrl+C
-	// is the cancel shortcut (the original behavior — Esc is also
-	// bound to cancel). This matches the chat input's "Ctrl+C is
-	// never cancel" rule.
+	// is the cancel shortcut (handled by the native screen).
 	overlay := m.sessionTextOverlay()
 	if overlay == nil {
 		return m, nil
@@ -372,19 +390,10 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 	if msg.String() == "ctrl+c" && overlay.HasActiveSelection() {
 		return m, rendering.CopyToClipboardCmd(overlay.SelectedText())
 	}
-	updated, cmd, action := overlay.Update(msg)
-	*overlay = updated
-	if cmd != nil {
-		*cmds = append(*cmds, cmd)
-	}
-	switch action {
-	case widgets.TextOverlaySave:
-		m.saveReferenceFromOverlay()
-	case widgets.TextOverlayCancel:
-		overlay.Close()
-		m.setMode(ModeChat)
-	}
 	if fw := m.windowManager.Focused(); fw != nil {
+		if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+			*cmds = append(*cmds, cmd)
+		}
 		fw.MarkContentDirty()
 	}
 	return m, tea.Batch(*cmds...)
@@ -412,17 +421,19 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 
 	if m.anyActive() && !m.OverlayState.IsBlocking() {
 		switch msg.Code {
-		case tea.KeyHome, tea.KeyEnd:
-			// Home/End go to the chat input when the input has content
-			// (the user is editing). Only route to the message list when
-			// the input is empty and an agent is active (scroll to top/bottom).
-			if m.Input.Value() != "" {
-				break // fall through to input.Update below
+		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+			if msg.Code == tea.KeyHome || msg.Code == tea.KeyEnd {
+				// Home/End go to the chat input when the input has content
+				// (the user is editing). Only route to the message list when
+				// the input is empty and an agent is active (scroll to top/bottom).
+				if m.Input.Value() != "" {
+					break // fall through to input.Update below
+				}
 			}
-			if ml := m.activeMsgList(); ml != nil {
-				_, cmd := ml.Update(msg)
-				if cmd != nil {
-					*cmds = append(*cmds, cmd)
+			if m.chatHost != nil {
+				res := m.chatHost.Handle(msg)
+				if res.Handled {
+					return m, nil
 				}
 			}
 			return m, tea.Batch(*cmds...)
@@ -471,13 +482,6 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		*cmds = append(*cmds, cmd)
 	}
 	*cmds = append(*cmds, m.handleInputEvent(evt)...)
-
-	if ml := m.activeMsgList(); ml != nil {
-		_, mlCmd := ml.Update(msg)
-		if mlCmd != nil {
-			*cmds = append(*cmds, mlCmd)
-		}
-	}
 
 	return m, tea.Batch(*cmds...)
 }
@@ -543,9 +547,8 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		// content if it knows how to handle paste. The current
 		// popups that accept paste are the find/replace popup
 		// (via its OnChange callback flow — but the user actually
-		// pastes into the find field via the keyboard handler in
-		// app.go) and the text overlay / composer (which wrap a
-		// components.TextInput). For now, just route to the
+		// pastes into the find field via handleFindReplaceKey) and the
+		// text overlay / composer (ui.TextArea). For now, just route to the
 		// content if it implements a Paste handler.
 		if fw := m.windowManager.Focused(); fw != nil {
 			cmd := m.pasteToWindowContent(fw, msg)

@@ -12,8 +12,6 @@ import (
 	"runtime"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-
 	"crude/tui/theme"
 )
 
@@ -264,16 +262,14 @@ func DetectNerdFont() bool {
 
 var (
 	// iconColorDir is the suggested color for directory icons.
-	// Uses the accent orange from the default theme.
-	iconColorDir color.Color = lipgloss.Color("#f0883e")
+	// Defaults from theme.DefaultDark().Tree — ApplyTheme overrides at runtime.
+	iconColorDir color.Color = theme.DefaultDark().Tree.Colors.IconDir
 
 	// iconColorFile is the suggested color for regular file icons.
-	// Uses a muted blue-gray.
-	iconColorFile color.Color = lipgloss.Color("#8b949e")
+	iconColorFile color.Color = theme.DefaultDark().Tree.Colors.IconFile
 
 	// iconColorSymlink is the suggested color for symlink icons.
-	// Uses a teal/cyan tone.
-	iconColorSymlink color.Color = lipgloss.Color("#79c0ff")
+	iconColorSymlink color.Color = theme.DefaultDark().Tree.Colors.IconSymlink
 )
 
 // ---------------------------------------------------------------------------

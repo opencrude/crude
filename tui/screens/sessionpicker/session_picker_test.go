@@ -1,0 +1,257 @@
+package sessionpicker
+
+import (
+	"database/sql"
+	"strings"
+	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"crude/sessiondb"
+	"crude/tui/surface"
+	"crude/tui/theme"
+	"crude/tui/ui"
+)
+
+func TestPaintGoldenCellBufferContract(t *testing.T) {
+	now := time.Now().UnixNano()
+	sessions := []sessiondb.SessionMeta{
+		{ID: "a", ProjectName: "crude", Model: "gpt", TurnCount: 3, CreatedAt: now,
+			FirstPrompt: sql.NullString{String: "fix the picker", Valid: true}},
+	}
+	screen, host := pickerHost(t, sessions)
+	buf := paintHost(host, 72, 12)
+	text := bufferText(buf)
+
+	if nonEmpty := countNonEmptyCells(buf); nonEmpty == 0 {
+		t.Fatal("session picker paint produced no non-empty cells")
+	}
+	for _, label := range []string{"Past sessions", "crude", "fix the picker", "3 turns"} {
+		if !strings.Contains(text, label) {
+			t.Fatalf("missing label %q:\n%s", label, text)
+		}
+	}
+	if !rowHasSelectionHighlight(buf) {
+		t.Fatalf("expected theme selection highlight:\n%s", text)
+	}
+	if _, ok := screen.Selected(); !ok {
+		t.Fatal("expected initial selection")
+	}
+}
+
+func countNonEmptyCells(buf *surface.CellBuffer) int {
+	n := 0
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			c := buf.Get(x, y)
+			if c.Char != 0 && c.Width != 0 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func TestSessionPickerEmptyState(t *testing.T) {
+	screen, host := pickerHost(t, nil)
+	buf := paintHost(host, 72, 10)
+	text := bufferText(buf)
+	for _, want := range []string{
+		"Past sessions",
+		"No past sessions found.",
+		"start a new",
+		"Enter resume",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("empty paint missing %q:\n%s", want, text)
+		}
+	}
+	if _, ok := screen.Selected(); ok {
+		t.Fatal("empty picker should have no selection")
+	}
+}
+
+func TestSessionPickerGroupedSessionsAndHighlight(t *testing.T) {
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	yesterday := today.AddDate(0, 0, -1)
+	older := today.AddDate(0, 0, -5)
+
+	sessions := []sessiondb.SessionMeta{
+		{
+			ID: "ses_today", ProjectName: "crude", Model: "gpt-test", TurnCount: 3,
+			CreatedAt:   today.UnixNano(),
+			FirstPrompt: sql.NullString{String: "fix the picker", Valid: true},
+		},
+		{
+			ID: "ses_yest", ProjectName: "other", Model: "claude", TurnCount: 1,
+			CreatedAt:   yesterday.UnixNano(),
+			FirstPrompt: sql.NullString{String: "yesterday work", Valid: true},
+		},
+		{
+			ID: "ses_old", ProjectName: "legacy", Model: "mini", TurnCount: 9,
+			CreatedAt:   older.UnixNano(),
+			FirstPrompt: sql.NullString{String: "old session", Valid: true},
+		},
+	}
+
+	groups := BuildSessionGroups(sessions)
+	if len(groups) != 3 {
+		t.Fatalf("groups=%d, want 3", len(groups))
+	}
+	if groups[0].Label != "today" || groups[1].Label != "yesterday" {
+		t.Fatalf("group labels=%q/%q", groups[0].Label, groups[1].Label)
+	}
+
+	screen, host := pickerHost(t, sessions)
+	buf := paintHost(host, 72, 14)
+	text := bufferText(buf)
+	for _, want := range []string{
+		"Past sessions (3)",
+		"today",
+		"yesterday",
+		"crude",
+		"other",
+		"legacy",
+		"fix the picker",
+		"3 turns",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("grouped paint missing %q:\n%s", want, text)
+		}
+	}
+
+	// First selectable row is focused → highlight background differs from empty cells.
+	if !rowHasSelectionHighlight(buf) {
+		t.Fatalf("expected selection highlight on focused row:\n%s", text)
+	}
+
+	selected, ok := screen.Selected()
+	if !ok || selected.ID != "ses_today" {
+		t.Fatalf("selected=%#v ok=%v", selected, ok)
+	}
+}
+
+func TestSessionPickerKeyboardResumeAndCancel(t *testing.T) {
+	now := time.Now().UnixNano()
+	sessions := []sessiondb.SessionMeta{
+		{ID: "a", ProjectName: "alpha", Model: "m", TurnCount: 1, CreatedAt: now,
+			FirstPrompt: sql.NullString{String: "one", Valid: true}},
+		{ID: "b", ProjectName: "beta", Model: "m", TurnCount: 2, CreatedAt: now,
+			FirstPrompt: sql.NullString{String: "two", Valid: true}},
+	}
+	screen, host := pickerHost(t, sessions)
+
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	selected, ok := screen.Selected()
+	if !ok || selected.ID != "b" {
+		t.Fatalf("after down selected=%#v", selected)
+	}
+
+	host.Handle(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	selected, ok = screen.Selected()
+	if !ok || selected.ID != "a" {
+		t.Fatalf("after k selected=%#v", selected)
+	}
+
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	msg := commandMessage[SelectMsg](t, result)
+	if msg.Target != screen || msg.Session.ID != "a" {
+		t.Fatalf("resume message=%#v", msg)
+	}
+
+	screen, host = pickerHost(t, sessions)
+	cancel := commandMessage[CancelMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc}))
+	if cancel.Target != screen {
+		t.Fatalf("cancel target=%p want %p", cancel.Target, screen)
+	}
+}
+
+func TestSessionPickerClickSelectsDoubleClickResumes(t *testing.T) {
+	now := time.Now().UnixNano()
+	sessions := []sessiondb.SessionMeta{
+		{ID: "a", ProjectName: "alpha", Model: "m", TurnCount: 1, CreatedAt: now},
+		{ID: "b", ProjectName: "beta", Model: "m", TurnCount: 2, CreatedAt: now},
+	}
+	screen, host := pickerHost(t, sessions)
+
+	// List starts at Y=2 (title + blank). Second session is one header + two rows → Y=4.
+	first := host.Handle(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
+	if first.Cmd != nil || first.Action != nil {
+		t.Fatalf("first click should select only: %#v", first)
+	}
+	selected, ok := screen.Selected()
+	if !ok || selected.ID != "b" {
+		t.Fatalf("after click selected=%#v", selected)
+	}
+
+	second := host.Handle(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
+	msg := commandMessage[SelectMsg](t, second)
+	if msg.Session.ID != "b" {
+		t.Fatalf("double-click resume=%#v", msg)
+	}
+}
+
+func pickerHost(t *testing.T, sessions []sessiondb.SessionMeta) (*Screen, *ui.Host) {
+	t.Helper()
+	th := theme.DefaultDark()
+	screen := New(th)
+	screen.Open(sessions)
+	component := ui.NewComponentWidget(th, screen, 72, 14)
+	screen.SetFocusHandler(component.Focus)
+	screen.FocusList()
+	host := component.Host()
+	host.Resize(72, 14)
+	host.Layout()
+	return screen, host
+}
+
+func paintHost(host *ui.Host, w, h int) *surface.CellBuffer {
+	host.Resize(w, h)
+	host.Layout()
+	buf := surface.NewCellBuffer(w, h)
+	host.Paint(buf)
+	return buf
+}
+
+func bufferText(buf *surface.CellBuffer) string {
+	var b strings.Builder
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			r := buf.Get(x, y).Char
+			if r == 0 {
+				r = ' '
+			}
+			b.WriteRune(r)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func rowHasSelectionHighlight(buf *surface.CellBuffer) bool {
+	tokens := ui.NewTokenSet(theme.DefaultDark())
+	_, wantBG := tokens.ListRowColors(ui.StateFocused)
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			c := buf.Get(x, y)
+			if !c.BG.IsDefault() && c.BG == wantBG && c.Char != 0 && c.Char != ' ' {
+				return true
+			}
+		}
+	}
+	return strings.Contains(bufferText(buf), "❯")
+}
+
+func commandMessage[T any](t *testing.T, result ui.EventResult) T {
+	t.Helper()
+	if result.Cmd == nil {
+		t.Fatalf("result did not emit a command: %#v", result)
+	}
+	message, ok := result.Cmd().(T)
+	if !ok {
+		t.Fatalf("command message=%T (%#v)", result.Cmd(), result.Cmd())
+	}
+	return message
+}

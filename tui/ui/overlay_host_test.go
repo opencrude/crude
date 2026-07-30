@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/rendering"
+	"crude/tui/theme"
 	"crude/tui/wm"
 )
 
@@ -16,7 +16,8 @@ func newTestOverlayHost(t *testing.T) (*OverlayHost, *wm.WindowManager) {
 }
 
 func newStubWindow(id string, w, h int, opts ...wm.WindowOption) *wm.FloatingWindow {
-	content := rendering.NewANSIAdapter(func() string { return "" })
+	label := NewLabel(RootID, "", theme.DefaultDark())
+	content := NewComponentWidget(theme.DefaultDark(), label, w, h)
 	fw := wm.NewFloatingWindow(id, "", content, w, h, opts...)
 	return fw
 }

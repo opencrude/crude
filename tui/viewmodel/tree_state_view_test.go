@@ -16,7 +16,7 @@ func TestTreeStateViewDataProjectsVisibleRows(t *testing.T) {
 	}
 
 	model := filetree.NewFileTreeModel(dir)
-	state := NewTreeState(model, nil, 30)
+	state := NewTreeState(model, 30)
 	view := state.ViewData()
 	if len(view.Rows) == 0 {
 		t.Fatal("expected visible tree rows")

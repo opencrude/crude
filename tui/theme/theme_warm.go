@@ -1,0 +1,84 @@
+package theme
+
+import "charm.land/lipgloss/v2"
+
+// DefaultWarm returns a warm, low-contrast dark reference theme. Soft
+// paper-and-ember tones reduce glare relative to the cooler GitHub-style
+// dark preset while keeping the same semantic roles and factory path.
+func DefaultWarm() *Theme {
+	c := Colors{
+		Bg:                 lipgloss.Color("#1c1917"),
+		Fg:                 lipgloss.Color("#e7e5e4"),
+		Muted:              lipgloss.Color("#a8a29e"),
+		Accent:             lipgloss.Color("#d97706"),
+		Accent2:            lipgloss.Color("#fbbf24"),
+		Success:            lipgloss.Color("#84cc16"),
+		Error:              lipgloss.Color("#f87171"),
+		Warning:            lipgloss.Color("#eab308"),
+		Border:             lipgloss.Color("#44403c"),
+		Selection:          lipgloss.Color("#3f2e1e"),
+		Hover:              lipgloss.Color("#292524"),
+		SubPaneBg:          lipgloss.Color("#231f1c"),
+		IncompleteBg:       lipgloss.Color("#3f1d1d"),
+		PopupBg:            lipgloss.Color("#292524"),
+		PopupBorder:        lipgloss.Color("#57534e"),
+		PopupBorderFocused: lipgloss.Color("#fbbf24"),
+		PopupTitle:         lipgloss.Color("#a8a29e"),
+		PopupTitleFocused:  lipgloss.Color("#fbbf24"),
+		PopupDivider:       lipgloss.Color("#3f3a36"),
+		PopupSubtleBg:      lipgloss.Color("#3f2e1e"),
+		PopupButtonBg:      lipgloss.Color("#57534e"),
+		PopupButtonFg:      lipgloss.Color("#e7e5e4"),
+		Code: CodeColors{
+			Keyword:  lipgloss.Color("#f87171"),
+			String:   lipgloss.Color("#fbbf24"),
+			Number:   lipgloss.Color("#fdba74"),
+			Comment:  lipgloss.Color("#a8a29e"),
+			Function: lipgloss.Color("#fcd34d"),
+			Type:     lipgloss.Color("#fb923c"),
+			Operator: lipgloss.Color("#f87171"),
+			Bg:       lipgloss.Color("#292524"),
+			Border:   lipgloss.Color("#44403c"),
+			Property: lipgloss.Color("#fdba74"),
+		},
+		Spinner: SpinnerColors{
+			Grounding: lipgloss.Color("#d97706"),
+			Planning:  lipgloss.Color("#fbbf24"),
+			Executing: lipgloss.Color("#84cc16"),
+			Default:   lipgloss.Color("#a8a29e"),
+			Done:      lipgloss.Color("#84cc16"),
+			Error:     lipgloss.Color("#f87171"),
+		},
+		Diff: DiffColors{
+			File:    lipgloss.Color("#a8a29e"),
+			Hunk:    lipgloss.Color("#78716c"),
+			Context: lipgloss.Color("#a8a29e"),
+			Add:     lipgloss.Color("#84cc16"),
+			Delete:  lipgloss.Color("#f87171"),
+		},
+		Tree: TreeColors{
+			DirFg:         lipgloss.Color("#fdba74"),
+			FileFg:        lipgloss.Color("#e7e5e4"),
+			SymlinkFg:     lipgloss.Color("#a8a29e"),
+			SelectedBg:    lipgloss.Color("#3f2e1e"),
+			SelectedFg:    lipgloss.Color("#e7e5e4"),
+			CursorBg:      lipgloss.Color("#5c3d1e"),
+			CursorFg:      lipgloss.Color("#e7e5e4"),
+			Hover:         lipgloss.Color("#292524"),
+			IndentLine:    lipgloss.Color("#44403c"),
+			GitModified:   lipgloss.Color("#eab308"),
+			GitAdded:      lipgloss.Color("#84cc16"),
+			GitDeleted:    lipgloss.Color("#f87171"),
+			GitUntracked:  lipgloss.Color("#78716c"),
+			GitConflicted: lipgloss.Color("#f87171"),
+			IconDir:       lipgloss.Color("#d97706"),
+			IconFile:      lipgloss.Color("#a8a29e"),
+			IconSymlink:   lipgloss.Color("#fbbf24"),
+			BorderFg:      lipgloss.Color("#44403c"),
+			DiagError:     lipgloss.Color("#f87171"),
+			DiagWarning:   lipgloss.Color("#eab308"),
+			DiagInfo:      lipgloss.Color("#fbbf24"),
+		},
+	}
+	return named("warm", newTheme(c))
+}

@@ -7,8 +7,12 @@ import (
 )
 
 type Theme struct {
+	Name    string
 	Colors  Colors
 	Spacing Spacing
+	Metrics Metrics
+	Glyphs  Glyphs
+	Type    Typography
 	Styles  Styles
 	Tree    Tree
 }
@@ -20,9 +24,9 @@ type Tree struct {
 }
 
 type Colors struct {
-	Bg, Fg, Muted, Accent, Accent2  color.Color
-	Success, Error, Warning, Border color.Color
-	Selection, SubPaneBg            color.Color
+	Bg, Fg, Muted, Accent, Accent2     color.Color
+	Success, Error, Warning, Border    color.Color
+	Selection, SubPaneBg, IncompleteBg color.Color
 	// Hover is the background color for interactive elements (file tree
 	// rows, tabs, command palette items, settings rows, etc.) when the
 	// mouse cursor is over them but they aren't selected. Slightly dimmer
@@ -123,29 +127,30 @@ type WindowStyles struct {
 }
 
 type Styles struct {
-	Header, Separator, DimLabel, AccentLabel       lipgloss.Style
-	Body, Button, ButtonFocus, ButtonDim, DialogBg lipgloss.Style
-	CodeBlock, ToolActive, ToolDone, ToolError     lipgloss.Style
-	ThinkingLine, UserLabel, AsstLabel             lipgloss.Style
-	ErrorText, StatusBar, InputPrompt, InputText   lipgloss.Style
-	Highlight, DangerText, RetryText, AwaitText    lipgloss.Style
-	Window                                         WindowStyles
+	Header, Separator, DimLabel, AccentLabel            lipgloss.Style
+	Body, Button, ButtonFocus, ButtonDim, DialogBg      lipgloss.Style
+	CodeBlock, ToolActive, ToolDone, ToolError          lipgloss.Style
+	ThinkingLine, UserLabel, AsstLabel, IncompleteLabel lipgloss.Style
+	ErrorText, StatusBar, InputPrompt, InputText        lipgloss.Style
+	Highlight, DangerText, RetryText, AwaitText         lipgloss.Style
+	Window                                              WindowStyles
 }
 
 func DefaultDark() *Theme {
 	c := Colors{
-		Bg:        lipgloss.Color("#0d1117"),
-		Fg:        lipgloss.Color("#e6edf3"),
-		Muted:     lipgloss.Color("#8b949e"),
-		Accent:    lipgloss.Color("#f0883e"),
-		Accent2:   lipgloss.Color("#a5d6ff"),
-		Success:   lipgloss.Color("#7ee787"),
-		Error:     lipgloss.Color("#ff7b72"),
-		Warning:   lipgloss.Color("#d29922"),
-		Border:    lipgloss.Color("#30363d"),
-		Selection: lipgloss.Color("#1e2a3a"),
-		Hover:     lipgloss.Color("#21262d"),
-		SubPaneBg: lipgloss.Color("#1c2333"),
+		Bg:           lipgloss.Color("#0d1117"),
+		Fg:           lipgloss.Color("#e6edf3"),
+		Muted:        lipgloss.Color("#8b949e"),
+		Accent:       lipgloss.Color("#f0883e"),
+		Accent2:      lipgloss.Color("#a5d6ff"),
+		Success:      lipgloss.Color("#7ee787"),
+		Error:        lipgloss.Color("#ff7b72"),
+		Warning:      lipgloss.Color("#d29922"),
+		Border:       lipgloss.Color("#30363d"),
+		Selection:    lipgloss.Color("#1e2a3a"),
+		Hover:        lipgloss.Color("#21262d"),
+		SubPaneBg:    lipgloss.Color("#1c2333"),
+		IncompleteBg: lipgloss.Color("#3a1a1a"),
 		// Popup chrome — unified design across all popups.
 		// Code.Bg provides the "card on editor" feel used by the
 		// diagnostic hover popup. PopupBorder is intentionally
@@ -205,8 +210,16 @@ func DefaultDark() *Theme {
 			IconFile:      lipgloss.Color("#8b949e"),
 			IconSymlink:   lipgloss.Color("#79c0ff"),
 			BorderFg:      lipgloss.Color("#30363d"),
+			DiagError:     lipgloss.Color("#ff7b72"),
+			DiagWarning:   lipgloss.Color("#d29922"),
+			DiagInfo:      lipgloss.Color("#79c0ff"),
 		},
 	}
 
-	return newTheme(c)
+	return named("dark", newTheme(c))
+}
+
+func named(name string, th *Theme) *Theme {
+	th.Name = name
+	return th
 }

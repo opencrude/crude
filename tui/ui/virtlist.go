@@ -20,21 +20,25 @@ type VirtItem struct {
 	Payload any
 }
 
-// RowPainter is called for each visible item row instead of the default label paint.
-// It receives the full row bounds, resolved interactive state, and paint context.
-type RowPainter func(buf *surface.CellBuffer, x, y, width int, item VirtItem, state ControlState, ctx PaintContext, tokens *TokenSet)
+// RowPainter paints one visible screen row of an item.
+// localRow is 0-based within the item (0 = first row of the item).
+// Multi-height items receive one call per visible continuation row.
+type RowPainter func(buf *surface.CellBuffer, x, y, width int, item VirtItem, localRow int, state ControlState, ctx PaintContext, tokens *TokenSet)
 
 // VirtualList is a variable-height selectable list with shared Selection + Scroll.
 // Height is measured in rows; scroll offset is in rows (not item indices).
 type VirtualList struct {
 	Base
-	items      []VirtItem
-	sel        *SelectionModel
-	scroll     *ScrollModel // content = total rows
-	tokens     *TokenSet
-	activate   string
-	hoverIdx   int
-	rowPainter RowPainter
+	items                  []VirtItem
+	sel                    *SelectionModel
+	scroll                 *ScrollModel // content = total rows
+	tokens                 *TokenSet
+	activate               string
+	hoverIdx               int
+	rowPainter             RowPainter
+	bottomPadding          int // trailing blank rows (chat gravity)
+	pointerPolicy          PointerPolicy
+	selectionAnchorsScroll bool // when true, selection changes reveal rows (launcher/FIF)
 	// prefix[i] = starting row of item i; prefix[len] = total rows
 	prefix []int
 }
@@ -42,12 +46,13 @@ type VirtualList struct {
 // NewVirtualList creates a variable-height list.
 func NewVirtualList(id ComponentID, tokens *TokenSet) *VirtualList {
 	return &VirtualList{
-		Base:     NewBase(id),
-		sel:      NewSelectionModel(false),
-		scroll:   NewScrollModel(),
-		tokens:   tokens,
-		activate: "virtlist.activate",
-		hoverIdx: -1,
+		Base:                   NewBase(id),
+		sel:                    NewSelectionModel(false),
+		scroll:                 NewScrollModel(),
+		tokens:                 tokens,
+		activate:               "virtlist.activate",
+		hoverIdx:               -1,
+		selectionAnchorsScroll: true,
 	}
 }
 
@@ -55,6 +60,7 @@ func NewVirtualList(id ComponentID, tokens *TokenSet) *VirtualList {
 func (v *VirtualList) SetTokens(ts *TokenSet) { v.tokens = ts }
 
 // SetItems replaces items and rebuilds the height index.
+// When stick-to-bottom is armed, the viewport stays pinned after the rebuild.
 func (v *VirtualList) SetItems(items []VirtItem) {
 	v.items = items
 	v.rebuildPrefix()
@@ -62,7 +68,7 @@ func (v *VirtualList) SetItems(items []VirtItem) {
 	if len(items) > 0 && v.sel.Index() < 0 {
 		v.sel.SetIndex(0)
 	}
-	v.ensureSelectedVisible()
+	v.applyScrollAfterContentChange()
 }
 
 // Items returns items.
@@ -73,14 +79,56 @@ func (v *VirtualList) SetActivateAction(id string) { v.activate = id }
 
 // SetRowPainter replaces the default item label painting with a custom delegate.
 // Hit testing, selection, scrolling, and empty-state handling remain shared.
+// The painter is invoked once per visible row of each item (including continuation rows).
 func (v *VirtualList) SetRowPainter(fn RowPainter) { v.rowPainter = fn }
+
+// SetPointerPolicy configures Host pointer routing for paint-only lists whose
+// parent owns text selection, wheel policy, or other pointer semantics.
+func (v *VirtualList) SetPointerPolicy(p PointerPolicy) { v.pointerPolicy = p }
+
+// SetSelectionAnchorsScroll controls whether selection changes and content/layout
+// updates scroll to keep the selected item visible. Default is true (launcher,
+// find-in-files). Paint-only consumers such as shellchat set false because the
+// parent owns scroll/selection semantics.
+func (v *VirtualList) SetSelectionAnchorsScroll(anchor bool) {
+	v.selectionAnchorsScroll = anchor
+	if anchor {
+		v.ensureSelectedVisible()
+	}
+}
+
+// SelectionAnchorsScroll reports whether selection anchors scroll position.
+func (v *VirtualList) SelectionAnchorsScroll() bool { return v.selectionAnchorsScroll }
+
+// PointerPolicy implements PointerPolicyProvider.
+func (v *VirtualList) PointerPolicy() PointerPolicy { return v.pointerPolicy }
+
+// SetBottomPadding adds trailing blank content rows (message-list gravity).
+func (v *VirtualList) SetBottomPadding(n int) {
+	if n < 0 {
+		n = 0
+	}
+	v.bottomPadding = n
+	v.rebuildPrefix()
+}
+
+// BottomPadding returns trailing blank rows.
+func (v *VirtualList) BottomPadding() int { return v.bottomPadding }
+
+// StickToBottom scrolls to the end and arms auto-scroll.
+func (v *VirtualList) StickToBottom() { v.scroll.StickToBottom() }
+
+// ApplyAutoScroll pins to bottom when auto-scroll is armed / near bottom.
+func (v *VirtualList) ApplyAutoScroll() { v.scroll.ApplyAutoScroll() }
 
 // SelectIndex selects idx and ensures its rows are visible.
 func (v *VirtualList) SelectIndex(idx int) bool {
 	if !v.sel.SetIndex(idx) {
 		return false
 	}
-	v.ensureSelectedVisible()
+	if v.selectionAnchorsScroll {
+		v.ensureSelectedVisible()
+	}
 	return true
 }
 
@@ -114,11 +162,16 @@ func (v *VirtualList) rebuildPrefix() {
 		total += h
 	}
 	v.prefix[len(v.items)] = total
-	v.scroll.SetContent(total)
+	v.scroll.SetContent(total + v.bottomPadding)
+}
+
+// ItemIndexAtRow returns the item index containing absRow, or -1 for padding/empty.
+func (v *VirtualList) ItemIndexAtRow(absRow int) int {
+	return v.itemAtRow(absRow)
 }
 
 func (v *VirtualList) itemAtRow(row int) int {
-	// binary search prefix
+	// binary search prefix; rows past last item (bottom padding) return -1
 	lo, hi := 0, len(v.items)-1
 	for lo <= hi {
 		mid := (lo + hi) / 2
@@ -151,6 +204,18 @@ func (v *VirtualList) ensureSelectedVisible() {
 	}
 }
 
+func (v *VirtualList) applyScrollAfterContentChange() {
+	if v.scroll.AutoScroll() {
+		v.scroll.StickToBottom()
+		return
+	}
+	if v.selectionAnchorsScroll {
+		v.ensureSelectedVisible()
+		return
+	}
+	v.scroll.Clamp()
+}
+
 func (v *VirtualList) Measure(_ LayoutContext, cs Constraints) Size {
 	return cs.ClampSize(Size{W: cs.MaxW, H: cs.MaxH})
 }
@@ -158,7 +223,13 @@ func (v *VirtualList) Measure(_ LayoutContext, cs Constraints) Size {
 func (v *VirtualList) Layout(_ LayoutContext, r Rect) {
 	v.SetBounds(r)
 	v.scroll.SetViewport(r.H)
-	v.ensureSelectedVisible()
+	if v.selectionAnchorsScroll {
+		v.ensureSelectedVisible()
+	} else if v.scroll.AutoScroll() {
+		v.scroll.StickToBottom()
+	} else {
+		v.scroll.Clamp()
+	}
 }
 
 func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
@@ -176,18 +247,8 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		if idx < 0 {
 			continue
 		}
-		// Only paint the first row of each item with the label.
 		itemStart := v.prefix[idx]
-		if absRow != itemStart {
-			// continuation rows: fill bg only
-			if v.tokens != nil {
-				_, bg := v.tokens.ListRowColors(StateDefault)
-				if !bg.IsDefault() {
-					FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
-				}
-			}
-			continue
-		}
+		localRow := absRow - itemStart
 		item := v.items[idx]
 		st := StateDefault
 		if idx == v.sel.Index() {
@@ -207,7 +268,11 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 			FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
 		}
 		if v.rowPainter != nil {
-			v.rowPainter(buf, x, y, r.W, item, st, ctx, v.tokens)
+			v.rowPainter(buf, x, y, r.W, item, localRow, st, ctx, v.tokens)
+			continue
+		}
+		// Default paint: label on first row only; continuation rows keep selection bg.
+		if localRow != 0 {
 			continue
 		}
 		marker := "  "
@@ -241,27 +306,42 @@ func (v *VirtualList) Handle(ctx EventContext, msg tea.Msg) EventResult {
 		switch m.Code {
 		case tea.KeyUp:
 			v.sel.MoveUp()
-			v.ensureSelectedVisible()
+			v.scroll.SetAutoScroll(false)
+			if v.selectionAnchorsScroll {
+				v.ensureSelectedVisible()
+			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyDown:
 			v.sel.MoveDown()
-			v.ensureSelectedVisible()
+			v.scroll.SetAutoScroll(false)
+			if v.selectionAnchorsScroll {
+				v.ensureSelectedVisible()
+			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyPgUp:
 			v.sel.PageUp(max(1, v.scroll.Viewport()/2))
-			v.ensureSelectedVisible()
+			v.scroll.SetAutoScroll(false)
+			if v.selectionAnchorsScroll {
+				v.ensureSelectedVisible()
+			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyPgDown:
 			v.sel.PageDown(max(1, v.scroll.Viewport()/2))
-			v.ensureSelectedVisible()
+			v.scroll.SetAutoScroll(false)
+			if v.selectionAnchorsScroll {
+				v.ensureSelectedVisible()
+			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyHome:
 			v.sel.Home()
-			v.ensureSelectedVisible()
+			v.scroll.SetAutoScroll(false)
+			if v.selectionAnchorsScroll {
+				v.ensureSelectedVisible()
+			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyEnd:
 			v.sel.End()
-			v.ensureSelectedVisible()
+			v.scroll.StickToBottom()
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyEnter:
 			item, ok := v.Selected()
@@ -277,8 +357,10 @@ func (v *VirtualList) Handle(ctx EventContext, msg tea.Msg) EventResult {
 	case tea.MouseWheelMsg:
 		if m.Button == tea.MouseWheelUp {
 			v.scroll.ScrollBy(-3)
+			v.scroll.SetAutoScroll(false)
 		} else if m.Button == tea.MouseWheelDown {
 			v.scroll.ScrollBy(3)
+			_ = v.scroll.ShouldAutoScroll()
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	case tea.MouseClickMsg:
@@ -289,7 +371,10 @@ func (v *VirtualList) Handle(ctx EventContext, msg tea.Msg) EventResult {
 		idx := v.itemAtRow(absRow)
 		if idx >= 0 {
 			v.sel.SetIndex(idx)
-			v.ensureSelectedVisible()
+			v.scroll.SetAutoScroll(false)
+			if v.selectionAnchorsScroll {
+				v.ensureSelectedVisible()
+			}
 			item := v.items[idx]
 			return EventResult{
 				Handled:    true,

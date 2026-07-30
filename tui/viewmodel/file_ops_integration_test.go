@@ -356,7 +356,7 @@ func newTestAppWithFileOpsAndBus(t *testing.T, dir string, bus *workspace.EventB
 	app := &App{
 		Workspace:          ws,
 		Theme:              th,
-		Tree:               NewTreeState(nil, nil, 30),
+		Tree:               NewTreeState(nil, 30),
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),
 		EditorState:        NewEditorState(),

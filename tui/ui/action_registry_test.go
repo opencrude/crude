@@ -111,11 +111,26 @@ func TestActionRegistry_HintFor(t *testing.T) {
 }
 
 func TestFormatShortcut(t *testing.T) {
-	if s := FormatShortcut("ctrl+alt+p"); s != "Ctrl+Alt+P" {
-		t.Fatalf("expected Ctrl+Alt+P, got %q", s)
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"p", "P"},
+		{"ctrl+alt+p", "Ctrl+Alt+P"},
+		{"alt+c", "Alt+C"},
+		{"↑↓", "↑↓"},
+		{"ctrl+↑", "Ctrl+↑"},
+		{"🔥", "🔥"},
+		{"ctrl+🔥", "Ctrl+🔥"},
 	}
-	if s := FormatShortcut("alt+c"); s != "Alt+C" {
-		t.Fatalf("expected Alt+C, got %q", s)
+	for _, tc := range cases {
+		got := FormatShortcut(tc.in)
+		if got != tc.want {
+			t.Fatalf("FormatShortcut(%q)=%q want %q", tc.in, got, tc.want)
+		}
+		if strings.ContainsRune(got, '\uFFFD') {
+			t.Fatalf("FormatShortcut(%q) produced U+FFFD: %q", tc.in, got)
+		}
 	}
 }
 
@@ -140,8 +155,12 @@ func TestDefaultRegistry_HasGlobalActions(t *testing.T) {
 func TestDefaultRegistry_HintsContainOnlyShortcutText(t *testing.T) {
 	r := DefaultRegistry()
 	for _, action := range r.All() {
-		if strings.Contains(action.HintKey, "→") {
-			t.Errorf("action %q embeds navigation text in HintKey %q", action.ID, action.HintKey)
+		// Arrow-only HintKeys are allowed; forbid embedding prose after arrows.
+		if strings.Contains(action.HintKey, "→") || strings.Contains(action.HintKey, "←") {
+			runes := []rune(action.HintKey)
+			if len(runes) > 2 {
+				t.Errorf("action %q embeds navigation prose in HintKey %q", action.ID, action.HintKey)
+			}
 		}
 		if action.HintKey != "" && strings.Contains(strings.ToLower(action.HintKey), strings.ToLower(action.Label)) {
 			t.Errorf("action %q embeds label in HintKey %q", action.ID, action.HintKey)

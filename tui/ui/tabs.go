@@ -10,10 +10,19 @@ import (
 	"crude/tui/surface"
 )
 
+// TabsChrome selects popup vs persistent shell styling.
+type TabsChrome uint8
+
+const (
+	TabsPopup TabsChrome = iota
+	TabsShell
+)
+
 // TabItem is one entry in a Tabs control.
 type TabItem struct {
 	ID        string
 	Label     string
+	Icon      string
 	Closable  bool
 	Attention bool
 }
@@ -25,11 +34,13 @@ type tabRange struct {
 // Tabs is a horizontal retained tab strip with keyboard and mouse parity.
 type Tabs struct {
 	Base
-	items  []TabItem
-	active int
-	hover  int
-	tokens *TokenSet
-	ranges []tabRange
+	items      []TabItem
+	active     int
+	hover      int
+	tokens     *TokenSet
+	ranges     []tabRange
+	chrome     TabsChrome
+	barFocused bool
 }
 
 func NewTabs(id ComponentID, tokens *TokenSet) *Tabs {
@@ -37,6 +48,27 @@ func NewTabs(id ComponentID, tokens *TokenSet) *Tabs {
 }
 
 func (t *Tabs) SetTokens(tokens *TokenSet) { t.tokens = tokens }
+
+// SetChrome selects popup or shell color roles.
+func (t *Tabs) SetChrome(chrome TabsChrome) { t.chrome = chrome }
+
+// SetBarFocused marks keyboard focus on the tab strip (shell separator accent).
+func (t *Tabs) SetBarFocused(focused bool) { t.barFocused = focused }
+
+// SyncHover sets hover index (-1 clears).
+func (t *Tabs) SyncHover(index int) {
+	if index < 0 || index >= len(t.items) {
+		t.hover = -1
+		return
+	}
+	t.hover = index
+}
+
+// HoverIndex returns the current hover index.
+func (t *Tabs) HoverIndex() int { return t.hover }
+
+// HitTest returns the tab index and whether the close affordance was hit.
+func (t *Tabs) HitTest(localX int) (int, bool) { return t.hit(localX) }
 
 func (t *Tabs) SetItems(items []TabItem, activeID string) {
 	t.items = append(t.items[:0], items...)
@@ -77,11 +109,19 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 	total := 0
 	for i, item := range t.items {
 		w := rendering.VisibleWidth(item.Label) + 2
+		// Shell chrome matches the old horizontal tab bar: label only (no
+		// icon). Icons caused tofu/`?` and width skew on many terminals.
+		if t.chrome != TabsShell && item.Icon != "" {
+			w += rendering.VisibleWidth(item.Icon) + 1
+		}
 		if item.Attention {
 			w += 2
 		}
 		if item.Closable {
 			w += 2
+		}
+		if t.chrome == TabsShell && i == t.active {
+			w += 2 // "❯ "
 		}
 		w = max(6, min(24, w))
 		ideal[i] = w
@@ -116,7 +156,20 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 	if r.Empty() {
 		return
 	}
-	bg, fg, muted, accent, hover := t.color(ColorPopupBg), t.color(ColorFg), t.color(ColorMuted), t.color(ColorAccent), t.color(ColorHover)
+	var bg, fg, muted, accent, hover cell.Color
+	if t.chrome == TabsShell {
+		bg = t.color(ColorBg)
+		fg = t.color(ColorFg)
+		muted = t.color(ColorMuted)
+		accent = t.color(ColorAccent)
+		hover = t.color(ColorHover)
+	} else {
+		bg = t.color(ColorPopupBg)
+		fg = t.color(ColorFg)
+		muted = t.color(ColorMuted)
+		accent = t.color(ColorAccent)
+		hover = t.color(ColorHover)
+	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	for i, item := range t.items {
 		if i >= len(t.ranges) {
@@ -129,29 +182,48 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 		itemFG, itemBG, attr := muted, bg, cell.Attrs(0)
 		if i == t.active {
-			itemFG, itemBG, attr = fg, t.color(ColorPopupSubtleBg), cell.AttrBold
+			if t.chrome == TabsShell {
+				itemFG, attr = fg, cell.AttrBold
+			} else {
+				itemFG, itemBG, attr = fg, t.color(ColorPopupSubtleBg), cell.AttrBold
+			}
 		} else if i == t.hover || (ctx.Hovered && i == t.hover) {
 			itemBG = hover
 		}
-		text := item.Label
+		label := item.Label
+		if t.chrome != TabsShell && item.Icon != "" {
+			label = item.Icon + " " + label
+		}
 		if item.Attention {
-			text = "• " + text
+			label = "• " + label
 			itemFG = accent
 		}
 		close := ""
 		if item.Closable {
 			close = " ×"
 		}
-		available := max(1, w-rendering.VisibleWidth(close)-1)
-		text = rendering.TruncateVisual(text, available, "…")
-		line := " " + text
-		padding := w - rendering.VisibleWidth(line) - rendering.VisibleWidth(close)
-		if padding > 0 {
-			line += strings.Repeat(" ", padding)
+		marker := ""
+		if t.chrome == TabsShell && i == t.active {
+			marker = "❯ "
 		}
-		line += close
+		available := max(1, w-1-rendering.VisibleWidth(marker)-rendering.VisibleWidth(close))
+		label = rendering.TruncateVisual(label, available, "…")
 		FillRect(buf, 0, 0, Rect{X: originX + r.X + hit.start, Y: originY + r.Y, W: w, H: 1}, cell.BlankCell(itemBG))
-		buf.WriteString(originX+r.X+hit.start, originY+r.Y, rendering.TruncateVisual(line, w, ""), itemFG, itemBG, attr)
+		x := originX + r.X + hit.start
+		y := originY + r.Y
+		buf.WriteString(x, y, " ", itemFG, itemBG, attr)
+		x++
+		if marker != "" {
+			buf.WriteString(x, y, marker, accent, itemBG, attr)
+			x += rendering.VisibleWidth(marker)
+		}
+		rest := label
+		pad := w - (x - (originX + r.X)) - rendering.VisibleWidth(close)
+		if pad > 0 {
+			rest += strings.Repeat(" ", pad)
+		}
+		rest += close
+		buf.WriteString(x, y, rest, itemFG, itemBG, attr)
 	}
 }
 
@@ -161,7 +233,7 @@ func (t *Tabs) Handle(ctx EventContext, msg tea.Msg) EventResult {
 		if len(t.items) == 0 {
 			return EventResult{}
 		}
-		next := t.active
+		var next int
 		switch {
 		case msg.Code == tea.KeyLeft || msg.String() == "ctrl+[":
 			next = (t.active - 1 + len(t.items)) % len(t.items)

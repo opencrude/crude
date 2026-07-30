@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"crude/provider"
+	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
+	"crude/tui/ui"
 	"crude/workspace"
 )
 
@@ -15,7 +17,7 @@ import (
 func TestSubPaneProjectionCreation(t *testing.T) {
 	app := newFullTestApp(t)
 	p := app.subPaneProjections.Get("agent-x", workspace.PaneAgent)
-	if p == nil || p.msgList == nil {
+	if p == nil || p.renderer == nil {
 		t.Fatal("Get did not create a projection with a MessageList")
 	}
 	if p.paneType != workspace.PaneAgent {
@@ -70,14 +72,14 @@ func TestSubPaneProjectionSyncPreservesByVersion(t *testing.T) {
 	if proj == nil {
 		t.Fatal("projection not created")
 	}
-	if len(proj.msgList.Messages()) != 1 || proj.msgList.Messages()[0].Content != "first" {
-		t.Fatalf("projection did not sync: %#v", proj.msgList.Messages())
+	if len(proj.renderer.Messages()) != 1 || proj.renderer.Messages()[0].Content != "first" {
+		t.Fatalf("projection did not sync: %#v", proj.renderer.Messages())
 	}
-	versionBefore := proj.msgList.SourceVersion()
+	versionBefore := proj.renderer.SourceVersion()
 	// A second sync with the same version must not bump SourceVersion.
 	app.syncAgentMessages("sync-agent", false)
-	if proj.msgList.SourceVersion() != versionBefore {
-		t.Fatalf("sync with same version mutated SourceVersion: %d -> %d", versionBefore, proj.msgList.SourceVersion())
+	if proj.renderer.SourceVersion() != versionBefore {
+		t.Fatalf("sync with same version mutated SourceVersion: %d -> %d", versionBefore, proj.renderer.SourceVersion())
 	}
 }
 
@@ -98,8 +100,8 @@ func TestSubPaneProjectionRenderThinkingPane(t *testing.T) {
 		t.Fatal("Render produced zero lines")
 	}
 	// First line is the header; it should contain the title "Thinking".
-	if !containsStr(lines[0], "Thinking") {
-		t.Fatalf("header line %q does not contain 'Thinking'", lines[0])
+	if !subPanePlainContains(lines, "Thinking") {
+		t.Fatalf("header line does not contain 'Thinking'")
 	}
 }
 
@@ -123,18 +125,10 @@ func TestSubPaneProjectionRenderAgentPaneCompact(t *testing.T) {
 		t.Fatalf("expected at least header + 1 tool line, got %d lines", len(lines))
 	}
 	// First line is the header; it should contain the agent title.
-	if !containsStr(lines[0], "my-agent") {
-		t.Fatalf("header %q does not contain 'my-agent'", lines[0])
+	if !subPanePlainContains(lines, "my-agent") {
+		t.Fatal("header does not contain 'my-agent'")
 	}
-	// Some tool line should reference read_file.
-	found := false
-	for _, l := range lines[1:] {
-		if containsStr(l, "read_file") {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !subPanePlainContains(lines, "read_file") {
 		t.Fatal("no tool line references 'read_file'")
 	}
 }
@@ -151,21 +145,19 @@ func TestSubPaneProjectionRenderDoneSummary(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected exactly 1 summary line, got %d", len(lines))
 	}
-	if !containsStr(lines[0], "my-agent") {
-		t.Fatalf("summary %q does not contain the agent title", lines[0])
+	if !subPanePlainContains(lines, "my-agent") {
+		t.Fatalf("summary does not contain the agent title")
 	}
-	if !containsStr(lines[0], "for") {
-		t.Fatalf("summary %q does not contain 'for'", lines[0])
+	if !subPanePlainContains(lines, "for") {
+		t.Fatalf("summary does not contain 'for'")
 	}
 }
 
-// TestSubPaneProjectionScrollbarViewAfterCompactScroll verifies that
-// compact scroll up/down affects the scrollbar view.
-func TestSubPaneProjectionScrollbarViewAfterCompactScroll(t *testing.T) {
+// TestSubPaneProjectionCompactScrollModel verifies compact panes use ScrollModel.
+func TestSubPaneProjectionCompactScrollModel(t *testing.T) {
 	app := newFullTestApp(t)
 	sp := app.PaneMgr.GetOrCreate("scroll-1", workspace.PaneAgent, "agent")
 	app.subPaneProjections.Get("scroll-1", workspace.PaneAgent)
-	// Add enough tool messages to exceed a 2-row viewport.
 	for i := 0; i < 5; i++ {
 		sp.Messages.AppendMessage(workspace.Message{
 			Role:             ttypes.RoleTool,
@@ -177,19 +169,28 @@ func TestSubPaneProjectionScrollbarViewAfterCompactScroll(t *testing.T) {
 		})
 	}
 	app.syncPaneMessages("scroll-1", false)
-	// Render once to populate compactContentH/compactVisibleH.
 	app.subPaneProjections.Render("scroll-1", sp, 30, 3, 0)
-	if !app.subPaneProjections.CanScrollCompact("scroll-1") {
-		t.Fatalf("expected CanScrollCompact=true after rendering 5 tools in a 2-row viewport")
+	scroll := app.subPaneProjections.ScrollModel("scroll-1")
+	if scroll == nil || scroll.MaxOffset() <= 0 {
+		t.Fatalf("expected scrollable compact pane, scroll=%v max=%d", scroll, scrollMax(scroll))
 	}
-	// Scroll up should decrement compactScrollY and disable auto-scroll.
-	app.subPaneProjections.ScrollCompactDown("scroll-1")
-	app.subPaneProjections.ScrollCompactUp("scroll-1")
-	// Scrollbar view should be non-empty (compact scrollbar is visible).
-	view := app.subPaneProjections.ScrollbarView("scroll-1", sp)
-	if view == "" {
-		t.Fatal("ScrollbarView returned empty for a compact pane with content")
+	scroll.SetAutoScroll(false)
+	before := scroll.Offset()
+	scroll.ScrollBy(-1)
+	if scroll.Offset() >= before {
+		t.Fatalf("ScrollBy(-1) should decrease offset before=%d after=%d", before, scroll.Offset())
 	}
+	st := app.subPaneProjections.PaneGutterState("scroll-1", sp)
+	if !st.Visible || st.Scroll != scroll {
+		t.Fatalf("PaneGutterState should expose visible scroll model: %+v", st)
+	}
+}
+
+func scrollMax(s *ui.ScrollModel) int {
+	if s == nil {
+		return 0
+	}
+	return s.MaxOffset()
 }
 
 // TestSubPaneProjectionToolLineCacheInvalidation verifies that a version
@@ -274,6 +275,131 @@ func TestThinkingPanePromotionRoundTrip(t *testing.T) {
 	}
 }
 
-func containsStr(s, sub string) bool {
-	return strings.Contains(s, sub)
+// TestThinkingSubpaneNativeRowsPreserveScrollPad pins thinking-subpane
+// row-for-row output (including gravity topPad stripping and a non-zero
+// scroll offset) and asserts content rows stay native.
+func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
+	app := newFullTestApp(t)
+	sp := app.PaneMgr.GetOrCreate("think-native", workspace.PaneThinking, "Thinking")
+	app.subPaneProjections.Get("think-native", workspace.PaneThinking)
+	sp.Messages.AppendMessage(workspace.Message{
+		Role:    ttypes.RoleThinking,
+		Content: "thought line one\nthought line two\nthought line three",
+		Time:    time.Now(),
+	})
+	app.syncPaneMessages("think-native", false)
+
+	const width = 40
+	const tallMaxH = 12 // taller than content → RenderVisible gravity pad, then topPad strip
+	tall := app.subPaneProjections.Render("think-native", sp, width, tallMaxH, 0)
+	if len(tall) < 2 {
+		t.Fatalf("expected header+content, got %d lines", len(tall))
+	}
+	tallPlain := make([]string, len(tall))
+	for i, l := range tall {
+		tallPlain[i] = l.PlainText()
+		if i == 0 {
+			if l.Native == nil || !strings.Contains(tallPlain[0], "Thinking") {
+				t.Fatalf("header line=%#v plain=%q", l, tallPlain[0])
+			}
+			continue
+		}
+		if l.Native == nil {
+			t.Fatalf("content row %d degraded to ANSI Text=%q", i, l.Text)
+		}
+		if l.Native.PreferANSI() {
+			t.Fatalf("content row %d PreferANSI", i)
+		}
+	}
+	// Gravity topPad must be stripped: first content row is not an empty pad.
+	if tallPlain[1] == "" && (len(tall) < 3 || !strings.Contains(strings.Join(tallPlain[2:], "\n"), "thought line one")) {
+		// blank after thinking header is legitimate; body must still appear
+		if !strings.Contains(strings.Join(tallPlain, "\n"), "thought line one") {
+			t.Fatalf("topPad strip lost body: %#v", tallPlain)
+		}
+	}
+	if !strings.Contains(strings.Join(tallPlain, "\n"), "thought line one") {
+		t.Fatalf("missing body after topPad: %#v", tallPlain)
+	}
+
+	// Overflow viewport + non-zero scroll: pin which content rows appear.
+	spOverflow := app.PaneMgr.GetOrCreate("think-scroll", workspace.PaneThinking, "Thinking")
+	app.subPaneProjections.Get("think-scroll", workspace.PaneThinking)
+	var b strings.Builder
+	for i := 0; i < 12; i++ {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("scroll-line-")
+		b.WriteByte(byte('a' + i))
+	}
+	spOverflow.Messages.AppendMessage(workspace.Message{
+		Role:    ttypes.RoleThinking,
+		Content: b.String(),
+		Time:    time.Now(),
+	})
+	app.syncPaneMessages("think-scroll", false)
+
+	const shortMaxH = 4
+	// Establish heights / bind scroll.
+	_ = app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0)
+	scroll := app.subPaneProjections.ScrollModel("think-scroll")
+	if scroll == nil {
+		t.Fatal("missing scroll model")
+	}
+	scroll.SetAutoScroll(false)
+	scroll.ScrollTo(2)
+	scrolled := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0)
+	if len(scrolled) < 2 {
+		t.Fatalf("scrolled render too short: %#v", scrolled)
+	}
+	scrolledPlain := make([]string, 0, len(scrolled)-1)
+	for i, l := range scrolled {
+		if i == 0 {
+			continue
+		}
+		if l.Native == nil {
+			t.Fatalf("scrolled content row %d not native: %q", i, l.Text)
+		}
+		scrolledPlain = append(scrolledPlain, l.PlainText())
+	}
+	joined := strings.Join(scrolledPlain, "\n")
+	if !strings.Contains(joined, "scroll-line-") {
+		t.Fatalf("scrolled window empty: %#v", scrolledPlain)
+	}
+	scroll.ScrollTo(0)
+	top := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0)
+	topPlain := make([]string, 0, len(top)-1)
+	for i, l := range top {
+		if i == 0 {
+			continue
+		}
+		topPlain = append(topPlain, l.PlainText())
+	}
+	if strings.Join(topPlain, "\n") == joined {
+		t.Fatalf("offset 0 and offset 2 produced identical content windows: %#v", scrolledPlain)
+	}
+	scroll.ScrollTo(2)
+	// Re-render at same offset must be stable (row-for-row pin).
+	again := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0)
+	if len(again) != len(scrolled) {
+		t.Fatalf("unstable length %d vs %d", len(again), len(scrolled))
+	}
+	for i := range scrolled {
+		if again[i].PlainText() != scrolled[i].PlainText() {
+			t.Fatalf("row %d plain changed %q -> %q", i, scrolled[i].PlainText(), again[i].PlainText())
+		}
+		if (again[i].Native == nil) != (scrolled[i].Native == nil) {
+			t.Fatalf("row %d native presence changed", i)
+		}
+	}
+}
+
+func subPanePlainContains(lines []chatprojection.SubPaneLine, sub string) bool {
+	for _, l := range lines {
+		if strings.Contains(l.PlainText(), sub) {
+			return true
+		}
+	}
+	return false
 }

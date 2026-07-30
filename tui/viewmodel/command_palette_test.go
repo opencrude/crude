@@ -6,7 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/rendering"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/widgets"
@@ -189,6 +191,86 @@ func TestCommandPaletteEscReturnsNil(t *testing.T) {
 	if cmd != nil {
 		t.Error("expected nil command from Esc")
 	}
+}
+
+func TestPaintGoldenCellBufferContract(t *testing.T) {
+	th := testTheme()
+	m := newCommandPaletteModel(th, nil, ui.DefaultRegistry())
+	cw := widgets.BuildCommandPaletteFrame(th, widgets.CommandPaletteSpec{
+		Items:    m.listItems(),
+		Selected: 0,
+		Width:    60,
+		Height:   14,
+	})
+	host := cw.Host()
+	host.Resize(60, 14)
+	host.Layout()
+	buf := surface.NewCellBuffer(60, 14)
+	host.Paint(buf)
+
+	if nonEmpty := countNonEmptyCells(buf); nonEmpty == 0 {
+		t.Fatal("command palette paint produced no non-empty cells")
+	}
+	painted := bufferPlain(buf)
+	for _, label := range []string{"Command Palette", "search commands", "Find in Files"} {
+		if !strings.Contains(painted, label) {
+			t.Fatalf("missing palette label %q:\n%s", label, painted)
+		}
+	}
+	if !bufferHasNonDefaultFG(buf) {
+		t.Fatal("command palette paint missing themed foreground")
+	}
+}
+
+func countNonEmptyCells(buf *surface.CellBuffer) int {
+	n := 0
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			c := buf.Get(x, y)
+			if c.Char != 0 && c.Width != 0 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func bufferHasNonDefaultFG(buf *surface.CellBuffer) bool {
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			if fg := buf.Get(x, y).FG; !fg.IsDefault() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func bufferHasFG(buf *surface.CellBuffer, want cell.Color) bool {
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			if fg := buf.Get(x, y).FG; !fg.IsDefault() && fg.Equal(want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func bufferPlain(buf *surface.CellBuffer) string {
+	var rows []string
+	for y := 0; y < buf.Height(); y++ {
+		var b strings.Builder
+		for x := 0; x < buf.Width(); x++ {
+			ch := buf.Get(x, y).Char
+			if ch == 0 {
+				ch = ' '
+			}
+			b.WriteRune(ch)
+		}
+		rows = append(rows, strings.TrimRight(b.String(), " "))
+	}
+	return strings.Join(rows, "\n")
 }
 
 // ── Frame-based tests ─────────────────────────────────────────────────────

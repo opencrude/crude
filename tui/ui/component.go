@@ -231,6 +231,31 @@ type ActionHandler interface {
 	HandleAction(ctx EventContext, action Action) EventResult
 }
 
+// PointerPolicy controls how ui.Host routes pointer messages to a component.
+type PointerPolicy uint8
+
+const (
+	// PointerPolicyDefault: the hit component handles pointer messages.
+	PointerPolicyDefault PointerPolicy = iota
+	// PointerPolicyPassthrough: pointer messages route to the nearest ancestor
+	// that does not passthrough (paint/hit bounds unchanged). Keyboard focus and
+	// non-pointer messages are unaffected.
+	PointerPolicyPassthrough
+)
+
+// PointerPolicyProvider is implemented by components that override Host pointer
+// routing (e.g. paint-only VirtualList children owned by a composite screen).
+type PointerPolicyProvider interface {
+	PointerPolicy() PointerPolicy
+}
+
+// PointerCaptureCanceller is implemented by components that hold drag or
+// selection state across an active left-button capture. Host invokes
+// CancelPointerCapture when capture is cleared without a matching release.
+type PointerCaptureCanceller interface {
+	CancelPointerCapture()
+}
+
 // Base is an embeddable partial implementation.
 type Base struct {
 	id     ComponentID

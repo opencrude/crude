@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Launch crude in a dedicated Alacritty window, drive it with keys/mouse, and
+# screenshot after each step. Always kills the window on exit.
+#
+# Usage: scripts/tuishot.sh <outdir> [step ...]
+#
+# Steps:
+#   key:<xdotool-key-spec>    key:ctrl+alt+p  key:Down  key:Escape  key:shift+Down
+#   type:<literal text>       type:main.go
+#   click:<col>,<row>[,<btn>] cell coords, btn 1=left 2=mid 3=right 4=whlup 5=whldn
+#   move:<col>,<row>          move pointer only (hover test)
+#   drag:<c1>,<r1>,<c2>,<r2>  press, move, shot mid-drag, release, shot
+#   wheel:<col>,<row>,<n>     n wheel-down clicks (negative = up) at cell
+#   sleep:<seconds>
+#   shot[:label]              extra screenshot
+#
+# Env: COLS ROWS PAINT_WAIT STEP_WAIT FONT_SIZE CRUDE_ARGS KEEP_OPEN
+set -uo pipefail
+
+OUTDIR="${1:?usage: tuishot.sh <outdir> [step ...]}"
+shift || true
+
+COLS="${COLS:-200}"
+ROWS="${ROWS:-50}"
+PAINT_WAIT="${PAINT_WAIT:-3}"
+STEP_WAIT="${STEP_WAIT:-0.7}"
+FONT_SIZE="${FONT_SIZE:-9}"
+CRUDE_ARGS="${CRUDE_ARGS:-}"
+KEEP_OPEN="${KEEP_OPEN:-0}"
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+WORK=/tmp/crude-tuishot
+BIN="$WORK/crude"
+LOG="$WORK/crude.log"
+LAUNCH="$WORK/launch.sh"
+mkdir -p "$WORK" "$OUTDIR"
+: > "$LOG"
+
+IMPORT=/home/lenovo/tools/imagemagick-7.1.2-18/bin/import
+export DISPLAY="${DISPLAY:-:0}"
+
+WIN_ID=""
+cleanup() {
+  [ "$KEEP_OPEN" = "1" ] && return 0
+  [ -n "$WIN_ID" ] && xdotool windowkill "$WIN_ID" 2>/dev/null
+  pkill -f "$BIN" 2>/dev/null
+  pkill -f 'alacritty --class CrudeShot' 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
+
+echo "== building crude =="
+( cd "$REPO" && go build -o "$BIN" . ) || { echo "BUILD FAILED"; exit 1; }
+
+# NO_COLOR is inherited from some parent shells (e.g. Cursor's, which also sets
+# TERM=dumb). Bubble Tea's colorprofile maps NO_COLOR to Ascii and strips every
+# colour, which silently invalidates screenshots as colour evidence. Clear it.
+cat > "$LAUNCH" <<EOF
+#!/bin/sh
+unset NO_COLOR CLICOLOR NO_COLOUR
+export COLORTERM=truecolor
+export TERM=${TERM_NAME:-alacritty}
+cd "$REPO" || exit 1
+"$BIN" $CRUDE_ARGS 2>>"$LOG"
+echo "CRUDE-EXITED rc=\$?" >>"$LOG"
+sleep 900
+EOF
+chmod +x "$LAUNCH"
+
+# opacity 1 + zero padding + no decorations => clean colors and exact cell math.
+alacritty --class CrudeShot,CrudeShot \
+  -o "window.opacity=1.0" \
+  -o "window.blur=false" \
+  -o "window.decorations=\"none\"" \
+  -o "window.dynamic_padding=false" \
+  -o "window.padding.x=0" \
+  -o "window.padding.y=0" \
+  -o "window.dimensions.columns=$COLS" \
+  -o "window.dimensions.lines=$ROWS" \
+  -o "window.startup_mode=\"Windowed\"" \
+  -o "font.size=$FONT_SIZE" \
+  -o "cursor.style.blinking=\"Off\"" \
+  -o "env.TERM=\"${TERM_NAME:-alacritty}\"" \
+  -o "env.COLORTERM=\"truecolor\"" \
+  -o "env.NO_COLOR=\"\"" \
+  -e "$LAUNCH" >>"$WORK/alacritty.log" 2>&1 &
+
+for _ in $(seq 1 100); do
+  WIN_ID=$(xdotool search --class "CrudeShot" 2>/dev/null | tail -1 || true)
+  [ -n "$WIN_ID" ] && break
+  sleep 0.15
+done
+[ -n "$WIN_ID" ] || { echo "ERROR: no window"; tail -20 "$WORK/alacritty.log"; exit 1; }
+
+# Pin to 0,0, raise above the desktop panel, and keep it there.
+xdotool windowmove "$WIN_ID" 0 0 2>/dev/null
+wmctrl -i -r "$WIN_ID" -b add,above 2>/dev/null
+xdotool windowraise "$WIN_ID" 2>/dev/null
+xdotool windowactivate --sync "$WIN_ID" 2>/dev/null
+sleep 0.3
+
+eval "$(xdotool getwindowgeometry --shell "$WIN_ID")"
+CW=$((WIDTH / COLS))
+CH=$((HEIGHT / ROWS))
+echo "win=$WIN_ID geom=${WIDTH}x${HEIGHT} cell=${CW}x${CH} grid=${COLS}x${ROWS}"
+[ "$CW" -gt 0 ] && [ "$CH" -gt 0 ] || { echo "ERROR: bad cell size"; exit 1; }
+
+# cell -> pixel at cell centre
+px() { echo $(( $1 * CW + CW / 2 )); }
+py() { echo $(( $1 * CH + CH / 2 )); }
+
+sleep "$PAINT_WAIT"
+
+N=0
+shot() {
+  N=$((N + 1))
+  xdotool windowraise "$WIN_ID" 2>/dev/null
+  local p
+  p="$(printf '%s/%02d-%s.png' "$OUTDIR" "$N" "${1:-shot}")"
+  if $IMPORT -window "$WIN_ID" "$p" 2>/dev/null; then echo "saved $p"; else echo "SHOT FAILED $p"; fi
+}
+slug() { printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_' | cut -c1-22; }
+
+shot boot
+
+for step in "$@"; do
+  case "$step" in
+    key:*)
+      spec="${step#key:}"
+      xdotool key --window "$WIN_ID" --clearmodifiers "$spec"
+      sleep "$STEP_WAIT"; shot "key-$(slug "$spec")" ;;
+    type:*)
+      txt="${step#type:}"
+      xdotool type --window "$WIN_ID" --delay 45 -- "$txt"
+      sleep "$STEP_WAIT"; shot "type-$(slug "$txt")" ;;
+    click:*)
+      IFS=',' read -r c r b <<<"${step#click:}"
+      b="${b:-1}"
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click "$b"
+      sleep "$STEP_WAIT"; shot "click-${c}_${r}_${b}" ;;
+    move:*)
+      IFS=',' read -r c r <<<"${step#move:}"
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
+      sleep "$STEP_WAIT"; shot "move-${c}_${r}" ;;
+    wheel:*)
+      IFS=',' read -r c r n <<<"${step#wheel:}"
+      btn=5; [ "${n:-1}" -lt 0 ] && { btn=4; n=$(( -n )); }
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
+      for _ in $(seq 1 "${n:-1}"); do xdotool click "$btn"; sleep 0.05; done
+      sleep "$STEP_WAIT"; shot "wheel-${c}_${r}_${btn}" ;;
+    drag:*)
+      IFS=',' read -r c1 r1 c2 r2 <<<"${step#drag:}"
+      xdotool mousemove --sync "$(px "$c1")" "$(py "$r1")" mousedown 1
+      sleep 0.25
+      xdotool mousemove --sync "$(px "$c2")" "$(py "$r2")"
+      sleep 0.25; shot "dragheld-${c1}_${r1}-${c2}_${r2}"
+      xdotool mouseup 1
+      sleep "$STEP_WAIT"; shot "drag-${c1}_${r1}-${c2}_${r2}" ;;
+    sleep:*) sleep "${step#sleep:}" ;;
+    shot) shot extra ;;
+    shot:*) shot "$(slug "${step#shot:}")" ;;
+    *) echo "unknown step: $step" ;;
+  esac
+done
+
+echo "== crude stderr tail =="
+tail -30 "$LOG"

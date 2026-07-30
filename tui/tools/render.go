@@ -1,10 +1,8 @@
 package tools
 
 import (
-	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -27,190 +25,14 @@ func isSummaryOnlyTool(name string) bool {
 	return false
 }
 
-func RenderToolMessage(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string) []string {
-	dim := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	isActive := (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") && msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
-
-	spinColor := th.Colors.Spinner.Default
-	if isActive {
-		switch phase {
-		case "grounding":
-			spinColor = th.Colors.Spinner.Grounding
-		case "planning":
-			spinColor = th.Colors.Spinner.Planning
-		case "executing":
-			spinColor = th.Colors.Spinner.Executing
-		}
-	} else if msg.ToolPreviewPhase == types.ToolPreviewDone {
-		if msg.ToolStatus == types.ToolStatusCancelled {
-			spinColor = th.Colors.Warning
-		} else {
-			spinColor = th.Colors.Spinner.Done
-		}
-	} else if msg.ToolPreviewPhase == types.ToolPreviewError || msg.ToolStatus == "error" {
-		spinColor = th.Colors.Spinner.Error
-	} else if msg.ToolStatus == "cancelled" {
-		spinColor = th.Colors.Warning
-	}
-	spinStyle := lipgloss.NewStyle().Foreground(spinColor)
-	nameStyle := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	titlePhase := msg.ToolPreviewPhase
-	if titlePhase == "" {
-		titlePhase = phase
-	}
-	title := BuildToolTitle(msg, titlePhase)
-
-	// Override title with content-derived summary on success
-	if msg.ToolStatus == "success" {
-		dur := rendering.FormatDuration(msg.ToolDuration)
-		target := msg.ToolArgs
-		if target == "" {
-			target = msg.ToolProgressLabel
-		}
-		if summary := resultSummary(msg.ToolName, msg.Content, target, dur); summary != "" {
-			title = summary
-		}
-	}
-
-	// Build the permission tag suffix for the title line
-	permSuffix := formatPermTag(msg.PermTag, th)
-
-	var msgLines []string
-
-	if isActive {
-		var dot string
-		if components.BlinkOn(spinFrame) {
-			dot = "● "
-		} else {
-			dot = "○ "
-		}
-		line := dim.Render("│ ") + spinStyle.Render(dot) + nameStyle.Render(title) + permSuffix
-		msgLines = append(msgLines, line)
-	} else if msg.ToolPreviewPhase == types.ToolPreviewDone {
-		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title) + permSuffix
-		msgLines = append(msgLines, line)
-	} else if msg.ToolPreviewPhase == types.ToolPreviewError {
-		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title) + permSuffix
-		msgLines = append(msgLines, line)
-	} else if msg.ToolStatus == "success" && msg.ToolName == "plan" {
-	} else if msg.ToolStatus == "success" {
-		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title) + permSuffix
-		msgLines = append(msgLines, line)
-	} else if msg.ToolStatus == "error" {
-		line := dim.Render("│ ") + spinStyle.Render("● ") + nameStyle.Render(title) + permSuffix
-		msgLines = append(msgLines, line)
-	} else {
-		line := dim.Render("│ ") + spinStyle.Render("○ ") + nameStyle.Render(title) + permSuffix
-		msgLines = append(msgLines, line)
-	}
-
-	if msg.ToolStatus == "success" && msg.Content != "" {
-		resultContent := msg.Content
-		fullLabel := rendering.PascalCaseTool(msg.ToolName) + " " + msg.ToolArgs
-		resultContent = strings.TrimPrefix(strings.TrimSpace(resultContent), fullLabel)
-		resultContent = strings.TrimSpace(resultContent)
-		if resultContent != "" {
-			if IsPlanTool(msg.ToolName) {
-				planBox := RenderPlanBox(resultContent, contentWidth-4, th)
-				for _, pl := range strings.Split(planBox, "\n") {
-					msgLines = append(msgLines, dim.Render("│ ")+pl)
-				}
-			} else if isSummaryOnlyTool(msg.ToolName) {
-				// Summary already embedded in the title line; no content lines needed
-			} else if isDiffTool(msg.ToolName) || IsDiffContent(resultContent) {
-				// Use the no-header variant: the title line already shows
-				// the file path and change counts (plus tokens & duration).
-				maxRes := TerminalResultHeight(height)
-				diffWidth := innerW - 4
-				if diffWidth < 20 {
-					diffWidth = 20
-				}
-				renderedDiff := RenderDiffNoHeader(resultContent, maxRes, diffWidth, th)
-				if renderedDiff != "" {
-					for _, dl := range strings.Split(renderedDiff, "\n") {
-						msgLines = append(msgLines, dim.Render("│ ")+dl)
-					}
-				} else {
-					// Fallback for non-diff content
-					firstLine := strings.SplitN(resultContent, "\n", 2)[0]
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(firstLine))
-				}
-			} else {
-				toolLineWidth := width - th.Spacing.PadLR*2 - 6
-				if toolLineWidth < 20 {
-					toolLineWidth = 20
-				}
-				var wrappedLines []string
-				for _, rl := range strings.Split(resultContent, "\n") {
-					// Trim all whitespace including tabs, not just spaces
-					trimmed := strings.TrimSpace(rl)
-					if trimmed == "" {
-						// Preserve empty lines to maintain output structure
-						// (paragraph breaks between sections, etc.)
-						wrappedLines = append(wrappedLines, dim.Render("│   "))
-						continue
-					}
-					// Sanitize the content to prevent TUI breakage
-					sanitized := rendering.SanitizeForTerminal(trimmed)
-					for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
-						if seg != "" {
-							wrappedLines = append(wrappedLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(seg))
-						}
-					}
-				}
-				maxRes := TerminalResultHeight(height)
-				for i, wl := range wrappedLines {
-					if i >= maxRes-1 {
-						remaining := len(wrappedLines) - i
-						msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))))
-						break
-					}
-					msgLines = append(msgLines, wl)
-				}
-			}
-		}
-	} else if msg.ToolStatus == "error" || msg.ToolStatus == "cancelled" {
-		if msg.Content != "" {
-			maxRes := TerminalResultHeight(height)
-			toolLineWidth := width - th.Spacing.PadLR*2 - 6
-			if toolLineWidth < 20 {
-				toolLineWidth = 20
-			}
-			var wrappedLines []string
-			for _, rl := range strings.Split(msg.Content, "\n") {
-				trimmed := strings.TrimSpace(rl)
-				if trimmed == "" {
-					wrappedLines = append(wrappedLines, dim.Render("│   "))
-					continue
-				}
-				sanitized := rendering.SanitizeForTerminal(trimmed)
-				for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
-					if seg != "" {
-						wrappedLines = append(wrappedLines, dim.Render("│   ")+th.Styles.ErrorText.Render(seg))
-					}
-				}
-			}
-			for i, wl := range wrappedLines {
-				if i >= maxRes-1 {
-					remaining := len(wrappedLines) - i
-					msgLines = append(msgLines, dim.Render("│   ")+lipgloss.NewStyle().Foreground(th.Colors.Muted).Render(fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))))
-					break
-				}
-				msgLines = append(msgLines, wl)
-			}
-		}
-	}
-
-	return msgLines
+// IsSummaryOnlyTool reports whether tool output is fully captured in the title line.
+func IsSummaryOnlyTool(name string) bool {
+	return isSummaryOnlyTool(name)
 }
 
-// isDiffTool returns true for tool names that produce diff-like output.
-func isDiffTool(name string) bool {
-	switch name {
-	case "write_file", "edit_file":
-		return true
-	}
-	return false
+// ResultSummary returns a compact title-line summary for successful tool output.
+func ResultSummary(tool, content, target, dur string) string {
+	return resultSummary(tool, content, target, dur)
 }
 
 func RenderPlanBox(text string, maxWidth int, th *theme.Theme) string {
@@ -921,21 +743,3 @@ func subAgentWriteReportSummary(content, target, duration string) string {
 
 // ── helpers ─────────────────────────────────────────────────
 
-func formatPermTag(tag string, th *theme.Theme) string {
-	if tag == "" {
-		return ""
-	}
-	muted := lipgloss.NewStyle().Foreground(th.Colors.Muted)
-	switch tag {
-	case "allowed":
-		return muted.Render("  ✓")
-	case "always":
-		return muted.Render("  ✓ always")
-	case "auto":
-		return muted.Render("  ✓ auto")
-	case "denied":
-		return muted.Render("  ✗")
-	default:
-		return muted.Render("  " + tag)
-	}
-}

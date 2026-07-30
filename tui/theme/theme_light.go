@@ -19,6 +19,7 @@ func DefaultLight() *Theme {
 		Selection:          lipgloss.Color("#dbeafe"),
 		Hover:              lipgloss.Color("#eaeef2"),
 		SubPaneBg:          lipgloss.Color("#eef1f4"),
+		IncompleteBg:       lipgloss.Color("#ffebe9"),
 		PopupBg:            lipgloss.Color("#ffffff"),
 		PopupBorder:        lipgloss.Color("#afb8c1"),
 		PopupBorderFocused: lipgloss.Color("#0969da"),
@@ -79,5 +80,5 @@ func DefaultLight() *Theme {
 			DiagInfo:      lipgloss.Color("#0969da"),
 		},
 	}
-	return newTheme(c)
+	return named("light", newTheme(c))
 }

@@ -14,26 +14,6 @@ import (
 	"crude/tui/surface"
 )
 
-const (
-	blinkPeriod = 800 // ms — matches components.BlinkPeriod
-	blinkHalf   = blinkPeriod / 2
-)
-
-func blinkOnTime(t time.Time) bool {
-	return t.UnixMilli()%blinkPeriod < blinkHalf
-}
-
-func blockCursorTime(clr color.Color) string {
-	if blinkOnTime(time.Now()) {
-		style := lipgloss.NewStyle()
-		if clr != nil {
-			style = style.Foreground(clr)
-		}
-		return style.Render("█")
-	}
-	return " "
-}
-
 func (t *TextArea) ansiColor(role SemanticColor) color.Color {
 	if t.tokens == nil || t.tokens.Theme() == nil {
 		return nil
@@ -554,7 +534,7 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 			case cursorSolid:
 				// solid phase: reverse video
 				cellFG, cellBG = bg, fg
-			case blinkOnTime(time.Now()):
+			case BlinkOnTime(time.Now()):
 				// blink-on phase: accent background, contrasting fg
 				accent := cell.NoColor
 				if t.tokens != nil {
@@ -591,7 +571,7 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 	if t.tokens != nil {
 		chipFG = t.tokens.Color(ColorAccent2)
 	}
-	chipFocused := focused && (cursorSolid || blinkOnTime(time.Now()))
+	chipFocused := focused && (cursorSolid || BlinkOnTime(time.Now()))
 	col := 0
 	pos := 0
 	for len(label) > 0 {
@@ -631,7 +611,7 @@ func (t *TextArea) paintBlockCursor(buf *surface.CellBuffer, x, y int, ch rune,
 	if t.tokens != nil {
 		accent = t.tokens.Color(ColorAccent)
 	}
-	if !cursorSolid && !blinkOnTime(time.Now()) {
+	if !cursorSolid && !BlinkOnTime(time.Now()) {
 		if preserveWhenOff {
 			return
 		}
@@ -855,7 +835,7 @@ func (t *TextArea) View(width, spinFrame int, cursorSolidAlways bool) string {
 			}
 			cursorChar = style.Render("█")
 		} else {
-			cursorChar = blockCursorTime(accentColor)
+			cursorChar = BlockCursorTime(accentColor)
 		}
 		allLines = append(allLines, prefix+cursorChar)
 	}
@@ -902,7 +882,7 @@ func (t *TextArea) renderSegmentANSI(line []rune, flatOffset, start, end int,
 			switch {
 			case cursorSolid:
 				b.WriteString("\x1b[7m" + cluster + "\x1b[0m")
-			case blinkOnTime(time.Now()):
+			case BlinkOnTime(time.Now()):
 				// accent background, contrasting foreground
 				style := lipgloss.NewStyle()
 				if accentColor != nil {
@@ -933,7 +913,7 @@ func (t *TextArea) renderSegmentANSI(line []rune, flatOffset, start, end int,
 			}
 			b.WriteString(style.Render("█"))
 		} else {
-			b.WriteString(blockCursorTime(accentColor))
+			b.WriteString(BlockCursorTime(accentColor))
 		}
 		rendered = b.String()
 	}
@@ -954,7 +934,7 @@ func (t *TextArea) renderAtomicChipANSI(label string, focused, cursorSolid bool)
 		style = style.Foreground(accent2)
 	}
 	if focused {
-		if cursorSolid || blinkOnTime(time.Now()) {
+		if cursorSolid || BlinkOnTime(time.Now()) {
 			if selection := t.ansiColor(ColorSelection); selection != nil {
 				style = style.Background(selection)
 			}

@@ -42,7 +42,6 @@ tab attention until the panel is activated or closed.
 
 | Control | Up/Down | Page | Home/End | Wrap | Enter |
 |---------|---------|------|----------|------|-------|
-| components.List | yes | yes | no | wrap | select |
 | Command palette | yes | yes | no | clamp | activate |
 | File picker | yes | yes | yes | clamp | open |
 | Find in Files | yes | yes | yes | clamp | open; Cc click toggles case sensitivity, .* click or Ctrl+R toggles regex |

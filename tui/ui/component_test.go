@@ -103,15 +103,17 @@ func TestButton_ActivateKeyAndClick(t *testing.T) {
 
 func TestButton_PaintStates(t *testing.T) {
 	btn := NewButton("btn", "OK", "ok")
+	tokens := NewTokenSet(theme.DefaultDark())
+	btn.SetTokens(tokens)
 	btn.Layout(LayoutContext{}, Rect{W: 8, H: 1})
 	buf := surface.NewCellBuffer(8, 1)
 	btn.Paint(buf, 0, 0, PaintContext{Focused: true})
 	if buf.Get(0, 0).Char != '[' {
 		t.Fatalf("got %c", buf.Get(0, 0).Char)
 	}
-	// Focused uses focusBG
-	if !buf.Get(0, 0).BG.Equal(btn.focusBG) {
-		t.Fatalf("focus bg %+v", buf.Get(0, 0).BG)
+	_, wantBG := tokens.ButtonColors(StateFocused)
+	if !buf.Get(0, 0).BG.Equal(wantBG) {
+		t.Fatalf("focus bg %+v want %+v", buf.Get(0, 0).BG, wantBG)
 	}
 }
 

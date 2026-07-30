@@ -1,0 +1,36 @@
+name: TUI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  tui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Lint (Phase 15 scope)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.64.8
+          golangci-lint run ./app/... ./tui/cell/... ./tui/surface/... ./tui/compositor/... ./tui/ui/... ./tui/screens/... ./workspace/...
+
+      - name: Design audit
+        run: ./scripts/tui_design_audit.sh
+
+      - name: Build
+        run: go build ./...
+
+      - name: TUI unit tests
+        run: make test-tui
+
+      - name: TUI race tests
+        run: make test-race-tui
+
+      - name: Full test suite
+        run: go test ./...

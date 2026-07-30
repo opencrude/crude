@@ -10,6 +10,8 @@ import (
 	"os"
 
 	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/ui"
 )
 
 // ---------------------------------------------------------------------------
@@ -146,6 +148,17 @@ func (m *FileTreeModel) Update(msg TreeMsg) tea.Cmd {
 // tree action. Returns a tea.Cmd for side effects (file open, filter
 // request, refresh, etc.).
 func (m *FileTreeModel) handleKey(key tea.KeyPressMsg) tea.Cmd {
+	if m.filterActive {
+		switch key.Code {
+		case tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown,
+			tea.KeyEnter, tea.KeyRight, tea.KeyLeft:
+			// navigation while filtering
+		default:
+			m.handleFilterInputKey(key)
+			return nil
+		}
+	}
+
 	// Check for Ctrl+Enter first (file open).
 	if key.Mod.Contains(tea.ModCtrl) && key.Code == tea.KeyEnter {
 		return m.ToggleExpandOrSelect()
@@ -212,7 +225,7 @@ func (m *FileTreeModel) handleKey(key tea.KeyPressMsg) tea.Cmd {
 
 	// --- Filter / Escape ---
 	case tea.KeyEsc:
-		if m.filter != "" {
+		if m.filterPattern() != "" {
 			m.ClearFilter()
 		}
 		return nil
@@ -220,6 +233,25 @@ func (m *FileTreeModel) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	default:
 		// Printable character keys and modifier combinations.
 		return m.handleKeyString(key)
+	}
+}
+
+func (m *FileTreeModel) handleFilterInputKey(key tea.KeyPressMsg) {
+	if m.filterEd == nil {
+		m.filterEd = ui.NewTextEdit()
+	}
+	switch key.Code {
+	case tea.KeyEsc:
+		m.ClearFilter()
+		return
+	case tea.KeyBackspace:
+		if m.filterEd.Value() == "" {
+			m.ClearFilter()
+			return
+		}
+	}
+	if ui.HandleFilterKey(m.filterEd, key) {
+		m.SetFilter(m.filterEd.Value())
 	}
 }
 
@@ -728,6 +760,13 @@ func (m *FileTreeModel) ScrollOffset() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.scrollOffset
+}
+
+// VisibleHeight returns the viewport row count last set by TreeHeightMsg.
+func (m *FileTreeModel) VisibleHeight() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.visibleHeight
 }
 
 // SetScrollOffset sets the scroll offset, clamped to valid range.

@@ -145,6 +145,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 
 	sess := &Session{
+		ID:               meta.ID,
 		cfg:              cfg,
 		provider:         p,
 		exec:             exec,

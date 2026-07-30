@@ -10,9 +10,9 @@ import (
 )
 
 func TestDemoGalleryPaintsAndEdits(t *testing.T) {
-	themes := map[string]*theme.Theme{
-		"dark":  theme.DefaultDark(),
-		"light": LightTheme(),
+	themes := map[string]*theme.Theme{}
+	for _, th := range theme.AllPresets() {
+		themes[th.Name] = th
 	}
 	for name, th := range themes {
 		t.Run(name, func(t *testing.T) {
@@ -32,7 +32,8 @@ func TestDemoGalleryPaintsAndEdits(t *testing.T) {
 }
 
 func TestDemoPaintHelper(t *testing.T) {
-	for name, th := range map[string]*theme.Theme{"dark": theme.DefaultDark(), "light": LightTheme()} {
+	for _, th := range theme.AllPresets() {
+		name := th.Name
 		t.Run(name, func(t *testing.T) {
 			buf := DemoPaint(th, 80, 30)
 			if buf == nil {
@@ -50,13 +51,21 @@ func TestDemoGalleryRuntimeThemeSwitchPreservesState(t *testing.T) {
 		t.Fatal("focused field did not accept edit before theme switch")
 	}
 	darkPopup := host.Tokens().Color(ColorPopupBg)
+	metricBefore := host.Tokens().MetricVersion
 	host.SetTheme(LightTheme())
 	if host.Tokens().Color(ColorPopupBg).Equal(darkPopup) {
 		t.Fatal("light theme did not replace resolved popup token")
 	}
+	if host.Tokens().MetricVersion != metricBefore {
+		t.Fatal("color-only theme switch should not bump metric version")
+	}
 	field, ok := host.registry[host.Focused()].(*TextField)
 	if !ok || field.Value() != "defaultx" {
 		t.Fatalf("theme switch lost focused input state: %#v", field)
+	}
+	host.SetTheme(HighContrastTheme())
+	if host.Tokens().Color(ColorPopupBg).Equal(darkPopup) {
+		t.Fatal("high-contrast theme did not replace popup token")
 	}
 	host.Paint(surface.NewCellBuffer(80, 30))
 }

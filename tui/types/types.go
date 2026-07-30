@@ -57,6 +57,7 @@ type (
 	ErrorMsg              = model.ErrorMsg
 	AgentMsg              = model.AgentMsg
 	OpenSettingsMsg       = model.OpenSettingsMsg
+	ConfigReloadedMsg     = model.ConfigReloadedMsg
 	FetchModelsMsg        = model.FetchModelsMsg
 	SaveSettingsMsg       = model.SaveSettingsMsg
 	UpdateModelMsg        = model.UpdateModelMsg

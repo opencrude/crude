@@ -265,6 +265,17 @@ func (e *TextEdit) RuneAt(i int) rune {
 	return e.runes[i]
 }
 
+// CopyStateTo copies content, cursor, and selection into dst.
+func (e *TextEdit) CopyStateTo(dst *TextEdit) {
+	if e == nil || dst == nil {
+		return
+	}
+	dst.runes = append([]rune(nil), e.runes...)
+	dst.cursor = e.cursor
+	dst.selAnchor = e.selAnchor
+	dst.selActive = e.selActive
+}
+
 // EnsureUTF8 validates that SetValue paths stay valid (helper for tests).
 func EnsureUTF8(s string) bool {
 	return utf8.ValidString(s)

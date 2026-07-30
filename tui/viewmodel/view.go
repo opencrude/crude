@@ -2,20 +2,20 @@ package viewmodel
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
-	"crude/tui/scrollbar"
+	"crude/tui/screens/shellchat"
+	"crude/tui/screens/shellheader"
+	"crude/tui/screens/shellinput"
+	"crude/tui/screens/shelltree"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/workspace"
 )
 
@@ -44,6 +44,14 @@ func (m *App) View() tea.View {
 	useCached := isEditorMain && m.sessionDeckHeight(m.height) == 0 && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
 
 	m.compositor.BeginFrame()
+	// Fill the root with the active theme background so uncovered cells
+	// (launcher holes, padding rows, transparent blits) follow the preset
+	// instead of the terminal's default colour — otherwise light presets
+	// leave dark strips where only header/status/sidebar filled explicitly.
+	if m.Theme != nil {
+		bg := cell.BlankCell(rendering.ThemeColorToCell(m.Theme.Colors.Bg))
+		m.compositor.Root().Buffer().Fill(bg)
+	}
 	m.renderCtx.SpinFrame = m.SpinFrame
 	m.syncRenderFocus()
 	m.resizeLayerSurfaces()
@@ -63,6 +71,14 @@ func (m *App) View() tea.View {
 		root.AddChild(m.mainLauncherSurf)
 		m.mainLauncherSurf.SetZOrder(1)
 	}
+	if m.mainChatSurf != nil {
+		root.AddChild(m.mainChatSurf)
+		m.mainChatSurf.SetZOrder(1)
+	}
+	if m.mainEditorSurf != nil {
+		root.AddChild(m.mainEditorSurf)
+		m.mainEditorSurf.SetZOrder(1)
+	}
 	if m.mainSidebarSurf != nil {
 		root.AddChild(m.mainSidebarSurf)
 		m.mainSidebarSurf.SetZOrder(2)
@@ -76,6 +92,19 @@ func (m *App) View() tea.View {
 		root.AddChild(m.mainHeaderSurf)
 		m.mainHeaderSurf.SetZOrder(4)
 	}
+	if m.mainTabBarSurf != nil {
+		root.AddChild(m.mainTabBarSurf)
+		m.mainTabBarSurf.SetZOrder(3)
+		m.mainTabBarSurf.SetVisible(m.tabBarVisible())
+	}
+	if m.mainInputSurf != nil {
+		root.AddChild(m.mainInputSurf)
+		m.mainInputSurf.SetZOrder(2)
+	}
+
+	// Capture before buildMainView clears contentDirty — editor surface
+	// reuses its cell buffer when only chrome (tree/tabs) changed.
+	editorNeedsPaint := m.contentDirty || m.mainEditorSurf == nil
 
 	// Main content surface stays transparent — only ANSI-rendered cells
 	// set explicit backgrounds. Transparent cells (like the top padding
@@ -90,9 +119,13 @@ func (m *App) View() tea.View {
 	}
 	m.renderSessionDeckToSurface()
 	m.renderLauncherToSurface()
+	m.renderChatToSurface()
+	m.renderEditorToSurface(editorNeedsPaint)
+	m.renderInputToSurface()
 
 	// Cheap layers: always re-render (surface fill + ANSI render).
 	m.renderHeaderToSurface()
+	m.renderTabBarToSurface()
 	if m.Tree.Visible {
 		m.renderSidebarToSurface()
 	}
@@ -123,14 +156,13 @@ func (m *App) View() tea.View {
 func (m *App) buildMainView() string {
 	// Account for file tree sidebar when visible.
 	sidebarW := 0
-	sidebarVisible := m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil
+	sidebarVisible := m.Tree.Visible && m.Tree.Model != nil && m.sidebarScreen != nil
 	if sidebarVisible {
 		sidebarW = m.Tree.Width + 1 // +1 for divider
 	}
 
 	m.Win.SetWidth(m.width - 2*m.Theme.Spacing.PadLR - sidebarW)
 
-	pad := strings.Repeat(" ", m.Theme.Spacing.PadLR)
 	contentW := m.width - sidebarW
 	innerW := contentW - m.Theme.Spacing.PadLR*2
 	if innerW < 20 {
@@ -143,31 +175,17 @@ func (m *App) buildMainView() string {
 
 	m.syncFormHint()
 
-	var inputView string
 	var inputLineCount int
 	if showMainInput {
-		inputView = m.Input.View(contentW, m.height, false, false, m.SpinFrame)
-		inputLineCount = len(strings.Split(inputView, "\n"))
+		inputLineCount = m.Input.ShellHeight(contentW)
 		if inputLineCount < 1 {
 			inputLineCount = 1
 		}
 	}
 
-	agentTabBarLine := ""
-	agentTabBarVisible := false
-	if m.Win.IsOpen() && m.Win.TabCount() >= 1 {
-		agentTabBarLine = m.Win.RenderTabBar()
-		agentTabBarVisible = agentTabBarLine != ""
-	}
-	if m.FocusStack.Top() == FocusTabBar && agentTabBarVisible {
-		focusStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent)
-		agentTabBarLine = focusStyle.Render(agentTabBarLine)
-	}
+	agentTabBarVisible := m.tabBarVisible()
 
 	baseNonChat := 3 + inputLineCount
-	if showMainInput {
-		baseNonChat++ // separator above the actual composer
-	}
 	if agentTabBarVisible {
 		baseNonChat += 2
 	}
@@ -191,209 +209,52 @@ func (m *App) buildMainView() string {
 	}
 
 	var chatVisible []string
-	var totalSBW int
 
 	if isEditorActive {
 		editorPadL := m.Theme.Spacing.PadLR
-		editorPadR := m.Theme.Spacing.PadLR
 		if sidebarVisible {
 			editorPadL = 0
 		}
 		m.EditorState.Editor.SetPadding(editorPadL)
-		chatVisible = m.EditorState.Editor.View(contentW, chatH, editorPadL, editorPadR)
-		totalSBW = 0
+		m.EditorState.Editor.SetStatusChrome(false)
+		// DocumentEditor paints into mainEditorSurf; reserve blank rows.
+		chatVisible = make([]string, chatH)
+		chatAreaTop := 3
+		if agentTabBarVisible {
+			chatAreaTop += 2
+		}
+		m.editorRect = ui.Rect{
+			X: sidebarW,
+			Y: chatAreaTop,
+			W: contentW,
+			H: chatH,
+		}
+		m.chatRect = ui.Rect{}
 	} else if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		// The native launcher screen paints into its own surface; the main
 		// content only needs to reserve the vertical space.
 		chatVisible = make([]string, chatH)
-		totalSBW = 0
+		m.chatRect = ui.Rect{}
+		m.editorRect = ui.Rect{}
 	} else {
-		activeML := m.activeMessageList()
-		activeAgent := m.agentForView()
-		activeTyping := false
-		if activeAgent != nil {
-			activeTyping = activeAgent.ComputeActiveTyping()
+		// Agent chat paints into mainChatSurf; reserve blank placeholder rows
+		// so the main ANSI string no longer embeds composed message content.
+		chatVisible = make([]string, chatH)
+		chatAreaTop := 3
+		if agentTabBarVisible {
+			chatAreaTop += 2
 		}
-		if activeML == nil {
-			chatVisible = []string{""}
-			totalSBW = 0
-		} else {
-			nestingLevel := m.subPaneProjections.ScrollbarNestingLevel(m.paneDoneMap())
-			paneSBW := nestingLevel*scrollbar.ScrollbarWidth + nestingLevel
-			if sp := m.PaneMgr.Get(m.AgentMgr.ActiveID()); sp != nil && m.subPaneProjections.Has(sp.ID) {
-				m.subPaneProjections.SetPaneScrollbarWidth(sp.ID, paneSBW)
-			}
-			if activeML != nil {
-				activeML.SetPaneScrollbarWidth(0)
-			}
-			activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
-			activeML.SetSpinFrame(m.SpinFrame)
-			activeML.SetActiveTyping(activeTyping)
-			activeML.SetPhase(m.StatusBar.Phase())
-			chatAreaTop := 3
-			if agentTabBarVisible {
-				chatAreaTop += 2
-			}
+		m.chatRect = ui.Rect{
+			X: sidebarW,
+			Y: chatAreaTop,
+			W: contentW,
+			H: chatH,
+		}
+		m.editorRect = ui.Rect{}
+		// Prepare MessageList geometry for subpane render/export.
+		if activeML := m.activeMessageList(); activeML != nil {
 			activeML.SetChatAreaBounds(chatAreaTop, chatH)
-
 			activeML.SetSize(m.width-sidebarW, m.height)
-			activeML.SetLeftOffset(sidebarW)
-
-			chatVisible = activeML.Render(innerW)
-
-			mainSBVisible := activeML.ScrollbarWidth() > 0
-
-			var mainSBLines []string
-			var paneLineMap []widgets.PaneLineInfo
-			var paneSBViews map[string][]string
-
-			totalSBW = scrollbar.ScrollbarWidth * (1 + nestingLevel)
-			if nestingLevel > 0 {
-				totalSBW += nestingLevel
-			}
-			if !mainSBVisible && nestingLevel == 0 {
-				totalSBW = 0
-			}
-			if !mainSBVisible && nestingLevel > 0 {
-				totalSBW = scrollbar.ScrollbarWidth*nestingLevel + nestingLevel
-			}
-
-			mainScrollbarView := activeML.ScrollbarView()
-			mainSBLines = strings.Split(mainScrollbarView, "\n")
-
-			paneLineMap = activeML.PaneLineMap()
-
-			paneSBViews = make(map[string][]string)
-			if nestingLevel > 0 {
-				for _, info := range paneLineMap {
-					if info.PaneID != "" {
-						if _, ok := paneSBViews[info.PaneID]; !ok {
-							sp := m.PaneMgr.Get(info.PaneID)
-							if sp != nil {
-								view := m.subPaneProjections.ScrollbarView(info.PaneID, sp)
-								paneSBViews[info.PaneID] = strings.Split(view, "\n")
-							}
-						}
-					}
-				}
-			}
-
-			subPaneBgSeq := ""
-			{
-				s := lipgloss.NewStyle().Background(m.Theme.Colors.SubPaneBg).Render(" ")
-				idx := strings.Index(s, " ")
-				if idx > 0 {
-					subPaneBgSeq = s[:idx]
-				}
-			}
-
-			reapplySubPaneBg := func(s string) string {
-				re := regexp.MustCompile(`\x1b\[(?:0?m|39m|49m)`)
-				return re.ReplaceAllString(s, "${0}"+subPaneBgSeq)
-			}
-
-			for i, line := range chatVisible {
-				maxContentW := innerW - totalSBW
-				if totalSBW > 0 {
-					maxContentW = innerW - totalSBW - 1
-				}
-				if maxContentW < 10 {
-					maxContentW = 10
-				}
-
-				isPaneLine := i < len(paneLineMap) && paneLineMap[i].PaneID != ""
-				hasBg := false
-				if isPaneLine {
-					sp := m.PaneMgr.Get(paneLineMap[i].PaneID)
-					hasBg = sp != nil && sp.Type == workspace.PaneAgent
-				}
-
-				var trimmed string
-				var visW int
-				if hasBg {
-					trimmed = line
-					visW = rendering.VisibleWidth(trimmed)
-					if visW > maxContentW {
-						trimmed = rendering.TruncateLine(trimmed, maxContentW)
-						visW = rendering.VisibleWidth(trimmed)
-					}
-				} else {
-					trimmed = rendering.TrimRightAnsiSpaces(line)
-					visW = rendering.VisibleWidth(trimmed)
-					if visW > maxContentW {
-						trimmed = rendering.TruncateLine(trimmed, maxContentW)
-						visW = rendering.VisibleWidth(trimmed)
-					}
-				}
-				line = trimmed
-
-				if totalSBW > 0 {
-					var paneSBLine, mainSBLine string
-
-					if nestingLevel > 0 && isPaneLine {
-						info := paneLineMap[i]
-						if paneSBLines, ok := paneSBViews[info.PaneID]; ok {
-							if info.LineIdx >= 0 && info.LineIdx < len(paneSBLines) && paneSBLines[info.LineIdx] != "" {
-								paneSBLine = paneSBLines[info.LineIdx]
-							}
-						}
-						if paneSBLine == "" {
-							paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-						}
-						if mainSBVisible && i < len(mainSBLines) {
-							mainSBLine = mainSBLines[i]
-						}
-						if mainSBLine == "" {
-							mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-						}
-					} else if nestingLevel > 0 {
-						paneSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-						if mainSBVisible && i < len(mainSBLines) {
-							mainSBLine = mainSBLines[i]
-						}
-						if mainSBLine == "" {
-							mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-						}
-					} else {
-						if mainSBVisible && i < len(mainSBLines) && mainSBLines[i] != "" {
-							mainSBLine = mainSBLines[i]
-						} else {
-							mainSBLine = strings.Repeat(" ", scrollbar.ScrollbarWidth)
-						}
-					}
-
-					padRight := innerW - totalSBW - 1 - visW
-					if padRight < 0 {
-						padRight = 0
-					}
-
-					var bgPart, noBgPart string
-					if nestingLevel > 0 {
-						bgPart = line + strings.Repeat(" ", padRight) + " " + paneSBLine
-						noBgPart = " " + mainSBLine
-					} else {
-						bgPart = line + strings.Repeat(" ", padRight)
-						noBgPart = " " + mainSBLine
-					}
-
-					if hasBg && subPaneBgSeq != "" {
-						bgPart = subPaneBgSeq + reapplySubPaneBg(bgPart) + "\x1b[0m"
-					}
-					line = pad + bgPart + noBgPart + pad
-				} else {
-					padRight := innerW - visW
-					if padRight < 0 {
-						padRight = 0
-					}
-					inner := line + strings.Repeat(" ", padRight)
-					if hasBg && subPaneBgSeq != "" {
-						inner = subPaneBgSeq + reapplySubPaneBg(inner) + "\x1b[0m"
-					}
-					line = pad + inner + pad
-				}
-
-				chatVisible[i] = line
-			}
 		}
 	}
 
@@ -417,13 +278,8 @@ func (m *App) buildMainView() string {
 	lines = append(lines, strings.Repeat(" ", contentW))
 
 	if agentTabBarVisible {
-		lines = append(lines, pad+agentTabBarLine+pad)
-		if m.FocusStack.Top() == FocusTabBar {
-			accentSepStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Accent)
-			lines = append(lines, accentSepStyle.Render(strings.Repeat("━", contentW)))
-		} else {
-			lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
-		}
+		lines = append(lines, strings.Repeat(" ", contentW))
+		lines = append(lines, strings.Repeat(" ", contentW))
 	}
 
 	for _, line := range chatVisible {
@@ -435,36 +291,29 @@ func (m *App) buildMainView() string {
 	}
 
 	if showMainInput {
-		lines = append(lines, widgets.RenderSep(contentW, m.Theme.Colors.Border))
-	}
-
-	if showMainInput {
-		refChips := m.renderReferenceChips()
-		if len(refChips) > 0 {
-			for _, rc := range refChips {
-				visW := rendering.VisibleWidth(rc)
-				rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
-				if rightPad < 0 {
-					rightPad = 0
-				}
-				lines = append(lines, pad+rc+strings.Repeat(" ", rightPad)+pad)
-			}
+		inputY := 3 + chatH
+		if agentTabBarVisible {
+			inputY += 2
 		}
-		for _, il := range strings.Split(inputView, "\n") {
-			visW := rendering.VisibleWidth(il)
-			rightPad := contentW - 2*m.Theme.Spacing.PadLR - visW
-			if rightPad < 0 {
-				rightPad = 0
-			}
-			lines = append(lines, pad+il+strings.Repeat(" ", rightPad)+pad)
+		inputY += deckLineCount
+		m.inputRect = ui.Rect{
+			X: sidebarW,
+			Y: inputY,
+			W: contentW,
+			H: inputLineCount,
 		}
+		for range inputLineCount {
+			lines = append(lines, strings.Repeat(" ", contentW))
+		}
+	} else {
+		m.inputRect = ui.Rect{}
 	}
 
 	// The status separator below is rendered by mainStatusbarSurf.
 
 	// The sidebar is rendered into its own layer surface
 	// (mainSidebarSurf). Update tree height/scroll state for it.
-	if m.Tree.Visible && m.Tree.Model != nil && m.Tree.Renderer != nil {
+	if m.Tree.Visible && m.Tree.Model != nil {
 		treeStart := 3
 		m.Tree.YOffset = treeStart
 		sidebarH := contentH - treeStart
@@ -472,7 +321,6 @@ func (m *App) buildMainView() string {
 			sidebarH = 0
 		}
 		m.Tree.Model.Update(filetree.TreeHeightMsg{Height: sidebarH})
-		m.Tree.Renderer.SetScrollbarContentHeight(sidebarH)
 	}
 
 	if len(lines) > contentH {
@@ -496,7 +344,8 @@ func (m *App) renderSessionDeckToSurface() {
 	m.sessionProjections.SetTheme(m.Theme)
 	m.mainSessionDeckSurf.Resize(r.W, r.H)
 	m.mainSessionDeckSurf.SetPosition(r.X, r.Y)
-	m.mainSessionDeckSurf.Buffer().Clear()
+	bgCell := cell.BlankCell(rendering.ThemeColorToCell(m.Theme.Colors.Bg))
+	m.mainSessionDeckSurf.Buffer().Fill(bgCell)
 	projection.deckHost.Resize(r.W, r.H)
 	projection.deckHost.Layout()
 	m.focusSessionDeckAfterLayout()
@@ -504,11 +353,7 @@ func (m *App) renderSessionDeckToSurface() {
 }
 
 func (m *App) syncFormHint() {
-	if m.FocusStack.Top() == FocusTabBar {
-		m.FormHint = "[ tab bar focused · ← →: navigate · enter: select · esc: unfocus ]"
-		return
-	}
-	m.FormHint = ""
+	// Tab-bar / overlay hints are built in contextualHelpSegments.
 }
 
 // renderLauncherToSurface paints the native launcher component tree into its
@@ -538,7 +383,8 @@ func (m *App) renderLauncherToSurface() {
 	m.mainLauncherSurf.SetVisible(true)
 	m.mainLauncherSurf.Resize(innerW, chatH)
 	m.mainLauncherSurf.SetPosition(layout.SidebarW+layout.PadLR, layout.ChatAreaTop)
-	m.mainLauncherSurf.Buffer().Clear()
+	bgCell := cell.BlankCell(rendering.ThemeColorToCell(m.Theme.Colors.Bg))
+	m.mainLauncherSurf.Buffer().Fill(bgCell)
 
 	m.launcherHost.Resize(innerW, chatH)
 	m.launcherHost.Layout()
@@ -547,35 +393,167 @@ func (m *App) renderLauncherToSurface() {
 	m.launcherHost.Paint(m.mainLauncherSurf.Buffer())
 }
 
-func (m *App) renderReferenceChips() []string {
-	refs := m.Input.PromptReferences()
-	if len(refs) == 0 {
-		return nil
+func (m *App) renderInputToSurface() {
+	if m.mainInputSurf == nil || m.inputScreen == nil || m.inputHost == nil {
+		return
 	}
-	var chips []string
-	for _, ref := range refs {
-		if !ref.Active() {
-			continue
-		}
-		label := ref.DisplayName()
-		chipStyle := lipgloss.NewStyle().
-			Foreground(m.Theme.Colors.Accent2).
-			Background(m.Theme.Colors.Selection).
-			Padding(0, 1)
-		closeStyle := lipgloss.NewStyle().Foreground(m.Theme.Colors.Error).Bold(true)
-		chip := chipStyle.Render(label) + closeStyle.Render(" ×")
-		chips = append(chips, chip)
+	r := m.inputRect
+	if r.Empty() {
+		m.mainInputSurf.SetVisible(false)
+		return
 	}
-	if len(chips) == 0 {
-		return nil
-	}
-	return []string{strings.Join(chips, " ")}
+	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.Theme.Colors.Bg), 0)
+	m.mainInputSurf.Resize(r.W, r.H)
+	m.mainInputSurf.SetPosition(r.X, r.Y)
+	m.mainInputSurf.Buffer().Fill(bgCell)
+	m.mainInputSurf.SetVisible(true)
+
+	m.Input.SetSpinFrame(m.SpinFrame)
+	m.inputScreen.Bind(&m.Input)
+	m.inputScreen.SetWidth(r.W)
+	m.inputHost.Resize(r.W, r.H)
+	m.inputHost.SetFrame(m.SpinFrame)
+	m.inputHost.Focus(shellinput.AreaID)
+	m.inputHost.Layout()
+	m.inputHost.Paint(m.mainInputSurf.Buffer())
 }
 
-// resizeLayerSurfaces resizes and repositions the persistent layer surfaces.
-// When the sidebar is visible, the main content surface is shifted right by
-// sidebarW and narrowed so it does not render underneath the sidebar. The
-// sidebar, header, and status bar are overlays that update independently.
+// renderChatToSurface paints the agent message list into its dedicated layer.
+// ScrollModel, scrollbar drag, and text selection live on shellchat;
+// MessageList exports rendered message rows via chatprojection.
+func (m *App) renderChatToSurface() {
+	if m.mainChatSurf == nil {
+		return
+	}
+	r := m.chatRect
+	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
+	isLauncher := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == ""
+	if r.Empty() || isEditorActive || isLauncher || m.chatScreen == nil || m.chatHost == nil {
+		m.mainChatSurf.SetVisible(false)
+		return
+	}
+
+	activeML := m.activeMessageList()
+	if activeML == nil {
+		m.mainChatSurf.SetVisible(false)
+		return
+	}
+
+	layout := m.computeLayout()
+	innerW := layout.InnerW
+	sidebarW := layout.SidebarW
+	chatH := r.H
+
+	activeAgent := m.agentForView()
+	activeTyping := false
+	if activeAgent != nil {
+		activeTyping = activeAgent.ComputeActiveTyping()
+	}
+
+	nestingLevel := m.subPaneProjections.ScrollbarNestingLevel(m.paneDoneMap())
+	paneSBW := nestingLevel*ui.ScrollbarWidth + nestingLevel
+	if sp := m.PaneMgr.Get(m.AgentMgr.ActiveID()); sp != nil && m.subPaneProjections.Has(sp.ID) {
+		m.subPaneProjections.SetPaneScrollbarWidth(sp.ID, paneSBW)
+	}
+	activeML.SetPaneScrollbarWidth(0)
+	activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
+	activeML.SetSpinFrame(m.SpinFrame)
+	activeML.SetActiveTyping(activeTyping)
+	if m.StatusBar != nil {
+		activeML.SetPhase(m.StatusBar.Phase())
+	}
+	activeML.SetChatAreaBounds(r.Y, chatH)
+	activeML.SetSize(m.width-sidebarW, m.height)
+	activeML.BindScroll(m.chatScreen.ScrollModel())
+
+	activeAgentID := m.AgentMgr.ActiveID()
+	switched := m.beginAgentChatScrollSwitch(activeAgentID)
+	msgRows, paneLineMap, contentH := activeML.ExportMessageRows(innerW)
+	m.finishAgentChatScrollMetrics(activeAgentID, chatH, contentH)
+	if switched {
+		msgRows, paneLineMap, contentH = activeML.ExportMessageRows(innerW)
+	}
+
+	mainSBVisible := contentH > chatH
+	paneGutters := m.subPaneProjections.BuildPaneGutters(paneLineMap, m.PaneMgr)
+
+	composeParams := shellchat.ComposeParams{
+		InnerW:        innerW,
+		PadLR:         layout.PadLR,
+		Theme:         m.Theme,
+		NestingLevel:  nestingLevel,
+		MainSBVisible: mainSBVisible,
+		PaneLineMap:   paneLineMap,
+		PaneGutters:   paneGutters,
+		HasPaneBg: func(paneID string) bool {
+			sp := m.PaneMgr.Get(paneID)
+			return sp != nil && sp.Type == workspace.PaneAgent
+		},
+	}
+
+	paint := shellchat.PaintParams{Compose: composeParams, PaneLineMap: paneLineMap}
+	if m.chatScreen != nil && m.chatScreen.HasActiveSelection() {
+		paint.HasSelection = true
+		paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol = m.chatScreen.SelectionRange()
+	}
+	m.chatScreen.SetMessages(msgRows, paint)
+
+	m.mainChatSurf.Resize(r.W, r.H)
+	m.mainChatSurf.SetPosition(r.X, r.Y)
+	bgCell := cell.BlankCell(rendering.ThemeColorToCell(m.Theme.Colors.Bg))
+	m.mainChatSurf.Buffer().Fill(bgCell)
+	m.mainChatSurf.SetVisible(true)
+
+	m.chatHost.Resize(r.W, r.H)
+	m.chatHost.SetFrame(m.SpinFrame)
+	m.chatHost.Layout()
+	m.chatHost.Paint(m.mainChatSurf.Buffer())
+}
+
+// renderEditorToSurface paints DocumentEditor chrome into mainEditorSurf via
+// shelleditor Host. When force is false, the previous cell buffer is kept
+// (contentDirty cache for expensive chroma). Chrome-only frames must not force.
+func (m *App) renderEditorToSurface(force bool) {
+	if m.mainEditorSurf == nil {
+		return
+	}
+	r := m.editorRect
+	active := m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen()
+	if !active || r.Empty() || m.editorScreen == nil || m.editorHost == nil {
+		m.mainEditorSurf.SetVisible(false)
+		return
+	}
+
+	sizeChanged := m.mainEditorSurf.Width() != r.W || m.mainEditorSurf.Height() != r.H
+	m.mainEditorSurf.Resize(r.W, r.H)
+	m.mainEditorSurf.SetPosition(r.X, r.Y)
+	m.mainEditorSurf.SetVisible(true)
+
+	if !force && !sizeChanged {
+		return
+	}
+
+	editorPadL := m.Theme.Spacing.PadLR
+	editorPadR := m.Theme.Spacing.PadLR
+	if m.Tree.Visible {
+		editorPadL = 0
+	}
+	m.EditorState.Editor.SetPadding(editorPadL)
+	m.EditorState.Editor.SetStatusChrome(false)
+	m.EditorState.Editor.SetTokens(m.editorHost.Tokens())
+
+	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.Theme.Colors.Bg), 0)
+	m.mainEditorSurf.Buffer().Fill(bgCell)
+
+	m.editorScreen.Bind(m.EditorState.Editor)
+	m.editorScreen.SetPadding(editorPadL, editorPadR)
+	m.editorScreen.SetFocused(m.focusTarget() == FocusEditor)
+	m.editorHost.Resize(r.W, r.H)
+	m.editorHost.SetFrame(m.SpinFrame)
+	m.editorHost.Layout()
+	m.editorHost.Paint(m.mainEditorSurf.Buffer())
+}
+
 func (m *App) resizeLayerSurfaces() {
 	if m.mainContentSurf == nil {
 		return
@@ -634,178 +612,201 @@ func (m *App) resizeLayerSurfaces() {
 	// Header surface starts at Y=1 to leave room for the padding row
 	// (row 0) which appears at the very top of the app.
 	m.mainHeaderSurf.SetPosition(0, 1)
+
+	tabVisible := m.tabBarVisible()
+	if m.mainTabBarSurf == nil {
+		m.mainTabBarSurf = surface.NewSurface("main-tabbar", contentW, 2, cell.TransparentBlank())
+		m.compositor.Root().AddChild(m.mainTabBarSurf)
+		m.mainTabBarSurf.SetZOrder(3)
+	} else if tabVisible {
+		layout := m.computeLayout()
+		m.mainTabBarSurf.Resize(layout.InnerW, 2)
+		m.mainTabBarSurf.SetPosition(layout.SidebarW+layout.PadLR, 3)
+	}
+	m.mainTabBarSurf.SetVisible(tabVisible)
 }
 
-// renderSidebarToSurface draws the file tree (plus its right-hand divider)
-// into the sidebar layer surface. Uses RenderToLines — the same path as the
-// original buildMainView — so scrollbar and LSP diagnostic indicators work.
+// renderSidebarToSurface paints the native file-tree component tree into the
+// sidebar layer surface (tree panel + divider column).
 func (m *App) renderSidebarToSurface() {
-	if m.mainSidebarSurf == nil || m.Tree.Renderer == nil {
+	if m.mainSidebarSurf == nil || m.sidebarScreen == nil || m.sidebarHost == nil || m.Tree.Model == nil {
 		return
 	}
 
 	sidebarH := m.mainSidebarSurf.Height()
-	// Fill with theme background so the surface is fully opaque
-	// (the default cell is transparent, which would let the back
-	// buffer show through and create visual gaps).
 	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.Theme.Colors.Bg), 0)
 	m.mainSidebarSurf.Buffer().Fill(bgCell)
 
-	// Update tree state before rendering so diagnostics, scrollbar
-	// and hover use the current viewport size.
 	m.Tree.Model.Update(filetree.TreeHeightMsg{Height: sidebarH})
-	m.Tree.Renderer.SetSize(m.Tree.Width, sidebarH)
-	m.Tree.Renderer.SetScrollbarContentHeight(sidebarH)
+	m.sidebarScreen.SetWidth(m.Tree.Width)
+	m.sidebarScreen.SetVisible(m.Tree.Visible)
 
-	treeLines := m.Tree.Renderer.RenderToLines(m.Tree.Width, sidebarH)
-	dividerStyle := lipgloss.NewStyle().Foreground(m.Theme.Tree.Colors.BorderFg)
-	divider := dividerStyle.Render("│")
-
-	var full strings.Builder
-	for i, line := range treeLines {
-		if i > 0 {
-			full.WriteByte('\n')
-		}
-		full.WriteString(line)
-		full.WriteString(divider)
+	sidebarW := m.Tree.Width + 1
+	m.sidebarHost.Resize(sidebarW, sidebarH)
+	m.sidebarHost.SetFrame(m.SpinFrame)
+	m.sidebarHost.Layout()
+	if m.FocusStack.Top() == FocusTree {
+		m.sidebarHost.Focus(shelltree.TreeID)
 	}
-	rendering.RenderToSurface(m.mainSidebarSurf, full.String())
+	m.sidebarHost.Paint(m.mainSidebarSurf.Buffer())
 }
 
-// renderStatusbarToSurface draws the status bar (2 rows: blank separator +
-// status content) into its own layer surface.
+// renderStatusbarToSurface paints the native status bar into its layer surface.
 func (m *App) renderStatusbarToSurface() {
-	if m.mainStatusbarSurf == nil {
+	if m.mainStatusbarSurf == nil || m.StatusBar == nil || m.statusHost == nil {
 		return
 	}
 	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.Theme.Colors.Bg), 0)
 	m.mainStatusbarSurf.Buffer().Fill(bgCell)
 
-	// Row 0: separator line (─).
-	// Row 1: status content with the standard left/right padding.
-	pad := strings.Repeat(" ", m.Theme.Spacing.PadLR)
-	left := m.StatusBar.ActivityView()
 	m.syncFormHint()
-	right := lipgloss.NewStyle().Foreground(m.Theme.Colors.Muted).Render(m.contextualHelpView())
-	leftW := rendering.VisibleWidth(left)
-	rightW := rendering.VisibleWidth(right)
-	available := m.width - 2*m.Theme.Spacing.PadLR
-	if available < 0 {
-		available = 0
-	}
-	if rightW > available {
-		right = rendering.TruncateLine(right, available)
-		rightW = rendering.VisibleWidth(right)
-	}
-	if leftW+rightW+2 > available {
-		left = rendering.TruncateLine(left, max(0, available-rightW-2))
-		leftW = rendering.VisibleWidth(left)
-	}
-	rightPad := available - leftW - rightW
-	if rightPad < 0 {
-		rightPad = 0
-	}
-	full := widgets.RenderSep(m.width, m.Theme.Colors.Border) + "\n" + pad + left + strings.Repeat(" ", rightPad) + right + pad
-	rendering.RenderToSurface(m.mainStatusbarSurf, full)
+	prefix, segs := m.contextualHelpSegments()
+	m.StatusBar.SetContextHelp(m.actionRegistry, prefix, segs)
+	m.StatusBar.SetWidth(m.width)
+
+	m.mainStatusbarSurf.SetVisible(true)
+	m.statusHost.Resize(m.width, 2)
+	m.statusHost.SetFrame(m.SpinFrame)
+	m.statusHost.Layout()
+	m.statusHost.Paint(m.mainStatusbarSurf.Buffer())
 }
 
-func (m *App) contextualHelpView() string {
+func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	if m.windowManager != nil {
 		if fw := m.windowManager.Focused(); fw != nil && fw.ID == findInFilesWindowID {
-			return "type to search  ·  ↑↓ preview  ·  enter open  ·  double-click open  ·  ctrl+r regex  ·  esc close"
+			return "", []ui.HintSegment{
+				ui.TextSeg("type to search"),
+				ui.ActionSeg("list.preview.navigate"),
+				ui.ActionSeg("list.open"),
+				ui.ActionSeg("list.open.mouse"),
+				ui.ActionSeg("search.regex.toggle"),
+				ui.ActionSeg("overlay.close"),
+			}
 		}
 	}
 	if m.sessionDeckFocused() {
-		return "tab next  ·  shift+tab previous  ·  ctrl+[ ] switch panels  ·  esc back"
+		return "", []ui.HintSegment{
+			ui.ActionSeg("focus.tab.next"),
+			ui.ActionSeg("focus.tab.previous"),
+			ui.ChordSeg("Ctrl+[ ]", "switch panels"),
+			ui.ActionSeg("panel.close"),
+		}
 	}
 	if m.launcherScreen != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		return m.launcherHelpView()
+		return "", m.launcherHelpSegments()
 	}
 	if m.FocusStack != nil && m.FocusStack.Top() == FocusTabBar {
-		return compactStatusHint(m.FormHint)
+		return "", []ui.HintSegment{
+			ui.TextSeg("tab bar focused"),
+			ui.ChordSeg("← →", "navigate"),
+			ui.ActionSeg("tabbar.select"),
+			ui.ActionSeg("tabbar.unfocus"),
+		}
 	}
 	if m.OverlayState.IsOverlay() {
-		return compactStatusHint(m.FormHint)
+		return "", nil
 	}
 	if m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
-		info := fmt.Sprintf(
+		ed := m.EditorState.Editor
+		title := ed.Title()
+		if ed.Modified() {
+			title += " ●"
+		}
+		prefix = fmt.Sprintf(
 			"%s  %d:%d  %dL",
-			m.EditorState.Editor.Title(),
-			m.EditorState.Editor.CursorLine()+1,
-			m.EditorState.Editor.CursorCol()+1,
-			m.EditorState.Editor.LineCount(),
+			title,
+			ed.CursorLine()+1,
+			ed.CursorCol()+1,
+			ed.LineCount(),
 		)
-		editorHintIDs := []ui.ActionID{"file.save", "edit.undo", "edit.redo"}
-		hints := make([]string, 0, len(editorHintIDs)+1)
+		if errs, warns, hints := ed.DiagnosticCounts(); errs > 0 || warns > 0 || hints > 0 {
+			var parts []string
+			if errs > 0 {
+				parts = append(parts, fmt.Sprintf("✕%d", errs))
+			}
+			if warns > 0 {
+				parts = append(parts, fmt.Sprintf("⚠%d", warns))
+			}
+			if hints > 0 {
+				parts = append(parts, fmt.Sprintf("ℹ%d", hints))
+			}
+			prefix += "  " + strings.Join(parts, " ")
+		}
 		if m.actionRegistry != nil {
-			for _, id := range editorHintIDs {
-				if hl := m.actionRegistry.HintLabelFor(id); hl != "" {
-					hints = append(hints, hl)
-				}
+			segs = []ui.HintSegment{
+				ui.ActionSeg("file.save"),
+				ui.ActionSeg("edit.undo"),
+				ui.ActionSeg("edit.redo"),
+				ui.ActionSeg("editor.close"),
+			}
+		} else {
+			segs = []ui.HintSegment{
+				ui.ChordSeg("Ctrl+S", "save"),
+				ui.ChordSeg("Ctrl+Z", "undo"),
+				ui.ChordSeg("Ctrl+Y", "redo"),
+				ui.ChordSeg("Esc", "close"),
 			}
 		}
-		hints = append(hints, "esc close")
-		return info + "  ·  " + strings.Join(hints, "  ·  ")
+		return prefix, segs
 	}
-	return m.Input.ContextHint()
+	return "", m.Input.ContextHelpSegments()
 }
 
-func compactStatusHint(hint string) string {
-	hint = strings.TrimSpace(hint)
-	if !strings.HasPrefix(hint, "[") {
-		return hint
-	}
-	end := strings.Index(hint, "]")
-	if end < 0 {
-		return strings.TrimSpace(strings.TrimPrefix(hint, "["))
-	}
-	main := strings.TrimSpace(hint[1:end])
-	rest := strings.TrimSpace(hint[end+1:])
-	if rest != "" {
-		return main + "  ·  " + rest
-	}
-	return main
+// contextualHelpView returns flattened status help for tests.
+func (m *App) contextualHelpView() string {
+	prefix, segs := m.contextualHelpSegments()
+	h := ui.NewHint("test-hint", m.actionRegistry, nil)
+	h.SetPrefix(prefix)
+	h.SetSegments(segs)
+	return h.PlainText()
 }
 
-// renderHeaderToSurface draws the header line (crude + model + uptime + agent
-// label) and the separator below it into the header layer surface.
+// renderHeaderToSurface paints the native header into its layer surface.
 func (m *App) renderHeaderToSurface() {
-	if m.mainHeaderSurf == nil {
+	if m.mainHeaderSurf == nil || m.headerScreen == nil || m.headerHost == nil {
 		return
 	}
 	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.Theme.Colors.Bg), 0)
 	m.mainHeaderSurf.Buffer().Fill(bgCell)
 
-	pad := strings.Repeat(" ", m.Theme.Spacing.PadLR)
-
 	viewLabel := ""
 	if node := m.AgentMgr.ActiveNode(); node != nil {
-		agentLabel := node.ID
-		if node.Label != "" {
-			agentLabel = node.Label
-		}
-		sp := m.PaneMgr.Get(node.ID)
-		catLabel := ""
-		if sp != nil {
-			catLabel = string(sp.Type)
-		}
-		viewLabel = agentLabel
-		if catLabel != "" {
-			viewLabel = catLabel + ":" + agentLabel
-		}
+		viewLabel = workspace.AgentDisplayLabel(node)
 	}
-	headerLine := widgets.RenderHeader(
-		m.Theme,
-		m.ModelName,
-		m.OverlayState.IsYolo(),
-		m.StartTime,
-		m.StatusBar.UsageView(),
-		viewLabel,
-		m.width,
-	)
+	usage := ""
+	if m.StatusBar != nil {
+		usage = m.StatusBar.UsageView()
+	}
+	m.headerScreen.SetProjection(shellheader.Projection{
+		ModelName: m.ModelName,
+		YOLO:      m.OverlayState.IsYolo(),
+		StartTime: m.StartTime,
+		Usage:     usage,
+		ViewLabel: viewLabel,
+		Width:     m.width,
+	})
 
-	// Row 0: header line
-	// Row 1: separator
-	full := pad + headerLine + pad + "\n" + widgets.RenderSep(m.width, m.Theme.Colors.Border)
-	rendering.RenderToSurface(m.mainHeaderSurf, full)
+	m.mainHeaderSurf.SetVisible(true)
+	m.headerHost.Resize(m.width, 2)
+	m.headerHost.Layout()
+	m.headerHost.Paint(m.mainHeaderSurf.Buffer())
+}
+
+// renderTabBarToSurface paints the native main tab bar into its layer surface.
+func (m *App) renderTabBarToSurface() {
+	if !m.tabBarVisible() || m.mainTabBarSurf == nil || m.tabScreen == nil || m.tabHost == nil {
+		if m.mainTabBarSurf != nil {
+			m.mainTabBarSurf.SetVisible(false)
+		}
+		return
+	}
+	bgCell := cell.NewCell(' ', cell.NoColor, rendering.ThemeColorToCell(m.Theme.Colors.Bg), 0)
+	m.mainTabBarSurf.Buffer().Fill(bgCell)
+
+	layout := m.computeLayout()
+	m.syncTabBarHost()
+	m.mainTabBarSurf.SetVisible(true)
+	m.tabHost.Resize(layout.InnerW, 2)
+	m.tabHost.Layout()
+	m.tabHost.Paint(m.mainTabBarSurf.Buffer())
 }

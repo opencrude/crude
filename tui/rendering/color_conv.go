@@ -1,10 +1,27 @@
 package rendering
 
 import (
+	"fmt"
 	"image/color"
 
 	"crude/tui/cell"
 )
+
+// ThemeColorToHex returns "#rrggbb" for a theme color, or "" if nil/transparent.
+func ThemeColorToHex(c color.Color) string {
+	if c == nil {
+		return ""
+	}
+	r, g, b, a := c.RGBA()
+	if a == 0 {
+		return ""
+	}
+	return fmt.Sprintf("#%02x%02x%02x",
+		uint8(float32(r)/float32(a)*255),
+		uint8(float32(g)/float32(a)*255),
+		uint8(float32(b)/float32(a)*255),
+	)
+}
 
 // ThemeColorToCell converts a theme color (color.Color) to cell.Color.
 // This handles the color.Color interface used by the theme system's

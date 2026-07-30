@@ -96,13 +96,13 @@ func (m *App) refreshFindReplacePopup() {
 		// Mutate existing frame content
 		if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
 			find := widgets.FindReplaceFrameFindField(cw)
-			if find != nil && find.Value() != fr.Query() {
-				find.SetValue(fr.Query())
+			if find != nil {
+				find.SyncEditFrom(fr.FindEdit())
 			}
 			if fr.ReplaceMode {
 				replace := widgets.FindReplaceFrameReplaceField(cw)
-				if replace != nil && replace.Value() != fr.Replace() {
-					replace.SetValue(fr.Replace())
+				if replace != nil {
+					replace.SyncEditFrom(fr.ReplaceEdit())
 				}
 			}
 			fw.SetSize(w, h)
@@ -118,6 +118,14 @@ func (m *App) refreshFindReplacePopup() {
 			Width:        w,
 			Height:       h,
 		})
+		if find := widgets.FindReplaceFrameFindField(frame); find != nil {
+			find.SyncEditFrom(fr.FindEdit())
+		}
+		if fr.ReplaceMode {
+			if replace := widgets.FindReplaceFrameReplaceField(frame); replace != nil {
+				replace.SyncEditFrom(fr.ReplaceEdit())
+			}
+		}
 		fw.SetContent(frame)
 		fw.SetSize(w, h)
 		fw.MarkContentDirty()
@@ -134,6 +142,14 @@ func (m *App) refreshFindReplacePopup() {
 		Width:        w,
 		Height:       h,
 	})
+	if find := widgets.FindReplaceFrameFindField(frame); find != nil {
+		find.SyncEditFrom(fr.FindEdit())
+	}
+	if fr.ReplaceMode {
+		if replace := widgets.FindReplaceFrameReplaceField(frame); replace != nil {
+			replace.SyncEditFrom(fr.ReplaceEdit())
+		}
+	}
 	fw := wm.NewFloatingWindow(string(ui.OverlayFindReplace), "", frame, w, h,
 		wm.WithDecoration(false),
 		wm.WithMovable(false),
@@ -169,16 +185,11 @@ func (m *App) pasteIntoFindReplace(fr *widgets.FindReplaceState) tea.Cmd {
 		return nil
 	}
 	text := string(data)
-	input := fr.ActiveInput()
-	if input == nil {
+	ed := fr.ActiveEdit()
+	if ed == nil {
 		return nil
 	}
-	// If there's a selection, replace it; otherwise insert at cursor.
-	if input.HasActiveSelection() {
-		s, e := input.SelectionRange()
-		input.DeleteRange(s, e)
-	}
-	input.InsertString(text)
+	ed.Insert(text)
 	if fr.OnChange != nil {
 		fr.OnChange()
 	}
@@ -186,13 +197,9 @@ func (m *App) pasteIntoFindReplace(fr *widgets.FindReplaceState) tea.Cmd {
 }
 
 // handleFindReplaceKey routes keypresses when the find/replace popup
-// is focused. The text-editing keys (characters, Backspace, Delete,
-// Left/Right, Home/End, Ctrl+Left/Right, Ctrl+A/E/U/K/W) are
-// delegated to the embedded components.TextInput — so all the
-// features that work in the chat input work here too (real selection,
-// rune-safe cursor, word motion, etc.). The popup-level keys
-// (Esc, Tab, Enter, Alt+C/W/R, Ctrl+Alt+Enter, Shift+Enter, Ctrl+C/V)
-// are handled here.
+// is focused. Text-editing keys are delegated to ui.TextEdit via
+// HandleTextEditKey. Popup-level keys (Esc, Tab, Enter, Alt+C/W/R,
+// Ctrl+Alt+Enter, Shift+Enter, Ctrl+C/V/X/A) are handled here.
 func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.FindReplace == nil {
 		return nil
@@ -259,43 +266,35 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 
-	// MS Edit shortcuts. Now that the popup uses real TextInput
-	// (with selection state), these work the same as in every
-	// other text field in the app: Ctrl+C copies the selection (or
-	// the whole field if no selection), Ctrl+X cuts, Ctrl+A
-	// selects all, Ctrl+V pastes.
+	// MS Edit shortcuts.
 	switch msg.String() {
 	case "ctrl+c":
-		// Copy: if there's a selection, copy that. Otherwise, copy
-		// the whole field (matches VSCode's find-dialog behavior).
-		input := fr.ActiveInput()
-		if input == nil {
+		ed := fr.ActiveEdit()
+		if ed == nil {
 			return nil
 		}
 		var text string
-		if input.HasActiveSelection() {
-			text = input.SelectedText()
+		if ed.HasSelection() {
+			text = ed.SelectedText()
 		} else {
-			text = input.Value()
+			text = ed.Value()
 		}
 		if text != "" {
 			return rendering.CopyToClipboardCmd(text)
 		}
 		return nil
 	case "ctrl+x":
-		// Cut: copy selection (or whole field) and delete it.
-		input := fr.ActiveInput()
-		if input == nil {
+		ed := fr.ActiveEdit()
+		if ed == nil {
 			return nil
 		}
 		var text string
-		if input.HasActiveSelection() {
-			text = input.SelectedText()
-			s, e := input.SelectionRange()
-			input.DeleteRange(s, e)
+		if ed.HasSelection() {
+			text = ed.SelectedText()
+			ed.Backspace()
 		} else {
-			text = input.Value()
-			input.Clear()
+			text = ed.Value()
+			ed.SetValue("")
 		}
 		if fr.OnChange != nil {
 			fr.OnChange()
@@ -305,43 +304,35 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	case "ctrl+a":
-		// Select all: anchor=0, end=length. TextInput handles this
-		// via the default key handler (Ctrl+A moves to col 0), so
-		// we route it explicitly to set a real selection.
-		input := fr.ActiveInput()
-		if input != nil {
-			input.SetSelection(0, input.Len())
+		ed := fr.ActiveEdit()
+		if ed != nil {
+			ed.SelectAll()
 		}
-		m.refreshFindReplacePopup()
+		m.syncFindReplaceFrameFromState()
 		return nil
 	case "ctrl+v":
-		// Paste: read clipboard, insert at cursor (replacing
-		// selection if present). Synchronous read keeps the
-		// popup's response on the same frame as the keypress.
 		return m.pasteIntoFindReplace(fr)
 	}
 
-	// All other keys: delegate to the focused input's TextInput,
-	// then sync the value to the frame's TextField for paint.
-	input := fr.ActiveInput()
-	if input != nil {
-		oldVal := input.Value()
-		updated, cmd := input.Update(msg, false)
-		*input = updated
-		if input.Value() != oldVal {
-			if fr.OnChange != nil {
-				fr.OnChange()
+	// All other keys: delegate to the focused field's TextEdit,
+	// then sync to the frame's TextField for paint.
+	ed := fr.ActiveEdit()
+	if ed != nil {
+		oldVal := ed.Value()
+		if ui.HandleTextEditKey(ed, msg) {
+			if ed.Value() != oldVal {
+				if fr.OnChange != nil {
+					fr.OnChange()
+				}
 			}
-			// Sync to frame TextField
 			m.syncFindReplaceFrameFromState()
 		}
-		return cmd
 	}
 	return nil
 }
 
-// syncFindReplaceFrameFromState copies the FindReplaceState's TextInput
-// values to the frame's TextField for paint.
+// syncFindReplaceFrameFromState copies FindReplaceState TextEdit
+// state to the frame TextFields for paint.
 func (m *App) syncFindReplaceFrameFromState() {
 	if m.windowManager == nil || m.FindReplace == nil {
 		return
@@ -353,12 +344,12 @@ func (m *App) syncFindReplaceFrameFromState() {
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
 		find := widgets.FindReplaceFrameFindField(cw)
 		if find != nil {
-			find.SetValue(m.FindReplace.Query())
+			find.SyncEditFrom(m.FindReplace.FindEdit())
 		}
 		if m.FindReplace.ReplaceMode {
 			replace := widgets.FindReplaceFrameReplaceField(cw)
 			if replace != nil {
-				replace.SetValue(m.FindReplace.Replace())
+				replace.SyncEditFrom(m.FindReplace.ReplaceEdit())
 			}
 		}
 		fw.MarkContentDirty()

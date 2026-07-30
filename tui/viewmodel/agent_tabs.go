@@ -4,12 +4,15 @@ import (
 	"strings"
 
 	"crude/provider"
+	"crude/tui/chatprojection"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/workspace"
 )
 
 func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
+	if m.launcherHost != nil {
+		m.launcherHost.CancelPointerCapture()
+	}
 	m.launcherScreen = nil
 	m.launcherHost = nil
 	if m.AgentMgr.Get(orchID) != nil {
@@ -17,7 +20,7 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 		return
 	}
 
-	ml := widgets.NewMessageList(m.Theme)
+	ml := chatprojection.NewRenderer(m.Theme)
 	ml.SetModelName(m.ModelName)
 	ml.SetUsername(m.Username)
 	ml.SetSubPaneContentFn(m.renderSubPaneContentForApp)
@@ -28,12 +31,18 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 	// already configured above (carrying SetSubPaneContentFn). This
 	// preserves the existing AddOrchestrator contract while keeping the
 	// MessageList ownership on the TUI projection side.
-	proj.msgList = ml
-	proj.msgList.SetModelName(m.ModelName)
-	proj.msgList.SetUsername(m.Username)
+	proj.renderer = ml
+	proj.renderer.SetModelName(m.ModelName)
+	proj.renderer.SetUsername(m.Username)
 
 	agent := workspace.NewAgentState(orchID, sp.Messages, m.Logger)
-	m.AgentMgr.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh, agent)
+	node := m.AgentMgr.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh, agent)
+	// Root orchestrators are the session's default/main agent. Seed category
+	// so presentation can show "Main Agent" without leaking orch IDs.
+	if node != nil {
+		node.Category = "default"
+		node.Model = m.ModelName
+	}
 	m.syncAgentWindowTabs()
 }
 
@@ -43,6 +52,8 @@ func (m *App) RemoveOrchestrator(orchID string) {
 
 // cleanupAgent removes all state for a given agent orchestrator or sub-agent.
 func (m *App) cleanupAgent(agentID string) {
+	m.clearAgentChatScroll(agentID)
+	m.subPaneProjections.Remove(agentID)
 	m.CloseAgent(agentID)
 	m.AgentMgr.Remove(agentID)
 	m.PaneMgr.Remove(agentID)
@@ -51,13 +62,13 @@ func (m *App) cleanupAgent(agentID string) {
 	}
 }
 
-func (m *App) activeMsgList() *widgets.MessageList {
+func (m *App) activeMsgList() *chatprojection.Renderer {
 	n := m.AgentMgr.ActiveNode()
 	if n == nil {
 		return nil
 	}
 	if p := m.subPaneProjections.GetExisting(n.ID); p != nil {
-		return p.msgList
+		return p.renderer
 	}
 	return nil
 }
@@ -128,22 +139,21 @@ func (m *App) setMode(newMode Mode) {
 	}
 	m.OverlayState.Set(newMode)
 	if ml := m.activeMsgList(); ml != nil {
-		ml.ClearSelection()
 		ml.InvalidateAllMessages()
 	}
+	m.clearChatPointerState()
 	switch newMode {
 	case ModeTextOverlay:
 		m.openTextOverlayWindow()
 	case ModeFilePicker:
 		m.openFilePickerWindow()
 	case ModeChat:
-		m.FormHint = ""
 		m.overlayHost.Close(ui.OverlayTextOverlay)
 		m.overlayHost.Close(ui.OverlayFilePicker)
 	}
 }
 
-func (m *App) activeMessageList() *widgets.MessageList {
+func (m *App) activeMessageList() *chatprojection.Renderer {
 	activeML := m.activeMsgList()
 	if activeML != nil {
 		return activeML
@@ -151,7 +161,7 @@ func (m *App) activeMessageList() *widgets.MessageList {
 	// Fallback: use any available agent's projection MessageList
 	for _, n := range m.AgentMgr.AllNodes() {
 		if p := m.subPaneProjections.GetExisting(n.ID); p != nil {
-			return p.msgList
+			return p.renderer
 		}
 	}
 	return nil
@@ -412,16 +422,4 @@ func (m *App) purgeStaleAgentTabs() {
 			}
 		}
 	}
-}
-
-func (m *App) renderSubPaneContent(paneID string, width, maxH, spinFrame int) []string {
-	sp := m.PaneMgr.Get(paneID)
-	if sp == nil {
-		return []string{"", "● unknown pane"}
-	}
-	if n := m.AgentMgr.Get(paneID); n != nil && n.State != nil {
-		m.subPaneProjections.SetStreaming(paneID, n.State.Streaming)
-		m.subPaneProjections.SetActiveTyping(paneID, n.State.ComputeActiveTyping())
-	}
-	return m.subPaneProjections.Render(paneID, sp, width, maxH, spinFrame)
 }

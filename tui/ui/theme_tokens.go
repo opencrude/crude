@@ -32,6 +32,7 @@ const (
 	ColorPopupSubtleBg
 	ColorPopupButtonBg
 	ColorPopupButtonFg
+	ColorIncompleteBg
 )
 
 // ControlState is the interactive state matrix used for token resolution.
@@ -67,10 +68,16 @@ func ResolveControlState(disabled, focused, selected, pressed, hovered bool) Con
 
 // TokenSet is a versioned, resolved palette of cell colors derived from a Theme.
 // Call Rebuild when the theme pointer changes or its contents are swapped.
+// ColorVersion bumps on every rebuild; MetricVersion bumps only when layout
+// metrics/spacing change so hosts can paint-only for color switches.
 type TokenSet struct {
-	Version uint64
-	theme   *theme.Theme
-	colors  map[SemanticColor]cell.Color
+	Version       uint64
+	ColorVersion  uint64
+	MetricVersion uint64
+	theme         *theme.Theme
+	colors        map[SemanticColor]cell.Color
+	lastMetrics   theme.Metrics
+	lastSpacing   theme.Spacing
 }
 
 // NewTokenSet resolves colors from th.
@@ -84,9 +91,19 @@ func NewTokenSet(th *theme.Theme) *TokenSet {
 func (ts *TokenSet) Rebuild(th *theme.Theme) {
 	ts.theme = th
 	ts.Version++
+	ts.ColorVersion++
 	if th == nil {
 		ts.colors = map[SemanticColor]cell.Color{}
+		ts.lastMetrics = theme.Metrics{}
+		ts.lastSpacing = theme.Spacing{}
+		ts.MetricVersion++
 		return
+	}
+	metricsChanged := th.Metrics != ts.lastMetrics || th.Spacing != ts.lastSpacing
+	ts.lastMetrics = th.Metrics
+	ts.lastSpacing = th.Spacing
+	if metricsChanged || ts.MetricVersion == 0 {
+		ts.MetricVersion++
 	}
 	c := th.Colors
 	ts.colors = map[SemanticColor]cell.Color{
@@ -111,6 +128,7 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorPopupSubtleBg:      rendering.ThemeColorToCell(c.PopupSubtleBg),
 		ColorPopupButtonBg:      rendering.ThemeColorToCell(c.PopupButtonBg),
 		ColorPopupButtonFg:      rendering.ThemeColorToCell(c.PopupButtonFg),
+		ColorIncompleteBg:       rendering.ThemeColorToCell(c.IncompleteBg),
 	}
 }
 
@@ -146,6 +164,52 @@ func (ts *TokenSet) ButtonGap() int {
 		return 2
 	}
 	return ts.theme.Spacing.ButtonGap
+}
+
+func (ts *TokenSet) FieldGap() int {
+	if ts == nil || ts.theme == nil {
+		return 1
+	}
+	return ts.theme.Spacing.FieldGap
+}
+
+func (ts *TokenSet) DialogPad() int {
+	if ts == nil || ts.theme == nil {
+		return 2
+	}
+	return ts.theme.Spacing.DialogPad
+}
+
+// Glyphs returns the active glyph token table.
+func (ts *TokenSet) Glyphs() theme.Glyphs {
+	if ts == nil || ts.theme == nil {
+		return theme.DefaultGlyphs()
+	}
+	return ts.theme.Glyphs
+}
+
+// Typography returns the active typography token table.
+func (ts *TokenSet) Typography() theme.Typography {
+	if ts == nil || ts.theme == nil {
+		return theme.DefaultTypography()
+	}
+	return ts.theme.Type
+}
+
+// Metrics returns the active layout metric token table.
+func (ts *TokenSet) Metrics() theme.Metrics {
+	if ts == nil || ts.theme == nil {
+		return theme.DefaultMetrics()
+	}
+	return ts.theme.Metrics
+}
+
+// MetricsChangedSince reports whether layout metrics changed since version.
+func (ts *TokenSet) MetricsChangedSince(version uint64) bool {
+	if ts == nil {
+		return false
+	}
+	return ts.MetricVersion != version
 }
 
 // ButtonColors returns fg/bg for a button in the given interactive state.
@@ -189,13 +253,20 @@ func (ts *TokenSet) InputColors(st ControlState) (fg, bg, border cell.Color) {
 }
 
 // ListRowColors returns fg/bg for a list row.
+// Precedence is enforced by the caller via ResolveControlState; colors here
+// must keep focused (keyboard) visually stronger and distinct from selected
+// (current item in an unfocused region) and hovered.
 func (ts *TokenSet) ListRowColors(st ControlState) (fg, bg cell.Color) {
 	fg = ts.Color(ColorFg)
 	bg = cell.NoColor
 	switch st {
 	case StateDisabled:
 		fg = ts.Color(ColorMuted)
-	case StateFocused, StateSelected:
+	case StateFocused:
+		// Keyboard focus: accent fill + inverse fg (same language as focused buttons).
+		fg = ts.Color(ColorBg)
+		bg = ts.Color(ColorAccent)
+	case StateSelected:
 		fg = ts.Color(ColorFg)
 		bg = ts.Color(ColorSelection)
 	case StateHovered:

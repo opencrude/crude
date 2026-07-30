@@ -2,14 +2,11 @@ package window
 
 import (
 	"fmt"
-	"image/color"
 	"strings"
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
-	"crude/tui/components"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/widget"
@@ -36,7 +33,6 @@ type TabLayout int
 
 const (
 	TabHorizontal TabLayout = iota
-	TabVertical
 )
 
 type Tab struct {
@@ -70,7 +66,6 @@ const (
 )
 
 type Window struct {
-	theme  *theme.Theme
 	tabs   []Tab
 	active int
 	width  int
@@ -80,9 +75,8 @@ type Window struct {
 	Hover widget.Hover
 }
 
-func New(th *theme.Theme) *Window {
+func New(_ *theme.Theme) *Window {
 	return &Window{
-		theme: th,
 		Hover: widget.NewHover(),
 	}
 }
@@ -282,7 +276,6 @@ func (w *Window) Update(msg tea.Msg) tea.Cmd {
 
 const (
 	closeBtnWidth  = 2
-	vCloseBtnWidth = 1
 	tabPadLeft     = 1
 	tabPadRight    = 1
 	tabMinWidth    = 6
@@ -290,68 +283,7 @@ const (
 	tabGap         = 1
 	tabBarPadLeft  = 0
 	tabBarPadRight = 0
-
-	// vTabBarMinWidth is the floor for the computed vertical tab sidebar width.
-	vTabBarMinWidth = 12
-	// vTabBarMaxAbsolute caps the sidebar so it never dominates the screen.
-	vTabBarMaxAbsolute = 35
-	// vTabBarPctOfWidth is the max percentage of terminal width the sidebar may use.
-	vTabBarPctOfWidth = 25
-	// vMinContentWidth is the minimum columns reserved for the content area.
-	vMinContentWidth = 30
 )
-
-// VTabBarWidth returns the computed width for the vertical tab sidebar.
-// It adapts to terminal width and actual tab title lengths so that tabs
-// show as much information as possible while maintaining sane proportions.
-// Returns 0 when no sidebar is needed (horizontal layout or ≤1 tab).
-func (w *Window) VTabBarWidth() int {
-	if w.layout != TabVertical || len(w.tabs) <= 1 {
-		return 0
-	}
-
-	// Find the widest tab item (title + optional icon).
-	maxItemW := 0
-	for _, t := range w.tabs {
-		titleForWidth := t.DisplayTitle
-		if titleForWidth == "" {
-			titleForWidth = t.Title
-		}
-		itemW := rendering.VisibleWidth(titleForWidth)
-		if t.Icon != "" {
-			itemW += rendering.VisibleWidth(t.Icon) + 1 // icon + trailing space
-		}
-		if itemW > maxItemW {
-			maxItemW = itemW
-		}
-	}
-
-	// Per-line overhead: │(1) + marker/indent(2) + close btn(1) + gap(1) = 5
-	const overhead = 5
-	idealW := overhead + maxItemW
-
-	// Upper bound: percentage of terminal width, with absolute cap.
-	maxW := w.width * vTabBarPctOfWidth / 100
-	if maxW > vTabBarMaxAbsolute {
-		maxW = vTabBarMaxAbsolute
-	}
-	// Ensure enough room for content.
-	if maxFromContent := w.width - vMinContentWidth; maxFromContent > vTabBarMinWidth && maxFromContent < maxW {
-		maxW = maxFromContent
-	}
-	if maxW < vTabBarMinWidth {
-		maxW = vTabBarMinWidth
-	}
-
-	// Clamp ideal to [min, max].
-	if idealW < vTabBarMinWidth {
-		idealW = vTabBarMinWidth
-	}
-	if idealW > maxW {
-		idealW = maxW
-	}
-	return idealW
-}
 
 type TabHitResult struct {
 	TabIndex int
@@ -361,10 +293,6 @@ type TabHitResult struct {
 func (w *Window) HitTest(x, y int) TabHitResult {
 	if !w.IsOpen() {
 		return TabHitResult{TabIndex: -1}
-	}
-
-	if w.layout == TabVertical {
-		return w.hitTestVertical(x, y)
 	}
 	return w.hitTestHorizontal(x, y)
 }
@@ -389,41 +317,6 @@ func (w *Window) hitTestHorizontal(x, y int) TabHitResult {
 			return TabHitResult{TabIndex: i, IsClose: false}
 		}
 		px = tabEnd + tabGap
-	}
-
-	return TabHitResult{TabIndex: -1}
-}
-
-func (w *Window) hitTestVertical(x, y int) TabHitResult {
-	if len(w.tabs) <= 1 {
-		return TabHitResult{TabIndex: -1}
-	}
-
-	tabBarW := w.VTabBarWidth()
-	contentWidth := w.width - tabBarW
-	if x < contentWidth {
-		return TabHitResult{TabIndex: -1}
-	}
-
-	tabX := x - contentWidth
-	if tabX < 0 || tabX >= tabBarW {
-		return TabHitResult{TabIndex: -1}
-	}
-
-	tabIndex := y / 2
-	if y%2 == 1 {
-		return TabHitResult{TabIndex: tabIndex, IsClose: false}
-	}
-
-	if tabIndex >= 0 && tabIndex < len(w.tabs) {
-		if tabX == 0 {
-			return TabHitResult{TabIndex: tabIndex, IsClose: false}
-		}
-		closeStart := tabBarW - vCloseBtnWidth
-		if tabX >= closeStart && w.tabs[tabIndex].Closable {
-			return TabHitResult{TabIndex: tabIndex, IsClose: true}
-		}
-		return TabHitResult{TabIndex: tabIndex, IsClose: false}
 	}
 
 	return TabHitResult{TabIndex: -1}
@@ -498,355 +391,6 @@ func (w *Window) computeTabWidths() []int {
 	}
 
 	return result
-}
-
-func (w *Window) RenderTabBar() string {
-	if !w.IsOpen() {
-		return ""
-	}
-	if w.layout == TabVertical {
-		return ""
-	}
-	return w.renderHorizontalTabBar()
-}
-
-func (w *Window) renderHorizontalTabBar() string {
-	tabWidths := w.computeTabWidths()
-	var b strings.Builder
-
-	b.WriteString(strings.Repeat(" ", tabBarPadLeft))
-
-	for i, t := range w.tabs {
-		tw := tabWidths[i]
-		isActive := i == w.active
-		isHovered := i == w.Hover.Index
-
-		tabStr := w.renderHorizontalTabItem(t, tw, isActive, isHovered)
-
-		b.WriteString(tabStr)
-
-		if i < len(w.tabs)-1 {
-			b.WriteString(strings.Repeat(" ", tabGap))
-		}
-	}
-
-	result := b.String()
-	resultW := rendering.VisibleWidth(result)
-	padEnd := w.width - resultW - tabBarPadLeft - tabBarPadRight
-	if padEnd > 0 {
-		b.WriteString(strings.Repeat(" ", padEnd))
-	}
-
-	return b.String()
-}
-
-func (w *Window) renderHorizontalTabItem(t Tab, tw int, isActive bool, isHovered bool) string {
-	var titleBuilder strings.Builder
-
-	titleText := t.DisplayTitle
-	if titleText == "" {
-		titleText = t.Title
-	}
-	closeW := 0
-	if t.Closable {
-		closeW = closeBtnWidth
-	}
-	availForTitle := tw - tabPadLeft - tabPadRight - closeW
-	if isActive {
-		availForTitle -= 2
-	}
-	if availForTitle < 1 {
-		availForTitle = 1
-	}
-
-	titleRW := rendering.VisibleWidth(titleText)
-	if titleRW > availForTitle {
-		titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
-	}
-
-	if isActive {
-		markerStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Accent).Bold(true)
-		titleBuilder.WriteString(markerStyle.Render("❯ "))
-		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Fg).Bold(true)
-		titleBuilder.WriteString(titleStyle.Render(titleText))
-	} else {
-		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-		titleBuilder.WriteString(titleStyle.Render(titleText))
-	}
-
-	titleRendered := titleBuilder.String()
-	titleW := rendering.VisibleWidth(titleRendered)
-	contentW := titleW + closeW
-	flex := tw - contentW
-	if flex < 0 {
-		flex = 0
-	}
-	padL := flex / 2
-	padR := flex - padL
-
-	result := strings.Repeat(" ", padL) + titleRendered + strings.Repeat(" ", padR)
-
-	if t.Closable {
-		closeStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-		result += closeStyle.Render(" ×")
-	}
-
-	if isHovered && !isActive {
-		hoverStyle := lipgloss.NewStyle().Background(w.theme.Colors.Hover)
-		result = hoverStyle.Render(result)
-	}
-
-	return result
-}
-
-func (w *Window) RenderSeparator() string {
-	if !w.IsOpen() {
-		return ""
-	}
-	return lipgloss.NewStyle().Foreground(w.theme.Colors.Border).
-		Render(strings.Repeat("─", w.width))
-}
-
-func (w *Window) RenderVerticalSidebar(contentLines []string) []string {
-	if !w.IsOpen() || w.layout != TabVertical || len(w.tabs) <= 1 {
-		return nil
-	}
-
-	tabBarW := w.VTabBarWidth()
-	contentW := w.width - tabBarW
-	if contentW < 10 {
-		contentW = 10
-	}
-
-	contentCount := len(contentLines)
-	tabCount := len(w.tabs)
-	tabLinesCount := tabCount
-	if tabCount > 1 {
-		tabLinesCount += tabCount - 1
-	}
-	totalLines := contentCount
-	if tabLinesCount > totalLines {
-		totalLines = tabLinesCount
-	}
-
-	result := make([]string, totalLines)
-
-	sepStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Border)
-	sep := sepStyle.Render("│")
-
-	tabLineIdx := 0
-	for i := 0; i < totalLines; i++ {
-		var contentLine string
-		if i < len(contentLines) {
-			contentLine = contentLines[i]
-		}
-
-		contentVisW := rendering.VisibleWidth(contentLine)
-		contentPad := contentW - contentVisW
-		if contentPad < 0 {
-			contentPad = 0
-		}
-
-		paddedContent := contentLine + strings.Repeat(" ", contentPad)
-
-		var tabLine string
-		if tabLineIdx < tabCount {
-			tabLine = w.renderVerticalTabItem(w.tabs[tabLineIdx], tabLineIdx == w.active, tabLineIdx == w.Hover.Index, tabBarW)
-			tabLineIdx++
-			if tabLineIdx < tabCount && i+1 < totalLines {
-				result[i] = paddedContent + tabLine
-				i++
-
-				var nextContent string
-				if i < len(contentLines) {
-					nextContent = contentLines[i]
-				}
-				nextVisW := rendering.VisibleWidth(nextContent)
-				nextPad := contentW - nextVisW
-				if nextPad < 0 {
-					nextPad = 0
-				}
-
-				tabSep := w.renderVerticalTabSeparator(tabBarW)
-				result[i] = nextContent + strings.Repeat(" ", nextPad) + tabSep
-				continue
-			}
-		} else {
-			tabLine = sep + strings.Repeat(" ", tabBarW-1)
-		}
-
-		result[i] = paddedContent + tabLine
-	}
-
-	return result
-}
-
-func (w *Window) renderVerticalTabItem(t Tab, isActive bool, isHovered bool, width int) string {
-	sepStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Border)
-	sep := sepStyle.Render("│")
-
-	var b strings.Builder
-
-	b.WriteString(sep)
-
-	if isActive {
-		markerStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Accent).Bold(true)
-		b.WriteString(markerStyle.Render("❯ "))
-		usedW := 3 // │(1) + ❯(1) + space(1)
-		closeW := 0
-		if t.Closable {
-			closeW = vCloseBtnWidth
-		}
-		iconW := 0
-		iconStr := ""
-		if t.Icon != "" {
-			iconStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Success)
-			iconStr = iconStyle.Render(t.Icon) + " "
-			iconW = rendering.VisibleWidth(t.Icon) + 1
-		}
-		availForTitle := width - usedW - closeW - iconW
-		if availForTitle < 1 {
-			availForTitle = 1
-		}
-		titleText := t.DisplayTitle
-		if titleText == "" {
-			titleText = t.Title
-		}
-		titleRW := rendering.VisibleWidth(titleText)
-		if titleRW > availForTitle {
-			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
-		}
-		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Fg).Bold(true)
-		b.WriteString(iconStr + titleStyle.Render(titleText))
-		rendered := b.String()
-		renderedW := rendering.VisibleWidth(rendered)
-		flexSpace := width - renderedW - closeW
-		if flexSpace < 0 {
-			flexSpace = 0
-		}
-		b.WriteString(strings.Repeat(" ", flexSpace))
-		if t.Closable {
-			closeStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-			b.WriteString(closeStyle.Render("×"))
-		}
-	} else {
-		b.WriteString("  ")
-		usedW := 3
-		closeW := 0
-		if t.Closable {
-			closeW = vCloseBtnWidth
-		}
-		iconW := 0
-		iconStr := ""
-		if t.Icon != "" {
-			iconStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-			iconStr = iconStyle.Render(t.Icon) + " "
-			iconW = rendering.VisibleWidth(t.Icon) + 1
-		}
-		availForTitle := width - usedW - closeW - iconW
-		if availForTitle < 1 {
-			availForTitle = 1
-		}
-		titleText := t.DisplayTitle
-		if titleText == "" {
-			titleText = t.Title
-		}
-		titleRW := rendering.VisibleWidth(titleText)
-		if titleRW > availForTitle {
-			titleText = rendering.TruncateVisual(titleText, availForTitle-1, "…")
-		}
-		titleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-		b.WriteString(iconStr + titleStyle.Render(titleText))
-		rendered := b.String()
-		renderedW := rendering.VisibleWidth(rendered)
-		flexSpace := width - renderedW - closeW
-		if flexSpace < 0 {
-			flexSpace = 0
-		}
-		b.WriteString(strings.Repeat(" ", flexSpace))
-		if t.Closable {
-			closeStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-			b.WriteString(closeStyle.Render("×"))
-		}
-	}
-
-	result := b.String()
-	if isHovered && !isActive {
-		hoverStyle := lipgloss.NewStyle().Background(w.theme.Colors.Hover)
-		result = hoverStyle.Render(result)
-	}
-	return result
-}
-
-func (w *Window) renderVerticalTabSeparator(width int) string {
-	sepStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-	sep := sepStyle.Render("│")
-	dashes := strings.Repeat("─", width-1)
-	return sep + sepStyle.Render(dashes)
-}
-
-type AsyncItem struct {
-	Handle   string
-	Command  string
-	Duration string
-	Status   string
-}
-
-func (w *Window) RenderVerticalAsyncRow(item AsyncItem, spinFrame int) string {
-	sepStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Border)
-	sep := sepStyle.Render("│")
-
-	var dot string
-	var dotColor color.Color
-	switch item.Status {
-	case "running":
-		if components.BlinkOn(spinFrame) {
-			dot = "●"
-		} else {
-			dot = "○"
-		}
-		dotColor = w.theme.Colors.Accent2
-	case "completed":
-		dot = "✓"
-		dotColor = w.theme.Colors.Success
-	case "failed":
-		dot = "✗"
-		dotColor = w.theme.Colors.Error
-	case "killed":
-		dot = "!"
-		dotColor = w.theme.Colors.Warning
-	default:
-		dot = "?"
-		dotColor = w.theme.Colors.Muted
-	}
-
-	cmd := item.Command
-	if rendering.VisibleWidth(cmd) > 20 {
-		cmd = rendering.TruncateVisual(cmd, 17, "…")
-	}
-
-	dotStyle := lipgloss.NewStyle().Foreground(dotColor)
-	handleStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Accent2)
-	dimStyle := lipgloss.NewStyle().Foreground(w.theme.Colors.Muted)
-
-	result := sep + " " +
-		dotStyle.Render(dot+" ") +
-		handleStyle.Render("["+item.Handle+"]") + " " +
-		dimStyle.Render(cmd) + "  " +
-		dimStyle.Render(item.Duration)
-
-	return result
-}
-
-func (w *Window) VerticalContentWidth() int {
-	if w.layout != TabVertical || len(w.tabs) <= 1 {
-		return w.width
-	}
-	contentW := w.width - w.VTabBarWidth()
-	if contentW < 10 {
-		contentW = 10
-	}
-	return contentW
 }
 
 func (w *Window) SetTabState(index int, state TabState) {
