@@ -201,29 +201,25 @@ floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
 - Wide cells (Width=2) write their continuation cell automatically
 - Continuation cells (Width=0) are skipped
 
-### Main Content Cache Rule (CRITICAL)
+### Unconditional Main-Content Repaint (was: contentDirty cache — REMOVED 2026-07)
 
-The `m.contentDirty` flag gates the `buildMainView()` call in `view.go`.
-The cache is ONLY used when the editor is the active view — chroma
-syntax highlighting is expensive:
-
-```go
-isEditorMain := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
-useCached := isEditorMain && !m.contentDirty && m.mainContentCached != "" && m.mainContentSurf != nil
-```
-
-Agent tabs call `buildMainView()` fresh every frame. The launcher is a
-native component tree painted into `mainLauncherSurf` every frame, so its
-cursor, hover, scroll, and animation state remain responsive without using
-the main-view ANSI cache.
+The `m.contentDirty` flag and the main-content ANSI cache were deleted.
+`View()` rebuilds the main content surface every frame. This is safe because
+the editor's expensive chroma work is **internally cached by line**
+(`chromaLineCache` + `chromaDirtyFrom` + `lineGeomCache` in `tui/editor`),
+so an editor repaint is a cell fill plus a cached-color walk:
+~180-250µs at 120x40 (see `BenchmarkEditorPaint_*` in `tui/screens/shelleditor/`).
 
 **RULES:**
-- `m.contentDirty = true` must be set ONLY in paths that modify editor
-  content or cursor position.
-- Do NOT set `m.contentDirty` for agent events, launcher operations,
-  tree operations, floating windows, context menus — the cache is
-  never read there.
-- `m.contentDirty` is reset to `false` at the end of `View()`.
+- Never reintroduce a frame-level dirty flag for the main content. If a
+  future perf problem appears, add a benchmark first (compare against
+  `docs/tui/PERFORMANCE_BASELINES.md`) and cache at the editor level.
+- `buildMainView()` may be called every frame; it only builds blank
+  placeholder rows and layout geometry.
+- The only remaining output cache is `m.cachedOutput`, used exclusively for
+  drag throttling (FloatingWindow drag with no position change).
+- `wm.FloatingWindow.contentDirty` is a separate, unrelated mechanism
+  (window-surface invalidation) — do not confuse it with the removed flag.
 
 ---
 

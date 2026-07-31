@@ -122,15 +122,10 @@ func TestOpenFile_FirstFramePaintsEditorGlyphs(t *testing.T) {
 
 	app := newEditorPaintApp(t, dir)
 
-	// Seed a launcher-style main-content cache so the pre-fix path would
-	// take useCached=true and leave editorRect empty (the black-frame bug).
+	// Paint a launcher frame first, then open the file: the next View()
+	// must lay out the editor rect and paint real content immediately.
 	app.EditorState.ActiveView = ""
 	_ = app.View()
-	if app.mainContentCached == "" {
-		t.Fatal("setup: expected launcher main content cache")
-	}
-	app.contentDirty = false
-	app.editorRect = ui.Rect{}
 
 	if _, err := app.openEditorTab(path); err != nil {
 		t.Fatal(err)
@@ -154,32 +149,36 @@ func TestOpenFile_FirstFramePaintsEditorGlyphs(t *testing.T) {
 	}
 }
 
-// TestOpenFile_DefensiveGuardPaintsWithoutContentDirty verifies View() still
-// paints when contentDirty was forgotten, as long as editorRect is empty /
-// cache kind mismatches.
-func TestOpenFile_DefensiveGuardPaintsWithoutContentDirty(t *testing.T) {
+// TestOpenFile_RepeatedFramesKeepPainting verifies the editor surface is
+// repainted unconditionally on every View() — a chrome-only frame (no dirty
+// mark, no size change) must still show the file, not a stale buffer.
+func TestOpenFile_RepeatedFramesKeepPainting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "guard_file.go")
 	if err := os.WriteFile(path, []byte("package guard_file\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	app := newEditorPaintApp(t, dir)
-	_ = app.View() // launcher cache
+	_ = app.View() // launcher frame
 	if _, err := app.openEditorTab(path); err != nil {
 		t.Fatal(err)
 	}
-	// Simulate the bug: dirty mark lost, rect unset, stale launcher cache.
-	app.contentDirty = false
-	app.editorRect = ui.Rect{}
-	app.mainContentCacheKind = mainViewLauncher
-	app.mainContentCacheEditorPath = ""
-
 	_ = app.View()
-	if countNonBlankGlyphs(app.mainEditorSurf.Buffer()) < 5 {
-		t.Fatal("defensive guard: first View must still paint editor glyphs")
-	}
 	if !bufferContainsPlain(app.mainEditorSurf.Buffer(), "guard_file") {
-		t.Fatal("defensive guard: missing guard_file content")
+		t.Fatal("setup: first editor frame must paint guard_file")
+	}
+
+	// Chrome-only frames (tree hover, cursor blink ticks, status ticks)
+	// previously relied on the contentDirty cache gate; painting is now
+	// unconditional, so repeated frames must keep the file visible.
+	for i := 0; i < 3; i++ {
+		_ = app.View()
+		if countNonBlankGlyphs(app.mainEditorSurf.Buffer()) < 5 {
+			t.Fatalf("frame %d: repeated View() dropped editor glyphs", i)
+		}
+		if !bufferContainsPlain(app.mainEditorSurf.Buffer(), "guard_file") {
+			t.Fatalf("frame %d: repeated View() lost guard_file content", i)
+		}
 	}
 }
 

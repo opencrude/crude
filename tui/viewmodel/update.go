@@ -37,16 +37,16 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncPersistentHostCapture()
 
 	// Dirty is set selectively per message type, NOT unconditionally.
-	// The full render pipeline (chroma syntax highlighting, glamour
-	// markdown, compositor, ANSI generation) runs only when dirty
-	// is true. Without this guard, every MouseMotionMsg (120-200/sec)
-	// triggers a complete frame rebuild from scratch, causing 100%
-	// CPU usage.
+	// The full render pipeline (editor cell paint, chat rows, compositor,
+	// ANSI generation) runs after every Update. The editor's chroma work
+	// is internally cached by line, so unconditional repaint stays cheap
+	// (BenchmarkEditorPaint_*). Mouse motion at 120-200/sec is the hot
+	// path — the editor repaint (~180-250µs at 120x40) plus compositor
+	// (~100µs) stays well inside the 16ms frame budget.
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.Logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
-		m.contentDirty = true
 		m.width = msg.Width
 		m.height = msg.Height
 		m.subPaneProjections.SetSize(msg.Width, msg.Height)
@@ -63,27 +63,20 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTick(msg)
 
 	case tea.KeyPressMsg:
-		m.contentDirty = true
 		return m.dispatchKeyPress(msg)
 
 	case tea.PasteMsg:
-		m.contentDirty = true
 		return m.dispatchPasteMsg(msg)
 
 	case tea.MouseClickMsg:
-		m.contentDirty = true
 		m.Logger.Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseClick(msg)
 
 	case tea.MouseWheelMsg:
-		m.contentDirty = true
 		m.Logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseWheel(msg)
 
 	case tea.MouseMotionMsg:
-		// Motion handlers set contentDirty when hover state or other
-		// visual state actually changes. Without this guard, every
-		// pixel of mouse movement triggers a full frame rebuild.
 		return m.dispatchMouseMotion(msg)
 
 	case tea.MouseReleaseMsg:
@@ -102,16 +95,10 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	default:
 		if m.isEditorMsg(msg) {
-			// Only set dirty when the cursor visibility actually
-			// changes. During the 530ms solid-cursor window after
-			// any activity, the blink tick is a no-op — setting
-			// dirty would waste a full frame render for nothing.
-			cursorBefore := m.EditorState.Editor != nil && m.EditorState.Editor.CursorVisible()
+			// Blink ticks are repaint-free when cursor visibility does not
+			// change: the editor's chroma cache is untouched and the
+			// compositor diffs identical cells into no ANSI output.
 			cmds = append(cmds, m.dispatchEditorTick(msg)...)
-			cursorAfter := m.EditorState.Editor != nil && m.EditorState.Editor.CursorVisible()
-			if cursorBefore != cursorAfter {
-				m.contentDirty = true
-			}
 		}
 	}
 
@@ -156,7 +143,6 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			} else {
 				reloadedText = m.EditorState.Editor.Value()
 				updateOpenFile = true
-				m.contentDirty = true
 			}
 		}
 		// LSP writes can wait on a subprocess pipe. Keep them off Bubble Tea's
@@ -703,8 +689,7 @@ func (m *App) handleTabSwitch() {
 
 	activeTab := m.Win.ActiveTab()
 	if activeTab == nil {
-		// Closing the last tab returns to launcher — main content must rebuild.
-		m.contentDirty = true
+		// Closing the last tab returns to launcher.
 		return
 	}
 
@@ -714,7 +699,6 @@ func (m *App) handleTabSwitch() {
 		if m.subPaneProjections.Has(agentID) {
 			m.subPaneProjections.InvalidateAllMessages(agentID)
 		}
-		m.contentDirty = true
 		return
 	}
 
@@ -736,15 +720,10 @@ func (m *App) handleTabSwitch() {
 			if err != nil && m.Logger != nil {
 				m.Logger.Error("EDITOR", "reopen_failed", "error", err.Error())
 			}
-			m.contentDirty = true
 			return
 		}
 		m.EditorState.ActiveView = path
 		m.EditorState.Editor = tab.Editor
-		// Opening a file / switching editor tabs changes editor content —
-		// contentDirty must flip so View() does not serve a stale cache
-		// (black first frame, or previous file until cursor blink).
-		m.contentDirty = true
 	}
 }
 

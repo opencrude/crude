@@ -21,7 +21,6 @@ func (m *App) cutEditorSelection() {
 	}
 	m.copyToClipboard(m.EditorState.Editor.SelectedText())
 	m.EditorState.Editor.DeleteSelection()
-	m.contentDirty = true
 }
 
 func (m *App) pasteIntoEditor() {
@@ -36,7 +35,6 @@ func (m *App) pasteIntoEditor() {
 	content := string(data)
 	m.EditorState.Editor.HandleEvent(tea.PasteMsg{Content: content})
 	m.StatusBar.SetInfo(fmt.Sprintf("Pasted %d chars", len(content)))
-	m.contentDirty = true
 }
 
 func (m *App) pasteIntoInput() {

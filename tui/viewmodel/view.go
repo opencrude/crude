@@ -19,28 +19,6 @@ import (
 	"crude/workspace"
 )
 
-// mainViewKind identifies which product surface the main-content ANSI cache
-// was built for. Used to refuse serving a launcher/chat cache while the
-// editor is active (and vice versa).
-type mainViewKind uint8
-
-const (
-	mainViewNone mainViewKind = iota
-	mainViewEditor
-	mainViewLauncher
-	mainViewChat
-)
-
-func (m *App) currentMainViewKind() mainViewKind {
-	if m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
-		return mainViewEditor
-	}
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		return mainViewLauncher
-	}
-	return mainViewChat
-}
-
 func (m *App) View() tea.View {
 	if m.width == 0 || m.height == 0 {
 		return tea.NewView("")
@@ -57,29 +35,6 @@ func (m *App) View() tea.View {
 		v.MouseMode = tea.MouseModeAllMotion
 		return v
 	}
-
-	// Only cache the main content when the editor is the active view —
-	// chroma syntax highlighting is expensive. Agent tabs use the fresh
-	// main-view path, while the native launcher surface is painted every
-	// frame so cursor, hover, scroll, and animation state stay responsive.
-	isEditorMain := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
-	currentKind := m.currentMainViewKind()
-	// Defensive: never sit on a blank/stale frame waiting for cursor blink.
-	// Force rebuild when editorRect was never laid out, the cache belongs to
-	// a different view kind, or the cached editor path is not the active tab.
-	forceMainRebuild := false
-	if isEditorMain && m.editorRect.Empty() {
-		forceMainRebuild = true
-	}
-	if m.mainContentCached != "" && m.mainContentCacheKind != currentKind {
-		forceMainRebuild = true
-	}
-	if isEditorMain && m.mainContentCacheKind == mainViewEditor &&
-		m.mainContentCacheEditorPath != "" &&
-		m.mainContentCacheEditorPath != m.EditorState.ActiveView {
-		forceMainRebuild = true
-	}
-	useCached := isEditorMain && m.sessionDeckHeight(m.height) == 0 && !m.contentDirty && !forceMainRebuild && m.mainContentCached != "" && m.mainContentSurf != nil
 
 	m.compositor.BeginFrame()
 	// Fill the root with the active theme background so uncovered cells
@@ -140,31 +95,16 @@ func (m *App) View() tea.View {
 		m.mainInputSurf.SetZOrder(2)
 	}
 
-	// Capture before buildMainView clears contentDirty — editor surface
-	// reuses its cell buffer when only chrome (tree/tabs) changed.
-	editorNeedsPaint := m.contentDirty || forceMainRebuild || m.mainEditorSurf == nil
-
-	// Main content surface stays transparent — only ANSI-rendered cells
-	// set explicit backgrounds. Transparent cells (like the top padding
-	// row) show the terminal default, matching the original behaviour.
-	if useCached {
-		rendering.RenderToSurface(m.mainContentSurf, m.mainContentCached)
-	} else {
-		mainContent := m.buildMainView()
-		m.mainContentCached = mainContent
-		m.mainContentCacheKind = currentKind
-		if currentKind == mainViewEditor {
-			m.mainContentCacheEditorPath = m.EditorState.ActiveView
-		} else {
-			m.mainContentCacheEditorPath = ""
-		}
-		m.contentDirty = false
-		rendering.RenderToSurface(m.mainContentSurf, mainContent)
-	}
+	// The main content surface is rebuilt every frame. Editor chroma work
+	// is internally cached (chromaLineCache + lineGeomCache keyed on raw
+	// text), so unconditional repaint is a cell fill with cached colors
+	// (see BenchmarkEditorPaint_* in tui/screens/shelleditor).
+	mainContent := m.buildMainView()
+	rendering.RenderToSurface(m.mainContentSurf, mainContent)
 	m.renderSessionDeckToSurface()
 	m.renderLauncherToSurface()
 	m.renderChatToSurface()
-	m.renderEditorToSurface(editorNeedsPaint)
+	m.renderEditorToSurface()
 	m.renderInputToSurface()
 
 	// Cheap layers: always re-render (surface fill + ANSI render).
@@ -185,7 +125,6 @@ func (m *App) View() tea.View {
 
 	output := m.compositor.Present()
 	m.cachedOutput = output
-	m.contentDirty = false
 
 	v := tea.NewView(output)
 	v.AltScreen = true
@@ -555,9 +494,11 @@ func (m *App) renderChatToSurface() {
 }
 
 // renderEditorToSurface paints DocumentEditor chrome into mainEditorSurf via
-// shelleditor Host. When force is false, the previous cell buffer is kept
-// (contentDirty cache for expensive chroma). Chrome-only frames must not force.
-func (m *App) renderEditorToSurface(force bool) {
+// shelleditor Host. Painted unconditionally every frame: editor chroma work is
+// internally cached by line (chromaLineCache), so this is a cell fill plus
+// cached-color walk — verified by BenchmarkEditorPaint_* (tui/screens/
+// shelleditor), ~180-250µs at 120x40.
+func (m *App) renderEditorToSurface() {
 	if m.mainEditorSurf == nil {
 		return
 	}
@@ -568,14 +509,9 @@ func (m *App) renderEditorToSurface(force bool) {
 		return
 	}
 
-	sizeChanged := m.mainEditorSurf.Width() != r.W || m.mainEditorSurf.Height() != r.H
 	m.mainEditorSurf.Resize(r.W, r.H)
 	m.mainEditorSurf.SetPosition(r.X, r.Y)
 	m.mainEditorSurf.SetVisible(true)
-
-	if !force && !sizeChanged {
-		return
-	}
 
 	editorPadL := m.Theme.Spacing.PadLR
 	editorPadR := m.Theme.Spacing.PadLR

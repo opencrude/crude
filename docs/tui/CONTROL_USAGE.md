@@ -30,7 +30,7 @@ target replacement under `tui/ui/`.
 |---------|--------|
 | Command palette list | sectioned VirtualList |
 | File tree | `ui.Tree` via `shelltree` |
-| Message list | **PARTIAL:** `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; structured rows native; markdown/thinking PreferANSI fallback remains; main `ScrollbarControl` |
+| Message list | ✅ `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; all rows native `PaintLine` (markdown/thinking bridged at render time via `BridgeAnsiLine`); main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
 | Tabs | `ui.Tabs` via `shelltabs` |
 | File picker entries | native `ui.List` |
@@ -46,7 +46,7 @@ target replacement under `tui/ui/`.
 |---------|--------|
 | ~~`tui/scrollbar.ScrollBar`~~ | **DELETED** — use `ui.ScrollModel` + `ui.ScrollbarControl` only |
 | Main chat | `shellchat.Screen` — external `ScrollbarControl` + `ScrollModel` on `VirtualList` |
-| Nested thinking/compact subpanes | Per-pane `*ui.ScrollModel`; compact rows are `chatprojection.PaintLine` → native `CellBuffer` paint in `shellchat` RowPainter (selection-capable; gutter column painted separately); thinking pane MessageList lines may still use ANSI fallback; persistent nested gutter when overflow (no fade timers) |
+| Nested thinking/compact subpanes | Per-pane `*ui.ScrollModel`; compact rows are `chatprojection.PaintLine` → native `CellBuffer` paint in `shellchat` RowPainter (selection-capable; gutter column painted separately); thinking pane lines use the same render-time ANSI→PaintLine bridge; persistent nested gutter when overflow (no fade timers) |
 | Find in Files inline glyphs | deleted |
 | Launcher inline glyphs | deleted; ScrollbarControl owns the final pane column |
 | File picker | native `ui.ScrollbarControl` |
@@ -58,7 +58,7 @@ target replacement under `tui/ui/`.
 
 | Current | Target |
 |---------|--------|
-| `widgets.PopupChromeLines` | **deleted** — product uses `ui.WindowFrame`; ContextMenuLines/Reveal retained for reveal-animation tests only |
+| `widgets.PopupChromeLines` | **deleted** — product uses `ui.WindowFrame`; `ContextMenuLines`/`Reveal` deleted with it (WindowFrame reveal animation pending; state-level menu tests kept in `contextmenu_v2_test.go`) |
 | `wm` decoration (deleted) | `ui.WindowFrame` |
 | Hand-drawn ╭─╮ in LSP popups | same WindowFrame |
 
