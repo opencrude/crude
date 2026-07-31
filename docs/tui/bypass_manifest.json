@@ -238,7 +238,7 @@
       "id": "compact-subpane-ansi",
       "path": "tui/viewmodel/subpane_render.go",
       "status": "migrated",
-      "note": "Compact agent subpane headers/tool lines/summaries emit chatprojection.PaintLine via subpane_build.go; shellchat paints native cells. Main chat + thinking MessageList body + chatprojection/render.go remain ANSI."
+      "note": "Compact agent subpane headers/tool lines/summaries emit chatprojection.PaintLine via subpane_build.go; shellchat paints native cells. Main chat + thinking bodies bridge glamour ANSI to native PaintLine spans at render time via BridgeAnsiLine (ansi_bridge.go); the multi-line BridgeAnsiLines helper was deleted as dead code; no paint-time ANSI fallback remains."
     }
   ],
   "foundation_tests": {

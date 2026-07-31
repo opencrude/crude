@@ -82,22 +82,16 @@ type App struct {
 	height   int
 
 	// Compositing engine
-	compositor        *compositor.Compositor
-	windowManager     *wm.WindowManager
-	renderCtx         *widget.RenderContext
-	cachedOutput      string // last rendered ANSI output for View() throttling during drag
-	contentDirty      bool   // true when the main view (editor/chat/launcher) needs re-rendering — separate from chrome (tree/tabs/popups) so hover changes don't trigger expensive chroma/glamour re-renders
-	mainContentCached string // last rendered main-view ANSI string — reused when only chrome changed (hover on tree, tabs, popups, etc.)
-	// mainContentCacheKind / mainContentCacheEditorPath identify what the
-	// cached ANSI string was built for so View() can refuse a stale cache
-	// when the active main view changes (launcher→editor, editor tab switch).
-	mainContentCacheKind       mainViewKind
-	mainContentCacheEditorPath string
+	compositor    *compositor.Compositor
+	windowManager *wm.WindowManager
+	renderCtx     *widget.RenderContext
+	cachedOutput  string // last rendered ANSI output for View() throttling during drag
 
 	// Layer surfaces for differential rendering. Cheap layers (sidebar,
-	// header, status bar) are always re-rendered every frame. The main
-	// content surface uses contentDirty to skip expensive chroma/glamour
-	// when only the editor content changed.
+	// header, status bar) and the main content surface are re-rendered
+	// every frame; the editor's chroma work is internally cached by line
+	// (chromaLineCache), so unconditional repaint stays a cell fill with
+	// cached colors (see BenchmarkEditorPaint_*).
 	mainContentSurf     *surface.Surface // editor/chat/launcher content
 	mainSidebarSurf     *surface.Surface // file tree sidebar + divider
 	mainStatusbarSurf   *surface.Surface // status bar separator + content

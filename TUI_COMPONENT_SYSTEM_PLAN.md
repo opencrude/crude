@@ -39,7 +39,7 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
 | 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
 | 12 Structured migrations | DONE | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, Find in Files, composer, text overlay, and launcher bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy overlay tabs, global async rows, and migrated legacy widgets deleted |
-| 13 Shell migrations | PARTIAL | Header/status/hints/tabs/tree/chat input/session picker/editor chrome native; message list Host+VirtualList native for structured rows, but markdown/thinking bodies still PreferANSI fallback; open: root Host/compositor wiring, `contentDirty` cache removal |
+| 13 Shell migrations | PARTIAL | Header/status/hints/tabs/tree/chat input/session picker/editor chrome native; message list Host+VirtualList native — markdown/thinking bodies bridge glamour ANSI to native PaintLines at render time (`BridgeAnsiLine`), no paint-time ANSI fallback; `contentDirty` cache REMOVED (2026-07-31, benchmark-verified); open: root Host/compositor wiring |
 | 14 Deletion | PARTIAL | `tui/scrollbar` + ANSI nested gutter strings deleted; dual chat/subpane scrollbar packages closed (only `ScrollbarControl` remains); bypass allowlist still non-empty (`docs/tui/bypass_manifest.json`) |
 | 15 Stabilization | IN PROGRESS | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests; suite green aside from known `jsonrepair` flake |
 
@@ -51,7 +51,7 @@ These are allowed only as shrinking adapters listed in `bypass_manifest.json`:
 - ~~`ui.LegacyWidget` / `ANSIViewFunc`~~ — **DELETED** (Phase 14); temporary widget→Component adapters removed; tests use native fixtures.
 - Flat `tui/ui/` package (plan target subdirs deferred until APIs stabilize).
 
-**Not done yet (do not claim as complete):** WindowFrame reveal animation (ContextMenuLines/Reveal deleted; reveal tests pending); full TextField surface paint everywhere; product controls still gradually consuming Glyph/Metrics tokens; root Host as viewmodel compositor root; `contentDirty` subtree invalidation; bypass allowlist enforcement (hex still in `theme/` + `diffview/`).
+**Not done yet (do not claim as complete):** WindowFrame reveal animation (ContextMenuLines/Reveal deleted; only state-level menu tests remain — no reveal animation or tests); full TextField surface paint everywhere; product controls still gradually consuming Glyph/Metrics tokens; root Host as viewmodel compositor root; bypass allowlist enforcement (hex still in `theme/` + `diffview/`). The `contentDirty` main-content cache was **removed** (2026-07-31): the editor's internal `chromaLineCache`/`chromaDirtyFrom` makes per-frame repaint ~180-250µs at 120x40, verified by `BenchmarkEditorPaint_*` and recorded in `docs/tui/PERFORMANCE_BASELINES.md`.
 
 ## 1. Objective
 
@@ -854,9 +854,13 @@ events.
 
 ### 17.1 Transition rule
 
-The current editor `contentDirty` cache remains unchanged until component-level
-invalidation proves equivalent behavior and performance. Its documented restrictions
-continue to apply during migration.
+The viewmodel main-content `contentDirty` cache was **removed** (2026-07-31)
+after benchmarks proved equivalent performance: the editor's internal
+per-line chroma cache (`chromaLineCache`/`chromaDirtyFrom`) makes an
+unconditional repaint a cell fill with cached colors (~180-250µs at 120x40,
+`BenchmarkEditorPaint_*`). Any future frame-level dirty flag needs the same
+benchmark-first discipline; cache at the editor level, never at the frame
+level.
 
 ### 17.2 Target invalidation
 
@@ -1446,7 +1450,10 @@ Exit criteria:
 - Every persistent surface is mounted in the component tree.
 - Message-list virtualization and editor performance meet recorded baselines.
 - The manual `contentDirty` cache is removed only after equivalent subtree
-  invalidation is verified.
+  invalidation is verified. **Done 2026-07-31:** the editor's internal
+  `chromaLineCache`/`chromaDirtyFrom` invalidates per-line, and unconditional
+  repaint is benchmark-verified (~180-250µs at 120x40) via
+  `BenchmarkEditorPaint_*` in `tui/screens/shelleditor/`.
 
 ### Phase 14: Package-boundary completion and deletion
 
@@ -1516,9 +1523,9 @@ Exit criteria:
 | Tabs | Tabs control + close actions + status indicators | 13 | **Native `tui/screens/shelltabs`** + **`ui.Tabs` shell chrome**; Host paint into `mainTabBarSurf`; `Window` tab state only; legacy `window.RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted |
 | File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | ✅ **Native `tui/screens/shelltree` + `ui.Tree` + `ScrollbarControl`**; `TreeState.ViewData()` seam; `filetree/render.go` (ANSI) **DELETED**; filter uses `ui.TextEdit` |
 | Chat input | TextArea + reference chips + action hints | 13 | **Native `tui/screens/shellinput`**; Host paint into `mainInputSurf`; `ui.TextArea` + chips + `ui.List` slash; ANSI composer embed removed from `buildMainView` |
-| Message list | VirtualList + message delegates + selection | 13 | ⚠️ **PARTIAL:** `chatprojection.Renderer` + `shellchat` Host/`VirtualList` paint structured `PaintLine` rows natively; markdown/thinking bodies still take PreferANSI fallback (`message_render.go`, `semantic_rows.go`, `shellchat/messages.go`). Main gutter via `ScrollbarControl`; legacy `widgets/messagelist.go` deleted |
+| Message list | VirtualList + message delegates + selection | 13 | ✅ `chatprojection.Renderer` + `shellchat` Host/`VirtualList` paint structured `PaintLine` rows natively; markdown/thinking bodies are bridged from glamour ANSI to native `PaintLine` spans at render time (`BridgeAnsiLine` in `ansi_bridge.go`, consumed by `message_render.go` and `renderer.go`) with no paint-time ANSI fallback (`shellchat/messages.go` has only the native row path; multi-line `BridgeAnsiLines` deleted as dead code). Main gutter via `ScrollbarControl`; legacy `widgets/messagelist.go` deleted |
 | Subpanes | Panel + VirtualList + nested viewport | 13 | ✅ Composition via `shellchat.Compose`; projection `*chatprojection.Renderer` in `subPaneProjectionRegistry` |
-| Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | ✅ **Native `tui/screens/shelleditor`** Host → `mainEditorSurf`; `Editor.Render` + `ui.ScrollbarControl` (paint **and** mouse drag); shellstatus carries title/●/cursor/diag counts/actions. `Editor.View()` / `scrollbar_ansi` deleted; legacy `scrollbar.ScrollBar` removed from editor |
+| Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | ✅ **Native `tui/screens/shelleditor`** Host → `mainEditorSurf`; `Editor.Render` + `ui.ScrollbarControl` (paint **and** mouse drag); shellstatus carries title/●/cursor/diag counts/actions; painted unconditionally every frame (main-content cache removed 2026-07-31; chroma cached per line internally). `Editor.View()` / `scrollbar_ansi` deleted; legacy `scrollbar.ScrollBar` removed from editor |
 | Session picker | Window + sectioned List | 13 | ✅ **DONE:** Native `tui/screens/sessionpicker` OverlayHost + paint goldens; legacy `widgets/sessionpicker.go` deleted |
 | Workspace/TUI boundary | Neutral workspace data + TUI projections and integration seams | 10 | ✅ Workspace production and test code has no `tui/` imports; LSP/file-tree callback fixtures live under `tui/filetree/` |
 
@@ -1983,9 +1990,11 @@ This program is complete only when all statements are true:
       typography/metric token tables, config.json hot-reload).
 
    4. **Phase 13:** persistent-shell and core-view migration (PARTIAL —
-      shell surfaces largely native; message list PreferANSI for markdown/
-      thinking remains; open: root Host/compositor wiring, `contentDirty`
-      cache removal).
+       shell surfaces and message rows are fully native; markdown/thinking
+       bodies bridge glamour ANSI to native PaintLines at render time via
+       `BridgeAnsiLine`; `contentDirty` main-content cache removed
+       2026-07-31 after benchmark verification; open: root Host/compositor
+       wiring).
 
    5. **Phase 14:** package-boundary completion and deletion.
 

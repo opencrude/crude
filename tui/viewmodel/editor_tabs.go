@@ -143,7 +143,6 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-	m.contentDirty = true
 }
 
 // gotoFirstDiagnostic opens the first error diagnostic in the
@@ -237,7 +236,6 @@ func (m *App) jumpToNextError() bool {
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 	m.StatusBar.SetInfo(fmt.Sprintf("Error at line %d: %s", d.Line+1, d.Message))
-	m.contentDirty = true
 	return true
 }
 
@@ -270,7 +268,6 @@ func (m *App) jumpToPrevError() bool {
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 	m.StatusBar.SetInfo(fmt.Sprintf("Error at line %d: %s", d.Line+1, d.Message))
-	m.contentDirty = true
 	return true
 }
 

@@ -96,6 +96,5 @@ func (m *App) openFindInFilesResult(match fileio.ProjectSearchMatch) tea.Cmd {
 	column := rendering.RuneIdxToCol([]rune(match.LineText), match.Column)
 	m.EditorState.Editor.SetCursorPosition(line, column)
 	m.EditorState.Editor.ScrollToCursor()
-	m.contentDirty = true
 	return cmd
 }

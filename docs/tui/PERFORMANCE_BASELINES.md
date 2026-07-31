@@ -1,8 +1,8 @@
 # TUI Performance Baselines
 
-Status: Phase 0 reference baseline
+Status: Phase 0 reference baseline + product-screen benches (2026-07-31)
 
-Recorded: 2026-07-17
+Recorded: 2026-07-17 (foundation), 2026-07-31 (product-screen additions)
 
 Canonical plan: [`TUI_COMPONENT_SYSTEM_PLAN.md`](../../TUI_COMPONENT_SYSTEM_PLAN.md)
 
@@ -41,6 +41,12 @@ GOMAXPROCS=12 go test -run '^$' \
   -bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANSI)' \
   -benchmem -count=5 \
   ./tui/ui ./tui/surface ./tui/compositor
+
+# Product-screen paint benches (Phase 15 additions)
+GOMAXPROCS=12 go test -run '^$' \
+  -bench 'Benchmark(EditorPaint|EditorScrollRepaint|ChatStreamPaint)' \
+  -benchmem -count=5 \
+  ./tui/screens/shelleditor/ ./tui/screens/shellchat/
 ```
 
 Record environment information with:
@@ -68,10 +74,24 @@ different power modes or materially different Go versions without noting that fa
 | `FlattenZOrder_Nested` | 779.3-800.6 ns | 2,168 | 8 |
 | `FullRender_80x24` | 102,508-104,310 ns | 49,460-49,461 | 7 |
 | `GenerateANSI_80x24` | 39,908-40,519 ns | 8,228 | 2 |
+| `EditorPaint_80x24` | 84,478-91,334 ns | 6,784 | 1,135 |
+| `EditorPaint_120x40` | 179,903-190,624 ns | 12,624 | 2,073 |
+| `EditorPaint_LargeFile_120x40` | 176,639-188,147 ns | 12,624 | 2,073 |
+| `EditorScrollRepaint_120x40` | 174,633-182,456 ns | 12,624 | 2,073 |
+| `ChatStreamPaint_80x24` | 221,183-227,901 ns | 10,464-10,477 | 338 |
+| `ChatStreamPaint_120x40` | 520,696-532,426 ns | 22,217-22,252 | 587-588 |
 
 `DemoGalleryHandleKeyEditCycle` measures two events per operation: one printable-rune
 insertion followed by Backspace. The pair keeps input length constant so later
 iterations do not benchmark progressively larger text.
+
+Product-screen benches measure **steady-state repaint with retained buffers**
+(production surfaces, not per-call allocations): `EditorPaint_*` paints the
+DocumentEditor viewport with internally cached chroma (the per-frame cost after
+the `contentDirty` cache was removed — ~180-250µs at 120x40, ~1.1% of a 16ms
+frame); `EditorScrollRepaint_*` repaints after a one-line scroll step;
+`ChatStreamPaint_*` installs an appended streaming line and repaints the
+shellchat Host (the per-frame streaming cost).
 
 ## Expected Reference Ranges
 
@@ -89,6 +109,12 @@ them is not automatically rejected, but it requires an explanation and a before/
 | `FlattenZOrder_Nested` | 1,500 ns/op | 2,300 B/op, 8 allocs/op |
 | `FullRender_80x24` | 175,000 ns/op | 52,000 B/op, 8 allocs/op |
 | `GenerateANSI_80x24` | 70,000 ns/op | 9,000 B/op, 2 allocs/op |
+| `EditorPaint_80x24` | 150,000 ns/op | 9,000 B/op, 1,200 allocs/op |
+| `EditorPaint_120x40` | 350,000 ns/op | 20,000 B/op, 2,200 allocs/op |
+| `EditorPaint_LargeFile_120x40` | 350,000 ns/op | 20,000 B/op, 2,200 allocs/op |
+| `EditorScrollRepaint_120x40` | 350,000 ns/op | 20,000 B/op, 2,200 allocs/op |
+| `ChatStreamPaint_80x24` | 350,000 ns/op | 18,000 B/op, 500 allocs/op |
+| `ChatStreamPaint_120x40` | 800,000 ns/op | 36,000 B/op, 800 allocs/op |
 
 The timing ceilings intentionally allow normal laptop frequency variation while still
 surfacing regressions large enough to threaten interactive rendering. Allocation
@@ -116,3 +142,10 @@ ceilings are tighter because they are less hardware-dependent.
 - `FullRender_80x24` intentionally creates a Surface each iteration and generates a
   complete ANSI frame. It measures the current complete path, not the desired final
   retained-screen cost.
+- `EditorPaint_*` allocation counts (1,135-2,073/op) include per-frame TokenSet and
+  render-context churn inside the editor/scrollbar paint path. They justify the
+  `contentDirty` removal decision because timing stays ~1% of the frame budget;
+  allocation reduction is future work, not a Phase 15 gate.
+- `ChatStreamPaint_*` allocation counts (338-588/op) are the streaming frame cost;
+  they include per-frame row projection. Same policy: timing is the gate, allocation
+  reduction is follow-up work.

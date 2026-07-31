@@ -1,8 +1,6 @@
 package chatprojection
 
 import (
-	"strings"
-
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/ui"
@@ -86,21 +84,6 @@ func BridgeAnsiLine(line string, tokens *ui.TokenSet) PaintLine {
 		return buildPlainBodyLine("")
 	}
 	return PaintLine{Spans: spans}
-}
-
-// BridgeAnsiLines converts a multi-line ANSI string into one PaintLine per
-// line (splitting on \n first). This is the single entry point used by the
-// markdown/streaming-cache bridges.
-func BridgeAnsiLines(ansi string, tokens *ui.TokenSet) []PaintLine {
-	if ansi == "" {
-		return []PaintLine{buildPlainBodyLine("")}
-	}
-	lines := strings.Split(ansi, "\n")
-	out := make([]PaintLine, len(lines))
-	for i, ln := range lines {
-		out[i] = BridgeAnsiLine(ln, tokens)
-	}
-	return out
 }
 
 func ansiRunToSpan(r rendering.AnsiRun, st ansiBridgeState) RowSpan {

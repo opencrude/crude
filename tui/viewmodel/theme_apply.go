@@ -91,8 +91,6 @@ func (m *App) ApplyThemePreset(preset string) {
 	}
 	// Invalidate every colour-holding render cache. Theme switches must not
 	// reuse ANSI/chroma/message pixels painted under the previous palette.
-	m.contentDirty = true
-	m.mainContentCached = ""
 	m.cachedOutput = ""
 	if m.mainContentSurf != nil {
 		m.mainContentSurf.Buffer().Clear()

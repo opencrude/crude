@@ -91,7 +91,6 @@ func (m *App) openSessionConfirmationPanel(projection *sessionProjection) {
 	projection.deckFocused = true
 	projection.deckFocus = confirmation.ActionsID
 	projection.deckHost.MarkLayout()
-	m.mainContentCached = ""
 }
 
 type sessionSettingsSaveResultMsg struct {
@@ -133,7 +132,6 @@ func (m *App) openSessionYoloPanel() {
 	projection.deckFocused = true
 	projection.deckFocus = yolo.ActionsID
 	projection.deckHost.MarkLayout()
-	m.mainContentCached = ""
 }
 
 func (m *App) activeSessionDeck() *sessionProjection {
@@ -156,7 +154,6 @@ func (m *App) openSessionSettingsPanel() {
 	projection.deckFocused = true
 	projection.deckFocus = sessionsettings.FormID
 	projection.deckHost.MarkLayout()
-	m.mainContentCached = ""
 }
 
 func (m *App) openSessionQuestionPanel(projection *sessionProjection) {
@@ -171,7 +168,6 @@ func (m *App) openSessionQuestionPanel(projection *sessionProjection) {
 	projection.deckFocused = true
 	projection.deckFocus = question.FormID
 	projection.deckHost.MarkLayout()
-	m.mainContentCached = ""
 }
 
 func (m *App) closeSessionPanel(id string) {
@@ -184,7 +180,6 @@ func (m *App) closeProjectionPanel(projection *sessionProjection, id string) {
 		return
 	}
 	projection.deckHost.MarkLayout()
-	m.mainContentCached = ""
 	m.normalizeSessionDeckFocus(projection)
 }
 
@@ -226,9 +221,6 @@ func (m *App) handleSessionDeckEvent(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	result := projection.deckHost.Handle(msg)
-	if result.Invalidate&ui.InvalidateLayout != 0 {
-		m.mainContentCached = ""
-	}
 	if result.Action != nil && result.Action.ID == "paneldeck.empty" {
 		projection.deckFocused = false
 		projection.deckFocus = ui.RootID

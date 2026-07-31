@@ -14,7 +14,7 @@ deliverable and exit criterion without watering down enforcement targets.
 | `go build ./...` | ✅ passing | Run in CI `.github/workflows/tui.yml` |
 | `go test ./...` | ✅ passing | Full suite green; `crude/jsonrepair TestConcurrentRepairStress` is a known flake (passes in isolation) |
 | TUI race suites | ✅ **expanded** | `make test-race-tui` — includes `./app/`, `./tui/viewmodel/` |
-| Static design checks, **no allowlist** | 🚧 shrunk | Hex allowlist = `tui/theme/` + `tui/diffview/` only; raw-ansi still lists foundation + PreferANSI chat paths in `bypass_manifest.json` (not empty) |
+| Static design checks, **no allowlist** | 🚧 shrunk | Hex allowlist = `tui/theme/` + `tui/diffview/` only; `raw-ansi-sgr` lists only low-level render paths (`tui/editor/render.go` + foundation) — chat markdown/thinking is a render-time ANSI→PaintLine bridge (`BridgeAnsiLine`), not a manifest bypass |
 | Runtime theme switching passes gallery + product tests | ⚠️ partial | Gallery done; product screens now have paint goldens for all shell chrome + FIF + palette |
 
 ## Deliverables
@@ -89,7 +89,7 @@ deliverable and exit criterion without watering down enforcement targets.
 | Gallery paint/handle benches | ✅ done | `tui/ui/benchmark_test.go` |
 | Surface/compositor benches | ✅ done | `tui/surface/`, `tui/compositor/` bench files |
 | CI bench regression gate | ❌ open | No automated threshold check in workflow |
-| Product-screen benches (chat stream, editor paint) | ❌ open | Need targets before Phase 15 exit |
+| Product-screen benches (chat stream, editor paint) | ✅ **new** | `tui/screens/shelleditor/paint_bench_test.go` (`BenchmarkEditorPaint_80x24/120x40/LargeFile`, `BenchmarkEditorScrollRepaint_120x40`), `tui/screens/shellchat/stream_bench_test.go` (`BenchmarkChatStreamPaint_80x24/120x40`); recorded in `PERFORMANCE_BASELINES.md`; supported the `contentDirty` cache removal (editor repaint ~180-250µs at 120x40) |
 
 ### 6. Root lint + CI workflow
 
@@ -164,8 +164,8 @@ Manifest: `docs/tui/bypass_manifest.json`
 2. Enable `errcheck` / `unused` / `gosimple` repo-wide after cleanup (~147 issues today)
 3. Empty all `allowed_paths` allowlists (`hardcoded-lipgloss-hex` still has 2 paths: `tui/theme/`, `tui/diffview/`)
 4. CI bench regression gate (optional `-benchtime` smoke)
-5. Product-screen allocation benchmarks (chat stream, editor paint)
-6. Layout constraint solver fuzz (blocked until Flex/Grid lands)
+5. Layout constraint solver fuzz (blocked until Flex/Grid lands)
+6. **Closed:** product-screen allocation benchmarks ✅ (2026-07-31) — editor + chat stream benches recorded; `contentDirty` cache removed on their evidence
 
 ### Genuinely untestable / manual-only surfaces
 
