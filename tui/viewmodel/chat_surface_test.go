@@ -6,14 +6,11 @@ import (
 	"time"
 
 	"crude/provider"
-	"crude/tui/cell"
 	"crude/tui/screens/shellchat"
-	"crude/tui/surface"
 	ttypes "crude/tui/types"
-	"crude/tui/ui"
 )
 
-func TestBuildMainView_AgentChatReservesPlaceholders(t *testing.T) {
+func TestComputeContentLayout_AgentChatReservesPlaceholders(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
@@ -30,10 +27,7 @@ func TestBuildMainView_AgentChatReservesPlaceholders(t *testing.T) {
 		Time:    time.Unix(1, 0),
 	})
 
-	out := app.buildMainView()
-	if strings.Contains(out, "UNIQUE_CHAT_MARKER_xyz") {
-		t.Fatal("buildMainView must not embed composed chat ANSI; expected blank placeholders")
-	}
+	_ = app.computeContentLayout()
 	if app.chatRect.Empty() {
 		t.Fatal("expected chatRect to be set for agent chat")
 	}
@@ -45,13 +39,10 @@ func TestBuildMainView_AgentChatReservesPlaceholders(t *testing.T) {
 	}
 }
 
-func TestRenderChatToSurface_PaintsNonEmptyMessages(t *testing.T) {
+func TestRenderShell_PaintsNonEmptyMessages(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.chatScreen = shellchat.New(app.Theme)
-	app.chatHost = ui.NewHost(app.Theme, app.chatScreen)
-	app.mainChatSurf = surface.NewSurface("main-chat", 80, 20, cell.TransparentBlank())
 
 	app.AddOrchestrator(
 		"agent",
@@ -66,18 +57,17 @@ func TestRenderChatToSurface_PaintsNonEmptyMessages(t *testing.T) {
 		Time:    time.Unix(1, 0),
 	})
 
-	_ = app.buildMainView()
-	app.renderChatToSurface()
+	app.paintShellFrame()
 
-	if !app.mainChatSurf.Visible() {
-		t.Fatal("expected mainChatSurf visible for agent chat")
+	if !app.chatHostVisible() {
+		t.Fatal("expected chat slot active for agent chat")
 	}
-	buf := app.mainChatSurf.Buffer()
+	buf := app.mainSurf.Buffer()
 	if shellchat.NonEmptyCellCount(buf) == 0 {
-		t.Fatal("expected non-empty message content on chat surface")
+		t.Fatal("expected non-empty message content on the shell surface")
 	}
 	found := false
-	for y := 0; y < buf.Height(); y++ {
+	for y := app.chatRect.Y; y < app.chatRect.Y+app.chatRect.H && y < buf.Height(); y++ {
 		row := shellchat.PlainRow(buf, y, buf.Width())
 		if strings.Contains(row, "surface paint hello") || strings.Contains(row, "hello") {
 			found = true
@@ -85,25 +75,6 @@ func TestRenderChatToSurface_PaintsNonEmptyMessages(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("expected message content painted on chat surface")
+		t.Fatal("expected message content painted on the shell surface")
 	}
-}
-
-func stripANSIForTest(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) && !(s[j] >= '@' && s[j] <= '~') {
-				j++
-			}
-			if j < len(s) {
-				i = j + 1
-				continue
-			}
-		}
-		b.WriteByte(s[i])
-		i++
-	}
-	return b.String()
 }

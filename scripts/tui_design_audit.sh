@@ -53,13 +53,13 @@ fi
 # Allowlist directories/files from Phase 0 freeze
 allow_hex=(
   'tui/theme/'
-  'tui/diffview/'
 )
 
 hex_hits="$(rg -n 'lipgloss\.Color\("#' --glob '*.go' --glob '!*_test.go' tui/ || true)"
 if [[ -n "$hex_hits" ]]; then
   while IFS= read -r line; do
     path="${line%%:*}"
+    path="${path//\\//}" # normalize Windows separators for allowlist matching
     allowed=0
     for a in "${allow_hex[@]}"; do
       case "$path" in
@@ -78,11 +78,10 @@ else
   echo "OK: no hard-coded lipgloss hex"
 fi
 
-# 4b) Raw truecolor / RGBA constructors outside theme + diffview (and tests).
+# 4b) Raw truecolor / RGBA constructors outside theme (and tests).
 # These bypass TokenSet and survive theme preset switches as fixed RGB strips.
 allow_raw=(
   'tui/theme/'
-  'tui/diffview/'
   'tui/cell/'
   'tui/rendering/'
 )
@@ -90,6 +89,7 @@ raw_hits="$(rg -n 'NewTrueColor\(|color\.RGBA\{|cell\.Color\{[^}]*R:' --glob '*.
 if [[ -n "$raw_hits" ]]; then
   while IFS= read -r line; do
     path="${line%%:*}"
+    path="${path//\\//}" # normalize Windows separators for allowlist matching
     allowed=0
     for a in "${allow_raw[@]}"; do
       case "$path" in
@@ -106,6 +106,39 @@ if [[ -n "$raw_hits" ]]; then
   fi
 else
   echo "OK: no raw colour constructors outside allowlist"
+fi
+
+# 4c) Raw ANSI SGR outside the raw-ansi-sgr allowlist (manifest rule).
+# Feature code must never emit raw \x1b[ sequences directly — it must paint
+# through TokenSet/component cells or the rendering ANSI pipeline. This is
+# the enforcement for the manifest's raw-ansi-sgr rule (previously
+# declarative only; tui/ui/text_area.go raw \x1b[7m was caught by it).
+allow_sgr=(
+  'tui/cell/'
+  'tui/compositor/'
+  'tui/rendering/'
+)
+sgr_hits="$(rg -n '\\x1b\[' --glob '*.go' --glob '!*_test.go' tui/ || true)"
+if [[ -n "$sgr_hits" ]]; then
+  while IFS= read -r line; do
+    path="${line%%:*}"
+    path="${path//\\//}" # normalize Windows separators for allowlist matching
+    allowed=0
+    for a in "${allow_sgr[@]}"; do
+      case "$path" in
+        $a*) allowed=1; break ;;
+      esac
+    done
+    if [[ $allowed -eq 0 ]]; then
+      echo "FAIL: raw ANSI SGR outside allowlist: $line"
+      fail=1
+    fi
+  done <<< "$sgr_hits"
+  if [[ $fail -eq 0 ]]; then
+    echo "OK: raw ANSI SGR only in allowlisted paths"
+  fi
+else
+  echo "OK: no raw ANSI SGR outside allowlist"
 fi
 
 # 5) Foundation packages must have tests
@@ -180,6 +213,15 @@ if [[ ! -f docs/tui/bypass_manifest.json ]]; then
   fail=1
 else
   echo "OK: bypass manifest present"
+fi
+
+# 11) Three-layer boundary: workspace/ must never import crude/tui
+# (Phase 14 exit criterion — dependency checks enforce the architecture).
+if rg -n 'crude/tui' --glob '*.go' workspace/ 2>/dev/null; then
+  echo "FAIL: workspace/ imports crude/tui (three-layer boundary violated)"
+  fail=1
+else
+  echo "OK: workspace/ has no crude/tui imports"
 fi
 
 if [[ $fail -ne 0 ]]; then

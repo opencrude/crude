@@ -29,24 +29,6 @@ func assertRepairEqual(t *testing.T, text string) {
 	assert.Equal(t, text, result)
 }
 
-// assertRepairFailureExact checks that the error message and position match exactly.
-func assertRepairFailureExact(t *testing.T, text, expectedErrMsg string, expectedPos int) {
-	t.Helper()
-	var (
-		result string
-		err    error
-	)
-	assert.NotPanics(t, func() {
-		result, err = Repair(text)
-	})
-	require.Error(t, err)
-	var repairErr *Error
-	require.ErrorAs(t, err, &repairErr)
-	assert.Equal(t, expectedErrMsg, repairErr.Message)
-	assert.Equal(t, expectedPos, repairErr.Position)
-	assert.Empty(t, result)
-}
-
 // ============================================================================
 // 1. UNICODE APOCALYPSE
 // ============================================================================
@@ -768,10 +750,10 @@ func TestConcurrentRepairStress(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				Repair(`{"a":1}`)
-				Repair(`{bad json`)
-				Repair(`[1,2`)
-				Repair("/* comment */")
+				_, _ = Repair(`{"a":1}`)
+				_, _ = Repair(`{bad json`)
+				_, _ = Repair(`[1,2`)
+				_, _ = Repair("/* comment */")
 			}()
 		}
 		wg.Wait()
@@ -1261,7 +1243,7 @@ func TestKeywordFuzzing(t *testing.T) {
 				// These may or may not error depending on how parser handles
 				// adjacent keywords. Just ensure no panic.
 				assert.NotPanics(t, func() {
-					Repair(tc.input)
+					_, _ = Repair(tc.input)
 				})
 			})
 		}
@@ -2634,7 +2616,7 @@ func BenchmarkRepairPathological(b *testing.B) {
 	for _, tc := range tests {
 		b.Run(tc.name, func(b *testing.B) {
 			for b.Loop() {
-				Repair(tc.input)
+				_, _ = Repair(tc.input)
 			}
 		})
 	}

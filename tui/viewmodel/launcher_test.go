@@ -4,19 +4,15 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
 	"crude/sessiondb"
-	"crude/tui/input"
 	"crude/tui/screens/launcher"
-	"crude/tui/screens/shellstatus"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/window"
 	"crude/workspace"
 )
 
@@ -33,8 +29,8 @@ func (l *testLogger) Debug(tag, msg string, pairs ...any) {}
 
 func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
-	th := theme.DefaultDark()
-	screen := launcher.New(th)
+	app := newTestApp(t)
+	app.Workspace.Logger = &testLogger{}
 	// Seed enough list rows for pointer-capture geometry tests that click mid-list.
 	workspaces := make([]workspace.WorkspaceInfo, 12)
 	for i := range workspaces {
@@ -45,31 +41,7 @@ func newTestAppWithLauncher(t *testing.T) *App {
 			SessionCount: 1,
 		}
 	}
-	screen.SetData(".", workspaces)
-	host := ui.NewHost(th, screen)
-	screen.SetFocusHandler(host.Focus)
-	app := &App{
-		Workspace: &workspace.Workspace{
-			AgentMgr:      workspace.NewAgentManager(),
-			PaneMgr:       workspace.NewPaneManager(),
-			StartTime:     time.Now(),
-			ActiveSession: &workspace.Session{},
-			Logger:        &testLogger{},
-		},
-		Theme:              th,
-		Input:              input.NewModel(th),
-		StatusBar:          shellstatus.New(th),
-		SpinFrame:          0,
-		OverlayState:       NewOverlayState(),
-		LSPPopup:           NewLSPPopupState(),
-		EditorState:        NewEditorState(),
-		launcherScreen:     screen,
-		launcherHost:       host,
-		actionRegistry:     ui.DefaultRegistry(),
-		subPaneProjections: newSubPaneProjectionRegistry(th),
-		sessionProjections: newSessionProjectionRegistry(th),
-	}
-	app.Win = window.New(th)
+	app.launcherScreen.SetData(".", workspaces)
 	return app
 }
 
@@ -299,6 +271,7 @@ func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
 	app.height = 30
 	app.ChatAreaHeight = 20
 	app.Tree = &TreeState{}
+	app.paintShellFrame()
 
 	workspaces := make([]workspace.WorkspaceInfo, 30)
 	for i := range workspaces {
@@ -310,21 +283,19 @@ func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
 	app.launcherScreen.SetData(".", workspaces)
 
 	layout := app.computeLayout()
-	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)
-	app.launcherHost.Layout()
 
 	// Click search row to focus filter, then wheel inside list.
-	app.launcherHost.Handle(tea.MouseClickMsg{X: 50, Y: 6, Button: tea.MouseLeft})
+	app.rootHandleFocus(launcher.ScreenID, tea.MouseClickMsg{X: layout.SidebarW + layout.PadLR + 50, Y: layout.ChatAreaTop + 6, Button: tea.MouseLeft})
 
 	scrollBefore := app.launcherScreen.ListScrollOffset()
-	app.launcherHost.Handle(tea.MouseWheelMsg{X: 50, Y: 7, Button: tea.MouseWheelDown})
+	app.rootHost.Handle(tea.MouseWheelMsg{X: layout.SidebarW + layout.PadLR + 50, Y: layout.ChatAreaTop + 7, Button: tea.MouseWheelDown})
 	if app.launcherScreen.ListScrollOffset() == scrollBefore {
 		t.Fatal("wheel inside workspace viewport should scroll results")
 	}
 
 	// Wheel over left column should not scroll.
 	app.launcherScreen.SetListScroll(0)
-	app.launcherHost.Handle(tea.MouseWheelMsg{X: 2, Y: 7, Button: tea.MouseWheelDown})
+	app.rootHost.Handle(tea.MouseWheelMsg{X: layout.SidebarW + layout.PadLR + 2, Y: layout.ChatAreaTop + 7, Button: tea.MouseWheelDown})
 	if app.launcherScreen.ListScrollOffset() != 0 {
 		t.Fatal("wheel over fixed left help/actions must not scroll workspace results")
 	}
@@ -336,13 +307,9 @@ func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 100
 	app.height = 30
-	app.launcherScreen = launcher.New(app.Theme)
 	app.launcherScreen.SetData(".", nil)
 
-	view := app.buildMainView()
-	if strings.Contains(view, "↑↓ navigate") {
-		t.Fatalf("launcher help should not consume a main-pane row:\n%s", view)
-	}
+	_ = app.computeContentLayout()
 	if app.ChatAreaHeight != 25 {
 		t.Fatalf("launcher should receive reclaimed separator/help rows: height=%d, want 25", app.ChatAreaHeight)
 	}

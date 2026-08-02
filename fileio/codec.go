@@ -109,11 +109,3 @@ func splitLines(content string) []string {
 	}
 	return lines
 }
-
-func joinLines(lines []string, trailingNL bool) string {
-	s := strings.Join(lines, "\n")
-	if trailingNL {
-		s += "\n"
-	}
-	return s
-}

@@ -8,14 +8,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
-	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/editor"
 	"crude/tui/screens/shellchat"
-	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
-	"crude/tui/ui"
 	"crude/workspace"
 )
 
@@ -25,9 +22,6 @@ func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.Mess
 	app.width = 80
 	app.height = 24
 	app.launcherScreen = nil
-	app.launcherHost = nil
-	app.mainChatSurf = surface.NewSurface("main-chat", 80, 20, cell.TransparentBlank())
-	app.mainLauncherSurf = surface.NewSurface("main-launcher", 80, 20, cell.TransparentBlank())
 
 	th := theme.DefaultDark()
 	screen := shellchat.New(th)
@@ -50,13 +44,9 @@ func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.Mess
 	if contentH < viewportH {
 		contentH = viewportH + 5
 	}
-	host := ui.NewHost(th, screen)
-	w := shellchat.ContentSurfaceWidth(40, th.Spacing.PadLR, true)
-	host.Resize(w, viewportH)
-	host.Layout()
 
 	app.chatScreen = screen
-	app.chatHost = host
+	app.shell.SetScreen(shellChatSlot, screen)
 
 	app.AddOrchestrator(
 		"agent",
@@ -77,8 +67,7 @@ func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.Mess
 			Time:    time.Unix(1, 0),
 		})
 	}
-	_ = app.buildMainView()
-	app.renderChatToSurface()
+	app.paintShellFrame()
 	screen.SyncScrollMetrics(app.chatRect.H, contentH)
 	return app, screen
 }
@@ -208,8 +197,8 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 		scroll := screen.ScrollModel()
 		scroll.StickToBottom()
 
-		app.chatHost.Handle(tea.MouseWheelMsg{
-			X: app.Theme.Spacing.PadLR + 2, Y: 2, Button: tea.MouseWheelUp,
+		app.rootHandleFocus(shellchat.ScreenID, tea.MouseWheelMsg{
+			X: app.chatRect.X + app.Theme.Spacing.PadLR + 2, Y: app.chatRect.Y, Button: tea.MouseWheelUp,
 		})
 		if scroll.AutoScroll() {
 			t.Fatal("wheel up should disarm auto-scroll")
@@ -221,8 +210,8 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 			Role: ttypes.RoleAssistant, Content: "another chunk\nmore lines", Time: time.Now(),
 		})
 		app.syncAgentMessages("agent", false)
-		_ = app.buildMainView()
-		app.renderChatToSurface()
+		_ = app.computeContentLayout()
+		app.configureChatScreen()
 		if scroll.Offset() != scroll.MaxOffset() || !scroll.AutoScroll() {
 			t.Fatalf("armed scroll should stick to bottom: off=%d max=%d auto=%v", scroll.Offset(), scroll.MaxOffset(), scroll.AutoScroll())
 		}
@@ -232,8 +221,8 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 		app, screen := setupChatRoutingApp(t, 5, rows)
 		scroll := screen.ScrollModel()
 		scroll.StickToBottom()
-		app.chatHost.Handle(tea.MouseWheelMsg{
-			X: app.Theme.Spacing.PadLR + 2, Y: 2, Button: tea.MouseWheelUp,
+		app.rootHandleFocus(shellchat.ScreenID, tea.MouseWheelMsg{
+			X: app.chatRect.X + app.Theme.Spacing.PadLR + 2, Y: app.chatRect.Y, Button: tea.MouseWheelUp,
 		})
 		if scroll.AutoScroll() {
 			t.Fatal("wheel up should disarm auto-scroll")
@@ -249,8 +238,8 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 			Role: ttypes.RoleAssistant, Content: strings.Repeat("appended line\n", 8), Time: time.Now(),
 		})
 		app.syncAgentMessages("agent", false)
-		_ = app.buildMainView()
-		app.renderChatToSurface()
+		_ = app.computeContentLayout()
+		app.configureChatScreen()
 		if scroll.AutoScroll() {
 			t.Fatal("append while disarmed must not re-arm auto-scroll")
 		}
@@ -267,21 +256,21 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 // TestChatSelectionCopyContract verifies full dispatch produces exactly one copy
 // command and clears selection without duplicate region routing.
 func TestChatSelectionCopyContract(t *testing.T) {
-	app, _ := setupChatRoutingApp(t, 2, []chatprojection.MessageRow{
+	app := newFullTestApp(t)
+	screen, host, localX := setupCapturedChatSelection(t, app, 2, []chatprojection.MessageRow{
 		{ID: "m1", Lines: []string{"hello world"}},
 	})
-	_, host, localX := setupCapturedChatSelection(t, app, app.chatRect.H, []chatprojection.MessageRow{
-		{ID: "m1", Lines: []string{"hello world"}},
-	})
-	host.Handle(tea.MouseMotionMsg{X: localX + 5, Y: 0, Button: tea.MouseLeft})
-	res := host.Handle(tea.MouseReleaseMsg{X: localX + 5, Y: 0, Button: tea.MouseLeft})
+	motionX := app.chatRect.X + localX + 5
+	motionY := app.chatRect.Y
+	host.Handle(tea.MouseMotionMsg{X: motionX, Y: motionY, Button: tea.MouseLeft})
+	res := host.Handle(tea.MouseReleaseMsg{X: motionX, Y: motionY, Button: tea.MouseLeft})
 	if res.Cmd == nil {
 		t.Fatal("release should produce copy cmd on non-empty selection")
 	}
-	if app.chatScreen.IsSelecting() || host.HasPointerCapture() {
+	if screen.IsSelecting() || host.HasPointerCapture() {
 		t.Fatal("selection and capture must clear after release")
 	}
-	res2 := host.Handle(tea.MouseReleaseMsg{X: localX + 5, Y: 0, Button: tea.MouseLeft})
+	res2 := host.Handle(tea.MouseReleaseMsg{X: motionX, Y: motionY, Button: tea.MouseLeft})
 	if res2.Cmd != nil {
 		t.Fatal("second release must not emit another copy cmd")
 	}

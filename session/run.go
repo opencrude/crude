@@ -167,8 +167,8 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	userMsg := s.buildUserMessage(userInput)
 
 	if s.db != nil {
-		sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
-		sessiondb.UpdateLastPrompt(s.db, s.sessionID, userInput.Text)
+		_ = sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
+		_ = sessiondb.UpdateLastPrompt(s.db, s.sessionID, userInput.Text)
 	}
 
 	s.msgsMu.Lock()

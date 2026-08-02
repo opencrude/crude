@@ -184,7 +184,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				}
 			}
 		} else if questionText != "" {
-			rawOpts, _ := params["options"]
+			rawOpts := params["options"]
 			var optStrs []string
 			if rawOpts != nil {
 				if arr, ok := rawOpts.([]any); ok {

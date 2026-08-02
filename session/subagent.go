@@ -202,7 +202,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 
 func formatSubAgentResult(result agent.SubAgentResult) string {
 	var sb strings.Builder
-	icon := "OK"
+	var icon string
 	switch result.Status {
 	case agent.SubAgentCompleted:
 		icon = "OK"
@@ -472,7 +472,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 			if wd != "" {
 				projectName = filepath.Base(wd)
 			}
-			sessiondb.Create(subDB, sessiondb.SessionMeta{
+			_ = sessiondb.Create(subDB, sessiondb.SessionMeta{
 				ID:              subSessionID,
 				ProjectPath:     wd,
 				ProjectName:     projectName,
@@ -591,7 +591,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	if err := r.mgr.Register(handle); err != nil {
 		r.fileOwnership.Release(spec.ID)
 		if subDB != nil {
-			sessiondb.CloseSession(subDB, subSessionID)
+			_ = sessiondb.CloseSession(subDB, subSessionID)
 			subDB.Close()
 		}
 		return nil, fmt.Errorf("register: %w", err)
@@ -642,7 +642,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			r.mgr.MarkFinished(handle.Spec.ID, result)
 			r.persistResult(result)
 			if handle.DB != nil {
-				sessiondb.CloseSession(handle.DB, handle.SessionID)
+				_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
 				handle.DB.Close()
 			}
 			return
@@ -662,7 +662,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			r.mgr.MarkFinished(handle.Spec.ID, result)
 			r.persistResult(result)
 			if handle.DB != nil {
-				sessiondb.CloseSession(handle.DB, handle.SessionID)
+				_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
 				handle.DB.Close()
 			}
 			return
@@ -753,7 +753,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 	r.persistResult(result)
 
 	if handle.DB != nil {
-		sessiondb.CloseSession(handle.DB, handle.SessionID)
+		_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
 		handle.DB.Close()
 	}
 }
@@ -940,50 +940,6 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 	result.ResultPath = reportPath
 }
 
-func (r *SubAgentRunner) autoWriteReportFromContext(handle *agent.SubAgentHandle, spec agent.SubAgentSpec) (tools.ToolResult, error) {
-	sessionDir := r.session.logger.SessionDir()
-	if sessionDir == "" {
-		return tools.ToolResult{}, fmt.Errorf("write_report: session directory not available")
-	}
-
-	reportsDir := filepath.Join(sessionDir, "reports")
-	if err := os.MkdirAll(reportsDir, 0755); err != nil {
-		return tools.ToolResult{}, fmt.Errorf("write_report: failed to create reports directory: %w", err)
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Sub-Agent Report: %s [%s]\n\n", spec.Name, spec.Category))
-	sb.WriteString(fmt.Sprintf("Task: %s\n\n", spec.Description))
-
-	filesRead := r.fileOwnership.ReadClaimsByAgent(spec.ID)
-	filesWritten := r.fileOwnership.WriteClaimsByAgent(spec.ID)
-	if len(filesRead) > 0 {
-		sb.WriteString("## Files Read\n\n")
-		for _, f := range filesRead {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
-		}
-	}
-	if len(filesWritten) > 0 {
-		sb.WriteString("\n## Files Written\n\n")
-		for _, f := range filesWritten {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
-		}
-	}
-
-	reportPath := filepath.Join(reportsDir, fmt.Sprintf("%s-report.md", spec.ID))
-	if err := os.WriteFile(reportPath, []byte(sb.String()), 0644); err != nil {
-		return tools.ToolResult{}, fmt.Errorf("write_report: failed to write report: %w", err)
-	}
-
-	handle.SetReportPath(reportPath)
-
-	resultJSON, _ := json.Marshal(map[string]string{
-		"status":      "report_auto_generated",
-		"report_path": reportPath,
-	})
-	return tools.ToolResult{Content: string(resultJSON)}, nil
-}
-
 func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan string, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 	parentFn := r.parentToolFn
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
@@ -1088,7 +1044,7 @@ func (r *SubAgentRunner) persistResult(result agent.SubAgentResult) {
 	if r.session.db == nil {
 		return
 	}
-	sessiondb.InsertSubAgentResult(r.session.db, sessiondb.SubAgentResultRow{
+	_ = sessiondb.InsertSubAgentResult(r.session.db, sessiondb.SubAgentResultRow{
 		ParentSessionID:  r.session.sessionID,
 		ChildSessionID:   result.SessionID,
 		AgentID:          string(result.AgentID),
@@ -1685,7 +1641,7 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 		case <-deadline:
 			h := a.NextAutoHandle()
 
-			mgr.Promote(uc, h)
+			_, _ = mgr.Promote(uc, h)
 			r.session.logger.Info("ASYNC", "subagent_auto_promote", "agent_id", a.AgentID, "handle", h, "pid", pid, "threshold", asyncPromotionThreshold)
 			return tools.ToolResult{Content: fmt.Sprintf(
 				"Command still running after %s — automatically promoted to async (handle: %q, PID: %d).\n\nYou can continue working while it runs. To manage this command:\n- check_async_command(handle=%q) — check if it's done\n- read_async_output(handle=%q, since_byte=0) — read output so far\n- kill_async_command(handle=%q) — kill it if needed",

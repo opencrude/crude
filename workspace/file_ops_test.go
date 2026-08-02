@@ -92,7 +92,7 @@ func TestFileOpsService_CreateFile_PublishesEvent(t *testing.T) {
 	svc := NewFileOpsService(dir, bus, testLogger{})
 
 	path := filepath.Join(dir, "event.txt")
-	svc.CreateFile(path)
+	_ = svc.CreateFile(path)
 
 	// Check that an event was published.
 	events := bus.RecentEvents(1)
@@ -551,7 +551,7 @@ func TestWorkspace_FileOps_PublishesThroughEventBus(t *testing.T) {
 	ws.SetEventBus(bus)
 
 	path := filepath.Join(dir, "event-test.txt")
-	ws.CreateFile(path)
+	_ = ws.CreateFile(path)
 
 	// Verify event was published.
 	events := bus.RecentEvents(1)

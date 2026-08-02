@@ -7,9 +7,6 @@ import (
 	"time"
 
 	"crude/provider"
-	"crude/tui/cell"
-	"crude/tui/screens/shellchat"
-	"crude/tui/surface"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -20,9 +17,6 @@ func setupAgentChatScrollTest(t *testing.T) *App {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.chatScreen = shellchat.New(app.Theme)
-	app.chatHost = ui.NewHost(app.Theme, app.chatScreen)
-	app.mainChatSurf = surface.NewSurface("main-chat", 80, 20, cell.TransparentBlank())
 	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	return app
 }
@@ -68,7 +62,7 @@ func renderAgentChat(app *App) {
 		app.ChatAreaHeight = app.height - 8
 	}
 	app.chatRect = ui.Rect{X: 0, Y: 2, W: app.width, H: app.ChatAreaHeight}
-	app.renderChatToSurface()
+	app.configureChatScreen()
 }
 
 func TestAgentChatScrollSwitchSaveRestore(t *testing.T) {

@@ -40,7 +40,7 @@ func SaveAgentSettingOverrides(db *sql.DB, sessionID string, overrides map[strin
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(`DELETE FROM session_agent_settings WHERE session_id = ?`, sessionID); err != nil {
 		return err
 	}

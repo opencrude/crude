@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -14,7 +15,17 @@ import (
 // modelsDevURL is the single endpoint for models.dev — a comprehensive
 // open-source database of AI model specs, pricing, and capabilities.
 // There is no per-model query API; the full ~6MB JSON must be downloaded.
+//
+// MODELS_DEV_URL overrides the endpoint (tests, air-gapped installs, or a
+// local mirror).
 const modelsDevURL = "https://models.dev/api.json"
+
+func modelsDevEndpoint() string {
+	if u := strings.TrimSpace(os.Getenv("MODELS_DEV_URL")); u != "" {
+		return u
+	}
+	return modelsDevURL
+}
 
 // mdProvider mirrors the per-provider section of the models.dev JSON.
 type mdProvider struct {
@@ -72,11 +83,12 @@ func hasModality(modalities []string, modality string) bool {
 // Prices from models.dev are per million tokens; they are converted to
 // per-token values before being returned.
 func FetchModelsDevAll() (map[string]ModelMeta, error) {
-	logIf(func(lg *logger.Logger) { lg.Info("PROVIDER", "models_dev_fetch", "url", modelsDevURL) })
+	url := modelsDevEndpoint()
+	logIf(func(lg *logger.Logger) { lg.Info("PROVIDER", "models_dev_fetch", "url", url) })
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	start := time.Now()
-	resp, err := client.Get(modelsDevURL)
+	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("fetch models.dev: %w", err)
 	}

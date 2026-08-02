@@ -12,10 +12,15 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/uitest"
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
-	dir := t.TempDir()
+	// Fixed workspace name so the root label is deterministic for the golden.
+	dir := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "main.go")
 	if err := os.WriteFile(path, []byte("package main\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -42,6 +47,10 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if !bufferHasFG(buf, wantAccent) {
 		t.Fatal("shell tree paint missing theme accent foreground")
 	}
+
+	// Byte-identical regression: catches a shifted indent/divider or wrong
+	// git-status glyph that property checks cannot see.
+	uitest.CheckGolden(t, "shelltree_dark_40x8", buf)
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {

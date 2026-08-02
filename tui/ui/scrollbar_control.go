@@ -51,9 +51,7 @@ func (s *ScrollbarControl) Paint(buf *surface.CellBuffer, originX, originY int, 
 	if r.Empty() || s.scroll == nil {
 		return
 	}
-	bg := cell.NoColor
-	trackFG := cell.NoColor
-	thumbFG := cell.NoColor
+	var bg, trackFG, thumbFG cell.Color
 	if s.tokens != nil {
 		bg = s.tokens.Color(ColorBg)
 		trackFG = s.tokens.Color(ColorBorder)

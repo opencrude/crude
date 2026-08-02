@@ -146,7 +146,7 @@ func TestViewModel_CreateFile_PublishesEvent(t *testing.T) {
 
 	// Create a file.
 	path := filepath.Join(dir, "event-file.txt")
-	app.CreateFile(path)
+	_ = app.CreateFile(path)
 
 	// Verify event was published through EventBus.
 	events := bus.RecentEvents(1)
@@ -165,7 +165,7 @@ func TestViewModel_DeletePath_PublishesEvent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	app.DeletePath(path)
+	_ = app.DeletePath(path)
 
 	// Verify event was published.
 	events := bus.RecentEvents(1)

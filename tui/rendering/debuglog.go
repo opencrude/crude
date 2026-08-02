@@ -17,6 +17,6 @@ func Log(format string, args ...interface{}) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	f.WriteString(line)
+	defer func() { _ = f.Close() }()
+	_, _ = f.WriteString(line)
 }

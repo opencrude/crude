@@ -251,10 +251,6 @@ func (m *Model) resolvedContextHelp() []ui.HintSegment {
 	return out
 }
 
-func (m *Model) buildChatHint() string {
-	return m.ContextHint()
-}
-
 func (m *Model) DismissHint() {
 	m.showHint = false
 }

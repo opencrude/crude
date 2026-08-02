@@ -39,7 +39,7 @@ func (e *Editor) startWatching() {
 		return
 	}
 	if err := w.Add(dir); err != nil {
-		w.Close()
+		_ = w.Close()
 		return
 	}
 	changed := make(chan struct{}, 1)

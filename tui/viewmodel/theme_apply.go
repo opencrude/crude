@@ -10,31 +10,25 @@ import (
 // themeConsumerID names a theme sink that ApplyThemePreset must update.
 // The anti-regression test requires every ID in requiredThemeConsumerIDs to
 // appear in the snapshot after a preset switch, and every non-nil *ui.Host
-// field on App to be covered by a registered consumer.
+// field on App to be covered by a registered consumer (rootHost covers the
+// whole shell tree via Host.SetTheme + applyTokenSet).
 type themeConsumerID string
 
 const (
 	themeConsumerAppTheme           themeConsumerID = "app.Theme"
 	themeConsumerRenderCtx          themeConsumerID = "renderCtx"
-	themeConsumerSidebarHost        themeConsumerID = "sidebarHost"
-	themeConsumerSidebarScreen      themeConsumerID = "sidebarScreen"
+	themeConsumerRootHost           themeConsumerID = "rootHost"
 	themeConsumerSessionProjections themeConsumerID = "sessionProjections"
 	themeConsumerSubPaneProjections themeConsumerID = "subPaneProjections"
-	themeConsumerLauncherHost       themeConsumerID = "launcherHost"
+	themeConsumerSidebarScreen      themeConsumerID = "sidebarScreen"
 	themeConsumerLauncherScreen     themeConsumerID = "launcherScreen"
-	themeConsumerHeaderHost         themeConsumerID = "headerHost"
 	themeConsumerHeaderScreen       themeConsumerID = "headerScreen"
-	themeConsumerTabHost            themeConsumerID = "tabHost"
 	themeConsumerTabScreen          themeConsumerID = "tabScreen"
-	themeConsumerInputHost          themeConsumerID = "inputHost"
 	themeConsumerInputScreen        themeConsumerID = "inputScreen"
 	themeConsumerInputModel         themeConsumerID = "Input"
-	themeConsumerChatHost           themeConsumerID = "chatHost"
 	themeConsumerChatScreen         themeConsumerID = "chatScreen"
-	themeConsumerEditorHost         themeConsumerID = "editorHost"
 	themeConsumerEditorScreen       themeConsumerID = "editorScreen"
 	themeConsumerEditorTokens       themeConsumerID = "EditorState.Editor"
-	themeConsumerStatusHost         themeConsumerID = "statusHost"
 	themeConsumerStatusBar          themeConsumerID = "StatusBar"
 	themeConsumerFindInFiles        themeConsumerID = "findInFiles"
 	themeConsumerFilePicker         themeConsumerID = "FilePicker"
@@ -49,17 +43,11 @@ const (
 var requiredThemeConsumerIDs = []themeConsumerID{
 	themeConsumerAppTheme,
 	themeConsumerRenderCtx,
-	themeConsumerSidebarHost,
+	themeConsumerRootHost,
 	themeConsumerSessionProjections,
 	themeConsumerSubPaneProjections,
-	themeConsumerLauncherHost,
-	themeConsumerHeaderHost,
-	themeConsumerTabHost,
-	themeConsumerInputHost,
 	themeConsumerInputModel,
-	themeConsumerChatHost,
-	themeConsumerEditorHost,
-	themeConsumerStatusHost,
+	themeConsumerEditorTokens,
 	themeConsumerOpenOverlays,
 }
 
@@ -92,17 +80,8 @@ func (m *App) ApplyThemePreset(preset string) {
 	// Invalidate every colour-holding render cache. Theme switches must not
 	// reuse ANSI/chroma/message pixels painted under the previous palette.
 	m.cachedOutput = ""
-	if m.mainContentSurf != nil {
-		m.mainContentSurf.Buffer().Clear()
-	}
-	if m.mainEditorSurf != nil {
-		m.mainEditorSurf.Buffer().Clear()
-	}
-	if m.mainChatSurf != nil {
-		m.mainChatSurf.Buffer().Clear()
-	}
-	if m.mainLauncherSurf != nil {
-		m.mainLauncherSurf.Buffer().Clear()
+	if m.mainSurf != nil {
+		m.mainSurf.Buffer().Clear()
 	}
 }
 
@@ -132,31 +111,17 @@ func (m *App) themeConsumers() []themeConsumer {
 			},
 		},
 		{
-			id: themeConsumerSidebarHost,
+			id: themeConsumerRootHost,
 			apply: func(th *theme.Theme) {
-				if m.sidebarHost != nil {
-					m.sidebarHost.SetTheme(th)
+				if m.rootHost != nil {
+					m.rootHost.SetTheme(th)
 				}
 			},
 			read: func() *theme.Theme {
-				if m.sidebarHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.sidebarHost.Theme()
-			},
-		},
-		{
-			id: themeConsumerSidebarScreen,
-			apply: func(th *theme.Theme) {
-				if m.sidebarScreen != nil {
-					m.sidebarScreen.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme {
-				if m.sidebarHost == nil {
-					return nil
-				}
-				return m.sidebarHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{
@@ -188,17 +153,17 @@ func (m *App) themeConsumers() []themeConsumer {
 			},
 		},
 		{
-			id: themeConsumerLauncherHost,
+			id: themeConsumerSidebarScreen,
 			apply: func(th *theme.Theme) {
-				if m.launcherHost != nil {
-					m.launcherHost.SetTheme(th)
+				if m.sidebarScreen != nil {
+					m.sidebarScreen.SetTheme(th)
 				}
 			},
 			read: func() *theme.Theme {
-				if m.launcherHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.launcherHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{
@@ -209,24 +174,10 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 			},
 			read: func() *theme.Theme {
-				if m.launcherHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.launcherHost.Theme()
-			},
-		},
-		{
-			id: themeConsumerHeaderHost,
-			apply: func(th *theme.Theme) {
-				if m.headerHost != nil {
-					m.headerHost.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme {
-				if m.headerHost == nil {
-					return nil
-				}
-				return m.headerHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{
@@ -237,24 +188,10 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 			},
 			read: func() *theme.Theme {
-				if m.headerHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.headerHost.Theme()
-			},
-		},
-		{
-			id: themeConsumerTabHost,
-			apply: func(th *theme.Theme) {
-				if m.tabHost != nil {
-					m.tabHost.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme {
-				if m.tabHost == nil {
-					return nil
-				}
-				return m.tabHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{
@@ -265,24 +202,10 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 			},
 			read: func() *theme.Theme {
-				if m.tabHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.tabHost.Theme()
-			},
-		},
-		{
-			id: themeConsumerInputHost,
-			apply: func(th *theme.Theme) {
-				if m.inputHost != nil {
-					m.inputHost.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme {
-				if m.inputHost == nil {
-					return nil
-				}
-				return m.inputHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{
@@ -293,10 +216,10 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 			},
 			read: func() *theme.Theme {
-				if m.inputHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.inputHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{
@@ -307,20 +230,6 @@ func (m *App) themeConsumers() []themeConsumer {
 			read: func() *theme.Theme { return m.Theme },
 		},
 		{
-			id: themeConsumerChatHost,
-			apply: func(th *theme.Theme) {
-				if m.chatHost != nil {
-					m.chatHost.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme {
-				if m.chatHost == nil {
-					return nil
-				}
-				return m.chatHost.Theme()
-			},
-		},
-		{
 			id: themeConsumerChatScreen,
 			apply: func(th *theme.Theme) {
 				if m.chatScreen != nil {
@@ -328,24 +237,10 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 			},
 			read: func() *theme.Theme {
-				if m.chatHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.chatHost.Theme()
-			},
-		},
-		{
-			id: themeConsumerEditorHost,
-			apply: func(th *theme.Theme) {
-				if m.editorHost != nil {
-					m.editorHost.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme {
-				if m.editorHost == nil {
-					return nil
-				}
-				return m.editorHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{
@@ -356,10 +251,10 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 			},
 			read: func() *theme.Theme {
-				if m.editorHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.editorHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{
@@ -377,20 +272,6 @@ func (m *App) themeConsumers() []themeConsumer {
 			},
 		},
 		{
-			id: themeConsumerStatusHost,
-			apply: func(th *theme.Theme) {
-				if m.statusHost != nil {
-					m.statusHost.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme {
-				if m.statusHost == nil {
-					return nil
-				}
-				return m.statusHost.Theme()
-			},
-		},
-		{
 			id: themeConsumerStatusBar,
 			apply: func(th *theme.Theme) {
 				if m.StatusBar != nil {
@@ -398,10 +279,10 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 			},
 			read: func() *theme.Theme {
-				if m.statusHost == nil {
+				if m.rootHost == nil {
 					return nil
 				}
-				return m.statusHost.Theme()
+				return m.rootHost.Theme()
 			},
 		},
 		{

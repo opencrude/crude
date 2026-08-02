@@ -11,17 +11,7 @@ import (
 	"crude/provider"
 )
 
-func openTestDB(t *testing.T) (*DB, string) {
-	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	db, err := OpenAndMigrate(dbPath)
-	if err != nil {
-		t.Fatalf("OpenAndMigrate: %v", err)
-	}
-	return &DB{db: db, path: dbPath}, dir
-}
-
+// DB wraps an open session DB for test fixtures (shared across test files).
 type DB struct {
 	db   *sql.DB
 	path string
@@ -190,14 +180,14 @@ func TestReplaceMessagesOverwrite(t *testing.T) {
 		{Role: "assistant", Content: provider.TextContent("reply1")},
 	}
 	turns1 := []int{1, 1}
-	ReplaceMessages(db, "test", msgs1, turns1)
+	_, _ = ReplaceMessages(db, "test", msgs1, turns1)
 
 	msgs2 := []provider.ChatMessage{
 		{Role: "user", Content: provider.TextContent("second")},
 		{Role: "assistant", Content: provider.TextContent("reply2")},
 	}
 	turns2 := []int{2, 2}
-	ReplaceMessages(db, "test", msgs2, turns2)
+	_, _ = ReplaceMessages(db, "test", msgs2, turns2)
 
 	loaded, loadedTurns, err := LoadMessages(db)
 	if err != nil {
@@ -240,7 +230,7 @@ func TestPerMessageTurnNumbers(t *testing.T) {
 	}
 	turns := []int{1, 1, 2, 2}
 
-	ReplaceMessages(db, "test", msgs, turns)
+	_, _ = ReplaceMessages(db, "test", msgs, turns)
 	_, loadedTurns, err := LoadMessages(db)
 	if err != nil {
 		t.Fatal(err)
@@ -298,10 +288,10 @@ func TestUpdateFirstLastPrompt(t *testing.T) {
 	}
 	defer db.Close()
 
-	Create(db, SessionMeta{ID: "t", ProjectPath: "/", ProjectName: "p", CreatedAt: 1})
+	_ = Create(db, SessionMeta{ID: "t", ProjectPath: "/", ProjectName: "p", CreatedAt: 1})
 
-	UpdateFirstPrompt(db, "t", "first prompt text that is very long and should be truncated at 200 characters but this one is short enough")
-	UpdateLastPrompt(db, "t", "last prompt")
+	_ = UpdateFirstPrompt(db, "t", "first prompt text that is very long and should be truncated at 200 characters but this one is short enough")
+	_ = UpdateLastPrompt(db, "t", "last prompt")
 
 	meta, _ := GetMeta(db)
 	if !meta.FirstPrompt.Valid {
@@ -314,7 +304,7 @@ func TestUpdateFirstLastPrompt(t *testing.T) {
 		t.Errorf("last_prompt: expected 'last prompt', got %q", meta.LastPrompt.String)
 	}
 
-	UpdateFirstPrompt(db, "t", "should not overwrite")
+	_ = UpdateFirstPrompt(db, "t", "should not overwrite")
 	meta2, _ := GetMeta(db)
 	if meta2.FirstPrompt.String == "should not overwrite" {
 		t.Error("UpdateFirstPrompt should not overwrite existing value")
@@ -330,11 +320,11 @@ func TestListSessions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		Create(db, SessionMeta{
+		_ = Create(db, SessionMeta{
 			ID: name, ProjectPath: "/", ProjectName: name,
 			Model: "m", Provider: "p", CreatedAt: int64(i + 1),
 		})
-		ReplaceMessages(db, name, []provider.ChatMessage{
+		_, _ = ReplaceMessages(db, name, []provider.ChatMessage{
 			{Role: "user", Content: provider.TextContent("hello")},
 		}, []int{1})
 		db.Close()
@@ -362,11 +352,11 @@ func TestListSessionsPaginated(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		Create(db, SessionMeta{
+		_ = Create(db, SessionMeta{
 			ID: name, ProjectPath: "/", ProjectName: name,
 			Model: "m", Provider: "p", CreatedAt: int64(i + 1),
 		})
-		ReplaceMessages(db, name, []provider.ChatMessage{
+		_, _ = ReplaceMessages(db, name, []provider.ChatMessage{
 			{Role: "user", Content: provider.TextContent("hello")},
 		}, []int{1})
 		db.Close()
@@ -422,8 +412,8 @@ func TestDeleteSession(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "delme.db")
 	db, _ := OpenAndMigrate(dbPath)
-	Create(db, SessionMeta{ID: "delme", ProjectPath: "/", ProjectName: "p", CreatedAt: 1})
-	db.Close()
+	_ = Create(db, SessionMeta{ID: "delme", ProjectPath: "/", ProjectName: "p", CreatedAt: 1})
+	_ = db.Close()
 
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatal("db should exist before delete")

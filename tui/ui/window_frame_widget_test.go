@@ -107,4 +107,83 @@ func TestWindowFrameWidgetTranslatesLegacyPointerToContent(t *testing.T) {
 	}
 }
 
+func TestWindowFrameRevealCollapsesContentHeight(t *testing.T) {
+	body := &testFrameBody{Base: NewBase("body")}
+	frame := NewWindowFrame("frame", FrameWindow, NewTokenSet(theme.DefaultDark()))
+	frame.SetContent(body)
+	frame.SetReveal(0)
+	frame.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 20, H: 10})
+
+	// Full content height = H - top border - bottom border = 10-2 = 8.
+	// At reveal 0 the body must collapse to zero height (chrome stays).
+	if got := body.Bounds().H; got != 0 {
+		t.Fatalf("reveal=0 body height=%d, want 0", got)
+	}
+	if got := frame.contentR.H; got != 8 {
+		t.Fatalf("content rect H=%d, want 8 (chrome unaffected)", got)
+	}
+}
+
+func TestWindowFrameRevealScalesContentHeight(t *testing.T) {
+	body := &testFrameBody{Base: NewBase("body")}
+	frame := NewWindowFrame("frame", FrameWindow, NewTokenSet(theme.DefaultDark()))
+	frame.SetContent(body)
+	frame.SetReveal(0.5)
+	frame.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 20, H: 10})
+
+	if got := body.Bounds().H; got != 4 {
+		t.Fatalf("reveal=0.5 body height=%d, want 4 (8*0.5)", got)
+	}
+}
+
+func TestWindowFrameRevealFullShowsAllContent(t *testing.T) {
+	body := &testFrameBody{Base: NewBase("body")}
+	frame := NewWindowFrame("frame", FrameWindow, NewTokenSet(theme.DefaultDark()))
+	frame.SetContent(body)
+	frame.SetReveal(1)
+	frame.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 20, H: 10})
+
+	if got := body.Bounds().H; got != 8 {
+		t.Fatalf("reveal=1 body height=%d, want 8 (full)", got)
+	}
+	if got := body.Bounds().Y; got != 1 {
+		t.Fatalf("reveal=1 body Y=%d, want 1 (below title row)", got)
+	}
+}
+
+func TestWindowFrameRevealClampsOutOfRange(t *testing.T) {
+	frame := NewWindowFrame("frame", FrameWindow, NewTokenSet(theme.DefaultDark()))
+	frame.SetReveal(-5)
+	if got := frame.Reveal(); got != 0 {
+		t.Fatalf("reveal(-5)=%v, want 0", got)
+	}
+	frame.SetReveal(7)
+	if got := frame.Reveal(); got != 1 {
+		t.Fatalf("reveal(7)=%v, want 1", got)
+	}
+}
+
+func TestWindowFrameRevealHostHitTestMatchesGeometry(t *testing.T) {
+	// The geometry that paints is the geometry that receives input: during
+	// a half reveal, Host hit-testing must NOT target content rows below the
+	// revealed area (they are not laid out).
+	body := &testFrameBody{Base: NewBase("body")}
+	frame := NewWindowFrame("frame", FrameWindow, NewTokenSet(theme.DefaultDark()))
+	frame.SetContent(body)
+	frame.SetReveal(0.5)
+	host := NewHost(theme.DefaultDark(), frame)
+	host.Resize(20, 10)
+	host.Layout()
+
+	// Revealed area: rows 1..4 (5 rows: title + 4 content). Row 5+ is the
+	// hidden lower body — hit-testing must return the frame/root, not body.
+	if id := host.HitTest(5, 2); id != "body" {
+		t.Fatalf("hit in revealed area=%q, want body", id)
+	}
+	if id := host.HitTest(5, 8); id == "body" {
+		t.Fatal("hit below revealed area must not target body")
+	}
+}
+
+
 var _ WindowEventTarget = (*testFrameEventTarget)(nil)

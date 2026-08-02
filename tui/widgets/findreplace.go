@@ -1,8 +1,6 @@
 package widgets
 
 import (
-	"unicode/utf8"
-
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/editor"
@@ -62,8 +60,6 @@ type FindReplaceState struct {
 	OnReplaceAll func()
 	// OnClose fires on Esc.
 	OnClose func()
-
-	width int
 }
 
 func (st *FindReplaceState) ensureFindEdit() *ui.TextEdit {
@@ -253,15 +249,6 @@ func HandleKey(st *FindReplaceState, msg tea.KeyPressMsg) (*FindReplaceState, te
 		return st, nil, ed.Value() != oldVal
 	}
 	return st, nil, false
-}
-
-// runeCount returns the rune length of a string. Used internally
-// for width calculations; replaced by utf8.RuneCountInString.
-func runeCount(s string) int { return utf8.RuneCountInString(s) }
-
-// visibleWidthOf is a thin wrapper around rendering.VisibleWidth.
-func visibleWidthOf(s string) int {
-	return rendering.VisibleWidth(s)
 }
 
 // VisibleWidth is a package-level re-export of rendering.VisibleWidth

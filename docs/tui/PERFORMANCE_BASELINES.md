@@ -101,20 +101,20 @@ them is not automatically rejected, but it requires an explanation and a before/
 
 | Benchmark | Expected upper time | Expected allocation ceiling |
 |-----------|---------------------|-----------------------------|
-| `DemoGalleryPaint_80x24` | 60,000 ns/op | 3,000 B/op, 65 allocs/op |
-| `DemoGalleryPaint_120x40` | 90,000 ns/op | 4,500 B/op, 65 allocs/op |
-| `DemoGalleryHandleKeyEditCycle` | 750 ns/op | 64 B/op, 4 allocs/op |
+| `DemoGalleryPaint_80x24` | 60,000 ns/op | 1,300 B/op, 60 allocs/op |
+| `DemoGalleryPaint_120x40` | 90,000 ns/op | 2,000 B/op, 60 allocs/op |
+| `DemoGalleryHandleKeyEditCycle` | 750 ns/op | 48 B/op, 3 allocs/op |
 | `Blit_80x24` | 15,000 ns/op | 0 B/op, 0 allocs/op |
 | `WriteString_Line` | 5,000 ns/op | 0 B/op, 0 allocs/op |
 | `FlattenZOrder_Nested` | 1,500 ns/op | 2,300 B/op, 8 allocs/op |
-| `FullRender_80x24` | 175,000 ns/op | 52,000 B/op, 8 allocs/op |
+| `FullRender_80x24` | 175,000 ns/op | 12,000 B/op, 6 allocs/op |
 | `GenerateANSI_80x24` | 70,000 ns/op | 9,000 B/op, 2 allocs/op |
 | `EditorPaint_80x24` | 150,000 ns/op | 9,000 B/op, 1,200 allocs/op |
 | `EditorPaint_120x40` | 350,000 ns/op | 20,000 B/op, 2,200 allocs/op |
 | `EditorPaint_LargeFile_120x40` | 350,000 ns/op | 20,000 B/op, 2,200 allocs/op |
 | `EditorScrollRepaint_120x40` | 350,000 ns/op | 20,000 B/op, 2,200 allocs/op |
-| `ChatStreamPaint_80x24` | 350,000 ns/op | 18,000 B/op, 500 allocs/op |
-| `ChatStreamPaint_120x40` | 800,000 ns/op | 36,000 B/op, 800 allocs/op |
+| `ChatStreamPaint_80x24` | 350,000 ns/op | 9,000 B/op, 300 allocs/op |
+| `ChatStreamPaint_120x40` | 800,000 ns/op | 20,000 B/op, 400 allocs/op |
 
 The timing ceilings intentionally allow normal laptop frequency variation while still
 surfacing regressions large enough to threaten interactive rendering. Allocation

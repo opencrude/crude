@@ -14,10 +14,14 @@ import (
 	"crude/tui/wm"
 )
 
-type mouseRegion int
+// shellRegion classifies a screen point for VIEWMODEL POLICY only (focus
+// stack updates, editor legacy routing, divider drag, status row, context
+// menus). Actual pointer targeting happens in the root Host hit tree; these
+// regions never translate coordinates.
+type shellRegion int
 
 const (
-	regionFloatingWindow mouseRegion = iota
+	regionNone shellRegion = iota
 	regionSidebar
 	regionSidebarDivider
 	regionTabBar
@@ -27,21 +31,9 @@ const (
 	regionChat
 	regionStatusBar
 	regionLauncher
-	regionNone
 )
 
-func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
-	if m.windowManager != nil {
-		if isWheel {
-			if m.windowManager.HandleMouseWheel(tea.MouseWheelMsg{X: x, Y: y}) != nil {
-				return regionFloatingWindow
-			}
-		} else {
-			if hitWin := m.windowManager.HandleMouse(tea.MouseClickMsg{X: x, Y: y}); hitWin != nil {
-				return regionFloatingWindow
-			}
-		}
-	}
+func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	if m.sessionDeckBlocking() {
 		return regionSessionDeck
 	}
@@ -70,7 +62,7 @@ func (m *App) classifyMouse(x, y int, isWheel bool) mouseRegion {
 		return regionSessionDeck
 	}
 
-	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
+	if m.isEditorActive() {
 		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.ChatAreaHeight {
 			return regionEditor
 		}
@@ -120,120 +112,15 @@ func (m *App) routeEditorMouse(msg tea.Msg) tea.Cmd {
 	return m.EditorState.Editor.HandleEvent(translated)
 }
 
-func (m *App) routeSidebarMouse(msg tea.Msg) tea.Cmd {
-	if m.sidebarHost == nil {
+// handleShellPointer routes one pointer message through the root Host.
+// The host hit-tests the shell tree, computes local coordinates from the
+// layout geometry, and manages capture for drags.
+func (m *App) handleShellPointer(msg tea.Msg) tea.Cmd {
+	if m.rootHost == nil {
 		return nil
 	}
-	translated := m.translateSidebarMouse(msg)
-	res := m.sidebarHost.Handle(translated)
+	res := m.rootHost.Handle(msg)
 	return res.Cmd
-}
-
-func (m *App) translateSidebarMouse(msg tea.Msg) tea.Msg {
-	offY := m.Tree.YOffset
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		mouse := mm.Mouse()
-		return tea.MouseClickMsg{X: mouse.X, Y: mouse.Y - offY, Button: mm.Button}
-	case tea.MouseMotionMsg:
-		mouse := mm.Mouse()
-		return tea.MouseMotionMsg{X: mouse.X, Y: mouse.Y - offY, Button: mm.Button}
-	case tea.MouseReleaseMsg:
-		mouse := mm.Mouse()
-		return tea.MouseReleaseMsg{X: mouse.X, Y: mouse.Y - offY, Button: mm.Button}
-	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X, Y: mm.Y - offY, Button: mm.Button}
-	}
-	return msg
-}
-
-func (m *App) translateChatMouse(msg tea.Msg) tea.Msg {
-	if m.chatRect.Empty() {
-		return msg
-	}
-	dx := m.chatRect.X
-	dy := m.chatRect.Y
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		mouse := mm.Mouse()
-		return tea.MouseClickMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
-	case tea.MouseMotionMsg:
-		mouse := mm.Mouse()
-		return tea.MouseMotionMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
-	case tea.MouseReleaseMsg:
-		mouse := mm.Mouse()
-		return tea.MouseReleaseMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
-	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X - dx, Y: mm.Y - dy, Button: mm.Button, Mod: mm.Mod}
-	}
-	return msg
-}
-
-func (m *App) translateLauncherMouse(msg tea.Msg) tea.Msg {
-	layout := m.computeLayout()
-	dx := layout.SidebarW + layout.PadLR
-	dy := layout.ChatAreaTop
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		mouse := mm.Mouse()
-		return tea.MouseClickMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
-	case tea.MouseMotionMsg:
-		mouse := mm.Mouse()
-		return tea.MouseMotionMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
-	case tea.MouseReleaseMsg:
-		mouse := mm.Mouse()
-		return tea.MouseReleaseMsg{X: mouse.X - dx, Y: mouse.Y - dy, Button: mm.Button, Mod: mm.Mod}
-	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X - dx, Y: mm.Y - dy, Button: mm.Button, Mod: mm.Mod}
-	}
-	return msg
-}
-
-// capturedPersistentHost returns the visible product Host that owns pointer
-// capture, if any. Precedence when more than one reports capture: chat >
-// sidebar > launcher. Inactive Hosts are canceled before routing.
-func (m *App) capturedPersistentHost() (*ui.Host, func(tea.Msg) tea.Msg) {
-	m.syncPersistentHostCapture()
-	entries := m.persistentHostEntries()
-	var best *persistentHostEntry
-	for i := range entries {
-		e := &entries[i]
-		if !e.active || e.host == nil || !e.host.HasPointerCapture() {
-			continue
-		}
-		if best == nil || e.priority < best.priority {
-			best = e
-		}
-	}
-	if best == nil {
-		return nil, nil
-	}
-	return best.host, best.translate
-}
-
-func (m *App) routeChatMouse(msg tea.Msg, mouse tea.Mouse, isLeftClick bool) []tea.Cmd {
-	var cmds []tea.Cmd
-	canType := false
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
-		canType = !n.State.Completed && n.State.IsActive()
-	}
-
-	if m.Input.InputSelecting() {
-		updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
-		m.Input = updated
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		cmds = append(cmds, m.handleInputEvent(evt)...)
-	} else {
-		if m.chatHost != nil {
-			res := m.chatHost.Handle(m.translateChatMouse(msg))
-			if res.Cmd != nil {
-				cmds = append(cmds, res.Cmd)
-			}
-		}
-	}
-	return cmds
 }
 
 func (m *App) routeInputMouse(msg tea.Msg) []tea.Cmd {
@@ -286,19 +173,9 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	region := m.classifyMouse(mouse.X, mouse.Y, false)
+	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 
 	switch region {
-	case regionSidebar:
-		m.setSessionDeckFocused(false)
-		m.FocusStack.Clear()
-		m.FocusStack.Push(FocusTree)
-		if mouse.Y-m.Tree.YOffset >= 0 {
-			cmd := m.routeSidebarMouse(msg)
-			return m, cmd
-		}
-		return m, nil
-
 	case regionSidebarDivider:
 		m.setSessionDeckFocused(false)
 		if msg.Button == tea.MouseLeft {
@@ -308,55 +185,69 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case regionTabBar:
+	case regionStatusBar:
+		// Passive display row; right-click is handled separately.
 		m.setSessionDeckFocused(false)
-		m.FocusStack.Clear()
-		m.FocusStack.Push(FocusTabBar)
-		cmd := m.handleTabBarEvent(msg)
-		return m, cmd
+		return m, nil
 
 	case regionEditor:
 		m.unfocus()
 		cmd := m.routeEditorMouse(msg)
 		m.updateDiagHoverPopup(mouse.X, mouse.Y)
-		if cmd != nil {
-			return m, cmd
-		}
-		return m, nil
-
-	case regionInput:
-		m.unfocus()
-		cmds = append(cmds, m.routeInputMouse(msg)...)
-		return m, tea.Batch(cmds...)
-
-	case regionChat:
-		m.unfocus()
-		cmds = append(cmds, m.routeChatMouse(msg, mouse, msg.Button == tea.MouseLeft)...)
-		return m, tea.Batch(cmds...)
+		return m, cmd
 
 	case regionSessionDeck:
 		m.setSessionDeckFocused(true)
-		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
-
-	case regionStatusBar:
-		m.setSessionDeckFocused(false)
-		// Left-click on the status bar is a no-op (it's a passive
-		// display, not an interactive region). Right-click goes
-		// through dispatchMouseRightClick instead.
-		return m, nil
-
-	case regionLauncher:
-		m.setSessionDeckFocused(false)
-		res := m.launcherHost.Handle(m.translateLauncherMouse(msg))
-		m.LastInteractionTime = time.Now()
-		return m, res.Cmd
+		return m, m.handleShellPointer(msg)
 	}
 
-	if m.FocusStack.Top() == FocusTree && mouse.X >= m.Tree.Width {
+	// Focus-stack policy for interactive shell regions. Runs before the
+	// root host routes the click so the stack and the host focus agree
+	// by the next frame's syncRootFocus.
+	switch region {
+	case regionSidebar:
+		m.setSessionDeckFocused(false)
+		m.FocusStack.Clear()
+		m.FocusStack.Push(FocusTree)
+	case regionTabBar:
+		m.setSessionDeckFocused(false)
+		m.FocusStack.Clear()
+		m.FocusStack.Push(FocusTabBar)
+	case regionChat, regionInput:
+		m.unfocus()
+	case regionLauncher:
+		m.setSessionDeckFocused(false)
+		m.LastInteractionTime = time.Now()
+	}
+
+	// Legacy input-model selection: while the chat input is drag-selecting,
+	// a click outside the input must reach the input model so it cancels
+	// the selection (click-away contract).
+	if region == regionChat && m.Input.InputSelecting() {
+		cmds = append(cmds, m.routeInputMouse(msg)...)
+		return m, tea.Batch(cmds...)
+	}
+
+	res := m.rootHost.Handle(msg)
+	if res.Cmd != nil {
+		cmds = append(cmds, res.Cmd)
+	}
+	// Tab-bar clicks bubble typed tabs.* actions up through the shell tree;
+	// the viewmodel translates them into window tab operations.
+	if res.Action != nil {
+		switch res.Action.ID {
+		case "tabs.activate", "tabs.close", "tabs.enter":
+			if cmd := m.handleTabBarHostResult(res); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+
+	if region == regionNone && m.FocusStack.Top() == FocusTree && mouse.X >= m.Tree.Width {
 		m.FocusStack.Pop()
 	}
 
-	return m, nil
+	return m, tea.Batch(cmds...)
 }
 
 func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
@@ -371,38 +262,29 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
-	region := m.classifyMouse(msg.X, msg.Y, true)
+	region := m.classifyShellRegion(msg.X, msg.Y, true)
 
 	switch region {
 	case regionSidebar:
-		cmd := m.routeSidebarMouse(msg)
-		return m, cmd
+		return m, m.handleShellPointer(msg)
 
 	case regionEditor:
 		m.EditorState.Editor.HandleEvent(msg)
 		return m, nil
 
-	case regionChat:
-		if m.chatHost != nil {
-			res := m.chatHost.Handle(m.translateChatMouse(msg))
-			if res.Handled {
-				return m, res.Cmd
-			}
-		}
-		return m, nil
-
 	case regionSessionDeck:
-		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
+		return m, m.handleShellPointer(msg)
 
 	case regionLauncher:
-		res := m.launcherHost.Handle(m.translateLauncherMouse(msg))
+		res := m.rootHost.Handle(msg)
 		m.LastInteractionTime = time.Now()
 		return m, res.Cmd
 
 	default:
+		// Chat (and anything else in the shell tree) scrolls through the
+		// root host hit-test; unhandled wheel stays unhandled.
+		return m, m.handleShellPointer(msg)
 	}
-
-	return m, nil
 }
 
 func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
@@ -431,8 +313,15 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if host, translate := m.capturedPersistentHost(); host != nil {
-		return m, host.Handle(translate(msg)).Cmd
+	// Root-host pointer capture: drags (chat selection, scrollbar thumbs,
+	// input selection, deck gutters) continue outside their original
+	// bounds until release — one capture service for the whole shell.
+	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
+		res := m.rootHost.Handle(msg)
+		if res.Cmd != nil {
+			cmds = append(cmds, res.Cmd)
+		}
+		return m, tea.Batch(cmds...)
 	}
 
 	if m.windowManager != nil {
@@ -451,101 +340,72 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	region := m.classifyShellRegion(mouse.X, mouse.Y, true)
+
 	// Launcher: when the launcher screen is active (no agents, no
-	// editor), route motion directly to its native component host
-	// and return. This is a critical performance fix: without this
-	// early return, every mouse-motion event over the launcher
-	// would fall through to the tree-hover-clear, tab-bar-hover-
-	// clear, clearDiagHoverPopup, and routeChatMouse paths — each
-	// of which does non-trivial work on every pixel of mouse
-	// movement.
-	//
-	// Before returning, clear tree and tab-bar hover state so the
-	// stale highlight doesn't persist when the mouse leaves those
-	// areas for the launcher.
+	// editor), route motion only inside the launcher or the file tree.
+	// This is a critical performance fix: every motion event outside
+	// those regions clears stale tree/tab hover and returns without
+	// the launcher re-render churn.
 	if m.launcherScreen != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
-		// Mouse is over the file tree — route there instead.
-		if m.Tree.Visible && m.Tree.Model != nil && mouse.X < m.Tree.Width {
-			cmd := m.routeSidebarMouse(msg)
-			return m, cmd
-		}
-		// Clear tree hover (mouse left the tree area).
-		if m.Tree.Model != nil {
-			m.Tree.Model.Hover.Clear()
-		}
-		// Clear tab bar hover (mouse left the tab row).
-		m.Win.Hover.Clear()
-		res := m.launcherHost.Handle(m.translateLauncherMouse(msg))
-		if res.Cmd != nil {
-			cmds = append(cmds, res.Cmd)
-		}
-		return m, tea.Batch(cmds...)
-	}
-
-	if m.Tree.Visible && m.Tree.Model != nil && mouse.X < m.Tree.Width {
-		cmd := m.routeSidebarMouse(msg)
-		return m, cmd
-	}
-
-	// Mouse is outside the tree — clear the hover state.
-	if m.Tree.Model != nil {
-		m.Tree.Model.Hover.Clear()
-	}
-
-	// Tab bar hover: update via native tab host when over row 3.
-	if m.tabBarVisible() && mouse.Y == 3 {
-		_ = m.handleTabBarEvent(tea.MouseMotionMsg{
-			X:      mouse.X,
-			Y:      0,
-			Button: mouse.Button,
-			Mod:    msg.Mod,
-		})
-		return m, tea.Batch(cmds...)
-	}
-
-	// Mouse is outside the tab bar — clear the hover state.
-	m.Win.Hover.Clear()
-	if m.sessionDeckRect.Contains(mouse.X, mouse.Y) {
-		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
-	}
-
-	// Overlay hover: forward mouse motion to the active overlay's
-	// interactive element (currently only the Confirm dialog's
-	// ButtonGroup). This is what gives the confirm dialog buttons
-	// the "live" hover background that makes the rest of the app
-	// feel like a real GUI.
-	//
-	// Only fire this when the mouse is actually inside the overlay
-	// region — the classifyMouse() call would also be expensive
-	// for every motion event, so we use a cheap bounds check first.
-	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
-		// Cheap Y-bounds check instead of full classifyMouse:
-		// classifyMouse checks WM, sidebar, tab bar, overlay, editor,
-		// launcher, input, and chat — but all those except "editor
-		// vs chat" have already been handled above (tree, tabs,
-		// overlay, etc.). We only need to know: is the mouse in
-		// the editor's Y range?
-		layout := m.computeLayout()
-		if mouse.Y >= layout.ChatAreaTop && mouse.Y < layout.ChatAreaTop+m.ChatAreaHeight && mouse.X >= layout.SidebarW {
-			cmd := m.routeEditorMouse(msg)
-			m.updateDiagHoverPopup(mouse.X, mouse.Y)
-			// Bare pointer motion is repaint-free only if nothing visual
-			// changed; the next frame paints the editor unconditionally.
-			if cmd != nil {
-				return m, cmd
+		switch region {
+		case regionSidebar:
+			return m, m.handleShellPointer(msg)
+		case regionLauncher:
+			m.LastInteractionTime = time.Now()
+			return m, m.handleShellPointer(msg)
+		default:
+			if m.Tree.Model != nil {
+				m.Tree.Model.Hover.Clear()
 			}
+			m.Win.Hover.Clear()
 			return m, nil
 		}
 	}
 
-	// Mouse moved away from editor — clear any diagnostic popup.
-	m.clearDiagHoverPopup()
+	switch region {
+	case regionSidebar:
+		return m, m.handleShellPointer(msg)
 
-	if m.OverlayState.IsChat() {
-		cmds = append(cmds, m.routeChatMouse(msg, mouse, false)...)
-		return m, tea.Batch(cmds...)
+	case regionTabBar:
+		// Tab hover is viewmodel state (Win.Hover) fed from the native
+		// Tabs control after routing the motion through the shell tree.
+		cmd := m.handleTabBarEvent(msg)
+		return m, cmd
+
+	case regionSessionDeck:
+		return m, m.handleShellPointer(msg)
+
+	case regionEditor:
+		if m.isEditorActive() {
+			cmd := m.routeEditorMouse(msg)
+			m.updateDiagHoverPopup(mouse.X, mouse.Y)
+			return m, cmd
+		}
+		return m, nil
+
+	case regionInput:
+		if m.Input.InputSelecting() {
+			return m, tea.Batch(m.routeInputMouse(msg)...)
+		}
+		return m, m.handleShellPointer(msg)
+
+	case regionChat:
+		if m.Input.InputSelecting() {
+			return m, tea.Batch(m.routeInputMouse(msg)...)
+		}
+		return m, m.handleShellPointer(msg)
 	}
 
+	// Mouse is outside every interactive region — clear stale hover.
+	if m.Tree.Model != nil {
+		m.Tree.Model.Hover.Clear()
+	}
+	m.Win.Hover.Clear()
+	m.clearDiagHoverPopup()
+	if m.OverlayState.IsChat() {
+		return m, m.handleShellPointer(msg)
+	}
 	return m, nil
 }
 
@@ -572,24 +432,21 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, nil
 	}
 
-	if host, translate := m.capturedPersistentHost(); host != nil {
-		res := host.Handle(translate(msg))
+	// Root-host capture release: ends drags (chat selection, scrollbar,
+	// input selection, deck gutters) wherever the pointer is.
+	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
+		res := m.rootHost.Handle(msg)
 		if res.Cmd != nil {
 			cmds = append(cmds, res.Cmd)
 		}
 		return m, tea.Batch(cmds...)
 	}
 
-	if m.Tree.Visible && m.Tree.Model != nil && mouse.X < m.Tree.Width {
-		cmd := m.routeSidebarMouse(msg)
-		return m, cmd
-	}
-
-	region := m.classifyMouse(mouse.X, mouse.Y, false)
+	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 
 	switch region {
 	case regionSessionDeck:
-		return m, m.handleSessionDeckEvent(m.translateSessionDeckMouse(msg))
+		return m, m.handleShellPointer(msg)
 
 	case regionEditor:
 		cmd := m.routeEditorMouse(msg)
@@ -599,20 +456,24 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, tea.Batch(cmds...)
 
 	case regionInput:
-		cmds = append(cmds, m.routeInputMouse(msg)...)
-		return m, tea.Batch(cmds...)
+		if m.Input.InputSelecting() {
+			cmds = append(cmds, m.routeInputMouse(msg)...)
+			return m, tea.Batch(cmds...)
+		}
+		return m, m.handleShellPointer(msg)
 
 	case regionLauncher:
 		if m.launcherHostVisible() {
-			if cmd := m.launcherHost.Handle(m.translateLauncherMouse(msg)).Cmd; cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+			return m, m.handleShellPointer(msg)
 		}
-		return m, tea.Batch(cmds...)
+		return m, nil
 
 	case regionChat:
-		cmds = append(cmds, m.routeChatMouse(msg, mouse, false)...)
-		return m, tea.Batch(cmds...)
+		if m.Input.InputSelecting() {
+			cmds = append(cmds, m.routeInputMouse(msg)...)
+			return m, tea.Batch(cmds...)
+		}
+		return m, m.handleShellPointer(msg)
 	}
 
 	return m, nil
@@ -782,15 +643,6 @@ func (m *App) clearDiagHoverPopup() {
 	m.overlayHost.Close(ui.OverlayDiagHover)
 }
 
-// padRight pads a string to the given visible width with spaces on the right.
-func padRight(s string, width int) string {
-	pad := width - rendering.VisibleWidth(s)
-	if pad < 0 {
-		pad = 0
-	}
-	return s + strings.Repeat(" ", pad)
-}
-
 // dispatchMouseRightClick shows a context menu appropriate to the
 // region the user clicked. If a context menu is already open, the
 // second right-click closes it (so the user can dismiss with the
@@ -818,7 +670,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		}
 	}
 
-	region := m.classifyMouse(mouse.X, mouse.Y, false)
+	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 	var st *widgets.ContextMenuState
 	switch region {
 	case regionEditor:

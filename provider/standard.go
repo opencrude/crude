@@ -1,7 +1,5 @@
 package provider
 
-import "io"
-
 // APIStandard defines the contract for an LLM API wire protocol.
 // Each standard implements a specific API format (OpenAI Chat Completions,
 // Anthropic Messages, Google Gemini, etc.). Providers are instances of
@@ -62,16 +60,4 @@ func UsageFromResponse(resp *ChatResponse) (int, int, int) {
 // Compile-time check helpers.
 type StreamDecoder interface {
 	Decode(data string) (*ChatResponse, error)
-}
-
-// writeCounter wraps an io.Writer and counts bytes written.
-type writeCounter struct {
-	w     io.Writer
-	count int64
-}
-
-func (wc *writeCounter) Write(p []byte) (int, error) {
-	n, err := wc.w.Write(p)
-	wc.count += int64(n)
-	return n, err
 }

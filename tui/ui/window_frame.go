@@ -38,15 +38,22 @@ type WindowFrame struct {
 	contentR Rect
 	// Close button hit region relative to frame bounds.
 	closeR Rect
+	// reveal is the content-reveal progress in [0,1]. At 0 the content
+	// area has zero height (the frame chrome shows an empty body); at 1
+	// the content is fully visible. Product code ramps this over a few
+	// frames for a top-to-bottom slide-in on open (see OverlayHost).
+	reveal float64
 }
 
-// NewWindowFrame creates a framed container.
+// NewWindowFrame creates a framed container. Content starts fully revealed;
+// SetReveal(0) collapses it for a slide-in animation.
 func NewWindowFrame(id ComponentID, role FrameRole, tokens *TokenSet) *WindowFrame {
 	return &WindowFrame{
 		Base:     NewBase(id),
 		role:     role,
 		tokens:   tokens,
 		closable: true,
+		reveal:   1,
 	}
 }
 
@@ -71,6 +78,23 @@ func (f *WindowFrame) SetBorderAccent(c cell.Color) { f.borderAccent = c }
 
 // SetTitleAccent overrides the title color with an explicit accent.
 func (f *WindowFrame) SetTitleAccent(c cell.Color) { f.titleAccent = c }
+
+// SetReveal sets the content-reveal progress in [0,1]. At 0 the content
+// area collapses to zero height (top-to-bottom slide-in start); at 1 the
+// content is fully shown. Values outside [0,1] are clamped. A frame with
+// reveal < 1 still paints its full chrome; only the body grows.
+func (f *WindowFrame) SetReveal(progress float64) {
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 1 {
+		progress = 1
+	}
+	f.reveal = progress
+}
+
+// Reveal returns the current content-reveal progress in [0,1].
+func (f *WindowFrame) Reveal() float64 { return f.reveal }
 
 // SetTokens updates theme tokens.
 func (f *WindowFrame) SetTokens(ts *TokenSet) { f.tokens = ts }
@@ -132,7 +156,15 @@ func (f *WindowFrame) Layout(ctx LayoutContext, r Rect) {
 	}
 	if f.content != nil {
 		// Content bounds are parent-local so Host paint/hit use contentR offset.
-		f.content.Layout(ctx, Rect{X: f.contentR.X, Y: f.contentR.Y, W: f.contentR.W, H: f.contentR.H})
+		// Reveal: during a slide-in the body height grows with progress, so
+		// the content's Layout/Paint and Host hit-testing all agree on what
+		// is visible (the geometry that paints is the geometry that receives
+		// input).
+		contentH := f.contentR.H
+		if f.reveal < 1 {
+			contentH = int(float64(contentH) * f.reveal)
+		}
+		f.content.Layout(ctx, Rect{X: f.contentR.X, Y: f.contentR.Y, W: f.contentR.W, H: contentH})
 	}
 }
 

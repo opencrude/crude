@@ -9,10 +9,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
-	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/uitest"
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
@@ -39,6 +39,10 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if !bufferHasNonDefaultFG(buf) {
 		t.Fatal("find in files paint missing themed foreground")
 	}
+
+	// Byte-identical regression. Deterministic: the search root (TempDir) is
+	// never rendered — only query, result paths, and status.
+	uitest.CheckGolden(t, "findinfiles_dark_80x24", buf)
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {
@@ -58,17 +62,6 @@ func bufferHasNonDefaultFG(buf *surface.CellBuffer) bool {
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x < buf.Width(); x++ {
 			if fg := buf.Get(x, y).FG; !fg.IsDefault() {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func bufferHasFG(buf *surface.CellBuffer, want cell.Color) bool {
-	for y := 0; y < buf.Height(); y++ {
-		for x := 0; x < buf.Width(); x++ {
-			if fg := buf.Get(x, y).FG; !fg.IsDefault() && fg.Equal(want) {
 				return true
 			}
 		}

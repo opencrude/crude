@@ -10,6 +10,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/uitest"
 )
 
 func TestPlainLinePlacesUsageBeforeClock(t *testing.T) {
@@ -62,9 +63,13 @@ func TestPlainLineOmitsEmptyViewLabelParenthetical(t *testing.T) {
 func TestPaintGoldenCellBufferContract(t *testing.T) {
 	th := theme.DefaultDark()
 	s := New(th)
+	// Freeze the elapsed clock: fixed now/start => deterministic golden.
+	fixedNow := time.Unix(1_700_000_000, 0)
+	nowFunc = func() time.Time { return fixedNow }
+	t.Cleanup(func() { nowFunc = time.Now })
 	s.SetProjection(Projection{
 		ModelName: "openrouter/model",
-		StartTime: time.Now(),
+		StartTime: fixedNow.Add(-time.Hour), // clock reads 1h0m0s
 		Usage:     "ready",
 		Width:     60,
 	})
@@ -91,6 +96,10 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if !bufferHasFG(buf, wantAccent) {
 		t.Fatal("shell header paint missing theme accent foreground")
 	}
+
+	// Byte-identical regression: catches a shifted cell or a wrong color on
+	// one cell that property checks cannot see.
+	uitest.CheckGolden(t, "shellheader_dark_60x2", buf)
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {

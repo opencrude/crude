@@ -40,6 +40,10 @@ type Screen struct {
 	proj   Projection
 }
 
+// nowFunc is a test seam for deterministic paint goldens (the header renders
+// an elapsed clock). Production uses time.Now; tests freeze it.
+var nowFunc = time.Now
+
 // New creates a header screen.
 func New(th *theme.Theme) *Screen {
 	if th == nil {
@@ -154,9 +158,9 @@ func (s *Screen) buildRuns(innerW int) (left, right []paintRun) {
 	usage := s.proj.Usage
 	start := s.proj.StartTime
 	if start.IsZero() {
-		start = time.Now()
+		start = nowFunc()
 	}
-	clock := time.Since(start).Truncate(time.Second).String()
+	clock := nowFunc().Sub(start).Truncate(time.Second).String()
 
 	appendRight := func(usageText string) []paintRun {
 		var parts [][]paintRun

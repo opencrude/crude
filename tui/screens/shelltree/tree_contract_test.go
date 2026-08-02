@@ -327,9 +327,7 @@ func TestShellTreeKeyboardContractTable(t *testing.T) {
 		},
 	}
 
-	for _, tc := range filterTypingCases() {
-		tests = append(tests, tc)
-	}
+	tests = append(tests, filterTypingCases()...)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

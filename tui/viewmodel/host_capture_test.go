@@ -10,6 +10,7 @@ import (
 	"crude/provider"
 	"crude/tui/chatprojection"
 	"crude/tui/editor"
+	"crude/tui/screens/shellchat"
 	ttypes "crude/tui/types"
 )
 
@@ -21,17 +22,22 @@ func openTestEditor(t *testing.T, app *App) string {
 	return path
 }
 
-func TestSyncPersistentHostCapture_ChatHiddenByEditor(t *testing.T) {
+// Root-host capture is validated by Host.Layout: when the captured component
+// leaves the tree (slot deactivated), validatePointerCapture cancels it. The
+// viewmodel no longer runs per-host capture arbitration (syncPersistentHost
+// Capture) — unmounting is the cancel path.
+
+func TestRootHostCapture_ChatHiddenByEditor(t *testing.T) {
 	app := newFullTestApp(t)
 	screen, host, _ := setupCapturedChatSelection(t, app, 1, []chatprojection.MessageRow{
 		{ID: "m1", Lines: []string{"editor hides chat"}},
 	})
 
 	openTestEditor(t, app)
-	app.syncPersistentHostCapture()
+	app.paintShellFrame()
 
 	if host.HasPointerCapture() {
-		t.Fatal("chat capture should cancel when editor is active")
+		t.Fatal("chat capture should cancel when editor deactivates the chat slot")
 	}
 	if screen.IsSelecting() {
 		t.Fatal("chat selection should cancel when editor is active")
@@ -39,7 +45,7 @@ func TestSyncPersistentHostCapture_ChatHiddenByEditor(t *testing.T) {
 
 	app.EditorState.ActiveView = ""
 	app.EditorState.Editor.Close()
-	app.syncPersistentHostCapture()
+	app.paintShellFrame()
 
 	if host.HasPointerCapture() {
 		t.Fatal("returning to chat must not restore latent capture")
@@ -49,14 +55,14 @@ func TestSyncPersistentHostCapture_ChatHiddenByEditor(t *testing.T) {
 	}
 }
 
-func TestSyncPersistentHostCapture_ChatReleaseElsewhereAfterEditor(t *testing.T) {
+func TestRootHostCapture_ChatReleaseElsewhereAfterEditor(t *testing.T) {
 	app := newFullTestApp(t)
 	screen, host, _ := setupCapturedChatSelection(t, app, 1, []chatprojection.MessageRow{
 		{ID: "m1", Lines: []string{"release elsewhere"}},
 	})
 
 	openTestEditor(t, app)
-	app.syncPersistentHostCapture()
+	app.paintShellFrame()
 
 	_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{
 		X: 10, Y: app.height - 1, Button: tea.MouseLeft,
@@ -68,43 +74,40 @@ func TestSyncPersistentHostCapture_ChatReleaseElsewhereAfterEditor(t *testing.T)
 
 	app.EditorState.ActiveView = ""
 	app.EditorState.Editor.Close()
-	app.syncPersistentHostCapture()
+	app.paintShellFrame()
 	if host.HasPointerCapture() || screen.IsSelecting() {
 		t.Fatal("return to chat after hidden release must stay clean")
 	}
 }
 
-func TestSyncPersistentHostCapture_SidebarHidden(t *testing.T) {
+func TestRootHostCapture_SidebarHidden(t *testing.T) {
 	app := newFullTestApp(t)
 	host, _, _ := setupScrollableSidebarCapture(t, app)
 
 	app.Tree.Visible = false
-	app.syncPersistentHostCapture()
+	app.paintShellFrame()
 
 	if host.HasPointerCapture() {
-		t.Fatal("sidebar capture should cancel when tree is hidden")
+		t.Fatal("sidebar capture should cancel when the tree is hidden")
 	}
 }
 
-func TestSyncPersistentHostCapture_LauncherHiddenByAgent(t *testing.T) {
+func TestRootHostCapture_LauncherHiddenByAgent(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	app.width = 100
 	app.height = 30
 	app.ChatAreaHeight = 20
 	app.Tree = NewTreeState(nil, 30)
 	app.Tree.Visible = false
+	app.paintShellFrame()
 
 	layout := app.computeLayout()
-	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)
-	app.launcherHost.Layout()
-
 	localX := layout.InnerW*40/100 + 7
 	localY := 8
-	res := app.launcherHost.Handle(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
-	if !res.Handled || !app.launcherHost.HasPointerCapture() {
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: layout.SidebarW + layout.PadLR + localX, Y: layout.ChatAreaTop + localY, Button: tea.MouseLeft})
+	if !res.Handled || !app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher click should capture pointer")
 	}
-	launcherHost := app.launcherHost
 
 	app.AddOrchestrator(
 		"agent",
@@ -113,80 +116,57 @@ func TestSyncPersistentHostCapture_LauncherHiddenByAgent(t *testing.T) {
 		make(chan struct{}, 1),
 		make(chan string, 1),
 	)
-	app.syncPersistentHostCapture()
 
-	if launcherHost.HasPointerCapture() {
+	if app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher capture should cancel when agent replaces launcher")
 	}
 }
 
-func TestSyncPersistentHostCapture_LauncherHiddenByMinSize(t *testing.T) {
+func TestRootHostCapture_LauncherHiddenByMinSize(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	app.width = 100
 	app.height = 30
 	app.ChatAreaHeight = 20
 	app.Tree = NewTreeState(nil, 30)
+	app.paintShellFrame()
 
 	layout := app.computeLayout()
-	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)
-	app.launcherHost.Layout()
-
 	localX := layout.InnerW*40/100 + 3 + 2 + 2
 	if localX >= layout.InnerW {
 		localX = layout.InnerW - 2
 	}
 	localY := 4 + 1 + 2 + 1
-	res := app.launcherHost.Handle(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
-	if !res.Handled || !app.launcherHost.HasPointerCapture() {
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: layout.SidebarW + layout.PadLR + localX, Y: layout.ChatAreaTop + localY, Button: tea.MouseLeft})
+	if !res.Handled || !app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher click should capture pointer")
 	}
 
-	app.ChatAreaHeight = 2 // below renderLauncher minimum of 3
-	app.syncPersistentHostCapture()
-	if app.launcherHost.HasPointerCapture() {
+	// Shrink the terminal so the launcher chat area drops below the
+	// 3-row minimum (computeContentLayout derives ChatAreaHeight from
+	// real geometry every frame — manual overrides do not stick).
+	app.height = 7
+	app.paintShellFrame()
+	if app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher capture should cancel when min-size gate hides launcher")
 	}
 }
 
-func TestCapturedPersistentHost_CancelsInactiveBeforeRouting(t *testing.T) {
+// TestRootHostCapture_SingleCaptureService verifies the root host is the one
+// capture owner: a drag captured anywhere keeps routing to the captured
+// component even when the pointer crosses every other shell region.
+func TestRootHostCapture_SingleCaptureService(t *testing.T) {
 	app := newFullTestApp(t)
-	_, chatHost, _ := setupCapturedChatSelection(t, app, 1, []chatprojection.MessageRow{
-		{ID: "m1", Lines: []string{"inactive cancel"}},
+	screen, host, _ := setupCapturedChatSelection(t, app, 1, []chatprojection.MessageRow{
+		{ID: "m1", Lines: []string{"single capture owner"}},
 	})
-	sidebarHost, _, _ := setupScrollableSidebarCapture(t, app)
 
-	openTestEditor(t, app)
-
-	host, _ := app.capturedPersistentHost()
-	if host != sidebarHost {
-		t.Fatalf("expected sidebar host to route, got %p", host)
+	// Motion over the header, sidebar, tab bar, and status rows — every
+	// motion must keep the chat selection drag alive.
+	for _, pt := range [][2]int{{5, 1}, {app.Tree.Width - 1, 6}, {40, 3}, {40, app.height - 1}} {
+		_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: pt[0], Y: pt[1], Button: tea.MouseLeft})
 	}
-	if chatHost.HasPointerCapture() {
-		t.Fatal("chat capture should be canceled before routing")
-	}
-	if !sidebarHost.HasPointerCapture() {
-		t.Fatal("sidebar capture should remain when still active")
-	}
-}
-
-func TestSyncPersistentHostCapture_DuplicateCapturePrefersChat(t *testing.T) {
-	app := newFullTestApp(t)
-	_, chatHost, _ := setupCapturedChatSelection(t, app, 1, []chatprojection.MessageRow{
-		{ID: "m1", Lines: []string{"winner"}},
-	})
-	sidebarHost, _, _ := setupScrollableSidebarCapture(t, app)
-
-	if !chatHost.HasPointerCapture() || !sidebarHost.HasPointerCapture() {
-		t.Fatal("setup should leave both hosts captured")
-	}
-
-	app.syncPersistentHostCapture()
-
-	if !chatHost.HasPointerCapture() {
-		t.Fatal("chat should win duplicate capture")
-	}
-	if sidebarHost.HasPointerCapture() {
-		t.Fatal("lower-priority sidebar capture should be canceled")
+	if !host.HasPointerCapture() || !screen.IsSelecting() {
+		t.Fatal("captured chat drag must survive motion across all shell regions")
 	}
 }
 
@@ -214,13 +194,13 @@ func TestKeyboardDismiss_CapturedSelectionClearsCaptureAndAutoScroll(t *testing.
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'a', Text: "a"})
 
 	if host.HasPointerCapture() {
-		t.Fatal("keyboard should cancel chat host capture")
+		t.Fatal("keyboard should cancel root host capture")
 	}
 	if screen.IsSelecting() {
 		t.Fatal("keyboard should end in-progress selection")
 	}
 
-	res := app.chatHost.Handle(ttypes.SelectionTickMsg(time.Now()))
+	res := app.rootHandleFocus(shellchat.ScreenID, ttypes.SelectionTickMsg(time.Now()))
 	if res.Handled && scroll.Offset() != beforeOffset {
 		t.Fatalf("selection auto-scroll should be disarmed, offset=%d before=%d", scroll.Offset(), beforeOffset)
 	}
@@ -235,13 +215,13 @@ func TestKeyboardDismiss_InProgressNonEmptySelectionDoesNotSwallowKey(t *testing
 		{ID: "m1", Lines: []string{"hello world"}},
 	})
 	padLR := app.Theme.Spacing.PadLR
-	host.Handle(tea.MouseMotionMsg{X: padLR + 6, Y: 0, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: app.chatRect.X + padLR + 6, Y: app.chatRect.Y, Button: tea.MouseLeft})
 
 	if !screen.IsSelecting() || !screen.HasActiveSelection() {
 		t.Fatal("expected in-progress non-empty selection")
 	}
 	if !host.HasPointerCapture() {
-		t.Fatal("expected host capture during selection drag")
+		t.Fatal("expected root host capture during selection drag")
 	}
 
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'a', Text: "a"})
@@ -263,7 +243,7 @@ func TestSetMode_ClearsCapturedSelection(t *testing.T) {
 	app.setMode(ModeChat)
 
 	if host.HasPointerCapture() {
-		t.Fatal("setMode should cancel chat host capture")
+		t.Fatal("setMode should cancel root host capture")
 	}
 	if screen.IsSelecting() {
 		t.Fatal("setMode should clear in-progress selection")
@@ -279,7 +259,7 @@ func TestSetMode_ClearsCapturedScrollbarDrag(t *testing.T) {
 	app.setMode(ModeChat)
 
 	if host.HasPointerCapture() {
-		t.Fatal("setMode should cancel chat host capture")
+		t.Fatal("setMode should cancel root host capture")
 	}
 	if screen.IsScrollbarDragging() {
 		t.Fatal("setMode should end scrollbar drag")

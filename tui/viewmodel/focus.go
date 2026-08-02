@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"crude/tui/screens/shelltabs"
 	"crude/workspace"
 )
 
@@ -127,9 +126,7 @@ func (m *App) setFocusTabBar() {
 	m.setSessionDeckFocused(false)
 	m.FocusStack.Clear()
 	m.FocusStack.Push(FocusTabBar)
-	if m.tabHost != nil {
-		m.tabHost.Focus(shelltabs.TabsID)
-	}
+	m.syncRootFocus()
 }
 
 func (m *App) syncRenderFocus() {

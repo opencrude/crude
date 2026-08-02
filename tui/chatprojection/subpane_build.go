@@ -5,16 +5,12 @@ import (
 	"strings"
 
 	"crude/tui/cell"
-	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/workspace"
 )
 
 // BuildSubPaneHeaderLine builds the title bar ("│ ● agent-name 12s").
-func BuildSubPaneHeaderLine(th *theme.Theme, header workspace.SubPaneHeaderView, width, spinFrame int) SubPaneLine {
-	if th == nil {
-		th = theme.DefaultDark()
-	}
+func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame int) SubPaneLine {
 	var spans []RowSpan
 	spans = append(spans, RowSpan{Text: "│ ", Role: ui.ColorBorder})
 
@@ -38,10 +34,7 @@ func BuildSubPaneHeaderLine(th *theme.Theme, header workspace.SubPaneHeaderView,
 }
 
 // BuildSubPaneSummaryLine builds the collapsed summary ("│ ● agent for 5.0s").
-func BuildSubPaneSummaryLine(th *theme.Theme, view workspace.SubPaneView, width int) SubPaneLine {
-	if th == nil {
-		th = theme.DefaultDark()
-	}
+func BuildSubPaneSummaryLine(view workspace.SubPaneView, width int) SubPaneLine {
 	summary := ""
 	if view.Summary != nil {
 		summary = view.Summary.Text
@@ -55,10 +48,7 @@ func BuildSubPaneSummaryLine(th *theme.Theme, view workspace.SubPaneView, width 
 }
 
 // BuildSubPaneToolLines builds tool rows from SubPaneView.ToolLines.
-func BuildSubPaneToolLines(th *theme.Theme, view workspace.SubPaneView, width int) []SubPaneLine {
-	if th == nil {
-		th = theme.DefaultDark()
-	}
+func BuildSubPaneToolLines(view workspace.SubPaneView, width int) []SubPaneLine {
 	var lines []SubPaneLine
 	for _, tl := range view.ToolLines {
 		if tl.Label == "" {
@@ -83,10 +73,7 @@ func BuildSubPaneToolLines(th *theme.Theme, view workspace.SubPaneView, width in
 }
 
 // BuildCompactWorkingLine builds the placeholder when a compact pane has no tools yet.
-func BuildCompactWorkingLine(th *theme.Theme, thinking bool, width int) SubPaneLine {
-	if th == nil {
-		th = theme.DefaultDark()
-	}
+func BuildCompactWorkingLine(thinking bool, width int) SubPaneLine {
 	msg := "Working..."
 	if thinking {
 		msg = "Thinking..."

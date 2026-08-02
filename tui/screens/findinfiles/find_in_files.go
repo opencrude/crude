@@ -254,13 +254,6 @@ func (s *Screen) selectIndex(idx int) {
 	s.sync()
 }
 
-func (s *Screen) ensureSelectedVisible() {
-	if s.selected < 0 {
-		return
-	}
-	s.list.list.SelectIndex(s.selected)
-}
-
 func (s *Screen) rebuildPreview() {
 	if s.selected < 0 || s.selected >= len(s.results) || s.results[s.selected].NameOnly {
 		s.previewSrc = nil

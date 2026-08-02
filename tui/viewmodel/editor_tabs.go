@@ -353,7 +353,3 @@ func (m *App) closeEditorTabsToRightOf(idx int) {
 		}
 	}
 }
-
-func (m *App) closeAllWindows() {
-	m.overlayHost.CloseAll()
-}

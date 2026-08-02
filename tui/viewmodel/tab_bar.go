@@ -23,26 +23,11 @@ func (m *App) tabBarLocalX(screenX int) int {
 	return x
 }
 
-// ensureTabBarGeometry resizes/lays out the tab Host so hit-testing matches
-// the painted strip at production geometry (sidebar + PadLR inset).
-func (m *App) ensureTabBarGeometry() {
-	if m.tabHost == nil || m.tabScreen == nil {
-		return
-	}
-	layout := m.computeLayout()
-	m.tabHost.Resize(layout.InnerW, 2)
-	m.syncTabBarHost()
-	m.tabHost.Layout()
-	// SetItems may have changed labels without dirtying Host layout; force
-	// the Tabs control to recompute ranges against the current width.
-	m.tabScreen.Layout(ui.LayoutContext{}, ui.Rect{W: layout.InnerW, H: 2})
-}
-
 func (m *App) tabBarHitTest(screenX int) (tabIndex int, closeHit bool) {
-	if !m.tabBarVisible() || m.tabScreen == nil || m.tabHost == nil {
+	if !m.tabBarVisible() || m.tabScreen == nil {
 		return -1, false
 	}
-	m.ensureTabBarGeometry()
+	m.syncTabBarHost()
 	return m.tabScreen.HitTest(m.tabBarLocalX(screenX))
 }
 
@@ -60,7 +45,7 @@ func uiTabID(id window.TabID) string {
 }
 
 func (m *App) syncTabBarHost() {
-	if m.tabScreen == nil || m.tabHost == nil {
+	if m.tabScreen == nil {
 		return
 	}
 	hover := -1
@@ -97,28 +82,24 @@ func (m *App) handleTabBarHostResult(res ui.EventResult) tea.Cmd {
 	return res.Cmd
 }
 
+// handleTabBarEvent routes tab-bar mouse events through the root host (the
+// tab slot geometry and hit-testing live in the shell tree). Actions from
+// the Tabs control bubble to the viewmodel via handleTabBarHostResult.
 func (m *App) handleTabBarEvent(msg tea.Msg) tea.Cmd {
-	if !m.tabBarVisible() || m.tabHost == nil {
+	if !m.tabBarVisible() || m.tabScreen == nil || m.rootHost == nil {
 		return nil
 	}
-	m.ensureTabBarGeometry()
-	m.tabHost.Focus(shelltabs.TabsID)
+	m.syncTabBarHost()
+	m.rootHost.Focus(shelltabs.TabsID)
+	res := m.rootHost.Handle(msg)
 	switch msg := msg.(type) {
-	case tea.MouseClickMsg:
-		localX := m.tabBarLocalX(msg.X)
-		res := m.tabHost.Handle(tea.MouseClickMsg{X: localX, Y: 0, Button: msg.Button, Mod: msg.Mod})
-		return m.handleTabBarHostResult(res)
 	case tea.MouseMotionMsg:
-		localX := m.tabBarLocalX(msg.X)
-		res := m.tabHost.Handle(tea.MouseMotionMsg{X: localX, Y: 0, Button: msg.Button, Mod: msg.Mod})
-		if m.tabScreen != nil && m.tabScreen.TabsControl().HoverIndex() >= 0 {
+		if m.tabScreen.TabsControl().HoverIndex() >= 0 {
 			m.Win.Hover.Set(m.tabScreen.TabsControl().HoverIndex())
 		} else {
 			m.Win.Hover.Clear()
 		}
-		return m.handleTabBarHostResult(res)
-	default:
-		res := m.tabHost.Handle(msg)
-		return m.handleTabBarHostResult(res)
+		_ = msg
 	}
+	return m.handleTabBarHostResult(res)
 }

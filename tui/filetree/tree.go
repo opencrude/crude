@@ -257,16 +257,6 @@ func (n *TreeNode) HasChildren() bool {
 	return len(n.Children) > 0
 }
 
-// childByName finds a child node by name. Returns nil if not found.
-func (n *TreeNode) childByName(name string) *TreeNode {
-	for _, child := range n.Children {
-		if child.Name == name {
-			return child
-		}
-	}
-	return nil
-}
-
 // ---------------------------------------------------------------------------
 // FileTreeModel
 // ---------------------------------------------------------------------------
@@ -391,7 +381,7 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 
 	// Initially expand the root so the tree isn't empty.
 	root.IsExpanded = true
-	m.loadDirectory(root)
+	_ = m.loadDirectory(root)
 
 	// Rebuild visible nodes.
 	m.rebuildVisibleNodes()
@@ -890,19 +880,6 @@ func (m *FileTreeModel) resortAll(node *TreeNode) {
 // ---------------------------------------------------------------------------
 // Refresh (for file system watcher events)
 // ---------------------------------------------------------------------------
-
-// refreshNode re-reads the contents of a directory node, diffs old vs new
-// children, and updates the tree accordingly. For use after file system
-// watcher events.
-func (m *FileTreeModel) refreshNode(path string) {
-	node, ok := m.nodes[path]
-	if !ok || !node.IsDir || node.Children == nil {
-		return
-	}
-
-	_ = m.loadDirectory(node) // loadDirectory handles diff via existing map
-	m.rebuildVisibleNodes()
-}
 
 // ProcessWatcherEvent handles a file system change event.
 //

@@ -9,6 +9,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/uitest"
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
@@ -38,6 +39,10 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if !bufferHasFG(buf, wantAccent) {
 		t.Fatal("shell input paint missing theme accent foreground")
 	}
+
+	// Byte-identical regression: catches a shifted prompt, a wrong padding
+	// cell, or a color change that property checks cannot see.
+	uitest.CheckGolden(t, "shellinput_dark_48x2", buf)
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {

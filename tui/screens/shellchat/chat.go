@@ -55,6 +55,7 @@ func New(th *theme.Theme) *Screen {
 	list := ui.NewVirtualList(AreaID, tokens)
 	list.SetPointerPolicy(ui.PointerPolicyPassthrough)
 	list.SetSelectionAnchorsScroll(false)
+	list.SetBottomGravity(true) // short chats anchor above the input prompt
 	list.Scroll().SetAutoScroll(true)
 	s := &Screen{
 		Base:   ui.NewBase(ScreenID),
@@ -231,15 +232,21 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: h})
 }
 
+// Layout lays out children with PARENT-LOCAL rects. Host.paintNode paints
+// children at (parent origin + child bounds), so a child whose bounds repeat
+// the slot origin would be painted twice-offset (the shellchat double-origin
+// bug that shifted chat content into the input prompt and status bar under
+// the root host). Children must never see the screen's absolute slot rect.
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	s.width = r.W
 	s.height = r.H
-	listRect := s.listLayoutRect(r)
+	local := ui.Rect{X: 0, Y: 0, W: r.W, H: r.H}
+	listRect := s.listLayoutRect(local)
 	s.list.Layout(ui.LayoutContext{}, listRect)
 	if s.mainScrollbarVisible() {
 		s.scrollbar.SetScroll(s.list.Scroll())
-		s.scrollbar.Layout(ui.LayoutContext{}, s.scrollbarLayoutRect(r))
+		s.scrollbar.Layout(ui.LayoutContext{}, s.scrollbarLayoutRect(local))
 	}
 }
 
@@ -261,11 +268,11 @@ func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 	}
 
 	if s.paneDrag != nil {
-		switch msg.(type) {
+		switch msg := msg.(type) {
 		case tea.MouseMotionMsg:
-			return s.handlePaneGutterMotion(ctx, msg.(tea.MouseMotionMsg))
+			return s.handlePaneGutterMotion(ctx, msg)
 		case tea.MouseReleaseMsg:
-			return s.handlePaneGutterRelease(ctx, msg.(tea.MouseReleaseMsg))
+			return s.handlePaneGutterRelease(ctx, msg)
 		}
 	}
 
@@ -277,7 +284,7 @@ func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 		return res
 	}
 
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case tea.MouseClickMsg:
 		if s.inScrollbarZone(ctx.LocalX) && s.scrollbar != nil {
 			s.selection.Clear()
@@ -287,21 +294,21 @@ func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			}
 			return res
 		}
-		if res := s.handlePaneGutterClick(ctx, msg.(tea.MouseClickMsg)); res.Handled {
+		if res := s.handlePaneGutterClick(ctx, msg); res.Handled {
 			return res
 		}
 	}
 
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case tea.MouseClickMsg:
-		return s.handleSelectionClick(ctx, msg.(tea.MouseClickMsg))
+		return s.handleSelectionClick(ctx, msg)
 	case tea.MouseMotionMsg:
 		if s.selection.selecting {
-			return s.handleSelectionMotion(ctx, msg.(tea.MouseMotionMsg))
+			return s.handleSelectionMotion(ctx, msg)
 		}
 	case tea.MouseReleaseMsg:
 		if s.selection.selecting {
-			return s.handleSelectionRelease(ctx, msg.(tea.MouseReleaseMsg))
+			return s.handleSelectionRelease(ctx, msg)
 		}
 	}
 
@@ -370,3 +377,5 @@ func NonEmptyCellCount(buf *surface.CellBuffer) int {
 	}
 	return n
 }
+
+

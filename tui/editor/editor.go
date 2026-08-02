@@ -549,7 +549,7 @@ func (e *Editor) DeleteSelection() bool {
 	sLine, sCol, eLine, eCol := e.SelectionRange()
 	start := Position{Line: sLine, Col: sCol}
 	end := Position{Line: eLine, Col: eCol}
-	e.buf.Delete(start, end)
+	_, _ = e.buf.Delete(start, end)
 	e.modified = true
 	if e.buffer != nil {
 		e.buffer.MarkDirty()
@@ -727,15 +727,4 @@ func (e *Editor) LineTextFromPath(filePath string, lineIdx int) (string, error) 
 		return "", fmt.Errorf("line %d out of range", lineIdx)
 	}
 	return strings.TrimRight(lines[lineIdx], "\r"), nil
-}
-
-func (e *Editor) severityColor(severity int) string {
-	switch severity {
-	case DiagError:
-		return "#ff7b72"
-	case DiagWarning:
-		return "#d29922"
-	default:
-		return "#8b949e"
-	}
 }

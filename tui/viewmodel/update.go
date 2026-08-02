@@ -22,6 +22,7 @@ import (
 	"crude/tui/screens/question"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/sessionsettings"
+	"crude/tui/screens/shellchat"
 	textoverlay "crude/tui/screens/textoverlay"
 	"crude/tui/screens/yolo"
 	settingsui "crude/tui/settings"
@@ -33,8 +34,6 @@ import (
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-
-	m.syncPersistentHostCapture()
 
 	// Dirty is set selectively per message type, NOT unconditionally.
 	// The full render pipeline (editor cell paint, chat rows, compositor,
@@ -55,8 +54,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.compositor != nil {
 			m.compositor.Resize(msg.Width, msg.Height)
 		}
-		// Resize all layer surfaces so they match the new dimensions.
-		m.resizeLayerSurfaces()
+		// The shell surface is resized on the next View() frame by
+		// renderShellToSurface (single full-screen surface).
 		return m, nil
 
 	case ttypes.TickMsg:
@@ -86,8 +85,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.dispatchMouseRelease(msg)
 
 	case ttypes.SelectionTickMsg:
-		if m.chatHost != nil {
-			res := m.chatHost.Handle(msg)
+		if m.chatScreen != nil && m.rootHost != nil {
+			m.rootHost.Focus(shellchat.ScreenID)
+			res := m.rootHost.Handle(msg)
 			if res.Cmd != nil {
 				cmds = append(cmds, res.Cmd)
 			}
@@ -116,6 +116,13 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	m.Input.SetSpinFrame(spinFrame)
 	m.StatusBar.ClearExpired()
 	m.refreshSessionBackgroundJobs(time.Now())
+	// Advance popup reveal animations (slide-in on open). Returns true while
+	// any reveal is mid-flight so the frame keeps repainting until done.
+	if m.advanceReveals(time.Now()) {
+		if fw := m.windowManager.Focused(); fw != nil {
+			fw.MarkContentDirty()
+		}
+	}
 	for _, n := range m.AgentMgr.AllNodes() {
 		if n.State != nil {
 			n.State.Tick(spinFrame)
@@ -179,6 +186,10 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	if m.anyActive() {
 		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
 	}
+	if len(m.reveals) > 0 {
+		// Popup reveal animations need the fast tick to render the slide-in.
+		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
+	}
 	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
 		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
 	}
@@ -212,6 +223,16 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.launcherScreen == msg.Screen {
 			cmds = append(cmds, m.handleLauncherDelete(msg))
 		}
+	case launcherWorkspacesMsg:
+		// Async workspace listing. Apply only the newest kick, and only if
+		// the launcher is still mounted (a session may have opened in the
+		// meantime). Applying keeps the user's filter/selection: SetData
+		// rebuilds items without resetting filter state.
+		if msg.Gen != m.launcherLoadGen.Load() || m.launcherScreen == nil {
+			break
+		}
+		m.launcherScreen.SetData(msg.Cwd, msg.Infos)
+		m.launcherScreen.SyncFocus()
 	case workspace.LSPDiagnosticsMsg:
 		m.handleLSPDiagnosticsUpdate(msg)
 	case workspace.FileWatcherMsg:
@@ -618,14 +639,6 @@ func translateMouseY(msg tea.Msg, delta int) tea.Msg {
 		return tea.MouseWheelMsg{X: mm.X, Y: mm.Y + delta, Button: mm.Button}
 	}
 	return msg
-}
-
-func (m *App) isMouseMsg(msg tea.Msg) bool {
-	switch msg.(type) {
-	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
-		return true
-	}
-	return false
 }
 
 func (m *App) handleAgentTabClose(index int) tea.Cmd {

@@ -24,6 +24,7 @@
 package workspace
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -198,16 +199,28 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 
 // readWorkspaceMetaBounded is readWorkspaceMeta with a hard wall-clock limit so
 // a locked/corrupt workspace.db cannot stall the launcher or tests.
+//
+// Both the read AND the goroutine's channel send are bound to the same
+// context: if the read outlives the limit, the query is cancelled (releasing
+// the DB handle), the send aborts, and the goroutine exits — it can never
+// leak an open sqlite handle (which would keep the DB file locked on
+// Windows) past the timeout.
 func readWorkspaceMetaBounded(dbPath string, limit time.Duration) *WorkspaceInfo {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+
 	type result struct{ info *WorkspaceInfo }
 	ch := make(chan result, 1)
 	go func() {
-		ch <- result{info: readWorkspaceMeta(dbPath)}
+		select {
+		case ch <- result{info: readWorkspaceMeta(ctx, dbPath)}:
+		case <-ctx.Done():
+		}
 	}()
 	select {
 	case r := <-ch:
 		return r.info
-	case <-time.After(limit):
+	case <-ctx.Done():
 		// Timed out — try a metadata-only fast path that avoids scanning
 		// workspace_sessions (the usual stall under a live writer lock).
 		return readWorkspaceMetaLight(dbPath)
@@ -226,7 +239,7 @@ func readWorkspaceMetaLight(dbPath string) *WorkspaceInfo {
 		return nil
 	}
 	db.SetMaxOpenConns(1)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var dir string
 	if err := db.QueryRow(`SELECT value FROM workspace_metadata WHERE key = 'project_dir'`).Scan(&dir); err != nil || dir == "" {
@@ -241,7 +254,9 @@ func readWorkspaceMetaLight(dbPath string) *WorkspaceInfo {
 // readWorkspaceMeta opens a workspace.db read-only and extracts project info.
 // It must not migrate or otherwise write — listing known workspaces from the
 // launcher must not mutate ~/.crude (including other projects' DBs).
-func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
+// All queries are context-bound so a stalled read can be cancelled (which
+// also releases the file handle; see readWorkspaceMetaBounded).
+func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
@@ -260,13 +275,13 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 
 	info := &WorkspaceInfo{}
 	// Prefer an explicit metadata key if present.
-	if p := wdb.GetSetting("project_dir"); p != "" {
+	if p := wdb.GetSettingContext(ctx, "project_dir"); p != "" {
 		info.ProjectDir = p
 		info.ProjectName = filepath.Base(p)
 	}
 	// Fall back to the most recent session's project_dir. Prefer project_name
 	// when the column exists; legacy registries omit it.
-	cols, colErr := tableColumns(db, "workspace_sessions")
+	cols, colErr := tableColumnsContext(ctx, db, "workspace_sessions")
 	if colErr != nil {
 		// Locked/corrupt DB — still return a stub entry from the folder name.
 		return info
@@ -274,14 +289,14 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 	var rows *sql.Rows
 	var qerr error
 	if cols["project_name"] {
-		rows, qerr = db.Query(`
+			rows, qerr = db.QueryContext(ctx, `
 			SELECT project_dir, project_name, created_at
 			FROM workspace_sessions
 			ORDER BY created_at DESC
 			LIMIT 1
 		`)
 	} else {
-		rows, qerr = db.Query(`
+			rows, qerr = db.QueryContext(ctx, `
 			SELECT project_dir, '' AS project_name, created_at
 			FROM workspace_sessions
 			ORDER BY created_at DESC
@@ -289,7 +304,6 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 		`)
 	}
 	if qerr == nil {
-		defer rows.Close()
 		if rows.Next() {
 			var dir, name string
 			var created int64
@@ -307,12 +321,16 @@ func readWorkspaceMeta(dbPath string) *WorkspaceInfo {
 				info.LastActive = created
 			}
 		}
+		// Close BEFORE the count query: the pool is capped at one
+		// connection, and an open Rows holds it — the count would wait on
+		// itself (self-deadlock) until the deferred Close runs.
+		_ = rows.Close()
 	}
 	// Session count (exclude rows whose session DB was marked unavailable).
 	if cols["db_missing"] {
-		_ = db.QueryRow(`SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0`).Scan(&info.SessionCount)
+			_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0`).Scan(&info.SessionCount)
 	} else {
-		_ = db.QueryRow(`SELECT COUNT(*) FROM workspace_sessions`).Scan(&info.SessionCount)
+			_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions`).Scan(&info.SessionCount)
 	}
 	info.ProjectName = WorkspaceDisplayName(*info)
 	return info

@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/uitest"
 	"crude/workspace"
 )
 
@@ -65,6 +67,11 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		t.Fatal("launcher paint missing theme accent foreground")
 	}
 
+	// Byte-identical regression on the static (pre-animation) frame.
+	// Deterministic: testScreen never calls SetAnimation, so spinFrame=0
+	// renders the hero's static layout.
+	uitest.CheckGolden(t, "launcher_dark_110x16", buf)
+
 	// Selected workspace row uses theme hover background.
 	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -110,7 +117,7 @@ func TestScreenPaintPreservesWelcomeHierarchy(t *testing.T) {
 	plain := bufferText(buf)
 	for _, want := range []string{
 		"New Session",
-		"/projects/current",
+		filepath.FromSlash("/projects/current"),
 		"New Workspace",
 		"SHORTCUTS",
 		"RECENT",

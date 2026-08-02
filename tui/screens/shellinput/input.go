@@ -102,7 +102,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		return
 	}
 	bg := s.tokens.Color(ui.ColorBg)
-	ui.FillRect(buf, ox, oy, ui.Rect{X: ox + b.X, Y: oy + b.Y, W: b.W, H: b.H}, cell.BlankCell(bg))
+	ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	s.model.PaintShell(buf, ox+b.X, oy+b.Y, b.W, b.H, ctx)
 }
 

@@ -507,7 +507,7 @@ func copyResultSummary(content, target, duration string) string {
 
 func parseJSONMap(content string) map[string]string {
 	result := make(map[string]string)
-	json.Unmarshal([]byte(content), &result)
+	_ = json.Unmarshal([]byte(content), &result)
 	return result
 }
 

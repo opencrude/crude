@@ -16,22 +16,6 @@ import (
 
 const asyncPromotionThreshold = 15 * time.Second
 
-func isFreeTool(name string) bool {
-	switch name {
-	case "plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
-		"report_blocker", "resolve_blocker", "list_goal_status",
-		"run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents",
-		"write_report":
-		return true
-	}
-	return false
-}
-
-func isSubAgentRequest(params map[string]any) bool {
-	_, ok := params["_subagent"]
-	return ok
-}
-
 func (s *Session) newAgent() *agent.Agent {
 	mainCat := s.cfg.GetActiveDefaultCategory()
 
@@ -542,7 +526,7 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 			handle := fmt.Sprintf("auto-%d", s.autoHandleCounter)
 			s.autoHandleMu.Unlock()
 
-			s.asyncMgr.Promote(uc, handle)
+			_, _ = s.asyncMgr.Promote(uc, handle)
 			s.logger.Info("ASYNC", "auto_promote", "handle", handle, "pid", pid, "threshold", asyncPromotionThreshold)
 			return tools.ToolResult{Content: fmt.Sprintf(
 				"Command still running after %s — automatically promoted to async (handle: %q, PID: %d).\n\nYou can continue working while it runs. To manage this command:\n- check_async_command(handle=%q) — check if it's done\n- read_async_output(handle=%q, since_byte=0) — read output so far\n- kill_async_command(handle=%q) — kill it if needed",

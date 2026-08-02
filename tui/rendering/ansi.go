@@ -101,6 +101,12 @@ func TrimRightAnsiSpaces(s string) string {
 }
 
 func StripAnsi(s string) string {
+	// Fast path: no escape byte means no ANSI to strip. Plain text (the
+	// overwhelming case in label/list/button paint paths) returns unchanged
+	// with zero allocations.
+	if !strings.ContainsRune(s, '\x1b') {
+		return s
+	}
 	var buf strings.Builder
 	i := 0
 	for i < len(s) {

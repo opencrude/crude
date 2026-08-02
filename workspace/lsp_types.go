@@ -38,6 +38,10 @@ type LSPClient interface {
 	OnDiagnostics(func(filePath string, diags []LSPDiagnostic))
 	Start(context.Context) error
 	Stop()
+	// Done is closed when the underlying server connection dies (server
+	// exit, pipe error, or a wedged server that hit the write-queue cap).
+	// The manager reaps the client on Done and restarts it on demand.
+	Done() <-chan struct{}
 	OpenFile(context.Context, string, string, string)
 	UpdateFile(context.Context, string, string)
 	CloseFile(context.Context, string)

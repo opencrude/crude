@@ -383,7 +383,7 @@ func (w *Workspace) CancelSubAgent(agentID string) {
 	}
 	runner := sess.backend.SubAgentRunner()
 	if runner != nil {
-		runner.CancelSubAgent(map[string]any{"handle_id": agentID})
+		_, _ = runner.CancelSubAgent(map[string]any{"handle_id": agentID})
 	}
 }
 
@@ -761,7 +761,7 @@ func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.Session
 	if err != nil {
 		return r
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	m, err := sessiondb.GetMeta(db)
 	if err != nil {

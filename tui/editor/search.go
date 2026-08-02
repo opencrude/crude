@@ -324,9 +324,9 @@ func (e *Editor) ReplaceCurrent() int {
 
 	// Delete the matched range, insert the replacement. We use
 	// buf.Delete + buf.Insert which both fire undo/redo entries.
-	e.buf.Delete(m.Start, m.End)
+	_, _ = e.buf.Delete(m.Start, m.End)
 	if repl != "" {
-		e.buf.Insert(m.Start, []byte(repl))
+		_, _ = e.buf.Insert(m.Start, []byte(repl))
 	}
 	e.modified = true
 	if e.buffer != nil {
@@ -364,9 +364,9 @@ func (e *Editor) ReplaceAll() int {
 	for i := len(e.search.Matches) - 1; i >= 0; i-- {
 		m := e.search.Matches[i]
 		repl := e.search.Replace
-		e.buf.Delete(m.Start, m.End)
+		_, _ = e.buf.Delete(m.Start, m.End)
 		if repl != "" {
-			e.buf.Insert(m.Start, []byte(repl))
+			_, _ = e.buf.Insert(m.Start, []byte(repl))
 		}
 		count++
 	}

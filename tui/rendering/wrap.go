@@ -301,7 +301,7 @@ func FindSegmentStart(logLine []rune, textW int, segmentIdx int) int {
 			remainingW += clusters[k].width
 		}
 		if remainingW <= textW {
-			currentSeg++
+			// All remaining content fits: this is the final segment.
 			break
 		}
 

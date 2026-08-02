@@ -21,7 +21,6 @@ func setupSessionDeckApp(t *testing.T) (*App, *sessionProjection) {
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = nil
-	app.launcherHost = nil
 	app.ActiveSession = &workspace.Session{
 		SessionID: "session",
 		Settings:  workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil),
@@ -78,7 +77,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		if app.Input.Value() != "should-not-reach" {
 			t.Fatal("blocking confirmation leaked key to chat input")
 		}
-		if region := app.classifyMouse(app.width-1, app.height-1, false); region != regionSessionDeck {
+		if region := app.classifyShellRegion(app.width-1, app.height-1, false); region != regionSessionDeck {
 			t.Fatalf("clicks classify as deck=%v want sessionDeck", region)
 		}
 	})

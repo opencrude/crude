@@ -1,5 +1,6 @@
 # Phase 15 lint gate — scoped to app/TUI/workspace packages in CI.
-# Full-repo cleanup is tracked separately; noisy linters stay off until green.
+# All default-family linters enabled (govet, ineffassign, misspell,
+# staticcheck, gosimple, unused, errcheck) — zero issues as of 2026-08-01.
 run:
   timeout: 5m
   tests: true
@@ -10,11 +11,9 @@ linters:
     - ineffassign
     - misspell
     - staticcheck
-  disable:
-    # Pre-existing dead code / unchecked errors — enable when repo is clean.
-    - errcheck
     - gosimple
     - unused
+    - errcheck
 
 issues:
   max-issues-per-linter: 0
@@ -52,6 +51,3 @@ issues:
       linters:
         - staticcheck
       text: "SA4017"
-    - path: workspace/
-      linters:
-        - errcheck

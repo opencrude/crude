@@ -27,7 +27,6 @@ type subPaneProjection struct {
 	// to decide whether the compact scrollbar or the MessageList scrollbar
 	// is the active one (for ScrollbarWidth/View/LineCount).
 	paneType workspace.PaneType
-	done     bool
 
 	// compact-agent scroll state. The workspace SubPane no longer owns
 	// scrollbar/cursor state; this projection does.
@@ -331,7 +330,7 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 
 	if sp.Done {
 		return []chatprojection.SubPaneLine{
-			chatprojection.BuildSubPaneSummaryLine(reg.theme, view, width),
+			chatprojection.BuildSubPaneSummaryLine(view, width),
 		}
 	}
 
@@ -375,7 +374,7 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 		}
 	}
 
-	headerLine := chatprojection.BuildSubPaneHeaderLine(reg.theme, view.Header, width, spinFrame)
+	headerLine := chatprojection.BuildSubPaneHeaderLine(view.Header, width, spinFrame)
 	lines := make([]chatprojection.SubPaneLine, 0, 1+visibleH)
 	lines = append(lines, headerLine)
 	for i := 0; i < visibleH; i++ {
@@ -403,7 +402,7 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 	if p.compactToolLines != nil && p.compactMsgVersion == msgVersion && p.compactMsgCount == len(msgs) && p.compactCacheWidth == width {
 		allToolLines = p.compactToolLines
 	} else {
-		allToolLines = chatprojection.BuildSubPaneToolLines(reg.theme, view, width)
+		allToolLines = chatprojection.BuildSubPaneToolLines(view, width)
 		p.compactToolLines = allToolLines
 		p.compactMsgVersion = msgVersion
 		p.compactMsgCount = len(msgs)
@@ -432,7 +431,7 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 	var toolLines []chatprojection.SubPaneLine
 	if len(allToolLines) == 0 {
 		thinking := p.renderer.ActiveThinkingLineCount(width) > 0
-		toolLines = append(toolLines, chatprojection.BuildCompactWorkingLine(reg.theme, thinking, width))
+		toolLines = append(toolLines, chatprojection.BuildCompactWorkingLine( thinking, width))
 	} else {
 		start := p.scroll.Offset()
 		end := start + visibleH
@@ -442,7 +441,7 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 		toolLines = allToolLines[start:end]
 	}
 
-	headerLine := chatprojection.BuildSubPaneHeaderLine(reg.theme, view.Header, width, spinFrame)
+	headerLine := chatprojection.BuildSubPaneHeaderLine(view.Header, width, spinFrame)
 	lines := make([]chatprojection.SubPaneLine, 0, 1+len(toolLines))
 	lines = append(lines, headerLine)
 	lines = append(lines, toolLines...)

@@ -9,6 +9,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/uitest"
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
@@ -47,6 +48,11 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if !bufferHasFG(buf, wantBorder) {
 		t.Fatal("shell status paint missing theme border foreground")
 	}
+
+	// Byte-identical regression. Deterministic here: no error/retry/info
+	// messages, no LastBusyAt, fixed spinFrame=0 — the heartbeat dot is the
+	// static "ready" glyph.
+	uitest.CheckGolden(t, "shellstatus_dark_80x2", buf)
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {

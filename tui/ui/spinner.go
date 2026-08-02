@@ -37,13 +37,6 @@ func BlockCursor(frame int, clr color.Color) string {
 	return " "
 }
 
-func BlockCursorTime(clr color.Color) string {
-	if BlinkOnTime(time.Now()) {
-		return lipgloss.NewStyle().Foreground(clr).Render("█")
-	}
-	return " "
-}
-
 func BlockCursorSolid(clr color.Color) string {
 	return lipgloss.NewStyle().Foreground(clr).Render("█")
 }

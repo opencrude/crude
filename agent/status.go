@@ -196,8 +196,7 @@ func BuildAsyncCommandStatus(mgr *fileio.AsyncCommandManager) string {
 		case fileio.AsyncKilled:
 			marker = "!"
 		}
-		var dur string
-		dur = c.Duration.Round(time.Second).String()
+		dur := c.Duration.Round(time.Second).String()
 		sb.WriteString(fmt.Sprintf("  %s [%s]: %s (PID %d, %s)", marker, c.Handle, c.Status, c.PID, dur))
 		if c.Status == fileio.AsyncFailed && c.Error != "" {
 			sb.WriteString(" — " + c.Error)

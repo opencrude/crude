@@ -8,6 +8,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/uitest"
 	"crude/tui/window"
 )
 
@@ -51,6 +52,10 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if !bufferHasFG(buf, wantAccent) {
 		t.Fatal("shell tabs paint missing theme accent foreground")
 	}
+
+	// Byte-identical regression: catches a shifted active marker or wrong
+	// separator glyph that property checks cannot see.
+	uitest.CheckGolden(t, "shelltabs_dark_40x2", buf)
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {

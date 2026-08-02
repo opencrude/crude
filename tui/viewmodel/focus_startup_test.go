@@ -11,8 +11,6 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/screens/launcher"
-	"crude/tui/screens/shelltree"
-	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -43,22 +41,15 @@ func TestStartupFocus_LauncherOwnsEnterAndHints(t *testing.T) {
 		app.FocusStack = workspace.NewFocusStack()
 	}
 
-	th := theme.DefaultDark()
-	app.launcherScreen = launcher.New(th)
 	app.launcherScreen.SetData(dir, nil)
-	app.launcherHost = ui.NewHost(th, app.launcherScreen)
-	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
-	app.launcherHost.Resize(60, 20)
-	app.launcherHost.Layout()
 	app.launcherScreen.SyncFocus()
+	app.paintShellFrame()
 
 	model := filetree.NewFileTreeModel(dir)
 	app.Tree = NewTreeState(model, 28)
 	app.Tree.Visible = true
-	app.sidebarScreen = shelltree.New(th, model)
-	app.sidebarHost = ui.NewHost(th, app.sidebarScreen)
-	app.sidebarHost.Resize(29, 20)
-	app.sidebarHost.Layout()
+	app.sidebarScreen.SetModel(model)
+	app.paintShellFrame()
 
 	if !app.launcherHostVisible() {
 		t.Fatal("precondition: launcher should be visible with no tabs")
@@ -89,7 +80,7 @@ func TestStartupFocus_LauncherOwnsEnterAndHints(t *testing.T) {
 	}
 	// ActivateMsg is returned as a Cmd from the launcher Host; drain it the
 	// same way Update would.
-	res := app.launcherHost.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	res := app.rootHandleFocus(launcher.ScreenID, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if res.Cmd == nil {
 		// First Enter already consumed via dispatch — re-select New Session
 		// and activate through dispatch by ensuring selection is on card 0.
@@ -114,7 +105,7 @@ func TestStartupFocus_LauncherOwnsEnterAndHints(t *testing.T) {
 	app.FocusStack.Clear()
 	app.launcherScreen.SetData(dir, nil)
 	app.launcherScreen.SyncFocus()
-	activate := app.launcherHost.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	activate := app.rootHandleFocus(launcher.ScreenID, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if activate.Cmd == nil {
 		t.Fatal("launcher Enter must emit ActivateMsg cmd")
 	}

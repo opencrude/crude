@@ -394,6 +394,12 @@ func (m *LSPManager) startClient(key string, client LSPClient, rootURI, cmd stri
 		return
 	}
 
+	// Reap the client when the underlying connection dies (server exit,
+	// pipe error, or a wedged server that hit the write-queue cap). The
+	// client is marked failed and removed so the next OpenFile restarts it;
+	// the lingering process is killed so a blocked pipe write can unwind.
+	m.reapOnDone(key, client, rootURI, cmd)
+
 	m.mu.Lock()
 	m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, status: LSPConnected}
 	m.recomputeActiveStatusLocked()
@@ -930,6 +936,37 @@ func (m *LSPManager) removeClient(client LSPClient) {
 			return
 		}
 	}
+}
+
+// reapOnDone watches a client's connection-death channel. On death the
+// client is removed from the registry and marked failed so the next
+// OpenFile starts a fresh server; the stale process is killed so a blocked
+// pipe write can unwind. Graceful stops remove the client first, making the
+// identity check a no-op. A nil Done channel (test fakes, unstarted
+// clients) disables reaping.
+func (m *LSPManager) reapOnDone(key string, client LSPClient, rootURI, cmd string) {
+	done := client.Done()
+	if done == nil {
+		return
+	}
+	go func() {
+		<-done
+		m.mu.Lock()
+		if m.clients[key] != client {
+			// Already removed (graceful stop or restart).
+			m.mu.Unlock()
+			return
+		}
+		delete(m.clients, key)
+		m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, status: LSPFailed, err: "language server connection lost"}
+		m.recomputeActiveStatusLocked()
+		m.mu.Unlock()
+
+		// Kill the lingering process outside the lock: the kill path may
+		// block up to the processCloser timeout while a wedged pipe
+		// unwinds.
+		client.Stop()
+	}()
 }
 
 // setSyncing flips the syncing flag. The status bar reads it to decide

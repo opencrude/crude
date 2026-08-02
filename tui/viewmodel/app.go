@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -87,24 +88,21 @@ type App struct {
 	renderCtx     *widget.RenderContext
 	cachedOutput  string // last rendered ANSI output for View() throttling during drag
 
-	// Layer surfaces for differential rendering. Cheap layers (sidebar,
-	// header, status bar) and the main content surface are re-rendered
-	// every frame; the editor's chroma work is internally cached by line
-	// (chromaLineCache), so unconditional repaint stays a cell fill with
-	// cached colors (see BenchmarkEditorPaint_*).
-	mainContentSurf     *surface.Surface // editor/chat/launcher content
-	mainSidebarSurf     *surface.Surface // file tree sidebar + divider
-	mainStatusbarSurf   *surface.Surface // status bar separator + content
-	mainHeaderSurf      *surface.Surface // header line + separator
-	mainTabBarSurf      *surface.Surface // main application tab bar + separator
-	mainSessionDeckSurf *surface.Surface // native per-session dock below messages
-	mainInputSurf       *surface.Surface // chat input shell (sep + chips + textarea + slash)
-	mainChatSurf        *surface.Surface // agent chat message list
-	mainEditorSurf      *surface.Surface // DocumentEditor shell (cell-buffer chrome)
-	sessionDeckRect     ui.Rect
-	inputRect           ui.Rect
-	chatRect            ui.Rect
-	editorRect          ui.Rect
+	// Root component tree (Phase 13.9): ONE ui.Host mounts the whole shell
+	// (header/status/tabs/sidebar/chat/input/editor/launcher/deckMount) and
+	// paints into ONE full-screen surface. Per-screen Hosts and layer
+	// surfaces are deleted; the per-session PanelDeck Hosts survive inside
+	// shellRoot's deckMount adapter.
+	mainSurf *surface.Surface // full-screen shell surface (replaces all layer surfaces)
+	shell    *shellRoot
+	rootHost *ui.Host
+	// Rectangles computed by computeContentLayout each frame; they drive
+	// shell slot geometry AND viewmodel policy (mouse region classification
+	// for editor/divider/status and focus-stack updates).
+	sessionDeckRect ui.Rect
+	inputRect       ui.Rect
+	chatRect        ui.Rect
+	editorRect      ui.Rect
 
 	actionRegistry     *ui.ActionRegistry
 	overlayHost        *ui.OverlayHost
@@ -113,30 +111,23 @@ type App struct {
 
 	// App-scoped fields (not on workspace.Workspace)
 	headerScreen           *shellheader.Screen
-	headerHost             *ui.Host
 	tabScreen              *shelltabs.Screen
-	tabHost                *ui.Host
 	sidebarScreen          *shelltree.Screen
-	sidebarHost            *ui.Host
-	statusHost             *ui.Host
 	inputScreen            *shellinput.Screen
-	inputHost              *ui.Host
 	chatScreen             *shellchat.Screen
-	chatHost               *ui.Host
 	agentChatScroll        map[string]agentMainChatScrollSnapshot
 	chatScrollAgent        string
 	chatScrollNeedsRestore bool
 	editorScreen           *shelleditor.Screen
-	editorHost             *ui.Host
 	launcherScreen         *launcher.Screen
-	launcherHost           *ui.Host
-	mainLauncherSurf       *surface.Surface
 	sessionPicker          *sessionpicker.Screen
 	commandPaletteModel    *commandPaletteModel
 	findInFiles            *findinfiles.Screen
 	findInFilesRequest     uint64
 	findInFilesGen         int
 	providerPresets        []ttypes.ProviderPreset
+	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
+	reveals                map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
 	OnExitMessage func()
@@ -145,34 +136,15 @@ type App struct {
 	lastCancelTime time.Time
 }
 
-type (
-	tickMsg               = ttypes.TickMsg
-	errorMsg              = ttypes.ErrorMsg
-	statusMsg             = ttypes.StatusMsg
-	agentMsg              = ttypes.AgentMsg
-	openSettingsMsg       = ttypes.OpenSettingsMsg
-	fetchModelsMsg        = ttypes.FetchModelsMsg
-	saveSettingsMsg       = ttypes.SaveSettingsMsg
-	updateModelMsg        = ttypes.UpdateModelMsg
-	selectionTickMsg      = ttypes.SelectionTickMsg
-	settingsSaveResultMsg = ttypes.SettingsSaveResultMsg
-)
-
 func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	th := theme.FromPreset(themePresetFromSettings(ws.LoadAppSettings()))
 	im := input.NewModel(th)
 	sb := shellstatus.New(th)
-	statusHost := ui.NewHost(th, sb)
 	headerScreen := shellheader.New(th)
-	headerHost := ui.NewHost(th, headerScreen)
 	tabScreen := shelltabs.New(th)
-	tabHost := ui.NewHost(th, tabScreen)
 	inputScreen := shellinput.New(th)
-	inputHost := ui.NewHost(th, inputScreen)
 	chatScreen := shellchat.New(th)
-	chatHost := ui.NewHost(th, chatScreen)
 	editorScreen := shelleditor.New(th)
-	editorHost := ui.NewHost(th, editorScreen)
 	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) {
 		if ws.Logger != nil {
 			ws.Logger.Warn(tag, msg, pairs...)
@@ -181,7 +153,6 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	treeModel := filetree.NewFileTreeModel(ws.RootPath)
 	tree := NewTreeState(treeModel, th.Tree.Config.DefaultWidth)
 	sidebarScreen := shelltree.New(th, treeModel)
-	sidebarHost := ui.NewHost(th, sidebarScreen)
 	bufferMgr := editor.NewBufferManager()
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
@@ -190,40 +161,19 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	ws.SetEventBus(eb)
 	ws.LSPMgr.SetRuntime(newEditorLSPRuntime())
 
-	// Create persistent layer surfaces. The main content covers the whole
-	// screen minus the header and status bar; sidebar, header, and status
-	// bar are overlays that update independently. The launcher surface is
-	// the main content layer when no agents/editor are open.
-	contentSurf := surface.NewSurface("main-content", 80, 24, cell.TransparentBlank())
-	sidebarSurf := surface.NewSurface("main-sidebar", th.Tree.Config.DefaultWidth, 1, cell.TransparentBlank())
-	statusbarSurf := surface.NewSurface("main-statusbar", 80, 1, cell.TransparentBlank())
-	headerSurf := surface.NewSurface("main-header", 80, 2, cell.TransparentBlank())
-	tabBarSurf := surface.NewSurface("main-tabbar", 80, 2, cell.TransparentBlank())
-	deckSurf := surface.NewSurface("session-deck", 80, 1, cell.TransparentBlank())
-	inputSurf := surface.NewSurface("main-input", 80, 4, cell.TransparentBlank())
-	chatSurf := surface.NewSurface("main-chat", 80, 24, cell.TransparentBlank())
-	editorSurf := surface.NewSurface("main-editor", 80, 24, cell.TransparentBlank())
-	launcherSurf := surface.NewSurface("main-launcher", 80, 24, cell.TransparentBlank())
-	comp.Root().AddChild(contentSurf)
-	comp.Root().AddChild(sidebarSurf)
-	comp.Root().AddChild(statusbarSurf)
-	comp.Root().AddChild(headerSurf)
-	comp.Root().AddChild(tabBarSurf)
-	comp.Root().AddChild(deckSurf)
-	comp.Root().AddChild(chatSurf)
-	comp.Root().AddChild(editorSurf)
-	comp.Root().AddChild(inputSurf)
-	comp.Root().AddChild(launcherSurf)
-	contentSurf.SetZOrder(0)
-	launcherSurf.SetZOrder(1)
-	chatSurf.SetZOrder(1)
-	editorSurf.SetZOrder(1)
-	deckSurf.SetZOrder(1)
-	inputSurf.SetZOrder(2)
-	sidebarSurf.SetZOrder(2)
-	statusbarSurf.SetZOrder(3)
-	headerSurf.SetZOrder(4)
-	tabBarSurf.SetZOrder(3)
+	// Start on the unified welcome launcher (actions + workspaces + sessions).
+	// The workspace listing loads asynchronously (refreshLauncherAsync from
+	// Init) so the first frame never blocks on the workspace DB scan.
+	launcherScreen := launcher.New(th)
+	launcherScreen.SetData(ws.RootPath, nil)
+
+	// The root tree: one Host mounts the whole shell and paints into one
+	// full-screen surface. The compositor renders this single surface under
+	// the floating windows (see View()).
+	deck := newDeckMount(nil)
+	shell := newShellRoot(headerScreen, sb, tabScreen, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck)
+	rootHost := ui.NewHost(th, shell)
+	launcherScreen.SetFocusHandler(rootHost.Focus)
 
 	edState := NewEditorState()
 	edState.Editor = editor.New(th)
@@ -237,11 +187,8 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	subPaneProjections := newSubPaneProjectionRegistry(th)
 	sessionProjections := newSessionProjectionRegistry(th)
 
-	// Start on the unified welcome launcher (actions + workspaces + sessions).
-	launcherScreen := launcher.New(th)
-	launcherScreen.Refresh(ws.RootPath)
-	launcherHost := ui.NewHost(th, launcherScreen)
-	launcherScreen.SetFocusHandler(launcherHost.Focus)
+	mainSurf := surface.NewSurface("main-shell", 80, 24, cell.TransparentBlank())
+	comp.Root().AddChild(mainSurf)
 
 	app := &App{
 		Workspace:           ws,
@@ -257,42 +204,28 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		OverlayState:        NewOverlayState(),
 		LSPPopup:            NewLSPPopupState(),
 		headerScreen:        headerScreen,
-		headerHost:          headerHost,
 		tabScreen:           tabScreen,
-		tabHost:             tabHost,
 		sidebarScreen:       sidebarScreen,
-		sidebarHost:         sidebarHost,
-		statusHost:          statusHost,
 		inputScreen:         inputScreen,
-		inputHost:           inputHost,
 		chatScreen:          chatScreen,
-		chatHost:            chatHost,
 		editorScreen:        editorScreen,
-		editorHost:          editorHost,
 		launcherScreen:      launcherScreen,
-		launcherHost:        launcherHost,
-		mainLauncherSurf:    launcherSurf,
+		shell:               shell,
+		rootHost:            rootHost,
+		mainSurf:            mainSurf,
 		providerPresets:     presets,
 		compositor:          comp,
 		windowManager:       wmgr,
 		eventBus:            eb,
 		renderCtx:           rctx,
 		lastCancelTime:      time.Now(),
-		mainContentSurf:     contentSurf,
-		mainSidebarSurf:     sidebarSurf,
-		mainStatusbarSurf:   statusbarSurf,
-		mainHeaderSurf:      headerSurf,
-		mainTabBarSurf:      tabBarSurf,
-		mainSessionDeckSurf: deckSurf,
-		mainInputSurf:       inputSurf,
-		mainChatSurf:        chatSurf,
-		mainEditorSurf:      editorSurf,
 		actionRegistry:      registry,
 		overlayHost:         overlay,
 		subPaneProjections:  subPaneProjections,
 		sessionProjections:  sessionProjections,
 		agentChatScroll:     make(map[string]agentMainChatScrollSnapshot),
 	}
+	deck.app = app
 
 	app.registerOverlayHandlers()
 
@@ -316,7 +249,8 @@ func (m *App) SwitchProject(projectDir string) error {
 	m.EditorState.Editor = editor.New(m.Theme)
 	m.LSPMgr.SetRuntime(newEditorLSPRuntime())
 	if m.launcherScreen != nil {
-		m.launcherScreen.Refresh(m.RootPath)
+		m.launcherScreen.SetData(m.RootPath, nil)
+		m.refreshLauncherAsync(m.RootPath)
 	}
 	return nil
 }
@@ -338,19 +272,6 @@ func (m *App) SetReferences(refs []sessiondb.Reference) {
 		m.RefStore().AddExisting(ref)
 	}
 	m.Input.SetReferenceStore(m.RefStore())
-}
-
-// popLongestLineWidth returns the display width of the widest
-// line in the slice. Used to size confirm-style popups.
-func popLongestLineWidth(lines []string) int {
-	max := 0
-	for _, l := range lines {
-		w := rendering.VisibleWidth(l)
-		if w > max {
-			max = w
-		}
-	}
-	return max
 }
 
 func (m *App) SetProgram(p *tea.Program) {
@@ -385,6 +306,12 @@ func (m *App) Init() tea.Cmd {
 				m.Logger.Warn("FILETREE", "watcher_start_failed", "error", err.Error())
 			}
 		}
+	}
+
+	// Kick the async launcher workspace listing for the welcome screen so
+	// the first frame paints immediately (no workspace DB scan on boot).
+	if m.launcherScreen != nil {
+		m.refreshLauncherAsync(m.RootPath)
 	}
 
 	return tea.Batch(tickCmd())
@@ -693,6 +620,24 @@ func (m *App) registerOverlayHandlers() {
 		return
 	}
 	oh := m.overlayHost
+
+	// Every NON-MODAL, non-typing overlay open starts a slide-in reveal on its
+	// WindowFrame (driven by the per-frame tick). Popovers, palettes and
+	// menus get the subtle open animation; modals (dirty-close, tree-delete,
+	// file picker, settings) appear instantly for snappy confirmation UX.
+	// Typing-driven popups (completion, references, outline) are excluded:
+	// they re-open on every keystroke, so an animation would feel laggy.
+	// The reveal is a no-op for windows without a WindowFrame body.
+	oh.SetOnOpen(func(id ui.OverlayID, fw *wm.FloatingWindow) {
+		switch id {
+		case ui.OverlayCompletion, ui.OverlayReferences, ui.OverlayOutline:
+			return
+		}
+		if entry := oh.Get(id); entry != nil && entry.Policy.Modal {
+			return
+		}
+		m.beginReveal(fw, string(id))
+	})
 
 	oh.RegisterContentHandler(ui.OverlayContextMenu, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		return m.clickContextMenu(localX, localY)

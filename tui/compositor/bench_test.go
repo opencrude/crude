@@ -9,12 +9,15 @@ import (
 
 func BenchmarkFullRender_80x24(b *testing.B) {
 	c := NewCompositor(80, 24)
+	// The layer surface is created ONCE and re-attached each frame — exactly
+	// how persistent layer surfaces behave in production. BeginFrame detaches
+	// children but does not destroy their buffers.
+	layer := surface.NewSurface("main", 80, 24, cell.BlankCell(cell.NewTrueColor(13, 17, 23)))
+	layer.Buffer().WriteString(0, 0, "crude compositor benchmark line", cell.NewTrueColor(230, 237, 243), cell.NoColor, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		c.BeginFrame()
-		layer := surface.NewSurface("main", 80, 24, cell.BlankCell(cell.NewTrueColor(13, 17, 23)))
-		layer.Buffer().WriteString(0, 0, "crude compositor benchmark line", cell.NewTrueColor(230, 237, 243), cell.NoColor, 0)
 		c.Root().AddChild(layer)
 		c.Composite()
 		_ = c.Present()

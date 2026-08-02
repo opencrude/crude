@@ -10,17 +10,14 @@ import (
 	"crude/provider"
 	"crude/tui/editor"
 	"crude/tui/filetree"
-	"crude/tui/screens/shelltabs"
-	"crude/tui/screens/shelltree"
 	"crude/tui/theme"
-	"crude/tui/ui"
 	"crude/tui/window"
 )
 
 // TestTabBarCloseClickAtProductionGeometry drives the real viewmodel mouse
-// path (classifyMouse → handleTabBarEvent → handleAgentTabClose) with a
-// sidebar + PadLR inset matching live layout — not the isolated shelltabs
-// Host contract.
+// path (classifyShellRegion → root host → tabs action → handleAgentTabClose)
+// with a sidebar + PadLR inset matching live layout — not the isolated
+// shelltabs Host contract.
 func TestTabBarCloseClickAtProductionGeometry(t *testing.T) {
 	dir := t.TempDir()
 	pathA := filepath.Join(dir, "alpha.go")
@@ -36,18 +33,13 @@ func TestTabBarCloseClickAtProductionGeometry(t *testing.T) {
 	app.Theme = theme.DefaultDark()
 	app.BufferMgr = editor.NewBufferManager()
 	app.Win = window.New(app.Theme)
-	app.tabScreen = shelltabs.New(app.Theme)
-	app.tabHost = ui.NewHost(app.Theme, app.tabScreen)
 	app.FocusStack.Clear()
 	app.launcherScreen = nil
-	app.launcherHost = nil
 
 	model := filetree.NewFileTreeModel(dir)
 	app.Tree = NewTreeState(model, 30)
 	app.Tree.Visible = true
-	th := theme.DefaultDark()
-	app.sidebarScreen = shelltree.New(th, model)
-	app.sidebarHost = ui.NewHost(th, app.sidebarScreen)
+	app.sidebarScreen.SetModel(model)
 
 	app.AddOrchestrator(
 		"agent",
@@ -67,7 +59,8 @@ func TestTabBarCloseClickAtProductionGeometry(t *testing.T) {
 	}
 	before := app.Win.TabCount()
 
-	app.ensureTabBarGeometry()
+	app.syncTabBarHost()
+	app.paintShellFrame()
 	tabs := app.tabScreen.TabsControl()
 	closeLocal := tabs.CloseLocalX(0)
 	if closeLocal < 0 {

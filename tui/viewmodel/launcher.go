@@ -40,13 +40,6 @@ func (m *App) launcherHelpSegments() []ui.HintSegment {
 	return segs
 }
 
-// launcherHelpView is flattened launcher help for tests.
-func (m *App) launcherHelpView() string {
-	h := ui.NewHint("launcher-help", m.actionRegistry, nil)
-	h.SetSegments(m.launcherHelpSegments())
-	return h.PlainText()
-}
-
 // launcherShortcuts returns the key/label rows shown in the left column.
 func (m *App) launcherShortcuts() [][2]string {
 	if m.actionRegistry == nil {
@@ -204,6 +197,13 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 }
 
 // openLauncher shows the workspace-centric welcome / start screen.
+//
+// The workspace listing is loaded ASYNCHRONOUSLY (see refreshLauncherAsync):
+// the launcher paints immediately with the last-known data (or fixed actions
+// only on first open) and the workspace rows arrive in a later
+// launcherWorkspacesMsg. The ~200ms DB scan must never block the update
+// goroutine — every back-to-launcher (last tab close, editor close, quit)
+// used to stall input and rendering for its full duration.
 func (m *App) openLauncher() {
 	cwd := m.RootPath
 	if cwd == "" {
@@ -211,11 +211,40 @@ func (m *App) openLauncher() {
 	}
 	if m.launcherScreen == nil {
 		m.launcherScreen = launcher.New(m.Theme)
-		m.launcherHost = ui.NewHost(m.Theme, m.launcherScreen)
-		m.launcherScreen.SetFocusHandler(m.launcherHost.Focus)
+		m.launcherScreen.SetFocusHandler(m.rootHost.Focus)
+		m.shell.SetScreen(shellLauncherSlot, m.launcherScreen)
 	}
-	m.launcherScreen.Refresh(cwd)
+	m.launcherScreen.SetData(cwd, nil)
+	m.refreshLauncherAsync(cwd)
 	m.LastInteractionTime = time.Now()
+}
+
+// launcherWorkspacesMsg carries an asynchronously-loaded workspace listing to
+// the update goroutine. Gen matches the launcherLoadGen that started the
+// load; stale generations are dropped by the handler.
+type launcherWorkspacesMsg struct {
+	Cwd   string
+	Infos []workspace.WorkspaceInfo
+	Gen   uint64
+}
+
+// refreshLauncherAsync loads the workspace list OFF the tea update goroutine
+// and delivers the result through the event bus (thread-safe Send; dropped
+// gracefully when no program is attached). Generation dedupe: only the
+// latest kick may apply, so rapid open/close/open cycles never apply a stale
+// listing for a previous directory.
+func (m *App) refreshLauncherAsync(cwd string) {
+	gen := m.launcherLoadGen.Add(1)
+	go func() {
+		if m.eventBus == nil {
+			return
+		}
+		infos, _ := workspace.ListWorkspaceInfos()
+		if m.launcherLoadGen.Load() != gen {
+			return
+		}
+		m.eventBus.Send(launcherWorkspacesMsg{Cwd: cwd, Infos: infos, Gen: gen})
+	}()
 }
 
 // openFolderPicker opens the existing file-picker UI in folder-select mode.
@@ -226,14 +255,4 @@ func (m *App) openFolderPicker() {
 	}
 	m.openPicker(start, filepickerscreen.ModeFolder)
 	// agent_tabs / setMode opens the filepicker floating window.
-}
-
-func clampInt(v, low, high int) int {
-	if v < low {
-		return low
-	}
-	if v > high {
-		return high
-	}
-	return v
 }

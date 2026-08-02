@@ -118,9 +118,15 @@ func (e *Editor) moveWordLeft() {
 			ri--
 		}
 		if ri <= 0 {
-			e.cursor.Col = 0
-			e.ensureCursorVisible()
-			return
+			if e.cursor.Line == 0 {
+				e.cursor.Col = 0
+				e.ensureCursorVisible()
+				return
+			}
+			// Whitespace-only (or fully consumed) line: keep climbing to the
+			// previous line's last word. Regression (b323a3b): this returned,
+			// parking the cursor on blank lines instead of the word before them.
+			continue
 		}
 		r := runes[ri-1]
 		if isWordChar(r) {
@@ -312,16 +318,6 @@ func (e *Editor) pageDown() {
 	}
 	e.applyGoalCol()
 	e.ensureCursorVisible()
-}
-
-func (e *Editor) clampCol(lineIdx int) {
-	if lineIdx < 0 {
-		return
-	}
-	lineVisW := e.lineVisualWidth(lineIdx)
-	if e.cursor.Col > lineVisW {
-		e.cursor.Col = lineVisW
-	}
 }
 
 func (e *Editor) goToDocStart() {

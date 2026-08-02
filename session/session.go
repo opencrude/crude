@@ -64,7 +64,6 @@ type Session struct {
 
 	sessionID    string
 	sessionStart time.Time
-	knowledgeDir string
 	yolo         bool
 
 	cost   *CostAccumulator
@@ -143,7 +142,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	}
 
 	if sessionDir != "" {
-		os.MkdirAll(sessionDir, 0700)
+		_ = os.MkdirAll(sessionDir, 0700)
 	}
 	fileio.SetSessionsRootFn(func() (string, error) { return sessionDir, nil })
 
@@ -257,7 +256,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	}
 
 	if dir := lg.SessionDir(); dir != "" {
-		os.MkdirAll(filepath.Join(dir, "reports"), 0755)
+		_ = os.MkdirAll(filepath.Join(dir, "reports"), 0755)
 	}
 
 	return sess, nil
@@ -310,9 +309,9 @@ func (s *Session) Close() {
 
 	s.logger.Close()
 	if !hasMsgs {
-		s.logger.Remove()
+		_ = s.logger.Remove()
 		if s.dbPath != "" {
-			os.Remove(s.dbPath)
+			_ = os.Remove(s.dbPath)
 		}
 	}
 }

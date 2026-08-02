@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/tui/screens/shelleditor"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/uitest"
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
@@ -43,6 +43,11 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if !bufferHasNonDefaultFG(buf) {
 		t.Fatal("shell editor paint missing themed foreground")
 	}
+
+	// Byte-identical regression: catches a shifted gutter, wrong chroma
+	// color on one token, or a moved cursor that property checks cannot see.
+	// Deterministic: editor cursor is a static inverted cell (no blink clock).
+	uitest.CheckGolden(t, "shelleditor_dark_48x10", buf)
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {
@@ -62,17 +67,6 @@ func bufferHasNonDefaultFG(buf *surface.CellBuffer) bool {
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x < buf.Width(); x++ {
 			if fg := buf.Get(x, y).FG; !fg.IsDefault() {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func bufferHasFG(buf *surface.CellBuffer, want cell.Color) bool {
-	for y := 0; y < buf.Height(); y++ {
-		for x := 0; x < buf.Width(); x++ {
-			if fg := buf.Get(x, y).FG; !fg.IsDefault() && fg.Equal(want) {
 				return true
 			}
 		}

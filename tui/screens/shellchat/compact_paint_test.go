@@ -17,7 +17,7 @@ func TestCompactNativeRowPaintGutterAlignment(t *testing.T) {
 	screen := shellchat.New(th)
 	tokens := ui.NewTokenSet(th)
 
-	header := chatprojection.BuildSubPaneHeaderLine(th, workspace.SubPaneHeaderView{
+	header := chatprojection.BuildSubPaneHeaderLine(workspace.SubPaneHeaderView{
 		Type:    workspace.PaneAgent,
 		Title:   "agent",
 		Elapsed: 2 * time.Second,
@@ -65,8 +65,7 @@ func TestCompactNativeRowPaintGutterAlignment(t *testing.T) {
 }
 
 func TestCompactNativeSelectionPlainText(t *testing.T) {
-	th := theme.DefaultDark()
-	tool := chatprojection.BuildSubPaneToolLines(th, workspace.SubPaneView{
+	tool := chatprojection.BuildSubPaneToolLines(workspace.SubPaneView{
 		ToolLines: []workspace.SubPaneToolLineView{
 			{Label: "read_file main.go", Phase: "done", Status: "success"},
 		},

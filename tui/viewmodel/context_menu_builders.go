@@ -413,19 +413,6 @@ func (m *App) closeContextMenu() {
 	m.overlayHost.Close(ui.OverlayContextMenu)
 }
 
-// findFlatItemIndex returns the index in FlatItems for the item at
-// (sectionIdx, itemIdx). Returns false if the item is disabled (and
-// therefore not in FlatItems).
-func findFlatItemIndex(st *widgets.ContextMenuState, sectionIdx, itemIdx int) (int, bool) {
-	for i := 0; i < len(st.FlatItems); i++ {
-		si, ii, ok := st.FlatItemAt(i)
-		if ok && si == sectionIdx && ii == itemIdx {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
 // handleContextMenuKey routes keypresses to the context menu. Up/
 // Down navigate items, Enter activates, Esc dismisses.
 func (m *App) handleContextMenuKey(msg tea.KeyPressMsg) tea.Cmd {

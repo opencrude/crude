@@ -35,13 +35,13 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 6 Input engine | PARTIAL | TextEdit on palette/launcher/settings/FIF; file/workspace picker and tree prompt use native TextField paint |
 | 7 Collections / scrollbar | PARTIAL | List, VirtualList, ScrollModel, ScrollbarControl; Phase 13.7/14 deleted `tui/scrollbar`; nested subpane gutters native in shellchat |
 | 8 Form system | PARTIAL | FormModel, FieldState, retained Form/FormField (text/select/multi-select/cycle/toggle/nav/separator), and ActionBar with variants/quick keys; workspace settings, session settings, questions, tool confirmation, YOLO, and background-job details are native consumers; remaining gaps are root Host wiring and non-form ANSI paint bridges |
-| 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint and PopupChrome deleted; OverlayHost owns all product popup lifecycle; WindowFrame reveal animation pending (ContextMenuLines/Reveal implementation deleted) |
+| 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint and PopupChrome deleted; OverlayHost owns all product popup lifecycle; **WindowFrame reveal animation DONE (2026-08-01)** — `WindowFrame.SetReveal` + OverlayHost `SetOnOpen` hook + viewmodel tick driver; non-modal popovers slide in over 120ms, modals appear instantly |
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
-| 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation tests retained pending WindowFrame reveal) |
+| 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (**reveal animation restored natively 2026-08-01** — WindowFrame.SetReveal + OverlayHost SetOnOpen; 6 reveal tests in ui + 6 in viewmodel) |
 | 12 Structured migrations | DONE | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, Find in Files, composer, text overlay, and launcher bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy overlay tabs, global async rows, and migrated legacy widgets deleted |
-| 13 Shell migrations | PARTIAL | Header/status/hints/tabs/tree/chat input/session picker/editor chrome native; message list Host+VirtualList native — markdown/thinking bodies bridge glamour ANSI to native PaintLines at render time (`BridgeAnsiLine`), no paint-time ANSI fallback; `contentDirty` cache REMOVED (2026-07-31, benchmark-verified); open: root Host/compositor wiring |
-| 14 Deletion | PARTIAL | `tui/scrollbar` + ANSI nested gutter strings deleted; dual chat/subpane scrollbar packages closed (only `ScrollbarControl` remains); bypass allowlist still non-empty (`docs/tui/bypass_manifest.json`) |
-| 15 Stabilization | IN PROGRESS | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests; suite green aside from known `jsonrepair` flake |
+| 13 Shell migrations | ✅ DONE | Header/status/hints/tabs/tree/chat input/session picker/editor chrome native; message list Host+VirtualList native — markdown/thinking bodies bridge glamour ANSI to native PaintLines at render time (`BridgeAnsiLine`), no paint-time ANSI fallback; `contentDirty` cache REMOVED (2026-07-31, benchmark-verified); **root Host wiring DONE (2026-08-01)** — one `App.rootHost` + `shellRoot` tree (header/status/tabs/sidebar/chat/input/editor/launcher/deckMount) painted into one `App.mainSurf`; per-screen Hosts and layer surfaces deleted; mouse translation helpers deleted; focus/key dispatch via rootHost (see §13.9) |
+| 14 Deletion | PARTIAL | `tui/scrollbar` + ANSI nested gutter strings deleted; dual chat/subpane scrollbar packages closed (only `ScrollbarControl` remains); `tui/diffview` deleted (2026-08-01, zero importers — last non-theme hex allowlist entry); `tui/components` + `tui/form` deleted; **TextArea ANSI View() path + input view.go bridge deleted (2026-08-01)** — chat input paints natively via PaintShell/Host, tests migrated to native Paint assertions; **~108 dead symbols deleted via unused/errcheck/gosimple (2026-08-01)**; bypass allowlist shrunk (hex = `tui/theme/` only); audit script now ENFORCES `raw-ansi-sgr` |
+| 15 Stabilization | IN PROGRESS | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests; suite green aside from known `jsonrepair` flake; **lint gate fully enabled + full-repo zero (2026-08-01)** — govet/ineffassign/misspell/staticcheck/gosimple/unused/errcheck all on across `./...`; three-layer boundary enforced in audit script |
 
 ### Intentional bridges (not drift — temporary)
 
@@ -51,7 +51,7 @@ These are allowed only as shrinking adapters listed in `bypass_manifest.json`:
 - ~~`ui.LegacyWidget` / `ANSIViewFunc`~~ — **DELETED** (Phase 14); temporary widget→Component adapters removed; tests use native fixtures.
 - Flat `tui/ui/` package (plan target subdirs deferred until APIs stabilize).
 
-**Not done yet (do not claim as complete):** WindowFrame reveal animation (ContextMenuLines/Reveal deleted; only state-level menu tests remain — no reveal animation or tests); full TextField surface paint everywhere; product controls still gradually consuming Glyph/Metrics tokens; root Host as viewmodel compositor root; bypass allowlist enforcement (hex still in `theme/` + `diffview/`). The `contentDirty` main-content cache was **removed** (2026-07-31): the editor's internal `chromaLineCache`/`chromaDirtyFrom` makes per-frame repaint ~180-250µs at 120x40, verified by `BenchmarkEditorPaint_*` and recorded in `docs/tui/PERFORMANCE_BASELINES.md`.
+**Not done yet (do not claim as complete):** full TextField surface paint everywhere; product controls still gradually consuming Glyph/Metrics tokens; bypass allowlist enforcement (hex now only in `theme/` after `diffview` deleted 2026-08-01). **WindowFrame reveal animation DONE (2026-08-01)**: `WindowFrame.SetReveal(progress)` collapses/grows the content area (Layout scales content height; Host hit-testing matches revealed geometry), OverlayHost `SetOnOpen` hook starts reveals, the viewmodel drives them from the per-frame tick (fast 16ms tick while animating, 120ms duration), and modals are excluded (appear instantly). Guarded by `TestWindowFrameReveal*` (ui) and `TestReveal_*` (viewmodel). The `contentDirty` main-content cache was **removed** (2026-07-31): the editor's internal `chromaLineCache`/`chromaDirtyFrom` makes per-frame repaint ~180-250µs at 120x40, verified by `BenchmarkEditorPaint_*` and recorded in `docs/tui/PERFORMANCE_BASELINES.md`. **Root Host wiring DONE (2026-08-01)** — the viewmodel is no longer hybrid: one `App.rootHost` + `shellRoot` tree + one `App.mainSurf` (§13.9).
 
 ## 1. Objective
 
@@ -270,7 +270,7 @@ The original TUI had:
 
 They disagreed on title placement, close buttons, background, inner padding, footer
 space, content bounds, and hit testing. Product windows now use `WindowFrame` only;
-remaining work is WindowFrame reveal animation (ContextMenuLines/Reveal implementation deleted).
+WindowFrame reveal animation DONE (2026-08-01): SetReveal + OverlayHost SetOnOpen + viewmodel tick driver (see Phase 9 row).
 
 ### 5.4 Visual styling
 
@@ -1260,12 +1260,13 @@ Landed:
 
 Remaining:
 - Tree prompt still rebuilds frame on each keystroke (acceptable interim; prefer mutate field)
-- WindowFrame reveal animation (ContextMenuLines/Reveal implementation deleted; reveal tests pending)
+- ~~WindowFrame reveal animation~~ ✅ DONE (2026-08-01) — SetReveal + OverlayHost SetOnOpen; tests: TestWindowFrameReveal* (ui) + TestReveal_* (viewmodel)
 
 Objectives:
 
-- Complete WindowFrame reveal animation (PopupChrome, WM decoration, hand-drawn
-  feature borders, and ContextMenuLines/Reveal already replaced/deleted).
+- ~~Complete WindowFrame reveal animation~~ ✅ DONE (2026-08-01) — SetReveal +
+  OverlayHost SetOnOpen + tick driver; PopupChrome, WM decoration, hand-drawn
+  feature borders, and ContextMenuLines/Reveal already replaced/deleted.
 
 Deliverables:
 
@@ -1455,6 +1456,176 @@ Exit criteria:
   repaint is benchmark-verified (~180-250µs at 120x40) via
   `BenchmarkEditorPaint_*` in `tui/screens/shelleditor/`.
 
+#### 13.9 Root Host wiring ✅ DONE (2026-08-01)
+
+**Target:** the viewmodel mounts the whole persistent shell as ONE component
+tree under a single `ui.Host` (`App.rootHost`) painted into ONE full-screen
+compositor surface (`App.mainSurf`). The nine per-screen `ui.Host` instances
+and ten layer surfaces are deleted; only the per-session `deckHost`
+(PanelDeck, retained per session by design) survives, mounted in the root
+tree through a thin `deckMount` adapter component.
+
+**Tree shape (viewmodel-owned composite `shellRoot`, ID `"shell"`):**
+
+```text
+rootHost
+└── shellRoot ("shell")
+    ├── header     shellheader.Screen   — always; rect (0, 1, W, 2)
+    ├── status     shellstatus.Screen   — always; rect (0, H-2, W, 2)
+    ├── tabs       shelltabs.Screen     — slot active when tabBarVisible()
+    ├── sidebar    shelltree.Screen     — slot active when Tree.Visible
+    ├── chat       shellchat.Screen     — slot active when chat visible
+    ├── input      shellinput.Screen    — slot active when input visible
+    ├── editor     shelleditor.Screen   — slot active when editor open
+    ├── launcher   launcher.Screen      — slot active when launcher visible
+    └── deck       deckMount            — slot active when deck open;
+                                          wraps the ACTIVE session's deckHost
+```
+
+**Rules:**
+
+- The viewmodel keeps its geometry computation (`computeLayout`,
+  `chatRect`/`editorRect`/`inputRect`/`sessionDeckRect`, `ChatAreaHeight`,
+  sidebar/tab-bar visibility) as the layout driver. `shellRoot.Layout`
+  assigns each active slot its screen-absolute rect (parent origin is 0,0).
+  `Host.collectScreen` then produces the ONE hit tree; screens receive
+  correct `LocalX`/`LocalY` from `EventContext` — the manual
+  `translateChatMouse`/`translateSidebarMouse`/`translateLauncherMouse`/
+  `translateSessionDeckMouse` helpers are deleted.
+- Keyboard routing keeps `focusTarget()` (FocusStack) as the viewmodel
+  policy, but per-screen host calls become `rootHost.Focus(<screen ID>)` +
+  `rootHost.Handle(msg)`. Unhandled keys bubble to the shell root (no-op).
+- Mouse routing keeps the viewmodel policy checks (WM first, sidebar
+  divider drag, status-bar row, deck blocking, editor legacy routing via
+  `routeEditorMouse`, focus-stack pushes on sidebar/tab-bar/chat/input
+  clicks) but the actual dispatch is `rootHost.Handle(rawMsg)`; region
+  classification is still allowed for policy, never for coordinate
+  translation. Host pointer capture replaces `capturedPersistentHost` /
+  `syncPersistentHostCapture`.
+- The editor screen stays input-no-op: editor keys/mouse keep routing
+  through viewmodel → `Editor.HandleEvent` (DocumentEditor integration
+  remains a later slice). `shelleditor.Screen.Handle` must keep returning
+  `EventResult{}`.
+- `deckMount` is a component whose Paint renders the active session's
+  `deckHost` into a retained deck-sized surface then blits it at its slot
+  rect, and whose Handle translates `EventContext` locals into deck-local
+  `tea.Msg`s and delegates to `deckHost.Handle` (preserving the
+  `paneldeck.empty` focus normalization). Per-session retention,
+  `deckFocused`, and `deckFocus` semantics are unchanged.
+- `themeConsumers()` collapses the eight host entries into `rootHost`
+  (Host.SetTheme propagates tokens to every mounted screen via
+  `applyTokenSet`); screen-level `SetTheme`/`SetTokens` consumers stay.
+
+**Exit criteria (this slice):** ✅ all met 2026-08-01
+
+- One `*ui.Host` field on `App` (rootHost); zero per-screen Host fields
+  and zero layer surfaces (mainContent/mainSidebar/mainStatusbar/
+  mainHeader/mainTabBar/mainSessionDeck/mainInput/mainChat/mainEditor/
+  mainLauncher deleted).
+- Pixels identical: the single root-host paint over `mainSurf` renders the
+  same cells the layer surfaces rendered (viewmodel paint tests assert
+  editor/chat/header/status/tree/launcher content on `mainSurf`; theme
+  paint test reconstructs the composited frame via bg-fill + Blit).
+- Mouse hit-testing needs no coordinate translation anywhere in
+  `tui/viewmodel` (grep for `translate.*Mouse` returns only deck-local
+  translation inside `deckMount` and editor's `routeEditorMouse` offset
+  math).
+- `dispatchKeyPress`/`dispatchPasteMsg` route through `rootHost` with
+  explicit `Focus(...)` per focus target; chat selection-tick and
+  `SelectionTickMsg` route through the root host too.
+- `go build ./...`, `go test ./...`, and the `test-race-tui` packages pass.
+
+**Landed implementation notes:**
+
+- `tui/viewmodel/shell_root.go`: `shellRoot` composite (ID `"shell"`) with
+  per-frame `setSlot` rects (driven by `computeContentLayout`), `Children()`
+  returning only active slots, and `SetScreen` for re-homed screens
+  (`openLauncher` recreation); `deckMount` (ID `"shell/deck"`) adapts the
+  active session's retained `deckHost` (paint via deck surface blit, input
+  via `EventContext`-local `tea.Msg` translation).
+- `App` fields: `rootHost`, `shell`, `mainSurf` (full-screen, z=0,
+  re-mounted after `BeginFrame` clears root children). Per-screen hosts and
+  all layer surfaces deleted.
+- `View()`: bg fill → re-mount `mainSurf` → `configureShell()` (geometry +
+  slots + projections) → `renderShellToSurface()` (unconditional
+  `MarkLayout` + `Paint`) → WM render → composite. `syncRootFocus()` maps
+  `focusTarget()` onto the root host's single focused component each frame.
+- Mouse routing: `classifyShellRegion` remains for POLICY only (focus-stack
+  pushes, editor legacy routing, divider drag, status row, context menus);
+  actual targeting is `rootHost.Handle` with raw screen coords. Host
+  pointer capture replaced `capturedPersistentHost` /
+  `syncPersistentHostCapture` (hidden-slot capture is canceled by
+  `Host.Layout`'s `validatePointerCapture` on unmount).
+- Keyboard: `dispatchLauncherKey`/`dispatchTreeKey`/`dispatchTabBarKey`/
+  `dispatchChatKey` and `SelectionTickMsg` route via `rootHost.Focus` +
+  `rootHost.Handle`; the editor's legacy `Editor.HandleEvent` routing is
+  unchanged (`shelleditor.Screen.Handle` stays a no-op).
+- Theme: `themeConsumers()` collapsed to `rootHost` (SetTheme propagates
+  tokens to every mounted screen via `applyTokenSet`); the anti-regression
+  test now enforces one host field (rootHost) wired into consumers.
+- Fixed latent double-offset `FillRect` bugs in `shellinput.Screen.Paint`
+  and `shelleditor.Screen.Paint` (they assumed `ox=0` from the
+  dedicated-surface era; the root host paints them at slot origins).
+- **Parent-local child rects (critical root-host rule):** `Host.paintNode`
+  paints a child at (parent origin + child bounds) and `collectScreen` treats
+  child bounds as parent-local. A screen that passes its own slot rect
+  (absolute, e.g. `{X:31,Y:5,...}`) to a child's `Layout` DOUBLE-COUNTED the
+  origin under the root host — the shellchat message list painted shifted by
+  the slot origin (content at col 64 instead of 33, rows 10+ instead of 5+),
+  and with a long conversation the shifted rows overwrote the input prompt
+  and the status bar. Fixed in `shellchat.Screen.Layout`: children
+  (`VirtualList`, `ScrollbarControl`) are laid out with parent-local rects
+  (`{X:0,Y:0,W:r.W,H:r.H}`). Guarded by `TestAgentView_ChatPaintsInsideSlot`
+  and `TestAgentView_LongChatDoesNotOverflowInputOrStatus` (both fail with
+  the double-origin reverted). Every shell screen must keep children in
+  parent-local space — the per-screen-host era made bounds (0,0)-based by
+  accident; the root host has no such accident.
+- **Launcher workspace load is ASYNC** (2026-08-01): `openLauncher` no
+  longer runs `workspace.ListWorkspaceInfos()` on the update goroutine
+  (~200ms DB scan for 92 workspaces stalled every back-to-launcher). The
+  launcher paints immediately with the last-known data (fixed actions on
+  first open) and `refreshLauncherAsync(cwd)` loads the listing in a
+  goroutine, delivering `launcherWorkspacesMsg{Cwd, Infos, Gen}` through the
+  event bus (thread-safe `Send`, dropped gracefully without a program).
+  Generation dedupe (`App.launcherLoadGen`, atomic) drops stale listings;
+  the handler skips applying when the launcher was replaced by a session.
+  Boot (`NewApp`/`Init`) and `SwitchProject` use the same path. Guarded by
+  `launcher_async_test.go` (`TestLauncherOpen_PaintsWithoutWorkspaceScan`,
+  `TestLauncherAsyncLoad_AppliesLatestGen`,
+  `TestLauncherAsyncLoad_DroppedWhenLauncherClosed`).
+- **Chat gravity restored** (2026-08-01): the renderer's `assembleOutput`
+  anchors short content at the BOTTOM of the viewport ("Gravity: content
+  shorter than viewport… content sits at the bottom"), and shellchat's
+  `ViewportPaneLineMap` already assumed it — but the root-host VirtualList
+  painted items from row 0, so short chats appeared at the TOP of the chat
+  area with a huge empty gap above the input prompt. Added
+  `ui.VirtualList.SetBottomGravity` (off by default; enabled by the chat
+  list in `shellchat.New`): when content fits the viewport and the scroll is
+  at offset 0, the items are painted at the bottom rows. Guarded by
+  `TestAgentView_ShortChatAnchorsToBottom` and the (updated)
+  `TestAgentView_ChatPaintsInsideSlot` (both fail with gravity reverted).
+  The pre-existing `SetBottomPadding` mechanism is NOT gravity (it extends
+  content downward) — only used by virtlist tests; the chat uses
+  `SetBottomGravity`.
+- **Input shell clamped to the status bar** (2026-08-01): `InputLineCount`
+  was unclamped — a long/multiline input could exceed the vertical budget
+  and its rows painted OVER the status separator and the status content
+  ("input pushes the right half of the bottom status and its separator out
+  of screen"). The old layer-surface world masked the overflow with the
+  status surface's higher z-order (status z=3 > input z=2); the root host
+  paints status FIRST in tree order, so any overlap lets the input win.
+  `computeContentLayout` now clamps the input shell to
+  `height - 2 - 3 - deck - tabs - 1` (status + top + deck + tab bar, keeping
+  one chat row minimum; the deck is squeezed first, so the clamp runs after
+  the deck height is known). The input textarea scrolls internally within
+  the clamped height (existing `clampScroll`/`EnsureCursorVisible`). Guarded
+  by `TestAgentView_LongInputDoesNotOverlapStatus` (fails with the clamp
+  reverted).
+- Tests migrated to the root-host model: shell capture/selection tests use
+  screen-absolute coords on `app.rootHost`; `newTestApp`/`newFullTestApp`
+  build the full shell; `paintShellFrame()` helper runs the production
+  configure+paint path.
+
 ### Phase 14: Package-boundary completion and deletion
 
 Objectives:
@@ -1518,14 +1689,14 @@ Exit criteria:
 | Composer | Window + TextArea + ActionBar/Hint | 12 | **Native `tui/screens/composer`**; WindowFrameWidget + OverlayHost; TextArea + ActionBar (Ctrl+Enter submit, Esc cancel/clear-selection); legacy ANSI widget deleted |
 | Text overlay | Window + TextArea + ActionBar | 12 | **Native `tui/screens/textoverlay`**; WindowFrameWidget + OverlayHost; TextArea + ActionBar (Ctrl+S save, Esc/Ctrl+C cancel); legacy ANSI widget deleted |
 | Launcher | Responsive layout + actions + SearchField + workspace collection | 12 | **Native `tui/screens/launcher`**; animated hero and New Workspace action cards, registry-derived shortcuts, SearchField, VirtualList workspace collection, fixed search row, owner-safe activation/deletion, and shared pane layout where content starts one column in and the scrollbar owns the final column |
-| Header | Row layout + text/status primitives | 13 | **Native `tui/screens/shellheader`**; Host paint into `mainHeaderSurf`; legacy `widgets.RenderHeader` deleted |
+| Header | Row layout + text/status primitives | 13 | **Native `tui/screens/shellheader`**; root-host slot paint (Phase 13.9); legacy `widgets.RenderHeader` deleted |
 | Status bar | Segmented row + action-derived hints | 13 | **Native `tui/screens/shellstatus`** + **`ui.Hint`/`ui.KeyChord`**; Host paint; durable usage via `Workspace.StatusView()`; status contexts emit registry segments; legacy ANSI statusbar + `#ffaa00` bypass deleted |
-| Tabs | Tabs control + close actions + status indicators | 13 | **Native `tui/screens/shelltabs`** + **`ui.Tabs` shell chrome**; Host paint into `mainTabBarSurf`; `Window` tab state only; legacy `window.RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted |
+| Tabs | Tabs control + close actions + status indicators | 13 | **Native `tui/screens/shelltabs`** + **`ui.Tabs` shell chrome**; root-host slot paint (Phase 13.9); `Window` tab state only; legacy `window.RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted |
 | File tree | Tree + Viewport + Scrollbar + SplitPane | 13 | ✅ **Native `tui/screens/shelltree` + `ui.Tree` + `ScrollbarControl`**; `TreeState.ViewData()` seam; `filetree/render.go` (ANSI) **DELETED**; filter uses `ui.TextEdit` |
-| Chat input | TextArea + reference chips + action hints | 13 | **Native `tui/screens/shellinput`**; Host paint into `mainInputSurf`; `ui.TextArea` + chips + `ui.List` slash; ANSI composer embed removed from `buildMainView` |
+| Chat input | TextArea + reference chips + action hints | 13 | **Native `tui/screens/shellinput`**; root-host slot + `ui.TextArea` + chips + `ui.List` slash; ANSI composer embed removed from `buildMainView` |
 | Message list | VirtualList + message delegates + selection | 13 | ✅ `chatprojection.Renderer` + `shellchat` Host/`VirtualList` paint structured `PaintLine` rows natively; markdown/thinking bodies are bridged from glamour ANSI to native `PaintLine` spans at render time (`BridgeAnsiLine` in `ansi_bridge.go`, consumed by `message_render.go` and `renderer.go`) with no paint-time ANSI fallback (`shellchat/messages.go` has only the native row path; multi-line `BridgeAnsiLines` deleted as dead code). Main gutter via `ScrollbarControl`; legacy `widgets/messagelist.go` deleted |
 | Subpanes | Panel + VirtualList + nested viewport | 13 | ✅ Composition via `shellchat.Compose`; projection `*chatprojection.Renderer` in `subPaneProjectionRegistry` |
-| Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | ✅ **Native `tui/screens/shelleditor`** Host → `mainEditorSurf`; `Editor.Render` + `ui.ScrollbarControl` (paint **and** mouse drag); shellstatus carries title/●/cursor/diag counts/actions; painted unconditionally every frame (main-content cache removed 2026-07-31; chroma cached per line internally). `Editor.View()` / `scrollbar_ansi` deleted; legacy `scrollbar.ScrollBar` removed from editor |
+| Editor chrome | DocumentEditor adapters + standard scrollbar/status/actions | 13 | ✅ **Native `tui/screens/shelleditor`** root-host slot; `Editor.Render` + `ui.ScrollbarControl` (paint **and** mouse drag); shellstatus carries title/●/cursor/diag counts/actions; painted unconditionally every frame (main-content cache removed 2026-07-31; chroma cached per line internally). `Editor.View()` / `scrollbar_ansi` deleted; legacy `scrollbar.ScrollBar` removed from editor |
 | Session picker | Window + sectioned List | 13 | ✅ **DONE:** Native `tui/screens/sessionpicker` OverlayHost + paint goldens; legacy `widgets/sessionpicker.go` deleted |
 | Workspace/TUI boundary | Neutral workspace data + TUI projections and integration seams | 10 | ✅ Workspace production and test code has no `tui/` imports; LSP/file-tree callback fixtures live under `tui/filetree/` |
 
@@ -1696,7 +1867,7 @@ This program is complete only when all statements are true:
     `ConfirmPromptSeverity` moved to `confirm_frame.go`. ContextMenuLines
     static tests migrated to `BuildContextMenuFrame` cell-buffer assertions
     (`contextmenu_frame_test.go`, 11 tests). ContextMenuLines/Reveal **deleted**
-    (reveal animation pending WindowFrame reveal support).
+    (reveal animation restored natively 2026-08-01 — WindowFrame.SetReveal + OverlayHost SetOnOpen + viewmodel tick driver).
 15. Phase 9 OverlayHost: typed `OverlayID`, `OverlayPolicy`, `OverlayEntry`,
     `OverlayStack` (`Open`/`Close`/`CloseAll`/`Get`/`IsOpen`/`Top`/`All`),
     `HandleClickOutside`, `RegisterContentHandler`/`RegisterHoverHandler`,
@@ -1989,19 +2160,20 @@ This program is complete only when all statements are true:
    3. **Phase 3 closeout:** ✅ complete (high-contrast theme, glyph/spacing/
       typography/metric token tables, config.json hot-reload).
 
-   4. **Phase 13:** persistent-shell and core-view migration (PARTIAL —
-       shell surfaces and message rows are fully native; markdown/thinking
-       bodies bridge glamour ANSI to native PaintLines at render time via
-       `BridgeAnsiLine`; `contentDirty` main-content cache removed
-       2026-07-31 after benchmark verification; open: root Host/compositor
-       wiring).
+   4. **Phase 13:** ✅ complete (2026-08-01) — the root Host wiring slice
+      (§13.9) landed: one `App.rootHost` + `shellRoot` tree (header/status/
+      tabs/sidebar/chat/input/editor/launcher/deckMount) painted into one
+      `App.mainSurf`; per-screen Hosts and layer surfaces deleted; mouse
+      translation helpers deleted; focus/key dispatch via rootHost.
 
-   5. **Phase 14:** package-boundary completion and deletion.
+   5. **Phase 14:** package-boundary completion and deletion. Progress (2026-08-01): `tui/diffview` deleted (zero importers — last non-theme hex allowlist entry); `tui/components` + `tui/form` already deleted; **TextArea ANSI View() path deleted** (`View`/`renderSegmentANSI`/`renderAtomicChipANSI`/`applySelectionANSI`/`blinkContrastFG`/`ansiColor` + `input/view.go` bridge + `ui.BlockCursorTime`; tests migrated to native `Paint` cell-buffer assertions where `Layout(W:8)` ≡ legacy `View(12)`); **~108 dead symbols deleted** via `unused`/`errcheck`/`gosimple` (50 unused incl. app.go legacy msg aliases + widgets test helpers; 46 unchecked errors; 12 simplifications); `workspace/` has zero `tui/` imports; audit script now enforces `raw-ansi-sgr`; lint gate fully enabled with zero issues. Remaining: shrink `raw-ansi-sgr` allowlist, delete any remaining legacy adapters whose consumers reached zero.
 
    6. **Phase 15:** stabilization and permanent enforcement (IN PROGRESS —
       see `docs/tui/PHASE15_CHECKLIST.md`; authoring doc, shell input/tabs
-      contracts, Host/WindowFrame fuzz added; allowlist still non-empty +
-      full lint gate green separately).
+      contracts, Host/WindowFrame fuzz added; **lint gate fully enabled
+      2026-08-01 — errcheck/unused/gosimple all on, zero issues repo-wide,
+      CI scope expanded to `./...`; three-layer boundary enforced**;
+      allowlist still non-empty: hex = `tui/theme/` only).
 
 ### Anti-drift checks
 

@@ -123,7 +123,7 @@ func (w *Watcher) Start() error {
 		}
 		return w.addWatchLocked(path)
 	}); err != nil {
-		fw.Close()
+		_ = fw.Close()
 		return err
 	}
 

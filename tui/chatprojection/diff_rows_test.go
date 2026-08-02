@@ -12,16 +12,6 @@ import (
 	"crude/tui/ui"
 )
 
-// roleOf returns the first non-empty span's role in a PaintLine.
-func roleOf(pl chatprojection.PaintLine) (ui.SemanticColor, bool) {
-	for _, s := range pl.Spans {
-		if s.Text != "" {
-			return s.Role, true
-		}
-	}
-	return 0, false
-}
-
 func TestBuildDiffRowsEmpty(t *testing.T) {
 	// The unified-diff parser is lenient: empty/plain input yields a single
 	// context row (matching the former ANSI renderer). What matters is that

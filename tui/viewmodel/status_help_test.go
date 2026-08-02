@@ -15,7 +15,6 @@ func TestEditorHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = nil
-	app.launcherHost = nil
 
 	path := filepath.Join(t.TempDir(), "handlers.go")
 	if err := os.WriteFile(path, []byte("package sample\n\nfunc handle() {}\n"), 0o600); err != nil {
@@ -35,10 +34,7 @@ func TestEditorHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 			t.Fatalf("editor status help missing %q: %q", want, help)
 		}
 	}
-	view := app.buildMainView()
-	if strings.Contains(view, "Ctrl+S save") {
-		t.Fatalf("editor help must not render inside the main pane:\n%s", view)
-	}
+	_ = app.computeContentLayout()
 	if app.ChatAreaHeight != 25 {
 		t.Fatalf("editor should reclaim help separator and row: height=%d, want 25", app.ChatAreaHeight)
 	}
@@ -49,11 +45,10 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = nil
-	app.launcherHost = nil
 	app.ActiveSession = workspace.NewSession("", "", nil, nil)
 	app.openSessionSettings()
 
-	view := app.buildMainView()
+	_ = app.computeContentLayout()
 	help := app.contextualHelpView()
 	if !strings.Contains(help, "Shift+Tab previous") {
 		t.Fatalf("session settings help should move to status: %q", help)
@@ -62,11 +57,8 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 		t.Fatalf("status help should use compact status-bar chrome: %q", help)
 	}
 
-	if strings.Contains(view, "Shift+Tab previous") {
-		t.Fatalf("session settings help must not render inside the main pane:\n%s", view)
-	}
-	inputLines := len(strings.Split(app.Input.View(app.width, app.height, false, false, app.SpinFrame), "\n"))
-	wantHeight := app.height - 2 - 3 - app.sessionDeckRect.H - inputLines - 1
+	inputLines := app.Input.ShellHeight(app.width)
+	wantHeight := app.height - 2 - 3 - app.sessionDeckRect.H - inputLines
 	if wantHeight < 1 {
 		wantHeight = 1
 	}
@@ -78,7 +70,6 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 func TestContextualHelpCoversTabFocus(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
-	app.launcherHost = nil
 	app.FocusStack.Push(FocusTabBar)
 	if got := app.contextualHelpView(); !strings.Contains(got, "tab bar focused") {
 		t.Fatalf("tab-focus help should move to status: %q", got)
@@ -88,15 +79,14 @@ func TestContextualHelpCoversTabFocus(t *testing.T) {
 func TestComposerHelpMovesToStatusWithoutRenderingInInput(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
-	app.launcherHost = nil
 
 	help := app.contextualHelpView()
 	if !strings.Contains(help, "Enter send") || !strings.Contains(help, "Ctrl+O attach file") {
 		t.Fatalf("composer guidance should appear in status context: %q", help)
 	}
-	inputView := app.Input.View(100, 20, false, false, 0)
-	if strings.Contains(inputView, "Enter send") || strings.Contains(inputView, "attach file") {
-		t.Fatalf("composer guidance must not reserve an input row: %q", inputView)
+	inputLines := app.Input.ShellHeight(100)
+	if inputLines > 2 {
+		t.Fatalf("composer guidance must not reserve an input row: shell=%d rows", inputLines)
 	}
 
 	app.Input.DismissHint()
@@ -108,7 +98,6 @@ func TestComposerHelpMovesToStatusWithoutRenderingInInput(t *testing.T) {
 func TestEditorContextHelpDerivesShortcutsFromRegistry(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
-	app.launcherHost = nil
 	app.width = 100
 	app.height = 30
 
@@ -140,7 +129,6 @@ func TestEditorContextHelpDerivesShortcutsFromRegistry(t *testing.T) {
 func TestEditorContextHelpFallsBackEmptyRegistry(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
-	app.launcherHost = nil
 	app.actionRegistry = nil
 	app.width = 100
 	app.height = 30

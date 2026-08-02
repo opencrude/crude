@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -62,7 +63,7 @@ func openWorkspaceDBAt(dbPath string) (*WorkspaceDB, error) {
 	}
 
 	if err := migrateWorkspaceSchema(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migrate workspace schema: %w", err)
 	}
 
@@ -163,11 +164,16 @@ func ensureWorkspaceSessionColumns(db *sql.DB) error {
 
 // tableColumns returns the set of column names for table via PRAGMA table_info.
 func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	return tableColumnsContext(context.Background(), db, table)
+}
+
+// tableColumnsContext is tableColumns with a context-bound query.
+func tableColumnsContext(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := make(map[string]bool)
 	for rows.Next() {
@@ -186,8 +192,13 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 // GetSetting retrieves a workspace-level setting by key.
 // Returns empty string if not found.
 func (wdb *WorkspaceDB) GetSetting(key string) string {
+	return wdb.GetSettingContext(context.Background(), key)
+}
+
+// GetSettingContext is GetSetting with a context-bound query.
+func (wdb *WorkspaceDB) GetSettingContext(ctx context.Context, key string) string {
 	var val string
-	row := wdb.DB.QueryRow(`SELECT value FROM workspace_metadata WHERE key = ?`, key)
+	row := wdb.DB.QueryRowContext(ctx, `SELECT value FROM workspace_metadata WHERE key = ?`, key)
 	_ = row.Scan(&val)
 	return val
 }
@@ -269,7 +280,7 @@ func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var metas []sessiondb.SessionMeta
 	for rows.Next() {
@@ -327,7 +338,7 @@ func (wdb *WorkspaceDB) SyncSessionMeta(projectDir, sessionID string) error {
 	if err != nil {
 		return err
 	}
-	defer sdb.Close()
+	defer func() { _ = sdb.Close() }()
 	return wdb.syncSessionMetaFromDB(sdb, sessionID)
 }
 
