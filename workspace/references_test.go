@@ -212,7 +212,7 @@ func TestReferenceStore_ListReferences_FiltersDeleted(t *testing.T) {
 	}
 
 	// Delete ref2
-	store.DeleteReference(ref2.ID)
+	_ = store.DeleteReference(ref2.ID)
 
 	// After delete, only 1 ref
 	list = store.ListReferences()
@@ -409,7 +409,7 @@ func TestLabelExists(t *testing.T) {
 	}
 
 	// Add a ref
-	store.CreateReference(sessiondb.CreateRequest{
+	_, _ = store.CreateReference(sessiondb.CreateRequest{
 		Kind:    sessiondb.KindPastedText,
 		Content: "content",
 	})

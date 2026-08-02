@@ -92,7 +92,7 @@ func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T
 	if !app.sessionDeckBlocking() || !app.sessionDeckCapturesInput() {
 		t.Fatal("blocking question panel did not capture deck input")
 	}
-	if region := app.classifyMouse(0, 0, false); region != regionSessionDeck {
+	if region := app.classifyShellRegion(0, 0, false); region != regionSessionDeck {
 		t.Fatalf("blocking question click classified as %v", region)
 	}
 
@@ -111,18 +111,17 @@ func TestSessionDeckReservesNativeRegionBelowMessages(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
 	app.launcherScreen = nil
-	app.launcherHost = nil
 	app.ActiveSession = &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	app.openSessionSettings()
+	_ = app.computeContentLayout()
 
-	view := app.buildMainView()
-	if view == "" || app.sessionDeckRect.Empty() {
-		t.Fatal("main view did not reserve a native session deck region")
+	if app.sessionDeckRect.Empty() {
+		t.Fatal("layout did not reserve a native session deck region")
 	}
 	if got, want := app.sessionDeckRect.Y, app.ChatAreaHeight+3; got != want {
 		t.Fatalf("deck Y=%d, want directly below messages at %d", got, want)
 	}
-	if region := app.classifyMouse(app.sessionDeckRect.X, app.sessionDeckRect.Y, false); region != regionSessionDeck {
+	if region := app.classifyShellRegion(app.sessionDeckRect.X, app.sessionDeckRect.Y, false); region != regionSessionDeck {
 		t.Fatalf("deck hit classified as %v", region)
 	}
 }

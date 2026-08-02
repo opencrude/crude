@@ -10,9 +10,6 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/screens/launcher"
-	"crude/tui/screens/shelltree"
-	"crude/tui/theme"
-	"crude/tui/ui"
 	"crude/workspace"
 )
 
@@ -32,20 +29,14 @@ func TestFocusPrecedence_TreeWinsOverVisibleLauncher(t *testing.T) {
 	app.EditorState = NewEditorState()
 	app.AgentMgr = workspace.NewAgentManager()
 
-	th := theme.DefaultDark()
-	app.launcherScreen = launcher.New(th)
 	app.launcherScreen.SetData(dir, nil)
-	app.launcherHost = ui.NewHost(th, app.launcherScreen)
-	app.launcherHost.Resize(60, 20)
-	app.launcherHost.Layout()
+	app.paintShellFrame()
 
 	model := filetree.NewFileTreeModel(dir)
 	app.Tree = NewTreeState(model, 28)
 	app.Tree.Visible = true
-	app.sidebarScreen = shelltree.New(th, model)
-	app.sidebarHost = ui.NewHost(th, app.sidebarScreen)
-	app.sidebarHost.Resize(29, 20)
-	app.sidebarHost.Layout()
+	app.sidebarScreen.SetModel(model)
+	app.paintShellFrame()
 
 	if !app.launcherHostVisible() {
 		t.Fatal("precondition: launcher should be visible with no tabs")

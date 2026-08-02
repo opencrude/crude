@@ -487,9 +487,3 @@ func (e *Editor) ensureCursorVisible() {
 
 	e.syncScrollChrome(availH)
 }
-
-// stringsReplaceTab expands tabs to spaces using tab stops. Kept as a
-// thin wrapper for call sites that still pass expanded display text.
-func stringsReplaceTab(s string) string {
-	return ExpandTabs(s, tabWidth)
-}

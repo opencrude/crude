@@ -242,22 +242,6 @@ func (m *App) normalizeSessionDeckFocus(projection *sessionProjection) {
 	projection.deckHost.Focus(ui.RootID)
 }
 
-func (m *App) translateSessionDeckMouse(msg tea.Msg) tea.Msg {
-	r := m.sessionDeckRect
-	switch msg := msg.(type) {
-	case tea.MouseClickMsg:
-		return tea.MouseClickMsg{X: msg.X - r.X, Y: msg.Y - r.Y, Button: msg.Button}
-	case tea.MouseMotionMsg:
-		return tea.MouseMotionMsg{X: msg.X - r.X, Y: msg.Y - r.Y, Button: msg.Button}
-	case tea.MouseReleaseMsg:
-		return tea.MouseReleaseMsg{X: msg.X - r.X, Y: msg.Y - r.Y, Button: msg.Button}
-	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: msg.X - r.X, Y: msg.Y - r.Y, Button: msg.Button}
-	default:
-		return msg
-	}
-}
-
 func (m *App) focusSessionDeckAfterLayout() {
 	projection := m.activeSessionDeck()
 	if projection == nil || !projection.deckFocused || projection.deckFocus == ui.RootID {

@@ -413,10 +413,6 @@ func (s *Screen) listItemVisible(itemIdx int) bool {
 	return false
 }
 
-func (s *Screen) workspaceVisible(itemIdx int) bool {
-	return s.listItemVisible(itemIdx)
-}
-
 func (s *Screen) selectableIndices() []int {
 	if s.filterOn {
 		return append([]int(nil), s.filtered...)
@@ -1483,17 +1479,6 @@ func sessionCountLabel(n int) string {
 		return "1 session"
 	}
 	return fmt.Sprintf("%d sessions", n)
-}
-
-func colorToUint8(c cell.Color) (r, g, b uint8) {
-	if c.Type == cell.ColorTrueColor {
-		return c.R, c.G, c.B
-	}
-	return 128, 128, 128
-}
-
-func lerpUint8(a, b uint8, t float64) uint8 {
-	return uint8(float64(a) + (float64(b)-float64(a))*t)
 }
 
 func clampInt(v, low, high int) int {

@@ -79,7 +79,6 @@ type Screen struct {
 	diagHints    int
 	lspVisible   bool
 	lspStatus    string
-	lspError     string
 }
 
 // New creates a status screen.
@@ -272,17 +271,6 @@ func (s *Screen) currentAgentPhase() string {
 		return ""
 	}
 	return st.phase
-}
-
-func (s *Screen) currentAgentStatusLine() string {
-	if s.currentAgent == "" {
-		return ""
-	}
-	st := s.getAgentState(s.currentAgent)
-	if st == nil {
-		return ""
-	}
-	return st.statusLine
 }
 
 func (s *Screen) View() string {
@@ -588,10 +576,6 @@ func randInt(n int) int {
 		return 0
 	}
 	return rand.Intn(n)
-}
-
-func (s *Screen) confirming() bool {
-	return s.isConfirming
 }
 
 func (s *Screen) SetConfirming(c bool) {

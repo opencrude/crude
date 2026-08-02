@@ -100,9 +100,6 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 				remainingHOff -= colW
 				continue
 			}
-			if remainingHOff > 0 {
-				remainingHOff = 0
-			}
 			if hasSiblingBelow(node, d) {
 				buf.Set(x, y, cell.NewCell('│', indentFG, bg, 0))
 			} else {
@@ -114,24 +111,17 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 				x++
 			}
 		}
-		if node.Depth >= 0 {
-			if remainingHOff >= 4 {
-				remainingHOff -= 4
+		if node.Depth >= 0 && remainingHOff < 4 {
+			if isLastChild(node) {
+				buf.Set(x, y, cell.NewCell('└', indentFG, bg, 0))
 			} else {
-				if remainingHOff > 0 {
-					remainingHOff = 0
-				}
-				if isLastChild(node) {
-					buf.Set(x, y, cell.NewCell('└', indentFG, bg, 0))
-				} else {
-					buf.Set(x, y, cell.NewCell('├', indentFG, bg, 0))
-				}
-				x++
-				buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
-				x++
-				buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
-				x++
+				buf.Set(x, y, cell.NewCell('├', indentFG, bg, 0))
 			}
+			x++
+			buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
+			x++
+			buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
+			x++
 		}
 
 		if node.IsDir && !(cfg.ShowIcons && icons != nil) {

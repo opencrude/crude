@@ -24,10 +24,6 @@ type Compositor struct {
 	height int                 // Terminal height in rows
 	root   *surface.Surface   // Root of the surface tree
 	damage DamageRegion       // Tracks what changed this frame
-
-	// fullRenderEveryN forces a full redraw every N frames to avoid any
-	// possible drift from incremental/diff rendering. 0 means never force.
-	frameCount int
 }
 
 // NewCompositor creates a compositor for the given terminal dimensions.
@@ -94,11 +90,6 @@ func (c *Compositor) BeginFrame() {
 	c.root.RemoveAllChildren()
 	c.root.Buffer().Clear()
 }
-
-// forceFullCompositeThreshold forces a full composite when more than this
-// fraction of the screen is damaged. Below the threshold, only dirty surfaces
-// are composited, and a diff is emitted.
-const forceFullCompositeThreshold = 0.5
 
 // Composite composites the entire surface tree into the back buffer using
 // painter's algorithm. It flattens the tree in z-order and blits every

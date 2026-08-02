@@ -127,10 +127,6 @@ func isDoubleQuoteLike(c rune) bool {
 		c == codeDoubleQuoteRight
 }
 
-func isDoubleQuote(c rune) bool {
-	return c == codeDoubleQuote
-}
-
 // isSingleQuoteLike checks if a rune is a single quote or variant.
 func isSingleQuoteLike(c rune) bool {
 	return c == codeQuote ||
@@ -138,10 +134,6 @@ func isSingleQuoteLike(c rune) bool {
 		c == codeQuoteRight ||
 		c == codeGraveAccent ||
 		c == codeAcuteAccent
-}
-
-func isSingleQuote(c rune) bool {
-	return c == codeQuote
 }
 
 // endsWithCommaOrNewline checks if the string ends with a comma or newline.

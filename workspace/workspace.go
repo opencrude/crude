@@ -295,7 +295,7 @@ func (w *Workspace) Close() {
 		w.LSPMgr.Stop()
 	}
 	if w.WorkspaceDB != nil {
-		w.WorkspaceDB.Close()
+		_ = w.WorkspaceDB.Close()
 		w.WorkspaceDB = nil
 	}
 }
@@ -454,7 +454,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		w.LSPMgr.Stop()
 	}
 	if w.WorkspaceDB != nil {
-		w.WorkspaceDB.Close()
+		_ = w.WorkspaceDB.Close()
 		w.WorkspaceDB = nil
 	}
 
@@ -493,7 +493,7 @@ func (w *Workspace) LoadAppSettings() ttypes.AppSettings {
 		return ttypes.AppSettings{}
 	}
 	var s ttypes.AppSettings
-	json.Unmarshal([]byte(raw), &s)
+	_ = json.Unmarshal([]byte(raw), &s)
 	return s
 }
 

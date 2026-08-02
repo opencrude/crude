@@ -8,11 +8,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/tui/uitest"
 	"crude/tui/widgets"
 )
 
@@ -222,6 +222,10 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if !bufferHasNonDefaultFG(buf) {
 		t.Fatal("command palette paint missing themed foreground")
 	}
+
+	// Byte-identical regression. Deterministic: fixed registry items, no
+	// time-dependent content in the palette frame.
+	uitest.CheckGolden(t, "command_palette_dark_60x14", buf)
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {
@@ -241,17 +245,6 @@ func bufferHasNonDefaultFG(buf *surface.CellBuffer) bool {
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x < buf.Width(); x++ {
 			if fg := buf.Get(x, y).FG; !fg.IsDefault() {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func bufferHasFG(buf *surface.CellBuffer, want cell.Color) bool {
-	for y := 0; y < buf.Height(); y++ {
-		for x := 0; x < buf.Width(); x++ {
-			if fg := buf.Get(x, y).FG; !fg.IsDefault() && fg.Equal(want) {
 				return true
 			}
 		}

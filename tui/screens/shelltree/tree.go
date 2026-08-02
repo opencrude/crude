@@ -92,10 +92,9 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 		localY--
 	}
 	translated := translateMouseY(msg, localY)
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		key := msg.(tea.KeyPressMsg)
-		cmd := v.owner.model.Update(filetree.TreeKeyPressMsg{Key: key})
+		cmd := v.owner.model.Update(filetree.TreeKeyPressMsg{Key: msg})
 		v.owner.syncFromModel()
 		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 	default:

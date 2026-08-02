@@ -10,9 +10,6 @@ import (
 	"crude/provider"
 	"crude/tui/editor"
 	"crude/tui/filetree"
-	"crude/tui/screens/shelltree"
-	"crude/tui/theme"
-	"crude/tui/ui"
 	"crude/tui/window"
 )
 
@@ -40,18 +37,13 @@ func setupTreeRoutingApp(t *testing.T) (*App, *filetree.FileTreeModel, string) {
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = nil
-	app.launcherHost = nil
 	app.BufferMgr = editor.NewBufferManager()
 
 	model := filetree.NewFileTreeModel(dir)
 	app.Tree = NewTreeState(model, 30)
 	app.Tree.Visible = true
-
-	th := theme.DefaultDark()
-	app.sidebarScreen = shelltree.New(th, model)
-	app.sidebarHost = ui.NewHost(th, app.sidebarScreen)
-	app.sidebarHost.Resize(app.Tree.Width, 16)
-	app.sidebarHost.Layout()
+	app.sidebarScreen.SetModel(model)
+	app.paintShellFrame()
 
 	app.AddOrchestrator(
 		"agent",

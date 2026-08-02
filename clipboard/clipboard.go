@@ -39,7 +39,6 @@ const (
 
 var (
 	lock      sync.Mutex
-	initOnce  sync.Once
 	initError error
 )
 

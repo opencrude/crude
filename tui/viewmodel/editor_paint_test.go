@@ -6,74 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/cell"
-	"crude/tui/compositor"
-	"crude/tui/editor"
-	"crude/tui/filetree"
-	"crude/tui/screens/launcher"
-	"crude/tui/screens/shelleditor"
-	"crude/tui/screens/shellheader"
-	"crude/tui/screens/shellstatus"
-	"crude/tui/screens/shelltree"
 	"crude/tui/surface"
-	"crude/tui/theme"
-	"crude/tui/ui"
-	"crude/tui/widget"
-	"crude/tui/wm"
 )
-
-// newEditorPaintApp builds a compositor-backed App that can paint the
-// DocumentEditor shell on the first View() after openEditorTab.
-func newEditorPaintApp(t *testing.T, root string) *App {
-	t.Helper()
-	th := theme.DefaultDark()
-	w, h := 100, 30
-	wmgr := wm.NewWindowManager()
-	comp := compositor.NewCompositor(w, h)
-
-	treeModel := filetree.NewFileTreeModel(root)
-	tree := NewTreeState(treeModel, 24)
-	tree.Visible = true
-
-	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
-	app.width = w
-	app.height = h
-	app.Theme = th
-	app.compositor = comp
-	app.windowManager = wmgr
-	app.overlayHost = ui.NewOverlayHost(wmgr)
-	app.renderCtx = widget.NewRenderContext(th)
-	app.Tree = tree
-	app.BufferMgr = editor.NewBufferManager()
-
-	app.headerScreen = shellheader.New(th)
-	app.headerHost = ui.NewHost(th, app.headerScreen)
-	app.StatusBar = shellstatus.New(th)
-	app.statusHost = ui.NewHost(th, app.StatusBar)
-	app.sidebarScreen = shelltree.New(th, treeModel)
-	app.sidebarHost = ui.NewHost(th, app.sidebarScreen)
-	app.launcherScreen = launcher.New(th)
-	app.launcherScreen.SetData(root, nil)
-	app.launcherHost = ui.NewHost(th, app.launcherScreen)
-	app.editorScreen = shelleditor.New(th)
-	app.editorHost = ui.NewHost(th, app.editorScreen)
-
-	app.mainHeaderSurf = surface.NewSurface("main-header", w, 2, cell.TransparentBlank())
-	app.mainStatusbarSurf = surface.NewSurface("main-statusbar", w, 2, cell.TransparentBlank())
-	app.mainSidebarSurf = surface.NewSurface("main-sidebar", tree.Width+1, h-4, cell.TransparentBlank())
-	app.mainLauncherSurf = surface.NewSurface("main-launcher", w-tree.Width-1, h-4, cell.TransparentBlank())
-	app.mainContentSurf = surface.NewSurface("main-content", w, h, cell.TransparentBlank())
-	app.mainEditorSurf = surface.NewSurface("main-editor", w, h, cell.TransparentBlank())
-	app.mainChatSurf = surface.NewSurface("main-chat", w, h, cell.TransparentBlank())
-	app.mainInputSurf = surface.NewSurface("main-input", w, 4, cell.TransparentBlank())
-	app.mainTabBarSurf = surface.NewSurface("main-tabbar", w, 2, cell.TransparentBlank())
-	app.mainSessionDeckSurf = surface.NewSurface("session-deck", w, 1, cell.TransparentBlank())
-	app.ChatAreaHeight = h - 6
-	app.EditorState = NewEditorState()
-	app.EditorState.Editor = editor.New(th)
-	return app
-}
 
 func countNonBlankGlyphs(buf *surface.CellBuffer) int {
 	if buf == nil {
@@ -136,20 +70,20 @@ func TestOpenFile_FirstFramePaintsEditorGlyphs(t *testing.T) {
 	if app.editorRect.Empty() {
 		t.Fatal("first frame: editorRect must be laid out")
 	}
-	if !app.mainEditorSurf.Visible() {
-		t.Fatal("first frame: mainEditorSurf must be visible")
+	if !app.isEditorActive() || !app.shellSlotActive(shellEditorSlot) {
+		t.Fatal("first frame: editor slot must be active")
 	}
-	buf := app.mainEditorSurf.Buffer()
+	buf := app.mainSurf.Buffer()
 	glyphs := countNonBlankGlyphs(buf)
 	if glyphs < 10 {
 		t.Fatalf("first frame: expected editor glyphs, got %d non-blank cells", glyphs)
 	}
 	if !bufferContainsPlain(buf, "unique_marker_alpha") && !bufferContainsPlain(buf, "AlphaMarker") {
-		t.Fatal("first frame: editor surface missing opened file content")
+		t.Fatal("first frame: shell surface missing opened file content")
 	}
 }
 
-// TestOpenFile_RepeatedFramesKeepPainting verifies the editor surface is
+// TestOpenFile_RepeatedFramesKeepPainting verifies the shell surface is
 // repainted unconditionally on every View() — a chrome-only frame (no dirty
 // mark, no size change) must still show the file, not a stale buffer.
 func TestOpenFile_RepeatedFramesKeepPainting(t *testing.T) {
@@ -164,7 +98,7 @@ func TestOpenFile_RepeatedFramesKeepPainting(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = app.View()
-	if !bufferContainsPlain(app.mainEditorSurf.Buffer(), "guard_file") {
+	if !bufferContainsPlain(app.mainSurf.Buffer(), "guard_file") {
 		t.Fatal("setup: first editor frame must paint guard_file")
 	}
 
@@ -173,10 +107,10 @@ func TestOpenFile_RepeatedFramesKeepPainting(t *testing.T) {
 	// unconditional, so repeated frames must keep the file visible.
 	for i := 0; i < 3; i++ {
 		_ = app.View()
-		if countNonBlankGlyphs(app.mainEditorSurf.Buffer()) < 5 {
+		if countNonBlankGlyphs(app.mainSurf.Buffer()) < 5 {
 			t.Fatalf("frame %d: repeated View() dropped editor glyphs", i)
 		}
-		if !bufferContainsPlain(app.mainEditorSurf.Buffer(), "guard_file") {
+		if !bufferContainsPlain(app.mainSurf.Buffer(), "guard_file") {
 			t.Fatalf("frame %d: repeated View() lost guard_file content", i)
 		}
 	}
@@ -200,7 +134,7 @@ func TestEditorTabSwitch_FirstFramePaintsNewFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = app.View()
-	if !bufferContainsPlain(app.mainEditorSurf.Buffer(), "file_aaa") {
+	if !bufferContainsPlain(app.mainSurf.Buffer(), "file_aaa") {
 		t.Fatal("setup: tab A should paint file_aaa")
 	}
 
@@ -209,7 +143,7 @@ func TestEditorTabSwitch_FirstFramePaintsNewFile(t *testing.T) {
 	}
 	// Immediate first frame after switch — no blink.
 	_ = app.View()
-	buf := app.mainEditorSurf.Buffer()
+	buf := app.mainSurf.Buffer()
 	if !bufferContainsPlain(buf, "file_bbb") && !bufferContainsPlain(buf, "TripleB") {
 		t.Fatal("tab switch first frame must paint file B content")
 	}
@@ -225,7 +159,7 @@ func TestEditorTabSwitch_FirstFramePaintsNewFile(t *testing.T) {
 		app.handleTabSwitch()
 	}
 	_ = app.View()
-	buf = app.mainEditorSurf.Buffer()
+	buf = app.mainSurf.Buffer()
 	if !bufferContainsPlain(buf, "file_aaa") && !bufferContainsPlain(buf, "TripleA") {
 		t.Fatal("switch back first frame must paint file A")
 	}

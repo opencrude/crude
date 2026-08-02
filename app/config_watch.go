@@ -30,7 +30,7 @@ func WatchConfig(send func(tea.Msg)) (stop func(), err error) {
 	done := make(chan struct{})
 	var stopOnce sync.Once
 	go func() {
-		defer watcher.Close()
+		defer func() { _ = watcher.Close() }()
 		base := filepath.Base(path)
 		var debounce *time.Timer
 		var debounceC <-chan time.Time

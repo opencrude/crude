@@ -136,11 +136,22 @@ type OverlayEntry struct {
 type OverlayHost struct {
 	wm    *wm.WindowManager
 	stack []*OverlayEntry
+
+	// onOpen is an optional hook invoked for every overlay open with the
+	// window and overlay ID, right after the window is registered. The
+	// viewmodel uses it to start reveal animations; the ui layer itself
+	// never animates (presentation policy lives with the caller).
+	onOpen func(id OverlayID, fw *wm.FloatingWindow)
 }
 
 // NewOverlayHost creates an overlay host wrapping the given WM.
 func NewOverlayHost(manager *wm.WindowManager) *OverlayHost {
 	return &OverlayHost{wm: manager}
+}
+
+// SetOnOpen installs the per-open hook (reveal animation start, etc.).
+func (h *OverlayHost) SetOnOpen(fn func(id OverlayID, fw *wm.FloatingWindow)) {
+	h.onOpen = fn
 }
 
 // Open registers an overlay. If an overlay with the same ID is
@@ -165,6 +176,9 @@ func (h *OverlayHost) Open(id OverlayID, fw *wm.FloatingWindow, policy OverlayPo
 		Policy:  policy,
 		OnClose: onClose,
 	})
+	if h.onOpen != nil {
+		h.onOpen(id, fw)
+	}
 }
 
 // Close removes an overlay and runs its OnClose cleanup.

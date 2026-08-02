@@ -15,13 +15,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Lint (Phase 15 scope)
+      - name: Lint (full repo)
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.64.8
-          golangci-lint run ./app/... ./tui/cell/... ./tui/surface/... ./tui/compositor/... ./tui/ui/... ./tui/screens/... ./workspace/...
+          golangci-lint run ./...
 
       - name: Design audit
         run: ./scripts/tui_design_audit.sh
+
+      - name: Bench allocation gate
+        run: ./scripts/tui_bench_gate.sh
 
       - name: Build
         run: go build ./...

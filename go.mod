@@ -106,3 +106,5 @@ require (
 replace charm.land/bubbletea/v2 => ./third_party/bubbletea
 
 replace github.com/charmbracelet/x/ansi => ./third_party/xansi
+
+replace github.com/charmbracelet/x/powernap => ./third_party/powernap

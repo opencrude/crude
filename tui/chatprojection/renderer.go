@@ -141,24 +141,6 @@ func (r *Renderer) syncScrollFromVL() {
 	}
 }
 
-func (r *Renderer) scrollBy(delta int) {
-	if scroll := r.authoritativeScroll(); scroll != nil {
-		scroll.ScrollBy(delta)
-		r.syncScrollToVL()
-		return
-	}
-	r.vl.ScrollBy(delta)
-}
-
-func (r *Renderer) scrollTo(y int) {
-	if scroll := r.authoritativeScroll(); scroll != nil {
-		scroll.ScrollTo(y)
-		r.syncScrollToVL()
-		return
-	}
-	r.vl.ScrollTo(y)
-}
-
 func (r *Renderer) effectiveScrollY() int {
 	if scroll := r.authoritativeScroll(); scroll != nil {
 		return scroll.Offset()

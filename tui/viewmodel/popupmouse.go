@@ -243,7 +243,6 @@ func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, edit *ui.T
 				goto done
 			}
 			acc += w
-			pos = i + 1
 		}
 		pos = len(runes)
 	done:
@@ -517,7 +516,7 @@ func (m *App) clickReferences(localX, localY int) tea.Cmd {
 			}
 			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
 				if item, ok := res.Action.Payload.(ui.ListItem); ok {
-					idx := -1
+					var idx int
 					if i, ok := item.Payload.(int); ok {
 						idx = i
 					} else {
@@ -617,7 +616,7 @@ func (m *App) clickCompletion(localX, localY int) tea.Cmd {
 			}
 			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
 				if item, ok := res.Action.Payload.(ui.ListItem); ok {
-					idx := -1
+					var idx int
 					if i, ok := item.Payload.(int); ok {
 						idx = i
 					} else {
@@ -703,7 +702,7 @@ func (m *App) clickOutline(localX, localY int) tea.Cmd {
 			}
 			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
 				if item, ok := res.Action.Payload.(ui.ListItem); ok {
-					idx := -1
+					var idx int
 					if i, ok := item.Payload.(int); ok {
 						idx = i
 					} else {

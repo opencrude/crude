@@ -240,10 +240,7 @@ func DetectNerdFont() bool {
 	// even if TERM indicates modern capabilities (e.g., Windows Terminal).
 	term := os.Getenv("TERM")
 	if strings.Contains(term, "truecolor") || strings.Contains(term, "256color") {
-		if runtime.GOOS == "windows" {
-			return false
-		}
-		return true
+		return runtime.GOOS != "windows"
 	}
 
 	// On Windows, default to false to avoid rendering NerdFont codepoints

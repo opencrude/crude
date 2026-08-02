@@ -1,26 +1,24 @@
 {
-  "version": 38,
-  "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only.",
+  "version": 44,
+  "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only. v44 (2026-08-01): WindowFrame reveal animation DONE (SetReveal + OverlayHost SetOnOpen + viewmodel tick driver; modals excluded); StripAnsi zero-alloc fast path (label/list paint allocations cut ~75%); FullRender benchmark fixed to reuse the layer surface (90425B->8249B/op); CI bench allocation gate added (scripts/tui_bench_gate.sh, tight ceilings); rendering adapter.go (ANSIAdapter/ModelAdapter) deleted. v43: full-repo lint gate zero; three-layer boundary enforced; moveWordLeft cross-line regression fixed. v42: lint gate fully enabled — errcheck/unused/gosimple all on, zero issues; ~108 dead symbols deleted; editor/render.go left raw-ansi-sgr allowlist. v41: TextArea ANSI View() path deleted. v40: dead tui/diffview package deleted. v39: Phase 13.9 root Host wiring landed.",
   "rules": [
     {
       "id": "hardcoded-lipgloss-hex",
       "pattern": "lipgloss\\.Color\\(\"#",
       "allowed_paths": [
-        "tui/theme/",
-        "tui/diffview/"
+        "tui/theme/"
       ],
-      "note": "Hex lives only in theme tokens + diffview styles. scrollbar/filetree icons/window/tools/xchroma/chatprojection migrated off allowlist."
+      "note": "Hex lives only in theme tokens. diffview deleted (2026-08-01); scrollbar/filetree icons/window/tools/xchroma/chatprojection migrated off allowlist."
     },
     {
       "id": "raw-truecolor-constructors",
       "pattern": "NewTrueColor\\(|color\\.RGBA\\{",
       "allowed_paths": [
         "tui/theme/",
-        "tui/diffview/",
         "tui/cell/",
         "tui/rendering/"
       ],
-      "note": "Feature paint must use TokenSet semantic roles. cell/ owns the constructor; rendering/ converts theme colors; theme/diffview may build palettes."
+      "note": "Feature paint must use TokenSet semantic roles. cell/ owns the constructor; rendering/ converts theme colors; theme/ may build palettes. diffview deleted (2026-08-01)."
     },
     {
       "id": "raw-ansi-sgr",
@@ -29,10 +27,9 @@
         "tui/cell/",
         "tui/compositor/",
         "tui/rendering/",
-        "tui/editor/render.go",
         "third_party/"
       ],
-      "note": "Feature code must not emit raw SGR. viewmodel/view.go and keyboard.go removed — they contain no \\x1b[ literals."
+      "note": "Feature code must not emit raw SGR. Enforced by tui_design_audit.sh (2026-08-01); editor/render.go left the allowlist (zero \\x1b[ literals); viewmodel/view.go, keyboard.go, and ui/text_area.go contain no \\x1b[ literals."
     },
     {
       "id": "uniseg-import",
@@ -229,6 +226,12 @@
       "note": "Chat TextArea is ui.TextArea painted by shellinput Host into mainInputSurf; no legacy components.TextInput chat path"
     },
     {
+      "id": "textarea-ansi-view-bridge",
+      "path": "tui/ui/text_area.go",
+      "status": "deleted",
+      "note": "TextArea.View + renderSegmentANSI/renderAtomicChipANSI/applySelectionANSI/blinkContrastFG/ansiColor deleted (2026-08-01); input/view.go ANSI bridge + ui.BlockCursorTime deleted; tests migrated to native Paint cell-buffer assertions (Layout W:8 ≡ legacy View(12))"
+    },
+    {
       "id": "messagelist-widget-deleted",
       "path": "tui/widgets/messagelist.go",
       "status": "deleted",
@@ -248,7 +251,7 @@
       "crude/tui/compositor",
       "crude/tui/ui"
     ],
-    "status": "phases 0-2 done; 3-10 partial; Phase 13.7/14 deleted tui/scrollbar; numeric baselines recorded; WindowFrame and OverlayHost own product chrome/lifecycle; workspace owns project search, file operations, agent routing, persisted hydration, and canonical live Conversation message data"
+    "status": "phases 0-2 done; 3-10 partial; Phase 13.7/14 deleted tui/scrollbar; numeric baselines recorded; WindowFrame and OverlayHost own product chrome/lifecycle; workspace owns project search, file operations, agent routing, persisted hydration, and canonical live Conversation message data; Phase 13.9 (2026-08-01) root Host wiring: one App.rootHost + shellRoot tree + one App.mainSurf, per-screen hosts/layer surfaces deleted"
   },
   "architecture_boundaries": {
     "workspace_production_tui_imports": {

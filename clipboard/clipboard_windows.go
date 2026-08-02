@@ -62,7 +62,7 @@ func read(t Format) ([]byte, error) {
 	if err := openClipboardWithRetry(); err != nil {
 		return nil, err
 	}
-	defer closeClipboard.Call()
+	defer func() { _, _, _ = closeClipboard.Call() }()
 
 	return readText()
 }
@@ -79,7 +79,7 @@ func readText() ([]byte, error) {
 		logIf(func(lg *logger.Logger) { lg.Warn("CLIPBOARD", "win_read_lock_failed") })
 		return nil, errUnavailable
 	}
-	defer gUnlock.Call(hMem)
+	defer func() { _, _, _ = gUnlock.Call(hMem) }()
 
 	const maxChars = 1 << 20
 	var ptr *uint16
@@ -108,7 +108,7 @@ func write(t Format, buf []byte) (bool, error) {
 	if err := openClipboardWithRetry(); err != nil {
 		return false, err
 	}
-	defer closeClipboard.Call()
+	defer func() { _, _, _ = closeClipboard.Call() }()
 
 	r, _, err := emptyClipboard.Call()
 	if r == 0 {
@@ -135,18 +135,18 @@ func write(t Format, buf []byte) (bool, error) {
 
 	p, _, err := gLock.Call(hMem)
 	if p == 0 {
-		gFree.Call(hMem)
+		_, _, _ = gFree.Call(hMem)
 		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_lock_failed", "error", err.Error()) })
 		return false, fmt.Errorf("failed to lock memory: %w", err)
 	}
 
-	memMove.Call(p, uintptr(unsafe.Pointer(&s[0])), uintptr(len(s)*2))
+	_, _, _ = memMove.Call(p, uintptr(unsafe.Pointer(&s[0])), uintptr(len(s)*2))
 
-	gUnlock.Call(hMem)
+	_, _, _ = gUnlock.Call(hMem)
 
 	v, _, err := setClipboardData.Call(cFmtUnicodeText, hMem)
 	if v == 0 {
-		gFree.Call(hMem)
+		_, _, _ = gFree.Call(hMem)
 		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_set_failed", "error", err.Error()) })
 		return false, fmt.Errorf("failed to set clipboard data: %w", err)
 	}

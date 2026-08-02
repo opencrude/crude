@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -12,12 +11,10 @@ import (
 	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"
-	"crude/tui/screens/shellstatus"
 	"crude/tui/settings"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/window"
 	"crude/tui/wm"
 	"crude/workspace"
 )
@@ -32,7 +29,7 @@ func TestFocusTarget_Launcher(t *testing.T) {
 	app := newTestApp(t)
 	app.width = 80
 	app.height = 30
-	_ = app.buildMainView()
+	_ = app.computeContentLayout()
 	if app.ChatAreaHeight < 3 {
 		t.Fatalf("launcher visibility setup: ChatAreaHeight=%d", app.ChatAreaHeight)
 	}
@@ -123,9 +120,9 @@ func TestAgentForView_WithActiveAgentView(t *testing.T) {
 	}
 }
 
-// buildMainView nil-activeML guard tests
+// computeContentLayout nil-activeML guard tests
 
-func TestBuildMainView_NilActiveML(t *testing.T) {
+func TestComputeContentLayout_NilActiveML(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
@@ -134,15 +131,15 @@ func TestBuildMainView_NilActiveML(t *testing.T) {
 	// so activeMsgList() returns nil (the node exists but MsgList is nil).
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: nil})
 
-	// This should not panic — the nil activeML guard in buildMainView
-	// should produce empty content instead of dereferencing nil.
-	out := app.buildMainView()
-	if out == "" {
-		t.Fatal("expected non-empty output from buildMainView")
+	// This should not panic — the nil activeML guard in computeContentLayout
+	// should produce a chat layout instead of dereferencing nil.
+	lay := app.computeContentLayout()
+	if lay.ChatH < 1 {
+		t.Fatal("expected a valid chat layout height")
 	}
 }
 
-func TestBuildMainView_NilActiveML_EmptyAgents(t *testing.T) {
+func TestComputeContentLayout_NilActiveML_EmptyAgents(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
@@ -150,32 +147,26 @@ func TestBuildMainView_NilActiveML_EmptyAgents(t *testing.T) {
 	// No agents, no editors, no launcher → the else-if for
 	// len(m.agents)==0 handles this, producing empty chat.
 	app.launcherScreen = nil
-	app.launcherHost = nil
 
-	out := app.buildMainView()
-	if out == "" {
-		t.Fatal("expected non-empty output from buildMainView")
+	lay := app.computeContentLayout()
+	if lay.ChatH < 1 {
+		t.Fatal("expected a valid chat layout height")
 	}
 }
 
-func TestBuildMainView_LauncherFallback(t *testing.T) {
+func TestComputeContentLayout_LauncherFallback(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
 
-	// Launcher present, no agents → launcher surface is active and the main
-	// content string only reserves blank chat rows.
-	app.launcherScreen = launcher.New(app.Theme)
-	app.launcherScreen.SetData(".", nil)
-	app.launcherHost = ui.NewHost(app.Theme, app.launcherScreen)
-	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
-
-	_ = app.buildMainView()
+	// Launcher present, no agents → the launcher slot is active and the
+	// content layout only reserves the chat rows.
+	_ = app.computeContentLayout()
 	if app.launcherScreen == nil {
 		t.Fatal("launcher screen should still be present")
 	}
-	if app.launcherHost == nil {
-		t.Fatal("launcher host should be present")
+	if !app.launcherHostVisible() {
+		t.Fatal("launcher slot should be active with no tabs")
 	}
 	if app.launcherScreen.TotalItems() < 2 {
 		t.Fatalf("expected at least 2 launcher items, got %d", app.launcherScreen.TotalItems())
@@ -230,7 +221,6 @@ func TestHandleQuit_LastTabRefreshesLauncher(t *testing.T) {
 
 	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
 	app.launcherScreen = nil // simulate launcher being cleared
-	app.launcherHost = nil
 
 	// Close last tab
 	_, cmd := app.handleQuit()
@@ -499,37 +489,33 @@ func TestSyncAgentWindowTabs_Empty(t *testing.T) {
 	app.syncAgentWindowTabs()
 }
 
-// classifyMouse tests
+// classifyShellRegion tests
 
-func TestClassifyMouse_NoAgents_NoEditor(t *testing.T) {
+func TestClassifyShellRegion_NoAgents_NoEditor(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
 
 	// With no launcher (e.g. during the very first frame before the
-	// launcher is created), classifyMouse falls through to regionInput
+	// launcher is created), classifyShellRegion falls through to regionInput
 	// — same as the old behavior, so we don't regress.
-	region := app.classifyMouse(10, 10, false)
+	region := app.classifyShellRegion(10, 10, false)
 	if region != regionInput {
 		t.Fatalf("expected regionInput with no agents and no launcher, got %v", region)
 	}
 }
 
-// TestClassifyMouse_NoAgents_NoEditor_WithLauncher verifies the new
+// TestClassifyShellRegion_NoAgents_NoEditor_WithLauncher verifies the new
 // behavior: when the launcher is on-screen, clicks in the main area
 // are classified as regionLauncher (not regionInput). This is the
 // fix for "click on New Session doesn't work".
-func TestClassifyMouse_NoAgents_NoEditor_WithLauncher(t *testing.T) {
+func TestClassifyShellRegion_NoAgents_NoEditor_WithLauncher(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
 	app.ChatAreaHeight = 17
-	app.launcherScreen = launcher.New(app.Theme)
-	app.launcherScreen.SetData(".", nil)
-	app.launcherHost = ui.NewHost(app.Theme, app.launcherScreen)
-	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
 
-	region := app.classifyMouse(10, 10, false)
+	region := app.classifyShellRegion(10, 10, false)
 	if region != regionLauncher {
 		t.Fatalf("expected regionLauncher with launcher present, got %v", region)
 	}
@@ -569,11 +555,11 @@ func TestClassifyMouse_WithAgent(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.ChatAreaHeight = 17 // set as buildMainView would
+	app.ChatAreaHeight = 17 // set as computeContentLayout would
 
 	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
 
-	region := app.classifyMouse(10, 10, false)
+	region := app.classifyShellRegion(10, 10, false)
 	if region != regionChat {
 		t.Fatalf("expected regionChat with agent, got %v", region)
 	}
@@ -588,7 +574,7 @@ func TestClassifyMouse_InputArea(t *testing.T) {
 	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
 
 	// y=24 is in the input area (chatH=17 + 4 + tabBarExtra=2 = 23)
-	region := app.classifyMouse(10, 24, false)
+	region := app.classifyShellRegion(10, 24, false)
 	if region != regionInput {
 		t.Fatalf("expected regionInput for input area, got %v", region)
 	}
@@ -703,78 +689,6 @@ func TestDispatchChatKey_CtrlC(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("expected nil cmd for ctrl+c with no selection")
 	}
-}
-
-func newTestApp(t *testing.T) *App {
-	t.Helper()
-	th := theme.DefaultDark()
-	wmgr := wm.NewWindowManager()
-
-	app := &App{
-		Workspace: &workspace.Workspace{
-			AgentMgr:      workspace.NewAgentManager(),
-			PaneMgr:       workspace.NewPaneManager(),
-			FocusStack:    workspace.NewFocusStack(),
-			StartTime:     time.Now(),
-			ActiveSession: &workspace.Session{},
-		},
-		Theme:              th,
-		Tree:               NewTreeState(nil, 30),
-		OverlayState:       NewOverlayState(),
-		LSPPopup:           NewLSPPopupState(),
-		EditorState:        NewEditorState(),
-		Input:              input.NewModel(th),
-		actionRegistry:     ui.DefaultRegistry(),
-		windowManager:      wmgr,
-		overlayHost:        ui.NewOverlayHost(wmgr),
-		subPaneProjections: newSubPaneProjectionRegistry(th),
-		sessionProjections: newSessionProjectionRegistry(th),
-	}
-
-	app.Win = window.New(th)
-	app.launcherScreen = launcher.New(th)
-	app.launcherScreen.SetData(".", nil)
-	app.launcherHost = ui.NewHost(th, app.launcherScreen)
-	app.launcherScreen.SetFocusHandler(app.launcherHost.Focus)
-
-	return app
-}
-
-func newFullTestApp(t *testing.T) *App {
-	t.Helper()
-	th := theme.DefaultDark()
-	im := input.NewModel(th)
-	sb := shellstatus.New(th)
-	wmgr := wm.NewWindowManager()
-
-	app := &App{
-		Workspace: &workspace.Workspace{
-			AgentMgr:      workspace.NewAgentManager(),
-			PaneMgr:       workspace.NewPaneManager(),
-			FocusStack:    workspace.NewFocusStack(),
-			StartTime:     time.Now(),
-			ActiveSession: &workspace.Session{},
-		},
-		Theme:              th,
-		Input:              im,
-		StatusBar:          sb,
-		Tree:               NewTreeState(nil, 30),
-		SpinFrame:          0,
-		OverlayState:       NewOverlayState(),
-		LSPPopup:           NewLSPPopupState(),
-		EditorState:        NewEditorState(),
-		width:              80,
-		height:             24,
-		actionRegistry:     ui.DefaultRegistry(),
-		windowManager:      wmgr,
-		overlayHost:        ui.NewOverlayHost(wmgr),
-		subPaneProjections: newSubPaneProjectionRegistry(th),
-		sessionProjections: newSessionProjectionRegistry(th),
-	}
-
-	app.Win = window.New(th)
-
-	return app
 }
 
 var _ tea.Model = (*App)(nil)

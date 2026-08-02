@@ -99,7 +99,7 @@ func (t *TUI) Wait() {
 }
 
 func (t *TUI) ReleaseTerminal() {
-	t.Program.ReleaseTerminal()
+	_ = t.Program.ReleaseTerminal()
 }
 
 func (t *TUI) SendAgentEvent(typ string, data any) {

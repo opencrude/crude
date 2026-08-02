@@ -7,19 +7,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
-	"crude/tui/compositor"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
-	"crude/tui/screens/launcher"
-	"crude/tui/screens/shellheader"
-	"crude/tui/screens/shellstatus"
-	"crude/tui/screens/shelltree"
 	settingsui "crude/tui/settings"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widget"
-	"crude/tui/wm"
 )
 
 // TestApplyThemePreset_PaintedCellsLeaveOldPalette asserts on actual painted
@@ -176,47 +169,20 @@ func newPaintableThemeApp(t *testing.T) *App {
 	t.Helper()
 	th := theme.DefaultDark()
 	w, h := 100, 28
-	wmgr := wm.NewWindowManager()
-	comp := compositor.NewCompositor(w, h)
 
 	treeModel := filetree.NewFileTreeModel(t.TempDir())
 	tree := NewTreeState(treeModel, 24)
 	tree.Visible = true
 
-	headerScreen := shellheader.New(th)
-	headerHost := ui.NewHost(th, headerScreen)
-	statusBar := shellstatus.New(th)
-	statusHost := ui.NewHost(th, statusBar)
-	sidebarScreen := shelltree.New(th, treeModel)
-	sidebarHost := ui.NewHost(th, sidebarScreen)
-	launcherScreen := launcher.New(th)
-	launcherScreen.SetData(t.TempDir(), nil)
-	launcherHost := ui.NewHost(th, launcherScreen)
-	launcherScreen.SetFocusHandler(launcherHost.Focus)
-
 	app := newFullTestApp(t)
 	app.width = w
 	app.height = h
 	app.Theme = th
-	app.compositor = comp
-	app.windowManager = wmgr
-	app.overlayHost = ui.NewOverlayHost(wmgr)
-	app.renderCtx = widget.NewRenderContext(th)
 	app.Tree = tree
-	app.headerScreen = headerScreen
-	app.headerHost = headerHost
-	app.statusHost = statusHost
-	app.StatusBar = statusBar
-	app.sidebarScreen = sidebarScreen
-	app.sidebarHost = sidebarHost
-	app.launcherScreen = launcherScreen
-	app.launcherHost = launcherHost
-	app.mainHeaderSurf = surface.NewSurface("main-header", w, 2, cell.TransparentBlank())
-	app.mainStatusbarSurf = surface.NewSurface("main-statusbar", w, 2, cell.TransparentBlank())
-	app.mainSidebarSurf = surface.NewSurface("main-sidebar", tree.Width+1, h-4, cell.TransparentBlank())
-	app.mainLauncherSurf = surface.NewSurface("main-launcher", w-tree.Width-1, h-4, cell.TransparentBlank())
-	app.mainContentSurf = surface.NewSurface("main-content", w, h, cell.TransparentBlank())
+	app.sidebarScreen.SetModel(treeModel)
+	app.launcherScreen.SetData(t.TempDir(), nil)
 	app.ChatAreaHeight = h - 6
+	app.paintShellFrame()
 	return app
 }
 
@@ -229,36 +195,21 @@ func paintThemeFrame(t *testing.T, app *App) *surface.CellBuffer {
 
 func paintThemeFrameSkippingApply(t *testing.T, app *App) *surface.CellBuffer {
 	t.Helper()
-	// Intentionally paint chrome using whatever theme each host still holds,
+	// Intentionally paint chrome using whatever theme each screen still holds,
 	// while filling the root from app.Theme (the broken half-theme pattern).
 	return capturePaintedShell(t, app)
 }
 
 func capturePaintedShell(t *testing.T, app *App) *surface.CellBuffer {
 	t.Helper()
-	w, h := app.width, app.height
-	buf := surface.NewCellBuffer(w, h)
+	app.renderShellToSurface()
+	// Reconstruct the composited frame: theme-bg fill at the bottom, then
+	// the shell surface's painted (non-transparent) cells on top — exactly
+	// what the compositor produces from the root fill + mainSurf.
+	buf := surface.NewCellBuffer(app.width, app.height)
 	bg := cell.BlankCell(rendering.ThemeColorToCell(app.Theme.Colors.Bg))
 	buf.Fill(bg)
-
-	app.renderHeaderToSurface()
-	if app.mainHeaderSurf != nil {
-		blitSurface(buf, app.mainHeaderSurf)
-	}
-	if app.Tree.Visible {
-		app.renderSidebarToSurface()
-		if app.mainSidebarSurf != nil {
-			blitSurface(buf, app.mainSidebarSurf)
-		}
-	}
-	app.renderStatusbarToSurface()
-	if app.mainStatusbarSurf != nil {
-		blitSurface(buf, app.mainStatusbarSurf)
-	}
-	app.renderLauncherToSurface()
-	if app.mainLauncherSurf != nil && app.mainLauncherSurf.Visible() {
-		blitSurface(buf, app.mainLauncherSurf)
-	}
+	surface.Blit(buf, 0, 0, app.mainSurf.Buffer(), nil)
 	if app.windowManager != nil {
 		app.windowManager.Render(app.compositor.Root(), app.renderCtx)
 		for _, fw := range app.windowManager.Windows() {
@@ -291,14 +242,6 @@ func capturePaintedShell(t *testing.T, app *App) *surface.CellBuffer {
 		}
 	}
 	return buf
-}
-
-func blitSurface(dst *surface.CellBuffer, s *surface.Surface) {
-	if s == nil || !s.Visible() {
-		return
-	}
-	x, y := s.Position()
-	surface.Blit(dst, x, y, s.Buffer(), nil)
 }
 
 func exclusiveSignatureColors(oldTh, newTh *theme.Theme) []cell.Color {

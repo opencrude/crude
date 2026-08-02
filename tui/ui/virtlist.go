@@ -36,7 +36,8 @@ type VirtualList struct {
 	activate               string
 	hoverIdx               int
 	rowPainter             RowPainter
-	bottomPadding          int // trailing blank rows (chat gravity)
+	bottomPadding          int // trailing blank content rows
+	bottomGravity          bool
 	pointerPolicy          PointerPolicy
 	selectionAnchorsScroll bool // when true, selection changes reveal rows (launcher/FIF)
 	// prefix[i] = starting row of item i; prefix[len] = total rows
@@ -103,7 +104,8 @@ func (v *VirtualList) SelectionAnchorsScroll() bool { return v.selectionAnchorsS
 // PointerPolicy implements PointerPolicyProvider.
 func (v *VirtualList) PointerPolicy() PointerPolicy { return v.pointerPolicy }
 
-// SetBottomPadding adds trailing blank content rows (message-list gravity).
+// SetBottomPadding adds trailing blank content rows (item count extension).
+// This is NOT chat gravity — see SetBottomGravity.
 func (v *VirtualList) SetBottomPadding(n int) {
 	if n < 0 {
 		n = 0
@@ -111,6 +113,13 @@ func (v *VirtualList) SetBottomPadding(n int) {
 	v.bottomPadding = n
 	v.rebuildPrefix()
 }
+
+// SetBottomGravity anchors items to the BOTTOM of the viewport when the
+// content is shorter than the viewport (chat gravity): the empty rows pad
+// the TOP, mirroring the renderer's assembleOutput gravity and shellchat's
+// ViewportPaneLineMap emptyTop math. Off by default — launcher/FIF lists
+// keep top-anchored item lists.
+func (v *VirtualList) SetBottomGravity(gravity bool) { v.bottomGravity = gravity }
 
 // BottomPadding returns trailing blank rows.
 func (v *VirtualList) BottomPadding() int { return v.bottomPadding }
@@ -239,8 +248,23 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 	}
 	off := v.scroll.Offset()
 	vh := v.scroll.Viewport()
+	// Chat gravity: when the content fits the viewport, anchor the items to
+	// the bottom and leave the top rows blank (short chats sit above the
+	// input, never at the top of an empty chat area).
+	gravityTop := 0
+	if v.bottomGravity && off == 0 {
+		if content := v.scroll.Content(); content < vh {
+			gravityTop = vh - content
+		}
+	}
 	for row := 0; row < vh; row++ {
 		absRow := off + row
+		if gravityTop > 0 {
+			if row < gravityTop {
+				continue
+			}
+			absRow = row - gravityTop
+		}
 		idx := v.itemAtRow(absRow)
 		y := originY + r.Y + row
 		x := originX + r.X

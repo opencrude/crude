@@ -30,9 +30,7 @@ func setupLauncherRoutingApp(t *testing.T, workspaces []workspace.WorkspaceInfo)
 	}
 
 	app.launcherScreen.SetData(".", workspaces)
-	layout := app.computeLayout()
-	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)
-	app.launcherHost.Layout()
+	app.paintShellFrame()
 
 	if app.focusTarget() != FocusLauncher {
 		t.Fatalf("focusTarget=%v want FocusLauncher", app.focusTarget())

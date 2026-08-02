@@ -42,6 +42,40 @@ func TestMoveWord_StopsAtPunctuation(t *testing.T) {
 	}
 }
 
+func TestMoveWordLeft_CrossesLines(t *testing.T) {
+	// Cursor at line start jumps to the previous line's last word start.
+	ed := loadEditorText(t, "cl.go", "hello world\nnext line\n")
+	ed.cursor = Position{Line: 1, Col: 0}
+	ed.moveWordLeft()
+	if ed.cursor.Line != 0 || ed.cursor.Col != 6 {
+		t.Fatalf("cross-line word-left: cursor=(%d,%d) want (0,6)", ed.cursor.Line, ed.cursor.Col)
+	}
+
+	// Whitespace-only previous line: keep climbing to a real word.
+	ed2 := loadEditorText(t, "cl2.go", "hello world\n   \nnext line\n")
+	ed2.cursor = Position{Line: 2, Col: 0}
+	ed2.moveWordLeft()
+	if ed2.cursor.Line != 0 || ed2.cursor.Col != 6 {
+		t.Fatalf("whitespace-skip word-left: cursor=(%d,%d) want (0,6)", ed2.cursor.Line, ed2.cursor.Col)
+	}
+
+	// At the very first line start: no-op.
+	ed3 := loadEditorText(t, "cl3.go", "solo\n")
+	ed3.cursor = Position{Line: 0, Col: 0}
+	ed3.moveWordLeft()
+	if ed3.cursor.Line != 0 || ed3.cursor.Col != 0 {
+		t.Fatalf("first-line word-left: cursor=(%d,%d) want (0,0)", ed3.cursor.Line, ed3.cursor.Col)
+	}
+
+	// Empty first line: no-op at (0,0).
+	ed4 := loadEditorText(t, "cl4.go", "\nword\n")
+	ed4.cursor = Position{Line: 0, Col: 0}
+	ed4.moveWordLeft()
+	if ed4.cursor.Line != 0 || ed4.cursor.Col != 0 {
+		t.Fatalf("empty-first-line word-left: cursor=(%d,%d) want (0,0)", ed4.cursor.Line, ed4.cursor.Col)
+	}
+}
+
 func TestMoveWord_UnicodeLetters(t *testing.T) {
 	ed := loadEditorText(t, "u.go", "café bar\n")
 	ed.cursor = Position{Line: 0, Col: 0}
@@ -103,7 +137,7 @@ func TestLineVisualWidth_MotionDoesNotTokenise(t *testing.T) {
 	ed.viewW = 100
 	ed.viewH = 40
 	_ = ed.lineVisualWidth(10)
-	if ed.chromaLineCache != nil && len(ed.chromaLineCache) > 0 {
+	if len(ed.chromaLineCache) > 0 {
 		t.Fatal("lineVisualWidth must not populate chroma cache")
 	}
 	ed.cursor = Position{Line: 10, Col: 0}
@@ -113,7 +147,7 @@ func TestLineVisualWidth_MotionDoesNotTokenise(t *testing.T) {
 		ed.moveUp()
 	}
 	elapsed := time.Since(start)
-	if ed.chromaLineCache != nil && len(ed.chromaLineCache) > 0 {
+	if len(ed.chromaLineCache) > 0 {
 		t.Fatal("cursor motion populated chroma cache — geometry is not split from colour")
 	}
 	if elapsed > 200*time.Millisecond {

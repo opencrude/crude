@@ -86,7 +86,7 @@ func (l *StackLayout) Arrange(children []ChildWidget, availW, availH int) {
 	// First pass: measure each child's preferred size.
 	prefs := make([][2]int, len(children))
 	for i, cw := range children {
-		cwW, cwH := availW, availH
+		var cwW, cwH int
 		if l.Direction == Vertical {
 			cwH = max(availH-totalGap, 0)
 			cwW = availW
@@ -184,7 +184,6 @@ type Container struct {
 	id       string
 	children []ChildWidget
 	layout   Layout
-	surf     *surface.Surface // Own surface (created during Render)
 }
 
 // NewContainer creates a container with the given id and layout.

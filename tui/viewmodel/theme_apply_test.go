@@ -13,14 +13,6 @@ import (
 func TestApplyThemePreset_UpdatesAllRegisteredConsumers(t *testing.T) {
 	app := newFullTestApp(t)
 	app.renderCtx = widget.NewRenderContext(app.Theme)
-	app.sidebarHost = ui.NewHost(app.Theme, nil)
-	app.headerHost = ui.NewHost(app.Theme, nil)
-	app.tabHost = ui.NewHost(app.Theme, nil)
-	app.inputHost = ui.NewHost(app.Theme, nil)
-	app.chatHost = ui.NewHost(app.Theme, nil)
-	app.editorHost = ui.NewHost(app.Theme, nil)
-	app.statusHost = ui.NewHost(app.Theme, nil)
-	app.launcherHost = ui.NewHost(app.Theme, nil)
 
 	proj := app.subPaneProjections.Get("pane-1", workspace.PaneAgent)
 	if proj == nil || proj.renderer == nil {
@@ -130,17 +122,13 @@ type namedHost struct {
 }
 
 // appHostHolders enumerates every App-owned *ui.Host that must receive themes.
+// The root host owns the whole shell tree (Host.SetTheme propagates to every
+// mounted screen via applyTokenSet); per-session deckHosts live on
+// sessionProjections and are covered by the sessionProjections consumer.
 // Keep in sync with App struct fields of type *ui.Host (enforced by test).
 func appHostHolders(app *App) []namedHost {
 	return []namedHost{
-		{"sidebarHost", app.sidebarHost},
-		{"headerHost", app.headerHost},
-		{"tabHost", app.tabHost},
-		{"statusHost", app.statusHost},
-		{"inputHost", app.inputHost},
-		{"chatHost", app.chatHost},
-		{"editorHost", app.editorHost},
-		{"launcherHost", app.launcherHost},
+		{"rootHost", app.rootHost},
 	}
 }
 

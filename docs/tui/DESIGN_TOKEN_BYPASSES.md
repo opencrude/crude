@@ -9,10 +9,11 @@ entries until the list is empty.
 | Location | Issue |
 |----------|-------|
 | `tui/theme/theme.go` | Some styles hard-code hex instead of Colors fields |
-| `tui/diffview/style.go` | Full independent palette |
 | `tui/filetree/icons.go` | Fallback icon colors (migrated to theme tokens; no longer on hex allowlist) |
 | `tui/chatprojection/` | message row paint uses theme tokens (replaces deleted `widgets/chatmessage.go`) |
 | `tui/editor/render.go` | raw ANSI diagnostic underlines |
+
+Note: `tui/diffview/style.go` (full independent palette) was **deleted** 2026-08-01 — the package had zero importers and was the last non-theme hex allowlist entry.
 
 ## Parallel style pipelines
 

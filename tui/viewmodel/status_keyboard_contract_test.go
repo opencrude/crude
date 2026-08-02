@@ -16,7 +16,6 @@ import (
 func TestStatusBarActionRegistryChordsDispatch(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
-	app.launcherHost = nil
 	app.width = 100
 	app.height = 30
 

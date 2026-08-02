@@ -151,7 +151,7 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE sessions ADD COLUMN depth INTEGER DEFAULT 0",
 	}
 	for _, m := range migrations {
-		db.Exec(m)
+		_, _ = db.Exec(m)
 	}
 	return nil
 }

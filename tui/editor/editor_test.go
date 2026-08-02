@@ -1,7 +1,6 @@
 package editor
 
 import (
-	"image/color"
 	"strings"
 	"testing"
 
@@ -645,7 +644,7 @@ func TestEditorOpenClose(t *testing.T) {
 	e := editorWithTheme()
 	e.filePath = "/tmp/test.go"
 	e.title = "test.go"
-	e.buf.Insert(Position{}, []byte("package main\nfunc main() {\n}\n"))
+	_, _ = e.buf.Insert(Position{}, []byte("package main\nfunc main() {\n}\n"))
 	e.open = true
 	e.initChroma()
 	assert.True(t, e.IsOpen())
@@ -674,12 +673,6 @@ func TestDefaultDarkTheme_HasCodeColors(t *testing.T) {
 	assert.NotNil(t, th.Colors.Error)
 	assert.NotNil(t, th.Colors.Warning)
 	assert.NotNil(t, th.Colors.Success)
-}
-
-func TestDefaultDarkTheme_ColorsAreColorType(t *testing.T) {
-	th := theme.DefaultDark()
-	_, ok := th.Colors.Code.Keyword.(color.Color)
-	assert.True(t, ok)
 }
 
 func TestBuildLineColorMap_MultipleFileTypes(t *testing.T) {

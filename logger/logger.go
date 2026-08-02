@@ -97,7 +97,7 @@ func New(opts Options) (*Logger, error) {
 func generateSessionID() string {
 	now := time.Now()
 	b := make([]byte, 4)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	short := hex.EncodeToString(b)
 	return fmt.Sprintf("%s_%s", now.Format("2006-01-02_150405"), short)
 }
@@ -113,6 +113,11 @@ func (l *Logger) SetTurnEnabled(on bool) {
 }
 
 func (l *Logger) write(level, tag, msg string, pairs ...any) {
+	// The closed flag is written by Close/Remove under the same mutex;
+	// reading it here must be synchronized too (a session's orchestrator
+	// goroutine can log concurrently with Session.Close).
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.closed {
 		return
 	}

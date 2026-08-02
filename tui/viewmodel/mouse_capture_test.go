@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -12,52 +14,32 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/filetree"
 	"crude/tui/screens/shellchat"
-	"crude/tui/screens/shelltree"
-	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
 )
 
-func setupCapturedChatSelection(t *testing.T, app *App, viewportH int, rows []chatprojection.MessageRow) (*shellchat.Screen, *ui.Host, int) {
+// chatViewportApp sizes the app so the chat viewport (chatRect.H) equals
+// viewportH through the production layout path:
+// ChatH = height - 2 (status) - 3 (padding+header) - inputLineCount(1).
+func chatViewportApp(t *testing.T, app *App, viewportH int) *App {
 	t.Helper()
 	if app == nil {
 		app = newFullTestApp(t)
 	}
-	th := theme.DefaultDark()
-	padLR := th.Spacing.PadLR
-	innerW := 40
-
-	screen := shellchat.New(th)
-	screen.SetMessages(rows, shellchat.PaintParams{
-		Compose: shellchat.ComposeParams{
-			InnerW: innerW,
-			PadLR:  padLR,
-			Theme:  th,
-		},
-	})
-	contentH := 0
-	for _, row := range rows {
-		h := len(row.Lines)
-		if h < 1 {
-			h = 1
-		}
-		contentH += h
-	}
-	if contentH < viewportH {
-		contentH = viewportH
-	}
-	screen.SyncScrollMetrics(viewportH, contentH)
-	w := shellchat.ContentSurfaceWidth(innerW, padLR, false)
-	host := ui.NewHost(th, screen)
-	host.Resize(w, viewportH)
-	host.Layout()
-
-	app.chatScreen = screen
-	app.chatHost = host
-	app.chatRect = ui.Rect{X: 30, Y: 5, W: w, H: viewportH}
-	app.height = 24
 	app.width = 80
+	app.height = viewportH + 6
+	return app
+}
+
+// setupCapturedChatSelection mounts a chat screen into the shell tree with
+// the given rows, sizes the app so the chat viewport matches viewportH, and
+// clicks inside the chat area to start a text-selection drag. The ROOT host
+// owns the capture. Returns (screen, rootHost, chat-local click X).
+func setupCapturedChatSelection(t *testing.T, app *App, viewportH int, rows []chatprojection.MessageRow) (*shellchat.Screen, *ui.Host, int) {
+	t.Helper()
+	app = chatViewportApp(t, app, viewportH)
+	app.launcherScreen = nil
 	if app.Tree == nil {
 		app.Tree = NewTreeState(nil, 30)
 	}
@@ -71,18 +53,27 @@ func setupCapturedChatSelection(t *testing.T, app *App, viewportH int, rows []ch
 			make(chan string, 1),
 		)
 	}
-	app.launcherScreen = nil
-	app.launcherHost = nil
-
-	localX := padLR + 1
-	res := host.Handle(tea.MouseClickMsg{X: localX, Y: 0, Button: tea.MouseLeft})
-	if !res.Handled || !host.HasPointerCapture() {
-		t.Fatal("chat host click should handle and capture pointer")
+	for _, row := range rows {
+		app.appendActiveMessage(ttypes.ChatMessage{
+			Role:    ttypes.RoleAssistant,
+			Content: strings.Join(row.Lines, "\n"),
+			Time:    time.Now(),
+		})
 	}
-	if !screen.IsSelecting() {
+	app.syncAgentMessages("agent", false)
+
+	app.paintShellFrame()
+
+	padLR := app.Theme.Spacing.PadLR
+	localX := padLR + 1
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: app.chatRect.X + localX, Y: app.chatRect.Y, Button: tea.MouseLeft})
+	if !res.Handled || !app.rootHost.HasPointerCapture() {
+		t.Fatal("chat click should handle and capture pointer on the root host")
+	}
+	if !app.chatScreen.IsSelecting() {
 		t.Fatal("expected in-progress text selection")
 	}
-	return screen, host, localX
+	return app.chatScreen, app.rootHost, localX
 }
 
 func TestDispatchMouseRelease_RoutesCapturedChatOutsideRegion(t *testing.T) {
@@ -98,23 +89,19 @@ func TestDispatchMouseRelease_RoutesCapturedChatOutsideRegion(t *testing.T) {
 	})
 
 	if host.HasPointerCapture() {
-		t.Fatal("release should clear host pointer capture")
+		t.Fatal("release should clear root host pointer capture")
 	}
 	if screen.IsSelecting() {
-		t.Fatal("selection should finish when release routed to chatHost while captured")
+		t.Fatal("selection should finish when release routed to captured chat while outside the region")
 	}
 }
 
 func TestDispatchMouseRelease_CapturedChatOverSidebar(t *testing.T) {
-	th := theme.DefaultDark()
 	treeModel := filetree.NewFileTreeModel(t.TempDir())
 	app := newFullTestApp(t)
 	app.Tree = NewTreeState(treeModel, 30)
 	app.Tree.Visible = true
-	sidebarScreen := shelltree.New(th, treeModel)
-	app.sidebarHost = ui.NewHost(th, sidebarScreen)
-	app.sidebarHost.Resize(app.Tree.Width, 20)
-	app.sidebarHost.Layout()
+	app.sidebarScreen.SetModel(treeModel)
 
 	screen, host, _ := setupCapturedChatSelection(t, app, 1, []chatprojection.MessageRow{
 		{ID: "m1", Lines: []string{"sidebar release test"}},
@@ -127,7 +114,7 @@ func TestDispatchMouseRelease_CapturedChatOverSidebar(t *testing.T) {
 	})
 
 	if host.HasPointerCapture() {
-		t.Fatal("sidebar release coords should still route to captured chatHost")
+		t.Fatal("sidebar release coords should still route to captured chat")
 	}
 	if screen.IsSelecting() {
 		t.Fatal("captured chat selection should finish on release over sidebar")
@@ -164,13 +151,13 @@ func TestDispatchMouseMotion_CapturedChatOverPopup(t *testing.T) {
 	})
 
 	if !host.HasPointerCapture() {
-		t.Fatal("popup motion must not steal chat pointer capture")
+		t.Fatal("popup motion must not steal root host pointer capture")
 	}
 	if !screen.IsSelecting() {
 		t.Fatal("chat selection must continue while captured over popup")
 	}
 	if paletteHost.Hovered() != hoverBefore {
-		t.Fatal("popup hover must not update while chatHost owns capture")
+		t.Fatal("popup hover must not update while the root host owns capture")
 	}
 	_ = cmd
 }
@@ -264,15 +251,11 @@ func TestDispatchMouseMotion_CapturedSelectionAutoScrollOutsideViewport(t *testi
 }
 
 func TestDispatchMouseMotion_CapturedChatDoesNotDuplicateSidebar(t *testing.T) {
-	th := theme.DefaultDark()
 	treeModel := filetree.NewFileTreeModel(t.TempDir())
 	app := newFullTestApp(t)
 	app.Tree = NewTreeState(treeModel, 30)
 	app.Tree.Visible = true
-	sidebarScreen := shelltree.New(th, treeModel)
-	app.sidebarHost = ui.NewHost(th, sidebarScreen)
-	app.sidebarHost.Resize(app.Tree.Width, 20)
-	app.sidebarHost.Layout()
+	app.sidebarScreen.SetModel(treeModel)
 
 	screen, host, _ := setupCapturedChatSelection(t, app, 1, []chatprojection.MessageRow{
 		{ID: "m1", Lines: []string{"no duplicate sidebar routing"}},
@@ -287,7 +270,7 @@ func TestDispatchMouseMotion_CapturedChatDoesNotDuplicateSidebar(t *testing.T) {
 		t.Fatal("sidebar motion must not interrupt captured chat drag")
 	}
 	if treeModel.Hover.Index != hoverBefore {
-		t.Fatal("sidebar hover must not update while chatHost owns capture")
+		t.Fatal("sidebar hover must not update while the root host owns capture")
 	}
 }
 
@@ -307,7 +290,7 @@ func setupScrollableSidebarCapture(t *testing.T, app *App) (*ui.Host, *filetree.
 	app.width = 80
 	app.height = 24
 	app.launcherScreen = nil
-	app.launcherHost = nil
+	app.sidebarScreen.SetModel(treeModel)
 	app.AddOrchestrator(
 		"agent",
 		make(chan provider.UserInput, 1),
@@ -316,65 +299,22 @@ func setupScrollableSidebarCapture(t *testing.T, app *App) (*ui.Host, *filetree.
 		make(chan string, 1),
 	)
 
-	th := theme.DefaultDark()
-	sidebarScreen := shelltree.New(th, treeModel)
-	app.sidebarScreen = sidebarScreen
-	host := ui.NewHost(th, sidebarScreen)
-	app.sidebarHost = host
-
 	treeModel.Update(filetree.TreeHeightMsg{Height: 10})
-	host.Resize(app.Tree.Width+1, app.height-app.Tree.YOffset-2)
-	host.Layout()
+	app.paintShellFrame()
 
 	scrollbarX := app.Tree.Width - 1
 	clickY := app.Tree.YOffset + 4
 	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: scrollbarX, Y: clickY, Button: tea.MouseLeft})
-	if !host.HasPointerCapture() {
+	if !app.rootHost.HasPointerCapture() {
 		t.Fatal("sidebar scrollbar click should capture pointer")
 	}
-	return host, treeModel, scrollbarX
+	return app.rootHost, treeModel, scrollbarX
 }
 
 func setupCapturedChatScrollbar(t *testing.T, app *App, viewportH int, rows []chatprojection.MessageRow) (*shellchat.Screen, *ui.Host) {
 	t.Helper()
-	if app == nil {
-		app = newFullTestApp(t)
-	}
-	th := theme.DefaultDark()
-	padLR := th.Spacing.PadLR
-	innerW := 40
-
-	screen := shellchat.New(th)
-	screen.SetMessages(rows, shellchat.PaintParams{
-		Compose: shellchat.ComposeParams{
-			InnerW:        innerW,
-			PadLR:         padLR,
-			Theme:         th,
-			MainSBVisible: true,
-		},
-	})
-	contentH := 0
-	for _, row := range rows {
-		h := len(row.Lines)
-		if h < 1 {
-			h = 1
-		}
-		contentH += h
-	}
-	if contentH < viewportH {
-		contentH = viewportH
-	}
-	screen.SyncScrollMetrics(viewportH, contentH)
-	w := shellchat.ContentSurfaceWidth(innerW, padLR, true)
-	host := ui.NewHost(th, screen)
-	host.Resize(w, viewportH)
-	host.Layout()
-
-	app.chatScreen = screen
-	app.chatHost = host
-	app.chatRect = ui.Rect{X: 30, Y: 5, W: w, H: viewportH}
-	app.height = 24
-	app.width = 80
+	app = chatViewportApp(t, app, viewportH)
+	app.launcherScreen = nil
 	if app.Tree == nil {
 		app.Tree = NewTreeState(nil, 30)
 	}
@@ -388,21 +328,30 @@ func setupCapturedChatScrollbar(t *testing.T, app *App, viewportH int, rows []ch
 			make(chan string, 1),
 		)
 	}
-	app.launcherScreen = nil
-	app.launcherHost = nil
+	for _, row := range rows {
+		app.appendActiveMessage(ttypes.ChatMessage{
+			Role:    ttypes.RoleAssistant,
+			Content: strings.Join(row.Lines, "\n"),
+			Time:    time.Now(),
+		})
+	}
+	app.syncAgentMessages("agent", false)
 
-	if screen.ScrollModel().MaxOffset() <= 0 {
+	app.paintShellFrame()
+
+	if app.chatScreen.ScrollModel().MaxOffset() <= 0 {
 		t.Fatal("expected scrollable chat content for scrollbar capture")
 	}
-	sbX := w - padLR - 1
-	res := host.Handle(tea.MouseClickMsg{X: sbX, Y: 0, Button: tea.MouseLeft})
-	if !res.Handled || !host.HasPointerCapture() {
+	padLR := app.Theme.Spacing.PadLR
+	sbX := app.chatRect.W - padLR - 1
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: app.chatRect.X + sbX, Y: app.chatRect.Y, Button: tea.MouseLeft})
+	if !res.Handled || !app.rootHost.HasPointerCapture() {
 		t.Fatal("chat scrollbar click should handle and capture pointer")
 	}
-	if !screen.IsScrollbarDragging() {
+	if !app.chatScreen.IsScrollbarDragging() {
 		t.Fatal("expected in-progress scrollbar drag")
 	}
-	return screen, host
+	return app.chatScreen, app.rootHost
 }
 
 func TestDispatchMouseMotion_CapturedSidebarCrossesMainContent(t *testing.T) {
@@ -469,19 +418,17 @@ func TestDispatchMouseRelease_CapturedLauncherOutsideRegion(t *testing.T) {
 		}
 	}
 	app.launcherScreen.SetData(".", workspaces)
+	app.paintShellFrame()
 
+	// Establish capture via the root host (same as a handled workspace-row click).
 	layout := app.computeLayout()
-	app.launcherHost.Resize(layout.InnerW, app.ChatAreaHeight)
-	app.launcherHost.Layout()
-
-	// Establish capture via the host (same as a handled workspace-row click).
 	localX := layout.InnerW*40/100 + 3 + 2 + 2
 	if localX >= layout.InnerW {
 		localX = layout.InnerW - 2
 	}
 	localY := 4 + 1 + 2 + 1 // hero + blank + header/search + first row
-	res := app.launcherHost.Handle(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
-	if !res.Handled || !app.launcherHost.HasPointerCapture() {
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: layout.SidebarW + layout.PadLR + localX, Y: layout.ChatAreaTop + localY, Button: tea.MouseLeft})
+	if !res.Handled || !app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher list click should capture pointer")
 	}
 
@@ -490,7 +437,7 @@ func TestDispatchMouseRelease_CapturedLauncherOutsideRegion(t *testing.T) {
 	_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{
 		X: clickX, Y: releaseY, Button: tea.MouseLeft,
 	})
-	if app.launcherHost.HasPointerCapture() {
+	if app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher release outside main pane should clear host capture")
 	}
 }

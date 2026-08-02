@@ -77,7 +77,7 @@ func TestSettingsCategories_SearchCategoryNameKeepsFields(t *testing.T) {
 	host.Layout()
 
 	// Type a query that matches the Appearance category name only.
-	for _, r := range []rune("appear") {
+	for _, r := range "appear" {
 		_ = host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	host.MarkLayout()

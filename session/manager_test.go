@@ -217,9 +217,9 @@ func TestCloseAll(t *testing.T) {
 	cfg := testConfig()
 	home := t.TempDir()
 
-	sm.NewSession(cfg, home)
-	sm.NewSession(cfg, home)
-	sm.NewSession(cfg, home)
+	_, _ = sm.NewSession(cfg, home)
+	_, _ = sm.NewSession(cfg, home)
+	_, _ = sm.NewSession(cfg, home)
 
 	if sm.Count() != 3 {
 		t.Fatalf("expected 3 sessions, got %d", sm.Count())
@@ -241,12 +241,12 @@ func TestCount(t *testing.T) {
 		t.Fatalf("expected 0, got %d", sm.Count())
 	}
 
-	sm.NewSession(cfg, home)
+	_, _ = sm.NewSession(cfg, home)
 	if sm.Count() != 1 {
 		t.Fatalf("expected 1, got %d", sm.Count())
 	}
 
-	sm.NewSession(cfg, home)
+	_, _ = sm.NewSession(cfg, home)
 	if sm.Count() != 2 {
 		t.Fatalf("expected 2, got %d", sm.Count())
 	}

@@ -54,13 +54,13 @@ func (b *Buffer) Line(i int) string {
 
 // Insert inserts text at a Position. Marks the buffer dirty.
 func (b *Buffer) Insert(pos Position, text []byte) {
-	b.buf.Insert(pos, text)
+	_, _ = b.buf.Insert(pos, text)
 	b.dirty = true
 }
 
 // Delete removes a range. Marks the buffer dirty.
 func (b *Buffer) Delete(start, end Position) {
-	b.buf.Delete(start, end)
+	_, _ = b.buf.Delete(start, end)
 	b.dirty = true
 }
 

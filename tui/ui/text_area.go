@@ -1,38 +1,16 @@
 package ui
 
 import (
-	"image/color"
 	"strings"
 	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 )
-
-func (t *TextArea) ansiColor(role SemanticColor) color.Color {
-	if t.tokens == nil || t.tokens.Theme() == nil {
-		return nil
-	}
-	switch role {
-	case ColorBg:
-		return t.tokens.Theme().Colors.Bg
-	case ColorFg:
-		return t.tokens.Theme().Colors.Fg
-	case ColorAccent:
-		return t.tokens.Theme().Colors.Accent
-	case ColorAccent2:
-		return t.tokens.Theme().Colors.Accent2
-	case ColorSelection:
-		return t.tokens.Theme().Colors.Selection
-	default:
-		return nil
-	}
-}
 
 // AtomicRange is a flat [Start, End) rune range that is treated as an
 // indivisible token by the editor (e.g. @reference chips). The cursor
@@ -382,7 +360,11 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 		bg = t.bg
 	}
 	if !bg.IsDefault() {
-		FillRect(buf, ox, oy, r, cell.BlankCell(bg))
+		// FillRect adds r.X/r.Y internally; pass the PAINT origin (not the
+		// already-translated ox/oy) so the bg fills the bounds exactly once.
+		// Passing ox/oy double-counts the origin and shifts the fill below
+		// and right (the textarea's white bg painted over the status bar).
+		FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	}
 
 	textW := t.textWidth
@@ -730,249 +712,6 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 		return nil
 	}
 	return nil
-}
-
-// View returns an ANSI-styled string rendering for legacy consumers that
-// still route through the View()-string pipeline. The native Paint path
-// is preferred for component-tree consumers.
-//
-// The `width` argument is the total available width. Like the legacy
-// TextInput bridge, this includes the surrounding horizontal padding and
-// the prompt prefix; the text wrap width is derived from both. The stored
-// text width is updated to the same value so cursor navigation and scrolling
-// use the exact geometry that was painted.
-//
-// The output mirrors the legacy components.TextInput.View:
-//   - First visual row: accent-colored "❯ " prompt prefix, then text.
-//   - Continuation/wrapped rows: 2-space indent, then text.
-//   - Text is rendered with InputText (Fg) styling.
-//   - Atomic ranges (@reference chips) are bold Accent2; when the cursor
-//     is inside one and the cursor is solid/blink-on, the chip gets a
-//     Selection background.
-//   - The cursor is a 3-state block: solid reverse video for 800ms after
-//     the last input, then a blinking accent-bg block, then plain text
-//     during blink-off. At end-of-line a "█" (or space during blink-off)
-//     is emitted.
-//   - Selection is rendered via rendering.ApplySelection.
-func (t *TextArea) View(width, spinFrame int, cursorSolidAlways bool) string {
-	if width < 1 {
-		width = 1
-	}
-	// Keep the ANSI bridge compatible with components.TextInput.View:
-	// width includes the theme's left/right padding and the two-cell
-	// prompt prefix. The rendered string therefore excludes the padding.
-	padLR := 2
-	if t.tokens != nil {
-		padLR = t.tokens.PadLR()
-	}
-	tw := width - padLR*2 - t.promptPrefixWidth()
-	if tw < 1 {
-		tw = 1
-	}
-	t.textWidth = tw
-	t.edit.SetTextWidth(tw)
-
-	selStart, selEnd := int(-1), int(-1)
-	if t.edit.IsSelecting() {
-		selStart, selEnd = t.edit.SelectionRange()
-	}
-
-	promptStyle := lipgloss.NewStyle()
-	textStyle := lipgloss.NewStyle()
-	if t.tokens != nil && t.tokens.Theme() != nil {
-		promptStyle = t.tokens.Theme().Styles.InputPrompt
-		textStyle = t.tokens.Theme().Styles.InputText
-	}
-	accentColor := t.ansiColor(ColorAccent)
-
-	cursorSolid := cursorSolidAlways || time.Since(t.lastInputTime) < 800*time.Millisecond
-
-	var allLines []string
-	lines := t.edit.Lines()
-	flatOffset := 0
-	for li, line := range lines {
-		segs := rendering.WordWrap(string(line), tw)
-		for si, seg := range segs {
-			isFirst := li == 0 && si == 0
-			var prefix string
-			if isFirst {
-				if pc := t.promptChar(); pc != "" {
-					prefix = promptStyle.Render(pc) + " "
-				} else {
-					prefix = "  "
-				}
-			} else {
-				prefix = "  "
-			}
-
-			segRunes := []rune(seg)
-			segStart := rendering.FindSegmentStart(line, tw, si)
-			lineTokenStart := segStart
-			lineTokenEnd := segStart + len(segRunes)
-			isCursorSeg := li == t.edit.CurLine() &&
-				si == segmentIdxFor(t.edit.CurLine(), t.edit.CurCol(), lines, tw)
-
-			rendered := t.renderSegmentANSI(line, flatOffset, lineTokenStart, lineTokenEnd,
-				isCursorSeg, selStart, selEnd, cursorSolid, textStyle, accentColor)
-			allLines = append(allLines, prefix+rendered)
-		}
-		flatOffset += len(line) + 1
-	}
-
-	// Empty buffer: emit prompt + block cursor
-	if len(allLines) == 0 {
-		var prefix string
-		if pc := t.promptChar(); pc != "" {
-			prefix = promptStyle.Render(pc) + " "
-		} else {
-			prefix = "  "
-		}
-		var cursorChar string
-		if cursorSolid {
-			style := lipgloss.NewStyle()
-			if accentColor != nil {
-				style = style.Foreground(accentColor)
-			}
-			cursorChar = style.Render("█")
-		} else {
-			cursorChar = BlockCursorTime(accentColor)
-		}
-		allLines = append(allLines, prefix+cursorChar)
-	}
-
-	return strings.Join(allLines, "\n")
-}
-
-// renderSegmentANSI renders a single wrapped segment to an ANSI string,
-// faithfully porting components.TextInput.renderSegmentTokens:
-//   - Atomic range chips are bold Accent2, with Selection bg when the
-//     cursor is inside and in solid/blink-on phase.
-//   - The cursor grapheme is rendered in 3 states: solid reverse video,
-//     blink-on accent-bg, or blink-off plain text.
-//   - End-of-line cursor emits a "█" (solid/blink-on) or " " (blink-off).
-//   - Selection is applied via rendering.ApplySelection.
-func (t *TextArea) renderSegmentANSI(line []rune, flatOffset, start, end int,
-	isCursorSeg bool, selStart, selEnd int, cursorSolid bool,
-	textStyle lipgloss.Style, accentColor color.Color) string {
-
-	cursorPos := t.edit.CursorFlat()
-	var b strings.Builder
-	pos := start
-	for pos < end {
-		flatPos := flatOffset + pos
-
-		// Atomic range chip
-		if ar, ok := t.edit.atomicRangeStartingAt(flatPos); ok && ar.End <= flatOffset+end {
-			label := string(line[pos : pos+(ar.End-ar.Start)])
-			chipFocused := isCursorSeg && cursorPos >= ar.Start && cursorPos < ar.End
-			b.WriteString(t.renderAtomicChipANSI(label, chipFocused, cursorSolid))
-			pos += ar.End - ar.Start
-			continue
-		}
-
-		cluster, _ := rendering.FirstGrapheme(string(line[pos:end]))
-		if len(cluster) == 0 {
-			break
-		}
-		clusterLen := len([]rune(cluster))
-		if clusterLen == 0 {
-			break
-		}
-		if isCursorSeg && cursorPos >= flatPos && cursorPos < flatPos+clusterLen {
-			switch {
-			case cursorSolid:
-				b.WriteString("\x1b[7m" + cluster + "\x1b[0m")
-			case BlinkOnTime(time.Now()):
-				// accent background, contrasting foreground
-				style := lipgloss.NewStyle()
-				if accentColor != nil {
-					style = style.Background(accentColor)
-				}
-				if contrast := t.blinkContrastFG(); contrast != nil {
-					style = style.Foreground(contrast)
-				}
-				b.WriteString(style.Render(cluster))
-			default:
-				// blink-off: plain text
-				b.WriteString(textStyle.Render(cluster))
-			}
-			pos += clusterLen
-			continue
-		}
-		b.WriteString(textStyle.Render(cluster))
-		pos += clusterLen
-	}
-	rendered := b.String()
-
-	// End-of-line block cursor
-	if isCursorSeg && cursorPos == flatOffset+end {
-		if cursorSolid {
-			style := lipgloss.NewStyle()
-			if accentColor != nil {
-				style = style.Foreground(accentColor)
-			}
-			b.WriteString(style.Render("█"))
-		} else {
-			b.WriteString(BlockCursorTime(accentColor))
-		}
-		rendered = b.String()
-	}
-
-	// Selection overlay
-	segFlatStart := flatOffset + start
-	segFlatEnd := flatOffset + end
-	if selStart >= 0 && selStart != selEnd && segFlatStart < selEnd && segFlatEnd > selStart {
-		rendered = t.applySelectionANSI(rendered, segFlatStart, segFlatEnd, selStart, selEnd)
-	}
-	return rendered
-}
-
-// renderAtomicChipANSI mirrors components.TextInput.renderAtomicLabel.
-func (t *TextArea) renderAtomicChipANSI(label string, focused, cursorSolid bool) string {
-	style := lipgloss.NewStyle().Bold(true)
-	if accent2 := t.ansiColor(ColorAccent2); accent2 != nil {
-		style = style.Foreground(accent2)
-	}
-	if focused {
-		if cursorSolid || BlinkOnTime(time.Now()) {
-			if selection := t.ansiColor(ColorSelection); selection != nil {
-				style = style.Background(selection)
-			}
-			if fg := t.ansiColor(ColorFg); fg != nil {
-				style = style.Foreground(fg)
-			}
-		}
-	}
-	return style.Render(label)
-}
-
-// blinkContrastFG returns the foreground color used for the blinking
-// cursor's "on" phase (accent background). The legacy TextInput used the
-// theme Bg color so the cursor reads as a solid block.
-func (t *TextArea) blinkContrastFG() color.Color {
-	return t.ansiColor(ColorBg)
-}
-
-// applySelectionANSI mirrors components.TextInput.applySelectionToRendered.
-// It converts the flat selection bounds to column offsets within the
-// (possibly ANSI-styled) segment and applies rendering.ApplySelection.
-func (t *TextArea) applySelectionANSI(rendered string, segFlatStart, segFlatEnd, selStart, selEnd int) string {
-	relStart := selStart - segFlatStart
-	if relStart < 0 {
-		relStart = 0
-	}
-	relEnd := selEnd - segFlatStart
-	if relEnd > segFlatEnd-segFlatStart {
-		relEnd = segFlatEnd - segFlatStart
-	}
-	if relStart >= relEnd {
-		return rendered
-	}
-	plain := rendering.StripAnsi(rendered)
-	runes := []rune(plain)
-	colStart := rendering.RuneIdxToCol(runes, relStart)
-	colEnd := rendering.RuneIdxToCol(runes, relEnd)
-	return rendering.ApplySelection(rendered, colStart, colEnd)
 }
 
 func segmentIdxFor(curLine, curCol int, buf [][]rune, textW int) int {

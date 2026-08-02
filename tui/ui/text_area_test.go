@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/cell"
-	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 )
@@ -241,22 +240,23 @@ func TestTextArea_PaintHandlesNewlines(t *testing.T) {
 	}
 }
 
-func TestTextArea_ViewPreservesLegacyPromptAndWrapGeometry(t *testing.T) {
+func TestTextArea_PaintPreservesLegacyPromptAndWrapGeometry(t *testing.T) {
 	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
 	ta.SetValue("abcdefgh")
 	ta.lastInputTime = time.Now()
 
 	// DefaultDark uses two cells of horizontal padding. The two-cell
-	// "❯ " prefix leaves six text columns in a width-12 bridge view.
-	plain := rendering.StripAnsi(ta.View(12, 0, true))
-	lines := strings.Split(plain, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("lines=%d output=%q", len(lines), plain)
+	// "❯ " prefix leaves six text columns in a width-8 control — the
+	// native equivalent of the legacy width-12 bridge view.
+	ta.Layout(LayoutContext{}, Rect{W: 8, H: 2})
+	buf := surface.NewCellBuffer(8, 2)
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
+
+	lines := []string{rowText(buf, 0), rowText(buf, 1)}
+	if got := lines[0]; got != "❯ abcdef" {
+		t.Fatalf("first line=%q want %q", got, "❯ abcdef")
 	}
-	if lines[0] != "❯ abcdef" {
-		t.Fatalf("first line=%q want %q", lines[0], "❯ abcdef")
-	}
-	if !strings.HasPrefix(lines[1], "  gh") {
+	if got := lines[1]; !strings.HasPrefix(got, "  gh") {
 		t.Fatalf("continuation=%q missing two-cell indent", lines[1])
 	}
 	if ta.textWidth != 6 {
@@ -269,25 +269,38 @@ func TestTextArea_SetPromptEmptyRestoresDefault(t *testing.T) {
 	ta.SetPrompt(">")
 	ta.SetPrompt("")
 	ta.SetValue("x")
-	plain := rendering.StripAnsi(ta.View(20, 0, true))
+	ta.Layout(LayoutContext{}, Rect{W: 8, H: 1})
+	buf := surface.NewCellBuffer(8, 1)
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: false})
+	plain := rowText(buf, 0)
 	if !strings.HasPrefix(plain, "❯ x") {
 		t.Fatalf("prompt=%q want default prompt", plain)
 	}
 }
 
-func TestTextArea_ViewRendersSolidCursorStates(t *testing.T) {
+func TestTextArea_PaintRendersSolidCursorStates(t *testing.T) {
 	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
 	ta.SetValue("abc")
 	ta.SetCursorFlat(1)
-	underChar := ta.View(20, 0, true)
-	if !strings.Contains(underChar, "\x1b[7m") {
-		t.Fatalf("cursor under character is not inverse video: %q", underChar)
+	ta.Layout(LayoutContext{}, Rect{W: 8, H: 1})
+	buf := surface.NewCellBuffer(8, 1)
+	ta.lastInputTime = time.Now()
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
+
+	// Solid cursor on the character under the cursor: inverse video —
+	// the grapheme's FG is the field bg and its BG is the field fg.
+	under := buf.Get(3, 0) // "❯ " then 'b' at col 3
+	if !under.BG.Equal(NewTokenSet(theme.DefaultDark()).Color(ColorFg)) {
+		t.Fatalf("cursor under character is not inverse video: %+v", under)
 	}
 
 	ta.SetCursorFlat(3)
-	atEnd := ta.View(20, 0, true)
-	if !strings.Contains(rendering.StripAnsi(atEnd), "abc█") {
-		t.Fatalf("end cursor missing block: %q", rendering.StripAnsi(atEnd))
+	buf = surface.NewCellBuffer(8, 1)
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
+	accent := NewTokenSet(theme.DefaultDark()).Color(ColorAccent)
+	end := buf.Get(5, 0) // block cursor at end-of-line col 5
+	if !end.BG.Equal(accent) {
+		t.Fatalf("end cursor missing accent block: %+v", end)
 	}
 }
 

@@ -62,9 +62,9 @@ func ListSubAgentResults(db *sql.DB, parentSessionID string) ([]SubAgentResultRo
 		if err != nil {
 			return nil, fmt.Errorf("sessiondb: scan sub_agent_result: %w", err)
 		}
-		json.Unmarshal([]byte(filesRead), &r.FilesRead)
-		json.Unmarshal([]byte(filesWritten), &r.FilesWritten)
-		json.Unmarshal([]byte(errorsJSON), &r.Errors)
+		_ = json.Unmarshal([]byte(filesRead), &r.FilesRead)
+		_ = json.Unmarshal([]byte(filesWritten), &r.FilesWritten)
+		_ = json.Unmarshal([]byte(errorsJSON), &r.Errors)
 		results = append(results, r)
 	}
 	return results, nil

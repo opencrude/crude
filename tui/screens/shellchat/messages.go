@@ -87,11 +87,6 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	}
 
 	globalLine := s.globalLineForItem(item.ID, localRow)
-	scroll := s.list.Scroll()
-	vpRow := globalLine - scroll.Offset()
-	if vpRow < 0 {
-		vpRow = 0
-	}
 
 	var paneInfo chatprojection.PaneLineInfo
 	if globalLine >= 0 && globalLine < len(s.paintState.paneLineMap) {

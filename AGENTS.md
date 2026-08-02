@@ -49,19 +49,26 @@ workspace publishes events that the TUI subscribes to.
 
 ### Current State (what's in the code vs what we're building)
 
-The codebase is mid-transition. The current layout is a hybrid:
+The three-layer split (`app/` → `workspace/` → `tui/`) is **DONE** —
+see `PLAN.md` for that history. What remains is the TUI component-system
+migration tracked in `TUI_COMPONENT_SYSTEM_PLAN.md`: the viewmodel still
+paints ~ten compositor layer surfaces through ~nine per-screen `ui.Host`
+instances; the target is **one root `ui.Host`** mounting the whole shell
+as a single component tree painted into one surface.
 
-| Exists today | → Target |
+| Area | Current state |
 |---|---|
-| `tui/viewmodel/App` — 60+ fields god object | → Split: business state moves to `workspace/`, rendering stays in `tui/` |
-| `app/app.go` — 446 lines, 15+ callbacks, session+app config mixed | → Thin CLI entry point (~50 lines), no callbacks |
-| `tui/tui.go` — callback holder (OnSettingsSave, OnQuit, OnNewSession...) | → Removed: TUI takes `*workspace.Workspace` directly |
-| `tui/types.Settings` — mixed app+session config | → Split: `AppConfig` + `SessionSettings` |
-| `tui/workspace/` — managers + event bus | → Expanded: owns ALL business state |
-| `session/` — standalone package | → Absorbed into `workspace/` |
-| `app/config.go` — FileConfig mixing app+session | → App config only |
+| `app/` | Thin CLI entry: creates workspace, bootstraps session, starts TUI. No callbacks. `app/app.go` ~270 lines. |
+| `workspace/` | Per-project state machine (repo root, NOT `tui/workspace/`). Owns sessions, orchestrators, LSP manager, file ops, project search, workspace DB. Zero `tui/` imports (production + tests). |
+| `tui/` | Dumb renderer + input router. Holds `*workspace.Workspace`, calls methods, subscribes to the event bus. `tui/tui.go` has no callbacks. |
+| `tui/viewmodel/App` | Presentation state holder. Currently hybrid: per-screen `ui.Host`s (header/tabs/sidebar/status/input/chat/editor/launcher) painted into layer surfaces + per-session `deckHost`. Target: one root Host (`rootHost`) + one shell surface. |
+| `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). |
+| `session/` | Session domain library (sessions are workspace-scoped under `~/.crude/workspaces/<hash>/sessions/`); consumed by `workspace/`. |
 
-See `ARCHITECTURE_TRANSITION.md` for the phase plan.
+See `PLAN.md` (architecture + workspace progress) and
+`TUI_COMPONENT_SYSTEM_PLAN.md` (component-system phases + §26 execution
+order) for the phase plans. `ARCHITECTURE_TRANSITION.md` was deleted once
+the transition it planned completed.
 
 ---
 
@@ -95,7 +102,7 @@ See `ARCHITECTURE_TRANSITION.md` for the phase plan.
 | `popupmouse.go` | Popup mouse dispatch |
 | `slash_commands.go` | Slash command parsing |
 
-### `tui/workspace/` — State managers (being expanded)
+### `workspace/` (repo root) — Business state machine
 | File | Role |
 |---|---|
 | `workspace.go` | Workspace struct (composition root: managers + references) |
@@ -104,14 +111,15 @@ See `ARCHITECTURE_TRANSITION.md` for the phase plan.
 | `session.go` | Session struct (dialogs, refs, token metrics) |
 | `agent_state.go` | AgentState streaming/thinking state + HandleEvent |
 | `agent_state_events.go` | Tool handling sub-methods on AgentState |
-| `editor_tab.go` | EditorTab wrapper (path + editor + dirty flag) |
+| `conversation.go` | Canonical live message store (Conversation/Message) |
 | `focus_stack.go` | FocusStack LIFO |
 | `lsp_manager.go` | LSPManager (connections, diagnostics cache) |
-| `lsp_popup_state.go` | LSPPopupState (refs/outline/completion/rename state) |
-| `overlay_state.go` | OverlayState (mode + blocking + yolo flags) |
-| `pane_manager.go` | SubPane + PaneManager |
 | `references.go` | ReferenceStore (SQLite-backed @references) |
-| `tree_state.go` | TreeState (file tree model + renderer + layout) |
+| `file_ops.go` | FileOpsService (filesystem mutations) |
+| `project_search.go` | ProjectSearchService (Find in Files execution) |
+| `view_data.go` | Presentation-neutral view data seams (TreeRowView, TabView, StatusView) |
+| `bootstrap.go` | Session create/resume/delete, launcher flows |
+| `db.go` / `paths.go` | Workspace DB + `~/.crude/workspaces/<hash>/` paths |
 
 ### `tui/editor/` — Core editor engine
 | File | Role |
@@ -135,6 +143,94 @@ See `ARCHITECTURE_TRANSITION.md` for the phase plan.
 ---
 
 ## Rendering Architecture (stable — no planned changes)
+
+### Root Host + Shell Surface (Phase 13.9, since 2026-08-01)
+
+The whole persistent shell is ONE component tree mounted on a single
+`ui.Host` (`App.rootHost`) painted into ONE full-screen compositor surface
+(`App.mainSurf`, z=0, re-mounted after every `BeginFrame`). The composite
+is `shellRoot` (`tui/viewmodel/shell_root.go`, ID `"shell"`) whose slots
+map to the shell screens:
+
+```text
+rootHost
+└── shellRoot ("shell")
+    ├── header     shellheader.Screen   — always; rect (0, 1, W, 2)
+    ├── status     shellstatus.Screen   — always; rect (0, H-2, W, 2)
+    ├── tabs       shelltabs.Screen     — active when tabBarVisible()
+    ├── sidebar    shelltree.Screen     — active when Tree.Visible
+    ├── chat       shellchat.Screen     — active when chat visible
+    ├── input      shellinput.Screen    — active when input visible
+    ├── editor     shelleditor.Screen   — active when editor open
+    ├── launcher   launcher.Screen      — active when launcher visible
+    └── deck       deckMount            — wraps the ACTIVE session's
+                                          retained deckHost (per-session
+                                          PanelDeck, Phase 12 design)
+```
+
+Rules:
+
+- `View()` = bg fill → re-mount `mainSurf` → `configureShell()` (geometry
+  via `computeContentLayout` + slot rects + screen projections) →
+  `renderShellToSurface()` (unconditional `MarkLayout` + `Paint`) → WM
+  render → composite. `syncRootFocus()` maps `focusTarget()` to the root
+  host's single focused component each frame.
+- `renderShellToSurface` fills `mainSurf` with the theme background BEFORE
+  the tree paints: unmounted slots (launcher replacing the editor, chat
+  replacing the launcher, ...) must not leave their previous opaque cells
+  behind — every cell not covered by an active slot shows the clean
+  background (this fixed the editor→launcher gutter artifacts).
+- Mouse targeting is `rootHost.Handle` with raw screen coordinates; the
+  Host computes `LocalX/LocalY` from layout geometry. `classifyShellRegion`
+  remains only for viewmodel POLICY (focus-stack pushes, editor legacy
+  routing via `routeEditorMouse`, sidebar-divider drag, status row,
+  context menus). Host pointer capture is the ONE capture service — hidden
+  slots cancel capture via `Host.Layout` `validatePointerCapture`.
+- The editor screen stays input-no-op: editor keys/mouse route through
+  viewmodel → `Editor.HandleEvent`. Deck panels keep their per-session
+  `deckHost`; `deckMount` adapts paint (blit) and input (local coords).
+- **Parent-local child rects:** `Host.paintNode` paints a child at (parent
+  origin + child bounds) — child bounds are PARENT-LOCAL by contract. A
+  shell screen that passes its absolute slot rect to a child's `Layout`
+  double-counts the origin (the shellchat double-origin bug: chat content
+  shifted right/down, and long conversations painted over the input prompt
+  and status bar). Children must be laid out with `{X:0, Y:0, ...}` rects.
+  Guarded by `TestAgentView_ChatPaintsInsideSlot` /
+  `TestAgentView_LongChatDoesNotOverflowInputOrStatus`.
+- **Chat gravity:** short chat content anchors to the BOTTOM of the viewport
+  (`ui.VirtualList.SetBottomGravity(true)`, set by `shellchat.New`) —
+  mirrors the renderer's `assembleOutput` gravity. Without it, short chats
+  painted at the top of the chat area with a huge gap above the input
+  prompt. Guarded by `TestAgentView_ShortChatAnchorsToBottom`.
+- **Input shell is clamped to the status bar:** `computeContentLayout`
+  clamps `InputLineCount` to `height - 2 - 3 - deck - tabs - 1` (status +
+  top + deck + tab bar, one chat row minimum). The old layer surfaces masked
+  oversized inputs with the status surface's higher z-order; the root host
+  paints status FIRST in tree order, so an unclamped shell painted its rows
+  over the status separator/content. The textarea scrolls internally within
+  the clamped height. Guarded by
+  `TestAgentView_LongInputDoesNotOverlapStatus`.
+- **TextArea.Paint FillRect uses the PAINT origin, not the translated
+  origin:** `TextArea.Paint` computes `ox = originX + r.X` /
+  `oy = originY + r.Y` for its content, but `FillRect(buf, ox, oy, r, …)`
+  re-adds `r.X`/`r.Y` internally, so passing `ox, oy` double-counts the
+  origin and shifts the bg fill down by `r.Y` and right by `r.X`. For the
+  chat input (bounds `r={X:pad, Y:1}` under a `shellinput` slot at row 56),
+  the white `PopupBg` fill landed at row `56 + 2*1 = 58` (the status
+  separator) and col `SidebarW + 2*pad + 2`, erasing the right portion of
+  the divider and leaving a white band over the status content ("input
+  pushes the right half of the bottom status and its separator out of
+  screen"). `TextField.Paint` already passed `originX, originY` correctly;
+  `TextArea` was the lone offender. Guarded by
+  `TestAgentView_TextAreaBgDoesNotOverwriteStatus`.
+- **Launcher workspace load is async** (2026-08-01): `openLauncher` paints
+  immediately (last-known data) and loads `ListWorkspaceInfos` in a
+  goroutine via `refreshLauncherAsync(cwd)` → `launcherWorkspacesMsg`
+  (event-bus `Send`, generation-deduped by `App.launcherLoadGen`). The
+  ~200ms DB scan must never block the update goroutine (back-to-launcher
+  hotpath). Guarded by `launcher_async_test.go`.
+- `themeConsumers()` walks `rootHost` (SetTheme propagates tokens to all
+  mounted screens via `applyTokenSet`).
 
 ### Surface Tree (Compositing Engine)
 
@@ -214,8 +310,8 @@ so an editor repaint is a cell fill plus a cached-color walk:
 - Never reintroduce a frame-level dirty flag for the main content. If a
   future perf problem appears, add a benchmark first (compare against
   `docs/tui/PERFORMANCE_BASELINES.md`) and cache at the editor level.
-- `buildMainView()` may be called every frame; it only builds blank
-  placeholder rows and layout geometry.
+- `computeContentLayout()` may be called every frame; it only computes
+  shell geometry (slot rects, chat/editor/input/deck rects) — no ANSI.
 - The only remaining output cache is `m.cachedOutput`, used exclusively for
   drag throttling (FloatingWindow drag with no position change).
 - `wm.FloatingWindow.contentDirty` is a separate, unrelated mechanism
@@ -277,6 +373,14 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 
 ## Pitfalls / Gotchas
 
+### Editor motion
+- **`Editor.moveWordLeft` must keep climbing across blank lines**: word-left
+  from a line start must skip whitespace-only lines and land on the previous
+  line's last word start (guarded by `TestMoveWordLeft_CrossesLines`). A
+  b323a3b rewrite once replaced the climb loop's `continue` with `return`,
+  parking the cursor on blank lines — and SA4004 flagged it as a dead loop.
+  When a "dead loop" warning appears, check for a swallowed `continue` first.
+
 ### ANSI & Width
 - **Full process:** see [`TERMINAL_WIDTH.md`](./TERMINAL_WIDTH.md).
 - **ANSI search false-matches**: NEVER use `strings.Index(rawLine, label)`
@@ -293,6 +397,41 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 - **go.mod replaces** (do not drop without understanding TERMINAL_WIDTH.md):
   - `charm.land/bubbletea/v2` → `./third_party/bubbletea`
   - `github.com/charmbracelet/x/ansi` → `./third_party/xansi`
+  - `github.com/charmbracelet/x/powernap` → `./third_party/powernap`
+    (vendored so the LSP transport can be patched; see LSP I/O below)
+
+### LSP I/O Architecture (since 2026-08-01)
+
+The LSP subprocess pipes must NEVER block a caller goroutine (previously a
+synchronous, context-unaware jsonrpc2 bufio flush on a back-pressured server
+pipe froze Bubble Tea's update goroutine — the tab-close hang).
+
+- `powernap` is vendored (`third_party/powernap`) with a `TransportWrap`
+  hook in `ClientConfig` (see `lsp.ClientConfig`); `LSPIntegration.Start`
+  passes a wrapper that installs `lspPipeMonitor` (`tui/editor/lsp_pipe.go`).
+- `asyncPipeWriter`: `Write` only enqueues a copy (O(1)); ONE dedicated
+  writer goroutine performs the actual pipe writes in FIFO order. The queue
+  is byte-bounded (`lspWriteQueueCap`); a fully-stalled server trips the cap
+  → fatal error → the jsonrpc2 connection fails fast (never blocks, never
+  corrupts framing).
+- `lspPipeMonitor.Done()` closes when the connection dies for ANY reason
+  (read EOF = server died, write error, queue-cap, graceful close). The
+  workspace `LSPManager` reaps dead clients via `reapOnDone`: removes the
+  client, marks it `LSPFailed`, kills the lingering process, and the next
+  `OpenFile` starts a fresh server.
+- The workspace `LSPClient` interface has `Done() <-chan struct{}`; test
+  fakes return nil to opt out of reaping.
+- `LSPIntegration` gained `WithServerEnv(map[string]string)` (server
+  subprocess env) and `MODELS_DEV_URL` overrides the models.dev catalog
+  endpoint (tests / air-gapped).
+- `readWorkspaceMetaBounded` (launcher workspace listing) is context-bound:
+  both the read AND its goroutine's channel send abort on timeout — a stale
+  read must never leak an open sqlite handle (that kept `workspace.db`
+  locked on Windows). It also closes its `Rows` explicitly before the count
+  query: the pool is capped at one connection, and an open Rows held it —
+  the count waited on itself (self-deadlock) and every workspace scan
+  burned the full 150ms bound (~12s for 92 workspaces on Windows; the
+  launcher appears instantly now).
 
 ### Popup Positioning
 - **`clampPopupPosition` exists** in `tui/viewmodel/mouse.go`. Use it
@@ -336,3 +475,19 @@ go build ./...
 go test ./tui/editor/... ./tui/viewmodel/... ./tui/workspace/...
 go test ./... 2>&1 | grep -v "^ok\|cached\|^?"
 ```
+
+## Lint Gate (fully enabled + full-repo zero 2026-08-01)
+
+The Phase 15 lint gate runs ALL default-family linters — `govet`,
+`ineffassign`, `misspell`, `staticcheck`, `gosimple`, `unused`, `errcheck` —
+with zero issues across the ENTIRE repo (CI runs `./...`). Do not
+reintroduce dead code or unchecked errors: a new `unused`/`errcheck`/
+`gosimple` finding fails CI.
+```bash
+golangci-lint run ./...
+```
+
+The design audit (`scripts/tui_design_audit.sh`) additionally enforces the
+three-layer boundary: `workspace/` must never import `crude/tui`, raw ANSI
+SGR lives only in `tui/cell|compositor|rendering`, and hard-coded hex lives
+only in `tui/theme/`.

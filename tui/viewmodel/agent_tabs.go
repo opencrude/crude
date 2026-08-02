@@ -1,8 +1,6 @@
 package viewmodel
 
 import (
-	"strings"
-
 	"crude/provider"
 	"crude/tui/chatprojection"
 	"crude/tui/ui"
@@ -10,11 +8,10 @@ import (
 )
 
 func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
-	if m.launcherHost != nil {
-		m.launcherHost.CancelPointerCapture()
+	if m.rootHost != nil {
+		m.rootHost.CancelPointerCapture()
 	}
 	m.launcherScreen = nil
-	m.launcherHost = nil
 	if m.AgentMgr.Get(orchID) != nil {
 		m.switchToAgentView(orchID)
 		return
@@ -179,10 +176,6 @@ func (m *App) agentForView() *workspace.AgentState {
 	return nil
 }
 
-func (m *App) activeAgentID() string {
-	return m.AgentMgr.ActiveID()
-}
-
 func (m *App) switchToAgentView(agentID string) {
 	prev := m.AgentMgr.ActiveID()
 	if agentID == "" {
@@ -328,36 +321,6 @@ func (m *App) syncAgentWindowTabs() {
 	}
 
 	m.purgeStaleAgentTabs()
-}
-
-func (m *App) agentTabSnapshot() string {
-	var b strings.Builder
-	for _, view := range m.AgentTabViews() {
-		if view.Kind != "sub-agent" || view.State == "completed" {
-			continue
-		}
-		b.WriteString(view.ID)
-		b.WriteByte('|')
-		b.WriteString(view.State)
-		b.WriteByte('|')
-		b.WriteString(view.DisplayTitle)
-		b.WriteByte('|')
-	}
-	return b.String()
-}
-
-func (m *App) ensureAgentTabActive() {
-	activeID := m.AgentMgr.ActiveID()
-	if activeID == "" {
-		return
-	}
-	activeTitle := m.agentTabTitle(activeID)
-	if tab := m.Win.TabByTitle(activeTitle); tab != nil {
-		targetIdx := m.Win.IndexOf(tab.ID)
-		if targetIdx >= 0 && m.Win.ActiveIndex() != targetIdx {
-			m.Win.SwitchTo(targetIdx)
-		}
-	}
 }
 
 // agentTabIcon returns the status icon for an agent's window tab.

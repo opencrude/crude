@@ -14,6 +14,9 @@ import (
 	"crude/tui/editor"
 	"crude/tui/input"
 	"crude/tui/rendering"
+	"crude/tui/screens/launcher"
+	"crude/tui/screens/shellchat"
+	"crude/tui/screens/shelltree"
 	"crude/tui/screens/shelltabs"
 	"crude/tui/ui"
 	"crude/tui/widgets"
@@ -51,8 +54,8 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.chatHost != nil && m.chatHost.HasPointerCapture() {
-		m.chatHost.CancelPointerCapture()
+	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
+		m.rootHost.CancelPointerCapture()
 	}
 	if m.chatScreen != nil && m.chatScreen.HasActiveSelection() {
 		m.chatScreen.ClearSelection()
@@ -94,10 +97,11 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.launcherScreen == nil || m.launcherHost == nil {
+	if m.launcherScreen == nil || m.rootHost == nil {
 		return m, nil
 	}
-	res := m.launcherHost.Handle(msg)
+	m.rootHost.Focus(launcher.ScreenID)
+	res := m.rootHost.Handle(msg)
 	return m, res.Cmd
 }
 
@@ -108,10 +112,11 @@ func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.sidebarHost == nil {
+	if m.rootHost == nil {
 		return m, nil
 	}
-	res := m.sidebarHost.Handle(msg)
+	m.rootHost.Focus(shelltree.TreeID)
+	res := m.rootHost.Handle(msg)
 	return m, res.Cmd
 }
 
@@ -360,10 +365,10 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 }
 
 func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.tabBarVisible() && m.tabHost != nil {
+	if m.tabBarVisible() && m.tabScreen != nil && m.rootHost != nil {
 		m.syncTabBarHost()
-		m.tabHost.Focus(shelltabs.TabsID)
-		res := m.tabHost.Handle(msg)
+		m.rootHost.Focus(shelltabs.TabsID)
+		res := m.rootHost.Handle(msg)
 		cmd := m.handleTabBarHostResult(res)
 		if msg.Code == tea.KeyEsc && m.FocusStack.Top() == FocusTabBar {
 			m.FocusStack.Pop()
@@ -451,8 +456,9 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 					break // fall through to input.Update below
 				}
 			}
-			if m.chatHost != nil {
-				res := m.chatHost.Handle(msg)
+			if m.chatScreen != nil && m.rootHost != nil {
+				m.rootHost.Focus(shellchat.ScreenID)
+				res := m.rootHost.Handle(msg)
 				if res.Handled {
 					return m, nil
 				}

@@ -59,7 +59,7 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 	if err != nil {
 		return 0, fmt.Errorf("sessiondb: replace messages begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec("DELETE FROM messages"); err != nil {
 		return 0, fmt.Errorf("sessiondb: replace messages delete: %w", err)
@@ -219,7 +219,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 			m.ToolCallID = r.ToolCallID.String
 		}
 		if r.ToolCalls.Valid && r.ToolCalls.String != "" {
-			json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
+			_ = json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
 		}
 		if r.CacheControl.Valid && r.CacheControl.String != "" {
 			var cc provider.CacheControl
@@ -279,7 +279,7 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 			m.ToolCallID = r.ToolCallID.String
 		}
 		if r.ToolCalls.Valid && r.ToolCalls.String != "" {
-			json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
+			_ = json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
 		}
 		if r.CacheControl.Valid && r.CacheControl.String != "" {
 			var cc provider.CacheControl

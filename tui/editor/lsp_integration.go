@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,12 +26,29 @@ type LSPIntegration struct {
 	client     *lsp.Client
 	serverCmd  string
 	serverArgs []string
+	serverEnv  map[string]string
 	rootURI    string
+
+	// pipe monitors the subprocess stream. All writes are decoupled from
+	// caller goroutines through the async writer (see lsp_pipe.go); Done
+	// signals connection death (server exit, pipe error, write-queue cap).
+	pipe *lspPipeMonitor
 
 	openFiles      map[string]*openFileState // filePath -> state
 	versionCounter int
 
 	onDiagnostics func(filePath string, diags []LSPDiagnostic)
+}
+
+// LSPIntegrationOption configures a new LSPIntegration.
+type LSPIntegrationOption func(*LSPIntegration)
+
+// WithServerEnv adds environment variables to the language server
+// subprocess (merged over the inherited environment).
+func WithServerEnv(env map[string]string) LSPIntegrationOption {
+	return func(l *LSPIntegration) {
+		l.serverEnv = env
+	}
 }
 
 type openFileState struct {
@@ -45,13 +63,17 @@ func (l *LSPIntegration) OnDiagnostics(fn func(filePath string, diags []LSPDiagn
 	l.onDiagnostics = fn
 }
 
-func NewLSPIntegration(serverCmd string, serverArgs []string, rootURI string) *LSPIntegration {
-	return &LSPIntegration{
+func NewLSPIntegration(serverCmd string, serverArgs []string, rootURI string, opts ...LSPIntegrationOption) *LSPIntegration {
+	l := &LSPIntegration{
 		serverCmd:  serverCmd,
 		serverArgs: serverArgs,
 		rootURI:    rootURI,
 		openFiles:  make(map[string]*openFileState),
 	}
+	for _, opt := range opts {
+		opt(l)
+	}
+	return l
 }
 
 func (l *LSPIntegration) RootURI() string {
@@ -68,10 +90,31 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 		return nil
 	}
 
+	// Decouple ALL LSP pipe I/O from caller goroutines (Bubble Tea's
+	// update goroutine in particular): jsonrpc2's buffered stream flushes
+	// synchronously and context-unaware, so a back-pressured server pipe
+	// used to block the UI indefinitely (see lsp_pipe.go). The monitor also
+	// surfaces connection death for server reaping/restart.
+	var pipe *lspPipeMonitor
 	client, err := lsp.NewClient(lsp.ClientConfig{
 		Command: l.serverCmd,
 		Args:    l.serverArgs,
 		RootURI: l.rootURI,
+		Environment: func() map[string]string {
+			if len(l.serverEnv) == 0 {
+				return nil
+			}
+			out := make(map[string]string, len(l.serverEnv))
+			for k, v := range l.serverEnv {
+				out[k] = v
+			}
+			return out
+		}(),
+		TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
+			nr, nw, mon := wrapLSPPipe(reader, writer)
+			pipe = mon
+			return nr, nw
+		},
 	})
 	if err != nil {
 		return err
@@ -94,7 +137,22 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	}
 
 	l.client = client
+	l.pipe = pipe
 	return nil
+}
+
+// Done is closed when the underlying server connection dies (server exit,
+// pipe error, or write-queue cap). A closed Done means the client must be
+// reaped and restarted before further LSP work. It is nil-safe before Start.
+func (l *LSPIntegration) Done() <-chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.pipe == nil {
+		// Never started: report a never-closing channel rather than a
+		// closed one so callers cannot reap an unstarted client.
+		return nil
+	}
+	return l.pipe.Done()
 }
 
 func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, text string) {
@@ -416,7 +474,7 @@ func (l *LSPIntegration) Stop() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = client.Shutdown(ctx)
-		client.Exit()
+		_ = client.Exit()
 		client.Kill()
 	}
 }

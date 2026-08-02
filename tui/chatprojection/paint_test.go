@@ -14,14 +14,13 @@ import (
 )
 
 func TestBuildSubPaneHeaderThinkingNative(t *testing.T) {
-	th := theme.DefaultDark()
 	header := workspace.SubPaneHeaderView{
 		Type:    workspace.PaneThinking,
 		Title:   "Thinking",
 		Done:    false,
 		Elapsed: 3 * time.Second,
 	}
-	line := chatprojection.BuildSubPaneHeaderLine(th, header, 30, 2)
+	line := chatprojection.BuildSubPaneHeaderLine(header, 30, 2)
 	if line.Native == nil {
 		t.Fatal("expected native header line")
 	}
@@ -34,7 +33,6 @@ func TestBuildSubPaneHeaderThinkingNative(t *testing.T) {
 }
 
 func TestBuildSubPaneToolStates(t *testing.T) {
-	th := theme.DefaultDark()
 	view := workspace.SubPaneView{
 		ToolLines: []workspace.SubPaneToolLineView{
 			{Label: "read ok", Phase: "done", Status: "success"},
@@ -42,7 +40,7 @@ func TestBuildSubPaneToolStates(t *testing.T) {
 			{Label: "streaming", Phase: "streaming", Status: "streaming"},
 		},
 	}
-	lines := chatprojection.BuildSubPaneToolLines(th, view, 24)
+	lines := chatprojection.BuildSubPaneToolLines(view, 24)
 	if len(lines) != 3 {
 		t.Fatalf("got %d tool lines", len(lines))
 	}

@@ -35,10 +35,10 @@ func TestMigrateWorkspaceSchemaUpgradesLegacyRegistry(t *testing.T) {
 		)
 	`)
 	if err != nil {
-		raw.Close()
+		_ = raw.Close()
 		t.Fatalf("create legacy table: %v", err)
 	}
-	raw.Close()
+	_ = raw.Close()
 
 	wdb, err := openWorkspaceDBAt(dbPath)
 	if err != nil {

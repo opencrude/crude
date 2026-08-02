@@ -210,7 +210,7 @@ func (r *GitStatusResolver) WatchForChanges() (stop func()) {
 	// exist yet in a bare repo), fall back to watching the entire .git directory.
 	if err := watcher.Add(indexPath); err != nil {
 		if err := watcher.Add(gitDir); err != nil {
-			watcher.Close()
+			_ = watcher.Close()
 			return nil
 		}
 	}
@@ -218,7 +218,7 @@ func (r *GitStatusResolver) WatchForChanges() (stop func()) {
 	stopCh := make(chan struct{})
 
 	go func() {
-		defer watcher.Close()
+		defer func() { _ = watcher.Close() }()
 
 		var debounce *time.Timer
 		const debounceDur = 100 * time.Millisecond

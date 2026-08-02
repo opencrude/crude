@@ -1,6 +1,7 @@
 package filepicker
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestFolderPickerFiltersFilesAndSelectsCurrentDirectory(t *testing.T) {
 	}
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	message := commandMessage[SelectMsg](t, result)
-	if message.Path != "/root" || !message.Folder {
+	if message.Path != filepath.FromSlash("/root") || !message.Folder {
 		t.Fatalf("folder select=%#v", message)
 	}
 }
@@ -109,7 +110,7 @@ func TestFilePickerPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
 			painted := pickerBufferText(buf)
-			for _, want := range []string{"Search files", "/root | 3 items", "src", "a.txt", "Attach", "Cancel"} {
+			for _, want := range []string{"Search files", filepath.FromSlash("/root") + " | 3 items", "src", "a.txt", "Attach", "Cancel"} {
 				if !strings.Contains(painted, want) {
 					t.Fatalf("size=%#v missing %q:\n%s", size, want, painted)
 				}

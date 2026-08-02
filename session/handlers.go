@@ -39,10 +39,10 @@ func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
 		return ttypes.UndoResultMsg{Desc: desc}
 	case strings.HasPrefix(cmd, "/undo-n"):
 		n := 1
-		parts := strings.Fields(cmd)
-		if len(parts) > 1 {
-			fmt.Sscanf(parts[1], "%d", &n)
-		}
+	parts := strings.Fields(cmd)
+	if len(parts) > 1 {
+		_, _ = fmt.Sscanf(parts[1], "%d", &n)
+	}
 		if n <= 0 {
 			n = 1
 		}

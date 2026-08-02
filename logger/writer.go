@@ -40,7 +40,7 @@ func NewBufferedWriter(path string) (*BufferedWriter, error) {
 func (w *BufferedWriter) Write(s string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.buf.WriteString(s)
+	_, _ = w.buf.WriteString(s)
 }
 
 // WriteString appends a string to the buffer. Thread-safe. Alias for Write.

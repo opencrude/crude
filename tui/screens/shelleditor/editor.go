@@ -117,7 +117,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 
 	bg := s.tokens.Color(ui.ColorBg)
 	if s.padL > 0 || s.padR > 0 {
-		ui.FillRect(buf, ox, oy, ui.Rect{X: ox + b.X, Y: oy + b.Y, W: b.W, H: b.H}, cell.BlankCell(bg))
+		ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	}
 
 	if s.paintSurf == nil || s.paintSurf.Width() != innerW || s.paintSurf.Height() != h {

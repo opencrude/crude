@@ -19,11 +19,11 @@ func setTestHome(t *testing.T, tmpDir string) func() {
 	t.Helper()
 	origHome := os.Getenv("HOME")
 	origProfile := os.Getenv("USERPROFILE")
-	os.Setenv("HOME", tmpDir)
-	os.Setenv("USERPROFILE", tmpDir)
+	_ = os.Setenv("HOME", tmpDir)
+	_ = os.Setenv("USERPROFILE", tmpDir)
 	return func() {
-		os.Setenv("HOME", origHome)
-		os.Setenv("USERPROFILE", origProfile)
+		_ = os.Setenv("HOME", origHome)
+		_ = os.Setenv("USERPROFILE", origProfile)
 	}
 }
 

@@ -3,12 +3,39 @@
 The canonical TUI component-system and design-language migration plan is
 [`TUI_COMPONENT_SYSTEM_PLAN.md`](./TUI_COMPONENT_SYSTEM_PLAN.md).
 
-**Component-system progress (2026-07-16):**
-- Phase 0 evidence freeze + `scripts/tui_design_audit.sh` ✅
-- Phase 1 foundation tests (`cell`, `surface`, `compositor`, `ui`) ✅
-- Phase 2 host + first controls (`tui/ui/`) ✅ — Host, TokenSet, TextEdit/TextField, List, Selection/Scroll
-- Phase 3/6/7 partial (tokens, text engine, list models) 🔄
-- Run: `./scripts/tui_design_audit.sh && go test -race ./tui/cell/ ./tui/surface/ ./tui/compositor/ ./tui/ui/`
+**Workspace refactor status:** Phases 1–6 (below) are **DONE** (completed
+2026-07). The three-layer split is complete: `workspace/` owns all business
+state with zero `tui/` imports, `tui/` is a dumb renderer + input router
+holding `*workspace.Workspace`, and `app/` is a thin CLI entry.
+
+**TUI component-system status:** In progress — see
+`TUI_COMPONENT_SYSTEM_PLAN.md` § Snapshot. The root Host wiring (Phase 13.9)
+is DONE (2026-08-01): one `App.rootHost` + `shellRoot` tree painted into one
+`App.mainSurf`; per-screen Hosts and layer surfaces deleted.
+
+**Agent-view regression fixes (2026-08-01):** the root-host migration
+introduced a double-origin bug — `Host.paintNode` paints children at
+(parent origin + child bounds), but shellchat passed its absolute slot rect
+to its children, so the chat list painted shifted by the slot origin and
+long conversations overwrote the input prompt and status bar. Fixed by
+laying children out parent-local (`{X:0,Y:0,...}`); guarded by
+`TestAgentView_ChatPaintsInsideSlot` /
+`TestAgentView_LongChatDoesNotOverflowInputOrStatus`. Short-chat gravity
+(renderer `assembleOutput` bottom-anchoring) was also missing in the
+root-host VirtualList — added `ui.VirtualList.SetBottomGravity`; guarded by
+`TestAgentView_ShortChatAnchorsToBottom`. The launcher workspace listing is
+loaded asynchronously (`refreshLauncherAsync` + `launcherWorkspacesMsg`,
+generation-deduped) so the ~200ms DB scan never blocks the back-to-launcher
+hotpath; guarded by `launcher_async_test.go`.
+
+**LSP engineering (2026-08-01):** LSP subprocess I/O is now fully decoupled
+from caller goroutines — powernap is vendored
+(`third_party/powernap`, `TransportWrap` hook), all writes go through a
+bounded async serialized writer (`tui/editor/lsp_pipe.go`), connection death
+is observable (`LSPClient.Done()`), the `LSPManager` reaps and restarts dead
+servers (`reapOnDone`), and launcher workspace reads are context-bound so a
+stalled read cannot leak the workspace DB handle (Windows file lock). See
+AGENTS.md → LSP I/O Architecture.
 
 ## Architecture: Three Layers
 
@@ -45,7 +72,7 @@ Communication: TUI → Workspace via method calls. Workspace → TUI via event b
         └── sessions/
 ```
 
-## Phase Status
+## Phase Status (workspace refactor — all DONE)
 
 ### Phase 1 — Workspace owns sessions ✅ DONE
 - [x] Remove `session.SessionManager` from workspace
@@ -56,38 +83,31 @@ Communication: TUI → Workspace via method calls. Workspace → TUI via event b
 - [x] Remove all TUI callback indirection (OnListSessions, OnDeleteSession, OnHardCancel, etc.)
 - [x] viewmodel.App calls workspace methods directly
 - [x] tui/tui.go simplified: no callbacks, takes *workspace.Workspace
-- [x] tui/viewmodel.NewApp takes *workspace.Workspace
-- [x] app.Run() creates workspace, bootstraps session, starts TUI
-- [x] `go build ./...` passes
-- [x] `go test ./...` passes (safety test failures fixed)
+- [x] `go build ./...` passes, `go test ./...` passes
 
 **Removed in Phase 4:** `OnNewSession` and `OnResumeSession` callbacks.
 
 ### Phase 2 — Workspace-scoped session registry enrichment ✅ DONE
-- [x] Enrich `workspace_sessions` table: project_name, turn_count, first_prompt, last_prompt, message_count (schema:83-107)
-- [x] WorkspaceDB.RegisterSession stores richer metadata (db.go:134)
-- [x] WorkspaceDB.UpdateSessionMeta wired for live updates (db.go:150 + SyncSessionMeta, CloseAllSessions, enrichSessionMeta)
-- [x] Workspace.enrichSessionMeta reads from session DB for full metadata + syncs back to registry (bootstrap.go:680)
+- [x] Enrich `workspace_sessions` table: project_name, turn_count, first_prompt, last_prompt, message_count
+- [x] WorkspaceDB.RegisterSession stores richer metadata
+- [x] WorkspaceDB.UpdateSessionMeta wired for live updates (SyncSessionMeta, CloseAllSessions, enrichSessionMeta)
+- [x] Workspace.enrichSessionMeta reads from session DB for full metadata + syncs back to registry
 
 ### Phase 3 — Session storage under workspace folder ✅ DONE
-- [x] Session DBs live under `~/.crude/workspaces/<hash>/sessions/` (paths.go:88-109)
-- [x] Session logs/reports live under `~/.crude/workspaces/<hash>/sessions/<id>/` (SessionDir, paths.go:88-98)
-- [x] Legacy fallback: if session DB not found in workspace, look in `~/.crude/sessions/` (bootstrap.go:108-116)
-- [x] New sessions always created under workspace folder (bootstrap.go:69-70)
+- [x] Session DBs live under `~/.crude/workspaces/<hash>/sessions/`
+- [x] Session logs/reports live under `~/.crude/workspaces/<hash>/sessions/<id>/`
+- [x] Legacy fallback: if session DB not found in workspace, look in `~/.crude/sessions/`
+- [x] New sessions always created under workspace folder
 
 ### Phase 4 — TUI decoupling + launcher becomes workspace selector ✅ DONE
 - [x] Remove OnNewSession/OnResumeSession callbacks from Workspace
-- [x] Workspace stores sessionCfg, homeDir, sender (EventSender)
-- [x] Workspace.NewSessionFromLauncher() handles full flow
-- [x] Workspace.ResumeSessionFromLauncher() handles resume
-- [x] Launcher calls workspace methods directly
-- [x] Launcher lists workspaces when no project dir specified (launcher.go:53 ListWorkspaceInfos)
-- [x] Launcher shows workspace-scoped sessions when inside a workspace (launcher.go:48 sessions param from ws.ListSessions)
-- [x] Resume session stays in same workspace (no quit/restart) (workspace.go:471 ResumeSessionFromLauncher)
+- [x] Workspace.NewSessionFromLauncher() / ResumeSessionFromLauncher() handle full flow
+- [x] Launcher lists workspaces when no project dir specified
+- [x] Launcher shows workspace-scoped sessions when inside a workspace
+- [x] Resume session stays in same workspace (no quit/restart)
 
 ### Phase 5 — App shell wiring ✅ DONE
 - [x] app.Run() creates workspace and starts TUI
-- [x] main.go is functional (not yet ~50 lines but works)
 - [x] App stores session.Config for reuse via SetBackendConfig
 - [x] Provider presets defined properly
 
@@ -95,39 +115,15 @@ Communication: TUI → Workspace via method calls. Workspace → TUI via event b
 - [x] Split Settings into AppSettings + SessionSettings
 - [x] AppPart() / SessionPart() methods on Settings
 - [x] HandleSettingsSave persists app settings to workspace.db
-- [x] LoadAppSettings reads from workspace.db
-- [x] /settings form has two sections (Session + Preferences) — UI polish for later
-- [x] New JetBrains-style workspace settings window (two-column, mouse-enabled)
+- [x] /settings form has two sections (Session + Preferences)
+- [x] JetBrains-style workspace settings window (two-column, mouse-enabled)
 - [x] Session settings form (provider/model/thinking) as overlay
 - [x] Ctrl+Alt+P command palette "Settings" opens workspace settings
-- [x] /settings opens session settings
 
 ## Key Decisions
 
 1. **Launcher = workspace selector** — top-level lists workspaces/projects. Inside a workspace, sessions are managed via agent tabs and slash commands.
-2. **No callback chains** — viewmodel calls workspace methods directly. Only OnNewSession/OnResumeSession remain as callbacks (Phase 4 target).
+2. **No callback chains** — viewmodel calls workspace methods directly.
 3. **Sessions are workspace-scoped** — listed from workspace.db, stored under workspace folder.
 4. **Config split** — app config (visual/tooling) vs session config (AI behavior). Three inheritance levels.
-
-## Files Changed in Phase 1
-
-| File | What Changed |
-|------|-------------|
-| `workspace/workspace.go` | Removed sessionManager, removed most callbacks, added Sessions slice, NewWorkspace simplified |
-| `workspace/bootstrap.go` | Direct session creation via session.NewWithSessionDir, workspace-scoped ListSessions/DeleteSession |
-| `workspace/session.go` | Added AgentID, HydratedMessages(), HydratedRefs() |
-| `workspace/paths.go` | Added SessionDir(), SessionDBPath() |
-| `workspace/db.go` | RegisterSession takes projectPath |
-| `session/session.go` | Added NewWithSessionDir() |
-| `session/resume.go` | Added ResumeSessionWithDir() |
-| `tui/tui.go` | Removed all callbacks, Start takes *workspace.Workspace |
-| `tui/viewmodel/app.go` | NewApp takes *workspace.Workspace, removed callback fields |
-| `tui/viewmodel/cancel.go` | Direct workspace methods |
-| `tui/viewmodel/command_palette.go` | Direct workspace methods |
-| `tui/viewmodel/update.go` | Direct workspace methods |
-| `tui/viewmodel/editor_tabs.go` | Direct workspace methods |
-| `tui/viewmodel/launcher.go` | Direct workspace methods |
-| `tui/viewmodel/keyboard.go` | Direct workspace methods |
-| `tui/viewmodel/slash_commands.go` | Direct workspace methods |
-| `tui/viewmodel/context_menu_builders.go` | Direct workspace methods |
-| `app/app.go` | Run() creates workspace, bootstraps session, starts TUI |
+5. **TUI owns presentation** — the component system, layer surfaces, focus, and projections live in `tui/`; workspace exposes neutral view data (`TreeRowView`, `TabView`, `StatusView`, `ChatMessageView`, `SessionSettingsState`) over the event bus / method calls.

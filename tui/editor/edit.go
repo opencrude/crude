@@ -17,9 +17,8 @@ func (e *Editor) insertRune(r rune) {
 	runeBytes := make([]byte, utf8.RuneLen(r))
 	utf8.EncodeRune(runeBytes, r)
 
-	e.buf.Insert(e.cursor, runeBytes)
+	_, _ = e.buf.Insert(e.cursor, runeBytes)
 	e.invalidateEditorCaches()
-
 	cursorAfter := e.cursor
 	if r == '\n' {
 		cursorAfter.Line++
@@ -68,7 +67,7 @@ func (e *Editor) insertText(s string) {
 	}
 
 	e.clearGoal()
-	e.buf.Insert(cursorBefore, []byte(s))
+	_, _ = e.buf.Insert(cursorBefore, []byte(s))
 	e.invalidateEditorCaches()
 	e.cursor = cursorAfter
 	e.modified = true
@@ -107,7 +106,7 @@ func (e *Editor) deleteBackward() {
 			start := Position{Line: e.cursor.Line, Col: e.cursor.Col - chVisW}
 			end := e.cursor
 
-			e.buf.Delete(start, end)
+			_, _ = e.buf.Delete(start, end)
 			e.invalidateEditorCaches()
 			e.cursor.Col -= chVisW
 			e.modified = true
@@ -131,7 +130,7 @@ func (e *Editor) deleteBackward() {
 		start := Position{Line: prevLine, Col: prevLineVisW}
 		end := Position{Line: e.cursor.Line, Col: 0}
 
-		e.buf.Delete(start, end)
+		_, _ = e.buf.Delete(start, end)
 		e.invalidateEditorCaches()
 		e.cursor.Line = prevLine
 		e.cursor.Col = prevLineVisW
@@ -169,7 +168,7 @@ func (e *Editor) deleteForward() {
 			start := e.cursor
 			end := Position{Line: e.cursor.Line, Col: e.cursor.Col + chVisW}
 
-			e.buf.Delete(start, end)
+			_, _ = e.buf.Delete(start, end)
 			e.invalidateEditorCaches()
 			e.modified = true
 			if e.buffer != nil {
@@ -189,7 +188,7 @@ func (e *Editor) deleteForward() {
 		start := e.cursor
 		end := Position{Line: e.cursor.Line + 1, Col: 0}
 
-		e.buf.Delete(start, end)
+		_, _ = e.buf.Delete(start, end)
 		e.invalidateEditorCaches()
 		e.modified = true
 		if e.buffer != nil {
@@ -228,10 +227,10 @@ func (e *Editor) undo() {
 
 	switch c.Type {
 	case ActInsert:
-		e.buf.Delete(c.StartPos, c.EndPos)
+		_, _ = e.buf.Delete(c.StartPos, c.EndPos)
 		e.cursor = c.CursorBefore
 	case ActDelete:
-		e.buf.Insert(c.StartPos, c.Text)
+		_, _ = e.buf.Insert(c.StartPos, c.Text)
 		e.cursor = c.CursorBefore
 	}
 	e.invalidateEditorCaches()
@@ -254,10 +253,10 @@ func (e *Editor) redo() {
 
 	switch c.Type {
 	case ActInsert:
-		e.buf.Insert(c.StartPos, c.Text)
+		_, _ = e.buf.Insert(c.StartPos, c.Text)
 		e.cursor = c.EndPos
 	case ActDelete:
-		e.buf.Delete(c.StartPos, c.EndPos)
+		_, _ = e.buf.Delete(c.StartPos, c.EndPos)
 		e.cursor = c.EndPos
 	}
 	e.invalidateEditorCaches()
