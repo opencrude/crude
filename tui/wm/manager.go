@@ -219,6 +219,17 @@ func (wm *WindowManager) Focused() *FloatingWindow {
 	return wm.focused
 }
 
+// ClearFocus drops window focus without reassigning it to another window. The
+// OverlayHost uses it to restore "no window focused" when the focus prior to an
+// overlay was the shell (editor/tree/chat), instead of snapping focus to
+// whatever is on top of the z-order.
+func (wm *WindowManager) ClearFocus() {
+	if wm.focused != nil {
+		wm.focused.Unfocus()
+		wm.focused = nil
+	}
+}
+
 // IsDragging reports whether a drag or resize interaction is in progress.
 func (wm *WindowManager) IsDragging() bool {
 	return wm.activeDrag != nil || wm.activeResize != nil

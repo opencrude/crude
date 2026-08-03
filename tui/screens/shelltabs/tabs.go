@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -160,7 +158,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	}
 	border := s.color(ui.ColorBorder)
 	accent := s.color(ui.ColorAccent)
-	sep := "─"
+	sep := string(ui.FirstRune(s.tokens.Glyphs().BorderH, '─'))
 	sepFG := border
 	if s.barFocused {
 		sep = "━"
@@ -170,7 +168,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	buf.WriteString(ox+b.X, sepY, strings.Repeat(sep, max(0, b.W)), sepFG, cell.NoColor, 0)
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {

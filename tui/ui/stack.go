@@ -1,8 +1,6 @@
 package ui
 
 import (
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/surface"
 )
 
@@ -122,7 +120,7 @@ func (s *Stack) Layout(ctx LayoutContext, r Rect) {
 func (s *Stack) Paint(_ *surface.CellBuffer, _, _ int, _ PaintContext) {}
 
 // Handle routes to children is done by Host hit-testing; stack itself ignores.
-func (s *Stack) Handle(_ EventContext, _ tea.Msg) EventResult {
+func (s *Stack) Handle(_ EventContext, _ Event) EventResult {
 	return EventResult{}
 }
 

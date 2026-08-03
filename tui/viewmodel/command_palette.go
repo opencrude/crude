@@ -62,6 +62,29 @@ func paletteEntriesFromRegistry(registry *ui.ActionRegistry) []cmdEntry {
 	return entries
 }
 
+// keyboardShortcutsHelp builds the registry-backed "Keyboard Shortcuts:"
+// block shown by help.show. Every shortcut is formatted from the action
+// registry (HintFor → FormatShortcut) so the listing can never drift
+// from active bindings; palette.open and DisplayOnly hint fragments are
+// excluded.
+func (m *App) keyboardShortcutsHelp() string {
+	if m.actionRegistry == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nKeyboard Shortcuts:\n")
+	for _, a := range m.actionRegistry.All() {
+		hint := ui.FormatShortcut(m.actionRegistry.HintFor(a.ID))
+		if hint == "" || a.ID == "palette.open" || a.DisplayOnly {
+			continue
+		}
+		b.WriteString("  " + hint)
+		b.WriteString(strings.Repeat(" ", max(0, 20-len([]rune(hint)))))
+		b.WriteString("- " + a.Label + "\n")
+	}
+	return b.String()
+}
+
 type commandPaletteModel struct {
 	th       *theme.Theme
 	items    []cmdEntry
@@ -404,27 +427,27 @@ func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// Navigation keys → List
 	switch msg.Code {
 	case tea.KeyUp:
-		list.Handle(ui.EventContext{}, msg)
+		list.Handle(ui.EventContext{}, ui.KeyEvent(msg))
 		m.syncPaletteModelFromList(list)
 		return true, nil
 	case tea.KeyDown:
-		list.Handle(ui.EventContext{}, msg)
+		list.Handle(ui.EventContext{}, ui.KeyEvent(msg))
 		m.syncPaletteModelFromList(list)
 		return true, nil
 	case tea.KeyPgUp:
-		list.Handle(ui.EventContext{}, msg)
+		list.Handle(ui.EventContext{}, ui.KeyEvent(msg))
 		m.syncPaletteModelFromList(list)
 		return true, nil
 	case tea.KeyPgDown:
-		list.Handle(ui.EventContext{}, msg)
+		list.Handle(ui.EventContext{}, ui.KeyEvent(msg))
 		m.syncPaletteModelFromList(list)
 		return true, nil
 	case tea.KeyHome:
-		list.Handle(ui.EventContext{}, msg)
+		list.Handle(ui.EventContext{}, ui.KeyEvent(msg))
 		m.syncPaletteModelFromList(list)
 		return true, nil
 	case tea.KeyEnd:
-		list.Handle(ui.EventContext{}, msg)
+		list.Handle(ui.EventContext{}, ui.KeyEvent(msg))
 		m.syncPaletteModelFromList(list)
 		return true, nil
 	case tea.KeyEnter:
@@ -446,7 +469,7 @@ func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 
 	// All other keys (text editing, Backspace, etc.) → search field
 	oldVal := search.Value()
-	search.Handle(ui.EventContext{}, msg)
+	search.Handle(ui.EventContext{}, ui.KeyEvent(msg))
 	if search.Value() != oldVal {
 		m.commandPaletteModel.setFilter(search.Value())
 		m.commandPaletteModel.applyFilter()
@@ -537,18 +560,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		for _, c := range input.AvailableCmds() {
 			b.WriteString("  " + "/" + c.Label + " - " + c.Desc + "\n")
 		}
-		b.WriteString("\nKeyboard Shortcuts:\n")
-		if m.actionRegistry != nil {
-			for _, a := range m.actionRegistry.All() {
-				hint := m.actionRegistry.HintFor(a.ID)
-				if hint == "" || a.ID == "palette.open" || a.DisplayOnly {
-					continue
-				}
-				b.WriteString("  " + hint)
-				b.WriteString(strings.Repeat(" ", max(0, 20-len(hint))))
-				b.WriteString("- " + a.Label + "\n")
-			}
-		}
+		b.WriteString(m.keyboardShortcutsHelp())
 		if m.AgentMgr.ActiveID() != "" {
 			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}

@@ -255,9 +255,10 @@ func (t *Tree) paintTreeRow(buf *surface.CellBuffer, x, y, width int, row TreeRo
 		remain -= indent
 	}
 	if row.IsDir && remain > 2 {
-		chev := "▸ "
+		g := DefaultGlyphsFromTokens(t.tokens)
+		chev := string(FirstRune(g.TreeCollapsed, '▸')) + " "
 		if row.Expanded {
-			chev = "▾ "
+			chev = string(FirstRune(g.TreeExpanded, '▾')) + " "
 		}
 		if row.Loading {
 			chev = "… "
@@ -371,57 +372,57 @@ func (t *Tree) paintDefaultRow(buf *surface.CellBuffer, x, y, width int, item Tr
 	buf.WriteString(x+indent, y, label, fg, bg, attr)
 }
 
-func (t *Tree) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
+func (t *Tree) Handle(ctx EventContext, evt Event) EventResult {
+	switch evt.Kind {
+	case EventKey:
 		if t.count() == 0 {
 			return EventResult{}
 		}
 		switch {
-		case msg.Code == tea.KeyUp || msg.String() == "k":
+		case evt.Key.Code == tea.KeyUp || evt.Key.String() == "k":
 			t.sel.MoveUp()
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Action: &Action{ID: "tree.select", Payload: t.ActiveID()}, Invalidate: InvalidatePaint}
-		case msg.Code == tea.KeyDown || msg.String() == "j":
+		case evt.Key.Code == tea.KeyDown || evt.Key.String() == "j":
 			t.sel.MoveDown()
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Action: &Action{ID: "tree.select", Payload: t.ActiveID()}, Invalidate: InvalidatePaint}
-		case msg.Code == tea.KeyEnter:
+		case evt.Key.Code == tea.KeyEnter:
 			return EventResult{Handled: true, Action: &Action{ID: t.activate, Payload: t.ActiveID()}, Invalidate: InvalidatePaint}
-		case msg.Code == tea.KeyPgUp:
+		case evt.Key.Code == tea.KeyPgUp:
 			t.sel.PageUp(t.scroll.Viewport())
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
-		case msg.Code == tea.KeyPgDown:
+		case evt.Key.Code == tea.KeyPgDown:
 			t.sel.PageDown(t.scroll.Viewport())
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
-		case msg.Code == tea.KeyHome:
+		case evt.Key.Code == tea.KeyHome:
 			t.sel.Home()
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
-		case msg.Code == tea.KeyEnd:
+		case evt.Key.Code == tea.KeyEnd:
 			t.sel.End()
 			t.scroll.EnsureVisible(t.sel.Index())
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
-	case tea.MouseWheelMsg:
-		switch msg.Button {
+	case EventMouseWheel:
+		switch evt.MouseWheel.Button {
 		case tea.MouseWheelUp:
 			t.scroll.ScrollBy(-3)
 		case tea.MouseWheelDown:
 			t.scroll.ScrollBy(3)
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
-	case tea.MouseMotionMsg:
+	case EventMouseMotion:
 		idx := t.rowAt(ctx.LocalY)
 		if idx != t.hoverIdx {
 			t.hoverIdx = idx
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
 		return EventResult{Handled: true}
-	case tea.MouseClickMsg:
-		if msg.Button != tea.MouseLeft {
+	case EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
 		}
 		idx := t.rowAt(ctx.LocalY)

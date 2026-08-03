@@ -19,6 +19,10 @@ type Host struct {
 	height  int
 	focused ComponentID
 	hovered ComponentID
+	// scopes is the active focus-scope stack (LIFO), pushed/popped by overlay
+	// open/close paths (see OverlayHost). Modal scopes trap keyboard focus
+	// within their subtree.
+	scopes []FocusScope
 	// captured is the resolved pointer dispatch target (post-passthrough) that
 	// owns an active left-button press until release.
 	captured   ComponentID
@@ -98,6 +102,7 @@ func (h *Host) SetRoot(root Component) {
 	h.needsPnt = true
 	h.focused = RootID
 	h.hovered = RootID
+	h.scopes = nil
 }
 
 // Root returns the root component.
@@ -117,12 +122,17 @@ func (h *Host) Resize(w, hgt int) {
 // SetFrame sets the animation frame counter exposed to components in PaintContext.
 func (h *Host) SetFrame(frame int) { h.frame = frame }
 
-// Focus sets keyboard focus to id if registered.
+// Focus sets keyboard focus to id if registered. While a modal focus scope is
+// active, focus is trapped: it may not move to a component outside the
+// topmost modal scope's subtree (see FocusWithinScope).
 func (h *Host) Focus(id ComponentID) bool {
 	if id != RootID {
 		if _, ok := h.registry[id]; !ok {
 			return false
 		}
+	}
+	if h.FocusScopeModal() && !h.FocusWithinScope(id) {
+		return false
 	}
 	if h.focused == id {
 		return true
@@ -138,8 +148,52 @@ func (h *Host) Focused() ComponentID { return h.focused }
 // Hovered returns the hovered component ID.
 func (h *Host) Hovered() ComponentID { return h.hovered }
 
-// HasPointerCapture reports whether a left-button press is captured.
+// HasPointerCapture reports whether a pointer capture is active.
 func (h *Host) HasPointerCapture() bool { return h.captured != RootID }
+
+// CapturedPointer reports the current capture owner and button, if any.
+func (h *Host) CapturedPointer() (ComponentID, tea.MouseButton, bool) {
+	return h.captured, h.captureBtn, h.captured != RootID
+}
+
+// CapturePointer explicitly captures pointer events for id. While captured,
+// MouseMotion and MouseRelease messages route to id regardless of the pointer
+// position (EventContext locals are computed against id's screen rect, so the
+// component sees negative/out-of-range locals when the pointer is outside),
+// so a drag continues outside the component's original bounds and ends
+// reliably on release. A new MouseClick is NOT captured — it hit-tests a
+// fresh interaction. When capture moves to a different owner, the previous
+// owner's PointerCaptureCanceller is invoked: it lost the pointer without a
+// matching release. Returns false and leaves capture unchanged when id is not
+// mounted.
+func (h *Host) CapturePointer(id ComponentID, btn tea.MouseButton) bool {
+	if id == RootID {
+		return false
+	}
+	if _, ok := h.registry[id]; !ok {
+		return false
+	}
+	if h.captured != RootID && h.captured != id {
+		if c, ok := h.registry[h.captured]; ok {
+			if cc, ok := c.(PointerCaptureCanceller); ok {
+				cc.CancelPointerCapture()
+			}
+		}
+	}
+	h.captured = id
+	h.captureBtn = btn
+	return true
+}
+
+// ReleasePointer ends an active capture for btn without invoking the
+// PointerCaptureCanceller hook. The normal end of a drag is the matching
+// MouseRelease routed to the captured component; components can call
+// ReleasePointer to end a drag early (e.g. Esc-cancel without a commit).
+func (h *Host) ReleasePointer(btn tea.MouseButton) {
+	if h.captured != RootID && btn == h.captureBtn {
+		h.clearPointerCapture()
+	}
+}
 
 // CancelPointerCapture clears Host capture and resets drag/selection state on
 // the captured component when it implements PointerCaptureCanceller.
@@ -292,6 +346,16 @@ func (h *Host) HitTest(x, y int) ComponentID {
 	return best
 }
 
+// ScreenRect returns the screen-absolute bounds of a registered component
+// after the latest layout, or false if the component is not mounted. This is
+// the single geometry source for pointer hit coordinates (Host.Handle builds
+// EventContext.Locals from these same rects).
+func (h *Host) ScreenRect(id ComponentID) (Rect, bool) {
+	h.Layout()
+	r, ok := h.screen[id]
+	return r, ok
+}
+
 // Handle dispatches a message to the focused component, with pointer
 // messages first updating hover and targeting the hit component.
 func (h *Host) Handle(msg tea.Msg) EventResult {
@@ -317,17 +381,14 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 		}
 		res := h.dispatchTo(id, m.X, m.Y, msg)
 		if m.Button == tea.MouseLeft && res.Handled {
-			h.captured = id
-			h.captureBtn = m.Button
+			h.CapturePointer(id, m.Button)
 		}
 		return res
 	case tea.MouseReleaseMsg:
 		hit := h.HitTest(m.X, m.Y)
 		id := h.pointerDispatchTarget(hit, m.Button, true)
 		res := h.dispatchTo(id, m.X, m.Y, msg)
-		if h.captured != RootID && m.Button == h.captureBtn {
-			h.clearPointerCapture()
-		}
+		h.ReleasePointer(m.Button)
 		return res
 	case tea.MouseWheelMsg:
 		hit := h.HitTest(m.X, m.Y)
@@ -397,7 +458,8 @@ func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {
 		ScreenX: sx,
 		ScreenY: sy,
 	}
-	res := c.Handle(ectx, msg)
+	evt := NormalizeEvent(msg)
+	res := c.Handle(ectx, evt)
 	res = h.bubbleAction(id, sx, sy, res)
 	// Unhandled key presses bubble to ancestors. Pointer/paste stay leaf-only
 	// so hit-tested targets and text editors keep exclusive ownership of those
@@ -405,8 +467,8 @@ func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {
 	// never leaves this Host — modal overlays stay contained by viewmodel
 	// routing keys only into the focused floating-window Host.
 	if !res.Handled {
-		if _, isKey := msg.(tea.KeyPressMsg); isKey {
-			res = h.bubbleUnhandledKey(id, sx, sy, msg, res)
+		if evt.IsKey() {
+			res = h.bubbleUnhandledKey(id, sx, sy, evt, res)
 		}
 	}
 	if res.Invalidate&InvalidateLayout != 0 {
@@ -428,12 +490,31 @@ func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {
 			res.Invalidate |= InvalidateFocus | InvalidatePaint
 		}
 	}
+	if res.Action != nil && res.Action.ID == "ui.capture" {
+		var btn tea.MouseButton
+		switch m := msg.(type) {
+		case tea.MouseClickMsg:
+			btn = m.Button
+		case tea.MouseMotionMsg:
+			btn = m.Button
+		}
+		if btn != tea.MouseNone {
+			captureID := id
+			if pid, ok := res.Action.Payload.(ComponentID); ok {
+				captureID = pid
+			}
+			if h.CapturePointer(captureID, btn) {
+				res.Action = nil
+				res.Handled = true
+			}
+		}
+	}
 	return res
 }
 
 // bubbleUnhandledKey walks from the focused leaf toward the root, offering
 // each ancestor a chance to Handle the key. Stops at the first Handled result.
-func (h *Host) bubbleUnhandledKey(source ComponentID, sx, sy int, msg tea.Msg, result EventResult) EventResult {
+func (h *Host) bubbleUnhandledKey(source ComponentID, sx, sy int, evt Event, result EventResult) EventResult {
 	current := source
 	for {
 		parentID, ok := h.parent[current]
@@ -453,7 +534,7 @@ func (h *Host) bubbleUnhandledKey(source ComponentID, sx, sy int, msg tea.Msg, r
 			ScreenX: sx,
 			ScreenY: sy,
 		}
-		childRes := parent.Handle(ectx, msg)
+		childRes := parent.Handle(ectx, evt)
 		result = result.Merge(childRes)
 		result = h.bubbleAction(parentID, sx, sy, result)
 		if childRes.Handled {

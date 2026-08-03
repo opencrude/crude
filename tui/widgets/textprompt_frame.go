@@ -68,10 +68,13 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ui.ComponentWid
 		)
 	}
 
-	spacer := ui.NewLabel(ui.NewID(ui.RootID, "tree-prompt/spacer"), "", th)
+	// Blank row between the field and hint becomes Inset bottom padding on the
+	// field, preserving the exact 4-row body layout.
+	fieldPad := ui.NewInset(ui.NewID(ui.RootID, "tree-prompt/field-pad"),
+		ui.Insets{Top: 0, Right: 0, Bottom: 1, Left: 0}, field)
 
 	body := ui.NewStack(ui.NewID(ui.RootID, "tree-prompt/body"), ui.Vertical, 0,
-		promptLabel, field, spacer, hint,
+		promptLabel, fieldPad, hint,
 	)
 
 	frame := ui.NewWindowFrame(ui.NewID(ui.RootID, "tree-prompt"), ui.FrameDialog, tokens)

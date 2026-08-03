@@ -119,6 +119,12 @@ type OverlayEntry struct {
 	Window  *wm.FloatingWindow
 	Policy  OverlayPolicy
 	OnClose func() // cleanup invoked when the overlay is removed
+
+	// priorFocus is the floating-window ID that had window-manager focus when
+	// this overlay opened ("" when the shell — editor/tree/chat — owned focus).
+	// Closing the focused overlay restores it, so nested overlays unwind to the
+	// exact prior focus path instead of "whatever is on top of the z-order".
+	priorFocus string
 }
 
 // OverlayHost manages the stack of floating overlay windows. It
@@ -137,6 +143,13 @@ type OverlayHost struct {
 	wm    *wm.WindowManager
 	stack []*OverlayEntry
 
+	// focusHost is the Host whose focus the overlay stack owns. When set, Open
+	// pushes a focus scope (capturing the Host's current focus) and
+	// Close/CloseAll pop it, so closing nested overlays restores the exact
+	// prior focus path. Optional: hosts constructed without a focusHost keep
+	// the legacy flat WM focus behavior.
+	focusHost *Host
+
 	// onOpen is an optional hook invoked for every overlay open with the
 	// window and overlay ID, right after the window is registered. The
 	// viewmodel uses it to start reveal animations; the ui layer itself
@@ -149,6 +162,15 @@ func NewOverlayHost(manager *wm.WindowManager) *OverlayHost {
 	return &OverlayHost{wm: manager}
 }
 
+// SetFocusHost attaches the Host whose focus the overlay stack scopes. Open
+// pushes a focus scope and Close/CloseAll pop it (see FocusScope).
+func (h *OverlayHost) SetFocusHost(host *Host) {
+	if h == nil {
+		return
+	}
+	h.focusHost = host
+}
+
 // SetOnOpen installs the per-open hook (reveal animation start, etc.).
 func (h *OverlayHost) SetOnOpen(fn func(id OverlayID, fw *wm.FloatingWindow)) {
 	h.onOpen = fn
@@ -157,6 +179,10 @@ func (h *OverlayHost) SetOnOpen(fn func(id OverlayID, fw *wm.FloatingWindow)) {
 // Open registers an overlay. If an overlay with the same ID is
 // already open, it is closed first (OnClose runs). The window is
 // added to the WM and positioned by the caller before calling Open.
+//
+// When a focus host is attached, Open pushes a focus scope for the overlay
+// (capturing the Host's current focus) so Close can restore the exact prior
+// focus path.
 func (h *OverlayHost) Open(id OverlayID, fw *wm.FloatingWindow, policy OverlayPolicy, onClose func()) {
 	if h == nil || h.wm == nil || fw == nil {
 		return
@@ -167,15 +193,22 @@ func (h *OverlayHost) Open(id OverlayID, fw *wm.FloatingWindow, policy OverlayPo
 	}
 	// Apply policy to the window.
 	fw.SetClickOutsideBehavior(policy.Outside.toWM())
+	// Capture the focused window BEFORE the new window steals focus, so the
+	// scope can restore it when this overlay closes.
+	prior := h.focusedWindowID()
 	// Add to WM.
 	h.wm.AddWindow(fw)
 	// Track in stack.
 	h.stack = append(h.stack, &OverlayEntry{
-		ID:      id,
-		Window:  fw,
-		Policy:  policy,
-		OnClose: onClose,
+		ID:         id,
+		Window:     fw,
+		Policy:     policy,
+		OnClose:    onClose,
+		priorFocus: prior,
 	})
+	if h.focusHost != nil {
+		h.focusHost.PushFocusScope(ComponentID(string(id)), policy.Modal)
+	}
 	if h.onOpen != nil {
 		h.onOpen(id, fw)
 	}
@@ -188,12 +221,19 @@ func (h *OverlayHost) Close(id OverlayID) {
 	}
 	for i, e := range h.stack {
 		if e.ID == id {
+			wasFocused := h.wm.Focused() != nil && h.wm.Focused().ID == string(id)
 			// Remove registration before cleanup so OnClose may safely change
 			// modes or close related overlays without recursively closing itself.
 			h.stack = append(h.stack[:i], h.stack[i+1:]...)
 			h.wm.RemoveWindow(string(id))
 			if e.OnClose != nil {
 				e.OnClose()
+			}
+			h.popScope(id)
+			// Restore the exact prior focus only when this overlay was the
+			// focused window; otherwise the overlay above it keeps focus.
+			if wasFocused {
+				h.restoreWindowFocus(e.priorFocus)
 			}
 			return
 		}
@@ -214,6 +254,7 @@ func (h *OverlayHost) CloseAll() {
 		if h.wm != nil {
 			h.wm.RemoveWindow(string(e.ID))
 		}
+		h.popScope(e.ID)
 		if e.OnClose != nil {
 			e.OnClose()
 		}
@@ -371,4 +412,50 @@ func (h *OverlayHost) HasContentHandler(id OverlayID) bool {
 func (h *OverlayHost) HasHoverHandler(id OverlayID) bool {
 	_, ok := hoverHandlers[id]
 	return ok
+}
+
+// focusedWindowID returns the ID of the WM's focused window, or "" when no
+// window has focus (the shell — editor/tree/chat — owns focus).
+func (h *OverlayHost) focusedWindowID() string {
+	if h == nil || h.wm == nil {
+		return ""
+	}
+	if fw := h.wm.Focused(); fw != nil {
+		return fw.ID
+	}
+	return ""
+}
+
+// popScope removes the focus scope for the overlay with the given ID. A top
+// scope pops and RESTORES the focus it captured; a non-top scope is dropped
+// without restoring so the overlay above it keeps focus.
+func (h *OverlayHost) popScope(id OverlayID) {
+	if h == nil || h.focusHost == nil {
+		return
+	}
+	boundary := ComponentID(string(id))
+	scopes := h.focusHost.FocusScopes()
+	if len(scopes) == 0 {
+		return
+	}
+	if scopes[len(scopes)-1] == boundary {
+		h.focusHost.PopFocusScope()
+		return
+	}
+	h.focusHost.RemoveFocusScope(boundary)
+}
+
+// restoreWindowFocus returns WM focus to the window that owned it when the
+// closed overlay opened. When no window was focused (prior == ""), focus is
+// cleared so the shell (editor/tree/chat) regains keyboard ownership rather
+// than the WM snapping to whatever is on top of the z-order.
+func (h *OverlayHost) restoreWindowFocus(prior string) {
+	if h == nil || h.wm == nil {
+		return
+	}
+	if prior != "" && h.wm.Window(prior) != nil {
+		h.wm.FocusWindow(prior)
+		return
+	}
+	h.wm.ClearFocus()
 }

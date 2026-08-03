@@ -113,9 +113,9 @@ func (s *SearchField) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 	s.field.Paint(buf, originX+r.X, originY+r.Y, ctx)
 }
 
-func (s *SearchField) Handle(ctx EventContext, msg tea.Msg) EventResult {
+func (s *SearchField) Handle(ctx EventContext, evt Event) EventResult {
 	before := s.Value()
-	result := s.field.Handle(ctx, msg)
+	result := s.field.Handle(ctx, evt)
 	if s.Value() != before {
 		result.Cmd = combineCmd(result.Cmd, s.Schedule())
 	}

@@ -3,7 +3,6 @@ package ui
 import (
 	"strings"
 	"time"
-	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -106,11 +105,17 @@ func (t *TextArea) SetPrompt(s string) {
 }
 
 // promptChar returns the glyph rendered before the first visual row.
-// An empty configured prompt intentionally resolves to "❯", matching
-// components.TextInput.promptChar() and preserving ResetPrompt behavior.
+// An empty configured prompt intentionally resolves to the theme Prompt
+// glyph ("❯" by default), matching components.TextInput.promptChar() and
+// preserving ResetPrompt behavior.
 func (t *TextArea) promptChar() string {
 	if t.prompt != "" {
 		return t.prompt
+	}
+	if t.tokens != nil {
+		if p := t.tokens.Glyphs().Prompt; p != "" {
+			return p
+		}
 	}
 	return "❯"
 }
@@ -606,17 +611,19 @@ func (t *TextArea) paintBlockCursor(buf *surface.CellBuffer, x, y int, ch rune,
 }
 
 // Handle processes keyboard, paste, and mouse events.
-func (t *TextArea) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	switch m := msg.(type) {
-	case tea.KeyPressMsg:
-		return t.handleKey(m)
-	case tea.PasteMsg:
-		t.edit.InsertString(m.Content)
-		t.lastInputTime = time.Now()
-		t.EnsureCursorVisible()
-		return EventResult{Handled: true, Invalidate: InvalidatePaint}
-	case tea.MouseClickMsg:
-		if m.Button != tea.MouseLeft {
+func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
+	switch evt.Kind {
+	case EventKey:
+		return t.handleKey(evt.Key)
+	case EventCustom:
+		if paste, ok := evt.Custom.(tea.PasteMsg); ok {
+			t.edit.InsertString(paste.Content)
+			t.lastInputTime = time.Now()
+			t.EnsureCursorVisible()
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		}
+	case EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
 		}
 		pos := t.MouseToFlatPos(ctx.LocalX, ctx.LocalY)
@@ -626,7 +633,7 @@ func (t *TextArea) Handle(ctx EventContext, msg tea.Msg) EventResult {
 			t.edit.SetSelecting(true)
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateFocus}
-	case tea.MouseMotionMsg:
+	case EventMouseMotion:
 		if t.edit.IsSelecting() {
 			pos := t.MouseToFlatPos(ctx.LocalX, ctx.LocalY)
 			if pos >= 0 {
@@ -634,7 +641,7 @@ func (t *TextArea) Handle(ctx EventContext, msg tea.Msg) EventResult {
 			}
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
-	case tea.MouseReleaseMsg:
+	case EventMouseRelease:
 		if t.edit.IsSelecting() {
 			t.edit.SetSelecting(false)
 		}
@@ -972,7 +979,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 			e.curCol = 0
 		} else {
 			for _, r := range msg.Text {
-				if unicode.IsPrint(r) {
+				if isEditableRune(r) {
 					pos := e.lineColToFlat(e.curLine, e.curCol)
 					e.insertRuneAt(pos, r)
 					e.curCol++

@@ -38,7 +38,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	}
 	tokens := ui.NewTokenSet(th)
 	s := &WorkspaceSettingsSurface{Base: ui.NewBase(WorkspaceSettingsSurfaceID), model: model, tokens: tokens}
-	s.search = &settingsSearchField{Base: ui.NewBase(WorkspaceSettingsSearchID), field: ui.NewTextField(WorkspaceSettingsSearchID, tokens), owner: s}
+	s.search = &settingsSearchField{Base: ui.NewBase(WorkspaceSettingsSearchID), field: ui.NewFilterField(WorkspaceSettingsSearchID, tokens), owner: s}
 	s.search.field.SetPrompt("> ")
 	s.search.field.SetPlaceholder("Search settings")
 	s.search.field.SetSubmitAction("")
@@ -140,11 +140,11 @@ func (s *WorkspaceSettingsSurface) Paint(_ *surface.CellBuffer, _, _ int, _ ui.P
 //   - form (no select open): leave form → categories (form.exit.backward)
 //   - categories / empty search / actions / surface: CancelMsg (close +
 //     revert live theme preview to the last saved preset)
-func (s *WorkspaceSettingsSurface) Handle(_ ui.EventContext, msg tea.Msg) ui.EventResult {
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok || s.model == nil {
+func (s *WorkspaceSettingsSurface) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+	if s.model == nil || !evt.IsKey() {
 		return ui.EventResult{}
 	}
+	key := evt.Key
 	switch key.Code {
 	case tea.KeyUp:
 		if s.model.MoveCategory(-1) {
@@ -217,7 +217,7 @@ func (s *WorkspaceSettingsSurface) Semantics() ui.Semantics {
 
 type settingsSearchField struct {
 	ui.Base
-	field *ui.TextField
+	field *ui.FilterField
 	owner *WorkspaceSettingsSurface
 }
 
@@ -231,13 +231,14 @@ func (s *settingsSearchField) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (s *settingsSearchField) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	s.field.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
 }
-func (s *settingsSearchField) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (s *settingsSearchField) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s.owner == nil || s.owner.model == nil {
-		return s.field.Handle(ctx, msg)
+		return s.field.Handle(ctx, evt)
 	}
-	result := s.field.Handle(ctx, msg)
+	result := s.field.Handle(ctx, evt)
 	s.owner.model.SetSearchActive(true)
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch key.Code {
 		case tea.KeyEnter:
 			s.owner.model.SetSearchQuery(s.field.Value())
@@ -255,15 +256,9 @@ func (s *settingsSearchField) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventR
 				s.owner.FocusCategories()
 				return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 			}
-		case tea.KeyEsc:
-			if s.field.Edit().Len() > 0 {
-				s.field.SetValue("")
-				s.owner.model.SetSearchQuery("")
-				s.owner.categories.syncItems()
-				s.owner.refreshForm()
-				return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
-			}
 		}
+		// Esc with a non-empty query is cleared by the FilterField itself;
+		// Esc with an empty query is unhandled so the surface cancels.
 	}
 	s.owner.model.SetSearchQuery(s.field.Value())
 	s.owner.categories.syncItems()
@@ -294,8 +289,8 @@ func (s *settingsCategoryList) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (s *settingsCategoryList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	s.list.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
 }
-func (s *settingsCategoryList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
-	result := s.list.Handle(ctx, msg)
+func (s *settingsCategoryList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	result := s.list.Handle(ctx, evt)
 	if s.owner == nil || s.owner.model == nil {
 		return result
 	}
@@ -306,7 +301,8 @@ func (s *settingsCategoryList) Handle(ctx ui.EventContext, msg tea.Msg) ui.Event
 			result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
 		}
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch key.Code {
 		case tea.KeyTab:
 			if key.Mod.Contains(tea.ModShift) {

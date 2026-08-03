@@ -3,8 +3,6 @@ package ui
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -92,7 +90,7 @@ func (k *KeyChord) Paint(buf *surface.CellBuffer, ox, oy int, _ PaintContext) {
 	}
 }
 
-func (k *KeyChord) Handle(_ EventContext, _ tea.Msg) EventResult { return EventResult{} }
+func (k *KeyChord) Handle(_ EventContext, _ Event) EventResult { return EventResult{} }
 
 func (k *KeyChord) Semantics() Semantics {
 	return Semantics{Role: RoleLabel, Label: k.PlainText(), Value: k.PlainText()}

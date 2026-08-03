@@ -219,7 +219,7 @@ type Component interface {
 	Measure(ctx LayoutContext, cs Constraints) Size
 	Layout(ctx LayoutContext, r Rect)
 	Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext)
-	Handle(ctx EventContext, msg tea.Msg) EventResult
+	Handle(ctx EventContext, evt Event) EventResult
 	Semantics() Semantics
 	Bounds() Rect
 }
@@ -286,7 +286,7 @@ func (b *Base) Layout(_ LayoutContext, r Rect) {
 }
 
 // Handle default ignores.
-func (b Base) Handle(_ EventContext, _ tea.Msg) EventResult {
+func (b Base) Handle(_ EventContext, _ Event) EventResult {
 	return EventResult{}
 }
 

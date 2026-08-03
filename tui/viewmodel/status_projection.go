@@ -8,7 +8,7 @@ func (m *App) syncWorkspaceStatusView() {
 	if m.StatusBar == nil || m.Workspace == nil {
 		return
 	}
-	view := m.Workspace.StatusView()
+	view := m.StatusView()
 	m.StatusBar.SetCurrentAgent(view.CurrentAgentID)
 	m.StatusBar.UpdateUsage(
 		view.Usage.Prompt,

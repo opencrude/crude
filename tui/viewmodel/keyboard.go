@@ -497,7 +497,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
-	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
+	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())
 	m.Input = updated
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
@@ -586,7 +586,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
-	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
+	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())
 	m.Input = updated
 	if cmd != nil {
 		cmds = append(cmds, cmd)

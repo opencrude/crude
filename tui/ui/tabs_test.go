@@ -123,7 +123,7 @@ func TestTabsAttentionAndCloseActions(t *testing.T) {
 		t.Fatalf("expected close hit at x=%d, got index=%d close=%v ranges=%+v", closeX, idx, closeHit, ranges)
 	}
 
-	act := tabs.Handle(EventContext{}, tea.KeyPressMsg{Code: tea.KeyRight})
+	act := tabs.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyRight}))
 	if act.Action == nil || act.Action.ID != "tabs.activate" || act.Action.Payload != "two" {
 		t.Fatalf("expected tabs.activate two, got %+v", act.Action)
 	}

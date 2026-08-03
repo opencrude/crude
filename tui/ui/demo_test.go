@@ -97,7 +97,7 @@ func TestVirtualListNavigation(t *testing.T) {
 		{ID: "c", Height: 1, Label: "C"},
 	})
 	vl.Layout(LayoutContext{Theme: th}, Rect{X: 0, Y: 0, W: 20, H: 5})
-	vl.Handle(EventContext{}, tea.KeyPressMsg{Code: tea.KeyDown})
+	vl.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	if vl.SelectedIndex() != 1 {
 		t.Fatalf("selected=%d want 1", vl.SelectedIndex())
 	}

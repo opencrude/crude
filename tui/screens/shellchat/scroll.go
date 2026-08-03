@@ -2,19 +2,21 @@ package shellchat
 
 import (
 	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/ui"
 )
 
 // handleScrollInput applies chat scroll keys/wheel to scroll. Returns true when
-// the message was consumed. Text selection and main scrollbar drag are handled
+// the event was consumed. Text selection and main scrollbar drag are handled
 // in Screen.Handle before this fallback runs.
-func (s *Screen) handleScrollInput(msg tea.Msg) bool {
+func (s *Screen) handleScrollInput(evt ui.Event) bool {
 	if s == nil || s.list == nil {
 		return false
 	}
 	scroll := s.list.Scroll()
-	switch m := msg.(type) {
-	case tea.KeyPressMsg:
-		switch m.Code {
+	switch evt.Kind {
+	case ui.EventKey:
+		switch evt.Key.Code {
 		case tea.KeyPgUp:
 			scroll.ScrollBy(-scroll.Viewport())
 			scroll.SetAutoScroll(false)
@@ -33,8 +35,8 @@ func (s *Screen) handleScrollInput(msg tea.Msg) bool {
 			scroll.StickToBottom()
 			return true
 		}
-	case tea.MouseWheelMsg:
-		switch m.Button {
+	case ui.EventMouseWheel:
+		switch evt.MouseWheel.Button {
 		case tea.MouseWheelUp:
 			n := s.wheel.WheelUp()
 			if n > 0 {

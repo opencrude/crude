@@ -13,12 +13,12 @@ import (
 
 const pasteInlineThreshold = 16 * 1024
 
-func (m Model) Update(msg tea.Msg, thinking, blocking bool, chatAreaHeight int, showHint bool) (Model, tea.Cmd, Event) {
+func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
 	m.thinking = thinking
 	m.blocking = blocking
 
 	if mouseMsg, ok := msg.(tea.MouseMsg); ok {
-		return m.handleMouse(mouseMsg, chatAreaHeight, showHint)
+		return m.handleMouse(mouseMsg)
 	}
 
 	if m.slashActive {
@@ -244,7 +244,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 
 	case tea.KeyEnter:
-		res := m.slashList.Handle(ui.EventContext{}, msg)
+		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
 		if res.Action != nil && res.Action.ID == "slash.select" {
 			if item, ok := m.slashList.Selected(); ok {
 				cmd := "/" + item.ID
@@ -271,11 +271,11 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 
 	case tea.KeyUp:
-		res := m.slashList.Handle(ui.EventContext{}, msg)
+		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
 		return m, res.Cmd, nil
 
 	case tea.KeyDown:
-		res := m.slashList.Handle(ui.EventContext{}, msg)
+		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
 		return m, res.Cmd, nil
 
 	case tea.KeyBackspace, tea.KeyDelete:
@@ -310,18 +310,19 @@ func (m *Model) appendHistory(text string) {
 	}
 }
 
-func (m Model) handleMouse(msg tea.MouseMsg, chatAreaHeight int, showHint bool) (Model, tea.Cmd, Event) {
+func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
 	switch msg := msg.(type) {
 	case tea.MouseClickMsg:
-		if msg.Button == tea.MouseLeft {
-			pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
+		switch msg.Button {
+		case tea.MouseLeft:
+			pos, ok := m.MouseToInputPos(msg.X, msg.Y)
 			if ok {
 				m.input.SetSelection(pos, pos)
 				m.input.SetCursorFlat(pos)
 			} else {
 				m.input.ClearSelection()
 			}
-		} else if msg.Button == tea.MouseWheelUp || msg.Button == tea.MouseWheelDown {
+		case tea.MouseWheelUp, tea.MouseWheelDown:
 			if msg.Button == tea.MouseWheelUp {
 				m.browseHistoryUp()
 			} else {
@@ -331,16 +332,13 @@ func (m Model) handleMouse(msg tea.MouseMsg, chatAreaHeight int, showHint bool) 
 
 	case tea.MouseMotionMsg:
 		if m.input.IsSelecting() {
-			pos, ok := m.MouseToInputPos(msg.X, msg.Y, chatAreaHeight, showHint)
+			pos, ok := m.MouseToInputPos(msg.X, msg.Y)
 			if ok {
 				m.input.UpdateSelectionEnd(pos)
+			} else if msg.Y < m.textAreaY() {
+				m.input.UpdateSelectionEnd(0)
 			} else {
-				firstY := m.FirstLineY(chatAreaHeight, showHint, m.thinking, m.input.Len())
-				if msg.Y < firstY {
-					m.input.UpdateSelectionEnd(0)
-				} else {
-					m.input.UpdateSelectionEnd(m.input.Len())
-				}
+				m.input.UpdateSelectionEnd(m.input.Len())
 			}
 		}
 

@@ -72,7 +72,7 @@ func TestVirtualListEndKeyStickToBottomContract(t *testing.T) {
 				}
 			}
 
-			res := list.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnd})
+			res := list.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnd}))
 			if !res.Handled {
 				t.Fatal("End key must be handled")
 			}

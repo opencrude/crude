@@ -203,7 +203,7 @@ func (s *shellRoot) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 // Handle is a no-op: the Host dispatches to the hit/focused component. Keys
 // that bubble here are deliberately unhandled so the viewmodel keeps its
 // focusTarget-based routing.
-func (s *shellRoot) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult {
+func (s *shellRoot) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult {
 	return ui.EventResult{}
 }
 
@@ -258,12 +258,12 @@ func (d *deckMount) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext
 	surface.BlitOpaque(buf, ox+b.X, oy+b.Y, d.surf.Buffer())
 }
 
-func (d *deckMount) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (d *deckMount) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	proj := d.app.activeSessionDeck()
 	if proj == nil || !proj.deck.IsOpen() {
 		return ui.EventResult{}
 	}
-	result := proj.deckHost.Handle(deckLocalMsg(msg, ctx.LocalX, ctx.LocalY))
+	result := proj.deckHost.Handle(deckLocalMsg(evt.ToMsg(), ctx.LocalX, ctx.LocalY))
 	if result.Action != nil && result.Action.ID == "paneldeck.empty" {
 		proj.deckFocused = false
 		proj.deckFocus = ui.RootID

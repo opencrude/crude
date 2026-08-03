@@ -6,8 +6,6 @@ package shellchat
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -257,68 +255,68 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	_ = ctx
 }
 
-func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s == nil {
 		return ui.EventResult{}
 	}
 
-	switch msg.(type) {
-	case types.SelectionTickMsg:
-		return s.handleSelectionTick()
+	if evt.Kind == ui.EventCustom {
+		if _, ok := evt.Custom.(types.SelectionTickMsg); ok {
+			return s.handleSelectionTick()
+		}
 	}
 
 	if s.paneDrag != nil {
-		switch msg := msg.(type) {
-		case tea.MouseMotionMsg:
-			return s.handlePaneGutterMotion(ctx, msg)
-		case tea.MouseReleaseMsg:
-			return s.handlePaneGutterRelease(ctx, msg)
+		switch evt.Kind {
+		case ui.EventMouseMotion:
+			return s.handlePaneGutterMotion(ctx, evt.MouseMotion)
+		case ui.EventMouseRelease:
+			return s.handlePaneGutterRelease(ctx, evt.MouseRelease)
 		}
 	}
 
 	if s.scrollbar != nil && s.scrollbar.IsDragging() {
-		res := s.scrollbar.Handle(ctx, msg)
+		res := s.scrollbar.Handle(ctx, evt)
 		if res.Handled {
 			s.syncScrollAfterUserScroll()
 		}
 		return res
 	}
 
-	switch msg := msg.(type) {
-	case tea.MouseClickMsg:
+	if evt.Kind == ui.EventMouseClick {
 		if s.inScrollbarZone(ctx.LocalX) && s.scrollbar != nil {
 			s.selection.Clear()
-			res := s.scrollbar.Handle(ctx, msg)
+			res := s.scrollbar.Handle(ctx, evt)
 			if res.Handled {
 				s.syncScrollAfterUserScroll()
 			}
 			return res
 		}
-		if res := s.handlePaneGutterClick(ctx, msg); res.Handled {
+		if res := s.handlePaneGutterClick(ctx, evt.MouseClick); res.Handled {
 			return res
 		}
 	}
 
-	switch msg := msg.(type) {
-	case tea.MouseClickMsg:
-		return s.handleSelectionClick(ctx, msg)
-	case tea.MouseMotionMsg:
+	switch evt.Kind {
+	case ui.EventMouseClick:
+		return s.handleSelectionClick(ctx, evt.MouseClick)
+	case ui.EventMouseMotion:
 		if s.selection.selecting {
-			return s.handleSelectionMotion(ctx, msg)
+			return s.handleSelectionMotion(ctx, evt.MouseMotion)
 		}
-	case tea.MouseReleaseMsg:
+	case ui.EventMouseRelease:
 		if s.selection.selecting {
-			return s.handleSelectionRelease(ctx, msg)
+			return s.handleSelectionRelease(ctx, evt.MouseRelease)
 		}
 	}
 
-	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
-		if res := s.handlePaneWheel(ctx, wheel); res.Handled {
+	if evt.Kind == ui.EventMouseWheel {
+		if res := s.handlePaneWheel(ctx, evt.MouseWheel); res.Handled {
 			return res
 		}
 	}
 
-	if s.handleScrollInput(msg) {
+	if s.handleScrollInput(evt) {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
 	return ui.EventResult{}

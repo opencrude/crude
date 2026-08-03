@@ -9,6 +9,8 @@ import (
 
 	"crude/tui/filetree"
 	"crude/tui/rendering"
+	"crude/tui/screens/shelleditor"
+	"crude/tui/screens/shellinput"
 	"crude/tui/ui"
 	"crude/tui/widgets"
 	"crude/tui/wm"
@@ -105,10 +107,17 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 }
 
 func (m *App) routeEditorMouse(msg tea.Msg) tea.Cmd {
-	layout := m.computeLayout()
-	translated := translateMouseY(msg, -layout.ChatAreaTop)
-	translated = translateMouseX(translated, -layout.SidebarW)
-	translated = translateMouseX(translated, -m.EditorState.Editor.PadL)
+	if m.rootHost == nil {
+		return nil
+	}
+	r, ok := m.rootHost.ScreenRect(shelleditor.ScreenID)
+	if !ok || r.Empty() {
+		return nil
+	}
+	// The editor pane origin comes from the Host's hit tree (one geometry
+	// source); the editor's own PadL is the model-internal content offset
+	// painted by the shelleditor screen.
+	translated := translateMouseDelta(msg, -r.X-m.EditorState.Editor.PadL, -r.Y)
 	return m.EditorState.Editor.HandleEvent(translated)
 }
 
@@ -129,13 +138,45 @@ func (m *App) routeInputMouse(msg tea.Msg) []tea.Cmd {
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
-	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
+	updated, cmd, evt := m.Input.Update(m.inputLocalMouse(msg), canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())
 	m.Input = updated
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	cmds = append(cmds, m.handleInputEvent(evt)...)
 	return cmds
+}
+
+// inputLocalMouse converts a screen-absolute mouse message to shellinput-local
+// coordinates using the input screen's rect from the root Host hit tree (one
+// geometry source). The input model maps the local Y to a text position.
+func (m *App) inputLocalMouse(msg tea.Msg) tea.Msg {
+	if m.rootHost == nil {
+		return msg
+	}
+	r, ok := m.rootHost.ScreenRect(shellinput.ScreenID)
+	if !ok || r.Empty() {
+		return msg
+	}
+	return translateMouseDelta(msg, -r.X, -r.Y)
+}
+
+// translateMouseDelta shifts a mouse message's coordinates by (dx, dy).
+func translateMouseDelta(msg tea.Msg, dx, dy int) tea.Msg {
+	switch mm := msg.(type) {
+	case tea.MouseClickMsg:
+		mouse := mm.Mouse()
+		return tea.MouseClickMsg{X: mouse.X + dx, Y: mouse.Y + dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseMotionMsg:
+		mouse := mm.Mouse()
+		return tea.MouseMotionMsg{X: mouse.X + dx, Y: mouse.Y + dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseReleaseMsg:
+		mouse := mm.Mouse()
+		return tea.MouseReleaseMsg{X: mouse.X + dx, Y: mouse.Y + dy, Button: mm.Button, Mod: mm.Mod}
+	case tea.MouseWheelMsg:
+		return tea.MouseWheelMsg{X: mm.X + dx, Y: mm.Y + dy, Button: mm.Button, Mod: mm.Mod}
+	}
+	return msg
 }
 
 func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {

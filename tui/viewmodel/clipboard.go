@@ -46,7 +46,7 @@ func (m *App) pasteIntoInput() {
 	content := string(data)
 	canType := !m.OverlayState.IsBlocking()
 	updated, _, _ := m.Input.Update(tea.PasteMsg{Content: content},
-		canType, m.OverlayState.IsBlocking(), m.ChatAreaHeight, m.Input.ShowHint())
+		canType, m.OverlayState.IsBlocking())
 	m.Input = updated
 	m.StatusBar.SetInfo(fmt.Sprintf("Pasted %d chars into input", len(content)))
 }

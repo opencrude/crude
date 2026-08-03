@@ -324,10 +324,10 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 	}
 }
 
-func (v *VirtualList) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	switch m := msg.(type) {
-	case tea.KeyPressMsg:
-		switch m.Code {
+func (v *VirtualList) Handle(ctx EventContext, evt Event) EventResult {
+	switch evt.Kind {
+	case EventKey:
+		switch evt.Key.Code {
 		case tea.KeyUp:
 			v.sel.MoveUp()
 			v.scroll.SetAutoScroll(false)
@@ -378,17 +378,18 @@ func (v *VirtualList) Handle(ctx EventContext, msg tea.Msg) EventResult {
 				Invalidate: InvalidatePaint,
 			}
 		}
-	case tea.MouseWheelMsg:
-		if m.Button == tea.MouseWheelUp {
+	case EventMouseWheel:
+		switch evt.MouseWheel.Button {
+		case tea.MouseWheelUp:
 			v.scroll.ScrollBy(-3)
 			v.scroll.SetAutoScroll(false)
-		} else if m.Button == tea.MouseWheelDown {
+		case tea.MouseWheelDown:
 			v.scroll.ScrollBy(3)
 			_ = v.scroll.ShouldAutoScroll()
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
-	case tea.MouseClickMsg:
-		if m.Button != tea.MouseLeft {
+	case EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
 		}
 		absRow := v.scroll.Offset() + ctx.LocalY
@@ -406,7 +407,7 @@ func (v *VirtualList) Handle(ctx EventContext, msg tea.Msg) EventResult {
 				Invalidate: InvalidatePaint | InvalidateFocus,
 			}
 		}
-	case tea.MouseMotionMsg:
+	case EventMouseMotion:
 		absRow := v.scroll.Offset() + ctx.LocalY
 		idx := v.itemAtRow(absRow)
 		if idx != v.hoverIdx {

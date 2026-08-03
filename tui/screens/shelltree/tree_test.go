@@ -53,6 +53,46 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	uitest.CheckGolden(t, "shelltree_dark_40x8", buf)
 }
 
+// TestScreenDividerConsumesBorderVGlyph verifies the sidebar divider chrome
+// paints the theme BorderV glyph: overriding the token changes the divider.
+func TestScreenDividerConsumesBorderVGlyph(t *testing.T) {
+	dir := t.TempDir()
+	model := filetree.NewFileTreeModel(dir)
+	th := theme.DefaultDark()
+	th.Glyphs.BorderV = "!"
+	screen := shelltree.New(th, model)
+	buf := screen.PaintTestBuffer(30, 6)
+	for y := 0; y < 6; y++ {
+		if c := buf.Get(29, y).Char; c != '!' {
+			t.Fatalf("divider row %d char=%q want '!' (BorderV token)", y, string(c))
+		}
+	}
+}
+
+// TestScreenDirIconConsumesTreeGlyphs verifies the file-tree directory icons
+// flow from the theme's TreeCollapsed/TreeExpanded glyph tokens through the
+// IconResolver into the painted rows.
+func TestScreenDirIconConsumesTreeGlyphs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	model := filetree.NewFileTreeModel(dir)
+	th := theme.DefaultDark()
+	th.Glyphs.TreeCollapsed = "c"
+	th.Glyphs.TreeExpanded = "v"
+	screen := shelltree.New(th, model)
+	buf := screen.PaintTestBuffer(30, 6)
+	row0 := shelltree.PlainRow(buf, 0, 30)
+	if !strings.Contains(row0, "v") {
+		t.Fatalf("expanded root row %q missing TreeExpanded glyph 'v'", row0)
+	}
+	row1 := shelltree.PlainRow(buf, 1, 30)
+	if !strings.Contains(row1, "c") {
+		t.Fatalf("collapsed subdir row %q missing TreeCollapsed glyph 'c'", row1)
+	}
+}
+
 func countNonEmptyCells(buf *surface.CellBuffer) int {
 	n := 0
 	for y := 0; y < buf.Height(); y++ {

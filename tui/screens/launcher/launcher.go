@@ -716,13 +716,13 @@ func (s *Screen) handleKey(msg tea.KeyPressMsg) ui.EventResult {
 	return ui.EventResult{}
 }
 
-func (s *Screen) forwardFilter(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (s *Screen) forwardFilter(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if !s.filterOn {
 		return ui.EventResult{}
 	}
 	s.focusID(SearchID)
 	ctx.Focused = true
-	result := s.search.Handle(ctx, msg)
+	result := s.search.Handle(ctx, evt)
 	result.Invalidate |= ui.InvalidateFocus | ui.InvalidatePaint
 	return result
 }
@@ -818,9 +818,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 	// terminal/theme default show through, matching the legacy welcome view.
 }
 
-func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		return s.handleKey(key)
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() {
+		return s.handleKey(evt.Key)
 	}
 	return ui.EventResult{}
 }
@@ -888,9 +888,16 @@ func (c *actionCard) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui
 
 	ox, oy := originX+r.X, originY+r.Y
 	innerW := r.W - 4 // 2 border + 2 padding
+	g := c.tokens.Glyphs()
+	cornerTL := string(ui.FirstRune(g.CornerTL, '╭'))
+	cornerTR := string(ui.FirstRune(g.CornerTR, '╮'))
+	cornerBL := string(ui.FirstRune(g.CornerBL, '╰'))
+	cornerBR := string(ui.FirstRune(g.CornerBR, '╯'))
+	hBorder := string(ui.FirstRune(g.BorderH, '─'))
+	vBorder := string(ui.FirstRune(g.BorderV, '│'))
 
 	// Top border
-	buf.WriteString(ox, oy, "╭"+strings.Repeat("─", r.W-2)+"╮", borderFG, cell.NoColor, 0)
+	buf.WriteString(ox, oy, cornerTL+strings.Repeat(hBorder, r.W-2)+cornerTR, borderFG, cell.NoColor, 0)
 
 	// Title row
 	title := c.title
@@ -898,13 +905,13 @@ func (c *actionCard) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui
 		title = sparkleFrame(c.owner.frame) + title
 	}
 	title = rendering.TruncateLine(title, innerW)
-	buf.WriteString(ox, oy+1, "│", borderFG, cell.NoColor, 0)
+	buf.WriteString(ox, oy+1, vBorder, borderFG, cell.NoColor, 0)
 	buf.WriteString(ox+1, oy+1, " ", titleFG, cell.NoColor, 0)
 	titleW := rendering.VisibleWidth(title)
 	buf.WriteString(ox+2, oy+1, title, titleFG, cell.NoColor, cell.AttrBold)
 	buf.WriteString(ox+2+titleW, oy+1, strings.Repeat(" ", innerW-titleW), titleFG, cell.NoColor, 0)
 	buf.WriteString(ox+r.W-2, oy+1, " ", titleFG, cell.NoColor, 0)
-	buf.WriteString(ox+r.W-1, oy+1, "│", borderFG, cell.NoColor, 0)
+	buf.WriteString(ox+r.W-1, oy+1, vBorder, borderFG, cell.NoColor, 0)
 
 	// Middle row
 	tag := c.tagline
@@ -923,37 +930,39 @@ func (c *actionCard) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui
 		spacerW = 0
 	}
 	middle := tag + strings.Repeat(" ", spacerW) + hint
-	buf.WriteString(ox, oy+2, "│", borderFG, cell.NoColor, 0)
+	buf.WriteString(ox, oy+2, vBorder, borderFG, cell.NoColor, 0)
 	buf.WriteString(ox+1, oy+2, " ", muted, cell.NoColor, 0)
 	buf.WriteString(ox+2, oy+2, middle, muted, cell.NoColor, 0)
 	buf.WriteString(ox+r.W-2, oy+2, " ", muted, cell.NoColor, 0)
-	buf.WriteString(ox+r.W-1, oy+2, "│", borderFG, cell.NoColor, 0)
+	buf.WriteString(ox+r.W-1, oy+2, vBorder, borderFG, cell.NoColor, 0)
 
 	// Bottom border
-	buf.WriteString(ox, oy+3, "╰"+strings.Repeat("─", r.W-2)+"╯", borderFG, cell.NoColor, 0)
+	buf.WriteString(ox, oy+3, cornerBL+strings.Repeat(hBorder, r.W-2)+cornerBR, borderFG, cell.NoColor, 0)
 }
 
-func (c *actionCard) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		result := c.owner.handleKey(key)
+func (c *actionCard) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() {
+		result := c.owner.handleKey(evt.Key)
 		if result.Handled || !c.owner.filterOn {
 			return result
 		}
-		return c.owner.forwardFilter(ctx, msg)
+		return c.owner.forwardFilter(ctx, evt)
 	}
 	if c.owner.filterOn {
-		if _, ok := msg.(tea.PasteMsg); ok {
-			return c.owner.forwardFilter(ctx, msg)
+		if evt.Kind == ui.EventCustom {
+			if _, ok := evt.Custom.(tea.PasteMsg); ok {
+				return c.owner.forwardFilter(ctx, evt)
+			}
 		}
 	}
-	switch m := msg.(type) {
-	case tea.MouseClickMsg:
-		if m.Button != tea.MouseLeft {
+	switch evt.Kind {
+	case ui.EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft {
 			return ui.EventResult{}
 		}
 		c.owner.selectFlat(c.owner.cardIndex(c.kind))
 		return ui.EventResult{Handled: true, Cmd: c.owner.activateSelected(), Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
-	case tea.MouseMotionMsg:
+	case ui.EventMouseMotion:
 		c.owner.selectFlat(c.owner.cardIndex(c.kind))
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
@@ -1006,7 +1015,7 @@ func (sl *shortcutList) Paint(buf *surface.CellBuffer, originX, originY int, ctx
 	if remain < 0 {
 		remain = 0
 	}
-	line := header + strings.Repeat("─", remain)
+	line := header + strings.Repeat(string(ui.FirstRune(tokens.Glyphs().BorderH, '─')), remain)
 	line = rendering.TruncateLine(line, r.W)
 	buf.WriteString(ox, oy, line, accent, cell.NoColor, cell.AttrBold)
 
@@ -1084,7 +1093,7 @@ func (sh *sectionHeader) Paint(buf *surface.CellBuffer, originX, originY int, ct
 	label := rendering.TruncateLine(strings.ToUpper(sh.label), labelW)
 	labelWUsed := rendering.VisibleWidth(label)
 	buf.WriteString(ox, oy, label, accent, cell.NoColor, cell.AttrBold)
-	buf.WriteString(ox+labelWUsed, oy, strings.Repeat("─", labelW-labelWUsed), accent, cell.NoColor, cell.AttrBold)
+	buf.WriteString(ox+labelWUsed, oy, strings.Repeat(string(ui.FirstRune(tokens.Glyphs().BorderH, '─')), labelW-labelWUsed), accent, cell.NoColor, cell.AttrBold)
 	if separatorW > 0 {
 		buf.WriteString(ox+labelW, oy, " ", muted, cell.NoColor, 0)
 	}
@@ -1093,11 +1102,12 @@ func (sh *sectionHeader) Paint(buf *surface.CellBuffer, originX, originY int, ct
 	}
 }
 
-func (sh *sectionHeader) Handle(_ ui.EventContext, msg tea.Msg) ui.EventResult {
-	if wheel, ok := msg.(tea.MouseWheelMsg); ok && sh.owner != nil {
-		if wheel.Button == tea.MouseWheelUp {
+func (sh *sectionHeader) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.Kind == ui.EventMouseWheel && sh.owner != nil {
+		switch evt.MouseWheel.Button {
+		case tea.MouseWheelUp:
 			sh.owner.list.list.Scroll().ScrollBy(-3)
-		} else if wheel.Button == tea.MouseWheelDown {
+		case tea.MouseWheelDown:
 			sh.owner.list.list.Scroll().ScrollBy(3)
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
@@ -1169,12 +1179,12 @@ func (e *workspaceEmpty) Paint(buf *surface.CellBuffer, originX, originY int, _ 
 	buf.WriteString(originX+r.X, originY+r.Y, text, tokens.Color(ui.ColorMuted), cell.NoColor, 0)
 }
 
-func (e *workspaceEmpty) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (e *workspaceEmpty) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	// The empty-state component occupies the same viewport as the collection
 	// so it can paint an empty result without a second geometry system. Forward
 	// events whenever rows exist to keep hit testing deterministic.
 	if e.owner != nil && len(e.owner.list.list.Items()) > 0 {
-		return e.owner.list.Handle(ctx, msg)
+		return e.owner.list.Handle(ctx, evt)
 	}
 	return ui.EventResult{}
 }
@@ -1215,22 +1225,23 @@ func (sw *searchWrapper) Paint(buf *surface.CellBuffer, originX, originY int, ct
 	sw.field.Paint(buf, originX+sw.Bounds().X, originY+sw.Bounds().Y, ctx)
 }
 
-func (sw *searchWrapper) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (sw *searchWrapper) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if !sw.owner.filterOn {
 		// When not filtering, the search row only reacts to activation/clicks.
-		switch m := msg.(type) {
-		case tea.MouseClickMsg:
-			if m.Button == tea.MouseLeft {
+		switch evt.Kind {
+		case ui.EventMouseClick:
+			if evt.MouseClick.Button == tea.MouseLeft {
 				sw.owner.activateFilter()
 				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
 			}
-		case tea.MouseWheelMsg:
-			return sw.forwardWheel(m)
+		case ui.EventMouseWheel:
+			return sw.forwardWheel(evt.MouseWheel)
 		}
 		return ui.EventResult{}
 	}
 
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch key.Code {
 		case tea.KeyUp:
 			sw.owner.moveSelection(-1)
@@ -1252,11 +1263,11 @@ func (sw *searchWrapper) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult
 		}
 	}
 
-	switch m := msg.(type) {
-	case tea.MouseWheelMsg:
-		return sw.forwardWheel(m)
-	case tea.MouseClickMsg:
-		if m.Button == tea.MouseLeft {
+	switch evt.Kind {
+	case ui.EventMouseWheel:
+		return sw.forwardWheel(evt.MouseWheel)
+	case ui.EventMouseClick:
+		if evt.MouseClick.Button == tea.MouseLeft {
 			// Click keeps the filter active; Host has already moved focus here.
 			sw.owner.filterOn = true
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
@@ -1264,7 +1275,7 @@ func (sw *searchWrapper) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult
 	}
 
 	before := sw.field.Value()
-	res := sw.field.Handle(ctx, msg)
+	res := sw.field.Handle(ctx, evt)
 	if sw.field.Value() != before {
 		sw.owner.applyFilter()
 		res.Invalidate |= ui.InvalidatePaint | ui.InvalidateLayout
@@ -1273,9 +1284,10 @@ func (sw *searchWrapper) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult
 }
 
 func (sw *searchWrapper) forwardWheel(m tea.MouseWheelMsg) ui.EventResult {
-	if m.Button == tea.MouseWheelUp {
+	switch m.Button {
+	case tea.MouseWheelUp:
 		sw.owner.list.list.Scroll().ScrollBy(-3)
-	} else if m.Button == tea.MouseWheelDown {
+	case tea.MouseWheelDown:
 		sw.owner.list.list.Scroll().ScrollBy(3)
 	}
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
@@ -1308,22 +1320,24 @@ func (wl *workspaceList) Paint(buf *surface.CellBuffer, originX, originY int, ct
 	wl.list.Paint(buf, originX+wl.Bounds().X, originY+wl.Bounds().Y, ctx)
 }
 
-func (wl *workspaceList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		result := wl.owner.handleKey(key)
+func (wl *workspaceList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() {
+		result := wl.owner.handleKey(evt.Key)
 		if result.Handled || !wl.owner.filterOn {
 			return result
 		}
-		return wl.owner.forwardFilter(ctx, msg)
+		return wl.owner.forwardFilter(ctx, evt)
 	}
 	if wl.owner.filterOn {
-		if _, ok := msg.(tea.PasteMsg); ok {
-			return wl.owner.forwardFilter(ctx, msg)
+		if evt.Kind == ui.EventCustom {
+			if _, ok := evt.Custom.(tea.PasteMsg); ok {
+				return wl.owner.forwardFilter(ctx, evt)
+			}
 		}
 	}
-	switch m := msg.(type) {
-	case tea.MouseClickMsg:
-		if m.Button != tea.MouseLeft {
+	switch evt.Kind {
+	case ui.EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft {
 			return ui.EventResult{}
 		}
 		idx := wl.rowAt(ctx.LocalY)
@@ -1333,7 +1347,7 @@ func (wl *workspaceList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult
 		realIdx := wl.realIndex(idx)
 		wl.owner.selectFlat(realIdx)
 		return ui.EventResult{Handled: true, Cmd: wl.owner.activateSelected(), Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
-	case tea.MouseMotionMsg:
+	case ui.EventMouseMotion:
 		idx := wl.rowAt(ctx.LocalY)
 		if idx < 0 {
 			return ui.EventResult{Handled: true}
@@ -1341,10 +1355,10 @@ func (wl *workspaceList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult
 		realIdx := wl.realIndex(idx)
 		wl.owner.selectFlat(realIdx)
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-	case tea.MouseWheelMsg:
-		return wl.list.Handle(ctx, msg)
+	case ui.EventMouseWheel:
+		return wl.list.Handle(ctx, evt)
 	}
-	return wl.list.Handle(ctx, msg)
+	return wl.list.Handle(ctx, evt)
 }
 
 func (wl *workspaceList) Semantics() ui.Semantics { return wl.list.Semantics() }

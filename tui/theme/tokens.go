@@ -57,7 +57,7 @@ func DefaultGlyphs() Glyphs {
 		ScrollbarThumb: "┃",
 		TreeExpanded:   "▾",
 		TreeCollapsed:  "▸",
-		BreadcrumbSep:  "❯",
+		BreadcrumbSep:  "▸",
 	}
 }
 

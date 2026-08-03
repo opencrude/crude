@@ -607,40 +607,6 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 	return nil
 }
 
-func translateMouseX(msg tea.Msg, delta int) tea.Msg {
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		mouse := mm.Mouse()
-		return tea.MouseClickMsg{X: mouse.X + delta, Y: mouse.Y, Button: mm.Button}
-	case tea.MouseMotionMsg:
-		mouse := mm.Mouse()
-		return tea.MouseMotionMsg{X: mouse.X + delta, Y: mouse.Y, Button: mm.Button}
-	case tea.MouseReleaseMsg:
-		mouse := mm.Mouse()
-		return tea.MouseReleaseMsg{X: mouse.X + delta, Y: mouse.Y, Button: mm.Button}
-	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X + delta, Y: mm.Y, Button: mm.Button}
-	}
-	return msg
-}
-
-func translateMouseY(msg tea.Msg, delta int) tea.Msg {
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		mouse := mm.Mouse()
-		return tea.MouseClickMsg{X: mouse.X, Y: mouse.Y + delta, Button: mm.Button}
-	case tea.MouseMotionMsg:
-		mouse := mm.Mouse()
-		return tea.MouseMotionMsg{X: mouse.X, Y: mouse.Y + delta, Button: mm.Button}
-	case tea.MouseReleaseMsg:
-		mouse := mm.Mouse()
-		return tea.MouseReleaseMsg{X: mouse.X, Y: mouse.Y + delta, Button: mm.Button}
-	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X, Y: mm.Y + delta, Button: mm.Button}
-	}
-	return msg
-}
-
 func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	if index < 0 || index >= m.Win.TabCount() {
 		return nil

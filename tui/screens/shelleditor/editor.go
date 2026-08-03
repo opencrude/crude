@@ -7,8 +7,6 @@ package shelleditor
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/tui/surface"
@@ -132,7 +130,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	surface.BlitOpaque(buf, ox+b.X+s.padL, oy+b.Y, s.paintSurf.Buffer())
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult {
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult {
 	// Editor input remains routed through viewmodel → Editor.HandleEvent
 	// until Host owns keyboard/mouse for DocumentEditor.
 	return ui.EventResult{}

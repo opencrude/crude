@@ -99,6 +99,18 @@ func TestTextEdit_InsertRunesFiltersControls(t *testing.T) {
 	}
 }
 
+func TestTextEdit_InsertRunesPreservesZWJEmoji(t *testing.T) {
+	family := "👨‍👩‍👧" // 3 emoji joined by two ZWJ (U+200D, category Cf)
+	e := NewTextEdit()
+	e.InsertRunes(family)
+	if e.Value() != family {
+		t.Fatalf("ZWJ runes dropped: value=%q want %q", e.Value(), family)
+	}
+	if e.Len() != 5 {
+		t.Fatalf("Len=%d want 5 runes (3 emoji + 2 ZWJ)", e.Len())
+	}
+}
+
 func TestTextEdit_DeleteWordBack(t *testing.T) {
 	e := NewTextEdit()
 	e.SetValue("one two")

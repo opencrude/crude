@@ -386,9 +386,10 @@ func findMatch(s string, start int, open, close byte) int {
 			inStr = true
 			continue
 		}
-		if s[i] == open {
+		switch s[i] {
+		case open:
 			depth++
-		} else if s[i] == close {
+		case close:
 			depth--
 			if depth == 0 {
 				return i
@@ -403,7 +404,7 @@ func isValidIdent(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
 			return false
 		}
 	}

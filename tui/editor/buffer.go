@@ -244,19 +244,20 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 
 	var newPieces []piece
 
-	if pieceOffset == 0 {
+	switch pieceOffset {
+	case 0:
 		newPieces = make([]piece, 0, len(pt.pieces)+1)
 		newPieces = append(newPieces, pt.pieces[:pieceIdx]...)
 		newPieces = append(newPieces, newPiece)
 		newPieces = append(newPieces, pt.pieces[pieceIdx:]...)
-	} else if pieceOffset == pt.pieces[pieceIdx].length {
+	case pt.pieces[pieceIdx].length:
 		newPieces = make([]piece, 0, len(pt.pieces)+1)
 		newPieces = append(newPieces, pt.pieces[:pieceIdx+1]...)
 		newPieces = append(newPieces, newPiece)
 		if pieceIdx+1 < len(pt.pieces) {
 			newPieces = append(newPieces, pt.pieces[pieceIdx+1:]...)
 		}
-	} else {
+	default:
 		oldPiece := pt.pieces[pieceIdx]
 		leftPiece := piece{buffer: oldPiece.buffer, start: oldPiece.start, length: pieceOffset}
 		rightPiece := piece{buffer: oldPiece.buffer, start: oldPiece.start + pieceOffset, length: oldPiece.length - pieceOffset}

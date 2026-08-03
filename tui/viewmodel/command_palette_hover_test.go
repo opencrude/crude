@@ -135,14 +135,14 @@ func TestCommandPalette_ListNavigationUpDown(t *testing.T) {
 	initialIdx := list.SelectedIndex()
 
 	// Simulate Down key on the list
-	list.Handle(ui.EventContext{Theme: testTheme(), Focused: true}, tea.KeyPressMsg{Code: tea.KeyDown})
+	list.Handle(ui.EventContext{Theme: testTheme(), Focused: true}, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	afterDown := list.SelectedIndex()
 	if afterDown <= initialIdx {
 		t.Errorf("Down should advance selection: %d -> %d", initialIdx, afterDown)
 	}
 
 	// Simulate Up key
-	list.Handle(ui.EventContext{Theme: testTheme(), Focused: true}, tea.KeyPressMsg{Code: tea.KeyUp})
+	list.Handle(ui.EventContext{Theme: testTheme(), Focused: true}, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 	afterUp := list.SelectedIndex()
 	if afterUp >= afterDown {
 		t.Errorf("Up should retreat selection: %d -> %d", afterDown, afterUp)

@@ -22,8 +22,15 @@ func TestComposerHintIsStatusOnly(t *testing.T) {
 	if shown != dismissed {
 		t.Fatalf("guidance must not reserve a shell row: shown=%d dismissed=%d", shown, dismissed)
 	}
-	if got := m.FirstLineY(20, true, false, 0); got != 24 {
-		t.Fatalf("status guidance must not shift mouse geometry: FirstLineY=%d", got)
+	// The guidance lives in the status bar, so the input's mouse geometry is
+	// independent of it: MouseToInputPos maps the input's own first text row
+	// (textAreaY, one separator row below the shell top) to rune index 0 and
+	// treats the row above the text area as outside the input.
+	if pos, ok := m.MouseToInputPos(0, m.textAreaY()); !ok || pos != 0 {
+		t.Fatalf("first text row must map to rune 0: pos=%d ok=%v", pos, ok)
+	}
+	if _, ok := m.MouseToInputPos(0, m.textAreaY()-1); ok {
+		t.Fatalf("row above the text area must be outside: ok=%v", ok)
 	}
 }
 

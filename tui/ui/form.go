@@ -123,7 +123,7 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 	x, y := originX+r.X, originY+r.Y
 	buf.WriteString(x, y, rendering.TruncateVisual(f.title, r.W, ""), fg, bg, cell.AttrBold)
 	buf.WriteString(x, y+1, rendering.TruncateVisual(f.detail, r.W, ""), muted, bg, 0)
-	buf.WriteString(x, y+2, strings.Repeat("─", max(0, r.W)), divider, bg, 0)
+	buf.WriteString(x, y+2, strings.Repeat(string(FirstRune(f.tokens.Glyphs().BorderH, '─')), max(0, r.W)), divider, bg, 0)
 	for index, field := range f.fields {
 		fieldCtx := ctx
 		fieldCtx.Focused = ctx.Focused && index == f.focused
@@ -131,23 +131,24 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 	}
 }
 
-func (f *Form) Handle(ctx EventContext, msg tea.Msg) EventResult {
+func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 	if len(f.fields) == 0 {
 		return EventResult{}
 	}
-	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 		for index, field := range f.fields {
 			if field.Bounds().Contains(ctx.LocalX, ctx.LocalY) {
 				if field.FieldState().Disabled || field.FieldState().Type == FieldSeparator {
 					return EventResult{Handled: true}
 				}
 				f.focused = index
-				return f.handleField(index, f.fieldContext(ctx, field), msg)
+				return f.handleField(index, f.fieldContext(ctx, field), evt)
 			}
 		}
 		return EventResult{Handled: true}
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		field := f.fields[f.focused]
 		if key.Code == tea.KeyEsc && !field.SelectOpen() {
 			return EventResult{Handled: true, Action: &Action{ID: "form.exit.backward"}, Invalidate: InvalidateFocus | InvalidatePaint}
@@ -165,11 +166,11 @@ func (f *Form) Handle(ctx EventContext, msg tea.Msg) EventResult {
 			return f.moveFocus(1)
 		}
 	}
-	return f.handleField(f.focused, f.fieldContext(ctx, f.fields[f.focused]), msg)
+	return f.handleField(f.focused, f.fieldContext(ctx, f.fields[f.focused]), evt)
 }
 
-func (f *Form) handleField(index int, ctx EventContext, msg tea.Msg) EventResult {
-	result := f.fields[index].Handle(ctx, msg)
+func (f *Form) handleField(index int, ctx EventContext, evt Event) EventResult {
+	result := f.fields[index].Handle(ctx, evt)
 	f.syncFields()
 	if result.Action != nil {
 		switch result.Action.ID {

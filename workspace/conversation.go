@@ -325,7 +325,8 @@ func (c *Conversation) UpdateToolProgress(toolID, internalID, name, phase, detai
 		message.ToolProgressLabel = path
 	}
 	c.bindToolID(message, toolID)
-	if phase == "done" {
+	switch phase {
+	case "done":
 		message.ToolLinesAdded = linesAdded
 		message.ToolLinesRemoved = linesRemoved
 		message.ToolPreviewPhase = "done"
@@ -333,7 +334,7 @@ func (c *Conversation) UpdateToolProgress(toolID, internalID, name, phase, detai
 		if estTokens > 0 {
 			message.ToolEstTokens = estTokens
 		}
-	} else if phase == "error" {
+	case "error":
 		message.ToolPreviewPhase = "error"
 		if linesAdded > 0 {
 			message.ToolLinesAdded = linesAdded

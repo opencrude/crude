@@ -69,7 +69,7 @@ func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
 			return ttypes.UndoResultMsg{Desc: "No file changes this session."}
 		}
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("%d file(s) changed this session:\n", len(files)))
+		fmt.Fprintf(&sb, "%d file(s) changed this session:\n", len(files))
 		for _, f := range files {
 			rel, relErr := filepath.Rel(".", f)
 			if relErr != nil {

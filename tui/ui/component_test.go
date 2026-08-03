@@ -86,16 +86,16 @@ func TestLabel_MeasurePaint(t *testing.T) {
 func TestButton_ActivateKeyAndClick(t *testing.T) {
 	btn := NewButton("btn", "Save", "form.save")
 	btn.Layout(LayoutContext{}, Rect{W: 10, H: 1})
-	res := btn.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnter})
+	res := btn.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter}))
 	if !res.Handled || res.Action == nil || res.Action.ID != "form.save" {
 		t.Fatalf("%+v", res)
 	}
-	res = btn.Handle(EventContext{}, tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	res = btn.Handle(EventContext{}, MouseClickEvent(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft}))
 	if !res.Handled || res.Action.ID != "form.save" {
 		t.Fatal(res)
 	}
 	btn.SetDisabled(true)
-	res = btn.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnter})
+	res = btn.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter}))
 	if res.Handled {
 		t.Fatal("disabled should not activate")
 	}

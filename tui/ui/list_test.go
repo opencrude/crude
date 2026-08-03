@@ -64,11 +64,11 @@ func TestList_KeyboardActivate(t *testing.T) {
 		{ID: "3", Label: "Gamma"},
 	})
 	l.Layout(LayoutContext{Theme: th}, Rect{W: 30, H: 5})
-	l.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDown})
+	l.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	if l.SelectedIndex() != 1 {
 		t.Fatal(l.SelectedIndex())
 	}
-	res := l.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnter})
+	res := l.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter}))
 	item, ok := res.Action.Payload.(ListItem)
 	if !ok || item.Label != "Beta" {
 		t.Fatalf("%+v", res.Action)
@@ -90,18 +90,18 @@ func TestList_SkipsHeaderAndDisabled(t *testing.T) {
 	if l.SelectedIndex() != 1 {
 		t.Fatalf("want first selectable 1, got %d", l.SelectedIndex())
 	}
-	l.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDown})
+	l.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	if l.SelectedIndex() != 4 {
 		t.Fatalf("down should skip disabled/sep to B (4), got %d", l.SelectedIndex())
 	}
-	l.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDown})
+	l.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	// wrap to A
 	if l.SelectedIndex() != 1 {
 		t.Fatalf("wrap to A, got %d", l.SelectedIndex())
 	}
 	// click disabled does not activate
 	l.SelectIndex(2)
-	res := l.Handle(EventContext{LocalY: 2, Focused: true}, tea.MouseClickMsg{Button: tea.MouseLeft})
+	res := l.Handle(EventContext{LocalY: 2, Focused: true}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
 	if res.Action != nil {
 		t.Fatal("disabled click must not activate")
 	}
@@ -116,12 +116,12 @@ func TestList_MouseAndWheel(t *testing.T) {
 	}
 	l.SetItems(items)
 	l.Layout(LayoutContext{}, Rect{W: 20, H: 5})
-	l.Handle(EventContext{LocalY: 2}, tea.MouseClickMsg{X: 0, Y: 2, Button: tea.MouseLeft})
+	l.Handle(EventContext{LocalY: 2}, MouseClickEvent(tea.MouseClickMsg{X: 0, Y: 2, Button: tea.MouseLeft}))
 	if l.SelectedIndex() != 2 {
 		t.Fatal(l.SelectedIndex())
 	}
 	off := l.Scroll().Offset()
-	l.Handle(EventContext{}, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	l.Handle(EventContext{}, MouseWheelEvent(tea.MouseWheelMsg{Button: tea.MouseWheelDown}))
 	if l.Scroll().Offset() < off {
 		t.Fatal("wheel should increase offset")
 	}

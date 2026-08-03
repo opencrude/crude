@@ -206,12 +206,12 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		buf.Set(ox+x, oy+y, cell.NewCell(ch, borderFG, bg, 0))
 	}
 	if r.W >= 2 && r.H >= 2 {
-		setRune(0, 0, firstRune(g.CornerTL, '╭'))
-		setRune(r.W-1, 0, firstRune(g.CornerTR, '╮'))
-		setRune(0, r.H-1, firstRune(g.CornerBL, '╰'))
-		setRune(r.W-1, r.H-1, firstRune(g.CornerBR, '╯'))
-		hBorder := firstRune(g.BorderH, '─')
-		vBorder := firstRune(g.BorderV, '│')
+		setRune(0, 0, FirstRune(g.CornerTL, '╭'))
+		setRune(r.W-1, 0, FirstRune(g.CornerTR, '╮'))
+		setRune(0, r.H-1, FirstRune(g.CornerBL, '╰'))
+		setRune(r.W-1, r.H-1, FirstRune(g.CornerBR, '╯'))
+		hBorder := FirstRune(g.BorderH, '─')
+		vBorder := FirstRune(g.BorderV, '│')
 		for x := 1; x < r.W-1; x++ {
 			setRune(x, 0, hBorder)
 			setRune(x, r.H-1, hBorder)
@@ -261,8 +261,8 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 }
 
 // Handle: close click emits action; otherwise forwards to content.
-func (f *WindowFrame) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+func (f *WindowFrame) Handle(ctx EventContext, evt Event) EventResult {
+	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 		if f.IsOnClose(ctx.LocalX, ctx.LocalY) {
 			return EventResult{
 				Handled:    true,
@@ -277,7 +277,7 @@ func (f *WindowFrame) Handle(ctx EventContext, msg tea.Msg) EventResult {
 	cctx := ctx
 	cctx.LocalX = ctx.LocalX - f.contentR.X
 	cctx.LocalY = ctx.LocalY - f.contentR.Y
-	return f.content.Handle(cctx, msg)
+	return f.content.Handle(cctx, evt)
 }
 
 // Semantics for the frame.
@@ -307,7 +307,8 @@ func DefaultGlyphsFromTokens(ts *TokenSet) theme.Glyphs {
 	return theme.DefaultGlyphs()
 }
 
-func firstRune(s string, fallback rune) rune {
+// FirstRune returns the first rune of s, or fallback when s is empty.
+func FirstRune(s string, fallback rune) rune {
 	if s == "" {
 		return fallback
 	}

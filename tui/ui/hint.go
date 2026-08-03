@@ -3,8 +3,6 @@ package ui
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -229,7 +227,7 @@ func (h *Hint) PaintInto(buf *surface.CellBuffer, x, y, maxW int) {
 	}
 }
 
-func (h *Hint) Handle(_ EventContext, _ tea.Msg) EventResult { return EventResult{} }
+func (h *Hint) Handle(_ EventContext, _ Event) EventResult { return EventResult{} }
 
 func (h *Hint) Semantics() Semantics {
 	return Semantics{Role: RoleLabel, Label: "Hint", Value: h.PlainText()}

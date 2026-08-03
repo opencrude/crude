@@ -33,9 +33,13 @@ func (s *ScrollbarControl) SetTokens(ts *TokenSet) { s.tokens = ts }
 // SetScroll binds a scroll model.
 func (s *ScrollbarControl) SetScroll(m *ScrollModel) { s.scroll = m }
 
-// Measure: 1 column wide, full height.
+// Measure: ScrollbarWidth metric columns wide (1 by default), full height.
 func (s *ScrollbarControl) Measure(_ LayoutContext, cs Constraints) Size {
-	return cs.ClampSize(Size{W: 1, H: cs.MaxH})
+	w := 1
+	if s.tokens != nil && s.tokens.Metrics().ScrollbarWidth > 0 {
+		w = s.tokens.Metrics().ScrollbarWidth
+	}
+	return cs.ClampSize(Size{W: w, H: cs.MaxH})
 }
 
 // Layout stores bounds and syncs viewport height to track height.
@@ -92,34 +96,35 @@ func (s *ScrollbarControl) CancelPointerCapture() {
 }
 
 // Handle maps click/drag on the track to scroll position.
-func (s *ScrollbarControl) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	switch m := msg.(type) {
-	case tea.MouseClickMsg:
-		if m.Button != tea.MouseLeft || s.scroll == nil || s.scroll.MaxOffset() <= 0 {
+func (s *ScrollbarControl) Handle(ctx EventContext, evt Event) EventResult {
+	switch evt.Kind {
+	case EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft || s.scroll == nil || s.scroll.MaxOffset() <= 0 {
 			return EventResult{}
 		}
 		s.beginDrag(ctx.LocalY)
-		return EventResult{Handled: true, Invalidate: InvalidatePaint}
-	case tea.MouseMotionMsg:
+		return EventResult{Handled: true, Action: &Action{ID: "ui.capture"}, Invalidate: InvalidatePaint}
+	case EventMouseMotion:
 		if !s.dragging || s.scroll == nil {
 			return EventResult{}
 		}
 		s.dragToLocalY(ctx.LocalY)
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
-	case tea.MouseReleaseMsg:
+	case EventMouseRelease:
 		if !s.dragging {
 			return EventResult{}
 		}
 		s.dragging = false
 		s.dragOffsetY = 0
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
-	case tea.MouseWheelMsg:
+	case EventMouseWheel:
 		if s.scroll == nil {
 			return EventResult{}
 		}
-		if m.Button == tea.MouseWheelUp {
+		switch evt.MouseWheel.Button {
+		case tea.MouseWheelUp:
 			s.scroll.ScrollBy(-3)
-		} else if m.Button == tea.MouseWheelDown {
+		case tea.MouseWheelDown:
 			s.scroll.ScrollBy(3)
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}

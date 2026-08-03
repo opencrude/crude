@@ -63,20 +63,20 @@ func (b *ToggleButton) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 	buf.WriteString(originX+r.X, originY+r.Y, rendering.TruncateVisual(b.label, r.W, ""), fg, bg, 0)
 }
 
-func (b *ToggleButton) Handle(_ EventContext, msg tea.Msg) EventResult {
+func (b *ToggleButton) Handle(_ EventContext, evt Event) EventResult {
 	if b.disabled {
 		return EventResult{}
 	}
-	switch m := msg.(type) {
-	case tea.KeyPressMsg:
-		if m.Code == tea.KeyEsc && b.cancelID != "" {
+	switch evt.Kind {
+	case EventKey:
+		if evt.Key.Code == tea.KeyEsc && b.cancelID != "" {
 			return EventResult{Handled: true, Action: &Action{ID: b.cancelID}, Invalidate: InvalidatePaint}
 		}
-		if m.Code == tea.KeyEnter || m.Code == tea.KeySpace {
+		if evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeySpace {
 			return EventResult{Handled: true, Action: &Action{ID: b.actionID}, Invalidate: InvalidatePaint}
 		}
-	case tea.MouseClickMsg:
-		if m.Button == tea.MouseLeft {
+	case EventMouseClick:
+		if evt.MouseClick.Button == tea.MouseLeft {
 			return EventResult{Handled: true, Action: &Action{ID: b.actionID}, Invalidate: InvalidatePaint}
 		}
 	}

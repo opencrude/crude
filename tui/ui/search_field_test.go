@@ -11,7 +11,7 @@ func TestSearchFieldDebouncesOnlyItsCurrentValue(t *testing.T) {
 	field.SetDebounce(0)
 	field.Layout(LayoutContext{}, Rect{W: 20, H: 1})
 
-	first := field.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	first := field.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'a', Text: "a"}))
 	if first.Cmd == nil {
 		t.Fatal("typing should schedule a debounce")
 	}
@@ -23,7 +23,7 @@ func TestSearchFieldDebouncesOnlyItsCurrentValue(t *testing.T) {
 		t.Fatal("current debounce should be accepted")
 	}
 
-	field.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: 'b', Text: "b"})
+	field.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'b', Text: "b"}))
 	if field.AcceptsDebounce(firstMsg) {
 		t.Fatal("a newer value should invalidate the prior debounce")
 	}

@@ -33,7 +33,7 @@ func NewFormField(id ComponentID, f *FieldState, tokens *TokenSet) *FormField {
 func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *TokenSet) *FormField {
 	ff := &FormField{Base: NewBase(id), model: model, field: f, tokens: tokens}
 	// Read-only hex colour reflections paint as swatches — no text editor.
-	if (f.Type == FieldText || f.Type == FieldPassword) && !(f.ReadOnly && isHexColor(f.Value.String())) {
+	if (f.Type == FieldText || f.Type == FieldPassword) && (!f.ReadOnly || !isHexColor(f.Value.String())) {
 		ff.control = NewTextField(NewID(id, "input"), tokens)
 		ff.control.SetValue(f.Value.String())
 		ff.control.SetPlaceholder(f.Placeholder)
@@ -329,29 +329,29 @@ func (ff *FormField) tokensColor(role SemanticColor, fallback cell.Color) cell.C
 	return ff.tokens.Color(role)
 }
 
-func (ff *FormField) Handle(ctx EventContext, msg tea.Msg) EventResult {
+func (ff *FormField) Handle(ctx EventContext, evt Event) EventResult {
 	if ff.field.Disabled || ff.field.ReadOnly {
 		return EventResult{}
 	}
 	switch ff.field.Type {
 	case FieldText, FieldPassword:
 		before := ff.control.Value()
-		result := ff.control.Handle(ff.controlContext(ctx), msg)
+		result := ff.control.Handle(ff.controlContext(ctx), evt)
 		if ff.control.Value() != before {
 			ff.setValue(StringValue(ff.control.Value()))
 		}
 		return result
 	case FieldSelect, FieldMultiSelect:
-		return ff.handleSelect(ctx, msg)
+		return ff.handleSelect(ctx, evt)
 	case FieldCycle:
-		return ff.handleCycle(msg)
+		return ff.handleCycle(evt)
 	case FieldToggle, FieldCheckbox:
-		return ff.handleToggle(msg)
+		return ff.handleToggle(evt)
 	case FieldNav:
-		if key, ok := msg.(tea.KeyPressMsg); ok && (key.Code == tea.KeyEnter || key.Code == tea.KeySpace || key.Code == tea.KeyRight) {
+		if evt.IsKey() && (evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeySpace || evt.Key.Code == tea.KeyRight) {
 			return EventResult{Handled: true, Action: &Action{ID: ff.field.Target, Payload: ff.field.ID}}
 		}
-		if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+		if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 			return EventResult{Handled: true, Action: &Action{ID: ff.field.Target, Payload: ff.field.ID}, Invalidate: InvalidateFocus | InvalidatePaint}
 		}
 	}
@@ -398,8 +398,9 @@ func (ff *FormField) paintNav(buf *surface.CellBuffer, x, y, width int, ctx Pain
 	buf.WriteString(x+available, y, arrow, muted, bg, 0)
 }
 
-func (ff *FormField) handleSelect(ctx EventContext, msg tea.Msg) EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+func (ff *FormField) handleSelect(ctx EventContext, evt Event) EventResult {
+	if evt.IsKey() {
+		key := evt.Key
 		if key.Code == tea.KeyEsc && ff.selectOpen {
 			ff.selectOpen = false
 			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
@@ -410,7 +411,7 @@ func (ff *FormField) handleSelect(ctx EventContext, msg tea.Msg) EventResult {
 			return EventResult{Handled: true, Action: &Action{ID: "form.select.open", Payload: ff.field.ID}, Invalidate: InvalidateLayout | InvalidatePaint}
 		}
 	}
-	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft && !ff.selectOpen {
+	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && !ff.selectOpen {
 		ff.selectOpen = true
 		ff.syncSelectItems()
 		return EventResult{Handled: true, Action: &Action{ID: "form.select.open", Payload: ff.field.ID}, Invalidate: InvalidateLayout | InvalidatePaint}
@@ -419,13 +420,13 @@ func (ff *FormField) handleSelect(ctx EventContext, msg tea.Msg) EventResult {
 		return EventResult{}
 	}
 	if len(ff.field.Options) == 0 {
-		if key, ok := msg.(tea.KeyPressMsg); ok && (key.Code == tea.KeyEnter || key.Code == tea.KeySpace) && !ff.field.Loading {
+		if evt.IsKey() && (evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeySpace) && !ff.field.Loading {
 			ff.selectOpen = false
 			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
 		}
 		return EventResult{Handled: true}
 	}
-	result := ff.selectList.Handle(ff.selectContext(ctx), msg)
+	result := ff.selectList.Handle(ff.selectContext(ctx), evt)
 	if result.Action != nil && result.Action.ID == "form.select.commit" {
 		if selected, ok := ff.selectList.Selected(); ok {
 			if id, ok := selected.Payload.(string); ok {
@@ -458,8 +459,8 @@ func (ff *FormField) handleSelect(ctx EventContext, msg tea.Msg) EventResult {
 	return result
 }
 
-func (ff *FormField) handleCycle(msg tea.Msg) EventResult {
-	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft && len(ff.field.Options) > 0 {
+func (ff *FormField) handleCycle(evt Event) EventResult {
+	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && len(ff.field.Options) > 0 {
 		idx := (ff.selectedIndex() + 1) % len(ff.field.Options)
 		ff.setValue(StringValue(ff.field.Options[idx].ID))
 		return EventResult{
@@ -468,8 +469,11 @@ func (ff *FormField) handleCycle(msg tea.Msg) EventResult {
 			Invalidate: InvalidatePaint,
 		}
 	}
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok || (key.Code != tea.KeyLeft && key.Code != tea.KeyRight && key.Code != tea.KeyEnter && key.Code != tea.KeySpace) || len(ff.field.Options) == 0 {
+	if evt.Kind != EventKey {
+		return EventResult{}
+	}
+	key := evt.Key
+	if (key.Code != tea.KeyLeft && key.Code != tea.KeyRight && key.Code != tea.KeyEnter && key.Code != tea.KeySpace) || len(ff.field.Options) == 0 {
 		return EventResult{}
 	}
 	idx := ff.selectedIndex()
@@ -486,13 +490,12 @@ func (ff *FormField) handleCycle(msg tea.Msg) EventResult {
 	}
 }
 
-func (ff *FormField) handleToggle(msg tea.Msg) EventResult {
-	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+func (ff *FormField) handleToggle(evt Event) EventResult {
+	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 		ff.setValue(BoolValue(!ff.field.Value.Bool()))
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	}
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok || (key.Code != tea.KeyEnter && key.Code != tea.KeySpace) {
+	if evt.Kind != EventKey || (evt.Key.Code != tea.KeyEnter && evt.Key.Code != tea.KeySpace) {
 		return EventResult{}
 	}
 	ff.setValue(BoolValue(!ff.field.Value.Bool()))

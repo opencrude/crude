@@ -184,6 +184,10 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		HintLabelForFn: func(id string) string { return registry.HintLabelFor(ui.ActionID(id)) },
 	})
 	overlay := ui.NewOverlayHost(wmgr)
+	// The overlay stack scopes the shell Host's focus: opening an overlay
+	// captures the current shell focus and closing it restores the exact
+	// prior focus path (Phase 5 focus scopes).
+	overlay.SetFocusHost(rootHost)
 	subPaneProjections := newSubPaneProjectionRegistry(th)
 	sessionProjections := newSessionProjectionRegistry(th)
 

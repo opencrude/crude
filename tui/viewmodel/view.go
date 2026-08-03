@@ -541,7 +541,8 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 		return "", []ui.HintSegment{
 			ui.ActionSeg("focus.tab.next"),
 			ui.ActionSeg("focus.tab.previous"),
-			ui.ChordSeg("Ctrl+[ ]", "switch panels"),
+			ui.ActionSeg("panel.previous"),
+			ui.ActionSeg("panel.next"),
 			ui.ActionSeg("panel.close"),
 		}
 	}
@@ -567,7 +568,8 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	case FocusTabBar:
 		return "", []ui.HintSegment{
 			ui.TextSeg("tab bar focused"),
-			ui.ChordSeg("← →", "navigate"),
+			ui.ActionSeg("tabbar.previous"),
+			ui.ActionSeg("tabbar.next"),
 			ui.ActionSeg("tabbar.select"),
 			ui.ActionSeg("tabbar.unfocus"),
 		}

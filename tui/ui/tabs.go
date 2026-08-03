@@ -147,9 +147,14 @@ func (t *Tabs) idealTabWidth(i int, label string) int {
 		w += rendering.VisibleWidth(" ×")
 	}
 	if t.chrome == TabsShell && i == t.active {
-		w += rendering.VisibleWidth("❯ ")
+		w += rendering.VisibleWidth(t.activeMarker())
 	}
 	return max(tabMinW, w)
+}
+
+// activeMarker returns the active-tab prefix glyph (Prompt token + space).
+func (t *Tabs) activeMarker() string {
+	return string(FirstRune(t.tokens.Glyphs().Prompt, '❯')) + " "
 }
 
 func (t *Tabs) displayLabel(i int) string {
@@ -338,7 +343,7 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 		marker := ""
 		if t.chrome == TabsShell && i == t.active {
-			marker = "❯ "
+			marker = t.activeMarker()
 		}
 		closeW := rendering.VisibleWidth(close)
 		markerW := rendering.VisibleWidth(marker)
@@ -368,19 +373,19 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 	}
 }
 
-func (t *Tabs) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
+func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
+	switch evt.Kind {
+	case EventKey:
 		if len(t.items) == 0 {
 			return EventResult{}
 		}
 		var next int
 		switch {
-		case msg.Code == tea.KeyLeft || msg.String() == "ctrl+[":
+		case evt.Key.Code == tea.KeyLeft || evt.Key.String() == "ctrl+[":
 			next = (t.active - 1 + len(t.items)) % len(t.items)
-		case msg.Code == tea.KeyRight || msg.String() == "ctrl+]":
+		case evt.Key.Code == tea.KeyRight || evt.Key.String() == "ctrl+]":
 			next = (t.active + 1) % len(t.items)
-		case msg.Code == tea.KeyEnter || msg.Code == tea.KeyDown || msg.Code == tea.KeyTab:
+		case evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeyDown || evt.Key.Code == tea.KeyTab:
 			return EventResult{Handled: true, Action: &Action{ID: "tabs.enter", Payload: t.ActiveID()}, Invalidate: InvalidateFocus | InvalidatePaint}
 		default:
 			return EventResult{}
@@ -390,15 +395,15 @@ func (t *Tabs) Handle(ctx EventContext, msg tea.Msg) EventResult {
 			t.ranges = t.computeRanges(r.W)
 		}
 		return EventResult{Handled: true, Action: &Action{ID: "tabs.activate", Payload: t.ActiveID()}, Invalidate: InvalidateLayout | InvalidatePaint}
-	case tea.MouseMotionMsg:
+	case EventMouseMotion:
 		index, _ := t.hit(ctx.LocalX)
 		if index != t.hover {
 			t.hover = index
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
 		return EventResult{Handled: true}
-	case tea.MouseClickMsg:
-		if msg.Button != tea.MouseLeft {
+	case EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
 		}
 		index, closeHit := t.hit(ctx.LocalX)

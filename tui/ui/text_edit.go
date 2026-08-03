@@ -114,14 +114,26 @@ func (e *TextEdit) Insert(s string) {
 	e.ClearSelection()
 }
 
-// InsertRunes inserts only printable runes (and space).
+// isEditableRune reports whether a rune is accepted into the editing engine.
+// Printable runes are accepted; the grapheme-joining format characters ZWJ
+// and ZWNJ (category Cf, not printable) are also kept so emoji sequences and
+// Indic scripts pasted or typed through the engine survive intact.
+func isEditableRune(r rune) bool {
+	if unicode.IsPrint(r) {
+		return true
+	}
+	return r == '\u200C' || r == '\u200D'
+}
+
+// InsertRunes inserts printable runes (and space), preserving grapheme-joining
+// format characters.
 func (e *TextEdit) InsertRunes(s string) {
 	var clean []rune
 	for _, r := range s {
 		if r == '\n' || r == '\t' {
 			continue
 		}
-		if unicode.IsPrint(r) {
+		if isEditableRune(r) {
 			clean = append(clean, r)
 		}
 	}
