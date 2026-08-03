@@ -40,7 +40,7 @@ type Screen struct {
 
 type treeFilterField struct {
 	ui.Base
-	field *ui.TextField
+	field *ui.FilterField
 	owner *Screen
 }
 
@@ -69,21 +69,19 @@ func (v *fileTreeView) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCo
 	v.tree.Paint(buf, ox, oy, ctx)
 }
 
-func (v *fileTreeView) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if v.owner == nil || v.owner.model == nil {
 		return ui.EventResult{}
 	}
 	localY := ctx.LocalY
-	if v.owner.filterRowActive() {
-		if localY == 0 {
-			if _, ok := msg.(tea.KeyPressMsg); ok && v.owner.filter != nil {
-				return v.owner.filter.Handle(ctx, msg)
-			}
-			v.owner.clearHover()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-		}
-		localY--
-	}
+	// ctx.LocalY comes from the Host hit tree relative to the tree view's own
+	// screen rect. The shell places that rect BELOW the filter row (treeY=1),
+	// and the filter row is a sibling painted by the Screen above this rect —
+	// it is not inside the tree view's bounds. So Host-local Y 0 is already
+	// the first tree row and no filter offset may be applied. Only the
+	// breadcrumb is painted by ui.Tree inside the tree view's own rect (as its
+	// first row), so that one offset translates Host-local row into the
+	// filetree model's item-row space.
 	if v.owner.breadcrumb != "" {
 		if localY == 0 {
 			v.owner.clearHover()
@@ -91,14 +89,13 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 		}
 		localY--
 	}
-	translated := translateMouseY(msg, localY)
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		cmd := v.owner.model.Update(filetree.TreeKeyPressMsg{Key: msg})
+	switch evt.Kind {
+	case ui.EventKey:
+		cmd := v.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 		v.owner.syncFromModel()
 		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 	default:
-		cmd := v.owner.model.Update(filetree.TreeMouseMsg{Mouse: translated})
+		cmd := v.owner.model.Update(filetree.TreeMouseMsg{Mouse: translateMouseY(evt, localY)})
 		v.owner.syncFromModel()
 		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 	}
@@ -106,18 +103,22 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 
 func (v *fileTreeView) Semantics() ui.Semantics { return v.tree.Semantics() }
 
-func translateMouseY(msg tea.Msg, y int) tea.Msg {
-	switch mm := msg.(type) {
-	case tea.MouseClickMsg:
-		return tea.MouseClickMsg{X: mm.X, Y: y, Button: mm.Button}
-	case tea.MouseMotionMsg:
-		return tea.MouseMotionMsg{X: mm.X, Y: y, Button: mm.Button}
-	case tea.MouseReleaseMsg:
-		return tea.MouseReleaseMsg{X: mm.X, Y: y, Button: mm.Button}
-	case tea.MouseWheelMsg:
-		return tea.MouseWheelMsg{X: mm.X, Y: y, Button: mm.Button}
+func translateMouseY(evt ui.Event, y int) tea.Msg {
+	switch evt.Kind {
+	case ui.EventMouseClick:
+		m := evt.MouseClick
+		return tea.MouseClickMsg{X: m.X, Y: y, Button: m.Button}
+	case ui.EventMouseMotion:
+		m := evt.MouseMotion
+		return tea.MouseMotionMsg{X: m.X, Y: y, Button: m.Button}
+	case ui.EventMouseRelease:
+		m := evt.MouseRelease
+		return tea.MouseReleaseMsg{X: m.X, Y: y, Button: m.Button}
+	case ui.EventMouseWheel:
+		m := evt.MouseWheel
+		return tea.MouseWheelMsg{X: m.X, Y: y, Button: m.Button}
 	}
-	return msg
+	return evt.Custom
 }
 
 // New creates a shell tree screen bound to model.
@@ -136,7 +137,7 @@ func New(th *theme.Theme, model *filetree.FileTreeModel) *Screen {
 	s.applyConfig()
 	s.filter = &treeFilterField{
 		Base:  ui.NewBase(FilterID),
-		field: ui.NewTextField(FilterID, tokens),
+		field: ui.NewFilterField(FilterID, tokens),
 		owner: s,
 	}
 	s.filter.field.SetPrompt("/ ")
@@ -151,6 +152,7 @@ func (s *Screen) applyConfig() {
 		s.icons = s.model.IconResolver()
 		if s.icons != nil {
 			s.icons.ApplyTheme(&s.th.Tree.Colors)
+			s.icons.SetGlyphs(s.th.Glyphs)
 		}
 	}
 }
@@ -356,17 +358,18 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	if b.W > 1 {
 		divX := ox + b.X + b.W - 1
 		divFG := s.tokens.TreeBorderFg()
+		divRune := ui.FirstRune(s.tokens.Glyphs().BorderV, '│')
 		for y := 0; y < b.H; y++ {
-			buf.Set(divX, oy+b.Y+y, cell.NewCell('│', divFG, bg, 0))
+			buf.Set(divX, oy+b.Y+y, cell.NewCell(divRune, divFG, bg, 0))
 		}
 	}
 }
 
-func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	treePanelW := s.width
 	if ctx.LocalX >= filetree.SidebarContentWidth(treePanelW) {
 		if s.scrollbar != nil && s.tree != nil && s.tree.tree != nil {
-			res := s.scrollbar.Handle(ctx, msg)
+			res := s.scrollbar.Handle(ctx, evt)
 			if res.Handled {
 				filetree.ApplyScrollToModel(s.model, s.tree.tree.Scroll())
 				s.syncFromModel()
@@ -375,7 +378,7 @@ func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 		}
 	}
 	if s.tree != nil {
-		return s.tree.Handle(ctx, msg)
+		return s.tree.Handle(ctx, evt)
 	}
 	return ui.EventResult{}
 }
@@ -442,15 +445,14 @@ func (f *treeFilterField) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.Pain
 	f.field.Paint(buf, ox+f.Bounds().X, oy+f.Bounds().Y, ctx)
 }
 
-func (f *treeFilterField) Handle(_ ui.EventContext, msg tea.Msg) ui.EventResult {
+func (f *treeFilterField) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	if f.owner == nil || f.owner.model == nil {
 		return ui.EventResult{}
 	}
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok {
+	if !evt.IsKey() {
 		return ui.EventResult{}
 	}
-	cmd := f.owner.model.Update(filetree.TreeKeyPressMsg{Key: key})
+	cmd := f.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 	f.owner.syncFromModel()
 	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 }

@@ -42,7 +42,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		var b strings.Builder
 		b.WriteString("Available commands:\n")
 		for _, c := range input.AvailableCmds() {
-			b.WriteString(fmt.Sprintf("  %-16s %s\n", "/"+c.Label, c.Desc))
+			fmt.Fprintf(&b, "  %-16s %s\n", "/"+c.Label, c.Desc)
 		}
 		if m.AgentMgr.ActiveID() != "" {
 			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
@@ -52,15 +52,15 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		b.WriteString("LSP Debug:\n")
 		if m.LSPMgr != nil {
 			conn, status, errMsg := m.LSPMgr.Status()
-			b.WriteString(fmt.Sprintf("  connected=%v  status=%d  error=%q\n", conn, status, errMsg))
+			fmt.Fprintf(&b, "  connected=%v  status=%d  error=%q\n", conn, status, errMsg)
 			ins := m.LSPMgr.ProjectInsights()
-			b.WriteString(fmt.Sprintf("  server=%s  ready=%v  files=%d  err=%d  warn=%d  hints=%d\n",
-				ins.ServerName, ins.ServerReady, ins.FilesAffected, ins.Errors, ins.Warnings, ins.Hints))
+			fmt.Fprintf(&b, "  server=%s  ready=%v  files=%d  err=%d  warn=%d  hints=%d\n",
+				ins.ServerName, ins.ServerReady, ins.FilesAffected, ins.Errors, ins.Warnings, ins.Hints)
 		}
 		if m.eventBus != nil {
 			b.WriteString("  Recent events:\n")
 			for _, e := range m.eventBus.RecentEvents(20) {
-				b.WriteString(fmt.Sprintf("    %s\n", e))
+				fmt.Fprintf(&b, "    %s\n", e)
 			}
 		}
 		if m.AgentMgr.ActiveID() != "" {

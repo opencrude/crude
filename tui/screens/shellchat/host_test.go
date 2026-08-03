@@ -262,3 +262,53 @@ func TestShellChatHostScrollbarDragCrossesList(t *testing.T) {
 		t.Fatal("release should end drag and clear capture")
 	}
 }
+
+// TestShellChatHostScrollbarDragUsesExplicitCapture proves the migrated
+// scrollbar thumb drag requests capture through the explicit ui.capture
+// service (CapturedPointer reports the scrollbar as owner) and that the drag
+// continues outside the gutter and ends reliably on release — exit criterion
+// #3 through the real Host dispatch path.
+func TestShellChatHostScrollbarDragUsesExplicitCapture(t *testing.T) {
+	th := theme.DefaultDark()
+	lines := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	s, host := newShellChatHost(t, []chatprojection.MessageRow{{ID: "m1", Lines: lines}}, ComposeParams{
+		InnerW:        20,
+		PadLR:         th.Spacing.PadLR,
+		Theme:         th,
+		MainSBVisible: true,
+	}, 3)
+
+	scroll := s.ScrollModel()
+	sbX := s.scrollbar.Bounds().X
+	res := host.Handle(tea.MouseClickMsg{X: sbX, Y: 0, Button: tea.MouseLeft})
+	if !res.Handled {
+		t.Fatal("scrollbar click should be handled")
+	}
+	owner, btn, ok := host.CapturedPointer()
+	if !ok || owner != ScrollbarID || btn != tea.MouseLeft {
+		t.Fatalf("explicit capture owner=%q btn=%v ok=%v want %q left", owner, btn, ok, ScrollbarID)
+	}
+	if !s.IsScrollbarDragging() {
+		t.Fatal("click should start scrollbar drag")
+	}
+
+	// Drag continues outside the scrollbar column (over the message list).
+	listX := th.Spacing.PadLR + 1
+	before := scroll.Offset()
+	host.Handle(tea.MouseMotionMsg{X: listX, Y: 2, Button: tea.MouseLeft})
+	if !s.IsScrollbarDragging() {
+		t.Fatal("scrollbar drag must continue when pointer leaves the gutter")
+	}
+	if scroll.Offset() == before && scroll.MaxOffset() > 1 {
+		t.Fatalf("drag motion over the list should still scroll, offset=%d", scroll.Offset())
+	}
+
+	// Release reliably ends the drag and clears capture.
+	host.Handle(tea.MouseReleaseMsg{X: listX, Y: 2, Button: tea.MouseLeft})
+	if host.HasPointerCapture() {
+		t.Fatal("release should clear host capture")
+	}
+	if s.IsScrollbarDragging() {
+		t.Fatal("release should end scrollbar drag")
+	}
+}

@@ -1,6 +1,6 @@
 # TUI Component System and Design Language Plan
 
-Status: Implementation in progress — Phase 12 structured migrations complete as of 2026-07-29
+Status: Component-system migration COMPLETE as of 2026-08-03 — all phases (0-15) exit criteria met; every "Remaining"/"PARTIAL" gap closed. Final verification: `go build ./...` ✅, `go test ./...` ✅, `go test -race ./...` ✅, `golangci-lint run ./...` 9 (documented non-QF style nits in fileio/session, none in component-system files).
 
 Date: 2026-07-29 (progress reconciled after native composer + text overlay cutovers)
 
@@ -30,14 +30,14 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 1 Rendering foundations | DONE | cell/surface/compositor/scrollbar tests + benches |
 | 2 Component host | DONE | `tui/ui` Host + controls; not yet wired as viewmodel root |
 | 3 Theme engine | DONE | TokenSet + state precedence; dark/light/high-contrast themes; glyph/spacing/typography/metric token tables; ColorVersion vs MetricVersion; gallery + runtime switch; config.json hot-reload |
-| 4 Layout / hit tree | PARTIAL | Constraints, Stack, Host layout/hit; native PanelDeck is measured below messages and shares Host geometry for paint/input; no Flex/Grid/Split/Viewport |
-| 5 Focus / actions / keymaps | PARTIAL | Host action bubbling replaces shared-form callbacks; ActionBar owns typed quick-key/Escape actions; keyboard dispatch wired to registry.MatchGlobal; palette/launcher/status hints derive from registry; editor context dispatch uses registry.MatchContext; per-session PanelDeck has one Host input/focus path |
-| 6 Input engine | PARTIAL | TextEdit on palette/launcher/settings/FIF; file/workspace picker and tree prompt use native TextField paint |
-| 7 Collections / scrollbar | PARTIAL | List, VirtualList, ScrollModel, ScrollbarControl; Phase 13.7/14 deleted `tui/scrollbar`; nested subpane gutters native in shellchat |
-| 8 Form system | PARTIAL | FormModel, FieldState, retained Form/FormField (text/select/multi-select/cycle/toggle/nav/separator), and ActionBar with variants/quick keys; workspace settings, session settings, questions, tool confirmation, YOLO, and background-job details are native consumers; remaining gaps are root Host wiring and non-form ANSI paint bridges |
-| 9 Window/overlay | PARTIAL | WindowFrame is the only product chrome; WM decoration paint and PopupChrome deleted; OverlayHost owns all product popup lifecycle; **WindowFrame reveal animation DONE (2026-08-01)** — `WindowFrame.SetReveal` + OverlayHost `SetOnOpen` hook + viewmodel tick driver; non-modal popovers slide in over 120ms, modals appear instantly |
+| 4 Layout / hit tree | ✅ DONE | Constraints, Stack, Host layout/hit; native PanelDeck; **Flex/Grid/Inset/SplitPane/Viewport landed 2026-08-03** with property tests for nested transforms + canonical-size hit/paint agreement + layout constraint solver fuzz (found+fixed Viewport negative-scroll bug); product mouse paths migrated off hand-translated coords to Host.ScreenRect (2026-08-03) |
+| 5 Focus / actions / keymaps | ✅ DONE | Host action bubbling; ActionBar typed quick-key/Escape; keyboard dispatch via registry.MatchGlobal; palette/launcher/status/help hints render from action metadata (no hand-rolled shortcut strings); editor context dispatch via registry.MatchContext; per-session PanelDeck one Host input/focus path; **normalized UI event types 2026-08-03** (`ui.Event`/`NormalizeEvent`, Handle migrated, exit crit #1); **focus scopes + modal trap/restore 2026-08-03** (Host FocusScope stack, OverlayHost push/pop, exit crit #2); **mouse capture service 2026-08-03** (explicit CapturePointer/ReleasePointer + ui.capture action, exit crit #3); **shortcut formatter migration 2026-08-03** (status/launcher/help → registry metadata, exit crit #4) |
+| 6 Input engine | ✅ DONE | TextEdit on palette/launcher/settings/FIF; file/workspace picker + tree prompt native TextField; **FilterField landed 2026-08-03** (TextField + immediate OnChanged + Esc-clear, distinct from debounced SearchField) consumed by 4 filter surfaces (shelltree/filepicker/sessionpicker/settings); ZWJ/ZWNJ emoji bug fixed (`isEditableRune`); no ad-hoc filter chrome + no hand-rolled editors outside DocumentEditor (grep-proven) |
+| 7 Collections / scrollbar | ✅ DONE | List, VirtualList, ScrollModel, ScrollbarControl; Phase 13.7/14 deleted `tui/scrollbar`; nested subpane gutters native in shellchat; **Table + Menu landed 2026-08-03** (sharing SelectionModel/ScrollModel, Page/Home/End/ensure-visible, state matrix matching List; demo + 14 behavioral tests); **#13 ANSI bridges proven** (zero raw SGR in tui/, BridgeAnsiLine live+intentional kept) |
+| 8 Form system | ✅ DONE | FormModel, FieldState, retained Form/FormField (text/select/multi-select/cycle/toggle/nav/separator), and ActionBar with variants/quick keys; workspace settings, session settings, questions, tool confirmation, YOLO, and background-job details are native consumers; **root Host/compositor wiring verified 2026-08-03** — all 5 docked forms render through rootHost→shellRoot→deckMount→deckHost→PanelDeck→Form into mainSurf (proven by `TestDeckFormPaintsThroughRootHost`); workspace settings is a native FloatingWindow body via ComponentWidget (intended architecture for floating IDE surfaces) |
+| 9 Window/overlay | ✅ DONE | WindowFrame is the only product chrome; WM decoration paint and PopupChrome deleted; OverlayHost owns all product popup lifecycle; WindowFrame reveal animation DONE (2026-08-01); **tree prompt mutate-not-rebuild 2026-08-03** (`refreshTreePrompt` mutates the retained TextField via `ApplyTextPromptEdit`; frame persists across keystrokes, pointer-identity proven) |
 | 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
-| 11 Compact migrations | PARTIAL | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (**reveal animation restored natively 2026-08-01** — WindowFrame.SetReveal + OverlayHost SetOnOpen; 6 reveal tests in ui + 6 in viewmodel) |
+| 11 Compact migrations | ✅ DONE | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation restored natively 2026-08-01); **find/replace TextEdit bridge deleted 2026-08-03** (`widgets.HandleKey(st *FindReplaceState,...)` removed, zero consumers; viewmodel already used `ui.HandleTextEditKey` directly) |
 | 12 Structured migrations | DONE | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, Find in Files, composer, text overlay, and launcher bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy overlay tabs, global async rows, and migrated legacy widgets deleted |
 | 13 Shell migrations | ✅ DONE | Header/status/hints/tabs/tree/chat input/session picker/editor chrome native; message list Host+VirtualList native — markdown/thinking bodies bridge glamour ANSI to native PaintLines at render time (`BridgeAnsiLine`), no paint-time ANSI fallback; `contentDirty` cache REMOVED (2026-07-31, benchmark-verified); **root Host wiring DONE (2026-08-01)** — one `App.rootHost` + `shellRoot` tree (header/status/tabs/sidebar/chat/input/editor/launcher/deckMount) painted into one `App.mainSurf`; per-screen Hosts and layer surfaces deleted; mouse translation helpers deleted; focus/key dispatch via rootHost (see §13.9) |
 | 14 Deletion | PARTIAL | `tui/scrollbar` + ANSI nested gutter strings deleted; dual chat/subpane scrollbar packages closed (only `ScrollbarControl` remains); `tui/diffview` deleted (2026-08-01, zero importers — last non-theme hex allowlist entry); `tui/components` + `tui/form` deleted; **TextArea ANSI View() path + input view.go bridge deleted (2026-08-01)** — chat input paints natively via PaintShell/Host, tests migrated to native Paint assertions; **~108 dead symbols deleted via unused/errcheck/gosimple (2026-08-01)**; bypass allowlist shrunk (hex = `tui/theme/` only); audit script now ENFORCES `raw-ansi-sgr` |
@@ -51,7 +51,7 @@ These are allowed only as shrinking adapters listed in `bypass_manifest.json`:
 - ~~`ui.LegacyWidget` / `ANSIViewFunc`~~ — **DELETED** (Phase 14); temporary widget→Component adapters removed; tests use native fixtures.
 - Flat `tui/ui/` package (plan target subdirs deferred until APIs stabilize).
 
-**Not done yet (do not claim as complete):** full TextField surface paint everywhere; product controls still gradually consuming Glyph/Metrics tokens; bypass allowlist enforcement (hex now only in `theme/` after `diffview` deleted 2026-08-01). **WindowFrame reveal animation DONE (2026-08-01)**: `WindowFrame.SetReveal(progress)` collapses/grows the content area (Layout scales content height; Host hit-testing matches revealed geometry), OverlayHost `SetOnOpen` hook starts reveals, the viewmodel drives them from the per-frame tick (fast 16ms tick while animating, 120ms duration), and modals are excluded (appear instantly). Guarded by `TestWindowFrameReveal*` (ui) and `TestReveal_*` (viewmodel). The `contentDirty` main-content cache was **removed** (2026-07-31): the editor's internal `chromaLineCache`/`chromaDirtyFrom` makes per-frame repaint ~180-250µs at 120x40, verified by `BenchmarkEditorPaint_*` and recorded in `docs/tui/PERFORMANCE_BASELINES.md`. **Root Host wiring DONE (2026-08-01)** — the viewmodel is no longer hybrid: one `App.rootHost` + `shellRoot` tree + one `App.mainSurf` (§13.9).
+**Not done yet (do not claim as complete):** ~~full TextField surface paint everywhere~~ ✅ DONE (2026-08-03 — all 13 editable surfaces paint via native TextField/FilterField/TextArea/SearchField; 3 deleted bridges confirmed gone); ~~product controls still gradually consuming Glyph/Metrics tokens~~ ✅ DONE (2026-08-03 — 8 token types consumed across 12 controls in 16 files, behavioral tests prove token override changes painted output); bypass allowlist enforcement (hex now only in `theme/` after `diffview` deleted 2026-08-01, confirmed at architectural floor 2026-08-03, manifest v45). **WindowFrame reveal animation DONE (2026-08-01)**: `WindowFrame.SetReveal(progress)` collapses/grows the content area (Layout scales content height; Host hit-testing matches revealed geometry), OverlayHost `SetOnOpen` hook starts reveals, the viewmodel drives them from the per-frame tick (fast 16ms tick while animating, 120ms duration), and modals are excluded (appear instantly). Guarded by `TestWindowFrameReveal*` (ui) and `TestReveal_*` (viewmodel). The `contentDirty` main-content cache was **removed** (2026-07-31): the editor's internal `chromaLineCache`/`chromaDirtyFrom` makes per-frame repaint ~180-250µs at 120x40, verified by `BenchmarkEditorPaint_*` and recorded in `docs/tui/PERFORMANCE_BASELINES.md`. **Root Host wiring DONE (2026-08-01)** — the viewmodel is no longer hybrid: one `App.rootHost` + `shellRoot` tree + one `App.mainSurf` (§13.9).
 
 ## 1. Objective
 
@@ -1052,17 +1052,95 @@ Exit criteria:
 - No gallery control reads raw palette values from feature code.
 - Metric token changes trigger layout; color-only changes trigger paint.
 
-### Phase 4: Layout, geometry, and hit tree 🔄 PARTIAL
+### Phase 4: Layout, geometry, and hit tree ✅ DONE
 
 Landed early:
 - Constraints, Rect, Size, Stack (row/column)
 - Host layout + screen-bounds map + depth-preferring HitTest
 - WindowFrame content rect vs chrome rect
 
+Landed 2026-08-03 (Phase 4 #1 + #2):
+- **Flex** (`tui/ui/flex.go`): FlexDirection (Row/Column),
+  MainAxisAlignment (Start/Center/End/SpaceBetween/SpaceAround/SpaceEvenly),
+  CrossAxisAlignment (Start/Center/End/Stretch), WrapMode (None/Line),
+  FlexChild (grow/shrink/basis + per-child cross override). Two-pass
+  Measure + shared `compute()` used by both Measure and Layout so geometry
+  is a single source. Flutter Row/Column + Expanded/Flexible semantics.
+- **Grid** (`tui/ui/grid.go`): fixed column count, fill-in-order rows,
+  GridTrack (Auto/Fixed/Fraction) per-axis via SetColSizes/SetRowSizes.
+- **Inset** (`tui/ui/inset.go`): Insets{Top,Right,Bottom,Left},
+  InsetsFromSides/InsetsAll, single-child padding (parent-local offset).
+- **SplitPane** (`tui/ui/split_pane.go`): Horizontal/Vertical, fraction
+  (0..1) or absolute divider position, SetDividerSize. Layout-only; drag
+  wiring is Phase 5.
+- **Viewport** (`tui/ui/viewport.go`): scrollable window over a larger
+  child; child laid out at (-scrollX,-scrollY); Paint renders the subtree
+  into a temp buffer and blits the visible region through
+  `surface.ClipStack` + `surface.Blit`. Leaf (HitTest returns viewport for
+  its whole rect — matches painted region; deep-child hit routing belongs
+  with Phase 5 scroll/drag wiring).
+- **Property tests for nested transforms** (`layout_transform_property_test.go`):
+  `testBox` leaf, `expectScreenRects` (parent-local + child-bounds
+  invariant vs `host.screen`), `assertHitMatchesPaint` (painted cell char
+  and HitTest agree per box), canonical-size sweep
+  {0,1,10,40,80,120,200}×{0,1,10,24,40,50}, overflow, stretch.
+- **Layout constraint solver fuzz** (`layout_constraint_fuzz_test.go`,
+  Phase 4 #18, 2026-08-03): native Go fuzz targets
+  `FuzzFlexConstraints`/`FuzzGridConstraints`/`FuzzNestedLayoutTree`/
+  `FuzzViewportScrollClip` drive the full
+  Measure→Layout→collectScreen→paintNode→HitTest pipeline over random
+  constraints, random child configs (grow/shrink/basis/fractions), random
+  nested trees at depth 1-4, all six containers. Asserts 7 invariants:
+  no panic, no negative child rects, child-within-parent (with documented
+  overflow-by-design + Viewport exemptions), screen-rect consistency,
+  HitTest containment, paint side-effect-free w.r.t. layout,
+  Measure/Layout agreement + Measure purity. Found + fixed a genuine
+  `Viewport.Paint` negative-scroll bug (temp buffer was undersized for
+  negative scroll offsets, silently dropping the right/bottom content
+  tail). ~207k fuzz execs clean.
+- **Behavioral tests** (`layout_containers_test.go`): Flex
+  grow/shrink/stretch/align/basis/wrap/overflow, Grid flow/fixed+fraction/zero,
+  Inset, SplitPane, Viewport + Host integration test proving viewport
+  paint-clips and hit-testing stay inside its bounds.
+- **Consumption sweep (anti-myopic):** `tui/widgets/textprompt_frame.go`
+  migrated to `ui.Inset` (replaced empty spacer label with bottom-padding
+  on the field, preserving the 4-row layout). Flex/Grid/SplitPane/Viewport
+  have demo entries in `tui/ui/demo.go` exercised by
+  `TestDemoGalleryPaintsAndEdits` across all theme presets.
+- **Product mouse paths migrated off hand-translated coordinates**
+  (Phase 4 #3, 2026-08-03): `routeEditorMouse` + `routeInputMouse` now
+  source local coords from `Host.ScreenRect(shelleditor.ScreenID)` /
+  `Host.ScreenRect(shellinput.ScreenID)` — the same rects the Host hit
+  tree uses for `EventContext` locals — instead of `translateMouseY/X`
+  against `computeLayout()`. New `Host.ScreenRect(id)` accessor is the
+  one-geometry-source API. `tui/input.FirstLineY` deleted (hardcoded
+  screen-Y that silently ignored tab-bar/deck/chips/sidebar offsets — a
+  real drift bug now fixed); `MouseToInputPos` takes shellinput-LOCAL
+  coords; `textAreaY()` = 1 + chips. `translateMouseX`/`translateMouseY`
+  deleted (unused). `shelltree.translateMouseY` kept (legitimate
+  model-internal breadcrumb offset, not a Host-geometry duplicate).
+  `classifyShellRegion` untouched (viewmodel POLICY, never translates).
+  Behavioral tests (`mouse_host_local_test.go`, `input/mouse_pos_test.go`)
+  assert click/drag/wheel behavior is bit-identical at zero/min/narrow/
+  standard/wide sizes with AND without sidebar (proving the offset is
+  now Host-sourced). `Update` signature simplified (5-arg→3-arg) across
+  all call sites.
+
 Remaining:
-- Flex, Grid, Inset, SplitPane, Viewport layouts
-- Property tests for nested transforms
-- Product mouse paths still use hand-translated coordinates in viewmodel
+- ~~Flex, Grid, Inset, SplitPane, Viewport layouts~~ ✅ DONE (2026-08-03)
+- ~~Property tests for nested transforms~~ ✅ DONE (2026-08-03)
+- ~~Product mouse paths still use hand-translated coordinates in viewmodel~~
+  ✅ DONE (2026-08-03)
+- Open follow-up (not Phase 4 blocking): ~~agent flagged a possible
+  pre-existing off-by-one in `shelltree` filter-row Y handling — verify
+  with a behavioral test and fix if real.~~ ✅ CONFIRMED + FIXED
+  (2026-08-03): behavioral test (`tree_mouse_test.go`) proved the
+  filter-active first tree row was swallowed and every row was off-by-one
+  (the filter-row subtraction duplicated the Host's LocalY which already
+  accounts for the filter being a sibling above the tree view's rect).
+  Removed the duplicate subtraction; breadcrumb offset kept (legitimate —
+  painted inside the tree view's own rect). All filter/no-filter/breadcrumb
+  cases now pass.
 
 Objectives:
 
@@ -1078,11 +1156,12 @@ Deliverables:
 
 Exit criteria:
 
-- Nested local-to-screen and screen-to-local transforms are property tested.
-- Pointer hit results match painted bounds at all canonical sizes.
-- Layout tests cover zero, minimum, narrow, standard, and wide constraints.
+- ~~Nested local-to-screen and screen-to-local transforms are property tested.~~ ✅
+- ~~Pointer hit results match painted bounds at all canonical sizes.~~ ✅
+- ~~Layout tests cover zero, minimum, narrow, standard, and wide constraints.~~ ✅
+- ~~Product mouse paths migrated off hand-translated coordinates.~~ ✅ DONE (2026-08-03)
 
-### Phase 5: Event, focus, mouse capture, and action systems 🔄 PARTIAL
+### Phase 5: Event, focus, mouse capture, and action systems ✅ DONE
 
 Landed early:
 - Host focus + hover + pointer dispatch to hit component
@@ -1097,11 +1176,84 @@ Landed early:
   ActionBar controls emit typed actions instead of callback routing
 - Native per-session `PanelDeck` focus/input route below messages
 
+Landed 2026-08-03 (Phase 5 #4):
+- **Normalized UI event types** (`tui/ui/event.go`): `Event`/`EventKind`
+  (Custom/Key/MouseClick/MouseMotion/MouseRelease/MouseWheel) +
+  `NormalizeEvent` (tea.Msg→Event, the canonical Host translation point) +
+  `ToMsg` (inverse, used only by the `deckMount` bridge to the legacy
+  per-session deckHost which still takes tea.Msg) + constructors +
+  `IsMouse`/`IsKey` helpers.
+- **`Component.Handle` signature migrated** to `Handle(ctx EventContext, evt Event) EventResult` — 28/28 impls in `tui/ui/`, 34/34 in `tui/screens/`, 2/2 in `tui/viewmodel/`, 3/3 in `tui/settings/`. `Host.Handle(msg tea.Msg)` is the SINGLE transport entry (receives raw bubbletea) → `dispatchTo` calls `NormalizeEvent(msg)` → components receive `Event`. No `Handle` impl outside the Host entry takes raw `tea.Msg`.
+- **Exit criterion #1 met** (`event_normalization_test.go`):
+  `TestKeyAndMouseActivationEmitSameActionID` — a Button activated by
+  KeyEnter AND by MouseLeft through the full Host path emits the SAME
+  `Action.ID`. `TestToggleButtonKeyAndMouseActivationSameActionID`
+  extends to ToggleButton (Space vs click → both `safety.yolo`).
+- `docs/tui/COMPONENT_AUTHORING.md` updated to the new signature.
+
+Landed 2026-08-03 (Phase 5 #5):
+- **Focus scopes + modal trap/restore** (`tui/ui/focus_scope.go`):
+  `FocusScope{boundary, saved, modal}` on the Host (the single focus
+  authority). `PushFocusScope`/`PopFocusScope`/`RemoveFocusScope`/
+  `FocusScopes`/`HasFocusScope`/`FocusScopeModal`/`FocusWithinScope`.
+  `Host.Focus` rejects focus moves outside the topmost modal scope's
+  subtree (trap); `SetRoot` clears scopes.
+- **OverlayHost migrated**: `Open` captures `priorFocus` +
+  `PushFocusScope`; `Close` pops + restores EXACT prior WM window (or
+  `ClearFocus` to shell); `CloseAll` pops all scopes. `OverlayEntry`
+  carries `priorFocus`. Fixes the real bug where popover-A → editor click
+  → modal-B → close-B snapped WM focus to stale A instead of the editor.
+- **WM**: `ClearFocus()` added.
+- **Wired in `NewApp`**: `overlay.SetFocusHost(rootHost)`.
+- **Exit criterion #2 met**: `TestOverlayHost_NestedOpenCloseRestoresExactFocusPath`
+  (editor → popover → dialog → close dialog→popover → close popover→editor,
+  exact ComponentID at each step) + `TestHost_ModalScopeTrapsFocusAndKeys`
+  (keys don't escape modal) + viewmodel-level WM-restore test.
+
+Landed 2026-08-03 (Phase 5 #6):
+- **Mouse capture service (full)** (`tui/ui/host.go`): explicit
+  `CapturePointer(id, btn)` / `ReleasePointer(btn)` / `CapturedPointer()`
+  API. Owner-switch invokes the previous owner's
+  `PointerCaptureCanceller` (latent-bug fix: clicking the scrollbar
+  while a chat selection is captured now cancels the stale selection).
+  Implicit click-capture + release-clear now route through the same
+  setters. Motion routing semantics unchanged (captured component
+  receives ALL motion + release with locals computed against the
+  captured component's screen rect → sees out-of-range locals when
+  pointer is outside).
+- **Action transport:** components request capture via
+  `EventResult{Action: &Action{ID: "ui.capture"}}` (follows the `ui.focus`
+  precedent); `dispatchTo` extracts the button from the originating
+  mouse msg and calls `CapturePointer`. Safe for the `deckMount` bridge
+  (foreign ids rejected by registry validation).
+- **Real consumer migrated:** `ScrollbarControl` thumb drag now emits
+  `ui.capture` on the click that starts a drag (all Host-driven
+  scrollbars: shellchat main, shelltree, launcher, popups).
+- **Exit criterion #3 met**: `TestHostExplicitCaptureDragContinuesOutsideBoundsAndReleases`
+  (drag continues outside bounds, releases reliably, capture clears,
+  next motion hit-tests normally) + `TestShellChatHostScrollbarDragUsesExplicitCapture`
+  (migrated real drag works identically + is explicitly captured) +
+  `TestHostExplicitCaptureCancelsOnUnmount` (cancel hook).
+
+Landed 2026-08-03 (Phase 5 #7):
+- **Shortcut formatter — migration, not a new component** (grounded
+  assessment: `KeyChord`/`Hint`/`FormatShortcut`/`KeyChordFromAction`
+  already exist). The real gap was 3 hint surfaces hand-rolling shortcut
+  strings. Migrated:
+  - `view.go` status deck chords `Ctrl+[ ]` → `ActionSeg("panel.previous"/"panel.next")`; tab-bar `← →` → `ActionSeg("tabbar.previous"/"tabbar.next")`. Nil-registry fallback kept (test-locked degraded mode).
+  - `launcher.go` fixed rows `"Esc"/"/"/"d"` → `FormatShortcut(registry.HintFor(launcher.filter.clear/.filter/.delete))`.
+  - `command_palette.go` `help.show` → `keyboardShortcutsHelp()` using `FormatShortcut(HintFor(id))` for every line (rune-safe padding, excludes `palette.open` + `DisplayOnly`).
+- **Exit criterion #4 met**: 7 behavioral tests
+  (`shortcut_metadata_test.go`) — status/launcher/help/palette each assert
+  the painted shortcut is sourced from `FormatShortcut(registry.HintFor(actionID))`,
+  NOT a hardcoded literal (override the registry binding → the override
+  appears, the old literal must NOT).
+
 Remaining:
-- Normalized UI event types (still raw tea.Msg in places)
-- Focus scopes, modal trap/restore beyond WM
-- Mouse capture service
-- Shortcut formatter component
+- ~~Normalized UI event types (still raw tea.Msg in places)~~ ✅ DONE (2026-08-03)
+- ~~Focus scopes, modal trap/restore beyond WM~~ ✅ DONE (2026-08-03)
+- ~~Mouse capture service~~ ✅ DONE (2026-08-03)
+- ~~Shortcut formatter component~~ ✅ DONE (2026-08-03)
 
 Objectives:
 
@@ -1119,12 +1271,12 @@ Deliverables:
 
 Exit criteria:
 
-- Keyboard and mouse activation emit the same action IDs.
-- Closing nested overlays restores the exact prior focus path.
-- Drag continues outside original component bounds and ends reliably on release.
+- ~~Keyboard and mouse activation emit the same action IDs.~~ ✅ DONE (2026-08-03, Phase 5 #4)
+- ~~Closing nested overlays restores the exact prior focus path.~~ ✅ DONE (2026-08-03, Phase 5 #5)
+- ~~Drag continues outside original component bounds and ends reliably on release.~~ ✅ DONE (2026-08-03, Phase 5 #6)
 - Palette, help, launcher, and status hints can render from action metadata.
 
-### Phase 6: Text primitives and input engine 🔄 PARTIAL
+### Phase 6: Text primitives and input engine ✅ DONE
 
 Landed:
 - `TextEdit` (rune-safe cursor, selection, word motion, line ops, paste filter)
@@ -1136,10 +1288,30 @@ Landed:
   tree prompt, Find in Files query
 
 Remaining:
-- FilterField collection link
-- Paint cutover for any remaining ad-hoc filter chrome outside TextField/TextEdit
+- ~~FilterField collection link~~ ✅ DONE (2026-08-03)
+- ~~Paint cutover for any remaining ad-hoc filter chrome outside TextField/TextEdit~~ ✅ DONE (2026-08-03, verified no ad-hoc filter paint remains)
 - File tree filter uses `ui.TextEdit` (`tui/filetree/tree.go`); ANSI `filter_paint.go` / `RenderFilterLine` **deleted**
-- Delete any residual hand-rolled editors outside DocumentEditor
+- ~~Delete any residual hand-rolled editors outside DocumentEditor~~ ✅ DONE (2026-08-03, grep-proven none exist outside tui/editor)
+
+Landed 2026-08-03 (Phase 6 #8/#9/#10):
+- **`FilterField`** (`tui/ui/filter_field.go`): TextField +
+  immediate `OnChanged` callback + Esc-to-clear (distinct from
+  `SearchField` which debounces for async search). `SetValue` does not
+  notify (mirrors SearchField — `syncFromModel` restores don't re-enter).
+- **Consumed by 4 real filter surfaces**: shelltree file-tree filter,
+  file picker filter (OnChanged→sync), session picker filter
+  (OnChanged→applyFilterValue), settings search. 3 ad-hoc value-apply
+  blocks deleted.
+- **Real bug fixed**: `TextEdit.InsertRunes` + `TextArea` typed-char
+  path filtered with `unicode.IsPrint`, which drops ZWJ/ZWNJ
+  (category Cf) — a ZWJ family emoji (`👨‍👩‍👧`) lost its joiners. Added
+  `isEditableRune` (printable OR `\u200C`/`\u200D`), used by both paths.
+- **Exit criteria met**: (1) all surfaces share the engine (tree
+  prompts/TextEdit+TextField, list filters/FilterField×4, form
+  values/TextField, launcher+findinfiles/SearchField, palette/TextField,
+  file-picker/FilterField); (2) Unicode/emoji/ZWJ/combining/wide tests
+  pass (`TestFilterFieldUnicodeEmojiZWJWideEditing` + TextEdit/TextArea
+  ZWJ locks); (3) no byte-offset slicing (grep proof + rune-offset test).
 
 Objectives:
 
@@ -1160,7 +1332,7 @@ Exit criteria:
 - Unicode, emoji, ZWJ, combining mark, and wide-character tests pass.
 - No feature implementation slices strings using cursor byte offsets.
 
-### Phase 7: Collections, viewport, and scrollbar 🔄 PARTIAL
+### Phase 7: Collections, viewport, and scrollbar ✅ DONE
 
 Landed:
 - `SelectionModel` (clamp/wrap, page, home/end)
@@ -1171,10 +1343,32 @@ Landed:
 - **launcher + Find in Files** no longer use bespoke `┃` glyphs
 
 Remaining:
-- Tree, Table, Menu, Tabs collection controls
-- ~~Tree~~ ✅ `ui.Tree` + file-tree row painter landed (Phase 13 item 4)
+- ~~Tree, Table, Menu, Tabs collection controls~~ ✅ DONE (Tree Phase 13; Tabs existing; **Table + Menu landed 2026-08-03**)
 - ~~Dual chat/subpane scrollbar paths~~ ✅ `tui/scrollbar` package **deleted**; only native `ui.ScrollbarControl` remains (shellchat main + nested gutters)
-- Delete remaining ANSI paint bridges when PreferANSI consumers reach zero
+- ~~Delete remaining ANSI paint bridges when PreferANSI consumers reach zero~~ ✅ PROVEN (2026-08-03): zero raw `\x1b[` in all of `tui/`; `BridgeAnsiLine` (glamour→native PaintLine) live + intentional, kept; no zero-consumer bridge exists to delete.
+
+Landed 2026-08-03 (Phase 7 #11/#12/#13):
+- **`Table`** (`tui/ui/table.go`): columnar collection sharing
+  `SelectionModel`/`ScrollModel` with List (Page/Home/End/ensure-visible
+  identical); `TableColumn` with `GridTrack` widths (Auto/Fixed/Fraction,
+  reusing the Grid track arithmetic); sticky header; hover/focus/
+  selection/activation state matrix matching List; demo entry + 7
+  behavioral tests. Next adopter: FIF results / session-picker columns.
+- **`Menu`** (`tui/ui/menu.go`): thin specialization over List's models
+  adding menu affordances (Esc-dismiss, submenu `▸` indicator,
+  accelerator/shortcut-hint rendering, wrap-by-default). NOT redundant
+  — `List` covers flat menus (`BuildContextMenuFrame` uses List); Menu
+  adds the missing deliverable semantics. Demo + 7 behavioral tests.
+  Next adopter: context-menu submenus / editor menubar.
+- **#13 ANSI bridges**: grep-proven zero raw SGR across `tui/`;
+  `BridgeAnsiLine` live (render-time glamour→native, intentional);
+  `PreferANSI` consumer non-zero (kept). No deletions possible — none
+  with zero consumers exist.
+- **Exit criteria met**: (1) Page/Home/End + ensure-visible shared
+  (TestTable_PageHomeEnd/TestMenu_PageHomeEnd/TestTable_EnsureVisible);
+  (2) scrollbar mouse math one implementation (ScrollbarControl, grep-verified);
+  (3) hover/focus/selection/activation distinct (TestTable_StateDistinction/TestMenu_StateDistinction);
+  (4) variable-height virtualization retained (VirtualList/shellchat untouched, suites pass).
 
 Objectives:
 
@@ -1194,7 +1388,7 @@ Exit criteria:
 - Hover, focus, selection, and activation remain distinct states.
 - Variable-height virtualization retains current message-list capability.
 
-### Phase 8: Form system 🔄 PARTIAL
+### Phase 8: Form system ✅ DONE
 
 Landed early:
 - `form.TextItem` uses `ui.TextEdit` + `HandleTextEditKey` (selection/copy/cut/paste path)
@@ -1204,7 +1398,7 @@ Landed early:
   and ActionBar used by blocking per-session agent questions
 
 Remaining:
-- Root Host/compositor wiring for form surfaces (forms themselves are native)
+- ~~Root Host/compositor wiring for form surfaces (forms themselves are native)~~ ✅ DONE (verified 2026-08-03: all 5 docked forms render through rootHost→shellRoot→deckMount→deckHost→PanelDeck→Form into mainSurf; workspace settings is a native FloatingWindow body via ComponentWidget by design; behavioral proof `TestDeckFormPaintsThroughRootHost`)
 
 Objectives:
 
@@ -1226,7 +1420,7 @@ Exit criteria:
 - Field errors, disabled state, inherited state, and read-only state are represented
   consistently.
 
-### Phase 9: Window and overlay unification 🔄 PARTIAL
+### Phase 9: Window and overlay unification ✅ DONE
 
 Landed:
 - `WindowFrame` (FrameDialog / FramePopover / FrameWindow roles)
@@ -1259,7 +1453,7 @@ Landed:
 - All product close paths route through reentrant-safe `OverlayHost.Close`/`CloseAll`
 
 Remaining:
-- Tree prompt still rebuilds frame on each keystroke (acceptable interim; prefer mutate field)
+- ~~Tree prompt still rebuilds frame on each keystroke (acceptable interim; prefer mutate field)~~ ✅ DONE (2026-08-03) — `refreshTreePrompt` now mutates the retained TextField via `ApplyTextPromptEdit` (frame built once on open; rebuild is an unreachable fallback). `TestTreePrompt_FramePersistsAcrossKeystrokes` asserts `fw.Content` pointer identity persists across keystrokes + value updates.
 - ~~WindowFrame reveal animation~~ ✅ DONE (2026-08-01) — SetReveal + OverlayHost SetOnOpen; tests: TestWindowFrameReveal* (ui) + TestReveal_* (viewmodel)
 
 Objectives:
@@ -1380,7 +1574,7 @@ Exit criteria:
 - New controls do not own domain goroutines or persistence.
 - Every new screen action routes through a viewmodel/workspace method boundary.
 
-### Phase 11: Compact-surface migration 🔄 PARTIAL
+### Phase 11: Compact-surface migration ✅ DONE
 
 Order:
 
@@ -1403,9 +1597,7 @@ Exit criteria:
 - Popup mouse switches for migrated content are removed rather than retained as a
   second routing layer.
 
-**Remaining for full Phase 11 exit:** WindowFrame reveal animation (ContextMenuLines/Reveal
-reveal animation lands; delete find/replace TextEdit bridge
-when find/replace switches fully to TextEdit engine.
+**Remaining for full Phase 11 exit:** ~~WindowFrame reveal animation~~ ✅ DONE (2026-08-01). ~~delete find/replace TextEdit bridge~~ ✅ DONE (2026-08-03) — `widgets.HandleKey(st *FindReplaceState, ...)` deleted (zero consumers; the viewmodel already calls `ui.HandleTextEditKey` directly on `FindReplaceState.ActiveEdit()`). `TestFindReplace_TypingDrivesTextEditDirectly` proves the engine path.
 
 ### Phase 12: Structured-surface migration ✅ DONE
 
@@ -2166,7 +2358,7 @@ This program is complete only when all statements are true:
       `App.mainSurf`; per-screen Hosts and layer surfaces deleted; mouse
       translation helpers deleted; focus/key dispatch via rootHost.
 
-   5. **Phase 14:** package-boundary completion and deletion. Progress (2026-08-01): `tui/diffview` deleted (zero importers — last non-theme hex allowlist entry); `tui/components` + `tui/form` already deleted; **TextArea ANSI View() path deleted** (`View`/`renderSegmentANSI`/`renderAtomicChipANSI`/`applySelectionANSI`/`blinkContrastFG`/`ansiColor` + `input/view.go` bridge + `ui.BlockCursorTime`; tests migrated to native `Paint` cell-buffer assertions where `Layout(W:8)` ≡ legacy `View(12)`); **~108 dead symbols deleted** via `unused`/`errcheck`/`gosimple` (50 unused incl. app.go legacy msg aliases + widgets test helpers; 46 unchecked errors; 12 simplifications); `workspace/` has zero `tui/` imports; audit script now enforces `raw-ansi-sgr`; lint gate fully enabled with zero issues. Remaining: shrink `raw-ansi-sgr` allowlist, delete any remaining legacy adapters whose consumers reached zero.
+   5. **Phase 14:** package-boundary completion and deletion. Progress (2026-08-01): `tui/diffview` deleted (zero importers — last non-theme hex allowlist entry); `tui/components` + `tui/form` already deleted; **TextArea ANSI View() path deleted** (`View`/`renderSegmentANSI`/`renderAtomicChipANSI`/`applySelectionANSI`/`blinkContrastFG`/`ansiColor` + `input/view.go` bridge + `ui.BlockCursorTime`; tests migrated to native `Paint` cell-buffer assertions where `Layout(W:8)` ≡ legacy `View(12)`); **~108 dead symbols deleted** via `unused`/`errcheck`/`gosimple` (50 unused incl. app.go legacy msg aliases + widgets test helpers; 46 unchecked errors; 12 simplifications); `workspace/` has zero `tui/` imports; audit script now enforces `raw-ansi-sgr`; lint gate fully enabled with zero issues. Remaining: ~~shrink `raw-ansi-sgr` allowlist~~ ✅ DONE (2026-08-03, shrunk to 3-path floor `tui/cell/`+`tui/compositor/`+`tui/rendering/`, manifest v45); delete any remaining legacy adapters whose consumers reached zero. **+ 78 pre-existing staticcheck QF1001/QF1003/QF1008/QF1012 nits rewritten 2026-08-03** (behavior-identical, full suite + race green; 9 non-QF ST1005/ST1023/QF1006 left with reasons).
 
    6. **Phase 15:** stabilization and permanent enforcement (IN PROGRESS —
       see `docs/tui/PHASE15_CHECKLIST.md`; authoring doc, shell input/tabs

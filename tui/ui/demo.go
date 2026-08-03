@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 )
@@ -37,6 +38,10 @@ func DemoGallery(th *theme.Theme) *Host {
 	// ── List states ──
 	listDefault := newDemoList(tokens, 0, false)
 	listSelected := newDemoList(tokens, 2, false)
+
+	// ── Collection states (Table, Menu) ──
+	tableDefault := newDemoTable(tokens, 1)
+	menuDefault := newDemoMenu(tokens, 1)
 
 	// ── Label variants ──
 	labelDefault := NewLabel(NewID(RootID, "lbl-default"), "Default label", th)
@@ -82,6 +87,11 @@ func DemoGallery(th *theme.Theme) *Host {
 		secLists.SetTokens(tokens)
 		secLists.SetColorRole(ColorMuted)
 	}
+	secCollections := NewLabel(NewID(RootID, "sec-col"), "── Collections ──", th)
+	if tokens != nil {
+		secCollections.SetTokens(tokens)
+		secCollections.SetColorRole(ColorMuted)
+	}
 	secLabels := NewLabel(NewID(RootID, "sec-lbl"), "── Labels ──", th)
 	if tokens != nil {
 		secLabels.SetTokens(tokens)
@@ -92,6 +102,18 @@ func DemoGallery(th *theme.Theme) *Host {
 		secFrames.SetTokens(tokens)
 		secFrames.SetColorRole(ColorMuted)
 	}
+	secLayouts := NewLabel(NewID(RootID, "sec-layout"), "── Layouts ──", th)
+	if tokens != nil {
+		secLayouts.SetTokens(tokens)
+		secLayouts.SetColorRole(ColorMuted)
+	}
+
+	// ── Layout container demos ──
+	flexDemo := newDemoFlex(tokens)
+	gridDemo := newDemoGrid(tokens)
+	insetDemo := newDemoInset(tokens)
+	splitDemo := newDemoSplit(tokens)
+	viewportDemo := newDemoViewport(tokens)
 
 	// Build the grid: each row is a horizontal stack [label, control].
 	rows := []Component{
@@ -107,6 +129,9 @@ func DemoGallery(th *theme.Theme) *Host {
 		secLists,
 		newDemoRow(tokens, "cursor=0", listDefault),
 		newDemoRow(tokens, "selected=2", listSelected),
+		secCollections,
+		newDemoRow(tokens, "table", tableDefault),
+		newDemoRow(tokens, "menu", menuDefault),
 		secLabels,
 		newDemoRow(tokens, "default", labelDefault),
 		newDemoRow(tokens, "accent", labelAccent),
@@ -117,6 +142,12 @@ func DemoGallery(th *theme.Theme) *Host {
 		newDemoRow(tokens, "dialog", frameDialog),
 		newDemoRow(tokens, "popover", framePopover),
 		newDemoRow(tokens, "window", frameWindow),
+		secLayouts,
+		newDemoRow(tokens, "flex", flexDemo),
+		newDemoRow(tokens, "grid", gridDemo),
+		newDemoRow(tokens, "inset", insetDemo),
+		newDemoRow(tokens, "split", splitDemo),
+		newDemoRow(tokens, "viewport", viewportDemo),
 	}
 
 	stack := NewStack(NewID(RootID, "gallery"), Vertical, 0, rows...)
@@ -129,14 +160,9 @@ func DemoGallery(th *theme.Theme) *Host {
 			return
 		}
 		h.Register(c)
-		if s, ok := c.(*Stack); ok {
-			for _, ch := range s.Children() {
+		if p, ok := c.(Parent); ok {
+			for _, ch := range p.Children() {
 				registerAll(ch)
-			}
-		}
-		if f, ok := c.(*WindowFrame); ok {
-			if f.Content() != nil {
-				registerAll(f.Content())
 			}
 		}
 	}
@@ -198,6 +224,42 @@ func newDemoList(tokens *TokenSet, selectedIdx int, hover bool) *List {
 	return list
 }
 
+func newDemoTable(tokens *TokenSet, selectedIdx int) *Table {
+	table := NewTable(NewID(RootID, "table"), tokens)
+	table.SetShowHeader(true)
+	table.SetColumns([]TableColumn{
+		{ID: "name", Label: "File", Track: FixedGridTrack(12), Align: TableAlignLeft},
+		{ID: "status", Label: "Status", Track: FractionGridTrack(1)},
+		{ID: "lines", Label: "Lines", Track: FixedGridTrack(6), Align: TableAlignRight},
+	})
+	table.SetRows([]TableRow{
+		{ID: "main.go", Cells: []TableCell{{Text: "main.go"}, {Text: "modified"}, {Text: "128"}}},
+		{ID: "app.go", Cells: []TableCell{{Text: "app.go"}, {Text: "saved"}, {Text: "310"}}},
+		{ID: "ui.go", Cells: []TableCell{{Text: "ui.go"}, {Text: "new"}, {Text: "42"}}},
+		{ID: "doc.go", Cells: []TableCell{{Text: "doc.go"}, {Text: "saved"}, {Text: "7"}}},
+	})
+	if selectedIdx >= 0 && selectedIdx < 4 {
+		table.SelectIndex(selectedIdx)
+	}
+	return table
+}
+
+func newDemoMenu(tokens *TokenSet, selectedIdx int) *Menu {
+	menu := NewMenu(NewID(RootID, "menu"), tokens)
+	menu.SetItems([]MenuItem{
+		{Header: true, Label: "Actions"},
+		{ID: "open", Label: "Open File…", Accel: "ctrl+o"},
+		{ID: "save", Label: "Save", Accel: "ctrl+s"},
+		{Separator: true},
+		{ID: "goto", Label: "Go to Symbol", Submenu: true},
+		{Disabled: true, Label: "Run (disabled)"},
+	})
+	if selectedIdx >= 0 {
+		menu.SelectIndex(selectedIdx)
+	}
+	return menu
+}
+
 func newDemoFrame(tokens *TokenSet, role FrameRole, title string, closable bool) *WindowFrame {
 	id := NewID(RootID, "frame-"+title)
 	frame := NewWindowFrame(id, role, tokens)
@@ -217,4 +279,58 @@ func newDemoRow(tokens *TokenSet, label string, control Component) *Stack {
 		lbl.SetColorRole(ColorMuted)
 	}
 	return NewStack(NewID(RootID, "row-"+label), Horizontal, 1, lbl, control)
+}
+
+// demoBandLabel is a label that fills its whole bounds with a popup background
+// so grow/stretch/padding effects are visible in the gallery.
+func demoBandLabel(id ComponentID, text string, tokens *TokenSet, role SemanticColor) *Label {
+	l := NewLabel(id, text, nil)
+	if tokens != nil {
+		l.SetStyle(tokens.Color(role), tokens.Color(ColorPopupBg), 0)
+		l.SetTokens(tokens)
+	}
+	return l
+}
+
+func newDemoFlex(tokens *TokenSet) *Flex {
+	f := NewFlex(NewID(RootID, "demo/flex"), FlexRow, 1,
+		NewFlexChild(demoBandLabel(NewID(RootID, "demo/flex/a"), "grow", tokens, ColorAccent), 2, 1, 0),
+		NewFlexChild(demoBandLabel(NewID(RootID, "demo/flex/b"), "mid", tokens, ColorMuted), 1, 1, 0),
+		NewFlexChild(demoBandLabel(NewID(RootID, "demo/flex/c"), "auto", tokens, ColorSuccess), 0, 1, 0),
+	)
+	f.SetCrossAxisAlignment(CrossStretch)
+	return f
+}
+
+func newDemoGrid(tokens *TokenSet) *Grid {
+	return NewGrid(NewID(RootID, "demo/grid"), 3, 1,
+		demoBandLabel(NewID(RootID, "demo/grid/a"), "A", tokens, ColorAccent),
+		demoBandLabel(NewID(RootID, "demo/grid/b"), "B", tokens, ColorMuted),
+		demoBandLabel(NewID(RootID, "demo/grid/c"), "C", tokens, ColorSuccess),
+		demoBandLabel(NewID(RootID, "demo/grid/d"), "D", tokens, ColorError),
+	)
+}
+
+func newDemoInset(tokens *TokenSet) *Inset {
+	return NewInset(NewID(RootID, "demo/inset"), InsetsAll(1),
+		demoBandLabel(NewID(RootID, "demo/inset/inner"), "padded", tokens, ColorAccent))
+}
+
+func newDemoSplit(tokens *TokenSet) *SplitPane {
+	s := NewSplitPane(NewID(RootID, "demo/split"), Horizontal,
+		demoBandLabel(NewID(RootID, "demo/split/first"), "left", tokens, ColorAccent),
+		demoBandLabel(NewID(RootID, "demo/split/second"), "right", tokens, ColorMuted))
+	s.SetFraction(0.4)
+	return s
+}
+
+func newDemoViewport(tokens *TokenSet) *Viewport {
+	content := NewLabel(NewID(RootID, "demo/viewport/content"), "long content scrolled through the viewport", nil)
+	if tokens != nil {
+		content.SetStyle(cell.NoColor, tokens.Color(ColorPopupBg), 0)
+		content.SetTokens(tokens)
+	}
+	vp := NewViewport(NewID(RootID, "demo/viewport"), content)
+	vp.SetScrollOffset(5, 0)
+	return vp
 }

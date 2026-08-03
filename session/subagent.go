@@ -221,8 +221,8 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 	default:
 		icon = string(result.Status)
 	}
-	sb.WriteString(fmt.Sprintf("## Sub-Agent Result: %s [%s]\n", result.Name, result.Category))
-	sb.WriteString(fmt.Sprintf("**Status:** %s", icon))
+	fmt.Fprintf(&sb, "## Sub-Agent Result: %s [%s]\n", result.Name, result.Category)
+	fmt.Fprintf(&sb, "**Status:** %s", icon)
 	switch icon {
 	case "CRASH":
 		sb.WriteString(" — **the agent process crashed unexpectedly (internal error, NOT a normal failure). Do NOT retry the same sub-agent configuration without investigating the crash errors below.**")
@@ -238,7 +238,7 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 			} else if strings.Contains(err, "5") && (strings.Contains(err, "5") || strings.Contains(err, "50")) {
 				sb.WriteString(" — **the API server returned an error. This may be transient; retry might work.**")
 			} else {
-				sb.WriteString(fmt.Sprintf(" — **the agent failed with an error: %s**", truncateString(err, 80)))
+				fmt.Fprintf(&sb, " — **the agent failed with an error: %s**", truncateString(err, 80))
 			}
 		}
 	case "QUOTA":
@@ -246,14 +246,14 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 	}
 	if result.DurationMs > 0 {
 		dur := time.Duration(result.DurationMs) * time.Millisecond
-		sb.WriteString(fmt.Sprintf(" (%s)", dur.Round(time.Second).String()))
+		fmt.Fprintf(&sb, " (%s)", dur.Round(time.Second).String())
 	}
 	sb.WriteString("\n")
 	if result.SessionID != "" {
-		sb.WriteString(fmt.Sprintf("**Session:** %s\n", result.SessionID))
+		fmt.Fprintf(&sb, "**Session:** %s\n", result.SessionID)
 	}
 	if result.ResultPath != "" {
-		sb.WriteString(fmt.Sprintf("\n**Report:** %s (use read_file to read the full report)\n", result.ResultPath))
+		fmt.Fprintf(&sb, "\n**Report:** %s (use read_file to read the full report)\n", result.ResultPath)
 	}
 	if len(result.SummaryGist) > 0 {
 		sb.WriteString("\n")
@@ -261,15 +261,15 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 		sb.WriteString("\n")
 	}
 	if len(result.FilesRead) > 0 {
-		sb.WriteString(fmt.Sprintf("\n**Files read:** %d\n", len(result.FilesRead)))
+		fmt.Fprintf(&sb, "\n**Files read:** %d\n", len(result.FilesRead))
 		for _, f := range result.FilesRead {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
+			fmt.Fprintf(&sb, "- %s\n", f)
 		}
 	}
 	if len(result.FilesWritten) > 0 {
-		sb.WriteString(fmt.Sprintf("\n**Files written:** %d\n", len(result.FilesWritten)))
+		fmt.Fprintf(&sb, "\n**Files written:** %d\n", len(result.FilesWritten))
 		for _, f := range result.FilesWritten {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
+			fmt.Fprintf(&sb, "- %s\n", f)
 		}
 	}
 	costInfo := ""
@@ -286,12 +286,12 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 		sb.WriteString("\n" + costInfo + "\n")
 	}
 	if len(result.Errors) > 0 {
-		sb.WriteString(fmt.Sprintf("\n**Errors:** %d\n", len(result.Errors)))
+		fmt.Fprintf(&sb, "\n**Errors:** %d\n", len(result.Errors))
 		for _, e := range result.Errors {
 			if len(e) > 200 {
 				e = e[:200] + "..."
 			}
-			sb.WriteString(fmt.Sprintf("- %s\n", e))
+			fmt.Fprintf(&sb, "- %s\n", e)
 		}
 	}
 	return strings.TrimSpace(sb.String())
@@ -411,12 +411,12 @@ func (r *SubAgentRunner) ListSubAgents(params map[string]any) (tools.ToolResult,
 		if e.Status != "" {
 			status = e.Status
 		}
-		sb.WriteString(fmt.Sprintf("- %s [%s] %s", e.Name, e.Category, status))
+		fmt.Fprintf(&sb, "- %s [%s] %s", e.Name, e.Category, status)
 		if e.ElapsedSeconds > 0 {
-			sb.WriteString(fmt.Sprintf(" (%s)", (time.Duration(e.ElapsedSeconds)*time.Second).Round(time.Second)))
+			fmt.Fprintf(&sb, " (%s)", (time.Duration(e.ElapsedSeconds)*time.Second).Round(time.Second))
 		}
 		if e.StepsUsed > 0 {
-			sb.WriteString(fmt.Sprintf(" steps=%d", e.StepsUsed))
+			fmt.Fprintf(&sb, " steps=%d", e.StepsUsed)
 		}
 		sb.WriteString("\n")
 	}
@@ -870,8 +870,8 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Sub-Agent Report: %s [%s]\n\n", handle.Spec.Name, handle.Spec.Category))
-	sb.WriteString(fmt.Sprintf("Task: %s\n\n", handle.Spec.Description))
+	fmt.Fprintf(&sb, "# Sub-Agent Report: %s [%s]\n\n", handle.Spec.Name, handle.Spec.Category)
+	fmt.Fprintf(&sb, "Task: %s\n\n", handle.Spec.Description)
 
 	// Determine if the agent actually ran or failed immediately
 	hadAssistantMsg := false
@@ -887,11 +887,11 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 		sb.WriteString("## Failure Summary\n\n")
 		sb.WriteString("The sub-agent encountered an error before it could start working. The LLM API call failed, so no assistant messages were generated and no work was performed.\n\n")
 		if len(result.Errors) == 1 {
-			sb.WriteString(fmt.Sprintf("**Error:** %s\n", result.Errors[0]))
+			fmt.Fprintf(&sb, "**Error:** %s\n", result.Errors[0])
 		} else {
-			sb.WriteString(fmt.Sprintf("**Errors (%d total):**\n", len(result.Errors)))
+			fmt.Fprintf(&sb, "**Errors (%d total):**\n", len(result.Errors))
 			for _, e := range result.Errors {
-				sb.WriteString(fmt.Sprintf("- %s\n", e))
+				fmt.Fprintf(&sb, "- %s\n", e)
 			}
 		}
 		sb.WriteString("\n**No files were read or written.**\n")
@@ -910,13 +910,13 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 		if len(filesRead) > 0 {
 			sb.WriteString("\n## Files Read\n\n")
 			for _, f := range filesRead {
-				sb.WriteString(fmt.Sprintf("- %s\n", f))
+				fmt.Fprintf(&sb, "- %s\n", f)
 			}
 		}
 		if len(filesWritten) > 0 {
 			sb.WriteString("\n## Files Written\n\n")
 			for _, f := range filesWritten {
-				sb.WriteString(fmt.Sprintf("- %s\n", f))
+				fmt.Fprintf(&sb, "- %s\n", f)
 			}
 		}
 	}
@@ -927,7 +927,7 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 			if len(e) > 200 {
 				e = e[:200] + "..."
 			}
-			sb.WriteString(fmt.Sprintf("- %s\n", e))
+			fmt.Fprintf(&sb, "- %s\n", e)
 		}
 	}
 

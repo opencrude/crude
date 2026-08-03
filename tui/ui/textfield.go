@@ -293,22 +293,24 @@ func (t *TextField) paintCursor(buf *surface.CellBuffer, x, y int, bg cell.Color
 }
 
 // Handle implements keyboard and paste editing.
-func (t *TextField) Handle(ctx EventContext, msg tea.Msg) EventResult {
+func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 	if t.disabled {
 		return EventResult{}
 	}
-	switch m := msg.(type) {
-	case tea.KeyPressMsg:
-		return t.handleKey(m)
-	case tea.PasteMsg:
-		if t.readOnly {
-			return EventResult{Handled: true}
+	switch evt.Kind {
+	case EventKey:
+		return t.handleKey(evt.Key)
+	case EventCustom:
+		if paste, ok := evt.Custom.(tea.PasteMsg); ok {
+			if t.readOnly {
+				return EventResult{Handled: true}
+			}
+			t.edit.InsertRunes(paste.Content)
+			t.ensureCursorVisible()
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
-		t.edit.InsertRunes(m.Content)
-		t.ensureCursorVisible()
-		return EventResult{Handled: true, Invalidate: InvalidatePaint}
-	case tea.MouseClickMsg:
-		if m.Button != tea.MouseLeft {
+	case EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
 		}
 		// Position cursor from local X

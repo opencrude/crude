@@ -73,7 +73,7 @@ func (e *Editor) handleScrollbarEvent(msg tea.Msg, localY int) bool {
 	if e.sbCtrl == nil {
 		return false
 	}
-	res := e.sbCtrl.Handle(ui.EventContext{LocalY: localY}, msg)
+	res := e.sbCtrl.Handle(ui.EventContext{LocalY: localY}, ui.NormalizeEvent(msg))
 	if res.Handled {
 		e.applyScrollbarOffset()
 	}

@@ -112,7 +112,7 @@ func TestBracketedPasteContractTable(t *testing.T) {
 			f.SetValue(tc.initial)
 			f.Layout(LayoutContext{}, Rect{W: 40, H: 1})
 			if tc.paste != "" {
-				f.Handle(EventContext{Focused: true}, tea.PasteMsg{Content: tc.paste})
+				f.Handle(EventContext{Focused: true}, CustomEvent(tea.PasteMsg{Content: tc.paste}))
 			}
 			if got := f.Value(); got != tc.wantField {
 				t.Fatalf("value=%q want %q", got, tc.wantField)
@@ -124,7 +124,7 @@ func TestBracketedPasteContractTable(t *testing.T) {
 			ta.SetValue(tc.initial)
 			ta.Layout(LayoutContext{}, Rect{W: 40, H: 5})
 			if tc.paste != "" {
-				ta.Handle(EventContext{Focused: true}, tea.PasteMsg{Content: tc.paste})
+				ta.Handle(EventContext{Focused: true}, CustomEvent(tea.PasteMsg{Content: tc.paste}))
 			}
 			if got := ta.Value(); got != tc.wantArea {
 				t.Fatalf("value=%q want %q", got, tc.wantArea)

@@ -95,14 +95,14 @@ func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) (string,
 func buildSubAgentAssignment(spec SubAgentSpec) string {
 	var b strings.Builder
 	b.WriteString("# Assignment\n")
-	b.WriteString(fmt.Sprintf("- Name: %s\n", emptyDefault(spec.Name, "unnamed")))
-	b.WriteString(fmt.Sprintf("- Category: %s\n", emptyDefault(spec.Category, "sub-agent")))
-	b.WriteString(fmt.Sprintf("- Description: %s", emptyDefault(spec.Description, "No description provided.")))
+	fmt.Fprintf(&b, "- Name: %s\n", emptyDefault(spec.Name, "unnamed"))
+	fmt.Fprintf(&b, "- Category: %s\n", emptyDefault(spec.Category, "sub-agent"))
+	fmt.Fprintf(&b, "- Description: %s", emptyDefault(spec.Description, "No description provided."))
 	if spec.ParentID != "" {
-		b.WriteString(fmt.Sprintf("\n- Parent: %s", spec.ParentID))
+		fmt.Fprintf(&b, "\n- Parent: %s", spec.ParentID)
 	}
 	if spec.ID != "" {
-		b.WriteString(fmt.Sprintf("\n- Agent ID: %s", spec.ID))
+		fmt.Fprintf(&b, "\n- Agent ID: %s", spec.ID)
 	}
 	return b.String()
 }

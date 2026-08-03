@@ -71,10 +71,11 @@ func New(th *theme.Theme) *Screen {
 	s.title = ui.NewLabel(TitleID, "Past sessions", th)
 	s.title.SetColorRole(ui.ColorFg)
 
-	search := ui.NewSearchField(SearchID, tokens)
+	search := ui.NewFilterField(SearchID, tokens)
 	search.SetPrompt("> ")
 	search.SetPlaceholder("Filter sessions")
 	search.SetSubmitAction("")
+	search.OnChanged(s.applyFilterValue)
 	s.search = &filterSearch{Base: ui.NewBase(SearchID), field: search, owner: s}
 
 	list := ui.NewList(ListID, tokens)
@@ -212,8 +213,9 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 
-func (s *Screen) Handle(_ ui.EventContext, msg tea.Msg) ui.EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() {
+		key := evt.Key
 		switch {
 		case key.Code == tea.KeyEsc:
 			if s.filterOn {
@@ -459,11 +461,12 @@ func (p *pickerList) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (p *pickerList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	p.list.Paint(buf, ox+p.Bounds().X, oy+p.Bounds().Y, ctx)
 }
-func (p *pickerList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (p *pickerList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if p.owner == nil {
-		return p.list.Handle(ctx, msg)
+		return p.list.Handle(ctx, evt)
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch {
 		case key.Code == tea.KeyEsc:
 			if p.owner.filterOn {
@@ -475,14 +478,13 @@ func (p *pickerList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			p.owner.activateFilter()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
 		case key.String() == "k":
-			return p.list.Handle(ctx, tea.KeyPressMsg{Code: tea.KeyUp})
+			return p.list.Handle(ctx, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 		case key.String() == "j":
-			return p.list.Handle(ctx, tea.KeyPressMsg{Code: tea.KeyDown})
+			return p.list.Handle(ctx, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 		}
 	}
-	result := p.list.Handle(ctx, msg)
-	click, clicked := msg.(tea.MouseClickMsg)
-	if clicked && click.Button == tea.MouseLeft && result.Action != nil {
+	result := p.list.Handle(ctx, evt)
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && result.Action != nil {
 		index := p.list.SelectedIndex()
 		now := time.Now()
 		if p.lastClick != index || now.Sub(p.lastClickTime) > 500*time.Millisecond {
@@ -499,10 +501,11 @@ func (p *pickerList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 func (p *pickerList) Semantics() ui.Semantics       { return p.list.Semantics() }
 func (p *pickerList) SetTokens(tokens *ui.TokenSet) { p.list.SetTokens(tokens) }
 
-// filterSearch paints/handles the search field and refreshes the list on each edit.
+// filterSearch paints/handles the filter field and re-applies it to the list
+// on every edit (FilterField.OnChanged, see New).
 type filterSearch struct {
 	ui.Base
-	field *ui.SearchField
+	field *ui.FilterField
 	owner *Screen
 }
 
@@ -516,17 +519,12 @@ func (f *filterSearch) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (f *filterSearch) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	f.field.Paint(buf, ox+f.Bounds().X, oy+f.Bounds().Y, ctx)
 }
-func (f *filterSearch) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEsc {
+func (f *filterSearch) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() && evt.Key.Code == tea.KeyEsc {
 		f.owner.deactivateFilter()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
 	}
-	res := f.field.Handle(ctx, msg)
-	if f.owner != nil {
-		f.owner.applyFilterValue(f.field.Value())
-		res.Invalidate |= ui.InvalidatePaint | ui.InvalidateLayout
-	}
-	return res
+	return f.field.Handle(ctx, evt)
 }
 func (f *filterSearch) Semantics() ui.Semantics       { return f.field.Semantics() }
 func (f *filterSearch) SetTokens(tokens *ui.TokenSet) { f.field.SetTokens(tokens) }

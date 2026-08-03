@@ -100,21 +100,21 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 	buf.WriteString(originX+r.X, originY+r.Y, rendering.TruncateVisual(text, r.W, ""), fg, bg, attr)
 }
 
-func (b *Button) Handle(ctx EventContext, msg tea.Msg) EventResult {
+func (b *Button) Handle(ctx EventContext, evt Event) EventResult {
 	if b.disabled {
 		return EventResult{}
 	}
-	switch m := msg.(type) {
-	case tea.KeyPressMsg:
-		if m.Code == tea.KeyEnter || m.Code == tea.KeySpace {
+	switch evt.Kind {
+	case EventKey:
+		if evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeySpace {
 			return EventResult{
 				Handled:    true,
 				Action:     &Action{ID: b.actionID, Payload: b.label},
 				Invalidate: InvalidatePaint,
 			}
 		}
-	case tea.MouseClickMsg:
-		if m.Button == tea.MouseLeft {
+	case EventMouseClick:
+		if evt.MouseClick.Button == tea.MouseLeft {
 			return EventResult{
 				Handled:    true,
 				Action:     &Action{ID: b.actionID, Payload: b.label},

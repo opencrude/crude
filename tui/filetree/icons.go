@@ -46,6 +46,11 @@ type IconResolver struct {
 	// When false, the Unicode fallback set is used instead.
 	UseNerdFont bool
 
+	// Glyphs is the expand/collapse glyph table used by the non-NerdFont
+	// directory fallback. Defaults to theme.DefaultGlyphs(); themes may
+	// override via SetGlyphs.
+	Glyphs theme.Glyphs
+
 	// DirColor is the color for directory icons.
 	// Defaults to iconColorDir if nil/not set.
 	DirColor color.Color
@@ -65,10 +70,32 @@ type IconResolver struct {
 func NewIconResolver() *IconResolver {
 	return &IconResolver{
 		UseNerdFont:  DetectNerdFont(),
+		Glyphs:       theme.DefaultGlyphs(),
 		DirColor:     iconColorDir,
 		FileColor:    iconColorFile,
 		SymlinkColor: iconColorSymlink,
 	}
+}
+
+// SetGlyphs overrides the expand/collapse glyph tokens used by the
+// non-NerdFont directory fallback. An empty value restores the defaults.
+func (r *IconResolver) SetGlyphs(g theme.Glyphs) {
+	r.Glyphs = g
+}
+
+// expandedGlyph returns the expand/collapse glyph for a directory state.
+func (r *IconResolver) expandedGlyph(expanded bool) string {
+	g := r.Glyphs
+	if g.TreeExpanded == "" {
+		g.TreeExpanded = "▾"
+	}
+	if g.TreeCollapsed == "" {
+		g.TreeCollapsed = "▸"
+	}
+	if expanded {
+		return g.TreeExpanded
+	}
+	return g.TreeCollapsed
 }
 
 // ApplyTheme applies theme colors to the IconResolver.
@@ -115,9 +142,9 @@ func (r *IconResolver) dirIcon(expanded bool) IconResult {
 		return IconResult{Icon: "\uf07b", Color: r.DirColor}
 	}
 	if expanded {
-		return IconResult{Icon: "▾", Color: r.DirColor}
+		return IconResult{Icon: r.expandedGlyph(true), Color: r.DirColor}
 	}
-	return IconResult{Icon: "▸", Color: r.DirColor}
+	return IconResult{Icon: r.expandedGlyph(false), Color: r.DirColor}
 }
 
 // symlinkIcon returns the icon for a symbolic link.

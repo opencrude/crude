@@ -38,7 +38,7 @@ func TestTextArea_SetValueMovesCursorToEnd(t *testing.T) {
 func TestTextArea_EnterInsertsNewlineInMultiLine(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 40, H: 5})
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnter})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter}))
 	if ta.Value() != "\n" {
 		t.Fatalf("value=%q want \\n", ta.Value())
 	}
@@ -51,12 +51,12 @@ func TestTextArea_EnterSubmitsInSingleLine(t *testing.T) {
 	ta := NewTextArea("test/area", nil, false)
 	ta.SetSubmitAction("submit")
 	ta.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 40, H: 1})
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: 'h', Text: "h"})
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: 'i', Text: "i"})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'h', Text: "h"}))
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'i', Text: "i"}))
 	if ta.Value() != "hi" {
 		t.Fatalf("value=%q want hi", ta.Value())
 	}
-	res := ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnter})
+	res := ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter}))
 	if res.Action == nil || res.Action.ID != "submit" || res.Action.Payload != "hi" {
 		t.Fatalf("enter should submit: %+v", res.Action)
 	}
@@ -83,8 +83,8 @@ func TestTextArea_CtrlEnterSubmitsEvenInMultiLine(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetSubmitAction("submit")
 	ta.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 40, H: 5})
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: 'a', Text: "a"})
-	res := ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'a', Text: "a"}))
+	res := ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl}))
 	if res.Action == nil || res.Action.ID != "submit" {
 		t.Fatalf("ctrl+enter should submit: %+v", res.Action)
 	}
@@ -97,23 +97,23 @@ func TestTextArea_VerticalNavigationAcrossLines(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("line1\nline2\nline3")
 	// cursor at end of line3 (2,5)
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyUp})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 	if ta.CurLine() != 1 {
 		t.Fatalf("up from line3: line=%d want 1", ta.CurLine())
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyUp})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 	if ta.CurLine() != 0 {
 		t.Fatalf("up from line2: line=%d want 0", ta.CurLine())
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyUp})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 	if ta.CurLine() != 0 || ta.CurCol() != 0 {
 		t.Fatalf("up at top should stick: line=%d col=%d", ta.CurLine(), ta.CurCol())
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDown})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	if ta.CurLine() != 1 {
 		t.Fatalf("down from line1: line=%d want 1", ta.CurLine())
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDown})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	if ta.CurLine() != 2 {
 		t.Fatalf("down from line2: line=%d want 2", ta.CurLine())
 	}
@@ -123,16 +123,16 @@ func TestTextArea_HomeEndAreLineAware(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("hello\nworld")
 	// cursor at end of "world" (1,5)
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyHome})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyHome}))
 	if ta.CurLine() != 1 || ta.CurCol() != 0 {
 		t.Fatalf("home: cursor=(%d,%d) want (1,0)", ta.CurLine(), ta.CurCol())
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnd})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnd}))
 	if ta.CurLine() != 1 || ta.CurCol() != 5 {
 		t.Fatalf("end: cursor=(%d,%d) want (1,5)", ta.CurLine(), ta.CurCol())
 	}
 	// Ctrl+Home goes to first line
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl}))
 	if ta.CurLine() != 0 || ta.CurCol() != 0 {
 		t.Fatalf("ctrl+home: cursor=(%d,%d) want (0,0)", ta.CurLine(), ta.CurCol())
 	}
@@ -143,7 +143,7 @@ func TestTextArea_BackspaceAtLineStartJoinsLines(t *testing.T) {
 	ta.SetValue("line1\nline2")
 	// cursor at (1,0)
 	ta.SetCursorFlat(6)
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyBackspace}))
 	if ta.Value() != "line1line2" {
 		t.Fatalf("value=%q want line1line2", ta.Value())
 	}
@@ -156,7 +156,7 @@ func TestTextArea_DeleteAtLineEndJoinsLines(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("line1\nline2")
 	ta.SetCursorFlat(5) // end of line1
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDelete})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDelete}))
 	if ta.Value() != "line1line2" {
 		t.Fatalf("value=%q want line1line2", ta.Value())
 	}
@@ -166,7 +166,7 @@ func TestTextArea_DeleteToLineStartStopsAtLineBoundary(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("line1\nline2")
 	ta.SetCursorFlat(8) // 'n' in "line2" (l-i-n-e-2 = cols 0-4, flat 6-10)
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl}))
 	// Ctrl+U deletes from line2 start (flat 6) to cursor (flat 8): removes "li", leaves "ne2"
 	if ta.Value() != "line1\nne2" {
 		t.Fatalf("value=%q want 'line1\\nne2'", ta.Value())
@@ -188,7 +188,7 @@ func TestTextArea_SelectionSpansLines(t *testing.T) {
 
 func TestTextArea_PasteInsertsStringWithNewlines(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
-	ta.Handle(EventContext{Focused: true}, tea.PasteMsg{Content: "hello\nworld"})
+	ta.Handle(EventContext{Focused: true}, CustomEvent(tea.PasteMsg{Content: "hello\nworld"}))
 	if ta.Value() != "hello\nworld" {
 		t.Fatalf("value=%q", ta.Value())
 	}
@@ -383,9 +383,20 @@ func TestTextArea_RuneSafeUnicode(t *testing.T) {
 		t.Fatalf("len=%d want 10", ta.Len())
 	}
 	// Backspace removes last rune
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyBackspace}))
 	if ta.Value() != "日本語\n🌍worl" {
 		t.Fatalf("value=%q", ta.Value())
+	}
+}
+
+// TestTextArea_TypedZWJEmojiPreserved locks the grapheme-joiner fix: typing a
+// ZWJ family emoji through the engine keeps the U+200D joiners intact.
+func TestTextArea_TypedZWJEmojiPreserved(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	family := "👨‍👩‍👧"
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: '👨', Text: family}))
+	if ta.Value() != family {
+		t.Fatalf("typed ZWJ runes dropped: value=%q want %q", ta.Value(), family)
 	}
 }
 
@@ -395,13 +406,13 @@ func TestTextArea_GoalColumnPreservedAcrossShorterLine(t *testing.T) {
 	ta.SetValue("long line here\nx")
 	// cursor at end of "x" (1,1)
 	ta.SetCursorFlat(15) // at 'l' in "long line here"
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDown})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	// Should clamp to end of "x" (col 1)
 	if ta.CurLine() != 1 || ta.CurCol() != 1 {
 		t.Fatalf("down to short line: cursor=(%d,%d) want (1,1)", ta.CurLine(), ta.CurCol())
 	}
 	// Up should try to restore the goal column
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyUp})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 	if ta.CurLine() != 0 {
 		t.Fatalf("up back: line=%d want 0", ta.CurLine())
 	}
@@ -421,7 +432,7 @@ func TestTextArea_SetTextWidthUpdatesWrappedNavigation(t *testing.T) {
 	if got := ta.CursorVisualLine(); got != 1 {
 		t.Fatalf("cursor visual line=%d want 1", got)
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyUp})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 	if ta.CurLine() != 0 || ta.CurCol() != 4 {
 		t.Fatalf("wrapped up cursor=(%d,%d) want (0,4)", ta.CurLine(), ta.CurCol())
 	}
@@ -446,7 +457,7 @@ func TestTextArea_AtomicRangeBackspaceDeletesWholeToken(t *testing.T) {
 	ta.SetAtomicRanges([]AtomicRange{{ID: "ref", Start: 6, End: 12}})
 	// cursor right after ']' at flat 12
 	ta.SetCursorFlat(12)
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyBackspace}))
 	if ta.Value() != "hello  world" {
 		t.Fatalf("atomic backspace: value=%q", ta.Value())
 	}
@@ -488,17 +499,17 @@ func TestTextArea_WordMotionCtrlLeftRight(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("hello world")
 	ta.SetCursorFlat(0)
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl}))
 	// cursorNextWord from 0: 'h' not space → skip word "hello" → at 5 (space)
 	if ta.CursorFlat() != 5 {
 		t.Fatalf("ctrl+right: cursor=%d want 5 (end of 'hello')", ta.CursorFlat())
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl}))
 	// from 5: skip spaces → at 'w' (6), skip word "world" → at 11
 	if ta.CursorFlat() != 11 {
 		t.Fatalf("ctrl+right again: cursor=%d want 11", ta.CursorFlat())
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl}))
 	// cursorPrevWord from 11: pos-- → 10 ('d'), 'd' not space, skip word back → 6 ('w')
 	if ta.CursorFlat() != 6 {
 		t.Fatalf("ctrl+left: cursor=%d want 6 (start of 'world')", ta.CursorFlat())
@@ -521,7 +532,7 @@ func TestTextArea_ShiftArrowStartsSelection(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("hello")
 	ta.SetCursorFlat(5) // end
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift}))
 	if !ta.HasActiveSelection() {
 		t.Fatal("shift+left should start selection")
 	}
@@ -529,7 +540,7 @@ func TestTextArea_ShiftArrowStartsSelection(t *testing.T) {
 	if s != 4 || e != 5 {
 		t.Fatalf("selection=[%d,%d) want [4,5)", s, e)
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift}))
 	s2, e2 := ta.SelectionRange()
 	if s2 != 3 || e2 != 5 {
 		t.Fatalf("extended selection=[%d,%d) want [3,5)", s2, e2)
@@ -540,14 +551,14 @@ func TestTextArea_ShiftHomeEndSelectsLine(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("hello world")
 	ta.SetCursorFlat(5) // at space
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModShift})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModShift}))
 	s, e := ta.SelectionRange()
 	if s != 0 || e != 5 {
 		t.Fatalf("shift+home selection=[%d,%d) want [0,5)", s, e)
 	}
 	// Shift+End extends from the anchor (5) to end, flipping the selection
 	// direction — this matches standard editor behavior.
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModShift})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModShift}))
 	s2, e2 := ta.SelectionRange()
 	if s2 != 5 || e2 != 11 {
 		t.Fatalf("shift+end selection=[%d,%d) want [5,11)", s2, e2)
@@ -561,7 +572,7 @@ func TestTextArea_PlainArrowClearsSelection(t *testing.T) {
 	if !ta.HasActiveSelection() {
 		t.Fatal("selection should be active")
 	}
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyLeft})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyLeft}))
 	if ta.HasActiveSelection() {
 		t.Fatal("plain left should clear selection")
 	}
@@ -570,7 +581,7 @@ func TestTextArea_PlainArrowClearsSelection(t *testing.T) {
 func TestTextArea_CtrlASelectsAll(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("hello\nworld")
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}))
 	if !ta.HasActiveSelection() {
 		t.Fatal("Ctrl+A should select all")
 	}
@@ -599,7 +610,7 @@ func TestTextArea_BackspaceDeletesSelection(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("hello world")
 	ta.SetSelection(0, 6)
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyBackspace}))
 	if ta.Value() != "world" {
 		t.Fatalf("backspace selection: value=%q want 'world'", ta.Value())
 	}
@@ -612,7 +623,7 @@ func TestTextArea_DeleteDeletesSelection(t *testing.T) {
 	ta := NewTextArea("test/area", nil, true)
 	ta.SetValue("hello world")
 	ta.SetSelection(0, 6)
-	ta.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDelete})
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDelete}))
 	if ta.Value() != "world" {
 		t.Fatalf("delete selection: value=%q want 'world'", ta.Value())
 	}

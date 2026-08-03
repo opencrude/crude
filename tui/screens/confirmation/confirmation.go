@@ -87,11 +87,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 	r := s.Bounds()
 	ui.PaintTree(s.form, buf, originX+r.X, originY+r.Y, ctx)
 }
-func (s *Screen) Handle(_ ui.EventContext, msg tea.Msg) ui.EventResult {
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok {
+func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+	if !evt.IsKey() {
 		return ui.EventResult{}
 	}
+	key := evt.Key
 	switch {
 	case key.Code == tea.KeyEsc || key.String() == "n":
 		return s.result("deny")

@@ -403,7 +403,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Paint
 	}
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
 	case "find.open":
@@ -443,11 +443,12 @@ func (q *findQuery) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintConte
 }
 func (q *findQuery) Semantics() ui.Semantics       { return q.field.Semantics() }
 func (q *findQuery) SetTokens(tokens *ui.TokenSet) { q.field.SetTokens(tokens) }
-func (q *findQuery) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if q.owner == nil {
-		return q.field.Handle(ctx, msg)
+		return q.field.Handle(ctx, evt)
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch key.Code {
 		case tea.KeyEsc:
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{Screen: q.owner} }}
@@ -455,7 +456,7 @@ func (q *findQuery) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			return ui.EventResult{Handled: true, Cmd: q.owner.openSelected()}
 		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 			q.owner.focusID(ListID)
-			result := q.owner.list.Handle(ui.EventContext{Focused: true}, msg)
+			result := q.owner.list.Handle(ui.EventContext{Focused: true}, evt)
 			result.Invalidate |= ui.InvalidateFocus | ui.InvalidatePaint
 			return result
 		case tea.KeyTab:
@@ -468,11 +469,11 @@ func (q *findQuery) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			return q.owner.HandleAction(ctx, ui.Action{ID: "find.toggle-regex"})
 		}
 	}
-	return q.applyFilter(ctx, msg)
+	return q.applyFilter(ctx, evt)
 }
-func (q *findQuery) applyFilter(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (q *findQuery) applyFilter(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	before := q.field.Value()
-	result := q.field.Handle(ctx, msg)
+	result := q.field.Handle(ctx, evt)
 	if q.field.Value() != before {
 		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
 		result.Cmd = combineFindCmd(result.Cmd, q.owner.queryChanged())
@@ -498,11 +499,12 @@ func (l *findList) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (l *findList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	l.list.Paint(buf, ox+l.Bounds().X, oy+l.Bounds().Y, ctx)
 }
-func (l *findList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if l.owner == nil {
-		return l.list.Handle(ctx, msg)
+		return l.list.Handle(ctx, evt)
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		if key.String() == "ctrl+r" {
 			return l.owner.HandleAction(ctx, ui.Action{ID: "find.toggle-regex"})
 		}
@@ -518,7 +520,7 @@ func (l *findList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 			old := l.list.SelectedIndex()
-			result := l.list.Handle(ctx, msg)
+			result := l.list.Handle(ctx, evt)
 			if l.list.SelectedIndex() != old {
 				l.owner.selectIndex(l.list.SelectedIndex())
 			}
@@ -526,17 +528,18 @@ func (l *findList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 		default:
 			if key.Text != "" && !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt) {
 				l.owner.focusID(QueryID)
-				return l.owner.queryField.applyFilter(ui.EventContext{Focused: true}, msg)
+				return l.owner.queryField.applyFilter(ui.EventContext{Focused: true}, evt)
 			}
 		}
 	}
-	if _, ok := msg.(tea.PasteMsg); ok {
-		l.owner.focusID(QueryID)
-		return l.owner.queryField.applyFilter(ui.EventContext{Focused: true}, msg)
+	if evt.Kind == ui.EventCustom {
+		if _, ok := evt.Custom.(tea.PasteMsg); ok {
+			l.owner.focusID(QueryID)
+			return l.owner.queryField.applyFilter(ui.EventContext{Focused: true}, evt)
+		}
 	}
-	result := l.list.Handle(ctx, msg)
-	click, clicked := msg.(tea.MouseClickMsg)
-	if clicked && click.Button == tea.MouseLeft && result.Action != nil {
+	result := l.list.Handle(ctx, evt)
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && result.Action != nil {
 		index := l.list.SelectedIndex()
 		now := time.Now()
 		if l.lastClick != index || now.Sub(l.lastClickTime) > 400*time.Millisecond {
@@ -590,7 +593,7 @@ func (p *previewPane) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.
 	ed.Render(p.owner.previewSurf, wctx)
 	surface.BlitOpaque(buf, originX+r.X, originY+r.Y, p.owner.previewSurf.Buffer())
 }
-func (p *previewPane) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult { return ui.EventResult{} }
+func (p *previewPane) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
 func (p *previewPane) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Preview"}
 }

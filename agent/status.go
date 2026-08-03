@@ -37,7 +37,7 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 			if len(objRunes) > maxObjRunes {
 				objective = string(objRunes[:maxObjRunes]) + "…"
 			}
-			sb.WriteString(fmt.Sprintf("Plan: %s (%s)\n", objective, statusLabel))
+			fmt.Fprintf(&sb, "Plan: %s (%s)\n", objective, statusLabel)
 
 			rawStatuses, _ := state.GetFromContext("plan_step_statuses")
 			rawLabels, _ := state.GetFromContext("plan_step_labels")
@@ -80,16 +80,16 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 					summaryParts = append(summaryParts, fmt.Sprintf("blocker: %s", focus.CurrentBlocker.Message))
 				}
 				if len(summaryParts) > 0 {
-					sb.WriteString(fmt.Sprintf("  %s\n", strings.Join(summaryParts, "  |  ")))
+					fmt.Fprintf(&sb, "  %s\n", strings.Join(summaryParts, "  |  "))
 				}
 			}
 		} else {
-			sb.WriteString(fmt.Sprintf("Goal: %s (%s)\n", focus.Intent, statusLabel))
+			fmt.Fprintf(&sb, "Goal: %s (%s)\n", focus.Intent, statusLabel)
 			if focus.OriginalQuery != "" {
-				sb.WriteString(fmt.Sprintf("  request: %s\n", focus.OriginalQuery))
+				fmt.Fprintf(&sb, "  request: %s\n", focus.OriginalQuery)
 			}
 			if focus.CurrentBlocker != nil {
-				sb.WriteString(fmt.Sprintf("  blocker [%s]: %s\n", focus.CurrentBlocker.Type.String(), focus.CurrentBlocker.Message))
+				fmt.Fprintf(&sb, "  blocker [%s]: %s\n", focus.CurrentBlocker.Type.String(), focus.CurrentBlocker.Message)
 			}
 		}
 	}
@@ -98,7 +98,7 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 	if len(suspended) > 0 {
 		sb.WriteString("Suspended:\n")
 		for _, g := range suspended {
-			sb.WriteString(fmt.Sprintf("  %s (%s)\n", g.Intent, goalStatusLabel(g.Status)))
+			fmt.Fprintf(&sb, "  %s (%s)\n", g.Intent, goalStatusLabel(g.Status))
 		}
 	}
 
@@ -197,7 +197,7 @@ func BuildAsyncCommandStatus(mgr *fileio.AsyncCommandManager) string {
 			marker = "!"
 		}
 		dur := c.Duration.Round(time.Second).String()
-		sb.WriteString(fmt.Sprintf("  %s [%s]: %s (PID %d, %s)", marker, c.Handle, c.Status, c.PID, dur))
+		fmt.Fprintf(&sb, "  %s [%s]: %s (PID %d, %s)", marker, c.Handle, c.Status, c.PID, dur)
 		if c.Status == fileio.AsyncFailed && c.Error != "" {
 			sb.WriteString(" — " + c.Error)
 		}

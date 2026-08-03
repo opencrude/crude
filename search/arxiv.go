@@ -166,7 +166,7 @@ func extractArxivLinks(links []arxivLink) (pdfURL, absURL string) {
 
 func formatArxivResults(query string, results []ArxivResult) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("arXiv search results for: %s\n\n", query))
+	fmt.Fprintf(&sb, "arXiv search results for: %s\n\n", query)
 
 	for i, r := range results {
 		authorStr := strings.Join(r.Authors, ", ")
@@ -174,21 +174,21 @@ func formatArxivResults(query string, results []ArxivResult) string {
 			authorStr = strings.Join(r.Authors[:5], ", ") + " et al."
 		}
 
-		sb.WriteString(fmt.Sprintf("%d. **%s**\n", i+1, r.Title))
-		sb.WriteString(fmt.Sprintf("   Authors: %s\n", authorStr))
+		fmt.Fprintf(&sb, "%d. **%s**\n", i+1, r.Title)
+		fmt.Fprintf(&sb, "   Authors: %s\n", authorStr)
 		if r.Date != "" {
-			sb.WriteString(fmt.Sprintf("   Published: %s\n", r.Date))
+			fmt.Fprintf(&sb, "   Published: %s\n", r.Date)
 		}
 		if len(r.Categories) > 0 {
-			sb.WriteString(fmt.Sprintf("   Categories: %s\n", strings.Join(r.Categories, ", ")))
+			fmt.Fprintf(&sb, "   Categories: %s\n", strings.Join(r.Categories, ", "))
 		}
 		if r.PDFURL != "" {
-			sb.WriteString(fmt.Sprintf("   PDF: %s\n", r.PDFURL))
+			fmt.Fprintf(&sb, "   PDF: %s\n", r.PDFURL)
 		}
 		if r.AbsURL != "" {
-			sb.WriteString(fmt.Sprintf("   URL: %s\n", r.AbsURL))
+			fmt.Fprintf(&sb, "   URL: %s\n", r.AbsURL)
 		}
-		sb.WriteString(fmt.Sprintf("   Abstract: %s\n\n", r.Abstract))
+		fmt.Fprintf(&sb, "   Abstract: %s\n\n", r.Abstract)
 	}
 	return sb.String()
 }

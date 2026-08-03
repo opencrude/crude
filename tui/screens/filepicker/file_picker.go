@@ -77,9 +77,10 @@ func New(th *theme.Theme) *Screen {
 	tokens := ui.NewTokenSet(th)
 	s := &Screen{Base: ui.NewBase(ScreenID), tokens: tokens, icons: filetree.NewIconResolver()}
 	s.icons.ApplyTheme(&th.Colors.Tree)
-	field := ui.NewTextField(FilterID, tokens)
+	field := ui.NewFilterField(FilterID, tokens)
 	field.SetPrompt("> ")
 	field.SetSubmitAction("")
+	field.OnChanged(func(string) { s.sync() })
 	s.filter = &pickerFilter{Base: ui.NewBase(FilterID), field: field, owner: s}
 	s.breadcrumb = ui.NewLabel(BreadcrumbID, "", th)
 	s.breadcrumb.SetColorRole(ui.ColorMuted)
@@ -167,7 +168,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})
 }
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
-func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult       { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult       { return ui.EventResult{} }
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
 	case "filepicker.entry.activate":
@@ -323,7 +324,7 @@ func (s *Screen) navigateParent() ui.EventResult {
 
 type pickerFilter struct {
 	ui.Base
-	field *ui.TextField
+	field *ui.FilterField
 	owner *Screen
 }
 
@@ -337,11 +338,12 @@ func (p *pickerFilter) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (p *pickerFilter) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	p.field.Paint(buf, ox+p.Bounds().X, oy+p.Bounds().Y, ctx)
 }
-func (p *pickerFilter) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (p *pickerFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if p.owner == nil {
-		return p.field.Handle(ctx, msg)
+		return p.field.Handle(ctx, evt)
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch {
 		case key.Code == tea.KeyEsc:
 			return p.owner.cancel()
@@ -359,7 +361,7 @@ func (p *pickerFilter) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			return p.owner.navigateParent()
 		case key.Code == tea.KeyUp || key.Code == tea.KeyDown || key.Code == tea.KeyPgUp || key.Code == tea.KeyPgDown || key.Code == tea.KeyHome || key.Code == tea.KeyEnd:
 			p.owner.focusID(ListID)
-			result := p.owner.list.list.Handle(ui.EventContext{Focused: true}, msg)
+			result := p.owner.list.list.Handle(ui.EventContext{Focused: true}, evt)
 			p.owner.syncPrimary()
 			return result
 		case key.Code == tea.KeyTab:
@@ -371,13 +373,8 @@ func (p *pickerFilter) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
 	}
-	before := p.field.Value()
-	result := p.field.Handle(ctx, msg)
-	if p.field.Value() != before {
-		p.owner.sync()
-		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
-	}
-	return result
+	// OnChanged (see New) re-applies the filter after the shared engine edits.
+	return p.field.Handle(ctx, evt)
 }
 func (p *pickerFilter) Semantics() ui.Semantics       { return p.field.Semantics() }
 func (p *pickerFilter) SetTokens(tokens *ui.TokenSet) { p.field.SetTokens(tokens) }
@@ -400,11 +397,12 @@ func (p *pickerList) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (p *pickerList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	p.list.Paint(buf, ox+p.Bounds().X, oy+p.Bounds().Y, ctx)
 }
-func (p *pickerList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (p *pickerList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if p.owner == nil {
-		return p.list.Handle(ctx, msg)
+		return p.list.Handle(ctx, evt)
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch {
 		case key.Code == tea.KeyEsc:
 			return p.owner.cancel()
@@ -415,7 +413,7 @@ func (p *pickerList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 				return p.owner.navigateParent()
 			}
 			p.owner.focusID(FilterID)
-			return p.owner.filter.Handle(ui.EventContext{Focused: true}, msg)
+			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
 		case key.Code == tea.KeyTab:
 			if key.Mod.Contains(tea.ModShift) {
 				p.owner.focusID(FilterID)
@@ -425,17 +423,18 @@ func (p *pickerList) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		case key.Text != "" && !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt):
 			p.owner.focusID(FilterID)
-			return p.owner.filter.Handle(ui.EventContext{Focused: true}, msg)
+			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
 		}
 	}
-	if _, ok := msg.(tea.PasteMsg); ok {
-		p.owner.focusID(FilterID)
-		return p.owner.filter.Handle(ui.EventContext{Focused: true}, msg)
+	if evt.Kind == ui.EventCustom {
+		if _, ok := evt.Custom.(tea.PasteMsg); ok {
+			p.owner.focusID(FilterID)
+			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
+		}
 	}
-	result := p.list.Handle(ctx, msg)
+	result := p.list.Handle(ctx, evt)
 	p.owner.syncPrimary()
-	click, clicked := msg.(tea.MouseClickMsg)
-	if clicked && click.Button == tea.MouseLeft && result.Action != nil {
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && result.Action != nil {
 		index := p.list.SelectedIndex()
 		now := time.Now()
 		if p.lastClick != index || now.Sub(p.lastClickTime) > 500*time.Millisecond {

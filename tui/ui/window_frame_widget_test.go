@@ -35,7 +35,7 @@ func (b *testFrameBody) Paint(buf *surface.CellBuffer, ox, oy int, _ PaintContex
 	}
 }
 
-func (b *testFrameBody) Handle(_ EventContext, _ tea.Msg) EventResult {
+func (b *testFrameBody) Handle(_ EventContext, _ Event) EventResult {
 	return EventResult{}
 }
 

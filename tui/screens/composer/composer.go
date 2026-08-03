@@ -129,7 +129,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 
-func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
@@ -184,15 +184,16 @@ func (c *composerInput) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintC
 	c.area.Paint(buf, ox+c.Bounds().X, oy+c.Bounds().Y, ctx)
 }
 
-func (c *composerInput) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (c *composerInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if c.owner == nil {
-		return c.area.Handle(ctx, msg)
+		return c.area.Handle(ctx, evt)
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch {
 		case key.Code == tea.KeyEsc:
 			if c.area.HasActiveSelection() {
-				return c.area.Handle(ctx, msg)
+				return c.area.Handle(ctx, evt)
 			}
 			return c.owner.cancel()
 		case key.Code == tea.KeyTab:
@@ -204,7 +205,7 @@ func (c *composerInput) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult 
 			return ui.EventResult{}
 		}
 	}
-	return c.area.Handle(ctx, msg)
+	return c.area.Handle(ctx, evt)
 }
 
 func (c *composerInput) Semantics() ui.Semantics       { return c.area.Semantics() }

@@ -510,7 +510,8 @@ func (r *Renderer) UpdateToolProgress(toolID, internalID, name, phase, message, 
 			r.sync.MsgByID[toolID] = msg
 		}
 	}
-	if phase == "done" {
+	switch phase {
+	case "done":
 		msg.ToolLivedAdded = linesAdded
 		msg.ToolLivedRemoved = linesRemoved
 		msg.ToolPreviewPhase = types.ToolPreviewDone
@@ -520,7 +521,7 @@ func (r *Renderer) UpdateToolProgress(toolID, internalID, name, phase, message, 
 		if estTokens > 0 {
 			msg.ToolEstTokens = estTokens
 		}
-	} else if phase == "error" {
+	case "error":
 		msg.ToolPreviewPhase = types.ToolPreviewError
 		if linesAdded > 0 {
 			msg.ToolLivedAdded = linesAdded

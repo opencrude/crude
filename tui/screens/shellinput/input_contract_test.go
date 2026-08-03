@@ -70,7 +70,7 @@ func TestShellInputKeyboardContractTable(t *testing.T) {
 				m.SetInput(tc.input)
 			}
 
-			updated, _, ev := m.Update(tc.key, false, false, 20, false)
+			updated, _, ev := m.Update(tc.key, false, false)
 
 			if updated.SlashActive() != tc.wantSlashActive {
 				t.Fatalf("SlashActive=%v want %v", updated.SlashActive(), tc.wantSlashActive)

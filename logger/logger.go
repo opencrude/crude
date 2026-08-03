@@ -173,7 +173,7 @@ func formatEntry(level, tag, msg string, pairs ...any) string {
 	sb.WriteString(msg)
 	for i := 0; i+1 < len(pairs); i += 2 {
 		sb.WriteByte(' ')
-		sb.WriteString(fmt.Sprintf("%v", pairs[i]))
+		fmt.Fprintf(&sb, "%v", pairs[i])
 		sb.WriteByte('=')
 		sb.WriteString(formatValue(pairs[i+1]))
 	}

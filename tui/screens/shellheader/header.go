@@ -5,8 +5,6 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -112,11 +110,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	border := s.color(ui.ColorBorder)
 	sepY := y + 1
 	if b.H >= 2 {
-		buf.WriteString(ox+b.X, sepY, strings.Repeat("─", max(0, b.W)), border, cell.NoColor, 0)
+		buf.WriteString(ox+b.X, sepY, strings.Repeat(string(ui.FirstRune(s.tokens.Glyphs().BorderH, '─')), max(0, b.W)), border, cell.NoColor, 0)
 	}
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
 
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleLabel, Label: "Header"}

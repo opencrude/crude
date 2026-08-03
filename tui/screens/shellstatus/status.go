@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/tui/rendering"
@@ -169,7 +167,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		pad = s.theme.Spacing.PadLR
 	}
 	border := s.color(ui.ColorBorder)
-	buf.WriteString(ox+b.X, oy+b.Y, strings.Repeat("─", max(0, b.W)), border, cell.NoColor, 0)
+	buf.WriteString(ox+b.X, oy+b.Y, strings.Repeat(string(ui.FirstRune(s.tokens.Glyphs().BorderH, '─')), max(0, b.W)), border, cell.NoColor, 0)
 
 	left := s.activitySegments()
 	hintW := 0
@@ -201,7 +199,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	}
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
 
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleLabel, Label: "Status", Value: s.ActivityView()}

@@ -16,12 +16,11 @@ type parentCatcher struct {
 }
 
 func (p *parentCatcher) Children() []Component { return []Component{p.child} }
-func (p *parentCatcher) Handle(_ EventContext, msg tea.Msg) EventResult {
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok {
+func (p *parentCatcher) Handle(_ EventContext, evt Event) EventResult {
+	if !evt.IsKey() {
 		return EventResult{}
 	}
-	p.gotKeys = append(p.gotKeys, key.String())
+	p.gotKeys = append(p.gotKeys, evt.Key.String())
 	return EventResult{Handled: true, Invalidate: InvalidatePaint}
 }
 

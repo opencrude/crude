@@ -203,21 +203,22 @@ func (d *PanelDeck) Layout(ctx LayoutContext, r Rect) {
 func (d *PanelDeck) Paint(buf *surface.CellBuffer, originX, originY int, _ PaintContext) {
 	r := d.Bounds()
 	bg, divider := d.color(ColorPopupBg), d.color(ColorPopupDivider)
+	hBorder := FirstRune(d.tokens.Glyphs().BorderH, '─')
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	if r.W > 0 && r.H > 0 {
 		for x := 0; x < r.W; x++ {
-			buf.Set(originX+r.X+x, originY+r.Y, cell.NewCell('─', divider, bg, 0))
+			buf.Set(originX+r.X+x, originY+r.Y, cell.NewCell(hBorder, divider, bg, 0))
 		}
 	}
 	if len(d.panels) > 1 && r.H > 2 {
 		for x := 0; x < r.W; x++ {
-			buf.Set(originX+r.X+x, originY+r.Y+2, cell.NewCell('─', divider, bg, 0))
+			buf.Set(originX+r.X+x, originY+r.Y+2, cell.NewCell(hBorder, divider, bg, 0))
 		}
 	}
 }
 
-func (d *PanelDeck) Handle(_ EventContext, msg tea.Msg) EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEsc {
+func (d *PanelDeck) Handle(_ EventContext, evt Event) EventResult {
+	if evt.IsKey() && evt.Key.Code == tea.KeyEsc {
 		if panel := d.Active(); panel != nil && panel.Closable {
 			id := panel.ID
 			d.Close(id)

@@ -194,7 +194,7 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 			if !bg.IsDefault() {
 				FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
 			}
-			line := strings.Repeat("─", max(0, r.W))
+			line := strings.Repeat(string(FirstRune(l.tokens.Glyphs().BorderH, '─')), max(0, r.W))
 			buf.WriteString(x, y, line, fg, bg, 0)
 			continue
 		}
@@ -267,10 +267,10 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 	}
 }
 
-func (l *List) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	switch m := msg.(type) {
-	case tea.KeyPressMsg:
-		switch m.Code {
+func (l *List) Handle(ctx EventContext, evt Event) EventResult {
+	switch evt.Kind {
+	case EventKey:
+		switch evt.Key.Code {
 		case tea.KeyUp:
 			next := l.moveToSelectable(l.sel.Index(), -1)
 			if next >= 0 {
@@ -330,7 +330,7 @@ func (l *List) Handle(ctx EventContext, msg tea.Msg) EventResult {
 				Invalidate: InvalidatePaint,
 			}
 		}
-	case tea.MouseMotionMsg:
+	case EventMouseMotion:
 		idx := l.scroll.Offset() + ctx.LocalY
 		if idx >= 0 && idx < len(l.items) {
 			if l.hoverIdx != idx {
@@ -339,8 +339,8 @@ func (l *List) Handle(ctx EventContext, msg tea.Msg) EventResult {
 			}
 		}
 		return EventResult{Handled: true}
-	case tea.MouseClickMsg:
-		if m.Button != tea.MouseLeft {
+	case EventMouseClick:
+		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
 		}
 		idx := l.scroll.Offset() + ctx.LocalY
@@ -357,10 +357,11 @@ func (l *List) Handle(ctx EventContext, msg tea.Msg) EventResult {
 				Invalidate: InvalidatePaint | InvalidateFocus,
 			}
 		}
-	case tea.MouseWheelMsg:
-		if m.Button == tea.MouseWheelUp {
+	case EventMouseWheel:
+		switch evt.MouseWheel.Button {
+		case tea.MouseWheelUp:
 			l.scroll.ScrollBy(-3)
-		} else if m.Button == tea.MouseWheelDown {
+		case tea.MouseWheelDown:
 			l.scroll.ScrollBy(3)
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}

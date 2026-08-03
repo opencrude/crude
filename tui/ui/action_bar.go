@@ -144,8 +144,9 @@ func (ab *ActionBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	}
 }
 
-func (ab *ActionBar) Handle(ctx EventContext, msg tea.Msg) EventResult {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
+	if evt.IsKey() {
+		key := evt.Key
 		if key.Code == tea.KeyEsc && ab.cancelAction != "" {
 			return EventResult{Handled: true, Action: &Action{ID: ab.cancelAction}, Invalidate: InvalidatePaint}
 		}
@@ -180,14 +181,12 @@ func (ab *ActionBar) Handle(ctx EventContext, msg tea.Msg) EventResult {
 			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
-	}
-	if _, ok := msg.(tea.KeyPressMsg); ok {
 		if ab.focused < 0 || ab.focused >= len(ab.buttons) {
 			return EventResult{}
 		}
-		return ab.handleButton(ab.focused, ctx, msg)
+		return ab.handleButton(ab.focused, ctx, evt)
 	}
-	if _, ok := msg.(tea.MouseMotionMsg); ok {
+	if evt.Kind == EventMouseMotion {
 		hovered := ab.buttonAt(ctx.LocalX, ctx.LocalY)
 		if hovered != ab.hovered {
 			ab.hovered = hovered
@@ -195,13 +194,13 @@ func (ab *ActionBar) Handle(ctx EventContext, msg tea.Msg) EventResult {
 		}
 		return EventResult{Handled: hovered >= 0}
 	}
-	if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 		index := ab.buttonAt(ctx.LocalX, ctx.LocalY)
 		if index < 0 {
 			return EventResult{}
 		}
 		ab.focused = index
-		return ab.handleButton(index, ctx, msg)
+		return ab.handleButton(index, ctx, evt)
 	}
 	return EventResult{}
 }
@@ -215,7 +214,7 @@ func (ab *ActionBar) buttonAt(x, y int) int {
 	return -1
 }
 
-func (ab *ActionBar) handleButton(index int, ctx EventContext, msg tea.Msg) EventResult {
+func (ab *ActionBar) handleButton(index int, ctx EventContext, evt Event) EventResult {
 	b := ab.buttons[index].button
 	br := b.Bounds()
 	return b.Handle(EventContext{
@@ -225,5 +224,5 @@ func (ab *ActionBar) handleButton(index int, ctx EventContext, msg tea.Msg) Even
 		LocalY:  ctx.LocalY - br.Y,
 		ScreenX: ctx.ScreenX,
 		ScreenY: ctx.ScreenY,
-	}, msg)
+	}, evt)
 }

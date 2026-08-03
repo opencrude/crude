@@ -53,7 +53,7 @@ func TestShellChatScrollModelStickToBottom(t *testing.T) {
 
 	scroll.SetAutoScroll(false)
 	scroll.ScrollTo(0)
-	if handled := s.Handle(ui.EventContext{}, tea.KeyPressMsg{Code: tea.KeyEnd}); !handled.Handled {
+	if handled := s.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnd})); !handled.Handled {
 		t.Fatal("End key should be handled")
 	}
 	if !scroll.AutoScroll() || scroll.Offset() != scroll.MaxOffset() {
@@ -68,7 +68,7 @@ func TestShellChatPgUpScrollsBoundModel(t *testing.T) {
 	scroll.SetContent(20)
 	scroll.StickToBottom()
 
-	res := s.Handle(ui.EventContext{}, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	res := s.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyPgUp}))
 	if !res.Handled {
 		t.Fatal("PgUp should be handled")
 	}

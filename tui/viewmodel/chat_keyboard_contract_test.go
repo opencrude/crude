@@ -140,7 +140,7 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 	t.Run("ctrl_c_copy_input_selection", func(t *testing.T) {
 		app, _ := setupChatRoutingApp(t, 3, []chatprojection.MessageRow{{ID: "m1", Lines: []string{"x"}}})
 		app.Input.SetInput("copy me")
-		updated, _, _ := app.Input.Update(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModShift, Text: "shift+home"}, true, false, 20, false)
+		updated, _, _ := app.Input.Update(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModShift, Text: "shift+home"}, true, false)
 		app.Input = updated
 		if !app.Input.InputSelecting() {
 			t.Fatal("setup: shift+home should select input prefix")

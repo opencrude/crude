@@ -101,7 +101,7 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 				continue
 			}
 			if hasSiblingBelow(node, d) {
-				buf.Set(x, y, cell.NewCell('│', indentFG, bg, 0))
+				buf.Set(x, y, cell.NewCell(ui.FirstRune(tokens.Glyphs().BorderV, '│'), indentFG, bg, 0))
 			} else {
 				buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
 			}
@@ -124,10 +124,11 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 			x++
 		}
 
-		if node.IsDir && !(cfg.ShowIcons && icons != nil) {
-			indicator := "▸"
+		if node.IsDir && (!cfg.ShowIcons || icons == nil) {
+			g := tokens.Glyphs()
+			indicator := string(ui.FirstRune(g.TreeCollapsed, '▸'))
 			if node.IsExpanded {
-				indicator = "▾"
+				indicator = string(ui.FirstRune(g.TreeExpanded, '▾'))
 			}
 			if icons != nil && icons.UseNerdFont {
 				if node.IsExpanded {
@@ -261,7 +262,11 @@ func BreadcrumbLine(model *FileTreeModel, width int) string {
 	if len(names) == 0 {
 		return ""
 	}
-	return rendering.TruncateLine(strings.Join(names, " ▸ "), width)
+	sep := theme.DefaultGlyphs().BreadcrumbSep
+	if sep == "" {
+		sep = "▸"
+	}
+	return rendering.TruncateLine(strings.Join(names, " "+sep+" "), width)
 }
 
 // SyncScrollModel copies model scroll state into a ui.ScrollModel.

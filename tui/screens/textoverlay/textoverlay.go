@@ -128,7 +128,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 
-func (s *Screen) Handle(_ ui.EventContext, _ tea.Msg) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
@@ -186,15 +186,16 @@ func (o *overlayInput) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCo
 	o.area.Paint(buf, ox+o.Bounds().X, oy+o.Bounds().Y, ctx)
 }
 
-func (o *overlayInput) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (o *overlayInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if o.owner == nil {
-		return o.area.Handle(ctx, msg)
+		return o.area.Handle(ctx, evt)
 	}
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	if evt.IsKey() {
+		key := evt.Key
 		switch {
 		case key.Code == tea.KeyEsc:
 			if o.area.HasActiveSelection() {
-				return o.area.Handle(ctx, msg)
+				return o.area.Handle(ctx, evt)
 			}
 			return o.owner.cancel()
 		case key.String() == "ctrl+s":
@@ -210,7 +211,7 @@ func (o *overlayInput) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
 	}
-	return o.area.Handle(ctx, msg)
+	return o.area.Handle(ctx, evt)
 }
 
 func (o *overlayInput) Semantics() ui.Semantics       { return o.area.Semantics() }

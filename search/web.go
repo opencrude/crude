@@ -31,13 +31,13 @@ func WebSearch(query string, maxResults int) (string, error) {
 
 	if len(results) == 0 {
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("No results found for: %s\n\n", query))
+		fmt.Fprintf(&sb, "No results found for: %s\n\n", query)
 
 		if len(succeeded) == 0 && len(failed) > 0 {
 			sb.WriteString("All search engines failed:\n")
 			logIf(func(lg *logger.Logger) { lg.Warn("SEARCH", "all_engines_failed", "query", query, "latency_ms", dur, "failures", fmt.Sprintf("%v", failed)) })
 			for eng, errMsg := range failed {
-				sb.WriteString(fmt.Sprintf("  - %s: %s\n", eng, errMsg))
+				fmt.Fprintf(&sb, "  - %s: %s\n", eng, errMsg)
 			}
 			sb.WriteString("\nThis may be due to network issues or rate limiting.\n")
 			sb.WriteString("Suggestions:\n")
@@ -57,29 +57,29 @@ func WebSearch(query string, maxResults int) (string, error) {
 	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "web_search_ok", "query", query, "results", len(results), "engines", len(succeeded), "latency_ms", dur) })
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Web search results for: %s\n", query))
+	fmt.Fprintf(&sb, "Web search results for: %s\n", query)
 
 	if len(succeeded) > 0 {
-		sb.WriteString(fmt.Sprintf("(Sources: %s)\n", strings.Join(succeeded, ", ")))
+		fmt.Fprintf(&sb, "(Sources: %s)\n", strings.Join(succeeded, ", "))
 	}
 	if len(failed) > 0 {
 		var failedEngines []string
 		for eng := range failed {
 			failedEngines = append(failedEngines, eng)
 		}
-		sb.WriteString(fmt.Sprintf("(Unavailable: %s)\n", strings.Join(failedEngines, ", ")))
+		fmt.Fprintf(&sb, "(Unavailable: %s)\n", strings.Join(failedEngines, ", "))
 	}
 	sb.WriteString("\n")
 
 	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, r.Title))
-		sb.WriteString(fmt.Sprintf("   %s\n", r.URL))
+		fmt.Fprintf(&sb, "%d. %s\n", i+1, r.Title)
+		fmt.Fprintf(&sb, "   %s\n", r.URL)
 		if r.Description != "" {
 			desc := r.Description
 			if len([]rune(desc)) > 200 {
 				desc = string([]rune(desc)[:200]) + "..."
 			}
-			sb.WriteString(fmt.Sprintf("   %s\n", desc))
+			fmt.Fprintf(&sb, "   %s\n", desc)
 		}
 		sb.WriteString("\n")
 	}
@@ -136,18 +136,18 @@ func WebFetch(rawURL string, offset, limit int) (string, error) {
 
 	var sb strings.Builder
 	if result.Title != "" {
-		sb.WriteString(fmt.Sprintf("Title: %s\n", result.Title))
+		fmt.Fprintf(&sb, "Title: %s\n", result.Title)
 	}
-	sb.WriteString(fmt.Sprintf("URL: %s\n", result.URL))
+	fmt.Fprintf(&sb, "URL: %s\n", result.URL)
 
 	if (offset > 1 || limit > 0) && totalChars > 0 {
 		endPos := offset + len([]rune(result.Content)) - 1
 		if limit > 0 && offset+limit-1 < endPos {
 			endPos = offset + limit - 1
 		}
-		sb.WriteString(fmt.Sprintf("Characters %d–%d of %s (%d total):\n\n", offset, endPos, result.URL, totalChars))
+		fmt.Fprintf(&sb, "Characters %d–%d of %s (%d total):\n\n", offset, endPos, result.URL, totalChars)
 	} else {
-		sb.WriteString(fmt.Sprintf("Total characters: %d\n\n", totalChars))
+		fmt.Fprintf(&sb, "Total characters: %d\n\n", totalChars)
 	}
 	sb.WriteString(result.Content)
 	return sb.String(), nil

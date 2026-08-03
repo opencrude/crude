@@ -1,8 +1,6 @@
 package widgets
 
 import (
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/ui"
@@ -228,27 +226,6 @@ func FindReplaceToEditor(st *FindReplaceState, e *editor.Editor) {
 		st.MatchCount = len(ss.Matches)
 		st.CurrentIdx = ss.CurrentIdx
 	}
-}
-
-// HandleKey routes a keypress to the focused input in the popup.
-// Popup-level keys (Esc, Tab, Enter, toggles) are handled by the
-// viewmodel; this helper forwards text-editing keys to ui.TextEdit.
-//
-// Returns the updated state, a tea.Cmd (always nil for TextEdit keys),
-// and a bool indicating whether the input value changed.
-func HandleKey(st *FindReplaceState, msg tea.KeyPressMsg) (*FindReplaceState, tea.Cmd, bool) {
-	if st == nil {
-		return st, nil, false
-	}
-	ed := st.ActiveEdit()
-	if ed == nil {
-		return st, nil, false
-	}
-	oldVal := ed.Value()
-	if ui.HandleTextEditKey(ed, msg) {
-		return st, nil, ed.Value() != oldVal
-	}
-	return st, nil, false
 }
 
 // VisibleWidth is a package-level re-export of rendering.VisibleWidth

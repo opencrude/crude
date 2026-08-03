@@ -71,11 +71,24 @@ func (m *App) launcherShortcuts() [][2]string {
 		}
 		out = append(out, [2]string{ui.FormatShortcut(hint), a.Label})
 	}
-	out = append(out,
-		[2]string{"Esc", "Cancel / dismiss"},
-		[2]string{"/", "Search workspaces"},
-		[2]string{"d", "Delete item"},
-	)
+	// The dismiss/search/delete rows keep descriptive labels but source
+	// their keys from the registry (launcher.filter.clear/filter/delete)
+	// so they can never drift from the active bindings.
+	fixed := []struct {
+		id    ui.ActionID
+		label string
+	}{
+		{"launcher.filter.clear", "Cancel / dismiss"},
+		{"launcher.filter", "Search workspaces"},
+		{"launcher.delete", "Delete item"},
+	}
+	for _, f := range fixed {
+		hint := ui.FormatShortcut(m.actionRegistry.HintFor(f.id))
+		if hint == "" {
+			continue
+		}
+		out = append(out, [2]string{hint, f.label})
+	}
 	return out
 }
 

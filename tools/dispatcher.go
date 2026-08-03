@@ -606,7 +606,7 @@ func tryDocRead(path string, offset, limit int, lg *logger.Logger) (string, bool
 
 func formatWriteResult(path string, lines int, oldContent, newContent string) ToolResult {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Written %d lines to %s\n", lines, path))
+	fmt.Fprintf(&sb, "Written %d lines to %s\n", lines, path)
 	diffText, additions, removals := diff.GenerateDiff(oldContent, newContent, path)
 	diffText = strings.TrimSpace(diffText)
 	if !diff.IsEmptyDiff(diffText) {
@@ -620,9 +620,9 @@ func formatWriteResult(path string, lines int, oldContent, newContent string) To
 func formatEditResult(path string, count int, oldContent, newContent string) ToolResult {
 	var sb strings.Builder
 	if count == 1 {
-		sb.WriteString(fmt.Sprintf("Replaced 1 occurrence in %s\n", path))
+		fmt.Fprintf(&sb, "Replaced 1 occurrence in %s\n", path)
 	} else {
-		sb.WriteString(fmt.Sprintf("Replaced %d occurrences in %s\n", count, path))
+		fmt.Fprintf(&sb, "Replaced %d occurrences in %s\n", count, path)
 	}
 	diffText, additions, removals := diff.GenerateDiff(oldContent, newContent, path)
 	diffText = strings.TrimSpace(diffText)

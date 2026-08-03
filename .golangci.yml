@@ -1,53 +1,62 @@
-# Phase 15 lint gate — scoped to app/TUI/workspace packages in CI.
-# All default-family linters enabled (govet, ineffassign, misspell,
-# staticcheck, gosimple, unused, errcheck) — zero issues as of 2026-08-01.
+version: "2"
 run:
-  timeout: 5m
   tests: true
-
+  timeout: 5m
 linters:
+  default: none
   enable:
     - govet
     - ineffassign
     - misspell
     - staticcheck
-    - gosimple
     - unused
     - errcheck
-
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - ineffassign
+          - staticcheck
+        path: _test\.go
+      - linters:
+          - staticcheck
+        path: tui/screens/sessionsettings/
+        text: SA1024
+      - linters:
+          - ineffassign
+        path: tui/screens/shellstatus/status\.go
+      - linters:
+          - staticcheck
+        path: tui/screens/launcher/launcher\.go
+        text: SA4017
+      - linters:
+          - staticcheck
+        path: tui/ui/textfield\.go
+        text: SA4006
+      - linters:
+          - staticcheck
+        path: tui/ui/textfield\.go
+        text: SA9003
+      - linters:
+          - staticcheck
+        path: tui/ui/list_test\.go
+        text: SA4017
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    # Test-only branches and assignments are lower signal for the Phase 15 gate.
-    - path: _test\.go
-      linters:
-        - ineffassign
-        - staticcheck
-    # Legacy session-settings trim cutset — unrelated to TUI stabilization.
-    - path: tui/screens/sessionsettings/
-      linters:
-        - staticcheck
-      text: "SA1024"
-    # Shell status readiness dot assignments are mid-migration.
-    - path: tui/screens/shellstatus/status\.go
-      linters:
-        - ineffassign
-    # Launcher layout guard uses Empty() for readability during migration.
-    - path: tui/screens/launcher/launcher\.go
-      linters:
-        - staticcheck
-      text: "SA4017"
-    # TextField selection swap is intentionally incomplete during theme migration.
-    - path: tui/ui/textfield\.go
-      linters:
-        - staticcheck
-      text: "SA4006"
-    - path: tui/ui/textfield\.go
-      linters:
-        - staticcheck
-      text: "SA9003"
-    - path: tui/ui/list_test\.go
-      linters:
-        - staticcheck
-      text: "SA4017"
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

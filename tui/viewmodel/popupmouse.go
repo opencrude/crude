@@ -509,7 +509,7 @@ func (m *App) clickReferences(localX, localY int) tea.Cmd {
 		cw.Host().Layout()
 		// Prefer frame Handle so close button is checked before content.
 		if root := cw.Root(); root != nil {
-			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
+			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, ui.MouseClickEvent(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft}))
 			if res.Action != nil && res.Action.ID == "window.close" {
 				m.closeReferencesPopup()
 				return nil
@@ -609,7 +609,7 @@ func (m *App) clickCompletion(localX, localY int) tea.Cmd {
 		cw.Host().Resize(ww, hh)
 		cw.Host().Layout()
 		if root := cw.Root(); root != nil {
-			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
+			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, ui.MouseClickEvent(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft}))
 			if res.Action != nil && res.Action.ID == "window.close" {
 				m.closeCompletionPopup()
 				return nil
@@ -695,7 +695,7 @@ func (m *App) clickOutline(localX, localY int) tea.Cmd {
 		cw.Host().Resize(ww, hh)
 		cw.Host().Layout()
 		if root := cw.Root(); root != nil {
-			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
+			res := root.Handle(ui.EventContext{LocalX: localX, LocalY: localY}, ui.MouseClickEvent(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft}))
 			if res.Action != nil && res.Action.ID == "window.close" {
 				m.closeOutlinePopup()
 				return nil

@@ -59,7 +59,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
     // Fill background from tokens, then paint children or projection text
 }
 
-func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
     return ui.EventResult{} // or delegate to child controls
 }
 ```
@@ -191,7 +191,7 @@ Shared thumb geometry over any `ScrollModel` (VirtualList, Tree, List).
 sb := ui.NewScrollbarControl(id, scrollModel, tokens)
 sb.Layout(ctx, ui.Rect{X: w - 1, Y: listY, W: 1, H: listH})
 sb.Paint(buf, ox, oy, ctx)
-sb.Handle(ctx, msg) // wheel, drag, page up/down
+sb.Handle(ctx, evt) // wheel, drag, page up/down
 ```
 
 - Pair with list viewport: list gets `W-1` columns; scrollbar owns the final column.

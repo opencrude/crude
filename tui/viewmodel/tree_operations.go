@@ -254,7 +254,17 @@ func (m *App) refreshTreePrompt() {
 	if fw == nil {
 		return
 	}
-	// Rebuild frame from current edit state (WindowFrame product path).
+	// Mutate the retained TextField in the existing frame instead of
+	// rebuilding the WindowFrame on each keystroke. The frame is built
+	// once on open; keystrokes push st.Edit into the framed field.
+	if m.TreePrompt.Edit != nil {
+		if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
+			widgets.ApplyTextPromptEdit(cw, m.TreePrompt)
+			fw.MarkContentDirty()
+			return
+		}
+	}
+	// Fallback: rebuild frame from current edit state.
 	frame := widgets.BuildTextPromptFrame(m.Theme, m.TreePrompt)
 	fw.SetContent(frame)
 	fw.MarkContentDirty()

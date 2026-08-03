@@ -1,6 +1,6 @@
 {
-  "version": 44,
-  "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only. v44 (2026-08-01): WindowFrame reveal animation DONE (SetReveal + OverlayHost SetOnOpen + viewmodel tick driver; modals excluded); StripAnsi zero-alloc fast path (label/list paint allocations cut ~75%); FullRender benchmark fixed to reuse the layer surface (90425B->8249B/op); CI bench allocation gate added (scripts/tui_bench_gate.sh, tight ceilings); rendering adapter.go (ANSIAdapter/ModelAdapter) deleted. v43: full-repo lint gate zero; three-layer boundary enforced; moveWordLeft cross-line regression fixed. v42: lint gate fully enabled — errcheck/unused/gosimple all on, zero issues; ~108 dead symbols deleted; editor/render.go left raw-ansi-sgr allowlist. v41: TextArea ANSI View() path deleted. v40: dead tui/diffview package deleted. v39: Phase 13.9 root Host wiring landed.",
+  "version": 45,
+  "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only. v45 (2026-08-03): raw-ansi-sgr allowlist shrunk to the 3-path foundation floor (tui/cell/ + tui/compositor/ + tui/rendering/) — third_party/ removed (vendored ANSI libs, outside the tui/-scoped audit search, not feature code); staticcheck QF1001/QF1003/QF1008/QF1012 cleanup (~78 behavior-identical rewrites, full suite green). v44 (2026-08-01): WindowFrame reveal animation DONE (SetReveal + OverlayHost SetOnOpen + viewmodel tick driver; modals excluded); StripAnsi zero-alloc fast path (label/list paint allocations cut ~75%); FullRender benchmark fixed to reuse the layer surface (90425B->8249B/op); CI bench allocation gate added (scripts/tui_bench_gate.sh, tight ceilings); rendering adapter.go (ANSIAdapter/ModelAdapter) deleted. v43: full-repo lint gate zero; three-layer boundary enforced; moveWordLeft cross-line regression fixed. v42: lint gate fully enabled — errcheck/unused/gosimple all on, zero issues; ~108 dead symbols deleted; editor/render.go left raw-ansi-sgr allowlist. v41: TextArea ANSI View() path deleted. v40: dead tui/diffview package deleted. v39: Phase 13.9 root Host wiring landed.",
   "rules": [
     {
       "id": "hardcoded-lipgloss-hex",
@@ -26,10 +26,9 @@
       "allowed_paths": [
         "tui/cell/",
         "tui/compositor/",
-        "tui/rendering/",
-        "third_party/"
+        "tui/rendering/"
       ],
-      "note": "Feature code must not emit raw SGR. Enforced by tui_design_audit.sh (2026-08-01); editor/render.go left the allowlist (zero \\x1b[ literals); viewmodel/view.go, keyboard.go, and ui/text_area.go contain no \\x1b[ literals."
+      "note": "Feature code must not emit raw SGR. Enforced by tui_design_audit.sh (2026-08-01); editor/render.go left the allowlist (zero \\x1b[ literals); viewmodel/view.go, keyboard.go, and ui/text_area.go contain no \\x1b[ literals. v45 (2026-08-03): shrunk to the 3-path foundation floor — third_party/ removed (vendored ANSI libs, not feature code, outside the tui/-scoped audit search)."
     },
     {
       "id": "uniseg-import",

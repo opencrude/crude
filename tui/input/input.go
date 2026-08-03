@@ -3,8 +3,6 @@ package input
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/sessiondb"
 	"crude/tui/cell"
 	"crude/tui/rendering"
@@ -314,16 +312,23 @@ func (m Model) InputTextWidth() int {
 	return w
 }
 
-func (m Model) FirstLineY(chatAreaHeight int, showHint, thinking bool, inputLen int) int {
-	_ = showHint
-	_ = thinking
-	_ = inputLen
-	return chatAreaHeight + 4
+// textAreaY returns the shell-local Y of the TextArea's first text row:
+// one separator row, plus one chip row when reference chips are shown.
+// MouseToInputPos maps shellinput-local Y against this row so a mouse hit
+// lands on the same text position the shellinput screen paints.
+func (m Model) textAreaY() int {
+	y := 1 // after separator
+	if len(m.activePromptRefs()) > 0 {
+		y++
+	}
+	return y
 }
 
-func (m Model) MouseToInputPos(mouseX, mouseY, chatAreaHeight int, showHint bool) (runeIdx int, ok bool) {
-	firstY := m.FirstLineY(chatAreaHeight, showHint, m.thinking, m.input.Len())
-	relY := mouseY - firstY
+// MouseToInputPos maps a shellinput-LOCAL point (relative to the input shell
+// rect, as delivered by the Host hit tree) to a flat rune index in the input
+// value. It returns ok=false when the point is above the text area.
+func (m Model) MouseToInputPos(mouseX, mouseY int) (runeIdx int, ok bool) {
+	relY := mouseY - m.textAreaY()
 	if relY < 0 {
 		return -1, false
 	}
@@ -556,14 +561,14 @@ func (m Model) PaintShell(buf *surface.CellBuffer, ox, oy, width, height int, ct
 }
 
 // HandleShell routes mouse/key events that target the shell surface locally.
-func (m *Model) HandleShell(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (m *Model) HandleShell(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if m.showSlashPopup() && m.slashList != nil {
 		b := m.slashList.Bounds()
 		if ctx.LocalY >= b.Y && ctx.LocalY < b.Y+b.H {
 			local := ctx
 			local.LocalY = ctx.LocalY - b.Y
 			local.LocalX = ctx.LocalX - b.X
-			return m.slashList.Handle(local, msg)
+			return m.slashList.Handle(local, evt)
 		}
 	}
 	if m.input != nil {
@@ -572,7 +577,7 @@ func (m *Model) HandleShell(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
 			local := ctx
 			local.LocalY = ctx.LocalY - b.Y
 			local.LocalX = ctx.LocalX - b.X
-			return m.input.Handle(local, msg)
+			return m.input.Handle(local, evt)
 		}
 	}
 	return ui.EventResult{}

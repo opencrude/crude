@@ -18,11 +18,11 @@ func TestVirtualListSelectsAndActivatesPayload(t *testing.T) {
 	})
 	list.Layout(LayoutContext{}, Rect{W: 30, H: 1})
 
-	list.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyDown})
+	list.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	if list.SelectedIndex() != 1 {
 		t.Fatalf("selected=%d", list.SelectedIndex())
 	}
-	result := list.Handle(EventContext{Focused: true}, tea.KeyPressMsg{Code: tea.KeyEnter})
+	result := list.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter}))
 	if result.Action == nil || result.Action.ID != "find.open" {
 		t.Fatalf("action=%#v", result.Action)
 	}

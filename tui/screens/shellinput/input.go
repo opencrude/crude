@@ -4,8 +4,6 @@ package shellinput
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/tui/cell"
 	"crude/tui/input"
 	"crude/tui/surface"
@@ -106,11 +104,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	s.model.PaintShell(buf, ox+b.X, oy+b.Y, b.W, b.H, ctx)
 }
 
-func (s *Screen) Handle(ctx ui.EventContext, msg tea.Msg) ui.EventResult {
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s.model == nil {
 		return ui.EventResult{}
 	}
-	return s.model.HandleShell(ctx, msg)
+	return s.model.HandleShell(ctx, evt)
 }
 
 func (s *Screen) Semantics() ui.Semantics {

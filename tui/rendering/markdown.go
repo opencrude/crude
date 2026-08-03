@@ -41,8 +41,8 @@ func MakeMdRenderer(width int) *glamour.TermRenderer {
 		GenericStrong:       ansi.StylePrimitive{Color: strPtr("#e6edf3")},
 		GenericSubheading:   ansi.StylePrimitive{Color: strPtr("#e6edf3")},
 	}
-	style.CodeBlock.StylePrimitive.Color = strPtr("#e6edf3")
-	style.CodeBlock.StylePrimitive.BackgroundColor = strPtr("#161b22")
+	style.CodeBlock.Color = strPtr("#e6edf3")
+	style.CodeBlock.BackgroundColor = strPtr("#161b22")
 	style.CodeBlock.BlockPrefix = ""
 	style.Paragraph.Margin = uintPtr(0)
 	style.Heading.Margin = uintPtr(0)

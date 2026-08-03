@@ -25,7 +25,7 @@ func TestTreePaintAndActivate(t *testing.T) {
 		t.Fatal("expected painted cells")
 	}
 
-	res := tree.Handle(EventContext{LocalX: 5, LocalY: 1}, tea.MouseClickMsg{Button: tea.MouseLeft})
+	res := tree.Handle(EventContext{LocalX: 5, LocalY: 1}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
 	if !res.Handled || res.Action == nil || res.Action.ID != "tree.activate" {
 		t.Fatalf("activate result=%+v", res)
 	}

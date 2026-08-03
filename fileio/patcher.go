@@ -377,11 +377,12 @@ func reindentBlock(contentLines, searchLines []string, matchStart int, replaceLi
 					}
 				}
 			} else if sws == cws {
-				if rlws == cws {
+				switch rlws {
+				case cws:
 					out[i] = rl
-				} else if rlws == "" {
+				case "":
 					out[i] = cws + rl
-				} else {
+				default:
 					out[i] = rl
 				}
 			} else {

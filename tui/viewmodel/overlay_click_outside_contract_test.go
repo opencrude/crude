@@ -293,6 +293,12 @@ func setupOverlayDispatchApp(t *testing.T) (*App, int, int) {
 	layout = layoutEditorForMouse(app)
 	clickX := layout.SidebarW + layout.PadLR + 10
 	clickY := layout.ChatAreaTop + 2
+
+	// The editor mouse path sources its coordinates from the root Host hit
+	// tree, so the editor screen must be mounted in the shell tree (painted)
+	// before clicks can route to it — the production contract.
+	app.paintShellFrame()
+
 	return app, clickX, clickY
 }
 

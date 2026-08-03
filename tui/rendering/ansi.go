@@ -347,11 +347,12 @@ func ExtractSelectedText(allLines []string, startLine, startCol, endLine, endCol
 			continue
 		}
 		plain := StripAnsi(allLines[i])
-		if i == startLine {
+		switch i {
+		case startLine:
 			buf.WriteString(ExtractVisibleRange(plain, startCol, -1))
-		} else if i == endLine {
+		case endLine:
 			buf.WriteString(ExtractVisibleRange(plain, 0, endCol))
-		} else {
+		default:
 			buf.WriteString(plain)
 		}
 		if i < endLine {
