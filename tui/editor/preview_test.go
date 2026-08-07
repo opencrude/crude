@@ -7,14 +7,14 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/widget"
+	"crude/tui/ui"
 )
 
 func TestPreviewUsesSourceLineNumbersAndChroma(t *testing.T) {
 	ed := NewPreview(theme.DefaultDark(), "/tmp/main.go", "func main() {\n\treturn\n}", 40)
 	ed.SetSelection(0, 0, 0, 4)
 	surf := surface.NewSurface("preview", 60, 4, cell.TransparentBlank())
-	ed.Render(surf, &widget.RenderContext{Theme: ed.th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 	buf := surf.Buffer()
 	plain := plainRow(buf, 0, 60)
 	if !strings.Contains(plain, "40") || !strings.Contains(plain, "func main") {
@@ -42,7 +42,7 @@ func TestRenderWideGlyphsKeepScrollbarColumn(t *testing.T) {
 		1,
 	)
 	surf := surface.NewSurface("preview", width, 4, cell.TransparentBlank())
-	ed.Render(surf, &widget.RenderContext{Theme: ed.th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 	buf := surf.Buffer()
 	for y := 0; y < 4; y++ {
 		scrollbarAt := -1

@@ -8,20 +8,19 @@ import (
 	"crude/clipboard"
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/window"
 )
 
-func (m *App) buildEditorContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
+func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
 		return nil
 	}
-	st := &widgets.ContextMenuState{Title: "Editor"}
+	st := &ui.ContextMenuState{Title: "Editor"}
 
 	// Cut/Copy/Paste (no section label: the popup title "Editor"
 	// already provides context, and the items speak for themselves)
-	st.Sections = append(st.Sections, widgets.ContextMenuSection{
-		Items: []widgets.ContextMenuItem{
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		Items: []ui.ContextMenuItem{
 			{Label: "Copy", Detail: "Ctrl+C", Disabled: !m.EditorState.Editor.HasSelection(), Action: func() {
 				m.copyEditorSelection()
 			}},
@@ -35,10 +34,10 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 	})
 
 	// Selection-aware items
-	selSection := widgets.ContextMenuSection{SectionLabel: "Selection"}
-	selItems := []widgets.ContextMenuItem{}
+	selSection := ui.ContextMenuSection{SectionLabel: "Selection"}
+	selItems := []ui.ContextMenuItem{}
 	if m.EditorState.Editor.HasSelection() {
-		selItems = append(selItems, widgets.ContextMenuItem{
+		selItems = append(selItems, ui.ContextMenuItem{
 			Label: "Format selection", Action: func() {
 				// Best-effort: rely on Save+format-on-save for now.
 				// This is a placeholder for a future range-format
@@ -62,26 +61,26 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 	diags := m.EditorState.Editor.DiagnosticsAt(pos.Line, pos.Col)
 	hasLSP := m.LSPMgr != nil && m.LSPMgr.ServerReady()
 
-	lspSection := widgets.ContextMenuSection{SectionLabel: "Code"}
+	lspSection := ui.ContextMenuSection{SectionLabel: "Code"}
 	if hasLSP {
-		lspSection.Items = append(lspSection.Items, widgets.ContextMenuItem{
+		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Go to definition", Detail: "Alt+.", Action: func() {
 				_, _ = m.requestDefinitionCmd(), 0
 			},
 		})
-		lspSection.Items = append(lspSection.Items, widgets.ContextMenuItem{
+		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Find references", Detail: "Alt+;", Action: func() {
 				_, _ = m.requestReferencesCmd(), 0
 			},
 		})
-		lspSection.Items = append(lspSection.Items, widgets.ContextMenuItem{
+		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: "Rename symbol", Detail: "F2", Action: func() {
 				m.startRename()
 			},
 		})
 	}
 	if len(diags) > 0 {
-		lspSection.Items = append(lspSection.Items, widgets.ContextMenuItem{
+		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
 			Label: fmt.Sprintf("Show %d diagnostic(s)", len(diags)), Action: func() {
 				m.showDiagnosticAt(pos.Line, pos.Col)
 			},
@@ -92,9 +91,9 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 	}
 
 	// View actions.
-	viewSection := widgets.ContextMenuSection{
+	viewSection := ui.ContextMenuSection{
 		SectionLabel: "View",
-		Items: []widgets.ContextMenuItem{
+		Items: []ui.ContextMenuItem{
 			{Label: "Find", Detail: "Ctrl+F", Action: func() {
 				m.openFindReplace(false)
 			}},
@@ -113,19 +112,19 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 
 // buildSidebarContextMenu creates the menu for right-click on a file
 // tree item.
-func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
+func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if m.Tree.Model == nil {
 		return nil
 	}
-	st := &widgets.ContextMenuState{Title: "File"}
+	st := &ui.ContextMenuState{Title: "File"}
 
 	// Get the path under the click.
 	path := m.pathUnderMouse(mouse)
 	isDir := path != "" && m.Tree.Model.IsDir(path)
 
-	st.Sections = append(st.Sections, widgets.ContextMenuSection{
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Actions",
-		Items: []widgets.ContextMenuItem{
+		Items: []ui.ContextMenuItem{
 			{Label: "Open", Disabled: path == "", Action: func() {
 				if path != "" {
 					_, _ = m.openFileFromTree(path)
@@ -139,23 +138,23 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState
 		},
 	})
 
-	createSection := widgets.ContextMenuSection{SectionLabel: "Create"}
+	createSection := ui.ContextMenuSection{SectionLabel: "Create"}
 	if isDir {
 		createSection.Items = append(createSection.Items,
-			widgets.ContextMenuItem{Label: "New file", Action: func() {
+			ui.ContextMenuItem{Label: "New file", Action: func() {
 				m.startNewFileInTree(path)
 			}},
-			widgets.ContextMenuItem{Label: "New folder", Action: func() {
+			ui.ContextMenuItem{Label: "New folder", Action: func() {
 				m.startNewFolderInTree(path)
 			}},
 		)
 	}
 	if path != "" {
 		createSection.Items = append(createSection.Items,
-			widgets.ContextMenuItem{Label: "New file (sibling)", Action: func() {
+			ui.ContextMenuItem{Label: "New file (sibling)", Action: func() {
 				m.startNewFileInTree(m.Tree.Model.ParentDir(path))
 			}},
-			widgets.ContextMenuItem{Label: "New folder (sibling)", Action: func() {
+			ui.ContextMenuItem{Label: "New folder (sibling)", Action: func() {
 				m.startNewFolderInTree(m.Tree.Model.ParentDir(path))
 			}},
 		)
@@ -165,9 +164,9 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState
 	}
 
 	if path != "" {
-		st.Sections = append(st.Sections, widgets.ContextMenuSection{
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Modify",
-			Items: []widgets.ContextMenuItem{
+			Items: []ui.ContextMenuItem{
 				{Label: "Rename", Action: func() {
 					m.startRenameInTree(path)
 				}},
@@ -185,7 +184,7 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState
 }
 
 // buildTabBarContextMenu creates the menu for right-click on a tab.
-func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
+func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if m.Win == nil || m.Win.TabCount() == 0 {
 		return nil
 	}
@@ -197,14 +196,14 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 	tabs := m.Win.Tabs()
 	tab := tabs[hit.TabIndex]
 
-	st := &widgets.ContextMenuState{Title: "Tab"}
+	st := &ui.ContextMenuState{Title: "Tab"}
 
 	// Get tab-specific info.
 	if m.isEditorTabTitle(tab.Title) {
 		path := m.editorPathFromTabTitle(tab.Title)
-		st.Sections = append(st.Sections, widgets.ContextMenuSection{
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Tab",
-			Items: []widgets.ContextMenuItem{
+			Items: []ui.ContextMenuItem{
 				{Label: "Close", Detail: "Ctrl+W", Action: func() {
 					m.EditorState.ActiveView = path
 					_ = m.handleAgentTabClose(hit.TabIndex)
@@ -227,9 +226,9 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 		})
 	} else if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)
-		st.Sections = append(st.Sections, widgets.ContextMenuSection{
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Tab",
-			Items: []widgets.ContextMenuItem{
+			Items: []ui.ContextMenuItem{
 				{Label: "Close", Action: func() {
 					_ = m.handleAgentTabClose(hit.TabIndex)
 				}},
@@ -244,11 +243,11 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState 
 }
 
 // buildInputContextMenu creates the menu for the chat input.
-func (m *App) buildInputContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
-	st := &widgets.ContextMenuState{Title: "Input"}
-	st.Sections = append(st.Sections, widgets.ContextMenuSection{
+func (m *App) buildInputContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	st := &ui.ContextMenuState{Title: "Input"}
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Clipboard",
-		Items: []widgets.ContextMenuItem{
+		Items: []ui.ContextMenuItem{
 			{Label: "Paste", Detail: "Ctrl+V", Action: func() {
 				m.pasteIntoInput()
 			}},
@@ -265,10 +264,10 @@ func (m *App) buildInputContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
 
 // buildChatContextMenu creates the menu for right-click in the
 // message list. (For now: clipboard + a copy-all option.)
-func (m *App) buildChatContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
-	st := &widgets.ContextMenuState{Title: "Chat"}
-	st.Sections = append(st.Sections, widgets.ContextMenuSection{
-		Items: []widgets.ContextMenuItem{
+func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	st := &ui.ContextMenuState{Title: "Chat"}
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		Items: []ui.ContextMenuItem{
 			{Label: "Copy selection", Action: func() {
 				if m.chatScreen != nil {
 					text := m.chatScreen.SelectedText()
@@ -314,20 +313,20 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
 // buildStatusBarContextMenu creates the menu for right-click on the
 // bottom status bar. Items surface LSP controls, status-line copy,
 // and a quick "go to first diagnostic" action.
-func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuState {
-	st := &widgets.ContextMenuState{Title: "Status Bar"}
+func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	st := &ui.ContextMenuState{Title: "Status Bar"}
 
 	// LSP section. Always shown when an workspace.LSPManager exists; items
 	// disable themselves when not applicable.
 	if m.LSPMgr != nil {
-		var lspItems []widgets.ContextMenuItem
+		var lspItems []ui.ContextMenuItem
 
 		isConfigured := m.LSPMgr.IsConfigured()
 		serverReady := m.LSPMgr.ServerReady()
 		ins := m.LSPMgr.ProjectInsights()
 		hasErrors := ins.Errors > 0
 
-		lspItems = append(lspItems, widgets.ContextMenuItem{
+		lspItems = append(lspItems, ui.ContextMenuItem{
 			Label:    "Restart LSP",
 			Detail:   "kill+relaunch",
 			Disabled: !isConfigured,
@@ -339,7 +338,7 @@ func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuSta
 		})
 
 		if serverReady {
-			lspItems = append(lspItems, widgets.ContextMenuItem{
+			lspItems = append(lspItems, ui.ContextMenuItem{
 				Label:  "Stop LSP",
 				Detail: "free port",
 				Action: func() {
@@ -350,7 +349,7 @@ func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuSta
 		} else if isConfigured {
 			// Server was configured but not connected (e.g. failed
 			// or still starting). Offer to start it.
-			lspItems = append(lspItems, widgets.ContextMenuItem{
+			lspItems = append(lspItems, ui.ContextMenuItem{
 				Label: "Start LSP",
 				Action: func() {
 					m.startLSPForWorkspace()
@@ -360,7 +359,7 @@ func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuSta
 		}
 
 		if hasErrors {
-			lspItems = append(lspItems, widgets.ContextMenuItem{
+			lspItems = append(lspItems, ui.ContextMenuItem{
 				Label:  "Goto first error",
 				Detail: "F8",
 				Action: func() {
@@ -373,7 +372,7 @@ func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuSta
 			summary := fmt.Sprintf("%s · ✕%d ⚠%d ℹ%d · %d files · %d symbols",
 				ins.ServerName, ins.Errors, ins.Warnings,
 				ins.Info+ins.Hints, ins.FilesAffected, ins.SymbolsCount)
-			lspItems = append(lspItems, widgets.ContextMenuItem{
+			lspItems = append(lspItems, ui.ContextMenuItem{
 				Label: "Copy diagnostics summary",
 				Action: func() {
 					m.copyToClipboard(summary)
@@ -382,7 +381,7 @@ func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuSta
 		}
 
 		if len(lspItems) > 0 {
-			st.Sections = append(st.Sections, widgets.ContextMenuSection{
+			st.Sections = append(st.Sections, ui.ContextMenuSection{
 				SectionLabel: "LSP",
 				Items:        lspItems,
 			})
@@ -390,7 +389,7 @@ func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuSta
 	}
 
 	// Status section. Always available.
-	statusItems := []widgets.ContextMenuItem{
+	statusItems := []ui.ContextMenuItem{
 		{
 			Label: "Copy status line",
 			Action: func() {
@@ -400,7 +399,7 @@ func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *widgets.ContextMenuSta
 			},
 		},
 	}
-	st.Sections = append(st.Sections, widgets.ContextMenuSection{
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Status",
 		Items:        statusItems,
 	})
@@ -460,16 +459,16 @@ func (m *App) refreshContextMenu() {
 	}
 	// Prefer mutating selection on the existing frame when possible.
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		widgets.ApplyContextMenuCursor(cw, m.LastContextMenu)
+		ui.ApplyContextMenuCursor(cw, m.LastContextMenu)
 		fw.MarkContentDirty()
 		return
 	}
-	frame := widgets.BuildContextMenuFrame(m.Theme, m.LastContextMenu)
+	frame := ui.BuildContextMenuFrame(m.Theme, m.LastContextMenu)
 	w, h := frame.Measure(60, 40)
-	if cw := widgets.ContextMenuPopupWidth(m.LastContextMenu); cw > 0 {
+	if cw := ui.ContextMenuPopupWidth(m.LastContextMenu); cw > 0 {
 		w = cw
 	}
-	if ch := widgets.ContextMenuPopupHeight(m.LastContextMenu); ch > 0 {
+	if ch := ui.ContextMenuPopupHeight(m.LastContextMenu); ch > 0 {
 		h = ch
 	}
 	fw.SetSize(w, h)

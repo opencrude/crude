@@ -6,7 +6,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	"crude/tui/widgets"
 )
 
 // TestFindReplace_TypingDrivesTextEditDirectly proves find/replace keys flow
@@ -37,7 +36,7 @@ func TestFindReplace_TypingDrivesTextEditDirectly(t *testing.T) {
 	if !ok {
 		t.Fatal("find-replace content is not a ComponentWidget")
 	}
-	if find := widgets.FindReplaceFrameFindField(cw); find != nil {
+	if find := ui.FindReplaceFrameFindField(cw); find != nil {
 		if got := find.Value(); got != "abc" {
 			t.Fatalf("frame find field: got %q, want %q", got, "abc")
 		}

@@ -28,8 +28,7 @@ import (
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/widget"
-	"crude/tui/widgets"
+	"crude/tui/ui/popup"
 	"crude/tui/window"
 	"crude/tui/wm"
 	"crude/workspace"
@@ -57,10 +56,10 @@ type App struct {
 	Win                 *window.Window
 	BufferMgr           *editor.BufferManager
 	Tree                *TreeState
-	FindReplace         *widgets.FindReplaceState
-	LastContextMenu     *widgets.ContextMenuState
+	FindReplace         *popup.FindReplaceState
+	LastContextMenu     *ui.ContextMenuState
 	ContextMenuOpenedAt time.Time
-	TreePrompt          *widgets.TextPromptState
+	TreePrompt          *ui.TextPromptState
 	TreeDeletePending   string
 	TreeDeleteChoice    int
 	FilePicker          *filepickerscreen.Screen
@@ -85,7 +84,7 @@ type App struct {
 	// Compositing engine
 	compositor    *compositor.Compositor
 	windowManager *wm.WindowManager
-	renderCtx     *widget.RenderContext
+	renderCtx     *wm.RenderContext
 	cachedOutput  string // last rendered ANSI output for View() throttling during drag
 
 	// Root component tree (Phase 13.9): ONE ui.Host mounts the whole shell
@@ -156,7 +155,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	bufferMgr := editor.NewBufferManager()
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
-	rctx := widget.NewRenderContext(th)
+	rctx := wm.NewRenderContext(th)
 	eb := workspace.NewEventBus()
 	ws.SetEventBus(eb)
 	ws.LSPMgr.SetRuntime(newEditorLSPRuntime())
@@ -423,7 +422,7 @@ func (m *App) openWorkspaceSettings() {
 		appSets.Providers[appSets.ActiveProvider] = pc
 	}
 
-	wsWidget := widgets.NewWorkspaceSettings(m.Theme, appSets, m.providerPresets)
+	wsWidget := popup.NewWorkspaceSettings(m.Theme, appSets, m.providerPresets)
 
 	w, h := fitFloatingSize(m.width, m.height, 104, 26, 60, 18)
 	frame := ui.NewWindowFrameWidget(

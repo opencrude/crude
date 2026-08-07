@@ -11,7 +11,6 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 	"crude/workspace"
 )
@@ -24,41 +23,41 @@ func (m *App) showDiagnosticAt(line, col int) {
 		return
 	}
 	// Build structured content lines.
-	var lines []widgets.DiagLine
-	lines = append(lines, widgets.DiagLine{
+	var lines []ui.DiagLine
+	lines = append(lines, ui.DiagLine{
 		Text: fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.Title(), line+1, col),
-		Kind: widgets.DiagLineTitle,
+		Kind: ui.DiagLineTitle,
 	})
 	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(line), "\n\r ")
 	if sourceLine != "" {
-		lines = append(lines, widgets.DiagLine{
+		lines = append(lines, ui.DiagLine{
 			Text: sourceLine,
-			Kind: widgets.DiagLineSource,
+			Kind: ui.DiagLineSource,
 		})
 	}
-	lines = append(lines, widgets.DiagLine{
-		Text: widgets.DiagLineDividerText(54),
-		Kind: widgets.DiagLineDivider,
+	lines = append(lines, ui.DiagLine{
+		Text: ui.DiagLineDividerText(54),
+		Kind: ui.DiagLineDivider,
 	})
 	for _, d := range diags {
-		lines = append(lines, widgets.DiagLine{
+		lines = append(lines, ui.DiagLine{
 			Text: d.Message,
-			Kind: widgets.DiagLineBody,
+			Kind: ui.DiagLineBody,
 		})
 	}
 
 	// Determine severity from the first diagnostic.
-	sev := widgets.DiagSevInfo
+	sev := ui.DiagSevInfo
 	if len(diags) > 0 {
 		switch diags[0].Severity {
 		case 1:
-			sev = widgets.DiagSevError
+			sev = ui.DiagSevError
 		case 2:
-			sev = widgets.DiagSevWarning
+			sev = ui.DiagSevWarning
 		}
 	}
 
-	frame := widgets.BuildDiagnosticFrame(m.Theme, widgets.DiagFrameSpec{
+	frame := ui.BuildDiagnosticFrame(m.Theme, ui.DiagFrameSpec{
 		Title:    "Diagnostic",
 		Icon:     "ℹ",
 		Severity: sev,

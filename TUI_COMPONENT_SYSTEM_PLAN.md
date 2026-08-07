@@ -1,6 +1,6 @@
 # TUI Component System and Design Language Plan
 
-Status: Component-system migration COMPLETE as of 2026-08-03 — all phases (0-15) exit criteria met; every "Remaining"/"PARTIAL" gap closed. Final verification: `go build ./...` ✅, `go test ./...` ✅, `go test -race ./...` ✅, `golangci-lint run ./...` 9 (documented non-QF style nits in fileio/session, none in component-system files).
+Status: Component-system migration COMPLETE as of 2026-08-03 — all phases (0-15) exit criteria met; every "Remaining"/"PARTIAL" gap closed; both legacy packages `tui/widget/` and `tui/widgets/` DELETED (all consumers migrated to `tui/ui/` + `tui/ui/popup/`). Final verification: `go build ./...` ✅, `go test ./...` ✅, `go test -race ./...` ✅, `golangci-lint run ./...` 9 (documented non-QF style nits in fileio/session, none in component-system files).
 
 Date: 2026-07-29 (progress reconciled after native composer + text overlay cutovers)
 
@@ -36,12 +36,12 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 7 Collections / scrollbar | ✅ DONE | List, VirtualList, ScrollModel, ScrollbarControl; Phase 13.7/14 deleted `tui/scrollbar`; nested subpane gutters native in shellchat; **Table + Menu landed 2026-08-03** (sharing SelectionModel/ScrollModel, Page/Home/End/ensure-visible, state matrix matching List; demo + 14 behavioral tests); **#13 ANSI bridges proven** (zero raw SGR in tui/, BridgeAnsiLine live+intentional kept) |
 | 8 Form system | ✅ DONE | FormModel, FieldState, retained Form/FormField (text/select/multi-select/cycle/toggle/nav/separator), and ActionBar with variants/quick keys; workspace settings, session settings, questions, tool confirmation, YOLO, and background-job details are native consumers; **root Host/compositor wiring verified 2026-08-03** — all 5 docked forms render through rootHost→shellRoot→deckMount→deckHost→PanelDeck→Form into mainSurf (proven by `TestDeckFormPaintsThroughRootHost`); workspace settings is a native FloatingWindow body via ComponentWidget (intended architecture for floating IDE surfaces) |
 | 9 Window/overlay | ✅ DONE | WindowFrame is the only product chrome; WM decoration paint and PopupChrome deleted; OverlayHost owns all product popup lifecycle; WindowFrame reveal animation DONE (2026-08-01); **tree prompt mutate-not-rebuild 2026-08-03** (`refreshTreePrompt` mutates the retained TextField via `ApplyTextPromptEdit`; frame persists across keystrokes, pointer-identity proven) |
-| 10 Domain seams | PARTIAL | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages now use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports |
+| 10 Domain seams | ✅ DONE | ProjectSearchService and FileOpsService own domain work; direct workspace agent lifecycle routing; persisted hydration uses `ChatMessageView`; live agent messages use workspace-owned `Conversation`/`Message` data projected into retained TUI lists by stable ID/version; workspace production and test packages are free of `tui/` imports; **file-tree control native (2026-08-03 verified)** — `ui.Tree` + `ui.FilterField` + `filetree` is a clean domain model (RowPainter callback, no Render/ANSI); the old "file-tree control not deleted" note was stale (Phase 13 completed it) |
 | 11 Compact migrations | ✅ DONE | all 11 surfaces migrated; ConfirmPrompt/3Button DELETED; ContextMenuLines static tests migrated to BuildContextMenuFrame (reveal animation restored natively 2026-08-01); **find/replace TextEdit bridge deleted 2026-08-03** (`widgets.HandleKey(st *FindReplaceState,...)` removed, zero consumers; viewmodel already used `ui.HandleTextEditKey` directly) |
 | 12 Structured migrations | DONE | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, Find in Files, composer, text overlay, and launcher bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy overlay tabs, global async rows, and migrated legacy widgets deleted |
 | 13 Shell migrations | ✅ DONE | Header/status/hints/tabs/tree/chat input/session picker/editor chrome native; message list Host+VirtualList native — markdown/thinking bodies bridge glamour ANSI to native PaintLines at render time (`BridgeAnsiLine`), no paint-time ANSI fallback; `contentDirty` cache REMOVED (2026-07-31, benchmark-verified); **root Host wiring DONE (2026-08-01)** — one `App.rootHost` + `shellRoot` tree (header/status/tabs/sidebar/chat/input/editor/launcher/deckMount) painted into one `App.mainSurf`; per-screen Hosts and layer surfaces deleted; mouse translation helpers deleted; focus/key dispatch via rootHost (see §13.9) |
-| 14 Deletion | PARTIAL | `tui/scrollbar` + ANSI nested gutter strings deleted; dual chat/subpane scrollbar packages closed (only `ScrollbarControl` remains); `tui/diffview` deleted (2026-08-01, zero importers — last non-theme hex allowlist entry); `tui/components` + `tui/form` deleted; **TextArea ANSI View() path + input view.go bridge deleted (2026-08-01)** — chat input paints natively via PaintShell/Host, tests migrated to native Paint assertions; **~108 dead symbols deleted via unused/errcheck/gosimple (2026-08-01)**; bypass allowlist shrunk (hex = `tui/theme/` only); audit script now ENFORCES `raw-ansi-sgr` |
-| 15 Stabilization | IN PROGRESS | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests; suite green aside from known `jsonrepair` flake; **lint gate fully enabled + full-repo zero (2026-08-01)** — govet/ineffassign/misspell/staticcheck/gosimple/unused/errcheck all on across `./...`; three-layer boundary enforced in audit script |
+| 14 Deletion | ✅ DONE | `tui/scrollbar` + ANSI nested gutter strings deleted; dual chat/subpane scrollbar packages closed (only `ScrollbarControl` remains); `tui/diffview` deleted (2026-08-01); `tui/components` + `tui/form` deleted; TextArea ANSI View() path + input view.go bridge deleted (2026-08-01); ~108 dead symbols deleted via unused/errcheck/gosimple (2026-08-01); bypass allowlist shrunk (hex = `tui/theme/` only); audit script now ENFORCES `raw-ansi-sgr`; **`tui/widget/` DELETED (2026-08-03)** — old Widget interface + RenderContext gone; `Hover` → `ui.Hover`; WM content type → `wm.WindowContent`; all consumers render via `ui.Component`/`ui.PaintContext`; **`tui/widgets/` DELETED (2026-08-03)** — frame builders + state types moved to `tui/ui/` (package `ui`) + `tui/ui/popup/`; all 10 viewmodel importers updated |
+| 15 Stabilization | ✅ DONE | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests; **suite fully green (2026-08-03)** — jsonrepair flake FIXED (deterministic settle poll); **lint gate fully enabled + full-repo** (govet/ineffassign/misspell/staticcheck/unused/errcheck on across `./...`); 78 pre-existing QF nits rewritten; 9 non-QF style nits left with reasons; three-layer boundary enforced in audit script; layout constraint solver fuzz landed; allowlists at architectural floor (manifest v45) |
 
 ### Intentional bridges (not drift — temporary)
 
@@ -49,7 +49,7 @@ These are allowed only as shrinking adapters listed in `bypass_manifest.json`:
 
 - `ui.ComponentWidget` / `ui.WindowFrameWidget` — mount Component trees and unified chrome inside existing FloatingWindow.
 - ~~`ui.LegacyWidget` / `ANSIViewFunc`~~ — **DELETED** (Phase 14); temporary widget→Component adapters removed; tests use native fixtures.
-- Flat `tui/ui/` package (plan target subdirs deferred until APIs stabilize).
+- `tui/ui/` package layout: core components in `tui/ui/` (flat); popup frame state types in `tui/ui/popup/` sub-package (moved from deleted `tui/widgets/` 2026-08-03).
 
 **Not done yet (do not claim as complete):** ~~full TextField surface paint everywhere~~ ✅ DONE (2026-08-03 — all 13 editable surfaces paint via native TextField/FilterField/TextArea/SearchField; 3 deleted bridges confirmed gone); ~~product controls still gradually consuming Glyph/Metrics tokens~~ ✅ DONE (2026-08-03 — 8 token types consumed across 12 controls in 16 files, behavioral tests prove token override changes painted output); bypass allowlist enforcement (hex now only in `theme/` after `diffview` deleted 2026-08-01, confirmed at architectural floor 2026-08-03, manifest v45). **WindowFrame reveal animation DONE (2026-08-01)**: `WindowFrame.SetReveal(progress)` collapses/grows the content area (Layout scales content height; Host hit-testing matches revealed geometry), OverlayHost `SetOnOpen` hook starts reveals, the viewmodel drives them from the per-frame tick (fast 16ms tick while animating, 120ms duration), and modals are excluded (appear instantly). Guarded by `TestWindowFrameReveal*` (ui) and `TestReveal_*` (viewmodel). The `contentDirty` main-content cache was **removed** (2026-07-31): the editor's internal `chromaLineCache`/`chromaDirtyFrom` makes per-frame repaint ~180-250µs at 120x40, verified by `BenchmarkEditorPaint_*` and recorded in `docs/tui/PERFORMANCE_BASELINES.md`. **Root Host wiring DONE (2026-08-01)** — the viewmodel is no longer hybrid: one `App.rootHost` + `shellRoot` tree + one `App.mainSurf` (§13.9).
 
@@ -1476,7 +1476,7 @@ Exit criteria:
 - No migrated feature draws borders or stores close-button coordinates.
 - Modal, non-modal, anchored, movable, and resizable examples pass interaction tests.
 
-### Phase 10: Domain seam corrections 🔄 PARTIAL
+### Phase 10: Domain seam corrections ✅ DONE
 
 Landed:
 - `workspace.ProjectSearchService` owns recursive project-search request IDs,
@@ -1552,9 +1552,7 @@ Landed:
   neutral `crude/types` diagnostics.
 
 Remaining:
-- Full tree control migration and filter-engine cutover remain under Phases 6,
-  7, and 13; `TreeState.ViewData()` is the data seam, not a claim that the old
-  file-tree control has been deleted.
+- ~~Full tree control migration and filter-engine cutover remain under Phases 6, 7, and 13; `TreeState.ViewData()` is the data seam, not a claim that the old file-tree control has been deleted.~~ ✅ STALE/CLOSED (2026-08-03) — file-tree is native (`ui.Tree` + `ui.FilterField` + `filetree` domain model with RowPainter callback, no Render/ANSI); Phase 13 completed the migration; the "not deleted" note predates that.
 
 Objectives:
 
@@ -2360,7 +2358,7 @@ This program is complete only when all statements are true:
 
    5. **Phase 14:** package-boundary completion and deletion. Progress (2026-08-01): `tui/diffview` deleted (zero importers — last non-theme hex allowlist entry); `tui/components` + `tui/form` already deleted; **TextArea ANSI View() path deleted** (`View`/`renderSegmentANSI`/`renderAtomicChipANSI`/`applySelectionANSI`/`blinkContrastFG`/`ansiColor` + `input/view.go` bridge + `ui.BlockCursorTime`; tests migrated to native `Paint` cell-buffer assertions where `Layout(W:8)` ≡ legacy `View(12)`); **~108 dead symbols deleted** via `unused`/`errcheck`/`gosimple` (50 unused incl. app.go legacy msg aliases + widgets test helpers; 46 unchecked errors; 12 simplifications); `workspace/` has zero `tui/` imports; audit script now enforces `raw-ansi-sgr`; lint gate fully enabled with zero issues. Remaining: ~~shrink `raw-ansi-sgr` allowlist~~ ✅ DONE (2026-08-03, shrunk to 3-path floor `tui/cell/`+`tui/compositor/`+`tui/rendering/`, manifest v45); delete any remaining legacy adapters whose consumers reached zero. **+ 78 pre-existing staticcheck QF1001/QF1003/QF1008/QF1012 nits rewritten 2026-08-03** (behavior-identical, full suite + race green; 9 non-QF ST1005/ST1023/QF1006 left with reasons).
 
-   6. **Phase 15:** stabilization and permanent enforcement (IN PROGRESS —
+   6. **Phase 15:** stabilization and permanent enforcement (✅ DONE —
       see `docs/tui/PHASE15_CHECKLIST.md`; authoring doc, shell input/tabs
       contracts, Host/WindowFrame fuzz added; **lint gate fully enabled
       2026-08-01 — errcheck/unused/gosimple all on, zero issues repo-wide,

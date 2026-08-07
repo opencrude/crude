@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/tui/widgets"
+	"crude/tui/ui/popup"
 	"crude/tui/wm"
 )
 
@@ -116,9 +116,9 @@ func TestClickContextMenu_ActivatesItem(t *testing.T) {
 
 	// Build a simple context menu.
 	activated := false
-	st := &widgets.ContextMenuState{
-		Sections: []widgets.ContextMenuSection{
-			{Items: []widgets.ContextMenuItem{
+	st := &ui.ContextMenuState{
+		Sections: []ui.ContextMenuSection{
+			{Items: []ui.ContextMenuItem{
 				{Label: "Copy", Action: func() { activated = true }},
 				{Label: "Paste"},
 			}},
@@ -128,12 +128,12 @@ func TestClickContextMenu_ActivatesItem(t *testing.T) {
 	app.LastContextMenu = st
 
 	// WindowFrame + ui.List product path.
-	frame := widgets.BuildContextMenuFrame(app.Theme, st)
+	frame := ui.BuildContextMenuFrame(app.Theme, st)
 	w, h := frame.Measure(60, 40)
-	if cw := widgets.ContextMenuPopupWidth(st); cw > 0 {
+	if cw := ui.ContextMenuPopupWidth(st); cw > 0 {
 		w = cw
 	}
-	if ch := widgets.ContextMenuPopupHeight(st); ch > 0 {
+	if ch := ui.ContextMenuPopupHeight(st); ch > 0 {
 		h = ch
 	}
 	fw := wm.NewFloatingWindow("context-menu", "", frame, w, h,
@@ -160,9 +160,9 @@ func TestClickContextMenu_DisabledItem_DoesNotActivate(t *testing.T) {
 	defer app.overlayHost.Close(ui.OverlayContextMenu)
 
 	activated := false
-	st := &widgets.ContextMenuState{
-		Sections: []widgets.ContextMenuSection{
-			{Items: []widgets.ContextMenuItem{
+	st := &ui.ContextMenuState{
+		Sections: []ui.ContextMenuSection{
+			{Items: []ui.ContextMenuItem{
 				{Label: "Cut", Action: func() { activated = true }, Disabled: true},
 			}},
 		},
@@ -170,12 +170,12 @@ func TestClickContextMenu_DisabledItem_DoesNotActivate(t *testing.T) {
 	st.Build()
 	app.LastContextMenu = st
 
-	frame := widgets.BuildContextMenuFrame(app.Theme, st)
+	frame := ui.BuildContextMenuFrame(app.Theme, st)
 	w, h := frame.Measure(60, 40)
-	if cw := widgets.ContextMenuPopupWidth(st); cw > 0 {
+	if cw := ui.ContextMenuPopupWidth(st); cw > 0 {
 		w = cw
 	}
-	if ch := widgets.ContextMenuPopupHeight(st); ch > 0 {
+	if ch := ui.ContextMenuPopupHeight(st); ch > 0 {
 		h = ch
 	}
 	fw := wm.NewFloatingWindow("context-menu", "", frame, w, h,
@@ -200,9 +200,9 @@ func TestHoverContextMenu_MovesCursor(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	defer app.overlayHost.Close(ui.OverlayContextMenu)
 
-	st := &widgets.ContextMenuState{
-		Sections: []widgets.ContextMenuSection{
-			{Items: []widgets.ContextMenuItem{
+	st := &ui.ContextMenuState{
+		Sections: []ui.ContextMenuSection{
+			{Items: []ui.ContextMenuItem{
 				{Label: "A"},
 				{Label: "B"},
 				{Label: "C"},
@@ -212,12 +212,12 @@ func TestHoverContextMenu_MovesCursor(t *testing.T) {
 	st.Build()
 	app.LastContextMenu = st
 
-	frame := widgets.BuildContextMenuFrame(app.Theme, st)
+	frame := ui.BuildContextMenuFrame(app.Theme, st)
 	w, h := frame.Measure(60, 40)
-	if cw := widgets.ContextMenuPopupWidth(st); cw > 0 {
+	if cw := ui.ContextMenuPopupWidth(st); cw > 0 {
 		w = cw
 	}
-	if ch := widgets.ContextMenuPopupHeight(st); ch > 0 {
+	if ch := ui.ContextMenuPopupHeight(st); ch > 0 {
 		h = ch
 	}
 	fw := wm.NewFloatingWindow("context-menu", "", frame, w, h,
@@ -249,7 +249,7 @@ func TestClickDirtyPrompt_CancelButtonCancels(t *testing.T) {
 	app.DirtyPromptPath = "/tmp/foo.go"
 	app.DirtyPromptChoice = 2
 
-	frame := widgets.BuildDirtyCloseFrame(app.Theme, "foo.go", 2)
+	frame := ui.BuildDirtyCloseFrame(app.Theme, "foo.go", 2)
 	w, h := frame.Measure(80, 40)
 	fw := wm.NewFloatingWindow("dirty-close-prompt", "", frame, w, h,
 		wm.WithDecoration(false),
@@ -264,7 +264,7 @@ func TestClickDirtyPrompt_CancelButtonCancels(t *testing.T) {
 	host := frame.Host()
 	host.Resize(w, h)
 	host.Layout()
-	cancelID := widgets.ConfirmButtonID(2)
+	cancelID := ui.ConfirmButtonID(2)
 	// Find a point inside the Cancel button from the host screen map via Focus+Handle.
 	// Click using Host hit-test coordinates by scanning.
 	clicked := false
@@ -295,7 +295,7 @@ func TestDirtyPromptKey_CancelBreaksEscLoop(t *testing.T) {
 	app.EditorState.ActiveView = "/tmp/foo.go"
 	app.DirtyPromptPath = "/tmp/foo.go"
 	app.DirtyPromptChoice = 2 // start focused on Cancel
-	frame := widgets.BuildDirtyCloseFrame(app.Theme, "foo.go", 2)
+	frame := ui.BuildDirtyCloseFrame(app.Theme, "foo.go", 2)
 	w, h := frame.Measure(80, 40)
 	fw := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", frame, w, h,
 		wm.WithDecoration(false),
@@ -355,7 +355,7 @@ func TestFocusRestoration_AfterPopupClose_EditorKeepsFocus(t *testing.T) {
 	}
 
 	// Open a popup. treeFocused/etc are unchanged.
-	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
+	pop := ui.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
 	fw := wm.NewFloatingWindow("context-menu", "", pop, 3, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -389,7 +389,7 @@ func TestFocusRestoration_AfterPopupClose_TreeKeepsFocus(t *testing.T) {
 	app.Tree.Visible = true
 
 	// Open and close a popup.
-	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
+	pop := ui.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
 	fw := wm.NewFloatingWindow("context-menu", "", pop, 3, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -411,7 +411,7 @@ func TestFocusRestoration_ChainedPopups(t *testing.T) {
 	app.EditorState.ActiveView = "/tmp/foo.go"
 
 	// Open popup A.
-	popA := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
+	popA := ui.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
 	fwA := wm.NewFloatingWindow("context-menu", "", popA, 3, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -419,7 +419,7 @@ func TestFocusRestoration_ChainedPopups(t *testing.T) {
 	app.overlayHost.Open(ui.OverlayContextMenu, fwA, ui.PopoverPolicy(true), nil)
 
 	// Open popup B on top.
-	popB := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
+	popB := ui.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
 	fwB := wm.NewFloatingWindow("find-replace", "", popB, 3, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -456,7 +456,7 @@ func TestFocusRestoration_FindReplaceOpen_EditorClickFocusesEditor(t *testing.T)
 	app.EditorState.ActiveView = "/tmp/foo.go"
 
 	// Open find-replace popup.
-	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
+	pop := ui.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
 	fw := wm.NewFloatingWindow("find-replace", "", pop, 3, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -493,7 +493,7 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 	app.Tree.Visible = true
 
 	// Open a context menu.
-	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
+	pop := ui.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
 	fw := wm.NewFloatingWindow("context-menu", "", pop, 3, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -525,11 +525,11 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 
 func TestHoverFindReplace_ToggleHover(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.FindReplace = &widgets.FindReplaceState{HoveredToggle: -1}
+	app.FindReplace = &popup.FindReplaceState{HoveredToggle: -1}
 
 	// Register a find-replace popup window so hover/click can
 	// compute toggle positions from its size.
-	pop := widgets.NewPopupContent([]string{"line"})
+	pop := ui.NewPopupContent([]string{"line"})
 	w := 44
 	h := 7
 	fw := wm.NewFloatingWindow("find-replace", "", pop, w, h,
@@ -578,13 +578,13 @@ func TestHoverFindReplace_ToggleHover(t *testing.T) {
 
 func TestClickFindReplace_FocusesFindField(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.FindReplace = &widgets.FindReplaceState{
+	app.FindReplace = &popup.FindReplaceState{
 		FocusedField: 1, // currently focused on replace
 	}
 	app.FindReplace.SetQuery("hello")
 
 	// Register a popup window so the click can run.
-	pop := widgets.NewPopupContent([]string{"line"})
+	pop := ui.NewPopupContent([]string{"line"})
 	fw := wm.NewFloatingWindow("find-replace", "", pop, 44, 7,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -603,14 +603,14 @@ func TestClickFindReplace_FocusesFindField(t *testing.T) {
 
 func TestClickFindReplace_TogglesCaseSensitive(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.FindReplace = &widgets.FindReplaceState{
+	app.FindReplace = &popup.FindReplaceState{
 		CaseSensitive: false,
 		HoveredToggle: -1,
 	}
 
 	// Register a popup window with width 44 so the toggle bands
 	// are at: Aa 27-31, \b 31-35, .* 35-39.
-	pop := widgets.NewPopupContent([]string{"line"})
+	pop := ui.NewPopupContent([]string{"line"})
 	fw := wm.NewFloatingWindow("find-replace", "", pop, 44, 7,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -656,7 +656,7 @@ func setupTestAppWithPopup(t *testing.T, id string, behavior wm.ClickOutsideBeha
 	t.Helper()
 	app := newTestAppForPopupMouse(t)
 
-	pop := widgets.NewPopupContent([]string{
+	pop := ui.NewPopupContent([]string{
 		"╭ ─╮",
 		"│ x │",
 		"╰ ─╯",

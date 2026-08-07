@@ -12,7 +12,6 @@ import (
 	"crude/tui/screens/shelleditor"
 	"crude/tui/screens/shellinput"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 )
 
@@ -557,15 +556,15 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(state.Line), "\n\r ")
 
 	// Build structured content lines.
-	var diagLines []widgets.DiagLine
-	diagLines = append(diagLines, widgets.DiagLine{
+	var diagLines []ui.DiagLine
+	diagLines = append(diagLines, ui.DiagLine{
 		Text: titleStr,
-		Kind: widgets.DiagLineTitle,
+		Kind: ui.DiagLineTitle,
 	})
 	if sourceLine != "" {
-		diagLines = append(diagLines, widgets.DiagLine{
+		diagLines = append(diagLines, ui.DiagLine{
 			Text: sourceLine,
-			Kind: widgets.DiagLineSource,
+			Kind: ui.DiagLineSource,
 		})
 	}
 
@@ -589,32 +588,32 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 	innerW := boxW - 6
 
 	// Divider
-	diagLines = append(diagLines, widgets.DiagLine{
-		Text: widgets.DiagLineDividerText(innerW),
-		Kind: widgets.DiagLineDivider,
+	diagLines = append(diagLines, ui.DiagLine{
+		Text: ui.DiagLineDividerText(innerW),
+		Kind: ui.DiagLineDivider,
 	})
 
 	// Body lines (word-wrapped).
 	for _, msg := range state.Messages {
-		diagLines = append(diagLines, widgets.DiagLine{
+		diagLines = append(diagLines, ui.DiagLine{
 			Text: msg,
-			Kind: widgets.DiagLineBody,
+			Kind: ui.DiagLineBody,
 		})
 	}
 
 	// Map severity to DiagSeverity for the frame.
-	diagSev := widgets.DiagSevInfo
+	diagSev := ui.DiagSevInfo
 	switch state.Severity {
 	case 1:
-		diagSev = widgets.DiagSevError
+		diagSev = ui.DiagSevError
 	case 2:
-		diagSev = widgets.DiagSevWarning
+		diagSev = ui.DiagSevWarning
 	}
 
 	popupH := len(diagLines) + 2
 	popupX, popupY := m.diagPopupPosition(screenX, screenY, boxW, popupH)
 
-	frame := widgets.BuildDiagnosticFrame(m.Theme, widgets.DiagFrameSpec{
+	frame := ui.BuildDiagnosticFrame(m.Theme, ui.DiagFrameSpec{
 		Title:    sevLabel,
 		Icon:     sevIcon,
 		Severity: diagSev,
@@ -712,7 +711,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	}
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
-	var st *widgets.ContextMenuState
+	var st *ui.ContextMenuState
 	switch region {
 	case regionEditor:
 		st = m.buildEditorContextMenu(mouse)
@@ -739,13 +738,13 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 
 	// Position the popup near the cursor without going off-screen.
 	// WindowFrame + ui.List (no PopupChrome).
-	frame := widgets.BuildContextMenuFrame(m.Theme, st)
+	frame := ui.BuildContextMenuFrame(m.Theme, st)
 	w, h := frame.Measure(60, 40)
 	// Prefer computed chrome sizes from state for tight menus.
-	if cw := widgets.ContextMenuPopupWidth(st); cw > 0 {
+	if cw := ui.ContextMenuPopupWidth(st); cw > 0 {
 		w = cw
 	}
-	if ch := widgets.ContextMenuPopupHeight(st); ch > 0 {
+	if ch := ui.ContextMenuPopupHeight(st); ch > 0 {
 		h = ch
 	}
 	x, y := clampPopupPosition(mouse.X, mouse.Y, w, h, m.width, m.height)

@@ -5,7 +5,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/tui/widgets"
+	"crude/tui/ui/popup"
 	"crude/tui/wm"
 )
 
@@ -132,14 +132,14 @@ func (m *App) clickContextMenu(localX, localY int) tea.Cmd {
 	cw.Host().Resize(ww, hh)
 	cw.Host().Layout()
 	res := cw.Host().Handle(tea.MouseClickMsg{X: localX, Y: localY, Button: tea.MouseLeft})
-	if res.Action == nil || res.Action.ID != widgets.ContextMenuActivate {
+	if res.Action == nil || res.Action.ID != ui.ContextMenuActivate {
 		return nil
 	}
 	item, ok := res.Action.Payload.(ui.ListItem)
 	if !ok || item.Disabled {
 		return nil
 	}
-	p, ok := item.Payload.(widgets.ContextMenuPayload)
+	p, ok := item.Payload.(ui.ContextMenuPayload)
 	if !ok {
 		return nil
 	}
@@ -171,7 +171,7 @@ func (m *App) hoverContextMenu(localX, localY int) {
 	ww, hh := fw.Size()
 	cw.Host().Resize(ww, hh)
 	cw.Host().Layout()
-	list := widgets.ContextMenuList(cw)
+	list := ui.ContextMenuList(cw)
 	if list == nil {
 		return
 	}
@@ -190,7 +190,7 @@ func (m *App) hoverContextMenu(localX, localY int) {
 	}
 	if list.SelectedIndex() != idx {
 		list.SelectIndex(idx)
-		widgets.SyncContextMenuCursor(cw, st)
+		ui.SyncContextMenuCursor(cw, st)
 		fw.MarkContentDirty()
 	}
 }
@@ -218,7 +218,7 @@ func (m *App) hoverContextMenu(localX, localY int) {
 // is 6 cells; "Replace: " is 9 cells). The chrome adds "│ " on the
 // left (2 cells of padding around the left border). We account for
 // both when translating local X to visible column within the value.
-func (m *App) positionFindReplaceCursor(fr *widgets.FindReplaceState, edit *ui.TextEdit, localX int, label string) {
+func (m *App) positionFindReplaceCursor(fr *popup.FindReplaceState, edit *ui.TextEdit, localX int, label string) {
 	if fr == nil || edit == nil {
 		return
 	}
@@ -514,7 +514,7 @@ func (m *App) clickReferences(localX, localY int) tea.Cmd {
 				m.closeReferencesPopup()
 				return nil
 			}
-			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
+			if res.Action != nil && res.Action.ID == ui.ListPopupActivate {
 				if item, ok := res.Action.Payload.(ui.ListItem); ok {
 					var idx int
 					if i, ok := item.Payload.(int); ok {
@@ -553,7 +553,7 @@ func (m *App) hoverReferences(localX, localY int) {
 		return
 	}
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		list := widgets.ListPopupList(cw)
+		list := ui.ListPopupList(cw)
 		if list == nil {
 			return
 		}
@@ -585,7 +585,7 @@ func (m *App) hoverReferences(localX, localY int) {
 
 // listPopupSelectedIndex returns the selected row index from a list popup frame.
 func (m *App) listPopupSelectedIndex(cw *ui.ComponentWidget) int {
-	list := widgets.ListPopupList(cw)
+	list := ui.ListPopupList(cw)
 	if list == nil {
 		return -1
 	}
@@ -614,7 +614,7 @@ func (m *App) clickCompletion(localX, localY int) tea.Cmd {
 				m.closeCompletionPopup()
 				return nil
 			}
-			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
+			if res.Action != nil && res.Action.ID == ui.ListPopupActivate {
 				if item, ok := res.Action.Payload.(ui.ListItem); ok {
 					var idx int
 					if i, ok := item.Payload.(int); ok {
@@ -650,7 +650,7 @@ func (m *App) hoverCompletion(localX, localY int) {
 		return
 	}
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		list := widgets.ListPopupList(cw)
+		list := ui.ListPopupList(cw)
 		if list == nil {
 			return
 		}
@@ -700,7 +700,7 @@ func (m *App) clickOutline(localX, localY int) tea.Cmd {
 				m.closeOutlinePopup()
 				return nil
 			}
-			if res.Action != nil && res.Action.ID == widgets.ListPopupActivate {
+			if res.Action != nil && res.Action.ID == ui.ListPopupActivate {
 				if item, ok := res.Action.Payload.(ui.ListItem); ok {
 					var idx int
 					if i, ok := item.Payload.(int); ok {
@@ -738,7 +738,7 @@ func (m *App) hoverOutline(localX, localY int) {
 		return
 	}
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		list := widgets.ListPopupList(cw)
+		list := ui.ListPopupList(cw)
 		if list == nil {
 			return
 		}
@@ -787,7 +787,7 @@ func (m *App) clickCommandPalette(fw *wm.FloatingWindow, localX, localY int) tea
 		Button: tea.MouseLeft,
 	})
 	// Check if the click activated a list item.
-	if res.Action != nil && res.Action.ID == widgets.CPActivate {
+	if res.Action != nil && res.Action.ID == ui.CPActivate {
 		if entry, ok := res.Action.Payload.(ui.ListItem); ok {
 			if ce, ok := entry.Payload.(cmdEntry); ok {
 				cb := m.commandPaletteModel.callback

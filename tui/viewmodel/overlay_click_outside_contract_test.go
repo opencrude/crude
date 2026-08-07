@@ -12,8 +12,6 @@ import (
 	"crude/tui/editor"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/tui/widget"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 )
 
@@ -60,7 +58,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 
 func openOverlayFixture(t *testing.T, app *App, fx overlayOutsideFixture) {
 	t.Helper()
-	pop := widgets.NewPopupContent([]string{"╭─╮", "│ x│", "╰─╯"})
+	pop := ui.NewPopupContent([]string{"╭─╮", "│ x│", "╰─╯"})
 	fw := wm.NewFloatingWindow(string(fx.id), "", pop, 7, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -305,7 +303,7 @@ func setupOverlayDispatchApp(t *testing.T) (*App, int, int) {
 func layoutEditorForMouse(app *App) LayoutInfo {
 	layout := app.computeLayout()
 	if app.renderCtx == nil {
-		app.renderCtx = widget.NewRenderContext(app.Theme)
+		app.renderCtx = wm.NewRenderContext(app.Theme)
 	}
 	edH := app.height - layout.ChatAreaTop - 2
 	if edH < 8 {
@@ -316,7 +314,7 @@ func layoutEditorForMouse(app *App) LayoutInfo {
 		w = 40
 	}
 	surf := surface.NewSurface("test-editor", w, edH, cell.TransparentBlank())
-	app.EditorState.Editor.Render(surf, app.renderCtx)
+	app.EditorState.Editor.Render(surf, ui.PaintContext{Theme: app.Theme})
 	return layout
 }
 

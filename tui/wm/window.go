@@ -4,7 +4,6 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
-	"crude/tui/widget"
 )
 
 // FloatingWindow is an interactive surface that floats above other content.
@@ -23,7 +22,7 @@ type FloatingWindow struct {
 	// Title is the text displayed in the window's title bar.
 	Title string
 	// Content is the widget rendered inside the window's content area.
-	Content widget.Widget
+	Content WindowContent
 
 	// Position (screen coordinates).
 	x, y int
@@ -89,7 +88,7 @@ type FloatingWindow struct {
 //
 // The window is visible and has standard frame interaction regions by default.
 // Content is expected to include ui.WindowFrame when visual chrome is wanted.
-func NewFloatingWindow(id, title string, content widget.Widget, w, h int, opts ...WindowOption) *FloatingWindow {
+func NewFloatingWindow(id, title string, content WindowContent, w, h int, opts ...WindowOption) *FloatingWindow {
 	fw := &FloatingWindow{
 		ID:           id,
 		Title:        title,
@@ -218,7 +217,7 @@ func (fw *FloatingWindow) SetPosition(x, y int) {
 // SetContent replaces the content widget and forces a re-render. Used
 // when a popup's content changes (e.g. focus shift in a confirm
 // dialog) without needing to close and reopen the window.
-func (fw *FloatingWindow) SetContent(c widget.Widget) {
+func (fw *FloatingWindow) SetContent(c WindowContent) {
 	fw.Content = c
 	fw.contentDirty = true
 }
@@ -271,7 +270,7 @@ func (fw *FloatingWindow) ApplyMove(dx, dy int) {
 //  2. Fill with transparent blanks (so uncovered areas show through)
 //  3. Create a child surface covering the complete window
 //  4. Call fw.Content.Render(contentSurf, ctx)
-func (fw *FloatingWindow) Render(ctx *widget.RenderContext) {
+func (fw *FloatingWindow) Render(ctx *RenderContext) {
 	// Always create/resize the window's surface.
 	if fw.surf == nil {
 		fw.surf = surface.NewSurface(fw.ID, fw.w, fw.h, cell.TransparentBlank())

@@ -10,7 +10,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/widget"
+	"crude/tui/wm"
 )
 
 func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
@@ -48,7 +48,7 @@ func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
 	surfaceRoot.SetFocusHandler(cw.Focus)
 	surfaceRoot.FocusSearch()
 	surf := surface.NewSurface("settings-test", 90, 28, cell.TransparentBlank())
-	cw.Render(surf, &widget.RenderContext{Theme: th})
+	cw.Render(surf, &wm.RenderContext{Theme: th})
 
 	for _, text := range []string{"Search settings", "AI", "IDE", "Save", "Cancel"} {
 		if !bufferContains(surf.Buffer(), text) {
@@ -86,7 +86,7 @@ func TestSettingsSearchFiltersGroupedNavigation(t *testing.T) {
 	}
 
 	surf := surface.NewSurface("settings-search-test", 80, 24, cell.TransparentBlank())
-	cw.Render(surf, &widget.RenderContext{Theme: th})
+	cw.Render(surf, &wm.RenderContext{Theme: th})
 	if !bufferContains(surf.Buffer(), "Font") || bufferContains(surf.Buffer(), "Providers") {
 		t.Fatal("filtered settings categories were not rendered")
 	}
@@ -99,7 +99,7 @@ func TestSettingsSurfaceActionBarEmitsMessages(t *testing.T) {
 	cw := ui.NewComponentWidget(th, surfaceRoot, 80, 24)
 	surfaceRoot.SetFocusHandler(cw.Focus)
 	surf := surface.NewSurface("settings-action-bar", 80, 24, cell.TransparentBlank())
-	cw.Render(surf, &widget.RenderContext{Theme: th})
+	cw.Render(surf, &wm.RenderContext{Theme: th})
 	cw.Focus(WorkspaceSettingsActionID)
 	result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if result.Cmd == nil {
@@ -118,7 +118,7 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
 	surfaceRoot.SetFocusHandler(cw.Focus)
 	surf := surface.NewSurface("settings-native-form", 90, 28, cell.TransparentBlank())
-	cw.Render(surf, &widget.RenderContext{Theme: th})
+	cw.Render(surf, &wm.RenderContext{Theme: th})
 
 	// The Editor category follows the AI group and Appearance rows.
 	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 10, Button: tea.MouseLeft})
@@ -157,7 +157,7 @@ func TestSettingsSurfaceNativeSelectCommitsProvider(t *testing.T) {
 	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
 	surfaceRoot.SetFocusHandler(cw.Focus)
 	surf := surface.NewSurface("settings-native-select", 90, 28, cell.TransparentBlank())
-	cw.Render(surf, &widget.RenderContext{Theme: th})
+	cw.Render(surf, &wm.RenderContext{Theme: th})
 
 	surfaceRoot.FocusForm()
 	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})

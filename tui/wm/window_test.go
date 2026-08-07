@@ -6,14 +6,11 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/widget"
 )
 
-type testWidget struct {
-	widget.BaseWidget
-}
+type testWidget struct{}
 
-func (t testWidget) Render(surf *surface.Surface, ctx *widget.RenderContext) {
+func (t testWidget) Render(surf *surface.Surface, ctx *RenderContext) {
 	for y := 0; y < surf.Height(); y++ {
 		for x := 0; x < surf.Width(); x++ {
 			surf.Buffer().Set(x, y, cell.NewCell('X', cell.NoColor, cell.NoColor, 0))
@@ -25,13 +22,9 @@ func testTheme() *theme.Theme {
 	return theme.DefaultDark()
 }
 
-func testContext() *widget.RenderContext {
-	return &widget.RenderContext{
-		Theme:     testTheme(),
-		ClipStack: surface.NewClipStack(),
-		Opacity:   1.0,
-		Focused:   false,
-		SpinFrame: 0,
+func testContext() *RenderContext {
+	return &RenderContext{
+		Theme: testTheme(),
 	}
 }
 

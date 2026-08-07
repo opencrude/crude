@@ -17,7 +17,6 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widget"
 )
 
 const (
@@ -589,7 +588,7 @@ func (p *previewPane) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.
 		p.owner.previewSurf = surface.NewSurface("fif-preview", w, h, cell.TransparentBlank())
 	}
 	p.owner.previewSurf.Buffer().Clear()
-	wctx := &widget.RenderContext{Theme: p.owner.th}
+	wctx := ui.PaintContext{Theme: p.owner.th}
 	ed.Render(p.owner.previewSurf, wctx)
 	surface.BlitOpaque(buf, originX+r.X, originY+r.Y, p.owner.previewSurf.Buffer())
 }

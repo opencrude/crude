@@ -19,7 +19,6 @@ import (
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/shelltabs"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	wm "crude/tui/wm"
 	"crude/workspace"
 )
@@ -1096,7 +1095,7 @@ func (m *App) showReferencesPopup(rows []refRow) {
 	}
 
 	title := fmt.Sprintf("References (%d)", len(listItems))
-	frame := widgets.BuildListPopupFrame(m.Theme, widgets.ListPopupSpec{
+	frame := ui.BuildListPopupFrame(m.Theme, ui.ListPopupSpec{
 		ID:       id,
 		Title:    title,
 		Items:    listItems,
@@ -1118,7 +1117,7 @@ func (m *App) showReferencesPopup(rows []refRow) {
 	if existing := m.windowManager.Window(id); existing != nil {
 		// Prefer mutating selection when content is already a ComponentWidget.
 		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
-			if list := widgets.ListPopupList(cw); list != nil {
+			if list := ui.ListPopupList(cw); list != nil {
 				list.SetItems(listItems)
 				list.SelectIndex(m.LSPPopup.RefCursor)
 				existing.SetSize(boxW, boxH)
@@ -1186,7 +1185,7 @@ func (m *App) syncReferencesListCursor() {
 		return
 	}
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		if list := widgets.ListPopupList(cw); list != nil {
+		if list := ui.ListPopupList(cw); list != nil {
 			list.SelectIndex(m.LSPPopup.RefCursor)
 			fw.MarkContentDirty()
 			return
@@ -1280,7 +1279,7 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 	}
 
 	title := fmt.Sprintf("Outline · %d", len(listItems))
-	frame := widgets.BuildListPopupFrame(m.Theme, widgets.ListPopupSpec{
+	frame := ui.BuildListPopupFrame(m.Theme, ui.ListPopupSpec{
 		ID:       outlinePopupID,
 		Title:    title,
 		Items:    listItems,
@@ -1301,7 +1300,7 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 
 	if existing := m.windowManager.Window(outlinePopupID); existing != nil {
 		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
-			if list := widgets.ListPopupList(cw); list != nil {
+			if list := ui.ListPopupList(cw); list != nil {
 				list.SetItems(listItems)
 				list.SelectIndex(m.LSPPopup.OutlineCursor)
 				existing.SetSize(boxW, boxH)
@@ -1358,7 +1357,7 @@ func (m *App) syncOutlineListCursor() {
 		return
 	}
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		if list := widgets.ListPopupList(cw); list != nil {
+		if list := ui.ListPopupList(cw); list != nil {
 			list.SelectIndex(m.LSPPopup.OutlineCursor)
 			fw.MarkContentDirty()
 			return
@@ -1460,7 +1459,7 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 	}
 
 	title := fmt.Sprintf("Completions · %d", len(listItems))
-	frame := widgets.BuildListPopupFrame(m.Theme, widgets.ListPopupSpec{
+	frame := ui.BuildListPopupFrame(m.Theme, ui.ListPopupSpec{
 		ID:       completionPopupID,
 		Title:    title,
 		Items:    listItems,
@@ -1489,7 +1488,7 @@ func (m *App) showCompletionPopup(items []editor.CompletionItem) {
 
 	if existing := m.windowManager.Window(completionPopupID); existing != nil {
 		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
-			if list := widgets.ListPopupList(cw); list != nil {
+			if list := ui.ListPopupList(cw); list != nil {
 				list.SetItems(listItems)
 				list.SelectIndex(m.LSPPopup.CompletionCursor)
 				existing.SetSize(boxW, boxH)
@@ -1546,7 +1545,7 @@ func (m *App) syncCompletionListCursor() {
 		return
 	}
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		if list := widgets.ListPopupList(cw); list != nil {
+		if list := ui.ListPopupList(cw); list != nil {
 			list.SelectIndex(m.LSPPopup.CompletionCursor)
 			fw.MarkContentDirty()
 			return

@@ -20,7 +20,6 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widget"
 	"crude/tui/window"
 	"crude/tui/wm"
 	"crude/workspace"
@@ -96,7 +95,7 @@ func newFullTestApp(t *testing.T) *App {
 	t.Helper()
 	app := newTestApp(t)
 	app.compositor = compositor.NewCompositor(app.width, app.height)
-	app.renderCtx = widget.NewRenderContext(app.Theme)
+	app.renderCtx = wm.NewRenderContext(app.Theme)
 	return app
 }
 

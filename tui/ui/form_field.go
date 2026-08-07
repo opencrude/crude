@@ -222,7 +222,6 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 			text := ff.field.Value.String()
 			if text == "" {
 				text = "-"
-				labelFG = mutedFG
 			}
 			buf.WriteString(contentX, y, rendering.TruncateVisual(text, contentW, "…"), valueFG, controlBG, 0)
 		}
