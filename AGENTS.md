@@ -1,5 +1,55 @@
 # Crude Architecture & Working Knowledge
 
+## Agent Boot Contract
+
+This root `AGENTS.md` is the canonical startup instruction file for this
+repository. Read it before inspecting or changing code. Do not substitute a
+generic README, tool probing, or assumptions from another project.
+
+### First actions
+
+1. Check `git status --short`; preserve unrelated user or agent changes.
+2. Read the relevant sections of this file, then consult `PLAN.md`,
+   `TUI_COMPONENT_SYSTEM_PLAN.md`, `TERMINAL_WIDTH.md`, and the relevant
+   `docs/tui/*.md` file before changing architecture or terminal UI code.
+3. Use `Glob` and `Grep` for repository discovery. Do not probe for generic
+   screenshot tools when a repository workflow exists.
+
+### Layer boundaries
+
+- `app/` owns application configuration, workspace lifecycle, and CLI startup.
+- `workspace/` owns project state, sessions, orchestrators, LSP, persistence,
+  and domain services. It must not import `crude/tui`.
+- `tui/` owns rendering and input routing. It calls workspace methods and
+  subscribes to workspace events; it does not own domain persistence.
+- Keep presentation-neutral contracts in `crude/types` or workspace view data.
+
+### Visual capture workflow
+
+Use the repository workflow only: `scripts/tuishot.sh`. For discussion-sized
+captures use a readable full-width terminal, for example:
+
+```bash
+COLS=160 ROWS=40 FONT_SIZE=11 scripts/tuishot.sh /tmp/crude-screenshots \
+  key:ctrl+alt+p type:settings key:Down key:Return
+```
+
+`Ctrl+Alt+P` opens the Command Palette. From the launcher, filter with
+`type:settings`, press `Down` to select the Tools > Settings entry, then press
+`Return`.
+
+After every capture, close the Alacritty/Crude window before finishing. Do not
+leave a `CrudeShot` window or capture process running. Keep `KEEP_OPEN=0` for
+normal captures; if `KEEP_OPEN=1` is used for an explicit interactive review,
+close it and verify `xdotool search --class CrudeShot` returns no window.
+
+### Validation baseline
+
+Run `go build ./...` after implementation changes. For TUI changes, run the
+focused package tests and then `go test ./...`; run `golangci-lint run ./...`
+when the change is complete. Do not update golden output unless the visual
+change is intentional and verified.
+
 ## Target Architecture: Three-Layer IDE
 
 ```
@@ -47,21 +97,21 @@ The `app/` layer does NOT wire TUI → workspace. The TUI holds a
 reference to `*workspace.Workspace` and calls methods directly. The
 workspace publishes events that the TUI subscribes to.
 
-### Current State (what's in the code vs what we're building)
+### Current State (what is in the code today)
 
-The three-layer split (`app/` → `workspace/` → `tui/`) is **DONE** —
-see `PLAN.md` for that history. What remains is the TUI component-system
-migration tracked in `TUI_COMPONENT_SYSTEM_PLAN.md`: the viewmodel still
-paints ~ten compositor layer surfaces through ~nine per-screen `ui.Host`
-instances; the target is **one root `ui.Host`** mounting the whole shell
-as a single component tree painted into one surface.
+The three-layer split (`app/` → `workspace/` → `tui/`) is **DONE** — see
+`PLAN.md` for that history. The root-host component-system cutover is also
+landed: the viewmodel mounts the shell through one root `ui.Host` and paints
+the persistent shell into one main surface. Later phase entries in
+`TUI_COMPONENT_SYSTEM_PLAN.md` are historical status and design context; do
+not assume an older phase description matches the current implementation.
 
 | Area | Current state |
 |---|---|
 | `app/` | Thin CLI entry: creates workspace, bootstraps session, starts TUI. No callbacks. `app/app.go` ~270 lines. |
 | `workspace/` | Per-project state machine (repo root, NOT `tui/workspace/`). Owns sessions, orchestrators, LSP manager, file ops, project search, workspace DB. Zero `tui/` imports (production + tests). |
 | `tui/` | Dumb renderer + input router. Holds `*workspace.Workspace`, calls methods, subscribes to the event bus. `tui/tui.go` has no callbacks. |
-| `tui/viewmodel/App` | Presentation state holder. Currently hybrid: per-screen `ui.Host`s (header/tabs/sidebar/status/input/chat/editor/launcher) painted into layer surfaces + per-session `deckHost`. Target: one root Host (`rootHost`) + one shell surface. |
+| `tui/viewmodel/App` | Presentation state holder. Uses one root `ui.Host` (`rootHost`) + one shell surface (`mainSurf`), with retained per-session `deckHost`s mounted through the shell. |
 | `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). |
 | `session/` | Session domain library (sessions are workspace-scoped under `~/.crude/workspaces/<hash>/sessions/`); consumed by `workspace/`. |
 

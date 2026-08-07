@@ -201,7 +201,7 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		if item.Header {
 			fg, bg := cell.NoColor, cell.NoColor
 			if l.tokens != nil {
-				fg = l.tokens.Color(ColorMuted)
+				fg = l.tokens.Color(ColorAccent2)
 				bg = l.tokens.Color(ColorPopupBg)
 			}
 			if !bg.IsDefault() {
@@ -237,7 +237,7 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		// marker
 		marker := "  "
 		if idx == l.sel.Index() && item.Selectable() {
-			marker = "❯ "
+			marker = DefaultGlyphsFromTokens(l.tokens).Prompt + " "
 		}
 		line := marker
 		if item.Icon != "" {

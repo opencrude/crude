@@ -126,7 +126,7 @@ type App struct {
 	findInFilesRequest     uint64
 	findInFilesGen         int
 	providerPresets        []ttypes.ProviderPreset
-	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
+	launcherLoadGen        atomic.Uint64         // generation of the in-flight async launcher load
 	reveals                map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
@@ -195,39 +195,39 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	comp.Root().AddChild(mainSurf)
 
 	app := &App{
-		Workspace:           ws,
-		Theme:               th,
-		Input:               im,
-		StatusBar:           sb,
-		Win:                 window.New(th),
-		BufferMgr:           bufferMgr,
-		Tree:                tree,
-		FilePicker:          filepickerscreen.New(th),
-		LastSettings:        ws.InitialSettings,
-		EditorState:         edState,
-		OverlayState:        NewOverlayState(),
-		LSPPopup:            NewLSPPopupState(),
-		headerScreen:        headerScreen,
-		tabScreen:           tabScreen,
-		sidebarScreen:       sidebarScreen,
-		inputScreen:         inputScreen,
-		chatScreen:          chatScreen,
-		editorScreen:        editorScreen,
-		launcherScreen:      launcherScreen,
-		shell:               shell,
-		rootHost:            rootHost,
-		mainSurf:            mainSurf,
-		providerPresets:     presets,
-		compositor:          comp,
-		windowManager:       wmgr,
-		eventBus:            eb,
-		renderCtx:           rctx,
-		lastCancelTime:      time.Now(),
-		actionRegistry:      registry,
-		overlayHost:         overlay,
-		subPaneProjections:  subPaneProjections,
-		sessionProjections:  sessionProjections,
-		agentChatScroll:     make(map[string]agentMainChatScrollSnapshot),
+		Workspace:          ws,
+		Theme:              th,
+		Input:              im,
+		StatusBar:          sb,
+		Win:                window.New(th),
+		BufferMgr:          bufferMgr,
+		Tree:               tree,
+		FilePicker:         filepickerscreen.New(th),
+		LastSettings:       ws.InitialSettings,
+		EditorState:        edState,
+		OverlayState:       NewOverlayState(),
+		LSPPopup:           NewLSPPopupState(),
+		headerScreen:       headerScreen,
+		tabScreen:          tabScreen,
+		sidebarScreen:      sidebarScreen,
+		inputScreen:        inputScreen,
+		chatScreen:         chatScreen,
+		editorScreen:       editorScreen,
+		launcherScreen:     launcherScreen,
+		shell:              shell,
+		rootHost:           rootHost,
+		mainSurf:           mainSurf,
+		providerPresets:    presets,
+		compositor:         comp,
+		windowManager:      wmgr,
+		eventBus:           eb,
+		renderCtx:          rctx,
+		lastCancelTime:     time.Now(),
+		actionRegistry:     registry,
+		overlayHost:        overlay,
+		subPaneProjections: subPaneProjections,
+		sessionProjections: sessionProjections,
+		agentChatScroll:    make(map[string]agentMainChatScrollSnapshot),
 	}
 	deck.app = app
 
@@ -425,12 +425,12 @@ func (m *App) openWorkspaceSettings() {
 
 	wsWidget := widgets.NewWorkspaceSettings(m.Theme, appSets, m.providerPresets)
 
-	w, h := fitFloatingSize(m.width, m.height, 86, 22, 60, 18)
+	w, h := fitFloatingSize(m.width, m.height, 104, 26, 60, 18)
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "workspace-settings-frame"),
 		ui.FrameWindow,
-		"Settings",
+		"Workspace Settings",
 		wsWidget.Component(),
 		wsWidget,
 		true,
@@ -439,7 +439,7 @@ func (m *App) openWorkspaceSettings() {
 	)
 	wsWidget.SetFocusHandler(frame.Focus)
 	wsWidget.FocusSearch()
-	win := wm.NewFloatingWindow(string(ui.OverlayWorkspaceSettings), "Settings", frame,
+	win := wm.NewFloatingWindow(string(ui.OverlayWorkspaceSettings), "Workspace Settings", frame,
 		w, h,
 		wm.WithDecoration(true),
 		wm.WithMovable(true),
@@ -584,8 +584,6 @@ func (m *App) toggleComposer() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// openOrchestratorSettings opens the settings to the current orchestrator's
-// category settings, allowing per-orchestrator model/provider overrides.
 func (m *App) openSessionSettings() {
 	p := m.activeSessionProjection()
 	if p == nil || p.settings == nil {
@@ -594,10 +592,6 @@ func (m *App) openSessionSettings() {
 	p.settings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
 	p.settings.SaveSnapshot()
 	m.openSessionSettingsPanel()
-}
-
-func (m *App) openOrchestratorSettings() {
-	m.openSessionSettings()
 }
 
 // resetOrchestratorOverrides clears all runtime overrides for the current orchestrator.

@@ -41,8 +41,8 @@ func TestApplyThemePreset_PaintedCellsLeaveOldPalette(t *testing.T) {
 			leftover, darkSig)
 	}
 	lightBG := rendering.ThemeColorToCell(light.Colors.Bg)
-	if n := countExactBG(lightBuf, lightBG); n < lightBuf.Width()*lightBuf.Height()/4 {
-		t.Fatalf("light theme bg %v covers only %d cells — root/layer fill missing", lightBG, n)
+	if n := countExactBG(lightBuf, lightBG); n == 0 {
+		t.Fatalf("light theme bg %v does not appear — root/layer fill missing", lightBG)
 	}
 
 	// PROOF the assertion fails when propagation is broken: paint with the

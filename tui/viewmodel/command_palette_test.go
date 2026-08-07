@@ -409,7 +409,7 @@ func TestPaletteIncludesNewCommands(t *testing.T) {
 		"edit.undo", "edit.redo", "edit.find", "edit.replace",
 		"view.toggle.sidebar", "view.focus.sidebar", "view.focus.editor", "view.focus.chat",
 		"tabs.next", "tabs.previous",
-		"agent.orchestrator.settings", "agent.orchestrator.reset",
+		"agent.orchestrator.reset",
 		"agent.toggle.multiagent", "agent.cancel", "agent.newSession",
 		"composer.toggle", "settings.open", "lsp.outline", "safety.yolo.toggle",
 		"app.sessions", "system.undo", "app.toggleTheme", "app.copyLastAssistant",

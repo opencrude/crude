@@ -3,6 +3,7 @@ package settings
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -42,6 +43,8 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.search.field.SetPrompt("> ")
 	s.search.field.SetPlaceholder("Search settings")
 	s.search.field.SetSubmitAction("")
+	s.search.field.SetBackgroundColor(tokens.Color(ui.ColorPopupSubtleBg))
+	s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
 	s.categories = &settingsCategoryList{Base: ui.NewBase(WorkspaceSettingsListID), list: ui.NewList(WorkspaceSettingsListID, tokens), owner: s}
 	s.categories.list.SetActivateAction("settings.category.open")
 	s.form = ui.NewForm(WorkspaceSettingsFormID, nil, "", "", tokens)
@@ -61,6 +64,8 @@ func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	if s.search != nil {
 		s.search.SetTokens(tokens)
+		s.search.field.SetBackgroundColor(tokens.Color(ui.ColorPopupSubtleBg))
+		s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
 	}
 	if s.categories != nil {
 		s.categories.SetTokens(tokens)
@@ -110,23 +115,53 @@ func (s *WorkspaceSettingsSurface) Measure(_ ui.LayoutContext, cs ui.Constraints
 }
 func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	leftW := 21
-	if s.model != nil {
-		for _, category := range s.model.categories {
-			leftW = max(leftW, rendering.VisibleWidth(category.Name)+4)
-		}
-	}
-	if maxLeft := r.W / 3; maxLeft > 0 && leftW > maxLeft {
-		leftW = maxLeft
-	}
-	leftW = max(12, leftW)
+	leftW := s.leftWidth(r.W)
 	formX, formW := leftW+3, max(1, r.W-leftW-4)
 	s.search.Layout(ctx, ui.Rect{X: 0, Y: 0, W: leftW, H: 1})
 	s.categories.Layout(ctx, ui.Rect{X: 0, Y: 2, W: leftW, H: max(1, r.H-2)})
 	s.form.Layout(ctx, ui.Rect{X: formX, Y: 0, W: formW, H: max(1, r.H-2)})
 	s.actions.Layout(ctx, ui.Rect{X: formX, Y: max(0, r.H-1), W: formW, H: 1})
 }
-func (s *WorkspaceSettingsSurface) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
+
+func (s *WorkspaceSettingsSurface) leftWidth(width int) int {
+	leftW := 24
+	if s.model != nil {
+		for _, category := range s.model.categories {
+			leftW = max(leftW, rendering.VisibleWidth(category.Name)+5)
+		}
+	}
+	if maxLeft := width / 3; maxLeft > 0 && leftW > maxLeft {
+		leftW = maxLeft
+	}
+	return max(12, leftW)
+}
+
+func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
+	r := s.Bounds()
+	if r.Empty() {
+		return
+	}
+	bg, divider, muted := cell.NoColor, cell.NoColor, cell.NoColor
+	if s.tokens != nil {
+		bg = s.tokens.Color(ui.ColorPopupBg)
+		divider = s.tokens.Color(ui.ColorPopupDivider)
+		muted = s.tokens.Color(ui.ColorMuted)
+	}
+	ui.FillRect(buf, originX, originY, r, cell.BlankCell(bg))
+	ox, oy := originX+r.X, originY+r.Y
+	leftW := s.leftWidth(r.W)
+	dividerX := ox + leftW + 1
+	border := ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderV, '|')
+	for y := 0; y < r.H; y++ {
+		buf.Set(dividerX, oy+y, cell.NewCell(border, divider, bg, 0))
+	}
+	buf.WriteString(ox, oy+1, "SECTIONS", muted, bg, cell.AttrBold)
+	actionY := oy + r.H - 2
+	formX := ox + leftW + 3
+	for x := formX; x < ox+r.W; x++ {
+		buf.Set(x, actionY, cell.NewCell(ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '-'), divider, bg, 0))
+	}
+}
 
 // Handle receives keys bubbled from focused children (search TextField leaves
 // Up/Down/Esc unhandled).

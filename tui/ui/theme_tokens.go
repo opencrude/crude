@@ -270,7 +270,10 @@ func (ts *TokenSet) InputColors(st ControlState) (fg, bg, border cell.Color) {
 // (current item in an unfocused region) and hovered.
 func (ts *TokenSet) ListRowColors(st ControlState) (fg, bg cell.Color) {
 	fg = ts.Color(ColorFg)
-	bg = cell.NoColor
+	// Lists are opaque controls. Leaving the default background unset replaces
+	// already-painted popup cells with inheriting cells, allowing content below
+	// a floating window to bleed through behind each label.
+	bg = ts.Color(ColorPopupBg)
 	switch st {
 	case StateDisabled:
 		fg = ts.Color(ColorMuted)

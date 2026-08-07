@@ -295,7 +295,7 @@ func TestSettingsAppearance_ColorFieldsShowResolvedHex(t *testing.T) {
 	buf := surface.NewCellBuffer(80, 24)
 	host.Paint(buf)
 	plain := settingsBufferPlain(buf)
-	if !strings.Contains(plain, bg) || !strings.Contains(plain, "foreground") || !strings.Contains(plain, "accent") {
+	if !strings.Contains(plain, bg) || !strings.Contains(plain, "Foreground") || !strings.Contains(plain, "Accent") {
 		t.Fatalf("painted appearance form missing colour values:\n%s", plain)
 	}
 

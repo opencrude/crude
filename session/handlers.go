@@ -39,10 +39,10 @@ func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
 		return ttypes.UndoResultMsg{Desc: desc}
 	case strings.HasPrefix(cmd, "/undo-n"):
 		n := 1
-	parts := strings.Fields(cmd)
-	if len(parts) > 1 {
-		_, _ = fmt.Sscanf(parts[1], "%d", &n)
-	}
+		parts := strings.Fields(cmd)
+		if len(parts) > 1 {
+			_, _ = fmt.Sscanf(parts[1], "%d", &n)
+		}
 		if n <= 0 {
 			n = 1
 		}
@@ -312,10 +312,11 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]ttype
 	}
 	l.Info("MODEL", "fetched", "provider", providerID, "count", len(models))
 
-	metas, mdErr := provider.FetchModelsDevAll()
-	if mdErr != nil {
-		l.Warn("MODEL", "meta_fetch_error", "error", mdErr.Error())
-	}
+	// Model discovery must return as soon as the provider responds. The full
+	// models.dev catalog is loaded independently during session startup; doing
+	// another synchronous 6MB download here made the Settings dropdown appear
+	// stuck for up to 30 seconds after models had already arrived.
+	metas := provider.GetAllModelMetas()
 
 	entries := make([]ttypes.ModelEntry, len(models))
 	enriched := 0
@@ -325,20 +326,18 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]ttype
 			Name:          m.Name,
 			ContextWindow: m.ContextWindow,
 		}
-		if mdErr == nil {
-			if meta := provider.LookupModelMeta(m.ID, metas); meta != nil {
-				if entry.ContextWindow == 0 {
-					entry.ContextWindow = meta.ContextWindow
-				}
-				entry.InputPrice = meta.InputPrice
-				entry.OutputPrice = meta.OutputPrice
-				entry.CacheReadPrice = meta.CacheReadPrice
-				entry.SupportsVision = meta.SupportsVision
-				entry.SupportsTools = meta.SupportsTools
-				entry.MaxOutput = meta.MaxOutput
-				entry.Attachment = meta.Attachment
-				enriched++
+		if meta := provider.LookupModelMeta(m.ID, metas); meta != nil {
+			if entry.ContextWindow == 0 {
+				entry.ContextWindow = meta.ContextWindow
 			}
+			entry.InputPrice = meta.InputPrice
+			entry.OutputPrice = meta.OutputPrice
+			entry.CacheReadPrice = meta.CacheReadPrice
+			entry.SupportsVision = meta.SupportsVision
+			entry.SupportsTools = meta.SupportsTools
+			entry.MaxOutput = meta.MaxOutput
+			entry.Attachment = meta.Attachment
+			enriched++
 		}
 		entries[i] = entry
 	}

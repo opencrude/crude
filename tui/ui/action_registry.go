@@ -408,13 +408,6 @@ var defaultActions = []*ActionDef{
 
 	// ─── Agent ───────────────────────────────────────────────────────
 	{
-		ID:          "agent.orchestrator.settings",
-		Label:       "Orchestrator Settings",
-		Description: "override model and provider",
-		Icon:        "⛭",
-		Category:    "Agent",
-	},
-	{
 		ID:          "agent.orchestrator.reset",
 		Label:       "Reset Overrides",
 		Description: "clear orchestrator overrides",

@@ -107,20 +107,21 @@ func (ff *FormField) height() int {
 
 func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 	ff.SetBounds(r)
+	controlX, controlW := ff.controlX(r.W), ff.controlWidth(r.W)
 	if ff.control != nil {
-		ff.control.Layout(ctx, Rect{X: ff.controlX(r.W), Y: 0, W: ff.controlWidth(r.W), H: 1})
+		ff.control.Layout(ctx, Rect{X: controlX + 1, Y: 0, W: max(1, controlW-2), H: 1})
 	}
 	if ff.selectList != nil && ff.selectOpen {
-		ff.selectList.Layout(ctx, Rect{X: ff.controlX(r.W), Y: 1, W: ff.controlWidth(r.W), H: ff.selectRows()})
+		ff.selectList.Layout(ctx, Rect{X: controlX, Y: 1, W: controlW, H: ff.selectRows()})
 	}
 }
 
 func (ff *FormField) controlX(width int) int {
 	lw := ff.labelWidth()
-	if width-lw-2 < 10 {
+	if width-lw-3 < 10 {
 		return min(lw, width)
 	}
-	return lw + 2
+	return lw + 3
 }
 
 func (ff *FormField) controlWidth(width int) int {
@@ -145,28 +146,34 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	}
 	bg := cell.NoColor
 	labelFG := cell.NoColor
+	valueFG := cell.NoColor
 	mutedFG := cell.NoColor
 	errorFG := cell.NoColor
 	dividerFG := cell.NoColor
+	sectionFG := cell.NoColor
 	if ff.tokens != nil {
 		bg = ff.tokens.Color(ColorPopupBg)
-		labelFG = ff.tokens.Color(ColorFg)
+		labelFG = ff.tokens.Color(ColorMuted)
+		valueFG = ff.tokens.Color(ColorFg)
 		mutedFG = ff.tokens.Color(ColorMuted)
 		errorFG = ff.tokens.Color(ColorError)
 		dividerFG = ff.tokens.Color(ColorPopupDivider)
+		sectionFG = ff.tokens.Color(ColorAccent2)
 	}
-	// Keyboard-focused row uses Accent (same as focused list rows) so form
-	// focus cannot be confused with an unfocused region's Selection highlight.
+	// Form focus is deliberately quieter than a list selection. The row gets a
+	// subtle control surface, while the marker and label carry the accent. The
+	// description remains quiet so focus reads as typographic emphasis rather
+	// than a large selection block.
 	focusedRow := ctx.Focused && !ff.field.Disabled && ff.field.Type != FieldSeparator
 	if focusedRow {
-		bg = ff.tokensColor(ColorAccent, bg)
-		labelFG = ff.tokensColor(ColorBg, labelFG)
-		mutedFG = labelFG
+		labelFG = ff.tokensColor(ColorAccent, labelFG)
+		valueFG = ff.tokensColor(ColorFg, valueFG)
+		mutedFG = ff.tokensColor(ColorMuted, mutedFG)
 	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	x, y := originX+r.X, originY+r.Y
 	if ff.field.Type == FieldSeparator {
-		buf.WriteString(x, y, rendering.TruncateVisual("────────────────────────────────────────────────", r.W, ""), dividerFG, bg, 0)
+		ff.paintSeparator(buf, x, y, r.W, sectionFG, dividerFG, bg)
 		return
 	}
 	if ff.field.Type == FieldNav {
@@ -174,22 +181,42 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		return
 	}
 
+	if focusedRow {
+		marker := DefaultGlyphsFromTokens(ff.tokens).Prompt
+		buf.WriteString(x, y, marker, labelFG, bg, cell.AttrBold)
+	}
+	labelX := x + 2
 	label := ff.field.Label
 	if ff.field.Required && label != "" {
-		label += "*"
+		label += " *"
 	}
-	label = rendering.TruncateVisual(label, ff.labelWidth(), "")
+	label = rendering.TruncateVisual(label, max(1, ff.labelWidth()-1), "")
 	if (ff.field.Disabled || ff.field.ReadOnly) && !focusedRow {
 		labelFG = mutedFG
 	}
-	buf.WriteString(x, y, label, labelFG, bg, 0)
+	labelAttr := cell.Attrs(0)
+	if focusedRow {
+		labelAttr = cell.AttrBold
+	}
+	buf.WriteString(labelX, y, label, labelFG, bg, labelAttr)
+
+	controlX := x + ff.controlX(r.W)
+	controlW := ff.controlWidth(r.W)
+	contentX := controlX + 1
+	contentW := max(1, controlW-2)
+	controlBG := ff.tokensColor(ColorPopupSubtleBg, bg)
+	if focusedRow {
+		controlBG = ff.tokensColor(ColorHover, controlBG)
+	}
+	FillRect(buf, 0, 0, Rect{X: controlX, Y: y, W: controlW, H: 1}, cell.BlankCell(controlBG))
 
 	if ff.field.ReadOnly && isHexColor(ff.field.Value.String()) {
-		ff.paintColorValue(buf, x+ff.controlX(r.W), y, ff.controlWidth(r.W), labelFG, mutedFG, bg)
+		ff.paintColorValue(buf, contentX, y, contentW, valueFG, mutedFG, controlBG)
 	} else if ff.field.Type == FieldText || ff.field.Type == FieldPassword {
 		if ff.control != nil {
 			fieldCtx := ctx
 			fieldCtx.Focused = ctx.Focused
+			ff.control.SetBackgroundColor(controlBG)
 			ff.control.Paint(buf, originX+r.X, originY+r.Y, fieldCtx)
 		} else {
 			text := ff.field.Value.String()
@@ -197,10 +224,10 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 				text = "-"
 				labelFG = mutedFG
 			}
-			buf.WriteString(x+ff.controlX(r.W), y, rendering.TruncateVisual(text, ff.controlWidth(r.W), ""), labelFG, bg, 0)
+			buf.WriteString(contentX, y, rendering.TruncateVisual(text, contentW, "…"), valueFG, controlBG, 0)
 		}
 	} else {
-		ff.paintChoice(buf, x+ff.controlX(r.W), y, ff.controlWidth(r.W), ctx, labelFG, mutedFG, bg)
+		ff.paintChoice(buf, contentX, y, contentW, ctx, valueFG, mutedFG, controlBG)
 	}
 
 	line := 1
@@ -213,23 +240,44 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 					message = "Loading..."
 				}
 			}
-			buf.WriteString(x+ff.controlX(r.W), y+line, rendering.TruncateVisual(message, ff.controlWidth(r.W), ""), mutedFG, bg, 0)
+			buf.WriteString(contentX, y+line, rendering.TruncateVisual(message, contentW, "…"), mutedFG, bg, 0)
 		} else {
 			ff.selectList.Paint(buf, originX+r.X, originY+r.Y, ctx)
 		}
 		line += ff.selectRows()
 	}
 	if ff.field.Description != "" && line < r.H {
-		buf.WriteString(x+ff.controlX(r.W), y+line, rendering.TruncateVisual(ff.field.Description, ff.controlWidth(r.W), ""), mutedFG, bg, 0)
+		buf.WriteString(contentX, y+line, rendering.TruncateVisual(ff.field.Description, contentW, "…"), mutedFG, bg, 0)
 		line++
 	}
 	for _, err := range ff.field.Errors {
 		if line >= r.H {
 			break
 		}
-		buf.WriteString(x+ff.controlX(r.W), y+line, rendering.TruncateVisual(err, ff.controlWidth(r.W), ""), errorFG, bg, 0)
+		buf.WriteString(contentX, y+line, rendering.TruncateVisual(err, contentW, "…"), errorFG, bg, 0)
 		line++
 	}
+}
+
+func (ff *FormField) paintSeparator(buf *surface.CellBuffer, x, y, width int, labelFG, lineFG, bg cell.Color) {
+	if width < 1 {
+		return
+	}
+	label := strings.TrimSpace(ff.field.Label)
+	border := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).BorderH, '-'))
+	if label == "" {
+		buf.WriteString(x, y, strings.Repeat(border, width), lineFG, bg, 0)
+		return
+	}
+	labelWidth := rendering.VisibleWidth(label)
+	if labelWidth+3 >= width {
+		buf.WriteString(x, y, rendering.TruncateVisual(label, width, ""), labelFG, bg, cell.AttrBold)
+		return
+	}
+	buf.WriteString(x, y, label, labelFG, bg, cell.AttrBold)
+	lineX := x + labelWidth + 2
+	lineW := width - labelWidth - 2
+	buf.WriteString(lineX, y, strings.Repeat(border, lineW), lineFG, bg, 0)
 }
 
 func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, fg, muted, bg cell.Color) {
@@ -238,6 +286,7 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 	}
 	value := ff.field.Value.String()
 	text := value
+	indicator := ""
 	switch ff.field.Type {
 	case FieldSelect:
 		for _, option := range ff.field.Options {
@@ -247,9 +296,9 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 			}
 		}
 		if ff.selectOpen {
-			text += " ▴"
+			indicator = "▴"
 		} else {
-			text += " ▾"
+			indicator = "▾"
 		}
 	case FieldMultiSelect:
 		labels := make([]string, 0, len(ff.field.Value.Strings()))
@@ -263,12 +312,25 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 		}
 		text = strings.Join(labels, ", ")
 		if ff.selectOpen {
-			text += " ▴"
+			indicator = "▴"
 		} else {
-			text += " ▾"
+			indicator = "▾"
 		}
 	case FieldCycle:
-		text = "← " + text + " →"
+		if text == "" {
+			text = ff.field.Placeholder
+		}
+		if text == "" {
+			text = "Not set"
+		}
+		left, right := "←", "→"
+		middleW := max(1, width-rendering.VisibleWidth(left)-rendering.VisibleWidth(right)-2)
+		text = left + " " + rendering.TruncateVisual(text, middleW, "…")
+		pad := width - rendering.VisibleWidth(text) - rendering.VisibleWidth(right)
+		if pad < 1 {
+			pad = 1
+		}
+		text += strings.Repeat(" ", pad) + right
 	case FieldToggle, FieldCheckbox:
 		if ff.field.Value.Bool() {
 			text = "[x]"
@@ -283,12 +345,21 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 		text += "  >"
 	}
 	if text == "" {
-		text = "-"
+		text = ff.field.Placeholder
+	}
+	if text == "" {
+		text = "Not configured"
 		fg = muted
 	}
-	// Full-row focus fill already applied in Paint; keep value on same bg.
 	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
-	buf.WriteString(x, y, rendering.TruncateVisual(text, width, ""), fg, bg, 0)
+	if indicator == "" {
+		buf.WriteString(x, y, rendering.TruncateVisual(text, width, "…"), fg, bg, 0)
+		return
+	}
+	indicatorW := rendering.VisibleWidth(indicator)
+	textW := max(1, width-indicatorW-1)
+	buf.WriteString(x, y, rendering.TruncateVisual(text, textW, "…"), fg, bg, 0)
+	buf.WriteString(x+width-indicatorW, y, indicator, muted, bg, 0)
 }
 
 func (ff *FormField) paintColorValue(buf *surface.CellBuffer, x, y, width int, fg, muted, bg cell.Color) {

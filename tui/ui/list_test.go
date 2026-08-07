@@ -146,6 +146,40 @@ func TestList_Paint(t *testing.T) {
 	}
 }
 
+func TestList_DefaultRowsKeepOpaqueControlBackground(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	list := NewList("list", tokens)
+	list.SetItems([]ListItem{{Label: "Selected"}, {Label: "Default"}})
+	list.Layout(LayoutContext{}, Rect{W: 20, H: 2})
+	buf := surface.NewCellBuffer(20, 2)
+	list.Paint(buf, 0, 0, PaintContext{Focused: true})
+
+	if got, want := buf.Get(2, 1).BG, tokens.Color(ColorPopupBg); !got.Equal(want) {
+		t.Fatalf("default row background=%v want opaque popup background %v", got, want)
+	}
+}
+
+func TestFormSetFormPreservesOpenAsyncSelect(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	value := StringValue("")
+	model := NewFormModel()
+	model.AddField(&FieldState{ID: "model", Label: "Model", Type: FieldSelect, Value: value, Initial: value})
+	form := NewForm("form", model, "Provider", "Select a model", tokens)
+	form.Layout(LayoutContext{}, Rect{W: 60, H: 12})
+	field := form.Field("model")
+	field.selectOpen = true
+
+	model.Field("model").Options = []FormOption{{ID: "gpt-5", Label: "GPT-5"}}
+	form.SetForm(model, "Provider", "Select a model")
+
+	if got := form.Field("model"); got != field || !got.SelectOpen() {
+		t.Fatal("same-model refresh replaced or closed the asynchronous select")
+	}
+	if items := field.selectList.Items(); len(items) != 1 || items[0].Label != "GPT-5" {
+		t.Fatalf("refreshed select items=%#v", items)
+	}
+}
+
 func TestTokenSet_ThemeSwitchBumpsVersion(t *testing.T) {
 	th := theme.DefaultDark()
 	ts := NewTokenSet(th)

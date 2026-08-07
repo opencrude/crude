@@ -170,11 +170,56 @@ func TestSettingsSurfaceNativeSelectCommitsProvider(t *testing.T) {
 	// Provider selection updates retained text controls before the user edits them.
 	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyTab})
 	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyTab})
-	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyTab})
 	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnd})
 	cw.Host().Handle(tea.KeyPressMsg{Code: '2', Text: "2"})
 	if got := m.AppSettings().Providers["openai"].ProviderURL; got != "https://openai2" {
 		t.Fatalf("programmatic provider synchronization saved base URL %q", got)
+	}
+}
+
+func TestSettingsModelSelectFetchStaysOpenWhenModelsArrive(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{
+		ActiveProvider: "openai",
+		Providers: map[string]types.ProviderConfig{
+			"openai": {ProviderURL: "https://api.example/v1", APIKey: "secret"},
+		},
+	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
+	surfaceRoot := NewSurface(th, m)
+	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 90, 28)
+	surfaceRoot.SetFocusHandler(frame.Focus)
+	host := frame.Host()
+	host.Resize(90, 28)
+	host.Layout()
+	surfaceRoot.FocusForm()
+
+	// Provider -> API key -> Base URL -> Default model.
+	for range 3 {
+		host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Cmd == nil {
+		t.Fatal("opening an empty model select did not request models")
+	}
+	request, ok := result.Cmd().(FetchModelsMsg)
+	if !ok {
+		t.Fatalf("model request message=%T", result.Cmd())
+	}
+	if request.ProviderID != "openai" || request.BaseURL != "https://api.example/v1" || request.APIKey != "secret" {
+		t.Fatalf("model request=%#v", request)
+	}
+	if !surfaceRoot.form.Field(fieldModel).SelectOpen() {
+		t.Fatal("model select closed before asynchronous result")
+	}
+
+	updated, _ := m.Update(ModelsMsg{ProviderID: "openai", Models: []types.ModelEntry{{ID: "gpt-5", Name: "GPT-5"}}})
+	m = &updated
+	surfaceRoot.SetModel(m)
+	if !surfaceRoot.form.Field(fieldModel).SelectOpen() {
+		t.Fatal("model select closed when asynchronous models arrived")
+	}
+	if options := m.currentForm().Field(fieldModel).Options; len(options) != 1 || options[0].Label != "GPT-5" {
+		t.Fatalf("model options=%#v", options)
 	}
 }
 

@@ -29,14 +29,33 @@ func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *Tok
 }
 
 func (f *Form) SetForm(model *FormModel, title, detail string) {
+	sameModel := f.model == model && f.sameFieldStructure(model)
 	f.model, f.title, f.detail = model, title, detail
-	f.rebuild()
+	if sameModel {
+		for _, field := range f.fields {
+			field.Sync()
+		}
+	} else {
+		f.rebuild()
+	}
 	// Rebuild replaces fields with empty bounds. Re-layout into the current
 	// form rect so the next paint shows fields without waiting for a host
 	// InvalidateLayout (category switches often only mark paint dirty).
 	if !f.Bounds().Empty() {
 		f.Layout(LayoutContext{}, f.Bounds())
 	}
+}
+
+func (f *Form) sameFieldStructure(model *FormModel) bool {
+	if model == nil || len(f.fields) != model.FieldCount() {
+		return false
+	}
+	for index, state := range model.Fields() {
+		if f.fields[index].FieldState().ID != state.ID {
+			return false
+		}
+	}
+	return true
 }
 
 func (f *Form) SetTokens(tokens *TokenSet) {
@@ -69,12 +88,15 @@ func (f *Form) rebuild() {
 	for _, field := range f.model.Fields() {
 		f.fields = append(f.fields, NewBoundFormField(NewID(f.ID(), field.ID), f.model, field, f.tokens))
 	}
-	f.focused = 0
+	f.focused = -1
 	for index, field := range f.fields {
 		if field.FieldState().ID == focusedID {
 			f.focused = index
 			break
 		}
+	}
+	if f.focused < 0 {
+		f.FocusFirst()
 	}
 }
 
@@ -101,6 +123,9 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 	y := 3 // title, description, divider
 	labelW := 0
 	for _, field := range f.fields {
+		if field.FieldState().Type == FieldSeparator {
+			continue
+		}
 		field.Layout(ctx, Rect{})
 		labelW = max(labelW, rendering.VisibleWidth(field.FieldState().Label)+1)
 	}
