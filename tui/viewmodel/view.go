@@ -526,14 +526,34 @@ func (m *App) configureStatusScreen() {
 
 func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	if m.windowManager != nil {
-		if fw := m.windowManager.Focused(); fw != nil && fw.ID == findInFilesWindowID {
-			return "", []ui.HintSegment{
-				ui.TextSeg("type to search"),
-				ui.ActionSeg("list.preview.navigate"),
-				ui.ActionSeg("list.open"),
-				ui.ActionSeg("list.open.mouse"),
-				ui.ActionSeg("search.regex.toggle"),
-				ui.ActionSeg("overlay.close"),
+		if fw := m.windowManager.Focused(); fw != nil {
+			switch fw.ID {
+			case findInFilesWindowID:
+				return "", []ui.HintSegment{
+					ui.TextSeg("type to search"),
+					ui.ActionSeg("list.preview.navigate"),
+					ui.ActionSeg("list.open"),
+					ui.ActionSeg("list.open.mouse"),
+					ui.ActionSeg("search.regex.toggle"),
+					ui.ActionSeg("overlay.close"),
+				}
+			case string(ui.OverlayCommandPalette):
+				return "", []ui.HintSegment{
+					ui.TextSeg("navigate ↑↓"),
+					ui.TextSeg("run Enter"),
+					ui.ActionSeg("overlay.close"),
+				}
+			case string(ui.OverlayWorkspaceSettings):
+				return "workspace settings", []ui.HintSegment{
+					ui.TextSeg("navigate ↑↓"),
+					ui.TextSeg("next Tab"),
+					ui.TextSeg("edit Enter"),
+					ui.ActionSeg("overlay.close"),
+				}
+			default:
+				if fw.Focusable() {
+					return "", []ui.HintSegment{ui.ActionSeg("overlay.close")}
+				}
 			}
 		}
 	}

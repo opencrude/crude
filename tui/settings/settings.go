@@ -129,32 +129,47 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 		providers[active] = types.ProviderConfig{}
 	}
 	m := &Model{th: th, presets: presets, providers: providers, providerID: active, models: make(map[string][]types.ModelEntry)}
+	appearanceFields := append([]*ui.FieldState{
+		separatorField("theme", "Theme"),
+		cycleField("preset", "Preset", append([]string(nil), theme.AllPresetNames...), appearance.Preset, "Choose a complete visual palette for the workspace."),
+		separatorField("palette", "Palette preview"),
+	}, appearanceColorFields(appearance.Preset, appearance)...)
 	m.categories = []Category{
 		{Name: "Providers", Group: "AI", Description: "Connections, credentials, and provider defaults.", Form: m.buildProvidersForm()},
 		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"])},
 		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"])},
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"])},
 		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"])},
-		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(
-			append([]*ui.FieldState{
-				cycleField("preset", "preset", append([]string(nil), theme.AllPresetNames...), appearance.Preset),
-			}, appearanceColorFields(appearance.Preset, appearance)...)...,
-		)},
+		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
-			textField("tab-size", "tab size", fmt.Sprintf("%d", editor.TabSize), false), cycleField("word-wrap", "word wrap", []string{"on", "off"}, boolStr(editor.WordWrap)),
-			cycleField("line-numbers", "line numbers", []string{"on", "off"}, boolStr(editor.LineNumbers)), cycleField("syntax-theme", "syntax theme", []string{"catppuccin", "dracula", "github", "monokai", "solarized"}, editor.SyntaxTheme),
-			cycleField("render-whitespace", "render whitespace", []string{"none", "boundary", "all"}, editor.RenderWhitespace), textField("auto-save-delay", "auto-save (ms)", fmt.Sprintf("%d", editor.AutoSaveDelay), false),
+			separatorField("editing", "Editing"),
+			textField("tab-size", "Tab size", fmt.Sprintf("%d", editor.TabSize), false, "Number of spaces inserted when a tab is used."),
+			cycleField("word-wrap", "Word wrap", []string{"on", "off"}, boolStr(editor.WordWrap), "Wrap long lines inside the editor viewport."),
+			cycleField("line-numbers", "Line numbers", []string{"on", "off"}, boolStr(editor.LineNumbers), "Show the document line-number gutter."),
+			cycleField("syntax-theme", "Syntax theme", []string{"catppuccin", "dracula", "github", "monokai", "solarized"}, editor.SyntaxTheme, "Color grammar used for source code."),
+			cycleField("render-whitespace", "Render whitespace", []string{"none", "boundary", "all"}, editor.RenderWhitespace, "Show spaces and tabs when inspecting layout."),
+			textField("auto-save-delay", "Auto-save delay", fmt.Sprintf("%d", editor.AutoSaveDelay), false, "Delay in milliseconds; zero disables automatic saves."),
 		)},
 		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: formModel(
-			cycleField("enabled", "enabled", []string{"on", "off"}, boolStr(lsp.Enabled)), cycleField("auto-detect", "auto-detect", []string{"on", "off"}, boolStr(lsp.AutoDetect)), cycleField("diagnostics", "diagnostics", []string{"on", "off"}, boolStr(lsp.Diagnostics)),
+			separatorField("language-intelligence", "Language intelligence"),
+			cycleField("enabled", "Enabled", []string{"on", "off"}, boolStr(lsp.Enabled), "Start language servers for supported projects."),
+			cycleField("auto-detect", "Auto-detect", []string{"on", "off"}, boolStr(lsp.AutoDetect), "Discover a server from the current project."),
+			cycleField("diagnostics", "Diagnostics", []string{"on", "off"}, boolStr(lsp.Diagnostics), "Show errors and warnings in the tree and editor."),
 		)},
 		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: formModel(
-			textField("sidebar-width", "sidebar width", fmt.Sprintf("%d", uiSettings.SidebarWidth), false), cycleField("show-hidden", "show hidden", []string{"on", "off"}, boolStr(uiSettings.ShowHiddenFiles)),
-			cycleField("show-icons", "show icons", []string{"on", "off"}, boolStr(uiSettings.ShowIcons)), cycleField("nerd-font", "nerd font", []string{"on", "off"}, boolStr(uiSettings.UseNerdFont)),
-			cycleField("git-status", "git status", []string{"on", "off"}, boolStr(uiSettings.ShowGitStatus)), cycleField("diagnostics", "diagnostics", []string{"on", "off"}, boolStr(uiSettings.ShowDiagnostics)),
+			separatorField("workspace-chrome", "Workspace chrome"),
+			textField("sidebar-width", "Sidebar width", fmt.Sprintf("%d", uiSettings.SidebarWidth), false, "Width of the file and workspace navigation rail."),
+			cycleField("show-hidden", "Show hidden files", []string{"on", "off"}, boolStr(uiSettings.ShowHiddenFiles), "Include dotfiles in the workspace tree."),
+			cycleField("show-icons", "Show file icons", []string{"on", "off"}, boolStr(uiSettings.ShowIcons), "Display file-type icons in navigation."),
+			cycleField("nerd-font", "Nerd font", []string{"on", "off"}, boolStr(uiSettings.UseNerdFont), "Use extended icon glyphs when the font supports them."),
+			cycleField("git-status", "Git status", []string{"on", "off"}, boolStr(uiSettings.ShowGitStatus), "Show changed-file markers in the workspace tree."),
+			cycleField("diagnostics", "Diagnostics", []string{"on", "off"}, boolStr(uiSettings.ShowDiagnostics), "Show language diagnostics in navigation."),
 		)},
 		{Name: "Font", Group: "IDE", Description: "Terminal font hints and ligatures.", Form: formModel(
-			textField("family", "family", font.Family, false), textField("size", "size", fmt.Sprintf("%d", font.Size), false), cycleField("ligatures", "ligatures", []string{"on", "off"}, boolStr(font.Ligatures)),
+			separatorField("typography", "Typography"),
+			textField("family", "Family", font.Family, false, "Font family is controlled by the host terminal."),
+			textField("size", "Size", fmt.Sprintf("%d", font.Size), false, "Preferred terminal font size in points."),
+			cycleField("ligatures", "Ligatures", []string{"on", "off"}, boolStr(font.Ligatures), "Allow programming ligatures when supported by the terminal."),
 		)},
 	}
 	for index := range m.categories {
@@ -172,22 +187,22 @@ func formModel(fields ...*ui.FieldState) *ui.FormModel {
 	return m
 }
 
-func textField(id, label, value string, password bool) *ui.FieldState {
+func textField(id, label, value string, password bool, description string) *ui.FieldState {
 	kind := ui.FieldText
 	if password {
 		kind = ui.FieldPassword
 	}
 	v := ui.StringValue(value)
-	return &ui.FieldState{ID: id, Label: label, Type: kind, Value: v, Initial: v}
+	return &ui.FieldState{ID: id, Label: label, Description: description, Type: kind, Value: v, Initial: v}
 }
 
-func cycleField(id, label string, values []string, current string) *ui.FieldState {
+func cycleField(id, label string, values []string, current, description string) *ui.FieldState {
 	options := make([]ui.FormOption, len(values))
 	for i, value := range values {
 		options[i] = ui.FormOption{ID: value, Label: value}
 	}
 	v := ui.StringValue(current)
-	return &ui.FieldState{ID: id, Label: label, Type: ui.FieldCycle, Value: v, Initial: v, Options: options}
+	return &ui.FieldState{ID: id, Label: label, Description: description, Type: ui.FieldCycle, Value: v, Initial: v, Options: options}
 }
 
 // appearanceColorFields builds read-only hex+swatch rows reflecting the active
@@ -203,13 +218,13 @@ func appearanceColorFields(preset string, overrides types.ThemeSettings) []*ui.F
 	}
 	c := th.Colors
 	return []*ui.FieldState{
-		readOnlyColorField("background", "background", resolve(overrides.Bg, c.Bg)),
-		readOnlyColorField("foreground", "foreground", resolve(overrides.Fg, c.Fg)),
-		readOnlyColorField("accent", "accent", resolve(overrides.Accent, c.Accent)),
-		readOnlyColorField("accent2", "accent2", resolve(overrides.Accent2, c.Accent2)),
-		readOnlyColorField("subpane-bg", "subpane bg", resolve(overrides.SubPaneBg, c.SubPaneBg)),
-		readOnlyColorField("border", "border", resolve(overrides.Border, c.Border)),
-		readOnlyColorField("selection", "selection", resolve(overrides.Selection, c.Selection)),
+		readOnlyColorField("background", "Background", resolve(overrides.Bg, c.Bg)),
+		readOnlyColorField("foreground", "Foreground", resolve(overrides.Fg, c.Fg)),
+		readOnlyColorField("accent", "Accent", resolve(overrides.Accent, c.Accent)),
+		readOnlyColorField("accent2", "Secondary accent", resolve(overrides.Accent2, c.Accent2)),
+		readOnlyColorField("subpane-bg", "Panel background", resolve(overrides.SubPaneBg, c.SubPaneBg)),
+		readOnlyColorField("border", "Border", resolve(overrides.Border, c.Border)),
+		readOnlyColorField("selection", "Selection", resolve(overrides.Selection, c.Selection)),
 	}
 }
 
@@ -221,9 +236,13 @@ func readOnlyColorField(id, label, hex string) *ui.FieldState {
 	}
 }
 
-func selectField(id, label, value string, options []ui.FormOption) *ui.FieldState {
+func separatorField(id, label string) *ui.FieldState {
+	return &ui.FieldState{ID: id, Label: label, Type: ui.FieldSeparator}
+}
+
+func selectField(id, label, value string, options []ui.FormOption, description string) *ui.FieldState {
 	v := ui.StringValue(value)
-	return &ui.FieldState{ID: id, Label: label, Type: ui.FieldSelect, Value: v, Initial: v, Options: options}
+	return &ui.FieldState{ID: id, Label: label, Description: description, Type: ui.FieldSelect, Value: v, Initial: v, Options: options}
 }
 
 func (m *Model) buildProvidersForm() *ui.FormModel {
@@ -234,7 +253,15 @@ func (m *Model) buildProvidersForm() *ui.FormModel {
 			baseURL = preset.BaseURL
 		}
 	}
-	return formModel(selectField(fieldProvider, "provider", m.providerID, m.providerOptions()), selectField(fieldModel, "default model", cfg.Model, modelOptions(m.models[m.providerID])), textField(fieldAPIKey, "api key", cfg.APIKey, true), textField(fieldBaseURL, "base url", baseURL, false), cycleField(fieldThinkingEffort, "thinking level", []string{"none", "low", "medium", "high", "xhigh"}, cfg.ThinkingEffort))
+	return formModel(
+		separatorField("connection", "Connection"),
+		selectField(fieldProvider, "Provider", m.providerID, m.providerOptions(), "The service used for model requests."),
+		textField(fieldAPIKey, "API key", cfg.APIKey, true, "Stored locally and masked while editing."),
+		textField(fieldBaseURL, "Base URL", baseURL, false, "Override the provider endpoint when using a proxy or local gateway."),
+		separatorField("defaults", "Model defaults"),
+		modelField(fieldModel, "Default model", cfg.Model, modelOptions(m.models[m.providerID]), "Used when an agent does not define its own model."),
+		thinkingField(fieldThinkingEffort, cfg.ThinkingEffort, "Controls how much internal reasoning the model may use."),
+	)
 }
 
 func (m *Model) buildAgentForm(cfg types.CategorySettings) *ui.FormModel {
@@ -251,7 +278,24 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings) *ui.FormModel {
 	if thinking == "" {
 		thinking = providerCfg.ThinkingEffort
 	}
-	return formModel(selectField(fieldProvider, "provider", providerID, m.providerOptions()), selectField(fieldModel, "model", model, modelOptions(m.models[providerID])), cycleField(fieldThinkingEffort, "thinking level", []string{"none", "low", "medium", "high", "xhigh"}, thinking))
+	return formModel(
+		separatorField("agent", "Agent behavior"),
+		selectField(fieldProvider, "Provider", providerID, m.providerOptions(), "Override the workspace provider for this agent."),
+		modelField(fieldModel, "Model", model, modelOptions(m.models[providerID]), "Override the workspace default model."),
+		thinkingField(fieldThinkingEffort, thinking, "Override the workspace reasoning budget."),
+	)
+}
+
+func modelField(id, label, value string, options []ui.FormOption, description string) *ui.FieldState {
+	field := selectField(id, label, value, options, description)
+	field.Placeholder = "Press Enter to fetch models"
+	return field
+}
+
+func thinkingField(id, current, description string) *ui.FieldState {
+	field := cycleField(id, "Thinking level", []string{"none", "low", "medium", "high", "xhigh"}, current, description)
+	field.Placeholder = "Provider default"
+	return field
 }
 
 func (m *Model) providerOptions() []ui.FormOption {

@@ -545,9 +545,6 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "settings.open":
 		m.openWorkspaceSettings()
 
-	case "agent.orchestrator.settings":
-		m.openOrchestratorSettings()
-
 	case "agent.orchestrator.reset":
 		m.resetOrchestratorOverrides()
 
