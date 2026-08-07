@@ -7,7 +7,6 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widget"
 	"crude/tui/wm"
 )
 
@@ -34,12 +33,11 @@ func (b *revealTestBody) Layout(_ ui.LayoutContext, r ui.Rect) { b.SetBounds(r) 
 
 func (b *revealTestBody) Paint(buf *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 
-// plainWidgetBody is a bare widget.Widget (no Component interface) used as a
-// non-framed FloatingWindow.Content in the no-op reveal test.
+// plainWidgetBody is a bare wm.WindowContent (no Component interface) used as
+// a non-framed FloatingWindow.Content in the no-op reveal test.
 type plainWidgetBody struct{}
 
-func (plainWidgetBody) Render(_ *surface.Surface, _ *widget.RenderContext) {}
-func (plainWidgetBody) Measure(availW, availH int) (int, int)             { return availW, availH }
+func (plainWidgetBody) Render(_ *surface.Surface, _ *wm.RenderContext) {}
 
 // TestReveal_BeginsAtZeroAndCompletes verifies the full lifecycle: begin
 // collapses the frame content, ticks ramp it, and after the duration it is

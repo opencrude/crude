@@ -8,7 +8,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/widget"
+	"crude/tui/ui"
 )
 
 func TestRenderPaintsSharedScrollbarChrome(t *testing.T) {
@@ -28,7 +28,7 @@ func TestRenderPaintsSharedScrollbarChrome(t *testing.T) {
 	ed.SetStatusChrome(false)
 
 	surf := surface.NewSurface("ed", 40, 10, cell.TransparentBlank())
-	ed.Render(surf, &widget.RenderContext{Theme: ed.th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 
 	sm := ed.ScrollModel()
 	if sm == nil || sm.MaxOffset() <= 0 {
@@ -65,7 +65,7 @@ func TestRenderDiagnosticsAndSearchChrome(t *testing.T) {
 	ed.SetQuery("alpha")
 
 	surf := surface.NewSurface("ed", 50, 6, cell.TransparentBlank())
-	ed.Render(surf, &widget.RenderContext{Theme: ed.th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 	buf := surf.Buffer()
 
 	// Gutter diagnostic icon in icon column (gutterWidth-2).

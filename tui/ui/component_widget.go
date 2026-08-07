@@ -6,10 +6,10 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/widget"
+	"crude/tui/wm"
 )
 
-// ComponentWidget bridges a Component tree into widget.Widget so product
+// ComponentWidget bridges a Component tree into wm.WindowContent so product
 // FloatingWindows can host WindowFrame and other ui components.
 //
 // Keyboard/mouse for product dialogs may still be routed by viewmodel until
@@ -60,7 +60,7 @@ func (c *ComponentWidget) Focus(id ComponentID) {
 	}
 }
 
-// Measure implements widget.Widget.
+// Measure reports the preferred size (preferW/preferH clamped to available).
 func (c *ComponentWidget) Measure(availW, availH int) (int, int) {
 	w, h := c.preferW, c.preferH
 	if w <= 0 {
@@ -79,7 +79,7 @@ func (c *ComponentWidget) Measure(availW, availH int) (int, int) {
 }
 
 // Render paints the component tree into the surface buffer.
-func (c *ComponentWidget) Render(surf *surface.Surface, ctx *widget.RenderContext) {
+func (c *ComponentWidget) Render(surf *surface.Surface, ctx *wm.RenderContext) {
 	if c == nil || c.host == nil || surf == nil {
 		return
 	}
@@ -233,5 +233,5 @@ func (h *Host) RegisterTree(c Component) {
 	}
 }
 
-var _ widget.Widget = (*ComponentWidget)(nil)
-var _ widget.Widget = (*WindowFrameWidget)(nil)
+var _ wm.WindowContent = (*ComponentWidget)(nil)
+var _ wm.WindowContent = (*WindowFrameWidget)(nil)

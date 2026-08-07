@@ -8,7 +8,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/widget"
+	"crude/tui/wm"
 )
 
 type testFrameBody struct {
@@ -63,7 +63,7 @@ func TestWindowFrameWidgetPaintsOnlyUnifiedChrome(t *testing.T) {
 		8,
 	)
 	surf := surface.NewSurface("window", 20, 8, cell.TransparentBlank())
-	framed.Render(surf, &widget.RenderContext{Theme: th, Focused: true})
+	framed.Render(surf, &wm.RenderContext{Theme: th, Focused: true})
 
 	buf := surf.Buffer()
 	if got := buf.Get(0, 0).Char; got != '╭' {

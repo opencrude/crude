@@ -8,7 +8,6 @@ import (
 
 	"crude/tui/filetree"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 )
 
@@ -39,7 +38,7 @@ func (m *App) openFileFromTree(path string) (tea.Cmd, error) {
 // above the active editor. On Enter, the file is created (empty)
 // and the tree is updated.
 func (m *App) startNewFileInTree(dir string) {
-	m.openTreeTextPrompt(widgets.TextPromptNewFile, "New file",
+	m.openTreeTextPrompt(ui.TextPromptNewFile, "New file",
 		"in "+dir, dir, "", func(value string) error {
 			if value == "" {
 				return fmt.Errorf("name cannot be empty")
@@ -66,7 +65,7 @@ func (m *App) startNewFileInTree(dir string) {
 // folder inside the given directory. On Enter, the folder is
 // created and the tree is updated.
 func (m *App) startNewFolderInTree(dir string) {
-	m.openTreeTextPrompt(widgets.TextPromptNewFolder, "New folder",
+	m.openTreeTextPrompt(ui.TextPromptNewFolder, "New folder",
 		"in "+dir, dir, "", func(value string) error {
 			if value == "" {
 				return fmt.Errorf("name cannot be empty")
@@ -95,7 +94,7 @@ func (m *App) startRenameInTree(path string) {
 		return
 	}
 	base := filepath.Base(path)
-	m.openTreeTextPrompt(widgets.TextPromptRename, "Rename",
+	m.openTreeTextPrompt(ui.TextPromptRename, "Rename",
 		path, "", base, func(value string) error {
 			if value == "" {
 				return fmt.Errorf("name cannot be empty")
@@ -151,7 +150,7 @@ func (m *App) startDeleteInTree(path string) {
 	}
 	// Default focus No (safe) so accidental Enter does not delete.
 	m.TreeDeleteChoice = 1
-	frame := widgets.BuildTreeDeleteFrame(m.Theme, question, detail, m.TreeDeleteChoice)
+	frame := ui.BuildTreeDeleteFrame(m.Theme, question, detail, m.TreeDeleteChoice)
 	w, h := frame.Measure(80, 40)
 	fw := wm.NewFloatingWindow(string(ui.OverlayTreeDelete), "", frame,
 		w, h,
@@ -175,18 +174,18 @@ func (m *App) startDeleteInTree(path string) {
 // so the three callers stay small. The submit callback returns a
 // non-nil error to surface validation issues; the popup stays open
 // in that case so the user can fix the name.
-func (m *App) openTreeTextPrompt(kind widgets.TextPromptKind, title, prompt, dir, initial string, onSubmit func(value string) error) {
+func (m *App) openTreeTextPrompt(kind ui.TextPromptKind, title, prompt, dir, initial string, onSubmit func(value string) error) {
 	if onSubmit == nil {
 		return
 	}
-	st := widgets.NewTextPromptState(kind, title, prompt, initial)
+	st := ui.NewTextPromptState(kind, title, prompt, initial)
 	st.OnSubmit = onSubmit
 	st.OnCancel = func() {}
 	// First product surface on unified WindowFrame chrome.
-	frame := widgets.BuildTextPromptFrame(m.Theme, st)
+	frame := ui.BuildTextPromptFrame(m.Theme, st)
 	fw := wm.NewFloatingWindow(string(ui.OverlayTreePrompt), "", frame,
-		widgets.TextPromptPopupWidth(st),
-		widgets.TextPromptPopupHeight(st),
+		ui.TextPromptPopupWidth(st),
+		ui.TextPromptPopupHeight(st),
 		wm.WithDecoration(false),
 		wm.WithMovable(false),
 		wm.WithResizable(false),
@@ -259,13 +258,13 @@ func (m *App) refreshTreePrompt() {
 	// once on open; keystrokes push st.Edit into the framed field.
 	if m.TreePrompt.Edit != nil {
 		if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-			widgets.ApplyTextPromptEdit(cw, m.TreePrompt)
+			ui.ApplyTextPromptEdit(cw, m.TreePrompt)
 			fw.MarkContentDirty()
 			return
 		}
 	}
 	// Fallback: rebuild frame from current edit state.
-	frame := widgets.BuildTextPromptFrame(m.Theme, m.TreePrompt)
+	frame := ui.BuildTextPromptFrame(m.Theme, m.TreePrompt)
 	fw.SetContent(frame)
 	fw.MarkContentDirty()
 }
@@ -332,7 +331,7 @@ func (m *App) refreshTreeDeleteConfirm() {
 		question = fmt.Sprintf("Delete %q?", base)
 		detail = path
 	}
-	frame := widgets.BuildTreeDeleteFrame(m.Theme, question, detail, m.TreeDeleteChoice)
+	frame := ui.BuildTreeDeleteFrame(m.Theme, question, detail, m.TreeDeleteChoice)
 	w, h := frame.Measure(80, 40)
 	fw.SetSize(w, h)
 	fw.SetContent(frame)

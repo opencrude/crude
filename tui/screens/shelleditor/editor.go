@@ -12,7 +12,6 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widget"
 )
 
 const (
@@ -125,7 +124,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	s.ed.SetTokens(s.tokens)
 	s.ed.SetStatusChrome(false)
 	s.ed.SetPadding(s.padL)
-	wctx := &widget.RenderContext{Theme: s.th, Focused: s.focused}
+	wctx := ui.PaintContext{Theme: s.th, Focused: s.focused}
 	s.ed.Render(s.paintSurf, wctx)
 	surface.BlitOpaque(buf, ox+b.X+s.padL, oy+b.Y, s.paintSurf.Buffer())
 }

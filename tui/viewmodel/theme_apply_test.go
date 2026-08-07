@@ -6,13 +6,13 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widget"
+	"crude/tui/wm"
 	"crude/workspace"
 )
 
 func TestApplyThemePreset_UpdatesAllRegisteredConsumers(t *testing.T) {
 	app := newFullTestApp(t)
-	app.renderCtx = widget.NewRenderContext(app.Theme)
+	app.renderCtx = wm.NewRenderContext(app.Theme)
 
 	proj := app.subPaneProjections.Get("pane-1", workspace.PaneAgent)
 	if proj == nil || proj.renderer == nil {
@@ -106,7 +106,7 @@ func TestApplyThemePreset_UpdatesAllRegisteredConsumers(t *testing.T) {
 
 func TestApplyThemePreset_ConfigHotReloadPath(t *testing.T) {
 	app := newFullTestApp(t)
-	app.renderCtx = widget.NewRenderContext(app.Theme)
+	app.renderCtx = wm.NewRenderContext(app.Theme)
 	app.applyThemePreset("warm")
 	if theme.PresetName(app.Theme) != "warm" {
 		t.Fatalf("hot-reload path left theme=%q", theme.PresetName(app.Theme))

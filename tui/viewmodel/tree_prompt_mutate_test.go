@@ -6,7 +6,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	"crude/tui/widgets"
 )
 
 // TestTreePrompt_FramePersistsAcrossKeystrokes proves the tree create/rename
@@ -17,7 +16,7 @@ func TestTreePrompt_FramePersistsAcrossKeystrokes(t *testing.T) {
 	app.width = 100
 	app.height = 30
 
-	app.openTreeTextPrompt(widgets.TextPromptNewFile, "New file", "Create in /tmp", "", "", func(value string) error {
+	app.openTreeTextPrompt(ui.TextPromptNewFile, "New file", "Create in /tmp", "", "", func(value string) error {
 		return nil
 	})
 	fw := app.windowManager.Window("tree-prompt")
@@ -46,7 +45,7 @@ func TestTreePrompt_FramePersistsAcrossKeystrokes(t *testing.T) {
 	if !ok {
 		t.Fatal("tree prompt content is not a ComponentWidget")
 	}
-	widgets.SyncTextPromptField(cw, app.TreePrompt)
+	ui.SyncTextPromptField(cw, app.TreePrompt)
 	if got := app.TreePrompt.ValueText(); got != "main.go" {
 		t.Fatalf("retained frame TextField did not reflect typed value; got %q, want %q", got, "main.go")
 	}
@@ -59,7 +58,7 @@ func TestTreePrompt_RenameKeystrokesPreserveFrame(t *testing.T) {
 	app.width = 100
 	app.height = 30
 
-	app.openTreeTextPrompt(widgets.TextPromptRename, "Rename", "old.go", "", "old.go", func(value string) error {
+	app.openTreeTextPrompt(ui.TextPromptRename, "Rename", "old.go", "", "old.go", func(value string) error {
 		return nil
 	})
 	fw := app.windowManager.Window("tree-prompt")

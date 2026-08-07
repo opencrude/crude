@@ -12,7 +12,6 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/widget"
 )
 
 func TestScreenCancelPointerCapture_ForwardsToEditor(t *testing.T) {
@@ -28,7 +27,7 @@ func TestScreenCancelPointerCapture_ForwardsToEditor(t *testing.T) {
 	}
 	// Establish view geometry so mouseToPosition works.
 	surf := surface.NewSurface("geom", 40, 12, cell.TransparentBlank())
-	ed.Render(surf, &widget.RenderContext{Theme: th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: th, Focused: true})
 
 	_ = ed.HandleEvent(tea.MouseClickMsg{X: 5, Y: 0, Button: tea.MouseLeft})
 	_ = ed.HandleEvent(tea.MouseMotionMsg{X: 5, Y: 2, Button: tea.MouseLeft})

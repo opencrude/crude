@@ -6,7 +6,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	"crude/tui/widgets"
 )
 
 func openCommandPaletteForInteractionTest(t *testing.T, callback func(string) tea.Cmd) (*App, *ui.ComponentWidget) {
@@ -39,7 +38,7 @@ func openCommandPaletteForInteractionTest(t *testing.T, callback func(string) te
 // event routing (replacing the old handleMouseMotion/lineToItem path).
 func TestCommandPalette_HoverViaHost(t *testing.T) {
 	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: m.listItems(),
 		Width: 60, Height: 14,
 	})
@@ -47,7 +46,7 @@ func TestCommandPalette_HoverViaHost(t *testing.T) {
 	if host == nil {
 		t.Fatal("expected host")
 	}
-	list := widgets.CommandPaletteList(cw)
+	list := ui.CommandPaletteList(cw)
 	if list == nil {
 		t.Fatal("expected list")
 	}
@@ -70,7 +69,7 @@ func TestCommandPalette_ClickActivatesItem(t *testing.T) {
 		called = cmdID
 		return nil
 	}, ui.DefaultRegistry())
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: m.listItems(),
 		Width: 60, Height: 14,
 	})
@@ -78,7 +77,7 @@ func TestCommandPalette_ClickActivatesItem(t *testing.T) {
 	if host == nil {
 		t.Fatal("expected host")
 	}
-	list := widgets.CommandPaletteList(cw)
+	list := ui.CommandPaletteList(cw)
 	if list == nil {
 		t.Fatal("expected list")
 	}
@@ -103,7 +102,7 @@ func TestCommandPalette_ClickActivatesItem(t *testing.T) {
 }
 
 func TestCommandPalette_SearchFieldFocus(t *testing.T) {
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: []ui.ListItem{{ID: "x", Label: "X"}},
 		Width: 60, Height: 14,
 	})
@@ -112,10 +111,10 @@ func TestCommandPalette_SearchFieldFocus(t *testing.T) {
 		t.Fatal("expected host")
 	}
 	// The search field should be focused on creation
-	if host.Focused() != widgets.CPSearchField {
+	if host.Focused() != ui.CPSearchField {
 		// Frame's root may be focused; that's acceptable as long as the
 		// search field is registered.
-		search := widgets.CommandPaletteSearch(cw)
+		search := ui.CommandPaletteSearch(cw)
 		if search == nil {
 			t.Error("expected search field to exist")
 		}
@@ -124,11 +123,11 @@ func TestCommandPalette_SearchFieldFocus(t *testing.T) {
 
 func TestCommandPalette_ListNavigationUpDown(t *testing.T) {
 	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: m.listItems(),
 		Width: 60, Height: 14,
 	})
-	list := widgets.CommandPaletteList(cw)
+	list := ui.CommandPaletteList(cw)
 	if list == nil {
 		t.Fatal("expected list")
 	}
@@ -151,7 +150,7 @@ func TestCommandPalette_ListNavigationUpDown(t *testing.T) {
 
 func TestCommandPalette_AppKeyboardNavigationPersistsAfterRefresh(t *testing.T) {
 	app, cw := openCommandPaletteForInteractionTest(t, nil)
-	list := widgets.CommandPaletteList(cw)
+	list := ui.CommandPaletteList(cw)
 	initial := list.SelectedIndex()
 
 	if _, cmd := app.dispatchFloatingWindowKey(tea.KeyPressMsg{Code: tea.KeyDown}); cmd != nil {
@@ -172,7 +171,7 @@ func TestCommandPalette_AppKeyboardTypingAndEnter(t *testing.T) {
 	if _, cmd := app.dispatchFloatingWindowKey(tea.KeyPressMsg{Code: 's', Text: "sett"}); cmd != nil {
 		t.Fatal("typing returned an unexpected command")
 	}
-	search := widgets.CommandPaletteSearch(cw)
+	search := ui.CommandPaletteSearch(cw)
 	if got := search.Value(); got != "sett" {
 		t.Fatalf("search value=%q, want sett", got)
 	}
@@ -195,15 +194,15 @@ func TestCommandPalette_AppMouseHoverAndClickUseWindowLocalCoordinates(t *testin
 	if !ok {
 		t.Fatalf("command palette root is %T, want *ui.WindowFrame", cw.Root())
 	}
-	list := widgets.CommandPaletteList(cw)
+	list := ui.CommandPaletteList(cw)
 	selectedRow := list.SelectedIndex() - list.Scroll().Offset()
 	localX := frame.ContentBounds().X + 1
 	localY := frame.ContentBounds().Y + list.Bounds().Y + selectedRow
 	sx, sy := fw.Position()
 
 	app.dispatchMouseMotion(tea.MouseMotionMsg{X: sx + localX, Y: sy + localY})
-	if got := cw.Host().Hovered(); got != widgets.CPList {
-		t.Fatalf("hovered component=%q, want %q", got, widgets.CPList)
+	if got := cw.Host().Hovered(); got != ui.CPList {
+		t.Fatalf("hovered component=%q, want %q", got, ui.CPList)
 	}
 
 	app.dispatchMouseClick(tea.MouseClickMsg{X: sx + localX, Y: sy + localY, Button: tea.MouseLeft})

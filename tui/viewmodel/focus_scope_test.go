@@ -6,7 +6,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 )
 
@@ -46,7 +45,7 @@ func TestViewmodel_NestedOverlayCloseRestoresExactPriorWindowFocus(t *testing.T)
 	app.overlayHost.SetFocusHost(app.rootHost)
 
 	// Open a keep-route popover (mirrors find-replace).
-	pop := widgets.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
+	pop := ui.NewPopupContent([]string{"╭─╮", "│ │", "╰─╯"})
 	fwA := wm.NewFloatingWindow(string(ui.OverlayFindReplace), "", pop, 3, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
@@ -66,7 +65,7 @@ func TestViewmodel_NestedOverlayCloseRestoresExactPriorWindowFocus(t *testing.T)
 	}
 
 	// A modal dialog opens over the popover.
-	fwB := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", widgets.NewPopupContent([]string{"╭─╮", "│ x │", "╰─╯"}), 5, 3,
+	fwB := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", ui.NewPopupContent([]string{"╭─╮", "│ x │", "╰─╯"}), 5, 3,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)

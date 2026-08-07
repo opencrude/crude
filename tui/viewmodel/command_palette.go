@@ -12,7 +12,6 @@ import (
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 )
 
@@ -365,7 +364,7 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 	model.width = palW
 	model.height = palH
 
-	frame := widgets.BuildCommandPaletteFrame(m.Theme, widgets.CommandPaletteSpec{
+	frame := ui.BuildCommandPaletteFrame(m.Theme, ui.CommandPaletteSpec{
 		Items:    model.listItems(),
 		Selected: 0,
 		Width:    palW,
@@ -418,8 +417,8 @@ func (m *App) handleCommandPaletteKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	if !ok || cw == nil {
 		return false, nil
 	}
-	search := widgets.CommandPaletteSearch(cw)
-	list := widgets.CommandPaletteList(cw)
+	search := ui.CommandPaletteSearch(cw)
+	list := ui.CommandPaletteList(cw)
 	if search == nil || list == nil {
 		return false, nil
 	}

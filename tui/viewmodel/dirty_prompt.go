@@ -6,7 +6,6 @@ import (
 	"charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/tui/wm"
 )
 
@@ -24,7 +23,7 @@ func (m *App) showDirtyClosePrompt(path string) {
 	// Default focus is "Cancel" (index 2) so an accidental Enter keeps
 	// the user's work safe.
 	m.DirtyPromptChoice = 2
-	frame := widgets.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
+	frame := ui.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
 	w, h := frame.Measure(80, 40)
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", frame, w, h,
@@ -154,7 +153,7 @@ func (m *App) refreshDirtyPrompt() {
 		return
 	}
 	filename := tab.Editor.Title()
-	frame := widgets.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
+	frame := ui.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
 	w, h := frame.Measure(80, 40)
 	fw.SetSize(w, h)
 	fw.SetContent(frame)
@@ -177,5 +176,5 @@ func confirmFrameButtonAt(fw *wm.FloatingWindow, localX, localY int) int {
 	cw.Host().Resize(ww, hh)
 	cw.Host().Layout()
 	id := cw.Host().HitTest(localX, localY)
-	return widgets.ConfirmButtonIndexFromID(id)
+	return ui.ConfirmButtonIndexFromID(id)
 }

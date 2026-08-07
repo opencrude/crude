@@ -8,7 +8,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/widget"
+	"crude/tui/ui"
 )
 
 func loadEditorText(t *testing.T, name, text string) *Editor {
@@ -27,7 +27,7 @@ func loadEditorText(t *testing.T, name, text string) *Editor {
 
 func paintEditor(ed *Editor, w, h int) *surface.CellBuffer {
 	surf := surface.NewSurface("ed", w, h, cell.TransparentBlank())
-	ed.Render(surf, &widget.RenderContext{Theme: ed.th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 	return surf.Buffer()
 }
 

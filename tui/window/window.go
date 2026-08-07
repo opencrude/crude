@@ -9,7 +9,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/tui/widget"
+	"crude/tui/ui"
 )
 
 var nextTabID uint64
@@ -72,12 +72,12 @@ type Window struct {
 	layout TabLayout
 
 	hint  string
-	Hover widget.Hover
+	Hover ui.Hover
 }
 
 func New(_ *theme.Theme) *Window {
 	return &Window{
-		Hover: widget.NewHover(),
+		Hover: ui.NewHover(),
 	}
 }
 

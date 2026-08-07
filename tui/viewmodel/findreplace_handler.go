@@ -8,7 +8,7 @@ import (
 	"crude/clipboard"
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/tui/widgets"
+	"crude/tui/ui/popup"
 	"crude/tui/wm"
 )
 
@@ -17,14 +17,14 @@ func (m *App) openFindReplace(replaceMode bool) {
 		return
 	}
 	if m.FindReplace == nil {
-		m.FindReplace = &widgets.FindReplaceState{
+		m.FindReplace = &popup.FindReplaceState{
 			HoveredToggle: -1, // no toggle hovered initially
 		}
 	}
 	m.FindReplace.ReplaceMode = replaceMode
 	// Pull current search state from the editor so the popup opens
 	// with the existing query if the user already had one typed.
-	widgets.FindReplaceFromEditor(m.FindReplace, m.EditorState.Editor)
+	popup.FindReplaceFromEditor(m.FindReplace, m.EditorState.Editor)
 	m.FindReplace.FocusedField = 0
 	// Move the find input cursor to the end of the query (the
 	// standard "open the popup, ready to append" UX). The replace
@@ -33,7 +33,7 @@ func (m *App) openFindReplace(replaceMode bool) {
 	// Wire callbacks to mutate the editor.
 	fr := m.FindReplace
 	fr.OnChange = func() {
-		widgets.FindReplaceToEditor(fr, m.EditorState.Editor)
+		popup.FindReplaceToEditor(fr, m.EditorState.Editor)
 		fr.MatchCount = len(m.EditorState.Editor.Search().Matches)
 		fr.CurrentIdx = m.EditorState.Editor.Search().CurrentIdx
 		m.refreshFindReplacePopup()
@@ -89,18 +89,18 @@ func (m *App) refreshFindReplacePopup() {
 		return
 	}
 	fr := m.FindReplace
-	w := widgets.FindReplacePopupWidth(fr)
-	h := widgets.FindReplacePopupHeight(fr)
+	w := popup.FindReplacePopupWidth(fr)
+	h := popup.FindReplacePopupHeight(fr)
 
 	if fw := m.windowManager.Window("find-replace"); fw != nil {
 		// Mutate existing frame content
 		if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-			find := widgets.FindReplaceFrameFindField(cw)
+			find := ui.FindReplaceFrameFindField(cw)
 			if find != nil {
 				find.SyncEditFrom(fr.FindEdit())
 			}
 			if fr.ReplaceMode {
-				replace := widgets.FindReplaceFrameReplaceField(cw)
+				replace := ui.FindReplaceFrameReplaceField(cw)
 				if replace != nil {
 					replace.SyncEditFrom(fr.ReplaceEdit())
 				}
@@ -110,7 +110,7 @@ func (m *App) refreshFindReplacePopup() {
 			return
 		}
 		// Fallback: rebuild frame
-		frame := widgets.BuildFindReplaceFrame(m.Theme, widgets.FindReplaceFrameSpec{
+		frame := ui.BuildFindReplaceFrame(m.Theme, ui.FindReplaceFrameSpec{
 			FindValue:    fr.Query(),
 			ReplaceValue: fr.Replace(),
 			ReplaceMode:  fr.ReplaceMode,
@@ -118,11 +118,11 @@ func (m *App) refreshFindReplacePopup() {
 			Width:        w,
 			Height:       h,
 		})
-		if find := widgets.FindReplaceFrameFindField(frame); find != nil {
+		if find := ui.FindReplaceFrameFindField(frame); find != nil {
 			find.SyncEditFrom(fr.FindEdit())
 		}
 		if fr.ReplaceMode {
-			if replace := widgets.FindReplaceFrameReplaceField(frame); replace != nil {
+			if replace := ui.FindReplaceFrameReplaceField(frame); replace != nil {
 				replace.SyncEditFrom(fr.ReplaceEdit())
 			}
 		}
@@ -134,7 +134,7 @@ func (m *App) refreshFindReplacePopup() {
 
 	// First time: create and position above the active editor.
 	layout := m.computeLayout()
-	frame := widgets.BuildFindReplaceFrame(m.Theme, widgets.FindReplaceFrameSpec{
+	frame := ui.BuildFindReplaceFrame(m.Theme, ui.FindReplaceFrameSpec{
 		FindValue:    fr.Query(),
 		ReplaceValue: fr.Replace(),
 		ReplaceMode:  fr.ReplaceMode,
@@ -142,11 +142,11 @@ func (m *App) refreshFindReplacePopup() {
 		Width:        w,
 		Height:       h,
 	})
-	if find := widgets.FindReplaceFrameFindField(frame); find != nil {
+	if find := ui.FindReplaceFrameFindField(frame); find != nil {
 		find.SyncEditFrom(fr.FindEdit())
 	}
 	if fr.ReplaceMode {
-		if replace := widgets.FindReplaceFrameReplaceField(frame); replace != nil {
+		if replace := ui.FindReplaceFrameReplaceField(frame); replace != nil {
 			replace.SyncEditFrom(fr.ReplaceEdit())
 		}
 	}
@@ -176,7 +176,7 @@ func (m *App) refreshFindReplacePopup() {
 // pasteIntoFindReplace reads the system clipboard and inserts the
 // text at the cursor position (or replaces the current selection)
 // in the find/replace popup's active input field.
-func (m *App) pasteIntoFindReplace(fr *widgets.FindReplaceState) tea.Cmd {
+func (m *App) pasteIntoFindReplace(fr *popup.FindReplaceState) tea.Cmd {
 	if fr == nil {
 		return nil
 	}
@@ -342,12 +342,12 @@ func (m *App) syncFindReplaceFrameFromState() {
 		return
 	}
 	if cw, ok := fw.Content.(*ui.ComponentWidget); ok && cw != nil {
-		find := widgets.FindReplaceFrameFindField(cw)
+		find := ui.FindReplaceFrameFindField(cw)
 		if find != nil {
 			find.SyncEditFrom(m.FindReplace.FindEdit())
 		}
 		if m.FindReplace.ReplaceMode {
-			replace := widgets.FindReplaceFrameReplaceField(cw)
+			replace := ui.FindReplaceFrameReplaceField(cw)
 			if replace != nil {
 				replace.SyncEditFrom(m.FindReplace.ReplaceEdit())
 			}

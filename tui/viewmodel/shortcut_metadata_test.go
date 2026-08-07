@@ -9,7 +9,6 @@ import (
 	"crude/tui/editor"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/tui/widgets"
 	"crude/workspace"
 )
 
@@ -181,7 +180,7 @@ func TestPaletteListPaintsRegistryMetadata(t *testing.T) {
 	reg := ui.NewActionRegistry()
 	reg.Register(&ui.ActionDef{ID: "palette.custom", Label: "Custom Thing", Description: "does custom things", Icon: "!", Category: "Tools"})
 	m := newCommandPaletteModel(testTheme(), nil, reg)
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: m.listItems(),
 		Width: 60, Height: 14,
 	})

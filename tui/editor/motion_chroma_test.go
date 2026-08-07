@@ -13,7 +13,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/widget"
+	"crude/tui/ui"
 )
 
 func TestMoveWord_StopsAtPunctuation(t *testing.T) {
@@ -195,7 +195,7 @@ func TestChroma_MultilineBlockComment(t *testing.T) {
 	}
 
 	surf := surface.NewSurface("ed", 80, 20, cell.TransparentBlank())
-	ed.Render(surf, &widget.RenderContext{Theme: ed.th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 
 	cm := ed.lineColorMap(3)
 	if cm == nil {

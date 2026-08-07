@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/widget"
+	"crude/tui/ui"
 )
 
 // TestHover_SetsIndexOnMotion verifies that a MouseMotionMsg with a
@@ -32,7 +32,7 @@ func TestHover_SetsIndexOnMotion(t *testing.T) {
 		nodes:         map[string]*TreeNode{root.Path: root},
 		showHidden:    false,
 		visibleHeight: 10,
-		Hover:         widget.NewHover(),
+		Hover:         ui.NewHover(),
 	}
 	m.rebuildVisibleNodes()
 
@@ -87,7 +87,7 @@ func TestHover_ClearsOnOutOfRange(t *testing.T) {
 		Root:          root,
 		nodes:         map[string]*TreeNode{root.Path: root},
 		visibleHeight: 5,
-		Hover:         widget.NewHover(),
+		Hover:         ui.NewHover(),
 	}
 	m.rebuildVisibleNodes()
 

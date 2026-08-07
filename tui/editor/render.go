@@ -9,14 +9,10 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
-	"crude/tui/widget"
+	"crude/tui/ui"
 )
 
-func (e *Editor) Measure(availW, availH int) (int, int) {
-	return availW, availH
-}
-
-func (e *Editor) Render(surf *surface.Surface, ctx *widget.RenderContext) {
+func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	if !e.open {
 		return
 	}

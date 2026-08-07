@@ -341,7 +341,7 @@ func (m *FileTreeModel) handleMouse(msg tea.Msg) tea.Cmd {
 //
 // Indices outside the visible range map to -1 (no hover), which is
 // the convention used by every other hover-capable widget — see
-// widget.Hover for the rationale.
+// ui.Hover for the rationale.
 func (m *FileTreeModel) handleMouseMotion(msg tea.MouseMotionMsg) bool {
 	m.mu.RLock()
 	so := m.scrollOffset

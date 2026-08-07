@@ -13,7 +13,6 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/uitest"
-	"crude/tui/widgets"
 )
 
 func testTheme() *theme.Theme {
@@ -198,7 +197,7 @@ func TestCommandPaletteEscReturnsNil(t *testing.T) {
 func TestPaintGoldenCellBufferContract(t *testing.T) {
 	th := testTheme()
 	m := newCommandPaletteModel(th, nil, ui.DefaultRegistry())
-	cw := widgets.BuildCommandPaletteFrame(th, widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(th, ui.CommandPaletteSpec{
 		Items:    m.listItems(),
 		Selected: 0,
 		Width:    60,
@@ -272,11 +271,11 @@ func bufferPlain(buf *surface.CellBuffer) string {
 
 func TestBuildCommandPaletteFrame_ListHasAllItems(t *testing.T) {
 	m := newCommandPaletteModel(testTheme(), nil, ui.DefaultRegistry())
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: m.listItems(),
 		Width: 60, Height: 14,
 	})
-	list := widgets.CommandPaletteList(cw)
+	list := ui.CommandPaletteList(cw)
 	if list == nil {
 		t.Fatal("expected list component in frame")
 	}
@@ -286,18 +285,18 @@ func TestBuildCommandPaletteFrame_ListHasAllItems(t *testing.T) {
 }
 
 func TestBuildCommandPaletteFrame_SearchFieldPresent(t *testing.T) {
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: []ui.ListItem{{ID: "x", Label: "X"}},
 		Width: 60, Height: 14,
 	})
-	search := widgets.CommandPaletteSearch(cw)
+	search := ui.CommandPaletteSearch(cw)
 	if search == nil {
 		t.Fatal("expected search field in frame")
 	}
 }
 
 func TestCommandPaletteFrame_WidthConsistent(t *testing.T) {
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: []ui.ListItem{{ID: "x", Label: "X"}},
 		Width: 50, Height: 14,
 	})
@@ -355,7 +354,7 @@ func TestCommandPaletteListItemsFilterReduces(t *testing.T) {
 
 func TestCommandPaletteViewWidthDoesNotExceed(t *testing.T) {
 	// Verify the frame's measured width doesn't exceed constraints
-	cw := widgets.BuildCommandPaletteFrame(testTheme(), widgets.CommandPaletteSpec{
+	cw := ui.BuildCommandPaletteFrame(testTheme(), ui.CommandPaletteSpec{
 		Items: []ui.ListItem{{ID: "x", Label: "X"}},
 		Width: 50, Height: 6,
 	})

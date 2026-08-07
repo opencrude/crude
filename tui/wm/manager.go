@@ -3,7 +3,6 @@ package wm
 import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
-	"crude/tui/widget"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -29,7 +28,7 @@ type WindowManager struct {
 	focused *FloatingWindow
 
 	// background is the main content widget rendered behind all windows.
-	background widget.Widget
+	background WindowContent
 
 	// Interaction state.
 	activeDrag   *FloatingWindow
@@ -210,7 +209,7 @@ func (wm *WindowManager) SendToBottom(id string) {
 }
 
 // SetBackground sets the main content widget that renders behind all windows.
-func (wm *WindowManager) SetBackground(w widget.Widget) {
+func (wm *WindowManager) SetBackground(w WindowContent) {
 	wm.background = w
 }
 
@@ -435,7 +434,7 @@ func (wm *WindowManager) isBlockedByModal(fw *FloatingWindow) bool {
 //
 // The background widget is rendered first, then each floating window
 // is rendered as a child surface of the root, positioned at its (x, y).
-func (wm *WindowManager) Render(rootSurf *surface.Surface, ctx *widget.RenderContext) {
+func (wm *WindowManager) Render(rootSurf *surface.Surface, ctx *RenderContext) {
 	// Render the background widget into the root surface.
 	if wm.background != nil {
 		wm.background.Render(rootSurf, ctx)
