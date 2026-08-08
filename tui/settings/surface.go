@@ -48,6 +48,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.categories = &settingsCategoryList{Base: ui.NewBase(WorkspaceSettingsListID), list: ui.NewList(WorkspaceSettingsListID, tokens), owner: s}
 	s.categories.list.SetActivateAction("settings.category.open")
 	s.form = ui.NewForm(WorkspaceSettingsFormID, nil, "", "", tokens)
+	s.form.SetFieldGap(1)
 	s.actions = ui.NewActionBar(WorkspaceSettingsActionID, tokens,
 		ui.ActionBarButton{ID: WorkspaceSettingsSaveID, Label: "Save", Action: "settings.save", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{ID: WorkspaceSettingsCancelID, Label: "Cancel", Action: "settings.cancel", Variant: ui.VariantSecondary, Enabled: true},

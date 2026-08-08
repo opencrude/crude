@@ -186,11 +186,16 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		buf.WriteString(x, y, marker, labelFG, bg, cell.AttrBold)
 	}
 	labelX := x + 2
-	label := ff.field.Label
-	if ff.field.Required && label != "" {
+	label := rendering.TruncateVisual(ff.field.Label, max(1, ff.labelWidth()-1), "")
+	// Markers are appended after truncation so they are never clipped; they
+	// borrow up to 2 cells from the 3-cell label→control gap (controlX =
+	// labelW+3) and can never overlap the control itself.
+	if ff.field.Required && ff.field.Label != "" {
 		label += " *"
 	}
-	label = rendering.TruncateVisual(label, max(1, ff.labelWidth()-1), "")
+	if ff.field.Dirty && ff.field.Label != "" {
+		label += " •"
+	}
 	if (ff.field.Disabled || ff.field.ReadOnly) && !focusedRow {
 		labelFG = mutedFG
 	}
@@ -493,6 +498,13 @@ func (ff *FormField) handleSelect(ctx EventContext, evt Event) EventResult {
 		if evt.IsKey() && (evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeySpace) && !ff.field.Loading {
 			ff.selectOpen = false
 			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
+		}
+		// Let non-key/non-mouse events (e.g. asynchronous ModelsMsg) bubble
+		// through to the screen-level eventTarget so model.Update can clear
+		// the Loading flag and populate options. Claiming Handled here would
+		// swallow the result and leave the UI stuck on "Fetching models...".
+		if !evt.IsKey() && !evt.IsMouse() {
+			return EventResult{}
 		}
 		return EventResult{Handled: true}
 	}

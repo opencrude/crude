@@ -25,6 +25,11 @@ type TextField struct {
 	submitID    string // action ID on Enter; empty = no submit action
 	// horizontal viewport for long values
 	viewStart int
+	// viewReset shows the HEAD of a programmatically replaced value until the
+	// user interacts. Without it, SetValue (cursor placed at end-of-value)
+	// scrolls a long URL to its tail, hiding the changed part — e.g. a
+	// provider switch looked like "the base URL just has a 1 in it".
+	viewReset bool
 	bg        cell.Color
 	bgSet     bool
 	tokens    *TokenSet
@@ -79,10 +84,12 @@ func (t *TextField) SetDisabled(v bool) { t.disabled = v }
 // SetPassword masks painted characters.
 func (t *TextField) SetPassword(v bool) { t.password = v }
 
-// SetValue replaces the field value.
+// SetValue replaces the field value and shows its start until the user
+// interacts (typing, cursor motion, or click take over the viewport).
 func (t *TextField) SetValue(s string) {
 	t.edit.SetValue(s)
-	t.ensureCursorVisible()
+	t.viewStart = 0
+	t.viewReset = true
 }
 
 // Value returns the field value.
@@ -109,7 +116,8 @@ func (t *TextField) Layout(_ LayoutContext, r Rect) {
 	t.SetBounds(r)
 	if t.readOnly {
 		t.viewStart = 0
-	} else {
+		t.viewReset = false
+	} else if !t.viewReset {
 		t.ensureCursorVisible()
 	}
 }
@@ -297,6 +305,8 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 	if t.disabled {
 		return EventResult{}
 	}
+	// Any user interaction hands the viewport back to the cursor.
+	t.viewReset = false
 	switch evt.Kind {
 	case EventKey:
 		return t.handleKey(evt.Key)

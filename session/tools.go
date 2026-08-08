@@ -64,7 +64,7 @@ func (s *Session) newAgent() *agent.Agent {
 			if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
 				if goalID, ok := rawGoalID.(string); ok && goalID != "" {
 					if g := s.sm.GetActiveGoal(s.sessionID); g != nil && g.ID == goalID {
-						return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one.")
+						return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one")
 					}
 				}
 			}

@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -228,9 +227,9 @@ func (s *Screen) openRole(role string) {
 		thinking = "none"
 	}
 	model := ui.NewFormModel()
-	model.AddField(selectField(fieldProvider, "provider", providerID, s.providerOptions()))
-	model.AddField(selectField(fieldModel, "model", cfg.Model, modelOptions(s.models[providerID])))
-	model.AddField(cycleField(fieldThinking, "thinking level", []string{"none", "low", "medium", "high", "xhigh"}, thinking))
+	model.AddField(ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(s.presets), "Provider used by this agent for the session."))
+	model.AddField(ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(s.models[providerID]), "Model used by this agent for the session."))
+	model.AddField(ui.ThinkingFieldState(fieldThinking, thinking, "Reasoning budget used by this agent for the session."))
 	model.OnChanged(func(fieldID string) {
 		if fieldID != fieldProvider {
 			return
@@ -240,7 +239,7 @@ func (s *Screen) openRole(role string) {
 		model.SetValue(fieldModel, ui.StringValue(providerCfg.Model))
 		model.SetValue(fieldThinking, ui.StringValue(providerCfg.ThinkingEffort))
 		if field := model.Field(fieldModel); field != nil {
-			field.Options = modelOptions(s.models[provider])
+			field.Options = ui.ModelOptions(s.models[provider])
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
 	})
@@ -273,7 +272,7 @@ func (s *Screen) ApplyModels(providerID string, models []types.ModelEntry) {
 	s.models[providerID] = models
 	if s.page == rolePage && s.formModel.Field(fieldProvider).Value.String() == providerID {
 		field := s.formModel.Field(fieldModel)
-		field.Options = modelOptions(models)
+		field.Options = ui.ModelOptions(models)
 		field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		s.form.SetForm(s.formModel, s.roleName(), "Session override. Back keeps unapplied values out of the session.")
 	}
@@ -348,44 +347,6 @@ func (s *Screen) SetInheritance(effective, base types.Settings, overrides map[st
 
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Session settings"}
-}
-
-func (s *Screen) providerOptions() []ui.FormOption {
-	options := make([]ui.FormOption, 0, len(s.presets))
-	for _, preset := range s.presets {
-		options = append(options, ui.FormOption{ID: preset.ID, Label: preset.Name, Detail: preset.HelpText})
-	}
-	return options
-}
-
-func selectField(id, label, value string, options []ui.FormOption) *ui.FieldState {
-	v := ui.StringValue(value)
-	return &ui.FieldState{ID: id, Label: label, Type: ui.FieldSelect, Value: v, Initial: v, Options: options}
-}
-
-func cycleField(id, label string, values []string, current string) *ui.FieldState {
-	options := make([]ui.FormOption, len(values))
-	for i, value := range values {
-		options[i] = ui.FormOption{ID: value, Label: value}
-	}
-	v := ui.StringValue(current)
-	return &ui.FieldState{ID: id, Label: label, Type: ui.FieldCycle, Value: v, Initial: v, Options: options}
-}
-
-func modelOptions(models []types.ModelEntry) []ui.FormOption {
-	options := make([]ui.FormOption, 0, len(models))
-	for _, model := range models {
-		label := model.Name
-		if label == "" {
-			label = model.ID
-		}
-		detail := ""
-		if model.ContextWindow > 0 {
-			detail = rendering.FormatTokens(model.ContextWindow)
-		}
-		options = append(options, ui.FormOption{ID: model.ID, Label: label, Detail: detail})
-	}
-	return options
 }
 
 func categoryFor(settings types.Settings, role string) types.CategorySettings {

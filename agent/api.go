@@ -117,7 +117,9 @@ func (a *Agent) completeStream(
 			return "", "", "", nil, 0, 0, 0, fmt.Errorf("create request: %w", err)
 		}
 		hdr, val := a.Provider.Auth()
-		httpReq.Header.Set(hdr, val)
+		if hdr != "" {
+			httpReq.Header.Set(hdr, val)
+		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "text/event-stream")
 

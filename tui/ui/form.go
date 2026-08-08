@@ -14,12 +14,13 @@ import (
 // expansion, and form-local focus while screens translate its emitted actions.
 type Form struct {
 	Base
-	model   *FormModel
-	title   string
-	detail  string
-	tokens  *TokenSet
-	fields  []*FormField
-	focused int
+	model     *FormModel
+	title     string
+	detail    string
+	tokens    *TokenSet
+	fields    []*FormField
+	focused   int
+	fieldGap  int
 }
 
 func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
@@ -108,12 +109,19 @@ func (f *Form) Measure(_ LayoutContext, cs Constraints) Size {
 	return cs.ClampSize(Size{W: cs.MaxW, H: f.PreferredHeight(cs.MaxH)})
 }
 
+// SetFieldGap configures the inter-field vertical spacing in rows. Use 0
+// (default) for compact dialog panels; use 1 for settings forms.
+func (f *Form) SetFieldGap(gap int) { f.fieldGap = gap }
+
 // PreferredHeight returns the rows required by the current field state,
-// including expanded selects and validation messages.
+// including expanded selects, validation messages, and inter-field gaps.
 func (f *Form) PreferredHeight(maxHeight int) int {
 	height := 3
-	for _, field := range f.fields {
+	for i, field := range f.fields {
 		height += field.height()
+		if i < len(f.fields)-1 && f.fieldGap > 0 && field.FieldState().Type != FieldSeparator && f.fields[i+1].FieldState().Type != FieldSeparator {
+			height += f.fieldGap
+		}
 	}
 	return min(maxHeight, height)
 }
@@ -130,7 +138,7 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 		labelW = max(labelW, rendering.VisibleWidth(field.FieldState().Label)+1)
 	}
 	labelW = min(labelW, max(8, r.W/2))
-	for _, field := range f.fields {
+	for i, field := range f.fields {
 		field.SetLabelWidth(labelW)
 		h := field.Measure(ctx, Loose(r.W, r.H)).H
 		if y+h > r.H {
@@ -138,6 +146,14 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 		}
 		field.Layout(ctx, Rect{X: 0, Y: y, W: r.W, H: h})
 		y += h
+		// The gap is breathing room, never a reason to drop a field: only
+		// add it when the next field still fits afterwards.
+		if i < len(f.fields)-1 && f.fieldGap > 0 && field.FieldState().Type != FieldSeparator && f.fields[i+1].FieldState().Type != FieldSeparator {
+			nextH := f.fields[i+1].Measure(ctx, Loose(r.W, r.H)).H
+			if y+f.fieldGap+nextH <= r.H {
+				y += f.fieldGap
+			}
+		}
 	}
 }
 

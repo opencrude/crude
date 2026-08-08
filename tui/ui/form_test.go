@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -50,6 +51,47 @@ func TestActionBarPaintsSemanticVariants(t *testing.T) {
 	}
 	if got, want := buf.Get(10, 0).BG, tokens.Color(ColorError); got != want {
 		t.Fatalf("danger action background=%v, want error %v", got, want)
+	}
+}
+
+func TestFormFieldPaintsDirtyMarkerOnModifiedLabel(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	value := StringValue("4")
+	model.AddField(&FieldState{ID: "tab-size", Label: "Tab size", Type: FieldText, Value: value, Initial: value})
+	form := NewForm("form", model, "Form", "Dirty tracking", tokens)
+	host := NewHost(theme.DefaultDark(), form)
+	host.Resize(60, 8)
+	host.Layout()
+
+	paint := func() string {
+		buf := surface.NewCellBuffer(60, 8)
+		host.Paint(buf)
+		var b strings.Builder
+		for y := 0; y < 8; y++ {
+			for x := 0; x < 60; x++ {
+				if c := buf.Get(x, y); c.Char != 0 {
+					b.WriteRune(c.Char)
+				}
+			}
+			b.WriteByte('\n')
+		}
+		return b.String()
+	}
+
+	if plain := paint(); strings.Contains(plain, "Tab size •") {
+		t.Fatalf("unmodified field must not paint dirty marker:\n%s", plain)
+	}
+	model.SetValue("tab-size", StringValue("8"))
+	if !model.Field("tab-size").Dirty {
+		t.Fatal("field must be dirty after SetValue diverges from Initial")
+	}
+	if plain := paint(); !strings.Contains(plain, "Tab size •") {
+		t.Fatalf("dirty field must paint • marker on the label:\n%s", plain)
+	}
+	model.Commit()
+	if plain := paint(); strings.Contains(plain, "Tab size •") {
+		t.Fatalf("committed field must drop the dirty marker:\n%s", plain)
 	}
 }
 
