@@ -40,7 +40,9 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	header, value := p.Auth()
-	req.Header.Set(header, value)
+	if header != "" {
+		req.Header.Set(header, value)
+	}
 
 	start := time.Now()
 	resp, err := client.Do(req)
@@ -52,6 +54,9 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 	if resp.StatusCode != 200 {
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
 			logIf(func(lg *logger.Logger) { lg.Error("PROVIDER", "fetch_models_auth_fail", "provider", p.Name, "status", resp.StatusCode) })
+			if p.APIKey == "" {
+				return nil, fmt.Errorf("%s requires an API key to list models — enter one in Settings → Providers", p.Name)
+			}
 			return nil, fmt.Errorf("invalid API key for %s", p.Name)
 		}
 		if resp.StatusCode == 404 {

@@ -944,7 +944,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 	parentFn := r.parentToolFn
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if !agent.PolicyAllows(spec.Policy, tool) {
-			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q.", tool, spec.PolicyName)
+			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q", tool, spec.PolicyName)
 		}
 
 		isReadOnlyExec := spec.Policy.AllowedCapabilities[safety.CanExecuteReadOnly] && !spec.Policy.AllowedCapabilities[safety.CanExecute]
@@ -953,7 +953,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			if command != "" {
 				safetyRes := safety.CheckCommandSafety(command, r.session.logger)
 				if safetyRes.Risk != safety.RiskSafe {
-					return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed.", command, safetyRes.Risk, safetyRes.Reason)
+					return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed", command, safetyRes.Risk, safetyRes.Reason)
 				}
 			}
 		}
@@ -1013,7 +1013,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			resolvedProvider = cfg.GetActiveDefaultCategory().Provider
 		}
 		if err := r.rateLimiter.Wait(ctx, resolvedProvider); err != nil {
-			return tools.ToolResult{}, fmt.Errorf("Rate limit exceeded for provider %q", resolvedProvider)
+			return tools.ToolResult{}, fmt.Errorf("rate limit exceeded for provider %q", resolvedProvider)
 		}
 
 		if tool == "write_report" {
@@ -1261,7 +1261,7 @@ func (r *SubAgentRunner) executeSubAgentPlanningTool(handle *agent.SubAgentHandl
 		if rawGoalID, ok := state.GetFromContext("plan_goal_id"); ok {
 			if goalID, ok := rawGoalID.(string); ok && goalID != "" {
 				if g := sm.GetActiveGoal(sessionID); g != nil && g.ID == goalID {
-					return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one.")
+					return tools.ToolResult{}, fmt.Errorf("plan: a plan already exists. Complete or abandon the current plan before creating a new one")
 				}
 			}
 		}
@@ -1612,7 +1612,7 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 			r.session.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
 		}
 		if isReadOnlyExec && sr.Risk != safety.RiskSafe {
-			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed.", cmd, sr.Risk, sr.Reason)
+			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed", cmd, sr.Risk, sr.Reason)
 		}
 	}
 

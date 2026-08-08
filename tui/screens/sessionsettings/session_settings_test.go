@@ -40,7 +40,7 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 
 	buf := surface.NewCellBuffer(80, 13)
 	host.Paint(buf)
-	if !bufferContains(buf, "Main Agent") || !bufferContains(buf, "thinking level") {
+	if !bufferContains(buf, "Main Agent") || !bufferContains(buf, "Thinking level") {
 		t.Fatal("native role form did not paint expected content")
 	}
 }

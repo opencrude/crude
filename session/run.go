@@ -197,7 +197,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	}
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
-	var prompt string = agent.BuildSystemPrompt(effectiveCfg.IsMultiAgentEnabled())
+	prompt := agent.BuildSystemPrompt(effectiveCfg.IsMultiAgentEnabled())
 
 	displayTracker := &displayMetaTracker{
 		metas: make(map[string]*sessiondb.DisplayMeta),

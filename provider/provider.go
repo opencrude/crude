@@ -108,9 +108,6 @@ func (p *Provider) Validate() error {
 	if p.BaseURL == "" {
 		return fmt.Errorf("provider: base URL is required")
 	}
-	if p.APIKey == "" {
-		return fmt.Errorf("provider: API key is required")
-	}
 	return nil
 }
 

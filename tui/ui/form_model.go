@@ -6,6 +6,19 @@ import (
 )
 
 // FieldType identifies the kind of form field.
+//
+// Indicator contract — each type renders one canonical affordance, owned by
+// FormField.paint* (form_field.go). New field types must pick an affordance
+// from this list or extend the list, never invent an ad-hoc glyph:
+//
+//	FieldText, FieldPassword  free-form TextField; no indicator
+//	FieldSelect               "▾" right-aligned when closed, "▴" when open
+//	FieldMultiSelect          "▾" right-aligned when closed, "▴" when open;
+//	                          option rows prefix "[x]"/"[ ]"
+//	FieldCycle                "←" left edge, "→" right edge (value centered)
+//	FieldToggle, FieldCheckbox "[x]" / "[ ]" inline
+//	FieldNav                  " >" right-aligned; row is a navigation target
+//	FieldSeparator            label + "─" rule; not focusable
 type FieldType int
 
 const (

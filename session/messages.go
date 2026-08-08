@@ -169,10 +169,7 @@ func (s *Session) flushWriteBufSync() {
 
 func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
 	msgs = backfillMissingToolResults(msgs)
-	for {
-		if len(msgs) == 0 {
-			break
-		}
+	for len(msgs) > 0 {
 		last := msgs[len(msgs)-1]
 		if last.Role == "tool" {
 			hasParent := false

@@ -22,6 +22,9 @@ func (s *OpenAIStandard) ModelsEndpoint(baseURL string) string {
 }
 
 func (s *OpenAIStandard) Auth(apiKey string) (string, string) {
+	if apiKey == "" {
+		return "", ""
+	}
 	return "Authorization", "Bearer " + apiKey
 }
 

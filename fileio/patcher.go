@@ -172,7 +172,7 @@ func applySingleOp(content string, op SearchReplace, lg *logger.Logger) (string,
 	return "", fmt.Errorf(
 		"search text not found (tried exact match, whitespace-normalised match, and substring match):\n  %s\n\n"+
 			"ⓘ  HINT: Copy FULL lines from read_file output — from the START of each line including all indentation.\n"+
-			"ⓘ  Do NOT start your search in the middle of a line.",
+			"ⓘ  Do NOT start your search in the middle of a line",
 		preview(op.Search),
 	)
 }
