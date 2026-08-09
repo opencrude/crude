@@ -58,7 +58,7 @@ func TestWorkspaceDisplayName_NeverShowsRawHash(t *testing.T) {
 }
 
 func TestListWorkspaceInfos_EmptyNameUsesPath(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := filepath.Join(t.TempDir(), "readable-name")
 	if err := os.MkdirAll(project, 0o755); err != nil {

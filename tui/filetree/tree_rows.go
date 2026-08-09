@@ -162,21 +162,49 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 		if node.IsDir && displayGit == GitNone && node.AggregateStatus != GitNone {
 			displayGit = node.AggregateStatus
 		}
-		gitReserve, diagReserve := 0, 0
+		type indicatorSegment struct {
+			text string
+			fg   cell.Color
+		}
+		var indicators [3]indicatorSegment
+		indicatorCount := 0
 		if cfg.ShowGitStatus && displayGit != GitNone {
-			gitReserve = rendering.VisibleWidth(StatusString(displayGit)) + 2
+			if gitStr := StatusString(displayGit); gitStr != "" {
+				indicators[indicatorCount] = indicatorSegment{text: gitStr, fg: gitColor(tokens, displayGit)}
+				indicatorCount++
+			}
 		}
 		if cfg.ShowDiagnostics && node.DiagnosticCount > 0 {
 			if node.DiagErrors > 0 {
-				diagReserve += 1 + rendering.VisibleWidth(itoa(node.DiagErrors))
+				indicators[indicatorCount] = indicatorSegment{text: "✕" + itoa(node.DiagErrors), fg: tokens.TreeDiagError()}
+				indicatorCount++
 			}
 			if node.DiagWarnings > 0 {
-				diagReserve += 1 + rendering.VisibleWidth(itoa(node.DiagWarnings))
+				indicators[indicatorCount] = indicatorSegment{text: "⚠" + itoa(node.DiagWarnings), fg: tokens.TreeDiagWarning()}
+				indicatorCount++
 			}
 		}
-		nameMax := width - (x - ox) - gitReserve - diagReserve
-		if nameMax < 3 {
-			nameMax = 3
+		indicatorW := 0
+		for i := 0; i < indicatorCount; i++ {
+			if i > 0 {
+				indicatorW++
+			}
+			indicatorW += rendering.VisibleWidth(indicators[i].text)
+		}
+		indicatorX := ox + width
+		nameMax := width - (x - ox)
+		if indicatorW > 0 {
+			indicatorX = ox + width - indicatorW - 1
+			if indicatorX-x < 2 {
+				indicatorCount = 0
+				indicatorW = 0
+				indicatorX = ox + width
+			} else {
+				nameMax = indicatorX - x - 1
+			}
+		}
+		if nameMax < 1 {
+			nameMax = 1
 		}
 		nameText := node.Name
 		if rendering.VisibleWidth(node.Name) > nameMax {
@@ -198,32 +226,16 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 		}
 		x = buf.WriteString(x, y, nameText, nameFG, bg, nameAttr)
 
-		if cfg.ShowGitStatus && displayGit != GitNone {
-			gitStr := StatusString(displayGit)
-			if gitStr != "" {
-				gitFG := gitColor(tokens, displayGit)
-				contentW := x - ox
-				gitW := rendering.VisibleWidth(gitStr)
-				gitX := ox + width - gitW - 1
-				if gitX > contentW {
-					for fx := x; fx < gitX; fx++ {
-						buf.Set(fx, y, cell.NewCell(' ', cell.NoColor, bg, 0))
-					}
-					buf.WriteString(gitX, y, gitStr, gitFG, bg, 0)
-					x = gitX + gitW
-				}
-			}
+		for fx := x; fx < indicatorX; fx++ {
+			buf.Set(fx, y, cell.NewCell(' ', cell.NoColor, bg, 0))
 		}
-		if cfg.ShowDiagnostics && node.DiagnosticCount > 0 {
-			if node.DiagErrors > 0 {
-				s := "✕" + itoa(node.DiagErrors)
-				buf.WriteString(x, y, " "+s, tokens.TreeDiagError(), bg, 0)
-				x += 1 + rendering.VisibleWidth(s)
+		x = indicatorX
+		for i := 0; i < indicatorCount; i++ {
+			if i > 0 {
+				buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
+				x++
 			}
-			if node.DiagWarnings > 0 {
-				s := "⚠" + itoa(node.DiagWarnings)
-				buf.WriteString(x, y, " "+s, tokens.TreeDiagWarning(), bg, 0)
-			}
+			x = buf.WriteString(x, y, indicators[i].text, indicators[i].fg, bg, 0)
 		}
 		for fx := x; fx < ox+width; fx++ {
 			buf.Set(fx, y, cell.NewCell(' ', cell.NoColor, bg, 0))

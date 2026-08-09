@@ -13,7 +13,7 @@ import (
 // TestBackfillSessionRegistryFromDisk inserts missing registry rows from
 // workspace-local session DBs and is idempotent.
 func TestBackfillSessionRegistryFromDisk(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := t.TempDir()
 	wsDir, err := WorkspaceDir(project)
@@ -91,7 +91,7 @@ func TestBackfillSessionRegistryFromDisk(t *testing.T) {
 // TestBackfillDoesNotOverwriteRicherExistingRow ensures a sparse derived
 // insert cannot clobber an already-populated registry row.
 func TestBackfillDoesNotOverwriteRicherExistingRow(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := t.TempDir()
 	wsDir, err := WorkspaceDir(project)
@@ -150,7 +150,7 @@ func TestBackfillDoesNotOverwriteRicherExistingRow(t *testing.T) {
 // TestBackfillSkipsCorruptSessionDB ensures a bad file does not abort backfill
 // of other sessions.
 func TestBackfillSkipsCorruptSessionDB(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := t.TempDir()
 	wsDir, err := WorkspaceDir(project)
@@ -195,7 +195,7 @@ func TestBackfillSkipsCorruptSessionDB(t *testing.T) {
 
 // TestBackfillUsesMtimeWhenCreatedAtMissing covers the last-resort timestamp.
 func TestBackfillUsesMtimeWhenCreatedAtMissing(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := t.TempDir()
 	wsDir, err := WorkspaceDir(project)
@@ -247,7 +247,7 @@ func TestBackfillUsesMtimeWhenCreatedAtMissing(t *testing.T) {
 // TestEnrichMarksMissingDoesNotDelete verifies TASK 2: apparent absence marks
 // the row unavailable instead of DELETE, and reappearance clears the flag.
 func TestEnrichMarksMissingDoesNotDelete(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := t.TempDir()
 	wsDir, err := WorkspaceDir(project)
@@ -328,7 +328,7 @@ func TestEnrichMarksMissingDoesNotDelete(t *testing.T) {
 // TestBackfillClearsMissingFlagWhenDBReappears covers the backfill path for
 // restoring a previously marked-missing row without overwriting fields.
 func TestBackfillClearsMissingFlagWhenDBReappears(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := t.TempDir()
 	wsDir, err := WorkspaceDir(project)
@@ -391,7 +391,7 @@ func TestBackfillClearsMissingFlagWhenDBReappears(t *testing.T) {
 // TestNewWorkspaceRunsBackfill ensures the workspace-open hook populates the
 // registry so ListSessions works without a separate call.
 func TestNewWorkspaceRunsBackfill(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := t.TempDir()
 	wsDir, err := WorkspaceDir(project)

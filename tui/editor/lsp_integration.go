@@ -555,11 +555,11 @@ func (l *LSPIntegration) Diagnostics() []LSPDiagnostic {
 }
 
 func (l *LSPIntegration) uriToPath(uri protocol.DocumentURI) string {
-	s := string(uri)
-	if strings.HasPrefix(s, "file://") {
-		return filepath.Clean(filepath.FromSlash(s[7:]))
+	path, err := uri.Path()
+	if err != nil {
+		return string(uri)
 	}
-	return s
+	return filepath.Clean(path)
 }
 
 func (l *LSPIntegration) updateDiagnostics(uri protocol.DocumentURI, diags []protocol.Diagnostic) {
@@ -654,12 +654,12 @@ func RootURIForFile(filePath string) string {
 	for {
 		for _, m := range markers {
 			if _, err := os.Stat(filepath.Join(d, m)); err == nil {
-				return "file://" + d
+				return string(protocol.URIFromPath(d))
 			}
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
-			return "file://" + dir
+			return string(protocol.URIFromPath(dir))
 		}
 		d = parent
 	}

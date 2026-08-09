@@ -140,12 +140,12 @@ func (m *LSPManager) detectProjectRoots(workspaceDir string) []string {
 	for _, marker := range []string{"go.mod", "package.json", "Cargo.toml", "pyproject.toml", "composer.json"} {
 		path := filepath.Join(dir, marker)
 		if _, err := os.Stat(path); err == nil {
-			roots = append(roots, "file://"+dir)
+			roots = append(roots, fileURI(dir))
 			break
 		}
 	}
 	if len(roots) == 0 {
-		roots = append(roots, "file://"+dir)
+		roots = append(roots, fileURI(dir))
 	}
 	return roots
 }
@@ -158,7 +158,7 @@ func (m *LSPManager) startServerForRoot(rootURI string) {
 	if runtime == nil {
 		return
 	}
-	rootPath := strings.TrimPrefix(rootURI, "file://")
+	rootPath := filePathFromURI(rootURI)
 	if rootPath == "" {
 		return
 	}
@@ -418,7 +418,7 @@ func (m *LSPManager) startClient(key string, client LSPClient, rootURI, cmd stri
 // openProjectFiles scans the project root for files handled by the given
 // server command and sends didOpen for each one.
 func (m *LSPManager) openProjectFiles(rootURI string, cmd string) {
-	rootPath := strings.TrimPrefix(rootURI, "file://")
+	rootPath := filePathFromURI(rootURI)
 	if rootPath == "" {
 		return
 	}

@@ -17,6 +17,7 @@ import (
 func TestWatchConfigConcurrentStopAndReload(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	cfgPath := ConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)

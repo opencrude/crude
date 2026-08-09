@@ -3,7 +3,6 @@ package viewmodel
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -105,6 +104,33 @@ func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 	}
 }
 
+func (m *App) wireLSPDiagnostics() {
+	if m == nil || m.LSPMgr == nil {
+		return
+	}
+	m.LSPMgr.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
+		if m.eventBus != nil {
+			m.eventBus.Send(workspace.LSPDiagnosticsMsg{FilePath: fp, Diagnostics: diags})
+		}
+	})
+}
+
+func (m *App) syncFileTreeDiagnosticsFromLSP() {
+	if m == nil || m.LSPMgr == nil || m.Tree == nil || m.Tree.Model == nil {
+		return
+	}
+	for fp, diags := range m.LSPMgr.AllDiagnostics() {
+		m.handleLSPDiagnosticsUpdate(workspace.LSPDiagnosticsMsg{FilePath: fp, Diagnostics: diags})
+	}
+}
+
+func (m *App) clearTreeDiagnostics() {
+	if m == nil || m.Tree == nil || m.Tree.Model == nil {
+		return
+	}
+	m.Tree.Model.ClearDiagnostics()
+}
+
 // handleFileWatcherEvent processes a file system change that arrived through
 // the workspace.EventBus from the file watcher goroutine. Forwards the change to the
 // LSP server for re-analysis.
@@ -126,12 +152,12 @@ func (m *App) handleFileWatcherEvent(msg workspace.FileWatcherMsg) tea.Cmd {
 	}
 }
 
-// startLSPForWorkspace scans the working directory and starts LSP
+// startLSPForWorkspace scans the active workspace root and starts LSP
 // servers for detected project roots.
 func (m *App) startLSPForWorkspace() {
-	wsDir, err := os.Getwd()
-	if err != nil {
-		wsDir = "."
+	wsDir := "."
+	if m.RootPath != "" {
+		wsDir = m.RootPath
 	}
 	if m.Logger != nil {
 		m.Logger.Debug("LSP", "starting_for_workspace", "dir", wsDir)
@@ -141,11 +167,13 @@ func (m *App) startLSPForWorkspace() {
 		// server doesn't leave stale errors visible until the new
 		// session republishes them.
 		m.LSPMgr.ClearDiagnostics()
+		m.clearTreeDiagnostics()
 		// Also clear per-editor diagnostic caches for open tabs.
 		// The new server will repopulate them via the onDiagnostics
 		// callback as it walks the project.
 		m.clearOpenEditorsDiagnostics()
 		m.LSPMgr.StartForWorkspace(wsDir)
+		m.syncFileTreeDiagnosticsFromLSP()
 	}
 }
 

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -93,7 +94,34 @@ func defaultRootURI(filePath string) string {
 	if err != nil {
 		abs = filePath
 	}
-	return "file://" + filepath.Dir(abs)
+	return fileURI(filepath.Dir(abs))
+}
+
+func fileURI(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	slashPath := filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" {
+		slashPath = "/" + slashPath
+	}
+	return (&url.URL{Scheme: "file", Path: slashPath}).String()
+}
+
+func filePathFromURI(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "file" {
+		return filepath.Clean(strings.TrimPrefix(uri, "file://"))
+	}
+	path := u.Path
+	if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
+		path = "//" + u.Host + path
+	}
+	if trimmed := strings.TrimPrefix(path, "/"); filepath.VolumeName(trimmed) != "" {
+		path = trimmed
+	}
+	return filepath.Clean(filepath.FromSlash(path))
 }
 
 func defaultLanguageID(ext string) string {
