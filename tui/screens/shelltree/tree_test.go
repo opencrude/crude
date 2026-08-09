@@ -8,6 +8,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/filetree"
+	"crude/tui/rendering"
 	"crude/tui/screens/shelltree"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -138,6 +139,55 @@ func TestScreenPaintsFileTreeNative(t *testing.T) {
 	row := shelltree.PlainRow(buf, 0, 28)
 	if row == "" {
 		t.Fatal("expected painted tree row")
+	}
+}
+
+func TestScreenAlignsGitAndDiagnosticsAsTrailingBlock(t *testing.T) {
+	dir := t.TempDir()
+	paths := map[string]string{
+		"both.go": filepath.Join(dir, "both.go"),
+		"diag.go": filepath.Join(dir, "diag.go"),
+		"git.go":  filepath.Join(dir, "git.go"),
+	}
+	for _, path := range paths {
+		if err := os.WriteFile(path, []byte("package test\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	model := filetree.NewFileTreeModel(dir)
+	model.NodeByPath(paths["git.go"]).GitStatus = filetree.GitModified
+	model.NodeByPath(paths["both.go"]).GitStatus = filetree.GitModified
+	model.SetDiagnostics(paths["diag.go"], 2, 0, 0)
+	model.SetDiagnostics(paths["both.go"], 3, 2, 0)
+
+	screen := shelltree.New(theme.DefaultDark(), model)
+	const width = 42
+	buf := screen.PaintTestBuffer(width, 8)
+	rows := map[string]string{}
+	for y := 0; y < 8; y++ {
+		row := shelltree.PlainRow(buf, y, width-1)
+		for name := range paths {
+			if strings.Contains(row, name) {
+				rows[name] = row
+			}
+		}
+	}
+
+	if !strings.HasSuffix(rows["git.go"], "M") {
+		t.Fatalf("git-only row has misplaced indicator: %q", rows["git.go"])
+	}
+	if !strings.HasSuffix(rows["diag.go"], "✕2") {
+		t.Fatalf("diagnostic-only row has misplaced indicator: %q", rows["diag.go"])
+	}
+	if !strings.HasSuffix(rows["both.go"], "M ✕3 ⚠2") {
+		t.Fatalf("combined row has wrong indicator order: %q", rows["both.go"])
+	}
+	wantRightEdge := rendering.VisibleWidth(rows["git.go"])
+	for _, name := range []string{"diag.go", "both.go"} {
+		if got := rendering.VisibleWidth(rows[name]); got != wantRightEdge {
+			t.Fatalf("%s trailing edge=%d want %d: %q", name, got, wantRightEdge, rows[name])
+		}
 	}
 }
 

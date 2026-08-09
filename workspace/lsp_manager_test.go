@@ -19,6 +19,13 @@ func (testLogger) Warn(tag, msg string, pairs ...any)  {}
 func (testLogger) Error(tag, msg string, pairs ...any) {}
 func (testLogger) Debug(tag, msg string, pairs ...any) {}
 
+func TestFileURIPathRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "with space")
+	if got := filePathFromURI(fileURI(path)); got != filepath.Clean(path) {
+		t.Fatalf("file URI round trip = %q, want %q", got, filepath.Clean(path))
+	}
+}
+
 func createFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {

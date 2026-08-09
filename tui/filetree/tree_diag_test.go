@@ -142,6 +142,33 @@ func TestSetDiagnostics_Replace(t *testing.T) {
 	}
 }
 
+func TestClearDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.go")
+	b := filepath.Join(dir, "b.go")
+	createFileForTest(t, a, "package a")
+	createFileForTest(t, b, "package b")
+
+	tree := NewFileTreeModel(dir)
+	tree.SetDiagnostics(a, 1, 0, 0)
+	tree.SetDiagnostics(b, 0, 2, 0)
+
+	tree.ClearDiagnostics()
+
+	for _, path := range []string{a, b} {
+		node := tree.NodeByPath(path)
+		if node == nil {
+			t.Fatalf("node not found at %q", path)
+		}
+		if node.DiagnosticCount != 0 || node.DiagErrors != 0 || node.DiagWarnings != 0 || node.DiagHints != 0 {
+			t.Fatalf("%s diagnostics not cleared: total=%d errors=%d warnings=%d hints=%d", filepath.Base(path), node.DiagnosticCount, node.DiagErrors, node.DiagWarnings, node.DiagHints)
+		}
+	}
+	if tree.Root.DiagnosticCount != 0 || tree.Root.DiagErrors != 0 || tree.Root.DiagWarnings != 0 || tree.Root.DiagHints != 0 {
+		t.Fatalf("root diagnostics not cleared: total=%d errors=%d warnings=%d hints=%d", tree.Root.DiagnosticCount, tree.Root.DiagErrors, tree.Root.DiagWarnings, tree.Root.DiagHints)
+	}
+}
+
 func TestSetDiagnostics_NodeNotLoaded(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "sub")

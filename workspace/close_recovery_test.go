@@ -12,7 +12,7 @@ import (
 // contract: close stamps the registry (registering if needed) and ListSessions
 // returns the row. Uses HOME isolation so ~/.crude is never touched.
 func TestCloseAgentLeavesListableResumableRegistryRecord(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 
 	project := t.TempDir()
 	wdb, err := OpenWorkspaceDB(project)

@@ -1,11 +1,14 @@
 package editor
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	"crude/tui/theme"
 )
@@ -560,6 +563,14 @@ func TestLSPIntegration_OnDiagnosticsCallback(t *testing.T) {
 	}
 
 	assert.True(t, called, "onDiagnostics callback should have been called")
+}
+
+func TestLSPIntegration_URIToPathRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "with space", "main.go")
+	uri := protocol.URIFromPath(path)
+	l := NewLSPIntegration("gopls", nil, string(protocol.URIFromPath(filepath.Dir(path))))
+
+	assert.Equal(t, filepath.Clean(path), l.uriToPath(uri))
 }
 
 // ── lspServerConfig tests ──────────────────────────────────────────

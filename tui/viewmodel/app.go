@@ -251,6 +251,8 @@ func (m *App) SwitchProject(projectDir string) error {
 	m.EditorState = NewEditorState()
 	m.EditorState.Editor = editor.New(m.Theme)
 	m.LSPMgr.SetRuntime(newEditorLSPRuntime())
+	m.wireLSPDiagnostics()
+	m.syncFileTreeDiagnosticsFromLSP()
 	if m.launcherScreen != nil {
 		m.launcherScreen.SetData(m.RootPath, nil)
 		m.refreshLauncherAsync(m.RootPath)
@@ -284,17 +286,14 @@ func (m *App) SetProgram(p *tea.Program) {
 }
 
 func (m *App) Init() tea.Cmd {
+	// Wire diagnostics before starting workspace LSP so fast servers cannot
+	// populate LSPManager's cache without notifying the tree/status update path.
+	m.wireLSPDiagnostics()
 	if m.OverlayState.IsChat() {
 		m.startLSPForWorkspace()
+	} else {
+		m.syncFileTreeDiagnosticsFromLSP()
 	}
-	// Wire the permanent diagnostics callback so project-wide diagnostics
-	// (which arrive as soon as the LSP server connects) always update
-	// the file tree, even before any file is opened in the editor.
-	m.LSPMgr.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
-		if m.eventBus != nil {
-			m.eventBus.Send(workspace.LSPDiagnosticsMsg{FilePath: fp, Diagnostics: diags})
-		}
-	})
 
 	// Hook file tree watcher events into the LSP server so it learns about
 	// disk changes (git checkout, external edits, etc.).

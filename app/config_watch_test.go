@@ -15,6 +15,7 @@ import (
 func TestWatchConfigEmitsThemePreset(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	cfgPath := ConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -54,6 +55,7 @@ func TestWatchConfigEmitsThemePreset(t *testing.T) {
 func TestWatchConfigSettlesAfterRapidWrites(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	cfgPath := ConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -101,6 +103,7 @@ func TestWatchConfigSettlesAfterRapidWrites(t *testing.T) {
 func TestWatchConfigSkipsInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	cfgPath := ConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -132,6 +135,7 @@ func TestWatchConfigSkipsInvalidJSON(t *testing.T) {
 func TestWatchConfigRecoversAfterInvalidThenValidWrite(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	cfgPath := ConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -180,6 +184,7 @@ func TestWatchConfigRecoversAfterInvalidThenValidWrite(t *testing.T) {
 func TestWatchConfigStopIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	cfgPath := ConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -199,6 +204,7 @@ func TestWatchConfigStopIsIdempotent(t *testing.T) {
 func TestWatchConfigRenameCreateEmitsReload(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	cfgDir := filepath.Dir(ConfigPath())
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatal(err)

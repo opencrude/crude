@@ -172,6 +172,11 @@ func (m *FileTreeModel) SetDiagnostics(path string, errors, warnings, hints int)
 	defer m.mu.Unlock()
 
 	fp := filepath.Clean(path)
+	if errors+warnings+hints <= 0 {
+		delete(m.diagnosticResolver, fp)
+		m.recomputeAggregateDiagnostics()
+		return
+	}
 	m.diagnosticResolver[fp] = DiagCounts{Errors: errors, Warnings: warnings, Hints: hints}
 
 	// If the tree node doesn't exist yet (file is in a collapsed directory),
@@ -182,6 +187,16 @@ func (m *FileTreeModel) SetDiagnostics(path string, errors, warnings, hints int)
 		m.ensureDiagnosticsNode(fp)
 	}
 
+	m.recomputeAggregateDiagnostics()
+}
+
+// ClearDiagnostics removes all per-file diagnostic counts and recomputes the
+// loaded tree aggregates. It is used when the LSP manager is restarted or the
+// workspace changes so stale diagnostics do not survive the clean slate.
+func (m *FileTreeModel) ClearDiagnostics() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.diagnosticResolver = make(map[string]DiagCounts)
 	m.recomputeAggregateDiagnostics()
 }
 
