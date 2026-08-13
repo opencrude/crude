@@ -136,9 +136,13 @@ func TestScreenOptionMouseSelectionMatchesKeyboardSelection(t *testing.T) {
 	host.Layout()
 
 	// PanelDeck reserves its divider at row 0; Form reserves title, detail, and
-	// divider rows before the answer field. Both clicks use Host geometry.
-	host.Handle(tea.MouseClickMsg{X: 16, Y: 4, Button: tea.MouseLeft})
-	host.Handle(tea.MouseClickMsg{X: 16, Y: 5, Button: tea.MouseLeft})
+	// divider rows before the answer field. The FieldSelect dropdown opens with
+	// a top border, then a filter row, so the first list row sits two rows
+	// below the control. Clicks use Host geometry; the option pick must land
+	// inside the dropdown's control column because hit testing is scoped to
+	// the visible dropdown panel.
+	host.Handle(tea.MouseClickMsg{X: 16, Y: 4, Button: tea.MouseLeft}) // open dropdown
+	host.Handle(tea.MouseClickMsg{X: 24, Y: 7, Button: tea.MouseLeft}) // click first option row
 	if screen.Current() != 1 || screen.Answer(0) != "mouse choice" {
 		t.Fatalf("mouse selection index=%d answer=%q", screen.Current(), screen.Answer(0))
 	}

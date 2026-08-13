@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 )
@@ -46,10 +48,10 @@ func TestActionBarPaintsSemanticVariants(t *testing.T) {
 	bar.Layout(LayoutContext{Theme: theme.DefaultDark()}, Rect{W: 30, H: 1})
 	buf := surface.NewCellBuffer(30, 1)
 	bar.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark()})
-	if got, want := buf.Get(0, 0).BG, tokens.Color(ColorAccent); got != want {
+	if got, want := buf.Get(10, 0).BG, tokens.Color(ColorAccent); got != want {
 		t.Fatalf("primary action background=%v, want accent %v", got, want)
 	}
-	if got, want := buf.Get(10, 0).BG, tokens.Color(ColorError); got != want {
+	if got, want := buf.Get(20, 0).BG, tokens.Color(ColorError); got != want {
 		t.Fatalf("danger action background=%v, want error %v", got, want)
 	}
 }
@@ -119,5 +121,180 @@ func TestFormMultiSelectTogglesChoicesWithoutLosingCursor(t *testing.T) {
 	}
 	if selected, ok := form.Field("choices").selectList.Selected(); !ok || selected.ID != "two" {
 		t.Fatalf("multi-select cursor=%#v", selected)
+	}
+}
+
+func TestFormSubsectionLabelsIndentFromSectionTitles(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	on := BoolValue(true)
+	model.AddField(&FieldState{ID: "features", Label: "Features", Type: FieldSeparator})
+	model.AddField(&FieldState{ID: "diagnostics", Label: "Diagnostics", Type: FieldToggle, Value: on, Initial: on})
+	form := NewForm("form", model, "", "", tokens)
+	form.Layout(LayoutContext{}, Rect{W: 40, H: 6})
+	buf := surface.NewCellBuffer(40, 6)
+	form.Paint(buf, 0, 0, PaintContext{})
+
+	titleX, fieldX := -1, -1
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			if titleX < 0 && buf.Get(x, y).Char == 'F' && x+7 < buf.Width() && buf.Get(x+1, y).Char == 'e' {
+				titleX = x
+			}
+			if fieldX < 0 && buf.Get(x, y).Char == 'D' && x+10 < buf.Width() && buf.Get(x+1, y).Char == 'i' {
+				fieldX = x
+			}
+		}
+	}
+	if titleX != 0 {
+		t.Fatalf("section title x=%d want 0", titleX)
+	}
+	if fieldX != tokens.FormIndent() {
+		t.Fatalf("field label x=%d want FormIndent %d", fieldX, tokens.FormIndent())
+	}
+}
+
+func TestFormPaintClipsFieldsToViewport(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	on := BoolValue(true)
+	model := NewFormModel()
+	for i := 0; i < 8; i++ {
+		model.AddField(&FieldState{
+			ID:          fmt.Sprintf("f%d", i),
+			Label:       fmt.Sprintf("Field %d", i),
+			Description: "description that must not leak",
+			Type:        FieldToggle,
+			Value:       on,
+			Initial:     on,
+		})
+	}
+	form := NewForm("form", model, "", "", tokens)
+	const formX, formY, formW, formH = 2, 2, 40, 5
+	form.Layout(LayoutContext{}, Rect{X: formX, Y: formY, W: formW, H: formH})
+
+	assertClipped := func(t *testing.T, buf *surface.CellBuffer) {
+		t.Helper()
+		for y := 0; y < buf.Height(); y++ {
+			for x := 0; x < buf.Width(); x++ {
+				inside := x >= formX && x < formX+formW && y >= formY && y < formY+formH
+				if inside {
+					continue
+				}
+				if buf.Get(x, y).Char != '#' {
+					t.Fatalf("form leaked %q at (%d,%d) outside viewport", string(buf.Get(x, y).Char), x, y)
+				}
+			}
+		}
+		found := false
+		for y := formY; y < formY+formH; y++ {
+			for x := formX; x < formX+formW; x++ {
+				if buf.Get(x, y).Char != '#' && buf.Get(x, y).Char != 0 && buf.Get(x, y).Char != ' ' {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatal("viewport is empty after paint")
+		}
+	}
+
+	paint := func() *surface.CellBuffer {
+		buf := surface.NewCellBuffer(50, 16)
+		sentinel := cell.Cell{Char: '#', Width: 1}
+		for y := 0; y < buf.Height(); y++ {
+			for x := 0; x < buf.Width(); x++ {
+				buf.Set(x, y, sentinel)
+			}
+		}
+		form.Paint(buf, 0, 0, PaintContext{})
+		return buf
+	}
+
+	t.Run("bottom straddle", func(t *testing.T) {
+		assertClipped(t, paint())
+	})
+	t.Run("top straddle", func(t *testing.T) {
+		form.Scroll().ScrollTo(1)
+		form.Layout(LayoutContext{}, Rect{X: formX, Y: formY, W: formW, H: formH})
+		assertClipped(t, paint())
+	})
+	t.Run("mid scroll", func(t *testing.T) {
+		form.Scroll().ScrollTo(3)
+		form.Layout(LayoutContext{}, Rect{X: formX, Y: formY, W: formW, H: formH})
+		assertClipped(t, paint())
+	})
+}
+
+func TestFormArrowsClampAtEdgesByDefault(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	empty := StringValue("")
+	model.AddField(&FieldState{ID: "a", Label: "A", Type: FieldText, Value: empty, Initial: empty})
+	model.AddField(&FieldState{ID: "b", Label: "B", Type: FieldText, Value: empty, Initial: empty})
+	form := NewForm("form", model, "", "", tokens)
+	form.Layout(LayoutContext{}, Rect{W: 40, H: 6})
+	form.FocusFirst()
+
+	res := form.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
+	if res.Action != nil {
+		t.Fatalf("Up at first field emitted %v", res.Action)
+	}
+
+	form.FocusLast()
+	res = form.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
+	if res.Action != nil {
+		t.Fatalf("Down at last field emitted %v", res.Action)
+	}
+
+	res = form.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyTab}))
+	if res.Action == nil || res.Action.ID != "form.exit.forward" {
+		t.Fatalf("Tab at last field result=%#v", res)
+	}
+
+	form.FocusFirst()
+	form.SetArrowExitsForm(true)
+	res = form.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
+	if res.Action == nil || res.Action.ID != "form.exit.backward" {
+		t.Fatalf("SetArrowExitsForm Up result=%#v", res)
+	}
+	form.FocusLast()
+	res = form.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
+	if res.Action == nil || res.Action.ID != "form.exit.forward" {
+		t.Fatalf("SetArrowExitsForm Down result=%#v", res)
+	}
+}
+
+func TestFormNavRowPaintsChevronNotPrompt(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	model.AddField(&FieldState{
+		ID: "default", Label: "Main Agent", Description: "openrouter  ·  gpt-5",
+		Type: FieldNav, Inherited: true, InheritedFrom: "workspace",
+	})
+	form := NewForm("form", model, "", "", tokens)
+	form.Layout(LayoutContext{}, Rect{W: 60, H: 4})
+	buf := surface.NewCellBuffer(60, 4)
+	form.Paint(buf, 0, 0, PaintContext{Focused: true})
+	var b strings.Builder
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 60; x++ {
+			if c := buf.Get(x, y); c.Char != 0 {
+				b.WriteRune(c.Char)
+			}
+		}
+		b.WriteByte('\n')
+	}
+	plain := b.String()
+	if strings.Contains(plain, theme.DefaultGlyphs().Prompt) {
+		t.Fatalf("nav row must not use the chat prompt glyph:\n%s", plain)
+	}
+	if strings.Contains(plain, ") )") || strings.Contains(plain, "(inherited") {
+		t.Fatalf("nav row must not wrap inherited text in parentheses:\n%s", plain)
+	}
+	if !strings.Contains(plain, theme.DefaultGlyphs().TreeCollapsed) {
+		t.Fatalf("nav row missing TreeCollapsed chevron:\n%s", plain)
+	}
+	if !strings.Contains(plain, "inherited from workspace") {
+		t.Fatalf("nav row missing inherited detail:\n%s", plain)
 	}
 }

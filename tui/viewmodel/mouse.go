@@ -16,15 +16,15 @@ import (
 )
 
 // shellRegion classifies a screen point for VIEWMODEL POLICY only (focus
-// stack updates, editor legacy routing, divider drag, status row, context
-// menus). Actual pointer targeting happens in the root Host hit tree; these
-// regions never translate coordinates.
+// stack updates, editor legacy routing, status row, context menus). Actual
+// pointer targeting happens in the root Host hit tree; these regions never
+// translate coordinates. Sidebar divider drag is Host pointer capture on
+// ui.SplitDivider, not a viewmodel-owned resize mode.
 type shellRegion int
 
 const (
 	regionNone shellRegion = iota
 	regionSidebar
-	regionSidebarDivider
 	regionTabBar
 	regionSessionDeck
 	regionEditor
@@ -47,10 +47,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 		return regionStatusBar
 	}
 
-	if m.Tree.Visible && m.Tree.Model != nil && x <= m.Tree.Width {
-		if x == m.Tree.Width {
-			return regionSidebarDivider
-		}
+	if x < m.sidebarHitWidth() {
 		return regionSidebar
 	}
 
@@ -128,7 +125,38 @@ func (m *App) handleShellPointer(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	res := m.rootHost.Handle(msg)
+	m.applyHostPointerActions(res)
 	return res.Cmd
+}
+
+func (m *App) applyHostPointerActions(res ui.EventResult) {
+	if res.Action == nil {
+		return
+	}
+	_ = m.handleHostAction(res.Action)
+}
+
+func (m *App) setSidebarWidth(w int) {
+	if m.Tree == nil {
+		return
+	}
+	if w < 12 {
+		w = 12
+	}
+	maxW := m.width / 2
+	if maxW < 12 {
+		maxW = 12
+	}
+	if w > maxW {
+		w = maxW
+	}
+	if m.Tree.Width == w {
+		return
+	}
+	m.Tree.Width = w
+	if m.Tree.Model != nil {
+		m.Tree.Model.Update(filetree.TreeWidthMsg{Width: w})
+	}
 }
 
 func (m *App) routeInputMouse(msg tea.Msg) []tea.Cmd {
@@ -216,15 +244,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 
 	switch region {
-	case regionSidebarDivider:
-		m.setSessionDeckFocused(false)
-		if msg.Button == tea.MouseLeft {
-			m.Tree.Resizing = true
-			m.Tree.ResizeStartX = mouse.X
-			m.Tree.ResizeStartWidth = m.Tree.Width
-		}
-		return m, nil
-
 	case regionStatusBar:
 		// Passive display row; right-click is handled separately.
 		m.setSessionDeckFocused(false)
@@ -269,6 +288,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 
 	res := m.rootHost.Handle(msg)
+	m.applyHostPointerActions(res)
 	if res.Cmd != nil {
 		cmds = append(cmds, res.Cmd)
 	}
@@ -283,7 +303,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if region == regionNone && m.FocusStack.Top() == FocusTree && mouse.X >= m.Tree.Width {
+	if region == regionNone && m.FocusStack.Top() == FocusTree && mouse.X >= m.sidebarHitWidth() {
 		m.FocusStack.Pop()
 	}
 
@@ -338,26 +358,12 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.Tree.Resizing {
-		deltaX := mouse.X - m.Tree.ResizeStartX
-		newWidth := m.Tree.ResizeStartWidth + deltaX
-		minW := 12
-		if newWidth < minW {
-			newWidth = minW
-		}
-		if newWidth > m.width/2 {
-			newWidth = m.width / 2
-		}
-		m.Tree.Width = newWidth
-		m.Tree.Model.Update(filetree.TreeWidthMsg{Width: newWidth})
-		return m, nil
-	}
-
 	// Root-host pointer capture: drags (chat selection, scrollbar thumbs,
-	// input selection, deck gutters) continue outside their original
-	// bounds until release — one capture service for the whole shell.
+	// split dividers, input selection, deck gutters) continue outside their
+	// original bounds until release — one capture service for the whole shell.
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 		res := m.rootHost.Handle(msg)
+		m.applyHostPointerActions(res)
 		if res.Cmd != nil {
 			cmds = append(cmds, res.Cmd)
 		}
@@ -467,15 +473,11 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		}
 	}
 
-	if m.Tree.Resizing {
-		m.Tree.Resizing = false
-		return m, nil
-	}
-
 	// Root-host capture release: ends drags (chat selection, scrollbar,
-	// input selection, deck gutters) wherever the pointer is.
+	// split dividers, input selection, deck gutters) wherever the pointer is.
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 		res := m.rootHost.Handle(msg)
+		m.applyHostPointerActions(res)
 		if res.Cmd != nil {
 			cmds = append(cmds, res.Cmd)
 		}

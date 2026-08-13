@@ -22,6 +22,20 @@ func newStubWindow(id string, w, h int, opts ...wm.WindowOption) *wm.FloatingWin
 	return fw
 }
 
+func TestTerminalOverlayID(t *testing.T) {
+	id := TerminalOverlayID("t9")
+	if id != OverlayTerminalPrefix+"t9" {
+		t.Fatalf("id=%q", id)
+	}
+	got, ok := TerminalIDFromOverlay(id)
+	if !ok || got != "t9" {
+		t.Fatalf("got=%q ok=%v", got, ok)
+	}
+	if IsTerminalOverlay(OverlayHelp) || !IsTerminalOverlay(id) {
+		t.Fatal("IsTerminalOverlay mismatch")
+	}
+}
+
 func TestOverlayHost_OpenAndClose(t *testing.T) {
 	host, _ := newTestOverlayHost(t)
 	closed := false

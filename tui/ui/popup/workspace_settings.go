@@ -15,7 +15,11 @@ type WorkspaceSettings struct {
 }
 
 func NewWorkspaceSettings(th *theme.Theme, appSets ttypes.AppSettings, presets []ttypes.ProviderPreset) *WorkspaceSettings {
-	model := settings.New(th, appSets, presets)
+	return NewWorkspaceSettingsScoped(th, appSets, presets, ttypes.SettingsScopeApplication, appSets, ttypes.WorkspaceOverrides{})
+}
+
+func NewWorkspaceSettingsScoped(th *theme.Theme, working ttypes.AppSettings, presets []ttypes.ProviderPreset, scope ttypes.SettingsScope, appDefaults ttypes.AppSettings, overrides ttypes.WorkspaceOverrides) *WorkspaceSettings {
+	model := settings.NewScoped(th, working, presets, scope, appDefaults, overrides)
 	return &WorkspaceSettings{
 		model:   model,
 		surface: settings.NewSurface(th, model),

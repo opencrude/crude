@@ -14,17 +14,19 @@ import (
 // expansion, and form-local focus while screens translate its emitted actions.
 type Form struct {
 	Base
-	model     *FormModel
-	title     string
-	detail    string
-	tokens    *TokenSet
-	fields    []*FormField
-	focused   int
-	fieldGap  int
+	model      *FormModel
+	title      string
+	detail     string
+	tokens     *TokenSet
+	fields     []*FormField
+	focused    int
+	fieldGap   int
+	scroll     *ScrollModel
+	arrowExits bool
 }
 
 func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
-	f := &Form{Base: NewBase(id), model: model, title: title, detail: detail, tokens: tokens, focused: -1}
+	f := &Form{Base: NewBase(id), model: model, title: title, detail: detail, tokens: tokens, focused: -1, scroll: NewScrollModel()}
 	f.rebuild()
 	return f
 }
@@ -113,70 +115,149 @@ func (f *Form) Measure(_ LayoutContext, cs Constraints) Size {
 // (default) for compact dialog panels; use 1 for settings forms.
 func (f *Form) SetFieldGap(gap int) { f.fieldGap = gap }
 
+// SetArrowExitsForm, when true, lets Up/Down at the first/last field leave
+// the form (settings category rail). The default clamps so docked lists do
+// not close or dump focus onto the action bar.
+func (f *Form) SetArrowExitsForm(v bool) { f.arrowExits = v }
+
+// Scroll returns the form's vertical scroll model for an on-demand scrollbar.
+func (f *Form) Scroll() *ScrollModel { return f.scroll }
+
 // PreferredHeight returns the rows required by the current field state,
-// including expanded selects, validation messages, and inter-field gaps.
+// including validation messages and inter-field gaps. Open selects overlay
+// and do not add to the layout height.
 func (f *Form) PreferredHeight(maxHeight int) int {
-	height := 3
+	return min(maxHeight, f.contentHeight())
+}
+
+func (f *Form) contentHeight() int {
+	header := 0
+	if f.title != "" {
+		header = 3
+	}
+	height := header
 	for i, field := range f.fields {
+		if i > 0 && field.FieldState().Type == FieldSeparator {
+			height++
+		}
 		height += field.height()
 		if i < len(f.fields)-1 && f.fieldGap > 0 && field.FieldState().Type != FieldSeparator && f.fields[i+1].FieldState().Type != FieldSeparator {
 			height += f.fieldGap
 		}
 	}
-	return min(maxHeight, height)
+	return height
 }
 
 func (f *Form) Layout(ctx LayoutContext, r Rect) {
 	f.SetBounds(r)
-	y := 3 // title, description, divider
+	if f.scroll == nil {
+		f.scroll = NewScrollModel()
+	}
+	y := 0
+	if f.title != "" {
+		y = 3
+	}
 	labelW := 0
 	for _, field := range f.fields {
 		if field.FieldState().Type == FieldSeparator {
 			continue
 		}
-		field.Layout(ctx, Rect{})
 		labelW = max(labelW, rendering.VisibleWidth(field.FieldState().Label)+1)
 	}
 	labelW = min(labelW, max(8, r.W/2))
+	contentY := y
 	for i, field := range f.fields {
+		if i > 0 && field.FieldState().Type == FieldSeparator {
+			contentY++
+		}
 		field.SetLabelWidth(labelW)
-		h := field.Measure(ctx, Loose(r.W, r.H)).H
-		if y+h > r.H {
-			break
-		}
-		field.Layout(ctx, Rect{X: 0, Y: y, W: r.W, H: h})
-		y += h
-		// The gap is breathing room, never a reason to drop a field: only
-		// add it when the next field still fits afterwards.
+		h := field.height()
+		field.Layout(ctx, Rect{X: 0, Y: contentY - f.scroll.Offset(), W: r.W, H: h})
+		contentY += h
 		if i < len(f.fields)-1 && f.fieldGap > 0 && field.FieldState().Type != FieldSeparator && f.fields[i+1].FieldState().Type != FieldSeparator {
-			nextH := f.fields[i+1].Measure(ctx, Loose(r.W, r.H)).H
-			if y+f.fieldGap+nextH <= r.H {
-				y += f.fieldGap
-			}
+			contentY += f.fieldGap
 		}
+	}
+	f.scroll.SetContent(contentY)
+	f.scroll.SetViewport(r.H)
+	for _, field := range f.fields {
+		field.layoutOverlay(ctx, r.H)
 	}
 }
 
 func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
 	r := f.Bounds()
+	if r.Empty() {
+		return
+	}
 	bg, fg, muted, divider := f.color(ColorPopupBg), f.color(ColorFg), f.color(ColorMuted), f.color(ColorPopupDivider)
-	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
-	x, y := originX+r.X, originY+r.Y
-	buf.WriteString(x, y, rendering.TruncateVisual(f.title, r.W, ""), fg, bg, cell.AttrBold)
-	buf.WriteString(x, y+1, rendering.TruncateVisual(f.detail, r.W, ""), muted, bg, 0)
-	buf.WriteString(x, y+2, strings.Repeat(string(FirstRune(f.tokens.Glyphs().BorderH, '─')), max(0, r.W)), divider, bg, 0)
+	// Paint into a viewport-sized buffer so variable-height fields that
+	// straddle the scroll edge cannot leak into chrome (footer actions,
+	// window title, sibling panels). CellBuffer.Set already clips OOB writes.
+	inner := surface.NewCellBuffer(max(1, r.W), max(1, r.H))
+	inner.Fill(cell.BlankCell(bg))
+	if f.title != "" {
+		inner.WriteString(0, 0, rendering.TruncateVisual(f.title, r.W, ""), fg, bg, cell.AttrBold)
+		inner.WriteString(0, 1, rendering.TruncateVisual(f.detail, r.W, ""), muted, bg, 0)
+		inner.WriteString(0, 2, strings.Repeat(string(FirstRune(f.tokens.Glyphs().BorderH, '─')), max(0, r.W)), divider, bg, 0)
+		// No y advance: field bounds already carry the header offset from Layout.
+	}
 	for index, field := range f.fields {
+		fr := field.Bounds()
+		if fr.Y+fr.H <= 0 || fr.Y >= r.H {
+			continue
+		}
 		fieldCtx := ctx
 		fieldCtx.Focused = ctx.Focused && index == f.focused
-		field.Paint(buf, x, y, fieldCtx)
+		field.Paint(inner, 0, 0, fieldCtx)
 	}
+	for index, field := range f.fields {
+		if !field.SelectOpen() {
+			continue
+		}
+		fieldCtx := ctx
+		fieldCtx.Focused = ctx.Focused && index == f.focused
+		field.PaintOverlay(inner, 0, 0, fieldCtx, r)
+	}
+	surface.Blit(buf, originX+r.X, originY+r.Y, inner, nil)
 }
 
 func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 	if len(f.fields) == 0 {
 		return EventResult{}
 	}
+	if evt.Kind == EventMouseWheel {
+		for index, field := range f.fields {
+			if field.SelectOpen() {
+				return f.handleField(index, f.fieldContext(ctx, field), evt)
+			}
+		}
+		if f.scroll != nil && f.scroll.MaxOffset() > 0 {
+			switch evt.MouseWheel.Button {
+			case tea.MouseWheelUp:
+				f.scroll.ScrollBy(-3)
+			case tea.MouseWheelDown:
+				f.scroll.ScrollBy(3)
+			}
+			f.Layout(LayoutContext{}, f.Bounds())
+			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
+		}
+	}
 	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+		// An open dropdown swallows clicks outside its panel: cancel it
+		// without moving focus or acting on whatever was underneath.
+		for index, field := range f.fields {
+			if !field.SelectOpen() {
+				continue
+			}
+			fr := field.Bounds()
+			if !field.selectPanelContains(ctx.LocalX-fr.X, ctx.LocalY-fr.Y) {
+				field.closeSelect()
+				return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateLayout}
+			}
+			f.focused = index
+			return f.handleField(index, f.fieldContext(ctx, field), evt)
+		}
 		for index, field := range f.fields {
 			if field.Bounds().Contains(ctx.LocalX, ctx.LocalY) {
 				if field.FieldState().Disabled || field.FieldState().Type == FieldSeparator {
@@ -196,15 +277,28 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		if key.Code == tea.KeyTab && !field.SelectOpen() {
 			if key.Mod.Contains(tea.ModShift) {
-				return f.moveFocus(-1)
+				return f.moveFocus(-1, true)
 			}
-			return f.moveFocus(1)
+			return f.moveFocus(1, true)
 		}
 		if (key.Code == tea.KeyUp || key.Code == tea.KeyDown) && !field.SelectOpen() {
 			if key.Code == tea.KeyUp {
-				return f.moveFocus(-1)
+				return f.moveFocus(-1, f.arrowExits)
 			}
-			return f.moveFocus(1)
+			return f.moveFocus(1, f.arrowExits)
+		}
+		if (key.Code == tea.KeyPgUp || key.Code == tea.KeyPgDown) && !field.SelectOpen() && f.scroll != nil {
+			delta := f.scroll.Viewport() - 1
+			if delta < 1 {
+				delta = 1
+			}
+			if key.Code == tea.KeyPgUp {
+				f.scroll.ScrollBy(-delta)
+			} else {
+				f.scroll.ScrollBy(delta)
+			}
+			f.Layout(LayoutContext{}, f.Bounds())
+			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
 		}
 	}
 	return f.handleField(f.focused, f.fieldContext(ctx, f.fields[f.focused]), evt)
@@ -216,7 +310,7 @@ func (f *Form) handleField(index int, ctx EventContext, evt Event) EventResult {
 	if result.Action != nil {
 		switch result.Action.ID {
 		case "form.next":
-			return f.moveFocus(1)
+			return f.moveFocus(1, f.arrowExits)
 		}
 	}
 	return result
@@ -228,6 +322,20 @@ func (f *Form) syncFields() {
 	}
 }
 
+// CloseOpenSelects cancels every open dropdown without committing. Screens
+// call this when interaction lands outside the form (rail, search, chrome)
+// so no orphaned dropdown survives a focus change elsewhere.
+func (f *Form) CloseOpenSelects() bool {
+	closed := false
+	for _, field := range f.fields {
+		if field.SelectOpen() {
+			field.closeSelect()
+			closed = true
+		}
+	}
+	return closed
+}
+
 func (f *Form) fieldContext(ctx EventContext, field *FormField) EventContext {
 	r := field.Bounds()
 	ctx.LocalX -= r.X
@@ -235,13 +343,17 @@ func (f *Form) fieldContext(ctx EventContext, field *FormField) EventContext {
 	return ctx
 }
 
-func (f *Form) moveFocus(delta int) EventResult {
+func (f *Form) moveFocus(delta int, exit bool) EventResult {
 	for next := f.focused + delta; next >= 0 && next < len(f.fields); next += delta {
 		field := f.fields[next].FieldState()
 		if !field.Disabled && field.Type != FieldSeparator {
 			f.focused = next
-			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+			f.ensureFocusedVisible()
+			return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateLayout}
 		}
+	}
+	if !exit {
+		return EventResult{Handled: true}
 	}
 	if delta < 0 {
 		return EventResult{Handled: true, Action: &Action{ID: "form.exit.backward"}, Invalidate: InvalidateFocus | InvalidatePaint}
@@ -264,6 +376,25 @@ func (f *Form) FocusLast() {
 			f.focused = index
 			return
 		}
+	}
+}
+
+func (f *Form) ensureFocusedVisible() {
+	if f.scroll == nil || f.focused < 0 || f.focused >= len(f.fields) {
+		return
+	}
+	field := f.fields[f.focused]
+	start := field.Bounds().Y + f.scroll.Offset()
+	end := start + max(1, field.Bounds().H) - 1
+	off := f.scroll.Offset()
+	vh := f.scroll.Viewport()
+	if start < off {
+		f.scroll.ScrollTo(start)
+	} else if end >= off+vh {
+		f.scroll.ScrollTo(end - vh + 1)
+	}
+	if !f.Bounds().Empty() {
+		f.Layout(LayoutContext{}, f.Bounds())
 	}
 }
 

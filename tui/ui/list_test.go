@@ -146,6 +146,25 @@ func TestList_Paint(t *testing.T) {
 	}
 }
 
+func TestList_HeaderFlushItemIndented(t *testing.T) {
+	ts := NewTokenSet(theme.DefaultDark())
+	l := NewList("list", ts)
+	l.SetSelectionMarker(false)
+	l.SetItems([]ListItem{
+		{Header: true, Label: "AI"},
+		{ID: "p", Label: "Providers"},
+	})
+	l.Layout(LayoutContext{}, Rect{W: 20, H: 2})
+	buf := surface.NewCellBuffer(20, 2)
+	l.Paint(buf, 0, 0, PaintContext{})
+	if buf.Get(0, 0).Char != 'A' {
+		t.Fatalf("header should start at column 0, got %q", buf.Get(0, 0).Char)
+	}
+	if buf.Get(0, 1).Char != ' ' || buf.Get(ts.FormIndent(), 1).Char != 'P' {
+		t.Fatalf("item should indent by FormIndent=%d, row=%q%q", ts.FormIndent(), buf.Get(0, 1).Char, buf.Get(1, 1).Char)
+	}
+}
+
 func TestList_DefaultRowsKeepOpaqueControlBackground(t *testing.T) {
 	tokens := NewTokenSet(theme.DefaultDark())
 	list := NewList("list", tokens)

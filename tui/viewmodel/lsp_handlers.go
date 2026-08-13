@@ -86,21 +86,29 @@ func (m *App) startRename() {
 // main Bubble Tea goroutine, so it can safely update the tree model and editor.
 func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 	if m.Tree.Model != nil {
-		errs, warns, hints := 0, 0, 0
-		for _, d := range msg.Diagnostics {
-			switch d.Severity {
-			case editor.DiagError:
-				errs++
-			case editor.DiagWarning:
-				warns++
-			default:
-				hints++
+		if m.LSPMgr == nil || m.LSPMgr.ShowDiagnosticsInTree() {
+			errs, warns, hints := 0, 0, 0
+			for _, d := range msg.Diagnostics {
+				switch d.Severity {
+				case editor.DiagError:
+					errs++
+				case editor.DiagWarning:
+					warns++
+				default:
+					hints++
+				}
 			}
+			m.Tree.Model.SetDiagnostics(msg.FilePath, errs, warns, hints)
+		} else {
+			m.Tree.Model.SetDiagnostics(msg.FilePath, 0, 0, 0)
 		}
-		m.Tree.Model.SetDiagnostics(msg.FilePath, errs, warns, hints)
 	}
 	if msg.FilePath == m.EditorState.Editor.FilePath() && m.EditorState.Editor.IsOpen() {
-		m.EditorState.Editor.SetDiagnostics(msg.Diagnostics)
+		if m.LSPMgr != nil && !m.LSPMgr.ShowDiagnosticsInEditor() {
+			m.EditorState.Editor.SetDiagnostics(nil)
+		} else {
+			m.EditorState.Editor.SetDiagnostics(msg.Diagnostics)
+		}
 	}
 }
 

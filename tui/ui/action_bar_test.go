@@ -26,8 +26,34 @@ func TestActionBarRoutesOnlyFocusedAndHitButtons(t *testing.T) {
 		t.Fatalf("focused cancel result=%#v", result)
 	}
 
-	result = host.Handle(tea.MouseClickMsg{X: 16, Y: 0, Button: tea.MouseLeft})
+	result = host.Handle(tea.MouseClickMsg{X: 32, Y: 0, Button: tea.MouseLeft})
 	if result.Action == nil || result.Action.ID != "cancel" {
 		t.Fatalf("cancel click result=%#v", result)
+	}
+}
+
+func TestActionBarAlignStartPacksFromLeft(t *testing.T) {
+	bar := NewActionBar("actions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{ID: "reset", Label: "Reset section", Action: "reset", Variant: VariantDanger, Enabled: true},
+	)
+	bar.SetAlignEnd(false)
+	bar.Layout(LayoutContext{}, Rect{W: 40, H: 1})
+	if bar.buttons[0].button.Bounds().X != 0 {
+		t.Fatalf("start-aligned button x=%d want 0", bar.buttons[0].button.Bounds().X)
+	}
+}
+
+func TestActionBarUpReturnsToForm(t *testing.T) {
+	bar := NewActionBar("actions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{ID: "save", Label: "Save", Action: "save", Enabled: true},
+		ActionBarButton{ID: "cancel", Label: "Cancel", Action: "cancel", Enabled: true},
+	)
+	res := bar.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
+	if res.Action == nil || res.Action.ID != "actionbar.exit.backward" {
+		t.Fatalf("Up on action bar result=%#v", res)
+	}
+	res = bar.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
+	if res.Action != nil {
+		t.Fatalf("Down on action bar should stay on the bar, got %v", res.Action)
 	}
 }

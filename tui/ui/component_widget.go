@@ -189,20 +189,32 @@ func (w *WindowFrameWidget) Body() Component {
 	return w.frame.Content()
 }
 
-// HandleEvent routes native component events first, then delegates unhandled
-// events to a legacy body using content-local coordinates.
-func (w *WindowFrameWidget) HandleEvent(msg tea.Msg) tea.Cmd {
+// Dispatch routes a message through the frame Host and returns the full
+// EventResult so callers can honor bubbled actions (window.close, terminal
+// float/dock). HandleEvent keeps the WindowContent tea.Cmd contract.
+func (w *WindowFrameWidget) Dispatch(msg tea.Msg) EventResult {
 	if w == nil || w.ComponentWidget == nil || w.host == nil {
-		return nil
+		return EventResult{}
 	}
 	result := w.host.Handle(msg)
 	if result.Handled {
-		return result.Cmd
+		return result
 	}
 	if w.eventTarget == nil || w.frame == nil {
-		return result.Cmd
+		return result
 	}
-	return w.eventTarget.HandleEvent(translateFrameEvent(msg, w.frame.ContentBounds()))
+	cmd := w.eventTarget.HandleEvent(translateFrameEvent(msg, w.frame.ContentBounds()))
+	if cmd != nil {
+		result.Cmd = cmd
+		result.Handled = true
+	}
+	return result
+}
+
+// HandleEvent routes native component events first, then delegates unhandled
+// events to a legacy body using content-local coordinates.
+func (w *WindowFrameWidget) HandleEvent(msg tea.Msg) tea.Cmd {
+	return w.Dispatch(msg).Cmd
 }
 
 func translateFrameEvent(msg tea.Msg, content Rect) tea.Msg {

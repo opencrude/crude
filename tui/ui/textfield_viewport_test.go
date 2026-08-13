@@ -51,6 +51,24 @@ func TestTextFieldUserTypingScrollsToCursor(t *testing.T) {
 	}
 }
 
+func TestTextFieldReplacedShorterValuePaintsWholeInput(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	f := NewTextField("f", tokens)
+	f.Layout(LayoutContext{Theme: theme.DefaultDark()}, Rect{W: 8, H: 1})
+	f.SetValue("a long value")
+	f.Handle(EventContext{Theme: theme.DefaultDark(), Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnd}))
+
+	// A dropdown filter can shrink its query without rebuilding the retained
+	// input. The viewport must be clamped before paint so the new text is never
+	// hidden behind an old horizontal scroll offset.
+	f.edit.SetValue("open")
+	buf := surface.NewCellBuffer(8, 1)
+	f.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
+	if got := textFieldRowText(buf); !strings.HasPrefix(got, "open") {
+		t.Fatalf("shorter replacement must remain visible, paints %q", got)
+	}
+}
+
 func textFieldRowText(buf *surface.CellBuffer) string {
 	var b strings.Builder
 	for x := 0; x < buf.Width(); x++ {

@@ -1,6 +1,7 @@
 package sessionsettings
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -87,6 +88,81 @@ func TestModelSelectEmitsFetchAndAppliesAsyncResult(t *testing.T) {
 	if field.Loading || len(field.Options) != 1 || field.Options[0].ID != "model-a" {
 		t.Fatalf("model field after result=%#v", field)
 	}
+}
+
+func TestRootArrowsDoNotCloseOrTrap(t *testing.T) {
+	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openrouter", Model: "workspace-main"},
+	}}}
+	screen := New(theme.DefaultDark(), settings, settings, nil)
+	deck := ui.NewPanelDeck("deck", ui.NewTokenSet(theme.DefaultDark()))
+	deck.Open(ui.PanelEntry{ID: "settings", Title: "Session Settings", Content: screen, Closable: true, Policy: ui.PanelInteractive, PreferredHeight: 16})
+	host := ui.NewHost(theme.DefaultDark(), deck)
+	host.Resize(80, 18)
+	host.Layout()
+	host.Focus(FormID)
+
+	screen.form.FocusFirst()
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyUp})
+	if !deck.IsOpen() {
+		t.Fatal("Up on the first agent row closed the dock")
+	}
+	if result.Action != nil && (result.Action.ID == "panel.close" || result.Action.ID == "paneldeck.empty") {
+		t.Fatalf("Up on the first agent row emitted %s", result.Action.ID)
+	}
+	if host.Focused() != FormID {
+		t.Fatalf("Up on the first agent row moved focus to %q", host.Focused())
+	}
+
+	screen.form.FocusLast()
+	_ = host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	if host.Focused() != FormID {
+		t.Fatalf("Down past the last agent row moved focus to %q", host.Focused())
+	}
+	if !deck.IsOpen() {
+		t.Fatal("Down past the last agent row closed the dock")
+	}
+	_ = host.Handle(tea.KeyPressMsg{Code: tea.KeyUp})
+	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if screen.page != rolePage || screen.role != "crafter" {
+		t.Fatalf("Up from last row should return to Crafter, page=%d role=%q", screen.page, screen.role)
+	}
+}
+
+func TestNavRowsPaintChevronNotPrompt(t *testing.T) {
+	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openrouter", Model: "workspace-main"},
+	}}}
+	screen := New(theme.DefaultDark(), settings, settings, nil)
+	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 72, H: 16})
+	buf := surface.NewCellBuffer(72, 16)
+	screen.form.Paint(buf, 0, 0, ui.PaintContext{Focused: true})
+	plain := bufferString(buf)
+	if strings.Contains(plain, theme.DefaultDark().Glyphs.Prompt) {
+		t.Fatalf("session settings must not paint the chat prompt glyph:\n%s", plain)
+	}
+	if strings.Contains(plain, ") )") || strings.Contains(plain, "(inherited") {
+		t.Fatalf("inherited detail must not use wrapping parentheses:\n%s", plain)
+	}
+	if !strings.Contains(plain, theme.DefaultDark().Glyphs.TreeCollapsed) {
+		t.Fatalf("nav rows missing TreeCollapsed chevron:\n%s", plain)
+	}
+	if !strings.Contains(plain, "inherited from workspace") {
+		t.Fatalf("nav rows missing inherited detail:\n%s", plain)
+	}
+}
+
+func bufferString(buf *surface.CellBuffer) string {
+	var b strings.Builder
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			if c := buf.Get(x, y); c.Char != 0 {
+				b.WriteRune(c.Char)
+			}
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func bufferContains(buf *surface.CellBuffer, want string) bool {

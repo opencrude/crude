@@ -220,11 +220,19 @@ func (m *App) handleSessionDeckEvent(msg tea.Msg) tea.Cmd {
 	if projection == nil || !projection.deck.IsOpen() {
 		return nil
 	}
+	before := m.deckPanelIDs()
 	result := projection.deckHost.Handle(msg)
-	if result.Action != nil && result.Action.ID == "paneldeck.empty" {
-		projection.deckFocused = false
-		projection.deckFocus = ui.RootID
+	if result.Action != nil {
+		if m.handleTerminalAction(*result.Action) {
+			m.normalizeSessionDeckFocus(projection)
+			return result.Cmd
+		}
+		if result.Action.ID == "paneldeck.empty" {
+			projection.deckFocused = false
+			projection.deckFocus = ui.RootID
+		}
 	}
+	m.reconcileClosedTerminalPanels(before)
 	m.normalizeSessionDeckFocus(projection)
 	return result.Cmd
 }

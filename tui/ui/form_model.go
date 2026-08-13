@@ -17,7 +17,7 @@ import (
 //	                          option rows prefix "[x]"/"[ ]"
 //	FieldCycle                "←" left edge, "→" right edge (value centered)
 //	FieldToggle, FieldCheckbox "[x]" / "[ ]" inline
-//	FieldNav                  " >" right-aligned; row is a navigation target
+//	FieldNav                  drill-in row: label + trailing ▸; detail on the next row
 //	FieldSeparator            label + "─" rule; not focusable
 type FieldType int
 

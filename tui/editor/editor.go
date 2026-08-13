@@ -260,6 +260,22 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 	}
 }
 
+// ReplaceDocument replaces the whole buffer text (shared Buffer or local
+// PieceTable), invalidates caches, and notifies listeners. Cursor is clamped.
+func (e *Editor) ReplaceDocument(text string) {
+	if e.buffer != nil {
+		e.buffer.ReplaceContents(text)
+	} else if e.buf != nil {
+		e.buf.ReplaceAll(text)
+		e.modified = true
+	}
+	e.invalidateEditorCaches()
+	if e.cursor.Line >= e.LineCount() {
+		e.cursor.Line = max(0, e.LineCount()-1)
+	}
+	e.notifyContentChanged()
+}
+
 func (e *Editor) Close() {
 	e.stopWatching()
 	e.open = false

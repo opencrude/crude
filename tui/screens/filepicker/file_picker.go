@@ -78,7 +78,8 @@ func New(th *theme.Theme) *Screen {
 	s := &Screen{Base: ui.NewBase(ScreenID), tokens: tokens, icons: filetree.NewIconResolver()}
 	s.icons.ApplyTheme(&th.Colors.Tree)
 	field := ui.NewFilterField(FilterID, tokens)
-	field.SetPrompt("> ")
+	field.SetPrompt(ui.SearchGlyphEnd(tokens))
+	field.SetPromptPlacement(ui.PromptEnd)
 	field.SetSubmitAction("")
 	field.OnChanged(func(string) { s.sync() })
 	s.filter = &pickerFilter{Base: ui.NewBase(FilterID), field: field, owner: s}
@@ -153,6 +154,10 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.list.SetTokens(tokens)
 	s.scrollbar.SetTokens(tokens)
 	s.actions.SetTokens(tokens)
+	if s.filter != nil && s.filter.field != nil {
+		s.filter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
+		s.filter.field.SetPromptPlacement(ui.PromptEnd)
+	}
 }
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})

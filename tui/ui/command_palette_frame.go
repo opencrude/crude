@@ -44,7 +44,8 @@ func BuildCommandPaletteFrame(th *theme.Theme, spec CommandPaletteSpec) *Compone
 	}
 
 	search := NewTextField(CPSearchField, tokens)
-	search.SetPrompt("> ")
+	search.SetPrompt(SearchGlyphEnd(tokens))
+	search.SetPromptPlacement(PromptEnd)
 	search.SetPlaceholder("search commands")
 	search.SetSubmitAction(CPSubmitSearch)
 

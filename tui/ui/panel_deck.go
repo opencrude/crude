@@ -153,6 +153,16 @@ func (d *PanelDeck) Active() *PanelEntry {
 func (d *PanelDeck) IsOpen() bool { return len(d.panels) > 0 }
 func (d *PanelDeck) Count() int   { return len(d.panels) }
 
+// Panels returns a copy of the docked panel entries.
+func (d *PanelDeck) Panels() []PanelEntry {
+	if d == nil || len(d.panels) == 0 {
+		return nil
+	}
+	out := make([]PanelEntry, len(d.panels))
+	copy(out, d.panels)
+	return out
+}
+
 func (d *PanelDeck) PreferredHeight(maxHeight int) int {
 	panel := d.Active()
 	if panel == nil || maxHeight <= 0 {

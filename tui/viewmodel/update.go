@@ -18,6 +18,7 @@ import (
 	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
+	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/question"
 	sessionpicker "crude/tui/screens/sessionpicker"
@@ -243,9 +244,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.findInFiles != nil && m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
 			m.findInFilesRequest = m.StartProjectSearch(msg.Query, msg.Options)
 			m.findInFilesGen = msg.Generation
-			if fw := m.windowManager.Window(findInFilesWindowID); fw != nil {
-				fw.MarkContentDirty()
-			}
+			m.markProjectSearchDirty()
 		}
 	case findinfiles.SearchCancelMsg:
 		if m.findInFiles == msg.Screen {
@@ -261,11 +260,17 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				msg.Result.Err,
 				msg.Result.Duration,
 			)
-			if fw := m.windowManager.Window(findInFilesWindowID); fw != nil {
-				fw.MarkContentDirty()
-			}
+			m.markProjectSearchDirty()
 			m.findInFilesRequest = 0
 		}
+	case workspace.TerminalOutputMsg:
+		m.handleTerminalOutput(msg)
+	case workspace.TerminalExitedMsg:
+		m.handleTerminalExited(msg)
+	case workspace.TerminalClosedMsg:
+		m.handleTerminalClosed(msg)
+	case workspace.TerminalTitleMsg:
+		m.applyTerminalTitle(msg.ID, msg.Title)
 	case findinfiles.OpenMsg:
 		if m.findInFiles != msg.Screen {
 			break
@@ -277,6 +282,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.findInFiles == msg.Screen {
 			m.closeFindInFiles()
 		}
+	case findinfiles.ReplaceMsg:
+		if cmd := m.applyProjectReplace(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case sessionpicker.SelectMsg:
 		if m.sessionPicker != nil && msg.Target == m.sessionPicker {
 			if cmd := m.handleSessionPickerSelect(msg.Session); cmd != nil {
@@ -286,6 +295,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case sessionpicker.CancelMsg:
 		if m.sessionPicker != nil && msg.Target == m.sessionPicker {
 			m.closeSessionPicker()
+		}
+	case helpscreen.CancelMsg:
+		if m.helpScreen != nil && msg.Target == m.helpScreen {
+			m.closeHelp()
 		}
 	case ttypes.ConfigReloadedMsg:
 		if msg.ThemePreset != "" {
@@ -408,25 +421,43 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.overlayHost.Close(ui.OverlayFilePicker)
 		}
 	case settingsui.SaveMsg:
-		m.Logger.Info("CONFIG", "workspace_settings_save")
+		m.Logger.Info("CONFIG", "settings_save", "scope", string(msg.Scope))
 		appSets := msg.AppSettings
-		if m.Logger != nil {
-			m.Logger.Info("WORKSPACE", "save_app_settings", "theme_preset", appSets.Theme.Preset, "provider", appSets.ActiveProvider)
-		}
-		err := m.SaveAppSettings(appSets)
-		if err != nil {
-			m.StatusBar.SetError("Failed to save workspace settings: " + err.Error())
-		} else {
-			m.applyThemePreset(themePresetFromSettings(appSets))
-			// Persist provider credentials to app config + live session config.
-			if err := m.SaveProviderSettings(appSets.ActiveProvider, appSets.Providers); err != nil {
-				m.StatusBar.SetError("Failed to save providers: " + err.Error())
+		if msg.Scope == ttypes.SettingsScopeWorkspace {
+			if err := m.SaveWorkspaceSettings(msg.Overrides); err != nil {
+				m.StatusBar.SetError("Failed to save workspace settings: " + err.Error())
 			} else {
+				m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
 				m.refreshAllSessionSettingsProjections()
 				m.StatusBar.SetInfo("Workspace settings saved")
 			}
+		} else {
+			if m.Logger != nil {
+				m.Logger.Info("WORKSPACE", "save_app_settings", "theme_preset", appSets.Theme.Preset, "provider", appSets.ActiveProvider)
+			}
+			if err := m.SaveAppSettings(appSets); err != nil {
+				m.StatusBar.SetError("Failed to save application settings: " + err.Error())
+			} else if err := m.SaveProviderSettings(appSets.ActiveProvider, appSets.Providers); err != nil {
+				m.StatusBar.SetError("Failed to save providers: " + err.Error())
+			} else {
+				m.applyThemePreset(themePresetFromSettings(appSets))
+				m.refreshAllSessionSettingsProjections()
+				m.StatusBar.SetInfo("Application settings saved")
+			}
 		}
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
+	case settingsui.ScopeMsg:
+		m.openSettings(msg.Scope)
+	case settingsui.ResetSectionMsg:
+		overrides := m.LoadWorkspaceOverrides()
+		overrides.ClearCategory(msg.Key)
+		if err := m.SaveWorkspaceSettings(overrides); err != nil {
+			m.StatusBar.SetError("Failed to reset section: " + err.Error())
+		} else {
+			m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+			m.refreshAllSessionSettingsProjections()
+			m.openSettings(ttypes.SettingsScopeWorkspace)
+		}
 	case settingsui.CancelMsg:
 		// Live preset cycling previews via ThemePreviewMsg without persisting.
 		// Cancel must restore the last saved palette across the whole UI.
@@ -599,6 +630,16 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 		return nil
 	}
 	localMsg := m.translateToLocalMouse(msg, fw)
+	if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+		result := w.Dispatch(localMsg)
+		fw.MarkContentDirty()
+		if result.Action != nil && result.Action.ID == "window.close" {
+			m.closePopupWindowByID(fw.ID)
+			return result.Cmd
+		}
+		cmd := m.handleHostAction(result.Action)
+		return tea.Batch(result.Cmd, cmd)
+	}
 	if handler, ok := fw.Content.(interface{ HandleEvent(tea.Msg) tea.Cmd }); ok {
 		cmd := handler.HandleEvent(localMsg)
 		fw.MarkContentDirty()

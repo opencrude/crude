@@ -77,6 +77,13 @@ func (b *Buffer) Save() error {
 	return nil
 }
 
+// ReplaceContents swaps the entire document text and marks the buffer dirty.
+// Used by project-wide replace so an open editor stays the source of truth.
+func (b *Buffer) ReplaceContents(text string) {
+	b.buf.ReplaceAll(text)
+	b.dirty = true
+}
+
 // MarkDirty marks the buffer as having unsaved changes.
 func (b *Buffer) MarkDirty() { b.dirty = true }
 

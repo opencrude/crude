@@ -76,6 +76,24 @@ func TestTextField_PaintPlaceholderAndValue(t *testing.T) {
 	}
 }
 
+func TestTextField_PromptEndPaintsGlyphAfterValue(t *testing.T) {
+	th := theme.DefaultDark()
+	ts := NewTokenSet(th)
+	f := NewTextField("q", ts)
+	f.SetPrompt(" ⌕")
+	f.SetPromptPlacement(PromptEnd)
+	f.SetValue("xy")
+	f.Layout(LayoutContext{}, Rect{W: 20, H: 1})
+	buf := surface.NewCellBuffer(20, 1)
+	f.Paint(buf, 0, 0, PaintContext{Theme: th, Focused: true})
+	if buf.Get(0, 0).Char != 'x' || buf.Get(1, 0).Char != 'y' {
+		t.Fatalf("value should start at column 0, got %q%q", buf.Get(0, 0).Char, buf.Get(1, 0).Char)
+	}
+	if buf.Get(18, 0).Char != ' ' || buf.Get(19, 0).Char != '⌕' {
+		t.Fatalf("trailing prompt got %q%q", buf.Get(18, 0).Char, buf.Get(19, 0).Char)
+	}
+}
+
 func TestTextField_ReadOnlyDisabled(t *testing.T) {
 	f := NewTextField("q", nil)
 	f.SetValue("x")

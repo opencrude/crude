@@ -68,7 +68,8 @@ func (s *ScrollbarControl) Paint(buf *surface.CellBuffer, originX, originY int, 
 	}
 	ox, oy := originX+r.X, originY+r.Y
 	if s.scroll.MaxOffset() <= 0 {
-		// Still fill the gutter so it doesn't show through as a light strip.
+		// Fill the reserved gutter so it doesn't show through as a light strip.
+		// Settings panels omit this control entirely via Needed().
 		if !bg.IsDefault() {
 			FillRect(buf, 0, 0, Rect{X: ox, Y: oy, W: r.W, H: r.H}, cell.BlankCell(bg))
 		}
@@ -86,7 +87,11 @@ func (s *ScrollbarControl) Paint(buf *surface.CellBuffer, originX, originY int, 
 	}
 }
 
-// IsDragging reports whether the thumb is being dragged.
+// Needed reports whether the scrollbar should occupy a column. On-demand
+// scrollbars stay hidden when content fits the viewport.
+func (s *ScrollbarControl) Needed() bool {
+	return s != nil && s.scroll != nil && s.scroll.MaxOffset() > 0
+}
 func (s *ScrollbarControl) IsDragging() bool { return s.dragging }
 
 // CancelPointerCapture ends an in-progress thumb drag without applying scroll.

@@ -13,8 +13,11 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/input"
 	"crude/tui/rendering"
+	"crude/tui/screens/activitybar"
+	"crude/tui/screens/activitylist"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
+	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/shellchat"
@@ -23,6 +26,7 @@ import (
 	"crude/tui/screens/shellinput"
 	"crude/tui/screens/shellstatus"
 	"crude/tui/screens/shelltabs"
+	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -112,6 +116,11 @@ type App struct {
 	headerScreen           *shellheader.Screen
 	tabScreen              *shelltabs.Screen
 	sidebarScreen          *shelltree.Screen
+	activityBar            *activitybar.Screen
+	activityList           *activitylist.Screen
+	activityView           activitybar.View
+	termScreens            map[string]*shellterm.Screen
+	suppressTermClose      string
 	inputScreen            *shellinput.Screen
 	chatScreen             *shellchat.Screen
 	agentChatScroll        map[string]agentMainChatScrollSnapshot
@@ -120,6 +129,7 @@ type App struct {
 	editorScreen           *shelleditor.Screen
 	launcherScreen         *launcher.Screen
 	sessionPicker          *sessionpicker.Screen
+	helpScreen             *helpscreen.Screen
 	commandPaletteModel    *commandPaletteModel
 	findInFiles            *findinfiles.Screen
 	findInFilesRequest     uint64
@@ -152,6 +162,8 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	treeModel := filetree.NewFileTreeModel(ws.RootPath)
 	tree := NewTreeState(treeModel, th.Tree.Config.DefaultWidth)
 	sidebarScreen := shelltree.New(th, treeModel)
+	activityBar := activitybar.New(th)
+	activityList := activitylist.New(th)
 	bufferMgr := editor.NewBufferManager()
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
@@ -170,7 +182,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	// full-screen surface. The compositor renders this single surface under
 	// the floating windows (see View()).
 	deck := newDeckMount(nil)
-	shell := newShellRoot(headerScreen, sb, tabScreen, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck)
+	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck)
 	rootHost := ui.NewHost(th, shell)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
 
@@ -209,6 +221,9 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		headerScreen:       headerScreen,
 		tabScreen:          tabScreen,
 		sidebarScreen:      sidebarScreen,
+		activityBar:        activityBar,
+		activityList:       activityList,
+		termScreens:        make(map[string]*shellterm.Screen),
 		inputScreen:        inputScreen,
 		chatScreen:         chatScreen,
 		editorScreen:       editorScreen,
@@ -247,6 +262,7 @@ func (m *App) SwitchProject(projectDir string) error {
 	if m.sidebarScreen != nil {
 		m.sidebarScreen.SetModel(treeModel)
 	}
+	m.discardTerminalUI()
 	m.BufferMgr = editor.NewBufferManager()
 	m.EditorState = NewEditorState()
 	m.EditorState.Editor = editor.New(m.Theme)
@@ -402,33 +418,52 @@ func (m *App) openFilePickerWindow() {
 
 // openWorkspaceSettings opens the JetBrains-style workspace settings as a floating window.
 func (m *App) openWorkspaceSettings() {
+	m.openSettings(ttypes.SettingsScopeWorkspace)
+}
+
+func (m *App) openApplicationSettings() {
+	m.openSettings(ttypes.SettingsScopeApplication)
+}
+
+func (m *App) openSettings(scope ttypes.SettingsScope) {
 	m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 
-	appSets := m.LoadAppSettings()
-	if len(appSets.Agents.Categories) == 0 {
-		appSets.Agents = m.WorkspaceAgentDefaults()
+	appDefaults := m.AppDefaults()
+	overrides := m.LoadWorkspaceOverrides()
+	working := appDefaults
+	title := "Application Settings"
+	if scope == ttypes.SettingsScopeWorkspace {
+		working = m.LoadAppSettings()
+		title = "Workspace Settings"
+	}
+	if len(working.Agents.Categories) == 0 {
+		working.Agents = m.WorkspaceAgentDefaults()
 	}
 	if providers := m.AllProviderConfigs(); len(providers) > 0 {
-		appSets.Providers = providers
+		if working.Providers == nil {
+			working.Providers = map[string]ttypes.ProviderConfig{}
+		}
+		for id, cfg := range providers {
+			if _, ok := working.Providers[id]; !ok {
+				working.Providers[id] = cfg
+			}
+		}
 	}
-	if appSets.ActiveProvider == "" {
-		appSets.ActiveProvider = m.LastSettings.ProviderID
+	if working.ActiveProvider == "" {
+		working.ActiveProvider = m.LastSettings.ProviderID
 	}
-	if appSets.ActiveProvider == "" {
-		appSets.ActiveProvider = "openrouter"
-	}
-	if pc := m.ProviderConfig(appSets.ActiveProvider); (pc.APIKey != "" || pc.ProviderURL != "") && appSets.Providers != nil {
-		appSets.Providers[appSets.ActiveProvider] = pc
+	if working.ActiveProvider == "" {
+		working.ActiveProvider = "openrouter"
 	}
 
-	wsWidget := popup.NewWorkspaceSettings(m.Theme, appSets, m.providerPresets)
+	wsWidget := popup.NewWorkspaceSettingsScoped(m.Theme, working, m.providerPresets, scope, appDefaults, overrides)
 
-	w, h := fitFloatingSize(m.width, m.height, 104, 26, 60, 18)
+	w, h := fitFloatingSize(m.width, m.height, 104, 28, 60, 18)
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "workspace-settings-frame"),
 		ui.FrameWindow,
-		"Workspace Settings",
+		title,
 		wsWidget.Component(),
 		wsWidget,
 		true,
@@ -437,7 +472,7 @@ func (m *App) openWorkspaceSettings() {
 	)
 	wsWidget.SetFocusHandler(frame.Focus)
 	wsWidget.FocusSearch()
-	win := wm.NewFloatingWindow(string(ui.OverlayWorkspaceSettings), "Workspace Settings", frame,
+	win := wm.NewFloatingWindow(string(ui.OverlayWorkspaceSettings), title, frame,
 		w, h,
 		wm.WithDecoration(true),
 		wm.WithMovable(true),
@@ -681,6 +716,13 @@ func (m *App) registerOverlayHandlers() {
 		x, y := fw.Position()
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})
+	oh.RegisterContentHandler(ui.OverlayHelp, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.forwardEventToWindowContent(fw, msg)
+	})
+	oh.RegisterHoverHandler(ui.OverlayHelp, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
+	})
 	oh.RegisterContentHandler(ui.OverlayComposer, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		return m.forwardEventToWindowContent(fw, msg)
 	})
@@ -700,6 +742,10 @@ func (m *App) registerOverlayHandlers() {
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})
 	oh.RegisterHoverHandler(ui.OverlayFindInFiles, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
+	})
+	oh.RegisterHoverHandler(ui.OverlayReplaceInFiles, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		x, y := fw.Position()
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})

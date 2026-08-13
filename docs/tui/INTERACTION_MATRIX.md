@@ -9,7 +9,11 @@ preserve or intentionally improve.
 |--------|-------------------|-------|
 | Command palette | Ctrl+Alt+P | Not Ctrl+P; tmux Shift issue |
 | Find in Files | Ctrl+Alt+F | Not Ctrl+Shift+F under tmux 3.4 |
-| Toggle sidebar | Ctrl+B | |
+| Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
+| Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 3-col activity rail stays |
+| Files / Agents / Terminals / Git | Ctrl+Shift+E / A / U / G | Activity bar destinations |
+| New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks like questions when a session exists |
+| Toggle terminal | Ctrl+` | Focus last terminal or create one |
 | Composer | Alt+C | |
 | Quit/close | Ctrl+Q | |
 | Cancel/back | Esc | Never Ctrl+C for back |
@@ -35,7 +39,7 @@ tab attention until the panel is activated or closed.
 | Behavior | Surfaces |
 |----------|----------|
 | CloseAndRoute | context menu, LSP popups, diagnostics |
-| KeepAndRoute | find/replace, find-in-files, composer, palette, textoverlay |
+| KeepAndRoute | find/replace, find-in-files, replace-in-files, composer, palette, textoverlay, floating terminals |
 | IgnoreAndConsume | dirty prompt, tree prompt, tree delete, filepicker, workspace settings |
 
 ## Collection navigation baseline
@@ -44,7 +48,8 @@ tab attention until the panel is activated or closed.
 |---------|---------|------|----------|------|-------|
 | Command palette | yes | yes | no | clamp | activate |
 | File picker | yes | yes | yes | clamp | open |
-| Find in Files | yes | yes | yes | clamp | open; Cc click toggles case sensitivity, .* click or Ctrl+R toggles regex |
+| Find in Files | yes | yes | yes | clamp | open; Cc/.* sit on the right of the query; Cc click toggles case, .* click or Ctrl+R toggles regex |
+| Replace in Files | yes | yes | yes | clamp | same search surface; Replace/All on the right of the replace row; Ctrl+Enter replaces all |
 | File tree | yes | custom | no | clamp | expand/open |
 | Context menu | yes | no | no | wrap | activate |
 | Launcher | yes | step | yes | clamp | activate; fixed search row; workspace viewport scrolls independently |

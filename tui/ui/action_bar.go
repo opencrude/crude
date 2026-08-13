@@ -33,9 +33,12 @@ type ActionBar struct {
 	buttons      []actionBarBtn
 	tokens       *TokenSet
 	gap          int
+	alignEnd     bool
 	focused      int
 	hovered      int
 	cancelAction string
+	exitForward  string
+	exitBackward string
 }
 
 type actionBarBtn struct {
@@ -51,10 +54,13 @@ type actionBarBtn struct {
 func NewActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *ActionBar {
 	ab := &ActionBar{
 		Base:    NewBase(id),
-		tokens:  tokens,
-		gap:     2,
-		hovered: -1,
-		buttons: make([]actionBarBtn, len(btns)),
+		tokens:   tokens,
+		gap:      2,
+		alignEnd:     true,
+		hovered:      -1,
+		exitForward:  "actionbar.exit.forward",
+		exitBackward: "actionbar.exit.backward",
+		buttons:      make([]actionBarBtn, len(btns)),
 	}
 	for i, b := range btns {
 		label := b.Label
@@ -85,6 +91,19 @@ func NewActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *Ac
 
 // SetCancelAction configures the typed action emitted for Escape.
 func (ab *ActionBar) SetCancelAction(action string) { ab.cancelAction = action }
+
+// SetAlignEnd right-aligns buttons (default). False packs them from the left.
+func (ab *ActionBar) SetAlignEnd(v bool) { ab.alignEnd = v }
+
+// SetExitActions overrides the Tab-out actions (defaults actionbar.exit.*).
+func (ab *ActionBar) SetExitActions(forward, backward string) {
+	if forward != "" {
+		ab.exitForward = forward
+	}
+	if backward != "" {
+		ab.exitBackward = backward
+	}
+}
 
 // SetEnabled updates a button by action ID without rebuilding the bar.
 func (ab *ActionBar) SetEnabled(action string, enabled bool) bool {
@@ -126,12 +145,23 @@ func (ab *ActionBar) Measure(ctx LayoutContext, cs Constraints) Size {
 
 func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	ab.SetBounds(r)
-	x := 0
+	totalW := 0
+	widths := make([]int, len(ab.buttons))
 	for i := range ab.buttons {
-		b := ab.buttons[i].button
-		bw := rendering.VisibleWidth(b.label) + 4
-		b.Layout(ctx, Rect{X: x, Y: 0, W: bw, H: 1})
-		x += bw + ab.gap
+		bw := rendering.VisibleWidth(ab.buttons[i].button.label) + 4
+		widths[i] = bw
+		totalW += bw
+		if i < len(ab.buttons)-1 {
+			totalW += ab.gap
+		}
+	}
+	x := 0
+	if ab.alignEnd {
+		x = max(0, r.W-totalW)
+	}
+	for i := range ab.buttons {
+		ab.buttons[i].button.Layout(ctx, Rect{X: x, Y: 0, W: widths[i], H: 1})
+		x += widths[i] + ab.gap
 	}
 }
 
@@ -160,13 +190,13 @@ func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
 		case tea.KeyTab:
 			if key.Mod.Contains(tea.ModShift) {
 				if ab.focused == 0 {
-					return EventResult{Handled: true, Action: &Action{ID: "actionbar.exit.backward"}, Invalidate: InvalidateFocus | InvalidatePaint}
+					return EventResult{Handled: true, Action: &Action{ID: ab.exitBackward}, Invalidate: InvalidateFocus | InvalidatePaint}
 				}
 				ab.focused--
 				return EventResult{Handled: true, Invalidate: InvalidatePaint}
 			}
 			if len(ab.buttons) > 0 && ab.focused == len(ab.buttons)-1 {
-				return EventResult{Handled: true, Action: &Action{ID: "actionbar.exit.forward"}, Invalidate: InvalidateFocus | InvalidatePaint}
+				return EventResult{Handled: true, Action: &Action{ID: ab.exitForward}, Invalidate: InvalidateFocus | InvalidatePaint}
 			}
 			ab.focused++
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
@@ -179,6 +209,10 @@ func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
 			if len(ab.buttons) > 0 && ab.focused < len(ab.buttons)-1 {
 				ab.focused++
 			}
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		case tea.KeyUp:
+			return EventResult{Handled: true, Action: &Action{ID: ab.exitBackward}, Invalidate: InvalidateFocus | InvalidatePaint}
+		case tea.KeyDown:
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
 		if ab.focused < 0 || ab.focused >= len(ab.buttons) {

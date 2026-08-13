@@ -9,6 +9,8 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/input"
+	"crude/tui/screens/activitybar"
+	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
@@ -16,6 +18,7 @@ import (
 	"crude/tui/screens/shellinput"
 	"crude/tui/screens/shellstatus"
 	"crude/tui/screens/shelltabs"
+	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -42,17 +45,20 @@ func newTestApp(t *testing.T) *App {
 	chatScreen := shellchat.New(th)
 	editorScreen := shelleditor.New(th)
 	sidebarScreen := shelltree.New(th, nil)
+	activityBar := activitybar.New(th)
+	activityList := activitylist.New(th)
 	launcherScreen := launcher.New(th)
 	launcherScreen.SetData(".", nil)
 
 	deck := newDeckMount(nil)
-	shell := newShellRoot(headerScreen, sb, tabScreen, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck)
+	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck)
 	rootHost := ui.NewHost(th, shell)
 
 	app := &App{
 		Workspace: &workspace.Workspace{
 			AgentMgr:      workspace.NewAgentManager(),
 			PaneMgr:       workspace.NewPaneManager(),
+			TermMgr:       workspace.NewTerminalManager("."),
 			FocusStack:    workspace.NewFocusStack(),
 			StartTime:     time.Now(),
 			ActiveSession: &workspace.Session{},
@@ -74,6 +80,9 @@ func newTestApp(t *testing.T) *App {
 		headerScreen:       headerScreen,
 		tabScreen:          tabScreen,
 		sidebarScreen:      sidebarScreen,
+		activityBar:        activityBar,
+		activityList:       activityList,
+		termScreens:        make(map[string]*shellterm.Screen),
 		inputScreen:        inputScreen,
 		chatScreen:         chatScreen,
 		editorScreen:       editorScreen,

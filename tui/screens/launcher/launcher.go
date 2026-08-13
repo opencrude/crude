@@ -151,7 +151,8 @@ type Screen struct {
 	hero         *actionCard
 	newWs        *actionCard
 	shortcutsCmp *shortcutList
-	divider      *vDivider
+	divider      *ui.SplitDivider
+	split        *ui.SplitModel
 	header       *sectionHeader
 	search       *searchWrapper
 	list         *workspaceList
@@ -202,12 +203,19 @@ func New(th *theme.Theme) *Screen {
 	}
 
 	s.shortcutsCmp = &shortcutList{Base: ui.NewBase(ShortcutsID), owner: s}
-	s.divider = &vDivider{Base: ui.NewBase(DividerID)}
+	s.split = ui.NewSplitModel(ui.Horizontal)
+	s.split.SetDividerSize(3)
+	s.divider = ui.NewSplitDivider(DividerID, s.split)
+	s.divider.SetTokens(tokens)
+	s.divider.SetColorRole(ui.ColorMuted)
+	s.divider.SetFill(true)
+	s.divider.SetTransparent(true)
 	s.header = &sectionHeader{Base: ui.NewBase(WorkspacesHeaderID), owner: s}
 	s.empty = &workspaceEmpty{Base: ui.NewBase(EmptyID), owner: s}
 
 	searchField := ui.NewSearchField(SearchID, tokens)
-	searchField.SetPrompt("> ")
+	searchField.SetPrompt(ui.SearchGlyphEnd(tokens))
+	searchField.SetPromptPlacement(ui.PromptEnd)
 	searchField.SetPlaceholder("Search workspaces")
 	searchField.SetSubmitAction("")
 	s.search = &searchWrapper{Base: ui.NewBase(SearchID), owner: s, field: searchField}
@@ -234,6 +242,14 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.search.SetTokens(tokens)
 	s.list.SetTokens(tokens)
 	s.scrollbar.SetTokens(tokens)
+	if s.divider != nil {
+		s.divider.SetTokens(tokens)
+		s.divider.SetColorRole(ui.ColorMuted)
+	}
+	if s.search != nil && s.search.field != nil {
+		s.search.field.SetPrompt(ui.SearchGlyphEnd(tokens))
+		s.search.field.SetPromptPlacement(ui.PromptEnd)
+	}
 }
 
 // SetFocusHandler sets the callback used to move keyboard focus.
@@ -759,6 +775,18 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	} else {
 		leftW = clampInt(leftW, 1, maxInt(1, width-gap-1))
 	}
+	if s.split != nil {
+		minLeft := 1
+		if width >= 40 {
+			minLeft = 24
+		}
+		s.split.SetDividerSize(gap)
+		s.split.SetMinSizes(minLeft, 1)
+		s.split.SetMaxFirst(maxInt(minLeft, width-gap-1))
+		if s.split.HasFirstSize() {
+			leftW, gap, _ = s.split.Resolve(width)
+		}
+	}
 	rightW := width - leftW - gap
 	if rightW < 1 {
 		rightW = 1
@@ -801,7 +829,10 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		countLabel = fmt.Sprintf("%d workspaces", nWorkspaces)
 	}
 	s.header.Set("Recent", countLabel)
-	s.divider.Layout(ctx, ui.Rect{X: leftW, Y: bodyY, W: gap, H: bodyH})
+	if s.divider != nil {
+		s.divider.SetCurrentFirst(leftW)
+		s.divider.Layout(ctx, ui.Rect{X: leftW, Y: bodyY, W: gap, H: bodyH})
+	}
 	s.header.Layout(ctx, pane.contentRect(bodyY, 1))
 	s.search.Layout(ctx, pane.bodyRect(bodyY+1, 1))
 	s.list.Layout(ctx, pane.bodyRect(listY, listH))
@@ -832,6 +863,8 @@ func (s *Screen) HandleAction(ctx ui.EventContext, action ui.Action) ui.EventRes
 	case "launcher.filter-on":
 		s.activateFilter()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}
+	case ui.ActionSplitResize:
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	}
 	return ui.EventResult{Action: &action}
 }
@@ -1117,36 +1150,6 @@ func (sh *sectionHeader) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult 
 
 func (sh *sectionHeader) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleLabel, Label: sh.label}
-}
-
-// vDivider paints the vertical " │ " separator between body columns.
-type vDivider struct {
-	ui.Base
-}
-
-func (vd *vDivider) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return cs.ClampSize(ui.Size{W: 3, H: cs.MaxH})
-}
-
-func (vd *vDivider) Layout(ctx ui.LayoutContext, r ui.Rect) {
-	vd.SetBounds(r)
-}
-
-func (vd *vDivider) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
-	r := vd.Bounds()
-	if r.Empty() {
-		return
-	}
-	tokens := ui.NewTokenSet(ctx.Theme)
-	muted := tokens.Color(ui.ColorMuted)
-	ox, oy := originX+r.X, originY+r.Y
-	for y := 0; y < r.H; y++ {
-		buf.WriteString(ox, oy+y, " │ ", muted, cell.NoColor, 0)
-	}
-}
-
-func (vd *vDivider) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleLabel, Label: "divider"}
 }
 
 // workspaceEmpty renders the quiet empty/no-results state for the collection.

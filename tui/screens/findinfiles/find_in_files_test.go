@@ -31,7 +31,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		t.Fatal("find in files paint produced no non-empty cells")
 	}
 	painted := bufferText(buf)
-	for _, label := range []string{"needle", "a.go", "b.go", "results"} {
+	for _, label := range []string{"needle", "a.go", "b.go", "matches"} {
 		if !strings.Contains(painted, label) {
 			t.Fatalf("missing FIF label %q:\n%s", label, painted)
 		}
@@ -86,8 +86,8 @@ func TestFindInFilesFilterPaintsQueryAndStatusAcrossThemes(t *testing.T) {
 			if !strings.Contains(painted, "Search file names and contents") {
 				t.Fatalf("theme=%v size=%#v missing placeholder:\n%s", th == theme.DefaultLight(), size, painted)
 			}
-			if !strings.Contains(painted, "type to search") {
-				t.Fatalf("theme=%v size=%#v missing hints:\n%s", th == theme.DefaultLight(), size, painted)
+			if !strings.Contains(painted, "Open") || !strings.Contains(painted, "Close") {
+				t.Fatalf("theme=%v size=%#v missing action buttons:\n%s", th == theme.DefaultLight(), size, painted)
 			}
 		}
 	}
@@ -227,7 +227,7 @@ func TestFindInFilesCaseToggleReschedulesSearch(t *testing.T) {
 	screen.SetQuery("Needle")
 	screen.queryField.field.SetDebounce(0)
 
-	result := host.Handle(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	result := host.Handle(tea.MouseClickMsg{X: screen.caseToggle.Bounds().X, Y: screen.caseToggle.Bounds().Y, Button: tea.MouseLeft})
 	if !screen.CaseSensitive() {
 		t.Fatal("case-sensitive toggle did not change state")
 	}
@@ -306,7 +306,7 @@ func TestFindInFilesStatusUpdatesFromResults(t *testing.T) {
 		{Path: "/root/a.go", RelativePath: "a.go", Line: 2, LineText: "b", NameOnly: true},
 		{Path: "/root/b.go", RelativePath: "b.go", Line: 3, LineText: "c", NameOnly: true},
 	}, nil, 7*time.Millisecond)
-	if !strings.Contains(screen.status.Text(), "3 results") {
+	if !strings.Contains(screen.status.Text(), "3 matches") {
 		t.Fatalf("status=%q", screen.status.Text())
 	}
 	if !strings.Contains(screen.status.Text(), "2 files") {
@@ -328,8 +328,33 @@ func TestFindInFilesLayoutAllocatesListAndPreviewRectangles(t *testing.T) {
 	if screen.preview.Bounds().Empty() {
 		t.Fatal("preview should receive a non-empty rectangle when window is tall enough")
 	}
-	if screen.hints.Bounds().Empty() {
-		t.Fatal("hints should receive a non-empty rectangle")
+	if screen.actions.Bounds().Empty() {
+		t.Fatal("actions should receive a non-empty rectangle")
+	}
+	if screen.divider == nil || screen.divider.Bounds().Empty() {
+		t.Fatal("results/preview split should mount a divider")
+	}
+	if screen.preview.Bounds().Y <= screen.list.Bounds().Y+screen.list.Bounds().H {
+		t.Fatal("preview should start below the list and divider")
+	}
+}
+
+func TestFindInFilesSplitDividerDragResizesResults(t *testing.T) {
+	screen, host := searchHost(t)
+	startH := screen.list.Bounds().H
+	div := screen.divider.Bounds()
+	if div.Empty() {
+		t.Fatal("divider bounds empty")
+	}
+	clickY := div.Y
+	res := host.Handle(tea.MouseClickMsg{X: 10, Y: clickY, Button: tea.MouseLeft})
+	if !res.Handled || !host.HasPointerCapture() {
+		t.Fatalf("click divider: handled=%v capture=%v", res.Handled, host.HasPointerCapture())
+	}
+	host.Handle(tea.MouseMotionMsg{X: 10, Y: clickY + 3, Button: tea.MouseLeft})
+	host.Layout()
+	if screen.list.Bounds().H != startH+3 {
+		t.Fatalf("after +3 drag list H=%d want %d", screen.list.Bounds().H, startH+3)
 	}
 }
 
@@ -345,6 +370,82 @@ func searchHost(t *testing.T) (*Screen, *ui.Host) {
 	screen.SetFocusHandler(component.Focus)
 	screen.FocusQuery()
 	return screen, host
+}
+
+func TestFindInFilesTogglesSitOnTheRight(t *testing.T) {
+	screen, _ := searchHost(t)
+	if screen.caseToggle.Bounds().X <= screen.queryField.Bounds().X {
+		t.Fatalf("case toggle X=%d should be right of query X=%d", screen.caseToggle.Bounds().X, screen.queryField.Bounds().X)
+	}
+	if screen.regexToggle.Bounds().X <= screen.caseToggle.Bounds().X {
+		t.Fatalf("regex toggle should sit to the right of case")
+	}
+}
+
+func TestReplaceInFilesLayoutShowsReplaceRowAndButtons(t *testing.T) {
+	th := theme.DefaultDark()
+	screen := New(th)
+	screen.OpenReplace(t.TempDir())
+	component := ui.NewComponentWidget(th, screen, 80, 24)
+	screen.SetFocusHandler(component.Focus)
+	host := component.Host()
+	host.Resize(80, 24)
+	host.Layout()
+	if screen.Mode() != ModeReplace {
+		t.Fatal("expected replace mode")
+	}
+	if screen.replaceField.Bounds().Empty() || screen.replaceActions.Bounds().Empty() {
+		t.Fatal("replace row should be laid out")
+	}
+	if screen.replaceField.Bounds().Y != 1 {
+		t.Fatalf("replace row Y=%d want 1", screen.replaceField.Bounds().Y)
+	}
+	if screen.list.Bounds().Y < 3 {
+		t.Fatalf("list Y=%d should sit below replace+status", screen.list.Bounds().Y)
+	}
+	buf := surface.NewCellBuffer(80, 24)
+	host.Paint(buf)
+	painted := bufferText(buf)
+	for _, label := range []string{"Replace with", "Replace", "All", "Open", "Close"} {
+		if !strings.Contains(painted, label) {
+			t.Fatalf("missing %q:\n%s", label, painted)
+		}
+	}
+}
+
+func TestReplaceInFilesEmitsReplaceMessages(t *testing.T) {
+	th := theme.DefaultDark()
+	screen := New(th)
+	screen.OpenReplace(t.TempDir())
+	component := ui.NewComponentWidget(th, screen, 80, 24)
+	host := component.Host()
+	host.Resize(80, 24)
+	host.Layout()
+	screen.SetFocusHandler(component.Focus)
+	screen.SetQuery("alpha")
+	screen.SetReplacement("omega")
+	screen.ScheduleSearch()
+	screen.ApplySearchResults(screen.Generation(), []fileio.ProjectSearchMatch{{
+		Path: "/root/a.go", RelativePath: "a.go", Line: 1, Column: 0, EndColumn: 5,
+		LineText: "alpha", TextMatches: []int{0, 1, 2, 3, 4},
+	}}, nil, time.Millisecond)
+
+	one := screen.replaceSelected()
+	if one == nil {
+		t.Fatal("replace one should emit")
+	}
+	msg, ok := one().(ReplaceMsg)
+	if !ok || msg.All || msg.Replacement != "omega" || msg.Match.Path != "/root/a.go" {
+		t.Fatalf("replace one=%#v", msg)
+	}
+	all := screen.replaceAll()
+	if all == nil {
+		t.Fatal("replace all should emit")
+	}
+	allMsg, ok := all().(ReplaceMsg)
+	if !ok || !allMsg.All || allMsg.Query != "alpha" {
+		t.Fatalf("replace all=%#v", allMsg)
+	}
 }
 
 func bufferText(buf *surface.CellBuffer) string {

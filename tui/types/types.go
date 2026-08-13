@@ -39,9 +39,13 @@ type (
 	Settings              = model.Settings
 	AppSettings           = model.AppSettings
 	SessionSettings       = model.SessionSettings
+	WorkspaceOverrides    = model.WorkspaceOverrides
+	SettingsScope         = model.SettingsScope
 	ThemeSettings         = model.ThemeSettings
 	EditorSettings        = model.EditorSettings
 	LSPSettings           = model.LSPSettings
+	LSPLanguageSettings   = model.LSPLanguageSettings
+	LSPLanguage           = model.LSPLanguage
 	UISettings            = model.UISettings
 	FontSettings          = model.FontSettings
 	ModelEntry            = model.ModelEntry
@@ -66,4 +70,19 @@ type (
 	SettingsSaveResultMsg = model.SettingsSaveResultMsg
 	SelectionTickMsg      = model.SelectionTickMsg
 	HistoryMessagesMsg    = model.HistoryMessagesMsg
+)
+
+const (
+	SettingsScopeApplication = model.SettingsScopeApplication
+	SettingsScopeWorkspace   = model.SettingsScopeWorkspace
+)
+
+var (
+	ApplyAppDefaults             = model.ApplyAppDefaults
+	NormalizeLSP                 = model.NormalizeLSP
+	DefaultLSPSettings           = model.DefaultLSPSettings
+	DefaultLSPLanguages          = model.DefaultLSPLanguages
+	MergeAppWorkspace            = model.MergeAppWorkspace
+	OverridesFromDiff            = model.OverridesFromDiff
+	WorkspaceOverridesFromDiff   = model.WorkspaceOverridesFromDiff
 )

@@ -100,6 +100,51 @@ func TestLSPManager_FileDiagnostics(t *testing.T) {
 	}
 }
 
+func TestLSPManager_FeatureGates(t *testing.T) {
+	m := NewLSPManager(testLogger{})
+	if !m.ShowDiagnosticsInEditor() || !m.ShowDiagnosticsInTree() || !m.ShowDiagnosticsInStatus() {
+		t.Fatal("default LSP settings should show diagnostics in editor, tree, and status")
+	}
+
+	off := model.DefaultLSPSettings()
+	off.Enabled = false
+	m.SetSettings(off)
+	if m.ShowDiagnosticsInEditor() || m.ShowDiagnosticsInTree() || m.ShowDiagnosticsInStatus() {
+		t.Fatal("master switch must hide every diagnostic surface")
+	}
+
+	s := model.DefaultLSPSettings()
+	s.DiagInEditor = false
+	m.SetSettings(s)
+	if m.ShowDiagnosticsInEditor() {
+		t.Fatal("diag-in-editor off should hide editor underlines")
+	}
+	if !m.ShowDiagnosticsInTree() {
+		t.Fatal("tree diagnostics should stay on when only editor display is off")
+	}
+
+	s.Diagnostics = false
+	m.SetSettings(s)
+	m.setFileDiagnostics("/tmp/gated.go", []model.LSPDiagnostic{{Line: 0, Col: 0, Severity: 1, Message: "err"}})
+	if m.HasFileDiagnostics("/tmp/gated.go") {
+		t.Fatal("incoming diagnostics must be dropped when diagnostics are disabled")
+	}
+
+	s = model.DefaultLSPSettings()
+	s.MinSeverity = "error"
+	m.SetSettings(s)
+	m.setFileDiagnostics("/tmp/warn.go", []model.LSPDiagnostic{{Line: 0, Col: 0, Severity: 2, Message: "warn"}})
+	if m.HasFileDiagnostics("/tmp/warn.go") {
+		t.Fatal("warnings below min severity should be dropped")
+	}
+
+	s.Languages["go"] = model.LSPLanguageSettings{Enabled: false, Command: "gopls"}
+	m.SetSettings(s)
+	if m.Settings().LanguageEnabled(".go") {
+		t.Fatal("disabled go language must not start")
+	}
+}
+
 func TestLSPManager_FileDiagnostics_PersistAfterSet(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 

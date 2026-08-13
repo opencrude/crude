@@ -75,7 +75,7 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		}
 	})
 	// Apply format-on-save preference from user settings. Defaults to off.
-	if m.LastSettings.Editor.FormatOnSave {
+	if m.LoadAppSettings().Editor.FormatOnSave {
 		ed.SetFormatOnSave(true)
 	} else {
 		ed.SetFormatOnSave(false)

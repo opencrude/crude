@@ -72,7 +72,8 @@ func New(th *theme.Theme) *Screen {
 	s.title.SetColorRole(ui.ColorFg)
 
 	search := ui.NewFilterField(SearchID, tokens)
-	search.SetPrompt("> ")
+	search.SetPrompt(ui.SearchGlyphEnd(tokens))
+	search.SetPromptPlacement(ui.PromptEnd)
 	search.SetPlaceholder("Filter sessions")
 	search.SetSubmitAction("")
 	search.OnChanged(s.applyFilterValue)
@@ -175,6 +176,10 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.scrollbar.SetTokens(tokens)
 	s.empty.SetTokens(tokens)
 	s.hints.SetTokens(tokens)
+	if s.search != nil && s.search.field != nil {
+		s.search.field.SetPrompt(ui.SearchGlyphEnd(tokens))
+		s.search.field.SetPromptPlacement(ui.PromptEnd)
+	}
 }
 
 func (s *Screen) SetTheme(th *theme.Theme) {

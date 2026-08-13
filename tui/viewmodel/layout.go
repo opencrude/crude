@@ -11,9 +11,9 @@ type LayoutInfo struct {
 }
 
 func (m *App) computeLayout() LayoutInfo {
-	sidebarW := 0
+	sidebarW := m.activityChromeWidth()
 	if m.Tree != nil && m.Tree.Visible && m.Tree.Model != nil && m.sidebarScreen != nil {
-		sidebarW = m.Tree.Width + 1
+		sidebarW += m.Tree.Width + 1
 	}
 
 	contentW := m.width - sidebarW

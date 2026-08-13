@@ -108,6 +108,73 @@ func SaveHistory(history []string) error {
 	return os.WriteFile(path, data, 0600)
 }
 
+func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
+	s := ttypes.AppSettings{ActiveProvider: fc.ActiveProvider}
+	if fc.Providers != nil {
+		s.Providers = make(map[string]ttypes.ProviderConfig, len(fc.Providers))
+		for id, p := range fc.Providers {
+			s.Providers[id] = ttypes.ProviderConfig{
+				APIKey: p.APIKey, ProviderURL: p.ProviderURL,
+				Model: p.Model, ThinkingEffort: p.ThinkingEffort,
+			}
+		}
+	}
+	if fc.Theme != nil {
+		s.Theme = *fc.Theme
+	}
+	if fc.Editor != nil {
+		s.Editor = *fc.Editor
+	}
+	if fc.LSP != nil {
+		s.LSP = *fc.LSP
+	}
+	if fc.UI != nil {
+		s.UI = *fc.UI
+	}
+	if fc.Font != nil {
+		s.Font = *fc.Font
+	}
+	if fc.Agents != nil {
+		s.Agents = session.ConfigToSettings(&session.Config{Agents: *fc.Agents}).Agents
+	}
+	ttypes.ApplyAppDefaults(&s)
+	return s
+}
+
+func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
+	if fc == nil {
+		return
+	}
+	theme, editor, lsp, ui, font := s.Theme, s.Editor, s.LSP, s.UI, s.Font
+	fc.Theme = &theme
+	fc.Editor = &editor
+	fc.LSP = &lsp
+	fc.UI = &ui
+	fc.Font = &font
+	fc.ActiveProvider = s.ActiveProvider
+	if s.Providers != nil {
+		if fc.Providers == nil {
+			fc.Providers = make(map[string]session.ProviderConfig, len(s.Providers))
+		}
+		for id, p := range s.Providers {
+			prev := fc.Providers[id]
+			if p.APIKey != "" {
+				prev.APIKey = p.APIKey
+			}
+			if p.ProviderURL != "" {
+				prev.ProviderURL = p.ProviderURL
+			}
+			if p.Model != "" {
+				prev.Model = p.Model
+			}
+			if p.ThinkingEffort != "" {
+				prev.ThinkingEffort = p.ThinkingEffort
+			}
+			fc.Providers[id] = prev
+		}
+	}
+}
+
 func FileConfigToSession(fc FileConfig) *session.Config {
 	cfg := &session.Config{
 		ActiveProvider:  fc.ActiveProvider,

@@ -8,7 +8,7 @@ import (
 )
 
 func killProcessGroup(pid int) {
-	syscall.Kill(-pid, syscall.SIGKILL)
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
 }
 
 func setCmdSysProcAttr(c *exec.Cmd) {

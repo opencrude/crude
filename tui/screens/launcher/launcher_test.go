@@ -55,7 +55,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		t.Fatal("launcher paint produced no non-empty cells")
 	}
 	plain := bufferText(buf)
-		for _, label := range []string{"New Session", "RECENT", "alpha", "✨"} {
+	for _, label := range []string{"New Session", "RECENT", "alpha", "✨"} {
 		if !strings.Contains(plain, label) {
 			t.Fatalf("missing label %q:\n%s", label, plain)
 		}
@@ -81,6 +81,26 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	lb := s.list.Bounds()
 	if got := buf.Get(lb.X, lb.Y).BG; got.IsDefault() || !got.Equal(wantHover) {
 		t.Fatalf("selected row BG=%#v want hover %#v", got, wantHover)
+	}
+}
+
+func TestLauncherSplitDividerDragResizesColumns(t *testing.T) {
+	s, h, _ := testScreen(t, 110, 16, nil)
+	startW := s.newWs.Bounds().W
+	div := s.divider.Bounds()
+	if div.Empty() {
+		t.Fatal("launcher divider bounds empty")
+	}
+	clickX := div.X + div.W/2
+	clickY := div.Y + 1
+	res := h.Handle(tea.MouseClickMsg{X: clickX, Y: clickY, Button: tea.MouseLeft})
+	if !res.Handled || !h.HasPointerCapture() {
+		t.Fatalf("click divider: handled=%v capture=%v hit=%q", res.Handled, h.HasPointerCapture(), h.HitTest(clickX, clickY))
+	}
+	h.Handle(tea.MouseMotionMsg{X: clickX + 5, Y: clickY, Button: tea.MouseLeft})
+	h.Layout()
+	if s.newWs.Bounds().W != startW+5 {
+		t.Fatalf("after +5 drag left W=%d want %d", s.newWs.Bounds().W, startW+5)
 	}
 }
 
@@ -308,8 +328,12 @@ func TestWorkspacePaneUsesOneColumnContentRailWithoutScrollbar(t *testing.T) {
 	if got := buf.Get(s.header.Bounds().X, s.header.Bounds().Y).Char; got != 'R' {
 		t.Fatalf("header starts at the wrong rail: %q", got)
 	}
-	if got := buf.Get(s.search.Bounds().X, s.search.Bounds().Y).Char; got != '>' {
+	if got := buf.Get(s.search.Bounds().X, s.search.Bounds().Y).Char; got != 'S' {
 		t.Fatalf("search starts at the wrong rail: %q", got)
+	}
+	searchEnd := s.search.Bounds().X + s.search.Bounds().W - 1
+	if got := buf.Get(searchEnd, s.search.Bounds().Y).Char; got != '⌕' {
+		t.Fatalf("search magnifier should sit at the trailing edge: %q", got)
 	}
 	if got := buf.Get(s.list.Bounds().X, s.list.Bounds().Y).Char; got != '❯' {
 		t.Fatalf("selected row starts at the wrong rail: %q", got)

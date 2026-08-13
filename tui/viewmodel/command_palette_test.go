@@ -404,13 +404,15 @@ func TestPaletteIncludesNewCommands(t *testing.T) {
 
 	required := []string{
 		"file.save", "file.attach", "file.new", "file.close", "file.revealInTree",
-		"search.project.open",
+		"search.project.open", "search.project.replace",
 		"edit.undo", "edit.redo", "edit.find", "edit.replace",
 		"view.toggle.sidebar", "view.focus.sidebar", "view.focus.editor", "view.focus.chat",
+		"view.activity.files", "view.activity.agents", "view.activity.terminals", "view.activity.git",
+		"terminal.new", "terminal.toggle",
 		"tabs.next", "tabs.previous",
 		"agent.orchestrator.reset",
 		"agent.toggle.multiagent", "agent.cancel", "agent.newSession",
-		"composer.toggle", "settings.open", "lsp.outline", "safety.yolo.toggle",
+		"composer.toggle", "settings.open", "settings.workspace", "lsp.outline", "safety.yolo.toggle",
 		"app.sessions", "system.undo", "app.toggleTheme", "app.copyLastAssistant",
 		"app.quit", "help.show",
 	}

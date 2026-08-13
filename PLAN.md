@@ -49,11 +49,18 @@ Communication: TUI → Workspace via method calls. Workspace → TUI via event b
 
 ## Config Levels
 
-| Level | File | Contents |
-|-------|------|----------|
-| App | `~/.crude/config.json` | Theme, editor, LSP, UI, font, provider API keys |
-| Workspace | `~/.crude/workspaces/<hash>/workspace.db` | Session registry, workspace settings overrides, state tracking |
-| Session | per-session DB | Model/provider, thinking effort, agent profiles, max steps, tool permissions, messages |
+JetBrains-style inheritance. Each layer stores only what it owns; lower layers
+overlay the ones above.
+
+| Level | File | Contents | Editor |
+|-------|------|----------|--------|
+| Application | `~/.crude/config.json` | Theme, editor, LSP, UI, font, provider credentials, default agents | Command Palette → Application Settings |
+| Workspace | `~/.crude/workspaces/<hash>/workspace.db` key `workspace_settings` | Sparse overrides (`types.WorkspaceOverrides`). Nil fields inherit from application. Credentials never persist here. | Command Palette → Workspace Settings |
+| Session | per-session DB `session_agent_settings` | Agent provider/model/thinking for this chat | `/settings` dock |
+
+Effective IDE prefs = `MergeAppWorkspace(app, workspace)`. Session settings inherit that baseline, then apply per-agent overrides. `LoadAppSettings()` returns the effective (merged) snapshot. Application save writes `config.json` only; workspace save writes `workspace_settings` only. Legacy `app_settings` rows in `workspace.db` are read as overrides.
+
+See [`docs/tui/SETTINGS.md`](./docs/tui/SETTINGS.md).
 
 ## Data Directory Layout
 

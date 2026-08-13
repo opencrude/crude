@@ -25,15 +25,16 @@ type overlayOutsideFixture struct {
 }
 
 // overlayOutsideContractMatrix is the authoritative Phase 15 policy table for
-// product floating overlays (17 surfaces). Each row is exercised by
-// TestOverlayClickOutsideContractMatrix. Real-opener dispatchMouseClick
-// integration is covered separately per policy group in
-// TestDispatchMouseClickOutsidePolicyGroups.
+// product floating overlays (19 static surfaces). Each row is exercised by
+// TestOverlayClickOutsideContractMatrix. Dynamic floating terminals use
+// DefaultOverlayPolicy (KeepRoute) with ids `terminal/<pty-id>` and are not
+// listed here. Real-opener dispatchMouseClick integration is covered separately
+// per policy group in TestDispatchMouseClickOutsidePolicyGroups.
 //
 // Policy groups:
 //   - CloseRoute (PopoverPolicy closeOnOutside=true): context-menu, LSP list popups, diag-context
-//   - KeepRoute (DefaultOverlayPolicy / PopoverPolicy false): find/replace, palette, composer, FIF, textoverlay, diag-hover
-//   - Ignore (ModalDialogPolicy): dirty-close, tree prompts, file/workspace pickers, session-picker
+//   - KeepRoute (DefaultOverlayPolicy / PopoverPolicy false): find/replace, palette, composer, FIF, replace-in-files, textoverlay, diag-hover
+//   - Ignore (ModalDialogPolicy): dirty-close, tree prompts, file/workspace pickers, session-picker, help
 var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayContextMenu, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayReferences, policy: ui.PopoverPolicy(true), wantClose: true},
@@ -46,6 +47,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayComposer, policy: ui.DefaultOverlayPolicy()},
 	{id: ui.OverlayTextOverlay, policy: ui.DefaultOverlayPolicy()},
 	{id: ui.OverlayFindInFiles, policy: ui.DefaultOverlayPolicy()},
+	{id: ui.OverlayReplaceInFiles, policy: ui.DefaultOverlayPolicy()},
 	{id: ui.OverlayDiagHover, policy: ui.PopoverPolicy(false)},
 
 	{id: ui.OverlayDirtyClose, policy: ui.ModalDialogPolicy(), wantSuppress: true},
@@ -54,6 +56,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayFilePicker, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayWorkspaceSettings, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlaySessionPicker, policy: ui.ModalDialogPolicy(), wantSuppress: true},
+	{id: ui.OverlayHelp, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 }
 
 func openOverlayFixture(t *testing.T, app *App, fx overlayOutsideFixture) {
@@ -209,8 +212,8 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 
 // TestOverlayOutsideContractMatrixCount guards the documented 17-overlay table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 17 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 17", got)
+	if got := len(overlayOutsideContractMatrix); got != 19 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 19", got)
 	}
 }
 
@@ -228,6 +231,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayComposer:          ui.OutsideKeepAndRoute,
 		ui.OverlayTextOverlay:       ui.OutsideKeepAndRoute,
 		ui.OverlayFindInFiles:       ui.OutsideKeepAndRoute,
+		ui.OverlayReplaceInFiles:    ui.OutsideKeepAndRoute,
 		ui.OverlayDiagHover:         ui.OutsideKeepAndRoute,
 		ui.OverlayDirtyClose:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayTreePrompt:        ui.OutsideIgnoreAndConsume,
@@ -235,9 +239,10 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayFilePicker:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayWorkspaceSettings: ui.OutsideIgnoreAndConsume,
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
+		ui.OverlayHelp:              ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 17 {
-		t.Fatalf("expected opener registry len=%d want 17", len(expected))
+	if len(expected) != 19 {
+		t.Fatalf("expected opener registry len=%d want 19", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]

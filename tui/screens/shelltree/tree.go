@@ -18,6 +18,7 @@ const (
 	FilterID    ui.ComponentID = "shelltree/filter"
 	TreeID      ui.ComponentID = "shelltree/tree"
 	ScrollbarID ui.ComponentID = "shelltree/scrollbar"
+	DividerID   ui.ComponentID = "shelltree/divider"
 )
 
 // Screen paints the workspace file tree, gutter, scrollbar, and divider.
@@ -36,6 +37,8 @@ type Screen struct {
 	filter    *treeFilterField
 	tree      *fileTreeView
 	scrollbar *ui.ScrollbarControl
+	split     *ui.SplitModel
+	divider   *ui.SplitDivider
 }
 
 type treeFilterField struct {
@@ -142,6 +145,11 @@ func New(th *theme.Theme, model *filetree.FileTreeModel) *Screen {
 	}
 	s.filter.field.SetPrompt("/ ")
 	s.filter.field.SetPlaceholder("Filter files")
+	s.split = ui.NewSplitModel(ui.Horizontal)
+	s.split.SetMinSizes(12, 0)
+	s.divider = ui.NewSplitDivider(DividerID, s.split)
+	s.divider.SetTokens(tokens)
+	s.divider.SetForeground(tokens.TreeBorderFg())
 	s.rebuildTree()
 	return s
 }
@@ -185,6 +193,12 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	if s.filter != nil && s.filter.field != nil {
 		s.filter.field.SetTokens(tokens)
 	}
+	if s.divider != nil {
+		s.divider.SetTokens(tokens)
+		if tokens != nil {
+			s.divider.SetForeground(tokens.TreeBorderFg())
+		}
+	}
 }
 
 // SetTheme replaces the active theme without rebuilding the component tree.
@@ -212,7 +226,7 @@ func (s *Screen) TreeControl() *ui.Tree {
 }
 
 func (s *Screen) Children() []ui.Component {
-	kids := make([]ui.Component, 0, 3)
+	kids := make([]ui.Component, 0, 4)
 	if s.filterRowActive() && s.filter != nil {
 		kids = append(kids, s.filter)
 	}
@@ -222,7 +236,27 @@ func (s *Screen) Children() []ui.Component {
 	if s.scrollbar != nil {
 		kids = append(kids, s.scrollbar)
 	}
+	if s.divider != nil {
+		kids = append(kids, s.divider)
+	}
 	return kids
+}
+
+// SetSplitMaxFirst caps sidebar drag at half the screen (viewmodel supplies
+// the live terminal width).
+func (s *Screen) SetSplitMaxFirst(n int) {
+	if s.split != nil {
+		s.split.SetMaxFirst(n)
+	}
+}
+
+// SplitFirst returns the first-pane size after a divider drag, or 0 when the
+// model is still following the laid-out slot width.
+func (s *Screen) SplitFirst() int {
+	if s.split == nil {
+		return 0
+	}
+	return s.split.FirstSize()
 }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
@@ -306,6 +340,13 @@ func (s *Screen) layoutChildren(r ui.Rect) {
 	if s.scrollbar != nil && treePanelW >= 1 {
 		s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{X: treePanelW - 1, Y: 0, W: 1, H: r.H})
 	}
+	if s.divider != nil && r.W > 0 {
+		if s.split != nil && !s.split.Dragging() {
+			s.split.SetFirstSize(s.width)
+		}
+		s.divider.SetCurrentFirst(s.width)
+		s.divider.Layout(ui.LayoutContext{}, ui.Rect{X: r.W - 1, Y: 0, W: 1, H: r.H})
+	}
 }
 
 func (s *Screen) syncFromModel() {
@@ -353,16 +394,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	}
 	s.syncFromModel()
-	// Children (tree + scrollbar) are painted by Host.paintNode; only the
-	// divider chrome is Screen-owned so it stays above the scrollbar.
-	if b.W > 1 {
-		divX := ox + b.X + b.W - 1
-		divFG := s.tokens.TreeBorderFg()
-		divRune := ui.FirstRune(s.tokens.Glyphs().BorderV, '│')
-		for y := 0; y < b.H; y++ {
-			buf.Set(divX, oy+b.Y+y, cell.NewCell(divRune, divFG, bg, 0))
-		}
-	}
+	// Children (tree, scrollbar, divider) are painted by Host.paintNode.
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {

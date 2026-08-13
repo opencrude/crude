@@ -43,6 +43,9 @@ func (s *SearchField) SetTokens(tokens *TokenSet) { s.field.SetTokens(tokens) }
 // SetPrompt configures the visual prompt.
 func (s *SearchField) SetPrompt(prompt string) { s.field.SetPrompt(prompt) }
 
+// SetPromptPlacement puts the prompt at the start or end of the field.
+func (s *SearchField) SetPromptPlacement(p PromptPlacement) { s.field.SetPromptPlacement(p) }
+
 // SetPlaceholder configures the empty-state hint.
 func (s *SearchField) SetPlaceholder(placeholder string) { s.field.SetPlaceholder(placeholder) }
 

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	ttypes "crude/types"
 )
 
 // clientKey returns a unique key for a rootURI+cmd pair, allowing
@@ -74,6 +76,8 @@ type LSPManager struct {
 	inflight int
 
 	runtime LSPRuntime
+
+	settings ttypes.LSPSettings
 }
 
 func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
@@ -92,6 +96,7 @@ func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
 		fileLastSync:    make(map[string]int64),
 		issueCount:      make(map[string]int),
 		runtime:         runtime,
+		settings:        ttypes.DefaultLSPSettings(),
 	}
 }
 
@@ -101,7 +106,33 @@ func (m *LSPManager) SetRuntime(runtime LSPRuntime) {
 	m.mu.Unlock()
 }
 
+// SetSettings installs the effective language-intelligence configuration.
+func (m *LSPManager) SetSettings(s ttypes.LSPSettings) {
+	m.mu.Lock()
+	m.settings = ttypes.NormalizeLSP(s)
+	m.mu.Unlock()
+}
+
+func (m *LSPManager) Settings() ttypes.LSPSettings {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.settings
+}
+
 func (m *LSPManager) serverConfigForExt(ext string) (string, []string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.serverConfigForExtLocked(ext)
+}
+
+func (m *LSPManager) serverConfigForExtLocked(ext string) (string, []string, bool) {
+	settings := m.settings
+	if !settings.LanguageEnabled(ext) {
+		return "", nil, false
+	}
+	if cmd, args, ok := settings.ServerOverride(ext); ok {
+		return cmd, args, true
+	}
 	if m.runtime != nil {
 		return m.runtime.ServerConfigForExt(ext)
 	}
@@ -126,6 +157,13 @@ func (m *LSPManager) languageID(ext string) string {
 // found under workspaceDir.  This is called after the session picker
 // so the server is ready before any file is opened.
 func (m *LSPManager) StartForWorkspace(workspaceDir string) {
+	m.mu.Lock()
+	enabled := m.settings.Enabled
+	startOnOpen := m.settings.StartOnOpen
+	m.mu.Unlock()
+	if !enabled || !startOnOpen {
+		return
+	}
 	roots := m.detectProjectRoots(workspaceDir)
 	for _, root := range roots {
 		m.startServerForRoot(root)
@@ -642,7 +680,7 @@ func (m *LSPManager) activeFileStateLocked() (lspClientState, bool) {
 		return lspClientState{}, false
 	}
 	ext := strings.ToLower(filepath.Ext(m.activeFilePath))
-	cmd, _, ok := m.serverConfigForExt(ext)
+	cmd, _, ok := m.serverConfigForExtLocked(ext)
 	if !ok {
 		return lspClientState{}, false
 	}
@@ -986,6 +1024,21 @@ func (m *LSPManager) setFileDiagnostics(filePath string, diags []LSPDiagnostic) 
 	defer m.mu.Unlock()
 	fp := filepath.Clean(filePath)
 
+	if !m.settings.Enabled || !m.settings.Diagnostics {
+		diags = nil
+	} else if len(diags) > 0 {
+		filtered := diags[:0]
+		for _, d := range diags {
+			if m.settings.SeverityAtLeast(d.Severity) {
+				filtered = append(filtered, d)
+			}
+		}
+		diags = filtered
+		if len(diags) == 0 {
+			diags = nil
+		}
+	}
+
 	// Subtract the old diagnostic messages from the global issue counter so
 	// the "top issue" only reflects the current snapshot. Skipping this
 	// would let stale messages keep "winning" the top slot forever.
@@ -1025,8 +1078,7 @@ func (m *LSPManager) FileDiagnostics(filePath string) []LSPDiagnostic {
 func (m *LSPManager) HasFileDiagnostics(filePath string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.fileDiagnostics[filepath.Clean(filePath)]
-	return ok
+	return len(m.fileDiagnostics[filepath.Clean(filePath)]) > 0
 }
 
 // InflightRequests returns the number of LSP requests currently in flight.
@@ -1061,8 +1113,29 @@ func (m *LSPManager) trackInflight(fn func() error) error {
 	return fn()
 }
 
+func (m *LSPManager) featureOn(pred func(ttypes.LSPSettings) bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.settings.Enabled && pred(m.settings)
+}
+
+func (m *LSPManager) ShowDiagnosticsInEditor() bool {
+	return m.featureOn(func(s ttypes.LSPSettings) bool { return s.Diagnostics && s.DiagInEditor })
+}
+
+func (m *LSPManager) ShowDiagnosticsInTree() bool {
+	return m.featureOn(func(s ttypes.LSPSettings) bool { return s.Diagnostics && s.DiagInTree })
+}
+
+func (m *LSPManager) ShowDiagnosticsInStatus() bool {
+	return m.featureOn(func(s ttypes.LSPSettings) bool { return s.Diagnostics && s.DiagInStatus })
+}
+
 // RequestDefinition routes a "go to definition" request to the right client.
 func (m *LSPManager) RequestDefinition(ctx context.Context, filePath string, line, col int) []LSPLocation {
+	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Definition }) {
+		return nil
+	}
 	var out []LSPLocation
 	_ = m.trackInflight(func() error {
 		client := m.clientForFile(filePath)
@@ -1077,6 +1150,9 @@ func (m *LSPManager) RequestDefinition(ctx context.Context, filePath string, lin
 
 // FindReferences routes a "find references" request to the right client.
 func (m *LSPManager) FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []LSPLocation {
+	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.References }) {
+		return nil
+	}
 	var out []LSPLocation
 	_ = m.trackInflight(func() error {
 		client := m.clientForFile(filePath)
@@ -1092,6 +1168,9 @@ func (m *LSPManager) FindReferences(ctx context.Context, filePath string, line, 
 // RequestDocumentSymbols routes a "document symbols" request to the right
 // client and caches the result for the document outline panel.
 func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string) []LSPSymbol {
+	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Outline }) {
+		return nil
+	}
 	var out []LSPSymbol
 	_ = m.trackInflight(func() error {
 		client := m.clientForFile(filePath)
@@ -1134,6 +1213,9 @@ func (m *LSPManager) AllDocumentSymbols() map[string][]LSPSymbol {
 
 // RequestHover routes a hover request to the right client.
 func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, col int) (string, error) {
+	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Hover }) {
+		return "", nil
+	}
 	var (
 		out string
 		err error
@@ -1151,6 +1233,9 @@ func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, co
 
 // RequestRename routes a rename request to the right client.
 func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (interface{}, error) {
+	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Rename }) {
+		return nil, nil
+	}
 	var (
 		out interface{}
 		err error
@@ -1168,6 +1253,9 @@ func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, c
 
 // RequestCompletions routes a completion request to the right client.
 func (m *LSPManager) RequestCompletions(ctx context.Context, filePath string, line, col int) []CompletionItem {
+	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Completions }) {
+		return nil
+	}
 	var out []CompletionItem
 	_ = m.trackInflight(func() error {
 		client := m.clientForFile(filePath)

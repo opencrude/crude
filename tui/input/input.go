@@ -53,13 +53,16 @@ type CmdInfo struct {
 }
 
 var availableCmds = []CmdInfo{
-	{Name: "settings", Label: "settings", Desc: "Open general settings"},
+	{Name: "settings", Label: "settings", Desc: "Open session AI settings"},
+	{Name: "provider", Label: "provider", Desc: "Open session AI settings"},
+	{Name: "api-key", Label: "api-key", Desc: "Open application provider credentials"},
 	{Name: "undo", Label: "undo", Desc: "Undo last file operation"},
 	{Name: "undo-n", Label: "undo N", Desc: "Undo last N file operations"},
 	{Name: "undo-all", Label: "undo all", Desc: "Undo all file operations this session"},
+	{Name: "changes", Label: "changes", Desc: "Show file changes this session"},
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
-	{Name: "help", Label: "help", Desc: "Show available commands"},
+	{Name: "help", Label: "help", Desc: "Open help"},
 }
 
 func AvailableCmds() []CmdInfo {
@@ -143,7 +146,7 @@ func NewModel(t *theme.Theme) Model {
 	slashList.SetActivateAction("slash.select")
 	slashList.SetItems(cmdsToItems(availableCmds))
 
-	return Model{
+	m := Model{
 		theme:     t,
 		tokens:    tokens,
 		input:     ui.NewTextArea("input/chat", tokens, true),
@@ -151,6 +154,8 @@ func NewModel(t *theme.Theme) Model {
 		histIdx:   -1,
 		showHint:  true,
 	}
+	m.syncShellChrome()
+	return m
 }
 
 // SetTokens updates theme tokens on the TextArea and slash list.
@@ -162,6 +167,17 @@ func (m *Model) SetTokens(ts *ui.TokenSet) {
 	if m.slashList != nil {
 		m.slashList.SetTokens(ts)
 	}
+	m.syncShellChrome()
+}
+
+// syncShellChrome keeps the docked chat composer on the shell surface color.
+// InputColors defaults to popup fill, which is correct for dialogs but paints
+// a raised box under the agents prompt.
+func (m *Model) syncShellChrome() {
+	if m.input == nil || m.tokens == nil {
+		return
+	}
+	m.input.SetBackgroundColor(m.tokens.Color(ui.ColorBg))
 }
 
 // SetTheme replaces the theme used for spacing and colors.
