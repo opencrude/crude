@@ -119,6 +119,14 @@ func TestBreadcrumbLineConsumesBreadcrumbSepToken(t *testing.T) {
 	if !strings.Contains(got, "sub") || !strings.Contains(got, "deep") {
 		t.Fatalf("breadcrumb %q missing ancestor path segments", got)
 	}
+
+	icons := NewIconResolver()
+	icons.UseNerdFont = false
+	withIcons := BreadcrumbLineWithIcons(model, 80, icons)
+	folderIcon := icons.ResolveIcon("sub", true, false, true).Icon
+	if folderIcon == "" || !strings.Contains(withIcons, folderIcon+" sub") {
+		t.Fatalf("icon breadcrumb %q missing normal tree folder icon %q", withIcons, folderIcon)
+	}
 }
 
 func rowOf(buf *surface.CellBuffer, y int) string {

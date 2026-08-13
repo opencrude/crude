@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -9,6 +10,7 @@ import (
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
 	"crude/tui/ui"
+	"crude/workspace"
 )
 
 func TestActivityBarAlwaysMounted(t *testing.T) {
@@ -69,7 +71,9 @@ func TestActivityBarClickSelectsView(t *testing.T) {
 	app.sidebarScreen.SetModel(model)
 	app.paintShellFrame()
 
-	res := app.rootHost.Handle(tea.MouseClickMsg{X: 1, Y: 3 + 1 + 2, Button: tea.MouseLeft})
+	res := app.rootHost.Handle(tea.MouseClickMsg{
+		X: 1, Y: sidebarTopRow + activitybar.RowStride, Button: tea.MouseLeft,
+	})
 	if res.Action == nil || res.Action.ID != activitybar.ActionSelect {
 		t.Fatalf("action=%v want %s", res.Action, activitybar.ActionSelect)
 	}
@@ -100,5 +104,44 @@ func TestTerminalOverlayIDsAreDynamicKeepRoute(t *testing.T) {
 	}
 	if ui.DefaultOverlayPolicy().Outside != ui.OutsideKeepAndRoute {
 		t.Fatal("floating terminals use DefaultOverlayPolicy KeepRoute")
+	}
+}
+
+func TestAgentSidebarProjectsAgentForest(t *testing.T) {
+	app := newFullTestApp(t)
+	root := app.AgentMgr.AddOrchestrator("root", nil, nil, nil, nil, workspace.NewAgentState("root", nil, nil))
+	root.Category = "default"
+	app.AgentMgr.AddSubAgent("child-a", "root", "Research", "model-a", "researcher", workspace.NewAgentState("child-a", nil, nil))
+	app.AgentMgr.AddSubAgent("child-b", "root", "Build", "model-b", "crafter", workspace.NewAgentState("child-b", nil, nil))
+
+	items := app.agentSidebarItems()
+	if len(items) != 3 {
+		t.Fatalf("items=%#v", items)
+	}
+	if items[0].Depth != 0 || items[0].Label != "Main Agent" {
+		t.Fatalf("root row=%#v", items[0])
+	}
+	if items[1].Depth != 1 || items[1].TreeLast || items[1].Label != "Research" {
+		t.Fatalf("first child row=%#v", items[1])
+	}
+	if items[2].Depth != 1 || !items[2].TreeLast || items[2].Label != "Build" {
+		t.Fatalf("last child row=%#v", items[2])
+	}
+}
+
+func TestEveryActivityDestinationHasContextMenu(t *testing.T) {
+	app := newFullTestApp(t)
+	for _, view := range activitybar.Views() {
+		menu := app.buildActivityRailContextMenu(view)
+		if menu == nil || len(menu.Sections) < 2 {
+			t.Fatalf("view=%v menu=%#v", view, menu)
+		}
+		if !strings.Contains(menu.Title, view.Label()) {
+			t.Fatalf("view=%v title=%q", view, menu.Title)
+		}
+		menu.Build()
+		if len(menu.FlatItems) == 0 {
+			t.Fatalf("view=%v has no usable context actions", view)
+		}
 	}
 }

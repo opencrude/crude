@@ -8,6 +8,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
+	"crude/tui/screens/panelchrome"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -16,9 +17,9 @@ import (
 const (
 	ScreenID    ui.ComponentID = "activitylist"
 	ListID      ui.ComponentID = "activitylist/list"
+	FilterID    ui.ComponentID = "activitylist/filter"
 	ScrollbarID ui.ComponentID = "activitylist/scrollbar"
 	DividerID   ui.ComponentID = "activitylist/divider"
-	TitleID     ui.ComponentID = "activitylist/title"
 
 	ActionActivate = "sidebar.activate"
 )
@@ -26,31 +27,26 @@ const (
 // doubleClickWindow matches the picker screens' click-arming interval.
 const doubleClickWindow = 500 * time.Millisecond
 
-// listTop is the row the list starts on (row 0 is the pane heading).
-const listTop = 1
+// listTop is the first scrollable row after title and persistent search.
+const listTop = panelchrome.HeaderRows
 
 const emptyStateText = "No items"
 
 // Screen is the sidebar body for Agents, Terminals, and Git.
 type Screen struct {
 	ui.Base
-	th        *theme.Theme
-	tokens    *ui.TokenSet
-	title     *paneTitle
-	list      *sidebarList
-	scrollbar *ui.ScrollbarControl
-	split     *ui.SplitModel
-	divider   *ui.SplitDivider
-	heading   string
+	th         *theme.Theme
+	tokens     *ui.TokenSet
+	filter     *ui.FilterField
+	list       *sidebarList
+	scrollbar  *ui.ScrollbarControl
+	split      *ui.SplitModel
+	divider    *ui.SplitDivider
+	heading    string
+	icon       string
+	badge      string
+	sourceData []ui.ListItem
 }
-
-// paneTitle is the pane heading label. Pointer events pass through to the
-// Screen so wheel over the heading still scrolls the list.
-type paneTitle struct {
-	*ui.Label
-}
-
-func (paneTitle) PointerPolicy() ui.PointerPolicy { return ui.PointerPolicyPassthrough }
 
 func New(th *theme.Theme) *Screen {
 	if th == nil {
@@ -61,10 +57,16 @@ func New(th *theme.Theme) *Screen {
 		Base:    ui.NewBase(ScreenID),
 		th:      th,
 		tokens:  tokens,
-		heading: "Files",
+		heading: "Agents",
+		icon:    "◈",
 	}
-	s.title = &paneTitle{Label: ui.NewLabel(TitleID, strings.ToUpper(s.heading), th)}
-	s.title.SetColorRole(ui.ColorMuted)
+	s.filter = ui.NewFilterField(FilterID, tokens)
+	s.filter.SetPrompt(ui.SearchGlyphEnd(tokens))
+	s.filter.SetPromptPlacement(ui.PromptEnd)
+	s.filter.SetPlaceholder("Search agents")
+	s.filter.SetBackgroundColor(tokens.Color(ui.ColorSubPaneBg))
+	s.filter.SetPromptColor(tokens.Color(ui.ColorAccent))
+	s.filter.OnChanged(func(string) { s.applyFilter() })
 	s.list = newSidebarList(s, tokens)
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, s.list.inner.Scroll(), tokens)
 	s.split = ui.NewSplitModel(ui.Horizontal)
@@ -76,19 +78,52 @@ func New(th *theme.Theme) *Screen {
 
 func (s *Screen) SetHeading(h string) {
 	s.heading = h
-	if s.title != nil {
-		s.title.SetText(strings.ToUpper(h))
+	if s.filter != nil {
+		s.filter.SetPlaceholder("Search " + strings.ToLower(h))
 	}
 }
 
-// SetItems replaces the list data. The shell calls this every frame with a
-// freshly built slice, so identical content must be a no-op: selection and
-// scroll state survive repaints. When the data really changed, the selection
-// is re-matched by item ID and the viewport offset is preserved (clamped).
+func (s *Screen) SetIcon(icon string) { s.icon = icon }
+
+func (s *Screen) SetBadge(badge string) { s.badge = badge }
+
+// SetItems replaces the unfiltered source data. The shell calls this every
+// frame, so identical content is a no-op and selection/scroll survive paint.
 func (s *Screen) SetItems(items []ui.ListItem) {
 	if s.list == nil {
 		return
 	}
+	if itemsEquivalent(s.sourceData, items) {
+		return
+	}
+	// Do not reuse the backing array: ui.List retains the visible slice. If
+	// sourceData overwrites that array before selection is captured, the
+	// selected ID silently changes to whichever new row occupies the index.
+	s.sourceData = append([]ui.ListItem(nil), items...)
+	s.applyFilter()
+}
+
+func (s *Screen) applyFilter() {
+	query := ""
+	if s.filter != nil {
+		query = strings.TrimSpace(strings.ToLower(s.filter.Value()))
+	}
+	items := s.sourceData
+	if query != "" {
+		items = make([]ui.ListItem, 0, len(s.sourceData))
+		for _, item := range s.sourceData {
+			if !item.Selectable() {
+				continue
+			}
+			if fuzzyContains(item.Label, query) || fuzzyContains(item.Detail, query) {
+				items = append(items, item)
+			}
+		}
+	}
+	s.applyVisibleItems(items)
+}
+
+func (s *Screen) applyVisibleItems(items []ui.ListItem) {
 	inner := s.list.inner
 	if itemsEquivalent(inner.Items(), items) {
 		return
@@ -128,8 +163,27 @@ func itemsEquivalent(a, b []ui.ListItem) bool {
 		if x.Disabled != y.Disabled || x.Header != y.Header || x.Separator != y.Separator || x.Spacer != y.Spacer {
 			return false
 		}
+		if x.Depth != y.Depth || x.TreeLast != y.TreeLast {
+			return false
+		}
 	}
 	return true
+}
+
+func fuzzyContains(value, query string) bool {
+	value = strings.ToLower(value)
+	query = strings.ToLower(query)
+	if strings.Contains(value, query) {
+		return true
+	}
+	queryRunes := []rune(query)
+	qi := 0
+	for _, r := range value {
+		if qi < len(queryRunes) && r == queryRunes[qi] {
+			qi++
+		}
+	}
+	return qi == len(queryRunes)
 }
 
 func (s *Screen) SetSplitMaxFirst(n int) {
@@ -147,6 +201,13 @@ func (s *Screen) SplitFirst() int {
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
+	if s.filter != nil {
+		s.filter.SetTokens(tokens)
+		s.filter.SetPrompt(ui.SearchGlyphEnd(tokens))
+		s.filter.SetPromptPlacement(ui.PromptEnd)
+		s.filter.SetBackgroundColor(tokens.Color(ui.ColorSubPaneBg))
+		s.filter.SetPromptColor(tokens.Color(ui.ColorAccent))
+	}
 	if s.list != nil {
 		s.list.SetTokens(tokens)
 	}
@@ -164,15 +225,12 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 	}
 	s.th = th
 	s.SetTokens(ui.NewTokenSet(th))
-	if s.title != nil {
-		s.title.SetTokens(ui.NewTokenSet(th))
-	}
 }
 
 func (s *Screen) Children() []ui.Component {
 	out := make([]ui.Component, 0, 4)
-	if s.title != nil {
-		out = append(out, s.title)
+	if s.filter != nil {
+		out = append(out, s.filter)
 	}
 	if s.list != nil {
 		out = append(out, s.list)
@@ -214,8 +272,13 @@ func (s *Screen) listTopRow(r ui.Rect) int {
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	contentW := s.contentWidth(r)
-	if s.title != nil {
-		s.title.Layout(ui.LayoutContext{}, ui.Rect{X: 1, Y: 0, W: max(1, contentW-2), H: 1})
+	if s.filter != nil {
+		s.filter.Layout(ui.LayoutContext{}, ui.Rect{
+			X: panelchrome.PadLeft,
+			Y: panelchrome.TitleRows,
+			W: max(1, contentW-panelchrome.PadLeft*2),
+			H: panelchrome.SearchRows,
+		})
 	}
 	listY := s.listTopRow(r)
 	listH := max(1, r.H-listY)
@@ -246,10 +309,51 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		muted = s.tokens.Color(ui.ColorMuted)
 	}
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
+	panelchrome.PaintTitle(buf, ox, oy, r, s.tokens, panelchrome.Title{
+		Icon: s.icon, Label: s.heading, Badge: s.badge,
+	})
 	if s.list != nil && len(s.list.items()) == 0 {
-		text := rendering.TruncateLine(emptyStateText, max(1, s.listWidth(r)-1))
+		text := emptyStateText
+		if s.filter != nil && strings.TrimSpace(s.filter.Value()) != "" {
+			text = "No matches"
+		}
+		text = rendering.TruncateLine(text, max(1, s.listWidth(r)-1))
 		buf.WriteString(ox+r.X+1, oy+r.Y+s.listTopRow(r), text, muted, bg, 0)
 	}
+}
+
+// Query returns the current panel filter.
+func (s *Screen) Query() string {
+	if s == nil || s.filter == nil {
+		return ""
+	}
+	return s.filter.Value()
+}
+
+// ItemAtLocalY resolves a panel-local row to its visible list item. Chrome,
+// scrollbar, and empty rows return false.
+func (s *Screen) ItemAtLocalY(localY int) (ui.ListItem, bool) {
+	if s == nil || s.list == nil {
+		return ui.ListItem{}, false
+	}
+	row := localY - s.listTopRow(s.Bounds())
+	if row < 0 || row >= s.list.inner.Scroll().Viewport() {
+		return ui.ListItem{}, false
+	}
+	idx := s.list.inner.Scroll().Offset() + row
+	items := s.list.inner.Items()
+	if idx < 0 || idx >= len(items) || !items[idx].Selectable() {
+		return ui.ListItem{}, false
+	}
+	return items[idx], true
+}
+
+// SelectedItem returns the currently selected visible item.
+func (s *Screen) SelectedItem() (ui.ListItem, bool) {
+	if s == nil || s.list == nil {
+		return ui.ListItem{}, false
+	}
+	return s.list.inner.Selected()
 }
 
 // Handle catches pointer events that miss every child: wheel anywhere in the
@@ -384,6 +488,22 @@ func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, item ui.Lis
 	}
 	cx := x + 1
 	remain := w - 2
+	if item.Depth > 0 && remain > 2 {
+		var branch strings.Builder
+		for depth := 1; depth < item.Depth; depth++ {
+			branch.WriteString("│  ")
+		}
+		if item.TreeLast {
+			branch.WriteString("└─ ")
+		} else {
+			branch.WriteString("├─ ")
+		}
+		prefix := rendering.TruncateVisual(branch.String(), remain, "")
+		buf.WriteString(cx, y, prefix, tokens.TreeIndentFg(), bg, 0)
+		pw := rendering.VisibleWidth(prefix)
+		cx += pw
+		remain -= pw
+	}
 	if item.Icon != "" && remain > 2 {
 		iconFG := tokens.Color(ui.ColorAccent)
 		if item.Disabled {

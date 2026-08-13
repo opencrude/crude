@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"fmt"
+	"strings"
+
 	"crude/tui/rendering"
 	"crude/types"
 )
@@ -98,11 +101,31 @@ func ModelOptions(models []types.ModelEntry) []FormOption {
 		if label == "" {
 			label = model.ID
 		}
-		detail := ""
+		var details []string
 		if model.ContextWindow > 0 {
-			detail = rendering.FormatTokens(model.ContextWindow)
+			details = append(details, rendering.FormatTokens(model.ContextWindow)+" ctx")
 		}
-		options = append(options, FormOption{ID: model.ID, Label: label, Detail: detail})
+		if model.InputPrice > 0 || model.OutputPrice > 0 {
+			details = append(details, fmt.Sprintf(
+				"$%.2f/%.2f per M", model.InputPrice*1_000_000, model.OutputPrice*1_000_000,
+			))
+		}
+		var capabilities []string
+		if model.SupportsVision {
+			capabilities = append(capabilities, "vision")
+		}
+		if model.SupportsTools {
+			capabilities = append(capabilities, "tools")
+		}
+		if model.Attachment {
+			capabilities = append(capabilities, "files")
+		}
+		if len(capabilities) > 0 {
+			details = append(details, strings.Join(capabilities, " · "))
+		}
+		options = append(options, FormOption{
+			ID: model.ID, Label: label, Detail: strings.Join(details, "  |  "),
+		})
 	}
 	return options
 }

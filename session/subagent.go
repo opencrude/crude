@@ -602,7 +602,19 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		SM:        subSM,
 	}
 
-	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
+	proxiedToolFn := r.buildProxiedToolFn(spec, blockCh, handle)
+	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		if isPlanningTool(tool) {
+			defer func() {
+				if err := persistConversationState(
+					context.Background(), handle.DB, handle.SM, handle.SessionID,
+				); err != nil {
+					handle.AddError("persist plan state: " + err.Error())
+				}
+			}()
+		}
+		return proxiedToolFn(ctx, tool, params)
+	}
 
 	systemPrompt, userPrompt := agent.BuildSubAgentPrompt(spec, profileInstructions)
 
@@ -735,6 +747,13 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		}
 	}, handle.BlockCh, handle.SM, handle.SessionID, nil)
 
+	if err := persistSubAgentTranscript(handle, agentMsgs); err != nil {
+		handle.AddError("persist transcript: " + err.Error())
+		r.session.logger.Warn(
+			"SUBAGENT", "transcript_persist_failed",
+			"agent_id", handle.Spec.ID, "error", err.Error(),
+		)
+	}
 	result := r.buildResultFromMessages(handle, agentMsgs)
 
 	if !handle.ReportDone() {
@@ -761,20 +780,60 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 	// Completion wakes are part of the delivery contract. Backpressure is
 	// preferable to silently losing a result; session cancellation unblocks
 	// shutdown if no orchestrator remains to drain the queue.
-	if r.wakeCh != nil {
-		select {
-		case r.wakeCh <- WakeEvent{
-			Type:     WakeSubAgentDone,
-			Data:     result,
-			SourceID: string(handle.Spec.ID),
-		}:
-		case <-r.sessionCtx.Done():
-		}
-	}
+	r.deliverCompletionWake(result)
 
 	if handle.DB != nil {
 		_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
 		handle.DB.Close()
+	}
+}
+
+func persistSubAgentTranscript(
+	handle *agent.SubAgentHandle,
+	messages []provider.ChatMessage,
+) error {
+	if handle == nil || handle.DB == nil {
+		return nil
+	}
+	var persisted []provider.ChatMessage
+	var turns []int
+	var metas []sessiondb.DisplayMeta
+	for _, message := range messages {
+		if message.Role == "system" {
+			continue
+		}
+		persisted = append(persisted, message)
+		turns = append(turns, 1)
+		meta := sessiondb.DisplayMeta{DisplayRole: message.Role}
+		if message.Role == "tool" {
+			if message.ToolError {
+				meta.ToolStatus = "error"
+			} else {
+				meta.ToolStatus = "success"
+			}
+		}
+		metas = append(metas, meta)
+	}
+	if len(persisted) == 0 {
+		return nil
+	}
+	_, err := sessiondb.ReplaceMessagesWithMeta(
+		handle.DB, handle.SessionID, persisted, turns, metas,
+	)
+	return err
+}
+
+func (r *SubAgentRunner) deliverCompletionWake(result agent.SubAgentResult) bool {
+	if r == nil || r.wakeCh == nil {
+		return false
+	}
+	select {
+	case r.wakeCh <- WakeEvent{
+		Type: WakeSubAgentDone, Data: result, SourceID: string(result.AgentID),
+	}:
+		return true
+	case <-r.sessionCtx.Done():
+		return false
 	}
 }
 
@@ -994,6 +1053,9 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 
 		if isPlanningTool(tool) {
 			return r.executeSubAgentPlanningTool(handle, tool, params)
+		}
+		if tool == "read_file" {
+			r.fileOwnership.RecordRead(spec.ID, getStrParam(params, "path"))
 		}
 
 		if isWriteTool(tool) {

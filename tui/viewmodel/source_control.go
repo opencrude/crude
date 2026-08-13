@@ -1,0 +1,237 @@
+package viewmodel
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/screens/sourcecontrol"
+	"crude/tui/ui"
+	"crude/tui/wm"
+	"crude/workspace"
+)
+
+type sourceControlResultMsg struct {
+	gen         uint64
+	snapshot    workspace.GitSnapshot
+	err         error
+	notice      string
+	clearCommit bool
+}
+
+func (m *App) refreshSourceControl() tea.Cmd {
+	if m.sourceControl == nil {
+		return nil
+	}
+	if m.Git == nil {
+		m.Git = workspace.NewGitService(m.RootPath)
+	}
+	m.sourceControl.SetLoading(true)
+	gen := m.gitRefreshGen.Add(1)
+	service := m.Git
+	return func() tea.Msg {
+		snapshot, err := service.Snapshot(context.Background())
+		return sourceControlResultMsg{gen: gen, snapshot: snapshot, err: err}
+	}
+}
+
+func (m *App) sourceControlMutation(
+	notice string,
+	clearCommit bool,
+	mutate func(context.Context, *workspace.GitService) error,
+) tea.Cmd {
+	if m.Git == nil {
+		m.Git = workspace.NewGitService(m.RootPath)
+	}
+	if m.sourceControl != nil {
+		m.sourceControl.SetLoading(true)
+	}
+	gen := m.gitRefreshGen.Add(1)
+	service := m.Git
+	return func() tea.Msg {
+		ctx := context.Background()
+		if err := mutate(ctx, service); err != nil {
+			return sourceControlResultMsg{gen: gen, err: err}
+		}
+		snapshot, err := service.Snapshot(ctx)
+		return sourceControlResultMsg{
+			gen: gen, snapshot: snapshot, err: err,
+			notice: notice, clearCommit: clearCommit,
+		}
+	}
+}
+
+// startSourceControlMutation is used by context-menu callbacks, whose action
+// signature cannot return a tea.Cmd. Completion still re-enters the update
+// goroutine through the workspace event bus.
+func (m *App) startSourceControlMutation(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	go func() {
+		msg := cmd()
+		if msg != nil && m.eventBus != nil {
+			m.eventBus.Send(msg)
+		}
+	}()
+}
+
+func (m *App) handleSourceControlAction(action ui.Action) (tea.Cmd, bool) {
+	switch action.ID {
+	case sourcecontrol.ActionRefresh:
+		return m.refreshSourceControl(), true
+	case sourcecontrol.ActionOpenChange:
+		change, ok := action.Payload.(workspace.GitChange)
+		if !ok || change.AbsolutePath == "" {
+			return nil, true
+		}
+		cmd, err := m.openEditorTab(change.AbsolutePath)
+		if err != nil {
+			m.StatusBar.SetError("Open change: " + err.Error())
+			return nil, true
+		}
+		return cmd, true
+	case sourcecontrol.ActionCheckoutBranch:
+		branch, ok := action.Payload.(workspace.GitBranchSummary)
+		if !ok || branch.Name == "" || branch.Current {
+			return nil, true
+		}
+		return m.sourceControlMutation(
+			"Switched to "+branch.Name, false,
+			func(ctx context.Context, service *workspace.GitService) error {
+				return service.Checkout(ctx, branch.Name)
+			},
+		), true
+	case sourcecontrol.ActionCommit:
+		message, _ := action.Payload.(string)
+		if message == "" {
+			m.StatusBar.SetError("Enter a commit message")
+			return nil, true
+		}
+		return m.sourceControlMutation(
+			"Committed changes", true,
+			func(ctx context.Context, service *workspace.GitService) error {
+				return service.Commit(ctx, message)
+			},
+		), true
+	}
+	return nil, false
+}
+
+func (m *App) applySourceControlResult(msg sourceControlResultMsg) {
+	if msg.gen == 0 || msg.gen != m.gitRefreshGen.Load() || m.sourceControl == nil {
+		return
+	}
+	if msg.err != nil {
+		m.sourceControl.SetError(msg.err)
+		if m.StatusBar != nil {
+			m.StatusBar.SetError("Source control: " + msg.err.Error())
+		}
+		return
+	}
+	m.sourceControl.SetSnapshot(msg.snapshot)
+	if msg.clearCommit {
+		m.sourceControl.ClearCommitMessage()
+	}
+	if m.activityBar != nil {
+		m.activityBar.SetBadge(activityGit, len(msg.snapshot.Changes))
+	}
+	if m.Tree != nil && m.Tree.Model != nil && m.Tree.Model.GitResolver() != nil {
+		_ = m.Tree.Model.GitResolver().Refresh()
+	}
+	if msg.notice != "" && m.StatusBar != nil {
+		m.StatusBar.SetInfo(msg.notice)
+	}
+}
+
+func (m *App) stageGitChange(change workspace.GitChange) tea.Cmd {
+	return m.sourceControlMutation(
+		"Staged "+filepath.Base(change.Path), false,
+		func(ctx context.Context, service *workspace.GitService) error {
+			return service.Stage(ctx, change.Path)
+		},
+	)
+}
+
+func (m *App) unstageGitChange(change workspace.GitChange) tea.Cmd {
+	return m.sourceControlMutation(
+		"Unstaged "+filepath.Base(change.Path), false,
+		func(ctx context.Context, service *workspace.GitService) error {
+			return service.Unstage(ctx, change.Path)
+		},
+	)
+}
+
+func (m *App) discardGitChange(change workspace.GitChange) tea.Cmd {
+	return m.sourceControlMutation(
+		"Discarded changes in "+filepath.Base(change.Path), false,
+		func(ctx context.Context, service *workspace.GitService) error {
+			if change.Area == workspace.GitAreaUntracked {
+				return fmt.Errorf("untracked files are never deleted by Discard")
+			}
+			return service.Discard(ctx, change.Path)
+		},
+	)
+}
+
+func (m *App) startDiscardGitChange(change workspace.GitChange) {
+	if change.Area == workspace.GitAreaUntracked {
+		m.StatusBar.SetError("Discard never deletes untracked files")
+		return
+	}
+	copy := change
+	m.GitDiscardPending = &copy
+	m.TreeDeletePending = ""
+	m.TreeDeleteChoice = 1 // safe default: Cancel
+	frame := m.buildGitDiscardFrame(copy)
+	w, h := frame.Measure(80, 40)
+	fw := wm.NewFloatingWindow(string(ui.OverlayTreeDelete), "", frame, w, h,
+		wm.WithDecoration(false),
+		wm.WithMovable(false),
+		wm.WithResizable(false),
+		wm.WithClosable(false),
+		wm.WithModal(true),
+		wm.WithFocusable(true),
+		wm.WithClickOutside(wm.ClickOutsideIgnore),
+	)
+	wm.CenterOnScreen(fw, m.width, m.height)
+	m.overlayHost.Open(ui.OverlayTreeDelete, fw, ui.ModalDialogPolicy(), func() {
+		m.TreeDeletePending = ""
+		m.GitDiscardPending = nil
+	})
+}
+
+func (m *App) buildGitDiscardFrame(change workspace.GitChange) *ui.ComponentWidget {
+	return ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
+		Title:    "Discard Changes",
+		Question: fmt.Sprintf("Discard working-tree changes in %q?", filepath.Base(change.Path)),
+		Detail:   change.Path + " · this cannot be undone",
+		Severity: ui.ConfirmPromptDanger,
+		Buttons: []ui.ConfirmButtonSpec{
+			{Label: "Discard", ActionID: ui.ConfirmActionDiscard},
+			{Label: "Cancel", ActionID: ui.ConfirmActionCancel},
+		},
+		FocusedIndex: m.TreeDeleteChoice,
+		Width:        64,
+	})
+}
+
+func (m *App) stageAllGitChanges() tea.Cmd {
+	return m.sourceControlMutation(
+		"Staged all changes", false,
+		func(ctx context.Context, service *workspace.GitService) error {
+			return service.StageAll(ctx)
+		},
+	)
+}
+
+func (m *App) unstageAllGitChanges() tea.Cmd {
+	return m.sourceControlMutation(
+		"Unstaged all changes", false,
+		func(ctx context.Context, service *workspace.GitService) error {
+			return service.UnstageAll(ctx)
+		},
+	)
+}

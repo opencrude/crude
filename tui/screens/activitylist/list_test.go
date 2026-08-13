@@ -74,8 +74,8 @@ func TestWheelScrollsViewportAndReachesEnd(t *testing.T) {
 	if got := s.list.inner.Scroll().Offset(); got != 3 {
 		t.Fatalf("offset after repaint = %d want 3 (per-frame relayout must not reset scroll)", got)
 	}
-	if !strings.Contains(rowText(buf, 1), "file03.go") {
-		t.Fatalf("first visible row = %q want file03.go", rowText(buf, 1))
+	if !strings.Contains(rowText(buf, listTop), "file03.go") {
+		t.Fatalf("first visible row = %q want file03.go", rowText(buf, listTop))
 	}
 
 	for i := 0; i < 40; i++ {
@@ -120,11 +120,11 @@ func TestPerFrameSetItemsPreservesScrollAndSelection(t *testing.T) {
 	}
 	frame()
 
-	first := host.Handle(tea.MouseClickMsg{X: 4, Y: 4, Button: tea.MouseLeft})
+	first := host.Handle(tea.MouseClickMsg{X: 4, Y: listTop + 3, Button: tea.MouseLeft})
 	if first.Action != nil {
 		t.Fatalf("single click must not activate: %+v", first.Action)
 	}
-	host.Handle(tea.MouseReleaseMsg{X: 4, Y: 4, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: 4, Y: listTop + 3, Button: tea.MouseLeft})
 	if sel, ok := s.list.inner.Selected(); !ok || sel.ID != "git:/repo/file03.go" {
 		t.Fatalf("selected after click = %+v", sel)
 	}
@@ -151,7 +151,8 @@ func TestPerFrameSetItemsPreservesScrollAndSelection(t *testing.T) {
 		t.Fatalf("offset after data change=%d want 12", got)
 	}
 	if idx := s.list.inner.SelectedIndex(); idx != 4 {
-		t.Fatalf("selection should follow its ID to index 4, got %d", idx)
+		selected, _ := s.list.inner.Selected()
+		t.Fatalf("selection should follow its ID to index 4, got %d (%s)", idx, selected.ID)
 	}
 }
 
@@ -206,40 +207,40 @@ func TestSingleClickSelectsDoubleClickActivates(t *testing.T) {
 	s, host := newTestScreen(t, gitItems(10))
 	paintFrame(host, testW, testH)
 
-	first := host.Handle(tea.MouseClickMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	first := host.Handle(tea.MouseClickMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 	if first.Action != nil {
 		t.Fatalf("first click must select only, got action %+v", first.Action)
 	}
-	host.Handle(tea.MouseReleaseMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 	if sel, _ := s.list.inner.Selected(); sel.ID != "git:/repo/file02.go" {
 		t.Fatalf("selected=%+v want file02", sel)
 	}
 
-	second := host.Handle(tea.MouseClickMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	second := host.Handle(tea.MouseClickMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 	if second.Action == nil || second.Action.ID != ActionActivate {
 		t.Fatalf("double click action=%+v want %s", second.Action, ActionActivate)
 	}
 	if item, ok := second.Action.Payload.(ui.ListItem); !ok || item.ID != "git:/repo/file02.go" {
 		t.Fatalf("payload=%+v", second.Action.Payload)
 	}
-	host.Handle(tea.MouseReleaseMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 
-	third := host.Handle(tea.MouseClickMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	third := host.Handle(tea.MouseClickMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 	if third.Action != nil {
 		t.Fatalf("click after activation must re-arm, got %+v", third.Action)
 	}
-	host.Handle(tea.MouseReleaseMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 
 	s.list.lastClickAt = time.Now().Add(-time.Second)
-	slow := host.Handle(tea.MouseClickMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	slow := host.Handle(tea.MouseClickMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 	if slow.Action != nil {
 		t.Fatalf("expired double-click window must not activate, got %+v", slow.Action)
 	}
-	host.Handle(tea.MouseReleaseMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 
-	host.Handle(tea.MouseClickMsg{X: 3, Y: 5, Button: tea.MouseLeft})
-	host.Handle(tea.MouseReleaseMsg{X: 3, Y: 5, Button: tea.MouseLeft})
-	other := host.Handle(tea.MouseClickMsg{X: 3, Y: 3, Button: tea.MouseLeft})
+	host.Handle(tea.MouseClickMsg{X: 3, Y: listTop + 4, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: 3, Y: listTop + 4, Button: tea.MouseLeft})
+	other := host.Handle(tea.MouseClickMsg{X: 3, Y: listTop + 2, Button: tea.MouseLeft})
 	if other.Action != nil {
 		t.Fatalf("quick click on a different row must not activate, got %+v", other.Action)
 	}
@@ -262,19 +263,19 @@ func TestEnterActivatesSelection(t *testing.T) {
 func TestEmptyStateAndDisabledPlaceholder(t *testing.T) {
 	s, host := newTestScreen(t, nil)
 	buf := paintFrame(host, testW, testH)
-	if !strings.Contains(rowText(buf, 1), emptyStateText) {
-		t.Fatalf("empty list must show %q, row=%q", emptyStateText, rowText(buf, 1))
+	if !strings.Contains(rowText(buf, listTop), emptyStateText) {
+		t.Fatalf("empty list must show %q, row=%q", emptyStateText, rowText(buf, listTop))
 	}
 
 	s.SetItems([]ui.ListItem{{ID: "none", Label: "Working tree clean", Disabled: true}})
 	buf = paintFrame(host, testW, testH)
-	if !strings.Contains(rowText(buf, 1), "Working tree clean") {
-		t.Fatalf("placeholder row=%q", rowText(buf, 1))
+	if !strings.Contains(rowText(buf, listTop), "Working tree clean") {
+		t.Fatalf("placeholder row=%q", rowText(buf, listTop))
 	}
-	if !buf.Get(1, 1).FG.Equal(s.tokens.Color(ui.ColorMuted)) {
+	if !buf.Get(1, listTop).FG.Equal(s.tokens.Color(ui.ColorMuted)) {
 		t.Fatal("placeholder must paint muted")
 	}
-	res := host.Handle(tea.MouseClickMsg{X: 3, Y: 1, Button: tea.MouseLeft})
+	res := host.Handle(tea.MouseClickMsg{X: 3, Y: listTop, Button: tea.MouseLeft})
 	if res.Action != nil {
 		t.Fatalf("placeholder must not activate: %+v", res.Action)
 	}
@@ -313,14 +314,14 @@ func TestGitStatusDetailStaysVisibleOnLongPaths(t *testing.T) {
 	s, host := newTestScreen(t, []ui.ListItem{long})
 	buf := paintFrame(host, testW, testH)
 	listW := s.listWidth(ui.Rect{W: testW, H: testH})
-	if got := buf.Get(listW-2, 1).Char; got != 'M' {
+	if got := buf.Get(listW-2, listTop).Char; got != 'M' {
 		t.Fatalf("detail char=%q want M pinned right", got)
 	}
-	if !buf.Get(listW-2, 1).FG.Equal(s.tokens.TreeGitModified()) {
+	if !buf.Get(listW-2, listTop).FG.Equal(s.tokens.TreeGitModified()) {
 		t.Fatal("git detail must use the tree git palette")
 	}
-	if !strings.Contains(rowText(buf, 1), "…") {
-		t.Fatalf("long label should be ellipsized: %q", rowText(buf, 1))
+	if !strings.Contains(rowText(buf, listTop), "…") {
+		t.Fatalf("long label should be ellipsized: %q", rowText(buf, listTop))
 	}
 }
 
@@ -347,7 +348,7 @@ func TestLongListPaintsInsideListBounds(t *testing.T) {
 func TestHeadingPaintsUppercaseWithPadding(t *testing.T) {
 	_, host := newTestScreen(t, gitItems(3))
 	buf := paintFrame(host, testW, testH)
-	if got := rowText(buf, 0); !strings.HasPrefix(got, " GIT") {
-		t.Fatalf("heading row=%q want padded uppercase GIT", got)
+	if got := rowText(buf, 0); !strings.Contains(got, "GIT") || !strings.HasPrefix(got, " ◈") {
+		t.Fatalf("heading row=%q want icon + padded uppercase GIT", got)
 	}
 }

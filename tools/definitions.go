@@ -286,7 +286,7 @@ var AgentTools = []ToolDef{
 			}`),
 		},
 	},
- {
+	{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "reply",

@@ -20,6 +20,7 @@ import (
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/sourcecontrol"
 	"crude/tui/screens/termdock"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -48,6 +49,7 @@ func newTestApp(t *testing.T) *App {
 	sidebarScreen := shelltree.New(th, nil)
 	activityBar := activitybar.New(th)
 	activityList := activitylist.New(th)
+	sourceControl := sourcecontrol.New(th)
 	launcherScreen := launcher.New(th)
 	launcherScreen.SetData(".", nil)
 	termDock := termdock.New(th)
@@ -60,6 +62,7 @@ func newTestApp(t *testing.T) *App {
 		Workspace: &workspace.Workspace{
 			AgentMgr:      workspace.NewAgentManager(),
 			PaneMgr:       workspace.NewPaneManager(),
+			Git:           workspace.NewGitService("."),
 			TermMgr:       workspace.NewTerminalManager("."),
 			FocusStack:    workspace.NewFocusStack(),
 			StartTime:     time.Now(),
@@ -84,6 +87,7 @@ func newTestApp(t *testing.T) *App {
 		sidebarScreen:      sidebarScreen,
 		activityBar:        activityBar,
 		activityList:       activityList,
+		sourceControl:      sourceControl,
 		termScreens:        make(map[string]*shellterm.Screen),
 		termDock:           termDock,
 		termDockHeight:     12,
@@ -100,6 +104,7 @@ func newTestApp(t *testing.T) *App {
 	deck.app = app
 	app.Win = window.New(th)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
+	sourceControl.SetFocusHandler(rootHost.Focus)
 	return app
 }
 

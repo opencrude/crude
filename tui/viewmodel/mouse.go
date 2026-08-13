@@ -294,6 +294,11 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	case regionLauncher:
 		m.setSessionDeckFocused(false)
 		m.setTermDockFocused(false)
+		// A prior sidebar click leaves FocusTree on the policy stack. The
+		// root Host correctly focuses the clicked launcher search field, but
+		// focusTarget would otherwise route the next key back into the file
+		// filter. Clear that stale policy owner before Host pointer routing.
+		m.FocusStack.Clear()
 		m.LastInteractionTime = time.Now()
 	}
 
@@ -750,7 +755,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	case regionEditor:
 		st = m.buildEditorContextMenu(mouse)
 	case regionSidebar:
-		st = m.buildSidebarContextMenu(mouse)
+		st = m.buildActivityRegionContextMenu(mouse)
 	case regionTabBar:
 		st = m.buildTabBarContextMenu(mouse)
 	case regionInput:

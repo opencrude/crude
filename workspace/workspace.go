@@ -95,6 +95,10 @@ type Workspace struct {
 	// goes through this service. Results are published through EventBus.
 	FileOps *FileOpsService
 
+	// Git owns source-control reads and mutations for this workspace.
+	// Frontends consume neutral snapshots and never execute Git directly.
+	Git *GitService
+
 	// TermMgr owns in-app PTY sessions (the terminal multiplexer).
 	TermMgr *TerminalManager
 
@@ -232,6 +236,7 @@ func NewWorkspace(
 		LSPMgr:          lspMgr,
 		ProjectSearch:   NewProjectSearchService(),
 		FileOps:         NewFileOpsService(rootPath, nil, lg),
+		Git:             NewGitService(rootPath),
 		TermMgr:         NewTerminalManager(rootPath),
 		FocusStack:      NewFocusStack(),
 		Sessions:        make([]*Session, 0),
@@ -491,6 +496,9 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.LSPMgr = NewLSPManager(w.Logger)
 	w.AgentMgr = NewAgentManager()
 	w.PaneMgr = NewPaneManager()
+	w.ProjectSearch = NewProjectSearchService()
+	w.FileOps = NewFileOpsService(abs, w.eventBus, w.Logger)
+	w.Git = NewGitService(abs)
 	w.TermMgr = NewTerminalManager(abs)
 	if w.eventBus != nil {
 		w.TermMgr.SetEventBus(w.eventBus)

@@ -293,19 +293,7 @@ func gitColor(tokens *ui.TokenSet, st GitStatus) cell.Color {
 
 // BreadcrumbLine builds the sticky parent path header for a scrolled tree.
 func BreadcrumbLine(model *FileTreeModel, width int) string {
-	if model == nil || model.ScrollOffset() <= 0 {
-		return ""
-	}
-	nodes := model.VisibleNodes()
-	off := model.ScrollOffset()
-	if off >= len(nodes) {
-		return ""
-	}
-	first := nodes[off]
-	var names []string
-	for p := first.Parent; p != nil; p = p.Parent {
-		names = append([]string{p.Name}, names...)
-	}
+	names := breadcrumbNames(model)
 	if len(names) == 0 {
 		return ""
 	}
@@ -314,6 +302,49 @@ func BreadcrumbLine(model *FileTreeModel, width int) string {
 		sep = "▸"
 	}
 	return rendering.TruncateLine(strings.Join(names, " "+sep+" "), width)
+}
+
+// BreadcrumbLineWithIcons builds the same sticky path as BreadcrumbLine but
+// resolves every folder through the file tree's active IconResolver. Sidebar
+// breadcrumbs therefore use the same icon family and Nerd Font policy as the
+// normal tree rows instead of becoming a visually unrelated plain-text path.
+func BreadcrumbLineWithIcons(model *FileTreeModel, width int, icons *IconResolver) string {
+	names := breadcrumbNames(model)
+	if len(names) == 0 {
+		return ""
+	}
+	sep := theme.DefaultGlyphs().BreadcrumbSep
+	if sep == "" {
+		sep = "▸"
+	}
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		part := name
+		if icons != nil {
+			if icon := icons.ResolveIcon(name, true, false, true).Icon; icon != "" {
+				part = icon + " " + name
+			}
+		}
+		parts = append(parts, part)
+	}
+	return rendering.TruncateLine(strings.Join(parts, " "+sep+" "), width)
+}
+
+func breadcrumbNames(model *FileTreeModel) []string {
+	if model == nil || model.ScrollOffset() <= 0 {
+		return nil
+	}
+	nodes := model.VisibleNodes()
+	off := model.ScrollOffset()
+	if off >= len(nodes) {
+		return nil
+	}
+	first := nodes[off]
+	var names []string
+	for p := first.Parent; p != nil; p = p.Parent {
+		names = append([]string{p.Name}, names...)
+	}
+	return names
 }
 
 // SyncScrollModel copies model scroll state into a ui.ScrollModel.

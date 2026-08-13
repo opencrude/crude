@@ -63,3 +63,39 @@ func TestFocusPrecedence_TreeWinsOverVisibleLauncher(t *testing.T) {
 		t.Fatal("tree `/` filter must activate when tree is focused")
 	}
 }
+
+func TestClickLauncherSearchClearsStaleTreeFocus(t *testing.T) {
+	dir := t.TempDir()
+	app := newFullTestApp(t)
+	app.width, app.height = 100, 30
+	app.AgentMgr = workspace.NewAgentManager()
+	model := filetree.NewFileTreeModel(dir)
+	app.Tree = NewTreeState(model, 28)
+	app.Tree.Visible = true
+	app.sidebarScreen.SetModel(model)
+	app.launcherScreen.SetData(dir, []workspace.WorkspaceInfo{{
+		ID: "other", ProjectDir: filepath.Join(t.TempDir(), "other"),
+	}})
+	app.paintShellFrame()
+
+	app.FocusStack.Clear()
+	app.FocusStack.Push(FocusTree)
+	rect, ok := app.rootHost.ScreenRect(launcher.SearchID)
+	if !ok || rect.Empty() {
+		t.Fatal("launcher search is not mounted")
+	}
+	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{
+		X: rect.X + 1, Y: rect.Y, Button: tea.MouseLeft,
+	})
+	if app.FocusStack.Top() == FocusTree {
+		t.Fatal("launcher click retained stale tree focus")
+	}
+
+	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'w', Text: "w"})
+	if got := app.launcherScreen.Query(); got != "w" {
+		t.Fatalf("launcher query=%q want w", got)
+	}
+	if got := model.Filter(); got != "" {
+		t.Fatalf("tree filter received launcher typing: %q", got)
+	}
+}

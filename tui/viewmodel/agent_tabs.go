@@ -48,15 +48,61 @@ func (m *App) RemoveOrchestrator(orchID string) {
 }
 
 // cleanupAgent removes all state for a given agent orchestrator or sub-agent.
+// Removing an orchestrator is a subtree operation: every descendant tab,
+// pane, projection, scroll snapshot, and status entry must disappear in the
+// same update as the AgentManager tree. Otherwise the status bar can report a
+// sleeping child after the Agents panel has already lost its parent tree.
 func (m *App) cleanupAgent(agentID string) {
-	m.clearAgentChatScroll(agentID)
-	m.subPaneProjections.Remove(agentID)
-	m.CloseAgent(agentID)
-	m.AgentMgr.Remove(agentID)
-	m.PaneMgr.Remove(agentID)
-	if m.StatusBar != nil {
-		m.StatusBar.ClearAgentState(agentID)
+	ids := []string{agentID}
+	if m.AgentMgr != nil {
+		if node := m.AgentMgr.Get(agentID); node != nil {
+			ids = agentSubtreeIDs(node)
+		}
 	}
+
+	// Workspace.CloseAgent needs the tree and session ownership maps intact
+	// to route backend cancellation and persist a recoverable session row.
+	m.CloseAgent(agentID)
+	if m.AgentMgr != nil {
+		m.AgentMgr.Remove(agentID)
+	}
+
+	for _, id := range ids {
+		m.clearAgentChatScroll(id)
+		if m.subPaneProjections != nil {
+			m.subPaneProjections.Remove(id)
+		}
+		if m.PaneMgr != nil {
+			m.PaneMgr.Remove(id)
+		}
+		if m.StatusBar != nil {
+			m.StatusBar.ClearAgentState(id)
+		}
+		if m.Win != nil {
+			if tab := m.Win.TabByTitle(m.agentTabTitle(id)); tab != nil {
+				m.Win.CloseTabByID(tab.ID)
+			}
+		}
+	}
+}
+
+func agentSubtreeIDs(root *workspace.AgentNode) []string {
+	if root == nil {
+		return nil
+	}
+	ids := make([]string, 0, 1+len(root.Children))
+	var appendTree func(*workspace.AgentNode)
+	appendTree = func(node *workspace.AgentNode) {
+		if node == nil {
+			return
+		}
+		ids = append(ids, node.ID)
+		for _, child := range node.Children {
+			appendTree(child)
+		}
+	}
+	appendTree(root)
+	return ids
 }
 
 func (m *App) activeMsgList() *chatprojection.Renderer {

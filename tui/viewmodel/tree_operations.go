@@ -13,18 +13,14 @@ import (
 
 // pathUnderMouse resolves a file tree path from a screen Y.
 func (m *App) pathUnderMouse(mouse tea.Mouse) string {
-	if m.Tree.Model == nil {
+	if m.Tree == nil || m.Tree.Model == nil || m.sidebarScreen == nil || m.rootHost == nil {
 		return ""
 	}
-	visible := m.Tree.Model.VisibleRows()
-	if visible == nil {
+	rect, ok := m.rootHost.ScreenRect(m.sidebarScreen.ID())
+	if !ok || !rect.Contains(mouse.X, mouse.Y) {
 		return ""
 	}
-	row := mouse.Y - m.Tree.YOffset
-	if row < 0 || row >= len(visible) {
-		return ""
-	}
-	return visible[row]
+	return m.sidebarScreen.PathAtLocalY(mouse.Y - rect.Y)
 }
 
 // openFileFromTree opens a file in the editor when triggered from
@@ -149,6 +145,7 @@ func (m *App) startDeleteInTree(path string) {
 		detail = path
 	}
 	// Default focus No (safe) so accidental Enter does not delete.
+	m.GitDiscardPending = nil
 	m.TreeDeleteChoice = 1
 	frame := ui.BuildTreeDeleteFrame(m.Theme, question, detail, m.TreeDeleteChoice)
 	w, h := frame.Measure(80, 40)
@@ -313,11 +310,19 @@ func (m *App) handleTreeDeleteConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *App) refreshTreeDeleteConfirm() {
-	if m.windowManager == nil || m.TreeDeletePending == "" {
+	if m.windowManager == nil || (m.TreeDeletePending == "" && m.GitDiscardPending == nil) {
 		return
 	}
 	fw := m.windowManager.Window("tree-delete-confirm")
 	if fw == nil {
+		return
+	}
+	if m.GitDiscardPending != nil {
+		frame := m.buildGitDiscardFrame(*m.GitDiscardPending)
+		w, h := frame.Measure(80, 40)
+		fw.SetSize(w, h)
+		fw.SetContent(frame)
+		fw.MarkContentDirty()
 		return
 	}
 	path := m.TreeDeletePending
@@ -339,6 +344,12 @@ func (m *App) refreshTreeDeleteConfirm() {
 }
 
 func (m *App) confirmTreeDelete() {
+	if m.GitDiscardPending != nil {
+		change := *m.GitDiscardPending
+		m.overlayHost.Close(ui.OverlayTreeDelete)
+		m.startSourceControlMutation(m.discardGitChange(change))
+		return
+	}
 	path := m.TreeDeletePending
 	m.overlayHost.Close(ui.OverlayTreeDelete)
 	if path == "" {

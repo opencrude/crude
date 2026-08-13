@@ -1,7 +1,10 @@
 package session
 
 import (
+	"database/sql"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"crude/sessiondb"
 	ttypes "crude/tui/types"
@@ -66,5 +69,53 @@ func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
 	if len(overrides) != 1 || overrides["researcher"].Model != "claude" ||
 		overrides["researcher"].APIStandard != "anthropic" {
 		t.Fatalf("explicit override map not honored: %#v", overrides)
+	}
+}
+
+func TestResumeHydratesCompletedSubAgents(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "parent.db")
+	db, err := sessiondb.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate: %v", err)
+	}
+	if err := sessiondb.Create(db, sessiondb.SessionMeta{
+		ID: "parent", ProjectPath: root, ProjectName: "project",
+		CreatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := sessiondb.Create(db, sessiondb.SessionMeta{
+		ID: "child", ProjectPath: root, ProjectName: "project",
+		CreatedAt: time.Now().UnixNano(), ParentSessionID: sql.NullString{
+			String: "parent", Valid: true,
+		},
+	}); err != nil {
+		t.Fatalf("Create child: %v", err)
+	}
+	if err := sessiondb.InsertSubAgentResult(db, sessiondb.SubAgentResultRow{
+		ParentSessionID: "parent", ChildSessionID: "child",
+		AgentID: "research-1", AgentName: "Research",
+		AgentCategory: "researcher", Status: "completed",
+		SummaryGist: "Found the lifecycle bug.", CreatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("InsertSubAgentResult: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close seed DB: %v", err)
+	}
+
+	resumed, err := ResumeSessionWithDir(dbPath, testConfig(), root, root)
+	if err != nil {
+		t.Fatalf("ResumeSessionWithDir: %v", err)
+	}
+	t.Cleanup(resumed.Close)
+	if resumed.SubAgentRunner() == nil {
+		t.Fatal("sub-agent runner was not restored")
+	}
+	result, ok := resumed.SubAgentRunner().Manager().GetCompleted("research-1")
+	if !ok || result.SummaryGist != "Found the lifecycle bug." ||
+		result.SessionID != "child" {
+		t.Fatalf("hydrated result = %+v, ok=%v", result, ok)
 	}
 }

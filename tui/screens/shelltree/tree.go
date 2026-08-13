@@ -2,6 +2,7 @@
 package shelltree
 
 import (
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -9,6 +10,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
+	"crude/tui/screens/panelchrome"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -119,12 +121,12 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 		cmd := v.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 		v.owner.syncFromModel()
 		inv := ui.InvalidatePaint
-		// The filter row is a child that mounts/unmounts with filter mode;
-		// toggling it changes the slot geometry, not just pixels.
-		if v.owner.model.FilterActive() != filterWas {
-			inv |= ui.InvalidateLayout
+		var action *ui.Action
+		if !filterWas && v.owner.model.FilterActive() {
+			action = &ui.Action{ID: "ui.focus", Payload: FilterID}
+			inv |= ui.InvalidateFocus
 		}
-		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: inv}
+		return ui.EventResult{Handled: true, Cmd: cmd, Action: action, Invalidate: inv}
 	default:
 		cmd := v.owner.model.Update(filetree.TreeMouseMsg{Mouse: translateMouseY(evt, localY)})
 		v.owner.syncFromModel()
@@ -171,8 +173,19 @@ func New(th *theme.Theme, model *filetree.FileTreeModel) *Screen {
 		field: ui.NewFilterField(FilterID, tokens),
 		owner: s,
 	}
-	s.filter.field.SetPrompt("/ ")
-	s.filter.field.SetPlaceholder("Filter files")
+	s.filter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
+	s.filter.field.SetPromptPlacement(ui.PromptEnd)
+	s.filter.field.SetPlaceholder("Search files")
+	s.filter.field.OnChanged(func(value string) {
+		if s.model == nil {
+			return
+		}
+		if !s.model.FilterActive() {
+			_ = s.model.EnterFilterMode()
+		}
+		s.model.SetFilter(value)
+		s.syncFromModel()
+	})
 	s.split = ui.NewSplitModel(ui.Horizontal)
 	s.split.SetMinSizes(12, 0)
 	s.divider = ui.NewSplitDivider(DividerID, s.split)
@@ -220,6 +233,8 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	}
 	if s.filter != nil && s.filter.field != nil {
 		s.filter.field.SetTokens(tokens)
+		s.filter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
+		s.filter.field.SetPromptPlacement(ui.PromptEnd)
 	}
 	if s.divider != nil {
 		s.divider.SetTokens(tokens)
@@ -255,7 +270,7 @@ func (s *Screen) TreeControl() *ui.Tree {
 
 func (s *Screen) Children() []ui.Component {
 	kids := make([]ui.Component, 0, 4)
-	if s.filterRowActive() && s.filter != nil {
+	if s.filter != nil {
 		kids = append(kids, s.filter)
 	}
 	if s.tree != nil {
@@ -308,15 +323,8 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.syncFromModel()
 }
 
-func (s *Screen) filterRowActive() bool {
-	return s.model != nil && s.model.FilterActive()
-}
-
 func (s *Screen) headerRows() int {
-	rows := 0
-	if s.filterRowActive() {
-		rows++
-	}
+	rows := panelchrome.HeaderRows
 	if s.breadcrumb != "" {
 		rows++
 	}
@@ -350,23 +358,33 @@ func (s *Screen) layoutChildren(r ui.Rect) {
 		treeW = 1
 	}
 	treeH := r.H
-	if rows := s.headerRows(); rows > 0 && treeH > 0 {
-		if rows >= treeH {
+	if panelchrome.HeaderRows > 0 && treeH > 0 {
+		if panelchrome.HeaderRows >= treeH {
 			treeH = 1
 		} else {
-			treeH -= rows
+			treeH -= panelchrome.HeaderRows
 		}
 	}
-	treeY := 0
-	if s.filterRowActive() {
-		treeY = 1
+	treeX := panelchrome.PadLeft
+	if treeX >= treeW {
+		treeX = 0
 	}
-	s.tree.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: treeY, W: treeW, H: maxInt(1, treeH)})
-	if s.filterRowActive() && s.filter != nil {
-		s.filter.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: treeW, H: 1})
+	s.tree.Layout(ui.LayoutContext{}, ui.Rect{
+		X: treeX, Y: panelchrome.HeaderRows, W: maxInt(1, treeW-treeX), H: maxInt(1, treeH),
+	})
+	if s.filter != nil {
+		filterW := maxInt(1, treeW-panelchrome.PadLeft*2)
+		s.filter.Layout(ui.LayoutContext{}, ui.Rect{
+			X: panelchrome.PadLeft, Y: panelchrome.TitleRows, W: filterW, H: panelchrome.SearchRows,
+		})
 	}
 	if s.scrollbar != nil && treePanelW >= 1 {
-		s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{X: treePanelW - 1, Y: 0, W: 1, H: r.H})
+		s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{
+			X: treePanelW - 1,
+			Y: panelchrome.HeaderRows,
+			W: 1,
+			H: maxInt(1, r.H-panelchrome.HeaderRows),
+		})
 	}
 	if s.divider != nil && r.W > 0 {
 		if s.split != nil && !s.split.Dragging() {
@@ -393,7 +411,7 @@ func (s *Screen) syncFromModel() {
 		s.filter.field.SetValue(s.model.Filter())
 	}
 	contentW := filetree.SidebarContentWidth(s.width)
-	s.breadcrumb = filetree.BreadcrumbLine(s.model, contentW)
+	s.breadcrumb = filetree.BreadcrumbLineWithIcons(s.model, contentW, s.icons)
 	s.tree.tree.SetBreadcrumb(s.breadcrumb)
 	filetree.SyncScrollModel(s.model, s.tree.tree.Scroll(), s.viewportHeight())
 	if s.scrollbar != nil {
@@ -422,6 +440,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	}
 	s.syncFromModel()
+	title := panelchrome.Title{Label: "Explorer", Icon: s.explorerIcon()}
+	if s.model != nil && s.model.Filter() != "" {
+		title.Badge = strconv.Itoa(len(s.model.VisibleNodes()))
+	}
+	panelchrome.PaintTitle(buf, ox, oy, b, s.tokens, title)
 	// Children (tree, scrollbar, divider) are painted by Host.paintNode.
 }
 
@@ -452,6 +475,48 @@ func (s *Screen) Semantics() ui.Semantics {
 
 func (s *Screen) ContentWidth() int {
 	return filetree.SidebarContentWidth(s.width)
+}
+
+// PathAtLocalY resolves a screen-local row to the visible file-tree path.
+// Title, search, and sticky breadcrumb rows are chrome and never resolve to a
+// file. This is the canonical hit path for adaptive context menus.
+func (s *Screen) PathAtLocalY(localY int) string {
+	if s.model == nil {
+		return ""
+	}
+	row := localY - panelchrome.HeaderRows
+	if row < 0 {
+		return ""
+	}
+	if s.breadcrumb != "" {
+		if row == 0 {
+			return ""
+		}
+		row--
+	}
+	idx := s.model.ScrollOffset() + row
+	nodes := s.model.VisibleNodes()
+	if idx < 0 || idx >= len(nodes) || nodes[idx] == nil {
+		return ""
+	}
+	return nodes[idx].Path
+}
+
+// BodyTop is the first row owned by the tree control (before an optional
+// sticky breadcrumb).
+func (s *Screen) BodyTop() int { return panelchrome.HeaderRows }
+
+func (s *Screen) explorerIcon() string {
+	if s.icons != nil && s.model != nil && s.model.Root != nil {
+		icon := s.icons.ResolveIcon(s.model.Root.Name, true, false, true).Icon
+		if icon != "" {
+			return icon
+		}
+	}
+	if panelchrome.NerdFont(s.th) {
+		return "\uf07b"
+	}
+	return "▤"
 }
 
 func (s *Screen) PaintTestBuffer(w, h int) *surface.CellBuffer {
@@ -505,21 +570,49 @@ func (f *treeFilterField) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.Pain
 	f.field.Paint(buf, ox+f.Bounds().X, oy+f.Bounds().Y, ctx)
 }
 
-func (f *treeFilterField) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+func (f *treeFilterField) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if f.owner == nil || f.owner.model == nil {
 		return ui.EventResult{}
 	}
-	if !evt.IsKey() {
-		return ui.EventResult{}
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+		_ = f.owner.model.EnterFilterMode()
+		ctx.Focused = true
+		res := f.field.Handle(ctx, evt)
+		res.Handled = true
+		res.Invalidate |= ui.InvalidateFocus | ui.InvalidatePaint
+		return res
 	}
-	filterWas := f.owner.model.FilterActive()
-	cmd := f.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
+	if evt.IsKey() {
+		switch evt.Key.Code {
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd, tea.KeyEnter:
+			cmd := f.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
+			f.owner.syncFromModel()
+			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+		case tea.KeyEsc:
+			if f.field.Value() != "" {
+				f.owner.model.ClearFilter()
+				f.field.SetValue("")
+				f.owner.syncFromModel()
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+			}
+			f.owner.model.ClearFilter()
+			f.owner.syncFromModel()
+			return ui.EventResult{
+				Handled:    true,
+				Action:     &ui.Action{ID: "ui.focus", Payload: TreeID},
+				Invalidate: ui.InvalidateFocus | ui.InvalidatePaint,
+			}
+		case 'r', '.':
+			if evt.Key.Mod.Contains(tea.ModCtrl) {
+				cmd := f.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
+				return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+			}
+		}
+	}
+	ctx.Focused = true
+	res := f.field.Handle(ctx, evt)
 	f.owner.syncFromModel()
-	inv := ui.InvalidatePaint
-	if f.owner.model.FilterActive() != filterWas {
-		inv |= ui.InvalidateLayout
-	}
-	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: inv}
+	return res
 }
 
 func (f *treeFilterField) Semantics() ui.Semantics {

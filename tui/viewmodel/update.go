@@ -212,6 +212,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
+	case sourceControlResultMsg:
+		m.applySourceControlResult(msg)
 	case ui.SearchDebouncedMsg:
 		if m.findInFiles != nil {
 			if cmd := m.findInFiles.HandleSearchDebounced(msg); cmd != nil {

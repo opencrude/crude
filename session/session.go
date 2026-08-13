@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -42,13 +43,13 @@ type Session struct {
 	cfg *Config
 	mu  sync.Mutex
 
-	provider  *provider.Provider
-	exec      fileio.Executer
-	editor    *fileio.Editor
-	logger    *logger.Logger
-	permStore *safety.PermissionStore
-	sm        *statemachine.ConversationStateMachine
-	asyncMgr  *fileio.AsyncCommandManager
+	provider    *provider.Provider
+	exec        fileio.Executer
+	editor      *fileio.Editor
+	logger      *logger.Logger
+	permStore   *safety.PermissionStore
+	sm          *statemachine.ConversationStateMachine
+	asyncMgr    *fileio.AsyncCommandManager
 	memoryStore MemoryStore
 
 	msgs          []provider.ChatMessage
@@ -300,6 +301,11 @@ func (s *Session) Close() {
 	}
 
 	if s.db != nil {
+		if err := persistConversationState(
+			context.Background(), s.db, s.sm, s.sessionID,
+		); err != nil {
+			s.logger.Error("STATE", "persist_on_close_failed", "error", err.Error())
+		}
 		if err := sessiondb.CloseSession(s.db, s.sessionID); err != nil {
 			s.logger.Error("SESSION", "close_session_error", "error", err.Error())
 		}

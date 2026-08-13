@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 type FileOwnership struct {
 	mu     sync.Mutex
 	claims map[string]ClaimEntry
+	reads  map[AgentID]map[string]struct{}
 }
 
 type ClaimEntry struct {
@@ -23,6 +25,7 @@ type ClaimEntry struct {
 func NewFileOwnership() *FileOwnership {
 	return &FileOwnership{
 		claims: make(map[string]ClaimEntry),
+		reads:  make(map[AgentID]map[string]struct{}),
 	}
 }
 
@@ -110,17 +113,30 @@ func (fo *FileOwnership) Release(agentID AgentID) {
 			delete(fo.claims, path)
 		}
 	}
+	delete(fo.reads, agentID)
+}
+
+func (fo *FileOwnership) RecordRead(agentID AgentID, path string) {
+	path = normalizeClaimPath(path)
+	if path == "" {
+		return
+	}
+	fo.mu.Lock()
+	defer fo.mu.Unlock()
+	if fo.reads[agentID] == nil {
+		fo.reads[agentID] = make(map[string]struct{})
+	}
+	fo.reads[agentID][path] = struct{}{}
 }
 
 func (fo *FileOwnership) ReadClaimsByAgent(agentID AgentID) []string {
 	fo.mu.Lock()
 	defer fo.mu.Unlock()
-	var paths []string
-	for path, entry := range fo.claims {
-		if entry.AgentID == agentID && !entry.IsWrite {
-			paths = append(paths, path)
-		}
+	paths := make([]string, 0, len(fo.reads[agentID]))
+	for path := range fo.reads[agentID] {
+		paths = append(paths, path)
 	}
+	sort.Strings(paths)
 	return paths
 }
 
@@ -133,5 +149,6 @@ func (fo *FileOwnership) WriteClaimsByAgent(agentID AgentID) []string {
 			paths = append(paths, path)
 		}
 	}
+	sort.Strings(paths)
 	return paths
 }

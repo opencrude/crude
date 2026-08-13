@@ -8,9 +8,25 @@ inherit.
 Application  (~/.crude/config.json)
     ↓ MergeAppWorkspace
 Workspace    (workspace.db / workspace_settings)
-    ↓ session dock overlays agent provider/model/thinking
+    ↓ session dock overlays agent provider/model/protocol/thinking
 Session      (session.db / session_agent_settings)
 ```
+
+Provider protocol resolution is equally layered:
+
+```
+session role override
+    ↓
+provider's selected-model override
+    ↓
+provider default
+    ↓
+built-in preset default
+```
+
+Supported standards are OpenAI Responses, OpenAI Chat Completions, and
+Anthropic Messages. Existing configs with no protocol fields continue to use
+their preset default.
 
 `workspace.LoadAppSettings()` returns the **effective** snapshot (app +
 workspace). Application defaults alone are `AppDefaults()`.
@@ -68,6 +84,11 @@ Visual contracts for this window:
   false while content fits)
 - Form paint clips to the panel viewport. Scrolled fields must not overwrite
   the footer separator or Save/Cancel row
+- The Providers page separates Connection, Communication protocol, and Model
+  defaults. A provider protocol can be overridden for one selected model
+  without changing other models on the same gateway.
+- Model choices show context size, per-million-token pricing, and
+  vision/tools/file capability badges when models.dev metadata is available.
 
 ## LSP
 
@@ -88,3 +109,5 @@ Layer coverage lives next to the code:
 - `tui/ui/form_select_test.go` — overlay height and paint/hit-testing
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar
 - `tui/settings/settings_scope_test.go` — workspace save payload and overflow scrollbars
+- `tui/settings/provider_switch_test.go` — provider/model protocol isolation
+- `tui/screens/sessionsettings/session_settings_test.go` — session protocol overrides
