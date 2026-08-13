@@ -9,6 +9,7 @@ import (
 
 	"crude/agent"
 	"crude/fileio"
+	"crude/provider"
 	"crude/safety"
 	"crude/statemachine"
 	"crude/tools"
@@ -16,19 +17,11 @@ import (
 
 const asyncPromotionThreshold = 15 * time.Second
 
-func (s *Session) newAgent() *agent.Agent {
-	mainCat := s.cfg.GetActiveDefaultCategory()
-
-	p := s.provider
-	p.Model = mainCat.Model
-	p.SetThinkingEffort(mainCat.ThinkingEffort)
-
-	a := agent.NewAgent(p, mainCat.Model, s.logger)
+func (s *Session) newAgent(p *provider.Provider, multiAgent bool) *agent.Agent {
+	a := agent.NewAgent(p, p.Model, s.logger)
 
 	a.Yolo = s.yolo
 	a.AsyncMgr = s.asyncMgr
-
-	multiAgent := s.cfg.IsMultiAgentEnabled()
 
 	if multiAgent {
 		a.FilteredTools = agent.ApplyOrchestratorOverrides(
@@ -40,6 +33,9 @@ func (s *Session) newAgent() *agent.Agent {
 	a.Policy = safety.DefaultPolicy()
 
 	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		if result, handled, err := s.executeMemoryTool(ctx, tool, params); handled {
+			return result, err
+		}
 		switch tool {
 		case "plan":
 			objective := getStrParam(params, "objective")
@@ -561,5 +557,3 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 		}
 	}
 }
-
-

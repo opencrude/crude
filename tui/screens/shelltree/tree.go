@@ -8,6 +8,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/filetree"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -70,6 +71,26 @@ func (v *fileTreeView) Layout(ctx ui.LayoutContext, r ui.Rect) {
 
 func (v *fileTreeView) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	v.tree.Paint(buf, ox, oy, ctx)
+	v.paintFilterEmptyState(buf, ox, oy)
+}
+
+// paintFilterEmptyState shows a hint row when an active filter matches
+// nothing, so the sidebar does not silently go blank.
+func (v *fileTreeView) paintFilterEmptyState(buf *surface.CellBuffer, ox, oy int) {
+	if v.owner == nil || v.owner.model == nil || buf == nil {
+		return
+	}
+	model := v.owner.model
+	if model.Filter() == "" || len(model.VisibleNodes()) > 0 {
+		return
+	}
+	r := v.Bounds()
+	if r.Empty() {
+		return
+	}
+	tokens := v.owner.tokens
+	text := rendering.TruncateLine("No matches", max(1, r.W-1))
+	buf.WriteString(ox+r.X+1, oy+r.Y, text, tokens.Color(ui.ColorMuted), tokens.Color(ui.ColorBg), 0)
 }
 
 func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
@@ -94,9 +115,16 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 	}
 	switch evt.Kind {
 	case ui.EventKey:
+		filterWas := v.owner.model.FilterActive()
 		cmd := v.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 		v.owner.syncFromModel()
-		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+		inv := ui.InvalidatePaint
+		// The filter row is a child that mounts/unmounts with filter mode;
+		// toggling it changes the slot geometry, not just pixels.
+		if v.owner.model.FilterActive() != filterWas {
+			inv |= ui.InvalidateLayout
+		}
+		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: inv}
 	default:
 		cmd := v.owner.model.Update(filetree.TreeMouseMsg{Mouse: translateMouseY(evt, localY)})
 		v.owner.syncFromModel()
@@ -484,9 +512,14 @@ func (f *treeFilterField) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult
 	if !evt.IsKey() {
 		return ui.EventResult{}
 	}
+	filterWas := f.owner.model.FilterActive()
 	cmd := f.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 	f.owner.syncFromModel()
-	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+	inv := ui.InvalidatePaint
+	if f.owner.model.FilterActive() != filterWas {
+		inv |= ui.InvalidateLayout
+	}
+	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: inv}
 }
 
 func (f *treeFilterField) Semantics() ui.Semantics {

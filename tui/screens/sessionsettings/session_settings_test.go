@@ -35,13 +35,13 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 	if result.Action != nil || screen.page != rolePage || screen.role != "default" {
 		t.Fatalf("role open result=%#v page=%d role=%q", result, screen.page, screen.role)
 	}
-	if screen.formModel.FieldCount() != 3 {
-		t.Fatalf("role form fields=%d, want provider/model/thinking", screen.formModel.FieldCount())
+	if screen.formModel.FieldCount() != 4 {
+		t.Fatalf("role form fields=%d, want provider/model/protocol/thinking", screen.formModel.FieldCount())
 	}
 
 	buf := surface.NewCellBuffer(80, 13)
 	host.Paint(buf)
-	if !bufferContains(buf, "Main Agent") || !bufferContains(buf, "Thinking level") {
+	if !bufferContains(buf, "Main Agent") || !bufferContains(buf, "Communication protocol") {
 		t.Fatal("native role form did not paint expected content")
 	}
 }
@@ -63,6 +63,33 @@ func TestRoleResetRestoresInheritanceAndRemovesOverride(t *testing.T) {
 	}
 	if got := settings.Agents.Categories["crafter"].Model; got != "workspace-crafter" {
 		t.Fatalf("model after reset=%q, want workspace-crafter", got)
+	}
+}
+
+func TestRoleProtocolOverrideIsSessionScoped(t *testing.T) {
+	base := types.Settings{
+		ProviderID: "openai",
+		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+			"default": {Provider: "openai", Model: "gpt-5.6"},
+		}},
+	}
+	screen := New(theme.DefaultDark(), base, base, nil)
+	screen.ConfigureProviders(
+		[]types.ProviderPreset{{ID: "openai", Name: "OpenAI", StandardID: "openai-responses"}},
+		map[string]types.ProviderConfig{
+			"openai": {APIStandard: "openai-responses", Model: "gpt-5.6"},
+		},
+	)
+	screen.openRole("default")
+	screen.formModel.SetValue(fieldStandard, ui.StringValue("openai"))
+	screen.applyRoleForm()
+
+	settings := screen.ToSettings()
+	if got := settings.SessionOverrides["default"].APIStandard; got != "openai" {
+		t.Fatalf("session protocol override = %q", got)
+	}
+	if got := screen.providers["openai"].APIStandard; got != "openai-responses" {
+		t.Fatalf("provider default mutated = %q", got)
 	}
 }
 

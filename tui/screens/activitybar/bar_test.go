@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
@@ -43,5 +44,28 @@ func TestClickEmitsSelect(t *testing.T) {
 	view, ok := res.Action.Payload.(View)
 	if !ok || view != ViewTerminals {
 		t.Fatalf("payload=%v", res.Action.Payload)
+	}
+}
+
+func TestHoverPaintsOnlyWhileHostHoversRail(t *testing.T) {
+	th := theme.DefaultDark()
+	s := New(th)
+	s.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: Width, H: 20})
+	res := s.Handle(ui.EventContext{LocalY: 3}, ui.Event{Kind: ui.EventMouseMotion})
+	if !res.Handled {
+		t.Fatal("motion over a glyph row must be handled")
+	}
+	hover := ui.NewTokenSet(th).Color(ui.ColorHover)
+
+	buf := surface.NewCellBuffer(Width, 20)
+	s.Paint(buf, 0, 0, ui.PaintContext{Hovered: true})
+	if !buf.Get(1, 3).BG.Equal(hover) {
+		t.Fatal("hovered rail row should paint hover bg while host hovers the rail")
+	}
+
+	buf = surface.NewCellBuffer(Width, 20)
+	s.Paint(buf, 0, 0, ui.PaintContext{Hovered: false})
+	if buf.Get(1, 3).BG.Equal(hover) {
+		t.Fatal("stale hover must not paint after the pointer left the rail")
 	}
 }

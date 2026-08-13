@@ -150,7 +150,7 @@ type TokenTracker struct {
 	LastRealPromptTokens int
 
 	// Cumulative real prompt tokens across all turns.
-	CumulativePromptTokens    int
+	CumulativePromptTokens     int
 	CumulativeCompletionTokens int
 
 	logger *logger.Logger

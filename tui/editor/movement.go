@@ -250,6 +250,8 @@ func colToRuneIdx(runes []rune, col int) int {
 	return len(runes)
 }
 
+// moveToLineStart implements Smart Home: the cursor toggles between the
+// first non-whitespace column and column 0, from either direction.
 func (e *Editor) moveToLineStart() {
 	e.clearGoal()
 	b, err := e.buf.Line(e.cursor.Line)
@@ -259,19 +261,17 @@ func (e *Editor) moveToLineStart() {
 		return
 	}
 	expLine := ExpandTabs(string(b), tabWidth)
-	if e.cursor.Col > 0 {
-		firstNonWS := 0
-		for _, r := range expLine {
-			if r != ' ' {
-				break
-			}
-			firstNonWS++
+	firstNonWS := 0
+	for _, r := range expLine {
+		if r != ' ' {
+			break
 		}
-		if e.cursor.Col != firstNonWS {
-			e.cursor.Col = firstNonWS
-		} else {
-			e.cursor.Col = 0
-		}
+		firstNonWS++
+	}
+	if e.cursor.Col == firstNonWS {
+		e.cursor.Col = 0
+	} else {
+		e.cursor.Col = firstNonWS
 	}
 	e.ensureCursorVisible()
 }

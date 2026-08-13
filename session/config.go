@@ -16,6 +16,7 @@ type CategoryConfig struct {
 	Provider       string   `json:"provider,omitempty"`
 	ProviderURL    string   `json:"provider_url,omitempty"`
 	APIKey         string   `json:"api_key,omitempty"`
+	APIStandard    string   `json:"api_standard,omitempty"`
 	Model          string   `json:"model,omitempty"`
 	ThinkingEffort string   `json:"thinking_effort,omitempty"`
 	Policy         string   `json:"policy,omitempty"`
@@ -139,10 +140,32 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	APIKey         string `json:"api_key,omitempty"`
-	ProviderURL    string `json:"provider_url,omitempty"`
-	Model          string `json:"model,omitempty"`
-	ThinkingEffort string `json:"thinking_effort,omitempty"`
+	APIKey         string            `json:"api_key,omitempty"`
+	ProviderURL    string            `json:"provider_url,omitempty"`
+	APIStandard    string            `json:"api_standard,omitempty"`
+	Model          string            `json:"model,omitempty"`
+	ModelStandards map[string]string `json:"model_standards,omitempty"`
+	ThinkingEffort string            `json:"thinking_effort,omitempty"`
+}
+
+func (c ProviderConfig) StandardForModel(model, providerID string) string {
+	if standard := c.ModelStandards[model]; standard != "" {
+		return standard
+	}
+	if c.APIStandard != "" {
+		return c.APIStandard
+	}
+	return provider.DefaultStandardID(providerID)
+}
+
+func providerForCategory(category CategoryConfig) (*provider.Provider, error) {
+	p := provider.FromPreset(category.Provider, category.APIKey, category.ProviderURL)
+	p.Model = category.Model
+	p.SetThinkingEffort(category.ThinkingEffort)
+	if err := p.SetStandardID(category.APIStandard); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func (c *Config) GetActiveProviderConfig() ProviderConfig {
@@ -241,6 +264,13 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 			cat.ProviderURL = p.BaseURL
 		}
 	}
+	if cat.APIStandard == "" {
+		if configured, ok := c.Providers[cat.Provider]; ok {
+			cat.APIStandard = configured.StandardForModel(cat.Model, cat.Provider)
+		} else {
+			cat.APIStandard = provider.DefaultStandardID(cat.Provider)
+		}
+	}
 }
 
 func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
@@ -259,6 +289,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		Provider:            v.Provider,
 		ProviderURL:         v.ProviderURL,
 		APIKey:              v.APIKey,
+		APIStandard:         v.APIStandard,
 		Model:               v.Model,
 		ThinkingEffort:      v.ThinkingEffort,
 		Policy:              v.Policy,
@@ -280,6 +311,7 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		Provider:            v.Provider,
 		ProviderURL:         v.ProviderURL,
 		APIKey:              v.APIKey,
+		APIStandard:         v.APIStandard,
 		Model:               v.Model,
 		ThinkingEffort:      v.ThinkingEffort,
 		Policy:              v.Policy,
@@ -370,6 +402,7 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		ProviderID:      mainCat.Provider,
 		ProviderURL:     providerURL,
 		ProviderAPIKey:  mainCat.APIKey,
+		APIStandard:     mainCat.APIStandard,
 		ThinkingEffort:  mainCat.ThinkingEffort,
 		TurnLogsEnabled: turnLogs,
 		Agents:          agentsSettings,

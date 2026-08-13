@@ -363,6 +363,35 @@ func TestHandleMouseTitleBarDrag(t *testing.T) {
 	}
 }
 
+func TestHandleMouseTitleActionCellsNeitherDragNorResize(t *testing.T) {
+	mgr := NewWindowManager()
+	fw := NewFloatingWindow("w", "W", testWidget{}, 20, 10)
+	fw.SetPosition(5, 5)
+	fw.SetTitleActionWidth(3)
+	mgr.AddWindow(fw)
+
+	// Reserved cells sit left of close: w=20, closable → local x 14..16.
+	if !fw.IsOnTitleAction(5+14, 5) || !fw.IsOnTitleAction(5+16, 5) {
+		t.Fatal("title-action region not where expected")
+	}
+	msg := tea.MouseClickMsg{X: 5 + 15, Y: 5}
+	clicked := mgr.HandleMouse(msg)
+	if clicked != fw {
+		t.Fatal("title-action click should return the window for content dispatch")
+	}
+	if fw.IsDragging() || mgr.activeDrag == fw {
+		t.Error("title-action click must not start a drag")
+	}
+	if fw.IsResizing() || mgr.activeResize == fw {
+		t.Error("title-action click must not start a top-edge resize")
+	}
+	// Ordinary title cells still drag.
+	msg = tea.MouseClickMsg{X: 5 + 7, Y: 5}
+	if mgr.HandleMouse(msg) != fw || !fw.IsDragging() {
+		t.Error("plain title bar click should still start a drag")
+	}
+}
+
 func TestHandleMouseEdgeResize(t *testing.T) {
 	mgr := NewWindowManager()
 	fw := NewFloatingWindow("w", "W", testWidget{}, 20, 10)

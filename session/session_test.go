@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"crude/provider"
+	"crude/sessiondb"
 )
 
 func TestDetectInterruption_Empty(t *testing.T) {
@@ -127,6 +128,21 @@ func TestSanitizeMessages_OrphanedToolCalls(t *testing.T) {
 	if !strings.HasPrefix(last.ContentString(), "[cancelled]") {
 		t.Errorf("expected backfilled result to start with [cancelled], got %q", last.ContentString())
 	}
+	if !last.ToolError {
+		t.Error("backfilled cancellation should be marked as a tool error")
+	}
+}
+
+func TestSanitizeMessages_RemovesMiddleOrphanToolResult(t *testing.T) {
+	msgs := []provider.ChatMessage{
+		{Role: "user", Content: provider.TextContent("hi")},
+		{Role: "tool", ToolCallID: "orphan", Content: provider.TextContent("invalid")},
+		{Role: "assistant", Content: provider.TextContent("hello")},
+	}
+	result := sanitizeMessages(msgs)
+	if len(result) != 2 || result[0].Role != "user" || result[1].Role != "assistant" {
+		t.Fatalf("orphan tool result survived sanitization: %+v", result)
+	}
 }
 
 func TestTruncateMessages_NoTruncation(t *testing.T) {
@@ -148,5 +164,114 @@ func TestTruncateMessages_ZeroWindow(t *testing.T) {
 	result := truncateMessages(msgs, 0, "test")
 	if len(result) != 2 {
 		t.Errorf("expected 2 (zero window = no truncation), got %d", len(result))
+	}
+}
+
+func TestTruncateMessagesKeepsToolExchangeAtomic(t *testing.T) {
+	msgs := []provider.ChatMessage{
+		{Role: "user", Content: provider.TextContent(strings.Repeat("old context ", 100))},
+		{
+			Role:    "assistant",
+			Content: provider.TextContent(""),
+			ToolCalls: []provider.ToolCall{
+				{ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read", Arguments: `{"path":"a"}`}},
+				{ID: "tc2", Type: "function", Function: provider.FunctionCall{Name: "read", Arguments: `{"path":"b"}`}},
+			},
+		},
+		{Role: "tool", ToolCallID: "tc1", Content: provider.TextContent(strings.Repeat("result ", 100))},
+		{Role: "tool", ToolCallID: "tc2", Content: provider.TextContent(strings.Repeat("result ", 100))},
+	}
+	result := truncateMessages(msgs, 80, "test")
+	if len(result) != 4 {
+		t.Fatalf("result length = %d, want summary plus complete tool exchange: %+v", len(result), result)
+	}
+	if result[0].Role != "user" || result[1].Role != "assistant" ||
+		len(result[1].ToolCalls) != 2 || result[2].ToolCallID != "tc1" ||
+		result[3].ToolCallID != "tc2" {
+		t.Fatalf("tool exchange was split: %+v", result)
+	}
+}
+
+func TestTruncateMessagesBuildsUsefulCheckpoint(t *testing.T) {
+	msgs := []provider.ChatMessage{
+		provider.NewTextMessage("user", strings.Repeat("investigate the parser bug ", 40)),
+		provider.NewTextMessage("assistant", "The parser drops CR-only SSE boundaries."),
+		{
+			Role: "assistant",
+			ToolCalls: []provider.ToolCall{{
+				ID:       "call-1",
+				Function: provider.FunctionCall{Name: "read_file", Arguments: `{"path":"provider/sse.go"}`},
+			}},
+		},
+		{Role: "tool", ToolCallID: "call-1", Content: provider.TextContent("reader implementation")},
+		provider.NewTextMessage("user", strings.Repeat("continue ", 80)),
+	}
+	result := truncateMessages(msgs, 120, "test")
+	if len(result) >= len(msgs) {
+		t.Fatalf("messages were not compacted: %d", len(result))
+	}
+	checkpoint := result[0].ContentString()
+	for _, want := range []string{"<context_checkpoint", "Tool call-1"} {
+		if !strings.Contains(checkpoint, want) {
+			t.Fatalf("checkpoint missing %q: %s", want, checkpoint)
+		}
+	}
+}
+
+func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
+	history := []provider.ChatMessage{
+		provider.NewTextMessage("user", "old request"),
+		provider.NewTextMessage("assistant", "old answer"),
+		provider.NewTextMessage("user", "current request"),
+	}
+	s := &Session{
+		msgs:         append([]provider.ChatMessage(nil), history...),
+		msgTurns:     []int{1, 1, 2},
+		displayMetas: make([]sessiondb.DisplayMeta, 3),
+		turnNumber:   2,
+	}
+	context := []provider.ChatMessage{
+		provider.NewTextMessage("user", "<context_checkpoint>old state</context_checkpoint>"),
+		history[2],
+	}
+	agentMessages := []provider.ChatMessage{
+		provider.NewTextMessage("system", "system"),
+		context[0],
+		context[1],
+		provider.NewTextMessage("assistant", "new answer"),
+	}
+	s.finalizeTurn(
+		agentMessages, len(context),
+		&displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)},
+		"new answer", "msg-2",
+	)
+	if len(s.msgs) != 4 {
+		t.Fatalf("durable history length = %d: %+v", len(s.msgs), s.msgs)
+	}
+	if s.msgs[0].ContentString() != "old request" ||
+		s.msgs[3].ContentString() != "new answer" {
+		t.Fatalf("durable history was replaced by compacted projection: %+v", s.msgs)
+	}
+	for _, message := range s.msgs {
+		if strings.Contains(message.ContentString(), "<context_checkpoint>") {
+			t.Fatal("ephemeral compaction checkpoint leaked into durable history")
+		}
+	}
+}
+
+func TestHardCancelSignalsEveryOrchestrator(t *testing.T) {
+	s := &Session{orchestrators: make(map[string]*Orchestrator)}
+	first := NewOrchestrator("first", s)
+	second := NewOrchestrator("second", s)
+	s.orchestrators[first.ID] = first
+	s.orchestrators[second.ID] = second
+
+	s.HardCancel()
+	for _, orchestrator := range []*Orchestrator{first, second} {
+		select {
+		case <-orchestrator.CancelCh:
+		default:
+			t.Fatalf("orchestrator %q was not cancelled", orchestrator.ID)
+		}
 	}
 }

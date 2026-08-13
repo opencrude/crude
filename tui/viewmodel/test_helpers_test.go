@@ -20,6 +20,7 @@ import (
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/termdock"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -49,9 +50,10 @@ func newTestApp(t *testing.T) *App {
 	activityList := activitylist.New(th)
 	launcherScreen := launcher.New(th)
 	launcherScreen.SetData(".", nil)
+	termDock := termdock.New(th)
 
 	deck := newDeckMount(nil)
-	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck)
+	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
 	rootHost := ui.NewHost(th, shell)
 
 	app := &App{
@@ -83,6 +85,8 @@ func newTestApp(t *testing.T) *App {
 		activityBar:        activityBar,
 		activityList:       activityList,
 		termScreens:        make(map[string]*shellterm.Screen),
+		termDock:           termDock,
+		termDockHeight:     12,
 		inputScreen:        inputScreen,
 		chatScreen:         chatScreen,
 		editorScreen:       editorScreen,

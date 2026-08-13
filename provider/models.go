@@ -1,9 +1,11 @@
 package provider
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -35,52 +37,99 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 
 	client := &http.Client{Timeout: 15 * time.Second}
 
-	req, err := http.NewRequest("GET", endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	header, value := p.Auth()
-	if header != "" {
-		req.Header.Set(header, value)
-	}
-
 	start := time.Now()
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch models: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		if resp.StatusCode == 401 || resp.StatusCode == 403 {
-			logIf(func(lg *logger.Logger) { lg.Error("PROVIDER", "fetch_models_auth_fail", "provider", p.Name, "status", resp.StatusCode) })
-			if p.APIKey == "" {
-				return nil, fmt.Errorf("%s requires an API key to list models — enter one in Settings → Providers", p.Name)
+	const maxModelsResponseBytes = 16 << 20
+	var models []ModelInfo
+	afterID := ""
+	seenCursors := make(map[string]struct{})
+	for {
+		requestEndpoint := endpoint
+		if p.StandardID() == "anthropic" {
+			parsed, err := url.Parse(endpoint)
+			if err != nil {
+				return nil, fmt.Errorf("parse models endpoint: %w", err)
 			}
-			return nil, fmt.Errorf("invalid API key for %s", p.Name)
+			query := parsed.Query()
+			query.Set("limit", "1000")
+			if afterID != "" {
+				query.Set("after_id", afterID)
+			}
+			parsed.RawQuery = query.Encode()
+			requestEndpoint = parsed.String()
 		}
-		if resp.StatusCode == 404 {
-			logIf(func(lg *logger.Logger) { lg.Warn("PROVIDER", "fetch_models_not_supported", "provider", p.Name) })
-			return nil, fmt.Errorf("models endpoint not supported by %s", p.Name)
+		req, err := http.NewRequest(http.MethodGet, requestEndpoint, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
 		}
-		return nil, fmt.Errorf("%s returned %d", p.Name, resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response")
-	}
-
-	models, err := p.standard.DecodeModels(body)
-	if err != nil {
-		return nil, fmt.Errorf("parse models: %w", err)
+		for header, value := range p.Headers() {
+			req.Header.Set(header, value)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("fetch models: %w", err)
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxModelsResponseBytes+1))
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read response: %w", readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close models response: %w", closeErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+				logIf(func(lg *logger.Logger) {
+					lg.Error("PROVIDER", "fetch_models_auth_fail", "provider", p.Name, "status", resp.StatusCode)
+				})
+				if p.APIKey == "" {
+					return nil, fmt.Errorf("%s requires an API key to list models — enter one in Settings → Providers", p.Name)
+				}
+				return nil, fmt.Errorf("invalid API key for %s", p.Name)
+			}
+			if resp.StatusCode == http.StatusNotFound {
+				logIf(func(lg *logger.Logger) { lg.Warn("PROVIDER", "fetch_models_not_supported", "provider", p.Name) })
+				return nil, fmt.Errorf("models endpoint not supported by %s", p.Name)
+			}
+			return nil, fmt.Errorf("%s returned %d", p.Name, resp.StatusCode)
+		}
+		if len(body) > maxModelsResponseBytes {
+			return nil, fmt.Errorf("models response exceeds %d bytes", maxModelsResponseBytes)
+		}
+		page, err := p.DecodeModels(body)
+		if err != nil {
+			return nil, fmt.Errorf("parse models: %w", err)
+		}
+		models = append(models, page...)
+		if p.StandardID() != "anthropic" {
+			break
+		}
+		var pagination struct {
+			HasMore bool   `json:"has_more"`
+			LastID  string `json:"last_id"`
+		}
+		if err := json.Unmarshal(body, &pagination); err != nil {
+			return nil, fmt.Errorf("parse Anthropic model pagination: %w", err)
+		}
+		if !pagination.HasMore {
+			break
+		}
+		if pagination.LastID == "" {
+			return nil, fmt.Errorf("anthropic models response has_more without last_id")
+		}
+		if _, exists := seenCursors[pagination.LastID]; exists {
+			return nil, fmt.Errorf("anthropic models pagination repeated cursor %q", pagination.LastID)
+		}
+		seenCursors[pagination.LastID] = struct{}{}
+		afterID = pagination.LastID
 	}
 
 	sort.Slice(models, func(i, j int) bool {
 		return strings.ToLower(models[i].ID) < strings.ToLower(models[j].ID)
 	})
 
-	logIf(func(lg *logger.Logger) { lg.Info("PROVIDER", "fetch_models_ok", "provider", p.Name, "count", len(models), "latency_ms", time.Since(start).Milliseconds()) })
+	logIf(func(lg *logger.Logger) {
+		lg.Info("PROVIDER", "fetch_models_ok", "provider", p.Name, "count", len(models), "latency_ms", time.Since(start).Milliseconds())
+	})
 
 	return models, nil
 }

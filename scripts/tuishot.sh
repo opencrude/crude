@@ -50,7 +50,10 @@ cleanup() {
 trap cleanup EXIT
 
 echo "== building crude =="
-( cd "$REPO" && go build -o "$BIN" . ) || { echo "BUILD FAILED"; exit 1; }
+# Embedded terminal needs libghostty-vt (cgo). Source the pin env so
+# CGO_ENABLED=1 even when the parent shell disabled it.
+# shellcheck disable=SC1091
+( cd "$REPO" && . scripts/libghostty_env.sh && go build -o "$BIN" . ) || { echo "BUILD FAILED"; exit 1; }
 
 # NO_COLOR is inherited from some parent shells (e.g. Cursor's, which also sets
 # TERM=dumb). Bubble Tea's colorprofile maps NO_COLOR to Ascii and strips every
@@ -102,12 +105,15 @@ sleep 0.3
 eval "$(xdotool getwindowgeometry --shell "$WIN_ID")"
 CW=$((WIDTH / COLS))
 CH=$((HEIGHT / ROWS))
-echo "win=$WIN_ID geom=${WIDTH}x${HEIGHT} cell=${CW}x${CH} grid=${COLS}x${ROWS}"
+echo "win=$WIN_ID geom=${WIDTH}x${HEIGHT}+${X}+${Y} cell=${CW}x${CH} grid=${COLS}x${ROWS}"
 [ "$CW" -gt 0 ] && [ "$CH" -gt 0 ] || { echo "ERROR: bad cell size"; exit 1; }
 
-# cell -> pixel at cell centre
-px() { echo $(( $1 * CW + CW / 2 )); }
-py() { echo $(( $1 * CH + CH / 2 )); }
+# cell -> ABSOLUTE screen pixel at cell centre. xdotool mousemove uses screen
+# coordinates, so the window origin must be added — otherwise clicks only
+# land when the WM happens to place the window at (0,0) (the historical
+# "clicks silently do nothing on some runs" flake).
+px() { echo $(( X + $1 * CW + CW / 2 )); }
+py() { echo $(( Y + $1 * CH + CH / 2 )); }
 
 sleep "$PAINT_WAIT"
 

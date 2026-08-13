@@ -143,3 +143,32 @@ func TestWorkspaceOverridesFromDiffOmitsAPIKeys(t *testing.T) {
 		t.Fatalf("effective model should use workspace overlay, got %#v", merged.Providers)
 	}
 }
+
+func TestProviderProtocolOverridesMergeAndClone(t *testing.T) {
+	app := AppSettings{
+		ActiveProvider: "openai",
+		Providers: map[string]ProviderConfig{
+			"openai": {
+				APIStandard:    "openai-responses",
+				ModelStandards: map[string]string{"gpt-legacy": "openai"},
+			},
+		},
+	}
+	overlay := WorkspaceOverrides{Providers: map[string]ProviderConfig{
+		"openai": {
+			APIStandard:    "openai",
+			ModelStandards: map[string]string{"gpt-5.6": "openai-responses"},
+		},
+	}}
+	got := MergeAppWorkspace(app, overlay)
+	cfg := got.Providers["openai"]
+	if cfg.APIStandard != "openai" ||
+		cfg.ModelStandards["gpt-legacy"] != "openai" ||
+		cfg.ModelStandards["gpt-5.6"] != "openai-responses" {
+		t.Fatalf("merged provider protocols = %#v", cfg)
+	}
+	cfg.ModelStandards["gpt-legacy"] = "anthropic"
+	if app.Providers["openai"].ModelStandards["gpt-legacy"] != "openai" {
+		t.Fatal("merged model-standard map aliases application settings")
+	}
+}

@@ -28,6 +28,7 @@ const (
 	shellEditorSlot
 	shellLauncherSlot
 	shellDeckSlot
+	shellTermDockSlot
 	shellSlotCount
 )
 
@@ -53,6 +54,8 @@ func (id shellSlotID) String() string {
 		return "shell/launcher"
 	case shellDeckSlot:
 		return "shell/deck"
+	case shellTermDockSlot:
+		return "shell/termdock"
 	}
 	return "shell/none"
 }
@@ -83,6 +86,7 @@ type shellRoot struct {
 	editor   ui.Component
 	launcher ui.Component
 	deck     *deckMount
+	termDock ui.Component
 
 	slots [shellSlotCount]shellSlot
 	dirty bool
@@ -91,6 +95,7 @@ type shellRoot struct {
 func newShellRoot(
 	header, status, tabs, activity, sidebar, chat, input, editor, launcher ui.Component,
 	deck *deckMount,
+	termDock ui.Component,
 ) *shellRoot {
 	return &shellRoot{
 		Base:     ui.NewBase("shell"),
@@ -104,6 +109,7 @@ func newShellRoot(
 		editor:   editor,
 		launcher: launcher,
 		deck:     deck,
+		termDock: termDock,
 		dirty:    true,
 	}
 }
@@ -149,6 +155,8 @@ func (s *shellRoot) SetScreen(id shellSlotID, c ui.Component) {
 		s.editor = c
 	case shellLauncherSlot:
 		s.launcher = c
+	case shellTermDockSlot:
+		s.termDock = c
 	case shellDeckSlot:
 		// deck mount is fixed; ignored
 		return
@@ -175,6 +183,7 @@ func (s *shellRoot) Children() []ui.Component {
 	appendSlot(shellEditorSlot, s.editor)
 	appendSlot(shellLauncherSlot, s.launcher)
 	appendSlot(shellDeckSlot, s.deck)
+	appendSlot(shellTermDockSlot, s.termDock)
 	return out
 }
 
@@ -203,6 +212,7 @@ func (s *shellRoot) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	layoutSlot(shellEditorSlot, s.editor)
 	layoutSlot(shellLauncherSlot, s.launcher)
 	layoutSlot(shellDeckSlot, s.deck)
+	layoutSlot(shellTermDockSlot, s.termDock)
 }
 
 // Paint is a no-op: children are painted by Host.paintNode at their slot

@@ -5,9 +5,14 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+const ptyWriteQueueCap = 1 << 20
+
+var errPtyWriterClosed = fmt.Errorf("terminal writer closed")
 
 // TerminalPlacement is presentation-owned; workspace only stores it so the
 // activity list can show docked vs floating without importing tui.
@@ -20,16 +25,16 @@ const (
 
 // TerminalInfo is a presentation-neutral snapshot of one PTY session.
 type TerminalInfo struct {
-	ID         string
-	Title      string
-	CWD        string
-	PID        int
-	Cols       int
-	Rows       int
-	Placement  TerminalPlacement
-	Alive      bool
-	ExitCode   int
-	ExitErr    string
+	ID        string
+	Title     string
+	CWD       string
+	PID       int
+	Cols      int
+	Rows      int
+	Placement TerminalPlacement
+	Alive     bool
+	ExitCode  int
+	ExitErr   string
 }
 
 // TerminalCreateOpts configures a new in-app terminal.
@@ -68,13 +73,13 @@ type TerminalTitleMsg struct {
 
 // TerminalManager owns workspace-scoped interactive PTY sessions.
 type TerminalManager struct {
-	mu      sync.Mutex
-	seq     atomic.Uint64
-	items   map[string]*terminalSession
-	order   []string
-	bus     *EventBus
-	root    string
-	host    HostInfo
+	mu    sync.Mutex
+	seq   atomic.Uint64
+	items map[string]*terminalSession
+	order []string
+	bus   *EventBus
+	root  string
+	host  HostInfo
 }
 
 type terminalSession struct {
@@ -88,6 +93,99 @@ type terminalSession struct {
 	exitCode  int
 	exitErr   string
 	io        terminalIO
+	writer    *ptyWriter
+}
+
+// ptyWriter serializes PTY stdin on a dedicated goroutine so the UI
+// thread (and Ghostty write_pty replies during Feed) never block on a
+// full slave input buffer.
+type ptyWriter struct {
+	mu        sync.Mutex
+	cond      *sync.Cond
+	sink      terminalIO
+	queue     [][]byte
+	queued    int
+	accepting bool
+	wg        sync.WaitGroup
+}
+
+func newPtyWriter(sink terminalIO) *ptyWriter {
+	w := &ptyWriter{sink: sink, accepting: true}
+	w.cond = sync.NewCond(&w.mu)
+	w.wg.Add(1)
+	go w.run()
+	return w
+}
+
+func (w *ptyWriter) Write(p []byte) (int, error) {
+	if w == nil {
+		return 0, errPtyWriterClosed
+	}
+	w.mu.Lock()
+	if !w.accepting {
+		w.mu.Unlock()
+		return 0, errPtyWriterClosed
+	}
+	if w.queued > 0 && w.queued+len(p) > ptyWriteQueueCap {
+		w.mu.Unlock()
+		return len(p), nil
+	}
+	buf := make([]byte, len(p))
+	copy(buf, p)
+	w.queue = append(w.queue, buf)
+	w.queued += len(buf)
+	w.cond.Signal()
+	w.mu.Unlock()
+	return len(p), nil
+}
+
+func (w *ptyWriter) stop() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.accepting = false
+	w.queue = nil
+	w.queued = 0
+	w.cond.Broadcast()
+	w.mu.Unlock()
+}
+
+func (w *ptyWriter) wait(d time.Duration) {
+	if w == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
+}
+
+func (w *ptyWriter) run() {
+	defer w.wg.Done()
+	for {
+		w.mu.Lock()
+		for len(w.queue) == 0 && w.accepting {
+			w.cond.Wait()
+		}
+		if len(w.queue) == 0 {
+			w.mu.Unlock()
+			return
+		}
+		buf := w.queue[0]
+		w.queue = w.queue[1:]
+		w.queued -= len(buf)
+		sink := w.sink
+		w.mu.Unlock()
+		if sink != nil {
+			_, _ = sink.Write(buf)
+		}
+	}
 }
 
 type terminalIO interface {
@@ -164,6 +262,7 @@ func (m *TerminalManager) Create(opts TerminalCreateOpts) (TerminalInfo, error) 
 		placement: TerminalDocked,
 		alive:     true,
 		io:        io,
+		writer:    newPtyWriter(io),
 	}
 	m.mu.Lock()
 	m.items[id] = sess
@@ -212,10 +311,10 @@ func (m *TerminalManager) Write(id string, data []byte) error {
 	m.mu.Lock()
 	s := m.items[id]
 	m.mu.Unlock()
-	if s == nil || s.io == nil {
+	if s == nil || s.writer == nil {
 		return fmt.Errorf("terminal %s not found", id)
 	}
-	_, err := s.io.Write(data)
+	_, err := s.writer.Write(data)
 	return err
 }
 
@@ -257,6 +356,19 @@ func (m *TerminalManager) SetTitle(id, title string) {
 	}
 }
 
+// SetCWD records the child's reported working directory (OSC 7). No event
+// is published: snapshots pick it up on the next List/Get.
+func (m *TerminalManager) SetCWD(id, cwd string) {
+	if m == nil || cwd == "" {
+		return
+	}
+	m.mu.Lock()
+	if s := m.items[id]; s != nil {
+		s.cwd = cwd
+	}
+	m.mu.Unlock()
+}
+
 // SetPlacement records docked vs floating for the activity list.
 func (m *TerminalManager) SetPlacement(id string, p TerminalPlacement) {
 	if m == nil {
@@ -288,8 +400,14 @@ func (m *TerminalManager) Close(id string) {
 		}
 	}
 	m.mu.Unlock()
+	if s.writer != nil {
+		s.writer.stop()
+	}
 	if s.io != nil {
 		_ = s.io.Close()
+	}
+	if s.writer != nil {
+		s.writer.wait(2 * time.Second)
 	}
 	m.emit(TerminalClosedMsg{ID: id})
 }

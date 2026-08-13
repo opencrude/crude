@@ -642,6 +642,54 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
+			Name: "remember",
+			Description: "Save a durable workspace memory for future turns and sessions. " +
+				"Use only for stable project conventions, user preferences, architectural decisions, or verified facts. " +
+				"Never store secrets, transient command output, or guesses.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"title":{"type":"string","description":"Short stable title used for deduplication."},
+					"content":{"type":"string","description":"Verified fact, decision, convention, or preference to retain."},
+					"kind":{"type":"string","enum":["fact","decision","convention","preference"],"description":"Memory category; default fact."},
+					"pinned":{"type":"boolean","description":"Always prioritize this memory during recall."}
+				},
+				"required":["title","content"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "recall_memory",
+			Description: "Search durable workspace memory for relevant facts, decisions, conventions, and preferences from prior work.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"query":{"type":"string","description":"Terms describing the information to recall."},
+					"limit":{"type":"integer","description":"Maximum memories to return; default 8, maximum 50."}
+				},
+				"required":["query"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "forget_memory",
+			Description: "Delete one durable workspace memory by ID when it is obsolete or incorrect.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"id":{"type":"string","description":"Memory ID returned by remember or recall_memory."}
+				},
+				"required":["id"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
 			Name:        "write_report",
 			Description: "Write your full detailed report to disk. The report is saved in the main agent's reports directory. After writing, continue working or finish naturally — the main agent will read the report file. Your report should contain ALL findings, file contents, analysis, and results in full detail. Do NOT summarize — the main agent needs verbatim content.",
 			Parameters: json.RawMessage(`{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"crude/provider"
@@ -22,16 +23,40 @@ func (a *Agent) Run(
 	sessionID string,
 	btwCh <-chan provider.ChatMessage,
 ) []provider.ChatMessage {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if emit == nil {
+		emit = func(AgentEvent) {}
+	}
 	l := a.logger
+	a.writeReportCalled = false
 	var emitActive atomic.Bool
 	emitActive.Store(true)
-	defer emitActive.Store(false)
 	origEmit := emit
+	var emitMu sync.Mutex
+	defer func() {
+		emitMu.Lock()
+		emitActive.Store(false)
+		emitMu.Unlock()
+	}()
 	emit = func(evt AgentEvent) {
 		if !emitActive.Load() {
 			return
 		}
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		if !emitActive.Load() {
+			return
+		}
+		if evt.Type == "done" || evt.Type == "error" {
+			emitActive.Store(false)
+		}
 		origEmit(evt)
+	}
+	if a.Provider == nil {
+		a.emitError(emit, fmt.Errorf("agent provider is nil"))
+		return append([]provider.ChatMessage(nil), sessionMessages...)
 	}
 
 	allTools := toolDefsToProviderDefs(a.FilteredTools)
@@ -73,14 +98,15 @@ func (a *Agent) Run(
 		if len(parts) == 0 {
 			return nil
 		}
-		return &provider.ChatMessage{Role: "system", Content: provider.TextContent(strings.Join(parts, "\n\n")), CacheControl: &provider.CacheControl{Type: "ephemeral"}}
+		content := "## Runtime Status\n\n" + strings.Join(parts, "\n\n")
+		return &provider.ChatMessage{Role: "system", Content: provider.TextContent(content), CacheControl: &provider.CacheControl{Type: "ephemeral"}}
 	}
 
 	var steps []StepRecord
 	var totalPromptTokens, totalCompletionTokens int
 	var lastPromptTokens int
 
-	ctxWindow := a.Provider.ContextWindow()
+	ctxWindow := a.Provider.Standard().ContextWindow(a.Model)
 	ctxLimit := int(float64(ctxWindow) * contextSafetyPct)
 	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "safety_limit", ctxLimit, "safety_pct", contextSafetyPct)
 
@@ -97,6 +123,8 @@ func (a *Agent) Run(
 	if a.MaxSteps > 0 {
 		stepsLimit = a.MaxSteps
 	}
+	btwInput := btwCh
+	continuations := 0
 	for step := 0; step < stepsLimit; step++ {
 		if ctx.Err() != nil {
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
@@ -111,7 +139,11 @@ func (a *Agent) Run(
 		drainBtw := func() {
 			for {
 				select {
-				case btwMsg := <-btwCh:
+				case btwMsg, ok := <-btwInput:
+					if !ok {
+						btwInput = nil
+						return
+					}
 					l.Info("BTW", "user_interruption", "step", step)
 					msgs = append(msgs, btwMsg)
 				default:
@@ -124,7 +156,7 @@ func (a *Agent) Run(
 		if smStatus := buildSMStatusMsg(); smStatus != nil {
 			replaced := false
 			for i := len(msgs) - 1; i >= 0; i-- {
-				if msgs[i].Role == "system" && containsPrefix(msgs[i].ContentString(), "## Current State") {
+				if msgs[i].Role == "system" && containsPrefix(msgs[i].ContentString(), "## Runtime Status") {
 					msgs[i] = *smStatus
 					replaced = true
 					break
@@ -137,7 +169,7 @@ func (a *Agent) Run(
 
 		prevPreviewKeys := make(map[string]string)
 
-		content, reasoningContent, finishReason, streamToolCalls, promptTokens, completionTokens, promptTokensCached, err := a.completeStream(ctx, msgs, allTools,
+		completion, err := a.completeStream(ctx, msgs, allTools,
 			func(token string) {
 				emit(AgentEvent{Type: "stream_token", Data: token})
 			},
@@ -164,6 +196,35 @@ func (a *Agent) Run(
 			},
 		)
 		if err != nil {
+			if completion.Usage.PromptTokens > 0 || completion.Usage.CompletionTokens > 0 ||
+				completion.Usage.PromptTokensCached > 0 || completion.Usage.PromptTokensWritten > 0 {
+				price := provider.LookupPrice(a.Model)
+				turnCost := price.CalculateCost(
+					completion.Usage.PromptTokens,
+					completion.Usage.CompletionTokens,
+					completion.Usage.PromptTokensCached,
+				)
+				emit(AgentEvent{Type: "usage", Data: map[string]any{
+					"prompt":           completion.Usage.PromptTokens,
+					"completion":       completion.Usage.CompletionTokens,
+					"prompt_cached":    completion.Usage.PromptTokensCached,
+					"prompt_written":   completion.Usage.PromptTokensWritten,
+					"context_window":   ctxWindow,
+					"cost":             turnCost,
+					"model":            a.Model,
+					"estimated":        false,
+					"partial_or_retry": true,
+				}})
+			}
+			if completion.Content != "" || completion.ReasoningContent != "" {
+				msgs = append(msgs, provider.ChatMessage{
+					Role:             "assistant",
+					Content:          provider.TextContent(completion.Content),
+					ReasoningContent: completion.ReasoningContent,
+					Reasoning:        completion.ReasoningContent,
+					ProviderItems:    completion.ProviderItems,
+				})
+			}
 			var apiErr *apiCallError
 			if errors.As(err, &apiErr) && apiErr.IsCancellation() {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
@@ -173,16 +234,34 @@ func (a *Agent) Run(
 			return msgs
 		}
 
-		totalPromptTokens += promptTokens
-		totalCompletionTokens += completionTokens
-		lastPromptTokens = promptTokens
+		promptTokens := completion.Usage.PromptTokens
+		completionTokens := completion.Usage.CompletionTokens
+		promptTokensCached := completion.Usage.PromptTokensCached
+		promptTokensWritten := completion.Usage.PromptTokensWritten
+		contextPromptTokens := completion.LastPromptTokens
 
 		estimated := false
-		if promptTokens == 0 && completionTokens == 0 {
+		if promptTokens == 0 {
 			promptTokens = provider.EstimateMessagesTotal(msgs, a.Model)
-			completionTokens = provider.EstimateTokens(content, a.Model)
 			estimated = true
 		}
+		if contextPromptTokens == 0 {
+			contextPromptTokens = provider.EstimateMessagesTotal(msgs, a.Model)
+		}
+		if completionTokens == 0 {
+			completionTokens = provider.EstimateTokens(
+				completion.Content+completion.ReasoningContent, a.Model,
+			)
+			for _, call := range completion.ToolCalls {
+				completionTokens += provider.EstimateTokens(
+					call.Function.Name+call.Function.Arguments, a.Model,
+				)
+			}
+			estimated = estimated || completionTokens > 0
+		}
+		totalPromptTokens += promptTokens
+		totalCompletionTokens += completionTokens
+		lastPromptTokens = contextPromptTokens
 
 		price := provider.LookupPrice(a.Model)
 		turnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)
@@ -190,35 +269,62 @@ func (a *Agent) Run(
 			"prompt":         promptTokens,
 			"completion":     completionTokens,
 			"prompt_cached":  promptTokensCached,
+			"prompt_written": promptTokensWritten,
+			"context_prompt": contextPromptTokens,
 			"context_window": ctxWindow,
 			"cost":           turnCost,
 			"model":          a.Model,
 			"estimated":      estimated,
 		}})
 
-		accumulatedText := content
-		toolCalls := streamToolCalls
+		accumulatedText := completion.Content
+		toolCalls := completion.ToolCalls
+		finishReason := completion.FinishReason
 
 		a.logger.Info("LLM", "step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason, "cumulative_prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
 
-		if accumulatedText == "" {
+		hasToolCalls := len(toolCalls) > 0
+		if accumulatedText == "" && !hasToolCalls {
 			accumulatedText = lastReply
 		}
-
-		hasToolCalls := len(toolCalls) > 0
 		if hasToolCalls {
 			l.Debug("AGENT", "branch_has_tool_calls", "count", len(toolCalls), "step", step)
 		} else {
 			l.Debug("AGENT", "branch_text_only", "text_len", len(accumulatedText), "step", step)
 		}
+		if hasToolCalls && isTruncatedFinishReason(finishReason) {
+			a.emitError(emit, fmt.Errorf(
+				"provider truncated a tool call response (%s); tools were not executed",
+				finishReason,
+			))
+			return msgs
+		}
 
-		assistantMsg := provider.ChatMessage{Role: "assistant", Content: provider.TextContent(accumulatedText), ReasoningContent: reasoningContent, Reasoning: reasoningContent}
+		assistantMsg := provider.ChatMessage{
+			Role:             "assistant",
+			Content:          provider.TextContent(accumulatedText),
+			ReasoningContent: completion.ReasoningContent,
+			Reasoning:        completion.ReasoningContent,
+			ProviderItems:    completion.ProviderItems,
+		}
 		if hasToolCalls {
 			assistantMsg.ToolCalls = toolCalls
 		}
 		msgs = append(msgs, assistantMsg)
 
 		if !hasToolCalls {
+			if isAutoContinuableFinishReason(finishReason) && continuations < maxAutoContinuations {
+				continuations++
+				l.Warn("AGENT", "auto_continue", "finish_reason", finishReason, "continuation", continuations)
+				msgs = append(msgs, provider.ChatMessage{
+					Role: "system",
+					Content: provider.TextContent(
+						"Continue the previous response exactly where it stopped. Do not repeat completed content. Continue using tools if the task still requires them.",
+					),
+					CacheControl: &provider.CacheControl{Type: "ephemeral"},
+				})
+				continue
+			}
 			if a.Depth > 0 && !a.writeReportCalled {
 				a.logger.Warn("SUBAGENT", "write_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
 				msgs = append(msgs, provider.ChatMessage{
@@ -231,42 +337,72 @@ func (a *Agent) Run(
 				}
 				continue
 			}
+			doneReason := "completed"
+			if finishReason != "" && finishReason != "stop" && finishReason != "end_turn" {
+				doneReason = finishReason
+			}
 			if accumulatedText != "" {
-				emit(AgentEvent{Type: "done", Data: map[string]any{"content": accumulatedText, "reason": "completed"}})
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": accumulatedText, "reason": doneReason}})
 			} else {
-				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Done.", "reason": "completed"}})
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Done.", "reason": doneReason}})
 			}
 			return msgs
 		}
+		continuations = 0
 
 		emit(AgentEvent{Type: "phase", Data: "executing"})
 
 		resultCh := a.executeToolCalls(ctx, toolCalls, emit, blockResolveCh, &lastReply, step)
 
-		var lastToolResultIdx int
-		for i := 0; i < len(toolCalls); i++ {
+		results := make([]execResult, len(toolCalls))
+		receivedResults := make([]bool, len(toolCalls))
+	collectResults:
+		for received := 0; received < len(toolCalls); received++ {
 			select {
 			case r := <-resultCh:
-				msgs = append(msgs, provider.ChatMessage{
-					Role:       "tool",
-					ToolCallID: r.id,
-					Content:    provider.TextContent(r.result.Content),
-				})
-				lastToolResultIdx = len(msgs) - 1
-				steps = append(steps, StepRecord{
-					Content:      accumulatedText,
-					ToolName:     r.name,
-					ToolInput:    fmt.Sprintf("%v", r.params),
-					ToolResult:   r.result.Content,
-					FinishReason: finishReason,
-				})
-				if r.name == "reply" && r.result.Content != "" {
-					emit(AgentEvent{Type: "stream_token", Data: r.result.Content})
+				if r.index >= 0 && r.index < len(results) {
+					results[r.index] = r
+					receivedResults[r.index] = true
 				}
 			case <-ctx.Done():
 				l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
-				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-				return msgs
+				break collectResults
+			}
+		}
+		for i := range results {
+			if receivedResults[i] {
+				continue
+			}
+			results[i] = execResult{
+				index: i,
+				id:    toolCalls[i].ID,
+				name:  toolCalls[i].Function.Name,
+				result: tools.ToolResult{
+					Content: "Turn cancelled by user.",
+				},
+				toolError: true,
+			}
+		}
+
+		var lastToolResultIdx int
+		for _, r := range results {
+			toolError := r.toolError || IsToolError(r.result.Content)
+			msgs = append(msgs, provider.ChatMessage{
+				Role:       "tool",
+				ToolCallID: r.id,
+				Content:    provider.TextContent(r.result.Content),
+				ToolError:  toolError,
+			})
+			lastToolResultIdx = len(msgs) - 1
+			steps = append(steps, StepRecord{
+				Content:      accumulatedText,
+				ToolName:     r.name,
+				ToolInput:    fmt.Sprintf("%v", r.params),
+				ToolResult:   r.result.Content,
+				FinishReason: finishReason,
+			})
+			if r.name == "reply" && r.result.Content != "" {
+				emit(AgentEvent{Type: "stream_token", Data: r.result.Content})
 			}
 		}
 
@@ -283,7 +419,7 @@ func (a *Agent) Run(
 
 		if isStopConditionMet(stopConditions, steps) {
 			reason := "stop_condition_met"
-			if lastPromptTokens > ctxLimit {
+			if ctxLimit > 0 && lastPromptTokens > ctxLimit {
 				reason = fmt.Sprintf("context_limit_reached (%d/%d tokens)", lastPromptTokens, ctxWindow)
 				l.Warn("CTX", "overflow", "prompt_tokens", lastPromptTokens, "limit", ctxLimit, "window", ctxWindow)
 			}
@@ -445,5 +581,23 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 			data["new_lines"] = newLines
 		}
 		emit(AgentEvent{Type: "tool_call_streaming", Data: data})
+	}
+}
+
+func isTruncatedFinishReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "length", "max_tokens", "max_output_tokens", "model_context_window_exceeded", "incomplete":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAutoContinuableFinishReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "length", "max_tokens", "max_output_tokens", "incomplete":
+		return true
+	default:
+		return false
 	}
 }

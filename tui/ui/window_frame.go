@@ -34,10 +34,16 @@ type WindowFrame struct {
 	closable     bool
 	borderAccent cell.Color // optional accent override for border
 	titleAccent  cell.Color // optional accent override for title
+	// Optional title-bar action button (glyph left of close, JetBrains
+	// tool-window style). Empty = none. Click emits "window.titleaction".
+	titleAction     string
+	titleActionHint string
 	// Content rect relative to frame bounds (after layout).
 	contentR Rect
 	// Close button hit region relative to frame bounds.
 	closeR Rect
+	// Title-action hit region relative to frame bounds.
+	titleActionR Rect
 	// reveal is the content-reveal progress in [0,1]. At 0 the content
 	// area has zero height (the frame chrome shows an empty body); at 1
 	// the content is fully visible. Product code ramps this over a few
@@ -105,6 +111,31 @@ func (f *WindowFrame) ContentBounds() Rect { return f.contentR }
 // CloseBounds returns the close-button rectangle in parent-local coords.
 func (f *WindowFrame) CloseBounds() Rect { return f.closeR }
 
+// SetTitleAction installs an optional title-bar button rendered left of the
+// close glyph. Clicking it emits Action{ID: "window.titleaction"}. hint is
+// used for semantics/tooltips only. The hit region is recomputed immediately
+// so callers may install the action after the widget's initial layout.
+func (f *WindowFrame) SetTitleAction(glyph, hint string) {
+	f.titleAction = glyph
+	f.titleActionHint = hint
+	f.layoutTitleAction(f.Bounds())
+}
+
+// TitleActionBounds returns the title-action rectangle in parent-local coords.
+func (f *WindowFrame) TitleActionBounds() Rect { return f.titleActionR }
+
+func (f *WindowFrame) layoutTitleAction(r Rect) {
+	if f.titleAction != "" && r.W >= 6 {
+		x := r.W - 3
+		if f.closable && r.W >= 3 {
+			x = r.W - 6
+		}
+		f.titleActionR = Rect{X: x, Y: 0, W: 3, H: 1}
+	} else {
+		f.titleActionR = Rect{}
+	}
+}
+
 // Children implements Parent.
 func (f *WindowFrame) Children() []Component {
 	if f.content == nil {
@@ -154,6 +185,7 @@ func (f *WindowFrame) Layout(ctx LayoutContext, r Rect) {
 	} else {
 		f.closeR = Rect{}
 	}
+	f.layoutTitleAction(r)
 	if f.content != nil {
 		// Content bounds are parent-local so Host paint/hit use contentR offset.
 		// Reveal: during a slide-in the body height grows with progress, so
@@ -233,6 +265,9 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		if f.closable {
 			avail -= 3
 		}
+		if !f.titleActionR.Empty() {
+			avail -= 3
+		}
 		if avail > 0 {
 			runes := []rune(title)
 			if rendering.VisibleWidth(title) > avail {
@@ -256,6 +291,10 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		}
 		buf.WriteString(cx, oy, " "+closeGlyph+" ", titleFG, bg, 0)
 	}
+	// Title-bar action button (left of close).
+	if !f.titleActionR.Empty() {
+		buf.WriteString(ox+f.titleActionR.X, oy, " "+f.titleAction+" ", titleFG, bg, 0)
+	}
 	// Content is painted by Host via Children(); frame only draws chrome.
 	// When used without Host, callers should PaintTree(frame) or use ComponentWidget.
 }
@@ -267,6 +306,13 @@ func (f *WindowFrame) Handle(ctx EventContext, evt Event) EventResult {
 			return EventResult{
 				Handled:    true,
 				Action:     &Action{ID: "window.close"},
+				Invalidate: InvalidatePaint,
+			}
+		}
+		if !f.titleActionR.Empty() && f.titleActionR.Contains(ctx.LocalX, ctx.LocalY) {
+			return EventResult{
+				Handled:    true,
+				Action:     &Action{ID: "window.titleaction"},
 				Invalidate: InvalidatePaint,
 			}
 		}

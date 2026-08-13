@@ -115,7 +115,9 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 		for id, p := range fc.Providers {
 			s.Providers[id] = ttypes.ProviderConfig{
 				APIKey: p.APIKey, ProviderURL: p.ProviderURL,
-				Model: p.Model, ThinkingEffort: p.ThinkingEffort,
+				APIStandard: p.APIStandard, Model: p.Model,
+				ModelStandards: cloneStringMap(p.ModelStandards),
+				ThinkingEffort: p.ThinkingEffort,
 			}
 		}
 	}
@@ -164,8 +166,14 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 			if p.ProviderURL != "" {
 				prev.ProviderURL = p.ProviderURL
 			}
+			if p.APIStandard != "" {
+				prev.APIStandard = p.APIStandard
+			}
 			if p.Model != "" {
 				prev.Model = p.Model
+			}
+			if p.ModelStandards != nil {
+				prev.ModelStandards = cloneStringMap(p.ModelStandards)
 			}
 			if p.ThinkingEffort != "" {
 				prev.ThinkingEffort = p.ThinkingEffort
@@ -173,6 +181,17 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 			fc.Providers[id] = prev
 		}
 	}
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
 }
 
 func FileConfigToSession(fc FileConfig) *session.Config {

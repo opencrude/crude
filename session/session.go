@@ -49,6 +49,7 @@ type Session struct {
 	permStore *safety.PermissionStore
 	sm        *statemachine.ConversationStateMachine
 	asyncMgr  *fileio.AsyncCommandManager
+	memoryStore MemoryStore
 
 	msgs          []provider.ChatMessage
 	msgTurns      []int
@@ -127,9 +128,10 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	workspaceCfg := copyConfig(cfg)
 	cfg = copyConfig(cfg)
 	mainCat := cfg.GetActiveDefaultCategory()
-	p := provider.FromPreset(mainCat.Provider, mainCat.APIKey, mainCat.ProviderURL)
-	p.Model = mainCat.Model
-	p.SetThinkingEffort(mainCat.ThinkingEffort)
+	p, err := providerForCategory(mainCat)
+	if err != nil {
+		return nil, fmt.Errorf("provider standard: %w", err)
+	}
 	if mainCat.ModelContextWindow > 0 {
 		provider.SetModelContext(mainCat.Model, mainCat.ModelContextWindow)
 	}
@@ -403,10 +405,29 @@ func (s *Session) IsAndClearReportConsumed(agentID string) bool {
 
 func (s *Session) HardCancel() {
 	atomic.StoreInt32(&s.hardCancelled, 1)
+	s.orchMu.Lock()
+	orchestrators := make([]*Orchestrator, 0, len(s.orchestrators))
+	for _, orchestrator := range s.orchestrators {
+		orchestrators = append(orchestrators, orchestrator)
+	}
+	s.orchMu.Unlock()
+	for _, orchestrator := range orchestrators {
+		select {
+		case orchestrator.CancelCh <- struct{}{}:
+		default:
+		}
+		select {
+		case orchestrator.BlockResolveCh <- "deny":
+		default:
+		}
+	}
 	if s.subAgentSup != nil {
 		s.subAgentSup.CancelAllActive()
 	}
-	s.logger.Info("CANCEL", "hard_cancel", "sub_agents_cancelled", s.subAgentSup != nil)
+	s.logger.Info(
+		"CANCEL", "hard_cancel",
+		"orchestrators", len(orchestrators), "sub_agents_cancelled", s.subAgentSup != nil,
+	)
 }
 
 func (s *Session) isHardCancelled() bool {
@@ -429,8 +450,16 @@ func (s *Session) drainWakeCh() {
 }
 
 func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
+	s.orchMu.Lock()
 	if atomic.LoadInt32(&s.closing) == 1 {
+		s.orchMu.Unlock()
 		return nil, fmt.Errorf("session is closing")
+	}
+	for _, existing := range s.orchestrators {
+		if existing != nil && !existing.closing.Load() {
+			s.orchMu.Unlock()
+			return existing, nil
+		}
 	}
 	nextID := s.orchNextID.Add(1)
 	o := NewOrchestrator(fmt.Sprintf("%s_orch_%d", s.ID, nextID), s)
@@ -447,7 +476,6 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 		o.subAgentSup = s.subAgentSup
 	}
 
-	s.orchMu.Lock()
 	if atomic.LoadInt32(&s.closing) == 1 {
 		s.orchMu.Unlock()
 		s.runtimeProfile.RemoveOverride(o.ID)

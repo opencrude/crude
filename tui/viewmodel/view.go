@@ -18,6 +18,7 @@ import (
 	"crude/tui/screens/shellinput"
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -93,6 +94,7 @@ type contentLayout struct {
 	ChatRect       ui.Rect
 	EditorRect     ui.Rect
 	DeckRect       ui.Rect
+	TermDockRect   ui.Rect
 }
 
 // computeContentLayout computes the shell geometry for one frame. It keeps
@@ -133,12 +135,14 @@ func (m *App) computeContentLayout() contentLayout {
 	}
 
 	agentTabBarVisible := m.tabBarVisible()
+	dockH := m.termDockHeightClamped()
+	bottomChrome := 2 + dockH
 
 	baseNonChat := 3 + lay.InputLineCount
 	if agentTabBarVisible {
 		baseNonChat += 2
 	}
-	deckAvailable := m.height - 2 - baseNonChat - 1
+	deckAvailable := m.height - bottomChrome - baseNonChat - 1
 	deckLineCount := m.sessionDeckHeight(max(0, deckAvailable))
 	nonChat := baseNonChat + deckLineCount
 
@@ -150,7 +154,7 @@ func (m *App) computeContentLayout() contentLayout {
 	// status content (long/multiline inputs "push the status out of screen").
 	// Keep one chat row minimum.
 	if lay.ShowMainInput {
-		budget := m.height - 2 - 3 - deckLineCount
+		budget := m.height - bottomChrome - 3 - deckLineCount
 		if agentTabBarVisible {
 			budget -= 2
 		}
@@ -167,7 +171,7 @@ func (m *App) computeContentLayout() contentLayout {
 		}
 	}
 
-	lay.ChatH = m.height - 2 - nonChat
+	lay.ChatH = m.height - bottomChrome - nonChat
 	if lay.ChatH < 1 {
 		lay.ChatH = 1
 	}
@@ -252,8 +256,9 @@ func (m *App) computeContentLayout() contentLayout {
 		m.inputRect = ui.Rect{}
 	}
 
-	// The sidebar is a slot in the root tree starting at row 3. Update the
-	// tree height for the model (used for scroll extent and rendering).
+	// The sidebar is a slot in the root tree starting at row 3. It keeps the
+	// full height beside the terminal panel (VS Code layout: the bottom
+	// panel occupies only the content column, never the sidebar).
 	if m.Tree != nil && m.Tree.Visible && m.Tree.Model != nil {
 		treeStart := 3
 		m.Tree.YOffset = treeStart
@@ -263,6 +268,19 @@ func (m *App) computeContentLayout() contentLayout {
 			sidebarH = 0
 		}
 		m.Tree.Model.Update(filetree.TreeHeightMsg{Height: sidebarH})
+	}
+
+	if dockH > 0 {
+		lay.TermDockRect = ui.Rect{
+			X: lay.SidebarW,
+			Y: m.height - 2 - dockH,
+			W: max(0, m.width-lay.SidebarW),
+			H: dockH,
+		}
+		m.termDockRect = lay.TermDockRect
+	} else {
+		lay.TermDockRect = ui.Rect{}
+		m.termDockRect = ui.Rect{}
 	}
 
 	return lay
@@ -282,7 +300,7 @@ func (m *App) configureShell() {
 		X: lay.SidebarW + lay.PadLR, Y: 3, W: lay.InnerW, H: 2,
 	})
 
-	// Activity bar: always-on left rail.
+	// Activity bar: always-on left rail, full height beside the panel.
 	activityW := m.activityChromeWidth()
 	sidebarH := (m.height - 2) - 3
 	if sidebarH < 1 {
@@ -312,6 +330,11 @@ func (m *App) configureShell() {
 	m.shell.setSlot(shellEditorSlot, m.isEditorActive(), lay.EditorRect)
 	m.shell.setSlot(shellInputSlot, !lay.InputRect.Empty(), lay.InputRect)
 	m.shell.setSlot(shellDeckSlot, !lay.DeckRect.Empty(), lay.DeckRect)
+	m.shell.setSlot(shellTermDockSlot, !lay.TermDockRect.Empty(), lay.TermDockRect)
+	if m.termDock != nil && !lay.TermDockRect.Empty() {
+		m.termDock.SetFocused(m.termDockFocused)
+		m.termDock.PrepareResize(lay.TermDockRect.Y, 8, 6)
+	}
 
 	// Screen projections/binds (paint happens once via rootHost.Paint).
 	m.configureHeaderScreen()
@@ -366,6 +389,20 @@ func (m *App) syncRootFocus() {
 	if m.rootHost == nil {
 		return
 	}
+	defer m.syncFloatingTerminalFocus()
+	defer m.syncTerminalFocusReports()
+	if m.termDockOwnsKeys() && m.termDock != nil {
+		cur := m.rootHost.Focused()
+		if cur == termdock.TabsID || cur == termdock.DividerID {
+			return
+		}
+		if child := m.termDock.Active(); child != nil {
+			m.rootHost.Focus(child.ID())
+			return
+		}
+		m.rootHost.Focus(termdock.ScreenID)
+		return
+	}
 	var id ui.ComponentID
 	switch m.focusTarget() {
 	case FocusTree:
@@ -386,6 +423,59 @@ func (m *App) syncRootFocus() {
 		id = shellchat.ScreenID
 	}
 	m.rootHost.Focus(id)
+}
+
+func (m *App) syncFloatingTerminalFocus() {
+	if m.overlayHost == nil {
+		return
+	}
+	for _, e := range m.overlayHost.All() {
+		if e == nil || e.Window == nil || !ui.IsTerminalOverlay(e.ID) {
+			continue
+		}
+		id, ok := ui.TerminalIDFromOverlay(e.ID)
+		if !ok {
+			continue
+		}
+		screen := m.termScreens[id]
+		if screen == nil {
+			continue
+		}
+		w, ok := e.Window.Content.(*ui.WindowFrameWidget)
+		if !ok || w.Host() == nil {
+			continue
+		}
+		w.Host().Focus(screen.ID())
+	}
+}
+
+// syncTerminalFocusReports tells each PTY child whether its pane owns input
+// (DEC mode 1004 focus reporting). Idempotent: screens only write CSI I/O on
+// an actual transition, so a per-frame sweep is safe and catches every focus
+// path (dock toggle, floating focus, palette stealing keys, ...).
+func (m *App) syncTerminalFocusReports() {
+	focusedFloating := ""
+	wmFocused := false
+	if m.windowManager != nil {
+		if fw := m.windowManager.Focused(); fw != nil {
+			wmFocused = true
+			if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) {
+				if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok {
+					focusedFloating = id
+				}
+			}
+		}
+	}
+	dockActive := ""
+	if focusedFloating == "" && !wmFocused && m.termDockOwnsKeys() && m.termDock != nil {
+		dockActive = m.termDock.ActiveID()
+	}
+	for id, s := range m.termScreens {
+		if s == nil {
+			continue
+		}
+		s.SetTermFocused(id == focusedFloating || id == dockActive)
+	}
 }
 
 func (m *App) syncFormHint() {

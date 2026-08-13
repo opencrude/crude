@@ -52,3 +52,6 @@ debug.test
 dist/
 build/
 tmp/
+
+# Pinned libghostty-vt install prefix (see deps/README.md)
+deps/libghostty-vt/

@@ -33,6 +33,8 @@ type FloatingWindow struct {
 	// Maximum size constraints (0 = unlimited).
 	maxW, maxH int
 
+	// titleActionW reserves cells left of close for a content title action.
+	titleActionW int
 	// decorated controls whether standard WindowFrame interaction regions are active.
 	// It does not cause the WM to paint chrome.
 	decorated bool
@@ -438,6 +440,34 @@ func (fw *FloatingWindow) IsOnCloseButton(screenX, screenY int) bool {
 		return false
 	}
 	return lx >= fw.w-3 && lx < fw.w
+}
+
+// SetTitleActionWidth reserves w cells left of the close button for a
+// content-owned title-bar action (WindowFrame.SetTitleAction). Clicks there
+// must dispatch to the content instead of starting a title drag.
+func (fw *FloatingWindow) SetTitleActionWidth(w int) {
+	if w < 0 {
+		w = 0
+	}
+	fw.titleActionW = w
+}
+
+// IsOnTitleAction reports whether a screen coordinate hits the reserved
+// title-action cells.
+func (fw *FloatingWindow) IsOnTitleAction(screenX, screenY int) bool {
+	if fw.titleActionW <= 0 || !fw.decorated {
+		return false
+	}
+	lx := screenX - fw.x
+	ly := screenY - fw.y
+	if ly != 0 {
+		return false
+	}
+	end := fw.w
+	if fw.closable {
+		end = fw.w - 3
+	}
+	return lx >= end-fw.titleActionW && lx < end
 }
 
 // MarkContentDirty flags the window's content as needing re-rendering.

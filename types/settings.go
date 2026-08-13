@@ -27,10 +27,10 @@ type WorkspaceOverrides struct {
 // LSPLanguage describes a built-in language server the settings UI can
 // enable, disable, or retarget.
 type LSPLanguage struct {
-	ID         string
-	Name       string
-	Exts       []string
-	DefaultCmd string
+	ID          string
+	Name        string
+	Exts        []string
+	DefaultCmd  string
 	DefaultArgs []string
 }
 
@@ -312,8 +312,19 @@ func mergeProvider(base, overlay ProviderConfig) ProviderConfig {
 	if overlay.ProviderURL != "" {
 		out.ProviderURL = overlay.ProviderURL
 	}
+	if overlay.APIStandard != "" {
+		out.APIStandard = overlay.APIStandard
+	}
 	if overlay.Model != "" {
 		out.Model = overlay.Model
+	}
+	if len(overlay.ModelStandards) > 0 {
+		if out.ModelStandards == nil {
+			out.ModelStandards = make(map[string]string, len(overlay.ModelStandards))
+		}
+		for model, standard := range overlay.ModelStandards {
+			out.ModelStandards[model] = standard
+		}
 	}
 	if overlay.ThinkingEffort != "" {
 		out.ThinkingEffort = overlay.ThinkingEffort
@@ -357,6 +368,9 @@ func mergeCategory(base, overlay CategorySettings) CategorySettings {
 	if overlay.APIKey != "" {
 		out.APIKey = overlay.APIKey
 	}
+	if overlay.APIStandard != "" {
+		out.APIStandard = overlay.APIStandard
+	}
 	if overlay.Model != "" {
 		out.Model = overlay.Model
 	}
@@ -391,6 +405,7 @@ func cloneProviders(src map[string]ProviderConfig) map[string]ProviderConfig {
 	}
 	out := make(map[string]ProviderConfig, len(src))
 	for k, v := range src {
+		v.ModelStandards = cloneStringMap(v.ModelStandards)
 		out[k] = v
 	}
 	return out

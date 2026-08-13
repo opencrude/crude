@@ -17,8 +17,9 @@ only against this catalog.
 | Sidebar divider | `tui/ui/split_divider.go`, `tui/screens/shelltree/`, `tui/screens/activitylist/` | Shared `ui.SplitModel` + `SplitDivider`; viewmodel applies `split.resize` to `Tree.Width` |
 | Main tab bar | `tui/screens/shelltabs/`, `tui/ui/tabs.go`, `tui/viewmodel/tab_bar.go`, `tui/window/window.go` | Native Host paint into `mainTabBarSurf`; `Window` retains tab state only (no ANSI render); legacy `RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted |
 | Chat input | `tui/screens/shellinput/`, `tui/input/`, `tui/ui/text_area.go` | Native Host paint into `mainInputSurf`; `ui.TextArea` + reference chips + `ui.List` slash popup; composer fill is shell `ColorBg` (not popup); no `components.TextInput` on chat path |
-| Session Panel Deck tabs | `tui/ui/tabs.go`, `tui/ui/panel_deck.go`, `tui/viewmodel/session_deck.go` | Per-session native component panel region below messages; docked terminals share this deck with questions |
-| In-app terminal (docked) | `tui/screens/shellterm/`, `tui/term/`, `workspace/terminal.go` | Ghostty-pinned PTY + VT paint; closable `PanelInteractive` tabs (`terminal/<id>`). See [`TERMINALS.md`](./TERMINALS.md) |
+| Session Panel Deck tabs | `tui/ui/tabs.go`, `tui/ui/panel_deck.go`, `tui/viewmodel/session_deck.go` | Per-session native component panel region below messages (settings, questions, confirmation, YOLO, jobs) — not terminals |
+| Terminal dock | `tui/screens/termdock/`, `tui/viewmodel/terminals.go` | Workspace-level tabbed PTY dock above the status bar; independent of session PanelDeck |
+| In-app terminal (docked) | `tui/screens/shellterm/`, `tui/term/`, `workspace/terminal.go` | libghostty-vt PTY + VT paint in the workspace dock. See [`TERMINALS.md`](./TERMINALS.md) |
 | Legacy inline panel tabs | deleted | Replaced by native per-session PanelDeck tabs; not the floating OverlayHost |
 | Status bar | `tui/screens/shellstatus/`, `tui/viewmodel/view.go` | Native Host paint; activity + `ui.Hint` segments via ActionRegistry; legacy `widgets/statusbar.go` deleted |
 | Contextual help | `tui/ui/hint.go`, `tui/ui/key_chord.go`, `tui/viewmodel/view.go` | Registry-derived Hint/KeyChord segments (Phase 13 item 2) |
@@ -76,7 +77,7 @@ Click-outside policies (verified in `tui/viewmodel/overlay_click_outside_contrac
 | Session settings | `tui/screens/sessionsettings/session_settings.go` | Native nested Form pages in per-session docked Panel Deck; Up/Down clamp on the agent list (Tab reaches Save/Cancel, Esc still closes); **Phase 15:** `viewmodel/panel_deck_contract_test.go` |
 | Tool confirmation | `tui/screens/confirmation/confirmation.go` | Native blocking metadata Form + ActionBar in the per-session Panel Deck; contracts in `panel_deck_contract_test.go` + `confirmation_test.go` |
 | Agent question form | `tui/screens/question/question.go` | Native blocking Form + option collection + TextField + ActionBar in the per-session Panel Deck; contracts in `panel_deck_contract_test.go` + `question_test.go` |
-| Docked terminal | `tui/screens/shellterm/` | Interactive PanelDeck tab (same region as questions); Float promotes to a window |
+| Docked terminal | `tui/screens/shellterm/`, `tui/screens/termdock/` | Workspace terminal dock tab; Float promotes to a window |
 | YOLO confirmation | `tui/screens/yolo/yolo.go` | Native blocking warning Form + ActionBar in the per-session Panel Deck; contracts in `panel_deck_contract_test.go` + `yolo_test.go` |
 | Generic confirm prompt | `tui/widgets/confirm_frame.go` | `BuildConfirmFrame` only; legacy `confirmprompt.go` deleted |
 

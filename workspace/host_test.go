@@ -1,8 +1,12 @@
 package workspace
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"crude/buildinfo"
 	"crude/types"
 )
 
@@ -66,8 +70,53 @@ func TestPTYEnvironPinsGhostty(t *testing.T) {
 	if got["COLORTERM"] != "truecolor" {
 		t.Fatalf("COLORTERM=%q", got["COLORTERM"])
 	}
+	if got["TERMINFO"] == "" {
+		t.Fatal("TERMINFO not set; TERM=xterm-ghostty must resolve against a real database")
+	}
 	if got["PATH"] != "/bin" {
 		t.Fatalf("PATH clobbered: %q", got["PATH"])
+	}
+}
+
+func TestTerminfoDirMaterializesPinnedEntry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CRUDE_TERMINFO_DIR", "")
+
+	dir := TerminfoDir()
+	wantDir := filepath.Join(home, buildinfo.DataDir(), "terminfo")
+	if dir != wantDir {
+		t.Fatalf("TerminfoDir=%q want %q", dir, wantDir)
+	}
+	entry := filepath.Join(dir, "x", types.GhosttyTermName)
+	got, err := os.ReadFile(entry)
+	if err != nil {
+		t.Fatalf("read materialized entry: %v", err)
+	}
+	if !bytes.Equal(got, types.GhosttyTerminfoEntry) {
+		t.Fatal("materialized entry does not match the embedded pinned entry")
+	}
+
+	// A stale/corrupt entry must be rewritten on the next call.
+	if err := os.WriteFile(entry, []byte("corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if dir := TerminfoDir(); dir != wantDir {
+		t.Fatalf("TerminfoDir=%q want %q", dir, wantDir)
+	}
+	got, err = os.ReadFile(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, types.GhosttyTerminfoEntry) {
+		t.Fatal("corrupt entry was not rewritten with the embedded pinned entry")
+	}
+
+	// Explicit override wins and materializes nothing.
+	override := t.TempDir()
+	t.Setenv("CRUDE_TERMINFO_DIR", override)
+	if dir := TerminfoDir(); dir != override {
+		t.Fatalf("TerminfoDir=%q want override %q", dir, override)
 	}
 }
 

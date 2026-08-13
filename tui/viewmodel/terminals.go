@@ -12,25 +12,75 @@ import (
 )
 
 const (
-	terminalPanelPrefix = "terminal/"
-	defaultTermCols     = 80
-	defaultTermRows     = 24
+	defaultTermCols       = 80
+	defaultTermRows       = 24
+	defaultTermDockHeight = 12
+	minTermDockHeight     = 6
+	minMainAboveDock      = 8
 )
-
-func terminalPanelID(id string) string { return terminalPanelPrefix + id }
-
-func terminalIDFromPanel(panelID string) (string, bool) {
-	if !strings.HasPrefix(panelID, terminalPanelPrefix) {
-		return "", false
-	}
-	return strings.TrimPrefix(panelID, terminalPanelPrefix), true
-}
 
 func (m *App) termMgr() *workspace.TerminalManager {
 	if m == nil || m.Workspace == nil {
 		return nil
 	}
 	return m.TermMgr
+}
+
+func (m *App) termDockVisible() bool {
+	return m.termDock != nil && !m.termDock.Empty()
+}
+
+func (m *App) termDockOwnsKeys() bool {
+	return m.termDockFocused && m.termDockVisible() && !m.sessionDeckBlocking()
+}
+
+func (m *App) terminalOwnsKeys() bool {
+	if m.windowManager != nil {
+		if fw := m.windowManager.Focused(); fw != nil {
+			return ui.IsTerminalOverlay(ui.OverlayID(fw.ID))
+		}
+	}
+	return m.termDockOwnsKeys()
+}
+
+func (m *App) termDockHeightClamped() int {
+	if !m.termDockVisible() {
+		return 0
+	}
+	h := m.termDockHeight
+	if h <= 0 {
+		h = defaultTermDockHeight
+	}
+	maxH := m.height - 2 - minMainAboveDock
+	if maxH < 4 {
+		maxH = 4
+	}
+	minH := minTermDockHeight
+	if minH > maxH {
+		minH = maxH
+	}
+	if h < minH {
+		h = minH
+	}
+	if h > maxH {
+		h = maxH
+	}
+	return h
+}
+
+func (m *App) setTermDockHeight(h int) {
+	m.termDockHeight = h
+	m.termDockHeight = m.termDockHeightClamped()
+	if m.termDockHeight == 0 {
+		m.termDockHeight = defaultTermDockHeight
+	}
+}
+
+func (m *App) setTermDockFocused(v bool) {
+	m.termDockFocused = v && m.termDockVisible()
+	if m.termDock != nil {
+		m.termDock.SetFocused(m.termDockFocused)
+	}
 }
 
 func (m *App) ensureTermScreen(id, title string) *shellterm.Screen {
@@ -51,13 +101,25 @@ func (m *App) ensureTermScreen(id, title string) *shellterm.Screen {
 			_ = mgr.Resize(id, cols, rows)
 		}
 	})
-	s.SetTitleHandler(func(t string) {
-		if mgr := m.termMgr(); mgr != nil {
-			mgr.SetTitle(id, t)
-		}
-	})
+	s.SetCopy(m.copyToClipboard)
+	// Note: no synchronous title hook. OSC titles are published from
+	// handleTerminalOutput via an async tea.Cmd; publishing here would
+	// re-enter the event bus while it is handling TerminalOutputMsg.
 	m.termScreens[id] = s
 	return s
+}
+
+func (m *App) dropTermScreen(id string) {
+	if m.termDock != nil {
+		m.termDock.Unmount(id)
+	}
+	if s := m.termScreens[id]; s != nil {
+		s.Close()
+		delete(m.termScreens, id)
+	}
+	if m.termDock != nil && m.termDock.Empty() {
+		m.termDockFocused = false
+	}
 }
 
 func (m *App) openNewTerminal() tea.Cmd {
@@ -80,10 +142,6 @@ func (m *App) openNewTerminal() tea.Cmd {
 		return nil
 	}
 	m.ensureTermScreen(info.ID, info.Title)
-	if m.activeSessionDeck() == nil {
-		m.promoteTerminal(info.ID)
-		return nil
-	}
 	m.dockTerminal(info.ID)
 	m.setActivity(activityTerminals, true)
 	return nil
@@ -91,7 +149,7 @@ func (m *App) openNewTerminal() tea.Cmd {
 
 func (m *App) dockTerminal(id string) {
 	mgr := m.termMgr()
-	if mgr == nil {
+	if mgr == nil || m.termDock == nil {
 		return
 	}
 	info, ok := mgr.Get(id)
@@ -106,22 +164,10 @@ func (m *App) dockTerminal(id string) {
 		m.suppressTermClose = ""
 	}
 	mgr.SetPlacement(id, workspace.TerminalDocked)
-	projection := m.activeSessionDeck()
-	if projection == nil || projection.deck == nil {
-		m.promoteTerminal(id)
-		return
-	}
-	projection.deck.Open(ui.PanelEntry{
-		ID:              terminalPanelID(id),
-		Title:           screen.Title(),
-		Content:         screen,
-		Closable:        true,
-		Policy:          ui.PanelInteractive,
-		PreferredHeight: 14,
-	})
-	projection.deckFocused = true
-	projection.deckFocus = screen.ID()
-	projection.deckHost.MarkLayout()
+	m.termDock.Mount(id, screen)
+	m.setSessionDeckFocused(false)
+	m.setTermDockFocused(true)
+	m.FocusStack.Clear()
 }
 
 func (m *App) promoteTerminal(id string) {
@@ -134,12 +180,12 @@ func (m *App) promoteTerminal(id string) {
 		return
 	}
 	screen := m.ensureTermScreen(id, info.Title)
-	screen.SetFloating(true)
-	if projection := m.activeSessionDeck(); projection != nil && projection.deck != nil {
-		_ = projection.deck.Close(terminalPanelID(id))
-		projection.deckHost.MarkLayout()
+	if m.termDock != nil {
+		m.termDock.Unmount(id)
 	}
+	screen.SetFloating(true)
 	mgr.SetPlacement(id, workspace.TerminalFloating)
+	m.setTermDockFocused(false)
 	m.openTerminalWindow(id, screen)
 }
 
@@ -173,6 +219,11 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 		w,
 		h,
 	)
+	if frame.Frame() != nil {
+		// JetBrains-style title-bar control: dock the tool window back into
+		// the panel (replaces the old in-body action bar).
+		frame.Frame().SetTitleAction("⇲", "Dock")
+	}
 	fw := wm.NewFloatingWindow(string(oid), screen.Title(), frame, w, h,
 		wm.WithDecoration(true),
 		wm.WithMovable(true),
@@ -182,6 +233,9 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 		wm.WithMinSize(min(40, w), min(10, h)),
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
+	// The dock title action owns its title-bar cells; clicks there must not
+	// start a window drag.
+	fw.SetTitleActionWidth(3)
 	wm.CenterOnScreen(fw, m.width, m.height)
 	closedID := id
 	m.overlayHost.Open(oid, fw, ui.DefaultOverlayPolicy(), func() {
@@ -190,6 +244,9 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 		}
 		m.closeTerminal(closedID)
 	})
+	if frame.Host() != nil {
+		frame.Host().Focus(screen.ID())
+	}
 }
 
 func (m *App) focusTerminal(id string) {
@@ -219,32 +276,70 @@ func (m *App) closeTerminal(id string) {
 	if id == "" {
 		return
 	}
-	if projection := m.activeSessionDeck(); projection != nil && projection.deck != nil {
-		_ = projection.deck.Close(terminalPanelID(id))
-		projection.deckHost.MarkLayout()
-	}
 	if m.overlayHost != nil {
 		m.suppressTermClose = id
 		m.overlayHost.Close(ui.TerminalOverlayID(id))
 		m.suppressTermClose = ""
 	}
-	if m.termScreens != nil {
-		delete(m.termScreens, id)
-	}
+	m.dropTermScreen(id)
 	if mgr := m.termMgr(); mgr != nil {
 		mgr.Close(id)
 	}
 }
 
-func (m *App) handleTerminalOutput(msg workspace.TerminalOutputMsg) {
-	if s := m.termScreens[msg.ID]; s != nil {
-		s.Feed(msg.Data)
+func (m *App) handleTerminalOutput(msg workspace.TerminalOutputMsg) tea.Cmd {
+	s := m.termScreens[msg.ID]
+	if s == nil {
+		return nil
 	}
+	fx := s.Feed(msg.Data)
 	if m.overlayHost != nil {
 		if fw := m.overlayHost.Window(ui.TerminalOverlayID(msg.ID)); fw != nil {
 			fw.MarkContentDirty()
 		}
 	}
+	if fx.HasClipboard {
+		// OSC 52 / OSC 1337 clipboard write from the child.
+		m.copyToClipboard(fx.Clipboard)
+	}
+	if fx.Bell {
+		m.markTerminalBell(msg.ID)
+	}
+	if fx.PwdChanged {
+		// No event-bus publish: SetCWD only updates the snapshot field.
+		if mgr := m.termMgr(); mgr != nil {
+			mgr.SetCWD(msg.ID, s.PWD())
+		}
+	}
+	if !fx.TitleChanged {
+		return nil
+	}
+	// Feed runs while Bubble Tea is handling TerminalOutputMsg, and the
+	// event bus delivers via Program.Send to an unbuffered channel. A
+	// synchronous TerminalManager.SetTitle here would deadlock the update
+	// loop (an idle floating terminal "hangs" as soon as the shell sets its
+	// OSC title), so publish the title from an async command instead.
+	id, title := msg.ID, s.Title()
+	return func() tea.Msg {
+		if mgr := m.termMgr(); mgr != nil {
+			mgr.SetTitle(id, title)
+		}
+		return nil
+	}
+}
+
+// markTerminalBell flags the dock tab of a ringing terminal that does not
+// currently own input.
+func (m *App) markTerminalBell(id string) {
+	if m.termDock == nil || !m.termDock.Contains(id) {
+		return
+	}
+	wmFocused := m.windowManager != nil && m.windowManager.Focused() != nil
+	focused := !wmFocused && m.termDockOwnsKeys() && m.termDock.ActiveID() == id
+	if focused {
+		return
+	}
+	m.termDock.SetAttention(id, true)
 }
 
 func (m *App) handleTerminalExited(msg workspace.TerminalExitedMsg) {
@@ -254,9 +349,7 @@ func (m *App) handleTerminalExited(msg workspace.TerminalExitedMsg) {
 }
 
 func (m *App) handleTerminalClosed(msg workspace.TerminalClosedMsg) {
-	if m.termScreens != nil {
-		delete(m.termScreens, msg.ID)
-	}
+	m.dropTermScreen(msg.ID)
 }
 
 func (m *App) handleTerminalAction(action ui.Action) bool {
@@ -285,42 +378,16 @@ func (m *App) handleTerminalAction(action ui.Action) bool {
 	return false
 }
 
-func (m *App) reconcileClosedTerminalPanels(before []string) {
-	projection := m.activeSessionDeck()
-	after := map[string]bool{}
-	if projection != nil && projection.deck != nil {
-		for _, p := range projection.deck.Panels() {
-			after[p.ID] = true
-		}
-	}
-	for _, id := range before {
-		termID, ok := terminalIDFromPanel(id)
-		if !ok || after[id] {
-			continue
-		}
-		if mgr := m.termMgr(); mgr != nil {
-			if info, exists := mgr.Get(termID); exists && info.Placement == workspace.TerminalFloating {
-				continue
+func (m *App) toggleTerminalFocus() tea.Cmd {
+	if m.terminalOwnsKeys() {
+		if m.windowManager != nil {
+			if fw := m.windowManager.Focused(); fw != nil && ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) {
+				m.windowManager.ClearFocus()
 			}
 		}
-		m.closeTerminal(termID)
-	}
-}
-
-func (m *App) deckPanelIDs() []string {
-	projection := m.activeSessionDeck()
-	if projection == nil || projection.deck == nil {
+		m.setTermDockFocused(false)
 		return nil
 	}
-	panels := projection.deck.Panels()
-	ids := make([]string, 0, len(panels))
-	for _, p := range panels {
-		ids = append(ids, p.ID)
-	}
-	return ids
-}
-
-func (m *App) toggleTerminalFocus() tea.Cmd {
 	mgr := m.termMgr()
 	if mgr == nil {
 		return m.openNewTerminal()
@@ -342,6 +409,9 @@ func (m *App) applyTerminalTitle(id, title string) {
 	if s := m.termScreens[id]; s != nil {
 		s.SetWindowTitle(title)
 	}
+	if m.termDock != nil {
+		m.termDock.SetTitle(id, title)
+	}
 	if m.overlayHost != nil {
 		if fw := m.overlayHost.Window(ui.TerminalOverlayID(id)); fw != nil {
 			fw.Title = title
@@ -350,29 +420,6 @@ func (m *App) applyTerminalTitle(id, title string) {
 			}
 			fw.MarkContentDirty()
 		}
-	}
-	projection := m.activeSessionDeck()
-	if projection == nil || projection.deck == nil {
-		return
-	}
-	screen := m.termScreens[id]
-	if screen == nil {
-		return
-	}
-	for _, p := range projection.deck.Panels() {
-		if p.ID != terminalPanelID(id) {
-			continue
-		}
-		projection.deck.Open(ui.PanelEntry{
-			ID:              p.ID,
-			Title:           title,
-			Content:         screen,
-			Closable:        p.Closable,
-			Policy:          p.Policy,
-			PreferredHeight: p.PreferredHeight,
-		})
-		projection.deckHost.MarkLayout()
-		return
 	}
 }
 
@@ -388,13 +435,62 @@ func (m *App) discardTerminalUI() {
 			m.suppressTermClose = ""
 		}
 	}
-	if projection := m.activeSessionDeck(); projection != nil && projection.deck != nil {
-		for _, p := range projection.deck.Panels() {
-			if _, ok := terminalIDFromPanel(p.ID); ok {
-				_ = projection.deck.Close(p.ID)
-			}
+	if m.termDock != nil {
+		for _, id := range m.termDock.IDs() {
+			m.termDock.Unmount(id)
 		}
-		projection.deckHost.MarkLayout()
+	}
+	for id, s := range m.termScreens {
+		if s != nil {
+			s.Close()
+		}
+		delete(m.termScreens, id)
 	}
 	m.termScreens = make(map[string]*shellterm.Screen)
+	m.termDockFocused = false
+}
+
+func (m *App) dispatchTermDockKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.rootHost == nil || m.termDock == nil {
+		return m, nil
+	}
+	m.syncRootFocus()
+	res := m.rootHost.Handle(msg)
+	return m, tea.Batch(res.Cmd, m.handleHostAction(res.Action))
+}
+
+func (m *App) dispatchTermDockPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.rootHost == nil {
+		return m, nil
+	}
+	m.syncRootFocus()
+	res := m.rootHost.Handle(msg)
+	return m, tea.Batch(res.Cmd, m.handleHostAction(res.Action))
+}
+
+// sessionDeck still calls this after Close of a panel; terminals no longer
+// live there, so a leftover terminal/ prefix is ignored.
+func (m *App) reconcileClosedTerminalPanels(before []string) {
+	_ = before
+}
+
+func (m *App) deckPanelIDs() []string {
+	projection := m.activeSessionDeck()
+	if projection == nil || projection.deck == nil {
+		return nil
+	}
+	panels := projection.deck.Panels()
+	ids := make([]string, 0, len(panels))
+	for _, p := range panels {
+		ids = append(ids, p.ID)
+	}
+	return ids
+}
+
+func terminalIDFromPanel(panelID string) (string, bool) {
+	const prefix = "terminal/"
+	if !strings.HasPrefix(panelID, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(panelID, prefix), true
 }

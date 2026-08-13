@@ -71,6 +71,9 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 	if err != nil {
 		return nil, fmt.Errorf("new backend session: %w", err)
 	}
+	if w.WorkspaceDB != nil {
+		bs.SetMemoryStore(w.WorkspaceDB)
+	}
 
 	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
 	fs.backend = bs
@@ -123,6 +126,9 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 	bs, err := session.ResumeSessionWithDir(dbPath, cfg, homeDir, sessionsRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resume backend session: %w", err)
+	}
+	if w.WorkspaceDB != nil {
+		bs.SetMemoryStore(w.WorkspaceDB)
 	}
 
 	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
@@ -242,8 +248,21 @@ func (w *Workspace) AllProviderConfigs() map[string]ttypes.ProviderConfig {
 	for k, v := range w.sessionCfg.Providers {
 		out[k] = ttypes.ProviderConfig{
 			APIKey: v.APIKey, ProviderURL: v.ProviderURL,
-			Model: v.Model, ThinkingEffort: v.ThinkingEffort,
+			APIStandard: v.APIStandard, Model: v.Model,
+			ModelStandards: copyStringMap(v.ModelStandards),
+			ThinkingEffort: v.ThinkingEffort,
 		}
+	}
+	return out
+}
+
+func copyStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for key, value := range src {
+		out[key] = value
 	}
 	return out
 }
@@ -264,7 +283,9 @@ func (w *Workspace) SaveProviderSettings(active string, providers map[string]tty
 		w.sessionCfg.Providers[id] = session.ProviderConfig{
 			APIKey:         pc.APIKey,
 			ProviderURL:    pc.ProviderURL,
+			APIStandard:    pc.APIStandard,
 			Model:          pc.Model,
+			ModelStandards: copyStringMap(pc.ModelStandards),
 			ThinkingEffort: pc.ThinkingEffort,
 		}
 	}
@@ -289,11 +310,16 @@ func (w *Workspace) SaveProviderSettings(active string, providers map[string]tty
 }
 
 // HandleFetchModels fetches available models from a provider.
-func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey string) ([]ttypes.ModelEntry, error) {
+func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey, standardID string) ([]ttypes.ModelEntry, error) {
 	if b := w.BackendSession(); b != nil {
-		return b.HandleFetchModels(providerID, baseURL, apiKey)
+		return b.HandleFetchModels(providerID, baseURL, apiKey, standardID)
 	}
 	p := provider.FromPreset(providerID, apiKey, baseURL)
+	if standardID != "" {
+		if err := p.SetStandardID(standardID); err != nil {
+			return nil, err
+		}
+	}
 	models, err := provider.FetchModels(p)
 	if err != nil {
 		return nil, err
@@ -433,7 +459,18 @@ func (w *Workspace) resolveAgentBlock(agentID, response string) bool {
 	case root.BlockResolveCh <- response:
 		return true
 	default:
-		return false
+		// A buffered response can be stale after cancellation or panel
+		// replacement. Prefer the user's latest explicit answer.
+		select {
+		case <-root.BlockResolveCh:
+		default:
+		}
+		select {
+		case root.BlockResolveCh <- response:
+			return true
+		default:
+			return false
+		}
 	}
 }
 
@@ -489,7 +526,11 @@ func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, b
 		sess.TokenEstimated, _ = usage["estimated"].(bool)
 		if contextWindow := toInt(usage["context_window"]); contextWindow > 0 {
 			sess.ContextWindow = contextWindow
-			if contextUsed := toInt(usage["context_used"]); contextUsed > 0 {
+			contextUsed := toInt(usage["context_prompt"])
+			if contextUsed == 0 {
+				contextUsed = toInt(usage["context_used"])
+			}
+			if contextUsed > 0 {
 				sess.ContextUsed = contextUsed
 			} else {
 				sess.ContextUsed = sess.TokenPrompt
@@ -502,7 +543,13 @@ func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, b
 		sess.TokenEstimated = false
 		if contextWindow := usage["context_window"]; contextWindow > 0 {
 			sess.ContextWindow = contextWindow
-			sess.ContextUsed = usage["prompt"]
+			sess.ContextUsed = usage["context_prompt"]
+			if sess.ContextUsed == 0 {
+				sess.ContextUsed = usage["context_used"]
+			}
+			if sess.ContextUsed == 0 {
+				sess.ContextUsed = usage["prompt"]
+			}
 		}
 	default:
 		return UsageSnapshot{}, false
@@ -637,8 +684,10 @@ func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 	if w.sessionCfg != nil {
 		if cfg, ok := w.sessionCfg.Providers[providerID]; ok {
 			return ttypes.ProviderConfig{
-				APIKey:      cfg.APIKey,
-				ProviderURL: cfg.ProviderURL,
+				APIKey: cfg.APIKey, ProviderURL: cfg.ProviderURL,
+				APIStandard: cfg.APIStandard, Model: cfg.Model,
+				ModelStandards: copyStringMap(cfg.ModelStandards),
+				ThinkingEffort: cfg.ThinkingEffort,
 			}
 		}
 	}
@@ -648,8 +697,10 @@ func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 	}
 	if cfg, ok := b.Config().Providers[providerID]; ok {
 		return ttypes.ProviderConfig{
-			APIKey:      cfg.APIKey,
-			ProviderURL: cfg.ProviderURL,
+			APIKey: cfg.APIKey, ProviderURL: cfg.ProviderURL,
+			APIStandard: cfg.APIStandard, Model: cfg.Model,
+			ModelStandards: copyStringMap(cfg.ModelStandards),
+			ThinkingEffort: cfg.ThinkingEffort,
 		}
 	}
 	return ttypes.ProviderConfig{}

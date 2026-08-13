@@ -72,11 +72,13 @@ func (m *App) focusTarget() FocusTarget {
 
 func (m *App) unfocus() {
 	m.setSessionDeckFocused(false)
+	m.setTermDockFocused(false)
 	m.FocusStack.Clear()
 }
 
 func (m *App) setFocusTree() {
 	m.setSessionDeckFocused(false)
+	m.setTermDockFocused(false)
 	m.FocusStack.Clear()
 	m.FocusStack.Push(FocusTree)
 }
@@ -86,6 +88,7 @@ func (m *App) setFocusTree() {
 // even when an editor tab is open. Used by view.focus.chat.
 func (m *App) setFocusInput() {
 	m.setSessionDeckFocused(false)
+	m.setTermDockFocused(false)
 	m.FocusStack.Clear()
 	m.FocusStack.Push(FocusInput)
 }
@@ -105,6 +108,7 @@ func (m *App) setFocusInput() {
 // that would otherwise shadow the editor.
 func (m *App) setFocusEditor() {
 	m.setSessionDeckFocused(false)
+	m.setTermDockFocused(false)
 	m.FocusStack.Clear()
 }
 
@@ -124,6 +128,7 @@ func (m *App) toggleFocusTree() {
 
 func (m *App) setFocusTabBar() {
 	m.setSessionDeckFocused(false)
+	m.setTermDockFocused(false)
 	m.FocusStack.Clear()
 	m.FocusStack.Push(FocusTabBar)
 	m.syncRootFocus()

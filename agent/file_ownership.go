@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,11 +27,12 @@ func NewFileOwnership() *FileOwnership {
 }
 
 func (fo *FileOwnership) CheckOrClaim(agentID AgentID, agentName string, path string, isWrite bool) error {
+	path = normalizeClaimPath(path)
 	fo.mu.Lock()
 	defer fo.mu.Unlock()
 
 	for claimedPath, entry := range fo.claims {
-		if strings.HasPrefix(path, claimedPath) || strings.HasPrefix(claimedPath, path) {
+		if claimPathsOverlap(path, claimedPath) {
 			if entry.AgentID != agentID {
 				return fmt.Errorf("file %q is owned by agent %q (claimed at %s)", path, entry.AgentName, entry.ClaimedAt.Format("15:04:05"))
 			}
@@ -51,8 +53,9 @@ func (fo *FileOwnership) PreClaim(agentID AgentID, agentName string, paths []str
 	defer fo.mu.Unlock()
 
 	for _, path := range paths {
+		path = normalizeClaimPath(path)
 		for claimedPath, entry := range fo.claims {
-			if strings.HasPrefix(path, claimedPath) || strings.HasPrefix(claimedPath, path) {
+			if claimPathsOverlap(path, claimedPath) {
 				if entry.AgentID != agentID {
 					return fmt.Errorf("pre-claim conflict: file %q is owned by agent %q", path, entry.AgentName)
 				}
@@ -62,6 +65,7 @@ func (fo *FileOwnership) PreClaim(agentID AgentID, agentName string, paths []str
 
 	now := time.Now()
 	for _, path := range paths {
+		path = normalizeClaimPath(path)
 		fo.claims[path] = ClaimEntry{
 			AgentID:   agentID,
 			AgentName: agentName,
@@ -70,6 +74,32 @@ func (fo *FileOwnership) PreClaim(agentID AgentID, agentName string, paths []str
 		}
 	}
 	return nil
+}
+
+func normalizeClaimPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	return filepath.Clean(path)
+}
+
+func claimPathsOverlap(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	return left == right || pathWithin(left, right) || pathWithin(right, left)
+}
+
+func pathWithin(path, parent string) bool {
+	relative, err := filepath.Rel(parent, path)
+	if err != nil || relative == "." || relative == ".." {
+		return relative == "."
+	}
+	return !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (fo *FileOwnership) Release(agentID AgentID) {
@@ -105,5 +135,3 @@ func (fo *FileOwnership) WriteClaimsByAgent(agentID AgentID) []string {
 	}
 	return paths
 }
-
-

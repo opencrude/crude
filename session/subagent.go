@@ -26,18 +26,18 @@ import (
 )
 
 type SubAgentRunner struct {
-	session         *Session
-	orchestratorID  string
-	effectiveCfg    *Config // per-orchestrator effective config (nil = use base)
-	mgr             *agent.SubAgentManager
-	fileOwnership   *agent.FileOwnership
-	rateLimiter     *agent.RateLimiter
-	sender          EventSender
-	parentToolFn    func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
-	wg              sync.WaitGroup
-	wakeCh          chan<- WakeEvent
-	sessionCtx      context.Context
-	sessionCancel   context.CancelFunc
+	session        *Session
+	orchestratorID string
+	effectiveCfg   *Config // per-orchestrator effective config (nil = use base)
+	mgr            *agent.SubAgentManager
+	fileOwnership  *agent.FileOwnership
+	rateLimiter    *agent.RateLimiter
+	sender         EventSender
+	parentToolFn   func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	wg             sync.WaitGroup
+	wakeCh         chan<- WakeEvent
+	sessionCtx     context.Context
+	sessionCancel  context.CancelFunc
 }
 
 func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
@@ -78,7 +78,6 @@ func (r *SubAgentRunner) CancelAllActive() []agent.AgentID {
 		r.mgr.Cancel(id)
 		r.fileOwnership.Release(id)
 	}
-	r.sessionCancel()
 	return ids
 }
 
@@ -115,15 +114,15 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	}
 
 	spec := agent.SubAgentSpec{
-		ID:          agent.AgentID(name + "-" + generateShortID()),
-		Name:        name,
-		Category:    category,
-		Description: description,
+		ID:           agent.AgentID(name + "-" + generateShortID()),
+		Name:         name,
+		Category:     category,
+		Description:  description,
 		Instructions: getStrParam(params, "instructions"),
-		PolicyName:  getStrParam(params, "policy"),
-		MaxSteps:    getIntParam(params, "max_steps"),
-		Depth:       1,
-		ParentID:    agent.AgentID(r.orchestratorID),
+		PolicyName:   getStrParam(params, "policy"),
+		MaxSteps:     getIntParam(params, "max_steps"),
+		Depth:        1,
+		ParentID:     agent.AgentID(r.orchestratorID),
 	}
 
 	if raw, ok := params["allowed_tools"]; ok {
@@ -348,13 +347,18 @@ func (r *SubAgentRunner) PollSubAgent(params map[string]any) (tools.ToolResult, 
 			r.session.MarkReportConsumed(handleID)
 			return tools.ToolResult{Content: formatSubAgentResult(completedResult)}, nil
 		}
+		status := agent.SubAgentFailedError
+		if finishedHandle.Agent != nil && finishedHandle.Agent.Ctx != nil &&
+			finishedHandle.Agent.Ctx.Err() == context.Canceled {
+			status = agent.SubAgentCancelled
+		}
 		result := agent.SubAgentResult{
-			AgentID:      finishedHandle.Spec.ID,
-			Name:         finishedHandle.Spec.Name,
-			Category:     finishedHandle.Spec.Category,
-			SessionID:    finishedHandle.SessionID,
-			Status:       agent.SubAgentCompleted,
-			DurationMs:   time.Since(finishedHandle.StartedAt).Milliseconds(),
+			AgentID:    finishedHandle.Spec.ID,
+			Name:       finishedHandle.Spec.Name,
+			Category:   finishedHandle.Spec.Category,
+			SessionID:  finishedHandle.SessionID,
+			Status:     status,
+			DurationMs: time.Since(finishedHandle.StartedAt).Milliseconds(),
 		}
 		promptTokens, compTokens, costUSD, errs := finishedHandle.Usage()
 		result.PromptTokens = promptTokens
@@ -413,7 +417,7 @@ func (r *SubAgentRunner) ListSubAgents(params map[string]any) (tools.ToolResult,
 		}
 		fmt.Fprintf(&sb, "- %s [%s] %s", e.Name, e.Category, status)
 		if e.ElapsedSeconds > 0 {
-			fmt.Fprintf(&sb, " (%s)", (time.Duration(e.ElapsedSeconds)*time.Second).Round(time.Second))
+			fmt.Fprintf(&sb, " (%s)", (time.Duration(e.ElapsedSeconds) * time.Second).Round(time.Second))
 		}
 		if e.StepsUsed > 0 {
 			fmt.Fprintf(&sb, " steps=%d", e.StepsUsed)
@@ -490,6 +494,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	resolvedProvider := spec.Provider
 	resolvedAPIKey := spec.APIKey
 	resolvedURL := spec.ProviderURL
+	resolvedAPIStandard := spec.APIStandard
 	resolvedModelName := spec.Model
 	resolvedThinkingEffort := spec.ThinkingEffort
 
@@ -528,11 +533,24 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		mainCat := cfg.GetActiveDefaultCategory()
 		resolvedThinkingEffort = mainCat.ThinkingEffort
 	}
+	if resolvedAPIStandard == "" {
+		if configured, ok := cfg.Providers[resolvedProvider]; ok {
+			resolvedAPIStandard = configured.StandardForModel(resolvedModelName, resolvedProvider)
+		} else {
+			resolvedAPIStandard = provider.DefaultStandardID(resolvedProvider)
+		}
+	}
 
 	r.session.logger.Info("SUBAGENT", "launch", "agent_id", spec.ID, "category", spec.Category, "provider", resolvedProvider, "model", resolvedModelName)
 
 	p := provider.FromPreset(resolvedProvider, resolvedAPIKey, resolvedURL)
 	p.Model = resolvedModelName
+	if err := p.SetStandardID(resolvedAPIStandard); err != nil {
+		if subDB != nil {
+			_ = subDB.Close()
+		}
+		return nil, fmt.Errorf("sub-agent provider standard: %w", err)
+	}
 	if resolvedThinkingEffort != "" {
 		p.SetThinkingEffort(resolvedThinkingEffort)
 	}
@@ -737,7 +755,12 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 	handle.ResultCh <- result
 	r.mgr.MarkFinished(handle.Spec.ID, result)
 
-	// Send wake event to main agent (non-blocking — don't block sub-agent shutdown if channel is full)
+	done = true
+	r.persistResult(result)
+
+	// Completion wakes are part of the delivery contract. Backpressure is
+	// preferable to silently losing a result; session cancellation unblocks
+	// shutdown if no orchestrator remains to drain the queue.
 	if r.wakeCh != nil {
 		select {
 		case r.wakeCh <- WakeEvent{
@@ -745,12 +768,9 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			Data:     result,
 			SourceID: string(handle.Spec.ID),
 		}:
-		default:
+		case <-r.sessionCtx.Done():
 		}
 	}
-
-	done = true
-	r.persistResult(result)
 
 	if handle.DB != nil {
 		_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
@@ -1131,13 +1151,17 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		}
 	}
 
-	if agentProfiles := r.session.cfg.Agents.AgentProfiles; agentProfiles != nil {
+	if agentProfiles := cfg.Agents.AgentProfiles; agentProfiles != nil {
 		if ap, ok := agentProfiles[name]; ok {
-			if spec.Model == "" && ap.Model != "" {
+			if ap.Model != "" && ap.Model != spec.Model {
 				spec.Model = ap.Model
+				spec.APIStandard = ""
 			}
-			if spec.Provider == "" && ap.Provider != "" {
+			if ap.Provider != "" && ap.Provider != spec.Provider {
 				spec.Provider = ap.Provider
+				spec.ProviderURL = ""
+				spec.APIKey = ""
+				spec.APIStandard = ""
 			}
 			if spec.Instructions == "" && ap.Instructions != "" {
 				spec.Instructions = ap.Instructions
@@ -1171,39 +1195,70 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 	if r.effectiveCfg != nil {
 		cfg = r.effectiveCfg
 	}
+	categoryCfg := cfg.GetCategoryConfig(spec.Category)
 	if spec.MaxSteps == 0 {
-		switch spec.Category {
-		case agent.CatResearcher:
-			spec.MaxSteps = 1000
-		case agent.CatCrafter:
-			spec.MaxSteps = 1000
-		case agent.CatAeron:
+		spec.MaxSteps = categoryCfg.MaxSteps
+		if spec.MaxSteps == 0 {
 			spec.MaxSteps = 1000
 		}
 	}
-	if spec.Model == "" || spec.Provider == "" || spec.APIKey == "" || spec.ProviderURL == "" {
-		mainCat := cfg.GetActiveDefaultCategory()
-		if spec.Model == "" {
-			spec.Model = mainCat.Model
+	if spec.Model == "" {
+		spec.Model = categoryCfg.Model
+	}
+	if spec.Provider == "" {
+		spec.Provider = categoryCfg.Provider
+	}
+	configured, hasConfiguredProvider := cfg.Providers[spec.Provider]
+	if spec.APIKey == "" {
+		spec.APIKey = configured.APIKey
+		if spec.APIKey == "" && categoryCfg.Provider == spec.Provider {
+			spec.APIKey = categoryCfg.APIKey
 		}
-		if spec.Provider == "" {
-			spec.Provider = mainCat.Provider
-		}
-		if spec.APIKey == "" {
-			spec.APIKey = mainCat.APIKey
+	}
+	if spec.ProviderURL == "" {
+		spec.ProviderURL = configured.ProviderURL
+		if spec.ProviderURL == "" && categoryCfg.Provider == spec.Provider {
+			spec.ProviderURL = categoryCfg.ProviderURL
 		}
 		if spec.ProviderURL == "" {
-			spec.ProviderURL = mainCat.ProviderURL
+			if preset := provider.GetPreset(spec.Provider); preset != nil {
+				spec.ProviderURL = preset.BaseURL
+			}
+		}
+	}
+	if spec.ThinkingEffort == "" {
+		spec.ThinkingEffort = categoryCfg.ThinkingEffort
+	}
+	if spec.APIStandard == "" {
+		if hasConfiguredProvider {
+			spec.APIStandard = configured.StandardForModel(spec.Model, spec.Provider)
+		} else {
+			spec.APIStandard = provider.DefaultStandardID(spec.Provider)
+		}
+	}
+	if spec.Model == categoryCfg.Model {
+		if spec.ModelContextWindow == 0 {
+			spec.ModelContextWindow = categoryCfg.ModelContextWindow
+		}
+		if spec.ModelInputPrice == 0 {
+			spec.ModelInputPrice = categoryCfg.ModelInputPrice
+		}
+		if spec.ModelOutputPrice == 0 {
+			spec.ModelOutputPrice = categoryCfg.ModelOutputPrice
+		}
+		if spec.ModelCachePrice == 0 {
+			spec.ModelCachePrice = categoryCfg.ModelCachePrice
 		}
 	}
 	if spec.PolicyName == "" {
-		switch spec.Category {
-		case agent.CatResearcher:
-			spec.PolicyName = "read-only"
-		case agent.CatCrafter:
-			spec.PolicyName = "no-delete"
-		case agent.CatAeron:
-			spec.PolicyName = "no-delete"
+		spec.PolicyName = categoryCfg.Policy
+		if spec.PolicyName == "" {
+			switch spec.Category {
+			case agent.CatResearcher:
+				spec.PolicyName = "read-only"
+			case agent.CatCrafter, agent.CatAeron:
+				spec.PolicyName = "no-delete"
+			}
 		}
 	}
 }

@@ -34,10 +34,65 @@ func EstimateTokens(text string, model string) int {
 // EstimateMessageTokens estimates the total token cost of a single
 // ChatMessage, including its content, tool calls, and role overhead.
 func EstimateMessageTokens(msg ChatMessage, model string) int {
-	tokens := EstimateTokens(msg.ContentString(), model)
-	for _, tc := range msg.ToolCalls {
-		tokens += EstimateTokens(tc.Function.Arguments, model)
-		tokens += EstimateTokens(tc.Function.Name, model)
+	var providerTokens int
+	var providerContent, providerReasoning, providerTools bool
+	for _, item := range msg.ProviderItems {
+		providerTokens += EstimateTokens(string(item.Data), model)
+		switch item.Standard {
+		case "openai-responses":
+			switch item.Type {
+			case "message":
+				providerContent = true
+			case "reasoning":
+				providerReasoning = true
+			case "function_call":
+				providerTools = true
+			}
+		case "anthropic":
+			switch item.Type {
+			case "text", "refusal":
+				providerContent = true
+			case "thinking", "redacted_thinking":
+				providerReasoning = true
+			case "tool_use":
+				providerTools = true
+			}
+		case "openai":
+			providerReasoning = true
+		}
+	}
+
+	tokens := providerTokens
+	if !providerContent {
+		tokens += EstimateTokens(msg.ContentString(), model)
+	}
+	if !providerReasoning && msg.ReasoningContent != "" {
+		tokens += EstimateTokens(msg.ReasoningContent, model)
+	}
+	if !providerReasoning && msg.Reasoning != "" && msg.Reasoning != msg.ReasoningContent {
+		tokens += EstimateTokens(msg.Reasoning, model)
+	}
+	if msg.Refusal != "" && msg.Refusal != msg.ContentString() {
+		tokens += EstimateTokens(msg.Refusal, model)
+	}
+	for _, detail := range msg.ReasoningDetails {
+		tokens += EstimateTokens(string(detail), model)
+	}
+	for _, part := range msg.Content.Parts() {
+		if part.Type == "image_url" && part.ImageURL != nil {
+			// Image tokenization varies by dimensions/detail and provider.
+			// Use a conservative fixed allowance when dimensions are unknown.
+			tokens += 1024
+		}
+	}
+	if !providerTools {
+		for _, tc := range msg.ToolCalls {
+			tokens += EstimateTokens(tc.Function.Arguments, model)
+			tokens += EstimateTokens(tc.Function.Name, model)
+		}
+	}
+	if msg.ToolCallID != "" {
+		tokens += EstimateTokens(msg.ToolCallID, model)
 	}
 	// Role overhead: each message has ~4 tokens of framing
 	// (role tag, separators, etc.) per the OpenAI tokenizer spec.

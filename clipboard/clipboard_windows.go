@@ -4,7 +4,10 @@ package clipboard
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -17,11 +20,11 @@ var (
 	user32   = syscall.MustLoadDLL("user32")
 	kernel32 = syscall.MustLoadDLL("kernel32")
 
-	openClipboard              = user32.MustFindProc("OpenClipboard")
-	closeClipboard             = user32.MustFindProc("CloseClipboard")
-	emptyClipboard             = user32.MustFindProc("EmptyClipboard")
-	getClipboardData           = user32.MustFindProc("GetClipboardData")
-	setClipboardData           = user32.MustFindProc("SetClipboardData")
+	openClipboard    = user32.MustFindProc("OpenClipboard")
+	closeClipboard   = user32.MustFindProc("CloseClipboard")
+	emptyClipboard   = user32.MustFindProc("EmptyClipboard")
+	getClipboardData = user32.MustFindProc("GetClipboardData")
+	setClipboardData = user32.MustFindProc("SetClipboardData")
 
 	gLock   = kernel32.MustFindProc("GlobalLock")
 	gUnlock = kernel32.MustFindProc("GlobalUnlock")
@@ -54,6 +57,9 @@ func read(t Format) ([]byte, error) {
 
 	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read", "format", t) })
 
+	if t == FmtImage {
+		return readImage()
+	}
 	if t != FmtText {
 		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read_unsupported", "format", t) })
 		return nil, errUnsupported
@@ -65,6 +71,37 @@ func read(t Format) ([]byte, error) {
 	defer func() { _, _, _ = closeClipboard.Call() }()
 
 	return readText()
+}
+
+func readImage() ([]byte, error) {
+	file, err := os.CreateTemp("", "crude-clipboard-*.png")
+	if err != nil {
+		return nil, err
+	}
+	path := file.Name()
+	_ = file.Close()
+	defer os.Remove(path)
+
+	escapedPath := strings.ReplaceAll(path, "'", "''")
+	script := "Add-Type -AssemblyName System.Windows.Forms; " +
+		"Add-Type -AssemblyName System.Drawing; " +
+		"$image = [Windows.Forms.Clipboard]::GetImage(); " +
+		"if ($null -eq $image) { exit 2 }; " +
+		"$image.Save('" + escapedPath + "', [Drawing.Imaging.ImageFormat]::Png)"
+	cmd := exec.Command(
+		"powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", script,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		logIf(func(lg *logger.Logger) {
+			lg.Debug("CLIPBOARD", "win_read_image_failed", "error", err.Error(), "output", string(output))
+		})
+		return nil, errUnavailable
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return nil, errUnavailable
+	}
+	return data, nil
 }
 
 func readText() ([]byte, error) {

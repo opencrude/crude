@@ -170,6 +170,9 @@ func (m *App) themeConsumers() []themeConsumer {
 						s.SetTheme(th)
 					}
 				}
+				if m.termDock != nil {
+					m.termDock.SetTheme(th)
+				}
 			},
 			read: func() *theme.Theme {
 				if m.rootHost == nil {

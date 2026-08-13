@@ -84,6 +84,7 @@ allow_raw=(
   'tui/theme/'
   'tui/cell/'
   'tui/rendering/'
+  'tui/term/'
 )
 raw_hits="$(rg -n 'NewTrueColor\(|color\.RGBA\{|cell\.Color\{[^}]*R:' --glob '*.go' --glob '!*_test.go' tui/ || true)"
 if [[ -n "$raw_hits" ]]; then

@@ -28,6 +28,9 @@ type Change struct {
 	StartPos     Position
 	EndPos       Position
 	CursorBefore Position
+	// Group links changes that undo/redo as one step. Zero means the
+	// change stands alone; equal non-zero values form one atomic group.
+	Group int
 }
 
 type Editor struct {
@@ -66,6 +69,13 @@ type Editor struct {
 	changes     []Change
 	changeIndex int
 	maxHistory  int
+
+	// undoGroupSeq/undoGroupDepth/undoGroupID implement undo grouping:
+	// changes recorded between beginUndoGroup and endUndoGroup share one
+	// group ID and undo/redo together as a single step.
+	undoGroupSeq   int
+	undoGroupDepth int
+	undoGroupID    int
 
 	open bool
 
@@ -557,7 +567,8 @@ func (e *Editor) FirstError() *LSPDiagnostic {
 }
 
 // DeleteSelection removes the current selection (if any) and
-// returns true if anything was deleted.
+// returns true if anything was deleted. The deletion is recorded as
+// a single undo step and the cursor moves to the selection start.
 func (e *Editor) DeleteSelection() bool {
 	if !e.HasSelection() {
 		return false
@@ -565,7 +576,17 @@ func (e *Editor) DeleteSelection() bool {
 	sLine, sCol, eLine, eCol := e.SelectionRange()
 	start := Position{Line: sLine, Col: sCol}
 	end := Position{Line: eLine, Col: eCol}
+	cursorBefore := e.cursor
+	text := e.buf.GetText(start, end)
 	_, _ = e.buf.Delete(start, end)
+	e.recordChange(Change{
+		Type:         ActDelete,
+		Text:         []byte(text),
+		StartPos:     start,
+		EndPos:       end,
+		CursorBefore: cursorBefore,
+	})
+	e.cursor = start
 	e.modified = true
 	if e.buffer != nil {
 		e.buffer.MarkDirty()

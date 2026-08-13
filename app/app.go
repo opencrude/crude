@@ -187,7 +187,8 @@ func providerPresets() []tui.ProviderPreset {
 	out := make([]tui.ProviderPreset, 0, len(provider.PresetList()))
 	for _, p := range provider.PresetList() {
 		out = append(out, tui.ProviderPreset{
-			ID: p.ID, Name: p.Name, HelpText: p.HelpText, BaseURL: p.BaseURL,
+			ID: p.ID, Name: p.Name, HelpText: p.HelpText,
+			BaseURL: p.BaseURL, StandardID: p.StandardID,
 		})
 	}
 	return out
@@ -204,6 +205,7 @@ func (a *App) initialSettings() tui.Settings {
 		settings.ProviderAPIKey = pc.APIKey
 		settings.ProviderURL = pc.ProviderURL
 		settings.Model = pc.Model
+		settings.APIStandard = pc.StandardForModel(pc.Model, a.fc.ActiveProvider)
 		settings.ThinkingEffort = pc.ThinkingEffort
 	}
 	return settings

@@ -100,7 +100,13 @@ type Screen struct {
 	icons          *filetree.IconResolver
 
 	results       []fileio.ProjectSearchMatch
+	groups        []resultGroup
+	rows          []displayRow
+	collapsed     map[string]bool
 	selected      int
+	selRow        int
+	histIdx       int
+	histDraft     string
 	loading       bool
 	errText       string
 	notice        string
@@ -119,7 +125,16 @@ func New(th *theme.Theme) *Screen {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	s := &Screen{Base: ui.NewBase(ScreenID), th: th, tokens: tokens, selected: -1, icons: filetree.NewIconResolver()}
+	s := &Screen{
+		Base:      ui.NewBase(ScreenID),
+		th:        th,
+		tokens:    tokens,
+		selected:  -1,
+		selRow:    -1,
+		histIdx:   -1,
+		collapsed: make(map[string]bool),
+		icons:     filetree.NewIconResolver(),
+	}
 	s.icons.ApplyTheme(&th.Colors.Tree)
 
 	field := ui.NewSearchField(QueryID, tokens)
@@ -144,6 +159,7 @@ func New(th *theme.Theme) *Screen {
 
 	list := ui.NewVirtualList(ListID, tokens)
 	list.SetActivateAction("find.open")
+	list.SetRowPainter(s.paintResultRow)
 	s.list = &findList{Base: ui.NewBase(ListID), list: list, owner: s, lastClick: -1}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
 
@@ -215,9 +231,9 @@ func (s *Screen) open(root string, mode Mode) {
 	s.regex = false
 	s.caseToggle.SetChecked(false)
 	s.regexToggle.SetChecked(false)
-	s.results = nil
-	s.selected = -1
-	s.previewSrc = nil
+	s.setResults(nil)
+	s.histIdx = -1
+	s.histDraft = ""
 	s.loading = false
 	s.errText = ""
 	s.notice = ""
@@ -237,6 +253,7 @@ func (s *Screen) Close() {
 	s.generation++
 	s.loading = false
 	s.queryField.field.Cancel()
+	queryHistory.Add(s.Query())
 }
 
 func (s *Screen) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
@@ -257,24 +274,19 @@ func (s *Screen) ApplySearchResults(generation int, results []fileio.ProjectSear
 	s.notice = ""
 	if err != nil {
 		s.errText = err.Error()
-		s.results = nil
-		s.selected = -1
-		s.previewSrc = nil
+		s.setResults(nil)
 		s.sync()
 		return
 	}
 	s.errText = ""
-	s.results = results
+	s.setResults(results)
 	s.list.lastClick = -1
 	s.list.lastClickTime = time.Time{}
 	s.list.list.Scroll().ScrollTo(0)
 	if len(s.results) == 0 {
-		s.selected = -1
-		s.previewSrc = nil
 		s.sync()
 		return
 	}
-	s.selected = 0
 	s.sync()
 	s.rebuildPreview()
 }
@@ -306,9 +318,7 @@ func (s *Screen) queryChanged() tea.Cmd {
 	s.loading = strings.TrimSpace(s.Query()) != ""
 	s.errText = ""
 	if strings.TrimSpace(s.Query()) == "" {
-		s.results = nil
-		s.selected = -1
-		s.previewSrc = nil
+		s.setResults(nil)
 		s.loading = false
 		s.sync()
 		return func() tea.Msg { return SearchCancelMsg{Screen: s} }
@@ -333,22 +343,6 @@ func (s *Screen) HandleSearchDebounced(msg ui.SearchDebouncedMsg) tea.Cmd {
 	}
 }
 
-func (s *Screen) selectIndex(idx int) {
-	if len(s.results) == 0 {
-		s.selected = -1
-		s.previewSrc = nil
-		return
-	}
-	idx = max(0, min(idx, len(s.results)-1))
-	if idx == s.selected {
-		return
-	}
-	s.selected = idx
-	s.list.list.SelectIndex(idx)
-	s.rebuildPreview()
-	s.sync()
-}
-
 func (s *Screen) rebuildPreview() {
 	if s.selected < 0 || s.selected >= len(s.results) || s.results[s.selected].NameOnly {
 		s.previewSrc = nil
@@ -364,7 +358,42 @@ func (s *Screen) rebuildPreview() {
 	startCol := rendering.RuneIdxToCol(lineRunes, result.Column)
 	endCol := rendering.RuneIdxToCol(lineRunes, max(result.EndColumn, result.Column+1))
 	preview.SetSelection(localLine, startCol, localLine, max(endCol, startCol+1))
+	s.applyPreviewMatches(preview, result)
 	s.previewSrc = preview
+}
+
+// applyPreviewMatches highlights EVERY match of the same file that falls
+// inside the preview excerpt through the editor's search-highlight path, so
+// the pane shows all hits on the previewed lines rather than only the
+// selected one. The selected match stays strongest via SetSelection.
+func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.ProjectSearchMatch) {
+	lineCount := strings.Count(selected.Context, "\n") + 1
+	st := preview.Search()
+	st.Matches = nil
+	st.CurrentIdx = -1
+	for i, r := range s.results {
+		if r.Path != selected.Path || r.NameOnly {
+			continue
+		}
+		local := r.Line - selected.ContextStart
+		if local < 0 || local >= lineCount {
+			continue
+		}
+		runes := []rune(r.LineText)
+		sc := rendering.RuneIdxToCol(runes, r.Column)
+		ec := rendering.RuneIdxToCol(runes, max(r.EndColumn, r.Column+1))
+		if ec <= sc {
+			ec = sc + 1
+		}
+		if i == s.selected {
+			st.CurrentIdx = len(st.Matches)
+		}
+		st.Matches = append(st.Matches, editor.SearchMatch{
+			Start: editor.Position{Line: local, Col: sc},
+			End:   editor.Position{Line: local, Col: ec},
+		})
+	}
+	st.Open = len(st.Matches) > 0
 }
 
 func (s *Screen) sync() {
@@ -374,28 +403,35 @@ func (s *Screen) sync() {
 }
 
 func (s *Screen) syncList() {
-	items := make([]ui.VirtItem, 0, len(s.results))
-	for i, result := range s.results {
-		icon := ""
-		if s.icons != nil {
-			icon = s.icons.ResolveIcon(filepath.Base(result.Path), false, false, false).Icon
+	items := make([]ui.VirtItem, 0, len(s.rows))
+	for i, row := range s.rows {
+		if row.kind == rowHeader {
+			g := s.groups[row.group]
+			items = append(items, ui.VirtItem{
+				ID:      fmt.Sprintf("hdr:%s", g.path),
+				Height:  1,
+				Label:   g.rel,
+				Detail:  fmt.Sprintf("%d", len(g.rows)),
+				Payload: row,
+			})
+			continue
 		}
+		result := s.results[row.result]
 		label := result.RelativePath
 		if !result.NameOnly {
 			label += fmt.Sprintf(":%d", result.Line)
 		}
 		items = append(items, ui.VirtItem{
-			ID:      fmt.Sprintf("%s-%d", result.Path, i),
+			ID:      fmt.Sprintf("match:%s-%d", result.Path, i),
 			Height:  1,
 			Label:   label,
-			Icon:    icon,
 			Detail:  strings.TrimRight(result.LineText, "\r\n"),
-			Payload: i,
+			Payload: row,
 		})
 	}
 	s.list.list.SetItems(items)
-	if s.selected >= 0 && s.selected < len(items) {
-		s.list.list.SelectIndex(s.selected)
+	if s.selRow >= 0 && s.selRow < len(items) {
+		s.list.list.SelectIndex(s.selRow)
 	}
 }
 
@@ -489,6 +525,7 @@ func (s *Screen) openSelected() tea.Cmd {
 	if s.selected < 0 || s.selected >= len(s.results) {
 		return nil
 	}
+	queryHistory.Add(s.Query())
 	return func() tea.Msg { return OpenMsg{Screen: s, Match: s.results[s.selected]} }
 }
 
@@ -496,6 +533,7 @@ func (s *Screen) replaceSelected() tea.Cmd {
 	if !s.canReplaceSelected() {
 		return nil
 	}
+	queryHistory.Add(s.Query())
 	return func() tea.Msg {
 		return ReplaceMsg{
 			Screen:      s,
@@ -511,6 +549,7 @@ func (s *Screen) replaceAll() tea.Cmd {
 	if s.mode != ModeReplace || s.replaceableCount() == 0 {
 		return nil
 	}
+	queryHistory.Add(s.Query())
 	return func() tea.Msg {
 		return ReplaceMsg{
 			Screen:      s,
@@ -714,6 +753,20 @@ func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	if evt.IsKey() {
 		key := evt.Key
+		// Query history: Ctrl+P/Ctrl+N always browse; bare Up/Down join in
+		// only when they cannot mean result navigation (empty field or an
+		// active history browse).
+		browsing := q.owner.HistoryBrowsing()
+		switch {
+		case key.String() == "ctrl+p":
+			return q.owner.historyStep(1)
+		case key.String() == "ctrl+n":
+			return q.owner.historyStep(-1)
+		case key.Code == tea.KeyUp && key.Mod == 0 && (browsing || strings.TrimSpace(q.field.Value()) == ""):
+			return q.owner.historyStep(1)
+		case key.Code == tea.KeyDown && key.Mod == 0 && browsing:
+			return q.owner.historyStep(-1)
+		}
 		switch key.Code {
 		case tea.KeyEsc:
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{Screen: q.owner} }}
@@ -751,6 +804,7 @@ func (q *findQuery) applyFilter(ctx ui.EventContext, evt ui.Event) ui.EventResul
 	before := q.field.Value()
 	result := q.field.Handle(ctx, evt)
 	if q.field.Value() != before {
+		q.owner.histIdx = -1
 		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
 		result.Cmd = combineFindCmd(result.Cmd, q.owner.queryChanged())
 	}
@@ -843,7 +897,15 @@ func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		case tea.KeyEsc:
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{Screen: l.owner} }}
 		case tea.KeyEnter:
+			if row, ok := l.owner.rowAt(l.owner.selRow); ok && row.kind == rowHeader {
+				l.owner.toggleGroup(row.group)
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+			}
 			return ui.EventResult{Handled: true, Cmd: l.owner.openSelected()}
+		case tea.KeyLeft:
+			return l.owner.collapseAtSelection()
+		case tea.KeyRight:
+			return l.owner.expandAtSelection()
 		case tea.KeyTab:
 			if key.Mod.Contains(tea.ModShift) {
 				if l.owner.mode == ModeReplace {
@@ -859,7 +921,7 @@ func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			old := l.list.SelectedIndex()
 			result := l.list.Handle(ctx, evt)
 			if l.list.SelectedIndex() != old {
-				l.owner.selectIndex(l.list.SelectedIndex())
+				l.owner.selectRow(l.list.SelectedIndex())
 			}
 			return result
 		default:
@@ -878,12 +940,22 @@ func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	result := l.list.Handle(ctx, evt)
 	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && result.Action != nil {
 		index := l.list.SelectedIndex()
+		if row, ok := l.owner.rowAt(index); ok && row.kind == rowHeader {
+			// A header click toggles the group immediately — no double-click
+			// arming, no open action.
+			l.owner.selectRow(index)
+			l.owner.toggleGroup(row.group)
+			l.lastClick, l.lastClickTime = -1, time.Time{}
+			result.Action = nil
+			result.Invalidate |= ui.InvalidatePaint
+			return result
+		}
 		now := time.Now()
 		if l.lastClick != index || now.Sub(l.lastClickTime) > 400*time.Millisecond {
 			l.lastClick, l.lastClickTime = index, now
 			result.Action = nil
-			if index >= 0 && index < len(l.owner.results) {
-				l.owner.selectIndex(index)
+			if index >= 0 && index < len(l.owner.rows) {
+				l.owner.selectRow(index)
 			}
 		}
 	}

@@ -86,8 +86,20 @@ func (e *Editor) insertText(s string) {
 	e.notifyContentChanged()
 }
 
+// insertNewline inserts a line break with auto-indent: the new line
+// inherits the current line's leading whitespace (up to the cursor), plus
+// one extra indent level when the text before the cursor ends with an
+// opening brace/bracket/paren. Recorded as a single undo step.
 func (e *Editor) insertNewline() {
-	e.insertRune('\n')
+	line := e.LineText(e.cursor.Line)
+	byteOff := VisualColToByteOffset(line, e.cursor.Col, tabWidth)
+	before := line[:byteOff]
+	indent := leadingWhitespace(before)
+	trimmed := strings.TrimRight(before, " \t")
+	if r, ok := lastRune(trimmed); ok && (r == '(' || r == '[' || r == '{') {
+		indent += indentUnit(indent)
+	}
+	e.insertText("\n" + indent)
 }
 
 func (e *Editor) insertTab() {
@@ -208,6 +220,7 @@ func (e *Editor) deleteForward() {
 }
 
 func (e *Editor) recordChange(c Change) {
+	c.Group = e.undoGroupID
 	if e.changeIndex < len(e.changes) {
 		e.changes = e.changes[:e.changeIndex]
 	}
@@ -218,20 +231,50 @@ func (e *Editor) recordChange(c Change) {
 	e.changeIndex = len(e.changes)
 }
 
+// beginUndoGroup starts an undo group: every change recorded before the
+// matching endUndoGroup shares one group ID and undoes/redoes atomically.
+// Nested calls join the outermost group.
+func (e *Editor) beginUndoGroup() {
+	e.undoGroupDepth++
+	if e.undoGroupDepth == 1 {
+		e.undoGroupSeq++
+		e.undoGroupID = e.undoGroupSeq
+	}
+}
+
+func (e *Editor) endUndoGroup() {
+	if e.undoGroupDepth == 0 {
+		return
+	}
+	e.undoGroupDepth--
+	if e.undoGroupDepth == 0 {
+		e.undoGroupID = 0
+	}
+}
+
 func (e *Editor) undo() {
 	if e.changeIndex <= 0 {
 		return
 	}
-	e.changeIndex--
-	c := e.changes[e.changeIndex]
+	group := e.changes[e.changeIndex-1].Group
+	for e.changeIndex > 0 {
+		c := e.changes[e.changeIndex-1]
+		if c.Group != group {
+			break
+		}
+		e.changeIndex--
 
-	switch c.Type {
-	case ActInsert:
-		_, _ = e.buf.Delete(c.StartPos, c.EndPos)
-		e.cursor = c.CursorBefore
-	case ActDelete:
-		_, _ = e.buf.Insert(c.StartPos, c.Text)
-		e.cursor = c.CursorBefore
+		switch c.Type {
+		case ActInsert:
+			_, _ = e.buf.Delete(c.StartPos, c.EndPos)
+			e.cursor = c.CursorBefore
+		case ActDelete:
+			_, _ = e.buf.Insert(c.StartPos, c.Text)
+			e.cursor = c.CursorBefore
+		}
+		if group == 0 {
+			break
+		}
 	}
 	e.invalidateEditorCaches()
 	e.modified = true
@@ -248,17 +291,27 @@ func (e *Editor) redo() {
 	if e.changeIndex >= len(e.changes) {
 		return
 	}
-	c := e.changes[e.changeIndex]
-	e.changeIndex++
+	group := e.changes[e.changeIndex].Group
+	for e.changeIndex < len(e.changes) {
+		c := e.changes[e.changeIndex]
+		if c.Group != group {
+			break
+		}
+		e.changeIndex++
 
-	switch c.Type {
-	case ActInsert:
-		_, _ = e.buf.Insert(c.StartPos, c.Text)
-		e.cursor = c.EndPos
-	case ActDelete:
-		_, _ = e.buf.Delete(c.StartPos, c.EndPos)
-		e.cursor = c.EndPos
+		switch c.Type {
+		case ActInsert:
+			_, _ = e.buf.Insert(c.StartPos, c.Text)
+			e.cursor = c.EndPos
+		case ActDelete:
+			_, _ = e.buf.Delete(c.StartPos, c.EndPos)
+			e.cursor = c.EndPos
+		}
+		if group == 0 {
+			break
+		}
 	}
+	e.clampCursorToLine()
 	e.invalidateEditorCaches()
 	e.modified = true
 	if e.buffer != nil {

@@ -186,4 +186,30 @@ func TestWindowFrameRevealHostHitTestMatchesGeometry(t *testing.T) {
 }
 
 
+func TestWindowFrameTitleActionAfterLayoutEmitsAction(t *testing.T) {
+	w := NewWindowFrameWidget(theme.DefaultDark(), "frame", FrameWindow, "Terminal",
+		&testFrameBody{Base: NewBase("body")}, nil, true, 40, 12)
+	// Install AFTER the constructor's initial layout: the hit region must be
+	// valid immediately (regression: the glyph never painted and clicks fell
+	// through because only Layout computed the rect).
+	w.Frame().SetTitleAction("⇲", "Dock")
+	r := w.Frame().TitleActionBounds()
+	if r.Empty() {
+		t.Fatal("title action bounds empty after SetTitleAction")
+	}
+	if want := (Rect{X: 40 - 6, Y: 0, W: 3, H: 1}); r != want {
+		t.Fatalf("title action rect=%+v want %+v (left of close)", r, want)
+	}
+	res := w.Frame().Handle(EventContext{LocalX: r.X + 1, LocalY: 0},
+		MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: r.X + 1, Y: 0}))
+	if res.Action == nil || res.Action.ID != "window.titleaction" {
+		t.Fatalf("title action click result=%+v want window.titleaction", res)
+	}
+	close := w.Frame().Handle(EventContext{LocalX: 40 - 2, LocalY: 0},
+		MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: 40 - 2, Y: 0}))
+	if close.Action == nil || close.Action.ID != "window.close" {
+		t.Fatalf("close click result=%+v want window.close (unchanged)", close)
+	}
+}
+
 var _ WindowEventTarget = (*testFrameEventTarget)(nil)

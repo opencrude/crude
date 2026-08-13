@@ -1,0 +1,10 @@
+# Exact revisions for Crude's libghostty-vt bootstrap.
+# Do not float these to latest. The C API is explicitly unstable.
+
+GHOSTTY_COMMIT=d2c70a8c7b9b6893c13640c02d7b6f9a1624f3f0
+GHOSTTY_VERSION=1.3.2-dev
+ZIG_VERSION=0.16.0
+
+# go-libghostty 56450a2 requires Go 1.26; Crude stays on Go 1.25.
+# Crude owns a narrow cgo adapter in tui/term instead of that module.
+GO_LIBGHOSTTY_DECISION=local-cgo-adapter

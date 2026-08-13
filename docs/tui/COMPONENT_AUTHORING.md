@@ -9,9 +9,9 @@ system. See also [`CONTROL_USAGE.md`](./CONTROL_USAGE.md),
 
 | Pattern | When to use | Examples |
 |---------|-------------|----------|
-| **Host paint screen** | Persistent docked chrome in the main layout | `shellheader`, `shelltabs`, `shellinput`, `shelltree`, `activitybar`, `activitylist`, `shellchat` |
+| **Host paint screen** | Persistent docked chrome in the main layout | `shellheader`, `shelltabs`, `shellinput`, `shelltree`, `activitybar`, `activitylist`, `shellchat`, `termdock` |
 | **OverlayHost + WindowFrame** | Floating dialogs and pickers | `sessionpicker`, `help`, `composer`, `findinfiles`, command palette, application/workspace settings, **floating terminals** |
-| **PanelDeck** | Session-owned panels between messages and input | session settings, questions, tool confirm, YOLO, **docked terminals** |
+| **PanelDeck** | Session-owned panels between messages and input | session settings, questions, tool confirm, YOLO |
 
 ---
 

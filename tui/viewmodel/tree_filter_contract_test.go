@@ -36,14 +36,28 @@ func TestTreeFilterTypingContractViewmodel(t *testing.T) {
 		}
 	}
 
+	// Filtering moves the cursor to the first match, which may be the last
+	// visible row — navigate in whichever direction has room and assert the
+	// keys still route to the model while the filter is active.
 	before := model.CursorIndex()
-	app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
-	if model.CursorIndex() != before+1 {
-		t.Fatalf("Down while filtering cursor=%d want %d", model.CursorIndex(), before+1)
-	}
-	app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyUp})
-	if model.CursorIndex() != before {
-		t.Fatalf("Up while filtering cursor=%d want %d", model.CursorIndex(), before)
+	if before > 0 {
+		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyUp})
+		if model.CursorIndex() != before-1 {
+			t.Fatalf("Up while filtering cursor=%d want %d", model.CursorIndex(), before-1)
+		}
+		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
+		if model.CursorIndex() != before {
+			t.Fatalf("Down while filtering cursor=%d want %d", model.CursorIndex(), before)
+		}
+	} else {
+		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
+		if model.CursorIndex() != 1 {
+			t.Fatalf("Down while filtering cursor=%d want 1", model.CursorIndex())
+		}
+		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyUp})
+		if model.CursorIndex() != 0 {
+			t.Fatalf("Up while filtering cursor=%d want 0", model.CursorIndex())
+		}
 	}
 
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})

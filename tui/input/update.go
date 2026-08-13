@@ -155,9 +155,7 @@ func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
 		m.syncSlashState()
 		return m, nil, nil
 	}
-	if inline {
-		m.InsertReference(ref)
-	}
+	m.InsertReference(ref)
 	m.syncSlashState()
 	return m, nil, RefSelectEvent{ID: ref.ID}
 }

@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
 )
 
 func setupRefDB(t *testing.T) (*DB, string) {

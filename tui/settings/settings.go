@@ -34,6 +34,7 @@ type FetchModelsMsg struct {
 	ProviderID string
 	BaseURL    string
 	APIKey     string
+	StandardID string
 }
 
 // ModelsMsg and ModelsErrorMsg deliver an asynchronous model-list result.
@@ -65,27 +66,29 @@ type Category struct {
 type categorySnapshot struct{ values map[string]ui.FieldValue }
 
 type modelSnapshot struct {
-	categories []categorySnapshot
-	selected   int
-	pane       int
-	providerID string
+	categories    []categorySnapshot
+	selected      int
+	pane          int
+	providerID    string
+	providerModel string
 }
 
 // Model is the workspace settings screen state.
 type Model struct {
-	th           *theme.Theme
-	categories   []Category
-	selected     int
-	pane         int // 0: category rail, 1: form
-	snapshot     *modelSnapshot
-	presets      []types.ProviderPreset
-	providers    map[string]types.ProviderConfig
-	providerID   string
-	models       map[string][]types.ModelEntry
-	searchEd     *ui.TextEdit
-	searchActive bool
-	scope        types.SettingsScope
-	appDefaults  types.AppSettings
+	th            *theme.Theme
+	categories    []Category
+	selected      int
+	pane          int // 0: category rail, 1: form
+	snapshot      *modelSnapshot
+	presets       []types.ProviderPreset
+	providers     map[string]types.ProviderConfig
+	providerID    string
+	providerModel string
+	models        map[string][]types.ModelEntry
+	searchEd      *ui.TextEdit
+	searchActive  bool
+	scope         types.SettingsScope
+	appDefaults   types.AppSettings
 }
 
 const (
@@ -93,6 +96,8 @@ const (
 	fieldModel          = "model"
 	fieldAPIKey         = "api-key"
 	fieldBaseURL        = "base-url"
+	fieldAPIStandard    = "api-standard"
+	fieldModelStandard  = "model-standard"
 	fieldThinkingEffort = "thinking-effort"
 )
 
@@ -111,11 +116,15 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 	font := current.Font
 	if len(presets) == 0 {
 		for _, preset := range provider.PresetList() {
-			presets = append(presets, types.ProviderPreset{ID: preset.ID, Name: preset.Name, HelpText: preset.HelpText, BaseURL: preset.BaseURL})
+			presets = append(presets, types.ProviderPreset{
+				ID: preset.ID, Name: preset.Name, HelpText: preset.HelpText,
+				BaseURL: preset.BaseURL, StandardID: preset.StandardID,
+			})
 		}
 	}
 	providers := make(map[string]types.ProviderConfig, len(current.Providers))
 	for id, cfg := range current.Providers {
+		cfg.ModelStandards = cloneStandardMap(cfg.ModelStandards)
 		providers[id] = cfg
 	}
 	active := current.ActiveProvider
@@ -125,7 +134,11 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 	if _, ok := providers[active]; !ok {
 		providers[active] = types.ProviderConfig{}
 	}
-	m := &Model{th: th, presets: presets, providers: providers, providerID: active, models: make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults}
+	m := &Model{
+		th: th, presets: presets, providers: providers, providerID: active,
+		providerModel: providers[active].Model,
+		models:        make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
+	}
 	appearanceFields := append([]*ui.FieldState{
 		ui.SeparatorFieldState("theme", "Theme"),
 		ui.CycleFieldState("preset", "Preset", append([]string(nil), theme.AllPresetNames...), appearance.Preset, "Choose a complete visual palette for the workspace."),
@@ -224,8 +237,22 @@ func (m *Model) buildProvidersForm() *ui.FormModel {
 		ui.SelectFieldState(fieldProvider, "Provider", m.providerID, ui.ProviderOptions(m.presets), "The service used for model requests."),
 		ui.PasswordFieldState(fieldAPIKey, "API key", cfg.APIKey, "Stored locally and masked while editing."),
 		ui.TextFieldState(fieldBaseURL, "Base URL", baseURL, "Override the provider endpoint when using a proxy or local gateway."),
+		ui.SeparatorFieldState("protocol", "Communication protocol"),
+		ui.SelectFieldState(
+			fieldAPIStandard, "Provider default", providerStandard(m.providerID, cfg),
+			standardOptions(nil),
+			"Wire protocol used unless the selected model has an override.",
+		),
 		ui.SeparatorFieldState("defaults", "Model defaults"),
 		ui.ModelFieldState(fieldModel, "Default model", cfg.Model, ui.ModelOptions(m.models[m.providerID]), "Used when an agent does not define its own model."),
+		ui.SelectFieldState(
+			fieldModelStandard, "Model protocol", modelStandardValue(cfg, cfg.Model),
+			standardOptions(&standardDefault{
+				ID: "inherit", Label: "Use provider default",
+				Detail: standardName(providerStandard(m.providerID, cfg)),
+			}),
+			"Override the communication protocol only for this model.",
+		),
 		ui.ThinkingFieldState(fieldThinkingEffort, cfg.ThinkingEffort, "Controls how much internal reasoning the model may use."),
 	)
 }
@@ -244,12 +271,84 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings) *ui.FormModel {
 	if thinking == "" {
 		thinking = providerCfg.ThinkingEffort
 	}
+	standard := cfg.APIStandard
+	if standard == "" {
+		standard = "inherit"
+	}
 	return formModel(
 		ui.SeparatorFieldState("agent", "Agent behavior"),
 		ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(m.presets), "Override the workspace provider for this agent."),
 		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Override the workspace default model."),
+		ui.SelectFieldState(
+			fieldAPIStandard, "Communication protocol", standard,
+			standardOptions(&standardDefault{
+				ID: "inherit", Label: "Use provider/model default",
+				Detail: standardName(resolveModelStandard(providerID, model, providerCfg)),
+			}),
+			"Keep inherited unless this agent requires a different provider wire protocol.",
+		),
 		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the workspace reasoning budget."),
 	)
+}
+
+type standardDefault struct {
+	ID     string
+	Label  string
+	Detail string
+}
+
+func standardOptions(def *standardDefault) []ui.FormOption {
+	options := make([]ui.FormOption, 0, len(provider.StandardList())+1)
+	if def != nil {
+		options = append(options, ui.FormOption{ID: def.ID, Label: def.Label, Detail: def.Detail})
+	}
+	for _, standard := range provider.StandardList() {
+		options = append(options, ui.FormOption{
+			ID: standard.ID, Label: standard.Name, Detail: standard.Description,
+		})
+	}
+	return options
+}
+
+func standardName(id string) string {
+	for _, standard := range provider.StandardList() {
+		if standard.ID == id {
+			return standard.Name
+		}
+	}
+	return id
+}
+
+func providerStandard(providerID string, cfg types.ProviderConfig) string {
+	if cfg.APIStandard != "" {
+		return cfg.APIStandard
+	}
+	return provider.DefaultStandardID(providerID)
+}
+
+func resolveModelStandard(providerID, model string, cfg types.ProviderConfig) string {
+	if standard := cfg.ModelStandards[model]; standard != "" {
+		return standard
+	}
+	return providerStandard(providerID, cfg)
+}
+
+func modelStandardValue(cfg types.ProviderConfig, model string) string {
+	if standard := cfg.ModelStandards[model]; standard != "" {
+		return standard
+	}
+	return "inherit"
+}
+
+func cloneStandardMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for model, standard := range src {
+		out[model] = standard
+	}
+	return out
 }
 
 func parseOpt(value string, defaultVal int) int {
@@ -297,16 +396,60 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		}
 		return
 	}
+	if category == catProviders && fieldID == fieldModel {
+		m.storeCurrentModelStandard()
+		m.providerModel = m.value(catProviders, fieldModel)
+		cfg := m.providers[m.providerID]
+		form := m.categories[catProviders].Form
+		form.SetValue(fieldModelStandard, ui.StringValue(modelStandardValue(cfg, m.providerModel)))
+		if field := form.Field(fieldModelStandard); field != nil {
+			field.Options = standardOptions(&standardDefault{
+				ID: "inherit", Label: "Use provider default",
+				Detail: standardName(providerStandard(m.providerID, cfg)),
+			})
+		}
+		return
+	}
+	if category == catProviders && fieldID == fieldAPIStandard {
+		cfg := m.providers[m.providerID]
+		cfg.APIStandard = m.value(catProviders, fieldAPIStandard)
+		if field := m.categories[catProviders].Form.Field(fieldModelStandard); field != nil {
+			field.Options = standardOptions(&standardDefault{
+				ID: "inherit", Label: "Use provider default",
+				Detail: standardName(providerStandard(m.providerID, cfg)),
+			})
+		}
+		return
+	}
 	if m.isAgentCategory(category) && fieldID == fieldProvider {
 		providerID := m.value(category, fieldProvider)
 		cfg := m.providers[providerID]
 		form := m.categories[category].Form
 		form.SetValue(fieldModel, ui.StringValue(cfg.Model))
+		form.SetValue(fieldAPIStandard, ui.StringValue("inherit"))
 		form.SetValue(fieldThinkingEffort, ui.StringValue(cfg.ThinkingEffort))
 		if field := form.Field(fieldModel); field != nil {
 			field.Options = ui.ModelOptions(m.models[providerID])
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
+		m.refreshAgentStandardOptions(category)
+		return
+	}
+	if m.isAgentCategory(category) && fieldID == fieldModel {
+		m.refreshAgentStandardOptions(category)
+	}
+}
+
+func (m *Model) refreshAgentStandardOptions(category int) {
+	form := m.categories[category].Form
+	providerID := m.value(category, fieldProvider)
+	model := m.value(category, fieldModel)
+	cfg := m.providers[providerID]
+	if field := form.Field(fieldAPIStandard); field != nil {
+		field.Options = standardOptions(&standardDefault{
+			ID: "inherit", Label: "Use provider/model default",
+			Detail: standardName(resolveModelStandard(providerID, model, cfg)),
+		})
 	}
 }
 
@@ -358,7 +501,11 @@ func (m *Model) OpenSelect(fieldID string) tea.Cmd {
 
 func (m *Model) fetchModelsCmd() tea.Cmd {
 	return func() tea.Msg {
-		return FetchModelsMsg{ProviderID: m.providerID, BaseURL: m.value(catProviders, fieldBaseURL), APIKey: m.value(catProviders, fieldAPIKey)}
+		return FetchModelsMsg{
+			ProviderID: m.providerID, BaseURL: m.value(catProviders, fieldBaseURL),
+			APIKey:     m.value(catProviders, fieldAPIKey),
+			StandardID: m.value(catProviders, fieldAPIStandard),
+		}
 	}
 }
 
@@ -370,7 +517,12 @@ func (m *Model) fetchModelsForProviderCmd(providerID string) tea.Cmd {
 			baseURL = preset.BaseURL
 		}
 	}
-	return func() tea.Msg { return FetchModelsMsg{ProviderID: providerID, BaseURL: baseURL, APIKey: cfg.APIKey} }
+	return func() tea.Msg {
+		return FetchModelsMsg{
+			ProviderID: providerID, BaseURL: baseURL, APIKey: cfg.APIKey,
+			StandardID: providerStandard(providerID, cfg),
+		}
+	}
 }
 
 func (m *Model) setModels(providerID string, models []types.ModelEntry) {
@@ -561,6 +713,7 @@ func (m *Model) collectProviders(settings *types.AppSettings) {
 	settings.ActiveProvider = m.providerID
 	settings.Providers = make(map[string]types.ProviderConfig, len(m.providers))
 	for id, cfg := range m.providers {
+		cfg.ModelStandards = cloneStandardMap(cfg.ModelStandards)
 		settings.Providers[id] = cfg
 	}
 }
@@ -569,7 +722,32 @@ func (m *Model) storeProviderForm(providerID string) {
 	if providerID == "" || len(m.categories) == 0 {
 		return
 	}
-	m.providers[providerID] = types.ProviderConfig{Model: m.value(catProviders, fieldModel), APIKey: m.value(catProviders, fieldAPIKey), ProviderURL: m.value(catProviders, fieldBaseURL), ThinkingEffort: m.value(catProviders, fieldThinkingEffort)}
+	m.storeCurrentModelStandard()
+	cfg := m.providers[providerID]
+	cfg.Model = m.value(catProviders, fieldModel)
+	cfg.APIKey = m.value(catProviders, fieldAPIKey)
+	cfg.ProviderURL = m.value(catProviders, fieldBaseURL)
+	cfg.APIStandard = m.value(catProviders, fieldAPIStandard)
+	cfg.ThinkingEffort = m.value(catProviders, fieldThinkingEffort)
+	m.providers[providerID] = cfg
+}
+
+func (m *Model) storeCurrentModelStandard() {
+	if m.providerID == "" || m.providerModel == "" || len(m.categories) == 0 {
+		return
+	}
+	cfg := m.providers[m.providerID]
+	cfg.ModelStandards = cloneStandardMap(cfg.ModelStandards)
+	standard := m.value(catProviders, fieldModelStandard)
+	if standard == "" || standard == "inherit" {
+		delete(cfg.ModelStandards, m.providerModel)
+	} else {
+		if cfg.ModelStandards == nil {
+			cfg.ModelStandards = make(map[string]string)
+		}
+		cfg.ModelStandards[m.providerModel] = standard
+	}
+	m.providers[m.providerID] = cfg
 }
 
 func (m *Model) loadProviderForm(providerID string) {
@@ -578,6 +756,7 @@ func (m *Model) loadProviderForm(providerID string) {
 	}
 	m.providerID = providerID
 	cfg := m.providers[providerID]
+	m.providerModel = cfg.Model
 	baseURL := cfg.ProviderURL
 	if baseURL == "" {
 		if preset := provider.GetPreset(providerID); preset != nil {
@@ -589,10 +768,18 @@ func (m *Model) loadProviderForm(providerID string) {
 	form.SetValue(fieldModel, ui.StringValue(cfg.Model))
 	form.SetValue(fieldAPIKey, ui.StringValue(cfg.APIKey))
 	form.SetValue(fieldBaseURL, ui.StringValue(baseURL))
+	form.SetValue(fieldAPIStandard, ui.StringValue(providerStandard(providerID, cfg)))
+	form.SetValue(fieldModelStandard, ui.StringValue(modelStandardValue(cfg, cfg.Model)))
 	form.SetValue(fieldThinkingEffort, ui.StringValue(cfg.ThinkingEffort))
 	if field := form.Field(fieldModel); field != nil {
 		field.Options = ui.ModelOptions(m.models[providerID])
 		field.Errors, field.Loading, field.LoadMessage = nil, false, ""
+	}
+	if field := form.Field(fieldModelStandard); field != nil {
+		field.Options = standardOptions(&standardDefault{
+			ID: "inherit", Label: "Use provider default",
+			Detail: standardName(providerStandard(providerID, cfg)),
+		})
 	}
 }
 
@@ -604,7 +791,15 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 		index int
 		key   string
 	}{{catMain, "default"}, {catResearcher, "researcher"}, {catCrafter, "crafter"}, {catAeron, "aeron"}} {
-		category := types.CategorySettings{Provider: m.value(entry.index, fieldProvider), Model: m.value(entry.index, fieldModel), ThinkingEffort: m.value(entry.index, fieldThinkingEffort)}
+		standard := m.value(entry.index, fieldAPIStandard)
+		if standard == "inherit" {
+			standard = ""
+		}
+		category := types.CategorySettings{
+			Provider: m.value(entry.index, fieldProvider),
+			Model:    m.value(entry.index, fieldModel), APIStandard: standard,
+			ThinkingEffort: m.value(entry.index, fieldThinkingEffort),
+		}
 		for _, model := range m.models[category.Provider] {
 			if model.ID == category.Model {
 				category.ModelContextWindow, category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = model.ContextWindow, model.InputPrice, model.OutputPrice, model.CacheReadPrice
@@ -718,7 +913,11 @@ func (m *Model) collectFont(cfg *types.FontSettings) {
 
 // Snapshot records values without retaining component interaction state.
 func (m *Model) Snapshot() {
-	snapshot := &modelSnapshot{categories: make([]categorySnapshot, len(m.categories)), selected: m.selected, pane: m.pane, providerID: m.providerID}
+	snapshot := &modelSnapshot{
+		categories: make([]categorySnapshot, len(m.categories)),
+		selected:   m.selected, pane: m.pane,
+		providerID: m.providerID, providerModel: m.providerModel,
+	}
 	for index, category := range m.categories {
 		values := make(map[string]ui.FieldValue, category.Form.FieldCount())
 		for _, field := range category.Form.Fields() {
@@ -745,5 +944,6 @@ func (m *Model) Restore() {
 			}
 		}
 	}
-	m.selected, m.pane, m.providerID = m.snapshot.selected, m.snapshot.pane, m.snapshot.providerID
+	m.selected, m.pane = m.snapshot.selected, m.snapshot.pane
+	m.providerID, m.providerModel = m.snapshot.providerID, m.snapshot.providerModel
 }

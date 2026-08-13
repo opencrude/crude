@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"crude/provider"
@@ -34,6 +33,8 @@ type MessageRow struct {
 	ToolName         sql.NullString
 	ToolResult       sql.NullString
 	ToolCallID       sql.NullString
+	ToolError        int
+	ProviderItems    sql.NullString
 	CacheControl     sql.NullString
 	TokenCount       int
 	SequenceNum      int
@@ -88,9 +89,9 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 		INSERT INTO messages (
 			role, content, content_type, reasoning_content, reasoning,
 			tool_calls, tool_name, tool_result, tool_call_id,
-			cache_control, token_count, sequence_num, turn_number,
+			tool_error, provider_items, cache_control, token_count, sequence_num, turn_number,
 			agent_id, created_at, display_meta
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return 0, fmt.Errorf("sessiondb: replace messages prepare: %w", err)
@@ -102,12 +103,25 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 	for i, m := range msgs {
 		var toolCallsJSON []byte
 		if len(m.ToolCalls) > 0 {
-			toolCallsJSON, _ = json.Marshal(m.ToolCalls)
+			toolCallsJSON, err = json.Marshal(m.ToolCalls)
+			if err != nil {
+				return 0, fmt.Errorf("sessiondb: marshal tool calls seq=%d: %w", i, err)
+			}
 		}
 
 		var cacheControlJSON []byte
 		if m.CacheControl != nil {
-			cacheControlJSON, _ = json.Marshal(m.CacheControl)
+			cacheControlJSON, err = json.Marshal(m.CacheControl)
+			if err != nil {
+				return 0, fmt.Errorf("sessiondb: marshal cache control seq=%d: %w", i, err)
+			}
+		}
+		var providerItemsJSON []byte
+		if len(m.ProviderItems) > 0 {
+			providerItemsJSON, err = json.Marshal(m.ProviderItems)
+			if err != nil {
+				return 0, fmt.Errorf("sessiondb: marshal provider items seq=%d: %w", i, err)
+			}
 		}
 
 		contentStr := m.Content.String()
@@ -149,8 +163,10 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 			nullString(""),
 			nullString(toolResult),
 			nullString(m.ToolCallID),
+			m.ToolError,
+			nullBytes(providerItemsJSON),
 			nullBytes(cacheControlJSON),
-			0,
+			provider.EstimateMessageTokens(m, ""),
 			i,
 			turn,
 			nil,
@@ -181,7 +197,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 	rows, err := db.Query(`
 		SELECT role, content, content_type, reasoning_content, reasoning,
 		       tool_calls, tool_name, tool_result, tool_call_id,
-		       cache_control, token_count, sequence_num, turn_number,
+		       tool_error, provider_items, cache_control, token_count, sequence_num, turn_number,
 		       agent_id, created_at, display_meta
 		FROM messages ORDER BY sequence_num
 	`)
@@ -197,7 +213,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 		err := rows.Scan(
 			&r.Role, &r.Content, &r.ContentType, &r.ReasoningContent, &r.Reasoning,
 			&r.ToolCalls, &r.ToolName, &r.ToolResult, &r.ToolCallID,
-			&r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
+			&r.ToolError, &r.ProviderItems, &r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
 			&r.AgentID, &r.CreatedAt, &r.DisplayMeta,
 		)
 		if err != nil {
@@ -221,18 +237,25 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 		if r.ToolCalls.Valid && r.ToolCalls.String != "" {
 			_ = json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
 		}
+		m.ToolError = r.ToolError != 0
+		if r.ProviderItems.Valid && r.ProviderItems.String != "" {
+			_ = json.Unmarshal([]byte(r.ProviderItems.String), &m.ProviderItems)
+		}
 		if r.CacheControl.Valid && r.CacheControl.String != "" {
 			var cc provider.CacheControl
 			if json.Unmarshal([]byte(r.CacheControl.String), &cc) == nil {
 				m.CacheControl = &cc
 			}
 		}
-		if m.Role == "tool" && r.ToolResult.Valid {
+		if m.Role == "tool" && r.ToolResult.Valid && r.ContentType.String != "multipart" {
 			m.Content = provider.TextContent(r.ToolResult.String)
 		}
 
 		msgs = append(msgs, m)
 		turns = append(turns, r.TurnNumber)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("sessiondb: load messages rows: %w", err)
 	}
 
 	return msgs, turns, nil
@@ -242,7 +265,7 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 	rows, err := db.Query(`
 		SELECT role, content, content_type, reasoning_content, reasoning,
 		       tool_calls, tool_name, tool_result, tool_call_id,
-		       cache_control, token_count, sequence_num, turn_number,
+		       tool_error, provider_items, cache_control, token_count, sequence_num, turn_number,
 		       agent_id, created_at, display_meta
 		FROM messages ORDER BY sequence_num
 	`)
@@ -257,7 +280,7 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 		err := rows.Scan(
 			&r.Role, &r.Content, &r.ContentType, &r.ReasoningContent, &r.Reasoning,
 			&r.ToolCalls, &r.ToolName, &r.ToolResult, &r.ToolCallID,
-			&r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
+			&r.ToolError, &r.ProviderItems, &r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
 			&r.AgentID, &r.CreatedAt, &r.DisplayMeta,
 		)
 		if err != nil {
@@ -281,13 +304,17 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 		if r.ToolCalls.Valid && r.ToolCalls.String != "" {
 			_ = json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
 		}
+		m.ToolError = r.ToolError != 0
+		if r.ProviderItems.Valid && r.ProviderItems.String != "" {
+			_ = json.Unmarshal([]byte(r.ProviderItems.String), &m.ProviderItems)
+		}
 		if r.CacheControl.Valid && r.CacheControl.String != "" {
 			var cc provider.CacheControl
 			if json.Unmarshal([]byte(r.CacheControl.String), &cc) == nil {
 				m.CacheControl = &cc
 			}
 		}
-		if m.Role == "tool" && r.ToolResult.Valid {
+		if m.Role == "tool" && r.ToolResult.Valid && r.ContentType.String != "multipart" {
 			m.Content = provider.TextContent(r.ToolResult.String)
 		}
 
@@ -310,6 +337,9 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 			CreatedAt: r.CreatedAt,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sessiondb: load messages with meta rows: %w", err)
+	}
 
 	return result, nil
 }
@@ -326,7 +356,6 @@ func nullBytes(b []byte) sql.NullString {
 }
 
 func parseMessageContent(s string, contentType string) provider.MessageContent {
-	s = strings.TrimSpace(s)
 	if contentType == "multipart" {
 		var parts []provider.ContentPart
 		if err := json.Unmarshal([]byte(s), &parts); err == nil && len(parts) > 0 {

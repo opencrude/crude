@@ -34,6 +34,21 @@ func TestResolveAgentBlockRoutesThroughOwningOrchestrator(t *testing.T) {
 	}
 }
 
+func TestResolveAgentBlockReplacesStaleBufferedResponse(t *testing.T) {
+	mgr := NewAgentManager()
+	block := make(chan string, 1)
+	block <- "stale"
+	mgr.AddOrchestrator("root", nil, nil, nil, block, &AgentState{})
+	ws := &Workspace{AgentMgr: mgr}
+
+	if !ws.ResolveConfirmation("root", "allow") {
+		t.Fatal("latest response was rejected")
+	}
+	if got := <-block; got != "allow" {
+		t.Fatalf("buffered response = %q, want latest answer", got)
+	}
+}
+
 func TestCloseAgentCancelsBeforeRemovingSessionOwnership(t *testing.T) {
 	mgr := NewAgentManager()
 	cancelCh := make(chan struct{}, 1)
@@ -123,13 +138,14 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 		"prompt_cached":  float64(2),
 		"cost":           0.25,
 		"context_window": float64(100),
-		"context_used":   float64(14),
+		"context_prompt": float64(37),
 		"estimated":      true,
 	})
 	if !ok {
 		t.Fatal("RecordAgentUsage() rejected valid usage")
 	}
-	if got.Prompt != 10 || got.Completion != 4 || got.Cached != 2 || got.Cost != 0.25 || got.ContextUsed != 14 || !got.Estimated {
+	if got.Prompt != 10 || got.Completion != 4 || got.Cached != 2 ||
+		got.Cost != 0.25 || got.ContextUsed != 37 || !got.Estimated {
 		t.Fatalf("unexpected usage snapshot: %#v", got)
 	}
 	if second.TokenPrompt != 99 {

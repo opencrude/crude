@@ -175,6 +175,25 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	extend := key.Mod&tea.ModShift != 0
 	ctrl := key.Mod&tea.ModCtrl != 0
 
+	switch key.String() {
+	case "alt+up":
+		e.moveLinesUp()
+		return nil
+	case "alt+down":
+		e.moveLinesDown()
+		return nil
+	case "ctrl+shift+d", "ctrl+shift+D":
+		e.duplicateLineOrSelection()
+		return nil
+	case "ctrl+shift+k", "ctrl+shift+K":
+		e.deleteLines()
+		return nil
+	case "ctrl+/", "ctrl+_":
+		// Ctrl+/ arrives as ctrl+_ (0x1F) on legacy terminal encodings.
+		e.toggleLineComment()
+		return nil
+	}
+
 	switch key.Code {
 	case tea.KeyUp:
 		e.clearSelectionIfNotExtending(extend)
@@ -279,13 +298,23 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.selEnd = e.cursor
 		}
 	case tea.KeyBackspace:
-		e.deleteBackward()
+		e.deleteBackwardSmart()
 	case tea.KeyDelete:
-		e.deleteForward()
+		if e.HasSelection() {
+			e.DeleteSelection()
+		} else {
+			e.deleteForward()
+		}
 	case tea.KeyEnter:
 		e.insertNewline()
 	case tea.KeyTab:
-		e.insertTab()
+		if extend {
+			e.outdentLines()
+		} else if e.selectionSpansLines() {
+			e.indentLines()
+		} else {
+			e.insertTab()
+		}
 	case tea.KeyEsc:
 		e.ClearSelection()
 		return e.closeCmd()
@@ -323,7 +352,7 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			if len(key.Text) > 0 {
 				for _, r := range key.Text {
 					if r >= 32 {
-						e.insertRune(r)
+						e.typeRune(r)
 					}
 				}
 			}

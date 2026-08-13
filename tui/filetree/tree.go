@@ -309,6 +309,18 @@ type FileTreeModel struct {
 	// filterEd holds the active filter pattern (empty = no filter).
 	filterEd *ui.TextEdit
 
+	// filterMatchPos maps node path → rune positions in Name matched by the
+	// active fuzzy filter. Rebuilt by applyFilterState on every SetFilter.
+	filterMatchPos map[string][]int
+
+	// filterSubtree maps node path → true when the node or any descendant
+	// matches the active filter. Drives visibility and auto-expansion.
+	filterSubtree map[string]bool
+
+	// filterAutoExpanded records directories the filter expanded so
+	// clearing the filter restores their collapsed state.
+	filterAutoExpanded []string
+
 	// sortBy controls how children are ordered within a directory.
 	sortBy SortOption
 
@@ -746,41 +758,103 @@ func (m *FileTreeModel) unfilteredWalk(node *TreeNode) {
 	}
 }
 
-// filteredWalk appends visible nodes depth-first with an active filter.
-// It returns true if the node or any of its descendants matched the filter.
-func (m *FileTreeModel) filteredWalk(node *TreeNode, parentVisible bool) bool {
-	if node.Hidden && !m.showHidden {
+// filteredWalk appends visible nodes depth-first with an active filter,
+// descending only into expanded directories. Visibility comes from the memo
+// maps built by applyFilterState: a node shows when it matched, an ancestor
+// matched, or its subtree contains a match.
+func (m *FileTreeModel) filteredWalk(node *TreeNode, ancestorMatched bool) {
+	if node == nil || (node.Hidden && !m.showHidden) {
+		return
+	}
+	_, selfMatched := m.filterMatchPos[node.Path]
+	if !ancestorMatched && !selfMatched && !m.filterSubtree[node.Path] {
+		return
+	}
+	m.visibleNodes = append(m.visibleNodes, node)
+	if node.IsDir && node.IsExpanded {
+		for _, child := range node.Children {
+			m.filteredWalk(child, ancestorMatched || selfMatched)
+		}
+	}
+}
+
+// filterLoadBudget caps how many unloaded directories one filter application
+// may lazily read from disk. Already-loaded directories are free, so repeated
+// keystrokes progressively deepen coverage without unbounded scans.
+const filterLoadBudget = 512
+
+// applyFilterState recomputes fuzzy-match memo maps for the current pattern
+// and auto-expands every directory whose subtree contains a match, recording
+// previously-collapsed ones so an empty pattern restores them.
+// Must be called with m.mu held.
+func (m *FileTreeModel) applyFilterState() {
+	pattern := m.filterPattern()
+	if pattern == "" {
+		for _, path := range m.filterAutoExpanded {
+			if n, ok := m.nodes[path]; ok && n.IsDir && n != m.Root {
+				n.IsExpanded = false
+			}
+		}
+		m.filterAutoExpanded = nil
+		m.filterMatchPos = nil
+		m.filterSubtree = nil
+		return
+	}
+	m.filterMatchPos = make(map[string][]int)
+	m.filterSubtree = make(map[string]bool)
+	budget := filterLoadBudget
+	m.computeFilterMatches(m.Root, pattern, &budget)
+	m.autoExpandFilterMatches(m.Root)
+}
+
+// computeFilterMatches fills filterMatchPos/filterSubtree for node's subtree,
+// lazily loading unloaded directories while budget lasts. Returns true when
+// the subtree (including node itself) contains a match. The root node never
+// self-matches — matching the workspace name would defeat the filter.
+func (m *FileTreeModel) computeFilterMatches(node *TreeNode, pattern string, budget *int) bool {
+	if node == nil || (node.Hidden && !m.showHidden) {
 		return false
 	}
-
-	// Does this node match the filter?
-	selfMatch := parentVisible || strings.Contains(
-		strings.ToLower(node.Name),
-		strings.ToLower(m.filterPattern()),
-	)
-
-	// If this is a directory, check children.
-	childMatch := false
+	any := false
+	if node != m.Root {
+		if pos, ok := FuzzyMatch(node.Name, pattern); ok {
+			m.filterMatchPos[node.Path] = pos
+			any = true
+		}
+	}
 	if node.IsDir {
-		// Only descend into expanded directories or if there's potential.
-		// We still need to check children even when collapsed for filter
-		// matching purposes — but we can only do this if children are loaded.
-		if node.Children != nil {
-			for _, child := range node.Children {
-				if m.filteredWalk(child, selfMatch || childMatch) {
-					childMatch = true
-				}
+		if node.Children == nil && *budget > 0 {
+			*budget--
+			_ = m.loadDirectory(node)
+		}
+		for _, child := range node.Children {
+			if m.computeFilterMatches(child, pattern, budget) {
+				any = true
 			}
 		}
 	}
-
-	visible := selfMatch || childMatch
-
-	if visible {
-		m.visibleNodes = append(m.visibleNodes, node)
+	if any {
+		m.filterSubtree[node.Path] = true
 	}
+	return any
+}
 
-	return visible
+// autoExpandFilterMatches expands every directory whose subtree matched so
+// filtered rows are reachable, recording directories that were collapsed.
+func (m *FileTreeModel) autoExpandFilterMatches(node *TreeNode) {
+	if node == nil || !node.IsDir || (node.Hidden && !m.showHidden) {
+		return
+	}
+	if !m.filterSubtree[node.Path] {
+		return
+	}
+	if !node.IsExpanded {
+		node.IsExpanded = true
+		m.filterAutoExpanded = append(m.filterAutoExpanded, node.Path)
+	}
+	for _, child := range node.Children {
+		m.autoExpandFilterMatches(child)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -794,12 +868,13 @@ func (m *FileTreeModel) filterPattern() string {
 	return m.filterEd.Value()
 }
 
-// SetFilter sets a case-insensitive filter pattern and rebuilds the visible
-// nodes list.
+// SetFilter sets a case-insensitive fuzzy filter pattern and rebuilds the
+// visible nodes list.
 //
-// A node is shown if its name contains the filter string OR if any of its
-// descendants match. Ancestors of matching nodes are also shown. When the
-// filter is empty, all (non-hidden, visible) nodes are shown.
+// A node is shown if the pattern is a subsequence of its name, if an ancestor
+// matched, or if any descendant matches. Ancestor directories of matches are
+// auto-expanded (and restored when the filter clears). When the filter is
+// empty, all (non-hidden, visible) nodes are shown.
 func (m *FileTreeModel) SetFilter(pattern string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -808,9 +883,39 @@ func (m *FileTreeModel) SetFilter(pattern string) {
 		m.filterEd = ui.NewTextEdit()
 	}
 	m.filterEd.SetValue(pattern)
+	m.applyFilterState()
 	m.rebuildVisibleNodes()
 
-	// Clamp cursor index to new visible list.
+	// While a pattern is active, selection follows the matches (VS Code
+	// behavior): keep the current node only if it matched itself; otherwise
+	// jump to the first matching row so Enter opens it immediately instead
+	// of toggling whatever directory happened to be selected.
+	if m.filterPattern() != "" {
+		if m.filterMatchPos[m.selectedPath] != nil {
+			for i, node := range m.visibleNodes {
+				if node.Path == m.selectedPath {
+					m.cursorIndex = i
+					return
+				}
+			}
+		}
+		for i, node := range m.visibleNodes {
+			if m.filterMatchPos[node.Path] != nil {
+				m.cursorIndex = i
+				m.selectedPath = node.Path
+				return
+			}
+		}
+	}
+
+	// Keep the selected node when it survived the filter change; otherwise
+	// clamp the cursor to the new visible list.
+	for i, node := range m.visibleNodes {
+		if node.Path == m.selectedPath {
+			m.cursorIndex = i
+			return
+		}
+	}
 	if m.cursorIndex >= len(m.visibleNodes) {
 		if len(m.visibleNodes) > 0 {
 			m.cursorIndex = len(m.visibleNodes) - 1
@@ -822,6 +927,18 @@ func (m *FileTreeModel) SetFilter(pattern string) {
 	} else if len(m.visibleNodes) > 0 {
 		m.selectedPath = m.visibleNodes[m.cursorIndex].Path
 	}
+}
+
+// FilterMatchPositions returns the rune positions in the node name matched by
+// the active fuzzy filter, or nil when the node did not match (or no filter
+// is active). The returned slice must not be modified.
+func (m *FileTreeModel) FilterMatchPositions(path string) []int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.filterMatchPos == nil {
+		return nil
+	}
+	return m.filterMatchPos[path]
 }
 
 // Filter returns the current filter pattern.
@@ -1077,9 +1194,9 @@ func (m *FileTreeModel) ParentDir(path string) string {
 	return ""
 }
 
-// ExpandToPath walks the tree and ensures all ancestors of the
-// given path are expanded so the path is visible. Returns true if
-// the path is now visible.
+// ExpandToPath expands (lazily loading as needed) every ancestor of the
+// given path, rebuilds the visible rows, and moves the selection to the path
+// so it is revealed and highlighted. Returns true if the path is now visible.
 func (m *FileTreeModel) ExpandToPath(path string) bool {
 	if path == "" {
 		return false
@@ -1087,54 +1204,51 @@ func (m *FileTreeModel) ExpandToPath(path string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Walk up the path components and expand each ancestor dir.
-	parts := splitPath(path)
-	current := ""
-	for i, p := range parts {
-		if i > 0 {
-			current += "/"
-		}
-		current += p
-		if i == len(parts)-1 {
-			// Leaf: just check it exists.
-			_, ok := m.nodes[current]
-			return ok
-		}
-		// Ancestor: must be expanded.
-		n, ok := m.nodes[current]
-		if !ok {
+	target := filepath.Clean(path)
+	if target != m.rootPath {
+		rel, err := filepath.Rel(m.rootPath, target)
+		if err != nil || rel == "." || rel == ".." ||
+			strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return false
 		}
-		if n.IsDir && !n.IsExpanded {
-			n.IsExpanded = true
-		}
-	}
-	// Rebuild visible nodes.
-	m.rebuildVisibleNodes()
-	return true
-}
-
-// splitPath is a small helper to break a path on /.
-func splitPath(p string) []string {
-	if p == "" {
-		return nil
-	}
-	out := []string{}
-	cur := ""
-	for _, r := range p {
-		if r == '/' {
-			if cur != "" {
-				out = append(out, cur)
-				cur = ""
+		node := m.Root
+		current := m.rootPath
+		for _, part := range strings.Split(rel, string(filepath.Separator)) {
+			if !node.IsDir {
+				return false
 			}
-		} else {
-			cur += string(r)
+			if node.Children == nil {
+				if err := m.loadDirectory(node); err != nil {
+					return false
+				}
+			}
+			node.IsExpanded = true
+			current = filepath.Join(current, part)
+			child, ok := m.nodes[current]
+			if !ok {
+				// Directory contents changed since the last load — refresh
+				// once and retry before giving up.
+				if err := m.loadDirectory(node); err != nil {
+					return false
+				}
+				if child, ok = m.nodes[current]; !ok {
+					return false
+				}
+			}
+			node = child
 		}
 	}
-	if cur != "" {
-		out = append(out, cur)
+
+	m.rebuildVisibleNodes()
+	for i, n := range m.visibleNodes {
+		if n.Path == target {
+			m.cursorIndex = i
+			m.selectedPath = target
+			m.updateScrollOffsetLocked()
+			return true
+		}
 	}
-	return out
+	return false
 }
 
 // NodeByPath looks up a TreeNode by its absolute path. Returns nil if not

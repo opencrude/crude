@@ -13,10 +13,12 @@ import (
 )
 
 type execResult struct {
-	id     string
-	params map[string]any
-	name   string
-	result tools.ToolResult
+	index     int
+	id        string
+	params    map[string]any
+	name      string
+	result    tools.ToolResult
+	toolError bool
 }
 
 type toolParamSchema struct {
@@ -61,32 +63,81 @@ func validateRequiredParams(toolName string, params map[string]any, defs []tools
 func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan string, lastReply *string, step int) <-chan execResult {
 	ch := make(chan execResult, len(toolCalls))
 
-	var nonBlocking, blocking []provider.ToolCall
-	for _, tc := range toolCalls {
+	type indexedToolCall struct {
+		index int
+		call  provider.ToolCall
+	}
+	var nonBlocking, blocking []indexedToolCall
+	for index, tc := range toolCalls {
+		indexed := indexedToolCall{index: index, call: tc}
 		if isPotentiallyBlocking(tc.Function.Name, a.Yolo) {
-			blocking = append(blocking, tc)
+			blocking = append(blocking, indexed)
 		} else {
-			nonBlocking = append(nonBlocking, tc)
+			nonBlocking = append(nonBlocking, indexed)
 		}
 	}
 
-	for _, tc := range nonBlocking {
-		a.logger.Debug("AGENT", "goroutine_start", "tool", tc.Function.Name, "step", step)
-		go func(tc provider.ToolCall) {
-			ch <- a.executeOneToolCall(ctx, tc, emit, nil, lastReply)
-		}(tc)
+	send := func(result execResult) {
+		select {
+		case ch <- result:
+		case <-ctx.Done():
+		}
+	}
+
+	for _, indexed := range nonBlocking {
+		a.logger.Debug("AGENT", "goroutine_start", "tool", indexed.call.Function.Name, "step", step)
+		go func(indexed indexedToolCall) {
+			result := a.executeOneToolCallSafely(ctx, indexed.call, emit, nil, lastReply)
+			result.index = indexed.index
+			send(result)
+		}(indexed)
 	}
 
 	if len(blocking) > 0 {
 		go func() {
-			for _, tc := range blocking {
-				a.logger.Debug("AGENT", "blocking_start", "tool", tc.Function.Name, "step", step)
-				ch <- a.executeOneToolCall(ctx, tc, emit, blockResolveCh, lastReply)
+			for _, indexed := range blocking {
+				a.logger.Debug("AGENT", "blocking_start", "tool", indexed.call.Function.Name, "step", step)
+				result := a.executeOneToolCallSafely(ctx, indexed.call, emit, blockResolveCh, lastReply)
+				result.index = indexed.index
+				send(result)
 			}
 		}()
 	}
 
 	return ch
+}
+
+func (a *Agent) executeOneToolCallSafely(
+	ctx context.Context,
+	tc provider.ToolCall,
+	emit func(AgentEvent),
+	blockResolveCh <-chan string,
+	lastReply *string,
+) (result execResult) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			message := fmt.Sprintf("Error: tool %q panicked: %v", tc.Function.Name, recovered)
+			a.logger.Error("TOOL", "panic", "name", tc.Function.Name, "error", recovered)
+			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+				"internal_id": tc.InternalID,
+				"tool_id":     tc.ID,
+				"name":        tc.Function.Name,
+				"phase":       "error",
+			}})
+			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+				"internal_id": tc.InternalID,
+				"tool_id":     tc.ID,
+				"name":        tc.Function.Name,
+				"result":      message,
+				"error":       "true",
+			}})
+			result = execResult{
+				id: tc.ID, name: tc.Function.Name,
+				result: tools.ToolResult{Content: message}, toolError: true,
+			}
+		}
+	}()
+	return a.executeOneToolCall(ctx, tc, emit, blockResolveCh, lastReply)
 }
 
 func isPotentiallyBlocking(name string, yolo bool) bool {
@@ -97,6 +148,8 @@ func isPotentiallyBlocking(name string, yolo bool) bool {
 		return true
 	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 		return !yolo
+	case "reply", "write_report":
+		return true
 	case "plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
 		"report_blocker", "resolve_blocker", "list_goal_status":
 		return true
@@ -108,10 +161,6 @@ func isPotentiallyBlocking(name string, yolo bool) bool {
 func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan string, lastReply *string) execResult {
 	internalID := tc.InternalID
 	goroutineStart := time.Now()
-
-	if tc.Function.Name == "write_report" {
-		a.writeReportCalled = true
-	}
 
 	var params map[string]any
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
@@ -136,10 +185,14 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"result":      errResult,
 			"error":       "true",
 		}})
-		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errResult}}
+		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errResult}, toolError: true}
 	}
 
-	if errMsg := validateRequiredParams(tc.Function.Name, params, a.FilteredTools); errMsg != "" {
+	validationDefs := a.FilteredTools
+	if len(validationDefs) == 0 {
+		validationDefs = tools.AgentTools
+	}
+	if errMsg := validateRequiredParams(tc.Function.Name, params, validationDefs); errMsg != "" {
 		a.logger.Warn("TOOL", "empty_required_param", "name", tc.Function.Name)
 		emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 			"internal_id": internalID,
@@ -160,7 +213,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"result":      errMsg,
 			"error":       "true",
 		}})
-		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}}
+		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
 	}
 
 	if tc.Function.Name == "reply" {
@@ -203,7 +256,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}
 
 		if len(questions) == 0 {
-			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Error: question tool requires a 'questions' array or 'question' parameter"}}
+			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Error: question tool requires a 'questions' array or 'question' parameter"}, toolError: true}
 		}
 
 		questionsJSON, _ := json.Marshal(questions)
@@ -218,12 +271,10 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"operation":      "questions",
 			"tool":           "question",
 			"target":         getStr(params, "question"),
-			"questions_json":  string(questionsJSON),
+			"questions_json": string(questionsJSON),
 		}})
-		var resp string
-		select {
-		case resp = <-blockResolveCh:
-		case <-ctx.Done():
+		resp, ok := waitForBlockResponse(ctx, blockResolveCh)
+		if !ok {
 			emit(AgentEvent{Type: "blocking_complete"})
 			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 				"internal_id": internalID,
@@ -231,7 +282,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				"name":        "question",
 				"result":      "Turn cancelled by user.",
 			}})
-			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Turn cancelled by user."}}
+			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Turn cancelled by user."}, toolError: true}
 		}
 		emit(AgentEvent{Type: "blocking_complete"})
 		emit(AgentEvent{Type: "tool_result", Data: map[string]any{
@@ -262,7 +313,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				"result":      errMsg,
 				"error":       "true",
 			}})
-			return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
+			return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}, toolError: true}
 		}
 		if !a.Yolo && sr.Risk.NeedsConfirmation() {
 			emit(AgentEvent{Type: "blocking", Data: map[string]string{
@@ -274,12 +325,10 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				"reason":     sr.Reason,
 				"suggestion": sr.Suggestion,
 			}})
-			var resp string
-			select {
-			case resp = <-blockResolveCh:
-			case <-ctx.Done():
+			resp, ok := waitForBlockResponse(ctx, blockResolveCh)
+			if !ok {
 				emit(AgentEvent{Type: "blocking_complete"})
-				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: "Turn cancelled by user."}}
+				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: "Turn cancelled by user."}, toolError: true}
 			}
 			if resp == "deny" {
 				errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
@@ -297,7 +346,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 					"result":      errMsg,
 					"error":       "true",
 				}})
-				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}}
+				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}, toolError: true}
 			}
 			a.logger.Info("BLOCK", "resolved", "response", resp, "operation", sr.Risk.String(), "tool", "execute_command")
 			emit(AgentEvent{Type: "blocking_complete"})
@@ -360,12 +409,10 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"reason":     fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name),
 			"suggestion": "",
 		}})
-		var resp string
-		select {
-		case resp = <-blockResolveCh:
-		case <-ctx.Done():
+		resp, ok := waitForBlockResponse(ctx, blockResolveCh)
+		if !ok {
 			emit(AgentEvent{Type: "blocking_complete"})
-			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled by user."}}
+			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled by user."}, toolError: true}
 		}
 		if resp == "deny" {
 			errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
@@ -383,7 +430,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				"result":      errMsg,
 				"error":       "true",
 			}})
-			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}}
+			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
 		}
 		a.logger.Info("BLOCK", "resolved", "response", resp, "operation", fileOp, "tool", tc.Function.Name)
 		emit(AgentEvent{Type: "blocking_complete"})
@@ -488,33 +535,37 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	if toolErr != nil && result.Content == "" {
 		result.Content = fmt.Sprintf("Error: %s", toolErr.Error())
 	}
+	toolFailed := toolErr != nil || IsToolError(result.Content)
+	if tc.Function.Name == "write_report" && !toolFailed {
+		a.writeReportCalled = true
+	}
 	toolDur := time.Since(toolStart).Milliseconds()
 
 	goroutineDur := time.Since(goroutineStart).Milliseconds()
 	a.logger.Debug("AGENT", "goroutine_complete", "tool", tc.Function.Name, "tool_id", tc.ID, "goroutine_dur_ms", goroutineDur, "tool_dur_ms", toolDur)
 
-	if IsToolError(result.Content) {
+	if toolFailed {
 		a.logger.Error("TOOL", "error", "name", tc.Function.Name, "error", result.Content, "latency_ms", toolDur)
 	} else {
 		a.logger.Info("TOOL", "result", "name", tc.Function.Name, "latency_ms", toolDur, "len", len(result.Content))
 	}
 
-	if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !IsToolError(result.Content) {
+	if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !toolFailed {
 		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-			"internal_id":   internalID,
-			"tool_id":       tc.ID,
-			"name":          tc.Function.Name,
-			"phase":         "done",
-			"path":          path,
-			"message":       fmt.Sprintf("\u2212%d/+%d lines", result.Removed, result.Added),
-			"lines_added":   result.Added,
-			"lines_removed": result.Removed,
-			"tool_dur_ms":   toolDur,
+			"internal_id":     internalID,
+			"tool_id":         tc.ID,
+			"name":            tc.Function.Name,
+			"phase":           "done",
+			"path":            path,
+			"message":         fmt.Sprintf("\u2212%d/+%d lines", result.Removed, result.Added),
+			"lines_added":     result.Added,
+			"lines_removed":   result.Removed,
+			"tool_dur_ms":     toolDur,
 			"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
 		}})
 	}
 
-	if tc.Function.Name == "write_report" && !IsToolError(result.Content) {
+	if tc.Function.Name == "write_report" && !toolFailed {
 		reportPath := ""
 		if raw := result.Content; raw != "" {
 			var parsed struct {
@@ -530,7 +581,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"name":            tc.Function.Name,
 			"phase":           "done",
 			"path":            reportPath,
-			"message":          fmt.Sprintf("+%d lines", result.Added),
+			"message":         fmt.Sprintf("+%d lines", result.Added),
 			"lines_added":     result.Added,
 			"lines_removed":   0,
 			"tool_dur_ms":     toolDur,
@@ -550,7 +601,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		resultData["lines_added"] = result.Added
 		resultData["lines_removed"] = result.Removed
 	}
-	if IsToolError(result.Content) {
+	if toolFailed {
 		resultData["error"] = "true"
 		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 			"internal_id": internalID,
@@ -561,5 +612,20 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	}
 	emit(AgentEvent{Type: "tool_result", Data: resultData})
 
-	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result}
+	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed}
+}
+
+func waitForBlockResponse(ctx context.Context, responses <-chan string) (string, bool) {
+	if responses == nil {
+		return "", false
+	}
+	select {
+	case response, ok := <-responses:
+		if !ok {
+			return "", false
+		}
+		return response, true
+	case <-ctx.Done():
+		return "", false
+	}
 }
