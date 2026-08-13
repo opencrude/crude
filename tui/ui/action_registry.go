@@ -642,6 +642,22 @@ var defaultActions = []*ActionDef{
 		HintKey: "Ctrl+Alt+S",
 	},
 	{
+		ID:          "memory.browse",
+		Label:       "Workspace Memory",
+		Description: "browse, pin, and forget durable agent memories",
+		Icon:        "◆",
+		Category:    "System",
+		// Ctrl+Alt+M: free of collisions with palette (Ctrl+Alt+P),
+		// sessions (Ctrl+Alt+S), and find (Ctrl+Alt+F).
+		Bindings: []KeyBinding{
+			{Key: "ctrl+alt+m"},
+			{Key: "ctrl+alt+M"},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'm'},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'M'},
+		},
+		HintKey: "Ctrl+Alt+M",
+	},
+	{
 		ID:          "system.undo",
 		Label:       "Undo Agent File Change",
 		Description: "revert the last file change made by the agent",

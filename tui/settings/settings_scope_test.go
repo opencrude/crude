@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"strings"
 	"testing"
 
 	"crude/tui/cell"
@@ -21,17 +22,21 @@ func TestWorkspaceScopeSaveEmitsOverridesWithoutAPIKeys(t *testing.T) {
 	}
 	working := app
 	working.Editor.TabSize = 8
-	working.Providers["openrouter"] = types.ProviderConfig{APIKey: "ws-key", Model: "ws-model"}
+	// A shallow struct copy shares the providers map; mutating it in place
+	// would edit the application baseline too and hide the diff.
+	working.Providers = map[string]types.ProviderConfig{
+		"openrouter": {APIKey: "ws-key", Model: "ws-model"},
+	}
 	model := NewScoped(th, working, nil, types.SettingsScopeWorkspace, app, types.WorkspaceOverrides{})
 	got := model.Overrides()
-	if got.Editor == nil || got.Editor.TabSize != 8 {
-		t.Fatalf("editor override missing: %#v", got.Editor)
+	if !strings.Contains(string(got.Editor), `"tab_size":8`) {
+		t.Fatalf("editor override missing: %s", got.Editor)
 	}
-	if got.Providers["openrouter"].APIKey != "" {
-		t.Fatalf("workspace save leaked API key: %#v", got.Providers)
+	if strings.Contains(string(got.Providers), "ws-key") {
+		t.Fatalf("workspace save leaked API key: %s", got.Providers)
 	}
-	if got.Providers["openrouter"].Model != "ws-model" {
-		t.Fatalf("workspace model overlay missing: %#v", got.Providers)
+	if !strings.Contains(string(got.Providers), "ws-model") {
+		t.Fatalf("workspace model overlay missing: %s", got.Providers)
 	}
 }
 

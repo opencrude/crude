@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -126,6 +127,127 @@ func TestAgentSidebarProjectsAgentForest(t *testing.T) {
 	}
 	if items[2].Depth != 1 || !items[2].TreeLast || items[2].Label != "Build" {
 		t.Fatalf("last child row=%#v", items[2])
+	}
+}
+
+// Clicking the icon of the view already on screen collapses the sidebar, and
+// clicking again brings it back — for every destination, through the real
+// mouse path rather than by calling toggleActivity directly.
+func TestRailClickTogglesSidebarForEveryView(t *testing.T) {
+	for _, view := range activitybar.Views() {
+		t.Run(view.Label(), func(t *testing.T) {
+			app := newFullTestApp(t)
+			app.width, app.height = 120, 40
+			model := filetree.NewFileTreeModel(t.TempDir())
+			app.Tree = NewTreeState(model, 24)
+			app.sidebarScreen.SetModel(model)
+			// Start collapsed so the sequence reads the same for the
+			// default view (Explorer) as for the others.
+			app.Tree.Visible = false
+			app.paintShellFrame()
+
+			railY := func(v activitybar.View) int {
+				for i, candidate := range activitybar.Views() {
+					if candidate == v {
+						return sidebarTopRow + i*activitybar.RowStride
+					}
+				}
+				t.Fatalf("unknown view %v", v)
+				return 0
+			}
+			click := func(y int) {
+				t.Helper()
+				m, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: 2, Y: y, Button: tea.MouseLeft})
+				app = m.(*App)
+				if cmd != nil {
+					cmd()
+				}
+				app.paintShellFrame()
+			}
+
+			click(railY(view))
+			if !app.sidebarContentVisible() || app.activityView != view {
+				t.Fatalf("first click should open %s: visible=%v view=%v",
+					view.Label(), app.sidebarContentVisible(), app.activityView)
+			}
+			click(railY(view))
+			if app.sidebarContentVisible() {
+				t.Fatalf("clicking the active %s icon must collapse the sidebar", view.Label())
+			}
+			click(railY(view))
+			if !app.sidebarContentVisible() {
+				t.Fatalf("clicking %s again must reopen the sidebar", view.Label())
+			}
+		})
+	}
+}
+
+// The rail's active marker has to follow the panel, not just the selection:
+// a collapsed sidebar that still shows a lit marker looks stuck.
+func TestRailMarkerFollowsSidebarVisibility(t *testing.T) {
+	app := newFullTestApp(t)
+	model := filetree.NewFileTreeModel(t.TempDir())
+	app.Tree = NewTreeState(model, 24)
+	app.Tree.Visible = true
+	app.sidebarScreen.SetModel(model)
+
+	app.refreshActivityList()
+	if !app.activityBar.PanelOpen() {
+		t.Fatal("an open sidebar must mark its rail entry active")
+	}
+	app.ToggleSidebar()
+	app.refreshActivityList()
+	if app.activityBar.PanelOpen() {
+		t.Fatal("Ctrl+B collapse must clear the rail's active marker")
+	}
+}
+
+// "New Terminal" is a button, not a resource row. Requiring a double click
+// made it look broken: a single click only highlighted the row.
+func TestNewTerminalRowActivatesOnSingleClick(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("in-app PTYs are unix-only")
+	}
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 40
+	model := filetree.NewFileTreeModel(t.TempDir())
+	app.Tree = NewTreeState(model, 24)
+	app.sidebarScreen.SetModel(model)
+	app.setActivity(activityTerminals, true)
+	app.paintShellFrame()
+
+	mgr := app.termMgr()
+	if mgr == nil {
+		t.Fatal("workspace terminal manager missing")
+	}
+	t.Cleanup(func() {
+		for _, info := range mgr.List() {
+			mgr.Close(info.ID)
+		}
+	})
+
+	rect, ok := app.rootHost.ScreenRect(activitylist.ScreenID)
+	if !ok {
+		t.Fatal("terminals panel is not mounted")
+	}
+	row := -1
+	for y := 0; y < rect.H; y++ {
+		if item, hit := app.activityList.ItemAtLocalY(y); hit && item.ID == sidebarItemNewTerminal {
+			row = rect.Y + y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatal("New Terminal row not found in the Terminals panel")
+	}
+
+	m, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: rect.X + 2, Y: row, Button: tea.MouseLeft})
+	app = m.(*App)
+	if cmd != nil {
+		cmd()
+	}
+	if len(mgr.List()) != 1 {
+		t.Fatalf("a single click on New Terminal must create a terminal, have %d", len(mgr.List()))
 	}
 }
 

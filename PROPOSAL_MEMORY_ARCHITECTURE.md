@@ -3,7 +3,28 @@
 ## Merging MemGPT + ClawVM + Engram for Persistent Context Management
 
 > **Date:** 2026-05-13
-> **Status:** Design Proposal
+> **Status:** SUPERSEDED (2026-08-13) — the native workspace memory system is
+> implemented; this document remains as design history.
+>
+> **What shipped** (see `memory/` package + `session/memory_pipeline.go`):
+> FTS5/BM25 scored recall (relevance + recency + importance + usage + IDE
+> path overlap) with token-budget packing; cross-session history mirror +
+> `search_history`; session summaries + continuity injection; async
+> background extraction with watermarks and a what-not-to-save taxonomy;
+> background consolidation (dedup, contradiction supersede, decay, cap)
+> under a cooperative lock; supersede-never-delete with an append-only
+> journal; tools `remember` / `recall_memory` / `update_memory` /
+> `forget_memory` / `search_history`; `/memory` browser (Ctrl+Alt+M);
+> Settings > Memory across app/workspace inheritance.
+>
+> **Deliberately not implemented from this proposal:** ClawVM typed pages,
+> multi-resolution variants, and the three-phase writeback journal. Crude's
+> durable per-session history already prevents flush-miss (compaction is
+> projection-only), and the 2026 field consensus (mem0 v3, Codex, ChatGPT
+> Dreaming) moved reconciliation out of the write path into batch
+> consolidation — ADD-only writes with background cleanup. Vector
+> embeddings remain a possible future retrieval arm; the schema leaves room.
+>
 > **Papers Referenced:**
 > - MemGPT: Towards LLMs as Operating Systems (Packter et al., 2023) — arXiv:2310.08560
 > - ClawVM: Harness-Managed Virtual Memory for Stateful Tool-Using LLM Agents (Rafique & Bindschaedler, 2026) — arXiv:2604.10352

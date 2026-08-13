@@ -102,6 +102,24 @@ func retryDelay(resp *http.Response, attempt int) time.Duration {
 	return retryBackoff(attempt)
 }
 
+// CompleteText performs a single completion outside the agent loop: no
+// tools, no streaming callbacks, no session state. Background jobs (memory
+// extraction, session summaries, consolidation) use it so they never touch
+// the interactive turn path.
+func CompleteText(
+	ctx context.Context, p *provider.Provider, model, system, user string,
+) (string, error) {
+	a := NewAgent(p, model, nil)
+	result, err := a.completeStream(ctx, []provider.ChatMessage{
+		provider.NewTextMessage("system", system),
+		provider.NewTextMessage("user", user),
+	}, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
 func (a *Agent) completeStream(
 	ctx context.Context,
 	msgs []provider.ChatMessage,

@@ -32,6 +32,7 @@ const (
 	OverlayDiagContext       OverlayID = "diag-context"
 	OverlayDiagHover         OverlayID = "diag-hover"
 	OverlaySessionPicker     OverlayID = "session-picker"
+	OverlayMemoryBrowser     OverlayID = "memory-browser"
 	OverlayHelp              OverlayID = "help"
 	OverlayTerminalPrefix    OverlayID = "terminal/"
 )

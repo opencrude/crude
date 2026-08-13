@@ -19,6 +19,7 @@ import (
 	findinfiles "crude/tui/screens/findinfiles"
 	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
+	memorybrowser "crude/tui/screens/memorybrowser"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
@@ -143,6 +144,7 @@ type App struct {
 	findInFiles            *findinfiles.Screen
 	findInFilesRequest     uint64
 	findInFilesGen         int
+	memoryBrowser          *memorybrowser.Screen
 	providerPresets        []ttypes.ProviderPreset
 	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
 	gitRefreshGen          atomic.Uint64
@@ -583,13 +585,14 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 			if action == window.CloseNone {
 				return m, nil
 			}
-			// If the tab was an agent tab, clean up
+			// Closing an agent tab minimizes it; the orchestrator and
+			// its conversation survive for later restore.
 			if m.isAgentTabTitle(tab.Title) {
 				agentID := m.agentIDFromTabTitle(tab.Title)
-				m.cleanupAgent(agentID)
+				m.minimizeAgent(agentID)
 			}
 			// If no tabs left, show welcome launcher
-			if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && !m.Win.IsOpen() {
+			if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && !m.Win.IsOpen() {
 				m.openLauncher()
 				return m, nil
 			}

@@ -119,6 +119,16 @@ Sub-agent tools are not available. Work as a single agent doing everything yours
 
 Follow the Task Resolution Protocol: GROUND → DECOMPOSE → PLAN → EXECUTE → VERIFY. Start with a discovery tool. Always read before editing. Verify after changes.`
 
+const memoryPrompt = `# Workspace Memory
+
+This workspace has durable memory across sessions. Relevant memories are auto-injected each turn under "## Workspace Memory"; a background curator also extracts memories from finished turns automatically.
+
+- remember: save knowledge worth keeping — stable conventions, verified decisions/facts, user preferences, useful references, and lessons (a failure plus its CONFIRMED fix, kind=lesson). Scope with paths=[...] when it applies to specific files.
+- Do NOT save: anything readable from the code itself, transient task state, unverified guesses, secrets, or generic programming knowledge.
+- recall_memory: search all stored memories when you need more than the auto-injected set.
+- search_history: search every past turn and session summary in this workspace ("what did we do last time", "have we hit this error before").
+- update_memory / forget_memory: correct or retire a memory the moment you notice it is wrong or obsolete — stale memory is worse than no memory.`
+
 func BuildSystemPrompt(multiAgent bool) string {
 	var b strings.Builder
 	b.WriteString(OrchestratorPrompt)
@@ -128,6 +138,8 @@ func BuildSystemPrompt(multiAgent bool) string {
 	} else {
 		b.WriteString(soloModePrompt)
 	}
+	b.WriteString("\n\n")
+	b.WriteString(memoryPrompt)
 	b.WriteString("\n\n")
 	b.WriteString(gatherEnvContext().buildSection())
 	return b.String()

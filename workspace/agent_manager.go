@@ -15,6 +15,11 @@ type AgentNode struct {
 	Label    string
 	Model    string
 	Category string
+	// Hidden marks an agent that the user dismissed from the tab bar. The
+	// orchestrator keeps running and every buffer stays intact; only the
+	// surfaced tab is gone. Restore it from the Agents panel or the
+	// sessions picker.
+	Hidden bool
 
 	InputChan      chan<- provider.UserInput
 	BtwChan        chan<- provider.UserInput
@@ -229,21 +234,77 @@ func (m *AgentManager) AnyActive() bool {
 	return false
 }
 
-// Count returns the total number of agents (orchestrator + sub-agents).
+// Count returns the total number of agents (orchestrator + sub-agents),
+// including minimized ones.
 func (m *AgentManager) Count() int {
 	return len(m.byID)
 }
 
+// VisibleCount returns the number of agents the user can currently see as
+// tabs. Shell gates that decide between the launcher, the chat, and the
+// editor use this: a workspace whose agents are all minimized must fall back
+// to the launcher even though the orchestrators are still alive.
+func (m *AgentManager) VisibleCount() int {
+	n := 0
+	for _, node := range m.byID {
+		if node != nil && !node.Hidden {
+			n++
+		}
+	}
+	return n
+}
+
+// SetHidden minimizes or restores an agent subtree. Hiding a root hides its
+// sub-agents with it so a restored orchestrator comes back whole.
+func (m *AgentManager) SetHidden(id string, hidden bool) {
+	node := m.byID[id]
+	if node == nil {
+		return
+	}
+	var walk func(*AgentNode)
+	walk = func(n *AgentNode) {
+		n.Hidden = hidden
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(node)
+	if hidden && m.active == id {
+		m.active = ""
+	}
+}
+
+// IsHidden reports whether an agent is minimized. Unknown IDs are not hidden.
+func (m *AgentManager) IsHidden(id string) bool {
+	node := m.byID[id]
+	return node != nil && node.Hidden
+}
+
+// HiddenOrchestrators returns the minimized root agents in creation order.
+func (m *AgentManager) HiddenOrchestrators() []*AgentNode {
+	var out []*AgentNode
+	for _, root := range m.roots {
+		if root != nil && root.Hidden {
+			out = append(out, root)
+		}
+	}
+	return out
+}
+
 // TabOrder returns the agent IDs in the order they should appear as tabs:
-// sub-agents first (by pane order), then the orchestrator.
+// sub-agents first (by pane order), then the orchestrator. Minimized agents
+// have no tab.
 func (m *AgentManager) TabOrder() []string {
 	var out []string
 	for _, child := range m.SubAgents() {
-		if !child.IsCompleted() {
+		if !child.IsCompleted() && !child.Hidden {
 			out = append(out, child.ID)
 		}
 	}
 	for _, root := range m.roots {
+		if root.Hidden {
+			continue
+		}
 		out = append(out, root.ID)
 	}
 	return out

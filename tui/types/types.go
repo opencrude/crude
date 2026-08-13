@@ -36,6 +36,7 @@ type (
 	CategorySettings      = model.CategorySettings
 	ProfileSettings       = model.ProfileSettings
 	AgentsSettings        = model.AgentsSettings
+	MemorySettings        = model.MemorySettings
 	Settings              = model.Settings
 	AppSettings           = model.AppSettings
 	SessionSettings       = model.SessionSettings
@@ -75,6 +76,12 @@ type (
 const (
 	SettingsScopeApplication = model.SettingsScopeApplication
 	SettingsScopeWorkspace   = model.SettingsScopeWorkspace
+)
+
+const (
+	DefaultMemoryRecallBudget   = model.DefaultMemoryRecallBudget
+	DefaultMemoryRecallLimit    = model.DefaultMemoryRecallLimit
+	DefaultMemoryExtractCadence = model.DefaultMemoryExtractCadence
 )
 
 var (

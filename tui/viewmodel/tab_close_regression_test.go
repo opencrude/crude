@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,23 +121,46 @@ func clickLastTabClose(t *testing.T, app *App) {
 	}
 }
 
-func assertLauncherBack(t *testing.T, app *App) {
+// assertLauncherBack checks the launcher took the screen back after the last
+// tab closed. retainedAgents is how many agents stay in the manager: closing
+// an agent tab minimizes it, so it is still listed in the Agents panel and
+// still restorable, while an editor tab close leaves nothing behind.
+func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	t.Helper()
 	if app.Win.TabCount() != 0 {
 		t.Fatalf("tabs=%d want 0 after closing last tab", app.Win.TabCount())
 	}
-	if app.AgentMgr.Count() != 0 {
-		t.Fatalf("agents=%d want 0", app.AgentMgr.Count())
+	if app.AgentMgr.VisibleCount() != 0 {
+		t.Fatalf("surfaced agents=%d want 0", app.AgentMgr.VisibleCount())
 	}
-	if got := app.StatusBar.SleepingAgentCount(); got != 0 {
-		t.Fatalf("sleeping agents=%d want 0 after closing last tab", got)
+	if got := app.AgentMgr.Count(); got != retainedAgents {
+		t.Fatalf("retained agents=%d want %d", got, retainedAgents)
+	}
+	// A minimized idle agent still reports as sleeping: the 💤 count is how
+	// the status bar advertises backgrounded work from the launcher.
+	if got := app.StatusBar.SleepingAgentCount(); got != retainedAgents {
+		t.Fatalf("sleeping agents=%d want %d after closing last tab", got, retainedAgents)
 	}
 	if got := app.StatusBar.ActiveAgentCount(); got != 0 {
 		t.Fatalf("active agents=%d want 0 after closing last tab", got)
 	}
 	items := app.agentSidebarItems()
-	if len(items) != 1 || items[0].Selectable() || items[0].Label != "No agents" {
-		t.Fatalf("Agents panel disagrees with closed lifecycle: %#v", items)
+	if retainedAgents == 0 {
+		if len(items) != 1 || items[0].Selectable() || items[0].Label != "No agents" {
+			t.Fatalf("Agents panel disagrees with closed lifecycle: %#v", items)
+		}
+	} else {
+		if len(items) != retainedAgents {
+			t.Fatalf("Agents panel must list minimized agents: %#v", items)
+		}
+		for _, item := range items {
+			if !item.Selectable() {
+				t.Fatalf("a minimized agent must stay clickable to restore: %#v", item)
+			}
+			if !strings.Contains(item.Detail, "minimized") {
+				t.Fatalf("minimized agent row should say so: %#v", item)
+			}
+		}
 	}
 	app.paintShellFrame()
 	if !app.shellSlotActive(shellLauncherSlot) {
@@ -178,7 +202,7 @@ func TestRealSessionLastTabCloseSwitchesToLauncher(t *testing.T) {
 	}
 
 	clickLastTabClose(t, app)
-	assertLauncherBack(t, app)
+	assertLauncherBack(t, app, 1)
 	t.Log("real-session last-tab close OK")
 	ws.Close()
 }
@@ -206,7 +230,7 @@ func TestAgentLastTabCloseSwitchesToLauncher(t *testing.T) {
 		t.Fatalf("after session open: chat=%v launcher=%v", app.shellSlotActive(shellChatSlot), app.shellSlotActive(shellLauncherSlot))
 	}
 	clickLastTabClose(t, app)
-	assertLauncherBack(t, app)
+	assertLauncherBack(t, app, 1)
 	t.Log("agent last-tab close OK")
 }
 
@@ -227,6 +251,6 @@ func TestEditorLastTabCloseSwitchesToLauncher(t *testing.T) {
 		t.Fatalf("after editor open: editor=%v launcher=%v", app.shellSlotActive(shellEditorSlot), app.shellSlotActive(shellLauncherSlot))
 	}
 	clickLastTabClose(t, app)
-	assertLauncherBack(t, app)
+	assertLauncherBack(t, app, 0)
 	t.Log("editor last-tab close OK")
 }

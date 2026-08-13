@@ -53,6 +53,8 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				case "app.sessions":
 					m.openSessionPicker()
 					return m, nil
+				case "memory.browse":
+					return m.toggleMemoryBrowser()
 				case "help.show":
 					return m.toggleHelp()
 				case "app.quit":

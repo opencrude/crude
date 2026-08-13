@@ -36,14 +36,20 @@ func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
 // LoadWorkspaceOverrides reads the sparse workspace overlay from workspace.db.
 // Legacy `app_settings` rows are treated as overrides so existing projects
 // keep their per-workspace theme/editor/LSP values.
+//
+// Stored overlays are re-diffed against the current application layer before
+// use. Older releases wrote whole categories, which froze every sibling
+// field at the application value of that day; re-diffing keeps only the
+// leaves that genuinely differ so untouched fields inherit again.
 func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
 	if w == nil || w.WorkspaceDB == nil {
 		return ttypes.WorkspaceOverrides{}
 	}
+	defaults := w.AppDefaults()
 	if raw := w.WorkspaceDB.GetSetting(workspaceSettingsKey); raw != "" {
 		var overrides ttypes.WorkspaceOverrides
 		if err := json.Unmarshal([]byte(raw), &overrides); err == nil {
-			return overrides
+			return ttypes.OverridesFromDiff(defaults, ttypes.MergeAppWorkspace(defaults, overrides))
 		}
 	}
 	raw := w.WorkspaceDB.GetSetting(legacyAppSettingsDBKey)
@@ -54,7 +60,7 @@ func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
 	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
 		return ttypes.WorkspaceOverrides{}
 	}
-	return ttypes.OverridesFromDiff(w.AppDefaults(), legacy)
+	return ttypes.OverridesFromDiff(defaults, legacy)
 }
 
 // SaveWorkspaceSettings persists sparse workspace overrides and reapplies
@@ -98,6 +104,9 @@ func (w *Workspace) applyEffectiveSettings() {
 	if w.sessionCfg != nil && len(effective.Agents.Categories) > 0 {
 		session.ApplyWorkspaceAgentDefaults(w.sessionCfg, effective.Agents)
 	}
+	if w.sessionCfg != nil {
+		w.sessionCfg.Memory = effective.Memory
+	}
 	for _, frontendSession := range w.Sessions {
 		if frontendSession == nil || frontendSession.backend == nil {
 			continue
@@ -106,6 +115,7 @@ func (w *Workspace) applyEffectiveSettings() {
 			Agents:         effective.Agents,
 			ActiveProvider: effective.ActiveProvider,
 			Providers:      effective.Providers,
+			Memory:         effective.Memory,
 		})
 		if frontendSession.Settings != nil {
 			frontendSession.Settings.SetInheritance(

@@ -519,9 +519,11 @@ func (w *Workspace) LoadAppSettings() ttypes.AppSettings {
 // SetBackendConfig stores the session config and home directory.
 // Called by app.Run() after creating the workspace.
 func (w *Workspace) SetBackendConfig(cfg *session.Config, homeDir string) {
-	if agents := w.EffectiveAppSettings().Agents; len(agents.Categories) > 0 {
-		session.ApplyWorkspaceAgentDefaults(cfg, agents)
+	effective := w.EffectiveAppSettings()
+	if len(effective.Agents.Categories) > 0 {
+		session.ApplyWorkspaceAgentDefaults(cfg, effective.Agents)
 	}
+	cfg.Memory = effective.Memory
 	w.sessionCfg = cfg
 	w.homeDir = homeDir
 }

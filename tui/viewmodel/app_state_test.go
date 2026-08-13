@@ -195,13 +195,17 @@ func TestHandleQuit_ClosesLastAgentTab(t *testing.T) {
 		t.Fatalf("expected 1 agent, got %d", app.AgentMgr.Count())
 	}
 
-	// First handleQuit closes the tab and shows launcher
+	// First handleQuit closes the tab and shows launcher. The agent is
+	// minimized, not destroyed — its orchestrator keeps running.
 	_, cmd := app.handleQuit()
 	if cmd != nil {
 		t.Fatal("expected nil cmd (launcher shown)")
 	}
-	if app.AgentMgr.Count() != 0 {
-		t.Fatal("expected agent to be cleaned up")
+	if app.AgentMgr.VisibleCount() != 0 {
+		t.Fatal("expected no surfaced agents after closing the last tab")
+	}
+	if !app.AgentMgr.IsHidden("ses_1_orch_1") {
+		t.Fatal("closing a tab must minimize the agent, not terminate it")
 	}
 
 	// Second handleQuit quits since there's nothing left
@@ -347,8 +351,11 @@ func TestHandleAgentTabClose_AgentTab(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("expected nil cmd after closing agent tab")
 	}
-	if app.AgentMgr.Count() != 0 {
-		t.Fatal("expected agents to be empty after closing last tab")
+	if app.AgentMgr.VisibleCount() != 0 {
+		t.Fatal("expected no surfaced agents after closing last tab")
+	}
+	if app.AgentMgr.Get("ses_1_orch_1") == nil {
+		t.Fatal("closing a tab must keep the agent alive for restore")
 	}
 }
 

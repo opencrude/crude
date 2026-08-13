@@ -20,6 +20,7 @@ type FileConfig struct {
 	LSP             *ttypes.LSPSettings               `json:"lsp,omitempty"`
 	UI              *ttypes.UISettings                `json:"ui,omitempty"`
 	Font            *ttypes.FontSettings              `json:"font,omitempty"`
+	Memory          *ttypes.MemorySettings            `json:"memory,omitempty"`
 }
 
 func (c *FileConfig) IsTurnLogsEnabled() bool {
@@ -139,6 +140,9 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	if fc.Agents != nil {
 		s.Agents = session.ConfigToSettings(&session.Config{Agents: *fc.Agents}).Agents
 	}
+	if fc.Memory != nil {
+		s.Memory = *fc.Memory
+	}
 	ttypes.ApplyAppDefaults(&s)
 	return s
 }
@@ -147,12 +151,13 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	if fc == nil {
 		return
 	}
-	theme, editor, lsp, ui, font := s.Theme, s.Editor, s.LSP, s.UI, s.Font
+	theme, editor, lsp, ui, font, memorySettings := s.Theme, s.Editor, s.LSP, s.UI, s.Font, s.Memory
 	fc.Theme = &theme
 	fc.Editor = &editor
 	fc.LSP = &lsp
 	fc.UI = &ui
 	fc.Font = &font
+	fc.Memory = &memorySettings
 	fc.ActiveProvider = s.ActiveProvider
 	if s.Providers != nil {
 		if fc.Providers == nil {
@@ -202,6 +207,9 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 	}
 	if fc.Agents != nil {
 		cfg.Agents = *fc.Agents
+	}
+	if fc.Memory != nil {
+		cfg.Memory = *fc.Memory
 	}
 	return cfg
 }

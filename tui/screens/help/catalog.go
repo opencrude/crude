@@ -72,6 +72,11 @@ func UsageTopics() []Topic {
 			Body:  "Each conversation is a session with its own agent settings. Resume a past session from the Sessions overlay or /sessions. New Session starts a fresh chat in the current workspace without leaving the project.",
 		},
 		{
+			ID:    "memory",
+			Title: "Workspace memory",
+			Body:  "The agent keeps durable memory per workspace: conventions, decisions, preferences, and lessons persist across sessions, and every past turn is searchable (the agent's search_history tool answers \"what did we do last time\"). Relevant memories are recalled into context automatically; a background curator extracts new ones after turns and consolidates duplicates. Browse, pin, or forget them in the Workspace Memory window (/memory or Ctrl+Alt+M) — forgetting keeps an audit trail. Tune or disable everything under Settings > Memory.",
+		},
+		{
 			ID:    "settings",
 			Title: "Settings",
 			Body:  "Application Settings are global (theme, editor, LSP, credentials). Workspace Settings overlay those for this project. /settings opens the session dock for per-agent provider, model, and thinking. Save writes only the layer you are editing.",

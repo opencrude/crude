@@ -59,7 +59,7 @@ func (w *Workspace) AgentTabViews() []TabView {
 	nodes := w.AgentMgr.AllNodes()
 	views := make([]TabView, 0, len(nodes))
 	for _, node := range nodes {
-		if node == nil {
+		if node == nil || node.Hidden {
 			continue
 		}
 		state := ""

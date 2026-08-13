@@ -33,6 +33,7 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool) *agent.Agent {
 	a.Policy = safety.DefaultPolicy()
 
 	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		s.recordToolTouch(tool, params)
 		if isPlanningTool(tool) {
 			defer func() {
 				if err := persistConversationState(

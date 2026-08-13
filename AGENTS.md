@@ -112,7 +112,7 @@ not assume an older phase description matches the current implementation.
 | `workspace/` | Per-project state machine (repo root, NOT `tui/workspace/`). Owns sessions, orchestrators, LSP manager, file ops, project search, workspace DB. Zero `tui/` imports (production + tests). |
 | `tui/` | Dumb renderer + input router. Holds `*workspace.Workspace`, calls methods, subscribes to the event bus. `tui/tui.go` has no callbacks. |
 | `tui/viewmodel/App` | Presentation state holder. Uses one root `ui.Host` (`rootHost`) + one shell surface (`mainSurf`), with retained per-session `deckHost`s mounted through the shell. |
-| `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). |
+| `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). Workspace overrides are FIELD-level, sessions snapshot — see `docs/tui/SETTINGS.md`. |
 | `session/` | Session domain library (sessions are workspace-scoped under `~/.crude/workspaces/<hash>/sessions/`); consumed by `workspace/`. |
 
 See `PLAN.md` (architecture + workspace progress) and
@@ -385,6 +385,33 @@ frame builders under `tui/widgets/*_frame.go` and native screen packages):
 
 Legacy `tui/widgets/popupchrome.go` is **deleted**.
 
+### Agent Tab Close Is Minimize, Not Terminate (since 2026-08-13)
+
+Closing an agent tab **minimizes** it: `AgentNode.Hidden` is set, the window
+tab goes away, and nothing else changes. The orchestrator keeps streaming,
+the conversation, panes, chat projections, scroll offsets, and session
+ownership are all retained. A stray click must never destroy work in flight.
+
+- `Workspace.MinimizeAgent` / `RestoreAgent` own the domain flag;
+  `AgentManager.SetHidden` hides a whole subtree so a restored orchestrator
+  comes back with its sub-agents.
+- `AgentTabViews()` filters hidden nodes, so `syncAgentWindowTabs` cannot
+  resurrect a minimized tab, and `purgeStaleAgentTabs` closes one that
+  lingers.
+- **`AgentMgr.Count()` vs `VisibleCount()`**: shell gates choosing between
+  launcher / chat / editor must use `VisibleCount()`, otherwise a workspace
+  whose agents are all minimized shows an empty chat instead of the
+  launcher. `Count()` stays the true total for the status bar and the
+  Agents rail badge — that badge is how a backgrounded agent stays
+  discoverable, alongside the status bar's 💤 count.
+- Restoring: the Agents panel lists minimized agents with a `minimized`
+  detail; activating a row calls `restoreAgent`. `switchToAgentView` unhides
+  on its own so every path back works.
+- Terminating is explicit: `terminateAgent` (tab and Agents-panel context
+  menus) still cancels the turn, stops the orchestrator, and drops state.
+  `cleanupAgent` remains the destructive path; do not wire it to tab close.
+- Guarded by `tui/viewmodel/agent_minimize_test.go`.
+
 ### Popup Click-Outside Behaviors
 | Behavior | Meaning |
 |----------|---------|
@@ -499,6 +526,18 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - **`widget.Hover`** is the canonical hover type (`tui/widget/hoverable.go`).
 - **`theme.Colors.Hover`** (`#21262d`) is the canonical hover background.
 - **Priority: focused (keyboard) > selected > hovered > nothing.**
+- **Activity rail entries are whole bands.** `activitybar.RowStride` is odd
+  so the glyph sits on the band's exact middle row (`iconRow`), and every
+  highlight — hover background and the `▌` accent marker — covers the full
+  band. A one-row marker next to a multi-row hover box reads as
+  misalignment. `SetPanelOpen(false)` drops the marker when the sidebar is
+  collapsed so the rail shows its toggle state.
+
+### Sidebar list rows: resource vs command
+`ui.ListItem.Command` marks a button-like row (e.g. "New Terminal").
+`activitylist` arms resource rows on the first click and activates on the
+second (matching the pickers), but command rows fire on a single click — a
+button that needs a double click reads as broken.
 
 ### Test Helper Ownership
 - Go `_test.go` files in one package share package scope. A helper defined in a
