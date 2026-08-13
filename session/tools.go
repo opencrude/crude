@@ -33,6 +33,15 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool) *agent.Agent {
 	a.Policy = safety.DefaultPolicy()
 
 	a.ToolFn = func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		if isPlanningTool(tool) {
+			defer func() {
+				if err := persistConversationState(
+					context.Background(), s.db, s.sm, s.sessionID,
+				); err != nil {
+					s.logger.Error("STATE", "persist_failed", "error", err.Error())
+				}
+			}()
+		}
 		if result, handled, err := s.executeMemoryTool(ctx, tool, params); handled {
 			return result, err
 		}

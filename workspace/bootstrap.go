@@ -173,11 +173,9 @@ func (w *Workspace) Hydrate() {
 		return
 	}
 	msgs := w.ActiveSession.backend.MessagesWithMeta()
-	if len(msgs) == 0 {
-		return
+	if len(msgs) > 0 {
+		w.ActiveSession.hydratedMessages = ConvertMessagesForDisplay(msgs)
 	}
-
-	w.ActiveSession.hydratedMessages = ConvertMessagesForDisplay(msgs)
 
 	if db := w.ActiveSession.DB; db != nil {
 		if refs, err := sessiondb.LoadPromptReferences(db); err == nil && len(refs) > 0 {
@@ -325,10 +323,24 @@ func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey, standardID st
 		return nil, err
 	}
 	entries := make([]ttypes.ModelEntry, 0, len(models))
+	metas := provider.GetAllModelMetas()
 	for _, model := range models {
-		entries = append(entries, ttypes.ModelEntry{
+		entry := ttypes.ModelEntry{
 			ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow,
-		})
+		}
+		if meta := provider.LookupModelMeta(model.ID, metas); meta != nil {
+			if entry.ContextWindow == 0 {
+				entry.ContextWindow = meta.ContextWindow
+			}
+			entry.InputPrice = meta.InputPrice
+			entry.OutputPrice = meta.OutputPrice
+			entry.CacheReadPrice = meta.CacheReadPrice
+			entry.SupportsVision = meta.SupportsVision
+			entry.SupportsTools = meta.SupportsTools
+			entry.MaxOutput = meta.MaxOutput
+			entry.Attachment = meta.Attachment
+		}
+		entries = append(entries, entry)
 	}
 	return entries, nil
 }

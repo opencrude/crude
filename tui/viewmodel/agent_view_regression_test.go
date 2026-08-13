@@ -103,9 +103,13 @@ func TestAgentView_TextAreaBgDoesNotOverwriteStatus(t *testing.T) {
 }
 
 func rowText(app *App, y int) string {
+	return rowTextFrom(app, y, 0)
+}
+
+func rowTextFrom(app *App, y, startX int) string {
 	buf := app.mainSurf.Buffer()
 	var b strings.Builder
-	for x := 0; x < buf.Width(); x++ {
+	for x := startX; x < buf.Width(); x++ {
 		c := buf.Get(x, y)
 		if c.Width > 0 && c.Char != 0 {
 			b.WriteRune(c.Char)
@@ -148,7 +152,7 @@ func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 	headerY := app.chatRect.Y + app.chatRect.H - contentH + 1
 	headerRow := rowText(app, headerY)
 	headerCol := lay.SidebarW + lay.PadLR
-	got := strings.TrimSpace(headerRow[headerCol:])
+	got := strings.TrimSpace(rowTextFrom(app, headerY, headerCol))
 	if !strings.HasPrefix(got, "❯") {
 		t.Fatalf("chat header not at col %d row %d (bottom-anchored); row=%q", headerCol, headerY, headerRow)
 	}
@@ -157,7 +161,7 @@ func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 	// glyphs) across the chat slot's content columns (skip the sidebar
 	// divider + pad).
 	emptyRow := rowText(app, app.chatRect.Y+3)
-	if strings.TrimSpace(emptyRow[app.chatRect.X+lay.PadLR:]) != "" {
+	if strings.TrimSpace(rowTextFrom(app, app.chatRect.Y+3, app.chatRect.X+lay.PadLR)) != "" {
 		t.Fatalf("chat area rows above content not clean: %q", emptyRow)
 	}
 }
@@ -189,7 +193,7 @@ func TestAgentView_ShortChatAnchorsToBottom(t *testing.T) {
 		t.Fatalf("last message not anchored to the slot bottom row; row=%q", last)
 	}
 	topRow := rowText(app, app.chatRect.Y+2)
-	if strings.TrimSpace(topRow[app.chatRect.X+lay.PadLR:]) != "" {
+	if strings.TrimSpace(rowTextFrom(app, app.chatRect.Y+2, app.chatRect.X+lay.PadLR)) != "" {
 		t.Fatalf("gravity pad rows above the message not blank: %q", topRow)
 	}
 }

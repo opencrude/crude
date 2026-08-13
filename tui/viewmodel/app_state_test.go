@@ -705,8 +705,8 @@ func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
 	if fileWindow == nil || !fileWindow.Decorated() || !fileWindow.Movable() {
 		t.Fatal("file picker should have a draggable title bar")
 	}
-	if fileWindow.Resizable() {
-		t.Fatal("file picker should use unified chrome and remain fixed-size")
+	if !fileWindow.Resizable() {
+		t.Fatal("workspace picker should be resizable for deep filesystem navigation")
 	}
 	if _, ok := fileWindow.Content.(*ui.WindowFrameWidget); !ok {
 		t.Fatal("file picker should use ui.WindowFrame chrome")

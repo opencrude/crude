@@ -128,6 +128,16 @@ func assertLauncherBack(t *testing.T, app *App) {
 	if app.AgentMgr.Count() != 0 {
 		t.Fatalf("agents=%d want 0", app.AgentMgr.Count())
 	}
+	if got := app.StatusBar.SleepingAgentCount(); got != 0 {
+		t.Fatalf("sleeping agents=%d want 0 after closing last tab", got)
+	}
+	if got := app.StatusBar.ActiveAgentCount(); got != 0 {
+		t.Fatalf("active agents=%d want 0 after closing last tab", got)
+	}
+	items := app.agentSidebarItems()
+	if len(items) != 1 || items[0].Selectable() || items[0].Label != "No agents" {
+		t.Fatalf("Agents panel disagrees with closed lifecycle: %#v", items)
+	}
 	app.paintShellFrame()
 	if !app.shellSlotActive(shellLauncherSlot) {
 		t.Fatal("launcher slot must be active after last tab close")

@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"crude/agent"
+	"crude/docconv"
 	"crude/fileio"
 	"crude/logger"
 	"crude/provider"
@@ -695,8 +697,19 @@ func (s *Session) buildUserMessage(input provider.UserInput, model string) provi
 					})
 					continue
 				}
-				data, err := os.ReadFile(ref.FilePath)
-				if err == nil {
+				ext := strings.ToLower(filepath.Ext(ref.FilePath))
+				if docconv.SupportedExt(ext) {
+					markdown, metadata, err := docconv.ConvertFile(ref.FilePath)
+					if err != nil {
+						s.logger.Warn("REF", "document_convert_error", "path", ref.FilePath, "error", err.Error())
+						content = fmt.Sprintf(
+							"Document %s could not be converted: %s",
+							ref.DisplayName(), err.Error(),
+						)
+					} else {
+						content = docconv.Header(ref.FilePath, metadata) + markdown
+					}
+				} else if data, err := os.ReadFile(ref.FilePath); err == nil {
 					content = string(data)
 				}
 			}

@@ -165,6 +165,9 @@ func (m *App) themeConsumers() []themeConsumer {
 				if m.activityList != nil {
 					m.activityList.SetTheme(th)
 				}
+				if m.sourceControl != nil {
+					m.sourceControl.SetTheme(th)
+				}
 				for _, s := range m.termScreens {
 					if s != nil {
 						s.SetTheme(th)

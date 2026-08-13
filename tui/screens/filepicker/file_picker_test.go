@@ -74,6 +74,24 @@ func TestFolderPickerFiltersFilesAndSelectsCurrentDirectory(t *testing.T) {
 	}
 }
 
+func TestFolderPickerUsesFuzzySearchAndWorkspaceChrome(t *testing.T) {
+	screen, host := pickerHost(t, ModeFolder)
+	host.Handle(tea.KeyPressMsg{Code: 's', Text: "s"})
+	host.Handle(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	if screen.VisibleCount() != 1 {
+		t.Fatalf("fuzzy 'sc' should match src, visible=%d", screen.VisibleCount())
+	}
+
+	buf := surface.NewCellBuffer(80, 14)
+	host.Paint(buf)
+	painted := pickerBufferText(buf)
+	for _, want := range []string{"◆ crude", "OPEN WORKSPACE", "fuzzy-search", "Open Workspace", "src"} {
+		if !strings.Contains(painted, want) {
+			t.Fatalf("missing %q:\n%s", want, painted)
+		}
+	}
+}
+
 func TestFilePickerPrimaryActionTracksSelectedFile(t *testing.T) {
 	screen, host := pickerHost(t, ModeFile)
 	if !host.Focus(ActionsID) {

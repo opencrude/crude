@@ -90,13 +90,13 @@ func TestScreenDirIconConsumesTreeGlyphs(t *testing.T) {
 	th.Glyphs.TreeExpanded = "v"
 	screen := shelltree.New(th, model)
 	buf := screen.PaintTestBuffer(30, 6)
-	row0 := shelltree.PlainRow(buf, 0, 30)
-	if !strings.Contains(row0, "v") {
-		t.Fatalf("expanded root row %q missing TreeExpanded glyph 'v'", row0)
+	rootRow := shelltree.PlainRow(buf, 2, 30)
+	if !strings.Contains(rootRow, "v") {
+		t.Fatalf("expanded root row %q missing TreeExpanded glyph 'v'", rootRow)
 	}
-	row1 := shelltree.PlainRow(buf, 1, 30)
-	if !strings.Contains(row1, "c") {
-		t.Fatalf("collapsed subdir row %q missing TreeCollapsed glyph 'c'", row1)
+	subdirRow := shelltree.PlainRow(buf, 3, 30)
+	if !strings.Contains(subdirRow, "c") {
+		t.Fatalf("collapsed subdir row %q missing TreeCollapsed glyph 'c'", subdirRow)
 	}
 }
 
@@ -142,7 +142,7 @@ func TestScreenPaintsFileTreeNative(t *testing.T) {
 	screen := shelltree.New(theme.DefaultDark(), model)
 	screen.ResizeLayout(32, 6)
 	buf := screen.PaintTestBuffer(32, 6)
-	row := shelltree.PlainRow(buf, 0, 28)
+	row := shelltree.PlainRow(buf, 2, 28)
 	if row == "" {
 		t.Fatal("expected painted tree row")
 	}

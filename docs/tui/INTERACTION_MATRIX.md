@@ -11,7 +11,7 @@ preserve or intentionally improve.
 | Find in Files | Ctrl+Alt+F | Not Ctrl+Shift+F under tmux 3.4 |
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
 | Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 3-col activity rail stays |
-| Files / Agents / Terminals / Git | Ctrl+Shift+E / A / U / G | Activity bar destinations |
+| Files / Agents / Terminals / Source Control | Ctrl+Shift+E / A / U / G | Activity destinations; rail and panel bodies expose destination-aware context menus |
 | New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks in the workspace terminal dock |
 | Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
 | Composer | Alt+C | |
@@ -36,9 +36,18 @@ preserve or intentionally improve.
 
 | Action | Binding | Notes |
 |--------|---------|-------|
-| Type-to-filter | any printable char | Fuzzy subsequence; ancestors auto-expand; Esc clears; `/` opens an empty filter |
+| Search files | click persistent search, `/`, or any printable char | Fuzzy subsequence; ancestors auto-expand; Esc clears; mouse focus and type-to-filter share one field |
 | Refresh tree | Ctrl+R | Relocated from `r` (typing now filters) |
 | Toggle hidden files | Ctrl+. | Relocated from `.` |
+
+## Source Control panel
+| Action | Binding / control | Notes |
+|--------|-------------------|-------|
+| Commit staged changes | Ctrl+Enter in commit field | Empty messages are rejected; refreshes snapshot after commit |
+| Refresh repository | Ctrl+R / context menu | Status, branch tracking, history, and branch list refresh asynchronously |
+| Stage / unstage | change context menu | Supports individual paths and stage/unstage all |
+| Checkout local branch | Enter / branch context menu | Current branch is disabled |
+| Discard tracked changes | change context menu | Opens a danger confirmation with Cancel focused; untracked files are never deleted |
 
 ## Terminal panel
 

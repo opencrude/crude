@@ -426,7 +426,7 @@ func (m *App) hoverDirtyPrompt(localX, localY int) {
 // =============================================================================
 
 func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
-	if m.TreeDeletePending == "" {
+	if m.TreeDeletePending == "" && m.GitDiscardPending == nil {
 		return nil
 	}
 	fw := m.windowManager.Window("tree-delete-confirm")

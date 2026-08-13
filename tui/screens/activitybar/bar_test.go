@@ -11,23 +11,20 @@ import (
 )
 
 func TestHitIndexGlyphRows(t *testing.T) {
-	if hitIndex(0) != -1 {
-		t.Fatal("row 0 is padding")
+	if hitIndex(0) != 0 || hitIndex(1) != 0 {
+		t.Fatal("rows 0-1 are the Files target")
 	}
-	if hitIndex(1) != 0 {
-		t.Fatal("row 1 is Files")
+	if hitIndex(2) != 1 || hitIndex(3) != 1 {
+		t.Fatal("rows 2-3 are Agents")
 	}
-	if hitIndex(3) != 1 {
-		t.Fatal("row 3 is Agents")
+	if hitIndex(4) != 2 || hitIndex(5) != 2 {
+		t.Fatal("rows 4-5 are Terminals")
 	}
-	if hitIndex(5) != 2 {
-		t.Fatal("row 5 is Terminals")
+	if hitIndex(6) != 3 || hitIndex(7) != 3 {
+		t.Fatal("rows 6-7 are Source Control")
 	}
-	if hitIndex(7) != 3 {
-		t.Fatal("row 7 is Git")
-	}
-	if hitIndex(2) != -1 {
-		t.Fatal("gap rows are not hits")
+	if hitIndex(8) != -1 {
+		t.Fatal("rows below the activity targets are not hits")
 	}
 }
 

@@ -28,6 +28,7 @@ import (
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/sourcecontrol"
 	"crude/tui/screens/termdock"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -67,6 +68,7 @@ type App struct {
 	TreePrompt          *ui.TextPromptState
 	TreeDeletePending   string
 	TreeDeleteChoice    int
+	GitDiscardPending   *workspace.GitChange
 	FilePicker          *filepickerscreen.Screen
 	DiagPopupID         string
 	DirtyPromptPath     string
@@ -121,6 +123,7 @@ type App struct {
 	sidebarScreen          *shelltree.Screen
 	activityBar            *activitybar.Screen
 	activityList           *activitylist.Screen
+	sourceControl          *sourcecontrol.Screen
 	activityView           activitybar.View
 	termScreens            map[string]*shellterm.Screen
 	termDock               *termdock.Screen
@@ -141,7 +144,8 @@ type App struct {
 	findInFilesRequest     uint64
 	findInFilesGen         int
 	providerPresets        []ttypes.ProviderPreset
-	launcherLoadGen        atomic.Uint64         // generation of the in-flight async launcher load
+	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
+	gitRefreshGen          atomic.Uint64
 	reveals                map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
@@ -170,6 +174,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	sidebarScreen := shelltree.New(th, treeModel)
 	activityBar := activitybar.New(th)
 	activityList := activitylist.New(th)
+	sourceControl := sourcecontrol.New(th)
 	termDock := termdock.New(th)
 	bufferMgr := editor.NewBufferManager()
 	comp := compositor.NewCompositor(80, 24)
@@ -192,6 +197,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
 	rootHost := ui.NewHost(th, shell)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
+	sourceControl.SetFocusHandler(rootHost.Focus)
 
 	edState := NewEditorState()
 	edState.Editor = editor.New(th)
@@ -230,6 +236,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		sidebarScreen:      sidebarScreen,
 		activityBar:        activityBar,
 		activityList:       activityList,
+		sourceControl:      sourceControl,
 		termScreens:        make(map[string]*shellterm.Screen),
 		termDock:           termDock,
 		termDockHeight:     12,
@@ -388,15 +395,21 @@ func (m *App) openTextOverlayWindow() {
 func (m *App) openFilePickerWindow() {
 	m.overlayHost.Close(ui.OverlayFilePicker)
 
+	folderMode := m.FilePicker.Mode() == filepickerscreen.ModeFolder
 	w, h := fitFloatingSize(m.width, m.height, 68, 20, 42, 12)
 	title := "Attach File"
-	if m.FilePicker.Mode() == filepickerscreen.ModeFolder {
+	frameKind := ui.FrameDialog
+	minW, minH := 42, 12
+	if folderMode {
+		w, h = fitFloatingSize(m.width, m.height, 96, 28, 60, 18)
 		title = "New Workspace"
+		frameKind = ui.FrameWindow
+		minW, minH = 60, 18
 	}
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "filepicker-frame"),
-		ui.FrameDialog,
+		frameKind,
 		title,
 		m.FilePicker,
 		nil,
@@ -411,11 +424,11 @@ func (m *App) openFilePickerWindow() {
 		wm.WithDecoration(true),
 		wm.WithMovable(true),
 		wm.WithClosable(true),
-		wm.WithResizable(false),
+		wm.WithResizable(folderMode),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
-		wm.WithMinSize(minInt(42, w), minInt(12, h)),
-		wm.WithMaxSize(w, h),
+		wm.WithMinSize(minInt(minW, w), minInt(minH, h)),
+		wm.WithMaxSize(maxInt(w, m.width-2), maxInt(h, m.height-2)),
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)

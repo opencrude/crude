@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/user"
@@ -106,6 +107,11 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 
 	sm := statemachine.NewConversationStateMachine(lg)
+	if err := restoreConversationState(context.Background(), db, sm, meta.ID); err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: %w", err)
+	}
 
 	workspaceCfg := copyConfig(cfg)
 	overrides, err := sessiondb.LoadAgentSettingOverrides(db, meta.ID)

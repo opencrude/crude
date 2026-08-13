@@ -161,6 +161,19 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.AgentMgr.SetActive(agentID)
 			m.syncAgentWindowTabs()
 		} else {
+			// A sub-agent start can arrive after its orchestrator tab was
+			// closed. The parent tree is the lifecycle authority: without it,
+			// creating only a pane/projection would produce a ghost that the
+			// status bar can see but the Agents panel cannot.
+			if m.AgentMgr.Get(parentID) == nil {
+				if m.Logger != nil {
+					m.Logger.Warn(
+						"AGENT", "event_for_unknown_subagent_parent",
+						"id", agentID, "parent_id", parentID, "type", evt.Type,
+					)
+				}
+				return nil
+			}
 			// Sub-agent: create sub-pane
 			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
 			subModel := m.ModelName
@@ -185,7 +198,11 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				cat = c
 			}
 			agentNode = m.AgentMgr.AddSubAgent(agentID, parentID, label, modelStr, cat, agent)
-			_ = agentNode
+			if agentNode == nil {
+				m.PaneMgr.Remove(agentID)
+				m.subPaneProjections.Remove(agentID)
+				return nil
+			}
 			if parent := m.AgentMgr.Get(parentID); parent != nil && parent.State != nil && parent.State.Messages != nil {
 				parent.State.Messages.AppendMessage(workspace.Message{
 					Role:      ttypes.RoleTool,

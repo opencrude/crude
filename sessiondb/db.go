@@ -129,6 +129,12 @@ CREATE TABLE IF NOT EXISTS session_agent_settings (
     PRIMARY KEY (session_id, category),
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
+
+CREATE TABLE IF NOT EXISTS session_runtime_state (
+    key        TEXT PRIMARY KEY,
+    value      BLOB NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 `
 
 func Open(dbPath string) (*sql.DB, error) {

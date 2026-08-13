@@ -18,6 +18,7 @@ import (
 	"crude/tui/screens/shellinput"
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/sourcecontrol"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -256,11 +257,11 @@ func (m *App) computeContentLayout() contentLayout {
 		m.inputRect = ui.Rect{}
 	}
 
-	// The sidebar is a slot in the root tree starting at row 3. It keeps the
-	// full height beside the terminal panel (VS Code layout: the bottom
-	// panel occupies only the content column, never the sidebar).
+	// The sidebar begins below the global application header and keeps the
+	// full remaining height beside the terminal panel (VS Code layout: the
+	// bottom panel occupies only the content column, never the sidebar).
 	if m.Tree != nil && m.Tree.Visible && m.Tree.Model != nil {
-		treeStart := 3
+		treeStart := sidebarTopRow
 		m.Tree.YOffset = treeStart
 		contentH := m.height - 2
 		sidebarH := contentH - treeStart
@@ -300,13 +301,13 @@ func (m *App) configureShell() {
 		X: lay.SidebarW + lay.PadLR, Y: 3, W: lay.InnerW, H: 2,
 	})
 
-	// Activity bar: always-on left rail, full height beside the panel.
+	// Activity bar: always-on left rail below the global application header.
 	activityW := m.activityChromeWidth()
-	sidebarH := (m.height - 2) - 3
+	sidebarH := (m.height - 2) - sidebarTopRow
 	if sidebarH < 1 {
 		sidebarH = 1
 	}
-	m.shell.setSlot(shellActivitySlot, activityW > 0, ui.Rect{X: 0, Y: 3, W: activityW, H: sidebarH})
+	m.shell.setSlot(shellActivitySlot, activityW > 0, ui.Rect{X: 0, Y: sidebarTopRow, W: activityW, H: sidebarH})
 
 	// Sidebar content: files / agents / terminals / git, right of the rail.
 	sidebarActive := m.sidebarHostVisible()
@@ -314,8 +315,10 @@ func (m *App) configureShell() {
 	if sidebarActive {
 		sidebarW = m.Tree.Width + 1
 	}
-	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{X: activityW, Y: 3, W: sidebarW, H: sidebarH})
-	if m.activityView != activityFiles && m.activityList != nil {
+	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{X: activityW, Y: sidebarTopRow, W: sidebarW, H: sidebarH})
+	if m.activityView == activityGit && m.sourceControl != nil {
+		m.shell.SetScreen(shellSidebarSlot, m.sourceControl)
+	} else if m.activityView != activityFiles && m.activityList != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.activityList)
 	} else if m.sidebarScreen != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.sidebarScreen)
@@ -408,8 +411,19 @@ func (m *App) syncRootFocus() {
 	case FocusTree:
 		if m.activityView == activityFiles {
 			id = shelltree.TreeID
+			if current := m.rootHost.Focused(); current == shelltree.FilterID || current == shelltree.TreeID {
+				id = current
+			}
+		} else if m.activityView == activityGit && m.sourceControl != nil {
+			id = sourcecontrol.ListID
+			if current := m.rootHost.Focused(); current == sourcecontrol.CommitID || current == sourcecontrol.ListID {
+				id = current
+			}
 		} else {
 			id = activitylist.ListID
+			if current := m.rootHost.Focused(); current == activitylist.FilterID || current == activitylist.ListID {
+				id = current
+			}
 		}
 	case FocusTabBar:
 		id = shelltabs.TabsID
@@ -417,6 +431,11 @@ func (m *App) syncRootFocus() {
 		id = shelleditor.ScreenID
 	case FocusLauncher:
 		id = launcher.ScreenID
+		switch current := m.rootHost.Focused(); current {
+		case launcher.ScreenID, launcher.HeroID, launcher.NewWorkspaceID,
+			launcher.SearchID, launcher.WorkspaceListID:
+			id = current
+		}
 	case FocusInput:
 		id = shellinput.ScreenID
 	default:
@@ -525,6 +544,13 @@ func (m *App) configureSidebarScreen() {
 			maxW = 12
 		}
 		m.activityList.SetSplitMaxFirst(maxW)
+	}
+	if m.sourceControl != nil {
+		maxW := m.width / 2
+		if maxW < 12 {
+			maxW = 12
+		}
+		m.sourceControl.SetSplitMaxFirst(maxW)
 	}
 }
 

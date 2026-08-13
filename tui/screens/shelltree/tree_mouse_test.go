@@ -49,9 +49,8 @@ func cursorBase(model *filetree.FileTreeModel) string {
 }
 
 // TestTreeMouseClickRowMapping pins the click->row mapping for every painted
-// row, with and without the filter row active. The intended mapping is what a
-// user sees on the painted layout: screen row 0 paints the filter row (when
-// active) and tree items start one row below it.
+// row, with and without a non-empty filter. Title and search are persistent:
+// screen rows 0/1 are chrome and tree items start at row 2.
 func TestTreeMouseClickRowMapping(t *testing.T) {
 	names := []string{"a.go", "b.go", "c.go", "d.go", "e.go"}
 	cases := []struct {
@@ -59,16 +58,16 @@ func TestTreeMouseClickRowMapping(t *testing.T) {
 		filter  bool
 		screenY int
 	}{
-		{"no_filter_row0", false, 0},
-		{"no_filter_row1", false, 1},
-		{"no_filter_row2", false, 2},
-		{"no_filter_row3", false, 3},
-		{"no_filter_row4", false, 4},
-		{"filter_row1_first_tree_row", true, 1},
-		{"filter_row2", true, 2},
-		{"filter_row3", true, 3},
-		{"filter_row4", true, 4},
-		{"filter_row5", true, 5},
+		{"no_filter_row0", false, 2},
+		{"no_filter_row1", false, 3},
+		{"no_filter_row2", false, 4},
+		{"no_filter_row3", false, 5},
+		{"no_filter_row4", false, 6},
+		{"filter_row0_first_tree_row", true, 2},
+		{"filter_row1", true, 3},
+		{"filter_row2", true, 4},
+		{"filter_row3", true, 5},
+		{"filter_row4", true, 6},
 	}
 
 	for _, tc := range cases {
@@ -84,12 +83,8 @@ func TestTreeMouseClickRowMapping(t *testing.T) {
 				t.Fatalf("need %d visible nodes, got %d", len(names)+1, len(nodes))
 			}
 
-			// The painted row a user sees at screenY. With the filter active the
-			// tree items sit one row lower (below the filter row).
-			wantIdx := tc.screenY
-			if tc.filter {
-				wantIdx = tc.screenY - 1
-			}
+			// The painted row a user sees at screenY, below title + search.
+			wantIdx := tc.screenY - 2
 			if wantIdx < 0 || wantIdx >= len(nodes) {
 				t.Fatalf("wantIdx %d out of range", wantIdx)
 			}
@@ -112,7 +107,7 @@ func TestTreeMouseClickRowMapping(t *testing.T) {
 
 // slotWrapper places a child screen at a slot rect, mirroring how
 // shellRoot.Layout drives the shelltree Screen's slot rect in the real shell
-// (configureShell: shellSidebarSlot = {0, 3, W, H}).
+// (configureShell: shellSidebarSlot starts at shell row 1).
 type slotWrapper struct {
 	ui.Base
 	child ui.Component
@@ -131,7 +126,7 @@ func (w *slotWrapper) Layout(_ ui.LayoutContext, r ui.Rect) {
 }
 
 // TestTreeMouseClickRealShellGeometry mounts the shelltree Screen at the
-// sidebar slot rect the real shell uses ({0, 3, W, H}) and clicks with
+// sidebar slot rect the real shell uses ({0, 1, W, H}) and clicks with
 // absolute screen coordinates, proving the row mapping holds end-to-end. Each
 // assertion uses a fresh model/host because clicking the root directory
 // toggles its expansion and changes the visible list.
@@ -142,7 +137,7 @@ func TestTreeMouseClickRealShellGeometry(t *testing.T) {
 		model.EnterFilterMode()
 		screen := shelltree.New(theme.DefaultDark(), model)
 		th := theme.DefaultDark()
-		host := ui.NewHost(th, &slotWrapper{Base: ui.NewBase("slot"), child: screen, slot: ui.Rect{X: 0, Y: 3, W: 30, H: 19}})
+		host := ui.NewHost(th, &slotWrapper{Base: ui.NewBase("slot"), child: screen, slot: ui.Rect{X: 0, Y: 1, W: 30, H: 21}})
 		host.Resize(80, 24)
 		host.Layout()
 		host.Focus(shelltree.TreeID)
@@ -156,15 +151,15 @@ func TestTreeMouseClickRealShellGeometry(t *testing.T) {
 		return model, cursorBase(model)
 	}
 
-	// Sidebar slot starts at screen Y=3: the filter row paints at Y=3 and the
-	// first tree row at Y=4, the second at Y=5. Expected rows come from the same
+	// Sidebar slot starts at screen Y=1: title/search paint at Y=1/2 and the
+	// first tree row at Y=3, the second at Y=4. Expected rows come from the same
 	// fixture that received the click (temp dir names are random per fixture).
 	for _, tc := range []struct {
 		screenY int
 		wantIdx int
 	}{
-		{4, 0},
-		{5, 1},
+		{3, 0},
+		{4, 1},
 	} {
 		model, got := clickAt(tc.screenY)
 		want := filepath.Base(model.VisibleNodes()[tc.wantIdx].Path)
@@ -182,7 +177,7 @@ func TestTreeViewScreenRect_BelowFilterRow(t *testing.T) {
 	model.EnterFilterMode()
 	screen := shelltree.New(theme.DefaultDark(), model)
 	th := theme.DefaultDark()
-	host := ui.NewHost(th, &slotWrapper{Base: ui.NewBase("slot"), child: screen, slot: ui.Rect{X: 0, Y: 3, W: 30, H: 19}})
+	host := ui.NewHost(th, &slotWrapper{Base: ui.NewBase("slot"), child: screen, slot: ui.Rect{X: 0, Y: 1, W: 30, H: 21}})
 	host.Resize(80, 24)
 	host.Layout()
 
@@ -190,14 +185,12 @@ func TestTreeViewScreenRect_BelowFilterRow(t *testing.T) {
 	if !ok {
 		t.Fatal("tree view not mounted")
 	}
-	// Filter row occupies slot row 0 (screen Y=3); the tree view must start at
-	// the next row. Therefore Host-local Y 0 at the tree view is already the
-	// first tree row — no filter offset may be applied.
-	if treeRect.Y != 4 {
-		t.Fatalf("tree view screen rect Y=%d, want 4 (slot.Y=3 + treeY=1)", treeRect.Y)
+	// Title/search occupy slot rows 0/1; the tree view starts at slot row 2.
+	if treeRect.Y != 3 {
+		t.Fatalf("tree view screen rect Y=%d, want 3 (slot.Y=1 + treeY=2)", treeRect.Y)
 	}
-	if treeRect.X != 0 || treeRect.W != 27 {
-		t.Fatalf("tree view screen rect X/W=%d/%d, want 0/27 (SidebarContentWidth(slot.W-1))", treeRect.X, treeRect.W)
+	if treeRect.X != 1 || treeRect.W != 26 {
+		t.Fatalf("tree view screen rect X/W=%d/%d, want 1/26 (left inset + sidebar content)", treeRect.X, treeRect.W)
 	}
 }
 
@@ -223,21 +216,18 @@ func TestTreeMouseClickBreadcrumbOffset(t *testing.T) {
 	model.SetCursorIndex(len(nodes) - 1)
 	host.Layout()
 
-	// Breadcrumb paints as tree row 0; the first item is tree row 1. With no
-	// filter, the tree view's screen rect starts at Y=0, so screenY=1 is the
-	// first item row.
-	host.Handle(tea.MouseClickMsg{X: 2, Y: 1, Button: tea.MouseLeft})
+	// Breadcrumb paints at tree row 0. Title/search occupy rows 0/1, so the
+	// first item paints at screen row 3.
+	host.Handle(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
 
 	if got := cursorBase(model); got != want {
-		t.Errorf("breadcrumb active: click at screenY=1 selected %q, want %q (visible[3])", got, want)
+		t.Errorf("breadcrumb active: click at screenY=3 selected %q, want %q (visible[3])", got, want)
 	}
 }
 
 // TestTreeMouseClickBreadcrumbAndFilter verifies the combined chrome case:
-// both the filter row (sibling above the tree view, slot row 0) and the
-// breadcrumb (painted inside the tree view as its row 0) are active. The first
-// item sits one row below each, so a click at screenY=2 (Screen mounted at the
-// origin) must select the first visible node.
+// both the persistent search row and the breadcrumb are present. The first
+// item sits below title + search + breadcrumb at screen row 3.
 func TestTreeMouseClickBreadcrumbAndFilter(t *testing.T) {
 	names := make([]string, 0, 24)
 	for i := 0; i < 24; i++ {
@@ -257,11 +247,10 @@ func TestTreeMouseClickBreadcrumbAndFilter(t *testing.T) {
 	model.SetCursorIndex(len(nodes) - 1)
 	host.Layout()
 
-	// Filter row at screen row 0, breadcrumb inside the tree view at row 0:
-	// the first item paints at screen row 2.
-	host.Handle(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
+	// Title/search at rows 0/1, breadcrumb at row 2, first item at row 3.
+	host.Handle(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
 
 	if got := cursorBase(model); got != want {
-		t.Errorf("filter+breadcrumb active: click at screenY=2 selected %q, want %q (visible[3])", got, want)
+		t.Errorf("filter+breadcrumb active: click at screenY=3 selected %q, want %q (visible[3])", got, want)
 	}
 }

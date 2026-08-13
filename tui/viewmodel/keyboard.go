@@ -19,6 +19,7 @@ import (
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
 	"crude/workspace"
@@ -63,17 +64,13 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.toggleFocusTree()
 					return m, nil
 				case "view.activity.files":
-					m.toggleActivity(activityFiles)
-					return m, nil
+					return m, m.toggleActivity(activityFiles)
 				case "view.activity.agents":
-					m.toggleActivity(activityAgents)
-					return m, nil
+					return m, m.toggleActivity(activityAgents)
 				case "view.activity.terminals":
-					m.toggleActivity(activityTerminals)
-					return m, nil
+					return m, m.toggleActivity(activityTerminals)
 				case "view.activity.git":
-					m.toggleActivity(activityGit)
-					return m, nil
+					return m, m.toggleActivity(activityGit)
 				case "terminal.new":
 					return m, m.openNewTerminal()
 				case "terminal.toggle":
@@ -134,7 +131,13 @@ func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.launcherScreen == nil || m.rootHost == nil {
 		return m, nil
 	}
-	m.rootHost.Focus(launcher.ScreenID)
+	switch m.rootHost.Focused() {
+	case launcher.ScreenID, launcher.HeroID, launcher.NewWorkspaceID,
+		launcher.SearchID, launcher.WorkspaceListID:
+		// Keep the exact child selected by mouse/focus navigation.
+	default:
+		m.rootHost.Focus(launcher.ScreenID)
+	}
 	res := m.rootHost.Handle(msg)
 	return m, res.Cmd
 }
@@ -150,9 +153,17 @@ func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.activityView == activityFiles {
-		m.rootHost.Focus(shelltree.TreeID)
+		if m.rootHost.Focused() != shelltree.FilterID {
+			m.rootHost.Focus(shelltree.TreeID)
+		}
+	} else if m.activityView == activityGit && m.sourceControl != nil {
+		if m.rootHost.Focused() != sourcecontrol.CommitID {
+			m.rootHost.Focus(sourcecontrol.ListID)
+		}
 	} else if m.activityList != nil {
-		m.rootHost.Focus(activitylist.ListID)
+		if m.rootHost.Focused() != activitylist.FilterID {
+			m.rootHost.Focus(activitylist.ListID)
+		}
 	}
 	res := m.rootHost.Handle(msg)
 	cmd := m.handleHostAction(res.Action)
@@ -162,6 +173,9 @@ func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // treeFilterBlocksEscPop reports whether Esc should clear the tree filter
 // (via sidebarHost/model) instead of popping FocusTree from the stack.
 func (m *App) treeFilterBlocksEscPop() bool {
+	if m.activityView != activityFiles && m.activityList != nil {
+		return m.activityList.Query() != ""
+	}
 	if m.Tree.Model == nil {
 		return false
 	}

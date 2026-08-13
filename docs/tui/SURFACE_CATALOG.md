@@ -11,9 +11,10 @@ only against this catalog.
 | Surface | Primary files | Notes |
 |---------|---------------|-------|
 | Header | `tui/screens/shellheader/`, `tui/viewmodel/view.go` | Native Host paint; logo, model, view label, YOLO, usage, uptime; legacy `widgets/header.go` deleted |
-| Activity bar | `tui/screens/activitybar/` | Always-on 3-col left rail (Files / Agents / Terminals / Git); click toggles the sidebar body |
-| File-tree sidebar | `tui/screens/shelltree/`, `tui/ui/tree.go`, `tui/filetree/tree_rows.go` | Native Host paint via `ui.Tree` + `ScrollbarControl`; connectors, git, diagnostics from theme tokens; **`ui.SplitDivider` resize** (Host pointer capture); sits to the right of the activity rail |
-| Activity lists | `tui/screens/activitylist/` | Sidebar body for Agents / Terminals / Git (`ui.List` + scrollbar + divider) |
+| Activity bar | `tui/screens/activitybar/` | Always-on 5-col left rail (Files / Agents / Terminals / Source Control), mounted below the two-row global header with two-row mouse targets, active marker, badges, icons, and a persistent right rule |
+| File-tree sidebar | `tui/screens/shelltree/`, `tui/ui/tree.go`, `tui/filetree/tree_rows.go` | Shared panel title chrome + persistent clickable fuzzy search; native `ui.Tree` + `ScrollbarControl`; icon breadcrumbs, connectors, git, diagnostics, left inset, and **`ui.SplitDivider` right border/resize** |
+| Activity lists | `tui/screens/activitylist/` | Shared titled/filterable sidebar body for hierarchical Agents and Terminals (`ui.List` + scrollbar + divider) |
+| Source Control | `tui/screens/sourcecontrol/`, `workspace/git_service.go`, `tui/viewmodel/source_control.go` | Branch/ahead-behind title, commit field, grouped conflicts/staged/working/untracked changes, recent commits, local branches, stage/unstage/commit/checkout/refresh operations, and safe discard confirmation |
 | Sidebar divider | `tui/ui/split_divider.go`, `tui/screens/shelltree/`, `tui/screens/activitylist/` | Shared `ui.SplitModel` + `SplitDivider`; viewmodel applies `split.resize` to `Tree.Width` |
 | Main tab bar | `tui/screens/shelltabs/`, `tui/ui/tabs.go`, `tui/viewmodel/tab_bar.go`, `tui/window/window.go` | Native Host paint into `mainTabBarSurf`; `Window` retains tab state only (no ANSI render); legacy `RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted |
 | Chat input | `tui/screens/shellinput/`, `tui/input/`, `tui/ui/text_area.go` | Native Host paint into `mainInputSurf`; `ui.TextArea` + reference chips + `ui.List` slash popup; composer fill is shell `ColorBg` (not popup); no `components.TextInput` on chat path |
@@ -56,7 +57,7 @@ Click-outside policies (verified in `tui/viewmodel/overlay_click_outside_contrac
 | Replace in Files | same screen, `ModeReplace` | Sibling overlay (`OverlayReplaceInFiles`); replace field + Replace/All on the right; writes via `fileio.PlanProjectReplace` then open buffers or `workspace.ApplyWorkspaceEdit` |
 | Find/replace | `tui/widgets/findreplace.go`, `tui/widgets/findreplace_frame.go` | In-buffer overlay; WindowFrame FramePopover + ui.TextField paint; state/keys via ui.TextEdit |
 | Workspace settings | `tui/settings/settings.go`, `tui/settings/surface.go`, `tui/ui/popup/workspace_settings.go` | Native List + FormModel/Form/FormField + ActionBar; segmented Application/Workspace footer switch (active = accent text); overlay selects with chrome; on-demand left/right scrollbars; **resizable rail/form split** |
-| File/workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` | Native TextField + breadcrumb Label + List + ScrollbarControl + ActionBar body in retained OverlayHost/FloatingWindow shell |
+| File/workspace picker | `tui/screens/filepicker/file_picker.go`, `tui/viewmodel/app.go` | Native fuzzy FilterField + icon breadcrumb + filesystem browser + scrollbar + ActionBar. Folder mode is a larger resizable branded New Workspace window with tree-style directory rows |
 | Help | `tui/screens/help/help.go`, `tui/viewmodel/help.go` | Native FilterField + VirtualList + ScrollbarControl in OverlayHost/FloatingWindow; usage topics + live slash commands + live shortcuts |
 | Composer | `tui/screens/composer` | Native TextArea + ActionBar; legacy ANSI widget deleted |
 | Text/reference overlay | `tui/screens/textoverlay` | Native TextArea + ActionBar; legacy ANSI widget deleted |

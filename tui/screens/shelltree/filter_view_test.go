@@ -47,8 +47,9 @@ func TestTypeToFilterOpensFilterRowAtHostLevel(t *testing.T) {
 	}
 
 	buf := paintHost(t, host, 40, 10)
-	if row0 := PlainRow(buf, 0, 40); !strings.Contains(row0, "u") || !strings.Contains(row0, "/") {
-		t.Fatalf("filter row should paint prompt and pattern, got %q", row0)
+	searchGlyph := ui.SearchGlyphEnd(ui.NewTokenSet(theme.DefaultDark()))
+	if searchRow := PlainRow(buf, 1, 40); !strings.Contains(searchRow, "u") || !strings.Contains(searchRow, searchGlyph) {
+		t.Fatalf("persistent search row should paint prompt and pattern, got %q", searchRow)
 	}
 	findRowContaining(t, buf, "util.go")
 	for y := 0; y < buf.Height(); y++ {
@@ -57,6 +58,20 @@ func TestTypeToFilterOpensFilterRowAtHostLevel(t *testing.T) {
 		}
 	}
 	_ = paths
+}
+
+func TestClickPersistentSearchOwnsTyping(t *testing.T) {
+	model, _ := treeFixture(t)
+	host := setupTreeHost(t, model)
+
+	result := host.Handle(tea.MouseClickMsg{X: 5, Y: 1, Button: tea.MouseLeft})
+	if !result.Handled || host.Focused() != FilterID {
+		t.Fatalf("search click result=%#v focus=%q", result, host.Focused())
+	}
+	pressKey(host, tea.KeyPressMsg{Code: 'u', Text: "u"})
+	if model.Filter() != "u" || !model.FilterActive() {
+		t.Fatalf("filter=%q active=%v", model.Filter(), model.FilterActive())
+	}
 }
 
 // TestTreeFilterHighlightsMatchedRunes verifies the fuzzy-matched runes of a

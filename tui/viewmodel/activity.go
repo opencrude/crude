@@ -11,6 +11,7 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
+	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
@@ -24,6 +25,10 @@ const (
 	activityGit       = activitybar.ViewGit
 
 	sidebarItemNewTerminal = "terminal.new"
+	// Row 0 is the outer top pad; rows 1-2 belong to the global
+	// application header. Sidebar chrome begins below that header so it
+	// cannot paint over the Crude brand, model, usage, or elapsed clock.
+	sidebarTopRow = 3
 )
 
 func (m *App) activityChromeWidth() int {
@@ -54,37 +59,64 @@ func (m *App) setActivity(view activitybar.View, showContent bool) {
 	m.refreshActivityList()
 }
 
-func (m *App) toggleActivity(view activitybar.View) {
+func (m *App) toggleActivity(view activitybar.View) tea.Cmd {
 	if m.activityView == view && m.Tree != nil && m.Tree.Visible {
 		m.Tree.Visible = false
 		if m.FocusStack != nil && m.FocusStack.Top() == FocusTree {
 			m.FocusStack.Pop()
 		}
-		return
+		return nil
 	}
 	m.setActivity(view, true)
 	if m.FocusStack != nil {
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTree)
 	}
+	if view == activityGit {
+		return m.refreshSourceControl()
+	}
+	return nil
 }
 
 func (m *App) refreshActivityList() {
 	if m.activityList == nil {
 		return
 	}
+	if m.activityBar != nil {
+		if m.AgentMgr != nil {
+			m.activityBar.SetBadge(activityAgents, m.AgentMgr.Count())
+		}
+		if mgr := m.termMgr(); mgr != nil {
+			m.activityBar.SetBadge(activityTerminals, len(mgr.List()))
+		}
+		if m.Tree != nil && m.Tree.Model != nil && m.Tree.Model.GitResolver() != nil {
+			m.activityBar.SetBadge(activityGit, len(m.Tree.Model.GitResolver().AllStatuses()))
+		}
+	}
+	nerd := panelchrome.NerdFont(m.Theme)
 	switch m.activityView {
 	case activityAgents:
 		m.activityList.SetHeading("Agents")
-		m.activityList.SetItems(m.agentSidebarItems())
+		m.activityList.SetIcon(activitybar.ViewAgents.Icon(nerd))
+		items := m.agentSidebarItems()
+		m.activityList.SetBadge(sidebarCountBadge(items))
+		m.activityList.SetItems(items)
 	case activityTerminals:
 		m.activityList.SetHeading("Terminals")
-		m.activityList.SetItems(m.terminalSidebarItems())
+		m.activityList.SetIcon(activitybar.ViewTerminals.Icon(nerd))
+		items := m.terminalSidebarItems()
+		m.activityList.SetBadge(sidebarCountBadge(items))
+		m.activityList.SetItems(items)
 	case activityGit:
-		m.activityList.SetHeading("Git")
-		m.activityList.SetItems(m.gitSidebarItems())
+		m.activityList.SetHeading("Source Control")
+		m.activityList.SetIcon(activitybar.ViewGit.Icon(nerd))
+		items := m.gitSidebarItems()
+		m.activityList.SetBadge(sidebarCountBadge(items))
+		m.activityList.SetItems(items)
 	default:
-		m.activityList.SetHeading("Files")
+		m.activityList.SetHeading("Explorer")
+		m.activityList.SetIcon(activitybar.ViewFiles.Icon(nerd))
+		m.activityList.SetBadge("")
 	}
 }
 
@@ -92,27 +124,52 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 	if m.AgentMgr == nil {
 		return []ui.ListItem{{ID: "none", Label: "No agents", Disabled: true}}
 	}
-	nodes := m.AgentMgr.AllNodes()
-	if len(nodes) == 0 {
+	roots := m.AgentMgr.Orchestrators()
+	if len(roots) == 0 {
 		return []ui.ListItem{{ID: "none", Label: "No agents", Disabled: true}}
 	}
-	items := make([]ui.ListItem, 0, len(nodes))
-	for _, n := range nodes {
+	items := make([]ui.ListItem, 0, m.AgentMgr.Count())
+	var appendTree func(*workspace.AgentNode, int, bool)
+	appendTree = func(n *workspace.AgentNode, depth int, last bool) {
 		if n == nil {
-			continue
+			return
 		}
 		label := workspace.AgentDisplayLabel(n)
+		if label == "" {
+			if n.IsOrchestrator() {
+				label = "Main Agent"
+			} else {
+				label = "Subagent"
+			}
+		}
 		detail := n.Model
+		icon := "◇"
+		if n.IsOrchestrator() {
+			icon = "◆"
+		}
 		if n.IsActive() {
 			detail = "running"
+			icon = "●"
 		} else if n.IsCompleted() {
 			detail = "done"
+			icon = "✓"
+		} else if detail == "" {
+			detail = "idle"
 		}
 		items = append(items, ui.ListItem{
-			ID:     "agent:" + n.ID,
-			Label:  label,
-			Detail: detail,
+			ID:       "agent:" + n.ID,
+			Label:    label,
+			Detail:   detail,
+			Icon:     icon,
+			Depth:    depth,
+			TreeLast: last,
 		})
+		for i, child := range n.Children {
+			appendTree(child, depth+1, i == len(n.Children)-1)
+		}
+	}
+	for i, root := range roots {
+		appendTree(root, 0, i == len(roots)-1)
 	}
 	return items
 }
@@ -148,9 +205,23 @@ func (m *App) terminalSidebarItems() []ui.ListItem {
 			ID:     "term:" + t.ID,
 			Label:  title,
 			Detail: place,
+			Icon:   "›_",
 		})
 	}
 	return items
+}
+
+func sidebarCountBadge(items []ui.ListItem) string {
+	count := 0
+	for _, item := range items {
+		if item.Selectable() && item.ID != sidebarItemNewTerminal {
+			count++
+		}
+	}
+	if count == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", count)
 }
 
 func (m *App) gitSidebarItems() []ui.ListItem {
@@ -222,13 +293,16 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if m.handleTerminalAction(*action) {
 		return nil
 	}
+	if cmd, handled := m.handleSourceControlAction(*action); handled {
+		return cmd
+	}
 	switch action.ID {
 	case termdock.ActionNew:
 		return m.openNewTerminal()
 	case activitybar.ActionSelect:
 		view, ok := action.Payload.(activitybar.View)
 		if ok {
-			m.toggleActivity(view)
+			return m.toggleActivity(view)
 		}
 		return nil
 	case activitylist.ActionActivate:

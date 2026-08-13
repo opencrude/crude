@@ -1,14 +1,21 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clipboard"
 	"crude/tui/rendering"
+	"crude/tui/screens/activitybar"
+	"crude/tui/screens/activitylist"
+	"crude/tui/screens/shelltree"
+	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	"crude/tui/window"
+	"crude/workspace"
 )
 
 func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
@@ -110,24 +117,389 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	return st
 }
 
+// buildActivityRegionContextMenu dispatches the left rail and sidebar body to
+// the destination that actually owns the clicked cells. The activity region
+// is not synonymous with the file tree: Agents, Terminals, and Source Control
+// each expose their own item-aware actions.
+func (m *App) buildActivityRegionContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	if m.rootHost == nil {
+		return nil
+	}
+	if rect, ok := m.rootHost.ScreenRect(activitybar.ScreenID); ok && rect.Contains(mouse.X, mouse.Y) {
+		view := m.activityView
+		if hit, hitOK := activitybar.ViewAt(mouse.Y - rect.Y); hitOK {
+			view = hit
+		}
+		return m.buildActivityRailContextMenu(view)
+	}
+	switch m.activityView {
+	case activityAgents:
+		return m.buildAgentSidebarContextMenu(mouse)
+	case activityTerminals:
+		return m.buildTerminalSidebarContextMenu(mouse)
+	case activityGit:
+		return m.buildSourceControlContextMenu(mouse)
+	default:
+		return m.buildSidebarContextMenu(mouse)
+	}
+}
+
+func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMenuState {
+	title := view.Glyph() + " " + view.Label()
+	visible := m.Tree != nil && m.Tree.Visible
+	active := m.activityView == view
+	showLabel := "Show " + view.Label()
+	if active && visible {
+		showLabel = "Hide " + view.Label()
+	}
+	st := &ui.ContextMenuState{
+		Title: title,
+		Sections: []ui.ContextMenuSection{{
+			SectionLabel: "View",
+			Items: []ui.ContextMenuItem{{
+				Label:  showLabel,
+				Detail: activityShortcut(view),
+				Action: func() {
+					m.startSourceControlMutation(m.toggleActivity(view))
+				},
+			}},
+		}},
+	}
+
+	switch view {
+	case activitybar.ViewFiles:
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Explorer",
+			Items: []ui.ContextMenuItem{
+				{Label: "Focus search", Detail: "/", Action: func() {
+					m.setActivity(activityFiles, true)
+					m.setFocusTree()
+					if m.rootHost != nil {
+						m.rootHost.Focus(shelltree.FilterID)
+					}
+				}},
+				{Label: "New file", Action: func() {
+					if m.Tree != nil && m.Tree.Model != nil {
+						m.startNewFileInTree(m.RootPath)
+					}
+				}},
+				{Label: "New folder", Action: func() {
+					if m.Tree != nil && m.Tree.Model != nil {
+						m.startNewFolderInTree(m.RootPath)
+					}
+				}},
+				{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
+					if m.Tree != nil && m.Tree.Model != nil {
+						m.startSourceControlMutation(m.Tree.Model.RefreshFromDisk())
+					}
+				}},
+			},
+		})
+	case activitybar.ViewAgents:
+		activeNode := m.AgentMgr.ActiveNode()
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Agents",
+			Items: []ui.ContextMenuItem{
+				{Label: "New session", Action: func() { m.startSourceControlMutation(m.launcherNewSession()) }},
+				{Label: "Manage sessions…", Action: m.openSessionPicker},
+				{Label: "Cancel active agent", Disabled: activeNode == nil || !activeNode.IsActive(), Action: func() {
+					if node := m.AgentMgr.ActiveNode(); node != nil {
+						go m.CancelAgent(node.ID)
+					}
+				}},
+			},
+		})
+	case activitybar.ViewTerminals:
+		hasTerminals := m.termMgr() != nil && len(m.termMgr().List()) > 0
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Terminals",
+			Items: []ui.ContextMenuItem{
+				{Label: "New terminal", Detail: "Ctrl+Shift+`", Action: func() { _ = m.openNewTerminal() }},
+				{Label: "Focus terminal", Detail: "Ctrl+`", Disabled: !hasTerminals, Action: func() { _ = m.toggleTerminalFocus() }},
+				{Label: "Close all terminals", Disabled: !hasTerminals, Action: m.closeAllTerminalsFromMenu},
+			},
+		})
+	case activitybar.ViewGit:
+		hasChanges, hasStaged := m.sourceControlCounts()
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Repository",
+			Items: []ui.ContextMenuItem{
+				{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
+					m.startSourceControlMutation(m.refreshSourceControl())
+				}},
+				{Label: "Stage all changes", Disabled: !hasChanges, Action: func() {
+					m.startSourceControlMutation(m.stageAllGitChanges())
+				}},
+				{Label: "Unstage all changes", Disabled: !hasStaged, Action: func() {
+					m.startSourceControlMutation(m.unstageAllGitChanges())
+				}},
+			},
+		})
+	}
+	return st
+}
+
+func activityShortcut(view activitybar.View) string {
+	switch view {
+	case activitybar.ViewAgents:
+		return "Ctrl+Shift+A"
+	case activitybar.ViewTerminals:
+		return "Ctrl+Shift+U"
+	case activitybar.ViewGit:
+		return "Ctrl+Shift+G"
+	default:
+		return "Ctrl+Shift+E"
+	}
+}
+
+func (m *App) activityItemAtMouse(mouse tea.Mouse) (ui.ListItem, bool) {
+	if m.activityList == nil || m.rootHost == nil {
+		return ui.ListItem{}, false
+	}
+	rect, ok := m.rootHost.ScreenRect(activitylist.ScreenID)
+	if !ok || !rect.Contains(mouse.X, mouse.Y) {
+		return ui.ListItem{}, false
+	}
+	return m.activityList.ItemAtLocalY(mouse.Y - rect.Y)
+}
+
+func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	item, hit := m.activityItemAtMouse(mouse)
+	agentID := ""
+	if hit && strings.HasPrefix(item.ID, "agent:") {
+		agentID = strings.TrimPrefix(item.ID, "agent:")
+	}
+	node := m.AgentMgr.Get(agentID)
+	title := "◈ Agents"
+	if node != nil {
+		label := workspace.AgentDisplayLabel(node)
+		if label == "" {
+			label = item.Label
+		}
+		title = "◈ " + label
+	}
+	st := &ui.ContextMenuState{Title: title}
+	if node != nil {
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Agent",
+			Items: []ui.ContextMenuItem{
+				{Label: "Open agent", Disabled: node.IsCompleted(), Action: func() {
+					m.switchToAgentView(node.ID)
+				}},
+				{Label: "Cancel agent", Disabled: !node.IsActive(), Action: func() {
+					go m.CancelAgent(node.ID)
+				}},
+				{Label: "Copy agent name", Action: func() { m.copyToClipboard(item.Label) }},
+				{Label: "Copy model", Disabled: node.Model == "", Action: func() { m.copyToClipboard(node.Model) }},
+			},
+		})
+	}
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		SectionLabel: "Sessions",
+		Items: []ui.ContextMenuItem{
+			{Label: "New session", Action: func() { m.startSourceControlMutation(m.launcherNewSession()) }},
+			{Label: "Manage sessions…", Action: m.openSessionPicker},
+		},
+	})
+	return st
+}
+
+func (m *App) buildTerminalSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	item, hit := m.activityItemAtMouse(mouse)
+	id := ""
+	if hit && strings.HasPrefix(item.ID, "term:") {
+		id = strings.TrimPrefix(item.ID, "term:")
+	}
+	info, found := workspace.TerminalInfo{}, false
+	if mgr := m.termMgr(); mgr != nil && id != "" {
+		info, found = mgr.Get(id)
+	}
+	title := "▸ Terminals"
+	if found {
+		title = "▸ " + item.Label
+	}
+	st := &ui.ContextMenuState{Title: title}
+	if found {
+		placementLabel := "Move to panel"
+		placementAction := func() { m.dockTerminal(id) }
+		if info.Placement == workspace.TerminalDocked {
+			placementLabel = "Move to window"
+			placementAction = func() { m.promoteTerminal(id) }
+		}
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Terminal",
+			Items: []ui.ContextMenuItem{
+				{Label: "Focus terminal", Action: func() { m.focusTerminal(id) }},
+				{Label: placementLabel, Action: placementAction},
+				{Label: "Copy working directory", Disabled: info.CWD == "", Action: func() { m.copyToClipboard(info.CWD) }},
+				{Label: "Close terminal", Action: func() { m.closeTerminal(id) }},
+			},
+		})
+	}
+	hasTerminals := m.termMgr() != nil && len(m.termMgr().List()) > 0
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		SectionLabel: "Panel",
+		Items: []ui.ContextMenuItem{
+			{Label: "New terminal", Detail: "Ctrl+Shift+`", Action: func() { _ = m.openNewTerminal() }},
+			{Label: "Close all terminals", Disabled: !hasTerminals, Action: m.closeAllTerminalsFromMenu},
+		},
+	})
+	return st
+}
+
+func (m *App) closeAllTerminalsFromMenu() {
+	mgr := m.termMgr()
+	if mgr == nil {
+		return
+	}
+	for _, terminal := range mgr.List() {
+		m.closeTerminal(terminal.ID)
+	}
+}
+
+func (m *App) buildSourceControlContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	var item sourcecontrol.Item
+	hit := false
+	if m.sourceControl != nil && m.rootHost != nil {
+		if rect, ok := m.rootHost.ScreenRect(sourcecontrol.ScreenID); ok && rect.Contains(mouse.X, mouse.Y) {
+			item, hit = m.sourceControl.ItemAtLocalY(mouse.Y - rect.Y)
+		}
+	}
+	title := "⑂ Source Control"
+	st := &ui.ContextMenuState{Title: title}
+	if hit {
+		switch item.Kind {
+		case sourcecontrol.ItemChange:
+			change := item.Change
+			st.Title = "⑂ " + change.Path
+			stageLabel := "Stage changes"
+			stageAction := func() { m.startSourceControlMutation(m.stageGitChange(change)) }
+			if change.Area == workspace.GitAreaStaged {
+				stageLabel = "Unstage changes"
+				stageAction = func() { m.startSourceControlMutation(m.unstageGitChange(change)) }
+			}
+			changeItems := []ui.ContextMenuItem{
+				{Label: "Open file", Disabled: change.AbsolutePath == "", Action: func() {
+					if change.AbsolutePath != "" {
+						_, _ = m.openEditorTab(change.AbsolutePath)
+					}
+				}},
+				{Label: stageLabel, Action: stageAction},
+				{Label: "Reveal in Explorer", Disabled: change.AbsolutePath == "", Action: func() {
+					m.setActivity(activityFiles, true)
+					if m.Tree != nil && m.Tree.Model != nil {
+						m.Tree.Model.ExpandToPath(change.AbsolutePath)
+					}
+				}},
+				{Label: "Copy relative path", Action: func() { m.copyToClipboard(change.Path) }},
+			}
+			if change.Area == workspace.GitAreaWorking {
+				changeItems = append(changeItems, ui.ContextMenuItem{
+					Label: "Discard changes…", Action: func() { m.startDiscardGitChange(change) },
+				})
+			}
+			st.Sections = append(st.Sections, ui.ContextMenuSection{
+				SectionLabel: change.Description,
+				Items:        changeItems,
+			})
+		case sourcecontrol.ItemCommit:
+			commit := item.Commit
+			st.Title = "● " + commit.ShortHash
+			st.Sections = append(st.Sections, ui.ContextMenuSection{
+				SectionLabel: "Commit",
+				Items: []ui.ContextMenuItem{
+					{Label: "Copy commit hash", Action: func() { m.copyToClipboard(commit.Hash) }},
+					{Label: "Copy commit message", Action: func() { m.copyToClipboard(commit.Subject) }},
+					{Label: "Copy author", Disabled: commit.Author == "", Action: func() { m.copyToClipboard(commit.Author) }},
+				},
+			})
+		case sourcecontrol.ItemBranch:
+			branch := item.Branch
+			st.Title = "⑂ " + branch.Name
+			st.Sections = append(st.Sections, ui.ContextMenuSection{
+				SectionLabel: "Branch",
+				Items: []ui.ContextMenuItem{
+					{Label: "Checkout branch", Disabled: branch.Current, Action: func() {
+						m.startSourceControlMutation(m.sourceControlMutation(
+							"Switched to "+branch.Name, false,
+							func(ctx context.Context, service *workspace.GitService) error {
+								return service.Checkout(ctx, branch.Name)
+							},
+						))
+					}},
+					{Label: "Copy branch name", Action: func() { m.copyToClipboard(branch.Name) }},
+				},
+			})
+		}
+	}
+	hasChanges, hasStaged := m.sourceControlCounts()
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		SectionLabel: "Repository",
+		Items: []ui.ContextMenuItem{
+			{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
+				m.startSourceControlMutation(m.refreshSourceControl())
+			}},
+			{Label: "Stage all changes", Disabled: !hasChanges, Action: func() {
+				m.startSourceControlMutation(m.stageAllGitChanges())
+			}},
+			{Label: "Unstage all changes", Disabled: !hasStaged, Action: func() {
+				m.startSourceControlMutation(m.unstageAllGitChanges())
+			}},
+			{Label: "Copy branch name", Disabled: m.sourceControl == nil || m.sourceControl.Snapshot().Branch == "", Action: func() {
+				m.copyToClipboard(m.sourceControl.Snapshot().Branch)
+			}},
+		},
+	})
+	return st
+}
+
+func (m *App) sourceControlCounts() (hasChanges, hasStaged bool) {
+	if m.sourceControl == nil {
+		return false, false
+	}
+	for _, change := range m.sourceControl.Snapshot().Changes {
+		if change.Area == workspace.GitAreaStaged {
+			hasStaged = true
+		} else {
+			hasChanges = true
+		}
+	}
+	return
+}
+
 // buildSidebarContextMenu creates the menu for right-click on a file
 // tree item.
 func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
-	if m.Tree.Model == nil {
+	if m.Tree == nil || m.Tree.Model == nil {
 		return nil
 	}
-	st := &ui.ContextMenuState{Title: "File"}
 
 	// Get the path under the click.
 	path := m.pathUnderMouse(mouse)
 	isDir := path != "" && m.Tree.Model.IsDir(path)
+	title := "▤ Explorer"
+	if path != "" {
+		if node := m.Tree.Model.NodeByPath(path); node != nil {
+			if isDir {
+				title = "▤ " + node.Name
+			} else {
+				title = "· " + node.Name
+			}
+		}
+	}
+	st := &ui.ContextMenuState{Title: title}
 
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Actions",
 		Items: []ui.ContextMenuItem{
-			{Label: "Open", Disabled: path == "", Action: func() {
+			{Label: "Open", Disabled: path == "" || isDir, Action: func() {
 				if path != "" {
 					_, _ = m.openFileFromTree(path)
+				}
+			}},
+			{Label: "Expand / collapse", Disabled: path == "" || !isDir, Action: func() {
+				if path != "" && isDir {
+					m.Tree.Model.ToggleExpand(path)
 				}
 			}},
 			{Label: "Reveal in tree", Disabled: path == "", Action: func() {
@@ -146,6 +518,16 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			}},
 			ui.ContextMenuItem{Label: "New folder", Action: func() {
 				m.startNewFolderInTree(path)
+			}},
+		)
+	}
+	if path == "" {
+		createSection.Items = append(createSection.Items,
+			ui.ContextMenuItem{Label: "New file", Action: func() {
+				m.startNewFileInTree(m.RootPath)
+			}},
+			ui.ContextMenuItem{Label: "New folder", Action: func() {
+				m.startNewFolderInTree(m.RootPath)
 			}},
 		)
 	}
@@ -179,6 +561,25 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			},
 		})
 	}
+
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		SectionLabel: "Explorer",
+		Items: []ui.ContextMenuItem{
+			{Label: "Focus search", Detail: "/", Action: func() {
+				m.setFocusTree()
+				if m.rootHost != nil {
+					m.rootHost.Focus(shelltree.FilterID)
+				}
+			}},
+			{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
+				m.startSourceControlMutation(m.Tree.Model.RefreshFromDisk())
+			}},
+			{Label: "Collapse folders", Action: m.Tree.Model.CollapseAll},
+			{Label: "Show hidden files", Detail: "Ctrl+.", Action: func() {
+				m.Tree.Model.SetShowHidden(!m.Tree.Model.ShowHidden())
+			}},
+		},
+	})
 
 	return st
 }
