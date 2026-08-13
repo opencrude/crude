@@ -7,11 +7,12 @@ target replacement under `tui/ui/`.
 
 | Category | Current implementations | Target |
 |----------|------------------------|--------|
-| Full input engine | Chat via `shellinput` + `ui.TextArea`; composer + text overlay via `ui.TextArea` screens; find/replace via `ui.TextEdit` + `ui.TextField` (`BuildFindReplaceFrame`) | `ui.TextField` / `ui.TextArea` |
-| Project search query | native `ui.SearchField` in `tui/screens/findinfiles` | same |
-| Form field editor | native `ui.Form` / `FormField` / `TextField` (workspace/session/question/background); legacy `tui/form` **deleted** | `ui.Form` / `FormField` over shared TextEdit engine |
+| Full input engine | Chat via `shellinput` + `ui.TextArea` (shell `ColorBg`, not popup fill); composer + text overlay via `ui.TextArea` screens; find/replace via `ui.TextEdit` + `ui.TextField` (`BuildFindReplaceFrame`) | `ui.TextField` / `ui.TextArea` |
+| Project search query | native `ui.SearchField` in `tui/screens/findinfiles` (SearchGlyph + PromptStart; Cc/.* toggles on the right) | same |
+| Project replace field | native `ui.TextField` on the Find in Files sibling (Replace in Files) | same |
+| Form field editor | native `ui.Form` / `FormField` / `TextField` (workspace/session/question/background); `FieldSelect` paints a bordered overlay dropdown (`PaintOverlay`) so opening it does not grow form height or push later fields; `Form.Paint` clips to the viewport so scrolled fields cannot leak into chrome; Up/Down clamp at the first/last field by default (docks); `SetArrowExitsForm(true)` only for the application/workspace settings form so arrows can leave to the category rail; Tab/Shift+Tab still leave the form; `FieldNav` is a two-line drill-in row with a trailing `TreeCollapsed` chevron (`▸`), not the chat `Prompt` glyph | `ui.Form` / `FormField` over shared TextEdit engine |
 | Hand-built prompt | `tui/widgets/textprompt.go` (product: TextEdit + WindowFrame) | `PromptField` |
-| Append/backspace filter | palette, launcher, settings | `FilterField` / `SearchField` |
+| Append/backspace filter | palette, launcher, settings | `FilterField` / `SearchField` with `SearchGlyphEnd` + `PromptEnd` (magnifier at the trailing edge) |
 | File/workspace picker filter | native `ui.TextField` in `tui/screens/filepicker` | same |
 | Document editor | `tui/editor/` PieceTable; main viewport `shelleditor` Host | Specialized `DocumentEditor` (kept) |
 
@@ -19,7 +20,8 @@ target replacement under `tui/ui/`.
 
 | Current | Target |
 |---------|--------|
-| Confirm / dirty / tree-delete ActionBar | `ui.ActionBar` / `ui.Button` via `BuildConfirmFrame` and friends |
+| Confirm / dirty / tree-delete ActionBar | `ui.ActionBar` / `ui.Button` via `BuildConfirmFrame` and friends. Buttons right-align (`alignEnd`) by default. Settings Reset uses a separate left-aligned bar. Up emits `actionbar.exit.backward` so docked forms can return from Save/Cancel; Down stays on the bar. |
+| Find in Files / Replace in Files | native `ui.ActionBar` (Open/Close; Replace/All on the replace row), right-aligned |
 | `PopupButton` / `PopupButtonRow` | same Button + ActionBar |
 | Agent question actions | native `ui.ActionBar` in `tui/screens/question` | same |
 | Tool confirmation / YOLO actions | native PanelDeck `ui.ActionBar` with typed quick keys and Escape actions | same |
@@ -30,6 +32,7 @@ target replacement under `tui/ui/`.
 |---------|--------|
 | Command palette list | sectioned VirtualList |
 | File tree | `ui.Tree` via `shelltree` |
+| Activity lists (Agents / Terminals / Git) | `ui.List` via `activitylist` |
 | Message list | ✅ `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; all rows native `PaintLine` (markdown/thinking bridged at render time via `BridgeAnsiLine`); main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
 | Tabs | `ui.Tabs` via `shelltabs` |
@@ -39,6 +42,16 @@ target replacement under `tui/ui/`.
 | Launcher workspaces | VirtualList + SearchField + ScrollbarControl; shared pane viewport geometry |
 | LSP popup lists | List |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
+
+## Splits
+
+| Current | Target |
+|---------|--------|
+| File tree vs main view | `ui.SplitDivider` in `shelltree` / `activitylist` + `split.resize` → `Tree.Width` |
+| Settings rail vs form | `ui.SplitModel` + `SplitDivider` on `WorkspaceSettingsSurface` |
+| Find in Files results vs preview | vertical `ui.SplitModel` + `SplitDivider` |
+| Launcher left vs workspaces | `ui.SplitDivider` replacing the paint-only `vDivider` |
+| Two-child containers | `ui.SplitPane` (owns model + divider, Host capture) |
 
 ## Scrollbars
 
@@ -52,6 +65,7 @@ target replacement under `tui/ui/`.
 | File picker | native `ui.ScrollbarControl` |
 | Find in Files | native `ui.ScrollbarControl` over `ui.VirtualList` |
 | Shell tree / editor main | `ui.ScrollbarControl` (`shelltree`, `shelleditor`) |
+| Settings left/right panels | `WorkspaceSettingsSurface` — `ScrollbarControl` on the category list and form, mounted only when `Needed()` (content overflows) |
 | Find in Files editor preview | cell-buffer `Editor.Render` adapter in `findinfiles` screen (no `Editor.View()` / `scrollbar_ansi` bridge) |
 
 ## Chrome
@@ -123,14 +137,14 @@ teardown: cancel `chatHost` pointer capture when armed, then
 selection or scrollbar drag cancels capture without swallowing unrelated keys; a
 non-empty `HasActiveSelection` range still consumes the dismissing keypress.
 
-Precedence for motion/release (after global WM drag/resize and tree-divider
-resize owners):
+Precedence for motion/release (after global WM drag/resize):
 
-1. Tree divider resize (`Tree.Resizing`)
-2. Active product Host pointer capture (chat → sidebar → launcher when multiple
-   report capture — lower-priority and inactive Host captures are canceled)
-3. Popup hover pre-selection (focusable floating windows)
-4. Normal region routing (sidebar, editor, chat, input, …)
+1. Active product Host pointer capture (chat selection, scrollbar thumbs,
+   **split dividers**, input selection, deck gutters). Capture keeps routing
+   after the pointer leaves the handle — including the file-tree sidebar
+   divider (`shelltree` `ui.SplitDivider`).
+2. Popup hover pre-selection (focusable floating windows)
+3. Normal region routing (sidebar, editor, chat, input, …)
 
 Editor mouse is **not** routed through `editorHost`; it uses the editor package
 path directly. Floating overlay content Hosts use the window-manager forward path,
@@ -145,11 +159,12 @@ API: `HasPointerCapture()`, `CancelPointerCapture()` on each product Host;
 |------------------|-----------|-------|
 | Shell tree keyboard (expand/collapse/Home/End/filter/Esc) | `tui/screens/shelltree/tree_contract_test.go` | Host-level table; filter typing; visible row/selection/expand state |
 | Tree focus + filter routing (viewmodel) | `tui/viewmodel/tree_focus_contract_test.go`, `tree_filter_contract_test.go` | sidebarHost gating, two-step Esc, Ctrl+C not back, hidden tree, open-once |
-| Overlay click-outside (17 product overlays) | `tui/viewmodel/overlay_click_outside_contract_test.go` | Full policy matrix (17) ≠ real-opener integration; matrix via `handlePopupClickOutside`; one `dispatchMouseClick` path per policy group |
+| Overlay click-outside (18 product overlays) | `tui/viewmodel/overlay_click_outside_contract_test.go` | Full policy matrix (18) ≠ real-opener integration; matrix via `handlePopupClickOutside`; one `dispatchMouseClick` path per policy group |
 | Shell header | `tui/screens/shellheader/header_contract_test.go` | **Display-only** — `Handle` no-op |
 | Shell status hints | `tui/screens/shellstatus/status_contract_test.go` | **Display-only** Screen; chords via ActionRegistry |
 | Status hint chords (save/undo) | `tui/viewmodel/status_keyboard_contract_test.go` | `dispatchEditorKey` + `Text: "ctrl+…"` form |
 | Shell tabs / input | `tui/screens/shelltabs/tabs_contract_test.go`, `shellinput/input_contract_test.go` | Prior pass |
 | Welcome launcher | `tui/screens/launcher/launcher_contract_test.go`, `tui/viewmodel/launcher_keyboard_contract_test.go` | Filter `/` once, Backspace/Esc, nav bounds, PgUp/PgDn/Home/End, workspace scroll, Enter activation, Ctrl+C noop, global Ctrl+B/Ctrl+Alt+P, min-size hidden gate |
 | Session PanelDeck (docked) | `tui/viewmodel/panel_deck_contract_test.go`, `tui/viewmodel/session_deck_test.go`, screen `*_test.go` | Blocking capture, settings Esc/Tab, confirmation `y`/Esc, question cancel, YOLO Esc, passive background jobs, session isolation |
+| Help overlay | `tui/screens/help/help_test.go`, `tui/viewmodel/help_test.go` | Modal Ignore; live catalog; F1 toggle; Esc closes; `/help` does not dump into chat |
 | Agent chat list | `tui/screens/shellchat/scroll_contract_test.go`, `host_test.go`, `tui/viewmodel/chat_keyboard_contract_test.go`, `host_capture_test.go`, `mouse_capture_test.go` | PgUp/PgDown/Home/End, wheel disarm/re-arm, scrollbar drag, selection copy once, capture teardown, input-empty routing |

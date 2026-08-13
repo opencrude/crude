@@ -43,6 +43,9 @@ func (f *FilterField) SetTokens(tokens *TokenSet) { f.field.SetTokens(tokens) }
 // SetPrompt configures the visual prompt.
 func (f *FilterField) SetPrompt(prompt string) { f.field.SetPrompt(prompt) }
 
+// SetPromptPlacement puts the prompt at the start or end of the field.
+func (f *FilterField) SetPromptPlacement(p PromptPlacement) { f.field.SetPromptPlacement(p) }
+
 // SetPlaceholder configures the empty-state hint.
 func (f *FilterField) SetPlaceholder(placeholder string) { f.field.SetPlaceholder(placeholder) }
 

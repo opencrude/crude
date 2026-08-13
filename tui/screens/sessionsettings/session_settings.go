@@ -90,6 +90,7 @@ func New(th *theme.Theme, effective, base types.Settings, overrides map[string]t
 		models: make(map[string][]types.ModelEntry),
 	}
 	s.form = ui.NewForm(FormID, nil, "", "", s.tokens)
+	s.form.SetFieldGap(1)
 	s.openRoot()
 	return s
 }
@@ -118,12 +119,12 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 }
 
 func (s *Screen) PreferredHeight(maxHeight int) int {
-	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-2))+2)
+	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-1))+1)
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	formH := max(1, r.H-2)
+	formH := max(1, r.H-1)
 	s.form.Layout(ctx, ui.Rect{X: 0, Y: 0, W: r.W, H: formH})
 	s.actions.Layout(ctx, ui.Rect{X: 0, Y: max(0, r.H-1), W: r.W, H: 1})
 }

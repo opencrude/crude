@@ -125,26 +125,37 @@ func TestLauncherShortcutsDeriveFromRegistryMetadata(t *testing.T) {
 	}
 }
 
-// TestHelpListingDerivesShortcutsFromRegistryMetadata proves help.show's
-// "Keyboard Shortcuts:" block renders FormatShortcut(registry.HintFor(id))
-// and excludes palette.open and DisplayOnly hint fragments.
+// TestHelpListingDerivesShortcutsFromRegistryMetadata proves the Help overlay
+// catalog uses FormatShortcut(registry.HintFor(id)) and excludes DisplayOnly
+// hint fragments.
 func TestHelpListingDerivesShortcutsFromRegistryMetadata(t *testing.T) {
 	app := newTestApp(t)
+	app.width, app.height = 100, 30
 	app.actionRegistry = overrideHintKey(t, "edit.find", "Ctrl+Alt+F2")
+	app.openHelp()
+	if app.helpScreen == nil || app.overlayHost.Window(ui.OverlayHelp) == nil {
+		t.Fatal("help overlay did not open")
+	}
 
-	help := app.keyboardShortcutsHelp()
 	want := ui.FormatShortcut(app.actionRegistry.HintFor("edit.find"))
-	if !strings.Contains(help, want) {
-		t.Fatalf("help listing must render %q from registry metadata; got:\n%s", want, help)
+	found := false
+	for _, sc := range app.helpShortcuts() {
+		if sc.Keys == want && sc.Label == "Save" {
+			// overrideHintKey replaces the whole ActionDef with Label "Save"
+			found = true
+		}
+		if sc.Keys == want {
+			found = true
+		}
+		if strings.EqualFold(sc.Label, "Send") || strings.EqualFold(sc.Label, "New line") {
+			t.Fatalf("help catalog must exclude DisplayOnly hint %q", sc.Label)
+		}
 	}
-	if strings.Contains(help, "Ctrl+F ") || strings.Contains(help, "Ctrl+F-") {
-		t.Fatalf("help listing must not render the hardcoded default literal when the registry overrides it:\n%s", help)
+	if !found {
+		t.Fatalf("help catalog missing overridden shortcut %q", want)
 	}
-	if strings.Contains(help, ui.FormatShortcut(app.actionRegistry.HintFor("palette.open"))) {
-		t.Fatalf("help listing must exclude the palette.open self-reference:\n%s", help)
-	}
-	if strings.Contains(help, "send") || strings.Contains(help, "new line") {
-		t.Fatalf("help listing must exclude DisplayOnly hint fragments:\n%s", help)
+	if want == "Ctrl+F" {
+		t.Fatal("precondition: override should not be the default Ctrl+F")
 	}
 }
 

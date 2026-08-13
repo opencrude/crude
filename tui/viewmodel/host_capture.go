@@ -22,10 +22,18 @@ func (m *App) chatHostVisible() bool {
 
 // sidebarHostVisible matches the shellSidebarSlot condition.
 func (m *App) sidebarHostVisible() bool {
-	if m.Tree == nil {
+	return m.sidebarContentVisible()
+}
+
+// sidebarContentVisible is the files/agents/terminals/git pane (not the rail).
+func (m *App) sidebarContentVisible() bool {
+	if m.Tree == nil || !m.Tree.Visible {
 		return false
 	}
-	return m.Tree.Visible && m.Tree.Model != nil && m.sidebarScreen != nil
+	if m.activityView == activityFiles {
+		return m.Tree.Model != nil && m.sidebarScreen != nil
+	}
+	return m.activityList != nil
 }
 
 // launcherHostVisible matches the shellLauncherSlot condition including

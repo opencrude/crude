@@ -25,13 +25,37 @@ const (
 	OverlayTextOverlay       OverlayID = "textoverlay"
 	OverlayCommandPalette    OverlayID = "command-palette"
 	OverlayFindInFiles       OverlayID = "find-in-files"
+	OverlayReplaceInFiles    OverlayID = "replace-in-files"
 	OverlayReferences        OverlayID = "references-popup"
 	OverlayCompletion        OverlayID = "completion-popup"
 	OverlayOutline           OverlayID = "outline-popup"
 	OverlayDiagContext       OverlayID = "diag-context"
 	OverlayDiagHover         OverlayID = "diag-hover"
 	OverlaySessionPicker     OverlayID = "session-picker"
+	OverlayHelp              OverlayID = "help"
+	OverlayTerminalPrefix    OverlayID = "terminal/"
 )
+
+// TerminalOverlayID is the OverlayHost id for one floating terminal window.
+func TerminalOverlayID(id string) OverlayID {
+	return OverlayTerminalPrefix + OverlayID(id)
+}
+
+// TerminalIDFromOverlay extracts the PTY id from a floating-terminal overlay.
+func TerminalIDFromOverlay(id OverlayID) (string, bool) {
+	s := string(id)
+	p := string(OverlayTerminalPrefix)
+	if len(s) <= len(p) || s[:len(p)] != p {
+		return "", false
+	}
+	return s[len(p):], true
+}
+
+// IsTerminalOverlay reports a per-session floating terminal window.
+func IsTerminalOverlay(id OverlayID) bool {
+	_, ok := TerminalIDFromOverlay(id)
+	return ok
+}
 
 // OutsidePolicy defines what happens when the user clicks outside
 // this overlay. Maps 1:1 to wm.ClickOutsideBehavior but is owned by

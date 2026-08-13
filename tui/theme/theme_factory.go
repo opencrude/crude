@@ -11,9 +11,9 @@ func newTheme(c Colors) *Theme {
 		FieldGap:     1,
 		ButtonGap:    2,
 		DialogPad:    2,
-		FormIndent:   0,
+		FormIndent:   1,
 		LabelColGap:  3,
-		FormTitlePad: 2,
+		FormTitlePad: 1,
 	}
 
 	treeConfig := TreeConfig{

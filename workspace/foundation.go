@@ -189,6 +189,14 @@ func msgDetail(msg tea.Msg) string {
 		return fmt.Sprintf("file=%s change=%d", m.FilePath, m.ChangeType)
 	case ProjectSearchCompletedMsg:
 		return fmt.Sprintf("request=%d matches=%d", m.Result.RequestID, len(m.Result.Matches))
+	case TerminalOutputMsg:
+		return fmt.Sprintf("id=%s bytes=%d", m.ID, len(m.Data))
+	case TerminalExitedMsg:
+		return fmt.Sprintf("id=%s code=%d", m.ID, m.ExitCode)
+	case TerminalClosedMsg:
+		return fmt.Sprintf("id=%s", m.ID)
+	case TerminalTitleMsg:
+		return fmt.Sprintf("id=%s title=%s", m.ID, m.Title)
 	default:
 		return ""
 	}

@@ -13,7 +13,6 @@ package workspace
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -221,51 +220,6 @@ func (w *Workspace) HandleSettingsSaveForSession(sessionID string, settings ttyp
 	if frontendSession.Settings != nil {
 		frontendSession.Settings.Effective = settings
 		frontendSession.Settings.Overrides = copyCategoryMap(settings.SessionOverrides)
-	}
-	return nil
-}
-
-// SaveAppSettings persists visual/tooling settings (theme, editor, LSP, UI, font)
-// to workspace.db without touching the backend session. Provider credentials are
-// saved separately via SaveProviderSettings.
-func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
-	// Provider credentials live in config.json. Agent defaults are scoped to
-	// this workspace and stay in workspace.db with the IDE preferences.
-	visual := ttypes.AppSettings{
-		Theme:  s.Theme,
-		Editor: s.Editor,
-		LSP:    s.LSP,
-		UI:     s.UI,
-		Font:   s.Font,
-		Agents: s.Agents,
-	}
-	if w.sessionCfg != nil {
-		session.ApplyWorkspaceAgentDefaults(w.sessionCfg, s.Agents)
-	}
-	for _, frontendSession := range w.Sessions {
-		if frontendSession != nil && frontendSession.backend != nil {
-			frontendSession.backend.UpdateWorkspaceDefaults(ttypes.AppSettings{Agents: s.Agents})
-			if frontendSession.Settings != nil {
-				frontendSession.Settings.SetInheritance(
-					frontendSession.backend.SettingsSnapshot(),
-					frontendSession.backend.WorkspaceSettingsSnapshot(),
-					frontendSession.backend.SessionOverridesSnapshot(),
-				)
-			}
-		}
-	}
-	if w.WorkspaceDB != nil {
-		data, _ := json.Marshal(visual)
-		if err := w.WorkspaceDB.SetSetting("app_settings", string(data)); err != nil {
-			w.Logger.Warn("WORKSPACE", "save_app_settings_failed", "error", err.Error())
-			return err
-		}
-	}
-	if w.OnAppSettingsSave != nil {
-		if err := w.OnAppSettingsSave(visual); err != nil {
-			w.Logger.Warn("WORKSPACE", "mirror_app_settings_failed", "error", err.Error())
-			return err
-		}
 	}
 	return nil
 }

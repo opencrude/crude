@@ -5,6 +5,7 @@ package theme
 // never hard-codes box/prompt/close glyphs when tokens are available.
 type Glyphs struct {
 	Prompt           string
+	Search           string
 	Close            string
 	CornerTL         string
 	CornerTR         string
@@ -46,6 +47,7 @@ type Metrics struct {
 func DefaultGlyphs() Glyphs {
 	return Glyphs{
 		Prompt:         "❯",
+		Search:         "⌕",
 		Close:          "✕",
 		CornerTL:       "╭",
 		CornerTR:       "╮",

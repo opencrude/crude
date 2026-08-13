@@ -56,6 +56,7 @@ func TestSettingsNavigation_TabOrderFromEveryRegion(t *testing.T) {
 		WorkspaceSettingsListID,
 		WorkspaceSettingsFormID,
 		WorkspaceSettingsActionID,
+		WorkspaceSettingsScopeID,
 	}
 	for startIdx, startID := range order {
 		frame.Focus(startID)

@@ -223,7 +223,8 @@ func DefaultRegistry() *ActionRegistry {
 // actions at runtime, but these globals are always available.
 //
 // Categories (used as palette group headers, in order of definition):
-//   File, Edit, View, Tabs, Agent, Tools, System, Help, Chat, App.
+//
+//	File, Edit, View, Tabs, Agent, Tools, System, Help, Chat, App.
 //
 // Hidden from the palette (excluded by paletteEntriesFromRegistry):
 //   - palette.open          (self-reference; opening it from itself is a no-op)
@@ -306,6 +307,20 @@ var defaultActions = []*ActionDef{
 		},
 		HintKey: "Ctrl+Alt+F",
 	},
+	{
+		ID:          "search.project.replace",
+		Label:       "Replace in Files",
+		Description: "find and replace across the project",
+		Icon:        "⇅",
+		Category:    "File",
+		Bindings: []KeyBinding{
+			{Key: "ctrl+alt+h"},
+			{Key: "ctrl+alt+H"},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'h'},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'H'},
+		},
+		HintKey: "Ctrl+Alt+H",
+	},
 
 	// ─── Edit ────────────────────────────────────────────────────────
 	{
@@ -385,6 +400,66 @@ var defaultActions = []*ActionDef{
 		Icon:        "▣",
 		Category:    "View",
 	},
+	{
+		ID:          "view.activity.files",
+		Label:       "Files",
+		Description: "show the file explorer in the sidebar",
+		Icon:        "F",
+		Category:    "View",
+		Bindings:    []KeyBinding{{Key: "ctrl+shift+e"}, {Mod: tea.ModCtrl | tea.ModShift, Code: 'e'}},
+		HintKey:     "Ctrl+Shift+E",
+	},
+	{
+		ID:          "view.activity.agents",
+		Label:       "Agents",
+		Description: "show open agents in the sidebar",
+		Icon:        "A",
+		Category:    "View",
+		Bindings:    []KeyBinding{{Key: "ctrl+shift+a"}, {Mod: tea.ModCtrl | tea.ModShift, Code: 'a'}},
+		HintKey:     "Ctrl+Shift+A",
+	},
+	{
+		ID:          "view.activity.terminals",
+		Label:       "Terminals",
+		Description: "show open terminals in the sidebar",
+		Icon:        "T",
+		Category:    "View",
+		Bindings:    []KeyBinding{{Key: "ctrl+shift+u"}, {Mod: tea.ModCtrl | tea.ModShift, Code: 'u'}},
+		HintKey:     "Ctrl+Shift+U",
+	},
+	{
+		ID:          "view.activity.git",
+		Label:       "Git",
+		Description: "show git status in the sidebar",
+		Icon:        "G",
+		Category:    "View",
+		Bindings:    []KeyBinding{{Key: "ctrl+shift+g"}, {Mod: tea.ModCtrl | tea.ModShift, Code: 'g'}},
+		HintKey:     "Ctrl+Shift+G",
+	},
+	{
+		ID:          "terminal.new",
+		Label:       "New Terminal",
+		Description: "open a new tabbed terminal (Ghostty-pinned PTY)",
+		Icon:        "$",
+		Category:    "View",
+		Bindings: []KeyBinding{
+			{Key: "ctrl+shift+`"},
+			{Mod: tea.ModCtrl | tea.ModShift, Code: '`'},
+		},
+		HintKey: "Ctrl+Shift+`",
+	},
+	{
+		ID:          "terminal.toggle",
+		Label:       "Toggle Terminal",
+		Description: "focus the last terminal or open a new one",
+		Icon:        ">_",
+		Category:    "View",
+		Bindings: []KeyBinding{
+			{Key: "ctrl+`"},
+			{Mod: tea.ModCtrl, Code: '`'},
+		},
+		HintKey: "Ctrl+`",
+	},
 
 	// ─── Tabs ────────────────────────────────────────────────────────
 	{
@@ -448,9 +523,16 @@ var defaultActions = []*ActionDef{
 	},
 	{
 		ID:          "settings.open",
-		Label:       "Settings",
-		Description: "workspace settings: theme, editor, LSP, UI, font",
+		Label:       "Application Settings",
+		Description: "app-wide theme, editor, LSP, UI, font, and credentials",
 		Icon:        "⚙",
+		Category:    "Tools",
+	},
+	{
+		ID:          "settings.workspace",
+		Label:       "Workspace Settings",
+		Description: "project overrides on top of application settings",
+		Icon:        "⬡",
 		Category:    "Tools",
 	},
 	{
@@ -524,9 +606,11 @@ var defaultActions = []*ActionDef{
 	{
 		ID:          "help.show",
 		Label:       "Help",
-		Description: "show commands and shortcuts",
+		Description: "open help: usage, slash commands, and shortcuts",
 		Icon:        "?",
 		Category:    "Help",
+		Bindings:    []KeyBinding{{Key: "f1"}},
+		HintKey:     "F1",
 	},
 
 	// ─── Chat input context actions (FocusContext: "chat") ───

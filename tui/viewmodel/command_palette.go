@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/input"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
@@ -59,29 +57,6 @@ func paletteEntriesFromRegistry(registry *ui.ActionRegistry) []cmdEntry {
 		})
 	}
 	return entries
-}
-
-// keyboardShortcutsHelp builds the registry-backed "Keyboard Shortcuts:"
-// block shown by help.show. Every shortcut is formatted from the action
-// registry (HintFor → FormatShortcut) so the listing can never drift
-// from active bindings; palette.open and DisplayOnly hint fragments are
-// excluded.
-func (m *App) keyboardShortcutsHelp() string {
-	if m.actionRegistry == nil {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("\nKeyboard Shortcuts:\n")
-	for _, a := range m.actionRegistry.All() {
-		hint := ui.FormatShortcut(m.actionRegistry.HintFor(a.ID))
-		if hint == "" || a.ID == "palette.open" || a.DisplayOnly {
-			continue
-		}
-		b.WriteString("  " + hint)
-		b.WriteString(strings.Repeat(" ", max(0, 20-len([]rune(hint)))))
-		b.WriteString("- " + a.Label + "\n")
-	}
-	return b.String()
 }
 
 type commandPaletteModel struct {
@@ -542,6 +517,9 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return nil
 
 	case "settings.open":
+		m.openApplicationSettings()
+
+	case "settings.workspace":
 		m.openWorkspaceSettings()
 
 	case "agent.orchestrator.reset":
@@ -551,15 +529,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.openSessionPicker()
 
 	case "help.show":
-		var b strings.Builder
-		b.WriteString("Available commands:\n")
-		for _, c := range input.AvailableCmds() {
-			b.WriteString("  " + "/" + c.Label + " - " + c.Desc + "\n")
-		}
-		b.WriteString(m.keyboardShortcutsHelp())
-		if m.AgentMgr.ActiveID() != "" {
-			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
-		}
+		m.openHelp()
 
 	case "system.undo":
 		go m.HandleUndo("/undo")
@@ -592,10 +562,20 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.setFocusEditor()
 
 	case "view.focus.chat":
-		// Real focus-chat path: push FocusInput so focusTarget() returns
-		// FocusInput even when an editor is open. This is the fix for the
-		// old behavior where "Focus Chat" was a no-op with an editor open.
 		m.setFocusInput()
+
+	case "view.activity.files":
+		m.toggleActivity(activityFiles)
+	case "view.activity.agents":
+		m.toggleActivity(activityAgents)
+	case "view.activity.terminals":
+		m.toggleActivity(activityTerminals)
+	case "view.activity.git":
+		m.toggleActivity(activityGit)
+	case "terminal.new":
+		return m.openNewTerminal()
+	case "terminal.toggle":
+		return m.toggleTerminalFocus()
 
 	case "file.attach":
 		m.openFilePicker()
@@ -708,6 +688,9 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "search.project.open":
 		m.toggleFindInFiles()
+
+	case "search.project.replace":
+		m.toggleReplaceInFiles()
 
 	case "agent.toggle.multiagent":
 		s := m.LastSettings

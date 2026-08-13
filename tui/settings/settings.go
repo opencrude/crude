@@ -15,7 +15,11 @@ import (
 )
 
 // SaveMsg is returned as a tea.Msg on save.
-type SaveMsg struct{ AppSettings types.AppSettings }
+type SaveMsg struct {
+	Scope       types.SettingsScope
+	AppSettings types.AppSettings
+	Overrides   types.WorkspaceOverrides
+}
 
 // CancelMsg is returned as a tea.Msg on cancel.
 type CancelMsg struct{}
@@ -42,6 +46,12 @@ type ModelsErrorMsg struct {
 	ProviderID string
 	Error      string
 }
+
+// ResetSectionMsg clears the workspace override for one settings page.
+type ResetSectionMsg struct{ Key string }
+
+// ScopeMsg switches the settings dialog between application and workspace.
+type ScopeMsg struct{ Scope types.SettingsScope }
 
 // Category is a presentation-neutral settings section backed by the shared
 // form model. It deliberately has no legacy tui/form state.
@@ -74,6 +84,8 @@ type Model struct {
 	models       map[string][]types.ModelEntry
 	searchEd     *ui.TextEdit
 	searchActive bool
+	scope        types.SettingsScope
+	appDefaults  types.AppSettings
 }
 
 const (
@@ -84,34 +96,19 @@ const (
 	fieldThinkingEffort = "thinking-effort"
 )
 
-// New creates a workspace settings model from current AppSettings.
+// New creates a settings model from current AppSettings (application scope).
 func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPreset) *Model {
+	return NewScoped(th, current, presets, types.SettingsScopeApplication, current, types.WorkspaceOverrides{})
+}
+
+// NewScoped creates a settings model for application or workspace scope.
+func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.ProviderPreset, scope types.SettingsScope, appDefaults types.AppSettings, _ types.WorkspaceOverrides) *Model {
+	types.ApplyAppDefaults(&current)
 	appearance := current.Theme
-	if appearance.Preset == "" {
-		appearance.Preset = "dark"
-	}
 	editor := current.Editor
-	if editor.TabSize == 0 {
-		editor.TabSize = 4
-	}
-	if editor.SyntaxTheme == "" {
-		editor.SyntaxTheme = "catppuccin"
-	}
-	if editor.RenderWhitespace == "" {
-		editor.RenderWhitespace = "none"
-	}
 	lsp := current.LSP
-	if !lsp.Enabled && !lsp.AutoDetect {
-		lsp.Enabled, lsp.AutoDetect, lsp.Diagnostics = true, true, true
-	}
 	uiSettings := current.UI
-	if uiSettings.SidebarWidth == 0 {
-		uiSettings.SidebarWidth = 30
-	}
 	font := current.Font
-	if font.Size == 0 {
-		font.Size = 12
-	}
 	if len(presets) == 0 {
 		for _, preset := range provider.PresetList() {
 			presets = append(presets, types.ProviderPreset{ID: preset.ID, Name: preset.Name, HelpText: preset.HelpText, BaseURL: preset.BaseURL})
@@ -128,7 +125,7 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 	if _, ok := providers[active]; !ok {
 		providers[active] = types.ProviderConfig{}
 	}
-	m := &Model{th: th, presets: presets, providers: providers, providerID: active, models: make(map[string][]types.ModelEntry)}
+	m := &Model{th: th, presets: presets, providers: providers, providerID: active, models: make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults}
 	appearanceFields := append([]*ui.FieldState{
 		ui.SeparatorFieldState("theme", "Theme"),
 		ui.CycleFieldState("preset", "Preset", append([]string(nil), theme.AllPresetNames...), appearance.Preset, "Choose a complete visual palette for the workspace."),
@@ -149,13 +146,9 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 			ui.CycleFieldState("syntax-theme", "Syntax theme", []string{"catppuccin", "dracula", "github", "monokai", "solarized"}, editor.SyntaxTheme, "Color grammar used for source code."),
 			ui.CycleFieldState("render-whitespace", "Render whitespace", []string{"none", "boundary", "all"}, editor.RenderWhitespace, "Show spaces and tabs when inspecting layout."),
 			ui.TextFieldState("auto-save-delay", "Auto-save delay", fmt.Sprintf("%d", editor.AutoSaveDelay), "Delay in milliseconds; zero disables automatic saves."),
+			ui.BoolFieldState("format-on-save", "Format on save", editor.FormatOnSave, "Run the language server formatter when a file is saved."),
 		)},
-		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: formModel(
-			ui.SeparatorFieldState("language-intelligence", "Language intelligence"),
-			ui.BoolFieldState("enabled", "Enabled", lsp.Enabled, "Start language servers for supported projects."),
-			ui.BoolFieldState("auto-detect", "Auto-detect", lsp.AutoDetect, "Discover a server from the current project."),
-			ui.BoolFieldState("diagnostics", "Diagnostics", lsp.Diagnostics, "Show errors and warnings in the tree and editor."),
-		)},
+		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: m.buildLSPForm(lsp)},
 		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: formModel(
 			ui.SeparatorFieldState("workspace-chrome", "Workspace chrome"),
 			ui.TextFieldState("sidebar-width", "Sidebar width", fmt.Sprintf("%d", uiSettings.SidebarWidth), "Width of the file and workspace navigation rail."),
@@ -285,6 +278,10 @@ func (m *Model) value(category int, fieldID string) string {
 		return ""
 	}
 	return field.Value.String()
+}
+
+func (m *Model) isAgentCategory(index int) bool {
+	return index == catMain || index == catResearcher || index == catCrafter || index == catAeron
 }
 
 func (m *Model) handleFieldChanged(category int, fieldID string) {
@@ -420,6 +417,19 @@ func (m *Model) SetSearchQuery(query string) {
 func (m *Model) SetSearchActive(active bool) { m.searchActive = active }
 func (m *Model) SelectedCategory() int       { return m.selected }
 func (m *Model) Pane() int                   { return m.pane }
+func (m *Model) Scope() types.SettingsScope {
+	if m == nil || m.scope == "" {
+		return types.SettingsScopeApplication
+	}
+	return m.scope
+}
+func (m *Model) SetScope(scope types.SettingsScope) { m.scope = scope }
+func (m *Model) Overrides() types.WorkspaceOverrides {
+	if m.Scope() != types.SettingsScopeWorkspace {
+		return types.WorkspaceOverrides{}
+	}
+	return types.WorkspaceOverridesFromDiff(m.appDefaults, m.AppSettings())
+}
 
 func (m *Model) SelectCategory(index int) {
 	if index >= 0 && index < len(m.categories) {
@@ -466,6 +476,9 @@ func (m *Model) CategoryItems() []ui.ListItem {
 	for _, index := range visible {
 		category := m.categories[index]
 		if category.Group != lastGroup {
+			if lastGroup != "" {
+				items = append(items, ui.ListItem{ID: "settings/gap/" + strings.ToLower(category.Group), Spacer: true})
+			}
 			items = append(items, ui.ListItem{ID: "settings/group/" + strings.ToLower(category.Group), Label: category.Group, Header: true})
 			lastGroup = category.Group
 		}
@@ -511,7 +524,24 @@ const (
 	catFont
 )
 
-func (m *Model) isAgentCategory(index int) bool { return index >= catMain && index <= catAeron }
+func (m *Model) currentOverrideKey() string {
+	switch m.selected {
+	case catAppearance:
+		return "appearance"
+	case catEditor:
+		return "editor"
+	case catLSP:
+		return "lsp"
+	case catUI:
+		return "interface"
+	case catFont:
+		return "font"
+	case catProviders:
+		return "providers"
+	default:
+		return "agents"
+	}
+}
 
 // AppSettings returns the values held by the shared form models.
 func (m *Model) AppSettings() types.AppSettings {
@@ -592,11 +622,90 @@ func (m *Model) collectAppearance(cfg *types.ThemeSettings) {
 }
 
 func (m *Model) collectEditor(cfg *types.EditorSettings) {
-	*cfg = types.EditorSettings{TabSize: parseOpt(m.value(catEditor, "tab-size"), 4), WordWrap: m.value(catEditor, "word-wrap") == "on", LineNumbers: m.value(catEditor, "line-numbers") == "on", SyntaxTheme: m.value(catEditor, "syntax-theme"), RenderWhitespace: m.value(catEditor, "render-whitespace"), AutoSaveDelay: parseOpt(m.value(catEditor, "auto-save-delay"), 0)}
+	*cfg = types.EditorSettings{TabSize: parseOpt(m.value(catEditor, "tab-size"), 4), WordWrap: m.value(catEditor, "word-wrap") == "on", LineNumbers: m.value(catEditor, "line-numbers") == "on", SyntaxTheme: m.value(catEditor, "syntax-theme"), RenderWhitespace: m.value(catEditor, "render-whitespace"), AutoSaveDelay: parseOpt(m.value(catEditor, "auto-save-delay"), 0), FormatOnSave: m.value(catEditor, "format-on-save") == "on"}
 }
 
 func (m *Model) collectLSP(cfg *types.LSPSettings) {
-	*cfg = types.LSPSettings{Enabled: m.value(catLSP, "enabled") == "on", AutoDetect: m.value(catLSP, "auto-detect") == "on", Diagnostics: m.value(catLSP, "diagnostics") == "on"}
+	lsp := types.NormalizeLSP(types.LSPSettings{
+		Enabled:          m.value(catLSP, "enabled") == "on",
+		AutoDetect:       m.value(catLSP, "auto-detect") == "on",
+		StartOnOpen:      m.value(catLSP, "start-on-open") == "on",
+		Diagnostics:      m.value(catLSP, "diagnostics") == "on",
+		Completions:      m.value(catLSP, "completions") == "on",
+		Hover:            m.value(catLSP, "hover") == "on",
+		Definition:       m.value(catLSP, "goto-definition") == "on",
+		References:       m.value(catLSP, "find-references") == "on",
+		Outline:          m.value(catLSP, "outline") == "on",
+		Rename:           m.value(catLSP, "rename") == "on",
+		DiagInEditor:     m.value(catLSP, "diag-editor") == "on",
+		DiagInTree:       m.value(catLSP, "diag-tree") == "on",
+		DiagInStatus:     m.value(catLSP, "diag-status") == "on",
+		AutoComplete:     m.value(catLSP, "auto-complete") == "on",
+		MinSeverity:      m.value(catLSP, "min-severity"),
+		UpdateDebounceMS: parseOpt(m.value(catLSP, "debounce"), 300),
+		Languages:        make(map[string]types.LSPLanguageSettings),
+	})
+	for _, lang := range types.DefaultLSPLanguages() {
+		enabled := m.value(catLSP, "lang-"+lang.ID+"-enabled") == "on"
+		cmd := m.value(catLSP, "lang-"+lang.ID+"-cmd")
+		args := splitArgs(m.value(catLSP, "lang-"+lang.ID+"-args"))
+		if cmd == "" {
+			cmd = lang.DefaultCmd
+		}
+		if len(args) == 0 {
+			args = append([]string(nil), lang.DefaultArgs...)
+		}
+		lsp.Languages[lang.ID] = types.LSPLanguageSettings{Enabled: enabled, Command: cmd, Args: args}
+	}
+	*cfg = lsp
+}
+
+func splitArgs(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return strings.Fields(s)
+}
+
+func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
+	lsp = types.NormalizeLSP(lsp)
+	fields := []*ui.FieldState{
+		ui.SeparatorFieldState("language-intelligence", "Language intelligence"),
+		ui.BoolFieldState("enabled", "Enabled", lsp.Enabled, "Master switch for language servers in this scope."),
+		ui.BoolFieldState("auto-detect", "Auto-detect", lsp.AutoDetect, "Start a server from files present in the project."),
+		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Launch detected servers when the workspace opens."),
+		ui.TextFieldState("debounce", "Update delay", fmt.Sprintf("%d", lsp.UpdateDebounceMS), "Milliseconds to wait after an edit before notifying the server."),
+		ui.SeparatorFieldState("features", "Features"),
+		ui.BoolFieldState("diagnostics", "Diagnostics", lsp.Diagnostics, "Publish errors, warnings, and hints from the server."),
+		ui.BoolFieldState("completions", "Completions", lsp.Completions, "Offer completion items at the cursor."),
+		ui.BoolFieldState("auto-complete", "Auto-complete", lsp.AutoComplete, "Trigger completions while typing."),
+		ui.BoolFieldState("hover", "Hover", lsp.Hover, "Show symbol documentation under the cursor."),
+		ui.BoolFieldState("goto-definition", "Go to definition", lsp.Definition, "Jump to the symbol definition."),
+		ui.BoolFieldState("find-references", "Find references", lsp.References, "List every reference to the symbol."),
+		ui.BoolFieldState("outline", "Document outline", lsp.Outline, "Build the file symbol outline."),
+		ui.BoolFieldState("rename", "Rename", lsp.Rename, "Rename the symbol across the project."),
+		ui.SeparatorFieldState("diagnostic-display", "Diagnostic display"),
+		ui.BoolFieldState("diag-editor", "In editor", lsp.DiagInEditor, "Underline issues in the open buffer."),
+		ui.BoolFieldState("diag-tree", "In file tree", lsp.DiagInTree, "Show issue counts on files in the sidebar."),
+		ui.BoolFieldState("diag-status", "In status bar", lsp.DiagInStatus, "Show project-wide error and warning totals."),
+		ui.CycleFieldState("min-severity", "Minimum severity", []string{"error", "warning", "info", "hint"}, lsp.MinSeverity, "Hide diagnostics weaker than this level."),
+		ui.SeparatorFieldState("servers", "Language servers"),
+	}
+	for _, lang := range types.DefaultLSPLanguages() {
+		cfg := lsp.Languages[lang.ID]
+		if cfg.Command == "" {
+			cfg.Command = lang.DefaultCmd
+			cfg.Args = append([]string(nil), lang.DefaultArgs...)
+			cfg.Enabled = true
+		}
+		fields = append(fields,
+			ui.BoolFieldState("lang-"+lang.ID+"-enabled", lang.Name, cfg.Enabled, "Start this server when matching files are present."),
+			ui.TextFieldState("lang-"+lang.ID+"-cmd", lang.ID+" command", cfg.Command, "Executable used for "+lang.Name+"."),
+			ui.TextFieldState("lang-"+lang.ID+"-args", lang.ID+" args", strings.Join(cfg.Args, " "), "Command arguments, space-separated."),
+		)
+	}
+	return formModel(fields...)
 }
 
 func (m *Model) collectUI(cfg *types.UISettings) {

@@ -50,7 +50,7 @@ func (m *App) focusTarget() FocusTarget {
 	if m.FocusStack != nil {
 		top = m.FocusStack.Top()
 	}
-	if top == FocusTree && m.Tree != nil && m.Tree.Model != nil && m.Tree.Visible {
+	if top == FocusTree && m.sidebarHostVisible() {
 		return FocusTree
 	}
 	if m.launcherHostVisible() {
@@ -112,7 +112,7 @@ func (m *App) setFocusEditor() {
 // to the previous region (launcher / editor / input) when the tree already
 // owns focus. Bound to Ctrl+1 (view.focus.sidebar).
 func (m *App) toggleFocusTree() {
-	if m.Tree == nil || m.Tree.Model == nil || !m.Tree.Visible {
+	if !m.sidebarHostVisible() {
 		return
 	}
 	if m.FocusStack.Top() == FocusTree {

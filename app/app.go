@@ -110,18 +110,10 @@ func (a *App) Run() {
 		return SaveFileConfig(a.fc)
 	}
 	ws.OnAppSettingsSave = func(s ttypes.AppSettings) error {
-		theme := s.Theme
-		editor := s.Editor
-		lsp := s.LSP
-		ui := s.UI
-		font := s.Font
-		a.fc.Theme = &theme
-		a.fc.Editor = &editor
-		a.fc.LSP = &lsp
-		a.fc.UI = &ui
-		a.fc.Font = &font
+		ApplyAppSettingsToFileConfig(&a.fc, s)
 		return SaveFileConfig(a.fc)
 	}
+	ws.SetAppDefaults(FileConfigToAppSettings(a.fc))
 
 	// 3. Optional --resume: bootstrap that session now (launcher still available
 	//  for multi-session after the TUI starts).

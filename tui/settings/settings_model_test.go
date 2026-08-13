@@ -50,13 +50,14 @@ func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
 	surf := surface.NewSurface("settings-test", 90, 28, cell.TransparentBlank())
 	cw.Render(surf, &wm.RenderContext{Theme: th})
 
-	for _, text := range []string{"Search settings", "AI", "IDE", "Save", "Cancel"} {
+	for _, text := range []string{"Search settings", "Application", "AI", "IDE", "Save", "Cancel"} {
 		if !bufferContains(surf.Buffer(), text) {
 			t.Fatalf("settings surface is missing %q", text)
 		}
 	}
 
-	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
+	// Rail rows: 3=AI header, 4=Providers, 5=Main Agent (search + gap above).
+	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 5, Button: tea.MouseLeft})
 	if m.SelectedCategory() != catMain || m.Pane() != 0 {
 		t.Fatalf("category click selected=%d pane=%d, want %d/0", m.SelectedCategory(), m.Pane(), catMain)
 	}
@@ -92,6 +93,50 @@ func TestSettingsSearchFiltersGroupedNavigation(t *testing.T) {
 	}
 }
 
+func TestSettingsSurfaceRailUsesConsistentInset(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{}, nil)
+	surfaceRoot := NewSurface(th, m)
+	surfaceRoot.Layout(ui.LayoutContext{Theme: th}, ui.Rect{W: 90, H: 24})
+
+	if got := surfaceRoot.search.Bounds().X; got != workspaceSettingsInset {
+		t.Fatalf("search X=%d want shared inset %d", got, workspaceSettingsInset)
+	}
+	if got := surfaceRoot.categories.Bounds().X; got != workspaceSettingsInset {
+		t.Fatalf("category rail X=%d want shared inset %d", got, workspaceSettingsInset)
+	}
+	if got := surfaceRoot.form.Bounds().X; got <= surfaceRoot.categories.Bounds().X {
+		t.Fatalf("form X=%d must follow category rail X=%d", got, surfaceRoot.categories.Bounds().X)
+	}
+}
+
+func TestSettingsSurfaceSplitDividerDragResizesRail(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{}, nil)
+	surfaceRoot := NewSurface(th, m)
+	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
+	surfaceRoot.SetFocusHandler(cw.Focus)
+	host := cw.Host()
+	host.Resize(90, 28)
+	host.Layout()
+
+	startW := surfaceRoot.search.Bounds().W
+	div := surfaceRoot.divider.Bounds()
+	if div.Empty() {
+		t.Fatal("settings divider bounds empty")
+	}
+	clickX := div.X + div.W/2
+	res := host.Handle(tea.MouseClickMsg{X: clickX, Y: 8, Button: tea.MouseLeft})
+	if !res.Handled || !host.HasPointerCapture() {
+		t.Fatalf("click divider: handled=%v capture=%v hit=%q", res.Handled, host.HasPointerCapture(), host.HitTest(clickX, 8))
+	}
+	host.Handle(tea.MouseMotionMsg{X: clickX + 6, Y: 8, Button: tea.MouseLeft})
+	host.Layout()
+	if surfaceRoot.search.Bounds().W != startW+6 {
+		t.Fatalf("after +6 drag rail W=%d want %d", surfaceRoot.search.Bounds().W, startW+6)
+	}
+}
+
 func TestSettingsSurfaceActionBarEmitsMessages(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, types.AppSettings{}, nil)
@@ -120,8 +165,9 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 	surf := surface.NewSurface("settings-native-form", 90, 28, cell.TransparentBlank())
 	cw.Render(surf, &wm.RenderContext{Theme: th})
 
-	// The Editor category follows the AI group and Appearance rows.
-	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 10, Button: tea.MouseLeft})
+	// Rail: scope, search, underline, then AI header / agents / gap / IDE /
+	// Appearance / Editor. Editor is one row below Appearance (Y=11).
+	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 12, Button: tea.MouseLeft})
 	if m.SelectedCategory() != catEditor {
 		t.Fatalf("selected category=%d, want editor", m.SelectedCategory())
 	}

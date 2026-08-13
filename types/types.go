@@ -154,12 +154,37 @@ type EditorSettings struct {
 	FormatOnSave     bool   `json:"format_on_save,omitempty"`
 }
 
+// LSPLanguageSettings is the per-language overlay for one language server.
+// Empty Command/Args inherit the built-in default for that language.
+type LSPLanguageSettings struct {
+	Enabled bool     `json:"enabled"`
+	Command string   `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
+}
+
+// LSPSettings is the language-intelligence configuration. Bools are persisted
+// without omitempty so an explicit off is distinct from "use defaults".
 type LSPSettings struct {
-	Enabled     bool                `json:"enabled,omitempty"`
-	AutoDetect  bool                `json:"auto_detect,omitempty"`
-	Servers     map[string]string   `json:"servers,omitempty"`
-	ServerArgs  map[string][]string `json:"server_args,omitempty"`
-	Diagnostics bool                `json:"diagnostics,omitempty"`
+	Enabled      bool `json:"enabled"`
+	AutoDetect   bool `json:"auto_detect"`
+	StartOnOpen  bool `json:"start_on_open"`
+	Diagnostics  bool `json:"diagnostics"`
+	Completions  bool `json:"completions"`
+	Hover        bool `json:"hover"`
+	Definition   bool `json:"goto_definition"`
+	References   bool `json:"find_references"`
+	Outline      bool `json:"document_outline"`
+	Rename       bool `json:"rename"`
+	DiagInEditor bool `json:"diag_in_editor"`
+	DiagInTree   bool `json:"diag_in_tree"`
+	DiagInStatus bool `json:"diag_in_status"`
+	AutoComplete bool `json:"auto_complete"`
+	// MinSeverity is error, warning, info, or hint.
+	MinSeverity      string                         `json:"min_severity,omitempty"`
+	UpdateDebounceMS int                            `json:"update_debounce_ms,omitempty"`
+	Servers          map[string]string              `json:"servers,omitempty"`
+	ServerArgs       map[string][]string            `json:"server_args,omitempty"`
+	Languages        map[string]LSPLanguageSettings `json:"languages,omitempty"`
 }
 
 type UISettings struct {

@@ -7,13 +7,10 @@ import (
 
 // TreeState is the retained TUI projection for the workspace file-tree data.
 type TreeState struct {
-	Model            *filetree.FileTreeModel
-	Visible          bool
-	Width            int
-	Resizing         bool
-	ResizeStartX     int
-	ResizeStartWidth int
-	YOffset          int
+	Model   *filetree.FileTreeModel
+	Visible bool
+	Width   int
+	YOffset int
 }
 
 // ViewData converts the retained file-tree control state into neutral row

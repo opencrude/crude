@@ -10,6 +10,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
+	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
@@ -101,9 +102,12 @@ type contentLayout struct {
 func (m *App) computeContentLayout() contentLayout {
 	lay := contentLayout{}
 
-	sidebarVisible := m.Tree.Visible && m.Tree.Model != nil && m.sidebarScreen != nil
+	activityW := m.activityChromeWidth()
+	sidebarVisible := m.sidebarHostVisible()
 	if sidebarVisible {
-		lay.SidebarW = m.Tree.Width + 1 // +1 for divider
+		lay.SidebarW = activityW + m.Tree.Width + 1 // activity + content + divider
+	} else {
+		lay.SidebarW = activityW
 	}
 
 	m.Win.SetWidth(m.width - 2*m.Theme.Spacing.PadLR - lay.SidebarW)
@@ -250,7 +254,7 @@ func (m *App) computeContentLayout() contentLayout {
 
 	// The sidebar is a slot in the root tree starting at row 3. Update the
 	// tree height for the model (used for scroll extent and rendering).
-	if m.Tree.Visible && m.Tree.Model != nil {
+	if m.Tree != nil && m.Tree.Visible && m.Tree.Model != nil {
 		treeStart := 3
 		m.Tree.YOffset = treeStart
 		contentH := m.height - 2
@@ -278,17 +282,26 @@ func (m *App) configureShell() {
 		X: lay.SidebarW + lay.PadLR, Y: 3, W: lay.InnerW, H: 2,
 	})
 
-	// Sidebar: full-height panel left of the content column.
-	sidebarActive := m.sidebarHostVisible()
+	// Activity bar: always-on left rail.
+	activityW := m.activityChromeWidth()
 	sidebarH := (m.height - 2) - 3
 	if sidebarH < 1 {
 		sidebarH = 1
 	}
+	m.shell.setSlot(shellActivitySlot, activityW > 0, ui.Rect{X: 0, Y: 3, W: activityW, H: sidebarH})
+
+	// Sidebar content: files / agents / terminals / git, right of the rail.
+	sidebarActive := m.sidebarHostVisible()
 	sidebarW := 0
 	if sidebarActive {
 		sidebarW = m.Tree.Width + 1
 	}
-	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{X: 0, Y: 3, W: sidebarW, H: sidebarH})
+	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{X: activityW, Y: 3, W: sidebarW, H: sidebarH})
+	if m.activityView != activityFiles && m.activityList != nil {
+		m.shell.SetScreen(shellSidebarSlot, m.activityList)
+	} else if m.sidebarScreen != nil {
+		m.shell.SetScreen(shellSidebarSlot, m.sidebarScreen)
+	}
 
 	// Main content views are mutually exclusive: launcher / chat / editor.
 	launcherActive := m.launcherHostVisible()
@@ -304,6 +317,7 @@ func (m *App) configureShell() {
 	m.configureHeaderScreen()
 	m.configureTabBarScreen()
 	m.configureSidebarScreen()
+	m.refreshActivityList()
 	m.configureInputScreen()
 	m.configureChatScreen()
 	m.configureEditorScreen()
@@ -355,7 +369,11 @@ func (m *App) syncRootFocus() {
 	var id ui.ComponentID
 	switch m.focusTarget() {
 	case FocusTree:
-		id = shelltree.TreeID
+		if m.activityView == activityFiles {
+			id = shelltree.TreeID
+		} else {
+			id = activitylist.ListID
+		}
 	case FocusTabBar:
 		id = shelltabs.TabsID
 	case FocusEditor:
@@ -404,8 +422,20 @@ func (m *App) configureTabBarScreen() {
 }
 
 func (m *App) configureSidebarScreen() {
-	// The sidebar screen derives its width/height from the slot rect during
-	// layout and syncs the model from the tree; no per-frame binds needed.
+	if m.sidebarScreen != nil {
+		maxW := m.width / 2
+		if maxW < 12 {
+			maxW = 12
+		}
+		m.sidebarScreen.SetSplitMaxFirst(maxW)
+	}
+	if m.activityList != nil {
+		maxW := m.width / 2
+		if maxW < 12 {
+			maxW = 12
+		}
+		m.activityList.SetSplitMaxFirst(maxW)
+	}
 }
 
 func (m *App) configureInputScreen() {
@@ -494,7 +524,7 @@ func (m *App) configureEditorScreen() {
 	}
 	editorPadL := m.Theme.Spacing.PadLR
 	editorPadR := m.Theme.Spacing.PadLR
-	if m.Tree.Visible {
+	if m.Tree != nil && m.Tree.Visible {
 		editorPadL = 0
 	}
 	m.EditorState.Editor.SetPadding(editorPadL)
@@ -528,12 +558,11 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	if m.windowManager != nil {
 		if fw := m.windowManager.Focused(); fw != nil {
 			switch fw.ID {
-			case findInFilesWindowID:
+			case findInFilesWindowID, replaceInFilesWindowID:
 				return "", []ui.HintSegment{
 					ui.TextSeg("type to search"),
 					ui.ActionSeg("list.preview.navigate"),
 					ui.ActionSeg("list.open"),
-					ui.ActionSeg("list.open.mouse"),
 					ui.ActionSeg("search.regex.toggle"),
 					ui.ActionSeg("overlay.close"),
 				}

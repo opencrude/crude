@@ -197,7 +197,6 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 			indicatorX = ox + width - indicatorW - 1
 			if indicatorX-x < 2 {
 				indicatorCount = 0
-				indicatorW = 0
 				indicatorX = ox + width
 			} else {
 				nameMax = indicatorX - x - 1

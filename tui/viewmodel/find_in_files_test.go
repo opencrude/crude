@@ -49,6 +49,64 @@ func TestFindInFilesShortcutRoutesTypingAndPaste(t *testing.T) {
 	}
 }
 
+func TestReplaceInFilesShortcutOpensSiblingOverlay(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width = 120
+	app.height = 36
+	app.RootPath = t.TempDir()
+	app.windowManager = wm.NewWindowManager()
+	app.overlayHost = ui.NewOverlayHost(app.windowManager)
+
+	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl | tea.ModAlt})
+	if app.findInFiles == nil || app.findInFiles.Mode() != findinfiles.ModeReplace {
+		t.Fatal("Ctrl+Alt+H should open Replace in Files")
+	}
+	if app.windowManager.Window(replaceInFilesWindowID) == nil {
+		t.Fatal("Replace in Files window missing")
+	}
+	if body, ok := app.windowManager.Window(replaceInFilesWindowID).Content.(*ui.WindowFrameWidget).Body().(*findinfiles.Screen); !ok || body != app.findInFiles {
+		t.Fatal("Replace in Files should mount the native search body")
+	}
+}
+
+func TestReplaceInFilesAppliesToDiskAndRefreshes(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.go")
+	if err := os.WriteFile(path, []byte("alpha\nalpha beta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := newFullTestApp(t)
+	app.width = 120
+	app.height = 36
+	app.RootPath = root
+	app.FileOps = workspace.NewFileOpsService(root, nil, nil)
+	app.windowManager = wm.NewWindowManager()
+	app.overlayHost = ui.NewOverlayHost(app.windowManager)
+	app.toggleReplaceInFiles()
+	search := app.findInFiles
+	search.SetQuery("alpha")
+	search.SetReplacement("omega")
+	search.ScheduleSearch()
+	search.ApplySearchResults(search.Generation(), []fileio.ProjectSearchMatch{
+		{Path: path, RelativePath: "main.go", Line: 1, Column: 0, EndColumn: 5, LineText: "alpha", TextMatches: []int{0, 1, 2, 3, 4}},
+		{Path: path, RelativePath: "main.go", Line: 2, Column: 0, EndColumn: 5, LineText: "alpha beta", TextMatches: []int{0, 1, 2, 3, 4}},
+	}, nil, 0)
+
+	cmd := app.applyProjectReplace(findinfiles.ReplaceMsg{
+		Screen: search, All: true, Query: "alpha", Replacement: "omega",
+	})
+	if cmd == nil {
+		t.Fatal("replace all should reschedule search")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "omega\nomega beta\n" {
+		t.Fatalf("disk=%q", data)
+	}
+}
+
 func TestFindInFilesSearchRoutesThroughWorkspaceEvent(t *testing.T) {
 	root := t.TempDir()
 	app := newFullTestApp(t)

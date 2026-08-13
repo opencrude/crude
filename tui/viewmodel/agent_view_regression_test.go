@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/rendering"
+	"crude/tui/screens/activitybar"
 	ttypes "crude/tui/types"
 )
 
@@ -130,8 +131,8 @@ func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 	app.paintShellFrame()
 
 	lay := app.computeLayout()
-	if lay.SidebarW != 31 {
-		t.Fatalf("precondition: sidebar 31 wide, got %d", lay.SidebarW)
+	if lay.SidebarW != 31+activitybar.Width {
+		t.Fatalf("precondition: sidebar %d wide, got %d", 31+activitybar.Width, lay.SidebarW)
 	}
 	if !app.shellSlotActive(shellChatSlot) {
 		t.Fatal("precondition: chat slot active")

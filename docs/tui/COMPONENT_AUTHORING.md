@@ -1,16 +1,17 @@
 # Component Authoring Guide
 
 Practical recipes for building TUI screens with the native `tui/ui` component
-system. See also [`CONTROL_USAGE.md`](./CONTROL_USAGE.md) and
-[`SURFACE_CATALOG.md`](./SURFACE_CATALOG.md).
+system. See also [`CONTROL_USAGE.md`](./CONTROL_USAGE.md),
+[`SURFACE_CATALOG.md`](./SURFACE_CATALOG.md), and
+[`SETTINGS.md`](./SETTINGS.md).
 
 ## Screen types
 
 | Pattern | When to use | Examples |
 |---------|-------------|----------|
-| **Host paint screen** | Persistent docked chrome in the main layout | `shellheader`, `shelltabs`, `shellinput`, `shelltree`, `shellchat` |
-| **OverlayHost + WindowFrame** | Floating dialogs and pickers | `sessionpicker`, `composer`, `findinfiles`, command palette |
-| **PanelDeck** | Session-owned panels between messages and input | settings, questions, tool confirm, YOLO |
+| **Host paint screen** | Persistent docked chrome in the main layout | `shellheader`, `shelltabs`, `shellinput`, `shelltree`, `activitybar`, `activitylist`, `shellchat` |
+| **OverlayHost + WindowFrame** | Floating dialogs and pickers | `sessionpicker`, `help`, `composer`, `findinfiles`, command palette, application/workspace settings, **floating terminals** |
+| **PanelDeck** | Session-owned panels between messages and input | session settings, questions, tool confirm, YOLO, **docked terminals** |
 
 ---
 
@@ -180,6 +181,8 @@ func myRowPainter(buf *surface.CellBuffer, x, y, width int,
 
 - Results map to `VirtItem{ID, Height:1, Label, Payload}`.
 - Selection/activate emits search-result actions.
+- Query row: SearchField on the left, case/regex ToggleButtons on the right.
+- Replace in Files is the same screen (`ModeReplace`) with a replace field and Replace/All on the right.
 
 ---
 
@@ -245,6 +248,45 @@ Screens must implement `SetTokens` / `SetTheme` and forward to children.
 
 - Gallery: `TestDemoGalleryRuntimeThemeSwitchPreservesState` in `tui/ui/demo_test.go`.
 - Product screens: call `SetTheme` then re-paint; assert accent FG still present.
+
+---
+
+## Recipe 6: resizable two-pane split
+
+Every two-panel layout uses `ui.SplitModel` + `ui.SplitDivider` (Host pointer
+capture). Do not add viewmodel-owned drag flags.
+
+**Two children:** wrap them in `ui.SplitPane` (it owns the model and divider).
+
+```go
+split := ui.NewSplitPane("editor/split", ui.Horizontal, left, right)
+split.SetMinSizes(12, 20)
+split.SetFraction(0.35)
+```
+
+**Custom multi-child columns** (settings rail, launcher, Find in Files, file
+tree vs the rest of the shell): keep laying out your own children, bind a
+shared model to a `SplitDivider`, and read `Resolve` / `HasFirstSize` from
+`Layout`.
+
+```go
+model := ui.NewSplitModel(ui.Horizontal)
+model.SetMinSizes(12, 20)
+div := ui.NewSplitDivider("surface/divider", model)
+div.SetColorRole(ui.ColorPopupDivider)
+div.SetTransparent(true)
+// Layout: first, gap, _ := model.Resolve(innerW) after a drag;
+// otherwise keep the default first-pane size. Place `div` in the gap.
+div.SetCurrentFirst(first)
+```
+
+Drag emits `split.resize` with `ui.SplitResize{ID, First}`. Screens that own
+their geometry consume it (`InvalidateLayout`). The shell sidebar is the
+exception: viewmodel applies the payload to `Tree.Width` so
+`computeContentLayout` can grow the slot.
+
+Horizontal splits paint `BorderV`; vertical splits paint `BorderH`. Hover and
+drag use `ColorAccent`.
 
 ---
 

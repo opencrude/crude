@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/input"
 	ttypes "crude/tui/types"
 )
 
@@ -33,20 +32,13 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.openSessionSettings()
 	case "/api-key":
 		m.Logger.Info("INPUT", "slash", "command", "api-key")
-		m.openWorkspaceSettings()
+		m.openApplicationSettings()
 	case "/sessions":
 		m.Logger.Info("INPUT", "slash", "command", "sessions")
 		m.openSessionPicker()
 	case "/help":
 		m.Logger.Info("INPUT", "slash", "command", "help")
-		var b strings.Builder
-		b.WriteString("Available commands:\n")
-		for _, c := range input.AvailableCmds() {
-			fmt.Fprintf(&b, "  %-16s %s\n", "/"+c.Label, c.Desc)
-		}
-		if m.AgentMgr.ActiveID() != "" {
-			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
-		}
+		m.openHelp()
 	case "/debug-lsp":
 		var b strings.Builder
 		b.WriteString("LSP Debug:\n")

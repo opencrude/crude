@@ -28,6 +28,9 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	}
 	th := theme.DefaultDark()
 	model := filetree.NewFileTreeModel(dir)
+	if r := model.IconResolver(); r != nil {
+		r.UseNerdFont = false
+	}
 	screen := shelltree.New(th, model)
 	screen.ResizeLayout(40, 8)
 
@@ -79,6 +82,9 @@ func TestScreenDirIconConsumesTreeGlyphs(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := filetree.NewFileTreeModel(dir)
+	if r := model.IconResolver(); r != nil {
+		r.UseNerdFont = false
+	}
 	th := theme.DefaultDark()
 	th.Glyphs.TreeCollapsed = "c"
 	th.Glyphs.TreeExpanded = "v"

@@ -16,9 +16,10 @@ type TextField struct {
 	Base
 	edit        *TextEdit
 	placeholder string
-	prompt      string // optional leading prompt e.g. ">"
+	prompt      string // optional prompt glyph/string (not part of value)
 	promptFG    cell.Color
 	promptFGSet bool
+	promptAtEnd bool
 	readOnly    bool
 	disabled    bool
 	password    bool
@@ -51,8 +52,21 @@ func (t *TextField) SetTokens(ts *TokenSet) { t.tokens = ts }
 // SetPlaceholder sets empty-state hint text.
 func (t *TextField) SetPlaceholder(s string) { t.placeholder = s }
 
-// SetPrompt sets a leading prompt glyph/string (not part of value).
+// SetPrompt sets a prompt glyph/string (not part of value). By default it
+// paints at the start of the field; call SetPromptPlacement(PromptEnd) for
+// trailing search glyphs.
 func (t *TextField) SetPrompt(s string) { t.prompt = s }
+
+// PromptPlacement selects whether the prompt paints before or after the value.
+type PromptPlacement int
+
+const (
+	PromptStart PromptPlacement = iota
+	PromptEnd
+)
+
+// SetPromptPlacement puts the prompt at the start (default) or end of the field.
+func (t *TextField) SetPromptPlacement(p PromptPlacement) { t.promptAtEnd = p == PromptEnd }
 
 // SetPromptColor overrides the prompt foreground color.
 func (t *TextField) SetPromptColor(c cell.Color) { t.promptFG, t.promptFGSet = c, true }
@@ -122,13 +136,20 @@ func (t *TextField) Layout(_ LayoutContext, r Rect) {
 	}
 }
 
-func (t *TextField) contentX() int {
+func (t *TextField) promptWidth() int {
 	return rendering.VisibleWidth(t.prompt)
+}
+
+func (t *TextField) contentX() int {
+	if t.promptAtEnd {
+		return 0
+	}
+	return t.promptWidth()
 }
 
 func (t *TextField) contentWidth() int {
 	b := t.Bounds()
-	w := b.W - t.contentX()
+	w := b.W - t.promptWidth()
 	if w < 0 {
 		return 0
 	}
@@ -163,6 +184,9 @@ func (t *TextField) ensureCursorVisible() {
 	if t.viewStart < 0 {
 		t.viewStart = 0
 	}
+	if maxStart := max(0, t.edit.Len()-cw); t.viewStart > maxStart {
+		t.viewStart = maxStart
+	}
 }
 
 // Paint renders prompt, value or placeholder, selection, and inverse cursor.
@@ -184,8 +208,12 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 	}
 	x := originX + r.X
 	y := originY + r.Y
+	promptW := t.promptWidth()
+	contentX := x
+	if t.prompt != "" && !t.promptAtEnd {
+		contentX = x + promptW
+	}
 
-	// Prompt
 	if t.prompt != "" {
 		pf := fg
 		if t.promptFGSet {
@@ -193,14 +221,18 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 		} else if t.tokens != nil {
 			pf = t.tokens.Color(ColorAccent)
 		}
-		buf.WriteString(x, y, t.prompt, pf, bg, 0)
-		x += t.contentX()
+		px := x
+		if t.promptAtEnd {
+			px = x + max(0, r.W-promptW)
+		}
+		buf.WriteString(px, y, t.prompt, pf, bg, 0)
 	}
 
 	cw := t.contentWidth()
 	if cw <= 0 {
 		return
 	}
+	x = contentX
 
 	// Placeholder when empty and not focused-with-cursor-only display
 	if t.edit.Len() == 0 && t.placeholder != "" {
@@ -218,14 +250,16 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 			phFG = t.tokens.Color(ColorMuted)
 		}
 		buf.WriteString(x, y, ph, phFG, bg, cell.AttrItalic)
-		// Cursor at start when focused
-		if ctx.Focused && !t.disabled {
-			t.paintCursor(buf, x, y, bg)
-		}
+		// No cursor block over placeholder text: a block here obscures the
+		// first placeholder glyph (e.g. the "F" in "Filter…") and reads as a
+		// highlight. The cursor appears as soon as the user types.
 		return
 	}
 
 	runes := t.displayRunes()
+	if maxStart := max(0, len(runes)-cw); t.viewStart > maxStart {
+		t.viewStart = maxStart
+	}
 	selA, selB := t.edit.SelectionRange()
 	selBG := bg
 	if t.tokens != nil {
@@ -325,6 +359,9 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		// Position cursor from local X
 		lx := ctx.LocalX - t.contentX()
+		if t.promptAtEnd && t.promptWidth() > 0 && ctx.LocalX >= t.Bounds().W-t.promptWidth() {
+			lx = t.contentWidth()
+		}
 		if lx < 0 {
 			lx = 0
 		}

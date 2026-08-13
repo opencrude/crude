@@ -47,7 +47,7 @@ deliverable and exit criterion without watering down enforcement targets.
 | ActionBar focus/hit routing | ✅ done | `tui/ui/action_bar_test.go` |
 | TextField / TextArea Home/End/shift | ✅ done | `tui/ui/textfield_test.go`, `tui/ui/text_area_test.go` |
 | Tree Home/End | ✅ done | `tui/ui/tree_test.go` + `tui/screens/shelltree/tree_contract_test.go` (Host-level table) |
-| Mouse click-outside policies | ✅ done | `tui/viewmodel/overlay_click_outside_contract_test.go` — full `overlayOutsideContractMatrix` (17 overlays) + one real `dispatchMouseClick` integration per policy group |
+| Mouse click-outside policies | ✅ done | `tui/viewmodel/overlay_click_outside_contract_test.go` — full `overlayOutsideContractMatrix` (18 overlays) + one real `dispatchMouseClick` integration per policy group |
 | Bracketed paste contract | ✅ done | `tui/ui/paste_contract_test.go` |
 | Shell header/tabs/status/tree/chat input | ✅ **expanded** | Paint goldens + keyboard tables: **shellinput**, **shelltabs**, **shelltree** (`tree_contract_test.go`), **shellheader** (`header_contract_test.go`, display-only), **shellstatus** (`status_contract_test.go` display-only + `viewmodel/status_keyboard_contract_test.go` ActionRegistry chords) |
 | Launcher / welcome keyboard contracts | ✅ **expanded** | `tui/screens/launcher/launcher_contract_test.go` (Host table incl. `d` delete); `tui/viewmodel/launcher_keyboard_contract_test.go` (dispatch + global chords + min-size gate) |

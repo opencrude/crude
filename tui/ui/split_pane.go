@@ -4,38 +4,44 @@ import (
 	"crude/tui/surface"
 )
 
-// SplitPane lays two children along one axis separated by a divider. The
-// divider position is controlled by a fraction (0..1) or an absolute cell
-// position. Drag wiring is a Phase 5 concern; the position setters exist so
-// drag handling can mutate them.
+// SplitPane lays two children along one axis separated by a draggable
+// SplitDivider. The divider position is a fraction (0..1) or an absolute
+// cell count; pointer capture on the divider mutates the bound SplitModel.
 type SplitPane struct {
 	Base
-	dir         Direction // Horizontal = side-by-side, Vertical = stacked
-	fraction    float64
-	dividerSize int
-	dividerPos  int // absolute main-axis position; -1 = derive from fraction
-	first       Component
-	second      Component
+	model   *SplitModel
+	divider *SplitDivider
+	first   Component
+	second  Component
 }
 
 // NewSplitPane creates a split with a 0.5 fraction and 1-cell divider.
 func NewSplitPane(id ComponentID, dir Direction, first, second Component) *SplitPane {
+	model := NewSplitModel(dir)
+	d := NewSplitDivider(NewID(id, "divider"), model)
 	return &SplitPane{
-		Base:        NewBase(id),
-		dir:         dir,
-		fraction:    0.5,
-		dividerSize: 1,
-		dividerPos:  -1,
-		first:       first,
-		second:      second,
+		Base:    NewBase(id),
+		model:   model,
+		divider: d,
+		first:   first,
+		second:  second,
 	}
 }
 
-// Children implements Parent.
+// Model returns the shared split state.
+func (s *SplitPane) Model() *SplitModel { return s.model }
+
+// Divider returns the hit-tested resize handle.
+func (s *SplitPane) Divider() *SplitDivider { return s.divider }
+
+// Children implements Parent: first pane, divider, second pane.
 func (s *SplitPane) Children() []Component {
-	out := make([]Component, 0, 2)
+	out := make([]Component, 0, 3)
 	if s.first != nil {
 		out = append(out, s.first)
+	}
+	if s.divider != nil {
+		out = append(out, s.divider)
 	}
 	if s.second != nil {
 		out = append(out, s.second)
@@ -46,30 +52,29 @@ func (s *SplitPane) Children() []Component {
 // SetFraction sets the divider as a fraction of the main axis (clamped to 0..1)
 // and clears any absolute position.
 func (s *SplitPane) SetFraction(f float64) {
-	if f < 0 {
-		f = 0
-	}
-	if f > 1 {
-		f = 1
-	}
-	s.fraction = f
-	s.dividerPos = -1
+	s.model.SetFraction(f)
 }
 
 // SetDividerPosition sets the divider at an absolute main-axis cell position.
 func (s *SplitPane) SetDividerPosition(p int) {
-	if p < 0 {
-		p = 0
-	}
-	s.dividerPos = p
+	s.model.SetFirstSize(p)
 }
 
 // SetDividerSize sets the divider width/height in cells.
 func (s *SplitPane) SetDividerSize(d int) {
-	if d < 0 {
-		d = 0
+	s.model.SetDividerSize(d)
+}
+
+// SetMinSizes sets the minimum first and second pane sizes.
+func (s *SplitPane) SetMinSizes(first, second int) {
+	s.model.SetMinSizes(first, second)
+}
+
+// SetTokens forwards theme tokens to the divider.
+func (s *SplitPane) SetTokens(ts *TokenSet) {
+	if s.divider != nil {
+		s.divider.SetTokens(ts)
 	}
-	s.dividerSize = d
 }
 
 // Measure sums the two panes and the divider along the main axis.
@@ -81,49 +86,36 @@ func (s *SplitPane) Measure(ctx LayoutContext, cs Constraints) Size {
 	if s.second != nil {
 		secondSz = s.second.Measure(ctx, Loose(cs.MaxW, cs.MaxH))
 	}
-	if s.dir == Horizontal {
+	div := s.model.DividerSize()
+	if s.model.Dir() == Horizontal {
 		return cs.ClampSize(Size{
-			W: firstSz.W + s.dividerSize + secondSz.W,
+			W: firstSz.W + div + secondSz.W,
 			H: max(firstSz.H, secondSz.H),
 		})
 	}
 	return cs.ClampSize(Size{
 		W: max(firstSz.W, secondSz.W),
-		H: firstSz.H + s.dividerSize + secondSz.H,
+		H: firstSz.H + div + secondSz.H,
 	})
 }
 
-// Layout assigns parent-local rects to both panes.
+// Layout assigns parent-local rects to both panes and the divider.
 func (s *SplitPane) Layout(ctx LayoutContext, r Rect) {
 	s.SetBounds(r)
-	if s.first == nil && s.second == nil {
-		return
-	}
 	mainTotal, crossTotal := r.W, r.H
-	if s.dir == Vertical {
+	if s.model.Dir() == Vertical {
 		mainTotal, crossTotal = r.H, r.W
 	}
-	divider := s.dividerSize
-	if divider > mainTotal {
-		divider = mainTotal
+	firstMain, divider, secondMain := s.model.Resolve(mainTotal)
+	if s.divider != nil {
+		s.divider.SetCurrentFirst(firstMain)
 	}
-	firstMain := int(float64(mainTotal) * s.fraction)
-	if s.dividerPos >= 0 {
-		firstMain = s.dividerPos
-	}
-	if firstMain < 0 {
-		firstMain = 0
-	}
-	if remain := mainTotal - divider; firstMain > remain {
-		firstMain = remain
-	}
-	secondMain := mainTotal - divider - firstMain
-	if secondMain < 0 {
-		secondMain = 0
-	}
-	if s.dir == Horizontal {
+	if s.model.Dir() == Horizontal {
 		if s.first != nil {
 			s.first.Layout(ctx, Rect{X: 0, Y: 0, W: firstMain, H: crossTotal})
+		}
+		if s.divider != nil {
+			s.divider.Layout(ctx, Rect{X: firstMain, Y: 0, W: divider, H: crossTotal})
 		}
 		if s.second != nil {
 			s.second.Layout(ctx, Rect{X: firstMain + divider, Y: 0, W: secondMain, H: crossTotal})
@@ -133,15 +125,18 @@ func (s *SplitPane) Layout(ctx LayoutContext, r Rect) {
 	if s.first != nil {
 		s.first.Layout(ctx, Rect{X: 0, Y: 0, W: crossTotal, H: firstMain})
 	}
+	if s.divider != nil {
+		s.divider.Layout(ctx, Rect{X: 0, Y: firstMain, W: crossTotal, H: divider})
+	}
 	if s.second != nil {
 		s.second.Layout(ctx, Rect{X: 0, Y: firstMain + divider, W: crossTotal, H: secondMain})
 	}
 }
 
-// Paint is a no-op; panes are painted by Host or PaintTree.
+// Paint is a no-op; panes and the divider are painted by Host.paintNode.
 func (s *SplitPane) Paint(_ *surface.CellBuffer, _, _ int, _ PaintContext) {}
 
-// Handle ignores; Host hit-testing routes to the panes.
+// Handle ignores; Host hit-testing routes to the panes or the divider.
 func (s *SplitPane) Handle(_ EventContext, _ Event) EventResult {
 	return EventResult{}
 }
@@ -150,3 +145,6 @@ func (s *SplitPane) Handle(_ EventContext, _ Event) EventResult {
 func (s *SplitPane) Semantics() Semantics {
 	return Semantics{Role: RoleGroup, Label: string(s.ID())}
 }
+
+var _ Component = (*SplitPane)(nil)
+var _ Parent = (*SplitPane)(nil)

@@ -178,6 +178,7 @@ const (
 	RoleLabel
 	RoleGroup
 	RoleScrollBar
+	RoleSeparator
 )
 
 // Semantics describes a component for testing and future a11y.

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -163,6 +165,19 @@ func (ts *TokenSet) Theme() *theme.Theme {
 	return ts.theme
 }
 
+// SearchGlyph returns the themed monochrome magnifying-glass glyph with a
+// trailing space ("⌕ ") for prefix placement. Prefer SearchGlyphEnd for
+// search/filter fields so the glyph sits at the end of the input.
+func SearchGlyph(ts *TokenSet) string {
+	return DefaultGlyphsFromTokens(ts).Search + " "
+}
+
+// SearchGlyphEnd returns a leading-space magnifying glass for trailing
+// placement (" ⌕"). The glyph is ordinary Unicode (U+2315), never emoji.
+func SearchGlyphEnd(ts *TokenSet) string {
+	return " " + strings.TrimSpace(DefaultGlyphsFromTokens(ts).Search)
+}
+
 // Spacing helpers from the active theme.
 func (ts *TokenSet) PadLR() int {
 	if ts == nil || ts.theme == nil {
@@ -190,6 +205,23 @@ func (ts *TokenSet) DialogPad() int {
 		return 2
 	}
 	return ts.theme.Spacing.DialogPad
+}
+
+// FormIndent is the one-column inset of subsection labels under a section
+// title (settings rail items under "AI"/"IDE", form fields under a separator).
+func (ts *TokenSet) FormIndent() int {
+	if ts == nil || ts.theme == nil {
+		return 1
+	}
+	return ts.theme.Spacing.FormIndent
+}
+
+// FormTitlePad is the inherited top inset inside a form/settings body.
+func (ts *TokenSet) FormTitlePad() int {
+	if ts == nil || ts.theme == nil {
+		return 1
+	}
+	return ts.theme.Spacing.FormTitlePad
 }
 
 // Glyphs returns the active glyph token table.

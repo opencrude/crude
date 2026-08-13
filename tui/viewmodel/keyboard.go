@@ -14,10 +14,11 @@ import (
 	"crude/tui/editor"
 	"crude/tui/input"
 	"crude/tui/rendering"
+	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
-	"crude/tui/screens/shelltree"
 	"crude/tui/screens/shelltabs"
+	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
 	"crude/workspace"
@@ -36,11 +37,15 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m.toggleCommandPalette()
 			case "search.project.open":
 				return m.toggleFindInFiles()
+			case "search.project.replace":
+				return m.toggleReplaceInFiles()
 			case "composer.toggle":
 				return m.toggleComposer()
 			case "app.sessions":
 				m.openSessionPicker()
 				return m, nil
+			case "help.show":
+				return m.toggleHelp()
 			case "app.quit":
 				return m.handleQuit()
 			case "view.toggle.sidebar":
@@ -49,6 +54,22 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case "view.focus.sidebar":
 				m.toggleFocusTree()
 				return m, nil
+			case "view.activity.files":
+				m.toggleActivity(activityFiles)
+				return m, nil
+			case "view.activity.agents":
+				m.toggleActivity(activityAgents)
+				return m, nil
+			case "view.activity.terminals":
+				m.toggleActivity(activityTerminals)
+				return m, nil
+			case "view.activity.git":
+				m.toggleActivity(activityGit)
+				return m, nil
+			case "terminal.new":
+				return m, m.openNewTerminal()
+			case "terminal.toggle":
+				return m, m.toggleTerminalFocus()
 			}
 		}
 	}
@@ -65,9 +86,11 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Esc always closes the topmost popup first, regardless of focus.
+	// Floating terminals are KeepRoute windows that own Esc as a PTY key;
+	// close them with the window X / Close action, not Esc.
 	if msg.Code == tea.KeyEsc && m.windowManager != nil {
 		if topWin := m.windowManager.TopWindow(); topWin != nil && topWin.Focusable() {
-			if topWin.ClickOutsideBehavior() != wm.ClickOutsideIgnore {
+			if !ui.IsTerminalOverlay(ui.OverlayID(topWin.ID)) && topWin.ClickOutsideBehavior() != wm.ClickOutsideIgnore {
 				m.closePopupWindowByID(topWin.ID)
 				return m, nil
 			}
@@ -114,9 +137,14 @@ func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.rootHost == nil {
 		return m, nil
 	}
-	m.rootHost.Focus(shelltree.TreeID)
+	if m.activityView == activityFiles {
+		m.rootHost.Focus(shelltree.TreeID)
+	} else if m.activityList != nil {
+		m.rootHost.Focus(activitylist.ListID)
+	}
 	res := m.rootHost.Handle(msg)
-	return m, res.Cmd
+	cmd := m.handleHostAction(res.Action)
+	return m, tea.Batch(res.Cmd, cmd)
 }
 
 // treeFilterBlocksEscPop reports whether Esc should clear the tree filter
@@ -314,7 +342,13 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			}
 			return m, nil
 
-		case "find-in-files":
+		case "find-in-files", "replace-in-files":
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+
+		case "help":
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -350,6 +384,13 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m.handleTextOverlayKey(msg, &cmds)
 
 		default:
+			if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) {
+				if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				fw.MarkContentDirty()
+				return m, tea.Batch(cmds...)
+			}
 			if msg.Code == tea.KeyEsc {
 				m.closePopupWindowByID(fw.ID)
 				return m, nil

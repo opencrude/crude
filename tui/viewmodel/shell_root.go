@@ -21,6 +21,7 @@ const (
 	shellHeaderSlot shellSlotID = iota
 	shellStatusSlot
 	shellTabsSlot
+	shellActivitySlot
 	shellSidebarSlot
 	shellChatSlot
 	shellInputSlot
@@ -38,6 +39,8 @@ func (id shellSlotID) String() string {
 		return "shell/status"
 	case shellTabsSlot:
 		return "shell/tabs"
+	case shellActivitySlot:
+		return "shell/activity"
 	case shellSidebarSlot:
 		return "shell/sidebar"
 	case shellChatSlot:
@@ -73,6 +76,7 @@ type shellRoot struct {
 	header   ui.Component
 	status   ui.Component
 	tabs     ui.Component
+	activity ui.Component
 	sidebar  ui.Component
 	chat     ui.Component
 	input    ui.Component
@@ -85,7 +89,7 @@ type shellRoot struct {
 }
 
 func newShellRoot(
-	header, status, tabs, sidebar, chat, input, editor, launcher ui.Component,
+	header, status, tabs, activity, sidebar, chat, input, editor, launcher ui.Component,
 	deck *deckMount,
 ) *shellRoot {
 	return &shellRoot{
@@ -93,6 +97,7 @@ func newShellRoot(
 		header:   header,
 		status:   status,
 		tabs:     tabs,
+		activity: activity,
 		sidebar:  sidebar,
 		chat:     chat,
 		input:    input,
@@ -132,6 +137,8 @@ func (s *shellRoot) SetScreen(id shellSlotID, c ui.Component) {
 		s.status = c
 	case shellTabsSlot:
 		s.tabs = c
+	case shellActivitySlot:
+		s.activity = c
 	case shellSidebarSlot:
 		s.sidebar = c
 	case shellChatSlot:
@@ -161,6 +168,7 @@ func (s *shellRoot) Children() []ui.Component {
 	appendSlot(shellHeaderSlot, s.header)
 	appendSlot(shellStatusSlot, s.status)
 	appendSlot(shellTabsSlot, s.tabs)
+	appendSlot(shellActivitySlot, s.activity)
 	appendSlot(shellSidebarSlot, s.sidebar)
 	appendSlot(shellChatSlot, s.chat)
 	appendSlot(shellInputSlot, s.input)
@@ -188,6 +196,7 @@ func (s *shellRoot) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	layoutSlot(shellHeaderSlot, s.header)
 	layoutSlot(shellStatusSlot, s.status)
 	layoutSlot(shellTabsSlot, s.tabs)
+	layoutSlot(shellActivitySlot, s.activity)
 	layoutSlot(shellSidebarSlot, s.sidebar)
 	layoutSlot(shellChatSlot, s.chat)
 	layoutSlot(shellInputSlot, s.input)

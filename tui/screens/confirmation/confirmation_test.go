@@ -45,7 +45,11 @@ func TestConfirmationPaintsRiskMetadataAndMouseActions(t *testing.T) {
 		}
 	}
 
-	result := host.Handle(tea.MouseClickMsg{X: 1, Y: 11, Button: tea.MouseLeft})
+	click := findPainted(buf, "Allow (y)")
+	if click.x < 0 {
+		t.Fatalf("Allow button not painted:\n%s", bufferText(buf))
+	}
+	result := host.Handle(tea.MouseClickMsg{X: click.x, Y: click.y, Button: tea.MouseLeft})
 	if result.Cmd == nil || result.Cmd().(ResultMsg).Choice != "allow" {
 		t.Fatalf("mouse allow result=%#v", result)
 	}
@@ -117,4 +121,25 @@ func bufferContains(buf *surface.CellBuffer, want string) bool {
 		}
 	}
 	return false
+}
+
+type paintedAt struct{ x, y int }
+
+func findPainted(buf *surface.CellBuffer, want string) paintedAt {
+	runes := []rune(want)
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x <= buf.Width()-len(runes); x++ {
+			matched := true
+			for index, r := range runes {
+				if buf.Get(x+index, y).Char != r {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return paintedAt{x: x, y: y}
+			}
+		}
+	}
+	return paintedAt{x: -1, y: -1}
 }

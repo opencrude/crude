@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,6 +95,9 @@ type Workspace struct {
 	// goes through this service. Results are published through EventBus.
 	FileOps *FileOpsService
 
+	// TermMgr owns in-app PTY sessions (the terminal multiplexer).
+	TermMgr *TerminalManager
+
 	// FocusStack manages keyboard focus as a stack. Pushing a floating
 	// window or clicking the tree pushes focus; closing pops back.
 	FocusStack *FocusStack
@@ -128,6 +130,10 @@ type Workspace struct {
 	// sessionCfg is the session config derived from app config.
 	sessionCfg *session.Config
 
+	// appDefaults is the application-layer settings snapshot supplied by
+	// app/ from ~/.crude/config.json. Workspace overrides layer on top.
+	appDefaults ttypes.AppSettings
+
 	// homeDir is the user's home directory.
 	homeDir string
 
@@ -139,8 +145,8 @@ type Workspace struct {
 	// layer can persist them to config.json. Optional.
 	OnConfigSave func(cfg *session.Config) error
 
-	// OnAppSettingsSave mirrors visual/tooling settings into config.json for
-	// live hot-reload after workspace.db persistence. Optional.
+	// OnAppSettingsSave persists application-layer settings to config.json.
+	// Workspace overrides are stored separately in workspace.db.
 	OnAppSettingsSave func(s ttypes.AppSettings) error
 
 	// ── Shared state (references, not owned)
@@ -176,6 +182,9 @@ func (w *Workspace) SetEventBus(bus *EventBus) {
 	w.eventBus = bus
 	if w.FileOps != nil {
 		w.FileOps.eventBus = bus
+	}
+	if w.TermMgr != nil {
+		w.TermMgr.SetEventBus(bus)
 	}
 }
 
@@ -223,6 +232,7 @@ func NewWorkspace(
 		LSPMgr:          lspMgr,
 		ProjectSearch:   NewProjectSearchService(),
 		FileOps:         NewFileOpsService(rootPath, nil, lg),
+		TermMgr:         NewTerminalManager(rootPath),
 		FocusStack:      NewFocusStack(),
 		Sessions:        make([]*Session, 0),
 		SessionsByID:    make(map[string]*Session),
@@ -291,6 +301,9 @@ func (w *Workspace) ReportPath() string {
 func (w *Workspace) Close() {
 	w.CloseAllSessions()
 	w.CancelProjectSearch()
+	if w.TermMgr != nil {
+		w.TermMgr.CloseAll()
+	}
 	if w.LSPMgr != nil {
 		w.LSPMgr.Stop()
 	}
@@ -450,6 +463,9 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 
 	// Tear down old project state.
 	w.CloseAllSessions()
+	if w.TermMgr != nil {
+		w.TermMgr.CloseAll()
+	}
 	if w.LSPMgr != nil {
 		w.LSPMgr.Stop()
 	}
@@ -475,6 +491,10 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.LSPMgr = NewLSPManager(w.Logger)
 	w.AgentMgr = NewAgentManager()
 	w.PaneMgr = NewPaneManager()
+	w.TermMgr = NewTerminalManager(abs)
+	if w.eventBus != nil {
+		w.TermMgr.SetEventBus(w.eventBus)
+	}
 
 	// Same self-heal as NewWorkspace when switching projects.
 	_ = w.BackfillSessionRegistry()
@@ -482,26 +502,17 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	return nil
 }
 
-// LoadAppSettings returns the app settings stored in workspace.db,
-// or an empty AppSettings if none are stored.
+// LoadAppSettings returns the effective settings for this workspace:
+// application defaults overlaid with workspace overrides.
 func (w *Workspace) LoadAppSettings() ttypes.AppSettings {
-	if w.WorkspaceDB == nil {
-		return ttypes.AppSettings{}
-	}
-	raw := w.WorkspaceDB.GetSetting("app_settings")
-	if raw == "" {
-		return ttypes.AppSettings{}
-	}
-	var s ttypes.AppSettings
-	_ = json.Unmarshal([]byte(raw), &s)
-	return s
+	return w.EffectiveAppSettings()
 }
 
 // SetBackendConfig stores the session config and home directory.
 // Called by app.Run() after creating the workspace.
 func (w *Workspace) SetBackendConfig(cfg *session.Config, homeDir string) {
-	if appSettings := w.LoadAppSettings(); len(appSettings.Agents.Categories) > 0 {
-		session.ApplyWorkspaceAgentDefaults(cfg, appSettings.Agents)
+	if agents := w.EffectiveAppSettings().Agents; len(agents.Categories) > 0 {
+		session.ApplyWorkspaceAgentDefaults(cfg, agents)
 	}
 	w.sessionCfg = cfg
 	w.homeDir = homeDir

@@ -104,6 +104,44 @@ func TestShellInputPaintsSeparatorAndPrompt(t *testing.T) {
 	}
 }
 
+func TestShellInputUsesShellBackground(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := ui.NewTokenSet(th)
+	shellBG := tokens.Color(ui.ColorBg)
+	popupBG := tokens.Color(ui.ColorPopupBg)
+	if shellBG.Equal(popupBG) {
+		t.Fatal("dark theme must distinguish shell bg from popup bg")
+	}
+
+	m := input.NewModel(th)
+	m.SetWidth(40)
+	m.SetInput("hello")
+	s := New(th)
+	s.Bind(&m)
+	buf := s.PaintTestBuffer(40, s.ContentHeight(40))
+
+	found := false
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			c := buf.Get(x, y)
+			if c.Char != 'h' {
+				continue
+			}
+			found = true
+			if c.BG.Equal(popupBG) {
+				t.Fatal("chat prompt used popup background")
+			}
+			if !c.BG.Equal(shellBG) {
+				t.Fatalf("chat prompt bg=%v want shell %v", c.BG, shellBG)
+			}
+			return
+		}
+	}
+	if !found {
+		t.Fatal("did not find input text to check background")
+	}
+}
+
 func TestShellInputSlashPopupIncreasesHeight(t *testing.T) {
 	th := theme.DefaultDark()
 	m := input.NewModel(th)
