@@ -1,6 +1,9 @@
 package types
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMergeAppWorkspaceInheritsNilOverrides(t *testing.T) {
 	app := AppSettings{
@@ -24,9 +27,12 @@ func TestMergeAppWorkspaceOverridesSelectedCategories(t *testing.T) {
 		Editor: EditorSettings{TabSize: 4},
 		LSP:    DefaultLSPSettings(),
 	}
-	tab := 8
-	editor := EditorSettings{TabSize: tab, WordWrap: true}
-	got := MergeAppWorkspace(app, WorkspaceOverrides{Editor: &editor})
+	ApplyAppDefaults(&app)
+	working := cloneAppSettings(app)
+	working.Editor.TabSize = 8
+	working.Editor.WordWrap = true
+
+	got := MergeAppWorkspace(app, OverridesFromDiff(app, working))
 	if got.Theme.Preset != "dark" {
 		t.Fatalf("theme should inherit, got %q", got.Theme.Preset)
 	}
@@ -46,14 +52,111 @@ func TestOverridesFromDiffRecordsOnlyChangedCategories(t *testing.T) {
 	working.Editor.TabSize = 2
 	working.ActiveProvider = "openai"
 	got := OverridesFromDiff(app, working)
-	if got.Theme != nil {
-		t.Fatal("unchanged theme must inherit")
+	if len(got.Theme) != 0 {
+		t.Fatalf("unchanged theme must inherit, got %s", got.Theme)
 	}
-	if got.Editor == nil || got.Editor.TabSize != 2 {
-		t.Fatalf("editor override missing: %#v", got.Editor)
+	if string(got.Editor) != `{"tab_size":2}` {
+		t.Fatalf("editor override should carry only the changed leaf, got %s", got.Editor)
 	}
 	if got.ActiveProvider == nil || *got.ActiveProvider != "openai" {
 		t.Fatalf("provider override missing: %#v", got.ActiveProvider)
+	}
+}
+
+// A workspace that overrides ONE field must keep inheriting every sibling
+// field, including application changes made after the override was stored.
+// Whole-category snapshots made a workspace behave like a hard copy: turning
+// something off at the application level had no effect on a workspace that
+// had once touched anything in that category.
+func TestWorkspaceInheritsFieldsItNeverTouched(t *testing.T) {
+	app := AppSettings{Editor: EditorSettings{TabSize: 4, LineNumbers: true, Minimap: true}}
+	ApplyAppDefaults(&app)
+
+	working := cloneAppSettings(app)
+	working.Editor.TabSize = 2
+	overrides := OverridesFromDiff(app, working)
+
+	// The application later turns two untouched features off.
+	app.Editor.Minimap = false
+	app.Editor.LineNumbers = false
+
+	got := MergeAppWorkspace(app, overrides)
+	if got.Editor.TabSize != 2 {
+		t.Fatalf("explicit workspace override lost: %#v", got.Editor)
+	}
+	if got.Editor.Minimap || got.Editor.LineNumbers {
+		t.Fatalf("untouched fields must follow the application layer: %#v", got.Editor)
+	}
+}
+
+// Language-intelligence toggles are the worst case: LSPSettings is one big
+// category, so a per-category overlay froze every feature flag at once.
+func TestWorkspaceInheritsLSPFlagsItNeverTouched(t *testing.T) {
+	app := AppSettings{LSP: DefaultLSPSettings()}
+	ApplyAppDefaults(&app)
+
+	working := cloneAppSettings(app)
+	working.LSP.MinSeverity = "error"
+	overrides := OverridesFromDiff(app, working)
+
+	app.LSP.Completions = false
+	app.LSP.Hover = false
+
+	got := MergeAppWorkspace(app, overrides)
+	if got.LSP.MinSeverity != "error" {
+		t.Fatalf("explicit override lost: %#v", got.LSP)
+	}
+	if got.LSP.Completions || got.LSP.Hover {
+		t.Fatal("app-level LSP feature switches must reach workspaces that never touched them")
+	}
+	if !got.LSP.Definition || !got.LSP.Diagnostics {
+		t.Fatal("inheriting must not disable unrelated features")
+	}
+}
+
+// Turning a boolean off is an override, not an absence. `omitempty` elides
+// false, so a naive diff would treat "disabled here" as "inherit".
+func TestWorkspaceCanOverrideBoolToFalse(t *testing.T) {
+	app := AppSettings{Editor: EditorSettings{TabSize: 4, WordWrap: true}}
+	ApplyAppDefaults(&app)
+
+	working := cloneAppSettings(app)
+	working.Editor.WordWrap = false
+	overrides := OverridesFromDiff(app, working)
+	if len(overrides.Editor) == 0 {
+		t.Fatal("disabling a field must record an override")
+	}
+	if got := MergeAppWorkspace(app, overrides); got.Editor.WordWrap {
+		t.Fatalf("explicit false must win over an inherited true: %#v", got.Editor)
+	}
+}
+
+// Loading re-diffs stored overlays, which is how legacy whole-category rows
+// heal into sparse ones. That round trip has to be stable.
+func TestOverridesRoundTripIsStable(t *testing.T) {
+	app := AppSettings{
+		Theme:  ThemeSettings{Preset: "dark"},
+		Editor: EditorSettings{TabSize: 4},
+		LSP:    DefaultLSPSettings(),
+		Agents: AgentsSettings{Enabled: true, MaxConcurrent: 3},
+	}
+	ApplyAppDefaults(&app)
+	working := cloneAppSettings(app)
+	working.Editor.TabSize = 2
+	working.LSP.Rename = false
+	working.Agents.MaxConcurrent = 8
+
+	first := OverridesFromDiff(app, working)
+	second := OverridesFromDiff(app, MergeAppWorkspace(app, first))
+	if string(first.Editor) != string(second.Editor) ||
+		string(first.LSP) != string(second.LSP) ||
+		string(first.Agents) != string(second.Agents) {
+		t.Fatalf("round trip drifted:\nfirst =%s %s %s\nsecond=%s %s %s",
+			first.Editor, first.LSP, first.Agents, second.Editor, second.LSP, second.Agents)
+	}
+	merged := MergeAppWorkspace(app, second)
+	if merged.Editor.TabSize != 2 || merged.LSP.Rename || merged.Agents.MaxConcurrent != 8 {
+		t.Fatalf("round trip lost overrides: %#v %#v %#v", merged.Editor, merged.LSP, merged.Agents)
 	}
 }
 
@@ -129,11 +232,11 @@ func TestWorkspaceOverridesFromDiffOmitsAPIKeys(t *testing.T) {
 
 	working.Providers["openrouter"] = ProviderConfig{APIKey: "workspace-key", Model: "ws-model"}
 	got = WorkspaceOverridesFromDiff(app, working)
-	if got.Providers["openrouter"].APIKey != "" {
-		t.Fatalf("workspace overlay leaked API key: %#v", got.Providers)
+	if strings.Contains(string(got.Providers), "workspace-key") {
+		t.Fatalf("workspace overlay leaked API key: %s", got.Providers)
 	}
-	if got.Providers["openrouter"].Model != "ws-model" {
-		t.Fatalf("model override missing: %#v", got.Providers)
+	if !strings.Contains(string(got.Providers), "ws-model") {
+		t.Fatalf("model override missing: %s", got.Providers)
 	}
 	merged := MergeAppWorkspace(app, got)
 	if merged.Providers["openrouter"].APIKey != "app-key" {
@@ -154,12 +257,13 @@ func TestProviderProtocolOverridesMergeAndClone(t *testing.T) {
 			},
 		},
 	}
-	overlay := WorkspaceOverrides{Providers: map[string]ProviderConfig{
-		"openai": {
-			APIStandard:    "openai",
-			ModelStandards: map[string]string{"gpt-5.6": "openai-responses"},
-		},
-	}}
+	ApplyAppDefaults(&app)
+	working := cloneAppSettings(app)
+	working.Providers["openai"] = ProviderConfig{
+		APIStandard:    "openai",
+		ModelStandards: map[string]string{"gpt-legacy": "openai", "gpt-5.6": "openai-responses"},
+	}
+	overlay := OverridesFromDiff(app, working)
 	got := MergeAppWorkspace(app, overlay)
 	cfg := got.Providers["openai"]
 	if cfg.APIStandard != "openai" ||

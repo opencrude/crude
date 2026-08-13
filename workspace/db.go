@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"crude/memory"
 	"crude/sessiondb"
 )
 
@@ -26,6 +27,10 @@ type WorkspaceDB struct {
 	Path       string
 	Dir        string
 	ProjectDir string
+
+	// Memory is the durable workspace memory store (schema owned by the
+	// crude/memory package; lives inside this same workspace.db).
+	Memory *memory.Store
 }
 
 // OpenWorkspaceDB opens (or creates) the workspace-level database for the
@@ -67,10 +72,17 @@ func openWorkspaceDBAt(dbPath string) (*WorkspaceDB, error) {
 		return nil, fmt.Errorf("migrate workspace schema: %w", err)
 	}
 
+	memStore, err := memory.Attach(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate memory schema: %w", err)
+	}
+
 	return &WorkspaceDB{
-		DB:   db,
-		Path: dbPath,
-		Dir:  dir,
+		DB:     db,
+		Path:   dbPath,
+		Dir:    dir,
+		Memory: memStore,
 	}, nil
 }
 
@@ -89,24 +101,6 @@ func migrateWorkspaceSchema(db *sql.DB) error {
 			value TEXT NOT NULL,
 			updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000000000)
 		)
-	`)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS workspace_memories (
-			id                TEXT PRIMARY KEY,
-			kind              TEXT NOT NULL DEFAULT 'fact',
-			title             TEXT NOT NULL,
-			content           TEXT NOT NULL,
-			source_session_id TEXT NOT NULL DEFAULT '',
-			pinned            INTEGER NOT NULL DEFAULT 0,
-			created_at        INTEGER NOT NULL,
-			updated_at        INTEGER NOT NULL
-		);
-		CREATE INDEX IF NOT EXISTS idx_workspace_memories_updated
-			ON workspace_memories(pinned DESC, updated_at DESC);
 	`)
 	if err != nil {
 		return err

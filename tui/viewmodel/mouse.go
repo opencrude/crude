@@ -78,7 +78,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	// regions below — the launcher must NOT steal those clicks.
 	// The file tree (sidebar) is already handled above (regionSidebar
 	// check), so the launcher never interferes with it.
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil {
+	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil {
 		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.ChatAreaHeight {
 			return regionLauncher
 		}
@@ -86,7 +86,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 		// region (so the user can still type / to filter).
 	}
 
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		return regionInput
 	}
 
@@ -420,7 +420,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// This is a critical performance fix: every motion event outside
 	// those regions clears stale tree/tab hover and returns without
 	// the launcher re-render churn.
-	if m.launcherScreen != nil && m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	if m.launcherScreen != nil && m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		switch region {
 		case regionSidebar:
 			return m, m.handleShellPointer(msg)

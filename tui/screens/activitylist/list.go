@@ -163,6 +163,9 @@ func itemsEquivalent(a, b []ui.ListItem) bool {
 		if x.Disabled != y.Disabled || x.Header != y.Header || x.Separator != y.Separator || x.Spacer != y.Spacer {
 			return false
 		}
+		if x.Command != y.Command {
+			return false
+		}
 		if x.Depth != y.Depth || x.TreeLast != y.TreeLast {
 			return false
 		}
@@ -577,7 +580,10 @@ func (l *sidebarList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{}
 		}
 		res := l.inner.Handle(ctx, evt)
-		if res.Action != nil && res.Action.ID == ActionActivate {
+		if res.Action != nil && res.Action.ID == ActionActivate && !activateIsCommand(res.Action) {
+			// Resource rows (agents, terminals, changed files) arm on the
+			// first click and open on the second, matching the pickers.
+			// Command rows are buttons and must fire immediately.
 			id := activateID(res.Action)
 			now := time.Now()
 			if id == "" || l.lastClickID != id || now.Sub(l.lastClickAt) > doubleClickWindow {
@@ -599,6 +605,11 @@ func activateID(a *ui.Action) string {
 		return ""
 	}
 	return item.ID
+}
+
+func activateIsCommand(a *ui.Action) bool {
+	item, ok := a.Payload.(ui.ListItem)
+	return ok && item.Command
 }
 
 // rowAt maps a list-local row to a selectable item index, or -1.

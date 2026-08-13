@@ -1,7 +1,7 @@
 # Settings layers
 
 Crude settings follow the JetBrains three-level model. Each layer stores only
-what it owns. Lower layers overlay the ones above; a nil/empty field means
+what it owns. Lower layers overlay the ones above; an absent field means
 inherit.
 
 ```
@@ -11,6 +11,36 @@ Workspace    (workspace.db / workspace_settings)
     ↓ session dock overlays agent provider/model/protocol/thinking
 Session      (session.db / session_agent_settings)
 ```
+
+## Two different inheritance rules, on purpose
+
+**Workspaces inherit live.** `WorkspaceOverrides` stores a partial JSON object
+per category holding only the individual leaves the workspace changed. Every
+field it does not name keeps following the application layer forever, so
+turning something off at the application level reaches the workspace even
+years later.
+
+Overriding a whole category is what made a workspace behave like a hard copy:
+changing one editor field froze every other editor field at whatever the
+application held that day. `OverridesFromDiff` recurses into nested objects,
+so a workspace that disables one language server keeps inheriting the other
+ten, and explicit `false` is a real override rather than an absent key
+(`omitempty` elides it, so the diff re-adds the zero).
+
+**Sessions snapshot.** A session captures the agent baseline — which provider,
+model, and thinking effort each role runs — when it starts, and keeps it. A
+running conversation must not switch models because another tab saved
+settings. `Session.UpdateWorkspaceDefaults` therefore refreshes only provider
+endpoints, wire standards, and credentials, so fixing a bad API key still
+reaches live sessions. `AdoptWorkspaceDefaults` is the deliberate re-inherit
+and runs only from user-invoked resets. New sessions always start from the
+current effective defaults.
+
+Stored overlays are re-diffed against the current application layer on load,
+which narrows legacy whole-category rows to their differing leaves. A
+snapshot cannot say which of its values the user meant, so migration keeps
+whatever still differs; **Reset section** in the workspace scope is how a
+category goes back to full inheritance.
 
 Provider protocol resolution is equally layered:
 
@@ -36,7 +66,7 @@ workspace). Application defaults alone are `AppDefaults()`.
 | Action | Persistence | Must not write |
 |--------|-------------|----------------|
 | Application Settings → Save | `config.json` via `SaveAppSettings` + provider credentials via `SaveProviderSettings` | `workspace.db` |
-| Workspace Settings → Save | sparse `WorkspaceOverrides` in `workspace.db` key `workspace_settings` | `config.json`, API keys |
+| Workspace Settings → Save | field-level `WorkspaceOverrides` in `workspace.db` key `workspace_settings` | `config.json`, API keys, untouched fields |
 | Workspace Settings → Reset section | `ClearCategory` then `SaveWorkspaceSettings` | other categories, app config |
 | `/settings` dock | session agent overrides | app/workspace IDE prefs |
 | Theme cycle (`app.toggleTheme`) | application layer | workspace overlay |
@@ -103,8 +133,11 @@ command/args overrides. `workspace.LSPManager` reads the **effective**
 
 Layer coverage lives next to the code:
 
-- `types/settings_test.go` — merge, diff, credential stripping, LSP language/severity
-- `workspace/settings_test.go` — overlay persistence vs app defaults, legacy migration
+- `types/settings_test.go` — field-level merge/diff, inheriting untouched
+  fields, explicit `false` overrides, round-trip stability, credential
+  stripping, LSP language/severity
+- `workspace/settings_test.go` — overlay persistence vs app defaults, live
+  inheritance of untouched fields, legacy whole-category migration
 - `workspace/lsp_manager_test.go` — feature gates and diagnostic filtering
 - `tui/ui/form_select_test.go` — overlay height and paint/hit-testing
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar

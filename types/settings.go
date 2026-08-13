@@ -1,6 +1,9 @@
 package types
 
-import "reflect"
+import (
+	"encoding/json"
+	"reflect"
+)
 
 // SettingsScope selects which layer a settings editor is writing.
 type SettingsScope string
@@ -10,18 +13,34 @@ const (
 	SettingsScopeWorkspace   SettingsScope = "workspace"
 )
 
-// WorkspaceOverrides is a sparse overlay on AppSettings. A nil pointer means
-// inherit from the application layer. This is the JetBrains project-settings
-// model: the workspace stores only what it changes.
+// WorkspaceOverrides is a sparse overlay on AppSettings. This is the
+// JetBrains project-settings model: the workspace stores only what it
+// changes, down to the individual FIELD.
+//
+// Each category holds a partial JSON object carrying just the leaf values
+// the workspace overrides; an absent key inherits from the application
+// layer forever, including later application-level edits. Whole-category
+// snapshots are what made a workspace behave like a hard copy — changing
+// one editor field used to freeze every other editor field at whatever the
+// application happened to hold that day, so a later app-level change to an
+// untouched field silently did nothing.
 type WorkspaceOverrides struct {
-	Theme          *ThemeSettings            `json:"theme,omitempty"`
-	Editor         *EditorSettings           `json:"editor,omitempty"`
-	LSP            *LSPSettings              `json:"lsp,omitempty"`
-	UI             *UISettings               `json:"ui,omitempty"`
-	Font           *FontSettings             `json:"font,omitempty"`
-	ActiveProvider *string                   `json:"active_provider,omitempty"`
-	Providers      map[string]ProviderConfig `json:"providers,omitempty"`
-	Agents         *AgentsSettings           `json:"agents,omitempty"`
+	Theme          json.RawMessage `json:"theme,omitempty"`
+	Editor         json.RawMessage `json:"editor,omitempty"`
+	LSP            json.RawMessage `json:"lsp,omitempty"`
+	UI             json.RawMessage `json:"ui,omitempty"`
+	Font           json.RawMessage `json:"font,omitempty"`
+	ActiveProvider *string         `json:"active_provider,omitempty"`
+	Providers      json.RawMessage `json:"providers,omitempty"`
+	Agents         json.RawMessage `json:"agents,omitempty"`
+	Memory         json.RawMessage `json:"memory,omitempty"`
+}
+
+// IsEmpty reports that the workspace inherits everything.
+func (o WorkspaceOverrides) IsEmpty() bool {
+	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
+		len(o.UI) == 0 && len(o.Font) == 0 && o.ActiveProvider == nil &&
+		len(o.Providers) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0
 }
 
 // LSPLanguage describes a built-in language server the settings UI can
@@ -113,6 +132,24 @@ func ApplyAppDefaults(s *AppSettings) {
 	if s.Providers == nil {
 		s.Providers = map[string]ProviderConfig{s.ActiveProvider: {}}
 	}
+	if s.Memory.AutoRecall == "" {
+		s.Memory.AutoRecall = "on"
+	}
+	if s.Memory.AutoExtract == "" {
+		s.Memory.AutoExtract = "on"
+	}
+	if s.Memory.Consolidation == "" {
+		s.Memory.Consolidation = "on"
+	}
+	if s.Memory.RecallBudgetTokens == 0 {
+		s.Memory.RecallBudgetTokens = DefaultMemoryRecallBudget
+	}
+	if s.Memory.RecallLimit == 0 {
+		s.Memory.RecallLimit = DefaultMemoryRecallLimit
+	}
+	if s.Memory.ExtractEveryTurns == 0 {
+		s.Memory.ExtractEveryTurns = DefaultMemoryExtractCadence
+	}
 }
 
 func lspUnset(s LSPSettings) bool {
@@ -166,79 +203,168 @@ func NormalizeLSP(s LSPSettings) LSPSettings {
 }
 
 // MergeAppWorkspace returns application settings with workspace overrides
-// applied. Nil override fields inherit from app.
+// applied field by field. Any leaf the workspace does not name inherits from
+// the application layer, so later app-level edits keep flowing through.
 func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	ApplyAppDefaults(&app)
 	out := cloneAppSettings(app)
-	if ws.Theme != nil {
-		out.Theme = *ws.Theme
-	}
-	if ws.Editor != nil {
-		out.Editor = *ws.Editor
-	}
-	if ws.LSP != nil {
-		out.LSP = NormalizeLSP(*ws.LSP)
-	}
-	if ws.UI != nil {
-		out.UI = *ws.UI
-	}
-	if ws.Font != nil {
-		out.Font = *ws.Font
-	}
+	applySparse(&out.Theme, ws.Theme)
+	applySparse(&out.Editor, ws.Editor)
+	applySparse(&out.LSP, ws.LSP)
+	applySparse(&out.UI, ws.UI)
+	applySparse(&out.Font, ws.Font)
+	applySparse(&out.Providers, ws.Providers)
+	applySparse(&out.Agents, ws.Agents)
+	applySparse(&out.Memory, ws.Memory)
 	if ws.ActiveProvider != nil && *ws.ActiveProvider != "" {
 		out.ActiveProvider = *ws.ActiveProvider
-	}
-	if len(ws.Providers) > 0 {
-		if out.Providers == nil {
-			out.Providers = make(map[string]ProviderConfig, len(ws.Providers))
-		}
-		for id, overlay := range ws.Providers {
-			out.Providers[id] = mergeProvider(out.Providers[id], overlay)
-		}
-	}
-	if ws.Agents != nil {
-		out.Agents = mergeAgents(out.Agents, *ws.Agents)
-		out.Agents.Enabled = ws.Agents.Enabled
 	}
 	return out
 }
 
-// OverridesFromDiff records every category in working that differs from app
-// as a workspace override. Identical categories inherit.
+// OverridesFromDiff records the individual leaf values in working that
+// differ from app. Everything else inherits.
+//
+// It is also the migration path for legacy whole-category overrides: run a
+// stored overlay through MergeAppWorkspace and back through this function
+// and only the genuinely different leaves survive.
 func OverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	var out WorkspaceOverrides
-	if !reflect.DeepEqual(app.Theme, working.Theme) {
-		theme := working.Theme
-		out.Theme = &theme
-	}
-	if !reflect.DeepEqual(app.Editor, working.Editor) {
-		editor := working.Editor
-		out.Editor = &editor
-	}
-	if !reflect.DeepEqual(app.LSP, working.LSP) {
-		lsp := working.LSP
-		out.LSP = &lsp
-	}
-	if !reflect.DeepEqual(app.UI, working.UI) {
-		ui := working.UI
-		out.UI = &ui
-	}
-	if !reflect.DeepEqual(app.Font, working.Font) {
-		font := working.Font
-		out.Font = &font
-	}
+	out.Theme = sparseDiff(app.Theme, working.Theme)
+	out.Editor = sparseDiff(app.Editor, working.Editor)
+	out.LSP = sparseDiff(app.LSP, working.LSP)
+	out.UI = sparseDiff(app.UI, working.UI)
+	out.Font = sparseDiff(app.Font, working.Font)
+	out.Providers = sparseDiff(app.Providers, working.Providers)
+	out.Agents = sparseDiff(app.Agents, working.Agents)
+	out.Memory = sparseDiff(app.Memory, working.Memory)
 	if app.ActiveProvider != working.ActiveProvider {
 		p := working.ActiveProvider
 		out.ActiveProvider = &p
 	}
-	if !reflect.DeepEqual(app.Providers, working.Providers) {
-		out.Providers = cloneProviders(working.Providers)
+	return out
+}
+
+// sparseDiff returns a partial JSON object holding only the leaves of
+// working that differ from base, or nil when the two agree. Nested objects
+// recurse so one changed leaf never captures its siblings.
+func sparseDiff(base, working any) json.RawMessage {
+	baseMap, ok1 := jsonObject(base)
+	workingMap, ok2 := jsonObject(working)
+	if !ok1 || !ok2 {
+		return nil
 	}
-	if !reflect.DeepEqual(app.Agents, working.Agents) {
-		agents := cloneAgents(working.Agents)
-		out.Agents = &agents
+	delta := diffObjects(baseMap, workingMap)
+	if len(delta) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(delta)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// applySparse deep-merges a partial JSON object onto dst, which must already
+// hold the inherited value.
+func applySparse(dst any, overlay json.RawMessage) {
+	if len(overlay) == 0 {
+		return
+	}
+	var overlayMap map[string]any
+	if err := json.Unmarshal(overlay, &overlayMap); err != nil || len(overlayMap) == 0 {
+		return
+	}
+	baseMap, ok := jsonObject(dst)
+	if !ok {
+		return
+	}
+	mergeObjects(baseMap, overlayMap)
+	data, err := json.Marshal(baseMap)
+	if err != nil {
+		return
+	}
+	// Merging onto the marshalled form means absent keys keep the inherited
+	// value; unmarshalling the whole object back is therefore lossless.
+	_ = json.Unmarshal(data, dst)
+}
+
+func jsonObject(v any) (map[string]any, bool) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, false
+	}
+	if out == nil {
+		out = map[string]any{}
+	}
+	return out, true
+}
+
+func diffObjects(base, working map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, wv := range working {
+		bv, present := base[key]
+		if !present {
+			out[key] = wv
+			continue
+		}
+		bm, bIsObj := bv.(map[string]any)
+		wm, wIsObj := wv.(map[string]any)
+		if bIsObj && wIsObj {
+			if sub := diffObjects(bm, wm); len(sub) > 0 {
+				out[key] = sub
+			}
+			continue
+		}
+		if !reflect.DeepEqual(bv, wv) {
+			out[key] = wv
+		}
+	}
+	// A key the base carries but working dropped means working holds the
+	// zero value and `omitempty` elided it. Record that zero explicitly so
+	// "turned this off" is a real override rather than silent inheritance.
+	for key, bv := range base {
+		if _, present := working[key]; present {
+			continue
+		}
+		if zero, ok := jsonZero(bv); ok {
+			out[key] = zero
+		}
 	}
 	return out
+}
+
+// jsonZero is the elided-by-omitempty counterpart of a JSON value. Objects
+// have no sparse representation for "cleared", so they report false.
+func jsonZero(v any) (any, bool) {
+	switch v.(type) {
+	case bool:
+		return false, true
+	case float64:
+		return float64(0), true
+	case string:
+		return "", true
+	case []any:
+		return []any{}, true
+	}
+	return nil, false
+}
+
+func mergeObjects(dst, overlay map[string]any) {
+	for key, ov := range overlay {
+		dv, present := dst[key]
+		dm, dIsObj := dv.(map[string]any)
+		om, oIsObj := ov.(map[string]any)
+		if present && dIsObj && oIsObj {
+			mergeObjects(dm, om)
+			continue
+		}
+		dst[key] = ov
+	}
 }
 
 // WorkspaceOverridesFromDiff is OverridesFromDiff for the workspace layer:
@@ -263,19 +389,21 @@ func WorkspaceOverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 	switch name {
 	case "theme", "appearance":
-		return o.Theme != nil
+		return len(o.Theme) > 0
 	case "editor":
-		return o.Editor != nil
+		return len(o.Editor) > 0
 	case "lsp", "language servers":
-		return o.LSP != nil
+		return len(o.LSP) > 0
 	case "ui", "interface":
-		return o.UI != nil
+		return len(o.UI) > 0
 	case "font":
-		return o.Font != nil
+		return len(o.Font) > 0
 	case "providers":
 		return o.ActiveProvider != nil || len(o.Providers) > 0
 	case "agents":
-		return o.Agents != nil
+		return len(o.Agents) > 0
+	case "memory":
+		return len(o.Memory) > 0
 	}
 	return false
 }
@@ -301,92 +429,9 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 		o.Providers = nil
 	case "agents":
 		o.Agents = nil
+	case "memory":
+		o.Memory = nil
 	}
-}
-
-func mergeProvider(base, overlay ProviderConfig) ProviderConfig {
-	out := base
-	if overlay.APIKey != "" {
-		out.APIKey = overlay.APIKey
-	}
-	if overlay.ProviderURL != "" {
-		out.ProviderURL = overlay.ProviderURL
-	}
-	if overlay.APIStandard != "" {
-		out.APIStandard = overlay.APIStandard
-	}
-	if overlay.Model != "" {
-		out.Model = overlay.Model
-	}
-	if len(overlay.ModelStandards) > 0 {
-		if out.ModelStandards == nil {
-			out.ModelStandards = make(map[string]string, len(overlay.ModelStandards))
-		}
-		for model, standard := range overlay.ModelStandards {
-			out.ModelStandards[model] = standard
-		}
-	}
-	if overlay.ThinkingEffort != "" {
-		out.ThinkingEffort = overlay.ThinkingEffort
-	}
-	return out
-}
-
-func mergeAgents(base, overlay AgentsSettings) AgentsSettings {
-	out := cloneAgents(base)
-	if overlay.Enabled {
-		out.Enabled = true
-	}
-	if overlay.ActiveProfile != "" {
-		out.ActiveProfile = overlay.ActiveProfile
-	}
-	if overlay.MaxConcurrent != 0 {
-		out.MaxConcurrent = overlay.MaxConcurrent
-	}
-	if len(overlay.Categories) > 0 {
-		if out.Categories == nil {
-			out.Categories = make(map[string]CategorySettings, len(overlay.Categories))
-		}
-		for key, cat := range overlay.Categories {
-			out.Categories[key] = mergeCategory(out.Categories[key], cat)
-		}
-	}
-	if len(overlay.Profiles) > 0 {
-		out.Profiles = append([]ProfileSettings(nil), overlay.Profiles...)
-	}
-	return out
-}
-
-func mergeCategory(base, overlay CategorySettings) CategorySettings {
-	out := base
-	if overlay.Provider != "" {
-		out.Provider = overlay.Provider
-	}
-	if overlay.ProviderURL != "" {
-		out.ProviderURL = overlay.ProviderURL
-	}
-	if overlay.APIKey != "" {
-		out.APIKey = overlay.APIKey
-	}
-	if overlay.APIStandard != "" {
-		out.APIStandard = overlay.APIStandard
-	}
-	if overlay.Model != "" {
-		out.Model = overlay.Model
-	}
-	if overlay.ThinkingEffort != "" {
-		out.ThinkingEffort = overlay.ThinkingEffort
-	}
-	if overlay.Policy != "" {
-		out.Policy = overlay.Policy
-	}
-	if overlay.MaxSteps != 0 {
-		out.MaxSteps = overlay.MaxSteps
-	}
-	if overlay.Description != "" {
-		out.Description = overlay.Description
-	}
-	return out
 }
 
 func cloneAppSettings(s AppSettings) AppSettings {

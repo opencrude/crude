@@ -14,7 +14,7 @@ func (m *App) chatHostVisible() bool {
 	if m.isEditorActive() {
 		return false
 	}
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		return false
 	}
 	return m.activeMessageList() != nil
@@ -42,7 +42,7 @@ func (m *App) launcherHostVisible() bool {
 	if m.launcherScreen == nil {
 		return false
 	}
-	if m.AgentMgr.Count() != 0 || m.EditorState.ActiveView != "" {
+	if m.AgentMgr.VisibleCount() != 0 || m.EditorState.ActiveView != "" {
 		return false
 	}
 	layout := m.computeLayout()

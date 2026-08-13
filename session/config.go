@@ -137,6 +137,7 @@ type Config struct {
 	Providers       map[string]ProviderConfig
 	TurnLogsEnabled bool
 	Agents          AgentsConfig
+	Memory          ttypes.MemorySettings
 }
 
 type ProviderConfig struct {
@@ -406,6 +407,7 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		ThinkingEffort:  mainCat.ThinkingEffort,
 		TurnLogsEnabled: turnLogs,
 		Agents:          agentsSettings,
+		Memory:          cfg.Memory,
 	}
 }
 

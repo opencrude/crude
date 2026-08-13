@@ -204,8 +204,13 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	var finalContent string
 	ctx, cancel := context.WithCancel(context.Background())
 	prompt := agent.BuildSystemPrompt(effectiveCfg.IsMultiAgentEnabled())
-	if memoryContext := s.recallMemoryContext(ctx, userInput.Text); memoryContext != "" {
+	if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
 		prompt += "\n\n" + memoryContext
+	}
+	if s.prevContextInjected.CompareAndSwap(false, true) {
+		if prevContext := s.previousSessionContext(ctx); prevContext != "" {
+			prompt += "\n\n" + prevContext
+		}
 	}
 
 	displayTracker := &displayMetaTracker{
@@ -573,6 +578,9 @@ func (s *Session) finalizeTurn(
 		s.appendToWriteBuf(s.msgs, s.msgTurns, s.displayMetas)
 	}
 
+	turnMsgs := s.messagesForTurnLocked(s.turnNumber)
+	turnNumber := s.turnNumber
+
 	s.msgsMu.Unlock()
 
 	if s.db != nil {
@@ -580,9 +588,22 @@ func (s *Session) finalizeTurn(
 		go s.flushWriteBuf()
 	}
 
+	s.afterTurnMemory(turnNumber, turnMsgs, finalContent)
+
 	if finalContent != "" {
 		s.logger.Info("CONV", "assistant_msg", "msg_id", msgID, "len", len(finalContent))
 	}
+}
+
+// messagesForTurnLocked snapshots this turn's messages. Caller holds msgsMu.
+func (s *Session) messagesForTurnLocked(turn int) []provider.ChatMessage {
+	var out []provider.ChatMessage
+	for i, msgTurn := range s.msgTurns {
+		if msgTurn == turn && i < len(s.msgs) {
+			out = append(out, s.msgs[i])
+		}
+	}
+	return out
 }
 
 func (s *Session) buildUserMessage(input provider.UserInput, model string) provider.ChatMessage {

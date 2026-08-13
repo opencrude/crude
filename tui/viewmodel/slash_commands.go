@@ -36,6 +36,12 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/sessions":
 		m.Logger.Info("INPUT", "slash", "command", "sessions")
 		m.openSessionPicker()
+	case "/memory":
+		m.Logger.Info("INPUT", "slash", "command", "memory")
+		_, cmd := m.toggleMemoryBrowser()
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case "/help":
 		m.Logger.Info("INPUT", "slash", "command", "help")
 		m.openHelp()

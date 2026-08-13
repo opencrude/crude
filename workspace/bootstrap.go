@@ -72,7 +72,8 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 		return nil, fmt.Errorf("new backend session: %w", err)
 	}
 	if w.WorkspaceDB != nil {
-		bs.SetMemoryStore(w.WorkspaceDB)
+		bs.SetMemoryStore(w.WorkspaceDB.Memory)
+		bs.StartMemoryMaintenance()
 	}
 
 	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
@@ -128,7 +129,8 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 		return nil, fmt.Errorf("resume backend session: %w", err)
 	}
 	if w.WorkspaceDB != nil {
-		bs.SetMemoryStore(w.WorkspaceDB)
+		bs.SetMemoryStore(w.WorkspaceDB.Memory)
+		bs.StartMemoryMaintenance()
 	}
 
 	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
@@ -398,6 +400,27 @@ func (w *Workspace) CancelAgent(agentID string) {
 	}
 }
 
+// MinimizeAgent dismisses an agent from the tab bar without stopping any
+// backend work. The orchestrator keeps streaming, tool calls keep running,
+// and the session stays owned by this agent — only the surfaced tab goes
+// away. This is what closing a tab does; terminating is CloseAgent.
+func (w *Workspace) MinimizeAgent(agentID string) {
+	if w.AgentMgr == nil || w.AgentMgr.Get(agentID) == nil {
+		return
+	}
+	w.AgentMgr.SetHidden(agentID, true)
+}
+
+// RestoreAgent brings a minimized agent back and makes it the active one.
+func (w *Workspace) RestoreAgent(agentID string) {
+	if w.AgentMgr == nil || w.AgentMgr.Get(agentID) == nil {
+		return
+	}
+	w.AgentMgr.SetHidden(agentID, false)
+	w.AgentMgr.SetActive(agentID)
+	w.ActivateSessionByAgent(agentID)
+}
+
 // CloseAgent stops backend work for agentID before the TUI removes its state.
 // For root agents it also persists a recoverable registry record (Register +
 // SyncSessionMeta + CloseSession) so the closed session remains listable and
@@ -604,6 +627,7 @@ func (w *Workspace) ResetOrchestratorOverrides(orchID string) {
 		return
 	}
 	b.RuntimeProfile().RemoveOverride(orchID)
+	w.adoptCurrentDefaults(b)
 	if err := b.ResetSessionSettings(); err != nil {
 		w.Logger.Warn("RUNTIME", "session_settings_reset_failed", "error", err.Error())
 	} else if w.ActiveSession != nil && w.ActiveSession.Settings != nil {
@@ -612,12 +636,30 @@ func (w *Workspace) ResetOrchestratorOverrides(orchID string) {
 	w.Logger.Info("RUNTIME", "orchestrator_reset", "id", orchID)
 }
 
-// ResetSessionSettings clears the active session's DB-backed overrides.
+// adoptCurrentDefaults re-inherits today's effective agent defaults into a
+// live session. Sessions snapshot their agent settings at creation, so this
+// is the only way a running session picks up later workspace edits — and it
+// runs exclusively from user-invoked resets.
+func (w *Workspace) adoptCurrentDefaults(b *session.Session) {
+	if b == nil {
+		return
+	}
+	effective := w.EffectiveAppSettings()
+	b.AdoptWorkspaceDefaults(ttypes.AppSettings{
+		Agents:         effective.Agents,
+		ActiveProvider: effective.ActiveProvider,
+		Providers:      effective.Providers,
+	})
+}
+
+// ResetSessionSettings clears the active session's DB-backed overrides and
+// re-inherits the current workspace defaults.
 func (w *Workspace) ResetSessionSettings() error {
 	b := w.BackendSession()
 	if b == nil {
 		return fmt.Errorf("no active session")
 	}
+	w.adoptCurrentDefaults(b)
 	if err := b.ResetSessionSettings(); err != nil {
 		return err
 	}
@@ -634,6 +676,7 @@ func (w *Workspace) ResetSessionSettingsForSession(sessionID string) error {
 	if frontendSession == nil || frontendSession.backend == nil {
 		return fmt.Errorf("session %q is not active", sessionID)
 	}
+	w.adoptCurrentDefaults(frontendSession.backend)
 	if err := frontendSession.backend.ResetSessionSettings(); err != nil {
 		return err
 	}

@@ -20,6 +20,7 @@ import (
 	findinfiles "crude/tui/screens/findinfiles"
 	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
+	memorybrowser "crude/tui/screens/memorybrowser"
 	"crude/tui/screens/question"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/sessionsettings"
@@ -306,6 +307,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case sessionpicker.CancelMsg:
 		if m.sessionPicker != nil && msg.Target == m.sessionPicker {
 			m.closeSessionPicker()
+		}
+	case memorybrowser.PinMsg:
+		m.handleMemoryBrowserPin(msg)
+	case memorybrowser.ForgetMsg:
+		m.handleMemoryBrowserForget(msg)
+	case memorybrowser.CancelMsg:
+		if m.memoryBrowser != nil && msg.Target == m.memoryBrowser {
+			m.closeMemoryBrowser()
 		}
 	case helpscreen.CancelMsg:
 		if m.helpScreen != nil && msg.Target == m.helpScreen {
@@ -687,9 +696,12 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)
 		m.Win.CloseTab(index)
-		m.cleanupAgent(agentID)
+		// Closing an agent tab minimizes it: the orchestrator keeps
+		// running and the conversation survives. Terminating is an
+		// explicit action from the tab or Agents-panel context menu.
+		m.minimizeAgent(agentID)
 		m.handleTabSwitch()
-		if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+		if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 			m.openLauncher()
 			m.LastInteractionTime = time.Now()
 			return nil
@@ -715,7 +727,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	m.Win.CloseTab(index)
 	m.handleTabSwitch()
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		m.openLauncher()
 	}
 	return nil

@@ -7,7 +7,7 @@ import (
 )
 
 func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		return nil
 	}
 

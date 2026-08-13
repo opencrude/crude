@@ -284,10 +284,16 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 			SectionLabel: "Agent",
 			Items: []ui.ContextMenuItem{
 				{Label: "Open agent", Disabled: node.IsCompleted(), Action: func() {
-					m.switchToAgentView(node.ID)
+					m.restoreAgent(node.ID)
+				}},
+				{Label: "Minimize agent", Disabled: node.Hidden, Detail: "keeps running", Action: func() {
+					m.minimizeAgent(node.ID)
 				}},
 				{Label: "Cancel agent", Disabled: !node.IsActive(), Action: func() {
 					go m.CancelAgent(node.ID)
+				}},
+				{Label: "Terminate agent", Detail: "stops work", Action: func() {
+					m.terminateAgent(node.ID)
 				}},
 				{Label: "Copy agent name", Action: func() { m.copyToClipboard(item.Label) }},
 				{Label: "Copy model", Disabled: node.Model == "", Action: func() { m.copyToClipboard(node.Model) }},
@@ -630,11 +636,14 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Tab",
 			Items: []ui.ContextMenuItem{
-				{Label: "Close", Action: func() {
+				{Label: "Minimize", Detail: "keeps running", Action: func() {
 					_ = m.handleAgentTabClose(hit.TabIndex)
 				}},
 				{Label: "Cancel agent", Action: func() {
 					go m.CancelAgent(agentID)
+				}},
+				{Label: "Terminate agent", Detail: "stops work", Action: func() {
+					m.terminateAgent(agentID)
 				}},
 			},
 		})

@@ -13,6 +13,29 @@ import (
 	"crude/workspace"
 )
 
+// memoryContextPaths collects IDE context for the memory system: the
+// active editor file first, then other open editor tabs. The backend uses
+// these to boost recall of memories scoped to the same paths.
+func (m *App) memoryContextPaths() []string {
+	if m.EditorState == nil {
+		return nil
+	}
+	var paths []string
+	if m.EditorState.ActiveView != "" {
+		paths = append(paths, m.EditorState.ActiveView)
+	}
+	for path := range m.EditorState.Tabs {
+		if path == m.EditorState.ActiveView {
+			continue
+		}
+		if len(paths) >= 8 {
+			break
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
 func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 	n := m.AgentMgr.Get(sessionID)
 	if n == nil || n.State == nil {
@@ -39,9 +62,11 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 		m.StatusBar.SetThinkingForAgent(sessionID, true, false, false)
 	}
 	ch := n.InputChan
+	input := provider.InputWithRefs(text, refIDs)
+	input.ActivePaths = m.memoryContextPaths()
 	return func() tea.Msg {
 		select {
-		case ch <- provider.InputWithRefs(text, refIDs):
+		case ch <- input:
 			return nil
 		default:
 			return ttypes.ErrorMsg("input channel blocked - please try again")
@@ -93,6 +118,28 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 }
 
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
+	if evt.Type == "memory_saved" {
+		// Background extraction saved durable memories. Surface it visibly
+		// but without blocking (status line, not a modal or chat message).
+		if data, ok := evt.Data.(map[string]any); ok && m.StatusBar != nil {
+			count, _ := data["count"].(int)
+			if count > 0 {
+				notice := fmt.Sprintf("Memory: saved %d from this session", count)
+				if titles, ok := data["titles"].([]string); ok && len(titles) > 0 {
+					notice = fmt.Sprintf("Memory: saved %q", titles[0])
+					if count > 1 {
+						notice += fmt.Sprintf(" +%d more", count-1)
+					}
+				}
+				m.StatusBar.SetInfo(notice)
+			}
+		}
+		if m.memoryBrowser != nil {
+			m.memoryBrowser.Refresh()
+			m.markMemoryBrowserDirty()
+		}
+		return nil
+	}
 	if evt.Type == "async_command_status" || evt.Type == "retry" {
 		switch evt.Type {
 		case "async_command_status":

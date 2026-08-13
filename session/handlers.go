@@ -283,31 +283,70 @@ func (s *Session) ResetSessionSettings() error {
 	return nil
 }
 
-// UpdateWorkspaceDefaults refreshes the inherited baseline while preserving
-// this session's explicit DB-backed overrides.
+// UpdateWorkspaceDefaults refreshes only the infrastructure half of the
+// inherited baseline: provider endpoints, wire standards, and credentials.
+//
+// Agent behaviour — which provider, model, and thinking effort each role
+// runs — is snapshotted when the session starts and is deliberately NOT
+// refreshed here. A running conversation must not change models because
+// another tab saved settings; sessions inherit at creation and then stay
+// stable. AdoptWorkspaceDefaults is the explicit re-inherit.
 func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.workspaceCfg == nil {
-		s.workspaceCfg = &Config{ActiveProvider: "openrouter"}
-	}
+	s.refreshProviderCredentialsLocked(settings)
+	s.workspaceCfg.Memory = settings.Memory
+	s.rebuildEffectiveConfigLocked()
+}
+
+// AdoptWorkspaceDefaults re-inherits the whole workspace baseline including
+// agent role defaults. Only explicit user action (resetting a session's
+// settings) reaches it.
+func (s *Session) AdoptWorkspaceDefaults(settings ttypes.AppSettings) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshProviderCredentialsLocked(settings)
 	if settings.ActiveProvider != "" {
 		s.workspaceCfg.ActiveProvider = settings.ActiveProvider
 	}
-	if len(settings.Providers) > 0 {
-		if s.workspaceCfg.Providers == nil {
-			s.workspaceCfg.Providers = make(map[string]ProviderConfig)
-		}
-		for id, cfg := range settings.Providers {
+	ApplyWorkspaceAgentDefaults(s.workspaceCfg, settings.Agents)
+	s.workspaceCfg.Memory = settings.Memory
+	s.rebuildEffectiveConfigLocked()
+}
+
+// refreshProviderCredentialsLocked updates how the session reaches a
+// provider without touching which model a role picks. A provider the
+// snapshot has never seen is adopted whole; there is nothing to keep stable.
+func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) {
+	if s.workspaceCfg == nil {
+		s.workspaceCfg = &Config{ActiveProvider: "openrouter"}
+	}
+	if len(settings.Providers) == 0 {
+		return
+	}
+	if s.workspaceCfg.Providers == nil {
+		s.workspaceCfg.Providers = make(map[string]ProviderConfig)
+	}
+	for id, cfg := range settings.Providers {
+		existing, known := s.workspaceCfg.Providers[id]
+		if !known {
 			s.workspaceCfg.Providers[id] = ProviderConfig{
 				APIKey: cfg.APIKey, ProviderURL: cfg.ProviderURL,
 				APIStandard: cfg.APIStandard, Model: cfg.Model,
 				ModelStandards: cloneProviderModelStandards(cfg.ModelStandards),
 				ThinkingEffort: cfg.ThinkingEffort,
 			}
+			continue
 		}
+		existing.APIKey = cfg.APIKey
+		existing.ProviderURL = cfg.ProviderURL
+		existing.APIStandard = cfg.APIStandard
+		existing.ModelStandards = cloneProviderModelStandards(cfg.ModelStandards)
+		s.workspaceCfg.Providers[id] = existing
 	}
-	ApplyWorkspaceAgentDefaults(s.workspaceCfg, settings.Agents)
+}
+
+func (s *Session) rebuildEffectiveConfigLocked() {
 	s.cfg = configWithSessionOverrides(s.workspaceCfg, s.sessionOverrides)
 	if s.runtimeProfile != nil {
 		s.runtimeProfile.UpdateBase(s.cfg)

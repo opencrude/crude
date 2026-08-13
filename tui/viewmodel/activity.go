@@ -79,11 +79,18 @@ func (m *App) toggleActivity(view activitybar.View) tea.Cmd {
 }
 
 func (m *App) refreshActivityList() {
+	if m.activityBar != nil {
+		// The rail's accent marker tracks whether the panel is actually
+		// mounted, so a collapsed sidebar reads as collapsed.
+		m.activityBar.SetPanelOpen(m.sidebarContentVisible())
+	}
 	if m.activityList == nil {
 		return
 	}
 	if m.activityBar != nil {
 		if m.AgentMgr != nil {
+			// Counts every agent the panel lists, minimized included —
+			// that badge is how a backgrounded agent stays discoverable.
 			m.activityBar.SetBadge(activityAgents, m.AgentMgr.Count())
 		}
 		if mgr := m.termMgr(); mgr != nil {
@@ -147,14 +154,25 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		if n.IsOrchestrator() {
 			icon = "◆"
 		}
-		if n.IsActive() {
+		switch {
+		case n.IsActive():
 			detail = "running"
 			icon = "●"
-		} else if n.IsCompleted() {
+		case n.IsCompleted():
 			detail = "done"
 			icon = "✓"
-		} else if detail == "" {
+		case detail == "":
 			detail = "idle"
+		}
+		// Minimized agents stay listed here: this panel is how they come
+		// back, so the row has to say the tab is gone, not that the agent is.
+		if n.Hidden {
+			if detail == "running" {
+				detail = "running · minimized"
+			} else {
+				detail = "minimized"
+			}
+			icon = "▪"
 		}
 		items = append(items, ui.ListItem{
 			ID:       "agent:" + n.ID,
@@ -176,9 +194,10 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 
 func (m *App) terminalSidebarItems() []ui.ListItem {
 	items := []ui.ListItem{{
-		ID:    sidebarItemNewTerminal,
-		Label: "New Terminal",
-		Icon:  "+",
+		ID:      sidebarItemNewTerminal,
+		Label:   "New Terminal",
+		Icon:    "+",
+		Command: true,
 	}}
 	mgr := m.termMgr()
 	if mgr == nil {
@@ -214,7 +233,7 @@ func (m *App) terminalSidebarItems() []ui.ListItem {
 func sidebarCountBadge(items []ui.ListItem) string {
 	count := 0
 	for _, item := range items {
-		if item.Selectable() && item.ID != sidebarItemNewTerminal {
+		if item.Selectable() && !item.Command {
 			count++
 		}
 	}
@@ -269,7 +288,7 @@ func (m *App) handleSidebarActivate(item ui.ListItem) tea.Cmd {
 	case item.ID == sidebarItemNewTerminal:
 		return m.openNewTerminal()
 	case strings.HasPrefix(item.ID, "agent:"):
-		m.switchToAgentView(strings.TrimPrefix(item.ID, "agent:"))
+		m.restoreAgent(strings.TrimPrefix(item.ID, "agent:"))
 		return nil
 	case strings.HasPrefix(item.ID, "term:"):
 		m.focusTerminal(strings.TrimPrefix(item.ID, "term:"))

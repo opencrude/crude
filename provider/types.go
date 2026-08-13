@@ -11,6 +11,9 @@ import (
 type UserInput struct {
 	Text         string
 	ReferenceIDs []string
+	// ActivePaths carries IDE context (active editor file, open tabs) so
+	// the memory system can boost recall of memories scoped to those paths.
+	ActivePaths []string
 }
 
 func PlainInput(text string) UserInput {

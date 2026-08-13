@@ -150,6 +150,17 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"])},
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"])},
 		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"])},
+		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: formModel(
+			ui.SeparatorFieldState("memory-recall", "Recall"),
+			ui.BoolFieldState("auto-recall", "Auto recall", current.Memory.AutoRecallEnabled(), "Inject relevant workspace memories into the agent context each turn."),
+			ui.TextFieldState("recall-budget", "Recall budget", fmt.Sprintf("%d", current.Memory.RecallBudgetOrDefault(types.DefaultMemoryRecallBudget)), "Token budget for the injected memory block."),
+			ui.TextFieldState("recall-limit", "Recall limit", fmt.Sprintf("%d", current.Memory.RecallLimitOrDefault(types.DefaultMemoryRecallLimit)), "Maximum memories injected per turn."),
+			ui.SeparatorFieldState("memory-background", "Background curation"),
+			ui.BoolFieldState("auto-extract", "Auto extract", current.Memory.AutoExtractEnabled(), "Extract durable memories and session summaries from finished turns using a background model call."),
+			ui.TextFieldState("extract-every", "Extract cadence", fmt.Sprintf("%d", current.Memory.ExtractCadenceOrDefault(types.DefaultMemoryExtractCadence)), "Run extraction every N turns."),
+			ui.BoolFieldState("consolidation", "Consolidation", current.Memory.ConsolidationEnabled(), "Background dedup, contradiction resolution, and decay of unused memories."),
+			ui.TextFieldState("memory-model", "Background model", current.Memory.Model, "Model for background memory jobs. Empty inherits the session model."),
+		)},
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
 			ui.SeparatorFieldState("editing", "Editing"),
@@ -669,6 +680,7 @@ const (
 	catResearcher
 	catCrafter
 	catAeron
+	catMemory
 	catAppearance
 	catEditor
 	catLSP
@@ -690,6 +702,8 @@ func (m *Model) currentOverrideKey() string {
 		return "font"
 	case catProviders:
 		return "providers"
+	case catMemory:
+		return "memory"
 	default:
 		return "agents"
 	}
@@ -700,12 +714,32 @@ func (m *Model) AppSettings() types.AppSettings {
 	var settings types.AppSettings
 	m.collectProviders(&settings)
 	m.collectAgents(&settings.Agents)
+	m.collectMemory(&settings.Memory)
 	m.collectAppearance(&settings.Theme)
 	m.collectEditor(&settings.Editor)
 	m.collectLSP(&settings.LSP)
 	m.collectUI(&settings.UI)
 	m.collectFont(&settings.Font)
 	return settings
+}
+
+func (m *Model) collectMemory(cfg *types.MemorySettings) {
+	*cfg = types.MemorySettings{
+		AutoRecall:         onOff(m.value(catMemory, "auto-recall") == "on"),
+		AutoExtract:        onOff(m.value(catMemory, "auto-extract") == "on"),
+		Consolidation:      onOff(m.value(catMemory, "consolidation") == "on"),
+		RecallBudgetTokens: parseOpt(m.value(catMemory, "recall-budget"), types.DefaultMemoryRecallBudget),
+		RecallLimit:        parseOpt(m.value(catMemory, "recall-limit"), types.DefaultMemoryRecallLimit),
+		ExtractEveryTurns:  parseOpt(m.value(catMemory, "extract-every"), types.DefaultMemoryExtractCadence),
+		Model:              strings.TrimSpace(m.value(catMemory, "memory-model")),
+	}
+}
+
+func onOff(enabled bool) string {
+	if enabled {
+		return "on"
+	}
+	return "off"
 }
 
 func (m *Model) collectProviders(settings *types.AppSettings) {

@@ -29,7 +29,15 @@ const (
 // RowStride is the height of one rail entry. Entries start at the rail's
 // first row so the rail reads as a column that begins at the top, and the
 // whole band is clickable (a one-row target is too small for a mouse).
-const RowStride = 2
+//
+// The band is odd-height so the glyph sits on its exact middle row: every
+// highlight (hover background, active marker) covers the whole band, so a
+// band always reads as a balanced block around its icon rather than a box
+// hanging below a top-aligned glyph.
+const RowStride = 3
+
+// iconRow is the band-local row carrying the glyph and badge.
+const iconRow = RowStride / 2
 
 const ScreenID ui.ComponentID = "activitybar"
 
@@ -98,12 +106,13 @@ func Views() []View { return append([]View(nil), views...) }
 // Screen is the VS Code-style left activity rail.
 type Screen struct {
 	ui.Base
-	th       *theme.Theme
-	tokens   *ui.TokenSet
-	active   View
-	hover    int
-	nerdFont bool
-	badges   map[View]int
+	th        *theme.Theme
+	tokens    *ui.TokenSet
+	active    View
+	panelOpen bool
+	hover     int
+	nerdFont  bool
+	badges    map[View]int
 }
 
 func New(th *theme.Theme) *Screen {
@@ -111,11 +120,12 @@ func New(th *theme.Theme) *Screen {
 		th = theme.DefaultDark()
 	}
 	s := &Screen{
-		Base:   ui.NewBase(ScreenID),
-		th:     th,
-		tokens: ui.NewTokenSet(th),
-		hover:  -1,
-		badges: map[View]int{},
+		Base:      ui.NewBase(ScreenID),
+		th:        th,
+		tokens:    ui.NewTokenSet(th),
+		hover:     -1,
+		panelOpen: true,
+		badges:    map[View]int{},
 	}
 	s.applyTheme(th)
 	return s
@@ -124,6 +134,14 @@ func New(th *theme.Theme) *Screen {
 func (s *Screen) Active() View { return s.active }
 
 func (s *Screen) SetActive(v View) { s.active = v }
+
+// SetPanelOpen reports whether the sidebar panel for the active view is
+// currently mounted. A collapsed panel drops the accent marker so the rail
+// shows the toggle state instead of claiming a panel is open.
+func (s *Screen) SetPanelOpen(open bool) { s.panelOpen = open }
+
+// PanelOpen reports the last state given to SetPanelOpen.
+func (s *Screen) PanelOpen() bool { return s.panelOpen }
 
 // SetBadge sets the pending-item count shown beside a view's icon. Counts
 // above 9 collapse to "+" so the rail never widens.
@@ -168,34 +186,37 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 
 	left := ox + r.X
 	top := oy + r.Y
+	bottom := top + r.H
 	for i, v := range views {
-		y := top + i*RowStride
-		if y < top || y >= top+r.H {
-			continue
+		bandTop := top + i*RowStride
+		if bandTop >= bottom {
+			break
 		}
-		active := v == s.active
-		hovered := i == s.hover && ctx.Hovered && !active
+		bandH := min(RowStride, bottom-bandTop)
+		current := v == s.active
+		hovered := i == s.hover && ctx.Hovered && !current
 
 		rowBG := bg
 		iconFG := muted
-		switch {
-		case active:
-			iconFG = fg
-		case hovered:
-			rowBG = s.tokens.Color(ui.ColorHover)
+		if current || hovered {
 			iconFG = fg
 		}
-		if rowBG != bg {
+		if hovered {
+			rowBG = s.tokens.Color(ui.ColorHover)
 			// The hover band stops before the rule so the separator stays
 			// a continuous line down the whole rail.
-			bandH := RowStride
-			if y+bandH > top+r.H {
-				bandH = top + r.H - y
-			}
-			ui.FillRect(buf, 0, 0, ui.Rect{X: left, Y: y, W: ruleCol, H: bandH}, cell.BlankCell(rowBG))
+			ui.FillRect(buf, 0, 0, ui.Rect{X: left, Y: bandTop, W: ruleCol, H: bandH}, cell.BlankCell(rowBG))
 		}
-		if active && r.W > markerCol {
-			buf.Set(left+markerCol, y, cell.NewCell('▌', accent, rowBG, 0))
+		// The accent marker spans the whole band so active and hovered
+		// entries occupy identical footprints.
+		if current && s.panelOpen && r.W > markerCol {
+			for dy := 0; dy < bandH; dy++ {
+				buf.Set(left+markerCol, bandTop+dy, cell.NewCell('▌', accent, rowBG, 0))
+			}
+		}
+		y := bandTop + iconRow
+		if y >= bottom {
+			continue
 		}
 		if r.W > iconCol {
 			buf.WriteString(left+iconCol, y, v.Icon(s.nerdFont), iconFG, rowBG, 0)

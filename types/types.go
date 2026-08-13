@@ -81,6 +81,7 @@ type Settings struct {
 	ThinkingEffort   string
 	TurnLogsEnabled  string
 	Agents           AgentsSettings
+	Memory           MemorySettings              `json:"memory,omitempty"`
 	SessionOverrides map[string]CategorySettings `json:"-"`
 	Theme            ThemeSettings               `json:"theme,omitempty"`
 	Editor           EditorSettings              `json:"editor,omitempty"`
@@ -98,6 +99,74 @@ type AppSettings struct {
 	ActiveProvider string                    `json:"active_provider,omitempty"`
 	Providers      map[string]ProviderConfig `json:"providers,omitempty"`
 	Agents         AgentsSettings            `json:"agents,omitempty"`
+	Memory         MemorySettings            `json:"memory,omitempty"`
+}
+
+// Memory system defaults (applied by ApplyAppDefaults and used as fallbacks
+// wherever a MemorySettings value is unset).
+const (
+	DefaultMemoryRecallBudget  = 1500
+	DefaultMemoryRecallLimit   = 10
+	DefaultMemoryExtractCadence = 3
+)
+
+// MemorySettings configures the workspace memory system. Tri-state strings
+// ("on"/"off"/"" = inherit-or-default) follow the TurnLogsEnabled style so
+// the sparse workspace-override diffing works unchanged.
+type MemorySettings struct {
+	// AutoRecall injects relevant memories into the system prompt each
+	// turn. Default on.
+	AutoRecall string `json:"auto_recall,omitempty"`
+	// AutoExtract runs background LLM extraction of durable memories from
+	// finished turns. Default on.
+	AutoExtract string `json:"auto_extract,omitempty"`
+	// Consolidation runs the background dedup/contradiction/decay job.
+	// Default on.
+	Consolidation string `json:"consolidation,omitempty"`
+	// RecallBudgetTokens caps the auto-injected memory block. Default 1500.
+	RecallBudgetTokens int `json:"recall_budget_tokens,omitempty"`
+	// RecallLimit caps the number of auto-injected memories. Default 10.
+	RecallLimit int `json:"recall_limit,omitempty"`
+	// ExtractEveryTurns is the extraction cadence. Default 3.
+	ExtractEveryTurns int `json:"extract_every_turns,omitempty"`
+	// Model optionally overrides the model used for background memory jobs
+	// (extraction, summaries, consolidation). Empty uses the session model.
+	Model string `json:"model,omitempty"`
+}
+
+// AutoRecallEnabled reports whether recall injection is active (default on).
+func (m MemorySettings) AutoRecallEnabled() bool { return m.AutoRecall != "off" }
+
+// AutoExtractEnabled reports whether background extraction is active
+// (default on).
+func (m MemorySettings) AutoExtractEnabled() bool { return m.AutoExtract != "off" }
+
+// ConsolidationEnabled reports whether background consolidation is active
+// (default on).
+func (m MemorySettings) ConsolidationEnabled() bool { return m.Consolidation != "off" }
+
+// RecallBudgetOrDefault returns the configured budget or fallback.
+func (m MemorySettings) RecallBudgetOrDefault(fallback int) int {
+	if m.RecallBudgetTokens > 0 {
+		return m.RecallBudgetTokens
+	}
+	return fallback
+}
+
+// RecallLimitOrDefault returns the configured limit or fallback.
+func (m MemorySettings) RecallLimitOrDefault(fallback int) int {
+	if m.RecallLimit > 0 {
+		return m.RecallLimit
+	}
+	return fallback
+}
+
+// ExtractCadenceOrDefault returns the configured cadence or fallback.
+func (m MemorySettings) ExtractCadenceOrDefault(fallback int) int {
+	if m.ExtractEveryTurns > 0 {
+		return m.ExtractEveryTurns
+	}
+	return fallback
 }
 
 type SessionSettings struct {

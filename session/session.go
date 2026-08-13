@@ -16,6 +16,7 @@ import (
 	"crude/js"
 	"crude/jsonrepair"
 	"crude/logger"
+	"crude/memory"
 	"crude/provider"
 	"crude/safety"
 	"crude/search"
@@ -50,7 +51,20 @@ type Session struct {
 	permStore   *safety.PermissionStore
 	sm          *statemachine.ConversationStateMachine
 	asyncMgr    *fileio.AsyncCommandManager
-	memoryStore MemoryStore
+	memoryStore *memory.Store
+
+	// touchedFiles accumulates files touched by tools this session; they
+	// boost recall of memories scoped to the same paths.
+	touchedFiles map[string]struct{}
+	touchedMu    sync.Mutex
+
+	// prevContextInjected flips on the first turn after start/resume so
+	// the previous-session continuity block is injected exactly once.
+	prevContextInjected atomic.Bool
+
+	// memoryJobs serializes background memory work (extraction, summary,
+	// consolidation) for this session.
+	memoryJobs memoryJobState
 
 	msgs          []provider.ChatMessage
 	msgTurns      []int
@@ -281,6 +295,11 @@ func (s *Session) Close() {
 
 	s.flushWg.Wait()
 	s.flushWriteBufSync()
+
+	// Final memory extraction + bounded wait for background memory jobs.
+	// The workspace memory DB outlives this session, so leftover work is
+	// never lost — the next maintenance sweep finishes it.
+	s.finishMemoryJobs()
 
 	if s.editor != nil {
 		s.editor.Close()

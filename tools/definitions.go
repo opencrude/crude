@@ -644,15 +644,18 @@ var AgentTools = []ToolDef{
 		Function: ToolFuncDef{
 			Name: "remember",
 			Description: "Save a durable workspace memory for future turns and sessions. " +
-				"Use only for stable project conventions, user preferences, architectural decisions, or verified facts. " +
-				"Never store secrets, transient command output, or guesses.",
+				"Use for stable project conventions, user preferences, verified architectural decisions/facts, " +
+				"useful external references, and lessons from failures whose fix was confirmed (kind=lesson). " +
+				"Never store secrets, transient state, command output, or unverified guesses.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"title":{"type":"string","description":"Short stable title used for deduplication."},
-					"content":{"type":"string","description":"Verified fact, decision, convention, or preference to retain."},
-					"kind":{"type":"string","enum":["fact","decision","convention","preference"],"description":"Memory category; default fact."},
-					"pinned":{"type":"boolean","description":"Always prioritize this memory during recall."}
+					"content":{"type":"string","description":"Self-contained knowledge to retain (1-4 sentences)."},
+					"kind":{"type":"string","enum":["fact","decision","convention","preference","lesson","reference"],"description":"Memory category; default fact."},
+					"importance":{"type":"integer","description":"0-100; most memories are 30-60, 80+ is rare. Default 40."},
+					"paths":{"type":"array","items":{"type":"string"},"description":"Repo-relative files/dirs this memory applies to. Boosts recall when those files are active. Omit for project-wide."},
+					"pinned":{"type":"boolean","description":"Always inject this memory into context. Reserve for critical rules."}
 				},
 				"required":["title","content"]
 			}`),
@@ -661,13 +664,14 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name:        "recall_memory",
-			Description: "Search durable workspace memory for relevant facts, decisions, conventions, and preferences from prior work.",
+			Name: "recall_memory",
+			Description: "Search durable workspace memory (facts, decisions, conventions, preferences, lessons) from all prior work in this project. " +
+				"Results are ranked by relevance, recency, importance, and usage. The top memories are already auto-injected each turn; use this for deeper or more specific searches.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"query":{"type":"string","description":"Terms describing the information to recall."},
-					"limit":{"type":"integer","description":"Maximum memories to return; default 8, maximum 50."}
+					"query":{"type":"string","description":"Terms describing the information to recall (identifiers, paths, and error strings work well)."},
+					"limit":{"type":"integer","description":"Maximum memories to return; default 12, maximum 50."}
 				},
 				"required":["query"]
 			}`),
@@ -676,14 +680,51 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name:        "forget_memory",
-			Description: "Delete one durable workspace memory by ID when it is obsolete or incorrect.",
+			Name: "update_memory",
+			Description: "Replace an existing workspace memory with corrected or refined content. " +
+				"The old version is kept superseded (auditable), linked to the replacement. Use when a remembered fact changed or was wrong.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"id":{"type":"string","description":"Memory ID being corrected (from recall_memory or the Workspace Memory context block)."},
+					"content":{"type":"string","description":"The corrected, self-contained content."},
+					"title":{"type":"string","description":"New title; omit to keep the existing title."},
+					"kind":{"type":"string","enum":["fact","decision","convention","preference","lesson","reference"],"description":"New category; omit to keep."},
+					"importance":{"type":"integer","description":"0-100; omit to keep."},
+					"paths":{"type":"array","items":{"type":"string"},"description":"New scope paths; omit to keep."}
+				},
+				"required":["id","content"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "forget_memory",
+			Description: "Retire one workspace memory by ID when it is obsolete or incorrect. " +
+				"The record is superseded, not destroyed, so the change stays auditable.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"id":{"type":"string","description":"Memory ID returned by remember or recall_memory."}
 				},
 				"required":["id"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name: "search_history",
+			Description: "Search everything ever done in this workspace: past conversation turns (what was asked, what was done, which files were touched) and per-session summaries across ALL sessions. " +
+				"Use to answer questions like 'what did we do last time', 'have we seen this error before', or 'which session changed file X'.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"query":{"type":"string","description":"Terms to search for (identifiers, paths, error strings, and topics all work)."},
+					"limit":{"type":"integer","description":"Maximum results per category; default 10, maximum 50."}
+				},
+				"required":["query"]
 			}`),
 		},
 	},

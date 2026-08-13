@@ -123,7 +123,7 @@ func (m *App) computeContentLayout() contentLayout {
 	}
 
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
-	isLauncherActive := m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil
+	isLauncherActive := m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil
 	lay.ShowMainInput = !isLauncherActive && !isEditorActive && !m.OverlayState.IsOverlay()
 
 	m.syncFormHint()

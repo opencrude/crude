@@ -1,6 +1,10 @@
 package viewmodel
 
 import (
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
 	"crude/provider"
 	"crude/tui/chatprojection"
 	"crude/tui/ui"
@@ -45,6 +49,57 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 
 func (m *App) RemoveOrchestrator(orchID string) {
 	m.cleanupAgent(orchID)
+}
+
+// minimizeAgent hides an agent's tab while every piece of its state stays
+// alive: the orchestrator keeps running, the conversation, panes, scroll
+// offsets, and session deck are retained, and the agent is listed in the
+// Agents panel so one click brings it back. Closing a tab must never kill
+// work in flight — terminating is the explicit cleanupAgent path.
+func (m *App) minimizeAgent(agentID string) {
+	if agentID == "" || m.AgentMgr == nil || m.AgentMgr.Get(agentID) == nil {
+		return
+	}
+	ids := agentSubtreeIDs(m.AgentMgr.Get(agentID))
+	m.MinimizeAgent(agentID)
+	for _, id := range ids {
+		if m.Win == nil {
+			break
+		}
+		if tab := m.Win.TabByTitle(m.agentTabTitle(id)); tab != nil {
+			m.Win.CloseTabByID(tab.ID)
+		}
+	}
+	m.refreshActivityList()
+}
+
+// terminateAgent is the explicit destructive close: it cancels the running
+// turn, stops the orchestrator, and drops every buffer. Only user-invoked
+// "Terminate" actions reach it — closing a tab minimizes instead.
+func (m *App) terminateAgent(agentID string) tea.Cmd {
+	if agentID == "" || m.AgentMgr == nil || m.AgentMgr.Get(agentID) == nil {
+		return nil
+	}
+	m.cleanupAgent(agentID)
+	m.handleTabSwitch()
+	m.refreshActivityList()
+	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
+		m.openLauncher()
+		m.LastInteractionTime = time.Now()
+	}
+	return nil
+}
+
+// restoreAgent re-surfaces a minimized agent and focuses its tab.
+func (m *App) restoreAgent(agentID string) {
+	if agentID == "" || m.AgentMgr == nil || m.AgentMgr.Get(agentID) == nil {
+		return
+	}
+	// The launcher only exists while nothing is surfaced; a restored agent
+	// takes the main content area back.
+	m.launcherScreen = nil
+	m.switchToAgentView(agentID)
+	m.refreshActivityList()
 }
 
 // cleanupAgent removes all state for a given agent orchestrator or sub-agent.
@@ -227,8 +282,13 @@ func (m *App) switchToAgentView(agentID string) {
 	if agentID == "" {
 		m.AgentMgr.ClearActive()
 	} else if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil && !n.State.Completed {
-		m.AgentMgr.SetActive(agentID)
-		m.ActivateSessionByAgent(agentID)
+		// Selecting a minimized agent is how the user brings it back.
+		if n.Hidden {
+			m.RestoreAgent(agentID)
+		} else {
+			m.AgentMgr.SetActive(agentID)
+			m.ActivateSessionByAgent(agentID)
+		}
 	}
 
 	curr := m.AgentMgr.ActiveID()
@@ -285,8 +345,9 @@ func (m *App) syncAgentWindowTabs() {
 		return
 	}
 
-	// If no agents exist, purge agent tabs and return
-	if m.AgentMgr.Count() == 0 {
+	// If no surfaced agents exist, purge agent tabs and return. Minimized
+	// agents are still in the manager but own no tab.
+	if m.AgentMgr.VisibleCount() == 0 {
 		m.purgeAgentTabs()
 		m.EditorState.TabSnapshotCache = ""
 		return
@@ -303,7 +364,7 @@ func (m *App) syncAgentWindowTabs() {
 	// Create tabs for sub-agents that have panes
 	for _, id := range m.PaneMgr.PaneOrder() {
 		n := m.AgentMgr.Get(id)
-		if n == nil || (n.State != nil && n.State.Completed) {
+		if n == nil || n.Hidden || (n.State != nil && n.State.Completed) {
 			continue
 		}
 		view, ok := viewByID[id]
@@ -328,7 +389,7 @@ func (m *App) syncAgentWindowTabs() {
 
 	// Create tabs for orchestrator agents (top-level agents without parent IDs)
 	for _, n := range m.AgentMgr.AllNodes() {
-		if n.State != nil && n.State.Completed {
+		if n.Hidden || (n.State != nil && n.State.Completed) {
 			continue
 		}
 		if n.Parent != nil {
@@ -415,8 +476,8 @@ func (m *App) purgeAgentTabs() {
 	}
 }
 
-// purgeStaleAgentTabs closes agent tabs for agents that no longer exist
-// or have completed.
+// purgeStaleAgentTabs closes agent tabs for agents that no longer exist,
+// have completed, or were minimized.
 func (m *App) purgeStaleAgentTabs() {
 	for i := m.Win.TabCount() - 1; i >= 0; i-- {
 		tabs := m.Win.Tabs()
@@ -426,7 +487,7 @@ func (m *App) purgeStaleAgentTabs() {
 		if m.isAgentTabTitle(tabs[i].Title) {
 			agentID := m.agentIDFromTabTitle(tabs[i].Title)
 			n := m.AgentMgr.Get(agentID)
-			if n == nil || (n.State != nil && n.State.Completed) {
+			if n == nil || n.Hidden || (n.State != nil && n.State.Completed) {
 				m.Win.CloseTabByID(tabs[i].ID)
 			}
 		}

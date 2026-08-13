@@ -62,6 +62,7 @@ var availableCmds = []CmdInfo{
 	{Name: "changes", Label: "changes", Desc: "Show file changes this session"},
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
+	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
 	{Name: "help", Label: "help", Desc: "Open help"},
 }
 

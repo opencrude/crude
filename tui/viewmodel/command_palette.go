@@ -528,6 +528,9 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "app.sessions":
 		m.openSessionPicker()
 
+	case "memory.browse":
+		_, _ = m.toggleMemoryBrowser()
+
 	case "help.show":
 		m.openHelp()
 

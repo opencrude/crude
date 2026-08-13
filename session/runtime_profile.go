@@ -266,6 +266,7 @@ func copyConfig(src *Config) *Config {
 	dst := &Config{
 		ActiveProvider:  src.ActiveProvider,
 		TurnLogsEnabled: src.TurnLogsEnabled,
+		Memory:          src.Memory,
 	}
 
 	if src.Providers != nil {
