@@ -63,6 +63,33 @@ func (m *SubAgentManager) MarkFinished(id AgentID, result SubAgentResult) {
 	m.completedMap[id] = result
 }
 
+// HydrateCompleted restores a durable result after process restart. Hydrated
+// handles are intentionally non-runnable; they exist so poll/list status keeps
+// the same semantics across resume.
+func (m *SubAgentManager) HydrateCompleted(result SubAgentResult) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := result.AgentID
+	if _, exists := m.completedMap[id]; exists {
+		return
+	}
+	startedAt := time.Now()
+	if result.DurationMs > 0 {
+		startedAt = startedAt.Add(-time.Duration(result.DurationMs) * time.Millisecond)
+	}
+	handle := &SubAgentHandle{
+		Spec: SubAgentSpec{
+			ID: id, Name: result.Name, Category: result.Category,
+		},
+		SessionID: result.SessionID,
+		StartedAt: startedAt,
+		Finished:  true,
+	}
+	m.finished[id] = handle
+	m.completed = append(m.completed, result)
+	m.completedMap[id] = result
+}
+
 func (m *SubAgentManager) GetCompleted(id AgentID) (SubAgentResult, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -87,9 +114,6 @@ func (m *SubAgentManager) Cancel(id AgentID) (SubAgentResult, bool) {
 	delete(m.active, id)
 	handle.Finished = true
 	m.finished[id] = handle
-	m.mu.Unlock()
-
-	handle.Cancel()
 	result := SubAgentResult{
 		AgentID:   id,
 		Name:      handle.Spec.Name,
@@ -97,12 +121,11 @@ func (m *SubAgentManager) Cancel(id AgentID) (SubAgentResult, bool) {
 		Status:    SubAgentCancelled,
 		SessionID: handle.SessionID,
 	}
-
-	m.mu.Lock()
 	m.completed = append(m.completed, result)
 	m.completedMap[id] = result
 	m.mu.Unlock()
 
+	handle.Cancel()
 	return result, true
 }
 
@@ -143,15 +166,15 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 	var entries []SubAgentStatusEntry
 	for id, h := range m.active {
 		entries = append(entries, SubAgentStatusEntry{
-			HandleID:      string(id),
-			Name:          h.Spec.Name,
-			Category:      h.Spec.Category,
-			Status:        string(SubAgentRunning),
+			HandleID:       string(id),
+			Name:           h.Spec.Name,
+			Category:       h.Spec.Category,
+			Status:         string(SubAgentRunning),
 			ElapsedSeconds: int(time.Since(h.StartedAt).Seconds()),
-			StepsUsed:     int(h.StepCount.Load()),
-			MaxSteps:      h.Spec.MaxSteps,
-			Model:         h.Spec.Model,
-			FilesClaimed:  h.Spec.FileOwnership,
+			StepsUsed:      int(h.StepCount.Load()),
+			MaxSteps:       h.Spec.MaxSteps,
+			Model:          h.Spec.Model,
+			FilesClaimed:   h.Spec.FileOwnership,
 		})
 	}
 	if includeCompleted {
@@ -165,24 +188,22 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 				summaryGist = r.SummaryGist
 			}
 			entries = append(entries, SubAgentStatusEntry{
-				HandleID:      string(id),
-				Name:          h.Spec.Name,
-				Category:      h.Spec.Category,
-				Status:        status,
+				HandleID:       string(id),
+				Name:           h.Spec.Name,
+				Category:       h.Spec.Category,
+				Status:         status,
 				ElapsedSeconds: int(time.Since(h.StartedAt).Seconds()),
-				StepsUsed:     int(h.StepCount.Load()),
-				MaxSteps:      h.Spec.MaxSteps,
-				Model:         h.Spec.Model,
-				FilesClaimed:  h.Spec.FileOwnership,
-				ResultPath:    resultPath,
-				SummaryGist:   summaryGist,
+				StepsUsed:      int(h.StepCount.Load()),
+				MaxSteps:       h.Spec.MaxSteps,
+				Model:          h.Spec.Model,
+				FilesClaimed:   h.Spec.FileOwnership,
+				ResultPath:     resultPath,
+				SummaryGist:    summaryGist,
 			})
 		}
 	}
 	return entries
 }
-
-
 
 type SubAgentStatusEntry struct {
 	HandleID       string   `json:"handle_id"`

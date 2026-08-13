@@ -145,6 +145,15 @@ func TestSetModelCap(t *testing.T) {
 	}
 }
 
+func TestMergeModelCapDoesNotEraseCatalogCapabilities(t *testing.T) {
+	resetDynamicCaps()
+	SetModelCap("vision-model", true, true)
+	MergeModelCap("vision-model", false, false)
+	if !SupportsVision("vision-model") || !SupportsTools("vision-model") {
+		t.Fatal("missing config flags erased catalog capabilities")
+	}
+}
+
 func TestLoadModelCaps_Overwrite(t *testing.T) {
 	resetDynamicCaps()
 

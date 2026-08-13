@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -20,6 +21,7 @@ const (
 const (
 	fieldProvider = "provider"
 	fieldModel    = "model"
+	fieldStandard = "api-standard"
 	fieldThinking = "thinking-effort"
 )
 
@@ -34,6 +36,7 @@ type FetchModelsMsg struct {
 	ProviderID string
 	BaseURL    string
 	APIKey     string
+	StandardID string
 }
 
 type page uint8
@@ -99,6 +102,7 @@ func (s *Screen) ConfigureProviders(presets []types.ProviderPreset, providers ma
 	s.presets = append(s.presets[:0], presets...)
 	s.providers = make(map[string]types.ProviderConfig, len(providers))
 	for id, cfg := range providers {
+		cfg.ModelStandards = cloneStandards(cfg.ModelStandards)
 		s.providers[id] = cfg
 	}
 	if s.page == rolePage {
@@ -130,7 +134,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 }
 
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
-func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult       { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult      { return ui.EventResult{} }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
@@ -227,21 +231,34 @@ func (s *Screen) openRole(role string) {
 	if thinking == "" {
 		thinking = "none"
 	}
+	standard := cfg.APIStandard
+	if standard == "" {
+		standard = "inherit"
+	}
 	model := ui.NewFormModel()
 	model.AddField(ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(s.presets), "Provider used by this agent for the session."))
 	model.AddField(ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(s.models[providerID]), "Model used by this agent for the session."))
+	model.AddField(ui.SelectFieldState(
+		fieldStandard, "Communication protocol", standard,
+		s.standardOptions(providerID, cfg.Model),
+		"Keep inherited unless this session requires a different provider wire protocol.",
+	))
 	model.AddField(ui.ThinkingFieldState(fieldThinking, thinking, "Reasoning budget used by this agent for the session."))
 	model.OnChanged(func(fieldID string) {
-		if fieldID != fieldProvider {
-			return
-		}
-		provider := model.Field(fieldProvider).Value.String()
-		providerCfg := s.providers[provider]
-		model.SetValue(fieldModel, ui.StringValue(providerCfg.Model))
-		model.SetValue(fieldThinking, ui.StringValue(providerCfg.ThinkingEffort))
-		if field := model.Field(fieldModel); field != nil {
-			field.Options = ui.ModelOptions(s.models[provider])
-			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
+		switch fieldID {
+		case fieldProvider:
+			providerID := model.Field(fieldProvider).Value.String()
+			providerCfg := s.providers[providerID]
+			model.SetValue(fieldModel, ui.StringValue(providerCfg.Model))
+			model.SetValue(fieldStandard, ui.StringValue("inherit"))
+			model.SetValue(fieldThinking, ui.StringValue(providerCfg.ThinkingEffort))
+			if field := model.Field(fieldModel); field != nil {
+				field.Options = ui.ModelOptions(s.models[providerID])
+				field.Errors, field.Loading, field.LoadMessage = nil, false, ""
+			}
+			s.refreshStandardOptions(model)
+		case fieldModel:
+			s.refreshStandardOptions(model)
 		}
 	})
 	s.formModel = model
@@ -251,6 +268,61 @@ func (s *Screen) openRole(role string) {
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "session-settings.role.back", Variant: ui.VariantSecondary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "reset-role"), Label: "Reset role", Action: "session-settings.role.reset", Variant: ui.VariantDanger, Enabled: true},
 	)
+}
+
+func (s *Screen) standardOptions(providerID, model string) []ui.FormOption {
+	cfg := s.providers[providerID]
+	inherited := cfg.APIStandard
+	if override := cfg.ModelStandards[model]; override != "" {
+		inherited = override
+	}
+	if inherited == "" {
+		inherited = provider.DefaultStandardID(providerID)
+	}
+	options := []ui.FormOption{{
+		ID: "inherit", Label: "Use provider/model default",
+		Detail: standardLabel(inherited),
+	}}
+	for _, standard := range provider.StandardList() {
+		options = append(options, ui.FormOption{
+			ID: standard.ID, Label: standard.Name, Detail: standard.Description,
+		})
+	}
+	return options
+}
+
+func (s *Screen) refreshStandardOptions(model *ui.FormModel) {
+	if model == nil {
+		return
+	}
+	field := model.Field(fieldStandard)
+	if field == nil {
+		return
+	}
+	field.Options = s.standardOptions(
+		model.Field(fieldProvider).Value.String(),
+		model.Field(fieldModel).Value.String(),
+	)
+}
+
+func standardLabel(id string) string {
+	for _, standard := range provider.StandardList() {
+		if standard.ID == id {
+			return standard.Name
+		}
+	}
+	return id
+}
+
+func cloneStandards(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for model, standard := range src {
+		out[model] = standard
+	}
+	return out
 }
 
 func (s *Screen) openSelect(fieldID string) tea.Cmd {
@@ -264,8 +336,15 @@ func (s *Screen) openSelect(fieldID string) tea.Cmd {
 	field.Loading, field.LoadMessage = true, "Fetching models..."
 	providerID := s.formModel.Field(fieldProvider).Value.String()
 	cfg := s.providers[providerID]
+	standardID := cfg.APIStandard
+	if standardID == "" {
+		standardID = provider.DefaultStandardID(providerID)
+	}
 	return func() tea.Msg {
-		return FetchModelsMsg{ProviderID: providerID, BaseURL: cfg.ProviderURL, APIKey: cfg.APIKey}
+		return FetchModelsMsg{
+			ProviderID: providerID, BaseURL: cfg.ProviderURL,
+			APIKey: cfg.APIKey, StandardID: standardID,
+		}
 	}
 }
 
@@ -303,9 +382,16 @@ func (s *Screen) applyRoleForm() {
 	cfg := categoryFor(s.effective, s.role)
 	cfg.Provider = s.formModel.Field(fieldProvider).Value.String()
 	cfg.Model = s.formModel.Field(fieldModel).Value.String()
+	cfg.APIStandard = s.formModel.Field(fieldStandard).Value.String()
+	if cfg.APIStandard == "inherit" {
+		cfg.APIStandard = ""
+	}
 	cfg.ThinkingEffort = s.formModel.Field(fieldThinking).Value.String()
 	setCategory(&s.effective, s.role, cfg)
-	s.overrides[s.role] = types.CategorySettings{Provider: cfg.Provider, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort}
+	s.overrides[s.role] = types.CategorySettings{
+		Provider: cfg.Provider, Model: cfg.Model,
+		APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
+	}
 }
 
 func (s *Screen) resetRole(role string) {
@@ -317,7 +403,8 @@ func (s *Screen) ToSettings() types.Settings {
 	settings := cloneSettings(s.effective)
 	settings.SessionOverrides = copyCategoryMap(s.overrides)
 	main := categoryFor(settings, "default")
-	settings.ProviderID, settings.Model, settings.ThinkingEffort = main.Provider, main.Model, main.ThinkingEffort
+	settings.ProviderID, settings.Model = main.Provider, main.Model
+	settings.APIStandard, settings.ThinkingEffort = main.APIStandard, main.ThinkingEffort
 	if providerCfg, ok := s.providers[main.Provider]; ok {
 		settings.ProviderURL, settings.ProviderAPIKey, settings.APIKey = providerCfg.ProviderURL, providerCfg.APIKey, providerCfg.APIKey
 	}
@@ -359,7 +446,10 @@ func categoryFor(settings types.Settings, role string) types.CategorySettings {
 			return cfg
 		}
 	}
-	return types.CategorySettings{Provider: settings.ProviderID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort}
+	return types.CategorySettings{
+		Provider: settings.ProviderID, Model: settings.Model,
+		APIStandard: settings.APIStandard, ThinkingEffort: settings.ThinkingEffort,
+	}
 }
 
 func setCategory(settings *types.Settings, role string, cfg types.CategorySettings) {

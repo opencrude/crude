@@ -40,6 +40,7 @@ type CategorySettings struct {
 	Provider            string
 	ProviderURL         string
 	APIKey              string
+	APIStandard         string
 	Model               string
 	ThinkingEffort      string
 	Policy              string
@@ -76,6 +77,7 @@ type Settings struct {
 	ProviderID       string
 	ProviderURL      string
 	ProviderAPIKey   string
+	APIStandard      string
 	ThinkingEffort   string
 	TurnLogsEnabled  string
 	Agents           AgentsSettings
@@ -104,6 +106,7 @@ type SessionSettings struct {
 	ProviderID      string         `json:"provider_id,omitempty"`
 	ProviderURL     string         `json:"provider_url,omitempty"`
 	ProviderAPIKey  string         `json:"provider_api_key,omitempty"`
+	APIStandard     string         `json:"api_standard,omitempty"`
 	ThinkingEffort  string         `json:"thinking_effort,omitempty"`
 	TurnLogsEnabled string         `json:"turn_logs_enabled,omitempty"`
 	Agents          AgentsSettings `json:"agents,omitempty"`
@@ -126,6 +129,7 @@ func (s Settings) SessionPart() SessionSettings {
 		ProviderID:      s.ProviderID,
 		ProviderURL:     s.ProviderURL,
 		ProviderAPIKey:  s.ProviderAPIKey,
+		APIStandard:     s.APIStandard,
 		ThinkingEffort:  s.ThinkingEffort,
 		TurnLogsEnabled: s.TurnLogsEnabled,
 		Agents:          s.Agents,
@@ -219,17 +223,20 @@ type ModelEntry struct {
 }
 
 type ProviderConfig struct {
-	APIKey         string `json:"api_key,omitempty"`
-	ProviderURL    string `json:"provider_url,omitempty"`
-	Model          string `json:"model,omitempty"`
-	ThinkingEffort string `json:"thinking_effort,omitempty"`
+	APIKey         string            `json:"api_key,omitempty"`
+	ProviderURL    string            `json:"provider_url,omitempty"`
+	APIStandard    string            `json:"api_standard,omitempty"`
+	Model          string            `json:"model,omitempty"`
+	ModelStandards map[string]string `json:"model_standards,omitempty"`
+	ThinkingEffort string            `json:"thinking_effort,omitempty"`
 }
 
 type ProviderPreset struct {
-	ID       string
-	Name     string
-	HelpText string
-	BaseURL  string
+	ID         string
+	Name       string
+	HelpText   string
+	BaseURL    string
+	StandardID string
 }
 
 type ConfirmResult struct {

@@ -32,44 +32,53 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// launcher/welcome screen.
 	if m.actionRegistry != nil {
 		if match := m.actionRegistry.MatchGlobal(msg); match != nil {
-			switch match.ID {
-			case "palette.open":
-				return m.toggleCommandPalette()
-			case "search.project.open":
-				return m.toggleFindInFiles()
-			case "search.project.replace":
-				return m.toggleReplaceInFiles()
-			case "composer.toggle":
-				return m.toggleComposer()
-			case "app.sessions":
-				m.openSessionPicker()
-				return m, nil
-			case "help.show":
-				return m.toggleHelp()
-			case "app.quit":
-				return m.handleQuit()
-			case "view.toggle.sidebar":
-				m.ToggleSidebar()
-				return m, nil
-			case "view.focus.sidebar":
-				m.toggleFocusTree()
-				return m, nil
-			case "view.activity.files":
-				m.toggleActivity(activityFiles)
-				return m, nil
-			case "view.activity.agents":
-				m.toggleActivity(activityAgents)
-				return m, nil
-			case "view.activity.terminals":
-				m.toggleActivity(activityTerminals)
-				return m, nil
-			case "view.activity.git":
-				m.toggleActivity(activityGit)
-				return m, nil
-			case "terminal.new":
-				return m, m.openNewTerminal()
-			case "terminal.toggle":
-				return m, m.toggleTerminalFocus()
+			if m.terminalOwnsKeys() {
+				switch match.ID {
+				case "palette.open", "terminal.new", "terminal.toggle":
+				default:
+					match = nil
+				}
+			}
+			if match != nil {
+				switch match.ID {
+				case "palette.open":
+					return m.toggleCommandPalette()
+				case "search.project.open":
+					return m.toggleFindInFiles()
+				case "search.project.replace":
+					return m.toggleReplaceInFiles()
+				case "composer.toggle":
+					return m.toggleComposer()
+				case "app.sessions":
+					m.openSessionPicker()
+					return m, nil
+				case "help.show":
+					return m.toggleHelp()
+				case "app.quit":
+					return m.handleQuit()
+				case "view.toggle.sidebar":
+					m.ToggleSidebar()
+					return m, nil
+				case "view.focus.sidebar":
+					m.toggleFocusTree()
+					return m, nil
+				case "view.activity.files":
+					m.toggleActivity(activityFiles)
+					return m, nil
+				case "view.activity.agents":
+					m.toggleActivity(activityAgents)
+					return m, nil
+				case "view.activity.terminals":
+					m.toggleActivity(activityTerminals)
+					return m, nil
+				case "view.activity.git":
+					m.toggleActivity(activityGit)
+					return m, nil
+				case "terminal.new":
+					return m, m.openNewTerminal()
+				case "terminal.toggle":
+					return m, m.toggleTerminalFocus()
+				}
 			}
 		}
 	}
@@ -83,6 +92,9 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
 		return m, m.handleSessionDeckEvent(msg)
+	}
+	if m.termDockOwnsKeys() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+		return m.dispatchTermDockKey(msg)
 	}
 
 	// Esc always closes the topmost popup first, regardless of focus.
@@ -594,6 +606,9 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
 		return m, m.handleSessionDeckEvent(msg)
+	}
+	if m.termDockOwnsKeys() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
+		return m.dispatchTermDockPaste(msg)
 	}
 
 	switch m.focusTarget() {

@@ -285,9 +285,13 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 				return fw // Caller should handle removal.
 			}
 
+			// Reserved title-action cells belong to the window content:
+			// they must start neither a title drag nor a top-edge resize.
+			onTitleAction := fw.IsOnTitleAction(m.X, m.Y)
+
 			// Check title bar for drag (before edge check — title bar is
 			// a more specific hit target than the resize edge).
-			if fw.Movable() && fw.IsOnTitleBar(m.X, m.Y) {
+			if fw.Movable() && fw.IsOnTitleBar(m.X, m.Y) && !onTitleAction {
 				wm.activeDrag = fw
 				fw.SetDragging(true)
 				fw.SetDragStart(m.X, m.Y)
@@ -297,7 +301,7 @@ func (wm *WindowManager) HandleMouse(msg tea.MouseMsg) *FloatingWindow {
 			}
 
 			// Check edge for resize.
-			if fw.Resizable() {
+			if fw.Resizable() && !onTitleAction {
 				edge := fw.HitTestEdge(m.X, m.Y)
 				if edge != EdgeNone {
 					wm.activeResize = fw

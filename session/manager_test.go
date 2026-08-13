@@ -315,6 +315,14 @@ func TestResumedSessionOrchestrators(t *testing.T) {
 	if _, ok := sess.orchestrators[orch.ID]; !ok {
 		t.Fatal("orchestrator should be stored in map")
 	}
+	again, err := sess.NewOrchestrator(sender)
+	if err != nil {
+		t.Fatalf("second NewOrchestrator failed: %v", err)
+	}
+	if again != orch {
+		t.Fatal("second NewOrchestrator started a duplicate loop")
+	}
+	sess.CloseOrchestrator(orch.ID)
 }
 
 func TestCloseOrchestratorSignalsStopWithoutClosingInputChannels(t *testing.T) {

@@ -12,6 +12,9 @@ import (
 )
 
 func read(t Format) ([]byte, error) {
+	if t == FmtImage {
+		return readImage()
+	}
 	if t != FmtText {
 		return nil, errUnsupported
 	}
@@ -41,6 +44,29 @@ func read(t Format) ([]byte, error) {
 	}
 
 	logIf(func(lg *logger.Logger) { lg.Warn("CLIPBOARD", "no_read_tool") })
+	return nil, errUnavailable
+}
+
+func readImage() ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	tools := [][]string{
+		{"wl-paste", "--no-newline", "--type", "image/png"},
+		{"wl-paste", "--no-newline", "--type", "image/jpeg"},
+		{"xclip", "-selection", "clipboard", "-o", "-target", "image/png"},
+		{"pngpaste", "-"},
+	}
+	for _, tool := range tools {
+		cmd := exec.CommandContext(ctx, tool[0], tool[1:]...)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if cmd.Run() == nil && out.Len() > 0 {
+			logIf(func(lg *logger.Logger) {
+				lg.Debug("CLIPBOARD", "read_image_ok", "tool", tool[0], "bytes", out.Len())
+			})
+			return out.Bytes(), nil
+		}
+	}
 	return nil, errUnavailable
 }
 

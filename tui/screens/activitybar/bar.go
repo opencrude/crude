@@ -117,7 +117,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		gfg, gbg := muted, bg
 		if v == s.active {
 			gfg, gbg = fg, accent
-		} else if i == s.hover && s.tokens != nil {
+		} else if i == s.hover && ctx.Hovered && s.tokens != nil {
+			// Hover paints only while the host still targets the rail, so a
+			// highlight cannot stick after the pointer moved to another pane.
 			gfg, gbg = fg, s.tokens.Color(ui.ColorHover)
 		}
 		ui.FillRect(buf, 0, 0, ui.Rect{X: ox + r.X, Y: y, W: r.W, H: 1}, cell.BlankCell(gbg))

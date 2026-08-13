@@ -135,6 +135,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	// Use per-orchestrator effective config from runtime profile.
 	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
 	activeCfg := effectiveCfg.GetActiveDefaultCategory()
+	provider.MergeModelCap(activeCfg.Model, activeCfg.ModelSupportsVision, activeCfg.ModelSupportsTools)
 	if activeCfg.APIKey == "" {
 		l.Warn("INPUT", "no_api_key")
 		sender.SendAgentEventWithID("error", "No API key configured. Press Ctrl+S to open settings.", o.ID)
@@ -164,7 +165,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	s.msgCounterMu.Unlock()
 	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "is_blocked", isBlocked, "turn", s.turnNumber)
 
-	userMsg := s.buildUserMessage(userInput)
+	userMsg := s.buildUserMessage(userInput, activeCfg.Model)
 
 	if s.db != nil {
 		_ = sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
@@ -186,24 +187,29 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		s.editor = s.editor.WithMessage(currentMsgID)
 	}
 
-	s.provider.Model = activeCfg.Model
-	s.provider.SetThinkingEffort(activeCfg.ThinkingEffort)
-	provider.SetModelCap(activeCfg.Model, activeCfg.ModelSupportsVision, activeCfg.ModelSupportsTools)
-
-	ag := s.newAgent()
+	turnProvider, err := providerForCategory(activeCfg)
+	if err != nil {
+		l.Error("AGENT", "provider_config_error", "error", err.Error())
+		sender.SendAgentEventWithID("error", "Invalid provider communication standard: "+err.Error(), o.ID)
+		return
+	}
+	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled())
 	if o.subAgentSup != nil {
 		o.subAgentSup.SetParentToolFn(ag.ToolFn)
 		ag.SubAgentMgr = o.subAgentSup.Manager()
 	}
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
+	ctx, cancel := context.WithCancel(context.Background())
 	prompt := agent.BuildSystemPrompt(effectiveCfg.IsMultiAgentEnabled())
+	if memoryContext := s.recallMemoryContext(ctx, userInput.Text); memoryContext != "" {
+		prompt += "\n\n" + memoryContext
+	}
 
 	displayTracker := &displayMetaTracker{
 		metas: make(map[string]*sessiondb.DisplayMeta),
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	ag.Ctx = ctx
 	go func() {
 		select {
@@ -248,7 +254,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 					close(btwMsgCh)
 					return
 				}
-				btwMsg := s.buildBtwMessage(btwInput)
+				btwMsg := s.buildBtwMessage(btwInput, activeCfg.Model)
 				select {
 				case btwMsgCh <- btwMsg:
 				case <-ctx.Done():
@@ -301,14 +307,19 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		}
 	}
 	ag.Emit = emit
-	agentMsgs := ag.Run(ctx, msgsCopy, prompt, emit, o.BlockResolveCh, s.sm, s.sessionID, btwMsgCh)
+	ctxWindow := provider.LookupContextWindow(activeCfg.Model)
+	contextMsgs := truncateMessages(msgsCopy, ctxWindow, activeCfg.Model)
+	if len(contextMsgs) < len(msgsCopy) {
+		l.Info("COMPACT", "context_projection", "history", len(msgsCopy), "projected", len(contextMsgs), "window", ctxWindow)
+	}
+	agentMsgs := ag.Run(ctx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sm, s.sessionID, btwMsgCh)
 	emitActive.Store(false)
 	s.toolCallSeq = ag.ToolCallSeq()
 
 	cancel()
 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
-	s.finalizeTurn(agentMsgs, displayTracker, finalContent, currentMsgID, activeCfg.Model)
+	s.finalizeTurn(agentMsgs, len(contextMsgs), displayTracker, finalContent, currentMsgID)
 }
 
 func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender) bool {
@@ -484,7 +495,13 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 	}
 }
 
-func (s *Session) finalizeTurn(agentMsgs []provider.ChatMessage, tracker *displayMetaTracker, finalContent string, msgID string, model string) {
+func (s *Session) finalizeTurn(
+	agentMsgs []provider.ChatMessage,
+	contextPrefixLen int,
+	tracker *displayMetaTracker,
+	finalContent string,
+	msgID string,
+) {
 	s.blockMu.Lock()
 	wasPending := s.pendingBlock
 	s.pendingBlock = false
@@ -502,19 +519,33 @@ func (s *Session) finalizeTurn(agentMsgs []provider.ChatMessage, tracker *displa
 	s.blockRespMu.Unlock()
 
 	s.msgsMu.Lock()
-	var persisted []provider.ChatMessage
-	var persistedTurns []int
-	var persistedMetas []sessiondb.DisplayMeta
+	var returned []provider.ChatMessage
 	for _, m := range agentMsgs {
-		if m.Role == "system" {
-			continue
+		if m.Role != "system" {
+			returned = append(returned, m)
 		}
-		persisted = append(persisted, m)
-		persistedTurns = append(persistedTurns, s.turnNumber)
+	}
+	if contextPrefixLen > len(returned) {
+		s.logger.Warn(
+			"COMPACT", "prefix_mismatch",
+			"expected", contextPrefixLen, "returned", len(returned),
+		)
+		contextPrefixLen = len(returned)
+	}
+	additions := append([]provider.ChatMessage(nil), returned[contextPrefixLen:]...)
+	additions = sanitizeMessages(additions)
+
+	additionTurns := make([]int, 0, len(additions))
+	additionMetas := make([]sessiondb.DisplayMeta, 0, len(additions))
+	for _, m := range additions {
+		additionTurns = append(additionTurns, s.turnNumber)
 		var dm sessiondb.DisplayMeta
 		switch m.Role {
 		case "tool":
 			dm = tracker.get(m.ToolCallID)
+			if m.ToolError && dm.ToolStatus == "" {
+				dm.ToolStatus = "cancelled"
+			}
 		case "assistant":
 			dm.DisplayRole = "assistant"
 			if m.ReasoningContent != "" || m.Reasoning != "" {
@@ -523,53 +554,13 @@ func (s *Session) finalizeTurn(agentMsgs []provider.ChatMessage, tracker *displa
 		case "user":
 			dm.DisplayRole = "user"
 		}
-		persistedMetas = append(persistedMetas, dm)
+		additionMetas = append(additionMetas, dm)
 	}
-	preSanitize := len(persisted)
-	persisted = sanitizeMessages(persisted)
-	delta := len(persisted) - preSanitize
-	if delta < 0 {
-		removedCount := -delta
-		persistedTurns = persistedTurns[:len(persisted)]
-		persistedMetas = persistedMetas[:len(persisted)]
-		s.logger.Debug("SANITIZE", "messages_removed", "count", removedCount, "remaining", len(persisted))
-	} else if delta > 0 {
-		extra := delta
-		extraTurns := make([]int, extra)
-		for i := range extraTurns {
-			extraTurns[i] = s.turnNumber
-		}
-		persistedTurns = append(persistedTurns, extraTurns...)
-		extraMetas := make([]sessiondb.DisplayMeta, extra)
-		for i := range extraMetas {
-			extraMetas[i] = sessiondb.DisplayMeta{DisplayRole: "tool", ToolStatus: "cancelled"}
-		}
-		persistedMetas = append(persistedMetas, extraMetas...)
-		s.logger.Debug("SANITIZE", "messages_backfilled", "count", delta, "total", len(persisted))
-	}
-	if len(persisted) == 0 {
-		persistedTurns = nil
-		persistedMetas = nil
-	}
-	ctxWindow := provider.LookupContextWindow(model)
-	preTruncate := len(persisted)
-	persisted = truncateMessages(persisted, ctxWindow, model)
-	if len(persisted) < preTruncate {
-		persistedTurns = persistedTurns[preTruncate-len(persisted):]
-		persistedMetas = persistedMetas[preTruncate-len(persisted):]
-		s.logger.Info("TRUNCATE", "messages", "before", preTruncate, "after", len(persisted), "window", ctxWindow)
-	}
-	if len(persisted) > len(persistedTurns) {
-		extra := len(persisted) - len(persistedTurns)
-		prefix := make([]int, extra)
-		persistedTurns = append(prefix, persistedTurns...)
-		metaPrefix := make([]sessiondb.DisplayMeta, extra)
-		persistedMetas = append(metaPrefix, persistedMetas...)
-	}
-	if len(persisted) > 0 {
-		s.msgs = persisted
-		s.msgTurns = persistedTurns
-		s.displayMetas = persistedMetas
+
+	if len(additions) > 0 {
+		s.msgs = append(s.msgs, additions...)
+		s.msgTurns = append(s.msgTurns, additionTurns...)
+		s.displayMetas = append(s.displayMetas, additionMetas...)
 	} else if finalContent != "" {
 		s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", Content: provider.TextContent(finalContent)})
 		s.msgTurns = append(s.msgTurns, s.turnNumber)
@@ -592,13 +583,13 @@ func (s *Session) finalizeTurn(agentMsgs []provider.ChatMessage, tracker *displa
 	}
 }
 
-func (s *Session) buildUserMessage(input provider.UserInput) provider.ChatMessage {
+func (s *Session) buildUserMessage(input provider.UserInput, model string) provider.ChatMessage {
 	if len(input.ReferenceIDs) == 0 || s.db == nil {
 		return provider.NewTextMessage("user", input.Text)
 	}
 
 	// Check if the current model supports vision
-	hasVision := provider.SupportsVision(s.provider.Model)
+	hasVision := provider.SupportsVision(model)
 
 	// Load only the referenced prompt references (filtered query)
 	refs, err := sessiondb.LoadPromptReferencesByIDs(s.db, input.ReferenceIDs)
@@ -642,7 +633,7 @@ func (s *Session) buildUserMessage(input provider.UserInput) provider.ChatMessag
 			var dataURL string
 			if ref.FilePath != "" {
 				// Validate file size before reading
-				if warning := provider.FileSizeExceeded(ref.FilePath, provider.MaxImageFileSizeFor(s.provider.Model)); warning != "" {
+				if warning := provider.FileSizeExceeded(ref.FilePath, provider.MaxImageFileSizeFor(model)); warning != "" {
 					s.logger.Warn("REF", "image_too_large", "warning", warning)
 					parts = append(parts, provider.ContentPart{
 						Type: "text",
@@ -668,7 +659,7 @@ func (s *Session) buildUserMessage(input provider.UserInput) provider.ChatMessag
 				dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(imgData)
 			} else if ref.Content != "" {
 				// Validate inline content size (base64 string length approximates byte size)
-				if int64(len(ref.Content)) > provider.MaxInlineContentSizeFor(s.provider.Model) {
+				if int64(len(ref.Content)) > provider.MaxInlineContentSizeFor(model) {
 					s.logger.Warn("REF", "inline_image_too_large", "content_len", len(ref.Content))
 					parts = append(parts, provider.ContentPart{
 						Type: "text",
@@ -696,7 +687,7 @@ func (s *Session) buildUserMessage(input provider.UserInput) provider.ChatMessag
 			content := ref.Content
 			if content == "" && ref.FilePath != "" {
 				// Validate file size before reading
-				if warning := provider.FileSizeExceeded(ref.FilePath, provider.MaxTextFileSizeFor(s.provider.Model)); warning != "" {
+				if warning := provider.FileSizeExceeded(ref.FilePath, provider.MaxTextFileSizeFor(model)); warning != "" {
 					s.logger.Warn("REF", "file_too_large", "warning", warning)
 					parts = append(parts, provider.ContentPart{
 						Type: "text",
@@ -730,8 +721,8 @@ const btwUrgentPrefix = "[USER INTERRUPTION — READ THIS NOW]\nThe user interru
 // buildBtwMessage creates a ChatMessage for a BTW (by-the-way) interruption.
 // It resolves any reference IDs via buildUserMessage and prepends the urgent
 // interruption prefix so the LLM prioritises the message.
-func (s *Session) buildBtwMessage(input provider.UserInput) provider.ChatMessage {
-	msg := s.buildUserMessage(input)
+func (s *Session) buildBtwMessage(input provider.UserInput, model string) provider.ChatMessage {
+	msg := s.buildUserMessage(input, model)
 	if msg.Content.IsText() {
 		return provider.ChatMessage{
 			Role:    "user",

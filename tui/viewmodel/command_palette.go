@@ -660,6 +660,30 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 			m.EditorState.Editor.Redo()
 		}
 
+	case "edit.moveLineUp", "edit.moveLineDown", "edit.duplicateLine", "edit.deleteLine", "edit.toggleComment":
+		// Line operations forward the same chord the keyboard path uses,
+		// so palette invocation and keyboard invocation cannot drift.
+		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("No file open")
+			}
+			return nil
+		}
+		var key tea.KeyPressMsg
+		switch cmdID {
+		case "edit.moveLineUp":
+			key = tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModAlt}
+		case "edit.moveLineDown":
+			key = tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModAlt}
+		case "edit.duplicateLine":
+			key = tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl | tea.ModShift}
+		case "edit.deleteLine":
+			key = tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl | tea.ModShift}
+		case "edit.toggleComment":
+			key = tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}
+		}
+		m.EditorState.Editor.HandleEvent(key)
+
 	case "lsp.outline":
 		return m.requestDocumentSymbolsCmd()
 

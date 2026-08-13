@@ -63,6 +63,32 @@ func TestTextContent_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestTextContent_UnmarshalJSONNull(t *testing.T) {
+	var content MessageContent
+	if err := json.Unmarshal([]byte(`null`), &content); err != nil {
+		t.Fatalf("UnmarshalJSON null: %v", err)
+	}
+	if !content.IsText() || content.String() != "" {
+		t.Fatalf("null content = %q, IsText=%v", content.String(), content.IsText())
+	}
+}
+
+func TestEstimateMessageTokensIncludesProtocolMetadata(t *testing.T) {
+	base := EstimateMessageTokens(NewTextMessage("assistant", "answer"), "test")
+	enriched := EstimateMessageTokens(ChatMessage{
+		Role:             "assistant",
+		Content:          PartsContent([]ContentPart{{Type: "image_url", ImageURL: &ImageURL{URL: "data:image/png;base64,abc"}}}),
+		ReasoningContent: "private reasoning",
+		ProviderItems: []ProviderItem{{
+			Standard: "anthropic", Type: "thinking",
+			Data: json.RawMessage(`{"type":"thinking","thinking":"private reasoning","signature":"sig"}`),
+		}},
+	}, "test")
+	if enriched <= base+1024 {
+		t.Fatalf("metadata estimate = %d, base = %d", enriched, base)
+	}
+}
+
 // --- PartsContent round-trip tests ---
 
 func TestPartsContent_IsText(t *testing.T) {

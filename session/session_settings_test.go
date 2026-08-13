@@ -12,7 +12,11 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 		ActiveProvider: "openrouter",
 		Providers: map[string]ProviderConfig{
 			"openrouter": {APIKey: "workspace-key", Model: "workspace-model", ThinkingEffort: "low"},
-			"openai":     {APIKey: "openai-key", ProviderURL: "https://api.openai.com/v1"},
+			"openai": {
+				APIKey: "openai-key", ProviderURL: "https://api.openai.com/v1",
+				APIStandard:    "openai-responses",
+				ModelStandards: map[string]string{"gpt-5": "openai"},
+			},
 		},
 		Agents: AgentsConfig{
 			ActiveProfile: "default",
@@ -30,7 +34,8 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 
 	effective := configWithSessionOverrides(base, overrides)
 	crafter := effective.GetCategoryConfig("crafter")
-	if crafter.Provider != "openai" || crafter.Model != "gpt-5" || crafter.ThinkingEffort != "high" {
+	if crafter.Provider != "openai" || crafter.Model != "gpt-5" ||
+		crafter.APIStandard != "openai" || crafter.ThinkingEffort != "high" {
 		t.Fatalf("crafter override not applied: %#v", crafter)
 	}
 	if crafter.APIKey != "openai-key" {
@@ -51,11 +56,15 @@ func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
 			"default": {Provider: "ignored", Model: "ignored"},
 		}},
 		SessionOverrides: map[string]ttypes.CategorySettings{
-			"researcher": {Provider: "anthropic", Model: "claude", ThinkingEffort: "low"},
+			"researcher": {
+				Provider: "anthropic", Model: "claude",
+				APIStandard: "anthropic", ThinkingEffort: "low",
+			},
 		},
 	}
 	overrides := settingsToSessionOverrides(settings)
-	if len(overrides) != 1 || overrides["researcher"].Model != "claude" {
+	if len(overrides) != 1 || overrides["researcher"].Model != "claude" ||
+		overrides["researcher"].APIStandard != "anthropic" {
 		t.Fatalf("explicit override map not honored: %#v", overrides)
 	}
 }

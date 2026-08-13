@@ -182,19 +182,26 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		m.StatusBar.SetProjectInsights(editor.ProjectInsights{})
 	}
 
-	// Status bar animations and launcher spin frames need their
-	// own content re-rendered even when main content hasn't changed.
-	if m.anyActive() {
-		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
-	}
-	if len(m.reveals) > 0 {
-		// Popup reveal animations need the fast tick to render the slide-in.
-		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
-	}
-	if m.AgentMgr.Count() == 0 && m.EditorState.ActiveView == "" {
+	// Status bar animations and popup reveals need their own content
+	// re-rendered even when main content hasn't changed.
+	if m.wantsFastTick() {
 		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
 	}
 	return m, tea.Batch(diskSyncCmd, tickCmd())
+}
+
+// wantsFastTick reports whether the 16 ms streaming tick is justified right
+// now: an agent/sub-pane is actively streaming, or a popup reveal animation
+// is mid-flight. An idle launcher does NOT qualify — it has no 60 Hz
+// animation, and a permanent 16 ms tick there repaints full 160x40 frames
+// (roughly a quarter CPU on an idle floating terminal).
+func (m *App) wantsFastTick() bool {
+	// Streaming agents and unfinished sub-panes repaint at frame rate.
+	if m.anyActive() {
+		return true
+	}
+	// Popup reveal animations need the fast tick to render the slide-in.
+	return len(m.reveals) > 0
 }
 
 func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
@@ -264,7 +271,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.findInFilesRequest = 0
 		}
 	case workspace.TerminalOutputMsg:
-		m.handleTerminalOutput(msg)
+		if cmd := m.handleTerminalOutput(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case workspace.TerminalExitedMsg:
 		m.handleTerminalExited(msg)
 	case workspace.TerminalClosedMsg:
@@ -470,7 +479,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case settingsui.FetchModelsMsg:
 		request := msg
 		cmds = append(cmds, func() tea.Msg {
-			models, err := m.HandleFetchModels(request.ProviderID, request.BaseURL, request.APIKey)
+			models, err := m.HandleFetchModels(
+				request.ProviderID, request.BaseURL, request.APIKey, request.StandardID,
+			)
 			if err != nil {
 				return settingsui.ModelsErrorMsg{ProviderID: request.ProviderID, Error: err.Error()}
 			}
@@ -532,7 +543,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		request := msg
 		target := m.sessionSettings()
 		cmds = append(cmds, func() tea.Msg {
-			models, err := m.HandleFetchModels(request.ProviderID, request.BaseURL, request.APIKey)
+			models, err := m.HandleFetchModels(
+				request.ProviderID, request.BaseURL, request.APIKey, request.StandardID,
+			)
 			return sessionSettingsModelsResultMsg{target: target, providerID: request.ProviderID, models: models, err: err}
 		})
 	case sessionSettingsModelsResultMsg:
@@ -631,11 +644,23 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 	}
 	localMsg := m.translateToLocalMouse(msg, fw)
 	if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+		if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) && w.Host() != nil {
+			if body := w.Body(); body != nil {
+				w.Host().Focus(body.ID())
+			}
+		}
 		result := w.Dispatch(localMsg)
 		fw.MarkContentDirty()
 		if result.Action != nil && result.Action.ID == "window.close" {
 			m.closePopupWindowByID(fw.ID)
 			return result.Cmd
+		}
+		if result.Action != nil && result.Action.ID == "window.titleaction" {
+			// Terminal windows use the title action as their Dock button.
+			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok {
+				m.dockTerminal(id)
+				return result.Cmd
+			}
 		}
 		cmd := m.handleHostAction(result.Action)
 		return tea.Batch(result.Cmd, cmd)

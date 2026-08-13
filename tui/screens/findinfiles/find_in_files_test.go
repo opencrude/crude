@@ -118,29 +118,39 @@ func TestFindInFilesNavigationClampsAndOpens(t *testing.T) {
 		{Path: "/root/c.go", RelativePath: "c.go", Line: 3, LineText: "gamma", NameOnly: true},
 	}
 	screen.ApplySearchResults(screen.generation, results, nil, 12*time.Millisecond)
-	if screen.Selected() != 0 {
-		t.Fatalf("initial selection=%d", screen.Selected())
+	// Three files → header+match per file: 6 display rows, selection starts
+	// on the first MATCH row (row 1), which is result 0.
+	if screen.DisplayRowCount() != 6 {
+		t.Fatalf("display rows=%d want 6", screen.DisplayRowCount())
+	}
+	if screen.Selected() != 0 || screen.SelectedRow() != 1 || screen.SelectedRowIsHeader() {
+		t.Fatalf("initial selection=%d row=%d header=%v", screen.Selected(), screen.SelectedRow(), screen.SelectedRowIsHeader())
 	}
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	if screen.Selected() != 2 {
-		t.Fatalf("after two down=%d", screen.Selected())
+	if screen.Selected() != 1 || !screen.SelectedRowIsHeader() {
+		t.Fatalf("down onto b.go header: selection=%d header=%v", screen.Selected(), screen.SelectedRowIsHeader())
 	}
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	if screen.Selected() != 2 {
-		t.Fatalf("clamp at end=%d", screen.Selected())
+	if screen.Selected() != 1 || screen.SelectedRowIsHeader() {
+		t.Fatalf("down onto b.go match: selection=%d header=%v", screen.Selected(), screen.SelectedRowIsHeader())
+	}
+	for i := 0; i < 3; i++ {
+		host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if screen.Selected() != 2 || screen.SelectedRow() != 5 {
+		t.Fatalf("clamp at end: selection=%d row=%d", screen.Selected(), screen.SelectedRow())
 	}
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyUp})
-	if screen.Selected() != 1 {
-		t.Fatalf("up=%d", screen.Selected())
+	if screen.Selected() != 2 || !screen.SelectedRowIsHeader() {
+		t.Fatalf("up onto c.go header: selection=%d header=%v", screen.Selected(), screen.SelectedRowIsHeader())
 	}
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyHome})
-	if screen.Selected() != 0 {
-		t.Fatalf("home=%d", screen.Selected())
+	if screen.Selected() != 0 || screen.SelectedRow() != 0 {
+		t.Fatalf("home=%d row=%d", screen.Selected(), screen.SelectedRow())
 	}
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if screen.Selected() != 2 {
-		t.Fatalf("end=%d", screen.Selected())
+	if screen.Selected() != 2 || screen.SelectedRow() != 5 {
+		t.Fatalf("end=%d row=%d", screen.Selected(), screen.SelectedRow())
 	}
 }
 
@@ -180,9 +190,15 @@ func TestFindInFilesFirstQueryNavigationSynchronizesPreviewAndOpen(t *testing.T)
 		{Path: "/root/b.go", RelativePath: "b.go", Line: 2, LineText: "beta", NameOnly: true},
 	}, nil, time.Millisecond)
 
+	// Rows: a.go header, a.go match, b.go header, b.go match. Stepping onto
+	// b.go's header already selects (and previews) its first match.
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	if screen.Selected() != 1 {
-		t.Fatalf("first down selected=%d, want 1", screen.Selected())
+	if screen.Selected() != 1 || !screen.SelectedRowIsHeader() {
+		t.Fatalf("first down selected=%d header=%v, want result 1 on header", screen.Selected(), screen.SelectedRowIsHeader())
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	if screen.Selected() != 1 || screen.SelectedRowIsHeader() {
+		t.Fatalf("second down selected=%d header=%v, want match row", screen.Selected(), screen.SelectedRowIsHeader())
 	}
 
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -261,14 +277,16 @@ func TestFindInFilesDoubleClickActivatesAndSingleClickJustSelects(t *testing.T) 
 		Path: "/root/z.go", RelativePath: "z.go", Line: 9, LineText: "zed", NameOnly: true,
 	}}, nil, 1*time.Millisecond)
 
-	first := host.Handle(tea.MouseClickMsg{X: 1, Y: 2, Button: tea.MouseLeft})
+	// The list starts at Y=2: row 0 is the z.go group header, row 1 (Y=3)
+	// is the match row.
+	first := host.Handle(tea.MouseClickMsg{X: 1, Y: 3, Button: tea.MouseLeft})
 	if first.Cmd != nil {
 		t.Fatalf("first click emitted command=%#v", first)
 	}
-	if screen.Selected() != 0 {
-		t.Fatalf("first click selected=%d", screen.Selected())
+	if screen.Selected() != 0 || screen.SelectedRowIsHeader() {
+		t.Fatalf("first click selected=%d header=%v", screen.Selected(), screen.SelectedRowIsHeader())
 	}
-	second := host.Handle(tea.MouseClickMsg{X: 1, Y: 2, Button: tea.MouseLeft})
+	second := host.Handle(tea.MouseClickMsg{X: 1, Y: 3, Button: tea.MouseLeft})
 	if second.Cmd == nil {
 		t.Fatal("second click should emit a command")
 	}

@@ -27,6 +27,7 @@ const (
 	regionSidebar
 	regionTabBar
 	regionSessionDeck
+	regionTermDock
 	regionEditor
 	regionInput
 	regionChat
@@ -45,6 +46,10 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	// the status bar (e.g. command palette) wins.
 	if m.height > 0 && y == m.height-1 {
 		return regionStatusBar
+	}
+
+	if m.termDockRect.Contains(x, y) {
+		return regionTermDock
 	}
 
 	if x < m.sidebarHitWidth() {
@@ -125,15 +130,17 @@ func (m *App) handleShellPointer(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	res := m.rootHost.Handle(msg)
-	m.applyHostPointerActions(res)
-	return res.Cmd
+	return tea.Batch(res.Cmd, m.applyHostPointerActions(res))
 }
 
-func (m *App) applyHostPointerActions(res ui.EventResult) {
+// applyHostPointerActions routes a host action and returns its command.
+// Dropping the command here silently broke mouse-activated sidebar items
+// (their state changed but the follow-up command never ran).
+func (m *App) applyHostPointerActions(res ui.EventResult) tea.Cmd {
 	if res.Action == nil {
-		return
+		return nil
 	}
-	_ = m.handleHostAction(res.Action)
+	return m.handleHostAction(res.Action)
 }
 
 func (m *App) setSidebarWidth(w int) {
@@ -247,6 +254,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	case regionStatusBar:
 		// Passive display row; right-click is handled separately.
 		m.setSessionDeckFocused(false)
+		m.setTermDockFocused(false)
 		return m, nil
 
 	case regionEditor:
@@ -256,7 +264,14 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case regionSessionDeck:
+		m.setTermDockFocused(false)
 		m.setSessionDeckFocused(true)
+		return m, m.handleShellPointer(msg)
+
+	case regionTermDock:
+		m.setSessionDeckFocused(false)
+		m.setTermDockFocused(true)
+		m.FocusStack.Clear()
 		return m, m.handleShellPointer(msg)
 	}
 
@@ -266,16 +281,19 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	switch region {
 	case regionSidebar:
 		m.setSessionDeckFocused(false)
+		m.setTermDockFocused(false)
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTree)
 	case regionTabBar:
 		m.setSessionDeckFocused(false)
+		m.setTermDockFocused(false)
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTabBar)
 	case regionChat, regionInput:
 		m.unfocus()
 	case regionLauncher:
 		m.setSessionDeckFocused(false)
+		m.setTermDockFocused(false)
 		m.LastInteractionTime = time.Now()
 	}
 
@@ -288,7 +306,9 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 
 	res := m.rootHost.Handle(msg)
-	m.applyHostPointerActions(res)
+	if cmd := m.applyHostPointerActions(res); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if res.Cmd != nil {
 		cmds = append(cmds, res.Cmd)
 	}
@@ -363,7 +383,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// original bounds until release — one capture service for the whole shell.
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 		res := m.rootHost.Handle(msg)
-		m.applyHostPointerActions(res)
+		if cmd := m.applyHostPointerActions(res); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if res.Cmd != nil {
 			cmds = append(cmds, res.Cmd)
 		}
@@ -424,6 +446,14 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 
 	case regionEditor:
 		if m.isEditorActive() {
+			// Also route the motion through the root host so its hover
+			// state follows the pointer into the editor: without this,
+			// sidebar rows / rail icons kept their hover tint after the
+			// pointer left them (shelleditor itself is input-no-op, so
+			// this is hover-only bookkeeping).
+			if m.rootHost != nil {
+				m.rootHost.Handle(msg)
+			}
 			cmd := m.routeEditorMouse(msg)
 			m.updateDiagHoverPopup(mouse.X, mouse.Y)
 			return m, cmd
@@ -477,7 +507,9 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 	// split dividers, input selection, deck gutters) wherever the pointer is.
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 		res := m.rootHost.Handle(msg)
-		m.applyHostPointerActions(res)
+		if cmd := m.applyHostPointerActions(res); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if res.Cmd != nil {
 			cmds = append(cmds, res.Cmd)
 		}

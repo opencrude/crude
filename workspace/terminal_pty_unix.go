@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 )
@@ -61,14 +63,36 @@ func (p *unixPTY) SetSize(cols, rows int) error {
 	return pty.Setsize(p.file, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 }
 
+// Close tears down the PTY child and its process group. pty.Start makes the
+// child a session leader (Setsid+Setctty), so its pgid equals its pid and a
+// negative-pid kill reaches descendants that stayed in that group (sh -c
+// pipelines, non-job-control children). SIGHUP first for normal terminal
+// hangup semantics — shells forward it to their jobs — then SIGKILL after a
+// short grace for anything that ignored it.
 func (p *unixPTY) Close() error {
+	pid := 0
 	if p.cmd != nil && p.cmd.Process != nil {
-		_ = p.cmd.Process.Kill()
+		pid = p.cmd.Process.Pid
 	}
+	if pid > 0 {
+		_ = syscall.Kill(-pid, syscall.SIGHUP)
+	}
+	var err error
 	if p.file != nil {
-		return p.file.Close()
+		err = p.file.Close()
 	}
-	return nil
+	if pid > 0 {
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			// The Wait goroutine reaps the leader; ESRCH means it is gone.
+			if syscall.Kill(pid, 0) != nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	}
+	return err
 }
 
 func (p *unixPTY) Wait() (int, error) {

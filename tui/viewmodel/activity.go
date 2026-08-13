@@ -12,6 +12,7 @@ import (
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -222,6 +223,8 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return nil
 	}
 	switch action.ID {
+	case termdock.ActionNew:
+		return m.openNewTerminal()
 	case activitybar.ActionSelect:
 		view, ok := action.Payload.(activitybar.View)
 		if ok {
@@ -240,6 +243,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		}
 		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID {
 			m.setSidebarWidth(payload.First)
+		}
+		if payload.ID == termdock.DividerID {
+			m.setTermDockHeight((m.height - 2) - payload.First)
 		}
 	}
 	return nil

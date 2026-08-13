@@ -48,3 +48,30 @@ func TestProviderSwitchUpdatesBaseURLValue(t *testing.T) {
 		t.Fatalf("previous provider's URL not stored on switch=%q", got)
 	}
 }
+
+func TestProviderAndModelProtocolsPersistIndependently(t *testing.T) {
+	m := New(theme.DefaultDark(), types.AppSettings{
+		ActiveProvider: "openai",
+		Providers: map[string]types.ProviderConfig{
+			"openai": {
+				Model: "gpt-5.6", APIStandard: "openai-responses",
+				ModelStandards: map[string]string{"gpt-5.6": "openai"},
+			},
+		},
+	}, []types.ProviderPreset{{
+		ID: "openai", Name: "OpenAI", StandardID: "openai-responses",
+	}})
+
+	if got := m.value(catProviders, fieldAPIStandard); got != "openai-responses" {
+		t.Fatalf("provider standard field = %q", got)
+	}
+	if got := m.value(catProviders, fieldModelStandard); got != "openai" {
+		t.Fatalf("model standard field = %q", got)
+	}
+	m.categories[catProviders].Form.SetValue(fieldModelStandard, ui.StringValue("anthropic"))
+	got := m.AppSettings().Providers["openai"]
+	if got.APIStandard != "openai-responses" ||
+		got.ModelStandards["gpt-5.6"] != "anthropic" {
+		t.Fatalf("saved provider config = %#v", got)
+	}
+}

@@ -35,6 +35,22 @@ func SetModelCap(modelID string, vision, tools bool) {
 	dynamicCapsMu.Unlock()
 }
 
+// MergeModelCap adds affirmative capability metadata without erasing a
+// catalog value when older configs do not contain the newer capability fields.
+func MergeModelCap(modelID string, vision, tools bool) {
+	lower := strings.ToLower(modelID)
+	dynamicCapsMu.Lock()
+	caps := dynamicCaps[lower]
+	if vision {
+		caps |= CapVision
+	}
+	if tools {
+		caps |= CapTools
+	}
+	dynamicCaps[lower] = caps
+	dynamicCapsMu.Unlock()
+}
+
 // LoadModelCaps bulk-populates dynamicCaps from a map of model metadata
 // (typically the result of FetchModelsDevAll). Existing entries are
 // overwritten.

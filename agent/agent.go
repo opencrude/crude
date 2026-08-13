@@ -23,10 +23,11 @@ type AgentEvent struct {
 }
 
 const (
-	maxSteps          = 10000
-	loopDetectWindow  = 8
-	loopDetectRepeats = 4
-	contextSafetyPct  = 0.85
+	maxSteps             = 10000
+	loopDetectWindow     = 8
+	loopDetectRepeats    = 4
+	contextSafetyPct     = 0.85
+	maxAutoContinuations = 4
 )
 
 type StepRecord struct {
@@ -38,28 +39,29 @@ type StepRecord struct {
 }
 
 type Agent struct {
-	Provider    *provider.Provider
-	Model       string
-	AgentID     AgentID
-	Policy      safety.Policy
-	Depth       int
-	ParentID    AgentID
+	Provider      *provider.Provider
+	Model         string
+	AgentID       AgentID
+	Policy        safety.Policy
+	Depth         int
+	ParentID      AgentID
 	MaxSteps      int
+	MaxRetries    int
 	FilteredTools []tools.ToolDef
 	ToolFn        func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
-	logger      *logger.Logger
-	turn        *logger.TurnLogger
-	Emit        func(AgentEvent)
-	Ctx         context.Context
-	Yolo        bool
-	AsyncMgr    *fileio.AsyncCommandManager
-	SubAgentMgr *SubAgentManager
-	client      *http.Client
-	toolCallSeq int
+	logger        *logger.Logger
+	turn          *logger.TurnLogger
+	Emit          func(AgentEvent)
+	Ctx           context.Context
+	Yolo          bool
+	AsyncMgr      *fileio.AsyncCommandManager
+	SubAgentMgr   *SubAgentManager
+	client        *http.Client
+	toolCallSeq   int
 
-	fileMu           sync.Map
+	fileMu            sync.Map
 	writeReportCalled bool
-	autoHandleMu     sync.Mutex
+	autoHandleMu      sync.Mutex
 	autoHandleCounter int
 }
 
@@ -76,15 +78,26 @@ func (a *Agent) fileMutex(path string) *sync.Mutex {
 }
 
 func (a *Agent) SetToolCallSeqStart(n int) { a.toolCallSeq = n }
-func (a *Agent) ToolCallSeq() int           { return a.toolCallSeq }
+func (a *Agent) ToolCallSeq() int          { return a.toolCallSeq }
+func (a *Agent) SetHTTPClient(client *http.Client) {
+	if client != nil {
+		a.client = client
+	}
+}
 
 func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
+	var turn *logger.TurnLogger
+	if lg != nil {
+		turn = lg.Turn()
+	}
 	return &Agent{
 		Provider: p,
 		Model:    model,
-		ToolFn:   func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) { return tools.ToolResult{}, nil },
-		logger:   lg,
-		turn:     lg.Turn(),
+		ToolFn: func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+			return tools.ToolResult{}, nil
+		},
+		logger: lg,
+		turn:   turn,
 		client: &http.Client{
 			Timeout: 300 * time.Second,
 			Transport: &http.Transport{

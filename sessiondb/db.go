@@ -3,6 +3,7 @@ package sessiondb
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_name         TEXT,
     tool_result       TEXT,
     tool_call_id      TEXT,
+    tool_error        INTEGER NOT NULL DEFAULT 0,
+    provider_items    TEXT,
     cache_control     TEXT,
     token_count       INTEGER DEFAULT 0,
     sequence_num      INTEGER NOT NULL,
@@ -121,6 +124,7 @@ CREATE TABLE IF NOT EXISTS session_agent_settings (
     category        TEXT NOT NULL,
     provider        TEXT,
     model           TEXT,
+    api_standard    TEXT,
     thinking_effort TEXT,
     PRIMARY KEY (session_id, category),
     FOREIGN KEY (session_id) REFERENCES sessions(id)
@@ -149,9 +153,15 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE sessions ADD COLUMN agent_category TEXT",
 		"ALTER TABLE sessions ADD COLUMN agent_name TEXT",
 		"ALTER TABLE sessions ADD COLUMN depth INTEGER DEFAULT 0",
+		"ALTER TABLE messages ADD COLUMN tool_error INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE messages ADD COLUMN provider_items TEXT",
+		"ALTER TABLE session_agent_settings ADD COLUMN api_standard TEXT",
 	}
 	for _, m := range migrations {
-		_, _ = db.Exec(m)
+		if _, err := db.Exec(m); err != nil &&
+			!strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return fmt.Errorf("sessiondb: migration %q: %w", m, err)
+		}
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -20,6 +21,10 @@ func TestPresetList_ImmutableCopy(t *testing.T) {
 	list1[0].Name = "modified"
 	if list2[0].Name == "modified" {
 		t.Fatal("PresetList returned shared mutable slice")
+	}
+	list1[0].ExtraBody["mutated"] = true
+	if _, exists := list2[0].ExtraBody["mutated"]; exists {
+		t.Fatal("PresetList returned shared ExtraBody map")
 	}
 }
 
@@ -95,6 +100,115 @@ func TestFromPreset_Valid(t *testing.T) {
 	}
 	if p.BaseURL == "" {
 		t.Error("BaseURL is empty")
+	}
+}
+
+func TestNativePresetStandards(t *testing.T) {
+	openAI := FromPreset("openai", "sk-test", "")
+	if got := openAI.StandardID(); got != "openai-responses" {
+		t.Fatalf("OpenAI standard = %q", got)
+	}
+	if got := openAI.ChatEndpoint(); got != "https://api.openai.com/v1/responses" {
+		t.Fatalf("OpenAI endpoint = %q", got)
+	}
+
+	anthropic := FromPreset("anthropic", "sk-test", "")
+	if got := anthropic.StandardID(); got != "anthropic" {
+		t.Fatalf("Anthropic standard = %q", got)
+	}
+	if got := anthropic.ChatEndpoint(); got != "https://api.anthropic.com/v1/messages" {
+		t.Fatalf("Anthropic endpoint = %q", got)
+	}
+
+	legacy := FromPreset("openai-chat", "sk-test", "")
+	if got := legacy.StandardID(); got != "openai" {
+		t.Fatalf("legacy OpenAI standard = %q", got)
+	}
+}
+
+func TestProviderJSONRoundTripPreservesStandard(t *testing.T) {
+	for _, presetID := range []string{"openai", "anthropic", "openai-chat"} {
+		original := FromPreset(presetID, "key", "")
+		encoded, err := json.Marshal(original)
+		if err != nil {
+			t.Fatalf("%s marshal: %v", presetID, err)
+		}
+		var restored Provider
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatalf("%s unmarshal: %v", presetID, err)
+		}
+		if restored.StandardID() != original.StandardID() {
+			t.Fatalf("%s standard = %q, want %q", presetID, restored.StandardID(), original.StandardID())
+		}
+		if restored.ChatEndpoint() != original.ChatEndpoint() {
+			t.Fatalf("%s endpoint = %q, want %q", presetID, restored.ChatEndpoint(), original.ChatEndpoint())
+		}
+	}
+}
+
+func TestProviderInfersStandardForLegacyJSON(t *testing.T) {
+	var restored Provider
+	if err := json.Unmarshal([]byte(`{
+		"id":"anthropic","base_url":"https://api.anthropic.com/v1"
+	}`), &restored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if restored.StandardID() != "anthropic" {
+		t.Fatalf("standard = %q", restored.StandardID())
+	}
+	if restored.NewStreamDecoder() == nil {
+		t.Fatal("provider returned nil stream decoder")
+	}
+}
+
+func TestProviderStandardCanOverridePreset(t *testing.T) {
+	p := FromPreset("openai", "key", "")
+	if err := p.SetStandardID("anthropic"); err != nil {
+		t.Fatalf("SetStandardID: %v", err)
+	}
+	if p.StandardID() != "anthropic" {
+		t.Fatalf("standard = %q", p.StandardID())
+	}
+	if got := p.ChatEndpoint(); got != "https://api.openai.com/v1/messages" {
+		t.Fatalf("endpoint = %q", got)
+	}
+	if err := p.SetStandardID("not-a-standard"); err == nil {
+		t.Fatal("invalid standard was accepted")
+	}
+}
+
+func TestDefaultStandardIDUsesPresetProtocol(t *testing.T) {
+	tests := map[string]string{
+		"openai": "openai-responses", "anthropic": "anthropic",
+		"openrouter": "openai", "custom": "openai",
+	}
+	for providerID, want := range tests {
+		if got := DefaultStandardID(providerID); got != want {
+			t.Errorf("%s standard = %q, want %q", providerID, got, want)
+		}
+	}
+}
+
+func TestProviderExtraBodyIsDeeplyIsolated(t *testing.T) {
+	input := map[string]any{
+		"reasoning": map[string]any{"effort": "high"},
+		"include":   []any{"reasoning.encrypted_content"},
+	}
+	p := FromPreset("openai", "sk-test", "")
+	p.SetExtraBody(input)
+	input["reasoning"].(map[string]any)["effort"] = "low"
+	input["include"].([]any)[0] = "mutated"
+
+	first := p.BuildExtraBody()
+	if got := first["reasoning"].(map[string]any)["effort"]; got != "high" {
+		t.Fatalf("stored nested map was mutated: %v", got)
+	}
+	if got := first["include"].([]any)[0]; got != "reasoning.encrypted_content" {
+		t.Fatalf("stored nested slice was mutated: %v", got)
+	}
+	first["reasoning"].(map[string]any)["effort"] = "low"
+	if got := p.BuildExtraBody()["reasoning"].(map[string]any)["effort"]; got != "high" {
+		t.Fatalf("BuildExtraBody returned shared nested state: %v", got)
 	}
 }
 

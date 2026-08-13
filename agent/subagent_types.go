@@ -42,6 +42,7 @@ type SubAgentSpec struct {
 	Provider       string        `json:"provider"`
 	ProviderURL    string        `json:"provider_url,omitempty"`
 	APIKey         string        `json:"api_key,omitempty"`
+	APIStandard    string        `json:"api_standard,omitempty"`
 	ThinkingEffort string        `json:"thinking_effort,omitempty"`
 	PolicyName     string        `json:"policy"`
 	Policy         safety.Policy `json:"-"`
@@ -77,15 +78,15 @@ type SubAgentResult struct {
 }
 
 type SubAgentHandle struct {
-	Spec      SubAgentSpec
-	Agent     *Agent
-	Cancel    context.CancelFunc
-	ResultCh  chan SubAgentResult
-	BlockCh   chan string
-	StartedAt time.Time
-	SessionID string
-	DB        *sql.DB
-	SM        *statemachine.ConversationStateMachine
+	Spec              SubAgentSpec
+	Agent             *Agent
+	Cancel            context.CancelFunc
+	ResultCh          chan SubAgentResult
+	BlockCh           chan string
+	StartedAt         time.Time
+	SessionID         string
+	DB                *sql.DB
+	SM                *statemachine.ConversationStateMachine
 	StepCount         atomic.Int32
 	Finished          bool
 	mu                sync.Mutex

@@ -239,8 +239,8 @@ func TestSettingsModelSelectFetchStaysOpenWhenModelsArrive(t *testing.T) {
 	host.Layout()
 	surfaceRoot.FocusForm()
 
-	// Provider -> API key -> Base URL -> Default model.
-	for range 3 {
+	// Provider -> API key -> Base URL -> Provider protocol -> Default model.
+	for range 4 {
 		host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
 	}
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})

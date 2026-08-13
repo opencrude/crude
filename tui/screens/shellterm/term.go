@@ -1,6 +1,10 @@
 package shellterm
 
 import (
+	"net/url"
+	"strings"
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
@@ -11,9 +15,8 @@ import (
 )
 
 const (
-	ScreenID   ui.ComponentID = "shellterm"
-	ActionsID  ui.ComponentID = "shellterm/actions"
-	SurfaceID  ui.ComponentID = "shellterm/surface"
+	ScreenID  ui.ComponentID = "shellterm"
+	SurfaceID ui.ComponentID = "shellterm/surface"
 
 	ActionPromote = "terminal.promote"
 	ActionDock    = "terminal.dock"
@@ -21,25 +24,51 @@ const (
 	ActionWrite   = "terminal.write"
 )
 
+// cursorBlinkPeriodMS is one blink phase (on or off). The shell repaints on
+// the idle tick, so the observed cadence quantizes to tick arrivals.
+const cursorBlinkPeriodMS = 600
+
 // Screen paints one PTY session and routes keys into it.
 type Screen struct {
 	ui.Base
-	th      *theme.Theme
-	tokens  *ui.TokenSet
-	termID  string
-	title   string
-	vt      *term.Emulator
-	actions *ui.ActionBar
+	th       *theme.Theme
+	tokens   *ui.TokenSet
+	termID   string
+	title    string
+	vt       *term.Emulator
+	initErr  error
 	floating bool
 	exited   bool
 	write    func([]byte)
 	resize   func(cols, rows int)
-	onTitle  func(string)
+	copy     func(string)
+	now      func() uint64
 	cols     int
 	rows     int
+
+	focusKnown bool
+	focused    bool
+	selecting  bool
+
+	fedBell bool
+	fedClip string
+	hasClip bool
+	fedPwd  bool
 }
 
-// New creates a terminal screen for id.
+// FeedEffects reports side effects of one Feed batch that the caller must
+// publish OUTSIDE the current update pass (event-bus publishes from inside
+// Feed would re-enter the update loop).
+type FeedEffects struct {
+	TitleChanged bool
+	Bell         bool
+	Clipboard    string
+	HasClipboard bool
+	PwdChanged   bool
+}
+
+// New creates a terminal screen for id. Construction succeeds even when
+// libghostty-vt is unavailable; Paint shows the error and input is a no-op.
 func New(th *theme.Theme, id, title string) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
@@ -51,15 +80,34 @@ func New(th *theme.Theme, id, title string) *Screen {
 		tokens: tokens,
 		termID: id,
 		title:  title,
-		vt:     term.NewEmulator(),
 	}
-	s.vt.SetTitleHandler(func(t string) {
-		s.title = t
-		if s.onTitle != nil {
-			s.onTitle(t)
-		}
-	})
-	s.rebuildActions()
+	s.now = func() uint64 { return uint64(time.Now().UnixNano()) }
+	s.vt, s.initErr = term.NewEmulator()
+	if s.vt != nil {
+		// Effect state is data-only: publishing to the workspace/event bus is
+		// the caller's job (via the FeedEffects returned from Feed), because
+		// Feed runs while Bubble Tea is handling TerminalOutputMsg and a
+		// synchronous event-bus publish would re-enter the update loop.
+		s.vt.SetTitleHandler(func(t string) {
+			s.title = t
+		})
+		s.vt.SetReplyHandler(func(b []byte) {
+			if s.write != nil {
+				s.write(b)
+			}
+		})
+		s.vt.SetBellHandler(func() {
+			s.fedBell = true
+		})
+		s.vt.SetClipboardHandler(func(text string) {
+			s.fedClip = text
+			s.hasClip = true
+		})
+		s.vt.SetPwdHandler(func(string) {
+			s.fedPwd = true
+		})
+		s.applyDefaultColors()
+	}
 	return s
 }
 
@@ -80,12 +128,51 @@ func (s *Screen) Title() string {
 
 func (s *Screen) SetWrite(fn func([]byte))          { s.write = fn }
 func (s *Screen) SetResize(fn func(cols, rows int)) { s.resize = fn }
-func (s *Screen) SetTitleHandler(fn func(string))   { s.onTitle = fn }
 
-func (s *Screen) SetFloating(v bool) {
-	s.floating = v
-	s.rebuildActions()
+// SetCopy receives selection / OSC 52 text destined for the system clipboard.
+func (s *Screen) SetCopy(fn func(string)) { s.copy = fn }
+
+// SetNow overrides the multi-click clock (tests).
+func (s *Screen) SetNow(fn func() uint64) {
+	if fn != nil {
+		s.now = fn
+	}
 }
+
+// PWD returns the child's OSC 7 working directory as a filesystem path
+// (OSC 7 payloads are file:// URLs).
+func (s *Screen) PWD() string {
+	if s.vt == nil {
+		return ""
+	}
+	raw := s.vt.PWD()
+	if raw == "" || !strings.HasPrefix(raw, "file://") {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Path == "" {
+		return raw
+	}
+	return u.Path
+}
+
+// SetTermFocused reports focus transitions to the child (CSI I/O) when it
+// enabled DEC mode 1004. Idempotent per state.
+func (s *Screen) SetTermFocused(v bool) {
+	if s.vt == nil || s.exited {
+		return
+	}
+	if s.focusKnown && s.focused == v {
+		return
+	}
+	s.focusKnown = true
+	s.focused = v
+	if data := s.vt.EncodeFocus(v); len(data) > 0 && s.write != nil {
+		s.write(data)
+	}
+}
+
+func (s *Screen) SetFloating(v bool) { s.floating = v }
 
 func (s *Screen) SetExited(v bool) { s.exited = v }
 
@@ -95,17 +182,39 @@ func (s *Screen) SetWindowTitle(title string) {
 	}
 }
 
-func (s *Screen) Feed(data []byte) {
+// Feed parses PTY bytes. The returned effects must be published
+// asynchronously — publishing to the event bus while Bubble Tea is still
+// inside the TerminalOutputMsg update would re-enter the update loop through
+// Program.Send and can deadlock it.
+func (s *Screen) Feed(data []byte) FeedEffects {
+	if s.vt == nil {
+		return FeedEffects{}
+	}
+	before := s.title
+	s.fedBell = false
+	s.fedClip = ""
+	s.hasClip = false
+	s.fedPwd = false
+	s.vt.Feed(data)
+	return FeedEffects{
+		TitleChanged: s.title != before,
+		Bell:         s.fedBell,
+		Clipboard:    s.fedClip,
+		HasClipboard: s.hasClip,
+		PwdChanged:   s.fedPwd,
+	}
+}
+
+func (s *Screen) Close() {
 	if s.vt != nil {
-		s.vt.Feed(data)
+		s.vt.Close()
+		s.vt = nil
 	}
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
-	if s.actions != nil {
-		s.actions.SetTokens(tokens)
-	}
+	s.applyDefaultColors()
 }
 
 func (s *Screen) SetTheme(th *theme.Theme) {
@@ -116,23 +225,11 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 	s.SetTokens(ui.NewTokenSet(th))
 }
 
-func (s *Screen) rebuildActions() {
-	floatLabel, floatAction := "Float", ActionPromote
-	if s.floating {
-		floatLabel, floatAction = "Dock", ActionDock
+func (s *Screen) applyDefaultColors() {
+	if s.vt == nil || s.tokens == nil {
+		return
 	}
-	s.actions = ui.NewActionBar(ui.NewID(s.ID(), "actions"), s.tokens,
-		ui.ActionBarButton{ID: ui.NewID(s.ID(), "float"), Label: floatLabel, Action: floatAction, Variant: ui.VariantSecondary, Enabled: true},
-		ui.ActionBarButton{ID: ui.NewID(s.ID(), "close"), Label: "Close", Action: ActionClose, Variant: ui.VariantGhost, Enabled: true},
-	)
-	s.actions.SetAlignEnd(true)
-}
-
-func (s *Screen) Children() []ui.Component {
-	if s.actions == nil {
-		return nil
-	}
-	return []ui.Component{s.actions}
+	s.vt.SetDefaultColors(s.tokens.Color(ui.ColorFg), s.tokens.Color(ui.ColorBg))
 }
 
 func (s *Screen) PreferredHeight(maxHeight int) int {
@@ -153,11 +250,7 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	actionH := 1
-	if s.actions != nil {
-		s.actions.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: r.H - actionH, W: r.W, H: actionH})
-	}
-	cols, rows := r.W, r.H-actionH
+	cols, rows := r.W, r.H
 	if cols < 2 {
 		cols = 2
 	}
@@ -178,49 +271,235 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	fg, bg := cell.NoColor, cell.NoColor
 	if s.tokens != nil {
 		fg = s.tokens.Color(ui.ColorFg)
-		bg = s.tokens.Color(ui.ColorPopupBg)
+		bg = s.tokens.Color(ui.ColorBg)
 	}
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
+	if s.initErr != nil {
+		msg := " libghostty-vt unavailable: " + s.initErr.Error()
+		buf.WriteString(ox+r.X, oy+r.Y, msg, fg, bg, 0)
+		return
+	}
 	if s.vt != nil {
+		blinkOn := true
+		if s.focused {
+			blinkOn = (time.Now().UnixMilli()/cursorBlinkPeriodMS)%2 == 0
+		}
+		s.vt.SetCursorState(s.focused, blinkOn)
 		s.vt.Paint(buf, ox+r.X, oy+r.Y, fg, bg)
+		s.paintScrollbackIndicator(buf, ox+r.X, oy+r.Y)
 	}
 	if s.exited && s.tokens != nil {
 		msg := " [process exited] "
-		buf.WriteString(ox+r.X, oy+r.Y+r.H-2, msg, s.tokens.Color(ui.ColorMuted), bg, 0)
+		y := oy + r.Y + max(0, r.H-2)
+		buf.WriteString(ox+r.X, y, msg, s.tokens.Color(ui.ColorMuted), bg, 0)
+	}
+	_ = ctx
+}
+
+// paintScrollbackIndicator overlays a right-edge scrollbar while the user is
+// scrolled into history, so the position in scrollback is always visible.
+func (s *Screen) paintScrollbackIndicator(buf *surface.CellBuffer, ox, oy int) {
+	if s.vt == nil || s.vt.ViewportPinned() || s.rows < 2 || s.cols < 2 {
+		return
+	}
+	offset, total, visible := s.vt.Scrollbar()
+	if total <= visible || total <= 0 {
+		return
+	}
+	trackFG, thumbFG := cell.NoColor, cell.NoColor
+	if s.tokens != nil {
+		trackFG = s.tokens.Color(ui.ColorBorder)
+		thumbFG = s.tokens.Color(ui.ColorFg)
+	}
+	x := ox + s.cols - 1
+	trackH := s.rows
+	thumbH := max(1, trackH*visible/total)
+	maxTop := trackH - thumbH
+	thumbTop := 0
+	if total > visible {
+		thumbTop = min(maxTop, offset*maxTop/(total-visible))
+	}
+	for i := 0; i < trackH; i++ {
+		ch, fg := '░', trackFG
+		if i >= thumbTop && i < thumbTop+thumbH {
+			ch, fg = '█', thumbFG
+		}
+		buf.Set(x, oy+i, cell.Cell{Char: ch, Width: 1, FG: fg})
 	}
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.Kind == ui.EventKey {
-		if s.exited {
-			return ui.EventResult{Handled: true}
-		}
-		data := term.EncodeKey(evt.Key)
-		if len(data) > 0 {
-			return s.writeBytes(data)
-		}
-		return ui.EventResult{Handled: true}
+		return s.handleKey(evt.Key)
 	}
 	if evt.Kind == ui.EventCustom {
-		if paste, ok := evt.Custom.(tea.PasteMsg); ok && !s.exited {
-			return s.writeBytes([]byte(paste.Content))
+		if paste, ok := evt.Custom.(tea.PasteMsg); ok && !s.exited && s.vt != nil {
+			s.vt.ClearSelection()
+			s.vt.ScrollBottom()
+			return s.writeBytes(s.vt.EncodePaste([]byte(paste.Content)))
 		}
 	}
-	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
+	switch evt.Kind {
+	case ui.EventMouseClick, ui.EventMouseRelease, ui.EventMouseMotion, ui.EventMouseWheel:
+		return s.handleMouse(ctx, evt)
 	}
 	return ui.EventResult{}
 }
 
-func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
-	switch action.ID {
-	case ActionPromote, ActionDock, ActionClose:
-		return ui.EventResult{
-			Handled: true,
-			Action:  &ui.Action{ID: action.ID, Payload: s.termID},
+func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
+	if s.exited || s.vt == nil {
+		return ui.EventResult{Handled: true}
+	}
+	shift := key.Mod.Contains(tea.ModShift)
+	ctrlShift := key.Mod.Contains(tea.ModCtrl) && shift
+	if ctrlShift {
+		switch key.Code {
+		case 'c', 'C':
+			if s.vt.HasSelection() {
+				s.copySelection()
+				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+			}
+		case 'a', 'A':
+			s.vt.SelectAll()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 	}
-	return ui.EventResult{Action: &action}
+	// Shift+PgUp/PgDn/Home/End drive scrollback while the primary screen is
+	// visible. Full-screen apps (alt screen) get the keys unchanged.
+	if shift && !s.vt.AltScreen() {
+		page := max(1, s.rows-1)
+		switch key.Code {
+		case tea.KeyPgUp:
+			s.vt.ScrollDelta(-page)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		case tea.KeyPgDown:
+			s.vt.ScrollDelta(page)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		case tea.KeyHome:
+			s.vt.ScrollTop()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		case tea.KeyEnd:
+			s.vt.ScrollBottom()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+	}
+	s.vt.ClearSelection()
+	if !s.vt.ViewportPinned() {
+		s.vt.ScrollBottom()
+	}
+	data := s.vt.EncodeKey(key)
+	if len(data) > 0 {
+		return s.writeBytes(data)
+	}
+	return ui.EventResult{Handled: true}
+}
+
+func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if s.exited || s.vt == nil {
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
+	}
+	cellX, cellY := ctx.LocalX, ctx.LocalY
+	if cellY >= s.rows && !s.selecting {
+		if evt.Kind == ui.EventMouseMotion {
+			return ui.EventResult{Handled: true}
+		}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
+	}
+	// Shift bypasses application mouse tracking (standard escape hatch so
+	// the user can always select/copy).
+	if s.vt.MouseTracking() && !mouseShift(evt) {
+		data := s.vt.EncodeMouse(evt, cellX, cellY)
+		if len(data) > 0 {
+			return s.writeBytes(data)
+		}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
+	}
+	switch evt.Kind {
+	case ui.EventMouseWheel:
+		delta := 0
+		switch evt.MouseWheel.Button {
+		case tea.MouseWheelUp:
+			delta = -3
+		case tea.MouseWheelDown:
+			delta = 3
+		}
+		if delta == 0 {
+			return ui.EventResult{Handled: true}
+		}
+		// Alternate screen has no scrollback: translate the wheel into
+		// arrow keys (less/vim/man scrolling) like Ghostty's alt-scroll.
+		if s.vt.AltScreen() {
+			code := tea.KeyUp
+			if delta > 0 {
+				code = tea.KeyDown
+			}
+			arrow := s.vt.EncodeKey(tea.KeyPressMsg{Code: code})
+			if len(arrow) == 0 {
+				return ui.EventResult{Handled: true}
+			}
+			out := make([]byte, 0, 3*len(arrow))
+			for i := 0; i < 3; i++ {
+				out = append(out, arrow...)
+			}
+			return s.writeBytes(out)
+		}
+		s.vt.ScrollDelta(delta)
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	case ui.EventMouseClick:
+		if evt.MouseClick.Button == tea.MouseLeft {
+			// A handled left click makes the Host capture the pointer, so
+			// drags keep landing here even when they leave the bounds.
+			s.selecting = true
+			s.vt.SelectionPress(cellX, cellY, s.now())
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
+	case ui.EventMouseMotion:
+		if s.selecting && evt.MouseMotion.Button == tea.MouseLeft {
+			s.vt.SelectionDrag(cellX, cellY)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		return ui.EventResult{Handled: true}
+	case ui.EventMouseRelease:
+		if s.selecting && evt.MouseRelease.Button == tea.MouseLeft {
+			s.selecting = false
+			if s.vt.SelectionRelease(cellX, cellY) {
+				s.copySelection()
+			}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		return ui.EventResult{Handled: true}
+	}
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
+}
+
+// CancelPointerCapture resets drag state when the Host revokes capture
+// (slot hidden, another window claimed the pointer, ...).
+func (s *Screen) CancelPointerCapture() { s.selecting = false }
+
+// copySelection sends the active selection to the system clipboard
+// (copy-on-select, matching mainstream terminal behavior).
+func (s *Screen) copySelection() {
+	if s.vt == nil || s.copy == nil {
+		return
+	}
+	if text := s.vt.SelectionText(); text != "" {
+		s.copy(text)
+	}
+}
+
+func mouseShift(evt ui.Event) bool {
+	switch evt.Kind {
+	case ui.EventMouseClick:
+		return evt.MouseClick.Mod.Contains(tea.ModShift)
+	case ui.EventMouseRelease:
+		return evt.MouseRelease.Mod.Contains(tea.ModShift)
+	case ui.EventMouseMotion:
+		return evt.MouseMotion.Mod.Contains(tea.ModShift)
+	case ui.EventMouseWheel:
+		return evt.MouseWheel.Mod.Contains(tea.ModShift)
+	}
+	return false
 }
 
 func (s *Screen) Semantics() ui.Semantics {

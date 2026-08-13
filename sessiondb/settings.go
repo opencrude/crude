@@ -7,12 +7,13 @@ import "database/sql"
 type AgentSettingOverride struct {
 	Provider       string
 	Model          string
+	APIStandard    string
 	ThinkingEffort string
 }
 
 func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSettingOverride, error) {
 	rows, err := db.Query(`
-		SELECT category, provider, model, thinking_effort
+		SELECT category, provider, model, api_standard, thinking_effort
 		FROM session_agent_settings
 		WHERE session_id = ?
 	`, sessionID)
@@ -24,12 +25,13 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 	overrides := make(map[string]AgentSettingOverride)
 	for rows.Next() {
 		var category string
-		var provider, model, thinking sql.NullString
-		if err := rows.Scan(&category, &provider, &model, &thinking); err != nil {
+		var provider, model, standard, thinking sql.NullString
+		if err := rows.Scan(&category, &provider, &model, &standard, &thinking); err != nil {
 			return nil, err
 		}
 		overrides[category] = AgentSettingOverride{
-			Provider: provider.String, Model: model.String, ThinkingEffort: thinking.String,
+			Provider: provider.String, Model: model.String,
+			APIStandard: standard.String, ThinkingEffort: thinking.String,
 		}
 	}
 	return overrides, rows.Err()
@@ -45,14 +47,15 @@ func SaveAgentSettingOverrides(db *sql.DB, sessionID string, overrides map[strin
 		return err
 	}
 	for category, override := range overrides {
-		if override.Provider == "" && override.Model == "" && override.ThinkingEffort == "" {
+		if override.Provider == "" && override.Model == "" &&
+			override.APIStandard == "" && override.ThinkingEffort == "" {
 			continue
 		}
 		if _, err := tx.Exec(`
 			INSERT INTO session_agent_settings
-				(session_id, category, provider, model, thinking_effort)
-			VALUES (?, ?, ?, ?, ?)
-		`, sessionID, category, override.Provider, override.Model, override.ThinkingEffort); err != nil {
+				(session_id, category, provider, model, api_standard, thinking_effort)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, sessionID, category, override.Provider, override.Model, override.APIStandard, override.ThinkingEffort); err != nil {
 			return err
 		}
 	}

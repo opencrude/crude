@@ -1,6 +1,6 @@
 {
-  "version": 45,
-  "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only. v45 (2026-08-03): raw-ansi-sgr allowlist shrunk to the 3-path foundation floor (tui/cell/ + tui/compositor/ + tui/rendering/) — third_party/ removed (vendored ANSI libs, outside the tui/-scoped audit search, not feature code); staticcheck QF1001/QF1003/QF1008/QF1012 cleanup (~78 behavior-identical rewrites, full suite green). v44 (2026-08-01): WindowFrame reveal animation DONE (SetReveal + OverlayHost SetOnOpen + viewmodel tick driver; modals excluded); StripAnsi zero-alloc fast path (label/list paint allocations cut ~75%); FullRender benchmark fixed to reuse the layer surface (90425B->8249B/op); CI bench allocation gate added (scripts/tui_bench_gate.sh, tight ceilings); rendering adapter.go (ANSIAdapter/ModelAdapter) deleted. v43: full-repo lint gate zero; three-layer boundary enforced; moveWordLeft cross-line regression fixed. v42: lint gate fully enabled — errcheck/unused/gosimple all on, zero issues; ~108 dead symbols deleted; editor/render.go left raw-ansi-sgr allowlist. v41: TextArea ANSI View() path deleted. v40: dead tui/diffview package deleted. v39: Phase 13.9 root Host wiring landed.",
+  "version": 46,
+  "description": "Phase 0 freeze of design-system and control bypasses. CI rejects NEW matches outside allowed_paths. Entries shrink only. v46 (2026-08-13): tui/term/ allowed for libghostty-vt application RGB cell mapping (default fg/bg remain TokenSet). v45 (2026-08-03): raw-ansi-sgr allowlist shrunk to the 3-path foundation floor (tui/cell/ + tui/compositor/ + tui/rendering/) — third_party/ removed (vendored ANSI libs, outside the tui/-scoped audit search, not feature code); staticcheck QF1001/QF1003/QF1008/QF1012 cleanup (~78 behavior-identical rewrites, full suite green). v44 (2026-08-01): WindowFrame reveal animation DONE (SetReveal + OverlayHost SetOnOpen + viewmodel tick driver; modals excluded); StripAnsi zero-alloc fast path (label/list paint allocations cut ~75%); FullRender benchmark fixed to reuse the layer surface (90425B->8249B/op); CI bench allocation gate added (scripts/tui_bench_gate.sh, tight ceilings); rendering adapter.go (ANSIAdapter/ModelAdapter) deleted. v43: full-repo lint gate zero; three-layer boundary enforced; moveWordLeft cross-line regression fixed. v42: lint gate fully enabled — errcheck/unused/gosimple all on, zero issues; ~108 dead symbols deleted; editor/render.go left raw-ansi-sgr allowlist. v41: TextArea ANSI View() path deleted. v40: dead tui/diffview package deleted. v39: Phase 13.9 root Host wiring landed.",
   "rules": [
     {
       "id": "hardcoded-lipgloss-hex",
@@ -16,9 +16,10 @@
       "allowed_paths": [
         "tui/theme/",
         "tui/cell/",
-        "tui/rendering/"
+        "tui/rendering/",
+        "tui/term/"
       ],
-      "note": "Feature paint must use TokenSet semantic roles. cell/ owns the constructor; rendering/ converts theme colors; theme/ may build palettes. diffview deleted (2026-08-01)."
+      "note": "Feature chrome must use TokenSet semantic roles. cell/ owns the constructor; rendering/ converts theme colors; theme/ may build palettes; tui/term maps libghostty-vt application RGB onto cells (default fg/bg still come from TokenSet)."
     },
     {
       "id": "raw-ansi-sgr",

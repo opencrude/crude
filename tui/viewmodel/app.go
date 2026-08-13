@@ -28,6 +28,7 @@ import (
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/termdock"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -92,10 +93,11 @@ type App struct {
 	cachedOutput  string // last rendered ANSI output for View() throttling during drag
 
 	// Root component tree (Phase 13.9): ONE ui.Host mounts the whole shell
-	// (header/status/tabs/sidebar/chat/input/editor/launcher/deckMount) and
-	// paints into ONE full-screen surface. Per-screen Hosts and layer
+	// (header/status/tabs/sidebar/chat/input/editor/launcher/deckMount/termDock)
+	// and paints into ONE full-screen surface. Per-screen Hosts and layer
 	// surfaces are deleted; the per-session PanelDeck Hosts survive inside
-	// shellRoot's deckMount adapter.
+	// shellRoot's deckMount adapter. Terminals use a workspace termDock slot,
+	// not the session PanelDeck.
 	mainSurf *surface.Surface // full-screen shell surface (replaces all layer surfaces)
 	shell    *shellRoot
 	rootHost *ui.Host
@@ -106,6 +108,7 @@ type App struct {
 	inputRect       ui.Rect
 	chatRect        ui.Rect
 	editorRect      ui.Rect
+	termDockRect    ui.Rect
 
 	actionRegistry     *ui.ActionRegistry
 	overlayHost        *ui.OverlayHost
@@ -120,6 +123,9 @@ type App struct {
 	activityList           *activitylist.Screen
 	activityView           activitybar.View
 	termScreens            map[string]*shellterm.Screen
+	termDock               *termdock.Screen
+	termDockHeight         int
+	termDockFocused        bool
 	suppressTermClose      string
 	inputScreen            *shellinput.Screen
 	chatScreen             *shellchat.Screen
@@ -164,6 +170,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	sidebarScreen := shelltree.New(th, treeModel)
 	activityBar := activitybar.New(th)
 	activityList := activitylist.New(th)
+	termDock := termdock.New(th)
 	bufferMgr := editor.NewBufferManager()
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
@@ -182,7 +189,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	// full-screen surface. The compositor renders this single surface under
 	// the floating windows (see View()).
 	deck := newDeckMount(nil)
-	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck)
+	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
 	rootHost := ui.NewHost(th, shell)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
 
@@ -224,6 +231,8 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		activityBar:        activityBar,
 		activityList:       activityList,
 		termScreens:        make(map[string]*shellterm.Screen),
+		termDock:           termDock,
+		termDockHeight:     12,
 		inputScreen:        inputScreen,
 		chatScreen:         chatScreen,
 		editorScreen:       editorScreen,

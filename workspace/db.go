@@ -94,6 +94,24 @@ func migrateWorkspaceSchema(db *sql.DB) error {
 		return err
 	}
 
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS workspace_memories (
+			id                TEXT PRIMARY KEY,
+			kind              TEXT NOT NULL DEFAULT 'fact',
+			title             TEXT NOT NULL,
+			content           TEXT NOT NULL,
+			source_session_id TEXT NOT NULL DEFAULT '',
+			pinned            INTEGER NOT NULL DEFAULT 0,
+			created_at        INTEGER NOT NULL,
+			updated_at        INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_workspace_memories_updated
+			ON workspace_memories(pinned DESC, updated_at DESC);
+	`)
+	if err != nil {
+		return err
+	}
+
 	// Session registry: tracks all AI sessions that have run in this workspace.
 	// This is the workspace's view of sessions — each session also has its own DB.
 	_, err = db.Exec(`

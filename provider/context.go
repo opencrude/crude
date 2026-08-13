@@ -32,21 +32,29 @@ func LookupContextWindow(modelID string) int {
 	dynamicContextsMu.RLock()
 	if c, ok := dynamicContexts[lower]; ok {
 		dynamicContextsMu.RUnlock()
-		logIf(func(lg *logger.Logger) { lg.Debug("PROVIDER", "ctx_window", "model", modelID, "window", c, "source", "dynamic") })
+		logIf(func(lg *logger.Logger) {
+			lg.Debug("PROVIDER", "ctx_window", "model", modelID, "window", c, "source", "dynamic")
+		})
 		return c
 	}
 	dynamicContextsMu.RUnlock()
 
 	for _, entry := range contextHints {
 		if entry.pattern == "" {
-			logIf(func(lg *logger.Logger) { lg.Debug("PROVIDER", "ctx_window", "model", modelID, "window", entry.window, "source", "default") })
+			logIf(func(lg *logger.Logger) {
+				lg.Debug("PROVIDER", "ctx_window", "model", modelID, "window", entry.window, "source", "default")
+			})
 			return entry.window
 		}
 		if strings.Contains(lower, entry.pattern) {
-			logIf(func(lg *logger.Logger) { lg.Debug("PROVIDER", "ctx_window", "model", modelID, "window", entry.window, "source", "hint", "pattern", entry.pattern) })
+			logIf(func(lg *logger.Logger) {
+				lg.Debug("PROVIDER", "ctx_window", "model", modelID, "window", entry.window, "source", "hint", "pattern", entry.pattern)
+			})
 			return entry.window
 		}
 	}
-	logIf(func(lg *logger.Logger) { lg.Debug("PROVIDER", "ctx_window", "model", modelID, "window", 1048576, "source", "hardcoded_default") })
+	logIf(func(lg *logger.Logger) {
+		lg.Debug("PROVIDER", "ctx_window", "model", modelID, "window", 1048576, "source", "hardcoded_default")
+	})
 	return 1048576
 }

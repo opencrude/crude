@@ -100,6 +100,10 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		l.Warn("CONFIG", "save_blocked", "reason", "empty_api_key")
 		return fmt.Errorf("API key cannot be empty — settings not saved")
 	}
+	configuredProvider, err := providerForCategory(mainCat)
+	if err != nil {
+		return fmt.Errorf("invalid provider communication standard: %w", err)
+	}
 
 	providerChanged := s.cfg.ActiveProvider != newCfg.ActiveProvider
 	modelChanged := mainCat.Model != oldModel
@@ -125,9 +129,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 			s.subAgentSup.SetSender(s.sender)
 		}
 	}
-	s.provider = provider.FromPreset(mainCat.Provider, mainCat.APIKey, mainCat.ProviderURL)
-	s.provider.Model = mainCat.Model
-	s.provider.SetThinkingEffort(mainCat.ThinkingEffort)
+	s.provider = configuredProvider
 	if mainCat.ModelContextWindow > 0 {
 		provider.SetModelContext(mainCat.Model, mainCat.ModelContextWindow)
 		l.Debug("CONFIG", "ctx_window_set", "model", mainCat.Model, "window", mainCat.ModelContextWindow)
@@ -140,7 +142,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		})
 		l.Debug("CONFIG", "price_set", "model", mainCat.Model, "input", mainCat.ModelInputPrice, "output", mainCat.ModelOutputPrice)
 	}
-	provider.SetModelCap(mainCat.Model, mainCat.ModelSupportsVision, mainCat.ModelSupportsTools)
+	provider.MergeModelCap(mainCat.Model, mainCat.ModelSupportsVision, mainCat.ModelSupportsTools)
 	s.logger.SetTurnEnabled(tuiSettings.TurnLogsEnabled != "off")
 	s.cfg.TurnLogsEnabled = tuiSettings.TurnLogsEnabled != "off"
 
@@ -159,19 +161,22 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 	if settings.SessionOverrides != nil {
 		for category, cfg := range settings.SessionOverrides {
 			overrides[category] = sessiondb.AgentSettingOverride{
-				Provider: cfg.Provider, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
+				Provider: cfg.Provider, Model: cfg.Model,
+				APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
 			}
 		}
 		return overrides
 	}
 	for category, cfg := range settings.Agents.Categories {
 		overrides[category] = sessiondb.AgentSettingOverride{
-			Provider: cfg.Provider, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
+			Provider: cfg.Provider, Model: cfg.Model,
+			APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
 		}
 	}
 	if _, ok := overrides[CategoryDefault]; !ok {
 		overrides[CategoryDefault] = sessiondb.AgentSettingOverride{
-			Provider: settings.ProviderID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort,
+			Provider: settings.ProviderID, Model: settings.Model,
+			APIStandard: settings.APIStandard, ThinkingEffort: settings.ThinkingEffort,
 		}
 	}
 	return overrides
@@ -200,11 +205,18 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 			if current.Provider != override.Provider {
 				current.APIKey = ""
 				current.ProviderURL = ""
+				current.APIStandard = ""
 			}
 			current.Provider = override.Provider
 		}
 		if override.Model != "" {
+			if current.Model != override.Model && override.APIStandard == "" {
+				current.APIStandard = ""
+			}
 			current.Model = override.Model
+		}
+		if override.APIStandard != "" {
+			current.APIStandard = override.APIStandard
 		}
 		if override.ThinkingEffort != "" {
 			current.ThinkingEffort = override.ThinkingEffort
@@ -240,7 +252,8 @@ func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings 
 	out := make(map[string]ttypes.CategorySettings, len(s.sessionOverrides))
 	for category, override := range s.sessionOverrides {
 		out[category] = ttypes.CategorySettings{
-			Provider: override.Provider, Model: override.Model, ThinkingEffort: override.ThinkingEffort,
+			Provider: override.Provider, Model: override.Model,
+			APIStandard: override.APIStandard, ThinkingEffort: override.ThinkingEffort,
 		}
 	}
 	return out
@@ -262,9 +275,11 @@ func (s *Session) ResetSessionSettings() error {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 	main := s.cfg.GetActiveDefaultCategory()
-	s.provider = provider.FromPreset(main.Provider, main.APIKey, main.ProviderURL)
-	s.provider.Model = main.Model
-	s.provider.SetThinkingEffort(main.ThinkingEffort)
+	configuredProvider, err := providerForCategory(main)
+	if err != nil {
+		return err
+	}
+	s.provider = configuredProvider
 	return nil
 }
 
@@ -286,7 +301,9 @@ func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 		for id, cfg := range settings.Providers {
 			s.workspaceCfg.Providers[id] = ProviderConfig{
 				APIKey: cfg.APIKey, ProviderURL: cfg.ProviderURL,
-				Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
+				APIStandard: cfg.APIStandard, Model: cfg.Model,
+				ModelStandards: cloneProviderModelStandards(cfg.ModelStandards),
+				ThinkingEffort: cfg.ThinkingEffort,
 			}
 		}
 	}
@@ -296,15 +313,23 @@ func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 	main := s.cfg.GetActiveDefaultCategory()
-	s.provider = provider.FromPreset(main.Provider, main.APIKey, main.ProviderURL)
-	s.provider.Model = main.Model
-	s.provider.SetThinkingEffort(main.ThinkingEffort)
+	configuredProvider, err := providerForCategory(main)
+	if err != nil {
+		s.logger.Warn("PROVIDER", "invalid_standard", "standard", main.APIStandard, "error", err.Error())
+		return
+	}
+	s.provider = configuredProvider
 }
 
-func (s *Session) HandleFetchModels(providerID, baseURL, apiKey string) ([]ttypes.ModelEntry, error) {
+func (s *Session) HandleFetchModels(providerID, baseURL, apiKey, standardID string) ([]ttypes.ModelEntry, error) {
 	l := s.logger
 	l.Info("MODEL", "fetch_begin", "provider", providerID)
 	p := provider.FromPreset(providerID, apiKey, baseURL)
+	if standardID != "" {
+		if err := p.SetStandardID(standardID); err != nil {
+			return nil, err
+		}
+	}
 	models, err := provider.FetchModels(p)
 	if err != nil {
 		l.Error("MODEL", "fetch_error", "provider", providerID, "error", err.Error())

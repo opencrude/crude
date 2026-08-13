@@ -210,6 +210,9 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	if override.APIKey != "" {
 		merged.APIKey = override.APIKey
 	}
+	if override.APIStandard != "" {
+		merged.APIStandard = override.APIStandard
+	}
 	if override.Model != "" {
 		merged.Model = override.Model
 	}
@@ -268,6 +271,9 @@ func copyConfig(src *Config) *Config {
 	if src.Providers != nil {
 		dst.Providers = make(map[string]ProviderConfig, len(src.Providers))
 		for k, v := range src.Providers {
+			if v.ModelStandards != nil {
+				v.ModelStandards = cloneProviderModelStandards(v.ModelStandards)
+			}
 			dst.Providers[k] = v
 		}
 	}
@@ -298,6 +304,17 @@ func copyConfig(src *Config) *Config {
 	dst.Agents = agents
 
 	return dst
+}
+
+func cloneProviderModelStandards(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for model, standard := range src {
+		out[model] = standard
+	}
+	return out
 }
 
 // Snapshot creates an immutable snapshot of the overrides for a specific

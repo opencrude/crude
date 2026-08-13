@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -206,7 +207,12 @@ func (c MessageContent) MarshalJSON() ([]byte, error) {
 // Accepts both "string" and [{...}] formats.
 // Array content is stored with the sentinel prefix for unambiguous detection.
 func (c *MessageContent) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
 	if len(data) == 0 {
+		*c = MessageContent("")
+		return nil
+	}
+	if bytes.Equal(data, []byte("null")) {
 		*c = MessageContent("")
 		return nil
 	}
@@ -218,19 +224,29 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 		*c = MessageContent(s)
 		return nil
 	}
-	// JSON array — store with sentinel prefix for multipart detection
-	*c = MessageContent(multipartSentinel + string(data))
-	return nil
+	if data[0] == '[' {
+		var parts []ContentPart
+		if err := json.Unmarshal(data, &parts); err != nil {
+			return err
+		}
+		*c = MessageContent(multipartSentinel + string(data))
+		return nil
+	}
+	return fmt.Errorf("message content must be a string, array, or null")
 }
 
 type ChatMessage struct {
-	Role             string         `json:"role"`
-	Content          MessageContent `json:"content"`
-	ReasoningContent string         `json:"reasoning_content,omitempty"`
-	Reasoning        string         `json:"reasoning,omitempty"`
-	ToolCalls        []ToolCall     `json:"tool_calls,omitempty"`
-	ToolCallID       string         `json:"tool_call_id,omitempty"`
-	CacheControl     *CacheControl  `json:"cache_control,omitempty"`
+	Role             string            `json:"role"`
+	Content          MessageContent    `json:"content"`
+	ReasoningContent string            `json:"reasoning_content,omitempty"`
+	Reasoning        string            `json:"reasoning,omitempty"`
+	Refusal          string            `json:"refusal,omitempty"`
+	ToolCalls        []ToolCall        `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
+	CacheControl     *CacheControl     `json:"cache_control,omitempty"`
+	ReasoningDetails []json.RawMessage `json:"reasoning_details,omitempty"`
+	ProviderItems    []ProviderItem    `json:"-"`
+	ToolError        bool              `json:"-"`
 }
 
 func (m ChatMessage) ContentString() string {
@@ -262,6 +278,86 @@ type FunctionCall struct {
 	Arguments string `json:"arguments"`
 }
 
+// ProviderItem preserves protocol-specific response items that must be sent
+// back unchanged on a later request. Examples include OpenAI reasoning items
+// and Anthropic signed thinking blocks.
+type ProviderItem struct {
+	Standard string          `json:"standard"`
+	Type     string          `json:"type"`
+	Data     json.RawMessage `json:"data"`
+}
+
+// TokenUsage is the protocol-neutral token accounting returned by a provider.
+type TokenUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	PromptTokensCached  int `json:"prompt_tokens_cached,omitempty"`
+	PromptTokensWritten int `json:"prompt_tokens_written,omitempty"`
+}
+
+// ToolCallDelta is a protocol-neutral fragment of a streamed tool call.
+// ReplaceArguments is used by standards whose final event contains the full
+// argument string after earlier delta events.
+type ToolCallDelta struct {
+	Index            int
+	ID               string
+	Type             string
+	Name             string
+	Arguments        string
+	ReplaceArguments bool
+}
+
+// StreamEvent is one decoded Server-Sent Event.
+type StreamEvent struct {
+	Event string
+	ID    string
+	Data  []byte
+}
+
+// StreamUpdate is the normalized output of one provider stream event.
+type StreamUpdate struct {
+	ContentDelta   string
+	ReasoningDelta string
+	ToolCalls      []ToolCallDelta
+	FinishReason   string
+	Usage          *TokenUsage
+	ProviderItems  []ProviderItem
+	Done           bool
+}
+
+// CompletionResponse is the normalized form of a non-streaming response.
+type CompletionResponse struct {
+	ID           string
+	Model        string
+	Message      ChatMessage
+	FinishReason string
+	Usage        TokenUsage
+}
+
+// APIError is a structured error received inside a successful HTTP response
+// or an SSE stream.
+type APIError struct {
+	Type    string
+	Code    string
+	Message string
+}
+
+func (e *APIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	switch {
+	case e.Type != "" && e.Code != "":
+		return fmt.Sprintf("%s (%s): %s", e.Type, e.Code, e.Message)
+	case e.Type != "":
+		return fmt.Sprintf("%s: %s", e.Type, e.Message)
+	case e.Code != "":
+		return fmt.Sprintf("%s: %s", e.Code, e.Message)
+	default:
+		return e.Message
+	}
+}
+
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }
@@ -275,30 +371,48 @@ type ChatRequest struct {
 	StreamOptions       *StreamOptions `json:"stream_options,omitempty"`
 	MaxTokens           int            `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
+	MaxOutputTokens     int            `json:"-"`
 }
 
 type ChatResponse struct {
-	Choices []struct {
-		Message      ChatMessage `json:"message"`
-		FinishReason string      `json:"finish_reason"`
-		Delta        struct {
-			Content          string     `json:"content"`
-			ReasoningContent string     `json:"reasoning_content"`
-			Reasoning        string     `json:"reasoning"`
-			ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-		} `json:"delta"`
-	} `json:"choices"`
-	Usage *struct {
-		PromptTokens        int `json:"prompt_tokens"`
-		CompletionTokens    int `json:"completion_tokens"`
-		TotalTokens         int `json:"total_tokens"`
-		PromptTokensDetails *struct {
-			CachedTokens int `json:"cached_tokens"`
-		} `json:"prompt_tokens_details,omitempty"`
-	} `json:"usage,omitempty"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	ID      string        `json:"id,omitempty"`
+	Model   string        `json:"model,omitempty"`
+	Choices []ChatChoice  `json:"choices"`
+	Usage   *ChatUsage    `json:"usage,omitempty"`
+	Error   *ChatAPIError `json:"error,omitempty"`
+}
+
+type ChatChoice struct {
+	Message      ChatMessage `json:"message"`
+	FinishReason string      `json:"finish_reason"`
+	Delta        ChatDelta   `json:"delta"`
+}
+
+type ChatDelta struct {
+	Content          string            `json:"content"`
+	ReasoningContent string            `json:"reasoning_content"`
+	Reasoning        string            `json:"reasoning"`
+	Refusal          string            `json:"refusal"`
+	ReasoningDetails []json.RawMessage `json:"reasoning_details,omitempty"`
+	ToolCalls        []ToolCall        `json:"tool_calls,omitempty"`
+}
+
+type ChatUsage struct {
+	PromptTokens        int                 `json:"prompt_tokens"`
+	CompletionTokens    int                 `json:"completion_tokens"`
+	TotalTokens         int                 `json:"total_tokens"`
+	PromptTokensDetails *PromptTokenDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+type PromptTokenDetails struct {
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+}
+
+type ChatAPIError struct {
+	Message string `json:"message"`
+	Type    string `json:"type,omitempty"`
+	Code    any    `json:"code,omitempty"`
 }
 
 type ToolDef struct {

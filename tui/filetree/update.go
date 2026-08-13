@@ -257,53 +257,33 @@ func (m *FileTreeModel) handleFilterInputKey(key tea.KeyPressMsg) {
 
 // handleKeyString processes keys by their string representation, used as
 // a fallback for printable and modifier-composite keys.
+//
+// Any bare printable character starts type-to-filter: it opens the filter
+// row (like `/`) and seeds the pattern with the typed character. `/` keeps
+// its role as the explicit filter-mode key with an empty pattern. The old
+// bare-letter actions moved to modifier chords (refresh r→Ctrl+R, hidden
+// toggle .→Ctrl+.) so they cannot collide with filter typing.
 func (m *FileTreeModel) handleKeyString(key tea.KeyPressMsg) tea.Cmd {
 	switch key.String() {
-	// --- Vim-style navigation ---
-	case "k":
-		m.MoveUp()
-		return nil
-	case "j":
-		m.MoveDown()
-		return nil
-
-	// --- Go to top / bottom (g / G) ---
-	case "g":
-		m.GoToTop()
-		return nil
-	case "G":
-		m.GoToBottom()
-		return nil
-
-	// --- Expand/collapse shortcuts ---
-	case "+":
-		m.ExpandAllNested()
-		return nil
-	case "-":
-		m.CollapseAllNested()
-		return nil
-
-	// --- Dot-files toggle ---
-	case ".":
-		m.SetShowHidden(!m.showHidden)
-		return nil
-
-	// --- Filter mode ---
-	case "f":
-		return m.EnterFilterMode()
 	case "/":
 		return m.EnterFilterMode()
-
-	// --- Tree refresh ---
-	case "r":
+	case "ctrl+r":
 		return m.RefreshFromDisk()
-
-	// --- Git refresh ---
+	case "ctrl+.":
+		m.SetShowHidden(!m.ShowHidden())
+		return nil
 	case "ctrl+shift+g":
 		return m.refreshGitStatus()
 	}
-
-	return nil
+	if key.Mod.Contains(tea.ModCtrl) || key.Mod.Contains(tea.ModAlt) || key.Mod.Contains(tea.ModSuper) {
+		return nil
+	}
+	if key.Text == "" {
+		return nil
+	}
+	cmd := m.EnterFilterMode()
+	m.handleFilterInputKey(key)
+	return cmd
 }
 
 // ---------------------------------------------------------------------------
@@ -489,7 +469,12 @@ func (m *FileTreeModel) pageSize() int {
 func (m *FileTreeModel) updateScrollOffset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.updateScrollOffsetLocked()
+}
 
+// updateScrollOffsetLocked is updateScrollOffset for callers that already
+// hold m.mu.
+func (m *FileTreeModel) updateScrollOffsetLocked() {
 	idx := m.cursorIndex
 	vh := m.visibleHeight
 	if vh <= 0 {

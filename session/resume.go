@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"strings"
 	"time"
 
+	"crude/agent"
 	"crude/clipboard"
 	"crude/diff"
 	"crude/fileio"
@@ -113,9 +115,12 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 	cfg = configWithSessionOverrides(workspaceCfg, overrides)
 	activeCfg := cfg.GetActiveDefaultCategory()
-	p := provider.FromPreset(activeCfg.Provider, activeCfg.APIKey, activeCfg.ProviderURL)
-	p.Model = activeCfg.Model
-	p.SetThinkingEffort(activeCfg.ThinkingEffort)
+	p, err := providerForCategory(activeCfg)
+	if err != nil {
+		_ = lg.Close()
+		db.Close()
+		return nil, fmt.Errorf("resume: provider standard: %w", err)
+	}
 
 	var displayMetas []sessiondb.DisplayMeta
 	var createdAts []int64
@@ -132,11 +137,16 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if interrupted {
 		msgs = append(msgs, provider.ChatMessage{
 			Role:    "user",
-			Content: provider.TextContent(action),
+			Content: provider.TextContent(resumeRecoveryPrefix + action),
 		})
 		msgTurns = append(msgTurns, maxTurn+1)
 		maxTurn++
 		displayMetas = append(displayMetas, sessiondb.DisplayMeta{DisplayRole: "user"})
+		if _, err := sessiondb.ReplaceMessagesWithMeta(db, meta.ID, msgs, msgTurns, displayMetas); err != nil {
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("resume: persist recovery message: %w", err)
+		}
 	}
 
 	resumeTurnNumber := maxTurn
@@ -177,8 +187,35 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
+		if rows, loadErr := sessiondb.ListSubAgentResults(db, meta.ID); loadErr != nil {
+			lg.Warn("SUBAGENT", "hydrate_results_failed", "error", loadErr.Error())
+		} else {
+			for _, row := range rows {
+				sess.subAgentSup.Manager().HydrateCompleted(subAgentResultFromRow(row))
+			}
+		}
 	}
 	return sess, nil
+}
+
+func subAgentResultFromRow(row sessiondb.SubAgentResultRow) agent.SubAgentResult {
+	return agent.SubAgentResult{
+		AgentID:      agent.AgentID(row.AgentID),
+		Name:         row.AgentName,
+		Category:     row.AgentCategory,
+		SessionID:    row.ChildSessionID,
+		Status:       agent.SubAgentStatus(row.Status),
+		SummaryGist:  row.SummaryGist,
+		ResultPath:   row.ResultPath,
+		LogPath:      row.SessionLogPath,
+		FilesRead:    append([]string(nil), row.FilesRead...),
+		FilesWritten: append([]string(nil), row.FilesWritten...),
+		Errors:       append([]string(nil), row.Errors...),
+		PromptTokens: row.PromptTokens,
+		CompTokens:   row.CompletionTokens,
+		CostUSD:      row.CostUSD,
+		DurationMs:   row.DurationMs,
+	}
 }
 
 func detectInterruption(msgs []provider.ChatMessage) (bool, string) {
@@ -186,6 +223,9 @@ func detectInterruption(msgs []provider.ChatMessage) (bool, string) {
 		return false, ""
 	}
 	last := msgs[len(msgs)-1]
+	if last.Role == "user" && strings.HasPrefix(last.ContentString(), resumeRecoveryPrefix) {
+		return false, ""
+	}
 	switch last.Role {
 	case "assistant":
 		if len(last.ToolCalls) > 0 {
@@ -199,6 +239,8 @@ func detectInterruption(msgs []provider.ChatMessage) (bool, string) {
 	}
 	return false, ""
 }
+
+const resumeRecoveryPrefix = "[Resume recovery]\n"
 
 func ResolveUsername() string {
 	if u, err := user.Current(); err == nil {

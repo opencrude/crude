@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"mime"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,20 +22,56 @@ import (
 
 type apiCallError struct {
 	Message          string
+	StatusCode       int
 	RetriesExhausted bool
+	Partial          bool
+	Cause            error
 }
 
 func (e *apiCallError) Error() string { return e.Message }
+func (e *apiCallError) Unwrap() error { return e.Cause }
 
 func (e *apiCallError) IsCancellation() bool {
-	return errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded) ||
-		strings.Contains(e.Message, "context canceled") || strings.Contains(e.Message, "context cancelled")
+	return errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded)
 }
 
-const maxRetries = 10
+type completionResult struct {
+	Content          string
+	ReasoningContent string
+	FinishReason     string
+	ToolCalls        []provider.ToolCall
+	ProviderItems    []provider.ProviderItem
+	Usage            provider.TokenUsage
+	LastPromptTokens int
+}
+
+func (r completionResult) hasOutput() bool {
+	return r.Content != "" || r.ReasoningContent != "" || len(r.ToolCalls) > 0 || len(r.ProviderItems) > 0
+}
+
+func addTokenUsage(left, right provider.TokenUsage) provider.TokenUsage {
+	return provider.TokenUsage{
+		PromptTokens:        left.PromptTokens + right.PromptTokens,
+		CompletionTokens:    left.CompletionTokens + right.CompletionTokens,
+		PromptTokensCached:  left.PromptTokensCached + right.PromptTokensCached,
+		PromptTokensWritten: left.PromptTokensWritten + right.PromptTokensWritten,
+	}
+}
+
+const (
+	maxRetries            = 10
+	maxErrorResponseBytes = 1 << 20
+	maxJSONResponseBytes  = 64 << 20
+	maxRetryDelay         = 2 * time.Minute
+)
 
 func isRetryable(code int) bool {
-	return code == http.StatusTooManyRequests || code >= 500
+	switch code {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
+		return true
+	default:
+		return code >= 500
+	}
 }
 
 func retryBackoff(attempt int) time.Duration {
@@ -40,8 +79,27 @@ func retryBackoff(attempt int) time.Duration {
 		return time.Duration(500+rand.Intn(1500)) * time.Millisecond
 	}
 	base := time.Duration(1<<min(attempt-1, 6)) * time.Second
-	jitter := time.Duration(rand.Intn(int(base))) / 4
-	return base + jitter
+	jitter := time.Duration(rand.Intn(max(1, int(base/4))))
+	return min(base+jitter, maxRetryDelay)
+}
+
+func retryDelay(resp *http.Response, attempt int) time.Duration {
+	if resp != nil {
+		if value := strings.TrimSpace(resp.Header.Get("retry-after-ms")); value != "" {
+			if milliseconds, err := strconv.ParseFloat(value, 64); err == nil && milliseconds >= 0 {
+				return min(time.Duration(milliseconds*float64(time.Millisecond)), maxRetryDelay)
+			}
+		}
+		if value := strings.TrimSpace(resp.Header.Get("Retry-After")); value != "" {
+			if seconds, err := strconv.ParseFloat(value, 64); err == nil && seconds >= 0 {
+				return min(time.Duration(seconds*float64(time.Second)), maxRetryDelay)
+			}
+			if when, err := http.ParseTime(value); err == nil {
+				return min(max(0, time.Until(when)), maxRetryDelay)
+			}
+		}
+	}
+	return retryBackoff(attempt)
 }
 
 func (a *Agent) completeStream(
@@ -53,17 +111,37 @@ func (a *Agent) completeStream(
 	onToolCallStart func(internalID, id, name string),
 	onToolCallDelta func(internalID, id, name, accumulatedArgs string),
 	onRetry func(attempt int, backoffSeconds float64),
-) (content string, reasoningContent string, finishReason string, toolCalls []provider.ToolCall, promptTokens int, completionTokens int, promptTokensCached int, err error) {
+) (completionResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if a.Provider == nil {
+		return completionResult{}, fmt.Errorf("agent provider is nil")
+	}
 	req := provider.ChatRequest{
-		Model:    a.Model,
-		Messages: msgs,
-		Tools:    tools,
-		Stream:   true,
+		Model:         a.Model,
+		Messages:      msgs,
+		Tools:         tools,
+		Stream:        true,
 		StreamOptions: &provider.StreamOptions{IncludeUsage: true},
 	}
 
-	ctxWindow := provider.LookupContextWindow(a.Model)
+	std := a.Provider.Standard()
+	ctxWindow := std.ContextWindow(a.Model)
 	if ctxWindow > 0 {
+		estimatedInput := provider.EstimateMessagesTotal(msgs, a.Model)
+		if len(tools) > 0 {
+			if encodedTools, marshalErr := json.Marshal(tools); marshalErr == nil {
+				estimatedInput += provider.EstimateTokens(string(encodedTools), a.Model)
+			}
+		}
+		available := ctxWindow - estimatedInput
+		if available <= 0 {
+			return completionResult{}, fmt.Errorf(
+				"estimated input exceeds the model context window (%d/%d tokens)",
+				estimatedInput, ctxWindow,
+			)
+		}
 		maxOut := ctxWindow / 4
 		if maxOut < 8192 {
 			maxOut = 8192
@@ -71,306 +149,618 @@ func (a *Agent) completeStream(
 		if maxOut > 65536 {
 			maxOut = 65536
 		}
-		req.MaxTokens = maxOut
-		req.MaxCompletionTokens = maxOut
+		if maxOut > available {
+			maxOut = available
+		}
+		req.MaxOutputTokens = maxOut
 	}
-
-	std := a.Provider.Standard()
 
 	body, err := std.EncodeRequest(&req)
 	if err != nil {
-		return "", "", "", nil, 0, 0, 0, fmt.Errorf("encode request: %w", err)
+		return completionResult{}, fmt.Errorf("encode request: %w", err)
+	}
+	body, err = mergeRequestExtras(body, a.Provider.BuildExtraBody())
+	if err != nil {
+		return completionResult{}, err
+	}
+	if err := a.Provider.Validate(); err != nil {
+		return completionResult{}, err
 	}
 
-	if extra := a.Provider.BuildExtraBody(); len(extra) > 0 {
-		a.logger.Debug("LLM", "extra_body", "keys", len(extra))
-		var merged map[string]any
-		if err := json.Unmarshal(body, &merged); err != nil {
-			return "", "", "", nil, 0, 0, 0, fmt.Errorf("merge extras: %w", err)
-		}
-		for k, v := range extra {
-			merged[k] = v
-		}
-		body, err = json.Marshal(merged)
-		if err != nil {
-			return "", "", "", nil, 0, 0, 0, fmt.Errorf("marshal merged: %w", err)
-		}
+	endpoint := a.Provider.ChatEndpoint()
+	attemptLimit := maxRetries
+	if a.MaxRetries > 0 {
+		attemptLimit = a.MaxRetries
+	}
+	client := a.client
+	if client == nil {
+		client = http.DefaultClient
 	}
 
 	streamStart := time.Now()
-	a.logger.Info("LLM", "prompt", "model", a.Model, "msgs", len(msgs), "tools", len(tools))
+	a.logger.Info("LLM", "prompt", "model", a.Model, "standard", std.ID(), "msgs", len(msgs), "tools", len(tools))
 
-	endpoint := a.Provider.ChatEndpoint()
-
-	firstTokenLogged := false
-
-	for attempt := 1; ; attempt++ {
-		select {
-		case <-ctx.Done():
-			a.logger.Warn("CANCEL", "stream_cancelled", "reason", ctx.Err().Error())
-			return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled: %v", ctx.Err())}
-		default:
+	var accumulatedUsage provider.TokenUsage
+	for attempt := 1; attempt <= attemptLimit; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled", err)
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
-			return "", "", "", nil, 0, 0, 0, fmt.Errorf("create request: %w", err)
+			return completionResult{Usage: accumulatedUsage}, fmt.Errorf("create request: %w", err)
 		}
-		hdr, val := a.Provider.Auth()
-		if hdr != "" {
-			httpReq.Header.Set(hdr, val)
+		for header, value := range a.Provider.Headers() {
+			httpReq.Header.Set(header, value)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Accept", "text/event-stream")
+		httpReq.Header.Set("Accept", "text/event-stream, application/json")
 
-		resp, err := a.client.Do(httpReq)
+		resp, err := client.Do(httpReq)
 		if err != nil {
-			if attempt >= maxRetries {
-				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request failed after %d attempts: %v", attempt, err), RetriesExhausted: true}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled", ctxErr)
 			}
-			bo := retryBackoff(attempt)
-			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", err.Error())
-			if onRetry != nil {
-				onRetry(attempt, bo.Seconds())
+			if attempt == attemptLimit {
+				return completionResult{Usage: accumulatedUsage}, &apiCallError{
+					Message:          fmt.Sprintf("stream request failed after %d attempts: %v", attempt, err),
+					RetriesExhausted: true,
+					Cause:            err,
+				}
 			}
-			select {
-			case <-time.After(bo):
-			case <-ctx.Done():
-				a.logger.Warn("CANCEL", "stream_retry_cancelled", "reason", ctx.Err().Error())
-				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled during retry: %v", ctx.Err())}
+			delay := retryBackoff(attempt)
+			a.logRetry(attempt, delay, err, onRetry)
+			if err := waitForRetry(ctx, delay); err != nil {
+				return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled during retry", err)
 			}
 			continue
 		}
 
-		if resp.StatusCode != 200 {
-			respBody, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			snippet := string(respBody)
-			if isRetryable(resp.StatusCode) {
-				if attempt >= maxRetries {
-					return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("API %d after %d attempts: %s", resp.StatusCode, attempt, snippet), RetriesExhausted: true}
-				}
-				bo := retryBackoff(attempt)
-				a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error())
-				if onRetry != nil {
-					onRetry(attempt, bo.Seconds())
-				}
-				select {
-				case <-time.After(bo):
-				case <-ctx.Done():
-					a.logger.Warn("CANCEL", "stream_retry_cancelled", "reason", ctx.Err().Error())
-					return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled during retry: %v", ctx.Err())}
-				}
-				continue
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			statusErr := readHTTPStatusError(resp)
+			if !isRetryable(resp.StatusCode) || attempt == attemptLimit {
+				statusErr.RetriesExhausted = isRetryable(resp.StatusCode) && attempt == attemptLimit
+				return completionResult{Usage: accumulatedUsage}, statusErr
 			}
-			a.logger.Error("LLM", "error", "model", a.Model, "error", fmt.Errorf("status %d: %s", resp.StatusCode, snippet).Error(), "latency_ms", time.Since(streamStart).Milliseconds())
-			return "", "", "", nil, 0, 0, 0, fmt.Errorf("API %d: %s", resp.StatusCode, snippet)
-		}
-
-		var contentBuf strings.Builder
-		var reasoningBuf strings.Builder
-		finishReason := ""
-		promptTokens := 0
-		completionTokens := 0
-		promptTokensCached := 0
-		toolCallsByIndex := make(map[int]*provider.ToolCall)
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			data := strings.TrimPrefix(line, "data: ")
-
-			chunk, err := std.DecodeStreamChunk(data)
-			if err != nil {
-				continue
-			}
-			if chunk == nil {
-				break
-			}
-			if len(chunk.Choices) == 0 {
-				continue
-			}
-
-			choice := chunk.Choices[0]
-			if choice.FinishReason != "" {
-				finishReason = choice.FinishReason
-			}
-
-			if chunk.Usage != nil {
-				promptTokens = chunk.Usage.PromptTokens
-				completionTokens = chunk.Usage.CompletionTokens
-				if chunk.Usage.PromptTokensDetails != nil {
-					promptTokensCached = chunk.Usage.PromptTokensDetails.CachedTokens
-				}
-				a.logger.Debug("STREAM", "usage_received", "prompt", promptTokens, "completion", completionTokens, "cached", promptTokensCached)
-			}
-
-			reasoningText := choice.Delta.ReasoningContent
-			if reasoningText == "" {
-				reasoningText = choice.Delta.Reasoning
-			}
-			if reasoningText != "" {
-				reasoningBuf.WriteString(reasoningText)
-				if emitThinking != nil {
-					emitThinking(reasoningText)
-				}
-			}
-
-			delta := choice.Delta.Content
-			if delta != "" {
-				if !firstTokenLogged {
-					latencyMs := time.Since(streamStart).Milliseconds()
-					a.logger.Debug("STREAM", "first_token", "model", a.Model, "latency_ms", latencyMs)
-					firstTokenLogged = true
-				}
-				contentBuf.WriteString(delta)
-				emit(delta)
-			}
-
-			for _, tc := range choice.Delta.ToolCalls {
-				existing, ok := toolCallsByIndex[tc.Index]
-				if !ok {
-					a.toolCallSeq++
-					internalID := fmt.Sprintf("_tc%d", a.toolCallSeq)
-					toolCallsByIndex[tc.Index] = &provider.ToolCall{
-						Index:      tc.Index,
-						ID:         tc.ID,
-						Type:       tc.Type,
-						InternalID: internalID,
-						Function: provider.FunctionCall{
-							Name:      tc.Function.Name,
-							Arguments: tc.Function.Arguments,
-						},
-					}
-					if onToolCallStart != nil && tc.Function.Name != "" {
-						a.logger.Debug("STREAM", "tool_call_start", "id", tc.ID, "internal_id", internalID, "name", tc.Function.Name)
-						onToolCallStart(internalID, tc.ID, tc.Function.Name)
-					}
-					if onToolCallDelta != nil && tc.Function.Name != "" {
-						a.logger.Debug("STREAM", "tool_call_delta", "id", tc.ID, "internal_id", internalID, "name", tc.Function.Name, "args_len", len(tc.Function.Arguments))
-						onToolCallDelta(internalID, tc.ID, tc.Function.Name, tc.Function.Arguments)
-					}
-				} else {
-					if tc.ID != "" && existing.ID == "" {
-						existing.ID = tc.ID
-					}
-					if tc.Type != "" && existing.Type == "" {
-						existing.Type = tc.Type
-					}
-					if tc.Function.Name != "" && existing.Function.Name == "" {
-						existing.Function.Name = tc.Function.Name
-						a.logger.Debug("STREAM", "tool_call_start", "id", existing.ID, "internal_id", existing.InternalID, "name", existing.Function.Name)
-						if onToolCallStart != nil {
-							onToolCallStart(existing.InternalID, existing.ID, existing.Function.Name)
-						}
-					}
-					existing.Function.Arguments += tc.Function.Arguments
-					if onToolCallDelta != nil && existing.Function.Name != "" {
-						onToolCallDelta(existing.InternalID, existing.ID, existing.Function.Name, existing.Function.Arguments)
-					}
-				}
-			}
-		}
-		resp.Body.Close()
-
-		if ctx.Err() != nil {
-			partialContent := contentBuf.String()
-			partialReasoning := reasoningBuf.String()
-			a.logger.Warn("CANCEL", "stream_interrupted", "agent_id", a.AgentID, "content_len", len(partialContent), "reason", ctx.Err().Error())
-			return partialContent, partialReasoning, finishReason, nil, promptTokens, completionTokens, promptTokensCached, &apiCallError{Message: fmt.Sprintf("Stream request cancelled: %v", ctx.Err())}
-		}
-
-		if err := scanner.Err(); err != nil {
-			partialContent := contentBuf.String()
-			if partialContent != "" {
-				a.logger.Warn("STREAM", "scan_error_partial", "model", a.Model, "content_len", len(partialContent), "error", err.Error())
-				return partialContent, reasoningBuf.String(), finishReason, nil, promptTokens, completionTokens, promptTokensCached, nil
-			}
-			if attempt >= maxRetries {
-				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream scan error after %d attempts: %v", attempt, err), RetriesExhausted: true}
-			}
-			bo := retryBackoff(attempt)
-			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt, "backoff_ms", int(bo.Milliseconds()), "error", fmt.Errorf("stream scan error: %w", err).Error())
-			if onRetry != nil {
-				onRetry(attempt, bo.Seconds())
-			}
-			select {
-			case <-time.After(bo):
-			case <-ctx.Done():
-				return "", "", "", nil, 0, 0, 0, &apiCallError{Message: fmt.Sprintf("Stream request cancelled during retry: %v", ctx.Err())}
+			delay := retryDelay(resp, attempt)
+			a.logRetry(attempt, delay, statusErr, onRetry)
+			if err := waitForRetry(ctx, delay); err != nil {
+				return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled during retry", err)
 			}
 			continue
 		}
 
-		var resultToolCalls []provider.ToolCall
-		if len(toolCallsByIndex) > 0 {
-			maxIdx := 0
-			for idx := range toolCallsByIndex {
-				if idx > maxIdx {
-					maxIdx = idx
+		result, consumeErr := a.consumeResponse(
+			ctx, resp, std, emit, emitThinking, onToolCallStart, onToolCallDelta, streamStart,
+		)
+		result.LastPromptTokens = result.Usage.PromptTokens
+		result.Usage = addTokenUsage(accumulatedUsage, result.Usage)
+		if consumeErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, cancellationError("Stream request cancelled", ctxErr)
+			}
+			if result.hasOutput() {
+				return result, &apiCallError{
+					Message: fmt.Sprintf("stream interrupted after partial response: %v", consumeErr),
+					Partial: true,
+					Cause:   consumeErr,
 				}
 			}
-			for i := 0; i <= maxIdx; i++ {
-				if tc, ok := toolCallsByIndex[i]; ok && tc.Function.Name != "" {
-					resultToolCalls = append(resultToolCalls, *tc)
+			if attempt < attemptLimit && retryableStreamError(consumeErr) {
+				accumulatedUsage = result.Usage
+				delay := retryBackoff(attempt)
+				a.logRetry(attempt, delay, consumeErr, onRetry)
+				if err := waitForRetry(ctx, delay); err != nil {
+					return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled during retry", err)
 				}
+				continue
 			}
+			return result, consumeErr
 		}
 
-		streamDur := time.Since(streamStart).Milliseconds()
-		a.logger.Info("LLM", "response", "model", a.Model, "tool_calls", len(resultToolCalls), "prompt_tokens", promptTokens, "completion_tokens", completionTokens, "cached_tokens", promptTokensCached, "latency_ms", streamDur)
+		a.logCompletedTurn(body, result, streamStart)
+		return result, nil
+	}
 
-		if a.turn != nil {
-			turnToolCalls := make([]logger.TurnToolCall, len(resultToolCalls))
-			for i, tc := range resultToolCalls {
-				turnToolCalls[i] = logger.TurnToolCall{
-					ID:        tc.ID,
-					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-				}
-			}
-			if turnFile := a.turn.Write(logger.TurnRecord{
-				Time:             time.Now(),
-				Model:            a.Model,
-				LatencyMS:        streamDur,
-				PromptTokens:     promptTokens,
-				CompletionTokens: completionTokens,
-				CachedTokens:     promptTokensCached,
-				FinishReason:     finishReason,
-				RequestBody:      body,
-				ResponseContent:  contentBuf.String(),
-				ReasoningContent: reasoningBuf.String(),
-				ToolCalls:        turnToolCalls,
-			}); turnFile != "" {
-				a.logger.Debug("LLM", "turn_dump", "file", turnFile)
-			}
-		}
-
-		return contentBuf.String(), reasoningBuf.String(), finishReason, resultToolCalls, promptTokens, completionTokens, promptTokensCached, nil
+	return completionResult{Usage: accumulatedUsage}, &apiCallError{
+		Message:          "stream request failed: retry limit reached",
+		RetriesExhausted: true,
 	}
 }
 
-func (a *Agent) emitError(emit func(AgentEvent), err error) {
-	errMsg := err.Error()
-	originalMsg := errMsg
-	if strings.Contains(errMsg, "context canceled") || strings.Contains(errMsg, "context cancelled") {
-		a.logger.Warn("LLM", "cancel_intercepted", "original", originalMsg)
-		emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-		return
-	} else if strings.Contains(errMsg, "429") {
-		errMsg = "Rate limited — please wait a moment and try again"
-	} else if strings.Contains(errMsg, " 5") && (strings.Contains(errMsg, "API 5") || strings.Contains(errMsg, "50") || strings.Contains(errMsg, "529")) {
-		errMsg = "API server error — please try again"
-	} else if idx := strings.Index(errMsg, "API error: "); idx >= 0 {
-		errMsg = errMsg[idx+len("API error: "):]
-		if len([]rune(errMsg)) > 120 {
-			errMsg = string([]rune(errMsg)[:120]) + "…"
+func mergeRequestExtras(body []byte, extra map[string]any) ([]byte, error) {
+	if len(extra) == 0 {
+		return body, nil
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(body, &merged); err != nil {
+		return nil, fmt.Errorf("merge request extras: %w", err)
+	}
+	for key, value := range extra {
+		merged[key] = value
+	}
+	result, err := json.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request extras: %w", err)
+	}
+	return result, nil
+}
+
+func (a *Agent) consumeResponse(
+	ctx context.Context,
+	resp *http.Response,
+	std provider.APIStandard,
+	emit func(string),
+	emitThinking func(string),
+	onToolCallStart func(string, string, string),
+	onToolCallDelta func(string, string, string, string),
+	streamStart time.Time,
+) (completionResult, error) {
+	defer resp.Body.Close()
+
+	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	bodyReader := bufio.NewReader(resp.Body)
+	isJSON := mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+	if !isJSON && mediaType != "text/event-stream" {
+		isJSON = readerLooksLikeJSON(bodyReader)
+	}
+	if isJSON {
+		body, err := readBounded(bodyReader, maxJSONResponseBytes)
+		if err != nil {
+			return completionResult{}, err
+		}
+		decoded, err := std.DecodeResponse(body)
+		if err != nil {
+			return completionResult{}, err
+		}
+		return a.resultFromChatResponse(decoded, emit, emitThinking, onToolCallStart, onToolCallDelta)
+	}
+
+	return a.consumeSSE(ctx, bodyReader, std.NewStreamDecoder(), emit, emitThinking,
+		onToolCallStart, onToolCallDelta, streamStart)
+}
+
+func readerLooksLikeJSON(reader *bufio.Reader) bool {
+	peeked, _ := reader.Peek(512)
+	trimmed := bytes.TrimSpace(peeked)
+	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
+}
+
+type toolCallAccumulator struct {
+	call    provider.ToolCall
+	started bool
+}
+
+func (a *Agent) consumeSSE(
+	ctx context.Context,
+	body io.Reader,
+	decoder provider.StreamDecoder,
+	emit func(string),
+	emitThinking func(string),
+	onToolCallStart func(string, string, string),
+	onToolCallDelta func(string, string, string, string),
+	streamStart time.Time,
+) (completionResult, error) {
+	reader := provider.NewSSEReader(body)
+	var content strings.Builder
+	var reasoning strings.Builder
+	result := completionResult{}
+	toolCalls := make(map[int]*toolCallAccumulator)
+	sawEvent := false
+	sawTerminal := false
+	firstTokenLogged := false
+
+	for {
+		if err := ctx.Err(); err != nil {
+			result.Content = content.String()
+			result.ReasoningContent = reasoning.String()
+			result.ToolCalls = finalizeToolCalls(toolCalls)
+			return result, err
+		}
+		event, err := reader.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			result.Content = content.String()
+			result.ReasoningContent = reasoning.String()
+			result.ToolCalls = finalizeToolCalls(toolCalls)
+			return result, err
+		}
+		sawEvent = true
+
+		update, err := decoder.Decode(event)
+		if err != nil {
+			result.Content = content.String()
+			result.ReasoningContent = reasoning.String()
+			result.ToolCalls = finalizeToolCalls(toolCalls)
+			return result, err
+		}
+		if update.Usage != nil {
+			result.Usage = *update.Usage
+		}
+		if update.FinishReason != "" {
+			result.FinishReason = update.FinishReason
+			sawTerminal = true
+		}
+		if len(update.ProviderItems) > 0 {
+			result.ProviderItems = append(result.ProviderItems, update.ProviderItems...)
+		}
+		if update.ReasoningDelta != "" {
+			reasoning.WriteString(update.ReasoningDelta)
+			if emitThinking != nil {
+				emitThinking(update.ReasoningDelta)
+			}
+		}
+		if update.ContentDelta != "" {
+			if !firstTokenLogged {
+				a.logger.Debug("STREAM", "first_token", "model", a.Model, "latency_ms", time.Since(streamStart).Milliseconds())
+				firstTokenLogged = true
+			}
+			content.WriteString(update.ContentDelta)
+			if emit != nil {
+				emit(update.ContentDelta)
+			}
+		}
+		for _, delta := range update.ToolCalls {
+			a.accumulateToolCall(toolCalls, delta, onToolCallStart, onToolCallDelta)
+		}
+		if update.Done {
+			sawTerminal = true
+			break
 		}
 	}
-	a.logger.Error("LLM", "emit_error", "original", originalMsg, "display", errMsg)
-	emit(AgentEvent{Type: "error", Data: errMsg})
+
+	result.Content = content.String()
+	result.ReasoningContent = reasoning.String()
+	result.ToolCalls = finalizeToolCalls(toolCalls)
+	if !sawEvent {
+		return result, io.ErrUnexpectedEOF
+	}
+	if !sawTerminal {
+		return result, fmt.Errorf("%w: provider stream ended without terminal event", io.ErrUnexpectedEOF)
+	}
+	if result.FinishReason == "" {
+		if len(result.ToolCalls) > 0 {
+			result.FinishReason = "tool_calls"
+		} else {
+			result.FinishReason = "stop"
+		}
+	}
+	return result, nil
+}
+
+func (a *Agent) accumulateToolCall(
+	toolCalls map[int]*toolCallAccumulator,
+	delta provider.ToolCallDelta,
+	onToolCallStart func(string, string, string),
+	onToolCallDelta func(string, string, string, string),
+) {
+	index := delta.Index
+	if existing := toolCalls[index]; existing != nil && delta.ID != "" &&
+		existing.call.ID != "" && existing.call.ID != delta.ID {
+		for index = 0; toolCalls[index] != nil; index++ {
+		}
+	}
+
+	acc := toolCalls[index]
+	if acc == nil {
+		a.toolCallSeq++
+		acc = &toolCallAccumulator{call: provider.ToolCall{
+			Index:      index,
+			InternalID: fmt.Sprintf("_tc%d", a.toolCallSeq),
+			Type:       "function",
+		}}
+		toolCalls[index] = acc
+	}
+	if delta.ID != "" {
+		acc.call.ID = delta.ID
+	}
+	if delta.Type != "" {
+		acc.call.Type = delta.Type
+	}
+	if delta.Name != "" {
+		acc.call.Function.Name = delta.Name
+	}
+	if delta.ReplaceArguments {
+		acc.call.Function.Arguments = delta.Arguments
+	} else {
+		acc.call.Function.Arguments += delta.Arguments
+	}
+	if !acc.started && acc.call.Function.Name != "" {
+		acc.started = true
+		if onToolCallStart != nil {
+			onToolCallStart(acc.call.InternalID, acc.call.ID, acc.call.Function.Name)
+		}
+	}
+	if onToolCallDelta != nil && acc.call.Function.Name != "" {
+		onToolCallDelta(acc.call.InternalID, acc.call.ID, acc.call.Function.Name, acc.call.Function.Arguments)
+	}
+}
+
+func finalizeToolCalls(accumulators map[int]*toolCallAccumulator) []provider.ToolCall {
+	if len(accumulators) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(accumulators))
+	for index := range accumulators {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	result := make([]provider.ToolCall, 0, len(indexes))
+	for _, index := range indexes {
+		call := accumulators[index].call
+		if call.Function.Name == "" {
+			continue
+		}
+		if call.ID == "" {
+			call.ID = "call" + call.InternalID
+		}
+		if call.Type == "" {
+			call.Type = "function"
+		}
+		result = append(result, call)
+	}
+	return result
+}
+
+func (a *Agent) resultFromChatResponse(
+	response *provider.ChatResponse,
+	emit func(string),
+	emitThinking func(string),
+	onToolCallStart func(string, string, string),
+	onToolCallDelta func(string, string, string, string),
+) (completionResult, error) {
+	if response == nil {
+		return completionResult{}, fmt.Errorf("provider returned an empty response")
+	}
+	if response.Error != nil {
+		return completionResult{}, &provider.APIError{
+			Type: response.Error.Type, Code: fmt.Sprint(response.Error.Code), Message: response.Error.Message,
+		}
+	}
+	if len(response.Choices) == 0 {
+		return completionResult{}, fmt.Errorf("provider response contains no choices")
+	}
+
+	choice := response.Choices[0]
+	message := choice.Message
+	content := message.ContentString()
+	if content == "" {
+		content = message.Refusal
+	}
+	reasoning := message.ReasoningContent
+	if reasoning == "" {
+		reasoning = message.Reasoning
+	}
+	if content == "" {
+		content = choice.Delta.Content
+	}
+	if content == "" {
+		content = choice.Delta.Refusal
+	}
+	if reasoning == "" {
+		reasoning = choice.Delta.ReasoningContent
+	}
+	if reasoning == "" {
+		reasoning = choice.Delta.Reasoning
+	}
+	toolCalls := message.ToolCalls
+	if len(toolCalls) == 0 {
+		toolCalls = choice.Delta.ToolCalls
+	}
+	for i := range toolCalls {
+		a.toolCallSeq++
+		toolCalls[i].Index = i
+		toolCalls[i].InternalID = fmt.Sprintf("_tc%d", a.toolCallSeq)
+		if toolCalls[i].ID == "" {
+			toolCalls[i].ID = "call" + toolCalls[i].InternalID
+		}
+		if toolCalls[i].Type == "" {
+			toolCalls[i].Type = "function"
+		}
+		if onToolCallStart != nil {
+			onToolCallStart(toolCalls[i].InternalID, toolCalls[i].ID, toolCalls[i].Function.Name)
+		}
+		if onToolCallDelta != nil {
+			onToolCallDelta(toolCalls[i].InternalID, toolCalls[i].ID,
+				toolCalls[i].Function.Name, toolCalls[i].Function.Arguments)
+		}
+	}
+	if reasoning != "" && emitThinking != nil {
+		emitThinking(reasoning)
+	}
+	if content != "" && emit != nil {
+		emit(content)
+	}
+
+	result := completionResult{
+		Content:          content,
+		ReasoningContent: reasoning,
+		FinishReason:     choice.FinishReason,
+		ToolCalls:        toolCalls,
+		ProviderItems:    message.ProviderItems,
+	}
+	if response.Usage != nil {
+		result.Usage.PromptTokens = response.Usage.PromptTokens
+		result.Usage.CompletionTokens = response.Usage.CompletionTokens
+		if response.Usage.PromptTokensDetails != nil {
+			result.Usage.PromptTokensCached = response.Usage.PromptTokensDetails.CachedTokens
+			result.Usage.PromptTokensWritten = response.Usage.PromptTokensDetails.CacheWriteTokens
+		}
+	}
+	if result.FinishReason == "" {
+		if len(result.ToolCalls) > 0 {
+			result.FinishReason = "tool_calls"
+		} else {
+			result.FinishReason = "stop"
+		}
+	}
+	return result, nil
+}
+
+func readHTTPStatusError(resp *http.Response) *apiCallError {
+	defer resp.Body.Close()
+	body, readErr := readBounded(resp.Body, maxErrorResponseBytes)
+	message := strings.TrimSpace(string(body))
+	if readErr != nil {
+		message = readErr.Error()
+	}
+
+	var envelope struct {
+		Error *struct {
+			Type    string `json:"type"`
+			Code    any    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		if envelope.Error != nil && envelope.Error.Message != "" {
+			message = envelope.Error.Message
+			if envelope.Error.Type != "" {
+				message = envelope.Error.Type + ": " + message
+			}
+			if envelope.Error.Code != nil && fmt.Sprint(envelope.Error.Code) != "" {
+				message = fmt.Sprintf("%v: %s", envelope.Error.Code, message)
+			}
+		} else if envelope.Message != "" {
+			message = envelope.Message
+		}
+	}
+	if message == "" {
+		message = http.StatusText(resp.StatusCode)
+	}
+	if requestID := firstNonEmpty(resp.Header.Get("request-id"), resp.Header.Get("x-request-id")); requestID != "" {
+		message += " (request " + requestID + ")"
+	}
+	return &apiCallError{
+		Message:    fmt.Sprintf("API %d: %s", resp.StatusCode, message),
+		StatusCode: resp.StatusCode,
+		Cause:      fmt.Errorf("HTTP %d", resp.StatusCode),
+	}
+}
+
+func readBounded(reader io.Reader, limit int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("response exceeds %d bytes", limit)
+	}
+	return body, nil
+}
+
+func retryableStreamError(err error) bool {
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var apiErr *provider.APIError
+	if errors.As(err, &apiErr) {
+		typ := strings.ToLower(apiErr.Type + " " + apiErr.Code)
+		return strings.Contains(typ, "overload") || strings.Contains(typ, "rate_limit") ||
+			strings.Contains(typ, "temporar") || strings.Contains(typ, "api_error") ||
+			strings.Contains(typ, "server_error") || strings.Contains(typ, "internal_error") ||
+			strings.Contains(typ, "timeout") || strings.Contains(typ, "unavailable")
+	}
+	return false
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func cancellationError(prefix string, cause error) *apiCallError {
+	return &apiCallError{Message: fmt.Sprintf("%s: %v", prefix, cause), Cause: cause}
+}
+
+func (a *Agent) logRetry(attempt int, delay time.Duration, err error, onRetry func(int, float64)) {
+	a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt,
+		"backoff_ms", delay.Milliseconds(), "error", err.Error())
+	if onRetry != nil {
+		onRetry(attempt, delay.Seconds())
+	}
+}
+
+func (a *Agent) logCompletedTurn(body []byte, result completionResult, streamStart time.Time) {
+	streamDuration := time.Since(streamStart).Milliseconds()
+	a.logger.Info("LLM", "response", "model", a.Model, "tool_calls", len(result.ToolCalls),
+		"prompt_tokens", result.Usage.PromptTokens, "completion_tokens", result.Usage.CompletionTokens,
+		"cached_tokens", result.Usage.PromptTokensCached, "latency_ms", streamDuration)
+
+	if a.turn == nil {
+		return
+	}
+	turnToolCalls := make([]logger.TurnToolCall, len(result.ToolCalls))
+	for i, call := range result.ToolCalls {
+		turnToolCalls[i] = logger.TurnToolCall{
+			ID:        call.ID,
+			Name:      call.Function.Name,
+			Arguments: call.Function.Arguments,
+		}
+	}
+	if turnFile := a.turn.Write(logger.TurnRecord{
+		Time:             time.Now(),
+		Model:            a.Model,
+		LatencyMS:        streamDuration,
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		CachedTokens:     result.Usage.PromptTokensCached,
+		FinishReason:     result.FinishReason,
+		RequestBody:      body,
+		ResponseContent:  result.Content,
+		ReasoningContent: result.ReasoningContent,
+		ToolCalls:        turnToolCalls,
+	}); turnFile != "" {
+		a.logger.Debug("LLM", "turn_dump", "file", turnFile)
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (a *Agent) emitError(emit func(AgentEvent), err error) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		a.logger.Warn("LLM", "cancel_intercepted", "original", err.Error())
+		emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+		return
+	}
+
+	display := err.Error()
+	var apiErr *apiCallError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusTooManyRequests:
+			display = "Rate limited — please wait a moment and try again"
+		case http.StatusUnauthorized, http.StatusForbidden:
+			display = "Authentication failed — check the provider API key"
+		default:
+			if apiErr.StatusCode >= 500 {
+				display = "API server error — please try again"
+			}
+		}
+	}
+	if len([]rune(display)) > 240 {
+		display = string([]rune(display)[:240]) + "…"
+	}
+	a.logger.Error("LLM", "emit_error", "original", err.Error(), "display", display)
+	emit(AgentEvent{Type: "error", Data: display})
 }

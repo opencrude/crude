@@ -1,9 +1,12 @@
 package workspace
 
 import (
+	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"crude/buildinfo"
 	"crude/types"
 )
 
@@ -90,6 +93,11 @@ func ghosttyVersionMatchesPin(version string) bool {
 
 // PTYEnviron returns environment variables for an in-app terminal so child
 // programs see the pinned Ghostty terminfo regardless of Crude's host.
+//
+// Setting TERM=xterm-ghostty is only half of the contract: the terminfo
+// database entry must also resolve. PTYEnviron therefore points TERMINFO at
+// TerminfoDir(), which materializes the embedded pinned entry under the app
+// data dir when no system database provides it.
 func PTYEnviron(extra []string) []string {
 	env := append([]string{}, extra...)
 	if len(env) == 0 {
@@ -99,7 +107,43 @@ func PTYEnviron(extra []string) []string {
 	env = setEnv(env, "COLORTERM", "truecolor")
 	env = setEnv(env, "TERM_PROGRAM", "ghostty")
 	env = setEnv(env, "TERM_PROGRAM_VERSION", types.PinnedGhosttyVersion)
+	if dir := TerminfoDir(); dir != "" {
+		env = setEnv(env, "TERMINFO", dir)
+	}
 	return env
+}
+
+// TerminfoDir returns the directory to expose as TERMINFO to child PTYs so
+// the pinned xterm-ghostty entry resolves. Precedence:
+//
+//  1. CRUDE_TERMINFO_DIR — explicit override (installers, tests); used
+//     verbatim, nothing is materialized.
+//  2. <home>/<app data dir>/terminfo — the embedded pinned entry is
+//     written there unless an identical file already exists.
+//
+// Returns "" when no usable directory can be established (no home dir, or an
+// unwritable app data dir); callers then fall back to the system terminfo
+// search path.
+func TerminfoDir() string {
+	if dir := os.Getenv("CRUDE_TERMINFO_DIR"); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, buildinfo.DataDir(), "terminfo")
+	entry := filepath.Join(dir, "x", types.GhosttyTermName)
+	if existing, err := os.ReadFile(entry); err == nil && bytes.Equal(existing, types.GhosttyTerminfoEntry) {
+		return dir
+	}
+	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+		return ""
+	}
+	if err := os.WriteFile(entry, types.GhosttyTerminfoEntry, 0o644); err != nil {
+		return ""
+	}
+	return dir
 }
 
 func setEnv(env []string, key, value string) []string {

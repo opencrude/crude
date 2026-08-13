@@ -12,23 +12,53 @@ preserve or intentionally improve.
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
 | Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 3-col activity rail stays |
 | Files / Agents / Terminals / Git | Ctrl+Shift+E / A / U / G | Activity bar destinations |
-| New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks like questions when a session exists |
-| Toggle terminal | Ctrl+` | Focus last terminal or create one |
+| New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks in the workspace terminal dock |
+| Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
 | Composer | Alt+C | |
 | Quit/close | Ctrl+Q | |
 | Cancel/back | Esc | Never Ctrl+C for back |
 | Copy | Ctrl+C | |
 | Paste | Bracketed paste primary; Ctrl+V fallback | |
 
+## Editor context
+
+| Action | Binding | Notes |
+|--------|---------|-------|
+| Move line/selection | Alt+Up / Alt+Down | One undo step each |
+| Duplicate line/selection | Ctrl+Shift+D | Kitty/CSI-u terminals |
+| Delete line(s) | Ctrl+Shift+K | Kitty/CSI-u terminals |
+| Toggle line comment | Ctrl+/ (legacy Ctrl+_) | Prefix from language map / chroma |
+| Indent / outdent selection | Tab / Shift+Tab | Shift+Tab outdents the current line without a selection |
+| Smart Home | Home | Toggles first non-blank column and column 0 |
+| Auto-close pairs | ( [ { " ' | Type-over closers; openers wrap an active selection; Backspace deletes an empty pair |
+
+## File tree context
+
+| Action | Binding | Notes |
+|--------|---------|-------|
+| Type-to-filter | any printable char | Fuzzy subsequence; ancestors auto-expand; Esc clears; `/` opens an empty filter |
+| Refresh tree | Ctrl+R | Relocated from `r` (typing now filters) |
+| Toggle hidden files | Ctrl+. | Relocated from `.` |
+
+## Terminal panel
+
+| Action | Binding / control | Notes |
+|--------|-------------------|-------|
+| New / float / close | `+` `⇱` `✕` header icons | Panel header, right of the tabs (VS Code style) |
+| Dock a floating terminal | `⇲` title-bar button | Same PTY, no restart |
+| Scrollback | Wheel, Shift+PgUp/PgDn/Home/End | Primary screen only; typing snaps to bottom |
+| Selection / copy | Drag; double-click word; triple-click line | Copy-on-release + Ctrl+Shift+C; Shift bypasses app mouse tracking |
+
 ## Focus precedence (current)
 
 1. Floating window (WM)
-2. Session Panel Deck (when focused)
-3. Launcher
-4. File tree
-5. Tab bar
-6. Editor
-7. Chat input
+2. Blocking session Panel Deck
+3. Focused workspace terminal dock
+4. Launcher
+5. File tree
+6. Tab bar
+7. Editor
+8. Chat input
 
 Passive background-job panels update their owning session deck without taking
 focus or displacing an active interactive panel. Failed and killed jobs request

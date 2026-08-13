@@ -79,22 +79,22 @@ func UsageTopics() []Topic {
 		{
 			ID:    "editor",
 			Title: "Editor",
-			Body:  "Open files from the tree or Find in Files. Diagnostics, go-to-definition, references, and outline use the workspace language server when LSP is enabled in settings. Find/replace is an overlay on the current buffer. Find in Files and Replace in Files are sibling project windows (Ctrl+Alt+F / Ctrl+Alt+H).",
+			Body:  "Open files from the tree or Find in Files. Diagnostics, go-to-definition, references, and outline use the workspace language server when LSP is enabled in settings. Find/replace is an overlay on the current buffer. Find in Files and Replace in Files are sibling project windows (Ctrl+Alt+F / Ctrl+Alt+H). Editing is IDE-grade: Enter auto-indents, brackets and quotes auto-close and wrap selections, Tab/Shift+Tab indent or outdent selected lines, Alt+Up/Down moves lines, Ctrl+Shift+D duplicates, Ctrl+Shift+K deletes, and Ctrl+/ toggles comments — each is a single undo step.",
 		},
 		{
 			ID:    "files",
 			Title: "Files and the tree",
-			Body:  "The left rail is Files, Agents, Terminals, and Git. Files is the project tree. The other views list open agents, PTY sessions, and git-changed files — click a row to focus or open it. Ctrl+B hides the sidebar body; the rail stays. Hide the sidebar from the Command Palette when you need width for the editor.",
+			Body:  "The left rail is Files, Agents, Terminals, and Git. Files is the project tree: just start typing to fuzzy-filter it (Esc clears; matches highlight and ancestors auto-expand), Ctrl+R refreshes, Ctrl+. toggles hidden files. The other views list open agents, PTY sessions, and git-changed files — click selects, double-click or Enter opens. Ctrl+B hides the sidebar body; the rail stays.",
 		},
 		{
 			ID:    "docks",
 			Title: "Session docks",
-			Body:  "Session AI settings, agent questions, tool confirmation, YOLO, and docked terminals sit in the dock between the chat and the input. Arrow keys move inside a list; Tab reaches Save/Cancel; Esc closes forms. Terminals send Esc to the PTY. Float on a terminal promotes it to a draggable window.",
+			Body:  "Session AI settings, agent questions, tool confirmation, YOLO, and background jobs sit in the session dock between the chat and the input. Arrow keys move inside a list; Tab reaches Save/Cancel; Esc closes forms. Terminals live in a separate workspace dock above the status bar.",
 		},
 		{
 			ID:    "terminals",
 			Title: "Terminals",
-			Body:  "New Terminal opens a Ghostty-pinned PTY (TERM=xterm-ghostty, version 1.3.0). With a session they dock as tabs above the input, like questions. Float turns a tab into a free window you can drag, resize, and stack; Dock puts it back. The Terminals activity view lists every session. Closing a window kills that PTY.",
+			Body:  "New Terminal opens a libghostty-vt PTY (TERM=xterm-ghostty, version 1.3.0) in the panel right of the sidebar. The panel header holds the tabs plus + (new), ⇱ (float), and ✕ (close); a floating terminal docks back from the ⇲ button in its title bar — same PTY, no restart. Ctrl+` toggles focus; Esc/Ctrl+C/Ctrl+Q go to the shell while focused. Drag-select copies on release (Shift bypasses app mouse tracking), Ctrl+Shift+C copies, Shift+PgUp/PgDn scrolls history, and the wheel scrolls full-screen apps too. Closing a tab or window kills that PTY and its process group.",
 		},
 		{
 			ID:    "safety",

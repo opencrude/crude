@@ -206,8 +206,10 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 			nameMax = 1
 		}
 		nameText := node.Name
+		truncated := false
 		if rendering.VisibleWidth(node.Name) > nameMax {
 			nameText = rendering.TruncateVisual(node.Name, nameMax, "…")
+			truncated = true
 		}
 		nameFG := tokens.TreeFileFg()
 		nameAttr := cell.Attrs(0)
@@ -223,7 +225,15 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 			}
 			nameAttr = cell.AttrBold
 		}
-		x = buf.WriteString(x, y, nameText, nameFG, bg, nameAttr)
+		var matchPos []int
+		if model != nil {
+			matchPos = model.FilterMatchPositions(node.Path)
+		}
+		if len(matchPos) == 0 {
+			x = buf.WriteString(x, y, nameText, nameFG, bg, nameAttr)
+		} else {
+			x = writeNameHighlighted(buf, x, y, nameText, truncated, matchPos, nameFG, tokens.Color(ui.ColorAccent), bg, nameAttr)
+		}
 
 		for fx := x; fx < indicatorX; fx++ {
 			buf.Set(fx, y, cell.NewCell(' ', cell.NoColor, bg, 0))
@@ -240,6 +250,32 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 			buf.Set(fx, y, cell.NewCell(' ', cell.NoColor, bg, 0))
 		}
 	}
+}
+
+// writeNameHighlighted paints a (possibly truncated) node name rune by rune,
+// switching matched runes to the accent foreground with bold. Positions are
+// rune indices into the ORIGINAL name; truncation keeps a prefix plus a
+// trailing ellipsis, so positions beyond the kept prefix are dropped and the
+// ellipsis itself is never highlighted.
+func writeNameHighlighted(buf *surface.CellBuffer, x, y int, nameText string, truncated bool, positions []int, fg, matchFG cell.Color, bg cell.Color, attr cell.Attrs) int {
+	runes := []rune(nameText)
+	kept := len(runes)
+	if truncated && kept > 0 {
+		kept--
+	}
+	pi := 0
+	for ri, r := range runes {
+		for pi < len(positions) && positions[pi] < ri {
+			pi++
+		}
+		matched := ri < kept && pi < len(positions) && positions[pi] == ri
+		if matched {
+			x = buf.WriteString(x, y, string(r), matchFG, bg, attr|cell.AttrBold)
+		} else {
+			x = buf.WriteString(x, y, string(r), fg, bg, attr)
+		}
+	}
+	return x
 }
 
 func gitColor(tokens *ui.TokenSet, st GitStatus) cell.Color {

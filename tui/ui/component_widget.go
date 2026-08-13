@@ -87,7 +87,7 @@ func (c *ComponentWidget) Render(surf *surface.Surface, ctx *wm.RenderContext) {
 	if w < 1 || h < 1 {
 		return
 	}
-	if ctx != nil && ctx.Theme != nil {
+	if ctx != nil && ctx.Theme != nil && c.host.Theme() != ctx.Theme {
 		c.host.SetTheme(ctx.Theme)
 		applyTokenSet(c.host.Root(), c.host.Tokens())
 	}

@@ -18,6 +18,11 @@ type APIStandard interface {
 	// Auth returns (headerName, headerValue) for API authentication.
 	Auth(apiKey string) (header, value string)
 
+	// Headers returns every protocol-required request header. Auth is retained
+	// for backwards compatibility, but callers making requests should use this
+	// method because standards such as Anthropic require multiple headers.
+	Headers(apiKey string) map[string]string
+
 	// EncodeRequest serializes a chat request into the wire format body.
 	EncodeRequest(req *ChatRequest) ([]byte, error)
 
@@ -26,7 +31,12 @@ type APIStandard interface {
 
 	// DecodeStreamChunk parses a single SSE data chunk from a streaming response.
 	// Returns nil chunk when the stream is done (e.g. "[DONE]" sentinel).
+	// Deprecated: request-scoped stream processing should use NewStreamDecoder.
 	DecodeStreamChunk(data string) (*ChatResponse, error)
+
+	// NewStreamDecoder returns a fresh request-scoped stream decoder. Decoders
+	// may retain state needed to assemble signed thinking or reasoning items.
+	NewStreamDecoder() StreamDecoder
 
 	// DecodeModels parses a model list response into ModelInfo entries.
 	// Returns nil if the standard doesn't support model listing.
@@ -59,5 +69,55 @@ func UsageFromResponse(resp *ChatResponse) (int, int, int) {
 
 // Compile-time check helpers.
 type StreamDecoder interface {
-	Decode(data string) (*ChatResponse, error)
+	Decode(event StreamEvent) (StreamUpdate, error)
+}
+
+func streamUpdateToChatResponse(update StreamUpdate) *ChatResponse {
+	if update.Done && update.ContentDelta == "" && update.ReasoningDelta == "" &&
+		len(update.ToolCalls) == 0 && len(update.ProviderItems) == 0 &&
+		update.FinishReason == "" && update.Usage == nil {
+		return nil
+	}
+
+	resp := &ChatResponse{}
+	if update.ContentDelta != "" || update.ReasoningDelta != "" ||
+		len(update.ToolCalls) > 0 || len(update.ProviderItems) > 0 || update.FinishReason != "" {
+		choice := ChatChoice{
+			FinishReason: update.FinishReason,
+			Message: ChatMessage{
+				Role:          "assistant",
+				Content:       TextContent(""),
+				ProviderItems: update.ProviderItems,
+			},
+		}
+		choice.Delta.Content = update.ContentDelta
+		choice.Delta.ReasoningContent = update.ReasoningDelta
+		choice.Delta.Reasoning = update.ReasoningDelta
+		for _, delta := range update.ToolCalls {
+			choice.Delta.ToolCalls = append(choice.Delta.ToolCalls, ToolCall{
+				Index: delta.Index,
+				ID:    delta.ID,
+				Type:  delta.Type,
+				Function: FunctionCall{
+					Name:      delta.Name,
+					Arguments: delta.Arguments,
+				},
+			})
+		}
+		resp.Choices = []ChatChoice{choice}
+	}
+	if update.Usage != nil {
+		resp.Usage = &ChatUsage{
+			PromptTokens:     update.Usage.PromptTokens,
+			CompletionTokens: update.Usage.CompletionTokens,
+			TotalTokens:      update.Usage.PromptTokens + update.Usage.CompletionTokens,
+		}
+		if update.Usage.PromptTokensCached > 0 || update.Usage.PromptTokensWritten > 0 {
+			resp.Usage.PromptTokensDetails = &PromptTokenDetails{
+				CachedTokens:     update.Usage.PromptTokensCached,
+				CacheWriteTokens: update.Usage.PromptTokensWritten,
+			}
+		}
+	}
+	return resp
 }

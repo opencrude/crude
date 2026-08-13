@@ -36,7 +36,7 @@ func TestModelFetchResultClearsLoadingViaFrameForwarding(t *testing.T) {
 	host.Resize(90, 28)
 	host.Layout()
 	surf.FocusForm()
-	for range 3 {
+	for range 4 {
 		host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
 	}
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -96,7 +96,7 @@ func TestModelFetchErrorClearsLoadingViaFrameForwarding(t *testing.T) {
 	host.Resize(90, 28)
 	host.Layout()
 	surf.FocusForm()
-	for range 3 {
+	for range 4 {
 		host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
 	}
 	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd == nil {
