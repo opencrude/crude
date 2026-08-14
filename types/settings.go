@@ -381,7 +381,36 @@ func WorkspaceOverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 		cfg.APIKey = ""
 		workingSans.Providers[id] = cfg
 	}
+	stripAgentAPIKeys(&appSans.Agents)
+	stripAgentAPIKeys(&workingSans.Agents)
 	return OverridesFromDiff(appSans, workingSans)
+}
+
+func stripAgentAPIKeys(agents *AgentsSettings) {
+	if agents == nil {
+		return
+	}
+	for id, cat := range agents.Categories {
+		cat.APIKey = ""
+		agents.Categories[id] = cat
+	}
+	if len(agents.Profiles) == 0 {
+		return
+	}
+	profiles := make([]ProfileSettings, len(agents.Profiles))
+	for i, profile := range agents.Profiles {
+		profiles[i] = profile
+		if profile.Categories == nil {
+			continue
+		}
+		cats := make(map[string]CategorySettings, len(profile.Categories))
+		for id, cat := range profile.Categories {
+			cat.APIKey = ""
+			cats[id] = cat
+		}
+		profiles[i].Categories = cats
+	}
+	agents.Profiles = profiles
 }
 
 // CategoryOverridden reports whether a settings page is stored as a workspace

@@ -111,6 +111,9 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 				x++
 			}
 		}
+		// Depth 0 is a child of the hidden workspace root. Those rows still
+		// get the first branch rail (├/└) so top-level folders look like
+		// they did under the old root row.
 		if node.Depth >= 0 && remainingHOff < 4 {
 			if isLastChild(node) {
 				buf.Set(x, y, cell.NewCell('└', indentFG, bg, 0))
@@ -291,6 +294,40 @@ func gitColor(tokens *ui.TokenSet, st GitStatus) cell.Color {
 	}
 }
 
+// HeaderMark is one workspace-status chip for the explorer search row.
+type HeaderMark struct {
+	Text string
+	FG   cell.Color
+}
+
+// HeaderMarks returns the aggregated git letter and diagnostic counts that
+// used to paint on the workspace root row. The explorer search badge uses
+// the same glyphs and colors.
+func HeaderMarks(root *TreeNode, cfg PaintConfig, tokens *ui.TokenSet) []HeaderMark {
+	if root == nil || tokens == nil {
+		return nil
+	}
+	var marks []HeaderMark
+	if cfg.ShowGitStatus {
+		git := root.GitStatus
+		if git == GitNone {
+			git = root.AggregateStatus
+		}
+		if s := StatusString(git); s != "" {
+			marks = append(marks, HeaderMark{Text: s, FG: gitColor(tokens, git)})
+		}
+	}
+	if cfg.ShowDiagnostics && root.DiagnosticCount > 0 {
+		if root.DiagErrors > 0 {
+			marks = append(marks, HeaderMark{Text: "✕" + itoa(root.DiagErrors), FG: tokens.TreeDiagError()})
+		}
+		if root.DiagWarnings > 0 {
+			marks = append(marks, HeaderMark{Text: "⚠" + itoa(root.DiagWarnings), FG: tokens.TreeDiagWarning()})
+		}
+	}
+	return marks
+}
+
 // BreadcrumbLine builds the sticky parent path header for a scrolled tree.
 func BreadcrumbLine(model *FileTreeModel, width int) string {
 	names := breadcrumbNames(model)
@@ -341,7 +378,7 @@ func breadcrumbNames(model *FileTreeModel) []string {
 	}
 	first := nodes[off]
 	var names []string
-	for p := first.Parent; p != nil; p = p.Parent {
+	for p := first.Parent; p != nil && p != model.Root; p = p.Parent {
 		names = append([]string{p.Name}, names...)
 	}
 	return names

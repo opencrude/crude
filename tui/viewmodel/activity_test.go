@@ -116,17 +116,20 @@ func TestAgentSidebarProjectsAgentForest(t *testing.T) {
 	app.AgentMgr.AddSubAgent("child-b", "root", "Build", "model-b", "crafter", workspace.NewAgentState("child-b", nil, nil))
 
 	items := app.agentSidebarItems()
-	if len(items) != 3 {
+	if len(items) < 1 || items[0].ID != sidebarItemNewAgent || !items[0].Command {
+		t.Fatalf("new agent command=%#v", items)
+	}
+	if len(items) != 4 {
 		t.Fatalf("items=%#v", items)
 	}
-	if items[0].Depth != 0 || items[0].Label != "Main Agent" {
-		t.Fatalf("root row=%#v", items[0])
+	if items[1].Depth != 0 || items[1].Label != "Main Agent" {
+		t.Fatalf("root row=%#v", items[1])
 	}
-	if items[1].Depth != 1 || items[1].TreeLast || items[1].Label != "Research" {
-		t.Fatalf("first child row=%#v", items[1])
+	if items[2].Depth != 1 || items[2].TreeLast || items[2].Label != "Research" {
+		t.Fatalf("first child row=%#v", items[2])
 	}
-	if items[2].Depth != 1 || !items[2].TreeLast || items[2].Label != "Build" {
-		t.Fatalf("last child row=%#v", items[2])
+	if items[3].Depth != 1 || !items[3].TreeLast || items[3].Label != "Build" {
+		t.Fatalf("last child row=%#v", items[3])
 	}
 }
 
@@ -251,6 +254,40 @@ func TestNewTerminalRowActivatesOnSingleClick(t *testing.T) {
 	}
 }
 
+func TestNewAgentRowActivatesOnSingleClick(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 40
+	model := filetree.NewFileTreeModel(t.TempDir())
+	app.Tree = NewTreeState(model, 24)
+	app.sidebarScreen.SetModel(model)
+	app.setActivity(activityAgents, true)
+	app.paintShellFrame()
+
+	rect, ok := app.rootHost.ScreenRect(activitylist.ScreenID)
+	if !ok {
+		t.Fatal("agents panel is not mounted")
+	}
+	row := -1
+	for y := 0; y < rect.H; y++ {
+		if item, hit := app.activityList.ItemAtLocalY(y); hit && item.ID == sidebarItemNewAgent {
+			row = rect.Y + y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatal("New Agent row not found in the Agents panel")
+	}
+
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: rect.X + 2, Y: row, Button: tea.MouseLeft})
+	if res.Action == nil || res.Action.ID != activitylist.ActionActivate {
+		t.Fatalf("single click must fire the command immediately: %#v", res.Action)
+	}
+	item, ok := res.Action.Payload.(ui.ListItem)
+	if !ok || item.ID != sidebarItemNewAgent || !item.Command {
+		t.Fatalf("payload=%#v", res.Action.Payload)
+	}
+}
+
 func TestEveryActivityDestinationHasContextMenu(t *testing.T) {
 	app := newFullTestApp(t)
 	for _, view := range activitybar.Views() {
@@ -265,5 +302,44 @@ func TestEveryActivityDestinationHasContextMenu(t *testing.T) {
 		if len(menu.FlatItems) == 0 {
 			t.Fatalf("view=%v has no usable context actions", view)
 		}
+	}
+}
+
+func TestActivityBarGearOpensApplicationSettings(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 40
+	model := filetree.NewFileTreeModel(t.TempDir())
+	app.Tree = NewTreeState(model, 24)
+	app.sidebarScreen.SetModel(model)
+	app.paintShellFrame()
+
+	rect, ok := app.rootHost.ScreenRect(activitybar.ScreenID)
+	if !ok || rect.H < activitybar.RowStride*5 {
+		t.Fatalf("activity rail too short for a settings gear: %+v", rect)
+	}
+	y := rect.Y + rect.H - 1
+	m, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: 2, Y: y, Button: tea.MouseLeft})
+	app = m.(*App)
+	if cmd != nil {
+		cmd()
+	}
+	win := app.windowManager.Window("workspace-settings")
+	if win == nil {
+		t.Fatal("gear click must open settings")
+	}
+	if win.Title != "Application Settings" {
+		t.Fatalf("title=%q want Application Settings", win.Title)
+	}
+}
+
+func TestActivitySettingsContextMenu(t *testing.T) {
+	app := newFullTestApp(t)
+	menu := app.buildActivitySettingsContextMenu()
+	if menu == nil || !strings.Contains(menu.Title, "Settings") {
+		t.Fatalf("menu=%#v", menu)
+	}
+	menu.Build()
+	if len(menu.FlatItems) != 2 {
+		t.Fatalf("items=%#v", menu.FlatItems)
 	}
 }

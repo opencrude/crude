@@ -34,7 +34,6 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	inputText := strings.TrimSpace(m.Input.Value())
 	if inputText != "" {
 		m.Input.ClearInput()
-		m.Input.DismissHint()
 		return nil
 	}
 

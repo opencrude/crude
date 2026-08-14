@@ -30,10 +30,6 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 		return m.handlePaste(msg.Content)
 
 	case tea.KeyPressMsg:
-		if m.showHint {
-			m.showHint = false
-		}
-
 		if msg.String() == "ctrl+o" {
 			return m, nil, AttachFilesEvent{}
 		}

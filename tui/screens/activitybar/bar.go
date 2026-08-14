@@ -17,9 +17,10 @@ import (
 //	col 2  gap
 //	col 3  view icon
 //	col 4  badge digit
-//	col 5  padding before the panel left border
-//	col 6  vertical rule separating the rail from the panel
-const Width = 7
+//	col 5  padding after the icon
+//	col 6  extra hover column so left/right pads around the icon match
+//	col 7  vertical rule separating the rail from the panel
+const Width = 8
 
 const (
 	outerGutterCol = 0
@@ -27,7 +28,8 @@ const (
 	iconCol        = 3
 	badgeCol       = 4
 	panelPadCol    = 5
-	ruleCol        = 6
+	afterIconCol   = 6
+	ruleCol        = 7
 )
 
 // RowStride is the height of one rail entry. Entries start at the rail's
@@ -45,7 +47,10 @@ const iconRow = RowStride / 2
 
 const ScreenID ui.ComponentID = "activitybar"
 
-const ActionSelect = "activity.select"
+const (
+	ActionSelect   = "activity.select"
+	ActionSettings = "activity.settings"
+)
 
 // View is one activity-bar destination.
 type View int
@@ -77,7 +82,9 @@ func (v View) Icon(nerdFont bool) string {
 	if nerdFont {
 		switch v {
 		case ViewAgents:
-			return "\uf085" // nf-fa-cogs
+			// nf-fa-android. nf-fa-robot (U+F544) is a down-arrow in Nerd
+			// Fonts 2.x, where that cell is still Material Design Icons.
+			return "\uf17b"
 		case ViewTerminals:
 			return "\uf120" // nf-fa-terminal
 		case ViewGit:
@@ -101,6 +108,16 @@ func (v View) Icon(nerdFont bool) string {
 // Glyph is the non-nerd-font rail symbol. Kept for callers that only need a
 // stable single-cell identity for a view.
 func (v View) Glyph() string { return v.Icon(false) }
+
+// SettingsIcon is the manage control pinned to the bottom of the rail.
+// nf-fa-cogs is the denser two-cog glyph the Agents entry used to carry —
+// a single cog (nf-fa-cog) reads as a one-column speck.
+func SettingsIcon(nerdFont bool) string {
+	if nerdFont {
+		return "\uf085" // nf-fa-cogs
+	}
+	return "⚙"
+}
 
 var views = []View{ViewFiles, ViewAgents, ViewTerminals, ViewGit}
 
@@ -199,44 +216,52 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		bandH := min(RowStride, bottom-bandTop)
 		current := v == s.active
 		hovered := i == s.hover && ctx.Hovered && !current
-
-		rowBG := bg
-		iconFG := muted
-		if current || hovered {
-			iconFG = fg
-		}
-		if hovered {
-			rowBG = s.tokens.Color(ui.ColorHover)
-			// The hover band excludes the outer gutter, the panel padding
-			// column, and the rule so the rail keeps a quiet inset at both
-			// the terminal edge and the panel left border.
-			ui.FillRect(buf, 0, 0, ui.Rect{
-				X: left + markerCol, Y: bandTop, W: panelPadCol - markerCol, H: bandH,
-			}, cell.BlankCell(rowBG))
-		}
-		// The accent marker spans the whole band so active and hovered
-		// entries occupy identical footprints.
-		if current && s.panelOpen && r.W > markerCol {
-			for dy := 0; dy < bandH; dy++ {
-				buf.Set(left+markerCol, bandTop+dy, cell.NewCell('▌', accent, rowBG, 0))
-			}
-		}
-		y := bandTop + iconRow
-		if y >= bottom {
-			continue
-		}
-		if r.W > iconCol {
-			buf.WriteString(left+iconCol, y, v.Icon(s.nerdFont), iconFG, rowBG, 0)
-		}
-		if r.W > badgeCol {
-			if badge := badgeText(s.badges[v]); badge != "" {
-				buf.WriteString(left+badgeCol, y, badge, accent, rowBG, cell.AttrBold)
-			}
-		}
+		s.paintBand(buf, left, bandTop, bandH, bottom, v.Icon(s.nerdFont), badgeText(s.badges[v]), current, hovered, bg, fg, accent, muted)
+	}
+	if localTop := settingsBandTop(r.H); localTop >= 0 {
+		hovered := s.hover == settingsHitIndex() && ctx.Hovered
+		s.paintBand(buf, left, top+localTop, RowStride, bottom, SettingsIcon(s.nerdFont), "", false, hovered, bg, fg, accent, muted)
 	}
 
 	if r.W > ruleCol {
 		panelchrome.PaintVRule(buf, left+ruleCol, top, r.H, s.tokens)
+	}
+}
+
+func (s *Screen) paintBand(buf *surface.CellBuffer, left, bandTop, bandH, bottom int, icon, badge string, current, hovered bool, bg, fg, accent, muted cell.Color) {
+	r := s.Bounds()
+	rowBG := bg
+	iconFG := muted
+	if current || hovered {
+		iconFG = fg
+	}
+	if hovered {
+		rowBG = s.tokens.Color(ui.ColorHover)
+		// Hover fills from the marker through afterIconCol so the pad
+		// before the icon (marker + gap) matches the pad after it
+		// (badge + two pad columns). The outer gutter stays inset
+		// from the terminal edge; the rule keeps its own background.
+		ui.FillRect(buf, 0, 0, ui.Rect{
+			X: left + markerCol, Y: bandTop, W: ruleCol - markerCol, H: bandH,
+		}, cell.BlankCell(rowBG))
+	}
+	// The accent marker spans the whole band so active and hovered
+	// entries occupy identical footprints. The settings gear is not a
+	// destination view, so it never takes the marker.
+	if current && s.panelOpen && r.W > markerCol {
+		for dy := 0; dy < bandH; dy++ {
+			buf.Set(left+markerCol, bandTop+dy, cell.NewCell('▌', accent, rowBG, 0))
+		}
+	}
+	y := bandTop + iconRow
+	if y >= bottom {
+		return
+	}
+	if r.W > iconCol {
+		buf.WriteString(left+iconCol, y, icon, iconFG, rowBG, 0)
+	}
+	if r.W > badgeCol && badge != "" {
+		buf.WriteString(left+badgeCol, y, badge, accent, rowBG, cell.AttrBold)
 	}
 }
 
@@ -255,7 +280,7 @@ func badgeText(n int) string {
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	switch evt.Kind {
 	case ui.EventMouseMotion:
-		idx := hitIndex(ctx.LocalY)
+		idx := s.hitTarget(ctx.LocalY)
 		if idx != s.hover {
 			s.hover = idx
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
@@ -265,7 +290,14 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if evt.MouseClick.Button != tea.MouseLeft {
 			return ui.EventResult{}
 		}
-		idx := hitIndex(ctx.LocalY)
+		idx := s.hitTarget(ctx.LocalY)
+		if idx == settingsHitIndex() {
+			return ui.EventResult{
+				Handled:    true,
+				Action:     &ui.Action{ID: ActionSettings},
+				Invalidate: ui.InvalidatePaint,
+			}
+		}
 		if idx < 0 || idx >= len(views) {
 			return ui.EventResult{Handled: true}
 		}
@@ -278,8 +310,21 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	return ui.EventResult{}
 }
 
-// hitIndex maps a rail-local row to a view index. Entries own their whole
-// RowStride band, so the gap row below an icon activates the same view.
+func settingsHitIndex() int { return len(views) }
+
+// settingsBandTop is the component-local row where the manage gear band
+// starts. Empty when the rail is too short to keep a full band below Git.
+func settingsBandTop(height int) int {
+	top := height - RowStride
+	if top < len(views)*RowStride {
+		return -1
+	}
+	return top
+}
+
+// hitIndex maps a rail-local row to a destination view index. Entries own
+// their whole RowStride band, so the gap row below an icon activates the
+// same view. The bottom gear is not a view; use hitTarget or SettingsAt.
 func hitIndex(localY int) int {
 	if localY < 0 {
 		return -1
@@ -291,6 +336,16 @@ func hitIndex(localY int) int {
 	return idx
 }
 
+func (s *Screen) hitTarget(localY int) int {
+	if idx := hitIndex(localY); idx >= 0 {
+		return idx
+	}
+	if SettingsAt(localY, s.Bounds().H) {
+		return settingsHitIndex()
+	}
+	return -1
+}
+
 // ViewAt reports the view under a rail-local row, for hit-test consumers
 // outside the component (context menus).
 func ViewAt(localY int) (View, bool) {
@@ -299,6 +354,12 @@ func ViewAt(localY int) (View, bool) {
 		return ViewFiles, false
 	}
 	return views[idx], true
+}
+
+// SettingsAt reports whether a rail-local row sits on the bottom manage gear.
+func SettingsAt(localY, height int) bool {
+	top := settingsBandTop(height)
+	return top >= 0 && localY >= top && localY < top+RowStride
 }
 
 func (s *Screen) Semantics() ui.Semantics {

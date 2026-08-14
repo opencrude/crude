@@ -17,7 +17,7 @@ import (
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
-	// Fixed workspace name so the root label is deterministic for the golden.
+	// Fixed workspace name so the search hint is deterministic for the golden.
 	dir := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -46,6 +46,16 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	plain := bufferPlain(buf)
 	if !strings.Contains(plain, "main.go") {
 		t.Fatalf("missing tree entry main.go:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Search in workspace") {
+		t.Fatalf("search hint should name the workspace:\n%s", plain)
+	}
+	// The workspace folder is the search hint, not a tree row under it.
+	for y := 1; y < buf.Height(); y++ {
+		row := shelltree.PlainRow(buf, y, buf.Width())
+		if strings.Contains(row, "workspace") && !strings.Contains(row, "main.go") {
+			t.Fatalf("workspace root should not paint as a tree row: %q", row)
+		}
 	}
 	wantAccent := ui.NewTokenSet(th).Color(ui.ColorAccent)
 	if !bufferHasFG(buf, wantAccent) {
@@ -90,13 +100,15 @@ func TestScreenDirIconConsumesTreeGlyphs(t *testing.T) {
 	th.Glyphs.TreeExpanded = "v"
 	screen := shelltree.New(th, model)
 	buf := screen.PaintTestBuffer(30, 6)
-	rootRow := shelltree.PlainRow(buf, 2, 30)
-	if !strings.Contains(rootRow, "v") {
-		t.Fatalf("expanded root row %q missing TreeExpanded glyph 'v'", rootRow)
-	}
-	subdirRow := shelltree.PlainRow(buf, 3, 30)
+	subdirRow := shelltree.PlainRow(buf, 1, 30)
 	if !strings.Contains(subdirRow, "c") {
-		t.Fatalf("collapsed subdir row %q missing TreeCollapsed glyph 'c'", subdirRow)
+		t.Fatalf("collapsed top-level dir row %q missing TreeCollapsed glyph 'c'", subdirRow)
+	}
+	model.Expand(filepath.Join(dir, "sub"))
+	buf = screen.PaintTestBuffer(30, 6)
+	expandedRow := shelltree.PlainRow(buf, 1, 30)
+	if !strings.Contains(expandedRow, "v") {
+		t.Fatalf("expanded top-level dir row %q missing TreeExpanded glyph 'v'", expandedRow)
 	}
 }
 
@@ -142,7 +154,7 @@ func TestScreenPaintsFileTreeNative(t *testing.T) {
 	screen := shelltree.New(theme.DefaultDark(), model)
 	screen.ResizeLayout(32, 6)
 	buf := screen.PaintTestBuffer(32, 6)
-	row := shelltree.PlainRow(buf, 2, 28)
+	row := shelltree.PlainRow(buf, 1, 28)
 	if row == "" {
 		t.Fatal("expected painted tree row")
 	}
@@ -194,6 +206,32 @@ func TestScreenAlignsGitAndDiagnosticsAsTrailingBlock(t *testing.T) {
 		if got := rendering.VisibleWidth(rows[name]); got != wantRightEdge {
 			t.Fatalf("%s trailing edge=%d want %d: %q", name, got, wantRightEdge, rows[name])
 		}
+	}
+}
+
+func TestSearchBadgeShowsWorkspaceGitAndDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model := filetree.NewFileTreeModel(dir)
+	if r := model.IconResolver(); r != nil {
+		r.UseNerdFont = false
+	}
+	model.Root.AggregateStatus = filetree.GitModified
+	model.SetDiagnostics(path, 2, 1, 0)
+
+	buf := shelltree.New(theme.DefaultDark(), model).PaintTestBuffer(40, 8)
+	header := shelltree.PlainRow(buf, 0, 39)
+	if !strings.Contains(header, "Search in") {
+		t.Fatalf("header %q missing search field", header)
+	}
+	if !strings.Contains(header, "M ✕2 ⚠1") {
+		t.Fatalf("header %q want trailing workspace git/diag chips", header)
+	}
+	if strings.Index(header, "Search") > strings.Index(header, "M ✕2") {
+		t.Fatalf("git/diag chips must trail the search field like the Agents count: %q", header)
 	}
 }
 

@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"crude/session"
@@ -49,10 +50,10 @@ func TestFileConfigRoundTrip(t *testing.T) {
 			SubPaneBg: "#1c2333",
 		},
 		Editor: &ttypes.EditorSettings{
-			TabSize:      4,
-			WordWrap:     true,
-			LineNumbers:  true,
-			SyntaxTheme:  "catppuccin",
+			TabSize:       4,
+			WordWrap:      true,
+			LineNumbers:   true,
+			SyntaxTheme:   "catppuccin",
 			AutoSaveDelay: 1000,
 		},
 		LSP: &ttypes.LSPSettings{
@@ -199,6 +200,90 @@ func TestSessionToFileConfigPreservesNewSettings(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+func TestSaveFileConfigOmitsAgentProfileAPIKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	restore := setTestHome(t, tmpDir)
+	defer restore()
+
+	fc := FileConfig{
+		ActiveProvider: "opencode-go",
+		Providers: map[string]session.ProviderConfig{
+			"opencode-go": {APIKey: "provider-key", ProviderURL: "https://opencode.ai/zen/go/v1"},
+		},
+		Agents: &session.AgentsConfig{
+			ActiveProfile: "test",
+			Profiles: map[string]session.ProfileConfig{
+				"test": {Categories: map[string]session.CategoryConfig{
+					"default": {Provider: "opencode-go", APIKey: "should-not-persist", Model: "deepseek-v4-flash"},
+				}},
+			},
+		},
+	}
+	if err := SaveFileConfig(fc); err != nil {
+		t.Fatalf("SaveFileConfig: %v", err)
+	}
+	data, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(data), "should-not-persist") {
+		t.Fatalf("agent profile API key leaked into config.json: %s", data)
+	}
+	if !strings.Contains(string(data), "provider-key") {
+		t.Fatal("provider API key should still persist")
+	}
+}
+
+func TestLoadFileConfigIgnoresAgentProfileAPIKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	restore := setTestHome(t, tmpDir)
+	defer restore()
+	if err := os.MkdirAll(filepath.Dir(ConfigPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{
+  "active_provider": "opencode-go",
+  "providers": {
+    "opencode-go": {"api_key": "provider-key"}
+  },
+  "agents": {
+    "active_profile": "test",
+    "profiles": {
+      "test": {
+        "categories": {
+          "default": {
+            "provider": "opencode-go",
+            "api_key": "stale-profile-key",
+            "model": "deepseek-v4-flash"
+          }
+        }
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(ConfigPath(), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded := LoadFileConfig()
+	if loaded.Providers["opencode-go"].APIKey != "provider-key" {
+		t.Fatalf("provider key = %q", loaded.Providers["opencode-go"].APIKey)
+	}
+	cat := loaded.Agents.Profiles["test"].Categories["default"]
+	if cat.APIKey != "" {
+		t.Fatalf("loaded agent profile API key = %q, want empty", cat.APIKey)
+	}
+	if cat.Provider != "opencode-go" || cat.Model != "deepseek-v4-flash" {
+		t.Fatalf("agent profile reference lost: %#v", cat)
+	}
+	sess := FileConfigToSession(loaded)
+	if sess.Agents.Profiles["test"].Categories["default"].APIKey != "" {
+		t.Fatal("session config kept a profile API key")
+	}
+	if got := sess.GetActiveDefaultCategory().APIKey; got != "provider-key" {
+		t.Fatalf("resolved key = %q, want provider-key", got)
+	}
+}
 
 func TestConfigPath(t *testing.T) {
 	tmpDir := t.TempDir()

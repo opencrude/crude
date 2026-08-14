@@ -197,8 +197,9 @@ func (rp *RuntimeProfile) applyOverrideToCategories(cfg *Config, oo *Orchestrato
 	return cfg
 }
 
-// mergeCategoryConfig merges override values into base, with override taking priority.
-// Only non-zero/non-empty override fields replace the base.
+// mergeCategoryConfig merges override values into base, with override taking
+// priority. Only non-zero/non-empty override fields replace the base.
+// API keys are never a category property and are cleared on the result.
 func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	merged := base
 	if override.Provider != "" {
@@ -206,9 +207,6 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	}
 	if override.ProviderURL != "" {
 		merged.ProviderURL = override.ProviderURL
-	}
-	if override.APIKey != "" {
-		merged.APIKey = override.APIKey
 	}
 	if override.APIStandard != "" {
 		merged.APIStandard = override.APIStandard
@@ -258,6 +256,7 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	if override.ModelAttachment {
 		merged.ModelAttachment = true
 	}
+	merged.APIKey = ""
 	return merged
 }
 

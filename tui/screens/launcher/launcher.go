@@ -3,7 +3,6 @@ package launcher
 
 import (
 	"fmt"
-	"math"
 	"path/filepath"
 	"strings"
 
@@ -165,7 +164,6 @@ type Screen struct {
 	filtered []int
 
 	frame         int
-	idleSeconds   float64
 	workspacePane paneLayout
 }
 
@@ -190,7 +188,6 @@ func New(th *theme.Theme) *Screen {
 		tagline: "",
 		hint:    "enter ↵",
 		sparkle: true,
-		pulse:   true,
 	}
 	s.newWs = &actionCard{
 		Base:    ui.NewBase(NewWorkspaceID),
@@ -273,10 +270,9 @@ func (s *Screen) SetShortcuts(shortcuts [][2]string) {
 	s.shortcuts = shortcuts
 }
 
-// SetAnimation updates sparkle/pulse state.
-func (s *Screen) SetAnimation(frame int, idleSeconds float64) {
+// SetAnimation updates the sparkle frame.
+func (s *Screen) SetAnimation(frame int, _ float64) {
 	s.frame = frame
-	s.idleSeconds = idleSeconds
 }
 
 // Refresh reloads workspaces and resets the launcher for the given project.
@@ -887,7 +883,6 @@ type actionCard struct {
 	tagline string
 	hint    string
 	sparkle bool
-	pulse   bool
 	tokens  *ui.TokenSet
 }
 
@@ -912,9 +907,6 @@ func (c *actionCard) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui
 	if selected {
 		borderFG = c.tokens.Color(ui.ColorAccent)
 		titleFG = c.tokens.Color(ui.ColorAccent)
-		if c.pulse && c.owner.idleSeconds >= 5.0 {
-			borderFG = c.pulseColor(c.owner.frame, c.tokens.Color(ui.ColorBorder), c.tokens.Color(ui.ColorAccent))
-		}
 	} else if c.kind == ItemNewSession {
 		borderFG = c.tokens.Color(ui.ColorMuted)
 	}
@@ -1004,12 +996,6 @@ func (c *actionCard) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 
 func (c *actionCard) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleButton, Label: c.title, Selected: c.owner.isCardSelected(c.kind)}
-}
-
-func (c *actionCard) pulseColor(frame int, c1, c2 cell.Color) cell.Color {
-	phase := float64(frame%3000) / 3000.0
-	t := 0.5 - 0.5*math.Cos(2*math.Pi*phase)
-	return c1.Blend(c2, float32(t))
 }
 
 // shortcutList renders the Shortcuts header and key/label rows in the left column.
@@ -1207,7 +1193,13 @@ type searchWrapper struct {
 	field *ui.SearchField
 }
 
-func (sw *searchWrapper) SetTokens(tokens *ui.TokenSet) { sw.field.SetTokens(tokens) }
+func (sw *searchWrapper) SetTokens(tokens *ui.TokenSet) {
+	sw.field.SetTokens(tokens)
+	if tokens != nil {
+		sw.field.SetBackgroundColor(tokens.Color(ui.ColorSubPaneBg))
+		sw.field.SetPromptColor(tokens.Color(ui.ColorAccent))
+	}
+}
 
 func (sw *searchWrapper) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return sw.field.Measure(ctx, cs)
@@ -1219,16 +1211,6 @@ func (sw *searchWrapper) Layout(ctx ui.LayoutContext, r ui.Rect) {
 }
 
 func (sw *searchWrapper) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
-	// Background and prompt color follow legacy launcher filter semantics:
-	// inactive search is transparent with a muted prompt; active search fills
-	// SubPaneBg and uses an accent prompt.
-	if sw.owner.filterOn {
-		sw.field.SetBackgroundColor(sw.field.Tokens().Color(ui.ColorSubPaneBg))
-		sw.field.SetPromptColor(sw.field.Tokens().Color(ui.ColorAccent))
-	} else {
-		sw.field.SetBackgroundColor(cell.NoColor)
-		sw.field.SetPromptColor(sw.field.Tokens().Color(ui.ColorMuted))
-	}
 	sw.field.Paint(buf, originX+sw.Bounds().X, originY+sw.Bounds().Y, ctx)
 }
 
@@ -1430,14 +1412,7 @@ func (wl *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, it
 	}
 	icon := icons.ResolveIcon(filepath.Base(ws.Path), true, false, false)
 
-	prefix := "  "
-	prefixFG := tokens.Color(ui.ColorFg)
-	if selected {
-		prefix = "❯ "
-		prefixFG = tokens.Color(ui.ColorAccent)
-	}
-
-	fixedW := 2 + rendering.VisibleWidth(icon.Icon) + 1 + 1 + 2 + rendering.VisibleWidth(meta)
+	fixedW := rendering.VisibleWidth(icon.Icon) + 1 + 1 + 2 + rendering.VisibleWidth(meta)
 	available := width - fixedW
 	if available < 2 {
 		available = 2
@@ -1466,7 +1441,6 @@ func (wl *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, it
 	metaFG := tokens.Color(ui.ColorMuted)
 
 	xpos := x
-	xpos = buf.WriteString(xpos, y, prefix, prefixFG, bg, cell.AttrBold)
 	xpos = buf.WriteString(xpos, y, icon.Icon, iconFG, bg, 0)
 	xpos = buf.WriteString(xpos, y, " ", nameFG, bg, 0)
 	xpos = buf.WriteString(xpos, y, displayName, nameFG, bg, cell.AttrBold)

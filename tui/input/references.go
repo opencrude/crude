@@ -38,7 +38,6 @@ func (m *Model) SetReferenceStore(store ReferenceStore) {
 func (m *Model) InsertReference(ref sessiondb.Reference) {
 	m.input.InsertString(ref.DisplayName())
 	m.applyReferenceRanges()
-	m.showHint = false
 }
 
 func (m Model) RefRanges() []RefRange {

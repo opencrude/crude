@@ -100,9 +100,9 @@ func TestWheelOverHeadingAndGapColumnScrolls(t *testing.T) {
 	s, host := newTestScreen(t, gitItems(40))
 	paintFrame(host, testW, testH)
 
-	host.Handle(tea.MouseWheelMsg{X: 4, Y: 0, Button: tea.MouseWheelDown})
+	host.Handle(tea.MouseWheelMsg{X: 1, Y: 0, Button: tea.MouseWheelDown})
 	if got := s.list.inner.Scroll().Offset(); got != 3 {
-		t.Fatalf("wheel over heading offset=%d want 3", got)
+		t.Fatalf("wheel over icon column offset=%d want 3", got)
 	}
 	gapX := s.listWidth(ui.Rect{W: testW, H: testH})
 	host.Handle(tea.MouseWheelMsg{X: gapX, Y: 5, Button: tea.MouseWheelDown})
@@ -345,10 +345,35 @@ func TestLongListPaintsInsideListBounds(t *testing.T) {
 	}
 }
 
-func TestHeadingPaintsUppercaseWithPadding(t *testing.T) {
+func TestHeaderPaintsIconThenSearch(t *testing.T) {
 	_, host := newTestScreen(t, gitItems(3))
 	buf := paintFrame(host, testW, testH)
-	if got := rowText(buf, 0); !strings.Contains(got, "GIT") || !strings.HasPrefix(got, " ◈") {
-		t.Fatalf("heading row=%q want icon + padded uppercase GIT", got)
+	got := rowText(buf, 0)
+	if strings.Contains(got, "GIT") {
+		t.Fatalf("panel name must not paint, row=%q", got)
+	}
+	if !strings.Contains(got, "◈") {
+		t.Fatalf("header row=%q want panel icon", got)
+	}
+	if !strings.Contains(strings.ToLower(got), "search") {
+		t.Fatalf("header row=%q want search field immediately after the icon", got)
+	}
+	if strings.Contains(rowText(buf, 1), "Search") {
+		t.Fatal("search must share the icon row, not sit on the next line")
+	}
+	if !strings.Contains(rowText(buf, listTop), "file00") {
+		t.Fatalf("first body row=%q want file00", rowText(buf, listTop))
+	}
+}
+
+func TestHeaderSearchAlignsWithListRightEdge(t *testing.T) {
+	s, host := newTestScreen(t, gitItems(3))
+	buf := paintFrame(host, testW, testH)
+	listW := s.listWidth(ui.Rect{W: testW, H: testH})
+	searchBG := s.tokens.Color(ui.ColorSubPaneBg)
+	for x := listW; x < s.contentWidth(ui.Rect{W: testW, H: testH}); x++ {
+		if buf.Get(x, 0).BG.Equal(searchBG) {
+			t.Fatalf("search bg at col %d extends past list width %d", x, listW)
+		}
 	}
 }

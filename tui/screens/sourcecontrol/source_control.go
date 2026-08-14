@@ -33,9 +33,8 @@ const (
 )
 
 const (
-	commitRow  = 1
-	summaryRow = 2
-	listTop    = 3
+	summaryRow = panelchrome.HeaderRows
+	listTop    = panelchrome.HeaderRows + 1
 )
 
 type ItemKind uint8
@@ -219,14 +218,12 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if contentW > 1 {
 		contentW--
 	}
-	s.commit.Layout(ctx, ui.Rect{
-		X: panelchrome.PadLeft, Y: commitRow,
-		W: max(1, contentW-panelchrome.PadLeft*2), H: 1,
-	})
+	s.commit.Layout(ctx, s.headerTitle().FieldRect(panelchrome.BodyWidth(contentW)))
 	listH := max(1, r.H-listTop)
+	bodyW := panelchrome.BodyWidth(contentW)
 	s.list.Layout(ctx, ui.Rect{
 		X: panelchrome.PadLeft, Y: listTop,
-		W: max(1, contentW-panelchrome.PadLeft-1), H: listH,
+		W: max(1, bodyW-panelchrome.PadLeft), H: listH,
 	})
 	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, contentW-1), Y: listTop, W: 1, H: listH})
 	if s.split != nil && !s.split.Dragging() {
@@ -243,11 +240,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	r := s.Bounds()
 	bg := s.tokens.Color(ui.ColorBg)
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	panelchrome.PaintTitle(buf, ox, oy, r, s.tokens, panelchrome.Title{
-		Icon:  sourceControlIcon(panelchrome.NerdFont(s.th)),
-		Label: "Source Control",
-		Badge: s.branchBadge(),
-	})
+	contentW := r.W
+	if contentW > 1 {
+		contentW--
+	}
+	panelchrome.PaintTitle(buf, ox, oy, ui.Rect{X: r.X, Y: r.Y, W: panelchrome.BodyWidth(contentW), H: r.H}, s.tokens, s.headerTitle())
 	s.paintSummary(buf, ox+r.X+panelchrome.PadLeft, oy+r.Y+summaryRow, max(1, r.W-3))
 }
 
@@ -286,6 +283,13 @@ func (s *Screen) summary() string {
 		parts = append(parts, fmt.Sprintf("%d untracked", n))
 	}
 	return strings.Join(parts, " · ")
+}
+
+func (s *Screen) headerTitle() panelchrome.Title {
+	return panelchrome.Title{
+		Icon:  sourceControlIcon(panelchrome.NerdFont(s.th)),
+		Badge: s.branchBadge(),
+	}
 }
 
 func (s *Screen) branchBadge() string {
