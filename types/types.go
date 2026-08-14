@@ -37,9 +37,11 @@ const (
 )
 
 type CategorySettings struct {
-	Provider            string
-	ProviderURL         string
-	APIKey              string
+	Provider    string
+	ProviderURL string
+	// APIKey is never a category property. Credentials live on the
+	// provider; json:"-" keeps them out of workspace overlays.
+	APIKey              string `json:"-"`
 	APIStandard         string
 	Model               string
 	ThinkingEffort      string
@@ -105,8 +107,8 @@ type AppSettings struct {
 // Memory system defaults (applied by ApplyAppDefaults and used as fallbacks
 // wherever a MemorySettings value is unset).
 const (
-	DefaultMemoryRecallBudget  = 1500
-	DefaultMemoryRecallLimit   = 10
+	DefaultMemoryRecallBudget   = 1500
+	DefaultMemoryRecallLimit    = 10
 	DefaultMemoryExtractCadence = 3
 )
 

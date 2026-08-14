@@ -36,8 +36,11 @@ func TestScreenPaintsGroupedRepositoryState(t *testing.T) {
 	buf := surface.NewCellBuffer(42, 18)
 	host.Paint(buf)
 	text := sourceControlText(buf)
+	if strings.Contains(text, "SOURCE CONTROL") {
+		t.Fatalf("panel name must not paint:\n%s", text)
+	}
 	for _, want := range []string{
-		"SOURCE CONTROL", "feature/polish", "STAGED CHANGES", "CHANGES",
+		"feature/polish", "STAGED CHANGES", "CHANGES",
 		"UNTRACKED", "RECENT COMMITS", "LOCAL BRANCHES", "polish source control",
 	} {
 		if !strings.Contains(text, want) {

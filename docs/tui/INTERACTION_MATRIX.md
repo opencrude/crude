@@ -12,6 +12,7 @@ preserve or intentionally improve.
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
 | Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 7-col activity rail (outer gutter plus one blank column before the panel left border) stays |
 | Files / Agents / Terminals / Source Control | Ctrl+Shift+E / A / U / G | Activity destinations; rail and panel bodies expose destination-aware context menus |
+| Application Settings | activity-bar gear | Bottom rail gear opens Application Settings (VS Code manage control); right-click also offers Workspace Settings |
 | New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks in the workspace terminal dock |
 | Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
 | Composer | Alt+C | |
@@ -41,7 +42,7 @@ preserve or intentionally improve.
 
 | Action | Binding | Notes |
 |--------|---------|-------|
-| Search files | click persistent search, `/`, or any printable char | Fuzzy subsequence; ancestors auto-expand; Esc clears; mouse focus and type-to-filter share one field |
+| Search files | click persistent search, `/`, or any printable char | Hint is `Search in <workspace>`; trailing badge shows aggregated git + diagnostics like the Agents count; fuzzy subsequence; ancestors auto-expand; Esc clears; mouse focus and type-to-filter share one field |
 | Refresh tree | Ctrl+R | Relocated from `r` (typing now filters) |
 | Toggle hidden files | Ctrl+. | Relocated from `.` |
 
@@ -53,6 +54,12 @@ preserve or intentionally improve.
 | Stage / unstage | change context menu | Supports individual paths and stage/unstage all |
 | Checkout local branch | Enter / branch context menu | Current branch is disabled |
 | Discard tracked changes | change context menu | Opens a danger confirmation with Cancel focused; untracked files are never deleted |
+
+## Agents panel
+
+| Action | Binding / control | Notes |
+|--------|-------------------|-------|
+| New Agent | `+ New Agent` command row | Same single-click button pattern as New Terminal; starts a session from the sidebar while editing |
 
 ## Terminal panel
 

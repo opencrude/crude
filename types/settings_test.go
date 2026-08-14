@@ -247,6 +247,28 @@ func TestWorkspaceOverridesFromDiffOmitsAPIKeys(t *testing.T) {
 	}
 }
 
+func TestWorkspaceOverridesFromDiffOmitsAgentAPIKeys(t *testing.T) {
+	app := AppSettings{
+		ActiveProvider: "opencode-go",
+		Providers:      map[string]ProviderConfig{"opencode-go": {APIKey: "app-key", Model: "app-model"}},
+		Agents: AgentsSettings{Categories: map[string]CategorySettings{
+			"default": {Provider: "opencode-go", APIKey: "app-key", Model: "app-model"},
+		}},
+	}
+	ApplyAppDefaults(&app)
+	working := cloneAppSettings(app)
+	working.Agents.Categories["default"] = CategorySettings{
+		Provider: "opencode-go", APIKey: "ws-key", Model: "ws-model",
+	}
+	got := WorkspaceOverridesFromDiff(app, working)
+	if strings.Contains(string(got.Agents), "ws-key") || strings.Contains(string(got.Agents), "app-key") {
+		t.Fatalf("workspace agent overlay leaked API key: %s", got.Agents)
+	}
+	if !strings.Contains(string(got.Agents), "ws-model") {
+		t.Fatalf("agent model overlay missing: %s", got.Agents)
+	}
+}
+
 func TestProviderProtocolOverridesMergeAndClone(t *testing.T) {
 	app := AppSettings{
 		ActiveProvider: "openai",

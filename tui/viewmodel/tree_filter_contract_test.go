@@ -36,11 +36,17 @@ func TestTreeFilterTypingContractViewmodel(t *testing.T) {
 		}
 	}
 
-	// Filtering moves the cursor to the first match, which may be the last
-	// visible row — navigate in whichever direction has room and assert the
-	// keys still route to the model while the filter is active.
+	// Filtering moves the cursor to the first match. The workspace root is
+	// not a painted row, so a tight filter may leave a single match — keys
+	// must still route to the model without moving off the list.
 	before := model.CursorIndex()
-	if before > 0 {
+	switch {
+	case len(model.VisibleNodes()) < 2:
+		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
+		if model.CursorIndex() != before {
+			t.Fatalf("Down on a single match cursor=%d want %d", model.CursorIndex(), before)
+		}
+	case before > 0:
 		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyUp})
 		if model.CursorIndex() != before-1 {
 			t.Fatalf("Up while filtering cursor=%d want %d", model.CursorIndex(), before-1)
@@ -49,7 +55,7 @@ func TestTreeFilterTypingContractViewmodel(t *testing.T) {
 		if model.CursorIndex() != before {
 			t.Fatalf("Down while filtering cursor=%d want %d", model.CursorIndex(), before)
 		}
-	} else {
+	default:
 		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
 		if model.CursorIndex() != 1 {
 			t.Fatalf("Down while filtering cursor=%d want 1", model.CursorIndex())

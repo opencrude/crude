@@ -1,14 +1,13 @@
 // Package panelchrome provides the shared chrome for the sidebar panels
 // mounted beside the activity rail (Files, Agents, Terminals, Git).
 //
-// Every panel paints the same title row, keeps the same body inset, and is
-// separated from its neighbours by the same vertical rule, so switching
-// activities never shifts the content grid under the pointer.
+// Every panel paints the same header (icon immediately followed by the
+// search/commit field), keeps the same body inset, and is separated from
+// its neighbours by the same vertical rule, so switching activities never
+// shifts the content grid under the pointer.
 package panelchrome
 
 import (
-	"strings"
-
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
@@ -22,29 +21,96 @@ const (
 	// touch the activity rail's border rule.
 	PadLeft = 1
 
-	// TitleRows is the height of the panel title row.
-	TitleRows = 1
-
-	// SearchRows is the height of the always-visible filter row.
+	// SearchRows is the height of the filter/commit field.
 	SearchRows = 1
 
-	// HeaderRows is the total chrome above a panel's scrollable body.
-	HeaderRows = TitleRows + SearchRows
+	// HeaderRows is the chrome above a panel's scrollable body: icon+search
+	// on one row, then the body immediately below.
+	HeaderRows = SearchRows
 )
 
-// Title describes one panel title row.
+// BadgePart is one trailing header chip, painted like the Agents count on
+// the search row. Empty FG uses the muted token.
+type BadgePart struct {
+	Text string
+	FG   cell.Color
+}
+
+// Title describes the shared panel header row: icon, then the interactive
+// field, then an optional right-aligned badge. The panel name is not painted;
+// the activity-rail icon already identifies the view.
 type Title struct {
 	// Icon is the panel glyph, painted in the accent color.
 	Icon string
-	// Label is the panel name. It is painted upper-case.
-	Label string
 	// Badge is an optional right-aligned count or status word.
 	Badge string
+	// BadgeParts, when non-empty, replace Badge so a row can carry more than
+	// one colored chip (explorer git + diagnostics).
+	BadgeParts []BadgePart
 }
 
-// PaintTitle draws one panel title row inside r:
-//
-//	ICON  LABEL ················· badge
+// BodyWidth is the row width left of the scrollbar track (gap column +
+// thumb). Header fields must use this so they share a right edge with
+// list/tree rows instead of running into the scrollbar column.
+func BodyWidth(innerW int) int {
+	return filetree.SidebarContentWidth(innerW)
+}
+
+// FieldRect is the search/commit field on the header row, immediately after
+// the icon and before any right-aligned badge. contentW is BodyWidth: the
+// same right edge as the panel's scrollable rows.
+func (t Title) FieldRect(contentW int) ui.Rect {
+	start := PadLeft + t.iconCols()
+	endReserve := 0
+	if b := t.badgeCols(); b > 0 {
+		endReserve = b
+	}
+	return ui.Rect{
+		X: start,
+		Y: 0,
+		W: max(1, contentW-start-endReserve),
+		H: SearchRows,
+	}
+}
+
+func (t Title) iconCols() int {
+	if t.Icon == "" {
+		return 0
+	}
+	return rendering.VisibleWidth(t.Icon) + 1
+}
+
+func (t Title) badgeCols() int {
+	w := t.badgeWidth()
+	if w == 0 {
+		return 0
+	}
+	return w + 1
+}
+
+func (t Title) badgeWidth() int {
+	if len(t.BadgeParts) > 0 {
+		n := 0
+		for _, p := range t.BadgeParts {
+			if p.Text == "" {
+				continue
+			}
+			if n > 0 {
+				n++
+			}
+			n += rendering.VisibleWidth(p.Text)
+		}
+		return n
+	}
+	if t.Badge == "" {
+		return 0
+	}
+	return rendering.VisibleWidth(t.Badge)
+}
+
+// PaintTitle draws the header icon (and optional badge) on row 0 of r.
+// The search/commit field is a child laid out with FieldRect and paints
+// the span between them.
 //
 // The row is filled with the panel background first so a previous activity's
 // longer title cannot bleed through when the panel swaps.
@@ -65,21 +131,32 @@ func PaintTitle(buf *surface.CellBuffer, ox, oy int, r ui.Rect, tokens *ui.Token
 		x = buf.WriteString(x, y, " ", tokens.Color(ui.ColorFg), bg, 0)
 	}
 
-	badge := ""
-	badgeW := 0
-	if t.Badge != "" {
-		badge = t.Badge
-		badgeW = rendering.VisibleWidth(badge) + 1
-		if badgeW >= end-x {
-			badge, badgeW = "", 0
-		}
+	muted := tokens.Color(ui.ColorMuted)
+	badgeW := t.badgeCols()
+	if badgeW >= end-x {
+		badgeW = 0
 	}
-
-	label := rendering.TruncateVisual(strings.ToUpper(t.Label), max(0, end-x-badgeW), "…")
-	x = buf.WriteString(x, y, label, tokens.Color(ui.ColorFg), bg, cell.AttrBold)
-
 	if badgeW > 0 {
-		buf.WriteString(end-badgeW+1, y, badge, tokens.Color(ui.ColorMuted), bg, 0)
+		bx := end - badgeW + 1
+		if len(t.BadgeParts) > 0 {
+			written := false
+			for _, p := range t.BadgeParts {
+				if p.Text == "" {
+					continue
+				}
+				if written {
+					bx = buf.WriteString(bx, y, " ", muted, bg, 0)
+				}
+				fg := p.FG
+				if fg.IsDefault() {
+					fg = muted
+				}
+				bx = buf.WriteString(bx, y, p.Text, fg, bg, 0)
+				written = true
+			}
+		} else {
+			buf.WriteString(bx, y, t.Badge, muted, bg, 0)
+		}
 	}
 	_ = x
 }

@@ -27,7 +27,7 @@ const (
 // doubleClickWindow matches the picker screens' click-arming interval.
 const doubleClickWindow = 500 * time.Millisecond
 
-// listTop is the first scrollable row after title and persistent search.
+// listTop is the first scrollable row after the icon+search header.
 const listTop = panelchrome.HeaderRows
 
 const emptyStateText = "No items"
@@ -86,6 +86,10 @@ func (s *Screen) SetHeading(h string) {
 func (s *Screen) SetIcon(icon string) { s.icon = icon }
 
 func (s *Screen) SetBadge(badge string) { s.badge = badge }
+
+func (s *Screen) headerTitle() panelchrome.Title {
+	return panelchrome.Title{Icon: s.icon, Badge: s.badge}
+}
 
 // SetItems replaces the unfiltered source data. The shell calls this every
 // frame, so identical content is a no-op and selection/scroll survive paint.
@@ -262,7 +266,7 @@ func (s *Screen) contentWidth(r ui.Rect) int {
 // listWidth mirrors the file tree's row width: one gap column between rows
 // and the scrollbar (filetree.SidebarContentWidth convention).
 func (s *Screen) listWidth(r ui.Rect) int {
-	return max(1, s.contentWidth(r)-2)
+	return panelchrome.BodyWidth(s.contentWidth(r))
 }
 
 func (s *Screen) listTopRow(r ui.Rect) int {
@@ -276,12 +280,7 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	contentW := s.contentWidth(r)
 	if s.filter != nil {
-		s.filter.Layout(ui.LayoutContext{}, ui.Rect{
-			X: panelchrome.PadLeft,
-			Y: panelchrome.TitleRows,
-			W: max(1, contentW-panelchrome.PadLeft*2),
-			H: panelchrome.SearchRows,
-		})
+		s.filter.Layout(ui.LayoutContext{}, s.headerTitle().FieldRect(s.listWidth(r)))
 	}
 	listY := s.listTopRow(r)
 	listH := max(1, r.H-listY)
@@ -312,9 +311,8 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		muted = s.tokens.Color(ui.ColorMuted)
 	}
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	panelchrome.PaintTitle(buf, ox, oy, r, s.tokens, panelchrome.Title{
-		Icon: s.icon, Label: s.heading, Badge: s.badge,
-	})
+	body := ui.Rect{X: r.X, Y: r.Y, W: s.listWidth(r), H: r.H}
+	panelchrome.PaintTitle(buf, ox, oy, body, s.tokens, s.headerTitle())
 	if s.list != nil && len(s.list.items()) == 0 {
 		text := emptyStateText
 		if s.filter != nil && strings.TrimSpace(s.filter.Value()) != "" {

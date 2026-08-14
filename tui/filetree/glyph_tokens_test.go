@@ -119,6 +119,9 @@ func TestBreadcrumbLineConsumesBreadcrumbSepToken(t *testing.T) {
 	if !strings.Contains(got, "sub") || !strings.Contains(got, "deep") {
 		t.Fatalf("breadcrumb %q missing ancestor path segments", got)
 	}
+	if strings.Contains(got, filepath.Base(dir)) {
+		t.Fatalf("breadcrumb %q must not name the workspace root", got)
+	}
 
 	icons := NewIconResolver()
 	icons.UseNerdFont = false

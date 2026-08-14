@@ -35,7 +35,10 @@ ten, and explicit `false` is a real override rather than an absent key
 **Sessions snapshot.** A session captures the agent baseline — which provider,
 model, and thinking effort each role runs — when it starts, and keeps it. A
 running conversation must not switch models because another tab saved
-settings. `Session.UpdateWorkspaceDefaults` therefore refreshes only provider
+settings. Agent profiles store a **provider ID only**; API keys live on
+`providers` in `config.json` and are resolved at use time. Updating a key in
+Application Settings → Providers is enough for every role that references
+that provider. `Session.UpdateWorkspaceDefaults` refreshes provider
 endpoints, wire standards, and credentials, so fixing a bad API key still
 reaches live sessions. `AdoptWorkspaceDefaults` is the deliberate re-inherit
 and runs only from user-invoked resets. New sessions always start from the
@@ -70,10 +73,10 @@ workspace). Application defaults alone are `AppDefaults()`.
 
 | Action | Persistence | Must not write |
 |--------|-------------|----------------|
-| Application Settings → Save | `config.json` via `SaveAppSettings` + provider credentials via `SaveProviderSettings` | `workspace.db` |
+| Application Settings → Save | `config.json` via `SaveAppSettings` + provider credentials via `SaveProviderSettings` | `workspace.db`, API keys on agent profiles |
 | Workspace Settings → Save | field-level `WorkspaceOverrides` in `workspace.db` key `workspace_settings` | `config.json`, API keys, untouched fields |
 | Workspace Settings → Reset section | `ClearCategory` then `SaveWorkspaceSettings` | other categories, app config |
-| `/settings` dock | session agent overrides | app/workspace IDE prefs |
+| `/settings` dock | session agent provider/model/protocol/thinking | app/workspace IDE prefs, API keys |
 | Theme cycle (`app.toggleTheme`) | application layer | workspace overlay |
 
 Legacy `workspace.db` key `app_settings` (full `AppSettings` blobs) is still

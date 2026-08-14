@@ -7,6 +7,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/surface"
+	"crude/tui/theme"
 )
 
 func TestVirtualListSelectsAndActivatesPayload(t *testing.T) {
@@ -62,6 +63,23 @@ func TestVirtualListPaintsMultiRowLocalRows(t *testing.T) {
 		if c.Char != want {
 			t.Fatalf("row %d char=%q want %q", y, string(c.Char), string(want))
 		}
+	}
+}
+
+func TestVirtualListOpaqueRowFillCanBeDisabled(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	list := NewVirtualList("chat", tokens)
+	list.SetOpaqueRowFill(false)
+	list.SetRowPainter(func(buf *surface.CellBuffer, x, y, width int, item VirtItem, localRow int, state ControlState, ctx PaintContext, ts *TokenSet) {
+		buf.Set(x+1, y, cell.NewCell('x', ts.Color(ColorFg), cell.NoColor, 0))
+	})
+	list.SetItems([]VirtItem{{ID: "m1", Height: 1, Label: "hello"}})
+	list.Layout(LayoutContext{}, Rect{W: 8, H: 1})
+	buf := surface.NewCellBuffer(8, 1)
+	list.Paint(buf, 0, 0, PaintContext{Focused: true})
+	popup := tokens.Color(ColorPopupBg)
+	if buf.Get(0, 0).BG.Equal(popup) {
+		t.Fatal("disabled row fill must not paint ListRowColors into untouched columns")
 	}
 }
 

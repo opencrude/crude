@@ -40,6 +40,7 @@ type VirtualList struct {
 	bottomGravity          bool
 	pointerPolicy          PointerPolicy
 	selectionAnchorsScroll bool // when true, selection changes reveal rows (launcher/FIF)
+	opaqueRowFill          bool // ListRowColors pre-fill; chat turns this off
 	// prefix[i] = starting row of item i; prefix[len] = total rows
 	prefix []int
 }
@@ -54,6 +55,7 @@ func NewVirtualList(id ComponentID, tokens *TokenSet) *VirtualList {
 		activate:               "virtlist.activate",
 		hoverIdx:               -1,
 		selectionAnchorsScroll: true,
+		opaqueRowFill:          true,
 	}
 }
 
@@ -120,6 +122,11 @@ func (v *VirtualList) SetBottomPadding(n int) {
 // ViewportPaneLineMap emptyTop math. Off by default — launcher/FIF lists
 // keep top-anchored item lists.
 func (v *VirtualList) SetBottomGravity(gravity bool) { v.bottomGravity = gravity }
+
+// SetOpaqueRowFill controls whether each row is pre-filled with ListRowColors.
+// Chat disables this so PadLR columns keep the shell background instead of
+// stacking PopupBg/Selection strips beside every message.
+func (v *VirtualList) SetOpaqueRowFill(fill bool) { v.opaqueRowFill = fill }
 
 // BottomPadding returns trailing blank rows.
 func (v *VirtualList) BottomPadding() int { return v.bottomPadding }
@@ -288,7 +295,7 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		if v.tokens != nil {
 			fg, bg = v.tokens.ListRowColors(st)
 		}
-		if !bg.IsDefault() {
+		if v.opaqueRowFill && !bg.IsDefault() {
 			FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
 		}
 		if v.rowPainter != nil {

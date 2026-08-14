@@ -73,14 +73,14 @@ func TestMinimizedAgentRestoresFromAgentsPanel(t *testing.T) {
 	_ = app.handleAgentTabClose(0)
 
 	items := app.agentSidebarItems()
-	if len(items) != 1 || items[0].ID != "agent:orch-1" {
+	if len(items) != 2 || items[0].ID != sidebarItemNewAgent || items[1].ID != "agent:orch-1" {
 		t.Fatalf("Agents panel must list the minimized agent: %#v", items)
 	}
-	if !strings.Contains(items[0].Detail, "minimized") {
-		t.Fatalf("row should show it is minimized: %#v", items[0])
+	if !strings.Contains(items[1].Detail, "minimized") {
+		t.Fatalf("row should show it is minimized: %#v", items[1])
 	}
 
-	if cmd := app.handleSidebarActivate(items[0]); cmd != nil {
+	if cmd := app.handleSidebarActivate(items[1]); cmd != nil {
 		cmd()
 	}
 	if app.AgentMgr.IsHidden("orch-1") {

@@ -53,6 +53,67 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	}
 }
 
+func TestCategoryAPIKeyAlwaysComesFromProvider(t *testing.T) {
+	cfg := &Config{
+		ActiveProvider: "opencode-go",
+		Providers: map[string]ProviderConfig{
+			"opencode-go": {APIKey: "provider-key", ProviderURL: "https://opencode.ai/zen/go/v1"},
+		},
+		Agents: AgentsConfig{
+			ActiveProfile: "test",
+			Profiles: map[string]ProfileConfig{
+				"test": {Categories: map[string]CategoryConfig{
+					CategoryDefault: {
+						Provider: "opencode-go",
+						APIKey:   "stale-profile-key",
+						Model:    "deepseek-v4-flash",
+					},
+				}},
+			},
+		},
+	}
+	got := cfg.GetActiveDefaultCategory()
+	if got.APIKey != "provider-key" {
+		t.Fatalf("resolved API key = %q, want provider-key", got.APIKey)
+	}
+	settings := ConfigToSettings(cfg)
+	if settings.Agents.Categories[CategoryDefault].APIKey != "" {
+		t.Fatalf("agent category settings leaked API key: %#v", settings.Agents.Categories[CategoryDefault])
+	}
+	if settings.APIKey != "provider-key" {
+		t.Fatalf("session snapshot API key = %q, want provider-key", settings.APIKey)
+	}
+}
+
+func TestApplyWorkspaceAgentDefaultsDoesNotStoreAPIKey(t *testing.T) {
+	cfg := &Config{
+		Providers: map[string]ProviderConfig{
+			"opencode-go": {APIKey: "provider-key"},
+		},
+		Agents: AgentsConfig{
+			ActiveProfile: "default",
+			Profiles: map[string]ProfileConfig{
+				"default": {Categories: map[string]CategoryConfig{
+					CategoryDefault: {Provider: "opencode-go", APIKey: "old-key"},
+				}},
+			},
+		},
+	}
+	ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{
+		CategoryDefault: {Provider: "opencode-go", APIKey: "from-form", Model: "m"},
+	}})
+	stored := cfg.Agents.Profiles["default"].Categories[CategoryDefault]
+	if stored.APIKey != "" {
+		t.Fatalf("stored category API key = %q, want empty", stored.APIKey)
+	}
+	if stored.Model != "m" {
+		t.Fatalf("stored model = %q, want m", stored.Model)
+	}
+	if got := cfg.GetActiveDefaultCategory().APIKey; got != "provider-key" {
+		t.Fatalf("resolved API key = %q, want provider-key", got)
+	}
+}
+
 func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
 	settings := ttypes.Settings{
 		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{

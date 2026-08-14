@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/theme"
 )
 
@@ -43,5 +45,20 @@ func TestComposerThinkingHintIsStatusOnly(t *testing.T) {
 	m.SetInput("hello")
 	if got := m.ContextHint(); got != "" {
 		t.Fatalf("typing should hide composer context, got %q", got)
+	}
+}
+
+func TestComposerHintReturnsAfterSubmit(t *testing.T) {
+	m := NewModel(theme.DefaultDark())
+	updated, _, _ := m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}, false, false)
+	if got := updated.ContextHint(); got != "" {
+		t.Fatalf("non-empty prompt should hide composer help, got %q", got)
+	}
+	updated, _, evt := updated.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
+	if evt == nil {
+		t.Fatal("expected submit event")
+	}
+	if got := updated.ContextHint(); !strings.Contains(got, "Enter send") {
+		t.Fatalf("empty prompt after send should restore composer help, got %q", got)
 	}
 }

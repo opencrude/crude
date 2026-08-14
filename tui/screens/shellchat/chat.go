@@ -54,6 +54,7 @@ func New(th *theme.Theme) *Screen {
 	list.SetPointerPolicy(ui.PointerPolicyPassthrough)
 	list.SetSelectionAnchorsScroll(false)
 	list.SetBottomGravity(true) // short chats anchor above the input prompt
+	list.SetOpaqueRowFill(false)
 	list.Scroll().SetAutoScroll(true)
 	s := &Screen{
 		Base:   ui.NewBase(ScreenID),
@@ -375,5 +376,3 @@ func NonEmptyCellCount(buf *surface.CellBuffer) int {
 	}
 	return n
 }
-
-

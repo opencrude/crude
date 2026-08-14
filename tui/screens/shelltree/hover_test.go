@@ -28,7 +28,7 @@ func TestHoverPaintUsesModelHoverIndex(t *testing.T) {
 	host.Resize(36, 8)
 	host.Layout()
 
-	// Hover the second visible row (after root).
+	// Hover the second visible file row (workspace root is not painted).
 	nodes := model.VisibleNodes()
 	if len(nodes) < 3 {
 		t.Fatalf("need >=3 visible nodes, got %d", len(nodes))

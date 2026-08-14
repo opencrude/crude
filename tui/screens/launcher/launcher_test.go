@@ -334,8 +334,7 @@ func TestWorkspacePaneUsesOneColumnContentRailWithoutScrollbar(t *testing.T) {
 	}
 
 	// Header and search begin on their respective rails. Selecting the first
-	// workspace puts the row marker on the body rail, while its background
-	// reaches the pane's final column without a compensating right gutter.
+	// workspace paints hover from the body rail to the pane's final column.
 	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	buf.Clear()
@@ -350,8 +349,12 @@ func TestWorkspacePaneUsesOneColumnContentRailWithoutScrollbar(t *testing.T) {
 	if got := buf.Get(searchEnd, s.search.Bounds().Y).Char; got != '⌕' {
 		t.Fatalf("search magnifier should sit at the trailing edge: %q", got)
 	}
-	if got := buf.Get(s.list.Bounds().X, s.list.Bounds().Y).Char; got != '❯' {
-		t.Fatalf("selected row starts at the wrong rail: %q", got)
+	if got := buf.Get(s.search.Bounds().X, s.search.Bounds().Y).BG; !got.Equal(s.tokens.Color(ui.ColorSubPaneBg)) {
+		t.Fatalf("search should use the filled list field background: %#v", got)
+	}
+	got := buf.Get(s.list.Bounds().X, s.list.Bounds().Y).Char
+	if got == '❯' || got == '>' || got == ' ' {
+		t.Fatalf("selected row should start with content, not a marker: %q", got)
 	}
 	rowEnd := s.list.Bounds().X + s.list.Bounds().W - 1
 	if got := buf.Get(rowEnd, s.list.Bounds().Y).BG; !got.Equal(s.tokens.Color(ui.ColorHover)) {
@@ -459,5 +462,37 @@ func TestPaintWorkspaceRow_EmptyNameUsesPathBasename(t *testing.T) {
 	}
 	if strings.Contains(plain, hash) {
 		t.Fatalf("painted row must not show raw workspace hash %q:\n%s", hash, plain)
+	}
+}
+
+func TestWorkspaceSearchUsesFilledField(t *testing.T) {
+	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
+		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
+	})
+	if s.FilterActive() {
+		t.Fatal("idle search should not be in filter mode")
+	}
+	want := s.tokens.Color(ui.ColorSubPaneBg)
+	r := s.search.Bounds()
+	if got := buf.Get(r.X, r.Y).BG; !got.Equal(want) {
+		t.Fatalf("idle search BG=%#v want SubPaneBg %#v", got, want)
+	}
+	h.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
+	buf.Clear()
+	h.Paint(buf)
+	if got := buf.Get(r.X, r.Y).BG; !got.Equal(want) {
+		t.Fatalf("active search BG=%#v want SubPaneBg %#v", got, want)
+	}
+}
+
+func TestHeroBorderDoesNotPulseWhileIdle(t *testing.T) {
+	s, h, buf := testScreen(t, 110, 16, nil)
+	s.SetAnimation(1500, 10)
+	buf.Clear()
+	h.Paint(buf)
+	want := s.tokens.Color(ui.ColorAccent)
+	r := s.hero.Bounds()
+	if got := buf.Get(r.X, r.Y).FG; !got.Equal(want) {
+		t.Fatalf("idle selected hero border FG=%#v want static accent %#v", got, want)
 	}
 }

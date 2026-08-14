@@ -13,9 +13,12 @@ const (
 )
 
 type CategoryConfig struct {
-	Provider       string   `json:"provider,omitempty"`
-	ProviderURL    string   `json:"provider_url,omitempty"`
-	APIKey         string   `json:"api_key,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	ProviderURL string `json:"provider_url,omitempty"`
+	// APIKey is filled at use time from Config.Providers. Agent profiles
+	// store a provider ID, never credentials — json:"-" so legacy
+	// category api_key fields are ignored on load and omitted on save.
+	APIKey         string   `json:"-"`
 	APIStandard    string   `json:"api_standard,omitempty"`
 	Model          string   `json:"model,omitempty"`
 	ThinkingEffort string   `json:"thinking_effort,omitempty"`
@@ -230,33 +233,22 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 	if cat.Provider == "" {
 		cat.Provider = c.EffectiveProviderID()
 	}
-	if cat.APIKey == "" || cat.ProviderURL == "" || cat.Model == "" || cat.ThinkingEffort == "" {
-		if prov, ok := c.Providers[cat.Provider]; ok {
-			if cat.APIKey == "" {
-				cat.APIKey = prov.APIKey
-			}
-			if cat.ProviderURL == "" {
-				cat.ProviderURL = prov.ProviderURL
-			}
-			if cat.Model == "" {
-				cat.Model = prov.Model
-			}
-			if cat.ThinkingEffort == "" {
-				cat.ThinkingEffort = prov.ThinkingEffort
-			}
-		} else if prov, ok := c.Providers[c.EffectiveProviderID()]; ok {
-			if cat.APIKey == "" {
-				cat.APIKey = prov.APIKey
-			}
-			if cat.ProviderURL == "" {
-				cat.ProviderURL = prov.ProviderURL
-			}
-			if cat.Model == "" {
-				cat.Model = prov.Model
-			}
-			if cat.ThinkingEffort == "" {
-				cat.ThinkingEffort = prov.ThinkingEffort
-			}
+	prov, ok := c.Providers[cat.Provider]
+	if !ok {
+		prov, ok = c.Providers[c.EffectiveProviderID()]
+	}
+	if ok {
+		// Always take credentials from the provider. A stored category key
+		// is leftover from older configs and must not shadow Settings.
+		cat.APIKey = prov.APIKey
+		if cat.ProviderURL == "" {
+			cat.ProviderURL = prov.ProviderURL
+		}
+		if cat.Model == "" {
+			cat.Model = prov.Model
+		}
+		if cat.ThinkingEffort == "" {
+			cat.ThinkingEffort = prov.ThinkingEffort
 		}
 	}
 	if cat.ProviderURL == "" {
@@ -271,6 +263,21 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 		} else {
 			cat.APIStandard = provider.DefaultStandardID(cat.Provider)
 		}
+	}
+}
+
+// StripStoredAgentAPIKeys removes credentials from every agent profile
+// category. Profiles reference a provider; keys live on Config.Providers.
+func StripStoredAgentAPIKeys(agents *AgentsConfig) {
+	if agents == nil {
+		return
+	}
+	for name, profile := range agents.Profiles {
+		for id, cat := range profile.Categories {
+			cat.APIKey = ""
+			profile.Categories[id] = cat
+		}
+		agents.Profiles[name] = profile
 	}
 }
 
@@ -289,7 +296,6 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	return ttypes.CategorySettings{
 		Provider:            v.Provider,
 		ProviderURL:         v.ProviderURL,
-		APIKey:              v.APIKey,
 		APIStandard:         v.APIStandard,
 		Model:               v.Model,
 		ThinkingEffort:      v.ThinkingEffort,
@@ -311,7 +317,6 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	return CategoryConfig{
 		Provider:            v.Provider,
 		ProviderURL:         v.ProviderURL,
-		APIKey:              v.APIKey,
 		APIStandard:         v.APIStandard,
 		Model:               v.Model,
 		ThinkingEffort:      v.ThinkingEffort,
@@ -432,7 +437,10 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	}
 	for category, value := range agents.Categories {
 		existing := profile.Categories[category]
-		profile.Categories[category] = mergeCategoryConfig(existing, catSettingsToConfig(value))
+		merged := mergeCategoryConfig(existing, catSettingsToConfig(value))
+		merged.APIKey = ""
+		profile.Categories[category] = merged
 	}
 	cfg.Agents.Profiles[profileName] = profile
+	StripStoredAgentAPIKeys(&cfg.Agents)
 }

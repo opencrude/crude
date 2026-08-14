@@ -25,6 +25,7 @@ const (
 	activityGit       = activitybar.ViewGit
 
 	sidebarItemNewTerminal = "terminal.new"
+	sidebarItemNewAgent    = "agent.new"
 	// Row 0 is the outer top pad; rows 1-2 belong to the global
 	// application header. Sidebar chrome begins below that header so it
 	// cannot paint over the Crude brand, model, usage, or elapsed clock.
@@ -128,14 +129,19 @@ func (m *App) refreshActivityList() {
 }
 
 func (m *App) agentSidebarItems() []ui.ListItem {
+	items := []ui.ListItem{{
+		ID:      sidebarItemNewAgent,
+		Label:   "New Agent",
+		Icon:    "+",
+		Command: true,
+	}}
 	if m.AgentMgr == nil {
-		return []ui.ListItem{{ID: "none", Label: "No agents", Disabled: true}}
+		return append(items, ui.ListItem{ID: "none", Label: "No agents", Disabled: true})
 	}
 	roots := m.AgentMgr.Orchestrators()
 	if len(roots) == 0 {
-		return []ui.ListItem{{ID: "none", Label: "No agents", Disabled: true}}
+		return append(items, ui.ListItem{ID: "none", Label: "No agents", Disabled: true})
 	}
-	items := make([]ui.ListItem, 0, m.AgentMgr.Count())
 	var appendTree func(*workspace.AgentNode, int, bool)
 	appendTree = func(n *workspace.AgentNode, depth int, last bool) {
 		if n == nil {
@@ -287,6 +293,8 @@ func (m *App) handleSidebarActivate(item ui.ListItem) tea.Cmd {
 	switch {
 	case item.ID == sidebarItemNewTerminal:
 		return m.openNewTerminal()
+	case item.ID == sidebarItemNewAgent:
+		return m.launcherNewSession()
 	case strings.HasPrefix(item.ID, "agent:"):
 		m.restoreAgent(strings.TrimPrefix(item.ID, "agent:"))
 		return nil
@@ -323,6 +331,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if ok {
 			return m.toggleActivity(view)
 		}
+		return nil
+	case activitybar.ActionSettings:
+		m.openApplicationSettings()
 		return nil
 	case activitylist.ActionActivate:
 		item, ok := action.Payload.(ui.ListItem)

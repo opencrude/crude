@@ -64,6 +64,7 @@ func loadFileConfigFrom(path string) (FileConfig, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return FileConfig{}, err
 	}
+	session.StripStoredAgentAPIKeys(cfg.Agents)
 	return cfg, nil
 }
 
@@ -76,6 +77,7 @@ func LoadFileConfig() FileConfig {
 }
 
 func SaveFileConfig(cfg FileConfig) error {
+	session.StripStoredAgentAPIKeys(cfg.Agents)
 	path := ConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -207,6 +209,7 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 	}
 	if fc.Agents != nil {
 		cfg.Agents = *fc.Agents
+		session.StripStoredAgentAPIKeys(&cfg.Agents)
 	}
 	if fc.Memory != nil {
 		cfg.Memory = *fc.Memory
@@ -222,5 +225,6 @@ func SessionToFileConfig(sc *session.Config) FileConfig {
 	fc.Providers = sc.Providers
 	fc.TurnLogsEnabled = &tl
 	fc.Agents = &sc.Agents
+	session.StripStoredAgentAPIKeys(fc.Agents)
 	return fc
 }

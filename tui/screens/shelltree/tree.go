@@ -175,7 +175,7 @@ func New(th *theme.Theme, model *filetree.FileTreeModel) *Screen {
 	}
 	s.filter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
 	s.filter.field.SetPromptPlacement(ui.PromptEnd)
-	s.filter.field.SetPlaceholder("Search files")
+	s.syncSearchPlaceholder()
 	s.filter.field.OnChanged(func(value string) {
 		if s.model == nil {
 			return
@@ -218,6 +218,7 @@ func (s *Screen) SetModel(model *filetree.FileTreeModel) {
 	s.model = model
 	s.applyConfig()
 	s.rebuildTree()
+	s.syncSearchPlaceholder()
 	s.syncFromModel()
 }
 
@@ -373,10 +374,7 @@ func (s *Screen) layoutChildren(r ui.Rect) {
 		X: treeX, Y: panelchrome.HeaderRows, W: maxInt(1, treeW-treeX), H: maxInt(1, treeH),
 	})
 	if s.filter != nil {
-		filterW := maxInt(1, treeW-panelchrome.PadLeft*2)
-		s.filter.Layout(ui.LayoutContext{}, ui.Rect{
-			X: panelchrome.PadLeft, Y: panelchrome.TitleRows, W: filterW, H: panelchrome.SearchRows,
-		})
+		s.filter.Layout(ui.LayoutContext{}, s.headerTitle().FieldRect(treeW))
 	}
 	if s.scrollbar != nil && treePanelW >= 1 {
 		s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{
@@ -410,6 +408,7 @@ func (s *Screen) syncFromModel() {
 	if s.filter != nil && s.model != nil {
 		s.filter.field.SetValue(s.model.Filter())
 	}
+	s.syncSearchPlaceholder()
 	contentW := filetree.SidebarContentWidth(s.width)
 	s.breadcrumb = filetree.BreadcrumbLineWithIcons(s.model, contentW, s.icons)
 	s.tree.tree.SetBreadcrumb(s.breadcrumb)
@@ -417,6 +416,21 @@ func (s *Screen) syncFromModel() {
 	if s.scrollbar != nil {
 		s.scrollbar.SetScroll(s.tree.tree.Scroll())
 	}
+}
+
+func (s *Screen) syncSearchPlaceholder() {
+	if s.filter == nil || s.filter.field == nil {
+		return
+	}
+	label := ""
+	if s.model != nil {
+		label = s.model.WorkspaceLabel()
+	}
+	if label == "" {
+		s.filter.field.SetPlaceholder("Search files")
+		return
+	}
+	s.filter.field.SetPlaceholder("Search in " + label)
 }
 
 func (s *Screen) clearHover() {
@@ -440,11 +454,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	}
 	s.syncFromModel()
-	title := panelchrome.Title{Label: "Explorer", Icon: s.explorerIcon()}
-	if s.model != nil && s.model.Filter() != "" {
-		title.Badge = strconv.Itoa(len(s.model.VisibleNodes()))
+	innerW := b.W
+	if innerW > 1 {
+		innerW--
 	}
-	panelchrome.PaintTitle(buf, ox, oy, b, s.tokens, title)
+	panelchrome.PaintTitle(buf, ox, oy, ui.Rect{X: b.X, Y: b.Y, W: panelchrome.BodyWidth(innerW), H: b.H}, s.tokens, s.headerTitle())
 	// Children (tree, scrollbar, divider) are painted by Host.paintNode.
 }
 
@@ -478,8 +492,8 @@ func (s *Screen) ContentWidth() int {
 }
 
 // PathAtLocalY resolves a screen-local row to the visible file-tree path.
-// Title, search, and sticky breadcrumb rows are chrome and never resolve to a
-// file. This is the canonical hit path for adaptive context menus.
+// The icon+search header and sticky breadcrumb rows are chrome and never
+// resolve to a file. This is the canonical hit path for adaptive context menus.
 func (s *Screen) PathAtLocalY(localY int) string {
 	if s.model == nil {
 		return ""
@@ -505,6 +519,21 @@ func (s *Screen) PathAtLocalY(localY int) string {
 // BodyTop is the first row owned by the tree control (before an optional
 // sticky breadcrumb).
 func (s *Screen) BodyTop() int { return panelchrome.HeaderRows }
+
+func (s *Screen) headerTitle() panelchrome.Title {
+	title := panelchrome.Title{Icon: s.explorerIcon()}
+	if s.model != nil {
+		for _, m := range filetree.HeaderMarks(s.model.Root, s.cfg, s.tokens) {
+			title.BadgeParts = append(title.BadgeParts, panelchrome.BadgePart{Text: m.Text, FG: m.FG})
+		}
+		if s.model.Filter() != "" {
+			title.BadgeParts = append(title.BadgeParts, panelchrome.BadgePart{
+				Text: strconv.Itoa(len(s.model.VisibleNodes())),
+			})
+		}
+	}
+	return title
+}
 
 func (s *Screen) explorerIcon() string {
 	if s.icons != nil && s.model != nil && s.model.Root != nil {

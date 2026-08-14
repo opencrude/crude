@@ -63,6 +63,53 @@ func TestPaintGoldenSetMessagesVirtItems(t *testing.T) {
 	}
 }
 
+func TestShellChatPadColumnsMatchShellBackground(t *testing.T) {
+	th := theme.DefaultDark()
+	s := New(th)
+	padLR := th.Spacing.PadLR
+	if padLR < 1 {
+		t.Fatal("theme PadLR must be at least 1 to observe side columns")
+	}
+	innerW := 24
+	rows := []chatprojection.MessageRow{
+		{
+			ID:    "u1",
+			Lines: []string{"hello"},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "hello", Role: ui.ColorFg}}},
+			},
+		},
+		{
+			ID:    "a1",
+			Lines: []string{"reply"},
+			Native: []chatprojection.PaintLine{
+				{Spans: []chatprojection.RowSpan{{Text: "reply", Role: ui.ColorFg}}},
+			},
+		},
+	}
+	s.SetMessages(rows, PaintParams{
+		Compose: ComposeParams{InnerW: innerW, PadLR: padLR, Theme: th},
+	})
+	w := innerW + padLR*2
+	buf := s.PaintTestBuffer(w, 2)
+	tokens := ui.NewTokenSet(th)
+	popup := tokens.Color(ui.ColorPopupBg)
+	selection := tokens.Color(ui.ColorSelection)
+	for y := 0; y < 2; y++ {
+		left := buf.Get(0, y)
+		right := buf.Get(w-1, y)
+		if left.BG.Equal(popup) || left.BG.Equal(selection) {
+			t.Fatalf("left pad y=%d uses list/popup fill %v", y, left.BG)
+		}
+		if right.BG.Equal(popup) || right.BG.Equal(selection) {
+			t.Fatalf("right pad y=%d uses list/popup fill %v", y, right.BG)
+		}
+		if !left.BG.Equal(buf.Get(0, 0).BG) {
+			t.Fatalf("left pad color changed across messages: y0=%v y%d=%v", buf.Get(0, 0).BG, y, left.BG)
+		}
+	}
+}
+
 func bufferHasThemedFG(buf *surface.CellBuffer) bool {
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x < buf.Width(); x++ {

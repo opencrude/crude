@@ -36,8 +36,8 @@ func TestHover_SetsIndexOnMotion(t *testing.T) {
 	}
 	m.rebuildVisibleNodes()
 
-	if got := len(m.VisibleNodes()); got != 4 {
-		t.Fatalf("setup: VisibleNodes len = %d, want 4 (root + 3 children)", got)
+	if got := len(m.VisibleNodes()); got != 3 {
+		t.Fatalf("setup: VisibleNodes len = %d, want 3 (children only)", got)
 	}
 
 	// No hover initially.
@@ -75,9 +75,10 @@ func TestHover_SetsIndexOnMotion(t *testing.T) {
 // "the cursor left the list".
 func TestHover_ClearsOnOutOfRange(t *testing.T) {
 	root := &TreeNode{
-		Name:  "root",
-		Path:  "/root",
-		IsDir: true,
+		Name:       "root",
+		Path:       "/root",
+		IsDir:      true,
+		IsExpanded: true,
 		Children: []*TreeNode{
 			{Name: "a.txt", Path: "/root/a.txt"},
 		},

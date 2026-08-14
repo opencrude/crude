@@ -3,6 +3,7 @@ package shelltree_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -27,6 +28,25 @@ func flatFileFixture(t *testing.T, names ...string) *filetree.FileTreeModel {
 	return filetree.NewFileTreeModel(dir)
 }
 
+// nestedScrollFixture puts the files in a subdirectory so a sticky breadcrumb
+// still has an ancestor to name after the workspace root row is omitted.
+func nestedScrollFixture(t *testing.T, names ...string) *filetree.FileTreeModel {
+	t.Helper()
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "nested")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(nested, n), []byte("package p\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	model := filetree.NewFileTreeModel(dir)
+	model.Expand(nested)
+	return model
+}
+
 // treeMouseHost mounts the shelltree screen as the Host root, mirroring
 // setupTreeHost in tree_contract_test.go.
 func treeMouseHost(t *testing.T, model *filetree.FileTreeModel) *ui.Host {
@@ -49,8 +69,8 @@ func cursorBase(model *filetree.FileTreeModel) string {
 }
 
 // TestTreeMouseClickRowMapping pins the click->row mapping for every painted
-// row, with and without a non-empty filter. Title and search are persistent:
-// screen rows 0/1 are chrome and tree items start at row 2.
+// row, with and without a non-empty filter. Icon and search share row 0:
+// tree items start at row 1.
 func TestTreeMouseClickRowMapping(t *testing.T) {
 	names := []string{"a.go", "b.go", "c.go", "d.go", "e.go"}
 	cases := []struct {
@@ -58,16 +78,16 @@ func TestTreeMouseClickRowMapping(t *testing.T) {
 		filter  bool
 		screenY int
 	}{
-		{"no_filter_row0", false, 2},
-		{"no_filter_row1", false, 3},
-		{"no_filter_row2", false, 4},
-		{"no_filter_row3", false, 5},
-		{"no_filter_row4", false, 6},
-		{"filter_row0_first_tree_row", true, 2},
-		{"filter_row1", true, 3},
-		{"filter_row2", true, 4},
-		{"filter_row3", true, 5},
-		{"filter_row4", true, 6},
+		{"no_filter_row0", false, 1},
+		{"no_filter_row1", false, 2},
+		{"no_filter_row2", false, 3},
+		{"no_filter_row3", false, 4},
+		{"no_filter_row4", false, 5},
+		{"filter_row0_first_tree_row", true, 1},
+		{"filter_row1", true, 2},
+		{"filter_row2", true, 3},
+		{"filter_row3", true, 4},
+		{"filter_row4", true, 5},
 	}
 
 	for _, tc := range cases {
@@ -79,12 +99,12 @@ func TestTreeMouseClickRowMapping(t *testing.T) {
 			host := treeMouseHost(t, model)
 
 			nodes := model.VisibleNodes()
-			if len(nodes) < len(names)+1 {
-				t.Fatalf("need %d visible nodes, got %d", len(names)+1, len(nodes))
+			if len(nodes) < len(names) {
+				t.Fatalf("need %d visible nodes, got %d", len(names), len(nodes))
 			}
 
-			// The painted row a user sees at screenY, below title + search.
-			wantIdx := tc.screenY - 2
+			// The painted row a user sees at screenY, below icon + search.
+			wantIdx := tc.screenY - 1
 			if wantIdx < 0 || wantIdx >= len(nodes) {
 				t.Fatalf("wantIdx %d out of range", wantIdx)
 			}
@@ -142,8 +162,8 @@ func TestTreeMouseClickRealShellGeometry(t *testing.T) {
 		host.Layout()
 		host.Focus(shelltree.TreeID)
 		nodes := model.VisibleNodes()
-		if len(nodes) != len(names)+1 {
-			t.Fatalf("need %d visible nodes, got %d", len(names)+1, len(nodes))
+		if len(nodes) != len(names) {
+			t.Fatalf("need %d visible nodes, got %d", len(names), len(nodes))
 		}
 		model.SetCursorIndex(len(nodes) - 1)
 		host.Layout()
@@ -151,15 +171,14 @@ func TestTreeMouseClickRealShellGeometry(t *testing.T) {
 		return model, cursorBase(model)
 	}
 
-	// Sidebar slot starts at screen Y=1: title/search paint at Y=1/2 and the
-	// first tree row at Y=3, the second at Y=4. Expected rows come from the same
-	// fixture that received the click (temp dir names are random per fixture).
+	// Sidebar slot starts at screen Y=1: icon+search paints at Y=1 and the
+	// first tree row at Y=2, the second at Y=3.
 	for _, tc := range []struct {
 		screenY int
 		wantIdx int
 	}{
-		{3, 0},
-		{4, 1},
+		{2, 0},
+		{3, 1},
 	} {
 		model, got := clickAt(tc.screenY)
 		want := filepath.Base(model.VisibleNodes()[tc.wantIdx].Path)
@@ -185,9 +204,9 @@ func TestTreeViewScreenRect_BelowFilterRow(t *testing.T) {
 	if !ok {
 		t.Fatal("tree view not mounted")
 	}
-	// Title/search occupy slot rows 0/1; the tree view starts at slot row 2.
-	if treeRect.Y != 3 {
-		t.Fatalf("tree view screen rect Y=%d, want 3 (slot.Y=1 + treeY=2)", treeRect.Y)
+	// Icon+search occupy slot row 0; the tree view starts at slot row 1.
+	if treeRect.Y != 2 {
+		t.Fatalf("tree view screen rect Y=%d, want 2 (slot.Y=1 + treeY=1)", treeRect.Y)
 	}
 	if treeRect.X != 1 || treeRect.W != 26 {
 		t.Fatalf("tree view screen rect X/W=%d/%d, want 1/26 (left inset + sidebar content)", treeRect.X, treeRect.W)
@@ -203,12 +222,15 @@ func TestTreeMouseClickBreadcrumbOffset(t *testing.T) {
 	for i := 0; i < 24; i++ {
 		names = append(names, "file"+string(rune('a'+i))+".go")
 	}
-	model := flatFileFixture(t, names...)
+	model := nestedScrollFixture(t, names...)
 	model.SetScrollOffset(3)
 	host := treeMouseHost(t, model)
 
 	if model.ScrollOffset() != 3 {
 		t.Fatalf("precondition: scroll offset 3, got %d", model.ScrollOffset())
+	}
+	if crumb := filetree.BreadcrumbLine(model, 80); crumb == "" || strings.Contains(crumb, filepath.Base(model.RootPath())) {
+		t.Fatalf("breadcrumb %q should name the nested folder, not the workspace root", crumb)
 	}
 	nodes := model.VisibleNodes()
 	want := filepath.Base(nodes[3].Path)
@@ -216,24 +238,24 @@ func TestTreeMouseClickBreadcrumbOffset(t *testing.T) {
 	model.SetCursorIndex(len(nodes) - 1)
 	host.Layout()
 
-	// Breadcrumb paints at tree row 0. Title/search occupy rows 0/1, so the
-	// first item paints at screen row 3.
-	host.Handle(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
+	// Breadcrumb paints at tree row 0. Icon+search occupy row 0, so the
+	// first item paints at screen row 2.
+	host.Handle(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
 
 	if got := cursorBase(model); got != want {
-		t.Errorf("breadcrumb active: click at screenY=3 selected %q, want %q (visible[3])", got, want)
+		t.Errorf("breadcrumb active: click at screenY=2 selected %q, want %q (visible[3])", got, want)
 	}
 }
 
 // TestTreeMouseClickBreadcrumbAndFilter verifies the combined chrome case:
 // both the persistent search row and the breadcrumb are present. The first
-// item sits below title + search + breadcrumb at screen row 3.
+// item sits below icon+search + breadcrumb at screen row 2.
 func TestTreeMouseClickBreadcrumbAndFilter(t *testing.T) {
 	names := make([]string, 0, 24)
 	for i := 0; i < 24; i++ {
 		names = append(names, "file"+string(rune('a'+i))+".go")
 	}
-	model := flatFileFixture(t, names...)
+	model := nestedScrollFixture(t, names...)
 	model.EnterFilterMode()
 	model.SetScrollOffset(3)
 	host := treeMouseHost(t, model)
@@ -241,16 +263,19 @@ func TestTreeMouseClickBreadcrumbAndFilter(t *testing.T) {
 	if model.ScrollOffset() != 3 {
 		t.Fatalf("precondition: scroll offset 3, got %d", model.ScrollOffset())
 	}
+	if crumb := filetree.BreadcrumbLine(model, 80); crumb == "" || strings.Contains(crumb, filepath.Base(model.RootPath())) {
+		t.Fatalf("breadcrumb %q should name the nested folder, not the workspace root", crumb)
+	}
 	nodes := model.VisibleNodes()
 	want := filepath.Base(nodes[3].Path)
 
 	model.SetCursorIndex(len(nodes) - 1)
 	host.Layout()
 
-	// Title/search at rows 0/1, breadcrumb at row 2, first item at row 3.
-	host.Handle(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
+	// Icon+search at row 0, breadcrumb at row 1, first item at row 2.
+	host.Handle(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
 
 	if got := cursorBase(model); got != want {
-		t.Errorf("filter+breadcrumb active: click at screenY=3 selected %q, want %q (visible[3])", got, want)
+		t.Errorf("filter+breadcrumb active: click at screenY=2 selected %q, want %q (visible[3])", got, want)
 	}
 }

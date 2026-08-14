@@ -119,6 +119,9 @@ func (m *App) buildActivityRegionContextMenu(mouse tea.Mouse) *ui.ContextMenuSta
 		return nil
 	}
 	if rect, ok := m.rootHost.ScreenRect(activitybar.ScreenID); ok && rect.Contains(mouse.X, mouse.Y) {
+		if activitybar.SettingsAt(mouse.Y-rect.Y, rect.H) {
+			return m.buildActivitySettingsContextMenu()
+		}
 		view := m.activityView
 		if hit, hitOK := activitybar.ViewAt(mouse.Y - rect.Y); hitOK {
 			view = hit
@@ -232,6 +235,19 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 	return st
 }
 
+func (m *App) buildActivitySettingsContextMenu() *ui.ContextMenuState {
+	return &ui.ContextMenuState{
+		Title: activitybar.SettingsIcon(false) + " Settings",
+		Sections: []ui.ContextMenuSection{{
+			SectionLabel: "Settings",
+			Items: []ui.ContextMenuItem{
+				{Label: "Application Settings", Action: m.openApplicationSettings},
+				{Label: "Workspace Settings", Action: m.openWorkspaceSettings},
+			},
+		}},
+	}
+}
+
 func activityShortcut(view activitybar.View) string {
 	switch view {
 	case activitybar.ViewAgents:
@@ -263,13 +279,13 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 		agentID = strings.TrimPrefix(item.ID, "agent:")
 	}
 	node := m.AgentMgr.Get(agentID)
-	title := "◈ Agents"
+	title := activitybar.ViewAgents.Glyph() + " Agents"
 	if node != nil {
 		label := workspace.AgentDisplayLabel(node)
 		if label == "" {
 			label = item.Label
 		}
-		title = "◈ " + label
+		title = activitybar.ViewAgents.Glyph() + " " + label
 	}
 	st := &ui.ContextMenuState{Title: title}
 	if node != nil {

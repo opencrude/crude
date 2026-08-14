@@ -48,8 +48,8 @@ func TestTypeToFilterOpensFilterRowAtHostLevel(t *testing.T) {
 
 	buf := paintHost(t, host, 40, 10)
 	searchGlyph := ui.SearchGlyphEnd(ui.NewTokenSet(theme.DefaultDark()))
-	if searchRow := PlainRow(buf, 1, 40); !strings.Contains(searchRow, "u") || !strings.Contains(searchRow, searchGlyph) {
-		t.Fatalf("persistent search row should paint prompt and pattern, got %q", searchRow)
+	if searchRow := PlainRow(buf, 0, 40); !strings.Contains(searchRow, "u") || !strings.Contains(searchRow, searchGlyph) {
+		t.Fatalf("header search should paint prompt and pattern, got %q", searchRow)
 	}
 	findRowContaining(t, buf, "util.go")
 	for y := 0; y < buf.Height(); y++ {
@@ -64,7 +64,7 @@ func TestClickPersistentSearchOwnsTyping(t *testing.T) {
 	model, _ := treeFixture(t)
 	host := setupTreeHost(t, model)
 
-	result := host.Handle(tea.MouseClickMsg{X: 5, Y: 1, Button: tea.MouseLeft})
+	result := host.Handle(tea.MouseClickMsg{X: 5, Y: 0, Button: tea.MouseLeft})
 	if !result.Handled || host.Focused() != FilterID {
 		t.Fatalf("search click result=%#v focus=%q", result, host.Focused())
 	}

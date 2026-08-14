@@ -146,20 +146,25 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	}
 	items := app.agentSidebarItems()
 	if retainedAgents == 0 {
-		if len(items) != 1 || items[0].Selectable() || items[0].Label != "No agents" {
+		if len(items) != 2 || items[0].ID != sidebarItemNewAgent || items[1].Label != "No agents" {
 			t.Fatalf("Agents panel disagrees with closed lifecycle: %#v", items)
 		}
 	} else {
-		if len(items) != retainedAgents {
-			t.Fatalf("Agents panel must list minimized agents: %#v", items)
-		}
+		got := 0
 		for _, item := range items {
+			if item.Command || item.ID == "none" {
+				continue
+			}
+			got++
 			if !item.Selectable() {
 				t.Fatalf("a minimized agent must stay clickable to restore: %#v", item)
 			}
 			if !strings.Contains(item.Detail, "minimized") {
 				t.Fatalf("minimized agent row should say so: %#v", item)
 			}
+		}
+		if got != retainedAgents {
+			t.Fatalf("Agents panel must list minimized agents: %#v", items)
 		}
 	}
 	app.paintShellFrame()

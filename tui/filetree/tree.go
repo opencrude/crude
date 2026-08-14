@@ -642,7 +642,8 @@ func (m *FileTreeModel) expandAllRecursive(node *TreeNode) {
 	}
 }
 
-// CollapseAll collapses every directory node, leaving only the root expanded.
+// CollapseAll collapses every directory node, leaving the workspace root
+// expanded so its children remain the explorer's top-level rows.
 func (m *FileTreeModel) CollapseAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -655,7 +656,9 @@ func (m *FileTreeModel) collapseAllRecursive(node *TreeNode) {
 	if !node.IsDir {
 		return
 	}
-	node.IsExpanded = false
+	if node != m.Root {
+		node.IsExpanded = false
+	}
 	for _, child := range node.Children {
 		m.collapseAllRecursive(child)
 	}
@@ -733,6 +736,11 @@ func (m *FileTreeModel) SelectedNode() *TreeNode {
 // filter. Hidden nodes are excluded when showHidden is false.
 func (m *FileTreeModel) rebuildVisibleNodes() {
 	m.visibleNodes = m.visibleNodes[:0] // reuse backing array
+	if m.Root != nil {
+		// The workspace root is never a painted row, so it must stay
+		// expanded or the explorer would go blank after Collapse All.
+		m.Root.IsExpanded = true
+	}
 
 	if m.filterPattern() != "" {
 		m.filteredWalk(m.Root, false)
@@ -745,11 +753,16 @@ func (m *FileTreeModel) rebuildVisibleNodes() {
 }
 
 // unfilteredWalk appends visible nodes depth-first with no active filter.
+// The workspace root stays in the model for git/diagnostic aggregation and
+// path operations, but it is not a painted row — the explorer search hint
+// names the workspace instead.
 func (m *FileTreeModel) unfilteredWalk(node *TreeNode) {
 	if node.Hidden && !m.showHidden {
 		return
 	}
-	m.visibleNodes = append(m.visibleNodes, node)
+	if node != m.Root {
+		m.visibleNodes = append(m.visibleNodes, node)
+	}
 
 	if node.IsDir && node.IsExpanded {
 		for _, child := range node.Children {
@@ -761,7 +774,8 @@ func (m *FileTreeModel) unfilteredWalk(node *TreeNode) {
 // filteredWalk appends visible nodes depth-first with an active filter,
 // descending only into expanded directories. Visibility comes from the memo
 // maps built by applyFilterState: a node shows when it matched, an ancestor
-// matched, or its subtree contains a match.
+// matched, or its subtree contains a match. The workspace root is omitted
+// from the painted list the same way as in unfilteredWalk.
 func (m *FileTreeModel) filteredWalk(node *TreeNode, ancestorMatched bool) {
 	if node == nil || (node.Hidden && !m.showHidden) {
 		return
@@ -770,7 +784,9 @@ func (m *FileTreeModel) filteredWalk(node *TreeNode, ancestorMatched bool) {
 	if !ancestorMatched && !selfMatched && !m.filterSubtree[node.Path] {
 		return
 	}
-	m.visibleNodes = append(m.visibleNodes, node)
+	if node != m.Root {
+		m.visibleNodes = append(m.visibleNodes, node)
+	}
 	if node.IsDir && node.IsExpanded {
 		for _, child := range node.Children {
 			m.filteredWalk(child, ancestorMatched || selfMatched)
@@ -1310,6 +1326,21 @@ func (m *FileTreeModel) RootPath() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.rootPath
+}
+
+// WorkspaceLabel is the workspace folder name used by the explorer search
+// hint. Empty when the root has no usable name.
+func (m *FileTreeModel) WorkspaceLabel() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.Root == nil {
+		return ""
+	}
+	name := strings.TrimSpace(m.Root.Name)
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return ""
+	}
+	return name
 }
 
 // IconResolver returns the model's icon resolver.

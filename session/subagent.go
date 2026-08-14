@@ -492,7 +492,6 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	}
 
 	resolvedProvider := spec.Provider
-	resolvedAPIKey := spec.APIKey
 	resolvedURL := spec.ProviderURL
 	resolvedAPIStandard := spec.APIStandard
 	resolvedModelName := spec.Model
@@ -507,22 +506,17 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		mainCat := cfg.GetActiveDefaultCategory()
 		resolvedProvider = mainCat.Provider
 	}
-	if resolvedAPIKey == "" || resolvedURL == "" {
-		if prov, ok := cfg.Providers[resolvedProvider]; ok {
-			if resolvedAPIKey == "" {
-				resolvedAPIKey = prov.APIKey
-			}
-			if resolvedURL == "" {
-				resolvedURL = prov.ProviderURL
-			}
-		} else {
-			mainCat := cfg.GetActiveDefaultCategory()
-			if resolvedAPIKey == "" {
-				resolvedAPIKey = mainCat.APIKey
-			}
-			if resolvedURL == "" {
-				resolvedURL = mainCat.ProviderURL
-			}
+	resolvedAPIKey := ""
+	if prov, ok := cfg.Providers[resolvedProvider]; ok {
+		resolvedAPIKey = prov.APIKey
+		if resolvedURL == "" {
+			resolvedURL = prov.ProviderURL
+		}
+	} else {
+		mainCat := cfg.GetActiveDefaultCategory()
+		resolvedAPIKey = mainCat.APIKey
+		if resolvedURL == "" {
+			resolvedURL = mainCat.ProviderURL
 		}
 	}
 	if resolvedModelName == "" {
@@ -1178,9 +1172,6 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.ProviderURL == "" && catCfg.ProviderURL != "" {
 			spec.ProviderURL = catCfg.ProviderURL
 		}
-		if spec.APIKey == "" && catCfg.APIKey != "" {
-			spec.APIKey = catCfg.APIKey
-		}
 		if spec.ThinkingEffort == "" && catCfg.ThinkingEffort != "" {
 			spec.ThinkingEffort = catCfg.ThinkingEffort
 		}
@@ -1271,12 +1262,7 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		spec.Provider = categoryCfg.Provider
 	}
 	configured, hasConfiguredProvider := cfg.Providers[spec.Provider]
-	if spec.APIKey == "" {
-		spec.APIKey = configured.APIKey
-		if spec.APIKey == "" && categoryCfg.Provider == spec.Provider {
-			spec.APIKey = categoryCfg.APIKey
-		}
-	}
+	spec.APIKey = configured.APIKey
 	if spec.ProviderURL == "" {
 		spec.ProviderURL = configured.ProviderURL
 		if spec.ProviderURL == "" && categoryCfg.Provider == spec.Provider {
