@@ -276,11 +276,11 @@ func setupOverlayDispatchApp(t *testing.T) (*App, int, int) {
 	if err := ed.Open(path); err != nil {
 		t.Fatal(err)
 	}
-	app.EditorState = NewEditorState()
-	app.EditorState.Editor = ed
-	app.EditorState.ActiveView = path
-	app.EditorState.Tabs[path] = NewEditorTab(path, ed)
 
+	// Agent first, then the editor tab: AddOrchestrator is a user action
+	// that activates the new agent even when an editor is showing. This
+	// fixture wants the editor painted with an agent already in the tab
+	// bar, which is "open a file after a session exists".
 	app.AddOrchestrator(
 		"agent",
 		make(chan provider.UserInput, 1),
@@ -288,6 +288,17 @@ func setupOverlayDispatchApp(t *testing.T) (*App, int, int) {
 		make(chan struct{}, 1),
 		make(chan string, 1),
 	)
+	app.EditorState = NewEditorState()
+	app.EditorState.Editor = ed
+	app.EditorState.Tabs[path] = NewEditorTab(path, ed)
+	title := app.editorTabTitle(path)
+	if app.Win.TabByTitle(title) == nil {
+		app.Win.OpenTab(title, "✎", true)
+	}
+	if winTab := app.Win.TabByTitle(title); winTab != nil {
+		app.Win.SwitchTo(app.Win.IndexOf(winTab.ID))
+		app.handleTabSwitch()
+	}
 	layout := app.computeLayout()
 	app.ChatAreaHeight = app.height - layout.ChatAreaTop - 2
 	if app.ChatAreaHeight < 10 {

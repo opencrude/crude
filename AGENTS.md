@@ -412,6 +412,29 @@ ownership are all retained. A stray click must never destroy work in flight.
   `cleanupAgent` remains the destructive path; do not wire it to tab close.
 - Guarded by `tui/viewmodel/agent_minimize_test.go`.
 
+### New Agent Surfaces a Tab Immediately (since 2026-08-14)
+
+Creating or restoring an agent **must add its window tab and make it the
+painted main view even while editor tabs are open**. A stray early return
+in `syncAgentWindowTabs` when `EditorState.ActiveView != ""` used to skip
+`OpenTab` entirely: New Agent created the session in `AgentMgr`, but the
+tab bar stayed on the editors until every editor tab was closed and the
+next tick finally synced.
+
+- `syncAgentWindowTabs` always creates/updates/purges **visible** agent
+  tabs, including while an editor is showing. Minimized agents still get
+  no tab (`AgentTabViews` filters `Hidden`).
+- Tick and other background callers must not steal the editor: `OpenTab`
+  activates the new tab, so when an editor is the painted view the sync
+  restores that editor as the window's active tab **without**
+  `handleTabSwitch` (which would clear `ActiveView`).
+- Explicit user actions — New Agent / `launcherNewSession` /
+  `AddOrchestrator` / restore / `switchToAgentView` — call
+  `activateAgentWindowTab` after sync so the agent becomes the selected
+  tab and `handleTabSwitch` clears `ActiveView`. Do not call that helper
+  from the tick path.
+- Guarded by `tui/viewmodel/agent_new_session_focus_test.go`.
+
 ### Popup Click-Outside Behaviors
 | Behavior | Meaning |
 |----------|---------|

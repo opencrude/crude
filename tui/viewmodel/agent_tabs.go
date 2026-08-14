@@ -45,6 +45,7 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 		node.Model = m.ModelName
 	}
 	m.syncAgentWindowTabs()
+	m.activateAgentWindowTab(orchID)
 }
 
 func (m *App) RemoveOrchestrator(orchID string) {
@@ -309,6 +310,9 @@ func (m *App) switchToAgentView(agentID string) {
 	}
 
 	m.syncAgentWindowTabs()
+	if curr != "" {
+		m.activateAgentWindowTab(curr)
+	}
 }
 
 // agentTabTitle returns the window tab title for an agent.
@@ -335,14 +339,57 @@ func (m *App) agentIDFromTabTitle(title string) string {
 	return title[6:]
 }
 
-// syncAgentWindowTabs creates/removes window tabs to match the current agent set.
-// Every agent gets its own tab.
-// Tabs are always shown when at least one agent or editor is open.
-func (m *App) syncAgentWindowTabs() {
-	// Don't switch away from editor tab
-	if m.EditorState.ActiveView != "" {
-		m.purgeStaleAgentTabs()
+// activateAgentWindowTab makes agentID the selected window tab and the
+// painted main view. Explicit user actions (New Agent, restore, existing
+// orchestrator re-entry) must call this even when an editor tab is open —
+// otherwise the session exists only in AgentMgr until every editor tab is
+// closed. Background syncAgentWindowTabs must not call it.
+func (m *App) activateAgentWindowTab(agentID string) {
+	if agentID == "" || m.Win == nil {
 		return
+	}
+	title := m.agentTabTitle(agentID)
+	tab := m.Win.TabByTitle(title)
+	if tab == nil {
+		return
+	}
+	m.launcherScreen = nil
+	if m.FocusStack != nil {
+		m.FocusStack.Clear()
+	}
+	idx := m.Win.IndexOf(tab.ID)
+	if m.Win.ActiveIndex() != idx {
+		m.Win.SwitchTo(idx)
+	}
+	m.handleTabSwitch()
+}
+
+func (m *App) keepWindowTab(title string) {
+	if title == "" || m.Win == nil {
+		return
+	}
+	tab := m.Win.TabByTitle(title)
+	if tab == nil {
+		return
+	}
+	idx := m.Win.IndexOf(tab.ID)
+	if m.Win.ActiveIndex() != idx {
+		m.Win.SwitchTo(idx)
+	}
+}
+
+// syncAgentWindowTabs creates/removes window tabs to match the current agent set.
+// Every visible agent gets its own tab, including while an editor is the
+// painted view — skipping creation there was the New Agent-while-editing bug.
+//
+// Tick and other background callers must not steal the editor: OpenTab
+// activates the new tab, so when an editor is showing we restore that
+// editor as the window's active tab afterwards. User actions that should
+// leave the editor call activateAgentWindowTab after this.
+func (m *App) syncAgentWindowTabs() {
+	keepEditor := ""
+	if m.EditorState != nil && m.EditorState.ActiveView != "" {
+		keepEditor = m.editorTabTitle(m.EditorState.ActiveView)
 	}
 
 	// If no surfaced agents exist, purge agent tabs and return. Minimized
@@ -350,6 +397,7 @@ func (m *App) syncAgentWindowTabs() {
 	if m.AgentMgr.VisibleCount() == 0 {
 		m.purgeAgentTabs()
 		m.EditorState.TabSnapshotCache = ""
+		m.keepWindowTab(keepEditor)
 		return
 	}
 
@@ -416,8 +464,12 @@ func (m *App) syncAgentWindowTabs() {
 		}
 	}
 
-	// Activate the correct tab
-	if activeID != "" {
+	// Activate the active agent tab only when the editor is not the
+	// painted view. OpenTab already selected any newly created tab, so
+	// restore the editor afterwards when we must not steal it.
+	if keepEditor != "" {
+		m.keepWindowTab(keepEditor)
+	} else if activeID != "" {
 		activeTitle := m.agentTabTitle(activeID)
 		if tab := m.Win.TabByTitle(activeTitle); tab != nil {
 			targetIdx := m.Win.IndexOf(tab.ID)
@@ -428,6 +480,7 @@ func (m *App) syncAgentWindowTabs() {
 	}
 
 	m.purgeStaleAgentTabs()
+	m.keepWindowTab(keepEditor)
 }
 
 // agentTabIcon returns the status icon for an agent's window tab.

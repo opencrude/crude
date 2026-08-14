@@ -59,7 +59,7 @@ preserve or intentionally improve.
 
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
-| New Agent | `+ New Agent` command row | Same single-click button pattern as New Terminal; starts a session from the sidebar while editing |
+| New Agent | `+ New Agent` command row | Same single-click button pattern as New Terminal. Starts a session from the sidebar (also palette `agent.newSession` / launcher New Session via `launcherNewSession`). **Must add a window tab and make it the active/painted view immediately**, even when editor tabs are already open — closing those editors must never be required to see the new agent. Background `syncAgentWindowTabs` (tick) still creates missing agent tabs but must not steal the editor; only explicit user actions call `activateAgentWindowTab`. Guarded by `tui/viewmodel/agent_new_session_focus_test.go`. |
 
 ## Terminal panel
 
