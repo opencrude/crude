@@ -37,6 +37,39 @@ servers (`reapOnDone`), and launcher workspace reads are context-bound so a
 stalled read cannot leak the workspace DB handle (Windows file lock). See
 AGENTS.md → LSP I/O Architecture.
 
+**Workspace-switch lifecycle (2026-08-13):** a project switch is a generation
+boundary. The old tree watcher and every editor projection are closed before
+replacement; project search is canceled without reusing request IDs; git and
+launcher generations advance; LSP requests, diagnostics, and result messages
+are canceled/generation-bound; workspace/session/sub-pane projections, tabs,
+the input draft, and project-bound overlays are cleared. Target directory and
+persistence preflight completes before old state is torn down. The target
+workspace theme is applied before rebuilding projections, while root-tree/Git
+construction and recursive watcher startup run asynchronously behind a
+generation-bound placeholder. Application-global infrastructure (compositor,
+root Host, action registry, history, Help, and Command Palette) remains live.
+
+**Editor Git blame and line edits (2026-08-13):** the editor gutter paints
+HEAD-vs-buffer line edits (`+` added, `~` modified) beside the diagnostic
+column. Blame for the cursor line appears in shellstatus; Copy blame commit
+lives on the editor context menu. `workspace.GitService.AnnotateFile` owns
+`git show` / `git blame --line-porcelain` off the update goroutine, with
+editor-git and workspace-switch generations so a stale result cannot paint
+the wrong buffer.
+
+**TUI reliability audit closeout (2026-08-13):** verified deadlock, terminal,
+input-routing, narrow-geometry, rendering, and blocking-I/O findings are fixed
+with focused contracts. File and terminal close commands no longer re-enter
+the synchronous event bus; PTY input is bounded with explicit backpressure;
+cursor blinking is activity-gated; clipboard, directory, and source-control
+subprocess work is asynchronous and time-bounded where applicable; clipboard
+operations run through one ordered worker and image references persist off the
+update goroutine; picker results require pointer/epoch/intent/generation
+ownership; blocking PanelDecks shield both keyboard and pointer input; and
+Unicode/narrow layouts
+derive geometry only from columns that exist. The live audit artifact records
+the evidence and remaining intentional conventions.
+
 ## Architecture: Three Layers
 
 ```

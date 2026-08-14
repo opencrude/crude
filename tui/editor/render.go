@@ -85,7 +85,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			ri++
 		}
 
-		numW := sw - 2 // reserve 1 column for diagnostic icon
+		numW := sw - 3 // git marker + diagnostic icon + rule
 		numStr := e.formatLineNum(lineIdx+1+e.lineNumberOffset, numW)
 
 		// Determine highest severity diagnostic on this line for the gutter icon.
@@ -95,15 +95,19 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				lineSev = d.severity
 			}
 		}
+		gitKind := e.gitKindAt(lineIdx)
+		diagCol := sw - 3
+		gitCol := sw - 2
+		ruleCol := sw - 1
 
 		for x := 0; x < sbX; x++ {
-			if x < sw-2 {
+			if x < diagCol {
 				if x < len(numStr) {
 					buf.Set(x, bufY, cell.NewCell(rune(numStr[x]), e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Bg), 0))
 				} else {
 					buf.Set(x, bufY, blankCell)
 				}
-			} else if x == sw-2 {
+			} else if x == diagCol {
 				// Diagnostic icon column.
 				if lineSev > 0 {
 					icon, ok := diagIcons[lineSev]
@@ -115,7 +119,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				} else {
 					buf.Set(x, bufY, blankCell)
 				}
-			} else if x == sw-1 {
+			} else if x == gitCol {
+				ch, fg := e.gitGutterCell(gitKind)
+				buf.Set(x, bufY, cell.NewCell(ch, fg, bgColor, 0))
+			} else if x == ruleCol {
 				borderCh := '│'
 				if e.tokens != nil {
 					if g := e.tokens.Glyphs().BorderV; g != "" {
@@ -267,12 +274,12 @@ func (e *Editor) gutterWidth() int {
 		digits = 2
 	}
 	// The gutter is: line number (digits) + diagnostic icon (1) +
-	// column guide (1). Returning digits+1 left the line number with
-	// only (digits-1) cells of room, which made the View() path emit
-	// one extra cell per line — the +1 ghost column the terminal
-	// could not clear.
-	return digits + 2
+	// git line-edit marker (1) + column guide (1).
+	return digits + 3
 }
+
+// GutterWidth is the painted left chrome width in columns.
+func (e *Editor) GutterWidth() int { return e.gutterWidth() }
 
 func (e *Editor) formatLineNum(n int, width int) string {
 	s := e.itoa(n)

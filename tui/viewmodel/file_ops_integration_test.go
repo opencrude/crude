@@ -16,8 +16,9 @@ import (
 // ── ViewModel integration tests for Phase 10 filesystem mutation seam ──
 //
 // These tests verify that tree operations (create file, create folder,
-// rename, delete) route through workspace methods and publish events
-// through EventBus, rather than performing direct filesystem mutations.
+// rename, delete) route through workspace methods and consume their returned
+// results rather than performing direct filesystem mutations or echoing
+// command results through EventBus.
 
 func TestViewModel_CreateFile_RoutesThroughWorkspace(t *testing.T) {
 	dir := t.TempDir()
@@ -139,23 +140,23 @@ func TestViewModel_ApplyWorkspaceEdit_RoutesThroughWorkspace(t *testing.T) {
 	}
 }
 
-func TestViewModel_CreateFile_PublishesEvent(t *testing.T) {
+func TestViewModel_CreateFile_DoesNotEchoReturnedResult(t *testing.T) {
 	dir := t.TempDir()
 	bus := workspace.NewEventBus()
 	app := newTestAppWithFileOpsAndBus(t, dir, bus)
 
-	// Create a file.
 	path := filepath.Join(dir, "event-file.txt")
-	_ = app.CreateFile(path)
+	msg := app.CreateFile(path)
+	if !msg.Succeeded() {
+		t.Fatalf("CreateFile failed: %v", msg.Err)
+	}
 
-	// Verify event was published through EventBus.
-	events := bus.RecentEvents(1)
-	if len(events) == 0 {
-		t.Fatal("no event published for CreateFile")
+	if events := bus.RecentEvents(1); len(events) != 0 {
+		t.Fatalf("CreateFile echoed its returned result through EventBus: %v", events)
 	}
 }
 
-func TestViewModel_DeletePath_PublishesEvent(t *testing.T) {
+func TestViewModel_DeletePath_DoesNotEchoReturnedResult(t *testing.T) {
 	dir := t.TempDir()
 	bus := workspace.NewEventBus()
 	app := newTestAppWithFileOpsAndBus(t, dir, bus)
@@ -165,12 +166,13 @@ func TestViewModel_DeletePath_PublishesEvent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_ = app.DeletePath(path)
+	msg := app.DeletePath(path)
+	if !msg.Succeeded() {
+		t.Fatalf("DeletePath failed: %v", msg.Err)
+	}
 
-	// Verify event was published.
-	events := bus.RecentEvents(1)
-	if len(events) == 0 {
-		t.Fatal("no event published for DeletePath")
+	if events := bus.RecentEvents(1); len(events) != 0 {
+		t.Fatalf("DeletePath echoed its returned result through EventBus: %v", events)
 	}
 }
 

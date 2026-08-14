@@ -668,14 +668,15 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Paint
 		bar = s.tokens.Color(ui.ColorPopupSubtleBg)
 	}
 	if !bg.IsDefault() {
-		ui.FillRect(buf, originX+r.X, originY+r.Y, r, cell.BlankCell(bg))
+		ui.FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	}
 	toolbarH := 1
 	if s.mode == ModeReplace {
 		toolbarH = 2
 	}
+	toolbarH = min(toolbarH, max(0, r.H))
 	if !bar.IsDefault() && toolbarH > 0 {
-		ui.FillRect(buf, originX+r.X, originY+r.Y, ui.Rect{W: r.W, H: toolbarH}, cell.BlankCell(bar))
+		ui.FillRect(buf, originX, originY, ui.Rect{X: r.X, Y: r.Y, W: r.W, H: toolbarH}, cell.BlankCell(bar))
 	}
 }
 

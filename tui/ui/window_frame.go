@@ -261,24 +261,21 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 	if title != "" {
 		// "─ Title ─" style: start after corner + space
 		tx := 2
-		avail := r.W - 4
-		if f.closable {
-			avail -= 3
+		// Protect the first title-bar control, or the right border when no
+		// control is mounted. The rendered label adds one space on each side,
+		// so only the columns strictly between those spaces belong to title.
+		titleEnd := r.W - 1
+		if !f.closeR.Empty() {
+			titleEnd = min(titleEnd, f.closeR.X)
 		}
 		if !f.titleActionR.Empty() {
-			avail -= 3
+			titleEnd = min(titleEnd, f.titleActionR.X)
 		}
+		avail := titleEnd - tx - 2
 		if avail > 0 {
-			runes := []rune(title)
-			if rendering.VisibleWidth(title) > avail {
-				// truncate by runes roughly
-				if len(runes) > avail {
-					runes = runes[:max(0, avail-1)]
-					title = string(runes) + "…"
-				}
-			} else {
-				title = string(runes)
-			}
+			// Titles are measured and truncated in terminal columns, preserving
+			// complete CJK/emoji grapheme clusters and the close/action regions.
+			title = rendering.TruncateVisual(title, avail, "…")
 			buf.WriteString(ox+tx, oy, " "+title+" ", titleFG, bg, cell.AttrBold)
 		}
 	}

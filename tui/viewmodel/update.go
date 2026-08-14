@@ -111,13 +111,20 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	var diskSyncCmd tea.Cmd
-	spinFrame := int(time.Now().UnixMilli())
+	now := time.Now()
+	spinFrame := int(now.UnixMilli())
 	m.SpinFrame = spinFrame
 	m.StatusBar.SetSpinFrame(spinFrame)
 	m.StatusBar.SetCurrentAgent(m.AgentMgr.ActiveID())
 	m.Input.SetSpinFrame(spinFrame)
 	m.StatusBar.ClearExpired()
-	m.refreshSessionBackgroundJobs(time.Now())
+	m.refreshSessionBackgroundJobs(now)
+	m.tickTerminalCursors(now)
+	var gitCmd tea.Cmd
+	if m.editorGitStale.Load() && now.Sub(m.editorGitAt) >= 400*time.Millisecond {
+		m.editorGitStale.Store(false)
+		gitCmd = m.refreshEditorGitCmd()
+	}
 	// Advance popup reveal animations (slide-in on open). Returns true while
 	// any reveal is mid-flight so the frame keeps repainting until done.
 	if m.advanceReveals(time.Now()) {
@@ -152,6 +159,8 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			} else {
 				reloadedText = m.EditorState.Editor.Value()
 				updateOpenFile = true
+				m.editorGitStale.Store(true)
+				m.editorGitAt = time.Time{}
 			}
 		}
 		// LSP writes can wait on a subprocess pipe. Keep them off Bubble Tea's
@@ -186,9 +195,9 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	// Status bar animations and popup reveals need their own content
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
-		return m, tea.Batch(diskSyncCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, streamingTickCmd())
 	}
-	return m, tea.Batch(diskSyncCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
@@ -215,6 +224,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	switch msg := msg.(type) {
 	case sourceControlResultMsg:
 		m.applySourceControlResult(msg)
+	case editorGitAnnotationMsg:
+		m.applyEditorGitAnnotation(msg)
+	case clipboardAsyncRequestMsg:
+		if cmd := m.clipboardAsyncCommand(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case clipboardAsyncResultMsg:
+		if cmd := m.applyClipboardAsyncResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case clipboardAsyncImageStoredMsg:
+		m.applyClipboardAsyncImageStored(msg)
+	case directoryAsyncResultMsg:
+		m.applyDirectoryAsyncResult(msg)
 	case ui.SearchDebouncedMsg:
 		if m.findInFiles != nil {
 			if cmd := m.findInFiles.HandleSearchDebounced(msg); cmd != nil {
@@ -244,6 +267,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		m.launcherScreen.SetData(msg.Cwd, msg.Infos)
 		m.launcherScreen.SyncFocus()
+	case workspaceTreeReadyMsg:
+		m.applyWorkspaceTreeReady(msg)
 	case workspace.LSPDiagnosticsMsg:
 		m.handleLSPDiagnosticsUpdate(msg)
 	case workspace.FileWatcherMsg:
@@ -279,8 +304,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case workspace.TerminalExitedMsg:
 		m.handleTerminalExited(msg)
-	case workspace.TerminalClosedMsg:
-		m.handleTerminalClosed(msg)
 	case workspace.TerminalTitleMsg:
 		m.applyTerminalTitle(msg.ID, msg.Title)
 	case findinfiles.OpenMsg:
@@ -345,15 +368,25 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.setMode(ModeChat)
 		}
 	case lspDefinitionResultMsg:
-		m.handleDefinitionResult(msg)
+		if m.acceptsLSPGeneration(msg.generation) {
+			m.handleDefinitionResult(msg)
+		}
 	case lspReferencesResultMsg:
-		m.handleReferencesResult(msg)
+		if m.acceptsLSPGeneration(msg.generation) {
+			m.handleReferencesResult(msg)
+		}
 	case lspDocumentSymbolsResultMsg:
-		m.handleDocumentSymbolsResult(msg)
+		if m.acceptsLSPGeneration(msg.generation) {
+			m.handleDocumentSymbolsResult(msg)
+		}
 	case lspRenameResultMsg:
-		m.handleRenameResult(msg)
+		if m.acceptsLSPGeneration(msg.generation) {
+			m.handleRenameResult(msg)
+		}
 	case lspCompletionResultMsg:
-		m.handleCompletionResult(msg)
+		if m.acceptsLSPGeneration(msg.generation) {
+			m.handleCompletionResult(msg)
+		}
 	case ttypes.ErrorMsg:
 		m.Logger.Debug("UI", "error", "msg", string(msg))
 		m.StatusBar.SetError(string(msg))
@@ -406,22 +439,17 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 		}
 	case filepickerscreen.NavigateMsg:
-		if msg.Target != m.FilePicker {
+		if !msg.ValidFor(m.FilePicker) {
 			break
 		}
-		listing, err := m.BrowseDirectory(msg.Path)
-		if err != nil {
-			msg.Target.SetError(err)
-			if m.StatusBar != nil {
-				m.StatusBar.SetError(err.Error())
-			}
-			break
+		if cmd := m.beginDirectoryAsyncLoadFor(msg.Target, msg.Path, msg.Intent()); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
-		msg.Target.SetDirectory(listing.Path, pickerEntries(listing.Entries))
 	case filepickerscreen.SelectMsg:
-		if msg.Target != m.FilePicker {
+		if !msg.ValidFor(m.FilePicker) {
 			break
 		}
+		m.invalidateDirectoryAsyncLoad(msg.Target)
 		m.overlayHost.Close(ui.OverlayFilePicker)
 		if msg.Folder {
 			if m.launcherScreen != nil {
@@ -437,7 +465,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.addFileReference(msg.Path)
 		}
 	case filepickerscreen.CancelMsg:
-		if msg.Target == m.FilePicker {
+		if msg.ValidFor(m.FilePicker) {
+			m.invalidateDirectoryAsyncLoad(msg.Target)
 			m.overlayHost.Close(ui.OverlayFilePicker)
 		}
 	case settingsui.SaveMsg:
@@ -783,6 +812,8 @@ func (m *App) handleTabSwitch() {
 		}
 		m.EditorState.ActiveView = path
 		m.EditorState.Editor = tab.Editor
+		m.editorGitStale.Store(true)
+		m.editorGitAt = time.Time{}
 	}
 }
 
@@ -827,17 +858,12 @@ func (m *App) openPicker(root string, mode filepickerscreen.Mode) {
 	if m.FilePicker == nil {
 		m.FilePicker = filepickerscreen.New(m.Theme)
 	}
-	listing, err := m.BrowseDirectory(root)
-	if err != nil {
-		m.FilePicker.Open(root, mode, nil)
-		m.FilePicker.SetError(err)
-		if m.StatusBar != nil {
-			m.StatusBar.SetError(err.Error())
-		}
-	} else {
-		m.FilePicker.Open(listing.Path, mode, pickerEntries(listing.Entries))
-	}
+	m.invalidateDirectoryAsyncLoad(m.FilePicker)
+	m.overlayHost.Close(ui.OverlayFilePicker)
+	m.FilePicker.Open(root, mode, nil)
+	cmd := m.beginDirectoryAsyncLoad(m.FilePicker, root)
 	m.setMode(ModeFilePicker)
+	m.runDetachedAsyncCmd(cmd)
 }
 
 func pickerEntries(entries []workspace.DirectoryEntry) []filepickerscreen.Entry {

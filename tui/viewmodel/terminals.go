@@ -1,22 +1,27 @@
 package viewmodel
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
+	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
 )
 
 const (
-	defaultTermCols       = 80
-	defaultTermRows       = 24
+	defaultTermCols       = workspace.DefaultTerminalCols
+	defaultTermRows       = workspace.DefaultTerminalRows
 	defaultTermDockHeight = 12
 	minTermDockHeight     = 6
 	minMainAboveDock      = 8
+	terminalDockTopRow    = 3
 )
 
 func (m *App) termMgr() *workspace.TerminalManager {
@@ -26,8 +31,12 @@ func (m *App) termMgr() *workspace.TerminalManager {
 	return m.TermMgr
 }
 
-func (m *App) termDockVisible() bool {
+func (m *App) termDockHasSessions() bool {
 	return m.termDock != nil && !m.termDock.Empty()
+}
+
+func (m *App) termDockVisible() bool {
+	return m.termDockHasSessions() && m.termDockHeightClamped() > 0
 }
 
 func (m *App) termDockOwnsKeys() bool {
@@ -44,7 +53,11 @@ func (m *App) terminalOwnsKeys() bool {
 }
 
 func (m *App) termDockHeightClamped() int {
-	if !m.termDockVisible() {
+	if !m.termDockHasSessions() {
+		return 0
+	}
+	availableH := m.height - 2 - terminalDockTopRow
+	if availableH < termdock.MinRenderableHeight {
 		return 0
 	}
 	h := m.termDockHeight
@@ -52,10 +65,16 @@ func (m *App) termDockHeightClamped() int {
 		h = defaultTermDockHeight
 	}
 	maxH := m.height - 2 - minMainAboveDock
-	if maxH < 4 {
-		maxH = 4
+	if maxH < termdock.MinRenderableHeight {
+		maxH = termdock.MinRenderableHeight
+	}
+	if maxH > availableH {
+		maxH = availableH
 	}
 	minH := minTermDockHeight
+	if minH < termdock.MinRenderableHeight {
+		minH = termdock.MinRenderableHeight
+	}
 	if minH > maxH {
 		minH = maxH
 	}
@@ -92,21 +111,53 @@ func (m *App) ensureTermScreen(id, title string) *shellterm.Screen {
 	}
 	s := shellterm.New(m.Theme, id, title)
 	s.SetWrite(func(data []byte) {
-		if mgr := m.termMgr(); mgr != nil {
-			_ = mgr.Write(id, data)
-		}
+		m.writeTerminal(id, data)
 	})
-	s.SetResize(func(cols, rows int) {
-		if mgr := m.termMgr(); mgr != nil {
-			_ = mgr.Resize(id, cols, rows)
-		}
+	s.SetResize(func(cols, rows int) error {
+		return m.resizeTerminal(id, cols, rows)
 	})
-	s.SetCopy(m.copyToClipboard)
+	s.SetCopy(rendering.CopyToClipboardCmd)
 	// Note: no synchronous title hook. OSC titles are published from
 	// handleTerminalOutput via an async tea.Cmd; publishing here would
 	// re-enter the event bus while it is handling TerminalOutputMsg.
 	m.termScreens[id] = s
 	return s
+}
+
+func (m *App) writeTerminal(id string, data []byte) {
+	mgr := m.termMgr()
+	if mgr == nil {
+		m.reportTerminalIOError("write", id, fmt.Errorf("terminals are unavailable"))
+		return
+	}
+	if err := mgr.Write(id, data); err != nil {
+		m.reportTerminalIOError("write", id, err)
+	}
+}
+
+func (m *App) resizeTerminal(id string, cols, rows int) error {
+	mgr := m.termMgr()
+	if mgr == nil {
+		err := fmt.Errorf("terminals are unavailable")
+		m.reportTerminalIOError("resize", id, err)
+		return err
+	}
+	if err := mgr.Resize(id, cols, rows); err != nil {
+		m.reportTerminalIOError("resize", id, err)
+		return err
+	}
+	return nil
+}
+
+func (m *App) reportTerminalIOError(operation, id string, err error) {
+	if err == nil || m.StatusBar == nil {
+		return
+	}
+	if id == "" {
+		m.StatusBar.SetError(fmt.Sprintf("Terminal %s failed: %v", operation, err))
+		return
+	}
+	m.StatusBar.SetError(fmt.Sprintf("Terminal %s failed (%s): %v", operation, id, err))
 }
 
 func (m *App) dropTermScreen(id string) {
@@ -158,6 +209,7 @@ func (m *App) dockTerminal(id string) {
 	}
 	screen := m.ensureTermScreen(id, info.Title)
 	screen.SetFloating(false)
+	screen.SetAttention(false)
 	if m.overlayHost != nil {
 		m.suppressTermClose = id
 		m.overlayHost.Close(ui.TerminalOverlayID(id))
@@ -184,6 +236,7 @@ func (m *App) promoteTerminal(id string) {
 		m.termDock.Unmount(id)
 	}
 	screen.SetFloating(true)
+	screen.SetAttention(false)
 	mgr.SetPlacement(id, workspace.TerminalFloating)
 	m.setTermDockFocused(false)
 	m.openTerminalWindow(id, screen)
@@ -223,6 +276,9 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 		// JetBrains-style title-bar control: dock the tool window back into
 		// the panel (replaces the old in-body action bar).
 		frame.Frame().SetTitleAction("⇲", "Dock")
+		if screen.HasAttention() {
+			frame.Frame().SetIcon("•")
+		}
 	}
 	fw := wm.NewFloatingWindow(string(oid), screen.Title(), frame, w, h,
 		wm.WithDecoration(true),
@@ -266,6 +322,7 @@ func (m *App) focusTerminal(id string) {
 		}
 		if m.windowManager != nil {
 			m.windowManager.FocusWindow(string(oid))
+			m.setFloatingTerminalAttention(id, false)
 		}
 		return
 	}
@@ -290,8 +347,20 @@ func (m *App) closeTerminal(id string) {
 func (m *App) handleTerminalOutput(msg workspace.TerminalOutputMsg) tea.Cmd {
 	s := m.termScreens[msg.ID]
 	if s == nil {
-		return nil
+		// PTY reads start as soon as Create returns. Materialize the retained
+		// projection on first output so a fast child cannot lose its startup
+		// banner before openNewTerminal mounts the screen. This is bounded by
+		// the emulator's configured scrollback; no parallel byte buffer exists.
+		if mgr := m.termMgr(); mgr != nil {
+			if info, ok := mgr.Get(msg.ID); ok {
+				s = m.ensureTermScreen(msg.ID, info.Title)
+			}
+		}
+		if s == nil {
+			return nil
+		}
 	}
+	var cmds []tea.Cmd
 	fx := s.Feed(msg.Data)
 	if m.overlayHost != nil {
 		if fw := m.overlayHost.Window(ui.TerminalOverlayID(msg.ID)); fw != nil {
@@ -300,7 +369,7 @@ func (m *App) handleTerminalOutput(msg workspace.TerminalOutputMsg) tea.Cmd {
 	}
 	if fx.HasClipboard {
 		// OSC 52 / OSC 1337 clipboard write from the child.
-		m.copyToClipboard(fx.Clipboard)
+		cmds = append(cmds, rendering.CopyToClipboardCmd(fx.Clipboard))
 	}
 	if fx.Bell {
 		m.markTerminalBell(msg.ID)
@@ -311,27 +380,49 @@ func (m *App) handleTerminalOutput(msg workspace.TerminalOutputMsg) tea.Cmd {
 			mgr.SetCWD(msg.ID, s.PWD())
 		}
 	}
-	if !fx.TitleChanged {
-		return nil
+	if fx.TitleChanged {
+		// Feed runs while Bubble Tea is handling TerminalOutputMsg, and the
+		// event bus delivers via Program.Send to an unbuffered channel. A
+		// synchronous TerminalManager.SetTitle here would deadlock the update
+		// loop (an idle floating terminal "hangs" as soon as the shell sets its
+		// OSC title), so publish the title from an async command instead.
+		id, title := msg.ID, s.Title()
+		cmds = append(cmds, func() tea.Msg {
+			if mgr := m.termMgr(); mgr != nil {
+				mgr.SetTitle(id, title)
+			}
+			return nil
+		})
 	}
-	// Feed runs while Bubble Tea is handling TerminalOutputMsg, and the
-	// event bus delivers via Program.Send to an unbuffered channel. A
-	// synchronous TerminalManager.SetTitle here would deadlock the update
-	// loop (an idle floating terminal "hangs" as soon as the shell sets its
-	// OSC title), so publish the title from an async command instead.
-	id, title := msg.ID, s.Title()
-	return func() tea.Msg {
-		if mgr := m.termMgr(); mgr != nil {
-			mgr.SetTitle(id, title)
+	return tea.Batch(cmds...)
+}
+
+// tickTerminalCursors advances libghostty cursor presentation. Docked
+// terminals are repainted with the root shell after every Update; retained
+// floating windows need an explicit dirty mark only when their blink phase
+// actually changes.
+func (m *App) tickTerminalCursors(now time.Time) {
+	for id, s := range m.termScreens {
+		if s == nil {
+			continue
 		}
-		return nil
+		var fw *wm.FloatingWindow
+		if m.overlayHost != nil {
+			fw = m.overlayHost.Window(ui.TerminalOverlayID(id))
+		}
+		if fw != nil && fw.Focused() && s.HasAttention() {
+			m.setFloatingTerminalAttention(id, false)
+		}
+		if s.TickCursor(now) && fw != nil {
+			fw.MarkContentDirty()
+		}
 	}
 }
 
-// markTerminalBell flags the dock tab of a ringing terminal that does not
-// currently own input.
+// markTerminalBell exposes an unseen bell on the dock tab or floating frame
+// of a terminal that does not currently own input.
 func (m *App) markTerminalBell(id string) {
-	if m.termDock == nil || !m.termDock.Contains(id) {
+	if m.floatingTerminalOwnsInput(id) {
 		return
 	}
 	wmFocused := m.windowManager != nil && m.windowManager.Focused() != nil
@@ -339,17 +430,50 @@ func (m *App) markTerminalBell(id string) {
 	if focused {
 		return
 	}
-	m.termDock.SetAttention(id, true)
+	if m.termDock != nil && m.termDock.Contains(id) {
+		m.termDock.SetAttention(id, true)
+		return
+	}
+	m.setFloatingTerminalAttention(id, true)
+}
+
+func (m *App) floatingTerminalOwnsInput(id string) bool {
+	if m.windowManager == nil {
+		return false
+	}
+	fw := m.windowManager.Focused()
+	return fw != nil && fw.ID == string(ui.TerminalOverlayID(id))
+}
+
+func (m *App) setFloatingTerminalAttention(id string, attention bool) {
+	s := m.termScreens[id]
+	if s == nil {
+		return
+	}
+	changed := s.SetAttention(attention)
+	if m.overlayHost == nil {
+		return
+	}
+	fw := m.overlayHost.Window(ui.TerminalOverlayID(id))
+	if fw == nil {
+		return
+	}
+	if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok && frame.Frame() != nil {
+		icon := ""
+		if attention {
+			icon = "•"
+		}
+		frame.Frame().SetIcon(icon)
+	}
+	if changed {
+		fw.MarkContentDirty()
+	}
 }
 
 func (m *App) handleTerminalExited(msg workspace.TerminalExitedMsg) {
 	if s := m.termScreens[msg.ID]; s != nil {
 		s.SetExited(true)
 	}
-}
-
-func (m *App) handleTerminalClosed(msg workspace.TerminalClosedMsg) {
-	m.dropTermScreen(msg.ID)
 }
 
 func (m *App) handleTerminalAction(action ui.Action) bool {
@@ -369,9 +493,7 @@ func (m *App) handleTerminalAction(action ui.Action) bool {
 	case shellterm.ActionWrite:
 		payload, ok := action.Payload.(shellterm.WritePayload)
 		if ok {
-			if mgr := m.termMgr(); mgr != nil {
-				_ = mgr.Write(payload.ID, payload.Data)
-			}
+			m.writeTerminal(payload.ID, payload.Data)
 		}
 		return true
 	}

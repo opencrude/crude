@@ -207,26 +207,24 @@ This chain needs a no-change fast path, but benchmark/trace it after fixing the
 unconditional launcher tick and debug logging rather than treating it as the
 sole hang cause.
 
-### Synchronous callback reentrancy remains a serious hang risk
+### Synchronous callback reentrancy — resolved
 
 libghostty invokes effects synchronously inside `Emulator.Feed`.
 
 - PTY replies call `TerminalManager.Write`, which now enqueues through the
   asynchronous `ptyWriter`; this avoids blocking the Bubble Tea update loop on
   a full PTY input pipe.
-- Title changes currently call `TerminalManager.SetTitle`, which publishes
-  `TerminalTitleMsg` through `EventBus.Send` immediately.
+- Title, bell, pwd, and clipboard effects are collected during `vt.Feed`.
+  After `ghostty_terminal_vt_write` returns, the viewmodel applies local
+  effects and schedules title publication as a `tea.Cmd`; it never calls the
+  synchronous `EventBus.Send` path from inside Bubble Tea `Update`.
+- Explicit terminal close is command-owned and no longer echoes a
+  `TerminalClosedMsg` through the event bus.
 
-`Feed` itself runs while Bubble Tea is handling `TerminalOutputMsg`. Calling
-`Program.Send` synchronously from that same update path can block waiting for
-the event loop that is currently inside `Feed`. This has not yet been proven by
-a deterministic test, but the control flow is unsafe and must be tested before
-declaring the hang fixed.
-
-The clean design is to collect title/effect state during `vt.Feed` and publish
-it only after `ghostty_terminal_vt_write` returns. PTY query replies may remain
-the special synchronous effect because they only enqueue bytes and do not
-re-enter the UI event bus.
+The deadlock paths are guarded by
+`TestTerminalTitleOutputDoesNotDeadlockOrDuplicate`,
+`TestTerminalReplyStormDoesNotDeadlockOrReenterBus`, and
+`TestWorkspaceSwitchTerminalCloseAllDoesNotReenterEventBus`.
 
 ## Theories Ruled Out
 

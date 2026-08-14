@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/clipboard"
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
@@ -39,23 +38,6 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			}},
 		},
 	})
-
-	// Selection-aware items
-	selSection := ui.ContextMenuSection{SectionLabel: "Selection"}
-	selItems := []ui.ContextMenuItem{}
-	if m.EditorState.Editor.HasSelection() {
-		selItems = append(selItems, ui.ContextMenuItem{
-			Label: "Format selection", Action: func() {
-				// Best-effort: rely on Save+format-on-save for now.
-				// This is a placeholder for a future range-format
-				// hook.
-			},
-		})
-	}
-	selSection.Items = selItems
-	if len(selItems) > 0 {
-		st.Sections = append(st.Sections, selSection)
-	}
 
 	// Diagnostic- and symbol-aware items.
 	// Use the current cursor position to find diagnostics at point.
@@ -96,6 +78,17 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if len(lspSection.Items) > 0 {
 		st.Sections = append(st.Sections, lspSection)
 	}
+
+	blame, hasBlame := m.EditorState.Editor.BlameAtLine(m.EditorState.Editor.CursorLine())
+	blameHash := blame.Hash
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		SectionLabel: "Git",
+		Items: []ui.ContextMenuItem{
+			{Label: "Copy blame commit", Disabled: !hasBlame || blameHash == "" || blame.Uncommitted, Action: func() {
+				m.copyToClipboard(blameHash)
+			}},
+		},
+	})
 
 	// View actions.
 	viewSection := ui.ContextMenuSection{
@@ -608,10 +601,22 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	// Get tab-specific info.
 	if m.isEditorTabTitle(tab.Title) {
 		path := m.editorPathFromTabTitle(tab.Title)
+		closeDetail := "Ctrl+W · Esc"
+		if m.actionRegistry != nil {
+			var hints []string
+			for _, id := range []ui.ActionID{"file.close", "editor.close"} {
+				if hint := ui.FormatShortcut(m.actionRegistry.HintFor(id)); hint != "" {
+					hints = append(hints, hint)
+				}
+			}
+			if len(hints) > 0 {
+				closeDetail = strings.Join(hints, " · ")
+			}
+		}
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Tab",
 			Items: []ui.ContextMenuItem{
-				{Label: "Close", Detail: "Ctrl+W", Action: func() {
+				{Label: "Close tab", Detail: closeDetail, Action: func() {
 					m.EditorState.ActiveView = path
 					_ = m.handleAgentTabClose(hit.TabIndex)
 				}},
@@ -701,19 +706,12 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					return
 				}
 				raw := ml.LastAssistantText()
-				lang, code, ok := rendering.ExtractLastCodeBlock(raw)
+				_, code, ok := rendering.ExtractLastCodeBlock(raw)
 				if !ok {
 					m.StatusBar.SetInfo("No code block in last assistant message")
 					return
 				}
-				if lang != "" {
-					m.StatusBar.SetInfo(fmt.Sprintf("Copied %s code block (%d chars)", lang, len(code)))
-				} else {
-					m.StatusBar.SetInfo(fmt.Sprintf("Copied code block (%d chars)", len(code)))
-				}
-				if err := clipboard.WriteText(code); err != nil {
-					m.StatusBar.SetError("clipboard error: " + err.Error())
-				}
+				m.copyToClipboard(code)
 			}},
 		},
 	})

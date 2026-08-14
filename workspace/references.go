@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"crude/provider"
@@ -15,6 +16,7 @@ import (
 )
 
 type ReferenceStore struct {
+	mu         sync.RWMutex
 	refs       map[string]sessiondb.Reference
 	counter    map[sessiondb.Kind]int
 	sessionID  string
@@ -33,6 +35,8 @@ func NewReferenceStore(sessionID, sessionDir string, db *sql.DB) *ReferenceStore
 }
 
 func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb.Reference, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if req.Kind == "" {
 		req.Kind = sessiondb.KindPastedText
 	}
@@ -106,6 +110,8 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 }
 
 func (s *ReferenceStore) UpdateReferenceContent(id, content string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ref, ok := s.refs[id]
 	if !ok {
 		return nil
@@ -119,6 +125,8 @@ func (s *ReferenceStore) UpdateReferenceContent(id, content string) error {
 }
 
 func (s *ReferenceStore) DeleteReference(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ref, ok := s.refs[id]
 	if !ok {
 		return nil
@@ -132,11 +140,15 @@ func (s *ReferenceStore) DeleteReference(id string) error {
 }
 
 func (s *ReferenceStore) GetReference(id string) (sessiondb.Reference, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	ref, ok := s.refs[id]
 	return ref, ok
 }
 
 func (s *ReferenceStore) ListReferences() []sessiondb.Reference {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	refs := make([]sessiondb.Reference, 0, len(s.refs))
 	for _, ref := range s.refs {
 		if ref.Active() {
@@ -147,6 +159,8 @@ func (s *ReferenceStore) ListReferences() []sessiondb.Reference {
 }
 
 func (s *ReferenceStore) AddExisting(ref sessiondb.Reference) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.refs == nil {
 		s.refs = make(map[string]sessiondb.Reference)
 	}

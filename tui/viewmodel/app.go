@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
@@ -146,8 +147,17 @@ type App struct {
 	findInFilesGen         int
 	memoryBrowser          *memorybrowser.Screen
 	providerPresets        []ttypes.ProviderPreset
+	asyncIO                atomic.Pointer[appAsyncIOState]
+	asyncIOStopped         atomic.Bool
 	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
 	gitRefreshGen          atomic.Uint64
+	editorGitGen           atomic.Uint64
+	editorGitAt            time.Time
+	editorGitStale         atomic.Bool
+	sourceControlTimeout   time.Duration
+	workspaceSwitchGen     atomic.Uint64   // invalidates project-bound async callbacks
+	lspRequestCtx          context.Context // canceled whenever the workspace generation changes
+	lspRequestCancel       context.CancelFunc
 	reveals                map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
@@ -272,25 +282,18 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 // projections that are rooted in the old project directory. Workspace does
 // not construct file-tree renderers or editor controls.
 func (m *App) SwitchProject(projectDir string) error {
+	if sameWorkspaceRoot(m.RootPath, projectDir) {
+		return nil
+	}
+	state := m.beginWorkspaceSwitch()
 	if err := m.Workspace.SwitchProject(projectDir); err != nil {
+		state.restore(m)
 		return err
 	}
-	treeModel := filetree.NewFileTreeModel(m.RootPath)
-	m.Tree = NewTreeState(treeModel, m.Theme.Tree.Config.DefaultWidth)
-	if m.sidebarScreen != nil {
-		m.sidebarScreen.SetModel(treeModel)
-	}
-	m.discardTerminalUI()
-	m.BufferMgr = editor.NewBufferManager()
-	m.EditorState = NewEditorState()
-	m.EditorState.Editor = editor.New(m.Theme)
-	m.LSPMgr.SetRuntime(newEditorLSPRuntime())
-	m.wireLSPDiagnostics()
-	m.syncFileTreeDiagnosticsFromLSP()
-	if m.launcherScreen != nil {
-		m.launcherScreen.SetData(m.RootPath, nil)
-		m.refreshLauncherAsync(m.RootPath)
-	}
+	// Workspace.SwitchProject has loaded the target workspace overrides. Apply
+	// its effective palette before constructing any target-owned projections.
+	m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+	m.finishWorkspaceSwitch(state)
 	return nil
 }
 
@@ -330,18 +333,10 @@ func (m *App) Init() tea.Cmd {
 	}
 
 	// Hook file tree watcher events into the LSP server so it learns about
-	// disk changes (git checkout, external edits, etc.).
-	if m.Tree.Model != nil {
-		m.Tree.Model.SetOnFileChanged(func(filePath string, changeType int) {
-			if m.eventBus != nil {
-				m.eventBus.Send(workspace.FileWatcherMsg{FilePath: filePath, ChangeType: changeType})
-			}
-		})
-		if err := m.Tree.Model.StartWatcher(); err != nil {
-			if m.Logger != nil {
-				m.Logger.Warn("FILETREE", "watcher_start_failed", "error", err.Error())
-			}
-		}
+	// disk changes (git checkout, external edits, etc.). Workspace switches
+	// use this exact helper too, keeping startup and replacement in lockstep.
+	if m.Tree != nil {
+		m.wireAndStartWorkspaceTreeWatcher(m.Tree.Model)
 	}
 
 	// Kick the async launcher workspace listing for the welcome screen so
@@ -435,6 +430,7 @@ func (m *App) openFilePickerWindow() {
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayFilePicker, win, ui.ModalDialogPolicy(), func() {
+		m.invalidateDirectoryAsyncLoad(m.FilePicker)
 		m.FilePicker.Close()
 		m.setMode(ModeChat)
 	})

@@ -40,18 +40,58 @@ type Entry struct {
 	IsDir bool
 }
 
+// IntentToken identifies one user intent within one open picker lifecycle.
+// Epoch prevents close/reopen ABA; Sequence prevents older intents from
+// overtaking newer intents from the same open picker.
+type IntentToken struct {
+	Epoch    uint64
+	Sequence uint64
+}
+
 type NavigateMsg struct {
-	Target *Screen
-	Path   string
+	Target   *Screen
+	Path     string
+	Epoch    uint64
+	Sequence uint64
 }
 
 type SelectMsg struct {
-	Target *Screen
-	Path   string
-	Folder bool
+	Target   *Screen
+	Path     string
+	Folder   bool
+	Epoch    uint64
+	Sequence uint64
 }
 
-type CancelMsg struct{ Target *Screen }
+type CancelMsg struct {
+	Target   *Screen
+	Epoch    uint64
+	Sequence uint64
+}
+
+func (m NavigateMsg) Intent() IntentToken {
+	return IntentToken{Epoch: m.Epoch, Sequence: m.Sequence}
+}
+
+func (m NavigateMsg) ValidFor(target *Screen) bool {
+	return m.Target == target && target != nil && target.IsCurrentIntent(m.Epoch, m.Sequence)
+}
+
+func (m SelectMsg) Intent() IntentToken {
+	return IntentToken{Epoch: m.Epoch, Sequence: m.Sequence}
+}
+
+func (m SelectMsg) ValidFor(target *Screen) bool {
+	return m.Target == target && target != nil && target.IsCurrentIntent(m.Epoch, m.Sequence)
+}
+
+func (m CancelMsg) Intent() IntentToken {
+	return IntentToken{Epoch: m.Epoch, Sequence: m.Sequence}
+}
+
+func (m CancelMsg) ValidFor(target *Screen) bool {
+	return m.Target == target && target != nil && target.IsCurrentIntent(m.Epoch, m.Sequence)
+}
 
 type Screen struct {
 	ui.Base
@@ -60,10 +100,14 @@ type Screen struct {
 	mode       Mode
 	root       string
 	current    string
+	rawEntries []Entry
 	entries    []Entry
 	visible    []Entry
 	active     bool
 	errText    string
+	openEpoch  uint64
+	intentSeq  uint64
+	asyncLoad  *asyncDirectoryLoad
 	filter     *pickerFilter
 	breadcrumb *ui.Label
 	list       *pickerList
@@ -98,6 +142,8 @@ func New(th *theme.Theme) *Screen {
 }
 
 func (s *Screen) Open(root string, mode Mode, entries []Entry) {
+	s.discardAsyncDirectoryLoad()
+	s.openEpoch++
 	s.mode = mode
 	s.root = filepath.Clean(root)
 	s.current = s.root
@@ -115,6 +161,7 @@ func (s *Screen) Open(root string, mode Mode, entries []Entry) {
 }
 
 func (s *Screen) SetDirectory(path string, entries []Entry) {
+	s.discardAsyncDirectoryLoad()
 	s.current = filepath.Clean(path)
 	s.errText = ""
 	s.filter.field.SetValue("")
@@ -132,12 +179,37 @@ func (s *Screen) SetError(err error) {
 	s.syncBreadcrumb()
 }
 
-func (s *Screen) Close()                  { s.active = false }
+func (s *Screen) Close() {
+	if s == nil {
+		return
+	}
+	s.discardAsyncDirectoryLoad()
+	s.active = false
+	s.errText = ""
+	s.openEpoch++
+	s.visible = s.visible[:0]
+	if s.list != nil && s.list.list != nil {
+		s.list.list.SetItems(nil)
+	}
+	s.syncPrimary()
+}
 func (s *Screen) IsOpen() bool            { return s.active }
 func (s *Screen) Mode() Mode              { return s.mode }
 func (s *Screen) Current() string         { return s.current }
 func (s *Screen) VisibleCount() int       { return len(s.visible) }
 func (s *Screen) Selected() (Entry, bool) { return s.selectedEntry() }
+func (s *Screen) OpenEpoch() uint64       { return s.openEpoch }
+func (s *Screen) IntentSequence() uint64  { return s.intentSeq }
+
+// IsCurrentIntent reports whether an emitted message still belongs to the
+// current open picker and is the newest user intent from that lifecycle.
+func (s *Screen) IsCurrentIntent(epoch, sequence uint64) bool {
+	return s != nil &&
+		s.active &&
+		sequence != 0 &&
+		epoch == s.openEpoch &&
+		sequence == s.intentSeq
+}
 
 func (s *Screen) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
 func (s *Screen) FocusFilter()                            { s.focusID(FilterID) }
@@ -263,13 +335,14 @@ func (s *Screen) rebuildActions() {
 }
 
 func (s *Screen) setEntries(entries []Entry) {
+	s.rawEntries = append(s.rawEntries[:0], entries...)
 	s.entries = s.entries[:0]
 	parent := filepath.Dir(s.current)
 	if parent != s.current && (s.mode == ModeFolder || s.current != s.root) {
 		s.entries = append(s.entries, Entry{Name: "..", Path: parent, IsDir: true})
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name, ".") || (s.mode == ModeFolder && !entry.IsDir) {
+		if entry.Name == ".." || strings.HasPrefix(entry.Name, ".") || (s.mode == ModeFolder && !entry.IsDir) {
 			continue
 		}
 		s.entries = append(s.entries, entry)
@@ -288,6 +361,15 @@ func (s *Screen) setEntries(entries []Entry) {
 }
 
 func (s *Screen) sync() {
+	if s.AsyncDirectoryLoading() {
+		s.visible = s.visible[:0]
+		if s.list != nil && s.list.list != nil {
+			s.list.list.SetItems(nil)
+		}
+		s.syncPrimary()
+		s.syncBreadcrumb()
+		return
+	}
 	query := strings.ToLower(s.filter.field.Value())
 	s.visible = s.visible[:0]
 	type rankedEntry struct {
@@ -344,9 +426,12 @@ func (s *Screen) sync() {
 }
 
 func (s *Screen) syncPrimary() {
-	enabled := s.mode == ModeFolder
-	if selected, ok := s.selectedEntry(); ok && !selected.IsDir {
-		enabled = true
+	enabled := false
+	if s.active && !s.AsyncDirectoryLoading() {
+		enabled = s.mode == ModeFolder
+		if selected, ok := s.selectedEntry(); ok && !selected.IsDir {
+			enabled = true
+		}
 	}
 	s.actions.SetEnabled("filepicker.select", enabled)
 }
@@ -440,6 +525,9 @@ func fuzzyScore(value, query string) (int, bool) {
 }
 
 func (s *Screen) selectedEntry() (Entry, bool) {
+	if s == nil || s.AsyncDirectoryLoading() {
+		return Entry{}, false
+	}
 	item, ok := s.list.list.Selected()
 	if !ok {
 		return Entry{}, false
@@ -449,6 +537,9 @@ func (s *Screen) selectedEntry() (Entry, bool) {
 }
 
 func (s *Screen) activateEntry(entry Entry) ui.EventResult {
+	if !s.activationEnabled() {
+		return ui.EventResult{Handled: true}
+	}
 	if entry.IsDir {
 		return s.navigate(entry.Path)
 	}
@@ -459,20 +550,72 @@ func (s *Screen) activateEntry(entry Entry) ui.EventResult {
 }
 
 func (s *Screen) navigate(path string) ui.EventResult {
-	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return NavigateMsg{Target: s, Path: path} }, Invalidate: ui.InvalidatePaint}
+	if !s.activationEnabled() {
+		return ui.EventResult{Handled: true}
+	}
+	intent, ok := s.nextIntent()
+	if !ok {
+		return ui.EventResult{Handled: true}
+	}
+	message := NavigateMsg{
+		Target: s, Path: path, Epoch: intent.Epoch, Sequence: intent.Sequence,
+	}
+	return ui.EventResult{
+		Handled:    true,
+		Cmd:        func() tea.Msg { return message },
+		Invalidate: ui.InvalidatePaint,
+	}
 }
 func (s *Screen) selectPath(path string, folder bool) ui.EventResult {
-	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return SelectMsg{Target: s, Path: path, Folder: folder} }}
+	if !s.activationEnabled() {
+		return ui.EventResult{Handled: true}
+	}
+	intent, ok := s.nextIntent()
+	if !ok {
+		return ui.EventResult{Handled: true}
+	}
+	message := SelectMsg{
+		Target: s, Path: path, Folder: folder, Epoch: intent.Epoch, Sequence: intent.Sequence,
+	}
+	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }}
 }
 func (s *Screen) cancel() ui.EventResult {
-	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{Target: s} }}
+	if s == nil || !s.active {
+		return ui.EventResult{Handled: true}
+	}
+	s.CancelAsyncDirectoryLoad()
+	intent, ok := s.nextIntent()
+	if !ok {
+		return ui.EventResult{Handled: true}
+	}
+	message := CancelMsg{Target: s, Epoch: intent.Epoch, Sequence: intent.Sequence}
+	return ui.EventResult{
+		Handled:    true,
+		Cmd:        func() tea.Msg { return message },
+		Invalidate: ui.InvalidatePaint,
+	}
 }
 func (s *Screen) navigateParent() ui.EventResult {
+	if !s.activationEnabled() {
+		return ui.EventResult{Handled: true}
+	}
 	parent := filepath.Dir(s.current)
 	if parent == s.current || (s.mode == ModeFile && s.current == s.root) {
 		return ui.EventResult{Handled: true}
 	}
 	return s.navigate(parent)
+}
+
+func (s *Screen) activationEnabled() bool {
+	return s != nil && s.active && !s.AsyncDirectoryLoading()
+}
+
+func (s *Screen) nextIntent() (IntentToken, bool) {
+	if s == nil || !s.active {
+		return IntentToken{}, false
+	}
+	s.intentSeq++
+	return IntentToken{Epoch: s.openEpoch, Sequence: s.intentSeq}, true
 }
 
 type pickerFilter struct {

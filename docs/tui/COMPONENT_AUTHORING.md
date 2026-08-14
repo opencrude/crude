@@ -93,6 +93,43 @@ host.Paint(buf)
 - Paint goldens: `host.Paint(buf)` + assert labels and accent FG (see `TestPaintGoldenCellBufferContract` in each screen package).
 - Keyboard contracts live on the bound model or child control; table-driven tests in `*_test.go`.
 
+### Geometry and terminal-width contracts
+
+- A `Rect` may use only columns supplied by its parent. Clamp derived widths
+  at zero; never turn an undersized constraint into a fabricated minimum
+  width. Minimums such as the launcher's 20-column usability policy are
+  visibility/adaptation gates, not permission to assign `W: 20`.
+- Horizontal theme padding is a request, not guaranteed geometry. Per frame,
+  use `effectivePad = min(themePad, ContentW/2)` and derive
+  `InnerW = ContentW - 2*effectivePad`; normal widths retain the theme value,
+  while every narrow width satisfies `2*PadLR + InnerW <= ContentW`.
+- Child bounds are parent-local. `Paint(buf, originX, originY, ...)` receives
+  the parent paint origin, so fill the component with
+  `ui.FillRect(buf, originX, originY, component.Bounds(), ...)`. Do not add
+  `Bounds().X/Y` to the origin and then pass those bounds again.
+- Compute shell geometry once per frame and pass that result to projections,
+  composition, paint, and hit testing. A chat renderer or tab model must not
+  independently restore an old width floor.
+- Measure, truncate, and pad text only with `tui/rendering` helpers.
+  `rendering.TruncateVisual` preserves CJK, combining, emoji, and ZWJ
+  grapheme clusters under the canonical terminal-column method.
+- Chat composition uses the actual `InnerW` supplied by shell layout. When a
+  markdown renderer's readable-body minimum does not fit, use the plain
+  wrapping path and let native paint clip to the real row; do not widen it.
+
+### Async result ownership
+
+- A retained component pointer is not sufficient identity across close/reopen.
+  Async intents must include an open epoch and monotonic intent sequence; the
+  host adds its own request generation before starting I/O.
+- Project-owned commands and callbacks also capture `workspaceSwitchGen`.
+  Cancel their contexts at the boundary and reject every result whose
+  generation no longer matches, even when the backend ignored cancellation.
+- Never perform filesystem, clipboard, SQLite, subprocess, or recursive
+  watcher work in `Update`. Return a `tea.Cmd` or use the generation-bound
+  detached bridge when a callback signature cannot return one. Closing the
+  owning component must cancel its pending request and release retained state.
+
 ---
 
 ## Recipe 2: OverlayHost + WindowFrame (floating)

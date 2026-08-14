@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -110,7 +111,12 @@ func TestScreenPrimaryScreenWheelScrollsViewport(t *testing.T) {
 func TestScreenSelectionCopiesOnRelease(t *testing.T) {
 	s, _ := newTestScreen(t)
 	var copied []string
-	s.SetCopy(func(text string) { copied = append(copied, text) })
+	s.SetCopy(func(text string) tea.Cmd {
+		return func() tea.Msg {
+			copied = append(copied, text)
+			return nil
+		}
+	})
 	now := uint64(1_000_000_000)
 	s.SetNow(func() uint64 { return now })
 	s.Feed([]byte("hello world"))
@@ -119,9 +125,16 @@ func TestScreenSelectionCopiesOnRelease(t *testing.T) {
 		ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: 0}))
 	s.Handle(ui.EventContext{LocalX: 4, LocalY: 0},
 		ui.MouseMotionEvent(tea.MouseMotionMsg{Button: tea.MouseLeft, X: 4, Y: 0}))
-	s.Handle(ui.EventContext{LocalX: 4, LocalY: 0},
+	res := s.Handle(ui.EventContext{LocalX: 4, LocalY: 0},
 		ui.MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 4, Y: 0}))
 
+	if len(copied) != 0 {
+		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
+	}
+	if res.Cmd == nil {
+		t.Fatal("selection release returned no clipboard command")
+	}
+	_ = res.Cmd()
 	if len(copied) != 1 || copied[0] != "hello" {
 		t.Fatalf("copied=%q want [hello]", copied)
 	}
@@ -130,7 +143,12 @@ func TestScreenSelectionCopiesOnRelease(t *testing.T) {
 func TestScreenCtrlShiftCCopiesWithoutWriting(t *testing.T) {
 	s, writes := newTestScreen(t)
 	var copied []string
-	s.SetCopy(func(text string) { copied = append(copied, text) })
+	s.SetCopy(func(text string) tea.Cmd {
+		return func() tea.Msg {
+			copied = append(copied, text)
+			return nil
+		}
+	})
 	s.Feed([]byte("hello world"))
 	s.vt.SelectionPress(6, 0, 1)
 	s.vt.SelectionDrag(10, 0)
@@ -139,6 +157,13 @@ func TestScreenCtrlShiftCCopiesWithoutWriting(t *testing.T) {
 	if !res.Handled {
 		t.Fatal("Ctrl+Shift+C not handled")
 	}
+	if len(copied) != 0 {
+		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
+	}
+	if res.Cmd == nil {
+		t.Fatal("Ctrl+Shift+C returned no clipboard command")
+	}
+	_ = res.Cmd()
 	if len(copied) != 1 || copied[0] != "world" {
 		t.Fatalf("copied=%q want [world]", copied)
 	}
@@ -181,6 +206,52 @@ func TestScreenFocusReportTransitions(t *testing.T) {
 	s.SetTermFocused(false)
 	if got := joined(writes); got != "\x1b[I\x1b[O" {
 		t.Fatalf("focus reports=%q want CSI I then CSI O exactly once each", got)
+	}
+}
+
+func TestScreenCursorTickReportsBlinkPhaseChanges(t *testing.T) {
+	s, _ := newTestScreen(t)
+	s.Feed([]byte("x\x1b[1;1H"))
+	s.SetTermFocused(true)
+	s.resetCursorBlink(time.UnixMilli(0))
+
+	// Reset puts the cursor in the visible activity phase, so the same instant
+	// is already represented and should not invalidate.
+	if s.TickCursor(time.UnixMilli(0)) {
+		t.Fatal("unchanged cursor phase reported a visual change")
+	}
+	if !s.TickCursor(time.UnixMilli(cursorBlinkIdleDelay.Milliseconds())) {
+		t.Fatal("cursor off phase did not report a visual change")
+	}
+	if !s.TickCursor(time.UnixMilli((cursorBlinkIdleDelay + cursorBlinkPeriod).Milliseconds())) {
+		t.Fatal("cursor on phase did not report a visual change")
+	}
+	// Repeating the same phase must be a no-op so floating terminals do not
+	// repaint on unrelated fast ticks.
+	if s.TickCursor(time.UnixMilli((cursorBlinkIdleDelay + cursorBlinkPeriod).Milliseconds() + 100)) {
+		t.Fatal("unchanged on phase reported a visual change")
+	}
+}
+
+func TestScreenCursorActivityStopsBlinkUntilIdle(t *testing.T) {
+	s, _ := newTestScreen(t)
+	s.Feed([]byte("x\x1b[1;1H"))
+	s.SetTermFocused(true)
+	start := time.UnixMilli(0)
+	s.resetCursorBlink(start)
+
+	if !s.TickCursor(start.Add(cursorBlinkIdleDelay)) {
+		t.Fatal("precondition: cursor did not enter its off phase")
+	}
+	activity := start.Add(cursorBlinkIdleDelay + 100*time.Millisecond)
+	if !s.resetCursorBlink(activity) {
+		t.Fatal("activity did not make the hidden cursor immediately visible")
+	}
+	if s.TickCursor(activity.Add(cursorBlinkIdleDelay - time.Millisecond)) {
+		t.Fatal("cursor blinked before the post-activity idle delay elapsed")
+	}
+	if !s.TickCursor(activity.Add(cursorBlinkIdleDelay)) {
+		t.Fatal("cursor did not resume blinking after becoming idle")
 	}
 }
 

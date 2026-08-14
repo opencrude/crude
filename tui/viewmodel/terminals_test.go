@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"runtime"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -75,6 +76,52 @@ func TestDockAndPromoteTerminalUsesWorkspaceDockAndOverlay(t *testing.T) {
 	}
 	if !app.termDock.Contains(info.ID) {
 		t.Fatal("redocked terminal missing from dock")
+	}
+}
+
+func TestFloatingTerminalBlinkInvalidatesRetainedWindow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("in-app PTYs are unix-only")
+	}
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 40
+	mgr := app.termMgr()
+	info, err := mgr.Create(workspace.TerminalCreateOpts{
+		Command: "/bin/cat",
+		CWD:     t.TempDir(),
+		Cols:    40,
+		Rows:    12,
+	})
+	if err != nil {
+		t.Skipf("pty create: %v", err)
+	}
+	t.Cleanup(func() {
+		app.discardTerminalUI()
+		mgr.Close(info.ID)
+	})
+
+	app.promoteTerminal(info.ID)
+	screen := app.termScreens[info.ID]
+	fw := app.overlayHost.Window(ui.TerminalOverlayID(info.ID))
+	if screen == nil || fw == nil {
+		t.Fatal("floating terminal projection missing")
+	}
+	screen.Feed([]byte("x\x1b[1;1H"))
+	screen.SetTermFocused(true)
+
+	// First render performs the floating layout (a resize is cursor activity).
+	fw.Render(app.renderCtx)
+	base := time.Now()
+	app.tickTerminalCursors(base)
+	fw.MarkContentDirty()
+	fw.Render(app.renderCtx)
+	if fw.IsContentDirty() {
+		t.Fatal("window remained dirty after rendering the current cursor phase")
+	}
+
+	app.tickTerminalCursors(base.Add(600 * time.Millisecond))
+	if !fw.IsContentDirty() {
+		t.Fatal("blink phase change did not invalidate floating terminal content")
 	}
 }
 

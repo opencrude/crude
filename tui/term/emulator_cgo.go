@@ -25,28 +25,28 @@ import (
 // Emulator is a libghostty-vt terminal painted into Crude's CellBuffer.
 // All methods on one instance must be serialized (Bubble Tea's update loop).
 type Emulator struct {
-	term       C.GhosttyTerminal
-	render     C.GhosttyRenderState
-	keyEnc     C.GhosttyKeyEncoder
-	keyEv      C.GhosttyKeyEvent
-	mouseEnc   C.GhosttyMouseEncoder
-	mouseEv    C.GhosttyMouseEvent
-	selGesture C.GhosttySelectionGesture
-	selPress   C.GhosttySelectionGestureEvent
-	selDrag    C.GhosttySelectionGestureEvent
-	selRelease C.GhosttySelectionGestureEvent
-	selAnchorX int
-	selAnchorY int
-	handle     cgo.Handle
-	cols       int
-	rows       int
-	title      string
-	pwd        string
-	onTitle    func(string)
-	onReply    func([]byte)
-	onBell     func()
-	onPwd      func(string)
-	onClipboard func(string)
+	term            C.GhosttyTerminal
+	render          C.GhosttyRenderState
+	keyEnc          C.GhosttyKeyEncoder
+	keyEv           C.GhosttyKeyEvent
+	mouseEnc        C.GhosttyMouseEncoder
+	mouseEv         C.GhosttyMouseEvent
+	selGesture      C.GhosttySelectionGesture
+	selPress        C.GhosttySelectionGestureEvent
+	selDrag         C.GhosttySelectionGestureEvent
+	selRelease      C.GhosttySelectionGestureEvent
+	selAnchorX      int
+	selAnchorY      int
+	handle          cgo.Handle
+	cols            int
+	rows            int
+	title           string
+	pwd             string
+	onTitle         func(string)
+	onReply         func([]byte)
+	onBell          func()
+	onPwd           func(string)
+	onClipboard     func(string)
 	closed          bool
 	pendingTitle    string
 	hasPendingTitle bool
@@ -56,14 +56,14 @@ type Emulator struct {
 	pendingClip     string
 	hasPendingClip  bool
 	paintCache      *surface.CellBuffer
-	paintDirty bool
-	paintFG    cell.Color
-	paintBG    cell.Color
-	defColors  bool
-	defFG      cell.Color
-	defBG      cell.Color
-	curFocused bool
-	curBlinkOn bool
+	paintDirty      bool
+	paintFG         cell.Color
+	paintBG         cell.Color
+	defColors       bool
+	defFG           cell.Color
+	defBG           cell.Color
+	curFocused      bool
+	curBlinkOn      bool
 }
 
 // NewEmulator creates an 80x24 libghostty-vt terminal.
@@ -487,12 +487,13 @@ func (e *Emulator) CursorBlink() bool {
 // SetCursorState drives cursor presentation: unfocused panes render a dim
 // hollow-style cursor; focused panes hide the cursor on the off blink phase
 // (only when the terminal's cursor style requests blinking).
-func (e *Emulator) SetCursorState(focused, blinkOn bool) {
+// It reports whether the visible cursor state changed.
+func (e *Emulator) SetCursorState(focused, blinkOn bool) bool {
 	if e == nil {
-		return
+		return false
 	}
 	if e.curFocused == focused && e.curBlinkOn == blinkOn {
-		return
+		return false
 	}
 	blinkRelevant := focused && e.CursorBlink()
 	changed := e.curFocused != focused || (blinkRelevant && e.curBlinkOn != blinkOn)
@@ -501,6 +502,7 @@ func (e *Emulator) SetCursorState(focused, blinkOn bool) {
 	if changed {
 		e.invalidatePaint()
 	}
+	return changed
 }
 
 // ScrollDelta moves the viewport (negative is up).

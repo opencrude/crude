@@ -44,7 +44,7 @@ func (m *App) startNewFileInTree(dir string) {
 			if !msg.Succeeded() {
 				return msg.Err
 			}
-			m.Tree.Model.ProcessWatcherEvent(filetree.FileChangeEvent{
+			m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
 				Type: filetree.FileCreated, Path: full,
 			})
 			m.StatusBar.SetInfo("Created " + value)
@@ -71,7 +71,7 @@ func (m *App) startNewFolderInTree(dir string) {
 			if !msg.Succeeded() {
 				return msg.Err
 			}
-			m.Tree.Model.ProcessWatcherEvent(filetree.FileChangeEvent{
+			m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
 				Type: filetree.FileCreated, Path: full,
 			})
 			// Expand the parent so the new folder is visible.
@@ -104,7 +104,7 @@ func (m *App) startRenameInTree(path string) {
 			if !msg.Succeeded() {
 				return msg.Err
 			}
-			m.Tree.Model.ProcessWatcherEvent(filetree.FileChangeEvent{
+			m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
 				Type: filetree.FileRenamed, OldPath: path, Path: newPath,
 			})
 			// If the file was open in an editor tab, retarget
@@ -360,7 +360,7 @@ func (m *App) confirmTreeDelete() {
 		m.StatusBar.SetError("delete " + filepath.Base(path) + ": " + msg.Err.Error())
 		return
 	}
-	m.Tree.Model.ProcessWatcherEvent(filetree.FileChangeEvent{
+	m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
 		Type: filetree.FileDeleted, Path: path,
 	})
 	// If the deleted file was open in an editor, close the tab.

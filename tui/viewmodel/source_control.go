@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -13,12 +14,22 @@ import (
 	"crude/workspace"
 )
 
+const defaultSourceControlTimeout = 30 * time.Second
+
 type sourceControlResultMsg struct {
 	gen         uint64
 	snapshot    workspace.GitSnapshot
 	err         error
 	notice      string
 	clearCommit bool
+}
+
+func (m *App) sourceControlContext() (context.Context, context.CancelFunc) {
+	timeout := m.sourceControlTimeout
+	if timeout <= 0 {
+		timeout = defaultSourceControlTimeout
+	}
+	return context.WithTimeout(context.Background(), timeout)
 }
 
 func (m *App) refreshSourceControl() tea.Cmd {
@@ -32,7 +43,9 @@ func (m *App) refreshSourceControl() tea.Cmd {
 	gen := m.gitRefreshGen.Add(1)
 	service := m.Git
 	return func() tea.Msg {
-		snapshot, err := service.Snapshot(context.Background())
+		ctx, cancel := m.sourceControlContext()
+		defer cancel()
+		snapshot, err := service.Snapshot(ctx)
 		return sourceControlResultMsg{gen: gen, snapshot: snapshot, err: err}
 	}
 }
@@ -51,7 +64,8 @@ func (m *App) sourceControlMutation(
 	gen := m.gitRefreshGen.Add(1)
 	service := m.Git
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := m.sourceControlContext()
+		defer cancel()
 		if err := mutate(ctx, service); err != nil {
 			return sourceControlResultMsg{gen: gen, err: err}
 		}

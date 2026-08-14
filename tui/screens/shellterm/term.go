@@ -12,6 +12,7 @@ import (
 	"crude/tui/term"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/workspace"
 )
 
 const (
@@ -24,9 +25,12 @@ const (
 	ActionWrite   = "terminal.write"
 )
 
-// cursorBlinkPeriodMS is one blink phase (on or off). The shell repaints on
-// the idle tick, so the observed cadence quantizes to tick arrivals.
-const cursorBlinkPeriodMS = 600
+const (
+	// Cursor activity holds the cursor visibly on for one phase. Once idle,
+	// alternating off/on phases begin at the same cadence.
+	cursorBlinkIdleDelay = 600 * time.Millisecond
+	cursorBlinkPeriod    = 600 * time.Millisecond
+)
 
 // Screen paints one PTY session and routes keys into it.
 type Screen struct {
@@ -40,15 +44,17 @@ type Screen struct {
 	floating bool
 	exited   bool
 	write    func([]byte)
-	resize   func(cols, rows int)
-	copy     func(string)
+	resize   func(cols, rows int) error
+	copy     func(string) tea.Cmd
 	now      func() uint64
 	cols     int
 	rows     int
 
-	focusKnown bool
-	focused    bool
-	selecting  bool
+	focusKnown         bool
+	focused            bool
+	selecting          bool
+	lastCursorActivity time.Time
+	attention          bool
 
 	fedBell bool
 	fedClip string
@@ -75,11 +81,12 @@ func New(th *theme.Theme, id, title string) *Screen {
 	}
 	tokens := ui.NewTokenSet(th)
 	s := &Screen{
-		Base:   ui.NewBase(ui.ComponentID("shellterm/" + id)),
-		th:     th,
-		tokens: tokens,
-		termID: id,
-		title:  title,
+		Base:               ui.NewBase(ui.ComponentID("shellterm/" + id)),
+		th:                 th,
+		tokens:             tokens,
+		termID:             id,
+		title:              title,
+		lastCursorActivity: time.Now(),
 	}
 	s.now = func() uint64 { return uint64(time.Now().UnixNano()) }
 	s.vt, s.initErr = term.NewEmulator()
@@ -126,11 +133,13 @@ func (s *Screen) Title() string {
 	return "Terminal"
 }
 
-func (s *Screen) SetWrite(fn func([]byte))          { s.write = fn }
-func (s *Screen) SetResize(fn func(cols, rows int)) { s.resize = fn }
+func (s *Screen) SetWrite(fn func([]byte))                { s.write = fn }
+func (s *Screen) SetResize(fn func(cols, rows int) error) { s.resize = fn }
 
-// SetCopy receives selection / OSC 52 text destined for the system clipboard.
-func (s *Screen) SetCopy(fn func(string)) { s.copy = fn }
+// SetCopy builds the asynchronous command that writes selected text to the
+// system clipboard. Clipboard subprocess I/O must never run in Handle, which
+// executes on Bubble Tea's update goroutine.
+func (s *Screen) SetCopy(fn func(string) tea.Cmd) { s.copy = fn }
 
 // SetNow overrides the multi-click clock (tests).
 func (s *Screen) SetNow(fn func() uint64) {
@@ -167,14 +176,58 @@ func (s *Screen) SetTermFocused(v bool) {
 	}
 	s.focusKnown = true
 	s.focused = v
+	s.resetCursorBlink(time.Now())
 	if data := s.vt.EncodeFocus(v); len(data) > 0 && s.write != nil {
 		s.write(data)
 	}
 }
 
+// resetCursorBlink records terminal activity and immediately makes the cursor
+// visible. Movement, input, output, resize, and focus changes all restart the
+// idle delay instead of letting an old wall-clock blink phase hide the cursor.
+func (s *Screen) resetCursorBlink(now time.Time) bool {
+	s.lastCursorActivity = now
+	if s.vt == nil || s.exited {
+		return false
+	}
+	return s.vt.SetCursorState(s.focused, true)
+}
+
+// TickCursor advances the cursor's focused blink phase. It returns true only
+// when the visible cursor state changed, allowing retained floating windows to
+// invalidate their cached content without repainting on every application
+// tick. Unfocused terminals keep a steady dim cursor.
+func (s *Screen) TickCursor(now time.Time) bool {
+	if s.vt == nil || s.exited {
+		return false
+	}
+	blinkOn := true
+	if s.focused && s.vt.CursorBlink() {
+		idleFor := now.Sub(s.lastCursorActivity)
+		if idleFor >= cursorBlinkIdleDelay {
+			phase := (idleFor - cursorBlinkIdleDelay) / cursorBlinkPeriod
+			blinkOn = phase%2 == 1
+		}
+	}
+	return s.vt.SetCursorState(s.focused, blinkOn)
+}
+
 func (s *Screen) SetFloating(v bool) { s.floating = v }
 
 func (s *Screen) SetExited(v bool) { s.exited = v }
+
+// SetAttention records an unseen bell for presentation by the owning dock or
+// floating frame. It reports whether the state changed.
+func (s *Screen) SetAttention(v bool) bool {
+	if s.attention == v {
+		return false
+	}
+	s.attention = v
+	return true
+}
+
+// HasAttention reports whether this terminal has an unseen bell.
+func (s *Screen) HasAttention() bool { return s.attention }
 
 func (s *Screen) SetWindowTitle(title string) {
 	if title != "" {
@@ -196,6 +249,9 @@ func (s *Screen) Feed(data []byte) FeedEffects {
 	s.hasClip = false
 	s.fedPwd = false
 	s.vt.Feed(data)
+	if len(data) > 0 {
+		s.resetCursorBlink(time.Now())
+	}
 	return FeedEffects{
 		TitleChanged: s.title != before,
 		Bell:         s.fedBell,
@@ -250,19 +306,19 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	cols, rows := r.W, r.H
-	if cols < 2 {
-		cols = 2
-	}
-	if rows < 1 {
-		rows = 1
-	}
+	cols, rows := workspace.NormalizeTerminalSize(r.W, r.H)
 	if s.vt != nil && (cols != s.cols || rows != s.rows) {
+		// Resize the PTY first. If its ioctl fails, keep the emulator on the
+		// previous grid so the two sides cannot silently diverge; a later
+		// layout retries because s.cols/s.rows were not committed.
+		if s.resize != nil {
+			if err := s.resize(cols, rows); err != nil {
+				return
+			}
+		}
 		s.cols, s.rows = cols, rows
 		s.vt.Resize(cols, rows)
-		if s.resize != nil {
-			s.resize(cols, rows)
-		}
+		s.resetCursorBlink(time.Now())
 	}
 }
 
@@ -280,11 +336,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		return
 	}
 	if s.vt != nil {
-		blinkOn := true
-		if s.focused {
-			blinkOn = (time.Now().UnixMilli()/cursorBlinkPeriodMS)%2 == 0
-		}
-		s.vt.SetCursorState(s.focused, blinkOn)
+		s.TickCursor(time.Now())
 		s.vt.Paint(buf, ox+r.X, oy+r.Y, fg, bg)
 		s.paintScrollbackIndicator(buf, ox+r.X, oy+r.Y)
 	}
@@ -334,6 +386,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	if evt.Kind == ui.EventCustom {
 		if paste, ok := evt.Custom.(tea.PasteMsg); ok && !s.exited && s.vt != nil {
+			s.resetCursorBlink(time.Now())
 			s.vt.ClearSelection()
 			s.vt.ScrollBottom()
 			return s.writeBytes(s.vt.EncodePaste([]byte(paste.Content)))
@@ -350,14 +403,18 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 	if s.exited || s.vt == nil {
 		return ui.EventResult{Handled: true}
 	}
+	s.resetCursorBlink(time.Now())
 	shift := key.Mod.Contains(tea.ModShift)
 	ctrlShift := key.Mod.Contains(tea.ModCtrl) && shift
 	if ctrlShift {
 		switch key.Code {
 		case 'c', 'C':
 			if s.vt.HasSelection() {
-				s.copySelection()
-				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+				return ui.EventResult{
+					Handled:    true,
+					Cmd:        s.copySelection(),
+					Invalidate: ui.InvalidatePaint,
+				}
 			}
 		case 'a', 'A':
 			s.vt.SelectAll()
@@ -404,6 +461,14 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{Handled: true}
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
+	}
+	switch evt.Kind {
+	case ui.EventMouseClick, ui.EventMouseRelease, ui.EventMouseWheel:
+		s.resetCursorBlink(time.Now())
+	case ui.EventMouseMotion:
+		if s.selecting || evt.MouseMotion.Button != tea.MouseNone || s.vt.MouseTracking() {
+			s.resetCursorBlink(time.Now())
+		}
 	}
 	// Shift bypasses application mouse tracking (standard escape hatch so
 	// the user can always select/copy).
@@ -463,10 +528,11 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	case ui.EventMouseRelease:
 		if s.selecting && evt.MouseRelease.Button == tea.MouseLeft {
 			s.selecting = false
+			var cmd tea.Cmd
 			if s.vt.SelectionRelease(cellX, cellY) {
-				s.copySelection()
+				cmd = s.copySelection()
 			}
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 		}
 		return ui.EventResult{Handled: true}
 	}
@@ -477,15 +543,16 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 // (slot hidden, another window claimed the pointer, ...).
 func (s *Screen) CancelPointerCapture() { s.selecting = false }
 
-// copySelection sends the active selection to the system clipboard
-// (copy-on-select, matching mainstream terminal behavior).
-func (s *Screen) copySelection() {
+// copySelection builds the command that sends the active selection to the
+// system clipboard (copy-on-select, matching mainstream terminal behavior).
+func (s *Screen) copySelection() tea.Cmd {
 	if s.vt == nil || s.copy == nil {
-		return
+		return nil
 	}
 	if text := s.vt.SelectionText(); text != "" {
-		s.copy(text)
+		return s.copy(text)
 	}
+	return nil
 }
 
 func mouseShift(evt ui.Event) bool {

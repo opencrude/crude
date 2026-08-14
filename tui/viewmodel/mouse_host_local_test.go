@@ -91,8 +91,8 @@ func TestEditorMouseClickUsesHostLocalCoords(t *testing.T) {
 				t.Fatalf("editor screen not mounted: ok=%v rect=%+v", ok, r)
 			}
 			padL := app.EditorState.Editor.PadL
-			// 5-line file: gutter = 2 (min line digits) + 2 = 4 columns.
-			localX := 6 // 2 cells into the text column
+			gutter := app.EditorState.Editor.GutterWidth()
+			localX := gutter + 2 // 2 cells into the text column
 			localY := 2
 			_, _ = app.dispatchMouseClick(tea.MouseClickMsg{
 				X: r.X + padL + localX, Y: r.Y + localY, Button: tea.MouseLeft,
@@ -100,8 +100,8 @@ func TestEditorMouseClickUsesHostLocalCoords(t *testing.T) {
 			if got := app.EditorState.Editor.CursorLine(); got != localY {
 				t.Fatalf("cursor line = %d, want %d (screen y=%d rect=%+v)", got, localY, r.Y+localY, r)
 			}
-			if got := app.EditorState.Editor.CursorCol(); got != localX-4 {
-				t.Fatalf("cursor col = %d, want %d", got, localX-4)
+			if got := app.EditorState.Editor.CursorCol(); got != localX-gutter {
+				t.Fatalf("cursor col = %d, want %d", got, localX-gutter)
 			}
 		})
 	}
@@ -116,8 +116,9 @@ func TestEditorMouseDragUsesHostLocalCoords(t *testing.T) {
 		t.Fatalf("editor screen not mounted: ok=%v rect=%+v", ok, r)
 	}
 	padL := app.EditorState.Editor.PadL
-	// gutter for the 5-line file is 4; local (6, 1) -> (line 1, col 2).
-	clickX, clickY := r.X+padL+6, r.Y+1
+	gutter := app.EditorState.Editor.GutterWidth()
+	localX := gutter + 2
+	clickX, clickY := r.X+padL+localX, r.Y+1
 	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: clickX, Y: clickY, Button: tea.MouseLeft})
 	_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: clickX, Y: r.Y + 3, Button: tea.MouseLeft})
 

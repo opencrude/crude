@@ -8,6 +8,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/workspace"
 )
 
 const (
@@ -20,6 +21,11 @@ const (
 	dividerH = 1
 	tabsH    = 1
 	chromeH  = dividerH + tabsH
+
+	// MinRenderableHeight guarantees that the divider and tab row never
+	// consume the whole dock: the active terminal always retains the shared
+	// minimum PTY grid height.
+	MinRenderableHeight = chromeH + workspace.MinTerminalRows
 )
 
 // Header action ids (panel-title buttons, VS Code style).
@@ -41,17 +47,18 @@ type headerAction struct {
 // closable tabs, and one active retained shellterm.Screen.
 type Screen struct {
 	ui.Base
-	th        *theme.Theme
-	tokens    *ui.TokenSet
-	tabs      *ui.Tabs
-	split     *ui.SplitModel
-	divider   *ui.SplitDivider
-	order     []string
-	screens   map[string]*shellterm.Screen
-	attention map[string]bool
-	active    string
-	focused   bool
-	tabFocus  bool
+	th         *theme.Theme
+	tokens     *ui.TokenSet
+	tabs       *ui.Tabs
+	split      *ui.SplitModel
+	divider    *ui.SplitDivider
+	order      []string
+	screens    map[string]*shellterm.Screen
+	attention  map[string]bool
+	active     string
+	focused    bool
+	tabFocus   bool
+	renderable bool
 
 	actions     []headerAction
 	hoverAction int // index into actions, -1 = none
@@ -152,6 +159,9 @@ func (s *Screen) OwnsFocus(id ui.ComponentID) bool {
 // PrepareResize records the first-pane size (screen Y of this dock) so the
 // divider drag reports absolute main-axis coordinates.
 func (s *Screen) PrepareResize(first, minMain, minDock int) {
+	if minDock < MinRenderableHeight {
+		minDock = MinRenderableHeight
+	}
 	if s.split != nil {
 		s.split.SetMinSizes(minMain, minDock)
 	}
@@ -262,7 +272,7 @@ func (s *Screen) syncTabs() {
 }
 
 func (s *Screen) Children() []ui.Component {
-	if s.Empty() {
+	if s.Empty() || !s.renderable {
 		return nil
 	}
 	out := []ui.Component{s.divider, s.tabs}
@@ -278,7 +288,10 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	if s.Empty() {
+	s.renderable = !s.Empty() && r.W > 0 && r.H >= MinRenderableHeight
+	if !s.renderable {
+		s.actions = s.actions[:0]
+		s.hoverAction = -1
 		return
 	}
 	s.divider.Layout(ctx, ui.Rect{X: 0, Y: 0, W: r.W, H: dividerH})
@@ -316,7 +329,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		fg = s.tokens.Color(ui.ColorFg)
 	}
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	if s.Empty() {
+	if s.Empty() || !s.renderable {
 		return
 	}
 	for i, a := range s.actions {
@@ -329,6 +342,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if !s.renderable {
+		return ui.EventResult{}
+	}
 	switch evt.Kind {
 	case ui.EventMouseMotion:
 		hover := s.actionAt(ctx.LocalX, ctx.LocalY)

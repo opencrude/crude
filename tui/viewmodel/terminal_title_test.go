@@ -16,9 +16,9 @@ import (
 // synchronous bus.Send from inside Update would hit.
 type noopTeaModel struct{}
 
-func (noopTeaModel) Init() tea.Cmd                            { return nil }
-func (noopTeaModel) Update(tea.Msg) (tea.Model, tea.Cmd)    { return noopTeaModel{}, nil }
-func (noopTeaModel) View() tea.View                         { return tea.View{} }
+func (noopTeaModel) Init() tea.Cmd                       { return nil }
+func (noopTeaModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return noopTeaModel{}, nil }
+func (noopTeaModel) View() tea.View                      { return tea.View{} }
 
 // Regression: an OSC title arriving via TerminalOutputMsg must NOT be
 // published synchronously. Feed runs inside Bubble Tea's update goroutine and
@@ -94,5 +94,84 @@ func TestTerminalTitleOutputDoesNotDeadlockOrDuplicate(t *testing.T) {
 	}
 	if got, _ := mgr.Get(info.ID); got.Title != "crude-title" {
 		t.Fatalf("manager title=%q want %q", got.Title, "crude-title")
+	}
+}
+
+// OSC 52 arrives while Update is handling PTY output. The system clipboard
+// helper may launch wl-copy/xclip, so the write must be returned as a command
+// rather than executed on the update goroutine.
+func TestTerminalClipboardOutputDefersSystemWrite(t *testing.T) {
+	app := newTestApp(t)
+	const id = "osc52"
+	app.ensureTermScreen(id, "cat")
+	t.Cleanup(func() { app.dropTermScreen(id) })
+
+	done := make(chan tea.Cmd, 1)
+	go func() {
+		done <- app.handleTerminalOutput(workspace.TerminalOutputMsg{
+			ID:   id,
+			Data: []byte("\x1b]52;c;aGVsbG8=\x07"),
+		})
+	}()
+
+	select {
+	case cmd := <-done:
+		if cmd == nil {
+			t.Fatal("OSC 52 returned no async clipboard command")
+		}
+		// Deliberately do not execute cmd: the contract under test is that
+		// external clipboard I/O happens only after Update returns it.
+	case <-time.After(5 * time.Second):
+		t.Fatal("OSC 52 blocked the update path on system clipboard I/O")
+	}
+}
+
+// Regression: selecting another workspace from the launcher calls
+// Workspace.SwitchProject on the Bubble Tea update goroutine. That closes all
+// terminals. Close must not synchronously echo TerminalClosedMsg through the
+// event bus: Program.Send waits for the update loop that is already inside
+// CloseAll, freezing the whole TUI.
+func TestWorkspaceSwitchTerminalCloseAllDoesNotReenterEventBus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("in-app PTYs are unix-only")
+	}
+	app := newTestApp(t)
+	mgr := app.Workspace.TermMgr
+	info, err := mgr.Create(workspace.TerminalCreateOpts{
+		Command: "/bin/cat",
+		CWD:     t.TempDir(),
+		Cols:    40,
+		Rows:    10,
+		Title:   "cat",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	bus := workspace.NewEventBus()
+	mgr.SetEventBus(bus)
+	// Never run this program. Its message channel has no receiver, exactly as
+	// when Program.Send is called recursively from the active Update pass.
+	bus.SetProgram(tea.NewProgram(noopTeaModel{}))
+
+	done := make(chan struct{})
+	go func() {
+		mgr.CloseAll()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("CloseAll deadlocked by publishing back into the active update loop")
+	}
+	bus.SetProgram(nil)
+
+	if _, ok := mgr.Get(info.ID); ok {
+		t.Fatal("terminal survived CloseAll")
+	}
+	for _, event := range bus.RecentEvents(16) {
+		if strings.Contains(event, "TerminalClosedMsg") {
+			t.Fatalf("explicit close echoed a lifecycle event: %s", event)
+		}
 	}
 }

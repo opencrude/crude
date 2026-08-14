@@ -10,15 +10,18 @@ preserve or intentionally improve.
 | Command palette | Ctrl+Alt+P | Not Ctrl+P; tmux Shift issue |
 | Find in Files | Ctrl+Alt+F | Not Ctrl+Shift+F under tmux 3.4 |
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
-| Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 3-col activity rail stays |
+| Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 7-col activity rail (outer gutter plus one blank column before the panel left border) stays |
 | Files / Agents / Terminals / Source Control | Ctrl+Shift+E / A / U / G | Activity destinations; rail and panel bodies expose destination-aware context menus |
 | New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks in the workspace terminal dock |
 | Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
 | Composer | Alt+C | |
-| Quit/close | Ctrl+Q | |
-| Cancel/back | Esc | Never Ctrl+C for back |
-| Copy | Ctrl+C | |
-| Paste | Bracketed paste primary; Ctrl+V fallback | |
+| Quit application | Ctrl+Q | |
+| Close active editor tab | Ctrl+W | Uses the dirty-close Save / Don't Save / Cancel prompt; terminal focus keeps the key as PTY input |
+| Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed |
+| Previous / next tab | Ctrl+[ / Ctrl+] | Global outside terminal key ownership, including editor focus |
+| Attach file / choose current folder | Ctrl+O | Opens Attach File from non-terminal shell views; a focused Open Workspace folder picker owns the same key locally and selects its current folder |
+| Copy | Ctrl+C | Copies an active editor, chat-input, or chat-message selection |
+| Paste | Bracketed paste primary; Ctrl+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input |
 
 ## Editor context
 
@@ -31,6 +34,8 @@ preserve or intentionally improve.
 | Indent / outdent selection | Tab / Shift+Tab | Shift+Tab outdents the current line without a selection |
 | Smart Home | Home | Toggles first non-blank column and column 0 |
 | Auto-close pairs | ( [ { " ' | Type-over closers; openers wrap an active selection; Backspace deletes an empty pair |
+| Close tab / contextual back | Ctrl+W / Esc | Both use the dirty-safe close path; Ctrl+W is the explicit Close Tab command |
+| Git line edits / blame | (gutter + status) | `+` added / `~` modified in the gutter; cursor blame in the status bar; Copy blame commit on the editor context menu |
 
 ## File tree context
 
@@ -102,3 +107,8 @@ tab attention until the panel is activated or closed.
 5. Scrollbar colors hard-coded outside theme.
 6. Three chrome systems disagree on padding and close buttons.
 7. Modal=true combined with CloseRoute on some popups (contradictory).
+8. Blocking PanelDeck pointer shielding. **FIXED**: while a blocking panel is
+   active, clicks/wheel/motion/releases outside its slot are consumed before
+   root-Host hit testing. Deck-owned drags may still release outside; stale
+   captures owned by underlying shell controls are canceled. Guarded by
+   `TestPanelDeckViewmodelContractTable/blocking_panel_shields_pointer_outside_deck_rect`.

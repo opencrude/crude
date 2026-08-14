@@ -12,18 +12,22 @@ import (
 
 // Width is the always-on left activity rail in cells:
 //
-//	col 0  active marker
-//	col 1  gap
-//	col 2  view icon
-//	col 3  badge digit
-//	col 4  vertical rule separating the rail from the panel
-const Width = 5
+//	col 0  outer shell gutter
+//	col 1  active marker
+//	col 2  gap
+//	col 3  view icon
+//	col 4  badge digit
+//	col 5  padding before the panel left border
+//	col 6  vertical rule separating the rail from the panel
+const Width = 7
 
 const (
-	markerCol = 0
-	iconCol   = 2
-	badgeCol  = 3
-	ruleCol   = 4
+	outerGutterCol = 0
+	markerCol      = 1
+	iconCol        = 3
+	badgeCol       = 4
+	panelPadCol    = 5
+	ruleCol        = 6
 )
 
 // RowStride is the height of one rail entry. Entries start at the rail's
@@ -203,9 +207,12 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		}
 		if hovered {
 			rowBG = s.tokens.Color(ui.ColorHover)
-			// The hover band stops before the rule so the separator stays
-			// a continuous line down the whole rail.
-			ui.FillRect(buf, 0, 0, ui.Rect{X: left, Y: bandTop, W: ruleCol, H: bandH}, cell.BlankCell(rowBG))
+			// The hover band excludes the outer gutter, the panel padding
+			// column, and the rule so the rail keeps a quiet inset at both
+			// the terminal edge and the panel left border.
+			ui.FillRect(buf, 0, 0, ui.Rect{
+				X: left + markerCol, Y: bandTop, W: panelPadCol - markerCol, H: bandH,
+			}, cell.BlankCell(rowBG))
 		}
 		// The accent marker spans the whole band so active and hovered
 		// entries occupy identical footprints.

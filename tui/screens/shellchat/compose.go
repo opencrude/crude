@@ -35,39 +35,66 @@ type ComposeParams struct {
 }
 
 type composeCtx struct {
-	pad          string
-	rowInnerW    int // InnerW minus external main gutter
-	paneSBW      int
-	nestingLevel int
+	pad       string
+	padW      int
+	rowInnerW int // InnerW minus external main gutter
+	paneSBW   int
 }
 
 func buildComposeCtx(p ComposeParams) composeCtx {
-	th := p.Theme
-	if th == nil {
-		th = theme.DefaultDark()
-	}
-	_ = th
-	innerW := p.InnerW
-	if innerW < 20 {
-		innerW = 20
-	}
-	nestingLevel := p.NestingLevel
+	innerW := max(0, p.InnerW)
+	padW := max(0, p.PadLR)
+	nestingLevel := max(0, p.NestingLevel)
 
 	mainGutter := 0
-	if p.MainSBVisible {
+	if p.MainSBVisible && innerW > 0 {
 		mainGutter = ui.ScrollbarWidth
 	}
 	paneSBW := 0
 	if nestingLevel > 0 {
 		paneSBW = ui.ScrollbarWidth*nestingLevel + nestingLevel
 	}
-	rowInnerW := innerW - mainGutter
+	rowInnerW := max(0, innerW-mainGutter)
 
 	return composeCtx{
-		pad:          strings.Repeat(" ", p.PadLR),
-		rowInnerW:    rowInnerW,
-		paneSBW:      paneSBW,
-		nestingLevel: nestingLevel,
+		pad:       strings.Repeat(" ", padW),
+		padW:      padW,
+		rowInnerW: rowInnerW,
+		paneSBW:   paneSBW,
+	}
+}
+
+type composeRowGeometry struct {
+	contentMax int
+	padRight   int
+	gutter     int
+}
+
+// layoutComposeRow is the single source for both native paint geometry and
+// composed test rows. Every value is bounded by rowInnerW; narrow terminals
+// never gain synthetic minimum-width columns.
+func layoutComposeRow(ctx composeCtx, contentVisW int) composeRowGeometry {
+	contentW := max(0, contentVisW)
+	paneGap := 0
+	if ctx.paneSBW > 0 && ctx.rowInnerW > 0 {
+		paneGap = 1
+	}
+	contentMax := ctx.rowInnerW
+	if ctx.paneSBW > 0 {
+		contentMax = max(0, ctx.rowInnerW-ctx.paneSBW-paneGap)
+	}
+	contentW = min(contentW, contentMax)
+
+	padRight := max(0, contentMax-contentW)
+	gutter := 0
+	if ctx.paneSBW > 0 {
+		remaining := max(0, ctx.rowInnerW-contentW-padRight)
+		gutter = min(paneGap+ui.ScrollbarWidth, remaining)
+	}
+	return composeRowGeometry{
+		contentMax: contentMax,
+		padRight:   padRight,
+		gutter:     gutter,
 	}
 }
 
@@ -84,45 +111,19 @@ type RowLayout struct {
 // LayoutRow mirrors ComposeRow width math without building ANSI strings.
 func LayoutRow(p ComposeParams, contentVisW int, paneInfo chatprojection.PaneLineInfo) RowLayout {
 	ctx := buildComposeCtx(p)
-	paneGap := 0
-	if ctx.paneSBW > 0 {
-		paneGap = 1
-	}
-	maxContentW := ctx.rowInnerW - ctx.paneSBW - paneGap
-	if maxContentW < 10 {
-		maxContentW = 10
-	}
+	geometry := layoutComposeRow(ctx, contentVisW)
 
 	hasBg := false
 	if paneInfo.PaneID != "" && p.HasPaneBg != nil {
 		hasBg = p.HasPaneBg(paneInfo.PaneID)
 	}
 
-	visW := contentVisW
-	if visW > maxContentW {
-		visW = maxContentW
-	}
-
-	padRight := ctx.rowInnerW - ctx.paneSBW - paneGap - visW
-	if padRight < 0 {
-		padRight = 0
-	}
-	gutterCols := 0
-	if ctx.paneSBW > 0 {
-		gutterCols = paneGap + ui.ScrollbarWidth
-	} else {
-		padRight = ctx.rowInnerW - visW
-		if padRight < 0 {
-			padRight = 0
-		}
-	}
-
 	return RowLayout{
-		PadLeft:    p.PadLR,
+		PadLeft:    ctx.padW,
 		RowInnerW:  ctx.rowInnerW,
-		ContentMax: maxContentW,
-		PadRight:   padRight,
-		GutterCols: gutterCols,
+		ContentMax: geometry.contentMax,
+		PadRight:   geometry.padRight,
+		GutterCols: geometry.gutter,
 		HasPaneBg:  hasBg,
 	}
 }
@@ -139,15 +140,6 @@ func ComposeRow(p ComposeParams, vpRow int, globalLine int, rawLine string, pane
 }
 
 func composeOneRow(ctx composeCtx, p ComposeParams, _ int, _ int, line string, paneInfo chatprojection.PaneLineInfo) string {
-	paneGap := 0
-	if ctx.paneSBW > 0 {
-		paneGap = 1
-	}
-	maxContentW := ctx.rowInnerW - ctx.paneSBW - paneGap
-	if maxContentW < 10 {
-		maxContentW = 10
-	}
-
 	isPaneLine := paneInfo.PaneID != ""
 	hasBg := false
 	if isPaneLine && p.HasPaneBg != nil {
@@ -159,37 +151,24 @@ func composeOneRow(ctx composeCtx, p ComposeParams, _ int, _ int, line string, p
 	if hasBg {
 		trimmed = line
 		visW = rendering.VisibleWidth(trimmed)
-		if visW > maxContentW {
-			trimmed = rendering.TruncateLine(trimmed, maxContentW)
-			visW = rendering.VisibleWidth(trimmed)
-		}
 	} else {
 		trimmed = rendering.TrimRightAnsiSpaces(line)
 		visW = rendering.VisibleWidth(trimmed)
-		if visW > maxContentW {
-			trimmed = rendering.TruncateLine(trimmed, maxContentW)
-			visW = rendering.VisibleWidth(trimmed)
-		}
 	}
-	line = trimmed
-
-	if ctx.paneSBW > 0 {
-		padRight := ctx.rowInnerW - ctx.paneSBW - paneGap - visW
-		if padRight < 0 {
-			padRight = 0
+	geometry := layoutComposeRow(ctx, visW)
+	if visW > geometry.contentMax {
+		if geometry.contentMax == 0 {
+			trimmed = ""
+		} else {
+			trimmed = rendering.TruncateLine(trimmed, geometry.contentMax)
 		}
-		// Reserve gap + one gutter column as spaces; native paint fills gutter cells.
-		// The subpane background is applied natively by PaintLineAt (subPaneBg flag),
-		// so no raw SGR background hack is emitted here.
-		inner := line + strings.Repeat(" ", padRight) + strings.Repeat(" ", paneGap+ui.ScrollbarWidth)
-		return ctx.pad + inner + ctx.pad
+		visW = rendering.VisibleWidth(trimmed)
+		geometry = layoutComposeRow(ctx, visW)
 	}
 
-	padRight := ctx.rowInnerW - visW
-	if padRight < 0 {
-		padRight = 0
-	}
-	inner := line + strings.Repeat(" ", padRight)
+	// The gutter reserve is spaces only; native paint fills the final gutter
+	// cell. At narrow widths it shrinks with the row instead of overflowing.
+	inner := trimmed + strings.Repeat(" ", geometry.padRight) + strings.Repeat(" ", geometry.gutter)
 	return ctx.pad + inner + ctx.pad
 }
 
@@ -215,9 +194,9 @@ func Compose(p ComposeParams) []string {
 // NestedGutterX returns the list-local X of the nested pane gutter column.
 func NestedGutterX(p ComposeParams, listW int) int {
 	ctx := buildComposeCtx(p)
-	if ctx.paneSBW <= 0 {
+	if ctx.paneSBW <= 0 || ctx.rowInnerW < ui.ScrollbarWidth || listW <= 0 {
 		return -1
 	}
-	_ = listW
-	return p.PadLR + ctx.rowInnerW - ui.ScrollbarWidth
+	x := ctx.padW + ctx.rowInnerW - ui.ScrollbarWidth
+	return min(x, listW-ui.ScrollbarWidth)
 }

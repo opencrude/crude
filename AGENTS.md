@@ -450,6 +450,42 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 
 ## Pitfalls / Gotchas
 
+### UI-thread I/O and project generations (2026-08-13)
+- **`EventBus.Send` is synchronous.** Never call it from a command that is
+  already executing on Bubble Tea's `Update` goroutine. File mutations return
+  `FileOperationResultMsg` directly, terminal close is command-owned, and OSC
+  title publication runs from a `tea.Cmd`; reintroducing an event echo on any
+  of those paths can deadlock `Program.Send`. Manual tree mutations use
+  `ProcessLocalMutation`; only real background watcher events use
+  `ProcessWatcherEvent`. Backend agent events enter the TUI through its FIFO
+  message pump so session teardown never waits on the active `Update`.
+- **Clipboard and picker I/O never run in `Update`.** Clipboard requests use
+  the App-owned FIFO worker and carry an editor/session/find-replace owner plus
+  generation; image reference persistence is a separate command.
+  Directory reads are cancelable/bounded at the UI boundary and require the
+  picker pointer, open epoch, intent sequence, and request generation; a stale
+  result cannot mutate a reopened picker. Keep test-only backend seams in
+  `async_io_test_helpers_test.go`, not production code. Editor Git blame and
+  line-edit annotation (`AnnotateFile`) also run in a command, keyed by
+  `editorGitGen` plus `workspaceSwitchGen`.
+- **A workspace switch is an explicit generation boundary.** Stop the old tree
+  watcher first; cancel search without replacing its monotonic ID service;
+  invalidate git/launcher/editor-git/LSP callbacks and request contexts; close every
+  distinct editor watcher and project-bound overlay; clear the old input draft;
+  then rebuild managers and projections. Validate the target directory and DB
+  before teardown, apply its effective theme before construction, and build
+  the root tree plus recursive watcher asynchronously with generation checks.
+  Terminal IDs are process-wide monotonic so queued old-manager messages cannot
+  target a replacement PTY.
+- **Blocking PanelDecks shield pointer input as well as keys.**
+  `blockingDeckShieldsPointer` consumes coordinates outside the deck before
+  root-Host hit testing, cancels stale underlying captures, and permits only a
+  deck-owned drag to release outside its slot.
+- **PTY input is bounded and non-blocking.** `ptyWriter.Write` either queues the
+  complete payload or returns `ErrTerminalBackpressure`; never silently drop
+  bytes. `NormalizeTerminalSize` is the shared emulator/PTY 8×2 floor, and a
+  failed PTY resize must not commit the emulator grid.
+
 ### Editor motion
 - **`Editor.moveWordLeft` must keep climbing across blank lines**: word-left
   from a line start must skip whitespace-only lines and land on the previous
@@ -531,7 +567,9 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   highlight — hover background and the `▌` accent marker — covers the full
   band. A one-row marker next to a multi-row hover box reads as
   misalignment. `SetPanelOpen(false)` drops the marker when the sidebar is
-  collapsed so the rail shows its toggle state.
+  collapsed so the rail shows its toggle state. The rail keeps one blank
+  column before its panel rule so file-tree / Agents / Terminals / Git
+  left borders are not flush against the icons.
 
 ### Sidebar list rows: resource vs command
 `ui.ListItem.Command` marks a button-like row (e.g. "New Terminal").

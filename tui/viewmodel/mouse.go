@@ -107,6 +107,30 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	return regionChat
 }
 
+// blockingDeckShieldsPointer keeps a modal session panel from routing raw
+// screen coordinates through the root Host into controls behind its slot.
+// A drag that began inside the deck may finish outside; any capture owned by
+// another shell component is stale once a blocking panel takes precedence.
+func (m *App) blockingDeckShieldsPointer(x, y int, preserveDeckCapture bool) bool {
+	if !m.sessionDeckBlocking() {
+		return false
+	}
+	if m.rootHost != nil {
+		captured, _, ok := m.rootHost.CapturedPointer()
+		if ok {
+			deckCaptured := m.shell != nil && m.shell.deck != nil && captured == m.shell.deck.ID()
+			if preserveDeckCapture && deckCaptured {
+				return false
+			}
+			m.rootHost.CancelPointerCapture()
+			if preserveDeckCapture {
+				return true
+			}
+		}
+	}
+	return !m.sessionDeckRect.Contains(x, y)
+}
+
 func (m *App) routeEditorMouse(msg tea.Msg) tea.Cmd {
 	if m.rootHost == nil {
 		return nil
@@ -247,6 +271,9 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
+	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
+		return m, nil
+	}
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 
@@ -347,6 +374,9 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
+	if m.blockingDeckShieldsPointer(msg.X, msg.Y, false) {
+		return m, nil
+	}
 	region := m.classifyShellRegion(msg.X, msg.Y, true)
 
 	switch region {
@@ -382,6 +412,10 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
+	if m.rootHost != nil && m.rootHost.HasPointerCapture() &&
+		m.blockingDeckShieldsPointer(mouse.X, mouse.Y, true) {
+		return m, tea.Batch(cmds...)
+	}
 
 	// Root-host pointer capture: drags (chat selection, scrollbar thumbs,
 	// split dividers, input selection, deck gutters) continue outside their
@@ -411,6 +445,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(cmds...)
 			}
 		}
+	}
+	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, true) {
+		return m, tea.Batch(cmds...)
 	}
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, true)
@@ -506,6 +543,9 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 				}
 			}
 		}
+	}
+	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, true) {
+		return m, tea.Batch(cmds...)
 	}
 
 	// Root-host capture release: ends drags (chat selection, scrollbar,
@@ -747,6 +787,9 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 			// Right-click on a floating window: do nothing for now.
 			return m, nil
 		}
+	}
+	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
+		return m, nil
 	}
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)

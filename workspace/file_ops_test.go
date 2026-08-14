@@ -86,18 +86,89 @@ func TestFileOpsService_CreateFile_EmptyPath(t *testing.T) {
 	}
 }
 
-func TestFileOpsService_CreateFile_PublishesEvent(t *testing.T) {
-	dir := t.TempDir()
-	bus := NewEventBus()
-	svc := NewFileOpsService(dir, bus, testLogger{})
+func TestFileOpsService_ReturnsResultsWithoutPublishing(t *testing.T) {
+	tests := []struct {
+		name        string
+		wantSuccess bool
+		run         func(t *testing.T, svc *FileOpsService, dir string) FileOperationResultMsg
+	}{
+		{
+			name:        "create file",
+			wantSuccess: true,
+			run: func(t *testing.T, svc *FileOpsService, dir string) FileOperationResultMsg {
+				return svc.CreateFile(filepath.Join(dir, "created.txt"))
+			},
+		},
+		{
+			name:        "create folder",
+			wantSuccess: true,
+			run: func(t *testing.T, svc *FileOpsService, dir string) FileOperationResultMsg {
+				return svc.CreateFolder(filepath.Join(dir, "created"))
+			},
+		},
+		{
+			name:        "rename",
+			wantSuccess: true,
+			run: func(t *testing.T, svc *FileOpsService, dir string) FileOperationResultMsg {
+				t.Helper()
+				oldPath := filepath.Join(dir, "old.txt")
+				if err := os.WriteFile(oldPath, []byte("old"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return svc.RenamePath(oldPath, filepath.Join(dir, "new.txt"))
+			},
+		},
+		{
+			name:        "delete",
+			wantSuccess: true,
+			run: func(t *testing.T, svc *FileOpsService, dir string) FileOperationResultMsg {
+				t.Helper()
+				path := filepath.Join(dir, "delete.txt")
+				if err := os.WriteFile(path, []byte("delete"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return svc.DeletePath(path)
+			},
+		},
+		{
+			name:        "workspace edit",
+			wantSuccess: true,
+			run: func(t *testing.T, svc *FileOpsService, dir string) FileOperationResultMsg {
+				t.Helper()
+				path := filepath.Join(dir, "edit.txt")
+				if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return svc.ApplyWorkspaceEdit([]FileEdit{{
+					Path:       path,
+					OldContent: "old",
+					NewContent: "new",
+				}})
+			},
+		},
+		{
+			name:        "validation failure",
+			wantSuccess: false,
+			run: func(t *testing.T, svc *FileOpsService, _ string) FileOperationResultMsg {
+				return svc.CreateFile("relative.txt")
+			},
+		},
+	}
 
-	path := filepath.Join(dir, "event.txt")
-	_ = svc.CreateFile(path)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bus := NewEventBus()
+			svc := NewFileOpsService(dir, bus, testLogger{})
 
-	// Check that an event was published.
-	events := bus.RecentEvents(1)
-	if len(events) == 0 {
-		t.Fatal("no event published for CreateFile")
+			msg := tc.run(t, svc, dir)
+			if msg.Succeeded() != tc.wantSuccess {
+				t.Fatalf("Succeeded()=%v, want %v (error=%v)", msg.Succeeded(), tc.wantSuccess, msg.Err)
+			}
+			if events := bus.RecentEvents(1); len(events) != 0 {
+				t.Fatalf("file operation echoed a returned result through EventBus: %v", events)
+			}
+		})
 	}
 }
 
@@ -544,19 +615,20 @@ func TestWorkspace_ApplyWorkspaceEdit(t *testing.T) {
 	}
 }
 
-func TestWorkspace_FileOps_PublishesThroughEventBus(t *testing.T) {
+func TestWorkspace_FileOps_ReturnsResultWithoutEventBusEcho(t *testing.T) {
 	dir := t.TempDir()
 	ws := testWorkspace(t, dir)
 	bus := NewEventBus()
 	ws.SetEventBus(bus)
 
 	path := filepath.Join(dir, "event-test.txt")
-	_ = ws.CreateFile(path)
+	msg := ws.CreateFile(path)
+	if !msg.Succeeded() {
+		t.Fatalf("CreateFile failed: %v", msg.Err)
+	}
 
-	// Verify event was published.
-	events := bus.RecentEvents(1)
-	if len(events) == 0 {
-		t.Fatal("no event published through EventBus")
+	if events := bus.RecentEvents(1); len(events) != 0 {
+		t.Fatalf("workspace echoed a returned file result through EventBus: %v", events)
 	}
 }
 

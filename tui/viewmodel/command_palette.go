@@ -604,8 +604,11 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 				if m.StatusBar != nil {
 					m.StatusBar.SetError(fmt.Sprintf("Save failed: %v", err))
 				}
-			} else if m.StatusBar != nil {
-				m.StatusBar.SetInfo("Saved")
+			} else {
+				if m.StatusBar != nil {
+					m.StatusBar.SetInfo("Saved")
+				}
+				cmds = append(cmds, m.refreshEditorGitCmd())
 			}
 		} else if m.StatusBar != nil {
 			m.StatusBar.SetInfo("No file open to save")

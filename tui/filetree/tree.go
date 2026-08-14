@@ -1021,17 +1021,7 @@ func (m *FileTreeModel) resortAll(node *TreeNode) {
 //   - FileRenamed: removes the old entry and adds the new one.
 func (m *FileTreeModel) ProcessWatcherEvent(evt FileChangeEvent) {
 	m.mu.Lock()
-
-	switch evt.Type {
-	case FileCreated:
-		m.handleFileCreated(evt.Path)
-	case FileDeleted:
-		m.handleFileDeleted(evt.Path)
-	case FileModified:
-		m.handleFileModified(evt.Path)
-	case FileRenamed:
-		m.handleFileRenamed(evt.OldPath, evt.Path)
-	}
+	m.applyMutationLocked(evt)
 	onFileChanged := m.onFileChanged
 	m.mu.Unlock()
 
@@ -1052,6 +1042,33 @@ func (m *FileTreeModel) ProcessWatcherEvent(evt FileChangeEvent) {
 		if changeType > 0 {
 			onFileChanged(evt.Path, changeType)
 		}
+	}
+}
+
+// ApplyLocalMutation immediately updates the tree after a filesystem mutation
+// initiated by the TUI. Unlike ProcessWatcherEvent, it does not invoke the
+// external watcher callback: local mutations run inside Bubble Tea Update, so
+// synchronously publishing back through EventBus would re-enter that same
+// update loop. A later fsnotify event remains responsible for notifying
+// external consumers such as the LSP.
+func (m *FileTreeModel) ApplyLocalMutation(evt FileChangeEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.applyMutationLocked(evt)
+}
+
+// applyMutationLocked applies the tree-state portion shared by local
+// mutations and background watcher events. The caller must hold m.mu.
+func (m *FileTreeModel) applyMutationLocked(evt FileChangeEvent) {
+	switch evt.Type {
+	case FileCreated:
+		m.handleFileCreated(evt.Path)
+	case FileDeleted:
+		m.handleFileDeleted(evt.Path)
+	case FileModified:
+		m.handleFileModified(evt.Path)
+	case FileRenamed:
+		m.handleFileRenamed(evt.OldPath, evt.Path)
 	}
 }
 
