@@ -104,11 +104,10 @@ func (e *Emulator) rebuildPaintCache(fg, bg cell.Color) {
 			}
 			selected := bool(rowSel.has) && x >= int(rowSel.start_x) && x <= int(rowSel.end_x)
 			if selected {
-				c.Attr |= cell.AttrReverse
-				c.FG, c.BG = c.BG, c.FG
+				c.Attr ^= cell.AttrReverse
 			}
 			if showCursor(bool(curVis), bool(curInView), x, y, int(curX), int(curY)) && e.cursorPhaseVisible() {
-				c = applyCursorStyle(c, curStyle, selected, e.curFocused)
+				c = applyCursorStyle(c, curStyle, e.curFocused)
 			}
 			e.paintCache.Set(x, y, c)
 			if c.Width == 2 {
@@ -149,7 +148,7 @@ func (e *Emulator) cursorPhaseVisible() bool {
 // invert the cell, bar/underline styles underline it (the closest cell-level
 // approximation of a thin caret). Unfocused panes dim the cursor cell — the
 // cell-grid stand-in for a hollow outline.
-func applyCursorStyle(c cell.Cell, style C.GhosttyRenderStateCursorVisualStyle, selected, focused bool) cell.Cell {
+func applyCursorStyle(c cell.Cell, style C.GhosttyRenderStateCursorVisualStyle, focused bool) cell.Cell {
 	switch style {
 	case C.GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR,
 		C.GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE:
@@ -159,15 +158,11 @@ func applyCursorStyle(c cell.Cell, style C.GhosttyRenderStateCursorVisualStyle, 
 		}
 		return c
 	default:
-		if selected {
-			// The selection already inverted the cell; invert back so the
-			// cursor stays visible inside a selection.
-			c.Attr &^= cell.AttrReverse
-			c.FG, c.BG = c.BG, c.FG
-		} else {
-			c.Attr |= cell.AttrReverse
-			c.FG, c.BG = c.BG, c.FG
-		}
+		// Toggle reverse relative to the cell's existing application or
+		// selection style. Do not also swap FG/BG: AttrReverse emits SGR 7
+		// later, and pre-swapping would make the output pipeline reverse the
+		// colors twice, leaving a blank cursor visually invisible.
+		c.Attr ^= cell.AttrReverse
 		if !focused {
 			c.Attr |= cell.AttrDim
 		}
@@ -204,7 +199,6 @@ func paintCell(cells C.GhosttyRenderStateRowCells, utf8 []byte, defFG, defBG cel
 	}
 	if snap.style.inverse {
 		attr |= cell.AttrReverse
-		fg, bg = bg, fg
 	}
 
 	enc := C.crude_cell_utf8(cells, (*C.uint8_t)(unsafe.Pointer(&utf8[0])), C.size_t(len(utf8)))

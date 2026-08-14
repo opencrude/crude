@@ -128,6 +128,12 @@ type Editor struct {
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
 
+	// gitEdits/gitBlame are presentation copies of the workspace Git
+	// annotation. Index 0 is editor line 0.
+	gitEdits []GitLineKind
+	gitBlame []GitBlameLine
+	gitLoaded bool
+
 	// formatOnSave, when true, runs the file's language-specific formatter
 	// (gofmt/rustfmt/black) right after Save() succeeds. Set via
 	// SetFormatOnSave(). Defaults to false to keep save behavior predictable

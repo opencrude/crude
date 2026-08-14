@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,6 +53,44 @@ func TestReferenceStore_CreateReference(t *testing.T) {
 	// KindPastedText keeps Content in memory (no file write)
 	if ref.Content != "hello world" {
 		t.Errorf("Content: got %q, want 'hello world'", ref.Content)
+	}
+}
+
+func TestReferenceStore_CreateReferenceConcurrent(t *testing.T) {
+	store := NewReferenceStore("sess1", t.TempDir(), nil)
+	const count = 32
+	var wg sync.WaitGroup
+	errs := make(chan error, count)
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := store.CreateReference(sessiondb.CreateRequest{
+				Kind:    sessiondb.KindPastedImage,
+				Mime:    "image/png",
+				Content: base64.StdEncoding.EncodeToString([]byte("image")),
+			})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	refs := store.ListReferences()
+	if len(refs) != count {
+		t.Fatalf("references=%d, want %d", len(refs), count)
+	}
+	labels := make(map[string]struct{}, count)
+	for _, ref := range refs {
+		if _, exists := labels[ref.Label]; exists {
+			t.Fatalf("duplicate concurrent label %q", ref.Label)
+		}
+		labels[ref.Label] = struct{}{}
 	}
 }
 

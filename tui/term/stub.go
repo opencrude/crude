@@ -45,7 +45,7 @@ func (e *Emulator) ScrollBottom()                           {}
 func (e *Emulator) Scrollbar() (offset, total, visible int) { return 0, 0, 0 }
 func (e *Emulator) SetDefaultColors(cell.Color, cell.Color) {}
 func (e *Emulator) CursorBlink() bool                       { return false }
-func (e *Emulator) SetCursorState(bool, bool)               {}
+func (e *Emulator) SetCursorState(bool, bool) bool          { return false }
 func (e *Emulator) SelectionPress(int, int, uint64) bool    { return false }
 func (e *Emulator) SelectionDrag(int, int) bool             { return false }
 func (e *Emulator) SelectionRelease(int, int) bool          { return false }

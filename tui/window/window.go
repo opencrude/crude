@@ -234,7 +234,7 @@ func (w *Window) Layout() TabLayout {
 }
 
 func (w *Window) SetWidth(width int) {
-	w.width = width
+	w.width = max(0, width)
 }
 
 func (w *Window) SetHint(h string) {
@@ -298,7 +298,7 @@ func (w *Window) HitTest(x, y int) TabHitResult {
 }
 
 func (w *Window) hitTestHorizontal(x, y int) TabHitResult {
-	if y != 0 {
+	if y != 0 || x < 0 || x >= w.width {
 		return TabHitResult{TabIndex: -1}
 	}
 
@@ -311,7 +311,8 @@ func (w *Window) hitTestHorizontal(x, y int) TabHitResult {
 
 		if x >= tabStart && x < tabEnd {
 			closeStart := tabEnd - closeBtnWidth - tabPadRight
-			if x >= closeStart && w.tabs[i].Closable {
+			closeFits := tw >= closeBtnWidth+tabPadRight
+			if closeFits && x >= closeStart && w.tabs[i].Closable {
 				return TabHitResult{TabIndex: i, IsClose: true}
 			}
 			return TabHitResult{TabIndex: i, IsClose: false}
@@ -328,9 +329,9 @@ func (w *Window) computeTabWidths() []int {
 		return nil
 	}
 
-	available := w.width - tabBarPadLeft - tabBarPadRight
-	if available < 1 {
-		available = 1
+	available := max(0, w.width-tabBarPadLeft-tabBarPadRight)
+	if available == 0 {
+		return make([]int, n)
 	}
 
 	idealWidths := make([]int, n)
@@ -359,16 +360,17 @@ func (w *Window) computeTabWidths() []int {
 		totalIdeal += ideal
 	}
 
-	if totalIdeal+n*tabGap-tabGap <= available {
+	if totalIdeal+(n-1)*tabGap <= available {
 		return idealWidths
 	}
 
-	perTab := available / n
+	// Reserve inter-tab gaps first, then distribute only columns that really
+	// exist. tabMinWidth is the preferred readable size, not permission to
+	// overflow a narrow terminal.
+	tabSpace := max(0, available-(n-1)*tabGap)
+	perTab := tabSpace / n
 	if perTab > tabMaxWidth {
 		perTab = tabMaxWidth
-	}
-	if perTab < tabMinWidth {
-		perTab = tabMinWidth
 	}
 
 	result := make([]int, n)
@@ -377,7 +379,7 @@ func (w *Window) computeTabWidths() []int {
 		result[i] = perTab
 		total += perTab
 	}
-	remaining := available - total - (n-1)*tabGap
+	remaining := tabSpace - total
 	for remaining > 0 {
 		for i := range n {
 			if remaining <= 0 {

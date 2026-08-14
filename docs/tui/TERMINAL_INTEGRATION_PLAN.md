@@ -62,8 +62,10 @@ fixed and visually verified with `scripts/tuishot.sh`.
   `TerminalPlacement` (`TerminalDocked`, `TerminalFloating`).
 - `workspace/terminal_pty_unix.go` uses `github.com/creack/pty` and starts the
   user's login shell. Windows currently returns an unsupported error.
-- The manager publishes `TerminalOutputMsg`, `TerminalExitedMsg`,
-  `TerminalClosedMsg`, and `TerminalTitleMsg` through the workspace event bus.
+- The manager publishes `TerminalOutputMsg`, `TerminalExitedMsg`, and
+  `TerminalTitleMsg` through the workspace event bus. Explicit close is
+  command-owned and is not echoed through the bus, because workspace switches
+  and close actions may already be running on Bubble Tea's update goroutine.
 - `workspace/host.go` sets in-app child environment values including
   `TERM=xterm-ghostty`, `TERM_PROGRAM=ghostty`, and the pinned Ghostty version.
 

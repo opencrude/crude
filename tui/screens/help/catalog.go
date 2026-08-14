@@ -59,7 +59,7 @@ func UsageTopics() []Topic {
 		{
 			ID:    "chat",
 			Title: "Chat",
-			Body:  "Type in the input at the bottom and press Enter to send. Alt+Enter inserts a newline. Type / to pick a slash command, or @ to attach a file. The agent can edit the project; tool confirmations and questions appear in the dock above the input, not as chat spam.",
+			Body:  "Type in the input at the bottom and press Enter to send. Alt+Enter inserts a newline. Type / to pick a slash command, use @ to reference a file, or press Ctrl+O to open Attach File from any non-terminal view. Ctrl+C copies an active input or chat-message selection. The agent can edit the project; tool confirmations and questions appear in the dock above the input, not as chat spam.",
 		},
 		{
 			ID:    "palette",
@@ -84,7 +84,7 @@ func UsageTopics() []Topic {
 		{
 			ID:    "editor",
 			Title: "Editor",
-			Body:  "Open files from the tree or Find in Files. Diagnostics, go-to-definition, references, and outline use the workspace language server when LSP is enabled in settings. Find/replace is an overlay on the current buffer. Find in Files and Replace in Files are sibling project windows (Ctrl+Alt+F / Ctrl+Alt+H). Editing is IDE-grade: Enter auto-indents, brackets and quotes auto-close and wrap selections, Tab/Shift+Tab indent or outdent selected lines, Alt+Up/Down moves lines, Ctrl+Shift+D duplicates, Ctrl+Shift+K deletes, and Ctrl+/ toggles comments — each is a single undo step.",
+			Body:  "Open files from the tree or Find in Files. Ctrl+[ and Ctrl+] switch tabs globally. Ctrl+W closes the active editor tab; Esc is contextual Back and also closes the tab after transient editor UI is dismissed. Unsaved changes always open the Save / Don't Save / Cancel prompt. Diagnostics, go-to-definition, references, and outline use the workspace language server when LSP is enabled in settings. Find/replace is an overlay on the current buffer. Find in Files and Replace in Files are sibling project windows (Ctrl+Alt+F / Ctrl+Alt+H). Editing is IDE-grade: Enter auto-indents, brackets and quotes auto-close and wrap selections, Tab/Shift+Tab indent or outdent selected lines, Alt+Up/Down moves lines, Ctrl+Shift+D duplicates, Ctrl+Shift+K deletes, and Ctrl+/ toggles comments — each is a single undo step.",
 		},
 		{
 			ID:    "files",

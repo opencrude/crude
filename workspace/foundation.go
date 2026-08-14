@@ -77,6 +77,7 @@ const (
 // through the EventBus. The handler in update.go applies the diagnostics to
 // the file tree and active editor on the main goroutine.
 type LSPDiagnosticsMsg struct {
+	Generation  uint64
 	FilePath    string
 	Diagnostics []LSPDiagnostic
 }
@@ -193,8 +194,6 @@ func msgDetail(msg tea.Msg) string {
 		return fmt.Sprintf("id=%s bytes=%d", m.ID, len(m.Data))
 	case TerminalExitedMsg:
 		return fmt.Sprintf("id=%s code=%d", m.ID, m.ExitCode)
-	case TerminalClosedMsg:
-		return fmt.Sprintf("id=%s", m.ID)
 	case TerminalTitleMsg:
 		return fmt.Sprintf("id=%s title=%s", m.ID, m.Title)
 	default:

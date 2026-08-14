@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,10 +28,20 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	// Global keybindings from the action registry — checked first,
-	// before focus routing. These must work everywhere including the
-	// launcher/welcome screen.
+	// before focus routing. These work across shell views, while terminal
+	// key ownership keeps the explicit passthrough exceptions below.
 	if m.actionRegistry != nil {
 		if match := m.actionRegistry.MatchGlobal(msg); match != nil {
+			// Ctrl+O is also the folder picker's explicit "open this folder"
+			// action. A focused modal owns that local contract; treating it as
+			// global "attach file" would replace the picker underneath it.
+			if m.windowManager != nil {
+				if fw := m.windowManager.Focused(); fw != nil &&
+					fw.ID == string(ui.OverlayFilePicker) &&
+					match.ID == "file.attach" {
+					match = nil
+				}
+			}
 			if m.terminalOwnsKeys() {
 				switch match.ID {
 				case "palette.open", "terminal.new", "terminal.toggle":
@@ -57,6 +66,22 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					return m.toggleMemoryBrowser()
 				case "help.show":
 					return m.toggleHelp()
+				case "file.attach":
+					m.openFilePicker()
+					return m, nil
+				case "file.close":
+					m.closeEditorTab()
+					return m, nil
+				case "tabs.next", "tabs.previous":
+					if m.Win != nil && m.Win.IsOpen() && m.Win.TabCount() > 0 {
+						if match.ID == "tabs.next" {
+							m.Win.Next()
+						} else {
+							m.Win.Prev()
+						}
+						m.handleTabSwitch()
+					}
+					return m, nil
 				case "app.quit":
 					return m.handleQuit()
 				case "view.toggle.sidebar":
@@ -82,6 +107,20 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// A chat-message selection owns Ctrl+C before keyboard activity tears down
+	// pointer capture. CancelPointerCapture clears the selection, so reading it
+	// afterward would silently turn copy into a no-op.
+	if msg.String() == "ctrl+c" && m.chatScreen != nil && m.chatScreen.HasActiveSelection() {
+		selected := m.chatScreen.SelectedText()
+		if m.rootHost != nil && m.rootHost.HasPointerCapture() {
+			m.rootHost.CancelPointerCapture()
+		}
+		m.chatScreen.ClearSelection()
+		if selected != "" {
+			return m, rendering.CopyToClipboardCmd(selected)
+		}
+		return m, nil
+	}
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 		m.rootHost.CancelPointerCapture()
 	}
@@ -130,8 +169,16 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.launcherScreen == nil || m.rootHost == nil {
+	if !m.focusLauncherHostControl() {
 		return m, nil
+	}
+	res := m.rootHost.Handle(msg)
+	return m, res.Cmd
+}
+
+func (m *App) focusLauncherHostControl() bool {
+	if m.launcherScreen == nil || m.rootHost == nil {
+		return false
 	}
 	switch m.rootHost.Focused() {
 	case launcher.ScreenID, launcher.HeroID, launcher.NewWorkspaceID,
@@ -140,8 +187,7 @@ func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	default:
 		m.rootHost.Focus(launcher.ScreenID)
 	}
-	res := m.rootHost.Handle(msg)
-	return m, res.Cmd
+	return true
 }
 
 func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -151,8 +197,17 @@ func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.rootHost == nil {
+	if !m.focusTreeHostControl() {
 		return m, nil
+	}
+	res := m.rootHost.Handle(msg)
+	cmd := m.handleHostAction(res.Action)
+	return m, tea.Batch(res.Cmd, cmd)
+}
+
+func (m *App) focusTreeHostControl() bool {
+	if m.rootHost == nil {
+		return false
 	}
 	if m.activityView == activityFiles {
 		if m.rootHost.Focused() != shelltree.FilterID {
@@ -167,9 +222,7 @@ func (m *App) dispatchTreeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.rootHost.Focus(activitylist.ListID)
 		}
 	}
-	res := m.rootHost.Handle(msg)
-	cmd := m.handleHostAction(res.Action)
-	return m, tea.Batch(res.Cmd, cmd)
+	return true
 }
 
 // treeFilterBlocksEscPop reports whether Esc should clear the tree filter
@@ -194,6 +247,12 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if msg.String() == "ctrl+v" {
+		// Editor.HandleEvent's standalone Ctrl+V support intentionally returns
+		// a generic PasteMsg. At the viewmodel boundary capture the initiating
+		// editor instead, so a delayed clipboard read cannot follow focus.
+		return m, m.beginEditorClipboardPaste(m.EditorState.Editor)
+	}
 	// Editor context actions from the registry (file.save, edit.undo,
 	// edit.redo, edit.find, edit.replace). Dispatched here before the
 	// legacy handleKey path so the same bindings that power the
@@ -208,10 +267,12 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					if m.StatusBar != nil {
 						m.StatusBar.SetError(fmt.Sprintf("Save failed: %v", err))
 					}
-				} else if m.StatusBar != nil {
+					return m, nil
+				}
+				if m.StatusBar != nil {
 					m.StatusBar.SetInfo("Saved")
 				}
-				return m, nil
+				return m, m.refreshEditorGitCmd()
 			case "edit.undo":
 				m.EditorState.Editor.Undo()
 				return m, nil
@@ -241,11 +302,9 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.closeCompletionPopup()
 			return m, nil
 		}
-		// Esc cancels pending close and closes the tab. If the user
-		// just dismissed a dirty-prompt with Cancel, the next Esc
-		// closes the tab directly — no loop because the prompt is
-		// already gone. (The 3-button prompt handles Save/Don't Save/
-		// Cancel cleanly.)
+		// Esc is contextual "back" in the editor and closes the active tab
+		// after transient editor UI has been dismissed. Ctrl+W reaches this
+		// same dirty-safe close path through the global action registry.
 		m.closeEditorTab()
 		return m, nil
 	}
@@ -557,10 +616,6 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m, nil
 	}
 
-	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
-		return m.dispatchEditorKey(msg)
-	}
-
 	canType := false
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
@@ -612,12 +667,10 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 // picker, the composer, the context menu's text field, etc. — which
 // is why "Ctrl+V doesn't work in settings" was the user's #1 pain.
 //
-// The new dispatch mirrors dispatchKeyPress: it asks the focus
-// resolver "where am I?", and routes to the widget that owns the
-// focus. Each branch falls through to the next if it doesn't own
-// the focus; the very last branch (chat input) is the catch-all for
-// "user is typing in the composer" which is the original behaviour
-// we want to preserve.
+// The dispatch mirrors dispatchKeyPress: it asks the focus resolver
+// "where am I?" and routes only to that owner. Root-host views return
+// even when their focused control declines the paste; only FocusInput
+// (or no explicit owner) reaches the chat input.
 func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
@@ -633,6 +686,33 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 			cmd := m.EditorState.Editor.HandleEvent(msg)
 			return m, cmd
 		}
+
+	case FocusLauncher:
+		if !m.focusLauncherHostControl() {
+			return m, nil
+		}
+		res := m.rootHost.Handle(msg)
+		return m, res.Cmd
+
+	case FocusTree:
+		if !m.focusTreeHostControl() {
+			return m, nil
+		}
+		res := m.rootHost.Handle(msg)
+		cmd := m.handleHostAction(res.Action)
+		return m, tea.Batch(res.Cmd, cmd)
+
+	case FocusTabBar:
+		if m.rootHost == nil {
+			return m, nil
+		}
+		if m.tabBarVisible() && m.tabScreen != nil {
+			m.syncTabBarHost()
+			m.rootHost.Focus(shelltabs.TabsID)
+			res := m.rootHost.Handle(msg)
+			return m, m.handleTabBarHostResult(res)
+		}
+		return m, nil
 
 	case FocusFloatingWindow:
 		// A popup is focused. Route to the focused window's
@@ -651,8 +731,9 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
-	// Default / FocusInput / FocusLauncher / FocusTree / FocusTabBar /
-	// FocusNone → route to chat input (the original behaviour).
+	// FocusInput / FocusNone → route to chat input. Other root-host focus
+	// owners return above even when they do not consume the paste, so a paste
+	// can never leak into a hidden chat input.
 	canType := false
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
@@ -712,37 +793,42 @@ func (m *App) isEditorMsg(msg any) bool {
 // lspDefinitionResultMsg is the response to a "go to definition" request.
 // locations is empty when the symbol has no definition or the request failed.
 type lspDefinitionResultMsg struct {
-	filePath  string
-	locations []editor.LSPLocation
+	generation uint64
+	filePath   string
+	locations  []editor.LSPLocation
 }
 
 // lspReferencesResultMsg is the response to a "find references" request.
 type lspReferencesResultMsg struct {
-	filePath  string
-	locations []editor.LSPLocation
+	generation uint64
+	filePath   string
+	locations  []editor.LSPLocation
 }
 
 // lspDocumentSymbolsResultMsg is the response to a "document symbols" request.
 // symbols is empty when the file has no symbols (empty file, server unsupported).
 type lspDocumentSymbolsResultMsg struct {
-	filePath string
-	symbols  []editor.LSPSymbol
+	generation uint64
+	filePath   string
+	symbols    []editor.LSPSymbol
 }
 
 // lspRenameResultMsg is the response to a "rename" request.
 type lspRenameResultMsg struct {
-	filePath string
-	newName  string
-	edit     interface{}
-	err      error
+	generation uint64
+	filePath   string
+	newName    string
+	edit       interface{}
+	err        error
 }
 
 // lspCompletionResultMsg is the response to a "completion" request.
 type lspCompletionResultMsg struct {
-	filePath string
-	line     int
-	col      int
-	items    []editor.CompletionItem
+	generation uint64
+	filePath   string
+	line       int
+	col        int
+	items      []editor.CompletionItem
 }
 
 // requestDefinitionCmd fires a "go to definition" request at the cursor.
@@ -758,9 +844,10 @@ func (m *App) requestDefinitionCmd() tea.Cmd {
 		return nil
 	}
 	lspMgr := m.LSPMgr
+	ctx, generation := m.lspRequestContext()
 	return tea.Cmd(func() tea.Msg {
-		locs := lspMgr.RequestDefinition(context.Background(), filePath, line, col)
-		return lspDefinitionResultMsg{filePath: filePath, locations: locs}
+		locs := lspMgr.RequestDefinition(ctx, filePath, line, col)
+		return lspDefinitionResultMsg{generation: generation, filePath: filePath, locations: locs}
 	})
 }
 
@@ -777,9 +864,10 @@ func (m *App) requestReferencesCmd() tea.Cmd {
 		return nil
 	}
 	lspMgr := m.LSPMgr
+	ctx, generation := m.lspRequestContext()
 	return tea.Cmd(func() tea.Msg {
-		locs := lspMgr.FindReferences(context.Background(), filePath, line, col, true)
-		return lspReferencesResultMsg{filePath: filePath, locations: locs}
+		locs := lspMgr.FindReferences(ctx, filePath, line, col, true)
+		return lspReferencesResultMsg{generation: generation, filePath: filePath, locations: locs}
 	})
 }
 
@@ -796,9 +884,10 @@ func (m *App) requestDocumentSymbolsCmd() tea.Cmd {
 		return nil
 	}
 	lspMgr := m.LSPMgr
+	ctx, generation := m.lspRequestContext()
 	return tea.Cmd(func() tea.Msg {
-		syms := lspMgr.RequestDocumentSymbols(context.Background(), filePath)
-		return lspDocumentSymbolsResultMsg{filePath: filePath, symbols: syms}
+		syms := lspMgr.RequestDocumentSymbols(ctx, filePath)
+		return lspDocumentSymbolsResultMsg{generation: generation, filePath: filePath, symbols: syms}
 	})
 }
 
@@ -832,9 +921,10 @@ func (m *App) submitRename(newName string) tea.Cmd {
 	filePath := m.EditorState.Editor.FilePath()
 	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
 	lspMgr := m.LSPMgr
+	ctx, generation := m.lspRequestContext()
 	return tea.Cmd(func() tea.Msg {
-		edit, err := lspMgr.RequestRename(context.Background(), filePath, line, col, newName)
-		return lspRenameResultMsg{filePath: filePath, newName: newName, edit: edit, err: err}
+		edit, err := lspMgr.RequestRename(ctx, filePath, line, col, newName)
+		return lspRenameResultMsg{generation: generation, filePath: filePath, newName: newName, edit: edit, err: err}
 	})
 }
 
@@ -851,9 +941,10 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 		return nil
 	}
 	lspMgr := m.LSPMgr
+	ctx, generation := m.lspRequestContext()
 	return tea.Cmd(func() tea.Msg {
-		items := lspMgr.RequestCompletions(context.Background(), filePath, line, col)
-		return lspCompletionResultMsg{filePath: filePath, line: line, col: col, items: items}
+		items := lspMgr.RequestCompletions(ctx, filePath, line, col)
+		return lspCompletionResultMsg{generation: generation, filePath: filePath, line: line, col: col, items: items}
 	})
 }
 

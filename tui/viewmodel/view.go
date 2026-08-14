@@ -98,6 +98,15 @@ type contentLayout struct {
 	TermDockRect   ui.Rect
 }
 
+// boundedContentGeometry turns theme padding into effective per-frame
+// padding. Normal widths keep the requested padding exactly; narrow widths
+// spend at most half the real content columns on each side.
+func boundedContentGeometry(contentW, requestedPad int) (padLR, innerW int) {
+	contentW = max(0, contentW)
+	padLR = min(max(0, requestedPad), contentW/2)
+	return padLR, contentW - 2*padLR
+}
+
 // computeContentLayout computes the shell geometry for one frame. It keeps
 // every side effect the legacy buildMainView produced (window width, input
 // shell height, chat/editor/input/deck rects, tree height messages, message
@@ -113,14 +122,12 @@ func (m *App) computeContentLayout() contentLayout {
 		lay.SidebarW = activityW
 	}
 
-	m.Win.SetWidth(m.width - 2*m.Theme.Spacing.PadLR - lay.SidebarW)
-
-	lay.ContentW = m.width - lay.SidebarW
-	lay.PadLR = m.Theme.Spacing.PadLR
-	lay.InnerW = lay.ContentW - m.Theme.Spacing.PadLR*2
-	if lay.InnerW < 20 {
-		lay.InnerW = 20
-	}
+	// Rect geometry must describe columns that actually exist. Minimum-width
+	// product policies (for example, whether the launcher is usable) remain
+	// visibility decisions; they must not widen shell slots past the terminal.
+	lay.ContentW = max(0, m.width-lay.SidebarW)
+	lay.PadLR, lay.InnerW = boundedContentGeometry(lay.ContentW, m.Theme.Spacing.PadLR)
+	m.Win.SetWidth(lay.InnerW)
 
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
 	isLauncherActive := m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil
@@ -182,7 +189,7 @@ func (m *App) computeContentLayout() contentLayout {
 		deckY += 2
 	}
 	if deckLineCount > 0 {
-		lay.DeckRect = ui.Rect{X: lay.SidebarW + m.Theme.Spacing.PadLR, Y: deckY, W: lay.InnerW, H: deckLineCount}
+		lay.DeckRect = ui.Rect{X: lay.SidebarW + lay.PadLR, Y: deckY, W: lay.InnerW, H: deckLineCount}
 		m.sessionDeckRect = lay.DeckRect
 	} else {
 		lay.DeckRect = ui.Rect{}
@@ -235,7 +242,7 @@ func (m *App) computeContentLayout() contentLayout {
 		// Prepare MessageList geometry for subpane render/export.
 		if activeML := m.activeMessageList(); activeML != nil {
 			activeML.SetChatAreaBounds(chatAreaTop, lay.ChatH)
-			activeML.SetSize(m.width-lay.SidebarW, m.height)
+			activeML.SetSize(lay.ContentW, m.height)
 		}
 	}
 
@@ -345,7 +352,7 @@ func (m *App) configureShell() {
 	m.configureSidebarScreen()
 	m.refreshActivityList()
 	m.configureInputScreen()
-	m.configureChatScreen()
+	m.configureChatScreenWithLayout(lay)
 	m.configureEditorScreen()
 	m.configureLauncherScreen()
 	m.configureStatusScreen()
@@ -563,7 +570,21 @@ func (m *App) configureInputScreen() {
 	m.inputScreen.SetWidth(m.inputRect.W)
 }
 
+// configureChatScreen keeps focused tests and non-frame callers on the same
+// bounded geometry contract by deriving widths from the already-final chat
+// rect. Production frames call configureChatScreenWithLayout with the exact
+// computeContentLayout result.
 func (m *App) configureChatScreen() {
+	contentW := max(0, m.chatRect.W)
+	padLR, innerW := boundedContentGeometry(contentW, m.Theme.Spacing.PadLR)
+	m.configureChatScreenWithLayout(contentLayout{
+		ContentW: contentW,
+		InnerW:   innerW,
+		PadLR:    padLR,
+	})
+}
+
+func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 	if m.chatRect.Empty() || m.chatScreen == nil {
 		return
 	}
@@ -572,9 +593,7 @@ func (m *App) configureChatScreen() {
 		return
 	}
 
-	layout := m.computeLayout()
 	innerW := layout.InnerW
-	sidebarW := layout.SidebarW
 	chatH := m.chatRect.H
 
 	activeAgent := m.agentForView()
@@ -596,7 +615,7 @@ func (m *App) configureChatScreen() {
 		activeML.SetPhase(m.StatusBar.Phase())
 	}
 	activeML.SetChatAreaBounds(m.chatRect.Y, chatH)
-	activeML.SetSize(m.width-sidebarW, m.height)
+	activeML.SetSize(layout.ContentW, m.height)
 	activeML.BindScroll(m.chatScreen.ScrollModel())
 
 	activeAgentID := m.AgentMgr.ActiveID()
@@ -755,6 +774,9 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 			ed.CursorCol()+1,
 			ed.LineCount(),
 		)
+		if blame := ed.CursorBlameSummary(); blame != "" {
+			prefix += "  " + blame
+		}
 		if errs, warns, hints := ed.DiagnosticCounts(); errs > 0 || warns > 0 || hints > 0 {
 			var parts []string
 			if errs > 0 {

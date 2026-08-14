@@ -82,6 +82,46 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		}
 	})
 
+	t.Run("blocking_panel_shields_pointer_outside_deck_rect", func(t *testing.T) {
+		app, projection := setupSessionDeckApp(t)
+		for range 40 {
+			app.appendActiveMessage(types.ChatMessage{
+				Role:    types.RoleAssistant,
+				Content: "underlying chat row must not receive modal pointer input",
+				Time:    time.Now(),
+			})
+		}
+		app.syncAgentMessages("agent", false)
+		projection.confirmation.Reset(confirmation.Details{Question: "Proceed?", Tool: "bash"})
+		projection.confirmationAgentID = "agent"
+		app.openSessionConfirmationPanel(projection)
+		app.paintShellFrame()
+
+		if app.chatRect.Empty() || app.sessionDeckRect.Empty() {
+			t.Fatalf("invalid shell geometry: chat=%+v deck=%+v", app.chatRect, app.sessionDeckRect)
+		}
+		scroll := app.chatScreen.ScrollModel()
+		if scroll.MaxOffset() <= 0 {
+			t.Fatal("test requires scrollable content behind the blocking panel")
+		}
+		beforeOffset := scroll.Offset()
+		beforeFocus := app.rootHost.Focused()
+		x, y := app.chatRect.X+1, app.chatRect.Y
+
+		_, _ = app.dispatchMouseWheel(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelUp})
+		if got := scroll.Offset(); got != beforeOffset {
+			t.Fatalf("blocking panel leaked wheel to chat: offset=%d want %d", got, beforeOffset)
+		}
+		_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+		if got := app.rootHost.Focused(); got != beforeFocus {
+			t.Fatalf("blocking panel leaked click focus: got %q want %q", got, beforeFocus)
+		}
+		_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseRight})
+		if app.LastContextMenu != nil {
+			t.Fatal("blocking panel leaked right-click to an underlying context menu")
+		}
+	})
+
 	t.Run("confirmation_y_esc_resolves_once", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
 		blockCh := make(chan string, 1)

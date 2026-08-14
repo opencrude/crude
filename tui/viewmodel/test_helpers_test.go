@@ -105,6 +105,21 @@ func newTestApp(t *testing.T) *App {
 	app.Win = window.New(th)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
 	sourceControl.SetFocusHandler(rootHost.Focus)
+	t.Cleanup(func() {
+		app.closeWorkspaceEditors()
+		if app.Tree != nil && app.Tree.Model != nil {
+			app.Tree.Model.StopWatcher()
+		}
+		if app.Workspace != nil {
+			if app.Workspace.TermMgr != nil {
+				app.Workspace.TermMgr.CloseAll()
+			}
+			if app.Workspace.LSPMgr != nil {
+				app.Workspace.LSPMgr.Stop()
+			}
+		}
+		resetAsyncIOStateForTest(app)
+	})
 	return app
 }
 

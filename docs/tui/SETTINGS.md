@@ -20,6 +20,11 @@ field it does not name keeps following the application layer forever, so
 turning something off at the application level reaches the workspace even
 years later.
 
+On a project switch, the target workspace database is opened before the old
+project is torn down. Its effective theme is then applied before target-owned
+editors, tree, and session projections are constructed, so no frame is built
+with the previous workspace palette.
+
 Overriding a whole category is what made a workspace behave like a hard copy:
 changing one editor field froze every other editor field at whatever the
 application held that day. `OverridesFromDiff` recurses into nested objects,

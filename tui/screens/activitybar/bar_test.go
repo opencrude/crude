@@ -69,12 +69,23 @@ func TestEntriesArePaintedAsUniformBands(t *testing.T) {
 
 	accent := ui.NewTokenSet(th).Color(ui.ColorAccent)
 	for dy := 0; dy < RowStride; dy++ {
+		if got := buf.Get(outerGutterCol, dy); got.Char != ' ' {
+			t.Fatalf("outer gutter row %d is not blank: %q", dy, got.Char)
+		}
 		if got := buf.Get(markerCol, dy); got.Char != '▌' || !got.FG.Equal(accent) {
 			t.Fatalf("active marker must span the whole band; row %d = %q", dy, got.Char)
 		}
 	}
 	if buf.Get(markerCol, RowStride).Char == '▌' {
 		t.Fatal("active marker must stop at its own band")
+	}
+	for dy := 0; dy < RowStride; dy++ {
+		if got := buf.Get(panelPadCol, dy); got.Char != ' ' {
+			t.Fatalf("panel padding row %d is not blank: %q", dy, got.Char)
+		}
+		if got := buf.Get(ruleCol, dy); got.Char == ' ' || got.Char == 0 {
+			t.Fatalf("panel left border row %d is blank", dy)
+		}
 	}
 }
 
@@ -91,10 +102,16 @@ func TestHoverBandCoversWholeEntry(t *testing.T) {
 	hover := ui.NewTokenSet(th).Color(ui.ColorHover)
 	for dy := 0; dy < RowStride; dy++ {
 		y := 2*RowStride + dy
-		for x := 0; x < ruleCol; x++ {
+		if buf.Get(outerGutterCol, y).BG.Equal(hover) {
+			t.Fatalf("outer gutter must not join the hover band at row %d", y)
+		}
+		for x := markerCol; x < panelPadCol; x++ {
 			if !buf.Get(x, y).BG.Equal(hover) {
 				t.Fatalf("hover band gap at (%d,%d)", x, y)
 			}
+		}
+		if buf.Get(panelPadCol, y).BG.Equal(hover) {
+			t.Fatalf("hover must stop before the panel padding at row %d", y)
 		}
 		if buf.Get(ruleCol, y).BG.Equal(hover) {
 			t.Fatalf("hover must stop before the rule at row %d", y)

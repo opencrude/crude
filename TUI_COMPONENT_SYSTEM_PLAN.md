@@ -1488,15 +1488,17 @@ Landed:
 - Service, widget, and viewmodel integration tests cover execution and cancellation
 - **`workspace.FileOpsService`** owns all filesystem mutations for the workspace:
   `CreateFile`, `CreateFolder`, `RenamePath`, `DeletePath`, `ApplyWorkspaceEdit`
-- All operations validate paths (absolute, under workspace root) and publish
-  typed `FileOperationResultMsg` through EventBus on success or failure
+- All operations validate paths (absolute, under workspace root) and return a
+  typed `FileOperationResultMsg` directly to the invoking command. They never
+  echo the result through EventBus: callers run inside Bubble Tea `Update`, so
+  synchronous `Program.Send` re-entry would deadlock.
 - **TUI tree operations migrated**: `startNewFileInTree`, `startNewFolderInTree`,
   `startRenameInTree`, `confirmTreeDelete` all delegate to workspace methods
 - **LSP rename migrated**: `handleRenameResult` collects edits into `FileEdit`
   structs and calls `ws.ApplyWorkspaceEdit` instead of direct `os.ReadFile`/`WriteFile`
 - **Comprehensive tests**: 25+ service tests (create/rename/delete/edit, validation,
-  edge cases) + 15+ viewmodel integration tests (routing, EventBus publication,
-  validation enforcement)
+  edge cases) + 15+ viewmodel integration tests (routing, direct result ownership,
+  no EventBus echo, validation enforcement)
 - **Agent lifecycle boundary:** `AgentManager` is an orchestrator forest rather than a
   single replaceable root; workspace tracks orchestrator-to-session ownership and
   exposes direct confirmation, question, cancellation, and close methods
@@ -2139,7 +2141,10 @@ This program is complete only when all statements are true:
     - `workspace.FileOpsService` with `CreateFile`, `CreateFolder`, `RenamePath`,
       `DeletePath`, `ApplyWorkspaceEdit` methods
     - Path validation (absolute, under workspace root, no escape)
-    - Typed `FileOperationResultMsg` published through EventBus for all operations
+    - Typed `FileOperationResultMsg` returned directly to the invoking command.
+      The original EventBus echo was removed on 2026-08-13 because TUI callers
+      run inside Bubble Tea `Update`; synchronous `Program.Send` re-entry could
+      deadlock the application.
     - `FileEdit` struct for workspace edits with content verification
     - TUI tree operations migrated: `startNewFileInTree`, `startNewFolderInTree`,
       `startRenameInTree`, `confirmTreeDelete`

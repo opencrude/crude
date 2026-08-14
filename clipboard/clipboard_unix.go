@@ -75,6 +75,9 @@ func write(t Format, buf []byte) (bool, error) {
 		return false, errUnsupported
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
 	tools := [][]string{
 		{"wl-copy"},
 		{"pbcopy"},
@@ -86,7 +89,7 @@ func write(t Format, buf []byte) (bool, error) {
 		if len(tool) == 0 {
 			continue
 		}
-		cmd := exec.Command(tool[0], tool[1:]...)
+		cmd := exec.CommandContext(ctx, tool[0], tool[1:]...)
 		cmd.Stdin = bytes.NewReader(buf)
 		if cmd.Run() == nil {
 			logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "write_tool_ok", "tool", tool[0]) })

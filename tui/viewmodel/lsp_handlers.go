@@ -85,6 +85,9 @@ func (m *App) startRename() {
 // through the workspace.EventBus from the LSP server's reader goroutine. Runs on the
 // main Bubble Tea goroutine, so it can safely update the tree model and editor.
 func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
+	if !m.acceptsLSPGeneration(msg.Generation) {
+		return
+	}
 	if m.Tree.Model != nil {
 		if m.LSPMgr == nil || m.LSPMgr.ShowDiagnosticsInTree() {
 			errs, warns, hints := 0, 0, 0
@@ -116,9 +119,14 @@ func (m *App) wireLSPDiagnostics() {
 	if m == nil || m.LSPMgr == nil {
 		return
 	}
+	generation := m.workspaceSwitchGen.Load()
 	m.LSPMgr.SetOnDiagnostics(func(fp string, diags []editor.LSPDiagnostic) {
 		if m.eventBus != nil {
-			m.eventBus.Send(workspace.LSPDiagnosticsMsg{FilePath: fp, Diagnostics: diags})
+			m.eventBus.Send(workspace.LSPDiagnosticsMsg{
+				Generation:  generation,
+				FilePath:    fp,
+				Diagnostics: diags,
+			})
 		}
 	})
 }
@@ -128,7 +136,11 @@ func (m *App) syncFileTreeDiagnosticsFromLSP() {
 		return
 	}
 	for fp, diags := range m.LSPMgr.AllDiagnostics() {
-		m.handleLSPDiagnosticsUpdate(workspace.LSPDiagnosticsMsg{FilePath: fp, Diagnostics: diags})
+		m.handleLSPDiagnosticsUpdate(workspace.LSPDiagnosticsMsg{
+			Generation:  m.workspaceSwitchGen.Load(),
+			FilePath:    fp,
+			Diagnostics: diags,
+		})
 	}
 }
 
@@ -201,6 +213,11 @@ func (m *App) clearOpenEditorsDiagnostics() {
 
 // StopLSP shuts down all LSP server connections.
 func (m *App) StopLSP() {
+	if m.lspRequestCancel != nil {
+		m.lspRequestCancel()
+		m.lspRequestCancel = nil
+		m.lspRequestCtx = nil
+	}
 	if m.LSPMgr != nil {
 		m.LSPMgr.Stop()
 	}

@@ -68,9 +68,9 @@ func TestRenderDiagnosticsAndSearchChrome(t *testing.T) {
 	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 	buf := surf.Buffer()
 
-	// Gutter diagnostic icon in icon column (gutterWidth-2).
+	// Gutter diagnostic icon in icon column (gutterWidth-3).
 	sw := ed.gutterWidth()
-	icon := buf.Get(sw-2, 0)
+	icon := buf.Get(sw-3, 0)
 	if icon.Char != '✕' {
 		t.Fatalf("diag icon = %q, want ✕", icon.Char)
 	}
@@ -90,5 +90,35 @@ func TestRenderDiagnosticsAndSearchChrome(t *testing.T) {
 	}
 	if !foundHL {
 		t.Fatal("expected search highlight background on match")
+	}
+}
+
+func TestRenderGitGutterBesideDiagnostics(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "g.go")
+	if err := os.WriteFile(path, []byte("alpha\nbeta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	ed.SetDiagnostics([]LSPDiagnostic{{
+		Line: 0, Col: 0, EndLine: 0, EndCol: 5, Severity: DiagError, Message: "err",
+	}})
+	ed.SetGitAnnotation([]GitLineKind{GitLineAdded, GitLineModified}, nil)
+
+	surf := surface.NewSurface("ed", 50, 6, cell.TransparentBlank())
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
+	buf := surf.Buffer()
+	sw := ed.gutterWidth()
+	if got := buf.Get(sw-3, 0).Char; got != '✕' {
+		t.Fatalf("diag col = %q, want ✕", got)
+	}
+	if got := buf.Get(sw-2, 0).Char; got != '+' {
+		t.Fatalf("git added col = %q, want +", got)
+	}
+	if got := buf.Get(sw-2, 1).Char; got != '~' {
+		t.Fatalf("git modified col = %q, want ~", got)
 	}
 }

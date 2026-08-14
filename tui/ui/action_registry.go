@@ -268,6 +268,7 @@ var defaultActions = []*ActionDef{
 		Description: "add a file reference",
 		Icon:        "⧉",
 		Category:    "File",
+		Bindings:    []KeyBinding{{Key: "ctrl+o"}},
 		HintKey:     "Ctrl+O",
 	},
 	{
@@ -728,7 +729,8 @@ var defaultActions = []*ActionDef{
 	// ─── Contextual status-bar hints (display-first) ───
 	{
 		ID:          "editor.close",
-		Label:       "Close",
+		Label:       "Close tab",
+		Description: "close the active editor tab as the contextual back action",
 		Category:    "Editor",
 		HintKey:     "Esc",
 		DisplayOnly: true,
@@ -869,7 +871,7 @@ var defaultActions = []*ActionDef{
 	},
 	{
 		ID:           "input.cancel",
-		Label:        "Exit",
+		Label:        "Cancel",
 		Category:     "Chat",
 		FocusContext: "chat",
 		HintKey:      "Esc",

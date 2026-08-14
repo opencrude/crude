@@ -63,8 +63,9 @@ func TestTerminalReplyStormDoesNotDeadlockOrReenterBus(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Update deadlocked on a DA reply storm (reply path blocked or re-entered the bus)")
 	}
-	// Detach the undrained program before cleanup: Close legitimately
-	// publishes TerminalClosedMsg through the bus.
+	// Detach the undrained program before cleanup. Explicit terminal close is
+	// command-owned and does not publish, but keeping test teardown isolated
+	// from an intentionally unusable Program makes that contract obvious.
 	bus.SetProgram(nil)
 	if replies != queries {
 		t.Fatalf("observed %d replies, want %d (one per DA query)", replies, queries)

@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/clipboard"
 	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/tui/ui/popup"
@@ -78,6 +77,7 @@ func (m *App) openFindReplace(replaceMode bool) {
 // but highlights stop rendering because Open is set to false on the
 // editor's SearchState.
 func (m *App) closeFindReplace() {
+	m.invalidateClipboardFindReplace(m.FindReplace)
 	m.overlayHost.Close(ui.OverlayFindReplace)
 }
 
@@ -169,31 +169,22 @@ func (m *App) refreshFindReplacePopup() {
 		if m.EditorState.Editor != nil {
 			m.EditorState.Editor.SetSearchOpen(false)
 		}
+		m.invalidateClipboardFindReplace(fr)
 		m.FindReplace = nil
 	})
 }
 
-// pasteIntoFindReplace reads the system clipboard and inserts the
-// text at the cursor position (or replaces the current selection)
-// in the find/replace popup's active input field.
+// pasteIntoFindReplace captures the exact popup and TextEdit owner before the
+// asynchronous clipboard read starts. The result handler performs the edit.
 func (m *App) pasteIntoFindReplace(fr *popup.FindReplaceState) tea.Cmd {
 	if fr == nil {
 		return nil
 	}
-	data := clipboard.Read(clipboard.FmtText)
-	if len(data) == 0 {
-		return nil
-	}
-	text := string(data)
 	ed := fr.ActiveEdit()
 	if ed == nil {
 		return nil
 	}
-	ed.Insert(text)
-	if fr.OnChange != nil {
-		fr.OnChange()
-	}
-	return nil
+	return m.beginFindReplaceClipboardPaste(fr, ed)
 }
 
 // handleFindReplaceKey routes keypresses when the find/replace popup

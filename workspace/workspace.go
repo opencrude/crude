@@ -2,7 +2,9 @@ package workspace
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -92,7 +94,7 @@ type Workspace struct {
 
 	// FileOps owns all filesystem mutations for this workspace.
 	// Every file creation, deletion, rename, and LSP workspace edit
-	// goes through this service. Results are published through EventBus.
+	// goes through this service. Callers own the returned operation results.
 	FileOps *FileOpsService
 
 	// Git owns source-control reads and mutations for this workspace.
@@ -396,13 +398,12 @@ func (w *Workspace) persistSessionRegistry(fs *Session) {
 
 // ── File operation methods ──
 //
-// These methods delegate to FileOpsService and publish results through
-// EventBus. The TUI calls these instead of performing filesystem mutations
-// directly.
+// These methods delegate to FileOpsService and return command-owned results.
+// The TUI calls them instead of performing filesystem mutations directly.
 
 // CreateFile creates an empty file at the given path.
 // The path must be absolute and under the workspace root.
-// Results are published through EventBus as FileOperationResultMsg.
+// The result is returned directly to the caller.
 func (w *Workspace) CreateFile(path string) FileOperationResultMsg {
 	if w.FileOps == nil {
 		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
@@ -412,7 +413,7 @@ func (w *Workspace) CreateFile(path string) FileOperationResultMsg {
 
 // CreateFolder creates a directory (and parents) at the given path.
 // The path must be absolute and under the workspace root.
-// Results are published through EventBus as FileOperationResultMsg.
+// The result is returned directly to the caller.
 func (w *Workspace) CreateFolder(path string) FileOperationResultMsg {
 	if w.FileOps == nil {
 		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
@@ -422,7 +423,7 @@ func (w *Workspace) CreateFolder(path string) FileOperationResultMsg {
 
 // RenamePath renames a file or folder from oldPath to newPath.
 // Both paths must be absolute and under the workspace root.
-// Results are published through EventBus as FileOperationResultMsg.
+// The result is returned directly to the caller.
 func (w *Workspace) RenamePath(oldPath, newPath string) FileOperationResultMsg {
 	if w.FileOps == nil {
 		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
@@ -433,7 +434,7 @@ func (w *Workspace) RenamePath(oldPath, newPath string) FileOperationResultMsg {
 // DeletePath removes a file or directory at the given path.
 // Directories are removed recursively.
 // The path must be absolute and under the workspace root.
-// Results are published through EventBus as FileOperationResultMsg.
+// The result is returned directly to the caller.
 func (w *Workspace) DeletePath(path string) FileOperationResultMsg {
 	if w.FileOps == nil {
 		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
@@ -443,7 +444,7 @@ func (w *Workspace) DeletePath(path string) FileOperationResultMsg {
 
 // ApplyWorkspaceEdit applies a set of text edits to files on disk.
 // This is used for LSP rename/refactor operations that modify multiple files.
-// Results are published through EventBus as FileOperationResultMsg.
+// The result is returned directly to the caller.
 func (w *Workspace) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResultMsg {
 	if w.FileOps == nil {
 		w.FileOps = NewFileOpsService(w.RootPath, w.eventBus, w.Logger)
@@ -452,26 +453,59 @@ func (w *Workspace) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResultMsg 
 }
 
 // SwitchProject re-roots this workspace at a new project directory.
-// Closes open sessions and reopens the workspace DB/tree for the new path.
-// Keeps sessionCfg, homeDir, sender, and theme so the TUI can continue.
+// Closes open sessions and recreates every project-bound domain manager.
+// Keeps sessionCfg, homeDir, sender, application defaults, and frontend
+// connections so the TUI can continue without restarting.
 func (w *Workspace) SwitchProject(projectDir string) error {
 	if projectDir == "" {
-		return fmt.Errorf("empty project dir")
+		return fmt.Errorf("switch project: empty project directory")
 	}
 	abs, err := filepath.Abs(projectDir)
 	if err != nil {
-		abs = projectDir
+		return fmt.Errorf("switch project: resolve %q: %w", projectDir, err)
+	}
+	if err := validateProjectDirectory(abs); err != nil {
+		return fmt.Errorf("switch project: %w", err)
 	}
 	if abs == w.RootPath {
 		return nil
 	}
 
+	// Prepare all target persistence before touching current project state.
+	// WorkspaceDir and OpenWorkspaceDB perform creation/migration, so success
+	// here proves the replacement can persist state.
+	wsDir, err := WorkspaceDir(abs)
+	if err != nil {
+		return fmt.Errorf("switch project: prepare workspace directory for %q: %w", abs, err)
+	}
+	wsDB, err := OpenWorkspaceDB(abs)
+	if err != nil {
+		if wsDB != nil {
+			_ = wsDB.Close()
+		}
+		return fmt.Errorf("switch project: prepare workspace database for %q: %w", abs, err)
+	}
+	dbTransferred := false
+	defer func() {
+		if !dbTransferred {
+			_ = wsDB.Close()
+		}
+	}()
+
+	// ProjectSearchService intentionally survives the switch after Cancel:
+	// it stores no project root, and retaining its monotonically increasing
+	// request IDs prevents a delayed old-project completion from colliding
+	// with the first request in the new project.
+	w.CancelProjectSearch()
+
 	// Tear down old project state.
 	w.CloseAllSessions()
 	if w.TermMgr != nil {
+		w.TermMgr.SetEventBus(nil)
 		w.TermMgr.CloseAll()
 	}
 	if w.LSPMgr != nil {
+		w.LSPMgr.SetOnDiagnostics(nil)
 		w.LSPMgr.Stop()
 	}
 	if w.WorkspaceDB != nil {
@@ -481,32 +515,53 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 
 	// Rebuild around the new project.
 	w.RootPath = abs
-	wsDir, wsErr := WorkspaceDir(abs)
-	if wsErr != nil {
-		return wsErr
-	}
 	w.WorkspaceDir = wsDir
-
-	wsDB, dbErr := OpenWorkspaceDB(abs)
-	if dbErr != nil {
-		w.Logger.Warn("WORKSPACE", "db_open_failed", "error", dbErr.Error())
-	}
 	w.WorkspaceDB = wsDB
+	dbTransferred = true
 
 	w.LSPMgr = NewLSPManager(w.Logger)
 	w.AgentMgr = NewAgentManager()
 	w.PaneMgr = NewPaneManager()
-	w.ProjectSearch = NewProjectSearchService()
+	if w.ProjectSearch == nil {
+		w.ProjectSearch = NewProjectSearchService()
+	}
 	w.FileOps = NewFileOpsService(abs, w.eventBus, w.Logger)
 	w.Git = NewGitService(abs)
 	w.TermMgr = NewTerminalManager(abs)
+	w.FocusStack = NewFocusStack()
+	w.registryErr = nil
 	if w.eventBus != nil {
 		w.TermMgr.SetEventBus(w.eventBus)
 	}
+	w.applyEffectiveSettings()
 
 	// Same self-heal as NewWorkspace when switching projects.
 	_ = w.BackfillSessionRegistry()
 
+	return nil
+}
+
+func validateProjectDirectory(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect project directory %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("project target %q is not a directory", path)
+	}
+
+	dir, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open project directory %q: %w", path, err)
+	}
+	_, readErr := dir.Readdirnames(1)
+	closeErr := dir.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return fmt.Errorf("read project directory %q: %w", path, readErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close project directory %q after validation: %w", path, closeErr)
+	}
 	return nil
 }
 

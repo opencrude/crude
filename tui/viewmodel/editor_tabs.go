@@ -73,6 +73,8 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		if m.LSPMgr != nil {
 			m.LSPMgr.QueueFileUpdate(fp, text)
 		}
+		m.editorGitGen.Add(1)
+		m.editorGitStale.Store(true)
 	})
 	// Apply format-on-save preference from user settings. Defaults to off.
 	if m.LoadAppSettings().Editor.FormatOnSave {
@@ -118,7 +120,7 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		m.handleTabSwitch()
 	}
 
-	return tea.Batch(ed.BlinkCmd(), lspOpenCmd), nil
+	return tea.Batch(ed.BlinkCmd(), lspOpenCmd, m.refreshEditorGitCmd()), nil
 }
 
 // jumpToDiagnostic opens the file containing the given diagnostic

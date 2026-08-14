@@ -59,6 +59,18 @@ func TestEmulatorSGRAndCUP(t *testing.T) {
 	}
 }
 
+func TestEmulatorInverseUsesSingleReverseOperation(t *testing.T) {
+	e := requireEmulator(t)
+	e.Feed([]byte("\x1b[7mX"))
+	c := paintGrid(t, e).Get(0, 0)
+	if c.Attr&cell.AttrReverse == 0 {
+		t.Fatalf("inverse cell attrs=%v want AttrReverse", c.Attr)
+	}
+	if !c.FG.Equal(cell.White) || !c.BG.Equal(cell.Black) {
+		t.Fatalf("inverse pre-swapped colors: fg=%v bg=%v", c.FG, c.BG)
+	}
+}
+
 func TestEmulatorAltScreen(t *testing.T) {
 	e := requireEmulator(t)
 	e.Resize(8, 2)
@@ -345,6 +357,9 @@ func TestEmulatorSelectionPaintsReverse(t *testing.T) {
 	if c.Attr&cell.AttrReverse == 0 {
 		t.Fatalf("selected cell attrs=%v want AttrReverse", c.Attr)
 	}
+	if !c.FG.Equal(cell.White) || !c.BG.Equal(cell.Black) {
+		t.Fatalf("selection pre-swapped colors: fg=%v bg=%v", c.FG, c.BG)
+	}
 	e.ClearSelection()
 	buf = paintGrid(t, e)
 	if c := buf.Get(1, 0); c.Attr&cell.AttrReverse != 0 {
@@ -447,6 +462,8 @@ func TestEmulatorCursorBlinkAndFocusStates(t *testing.T) {
 	e.SetCursorState(true, true)
 	if c := paintGrid(t, e).Get(0, 0); c.Attr&cell.AttrReverse == 0 {
 		t.Fatalf("blink-on cursor attrs=%v want AttrReverse", c.Attr)
+	} else if !c.FG.Equal(cell.White) || !c.BG.Equal(cell.Black) {
+		t.Fatalf("cursor pre-swapped colors: fg=%v bg=%v", c.FG, c.BG)
 	}
 	// Focused, blink phase off: cursor hidden.
 	e.SetCursorState(true, false)

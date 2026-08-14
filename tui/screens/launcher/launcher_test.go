@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -213,6 +214,20 @@ func TestScreenEmptyAndNoResultsStates(t *testing.T) {
 	h.Paint(buf)
 	if got := bufferText(buf); !strings.Contains(got, `No workspaces match "z"`) {
 		t.Fatalf("no-results state missing:\n%s", got)
+	}
+}
+
+func TestLauncherPaintHandlesEveryNarrowWidth(t *testing.T) {
+	workspaces := []workspace.WorkspaceInfo{
+		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha"},
+		{ID: "beta", ProjectName: "beta", ProjectDir: "/projects/beta"},
+		{ID: "gamma", ProjectName: "gamma", ProjectDir: "/projects/gamma"},
+	}
+	for width := 1; width <= 60; width++ {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			_, host, buf := testScreen(t, width, 18, workspaces)
+			host.Paint(buf)
+		})
 	}
 }
 

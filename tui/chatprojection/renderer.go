@@ -228,6 +228,8 @@ func (r *Renderer) SetUsername(name string) {
 }
 
 func (r *Renderer) SetSize(w, h int) {
+	w = max(0, w)
+	h = max(0, h)
 	if r.width != w {
 		for i := range r.sync.Messages {
 			r.sync.Messages[i].CachedLines = nil
@@ -1017,10 +1019,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		if maxH < 5 {
 			maxH = 5
 		}
-		paneWidth := width - 2*ui.ScrollbarWidth - 2
-		if paneWidth < 10 {
-			paneWidth = 10
-		}
+		paneWidth := max(0, width-2*ui.ScrollbarWidth-2)
 		paneLines := r.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, r.spinFrame)
 		result := make([]string, 0, len(paneLines)+1)
 		native := make([]PaintLine, 0, len(paneLines)+1)
@@ -1100,21 +1099,25 @@ func (r *Renderer) isStreamingCursor(msg *types.ChatMessage) bool {
 	return false
 }
 
-func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader bool) renderContext {
-	padLR := r.theme.Spacing.PadLR
-	sbW := r.ScrollbarWidth()
+const messageBodyChromeWidth = 16
+
+// availableMessageWidths derives every chat width from the current renderer
+// bounds. Minimum readable widths are presentation policies, not geometry:
+// a narrow terminal may yield zero content columns but never synthetic ones.
+func (r *Renderer) availableMessageWidths() (contentWidth, innerW int) {
+	padLR := max(0, r.theme.Spacing.PadLR)
+	sbW := max(0, r.ScrollbarWidth())
 	sbGapW := 0
 	if sbW > 0 {
 		sbGapW = 1
 	}
-	contentWidth := r.width - padLR*2 - 16 - sbW - sbGapW
-	if contentWidth < 10 {
-		contentWidth = 10
-	}
-	innerW := r.width - padLR*2 - sbW - sbGapW
-	if innerW < 20 {
-		innerW = 20
-	}
+	innerW = max(0, r.width-padLR*2-sbW-sbGapW)
+	contentWidth = max(0, innerW-messageBodyChromeWidth)
+	return contentWidth, innerW
+}
+
+func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader bool) renderContext {
+	contentWidth, innerW := r.availableMessageWidths()
 	return renderContext{
 		th:           r.theme,
 		tokens:       r.Tokens(),
@@ -1285,14 +1288,26 @@ func (r *Renderer) MdRenderer() *glamour.TermRenderer {
 }
 
 func (r *Renderer) makeMdRenderer() *glamour.TermRenderer {
-	w := r.width
-	if r.mdRenderer != nil && r.cachedWidth == w {
+	contentWidth, _ := r.availableMessageWidths()
+	// Glamour's shared renderer intentionally has a 20-column readable-body
+	// minimum. Below that policy threshold, use the plain wrapping path so a
+	// narrow chat does not reintroduce a synthetic 20-column composition.
+	const minimumMarkdownContentWidth = 20
+	if contentWidth < minimumMarkdownContentWidth {
+		r.mdRenderer = nil
+		r.cachedWidth = contentWidth
+		return nil
+	}
+	if r.mdRenderer != nil && r.cachedWidth == contentWidth {
 		return r.mdRenderer
 	}
-	md := rendering.MakeMdRenderer(w)
+	// MakeMdRenderer subtracts four padding columns plus the same 16-column
+	// message chrome. Re-add those fixed columns after deriving the bounded
+	// content width so its word-wrap width equals contentWidth exactly.
+	md := rendering.MakeMdRenderer(contentWidth + 4 + messageBodyChromeWidth)
 	if md != nil {
 		r.mdRenderer = md
-		r.cachedWidth = w
+		r.cachedWidth = contentWidth
 	}
 	return md
 }

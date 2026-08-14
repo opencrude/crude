@@ -39,12 +39,12 @@ without this database: child rc scripts break (`tput colors` returns empty).
 | Shift override | Shift+click/drag bypasses tracking for selection (standard escape hatch) |
 | Selection | Ghostty selection gestures: click anchor, drag, double-click word, triple-click line; painted via render-state row ranges (reverse video) |
 | Copy | Copy-on-select + `Ctrl+Shift+C`; `Ctrl+Shift+A` selects all; text formatted with Ghostty clipboard semantics (unwrap + trim) |
-| OSC 52 clipboard | Child clipboard writes land on the system clipboard (decoded MIME, text/plain preferred); reads are always ignored |
+| OSC 52 clipboard | Child clipboard writes land on the system clipboard via an async command (decoded MIME, text/plain preferred); reads are always ignored and the helper subprocess is time-bounded |
 | Scrollback | Wheel scrolls viewport; `Shift+PgUp/PgDn/Home/End` on the primary screen; typing/paste snaps to bottom; right-edge scrollbar overlay while scrolled |
 | Alt screen wheel | No tracking + alternate screen → wheel sends arrow keys (3×), like Ghostty's alternate-scroll |
 | Focus reporting | DEC mode 1004 → CSI I/O on real pane-focus transitions (`syncTerminalFocusReports` sweep, idempotent) |
-| Cursor styles | DECSCUSR: block/hollow invert the cell, bar/underline render `AttrUnderline` |
-| Bell | BEL flags the dock tab (`● ` prefix) when the terminal does not own input |
+| Cursor styles | DECSCUSR: block/hollow use one visible SGR reverse operation, bar/underline render `AttrUnderline`; input/output/movement/resize/focus changes hold the focused cursor visible, then a 600 ms idle delay starts 600 ms blink phases; retained floating windows invalidate only on transitions |
+| Bell | BEL flags an unfocused dock tab or adds a `•` icon to an unfocused floating `WindowFrame`; focusing the terminal clears it |
 | OSC titles | Deferred to end of Feed, published via async command (never synchronous bus publish) |
 | OSC 7 pwd | Updates `TerminalInfo.CWD` (file:// URL parsed to a path) |
 | Query replies | DA/DSR/XTVERSION/size replies enqueue on the async `ptyWriter` — never block or re-enter the bus (`TestTerminalReplyStormDoesNotDeadlockOrReenterBus`) |
@@ -52,6 +52,35 @@ without this database: child rc scripts break (`tput colors` returns empty).
 All libghostty effect callbacks (title, bell, pwd, clipboard) are collected
 during `vt_write` and flushed after the C call returns — handlers must never
 re-enter libghostty mid-parse.
+
+## PTY input and size contracts
+
+PTY stdin is serialized by one dedicated `ptyWriter` goroutine. Its queue is
+bounded at 1 MiB: a write that cannot fit in full returns
+`workspace.ErrTerminalBackpressure`, reports zero accepted bytes, and leaves
+the existing queue unchanged. Queue overflow must never return success while
+discarding the new bytes. A later write also surfaces a retained asynchronous
+sink error instead of silently accepting more input. The viewmodel reports
+manager write and resize failures in the status bar.
+
+`workspace.NormalizeTerminalSize` is the single grid-size contract for both
+libghostty and the PTY: at least 8 columns by 2 rows. Tiny screen layouts send
+that same normalized size to both sides; they must never leave a 2×1 emulator
+attached to an 8×2 PTY. The PTY resize is attempted first; on failure the
+emulator keeps its previous grid and the next layout retries rather than
+committing a desynchronized size.
+
+PTY reads may race the caller that mounts a newly-created screen. On the first
+`TerminalOutputMsg`, the viewmodel materializes the retained emulator directly
+from the manager snapshot when needed and feeds the bytes immediately. This
+uses the emulator's bounded scrollback and does not add an unbounded startup
+buffer.
+
+Terminal IDs come from one process-wide monotonic sequence, not a
+`TerminalManager`-local counter. Workspace switching replaces the manager while
+old output/title/exit messages may still be queued; a replacement manager
+therefore cannot reuse the old session's ID and stale messages cannot resolve
+to a new PTY or lazily materialize its screen.
 
 ## Shutdown
 
@@ -62,6 +91,9 @@ non-job-control children) cannot survive as orphans
 (`TestTerminalCloseKillsProcessGroup`). Job-control shells forward SIGHUP to
 their own jobs. `Workspace.Close` and project switches call
 `TerminalManager.CloseAll` (`TestTerminalManagerCloseAllReapsChildren`).
+Explicit close is command-owned and does not publish a `TerminalClosedMsg`:
+workspace switches and close actions run on Bubble Tea's update goroutine, so
+synchronously echoing through `EventBus.Send` would deadlock on `Program.Send`.
 
 ## Layers
 
@@ -90,7 +122,10 @@ outer emulator matches the Ghostty pin. In-app PTYs always set:
 
 - **Docked:** workspace terminal dock (`tui/screens/termdock`) above the
   status bar, independent of AI session `PanelDeck`. Available in launcher,
-  editor, and chat. Closing the last docked tab hides the dock.
+  editor, and chat. Dock chrome is two rows and is shown only when at least
+  two terminal body rows fit below the application header; at an 8-row
+  application height the dock stays unmounted instead of overlapping header
+  chrome. Closing the last docked tab hides the dock.
 - **Floating:** `OverlayHost` + `FloatingWindow` + `WindowFrame`,
   `DefaultOverlayPolicy` (KeepRoute, movable, resizable). Overlay IDs are
   dynamic: `ui.TerminalOverlayID(id)` → `"terminal/"+id`.

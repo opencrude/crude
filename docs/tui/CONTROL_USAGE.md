@@ -14,7 +14,7 @@ target replacement under `tui/ui/`.
 | Hand-built prompt | `tui/widgets/textprompt.go` (product: TextEdit + WindowFrame) | `PromptField` |
 | Append/backspace filter | palette, launcher, settings | `FilterField` / `SearchField` with `SearchGlyphEnd` + `PromptEnd` (magnifier at the trailing edge) |
 | File/workspace picker filter | native `ui.TextField` in `tui/screens/filepicker` | same |
-| Document editor | `tui/editor/` PieceTable; main viewport `shelleditor` Host | Specialized `DocumentEditor` (kept) |
+| Document editor | `tui/editor/` PieceTable; main viewport `shelleditor` Host; gutter paints diagnostics then Git line edits (`+`/`~`); blame is status-bar + editor context menu, not a sidebar | Specialized `DocumentEditor` (kept) |
 
 ## Buttons
 
@@ -168,3 +168,25 @@ API: `HasPointerCapture()`, `CancelPointerCapture()` on each product Host;
 | Session PanelDeck (docked) | `tui/viewmodel/panel_deck_contract_test.go`, `tui/viewmodel/session_deck_test.go`, screen `*_test.go` | Blocking capture, settings Esc/Tab, confirmation `y`/Esc, question cancel, YOLO Esc, passive background jobs, session isolation |
 | Help overlay | `tui/screens/help/help_test.go`, `tui/viewmodel/help_test.go` | Modal Ignore; live catalog; F1 toggle; Esc closes; `/help` does not dump into chat |
 | Agent chat list | `tui/screens/shellchat/scroll_contract_test.go`, `host_test.go`, `tui/viewmodel/chat_keyboard_contract_test.go`, `host_capture_test.go`, `mouse_capture_test.go` | PgUp/PgDown/Home/End, wheel disarm/re-arm, scrollbar drag, selection copy once, capture teardown, input-empty routing |
+
+## Async I/O boundaries
+
+- Viewmodel clipboard helpers enqueue typed requests into one app-owned FIFO
+  worker. Reads and writes therefore preserve user order (copy followed by
+  paste cannot read the previous clipboard value) without blocking `Update`.
+  Results carry their editor, find/replace `TextEdit`, or session owner, and
+  stale generations cannot paste into a newly focused control. Clipboard-image
+  file/SQLite persistence is a second `tea.Cmd`; only its owner-bound completion
+  inserts the reference into the active input.
+- File-picker directory reads run off the update goroutine. The picker keeps
+  its last successful rows while showing `Loading…`; pointer + open-epoch +
+  intent-sequence + request-generation ownership drops close/reopen ABA and
+  reordered intents. Closing cancels ownership immediately, reads have a
+  bounded wait, and errors restore the previous raw directory listing without
+  duplicating the synthetic parent row.
+
+Source-control snapshots and mutations also run as `tea.Cmd`, with one
+30-second context deadline covering the mutation and its follow-up snapshot.
+A wedged Git subprocess therefore resolves back into the normal error state
+instead of leaving the panel loading indefinitely
+(`TestSourceControlMutationHasDeadline`).

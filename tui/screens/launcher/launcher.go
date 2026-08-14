@@ -1123,10 +1123,14 @@ func (sh *sectionHeader) Paint(buf *surface.CellBuffer, originX, originY int, ct
 		separatorW = 1
 	}
 	labelW := maxInt(0, r.W-trailingW-separatorW)
-	label := rendering.TruncateLine(strings.ToUpper(sh.label), labelW)
+	label := ""
+	if labelW > 0 {
+		label = rendering.TruncateLine(strings.ToUpper(sh.label), labelW)
+	}
 	labelWUsed := rendering.VisibleWidth(label)
 	buf.WriteString(ox, oy, label, accent, cell.NoColor, cell.AttrBold)
-	buf.WriteString(ox+labelWUsed, oy, strings.Repeat(string(ui.FirstRune(tokens.Glyphs().BorderH, '─')), labelW-labelWUsed), accent, cell.NoColor, cell.AttrBold)
+	fillW := maxInt(0, labelW-labelWUsed)
+	buf.WriteString(ox+labelWUsed, oy, strings.Repeat(string(ui.FirstRune(tokens.Glyphs().BorderH, '─')), fillW), accent, cell.NoColor, cell.AttrBold)
 	if separatorW > 0 {
 		buf.WriteString(ox+labelW, oy, " ", muted, cell.NoColor, 0)
 	}

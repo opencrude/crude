@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -10,9 +12,45 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-const ptyWriteQueueCap = 1 << 20
+const (
+	// MinTerminalCols and MinTerminalRows are the shared emulator/PTY grid
+	// floor. Presentation code must normalize through NormalizeTerminalSize
+	// before resizing either side of the terminal pair.
+	MinTerminalCols = 8
+	MinTerminalRows = 2
 
-var errPtyWriterClosed = fmt.Errorf("terminal writer closed")
+	DefaultTerminalCols = 80
+	DefaultTerminalRows = 24
+
+	ptyWriteQueueCap = 1 << 20
+)
+
+var (
+	// ErrTerminalBackpressure means the bounded asynchronous PTY input queue
+	// cannot accept a complete write without exceeding its memory limit. No
+	// bytes from the rejected write were queued.
+	ErrTerminalBackpressure = errors.New("terminal input queue full")
+
+	// terminalIDSequence is process-scoped rather than manager-scoped. A
+	// workspace switch replaces TerminalManager while old Bubble Tea messages
+	// may still be queued; IDs must not be reused by the replacement manager.
+	terminalIDSequence atomic.Uint64
+
+	errPTYWriterClosed = errors.New("terminal writer closed")
+	errPTYWriterNoSink = errors.New("terminal writer has no sink")
+)
+
+// NormalizeTerminalSize applies the one grid-size floor shared by the
+// workspace PTY and the TUI emulator.
+func NormalizeTerminalSize(cols, rows int) (int, int) {
+	if cols < MinTerminalCols {
+		cols = MinTerminalCols
+	}
+	if rows < MinTerminalRows {
+		rows = MinTerminalRows
+	}
+	return cols, rows
+}
 
 // TerminalPlacement is presentation-owned; workspace only stores it so the
 // activity list can show docked vs floating without importing tui.
@@ -60,11 +98,6 @@ type TerminalExitedMsg struct {
 	Err      string
 }
 
-// TerminalClosedMsg is published after Close removes the session.
-type TerminalClosedMsg struct {
-	ID string
-}
-
 // TerminalTitleMsg is published when the child sets the window title (OSC).
 type TerminalTitleMsg struct {
 	ID    string
@@ -74,7 +107,6 @@ type TerminalTitleMsg struct {
 // TerminalManager owns workspace-scoped interactive PTY sessions.
 type TerminalManager struct {
 	mu    sync.Mutex
-	seq   atomic.Uint64
 	items map[string]*terminalSession
 	order []string
 	bus   *EventBus
@@ -106,6 +138,7 @@ type ptyWriter struct {
 	queue     [][]byte
 	queued    int
 	accepting bool
+	writeErr  error
 	wg        sync.WaitGroup
 }
 
@@ -119,16 +152,30 @@ func newPtyWriter(sink terminalIO) *ptyWriter {
 
 func (w *ptyWriter) Write(p []byte) (int, error) {
 	if w == nil {
-		return 0, errPtyWriterClosed
+		return 0, errPTYWriterClosed
+	}
+	if len(p) == 0 {
+		return 0, nil
 	}
 	w.mu.Lock()
 	if !w.accepting {
+		err := w.writeErr
+		if err == nil {
+			err = errPTYWriterClosed
+		}
 		w.mu.Unlock()
-		return 0, errPtyWriterClosed
+		return 0, err
 	}
-	if w.queued > 0 && w.queued+len(p) > ptyWriteQueueCap {
+	if len(p) > ptyWriteQueueCap-w.queued {
+		err := fmt.Errorf(
+			"%w: queued=%d incoming=%d capacity=%d",
+			ErrTerminalBackpressure,
+			w.queued,
+			len(p),
+			ptyWriteQueueCap,
+		)
 		w.mu.Unlock()
-		return len(p), nil
+		return 0, err
 	}
 	buf := make([]byte, len(p))
 	copy(buf, p)
@@ -182,10 +229,46 @@ func (w *ptyWriter) run() {
 		w.queued -= len(buf)
 		sink := w.sink
 		w.mu.Unlock()
-		if sink != nil {
-			_, _ = sink.Write(buf)
+		if sink == nil {
+			w.fail(errPTYWriterNoSink)
+			return
+		}
+		if err := writeTerminalBytes(sink, buf); err != nil {
+			w.fail(fmt.Errorf("terminal writer: %w", err))
+			return
 		}
 	}
+}
+
+func (w *ptyWriter) fail(err error) {
+	w.mu.Lock()
+	if w.writeErr == nil {
+		w.writeErr = err
+	}
+	w.accepting = false
+	w.queue = nil
+	w.queued = 0
+	w.cond.Broadcast()
+	w.mu.Unlock()
+}
+
+func writeTerminalBytes(sink terminalIO, p []byte) error {
+	for len(p) > 0 {
+		n, err := sink.Write(p)
+		if n < 0 || n > len(p) {
+			return io.ErrShortWrite
+		}
+		if n > 0 {
+			p = p[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 type terminalIO interface {
@@ -231,12 +314,13 @@ func (m *TerminalManager) Create(opts TerminalCreateOpts) (TerminalInfo, error) 
 		return TerminalInfo{}, fmt.Errorf("terminal manager is nil")
 	}
 	cols, rows := opts.Cols, opts.Rows
-	if cols < 8 {
-		cols = 80
+	if cols <= 0 {
+		cols = DefaultTerminalCols
 	}
-	if rows < 2 {
-		rows = 24
+	if rows <= 0 {
+		rows = DefaultTerminalRows
 	}
+	cols, rows = NormalizeTerminalSize(cols, rows)
 	cwd := opts.CWD
 	if cwd == "" {
 		cwd = m.root
@@ -244,7 +328,7 @@ func (m *TerminalManager) Create(opts TerminalCreateOpts) (TerminalInfo, error) 
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	id := fmt.Sprintf("t%d", m.seq.Add(1))
+	id := fmt.Sprintf("t%d", terminalIDSequence.Add(1))
 	title := opts.Title
 	if title == "" {
 		title = "Terminal"
@@ -305,7 +389,10 @@ func (m *TerminalManager) Get(id string) (TerminalInfo, bool) {
 
 // Write sends bytes to the PTY (keystrokes, paste).
 func (m *TerminalManager) Write(id string, data []byte) error {
-	if m == nil || len(data) == 0 {
+	if m == nil {
+		return fmt.Errorf("terminal manager is nil")
+	}
+	if len(data) == 0 {
 		return nil
 	}
 	m.mu.Lock()
@@ -315,28 +402,33 @@ func (m *TerminalManager) Write(id string, data []byte) error {
 		return fmt.Errorf("terminal %s not found", id)
 	}
 	_, err := s.writer.Write(data)
-	return err
+	if err != nil {
+		return fmt.Errorf("terminal %s write: %w", id, err)
+	}
+	return nil
 }
 
 // Resize updates the PTY winsize.
 func (m *TerminalManager) Resize(id string, cols, rows int) error {
 	if m == nil {
-		return nil
+		return fmt.Errorf("terminal manager is nil")
 	}
-	if cols < 8 {
-		cols = 8
-	}
-	if rows < 2 {
-		rows = 2
-	}
+	cols, rows = NormalizeTerminalSize(cols, rows)
 	m.mu.Lock()
 	s := m.items[id]
 	m.mu.Unlock()
 	if s == nil || s.io == nil {
 		return fmt.Errorf("terminal %s not found", id)
 	}
-	s.cols, s.rows = cols, rows
-	return s.io.SetSize(cols, rows)
+	if err := s.io.SetSize(cols, rows); err != nil {
+		return fmt.Errorf("terminal %s resize to %dx%d: %w", id, cols, rows, err)
+	}
+	m.mu.Lock()
+	if m.items[id] == s {
+		s.cols, s.rows = cols, rows
+	}
+	m.mu.Unlock()
+	return nil
 }
 
 // SetTitle stores a title from OSC (TUI VT) or the user.
@@ -382,6 +474,12 @@ func (m *TerminalManager) SetPlacement(id string, p TerminalPlacement) {
 }
 
 // Close kills the PTY and removes the session.
+//
+// Close is an explicit command, often called from Bubble Tea's Update
+// goroutine (terminal close actions and workspace switches). It deliberately
+// does not echo a completion event through EventBus: EventBus.Send calls
+// Program.Send synchronously, which would wait on the same Update goroutine
+// and deadlock. Callers already own the corresponding presentation teardown.
 func (m *TerminalManager) Close(id string) {
 	if m == nil {
 		return
@@ -409,7 +507,6 @@ func (m *TerminalManager) Close(id string) {
 	if s.writer != nil {
 		s.writer.wait(2 * time.Second)
 	}
-	m.emit(TerminalClosedMsg{ID: id})
 }
 
 // CloseAll tears down every PTY. Safe to call from Workspace.Close.
@@ -486,5 +583,4 @@ func (s *terminalSession) info() TerminalInfo {
 
 var _ tea.Msg = TerminalOutputMsg{}
 var _ tea.Msg = TerminalExitedMsg{}
-var _ tea.Msg = TerminalClosedMsg{}
 var _ tea.Msg = TerminalTitleMsg{}
