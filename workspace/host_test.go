@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"crude/buildinfo"
@@ -82,6 +83,10 @@ func TestTerminfoDirMaterializesPinnedEntry(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CRUDE_TERMINFO_DIR", "")
+	// os.UserHomeDir reads USERPROFILE on Windows, not HOME.
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
 
 	dir := TerminfoDir()
 	wantDir := filepath.Join(home, buildinfo.DataDir(), "terminfo")

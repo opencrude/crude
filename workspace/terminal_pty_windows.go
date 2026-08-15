@@ -2,8 +2,371 @@
 
 package workspace
 
-import "fmt"
+import (
+	"fmt"
+	"os/exec"
+	"strings"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+// conpty implements terminalIO using the Windows ConPTY API
+// (CreatePseudoConsole + CreateProcess with STARTUPINFOEX).
+type conpty struct {
+	hpc        windows.Handle
+	procInfo   windows.ProcessInformation
+	procHandle windows.Handle
+	readPipe   windows.Handle // ptyOutRead — ConPTY output (we read)
+	writePipe  windows.Handle // ptyInWrite — ConPTY input  (we write)
+	wait       chan waitResult
+	closed     bool
+}
+
+type waitResult struct {
+	code int
+	err  error
+}
 
 func startTerminalIO(command string, args []string, cwd string, cols, rows int) (terminalIO, error) {
-	return nil, fmt.Errorf("in-app terminals are not supported on Windows yet")
+	shell := command
+	if shell == "" {
+		shell = findWindowsShell()
+		if args == nil {
+			args = []string{}
+		}
+	}
+
+	// Build the command line. CreateProcess wants a single mutable UTF-16
+	// command line string, not an argv. Quote each argument using the
+	// CommandLineToArgvW-compatible algorithm so paths with spaces survive.
+	cmdLine := buildWindowsCommandLine(shell, args)
+
+	// Two pipe pairs: one for PTY input (we write → ConPTY reads),
+	// one for PTY output (ConPTY writes → we read).
+	var ptyInRead, ptyInWrite, ptyOutRead, ptyOutWrite windows.Handle
+	sa := &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		InheritHandle:      1, // handles inheritable so the ConPTY side can take them
+		SecurityDescriptor: nil,
+	}
+	if err := windows.CreatePipe(&ptyInRead, &ptyInWrite, sa, 0); err != nil {
+		return nil, fmt.Errorf("conpty: create input pipe: %w", err)
+	}
+	if err := windows.CreatePipe(&ptyOutRead, &ptyOutWrite, sa, 0); err != nil {
+		_ = windows.CloseHandle(ptyInRead)
+		_ = windows.CloseHandle(ptyInWrite)
+		return nil, fmt.Errorf("conpty: create output pipe: %w", err)
+	}
+
+	// The ConPTY takes ownership of ptyInRead and ptyOutWrite. Make sure
+	// our side's handles are NOT inherited by the child process — otherwise
+	// the child keeps the write end of our input pipe open and Read never
+	// sees EOF. SetHandleInformation clears the inherit flag by passing
+	// HANDLE_FLAG_INHERIT as the mask and 0 as the flags value.
+	if err := windows.SetHandleInformation(ptyInWrite, windows.HANDLE_FLAG_INHERIT, 0); err != nil {
+		_ = windows.CloseHandle(ptyInRead)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		_ = windows.CloseHandle(ptyOutWrite)
+		return nil, fmt.Errorf("conpty: protect input write handle: %w", err)
+	}
+	if err := windows.SetHandleInformation(ptyOutRead, windows.HANDLE_FLAG_INHERIT, 0); err != nil {
+		_ = windows.CloseHandle(ptyInRead)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		_ = windows.CloseHandle(ptyOutWrite)
+		return nil, fmt.Errorf("conpty: protect output read handle: %w", err)
+	}
+
+	size := windows.Coord{
+		X: int16(cols),
+		Y: int16(rows),
+	}
+	var hpc windows.Handle
+	if err := windows.CreatePseudoConsole(size, ptyInRead, ptyOutWrite, 0, &hpc); err != nil {
+		_ = windows.CloseHandle(ptyInRead)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		_ = windows.CloseHandle(ptyOutWrite)
+		return nil, fmt.Errorf("conpty: CreatePseudoConsole: %w", err)
+	}
+
+	// CreatePseudoConsole consumed these handles; close our references so
+	// the only outstanding handle on each is inside the ConPTY.
+	_ = windows.CloseHandle(ptyInRead)
+	_ = windows.CloseHandle(ptyOutWrite)
+
+	// Build the PROC_THREAD_ATTRIBUTE_LIST with the PSEUDOCONSOLE attribute.
+	// The attribute list is embedded in STARTUPINFOEX so CreateProcess can
+	// attach the child to the pseudo console.
+	attrList, err := windows.NewProcThreadAttributeList(1)
+	if err != nil {
+		windows.ClosePseudoConsole(hpc)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		return nil, fmt.Errorf("conpty: attribute list: %w", err)
+	}
+	defer attrList.Delete()
+
+	if err := attrList.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(hpc), unsafe.Sizeof(hpc)); err != nil {
+		windows.ClosePseudoConsole(hpc)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		return nil, fmt.Errorf("conpty: set pseudoconsole attribute: %w", err)
+	}
+
+	startupInfo := &windows.StartupInfoEx{
+		StartupInfo: windows.StartupInfo{
+			Cb:    uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
+			Flags: windows.STARTF_USESTDHANDLES,
+		},
+		ProcThreadAttributeList: attrList.List(),
+	}
+
+	var procInfo windows.ProcessInformation
+		cmdLinePtr, err := windows.UTF16PtrFromString(cmdLine)
+	if err != nil {
+		windows.ClosePseudoConsole(hpc)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		return nil, fmt.Errorf("conpty: encode command line: %w", err)
+	}
+
+	var cwdPtr *uint16
+	if cwd != "" {
+		cwdPtr, err = windows.UTF16PtrFromString(cwd)
+		if err != nil {
+			windows.ClosePseudoConsole(hpc)
+			_ = windows.CloseHandle(ptyInWrite)
+			_ = windows.CloseHandle(ptyOutRead)
+			return nil, fmt.Errorf("conpty: encode cwd: %w", err)
+		}
+	}
+
+	envBlock, err := buildWindowsEnvBlock(PTYEnviron(nil))
+	if err != nil {
+		windows.ClosePseudoConsole(hpc)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		return nil, fmt.Errorf("conpty: build env block: %w", err)
+	}
+
+	creationFlags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
+	if err := windows.CreateProcess(
+		nil,           // appName — let CreateProcess parse the command line
+		cmdLinePtr,    // commandLine — must be mutable UTF-16
+		nil, nil,      // process/thread security attributes
+		true,          // inheritHandles — required for attribute list
+		creationFlags,
+		envBlock,
+		cwdPtr,
+		&startupInfo.StartupInfo,
+		&procInfo,
+	); err != nil {
+		windows.ClosePseudoConsole(hpc)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		return nil, fmt.Errorf("conpty: CreateProcess: %w", err)
+	}
+
+	// We only need the process handle for wait/terminate; the thread handle
+	// is not useful after the process starts.
+	_ = windows.CloseHandle(procInfo.Thread)
+
+	c := &conpty{
+		hpc:        hpc,
+		procInfo:   procInfo,
+		procHandle: procInfo.Process,
+		readPipe:   ptyOutRead,
+		writePipe:  ptyInWrite,
+		wait:       make(chan waitResult, 1),
+	}
+	go c.waitLoop()
+	return c, nil
+}
+
+func (c *conpty) waitLoop() {
+	_, err := windows.WaitForSingleObject(c.procHandle, windows.INFINITE)
+	var code uint32
+	if err == nil {
+		err = windows.GetExitCodeProcess(c.procHandle, &code)
+	}
+	c.wait <- waitResult{code: int(code), err: err}
+}
+
+func (c *conpty) Read(b []byte) (int, error) {
+	if c == nil || c.closed || c.readPipe == 0 {
+		return 0, fmt.Errorf("conpty: read handle closed")
+	}
+	var done uint32
+	err := windows.ReadFile(c.readPipe, b, &done, nil)
+	if err != nil {
+		return int(done), err
+	}
+	if done == 0 {
+		return 0, fmt.Errorf("conpty: end of stream")
+	}
+	return int(done), nil
+}
+
+func (c *conpty) Write(b []byte) (int, error) {
+	if c == nil || c.closed || c.writePipe == 0 {
+		return 0, fmt.Errorf("conpty: write handle closed")
+	}
+	var done uint32
+	err := windows.WriteFile(c.writePipe, b, &done, nil)
+	if err != nil {
+		return int(done), err
+	}
+	return int(done), nil
+}
+
+func (c *conpty) SetSize(cols, rows int) error {
+	if c == nil || c.hpc == 0 {
+		return fmt.Errorf("conpty: not initialized")
+	}
+	size := windows.Coord{
+		X: int16(cols),
+		Y: int16(rows),
+	}
+	return windows.ResizePseudoConsole(c.hpc, size)
+}
+
+func (c *conpty) Close() error {
+	if c == nil || c.closed {
+		return nil
+	}
+	c.closed = true
+
+	// Close the pseudo console first. This signals the child that the
+	// terminal is gone and typically causes it to exit. Then close our
+	// pipe handles and wait briefly for the process.
+	if c.hpc != 0 {
+		windows.ClosePseudoConsole(c.hpc)
+		c.hpc = 0
+	}
+	if c.writePipe != 0 {
+		_ = windows.CloseHandle(c.writePipe)
+		c.writePipe = 0
+	}
+	if c.readPipe != 0 {
+		_ = windows.CloseHandle(c.readPipe)
+		c.readPipe = 0
+	}
+
+	// Give the child a brief grace period, then force-kill.
+	if c.procHandle != 0 {
+		result, _ := windows.WaitForSingleObject(c.procHandle, 2000)
+		if result != uint32(windows.WAIT_OBJECT_0) {
+			_ = windows.TerminateProcess(c.procHandle, 1)
+		}
+		_ = windows.CloseHandle(c.procHandle)
+		c.procHandle = 0
+	}
+	return nil
+}
+
+func (c *conpty) Wait() (int, error) {
+	if c == nil {
+		return -1, fmt.Errorf("conpty: nil")
+	}
+	res := <-c.wait
+	return res.code, res.err
+}
+
+func (c *conpty) Pid() int {
+	if c == nil || c.procHandle == 0 {
+		return 0
+	}
+	return int(c.procInfo.ProcessId)
+}
+
+// findWindowsShell returns the preferred shell for ConPTY sessions.
+// PowerShell is preferred on Windows 10+; cmd.exe is the fallback.
+func findWindowsShell() string {
+	if p, err := exec.LookPath("powershell.exe"); err == nil {
+		return p
+	}
+	if p, err := exec.LookPath("pwsh.exe"); err == nil {
+		return p
+	}
+	return "cmd.exe"
+}
+
+// buildWindowsCommandLine constructs a CreateProcess-compatible command line
+// from an executable path and argument list. Each argument is quoted using
+// the CommandLineToArgvW-compatible algorithm so paths with spaces survive.
+func buildWindowsCommandLine(exe string, args []string) string {
+	parts := make([]string, 0, 1+len(args))
+	parts = append(parts, quoteWindowsArg(exe))
+	for _, a := range args {
+		parts = append(parts, quoteWindowsArg(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+// quoteWindowsArg quotes a single argument for the Windows command line.
+// Implements the algorithm described by CommandLineToArgvW: backslashes
+// are special only when they precede a double quote.
+func quoteWindowsArg(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t\n\v\"") {
+		return s
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	slashes := 0
+	for _, r := range s {
+		switch r {
+		case '\\':
+			slashes++
+			b.WriteRune(r)
+		case '"':
+			for i := 0; i < slashes; i++ {
+				b.WriteByte('\\')
+			}
+			b.WriteString(`\"`)
+			slashes = 0
+		default:
+			slashes = 0
+			b.WriteRune(r)
+		}
+	}
+	for i := 0; i < slashes; i++ {
+		b.WriteByte('\\')
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// buildWindowsEnvBlock converts a KEY=VALUE environment list into the
+// null-terminated, double-null-terminated UTF-16 environment block that
+// CreateProcess expects when CREATE_UNICODE_ENVIRONMENT is set. Each entry
+// is separated by a null character and the block ends with a second null.
+func buildWindowsEnvBlock(env []string) (*uint16, error) {
+	if len(env) == 0 {
+		return nil, nil
+	}
+	// Build the UTF-16 slice manually: UTF16PtrFromString rejects embedded
+	// nulls, so we concatenate each entry's UTF-16 encoding plus a null,
+	// then a final terminating null.
+	var block []uint16
+	for _, e := range env {
+		chars, err := windows.UTF16FromString(e)
+		if err != nil {
+			return nil, err
+		}
+		// UTF16FromString appends a null terminator; keep it as the entry
+		// separator and drop any extra.
+		block = append(block, chars...)
+	}
+	// Ensure the block ends with a double null (UTF16FromString already
+	// added one per entry; add the final one if not already present).
+	if len(block) == 0 || block[len(block)-1] != 0 {
+		block = append(block, 0)
+	}
+	return &block[0], nil
 }

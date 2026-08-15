@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -58,12 +59,26 @@ func colorKey(c cell.Color) string {
 // testdata/golden/<name>.sha256 (relative to the importing package, since
 // test binaries run with cwd = package dir). Pass -update to regenerate when
 // a paint change is INTENTIONAL.
+//
+// When a platform-specific variant testdata/golden/<name>_<goos>.sha256
+// exists, it takes precedence over the default. This lets screens that
+// render platform-dependent text (e.g. filepath.Abs-converted paths) keep
+// separate goldens per OS without changing rendering code.
 func CheckGolden(t *testing.T, name string, buf *surface.CellBuffer) {
 	t.Helper()
 	got := GoldenHash(buf)
-	path := filepath.Join("testdata", "golden", name+".sha256")
+	defaultPath := filepath.Join("testdata", "golden", name+".sha256")
+	platformPath := filepath.Join("testdata", "golden",
+		fmt.Sprintf("%s_%s.sha256", name, runtime.GOOS))
 
 	if *updateGoldens {
+		// -update writes the platform-specific file when a platform variant
+		// already exists, otherwise the default. This prevents accidentally
+		// overwriting the Linux golden when running -update on Windows.
+		path := defaultPath
+		if _, err := os.Stat(platformPath); err == nil {
+			path = platformPath
+		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -72,6 +87,12 @@ func CheckGolden(t *testing.T, name string, buf *surface.CellBuffer) {
 		}
 		t.Logf("updated golden %s -> %s", name, got)
 		return
+	}
+
+	// Prefer the platform-specific golden when it exists.
+	path := defaultPath
+	if _, err := os.Stat(platformPath); err == nil {
+		path = platformPath
 	}
 
 	raw, err := os.ReadFile(path)
