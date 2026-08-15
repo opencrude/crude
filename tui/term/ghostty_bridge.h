@@ -10,11 +10,20 @@
 #define CRUDE_CELL_PX_W 8
 #define CRUDE_CELL_PX_H 16
 
-extern void goWritePtyTrampoline(GhosttyTerminal, void*, uint8_t*, size_t);
-extern void goTitleChangedTrampoline(GhosttyTerminal, void*);
-extern void goBellTrampoline(GhosttyTerminal, void*);
-extern void goPwdChangedTrampoline(GhosttyTerminal, void*);
-extern GhosttyClipboardWriteResult goClipboardWriteTrampoline(GhosttyTerminal, void*, GhosttyClipboardWrite*);
+/* cgo adds __declspec(dllexport) to //export trampolines on Windows. The
+ * attribute must be present on the first declaration or MSVC/clang rejects
+ * the redeclaration. On non-Windows it's a no-op. */
+#ifdef _WIN32
+#define CRUDE_EXPORT __declspec(dllexport)
+#else
+#define CRUDE_EXPORT
+#endif
+
+CRUDE_EXPORT void goWritePtyTrampoline(GhosttyTerminal, void*, uint8_t*, size_t);
+CRUDE_EXPORT void goTitleChangedTrampoline(GhosttyTerminal, void*);
+CRUDE_EXPORT void goBellTrampoline(GhosttyTerminal, void*);
+CRUDE_EXPORT void goPwdChangedTrampoline(GhosttyTerminal, void*);
+CRUDE_EXPORT GhosttyClipboardWriteResult goClipboardWriteTrampoline(GhosttyTerminal, void*, GhosttyClipboardWrite*);
 
 /* cgo.Handle is a uintptr index, not a Go pointer. Passing it as uintptr_t
  * avoids checkptr (-race) rejecting unsafe.Pointer(handle). Ghostty userdata

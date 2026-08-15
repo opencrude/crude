@@ -13,8 +13,10 @@ against the pinned headers instead.
 
 ## Bootstrap
 
-Zig 0.16.x must be on `PATH` (install under `~/tools/zig-0.16.0` is enough)
-and `tic` must be available (Debian/Ubuntu package `ncurses-bin`).
+Zig 0.16.x must be on `PATH` (install under `~/tools/zig-0.16.0` is enough).
+On Linux, `tic` (Debian/Ubuntu package `ncurses-bin`) is also required.
+
+### Linux / macOS
 
 ```bash
 scripts/bootstrap_libghostty.sh
@@ -23,6 +25,25 @@ scripts/bootstrap_libghostty.sh
 This clones Ghostty at the commit in `GHOSTTY_PIN` (default source dir
 `$HOME/tools/src/ghostty`) and installs headers + `libghostty-vt.a` into
 `deps/libghostty-vt/`.
+
+### Windows
+
+```powershell
+pwsh scripts/bootstrap_libghostty.ps1
+```
+
+The Windows bootstrap builds only `libghostty-vt` (producing
+`ghostty-vt-static.lib`, not `libghostty-vt.a`). The terminfo step is
+skipped — the compiled `xterm-ghostty` entry is already committed under
+`types/terminfo/` and embedded via `go:embed`, so Windows users don't
+need `tic`.
+
+The Windows build uses `zig cc` as the C compiler (`CC=zig cc`): it
+produces MSVC COFF objects that link cleanly against `ghostty-vt-static.lib`
+while accepting gcc-style cgo flags. `gcc`/MinGW produces ABI-incompatible
+objects (`__chkstk` mismatch); `clang` targets the MSVC ABI but rejects
+cgo's `-mthreads` flag. Source `scripts/libghostty_env.ps1` before building
+to set `CC`, `CXX`, `PKG_CONFIG_PATH`, and add Zig to `PATH`.
 
 ## Pinned terminfo
 

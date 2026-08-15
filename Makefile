@@ -23,3 +23,16 @@ design-audit:
 # Allocation regression gate against PERFORMANCE_BASELINES.md ceilings.
 bench-gate:
 	./scripts/tui_bench_gate.sh
+
+# --- Windows targets (use PowerShell + zig cc) ---
+libghostty-windows:
+	pwsh scripts/bootstrap_libghostty.ps1
+
+ensure-libghostty-windows:
+	@if (-not (Test-Path deps/libghostty-vt/lib/ghostty-vt-static.lib)) { pwsh scripts/bootstrap_libghostty.ps1 }
+
+build-windows: ensure-libghostty-windows
+	. scripts/libghostty_env.ps1; go build ./...
+
+test-tui-windows: ensure-libghostty-windows
+	. scripts/libghostty_env.ps1; go test ./tui/...
