@@ -725,6 +725,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "agent.toggle.multiagent":
 		s := m.LastSettings
 		s.Agents.Enabled = !s.Agents.Enabled
+		enabled := s.Agents.Enabled
+		s.SessionMultiAgent = &enabled
 		m.StatusBar.SetInfo("Toggling multi-agent mode...")
 		cmds = append(cmds, func() tea.Msg {
 			err := m.HandleSettingsSave(s)

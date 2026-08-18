@@ -40,8 +40,8 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 			t.Fatalf("shell tabs must omit icons, found %q in %q", icon, row0)
 		}
 	}
-	if !strings.Contains(row0, "❯") {
-		t.Fatalf("expected active marker in row 0: %q", row0)
+	if strings.Contains(row0, "❯") {
+		t.Fatalf("shell tabs must not paint a prompt glyph: %q", row0)
 	}
 	row1 := readRow(buf, 1, 40)
 	if !strings.Contains(row1, "━") {
@@ -115,8 +115,8 @@ func TestScreenPaintsTabsAndSeparator(t *testing.T) {
 	if strings.Contains(row0, "📄") {
 		t.Fatalf("shell tabs must omit icons, got %q", row0)
 	}
-	if !strings.Contains(row0, "Editor") || !strings.Contains(row0, "❯") {
-		t.Fatalf("expected tab content in row 0, got %q", row0)
+	if !strings.Contains(row0, "Editor") || strings.Contains(row0, "❯") {
+		t.Fatalf("expected tab content without prompt glyph in row 0, got %q", row0)
 	}
 	row1 := readRow(buf, 1, 30)
 	if !strings.Contains(row1, "━") {

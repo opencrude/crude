@@ -47,35 +47,40 @@ func (s *Screen) Reset() {
 		value := ui.StringValue(field.value)
 		model.AddField(&ui.FieldState{ID: field.id, Label: field.label, Type: ui.FieldText, Value: value, Initial: value, ReadOnly: true})
 	}
-	s.form = ui.NewForm(FormID, model, "YOLO mode", "Are you absolutely sure?", s.tokens)
-	s.actions = ui.NewActionBar(ActionsID, s.tokens,
+	s.form = ui.NewDockedForm(FormID, model, "YOLO mode", "Are you absolutely sure?", s.tokens)
+	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens,
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "enable"), Label: "Enable YOLO", Action: "yolo.enable", Shortcut: "y", Variant: ui.VariantDanger, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "yolo.cancel", Shortcut: "n", Variant: ui.VariantSecondary, Enabled: true},
 	)
 	s.actions.SetCancelAction("yolo.cancel")
 }
 
-func (s *Screen) Children() []ui.Component { return []ui.Component{s.actions} }
+func (s *Screen) Children() []ui.Component { return []ui.Component{s.form, s.actions} }
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.form.SetTokens(tokens)
 	s.actions.SetTokens(tokens)
 }
+
+func (s *Screen) SetSurfaceBackground(role ui.SemanticColor) {
+	if s.form != nil {
+		s.form.SetSurfaceBackground(role)
+	}
+}
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: s.PreferredHeight(cs.MaxH)})
 }
 func (s *Screen) PreferredHeight(maxHeight int) int {
-	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-2))+2)
+	chrome := s.actions.PreferredHeight()
+	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-chrome))+chrome)
 }
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	s.form.Layout(ctx, ui.Rect{W: r.W, H: max(1, r.H-2)})
-	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})
+	chrome := s.actions.PreferredHeight()
+	s.form.Layout(ctx, ui.Rect{W: r.W, H: max(1, r.H-chrome)})
+	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-chrome), W: r.W, H: chrome})
 }
-func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
-	r := s.Bounds()
-	ui.PaintTree(s.form, buf, originX+r.X, originY+r.Y, ctx)
-}
+func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	if !evt.IsKey() {
 		return ui.EventResult{}
@@ -103,8 +108,24 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	if matched {
 		return s.result(enabled)
 	}
-	if action.ID == "actionbar.exit.forward" || action.ID == "actionbar.exit.backward" {
+	if action.ID == "form.exit.forward" || action.ID == "form.exit.backward" {
+		if action.ID == "form.exit.backward" {
+			s.actions.FocusLast()
+		} else {
+			s.actions.FocusFirst()
+		}
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	}
+	if action.ID == "form.cancel" {
+		return s.result(false)
+	}
+	if action.ID == "actionbar.exit.forward" || action.ID == "actionbar.exit.backward" {
+		if action.ID == "actionbar.exit.backward" {
+			s.form.FocusLast()
+		} else {
+			s.form.FocusFirst()
+		}
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: FormID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return ui.EventResult{Action: &action}
 }

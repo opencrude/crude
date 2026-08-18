@@ -210,6 +210,9 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 	if fc.Agents != nil {
 		cfg.Agents = *fc.Agents
 		session.StripStoredAgentAPIKeys(&cfg.Agents)
+		session.EnsureAgentsDefaults(&cfg.Agents)
+	} else {
+		cfg.Agents = session.DefaultAgentsConfig()
 	}
 	if fc.Memory != nil {
 		cfg.Memory = *fc.Memory

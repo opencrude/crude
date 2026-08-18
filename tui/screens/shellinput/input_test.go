@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/cell"
 	"crude/tui/input"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -35,12 +34,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 			t.Fatalf("missing shell input label %q:\n%s", label, plain)
 		}
 	}
-	wantAccent := ui.NewTokenSet(th).Color(ui.ColorAccent)
-	if !bufferHasFG(buf, wantAccent) {
-		t.Fatal("shell input paint missing theme accent foreground")
-	}
-
-	// Byte-identical regression: catches a shifted prompt, a wrong padding
+	// Byte-identical regression: catches a shifted input, a wrong padding
 	// cell, or a color change that property checks cannot see.
 	uitest.CheckGolden(t, "shellinput_dark_48x2", buf)
 }
@@ -56,17 +50,6 @@ func countNonEmptyCells(buf *surface.CellBuffer) int {
 		}
 	}
 	return n
-}
-
-func bufferHasFG(buf *surface.CellBuffer, want cell.Color) bool {
-	for y := 0; y < buf.Height(); y++ {
-		for x := 0; x < buf.Width(); x++ {
-			if fg := buf.Get(x, y).FG; !fg.IsDefault() && fg.Equal(want) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func bufferPlain(buf *surface.CellBuffer) string {
@@ -94,7 +77,7 @@ func TestShellInputPaintsSeparatorAndPrompt(t *testing.T) {
 	found := false
 	for y := 1; y < buf.Height(); y++ {
 		plain := PlainRow(buf, y, 40)
-		if strings.Contains(plain, "hello") || strings.Contains(plain, "❯") {
+		if strings.Contains(plain, "hello") {
 			found = true
 			break
 		}
@@ -159,5 +142,47 @@ func TestShellInputSlashPopupIncreasesHeight(t *testing.T) {
 	}
 	if len(m.SlashFiltered()) == 0 {
 		t.Fatal("expected filtered slash commands")
+	}
+}
+
+func TestShellInputSlashListUsesShellBackground(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := ui.NewTokenSet(th)
+	shellBG := tokens.Color(ui.ColorBg)
+	popupBG := tokens.Color(ui.ColorPopupBg)
+	if shellBG.Equal(popupBG) {
+		t.Fatal("dark theme must distinguish shell bg from popup bg")
+	}
+
+	m := input.NewModel(th)
+	m.SetWidth(48)
+	m.SetInput("/s")
+	if !m.SlashActive() {
+		t.Fatal("expected slash mode for /s")
+	}
+	s := New(th)
+	s.Bind(&m)
+	buf := s.PaintTestBuffer(48, m.ShellHeight(48))
+
+	found := false
+	for y := 0; y < buf.Height(); y++ {
+		plain := PlainRow(buf, y, 48)
+		if !strings.Contains(plain, "settings") {
+			continue
+		}
+		found = true
+		for x := 0; x < buf.Width(); x++ {
+			c := buf.Get(x, y)
+			if c.Char == 0 {
+				continue
+			}
+			if c.BG.Equal(popupBG) {
+				t.Fatal("slash command list used popup background")
+			}
+		}
+		return
+	}
+	if !found {
+		t.Fatal("did not find slash command row to check background")
 	}
 }

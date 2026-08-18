@@ -87,7 +87,8 @@ func ResolveConfig(flags CLIFlags) (FileConfig, error) {
 	// Apply --model flag to the active profile's default category.
 	if flags.Model != "" {
 		if fc.Agents == nil {
-			fc.Agents = &session.AgentsConfig{ActiveProfile: "default", Profiles: make(map[string]session.ProfileConfig)}
+			agents := session.DefaultAgentsConfig()
+			fc.Agents = &agents
 		}
 		ap := fc.Agents.ActiveProfile
 		if ap == "" {

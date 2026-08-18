@@ -152,9 +152,9 @@ func (t *Tabs) idealTabWidth(i int, label string) int {
 	return max(tabMinW, w)
 }
 
-// activeMarker returns the active-tab prefix glyph (Prompt token + space).
+// activeMarker is empty: the active tab uses bold + accent, never a prompt glyph.
 func (t *Tabs) activeMarker() string {
-	return string(FirstRune(t.tokens.Glyphs().Prompt, '❯')) + " "
+	return ""
 }
 
 func (t *Tabs) displayLabel(i int) string {

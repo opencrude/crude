@@ -43,7 +43,7 @@ func TestDeckFormPaintsThroughRootHost(t *testing.T) {
 
 	// The form title, a nav field label, and a primary action must all paint
 	// into the root-host shell surface INSIDE the deck slot.
-	for _, want := range []string{"Session AI Settings", "Main Agent", "Save"} {
+	for _, want := range []string{"Session Settings", "Main Agent", "Save"} {
 		if !deckRegionContains(buf, deck, want) {
 			t.Fatalf("form content %q missing from the deck slot of the root-host surface", want)
 		}

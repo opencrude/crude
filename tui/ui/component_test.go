@@ -111,9 +111,9 @@ func TestButton_PaintStates(t *testing.T) {
 	if buf.Get(0, 0).Char != '[' {
 		t.Fatalf("got %c", buf.Get(0, 0).Char)
 	}
-	_, wantBG := tokens.ButtonColors(StateFocused)
-	if !buf.Get(0, 0).BG.Equal(wantBG) {
-		t.Fatalf("focus bg %+v want %+v", buf.Get(0, 0).BG, wantBG)
+	wantFill := tokens.Color(ColorAccent)
+	if !buf.Get(0, 0).BG.Equal(wantFill) {
+		t.Fatalf("focus bg %+v want variant fill %+v", buf.Get(0, 0).BG, wantFill)
 	}
 }
 

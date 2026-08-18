@@ -114,6 +114,59 @@ func TestApplyWorkspaceAgentDefaultsDoesNotStoreAPIKey(t *testing.T) {
 	}
 }
 
+func TestEnsureAgentsDefaultsRestoresOmittedMultiAgent(t *testing.T) {
+	agents := AgentsConfig{ActiveProfile: "default", Profiles: map[string]ProfileConfig{
+		"default": {Categories: map[string]CategoryConfig{
+			CategoryDefault: {Provider: "openrouter", Model: "m"},
+		}},
+	}}
+	EnsureAgentsDefaults(&agents)
+	if !agents.Enabled || agents.Profiles["default"].MultiAgent == nil || !*agents.Profiles["default"].MultiAgent {
+		t.Fatalf("omitted multi-agent stayed off: %#v", agents)
+	}
+	cfg := &Config{Agents: agents}
+	if !cfg.IsMultiAgentEnabled() {
+		t.Fatal("restored defaults still report multi-agent disabled")
+	}
+}
+
+func TestHandleSettingsSaveAppliesMultiAgent(t *testing.T) {
+	root := t.TempDir()
+	cfg := testConfig()
+	off := false
+	prof := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
+	prof.MultiAgent = &off
+	cfg.Agents.Enabled = false
+	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = prof
+
+	sess, err := NewWithSessionDir("", cfg, root, root)
+	if err != nil {
+		t.Fatalf("NewWithSessionDir: %v", err)
+	}
+	t.Cleanup(sess.Close)
+	if sess.SettingsSnapshot().Agents.Enabled || sess.SubAgentRunner() != nil {
+		t.Fatal("precondition: session must start with multi-agent off")
+	}
+
+	settings := sess.SettingsSnapshot()
+	settings.Agents.Enabled = true
+	on := true
+	settings.SessionMultiAgent = &on
+	if err := sess.HandleSettingsSave(settings); err != nil {
+		t.Fatalf("HandleSettingsSave: %v", err)
+	}
+	if !sess.SettingsSnapshot().Agents.Enabled {
+		t.Fatal("saved multi-agent on did not enable the session")
+	}
+	if sess.SubAgentRunner() == nil {
+		t.Fatal("enabling multi-agent did not create the sub-agent runner")
+	}
+	snap := sess.SettingsSnapshot()
+	if snap.SessionMultiAgent == nil || !*snap.SessionMultiAgent {
+		t.Fatalf("snapshot missing session multi-agent override: %#v", snap)
+	}
+}
+
 func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
 	settings := ttypes.Settings{
 		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{

@@ -124,6 +124,8 @@ type Session struct {
 	// per-session config after applying overrides loaded from this session's DB.
 	workspaceCfg     *Config
 	sessionOverrides map[string]sessiondb.AgentSettingOverride
+	// multiAgentOverride is the explicit session flag. nil inherits workspace.
+	multiAgentOverride *bool
 }
 
 // New creates a backend session in the global sessions directory.

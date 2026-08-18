@@ -53,7 +53,20 @@ func TestActionBarUpReturnsToForm(t *testing.T) {
 		t.Fatalf("Up on action bar result=%#v", res)
 	}
 	res = bar.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
-	if res.Action != nil {
-		t.Fatalf("Down on action bar should stay on the bar, got %v", res.Action)
+	if res.Action == nil || res.Action.ID != "actionbar.exit.forward" {
+		t.Fatalf("Down on action bar result=%#v", res)
+	}
+}
+
+func TestDockedActionBarPacksFromLeftWithRule(t *testing.T) {
+	bar := NewDockedActionBar("actions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{ID: "save", Label: "Save", Action: "save", Variant: VariantPrimary, Enabled: true},
+	)
+	if bar.PreferredHeight() != 2 {
+		t.Fatalf("docked action bar height=%d, want 2", bar.PreferredHeight())
+	}
+	bar.Layout(LayoutContext{}, Rect{W: 40, H: 2})
+	if bar.buttons[0].button.Bounds().X != 0 || bar.buttons[0].button.Bounds().Y != 1 {
+		t.Fatalf("docked button bounds=%v, want x=0 y=1", bar.buttons[0].button.Bounds())
 	}
 }

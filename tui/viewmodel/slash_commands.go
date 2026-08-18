@@ -27,12 +27,11 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/settings":
 		m.Logger.Info("INPUT", "slash", "command", "settings")
 		m.openSessionSettings()
-	case "/provider":
-		m.Logger.Info("INPUT", "slash", "command", "provider")
-		m.openSessionSettings()
-	case "/api-key":
-		m.Logger.Info("INPUT", "slash", "command", "api-key")
-		m.openApplicationSettings()
+	case "/model":
+		m.Logger.Info("INPUT", "slash", "command", "model")
+		if cmd := m.openSessionModelPicker(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case "/sessions":
 		m.Logger.Info("INPUT", "slash", "command", "sessions")
 		m.openSessionPicker()
@@ -80,7 +79,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.openSessionYoloPanel()
 			m.Logger.Info("SAFETY", "yolo_prompt", "source", "slash")
 		}
-	case "/undo", "/undo-n", "/undo-all", "/changes":
+	case "/undo", "/undo-n", "/undo-all":
 		m.Logger.Info("INPUT", "slash", "command", cmd)
 		m.HandleUndo(cmd)
 	default:

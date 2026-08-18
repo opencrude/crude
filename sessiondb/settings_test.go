@@ -6,6 +6,43 @@ import (
 	"time"
 )
 
+func TestSessionFlagsRoundTripAndClear(t *testing.T) {
+	db, err := OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		INSERT INTO sessions (id, project_path, project_name, created_at)
+		VALUES (?, ?, ?, ?)
+	`, "session-1", "/tmp/project", "project", time.Now().UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+
+	on := true
+	if err := SaveSessionFlags(db, "session-1", SessionFlags{MultiAgent: &on}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSessionFlags(db, "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MultiAgent == nil || !*got.MultiAgent {
+		t.Fatalf("loaded flags = %#v, want multi-agent on", got)
+	}
+
+	if err := ClearSessionFlags(db, "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadSessionFlags(db, "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MultiAgent != nil {
+		t.Fatalf("flags after clear = %#v, want inherit", got)
+	}
+}
+
 func TestAgentSettingOverridesRoundTripAndClear(t *testing.T) {
 	db, err := OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
 	if err != nil {

@@ -11,7 +11,7 @@ system. See also [`CONTROL_USAGE.md`](./CONTROL_USAGE.md),
 |---------|-------------|----------|
 | **Host paint screen** | Persistent docked chrome in the main layout | `shellheader`, `shelltabs`, `shellinput`, `shelltree`, `activitybar`, `activitylist`, `shellchat`, `termdock` |
 | **OverlayHost + WindowFrame** | Floating dialogs and pickers | `sessionpicker`, `help`, `composer`, `findinfiles`, command palette, application/workspace settings, **floating terminals** |
-| **PanelDeck** | Session-owned panels between messages and input | session settings, questions, tool confirm, YOLO |
+| **PanelDeck** | Session-owned panels between messages and input; shell `ColorBg`, not popup fill | session settings, questions, tool confirm, YOLO, background jobs |
 
 ---
 
@@ -274,9 +274,9 @@ Screens must implement `SetTokens` / `SetTheme` and forward to children.
 
 | Role | Use |
 |------|-----|
-| `ColorBg`, `ColorFg`, `ColorMuted` | Base text surfaces |
-| `ColorAccent`, `ColorAccent2` | Active markers, chips, tab separator when focused |
-| `ColorHover`, `ColorSelection` | Mouse/keyboard highlight |
+| `ColorBg`, `ColorFg`, `ColorMuted` | Base text surfaces. Primary labels/values are `ColorFg`; inherited, accelerators, and other meta are `ColorMuted` (`TokenSet.MenuInk`) |
+| `ColorAccent`, `ColorAccent2` | Active markers, chips, tab separator when focused, compact-form focused labels |
+| `ColorHover`, `ColorSelection` | Mouse/keyboard highlight. Compact form focus uses `ColorHover`; lists keep accent-fill focus via `ListRowColors` |
 | `ColorBorder` | Separators, tree gutter |
 | `ColorPopupBg`, `ColorPopupBorder` | WindowFrame chrome |
 | `ColorError` | Diagnostics, chip close marks |
@@ -324,6 +324,23 @@ exception: viewmodel applies the payload to `Tree.Width` so
 
 Horizontal splits paint `BorderV`; vertical splits paint `BorderH`. Hover and
 drag use `ColorAccent`.
+
+---
+
+## Selection, prompts, and filter fill
+
+Never paint `❯` (or `Glyphs.Prompt`) as a selection marker, list cursor,
+tab marker, chat prefix, or input prompt. Selectable rows react with
+hover background and selected/focused background only. Chat input has
+no leading glyph and no leading space. File-tree expand/collapse still
+uses `TreeCollapsed` / `TreeExpanded`. Path breadcrumbs still use
+`BreadcrumbSep` (`▸`). Settings and dock titles use `ui.TitleBreadcrumb`
+(` · `).
+
+`NewFilterField` and `NewSearchField` always fill with `FilterSurface`
+(`ColorPopupSubtleBg`). Do not set a filter to `ColorBg`. Sidebar
+filters may override to `ColorSubPaneBg` after `SetTokens` if that
+surface is already distinct from the list.
 
 ---
 

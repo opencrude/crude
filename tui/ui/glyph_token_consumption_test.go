@@ -30,15 +30,19 @@ func TestPanelDeckDividerConsumesBorderHGlyph(t *testing.T) {
 	}
 }
 
-func TestTextAreaPromptConsumesPromptGlyph(t *testing.T) {
+func TestTextAreaHasNoDefaultPromptGlyph(t *testing.T) {
 	th := themeWithGlyph(func(g *theme.Glyphs) { g.Prompt = ">" })
 	ta := NewTextArea("test/area", NewTokenSet(th), true)
 	ta.SetValue("hello")
 	ta.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 20, H: 3})
 	buf := surface.NewCellBuffer(20, 3)
 	ta.Paint(buf, 0, 0, PaintContext{Theme: th, Focused: true})
-	if row := rowText(buf, 0); !strings.HasPrefix(row, ">") {
-		t.Fatalf("row 0=%q want prefix '>' (Prompt token)", row)
+	row := rowText(buf, 0)
+	if strings.HasPrefix(strings.TrimLeft(row, " "), ">") || strings.Contains(row, "❯") {
+		t.Fatalf("row 0=%q must not consume Glyphs.Prompt", row)
+	}
+	if !strings.Contains(row, "hello") {
+		t.Fatalf("row 0=%q missing hello", row)
 	}
 }
 
@@ -79,7 +83,6 @@ func TestScrollbarControlMeasureConsumesScrollbarWidthMetric(t *testing.T) {
 func TestMenuConsumesBorderPromptTreeGlyphs(t *testing.T) {
 	th := themeWithGlyph(func(g *theme.Glyphs) {
 		g.BorderH = "-"
-		g.Prompt = ">"
 		g.TreeCollapsed = "»"
 	})
 	m := NewMenu("menu", NewTokenSet(th))
@@ -96,8 +99,11 @@ func TestMenuConsumesBorderPromptTreeGlyphs(t *testing.T) {
 		t.Fatalf("menu separator row char=%q want '-' (BorderH token)", string(got))
 	}
 	row := rowText(buf, 1)
-	if !strings.Contains(row, ">") {
-		t.Fatalf("selected menu row=%q missing '>' (Prompt token)", row)
+	if strings.Contains(row, ">") || strings.Contains(row, "❯") {
+		t.Fatalf("selected menu row=%q must not paint a prompt glyph", row)
+	}
+	if !strings.Contains(row, "One") {
+		t.Fatalf("selected menu row=%q missing label", row)
 	}
 	subRow := rowText(buf, 2)
 	if !strings.Contains(subRow, "»") {

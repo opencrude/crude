@@ -76,7 +76,7 @@ workspace). Application defaults alone are `AppDefaults()`.
 | Application Settings → Save | `config.json` via `SaveAppSettings` + provider credentials via `SaveProviderSettings` | `workspace.db`, API keys on agent profiles |
 | Workspace Settings → Save | field-level `WorkspaceOverrides` in `workspace.db` key `workspace_settings` | `config.json`, API keys, untouched fields |
 | Workspace Settings → Reset section | `ClearCategory` then `SaveWorkspaceSettings` | other categories, app config |
-| `/settings` dock | session agent provider/model/protocol/thinking | app/workspace IDE prefs, API keys |
+| `/settings` or `/model` dock | session agent provider/model/protocol/thinking **and multi-agent** | app/workspace IDE prefs, API keys |
 | Theme cycle (`app.toggleTheme`) | application layer | workspace overlay |
 
 Legacy `workspace.db` key `app_settings` (full `AppSettings` blobs) is still
@@ -95,10 +95,21 @@ entries:
 - `settings.open` — Application Settings
 - `settings.workspace` — Workspace Settings
 
-Session settings stay on the per-session Panel Deck (`/settings`).
-Up/Down stay inside the agent list; Tab moves to Save/Cancel; Esc
-closes. Agent rows use a trailing `▸` (`TreeCollapsed`), not the chat
-prompt glyph.
+Session settings stay on the per-session Panel Deck (`/settings` or
+`/model`). Titles are breadcrumbs: `Session Settings · Main Agent · Model`
+for any depth. The root page is a compact agent table (model, then
+provider, aligned `·` columns) with **Multi Agent** last after a blank
+row — that inherited `·` shares the agent table's last column. Enter on
+a role opens its overrides; Enter on Provider or Model opens a
+filterable picker page. Filter inputs use `FilterSurface`
+(`ColorPopupSubtleBg`), never the dock fill. Docked forms are compact:
+title + rule, one line per field, a shared value column. Leftover
+width is distributed as space after the label and before inherited
+text (not filler periods). `·` is a column separator only. Labels and
+values use `ColorFg`; inherited/meta use `ColorMuted`. Up/Down
+cycle fields and the left-aligned Save/Cancel/Reset
+row; Esc closes or goes back. Agent rows keep a trailing `▸`
+(`TreeCollapsed`). Never paint `❯`.
 
 Visual contracts for this window:
 
@@ -151,4 +162,4 @@ Layer coverage lives next to the code:
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar
 - `tui/settings/settings_scope_test.go` — workspace save payload and overflow scrollbars
 - `tui/settings/provider_switch_test.go` — provider/model protocol isolation
-- `tui/screens/sessionsettings/session_settings_test.go` — session protocol overrides
+- `tui/screens/sessionsettings/session_settings_test.go` — session protocol overrides and multi-agent toggle

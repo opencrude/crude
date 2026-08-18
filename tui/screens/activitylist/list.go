@@ -526,7 +526,7 @@ func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, item ui.Lis
 	}
 	labelBudget := remain
 	if detailW > 0 {
-		labelBudget = remain - detailW - 1
+		labelBudget = remain - detailW - ui.TableMinGap
 	}
 	label := rendering.TruncateVisual(item.Label, max(1, labelBudget), "…")
 	buf.WriteString(cx, y, label, fg, bg, attr)

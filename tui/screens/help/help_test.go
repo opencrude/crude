@@ -23,7 +23,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 			t.Fatalf("missing label %q:\n%s", label, text)
 		}
 	}
-	if strings.Contains(text, theme.DefaultDark().Glyphs.Prompt) {
+	if strings.Contains(text, "❯") {
 		t.Fatalf("help must not use the chat prompt glyph:\n%s", text)
 	}
 }

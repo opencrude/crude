@@ -109,6 +109,17 @@ func TestColorBlend(t *testing.T) {
 	}
 }
 
+func TestContrastColorPicksReadableForeground(t *testing.T) {
+	onLight := ContrastColor(NewTrueColor(0xf0, 0xf6, 0xfc))
+	if int(onLight.R)+int(onLight.G)+int(onLight.B) > 120 {
+		t.Fatalf("light fill should get a dark fg: %+v", onLight)
+	}
+	onDark := ContrastColor(NewTrueColor(0x0d, 0x11, 0x17))
+	if int(onDark.R)+int(onDark.G)+int(onDark.B) < 400 {
+		t.Fatalf("dark fill should get a light fg: %+v", onDark)
+	}
+}
+
 func TestColorToRGB_PaletteCubeAndGray(t *testing.T) {
 	// Standard red
 	r, g, b := colorToRGB(Red)

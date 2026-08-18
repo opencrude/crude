@@ -269,7 +269,7 @@ func rowHasSelectionHighlight(buf *surface.CellBuffer) bool {
 			}
 		}
 	}
-	return strings.Contains(bufferText(buf), "❯")
+	return false
 }
 
 func commandMessage[T any](t *testing.T, result ui.EventResult) T {

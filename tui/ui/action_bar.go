@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 )
@@ -39,6 +42,9 @@ type ActionBar struct {
 	cancelAction string
 	exitForward  string
 	exitBackward string
+	showRule     bool
+	surfaceRole  SemanticColor
+	surfaceSet   bool
 }
 
 type actionBarBtn struct {
@@ -89,11 +95,56 @@ func NewActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *Ac
 	return ab
 }
 
+// NewDockedActionBar packs buttons from the left on the chat surface, with a
+// rule above the row so dock actions read as the last form line.
+func NewDockedActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *ActionBar {
+	ab := NewActionBar(id, tokens, btns...)
+	ab.SetAlignEnd(false)
+	ab.SetShowRule(true)
+	ab.SetSurfaceBackground(ColorBg)
+	return ab
+}
+
 // SetCancelAction configures the typed action emitted for Escape.
 func (ab *ActionBar) SetCancelAction(action string) { ab.cancelAction = action }
 
 // SetAlignEnd right-aligns buttons (default). False packs them from the left.
 func (ab *ActionBar) SetAlignEnd(v bool) { ab.alignEnd = v }
+
+// SetShowRule paints a divider on the first row and places buttons below it.
+func (ab *ActionBar) SetShowRule(v bool) { ab.showRule = v }
+
+// SetSurfaceBackground is the idle button fill (dock ColorBg, popup ColorPopupBg).
+func (ab *ActionBar) SetSurfaceBackground(role SemanticColor) {
+	ab.surfaceRole = role
+	ab.surfaceSet = true
+	ab.syncButtonSurface()
+}
+
+func (ab *ActionBar) syncButtonSurface() {
+	if !ab.surfaceSet || ab.tokens == nil {
+		return
+	}
+	bg := ab.tokens.Color(ab.surfaceRole)
+	for i := range ab.buttons {
+		ab.buttons[i].button.SetSurfaceBackground(bg)
+	}
+}
+
+func (ab *ActionBar) FocusFirst() { ab.focused = 0 }
+
+func (ab *ActionBar) FocusLast() {
+	if n := len(ab.buttons); n > 0 {
+		ab.focused = n - 1
+	}
+}
+
+func (ab *ActionBar) PreferredHeight() int {
+	if ab.showRule {
+		return 2
+	}
+	return 1
+}
 
 // SetExitActions overrides the Tab-out actions (defaults actionbar.exit.*).
 func (ab *ActionBar) SetExitActions(forward, backward string) {
@@ -123,6 +174,7 @@ func (ab *ActionBar) SetTokens(ts *TokenSet) {
 	for i := range ab.buttons {
 		ab.buttons[i].button.SetTokens(ts)
 	}
+	ab.syncButtonSurface()
 }
 
 func (ab *ActionBar) Children() []Component {
@@ -140,7 +192,7 @@ func (ab *ActionBar) Measure(ctx LayoutContext, cs Constraints) Size {
 			totalW += ab.gap
 		}
 	}
-	return cs.ClampSize(Size{W: totalW, H: 1})
+	return cs.ClampSize(Size{W: totalW, H: ab.PreferredHeight()})
 }
 
 func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
@@ -159,18 +211,33 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	if ab.alignEnd {
 		x = max(0, r.W-totalW)
 	}
+	y := 0
+	if ab.showRule {
+		y = 1
+	}
 	for i := range ab.buttons {
-		ab.buttons[i].button.Layout(ctx, Rect{X: x, Y: 0, W: widths[i], H: 1})
+		ab.buttons[i].button.Layout(ctx, Rect{X: x, Y: y, W: widths[i], H: 1})
 		x += widths[i] + ab.gap
 	}
 }
 
 func (ab *ActionBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
+	r := ab.Bounds()
+	if ab.showRule && ab.tokens != nil && r.W > 0 {
+		bg := ab.tokens.Color(ColorPopupBg)
+		if ab.surfaceSet {
+			bg = ab.tokens.Color(ab.surfaceRole)
+		}
+		divider := ab.tokens.Color(ColorPopupDivider)
+		ox, oy := originX+r.X, originY+r.Y
+		FillRect(buf, 0, 0, Rect{X: ox, Y: oy, W: r.W, H: r.H}, cell.BlankCell(bg))
+		buf.WriteString(ox, oy, strings.Repeat(string(FirstRune(ab.tokens.Glyphs().BorderH, '─')), r.W), divider, bg, 0)
+	}
 	for i := range ab.buttons {
 		buttonCtx := ctx
 		buttonCtx.Focused = ctx.Focused && i == ab.focused
 		buttonCtx.Hovered = ctx.Hovered && i == ab.hovered
-		ab.buttons[i].button.Paint(buf, originX+ab.Bounds().X, originY+ab.Bounds().Y, buttonCtx)
+		ab.buttons[i].button.Paint(buf, originX+r.X, originY+r.Y, buttonCtx)
 	}
 }
 
@@ -201,19 +268,19 @@ func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
 			ab.focused++
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyLeft:
-			if len(ab.buttons) > 0 && ab.focused > 0 {
-				ab.focused--
+			if n := len(ab.buttons); n > 0 {
+				ab.focused = (ab.focused - 1 + n) % n
 			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyRight:
-			if len(ab.buttons) > 0 && ab.focused < len(ab.buttons)-1 {
-				ab.focused++
+			if n := len(ab.buttons); n > 0 {
+				ab.focused = (ab.focused + 1) % n
 			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyUp:
 			return EventResult{Handled: true, Action: &Action{ID: ab.exitBackward}, Invalidate: InvalidateFocus | InvalidatePaint}
 		case tea.KeyDown:
-			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+			return EventResult{Handled: true, Action: &Action{ID: ab.exitForward}, Invalidate: InvalidateFocus | InvalidatePaint}
 		}
 		if ab.focused < 0 || ab.focused >= len(ab.buttons) {
 			return EventResult{}

@@ -9,6 +9,27 @@ import (
 	"crude/tui/theme"
 )
 
+func TestPanelDeckUsesShellBackground(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := NewTokenSet(th)
+	shell := tokens.Color(ColorBg)
+	popup := tokens.Color(ColorPopupBg)
+	if shell.Equal(popup) {
+		t.Fatal("dark theme must distinguish shell bg from popup bg")
+	}
+	deck := NewPanelDeck("deck", tokens)
+	form := NewDockedForm("deck/form", nil, "Settings", "Per-session", tokens)
+	deck.Open(PanelEntry{ID: "settings", Title: "Settings", Content: form, Closable: true, Policy: PanelInteractive, PreferredHeight: 6})
+	host := NewHost(th, deck)
+	host.Resize(40, 8)
+	host.Layout()
+	buf := surface.NewCellBuffer(40, 8)
+	host.Paint(buf)
+	if got := buf.Get(0, 0).BG; !got.Equal(shell) || got.Equal(popup) {
+		t.Fatalf("deck chrome bg=%v want shell %v (not popup %v)", got, shell, popup)
+	}
+}
+
 func TestPanelDeckRetainsPanelsAndRoutesTabs(t *testing.T) {
 	tokens := NewTokenSet(theme.DefaultDark())
 	deck := NewPanelDeck("deck", tokens)

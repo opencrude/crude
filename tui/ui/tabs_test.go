@@ -71,8 +71,8 @@ func TestTabsShellChromeOmitsIconAndPaintsActiveMarker(t *testing.T) {
 	if strings.Contains(line, "●") {
 		t.Fatalf("shell tabs must omit icons (tofu risk), got %q", line)
 	}
-	if !strings.Contains(line, "❯") {
-		t.Fatalf("expected active marker in shell tab, got %q", line)
+	if strings.Contains(line, "❯") {
+		t.Fatalf("shell tabs must not paint a prompt glyph, got %q", line)
 	}
 	if !strings.Contains(line, "Alpha") {
 		t.Fatalf("expected active label, got %q", line)

@@ -63,6 +63,11 @@ func SeparatorFieldState(id, label string) *FieldState {
 	return &FieldState{ID: id, Label: label, Type: FieldSeparator}
 }
 
+// SpacerFieldState builds a blank, unfocusable row.
+func SpacerFieldState(id string) *FieldState {
+	return &FieldState{ID: id, Type: FieldSpacer}
+}
+
 // ThinkingLevels is the canonical thinking-level option list, shared by the
 // workspace settings and session override forms.
 var ThinkingLevels = []string{"none", "low", "medium", "high", "xhigh"}
