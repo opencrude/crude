@@ -134,7 +134,7 @@ func TestList_Paint(t *testing.T) {
 	l.Layout(LayoutContext{}, Rect{W: 20, H: 3})
 	buf := surface.NewCellBuffer(20, 3)
 	l.Paint(buf, 0, 0, PaintContext{Focused: true})
-	// marker ❯ is multi-byte; look for 'H'
+	// look for 'H'
 	found := false
 	for x := 0; x < 20; x++ {
 		if buf.Get(x, 0).Char == 'H' {

@@ -1447,10 +1447,7 @@ func (wl *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, it
 	xpos = buf.WriteString(xpos, y, path, pathFG, bg, 0)
 
 	leftW := xpos - x
-	gap := width - leftW - rendering.VisibleWidth(meta)
-	if gap < 1 {
-		gap = 1
-	}
+	gap := ui.TrailingGap(width, leftW, rendering.VisibleWidth(meta))
 	xpos = buf.WriteString(xpos, y, strings.Repeat(" ", gap), nameFG, bg, 0)
 	buf.WriteString(xpos, y, meta, metaFG, bg, 0)
 }

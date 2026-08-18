@@ -114,7 +114,8 @@ func (s *Screen) rebuild(now time.Time) {
 	if len(visible) != 1 {
 		detail += "s"
 	}
-	s.form = ui.NewForm(FormID, model, "Background jobs", detail, s.tokens)
+	s.form = ui.NewDockedForm(FormID, model, "Background jobs", detail, s.tokens)
+	s.form.SetCompact(false)
 	s.visible = len(visible)
 	s.attention = false
 	for _, job := range visible {

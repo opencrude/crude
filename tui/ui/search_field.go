@@ -30,15 +30,20 @@ type SearchField struct {
 
 // NewSearchField creates a debounced single-line search input.
 func NewSearchField(id ComponentID, tokens *TokenSet) *SearchField {
-	return &SearchField{
+	s := &SearchField{
 		Base:     NewBase(id),
 		field:    NewTextField(id, tokens),
 		debounce: 120 * time.Millisecond,
 	}
+	s.field.SetBackgroundColor(FilterSurface(tokens))
+	return s
 }
 
 // SetTokens updates the theme token set.
-func (s *SearchField) SetTokens(tokens *TokenSet) { s.field.SetTokens(tokens) }
+func (s *SearchField) SetTokens(tokens *TokenSet) {
+	s.field.SetTokens(tokens)
+	s.field.SetBackgroundColor(FilterSurface(tokens))
+}
 
 // SetPrompt configures the visual prompt.
 func (s *SearchField) SetPrompt(prompt string) { s.field.SetPrompt(prompt) }

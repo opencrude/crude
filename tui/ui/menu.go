@@ -6,7 +6,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
-	"crude/tui/rendering"
 	"crude/tui/surface"
 )
 
@@ -235,53 +234,30 @@ func (m *Menu) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 			st = StateHovered
 		}
 		fg, bg := cell.NoColor, cell.NoColor
+		muted := cell.NoColor
 		if m.tokens != nil {
 			fg, bg = m.tokens.ListRowColors(st)
+			fg, muted = m.tokens.MenuInk(st, fg)
 		}
 		if !bg.IsDefault() {
 			FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
 		}
-		marker := "  "
-		if idx == m.sel.Index() && item.Selectable() {
-			marker = string(FirstRune(m.tokens.Glyphs().Prompt, '❯')) + " "
-		}
-		label := marker + item.Label
 		attr := cell.Attrs(0)
 		if idx == m.sel.Index() && item.Selectable() {
 			attr = cell.AttrBold
 		}
 		trailing := ""
+		trailingFG := muted
 		if item.Submenu {
 			trailing = string(FirstRune(m.tokens.Glyphs().TreeCollapsed, '▸'))
+			trailingFG = fg
+			if m.tokens != nil && st != StateFocused && st != StateSelected {
+				trailingFG = m.tokens.Color(ColorAccent)
+			}
 		} else if item.Accel != "" {
 			trailing = item.Accel
 		}
-		labelMax := r.W
-		if trailing != "" {
-			labelMax -= rendering.VisibleWidth(trailing) + 1
-		}
-		if labelMax < 1 {
-			labelMax = 1
-		}
-		label = rendering.TruncateLine(label, labelMax)
-		line := label
-		if trailing != "" {
-			gap := r.W - rendering.VisibleWidth(label) - rendering.VisibleWidth(trailing)
-			if gap < 1 {
-				gap = 1
-			}
-			line += strings.Repeat(" ", gap) + trailing
-		}
-		line = rendering.TruncateLine(line, r.W)
-		subFg := fg
-		if item.Submenu && m.tokens != nil {
-			subFg = m.tokens.Color(ColorAccent)
-		}
-		buf.WriteString(x, y, line, fg, bg, attr)
-		if item.Submenu && trailing != "" {
-			sx := x + r.W - rendering.VisibleWidth(trailing)
-			buf.WriteString(sx, y, trailing, subFg, bg, attr)
-		}
+		paintMenuDetail(buf, x, y, r.W, item.Label, trailing, fg, trailingFG, bg, attr)
 	}
 }
 

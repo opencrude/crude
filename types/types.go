@@ -85,6 +85,9 @@ type Settings struct {
 	Agents           AgentsSettings
 	Memory           MemorySettings              `json:"memory,omitempty"`
 	SessionOverrides map[string]CategorySettings `json:"-"`
+	// SessionMultiAgent is the explicit session override for sub-agent
+	// spawning. nil means inherit the workspace/profile default.
+	SessionMultiAgent *bool `json:"-"`
 	Theme            ThemeSettings               `json:"theme,omitempty"`
 	Editor           EditorSettings              `json:"editor,omitempty"`
 	LSP              LSPSettings                 `json:"lsp,omitempty"`

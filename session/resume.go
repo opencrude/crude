@@ -120,6 +120,14 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		return nil, fmt.Errorf("resume: load session settings: %w", err)
 	}
 	cfg = configWithSessionOverrides(workspaceCfg, overrides)
+	flags, err := sessiondb.LoadSessionFlags(db, meta.ID)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load session flags: %w", err)
+	}
+	if flags.MultiAgent != nil {
+		applySessionMultiAgent(cfg, *flags.MultiAgent)
+	}
 	activeCfg := cfg.GetActiveDefaultCategory()
 	p, err := providerForCategory(activeCfg)
 	if err != nil {
@@ -188,8 +196,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		consumedReports:  make(map[string]bool),
 		orchestrators:    make(map[string]*Orchestrator),
 		runtimeProfile:   NewRuntimeProfile(cfg),
-		workspaceCfg:     workspaceCfg,
-		sessionOverrides: overrides,
+		workspaceCfg:       workspaceCfg,
+		sessionOverrides:   overrides,
+		multiAgentOverride: cloneBoolPtr(flags.MultiAgent),
 	}
 	if cfg.IsMultiAgentEnabled() {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)

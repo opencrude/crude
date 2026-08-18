@@ -321,3 +321,21 @@ func (ts *TokenSet) ListRowColors(st ControlState) (fg, bg cell.Color) {
 	}
 	return fg, bg
 }
+
+// MenuInk is the shared text language for lists, menus, and compact docks:
+// primary labels/values use ColorFg, meta/inherited/accelerators use
+// ColorMuted, and focused/selected rows keep meta readable on the row fill.
+func (ts *TokenSet) MenuInk(st ControlState, fg cell.Color) (primary, muted cell.Color) {
+	if ts == nil {
+		return fg, fg
+	}
+	primary = fg
+	muted = ts.Color(ColorMuted)
+	if st == StateFocused || st == StateSelected {
+		muted = fg
+	}
+	if st == StateDisabled {
+		primary = muted
+	}
+	return primary, muted
+}

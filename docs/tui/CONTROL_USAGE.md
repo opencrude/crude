@@ -7,12 +7,12 @@ target replacement under `tui/ui/`.
 
 | Category | Current implementations | Target |
 |----------|------------------------|--------|
-| Full input engine | Chat via `shellinput` + `ui.TextArea` (shell `ColorBg`, not popup fill); composer + text overlay via `ui.TextArea` screens; find/replace via `ui.TextEdit` + `ui.TextField` (`BuildFindReplaceFrame`) | `ui.TextField` / `ui.TextArea` |
+| Full input engine | Chat via `shellinput` + `ui.TextArea` (shell `ColorBg`, not popup fill, no leading `❯`); composer + text overlay via `ui.TextArea` screens; find/replace via `ui.TextEdit` + `ui.TextField` (`BuildFindReplaceFrame`) | `ui.TextField` / `ui.TextArea` |
 | Project search query | native `ui.SearchField` in `tui/screens/findinfiles` (SearchGlyph + PromptStart; Cc/.* toggles on the right) | same |
 | Project replace field | native `ui.TextField` on the Find in Files sibling (Replace in Files) | same |
-| Form field editor | native `ui.Form` / `FormField` / `TextField` (workspace/session/question/background); `FieldSelect` paints a bordered overlay dropdown (`PaintOverlay`) so opening it does not grow form height or push later fields; `Form.Paint` clips to the viewport so scrolled fields cannot leak into chrome; Up/Down clamp at the first/last field by default (docks); `SetArrowExitsForm(true)` only for the application/workspace settings form so arrows can leave to the category rail; Tab/Shift+Tab still leave the form; `FieldNav` is a two-line drill-in row with a trailing `TreeCollapsed` chevron (`▸`), not the chat `Prompt` glyph | `ui.Form` / `FormField` over shared TextEdit engine |
+| Form field editor | native `ui.Form` / `FormField` / `TextField` (workspace/session/question/background); `FieldSelect` paints a bordered overlay dropdown (`PaintOverlay`) so opening it does not grow form height or push later fields; `Form.Paint` clips to the viewport so scrolled fields cannot leak into chrome; docked forms use `SetArrowExitsForm(true)` so Up/Down cycle onto the ActionBar; floating settings also exit to the category rail; Esc emits `form.cancel`; Tab/Shift+Tab still leave the form; compact `FieldNav`/`FieldCycle` share `planCompactTable`: leftover width becomes space after the label and before the last column (never filler periods), `·` is a separator only, labels/values use `ColorFg`, inherited/meta use `ColorMuted`, focused row uses `ColorHover` + accent label. Lists/menus use the same `TableMinGap` + `MenuInk`. Trailing `TreeCollapsed` (`▸`) on nav only. Never `❯`. | `ui.Form` / `FormField` over shared TextEdit engine |
 | Hand-built prompt | `tui/widgets/textprompt.go` (product: TextEdit + WindowFrame) | `PromptField` |
-| Append/backspace filter | palette, launcher, settings | `FilterField` / `SearchField` with `SearchGlyphEnd` + `PromptEnd` (magnifier at the trailing edge) |
+| Append/backspace filter | palette, launcher, settings, session model/provider pickers | `FilterField` / `SearchField` with `SearchGlyphEnd` + `PromptEnd` (magnifier at the trailing edge) and `FilterSurface` (`ColorPopupSubtleBg`) so the input never shares the list/dock fill |
 | File/workspace picker filter | native `ui.TextField` in `tui/screens/filepicker` | same |
 | Document editor | `tui/editor/` PieceTable; main viewport `shelleditor` Host; gutter paints diagnostics then Git line edits (`+`/`~`); blame is status-bar + editor context menu, not a sidebar | Specialized `DocumentEditor` (kept) |
 
@@ -20,7 +20,7 @@ target replacement under `tui/ui/`.
 
 | Current | Target |
 |---------|--------|
-| Confirm / dirty / tree-delete ActionBar | `ui.ActionBar` / `ui.Button` via `BuildConfirmFrame` and friends. Buttons right-align (`alignEnd`) by default. Settings Reset uses a separate left-aligned bar. Up emits `actionbar.exit.backward` so docked forms can return from Save/Cancel; Down stays on the bar. |
+| Confirm / dirty / tree-delete ActionBar | `ui.ActionBar` / `ui.Button` via `BuildConfirmFrame` and friends. Floating bars right-align (`alignEnd`); `NewDockedActionBar` packs from the left with a top rule. Idle buttons use variant-colored `[ Label ]` on the surface; hover/focus invert — variant color becomes the fill, `cell.ContrastColor` picks a readable fg. Up/Down leave the bar (`actionbar.exit.*`) so forms and buttons cycle together; Left/Right wrap among buttons. |
 | Find in Files / Replace in Files | native `ui.ActionBar` (Open/Close; Replace/All on the replace row), right-aligned |
 | `PopupButton` / `PopupButtonRow` | same Button + ActionBar |
 | Agent question actions | native `ui.ActionBar` in `tui/screens/question` | same |

@@ -53,13 +53,11 @@ type CmdInfo struct {
 }
 
 var availableCmds = []CmdInfo{
-	{Name: "settings", Label: "settings", Desc: "Open session AI settings"},
-	{Name: "provider", Label: "provider", Desc: "Open session AI settings"},
-	{Name: "api-key", Label: "api-key", Desc: "Open application provider credentials"},
+	{Name: "settings", Label: "settings", Desc: "Open session AI settings (models and multi-agent)"},
+	{Name: "model", Label: "model", Desc: "Choose this session's model"},
 	{Name: "undo", Label: "undo", Desc: "Undo last file operation"},
 	{Name: "undo-n", Label: "undo N", Desc: "Undo last N file operations"},
 	{Name: "undo-all", Label: "undo all", Desc: "Undo all file operations this session"},
-	{Name: "changes", Label: "changes", Desc: "Show file changes this session"},
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
@@ -145,6 +143,7 @@ func NewModel(t *theme.Theme) Model {
 	tokens := ui.NewTokenSet(t)
 	slashList := ui.NewList("input/slash", tokens)
 	slashList.SetActivateAction("slash.select")
+	slashList.SetDefaultRowBackground(ui.ColorBg)
 	slashList.SetItems(cmdsToItems(availableCmds))
 
 	m := Model{
@@ -167,6 +166,7 @@ func (m *Model) SetTokens(ts *ui.TokenSet) {
 	}
 	if m.slashList != nil {
 		m.slashList.SetTokens(ts)
+		m.slashList.SetDefaultRowBackground(ui.ColorBg)
 	}
 	m.syncShellChrome()
 }
@@ -364,12 +364,9 @@ func (m Model) MouseToInputPos(mouseX, mouseY int) (runeIdx int, ok bool) {
 		segments := rendering.WordWrap(string(logLine), textW)
 		for si, seg := range segments {
 			if visIdx == relY {
-				// The TextArea renders a "❯ " prefix on the first visual
-				// row and a "  " continuation indent on wrapped rows.
-				// Both are exactly 2 cells wide. The theme's left padding
-				// (PadLR) is also rendered outside the TextArea. So the
-				// text column starts at PadLR + 2.
-				col := mouseX - m.theme.Spacing.PadLR - 2
+				// Text starts after theme PadLR plus any configured
+				// TextArea prompt prefix (chat input has none).
+				col := mouseX - m.theme.Spacing.PadLR - m.input.PromptPrefixWidth()
 				if col < 0 {
 					col = 0
 				}

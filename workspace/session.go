@@ -164,6 +164,10 @@ func cloneSettings(src types.Settings) types.Settings {
 	dst := src
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
+	if src.SessionMultiAgent != nil {
+		value := *src.SessionMultiAgent
+		dst.SessionMultiAgent = &value
+	}
 	return dst
 }
 

@@ -153,7 +153,7 @@ func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 	headerRow := rowText(app, headerY)
 	headerCol := lay.SidebarW + lay.PadLR
 	got := strings.TrimSpace(rowTextFrom(app, headerY, headerCol))
-	if !strings.HasPrefix(got, "❯") {
+	if strings.HasPrefix(got, "❯") || got == "" {
 		t.Fatalf("chat header not at col %d row %d (bottom-anchored); row=%q", headerCol, headerY, headerRow)
 	}
 

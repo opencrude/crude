@@ -14,21 +14,58 @@ import (
 // expansion, and form-local focus while screens translate its emitted actions.
 type Form struct {
 	Base
-	model      *FormModel
-	title      string
-	detail     string
-	tokens     *TokenSet
-	fields     []*FormField
-	focused    int
-	fieldGap   int
-	scroll     *ScrollModel
-	arrowExits bool
+	model       *FormModel
+	title       string
+	detail      string
+	tokens      *TokenSet
+	fields      []*FormField
+	focused     int
+	fieldGap    int
+	scroll      *ScrollModel
+	arrowExits  bool
+	compact     bool
+	surfaceRole SemanticColor
+	surfaceSet  bool
 }
 
 func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
 	f := &Form{Base: NewBase(id), model: model, title: title, detail: detail, tokens: tokens, focused: -1, scroll: NewScrollModel()}
 	f.rebuild()
 	return f
+}
+
+// NewDockedForm builds a form that shares the chat/shell surface color.
+// Use this for PanelDeck content. Floating windows keep NewForm (popup fill).
+func NewDockedForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
+	f := NewForm(id, model, title, detail, tokens)
+	f.SetSurfaceBackground(ColorBg)
+	f.SetCompact(true)
+	f.SetArrowExitsForm(true)
+	return f
+}
+
+// SetCompact enables the lean docked-form density: title+rule header, no
+// inter-field gap, and single-line fields. Descriptions stay on the field
+// for hints; they do not grow the dock. Floating settings keep the spacious
+// default.
+func (f *Form) SetCompact(v bool) {
+	f.compact = v
+	if v {
+		f.fieldGap = 0
+	}
+	for _, field := range f.fields {
+		field.SetCompact(v)
+	}
+}
+
+// SetSurfaceBackground selects the form fill role. Docked session panels use
+// ColorBg so they sit in the chat column; floating settings keep ColorPopupBg.
+func (f *Form) SetSurfaceBackground(role SemanticColor) {
+	f.surfaceRole = role
+	f.surfaceSet = true
+	for _, field := range f.fields {
+		field.SetSurfaceBackground(role)
+	}
 }
 
 func (f *Form) SetForm(model *FormModel, title, detail string) {
@@ -101,6 +138,16 @@ func (f *Form) rebuild() {
 	if f.focused < 0 {
 		f.FocusFirst()
 	}
+	if f.surfaceSet {
+		for _, field := range f.fields {
+			field.SetSurfaceBackground(f.surfaceRole)
+		}
+	}
+	if f.compact {
+		for _, field := range f.fields {
+			field.SetCompact(true)
+		}
+	}
 }
 
 // Children is intentionally empty. Form retains its fields so a single focus
@@ -130,12 +177,18 @@ func (f *Form) PreferredHeight(maxHeight int) int {
 	return min(maxHeight, f.contentHeight())
 }
 
-func (f *Form) contentHeight() int {
-	header := 0
-	if f.title != "" {
-		header = 3
+func (f *Form) headerHeight() int {
+	if f.title == "" {
+		return 0
 	}
-	height := header
+	if f.compact && strings.TrimSpace(f.detail) == "" {
+		return 2
+	}
+	return 3
+}
+
+func (f *Form) contentHeight() int {
+	height := f.headerHeight()
 	for i, field := range f.fields {
 		if i > 0 && field.FieldState().Type == FieldSeparator {
 			height++
@@ -153,24 +206,29 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 	if f.scroll == nil {
 		f.scroll = NewScrollModel()
 	}
-	y := 0
-	if f.title != "" {
-		y = 3
-	}
+	y := f.headerHeight()
 	labelW := 0
 	for _, field := range f.fields {
-		if field.FieldState().Type == FieldSeparator {
+		st := field.FieldState()
+		if st.Type == FieldSeparator || st.Type == FieldSpacer {
 			continue
 		}
-		labelW = max(labelW, rendering.VisibleWidth(field.FieldState().Label)+1)
+		labelW = max(labelW, rendering.VisibleWidth(st.Label))
+	}
+	if !f.compact {
+		// Spacious forms append dirty/required markers after the label; they
+		// borrow this extra column from the label→control gap.
+		labelW++
 	}
 	labelW = min(labelW, max(8, r.W/2))
+	colW := f.tableColumnWidths()
 	contentY := y
 	for i, field := range f.fields {
 		if i > 0 && field.FieldState().Type == FieldSeparator {
 			contentY++
 		}
 		field.SetLabelWidth(labelW)
+		field.SetColumnWidths(colW)
 		h := field.height()
 		field.Layout(ctx, Rect{X: 0, Y: contentY - f.scroll.Offset(), W: r.W, H: h})
 		contentY += h
@@ -190,7 +248,7 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 	if r.Empty() {
 		return
 	}
-	bg, fg, muted, divider := f.color(ColorPopupBg), f.color(ColorFg), f.color(ColorMuted), f.color(ColorPopupDivider)
+	bg, fg, muted, divider := f.surfaceColor(), f.color(ColorFg), f.color(ColorMuted), f.color(ColorPopupDivider)
 	// Paint into a viewport-sized buffer so variable-height fields that
 	// straddle the scroll edge cannot leak into chrome (footer actions,
 	// window title, sibling panels). CellBuffer.Set already clips OOB writes.
@@ -198,8 +256,12 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 	inner.Fill(cell.BlankCell(bg))
 	if f.title != "" {
 		inner.WriteString(0, 0, rendering.TruncateVisual(f.title, r.W, ""), fg, bg, cell.AttrBold)
-		inner.WriteString(0, 1, rendering.TruncateVisual(f.detail, r.W, ""), muted, bg, 0)
-		inner.WriteString(0, 2, strings.Repeat(string(FirstRune(f.tokens.Glyphs().BorderH, '─')), max(0, r.W)), divider, bg, 0)
+		ruleY := 1
+		if !f.compact || strings.TrimSpace(f.detail) != "" {
+			inner.WriteString(0, 1, rendering.TruncateVisual(f.detail, r.W, ""), muted, bg, 0)
+			ruleY = 2
+		}
+		inner.WriteString(0, ruleY, strings.Repeat(string(FirstRune(f.tokens.Glyphs().BorderH, '─')), max(0, r.W)), divider, bg, 0)
 		// No y advance: field bounds already carry the header offset from Layout.
 	}
 	for index, field := range f.fields {
@@ -260,7 +322,7 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		for index, field := range f.fields {
 			if field.Bounds().Contains(ctx.LocalX, ctx.LocalY) {
-				if field.FieldState().Disabled || field.FieldState().Type == FieldSeparator {
+				if field.FieldState().skipFocus() {
 					return EventResult{Handled: true}
 				}
 				f.focused = index
@@ -273,7 +335,7 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 		key := evt.Key
 		field := f.fields[f.focused]
 		if key.Code == tea.KeyEsc && !field.SelectOpen() {
-			return EventResult{Handled: true, Action: &Action{ID: "form.exit.backward"}, Invalidate: InvalidateFocus | InvalidatePaint}
+			return EventResult{Handled: true, Action: &Action{ID: "form.cancel"}, Invalidate: InvalidateFocus | InvalidatePaint}
 		}
 		if key.Code == tea.KeyTab && !field.SelectOpen() {
 			if key.Mod.Contains(tea.ModShift) {
@@ -346,7 +408,7 @@ func (f *Form) fieldContext(ctx EventContext, field *FormField) EventContext {
 func (f *Form) moveFocus(delta int, exit bool) EventResult {
 	for next := f.focused + delta; next >= 0 && next < len(f.fields); next += delta {
 		field := f.fields[next].FieldState()
-		if !field.Disabled && field.Type != FieldSeparator {
+		if !field.skipFocus() {
 			f.focused = next
 			f.ensureFocusedVisible()
 			return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateLayout}
@@ -363,7 +425,7 @@ func (f *Form) moveFocus(delta int, exit bool) EventResult {
 
 func (f *Form) FocusFirst() {
 	for index, field := range f.fields {
-		if !field.FieldState().Disabled && field.FieldState().Type != FieldSeparator {
+		if !field.FieldState().skipFocus() {
 			f.focused = index
 			return
 		}
@@ -371,12 +433,31 @@ func (f *Form) FocusFirst() {
 }
 func (f *Form) FocusLast() {
 	for index := len(f.fields) - 1; index >= 0; index-- {
-		field := f.fields[index].FieldState()
-		if !field.Disabled && field.Type != FieldSeparator {
+		if !f.fields[index].FieldState().skipFocus() {
 			f.focused = index
 			return
 		}
 	}
+}
+
+func (f *Form) tableColumnWidths() []int {
+	raw := make([][]string, 0, len(f.fields))
+	inherited := make([]bool, 0, len(f.fields))
+	maxN := 0
+	for _, field := range f.fields {
+		cols := field.compactColumnsRaw()
+		raw = append(raw, cols)
+		st := field.FieldState()
+		inherited = append(inherited, st != nil && st.Inherited)
+		maxN = max(maxN, len(cols))
+	}
+	widths := make([]int, maxN)
+	for i, cols := range raw {
+		for j, col := range padInheritedColumns(cols, inherited[i], maxN) {
+			widths[j] = max(widths[j], rendering.VisibleWidth(col))
+		}
+	}
+	return widths
 }
 
 func (f *Form) ensureFocusedVisible() {
@@ -403,6 +484,13 @@ func (f *Form) color(role SemanticColor) cell.Color {
 		return cell.NoColor
 	}
 	return f.tokens.Color(role)
+}
+
+func (f *Form) surfaceColor() cell.Color {
+	if f.surfaceSet {
+		return f.color(f.surfaceRole)
+	}
+	return f.color(ColorPopupBg)
 }
 
 func (f *Form) Semantics() Semantics {

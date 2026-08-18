@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
@@ -292,8 +290,10 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 			st = StateHovered
 		}
 		fg, bg := cell.NoColor, cell.NoColor
+		muted := cell.NoColor
 		if v.tokens != nil {
 			fg, bg = v.tokens.ListRowColors(st)
+			fg, muted = v.tokens.MenuInk(st, fg)
 		}
 		if v.opaqueRowFill && !bg.IsDefault() {
 			FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
@@ -306,28 +306,18 @@ func (v *VirtualList) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 		if localRow != 0 {
 			continue
 		}
-		marker := "  "
-		if idx == v.sel.Index() {
-			marker = "❯ "
-		}
-		line := marker
+		prefix := ""
 		if item.Icon != "" {
-			line += item.Icon + " "
+			prefix = item.Icon + " "
 		}
-		line += item.Label
-		if item.Detail != "" {
-			gap := r.W - rendering.VisibleWidth(line) - rendering.VisibleWidth(item.Detail) - 1
-			if gap < 1 {
-				gap = 1
-			}
-			line += strings.Repeat(" ", gap) + item.Detail
-		}
-		line = rendering.TruncateLine(line, r.W)
 		attr := cell.Attrs(0)
 		if idx == v.sel.Index() {
 			attr = cell.AttrBold
 		}
-		buf.WriteString(x, y, line, fg, bg, attr)
+		if prefix != "" {
+			buf.WriteString(x, y, prefix, fg, bg, attr)
+		}
+		paintMenuDetail(buf, x+rendering.VisibleWidth(prefix), y, r.W-rendering.VisibleWidth(prefix), item.Label, item.Detail, fg, muted, bg, attr)
 	}
 }
 

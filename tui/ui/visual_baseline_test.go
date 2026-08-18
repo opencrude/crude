@@ -309,7 +309,7 @@ func TestVisualBaseline_TextField_CursorBlock(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := NewTokenSet(th)
 	field := NewTextField(NewID(RootID, "cursor-test"), tokens)
-	field.SetPrompt("❯")
+	field.SetPrompt(">")
 	field.SetValue("hello")
 
 	// Use Host to focus the field properly.
@@ -322,9 +322,9 @@ func TestVisualBaseline_TextField_CursorBlock(t *testing.T) {
 	h.Paint(buf)
 
 	// The cursor should be at position after "hello" (position 6, accounting
-	// for prompt "❯" + space). The cursor cell should have different colors
+	// for prompt ">" + space). The cursor cell should have different colors
 	// from the surrounding text.
-	promptWidth := 2           // "❯" + space
+	promptWidth := 2           // ">" + space
 	cursorX := promptWidth + 5 // after "hello"
 	if cursorX < 30 {
 		cursorCell := buf.Get(cursorX, 0)
@@ -341,7 +341,7 @@ func TestVisualBaseline_TextField_Placeholder(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := NewTokenSet(th)
 	field := NewTextField(NewID(RootID, "ph-test"), tokens)
-	field.SetPrompt("❯")
+	field.SetPrompt(">")
 	field.SetPlaceholder("type here…")
 	field.Layout(LayoutContext{Theme: th}, Rect{X: 0, Y: 0, W: 30, H: 1})
 

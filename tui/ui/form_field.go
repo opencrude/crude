@@ -26,6 +26,10 @@ type FormField struct {
 	selectFilter *FilterField
 	selectQuery  string
 	overlayY     int
+	surfaceRole  SemanticColor
+	surfaceSet   bool
+	compact      bool
+	colWidths    []int
 }
 
 const selectOverlayChrome = 1
@@ -65,6 +69,25 @@ func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *
 		ff.syncSelectItems(false)
 	}
 	return ff
+}
+
+func (ff *FormField) SetSurfaceBackground(role SemanticColor) {
+	ff.surfaceRole = role
+	ff.surfaceSet = true
+}
+
+func (ff *FormField) SetCompact(v bool) { ff.compact = v }
+
+func (ff *FormField) SetColumnWidths(w []int) { ff.colWidths = w }
+
+func (ff *FormField) surfaceBg() cell.Color {
+	if ff.tokens == nil {
+		return cell.NoColor
+	}
+	if ff.surfaceSet {
+		return ff.tokens.Color(ff.surfaceRole)
+	}
+	return ff.tokens.Color(ColorPopupBg)
 }
 
 func (ff *FormField) SetTokens(ts *TokenSet) {
@@ -107,8 +130,11 @@ func (ff *FormField) Measure(_ LayoutContext, cs Constraints) Size {
 }
 
 func (ff *FormField) height() int {
-	if ff.field.Type == FieldSeparator {
+	if ff.field.Type == FieldSeparator || ff.field.Type == FieldSpacer {
 		return 1
+	}
+	if ff.compact {
+		return 1 + len(ff.field.Errors)
 	}
 	if ff.field.Type == FieldNav {
 		if strings.TrimSpace(ff.navDetail()) != "" {
@@ -163,7 +189,7 @@ func (ff *FormField) selectPanelHeight() int {
 }
 
 func (ff *FormField) labelIndent() int {
-	if ff.field != nil && (ff.field.Type == FieldSeparator || ff.field.Type == FieldNav) {
+	if ff.compact || (ff.field != nil && (ff.field.Type == FieldSeparator || ff.field.Type == FieldNav || ff.field.Type == FieldSpacer)) {
 		return 0
 	}
 	if ff.tokens == nil {
@@ -210,29 +236,35 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	errorFG := cell.NoColor
 	dividerFG := cell.NoColor
 	if ff.tokens != nil {
-		bg = ff.tokens.Color(ColorPopupBg)
-		labelFG = ff.tokens.Color(ColorMuted)
+		bg = ff.surfaceBg()
+		labelFG = ff.tokens.Color(ColorFg)
 		valueFG = ff.tokens.Color(ColorFg)
 		mutedFG = ff.tokens.Color(ColorMuted)
 		errorFG = ff.tokens.Color(ColorError)
 		dividerFG = ff.tokens.Color(ColorPopupDivider)
 	}
-	// Form focus is deliberately quieter than a list selection. The row gets a
-	// subtle control surface, while the marker and label carry the accent. The
-	// description remains quiet so focus reads as typographic emphasis rather
-	// than a large selection block.
-	focusedRow := ctx.Focused && !ff.field.Disabled && ff.field.Type != FieldSeparator
+	// Form focus uses the same hover fill as menus. The label carries accent
+	// + bold; values stay ColorFg and inherited/meta stay ColorMuted so the
+	// row does not invent a third ink.
+	focusedRow := ctx.Focused && !ff.field.skipFocus()
 	rowBG := bg
 	if focusedRow {
-		rowBG = ff.tokensColor(ColorPopupSubtleBg, bg)
+		rowBG = ff.tokensColor(ColorHover, bg)
 		labelFG = ff.tokensColor(ColorAccent, labelFG)
 		valueFG = ff.tokensColor(ColorFg, valueFG)
 		mutedFG = ff.tokensColor(ColorMuted, mutedFG)
 	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	x, y := originX+r.X, originY+r.Y
+	if ff.field.Type == FieldSpacer {
+		return
+	}
 	if ff.field.Type == FieldSeparator {
 		ff.paintSeparator(buf, x, y, r.W, mutedFG, dividerFG, bg)
+		return
+	}
+	if ff.compact && (ff.field.Type == FieldNav || ff.field.Type == FieldCycle) {
+		ff.paintCompactRow(buf, x, y, r.W, ctx, labelFG, valueFG, mutedFG, bg)
 		return
 	}
 	if ff.field.Type == FieldNav {
@@ -244,7 +276,11 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(rowBG))
 	}
 	labelX := x + ff.labelIndent()
-	label := rendering.TruncateVisual(ff.field.Label, max(1, ff.labelWidth()-1), "")
+	labelMax := max(1, ff.labelWidth()-1)
+	if ff.compact {
+		labelMax = max(1, ff.labelWidth())
+	}
+	label := rendering.TruncateVisual(ff.field.Label, labelMax, "")
 	// Markers are appended after truncation so they are never clipped; they
 	// borrow up to 2 cells from the 2-cell label→control gap (controlX =
 	// labelW+1) and can never overlap the control itself.
@@ -267,13 +303,13 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	controlW := ff.controlWidth(r.W)
 	contentX := controlX + 1
 	contentW := max(1, controlW-2)
-	// The focused row is one raised band: control and label share the same
-	// background so focus reads as a full-row highlight, not a box.
+	// Spacious settings raise the unfocused control so it reads as a field.
+	// Compact docks keep the chat surface and only highlight the focused row.
 	controlBG := rowBG
-	if !focusedRow {
+	if !ff.compact && !focusedRow {
 		controlBG = ff.tokensColor(ColorPopupSubtleBg, bg)
+		FillRect(buf, 0, 0, Rect{X: controlX, Y: y, W: controlW, H: 1}, cell.BlankCell(controlBG))
 	}
-	FillRect(buf, 0, 0, Rect{X: controlX, Y: y, W: controlW, H: 1}, cell.BlankCell(controlBG))
 
 	if ff.field.ReadOnly && isHexColor(ff.field.Value.String()) {
 		ff.paintColorValue(buf, contentX, y, contentW, valueFG, mutedFG, controlBG)
@@ -295,7 +331,7 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	}
 
 	line := 1
-	if ff.field.Description != "" && line < r.H {
+	if !ff.compact && ff.field.Description != "" && line < r.H {
 		buf.WriteString(contentX, y+line, rendering.TruncateVisual(ff.field.Description, contentW, "…"), mutedFG, bg, 0)
 		line++
 	}
@@ -435,6 +471,12 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 			indicator = "▾"
 		}
 	case FieldCycle:
+		for _, option := range ff.field.Options {
+			if option.ID == value {
+				text = option.Label
+				break
+			}
+		}
 		if text == "" {
 			text = ff.field.Placeholder
 		}
@@ -442,6 +484,10 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 			text = "Not set"
 		}
 		left, right := "←", "→"
+		if ff.compact {
+			text = left + " " + text + " " + right
+			break
+		}
 		middleW := max(1, width-rendering.VisibleWidth(left)-rendering.VisibleWidth(right)-2)
 		text = left + " " + rendering.TruncateVisual(text, middleW, "…")
 		pad := width - rendering.VisibleWidth(text) - rendering.VisibleWidth(right)
@@ -468,6 +514,13 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 	if text == "" {
 		text = "Not configured"
 		fg = muted
+	}
+	if ff.compact {
+		buf.WriteString(x, y, rendering.TruncateVisual(text, max(1, width-rendering.VisibleWidth(indicator)-1), "…"), fg, bg, 0)
+		if indicator != "" {
+			buf.WriteString(x+width-rendering.VisibleWidth(indicator), y, indicator, muted, bg, 0)
+		}
+		return
 	}
 	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
 	textX, textW := x, width
@@ -565,13 +618,17 @@ func (ff *FormField) paintNav(buf *surface.CellBuffer, x, y, width int, ctx Pain
 	if width < 1 {
 		return
 	}
+	if ff.compact {
+		ff.paintNavCompact(buf, x, y, width, ctx, fg, muted, bg)
+		return
+	}
 	if ff.field.Disabled {
 		fg = muted
 	}
 	focused := ctx.Focused && !ff.field.Disabled
 	rowBG := bg
 	if focused {
-		rowBG = ff.tokensColor(ColorPopupSubtleBg, bg)
+		rowBG = ff.tokensColor(ColorHover, bg)
 		fg = ff.tokensColor(ColorAccent, fg)
 		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: ff.height()}, cell.BlankCell(rowBG))
 	}
@@ -602,17 +659,191 @@ func (ff *FormField) paintNav(buf *surface.CellBuffer, x, y, width int, ctx Pain
 	buf.WriteString(x+indent, y+1, rendering.TruncateVisual(detail, max(1, width-indent), "…"), muted, rowBG, 0)
 }
 
+func (ff *FormField) paintNavCompact(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, fg, muted, bg cell.Color) {
+	ff.paintCompactRow(buf, x, y, width, ctx, fg, ff.tokensColor(ColorFg, fg), muted, bg)
+}
+
+func (ff *FormField) paintCompactRow(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, labelFG, valueFG, muted, bg cell.Color) {
+	if ff.field == nil {
+		return
+	}
+	if ff.field.Disabled {
+		labelFG = muted
+		valueFG = muted
+	}
+	focused := ctx.Focused && !ff.field.Disabled && !ff.field.skipFocus()
+	rowBG := bg
+	if focused {
+		rowBG = ff.tokensColor(ColorHover, bg)
+		labelFG = ff.tokensColor(ColorAccent, labelFG)
+		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(rowBG))
+	}
+	chevron := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸'))
+	chevronW := rendering.VisibleWidth(chevron)
+	if ff.field.Type == FieldNav && chevronW > 0 && chevronW <= width {
+		chevronFG := muted
+		if focused {
+			chevronFG = labelFG
+		}
+		buf.WriteString(x+width-chevronW, y, chevron, chevronFG, rowBG, 0)
+	}
+	label := rendering.TruncateVisual(ff.field.Label, max(1, ff.labelWidth()), "…")
+	labelAttr := cell.Attrs(0)
+	if focused {
+		labelAttr = cell.AttrBold
+	}
+	buf.WriteString(x, y, label, labelFG, rowBG, labelAttr)
+	raw := ff.compactColumnsRaw()
+	if len(raw) == 0 {
+		return
+	}
+	inherited := ff.field.Inherited
+	cells := padInheritedColumns(raw, inherited, max(len(ff.colWidths), len(raw)))
+	colMins := append([]int(nil), ff.colWidths...)
+	for len(colMins) < len(cells) {
+		colMins = append(colMins, 0)
+	}
+	for i, text := range cells {
+		colMins[i] = max(colMins[i], rendering.VisibleWidth(text))
+	}
+	// Reserve the nav chevron on every compact row so Multi Agent's
+	// inherited column lands on the same cells as the agent rows.
+	plan := planCompactTable(width, ff.labelWidth(), chevronW, colMins)
+	ff.paintTableCells(buf, x, y, width-chevronW, plan, cells, inherited, valueFG, muted, rowBG)
+}
+
+func (ff *FormField) paintTableCells(buf *surface.CellBuffer, x, y, width int, plan compactTablePlan, cells []string, inherited bool, valueFG, muted, bg cell.Color) {
+	if len(cells) == 0 {
+		return
+	}
+	sepW := rendering.VisibleWidth(TableSep)
+	col := plan.labelW + plan.gapL
+	last := len(cells) - 1
+	for i, text := range cells {
+		if i > 0 {
+			if i == last {
+				col += plan.flex
+			}
+			if col+sepW > width {
+				return
+			}
+			if strings.TrimSpace(text) != "" {
+				buf.WriteString(x+col, y, TableSep, muted, bg, 0)
+			}
+			col += sepW
+		}
+		w := plan.colW[i]
+		if w < 1 || col >= width {
+			return
+		}
+		if strings.TrimSpace(text) == "" {
+			col += w
+			continue
+		}
+		fg := valueFG
+		if inherited && i == last {
+			fg = muted
+		}
+		buf.WriteString(x+col, y, rendering.TruncateVisual(text, min(w, width-col), "…"), fg, bg, 0)
+		col += w
+	}
+}
+
+func (ff *FormField) compactColumnsRaw() []string {
+	if ff.field == nil {
+		return nil
+	}
+	switch ff.field.Type {
+	case FieldNav:
+		if cols := ff.field.tableColumns(); len(cols) > 0 {
+			return cols
+		}
+		text := strings.TrimSpace(ff.field.Description)
+		if text == "" {
+			text = strings.TrimSpace(ff.field.Value.String())
+		}
+		cols := make([]string, 0, 2)
+		if text != "" {
+			cols = append(cols, text)
+		}
+		if ff.field.Inherited {
+			if suffix := ff.inheritedSuffix(); suffix != "" {
+				cols = append(cols, suffix)
+			}
+		}
+		return cols
+	case FieldCycle:
+		cols := []string{ff.cycleDisplay()}
+		if ff.field.Inherited {
+			if suffix := ff.inheritedSuffix(); suffix != "" {
+				cols = append(cols, suffix)
+			}
+		}
+		return cols
+	default:
+		return nil
+	}
+}
+
+func (ff *FormField) cycleDisplay() string {
+	if ff.field == nil {
+		return "←  →"
+	}
+	text := ff.field.Value.String()
+	for _, option := range ff.field.Options {
+		if option.ID == text {
+			text = option.Label
+			break
+		}
+	}
+	if text == "" {
+		text = ff.field.Placeholder
+	}
+	if text == "" {
+		text = "Not set"
+	}
+	return "← " + text + " →"
+}
+
+func padInheritedColumns(cols []string, inherited bool, width int) []string {
+	if len(cols) == 0 {
+		return cols
+	}
+	if width < len(cols) {
+		width = len(cols)
+	}
+	if inherited && len(cols) < width {
+		head := append([]string(nil), cols[:len(cols)-1]...)
+		for len(head) < width-1 {
+			head = append(head, "")
+		}
+		return append(head, cols[len(cols)-1])
+	}
+	out := append([]string(nil), cols...)
+	for len(out) < width {
+		out = append(out, "")
+	}
+	return out
+}
+
+func (ff *FormField) inheritedSuffix() string {
+	if ff.field == nil || !ff.field.Inherited {
+		return ""
+	}
+	if ff.field.InheritedFrom != "" {
+		return "inherited from " + ff.field.InheritedFrom
+	}
+	return "inherited"
+}
+
 func (ff *FormField) navDetail() string {
 	if ff.field == nil {
 		return ""
 	}
 	detail := strings.TrimSpace(ff.field.Description)
-	if !ff.field.Inherited {
+	suffix := ff.inheritedSuffix()
+	if suffix == "" {
 		return detail
-	}
-	suffix := "inherited"
-	if ff.field.InheritedFrom != "" {
-		suffix = "inherited from " + ff.field.InheritedFrom
 	}
 	if detail == "" {
 		return suffix

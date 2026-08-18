@@ -4,7 +4,7 @@ package theme
 // Themes may override them; the factory supplies defaults so product code
 // never hard-codes box/prompt/close glyphs when tokens are available.
 type Glyphs struct {
-	Prompt           string
+	Prompt           string // unused; must stay empty. Never paint ❯.
 	Search           string
 	Close            string
 	CornerTL         string
@@ -46,7 +46,7 @@ type Metrics struct {
 // DefaultGlyphs returns the shared reference glyph table.
 func DefaultGlyphs() Glyphs {
 	return Glyphs{
-		Prompt:         "❯",
+		Prompt:         "",
 		Search:         "⌕",
 		Close:          "✕",
 		CornerTL:       "╭",

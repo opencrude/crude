@@ -219,8 +219,7 @@ func TestBuildContextMenuFrame_DisabledAlignment(t *testing.T) {
 	surf, _ := renderContextMenuFrame(t, st)
 	// Items at rows 1, 2, 3. Find the column where each label starts
 	// by scanning the row for the label rune sequence. The marker
-	// ("❯ " for selected, "  " otherwise) precedes the label, so all
-	// labels should start at the same column.
+	// labels should start at the same column. Selection is background only.
 	labels := []string{"Enabled", "Off", "On"}
 	var cols []int
 	for i, label := range labels {

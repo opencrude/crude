@@ -26,8 +26,8 @@ func TestTokenSetMetricVersionColorOnlySwitch(t *testing.T) {
 
 func TestTokenSetExposesGlyphSpacingTypography(t *testing.T) {
 	ts := NewTokenSet(theme.DefaultHighContrast())
-	if ts.Glyphs().Prompt != "❯" {
-		t.Fatalf("prompt glyph=%q", ts.Glyphs().Prompt)
+	if ts.Glyphs().Prompt != "" {
+		t.Fatalf("prompt glyph must stay empty, got %q", ts.Glyphs().Prompt)
 	}
 	if ts.PadLR() != 2 || ts.Metrics().TitleBarHeight != 1 {
 		t.Fatalf("spacing/metrics missing")

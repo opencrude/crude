@@ -15,10 +15,13 @@ import (
 //	FieldSelect               "▾" right-aligned when closed, "▴" when open
 //	FieldMultiSelect          "▾" right-aligned when closed, "▴" when open;
 //	                          option rows prefix "[x]"/"[ ]"
-//	FieldCycle                "←" left edge, "→" right edge (value centered)
+//	FieldCycle                "←" left edge, "→" right edge (value centered);
+//	                          compact docks share the FieldNav table columns
 //	FieldToggle, FieldCheckbox "[x]" / "[ ]" inline
-//	FieldNav                  drill-in row: label + trailing ▸; detail on the next row
+//	FieldNav                  drill-in row: label + trailing ▸; compact docks
+//	                          paint Columns as an aligned table. Never ❯.
 //	FieldSeparator            label + "─" rule; not focusable
+//	FieldSpacer               blank row; not focusable
 type FieldType int
 
 const (
@@ -31,6 +34,7 @@ const (
 	FieldNav
 	FieldSeparator
 	FieldMultiSelect
+	FieldSpacer
 )
 
 // FieldValue is a typed wrapper for field values.
@@ -144,11 +148,36 @@ type FieldState struct {
 	Inherited     bool
 	InheritedFrom string
 	Options       []FormOption
+	Columns       []string // compact FieldNav table cells after the label
 	Validator     func(value FieldValue) []string
 	Target        string // for FieldNav: target page/focus ID
 }
 
 func (f *FieldState) HasErrors() bool { return len(f.Errors) > 0 }
+
+// skipFocus reports rows the form must walk past during keyboard traversal.
+func (f *FieldState) skipFocus() bool {
+	if f == nil {
+		return true
+	}
+	return f.Disabled || f.Type == FieldSeparator || f.Type == FieldSpacer
+}
+
+// tableColumns is the compact dock table: explicit cells plus inheritance.
+func (f *FieldState) tableColumns() []string {
+	if f == nil || len(f.Columns) == 0 {
+		return nil
+	}
+	cols := append([]string(nil), f.Columns...)
+	if !f.Inherited {
+		return cols
+	}
+	suffix := "inherited"
+	if f.InheritedFrom != "" {
+		suffix = "inherited from " + f.InheritedFrom
+	}
+	return append(cols, suffix)
+}
 
 func (f *FieldState) Validate() {
 	if f.Validator != nil {

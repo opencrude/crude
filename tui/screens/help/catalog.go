@@ -79,7 +79,7 @@ func UsageTopics() []Topic {
 		{
 			ID:    "settings",
 			Title: "Settings",
-			Body:  "Application Settings are global (theme, editor, LSP, credentials). Workspace Settings overlay those for this project. /settings opens the session dock for per-agent provider, model, and thinking. Save writes only the layer you are editing.",
+			Body:  "Application Settings are global (theme, editor, LSP, credentials). Workspace Settings overlay those for this project. /settings opens the session dock for per-agent provider, model, thinking, and multi-agent. Save writes only the layer you are editing.",
 		},
 		{
 			ID:    "editor",

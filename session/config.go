@@ -204,6 +204,56 @@ func (c *Config) IsMultiAgentEnabled() bool {
 	return c.Agents.Enabled
 }
 
+// EnsureAgentsDefaults restores product defaults that JSON omitempty cannot
+// represent. A missing multi-agent flag is on (DefaultAgentsConfig), not the
+// bool zero value that made refactored configs silently disable sub-agents.
+func EnsureAgentsDefaults(a *AgentsConfig) {
+	if a == nil {
+		return
+	}
+	def := DefaultAgentsConfig()
+	if a.ActiveProfile == "" {
+		a.ActiveProfile = def.ActiveProfile
+	}
+	if a.MaxConcurrent == 0 {
+		a.MaxConcurrent = def.MaxConcurrent
+	}
+	if a.Profiles == nil {
+		a.Profiles = make(map[string]ProfileConfig)
+	}
+	prof := a.Profiles[a.ActiveProfile]
+	if prof.MultiAgent == nil {
+		enabled := true
+		prof.MultiAgent = &enabled
+		a.Profiles[a.ActiveProfile] = prof
+	}
+	if !a.Enabled {
+		a.Enabled = *prof.MultiAgent
+	}
+}
+
+func applySessionMultiAgent(cfg *Config, enabled bool) {
+	if cfg == nil {
+		return
+	}
+	cfg.Agents.Enabled = enabled
+	prof, name := activeProfileCfg(cfg)
+	if cfg.Agents.Profiles == nil {
+		cfg.Agents.Profiles = make(map[string]ProfileConfig)
+	}
+	value := enabled
+	prof.MultiAgent = &value
+	cfg.Agents.Profiles[name] = prof
+}
+
+func cloneBoolPtr(src *bool) *bool {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
+}
+
 func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 	prof, _ := activeProfileCfg(c)
 	// Try "default" first, then backward-compat "main"

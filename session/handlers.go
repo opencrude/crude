@@ -115,10 +115,21 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 
 	s.cfg = newCfg
 	s.sessionOverrides = overrides
+	enabled := tuiSettings.Agents.Enabled
+	if tuiSettings.SessionMultiAgent != nil {
+		enabled = *tuiSettings.SessionMultiAgent
+	}
+	applySessionMultiAgent(s.cfg, enabled)
+	s.multiAgentOverride = cloneBoolPtr(&enabled)
+	if s.db != nil {
+		if err := sessiondb.SaveSessionFlags(s.db, s.sessionID, sessiondb.SessionFlags{MultiAgent: s.multiAgentOverride}); err != nil {
+			return fmt.Errorf("save session flags: %w", err)
+		}
+	}
 	// Update the runtime profile's base config so per-orchestrator overrides
 	// continue to work on top of the new saved config.
 	if s.runtimeProfile != nil {
-		s.runtimeProfile.UpdateBase(newCfg)
+		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 
 	// If multi-agent was just enabled, create the sub-agent runner if missing
@@ -234,7 +245,12 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 func (s *Session) SettingsSnapshot() ttypes.Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return ConfigToSettings(s.cfg)
+	settings := ConfigToSettings(s.cfg)
+	settings.SessionMultiAgent = cloneBoolPtr(s.multiAgentOverride)
+	if s.multiAgentOverride != nil {
+		settings.Agents.Enabled = *s.multiAgentOverride
+	}
+	return settings
 }
 
 // WorkspaceSettingsSnapshot returns the inherited workspace baseline without
@@ -268,9 +284,13 @@ func (s *Session) ResetSessionSettings() error {
 		if err := sessiondb.ClearAgentSettingOverrides(s.db, s.sessionID); err != nil {
 			return err
 		}
+		if err := sessiondb.ClearSessionFlags(s.db, s.sessionID); err != nil {
+			return err
+		}
 	}
 	s.cfg = configWithSessionOverrides(s.workspaceCfg, nil)
 	s.sessionOverrides = make(map[string]sessiondb.AgentSettingOverride)
+	s.multiAgentOverride = nil
 	if s.runtimeProfile != nil {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}

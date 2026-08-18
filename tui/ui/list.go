@@ -40,9 +40,8 @@ type List struct {
 	tokens          *TokenSet
 	activate        string // action ID on Enter/click
 	hoverIdx        int
-	defaultBgRole   SemanticColor
-	defaultBgSet    bool
-	selectionMarker bool
+	defaultBgRole SemanticColor
+	defaultBgSet  bool
 }
 
 // NewList creates a list (clamp navigation, not wrap).
@@ -53,8 +52,7 @@ func NewList(id ComponentID, tokens *TokenSet) *List {
 		scroll:          NewScrollModel(),
 		tokens:          tokens,
 		activate:        "list.activate",
-		hoverIdx:        -1,
-		selectionMarker: true,
+		hoverIdx: -1,
 	}
 }
 
@@ -78,11 +76,10 @@ func (l *List) SetDefaultRowBackground(role SemanticColor) {
 	l.defaultBgSet = true
 }
 
-// SetSelectionMarker toggles the ❯ cursor marker on the selected row.
-// Top-level navigation (e.g. a settings category rail) shows its active row
-// with background + font color only; dropdown option lists keep the marker.
-// Marker-less rows still indent by FormIndent so they sit under section titles.
-func (l *List) SetSelectionMarker(show bool) { l.selectionMarker = show }
+// SetSelectionMarker is retained for callers. Lists never paint a prompt
+// glyph; selection is background + bold only. Rows still indent by FormIndent
+// so they sit under section titles.
+func (l *List) SetSelectionMarker(_ bool) {}
 
 // SetItems replaces items and selects the first selectable row if needed.
 func (l *List) SetItems(items []ListItem) {
@@ -277,50 +274,31 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 			st = StateHovered
 		}
 		fg, bg := cell.NoColor, cell.NoColor
+		muted := cell.NoColor
 		if l.tokens != nil {
 			fg, bg = l.tokens.ListRowColors(st)
 			if st == StateDefault || st == StateDisabled {
 				bg = l.rowBg()
 			}
+			fg, muted = l.tokens.MenuInk(st, fg)
 		}
 		if !bg.IsDefault() {
 			FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
 		}
-		// Subsection rows sit one column in from section titles. Marker-less
-		// lists (settings rail) use FormIndent; lists with a ❯ marker keep
-		// that two-cell gutter as their indent.
-		marker := strings.Repeat(" ", l.itemIndent())
-		if l.selectionMarker {
-			marker = "  "
-			if idx == l.sel.Index() && item.Selectable() {
-				marker = DefaultGlyphsFromTokens(l.tokens).Prompt + " "
-			}
-		}
-		line := marker
+		// Subsection rows sit one column in from section titles. Selection
+		// is background + bold only — never a prompt glyph or leading marker.
+		prefix := strings.Repeat(" ", l.itemIndent())
 		if item.Icon != "" {
-			line += item.Icon + " "
+			prefix += item.Icon + " "
 		}
-		line += item.Label
-		if item.Detail != "" {
-			// pad and detail
-			used := rendering.VisibleWidth(line)
-			gap := r.W - used - rendering.VisibleWidth(item.Detail) - 1
-			if gap < 1 {
-				gap = 1
-			}
-			// build with spaces
-			spaces := make([]byte, gap)
-			for i := range spaces {
-				spaces[i] = ' '
-			}
-			line += string(spaces) + item.Detail
-		}
-		line = rendering.TruncateLine(line, r.W)
 		attr := cell.Attrs(0)
 		if idx == l.sel.Index() && item.Selectable() {
 			attr = cell.AttrBold
 		}
-		buf.WriteString(x, y, line, fg, bg, attr)
+		if prefix != "" {
+			buf.WriteString(x, y, prefix, fg, bg, attr)
+		}
+		paintMenuDetail(buf, x+rendering.VisibleWidth(prefix), y, r.W-rendering.VisibleWidth(prefix), item.Label, item.Detail, fg, muted, bg, attr)
 	}
 }
 

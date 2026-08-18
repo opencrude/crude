@@ -65,7 +65,7 @@ func New(th *theme.Theme) *Screen {
 		th = theme.DefaultDark()
 	}
 	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th)}
-	s.form = ui.NewForm(FormID, nil, "", "", s.tokens)
+	s.form = ui.NewDockedForm(FormID, nil, "", "", s.tokens)
 	s.openCurrent()
 	return s
 }
@@ -116,14 +116,22 @@ func (s *Screen) PreferredHeight(maxHeight int) int {
 	if s.Count() == 0 {
 		return 0
 	}
-	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-2))+2)
+	chrome := 2
+	if s.actions != nil {
+		chrome = s.actions.PreferredHeight()
+	}
+	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-chrome))+chrome)
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	formH := max(1, r.H-2)
+	chrome := 2
+	if s.actions != nil {
+		chrome = s.actions.PreferredHeight()
+	}
+	formH := max(1, r.H-chrome)
 	s.form.Layout(ctx, ui.Rect{W: r.W, H: formH})
-	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})
+	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-chrome), W: r.W, H: chrome})
 }
 
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
@@ -156,13 +164,17 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		return focusFormResult(ui.InvalidateLayout)
 	case "question.cancel":
 		return s.cancel()
-	case "form.exit.backward":
+	case "form.cancel":
 		if s.customSelected() {
 			s.form.FocusFirst()
 			return focusFormResult(0)
 		}
 		return s.cancel()
+	case "form.exit.backward":
+		s.actions.FocusLast()
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "form.exit.forward":
+		s.actions.FocusFirst()
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "actionbar.exit.backward":
 		s.form.FocusLast()
@@ -180,7 +192,7 @@ func (s *Screen) openCurrent() {
 	if !ok {
 		s.formModel = model
 		s.form.SetForm(model, "Question", "")
-		s.actions = ui.NewActionBar(ActionsID, s.tokens)
+		s.actions = ui.NewDockedActionBar(ActionsID, s.tokens)
 		return
 	}
 
@@ -240,7 +252,7 @@ func (s *Screen) openCurrent() {
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "next"), Label: label, Action: "question.next", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "question.cancel", Variant: ui.VariantDanger, Enabled: true},
 	)
-	s.actions = ui.NewActionBar(ActionsID, s.tokens, buttons...)
+	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 }
 
 func (s *Screen) advance() ui.EventResult {

@@ -283,8 +283,8 @@ func copyConfig(src *Config) *Config {
 		agents.Profiles = make(map[string]ProfileConfig, len(src.Agents.Profiles))
 		for name, prof := range src.Agents.Profiles {
 			profCopy := ProfileConfig{
-				MultiAgent: prof.MultiAgent,
-				TurnLogs:   prof.TurnLogs,
+				MultiAgent: cloneBoolPtr(prof.MultiAgent),
+				TurnLogs:   cloneBoolPtr(prof.TurnLogs),
 			}
 			if prof.Categories != nil {
 				profCopy.Categories = make(map[string]CategoryConfig, len(prof.Categories))

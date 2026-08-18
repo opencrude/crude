@@ -328,7 +328,7 @@ floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
   their legacy body content.
 - `PanelDeck` is exclusively for session-owned docked content between messages and
   chat input: session settings, questions, tool confirmation, YOLO, and background
-  job details.
+  job details. Those docks share the chat `ColorBg` — they are not popup cards.
 - The old `App.Overlay` inline tab system is deleted. Never reintroduce it or route
   floating windows through `PanelDeck` as a shortcut.
 

@@ -130,6 +130,12 @@ CREATE TABLE IF NOT EXISTS session_agent_settings (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
+CREATE TABLE IF NOT EXISTS session_flags (
+    session_id  TEXT PRIMARY KEY,
+    multi_agent INTEGER,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
 CREATE TABLE IF NOT EXISTS session_runtime_state (
     key        TEXT PRIMARY KEY,
     value      BLOB NOT NULL,

@@ -29,7 +29,7 @@ func buildUserHeader(username, timeLabel string, innerW int, suppressHeader bool
 	if suppressHeader {
 		return PaintLine{}
 	}
-	label := "❯ " + username + " "
+	label := username + " "
 	pl := PaintLine{Spans: []RowSpan{
 		spanWithBg(label, ui.ColorFg, ui.ColorPopupSubtleBg, cell.AttrBold),
 	}}
@@ -47,12 +47,12 @@ func buildAssistantHeader(modelName string, incomplete bool, timeLabel string, i
 	var role, bg ui.SemanticColor
 	var attr cell.Attrs
 	if incomplete {
-		label = "❯ ⚠ Crude " + modelName + " "
+		label = "⚠ Crude " + modelName + " "
 		role = ui.ColorError
 		bg = ui.ColorIncompleteBg
 		attr = cell.AttrBold | cell.AttrItalic
 	} else {
-		label = "❯ Crude " + modelName + " "
+		label = "Crude " + modelName + " "
 		role = ui.ColorAccent2
 		bg = ui.ColorPopupSubtleBg
 		attr = cell.AttrBold

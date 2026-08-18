@@ -156,6 +156,18 @@ func (m *App) openSessionSettingsPanel() {
 	projection.deckHost.MarkLayout()
 }
 
+func (m *App) openSessionModelPicker() tea.Cmd {
+	m.openSessionSettings()
+	projection := m.activeSessionDeck()
+	if projection == nil || projection.settings == nil {
+		return nil
+	}
+	cmd := projection.settings.OpenModelPicker("default")
+	projection.deckFocus = sessionsettings.ScreenID
+	projection.deckHost.MarkLayout()
+	return cmd
+}
+
 func (m *App) openSessionQuestionPanel(projection *sessionProjection) {
 	if projection == nil || projection.deck == nil || projection.deckHost == nil || projection.question == nil || projection.question.Count() == 0 {
 		return

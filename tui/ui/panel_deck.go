@@ -46,7 +46,9 @@ type PanelDeck struct {
 }
 
 func NewPanelDeck(id ComponentID, tokens *TokenSet) *PanelDeck {
-	return &PanelDeck{Base: NewBase(id), tokens: tokens, tabs: NewTabs(NewID(id, "tabs"), tokens), active: -1}
+	tabs := NewTabs(NewID(id, "tabs"), tokens)
+	tabs.SetChrome(TabsShell)
+	return &PanelDeck{Base: NewBase(id), tokens: tokens, tabs: tabs, active: -1}
 }
 
 func (d *PanelDeck) SetTokens(tokens *TokenSet) {
@@ -54,6 +56,7 @@ func (d *PanelDeck) SetTokens(tokens *TokenSet) {
 	d.tabs.SetTokens(tokens)
 	if panel := d.Active(); panel != nil {
 		applyTokenSet(panel.Content, tokens)
+		applyDockedSurface(panel.Content)
 	}
 }
 
@@ -75,6 +78,7 @@ func (d *PanelDeck) Open(panel PanelEntry) {
 			if !blocksActivation && !queuesPassive {
 				d.active = i
 			}
+			applyDockedSurface(panel.Content)
 			d.syncTabs()
 			return
 		}
@@ -83,6 +87,7 @@ func (d *PanelDeck) Open(panel PanelEntry) {
 	if !blocksActivation && !queuesPassive {
 		d.active = len(d.panels) - 1
 	}
+	applyDockedSurface(panel.Content)
 	d.syncTabs()
 }
 
@@ -212,7 +217,7 @@ func (d *PanelDeck) Layout(ctx LayoutContext, r Rect) {
 
 func (d *PanelDeck) Paint(buf *surface.CellBuffer, originX, originY int, _ PaintContext) {
 	r := d.Bounds()
-	bg, divider := d.color(ColorPopupBg), d.color(ColorPopupDivider)
+	bg, divider := d.color(ColorBg), d.color(ColorPopupDivider)
 	hBorder := FirstRune(d.tokens.Glyphs().BorderH, '─')
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	if r.W > 0 && r.H > 0 {
@@ -296,6 +301,24 @@ func (d *PanelDeck) color(role SemanticColor) cell.Color {
 		return cell.NoColor
 	}
 	return d.tokens.Color(role)
+}
+
+// applyDockedSurface paints session-owned deck content on the chat surface
+// so settings, questions, confirmations, YOLO, and jobs do not sit on a
+// raised popup fill. Screens that hide Form from Children must still use
+// NewDockedForm when they construct or replace that form.
+func applyDockedSurface(c Component) {
+	if c == nil {
+		return
+	}
+	if s, ok := c.(interface{ SetSurfaceBackground(SemanticColor) }); ok {
+		s.SetSurfaceBackground(ColorBg)
+	}
+	if p, ok := c.(Parent); ok {
+		for _, child := range p.Children() {
+			applyDockedSurface(child)
+		}
+	}
 }
 
 func (d *PanelDeck) Semantics() Semantics {

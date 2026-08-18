@@ -27,10 +27,10 @@ func TestMouseToInputPosUsesInputLocalGeometry(t *testing.T) {
 			padLR := m.theme.Spacing.PadLR
 			firstRow := m.textAreaY()
 
-			if pos, ok := m.MouseToInputPos(padLR+2, firstRow); !ok || pos != 0 {
+			if pos, ok := m.MouseToInputPos(padLR, firstRow); !ok || pos != 0 {
 				t.Fatalf("first row first col = %d ok=%v, want 0", pos, ok)
 			}
-			if pos, ok := m.MouseToInputPos(padLR+2+2, firstRow); !ok || pos != 2 {
+			if pos, ok := m.MouseToInputPos(padLR+2, firstRow); !ok || pos != 2 {
 				t.Fatalf("first row col 2 = %d ok=%v, want 2", pos, ok)
 			}
 			if _, ok := m.MouseToInputPos(0, firstRow-1); ok {
@@ -49,7 +49,7 @@ func TestMouseToInputPosWrappedRows(t *testing.T) {
 	padLR := m.theme.Spacing.PadLR
 	firstRow := m.textAreaY()
 	want := len("alpha") + 1 + 2
-	if pos, ok := m.MouseToInputPos(padLR+2+2, firstRow+1); !ok || pos != want {
+	if pos, ok := m.MouseToInputPos(padLR+2, firstRow+1); !ok || pos != want {
 		t.Fatalf("second row col 2 = %d ok=%v, want %d", pos, ok, want)
 	}
 }

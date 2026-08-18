@@ -207,7 +207,7 @@ func TestInputMouseClickUsesHostLocalCoords(t *testing.T) {
 			}
 			padLR := app.Theme.Spacing.PadLR
 			// First text row (separator at local y=0, text at y=1); column 5.
-			clickX := r.X + padLR + 2 + 5
+			clickX := r.X + padLR + 5
 			clickY := r.Y + 1
 			app.routeInputMouse(tea.MouseClickMsg{X: clickX, Y: clickY, Button: tea.MouseLeft})
 			start, end := app.Input.InputSelectionRange()
@@ -229,13 +229,13 @@ func TestInputMouseDragUsesHostLocalCoords(t *testing.T) {
 	}
 	padLR := app.Theme.Spacing.PadLR
 	// Row 0 col 2 -> flat 2; row 1 col 3 -> flat 6+3 = 9.
-	app.routeInputMouse(tea.MouseClickMsg{X: r.X + padLR + 2 + 2, Y: r.Y + 1, Button: tea.MouseLeft})
-	app.routeInputMouse(tea.MouseMotionMsg{X: r.X + padLR + 2 + 3, Y: r.Y + 2, Button: tea.MouseLeft})
+	app.routeInputMouse(tea.MouseClickMsg{X: r.X + padLR + 2, Y: r.Y + 1, Button: tea.MouseLeft})
+	app.routeInputMouse(tea.MouseMotionMsg{X: r.X + padLR + 3, Y: r.Y + 2, Button: tea.MouseLeft})
 	start, end := app.Input.InputSelectionRange()
 	if start != 2 || end != 9 {
 		t.Fatalf("input selection = (%d,%d), want (2,9)", start, end)
 	}
-	app.routeInputMouse(tea.MouseReleaseMsg{X: r.X + padLR + 2 + 3, Y: r.Y + 2, Button: tea.MouseLeft})
+	app.routeInputMouse(tea.MouseReleaseMsg{X: r.X + padLR + 3, Y: r.Y + 2, Button: tea.MouseLeft})
 	if start, end := app.Input.InputSelectionRange(); start != 2 || end != 9 {
 		t.Fatalf("release must keep selection: (%d,%d), want (2,9)", start, end)
 	}

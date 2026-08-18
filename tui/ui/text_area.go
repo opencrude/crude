@@ -37,10 +37,9 @@ type TextAreaSubmitEvent struct {
 // navigation, goal-column preservation, multi-line selection, atomic
 // ranges, and the full legacy key set.
 //
-// By default the first visual row is prefixed with the "❯" prompt glyph
-// (accent-colored), matching the legacy components.TextInput behavior.
-// Continuation/wrapped rows get a "  " indent. Callers may override the
-// prompt via SetPrompt; an empty value restores the default glyph.
+// Chat input has no leading prompt glyph. Callers may set a custom prefix
+// via SetPrompt; an empty value paints text from column 0. Wrapped rows
+// indent only when a prompt is configured.
 //
 // This is the Phase 6 multi-line input primitive. It satisfies ui.Component.
 type TextArea struct {
@@ -69,8 +68,8 @@ type TextArea struct {
 // the explicit submit key, typically Ctrl+Enter); when false, Enter emits
 // the submit action.
 //
-// The default prompt glyph "❯" is enabled — this matches the legacy
-// components.TextInput behavior. Use SetPrompt to customize it.
+// There is no default prompt glyph. Use SetPrompt only for labeled
+// fields that need a visible prefix.
 func NewTextArea(id ComponentID, tokens *TokenSet, multiLine bool) *TextArea {
 	t := &TextArea{
 		Base:      NewBase(id),
@@ -88,9 +87,8 @@ func (t *TextArea) SetTokens(ts *TokenSet) { t.tokens = ts }
 // SetPlaceholder sets empty-state hint text.
 func (t *TextArea) SetPlaceholder(s string) { t.placeholder = s }
 
-// SetPrompt sets a leading prompt glyph drawn before the first line. An
-// empty prompt restores the default "❯", matching the legacy TextInput
-// contract used by input.ResetPrompt.
+// SetPrompt sets a leading prompt drawn before the first line. An empty
+// prompt paints no prefix and no leading space.
 func (t *TextArea) SetPrompt(s string) {
 	t.prompt = s
 	if bounds := t.Bounds(); !bounds.Empty() {
@@ -104,34 +102,30 @@ func (t *TextArea) SetPrompt(s string) {
 	}
 }
 
-// promptChar returns the glyph rendered before the first visual row.
-// An empty configured prompt intentionally resolves to the theme Prompt
-// glyph ("❯" by default), matching components.TextInput.promptChar() and
-// preserving ResetPrompt behavior.
+// promptChar returns the configured prefix, or empty when none is set.
 func (t *TextArea) promptChar() string {
-	if t.prompt != "" {
-		return t.prompt
-	}
-	if t.tokens != nil {
-		if p := t.tokens.Glyphs().Prompt; p != "" {
-			return p
-		}
-	}
-	return "❯"
+	return t.prompt
 }
 
 // promptPrefix returns the full prefix string (glyph + trailing space)
 // used for the first visual row, or the continuation indent otherwise.
 func (t *TextArea) promptPrefix(isFirst bool) string {
-	if isFirst {
-		if pc := t.promptChar(); pc != "" {
-			return pc + " "
-		}
+	pc := t.promptChar()
+	if pc == "" {
+		return ""
 	}
-	return "  "
+	if isFirst {
+		return pc + " "
+	}
+	return strings.Repeat(" ", rendering.VisibleWidth(pc+" "))
 }
 
-// promptPrefixWidth returns the visible width of the first-row prefix.
+// PromptPrefixWidth is the visible width of the first-row prefix, or 0
+// when the chat input has no prompt glyph.
+func (t *TextArea) PromptPrefixWidth() int {
+	return t.promptPrefixWidth()
+}
+
 func (t *TextArea) promptPrefixWidth() int {
 	return rendering.VisibleWidth(t.promptPrefix(true))
 }
@@ -456,9 +450,8 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	}
 }
 
-// paintPromptPrefix paints the "❯ " (or custom prompt, or continuation
-// indent) at the start of a visual row. The prompt glyph uses the Accent
-// color; the trailing space and continuation indent inherit the field bg.
+// paintPromptPrefix paints a configured prompt (or continuation indent)
+// at the start of a visual row. Empty prompts paint nothing.
 func (t *TextArea) paintPromptPrefix(buf *surface.CellBuffer, x, y int, fg, bg cell.Color, isFirst bool) {
 	pref := t.promptPrefix(isFirst)
 	if pref == "" {

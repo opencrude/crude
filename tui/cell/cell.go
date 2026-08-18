@@ -178,6 +178,18 @@ func (c Color) Blend(over Color, alpha float32) Color {
 	return NewTrueColor(r, g, b)
 }
 
+// ContrastColor returns a readable foreground for bg: near-black on light
+// fills, near-white on dark fills. Buttons use this so variant-colored hover
+// chips stay legible on every theme.
+func ContrastColor(bg Color) Color {
+	r, g, b := colorToRGB(bg)
+	luma := 0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)
+	if luma > 140 {
+		return NewTrueColor(0x0d, 0x11, 0x17)
+	}
+	return NewTrueColor(0xf0, 0xf6, 0xfc)
+}
+
 // colorToRGB extracts RGB components from a Color.
 // For palette colors, returns the palette index as a gray approximation.
 // This is a helper for Blend; in practice, the compositor may want to

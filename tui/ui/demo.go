@@ -194,7 +194,7 @@ func newDemoTextField(tokens *TokenSet, value, placeholder string) *TextField {
 		id = NewID(RootID, "tf-dis")
 	}
 	tf := NewTextField(id, tokens)
-	tf.SetPrompt("❯")
+	tf.SetPrompt("")
 	tf.SetPlaceholder(placeholder)
 	if value != "" {
 		tf.SetValue(value)

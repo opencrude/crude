@@ -25,10 +25,12 @@ type FilterField struct {
 
 // NewFilterField creates a single-line filter input.
 func NewFilterField(id ComponentID, tokens *TokenSet) *FilterField {
-	return &FilterField{
+	f := &FilterField{
 		Base:  NewBase(id),
 		field: NewTextField(id, tokens),
 	}
+	f.field.SetBackgroundColor(FilterSurface(tokens))
+	return f
 }
 
 // OnChanged registers the callback invoked whenever the value changes through
@@ -38,7 +40,19 @@ func NewFilterField(id ComponentID, tokens *TokenSet) *FilterField {
 func (f *FilterField) OnChanged(fn func(string)) { f.onChange = fn }
 
 // SetTokens updates the theme token set.
-func (f *FilterField) SetTokens(tokens *TokenSet) { f.field.SetTokens(tokens) }
+func (f *FilterField) SetTokens(tokens *TokenSet) {
+	f.field.SetTokens(tokens)
+	f.field.SetBackgroundColor(FilterSurface(tokens))
+}
+
+// FilterSurface is the distinct fill for filter and search inputs so they
+// never sit on the same color as the surrounding list, dock, or popup.
+func FilterSurface(tokens *TokenSet) cell.Color {
+	if tokens == nil {
+		return cell.NoColor
+	}
+	return tokens.Color(ColorPopupSubtleBg)
+}
 
 // SetPrompt configures the visual prompt.
 func (f *FilterField) SetPrompt(prompt string) { f.field.SetPrompt(prompt) }
