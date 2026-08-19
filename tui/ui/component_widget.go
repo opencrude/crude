@@ -78,6 +78,20 @@ func (c *ComponentWidget) Measure(availW, availH int) (int, int) {
 	return w, h
 }
 
+// Render paints the component tree into the surface buffer. It first feeds
+// the WM's resize-edge hover state into the frame so the border highlight
+// matches the edge under the mouse pointer.
+func (w *WindowFrameWidget) Render(surf *surface.Surface, ctx *wm.RenderContext) {
+	if w == nil || w.frame == nil {
+		return
+	}
+	if w.host == nil {
+		return
+	}
+	w.frame.SetHoverEdge(w.hoverEdge)
+	w.ComponentWidget.Render(surf, ctx)
+}
+
 // Render paints the component tree into the surface buffer.
 func (c *ComponentWidget) Render(surf *surface.Surface, ctx *wm.RenderContext) {
 	if c == nil || c.host == nil || surf == nil {
@@ -143,6 +157,21 @@ type WindowFrameWidget struct {
 	*ComponentWidget
 	frame       *WindowFrame
 	eventTarget WindowEventTarget
+	// hoverEdge is the resize edge currently under the mouse pointer,
+	// fed from the WM each render so the frame border highlight tracks it.
+	hoverEdge wm.Edge
+}
+
+// SetHoverEdge records the resize edge under the mouse pointer for the
+// frame's border highlight. The WM calls this on mouse motion.
+func (w *WindowFrameWidget) SetHoverEdge(edge wm.Edge) {
+	if w == nil {
+		return
+	}
+	w.hoverEdge = edge
+	if w.frame != nil {
+		w.frame.SetHoverEdge(edge)
+	}
 }
 
 // NewWindowFrameWidget builds a framed widget suitable for FloatingWindow

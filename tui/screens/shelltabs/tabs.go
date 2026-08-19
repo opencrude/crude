@@ -148,7 +148,16 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	if r.W > 0 {
 		s.width = r.W
 	}
-	s.tabs.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: r.W, H: 1})
+	// The tab strip slot spans the whole content column so the bottom
+	// separator runs edge to edge; the tabs control itself keeps the
+	// theme's horizontal padding (the parent enforces the theme). Narrow
+	// strips cap the padding at half the width, like the shell's content
+	// geometry.
+	pad := 0
+	if s.tokens != nil {
+		pad = min(max(0, s.tokens.PadLR()), max(0, r.W)/2)
+	}
+	s.tabs.Layout(ui.LayoutContext{}, ui.Rect{X: pad, Y: 0, W: max(0, r.W-2*pad), H: 1})
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
@@ -178,8 +187,10 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	return ui.EventResult{Action: &action}
 }
 
+// HitTest resolves screen-local X against the tabs control, translating
+// through the control's padded bounds so callers work in slot coordinates.
 func (s *Screen) HitTest(localX int) (int, bool) {
-	return s.tabs.HitTest(localX)
+	return s.tabs.HitTest(localX - s.tabs.Bounds().X)
 }
 
 func (s *Screen) Semantics() ui.Semantics {

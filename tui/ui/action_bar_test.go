@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/surface"
 	"crude/tui/theme"
 )
 
@@ -70,3 +71,57 @@ func TestDockedActionBarPacksFromLeftWithRule(t *testing.T) {
 		t.Fatalf("docked button bounds=%v, want x=0 y=1", bar.buttons[0].button.Bounds())
 	}
 }
+
+func TestActionBarRuleFullBleedSpansParentRow(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	paint := func(bar *ActionBar) *surface.CellBuffer {
+		bar.Layout(LayoutContext{}, Rect{W: 40, H: 2})
+		buf := surface.NewCellBuffer(100, 2)
+		bar.Paint(buf, 0, 0, PaintContext{})
+		return buf
+	}
+	bleeded := NewDockedActionBar("actions", tokens,
+		ActionBarButton{ID: "save", Label: "Save", Action: "save", Enabled: true},
+	)
+	bleeded.SetRuleBleed(0, 100)
+	buf := paint(bleeded)
+	if got := buf.Get(99, 0).Char; got != '─' {
+		t.Fatalf("full-bleed rule stopped before the parent row end: cell=%q", got)
+	}
+	if got := bleedWithBufEdge(buf); got != 100 {
+		t.Fatalf("full-bleed rule width=%d, want 100", got)
+	}
+
+	// An offset bleed starts offsetX columns LEFT of the bar origin: the
+	// rule runs from the parent's left edge to width-offsetX columns right
+	// of the bar, i.e. edge to edge across the deck row.
+	bleeded.SetRuleBleed(3, 100)
+	buf = paint(bleeded)
+	if got := buf.Get(0, 0).Char; got != '─' {
+		t.Fatalf("offset bleed must start left of the bar origin: cell=%q", got)
+	}
+	if got := buf.Get(97, 0).Char; got == '─' {
+		t.Fatal("offset bleed painted past the parent row end")
+	}
+
+	bounded := NewActionBar("actions", tokens,
+		ActionBarButton{ID: "save", Label: "Save", Action: "save", Enabled: true},
+	)
+	bounded.SetShowRule(true)
+	bounded.SetRuleBleed(0, 100)
+	buf = paint(bounded)
+	if got := buf.Get(41, 0).Char; got == '─' {
+		t.Fatal("bounded rule expanded despite full-bleed being disabled")
+	}
+}
+
+func bleedWithBufEdge(buf *surface.CellBuffer) int {
+	width := 0
+	for x := 0; x < buf.Width(); x++ {
+		if buf.Get(x, 0).Char == '─' {
+			width = x + 1
+		}
+	}
+	return width
+}
+

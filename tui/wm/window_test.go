@@ -241,6 +241,38 @@ func TestHitTestEdgeUndecorated(t *testing.T) {
 	}
 }
 
+func TestHoverEdgeMarksContentDirtyAndTracksChanges(t *testing.T) {
+	fw := NewFloatingWindow("hover", "Hover", testWidget{}, 10, 6)
+	fw.SetPosition(0, 0)
+	fw.MarkContentDirty()
+	_ = fw.IsContentDirty()
+	// Render once so the window starts clean.
+	if fw.surf == nil {
+		fw.surf = surface.NewSurface("hover", fw.w, fw.h, cell.TransparentBlank())
+	}
+	fw.contentDirty = false
+
+	if fw.HoverEdge() != EdgeNone {
+		t.Fatalf("initial hover edge = %v, want EdgeNone", fw.HoverEdge())
+	}
+	fw.SetHoverEdge(EdgeLeft)
+	if fw.HoverEdge() != EdgeLeft {
+		t.Fatalf("hover edge after set = %v, want EdgeLeft", fw.HoverEdge())
+	}
+	if !fw.IsContentDirty() {
+		t.Fatal("SetHoverEdge must mark the window content dirty for a repaint")
+	}
+	fw.contentDirty = false
+	fw.SetHoverEdge(EdgeLeft) // no change → no new dirty
+	if fw.IsContentDirty() {
+		t.Fatal("unchanged hover edge must not re-mark content dirty")
+	}
+	fw.SetHoverEdge(EdgeNone)
+	if fw.HoverEdge() != EdgeNone {
+		t.Fatalf("cleared hover edge = %v, want EdgeNone", fw.HoverEdge())
+	}
+}
+
 func TestIsOnWindowFrameTitleBar(t *testing.T) {
 	fw := NewFloatingWindow("tb", "TB", testWidget{}, 10, 6)
 	fw.SetPosition(5, 5)

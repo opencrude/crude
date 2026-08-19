@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -99,6 +100,80 @@ func TestPanelDeckPassivePanelDoesNotDisplaceInteractivePanel(t *testing.T) {
 	}
 	if !deck.panels[1].Attention {
 		t.Fatal("queued passive panel lost its requested attention")
+	}
+}
+
+func TestPanelDeckReadableWidthClampsContent(t *testing.T) {
+	// DefaultDark PadLR=2: content keeps the theme padding on both sides,
+	// then readable-width clamps what remains.
+	cases := []struct {
+		deckW        int
+		wantContentW int
+	}{
+		{deckW: 100, wantContentW: 96}, // narrow: full (padded) width
+		{deckW: 120, wantContentW: 58}, // wide: half of 116
+		{deckW: 210, wantContentW: 68}, // ultra wide: third of 206
+	}
+	for _, tc := range cases {
+		deck := NewPanelDeck("deck", NewTokenSet(theme.DefaultDark()))
+		content := NewLabel("deck/settings", "Settings", theme.DefaultDark())
+		deck.Open(PanelEntry{ID: "settings", Title: "Settings", Content: content, Policy: PanelInteractive, Width: PanelReadableWidth})
+		deck.Layout(LayoutContext{}, Rect{W: tc.deckW, H: 8})
+		got := content.Bounds()
+		if got.W != tc.wantContentW || got.X != 2 {
+			t.Fatalf("deckW=%d content bounds=%+v, want X=2 W=%d", tc.deckW, got, tc.wantContentW)
+		}
+	}
+}
+
+func TestPanelDeckFullWidthPanelIgnoresReadableWidth(t *testing.T) {
+	deck := NewPanelDeck("deck", NewTokenSet(theme.DefaultDark()))
+	content := NewLabel("deck/jobs", "Jobs", theme.DefaultDark())
+	deck.Open(PanelEntry{ID: "jobs", Title: "Jobs", Content: content, Policy: PanelPassive})
+	deck.Layout(LayoutContext{}, Rect{W: 210, H: 8})
+	if got := content.Bounds(); got.X != 2 || got.W != 206 {
+		t.Fatalf("default panel must keep the padded deck width, bounds=%+v", got)
+	}
+}
+
+func TestPanelDeckReadableWidthFeedsRuleBleed(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	deck := NewPanelDeck("deck", tokens)
+	model := NewFormModel()
+	model.AddField(&FieldState{ID: "name", Label: "Name", Type: FieldText, Value: StringValue("x")})
+	form := NewDockedForm("deck/form", model, strings.Repeat("T", 90), "", tokens)
+	deck.Open(PanelEntry{ID: "settings", Title: "Settings", Content: form, Policy: PanelInteractive, Width: PanelReadableWidth})
+	deck.Layout(LayoutContext{}, Rect{W: 120, H: 6})
+	if form.Bounds().W != 58 || form.Bounds().X != 2 {
+		t.Fatalf("readable panel form bounds=%+v, want X=2 W=58", form.Bounds())
+	}
+	buf := surface.NewCellBuffer(120, 6)
+	form.Paint(buf, 0, 0, PaintContext{})
+	// Rule row (title + 1 within the form, content starts at deck row 1)
+	// must span the deck edge to edge even though content keeps the theme
+	// padding and the readable clamp.
+	if got := buf.Get(0, 2).Char; got != '─' {
+		t.Fatalf("deck rule must reach the left edge: cell=%q", got)
+	}
+	if got := buf.Get(119, 2).Char; got != '─' {
+		t.Fatalf("deck rule must reach the right edge: cell=%q", got)
+	}
+	if got := buf.Get(61, 1).Char; got == 'T' {
+		t.Fatal("title must stay truncated to the readable column")
+	}
+
+	// A full-width panel publishes no bleed, so rules stay bounded.
+	deck.Open(PanelEntry{ID: "jobs", Title: "Jobs", Content: NewLabel("deck/jobs", "Jobs", theme.DefaultDark()), Policy: PanelPassive})
+	deck.panels[1].Attention = false
+	deck.Activate("jobs")
+	deck.Layout(LayoutContext{}, Rect{W: 120, H: 6})
+	deck.Activate("settings")
+	deck.Layout(LayoutContext{}, Rect{W: 120, H: 6})
+	buf = surface.NewCellBuffer(120, 6)
+	form.Paint(buf, 0, 0, PaintContext{})
+	ruleY := form.Bounds().Y + 1
+	if got := buf.Get(119, ruleY).Char; got != '─' {
+		t.Fatalf("bleed must be re-applied when the readable panel returns: cell=%q", got)
 	}
 }
 

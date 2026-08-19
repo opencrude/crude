@@ -42,9 +42,12 @@ type ActionBar struct {
 	cancelAction string
 	exitForward  string
 	exitBackward string
-	showRule     bool
-	surfaceRole  SemanticColor
-	surfaceSet   bool
+	showRule      bool
+	surfaceRole   SemanticColor
+	surfaceSet    bool
+	ruleFullBleed bool
+	ruleBleedX    int
+	ruleBleedW    int
 }
 
 type actionBarBtn struct {
@@ -102,6 +105,7 @@ func NewDockedActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButto
 	ab.SetAlignEnd(false)
 	ab.SetShowRule(true)
 	ab.SetSurfaceBackground(ColorBg)
+	ab.SetRuleFullBleed(true)
 	return ab
 }
 
@@ -113,6 +117,19 @@ func (ab *ActionBar) SetAlignEnd(v bool) { ab.alignEnd = v }
 
 // SetShowRule paints a divider on the first row and places buttons below it.
 func (ab *ActionBar) SetShowRule(v bool) { ab.showRule = v }
+
+// SetRuleFullBleed configures whether the rule may expand beyond the bar's
+// own width when the parent supplies a wider bleed row. Docked bars opt in
+// so the rule spans the whole deck row edge to edge while buttons stay in
+// the padded column. Per-rule control stays with the bar; the parent only
+// supplies the row geometry.
+func (ab *ActionBar) SetRuleFullBleed(v bool) { ab.ruleFullBleed = v }
+
+// SetRuleBleed is called by the parent (PanelDeck) at layout time with the
+// deck row geometry a full-bleed rule may span: offsetX columns left of the
+// bar's own origin, width the total row width. Width 0 keeps the rule
+// bounded to the bar's own width.
+func (ab *ActionBar) SetRuleBleed(offsetX, width int) { ab.ruleBleedX, ab.ruleBleedW = offsetX, width }
 
 // SetSurfaceBackground is the idle button fill (dock ColorBg, popup ColorPopupBg).
 func (ab *ActionBar) SetSurfaceBackground(role SemanticColor) {
@@ -230,8 +247,12 @@ func (ab *ActionBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		}
 		divider := ab.tokens.Color(ColorPopupDivider)
 		ox, oy := originX+r.X, originY+r.Y
+		ruleX, ruleW := 0, r.W
+		if ab.ruleFullBleed && ab.ruleBleedW-ab.ruleBleedX > ruleW {
+			ruleX, ruleW = -ab.ruleBleedX, ab.ruleBleedW
+		}
 		FillRect(buf, 0, 0, Rect{X: ox, Y: oy, W: r.W, H: r.H}, cell.BlankCell(bg))
-		buf.WriteString(ox, oy, strings.Repeat(string(FirstRune(ab.tokens.Glyphs().BorderH, '─')), r.W), divider, bg, 0)
+		buf.WriteString(ox+ruleX, oy, strings.Repeat(string(FirstRune(ab.tokens.Glyphs().BorderH, '─')), max(0, ruleW)), divider, bg, 0)
 	}
 	for i := range ab.buttons {
 		buttonCtx := ctx

@@ -139,6 +139,63 @@ func TestModelSelectEmitsFetchAndAppliesAsyncResult(t *testing.T) {
 	}
 }
 
+func TestModelPickerEnterCommitsToRolePage(t *testing.T) {
+	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openrouter", Model: "workspace-main"},
+	}}}
+	screen := New(theme.DefaultDark(), settings, settings, nil)
+	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}}, map[string]types.ProviderConfig{
+		"openrouter": {Model: "gpt-5.6"},
+	})
+	screen.openRole("default")
+	screen.OpenModelPicker("default")
+	screen.ApplyModels("openrouter", []types.ModelEntry{{ID: "model-b", Name: "Model B"}})
+
+	// Enter on the selected model row commits the pick.
+	res := screen.Handle(ui.EventContext{}, ui.NormalizeEvent(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	if res.Action != nil && res.Action.ID == "session-settings.model.select" {
+		t.Fatalf("Enter leaked the select action: %#v", res.Action)
+	}
+	if screen.page != rolePage {
+		t.Fatalf("page=%d, want role page after Enter commit", screen.page)
+	}
+	field := screen.formModel.Field(fieldModel)
+	if field == nil || field.Value.String() != "model-b" {
+		t.Fatalf("role page model=%#v, want model-b", field)
+	}
+	if cfg := categoryFor(screen.effective, "default"); cfg.Model != "model-b" {
+		t.Fatalf("effective model=%q, want model-b", cfg.Model)
+	}
+}
+
+func TestModelPickerClickCommitsToRolePage(t *testing.T) {
+	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openrouter", Model: "workspace-main"},
+	}}}
+	screen := New(theme.DefaultDark(), settings, settings, nil)
+	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}}, map[string]types.ProviderConfig{
+		"openrouter": {Model: "gpt-5.6"},
+	})
+	screen.openRole("default")
+	screen.OpenModelPicker("default")
+	screen.ApplyModels("openrouter", []types.ModelEntry{{ID: "model-c", Name: "Model C"}})
+	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 72, H: 16})
+	screen.modelList.SelectIndex(0)
+
+	// Click on the selected row commits the pick and returns to the role page.
+	lr := screen.modelList.Bounds()
+	res := screen.Handle(ui.EventContext{LocalX: lr.X + 2, LocalY: lr.Y}, ui.NormalizeEvent(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft}))
+	if res.Action != nil && res.Action.ID == "session-settings.model.select" {
+		t.Fatalf("click leaked the select action: %#v", res.Action)
+	}
+	if screen.page != rolePage {
+		t.Fatalf("page=%d, want role page after click commit", screen.page)
+	}
+	if cfg := categoryFor(screen.effective, "default"); cfg.Model != "model-c" {
+		t.Fatalf("effective model=%q, want model-c", cfg.Model)
+	}
+}
+
 func TestRootArrowsDoNotCloseOrTrap(t *testing.T) {
 	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
 		"default": {Provider: "openrouter", Model: "workspace-main"},

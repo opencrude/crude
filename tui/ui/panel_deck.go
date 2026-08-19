@@ -16,6 +16,33 @@ const (
 	PanelBlocking
 )
 
+// PanelWidth selects how much of the deck width a panel's content may use.
+// The deck (the parent) enforces it; content never self-sizes horizontally.
+type PanelWidth uint8
+
+const (
+	// PanelFullWidth lets content span the whole deck content row (default).
+	PanelFullWidth PanelWidth = iota
+	// PanelReadableWidth clamps content to a readable column sized by
+	// ReadableWidth (left-aligned), so compact forms stay orderly on wide
+	// decks.
+	PanelReadableWidth
+)
+
+// ReadableWidth adapts a content column to the available deck width: ultra
+// wide decks yield a third of their width, wide decks a half, and narrow
+// decks keep the full width so controls never cramp.
+func ReadableWidth(avail int) int {
+	switch {
+	case avail >= 200:
+		return avail / 3
+	case avail >= 110:
+		return avail / 2
+	default:
+		return avail
+	}
+}
+
 // PanelEntry is one retained panel in a docked deck.
 type PanelEntry struct {
 	ID              string
@@ -26,6 +53,7 @@ type PanelEntry struct {
 	Attention       bool
 	Policy          PanelPolicy
 	PreferredHeight int
+	Width           PanelWidth
 }
 
 // PreferredHeightComponent allows panel content to report dynamic intrinsic
@@ -202,15 +230,40 @@ func (d *PanelDeck) Measure(_ LayoutContext, cs Constraints) Size {
 	return cs.ClampSize(Size{W: cs.MaxW, H: d.PreferredHeight(cs.MaxH)})
 }
 
+// contentPad derives the deck's horizontal content padding from the theme
+// tokens (the parent enforces the theme): tabs and panel content keep the
+// padding model while separator rules run edge to edge via rule bleed.
+// Narrow decks cap the padding at half the width, like the shell's content
+// geometry.
+func (d *PanelDeck) contentPad(width int) int {
+	if d.tokens == nil || width < 1 {
+		return 0
+	}
+	return min(max(0, d.tokens.PadLR()), width/2)
+}
+
 func (d *PanelDeck) Layout(ctx LayoutContext, r Rect) {
 	d.SetBounds(r)
+	padX := d.contentPad(r.W)
+	innerW := max(0, r.W-2*padX)
 	contentY := 1
 	if len(d.panels) > 1 {
-		d.tabs.Layout(ctx, Rect{X: 0, Y: 1, W: r.W, H: 1})
+		d.tabs.Layout(ctx, Rect{X: padX, Y: 1, W: innerW, H: 1})
 		contentY = 3
 	}
-	d.content = Rect{X: 0, Y: contentY, W: r.W, H: max(0, r.H-contentY)}
+	contentW := innerW
+	if panel := d.Active(); panel != nil && panel.Width == PanelReadableWidth {
+		contentW = min(innerW, ReadableWidth(innerW))
+	}
+	// Publish the deck row geometry for configurable full-bleed separator
+	// rules BEFORE laying content out, so rule owners (forms, action bars,
+	// picker dividers) already know the row when they size separator fields.
+	// Rules span the deck edge to edge (offsetX columns left of the content
+	// origin, width the full deck row); components keep rules bounded to
+	// their own column unless they opted in with SetRuleFullBleed.
+	d.content = Rect{X: padX, Y: contentY, W: contentW, H: max(0, r.H-contentY)}
 	if panel := d.Active(); panel != nil {
+		applyRuleBleed(panel.Content, d.content.X, r.W)
 		panel.Content.Layout(ctx, d.content)
 	}
 }
@@ -301,6 +354,30 @@ func (d *PanelDeck) color(role SemanticColor) cell.Color {
 		return cell.NoColor
 	}
 	return d.tokens.Color(role)
+}
+
+// ruleBleeder is implemented by components with separator rules that can
+// expand to a parent-supplied row geometry (Form, ActionBar, deck screens
+// with their own divider rows). offsetX is how far left of the component's
+// own origin the row starts, width the total row width. Whether the
+// geometry is actually used stays configurable per rule owner
+// (SetRuleFullBleed); the parent only publishes the deck-wide row.
+type ruleBleeder interface {
+	SetRuleBleed(offsetX, width int)
+}
+
+func applyRuleBleed(c Component, offsetX, width int) {
+	if c == nil {
+		return
+	}
+	if rb, ok := c.(ruleBleeder); ok {
+		rb.SetRuleBleed(offsetX, width)
+	}
+	if p, ok := c.(Parent); ok {
+		for _, child := range p.Children() {
+			applyRuleBleed(child, offsetX, width)
+		}
+	}
 }
 
 // applyDockedSurface paints session-owned deck content on the chat surface

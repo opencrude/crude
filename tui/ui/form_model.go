@@ -148,7 +148,7 @@ type FieldState struct {
 	Inherited     bool
 	InheritedFrom string
 	Options       []FormOption
-	Columns       []string // compact FieldNav table cells after the label
+	Columns       []string // compact FieldNav table cells after the label; for FieldCycle, empty spacer slots before the cycle control (column alignment)
 	Validator     func(value FieldValue) []string
 	Target        string // for FieldNav: target page/focus ID
 }

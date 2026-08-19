@@ -12,6 +12,95 @@ import (
 	"crude/tui/ui"
 )
 
+func TestSettingsPasteIntoAPIKey_UpdatesFieldAndScrollsToCursor(t *testing.T) {
+	th := theme.DefaultDark()
+	model := New(th, types.AppSettings{
+		ActiveProvider: "openrouter",
+		Providers: map[string]types.ProviderConfig{
+			"openrouter": {},
+		},
+	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}})
+	surfaceRoot := NewSurface(th, model)
+	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 80, 22)
+	surfaceRoot.SetFocusHandler(frame.Focus)
+	host := frame.Host()
+	host.Resize(80, 22)
+	host.Layout()
+
+	model.SelectCategory(catProviders)
+	surfaceRoot.refreshForm()
+	surfaceRoot.form.FocusFirst()
+	surfaceRoot.FocusForm()
+	host.Layout()
+
+	// Focus moves to the API key field (provider is a select; second focusable).
+	_ = host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	field := surfaceRoot.form.Field(fieldAPIKey)
+	if field == nil {
+		t.Fatal("providers form missing api-key field")
+	}
+	control := field.Control()
+	if control == nil {
+		t.Fatal("api-key field has no text control")
+	}
+	control.SetValue("")
+
+	key := "sk-ant-abcdefghijklmnopqrstuvwxyz1234567890"
+	res := host.Handle(tea.PasteMsg{Content: key})
+	if !res.Handled {
+		t.Fatalf("paste into settings not handled (handled=%v)", res.Handled)
+	}
+	if got := control.Value(); got != key {
+		t.Fatalf("api-key value after paste=%q, want %q", got, key)
+	}
+}
+
+func TestSettingsPasteIntoAPIKey_MovesCursorIntoView(t *testing.T) {
+	th := theme.DefaultDark()
+	model := New(th, types.AppSettings{
+		ActiveProvider: "openrouter",
+		Providers: map[string]types.ProviderConfig{
+			"openrouter": {},
+		},
+	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}})
+	surfaceRoot := NewSurface(th, model)
+	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 80, 22)
+	surfaceRoot.SetFocusHandler(frame.Focus)
+	host := frame.Host()
+	host.Resize(80, 22)
+	host.Layout()
+
+	model.SelectCategory(catProviders)
+	surfaceRoot.refreshForm()
+	surfaceRoot.form.FocusFirst()
+	surfaceRoot.FocusForm()
+	host.Layout()
+
+	// The api-key field is the second focusable field (after the provider
+	// select), so one Down lands on it.
+	_ = host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	field := surfaceRoot.form.Field(fieldAPIKey)
+	if field == nil {
+		t.Fatal("providers form missing api-key field")
+	}
+	control := field.Control()
+	if control == nil {
+		t.Fatal("api-key field has no text control")
+	}
+	control.SetValue("")
+
+	// A key longer than the field width must scroll the viewport so the
+	// cursor (at end) is visible immediately after the paste.
+	key := "sk-ant-abcdefghijklmnopqrstuvwxyz1234567890"
+	_ = host.Handle(tea.PasteMsg{Content: key})
+	host.MarkLayout()
+	host.Layout()
+	if !control.CursorVisible() {
+		t.Fatalf("after paste cursor not visible: cursor=%d viewStart=%d width=%d",
+			control.Edit().Cursor(), control.ViewStart(), control.Edit().Len())
+	}
+}
+
 func TestSettingsCategories_AllFormsPopulateFields(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{Theme: types.ThemeSettings{Preset: "dark"}}, nil)

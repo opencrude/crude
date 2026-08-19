@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(go:*)",
+      "powershell",
+      "Shell(Select-String:*)",
+      "Shell(Select-Object:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

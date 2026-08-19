@@ -80,6 +80,54 @@ func TestWindowFrameWidgetPaintsOnlyUnifiedChrome(t *testing.T) {
 	}
 }
 
+func TestWindowFrameWidgetHoverEdgeHighlightsBorder(t *testing.T) {
+	th := theme.DefaultDark()
+	body := &testFrameBody{Base: NewBase("body")}
+	framed := NewWindowFrameWidget(
+		th,
+		"frame",
+		FrameDialog,
+		"Unified",
+		body,
+		nil,
+		true,
+		20,
+		8,
+	)
+	tokens := NewTokenSet(th)
+	accent := tokens.Color(ColorAccent)
+	normal := tokens.Color(ColorPopupBorder)
+
+	// No hover: the bottom-left border cell uses the normal border color.
+	surf := surface.NewSurface("window", 20, 8, cell.TransparentBlank())
+	framed.Render(surf, &wm.RenderContext{Theme: th, Focused: true})
+	if got := surf.Buffer().Get(1, 7).FG; got == accent {
+		t.Fatalf("idle bottom border cell FG=%v, must not be accent", got)
+	}
+
+	// Hover on the bottom edge: the bottom border paints with the accent.
+	framed.SetHoverEdge(wm.EdgeBottom)
+	surf = surface.NewSurface("window", 20, 8, cell.TransparentBlank())
+	framed.Render(surf, &wm.RenderContext{Theme: th, Focused: true})
+	buf := surf.Buffer()
+	for x := 1; x < 19; x++ {
+		if got := buf.Get(x, 7).FG; got != accent {
+			t.Fatalf("bottom hover cell (%d,7) FG=%v, want accent %v", x, got, accent)
+		}
+	}
+	// The left border above the bottom edge stays normal.
+	if got := buf.Get(0, 3).FG; got != normal && got == accent {
+		t.Fatalf("left border FG=%v, want non-accent", got)
+	}
+	// Clearing hover restores the normal border.
+	framed.SetHoverEdge(wm.EdgeNone)
+	surf = surface.NewSurface("window", 20, 8, cell.TransparentBlank())
+	framed.Render(surf, &wm.RenderContext{Theme: th, Focused: true})
+	if got := surf.Buffer().Get(1, 7).FG; got == accent {
+		t.Fatalf("cleared hover bottom border FG=%v, must not be accent", got)
+	}
+}
+
 func TestWindowFrameWidgetTranslatesLegacyPointerToContent(t *testing.T) {
 	th := theme.DefaultDark()
 	body := &testFrameBody{Base: NewBase("body")}
