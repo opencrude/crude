@@ -107,6 +107,14 @@ func (ff *FormField) FieldState() *FieldState { return ff.field }
 func (ff *FormField) SetLabelWidth(w int)     { ff.labelW = w }
 func (ff *FormField) SelectOpen() bool        { return ff.selectOpen }
 
+// Control returns the retained text control for text/password fields, or nil.
+func (ff *FormField) Control() *TextField {
+	if ff.control == nil {
+		return nil
+	}
+	return ff.control
+}
+
 // Sync reflects programmatic FormModel changes without replacing the retained
 // editor or losing its selection/cursor when the value is unchanged.
 func (ff *FormField) Sync() {
@@ -706,10 +714,13 @@ func (ff *FormField) paintCompactRow(buf *surface.CellBuffer, x, y, width int, c
 	for i, text := range cells {
 		colMins[i] = max(colMins[i], rendering.VisibleWidth(text))
 	}
-	// Reserve the nav chevron on every compact row so Multi Agent's
-	// inherited column lands on the same cells as the agent rows.
-	plan := planCompactTable(width, ff.labelWidth(), chevronW, colMins)
-	ff.paintTableCells(buf, x, y, width-chevronW, plan, cells, inherited, valueFG, muted, rowBG)
+	// Reserve the nav chevron plus a small gutter on every compact row so
+	// Multi Agent's inherited column lands on the same cells as the agent
+	// rows and the trailing meta text ("inherited from workspace") never
+	// hugs the chevron or the focused row's right edge.
+	trailerW := chevronW + TableMinGap
+	plan := planCompactTable(width, ff.labelWidth(), trailerW, colMins)
+	ff.paintTableCells(buf, x, y, width-trailerW, plan, cells, inherited, valueFG, muted, rowBG)
 }
 
 func (ff *FormField) paintTableCells(buf *surface.CellBuffer, x, y, width int, plan compactTablePlan, cells []string, inherited bool, valueFG, muted, bg cell.Color) {
@@ -733,12 +744,12 @@ func (ff *FormField) paintTableCells(buf *surface.CellBuffer, x, y, width int, p
 			col += sepW
 		}
 		w := plan.colW[i]
-		if w < 1 || col >= width {
-			return
-		}
 		if strings.TrimSpace(text) == "" {
 			col += w
 			continue
+		}
+		if w < 1 || col >= width {
+			return
 		}
 		fg := valueFG
 		if inherited && i == last {
@@ -773,7 +784,10 @@ func (ff *FormField) compactColumnsRaw() []string {
 		}
 		return cols
 	case FieldCycle:
-		cols := []string{ff.cycleDisplay()}
+		// Columns act as spacer slots before the cycle control so the
+		// control can align with a specific shared table column (e.g. the
+		// · provider column) instead of hugging the label.
+		cols := append(append([]string(nil), ff.field.Columns...), ff.cycleDisplay())
 		if ff.field.Inherited {
 			if suffix := ff.inheritedSuffix(); suffix != "" {
 				cols = append(cols, suffix)

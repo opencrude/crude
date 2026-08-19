@@ -332,7 +332,19 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 //   - categories / empty search / actions / surface: CancelMsg (close +
 //     revert live theme preview to the last saved preset)
 func (s *WorkspaceSettingsSurface) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
-	if s.model == nil || !evt.IsKey() {
+	if s.model == nil {
+		return ui.EventResult{}
+	}
+	// Custom events (paste, file drops) belong to the focused text control.
+	// Rejecting them here left the value inserted but the horizontal
+	// viewport stale until the next arrow key forced a re-layout.
+	if !evt.IsKey() && evt.Kind != ui.EventCustom {
+		return ui.EventResult{}
+	}
+	if evt.Kind == ui.EventCustom {
+		if s.form != nil {
+			return s.form.Handle(ui.EventContext{}, evt)
+		}
 		return ui.EventResult{}
 	}
 	key := evt.Key

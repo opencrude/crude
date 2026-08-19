@@ -221,6 +221,110 @@ func TestSessionPickerClickSelectsDoubleClickResumes(t *testing.T) {
 	}
 }
 
+func pickerItem(t *testing.T, screen *Screen, id string) ui.ListItem {
+	t.Helper()
+	for _, item := range screen.list.list.Items() {
+		if item.ID == id {
+			return item
+		}
+	}
+	t.Fatalf("missing row %q", id)
+	return ui.ListItem{}
+}
+
+func TestLiveRowsShowStatusAndSubAgents(t *testing.T) {
+	th := theme.DefaultDark()
+	screen := New(th)
+	now := time.Now().UnixNano()
+	screen.Open([]sessiondb.SessionMeta{
+		{ID: "root", ProjectName: "alpha", Model: "gpt-5", TurnCount: 3, CreatedAt: now},
+		{ID: "old", ProjectName: "beta", Model: "gpt-5", TurnCount: 1, CreatedAt: now},
+	})
+	screen.SetLiveInfo(map[string]LiveInfo{
+		"root": {Status: StatusWorking, SubAgents: 2},
+	})
+
+	root := pickerItem(t, screen, "root")
+	isSpinner := false
+	for _, frame := range spinnerFrames {
+		if root.Icon == frame {
+			isSpinner = true
+		}
+	}
+	if !isSpinner {
+		t.Fatalf("working session icon=%q, want a spinner frame", root.Icon)
+	}
+	for _, want := range []string{"2 sub-agents", "working", "gpt-5", "3 turns"} {
+		if !strings.Contains(root.Detail, want) {
+			t.Fatalf("working detail %q missing %q", root.Detail, want)
+		}
+	}
+
+	old := pickerItem(t, screen, "old")
+	if old.Icon != "○" {
+		t.Fatalf("terminated session icon=%q, want ○", old.Icon)
+	}
+	if !strings.Contains(old.Detail, "terminated") {
+		t.Fatalf("terminated detail %q missing status word", old.Detail)
+	}
+
+	// Minimized and idle get distinct static icons.
+	screen.SetLiveInfo(map[string]LiveInfo{
+		"root": {Status: StatusMinimized},
+		"old":  {Status: StatusIdle},
+	})
+	if got := pickerItem(t, screen, "root").Icon; got != "▪" {
+		t.Fatalf("minimized icon=%q, want ▪", got)
+	}
+	if got := pickerItem(t, screen, "old").Icon; got != "●" {
+		t.Fatalf("idle icon=%q, want ●", got)
+	}
+}
+
+func TestWorkingIconAnimatesAndSelectionSurvives(t *testing.T) {
+	th := theme.DefaultDark()
+	screen := New(th)
+	now := time.Now().UnixNano()
+	screen.Open([]sessiondb.SessionMeta{
+		{ID: "a", ProjectName: "alpha", TurnCount: 1, CreatedAt: now},
+		{ID: "b", ProjectName: "beta", TurnCount: 2, CreatedAt: now},
+		{ID: "c", ProjectName: "gamma", TurnCount: 3, CreatedAt: now},
+	})
+	screen.SetLiveInfo(map[string]LiveInfo{"a": {Status: StatusWorking}})
+	if !screen.NeedsAnimation() {
+		t.Fatal("a working session must request animation")
+	}
+	// Pin the user's selection on "c": tick-driven resyncs must not steal it.
+	target := -1
+	for i, item := range screen.list.list.Items() {
+		if item.ID == "c" {
+			target = i
+		}
+	}
+	screen.list.list.SelectIndex(target)
+
+	screen.SetSpinFrame(0)
+	before := pickerItem(t, screen, "a").Icon
+	screen.SetSpinFrame(300)
+	after := pickerItem(t, screen, "a").Icon
+	if before == after {
+		t.Fatalf("working icon did not animate: %q", before)
+	}
+	if meta, ok := screen.Selected(); !ok || meta.ID != "c" {
+		t.Fatalf("selection lost during spinner resync: %#v", meta)
+	}
+	// Non-working frames do nothing: no working session, no animation.
+	screen.SetLiveInfo(map[string]LiveInfo{"a": {Status: StatusIdle}})
+	if screen.NeedsAnimation() {
+		t.Fatal("idle sessions must not request animation")
+	}
+	static := pickerItem(t, screen, "a").Icon
+	screen.SetSpinFrame(999)
+	if got := pickerItem(t, screen, "a").Icon; got != static {
+		t.Fatalf("stopped session icon changed: %q → %q", static, got)
+	}
+}
+
 func pickerHost(t *testing.T, sessions []sessiondb.SessionMeta) (*Screen, *ui.Host) {
 	t.Helper()
 	th := theme.DefaultDark()

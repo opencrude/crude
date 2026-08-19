@@ -121,6 +121,20 @@ func (t *TextField) SyncEditFrom(ed *TextEdit) {
 // Edit exposes the underlying model for advanced callers/tests.
 func (t *TextField) Edit() *TextEdit { return t.edit }
 
+// ViewStart returns the horizontal viewport offset (visible runes).
+func (t *TextField) ViewStart() int { return t.viewStart }
+
+// CursorVisible reports whether the editing cursor lies inside the
+// horizontal viewport for the current bounds.
+func (t *TextField) CursorVisible() bool {
+	cw := t.contentWidth()
+	if cw <= 0 {
+		return true
+	}
+	cur := t.edit.Cursor()
+	return cur >= t.viewStart && cur < t.viewStart+cw
+}
+
 // Measure: one row, full available width.
 func (t *TextField) Measure(_ LayoutContext, cs Constraints) Size {
 	return cs.ClampSize(Size{W: cs.MaxW, H: 1})
@@ -178,13 +192,20 @@ func (t *TextField) ensureCursorVisible() {
 	if cur < t.viewStart {
 		t.viewStart = cur
 	}
-	if cur > t.viewStart+cw {
-		t.viewStart = cur - cw
+	if cur >= t.viewStart+cw {
+		// Scroll so the cursor lands on the last visible column. A cursor at
+		// exactly viewStart+cw paints off-screen (Paint only emits columns
+		// [0, cw)), which is why a pasted over-width value showed its head
+		// with no cursor until an arrow key re-laid-out the field.
+		t.viewStart = cur - cw + 1
 	}
 	if t.viewStart < 0 {
 		t.viewStart = 0
 	}
-	if maxStart := max(0, t.edit.Len()-cw); t.viewStart > maxStart {
+	// The cursor must stay on-screen: with a value exactly filling (or
+	// overflowing) the field, the viewport may start one column after
+	// len-cw so the end-of-value cursor paints on the last visible column.
+	if maxStart := max(0, t.edit.Len()-cw+1); t.viewStart > maxStart {
 		t.viewStart = maxStart
 	}
 }
@@ -257,7 +278,7 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 	}
 
 	runes := t.displayRunes()
-	if maxStart := max(0, len(runes)-cw); t.viewStart > maxStart {
+	if maxStart := max(0, len(runes)-cw+1); t.viewStart > maxStart {
 		t.viewStart = maxStart
 	}
 	selA, selB := t.edit.SelectionRange()

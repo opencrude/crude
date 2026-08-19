@@ -83,6 +83,11 @@ type FloatingWindow struct {
 	// contentDirty tracks whether the window's content needs re-rendering.
 	// Position-only changes (drag) do not mark content dirty.
 	contentDirty bool
+
+	// hoverEdge is the resize edge currently under the mouse pointer. The
+	// content chrome (ui.WindowFrame) paints this edge highlighted so the
+	// user can see exactly which border a press will resize.
+	hoverEdge Edge
 }
 
 // NewFloatingWindow creates a new floating window with the given dimensions
@@ -293,6 +298,11 @@ func (fw *FloatingWindow) Render(ctx *RenderContext) {
 
 		// Create or reuse a child surface for the content area and render the content.
 		if fw.Content != nil && fw.contentW > 0 && fw.contentH > 0 {
+			// Feed the resize-edge hover into framed content so the chrome
+			// can paint the highlighted border.
+			if framed, ok := fw.Content.(interface{ SetHoverEdge(Edge) }); ok {
+				framed.SetHoverEdge(fw.hoverEdge)
+			}
 			// Reuse or create content surface
 			if fw.contentSurf == nil || fw.contentSurf.Width() != fw.contentW || fw.contentSurf.Height() != fw.contentH {
 				fw.contentSurf = surface.NewSurface(
@@ -406,6 +416,19 @@ func (fw *FloatingWindow) SetResizing(r bool, edge Edge) {
 
 // ResizeEdge returns the edge being used for resizing.
 func (fw *FloatingWindow) ResizeEdge() Edge { return fw.resizeEdge }
+
+// SetHoverEdge records the resize edge currently under the mouse pointer.
+// It is the visual hover state for the frame's border highlight.
+func (fw *FloatingWindow) SetHoverEdge(edge Edge) {
+	if fw.hoverEdge == edge {
+		return
+	}
+	fw.hoverEdge = edge
+	fw.contentDirty = true // the frame repaints its border highlight
+}
+
+// HoverEdge returns the resize edge under the mouse pointer, or EdgeNone.
+func (fw *FloatingWindow) HoverEdge() Edge { return fw.hoverEdge }
 
 // ResizeStartSize returns the window size at the start of the resize.
 func (fw *FloatingWindow) ResizeStartSize() (int, int) {

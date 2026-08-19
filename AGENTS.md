@@ -329,6 +329,33 @@ floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
 - `PanelDeck` is exclusively for session-owned docked content between messages and
   chat input: session settings, questions, tool confirmation, YOLO, and background
   job details. Those docks share the chat `ColorBg` — they are not popup cards.
+- **Deck and tab-bar slots span the FULL content column** (`SidebarW..width`, no
+  `PadLR` inset in their slot rects) so separator rules run edge to edge, same as
+  the chat and terminal dock. The `PadLR` model lives inside the components:
+  `PanelDeck.contentPad` and `shelltabs.Screen.Layout` self-derive it from
+  `TokenSet.PadLR()` (clamped at half the width on narrow terminals) and inset
+  only their tabs and content.
+- **Full-bleed separator rules are configurable, parent-published:** each
+  `PanelDeck.Layout` calls `applyRuleBleed` with the deck row geometry
+  (`offsetX`, `width`) through the content tree (`ruleBleeder` interface on Form,
+  ActionBar, screens with their own divider). Components expand rules ONLY when
+  they opted in with `SetRuleFullBleed(true)` — `NewDockedForm`/`NewDockedActionBar`
+  do it by default; floating popups keep rules bounded. The Form paints into a
+  buffer that reserves the left spill (`off = -min(0, ruleX)`) and blits shifted,
+  so rules can start in the left padding without moving field geometry.
+- **Readable-width panels:** `PanelEntry.Width = PanelReadableWidth` (session
+  settings) clamps content via `ui.ReadableWidth` (≥200 → 1/3, ≥110 → 1/2, else
+  full), left-aligned in the padded column; the parent enforces it.
+- **Compact form tables:** `planCompactTable` caps the label→value bonus
+  (`TableMaxLabelGapBonus`) and spends the rest before the trailing meta column;
+  a `TableMinGap` gutter always separates the last column from the nav chevron.
+  `FieldState.Columns` are also accepted by `FieldCycle` as spacer slots so a
+  cycle control can align with a specific shared value column (Multi Agent sits
+  under · provider). Zero-width leading columns must never abort row painting —
+  `paintTableCells` skips blank cells before the width guard.
+- **Form hover-focusing:** `Form.Handle` moves the field highlight to the row
+  under the pointer on `EventMouseMotion` (decorative rows never take it), like
+  menus and lists; an open dropdown owns hover first.
 - The old `App.Overlay` inline tab system is deleted. Never reintroduce it or route
   floating windows through `PanelDeck` as a shortcut.
 

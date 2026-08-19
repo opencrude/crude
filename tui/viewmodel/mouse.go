@@ -411,6 +411,20 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		if m.windowManager.IsDragging() {
 			return m, tea.Batch(cmds...)
 		}
+		// Track the resize-edge hover so the frame chrome can highlight
+		// exactly which border a press will drag. Clear the highlight when
+		// the pointer leaves a window or its edges.
+		for i := len(m.windowManager.Windows()) - 1; i >= 0; i-- {
+			fw := m.windowManager.Windows()[i]
+			if !fw.Visible() || !fw.Focusable() {
+				continue
+			}
+			if fw.ContainsPoint(mouse.X, mouse.Y) && fw.Resizable() {
+				fw.SetHoverEdge(fw.HitTestEdge(mouse.X, mouse.Y))
+			} else if fw.HoverEdge() != wm.EdgeNone {
+				fw.SetHoverEdge(wm.EdgeNone)
+			}
+		}
 	}
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() &&
 		m.blockingDeckShieldsPointer(mouse.X, mouse.Y, true) {

@@ -755,6 +755,11 @@ func (m *App) pasteToWindowContent(fw *wm.FloatingWindow, msg tea.PasteMsg) tea.
 	if fw == nil || fw.Content == nil {
 		return nil
 	}
+	// The paste may change the focused text control (value, cursor,
+	// horizontal viewport). Mark the window dirty so the new text is
+	// actually painted — without this the value sat in the model until
+	// mouse motion or an arrow key forced a repaint.
+	defer fw.MarkContentDirty()
 	switch c := fw.Content.(type) {
 	case interface{ HandleEvent(tea.Msg) tea.Cmd }:
 		return c.HandleEvent(msg)

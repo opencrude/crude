@@ -14,9 +14,12 @@ func (m *App) tabBarVisible() bool {
 	return m.Win != nil && m.Win.IsOpen() && m.Win.TabCount() >= 1 && m.Win.Layout() == window.TabHorizontal
 }
 
+// tabBarLocalX converts a raw screen X into the tab bar screen's
+// slot-local X. The slot spans the whole content column; the shelltabs
+// screen translates through its padded tabs bounds internally.
 func (m *App) tabBarLocalX(screenX int) int {
 	layout := m.computeLayout()
-	x := screenX - layout.SidebarW - layout.PadLR
+	x := screenX - layout.SidebarW
 	if x < 0 {
 		return 0
 	}

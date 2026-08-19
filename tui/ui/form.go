@@ -14,18 +14,21 @@ import (
 // expansion, and form-local focus while screens translate its emitted actions.
 type Form struct {
 	Base
-	model       *FormModel
-	title       string
-	detail      string
-	tokens      *TokenSet
-	fields      []*FormField
-	focused     int
-	fieldGap    int
-	scroll      *ScrollModel
-	arrowExits  bool
-	compact     bool
-	surfaceRole SemanticColor
-	surfaceSet  bool
+	model         *FormModel
+	title         string
+	detail        string
+	tokens        *TokenSet
+	fields        []*FormField
+	focused       int
+	fieldGap      int
+	scroll        *ScrollModel
+	arrowExits    bool
+	compact       bool
+	surfaceRole   SemanticColor
+	surfaceSet    bool
+	ruleFullBleed bool
+	ruleBleedX    int
+	ruleBleedW    int
 }
 
 func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
@@ -41,7 +44,33 @@ func NewDockedForm(id ComponentID, model *FormModel, title, detail string, token
 	f.SetSurfaceBackground(ColorBg)
 	f.SetCompact(true)
 	f.SetArrowExitsForm(true)
+	f.SetRuleFullBleed(true)
 	return f
+}
+
+// SetRuleFullBleed configures whether the form's separator rules (header
+// rule and FieldSeparator rows) may expand beyond the form's content width
+// when the parent supplies a wider bleed row. Docked forms opt in so their
+// rules span the whole deck row edge to edge while fields stay in the
+// padded column; floating settings keep rules bounded to the popup.
+// Per-separator control stays with the form; the parent only supplies the
+// row geometry.
+func (f *Form) SetRuleFullBleed(v bool) { f.ruleFullBleed = v }
+
+// SetRuleBleed is called by the parent (PanelDeck) at layout time with the
+// deck row geometry a full-bleed rule may span: offsetX columns left of the
+// form's own origin, width the total row width. Width 0 keeps rules bounded
+// to the form's own width.
+func (f *Form) SetRuleBleed(offsetX, width int) { f.ruleBleedX, f.ruleBleedW = offsetX, width }
+
+// ruleSpan resolves where separator rules paint relative to the form
+// origin: their own column unless full-bleed rules are enabled and the
+// parent published a wider row (the usual case for a padded deck).
+func (f *Form) ruleSpan(contentW int) (x, w int) {
+	if f.ruleFullBleed && f.ruleBleedW-f.ruleBleedX > contentW {
+		return -f.ruleBleedX, f.ruleBleedW
+	}
+	return 0, contentW
 }
 
 // SetCompact enables the lean docked-form density: title+rule header, no
@@ -230,7 +259,11 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 		field.SetLabelWidth(labelW)
 		field.SetColumnWidths(colW)
 		h := field.height()
-		field.Layout(ctx, Rect{X: 0, Y: contentY - f.scroll.Offset(), W: r.W, H: h})
+		fieldX, fieldW := 0, r.W
+		if field.FieldState().Type == FieldSeparator {
+			fieldX, fieldW = f.ruleSpan(r.W)
+		}
+		field.Layout(ctx, Rect{X: fieldX, Y: contentY - f.scroll.Offset(), W: fieldW, H: h})
 		contentY += h
 		if i < len(f.fields)-1 && f.fieldGap > 0 && field.FieldState().Type != FieldSeparator && f.fields[i+1].FieldState().Type != FieldSeparator {
 			contentY += f.fieldGap
@@ -249,19 +282,25 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		return
 	}
 	bg, fg, muted, divider := f.surfaceColor(), f.color(ColorFg), f.color(ColorMuted), f.color(ColorPopupDivider)
+	ruleX, ruleW := f.ruleSpan(r.W)
 	// Paint into a viewport-sized buffer so variable-height fields that
 	// straddle the scroll edge cannot leak into chrome (footer actions,
 	// window title, sibling panels). CellBuffer.Set already clips OOB writes.
-	inner := surface.NewCellBuffer(max(1, r.W), max(1, r.H))
+	// The buffer reserves the rule's left spill (off columns) so full-bleed
+	// separator rules can run the parent row edge to edge while field
+	// content stays in the form's own padded column; the blit origin shifts
+	// by the same spill.
+	off := -min(0, ruleX)
+	inner := surface.NewCellBuffer(off+max(1, max(r.W, ruleW+ruleX)), max(1, r.H))
 	inner.Fill(cell.BlankCell(bg))
 	if f.title != "" {
-		inner.WriteString(0, 0, rendering.TruncateVisual(f.title, r.W, ""), fg, bg, cell.AttrBold)
+		inner.WriteString(off, 0, rendering.TruncateVisual(f.title, r.W, ""), fg, bg, cell.AttrBold)
 		ruleY := 1
 		if !f.compact || strings.TrimSpace(f.detail) != "" {
-			inner.WriteString(0, 1, rendering.TruncateVisual(f.detail, r.W, ""), muted, bg, 0)
+			inner.WriteString(off, 1, rendering.TruncateVisual(f.detail, r.W, ""), muted, bg, 0)
 			ruleY = 2
 		}
-		inner.WriteString(0, ruleY, strings.Repeat(string(FirstRune(f.tokens.Glyphs().BorderH, '─')), max(0, r.W)), divider, bg, 0)
+		inner.WriteString(ruleX+off, ruleY, strings.Repeat(string(FirstRune(f.tokens.Glyphs().BorderH, '─')), max(0, ruleW)), divider, bg, 0)
 		// No y advance: field bounds already carry the header offset from Layout.
 	}
 	for index, field := range f.fields {
@@ -271,7 +310,7 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 		fieldCtx := ctx
 		fieldCtx.Focused = ctx.Focused && index == f.focused
-		field.Paint(inner, 0, 0, fieldCtx)
+		field.Paint(inner, off, 0, fieldCtx)
 	}
 	for index, field := range f.fields {
 		if !field.SelectOpen() {
@@ -279,9 +318,9 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 		fieldCtx := ctx
 		fieldCtx.Focused = ctx.Focused && index == f.focused
-		field.PaintOverlay(inner, 0, 0, fieldCtx, r)
+		field.PaintOverlay(inner, off, 0, fieldCtx, r)
 	}
-	surface.Blit(buf, originX+r.X, originY+r.Y, inner, nil)
+	surface.Blit(buf, originX+r.X-off, originY+r.Y, inner, nil)
 }
 
 func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
@@ -304,6 +343,31 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 			f.Layout(LayoutContext{}, f.Bounds())
 			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
 		}
+	}
+	if evt.Kind == EventMouseMotion {
+		// An open dropdown owns hover: motion feeds its option list.
+		for index, field := range f.fields {
+			if field.SelectOpen() {
+				return f.handleField(index, f.fieldContext(ctx, field), evt)
+			}
+		}
+		// Hover-focusing: the row under the pointer takes the field highlight,
+		// like menus and lists. Decorative rows never take it.
+		for index, field := range f.fields {
+			if !field.Bounds().Contains(ctx.LocalX, ctx.LocalY) {
+				continue
+			}
+			state := field.FieldState()
+			if state.skipFocus() || state.Disabled {
+				return EventResult{Handled: true}
+			}
+			if f.focused != index {
+				f.focused = index
+				return EventResult{Handled: true, Invalidate: InvalidatePaint}
+			}
+			return EventResult{Handled: true}
+		}
+		return EventResult{}
 	}
 	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 		// An open dropdown swallows clicks outside its panel: cancel it

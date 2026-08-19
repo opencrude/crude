@@ -430,6 +430,130 @@ func TestCompactTableUsesSharedInkAndDynamicGaps(t *testing.T) {
 	if got := buf.Get(inh, mainY).FG; !got.Equal(tokens.Color(ColorMuted)) {
 		t.Fatalf("inherited fg=%v, want ColorMuted", got)
 	}
+	// The trailing meta column must leave a gutter before the nav chevron
+	// (and the focused row's right edge) instead of painting flush against it.
+	chevron := []rune(theme.DefaultGlyphs().TreeCollapsed)[0]
+	chevronX := -1
+	for x := 0; x < buf.Width(); x++ {
+		if buf.Get(x, mainY).Char == chevron {
+			chevronX = x
+		}
+	}
+	if chevronX < 0 {
+		t.Fatal("nav row missing chevron")
+	}
+	if gap := chevronX - (inh + rendering.VisibleWidth("inherited from workspace")); gap < 1 {
+		t.Fatalf("gap between inherited text and chevron=%d, want at least 1", gap)
+	}
+}
+
+func TestDockedFormRuleFullBleedSpansParentRow(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	model.AddField(&FieldState{ID: "name", Label: "Name", Type: FieldText, Value: StringValue("x")})
+	form := NewDockedForm("form", model, "Session Settings", "", tokens)
+	form.SetRuleBleed(0, 100)
+	form.Layout(LayoutContext{}, Rect{W: 40, H: 4})
+	buf := surface.NewCellBuffer(100, 4)
+	form.Paint(buf, 0, 0, PaintContext{})
+	// Compact header: title on row 0, rule on row 1.
+	if got := buf.Get(99, 1).Char; got != '─' {
+		t.Fatalf("full-bleed header rule stopped before the parent row end: cell=%q", got)
+	}
+
+	form.SetRuleFullBleed(false)
+	form.Layout(LayoutContext{}, Rect{W: 40, H: 4})
+	buf = surface.NewCellBuffer(100, 4)
+	form.Paint(buf, 0, 0, PaintContext{})
+	if got := buf.Get(41, 1).Char; got == '─' {
+		t.Fatal("header rule expanded despite SetRuleFullBleed(false)")
+	}
+}
+
+func TestFormSeparatorFieldUsesBleedWidth(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	model.AddField(&FieldState{ID: "sep", Label: "Advanced", Type: FieldSeparator})
+	form := NewDockedForm("form", model, "Settings", "", tokens)
+	form.SetRuleBleed(4, 100)
+	form.Layout(LayoutContext{}, Rect{W: 40, H: 5})
+	if b := form.Field("sep").Bounds(); b.W != 100 || b.X != -4 {
+		t.Fatalf("separator field bounds=%+v, want X=-4 W=100 (parent row)", b)
+	}
+	form.SetRuleBleed(0, 0)
+	form.Layout(LayoutContext{}, Rect{W: 40, H: 5})
+	if b := form.Field("sep").Bounds(); b.W != 40 || b.X != 0 {
+		t.Fatalf("cleared bleed must bound the separator to the form, got %+v", b)
+	}
+}
+
+func TestFormHoverMovesFieldHighlight(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	model.AddField(&FieldState{ID: "a", Label: "Alpha", Type: FieldNav, Target: "open.a"})
+	model.AddField(&FieldState{ID: "b", Label: "Beta", Type: FieldNav, Target: "open.b"})
+	model.AddField(&FieldState{ID: "gap", Label: "", Type: FieldSpacer})
+	model.AddField(&FieldState{ID: "c", Label: "Gamma", Type: FieldNav, Target: "open.c"})
+	form := NewDockedForm("form", model, "Settings", "", tokens)
+	form.Layout(LayoutContext{}, Rect{W: 60, H: 8})
+	if form.focused != 0 {
+		t.Fatalf("initial focus=%d, want 0", form.focused)
+	}
+	// Compact form: header rows 0-1, fields at rows 2..4 (spacer included).
+	res := form.Handle(EventContext{LocalX: 5, LocalY: 3}, MouseMotionEvent(tea.MouseMotionMsg{}))
+	if !res.Handled || form.focused != 1 {
+		t.Fatalf("motion over Beta: handled=%v focus=%d, want focus 1", res.Handled, form.focused)
+	}
+	if res.Invalidate&InvalidatePaint == 0 {
+		t.Fatal("hover-focus change must invalidate paint")
+	}
+	res = form.Handle(EventContext{LocalX: 5, LocalY: 4}, MouseMotionEvent(tea.MouseMotionMsg{}))
+	if form.focused != 1 || res.Invalidate != 0 {
+		t.Fatalf("decorative spacer row must not take hover focus: focus=%d invalidate=%v", form.focused, res.Invalidate)
+	}
+	res = form.Handle(EventContext{LocalX: 5, LocalY: 7}, MouseMotionEvent(tea.MouseMotionMsg{}))
+	if res.Handled || form.focused != 1 {
+		t.Fatalf("motion outside fields: handled=%v focus=%d, want untouched", res.Handled, form.focused)
+	}
+}
+
+func TestCycleControlAlignsWithSharedValueColumn(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	model.AddField(&FieldState{
+		ID: "default", Label: "Main Agent", Type: FieldNav,
+		Columns: []string{"", "openrouter"}, Inherited: true, InheritedFrom: "workspace",
+	})
+	multi := BoolFieldState("multi", "Multi Agent", true, "")
+	multi.Columns = []string{""}
+	multi.Inherited = true
+	multi.InheritedFrom = "workspace"
+	model.AddField(multi)
+	form := NewDockedForm("form", model, "Session Settings", "", tokens)
+	form.Layout(LayoutContext{}, Rect{W: 80, H: 8})
+	buf := surface.NewCellBuffer(80, 8)
+	form.Paint(buf, 0, 0, PaintContext{})
+	navY, cycleY := -1, -1
+	for y := 0; y < 8; y++ {
+		row := formRowText(buf, y)
+		if strings.Contains(row, "Main Agent") {
+			navY = y
+		}
+		if strings.Contains(row, "Multi Agent") {
+			cycleY = y
+		}
+	}
+	if navY < 0 || cycleY < 0 {
+		t.Fatalf("missing rows:\n%s", formBufferPlain(buf))
+	}
+	provider := formColOf(buf, navY, "openrouter")
+	cycle := formColOf(buf, cycleY, "← on →")
+	if provider < 0 || cycle < 0 {
+		t.Fatalf("missing value cells: provider=%d cycle=%d\n%s", provider, cycle, formBufferPlain(buf))
+	}
+	if provider != cycle {
+		t.Fatalf("cycle control at col %d, want aligned with · provider at %d\n%s", cycle, provider, formBufferPlain(buf))
+	}
 }
 
 func formRowText(buf *surface.CellBuffer, y int) string {

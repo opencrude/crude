@@ -7,6 +7,7 @@ import (
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/workspace"
 )
 
 // openSessionPicker opens the native past-sessions overlay.
@@ -23,6 +24,7 @@ func (m *App) openSessionPicker() {
 		m.sessionPicker = sessionpicker.New(m.Theme)
 	}
 	m.sessionPicker.Open(sessions)
+	m.sessionPicker.SetLiveInfo(m.sessionLiveInfos(sessions))
 
 	w, h := fitFloatingSize(m.width, m.height, 78, 22, 48, 12)
 	frame := ui.NewWindowFrameWidget(
@@ -64,6 +66,53 @@ func (m *App) closeSessionPicker() {
 	if m.overlayHost != nil {
 		m.overlayHost.Close(ui.OverlaySessionPicker)
 	}
+}
+
+// sessionLiveInfos maps each listed session to its lifecycle status and
+// sub-agent count. Status comes from the live agent tree (working/minimized/
+// idle wins per merge precedence); sub-agents come from the persisted parent
+// linkage, grown by the live tree when it has more.
+func (m *App) sessionLiveInfos(sessions []sessiondb.SessionMeta) map[string]sessionpicker.LiveInfo {
+	live := make(map[string]sessionpicker.LiveInfo, len(sessions))
+	for _, meta := range sessions {
+		if meta.ParentSessionID.Valid && meta.ParentSessionID.String != "" {
+			id := meta.ParentSessionID.String
+			info := live[id]
+			info.SubAgents++
+			live[id] = info
+		}
+	}
+	if m.AgentMgr != nil {
+		for agentID, sess := range m.SessionsByAgent {
+			node := m.AgentMgr.Get(agentID)
+			if node == nil || sess == nil || sess.SessionID == "" {
+				continue
+			}
+			status := sessionpicker.StatusIdle
+			switch {
+			case node.IsActive():
+				status = sessionpicker.StatusWorking
+			case node.Hidden:
+				status = sessionpicker.StatusMinimized
+			}
+			live[sess.SessionID] = live[sess.SessionID].Merge(sessionpicker.LiveInfo{
+				Status:    status,
+				SubAgents: countAgentDescendants(node),
+			})
+		}
+	}
+	return live
+}
+
+func countAgentDescendants(n *workspace.AgentNode) int {
+	if n == nil {
+		return 0
+	}
+	total := 0
+	for _, child := range n.Children {
+		total += 1 + countAgentDescendants(child)
+	}
+	return total
 }
 
 func (m *App) handleSessionPickerSelect(meta sessiondb.SessionMeta) tea.Cmd {

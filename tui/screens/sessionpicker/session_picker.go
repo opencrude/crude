@@ -32,6 +32,57 @@ type Group struct {
 	Sessions []sessiondb.SessionMeta
 }
 
+// SessionStatus is the lifecycle state shown on a session row.
+type SessionStatus uint8
+
+const (
+	// StatusTerminated: no live agent owns the session (stopped/closed).
+	StatusTerminated SessionStatus = iota
+	// StatusWorking: a live agent for the session is running a turn.
+	StatusWorking
+	// StatusIdle: a live agent owns the session but is between turns.
+	StatusIdle
+	// StatusMinimized: live, but its window tab was closed (minimized).
+	StatusMinimized
+)
+
+func (s SessionStatus) String() string {
+	switch s {
+	case StatusWorking:
+		return "working"
+	case StatusIdle:
+		return "idle"
+	case StatusMinimized:
+		return "minimized"
+	default:
+		return "terminated"
+	}
+}
+
+// LiveInfo carries runtime details for one session, supplied by the
+// viewmodel/work boundary: lifecycle status and sub-agent count.
+type LiveInfo struct {
+	Status    SessionStatus
+	SubAgents int
+}
+
+// Merge keeps the strongest status seen for a session with several live
+// nodes: working wins over minimized, minimized over idle, anything over
+// terminated. The larger sub-agent count wins (persisted vs live tree).
+func (i LiveInfo) Merge(other LiveInfo) LiveInfo {
+	out := i
+	if other.Status > i.Status {
+		out.Status = other.Status
+	}
+	if other.SubAgents > i.SubAgents {
+		out.SubAgents = other.SubAgents
+	}
+	return out
+}
+
+// spinnerFrames cycles the working-session icon (unicode braille, ~100ms).
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 // SelectMsg is emitted when the user resumes a session.
 type SelectMsg struct {
 	Target  *Screen
@@ -48,6 +99,8 @@ type Screen struct {
 	tokens     *ui.TokenSet
 	sessions   []sessiondb.SessionMeta
 	filtered   []sessiondb.SessionMeta
+	live       map[string]LiveInfo
+	spinFrame  int
 	filterOn   bool
 	filterText string
 	active     bool
@@ -92,9 +145,11 @@ func New(th *theme.Theme) *Screen {
 	return s
 }
 
-// Open loads sessions and marks the picker active.
+// Open loads sessions and marks the picker active. Runtime details reset;
+// the caller refreshes them via SetLiveInfo right after.
 func (s *Screen) Open(sessions []sessiondb.SessionMeta) {
 	s.sessions = append(s.sessions[:0], sessions...)
+	s.live = nil
 	s.filterOn = false
 	s.filterText = ""
 	if s.search != nil && s.search.field != nil {
@@ -137,6 +192,51 @@ func (s *Screen) SelectedIndex() int {
 		}
 	}
 	return -1
+}
+
+// SetLiveInfo supplies per-session runtime details (status, sub-agent
+// counts). The viewmodel refreshes it on open and on ticks while running
+// agents change state. Rows resync with the selection preserved.
+func (s *Screen) SetLiveInfo(live map[string]LiveInfo) {
+	s.live = live
+	s.sync()
+}
+
+// NeedsAnimation reports whether any listed session is running a turn, so
+// the host keeps repainting the spinner icon on ticks.
+func (s *Screen) NeedsAnimation() bool {
+	for _, info := range s.live {
+		if info.Status == StatusWorking {
+			return true
+		}
+	}
+	return false
+}
+
+// SetSpinFrame advances the running-spinner icon. Rows rebuild only on
+// change; stopped sessions keep static icons and never animate.
+func (s *Screen) SetSpinFrame(frame int) {
+	if frame == s.spinFrame || !s.NeedsAnimation() {
+		return
+	}
+	s.spinFrame = frame
+	s.sync()
+}
+
+func (s *Screen) rowIcon(id string) string {
+	if s.live == nil {
+		return ""
+	}
+	switch s.live[id].Status {
+	case StatusWorking:
+		return spinnerFrames[(s.spinFrame/100)%len(spinnerFrames)]
+	case StatusIdle:
+		return "●"
+	case StatusMinimized:
+		return "▪"
+	default:
+		return "○"
+	}
 }
 
 // SetFocusHandler registers Host focus routing.
@@ -290,12 +390,27 @@ func (s *Screen) sync() {
 			items = append(items, ui.ListItem{
 				ID:      ses.ID,
 				Label:   sessionLabel(ses),
-				Detail:  sessionDetail(ses),
+				Icon:    s.rowIcon(ses.ID),
+				Detail:  s.sessionDetail(ses),
 				Payload: ses,
 			})
 		}
 	}
+	// ui.List.SetItems snaps the selection to the first row; keep the user's
+	// session pinned so tick-driven resyncs (spinner frames) never steal it.
+	prevID := ""
+	if meta, ok := s.Selected(); ok {
+		prevID = meta.ID
+	}
 	s.list.list.SetItems(items)
+	if prevID != "" {
+		for i, item := range items {
+			if item.ID == prevID {
+				s.list.list.SelectIndex(i)
+				break
+			}
+		}
+	}
 	s.title.SetText(fmt.Sprintf("Past sessions (%d)", len(s.sessions)))
 }
 
@@ -336,7 +451,7 @@ func (s *Screen) filterSessions(all []sessiondb.SessionMeta, query string) []ses
 	}
 	var out []sessiondb.SessionMeta
 	for _, ses := range all {
-		hay := strings.ToLower(sessionLabel(ses) + " " + sessionDetail(ses) + " " + ses.ProjectName + " " + ses.Model + " " + ses.ID)
+		hay := strings.ToLower(sessionLabel(ses) + " " + s.sessionDetail(ses) + " " + ses.ProjectName + " " + ses.Model + " " + ses.ID)
 		if ses.FirstPrompt.Valid {
 			hay += " " + strings.ToLower(ses.FirstPrompt.String)
 		}
@@ -426,14 +541,28 @@ func sessionLabel(s sessiondb.SessionMeta) string {
 	return rendering.TruncateLine(title, 36)
 }
 
-func sessionDetail(s sessiondb.SessionMeta) string {
+// sessionDetail composes the right-aligned row metadata: turns, sub-agent
+// count, lifecycle status, model, and start time.
+func (s *Screen) sessionDetail(ses sessiondb.SessionMeta) string {
 	when := ""
-	if s.CreatedAt > 0 {
-		when = time.Unix(0, s.CreatedAt).Format("15:04")
+	if ses.CreatedAt > 0 {
+		when = time.Unix(0, ses.CreatedAt).Format("15:04")
 	}
-	parts := []string{fmt.Sprintf("%d turns", s.TurnCount)}
-	if s.Model != "" {
-		parts = append(parts, s.Model)
+	parts := []string{fmt.Sprintf("%d turns", ses.TurnCount)}
+	if info := s.live[ses.ID]; info.SubAgents > 0 {
+		label := "sub-agents"
+		if info.SubAgents == 1 {
+			label = "sub-agent"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", info.SubAgents, label))
+	}
+	// The status word appears once runtime info was supplied; without it the
+	// picker keeps its plain past-sessions look.
+	if s.live != nil {
+		parts = append(parts, s.live[ses.ID].Status.String())
+	}
+	if ses.Model != "" {
+		parts = append(parts, ses.Model)
 	}
 	if when != "" {
 		parts = append(parts, when)

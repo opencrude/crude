@@ -20,8 +20,11 @@ const (
 	FilterID    ui.ComponentID = "activitylist/filter"
 	ScrollbarID ui.ComponentID = "activitylist/scrollbar"
 	DividerID   ui.ComponentID = "activitylist/divider"
+	FooterID    ui.ComponentID = "activitylist/footer"
 
 	ActionActivate = "sidebar.activate"
+	// ActionBrowseSessions is fired by the agents panel's pinned footer row.
+	ActionBrowseSessions = "activitylist.browse-sessions"
 )
 
 // doubleClickWindow matches the picker screens' click-arming interval.
@@ -42,6 +45,7 @@ type Screen struct {
 	scrollbar  *ui.ScrollbarControl
 	split      *ui.SplitModel
 	divider    *ui.SplitDivider
+	footer     *footerRow
 	heading    string
 	icon       string
 	badge      string
@@ -69,6 +73,7 @@ func New(th *theme.Theme) *Screen {
 	s.filter.OnChanged(func(string) { s.applyFilter() })
 	s.list = newSidebarList(s, tokens)
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, s.list.inner.Scroll(), tokens)
+	s.footer = newFooterRow(tokens)
 	s.split = ui.NewSplitModel(ui.Horizontal)
 	s.split.SetMinSizes(12, 0)
 	s.divider = ui.NewSplitDivider(DividerID, s.split)
@@ -84,6 +89,20 @@ func (s *Screen) SetHeading(h string) {
 }
 
 func (s *Screen) SetIcon(icon string) { s.icon = icon }
+
+// SetFooter shows or hides the pinned bottom action row. The footer sits
+// OUTSIDE the scrollable list: the list and its scrollbar keep their own
+// rows above it (an empty label hides the row and frees it again).
+func (s *Screen) SetFooter(label, icon string) {
+	if s.footer == nil {
+		return
+	}
+	s.footer.label, s.footer.icon = label, icon
+}
+
+func (s *Screen) footerVisible() bool {
+	return s.footer != nil && s.footer.label != ""
+}
 
 func (s *Screen) SetBadge(badge string) { s.badge = badge }
 
@@ -224,6 +243,9 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	if s.divider != nil {
 		s.divider.SetTokens(tokens)
 	}
+	if s.footer != nil {
+		s.footer.SetTokens(tokens)
+	}
 }
 
 func (s *Screen) SetTheme(th *theme.Theme) {
@@ -247,6 +269,9 @@ func (s *Screen) Children() []ui.Component {
 	}
 	if s.divider != nil {
 		out = append(out, s.divider)
+	}
+	if s.footerVisible() {
+		out = append(out, s.footer)
 	}
 	return out
 }
@@ -283,12 +308,19 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 		s.filter.Layout(ui.LayoutContext{}, s.headerTitle().FieldRect(s.listWidth(r)))
 	}
 	listY := s.listTopRow(r)
-	listH := max(1, r.H-listY)
+	footerH := 0
+	if s.footerVisible() {
+		footerH = 1
+	}
+	listH := max(1, r.H-listY-footerH)
 	if s.list != nil {
 		s.list.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: listY, W: s.listWidth(r), H: listH})
 	}
 	if s.scrollbar != nil && contentW >= 1 {
 		s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{X: contentW - 1, Y: listY, W: 1, H: listH})
+	}
+	if footerH > 0 {
+		s.footer.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: max(0, r.H-1), W: contentW, H: 1})
 	}
 	if s.divider != nil && r.W > 0 {
 		if s.split != nil && !s.split.Dragging() {
@@ -631,3 +663,71 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+// footerRow is the pinned bottom action row of the panel (e.g. "Browse all
+// sessions" under the agents list). It is a single full-width button: hover
+// tints the row, click or Enter fires the browse action.
+type footerRow struct {
+	ui.Base
+	tokens *ui.TokenSet
+	label  string
+	icon   string
+}
+
+func newFooterRow(tokens *ui.TokenSet) *footerRow {
+	return &footerRow{Base: ui.NewBase(FooterID), tokens: tokens}
+}
+
+func (f *footerRow) SetTokens(tokens *ui.TokenSet) { f.tokens = tokens }
+
+func (f *footerRow) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return cs.ClampSize(ui.Size{W: cs.MaxW, H: 1})
+}
+
+func (f *footerRow) Layout(_ ui.LayoutContext, r ui.Rect) { f.SetBounds(r) }
+
+func (f *footerRow) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
+	r := f.Bounds()
+	if r.Empty() || buf == nil || f.label == "" || f.tokens == nil {
+		return
+	}
+	bg := f.tokens.Color(ui.ColorSubPaneBg)
+	fg := f.tokens.Color(ui.ColorFg)
+	iconFG := f.tokens.Color(ui.ColorAccent)
+	attr := cell.Attrs(0)
+	if ctx.Hovered {
+		bg = f.tokens.TreeHoverBg()
+		fg = f.tokens.Color(ui.ColorAccent)
+	}
+	if ctx.Focused {
+		fg, attr = f.tokens.Color(ui.ColorAccent), cell.AttrBold
+		bg = f.tokens.TreeHoverBg()
+	}
+	x, y := ox+r.X, oy+r.Y
+	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
+	cx := x + 1
+	if f.icon != "" {
+		buf.WriteString(cx, y, f.icon+" ", iconFG, bg, 0)
+		cx += rendering.VisibleWidth(f.icon) + 1
+	}
+	buf.WriteString(cx, y, rendering.TruncateLine(f.label, max(1, r.W-(cx-x)-1)), fg, bg, attr)
+}
+
+func (f *footerRow) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.Kind == ui.EventMouseMotion {
+		return ui.EventResult{Handled: true}
+	}
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionBrowseSessions}, Invalidate: ui.InvalidatePaint}
+	}
+	if evt.IsKey() && (evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeySpace) {
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionBrowseSessions}, Invalidate: ui.InvalidatePaint}
+	}
+	return ui.EventResult{}
+}
+
+func (f *footerRow) Semantics() ui.Semantics {
+	return ui.Semantics{Role: ui.RoleButton, Label: f.label}
+}
+
+var _ ui.Component = (*footerRow)(nil)

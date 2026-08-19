@@ -14,6 +14,13 @@ const TableMinGap = 2
 // TableSep is the compact-table column separator. It is never used as filler.
 const TableSep = " · "
 
+// TableMaxLabelGapBonus caps how much leftover width planCompactTable may
+// spend between the label and the first value column. Beyond the bonus the
+// label stays close to its values (compact, scannable rows) and the rest of
+// the leftover moves in front of the trailing column, which keeps the
+// right-aligned meta column pinned to the row edge.
+const TableMaxLabelGapBonus = 6
+
 type compactTablePlan struct {
 	labelW int
 	gapL   int
@@ -21,10 +28,10 @@ type compactTablePlan struct {
 	flex   int
 }
 
-// planCompactTable spends leftover row width as breathing room: half after
-// the label, half before the last (usually inherited/meta) column. Column
-// widths stay content-sized so values line up; extra space is never filler
-// punctuation.
+// planCompactTable spends leftover row width as breathing room: a capped
+// bonus after the label, the rest before the last (usually inherited/meta)
+// column so it stays pinned to the row edge. Column widths stay
+// content-sized so values line up; extra space is never filler punctuation.
 func planCompactTable(totalW, labelW, chevronW int, colMins []int) compactTablePlan {
 	if labelW < 1 {
 		labelW = 1
@@ -43,8 +50,9 @@ func planCompactTable(totalW, labelW, chevronW int, colMins []int) compactTableP
 	switch {
 	case extra > TableMinGap:
 		leftover := extra - TableMinGap
-		gapL += leftover / 2
-		flex = leftover - leftover/2
+		bonus := min(leftover/2, TableMaxLabelGapBonus)
+		gapL += bonus
+		flex = leftover - bonus
 	case extra > 0:
 		gapL = extra
 	default:

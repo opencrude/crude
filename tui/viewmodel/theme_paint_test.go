@@ -15,6 +15,36 @@ import (
 	"crude/tui/ui"
 )
 
+// TestSettingsPaste_MarksFloatingWindowDirty ensures a paste into a focused
+// floating window (workspace settings API key) marks the window content dirty
+// so the inserted text is actually painted. Without this, the value sat in the
+// model until mouse motion or an arrow key forced a repaint — "I paste and see
+// nothing until I move the cursor".
+func TestSettingsPaste_MarksFloatingWindowDirty(t *testing.T) {
+	app := newPaintableThemeApp(t)
+	app.openWorkspaceSettings()
+	app.FocusStack.Push(FocusFloatingWindow)
+
+	fw := app.windowManager.Focused()
+	if fw == nil {
+		t.Fatal("no focused floating window after opening workspace settings")
+	}
+	// Render once so the window starts clean; the paste must re-dirty it.
+	app.windowManager.Render(app.compositor.Root(), app.renderCtx)
+	if fw.IsContentDirty() {
+		t.Fatal("harness: window should start clean after Render")
+	}
+	_, cmd := app.dispatchPasteMsg(tea.PasteMsg{Content: "sk-test-paste-key"})
+	if cmd != nil {
+		// The paste handler may return a cmd; consume it so it cannot
+		// deadlock a later Program.Send in the harness.
+		_ = cmd()
+	}
+	if !fw.IsContentDirty() {
+		t.Fatal("paste into workspace settings did not mark the floating window content dirty")
+	}
+}
+
 // TestApplyThemePreset_PaintedCellsLeaveOldPalette asserts on actual painted
 // cell backgrounds — not theme pointers. A pointer-only check previously
 // passed while live screenshots still showed dark voids / half-themed UI.

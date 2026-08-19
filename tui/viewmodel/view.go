@@ -189,7 +189,10 @@ func (m *App) computeContentLayout() contentLayout {
 		deckY += 2
 	}
 	if deckLineCount > 0 {
-		lay.DeckRect = ui.Rect{X: lay.SidebarW + lay.PadLR, Y: deckY, W: lay.InnerW, H: deckLineCount}
+		// The deck slot spans the full content column so separator rules can
+		// run edge to edge (like the terminal dock); the PanelDeck applies
+		// the theme's horizontal padding to its tabs and panel content.
+		lay.DeckRect = ui.Rect{X: lay.SidebarW, Y: deckY, W: lay.ContentW, H: deckLineCount}
 		m.sessionDeckRect = lay.DeckRect
 	} else {
 		lay.DeckRect = ui.Rect{}
@@ -303,9 +306,11 @@ func (m *App) configureShell() {
 	m.shell.setSlot(shellHeaderSlot, true, ui.Rect{X: 0, Y: 1, W: m.width, H: 2})
 	m.shell.setSlot(shellStatusSlot, true, ui.Rect{X: 0, Y: m.height - 2, W: m.width, H: 2})
 
-	// Tab bar: inset below the header separator, above the chat area.
+	// Tab bar: full content column below the header separator so its bottom
+	// rule runs edge to edge; the shelltabs screen applies the theme's
+	// horizontal padding to the tabs control itself.
 	m.shell.setSlot(shellTabsSlot, m.tabBarVisible(), ui.Rect{
-		X: lay.SidebarW + lay.PadLR, Y: 3, W: lay.InnerW, H: 2,
+		X: lay.SidebarW, Y: 3, W: lay.ContentW, H: 2,
 	})
 
 	// Activity bar: always-on left rail below the global application header.
@@ -512,10 +517,6 @@ func (m *App) configureHeaderScreen() {
 	if m.headerScreen == nil {
 		return
 	}
-	viewLabel := ""
-	if node := m.AgentMgr.ActiveNode(); node != nil {
-		viewLabel = workspace.AgentDisplayLabel(node)
-	}
 	usage := ""
 	if m.StatusBar != nil {
 		usage = m.StatusBar.UsageView()
@@ -525,8 +526,9 @@ func (m *App) configureHeaderScreen() {
 		YOLO:      m.OverlayState.IsYolo(),
 		StartTime: m.StartTime,
 		Usage:     usage,
-		ViewLabel: viewLabel,
-		Width:     m.width,
+		// No ViewLabel: the active agent already has its own window tab, so
+		// the header stays on app + model only.
+		Width: m.width,
 	})
 }
 

@@ -85,6 +85,8 @@ type Screen struct {
 	modelFilter *ui.FilterField
 	modelList   *ui.List
 	modelQuery  string
+	ruleBleedX  int
+	ruleBleedW  int
 }
 
 type snapshot struct {
@@ -143,6 +145,11 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	}
 }
 
+// SetRuleBleed records the deck row geometry supplied by the parent
+// PanelDeck so the picker's divider can span the row edge to edge while
+// list rows stay in the padded column; width 0 keeps the divider bounded.
+func (s *Screen) SetRuleBleed(offsetX, width int) { s.ruleBleedX, s.ruleBleedW = offsetX, width }
+
 func (s *Screen) Children() []ui.Component {
 	if s.pickerPage() {
 		return []ui.Component{s.actions}
@@ -197,8 +204,12 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 		leaf = "Provider"
 	}
 	title := s.title(s.roleName(), leaf)
+	divX, divW := x, r.W
+	if s.ruleBleedW-s.ruleBleedX > r.W {
+		divX, divW = x-s.ruleBleedX, s.ruleBleedW
+	}
 	buf.WriteString(x, y, rendering.TruncateVisual(title, r.W, ""), fg, bg, cell.AttrBold)
-	buf.WriteString(x, y+1, strings.Repeat(string(ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '─')), max(0, r.W)), divider, bg, 0)
+	buf.WriteString(divX, y+1, strings.Repeat(string(ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '─')), max(0, divW)), divider, bg, 0)
 	s.modelFilter.Paint(buf, x, y, ctx)
 	s.modelList.Paint(buf, x, y, ctx)
 }
@@ -218,11 +229,15 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 		lr := s.modelList.Bounds()
 		if lr.Contains(ctx.LocalX, ctx.LocalY) {
-			return s.modelList.Handle(ui.EventContext{
+			res := s.modelList.Handle(ui.EventContext{
 				Theme: ctx.Theme, Focused: true,
 				LocalX: ctx.LocalX - lr.X, LocalY: ctx.LocalY - lr.Y,
 				ScreenX: ctx.ScreenX, ScreenY: ctx.ScreenY,
 			}, evt)
+			if res.Action != nil && s.isPickerSelectAction(res.Action.ID) {
+				return s.commitPickerAction(res)
+			}
+			return res
 		}
 		return ui.EventResult{}
 	}
@@ -239,11 +254,56 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	switch key.Code {
 	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd, tea.KeyEnter:
-		return s.modelList.Handle(ctx, evt)
+		res := s.modelList.Handle(ctx, evt)
+		if res.Action != nil && s.isPickerSelectAction(res.Action.ID) {
+			return s.commitPickerAction(res)
+		}
+		return res
 	case tea.KeyTab:
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return s.modelFilter.Handle(ctx, evt)
+}
+
+func (s *Screen) isPickerSelectAction(id string) bool {
+	return id == "session-settings.model.select" || id == "session-settings.provider.select"
+}
+
+func (s *Screen) commitPickerAction(res ui.EventResult) ui.EventResult {
+	if s.page == modelPage {
+		s.commitModelSelection()
+	} else {
+		s.commitProviderSelection()
+	}
+	s.openRole(s.role)
+	return focusFormResult(ui.InvalidateLayout)
+}
+
+// applyModelToEffective stages a model picker selection into the effective
+// settings so returning to the role page (which rebuilds the form from
+// effective) keeps the picked model instead of reverting to the old value.
+func (s *Screen) applyModelToEffective(id string) {
+	if s.role == "" || id == "" {
+		return
+	}
+	cfg := categoryFor(s.effective, s.role)
+	cfg.Model = id
+	setCategory(&s.effective, s.role, cfg)
+}
+
+// applyProviderToEffective stages a provider picker selection into the
+// effective settings for the current role so the role page rebuild keeps it.
+func (s *Screen) applyProviderToEffective(id string) {
+	if s.role == "" || id == "" {
+		return
+	}
+	cfg := categoryFor(s.effective, s.role)
+	cfg.Provider = id
+	providerCfg := s.providers[id]
+	cfg.Model = providerCfg.Model
+	cfg.APIStandard = "inherit"
+	cfg.ThinkingEffort = providerCfg.ThinkingEffort
+	setCategory(&s.effective, s.role, cfg)
 }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
@@ -336,6 +396,10 @@ func (s *Screen) openRoot() {
 	model.AddField(ui.SpacerFieldState("roles-gap"))
 	multi := ui.BoolFieldState(fieldMultiAgent, "Multi Agent", s.effective.Agents.Enabled,
 		"Allow this session to spawn researcher, crafter, and aeron sub-agents.")
+	// One spacer slot before the cycle control: the switch aligns with the
+	// agent rows' first value column (· provider/model) instead of hugging
+	// the label.
+	multi.Columns = []string{""}
 	if s.effective.SessionMultiAgent == nil {
 		multi.Inherited = true
 		multi.InheritedFrom = "workspace"
@@ -632,13 +696,13 @@ func (s *Screen) commitModelSelection() {
 	if id == "" {
 		id = item.ID
 	}
-	if s.formModel == nil {
-		return
+	if s.formModel != nil {
+		s.formModel.SetValue(fieldModel, ui.StringValue(id))
+		if field := s.formModel.Field(fieldModel); field != nil {
+			field.Description = item.Label
+		}
 	}
-	s.formModel.SetValue(fieldModel, ui.StringValue(id))
-	if field := s.formModel.Field(fieldModel); field != nil {
-		field.Description = item.Label
-	}
+	s.applyModelToEffective(id)
 }
 
 func (s *Screen) commitProviderSelection() {
@@ -651,6 +715,7 @@ func (s *Screen) commitProviderSelection() {
 		id = item.ID
 	}
 	s.applyProvider(id)
+	s.applyProviderToEffective(id)
 }
 
 func (s *Screen) applyProvider(providerID string) {

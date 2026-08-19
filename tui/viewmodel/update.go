@@ -132,6 +132,18 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			fw.MarkContentDirty()
 		}
 	}
+	// Sessions browser: spin the working-session icon and refresh runtime
+	// details while any listed session runs a turn. Stopped sessions keep
+	// static icons and never trigger repaints.
+	if m.sessionPicker != nil && m.sessionPicker.NeedsAnimation() {
+		m.sessionPicker.SetSpinFrame(spinFrame)
+		m.sessionPicker.SetLiveInfo(m.sessionLiveInfos(m.sessionPicker.Sessions()))
+		if m.overlayHost != nil {
+			if fw := m.overlayHost.Window(ui.OverlaySessionPicker); fw != nil {
+				fw.MarkContentDirty()
+			}
+		}
+	}
 	for _, n := range m.AgentMgr.AllNodes() {
 		if n.State != nil {
 			n.State.Tick(spinFrame)
