@@ -17,7 +17,7 @@ type FindReplaceFrameSpec struct {
 	FindValue    string
 	ReplaceValue string
 	ReplaceMode  bool
-	FocusedField  int // 0=find, 1=replace
+	FocusedField int // 0=find, 1=replace
 	Width        int
 	Height       int
 }

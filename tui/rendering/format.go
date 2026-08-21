@@ -55,6 +55,26 @@ func FormatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dmin %dseconds", mins, remainingSecs)
 }
 
+// FormatThinkingDuration renders a compact human duration for thinking
+// blocks: "42s", "2m 10s", "1h 03m 05s".
+func FormatThinkingDuration(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	secs := int(d.Seconds())
+	hours := secs / 3600
+	mins := (secs % 3600) / 60
+	rem := secs % 60
+	switch {
+	case hours > 0:
+		return fmt.Sprintf("%dh %02dm %02ds", hours, mins, rem)
+	case mins > 0:
+		return fmt.Sprintf("%dm %02ds", mins, rem)
+	default:
+		return fmt.Sprintf("%ds", rem)
+	}
+}
+
 func ToolLabel(tool, argsSummary string) string {
 	if argsSummary != "" {
 		return fmt.Sprintf("%s %s", tool, argsSummary)

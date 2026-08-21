@@ -96,7 +96,8 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	overrides := settingsToSessionOverrides(tuiSettings)
 	newCfg := configWithSessionOverrides(s.workspaceCfg, overrides)
 	mainCat := newCfg.GetActiveDefaultCategory()
-	if mainCat.APIKey == "" {
+	// OAuth providers (e.g. ChatGPT subscription) have no API key; allow them.
+	if mainCat.APIKey == "" && mainCat.OAuth == nil {
 		l.Warn("CONFIG", "save_blocked", "reason", "empty_api_key")
 		return fmt.Errorf("API key cannot be empty — settings not saved")
 	}
@@ -387,6 +388,15 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey, standardID stri
 	if standardID != "" {
 		if err := p.SetStandardID(standardID); err != nil {
 			return nil, err
+		}
+	}
+	// The ChatGPT subscription provider authenticates via OAuth, not an API
+	// key. Attach the stored credentials so the /models request carries the
+	// access token (and codex headers) instead of failing with "requires an
+	// API key".
+	if cfg := s.Config(); cfg != nil {
+		if pc, ok := cfg.Providers[providerID]; ok && pc.OAuth != nil {
+			p.SetOAuth(pc.OAuth)
 		}
 	}
 	models, err := provider.FetchModels(p)

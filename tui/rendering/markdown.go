@@ -59,5 +59,5 @@ func MakeMdRenderer(width int) *glamour.TermRenderer {
 	return nil
 }
 
-func uintPtr(u uint) *uint { return &u }
+func uintPtr(u uint) *uint    { return &u }
 func strPtr(s string) *string { return &s }

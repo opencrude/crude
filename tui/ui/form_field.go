@@ -276,7 +276,11 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		return
 	}
 	if ff.field.Type == FieldNav {
-		ff.paintNav(buf, x, y, r.W, ctx, labelFG, mutedFG, bg)
+		if ff.field.Button {
+			ff.paintNavButton(buf, x, y, r.W, ctx, labelFG, mutedFG, bg, focusedRow, rowBG)
+		} else {
+			ff.paintNav(buf, x, y, r.W, ctx, labelFG, mutedFG, bg)
+		}
 		return
 	}
 
@@ -665,6 +669,62 @@ func (ff *FormField) paintNav(buf *surface.CellBuffer, x, y, width int, ctx Pain
 		indent = 1
 	}
 	buf.WriteString(x+indent, y+1, rendering.TruncateVisual(detail, max(1, width-indent), "…"), muted, rowBG, 0)
+}
+
+// paintNavButton renders a FieldNav as an inset boxed button occupying the
+// right control column (matching the dropdown/select affordance) rather than a
+// full-width drill-in row. The chevron is inset one gutter from the right
+// border so it never sticks to the scrollbar, and the box uses the popup
+// border + subtle background, picking up accent + hover when focused.
+func (ff *FormField) paintNavButton(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, fg, muted, bg cell.Color, focused bool, rowBG cell.Color) {
+	if width < 3 {
+		ff.paintNav(buf, x, y, width, ctx, fg, muted, bg)
+		return
+	}
+	controlX := x + ff.controlX(width)
+	controlW := ff.controlWidth(width)
+	if controlW < 3 {
+		controlX, controlW = x, width
+	}
+
+	buttonBG := ff.tokensColor(ColorPopupSubtleBg, bg)
+	borderFG := ff.tokensColor(ColorPopupBorder, muted)
+	chevronFG := muted
+	labelFG := fg
+	labelAttr := cell.Attrs(0)
+	if focused {
+		buttonBG = rowBG
+		borderFG = ff.tokensColor(ColorAccent, borderFG)
+		chevronFG = ff.tokensColor(ColorAccent, muted)
+		labelFG = ff.tokensColor(ColorAccent, fg)
+		labelAttr = cell.AttrBold
+	}
+	if ff.field.Disabled {
+		labelFG, chevronFG, borderFG = muted, muted, muted
+	}
+
+	FillRect(buf, 0, 0, Rect{X: controlX, Y: y, W: controlW, H: 1}, cell.BlankCell(buttonBG))
+	vBorder := FirstRune(DefaultGlyphsFromTokens(ff.tokens).BorderV, '│')
+	buf.Set(controlX, y, cell.NewCell(vBorder, borderFG, buttonBG, 0))
+	buf.Set(controlX+controlW-1, y, cell.NewCell(vBorder, borderFG, buttonBG, 0))
+
+	chevron := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸'))
+	chevronW := rendering.VisibleWidth(chevron)
+	innerX := controlX + 1
+	innerW := controlW - 2
+	chevX := innerX + innerW - chevronW - 1 // one gutter before the right border
+	labelStart := innerX + 1                // one cell pad after the left border
+	labelMax := max(1, chevX-labelStart-1)
+	if labelMax > 0 {
+		buf.WriteString(labelStart, y, rendering.TruncateVisual(ff.field.Label, labelMax, "…"), labelFG, buttonBG, labelAttr)
+	}
+	if chevronW > 0 && chevX >= innerX {
+		buf.WriteString(chevX, y, chevron, chevronFG, buttonBG, 0)
+	}
+
+	if detail := strings.TrimSpace(ff.navDetail()); detail != "" && ff.height() >= 2 {
+		buf.WriteString(labelStart, y+1, rendering.TruncateVisual(detail, max(1, innerW-1), "…"), muted, bg, 0)
+	}
 }
 
 func (ff *FormField) paintNavCompact(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, fg, muted, bg cell.Color) {

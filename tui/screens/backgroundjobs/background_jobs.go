@@ -94,7 +94,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.form.Layout(ctx, ui.Rect{W: r.W, H: r.H})
 }
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
-func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult       { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult      { return ui.EventResult{} }
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Background jobs", Value: fmt.Sprintf("%d visible", s.visible)}
 }

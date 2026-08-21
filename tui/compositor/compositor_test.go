@@ -67,7 +67,7 @@ func TestCompositor_CompositeBlitsChildren(t *testing.T) {
 
 func TestCompositor_PresentNoDamageEmpty(t *testing.T) {
 	c := NewCompositor(4, 2)
-	// BeginFrame resets damage; Composite without children marks nothing? 
+	// BeginFrame resets damage; Composite without children marks nothing?
 	// BeginFrame clears damage. Composite with only invisible/empty tree:
 	// root is in FlattenZOrder and is Visible — so it marks damage for root rect.
 	c.BeginFrame()

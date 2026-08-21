@@ -103,7 +103,9 @@ func sessionSettingsPanel(screen *sessionsettings.Screen) ui.PanelEntry {
 	return ui.PanelEntry{
 		ID: sessionSettingsPanelID, Title: "Session Settings", Content: screen,
 		Closable: true, Policy: ui.PanelInteractive, PreferredHeight: 12,
-		Width: ui.PanelReadableWidth,
+		// Wide-readable so the "inherited from workspace" trailing column on
+		// each agent row stays visible without stretching to the deck edge.
+		Width: ui.PanelWideReadable,
 	}
 }
 

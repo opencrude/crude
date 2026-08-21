@@ -27,18 +27,18 @@ const (
 
 // StepResult is returned from goal step execution and drives the conversation flow.
 type StepResult struct {
-	Status               StepStatus
-	Response             string
-	OutcomeCode          string
-	ErrorCode            string
-	ActionType           string
-	IsRetryable          bool
-	DebugReason          string
-	Blocker              *BlockingCondition
-	SubGoals             []*Goal
-	OutputData           map[string]any
+	Status                StepStatus
+	Response              string
+	OutcomeCode           string
+	ErrorCode             string
+	ActionType            string
+	IsRetryable           bool
+	DebugReason           string
+	Blocker               *BlockingCondition
+	SubGoals              []*Goal
+	OutputData            map[string]any
 	ShouldEndConversation bool
-	RequiredSlots        []string
+	RequiredSlots         []string
 }
 
 // Complete creates a successful step result.
@@ -60,7 +60,9 @@ func (s StepStatus) String() string {
 }
 
 func Complete(response string, outputData map[string]any) *StepResult {
-	stepLogIf(func(lg *logger.Logger) { lg.Debug("STEP", "complete", "response_len", len(response), "output_keys", len(outputData)) })
+	stepLogIf(func(lg *logger.Logger) {
+		lg.Debug("STEP", "complete", "response_len", len(response), "output_keys", len(outputData))
+	})
 	return &StepResult{
 		Status:      StepComplete,
 		Response:    response,
@@ -88,7 +90,9 @@ func Blocked(blocker *BlockingCondition, response string) *StepResult {
 			NewGoal(blocker.SubGoalIntent, blocker.Message, PriorityNormal, blocker.IsBlocking),
 		}
 	}
-	stepLogIf(func(lg *logger.Logger) { lg.Info("STEP", "blocked", "blocker_type", blocker.Type.String(), "sub_goal", blocker.SubGoalIntent) })
+	stepLogIf(func(lg *logger.Logger) {
+		lg.Info("STEP", "blocked", "blocker_type", blocker.Type.String(), "sub_goal", blocker.SubGoalIntent)
+	})
 	return r
 }
 

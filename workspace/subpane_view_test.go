@@ -73,6 +73,36 @@ func TestSubPaneViewSummaryWhenDone(t *testing.T) {
 	}
 }
 
+// TestSubPaneViewSummaryHumanDuration verifies the collapsed summary uses a
+// compact human duration ("42s", "2m 10s", "1h 02m 03s") rather than decimal
+// seconds, so the demoted thinking line reads "Thought for 2m 10s".
+func TestSubPaneViewSummaryHumanDuration(t *testing.T) {
+	tests := []struct {
+		name    string
+		elapsed time.Duration
+		expect  string
+	}{
+		{"seconds", 42 * time.Second, "for 42s"},
+		{"minsecs", 2*time.Minute + 10*time.Second, "for 2m 10s"},
+		{"hourminsecs", time.Hour + 3*time.Minute + 5*time.Second, "for 1h 03m 05s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sp := NewSubPane("think-dur", PaneThinking, "Thinking")
+			sp.Done = true
+			sp.StartTime = time.Now().Add(-tt.elapsed)
+			sp.EndTime = time.Now()
+			view := sp.View()
+			if !contains(view.Summary.Text, tt.expect) {
+				t.Fatalf("expected Summary.Text to contain %q, got %q", tt.expect, view.Summary.Text)
+			}
+			if !contains(view.Summary.Text, "Thought") {
+				t.Fatalf("expected summary to say 'Thought', got %q", view.Summary.Text)
+			}
+		})
+	}
+}
+
 func TestSubPaneViewSummaryTokenFormatting(t *testing.T) {
 	tests := []struct {
 		name   string

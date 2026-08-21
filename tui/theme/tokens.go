@@ -4,20 +4,20 @@ package theme
 // Themes may override them; the factory supplies defaults so product code
 // never hard-codes box/prompt/close glyphs when tokens are available.
 type Glyphs struct {
-	Prompt           string // unused; must stay empty. Never paint ❯.
-	Search           string
-	Close            string
-	CornerTL         string
-	CornerTR         string
-	CornerBL         string
-	CornerBR         string
-	BorderH          string
-	BorderV          string
-	ScrollbarTrack   string
-	ScrollbarThumb   string
-	TreeExpanded     string
-	TreeCollapsed    string
-	BreadcrumbSep    string
+	Prompt         string // unused; must stay empty. Never paint ❯.
+	Search         string
+	Close          string
+	CornerTL       string
+	CornerTR       string
+	CornerBL       string
+	CornerBR       string
+	BorderH        string
+	BorderV        string
+	ScrollbarTrack string
+	ScrollbarThumb string
+	TreeExpanded   string
+	TreeCollapsed  string
+	BreadcrumbSep  string
 }
 
 // Typography captures semantic text emphasis that themes may vary without
@@ -34,13 +34,13 @@ type Typography struct {
 // Metrics are layout-affecting control measurements. Changing these must
 // invalidate layout; color-only theme changes must not.
 type Metrics struct {
-	TitleBarHeight   int
-	BorderWidth      int
-	ScrollbarWidth   int
-	MinDialogWidth   int
-	MinDialogHeight  int
-	ButtonPadX       int
-	InputMinWidth    int
+	TitleBarHeight  int
+	BorderWidth     int
+	ScrollbarWidth  int
+	MinDialogWidth  int
+	MinDialogHeight int
+	ButtonPadX      int
+	InputMinWidth   int
 }
 
 // DefaultGlyphs returns the shared reference glyph table.

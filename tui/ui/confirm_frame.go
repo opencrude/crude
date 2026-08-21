@@ -47,11 +47,11 @@ func (s ConfirmPromptSeverity) accent(th *theme.Theme) color.Color {
 
 // Confirm button action IDs (WindowFrame path).
 const (
-	ConfirmActionYes    = "confirm.yes"
-	ConfirmActionNo     = "confirm.no"
-	ConfirmActionSave   = "confirm.save"
+	ConfirmActionYes     = "confirm.yes"
+	ConfirmActionNo      = "confirm.no"
+	ConfirmActionSave    = "confirm.save"
 	ConfirmActionDiscard = "confirm.discard"
-	ConfirmActionCancel = "confirm.cancel"
+	ConfirmActionCancel  = "confirm.cancel"
 )
 
 // ConfirmButtonSpec describes one action button in a confirm dialog.

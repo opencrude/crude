@@ -461,7 +461,7 @@ func (s *Screen) lspSegments() []seg {
 	dot := seg{text: glyph, role: dotRole, attr: attr}
 
 	if s.project.ServerFailed && s.project.ServerError != "" {
-		return []seg{dot, seg{text: " ", role: ui.ColorMuted}, seg{text: s.project.ServerError, role: ui.ColorError, attr: cell.AttrBold}}
+		return []seg{dot, {text: " ", role: ui.ColorMuted}, {text: s.project.ServerError, role: ui.ColorError, attr: cell.AttrBold}}
 	}
 
 	out := []seg{dot}

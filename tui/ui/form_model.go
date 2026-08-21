@@ -151,6 +151,7 @@ type FieldState struct {
 	Columns       []string // compact FieldNav table cells after the label; for FieldCycle, empty spacer slots before the cycle control (column alignment)
 	Validator     func(value FieldValue) []string
 	Target        string // for FieldNav: target page/focus ID
+	Button        bool   // for FieldNav: render as an inset boxed button in the control column instead of a full-width drill-in row
 }
 
 func (f *FieldState) HasErrors() bool { return len(f.Errors) > 0 }

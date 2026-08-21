@@ -48,7 +48,9 @@ func GenerateDiff(beforeContent, afterContent, fileName string) (string, int, in
 		}
 	}
 
-	diffLogIf(func(lg *logger.Logger) { lg.Debug("DIFF", "generate", "file", fileName, "additions", additions, "removals", removals, "diff_len", len(unified), "latency_ms", time.Since(start).Milliseconds()) })
+	diffLogIf(func(lg *logger.Logger) {
+		lg.Debug("DIFF", "generate", "file", fileName, "additions", additions, "removals", removals, "diff_len", len(unified), "latency_ms", time.Since(start).Milliseconds())
+	})
 	return unified, additions, removals
 }
 

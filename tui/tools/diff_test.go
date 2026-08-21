@@ -229,8 +229,8 @@ func TestParseGitDiffHeaders(t *testing.T) {
 
 func TestIsDiffContent(t *testing.T) {
 	tests := []struct {
-		input   string
-		expect  bool
+		input  string
+		expect bool
 	}{
 		{"```diff\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n```", true},
 		{"Just some regular text", false},

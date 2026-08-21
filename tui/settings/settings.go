@@ -54,6 +54,17 @@ type ResetSectionMsg struct{ Key string }
 // ScopeMsg switches the settings dialog between application and workspace.
 type ScopeMsg struct{ Scope types.SettingsScope }
 
+// ChatGPTSignInResultMsg delivers the outcome of a "Sign in with ChatGPT" run.
+// On success Creds holds the tokens to persist; on failure Err is set (and may
+// wrap a ChatGPTSignInError whose Fatal flag means the stored session is dead).
+type ChatGPTSignInResultMsg struct {
+	Creds *provider.OAuthCredentials
+	Err   error
+}
+
+// ChatGPTSignOutMsg clears the stored ChatGPT tokens.
+type ChatGPTSignOutMsg struct{}
+
 // Category is a presentation-neutral settings section backed by the shared
 // form model. It deliberately has no legacy tui/form state.
 type Category struct {
@@ -243,10 +254,20 @@ func (m *Model) buildProvidersForm() *ui.FormModel {
 			baseURL = preset.BaseURL
 		}
 	}
-	return formModel(
+	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("connection", "Connection"),
 		ui.SelectFieldState(fieldProvider, "Provider", m.providerID, ui.ProviderOptions(m.presets), "The service used for model requests."),
-		ui.PasswordFieldState(fieldAPIKey, "API key", cfg.APIKey, "Stored locally and masked while editing."),
+	}
+	// The ChatGPT subscription provider authenticates via OAuth, not an API
+	// key, so it gets a status row plus a sign-in / sign-out drill-in instead
+	// of the masked key field. The field set differs per provider, which is
+	// why the form is rebuilt on provider switch (see rebuildProvidersForm).
+	if m.providerID == "chatgpt" {
+		fields = append(fields, m.chatgptAuthFields(cfg)...)
+	} else {
+		fields = append(fields, ui.PasswordFieldState(fieldAPIKey, "API key", cfg.APIKey, "Stored locally and masked while editing."))
+	}
+	fields = append(fields,
 		ui.TextFieldState(fieldBaseURL, "Base URL", baseURL, "Override the provider endpoint when using a proxy or local gateway."),
 		ui.SeparatorFieldState("protocol", "Communication protocol"),
 		ui.SelectFieldState(
@@ -266,6 +287,52 @@ func (m *Model) buildProvidersForm() *ui.FormModel {
 		),
 		ui.ThinkingFieldState(fieldThinkingEffort, cfg.ThinkingEffort, "Controls how much internal reasoning the model may use."),
 	)
+	return formModel(fields...)
+}
+
+// chatgptAuthFields builds the OAuth status + sign-in/sign-out rows shown in
+// place of the API-key field for the ChatGPT subscription provider.
+func (m *Model) chatgptAuthFields(cfg types.ProviderConfig) []*ui.FieldState {
+	signedIn := cfg.OAuth != nil && cfg.OAuth.AccessToken != ""
+	status := "Not signed in"
+	if signedIn {
+		switch {
+		case cfg.OAuth.Email != "":
+			status = "Signed in as " + cfg.OAuth.Email
+		case cfg.OAuth.AccountID != "":
+			status = "Signed in (account " + cfg.OAuth.AccountID + ")"
+		default:
+			status = "Signed in"
+		}
+	}
+	statusField := ui.TextFieldState("chatgpt-status", "Account", status,
+		"The ChatGPT provider rides a Plus/Pro subscription via Sign in with ChatGPT — no API key.")
+	statusField.ReadOnly = true
+	if signedIn {
+		return []*ui.FieldState{
+			statusField,
+			{ID: "chatgpt-signout", Label: "Sign out", Type: ui.FieldNav, Target: "settings.chatgpt.signout",
+				Button:      true,
+				Description: "Forget the stored ChatGPT tokens. You can sign in again any time."},
+		}
+	}
+	return []*ui.FieldState{
+		statusField,
+		{ID: "chatgpt-signin", Label: "Sign in with ChatGPT", Type: ui.FieldNav, Target: "settings.chatgpt.signin",
+			Button:      true,
+			Description: "Opens a browser to authorize crude with your ChatGPT Plus/Pro subscription."},
+	}
+}
+
+// rebuildProvidersForm rebuilds the provider form for the current providerID.
+// The field set is provider-specific (ChatGPT swaps the API-key row for OAuth
+// rows), so switching providers must replace the form model, not just its
+// values. The surface rebinds its form widget in the form.changed handler.
+func (m *Model) rebuildProvidersForm() {
+	form := m.buildProvidersForm()
+	m.categories[catProviders].Form = form
+	category := catProviders
+	form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
 }
 
 func (m *Model) buildAgentForm(cfg types.CategorySettings) *ui.FormModel {
@@ -390,6 +457,28 @@ func (m *Model) value(category int, fieldID string) string {
 	return field.Value.String()
 }
 
+// ValueForTest exposes a form field's string value for tests.
+func (m *Model) ValueForTest(category int, fieldID string) string {
+	return m.value(category, fieldID)
+}
+
+// SetValueForTest sets a form field value, firing the same onChanged path a
+// user edit would.
+func (m *Model) SetValueForTest(category int, fieldID, value string) {
+	if category < 0 || category >= len(m.categories) || m.categories[category].Form == nil {
+		return
+	}
+	m.categories[category].Form.SetValue(fieldID, ui.StringValue(value))
+}
+
+// ProviderIDForTest exposes the current provider selection for tests.
+func (m *Model) ProviderIDForTest() string {
+	if m == nil {
+		return ""
+	}
+	return m.providerID
+}
+
 func (m *Model) isAgentCategory(index int) bool {
 	return index == catMain || index == catResearcher || index == catCrafter || index == catAeron
 }
@@ -403,7 +492,11 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		providerID := m.value(catProviders, fieldProvider)
 		if providerID != "" && providerID != m.providerID {
 			m.storeProviderForm(m.providerID)
-			m.loadProviderForm(providerID)
+			m.providerID = providerID
+			m.providerModel = m.providers[providerID].Model
+			// The field set is provider-specific (ChatGPT swaps the API-key row
+			// for OAuth rows), so rebuild rather than just repopulating values.
+			m.rebuildProvidersForm()
 		}
 		return
 	}
@@ -488,8 +581,40 @@ func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.setModels(msg.ProviderID, msg.Models)
 	case ModelsErrorMsg:
 		m.setModelsError(msg.ProviderID, msg.Error)
+	case ChatGPTSignInResultMsg:
+		if msg.Err == nil && msg.Creds != nil {
+			m.setChatGPTAuth(msg.Creds, "")
+		} else {
+			// Surface the failure on the status row; keep the sign-in button.
+			msg2 := ""
+			if msg.Err != nil {
+				msg2 = msg.Err.Error()
+			}
+			m.setChatGPTAuth(nil, msg2)
+		}
+	case ChatGPTSignOutMsg:
+		m.setChatGPTAuth(nil, "")
 	}
 	return *m, nil
+}
+
+// setChatGPTAuth updates the chatgpt provider's OAuth state and refreshes the
+// provider form when chatgpt is the selected provider. A nil creds clears the
+// tokens (sign-out or fatal sign-in failure); errMsg is shown on the status
+// row so the user sees why a sign-in attempt failed.
+func (m *Model) setChatGPTAuth(creds *provider.OAuthCredentials, errMsg string) {
+	cfg := m.providers["chatgpt"]
+	cfg.OAuth = creds
+	m.providers["chatgpt"] = cfg
+	if m.providerID != "chatgpt" {
+		return
+	}
+	m.rebuildProvidersForm()
+	if errMsg != "" {
+		if f := m.categories[catProviders].Form.Field("chatgpt-status"); f != nil {
+			f.Errors = []string{errMsg}
+		}
+	}
 }
 
 func (m *Model) OpenSelect(fieldID string) tea.Cmd {

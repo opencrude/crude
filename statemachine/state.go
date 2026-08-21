@@ -22,9 +22,9 @@ type ConversationState struct {
 	ID             string
 	ConversationID string
 
-	ThreadRoots  map[string]*Goal
-	FocusGoalID  string
-	ResumeStack  []string
+	ThreadRoots map[string]*Goal
+	FocusGoalID string
+	ResumeStack []string
 
 	ContextData      map[string]any
 	ExecutionHistory []GoalExecutionLog
@@ -137,7 +137,9 @@ func (s *ConversationState) PushToResumeStack(goalID string) {
 		}
 	}
 	s.ResumeStack = append(filtered, goalID)
-	s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "push_resume", "goal_id", goalID, "stack_depth", len(s.ResumeStack)) })
+	s.logIf(func(lg *logger.Logger) {
+		lg.Debug("STATE", "push_resume", "goal_id", goalID, "stack_depth", len(s.ResumeStack))
+	})
 }
 
 // PopFromResumeStack pops the topmost valid (non-terminal) goal ID.
@@ -147,10 +149,14 @@ func (s *ConversationState) PopFromResumeStack() string {
 		s.ResumeStack = s.ResumeStack[:len(s.ResumeStack)-1]
 		g, ok := s.ThreadRoots[top]
 		if ok && g.Status != GoalCompleted && g.Status != GoalFailed {
-			s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "pop_resume", "goal_id", top, "stack_depth", len(s.ResumeStack)) })
+			s.logIf(func(lg *logger.Logger) {
+				lg.Debug("STATE", "pop_resume", "goal_id", top, "stack_depth", len(s.ResumeStack))
+			})
 			return top
 		}
-		s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "pop_resume_skipped", "goal_id", top, "status", g.Status.String()) })
+		s.logIf(func(lg *logger.Logger) {
+			lg.Debug("STATE", "pop_resume_skipped", "goal_id", top, "status", g.Status.String())
+		})
 	}
 	return ""
 }
@@ -189,7 +195,9 @@ func (s *ConversationState) CleanupExpiredGoals() int {
 		s.ResumeStack = filtered
 	}
 	if len(expired) > 0 {
-		s.logIf(func(lg *logger.Logger) { lg.Info("STATE", "cleanup_expired", "expired_count", len(expired), "remaining", len(s.ThreadRoots)) })
+		s.logIf(func(lg *logger.Logger) {
+			lg.Info("STATE", "cleanup_expired", "expired_count", len(expired), "remaining", len(s.ThreadRoots))
+		})
 	}
 	return len(expired)
 }
@@ -205,7 +213,9 @@ func (s *ConversationState) TransferSlotsToGoal(source, target *Goal) {
 		}
 	}
 	if !related {
-		s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "transfer_skipped", "source", source.Intent, "target", target.Intent, "reason", "not_related") })
+		s.logIf(func(lg *logger.Logger) {
+			lg.Debug("STATE", "transfer_skipped", "source", source.Intent, "target", target.Intent, "reason", "not_related")
+		})
 		return
 	}
 	transferred := 0
@@ -215,7 +225,9 @@ func (s *ConversationState) TransferSlotsToGoal(source, target *Goal) {
 			transferred++
 		}
 	}
-	s.logIf(func(lg *logger.Logger) { lg.Debug("STATE", "transfer_slots", "source", source.Intent, "target", target.Intent, "transferred", transferred) })
+	s.logIf(func(lg *logger.Logger) {
+		lg.Debug("STATE", "transfer_slots", "source", source.Intent, "target", target.Intent, "transferred", transferred)
+	})
 }
 
 // GoalContext

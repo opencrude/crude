@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"crude/buildinfo"
+	"crude/provider"
 	"crude/session"
 	ttypes "crude/tui/types"
 )
@@ -121,6 +122,7 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 				APIStandard: p.APIStandard, Model: p.Model,
 				ModelStandards: cloneStringMap(p.ModelStandards),
 				ThinkingEffort: p.ThinkingEffort,
+				OAuth:          cloneOAuth(p.OAuth),
 			}
 		}
 	}
@@ -185,6 +187,9 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 			if p.ThinkingEffort != "" {
 				prev.ThinkingEffort = p.ThinkingEffort
 			}
+			// OAuth tokens: replace when present, clear when absent so a sign-out
+			// (nil) is not silently swallowed by the non-empty-only merge above.
+			prev.OAuth = cloneOAuth(p.OAuth)
 			fc.Providers[id] = prev
 		}
 	}
@@ -199,6 +204,16 @@ func cloneStringMap(src map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// cloneOAuth returns a deep-enough copy of OAuth credentials (all fields are
+// value types) so config layers never alias the same token struct.
+func cloneOAuth(src *provider.OAuthCredentials) *provider.OAuthCredentials {
+	if src == nil {
+		return nil
+	}
+	dup := *src
+	return &dup
 }
 
 func FileConfigToSession(fc FileConfig) *session.Config {

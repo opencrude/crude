@@ -431,7 +431,7 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 	var toolLines []chatprojection.SubPaneLine
 	if len(allToolLines) == 0 {
 		thinking := p.renderer.ActiveThinkingLineCount(width) > 0
-		toolLines = append(toolLines, chatprojection.BuildCompactWorkingLine( thinking, width))
+		toolLines = append(toolLines, chatprojection.BuildCompactWorkingLine(thinking, width))
 	} else {
 		start := p.scroll.Offset()
 		end := start + visibleH

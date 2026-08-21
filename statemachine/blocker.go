@@ -6,7 +6,7 @@ import "time"
 type BlockingConditionType int
 
 const (
-	BlockAuthRequired      BlockingConditionType = iota
+	BlockAuthRequired BlockingConditionType = iota
 	BlockMissingParameter
 	BlockConfirmationNeeded
 	BlockRateLimitExceeded
@@ -33,13 +33,13 @@ func (t BlockingConditionType) String() string {
 
 // BlockingCondition represents why a goal is currently blocked.
 type BlockingCondition struct {
-	ID           string
-	Type         BlockingConditionType
-	Message      string
-	Context      map[string]any
+	ID            string
+	Type          BlockingConditionType
+	Message       string
+	Context       map[string]any
 	SubGoalIntent string
-	IsBlocking   bool
-	CreatedAt    time.Time
+	IsBlocking    bool
+	CreatedAt     time.Time
 }
 
 func newBlocker(t BlockingConditionType, msg string) *BlockingCondition {

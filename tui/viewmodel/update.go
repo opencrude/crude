@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -545,6 +547,51 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+	case settingsui.ChatGPTSignInResultMsg:
+		if msg.Err == nil && msg.Creds != nil {
+			if err := m.saveChatGPTOAuth(msg.Creds); err != nil {
+				m.StatusBar.SetError("Failed to save ChatGPT sign-in: " + err.Error())
+			} else {
+				m.refreshAllSessionSettingsProjections()
+				label := msg.Creds.Email
+				if label == "" {
+					label = "ChatGPT"
+				}
+				m.StatusBar.SetInfo("Signed in as " + label)
+			}
+		} else {
+			reason := "Sign in with ChatGPT failed"
+			if msg.Err != nil {
+				reason = msg.Err.Error()
+			}
+			// A fatal error (revoked consent, bad refresh token) means the
+			// stored session is dead — clear it so we don't keep retrying.
+			var signInErr *provider.ChatGPTSignInError
+			if msg.Err != nil && errors.As(msg.Err, &signInErr) && signInErr.Fatal {
+				if err := m.saveChatGPTOAuth(nil); err == nil {
+					m.refreshAllSessionSettingsProjections()
+				}
+			}
+			m.StatusBar.SetError(reason)
+		}
+		// Refresh the open form so the status row + sign-in/sign-out button swap.
+		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case settingsui.ChatGPTSignOutMsg:
+		if err := m.saveChatGPTOAuth(nil); err != nil {
+			m.StatusBar.SetError("Failed to clear ChatGPT sign-in: " + err.Error())
+		} else {
+			m.refreshAllSessionSettingsProjections()
+			m.StatusBar.SetInfo("Signed out of ChatGPT")
+		}
+		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	case sessionsettings.SaveMsg:
 		m.Logger.Info("CONFIG", "session_settings_save")
 		m.StatusBar.SetInfo("saving...")
@@ -560,6 +607,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			err := m.HandleSettingsSaveForSession(sessionID, s)
 			return sessionSettingsSaveResultMsg{target: target, settings: s, err: err}
 		})
+	case sessionsettings.SaveAsWorkspaceMsg:
+		// Promote the current agent settings to workspace defaults so every
+		// future agent (and new session) inherits them.
+		m.Logger.Info("CONFIG", "session_settings_save_as_workspace")
+		appDefaults := m.AppDefaults()
+		working := appDefaults
+		working.Agents = msg.Settings.Agents
+		overrides := types.WorkspaceOverridesFromDiff(appDefaults, working)
+		if err := m.SaveWorkspaceSettings(overrides); err != nil {
+			m.StatusBar.SetError("Failed to save as workspace settings: " + err.Error())
+		} else {
+			m.refreshAllSessionSettingsProjections()
+			m.StatusBar.SetInfo("Agent settings saved as workspace defaults")
+		}
 	case sessionSettingsSaveResultMsg:
 		_, projection := m.sessionProjections.projectionForSettings(msg.target)
 		if msg.err != nil {
@@ -688,6 +749,25 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 		return tea.MouseWheelMsg{X: mm.X - offX, Y: mm.Y - offY, Button: mm.Button}
 	}
 	return msg
+}
+
+// saveChatGPTOAuth persists ChatGPT OAuth credentials at application scope.
+// A nil creds clears the tokens (sign-out / fatal sign-in failure). OAuth is
+// always stored at app scope — workspace overlays strip credentials — so this
+// loads the full app settings, mutates only the chatgpt entry, and saves both
+// the file and the live session config so the running agent picks it up.
+func (m *App) saveChatGPTOAuth(creds *provider.OAuthCredentials) error {
+	s := m.LoadAppSettings()
+	if s.Providers == nil {
+		s.Providers = make(map[string]ttypes.ProviderConfig)
+	}
+	cfg := s.Providers["chatgpt"]
+	cfg.OAuth = creds
+	s.Providers["chatgpt"] = cfg
+	if err := m.SaveAppSettings(s); err != nil {
+		return err
+	}
+	return m.SaveProviderSettings(s.ActiveProvider, s.Providers)
 }
 
 func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) tea.Cmd {

@@ -85,11 +85,11 @@ const (
 )
 
 var (
-	ApplyAppDefaults             = model.ApplyAppDefaults
-	NormalizeLSP                 = model.NormalizeLSP
-	DefaultLSPSettings           = model.DefaultLSPSettings
-	DefaultLSPLanguages          = model.DefaultLSPLanguages
-	MergeAppWorkspace            = model.MergeAppWorkspace
-	OverridesFromDiff            = model.OverridesFromDiff
-	WorkspaceOverridesFromDiff   = model.WorkspaceOverridesFromDiff
+	ApplyAppDefaults           = model.ApplyAppDefaults
+	NormalizeLSP               = model.NormalizeLSP
+	DefaultLSPSettings         = model.DefaultLSPSettings
+	DefaultLSPLanguages        = model.DefaultLSPLanguages
+	MergeAppWorkspace          = model.MergeAppWorkspace
+	OverridesFromDiff          = model.OverridesFromDiff
+	WorkspaceOverridesFromDiff = model.WorkspaceOverridesFromDiff
 )

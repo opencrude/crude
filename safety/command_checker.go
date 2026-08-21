@@ -53,20 +53,20 @@ func (r CommandRisk) IsAlwaysBlocked() bool {
 }
 
 type CommandSafetyResult struct {
-	Risk              CommandRisk
-	BaseCommand       string
-	FullCommand       string
-	Reason            string
-	Suggestion        string
-	TargetsSystem     bool
-	UsesSudo          bool
-	PipedToShell      bool
-	ModifiesConfig    bool
-	ReadsCredentials  bool
-	Obfuscated        bool
-	AffectedPaths     []string
-	RedirectTargets   []string
-	Calls             []string
+	Risk             CommandRisk
+	BaseCommand      string
+	FullCommand      string
+	Reason           string
+	Suggestion       string
+	TargetsSystem    bool
+	UsesSudo         bool
+	PipedToShell     bool
+	ModifiesConfig   bool
+	ReadsCredentials bool
+	Obfuscated       bool
+	AffectedPaths    []string
+	RedirectTargets  []string
+	Calls            []string
 }
 
 var systemPrefixes []string

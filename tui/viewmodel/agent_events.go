@@ -230,6 +230,9 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
 			proj.renderer.SetModelName(subModel)
 			proj.renderer.SetUsername(m.Username)
+			// Nested subpanes (e.g. a promoted thinking block inside this
+			// sub-agent's own chat) render through the same registry.
+			proj.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 			agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
 			// Get label/model/category from event data
 			label := ""
@@ -294,7 +297,8 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 
 	thinkingTarget := m.getThinkingTarget(agentID, agent)
 
-	hasThinking := agent != nil && agent.ThinkingPaneID != ""
+	// agent is guaranteed non-nil past the guard above.
+	hasThinking := agent.ThinkingPaneID != ""
 
 	cmd := agent.HandleEvent(evt, thinkingTarget,
 		func(statusLine string) {
@@ -350,7 +354,10 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")
 	m.syncConversationMessages(thinkingTarget, evt.Type == "done" || evt.Type == "error")
 
-	if evt.Type == "thinking" && hasThinking {
+	// Promotion is guarded inside checkThinkingPromotion (no-op once the
+	// thinking block already lives in its own pane), so it is safe to call
+	// on every thinking event.
+	if evt.Type == "thinking" {
 		m.checkThinkingPromotion(agent)
 	}
 
@@ -380,15 +387,20 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 }
 
 func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *workspace.Conversation {
-	if m.PaneMgr.Has(agentID) {
-		return m.PaneMgr.Get(agentID).Messages
-	}
-
-	if agent.ThinkingPaneID != "" {
+	// Once thinking has been promoted to its own pane, keep streaming into
+	// that pane instead of spawning a fresh inline block in the chat. The
+	// pane check must come first: the main orchestrator also owns a PaneAgent
+	// in the manager, so PaneMgr.Has(agentID) alone would never redirect.
+	if agent != nil && agent.ThinkingPaneID != "" {
 		if sp := m.PaneMgr.Get(agent.ThinkingPaneID); sp != nil {
 			return sp.Messages
 		}
+		// Stale reference (pane closed) — fall through to a real conversation.
 		agent.ThinkingPaneID = ""
+	}
+
+	if m.PaneMgr.Has(agentID) {
+		return m.PaneMgr.Get(agentID).Messages
 	}
 
 	sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
@@ -401,15 +413,9 @@ func (m *App) checkThinkingPromotion(agent *workspace.AgentState) {
 	}
 
 	chatH := m.ChatAreaHeight
-	threshold := chatH / 3
-	if threshold < 5 {
-		threshold = 5
-	}
+	threshold := max(chatH/3, 5)
 
-	contentWidth := m.width - 16
-	if contentWidth < 10 {
-		contentWidth = 10
-	}
+	contentWidth := max(m.width-16, 10)
 	pane := m.PaneMgr.Get(agent.ID)
 	if pane == nil {
 		return
@@ -428,7 +434,18 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 	if agent == nil || agent.Messages == nil {
 		return
 	}
-	paneID := "thinking-" + time.Now().Format("150405")
+	// Scope the pane ID to the agent so two agents thinking in the same
+	// second never collide on the same "thinking-HHMMSS" pane.
+	paneID := "thinking-" + agent.ID + "-" + time.Now().Format("150405")
+	// Preserve the original thinking start time so the eventual
+	// "thought for Xs" label covers the whole block, not just the
+	// post-promotion window.
+	start := time.Time{}
+	for _, msg := range agent.Messages.Messages() {
+		if msg.Role == ttypes.RoleThinking && msg.ThinkingActive {
+			start = msg.Time
+		}
+	}
 	content := agent.Messages.RemoveActiveThinking()
 
 	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking")
@@ -437,7 +454,20 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 	proj.renderer.SetUsername(m.Username)
 
 	if content != "" {
-		sp.Messages.AppendThinking(content)
+		if start.IsZero() {
+			sp.Messages.AppendThinking(content)
+		} else {
+			sp.Messages.AppendMessage(workspace.Message{
+				Role:           ttypes.RoleThinking,
+				Content:        content,
+				Time:           start,
+				ThinkingActive: true,
+			})
+			// The pane's own clock starts at the block start so the header
+			// and the collapsed "thought for X" summary cover the whole
+			// block, not just the post-promotion window.
+			sp.StartTime = start
+		}
 	}
 
 	agent.ThinkingPaneID = paneID

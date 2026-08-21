@@ -28,6 +28,9 @@ func NewWorkspaceSettingsScoped(th *theme.Theme, working ttypes.AppSettings, pre
 
 func (ws *WorkspaceSettings) Component() ui.Component { return ws.surface }
 
+// ModelForTest exposes the underlying settings model for tests.
+func (ws *WorkspaceSettings) ModelForTest() *settings.Model { return ws.model }
+
 func (ws *WorkspaceSettings) SetFocusHandler(fn func(ui.ComponentID)) {
 	ws.surface.SetFocusHandler(fn)
 }
@@ -36,8 +39,12 @@ func (ws *WorkspaceSettings) FocusSearch() { ws.surface.FocusSearch() }
 
 func (ws *WorkspaceSettings) HandleEvent(msg tea.Msg) tea.Cmd {
 	oldPane := ws.model.Pane()
-	updated, cmd := ws.model.Update(msg)
-	ws.model = &updated
+	// Update mutates the model in place and returns a copy; keep ws.model
+	// pointing at the same instance. Replacing it with the copy would orphan
+	// the form's onChanged closures, which capture the original pointer, so
+	// later field edits would mutate a stale model and the dropdown and model
+	// would diverge (e.g. provider switch after a sign-in).
+	_, cmd := ws.model.Update(msg)
 	ws.surface.SetModel(ws.model)
 	if oldPane == 1 && ws.model.Pane() == 0 {
 		ws.surface.FocusCategories()

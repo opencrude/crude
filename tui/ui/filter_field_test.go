@@ -15,9 +15,9 @@ func TestFilterFieldUnicodeEmojiZWJWideEditing(t *testing.T) {
 	f := NewFilterField("filter", nil)
 	f.Layout(LayoutContext{}, Rect{W: 60, H: 1})
 
-	family := "👨‍👩‍👧"          // 5 runes (3 emoji + 2 ZWJ)
-	combining := "e\u0301"     // 2 runes (base + combining acute)
-	wide := "日"               // 1 rune, 2 cells wide
+	family := "👨‍👩‍👧"      // 5 runes (3 emoji + 2 ZWJ)
+	combining := "e\u0301" // 2 runes (base + combining acute)
+	wide := "日"            // 1 rune, 2 cells wide
 	want := "a" + family + combining + wide + "🚀"
 
 	f.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'a', Text: "a"}))

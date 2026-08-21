@@ -3,6 +3,7 @@ package workspace
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestMessageContainsNoPresentationCacheFields(t *testing.T) {
@@ -83,6 +84,52 @@ func TestConversationRemoveActiveThinking(t *testing.T) {
 	content := conversation.RemoveActiveThinking()
 	if content != "private reasoning" || len(conversation.Messages()) != 0 {
 		t.Fatalf("RemoveActiveThinking() = %q, messages=%#v", content, conversation.Messages())
+	}
+}
+
+func TestMarkAllThinkingDoneRecordsDuration(t *testing.T) {
+	conversation := NewConversation()
+	conversation.AppendMessage(Message{
+		Role:           MessageRoleThinking,
+		Content:        "reasoning",
+		Time:           time.Now().Add(-3 * time.Second),
+		ThinkingActive: true,
+	})
+	conversation.MarkAllThinkingDone()
+	messages := conversation.Messages()
+	if len(messages) != 1 {
+		t.Fatalf("message count = %d, want 1", len(messages))
+	}
+	msg := messages[0]
+	if msg.ThinkingActive || msg.ThinkingInterrupted {
+		t.Fatalf("thinking block still active: %#v", msg)
+	}
+	if msg.ThinkingDuration < 3*time.Second {
+		t.Fatalf("ThinkingDuration = %v, want >= 3s", msg.ThinkingDuration)
+	}
+	// Repeated MarkAllThinkingDone calls must not recompute the duration.
+	first := msg.ThinkingDuration
+	conversation.MarkAllThinkingDone()
+	if got := conversation.Messages()[0].ThinkingDuration; got != first {
+		t.Fatalf("duration recomputed on second call: %v -> %v", first, got)
+	}
+}
+
+func TestMarkAllThinkingInterruptedRecordsDuration(t *testing.T) {
+	conversation := NewConversation()
+	conversation.AppendMessage(Message{
+		Role:           MessageRoleThinking,
+		Content:        "reasoning",
+		Time:           time.Now().Add(-2 * time.Second),
+		ThinkingActive: true,
+	})
+	conversation.MarkAllThinkingInterrupted()
+	msg := conversation.Messages()[0]
+	if !msg.ThinkingInterrupted {
+		t.Fatalf("thinking block not interrupted: %#v", msg)
+	}
+	if msg.ThinkingDuration < 2*time.Second {
+		t.Fatalf("ThinkingDuration = %v, want >= 2s", msg.ThinkingDuration)
 	}
 }
 

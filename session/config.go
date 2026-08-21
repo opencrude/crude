@@ -18,15 +18,18 @@ type CategoryConfig struct {
 	// APIKey is filled at use time from Config.Providers. Agent profiles
 	// store a provider ID, never credentials — json:"-" so legacy
 	// category api_key fields are ignored on load and omitted on save.
-	APIKey         string   `json:"-"`
-	APIStandard    string   `json:"api_standard,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	ThinkingEffort string   `json:"thinking_effort,omitempty"`
-	Policy         string   `json:"policy,omitempty"`
-	MaxSteps       int      `json:"max_steps,omitempty"`
-	Description    string   `json:"description,omitempty"`
-	AllowedTools   []string `json:"allowed_tools,omitempty"`
-	DeniedTools    []string `json:"denied_tools,omitempty"`
+	APIKey string `json:"-"`
+	// OAuth is filled at use time from Config.Providers, like APIKey. It is
+	// never persisted on a category — json:"-" keeps it out of agent profiles.
+	OAuth          *provider.OAuthCredentials `json:"-"`
+	APIStandard    string                     `json:"api_standard,omitempty"`
+	Model          string                     `json:"model,omitempty"`
+	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
+	Policy         string                     `json:"policy,omitempty"`
+	MaxSteps       int                        `json:"max_steps,omitempty"`
+	Description    string                     `json:"description,omitempty"`
+	AllowedTools   []string                   `json:"allowed_tools,omitempty"`
+	DeniedTools    []string                   `json:"denied_tools,omitempty"`
 
 	ModelContextWindow  int     `json:"model_context_window,omitempty"`
 	ModelInputPrice     float64 `json:"model_input_price,omitempty"`
@@ -144,12 +147,13 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	APIKey         string            `json:"api_key,omitempty"`
-	ProviderURL    string            `json:"provider_url,omitempty"`
-	APIStandard    string            `json:"api_standard,omitempty"`
-	Model          string            `json:"model,omitempty"`
-	ModelStandards map[string]string `json:"model_standards,omitempty"`
-	ThinkingEffort string            `json:"thinking_effort,omitempty"`
+	APIKey         string                     `json:"api_key,omitempty"`
+	ProviderURL    string                     `json:"provider_url,omitempty"`
+	APIStandard    string                     `json:"api_standard,omitempty"`
+	Model          string                     `json:"model,omitempty"`
+	ModelStandards map[string]string          `json:"model_standards,omitempty"`
+	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
+	OAuth          *provider.OAuthCredentials `json:"oauth,omitempty"`
 }
 
 func (c ProviderConfig) StandardForModel(model, providerID string) string {
@@ -168,6 +172,9 @@ func providerForCategory(category CategoryConfig) (*provider.Provider, error) {
 	p.SetThinkingEffort(category.ThinkingEffort)
 	if err := p.SetStandardID(category.APIStandard); err != nil {
 		return nil, err
+	}
+	if category.OAuth != nil {
+		p.SetOAuth(category.OAuth)
 	}
 	return p, nil
 }
@@ -291,6 +298,7 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 		// Always take credentials from the provider. A stored category key
 		// is leftover from older configs and must not shadow Settings.
 		cat.APIKey = prov.APIKey
+		cat.OAuth = prov.OAuth
 		if cat.ProviderURL == "" {
 			cat.ProviderURL = prov.ProviderURL
 		}

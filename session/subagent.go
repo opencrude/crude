@@ -507,14 +507,17 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		resolvedProvider = mainCat.Provider
 	}
 	resolvedAPIKey := ""
+	var resolvedOAuth *provider.OAuthCredentials
 	if prov, ok := cfg.Providers[resolvedProvider]; ok {
 		resolvedAPIKey = prov.APIKey
+		resolvedOAuth = prov.OAuth
 		if resolvedURL == "" {
 			resolvedURL = prov.ProviderURL
 		}
 	} else {
 		mainCat := cfg.GetActiveDefaultCategory()
 		resolvedAPIKey = mainCat.APIKey
+		resolvedOAuth = mainCat.OAuth
 		if resolvedURL == "" {
 			resolvedURL = mainCat.ProviderURL
 		}
@@ -544,6 +547,9 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 			_ = subDB.Close()
 		}
 		return nil, fmt.Errorf("sub-agent provider standard: %w", err)
+	}
+	if resolvedOAuth != nil {
+		p.SetOAuth(resolvedOAuth)
 	}
 	if resolvedThinkingEffort != "" {
 		p.SetThinkingEffort(resolvedThinkingEffort)

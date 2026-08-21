@@ -100,7 +100,9 @@ func (p *pathPolicy) validatePath(absPath string) error {
 		resolved, err := resolveSymlink(absPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				safetyLogIf(func(lg *logger.Logger) { lg.Warn("SAFETY", "symlink_resolve_failed", "path", absPath, "error", err.Error()) })
+				safetyLogIf(func(lg *logger.Logger) {
+					lg.Warn("SAFETY", "symlink_resolve_failed", "path", absPath, "error", err.Error())
+				})
 				return fmt.Errorf("symlink resolution failed for %s: %w", absPath, err)
 			}
 		} else {

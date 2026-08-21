@@ -3,6 +3,7 @@ package types
 import (
 	"time"
 
+	"crude/provider"
 	"crude/sessiondb"
 )
 
@@ -87,12 +88,12 @@ type Settings struct {
 	SessionOverrides map[string]CategorySettings `json:"-"`
 	// SessionMultiAgent is the explicit session override for sub-agent
 	// spawning. nil means inherit the workspace/profile default.
-	SessionMultiAgent *bool `json:"-"`
-	Theme            ThemeSettings               `json:"theme,omitempty"`
-	Editor           EditorSettings              `json:"editor,omitempty"`
-	LSP              LSPSettings                 `json:"lsp,omitempty"`
-	UI               UISettings                  `json:"ui,omitempty"`
-	Font             FontSettings                `json:"font,omitempty"`
+	SessionMultiAgent *bool          `json:"-"`
+	Theme             ThemeSettings  `json:"theme,omitempty"`
+	Editor            EditorSettings `json:"editor,omitempty"`
+	LSP               LSPSettings    `json:"lsp,omitempty"`
+	UI                UISettings     `json:"ui,omitempty"`
+	Font              FontSettings   `json:"font,omitempty"`
 }
 
 type AppSettings struct {
@@ -297,12 +298,13 @@ type ModelEntry struct {
 }
 
 type ProviderConfig struct {
-	APIKey         string            `json:"api_key,omitempty"`
-	ProviderURL    string            `json:"provider_url,omitempty"`
-	APIStandard    string            `json:"api_standard,omitempty"`
-	Model          string            `json:"model,omitempty"`
-	ModelStandards map[string]string `json:"model_standards,omitempty"`
-	ThinkingEffort string            `json:"thinking_effort,omitempty"`
+	APIKey         string                     `json:"api_key,omitempty"`
+	ProviderURL    string                     `json:"provider_url,omitempty"`
+	APIStandard    string                     `json:"api_standard,omitempty"`
+	Model          string                     `json:"model,omitempty"`
+	ModelStandards map[string]string          `json:"model_standards,omitempty"`
+	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
+	OAuth          *provider.OAuthCredentials `json:"oauth,omitempty"`
 }
 
 type ProviderPreset struct {
@@ -355,6 +357,7 @@ type ChatMessage struct {
 
 	ThinkingActive      bool
 	ThinkingInterrupted bool
+	ThinkingDuration    time.Duration
 
 	Incomplete       bool
 	IncompleteReason string

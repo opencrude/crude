@@ -23,7 +23,7 @@ type RowSpan struct {
 	Attr   cell.Attrs
 	// FGColor, when FGSet is true, overrides Role at paint time.
 	FGColor cell.Color
-	FGSet    bool
+	FGSet   bool
 	// BGColor, when BGSet is true, overrides BgRole at paint time.
 	BGColor cell.Color
 	BGSet   bool

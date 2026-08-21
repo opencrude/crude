@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -40,7 +41,9 @@ type Provider struct {
 
 	standard       APIStandard
 	extraBody      map[string]any
+	extraHeaders   map[string]string
 	thinkingEffort string
+	oauth          *OAuthCredentials
 }
 
 type StandardInfo struct {
@@ -53,6 +56,8 @@ var standardInfos = []StandardInfo{
 	{ID: "openai-responses", Name: "OpenAI Responses", Description: "Native Responses API with reasoning-item continuity."},
 	{ID: "openai", Name: "OpenAI Chat Completions", Description: "Chat Completions and compatible gateways."},
 	{ID: "anthropic", Name: "Anthropic Messages", Description: "Native Claude Messages with signed thinking blocks."},
+	{ID: "ollama", Name: "Ollama", Description: "Native Ollama /api/chat protocol (local + cloud)."},
+	{ID: "codex", Name: "ChatGPT Codex", Description: "ChatGPT-subscription Responses backend (Sign in with ChatGPT)."},
 }
 
 func StandardList() []StandardInfo {
@@ -119,19 +124,103 @@ func (p *Provider) ModelsEndpoint() string {
 }
 
 func (p *Provider) Auth() (header, value string) {
-	return p.Standard().Auth(p.APIKey)
+	return p.Standard().Auth(p.effectiveAPIKey())
 }
 
 func (p *Provider) Headers() map[string]string {
-	headers := p.Standard().Headers(p.APIKey)
-	if len(headers) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(headers))
+	headers := p.Standard().Headers(p.effectiveAPIKey())
+	out := make(map[string]string, len(headers)+len(p.extraHeaders))
 	for key, value := range headers {
 		out[key] = value
 	}
+	for key, value := range p.extraHeaders {
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
 	return out
+}
+
+// effectiveAPIKey returns the credential used as the bearer: the OAuth access
+// token when present (e.g. the ChatGPT subscription flow), falling back to the
+// static API key.
+func (p *Provider) effectiveAPIKey() string {
+	if p.oauth != nil && p.oauth.AccessToken != "" {
+		return p.oauth.AccessToken
+	}
+	return p.APIKey
+}
+
+// SetOAuth attaches OAuth credentials (from a Sign-in with ChatGPT flow) to the
+// provider. For the codex standard it also installs the per-session headers the
+// ChatGPT-subscription backend requires: originator, openai-beta,
+// chatgpt-account-id, and stable session-id / thread-id values.
+func (p *Provider) SetOAuth(creds *OAuthCredentials) {
+	if creds == nil {
+		p.oauth = nil
+		return
+	}
+	p.oauth = creds
+	if p.StandardID() == "codex" {
+		p.applyCodexHeaders()
+	}
+}
+
+func (p *Provider) applyCodexHeaders() {
+	if p.oauth == nil {
+		return
+	}
+	sessionID := newSessionUUID()
+	hdrs := map[string]string{
+		"originator":  openAIOAuthOrigin,
+		"openai-beta": "responses=experimental",
+		"session-id":  sessionID,
+		"thread-id":   sessionID,
+		"User-Agent":  "crude/" + codexClientVersion,
+	}
+	if p.oauth.AccountID != "" {
+		hdrs["chatgpt-account-id"] = p.oauth.AccountID
+	}
+	p.extraHeaders = hdrs
+}
+
+// OAuth returns the stored OAuth credentials, or nil if none are set.
+func (p *Provider) OAuth() *OAuthCredentials { return p.oauth }
+
+// EnsureAuth refreshes the OAuth access token in memory if it is missing or
+// about to expire. It is a no-op for providers without OAuth credentials.
+// Refresh updates only the live provider state; the persisted refresh token
+// remains valid across restarts, so a restart re-refreshes without re-sign-in.
+func (p *Provider) EnsureAuth(ctx context.Context) error {
+	if p.oauth == nil || p.oauth.RefreshToken == "" {
+		return nil
+	}
+	if !p.oauth.expiredSoon() {
+		return nil
+	}
+	creds, err := RefreshOpenAIToken(ctx, p.oauth.RefreshToken)
+	if err != nil {
+		return err
+	}
+	p.oauth.AccessToken = creds.AccessToken
+	if creds.RefreshToken != "" {
+		p.oauth.RefreshToken = creds.RefreshToken
+	}
+	if creds.IDToken != "" {
+		p.oauth.IDToken = creds.IDToken
+	}
+	if creds.Email != "" {
+		p.oauth.Email = creds.Email
+	}
+	p.oauth.ExpiresAt = creds.ExpiresAt
+	if creds.AccountID != "" {
+		p.oauth.AccountID = creds.AccountID
+	}
+	if p.StandardID() == "codex" {
+		p.applyCodexHeaders()
+	}
+	return nil
 }
 
 func (p *Provider) EncodeRequest(req *ChatRequest) ([]byte, error) {
@@ -306,6 +395,27 @@ var presets = []Preset{
 		StandardID: "openai",
 	},
 	{
+		ID:         "ollama-cloud",
+		Name:       "Ollama Cloud",
+		BaseURL:    "https://ollama.com/api",
+		HelpText:   "Hosted Ollama models (native /api/chat). API key at ollama.com/settings/keys",
+		StandardID: "ollama",
+	},
+	{
+		ID:         "synthetic",
+		Name:       "Synthetic",
+		BaseURL:    "https://api.synthetic.new/openai/v1",
+		HelpText:   "GLM & Kimi models via syn: aliases. dev.synthetic.new",
+		StandardID: "openai",
+	},
+	{
+		ID:         "chatgpt",
+		Name:       "OpenAI (ChatGPT subscription)",
+		BaseURL:    "https://chatgpt.com/backend-api/codex",
+		HelpText:   "Use a ChatGPT Plus/Pro subscription via Sign in with ChatGPT.",
+		StandardID: "codex",
+	},
+	{
 		ID:         "custom",
 		Name:       "Custom",
 		BaseURL:    "",
@@ -340,6 +450,10 @@ func standardByID(id string) APIStandard {
 		return &OpenAIResponsesStandard{}
 	case "anthropic":
 		return &AnthropicStandard{}
+	case "ollama":
+		return &OllamaStandard{}
+	case "codex":
+		return &CodexStandard{}
 	default:
 		return &OpenAIStandard{}
 	}
@@ -352,7 +466,7 @@ func isKnownStandardID(id string) bool {
 
 func canonicalStandardID(id string) (string, bool) {
 	switch id {
-	case "openai", "openai-chat", "openai-responses", "responses", "anthropic":
+	case "openai", "openai-chat", "openai-responses", "responses", "anthropic", "ollama", "codex":
 		switch id {
 		case "openai-chat":
 			return "openai", true

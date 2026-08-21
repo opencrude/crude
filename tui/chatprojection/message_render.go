@@ -156,6 +156,11 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
 	timeLabel := rendering.FormatTimeLabel(msg.Time)
+	// Once a thinking block finishes, replace the clock label with how long
+	// it ran ("thought for 12s"), matching the historical chat view.
+	if !msg.ThinkingActive && !msg.ThinkingInterrupted && msg.ThinkingDuration > 0 {
+		timeLabel = "thought for " + rendering.FormatThinkingDuration(msg.ThinkingDuration)
+	}
 	header, _ := buildThinkingHeader(ctx.modelName, msg.Incomplete, timeLabel, ctx.innerW, suppressHeader)
 	if !header.IsZero() {
 		ml.lines = append(ml.lines, header.PlainText())

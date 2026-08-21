@@ -54,7 +54,9 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 	// 1. Check global destructive op permission (for commands)
 	key := PermissionKey{Scope: ScopeDestructiveOp, Tool: tool, Op: op}
 	if s.allowed[key] {
-		s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_destructive_op") })
+		s.logIf(func(lg *logger.Logger) {
+			lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_destructive_op")
+		})
 		return true
 	}
 
@@ -67,7 +69,9 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 		dir := filepath.Dir(absPath)
 		outsideKey := PermissionKey{Scope: ScopeOutsideCwd, Op: op, Tool: tool, Dir: dir}
 		if s.allowed[outsideKey] {
-			s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_outside_cwd") })
+			s.logIf(func(lg *logger.Logger) {
+				lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_outside_cwd")
+			})
 			return true
 		}
 	}
@@ -80,7 +84,9 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 				if pk.Scope == ScopePathTree && pk.Tool == tool && pk.Op == op {
 					// Check if the target path is within the allowed directory tree
 					if strings.HasPrefix(absPath, pk.Dir+string(os.PathSeparator)) || absPath == pk.Dir {
-						s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_path_tree") })
+						s.logIf(func(lg *logger.Logger) {
+							lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "allowed_path_tree")
+						})
 						return true
 					}
 				}
@@ -88,7 +94,9 @@ func (s *PermissionStore) IsAlwaysAllowed(op CRUDEOp, tool string, targetPath st
 		}
 	}
 
-	s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "denied") })
+	s.logIf(func(lg *logger.Logger) {
+		lg.Debug("PERM", "check", "op", op, "tool", tool, "target", targetPath, "result", "denied")
+	})
 	return false
 }
 
@@ -149,7 +157,9 @@ func (s *PermissionStore) IsCommandAllowed(sr *CommandSafetyResult) bool {
 		Op:    OpExecute,
 	}
 	if s.allowed[key] {
-		s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", "allowed_global") })
+		s.logIf(func(lg *logger.Logger) {
+			lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", "allowed_global")
+		})
 		return true
 	}
 
@@ -160,10 +170,14 @@ func (s *PermissionStore) IsCommandAllowed(sr *CommandSafetyResult) bool {
 			Dir:   sr.Risk.String(),
 		}
 		allowed := s.allowed[riskKey]
-		s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", fmt.Sprintf("%v", allowed)) })
+		s.logIf(func(lg *logger.Logger) {
+			lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", fmt.Sprintf("%v", allowed))
+		})
 		return allowed
 	}
-	s.logIf(func(lg *logger.Logger) { lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", "denied") })
+	s.logIf(func(lg *logger.Logger) {
+		lg.Debug("PERM", "command_check", "risk", sr.Risk.String(), "result", "denied")
+	})
 	return false
 }
 

@@ -233,7 +233,6 @@ func TestWindowFrameRevealHostHitTestMatchesGeometry(t *testing.T) {
 	}
 }
 
-
 func TestWindowFrameTitleActionAfterLayoutEmitsAction(t *testing.T) {
 	w := NewWindowFrameWidget(theme.DefaultDark(), "frame", FrameWindow, "Terminal",
 		&testFrameBody{Base: NewBase("body")}, nil, true, 40, 12)

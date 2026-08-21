@@ -138,7 +138,9 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
 	activeCfg := effectiveCfg.GetActiveDefaultCategory()
 	provider.MergeModelCap(activeCfg.Model, activeCfg.ModelSupportsVision, activeCfg.ModelSupportsTools)
-	if activeCfg.APIKey == "" {
+	// The ChatGPT subscription provider authenticates via OAuth, not an API
+	// key, so an empty key is fine when OAuth credentials are present.
+	if activeCfg.APIKey == "" && activeCfg.OAuth == nil {
 		l.Warn("INPUT", "no_api_key")
 		sender.SendAgentEventWithID("error", "No API key configured. Press Ctrl+S to open settings.", o.ID)
 		return

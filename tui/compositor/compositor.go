@@ -22,8 +22,8 @@ type Compositor struct {
 	back   *surface.CellBuffer // Being rendered into (current frame)
 	width  int                 // Terminal width in columns
 	height int                 // Terminal height in rows
-	root   *surface.Surface   // Root of the surface tree
-	damage DamageRegion       // Tracks what changed this frame
+	root   *surface.Surface    // Root of the surface tree
+	damage DamageRegion        // Tracks what changed this frame
 }
 
 // NewCompositor creates a compositor for the given terminal dimensions.

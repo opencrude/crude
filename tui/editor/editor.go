@@ -130,8 +130,8 @@ type Editor struct {
 
 	// gitEdits/gitBlame are presentation copies of the workspace Git
 	// annotation. Index 0 is editor line 0.
-	gitEdits []GitLineKind
-	gitBlame []GitBlameLine
+	gitEdits  []GitLineKind
+	gitBlame  []GitBlameLine
 	gitLoaded bool
 
 	// formatOnSave, when true, runs the file's language-specific formatter

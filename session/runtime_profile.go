@@ -202,14 +202,24 @@ func (rp *RuntimeProfile) applyOverrideToCategories(cfg *Config, oo *Orchestrato
 // API keys are never a category property and are cleared on the result.
 func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	merged := base
+	// A provider switch invalidates the base's URL and wire standard from the
+	// old provider. The settings forms never carry a per-category URL, and set
+	// the standard to "inherit" on a switch, so without clearing here the stale
+	// values survive and the agent posts the new provider's credentials to the
+	// old provider's endpoint (the reported "Authentication failed").
+	providerChanged := override.Provider != "" && override.Provider != base.Provider
 	if override.Provider != "" {
 		merged.Provider = override.Provider
 	}
 	if override.ProviderURL != "" {
 		merged.ProviderURL = override.ProviderURL
+	} else if providerChanged {
+		merged.ProviderURL = ""
 	}
 	if override.APIStandard != "" {
 		merged.APIStandard = override.APIStandard
+	} else if providerChanged {
+		merged.APIStandard = ""
 	}
 	if override.Model != "" {
 		merged.Model = override.Model

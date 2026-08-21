@@ -46,6 +46,21 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 	}
 }
 
+func TestRootActionOrderPutsSaveAsWorkspaceLast(t *testing.T) {
+	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{}}}
+	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
+	labels := screen.actions.ButtonLabelsForTest()
+	want := []string{"Save", "Cancel", "Reset", "Save as workspace"}
+	if len(labels) != len(want) {
+		t.Fatalf("labels = %v, want %v", labels, want)
+	}
+	for i, w := range want {
+		if labels[i] != w {
+			t.Errorf("label[%d] = %q, want %q", i, labels[i], w)
+		}
+	}
+}
+
 func TestRootIncludesMultiAgentToggle(t *testing.T) {
 	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{
 		Enabled: false,
@@ -84,6 +99,35 @@ func TestRoleResetRestoresInheritanceAndRemovesOverride(t *testing.T) {
 	}
 	if got := settings.Agents.Categories["crafter"].Model; got != "workspace-crafter" {
 		t.Fatalf("model after reset=%q, want workspace-crafter", got)
+	}
+}
+
+func TestInheritMainCopiesMainAgentCategory(t *testing.T) {
+	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openai", Model: "gpt-5.6", ThinkingEffort: "high"},
+		"crafter": {Provider: "openrouter", Model: "workspace-crafter"},
+	}}}
+	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
+
+	screen.inheritMain("crafter")
+	settings := screen.ToSettings()
+	got := settings.Agents.Categories["crafter"]
+	if got.Provider != "openai" || got.Model != "gpt-5.6" || got.ThinkingEffort != "high" {
+		t.Fatalf("crafter after inherit = %+v, want main agent's category", got)
+	}
+	if _, ok := settings.SessionOverrides["crafter"]; !ok {
+		t.Fatal("inherit main should record a session override")
+	}
+}
+
+func TestInheritMainNoopForDefaultRole(t *testing.T) {
+	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openai", Model: "gpt-5.6"},
+	}}}
+	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
+	screen.inheritMain("default")
+	if _, ok := screen.overrides["default"]; ok {
+		t.Fatal("default role should not get an inherit-main override")
 	}
 }
 

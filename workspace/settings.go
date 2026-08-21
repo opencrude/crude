@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	workspaceSettingsKey     = "workspace_settings"
-	legacyAppSettingsDBKey   = "app_settings"
+	workspaceSettingsKey   = "workspace_settings"
+	legacyAppSettingsDBKey = "app_settings"
 )
 
 // SetAppDefaults stores the application-layer snapshot from config.json.

@@ -338,7 +338,7 @@ func revertEntry(e JournalEntry, lg *logger.Logger) error {
 			curCS := checksum(cur)
 			if curCS != e.ChecksumN {
 				lg.Warn("JOURNAL", "modified_externally", "path", e.Path, "op_id", truncateHash(e.OpID, 8),
-				"expected", truncateHash(e.ChecksumN, 8), "got", truncateHash(curCS, 8))
+					"expected", truncateHash(e.ChecksumN, 8), "got", truncateHash(curCS, 8))
 			}
 		}
 		return writeAtomic(e.Path, old, os.FileMode(e.OldPerm), lg)

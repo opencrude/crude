@@ -1,8 +1,8 @@
 package rendering
 
 import (
-	"crude/clipboard"
 	tea "charm.land/bubbletea/v2"
+	"crude/clipboard"
 )
 
 // ClipboardCopiedMsg is sent after a successful clipboard write.
