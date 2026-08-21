@@ -1,8 +1,12 @@
 package settings
 
 import (
+	"context"
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -390,7 +394,24 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 				Cmd:     func() tea.Msg { return ThemePreviewMsg{Preset: preset} },
 			}
 		}
+		// Switching the provider rebuilds the provider form (the field set is
+		// provider-specific — ChatGPT swaps the API-key row for OAuth rows).
+		// The model has already rebuilt the FormModel; rebind the form widget
+		// so the new fields paint and keep focus on the provider selector.
+		if fieldID == fieldProvider && s.model != nil && s.model.SelectedCategory() == catProviders {
+			s.refreshForm()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		}
 		return ui.EventResult{Handled: true}
+	case "settings.chatgpt.signin":
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+			defer cancel()
+			creds, err := provider.SignInWithChatGPT(ctx)
+			return ChatGPTSignInResultMsg{Creds: creds, Err: err}
+		}}
+	case "settings.chatgpt.signout":
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ChatGPTSignOutMsg{} }}
 	case "form.select.open":
 		fieldID, _ := action.Payload.(string)
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint, Cmd: s.model.OpenSelect(fieldID)}

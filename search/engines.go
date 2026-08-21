@@ -92,7 +92,9 @@ func (t *engineTracker) engines() []string {
 }
 
 func searchWithEngine(engine, query string, limit int) ([]SearchResult, error) {
-	logIf(func(lg *logger.Logger) { lg.Debug("SEARCH", "engine_start", "engine", engine, "query", query, "limit", limit) })
+	logIf(func(lg *logger.Logger) {
+		lg.Debug("SEARCH", "engine_start", "engine", engine, "query", query, "limit", limit)
+	})
 	start := time.Now()
 	results, err := func() ([]SearchResult, error) {
 		switch strings.ToLower(engine) {
@@ -110,9 +112,13 @@ func searchWithEngine(engine, query string, limit int) ([]SearchResult, error) {
 	}()
 	dur := time.Since(start).Milliseconds()
 	if err != nil {
-		logIf(func(lg *logger.Logger) { lg.Warn("SEARCH", "engine_failed", "engine", engine, "latency_ms", dur, "error", err.Error()) })
+		logIf(func(lg *logger.Logger) {
+			lg.Warn("SEARCH", "engine_failed", "engine", engine, "latency_ms", dur, "error", err.Error())
+		})
 	} else {
-		logIf(func(lg *logger.Logger) { lg.Debug("SEARCH", "engine_ok", "engine", engine, "results", len(results), "latency_ms", dur) })
+		logIf(func(lg *logger.Logger) {
+			lg.Debug("SEARCH", "engine_ok", "engine", engine, "results", len(results), "latency_ms", dur)
+		})
 	}
 	return results, err
 }
@@ -122,7 +128,9 @@ func searchWithEngine(engine, query string, limit int) ([]SearchResult, error) {
 // and failed engines with their error messages.
 func SuperSearch(query string, limit int) ([]SearchResult, []string, map[string]string) {
 	engines := tracker.engines()
-	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "super_start", "query", query, "limit", limit, "engines", engines) })
+	logIf(func(lg *logger.Logger) {
+		lg.Info("SEARCH", "super_start", "query", query, "limit", limit, "engines", engines)
+	})
 
 	type engineResult struct {
 		engine  string
@@ -156,7 +164,9 @@ func SuperSearch(query string, limit int) ([]SearchResult, []string, map[string]
 	}
 
 	deduped := deduplicateResults(allResults, limit)
-	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "super_done", "query", query, "raw", len(allResults), "deduped", len(deduped), "succeeded", len(succeeded), "failed_engines", len(failed)) })
+	logIf(func(lg *logger.Logger) {
+		lg.Info("SEARCH", "super_done", "query", query, "raw", len(allResults), "deduped", len(deduped), "succeeded", len(succeeded), "failed_engines", len(failed))
+	})
 	return deduped, succeeded, failed
 }
 

@@ -585,7 +585,7 @@ func TestSuiteSelection_AllCases(t *testing.T) {
 		e.SetValue("abcdef")
 		e.SetCursor(3, false)
 		e.SetCursor(1, true) // select [1,3)
-		e.SetCursor(5, true)  // extend to [3,5) — anchor stays at 3
+		e.SetCursor(5, true) // extend to [3,5) — anchor stays at 3
 		a, b := e.SelectionRange()
 		if a != 3 || b != 5 {
 			t.Fatalf("range=[%d,%d) want [3,5)", a, b)
@@ -1382,8 +1382,8 @@ func TestSuiteStress_IntegrationScenarios(t *testing.T) {
 		e := NewTextEdit()
 		e.SetValue("abcdef")
 		e.SetCursor(3, false)
-		e.SetCursor(0, true)  // select [0,3) backward
-		e.SetCursor(2, true)  // contract to [2,3)
+		e.SetCursor(0, true) // select [0,3) backward
+		e.SetCursor(2, true) // contract to [2,3)
 		a, b := e.SelectionRange()
 		if a != 2 || b != 3 {
 			t.Fatalf("range=[%d,%d) want [2,3)", a, b)
@@ -1586,7 +1586,7 @@ func TestSuiteNewline_DocumentationTests(t *testing.T) {
 		e.SetCursor(7, false) // end of "bar"
 		e.MoveWordLeft(false)
 		// Skips no spaces (cursor at 'r'), then skips word chars back to 'b'
-		// Actually: pos=7, pos-- → 6 ('a'), is 'a' space? no. buf[5]='r'? 
+		// Actually: pos=7, pos-- → 6 ('a'), is 'a' space? no. buf[5]='r'?
 		// Wait: "foo\nbar" → f(0)o(1)o(2)\n(3)b(4)a(5)r(6) — cursor=7
 		// pos=7, pos-- → 6. buf[6]='r', is space? no.
 		// for pos>0 && buf[pos-1] != ' ': pos=6, buf[5]='a' not space → pos=5
@@ -1686,8 +1686,8 @@ func TestSuiteNewline_DocumentationTests(t *testing.T) {
 		// line/col coordinates for selection.
 		e := NewTextEdit()
 		e.SetValue("foo\nbar\nbaz")
-		e.SetCursor(2, false)  // in "fo|o"
-		e.SetCursor(10, true)   // extend to "ba|z" → select "o\nbar\nba"
+		e.SetCursor(2, false) // in "fo|o"
+		e.SetCursor(10, true) // extend to "ba|z" → select "o\nbar\nba"
 		a, b := e.SelectionRange()
 		if a != 2 || b != 10 {
 			t.Fatalf("range=[%d,%d) want [2,10)", a, b)
@@ -1718,11 +1718,11 @@ func TestSuiteNewline_DocumentationTests(t *testing.T) {
 func TestSuiteBoundary_EdgeCaseMatrix(t *testing.T) {
 	// Table-driven boundary tests for every operation
 	type tc struct {
-		name     string
-		setup    func(e *TextEdit)
-		op       func(e *TextEdit)
-		wantVal  string
-		wantCur  int
+		name    string
+		setup   func(e *TextEdit)
+		op      func(e *TextEdit)
+		wantVal string
+		wantCur int
 	}
 
 	tests := []tc{
@@ -1804,8 +1804,8 @@ func TestSuiteSelection_DirectionAndExtension(t *testing.T) {
 		e := NewTextEdit()
 		e.SetValue("abcdef")
 		e.SetCursor(3, false)
-		e.SetCursor(1, true)  // [1,3)
-		e.SetCursor(3, true)  // back to anchor → zero-width
+		e.SetCursor(1, true) // [1,3)
+		e.SetCursor(3, true) // back to anchor → zero-width
 		if e.HasSelection() {
 			t.Fatal("selection should be zero-width when cursor == anchor")
 		}
@@ -1816,7 +1816,7 @@ func TestSuiteSelection_DirectionAndExtension(t *testing.T) {
 		e.SetValue("abcdef")
 		e.SetCursor(0, false)
 		e.SetCursor(3, true) // [0,3)
-		e.MoveLeft(false)     // non-extending → clears
+		e.MoveLeft(false)    // non-extending → clears
 		if e.HasSelection() {
 			t.Fatal("selection should be cleared")
 		}
@@ -1830,7 +1830,7 @@ func TestSuiteSelection_DirectionAndExtension(t *testing.T) {
 		e.SetValue("abcdef")
 		e.SetCursor(0, false)
 		e.SetCursor(3, true) // [0,3)
-		e.MoveLeft(true)      // extend → [0,2)
+		e.MoveLeft(true)     // extend → [0,2)
 		a, b := e.SelectionRange()
 		if a != 0 || b != 2 {
 			t.Fatalf("range=[%d,%d) want [0,2)", a, b)

@@ -35,10 +35,14 @@ type Message struct {
 
 	ThinkingActive      bool
 	ThinkingInterrupted bool
-	Incomplete          bool
-	IncompleteReason    string
-	SubPaneID           string
-	PermTag             string
+	// ThinkingDuration records how long this thinking block ran. It is set
+	// when the block transitions out of the active state (done or
+	// interrupted) so the TUI can render a "thought for Xs" label.
+	ThinkingDuration time.Duration
+	Incomplete       bool
+	IncompleteReason string
+	SubPaneID        string
+	PermTag          string
 }
 
 // Conversation is the canonical live message state for one agent or thinking
@@ -137,6 +141,9 @@ func (c *Conversation) MarkAllThinkingDone() {
 	changed := false
 	for _, message := range c.messages {
 		if message.Role == MessageRoleThinking && (message.ThinkingActive || message.ThinkingInterrupted) {
+			if message.ThinkingActive {
+				message.ThinkingDuration = time.Since(message.Time)
+			}
 			message.ThinkingActive = false
 			message.ThinkingInterrupted = false
 			changed = true
@@ -156,6 +163,7 @@ func (c *Conversation) MarkAllThinkingInterrupted() {
 		}
 		if message.ThinkingActive {
 			message.ThinkingInterrupted = true
+			message.ThinkingDuration = time.Since(message.Time)
 		}
 		if message.ThinkingActive || message.ThinkingInterrupted {
 			message.ThinkingActive = false

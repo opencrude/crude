@@ -167,7 +167,10 @@ func TestEditorMouseWheelUsesHostLocalCoords(t *testing.T) {
 // TestEditorMouseDegenerateSizesNoPanic verifies the migrated editor mouse path
 // degrades gracefully (never panics) at zero/min/narrow viewport sizes.
 func TestEditorMouseDegenerateSizesNoPanic(t *testing.T) {
-	sizes := []struct{ name string; w, h int }{
+	sizes := []struct {
+		name string
+		w, h int
+	}{
 		{"zero", 0, 0},
 		{"min", 1, 1},
 		{"narrow", 10, 3},

@@ -20,9 +20,9 @@ const (
 // DiffContentLine is one content line of a unified diff: the body (without
 // the +/- prefix) plus its new-file line number (0 for deletions).
 type DiffContentLine struct {
-	Kind      DiffLineKind
-	NewLine   int
-	Content   string
+	Kind    DiffLineKind
+	NewLine int
+	Content string
 }
 
 // DiffHunkStructure is one hunk: the new-file start line and its content lines.
@@ -70,7 +70,7 @@ func ParseUnifiedDiffStruct(raw string) []DiffFileStructure {
 			for li, l := range h.Lines {
 				lines[li] = DiffContentLine{
 					Kind:    diffKindFromInternal(l.Type),
-					NewLine:  l.NewLineNum,
+					NewLine: l.NewLineNum,
 					Content: l.Content,
 				}
 			}

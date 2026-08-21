@@ -14,11 +14,11 @@ import (
 type HostKind string
 
 const (
-	HostGhostty  HostKind = "ghostty"
-	HostTmux     HostKind = "tmux"
-	HostZellij   HostKind = "zellij"
-	HostScreen   HostKind = "screen"
-	HostUnknown  HostKind = "unknown"
+	HostGhostty HostKind = "ghostty"
+	HostTmux    HostKind = "tmux"
+	HostZellij  HostKind = "zellij"
+	HostScreen  HostKind = "screen"
+	HostUnknown HostKind = "unknown"
 )
 
 // HostInfo describes the outer terminal and any multiplexer wrapping Crude.

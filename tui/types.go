@@ -19,7 +19,7 @@ type AgentEventMsg = ttypes.AgentEventMsg
 
 const (
 	ToolPreviewPreparing = ttypes.ToolPreviewPreparing
-	ToolPreviewStreaming  = ttypes.ToolPreviewStreaming
+	ToolPreviewStreaming = ttypes.ToolPreviewStreaming
 	ToolPreviewDone      = ttypes.ToolPreviewDone
 	ToolPreviewError     = ttypes.ToolPreviewError
 )
@@ -40,6 +40,6 @@ const (
 )
 
 type (
-	ModelsListMsg        = ttypes.ModelsListMsg
-	ModelsErrorMsg       = ttypes.ModelsErrorMsg
+	ModelsListMsg  = ttypes.ModelsListMsg
+	ModelsErrorMsg = ttypes.ModelsErrorMsg
 )

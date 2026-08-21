@@ -106,11 +106,11 @@ func TestUnicodeApocalypse(t *testing.T) {
 	t.Run("emoji_zwj_sequences", func(t *testing.T) {
 		t.Parallel()
 		emojis := []string{
-			`"👨‍👩‍👧‍👦"`,     // family
-			`"👩‍💻"`,        // woman technologist
-			`"🏳️‍🌈"`,      // rainbow flag
+			`"👨‍👩‍👧‍👦"`, // family
+			`"👩‍💻"`,     // woman technologist
+			`"🏳️‍🌈"`,    // rainbow flag
 			`"🐱‍👤"`,     // ninja cat
-			`"👁️‍🗨️"`,     // eye in speech bubble
+			`"👁️‍🗨️"`,   // eye in speech bubble
 		}
 		for _, e := range emojis {
 			result, err := Repair(e)
@@ -149,14 +149,14 @@ func TestUnicodeApocalypse(t *testing.T) {
 	t.Run("unicode_normalization_attacks", func(t *testing.T) {
 		t.Parallel()
 		cases := []string{
-			`"café"`,      // NFC
+			`"café"`,       // NFC
 			`"cafe\u0301"`, // NFD (é as e + combining acute)
 			`"ﬁ"`,          // ligature fi (U+FB01)
 			`"ß"`,          // Eszett
-			`"ℌ"`,         // black-letter H
-			`"ﬀ"`,         // ff ligature
-			`"Ω"`,         // Greek omega
-			`"ω"`,         // Greek omega (different code point)
+			`"ℌ"`,          // black-letter H
+			`"ﬀ"`,          // ff ligature
+			`"Ω"`,          // Greek omega
+			`"ω"`,          // Greek omega (different code point)
 		}
 		for _, c := range cases {
 			c := c
@@ -508,13 +508,13 @@ func TestQuoteCombinatorics(t *testing.T) {
 	t.Run("mixed_quote_types_in_single_string", func(t *testing.T) {
 		t.Parallel()
 		inputs := []string{
-			`"it's working"`,                                    // single quote inside double
-			`'he said "hello"'`,                                  // double inside single
-			"\u201Che said \u2018hello\u2019\u201D",              // smart mixed
-			"`backtick with 'single' and \"double\"`",            // backtick outer
-			"\u00B4acute with `backtick`\u0060",                  // acute/grave mix
-			"\u2018\u2018\u2018\u2019\u2019\u2019",               // multiple curly singles
-			"\u201C\u201C\u201D\u201C\u201D\u201D",               // curly double chaos
+			`"it's working"`,                          // single quote inside double
+			`'he said "hello"'`,                       // double inside single
+			"\u201Che said \u2018hello\u2019\u201D",   // smart mixed
+			"`backtick with 'single' and \"double\"`", // backtick outer
+			"\u00B4acute with `backtick`\u0060",       // acute/grave mix
+			"\u2018\u2018\u2018\u2019\u2019\u2019",    // multiple curly singles
+			"\u201C\u201C\u201D\u201C\u201D\u201D",    // curly double chaos
 		}
 		for _, input := range inputs {
 			input := input
@@ -530,18 +530,18 @@ func TestQuoteCombinatorics(t *testing.T) {
 	t.Run("unmatched_quote_nightmares", func(t *testing.T) {
 		t.Parallel()
 		inputs := []string{
-			`"hello`,             // missing end
-			`hello"`,             // missing start
-			`'hello`,             // missing end single
-			`hello'`,             // missing start single
-			"\u201Chello",        // smart open only
-			"hello\u201D",        // smart close only
-			"\u2018hello",        // smart single open only
-			"hello\u2019",        // smart single close only
-			"`hello",             // missing backtick end
-			"hello`",             // missing backtick start
-			`"hello'world"`,      // single quote inside doubles (valid)
-			`'hello"world'`,      // double inside singles
+			`"hello`,        // missing end
+			`hello"`,        // missing start
+			`'hello`,        // missing end single
+			`hello'`,        // missing start single
+			"\u201Chello",   // smart open only
+			"hello\u201D",   // smart close only
+			"\u2018hello",   // smart single open only
+			"hello\u2019",   // smart single close only
+			"`hello",        // missing backtick end
+			"hello`",        // missing backtick start
+			`"hello'world"`, // single quote inside doubles (valid)
+			`'hello"world'`, // double inside singles
 		}
 		for _, input := range inputs {
 			input := input
@@ -839,10 +839,10 @@ func TestMongoDBApocalypse(t *testing.T) {
 			`Foo(1)`,
 			`Foo(1,2,3)`,
 			`Foo(Bar(Baz(1)))`,
-			`$lookup()`,      // dollar sign prefix
-			`_internal()`,    // underscore prefix
-			`$$variable()`,   // double dollar
-			`Foo123_Bar()`,   // digits and underscore
+			`$lookup()`,    // dollar sign prefix
+			`_internal()`,  // underscore prefix
+			`$$variable()`, // double dollar
+			`Foo123_Bar()`, // digits and underscore
 			`A()`,
 
 			// These should NOT be treated as function calls
@@ -1829,7 +1829,7 @@ func TestControlCharsOutsideStrings(t *testing.T) {
 func TestFailingEdgeCases(t *testing.T) {
 	t.Parallel()
 
-		// These should produce errors - validate the error types
+	// These should produce errors - validate the error types
 	tests := []struct {
 		name        string
 		input       string
@@ -2200,15 +2200,15 @@ func TestEscapedVsRawUnicode(t *testing.T) {
 	t.Run("mixed_escaped_and_raw", func(t *testing.T) {
 		t.Parallel()
 		inputs := []string{
-			`"\u0048\u0065\u006C\u006C\u006F"`,           // Hello as unicode escapes
-			`"Hello"`,                                      // raw Hello
-			`"\u0048ello"`,                                 // mixed: H as escape + ello
-			`"H\u0065llo"`,                                 // mixed: e as escape
-			`"He\u006C\u006Co"`,                            // mixed: ll as escapes
-			`"\u0048\u0065l\u006Co"`,                       // mixed pattern
-			`"\u2605 \u2605 \u2605"`,                       // star escapes
-			`"★ ★ ★"`,                                     // raw stars
-			`"\u2605 ★ \u2605"`,                            // mixed stars
+			`"\u0048\u0065\u006C\u006C\u006F"`, // Hello as unicode escapes
+			`"Hello"`,                          // raw Hello
+			`"\u0048ello"`,                     // mixed: H as escape + ello
+			`"H\u0065llo"`,                     // mixed: e as escape
+			`"He\u006C\u006Co"`,                // mixed: ll as escapes
+			`"\u0048\u0065l\u006Co"`,           // mixed pattern
+			`"\u2605 \u2605 \u2605"`,           // star escapes
+			`"★ ★ ★"`,                          // raw stars
+			`"\u2605 ★ \u2605"`,                // mixed stars
 		}
 		for _, input := range inputs {
 			input := input
@@ -2374,11 +2374,11 @@ func TestZeroWidthJoinersInStrings(t *testing.T) {
 	t.Run("emoji_zwj_edge_cases", func(t *testing.T) {
 		t.Parallel()
 		inputs := []string{
-			"\"a\u200Db\"",          // ZWNJ
-			"\"a\u200Cb\"",          // ZWJ
+			"\"a\u200Db\"",             // ZWNJ
+			"\"a\u200Cb\"",             // ZWJ
 			"\"a\u200D\u200C\u200Db\"", // multiple
-			"\"\u200D\"",            // just ZWJ
-			"\"\u200C\"",            // just ZWNJ
+			"\"\u200D\"",               // just ZWJ
+			"\"\u200C\"",               // just ZWNJ
 		}
 		for _, input := range inputs {
 			input := input
@@ -2598,8 +2598,18 @@ func BenchmarkRepairPathological(b *testing.B) {
 		input string
 	}{
 		{
-			name:  "deeply_nested",
-			input: func() string { s := "["; for range 10000 { s += "[" }; s += "1"; for range 10000 { s += "]" }; return s }(),
+			name: "deeply_nested",
+			input: func() string {
+				s := "["
+				for range 10000 {
+					s += "["
+				}
+				s += "1"
+				for range 10000 {
+					s += "]"
+				}
+				return s
+			}(),
 		},
 		{
 			name:  "huge_escaped_string",
@@ -2610,7 +2620,7 @@ func BenchmarkRepairPathological(b *testing.B) {
 			input: strings.Repeat("hello world ", 1000),
 		},
 		{
-			name:  "many_comments",
+			name: "many_comments",
 			input: func() string {
 				var sb strings.Builder
 				sb.WriteString("[")

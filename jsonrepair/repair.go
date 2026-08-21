@@ -56,7 +56,9 @@ func Repair(text string) (string, error) {
 
 	success, err := parseValue(&runes, &i, &output)
 	if err != nil {
-		logIf(func(lg *logger.Logger) { lg.Error("JSON_REPAIR", "parse_value_error", "position", i, "error", err.Error(), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds()) })
+		logIf(func(lg *logger.Logger) {
+			lg.Error("JSON_REPAIR", "parse_value_error", "position", i, "error", err.Error(), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds())
+		})
 		return "", err
 	}
 	if !success {
@@ -65,10 +67,14 @@ func Repair(text string) (string, error) {
 		}
 		parseWhitespaceAndSkipComments(&runes, &i, &output, true)
 		if i >= len(runes) && hasNonWhitespaceContent(runes) {
-			logIf(func(lg *logger.Logger) { lg.Warn("JSON_REPAIR", "fallback_null", "input_len", len(text), "latency_ms", time.Since(start).Milliseconds()) })
+			logIf(func(lg *logger.Logger) {
+				lg.Warn("JSON_REPAIR", "fallback_null", "input_len", len(text), "latency_ms", time.Since(start).Milliseconds())
+			})
 			return "null", nil
 		}
-		logIf(func(lg *logger.Logger) { lg.Error("JSON_REPAIR", "unexpected_end", "position", len(runes), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds()) })
+		logIf(func(lg *logger.Logger) {
+			lg.Error("JSON_REPAIR", "unexpected_end", "position", len(runes), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds())
+		})
 		return "", newUnexpectedEndError(len(runes))
 	}
 
@@ -120,12 +126,16 @@ func Repair(text string) (string, error) {
 	}
 
 	if i >= len(runes) {
-		logIf(func(lg *logger.Logger) { lg.Info("JSON_REPAIR", "ok", "input_len", len(text), "output_len", output.Len(), "latency_ms", time.Since(start).Milliseconds()) })
+		logIf(func(lg *logger.Logger) {
+			lg.Info("JSON_REPAIR", "ok", "input_len", len(text), "output_len", output.Len(), "latency_ms", time.Since(start).Milliseconds())
+		})
 		return output.String(), nil
 	}
 
 	message := fmt.Sprintf("unexpected character %q", string(runes[i]))
-	logIf(func(lg *logger.Logger) { lg.Error("JSON_REPAIR", "unexpected_character", "position", i, "char", string(runes[i]), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds()) })
+	logIf(func(lg *logger.Logger) {
+		lg.Error("JSON_REPAIR", "unexpected_character", "position", i, "char", string(runes[i]), "input_len", len(text), "latency_ms", time.Since(start).Milliseconds())
+	})
 	return "", newUnexpectedCharacterError(message, i)
 }
 

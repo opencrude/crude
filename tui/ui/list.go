@@ -34,12 +34,12 @@ func (it ListItem) Selectable() bool {
 // List is a uniform-height selectable list with shared Selection + Scroll models.
 type List struct {
 	Base
-	items           []ListItem
-	sel             *SelectionModel
-	scroll          *ScrollModel
-	tokens          *TokenSet
-	activate        string // action ID on Enter/click
-	hoverIdx        int
+	items         []ListItem
+	sel           *SelectionModel
+	scroll        *ScrollModel
+	tokens        *TokenSet
+	activate      string // action ID on Enter/click
+	hoverIdx      int
 	defaultBgRole SemanticColor
 	defaultBgSet  bool
 }
@@ -47,11 +47,11 @@ type List struct {
 // NewList creates a list (clamp navigation, not wrap).
 func NewList(id ComponentID, tokens *TokenSet) *List {
 	return &List{
-		Base:            NewBase(id),
-		sel:             NewSelectionModel(false),
-		scroll:          NewScrollModel(),
-		tokens:          tokens,
-		activate:        "list.activate",
+		Base:     NewBase(id),
+		sel:      NewSelectionModel(false),
+		scroll:   NewScrollModel(),
+		tokens:   tokens,
+		activate: "list.activate",
 		hoverIdx: -1,
 	}
 }

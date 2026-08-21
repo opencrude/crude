@@ -1,0 +1,337 @@
+package provider
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// OllamaStandard implements APIStandard for Ollama's native /api/chat protocol.
+// This is the format used by both a local Ollama daemon (http://localhost:11434)
+// and Ollama Cloud (https://ollama.com/api). Unlike the OpenAI-compatible /v1
+// endpoint, the native protocol streams newline-delimited JSON (application/
+// x-ndjson) rather than Server-Sent Events, and exposes model listing via
+// /api/tags.
+type OllamaStandard struct{}
+
+func (s *OllamaStandard) ID() string { return "ollama" }
+
+func (s *OllamaStandard) ChatEndpoint(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/api/chat"
+}
+
+func (s *OllamaStandard) ModelsEndpoint(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/api/tags"
+}
+
+func (s *OllamaStandard) Auth(apiKey string) (string, string) {
+	if apiKey == "" {
+		// Local Ollama requires no credentials; Ollama Cloud uses a Bearer key.
+		return "", ""
+	}
+	return "Authorization", "Bearer " + apiKey
+}
+
+func (s *OllamaStandard) Headers(apiKey string) map[string]string {
+	header, value := s.Auth(apiKey)
+	if header == "" {
+		return nil
+	}
+	return map[string]string{header: value}
+}
+
+func (s *OllamaStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	messages, err := encodeOllamaMessages(req.Messages)
+	if err != nil {
+		return nil, err
+	}
+	wire := map[string]any{
+		"model":    req.Model,
+		"messages": messages,
+		"stream":   req.Stream,
+	}
+	if len(req.Tools) > 0 {
+		tools := make([]openAIChatToolParam, 0, len(req.Tools))
+		for _, tool := range req.Tools {
+			toolType := tool.Type
+			if toolType == "" {
+				toolType = "function"
+			}
+			tools = append(tools, openAIChatToolParam{
+				Type: toolType, Function: tool.Function,
+			})
+		}
+		wire["tools"] = tools
+	}
+	// Ollama takes generation limits under "options", not as top-level max_tokens.
+	if req.MaxOutputTokens > 0 {
+		wire["options"] = map[string]any{"num_predict": req.MaxOutputTokens}
+	}
+	return json.Marshal(wire)
+}
+
+// encodeOllamaMessages serializes chat messages into Ollama's native message
+// shape. Text content is sent as a string; multipart content is split into a
+// text "content" field plus an "images" array of raw base64 payloads (Ollama
+// expects image bytes without the data:...;base64, URL prefix). Tool calls and
+// tool-call IDs reuse the OpenAI wire shape, which Ollama understands.
+func encodeOllamaMessages(messages []ChatMessage) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(messages))
+	for _, m := range messages {
+		wire := map[string]any{"role": m.Role}
+		if m.Content.IsText() {
+			wire["content"] = m.Content.String()
+		} else {
+			var texts []string
+			var images []string
+			for _, part := range m.Content.Parts() {
+				switch part.Type {
+				case "text":
+					if part.Text != "" {
+						texts = append(texts, part.Text)
+					}
+				case "image_url":
+					if part.ImageURL != nil {
+						images = append(images, dataURLToBase64(part.ImageURL.URL))
+					}
+				}
+			}
+			wire["content"] = strings.Join(texts, "\n")
+			if len(images) > 0 {
+				wire["images"] = images
+			}
+		}
+		if m.ToolCallID != "" {
+			wire["tool_call_id"] = m.ToolCallID
+		}
+		if len(m.ToolCalls) > 0 {
+			calls := make([]openAIChatToolCallParam, 0, len(m.ToolCalls))
+			for _, call := range m.ToolCalls {
+				callType := call.Type
+				if callType == "" {
+					callType = "function"
+				}
+				calls = append(calls, openAIChatToolCallParam{
+					ID: call.ID, Type: callType, Function: call.Function,
+				})
+			}
+			wire["tool_calls"] = calls
+		}
+		out = append(out, wire)
+	}
+	return out, nil
+}
+
+// dataURLToBase64 strips the "data:<mime>;base64," prefix from a data URL,
+// returning the raw base64 payload Ollama expects in its "images" array.
+func dataURLToBase64(dataURL string) string {
+	if _, payload, ok := strings.Cut(dataURL, ","); ok {
+		return payload
+	}
+	return dataURL
+}
+
+// ollamaChatChunk is the wire shape of both a non-streaming /api/chat response
+// and a single streaming NDJSON line.
+type ollamaChatChunk struct {
+	Model   string `json:"model"`
+	Message struct {
+		Role      string                    `json:"role"`
+		Content   string                    `json:"content"`
+		Thinking  string                    `json:"thinking"`
+		ToolCalls []openAIChatToolCallParam `json:"tool_calls"`
+	} `json:"message"`
+	DoneReason       string `json:"done_reason"`
+	Done             bool   `json:"done"`
+	PromptEvalCount  int    `json:"prompt_eval_count"`
+	EvalCount        int    `json:"eval_count"`
+	PromptEvalTokens int    `json:"prompt_eval_tokens"` // newer field alias
+	EvalTokens       int    `json:"eval_tokens"`        // newer field alias
+	Error            string `json:"error"`
+}
+
+func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
+	var chunk ollamaChatChunk
+	if err := json.Unmarshal(body, &chunk); err != nil {
+		return nil, fmt.Errorf("unmarshal ollama response: %w", err)
+	}
+	if chunk.Error != "" {
+		return nil, fmt.Errorf("ollama: %s", chunk.Error)
+	}
+	resp := &ChatResponse{Model: chunk.Model}
+	choice := ChatChoice{
+		Message: ChatMessage{
+			Role:    firstNonEmptyOllama(chunk.Message.Role, "assistant"),
+			Content: TextContent(chunk.Message.Content),
+		},
+		FinishReason: ollamaFinishReason(chunk.DoneReason, chunk.Message.ToolCalls),
+	}
+	if chunk.Message.Thinking != "" {
+		choice.Message.Reasoning = chunk.Message.Thinking
+	}
+	for _, tc := range chunk.Message.ToolCalls {
+		callType := tc.Type
+		if callType == "" {
+			callType = "function"
+		}
+		choice.Message.ToolCalls = append(choice.Message.ToolCalls, ToolCall{
+			ID: tc.ID, Type: callType, Function: tc.Function,
+		})
+	}
+	resp.Choices = []ChatChoice{choice}
+	prompt, completion := ollamaUsage(&chunk)
+	if prompt > 0 || completion > 0 {
+		resp.Usage = &ChatUsage{
+			PromptTokens:     prompt,
+			CompletionTokens: completion,
+			TotalTokens:      prompt + completion,
+		}
+	}
+	return resp, nil
+}
+
+func (s *OllamaStandard) DecodeStreamChunk(data string) (*ChatResponse, error) {
+	update, err := s.NewStreamDecoder().Decode(StreamEvent{Data: []byte(data)})
+	if err != nil {
+		return nil, err
+	}
+	return streamUpdateToChatResponse(update), nil
+}
+
+func (s *OllamaStandard) NewStreamDecoder() StreamDecoder {
+	return &ollamaStreamDecoder{}
+}
+
+type ollamaStreamDecoder struct{}
+
+func (d *ollamaStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
+	data := strings.TrimSpace(string(event.Data))
+	if data == "" {
+		return StreamUpdate{}, nil
+	}
+	var chunk ollamaChatChunk
+	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		return StreamUpdate{}, fmt.Errorf("decode ollama stream line: %w", err)
+	}
+	if chunk.Error != "" {
+		return StreamUpdate{}, fmt.Errorf("ollama: %s", chunk.Error)
+	}
+	update := StreamUpdate{
+		ContentDelta:   chunk.Message.Content,
+		ReasoningDelta: chunk.Message.Thinking,
+	}
+	for _, tc := range chunk.Message.ToolCalls {
+		callType := tc.Type
+		if callType == "" {
+			callType = "function"
+		}
+		update.ToolCalls = append(update.ToolCalls, ToolCallDelta{
+			ID:        tc.ID,
+			Type:      callType,
+			Name:      tc.Function.Name,
+			Arguments: tc.Function.Arguments,
+		})
+	}
+	if chunk.Done {
+		update.Done = true
+		if chunk.DoneReason != "" {
+			update.FinishReason = chunk.DoneReason
+		} else if len(update.ToolCalls) > 0 {
+			update.FinishReason = "tool_calls"
+		} else {
+			update.FinishReason = "stop"
+		}
+		prompt, completion := ollamaUsage(&chunk)
+		if prompt > 0 || completion > 0 {
+			update.Usage = &TokenUsage{
+				PromptTokens:     prompt,
+				CompletionTokens: completion,
+			}
+		}
+	}
+	return update, nil
+}
+
+func (s *OllamaStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
+	var result struct {
+		Models []struct {
+			Name    string `json:"name"`
+			Model   string `json:"model"`
+			Details struct {
+				ParameterSize     string `json:"parameter_size"`
+				QuantizationLevel string `json:"quantization_level"`
+				Family            string `json:"family"`
+			} `json:"details"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal ollama models: %w", err)
+	}
+	models := make([]ModelInfo, 0, len(result.Models))
+	for _, m := range result.Models {
+		id := m.Name
+		if id == "" {
+			id = m.Model
+		}
+		if id == "" {
+			continue
+		}
+		models = append(models, ModelInfo{ID: id, Name: id})
+	}
+	return models, nil
+}
+
+func (s *OllamaStandard) ExtraBody(modelID, thinkingEffort string) map[string]any {
+	if thinkingEffort == "" || thinkingEffort == "none" {
+		return nil
+	}
+	// Ollama exposes a single boolean "think" toggle (qwen3, gpt-oss, ...) rather
+	// than graded effort levels. A non-default effort enables thinking.
+	return map[string]any{"think": true}
+}
+
+func (s *OllamaStandard) ContextWindow(modelID string) int {
+	return LookupContextWindow(modelID)
+}
+
+func (s *OllamaStandard) UsageFromResponse(resp *ChatResponse) (int, int, int) {
+	return UsageFromResponse(resp)
+}
+
+// ollamaFinishReason maps Ollama's done_reason to an OpenAI-style finish reason,
+// inferring from tool calls when the field is absent.
+func ollamaFinishReason(doneReason string, toolCalls []openAIChatToolCallParam) string {
+	if doneReason != "" {
+		return doneReason
+	}
+	if len(toolCalls) > 0 {
+		return "tool_calls"
+	}
+	return "stop"
+}
+
+// ollamaUsage extracts prompt/completion token counts from a chunk, tolerating
+// both the legacy *_count and newer *_tokens field names.
+func ollamaUsage(chunk *ollamaChatChunk) (prompt, completion int) {
+	prompt = chunk.PromptEvalCount
+	if prompt == 0 {
+		prompt = chunk.PromptEvalTokens
+	}
+	completion = chunk.EvalCount
+	if completion == 0 {
+		completion = chunk.EvalTokens
+	}
+	return prompt, completion
+}
+
+func firstNonEmptyOllama(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}

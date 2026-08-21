@@ -251,6 +251,7 @@ func (w *Workspace) AllProviderConfigs() map[string]ttypes.ProviderConfig {
 			APIStandard: v.APIStandard, Model: v.Model,
 			ModelStandards: copyStringMap(v.ModelStandards),
 			ThinkingEffort: v.ThinkingEffort,
+			OAuth:          cloneSessionOAuth(v.OAuth),
 		}
 	}
 	return out
@@ -265,6 +266,17 @@ func copyStringMap(src map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+// cloneSessionOAuth returns a shallow copy of OAuth credentials. All fields are
+// value types, so a struct copy is enough to keep the session config from
+// aliasing the UI provider map.
+func cloneSessionOAuth(src *provider.OAuthCredentials) *provider.OAuthCredentials {
+	if src == nil {
+		return nil
+	}
+	dup := *src
+	return &dup
 }
 
 // SaveProviderSettings updates the live session config and persists via OnConfigSave.
@@ -287,6 +299,7 @@ func (w *Workspace) SaveProviderSettings(active string, providers map[string]tty
 			Model:          pc.Model,
 			ModelStandards: copyStringMap(pc.ModelStandards),
 			ThinkingEffort: pc.ThinkingEffort,
+			OAuth:          cloneSessionOAuth(pc.OAuth),
 		}
 	}
 	for _, frontendSession := range w.Sessions {
@@ -318,6 +331,13 @@ func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey, standardID st
 	if standardID != "" {
 		if err := p.SetStandardID(standardID); err != nil {
 			return nil, err
+		}
+	}
+	// Attach stored OAuth credentials (e.g. ChatGPT subscription) so the
+	// /models request is authenticated with the access token, not an API key.
+	if w.sessionCfg != nil {
+		if pc, ok := w.sessionCfg.Providers[providerID]; ok && pc.OAuth != nil {
+			p.SetOAuth(pc.OAuth)
 		}
 	}
 	models, err := provider.FetchModels(p)

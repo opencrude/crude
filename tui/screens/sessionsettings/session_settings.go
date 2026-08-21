@@ -34,6 +34,10 @@ type SaveMsg struct {
 	Target   *Screen
 	Settings types.Settings
 }
+type SaveAsWorkspaceMsg struct {
+	Target   *Screen
+	Settings types.Settings
+}
 type CancelMsg struct{ Target *Screen }
 type ResetMsg struct{ Target *Screen }
 
@@ -75,11 +79,11 @@ type Screen struct {
 	form      *ui.Form
 	actions   *ui.ActionBar
 
-	base      types.Settings
-	effective types.Settings
-	overrides map[string]types.CategorySettings
-	presets   []types.ProviderPreset
-	providers map[string]types.ProviderConfig
+	base        types.Settings
+	effective   types.Settings
+	overrides   map[string]types.CategorySettings
+	presets     []types.ProviderPreset
+	providers   map[string]types.ProviderConfig
 	models      map[string][]types.ModelEntry
 	snapshot    *snapshot
 	modelFilter *ui.FilterField
@@ -352,6 +356,8 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		return focusFormResult(0)
 	case "session-settings.save":
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return SaveMsg{Target: s, Settings: s.ToSettings()} }, Invalidate: ui.InvalidatePaint}
+	case "session-settings.save-workspace":
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return SaveAsWorkspaceMsg{Target: s, Settings: s.ToSettings()} }, Invalidate: ui.InvalidatePaint}
 	case "session-settings.cancel":
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "panel.close"}, Cmd: func() tea.Msg { return CancelMsg{Target: s} }, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case "session-settings.reset":
@@ -367,7 +373,11 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		}
 		s.openRoot()
 		return focusFormResult(ui.InvalidateLayout)
-	case "session-settings.role.reset":
+	case "session-settings.role.inherit-main":
+		s.inheritMain(s.role)
+		s.openRoot()
+		return focusFormResult(ui.InvalidateLayout)
+	case "session-settings.role.reset-workspace":
 		s.resetRole(s.role)
 		s.openRoot()
 		return focusFormResult(ui.InvalidateLayout)
@@ -415,6 +425,8 @@ func (s *Screen) rootActions() *ui.ActionBar {
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "save"), Label: "Save", Action: "session-settings.save", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "session-settings.cancel", Variant: ui.VariantSecondary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "reset"), Label: "Reset", Action: "session-settings.reset", Variant: ui.VariantDanger, Enabled: true},
+		// Least common action sits last so it never crowds Save/Cancel/Reset.
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "save-workspace"), Label: "Save as workspace", Action: "session-settings.save-workspace", Variant: ui.VariantSecondary, Enabled: true},
 	)
 }
 
@@ -460,11 +472,17 @@ func (s *Screen) openRole(role string) {
 	model.AddField(ui.ThinkingFieldState(fieldThinking, thinking, ""))
 	s.formModel = model
 	s.form.SetForm(model, s.title(name), "")
-	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens,
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "apply"), Label: "Apply", Action: "session-settings.role.apply", Variant: ui.VariantPrimary, Enabled: true},
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "session-settings.role.back", Variant: ui.VariantSecondary, Enabled: true},
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "reset-role"), Label: "Reset role", Action: "session-settings.role.reset", Variant: ui.VariantDanger, Enabled: true},
-	)
+	buttons := []ui.ActionBarButton{
+		{ID: ui.NewID(ActionsID, "apply"), Label: "Apply", Action: "session-settings.role.apply", Variant: ui.VariantPrimary, Enabled: true},
+		{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "session-settings.role.back", Variant: ui.VariantSecondary, Enabled: true},
+	}
+	// The main agent is the source of "inherit from main"; it cannot inherit
+	// from itself, so that button only appears on the other roles.
+	if role != "default" {
+		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "inherit-main"), Label: "Inherit from main", Action: "session-settings.role.inherit-main", Variant: ui.VariantSecondary, Enabled: true})
+	}
+	buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "reset-workspace"), Label: "Reset to workspace", Action: "session-settings.role.reset-workspace", Variant: ui.VariantDanger, Enabled: true})
+	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 }
 
 func (s *Screen) standardOptions(providerID, model string) []ui.FormOption {
@@ -853,6 +871,20 @@ func (s *Screen) applyRoleForm() {
 func (s *Screen) resetRole(role string) {
 	setCategory(&s.effective, role, categoryFor(s.base, role))
 	delete(s.overrides, role)
+}
+
+// inheritMain copies the main agent's effective category into the given role
+// and records it as a session override, so the role follows the main agent.
+func (s *Screen) inheritMain(role string) {
+	if role == "default" {
+		return
+	}
+	mainCfg := categoryFor(s.effective, "default")
+	setCategory(&s.effective, role, mainCfg)
+	s.overrides[role] = types.CategorySettings{
+		Provider: mainCfg.Provider, Model: mainCfg.Model,
+		APIStandard: mainCfg.APIStandard, ThinkingEffort: mainCfg.ThinkingEffort,
+	}
 }
 
 func (s *Screen) ToSettings() types.Settings {

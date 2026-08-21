@@ -289,14 +289,14 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 	var rows *sql.Rows
 	var qerr error
 	if cols["project_name"] {
-			rows, qerr = db.QueryContext(ctx, `
+		rows, qerr = db.QueryContext(ctx, `
 			SELECT project_dir, project_name, created_at
 			FROM workspace_sessions
 			ORDER BY created_at DESC
 			LIMIT 1
 		`)
 	} else {
-			rows, qerr = db.QueryContext(ctx, `
+		rows, qerr = db.QueryContext(ctx, `
 			SELECT project_dir, '' AS project_name, created_at
 			FROM workspace_sessions
 			ORDER BY created_at DESC
@@ -328,9 +328,9 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 	}
 	// Session count (exclude rows whose session DB was marked unavailable).
 	if cols["db_missing"] {
-			_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0`).Scan(&info.SessionCount)
+		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0`).Scan(&info.SessionCount)
 	} else {
-			_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions`).Scan(&info.SessionCount)
+		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions`).Scan(&info.SessionCount)
 	}
 	info.ProjectName = WorkspaceDisplayName(*info)
 	return info

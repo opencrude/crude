@@ -27,6 +27,10 @@ const (
 	// ReadableWidth (left-aligned), so compact forms stay orderly on wide
 	// decks.
 	PanelReadableWidth
+	// PanelWideReadable clamps content to a wider-than-readable column
+	// (WideReadableWidth) so trailing detail columns (e.g. "inherited from
+	// workspace") stay visible without spanning the whole deck row.
+	PanelWideReadable
 )
 
 // ReadableWidth adapts a content column to the available deck width: ultra
@@ -38,6 +42,20 @@ func ReadableWidth(avail int) int {
 		return avail / 3
 	case avail >= 110:
 		return avail / 2
+	default:
+		return avail
+	}
+}
+
+// WideReadableWidth is a looser clamp than ReadableWidth for panels that carry
+// trailing detail columns (e.g. "inherited from workspace"): two thirds on
+// ultra-wide decks, three quarters on wide decks, full width otherwise.
+func WideReadableWidth(avail int) int {
+	switch {
+	case avail >= 200:
+		return avail * 2 / 3
+	case avail >= 110:
+		return avail * 3 / 4
 	default:
 		return avail
 	}
@@ -252,8 +270,13 @@ func (d *PanelDeck) Layout(ctx LayoutContext, r Rect) {
 		contentY = 3
 	}
 	contentW := innerW
-	if panel := d.Active(); panel != nil && panel.Width == PanelReadableWidth {
-		contentW = min(innerW, ReadableWidth(innerW))
+	if panel := d.Active(); panel != nil {
+		switch panel.Width {
+		case PanelReadableWidth:
+			contentW = min(innerW, ReadableWidth(innerW))
+		case PanelWideReadable:
+			contentW = min(innerW, WideReadableWidth(innerW))
+		}
 	}
 	// Publish the deck row geometry for configurable full-bleed separator
 	// rules BEFORE laying content out, so rule owners (forms, action bars,

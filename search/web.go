@@ -35,7 +35,9 @@ func WebSearch(query string, maxResults int) (string, error) {
 
 		if len(succeeded) == 0 && len(failed) > 0 {
 			sb.WriteString("All search engines failed:\n")
-			logIf(func(lg *logger.Logger) { lg.Warn("SEARCH", "all_engines_failed", "query", query, "latency_ms", dur, "failures", fmt.Sprintf("%v", failed)) })
+			logIf(func(lg *logger.Logger) {
+				lg.Warn("SEARCH", "all_engines_failed", "query", query, "latency_ms", dur, "failures", fmt.Sprintf("%v", failed))
+			})
 			for eng, errMsg := range failed {
 				fmt.Fprintf(&sb, "  - %s: %s\n", eng, errMsg)
 			}
@@ -54,7 +56,9 @@ func WebSearch(query string, maxResults int) (string, error) {
 		return sb.String(), nil
 	}
 
-	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "web_search_ok", "query", query, "results", len(results), "engines", len(succeeded), "latency_ms", dur) })
+	logIf(func(lg *logger.Logger) {
+		lg.Info("SEARCH", "web_search_ok", "query", query, "results", len(results), "engines", len(succeeded), "latency_ms", dur)
+	})
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Web search results for: %s\n", query)
@@ -112,7 +116,9 @@ func WebFetch(rawURL string, offset, limit int) (string, error) {
 
 	result, err := fetchWebContent(rawURL, offset, limit)
 	if err != nil {
-		logIf(func(lg *logger.Logger) { lg.Warn("SEARCH", "fetch_error", "url", rawURL, "latency_ms", time.Since(start).Milliseconds(), "error", err.Error()) })
+		logIf(func(lg *logger.Logger) {
+			lg.Warn("SEARCH", "fetch_error", "url", rawURL, "latency_ms", time.Since(start).Milliseconds(), "error", err.Error())
+		})
 		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
 			return "", fmt.Errorf("fetch: request timed out for %s — the site may be slow or blocking automated requests. Try again or try a different URL", rawURL)
 		}
@@ -126,7 +132,9 @@ func WebFetch(rawURL string, offset, limit int) (string, error) {
 	}
 
 	dur := time.Since(start).Milliseconds()
-	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "fetch_ok", "url", rawURL, "total_chars", result.TotalChars, "latency_ms", dur) })
+	logIf(func(lg *logger.Logger) {
+		lg.Info("SEARCH", "fetch_ok", "url", rawURL, "total_chars", result.TotalChars, "latency_ms", dur)
+	})
 
 	if result.Content == "" {
 		return fmt.Sprintf("No content could be extracted from %s\n\nThe page may be:\n- A JavaScript-rendered single-page app (try a different URL)\n- Empty or requiring authentication\n- A binary file (PDF, image, etc.)", rawURL), nil
@@ -155,13 +163,13 @@ func WebFetch(rawURL string, offset, limit int) (string, error) {
 
 // mimeToExt maps document MIME types to file extensions for docconv.
 var mimeToExt = map[string]string{
-	"application/pdf":                                                  ".pdf",
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+	"application/pdf": ".pdf",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   ".docx",
 	"application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-	"application/vnd.ms-excel":         ".xls",
-	"application/epub+zip":             ".epub",
-	"application/x-ipynb+json":         ".ipynb",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         ".xlsx",
+	"application/vnd.ms-excel": ".xls",
+	"application/epub+zip":     ".epub",
+	"application/x-ipynb+json": ".ipynb",
 }
 
 // docExtFromURL checks if a URL ends with a supported document extension.

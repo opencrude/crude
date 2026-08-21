@@ -329,7 +329,8 @@ func (s *Session) memoryCompleter() (func(context.Context, string, string) (stri
 	if override := strings.TrimSpace(cfg.Memory.Model); override != "" {
 		category.Model = override
 	}
-	if category.APIKey == "" {
+	// OAuth providers (e.g. ChatGPT subscription) have no API key; allow them.
+	if category.APIKey == "" && category.OAuth == nil {
 		return nil, fmt.Errorf("no API key configured")
 	}
 	p, err := providerForCategory(category)

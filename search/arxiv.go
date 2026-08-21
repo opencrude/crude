@@ -100,7 +100,9 @@ func ArxivSearch(query string, maxResults int) (string, error) {
 	}
 
 	dur := time.Since(start).Milliseconds()
-	logIf(func(lg *logger.Logger) { lg.Info("SEARCH", "arxiv_ok", "query", query, "results", len(feed.Entries), "latency_ms", dur) })
+	logIf(func(lg *logger.Logger) {
+		lg.Info("SEARCH", "arxiv_ok", "query", query, "results", len(feed.Entries), "latency_ms", dur)
+	})
 
 	if len(feed.Entries) == 0 {
 		return "No arXiv papers found for: " + query, nil

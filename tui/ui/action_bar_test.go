@@ -124,4 +124,3 @@ func bleedWithBufEdge(buf *surface.CellBuffer) int {
 	}
 	return width
 }
-

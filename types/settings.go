@@ -375,10 +375,12 @@ func WorkspaceOverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	workingSans := cloneAppSettings(working)
 	for id, cfg := range appSans.Providers {
 		cfg.APIKey = ""
+		cfg.OAuth = nil
 		appSans.Providers[id] = cfg
 	}
 	for id, cfg := range workingSans.Providers {
 		cfg.APIKey = ""
+		cfg.OAuth = nil
 		workingSans.Providers[id] = cfg
 	}
 	stripAgentAPIKeys(&appSans.Agents)

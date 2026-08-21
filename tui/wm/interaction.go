@@ -105,7 +105,7 @@ func CascadePositions(windows []*FloatingWindow, screenW, screenH int) {
 
 	// Calculate how many offsets fit before we go off-screen.
 	// Reset the cascade position when windows would go off the bottom.
-	maxY := screenH - 5 // leave some margin at the bottom
+	maxY := screenH - 5  // leave some margin at the bottom
 	maxX := screenW - 10 // leave some margin at the right
 
 	x := startX

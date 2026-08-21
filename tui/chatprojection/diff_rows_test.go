@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/chatprojection"
 	"crude/tui/cell"
+	"crude/tui/chatprojection"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/tools"
@@ -155,13 +155,13 @@ func TestBuildPlanRowsRoles(t *testing.T) {
 		}
 	}
 	wantRoles := []ui.SemanticColor{
-		ui.ColorAccent,    // Plan:
-		ui.ColorMuted,     // ☐
-		ui.ColorAccent2,   // →
-		ui.ColorSuccess,   // ✓
-		ui.ColorError,     // ✗
-		ui.ColorWarning,   // !
-		ui.ColorWarning,   // Suspended:
+		ui.ColorAccent,  // Plan:
+		ui.ColorMuted,   // ☐
+		ui.ColorAccent2, // →
+		ui.ColorSuccess, // ✓
+		ui.ColorError,   // ✗
+		ui.ColorWarning, // !
+		ui.ColorWarning, // Suspended:
 	}
 	for i, want := range wantRoles {
 		role, ok := contentRole(rows[i])

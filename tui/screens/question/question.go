@@ -135,7 +135,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 }
 
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
-func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult       { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult      { return ui.EventResult{} }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {

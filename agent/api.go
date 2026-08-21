@@ -185,6 +185,12 @@ func (a *Agent) completeStream(
 		return completionResult{}, err
 	}
 
+	// Refresh OAuth access tokens (e.g. ChatGPT subscription) before building
+	// the request so the bearer is current for every attempt.
+	if err := a.Provider.EnsureAuth(ctx); err != nil {
+		return completionResult{}, fmt.Errorf("refresh oauth token: %w", err)
+	}
+
 	endpoint := a.Provider.ChatEndpoint()
 	attemptLimit := maxRetries
 	if a.MaxRetries > 0 {
@@ -318,6 +324,17 @@ func (a *Agent) consumeResponse(
 
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	bodyReader := bufio.NewReader(resp.Body)
+
+	// Ollama's native protocol streams newline-delimited JSON (application/
+	// x-ndjson) rather than Server-Sent Events. It must be routed before the
+	// JSON sniff below: NDJSON starts with '{' and would otherwise be mistaken
+	// for a single non-streaming JSON response. Re-emit each line as an SSE
+	// "data:" event so the existing SSE consumer and stream decoders handle it.
+	if mediaType == "application/x-ndjson" || mediaType == "application/json-seq" {
+		return a.consumeSSE(ctx, newNDJSONToSSEReader(bodyReader), std.NewStreamDecoder(), emit, emitThinking,
+			onToolCallStart, onToolCallDelta, streamStart)
+	}
+
 	isJSON := mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
 	if !isJSON && mediaType != "text/event-stream" {
 		isJSON = readerLooksLikeJSON(bodyReader)
@@ -342,6 +359,47 @@ func readerLooksLikeJSON(reader *bufio.Reader) bool {
 	peeked, _ := reader.Peek(512)
 	trimmed := bytes.TrimSpace(peeked)
 	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
+}
+
+// ndjsonToSSEReader wraps a newline-delimited JSON stream (Ollama's native
+// streaming format) and re-emits each non-empty line as an SSE "data:" event
+// terminated by a blank line, so the existing SSE consumer and stream decoders
+// process it unchanged.
+type ndjsonToSSEReader struct {
+	r   *bufio.Reader
+	buf []byte
+	eof bool
+}
+
+func newNDJSONToSSEReader(r *bufio.Reader) *ndjsonToSSEReader {
+	return &ndjsonToSSEReader{r: r}
+}
+
+func (n *ndjsonToSSEReader) Read(p []byte) (int, error) {
+	for {
+		if len(n.buf) > 0 {
+			copied := copy(p, n.buf)
+			n.buf = n.buf[copied:]
+			return copied, nil
+		}
+		if n.eof {
+			return 0, io.EOF
+		}
+		line, err := n.r.ReadBytes('\n')
+		line = bytes.TrimSpace(line)
+		if len(line) > 0 {
+			n.buf = append(n.buf, "data: "...)
+			n.buf = append(n.buf, line...)
+			n.buf = append(n.buf, '\n', '\n')
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				n.eof = true
+				continue // flush any buffered event before reporting EOF
+			}
+			return 0, err
+		}
+	}
 }
 
 type toolCallAccumulator struct {
@@ -769,7 +827,11 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 		case http.StatusTooManyRequests:
 			display = "Rate limited — please wait a moment and try again"
 		case http.StatusUnauthorized, http.StatusForbidden:
-			display = "Authentication failed — check the provider API key"
+			if a.Provider != nil && a.Provider.OAuth() != nil {
+				display = "Authentication failed — re-sign in with ChatGPT in Settings → Providers"
+			} else {
+				display = "Authentication failed — check the provider API key in Settings → Providers"
+			}
 		default:
 			if apiErr.StatusCode >= 500 {
 				display = "API server error — please try again"

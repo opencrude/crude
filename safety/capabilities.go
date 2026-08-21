@@ -29,11 +29,11 @@ func safetyLogIf(fn func(lg *logger.Logger)) {
 type CRUDEOp string
 
 const (
-	OpCreate  CRUDEOp = "Create"
-	OpRead    CRUDEOp = "Read"
-	OpUpdate  CRUDEOp = "Update"
-	OpDelete  CRUDEOp = "Delete"
-	OpExecute        CRUDEOp = "Execute"
+	OpCreate          CRUDEOp = "Create"
+	OpRead            CRUDEOp = "Read"
+	OpUpdate          CRUDEOp = "Update"
+	OpDelete          CRUDEOp = "Delete"
+	OpExecute         CRUDEOp = "Execute"
 	OpExecuteReadOnly CRUDEOp = "ExecuteReadOnly"
 )
 

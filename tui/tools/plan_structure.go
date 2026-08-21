@@ -11,12 +11,12 @@ type PlanRowKind int
 
 const (
 	PlanRowDefault PlanRowKind = iota
-	PlanRowDone    // ✓
-	PlanRowActive  // →
-	PlanRowFailed  // ✗
-	PlanRowWarning // !
-	PlanRowTodo    // ☐
-	PlanRowHeader  // Plan: / Goal:
+	PlanRowDone                // ✓
+	PlanRowActive              // →
+	PlanRowFailed              // ✗
+	PlanRowWarning             // !
+	PlanRowTodo                // ☐
+	PlanRowHeader              // Plan: / Goal:
 	PlanRowSuspended
 )
 

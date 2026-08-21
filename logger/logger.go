@@ -125,10 +125,30 @@ func (l *Logger) write(level, tag, msg string, pairs ...any) {
 }
 
 // Info logs an informational entry with tag and key=value pairs.
-func (l *Logger) Info(tag, msg string, pairs ...any)  { if l == nil { return }; l.write("INFO", tag, msg, pairs...) }
-func (l *Logger) Warn(tag, msg string, pairs ...any)  { if l == nil { return }; l.write("WARN", tag, msg, pairs...) }
-func (l *Logger) Error(tag, msg string, pairs ...any) { if l == nil { return }; l.write("ERR!", tag, msg, pairs...) }
-func (l *Logger) Debug(tag, msg string, pairs ...any) { if l == nil { return }; l.write("DBG", tag, msg, pairs...) }
+func (l *Logger) Info(tag, msg string, pairs ...any) {
+	if l == nil {
+		return
+	}
+	l.write("INFO", tag, msg, pairs...)
+}
+func (l *Logger) Warn(tag, msg string, pairs ...any) {
+	if l == nil {
+		return
+	}
+	l.write("WARN", tag, msg, pairs...)
+}
+func (l *Logger) Error(tag, msg string, pairs ...any) {
+	if l == nil {
+		return
+	}
+	l.write("ERR!", tag, msg, pairs...)
+}
+func (l *Logger) Debug(tag, msg string, pairs ...any) {
+	if l == nil {
+		return
+	}
+	l.write("DBG", tag, msg, pairs...)
+}
 
 // Close flushes buffers, writes session.end, and releases resources.
 func (l *Logger) Close() error {

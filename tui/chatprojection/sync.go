@@ -149,6 +149,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.ToolDuration == incoming.ToolDuration &&
 		current.ThinkingActive == incoming.ThinkingActive &&
 		current.ThinkingInterrupted == incoming.ThinkingInterrupted &&
+		current.ThinkingDuration == incoming.ThinkingDuration &&
 		current.Incomplete == incoming.Incomplete &&
 		current.IncompleteReason == incoming.IncompleteReason &&
 		current.SubPaneID == incoming.SubPaneID &&

@@ -7,27 +7,57 @@ import (
 
 // Tree semantic colors resolve from theme.Tree.Colors via TokenSet.
 
-func (ts *TokenSet) TreeDirFg() cell.Color       { return ts.treeColor(func(v treeColorView) cell.Color { return v.DirFg }) }
-func (ts *TokenSet) TreeFileFg() cell.Color      { return ts.treeColor(func(v treeColorView) cell.Color { return v.FileFg }) }
-func (ts *TokenSet) TreeSymlinkFg() cell.Color   { return ts.treeColor(func(v treeColorView) cell.Color { return v.SymlinkFg }) }
-func (ts *TokenSet) TreeSelectedBg() cell.Color  { return ts.treeColor(func(v treeColorView) cell.Color { return v.SelectedBg }) }
-func (ts *TokenSet) TreeSelectedFg() cell.Color  { return ts.treeColor(func(v treeColorView) cell.Color { return v.SelectedFg }) }
-func (ts *TokenSet) TreeCursorBg() cell.Color    { return ts.treeColor(func(v treeColorView) cell.Color { return v.CursorBg }) }
-func (ts *TokenSet) TreeCursorFg() cell.Color    { return ts.treeColor(func(v treeColorView) cell.Color { return v.CursorFg }) }
-func (ts *TokenSet) TreeHoverBg() cell.Color     { return ts.treeColor(func(v treeColorView) cell.Color { return v.Hover }) }
-func (ts *TokenSet) TreeIndentFg() cell.Color    { return ts.treeColor(func(v treeColorView) cell.Color { return v.IndentLine }) }
-func (ts *TokenSet) TreeGitModified() cell.Color { return ts.treeColor(func(v treeColorView) cell.Color { return v.GitModified }) }
-func (ts *TokenSet) TreeGitAdded() cell.Color    { return ts.treeColor(func(v treeColorView) cell.Color { return v.GitAdded }) }
-func (ts *TokenSet) TreeGitDeleted() cell.Color  { return ts.treeColor(func(v treeColorView) cell.Color { return v.GitDeleted }) }
+func (ts *TokenSet) TreeDirFg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.DirFg })
+}
+func (ts *TokenSet) TreeFileFg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.FileFg })
+}
+func (ts *TokenSet) TreeSymlinkFg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.SymlinkFg })
+}
+func (ts *TokenSet) TreeSelectedBg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.SelectedBg })
+}
+func (ts *TokenSet) TreeSelectedFg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.SelectedFg })
+}
+func (ts *TokenSet) TreeCursorBg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.CursorBg })
+}
+func (ts *TokenSet) TreeCursorFg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.CursorFg })
+}
+func (ts *TokenSet) TreeHoverBg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.Hover })
+}
+func (ts *TokenSet) TreeIndentFg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.IndentLine })
+}
+func (ts *TokenSet) TreeGitModified() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.GitModified })
+}
+func (ts *TokenSet) TreeGitAdded() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.GitAdded })
+}
+func (ts *TokenSet) TreeGitDeleted() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.GitDeleted })
+}
 func (ts *TokenSet) TreeGitUntracked() cell.Color {
 	return ts.treeColor(func(v treeColorView) cell.Color { return v.GitUntracked })
 }
 func (ts *TokenSet) TreeGitConflicted() cell.Color {
 	return ts.treeColor(func(v treeColorView) cell.Color { return v.GitConflicted })
 }
-func (ts *TokenSet) TreeDiagError() cell.Color   { return ts.treeColor(func(v treeColorView) cell.Color { return v.DiagError }) }
-func (ts *TokenSet) TreeDiagWarning() cell.Color { return ts.treeColor(func(v treeColorView) cell.Color { return v.DiagWarning }) }
-func (ts *TokenSet) TreeBorderFg() cell.Color    { return ts.treeColor(func(v treeColorView) cell.Color { return v.BorderFg }) }
+func (ts *TokenSet) TreeDiagError() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.DiagError })
+}
+func (ts *TokenSet) TreeDiagWarning() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.DiagWarning })
+}
+func (ts *TokenSet) TreeBorderFg() cell.Color {
+	return ts.treeColor(func(v treeColorView) cell.Color { return v.BorderFg })
+}
 
 type treeColorView struct {
 	DirFg, FileFg, SymlinkFg          cell.Color

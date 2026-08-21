@@ -218,6 +218,14 @@ func (w *WindowFrameWidget) Body() Component {
 	return w.frame.Content()
 }
 
+// EventTargetForTest returns the legacy event target (test helper).
+func (w *WindowFrameWidget) EventTargetForTest() WindowEventTarget {
+	if w == nil {
+		return nil
+	}
+	return w.eventTarget
+}
+
 // Dispatch routes a message through the frame Host and returns the full
 // EventResult so callers can honor bubbled actions (window.close, terminal
 // float/dock). HandleEvent keeps the WindowContent tea.Cmd contract.

@@ -99,15 +99,37 @@ func (sp *SubPane) buildSummaryView() *SubPaneSummaryView {
 	}
 	verb := "Thinking"
 	if sp.Done {
-		verb = "Thinked"
+		verb = "Thought"
 	}
 	if sp.Type == PaneAgent {
 		verb = sp.Title
 	}
-	text := fmt.Sprintf("%s for %.1fs%s", verb, dur.Seconds(), tokens)
+	text := fmt.Sprintf("%s for %s%s", verb, formatDurationHuman(dur), tokens)
 	return &SubPaneSummaryView{
 		Text:       text,
 		TokenCount: sp.TokenCount,
+	}
+}
+
+// formatDurationHuman renders a compact human duration for the collapsed
+// summary line: "42s", "2m 10s", "1h 02m 03s". It mirrors the TUI's
+// rendering.FormatThinkingDuration so the promoted pane summary and the
+// inline "thought for Xs" label read identically.
+func formatDurationHuman(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	secs := int(d.Seconds())
+	hours := secs / 3600
+	mins := (secs % 3600) / 60
+	rem := secs % 60
+	switch {
+	case hours > 0:
+		return fmt.Sprintf("%dh %02dm %02ds", hours, mins, rem)
+	case mins > 0:
+		return fmt.Sprintf("%dm %02ds", mins, rem)
+	default:
+		return fmt.Sprintf("%ds", rem)
 	}
 }
 

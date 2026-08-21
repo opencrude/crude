@@ -110,7 +110,7 @@ type StyleID struct {
 //
 // When the pool exceeds maxPoolSize entries, it is automatically reset.
 type StylePool struct {
-	styles []StyleEntry     // ID → style
+	styles []StyleEntry       // ID → style
 	index  map[StyleID]uint16 // style → ID
 }
 

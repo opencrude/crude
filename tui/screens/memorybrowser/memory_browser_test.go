@@ -25,8 +25,8 @@ func testRecords() []memory.ScoredRecord {
 		}},
 		{Record: memory.Record{
 			ID: "mem-2", Kind: memory.KindLesson, Title: "moveWordLeft climbs blank lines",
-			Content:   "A swallowed continue parks the cursor on blank lines.",
-			Status:    memory.StatusActive, Importance: 55, Source: memory.SourceAuto,
+			Content: "A swallowed continue parks the cursor on blank lines.",
+			Status:  memory.StatusActive, Importance: 55, Source: memory.SourceAuto,
 			UpdatedAt: now, CreatedAt: now,
 		}},
 	}

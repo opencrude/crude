@@ -348,13 +348,13 @@ func (a Attrs) Has(mask Attrs) bool {
 // A Transparent cell does not overwrite the cell below during compositing.
 // This is how "holes" in floating windows let background content show through.
 type Cell struct {
-	Char        rune  // The character to display (0 for continuation cells)
+	Char        rune   // The character to display (0 for continuation cells)
 	Content     string // Full grapheme cluster text (Char is just the first rune)
-	Width       uint8 // Display width: 0 (continuation), 1 (normal), 2 (wide)
-	FG          Color // Foreground color
-	BG          Color // Background color
-	Attr        Attrs // Text rendering attributes
-	Transparent bool  // If true, compositing skips this cell (shows below)
+	Width       uint8  // Display width: 0 (continuation), 1 (normal), 2 (wide)
+	FG          Color  // Foreground color
+	BG          Color  // Background color
+	Attr        Attrs  // Text rendering attributes
+	Transparent bool   // If true, compositing skips this cell (shows below)
 }
 
 // NewCell creates a normal-width cell with the given character and style.

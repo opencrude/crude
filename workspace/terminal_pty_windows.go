@@ -125,7 +125,7 @@ func startTerminalIO(command string, args []string, cwd string, cols, rows int) 
 	}
 
 	var procInfo windows.ProcessInformation
-		cmdLinePtr, err := windows.UTF16PtrFromString(cmdLine)
+	cmdLinePtr, err := windows.UTF16PtrFromString(cmdLine)
 	if err != nil {
 		windows.ClosePseudoConsole(hpc)
 		_ = windows.CloseHandle(ptyInWrite)
@@ -154,10 +154,10 @@ func startTerminalIO(command string, args []string, cwd string, cols, rows int) 
 
 	creationFlags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
 	if err := windows.CreateProcess(
-		nil,           // appName — let CreateProcess parse the command line
-		cmdLinePtr,    // commandLine — must be mutable UTF-16
-		nil, nil,      // process/thread security attributes
-		true,          // inheritHandles — required for attribute list
+		nil,        // appName — let CreateProcess parse the command line
+		cmdLinePtr, // commandLine — must be mutable UTF-16
+		nil, nil,   // process/thread security attributes
+		true, // inheritHandles — required for attribute list
 		creationFlags,
 		envBlock,
 		cwdPtr,

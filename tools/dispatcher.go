@@ -99,9 +99,9 @@ func GetFloatArgAny(args map[string]any, key string, defaultVal float64) float64
 }
 
 type ToolResult struct {
-	Content  string
-	Added    int
-	Removed  int
+	Content string
+	Added   int
+	Removed int
 }
 
 func (r ToolResult) String() string {
@@ -269,7 +269,7 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		oldString := GetStrArg(params, "old_string", "")
 		newString := GetStrArg(params, "new_string", "")
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "old_len", len(oldString), "new_len", len(newString))
-	if len([]rune(oldString)) > 80 {
+		if len([]rune(oldString)) > 80 {
 			lg.Debug("DISPATCH", "old_preview", "first_80", string([]rune(oldString)[:80])+"…")
 		}
 		orig := ""

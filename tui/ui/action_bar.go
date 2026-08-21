@@ -33,15 +33,15 @@ type ActionBarButton struct {
 // ActionBar is a horizontal row of buttons for form save/cancel/reset actions.
 type ActionBar struct {
 	Base
-	buttons      []actionBarBtn
-	tokens       *TokenSet
-	gap          int
-	alignEnd     bool
-	focused      int
-	hovered      int
-	cancelAction string
-	exitForward  string
-	exitBackward string
+	buttons       []actionBarBtn
+	tokens        *TokenSet
+	gap           int
+	alignEnd      bool
+	focused       int
+	hovered       int
+	cancelAction  string
+	exitForward   string
+	exitBackward  string
 	showRule      bool
 	surfaceRole   SemanticColor
 	surfaceSet    bool
@@ -62,9 +62,9 @@ type actionBarBtn struct {
 // NewActionBar creates an action bar with the given buttons.
 func NewActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *ActionBar {
 	ab := &ActionBar{
-		Base:    NewBase(id),
-		tokens:   tokens,
-		gap:      2,
+		Base:         NewBase(id),
+		tokens:       tokens,
+		gap:          2,
 		alignEnd:     true,
 		hovered:      -1,
 		exitForward:  "actionbar.exit.forward",
@@ -146,6 +146,18 @@ func (ab *ActionBar) syncButtonSurface() {
 	for i := range ab.buttons {
 		ab.buttons[i].button.SetSurfaceBackground(bg)
 	}
+}
+
+// ButtonLabelsForTest returns the visible button labels in layout order.
+func (ab *ActionBar) ButtonLabelsForTest() []string {
+	if ab == nil {
+		return nil
+	}
+	out := make([]string, len(ab.buttons))
+	for i, b := range ab.buttons {
+		out[i] = b.label
+	}
+	return out
 }
 
 func (ab *ActionBar) FocusFirst() { ab.focused = 0 }

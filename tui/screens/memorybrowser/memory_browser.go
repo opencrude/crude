@@ -231,7 +231,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.empty.Layout(ctx, ui.Rect{Y: listY, W: r.W, H: listH})
 	} else {
 		s.list.Layout(ctx, ui.Rect{X: 0, Y: listY, W: max(1, r.W-1), H: listH})
-		s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W - 1), Y: listY, W: 1, H: listH})
+		s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-1), Y: listY, W: 1, H: listH})
 	}
 	s.detailRect = ui.Rect{X: 0, Y: listY + listH, W: r.W, H: detailH}
 	s.hints.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})

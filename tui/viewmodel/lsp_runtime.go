@@ -30,7 +30,7 @@ func (c *editorLSPClient) OnDiagnostics(fn func(string, []workspace.LSPDiagnosti
 
 func (c *editorLSPClient) Start(ctx context.Context) error { return c.client.Start(ctx) }
 func (c *editorLSPClient) Stop()                           { c.client.Stop() }
-func (c *editorLSPClient) Done() <-chan struct{}          { return c.client.Done() }
+func (c *editorLSPClient) Done() <-chan struct{}           { return c.client.Done() }
 func (c *editorLSPClient) OpenFile(ctx context.Context, path, language, text string) {
 	c.client.OpenFile(ctx, path, language, text)
 }

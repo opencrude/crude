@@ -30,12 +30,12 @@ type CancelMsg struct {
 // the existing OverlayHost / WindowFrame shell.
 type Screen struct {
 	ui.Base
-	th     *theme.Theme
-	tokens *ui.TokenSet
-	input  *composerInput
+	th      *theme.Theme
+	tokens  *ui.TokenSet
+	input   *composerInput
 	actions *ui.ActionBar
-	open   bool
-	focus  func(ui.ComponentID)
+	open    bool
+	focus   func(ui.ComponentID)
 }
 
 // New creates a closed composer screen.

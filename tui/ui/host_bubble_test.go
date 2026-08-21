@@ -93,10 +93,10 @@ func TestHost_KeyBubbling_StopsAtFirstHandler(t *testing.T) {
 
 func TestHost_KeyBubbling_Table(t *testing.T) {
 	cases := []struct {
-		name      string
-		msg       tea.KeyPressMsg
+		name       string
+		msg        tea.KeyPressMsg
 		wantBubble bool
-		setup     func(*TextField)
+		setup      func(*TextField)
 	}{
 		{name: "up", msg: tea.KeyPressMsg{Code: tea.KeyUp}, wantBubble: true},
 		{name: "down", msg: tea.KeyPressMsg{Code: tea.KeyDown}, wantBubble: true},

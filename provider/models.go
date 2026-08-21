@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,12 @@ type ModelInfo struct {
 func FetchModels(p *Provider) ([]ModelInfo, error) {
 	if p == nil {
 		return nil, fmt.Errorf("provider is nil")
+	}
+
+	// Refresh OAuth tokens (e.g. ChatGPT subscription) so the bearer used for
+	// the /models request is current.
+	if err := p.EnsureAuth(context.Background()); err != nil {
+		return nil, fmt.Errorf("refresh oauth token: %w", err)
 	}
 
 	endpoint := p.ModelsEndpoint()
@@ -82,6 +89,9 @@ func FetchModels(p *Provider) ([]ModelInfo, error) {
 					lg.Error("PROVIDER", "fetch_models_auth_fail", "provider", p.Name, "status", resp.StatusCode)
 				})
 				if p.APIKey == "" {
+					if p.OAuth() != nil {
+						return nil, fmt.Errorf("%s authentication failed — re-sign in with ChatGPT in Settings → Providers", p.Name)
+					}
 					return nil, fmt.Errorf("%s requires an API key to list models — enter one in Settings → Providers", p.Name)
 				}
 				return nil, fmt.Errorf("invalid API key for %s", p.Name)

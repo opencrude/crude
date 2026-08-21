@@ -38,10 +38,10 @@ func renderAssistantLines(t *testing.T, content string, th *theme.Theme, width i
 
 // TestMarkdownBridgedToNativeGoldenCellBuffer renders a markdown message with
 // a fenced code block (syntax highlighting) into a cell buffer and asserts:
-// 1. No row ever requests the ANSI path.
-// 2. No painted cell contains an ANSI escape rune.
-// 3. The code-block content paints with a non-default FG (Chroma syntax colours
-//    carried as explicit overrides).
+//  1. No row ever requests the ANSI path.
+//  2. No painted cell contains an ANSI escape rune.
+//  3. The code-block content paints with a non-default FG (Chroma syntax colours
+//     carried as explicit overrides).
 func TestMarkdownBridgedToNativeGoldenCellBuffer(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)

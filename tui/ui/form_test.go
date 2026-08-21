@@ -382,12 +382,12 @@ func TestCompactTableUsesSharedInkAndDynamicGaps(t *testing.T) {
 	model := NewFormModel()
 	model.AddField(&FieldState{
 		ID: "default", Label: "Main Agent", Type: FieldNav,
-		Columns: []string{"deepseek-v4-flash", "opencode-go"},
+		Columns:   []string{"deepseek-v4-flash", "opencode-go"},
 		Inherited: true, InheritedFrom: "workspace",
 	})
 	model.AddField(&FieldState{
 		ID: "crafter", Label: "Crafter", Type: FieldNav,
-		Columns: []string{"glm-5.1-precision", "crof"},
+		Columns:   []string{"glm-5.1-precision", "crof"},
 		Inherited: true, InheritedFrom: "workspace",
 	})
 	form := NewDockedForm("form", model, "Session Settings", "", tokens)
