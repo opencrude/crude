@@ -260,6 +260,7 @@ func (r *Renderer) SetChatAreaBounds(top, height int) {
 }
 
 func (r *Renderer) AppendMessage(msg types.ChatMessage) {
+	r.invalidateStreamingCursorOwner()
 	msgCopy := msg
 	if msgCopy.InternalID == "" {
 		msgCopy.InternalID = r.nextMsgID()
@@ -311,6 +312,7 @@ func (r *Renderer) AppendThinking(s string) {
 			r.vl.InvalidateItem(msg.InternalID)
 		}
 	}
+	r.invalidateStreamingCursorOwner()
 	newMsg := &types.ChatMessage{
 		InternalID:     r.nextMsgID(),
 		Role:           types.RoleThinking,
@@ -432,6 +434,7 @@ func (r *Renderer) UpdateToolStreaming(toolID, internalID, name string, data map
 	if newLines > 0 {
 		msg.ToolLivedAdded = newLines
 	}
+	r.invalidateStreamingCursorOwner()
 	r.sync.MsgByID[msg.InternalID] = msg
 	if toolID != "" {
 		r.sync.MsgByID[toolID] = msg
@@ -486,6 +489,7 @@ func (r *Renderer) UpdateToolCall(toolID, internalID, name, argsCompact string) 
 		ToolProgressLabel: argsCompact,
 		ToolStartTime:     time.Now(),
 	}
+	r.invalidateStreamingCursorOwner()
 	r.sync.MsgByID[msg.InternalID] = msg
 	if toolID != "" {
 		r.sync.MsgByID[toolID] = msg
@@ -700,17 +704,21 @@ func (r *Renderer) InvalidateCache() {
 }
 
 func (r *Renderer) SetStreaming(s bool) {
+	if r.streaming == s {
+		return
+	}
+	if len(r.sync.Messages) > 0 {
+		last := r.sync.Messages[len(r.sync.Messages)-1]
+		if last.Role == types.RoleAssistant {
+			last.CachedLines = nil
+			r.vl.InvalidateItem(last.InternalID)
+		}
+	}
 	r.streaming = s
 }
 
 func (r *Renderer) EndStreamingCursor() {
-	r.streaming = false
-	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
-		if r.sync.Messages[i].Role == types.RoleAssistant {
-			r.vl.InvalidateItem(r.sync.Messages[i].InternalID)
-			break
-		}
-	}
+	r.SetStreaming(false)
 }
 
 func (r *Renderer) SetSpinFrame(f int) {
@@ -749,6 +757,7 @@ func (r *Renderer) SourceVersion() uint64 {
 // SyncMessages updates the retained TUI projection from workspace-owned
 // message data. Stable IDs preserve unchanged render caches and scroll state.
 func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion uint64) {
+	cursorOwnerID := r.streamingCursorOwnerID()
 	result, ok := r.sync.SyncMessages(messages, sourceVersion)
 	if !ok {
 		return
@@ -756,6 +765,12 @@ func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion uint
 
 	previousLen := result.PreviousLen
 	if result.PureAppend && len(messages) > previousLen {
+		if cursorOwnerID != "" {
+			if previous := r.sync.MsgByID[cursorOwnerID]; previous != nil {
+				previous.CachedLines = nil
+			}
+			r.vl.InvalidateItem(cursorOwnerID)
+		}
 		for index := previousLen; index < len(r.sync.Messages); index++ {
 			r.vl.AppendItem(r.messageToItem(index))
 		}
@@ -845,6 +860,20 @@ func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, i
 		return nil, nil, 0
 	}
 	r.prepareRender(width)
+	// shellchat owns the visible viewport and may scroll to any exported row.
+	// Materialize every dirty item before handing it to the second VirtualList;
+	// otherwise offscreen items become blank bands and lack pane gutter metadata.
+	r.vl.EnsureHeights(r.renderItem, width)
+	r.vl.BuildIndex()
+	if r.autoScroll() {
+		r.vl.ScrollToBottom()
+		r.syncScrollFromVL()
+		if scroll := r.authoritativeScroll(); scroll != nil {
+			scroll.ApplyAutoScroll()
+		}
+	} else {
+		r.vl.ClampScroll()
+	}
 	rows := make([]MessageRow, 0, r.vl.ItemCount())
 	for i := 0; i < r.vl.ItemCount(); i++ {
 		item := r.vl.Item(i)
@@ -884,6 +913,9 @@ func (r *Renderer) prepareRender(width int) {
 		r.vl.InvalidateAll()
 	}
 
+	// The shellchat ScrollModel is authoritative. Apply the latest wheel/drag
+	// offset before selecting the retained items that need rendering.
+	r.syncScrollToVL()
 	_ = r.vl.RenderVisible(r.renderItem, width)
 
 	if r.extScroll == nil && r.paneScroll != nil {
@@ -891,7 +923,6 @@ func (r *Renderer) prepareRender(width int) {
 		r.paneScroll.SetViewport(r.vl.ViewportHeight())
 	}
 
-	r.syncScrollToVL()
 	if r.autoScroll() {
 		r.vl.BuildIndex()
 		r.vl.ScrollToBottom()
@@ -907,6 +938,28 @@ func (r *Renderer) prepareRender(width int) {
 		r.vl.ClampScroll()
 		r.syncScrollFromVL()
 	}
+}
+
+func (r *Renderer) streamingCursorOwnerID() string {
+	if len(r.sync.Messages) == 0 {
+		return ""
+	}
+	last := r.sync.Messages[len(r.sync.Messages)-1]
+	if r.isStreamingCursor(last) {
+		return last.InternalID
+	}
+	return ""
+}
+
+func (r *Renderer) invalidateStreamingCursorOwner() {
+	id := r.streamingCursorOwnerID()
+	if id == "" {
+		return
+	}
+	if msg := r.sync.MsgByID[id]; msg != nil {
+		msg.CachedLines = nil
+	}
+	r.vl.InvalidateItem(id)
 }
 
 func (r *Renderer) buildGlobalPaneLineMap() []PaneLineInfo {

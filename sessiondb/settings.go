@@ -13,7 +13,7 @@ type AgentSettingOverride struct {
 	APIStandard string
 	// Inherit is the live-inheritance marker: "main" follows this session's
 	// main agent, "workspace" follows the workspace's main agent.
-	Inherit       string
+	Inherit        string
 	ThinkingEffort string
 }
 

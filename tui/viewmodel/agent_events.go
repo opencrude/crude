@@ -118,6 +118,13 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 }
 
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
+	if evt.Type == "btw_consumed" {
+		if m.StatusBar != nil {
+			m.StatusBar.SetBtwCount(max(0, m.StatusBar.BtwCount()-1))
+		}
+		m.syncAgentWindowTabs()
+		return nil
+	}
 	if evt.Type == "memory_saved" {
 		// Background extraction saved durable memories. Surface it visibly
 		// but without blocking (status line, not a modal or chat message).
@@ -363,7 +370,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 
 	if hasThinking && agent.ThinkingPaneID != "" {
 		switch evt.Type {
-		case "stream_token", "tool_call", "tool_call_streaming", "done":
+		case "stream_token", "tool_call", "tool_call_streaming":
 			m.handleSubPaneCompletion(agentID)
 		}
 	}

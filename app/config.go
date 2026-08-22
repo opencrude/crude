@@ -163,6 +163,19 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	fc.Font = &font
 	fc.Memory = &memorySettings
 	fc.ActiveProvider = s.ActiveProvider
+	if len(s.Agents.Categories) > 0 || s.Agents.ActiveProfile != "" ||
+		s.Agents.MaxConcurrent > 0 || len(s.Agents.Profiles) > 0 {
+		agents := session.DefaultAgentsConfig()
+		if fc.Agents != nil {
+			agents = *fc.Agents
+		}
+		if s.Agents.ActiveProfile == "" {
+			s.Agents.ActiveProfile = agents.ActiveProfile
+		}
+		agentCfg := &session.Config{Agents: agents}
+		session.ApplyWorkspaceAgentDefaults(agentCfg, s.Agents)
+		fc.Agents = &agentCfg.Agents
+	}
 	if s.Providers != nil {
 		if fc.Providers == nil {
 			fc.Providers = make(map[string]session.ProviderConfig, len(s.Providers))

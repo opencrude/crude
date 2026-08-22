@@ -25,12 +25,62 @@ func TestBackgroundJobsPaintsCommandDetailsAcrossThemesAndSizes(t *testing.T) {
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
 			painted := bufferText(buf)
-			for _, want := range []string{"Background jobs", "[build]", "go test ./...", "RUNNING", "pid 42"} {
+			for _, want := range []string{"Background jobs", "STATUS", "HANDLE", "COMMAND", "RUNNING", "[build]"} {
 				if !strings.Contains(painted, want) {
 					t.Fatalf("size=%#v missing %q:\n%s", size, want, painted)
 				}
 			}
+			if size.W >= 60 {
+				for _, want := range []string{"DURATION", "PID", "EXIT", "42", "go test ./..."} {
+					if !strings.Contains(painted, want) {
+						t.Fatalf("size=%#v missing %q:\n%s", size, want, painted)
+					}
+				}
+			} else if !strings.Contains(painted, "go test") {
+				t.Fatalf("size=%#v command column truncated wrongly:\n%s", size, painted)
+			}
+			if strings.Contains(painted, "❯") || strings.Contains(painted, ">") {
+				t.Fatalf("size=%#v painted a marker glyph:\n%s", size, painted)
+			}
 		}
+	}
+}
+
+func TestBackgroundJobsPaintsStatusGlyphsAndErrors(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	screen := New(theme.DefaultDark())
+	screen.SetJobs([]Job{
+		{Handle: "done", Command: "true", Status: "completed", EndedAt: now, ExitCode: 0},
+		{Handle: "failed", Command: "false", Status: "failed", EndedAt: now, ExitCode: 1, Error: "exit status 1"},
+		{Handle: "kill", Command: "sleep 99", Status: "killed", EndedAt: now, ExitCode: 130},
+	}, now)
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	host.Resize(120, 12)
+	buf := surface.NewCellBuffer(120, 12)
+	host.Paint(buf)
+	painted := bufferText(buf)
+	for _, want := range []string{"✓ COMPLETED", "✗ FAILED", "! KILLED", "exit status 1", "130"} {
+		if !strings.Contains(painted, want) {
+			t.Fatalf("missing %q:\n%s", want, painted)
+		}
+	}
+}
+
+func TestBackgroundJobsShrinksColumnsOnNarrowWidths(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 5, 0, time.UTC)
+	screen := New(theme.DefaultDark())
+	screen.SetJobs([]Job{{Handle: "build", Command: "go test ./...", PID: 42, Status: "running", StartedAt: now.Add(-5 * time.Second)}}, now)
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	host.Resize(42, 8)
+	buf := surface.NewCellBuffer(42, 8)
+	host.Paint(buf)
+	painted := bufferText(buf)
+	if strings.Contains(painted, "PID") {
+		t.Fatalf("narrow layout should drop PID/EXIT columns:\n%s", painted)
+	}
+	// Command column still paints (truncated with an ellipsis).
+	if !strings.Contains(painted, "go test") {
+		t.Fatalf("command truncated incorrectly:\n%s", painted)
 	}
 }
 

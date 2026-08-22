@@ -12,9 +12,9 @@ type MemoryRowKind int
 
 const (
 	MemoryRowDefault MemoryRowKind = iota
-	MemoryRowTitle                  // a bold heading (e.g. a memory's title)
-	MemoryRowMeta                   // muted metadata (kind / importance / when)
-	MemoryRowBody                   // the content / summary text
+	MemoryRowTitle                 // a bold heading (e.g. a memory's title)
+	MemoryRowMeta                  // muted metadata (kind / importance / when)
+	MemoryRowBody                  // the content / summary text
 )
 
 // MemoryLine is one structured memory-tool result row.
@@ -155,7 +155,7 @@ func buildRecallRows(content string, contentWidth int) []MemoryLine {
 
 func buildHistoryRows(content string, contentWidth int) []MemoryLine {
 	var payload struct {
-		Turns    []struct {
+		Turns []struct {
 			SessionID string   `json:"session_id"`
 			Turn      int      `json:"turn"`
 			When      string   `json:"when"`

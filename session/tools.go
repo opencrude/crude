@@ -398,6 +398,9 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool) *agent.Agent {
 			return s.executeCommandAutoPromote(ctx, params)
 
 		case "run_sub_agent":
+			if !multiAgent {
+				return tools.ToolResult{Content: "Error: multi-agent mode is disabled"}, fmt.Errorf("multi-agent mode is disabled")
+			}
 			if s.subAgentSup == nil {
 				if !s.initSubAgentRunner() {
 					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
