@@ -17,8 +17,8 @@ func TestContentSurfaceWidthMatchesProduction(t *testing.T) {
 	if got := ContentSurfaceWidth(innerW, padLR, false); got != innerW+padLR*2 {
 		t.Fatalf("no gutter width=%d want %d", got, innerW+padLR*2)
 	}
-	if got := ContentSurfaceWidth(innerW, padLR, true); got != innerW+padLR*2+1 {
-		t.Fatalf("with gutter width=%d want %d", got, innerW+padLR*2+1)
+	if got := ContentSurfaceWidth(innerW, padLR, true); got != innerW+padLR*2 {
+		t.Fatalf("with gutter width=%d want %d", got, innerW+padLR*2)
 	}
 }
 
@@ -215,13 +215,72 @@ func TestNestedPaneComposeAlignment(t *testing.T) {
 
 	buf := surfaceFromHost(t, host)
 	gx := NestedGutterX(s.paintState.compose, list.W)
+	if gx != sb.X-ui.ScrollbarWidth-1 {
+		t.Fatalf("nested gutter X=%d want %d (pane scrollbar, blank, main scrollbar)", gx, sb.X-2)
+	}
 	c := buf.Get(gx, 1)
 	if c.Char != '█' && c.Char != '░' {
 		t.Fatalf("nested pane row should have native gutter at x=%d: char=%q", gx, string(c.Char))
 	}
+	if gap := buf.Get(gx+ui.ScrollbarWidth, 1); gap.Char == '█' || gap.Char == '░' {
+		t.Fatalf("column between nested and main scrollbars must stay blank: char=%q", string(gap.Char))
+	}
 	mainCol := PlainRow(buf, sb.X, sb.X+sb.W)
 	if strings.Contains(mainCol, "pane") {
 		t.Fatalf("main gutter column should not contain row text: %q", mainCol)
+	}
+}
+
+func TestNestedPaneBackgroundDoesNotChangeScrollbarGeometry(t *testing.T) {
+	th := theme.DefaultDark()
+	padLR := th.Spacing.PadLR
+	subPaneBG := ui.NewTokenSet(th).Color(ui.ColorSubPaneBg)
+
+	for _, tc := range []struct {
+		name  string
+		hasBG bool
+	}{
+		{name: "thinking", hasBG: false},
+		{name: "subagent", hasBG: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			paneScroll := ui.NewScrollModel()
+			paneScroll.SetContent(4)
+			paneScroll.SetViewport(1)
+			paneMap := []chatprojection.PaneLineInfo{{PaneID: "pane", LineIdx: 0}}
+			s, host := newShellChatHost(t, []chatprojection.MessageRow{{
+				ID:    "pane-row",
+				Lines: []string{"pane content"},
+			}}, ComposeParams{
+				InnerW:        40,
+				PadLR:         padLR,
+				Theme:         th,
+				NestingLevel:  1,
+				MainSBVisible: true,
+				PaneLineMap:   paneMap,
+				PaneGutters: map[string]PaneGutterState{
+					"pane": {Scroll: paneScroll, TrackH: 1, Visible: true},
+				},
+				HasPaneBg: func(string) bool { return tc.hasBG },
+			}, 1)
+
+			buf := surfaceFromHost(t, host)
+			gx := NestedGutterX(s.paintState.compose, s.list.Bounds().W)
+			mainX := s.scrollbar.Bounds().X
+			if gx != mainX-2 {
+				t.Fatalf("pane scrollbar X=%d main X=%d, want pane at main-2", gx, mainX)
+			}
+			contentBG := buf.Get(padLR, 0).BG
+			if tc.hasBG && contentBG != subPaneBG {
+				t.Fatalf("subagent content bg=%v want %v", contentBG, subPaneBG)
+			}
+			if !tc.hasBG && contentBG == subPaneBG {
+				t.Fatalf("thinking content unexpectedly uses subagent background %v", subPaneBG)
+			}
+			if gapBG := buf.Get(gx+1, 0).BG; gapBG == subPaneBG {
+				t.Fatalf("separator gap inherited subagent background %v", gapBG)
+			}
+		})
 	}
 }
 

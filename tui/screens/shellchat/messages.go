@@ -114,17 +114,15 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	col := drawn
 	padX := lineX + drawn
 	paintNativeSpaces(buf, padX, y, layout.PadRight, tokens, selStart, selEnd, layout.HasPaneBg, col)
-	col += layout.PadRight
-	if layout.GutterCols > ui.ScrollbarWidth {
-		gap := layout.GutterCols - ui.ScrollbarWidth
-		// Continue selection column tracking through the gutter gap so
-		// multi-column selections paint consistently across the row.
-		paintNativeSpaces(buf, padX+layout.PadRight, y, gap, tokens, selStart, selEnd, layout.HasPaneBg, col)
-	}
 
 	gx := NestedGutterX(s.paintState.compose, width)
 	if gx >= 0 && paneInfo.PaneID != "" {
 		s.paintNestedGutter(buf, x+gx, y, paneInfo)
+	}
+	if gx >= 0 && layout.GutterCols > ui.ScrollbarWidth {
+		// The separator belongs to the main chat, not the pane. In particular,
+		// a compact subagent's background ends at its own scrollbar.
+		paintNativeSpaces(buf, x+gx+ui.ScrollbarWidth, y, layout.GutterCols-ui.ScrollbarWidth, tokens, 0, 0, false, 0)
 	}
 }
 

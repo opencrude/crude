@@ -1,8 +1,6 @@
 package viewmodel
 
 import (
-	"time"
-
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
@@ -331,6 +329,7 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	if sp.Done {
 		return []chatprojection.SubPaneLine{
 			chatprojection.BuildSubPaneSummaryLine(view, width),
+			chatprojection.SeparatorLine(),
 		}
 	}
 
@@ -465,20 +464,4 @@ func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame i
 		m.subPaneProjections.SetActiveTyping(paneID, n.State.ComputeActiveTyping())
 	}
 	return m.subPaneProjections.Render(paneID, sp, width, maxH, spinFrame)
-}
-
-// EnsureTime is a tiny helper so time is referenced even if other
-// imports are pruned during incremental edits.
-var _ = time.Now
-
-// paneDoneMap builds the per-pane Done snapshot used by the registry's
-// aggregate scrollbar queries (HasAnyScrollbarVisible / ScrollbarNestingLevel).
-// The registry takes the done-map as a parameter so it never reaches back
-// into SubPane state.
-func (m *App) paneDoneMap() map[string]bool {
-	done := make(map[string]bool, len(m.PaneMgr.Panes()))
-	for id, sp := range m.PaneMgr.Panes() {
-		done[id] = sp.Done
-	}
-	return done
 }

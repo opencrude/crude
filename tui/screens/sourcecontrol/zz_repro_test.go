@@ -10,7 +10,12 @@ import (
 	"crude/workspace"
 )
 
-func TestReproGitScrollbarSnapBackOnRelayout(t *testing.T) {
+// TestGitListOffsetSurvivesRelayout guards against scroll snap-back: the
+// offset produced by wheel scrolling must not be yanked back to the selection
+// by a subsequent layout/frame. List.Layout must clamp the viewport but never
+// call EnsureVisible (that used to reset offset to the selected row on every
+// frame, undoing the wheel gesture within one tick).
+func TestGitListOffsetSurvivesRelayout(t *testing.T) {
 	th := theme.DefaultDark()
 	screen := New(th)
 	changes := make([]workspace.GitChange, 0, 60)
@@ -27,15 +32,16 @@ func TestReproGitScrollbarSnapBackOnRelayout(t *testing.T) {
 	before := screen.list.Scroll().Offset()
 	host.Handle(tea.MouseWheelMsg{X: listRect.X + 1, Y: listRect.Y + 1, Button: tea.MouseWheelDown})
 	afterWheel := screen.list.Scroll().Offset()
-	t.Logf("offset before=%d after wheel=%d", before, afterWheel)
+	if afterWheel <= before {
+		t.Fatalf("wheel did not scroll: offset before=%d after=%d", before, afterWheel)
+	}
 
 	// simulate a fresh shell frame: Layout() then Paint() then Layout()
 	host.Layout()
 	host.MarkLayout()
 	host.Layout()
 	afterFrame := screen.list.Scroll().Offset()
-	t.Logf("offset after relayout frame=%d", afterFrame)
 	if afterFrame != afterWheel {
-		t.Logf("SNAP-BACK CONFIRMED: %d -> %d after layout", afterWheel, afterFrame)
+		t.Fatalf("SNAP-BACK: offset %d after wheel became %d after relayout", afterWheel, afterFrame)
 	}
 }

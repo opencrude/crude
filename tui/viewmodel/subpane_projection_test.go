@@ -134,7 +134,7 @@ func TestSubPaneProjectionRenderAgentPaneCompact(t *testing.T) {
 }
 
 // TestSubPaneProjectionRenderDoneSummary verifies that a Done pane renders
-// only the summary line.
+// its summary followed by one unformatted separator row.
 func TestSubPaneProjectionRenderDoneSummary(t *testing.T) {
 	app := newFullTestApp(t)
 	sp := app.PaneMgr.GetOrCreate("done-1", workspace.PaneAgent, "my-agent")
@@ -142,14 +142,17 @@ func TestSubPaneProjectionRenderDoneSummary(t *testing.T) {
 	sp.Collapse()
 	app.subPaneProjections.Get("done-1", workspace.PaneAgent)
 	lines := app.subPaneProjections.Render("done-1", sp, 40, 5, 0)
-	if len(lines) != 1 {
-		t.Fatalf("expected exactly 1 summary line, got %d", len(lines))
+	if len(lines) != 2 {
+		t.Fatalf("expected summary plus separator, got %d lines", len(lines))
 	}
 	if !subPanePlainContains(lines, "my-agent") {
 		t.Fatalf("summary does not contain the agent title")
 	}
 	if !subPanePlainContains(lines, "for") {
 		t.Fatalf("summary does not contain 'for'")
+	}
+	if !lines[1].Separator || lines[1].PlainText() != "" {
+		t.Fatalf("done pane separator = %+v", lines[1])
 	}
 }
 
@@ -270,8 +273,8 @@ func TestThinkingPanePromotionRoundTrip(t *testing.T) {
 	// Collapse and verify the summary path.
 	sp.Collapse()
 	doneLines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0)
-	if len(doneLines) != 1 {
-		t.Fatalf("expected 1 summary line after Collapse, got %d", len(doneLines))
+	if len(doneLines) != 2 || !doneLines[1].Separator {
+		t.Fatalf("expected summary plus separator after Collapse, got %+v", doneLines)
 	}
 }
 

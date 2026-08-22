@@ -175,12 +175,8 @@ func (s *Screen) Children() []ui.Component {
 }
 
 // ContentSurfaceWidth is the chat surface width for compose InnerW and PadLR.
-func ContentSurfaceWidth(innerW, padLR int, mainSBVisible bool) int {
-	w := innerW + padLR*2
-	if mainSBVisible {
-		w++
-	}
-	return w
+func ContentSurfaceWidth(innerW, padLR int, _ bool) int {
+	return innerW + padLR*2
 }
 
 func (s *Screen) mainScrollbarVisible() bool {

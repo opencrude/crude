@@ -70,7 +70,7 @@ func SpacerFieldState(id string) *FieldState {
 
 // ThinkingLevels is the canonical thinking-level option list, shared by the
 // workspace settings and session override forms.
-var ThinkingLevels = []string{"none", "low", "medium", "high", "xhigh"}
+var ThinkingLevels = []string{"none", "low", "medium", "high", "xhigh", "max"}
 
 // ModelFieldState builds a model select field with the standard "fetch on
 // open" placeholder used when the provider's model list is not loaded yet.

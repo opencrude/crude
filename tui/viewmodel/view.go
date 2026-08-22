@@ -604,12 +604,6 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 		activeTyping = activeAgent.ComputeActiveTyping()
 	}
 
-	nestingLevel := m.subPaneProjections.ScrollbarNestingLevel(m.paneDoneMap())
-	paneSBW := nestingLevel*ui.ScrollbarWidth + nestingLevel
-	if sp := m.PaneMgr.Get(m.AgentMgr.ActiveID()); sp != nil && m.subPaneProjections.Has(sp.ID) {
-		m.subPaneProjections.SetPaneScrollbarWidth(sp.ID, paneSBW)
-	}
-	activeML.SetPaneScrollbarWidth(0)
 	activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
 	activeML.SetSpinFrame(m.SpinFrame)
 	activeML.SetActiveTyping(activeTyping)
@@ -622,14 +616,37 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 
 	activeAgentID := m.AgentMgr.ActiveID()
 	switched := m.beginAgentChatScrollSwitch(activeAgentID)
+	// The first export renders inline subpanes, and that render is what sets
+	// each pane's ScrollModel content/viewport. The nested-gutter nesting
+	// level (does any pane reserve a scrollbar column?) depends on those
+	// metrics, so it must be computed after this pass — otherwise a thinking
+	// pane that just appeared on this frame computes nesting=0 and shows no
+	// scrollbar until the next frame.
 	msgRows, paneLineMap, contentH := activeML.ExportMessageRows(innerW)
 	m.finishAgentChatScrollMetrics(activeAgentID, chatH, contentH)
 	if switched {
 		msgRows, paneLineMap, contentH = activeML.ExportMessageRows(innerW)
+		m.finishAgentChatScrollMetrics(activeAgentID, chatH, contentH)
+	}
+
+	paneGutters := m.subPaneProjections.BuildPaneGutters(paneLineMap, m.PaneMgr)
+	nestingLevel := 0
+	for _, gutter := range paneGutters {
+		if gutter.Visible && gutter.Scroll != nil {
+			nestingLevel = 1
+			break
+		}
+	}
+	if activeML.SetPaneScrollbarWidth(nestingLevel * ui.ScrollbarWidth) {
+		// The discovery pass above establishes each pane's vertical scroll
+		// metrics. Re-export once when the horizontal gutter footprint changes
+		// so the pane width and painted columns agree on this same frame.
+		msgRows, paneLineMap, contentH = activeML.ExportMessageRows(innerW)
+		m.finishAgentChatScrollMetrics(activeAgentID, chatH, contentH)
+		paneGutters = m.subPaneProjections.BuildPaneGutters(paneLineMap, m.PaneMgr)
 	}
 
 	mainSBVisible := contentH > chatH
-	paneGutters := m.subPaneProjections.BuildPaneGutters(paneLineMap, m.PaneMgr)
 
 	composeParams := shellchat.ComposeParams{
 		InnerW:        innerW,

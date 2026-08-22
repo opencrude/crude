@@ -5,6 +5,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/types"
+	"crude/tui/ui"
 )
 
 func TestRendererDerivesNarrowWidthsFromActualBoundsGPT56(t *testing.T) {
@@ -39,6 +40,11 @@ func TestSubPaneCallbackReceivesNoSyntheticNarrowWidthGPT56(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(3, 6)
 	r.SetChatAreaBounds(0, 6)
+	r.SetPaneScrollbarWidth(1)
+	paneScroll := ui.NewScrollModel()
+	paneScroll.SetContent(2)
+	paneScroll.SetViewport(1)
+	r.BindPaneScroll(paneScroll)
 	gotWidth := -1
 	r.SetSubPaneContentFn(func(_ string, width, _, _ int) []SubPaneLine {
 		gotWidth = width
@@ -51,6 +57,6 @@ func TestSubPaneCallbackReceivesNoSyntheticNarrowWidthGPT56(t *testing.T) {
 
 	_, _, _ = r.ExportMessageRows(3)
 	if gotWidth != 0 {
-		t.Fatalf("three-column subpane callback width=%d, want 0 after chrome", gotWidth)
+		t.Fatalf("three-column subpane callback width=%d, want 0 after pane/main scrollbar footprint", gotWidth)
 	}
 }

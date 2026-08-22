@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -83,6 +84,111 @@ func TestRunAutomaticallyContinuesTruncatedResponse(t *testing.T) {
 	}
 	if len(assistantContent) != 2 || assistantContent[0] != "part one" || assistantContent[1] != "part two" {
 		t.Fatalf("assistant messages = %#v", assistantContent)
+	}
+}
+
+func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
+	var requests atomic.Int32
+	secondRequest := make(chan []provider.ChatMessage, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if requests.Add(1) == 1 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"part one\"}}]}\n\n")
+			return
+		}
+		secondRequest <- request.Messages
+		writeChatSSE(w, " part two", "stop")
+	}))
+	defer server.Close()
+
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "test-model"
+	agent := newTestAgent(t, p, p.Model)
+	agent.MaxSteps = 3
+
+	var events []AgentEvent
+	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
+		events = append(events, event)
+	}, nil, nil, "", nil)
+	if requests.Load() != 2 {
+		t.Fatalf("requests = %d, want 2", requests.Load())
+	}
+	if hasEvent(events, "error") {
+		t.Fatalf("interrupted text stream surfaced an error: %+v", events)
+	}
+	if !hasEvent(events, "retry") || !hasEvent(events, "done") {
+		t.Fatalf("events lack retry/done recovery markers: %+v", events)
+	}
+
+	var streamed strings.Builder
+	for _, event := range events {
+		if event.Type == "stream_token" {
+			if token, ok := event.Data.(string); ok {
+				streamed.WriteString(token)
+			}
+		}
+	}
+	if got := streamed.String(); got != "part one part two" {
+		t.Fatalf("streamed content = %q", got)
+	}
+
+	requestMessages := <-secondRequest
+	var sawPartial, sawContinuation bool
+	for _, message := range requestMessages {
+		if message.Role == "assistant" && message.ContentString() == "part one" {
+			sawPartial = true
+		}
+		if message.Role == "system" && strings.Contains(message.ContentString(), "Continue the previous response") {
+			sawContinuation = true
+		}
+	}
+	if !sawPartial || !sawContinuation {
+		t.Fatalf("recovery request lacks partial assistant/continuation: %+v", requestMessages)
+	}
+
+	var assistantContent []string
+	for _, message := range messages {
+		if message.Role == "assistant" {
+			assistantContent = append(assistantContent, message.ContentString())
+		}
+	}
+	if len(assistantContent) != 2 || assistantContent[0] != "part one" || assistantContent[1] != " part two" {
+		t.Fatalf("assistant messages = %#v", assistantContent)
+	}
+}
+
+func TestRunDoesNotContinueInterruptedToolCall(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w,
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"execute_command","arguments":"{\"command\":\"touch /tmp/never-run\""}}]}}]}`+"\n\n")
+	}))
+	defer server.Close()
+
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "test-model"
+	agent := newTestAgent(t, p, p.Model)
+	agent.MaxSteps = 3
+
+	var events []AgentEvent
+	agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
+		events = append(events, event)
+	}, nil, nil, "", nil)
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d, want no continuation for a partial tool call", requests.Load())
+	}
+	if !hasEvent(events, "error") {
+		t.Fatalf("partial tool call must fail closed: %+v", events)
+	}
+	if !hasEvent(events, "tool_call_streaming") {
+		t.Fatalf("test stream did not decode a partial tool call: %+v", events)
 	}
 }
 

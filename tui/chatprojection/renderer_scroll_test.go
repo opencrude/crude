@@ -133,3 +133,30 @@ func TestRendererPaneOnlyDisarmedPreservesOffsetOnAppend(t *testing.T) {
 		t.Fatalf("disarmed pane offset changed on append: got %d want %d", pane.Offset(), before)
 	}
 }
+
+func TestCollapsedSubPaneSeparatorIsNotPaneOwned(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetChatAreaBounds(0, 4)
+	r.SetSubPaneContentFn(func(_ string, _, _, _ int) []SubPaneLine {
+		return []SubPaneLine{
+			NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}}),
+			SeparatorLine(),
+		}
+	})
+	r.AppendMessage(types.ChatMessage{
+		InternalID: "thought-pane",
+		Role:       types.RoleTool,
+		SubPaneID:  "thinking-1",
+	})
+
+	rows, paneMap, contentH := r.ExportMessageRows(40)
+	if len(rows) != 1 || len(rows[0].Lines) != 3 || contentH != 3 {
+		t.Fatalf("collapsed pane rows/content = %+v / %d", rows, contentH)
+	}
+	if rows[0].Lines[0] != "" || rows[0].Lines[1] != "Thought for 2s" || rows[0].Lines[2] != "" {
+		t.Fatalf("collapsed pane lines = %#v", rows[0].Lines)
+	}
+	if len(paneMap) != 3 || paneMap[1].PaneID != "thinking-1" || paneMap[0].PaneID != "" || paneMap[2].PaneID != "" {
+		t.Fatalf("separator must not inherit pane ownership: %+v", paneMap)
+	}
+}

@@ -6,22 +6,22 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/activitybar"
+	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	"crude/workspace"
 )
 
-func TestReproGitPanelScrollbarInShell(t *testing.T) {
+// TestGitPanelWheelScrollingSurvivesShellFrame guards against scroll
+// snap-back through the full shell: a wheel gesture on the git list must move
+// the offset and a subsequent shell frame must not reset it to the selection.
+func TestGitPanelWheelScrollingSurvivesShellFrame(t *testing.T) {
 	app := newFullTestApp(t)
 	app.Tree = NewTreeState(nil, 30)
 	app.Tree.Visible = true
 	app.width = 100
 	app.height = 30
-
-	// switch to git activity
 	app.setActivity(activitybar.ViewGit, true)
-	app.activityView = activityGit
 
-	// snapshot with many changes
 	changes := make([]workspace.GitChange, 0, 60)
 	for i := 0; i < 60; i++ {
 		changes = append(changes, workspace.GitChange{Path: "f.go", Area: workspace.GitAreaWorking, Code: "M"})
@@ -30,29 +30,33 @@ func TestReproGitPanelScrollbarInShell(t *testing.T) {
 
 	app.paintShellFrame()
 
-	// verify sidebar slot has sourcecontrol mounted
-	if got := app.shell.slots[shellSidebarSlot].active; !got {
-		t.Fatal("sidebar slot inactive")
-	}
-	rect, ok := app.rootHost.ScreenRect(sourcecontrolScrollbarIDForTest())
+	listRect, ok := app.rootHost.ScreenRect(sourcecontrol.ListID)
 	if !ok {
-		t.Fatal("git scrollbar not registered in root host")
+		t.Fatal("git list not registered in root host")
 	}
-	t.Logf("git scrollbar screen rect=%v", rect)
-	hit := app.rootHost.HitTest(rect.X, rect.Y+4)
-	t.Logf("hit=%q", hit)
+	offset := gitListScrollOffset(app)
 
-	// click on the scrollbar track
-	res := app.rootHost.Handle(tea.MouseClickMsg{X: rect.X, Y: rect.Y + 4, Button: tea.MouseLeft})
-	t.Logf("click handled=%v captured=%v", res.Handled, app.rootHost.HasPointerCapture())
+	before := offset()
+	app.rootHost.Handle(tea.MouseWheelMsg{X: listRect.X + 1, Y: listRect.Y + 1, Button: tea.MouseWheelDown})
+	afterWheel := offset()
+	if afterWheel <= before {
+		t.Fatalf("wheel did not scroll: offset before=%d after=%d", before, afterWheel)
+	}
 
-	// wheel over the git list
-	offBefore := app.sourceControl.Snapshot()
-	_ = offBefore
-	_ = ui.RootID
+	// A fresh shell frame must keep the user's offset.
+	app.paintShellFrame()
+	afterFrame := offset()
+	if afterFrame != afterWheel {
+		t.Fatalf("SNAP-BACK: offset %d after wheel became %d after shell frame", afterWheel, afterFrame)
+	}
 }
 
-// sourcecontrolScrollbarIDForTest returns the scrollbar component id of the git screen.
-func sourcecontrolScrollbarIDForTest() ui.ComponentID {
-	return "sourcecontrol/scrollbar"
+// gitListScrollOffset returns a reader for the git list scroll offset.
+func gitListScrollOffset(app *App) func() int {
+	for _, c := range app.sourceControl.Children() {
+		if lst, ok := c.(*ui.List); ok {
+			return func() int { return lst.Scroll().Offset() }
+		}
+	}
+	return func() int { return -1 }
 }
