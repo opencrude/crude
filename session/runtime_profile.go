@@ -278,6 +278,11 @@ func copyConfig(src *Config) *Config {
 		Memory:          src.Memory,
 	}
 
+	if src.workspaceMain != nil {
+		m := *src.workspaceMain
+		dst.workspaceMain = &m
+	}
+
 	if src.Providers != nil {
 		dst.Providers = make(map[string]ProviderConfig, len(src.Providers))
 		for k, v := range src.Providers {

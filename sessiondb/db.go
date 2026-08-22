@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS session_agent_settings (
     model           TEXT,
     api_standard    TEXT,
     thinking_effort TEXT,
+    inherit_source  TEXT,
     PRIMARY KEY (session_id, category),
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
@@ -168,6 +169,7 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE messages ADD COLUMN tool_error INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE messages ADD COLUMN provider_items TEXT",
 		"ALTER TABLE session_agent_settings ADD COLUMN api_standard TEXT",
+		"ALTER TABLE session_agent_settings ADD COLUMN inherit_source TEXT",
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil &&

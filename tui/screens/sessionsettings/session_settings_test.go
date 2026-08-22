@@ -35,14 +35,17 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 	if result.Action != nil || screen.page != rolePage || screen.role != "default" {
 		t.Fatalf("role open result=%#v page=%d role=%q", result, screen.page, screen.role)
 	}
-	if screen.formModel.FieldCount() != 4 {
-		t.Fatalf("role form fields=%d, want provider/model/protocol/thinking", screen.formModel.FieldCount())
+	if screen.formModel.FieldCount() != 3 {
+		t.Fatalf("role form fields=%d, want provider/model/thinking", screen.formModel.FieldCount())
 	}
 
 	buf := surface.NewCellBuffer(80, 13)
 	host.Paint(buf)
-	if !bufferContains(buf, "Main Agent") || !bufferContains(buf, "Protocol") {
+	if !bufferContains(buf, "Main Agent") {
 		t.Fatal("native role form did not paint expected content")
+	}
+	if bufferContains(buf, "Protocol") {
+		t.Fatal("role form should not expose a communication-protocol field")
 	}
 }
 
@@ -84,7 +87,7 @@ func TestRootIncludesMultiAgentToggle(t *testing.T) {
 
 func TestRoleResetRestoresInheritanceAndRemovesOverride(t *testing.T) {
 	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
-		"crafter": {Provider: "openrouter", Model: "workspace-crafter", ThinkingEffort: "medium"},
+		"default": {Provider: "openrouter", Model: "workspace-main"},
 	}}}
 	effective := cloneSettings(base)
 	setCategory(&effective, "crafter", types.CategorySettings{Provider: "openai", Model: "session-crafter", ThinkingEffort: "high"})
@@ -97,12 +100,15 @@ func TestRoleResetRestoresInheritanceAndRemovesOverride(t *testing.T) {
 	if _, ok := settings.SessionOverrides["crafter"]; ok {
 		t.Fatal("reset role still has an explicit session override")
 	}
-	if got := settings.Agents.Categories["crafter"].Model; got != "workspace-crafter" {
-		t.Fatalf("model after reset=%q, want workspace-crafter", got)
+	// A sub-agent reset returns to inheriting the session main agent live —
+	// no stale copy, no explicit provider/model.
+	got := settings.Agents.Categories["crafter"]
+	if got.Inherit != "main" || got.Model != "" || got.Provider != "" {
+		t.Fatalf("crafter after reset = %+v, want inherit-main reference", got)
 	}
 }
 
-func TestInheritMainCopiesMainAgentCategory(t *testing.T) {
+func TestInheritMainIsLiveReference(t *testing.T) {
 	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
 		"default": {Provider: "openai", Model: "gpt-5.6", ThinkingEffort: "high"},
 		"crafter": {Provider: "openrouter", Model: "workspace-crafter"},
@@ -112,11 +118,28 @@ func TestInheritMainCopiesMainAgentCategory(t *testing.T) {
 	screen.inheritMain("crafter")
 	settings := screen.ToSettings()
 	got := settings.Agents.Categories["crafter"]
-	if got.Provider != "openai" || got.Model != "gpt-5.6" || got.ThinkingEffort != "high" {
-		t.Fatalf("crafter after inherit = %+v, want main agent's category", got)
+	// A live reference carries the marker and no copied values.
+	if got.Inherit != "main" {
+		t.Fatalf("crafter inherit marker = %q, want main", got.Inherit)
 	}
-	if _, ok := settings.SessionOverrides["crafter"]; !ok {
-		t.Fatal("inherit main should record a session override")
+	if got.Model != "" || got.Provider != "" {
+		t.Fatalf("crafter should not copy main's values, got %+v", got)
+	}
+	over, ok := settings.SessionOverrides["crafter"]
+	if !ok || over.Inherit != "main" {
+		t.Fatalf("inherit main should record a live main-agent override, got %+v", over)
+	}
+}
+
+func TestInheritWorkspaceIsLiveReference(t *testing.T) {
+	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openai", Model: "gpt-5.6"},
+	}}}
+	screen := New(theme.DefaultDark(), cloneSettings(base), base, nil)
+	screen.inheritWorkspace("default")
+	settings := screen.ToSettings()
+	if got := settings.Agents.Categories["default"].Inherit; got != "workspace" {
+		t.Fatalf("default inherit marker = %q, want workspace", got)
 	}
 }
 
@@ -131,30 +154,24 @@ func TestInheritMainNoopForDefaultRole(t *testing.T) {
 	}
 }
 
-func TestRoleProtocolOverrideIsSessionScoped(t *testing.T) {
-	base := types.Settings{
-		ProviderID: "openai",
-		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
-			"default": {Provider: "openai", Model: "gpt-5.6"},
-		}},
-	}
-	screen := New(theme.DefaultDark(), base, base, nil)
-	screen.ConfigureProviders(
-		[]types.ProviderPreset{{ID: "openai", Name: "OpenAI", StandardID: "openai-responses"}},
-		map[string]types.ProviderConfig{
-			"openai": {APIStandard: "openai-responses", Model: "gpt-5.6"},
-		},
-	)
-	screen.openRole("default")
-	screen.formModel.SetValue(fieldStandard, ui.StringValue("openai"))
-	screen.applyRoleForm()
+func TestRoleResetPointsAtWorkspace(t *testing.T) {
+	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openrouter", Model: "workspace-main"},
+	}}}
+	effective := cloneSettings(base)
+	setCategory(&effective, "default", types.CategorySettings{Provider: "openai", Model: "session-main"})
+	screen := New(theme.DefaultDark(), effective, base, map[string]types.CategorySettings{
+		"default": {Provider: "openai", Model: "session-main"},
+	})
 
+	screen.resetRole("default")
 	settings := screen.ToSettings()
-	if got := settings.SessionOverrides["default"].APIStandard; got != "openai" {
-		t.Fatalf("session protocol override = %q", got)
+	if _, ok := settings.SessionOverrides["default"]; ok {
+		t.Fatal("reset main should remove the session override")
 	}
-	if got := screen.providers["openai"].APIStandard; got != "openai-responses" {
-		t.Fatalf("provider default mutated = %q", got)
+	// The main agent's reset points back at the live workspace main.
+	if got := settings.Agents.Categories["default"].Inherit; got != "workspace" {
+		t.Fatalf("default after reset inherit = %q, want workspace", got)
 	}
 }
 
@@ -207,7 +224,7 @@ func TestModelPickerEnterCommitsToRolePage(t *testing.T) {
 	if field == nil || field.Value.String() != "model-b" {
 		t.Fatalf("role page model=%#v, want model-b", field)
 	}
-	if cfg := categoryFor(screen.effective, "default"); cfg.Model != "model-b" {
+	if cfg := categoryFor(screen.effective, screen.base, "default"); cfg.Model != "model-b" {
 		t.Fatalf("effective model=%q, want model-b", cfg.Model)
 	}
 }
@@ -235,7 +252,7 @@ func TestModelPickerClickCommitsToRolePage(t *testing.T) {
 	if screen.page != rolePage {
 		t.Fatalf("page=%d, want role page after click commit", screen.page)
 	}
-	if cfg := categoryFor(screen.effective, "default"); cfg.Model != "model-c" {
+	if cfg := categoryFor(screen.effective, screen.base, "default"); cfg.Model != "model-c" {
 		t.Fatalf("effective model=%q, want model-c", cfg.Model)
 	}
 }
@@ -464,4 +481,60 @@ func bufferContains(buf *surface.CellBuffer, want string) bool {
 		}
 	}
 	return false
+}
+
+// colOfPos finds the x of needle on a buffer row y using rune columns.
+func colOfPos(buf *surface.CellBuffer, y int, needle string) int {
+	if y < 0 || y >= buf.Height() {
+		return -1
+	}
+	row := bufferString(buf)
+	lines := strings.Split(row, "\n")
+	if y >= len(lines) {
+		return -1
+	}
+	return colOf(lines[y], needle)
+}
+
+func TestMultiAgentControlAlignsUnderModelColumn(t *testing.T) {
+	settings := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{
+		Categories: map[string]types.CategorySettings{
+			"default": {Provider: "openrouter", Model: "stealth/ox-alpha"},
+		},
+	}}
+	screen := New(theme.DefaultDark(), settings, settings, nil)
+	deck := ui.NewPanelDeck("deck", ui.NewTokenSet(theme.DefaultDark()))
+	deck.Open(ui.PanelEntry{ID: "settings", Title: "Session Settings", Content: screen, Closable: true, Policy: ui.PanelInteractive, PreferredHeight: 12})
+	host := ui.NewHost(theme.DefaultDark(), deck)
+	host.Resize(80, 13)
+	host.Layout()
+
+	buf := surface.NewCellBuffer(80, 13)
+	host.Paint(buf)
+
+	mainY, multiY := -1, -1
+	for y := 0; y < buf.Height(); y++ {
+		if colOfPos(buf, y, "Main Agent") >= 0 && mainY < 0 {
+			mainY = y
+		}
+		if colOfPos(buf, y, "Multi Agent") >= 0 && multiY < 0 {
+			multiY = y
+		}
+	}
+	if mainY < 0 || multiY < 0 {
+		t.Fatalf("missing rows: mainY=%d multiY=%d", mainY, multiY)
+	}
+	modelCol := colOfPos(buf, mainY, "stealth/ox-alpha")
+	ctrlCol := colOfPos(buf, multiY, "←")
+	if modelCol < 0 || ctrlCol < 0 {
+		t.Fatalf("model col=%d ctrl col=%d", modelCol, ctrlCol)
+	}
+	if modelCol != ctrlCol {
+		t.Fatalf("Multi Agent control col=%d, want model col=%d", ctrlCol, modelCol)
+	}
+	// The inherit text must stay in the last column (right of the control).
+	inh := colOfPos(buf, multiY, "inherited from workspace")
+	if inh >= 0 && inh <= modelCol {
+		t.Fatalf("inherit text must be right of the model column: inh=%d model=%d", inh, modelCol)
+	}
 }

@@ -165,11 +165,18 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 	if !header.IsZero() {
 		ml.lines = append(ml.lines, header.PlainText())
 		ml.native = append(ml.native, header)
-		ml.lines = append(ml.lines, "")
-		ml.native = append(ml.native, buildPlainBodyLine(""))
 	}
 
 	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
+	// Only insert the header↔body gap when there is a body to separate. When
+	// the thinking body is empty (a completed block collapsed to its label, or
+	// a wrap that yields a single blank), adding a blank here stacks with the
+	// following message's own separator and produces two blank rows between the
+	// thinking header and the next block. Exactly one row separates blocks.
+	if hasThinkingBody(wrapped) {
+		ml.lines = append(ml.lines, "")
+		ml.native = append(ml.native, buildPlainBodyLine(""))
+	}
 	for i, line := range wrapped {
 		pl := buildThinkingBodyLine(line, i == 0, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
 		ml.lines = append(ml.lines, pl.PlainText())
@@ -194,6 +201,18 @@ func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
 		ml.native = append(ml.native, pl)
 	}
 	return ml
+}
+
+// hasThinkingBody reports whether a wrapped thinking body has real content
+// (more than one line, or a single non-blank line). A body that wraps to just
+// [""] is "no body" — a completed thinking block collapsed to its label — so
+// the header↔body gap must be skipped to avoid stacking with the next block's
+// separator and producing two blank rows.
+func hasThinkingBody(wrapped []string) bool {
+	if len(wrapped) == 1 {
+		return strings.TrimSpace(wrapped[0]) != ""
+	}
+	return true
 }
 
 func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {

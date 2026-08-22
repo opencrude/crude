@@ -25,9 +25,14 @@ const (
 const (
 	fieldProvider   = "provider"
 	fieldModel      = "model"
-	fieldStandard   = "api-standard"
 	fieldThinking   = "thinking-effort"
 	fieldMultiAgent = "multi-agent"
+)
+
+// Live-inheritance markers, mirroring session.InheritMain/InheritWorkspace.
+const (
+	InheritMainMarker      = "main"
+	InheritWorkspaceMarker = "workspace"
 )
 
 type SaveMsg struct {
@@ -65,6 +70,7 @@ var agentRoles = []struct {
 	{Key: "researcher", Name: "Researcher"},
 	{Key: "crafter", Name: "Crafter"},
 	{Key: "aeron", Name: "Aeron"},
+	{Key: "memory", Name: "Memory Agent"},
 }
 
 // Screen edits per-session agent overrides using the shared native form
@@ -134,6 +140,17 @@ func (s *Screen) ConfigureProviders(presets []types.ProviderPreset, providers ma
 	case modelPage, providerPage:
 		s.syncPickerList()
 	}
+}
+
+func cloneStandards(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for model, standard := range src {
+		out[model] = standard
+	}
+	return out
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
@@ -290,7 +307,7 @@ func (s *Screen) applyModelToEffective(id string) {
 	if s.role == "" || id == "" {
 		return
 	}
-	cfg := categoryFor(s.effective, s.role)
+	cfg := categoryFor(s.effective, s.base, s.role)
 	cfg.Model = id
 	setCategory(&s.effective, s.role, cfg)
 }
@@ -301,11 +318,10 @@ func (s *Screen) applyProviderToEffective(id string) {
 	if s.role == "" || id == "" {
 		return
 	}
-	cfg := categoryFor(s.effective, s.role)
+	cfg := categoryFor(s.effective, s.base, s.role)
 	cfg.Provider = id
 	providerCfg := s.providers[id]
 	cfg.Model = providerCfg.Model
-	cfg.APIStandard = "inherit"
 	cfg.ThinkingEffort = providerCfg.ThinkingEffort
 	setCategory(&s.effective, s.role, cfg)
 }
@@ -377,6 +393,10 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		s.inheritMain(s.role)
 		s.openRoot()
 		return focusFormResult(ui.InvalidateLayout)
+	case "session-settings.role.inherit-workspace":
+		s.inheritWorkspace(s.role)
+		s.openRoot()
+		return focusFormResult(ui.InvalidateLayout)
 	case "session-settings.role.reset-workspace":
 		s.resetRole(s.role)
 		s.openRoot()
@@ -393,23 +413,29 @@ func (s *Screen) openRoot() {
 	s.page, s.role = rootPage, ""
 	model := ui.NewFormModel()
 	for _, role := range agentRoles {
-		cfg := categoryFor(s.effective, role.Key)
+		cfg := categoryFor(s.effective, s.base, role.Key)
+		over := s.overrides[role.Key]
 		_, overridden := s.overrides[role.Key]
+		inheritedFrom := "workspace"
+		if over.Inherit == "main" {
+			inheritedFrom = "main agent"
+		}
 		model.AddField(&ui.FieldState{
 			ID: role.Key, Label: role.Name, Type: ui.FieldNav,
 			Columns:       []string{cfg.Model, cfg.Provider},
 			Target:        "session-settings.role.open",
 			Inherited:     !overridden,
-			InheritedFrom: "workspace",
+			InheritedFrom: inheritedFrom,
 		})
 	}
 	model.AddField(ui.SpacerFieldState("roles-gap"))
 	multi := ui.BoolFieldState(fieldMultiAgent, "Multi Agent", s.effective.Agents.Enabled,
 		"Allow this session to spawn researcher, crafter, and aeron sub-agents.")
-	// One spacer slot before the cycle control: the switch aligns with the
-	// agent rows' first value column (· provider/model) instead of hugging
-	// the label.
-	multi.Columns = []string{""}
+	// No spacer slots: the switch rides under the agent rows' first value
+	// column (· model) — the same alignment anchor as the model names. For an
+	// inherited row padInheritedColumns pushes "inherited from workspace" to the
+	// last column, so the control sits under the model column with the
+	// provider column left blank and the inherit text pinned to the row edge.
 	if s.effective.SessionMultiAgent == nil {
 		multi.Inherited = true
 		multi.InheritedFrom = "workspace"
@@ -442,7 +468,7 @@ func (s *Screen) openRole(role string) {
 		return
 	}
 	s.page, s.role = rolePage, role
-	cfg := categoryFor(s.effective, role)
+	cfg := categoryFor(s.effective, s.base, role)
 	providerID := cfg.Provider
 	if providerID == "" {
 		providerID = s.effective.ProviderID
@@ -450,10 +476,6 @@ func (s *Screen) openRole(role string) {
 	thinking := cfg.ThinkingEffort
 	if thinking == "" {
 		thinking = "none"
-	}
-	standard := cfg.APIStandard
-	if standard == "" {
-		standard = "inherit"
 	}
 	model := ui.NewFormModel()
 	model.AddField(&ui.FieldState{
@@ -466,9 +488,6 @@ func (s *Screen) openRole(role string) {
 		Value: ui.StringValue(cfg.Model), Description: cfg.Model,
 		Target: "session-settings.model.open",
 	})
-	standardField := ui.SelectFieldState(fieldStandard, "Protocol", standard, s.standardOptions(providerID, cfg.Model), "")
-	standardField.Type = ui.FieldCycle
-	model.AddField(standardField)
 	model.AddField(ui.ThinkingFieldState(fieldThinking, thinking, ""))
 	s.formModel = model
 	s.form.SetForm(model, s.title(name), "")
@@ -477,67 +496,16 @@ func (s *Screen) openRole(role string) {
 		{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "session-settings.role.back", Variant: ui.VariantSecondary, Enabled: true},
 	}
 	// The main agent is the source of "inherit from main"; it cannot inherit
-	// from itself, so that button only appears on the other roles.
+	// from itself, so that button only appears on the other roles. Both
+	// surfaces can point at the live workspace main agent.
 	if role != "default" {
 		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "inherit-main"), Label: "Inherit from main", Action: "session-settings.role.inherit-main", Variant: ui.VariantSecondary, Enabled: true})
 	}
-	buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "reset-workspace"), Label: "Reset to workspace", Action: "session-settings.role.reset-workspace", Variant: ui.VariantDanger, Enabled: true})
-	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
-}
-
-func (s *Screen) standardOptions(providerID, model string) []ui.FormOption {
-	cfg := s.providers[providerID]
-	inherited := cfg.APIStandard
-	if override := cfg.ModelStandards[model]; override != "" {
-		inherited = override
-	}
-	if inherited == "" {
-		inherited = provider.DefaultStandardID(providerID)
-	}
-	options := []ui.FormOption{{
-		ID: "inherit", Label: "Use provider/model default",
-		Detail: standardLabel(inherited),
-	}}
-	for _, standard := range provider.StandardList() {
-		options = append(options, ui.FormOption{
-			ID: standard.ID, Label: standard.Name, Detail: standard.Description,
-		})
-	}
-	return options
-}
-
-func (s *Screen) refreshStandardOptions(model *ui.FormModel) {
-	if model == nil {
-		return
-	}
-	field := model.Field(fieldStandard)
-	if field == nil {
-		return
-	}
-	field.Options = s.standardOptions(
-		model.Field(fieldProvider).Value.String(),
-		model.Field(fieldModel).Value.String(),
+	buttons = append(buttons,
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "inherit-workspace"), Label: "Inherit from workspace", Action: "session-settings.role.inherit-workspace", Variant: ui.VariantSecondary, Enabled: true},
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "reset-workspace"), Label: "Reset", Action: "session-settings.role.reset-workspace", Variant: ui.VariantDanger, Enabled: true},
 	)
-}
-
-func standardLabel(id string) string {
-	for _, standard := range provider.StandardList() {
-		if standard.ID == id {
-			return standard.Name
-		}
-	}
-	return id
-}
-
-func cloneStandards(src map[string]string) map[string]string {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string]string, len(src))
-	for model, standard := range src {
-		out[model] = standard
-	}
-	return out
+	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 }
 
 func (s *Screen) cancelOrBack() ui.EventResult {
@@ -559,7 +527,7 @@ func (s *Screen) currentProviderID() string {
 			return field.Value.String()
 		}
 	}
-	cfg := categoryFor(s.effective, s.role)
+	cfg := categoryFor(s.effective, s.base, s.role)
 	if cfg.Provider != "" {
 		return cfg.Provider
 	}
@@ -751,9 +719,7 @@ func (s *Screen) applyProvider(providerID string) {
 		field.Options = ui.ModelOptions(s.models[providerID])
 		field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 	}
-	s.formModel.SetValue(fieldStandard, ui.StringValue("inherit"))
 	s.formModel.SetValue(fieldThinking, ui.StringValue(providerCfg.ThinkingEffort))
-	s.refreshStandardOptions(s.formModel)
 }
 
 func (s *Screen) openSelect(fieldID string) tea.Cmd {
@@ -853,47 +819,70 @@ func (s *Screen) applyRoleForm() {
 	if s.page != rolePage {
 		return
 	}
-	cfg := categoryFor(s.effective, s.role)
+	cfg := categoryFor(s.effective, s.base, s.role)
 	cfg.Provider = s.formModel.Field(fieldProvider).Value.String()
 	cfg.Model = s.formModel.Field(fieldModel).Value.String()
-	cfg.APIStandard = s.formModel.Field(fieldStandard).Value.String()
-	if cfg.APIStandard == "inherit" {
-		cfg.APIStandard = ""
-	}
 	cfg.ThinkingEffort = s.formModel.Field(fieldThinking).Value.String()
+	// A manual override never carries a live-inherit marker.
+	cfg.Inherit = ""
 	setCategory(&s.effective, s.role, cfg)
 	s.overrides[s.role] = types.CategorySettings{
 		Provider: cfg.Provider, Model: cfg.Model,
-		APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
+		ThinkingEffort: cfg.ThinkingEffort,
 	}
 }
 
 func (s *Screen) resetRole(role string) {
-	setCategory(&s.effective, role, categoryFor(s.base, role))
+	// Point the role back at its live inheritance source rather than restoring
+	// a snapshot copy. The main agent's "reset" means no override at all
+	// (inherit workspace by default). A sub-agent's reset means inherit the
+	// session main agent, which is the default for roles without an override.
 	delete(s.overrides, role)
+	if role == "default" {
+		setCategory(&s.effective, role, inheritCategory("workspace"))
+		return
+	}
+	setCategory(&s.effective, role, inheritCategory("main"))
 }
 
-// inheritMain copies the main agent's effective category into the given role
-// and records it as a session override, so the role follows the main agent.
+// inheritMain points a sub-agent at the live session main agent. No values are
+// copied: editing the main agent later propagates to this role.
 func (s *Screen) inheritMain(role string) {
 	if role == "default" {
 		return
 	}
-	mainCfg := categoryFor(s.effective, "default")
-	setCategory(&s.effective, role, mainCfg)
-	s.overrides[role] = types.CategorySettings{
-		Provider: mainCfg.Provider, Model: mainCfg.Model,
-		APIStandard: mainCfg.APIStandard, ThinkingEffort: mainCfg.ThinkingEffort,
-	}
+	delete(s.overrides, role)
+	setCategory(&s.effective, role, inheritCategory("main"))
+	s.overrides[role] = types.CategorySettings{Inherit: "main"}
+}
+
+// inheritWorkspace points any agent at the live workspace main agent.
+func (s *Screen) inheritWorkspace(role string) {
+	delete(s.overrides, role)
+	setCategory(&s.effective, role, inheritCategory("workspace"))
+	s.overrides[role] = types.CategorySettings{Inherit: "workspace"}
+}
+
+func inheritCategory(inherit string) types.CategorySettings {
+	return types.CategorySettings{Inherit: inherit}
 }
 
 func (s *Screen) ToSettings() types.Settings {
 	s.applyRootForm()
 	settings := cloneSettings(s.effective)
-	settings.SessionOverrides = copyCategoryMap(s.overrides)
+	for role, over := range s.overrides {
+		settings.SessionOverrides[role] = over
+	}
 	settings.Agents.Enabled = s.effective.Agents.Enabled
 	settings.SessionMultiAgent = cloneBoolPtr(s.effective.SessionMultiAgent)
-	main := categoryFor(settings, "default")
+	// The Memory Agent role is stored alongside the other roles in
+	// Agents.Categories["memory"] but resolved as the session's memory
+	// category. Fold it into Memory.MemoryCategory so the backend picks up a
+	// per-session override (an explicit setting or an inherit marker).
+	if cfg, ok := settings.Agents.Categories["memory"]; ok {
+		settings.Memory.MemoryCategory = cfg
+	}
+	main := categoryFor(settings, s.base, "default")
 	settings.ProviderID, settings.Model = main.Provider, main.Model
 	settings.APIStandard, settings.ThinkingEffort = main.APIStandard, main.ThinkingEffort
 	if providerCfg, ok := s.providers[main.Provider]; ok {
@@ -929,19 +918,40 @@ func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Session settings"}
 }
 
-func categoryFor(settings types.Settings, role string) types.CategorySettings {
-	if cfg, ok := settings.Agents.Categories[role]; ok {
-		return cfg
-	}
-	if role != "default" {
+// categoryFor returns a role's effective category for display. It resolves
+// live-inheritance markers so a role pointed at the main/workspace agent shows
+// the inherited provider/model rather than an empty row.
+//
+//   - Inherit="main"      → the session's main agent (default category)
+//   - Inherit="workspace" → the workspace baseline's main agent (base default)
+//
+// base is the workspace baseline (concrete, no markers), so a workspace marker
+// always terminates at a real value; it must never be the same settings object
+// as the one carrying the marker.
+func categoryFor(settings, base types.Settings, role string) types.CategorySettings {
+	if role == "" || role == "default" {
 		if cfg, ok := settings.Agents.Categories["default"]; ok {
+			if cfg.Inherit == InheritWorkspaceMarker && base.Agents.Categories != nil {
+				return categoryFor(base, base, "default")
+			}
 			return cfg
 		}
+		return types.CategorySettings{
+			Provider: settings.ProviderID, Model: settings.Model,
+			ThinkingEffort: settings.ThinkingEffort,
+		}
 	}
-	return types.CategorySettings{
-		Provider: settings.ProviderID, Model: settings.Model,
-		APIStandard: settings.APIStandard, ThinkingEffort: settings.ThinkingEffort,
+	if cfg, ok := settings.Agents.Categories[role]; ok {
+		switch cfg.Inherit {
+		case InheritMainMarker:
+			return categoryFor(settings, base, "default")
+		case InheritWorkspaceMarker:
+			return categoryFor(base, base, "default")
+		}
+		return cfg
 	}
+	// A role with no explicit category inherits the session main agent.
+	return categoryFor(settings, base, "default")
 }
 
 func setCategory(settings *types.Settings, role string, cfg types.CategorySettings) {

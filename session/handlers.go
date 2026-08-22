@@ -175,6 +175,7 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 			overrides[category] = sessiondb.AgentSettingOverride{
 				Provider: cfg.Provider, Model: cfg.Model,
 				APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
+				Inherit: cfg.Inherit,
 			}
 		}
 		return overrides
@@ -183,12 +184,14 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 		overrides[category] = sessiondb.AgentSettingOverride{
 			Provider: cfg.Provider, Model: cfg.Model,
 			APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
+			Inherit: cfg.Inherit,
 		}
 	}
 	if _, ok := overrides[CategoryDefault]; !ok {
 		overrides[CategoryDefault] = sessiondb.AgentSettingOverride{
 			Provider: settings.ProviderID, Model: settings.Model,
 			APIStandard: settings.APIStandard, ThinkingEffort: settings.ThinkingEffort,
+			Inherit: settings.Agents.Categories[CategoryDefault].Inherit,
 		}
 	}
 	return overrides
@@ -199,6 +202,9 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 		base = &Config{ActiveProvider: "openrouter"}
 	}
 	cfg := copyConfig(base)
+	// Capture the live workspace main-agent category so categories marked
+	// Inherit="workspace" can resolve through it at read time.
+	cfg.workspaceMain = workspaceMainCategory(base)
 	if cfg.Agents.Profiles == nil {
 		cfg.Agents.Profiles = make(map[string]ProfileConfig)
 	}
@@ -213,6 +219,12 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 	}
 	for category, override := range overrides {
 		current := profile.Categories[category]
+		if override.Inherit != "" {
+			// A live reference: replace any stored manual values with the
+			// marker and let resolution follow the chain at read time.
+			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit}
+			continue
+		}
 		if override.Provider != "" {
 			if current.Provider != override.Provider {
 				current.APIKey = ""
@@ -233,6 +245,7 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 		if override.ThinkingEffort != "" {
 			current.ThinkingEffort = override.ThinkingEffort
 		}
+		current.Inherit = ""
 		profile.Categories[category] = current
 	}
 	cfg.Agents.Profiles[profileName] = profile
@@ -240,6 +253,25 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 		cfg.ActiveProvider = main.Provider
 	}
 	return cfg
+}
+
+// workspaceMainCategory extracts the workspace baseline's main-agent category.
+// This is what a session's Inherit="workspace" markers resolve through, so
+// they follow the live workspace main agent rather than a snapshot copy.
+func workspaceMainCategory(base *Config) *CategoryConfig {
+	if base == nil {
+		return nil
+	}
+	prof, _ := activeProfileCfg(base)
+	for _, key := range []string{CategoryDefault, "main"} {
+		if cat, ok := prof.Categories[key]; ok {
+			dup := cat
+			return &dup
+		}
+	}
+	cat := CategoryConfig{Provider: base.EffectiveProviderID()}
+	base.resolveCategoryDefaults(&cat)
+	return &cat
 }
 
 // SettingsSnapshot returns the current effective session settings.
@@ -271,6 +303,7 @@ func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings 
 		out[category] = ttypes.CategorySettings{
 			Provider: override.Provider, Model: override.Model,
 			APIStandard: override.APIStandard, ThinkingEffort: override.ThinkingEffort,
+			Inherit: override.Inherit,
 		}
 	}
 	return out
@@ -304,18 +337,23 @@ func (s *Session) ResetSessionSettings() error {
 	return nil
 }
 
-// UpdateWorkspaceDefaults refreshes only the infrastructure half of the
-// inherited baseline: provider endpoints, wire standards, and credentials.
+// UpdateWorkspaceDefaults refreshes the inherited workspace baseline: provider
+// endpoints, wire standards, credentials, AND agent role defaults.
 //
-// Agent behaviour — which provider, model, and thinking effort each role
-// runs — is snapshotted when the session starts and is deliberately NOT
-// refreshed here. A running conversation must not change models because
-// another tab saved settings; sessions inherit at creation and then stay
-// stable. AdoptWorkspaceDefaults is the explicit re-inherit.
+// With live inheritance, an Inherit="workspace" marker must resolve against the
+// current workspace main agent, and a role that inherits the session main
+// follows today's main. So a workspace edit propagates to live sessions without
+// copying values. Manual session overrides are preserved by
+// rebuildEffectiveConfigLocked, which re-applies them on top of the refreshed
+// baseline.
 func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refreshProviderCredentialsLocked(settings)
+	if settings.ActiveProvider != "" {
+		s.workspaceCfg.ActiveProvider = settings.ActiveProvider
+	}
+	ApplyWorkspaceAgentDefaults(s.workspaceCfg, settings.Agents)
 	s.workspaceCfg.Memory = settings.Memory
 	s.rebuildEffectiveConfigLocked()
 }

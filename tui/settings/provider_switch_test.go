@@ -12,7 +12,8 @@ import (
 
 // TestProviderSwitchUpdatesBaseURLValue uses the exact config shape from the
 // user's local ~/.crude/config.json (only openrouter, no key) and switches to
-// Groq. It asserts the base URL model value changes to the Groq preset URL.
+// Groq. It asserts the base URL value changes to the Groq preset URL and that
+// the prior provider's URL is preserved on switch.
 func TestProviderSwitchUpdatesBaseURLValue(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, types.AppSettings{
@@ -49,14 +50,14 @@ func TestProviderSwitchUpdatesBaseURLValue(t *testing.T) {
 	}
 }
 
-func TestProviderAndModelProtocolsPersistIndependently(t *testing.T) {
+// TestProviderProtocolPersists verifies the provider's communication protocol
+// field survives a settings round-trip. Per-model protocol overrides were
+// removed with the provider "default model" concept.
+func TestProviderProtocolPersists(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
 		ActiveProvider: "openai",
 		Providers: map[string]types.ProviderConfig{
-			"openai": {
-				Model: "gpt-5.6", APIStandard: "openai-responses",
-				ModelStandards: map[string]string{"gpt-5.6": "openai"},
-			},
+			"openai": {Model: "gpt-5.6", APIStandard: "openai-responses"},
 		},
 	}, []types.ProviderPreset{{
 		ID: "openai", Name: "OpenAI", StandardID: "openai-responses",
@@ -65,13 +66,8 @@ func TestProviderAndModelProtocolsPersistIndependently(t *testing.T) {
 	if got := m.value(catProviders, fieldAPIStandard); got != "openai-responses" {
 		t.Fatalf("provider standard field = %q", got)
 	}
-	if got := m.value(catProviders, fieldModelStandard); got != "openai" {
-		t.Fatalf("model standard field = %q", got)
-	}
-	m.categories[catProviders].Form.SetValue(fieldModelStandard, ui.StringValue("anthropic"))
 	got := m.AppSettings().Providers["openai"]
-	if got.APIStandard != "openai-responses" ||
-		got.ModelStandards["gpt-5.6"] != "anthropic" {
+	if got.APIStandard != "openai-responses" || got.Model != "gpt-5.6" {
 		t.Fatalf("saved provider config = %#v", got)
 	}
 }

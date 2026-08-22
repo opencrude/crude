@@ -1052,7 +1052,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 	isStreamingCursor := r.isStreamingCursor(msg)
 	msgIdx := r.messageIndexOf(msg)
 	suppressHeader := r.shouldSuppressHeader(msgIdx)
-	needsSpacer := !suppressHeader || r.needsThinkingSpacer(msgIdx) || r.needsPostThinkingSpacer(msgIdx)
+	needsSpacer := r.needsLeadingSpacer(msgIdx)
 
 	if msg.CachedLines != nil && !isStreamingCursor {
 		result := make([]string, 0, len(msg.CachedLines)+1)
@@ -1160,7 +1160,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 
 	msgIdx := r.messageIndexOf(origMsg)
 	suppressHeader := r.shouldSuppressHeader(msgIdx)
-	needsSpacer := !suppressHeader || r.needsThinkingSpacer(msgIdx) || r.needsPostThinkingSpacer(msgIdx)
+	needsSpacer := r.needsLeadingSpacer(msgIdx)
 
 	ctx := r.buildRenderContext(origMsg, suppressHeader)
 	if r.streaming && r.isLastMessage(origMsg) && origMsg.Role == types.RoleAssistant {
@@ -1239,6 +1239,29 @@ func (r *Renderer) needsPostThinkingSpacer(msgIdx int) bool {
 	return r.sync.Messages[msgIdx-1].Role == types.RoleThinking
 }
 
+// previousEndsWithPaneSeparator reports whether the message right before idx
+// owns a collapsed subpane that already paints a trailing separator blank. A
+// message following it must not add its own leading spacer, or the two blanks
+// stack into a double empty row between the thought block and the next block.
+func (r *Renderer) previousEndsWithPaneSeparator(msgIdx int) bool {
+	if msgIdx <= 0 {
+		return false
+	}
+	return r.sync.Messages[msgIdx-1].SubPaneID != ""
+}
+
+// needsLeadingSpacer decides whether a message should paint a blank row before
+// it. The previous message's own separation (a collapsed subpane's trailing
+// separator, or a header that is already suppressed) must not be doubled by a
+// second blank here.
+func (r *Renderer) needsLeadingSpacer(msgIdx int) bool {
+	if r.previousEndsWithPaneSeparator(msgIdx) {
+		return false
+	}
+	suppressHeader := r.shouldSuppressHeader(msgIdx)
+	return !suppressHeader || r.needsThinkingSpacer(msgIdx) || r.needsPostThinkingSpacer(msgIdx)
+}
+
 func (r *Renderer) shouldSuppressHeader(msgIdx int) bool {
 	if msgIdx <= 0 {
 		return false
@@ -1273,8 +1296,7 @@ func (r *Renderer) messageToItem(idx int) renderItem {
 	height := -1
 	var rendered []string
 	if msg.CachedLines != nil {
-		suppressHeader := r.shouldSuppressHeader(idx)
-		needsSpacer := !suppressHeader || r.needsThinkingSpacer(idx) || r.needsPostThinkingSpacer(idx)
+		needsSpacer := r.needsLeadingSpacer(idx)
 		if needsSpacer {
 			height = len(msg.CachedLines) + 1
 			rendered = make([]string, 0, height)

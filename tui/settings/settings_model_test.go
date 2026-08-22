@@ -238,31 +238,29 @@ func TestSettingsModelSelectFetchStaysOpenWhenModelsArrive(t *testing.T) {
 	host.Resize(90, 28)
 	host.Layout()
 	surfaceRoot.FocusForm()
+	m.SelectCategory(catMain)
+	surfaceRoot.FocusForm()
 
-	// Provider -> API key -> Base URL -> Provider protocol -> Default model.
-	for range 4 {
-		host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
-	}
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if result.Cmd == nil {
+	result := m.OpenSelect(fieldModel)
+	if result == nil {
 		t.Fatal("opening an empty model select did not request models")
 	}
-	request, ok := result.Cmd().(FetchModelsMsg)
+	request, ok := result().(FetchModelsMsg)
 	if !ok {
-		t.Fatalf("model request message=%T", result.Cmd())
+		t.Fatalf("model request message=%T", result())
 	}
 	if request.ProviderID != "openai" || request.BaseURL != "https://api.example/v1" || request.APIKey != "secret" {
 		t.Fatalf("model request=%#v", request)
 	}
-	if !surfaceRoot.form.Field(fieldModel).SelectOpen() {
+	if !m.currentForm().Field(fieldModel).Loading {
 		t.Fatal("model select closed before asynchronous result")
 	}
 
 	updated, _ := m.Update(ModelsMsg{ProviderID: "openai", Models: []types.ModelEntry{{ID: "gpt-5", Name: "GPT-5"}}})
 	m = &updated
 	surfaceRoot.SetModel(m)
-	if !surfaceRoot.form.Field(fieldModel).SelectOpen() {
-		t.Fatal("model select closed when asynchronous models arrived")
+	if m.currentForm().Field(fieldModel).Loading {
+		t.Fatal("model field still loading after async models arrived")
 	}
 	if options := m.currentForm().Field(fieldModel).Options; len(options) != 1 || options[0].Label != "GPT-5" {
 		t.Fatalf("model options=%#v", options)

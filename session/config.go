@@ -10,6 +10,24 @@ const (
 	CategoryResearcher = "researcher"
 	CategoryCrafter    = "crafter"
 	CategoryAeron      = "aeron"
+	CategoryMemory     = "memory"
+)
+
+// NormalizeModel returns the bare model id for a category. The provider is
+// stored separately, so any legacy "provider/model" string is reduced to the
+// model part — "google/gemini-2.0-flash-exp:free" → "gemini-2.0-flash-exp:free".
+// The provider is never shown in front of crude's name; only the model is.
+func NormalizeModel(model string) string {
+	return provider.StripProviderPrefix(model)
+}
+
+// Live-inheritance markers used on a session category to point it at a
+// configuration source rather than storing a copied value.
+const (
+	// InheritMain follows this session's main agent live.
+	InheritMain = "main"
+	// InheritWorkspace follows the workspace baseline's main agent live.
+	InheritWorkspace = "workspace"
 )
 
 type CategoryConfig struct {
@@ -25,11 +43,16 @@ type CategoryConfig struct {
 	APIStandard    string                     `json:"api_standard,omitempty"`
 	Model          string                     `json:"model,omitempty"`
 	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
-	Policy         string                     `json:"policy,omitempty"`
-	MaxSteps       int                        `json:"max_steps,omitempty"`
-	Description    string                     `json:"description,omitempty"`
-	AllowedTools   []string                   `json:"allowed_tools,omitempty"`
-	DeniedTools    []string                   `json:"denied_tools,omitempty"`
+	// Inherit is the session-level live-inheritance marker: "main" follows
+	// this session's main agent, "workspace" follows the workspace's main
+	// agent. A category carrying a marker stores no provider/model values;
+	// resolution follows the marker at read time. Empty means explicit.
+	Inherit      string   `json:"inherit,omitempty"`
+	Policy       string   `json:"policy,omitempty"`
+	MaxSteps     int      `json:"max_steps,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	AllowedTools []string `json:"allowed_tools,omitempty"`
+	DeniedTools  []string `json:"denied_tools,omitempty"`
 
 	ModelContextWindow  int     `json:"model_context_window,omitempty"`
 	ModelInputPrice     float64 `json:"model_input_price,omitempty"`
@@ -67,6 +90,10 @@ type AgentProfileConfig struct {
 	MaxSteps      int      `json:"max_steps,omitempty"`
 }
 
+// DefaultAgentsConfig returns the built-in agent scaffolding. No category
+// ships a model: the user configures the main agent (and any role that should
+// not inherit it) explicitly. Roles without a model inherit the main agent's
+// configuration at read time.
 func DefaultAgentsConfig() AgentsConfig {
 	t := true
 	return AgentsConfig{
@@ -79,7 +106,6 @@ func DefaultAgentsConfig() AgentsConfig {
 				TurnLogs:   &t,
 				Categories: map[string]CategoryConfig{
 					CategoryResearcher: {
-						Model:        "google/gemini-2.0-flash-exp:free",
 						Policy:       "read-only",
 						MaxSteps:     1000,
 						Description:  "Gatherer — explores codebase, searches web, runs experiments",
@@ -87,18 +113,16 @@ func DefaultAgentsConfig() AgentsConfig {
 						DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
 					},
 					CategoryCrafter: {
-						Model:       "qwen/qwen3.5-235b-a22b",
 						Policy:      "no-delete",
 						MaxSteps:    1000,
 						Description: "Implementer — writes code, edits files, runs tests",
 						DeniedTools: []string{"delete_file"},
 					},
 					CategoryAeron: {
-						Model:       "google/gemini-2.0-flash-exp:free",
-						Policy:      "read-only",
-						MaxSteps:    1000,
-						Description: "Grunt — formatting, linting, boilerplate, monitoring",
-						DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
+						Policy:       "read-only",
+						MaxSteps:     1000,
+						Description:  "Grunt — formatting, linting, boilerplate, monitoring",
+						DeniedTools:  []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
 					},
 				},
 			},
@@ -144,6 +168,13 @@ type Config struct {
 	TurnLogsEnabled bool
 	Agents          AgentsConfig
 	Memory          ttypes.MemorySettings
+
+	// workspaceMain is a copy of the workspace baseline's main-agent
+	// category. Categories carrying Inherit="workspace" resolve through it
+	// at read time so they follow the live workspace main agent. It is
+	// populated by configWithSessionOverrides and carried through copyConfig;
+	// nil disables workspace-marker resolution (the marker is ignored).
+	workspaceMain *CategoryConfig
 }
 
 type ProviderConfig struct {
@@ -261,25 +292,108 @@ func cloneBoolPtr(src *bool) *bool {
 	return &value
 }
 
+// GetActiveDefaultCategory resolves the main agent ("default", legacy "main")
+// category. Inheritance is resolved live at read time:
+//
+//	main without a stored category → the workspace baseline (via the
+//	  EffectiveProviderID + provider settings fallbacks)
+//	main marked Inherit="workspace" → the workspace baseline main agent
+//
+// The returned value is a resolved copy; callers may mutate it freely.
 func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 	prof, _ := activeProfileCfg(c)
 	// Try "default" first, then backward-compat "main"
-	if cat, ok := prof.Categories[CategoryDefault]; ok {
-		c.resolveCategoryDefaults(&cat)
-		return cat
-	}
-	if cat, ok := prof.Categories["main"]; ok {
-		c.resolveCategoryDefaults(&cat)
-		return cat
+	for _, key := range []string{CategoryDefault, "main"} {
+		if cat, ok := prof.Categories[key]; ok {
+			if cat.Inherit == InheritWorkspace && c.workspaceMain != nil {
+				resolved := *c.workspaceMain
+				c.resolveCategoryDefaults(&resolved)
+				return resolved
+			}
+			c.resolveCategoryDefaults(&cat)
+			return cat
+		}
 	}
 	cat := CategoryConfig{Provider: c.EffectiveProviderID()}
 	c.resolveCategoryDefaults(&cat)
 	return cat
 }
 
+// GetCategoryConfig resolves a role's effective configuration live:
+//
+//	role with stored manual values    → those values
+//	role marked Inherit="main"        → this session's main agent
+//	role marked Inherit="workspace"   → the workspace main agent
+//	role absent from the profile      → this session's main agent
+//	role present but no provider/model/thinking → its own values, with the
+//	  empty fields field-inherited from the main agent
+//
+// Editing the source therefore propagates to every role that inherits it.
 func (c *Config) GetCategoryConfig(category string) CategoryConfig {
+	if category == "" || category == CategoryDefault || category == "main" {
+		return c.GetActiveDefaultCategory()
+	}
 	prof, _ := activeProfileCfg(c)
 	if cat, ok := prof.Categories[category]; ok {
+		switch {
+		case cat.Inherit == InheritWorkspace && c.workspaceMain != nil:
+			resolved := *c.workspaceMain
+			c.resolveCategoryDefaults(&resolved)
+			return resolved
+		case cat.Inherit == InheritMain:
+			return c.GetActiveDefaultCategory()
+		}
+		c.resolveCategoryDefaults(&cat)
+		// Field-level inheritance: a role that doesn't set its own
+		// provider/model/thinking takes them from the main agent.
+		if cat.Model == "" || cat.Provider == "" || cat.ThinkingEffort == "" || cat.APIStandard == "" {
+			main := c.GetActiveDefaultCategory()
+			if cat.Provider == "" {
+				cat.Provider = main.Provider
+			}
+			if cat.Model == "" {
+				cat.Model = main.Model
+			}
+			if cat.ThinkingEffort == "" {
+				cat.ThinkingEffort = main.ThinkingEffort
+			}
+			if cat.APIStandard == "" {
+				cat.APIStandard = main.APIStandard
+			}
+			c.resolveCategoryDefaults(&cat)
+		}
+		return cat
+	}
+	return c.GetActiveDefaultCategory()
+}
+
+// GetMemoryCategory resolves the memory agent's configuration. It behaves like
+// any other agent: an explicit session override (profile Categories["memory"]),
+// then the configured MemoryCategory, wins; otherwise it inherits the main
+// agent live. Backward-compat Memory.Model (a bare override) is folded in when
+// the memory category sets no model of its own.
+func (c *Config) GetMemoryCategory() CategoryConfig {
+	// A live session/workspace override stored in the active profile.
+	prof, _ := activeProfileCfg(c)
+	if cat, ok := prof.Categories[CategoryMemory]; ok {
+		switch {
+		case cat.Inherit == InheritWorkspace && c.workspaceMain != nil:
+			resolved := *c.workspaceMain
+			c.resolveCategoryDefaults(&resolved)
+			return resolved
+		case cat.Inherit == InheritMain:
+			return c.GetActiveDefaultCategory()
+		}
+		c.resolveCategoryDefaults(&cat)
+		return cat
+	}
+	cat := catSettingsToConfig(c.Memory.MemoryCategory)
+	// A legacy bare model override still applies when no explicit memory
+	// category model is set.
+	if cat.Model == "" && c.Memory.Model != "" {
+		cat.Model = c.Memory.Model
+	}
+	if cat.Model != "" || cat.Provider != "" || cat.ThinkingEffort != "" {
 		c.resolveCategoryDefaults(&cat)
 		return cat
 	}
@@ -302,9 +416,8 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 		if cat.ProviderURL == "" {
 			cat.ProviderURL = prov.ProviderURL
 		}
-		if cat.Model == "" {
-			cat.Model = prov.Model
-		}
+		// No provider→model inheritance: an agent's model is set on the agent
+		// (or inherited from the main agent), never on a provider.
 		if cat.ThinkingEffort == "" {
 			cat.ThinkingEffort = prov.ThinkingEffort
 		}
@@ -315,6 +428,10 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 			cat.ProviderURL = p.BaseURL
 		}
 	}
+	// The model is a bare model id; the provider is its own field. Normalize
+	// any legacy "provider/model" string so display and callers never see the
+	// provider doubled up in front of crude's name.
+	cat.Model = NormalizeModel(cat.Model)
 	if cat.APIStandard == "" {
 		if configured, ok := c.Providers[cat.Provider]; ok {
 			cat.APIStandard = configured.StandardForModel(cat.Model, cat.Provider)
@@ -357,6 +474,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		APIStandard:         v.APIStandard,
 		Model:               v.Model,
 		ThinkingEffort:      v.ThinkingEffort,
+		Inherit:             v.Inherit,
 		Policy:              v.Policy,
 		MaxSteps:            v.MaxSteps,
 		Description:         v.Description,
@@ -376,8 +494,9 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		Provider:            v.Provider,
 		ProviderURL:         v.ProviderURL,
 		APIStandard:         v.APIStandard,
-		Model:               v.Model,
+		Model:               NormalizeModel(v.Model),
 		ThinkingEffort:      v.ThinkingEffort,
+		Inherit:             v.Inherit,
 		Policy:              v.Policy,
 		MaxSteps:            v.MaxSteps,
 		Description:         v.Description,
@@ -426,10 +545,10 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
 		Categories:    make(map[string]ttypes.CategorySettings),
 	}
-	for k, v := range activeProf.Categories {
-		resolved := v
-		cfg.resolveCategoryDefaults(&resolved)
-		agentsSettings.Categories[k] = catConfigToSettings(resolved)
+	for k := range activeProf.Categories {
+		// Resolve through the live inheritance chain so a role marked
+		// Inherit="main"/"workspace" reports its effective provider/model.
+		agentsSettings.Categories[k] = catConfigToSettings(cfg.GetCategoryConfig(k))
 	}
 
 	if _, hasDefault := agentsSettings.Categories[CategoryDefault]; !hasDefault {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/tools"
@@ -86,6 +87,22 @@ func buildToolPlainResultLine(prefix, text string, errorStyle bool) PaintLine {
 	return PaintLine{Spans: spans}
 }
 
+// buildMemoryToolRow renders a structured memory-tool result line with the
+// shared tool gutter ("│   ") and a kind-specific semantic role: titles use
+// accent, metadata uses muted, body uses foreground.
+func buildMemoryToolRow(line tools.MemoryLine) PaintLine {
+	spans := []RowSpan{{Text: "│   ", Role: ui.ColorMuted}}
+	switch line.Kind {
+	case tools.MemoryRowTitle:
+		spans = append(spans, RowSpan{Text: line.Text, Role: ui.ColorAccent2, Attr: cell.AttrBold})
+	case tools.MemoryRowMeta:
+		spans = append(spans, RowSpan{Text: line.Text, Role: ui.ColorMuted})
+	default:
+		spans = append(spans, RowSpan{Text: line.Text, Role: ui.ColorFg})
+	}
+	return PaintLine{Spans: spans}
+}
+
 func buildToolTruncationLine(remaining int) PaintLine {
 	msg := fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))
 	return PaintLine{Spans: []RowSpan{
@@ -96,6 +113,9 @@ func buildToolTruncationLine(remaining int) PaintLine {
 
 func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 	if tools.IsPlanTool(msg.ToolName) {
+		return true
+	}
+	if tools.IsMemorySearchTool(msg.ToolName) {
 		return true
 	}
 	if isDiffToolName(msg.ToolName) || tools.IsDiffContent(resultContent) {
@@ -188,6 +208,21 @@ func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent 
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
 		}
+		return
+	}
+	if tools.IsMemorySearchTool(msg.ToolName) {
+		memLines := tools.BuildMemoryResultRows(msg.ToolName, resultContent, contentWidth)
+		if len(memLines) > 0 {
+			for _, mline := range memLines {
+				pl := buildMemoryToolRow(mline)
+				ml.lines = append(ml.lines, pl.PlainText())
+				ml.native = append(ml.native, pl)
+			}
+			return
+		}
+		// Non-JSON content (e.g. "No past turns matched...") renders as plain
+		// body, not a diff.
+		ml.appendPlainToolBody(resultContent, contentWidth, height, false)
 		return
 	}
 	maxRes := tools.TerminalResultHeight(height)
