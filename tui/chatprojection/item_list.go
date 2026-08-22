@@ -10,6 +10,7 @@ type renderItem struct {
 	Dirty    bool
 	Rendered []string
 	Native   []PaintLine
+	PaneRows int
 	Data     interface{}
 }
 

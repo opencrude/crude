@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,8 @@ import (
 	"crude/statemachine"
 	"crude/tools"
 )
+
+const continuePreviousResponse = "Continue the previous response exactly where it stopped. Do not repeat completed content. Continue using tools if the task still requires them."
 
 func (a *Agent) Run(
 	ctx context.Context,
@@ -230,6 +233,23 @@ func (a *Agent) Run(
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 				return msgs
 			}
+			if apiErr != nil && apiErr.Partial && errors.Is(err, io.ErrUnexpectedEOF) &&
+				len(completion.ToolCalls) == 0 &&
+				(completion.Content != "" || completion.ReasoningContent != "") &&
+				continuations < maxAutoContinuations {
+				continuations++
+				l.Warn("AGENT", "auto_continue_interrupted_stream", "continuation", continuations, "error", err.Error())
+				emit(AgentEvent{Type: "retry", Data: map[string]any{
+					"attempt": continuations + 1,
+					"backoff": float64(0),
+				}})
+				msgs = append(msgs, provider.ChatMessage{
+					Role:         "system",
+					Content:      provider.TextContent(continuePreviousResponse),
+					CacheControl: &provider.CacheControl{Type: "ephemeral"},
+				})
+				continue
+			}
 			a.emitError(emit, err)
 			return msgs
 		}
@@ -317,10 +337,8 @@ func (a *Agent) Run(
 				continuations++
 				l.Warn("AGENT", "auto_continue", "finish_reason", finishReason, "continuation", continuations)
 				msgs = append(msgs, provider.ChatMessage{
-					Role: "system",
-					Content: provider.TextContent(
-						"Continue the previous response exactly where it stopped. Do not repeat completed content. Continue using tools if the task still requires them.",
-					),
+					Role:         "system",
+					Content:      provider.TextContent(continuePreviousResponse),
 					CacheControl: &provider.CacheControl{Type: "ephemeral"},
 				})
 				continue

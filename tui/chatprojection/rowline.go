@@ -74,8 +74,9 @@ func (pl PaintLine) PreferANSI() bool {
 // NativeLine) used by selection/copy. The legacy ANSI-only path (ANSILine)
 // has been removed — every row carries a Native PaintLine.
 type SubPaneLine struct {
-	Native *PaintLine
-	Text   string
+	Native    *PaintLine
+	Text      string
+	Separator bool
 }
 
 // PlainText returns selection/plain text for this row.
@@ -91,4 +92,12 @@ func (sl SubPaneLine) PlainText() string {
 func NativeLine(pl PaintLine) SubPaneLine {
 	t := pl.PlainText()
 	return SubPaneLine{Native: &pl, Text: t}
+}
+
+// SeparatorLine returns an empty row that belongs to the parent chat rather
+// than the pane. Collapsed panes use it to separate their summary from the
+// next message without inheriting pane background, scrollbar, or wheel input.
+func SeparatorLine() SubPaneLine {
+	pl := PaintLine{Spans: []RowSpan{{Text: "", Role: ui.ColorFg}}}
+	return SubPaneLine{Native: &pl, Separator: true}
 }

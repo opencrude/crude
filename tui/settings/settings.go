@@ -909,39 +909,6 @@ func (m *Model) storeCurrentModelStandard() {
 	m.providers[m.providerID] = cfg
 }
 
-func (m *Model) loadProviderForm(providerID string) {
-	if providerID == "" {
-		return
-	}
-	m.providerID = providerID
-	cfg := m.providers[providerID]
-	m.providerModel = cfg.Model
-	baseURL := cfg.ProviderURL
-	if baseURL == "" {
-		if preset := provider.GetPreset(providerID); preset != nil {
-			baseURL = preset.BaseURL
-		}
-	}
-	form := m.categories[catProviders].Form
-	form.SetValue(fieldProvider, ui.StringValue(providerID))
-	form.SetValue(fieldModel, ui.StringValue(cfg.Model))
-	form.SetValue(fieldAPIKey, ui.StringValue(cfg.APIKey))
-	form.SetValue(fieldBaseURL, ui.StringValue(baseURL))
-	form.SetValue(fieldAPIStandard, ui.StringValue(providerStandard(providerID, cfg)))
-	form.SetValue(fieldModelStandard, ui.StringValue(modelStandardValue(cfg, cfg.Model)))
-	form.SetValue(fieldThinkingEffort, ui.StringValue(cfg.ThinkingEffort))
-	if field := form.Field(fieldModel); field != nil {
-		field.Options = ui.ModelOptions(m.models[providerID])
-		field.Errors, field.Loading, field.LoadMessage = nil, false, ""
-	}
-	if field := form.Field(fieldModelStandard); field != nil {
-		field.Options = standardOptions(&standardDefault{
-			ID: "inherit", Label: "Use provider default",
-			Detail: standardName(providerStandard(providerID, cfg)),
-		})
-	}
-}
-
 func (m *Model) collectAgents(agents *types.AgentsSettings) {
 	if agents.Categories == nil {
 		agents.Categories = make(map[string]types.CategorySettings)

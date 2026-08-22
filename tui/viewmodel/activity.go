@@ -13,6 +13,7 @@ import (
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/sourcecontrol"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -352,7 +353,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID {
+		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID || payload.ID == sourcecontrol.DividerID {
 			m.setSidebarWidth(payload.First)
 		}
 		if payload.ID == termdock.DividerID {

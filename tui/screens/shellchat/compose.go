@@ -39,6 +39,7 @@ type composeCtx struct {
 	padW      int
 	rowInnerW int // InnerW minus external main gutter
 	paneSBW   int
+	paneGapW  int
 }
 
 func buildComposeCtx(p ComposeParams) composeCtx {
@@ -52,15 +53,20 @@ func buildComposeCtx(p ComposeParams) composeCtx {
 	}
 	paneSBW := 0
 	if nestingLevel > 0 {
-		paneSBW = ui.ScrollbarWidth*nestingLevel + nestingLevel
+		paneSBW = ui.ScrollbarWidth * nestingLevel
 	}
 	rowInnerW := max(0, innerW-mainGutter)
+	paneGapW := 0
+	if paneSBW > 0 {
+		paneGapW = 1
+	}
 
 	return composeCtx{
 		pad:       strings.Repeat(" ", padW),
 		padW:      padW,
 		rowInnerW: rowInnerW,
 		paneSBW:   paneSBW,
+		paneGapW:  paneGapW,
 	}
 }
 
@@ -75,22 +81,15 @@ type composeRowGeometry struct {
 // never gain synthetic minimum-width columns.
 func layoutComposeRow(ctx composeCtx, contentVisW int) composeRowGeometry {
 	contentW := max(0, contentVisW)
-	paneGap := 0
-	if ctx.paneSBW > 0 && ctx.rowInnerW > 0 {
-		paneGap = 1
-	}
 	contentMax := ctx.rowInnerW
+	gutter := 0
 	if ctx.paneSBW > 0 {
-		contentMax = max(0, ctx.rowInnerW-ctx.paneSBW-paneGap)
+		gutter = min(ctx.rowInnerW, ctx.paneSBW+ctx.paneGapW)
+		contentMax = max(0, ctx.rowInnerW-gutter)
 	}
 	contentW = min(contentW, contentMax)
 
 	padRight := max(0, contentMax-contentW)
-	gutter := 0
-	if ctx.paneSBW > 0 {
-		remaining := max(0, ctx.rowInnerW-contentW-padRight)
-		gutter = min(paneGap+ui.ScrollbarWidth, remaining)
-	}
 	return composeRowGeometry{
 		contentMax: contentMax,
 		padRight:   padRight,
@@ -104,7 +103,7 @@ type RowLayout struct {
 	RowInnerW  int
 	ContentMax int
 	PadRight   int
-	GutterCols int // gap + scrollbar column reserve (spaces only)
+	GutterCols int // pane scrollbar followed by one blank separator column
 	HasPaneBg  bool
 }
 
@@ -191,12 +190,14 @@ func Compose(p ComposeParams) []string {
 	return out
 }
 
-// NestedGutterX returns the list-local X of the nested pane gutter column.
+// NestedGutterX returns the list-local X of the nested pane scrollbar. The
+// column after it is a blank separator before the main chat scrollbar.
 func NestedGutterX(p ComposeParams, listW int) int {
 	ctx := buildComposeCtx(p)
 	if ctx.paneSBW <= 0 || ctx.rowInnerW < ui.ScrollbarWidth || listW <= 0 {
 		return -1
 	}
-	x := ctx.padW + ctx.rowInnerW - ui.ScrollbarWidth
+	footprint := min(ctx.rowInnerW, ctx.paneSBW+ctx.paneGapW)
+	x := ctx.padW + ctx.rowInnerW - footprint
 	return min(x, listW-ui.ScrollbarWidth)
 }

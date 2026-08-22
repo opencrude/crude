@@ -226,6 +226,11 @@ func (s *Screen) handlePaneWheel(ctx ui.EventContext, msg tea.MouseWheelMsg) ui.
 	if !ok {
 		return ui.EventResult{}
 	}
+	gx := s.nestedGutterX()
+	if gx >= 0 && ctx.LocalX >= gx+ui.ScrollbarWidth {
+		// The blank separator and main scrollbar belong to the outer chat.
+		return ui.EventResult{}
+	}
 	if s.isNestedGutterHit(ctx.LocalX) {
 		return s.handlePaneGutterWheel(info.PaneID, msg)
 	}

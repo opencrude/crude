@@ -363,7 +363,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 
 	if hasThinking && agent.ThinkingPaneID != "" {
 		switch evt.Type {
-		case "stream_token", "tool_call", "tool_call_streaming":
+		case "stream_token", "tool_call", "tool_call_streaming", "done":
 			m.handleSubPaneCompletion(agentID)
 		}
 	}
@@ -434,9 +434,7 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 	if agent == nil || agent.Messages == nil {
 		return
 	}
-	// Scope the pane ID to the agent so two agents thinking in the same
-	// second never collide on the same "thinking-HHMMSS" pane.
-	paneID := "thinking-" + agent.ID + "-" + time.Now().Format("150405")
+	paneID := m.nextThinkingPaneID(agent.ID, time.Now())
 	// Preserve the original thinking start time so the eventual
 	// "thought for Xs" label covers the whole block, not just the
 	// post-promotion window.
@@ -480,6 +478,15 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 	})
 	m.syncAgentMessages(agent.ID, false)
 	m.syncPaneMessages(paneID, false)
+}
+
+func (m *App) nextThinkingPaneID(agentID string, now time.Time) string {
+	base := "thinking-" + agentID + "-" + now.Format("150405")
+	paneID := base
+	for suffix := 2; m.PaneMgr.Has(paneID) || m.subPaneProjections.Has(paneID); suffix++ {
+		paneID = fmt.Sprintf("%s-%d", base, suffix)
+	}
+	return paneID
 }
 
 func (m *App) handleSubPaneCompletion(agentID string) {

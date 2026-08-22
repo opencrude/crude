@@ -168,14 +168,17 @@ func (r *Renderer) PaneLineMap() []PaneLineInfo {
 	return r.paneLineMap
 }
 
-func (r *Renderer) SetPaneScrollbarWidth(w int) {
+func (r *Renderer) SetPaneScrollbarWidth(w int) bool {
+	w = max(0, w)
 	if w != r.paneScrollbarW {
 		r.paneScrollbarW = w
 		for _, msg := range r.sync.Messages {
 			r.invalidateMessageCache(msg)
 		}
 		r.vl.InvalidateAll()
+		return true
 	}
+	return false
 }
 
 func (r *Renderer) PaneScrollbarWidth() int {
@@ -922,7 +925,8 @@ func (r *Renderer) buildGlobalPaneLineMap() []PaneLineInfo {
 		if msg.SubPaneID == "" {
 			continue
 		}
-		if localLine >= 1 {
+		item := r.vl.Item(itemIdx)
+		if item != nil && localLine >= 1 && localLine <= item.PaneRows {
 			paneMap[globalLine] = PaneLineInfo{
 				PaneID:  msg.SubPaneID,
 				LineIdx: localLine - 2,
@@ -966,13 +970,11 @@ func (r *Renderer) buildPaneLineMap(visible []string) {
 			continue
 		}
 
-		// localLine 0 is the leading spacer (from renderItem) — skip it so it
-		// doesn't get background color. localLine 1 is the subpane header, which
-		// should get background (hasBg check in view.go). LineIdx maps content
-		// lines to their scrollbar position: localLine 2 = content line 0, etc.
-		// LineIdx can be -1 for the header line, which view.go handles by
-		// rendering a blank scrollbar track character.
-		if localLine >= 1 {
+		// localLine 0 is the leading spacer. PaneRows excludes a collapsed
+		// pane's trailing separator, so neither blank row inherits pane
+		// background, scrollbar paint, or nested wheel ownership.
+		item := r.vl.Item(itemIdx)
+		if item != nil && localLine >= 1 && localLine <= item.PaneRows {
 			r.paneLineMap[i] = PaneLineInfo{
 				PaneID:  msg.SubPaneID,
 				LineIdx: localLine - 2,
@@ -1011,6 +1013,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 	msg, ok := item.Data.(*types.ChatMessage)
 	if !ok {
 		item.Native = nil
+		item.PaneRows = 0
 		return []string{""}
 	}
 
@@ -1019,13 +1022,17 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		if maxH < 5 {
 			maxH = 5
 		}
-		paneWidth := max(0, width-2*ui.ScrollbarWidth-2)
+		paneWidth := max(0, width-r.scrollbarFootprint())
 		paneLines := r.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, r.spinFrame)
 		result := make([]string, 0, len(paneLines)+1)
 		native := make([]PaintLine, 0, len(paneLines)+1)
+		item.PaneRows = 0
 		result = append(result, "")
 		native = append(native, buildPlainBodyLine(""))
 		for _, sl := range paneLines {
+			if !sl.Separator {
+				item.PaneRows++
+			}
 			if sl.Native != nil {
 				result = append(result, sl.PlainText())
 				native = append(native, *sl.Native)
@@ -1040,6 +1047,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		item.Native = native
 		return result
 	}
+	item.PaneRows = 0
 
 	isStreamingCursor := r.isStreamingCursor(msg)
 	msgIdx := r.messageIndexOf(msg)
@@ -1106,14 +1114,20 @@ const messageBodyChromeWidth = 16
 // a narrow terminal may yield zero content columns but never synthetic ones.
 func (r *Renderer) availableMessageWidths() (contentWidth, innerW int) {
 	padLR := max(0, r.theme.Spacing.PadLR)
-	sbW := max(0, r.ScrollbarWidth())
-	sbGapW := 0
-	if sbW > 0 {
-		sbGapW = 1
-	}
-	innerW = max(0, r.width-padLR*2-sbW-sbGapW)
+	innerW = max(0, r.width-padLR*2-r.scrollbarFootprint())
 	contentWidth = max(0, innerW-messageBodyChromeWidth)
 	return contentWidth, innerW
+}
+
+// scrollbarFootprint is the shared horizontal contract for chat content:
+// every visible scrollbar occupies one column, and the group has one blank
+// separator immediately before the outermost (main chat) scrollbar.
+func (r *Renderer) scrollbarFootprint() int {
+	w := max(0, r.ScrollbarWidth())
+	if w > 0 {
+		w++
+	}
+	return w
 }
 
 func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader bool) renderContext {

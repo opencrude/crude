@@ -6,7 +6,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/filetree"
+	"crude/tui/screens/activitybar"
 	"crude/tui/screens/shelltree"
+	"crude/tui/screens/sourcecontrol"
 )
 
 func TestSidebarSplitDividerDragResizesTree(t *testing.T) {
@@ -57,5 +59,38 @@ func TestSidebarSplitDividerDragClampsToHalfWidth(t *testing.T) {
 	want := app.width / 2
 	if app.Tree.Width != want {
 		t.Fatalf("clamped width=%d want %d", app.Tree.Width, want)
+	}
+}
+
+func TestGitPanelSplitDividerDragResizesTree(t *testing.T) {
+	app := newFullTestApp(t)
+	app.Tree = NewTreeState(nil, 30)
+	app.Tree.Visible = true
+	app.setActivity(activitybar.ViewGit, true)
+	app.paintShellFrame()
+
+	start := app.Tree.Width
+	if start != 30 {
+		t.Fatalf("start width=%d", start)
+	}
+	divX := app.activityChromeWidth() + start
+	if id := app.rootHost.HitTest(divX, 8); id != sourcecontrol.DividerID {
+		t.Fatalf("HitTest(%d,8)=%q want %q", divX, id, sourcecontrol.DividerID)
+	}
+
+	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: divX, Y: 8, Button: tea.MouseLeft})
+	if !app.rootHost.HasPointerCapture() {
+		t.Fatal("divider click should capture the pointer")
+	}
+	_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: divX + 8, Y: 8, Button: tea.MouseLeft})
+	if app.Tree.Width != start+8 {
+		t.Fatalf("after +8 drag width=%d want %d", app.Tree.Width, start+8)
+	}
+	_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{X: divX + 8, Y: 8, Button: tea.MouseLeft})
+	if app.rootHost.HasPointerCapture() {
+		t.Fatal("release should clear capture")
+	}
+	if app.Tree.Width != start+8 {
+		t.Fatalf("width after release=%d want %d", app.Tree.Width, start+8)
 	}
 }

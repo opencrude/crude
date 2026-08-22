@@ -203,7 +203,6 @@ func (l *List) Measure(_ LayoutContext, cs Constraints) Size {
 func (l *List) Layout(_ LayoutContext, r Rect) {
 	l.SetBounds(r)
 	l.scroll.SetViewport(r.H)
-	l.scroll.EnsureVisible(l.sel.Index())
 }
 
 func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
