@@ -100,6 +100,9 @@ type Model struct {
 	searchActive  bool
 	scope         types.SettingsScope
 	appDefaults   types.AppSettings
+	// agents holds the working AgentsSettings so the main agent form's
+	// Multi-Agent toggle reads and writes the real workspace flag.
+	agents *types.AgentsSettings
 }
 
 const (
@@ -108,8 +111,8 @@ const (
 	fieldAPIKey         = "api-key"
 	fieldBaseURL        = "base-url"
 	fieldAPIStandard    = "api-standard"
-	fieldModelStandard  = "model-standard"
 	fieldThinkingEffort = "thinking-effort"
+	fieldMultiAgent     = "multi-agent"
 )
 
 // New creates a settings model from current AppSettings (application scope).
@@ -149,6 +152,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		th: th, presets: presets, providers: providers, providerID: active,
 		providerModel: providers[active].Model,
 		models:        make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
+		agents: &current.Agents,
 	}
 	appearanceFields := append([]*ui.FieldState{
 		ui.SeparatorFieldState("theme", "Theme"),
@@ -156,22 +160,12 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		ui.SeparatorFieldState("palette", "Palette preview"),
 	}, appearanceColorFields(appearance.Preset, appearance)...)
 	m.categories = []Category{
-		{Name: "Providers", Group: "AI", Description: "Connections, credentials, and provider defaults.", Form: m.buildProvidersForm()},
-		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"])},
-		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"])},
-		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"])},
-		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"])},
-		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: formModel(
-			ui.SeparatorFieldState("memory-recall", "Recall"),
-			ui.BoolFieldState("auto-recall", "Auto recall", current.Memory.AutoRecallEnabled(), "Inject relevant workspace memories into the agent context each turn."),
-			ui.TextFieldState("recall-budget", "Recall budget", fmt.Sprintf("%d", current.Memory.RecallBudgetOrDefault(types.DefaultMemoryRecallBudget)), "Token budget for the injected memory block."),
-			ui.TextFieldState("recall-limit", "Recall limit", fmt.Sprintf("%d", current.Memory.RecallLimitOrDefault(types.DefaultMemoryRecallLimit)), "Maximum memories injected per turn."),
-			ui.SeparatorFieldState("memory-background", "Background curation"),
-			ui.BoolFieldState("auto-extract", "Auto extract", current.Memory.AutoExtractEnabled(), "Extract durable memories and session summaries from finished turns using a background model call."),
-			ui.TextFieldState("extract-every", "Extract cadence", fmt.Sprintf("%d", current.Memory.ExtractCadenceOrDefault(types.DefaultMemoryExtractCadence)), "Run extraction every N turns."),
-			ui.BoolFieldState("consolidation", "Consolidation", current.Memory.ConsolidationEnabled(), "Background dedup, contradiction resolution, and decay of unused memories."),
-			ui.TextFieldState("memory-model", "Background model", current.Memory.Model, "Model for background memory jobs. Empty inherits the session model."),
-		)},
+		{Name: "Providers", Group: "AI", Description: "Connections, credentials, and communication protocol.", Form: m.buildProvidersForm()},
+		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"], true)},
+		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"], false)},
+		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"], false)},
+		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"], false)},
+		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: m.buildMemoryForm(current.Memory)},
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
 			ui.SeparatorFieldState("editing", "Editing"),
@@ -273,19 +267,8 @@ func (m *Model) buildProvidersForm() *ui.FormModel {
 		ui.SelectFieldState(
 			fieldAPIStandard, "Provider default", providerStandard(m.providerID, cfg),
 			standardOptions(nil),
-			"Wire protocol used unless the selected model has an override.",
+			"Wire protocol used by this provider.",
 		),
-		ui.SeparatorFieldState("defaults", "Model defaults"),
-		ui.ModelFieldState(fieldModel, "Default model", cfg.Model, ui.ModelOptions(m.models[m.providerID]), "Used when an agent does not define its own model."),
-		ui.SelectFieldState(
-			fieldModelStandard, "Model protocol", modelStandardValue(cfg, cfg.Model),
-			standardOptions(&standardDefault{
-				ID: "inherit", Label: "Use provider default",
-				Detail: standardName(providerStandard(m.providerID, cfg)),
-			}),
-			"Override the communication protocol only for this model.",
-		),
-		ui.ThinkingFieldState(fieldThinkingEffort, cfg.ThinkingEffort, "Controls how much internal reasoning the model may use."),
 	)
 	return formModel(fields...)
 }
@@ -335,7 +318,11 @@ func (m *Model) rebuildProvidersForm() {
 	form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
 }
 
-func (m *Model) buildAgentForm(cfg types.CategorySettings) *ui.FormModel {
+// buildAgentForm builds an agent's behavior form. When isMain is true it also
+// carries the Multi-Agent enable/disable toggle so the main settings surface
+// mirrors the /settings deck. Communication protocol is deliberately not an
+// agent property — it is resolved from the provider at use time.
+func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.FormModel {
 	providerID := cfg.Provider
 	if providerID == "" {
 		providerID = m.providerID
@@ -349,23 +336,66 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings) *ui.FormModel {
 	if thinking == "" {
 		thinking = providerCfg.ThinkingEffort
 	}
-	standard := cfg.APIStandard
-	if standard == "" {
-		standard = "inherit"
-	}
-	return formModel(
+	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("agent", "Agent behavior"),
 		ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(m.presets), "Override the workspace provider for this agent."),
 		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Override the workspace default model."),
-		ui.SelectFieldState(
-			fieldAPIStandard, "Communication protocol", standard,
-			standardOptions(&standardDefault{
-				ID: "inherit", Label: "Use provider/model default",
-				Detail: standardName(resolveModelStandard(providerID, model, providerCfg)),
-			}),
-			"Keep inherited unless this agent requires a different provider wire protocol.",
-		),
 		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the workspace reasoning budget."),
+	}
+	if isMain {
+		fields = append(fields,
+			ui.SeparatorFieldState("delegation", "Delegation"),
+			ui.BoolFieldState(fieldMultiAgent, "Multi Agent",
+				m.agentsEnabled(), "Allow this workspace to spawn researcher, crafter, and aeron sub-agents."),
+		)
+	}
+	return formModel(fields...)
+}
+
+// agentsEnabled is a placeholder that is replaced by NewScoped wiring below;
+// it reads the controller-level multi-agent flag from the model.
+func (m *Model) agentsEnabled() bool {
+	if m.agents != nil {
+		return m.agents.Enabled
+	}
+	return true
+}
+
+// buildMemoryForm builds the Memory settings form: all the recall/extract/
+// consolidation controls plus an Agent behavior section so the memory agent
+// can pick its own provider/model/thinking like any other agent. Empty fields
+// inherit the main agent at use time.
+func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
+	cat := mem.MemoryCategory
+	providerID := cat.Provider
+	if providerID == "" {
+		providerID = m.providerID
+	}
+	providerCfg := m.providers[providerID]
+	model := cat.Model
+	if model == "" {
+		model = mem.Model // legacy bare override
+	}
+	if model == "" {
+		model = providerCfg.Model
+	}
+	thinking := cat.ThinkingEffort
+	if thinking == "" {
+		thinking = providerCfg.ThinkingEffort
+	}
+	return formModel(
+		ui.SeparatorFieldState("memory-recall", "Recall"),
+		ui.BoolFieldState("auto-recall", "Auto recall", mem.AutoRecallEnabled(), "Inject relevant workspace memories into the agent context each turn."),
+		ui.TextFieldState("recall-budget", "Recall budget", fmt.Sprintf("%d", mem.RecallBudgetOrDefault(types.DefaultMemoryRecallBudget)), "Token budget for the injected memory block."),
+		ui.TextFieldState("recall-limit", "Recall limit", fmt.Sprintf("%d", mem.RecallLimitOrDefault(types.DefaultMemoryRecallLimit)), "Maximum memories injected per turn."),
+		ui.SeparatorFieldState("memory-background", "Background curation"),
+		ui.BoolFieldState("auto-extract", "Auto extract", mem.AutoExtractEnabled(), "Extract durable memories and session summaries from finished turns using a background model call."),
+		ui.TextFieldState("extract-every", "Extract cadence", fmt.Sprintf("%d", mem.ExtractCadenceOrDefault(types.DefaultMemoryExtractCadence)), "Run extraction every N turns."),
+		ui.BoolFieldState("consolidation", "Consolidation", mem.ConsolidationEnabled(), "Background dedup, contradiction resolution, and decay of unused memories."),
+		ui.SeparatorFieldState("memory-agent", "Memory agent"),
+		ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(m.presets), "Override the workspace provider for the memory agent."),
+		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Model for background memory jobs. Empty inherits the main agent."),
+		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the memory agent's reasoning budget."),
 	)
 }
 
@@ -388,34 +418,11 @@ func standardOptions(def *standardDefault) []ui.FormOption {
 	return options
 }
 
-func standardName(id string) string {
-	for _, standard := range provider.StandardList() {
-		if standard.ID == id {
-			return standard.Name
-		}
-	}
-	return id
-}
-
 func providerStandard(providerID string, cfg types.ProviderConfig) string {
 	if cfg.APIStandard != "" {
 		return cfg.APIStandard
 	}
 	return provider.DefaultStandardID(providerID)
-}
-
-func resolveModelStandard(providerID, model string, cfg types.ProviderConfig) string {
-	if standard := cfg.ModelStandards[model]; standard != "" {
-		return standard
-	}
-	return providerStandard(providerID, cfg)
-}
-
-func modelStandardValue(cfg types.ProviderConfig, model string) string {
-	if standard := cfg.ModelStandards[model]; standard != "" {
-		return standard
-	}
-	return "inherit"
 }
 
 func cloneStandardMap(src map[string]string) map[string]string {
@@ -500,60 +507,26 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		}
 		return
 	}
-	if category == catProviders && fieldID == fieldModel {
-		m.storeCurrentModelStandard()
-		m.providerModel = m.value(catProviders, fieldModel)
-		cfg := m.providers[m.providerID]
-		form := m.categories[catProviders].Form
-		form.SetValue(fieldModelStandard, ui.StringValue(modelStandardValue(cfg, m.providerModel)))
-		if field := form.Field(fieldModelStandard); field != nil {
-			field.Options = standardOptions(&standardDefault{
-				ID: "inherit", Label: "Use provider default",
-				Detail: standardName(providerStandard(m.providerID, cfg)),
-			})
-		}
-		return
-	}
 	if category == catProviders && fieldID == fieldAPIStandard {
-		cfg := m.providers[m.providerID]
-		cfg.APIStandard = m.value(catProviders, fieldAPIStandard)
-		if field := m.categories[catProviders].Form.Field(fieldModelStandard); field != nil {
-			field.Options = standardOptions(&standardDefault{
-				ID: "inherit", Label: "Use provider default",
-				Detail: standardName(providerStandard(m.providerID, cfg)),
-			})
-		}
+		m.providers[m.providerID] = func(cfg types.ProviderConfig) types.ProviderConfig {
+			cfg.APIStandard = m.value(catProviders, fieldAPIStandard)
+			return cfg
+		}(m.providers[m.providerID])
 		return
 	}
-	if m.isAgentCategory(category) && fieldID == fieldProvider {
+	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldProvider {
 		providerID := m.value(category, fieldProvider)
 		cfg := m.providers[providerID]
 		form := m.categories[category].Form
 		form.SetValue(fieldModel, ui.StringValue(cfg.Model))
-		form.SetValue(fieldAPIStandard, ui.StringValue("inherit"))
-		form.SetValue(fieldThinkingEffort, ui.StringValue(cfg.ThinkingEffort))
 		if field := form.Field(fieldModel); field != nil {
 			field.Options = ui.ModelOptions(m.models[providerID])
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
-		m.refreshAgentStandardOptions(category)
 		return
 	}
-	if m.isAgentCategory(category) && fieldID == fieldModel {
-		m.refreshAgentStandardOptions(category)
-	}
-}
-
-func (m *Model) refreshAgentStandardOptions(category int) {
-	form := m.categories[category].Form
-	providerID := m.value(category, fieldProvider)
-	model := m.value(category, fieldModel)
-	cfg := m.providers[providerID]
-	if field := form.Field(fieldAPIStandard); field != nil {
-		field.Options = standardOptions(&standardDefault{
-			ID: "inherit", Label: "Use provider/model default",
-			Detail: standardName(resolveModelStandard(providerID, model, cfg)),
-		})
+	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldModel {
+		return
 	}
 }
 
@@ -629,7 +602,7 @@ func (m *Model) OpenSelect(fieldID string) tea.Cmd {
 	if m.selected == catProviders {
 		return m.fetchModelsCmd()
 	}
-	if m.isAgentCategory(m.selected) {
+	if m.isAgentCategory(m.selected) || m.selected == catMemory {
 		return m.fetchModelsForProviderCmd(m.value(m.selected, fieldProvider))
 	}
 	return nil
@@ -856,7 +829,11 @@ func (m *Model) collectMemory(cfg *types.MemorySettings) {
 		RecallBudgetTokens: parseOpt(m.value(catMemory, "recall-budget"), types.DefaultMemoryRecallBudget),
 		RecallLimit:        parseOpt(m.value(catMemory, "recall-limit"), types.DefaultMemoryRecallLimit),
 		ExtractEveryTurns:  parseOpt(m.value(catMemory, "extract-every"), types.DefaultMemoryExtractCadence),
-		Model:              strings.TrimSpace(m.value(catMemory, "memory-model")),
+		MemoryCategory: types.CategorySettings{
+			Provider:       m.value(catMemory, fieldProvider),
+			Model:          m.value(catMemory, fieldModel),
+			ThinkingEffort: m.value(catMemory, fieldThinkingEffort),
+		},
 	}
 }
 
@@ -881,32 +858,11 @@ func (m *Model) storeProviderForm(providerID string) {
 	if providerID == "" || len(m.categories) == 0 {
 		return
 	}
-	m.storeCurrentModelStandard()
 	cfg := m.providers[providerID]
-	cfg.Model = m.value(catProviders, fieldModel)
 	cfg.APIKey = m.value(catProviders, fieldAPIKey)
 	cfg.ProviderURL = m.value(catProviders, fieldBaseURL)
 	cfg.APIStandard = m.value(catProviders, fieldAPIStandard)
-	cfg.ThinkingEffort = m.value(catProviders, fieldThinkingEffort)
 	m.providers[providerID] = cfg
-}
-
-func (m *Model) storeCurrentModelStandard() {
-	if m.providerID == "" || m.providerModel == "" || len(m.categories) == 0 {
-		return
-	}
-	cfg := m.providers[m.providerID]
-	cfg.ModelStandards = cloneStandardMap(cfg.ModelStandards)
-	standard := m.value(catProviders, fieldModelStandard)
-	if standard == "" || standard == "inherit" {
-		delete(cfg.ModelStandards, m.providerModel)
-	} else {
-		if cfg.ModelStandards == nil {
-			cfg.ModelStandards = make(map[string]string)
-		}
-		cfg.ModelStandards[m.providerModel] = standard
-	}
-	m.providers[m.providerID] = cfg
 }
 
 func (m *Model) collectAgents(agents *types.AgentsSettings) {
@@ -917,13 +873,9 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 		index int
 		key   string
 	}{{catMain, "default"}, {catResearcher, "researcher"}, {catCrafter, "crafter"}, {catAeron, "aeron"}} {
-		standard := m.value(entry.index, fieldAPIStandard)
-		if standard == "inherit" {
-			standard = ""
-		}
 		category := types.CategorySettings{
 			Provider: m.value(entry.index, fieldProvider),
-			Model:    m.value(entry.index, fieldModel), APIStandard: standard,
+			Model:    m.value(entry.index, fieldModel),
 			ThinkingEffort: m.value(entry.index, fieldThinkingEffort),
 		}
 		for _, model := range m.models[category.Provider] {
@@ -934,6 +886,11 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 			}
 		}
 		agents.Categories[entry.key] = category
+	}
+	// The main agent form owns the Multi-Agent toggle; mirror it into the
+	// collected agents settings.
+	if field := m.categories[catMain].Form.Field(fieldMultiAgent); field != nil {
+		agents.Enabled = ui.BoolFieldValue(field)
 	}
 }
 

@@ -165,6 +165,11 @@ func (w *Workspace) addSession(fs *Session) {
 	w.Sessions = append(w.Sessions, fs)
 	w.SessionsByID[fs.SessionID] = fs
 	w.ActiveSession = fs
+	// The header badge must show the session's real main-agent model once a
+	// session is active, replacing the startup placeholder.
+	if fs.backend != nil {
+		w.ModelName = fs.backend.ModelName()
+	}
 }
 
 // Hydrate loads conversation history from the active backend session into

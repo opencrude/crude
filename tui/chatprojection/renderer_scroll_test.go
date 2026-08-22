@@ -160,3 +160,43 @@ func TestCollapsedSubPaneSeparatorIsNotPaneOwned(t *testing.T) {
 		t.Fatalf("separator must not inherit pane ownership: %+v", paneMap)
 	}
 }
+
+func TestCollapsedThinkingThenToolIsSingleGap(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetChatAreaBounds(0, 6)
+	r.SetSubPaneContentFn(func(_ string, _, _, _ int) []SubPaneLine {
+		return []SubPaneLine{
+			NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}}),
+			SeparatorLine(),
+		}
+	})
+	r.AppendMessage(types.ChatMessage{
+		InternalID: "thought-pane",
+		Role:       types.RoleTool,
+		SubPaneID:  "thinking-1",
+	})
+	r.AppendMessage(types.ChatMessage{
+		InternalID: "tool-1",
+		Role:       types.RoleTool,
+		ToolName:   "search_history",
+		Content:    "Search History settings deck restore",
+	})
+
+	rows, _, _ := r.ExportMessageRows(60)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 message rows, got %d", len(rows))
+	}
+	// rows[0] is the collapsed pane: leading blank, label, trailing separator
+	// blank. That trailing blank is the ONE row separating it from the tool.
+	if len(rows[0].Lines) != 3 || rows[0].Lines[2] != "" {
+		t.Fatalf("collapsed pane should end on a separator blank: %#v", rows[0].Lines)
+	}
+	// The tool must start immediately after that separator — no extra leading
+	// spacer, so exactly one blank row sits between the thought and the tool.
+	if len(rows[1].Lines) == 0 || strings.TrimSpace(rows[1].Lines[0]) == "" {
+		t.Fatalf("tool message should start right after the pane's separator, got %#v", rows[1].Lines)
+	}
+	if !strings.Contains(rows[1].Lines[0], "Search History") {
+		t.Fatalf("tool first line should carry the tool content, got %q", rows[1].Lines[0])
+	}
+}

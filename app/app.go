@@ -91,9 +91,17 @@ func (a *App) Run() {
 	lg := &appLogger{}
 
 	// 1. Create the workspace shell (no session until launcher/resume picks one).
+	//
+	// The initial model badge must be the main agent's MODEL, never the provider
+	// ID. Reconcile the app config into a session config to resolve the main
+	// agent's default category (with provider defaults applied), then pass
+	// through only the model name. This is still a placeholder until a session
+	// publishes its real model, but it is the right one rather than a provider.
+	sessCfg0 := FileConfigToSession(a.fc)
+	initialModel := sessCfg0.GetActiveDefaultCategory().Model
 	ws := workspace.NewWorkspace(
 		a.projectDir,
-		a.fc.ActiveProvider, // model name (will be overridden by session)
+		initialModel,
 		session.ResolveUsername(),
 		a.initialSettings(),
 		lg,

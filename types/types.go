@@ -42,13 +42,18 @@ type CategorySettings struct {
 	ProviderURL string
 	// APIKey is never a category property. Credentials live on the
 	// provider; json:"-" keeps them out of workspace overlays.
-	APIKey              string `json:"-"`
-	APIStandard         string
-	Model               string
-	ThinkingEffort      string
-	Policy              string
-	MaxSteps            int
-	Description         string
+	APIKey         string `json:"-"`
+	APIStandard    string
+	Model          string
+	ThinkingEffort string
+	// Inherit is the session-level live-inheritance marker: "main" follows
+	// this session's main agent, "workspace" follows the workspace's main
+	// agent. Empty means an explicit (manual) category. Never set on
+	// workspace/app agent categories.
+	Inherit string `json:"inherit,omitempty"`
+	Policy  string
+	MaxSteps int
+	Description string
 	ModelContextWindow  int
 	ModelInputPrice     float64
 	ModelOutputPrice    float64
@@ -137,7 +142,13 @@ type MemorySettings struct {
 	ExtractEveryTurns int `json:"extract_every_turns,omitempty"`
 	// Model optionally overrides the model used for background memory jobs
 	// (extraction, summaries, consolidation). Empty uses the session model.
+	// Kept for backward-compat; prefer MemoryCategory.
 	Model string `json:"model,omitempty"`
+	// MemoryCategory is the memory agent's own configuration: provider,
+	// model, and thinking effort. Empty fields inherit the main agent, so the
+	// memory agent behaves like every other agent. It is set on the session
+	// config and mirrored here for the settings form.
+	MemoryCategory CategorySettings `json:"memory_category,omitempty"`
 }
 
 // AutoRecallEnabled reports whether recall injection is active (default on).

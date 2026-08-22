@@ -24,6 +24,9 @@ func TestModelFetchResultClearsLoadingViaFrameForwarding(t *testing.T) {
 		Providers: map[string]types.ProviderConfig{
 			"openai": {ProviderURL: "https://api.example/v1", APIKey: "secret"},
 		},
+		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+			"default": {Provider: "openai"},
+		}},
 	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 
 	// Build the real surface + popup bridge.
@@ -35,16 +38,13 @@ func TestModelFetchResultClearsLoadingViaFrameForwarding(t *testing.T) {
 	host := widget.Host()
 	host.Resize(90, 28)
 	host.Layout()
+	// Focus the Main Agent form and open its Model select.
 	surf.FocusForm()
-	for range 4 {
-		host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
-	}
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if result.Cmd == nil {
+	m.SelectCategory(catMain)
+	surf.FocusForm()
+	result := m.OpenSelect(fieldModel)
+	if result == nil {
 		t.Fatal("opening model select did not request models")
-	}
-	if !surf.form.Field(fieldModel).SelectOpen() {
-		t.Fatal("model select should be open while loading")
 	}
 	field := m.currentForm().Field(fieldModel)
 	if !field.Loading {
@@ -85,6 +85,9 @@ func TestModelFetchErrorClearsLoadingViaFrameForwarding(t *testing.T) {
 		Providers: map[string]types.ProviderConfig{
 			"openai": {ProviderURL: "https://api.example/v1", APIKey: "secret"},
 		},
+		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+			"default": {Provider: "openai"},
+		}},
 	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 
 	surf := NewSurface(th, m)
@@ -96,10 +99,9 @@ func TestModelFetchErrorClearsLoadingViaFrameForwarding(t *testing.T) {
 	host.Resize(90, 28)
 	host.Layout()
 	surf.FocusForm()
-	for range 4 {
-		host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
-	}
-	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd == nil {
+	m.SelectCategory(catMain)
+	surf.FocusForm()
+	if result := m.OpenSelect(fieldModel); result == nil {
 		t.Fatal("opening model select did not request models")
 	}
 	if !m.currentForm().Field(fieldModel).Loading {

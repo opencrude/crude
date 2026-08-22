@@ -361,6 +361,7 @@ func (s *Session) Config() *Config { return s.cfg }
 
 func (s *Session) RuntimeProfile() *RuntimeProfile { return s.runtimeProfile }
 
+// ModelName returns the display name of the active (main agent) model.
 func (s *Session) ModelName() string {
 	return s.cfg.GetActiveDefaultCategory().Model
 }

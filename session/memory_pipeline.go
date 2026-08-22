@@ -316,8 +316,8 @@ func buildTranscript(turns []memory.HistoryHit) string {
 }
 
 // memoryCompleter builds the one-shot completion function for background
-// jobs: the session's default provider, optionally with the memory model
-// override.
+// jobs: the memory agent's provider/model, which inherits the main agent
+// live unless configured otherwise.
 func (s *Session) memoryCompleter() (func(context.Context, string, string) (string, error), error) {
 	s.mu.Lock()
 	cfg := s.cfg
@@ -325,10 +325,7 @@ func (s *Session) memoryCompleter() (func(context.Context, string, string) (stri
 	if cfg == nil {
 		return nil, fmt.Errorf("session has no config")
 	}
-	category := cfg.GetActiveDefaultCategory()
-	if override := strings.TrimSpace(cfg.Memory.Model); override != "" {
-		category.Model = override
-	}
+	category := cfg.GetMemoryCategory()
 	// OAuth providers (e.g. ChatGPT subscription) have no API key; allow them.
 	if category.APIKey == "" && category.OAuth == nil {
 		return nil, fmt.Errorf("no API key configured")
