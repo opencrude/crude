@@ -50,10 +50,10 @@ type CategorySettings struct {
 	// this session's main agent, "workspace" follows the workspace's main
 	// agent. Empty means an explicit (manual) category. Never set on
 	// workspace/app agent categories.
-	Inherit string `json:"inherit,omitempty"`
-	Policy  string
-	MaxSteps int
-	Description string
+	Inherit             string `json:"inherit,omitempty"`
+	Policy              string
+	MaxSteps            int
+	Description         string
 	ModelContextWindow  int
 	ModelInputPrice     float64
 	ModelOutputPrice    float64

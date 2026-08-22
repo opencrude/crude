@@ -1,6 +1,7 @@
 package question
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -134,17 +135,68 @@ func TestScreenOptionMouseSelectionMatchesKeyboardSelection(t *testing.T) {
 	host := ui.NewHost(theme.DefaultDark(), deck)
 	host.Resize(80, 12)
 	host.Layout()
+	host.Focus(FormID)
 
-	// PanelDeck reserves its divider at row 0; Form reserves title, detail, and
-	// divider rows before the answer field. The FieldSelect dropdown opens with
-	// a top border, then a filter row, so the first list row sits two rows
-	// below the control. Clicks use Host geometry; the option pick must land
-	// inside the dropdown's control column because hit testing is scoped to
-	// the visible dropdown panel.
-	host.Handle(tea.MouseClickMsg{X: 16, Y: 4, Button: tea.MouseLeft}) // open dropdown
-	host.Handle(tea.MouseClickMsg{X: 24, Y: 7, Button: tea.MouseLeft}) // click first option row
+	// Open the shared option dropdown with the keyboard, then click the
+	// painted option row wherever the two-pane (rail + form) layout placed
+	// it — the option pick hit test must land inside the visible dropdown.
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	buf := surface.NewCellBuffer(80, 12)
+	host.Paint(buf)
+	x, y, ok := bufferFind(buf, "mouse choice")
+	if !ok {
+		t.Fatalf("dropdown option not painted:\n%s", bufferText(buf))
+	}
+	host.Handle(tea.MouseClickMsg{X: x + 1, Y: y, Button: tea.MouseLeft})
 	if screen.Current() != 1 || screen.Answer(0) != "mouse choice" {
 		t.Fatalf("mouse selection index=%d answer=%q", screen.Current(), screen.Answer(0))
+	}
+}
+
+func TestScreenRailShowsAnswerStateAndSelectsQuestions(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.Reset(`[
+		{"question":"Color","header":"Color","options":["red"]},
+		{"question":"Note"}
+	]`)
+	deck := ui.NewPanelDeck("deck", ui.NewTokenSet(theme.DefaultDark()))
+	deck.Open(ui.PanelEntry{ID: "question", Title: "Questions", Content: screen, Policy: ui.PanelBlocking})
+	host := ui.NewHost(theme.DefaultDark(), deck)
+	host.Resize(80, 12)
+	host.Layout()
+	host.Focus(FormID)
+
+	buf := surface.NewCellBuffer(80, 12)
+	host.Paint(buf)
+	painted := bufferText(buf)
+	for _, want := range []string{"1. Color", "2. Note"} {
+		if !strings.Contains(painted, want) {
+			t.Fatalf("rail missing %q:\n%s", want, painted)
+		}
+	}
+	if strings.Contains(painted, "❯") {
+		t.Fatalf("rail painted a marker glyph:\n%s", painted)
+	}
+
+	// Answer Q1 through the shared select; the rail icon flips to ✓ and the
+	// screen advances to Q2 (rail selection follows).
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if screen.Current() != 1 || screen.Answer(0) != "red" {
+		t.Fatalf("after option commit index=%d answer=%q", screen.Current(), screen.Answer(0))
+	}
+	railItems := screen.rail.Items()
+	if len(railItems) != 3 || railItems[0].Icon != "✓" || railItems[2].Icon != "○" {
+		t.Fatalf("rail icons after answering: %+v", railItems)
+	}
+
+	// Activating a rail row jumps to that question (entry, then separator).
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.rail.select", Payload: ui.ListItem{ID: "rail/0", Label: "1. Color", Payload: 0}})
+	if screen.Current() != 0 {
+		t.Fatalf("rail select stayed on index %d, want 0", screen.Current())
+	}
+	if screen.formModel.Field(answerFieldID).Value.String() != "option:0" {
+		t.Fatalf("rail select lost the prior answer: %q", screen.formModel.Field(answerFieldID).Value.String())
 	}
 }
 
@@ -167,6 +219,14 @@ func TestScreenPaintsAcrossThemesAndSizes(t *testing.T) {
 }
 
 func bufferContains(buf *surface.CellBuffer, want string) bool {
+	_, _, ok := bufferFind(buf, want)
+	return ok
+}
+
+// bufferFind locates the first pixel of a painted run of text, returning its
+// cell coordinates. Used to compute mouse hit targets whose geometry depends
+// on the live layout (rail width, form pane offset, dropdown position).
+func bufferFind(buf *surface.CellBuffer, want string) (int, int, bool) {
 	runes := []rune(want)
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x <= buf.Width()-len(runes); x++ {
@@ -178,9 +238,24 @@ func bufferContains(buf *surface.CellBuffer, want string) bool {
 				}
 			}
 			if matched {
-				return true
+				return x, y, true
 			}
 		}
 	}
-	return false
+	return 0, 0, false
+}
+
+func bufferText(buf *surface.CellBuffer) string {
+	var result strings.Builder
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			r := buf.Get(x, y).Char
+			if r == 0 {
+				r = ' '
+			}
+			result.WriteRune(r)
+		}
+		result.WriteByte('\n')
+	}
+	return result.String()
 }

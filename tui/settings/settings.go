@@ -874,8 +874,8 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 		key   string
 	}{{catMain, "default"}, {catResearcher, "researcher"}, {catCrafter, "crafter"}, {catAeron, "aeron"}} {
 		category := types.CategorySettings{
-			Provider: m.value(entry.index, fieldProvider),
-			Model:    m.value(entry.index, fieldModel),
+			Provider:       m.value(entry.index, fieldProvider),
+			Model:          m.value(entry.index, fieldModel),
 			ThinkingEffort: m.value(entry.index, fieldThinkingEffort),
 		}
 		for _, model := range m.models[category.Provider] {

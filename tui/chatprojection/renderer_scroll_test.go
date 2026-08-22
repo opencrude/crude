@@ -1,6 +1,7 @@
 package chatprojection
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -198,5 +199,78 @@ func TestCollapsedThinkingThenToolIsSingleGap(t *testing.T) {
 	}
 	if !strings.Contains(rows[1].Lines[0], "Search History") {
 		t.Fatalf("tool first line should carry the tool content, got %q", rows[1].Lines[0])
+	}
+}
+
+func TestExportMessageRowsRendersEveryDirtyItem(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetSize(48, 3)
+	r.SetChatAreaBounds(0, 3)
+	for i := 0; i < 10; i++ {
+		r.AppendMessage(types.ChatMessage{
+			InternalID: fmt.Sprintf("message-%d", i),
+			Role:       types.RoleAssistant,
+			Content:    fmt.Sprintf("content-%d", i),
+		})
+	}
+
+	rows, _, _ := r.ExportMessageRows(48)
+	if len(rows) != 10 {
+		t.Fatalf("exported rows=%d want 10", len(rows))
+	}
+	for i, row := range rows {
+		if got := strings.Join(row.Lines, "\n"); !strings.Contains(got, fmt.Sprintf("content-%d", i)) {
+			t.Fatalf("row %d exported stale/blank content: %q", i, got)
+		}
+	}
+}
+
+func TestLaterToolRemovesCursorFromPreviousAssistant(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetSize(60, 8)
+	r.SetChatAreaBounds(0, 8)
+	r.SetStreaming(true)
+	r.SetActiveTyping(true)
+	r.AppendMessage(types.ChatMessage{
+		InternalID: "assistant",
+		Role:       types.RoleAssistant,
+		Content:    "I will inspect the current implementation.",
+	})
+
+	rows, _, _ := r.ExportMessageRows(60)
+	if len(rows) != 1 || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "█") {
+		t.Fatalf("active assistant lacks cursor: %+v", rows)
+	}
+
+	r.UpdateToolCall("tool-1", "tool-message", "read_file", "main.go")
+	rows, _, _ = r.ExportMessageRows(60)
+	if len(rows) < 2 {
+		t.Fatalf("tool append did not produce a later row: %+v", rows)
+	}
+	if got := strings.Join(rows[0].Lines, "\n"); strings.Contains(got, "█") {
+		t.Fatalf("previous assistant retained typing cursor after later tool row: %q", got)
+	}
+}
+
+func TestSyncAppendRemovesCursorFromPreviousAssistant(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetSize(60, 8)
+	r.SetChatAreaBounds(0, 8)
+	r.SetStreaming(true)
+	r.SetActiveTyping(true)
+	r.SyncMessages([]types.ChatMessage{{
+		InternalID: "assistant",
+		Role:       types.RoleAssistant,
+		Content:    "Working now.",
+	}}, 1)
+	_, _, _ = r.ExportMessageRows(60)
+
+	r.SyncMessages([]types.ChatMessage{
+		{InternalID: "assistant", Role: types.RoleAssistant, Content: "Working now."},
+		{InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "calling"},
+	}, 2)
+	rows, _, _ := r.ExportMessageRows(60)
+	if got := strings.Join(rows[0].Lines, "\n"); strings.Contains(got, "█") {
+		t.Fatalf("synced assistant retained typing cursor after append: %q", got)
 	}
 }

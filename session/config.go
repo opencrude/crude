@@ -119,10 +119,10 @@ func DefaultAgentsConfig() AgentsConfig {
 						DeniedTools: []string{"delete_file"},
 					},
 					CategoryAeron: {
-						Policy:       "read-only",
-						MaxSteps:     1000,
-						Description:  "Grunt — formatting, linting, boilerplate, monitoring",
-						DeniedTools:  []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
+						Policy:      "read-only",
+						MaxSteps:    1000,
+						Description: "Grunt — formatting, linting, boilerplate, monitoring",
+						DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
 					},
 				},
 			},
@@ -597,18 +597,31 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 // the active profile. Provider credentials remain app-global; new sessions
 // inherit these role defaults unless their own DB contains an override.
 func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
-	if cfg == nil || len(agents.Categories) == 0 {
+	if cfg == nil {
+		return
+	}
+	if len(agents.Categories) == 0 && agents.ActiveProfile == "" &&
+		agents.MaxConcurrent == 0 && len(agents.Profiles) == 0 {
 		return
 	}
 	if cfg.Agents.Profiles == nil {
 		cfg.Agents.Profiles = make(map[string]ProfileConfig)
 	}
-	profileName := cfg.Agents.ActiveProfile
+	profileName := agents.ActiveProfile
+	if profileName == "" {
+		profileName = cfg.Agents.ActiveProfile
+	}
 	if profileName == "" {
 		profileName = "default"
-		cfg.Agents.ActiveProfile = profileName
+	}
+	cfg.Agents.ActiveProfile = profileName
+	cfg.Agents.Enabled = agents.Enabled
+	if agents.MaxConcurrent > 0 {
+		cfg.Agents.MaxConcurrent = agents.MaxConcurrent
 	}
 	profile := cfg.Agents.Profiles[profileName]
+	enabled := agents.Enabled
+	profile.MultiAgent = &enabled
 	if profile.Categories == nil {
 		profile.Categories = make(map[string]CategoryConfig)
 	}

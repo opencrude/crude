@@ -116,12 +116,10 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 
 	s.cfg = newCfg
 	s.sessionOverrides = overrides
-	enabled := tuiSettings.Agents.Enabled
 	if tuiSettings.SessionMultiAgent != nil {
-		enabled = *tuiSettings.SessionMultiAgent
+		applySessionMultiAgent(s.cfg, *tuiSettings.SessionMultiAgent)
 	}
-	applySessionMultiAgent(s.cfg, enabled)
-	s.multiAgentOverride = cloneBoolPtr(&enabled)
+	s.multiAgentOverride = cloneBoolPtr(tuiSettings.SessionMultiAgent)
 	if s.db != nil {
 		if err := sessiondb.SaveSessionFlags(s.db, s.sessionID, sessiondb.SessionFlags{MultiAgent: s.multiAgentOverride}); err != nil {
 			return fmt.Errorf("save session flags: %w", err)
@@ -407,6 +405,9 @@ func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) 
 
 func (s *Session) rebuildEffectiveConfigLocked() {
 	s.cfg = configWithSessionOverrides(s.workspaceCfg, s.sessionOverrides)
+	if s.multiAgentOverride != nil {
+		applySessionMultiAgent(s.cfg, *s.multiAgentOverride)
+	}
 	if s.runtimeProfile != nil {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}

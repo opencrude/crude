@@ -139,22 +139,25 @@ func (a *Agent) Run(
 			emit(AgentEvent{Type: "phase", Data: "grounding"})
 		}
 
-		drainBtw := func() {
+		drainBtw := func() int {
+			consumed := 0
 			for {
 				select {
 				case btwMsg, ok := <-btwInput:
 					if !ok {
 						btwInput = nil
-						return
+						return consumed
 					}
 					l.Info("BTW", "user_interruption", "step", step)
 					msgs = append(msgs, btwMsg)
+					consumed++
+					emit(AgentEvent{Type: "btw_consumed"})
 				default:
-					return
+					return consumed
 				}
 			}
 		}
-		drainBtw()
+		_ = drainBtw()
 
 		if smStatus := buildSMStatusMsg(); smStatus != nil {
 			replaced := false
@@ -343,13 +346,20 @@ func (a *Agent) Run(
 				})
 				continue
 			}
+			// A BTW message can arrive while the terminal completion is in
+			// flight. Consume it before emitting done so it becomes the next LLM
+			// step instead of being stranded when the turn goroutine shuts down.
+			if drainBtw() > 0 {
+				continuations = 0
+				continue
+			}
 			if a.Depth > 0 && !a.writeReportCalled {
 				a.logger.Warn("SUBAGENT", "write_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
 				msgs = append(msgs, provider.ChatMessage{
 					Role:    "user",
 					Content: provider.TextContent("[SYSTEM] You are about to end your loop without calling write_report. Your work will be LOST — the main agent cannot see your chat messages. You MUST call write_report with a detailed report before ending. Do it now."),
 				})
-				drainBtw()
+				_ = drainBtw()
 				if smStatus := buildSMStatusMsg(); smStatus != nil {
 					msgs = append(msgs, *smStatus)
 				}

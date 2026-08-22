@@ -161,6 +161,22 @@ func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
 	}
 }
 
+func TestApplyAppSettingsPersistsMultiAgentOff(t *testing.T) {
+	agents := session.DefaultAgentsConfig()
+	fc := FileConfig{Agents: &agents}
+	settings := FileConfigToAppSettings(fc)
+	settings.Agents.Enabled = false
+
+	ApplyAppSettingsToFileConfig(&fc, settings)
+	if fc.Agents == nil {
+		t.Fatal("agents config was dropped")
+	}
+	cfg := &session.Config{Agents: *fc.Agents}
+	if cfg.IsMultiAgentEnabled() || fc.Agents.Enabled {
+		t.Fatalf("multi-agent off was not persisted: %#v", fc.Agents)
+	}
+}
+
 func TestFileConfigLoadsMissingFileGracefully(t *testing.T) {
 	tmpDir := t.TempDir()
 	restore := setTestHome(t, tmpDir)

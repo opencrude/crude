@@ -404,6 +404,20 @@ func TestSubmitBtw_NonexistentAgent(t *testing.T) {
 	}
 }
 
+func TestBtwConsumedClearsPendingStatus(t *testing.T) {
+	app := newFullTestApp(t)
+	app.StatusBar.SetBtwCount(2)
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent"})
+	if got := app.StatusBar.BtwCount(); got != 1 {
+		t.Fatalf("pending BTW count=%d want 1", got)
+	}
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent"})
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent"})
+	if got := app.StatusBar.BtwCount(); got != 0 {
+		t.Fatalf("pending BTW count underflowed to %d", got)
+	}
+}
+
 // removeOrchestrator tests
 
 func TestRemoveOrchestrator_CleansUp(t *testing.T) {

@@ -80,6 +80,7 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 		make(chan string, 1),
 	)
 	agent := app.AgentMgr.Get("repeat-agent").State
+	fillAgentChat(app, "repeat-agent", 6, "history")
 	seen := make(map[string]bool)
 
 	for cycle := 0; cycle < 4; cycle++ {
@@ -102,6 +103,24 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 		if !gutter.Visible || gutter.Scroll == nil || gutter.Scroll.MaxOffset() <= 0 {
 			t.Fatalf("cycle %d pane %q lacks an overflowing scrollbar: %+v", cycle, paneID, gutter)
 		}
+		layout := app.computeContentLayout()
+		mainScrollbarX := app.chatRect.X + app.chatRect.W - layout.PadLR - 1
+		paneScrollbarX := mainScrollbarX - 2
+		painted := false
+		paneRows := 0
+		for y, info := range app.chatScreen.ViewportPaneLineMap() {
+			if info.PaneID != paneID {
+				continue
+			}
+			paneRows++
+			ch := app.mainSurf.Buffer().Get(paneScrollbarX, app.chatRect.Y+y).Char
+			if ch == '░' || ch == '█' {
+				painted = true
+			}
+		}
+		if paneRows == 0 || !painted {
+			t.Fatalf("cycle %d pane %q has state but no painted scrollbar: rows=%d x=%d", cycle, paneID, paneRows, paneScrollbarX)
+		}
 
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "stream_token", AgentID: "repeat-agent", Data: "reply"})
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "done", AgentID: "repeat-agent", Data: map[string]any{
@@ -111,6 +130,54 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 		if agent.ThinkingPaneID != "" {
 			t.Fatalf("cycle %d: thinking pane remained active after completion", cycle)
 		}
+	}
+}
+
+func TestThinkingScrollbarPaintsOnFirstFrameAfterReturningToActivePane(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width = 80
+	app.height = 24
+	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
+	app.AddOrchestrator(
+		"scrolled-agent",
+		make(chan provider.UserInput, 1),
+		make(chan provider.UserInput, 1),
+		make(chan struct{}, 1),
+		make(chan string, 1),
+	)
+	fillAgentChat(app, "scrolled-agent", 12, "history")
+	app.paintShellFrame()
+	mainScroll := app.chatScreen.ScrollModel()
+	mainScroll.SetAutoScroll(false)
+	mainScroll.ScrollTo(0)
+
+	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scrolled-agent", Data: thinkingLines(50)})
+	paneID := app.AgentMgr.Get("scrolled-agent").State.ThinkingPaneID
+	if paneID == "" {
+		t.Fatal("thinking was not promoted while main chat was scrolled away")
+	}
+	// Materialize the active pane while it is outside the parent viewport.
+	app.paintShellFrame()
+	mainScroll.ScrollTo(mainScroll.MaxOffset())
+	app.paintShellFrame()
+
+	layout := app.computeContentLayout()
+	mainScrollbarX := app.chatRect.X + app.chatRect.W - layout.PadLR - 1
+	paneScrollbarX := mainScrollbarX - 2
+	paneRows := 0
+	painted := false
+	for y, info := range app.chatScreen.ViewportPaneLineMap() {
+		if info.PaneID != paneID {
+			continue
+		}
+		paneRows++
+		ch := app.mainSurf.Buffer().Get(paneScrollbarX, app.chatRect.Y+y).Char
+		if ch == '░' || ch == '█' {
+			painted = true
+		}
+	}
+	if paneRows == 0 || !painted {
+		t.Fatalf("active pane %q did not paint scrollbar on return: rows=%d x=%d", paneID, paneRows, paneScrollbarX)
 	}
 }
 

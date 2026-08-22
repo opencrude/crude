@@ -167,6 +167,93 @@ func TestHandleSettingsSaveAppliesMultiAgent(t *testing.T) {
 	}
 }
 
+func TestApplyWorkspaceAgentDefaultsUpdatesMultiAgentFlag(t *testing.T) {
+	on := true
+	cfg := &Config{Agents: AgentsConfig{
+		Enabled:       true,
+		ActiveProfile: "default",
+		Profiles: map[string]ProfileConfig{
+			"default": {
+				MultiAgent: &on,
+				Categories: map[string]CategoryConfig{
+					CategoryDefault: {Provider: "openrouter", Model: "model"},
+				},
+			},
+		},
+	}}
+	ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{
+		Enabled:       false,
+		ActiveProfile: "default",
+		Categories: map[string]ttypes.CategorySettings{
+			CategoryDefault: {Provider: "openrouter", Model: "model"},
+		},
+	})
+	if cfg.IsMultiAgentEnabled() || cfg.Agents.Enabled {
+		t.Fatalf("workspace multi-agent off was not applied: %#v", cfg.Agents)
+	}
+}
+
+func TestWorkspaceRefreshPreservesSessionMultiAgentOverride(t *testing.T) {
+	root := t.TempDir()
+	cfg := testConfig()
+	sess, err := NewWithSessionDir("", cfg, root, root)
+	if err != nil {
+		t.Fatalf("NewWithSessionDir: %v", err)
+	}
+	t.Cleanup(sess.Close)
+
+	settings := sess.SettingsSnapshot()
+	off := false
+	settings.Agents.Enabled = false
+	settings.SessionMultiAgent = &off
+	if err := sess.HandleSettingsSave(settings); err != nil {
+		t.Fatalf("HandleSettingsSave: %v", err)
+	}
+
+	workspaceSettings := ConfigToSettings(cfg)
+	workspaceSettings.Agents.Enabled = true
+	sess.UpdateWorkspaceDefaults(ttypes.AppSettings{Agents: workspaceSettings.Agents})
+
+	snapshot := sess.SettingsSnapshot()
+	if snapshot.SessionMultiAgent == nil || *snapshot.SessionMultiAgent || snapshot.Agents.Enabled {
+		t.Fatalf("session UI lost explicit multi-agent off: %#v", snapshot)
+	}
+	if effective := sess.RuntimeProfile().GetEffectiveConfig("main"); effective.IsMultiAgentEnabled() {
+		t.Fatalf("runtime ignored displayed multi-agent off: %#v", effective.Agents)
+	}
+}
+
+func TestHandleSettingsSavePreservesMultiAgentInheritance(t *testing.T) {
+	root := t.TempDir()
+	cfg := testConfig()
+	off := false
+	prof := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
+	prof.MultiAgent = &off
+	cfg.Agents.Enabled = false
+	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = prof
+	sess, err := NewWithSessionDir("", cfg, root, root)
+	if err != nil {
+		t.Fatalf("NewWithSessionDir: %v", err)
+	}
+	t.Cleanup(sess.Close)
+
+	settings := sess.SettingsSnapshot()
+	settings.SessionMultiAgent = nil
+	if err := sess.HandleSettingsSave(settings); err != nil {
+		t.Fatalf("HandleSettingsSave: %v", err)
+	}
+	if got := sess.SettingsSnapshot().SessionMultiAgent; got != nil {
+		t.Fatalf("saving inherited settings created override %v", *got)
+	}
+
+	workspaceSettings := ConfigToSettings(cfg)
+	workspaceSettings.Agents.Enabled = true
+	sess.UpdateWorkspaceDefaults(ttypes.AppSettings{Agents: workspaceSettings.Agents})
+	if !sess.RuntimeProfile().GetEffectiveConfig("main").IsMultiAgentEnabled() {
+		t.Fatal("inherited session did not follow workspace multi-agent change")
+	}
+}
+
 func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
 	settings := ttypes.Settings{
 		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{

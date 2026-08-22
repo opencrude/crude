@@ -56,6 +56,76 @@ func TestRunDoesNotSpinOnClosedBTWChannel(t *testing.T) {
 	}
 }
 
+func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
+	var requests atomic.Int32
+	firstStarted := make(chan struct{}, 1)
+	releaseFirst := make(chan struct{})
+	secondMessages := make(chan []provider.ChatMessage, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if requests.Add(1) == 1 {
+			firstStarted <- struct{}{}
+			<-releaseFirst
+			writeChatSSE(w, "first response", "stop")
+			return
+		}
+		secondMessages <- request.Messages
+		writeChatSSE(w, "second response", "stop")
+	}))
+	defer server.Close()
+
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "test-model"
+	agent := newTestAgent(t, p, p.Model)
+	agent.MaxSteps = 2
+	btw := make(chan provider.ChatMessage, 1)
+	events := make(chan AgentEvent, 32)
+	done := make(chan []provider.ChatMessage, 1)
+	go func() {
+		done <- agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
+			events <- event
+		}, nil, nil, "", btw)
+	}()
+
+	<-firstStarted
+	btw <- provider.NewTextMessage("user", "use this in the next turn")
+	close(releaseFirst)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent did not finish BTW continuation")
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("requests=%d want BTW to force a second request", requests.Load())
+	}
+	requestMessages := <-secondMessages
+	foundBTW := false
+	for _, message := range requestMessages {
+		if message.Role == "user" && strings.Contains(message.ContentString(), "use this in the next turn") {
+			foundBTW = true
+			break
+		}
+	}
+	if !foundBTW {
+		t.Fatalf("second request lacks BTW message: %+v", requestMessages)
+	}
+	close(events)
+	foundConsumed := false
+	for event := range events {
+		if event.Type == "btw_consumed" {
+			foundConsumed = true
+		}
+	}
+	if !foundConsumed {
+		t.Fatal("BTW consumption was not acknowledged to the UI")
+	}
+}
+
 func TestRunAutomaticallyContinuesTruncatedResponse(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

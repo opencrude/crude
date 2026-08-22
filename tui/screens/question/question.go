@@ -8,15 +8,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
 
 const (
-	ScreenID  ui.ComponentID = "session-question"
-	FormID    ui.ComponentID = "session-question/form"
-	ActionsID ui.ComponentID = "session-question/actions"
+	ScreenID      ui.ComponentID = "session-question"
+	FormID        ui.ComponentID = "session-question/form"
+	ActionsID     ui.ComponentID = "session-question/actions"
+	RailID        ui.ComponentID = "session-question/rail"
+	RailScrollID  ui.ComponentID = "session-question/rail-scroll"
+	RailDividerID ui.ComponentID = "session-question/rail-divider"
 
 	answerFieldID  = "answer"
 	customFieldID  = "custom-answer"
@@ -46,18 +51,25 @@ type ResultMsg struct {
 type CancelMsg struct{ Target *Screen }
 
 // Screen composes the shared Form, option collection, TextField, and ActionBar
-// for a blocking agent question request. It has no workspace dependencies.
+// for a blocking agent question request. A question rail (shared List) mirrors
+// the settings deck: every question appears as a row with an answered/unanswered
+// icon; the active row is indicated by background+text color only (no marker
+// glyphs), and hover/selection states come from the shared List row colors.
+// It has no workspace dependencies.
 type Screen struct {
 	ui.Base
-	tokens    *ui.TokenSet
-	items     []Item
-	answers   []string
-	choices   [][]string
-	custom    []string
-	index     int
-	formModel *ui.FormModel
-	form      *ui.Form
-	actions   *ui.ActionBar
+	tokens     *ui.TokenSet
+	items      []Item
+	answers    []string
+	choices    [][]string
+	custom     []string
+	index      int
+	formModel  *ui.FormModel
+	form       *ui.Form
+	actions    *ui.ActionBar
+	rail       *ui.List
+	railScroll *ui.ScrollbarControl
+	divider    *railDivider
 }
 
 func New(th *theme.Theme) *Screen {
@@ -66,6 +78,11 @@ func New(th *theme.Theme) *Screen {
 	}
 	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th)}
 	s.form = ui.NewDockedForm(FormID, nil, "", "", s.tokens)
+	s.rail = ui.NewList(RailID, s.tokens)
+	s.rail.SetActivateAction("question.rail.select")
+	s.rail.SetDefaultRowBackground(ui.ColorBg)
+	s.railScroll = ui.NewScrollbarControl(RailScrollID, s.rail.Scroll(), s.tokens)
+	s.divider = &railDivider{Base: ui.NewBase(RailDividerID), tokens: s.tokens}
 	s.openCurrent()
 	return s
 }
@@ -82,6 +99,7 @@ func (s *Screen) Reset(questionsJSON string) int {
 	s.choices = make([][]string, len(items))
 	s.custom = make([]string, len(items))
 	s.index = 0
+	s.syncRail()
 	s.openCurrent()
 	return len(items)
 }
@@ -92,10 +110,105 @@ func (s *Screen) Dismiss() {
 	s.choices = nil
 	s.custom = nil
 	s.index = 0
+	s.syncRail()
 	s.openCurrent()
 }
 
 func (s *Screen) Count() int { return len(s.items) }
+
+func (s *Screen) SetTokens(tokens *ui.TokenSet) {
+	s.tokens = tokens
+	s.form.SetTokens(tokens)
+	if s.actions != nil {
+		s.actions.SetTokens(tokens)
+	}
+	s.rail.SetTokens(tokens)
+	s.railScroll.SetTokens(tokens)
+	s.divider.tokens = tokens
+}
+
+// syncRail rebuilds the question rail rows. Each question paints as
+// "○ N. Title" (unanswered) or "✓ N. Title" (answered); divider rules
+// separate entries; the active question is indicated by background and text
+// color only (the shared List selection row) — never a marker glyph.
+func (s *Screen) syncRail() {
+	if s.rail == nil {
+		return
+	}
+	items := make([]ui.ListItem, 0, max(0, s.Count()*2-1))
+	for i, q := range s.items {
+		label := q.Header
+		if label == "" {
+			label = q.Question
+		}
+		if rendering.VisibleWidth(label) > 30 {
+			label = rendering.TruncateVisual(label, 29, "…")
+		}
+		icon := "○"
+		if i < len(s.answers) && strings.TrimSpace(s.answers[i]) != "" {
+			icon = "✓"
+		}
+		items = append(items, ui.ListItem{
+			ID:      fmt.Sprintf("rail/%d", i),
+			Label:   fmt.Sprintf("%d. %s", i+1, label),
+			Icon:    icon,
+			Payload: i,
+		})
+		if i < s.Count()-1 {
+			items = append(items, ui.ListItem{ID: fmt.Sprintf("rail/sep/%d", i), Separator: true})
+		}
+	}
+	s.rail.SetItems(items)
+	for index, item := range items {
+		if payload, ok := item.Payload.(int); ok && payload == s.index {
+			s.rail.SelectIndex(index)
+			break
+		}
+	}
+}
+
+// railWidth sizes the question rail like the old deck's sidebar: at most 25%
+// of the width (capped at 35), never below 8, and never starving the form
+// below the readable minimum.
+func (s *Screen) railWidth(total int) int {
+	if total <= 0 {
+		return 12
+	}
+	maxItemW := 0
+	for i, q := range s.items {
+		label := q.Header
+		if label == "" {
+			label = q.Question
+		}
+		if rendering.VisibleWidth(label) > 30 {
+			label = rendering.TruncateVisual(label, 29, "…")
+		}
+		title := fmt.Sprintf("%d. %s", i+1, label)
+		w := rendering.VisibleWidth(title) + 4 // icon + indent spacing
+		if w > maxItemW {
+			maxItemW = w
+		}
+	}
+	ideal := maxItemW + 1
+	maxW := total * 25 / 100
+	if maxW > 35 {
+		maxW = 35
+	}
+	if maxW < 8 {
+		maxW = 8
+	}
+	const minContent = 24
+	if fromContent := total - minContent - 1; fromContent > 8 && fromContent < maxW {
+		maxW = fromContent
+	}
+	if ideal < 8 {
+		ideal = 8
+	}
+	if ideal > maxW {
+		ideal = maxW
+	}
+	return ideal
+}
 
 func (s *Screen) Current() int { return s.index }
 
@@ -106,7 +219,15 @@ func (s *Screen) Answer(index int) string {
 	return s.answers[index]
 }
 
-func (s *Screen) Children() []ui.Component { return []ui.Component{s.form, s.actions} }
+func (s *Screen) Children() []ui.Component {
+	children := []ui.Component{s.rail, s.form, s.actions}
+	if s.railScroll != nil && s.railScroll.Needed() {
+		children = append(children, s.railScroll)
+	}
+	// The pane divider paints last so form rules and rail fills never mask it.
+	children = append(children, s.divider)
+	return children
+}
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: s.PreferredHeight(cs.MaxH)})
@@ -129,13 +250,56 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if s.actions != nil {
 		chrome = s.actions.PreferredHeight()
 	}
-	formH := max(1, r.H-chrome)
-	s.form.Layout(ctx, ui.Rect{W: r.W, H: formH})
+	bodyH := max(1, r.H-chrome)
+	railW := s.railWidth(r.W)
+	scroll := s.railScroll != nil && s.railScroll.Needed()
+	railContentW := railW
+	if scroll {
+		railContentW = max(1, railW-1)
+	}
+	s.rail.Layout(ctx, ui.Rect{X: 0, Y: 0, W: railContentW, H: bodyH})
+	if scroll {
+		s.railScroll.Layout(ctx, ui.Rect{X: max(0, railW-1), Y: 0, W: 1, H: bodyH})
+	} else if s.railScroll != nil {
+		s.railScroll.Layout(ctx, ui.Rect{})
+	}
+	formX := railW + 2
+	s.form.Layout(ctx, ui.Rect{X: formX, Y: 0, W: max(1, r.W-formX), H: bodyH})
 	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-chrome), W: r.W, H: chrome})
+	s.divider.Layout(ctx, ui.Rect{X: railW, Y: 0, W: 1, H: bodyH})
 }
 
-func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
-func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult      { return ui.EventResult{} }
+func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
+	r := s.Bounds()
+	if r.Empty() {
+		return
+	}
+	bg := cell.NoColor
+	if s.tokens != nil {
+		bg = s.tokens.Color(ui.ColorBg)
+	}
+	ui.FillRect(buf, originX, originY, r, cell.BlankCell(bg))
+}
+
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if !evt.IsKey() {
+		return ui.EventResult{}
+	}
+	// Keys unclaimed by the rail (Tab/Esc) bubble here: rail Tab enters the
+	// form, Shift+Tab steps back to the action bar, Esc cancels the deck.
+	switch evt.Key.Code {
+	case tea.KeyTab:
+		if evt.Key.Mod.Contains(tea.ModShift) {
+			s.actions.FocusFirst()
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
+		s.form.FocusFirst()
+		return focusFormResult(ui.InvalidateLayout)
+	case tea.KeyEsc:
+		return s.cancel()
+	}
+	return ui.EventResult{}
+}
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
@@ -146,6 +310,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		if fieldID != answerFieldID {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
+		s.syncRail()
 		if s.customSelected() {
 			s.form.FocusLast()
 			return focusFormResult(ui.InvalidateLayout)
@@ -154,11 +319,25 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 			return s.advance()
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	case "question.rail.select":
+		item, ok := action.Payload.(ui.ListItem)
+		if !ok {
+			return ui.EventResult{}
+		}
+		index, ok := item.Payload.(int)
+		if !ok || index < 0 || index >= len(s.items) || index == s.index {
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		s.index = index
+		s.syncRail()
+		s.openCurrent()
+		return focusFormResult(ui.InvalidateLayout)
 	case "question.next":
 		return s.advance()
 	case "question.previous":
 		if s.index > 0 {
 			s.index--
+			s.syncRail()
 			s.openCurrent()
 		}
 		return focusFormResult(ui.InvalidateLayout)
@@ -177,6 +356,9 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		s.actions.FocusFirst()
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "actionbar.exit.backward":
+		if s.Count() > 0 {
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: RailID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
 		s.form.FocusLast()
 		return focusFormResult(0)
 	case "actionbar.exit.forward":
@@ -266,6 +448,7 @@ func (s *Screen) advance() ui.EventResult {
 	}
 	if s.index < len(s.items)-1 {
 		s.index++
+		s.syncRail()
 		s.openCurrent()
 		return focusFormResult(ui.InvalidateLayout)
 	}
@@ -410,10 +593,46 @@ func focusFormResult(extra ui.Invalidation) ui.EventResult {
 	return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: FormID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint | extra}
 }
 
+// railDivider paints the vertical rule between the question rail and the form
+// pane. It is the last child so form rules and rail fills never mask it (the
+// settings deck uses the same paint-last split divider pattern).
+type railDivider struct {
+	ui.Base
+	tokens *ui.TokenSet
+}
+
+func (d *railDivider) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return cs.ClampSize(ui.Size{W: 1, H: cs.MaxH})
+}
+
+func (d *railDivider) Layout(_ ui.LayoutContext, r ui.Rect) { d.SetBounds(r) }
+
+func (d *railDivider) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
+	r := d.Bounds()
+	if r.Empty() {
+		return
+	}
+	fg, bg := cell.NoColor, cell.NoColor
+	if d.tokens != nil {
+		fg, bg = d.tokens.Color(ui.ColorPopupDivider), d.tokens.Color(ui.ColorBg)
+	}
+	x := originX + r.X
+	glyph := ui.FirstRune(ui.DefaultGlyphsFromTokens(d.tokens).BorderV, '│')
+	for y := originY + r.Y; y < originY+r.Y+r.H; y++ {
+		buf.Set(x, y, cell.NewCell(glyph, fg, bg, 0))
+	}
+}
+
+func (d *railDivider) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
+func (d *railDivider) Semantics() ui.Semantics {
+	return ui.Semantics{Role: ui.RoleSeparator, Label: "Questions"}
+}
+
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleDialog, Label: "Agent questions"}
 }
 
+var _ ui.Component = (*railDivider)(nil)
 var _ ui.Component = (*Screen)(nil)
 var _ ui.Parent = (*Screen)(nil)
 var _ ui.ActionHandler = (*Screen)(nil)

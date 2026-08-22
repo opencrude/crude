@@ -267,6 +267,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"name":        "question",
 			"args":        formatToolArgs(params),
 		}})
+		drainStaleBlockResponses(blockResolveCh)
 		emit(AgentEvent{Type: "blocking", Data: map[string]any{
 			"operation":      "questions",
 			"tool":           "question",
@@ -316,6 +317,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}, toolError: true}
 		}
 		if !a.Yolo && sr.Risk.NeedsConfirmation() {
+			drainStaleBlockResponses(blockResolveCh)
 			emit(AgentEvent{Type: "blocking", Data: map[string]string{
 				"operation":  sr.Risk.String(),
 				"tool":       "execute_command",
@@ -400,6 +402,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 
 	if fileCheck && !a.Yolo {
 		question := fmt.Sprintf("Allow this %s operation on %s?", fileOp, fileTarget)
+		drainStaleBlockResponses(blockResolveCh)
 		emit(AgentEvent{Type: "blocking", Data: map[string]string{
 			"operation":  fileOp,
 			"tool":       tc.Function.Name,
@@ -613,6 +616,28 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	emit(AgentEvent{Type: "tool_result", Data: resultData})
 
 	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed}
+}
+
+// drainStaleBlockResponses drops any value already buffered in the shared
+// block-resolve channel. The channel is size-1 and lives for the
+// orchestrator's whole lifetime, so cancel/stop/hard-cancel paths
+// (session/run.go, session/session.go) can write "deny" into it at times when
+// no block is pending. A stale value left behind is then consumed by the next
+// waitForBlockResponse, instantly resolving a brand-new question as "deny"
+// before the UI even renders it. Call this immediately BEFORE emitting a
+// blocking event: at that instant no response for the new block can exist yet,
+// so everything drained is by construction stale.
+func drainStaleBlockResponses(responses <-chan string) {
+	if responses == nil {
+		return
+	}
+	for {
+		select {
+		case <-responses:
+		default:
+			return
+		}
+	}
 }
 
 func waitForBlockResponse(ctx context.Context, responses <-chan string) (string, bool) {
