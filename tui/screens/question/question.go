@@ -17,14 +17,11 @@ import (
 
 const (
 	ScreenID      ui.ComponentID = "session-question"
-	FormID        ui.ComponentID = "session-question/form"
 	ActionsID     ui.ComponentID = "session-question/actions"
 	RailID        ui.ComponentID = "session-question/rail"
 	RailScrollID  ui.ComponentID = "session-question/rail-scroll"
 	RailDividerID ui.ComponentID = "session-question/rail-divider"
 
-	answerFieldID  = "answer"
-	customFieldID  = "custom-answer"
 	customOptionID = "custom"
 )
 
@@ -50,38 +47,81 @@ type ResultMsg struct {
 
 type CancelMsg struct{ Target *Screen }
 
-// Screen composes the shared Form, option collection, TextField, and ActionBar
-// for a blocking agent question request. A question rail (shared List) mirrors
-// the settings deck: every question appears as a row with an answered/unanswered
-// icon; the active row is indicated by background+text color only (no marker
-// glyphs), and hover/selection states come from the shared List row colors.
-// It has no workspace dependencies.
+// Screen composes the dedicated answer stack, write-in field, question rail,
+// and ActionBar for a blocking agent request. The right pane never renders a
+// dropdown: every option is its own stacked row followed by a "Write your
+// response" line, selectable by keyboard (arrows + Enter/Space) or mouse.
+// A question rail mirrors the settings deck; the active row is indicated by
+// background+text color only (no marker glyphs). It has no workspace
+// dependencies.
 type Screen struct {
 	ui.Base
-	tokens     *ui.TokenSet
-	items      []Item
-	answers    []string
-	choices    [][]string
-	custom     []string
-	index      int
-	formModel  *ui.FormModel
-	form       *ui.Form
-	actions    *ui.ActionBar
-	rail       *ui.List
-	railScroll *ui.ScrollbarControl
-	divider    *railDivider
+	tokens  *ui.TokenSet
+	items   []Item
+	answers []string
+	choices [][]string
+	custom  []string
+	index   int
+	errMsg  string
+
+	railRows    *ui.List
+	options     *ui.List
+	input       *answerInput
+	actions     *ui.ActionBar
+	railGate    *focusGate
+	optionsGate *focusGate
+	inputGate   *focusGate
+	railScroll  *ui.ScrollbarControl
+	divider     *railDivider
+
+	// Cached right-pane geometry from the latest Layout so Paint can place
+	// the header rule, error line, and truncations without recomputation.
+	paneX      int
+	paneW      int
+	paneIndent int
+	headerH    int
+	optH       int
+	inputH     int
+
+	ruleFullBleed bool
+	ruleBleedX    int
+	ruleBleedW    int
 }
 
 func New(th *theme.Theme) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
-	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th)}
-	s.form = ui.NewDockedForm(FormID, nil, "", "", s.tokens)
-	s.rail = ui.NewList(RailID, s.tokens)
-	s.rail.SetActivateAction("question.rail.select")
-	s.rail.SetDefaultRowBackground(ui.ColorBg)
-	s.railScroll = ui.NewScrollbarControl(RailScrollID, s.rail.Scroll(), s.tokens)
+	s := &Screen{
+		Base:          ui.NewBase(ScreenID),
+		tokens:        ui.NewTokenSet(th),
+		ruleFullBleed: true,
+	}
+	s.railRows = ui.NewList(ui.NewID(RailID, "rows"), s.tokens)
+	s.railRows.SetActivateAction("question.rail.select")
+	s.railRows.SetDefaultRowBackground(ui.ColorBg)
+
+	s.options = ui.NewList(ui.NewID(OptionsID, "rows"), s.tokens)
+	s.options.SetActivateAction("question.option.activate")
+	s.options.SetDefaultRowBackground(ui.ColorBg)
+
+	field := ui.NewTextArea(InputID, s.tokens, true)
+	field.SetSubmitAction("question.next")
+	field.SetPlaceholder("Type your answer")
+	// Prompt-area chrome rule (mirrors the session chat composer): the
+	// shared InputColors default is a raised popup fill; decks stay flat.
+	field.SetBackgroundColor(s.tokens.Color(ui.ColorBg))
+	s.input = &answerInput{TextArea: field}
+	s.input.onChange = func(value string) { s.onInputChanged(value) }
+
+	// Focus cycle: rail ⇄ options ⇄ input ⇄ actions. Esc climbs one level at
+	// a time — the write-in hands back to the rows, the rows hand back to the
+	// rail, and only Esc on the rail cancels the deck.
+	s.railGate = newFocusGate(RailID, s.railRows, OptionsID, ActionsID, "question.cancel", nil)
+	s.optionsGate = newFocusGate(OptionsID, s.options, InputID, RailID, railFocusAction, RailID)
+	s.inputGate = newFocusGate(InputID, s.input, ActionsID, OptionsID, focusBackwardAction, OptionsID)
+
+	s.railScroll = ui.NewScrollbarControl(RailScrollID, s.railRows.Scroll(), s.tokens)
 	s.divider = &railDivider{Base: ui.NewBase(RailDividerID), tokens: s.tokens}
 	s.openCurrent()
 	return s
@@ -118,13 +158,34 @@ func (s *Screen) Count() int { return len(s.items) }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
-	s.form.SetTokens(tokens)
 	if s.actions != nil {
 		s.actions.SetTokens(tokens)
 	}
-	s.rail.SetTokens(tokens)
+	s.railRows.SetTokens(tokens)
+	s.options.SetTokens(tokens)
+	if s.input != nil {
+		s.input.SetTokens(tokens)
+		// Re-assert the flat deck chrome after the token swap, exactly like
+		// the session chat composer's syncShellChrome does.
+		s.input.SetBackgroundColor(tokens.Color(ui.ColorBg))
+	}
 	s.railScroll.SetTokens(tokens)
 	s.divider.tokens = tokens
+}
+
+// SetRuleFullBleed toggles whether the header rule may span the deck row
+// (docked panels do; the parent publishes the row geometry via SetRuleBleed).
+func (s *Screen) SetRuleFullBleed(v bool) { s.ruleFullBleed = v }
+
+// SetRuleBleed records the deck row geometry supplied by the parent deck at
+// layout time (mirrors Form/ActionBar).
+func (s *Screen) SetRuleBleed(offsetX, width int) { s.ruleBleedX, s.ruleBleedW = offsetX, width }
+
+func (s *Screen) ruleSpan(contentW int) (x, w int) {
+	if s.ruleFullBleed && s.ruleBleedW-s.ruleBleedX > contentW {
+		return -s.ruleBleedX, s.ruleBleedW
+	}
+	return 0, contentW
 }
 
 // syncRail rebuilds the question rail rows. Each question paints as
@@ -132,7 +193,7 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 // separate entries; the active question is indicated by background and text
 // color only (the shared List selection row) — never a marker glyph.
 func (s *Screen) syncRail() {
-	if s.rail == nil {
+	if s.railRows == nil {
 		return
 	}
 	items := make([]ui.ListItem, 0, max(0, s.Count()*2-1))
@@ -158,10 +219,10 @@ func (s *Screen) syncRail() {
 			items = append(items, ui.ListItem{ID: fmt.Sprintf("rail/sep/%d", i), Separator: true})
 		}
 	}
-	s.rail.SetItems(items)
+	s.railRows.SetItems(items)
 	for index, item := range items {
 		if payload, ok := item.Payload.(int); ok && payload == s.index {
-			s.rail.SelectIndex(index)
+			s.railRows.SelectIndex(index)
 			break
 		}
 	}
@@ -220,13 +281,70 @@ func (s *Screen) Answer(index int) string {
 }
 
 func (s *Screen) Children() []ui.Component {
-	children := []ui.Component{s.rail, s.form, s.actions}
+	children := []ui.Component{s.railGate, s.optionsGate, s.inputGate, s.actions}
 	if s.railScroll != nil && s.railScroll.Needed() {
 		children = append(children, s.railScroll)
 	}
 	// The pane divider paints last so form rules and rail fills never mask it.
 	children = append(children, s.divider)
 	return children
+}
+
+// headerHeight is the right-pane chrome above the answer stack: title, optional
+// question detail, and the separator rule (mirrors the docked-form header).
+func (s *Screen) headerHeight() int {
+	if s.Count() == 0 {
+		return 0
+	}
+	item, ok := s.currentItem()
+	if !ok || strings.TrimSpace(item.Question) == "" {
+		return 2
+	}
+	return 3
+}
+
+func (s *Screen) optionRowCount() int {
+	item, ok := s.currentItem()
+	if !ok || s.index < 0 || s.index >= len(s.choices) {
+		return 0
+	}
+	return len(optionItems(item, s.choices[s.index]))
+}
+
+func (s *Screen) errHeight() int {
+	if s.errMsg == "" {
+		return 0
+	}
+	return 1
+}
+
+func (s *Screen) inputIndent(paneW int) int {
+	indent := 0
+	if s.tokens != nil {
+		indent = max(0, s.tokens.FormIndent())
+	}
+	return min(indent, max(0, paneW-8))
+}
+
+// inputNaturalH reports the prompt-area's wrap-aware row count at the given
+// width, clamped to at least one row and at most maxH (Constraints clamp
+// against MaxH, so a zero bound would collapse the measure to zero).
+func (s *Screen) inputNaturalH(w, maxH int) int {
+	if s.input == nil || w < 1 {
+		return 1
+	}
+	h := s.input.Measure(ui.LayoutContext{}, ui.Constraints{MaxW: w, MaxH: max(1, maxH)}).H
+	return max(1, h)
+}
+
+// preferredInputH sizes the write-in for deck-height math. Before the first
+// layout there is no real width to wrap against, so it claims one row and
+// converges on the next pass once paneW is known.
+func (s *Screen) preferredInputH(maxHeight int) int {
+	if s.paneW <= 0 || maxHeight <= 0 {
+		return 1
+	}
+	return s.inputNaturalH(max(1, s.paneW-s.paneIndent), maxHeight)
 }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
@@ -241,7 +359,8 @@ func (s *Screen) PreferredHeight(maxHeight int) int {
 	if s.actions != nil {
 		chrome = s.actions.PreferredHeight()
 	}
-	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-chrome))+chrome)
+	body := s.headerHeight() + s.optionRowCount() + s.preferredInputH(maxHeight) + s.errHeight()
+	return min(maxHeight, min(body, max(0, maxHeight-chrome))+chrome)
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
@@ -257,14 +376,36 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if scroll {
 		railContentW = max(1, railW-1)
 	}
-	s.rail.Layout(ctx, ui.Rect{X: 0, Y: 0, W: railContentW, H: bodyH})
+	s.railGate.Layout(ctx, ui.Rect{X: 0, Y: 0, W: railContentW, H: bodyH})
 	if scroll {
 		s.railScroll.Layout(ctx, ui.Rect{X: max(0, railW-1), Y: 0, W: 1, H: bodyH})
 	} else if s.railScroll != nil {
 		s.railScroll.Layout(ctx, ui.Rect{})
 	}
-	formX := railW + 2
-	s.form.Layout(ctx, ui.Rect{X: formX, Y: 0, W: max(1, r.W-formX), H: bodyH})
+
+	s.headerH = s.headerHeight()
+	s.paneX = railW + 2
+	s.paneW = max(1, r.W-s.paneX)
+	s.paneIndent = s.inputIndent(s.paneW)
+	errH := s.errHeight()
+	inputW := max(1, s.paneW-s.paneIndent)
+	avail := max(1, bodyH-s.headerH-errH)
+	s.optH = 0
+	if rows := s.optionRowCount(); rows > 0 {
+		s.optH = min(rows, avail)
+	}
+	// The write-in is a prompt area: it grows with its content but never
+	// pushes the option stack or the action bar out of the pane; overflow
+	// scrolls inside the control instead.
+	room := max(1, avail-s.optH)
+	s.inputH = min(s.inputNaturalH(inputW, room), room)
+	s.optionsGate.Layout(ctx, ui.Rect{X: s.paneX, Y: s.headerH, W: s.paneW, H: s.optH})
+	s.inputGate.Layout(ctx, ui.Rect{
+		X: s.paneX + s.paneIndent,
+		Y: s.headerH + s.optH,
+		W: inputW,
+		H: s.inputH,
+	})
 	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-chrome), W: r.W, H: chrome})
 	s.divider.Layout(ctx, ui.Rect{X: railW, Y: 0, W: 1, H: bodyH})
 }
@@ -275,50 +416,66 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Paint
 		return
 	}
 	bg := cell.NoColor
+	fg, muted, divider, errorFG := cell.NoColor, cell.NoColor, cell.NoColor, cell.NoColor
 	if s.tokens != nil {
 		bg = s.tokens.Color(ui.ColorBg)
+		fg = s.tokens.Color(ui.ColorFg)
+		muted = s.tokens.Color(ui.ColorMuted)
+		divider = s.tokens.Color(ui.ColorPopupDivider)
+		errorFG = s.tokens.Color(ui.ColorError)
 	}
 	ui.FillRect(buf, originX, originY, r, cell.BlankCell(bg))
+	if s.Count() == 0 {
+		return
+	}
+	x, y := originX+r.X, originY+r.Y
+	title, detail := s.currentTitleDetail()
+	buf.WriteString(x+s.paneX, y, rendering.TruncateVisual(title, s.paneW, ""), fg, bg, cell.AttrBold)
+	if s.headerH == 3 {
+		buf.WriteString(x+s.paneX, y+1, rendering.TruncateVisual(detail, s.paneW, ""), muted, bg, 0)
+	}
+	// Header rule spans the deck row edge to edge when the parent published
+	// bleed geometry (paint-last ordering keeps it visible over fills).
+	ruleX, ruleW := s.ruleSpan(s.paneW)
+	startX := max(x, x+s.paneX+ruleX)
+	endX := min(x+r.W, x+s.paneX+ruleX+ruleW)
+	if endX > startX {
+		glyph := ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '─')
+		buf.WriteString(startX, y+s.headerH-1, strings.Repeat(string(glyph), endX-startX), divider, bg, 0)
+	}
+	if s.errMsg != "" {
+		errX := x + s.paneX + s.paneIndent
+		errY := y + s.headerH + s.optH + s.inputH
+		buf.WriteString(errX, errY, rendering.TruncateVisual(s.errMsg, max(1, s.paneW-s.paneIndent), "…"), errorFG, bg, 0)
+	}
 }
 
-func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	if !evt.IsKey() {
 		return ui.EventResult{}
 	}
-	// Keys unclaimed by the rail (Tab/Esc) bubble here: rail Tab enters the
-	// form, Shift+Tab steps back to the action bar, Esc cancels the deck.
+	// Keys reaching the screen directly (screen-focused or unhandled past the
+	// gates): Tab enters the answer pane, Shift+Tab wraps to the actions,
+	// Esc lands on the rail instead of cancelling.
 	switch evt.Key.Code {
 	case tea.KeyTab:
 		if evt.Key.Mod.Contains(tea.ModShift) {
-			s.actions.FocusFirst()
-			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+			return s.focusResult(ActionsID, false)
 		}
-		s.form.FocusFirst()
-		return focusFormResult(ui.InvalidateLayout)
+		return s.focusResult(s.entryFocusID(), true)
 	case tea.KeyEsc:
-		return s.cancel()
+		return s.focusResult(RailID, false)
 	}
 	return ui.EventResult{}
 }
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
-	case "form.select.open":
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
-	case "form.changed":
-		fieldID, _ := action.Payload.(string)
-		if fieldID != answerFieldID {
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-		}
-		s.syncRail()
-		if s.customSelected() {
-			s.form.FocusLast()
-			return focusFormResult(ui.InvalidateLayout)
-		}
-		if item, ok := s.currentItem(); ok && !item.Multiple {
-			return s.advance()
-		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	case focusForwardAction, focusBackwardAction:
+		target, _ := action.Payload.(ui.ComponentID)
+		return s.focusResult(s.visibleTarget(target), action.ID == focusForwardAction)
+	case railFocusAction:
+		return s.focusResult(RailID, false)
 	case "question.rail.select":
 		item, ok := action.Payload.(ui.ListItem)
 		if !ok {
@@ -331,7 +488,11 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		s.index = index
 		s.syncRail()
 		s.openCurrent()
-		return focusFormResult(ui.InvalidateLayout)
+		result := s.focusResult(s.entryFocusID(), true)
+		result.Invalidate |= ui.InvalidateLayout
+		return result
+	case "question.option.activate":
+		return s.handleOptionActivate(action)
 	case "question.next":
 		return s.advance()
 	case "question.previous":
@@ -340,88 +501,120 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 			s.syncRail()
 			s.openCurrent()
 		}
-		return focusFormResult(ui.InvalidateLayout)
+		result := s.focusResult(s.entryFocusID(), true)
+		result.Invalidate |= ui.InvalidateLayout
+		return result
 	case "question.cancel":
 		return s.cancel()
-	case "form.cancel":
-		if s.customSelected() {
-			s.form.FocusFirst()
-			return focusFormResult(0)
-		}
-		return s.cancel()
-	case "form.exit.backward":
-		s.actions.FocusLast()
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "form.exit.forward":
-		s.actions.FocusFirst()
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "actionbar.exit.backward":
-		if s.Count() > 0 {
-			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: RailID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-		}
-		s.form.FocusLast()
-		return focusFormResult(0)
+		return s.focusResult(RailID, false)
 	case "actionbar.exit.forward":
-		s.form.FocusFirst()
-		return focusFormResult(0)
+		return s.focusResult(s.entryFocusID(), true)
 	}
 	return ui.EventResult{Action: &action}
 }
 
-func (s *Screen) openCurrent() {
-	model := ui.NewFormModel()
+// handleOptionActivate applies a stacked-row activation shared by Enter/Space
+// and mouse clicks. Single-choice rows record the answer and advance;
+// multi-choice rows toggle in place; the write-in row selects the custom
+// answer and focuses the text line beneath the stack.
+func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
+	item, ok := s.currentItem()
+	row, rowOK := action.Payload.(ui.ListItem)
+	if !ok || !rowOK {
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	}
+	id, _ := row.Payload.(string)
+	if id == customOptionID {
+		s.selectCustom()
+		result := s.focusResult(InputID, true)
+		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
+		return result
+	}
+	index := optionIndex(id)
+	if index < 0 || index >= len(item.Options) {
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	}
+	if item.Multiple {
+		s.toggleChoice(id)
+		s.syncAnswer()
+		s.syncOptions()
+		s.refreshError()
+		s.syncRail()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	}
+	s.choices[s.index] = []string{id}
+	s.syncAnswer()
+	s.syncRail()
+	return s.advance()
+}
+
+// selectCustom marks the write-in row as the active answer. Single-choice
+// questions replace their pick with the write-in; multi-select adds it.
+func (s *Screen) selectCustom() {
 	item, ok := s.currentItem()
 	if !ok {
-		s.formModel = model
-		s.form.SetForm(model, "Question", "")
+		return
+	}
+	if item.Multiple {
+		if !containsCustom(s.choices[s.index]) {
+			s.choices[s.index] = append(s.choices[s.index], customOptionID)
+		}
+	} else {
+		s.choices[s.index] = []string{customOptionID}
+	}
+	s.syncAnswer()
+	s.syncOptions()
+	s.refreshError()
+	s.syncRail()
+}
+
+// toggleChoice flips one option's membership in a multi-select question.
+func (s *Screen) toggleChoice(id string) {
+	values := s.choices[s.index]
+	for i, value := range values {
+		if value == id {
+			s.choices[s.index] = append(values[:i:i], values[i+1:]...)
+			return
+		}
+	}
+	s.choices[s.index] = append(append([]string(nil), values...), id)
+}
+
+// onInputChanged runs on every keystroke/paste in the write-in line: typing
+// selects the custom answer (replacing any single-choice pick), keeps the
+// stack icons in sync, and re-runs live validation like the shared form did.
+func (s *Screen) onInputChanged(value string) {
+	item, ok := s.currentItem()
+	if !ok {
+		return
+	}
+	s.custom[s.index] = value
+	if len(item.Options) > 0 && strings.TrimSpace(value) != "" {
+		if item.Multiple {
+			if !containsCustom(s.choices[s.index]) {
+				s.choices[s.index] = append(s.choices[s.index], customOptionID)
+			}
+		} else if !containsCustom(s.choices[s.index]) {
+			s.choices[s.index] = []string{customOptionID}
+		}
+		s.syncOptions()
+	}
+	s.syncAnswer()
+	s.refreshError()
+	s.syncRail()
+}
+
+func (s *Screen) openCurrent() {
+	s.errMsg = ""
+	if _, ok := s.currentItem(); !ok {
+		s.syncRail()
 		s.actions = ui.NewDockedActionBar(ActionsID, s.tokens)
 		return
 	}
+	s.input.SetValue(s.custom[s.index])
+	s.syncOptions()
 
-	title := item.Header
-	if title == "" {
-		title = fmt.Sprintf("Question %d of %d", s.index+1, len(s.items))
-	} else {
-		title = fmt.Sprintf("Question %d of %d: %s", s.index+1, len(s.items), title)
-	}
-	detail := item.Question
-	if len(item.Options) == 0 {
-		value := ui.StringValue(s.answers[s.index])
-		model.AddField(&ui.FieldState{
-			ID: answerFieldID, Label: "Answer", Type: ui.FieldText, Value: value, Initial: value,
-			Required: true, Placeholder: "Type your answer", SubmitAction: "question.next",
-		})
-	} else {
-		options := questionOptions(item)
-		if item.Multiple {
-			value := ui.StringsValue(append([]string(nil), s.choices[s.index]...))
-			model.AddField(&ui.FieldState{ID: answerFieldID, Label: "Answers", Type: ui.FieldMultiSelect, Value: value, Initial: value, Required: true, Options: options, Description: "Select all that apply."})
-		} else {
-			value := ui.StringValue("")
-			if len(s.choices[s.index]) > 0 {
-				value = ui.StringValue(s.choices[s.index][0])
-			}
-			model.AddField(&ui.FieldState{ID: answerFieldID, Label: "Answer", Type: ui.FieldSelect, Value: value, Initial: value, Required: true, Options: options})
-		}
-		customValue := ui.StringValue(s.custom[s.index])
-		model.AddField(&ui.FieldState{
-			ID: customFieldID, Label: "Custom answer", Type: ui.FieldText, Value: customValue, Initial: customValue,
-			Disabled: !containsCustom(s.choices[s.index]), Placeholder: "Type your answer", SubmitAction: "question.next",
-			Validator: func(value ui.FieldValue) []string {
-				if s.customSelectedFrom(model) && strings.TrimSpace(value.String()) == "" {
-					return []string{"Custom answer is required"}
-				}
-				return nil
-			},
-		})
-	}
-	model.OnChanged(func(_ string) {
-		s.syncCustomField(model)
-		s.syncAnswer(model)
-		model.ValidateAll()
-	})
-	s.formModel = model
-	s.form.SetForm(model, title, detail)
 	buttons := make([]ui.ActionBarButton, 0, 3)
 	if s.index > 0 {
 		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "question.previous", Variant: ui.VariantSecondary, Enabled: true})
@@ -431,26 +624,133 @@ func (s *Screen) openCurrent() {
 		label = "Submit"
 	}
 	buttons = append(buttons,
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "next"), Label: label, Action: "question.next", Variant: ui.VariantPrimary, Enabled: true},
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "next"), Label: label, Action: "question.next", Shortcut: "ctrl+enter", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "question.cancel", Variant: ui.VariantDanger, Enabled: true},
 	)
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 }
 
+// syncOptions rebuilds the stacked answer rows, anchoring the highlight on the
+// current answer when one exists, otherwise carrying the cursor across.
+func (s *Screen) syncOptions() {
+	item, ok := s.currentItem()
+	if !ok || s.options == nil {
+		return
+	}
+	carried := ""
+	if selected, ok := s.options.Selected(); ok {
+		carried = selected.ID
+	}
+	items := optionItems(item, s.choices[s.index])
+	s.options.SetItems(items)
+	wants := make([]string, 0, 2)
+	if len(s.choices[s.index]) > 0 {
+		wants = append(wants, s.choices[s.index][0])
+	}
+	if carried != "" {
+		wants = append(wants, carried)
+	}
+	for _, want := range wants {
+		for index, it := range items {
+			if it.ID == want {
+				s.options.SelectIndex(index)
+				return
+			}
+		}
+	}
+}
+
+// syncAnswer projects choices + the write-in text onto the retained answers.
+// The draft (s.custom) keeps exactly what was typed; the projected answer
+// trims surrounding whitespace so a trailing newline from the prompt area
+// never leaks into the resolved tool payload.
+func (s *Screen) syncAnswer() {
+	item, ok := s.currentItem()
+	if !ok || s.index < 0 || s.index >= len(s.answers) {
+		return
+	}
+	if len(item.Options) == 0 {
+		s.answers[s.index] = strings.TrimSpace(s.input.Value())
+		return
+	}
+	custom := strings.TrimSpace(s.input.Value())
+	s.custom[s.index] = s.input.Value()
+	values := make([]string, 0, len(s.choices[s.index]))
+	for _, id := range s.choices[s.index] {
+		if id == customOptionID {
+			if strings.TrimSpace(custom) != "" {
+				values = append(values, custom)
+			}
+			continue
+		}
+		if index := optionIndex(id); index >= 0 && index < len(item.Options) {
+			values = append(values, item.Options[index])
+		}
+	}
+	s.answers[s.index] = strings.Join(values, ", ")
+}
+
+// canAdvance reports whether the current question carries a submittable
+// answer. An empty write-in blocks even though it paints no message — the
+// prompt area's placeholder already asks for text, and repeating it as an
+// error line under the input said the same thing twice.
+func (s *Screen) canAdvance() bool {
+	item, ok := s.currentItem()
+	if !ok {
+		return false
+	}
+	if len(item.Options) == 0 {
+		return strings.TrimSpace(s.input.Value()) != ""
+	}
+	if len(s.choices[s.index]) == 0 {
+		return false
+	}
+	if containsCustom(s.choices[s.index]) && strings.TrimSpace(s.input.Value()) == "" {
+		return false
+	}
+	return true
+}
+
+// validationError reports the live blocking message for the current question,
+// mirroring the required/custom validators the shared form enforced. Only the
+// option-choice gaps speak up; text-input gaps stay silent (see canAdvance).
+func (s *Screen) validationError() string {
+	item, ok := s.currentItem()
+	if !ok {
+		return ""
+	}
+	if len(item.Options) == 0 || len(s.choices[s.index]) > 0 {
+		return ""
+	}
+	if item.Multiple {
+		return "Select at least one answer"
+	}
+	return "Choose an answer to continue"
+}
+
+func (s *Screen) refreshError() { s.errMsg = s.validationError() }
+
 func (s *Screen) advance() ui.EventResult {
-	if s.formModel == nil {
+	if s.Count() == 0 {
 		return ui.EventResult{Handled: true}
 	}
-	s.syncAnswer(s.formModel)
-	s.formModel.ValidateAll()
-	if s.formModel.AnyErrors() {
+	s.syncAnswer()
+	if !s.canAdvance() {
+		// Blocked stays put. Option-choice gaps paint their hint; empty
+		// write-ins rely on the placeholder and stay silent.
+		if message := s.validationError(); message != "" {
+			s.errMsg = message
+		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	}
+	s.errMsg = ""
 	if s.index < len(s.items)-1 {
 		s.index++
 		s.syncRail()
 		s.openCurrent()
-		return focusFormResult(ui.InvalidateLayout)
+		result := s.focusResult(s.entryFocusID(), true)
+		result.Invalidate |= ui.InvalidateLayout
+		return result
 	}
 	return ui.EventResult{
 		Handled:    true,
@@ -467,6 +767,44 @@ func (s *Screen) cancel() ui.EventResult {
 		Cmd:        func() tea.Msg { return CancelMsg{Target: s} },
 		Invalidate: ui.InvalidateLayout | ui.InvalidatePaint,
 	}
+}
+
+// focusResult seeds the target pane and asks the host to move deck focus.
+// Entering the action bar picks its first (forward) or last (backward) button.
+func (s *Screen) focusResult(target ui.ComponentID, forward bool) ui.EventResult {
+	if target == ActionsID && s.actions != nil {
+		if forward {
+			s.actions.FocusFirst()
+		} else {
+			s.actions.FocusLast()
+		}
+	}
+	return ui.EventResult{
+		Handled:    true,
+		Action:     &ui.Action{ID: "ui.focus", Payload: target},
+		Invalidate: ui.InvalidateFocus | ui.InvalidatePaint,
+	}
+}
+
+// visibleTarget redirects focus hops away from panes that do not exist for
+// the current question: text-only questions have no option rows, so leaving
+// the write-in (Esc) or Tabbing from the rail lands on the rail directly.
+func (s *Screen) visibleTarget(target ui.ComponentID) ui.ComponentID {
+	if target == OptionsID {
+		if item, ok := s.currentItem(); !ok || len(item.Options) == 0 {
+			return RailID
+		}
+	}
+	return target
+}
+
+// entryFocusID is where keyboard traversal enters the current question: the
+// stacked rows for option questions, the write-in line for free-text ones.
+func (s *Screen) entryFocusID() ui.ComponentID {
+	if item, ok := s.currentItem(); ok && len(item.Options) == 0 {
+		return InputID
+	}
+	return OptionsID
 }
 
 func (s *Screen) Result() Result {
@@ -487,89 +825,23 @@ func (s *Screen) currentItem() (Item, bool) {
 	return s.items[s.index], true
 }
 
-func questionOptions(item Item) []ui.FormOption {
-	options := make([]ui.FormOption, 0, len(item.Options)+1)
-	for index, option := range item.Options {
-		options = append(options, ui.FormOption{ID: fmt.Sprintf("option:%d", index), Label: option})
-	}
-	return append(options, ui.FormOption{ID: customOptionID, Label: "Type your own answer"})
-}
-
-func (s *Screen) customSelected() bool { return s.customSelectedFrom(s.formModel) }
-
-func (s *Screen) customSelectedFrom(model *ui.FormModel) bool {
-	if model == nil {
-		return false
-	}
-	field := model.Field(answerFieldID)
-	if field == nil {
-		return false
-	}
-	if field.Type == ui.FieldMultiSelect {
-		for _, value := range field.Value.Strings() {
-			if value == customOptionID {
-				return true
-			}
-		}
-		return false
-	}
-	return field.Value.String() == customOptionID
-}
-
-func (s *Screen) syncCustomField(model *ui.FormModel) {
-	custom := model.Field(customFieldID)
-	if custom == nil {
-		return
-	}
-	custom.Disabled = !s.customSelectedFrom(model)
-}
-
-func (s *Screen) syncAnswer(model *ui.FormModel) {
+// currentTitleDetail builds the pane header texts for painting.
+func (s *Screen) currentTitleDetail() (string, string) {
 	item, ok := s.currentItem()
-	if !ok || s.index < 0 || s.index >= len(s.answers) {
-		return
+	if !ok {
+		return "", ""
 	}
-	field := model.Field(answerFieldID)
-	if field == nil {
-		return
+	return s.titleDetailFor(item)
+}
+
+func (s *Screen) titleDetailFor(item Item) (string, string) {
+	title := item.Header
+	if title == "" {
+		title = fmt.Sprintf("Question %d of %d", s.index+1, len(s.items))
+	} else {
+		title = fmt.Sprintf("Question %d of %d: %s", s.index+1, len(s.items), title)
 	}
-	if len(item.Options) == 0 {
-		s.answers[s.index] = field.Value.String()
-		return
-	}
-	custom := ""
-	if customField := model.Field(customFieldID); customField != nil {
-		custom = customField.Value.String()
-	}
-	s.custom[s.index] = custom
-	if item.Multiple {
-		s.choices[s.index] = append(s.choices[s.index][:0], field.Value.Strings()...)
-		values := make([]string, 0, len(field.Value.Strings()))
-		for _, id := range field.Value.Strings() {
-			if id == customOptionID {
-				if strings.TrimSpace(custom) != "" {
-					values = append(values, custom)
-				}
-				continue
-			}
-			if index := optionIndex(id); index >= 0 && index < len(item.Options) {
-				values = append(values, item.Options[index])
-			}
-		}
-		s.answers[s.index] = strings.Join(values, ", ")
-		return
-	}
-	s.choices[s.index] = s.choices[s.index][:0]
-	if field.Value.String() != "" {
-		s.choices[s.index] = append(s.choices[s.index], field.Value.String())
-	}
-	if field.Value.String() == customOptionID {
-		s.answers[s.index] = custom
-		return
-	}
-	if index := optionIndex(field.Value.String()); index >= 0 && index < len(item.Options) {
-		s.answers[s.index] = item.Options[index]
-	}
+	return title, item.Question
 }
 
 func optionIndex(id string) int {
@@ -587,10 +859,6 @@ func containsCustom(values []string) bool {
 		}
 	}
 	return false
-}
-
-func focusFormResult(extra ui.Invalidation) ui.EventResult {
-	return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: FormID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint | extra}
 }
 
 // railDivider paints the vertical rule between the question rail and the form
