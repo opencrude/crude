@@ -181,7 +181,7 @@ func (m *App) openSessionQuestionPanel(projection *sessionProjection) {
 		return
 	}
 	projection.deckFocused = true
-	projection.deckFocus = question.FormID
+	projection.deckFocus = question.OptionsID
 	projection.deckHost.MarkLayout()
 }
 

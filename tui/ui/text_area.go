@@ -133,6 +133,11 @@ func (t *TextArea) promptPrefixWidth() int {
 // SetBackgroundColor overrides the field background fill.
 func (t *TextArea) SetBackgroundColor(c cell.Color) { t.bg, t.bgSet = c, true }
 
+// BackgroundColor reports the explicit fill override, if one is set. Deck
+// contracts use it to lock flat chrome (no raised popup fill) on embedded
+// prompt areas.
+func (t *TextArea) BackgroundColor() (cell.Color, bool) { return t.bg, t.bgSet }
+
 // SetSubmitAction sets the action ID emitted on Enter (single-line mode) or
 // Ctrl+Enter (multi-line mode).
 func (t *TextArea) SetSubmitAction(id string) { t.submitID = id }

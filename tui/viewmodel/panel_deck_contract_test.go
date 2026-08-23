@@ -10,6 +10,7 @@ import (
 	"crude/provider"
 	"crude/tui/editor"
 	"crude/tui/screens/confirmation"
+	"crude/tui/screens/question"
 	"crude/tui/screens/yolo"
 	"crude/types"
 	"crude/workspace"
@@ -163,7 +164,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		}
 	})
 
-	t.Run("question_cancel_via_dispatch_resolves_once", func(t *testing.T) {
+	t.Run("question_esc_returns_to_rail_then_rail_esc_resolves_once", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
 		blockCh := make(chan string, 1)
 		app.AgentMgr.Get("agent").BlockResolveCh = blockCh
@@ -177,7 +178,27 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		projection.deckHost.Layout()
 		app.focusSessionDeckAfterLayout()
 		app.Input.SetInput("blocked")
+		// First Esc: the answer pane hands focus back to the question rail
+		// without denying anything.
 		_, cmd := app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
+		if cmd != nil {
+			if msg := cmd(); msg != nil {
+				app.Update(msg)
+			}
+		}
+		if !projection.deck.IsOpen() {
+			t.Fatal("esc in the answer pane must not close the panel")
+		}
+		if projection.deckHost.Focused() != question.RailID {
+			t.Fatalf("esc focus=%q want %q", projection.deckHost.Focused(), question.RailID)
+		}
+		select {
+		case got := <-blockCh:
+			t.Fatalf("rail-return esc resolved the tool early: %q", got)
+		default:
+		}
+		// Second Esc, now on the rail, is the explicit deny path.
+		_, cmd = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
 		if cmd != nil {
 			if msg := cmd(); msg != nil {
 				app.Update(msg)
