@@ -85,10 +85,179 @@ func BuildDiffRows(raw string, maxLines, maxWidth int) []PaintLine {
 	return out
 }
 
+// BuildClaudeDiffRows renders a unified diff in the Claude-style body format:
+// no fences, no file/hunk headers — just right-aligned dim line numbers, a
+// tight `+`/`-` indicator column, and per-line background bands (full-width
+// green for additions, red for deletions) so changes read as colored stripes.
+// Context lines render without a band; trimmed gaps render as untinted `···`.
+// The band is padded to `totalWidth` so tinted rows span the full painted row.
+// When expanded is false the preview is budgeted and a "+N more changes"
+// footer reports the hidden remainder.
+func BuildClaudeDiffRows(raw string, textWidth, totalWidth int, expanded bool) []PaintLine {
+	files := tools.ParseUnifiedDiffStruct(raw)
+	if len(files) == 0 {
+		return nil
+	}
+
+	const previewDiffRows = 24
+	var out []PaintLine
+	remaining := previewDiffRows
+	if expanded {
+		remaining = -1
+	}
+	for fi, file := range files {
+		if fi > 0 {
+			out = append(out, buildDiffGutterBlank())
+		}
+		rows := tools.BuildDiffRows(file)
+		if len(rows) > 0 && tools.CompactContextLines > 0 {
+			rows = tools.TrimDiffContext(rows, tools.CompactContextLines)
+		}
+
+		maxNumWidth := 4
+		for _, r := range rows {
+			if r.LineNum > 0 {
+				w := rendering.VisibleWidth(strconv.Itoa(r.LineNum))
+				if w > maxNumWidth {
+					maxNumWidth = w
+				}
+			}
+		}
+
+		contentWidth := textWidth - maxNumWidth - 3
+		if contentWidth < 10 {
+			contentWidth = 10
+		}
+
+		for _, r := range rows {
+			if remaining == 0 {
+				continue
+			}
+			if r.Ellipsis {
+				out = append(out, buildDiffEllipsisRow(maxNumWidth))
+				continue
+			}
+			rowLines := buildClaudeDiffContentRows(r, maxNumWidth, contentWidth, totalWidth)
+			out = append(out, rowLines...)
+			if remaining > 0 {
+				remaining -= len(rowLines)
+				if remaining < 0 {
+					remaining = 0
+				}
+			}
+		}
+	}
+
+	if remaining == 0 {
+		hidden := countDiffRows(raw) - len(out)
+		if hidden > 0 {
+			out = append(out, buildDiffTruncationRow(0, hidden))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func countDiffRows(raw string) int {
+	files := tools.ParseUnifiedDiffStruct(raw)
+	n := 0
+	for _, f := range files {
+		n += len(tools.BuildDiffRows(f))
+	}
+	return n
+}
+
+// buildClaudeDiffContentRows renders one diff row with the tight gutter and
+// full-width band. Long content hard-wraps with continuation rows that keep
+// the band and blank the number/sign columns.
+func buildClaudeDiffContentRows(r tools.DiffRow, maxNumWidth, contentWidth, totalWidth int) []PaintLine {
+	numStr := ""
+	if r.LineNum > 0 {
+		numStr = strconv.Itoa(r.LineNum)
+	}
+	paddedNum := fmt.Sprintf("%*s", maxNumWidth, numStr)
+
+	indicator := " "
+	contentRole := ui.ColorDiffContext
+	indicatorRole := ui.ColorMuted
+	band := ui.SemanticColor(0)
+	bandSet := false
+	switch r.Kind {
+	case tools.DiffLineAddition:
+		indicator = "+"
+		contentRole = ui.ColorDiffAddition
+		indicatorRole = ui.ColorDiffAddition
+		band = ui.ColorDiffAdditionBg
+		bandSet = true
+	case tools.DiffLineDeletion:
+		indicator = "-"
+		contentRole = ui.ColorDiffDeletion
+		indicatorRole = ui.ColorDiffDeletion
+		band = ui.ColorDiffDeletionBg
+		bandSet = true
+	case tools.DiffLineContext:
+		indicator = " "
+		contentRole = ui.ColorDiffContext
+		indicatorRole = ui.ColorMuted
+	}
+
+	content := r.Content
+	segments := []string{content}
+	if rendering.VisibleWidth(content) > contentWidth {
+		segments = rendering.HardWrap(content, contentWidth)
+	}
+	out := make([]PaintLine, 0, len(segments))
+	for si, seg := range segments {
+		sign := indicator
+		blankNum := paddedNum
+		if si > 0 {
+			sign = " "
+			blankNum = strings.Repeat(" ", len(paddedNum))
+		}
+		pl := PaintLine{Spans: []RowSpan{
+			{Text: "│ ", Role: ui.ColorMuted},
+			{Text: blankNum, Role: ui.ColorMuted},
+			{Text: " ", Role: ui.ColorMuted},
+			{Text: sign + " ", Role: indicatorRole},
+			{Text: seg, Role: contentRole},
+		}}
+		if bandSet {
+			pl = bandPaintLine(pl, band, totalWidth)
+		}
+		out = append(out, pl)
+	}
+	return out
+}
+
+// bandPaintLine pads a PaintLine with the band background so the tint spans
+// the full painted row width (stopping at the scrollbar gutter like pane bg).
+func bandPaintLine(pl PaintLine, band ui.SemanticColor, totalWidth int) PaintLine {
+	spans := append([]RowSpan{}, pl.Spans...)
+	// Keep the outer Crude gutter untinted; number/sign/content and trailing
+	// cells share one semantic band.
+	for i := 1; i < len(spans); i++ {
+		spans[i].BgRole = band
+		spans[i].BgSet = true
+	}
+	pl.Spans = spans
+	used := pl.VisibleWidth()
+	if used >= totalWidth {
+		return pl
+	}
+	pad := totalWidth - used
+	spans = append([]RowSpan{}, pl.Spans...)
+	spans = append(spans, RowSpan{Text: strings.Repeat(" ", pad), Role: ui.ColorFg, BgRole: band, BgSet: true})
+	return PaintLine{Spans: spans}
+}
+
+// buildDiffGutterBlank returns the inter-file blank row.
 func buildDiffGutterBlank() PaintLine {
 	return PaintLine{Spans: []RowSpan{{Text: "│ ", Role: ui.ColorMuted}}}
 }
 
+// buildDiffEllipsisRow returns an untinted "···" elision row.
 func buildDiffEllipsisRow(maxNumWidth int) PaintLine {
 	prefix := strings.Repeat(" ", maxNumWidth) + "   ···"
 	return PaintLine{Spans: []RowSpan{

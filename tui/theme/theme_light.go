@@ -50,11 +50,13 @@ func DefaultLight() *Theme {
 			Error:     lipgloss.Color("#cf222e"),
 		},
 		Diff: DiffColors{
-			File:    lipgloss.Color("#57606a"),
-			Hunk:    lipgloss.Color("#8250df"),
-			Context: lipgloss.Color("#656d76"),
-			Add:     lipgloss.Color("#1a7f37"),
-			Delete:  lipgloss.Color("#cf222e"),
+			File:     lipgloss.Color("#57606a"),
+			Hunk:     lipgloss.Color("#8250df"),
+			Context:  lipgloss.Color("#656d76"),
+			Add:      lipgloss.Color("#1a7f37"),
+			Delete:   lipgloss.Color("#cf222e"),
+			AddBg:    lipgloss.Color("#dafbe1"),
+			DeleteBg: lipgloss.Color("#ffebe9"),
 		},
 		Tree: TreeColors{
 			DirFg:         lipgloss.Color("#0969da"),

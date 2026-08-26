@@ -9,11 +9,12 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	"crude/tui/tools"
 	"crude/tui/types"
 	"crude/tui/ui"
 )
 
-type SubPaneContentFn func(paneID string, width, maxH, spinFrame int) []SubPaneLine
+type SubPaneContentFn func(paneID string, width, maxH, spinFrame int, expanded bool) []SubPaneLine
 
 type Renderer struct {
 	vl         itemList
@@ -49,6 +50,24 @@ type Renderer struct {
 	// never per frame).
 	streamNative    map[string][]PaintLine
 	streamNativeLen map[string]int
+	// thinkingBodyOnly is enabled for retained PaneThinking projections. The
+	// parent pane owns lifecycle/disclosure chrome; this renderer supplies only
+	// wrapped reasoning body rows and cursor/strike styling.
+	thinkingBodyOnly bool
+	// expanded records user-expanded messages; the absence of an ID means the
+	// deterministic default applies (see disclosure.go). Disclosure is TUI
+	// presentation state only — never persisted.
+	expanded map[string]bool
+}
+
+// SetThinkingBodyOnly switches retained thinking-pane projections between
+// full chat blocks and body-only rows. It is presentation state owned by TUI.
+func (r *Renderer) SetThinkingBodyOnly(v bool) {
+	if r.thinkingBodyOnly == v {
+		return
+	}
+	r.thinkingBodyOnly = v
+	r.InvalidateAllMessages()
 }
 
 func NewRenderer(t *theme.Theme) *Renderer {
@@ -59,6 +78,7 @@ func NewRenderer(t *theme.Theme) *Renderer {
 		nativeCache:     make(map[string][]PaintLine),
 		streamNative:    make(map[string][]PaintLine),
 		streamNativeLen: make(map[string]int),
+		expanded:        make(map[string]bool),
 	}
 	r.tokens = ui.NewTokenSet(t)
 	return r
@@ -881,8 +901,12 @@ func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, i
 			continue
 		}
 		subPaneID := ""
+		toggleLine := -1
 		if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
 			subPaneID = msg.SubPaneID
+			if r.hasDisclosure(msg) {
+				toggleLine = 0
+			}
 		}
 		lines := item.Rendered
 		if len(lines) == 0 {
@@ -892,11 +916,20 @@ func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, i
 		if len(native) != len(lines) {
 			native = nil
 		}
+		if toggleLine >= 0 {
+			// The leading spacer occupies row 0 when present; the disclosure
+			// affordance lives on the message's first content row.
+			if toggleLine < len(lines) && strings.TrimSpace(lines[0]) == "" {
+				toggleLine = 1
+			}
+		}
 		rows = append(rows, MessageRow{
-			ID:        item.ID,
-			Lines:     lines,
-			Native:    native,
-			SubPaneID: subPaneID,
+			ID:         item.ID,
+			Lines:      lines,
+			Native:     native,
+			SubPaneID:  subPaneID,
+			Toggle:     toggleLine >= 0,
+			ToggleLine: toggleLine,
 		})
 	}
 	paneMap := r.buildGlobalPaneLineMap()
@@ -1076,7 +1109,8 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 			maxH = 5
 		}
 		paneWidth := max(0, width-r.scrollbarFootprint())
-		paneLines := r.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, r.spinFrame)
+		expanded := r.disclosureState(msg) == DisclosureExpanded
+		paneLines := r.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, r.spinFrame, expanded)
 		result := make([]string, 0, len(paneLines)+1)
 		native := make([]PaintLine, 0, len(paneLines)+1)
 		item.PaneRows = 0
@@ -1194,22 +1228,42 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 		chatH = r.height
 	}
 	return renderContext{
-		th:           r.theme,
-		tokens:       r.Tokens(),
-		contentWidth: contentWidth,
-		innerW:       innerW,
-		width:        r.width,
-		height:       r.height,
-		chatHeight:   chatH,
-		spinFrame:    r.spinFrame,
-		activeTyping: r.activeTyping,
-		modelName:    r.modelName,
-		username:     r.username,
-		streaming:    r.streaming,
-		isLastMsg:    r.isLastMessage(msg),
-		phase:        r.phase,
-		mdRenderer:   r.MdRenderer(),
+		th:               r.theme,
+		tokens:           r.Tokens(),
+		contentWidth:     contentWidth,
+		innerW:           innerW,
+		width:            r.width,
+		height:           r.height,
+		chatHeight:       chatH,
+		spinFrame:        r.spinFrame,
+		activeTyping:     r.activeTyping,
+		modelName:        r.modelName,
+		username:         r.username,
+		streaming:        r.streaming,
+		isLastMsg:        r.isLastMessage(msg),
+		phase:            r.phase,
+		mdRenderer:       r.MdRenderer(),
+		disclosure:       r.disclosureState(msg),
+		thinkingBodyOnly: r.thinkingBodyOnly,
+		planSuperseded:   r.planMessageSuperseded(msg),
 	}
+}
+
+// planMessageSuperseded collapses historical snapshots when a newer plan
+// mutation/snapshot exists. The underlying transcript remains intact and an
+// explicit expansion still reveals the older snapshot.
+func (r *Renderer) planMessageSuperseded(msg *types.ChatMessage) bool {
+	if msg == nil || msg.Role != types.RoleTool || !tools.IsPlanTool(msg.ToolName) || msg.ToolStatus == "error" {
+		return false
+	}
+	idx := r.messageIndexOf(msg)
+	for i := idx + 1; i < len(r.sync.Messages); i++ {
+		next := r.sync.Messages[i]
+		if next != nil && next.Role == types.RoleTool && tools.IsPlanTool(next.ToolName) && next.ToolStatus != "error" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []PaintLine) {

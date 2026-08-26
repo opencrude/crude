@@ -50,11 +50,13 @@ func DefaultWarm() *Theme {
 			Error:     lipgloss.Color("#f87171"),
 		},
 		Diff: DiffColors{
-			File:    lipgloss.Color("#a8a29e"),
-			Hunk:    lipgloss.Color("#78716c"),
-			Context: lipgloss.Color("#a8a29e"),
-			Add:     lipgloss.Color("#84cc16"),
-			Delete:  lipgloss.Color("#f87171"),
+			File:     lipgloss.Color("#a8a29e"),
+			Hunk:     lipgloss.Color("#78716c"),
+			Context:  lipgloss.Color("#a8a29e"),
+			Add:      lipgloss.Color("#84cc16"),
+			Delete:   lipgloss.Color("#f87171"),
+			AddBg:    lipgloss.Color("#1c2413"),
+			DeleteBg: lipgloss.Color("#2d1517"),
 		},
 		Tree: TreeColors{
 			DirFg:         lipgloss.Color("#fdba74"),

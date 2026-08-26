@@ -12,6 +12,9 @@ type renderItem struct {
 	Native   []PaintLine
 	PaneRows int
 	Data     interface{}
+	// ToggleRow is the row index within Rendered (including any leading
+	// spacer) that owns the disclosure affordance; -1 means none.
+	ToggleRow int
 }
 
 type heightIndex struct {

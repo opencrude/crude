@@ -138,7 +138,7 @@ func TestRendererPaneOnlyDisarmedPreservesOffsetOnAppend(t *testing.T) {
 func TestCollapsedSubPaneSeparatorIsNotPaneOwned(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 4)
-	r.SetSubPaneContentFn(func(_ string, _, _, _ int) []SubPaneLine {
+	r.SetSubPaneContentFn(func(_ string, _, _, _ int, _ bool) []SubPaneLine {
 		return []SubPaneLine{
 			NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}}),
 			SeparatorLine(),
@@ -165,7 +165,7 @@ func TestCollapsedSubPaneSeparatorIsNotPaneOwned(t *testing.T) {
 func TestCollapsedThinkingThenToolIsSingleGap(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 6)
-	r.SetSubPaneContentFn(func(_ string, _, _, _ int) []SubPaneLine {
+	r.SetSubPaneContentFn(func(_ string, _, _, _ int, _ bool) []SubPaneLine {
 		return []SubPaneLine{
 			NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}}),
 			SeparatorLine(),

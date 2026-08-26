@@ -52,6 +52,28 @@ func TestShellChatTextSelectionCopy(t *testing.T) {
 	}
 }
 
+func TestShellChatDisclosureClickEmitsToggleAction(t *testing.T) {
+	th := theme.DefaultDark()
+	s := New(th)
+	rows := []chatprojection.MessageRow{{
+		ID: "thought-1", Lines: []string{"│ ● Thought for 2s ▸"}, Toggle: true, ToggleLine: 0,
+	}}
+	s.SetMessages(rows, PaintParams{Compose: ComposeParams{InnerW: 40, PadLR: th.Spacing.PadLR, Theme: th}})
+	s.SyncScrollMetrics(1, 1)
+	s.Layout(ui.LayoutContext{}, ui.Rect{W: 40 + th.Spacing.PadLR*2, H: 1})
+
+	ctx := ui.EventContext{LocalX: th.Spacing.PadLR + 2, LocalY: 0}
+	_ = s.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: 0, Button: tea.MouseLeft}))
+	res := s.Handle(ctx, ui.MouseReleaseEvent(tea.MouseReleaseMsg{X: ctx.LocalX, Y: 0, Button: tea.MouseLeft}))
+	if res.Action == nil || res.Action.ID != chatprojection.ChatToggleActionID {
+		t.Fatalf("release action = %+v", res.Action)
+	}
+	payload, ok := res.Action.Payload.(chatprojection.ChatTogglePayload)
+	if !ok || payload.MessageID != "thought-1" {
+		t.Fatalf("toggle payload = %#v", res.Action.Payload)
+	}
+}
+
 func TestShellChatScrollbarDragScrolls(t *testing.T) {
 	th := theme.DefaultDark()
 	s := New(th)

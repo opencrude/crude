@@ -5,6 +5,7 @@ import (
 
 	"charm.land/glamour/v2"
 
+	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
@@ -48,6 +49,16 @@ type renderContext struct {
 	isLastMsg    bool
 	phase        string
 	mdRenderer   *glamour.TermRenderer
+	// disclosure is the resolved expand/collapse mode for this message
+	// (see disclosure.go). Deterministic defaults keep live and hydrated
+	// sessions rendering the same shape.
+	disclosure DisclosureState
+	// thinkingBodyOnly is set for promoted PaneThinking content. The parent
+	// pane renders Thinking/Thought chrome and owns disclosure.
+	thinkingBodyOnly bool
+	// planSuperseded hides repeated plan snapshots by default while preserving
+	// each tool's preparing/doing/done title and expandable content.
+	planSuperseded bool
 	// streamNative holds the pre-bridged native rows for the completed portion
 	// of a streaming assistant message (built once per StreamCompletedLen change
 	// by the Renderer, never per frame). Set only for the streaming cursor.
@@ -156,29 +167,81 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 
 func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
-	timeLabel := rendering.FormatTimeLabel(msg.Time)
-	// Once a thinking block finishes, replace the clock label with how long
-	// it ran ("thought for 12s"), matching the historical chat view.
-	if !msg.ThinkingActive && !msg.ThinkingInterrupted && msg.ThinkingDuration > 0 {
-		timeLabel = "thought for " + rendering.FormatThinkingDuration(msg.ThinkingDuration)
+	if ctx.thinkingBodyOnly {
+		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
+		bodyStart := len(ml.native)
+		for _, line := range wrapped {
+			pl := buildThinkingBodyLine(line, false, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
+			ml.lines = append(ml.lines, pl.PlainText())
+			ml.native = append(ml.native, pl)
+		}
+		if msg.Incomplete || msg.ThinkingInterrupted {
+			strikeBody(ml.native[bodyStart:])
+		}
+		return ml
 	}
-	header, _ := buildThinkingHeader(ctx.modelName, msg.Incomplete, timeLabel, ctx.innerW, suppressHeader)
-	if !header.IsZero() {
+	completed := !msg.ThinkingActive && !msg.ThinkingInterrupted
+
+	if completed {
+		// Completed thinking always renders its own summary row; that row is
+		// the disclosure affordance (▸ collapsed, ▾ expanded). The body shows
+		// only when expanded.
+		label := "Thought"
+		role := ui.ColorMuted
+		if msg.ThinkingInterrupted {
+			label = "Thought interrupted"
+			role = ui.ColorWarning
+		} else if msg.ThinkingDuration > 0 {
+			label = "Thought for " + rendering.FormatThinkingDuration(msg.ThinkingDuration)
+		}
+		chevron := " ▸"
+		if ctx.disclosure == DisclosureExpanded {
+			chevron = " ▾"
+		}
+		header := PaintLine{Spans: []RowSpan{
+			{Text: "│ ", Role: ui.ColorMuted},
+			{Text: "● ", Role: role},
+			{Text: label, Role: ui.ColorMuted},
+			{Text: chevron, Role: ui.ColorMuted},
+		}}
 		ml.lines = append(ml.lines, header.PlainText())
 		ml.native = append(ml.native, header)
+		if ctx.disclosure != DisclosureExpanded {
+			return ml
+		}
+		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
+		if hasThinkingBody(wrapped) {
+			ml.lines = append(ml.lines, "")
+			ml.native = append(ml.native, buildPlainBodyLine(""))
+		}
+		bodyStart := len(ml.native)
+		for i, line := range wrapped {
+			pl := buildThinkingBodyLine(line, i == 0, ctx.spinFrame, false, msg.ThinkingInterrupted)
+			ml.lines = append(ml.lines, pl.PlainText())
+			ml.native = append(ml.native, pl)
+		}
+		if msg.ThinkingInterrupted {
+			strikeBody(ml.native[bodyStart:])
+		}
+		return ml
 	}
 
+	label := "Thinking"
+	role := thinkingDotRole(ctx.spinFrame)
+	if msg.ThinkingInterrupted {
+		label = "Thought interrupted"
+		role = ui.ColorWarning
+	}
+	header := PaintLine{Spans: []RowSpan{
+		{Text: "│ ", Role: ui.ColorMuted},
+		{Text: "● ", Role: role},
+		{Text: label, Role: ui.ColorAccent, Attr: cell.AttrBold},
+	}}
+	ml.lines = append(ml.lines, header.PlainText())
+	ml.native = append(ml.native, header)
+
 	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
-	// Only insert the header↔body gap when there is a header to separate from
-	// the body AND a body to separate. When the header is suppressed (a
-	// continuation thinking block in a run of agent messages), the gap blank
-	// would stack on top of the inter-item leading spacer and produce two
-	// blank rows between the previous item and this thinking body. When the
-	// thinking body is empty (a completed block collapsed to its label, or a
-	// wrap that yields a single blank), adding a blank here stacks with the
-	// following message's own separator and produces two blank rows between the
-	// thinking header and the next block. Exactly one row separates blocks.
-	if !suppressHeader && hasThinkingBody(wrapped) {
+	if hasThinkingBody(wrapped) {
 		ml.lines = append(ml.lines, "")
 		ml.native = append(ml.native, buildPlainBodyLine(""))
 	}
@@ -232,7 +295,10 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 	case types.RoleThinking:
 		return renderThinkingMessage(msg, ctx, suppressHeader)
 	case types.RoleTool:
-		return renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase)
+		if ctx.planSuperseded && ctx.disclosure != DisclosureExpanded {
+			msg.Content = ""
+		}
+		return renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure)
 	case types.RoleError:
 		return renderErrorMessage(msg, ctx)
 	default:

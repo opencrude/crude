@@ -350,7 +350,7 @@ func TestThinkingPaneDemotesToSummary(t *testing.T) {
 	if sp == nil || !sp.Done {
 		t.Fatalf("thinking pane not collapsed after stream started")
 	}
-	lines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0)
+	lines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0, false)
 	if len(lines) != 2 {
 		t.Fatalf("expected summary plus separator after collapse, got %d lines", len(lines))
 	}
@@ -396,7 +396,7 @@ func TestThinkingPaneDemotesWhenTurnEndsDirectly(t *testing.T) {
 	if agent.ThinkingPaneID != "" {
 		t.Fatalf("active thinking pane ID remained %q after done", agent.ThinkingPaneID)
 	}
-	lines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0)
+	lines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0, false)
 	if len(lines) != 2 || !strings.Contains(lines[0].PlainText(), "Thought") || !lines[1].Separator {
 		t.Fatalf("direct-done pane did not demote to Thought plus separator: %+v", lines)
 	}

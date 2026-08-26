@@ -79,6 +79,7 @@ func TestShellchatPaintsDiffToolBodyNative(t *testing.T) {
 	r.SetStreaming(false)
 	diff := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1,2 +1,2 @@\n-func old()\n+func new()\n```"
 	r.AppendMessage(types.ChatMessage{
+		InternalID: "edit-1",
 		Role:       types.RoleTool,
 		ToolName:   "edit_file",
 		ToolArgs:   "main.go",
@@ -86,6 +87,9 @@ func TestShellchatPaintsDiffToolBodyNative(t *testing.T) {
 		ToolStatus: "success",
 		Time:       time.Now(),
 	})
+	// Edit/write blocks collapse to title-only by default; expand so the
+	// tinted diff body is painted.
+	r.ToggleDisclosure("edit-1")
 	rows, paneMap, _ := r.ExportMessageRows(80)
 
 	compose := shellchat.ComposeParams{

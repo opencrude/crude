@@ -46,7 +46,7 @@ func TestSubPaneCallbackReceivesNoSyntheticNarrowWidthGPT56(t *testing.T) {
 	paneScroll.SetViewport(1)
 	r.BindPaneScroll(paneScroll)
 	gotWidth := -1
-	r.SetSubPaneContentFn(func(_ string, width, _, _ int) []SubPaneLine {
+	r.SetSubPaneContentFn(func(_ string, width, _, _ int, _ bool) []SubPaneLine {
 		gotWidth = width
 		return []SubPaneLine{{Text: "pane"}}
 	})

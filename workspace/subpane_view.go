@@ -79,13 +79,11 @@ func (sp *SubPane) View() SubPaneView {
 		Summary:   nil,
 	}
 
-	if sp.Done {
-		view.Summary = sp.buildSummaryView()
-		return view
-	}
-
 	if sp.Type == PaneAgent {
 		view.ToolLines = buildToolLines(msgs)
+	}
+	if sp.Done {
+		view.Summary = sp.buildSummaryView()
 	}
 
 	return view
@@ -117,7 +115,10 @@ func (sp *SubPane) buildSummaryView() *SubPaneSummaryView {
 // inline "thought for Xs" label read identically.
 func formatDurationHuman(d time.Duration) string {
 	if d <= 0 {
-		return "0s"
+		return "<1s"
+	}
+	if d < time.Second {
+		return "<1s"
 	}
 	secs := int(d.Seconds())
 	hours := secs / 3600

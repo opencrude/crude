@@ -11,16 +11,18 @@ type ChatMessageView struct {
 	ReferenceLabels []string
 	Time            time.Time
 
-	ToolName          string
-	ToolArgs          string
-	ToolID            string
-	ToolStatus        string
-	ToolProgressLabel string
-	ToolPreviewPhase  string
-	ToolEstTokens     int
-	ToolLinesAdded    int
-	ToolLinesRemoved  int
-	ToolDuration      time.Duration
+	ToolName            string
+	ToolArgs            string
+	ToolID              string
+	ToolStatus          string
+	ToolProgressLabel   string
+	ToolPreviewPhase    string
+	ToolEstTokens       int
+	ToolLinesAdded      int
+	ToolLinesRemoved    int
+	ToolDuration        time.Duration
+	ThinkingDuration    time.Duration
+	ThinkingInterrupted bool
 
 	SubPaneID string
 	PermTag   string

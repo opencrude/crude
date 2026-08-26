@@ -42,6 +42,9 @@ const (
 	ColorDiffContext
 	ColorDiffAddition
 	ColorDiffDeletion
+	// Diff background bands tint the full row behind changed lines.
+	ColorDiffAdditionBg
+	ColorDiffDeletionBg
 )
 
 // ControlState is the interactive state matrix used for token resolution.
@@ -143,6 +146,8 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorDiffContext:        rendering.ThemeColorToCell(c.Diff.Context),
 		ColorDiffAddition:       rendering.ThemeColorToCell(c.Diff.Add),
 		ColorDiffDeletion:       rendering.ThemeColorToCell(c.Diff.Delete),
+		ColorDiffAdditionBg:     rendering.ThemeColorToCell(c.Diff.AddBg),
+		ColorDiffDeletionBg:     rendering.ThemeColorToCell(c.Diff.DeleteBg),
 	}
 }
 

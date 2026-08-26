@@ -52,11 +52,13 @@ func DefaultHighContrast() *Theme {
 			Error:     lipgloss.Color("#ff4040"),
 		},
 		Diff: DiffColors{
-			File:    lipgloss.Color("#c8c8c8"),
-			Hunk:    lipgloss.Color("#ff80ff"),
-			Context: lipgloss.Color("#c8c8c8"),
-			Add:     lipgloss.Color("#00ff00"),
-			Delete:  lipgloss.Color("#ff4040"),
+			File:     lipgloss.Color("#c8c8c8"),
+			Hunk:     lipgloss.Color("#ff80ff"),
+			Context:  lipgloss.Color("#c8c8c8"),
+			Add:      lipgloss.Color("#00ff00"),
+			Delete:   lipgloss.Color("#ff4040"),
+			AddBg:    lipgloss.Color("#0a2a0a"),
+			DeleteBg: lipgloss.Color("#3a0a0a"),
 		},
 		Tree: TreeColors{
 			DirFg:         lipgloss.Color("#00ffff"),
