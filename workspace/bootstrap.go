@@ -924,7 +924,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 
 	toolNameByCallID := buildToolNameIndex(msgs)
 
-	for _, mm := range msgs {
+	for index, mm := range msgs {
 		role := mm.Meta.DisplayRole
 		if role == "" {
 			role = mm.Msg.Role
@@ -956,10 +956,20 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 			})
 
 		case "thinking":
+			var thinkingDuration time.Duration
+			if mm.Meta.DurationMs > 0 {
+				thinkingDuration = time.Duration(mm.Meta.DurationMs) * time.Millisecond
+			} else if index+1 < len(msgs) && msgs[index+1].CreatedAt > mm.CreatedAt {
+				thinkingDuration = time.Duration(msgs[index+1].CreatedAt - mm.CreatedAt)
+				if thinkingDuration > 30*time.Minute {
+					thinkingDuration = 0
+				}
+			}
 			result = append(result, ChatMessageView{
-				Role:    "thinking",
-				Content: mm.Msg.ReasoningContent,
-				Time:    msgTime,
+				Role:             "thinking",
+				Content:          mm.Msg.ReasoningContent,
+				Time:             msgTime,
+				ThinkingDuration: thinkingDuration,
 			})
 			if mm.Msg.Content.String() != "" {
 				result = append(result, ChatMessageView{
@@ -983,9 +993,12 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 			}
 
 			argsCompact := SummarizeToolArgs(toolName, toolArgs)
-			content := toolName
-			if argsCompact != "" {
-				content = toolName + " " + argsCompact
+			content := mm.Msg.Content.String()
+			if content == "" {
+				content = toolName
+				if argsCompact != "" {
+					content = toolName + " " + argsCompact
+				}
 			}
 
 			chatMsg := ChatMessageView{

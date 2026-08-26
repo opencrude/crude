@@ -50,11 +50,13 @@ func DefaultMidnight() *Theme {
 			Error:     lipgloss.Color("#fb7185"),
 		},
 		Diff: DiffColors{
-			File:    lipgloss.Color("#94a3b8"),
-			Hunk:    lipgloss.Color("#64748b"),
-			Context: lipgloss.Color("#94a3b8"),
-			Add:     lipgloss.Color("#34d399"),
-			Delete:  lipgloss.Color("#fb7185"),
+			File:     lipgloss.Color("#94a3b8"),
+			Hunk:     lipgloss.Color("#64748b"),
+			Context:  lipgloss.Color("#94a3b8"),
+			Add:      lipgloss.Color("#34d399"),
+			Delete:   lipgloss.Color("#fb7185"),
+			AddBg:    lipgloss.Color("#12261e"),
+			DeleteBg: lipgloss.Color("#2d1517"),
 		},
 		Tree: TreeColors{
 			DirFg:         lipgloss.Color("#38bdf8"),

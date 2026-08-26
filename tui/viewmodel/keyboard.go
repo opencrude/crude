@@ -579,6 +579,11 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	switch msg.String() {
 	case "ctrl+v", "ctrl+shift+v":
 		return m, m.beginInputClipboardPaste()
+	case "ctrl+alt+e":
+		if ml := m.activeMessageList(); ml != nil {
+			ml.ToggleLastDisclosure()
+		}
+		return m, nil
 	}
 
 	if m.anyActive() && !m.OverlayState.IsBlocking() {

@@ -68,6 +68,9 @@ type SpinnerColors struct {
 
 type DiffColors struct {
 	File, Hunk, Context, Add, Delete color.Color
+	// AddBg/DeleteBg tint the full row width behind additions/deletions so
+	// diffs read as colored bands (Claude-style) instead of colored glyphs.
+	AddBg, DeleteBg color.Color
 }
 
 type TreeColors struct {
@@ -190,6 +193,10 @@ func DefaultDark() *Theme {
 			Context: lipgloss.Color("#8b949e"),
 			Add:     lipgloss.Color("#7ee787"),
 			Delete:  lipgloss.Color("#ff7b72"),
+			// Subtle dark bands so additions/deletions read as full-width
+			// stripes while text stays readable on the default background.
+			AddBg:    lipgloss.Color("#12261e"),
+			DeleteBg: lipgloss.Color("#2d1517"),
 		},
 		Tree: TreeColors{
 			DirFg:         lipgloss.Color("#79c0ff"),

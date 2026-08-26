@@ -210,6 +210,14 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 		s.selection.selEndLine = lineIdx
 		s.selection.selEndCol = rendering.Max(0, ctx.LocalX-s.layout.padLR)
 	}
+	// A click without drag on a disclosure row toggles the block instead of
+	// copying an empty selection. Drags (anchor != end) always select.
+	clickNoDrag := s.selection.selAnchorLine == s.selection.selEndLine &&
+		s.selection.selAnchorCol == s.selection.selEndCol
+	toggleMsgID := ""
+	if clickNoDrag && ok {
+		toggleMsgID = s.disclosureRowAt(lineIdx)
+	}
 	s.selection.selecting = false
 	s.selection.selAutoScroll = false
 	sLine, sCol, eLine, eCol := s.selection.Range()
@@ -219,11 +227,42 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 	s.selection.selAnchorCol = 0
 	s.selection.selEndLine = 0
 	s.selection.selEndCol = 0
+	if toggleMsgID != "" {
+		return ui.EventResult{
+			Handled:    true,
+			Invalidate: ui.InvalidatePaint,
+			Action: &ui.Action{
+				ID:      chatprojection.ChatToggleActionID,
+				Payload: chatprojection.ChatTogglePayload{MessageID: toggleMsgID},
+			},
+		}
+	}
 	var cmd tea.Cmd
 	if text != "" {
 		cmd = rendering.CopyToClipboardCmd(text)
 	}
 	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+}
+
+// disclosureRowAt returns the message ID whose toggle row occupies the global
+// line, or "" when the line is not a disclosure anchor.
+func (s *Screen) disclosureRowAt(globalLine int) string {
+	line := globalLine
+	for _, row := range s.rows {
+		h := len(row.Lines)
+		if h < 1 {
+			h = 1
+		}
+		if line >= h {
+			line -= h
+			continue
+		}
+		if row.Toggle && row.ToggleLine >= 0 && line == row.ToggleLine {
+			return row.ID
+		}
+		return ""
+	}
+	return ""
 }
 
 func (s *Screen) handleSelectionTick() ui.EventResult {

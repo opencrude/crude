@@ -85,6 +85,9 @@ func (reg *subPaneProjectionRegistry) Get(paneID string, paneType workspace.Pane
 		renderer: chatprojection.NewRenderer(reg.theme),
 		scroll:   ui.NewScrollModel(),
 	}
+	if paneType == workspace.PaneThinking {
+		p.renderer.SetThinkingBodyOnly(true)
+	}
 	p.scroll.SetAutoScroll(true)
 	p.renderer.BindPaneScroll(p.scroll)
 	reg.projections[paneID] = p
@@ -320,13 +323,15 @@ func (reg *subPaneProjectionRegistry) BuildPaneGutters(paneLineMap []chatproject
 // Render produces subpane rows for chatprojection embedding. Structured
 // native rows are returned for compact headers/tool lines and thinking-pane
 // MessageList content (which is already native from renderThinkingMessage).
-func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPane, width, maxH, spinFrame int) []chatprojection.SubPaneLine {
+// expanded is the chat-level disclosure state: a completed pane that is not
+// expanded collapses to its one-line summary.
+func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPane, width, maxH, spinFrame int, expanded bool) []chatprojection.SubPaneLine {
 	if width < 10 {
 		width = 10
 	}
 	view := sp.View()
 
-	if sp.Done {
+	if sp.Done && !expanded {
 		return []chatprojection.SubPaneLine{
 			chatprojection.BuildSubPaneSummaryLine(view, width),
 			chatprojection.SeparatorLine(),
@@ -451,7 +456,7 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 // by MessageList.SetSubPaneContentFn. It is set on each projection's
 // MessageList so the parent's render path still calls back into the
 // registry.
-func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame int) []chatprojection.SubPaneLine {
+func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame int, expanded bool) []chatprojection.SubPaneLine {
 	sp := m.PaneMgr.Get(paneID)
 	if sp == nil {
 		return []chatprojection.SubPaneLine{
@@ -463,5 +468,5 @@ func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame i
 		m.subPaneProjections.SetStreaming(paneID, n.State.Streaming)
 		m.subPaneProjections.SetActiveTyping(paneID, n.State.ComputeActiveTyping())
 	}
-	return m.subPaneProjections.Render(paneID, sp, width, maxH, spinFrame)
+	return m.subPaneProjections.Render(paneID, sp, width, maxH, spinFrame, expanded)
 }

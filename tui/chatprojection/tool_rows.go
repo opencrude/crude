@@ -132,7 +132,7 @@ func isDiffToolName(name string) bool {
 	return false
 }
 
-func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string) messageLines {
+func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState) messageLines {
 	titlePhase := msg.ToolPreviewPhase
 	if titlePhase == "" {
 		titlePhase = phase
@@ -140,8 +140,19 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 
 	var out messageLines
 	titlePL := buildToolTitleLine(msg, titlePhase, phase, spinFrame)
+	if msg.ToolStatus == "success" && msg.Content != "" {
+		glyph := "▸"
+		if disclosure == DisclosureExpanded {
+			glyph = "▾"
+		}
+		titlePL = appendToolDisclosureGlyph(titlePL, glyph)
+	}
 	out.lines = append(out.lines, titlePL.PlainText())
 	out.native = append(out.native, titlePL)
+
+	// Completed tools render a budgeted preview by default; full output only
+	// when the user expanded the block.
+	expanded := disclosure == DisclosureExpanded
 
 	if msg.ToolStatus == "success" && msg.Content != "" {
 		resultContent := msg.Content
@@ -149,25 +160,31 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		resultContent = strings.TrimPrefix(strings.TrimSpace(resultContent), fullLabel)
 		resultContent = strings.TrimSpace(resultContent)
 		if resultContent != "" {
-			if isToolRichBody(msg, resultContent) {
-				out.appendRichToolBody(msg, resultContent, th, contentWidth, innerW, height)
-			} else if tools.IsSummaryOnlyTool(msg.ToolName) {
+			switch {
+			case msg.ToolName == "write_file" && !expanded:
+				// Writes stay title-only in preview; counts already live in the
+				// title and expansion reveals the full tinted additions diff.
+			case isToolRichBody(msg, resultContent):
+				out.appendRichToolBody(msg, resultContent, th, contentWidth, innerW, height, expanded)
+			case tools.IsSummaryOnlyTool(msg.ToolName) && !expanded:
 				// title only
-			} else {
+			case tools.IsSummaryOnlyTool(msg.ToolName):
+				out.appendPlainToolBody(msg.ToolName, resultContent, innerW, height, false, true)
+			default:
 				// Search/listing tools lead with a self-describing count line
 				// ("5 matches for X") that the title summary already renders as
 				// "— 5 matches". Drop it from the body so it isn't printed twice.
 				body := stripRedundantResultHeader(msg.ToolName, resultContent)
-				out.appendPlainToolBody(body, width, height, false)
+				out.appendPlainToolBody(msg.ToolName, body, innerW, height, false, expanded)
 			}
 		}
 	} else if msg.ToolStatus == "error" {
 		if msg.Content != "" {
-			out.appendPlainToolBody(msg.Content, width, height, true)
+			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, true, true)
 		}
 	} else if msg.ToolStatus == types.ToolStatusCancelled {
 		if msg.Content != "" {
-			out.appendPlainToolBody(msg.Content, width, height, false)
+			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, false, true)
 		}
 	}
 
@@ -178,6 +195,13 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 	}
 
 	return out
+}
+
+// appendToolDisclosureGlyph adds the " ▸" affordance to a collapsed tool's
+// title row so it reads as clickable even when the body is a budgeted preview.
+func appendToolDisclosureGlyph(pl PaintLine, glyph string) PaintLine {
+	pl.Spans = append(pl.Spans, RowSpan{Text: " " + glyph, Role: ui.ColorMuted})
+	return pl
 }
 
 // stripRedundantResultHeader removes a leading self-describing count line from
@@ -231,12 +255,15 @@ func isCountHeader(line string) bool {
 	return false
 }
 
-func (ml *messageLines) appendPlainToolBody(resultContent string, width, height int, errorStyle bool) {
+func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, width, height int, errorStyle, expanded bool) {
+	// Wrap at the real painted content width (not the full terminal width)
+	// so every wrapped segment stays inside the LayoutRow band. The 6-col
+	// margin mirrors the "│   " gutter plus hanging indent.
 	toolLineWidth := width - 6
 	if toolLineWidth < 20 {
 		toolLineWidth = 20
 	}
-	maxRes := tools.TerminalResultHeight(height)
+	maxRes := toolPreviewHeight(toolName, height)
 	// Grep/find-style output repeats the same absolute path prefix on every
 	// line ("/home/u/proj/tui/file.go:12: ..."). Stripping that shared prefix
 	// fits far more matches per line; a short header shows what was stripped.
@@ -254,12 +281,17 @@ func (ml *messageLines) appendPlainToolBody(resultContent string, width, height 
 		ml.native = append(ml.native, header)
 	}
 	var wrapped []string
+	previousBlank := false
 	for _, rl := range rawLines {
 		trimmed := strings.TrimSpace(rl)
 		if trimmed == "" {
-			wrapped = append(wrapped, "")
+			if expanded || !previousBlank {
+				wrapped = append(wrapped, "")
+			}
+			previousBlank = true
 			continue
 		}
+		previousBlank = false
 		if prefix != "" {
 			trimmed = strings.TrimPrefix(trimmed, prefix)
 		}
@@ -270,18 +302,83 @@ func (ml *messageLines) appendPlainToolBody(resultContent string, width, height 
 			}
 		}
 	}
-	for i, seg := range wrapped {
-		if i >= maxRes-1 {
-			remaining := len(wrapped) - i
-			trunc := buildToolTruncationLine(remaining)
+	indices, hidden := previewLineIndices(toolName, len(wrapped), maxRes, expanded)
+	headCount := commandPreviewHeadCount(toolName, len(indices))
+	for position, i := range indices {
+		if hidden > 0 && isCommandEvidenceTool(toolName) && position == headCount {
+			trunc := buildToolTruncationLine(hidden)
 			ml.lines = append(ml.lines, trunc.PlainText())
 			ml.native = append(ml.native, trunc)
-			break
 		}
+		seg := wrapped[i]
 		pl := buildToolPlainResultLine("│   ", seg, errorStyle)
 		ml.lines = append(ml.lines, pl.PlainText())
 		ml.native = append(ml.native, pl)
 	}
+	if hidden > 0 && !isCommandEvidenceTool(toolName) {
+		trunc := buildToolTruncationLine(hidden)
+		ml.lines = append(ml.lines, trunc.PlainText())
+		ml.native = append(ml.native, trunc)
+	}
+}
+
+func toolPreviewHeight(toolName string, height int) int {
+	switch toolName {
+	case "execute_command", "async_execute_command", "read_async_output", "check_async_command", "run_javascript":
+		return tools.TerminalResultHeight(height)
+	case "grep_files", "glob_files", "list_directory", "web_search", "web_fetch", "arxiv_search":
+		return min(10, tools.TerminalResultHeight(height))
+	case "search_history", "recall_memory":
+		return min(8, tools.TerminalResultHeight(height))
+	default:
+		return min(12, tools.TerminalResultHeight(height))
+	}
+}
+
+func isCommandEvidenceTool(toolName string) bool {
+	switch toolName {
+	case "execute_command", "async_execute_command", "read_async_output", "check_async_command", "run_javascript":
+		return true
+	}
+	return false
+}
+
+// previewLineIndices preserves both command setup and outcome. Less critical
+// families keep their first useful rows and one explicit elision footer.
+func previewLineIndices(toolName string, count, budget int, expanded bool) ([]int, int) {
+	if expanded || budget <= 0 || count <= budget {
+		indices := make([]int, count)
+		for i := range indices {
+			indices[i] = i
+		}
+		return indices, 0
+	}
+	visible := max(1, budget-1)
+	hidden := count - visible
+	if !isCommandEvidenceTool(toolName) {
+		indices := make([]int, visible)
+		for i := range indices {
+			indices[i] = i
+		}
+		return indices, hidden
+	}
+	head := max(2, visible/3)
+	tail := visible - head
+	indices := make([]int, 0, visible)
+	for i := 0; i < head; i++ {
+		indices = append(indices, i)
+	}
+	for i := count - tail; i < count; i++ {
+		indices = append(indices, i)
+	}
+	return indices, hidden
+}
+
+func commandPreviewHeadCount(toolName string, visible int) int {
+	if !isCommandEvidenceTool(toolName) {
+		return visible
+	}
+	return max(2, visible/3)
 }
 
 // commonDirPrefix returns the longest directory prefix shared by every line,
@@ -326,10 +423,14 @@ func buildPlainToolResultLine(text string) PaintLine {
 	}}
 }
 
-func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent string, th *theme.Theme, contentWidth, innerW, height int) {
+func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent string, th *theme.Theme, contentWidth, innerW, height int, expanded bool) {
 	_ = th
 	if tools.IsPlanTool(msg.ToolName) {
 		planRows := BuildPlanRows(resultContent, contentWidth)
+		if !expanded && len(planRows) > 10 {
+			hidden := len(planRows) - 9
+			planRows = append(planRows[:9], buildToolTruncationLine(hidden))
+		}
 		for _, pl := range planRows {
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
@@ -339,6 +440,19 @@ func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent 
 	if tools.IsMemorySearchTool(msg.ToolName) {
 		memLines := tools.BuildMemoryResultRows(msg.ToolName, resultContent, contentWidth)
 		if len(memLines) > 0 {
+			if !expanded && len(memLines) > 8 {
+				hidden := len(memLines) - 7
+				memLines = memLines[:7]
+				for _, mline := range memLines {
+					pl := buildMemoryToolRow(mline)
+					ml.lines = append(ml.lines, pl.PlainText())
+					ml.native = append(ml.native, pl)
+				}
+				trunc := buildToolTruncationLine(hidden)
+				ml.lines = append(ml.lines, trunc.PlainText())
+				ml.native = append(ml.native, trunc)
+				return
+			}
 			for _, mline := range memLines {
 				pl := buildMemoryToolRow(mline)
 				ml.lines = append(ml.lines, pl.PlainText())
@@ -348,15 +462,10 @@ func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent 
 		}
 		// Non-JSON content (e.g. "No past turns matched...") renders as plain
 		// body, not a diff.
-		ml.appendPlainToolBody(resultContent, contentWidth, height, false)
+		ml.appendPlainToolBody(msg.ToolName, resultContent, innerW, height, false, expanded)
 		return
 	}
-	maxRes := tools.TerminalResultHeight(height)
-	diffWidth := innerW - 4
-	if diffWidth < 20 {
-		diffWidth = 20
-	}
-	diffRows := BuildDiffRows(resultContent, maxRes, diffWidth)
+	diffRows := BuildClaudeDiffRows(resultContent, contentWidth, innerW, expanded)
 	if len(diffRows) > 0 {
 		for _, pl := range diffRows {
 			ml.lines = append(ml.lines, pl.PlainText())

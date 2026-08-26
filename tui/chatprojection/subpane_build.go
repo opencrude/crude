@@ -1,10 +1,10 @@
 package chatprojection
 
 import (
-	"fmt"
 	"strings"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -22,12 +22,25 @@ func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame
 		default:
 			spans = append(spans, RowSpan{Text: "● " + header.Title, Role: ui.ColorAccent, Attr: cell.AttrBold})
 		}
+	} else if header.Type == workspace.PaneThinking {
+		duration := rendering.FormatThinkingDuration(header.Elapsed)
+		if duration == "" {
+			duration = "<1s"
+		}
+		spans = append(spans, RowSpan{Text: "● Thought for " + duration, Role: ui.ColorMuted})
+		spans = append(spans, RowSpan{Text: " ▾", Role: ui.ColorMuted})
 	} else {
 		spans = append(spans, RowSpan{Text: "● " + header.Title, Role: ui.ColorMuted})
+		spans = append(spans, RowSpan{Text: " ▾", Role: ui.ColorMuted})
 	}
 
-	meta := fmt.Sprintf("%.0fs", header.Elapsed.Seconds())
-	spans = append(spans, RowSpan{Text: " " + meta, Role: ui.ColorMuted})
+	if !header.Done {
+		meta := rendering.FormatThinkingDuration(header.Elapsed)
+		if meta == "" {
+			meta = "<1s"
+		}
+		spans = append(spans, RowSpan{Text: " " + meta, Role: ui.ColorMuted})
+	}
 
 	pl := padPaintLine(PaintLine{Spans: spans}, width)
 	return NativeLine(pl)
@@ -41,7 +54,7 @@ func BuildSubPaneSummaryLine(view workspace.SubPaneView, width int) SubPaneLine 
 	}
 	spans := []RowSpan{
 		{Text: "│ ", Role: ui.ColorBorder},
-		{Text: "● " + summary, Role: ui.ColorMuted},
+		{Text: "● " + summary + " ▸", Role: ui.ColorMuted},
 	}
 	pl := padPaintLine(PaintLine{Spans: spans}, width)
 	return NativeLine(pl)

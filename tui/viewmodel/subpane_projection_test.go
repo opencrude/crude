@@ -95,7 +95,7 @@ func TestSubPaneProjectionRenderThinkingPane(t *testing.T) {
 		Time:    time.Now(),
 	})
 	app.syncPaneMessages("think-1", false)
-	lines := app.subPaneProjections.Render("think-1", sp, 40, 5, 0)
+	lines := app.subPaneProjections.Render("think-1", sp, 40, 5, 0, true)
 	if len(lines) == 0 {
 		t.Fatal("Render produced zero lines")
 	}
@@ -120,7 +120,7 @@ func TestSubPaneProjectionRenderAgentPaneCompact(t *testing.T) {
 		Time:             time.Now(),
 	})
 	app.syncPaneMessages("agent-1", false)
-	lines := app.subPaneProjections.Render("agent-1", sp, 40, 5, 0)
+	lines := app.subPaneProjections.Render("agent-1", sp, 40, 5, 0, true)
 	if len(lines) < 2 {
 		t.Fatalf("expected at least header + 1 tool line, got %d lines", len(lines))
 	}
@@ -141,7 +141,7 @@ func TestSubPaneProjectionRenderDoneSummary(t *testing.T) {
 	sp.TokenCount = 5200
 	sp.Collapse()
 	app.subPaneProjections.Get("done-1", workspace.PaneAgent)
-	lines := app.subPaneProjections.Render("done-1", sp, 40, 5, 0)
+	lines := app.subPaneProjections.Render("done-1", sp, 40, 5, 0, false)
 	if len(lines) != 2 {
 		t.Fatalf("expected summary plus separator, got %d lines", len(lines))
 	}
@@ -172,7 +172,7 @@ func TestSubPaneProjectionCompactScrollModel(t *testing.T) {
 		})
 	}
 	app.syncPaneMessages("scroll-1", false)
-	app.subPaneProjections.Render("scroll-1", sp, 30, 3, 0)
+	app.subPaneProjections.Render("scroll-1", sp, 30, 3, 0, true)
 	scroll := app.subPaneProjections.ScrollModel("scroll-1")
 	if scroll == nil || scroll.MaxOffset() <= 0 {
 		t.Fatalf("expected scrollable compact pane, scroll=%v max=%d", scroll, scrollMax(scroll))
@@ -212,7 +212,7 @@ func TestSubPaneProjectionToolLineCacheInvalidation(t *testing.T) {
 	})
 	app.syncPaneMessages("cache-1", false)
 	// First render populates the cache.
-	app.subPaneProjections.Render("cache-1", sp, 30, 5, 0)
+	app.subPaneProjections.Render("cache-1", sp, 30, 5, 0, true)
 	proj := app.subPaneProjections.GetExisting("cache-1")
 	cachedVersion := proj.compactMsgVersion
 	cachedCount := proj.compactMsgCount
@@ -229,7 +229,7 @@ func TestSubPaneProjectionToolLineCacheInvalidation(t *testing.T) {
 		Time:             time.Now(),
 	})
 	app.syncPaneMessages("cache-1", false)
-	app.subPaneProjections.Render("cache-1", sp, 30, 5, 0)
+	app.subPaneProjections.Render("cache-1", sp, 30, 5, 0, true)
 	if proj.compactMsgVersion == cachedVersion {
 		t.Fatal("compact cache version did not bump after sync")
 	}
@@ -266,13 +266,13 @@ func TestThinkingPanePromotionRoundTrip(t *testing.T) {
 	agent.ThinkingPaneID = paneID
 	// Render the thinking pane; it should produce content.
 	app.syncPaneMessages(paneID, false)
-	lines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0)
+	lines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0, true)
 	if len(lines) == 0 {
 		t.Fatal("thinking pane rendered zero lines")
 	}
 	// Collapse and verify the summary path.
 	sp.Collapse()
-	doneLines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0)
+	doneLines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0, false)
 	if len(doneLines) != 2 || !doneLines[1].Separator {
 		t.Fatalf("expected summary plus separator after Collapse, got %+v", doneLines)
 	}
@@ -294,7 +294,7 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 
 	const width = 40
 	const tallMaxH = 12 // taller than content → RenderVisible gravity pad, then topPad strip
-	tall := app.subPaneProjections.Render("think-native", sp, width, tallMaxH, 0)
+	tall := app.subPaneProjections.Render("think-native", sp, width, tallMaxH, 0, true)
 	if len(tall) < 2 {
 		t.Fatalf("expected header+content, got %d lines", len(tall))
 	}
@@ -345,14 +345,14 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 
 	const shortMaxH = 4
 	// Establish heights / bind scroll.
-	_ = app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0)
+	_ = app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0, true)
 	scroll := app.subPaneProjections.ScrollModel("think-scroll")
 	if scroll == nil {
 		t.Fatal("missing scroll model")
 	}
 	scroll.SetAutoScroll(false)
 	scroll.ScrollTo(2)
-	scrolled := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0)
+	scrolled := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0, true)
 	if len(scrolled) < 2 {
 		t.Fatalf("scrolled render too short: %#v", scrolled)
 	}
@@ -371,7 +371,7 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 		t.Fatalf("scrolled window empty: %#v", scrolledPlain)
 	}
 	scroll.ScrollTo(0)
-	top := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0)
+	top := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0, true)
 	topPlain := make([]string, 0, len(top)-1)
 	for i, l := range top {
 		if i == 0 {
@@ -384,7 +384,7 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 	}
 	scroll.ScrollTo(2)
 	// Re-render at same offset must be stable (row-for-row pin).
-	again := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0)
+	again := app.subPaneProjections.Render("think-scroll", spOverflow, width, shortMaxH, 0, true)
 	if len(again) != len(scrolled) {
 		t.Fatalf("unstable length %d vs %d", len(again), len(scrolled))
 	}

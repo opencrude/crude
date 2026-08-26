@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/chatprojection"
 	"crude/tui/filetree"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
@@ -347,6 +348,15 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		}
 	case activitylist.ActionBrowseSessions:
 		m.openSessionPicker()
+		return nil
+	case chatprojection.ChatToggleActionID:
+		payload, ok := action.Payload.(chatprojection.ChatTogglePayload)
+		if !ok {
+			return nil
+		}
+		if ml := m.activeMessageList(); ml != nil {
+			ml.ToggleDisclosure(payload.MessageID)
+		}
 		return nil
 	case ui.ActionSplitResize:
 		payload, ok := action.Payload.(ui.SplitResize)

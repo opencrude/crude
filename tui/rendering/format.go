@@ -61,6 +61,9 @@ func FormatThinkingDuration(d time.Duration) string {
 	if d <= 0 {
 		return ""
 	}
+	if d < time.Second {
+		return "<1s"
+	}
 	secs := int(d.Seconds())
 	hours := secs / 3600
 	mins := (secs % 3600) / 60

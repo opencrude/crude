@@ -202,7 +202,9 @@ func TestLoadFileMissingAndCorrupt(t *testing.T) {
 		t.Fatalf("missing file: store=%+v err=%v", s, err)
 	}
 	corrupt := filepath.Join(t.TempDir(), "bad.json")
-	os.WriteFile(corrupt, []byte("{not json"), 0600)
+	if err := os.WriteFile(corrupt, []byte("{not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := LoadFile(corrupt); err == nil {
 		t.Fatal("corrupt file should error")
 	}

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"testing"
+	"time"
 
 	"crude/provider"
 	"crude/sessiondb"
@@ -24,6 +25,44 @@ func TestTakeHydratedDataIsOneShot(t *testing.T) {
 	}
 	if got := sess.TakeHydratedRefs(); len(got) != 0 {
 		t.Fatalf("hydrated references were returned twice: %#v", got)
+	}
+}
+
+func TestConvertMessagesForDisplayRetainsToolResultBody(t *testing.T) {
+	message := provider.NewTextMessage("tool", "=== RUN TestOne\n--- PASS: TestOne")
+	message.ToolCallID = "call-1"
+	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
+		Msg: message,
+		Meta: sessiondb.DisplayMeta{
+			DisplayRole: "tool", ToolName: "execute_command", ToolArgs: `{"command":"go test ./..."}`,
+			ToolStatus: "success",
+		},
+	}})
+	if len(views) != 1 {
+		t.Fatalf("hydrated views = %+v", views)
+	}
+	if views[0].Content != "=== RUN TestOne\n--- PASS: TestOne" {
+		t.Fatalf("tool result body lost during hydration: %q", views[0].Content)
+	}
+	if views[0].ToolName != "execute_command" || views[0].ToolPreviewPhase != "done" {
+		t.Fatalf("tool presentation metadata = %+v", views[0])
+	}
+}
+
+func TestConvertMessagesForDisplayHydratesThinkingDuration(t *testing.T) {
+	start := time.Unix(100, 0)
+	thinking := provider.NewTextMessage("assistant", "answer")
+	thinking.ReasoningContent = "reasoning body"
+	next := provider.NewTextMessage("assistant", "next")
+	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{
+		{Msg: thinking, Meta: sessiondb.DisplayMeta{DisplayRole: "thinking"}, CreatedAt: start.UnixNano()},
+		{Msg: next, Meta: sessiondb.DisplayMeta{DisplayRole: "assistant"}, CreatedAt: start.Add(5 * time.Second).UnixNano()},
+	})
+	if len(views) < 1 || views[0].Role != "thinking" {
+		t.Fatalf("hydrated views = %+v", views)
+	}
+	if views[0].ThinkingDuration != 5*time.Second {
+		t.Fatalf("thinking duration = %v", views[0].ThinkingDuration)
 	}
 }
 

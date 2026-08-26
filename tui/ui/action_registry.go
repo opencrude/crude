@@ -725,6 +725,16 @@ var defaultActions = []*ActionDef{
 		HintKey:      "Alt+Enter",
 		DisplayOnly:  true,
 	},
+	{
+		ID:           "chat.toggle-details",
+		Label:        "Expand/collapse details",
+		Description:  "toggle the newest expandable chat block",
+		Category:     "Chat",
+		FocusContext: "chat",
+		Bindings:     []KeyBinding{{Key: "ctrl+alt+e"}},
+		HintKey:      "Ctrl+Alt+E",
+		DisplayOnly:  true,
+	},
 
 	// ─── Contextual status-bar hints (display-first) ───
 	{

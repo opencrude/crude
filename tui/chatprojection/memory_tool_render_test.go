@@ -23,7 +23,7 @@ func TestRenderSearchHistoryStructured(t *testing.T) {
 		ToolStatus: "success",
 		Content:    string(payload),
 	}
-	ml := renderToolMessageLines(msg, theme.DefaultDark(), 80, 90, 100, 0, 12, "done")
+	ml := renderToolMessageLines(msg, theme.DefaultDark(), 80, 90, 100, 0, 12, "done", DisclosureExpanded)
 
 	plain := append([]string(nil), ml.lines...)
 	joined := strings.Join(plain, "\n")

@@ -255,14 +255,6 @@ func referenceRangeContains(ranges []referenceTextRange, offset int) bool {
 	return false
 }
 
-func buildThinkingHeader(modelName string, incomplete bool, timeLabel string, innerW int, suppressHeader bool) (header PaintLine, blank PaintLine) {
-	if suppressHeader {
-		return PaintLine{}, buildPlainBodyLine("")
-	}
-	header = buildAssistantHeader(modelName, incomplete, timeLabel, innerW, false)
-	return header, buildPlainBodyLine("")
-}
-
 func buildThinkingBodyLine(line string, firstLine bool, spinFrame int, active, interrupted bool) PaintLine {
 	spans := []RowSpan{{Text: "│ ", Role: ui.ColorBorder}}
 	if firstLine {
