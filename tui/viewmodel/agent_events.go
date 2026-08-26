@@ -42,10 +42,12 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 		return nil
 	}
 	agent := n.State
+	referenceLabels := m.referenceLabels(refIDs)
 	agent.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleUser,
-		Content: text,
-		Time:    time.Now(),
+		Role:            ttypes.RoleUser,
+		Content:         text,
+		ReferenceLabels: referenceLabels,
+		Time:            time.Now(),
 	})
 	if len(m.History) == 0 || m.History[len(m.History)-1] != text {
 		m.History = append(m.History, text)
@@ -80,10 +82,12 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 		return nil
 	}
 	agent := n.State
+	referenceLabels := m.referenceLabels(refIDs)
 	agent.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleUser,
-		Content: text,
-		Time:    time.Now(),
+		Role:            ttypes.RoleUser,
+		Content:         text,
+		ReferenceLabels: referenceLabels,
+		Time:            time.Now(),
 	})
 	if len(m.History) == 0 || m.History[len(m.History)-1] != text {
 		m.History = append(m.History, text)
@@ -107,6 +111,27 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 		}
 		return nil
 	}
+}
+
+func (m *App) referenceLabels(refIDs []string) []string {
+	store := m.RefStore()
+	if store == nil || len(refIDs) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(refIDs))
+	seen := make(map[string]bool, len(refIDs))
+	for _, id := range refIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		ref, ok := store.GetReference(id)
+		if !ok || !ref.Active() || ref.DisplayName() == "" {
+			continue
+		}
+		seen[id] = true
+		labels = append(labels, ref.DisplayName())
+	}
+	return labels
 }
 
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {

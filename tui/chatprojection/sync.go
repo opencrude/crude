@@ -3,6 +3,7 @@ package chatprojection
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -132,6 +133,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 	return current.InternalID == incoming.InternalID &&
 		current.Role == incoming.Role &&
 		current.Content == incoming.Content &&
+		slices.Equal(current.ReferenceLabels, incoming.ReferenceLabels) &&
 		current.Time.Equal(incoming.Time) &&
 		current.ToolName == incoming.ToolName &&
 		current.ToolArgs == incoming.ToolArgs &&

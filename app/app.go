@@ -23,6 +23,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/history"
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
@@ -133,9 +134,13 @@ func (a *App) Run() {
 	}
 
 	// 4. Start the TUI with provider presets for app settings.
-	history := LoadHistory()
+	prompts, err := history.LoadFile(history.DefaultPath())
+	if err != nil {
+		lg.Warn("APP", "history_load_failed", "error", err.Error())
+		prompts = history.New()
+	}
 	presets := providerPresets()
-	t, err := tui.Start(ws, presets, history, lg)
+	t, err := tui.Start(ws, presets, prompts, lg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		os.Exit(1)

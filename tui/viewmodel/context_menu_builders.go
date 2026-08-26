@@ -3,10 +3,12 @@ package viewmodel
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/input"
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
@@ -675,6 +677,14 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 
 // buildInputContextMenu creates the menu for the chat input.
 func (m *App) buildInputContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	// Right-click on an attached reference chip gets attachment management
+	// instead of the clipboard menu — the block under the pointer is the
+	// object of interest.
+	if rr, ok := m.refRangeAtMouse(mouse); ok {
+		if st := m.buildAttachmentContextMenu(rr); st != nil {
+			return st
+		}
+	}
 	st := &ui.ContextMenuState{Title: "Input"}
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Clipboard",
@@ -691,6 +701,145 @@ func (m *App) buildInputContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		},
 	})
 	return st
+}
+
+// refRangeAtMouse maps a screen-space mouse point into the composer's flat
+// rune coordinates and reports the reference-chip range under it, if any.
+func (m *App) refRangeAtMouse(mouse tea.Mouse) (input.RefRange, bool) {
+	if m.inputRect.Empty() || m.ActiveSession == nil {
+		return input.RefRange{}, false
+	}
+	localX := mouse.X - m.inputRect.X
+	localY := mouse.Y - m.inputRect.Y
+	pos, ok := m.Input.MouseToInputPos(localX, localY)
+	if !ok {
+		return input.RefRange{}, false
+	}
+	for _, rr := range m.Input.RefRanges() {
+		if pos >= rr.Start && pos < rr.End {
+			return rr, true
+		}
+	}
+	return input.RefRange{}, false
+}
+
+// buildAttachmentContextMenu is the per-chip menu behind right-click on a
+// pill: preview the content, relabel it, remove it from the draft, or open
+// file-backed attachments in the editor.
+func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState {
+	if m.RefStore() == nil {
+		return nil
+	}
+	ref, ok := m.RefStore().GetReference(rr.ID)
+	if !ok || !ref.Active() {
+		return nil
+	}
+	title := strings.TrimSuffix(strings.TrimPrefix(ref.DisplayName(), "["), "]")
+	st := &ui.ContextMenuState{Title: title}
+	items := []ui.ContextMenuItem{
+		{Label: "Preview", Detail: "Space", Action: func() {
+			m.openReferenceOverlay(rr.ID)
+		}},
+		{Label: "Rename…", Action: func() {
+			m.startAttachmentRename(rr.ID, title)
+		}},
+		{Label: "Remove", Action: func() {
+			m.removeAttachment(rr)
+		}},
+	}
+	if ref.FilePath != "" {
+		path := ref.FilePath
+		items = append(items, ui.ContextMenuItem{Label: "Open in editor", Action: func() {
+			if _, err := m.openEditorTab(path); err != nil {
+				m.StatusBar.SetError("open attachment: " + err.Error())
+			}
+		}})
+	}
+	st.Sections = append(st.Sections, ui.ContextMenuSection{Items: items})
+	return st
+}
+
+// removeAttachment strips a reference token from the draft and soft-deletes
+// its backing reference. The caret stays where the removal happened.
+func (m *App) removeAttachment(rr input.RefRange) {
+	runes := []rune(m.Input.Value())
+	if rr.Start < 0 || rr.End > len(runes) || rr.Start >= rr.End {
+		return
+	}
+	cursor := m.Input.CursorFlat()
+	next := string(runes[:rr.Start]) + string(runes[rr.End:])
+	m.Input.SetInput(next)
+	if cursor > rr.Start {
+		if cursor -= rr.End - rr.Start; cursor < rr.Start {
+			cursor = rr.Start
+		}
+	}
+	m.Input.SetCursorFlat(cursor)
+	if m.ActiveSession != nil && m.ActiveSession.RefStore != nil {
+		_ = m.ActiveSession.RefStore.DeleteReference(rr.ID)
+	}
+	if m.StatusBar != nil {
+		m.StatusBar.SetInfo("Attachment removed")
+	}
+}
+
+// startAttachmentRename opens the shared text prompt to relabel one chip.
+// The chip's draft spans are captured BEFORE the store rename — once the
+// store knows only the new label, the old tokens no longer resolve by scan.
+func (m *App) startAttachmentRename(refID, current string) {
+	if m.RefStore() == nil {
+		return
+	}
+	spans := m.refRangesFor(refID)
+	m.openTreeTextPrompt(ui.TextPromptRename, "Rename attachment",
+		"label", "", current, func(value string) error {
+			final, ok := m.RefStore().RenameReference(refID, value)
+			if !ok {
+				return fmt.Errorf("cannot rename this attachment")
+			}
+			m.replaceRefSpans(spans, final)
+			if m.StatusBar != nil {
+				m.StatusBar.SetInfo("Renamed to " + strings.TrimSuffix(strings.TrimPrefix(final, "["), "]"))
+			}
+			return nil
+		})
+}
+
+func (m *App) refRangesFor(refID string) []input.RefRange {
+	var out []input.RefRange
+	for _, rr := range m.Input.RefRanges() {
+		if rr.ID == refID {
+			out = append(out, rr)
+		}
+	}
+	return out
+}
+
+// replaceRefSpans swaps every captured chip span for newLabel. Spans are
+// applied highest-Start-first so earlier offsets stay valid as the text
+// shrinks or grows.
+func (m *App) replaceRefSpans(spans []input.RefRange, newLabel string) {
+	valid := make([]input.RefRange, 0, len(spans))
+	runes := []rune(m.Input.Value())
+	for _, rr := range spans {
+		if rr.Start >= 0 && rr.End <= len(runes) && rr.Start < rr.End {
+			valid = append(valid, rr)
+		}
+	}
+	if len(valid) == 0 {
+		return
+	}
+	sort.Slice(valid, func(i, j int) bool { return valid[i].Start > valid[j].Start })
+	leftmost := valid[len(valid)-1].Start
+	for _, rr := range valid {
+		runes = append(runes[:rr.Start], append([]rune(newLabel), runes[rr.End:]...)...)
+	}
+	m.Input.SetInput(string(runes))
+	caret := leftmost + len([]rune(newLabel))
+	if caret > len(runes) {
+		caret = len(runes)
+	}
+	m.Input.SetCursorFlat(caret)
 }
 
 // buildChatContextMenu creates the menu for right-click in the

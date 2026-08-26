@@ -48,14 +48,6 @@ func ConfigPath() string {
 	return filepath.Join(home, buildinfo.DataDir(), "config.json")
 }
 
-func HistoryPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "crude_history.json"
-	}
-	return filepath.Join(home, buildinfo.DataDir(), "history.json")
-}
-
 func loadFileConfigFrom(path string) (FileConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -84,28 +76,6 @@ func SaveFileConfig(cfg FileConfig) error {
 		return err
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0600)
-}
-
-func LoadHistory() []string {
-	var history []string
-	data, err := os.ReadFile(HistoryPath())
-	if err != nil {
-		return history
-	}
-	_ = json.Unmarshal(data, &history)
-	return history
-}
-
-func SaveHistory(history []string) error {
-	path := HistoryPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(history, "", "  ")
 	if err != nil {
 		return err
 	}

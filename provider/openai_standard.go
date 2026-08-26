@@ -111,12 +111,6 @@ func encodeOpenAIChatMessages(messages []ChatMessage) ([]any, error) {
 			"role":    message.Role,
 			"content": message.Content,
 		}
-		if message.ReasoningContent != "" {
-			wire["reasoning_content"] = message.ReasoningContent
-		}
-		if message.Reasoning != "" {
-			wire["reasoning"] = message.Reasoning
-		}
 		if message.Refusal != "" {
 			wire["refusal"] = message.Refusal
 		}
@@ -153,8 +147,14 @@ func encodeOpenAIChatMessages(messages []ChatMessage) ([]any, error) {
 			}
 			details = append(details, bytes.Clone(item.Data))
 		}
+		// Structured reasoning is the lossless continuation contract. Replaying
+		// text aliases beside it gives gateways competing copies of one stream.
 		if len(details) > 0 {
-			wire["reasoning_details"] = details
+			wire["reasoning_details"] = mergeOpenAIReasoningDetails(details)
+		} else if message.ReasoningContent != "" {
+			wire["reasoning_content"] = message.ReasoningContent
+		} else if message.Reasoning != "" {
+			wire["reasoning"] = message.Reasoning
 		}
 		result = append(result, wire)
 	}
@@ -173,9 +173,16 @@ func (s *OpenAIStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 		return nil, fmt.Errorf("OpenAI response contains no choices")
 	}
 	for i := range resp.Choices {
-		captureOpenAIReasoningDetails(&resp.Choices[i].Message, resp.Choices[i].Delta.ReasoningDetails)
-		if resp.Choices[i].Message.ContentString() == "" && resp.Choices[i].Message.Refusal != "" {
-			resp.Choices[i].Message.Content = TextContent(resp.Choices[i].Message.Refusal)
+		choice := &resp.Choices[i]
+		details := append([]json.RawMessage(nil), choice.Message.ReasoningDetails...)
+		details = append(details, choice.Delta.ReasoningDetails...)
+		if reasoning, ok := openAIVisibleReasoning(details); ok {
+			choice.Message.ReasoningContent = reasoning
+			choice.Message.Reasoning = reasoning
+		}
+		captureOpenAIReasoningDetails(&choice.Message, choice.Delta.ReasoningDetails)
+		if choice.Message.ContentString() == "" && choice.Message.Refusal != "" {
+			choice.Message.Content = TextContent(choice.Message.Refusal)
 		}
 	}
 	return &resp, nil
@@ -233,9 +240,13 @@ func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error
 	if update.ContentDelta == "" {
 		update.ContentDelta = choice.Delta.Refusal
 	}
-	update.ReasoningDelta = choice.Delta.ReasoningContent
-	if update.ReasoningDelta == "" {
-		update.ReasoningDelta = choice.Delta.Reasoning
+	if reasoning, ok := openAIVisibleReasoning(choice.Delta.ReasoningDetails); ok {
+		update.ReasoningDelta = reasoning
+	} else {
+		update.ReasoningDelta = choice.Delta.ReasoningContent
+		if update.ReasoningDelta == "" {
+			update.ReasoningDelta = choice.Delta.Reasoning
+		}
 	}
 	update.FinishReason = choice.FinishReason
 	update.ProviderItems = openAIReasoningDetailItems(choice.Delta.ReasoningDetails, nil)
@@ -249,6 +260,147 @@ func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error
 		})
 	}
 	return update, nil
+}
+
+// openAIVisibleReasoning extracts the displayable stream fragments from the
+// structured OpenRouter reasoning_details contract. These fragments are the
+// canonical stream: legacy delta.reasoning may be synthesized by a gateway and
+// has been observed with a newline appended to every token.
+func openAIVisibleReasoning(details []json.RawMessage) (string, bool) {
+	fragments := openAIVisibleReasoningFragments(details)
+	if len(fragments) == 0 {
+		return "", false
+	}
+	var reasoning strings.Builder
+	for _, fragment := range fragments {
+		reasoning.WriteString(fragment)
+	}
+	return reasoning.String(), true
+}
+
+func openAIVisibleReasoningFragments(details []json.RawMessage) []string {
+	var fragments []string
+	for _, raw := range details {
+		if len(raw) == 0 || !json.Valid(raw) {
+			continue
+		}
+		var detail struct {
+			Type    string `json:"type"`
+			Text    string `json:"text"`
+			Summary string `json:"summary"`
+		}
+		if err := json.Unmarshal(raw, &detail); err != nil {
+			continue
+		}
+		var fragment string
+		switch detail.Type {
+		case "reasoning.text":
+			fragment = detail.Text
+		case "reasoning.summary":
+			fragment = detail.Summary
+			if fragment == "" {
+				fragment = detail.Text
+			}
+		default:
+			continue
+		}
+		if fragment == "" {
+			continue
+		}
+		fragments = append(fragments, fragment)
+	}
+	return fragments
+}
+
+// mergeOpenAIReasoningDetails implodes streaming fragments before replaying an
+// assistant message. OpenRouter tags fragments from one logical detail with
+// the same (type, index); sending those fragments back as separate array items
+// makes providers interpret each token as a separate reasoning block.
+func mergeOpenAIReasoningDetails(details []json.RawMessage) []json.RawMessage {
+	if len(details) <= 1 {
+		return details
+	}
+	merged := make([]json.RawMessage, 0, len(details))
+	for index := 0; index < len(details); {
+		key, mergeable := openAIReasoningDetailMergeKey(details[index])
+		if !mergeable {
+			merged = append(merged, bytes.Clone(details[index]))
+			index++
+			continue
+		}
+		end := index + 1
+		for end < len(details) {
+			nextKey, nextMergeable := openAIReasoningDetailMergeKey(details[end])
+			if !nextMergeable || nextKey != key {
+				break
+			}
+			end++
+		}
+		if end == index+1 {
+			merged = append(merged, bytes.Clone(details[index]))
+		} else {
+			merged = append(merged, mergeOpenAIReasoningDetailRun(details[index:end]))
+		}
+		index = end
+	}
+	return merged
+}
+
+func openAIReasoningDetailMergeKey(raw json.RawMessage) (string, bool) {
+	var detail map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &detail); err != nil {
+		return "", false
+	}
+	indexRaw, ok := detail["index"]
+	if !ok || string(indexRaw) == "null" {
+		return "", false
+	}
+	var index any
+	if err := json.Unmarshal(indexRaw, &index); err != nil || index == nil {
+		return "", false
+	}
+	var detailType string
+	if typeRaw := detail["type"]; len(typeRaw) > 0 {
+		_ = json.Unmarshal(typeRaw, &detailType)
+	}
+	return fmt.Sprintf("%s\x00%T:%v", detailType, index, index), true
+}
+
+func mergeOpenAIReasoningDetailRun(run []json.RawMessage) json.RawMessage {
+	merged := make(map[string]json.RawMessage)
+	textParts := map[string][]string{"text": nil, "summary": nil}
+	textSeen := make(map[string]bool, len(textParts))
+	for _, raw := range run {
+		var detail map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &detail); err != nil {
+			continue
+		}
+		for key, value := range detail {
+			if _, isText := textParts[key]; isText {
+				var fragment string
+				if err := json.Unmarshal(value, &fragment); err == nil {
+					textParts[key] = append(textParts[key], fragment)
+					textSeen[key] = true
+					continue
+				}
+			}
+			if string(value) != "null" {
+				merged[key] = bytes.Clone(value)
+			}
+		}
+	}
+	for key, parts := range textParts {
+		if !textSeen[key] {
+			continue
+		}
+		encoded, _ := json.Marshal(strings.Join(parts, ""))
+		merged[key] = encoded
+	}
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return bytes.Clone(run[0])
+	}
+	return encoded
 }
 
 func captureOpenAIReasoningDetails(message *ChatMessage, additional []json.RawMessage) {

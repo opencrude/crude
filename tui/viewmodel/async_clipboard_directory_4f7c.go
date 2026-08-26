@@ -325,6 +325,17 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 	return nil
 }
 
+func (m *App) beginInputClipboardPaste() tea.Cmd {
+	if m.ActiveSession == nil || m.ActiveSession.RefStore == nil {
+		return nil
+	}
+	request := m.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{
+		operation: clipboardAsyncPasteInputImageFirst,
+		session:   m.ActiveSession,
+	})
+	return m.clipboardAsyncCommand(request)
+}
+
 func (m *App) beginEditorClipboardPaste(target *editor.Editor) tea.Cmd {
 	if target == nil {
 		return nil

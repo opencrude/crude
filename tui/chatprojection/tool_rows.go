@@ -154,16 +154,81 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 			} else if tools.IsSummaryOnlyTool(msg.ToolName) {
 				// title only
 			} else {
-				out.appendPlainToolBody(resultContent, width, height, false)
+				// Search/listing tools lead with a self-describing count line
+				// ("5 matches for X") that the title summary already renders as
+				// "— 5 matches". Drop it from the body so it isn't printed twice.
+				body := stripRedundantResultHeader(msg.ToolName, resultContent)
+				out.appendPlainToolBody(body, width, height, false)
 			}
 		}
-	} else if msg.ToolStatus == "error" || msg.ToolStatus == "cancelled" {
+	} else if msg.ToolStatus == "error" {
 		if msg.Content != "" {
 			out.appendPlainToolBody(msg.Content, width, height, true)
 		}
+	} else if msg.ToolStatus == types.ToolStatusCancelled {
+		if msg.Content != "" {
+			out.appendPlainToolBody(msg.Content, width, height, false)
+		}
+	}
+
+	// A cancelled tool call struck through entirely: the title line and any
+	// body lines read as withdrawn work rather than a completed result.
+	if msg.ToolStatus == types.ToolStatusCancelled {
+		strikeBody(out.native)
 	}
 
 	return out
+}
+
+// stripRedundantResultHeader removes a leading self-describing count line from
+// search/listing tool bodies because the title summary already shows the count
+// (e.g. "— 5 matches"). Only tools that emit such a header participate, and
+// only a first line matching the "<n> (match|matches|file|files|entries|result|results)"
+// shape is dropped — a first line with real content is never removed.
+func stripRedundantResultHeader(toolName, content string) string {
+	switch toolName {
+	case "grep_files", "glob_files", "web_search", "arxiv_search", "execute_command":
+		// execute_command output is arbitrary; don't guess at its first line.
+		if toolName == "execute_command" {
+			return content
+		}
+	default:
+		return content
+	}
+	firstNL := strings.Index(content, "\n")
+	if firstNL <= 0 {
+		return content
+	}
+	first := strings.TrimSpace(content[:firstNL])
+	// "Web search results for: <query>" repeats the title's `Searched "<query>"`.
+	if toolName == "web_search" && strings.HasPrefix(strings.ToLower(first), "web search results for:") {
+		return strings.TrimSpace(content[firstNL+1:])
+	}
+	if isCountHeader(first) {
+		return strings.TrimSpace(content[firstNL+1:])
+	}
+	return content
+}
+
+func isCountHeader(line string) bool {
+	// "<n> <unit> ..." where unit is one of the known search/listing nouns.
+	i := strings.Index(line, " ")
+	if i <= 0 {
+		return false
+	}
+	num := line[:i]
+	for _, ch := range num {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	rest := strings.ToLower(line[i+1:])
+	for _, unit := range []string{"match", "matches", "file", "files", "entries", "result", "results", "papers"} {
+		if strings.HasPrefix(rest, unit+" ") || rest == unit {
+			return true
+		}
+	}
+	return false
 }
 
 func (ml *messageLines) appendPlainToolBody(resultContent string, width, height int, errorStyle bool) {
@@ -172,12 +237,31 @@ func (ml *messageLines) appendPlainToolBody(resultContent string, width, height 
 		toolLineWidth = 20
 	}
 	maxRes := tools.TerminalResultHeight(height)
+	// Grep/find-style output repeats the same absolute path prefix on every
+	// line ("/home/u/proj/tui/file.go:12: ..."). Stripping that shared prefix
+	// fits far more matches per line; a short header shows what was stripped.
+	var nonBlank []string
+	rawLines := strings.Split(resultContent, "\n")
+	for _, rl := range rawLines {
+		if strings.TrimSpace(rl) != "" {
+			nonBlank = append(nonBlank, strings.TrimSpace(rl))
+		}
+	}
+	prefix := commonDirPrefix(nonBlank)
+	if prefix != "" {
+		header := buildPlainToolResultLine(prefixHeader(prefix))
+		ml.lines = append(ml.lines, header.PlainText())
+		ml.native = append(ml.native, header)
+	}
 	var wrapped []string
-	for _, rl := range strings.Split(resultContent, "\n") {
+	for _, rl := range rawLines {
 		trimmed := strings.TrimSpace(rl)
 		if trimmed == "" {
 			wrapped = append(wrapped, "")
 			continue
+		}
+		if prefix != "" {
+			trimmed = strings.TrimPrefix(trimmed, prefix)
 		}
 		sanitized := rendering.SanitizeForTerminal(trimmed)
 		for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
@@ -198,6 +282,48 @@ func (ml *messageLines) appendPlainToolBody(resultContent string, width, height 
 		ml.lines = append(ml.lines, pl.PlainText())
 		ml.native = append(ml.native, pl)
 	}
+}
+
+// commonDirPrefix returns the longest directory prefix shared by every line,
+// cut at a path separator and ending in "/". Returns "" unless every line
+// begins with an absolute path under a common directory (so scattered output
+// is never mangled).
+func commonDirPrefix(lines []string) string {
+	if len(lines) < 2 {
+		return ""
+	}
+	prefix := lines[0]
+	for _, l := range lines[1:] {
+		for !strings.HasPrefix(l, prefix) {
+			if len(prefix) == 0 {
+				return ""
+			}
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	// Cut back to the last path separator and require a root-ish absolute path
+	// ("/a/b/") so "3 result"/"line 1" fragments are never treated as paths.
+	slash := strings.LastIndex(prefix, "/")
+	if slash < 1 {
+		return ""
+	}
+	prefix = prefix[:slash+1]
+	// Require at least two path segments ("/x/") to avoid stripping "/".
+	if strings.Count(prefix, "/") < 2 {
+		return ""
+	}
+	return prefix
+}
+
+func prefixHeader(prefix string) string {
+	return "in " + prefix
+}
+
+func buildPlainToolResultLine(text string) PaintLine {
+	return PaintLine{Spans: []RowSpan{
+		{Text: "│   ", Role: ui.ColorMuted},
+		{Text: text, Role: ui.ColorMuted, Attr: cell.AttrItalic},
+	}}
 }
 
 func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent string, th *theme.Theme, contentWidth, innerW, height int) {

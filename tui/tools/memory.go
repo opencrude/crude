@@ -7,6 +7,31 @@ import (
 	"crude/tui/rendering"
 )
 
+// flexStringSlice is a tolerant []string that decodes from either a JSON array
+// of strings or a single space-joined string (the backend emits tools/files as
+// space-joined strings on history hits but array-of-strings elsewhere). Without
+// this, a strict []string field fails the whole unmarshal and the projection
+// falls back to showing the raw JSON blob.
+type flexStringSlice []string
+
+func (f *flexStringSlice) UnmarshalJSON(data []byte) error {
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*f = arr
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		*f = nil
+		return nil
+	}
+	*f = strings.Fields(s)
+	return nil
+}
+
 // MemoryRowKind classifies a memory-tool result line for semantic coloring.
 type MemoryRowKind int
 
@@ -156,21 +181,21 @@ func buildRecallRows(content string, contentWidth int) []MemoryLine {
 func buildHistoryRows(content string, contentWidth int) []MemoryLine {
 	var payload struct {
 		Turns []struct {
-			SessionID string   `json:"session_id"`
-			Turn      int      `json:"turn"`
-			When      string   `json:"when"`
-			User      string   `json:"user"`
-			Assistant string   `json:"assistant"`
-			Tools     []string `json:"tools"`
-			Files     []string `json:"files"`
+			SessionID string          `json:"session_id"`
+			Turn      int             `json:"turn"`
+			When      string          `json:"when"`
+			User      string          `json:"user"`
+			Assistant string          `json:"assistant"`
+			Tools     flexStringSlice `json:"tools"`
+			Files     flexStringSlice `json:"files"`
 		} `json:"turns"`
 		Sessions []struct {
-			SessionID string   `json:"session_id"`
-			Title     string   `json:"title"`
-			Summary   string   `json:"summary"`
-			Outcome   string   `json:"outcome"`
-			KeyFiles  []string `json:"key_files"`
-			When      string   `json:"when"`
+			SessionID string          `json:"session_id"`
+			Title     string          `json:"title"`
+			Summary   string          `json:"summary"`
+			Outcome   string          `json:"outcome"`
+			KeyFiles  flexStringSlice `json:"key_files"`
+			When      string          `json:"when"`
 		} `json:"sessions"`
 	}
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"crude/history"
 	"crude/session"
 	ttypes "crude/tui/types"
 )
@@ -320,8 +321,9 @@ func TestHistoryPath(t *testing.T) {
 	restore := setTestHome(t, tmpDir)
 	defer restore()
 
-	path := HistoryPath()
+	// HistoryPath moved to the history package (history.DefaultPath).
+	path := history.DefaultPath()
 	if path == "" {
-		t.Fatal("HistoryPath returned empty")
+		t.Fatal("DefaultPath returned empty")
 	}
 }

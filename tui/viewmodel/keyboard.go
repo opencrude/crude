@@ -572,6 +572,15 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m, m.handleCancel(msg)
 	}
 
+	// Ctrl+V / Ctrl+Shift+V read the SYSTEM clipboard (image-first) instead of
+	// relying on terminal bracketed paste, which can carry text only. Terminals
+	// that paste themselves (GNOME Terminal) deliver bracketed PasteMsg instead
+	// and never send this keypress, so the two paths cannot double-insert.
+	switch msg.String() {
+	case "ctrl+v", "ctrl+shift+v":
+		return m, m.beginInputClipboardPaste()
+	}
+
 	if m.anyActive() && !m.OverlayState.IsBlocking() {
 		switch msg.Code {
 		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
@@ -622,6 +631,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	}
 	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())
 	m.Input = updated
+	m.persistComposerDraftIfChanged()
 	if cmd != nil {
 		*cmds = append(*cmds, cmd)
 	}
@@ -642,8 +652,10 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 			cmds = append(cmds, m.submitRename(e.Text))
 			return cmds
 		}
+		cmds = append(cmds, m.recordPrompt(e.Text))
 		cmds = append(cmds, m.submitInput(m.AgentMgr.ActiveID(), e.Text, e.ReferenceIDs))
 	case input.BtwSubmitEvent:
+		cmds = append(cmds, m.recordPrompt(e.Text))
 		cmds = append(cmds, m.submitBtw(m.AgentMgr.ActiveID(), e.Text, e.ReferenceIDs))
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
@@ -740,6 +752,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	}
 	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())
 	m.Input = updated
+	m.persistComposerDraftIfChanged()
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}

@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/fileio"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/editor"
@@ -250,6 +251,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case clipboardAsyncImageStoredMsg:
 		m.applyClipboardAsyncImageStored(msg)
+	case composerDraftLoadedMsg:
+		m.applyComposerDraft(msg)
+	case composerDraftSavedMsg:
+		m.onComposerDraftSaved()
 	case directoryAsyncResultMsg:
 		m.applyDirectoryAsyncResult(msg)
 	case ui.SearchDebouncedMsg:
@@ -921,9 +926,29 @@ func (m *App) openReferenceOverlay(refID string) {
 	if title == "" {
 		title = ref.ID
 	}
-	if overlay := m.sessionTextOverlay(); overlay != nil {
-		overlay.Open(refID, title, ref.Content)
+	overlay := m.sessionTextOverlay()
+	if overlay == nil {
+		return
 	}
+	content := ref.Content
+	if content == "" && ref.FilePath != "" {
+		// File-backed attachment: nothing was ever stored inline. Load a
+		// bounded preview from disk instead of showing an empty dialog, and
+		// open read-only — the file on disk stays the source of truth.
+		prev, err := fileio.InspectFile(ref.FilePath, fileio.DefaultPreviewBytes, fileio.DefaultHexHeadBytes)
+		if err != nil {
+			if m.StatusBar != nil {
+				m.StatusBar.SetError("preview failed: " + err.Error())
+			}
+			return
+		}
+		content = prev.ReadableText()
+		title = "Preview: " + title
+		overlay.OpenReadOnly(refID, title, content)
+		m.setMode(ModeTextOverlay)
+		return
+	}
+	overlay.Open(refID, title, content)
 	m.setMode(ModeTextOverlay)
 }
 

@@ -326,8 +326,58 @@ func TestTextArea_PaintSelectionAndAtomicChipStyles(t *testing.T) {
 	if !buf.Get(chipStart, 0).BG.Equal(tokens.Color(ColorSelection)) {
 		t.Fatalf("selected chip bg=%v want %v", buf.Get(chipStart, 0).BG, tokens.Color(ColorSelection))
 	}
-	if buf.Get(chipStart+2, 0).BG.Equal(tokens.Color(ColorSelection)) {
-		t.Fatalf("unselected chip cell inherited selection background")
+	// The whole token paints as a filled pill (selection overlap or not);
+	// plain text AFTER the chip must stay on the default background.
+	if !buf.Get(chipStart+2, 0).BG.Equal(tokens.Color(ColorSelection)) {
+		t.Fatalf("chip cell %d lost pill background=%v", chipStart+2, tokens.Color(ColorSelection))
+	}
+	if buf.Get(5, 0).BG.Equal(tokens.Color(ColorSelection)) {
+		t.Fatalf("text after chip inherited chip background")
+	}
+}
+
+// TestTextArea_AtomicChipPaintsAsFilledPill guards the attachment-block look:
+// EVERY cell of a reference token carries the pill background so chips read
+// as blocks (Cursor-style), independent of any text selection.
+func TestTextArea_AtomicChipPaintsAsFilledPill(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	ta := NewTextArea("test/area", tokens, true)
+	ta.SetValue("[File1] rest")
+	ta.SetAtomicRanges([]AtomicRange{{ID: "ref", Start: 0, End: 7}})
+	ta.SetCursorFlat(9)
+	ta.Layout(LayoutContext{}, Rect{W: 20, H: 2})
+	buf := surface.NewCellBuffer(20, 2)
+	ta.lastInputTime = time.Now()
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: false})
+
+	pillBG := tokens.Color(ColorSelection)
+	for i := 0; i < 7; i++ {
+		if !buf.Get(i, 0).BG.Equal(pillBG) {
+			t.Fatalf("pill cell %d bg=%v want %v", i, buf.Get(i, 0).BG, pillBG)
+		}
+		if !buf.Get(i, 0).FG.Equal(tokens.Color(ColorAccent2)) {
+			t.Fatalf("pill cell %d fg=%v want accent2", i, buf.Get(i, 0).FG)
+		}
+	}
+	if buf.Get(8, 0).BG.Equal(pillBG) {
+		t.Fatal("text outside the chip inherited the pill background")
+	}
+
+	// Hovering highlights the pill instead.
+	ta.hoverFlat = 2
+	buf = surface.NewCellBuffer(20, 2)
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: false})
+	if !buf.Get(2, 0).BG.Equal(tokens.Color(ColorHover)) {
+		t.Fatalf("hovered pill bg=%v want %v", buf.Get(2, 0).BG, tokens.Color(ColorHover))
+	}
+
+	// Error tone swaps the text color to error while keeping the pill fill.
+	ta.hoverFlat = -1
+	ta.SetAtomicRanges([]AtomicRange{{ID: "ref", Start: 0, End: 7, Tone: ChipToneError}})
+	buf = surface.NewCellBuffer(20, 2)
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: false})
+	if !buf.Get(2, 0).FG.Equal(tokens.Color(ColorError)) {
+		t.Fatalf("error-tone chip fg=%v want error", buf.Get(2, 0).FG)
 	}
 }
 
