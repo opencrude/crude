@@ -380,6 +380,15 @@ func (w *Workspace) HandleUndo(cmd string) interface{} {
 	return nil
 }
 
+// HandleCompact force-compacts the backend session's conversation context
+// into a summary checkpoint.
+func (w *Workspace) HandleCompact() interface{} {
+	if b := w.BackendSession(); b != nil {
+		return b.HandleCompact()
+	}
+	return ttypes.CompactResultMsg{Error: "no active session"}
+}
+
 // SetYolo toggles auto-approve mode.
 func (w *Workspace) SetYolo(enabled bool) {
 	if b := w.BackendSession(); b != nil {
@@ -928,10 +937,15 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 
 		switch role {
 		case "user":
+			content := mm.Meta.DisplayContent
+			if content == "" {
+				content = userMessageDisplayContent(mm.Msg.Content)
+			}
 			result = append(result, ChatMessageView{
-				Role:    "user",
-				Content: mm.Msg.Content.ContentDescription(),
-				Time:    msgTime,
+				Role:            "user",
+				Content:         content,
+				ReferenceLabels: append([]string(nil), mm.Meta.ReferenceLabels...),
+				Time:            msgTime,
 			})
 
 		case "assistant":
@@ -1015,6 +1029,21 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 	}
 
 	return result
+}
+
+// userMessageDisplayContent keeps hydration identical to the live composer.
+// Multipart payload parts contain expanded files/images for the provider and
+// must never be dumped into the visible user message on resume.
+func userMessageDisplayContent(content provider.MessageContent) string {
+	if content.IsText() {
+		return content.String()
+	}
+	for _, part := range content.Parts() {
+		if part.Type == "text" && part.Text != "" {
+			return part.Text
+		}
+	}
+	return content.ContentDescription()
 }
 
 func buildToolNameIndex(msgs []sessiondb.MessageWithMeta) map[string]string {

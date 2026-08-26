@@ -52,3 +52,36 @@ func TestLargePasteInsertsFileBackedReferenceChip(t *testing.T) {
 		t.Fatalf("composer value = %q", updated.Value())
 	}
 }
+
+func TestShortMultilinePasteStaysLiteral(t *testing.T) {
+	model := NewModel(theme.DefaultDark())
+	store := &pasteReferenceStore{}
+	model.SetReferenceStore(store)
+
+	content := "first line\nsecond line"
+	updated, _, _ := model.handlePaste(content)
+	if len(store.references) != 0 {
+		t.Fatalf("short multiline paste became a reference: %+v", store.references)
+	}
+	if got := updated.Value(); got != content {
+		t.Fatalf("pasted content = %q, want %q", got, content)
+	}
+}
+
+func TestLargeInlinePasteCreatesContentReference(t *testing.T) {
+	model := NewModel(theme.DefaultDark())
+	store := &pasteReferenceStore{}
+	model.SetReferenceStore(store)
+
+	content := strings.Repeat("x", pasteReferenceThreshold)
+	updated, _, _ := model.handlePaste(content)
+	if len(store.references) != 1 || store.references[0].Kind != sessiondb.KindPastedText {
+		t.Fatalf("references = %+v", store.references)
+	}
+	if store.references[0].Content != content {
+		t.Fatal("inline pasted-text payload was not retained")
+	}
+	if ids := updated.ReferencedIDs(); len(ids) != 1 || ids[0] != "ref-large" {
+		t.Fatalf("referenced IDs = %v", ids)
+	}
+}

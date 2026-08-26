@@ -55,11 +55,10 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 			select {
 			case <-tick.C:
 				cmds := s.asyncMgr.List()
-				if len(cmds) > 0 {
-					sender.SendAgentEvent("async_command_status", cmds)
-				} else {
-					sender.SendAgentEvent("async_command_status", []fileio.AsyncCmdInfo{})
-				}
+				// Attribute to this orchestrator: the TUI resolves the owning
+				// session projection from the ID (empty IDs are dropped by
+				// sessionProjectionForAgent, which kept the deck hidden forever).
+				sender.SendAgentEventWithID("async_command_status", cmds, o.ID)
 			case <-asyncPollingStop:
 				l.Debug("ASYNC", "poll_stop")
 				return
@@ -169,7 +168,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	s.msgCounterMu.Unlock()
 	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "is_blocked", isBlocked, "turn", s.turnNumber)
 
-	userMsg := s.buildUserMessage(userInput, activeCfg.Model)
+	userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
 
 	if s.db != nil {
 		_ = sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
@@ -179,7 +178,11 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	s.msgsMu.Lock()
 	s.msgs = append(s.msgs, userMsg)
 	s.msgTurns = append(s.msgTurns, s.turnNumber)
-	s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{DisplayRole: "user"})
+	s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{
+		DisplayRole:     "user",
+		DisplayContent:  userInput.Text,
+		ReferenceLabels: referenceLabels,
+	})
 	msgsCopy := make([]provider.ChatMessage, len(s.msgs))
 	copy(msgsCopy, s.msgs)
 	s.msgsMu.Unlock()
@@ -609,18 +612,25 @@ func (s *Session) messagesForTurnLocked(turn int) []provider.ChatMessage {
 }
 
 func (s *Session) buildUserMessage(input provider.UserInput, model string) provider.ChatMessage {
+	msg, _ := s.buildUserMessageWithDisplay(input, model)
+	return msg
+}
+
+func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model string) (provider.ChatMessage, []string) {
 	if len(input.ReferenceIDs) == 0 || s.db == nil {
-		return provider.NewTextMessage("user", input.Text)
+		return provider.NewTextMessage("user", input.Text), nil
 	}
 
-	// Check if the current model supports vision
-	hasVision := provider.SupportsVision(model)
+	// Unknown custom/alias models should get the attachment and let the provider
+	// decide. Treating missing catalog metadata as an explicit "no vision"
+	// silently replaced valid images with local paths the model could not read.
+	hasVision, visionKnown := provider.VisionCapability(model)
 
 	// Load only the referenced prompt references (filtered query)
 	refs, err := sessiondb.LoadPromptReferencesByIDs(s.db, input.ReferenceIDs)
 	if err != nil {
 		s.logger.Warn("REF", "load_refs_error", "error", err.Error())
-		return provider.NewTextMessage("user", input.Text)
+		return provider.NewTextMessage("user", input.Text), nil
 	}
 
 	// Build an order-preserving map keyed by reference ID
@@ -629,30 +639,38 @@ func (s *Session) buildUserMessage(input provider.UserInput, model string) provi
 		refMap[r.ID] = r
 	}
 
-	var parts []provider.ContentPart
-	if input.Text != "" {
-		parts = append(parts, provider.ContentPart{Type: "text", Text: input.Text})
-	}
-
+	orderedRefs := make([]sessiondb.Reference, 0, len(input.ReferenceIDs))
+	referenceLabels := make([]string, 0, len(input.ReferenceIDs))
+	promptText := input.Text
 	for _, id := range input.ReferenceIDs {
 		ref, ok := refMap[id]
 		if !ok || !ref.Active() {
 			continue
 		}
+		orderedRefs = append(orderedRefs, ref)
+		label := ref.DisplayName()
+		if label != "" {
+			referenceLabels = append(referenceLabels, label)
+			promptText = strings.ReplaceAll(promptText, label, "")
+		}
+	}
+
+	var parts []provider.ContentPart
+	if promptText = strings.TrimSpace(promptText); promptText != "" {
+		parts = append(parts, provider.ContentPart{Type: "text", Text: promptText})
+	}
+
+	for _, ref := range orderedRefs {
 		switch ref.Kind {
 		case sessiondb.KindPastedImage:
-			if !hasVision {
-				// Model doesn't support images; add text description instead
-				label := ref.DisplayName()
-				desc := fmt.Sprintf("--- %s (image", label)
-				if ref.FilePath != "" {
-					desc += fmt.Sprintf(": %s", ref.FilePath)
-				}
-				if ref.Mime != "" {
-					desc += fmt.Sprintf(", %s", ref.Mime)
-				}
-				desc += ") ---"
-				parts = append(parts, provider.ContentPart{Type: "text", Text: desc})
+			if visionKnown && !hasVision {
+				parts = append(parts, provider.ContentPart{
+					Type: "text",
+					Text: fmt.Sprintf(
+						"--- %s (image omitted: model does not advertise image input) ---",
+						ref.DisplayName(),
+					),
+				})
 				continue
 			}
 			var dataURL string
@@ -732,8 +750,8 @@ func (s *Session) buildUserMessage(input provider.UserInput, model string) provi
 					} else {
 						content = docconv.Header(ref.FilePath, metadata) + markdown
 					}
-				} else if data, err := os.ReadFile(ref.FilePath); err == nil {
-					content = string(data)
+				} else if prev, perr := fileio.InspectFile(ref.FilePath, provider.MaxTextFileSizeFor(model), fileio.DefaultHexHeadBytes); perr == nil {
+					content = prev.ReadableText()
 				}
 			}
 			if content != "" {
@@ -747,9 +765,9 @@ func (s *Session) buildUserMessage(input provider.UserInput, model string) provi
 	}
 
 	if len(parts) == 0 {
-		return provider.NewTextMessage("user", input.Text)
+		return provider.NewTextMessage("user", promptText), referenceLabels
 	}
-	return provider.NewMultiPartMessage("user", parts)
+	return provider.NewMultiPartMessage("user", parts), referenceLabels
 }
 
 const btwUrgentPrefix = "[USER INTERRUPTION — READ THIS NOW]\nThe user interrupted your work with an important message while you were running. Stop what you're doing, read this carefully, and adjust your approach accordingly. This takes priority over whatever you are doing.\n\n"

@@ -139,6 +139,73 @@ func (s *ReferenceStore) DeleteReference(id string) error {
 	return nil
 }
 
+// RenameReference relabels an active reference. The label is bracket-wrapped,
+// made unique among the other active references (mirroring CreateReference's
+// uniquifier), persisted when a DB backs the store, and reflected in the
+// in-memory map. It returns the final label actually applied.
+func (s *ReferenceStore) RenameReference(id, label string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ref, ok := s.refs[id]
+	if !ok || !ref.Active() {
+		return "", false
+	}
+	label = normalizeReferenceLabel(label)
+	if label == "" {
+		return "", false
+	}
+	for otherID, other := range s.refs {
+		if otherID == id || !other.Active() || other.Label != label {
+			continue
+		}
+		base := strings.TrimSuffix(label, "]")
+		suffix := 1
+		for {
+			candidate := fmt.Sprintf("%s %d]", base, suffix)
+			conflict := false
+			for thirdID, third := range s.refs {
+				if thirdID != id && third.Active() && third.Label == candidate {
+					conflict = true
+					break
+				}
+			}
+			if !conflict {
+				label = candidate
+				break
+			}
+			suffix++
+		}
+		break
+	}
+	ref.Label = label
+	s.refs[id] = ref
+	if s.db != nil {
+		if err := sessiondb.UpdatePromptReferenceLabel(s.db, id, label); err != nil {
+			return "", false
+		}
+	}
+	return label, true
+}
+
+// normalizeReferenceLabel wraps a bare name in reference brackets and strips
+// surrounding whitespace. Empty inner text is rejected.
+func normalizeReferenceLabel(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	if !strings.HasPrefix(label, "[") {
+		label = "[" + label
+	}
+	if !strings.HasSuffix(label, "]") {
+		label += "]"
+	}
+	if strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(label, "["), "]")) == "" {
+		return ""
+	}
+	return label
+}
+
 func (s *ReferenceStore) GetReference(id string) (sessiondb.Reference, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

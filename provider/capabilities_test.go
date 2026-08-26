@@ -62,6 +62,9 @@ func TestSupportsVision_UnknownModel(t *testing.T) {
 	if SupportsVision("totally-unknown-model-xyz") {
 		t.Error("SupportsVision should default to false for unknown models")
 	}
+	if supported, known := VisionCapability("totally-unknown-model-xyz"); supported || known {
+		t.Fatalf("VisionCapability unknown = (%v, %v), want (false, false)", supported, known)
+	}
 }
 
 func TestSupportsVision_CaseInsensitive(t *testing.T) {
@@ -151,6 +154,25 @@ func TestMergeModelCapDoesNotEraseCatalogCapabilities(t *testing.T) {
 	MergeModelCap("vision-model", false, false)
 	if !SupportsVision("vision-model") || !SupportsTools("vision-model") {
 		t.Fatal("missing config flags erased catalog capabilities")
+	}
+}
+
+func TestMergeModelCapDoesNotTurnMissingVisionFlagIntoKnownFalse(t *testing.T) {
+	resetDynamicCaps()
+	MergeModelCap("custom-alias", false, true)
+	if supported, known := VisionCapability("custom-alias"); supported || known {
+		t.Fatalf("VisionCapability after tools-only merge = (%v, %v), want unknown", supported, known)
+	}
+	if !SupportsTools("custom-alias") {
+		t.Fatal("tools-only merge lost affirmative tool capability")
+	}
+}
+
+func TestSetModelCapRecordsKnownNonVision(t *testing.T) {
+	resetDynamicCaps()
+	SetModelCap("text-only", false, true)
+	if supported, known := VisionCapability("text-only"); supported || !known {
+		t.Fatalf("VisionCapability known non-vision = (%v, %v)", supported, known)
 	}
 }
 

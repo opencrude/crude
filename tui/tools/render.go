@@ -9,11 +9,13 @@ import (
 )
 
 // isSummaryOnlyTool returns true for tools whose result is fully expressed
-// in the title-line summary — no content lines are rendered below.
+// in the title-line summary — no content lines are rendered below. Search and
+// listing tools (grep_files, glob_files, list_directory, web_search,
+// arxiv_search) are deliberately NOT summary-only: their actual matches are
+// the content the user wants to read, so they render in the body.
 func isSummaryOnlyTool(name string) bool {
 	switch name {
-	case "read_file", "grep_files", "list_directory", "glob_files",
-		"web_search", "arxiv_search", "wait", "kill_async_command",
+	case "read_file", "wait", "kill_async_command",
 		"delete_file", "move_file", "copy_file",
 		"run_sub_agent", "poll_sub_agent", "cancel_sub_agent",
 		"list_sub_agents", "write_report",
@@ -45,10 +47,17 @@ func truncateLineToWidth(line string, maxDisplayWidth int) string {
 	return rendering.TruncateVisual(line, maxDisplayWidth, "…")
 }
 
+// TerminalResultHeight caps how many result lines a tool message may occupy in
+// the chat viewport. The cap is relative to the chat area height (the visible
+// scroll window), not the whole terminal, so a tall chat shows substantially
+// more of a command/search result before the "+N more lines" truncation.
 func TerminalResultHeight(height int) int {
-	h := height / 3
-	if h < 4 {
-		h = 4
+	// Show up to two-thirds of the visible chat area: a grep or command output
+	// is content the user wants to read, not a footer. Floor of 6 keeps small
+	// terminals usable.
+	h := height * 2 / 3
+	if h < 6 {
+		h = 6
 	}
 	return h
 }

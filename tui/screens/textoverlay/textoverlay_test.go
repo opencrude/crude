@@ -120,6 +120,74 @@ func TestTextOverlayPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 	}
 }
 
+// TestTextOverlayReadOnlyPreview guards the file-backed attachment preview:
+// content is visible but inert — no typing, no Ctrl+S save — while reading
+// (navigation, selection copy, Esc dismiss) keeps working.
+func TestTextOverlayReadOnlyPreview(t *testing.T) {
+	screen, host := overlayHost(t)
+	screen.OpenReadOnly("ref-9", "Preview: notes.txt", "binary preview body")
+	if !screen.ReadOnly() {
+		t.Fatal("OpenReadOnly must mark the screen read-only")
+	}
+
+	// Typing must not mutate the previewed content.
+	if result := host.Handle(tea.KeyPressMsg{Code: 'x', Text: "x"}); !result.Handled || screen.Value() != "binary preview body" {
+		t.Fatalf("read-only typing result=%#v value=%q", result, screen.Value())
+	}
+	// Enter would insert a newline in a multi-line area — also swallowed.
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if strings.Contains(screen.Value(), "\n") {
+		t.Fatalf("read-only enter mutated value: %q", screen.Value())
+	}
+
+	// Navigation still works: cursor moves to the end of the text.
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnd})
+
+	// Ctrl+S is inert — no SaveMsg may be emitted.
+	result := host.Handle(tea.KeyPressMsg{Text: "ctrl+s", Mod: tea.ModCtrl, Code: 's'})
+	if result.Cmd != nil || !result.Handled {
+		t.Fatalf("read-only ctrl+s must be inert, got %#v", result)
+	}
+	if len(screen.actions.ButtonLabelsForTest()) == 0 {
+		t.Fatal("read-only action bar must still render buttons")
+	}
+	for _, label := range screen.actions.ButtonLabelsForTest() {
+		if label == "Save" {
+			t.Fatal("read-only action bar must not offer Save")
+		}
+	}
+
+	// Esc dismisses without persisting anything.
+	cancel := commandMessage[CancelMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc}))
+	if cancel.Target != screen {
+		t.Fatalf("cancel=%#v", cancel)
+	}
+}
+
+// TestTextOverlayOpenResetsReadOnly guards reuse of the retained per-session
+// overlay screen: a regular Open after a read-only preview restores editing.
+func TestTextOverlayOpenResetsReadOnly(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.OpenReadOnly("a", "Preview", "content")
+	if !screen.ReadOnly() {
+		t.Fatal("expected read-only after OpenReadOnly")
+	}
+	screen.Open("b", "Edit ref", "draft text")
+	if screen.ReadOnly() {
+		t.Fatal("regular Open must restore editability")
+	}
+	labels := screen.actions.ButtonLabelsForTest()
+	hasSave := false
+	for _, l := range labels {
+		if strings.HasPrefix(l, "Save") {
+			hasSave = true
+		}
+	}
+	if !hasSave {
+		t.Fatalf("editable overlay lost its Save button: %v", labels)
+	}
+}
+
 func overlayHost(t *testing.T) (*Screen, *ui.Host) {
 	t.Helper()
 	th := theme.DefaultDark()

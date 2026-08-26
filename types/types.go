@@ -344,11 +344,20 @@ type UndoResultMsg struct {
 	Error string
 }
 
+// CompactResultMsg reports the outcome of a forced context compaction.
+type CompactResultMsg struct {
+	Desc   string
+	Error  string
+	Before int
+	After  int
+}
+
 type ChatMessage struct {
-	InternalID string
-	Role       string
-	Content    string
-	Time       time.Time
+	InternalID      string
+	Role            string
+	Content         string
+	ReferenceLabels []string
+	Time            time.Time
 
 	ToolName   string
 	ToolArgs   string

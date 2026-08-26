@@ -2,11 +2,13 @@ package viewmodel
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/history"
 	"crude/sessiondb"
 	"crude/tui/cell"
 	"crude/tui/compositor"
@@ -73,13 +75,23 @@ type App struct {
 	GitDiscardPending   *workspace.GitChange
 	FilePicker          *filepickerscreen.Screen
 	DiagPopupID         string
-	DirtyPromptPath     string
-	DirtyPromptChoice   int
-	ChatAreaHeight      int
-	LastInteractionTime time.Time
-	SpinFrame           int
-	History             []string
-	LastSettings        ttypes.Settings
+
+	// Composer draft persistence (hydration). The active-session pointer is
+	// compared every frame; on change the composer clears immediately and the
+	// incoming session's persisted draft loads asynchronously.
+	composerHydratedFor    *workspace.Session
+	composerSavedDraft     string
+	composerSaving         bool
+	composerDirtySinceSave bool
+	DirtyPromptPath        string
+	DirtyPromptChoice      int
+	ChatAreaHeight         int
+	LastInteractionTime    time.Time
+	SpinFrame              int
+	History                []string // recall slice mirrored from Prompts
+	Prompts                *history.Store
+	promptHistoryPath      string
+	LastSettings           ttypes.Settings
 
 	// Display state (owned by viewmodel — tracks what's visible/active)
 	EditorState  *EditorState
@@ -297,9 +309,43 @@ func (m *App) SwitchProject(projectDir string) error {
 	return nil
 }
 
-func (m *App) SetHistory(history []string) {
-	m.History = history
-	m.Input.SetHistory(history)
+// SetPromptHistory installs the global prompt-history store and seeds
+// composer up/down recall from it.
+func (m *App) SetPromptHistory(store *history.Store) {
+	if store == nil {
+		store = history.New()
+	}
+	m.Prompts = store
+	m.promptHistoryPath = history.DefaultPath()
+	m.syncPromptRecall()
+}
+
+// recordPrompt folds a submitted prompt into the global history and returns a
+// command that persists the store to disk off the UI thread. The in-memory
+// fold is synchronous so ↑ recalls the prompt immediately; the file write is
+// deferred. Merged repeats still save — they change count/lastSeen/text.
+func (m *App) recordPrompt(text string) tea.Cmd {
+	if m.Prompts == nil {
+		return nil
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	m.Prompts.Record(text, time.Now())
+	m.syncPromptRecall()
+	path := m.promptHistoryPath
+	return func() tea.Msg {
+		if err := m.Prompts.Save(path); err != nil && m.Logger != nil {
+			m.Logger.Warn("HISTORY", "save_failed", "error", err.Error())
+		}
+		return nil
+	}
+}
+
+// syncPromptRecall refreshes the composer's recall slice from the store.
+func (m *App) syncPromptRecall() {
+	m.History = m.Prompts.Recall()
+	m.Input.SetHistory(m.History)
 }
 
 func modeName(m Mode) string {

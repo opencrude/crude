@@ -11,6 +11,16 @@ import (
 	"crude/tui/surface"
 )
 
+// ChipTone selects the display state of an AtomicRange chip. Zero value is
+// the normal attached state; Error marks a chip whose backing reference or
+// file vanished (deleted elsewhere, moved, or missing on disk).
+type ChipTone uint8
+
+const (
+	ChipToneNormal ChipTone = iota
+	ChipToneError
+)
+
 // AtomicRange is a flat [Start, End) rune range that is treated as an
 // indivisible token by the editor (e.g. @reference chips). The cursor
 // snaps across it and backspace/delete removes it as a unit.
@@ -18,6 +28,7 @@ type AtomicRange struct {
 	ID    string
 	Start int
 	End   int
+	Tone  ChipTone
 }
 
 // TextAreaSubmitEvent is emitted by the legacy Update bridge when Enter is
@@ -61,6 +72,10 @@ type TextArea struct {
 	viewH int
 	// lastInputTime tracks the last edit for cursor solid-phase rendering.
 	lastInputTime time.Time
+	// hoverFlat is the flat rune index under the pointer (-1 = none). It
+	// drives chip hover highlighting; updated on every mouse motion over
+	// the text body, independent of selection drags.
+	hoverFlat int
 }
 
 // NewTextArea creates a multi-line text area. multiLine controls Enter
@@ -77,6 +92,7 @@ func NewTextArea(id ComponentID, tokens *TokenSet, multiLine bool) *TextArea {
 		edit:      newTextAreaEngine(),
 		multiLine: multiLine,
 		submitID:  "input.submit",
+		hoverFlat: -1,
 	}
 	return t
 }
@@ -254,6 +270,12 @@ func (t *TextArea) DeleteRange(start, end int) { t.edit.DeleteRange(start, end) 
 
 // SetAtomicRanges sets the atomic (untouchable) ranges for reference chips.
 func (t *TextArea) SetAtomicRanges(ranges []AtomicRange) { t.edit.SetAtomicRanges(ranges) }
+
+// AtomicRanges returns a copy of the currently registered atomic ranges,
+// including display tone. Attachment flows use it to verify chip state.
+func (t *TextArea) AtomicRanges() []AtomicRange {
+	return append([]AtomicRange(nil), t.edit.atomicRanges...)
+}
 
 // NormalizeCursorAtomic snaps the cursor out of any atomic range.
 func (t *TextArea) NormalizeCursorAtomic() { t.edit.NormalizeCursorAtomic() }
@@ -492,9 +514,9 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 		if ar, ok := t.edit.atomicRangeStartingAt(flatPos); ok && ar.End <= flatOffset+end {
 			labelRunes := line[pos : pos+(ar.End-ar.Start)]
 			label := string(labelRunes)
-			chipFocused := focused && isCursorSeg && cursorPos >= ar.Start && cursorPos < ar.End
-			col += t.paintAtomicChip(buf, x+col, y, label, flatPos, chipFocused,
-				cursorSolid, selStart, selEnd, fg, bg, selBG)
+			cursorInChip := focused && isCursorSeg && cursorPos >= ar.Start && cursorPos < ar.End
+			col += t.paintAtomicChip(buf, x+col, y, label, ar, cursorInChip,
+				focused, cursorSolid, selStart, selEnd, fg, bg, selBG)
 			pos += ar.End - ar.Start
 			continue
 		}
@@ -545,18 +567,28 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 	}
 }
 
-// paintAtomicChip renders an @reference chip: bold Accent2 foreground.
-// When the cursor is inside the chip and in solid/blink-on phase, the
-// chip gets a Selection background so the user can see which chip the
-// cursor is on.
+// paintAtomicChip renders a @reference chip as a filled pill: a Selection
+// background across the whole token with bold Accent2 text, so attachments
+// read as blocks rather than plain prose. Error-tone chips (backing file or
+// reference gone) switch to ColorError text. Hovering highlights the pill
+// background; when the text cursor is inside the chip and in solid/blink-on
+// phase, the pill inverts (Selection bg + Fg) to show which chip is active.
 func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label string,
-	flatStart int, focused, cursorSolid bool, selStart, selEnd int,
-	fg, bg, selBG cell.Color) int {
+	ar AtomicRange, cursorInChip, componentFocused, cursorSolid bool,
+	selStart, selEnd int, fg, bg, selBG cell.Color) int {
 	chipFG := fg
+	chipBG := bg
 	if t.tokens != nil {
 		chipFG = t.tokens.Color(ColorAccent2)
+		chipBG = t.tokens.Color(ColorSelection)
+		if ar.Tone == ChipToneError {
+			chipFG = t.tokens.Color(ColorError)
+		}
 	}
-	chipFocused := focused && (cursorSolid || BlinkOnTime(time.Now()))
+	if t.hoverFlat >= ar.Start && t.hoverFlat < ar.End && t.tokens != nil {
+		chipBG = t.tokens.Color(ColorHover)
+	}
+	chipFocused := componentFocused && cursorInChip && (cursorSolid || BlinkOnTime(time.Now()))
 	col := 0
 	pos := 0
 	for len(label) > 0 {
@@ -565,9 +597,9 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 			break
 		}
 		clusterLen := len([]rune(cluster))
-		cellFG, cellBG := chipFG, bg
+		cellFG, cellBG := chipFG, chipBG
 		if selStart >= 0 && selStart != selEnd &&
-			flatStart+pos < selEnd && flatStart+pos+clusterLen > selStart {
+			ar.Start+pos < selEnd && ar.Start+pos+clusterLen > selStart {
 			cellBG = selBG
 		}
 		if chipFocused {
@@ -632,11 +664,12 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateFocus}
 	case EventMouseMotion:
-		if t.edit.IsSelecting() {
-			pos := t.MouseToFlatPos(ctx.LocalX, ctx.LocalY)
-			if pos >= 0 {
-				t.edit.UpdateSelectionEnd(pos)
-			}
+		pos := t.MouseToFlatPos(ctx.LocalX, ctx.LocalY)
+		if pos != t.hoverFlat {
+			t.hoverFlat = pos
+		}
+		if pos >= 0 && t.edit.IsSelecting() {
+			t.edit.UpdateSelectionEnd(pos)
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	case EventMouseRelease:

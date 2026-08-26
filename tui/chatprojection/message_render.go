@@ -39,6 +39,7 @@ type renderContext struct {
 	innerW       int
 	width        int
 	height       int
+	chatHeight   int
 	spinFrame    int
 	activeTyping bool
 	modelName    string
@@ -55,6 +56,7 @@ type renderContext struct {
 
 func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
+	referenceLabels := userReferenceLabels(msg.Content, msg.ReferenceLabels)
 	header := buildUserHeader(ctx.username, rendering.FormatTimeLabel(msg.Time), ctx.innerW, suppressHeader)
 	if !header.IsZero() {
 		ml.lines = append(ml.lines, header.PlainText())
@@ -66,14 +68,16 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 		bodyLines := strings.Split(rendered, "\n")
 		for _, line := range bodyLines {
 			pl := BridgeAnsiLine(line, ctx.tokens)
+			pl = styleReferenceLabels(pl, referenceLabels)
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
 		}
 	} else {
 		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
 		body := buildPlainBodyLines(wrapped)
-		for i, pl := range body {
-			ml.lines = append(ml.lines, wrapped[i])
+		for _, pl := range body {
+			pl = styleReferenceLabels(pl, referenceLabels)
+			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
 		}
 	}
@@ -142,14 +146,11 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 		bodyLines = []string{""}
 		bodyNative = []PaintLine{buildPlainBodyLine("")}
 	}
+	if msg.Incomplete {
+		strikeBody(bodyNative)
+	}
 	ml.lines = append(ml.lines, bodyLines...)
 	ml.native = append(ml.native, bodyNative...)
-
-	if msg.Incomplete && msg.IncompleteReason != "" && len(ml.lines) > 0 {
-		last := len(ml.lines) - 1
-		ml.native[last] = appendIncompleteReason(ml.native[last], msg.IncompleteReason)
-		ml.lines[last] = ml.native[last].PlainText()
-	}
 	return ml
 }
 
@@ -168,25 +169,28 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 	}
 
 	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
-	// Only insert the header↔body gap when there is a body to separate. When
-	// the thinking body is empty (a completed block collapsed to its label, or
-	// a wrap that yields a single blank), adding a blank here stacks with the
+	// Only insert the header↔body gap when there is a header to separate from
+	// the body AND a body to separate. When the header is suppressed (a
+	// continuation thinking block in a run of agent messages), the gap blank
+	// would stack on top of the inter-item leading spacer and produce two
+	// blank rows between the previous item and this thinking body. When the
+	// thinking body is empty (a completed block collapsed to its label, or a
+	// wrap that yields a single blank), adding a blank here stacks with the
 	// following message's own separator and produces two blank rows between the
 	// thinking header and the next block. Exactly one row separates blocks.
-	if hasThinkingBody(wrapped) {
+	if !suppressHeader && hasThinkingBody(wrapped) {
 		ml.lines = append(ml.lines, "")
 		ml.native = append(ml.native, buildPlainBodyLine(""))
 	}
+	bodyStart := len(ml.native)
 	for i, line := range wrapped {
 		pl := buildThinkingBodyLine(line, i == 0, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
 		ml.lines = append(ml.lines, pl.PlainText())
 		ml.native = append(ml.native, pl)
 	}
 
-	if msg.Incomplete && msg.IncompleteReason != "" && len(ml.lines) > 0 {
-		last := len(ml.lines) - 1
-		ml.native[last] = appendIncompleteReason(ml.native[last], msg.IncompleteReason)
-		ml.lines[last] = ml.native[last].PlainText()
+	if msg.Incomplete || msg.ThinkingInterrupted {
+		strikeBody(ml.native[bodyStart:])
 	}
 	return ml
 }
@@ -194,7 +198,11 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
 	var ml messageLines
 	timeLabel := rendering.FormatTimeLabel(msg.Time)
-	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
+	// Wrap at contentWidth-6 so the "error " first-line prefix (6 cols) and the
+	// matching 6-col continuation indent keep every visual row within
+	// contentWidth. This prevents continuation lines from overrunning the width
+	// and producing ragged, off-screen wraps.
+	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth-6)
 	for i, line := range wrapped {
 		pl := buildErrorHeaderLine(line, timeLabel, ctx.innerW, i == 0)
 		ml.lines = append(ml.lines, pl.PlainText())
@@ -224,7 +232,7 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 	case types.RoleThinking:
 		return renderThinkingMessage(msg, ctx, suppressHeader)
 	case types.RoleTool:
-		return renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.height, ctx.phase)
+		return renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase)
 	case types.RoleError:
 		return renderErrorMessage(msg, ctx)
 	default:

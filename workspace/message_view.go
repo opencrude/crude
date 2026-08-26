@@ -6,9 +6,10 @@ import "time"
 // persisted conversation. Runtime rendering caches and selection state belong
 // to the frontend and are created when this view crosses into the TUI.
 type ChatMessageView struct {
-	Role    string
-	Content string
-	Time    time.Time
+	Role            string
+	Content         string
+	ReferenceLabels []string
+	Time            time.Time
 
 	ToolName          string
 	ToolArgs          string

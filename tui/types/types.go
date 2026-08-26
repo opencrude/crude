@@ -55,6 +55,7 @@ type (
 	ConfirmResult         = model.ConfirmResult
 	QuestionResult        = model.QuestionResult
 	UndoResultMsg         = model.UndoResultMsg
+	CompactResultMsg      = model.CompactResultMsg
 	ChatMessage           = model.ChatMessage
 	AgentEventMsg         = model.AgentEventMsg
 	TickMsg               = model.TickMsg

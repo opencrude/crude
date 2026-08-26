@@ -57,6 +57,16 @@ func DeletePromptReference(db *sql.DB, id string) error {
 	return nil
 }
 
+func UpdatePromptReferenceLabel(db *sql.DB, id, label string) error {
+	_, err := db.Exec(`
+		UPDATE prompt_references SET label = ? WHERE id = ? AND deleted_at IS NULL
+	`, label, id)
+	if err != nil {
+		return fmt.Errorf("sessiondb: update prompt reference label: %w", err)
+	}
+	return nil
+}
+
 func LoadPromptReferences(db *sql.DB) ([]Reference, error) {
 	rows, err := db.Query(`
 		SELECT id, session_id, kind, label, title, mime, content, file_path,

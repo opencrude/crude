@@ -11,7 +11,10 @@ import (
 	"crude/tui/ui"
 )
 
-const pasteInlineThreshold = 16 * 1024
+const (
+	pasteReferenceThreshold = 4 * 1024
+	pasteInlineThreshold    = 16 * 1024
+)
 
 func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
 	m.thinking = thinking
@@ -126,7 +129,7 @@ func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 	}
 
-	if m.refStore == nil || (utf8.RuneCountInString(content) < 240 && !strings.Contains(content, "\n")) {
+	if m.refStore == nil || utf8.RuneCountInString(content) < pasteReferenceThreshold {
 		m.input.InsertString(content)
 		m.syncSlashState()
 		return m, nil, nil

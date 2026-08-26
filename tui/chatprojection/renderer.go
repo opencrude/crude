@@ -1185,6 +1185,14 @@ func (r *Renderer) scrollbarFootprint() int {
 
 func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader bool) renderContext {
 	contentWidth, innerW := r.availableMessageWidths()
+	// Tool result bodies (command output, grep, diffs) cap their height against
+	// the visible chat viewport, not the full terminal height. When the chat
+	// area fills the terminal the two are equal; in a floating/split layout the
+	// chat area is the honest size of the scroll window the reader sees.
+	chatH := r.chatAreaHeight
+	if chatH <= 0 {
+		chatH = r.height
+	}
 	return renderContext{
 		th:           r.theme,
 		tokens:       r.Tokens(),
@@ -1192,6 +1200,7 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 		innerW:       innerW,
 		width:        r.width,
 		height:       r.height,
+		chatHeight:   chatH,
 		spinFrame:    r.spinFrame,
 		activeTyping: r.activeTyping,
 		modelName:    r.modelName,
@@ -1272,26 +1281,6 @@ func messageParty(role string) string {
 	}
 }
 
-func (r *Renderer) needsThinkingSpacer(msgIdx int) bool {
-	if r.sync.Messages[msgIdx].Role != types.RoleThinking {
-		return false
-	}
-	if msgIdx <= 0 {
-		return true
-	}
-	return r.sync.Messages[msgIdx-1].Role != types.RoleThinking
-}
-
-func (r *Renderer) needsPostThinkingSpacer(msgIdx int) bool {
-	if r.sync.Messages[msgIdx].Role != types.RoleAssistant {
-		return false
-	}
-	if msgIdx <= 0 {
-		return false
-	}
-	return r.sync.Messages[msgIdx-1].Role == types.RoleThinking
-}
-
 // previousEndsWithPaneSeparator reports whether the message right before idx
 // owns a collapsed subpane that already paints a trailing separator blank. A
 // message following it must not add its own leading spacer, or the two blanks
@@ -1304,15 +1293,16 @@ func (r *Renderer) previousEndsWithPaneSeparator(msgIdx int) bool {
 }
 
 // needsLeadingSpacer decides whether a message should paint a blank row before
-// it. The previous message's own separation (a collapsed subpane's trailing
-// separator, or a header that is already suppressed) must not be doubled by a
-// second blank here.
+// it. Exactly one blank row separates any two adjacent chat items: every
+// message gets a leading spacer (the first one's serves as top padding) except
+// when the previous message is a collapsed subpane that already paints its own
+// trailing separator blank. Header suppression only controls whether a party
+// label is shown — it must never remove the inter-item separator, or a tool
+// followed by a same-party assistant (header suppressed) gets zero gap while a
+// tool followed by thinking gets two (the thinking's internal header↔body gap
+// stacks on top of the spacer).
 func (r *Renderer) needsLeadingSpacer(msgIdx int) bool {
-	if r.previousEndsWithPaneSeparator(msgIdx) {
-		return false
-	}
-	suppressHeader := r.shouldSuppressHeader(msgIdx)
-	return !suppressHeader || r.needsThinkingSpacer(msgIdx) || r.needsPostThinkingSpacer(msgIdx)
+	return !r.previousEndsWithPaneSeparator(msgIdx)
 }
 
 func (r *Renderer) shouldSuppressHeader(msgIdx int) bool {

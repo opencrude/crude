@@ -13,10 +13,11 @@ const (
 // Message is live conversation data owned by the workspace. Rendering caches,
 // selection, scrolling, and terminal layout remain in the TUI projection.
 type Message struct {
-	InternalID string
-	Role       string
-	Content    string
-	Time       time.Time
+	InternalID      string
+	Role            string
+	Content         string
+	ReferenceLabels []string
+	Time            time.Time
 
 	ToolName            string
 	ToolArgs            string

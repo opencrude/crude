@@ -566,7 +566,11 @@ func TestReplaceMessagesMultipartWithMeta(t *testing.T) {
 	}
 	turns := []int{1}
 	metas := []DisplayMeta{
-		{DisplayRole: "user", ToolName: ""},
+		{
+			DisplayRole:     "user",
+			DisplayContent:  "[Pasted IMG1] multi-part msg",
+			ReferenceLabels: []string{"[Pasted IMG1]"},
+		},
 	}
 
 	_, err = ReplaceMessagesWithMeta(db, "test", msgs, turns, metas)
@@ -586,6 +590,11 @@ func TestReplaceMessagesMultipartWithMeta(t *testing.T) {
 	}
 	if !loaded[0].Msg.Content.HasImage() {
 		t.Error("should have image")
+	}
+	if loaded[0].Meta.DisplayContent != metas[0].DisplayContent ||
+		len(loaded[0].Meta.ReferenceLabels) != 1 ||
+		loaded[0].Meta.ReferenceLabels[0] != "[Pasted IMG1]" {
+		t.Fatalf("display metadata did not round-trip: %+v", loaded[0].Meta)
 	}
 }
 

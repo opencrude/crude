@@ -28,6 +28,7 @@ func (m *App) View() tea.View {
 	if m.width == 0 || m.height == 0 {
 		return tea.NewView("")
 	}
+	m.maybeHydrateComposerDraft()
 
 	isDragging := m.windowManager.IsDragging()
 	wmNeedsRender := m.windowManager.NeedsRender()
@@ -131,7 +132,11 @@ func (m *App) computeContentLayout() contentLayout {
 
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
 	isLauncherActive := m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil
-	lay.ShowMainInput = !isLauncherActive && !isEditorActive && !m.OverlayState.IsOverlay()
+	// The file picker is a FloatingWindow over the chat, not an input-replacing
+	// mode: hiding the composer while it is open made Ctrl+O look like the
+	// prompt area vanished. Every other overlay mode still owns the full frame.
+	overlayHidesInput := m.OverlayState.IsOverlay() && !m.OverlayState.Is(workspace.ModeFilePicker)
+	lay.ShowMainInput = !isLauncherActive && !isEditorActive && !overlayHidesInput
 
 	m.syncFormHint()
 

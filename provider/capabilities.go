@@ -12,6 +12,8 @@ const (
 	CapVision modelCap = 1 << iota
 	CapTools
 	CapStreaming
+	capVisionKnown
+	capToolsKnown
 )
 
 // dynamicCaps holds model capabilities populated from models.dev data.
@@ -23,7 +25,7 @@ var (
 
 // SetModelCap stores capability flags for a model ID (case-insensitive).
 func SetModelCap(modelID string, vision, tools bool) {
-	var caps modelCap
+	caps := capVisionKnown | capToolsKnown
 	if vision {
 		caps |= CapVision
 	}
@@ -38,14 +40,17 @@ func SetModelCap(modelID string, vision, tools bool) {
 // MergeModelCap adds affirmative capability metadata without erasing a
 // catalog value when older configs do not contain the newer capability fields.
 func MergeModelCap(modelID string, vision, tools bool) {
+	if !vision && !tools {
+		return
+	}
 	lower := strings.ToLower(modelID)
 	dynamicCapsMu.Lock()
 	caps := dynamicCaps[lower]
 	if vision {
-		caps |= CapVision
+		caps |= CapVision | capVisionKnown
 	}
 	if tools {
-		caps |= CapTools
+		caps |= CapTools | capToolsKnown
 	}
 	dynamicCaps[lower] = caps
 	dynamicCapsMu.Unlock()
@@ -57,7 +62,7 @@ func MergeModelCap(modelID string, vision, tools bool) {
 func LoadModelCaps(metas map[string]ModelMeta) {
 	dynamicCapsMu.Lock()
 	for id, meta := range metas {
-		var caps modelCap
+		caps := capVisionKnown | capToolsKnown
 		if meta.SupportsVision {
 			caps |= CapVision
 		}
@@ -90,15 +95,23 @@ func lookupCaps(modelID string) (modelCap, bool) {
 	return 0, false
 }
 
-// SupportsVision returns true if the given model ID supports image input.
-// It checks the dynamicCaps map populated from models.dev data.
-// If the model is not found in dynamicCaps, it returns false (safe default).
-func SupportsVision(modelID string) bool {
+// VisionCapability reports both the capability value and whether it came from
+// authoritative model metadata. Config merges only add affirmative flags, so a
+// missing legacy model_supports_vision field must remain unknown rather than
+// becoming an explicit rejection of image input.
+func VisionCapability(modelID string) (supported, known bool) {
 	if caps, ok := lookupCaps(modelID); ok {
-		return caps&CapVision != 0
+		return caps&CapVision != 0, caps&capVisionKnown != 0
 	}
-	// Safe fallback: assume no vision for unknown models
-	return false
+	return false, false
+}
+
+// SupportsVision returns true only for models affirmatively known to support
+// image input. Callers that can safely attempt unknown models should use
+// VisionCapability and handle the known flag explicitly.
+func SupportsVision(modelID string) bool {
+	supported, _ := VisionCapability(modelID)
+	return supported
 }
 
 // SupportsTools returns true if the model supports tool/function calling.
@@ -107,7 +120,9 @@ func SupportsVision(modelID string) bool {
 // most modern models support tools).
 func SupportsTools(modelID string) bool {
 	if caps, ok := lookupCaps(modelID); ok {
-		return caps&CapTools != 0
+		if caps&capToolsKnown != 0 {
+			return caps&CapTools != 0
+		}
 	}
 	// Most modern models support tools; default to true
 	return true

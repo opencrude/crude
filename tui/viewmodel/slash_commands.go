@@ -44,6 +44,20 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/help":
 		m.Logger.Info("INPUT", "slash", "command", "help")
 		m.openHelp()
+	case "/compact":
+		m.Logger.Info("INPUT", "slash", "command", "compact")
+		if res, ok := m.HandleCompact().(ttypes.CompactResultMsg); ok {
+			if res.Error != "" {
+				m.Logger.Error("COMPACT", "slash_failed", "error", res.Error)
+				m.StatusBar.SetError(res.Error)
+			} else {
+				m.Logger.Info("COMPACT", "slash_ok", "before", res.Before, "after", res.After)
+				m.StatusBar.SetInfo(res.Desc)
+				if m.AgentMgr.ActiveID() != "" {
+					m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: res.Desc, Time: time.Now()})
+				}
+			}
+		}
 	case "/debug-lsp":
 		var b strings.Builder
 		b.WriteString("LSP Debug:\n")

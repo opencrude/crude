@@ -13,6 +13,7 @@ func ChatMessagesFromViews(views []workspace.ChatMessageView) []ttypes.ChatMessa
 		messages = append(messages, ttypes.ChatMessage{
 			Role:              view.Role,
 			Content:           view.Content,
+			ReferenceLabels:   append([]string(nil), view.ReferenceLabels...),
 			Time:              view.Time,
 			ToolName:          view.ToolName,
 			ToolArgs:          view.ToolArgs,
@@ -42,6 +43,7 @@ func chatMessagesFromConversation(conversation *workspace.Conversation) ([]ttype
 			InternalID:          view.InternalID,
 			Role:                view.Role,
 			Content:             view.Content,
+			ReferenceLabels:     append([]string(nil), view.ReferenceLabels...),
 			Time:                view.Time,
 			ToolName:            view.ToolName,
 			ToolArgs:            view.ToolArgs,
@@ -74,6 +76,7 @@ func workspaceMessageFromChat(message ttypes.ChatMessage) workspace.Message {
 		InternalID:          message.InternalID,
 		Role:                message.Role,
 		Content:             message.Content,
+		ReferenceLabels:     append([]string(nil), message.ReferenceLabels...),
 		Time:                message.Time,
 		ToolName:            message.ToolName,
 		ToolArgs:            message.ToolArgs,

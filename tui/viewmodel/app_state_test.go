@@ -612,8 +612,8 @@ func TestHandleInputEvent_SubmitWithActiveAgentView(t *testing.T) {
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
-	if len(cmds) != 1 {
-		t.Fatalf("expected 1 cmd, got %d", len(cmds))
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 cmds (history record + submit), got %d", len(cmds))
 	}
 }
 
@@ -623,8 +623,8 @@ func TestHandleInputEvent_SubmitEmptyAgentView(t *testing.T) {
 	app.height = 24
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
-	if len(cmds) != 1 {
-		t.Fatalf("expected 1 cmd, got %d", len(cmds))
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 cmds (history record + submit), got %d", len(cmds))
 	}
 	// submitInput with empty activeAgentView should return nil cmd
 	// (agent lookup fails), but handleInputEvent still appends it.
@@ -639,8 +639,8 @@ func TestHandleInputEvent_BtwSubmit(t *testing.T) {
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, btwCh, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmds := app.handleInputEvent(input.BtwSubmitEvent{Text: "btw text"})
-	if len(cmds) != 1 {
-		t.Fatalf("expected 1 cmd, got %d", len(cmds))
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 cmds (history record + btw submit), got %d", len(cmds))
 	}
 }
 

@@ -61,6 +61,7 @@ var availableCmds = []CmdInfo{
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
+	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},
 	{Name: "help", Label: "help", Desc: "Open help"},
 }
 
@@ -204,9 +205,12 @@ func (m *Model) ContextHint() string {
 }
 
 // ContextHelpSegments returns status-bar hint segments for the chat input.
-// Callers with a full ActionRegistry should prefer these ActionSeg values.
+// The guidance persists while the prompt has text — every chord stays
+// actionable mid-draft (Enter sends, Alt+Enter breaks the line) — and only
+// hides via DismissHint. Callers with a full ActionRegistry should prefer
+// these ActionSeg values.
 func (m *Model) ContextHelpSegments() []ui.HintSegment {
-	if !m.showHint || m.input.Value() != "" {
+	if !m.showHint {
 		return nil
 	}
 	if m.thinking && !m.blocking {
@@ -401,6 +405,14 @@ func (m Model) InputSelectionRange() (start, end int) {
 func (m *Model) ClearInputSelection() {
 	m.input.ClearSelection()
 }
+
+// CursorFlat returns the flat rune index of the text cursor. Attachment
+// flows (context-menu remove/rename) use it to keep the caret stable while
+// the draft text is rewritten.
+func (m Model) CursorFlat() int { return m.input.CursorFlat() }
+
+// SetCursorFlat moves the text cursor to a flat rune index.
+func (m *Model) SetCursorFlat(pos int) { m.input.SetCursorFlat(pos) }
 
 func (m Model) Value() string {
 	return m.input.Value()

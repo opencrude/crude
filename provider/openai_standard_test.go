@@ -36,9 +36,11 @@ func TestOpenAIStandardEncodesOnlyWireMessageFields(t *testing.T) {
 		Model: "model",
 		Messages: []ChatMessage{
 			{
-				Role:         "assistant",
-				Content:      TextContent(""),
-				CacheControl: &CacheControl{Type: "ephemeral"},
+				Role:             "assistant",
+				Content:          TextContent(""),
+				ReasoningContent: "legacy content",
+				Reasoning:        "legacy alias",
+				CacheControl:     &CacheControl{Type: "ephemeral"},
 				ToolCalls: []ToolCall{{
 					Index: 7, ID: "call_1", Type: "function",
 					Function: FunctionCall{Name: "read_file", Arguments: `{"path":"a.go"}`},
@@ -81,6 +83,12 @@ func TestOpenAIStandardEncodesOnlyWireMessageFields(t *testing.T) {
 	if len(details) != 1 || details[0].(map[string]any)["data"] != "opaque" {
 		t.Fatalf("reasoning_details = %#v", details)
 	}
+	if _, exists := assistant["reasoning_content"]; exists {
+		t.Fatalf("text reasoning duplicated beside reasoning_details: %#v", assistant)
+	}
+	if _, exists := assistant["reasoning"]; exists {
+		t.Fatalf("reasoning alias duplicated beside reasoning_details: %#v", assistant)
+	}
 	toolResult := messages[1].(map[string]any)
 	if _, exists := toolResult["tool_error"]; exists {
 		t.Fatalf("internal tool_error leaked onto wire: %#v", toolResult)
@@ -88,6 +96,32 @@ func TestOpenAIStandardEncodesOnlyWireMessageFields(t *testing.T) {
 	toolDef := request["tools"].([]any)[0].(map[string]any)
 	if _, exists := toolDef["cache_control"]; exists {
 		t.Fatalf("non-standard cache_control leaked onto tool: %#v", toolDef)
+	}
+}
+
+func TestOpenAIStandardEncodesOneTextReasoningField(t *testing.T) {
+	body, err := (&OpenAIStandard{}).EncodeRequest(&ChatRequest{
+		Model: "model",
+		Messages: []ChatMessage{{
+			Role:             "assistant",
+			Content:          TextContent("answer"),
+			ReasoningContent: "canonical reasoning",
+			Reasoning:        "duplicate alias",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("EncodeRequest: %v", err)
+	}
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	message := request["messages"].([]any)[0].(map[string]any)
+	if message["reasoning_content"] != "canonical reasoning" {
+		t.Fatalf("reasoning_content = %#v", message["reasoning_content"])
+	}
+	if _, exists := message["reasoning"]; exists {
+		t.Fatalf("duplicate reasoning alias encoded: %#v", message)
 	}
 }
 
@@ -111,6 +145,34 @@ func TestOpenAIStandardPreservesReasoningDetails(t *testing.T) {
 	}
 	if len(message.ReasoningDetails) != 0 {
 		t.Fatalf("wire reasoning details were not normalized: %+v", message.ReasoningDetails)
+	}
+}
+
+func TestOpenAIStandardUsesStructuredReasoningText(t *testing.T) {
+	response, err := (&OpenAIStandard{}).DecodeResponse([]byte(`{
+		"choices":[{
+			"message":{
+				"role":"assistant",
+				"content":"answer",
+				"reasoning":"The\n answer\n",
+				"reasoning_content":"The\n answer\n",
+				"reasoning_details":[
+					{"type":"reasoning.text","text":"The"},
+					{"type":"reasoning.text","text":" answer"}
+				]
+			},
+			"finish_reason":"stop"
+		}]
+	}`))
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	message := response.Choices[0].Message
+	if message.ReasoningContent != "The answer" || message.Reasoning != "The answer" {
+		t.Fatalf("reasoning content = %q / %q", message.ReasoningContent, message.Reasoning)
+	}
+	if len(message.ProviderItems) != 2 {
+		t.Fatalf("provider items = %+v", message.ProviderItems)
 	}
 }
 
@@ -205,6 +267,124 @@ func TestOpenAIChatPreservesRepeatedReasoningDetails(t *testing.T) {
 		if len(update.ProviderItems) != 1 {
 			t.Fatalf("update %d provider items = %+v", index, update.ProviderItems)
 		}
+	}
+}
+
+func TestOpenAIChatPrefersStructuredReasoningFragments(t *testing.T) {
+	decoder := (&OpenAIStandard{}).NewStreamDecoder()
+	events := []string{
+		`{"choices":[{"delta":{"reasoning":"The\n","reasoning_details":[{"type":"reasoning.text","text":"The","index":0}]}}]}`,
+		`{"choices":[{"delta":{"reasoning":" reasoning\n","reasoning_details":[{"type":"reasoning.text","text":" reasoning","index":0}]}}]}`,
+		`{"choices":[{"delta":{"reasoning":"\n\nNext\n","reasoning_details":[{"type":"reasoning.text","text":"\n\nNext","index":0}]}}]}`,
+	}
+	var reasoning string
+	for index, event := range events {
+		update, err := decoder.Decode(StreamEvent{Data: []byte(event)})
+		if err != nil {
+			t.Fatalf("Decode %d: %v", index, err)
+		}
+		if len(update.ProviderItems) != 1 {
+			t.Fatalf("update %d provider items = %+v", index, update.ProviderItems)
+		}
+		reasoning += update.ReasoningDelta
+	}
+	if reasoning != "The reasoning\n\nNext" {
+		t.Fatalf("reasoning = %q", reasoning)
+	}
+}
+
+func TestOpenAIStandardMergesFragmentedReasoningDetailsOnReplay(t *testing.T) {
+	fragments := []map[string]any{
+		{"type": "reasoning.text", "text": "The", "format": "unknown", "index": 0},
+		{"type": "reasoning.text", "text": "\n\n\n", "format": "unknown", "index": 0},
+		{"type": "reasoning.text", "text": " existing", "format": "unknown", "index": 0},
+		{"type": "reasoning.text", "signature": "sig-final", "format": "unknown", "index": 0},
+	}
+	decoder := (&OpenAIStandard{}).NewStreamDecoder()
+	message := ChatMessage{Role: "assistant", Content: TextContent("answer")}
+	for index, fragment := range fragments {
+		data, err := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{"reasoning_details": []any{fragment}},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("marshal stream fragment %d: %v", index, err)
+		}
+		update, err := decoder.Decode(StreamEvent{Data: data})
+		if err != nil {
+			t.Fatalf("decode stream fragment %d: %v", index, err)
+		}
+		message.ProviderItems = append(message.ProviderItems, update.ProviderItems...)
+	}
+	body, err := (&OpenAIStandard{}).EncodeRequest(&ChatRequest{
+		Model:    "model",
+		Messages: []ChatMessage{message},
+	})
+	if err != nil {
+		t.Fatalf("EncodeRequest: %v", err)
+	}
+	var request struct {
+		Messages []struct {
+			ReasoningDetails []map[string]any `json:"reasoning_details"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	got := request.Messages[0].ReasoningDetails
+	if len(got) != 1 {
+		t.Fatalf("reasoning detail count = %d, want 1: %#v", len(got), got)
+	}
+	if got[0]["text"] != "The\n\n\n existing" || got[0]["signature"] != "sig-final" {
+		t.Fatalf("merged reasoning detail = %#v", got[0])
+	}
+}
+
+func TestMergeOpenAIReasoningDetailsPreservesDistinctAndUnindexedEntries(t *testing.T) {
+	details := []json.RawMessage{
+		json.RawMessage(`{"type":"reasoning.text","text":"A","index":0}`),
+		json.RawMessage(`{"type":"reasoning.text","text":"B","index":1}`),
+		json.RawMessage(`{"type":"reasoning.text","text":"C","index":0}`),
+		json.RawMessage(`{"type":"reasoning.text","text":"D"}`),
+		json.RawMessage(`{"type":"reasoning.text","text":"E"}`),
+	}
+	merged := mergeOpenAIReasoningDetails(details)
+	if len(merged) != len(details) {
+		t.Fatalf("distinct/unindexed entries merged: %s", merged)
+	}
+}
+
+func TestMergeOpenAIReasoningDetailsMergesSummaryFragments(t *testing.T) {
+	details := []json.RawMessage{
+		json.RawMessage(`{"type":"reasoning.summary","summary":"First","index":0}`),
+		json.RawMessage(`{"type":"reasoning.summary","summary":" second","index":0}`),
+	}
+	merged := mergeOpenAIReasoningDetails(details)
+	if len(merged) != 1 {
+		t.Fatalf("merged count = %d", len(merged))
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(merged[0], &detail); err != nil {
+		t.Fatalf("unmarshal merged detail: %v", err)
+	}
+	if detail["summary"] != "First second" {
+		t.Fatalf("merged summary = %#v", detail)
+	}
+}
+
+func TestOpenAIChatUsesStructuredReasoningSummary(t *testing.T) {
+	decoder := (&OpenAIStandard{}).NewStreamDecoder()
+	update, err := decoder.Decode(StreamEvent{Data: []byte(`{
+		"choices":[{"delta":{"reasoning_details":[
+			{"type":"reasoning.summary","summary":"Checked constraints"}
+		]}}]
+	}`)})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if update.ReasoningDelta != "Checked constraints" {
+		t.Fatalf("reasoning delta = %q", update.ReasoningDelta)
 	}
 }
 

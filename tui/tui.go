@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/history"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/types"
@@ -139,7 +140,7 @@ var global *TUI
 // The workspace must already be initialized. The app layer is responsible
 // for setting workspace callbacks (OnNewSession, OnResumeSession) before
 // calling Start.
-func Start(ws *workspace.Workspace, presets []ProviderPreset, history []string, lg interface {
+func Start(ws *workspace.Workspace, presets []ProviderPreset, prompts *history.Store, lg interface {
 	Info(tag, msg string, pairs ...any)
 	Warn(tag, msg string, pairs ...any)
 	Error(tag, msg string, pairs ...any)
@@ -151,7 +152,7 @@ func Start(ws *workspace.Workspace, presets []ProviderPreset, history []string, 
 	global = t
 
 	a := viewmodel.NewApp(ws, presets)
-	a.SetHistory(history)
+	a.SetPromptHistory(prompts)
 	// Force UV to use the same grapheme-width method as Crude layout and
 	// surface packing. See TERMINAL_WIDTH.md.
 	program := tea.NewProgram(a, tea.WithWidthMethod(ansi.GraphemeWidth))

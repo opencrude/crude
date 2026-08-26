@@ -1,6 +1,7 @@
 package input
 
 import (
+	"os"
 	"sort"
 	"strings"
 
@@ -77,13 +78,41 @@ func (m *Model) SetValuePreserveReferences(text string) {
 }
 
 func (m *Model) applyReferenceRanges() {
+	if m.refStore == nil {
+		m.input.SetAtomicRanges(nil)
+		m.input.NormalizeCursorAtomic()
+		return
+	}
 	ranges := m.RefRanges()
+	refs := m.refStore.ListReferences()
 	atomic := make([]ui.AtomicRange, len(ranges))
 	for i, rr := range ranges {
-		atomic[i] = ui.AtomicRange{Start: rr.Start, End: rr.End, ID: rr.ID}
+		tone := ui.ChipToneNormal
+		if ref, ok := refByID(refs, rr.ID); !ok || !ref.Active() || refFileMissing(ref) {
+			tone = ui.ChipToneError
+		}
+		atomic[i] = ui.AtomicRange{Start: rr.Start, End: rr.End, ID: rr.ID, Tone: tone}
 	}
 	m.input.SetAtomicRanges(atomic)
 	m.input.NormalizeCursorAtomic()
+}
+
+// refFileMissing reports whether a file-backed reference points at a path
+// that no longer exists. Such chips render in the error tone so a stale
+// attachment is visible instead of silently submitting a dead reference.
+func refFileMissing(ref sessiondb.Reference) bool {
+	switch ref.Kind {
+	case sessiondb.KindPastedImage, sessiondb.KindSelectedFile, sessiondb.KindPastedTextFile:
+	default:
+		return false
+	}
+	if ref.FilePath == "" {
+		return false
+	}
+	if _, err := os.Stat(ref.FilePath); err != nil {
+		return true
+	}
+	return false
 }
 
 func FindRefRanges(text string, refs []sessiondb.Reference) []RefRange {
@@ -182,6 +211,10 @@ func DisplayReferences(text string, refs []sessiondb.Reference) string {
 	b.WriteString(string(runes[last:]))
 	return b.String()
 }
+
+// StripUnresolvedReferences was removed: hydration now removes dead chips by
+// their persisted spans (composerDraftSnapshot.Spans), which cannot confuse
+// user-typed bracketed prose with attachment tokens.
 
 func refByID(refs []sessiondb.Reference, id string) (sessiondb.Reference, bool) {
 	for _, ref := range refs {

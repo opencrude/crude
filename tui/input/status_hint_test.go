@@ -42,23 +42,36 @@ func TestComposerThinkingHintIsStatusOnly(t *testing.T) {
 	if got := m.ContextHint(); !strings.Contains(got, "send a note") {
 		t.Fatalf("thinking ContextHint()=%q", got)
 	}
+	// The guidance persists while drafting: every chord it names stays
+	// actionable with text in the prompt. Hide-on-type was placeholder-era
+	// behavior from when this row lived inside the input shell.
 	m.SetInput("hello")
-	if got := m.ContextHint(); got != "" {
-		t.Fatalf("typing should hide composer context, got %q", got)
+	if got := m.ContextHint(); !strings.Contains(got, "send a note") {
+		t.Fatalf("typing must keep composer context, got %q", got)
 	}
 }
 
-func TestComposerHintReturnsAfterSubmit(t *testing.T) {
+// TestComposerHintPersistsThroughTypingAndSubmit guards the new guidance
+// contract: the status-bar hint survives an in-progress draft and a submit,
+// and only DismissHint clears it.
+func TestComposerHintPersistsThroughTypingAndSubmit(t *testing.T) {
 	m := NewModel(theme.DefaultDark())
 	updated, _, _ := m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"}, false, false)
-	if got := updated.ContextHint(); got != "" {
-		t.Fatalf("non-empty prompt should hide composer help, got %q", got)
-	}
-	updated, _, evt := updated.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
-	if evt == nil {
-		t.Fatal("expected submit event")
+	if updated.Value() != "h" {
+		t.Fatalf("draft not registered before submit: %q", updated.Value())
 	}
 	if got := updated.ContextHint(); !strings.Contains(got, "Enter send") {
-		t.Fatalf("empty prompt after send should restore composer help, got %q", got)
+		t.Fatalf("drafting should keep composer help, got %q", got)
+	}
+	updated, _, evt := updated.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
+	submit, ok := evt.(SubmitEvent)
+	if !ok {
+		t.Fatalf("expected submit event, got %T", evt)
+	}
+	if submit.Text != "h" {
+		t.Fatalf("submit carried wrong text: %q", submit.Text)
+	}
+	if got := updated.ContextHint(); !strings.Contains(got, "Enter send") {
+		t.Fatalf("submitting should keep composer help, got %q", got)
 	}
 }

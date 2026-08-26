@@ -31,13 +31,14 @@ type CancelMsg struct {
 // ActionBar inside the existing OverlayHost / WindowFrame shell.
 type Screen struct {
 	ui.Base
-	th      *theme.Theme
-	tokens  *ui.TokenSet
-	input   *overlayInput
-	actions *ui.ActionBar
-	title   string
-	refID   string
-	focus   func(ui.ComponentID)
+	th       *theme.Theme
+	tokens   *ui.TokenSet
+	input    *overlayInput
+	actions  *ui.ActionBar
+	title    string
+	refID    string
+	readOnly bool
+	focus    func(ui.ComponentID)
 }
 
 // New creates a closed text-overlay screen.
@@ -55,10 +56,25 @@ func New(th *theme.Theme) *Screen {
 }
 
 func (s *Screen) Open(refID, title, content string) {
+	s.open(refID, title, content, false)
+}
+
+// OpenReadOnly opens the overlay as a preview: editing keys are swallowed,
+// there is no Save action, and dismissal never persists anything. Used for
+// file-backed attachment previews where the source of truth lives on disk.
+func (s *Screen) OpenReadOnly(refID, title, content string) {
+	s.open(refID, title, content, true)
+}
+
+func (s *Screen) open(refID, title, content string, readOnly bool) {
 	s.refID = refID
 	s.title = title
+	s.readOnly = readOnly
 	s.input.area.SetValue(content)
+	s.rebuildActions()
 }
+
+func (s *Screen) ReadOnly() bool { return s.readOnly }
 
 func (s *Screen) Close() {
 	s.refID = ""
@@ -92,6 +108,16 @@ func (s *Screen) focusID(id ui.ComponentID) {
 }
 
 func (s *Screen) rebuildActions() {
+	if s.readOnly {
+		s.actions = ui.NewActionBar(ActionsID, s.tokens,
+			ui.ActionBarButton{
+				ID: ui.NewID(ActionsID, "cancel"), Label: "Close", Action: "textoverlay.cancel",
+				Variant: ui.VariantSecondary, Enabled: true,
+			},
+		)
+		s.actions.SetCancelAction("textoverlay.cancel")
+		return
+	}
 	s.actions = ui.NewActionBar(ActionsID, s.tokens,
 		ui.ActionBarButton{
 			ID: ui.NewID(ActionsID, "save"), Label: "Save", Action: "textoverlay.save",
@@ -133,6 +159,11 @@ func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return u
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
 	case "textoverlay.save":
+		if s.readOnly {
+			// Read-only previews never persist — the Save action doesn't
+			// even render, but a stale chord must stay inert too.
+			return ui.EventResult{Handled: true}
+		}
 		return s.save()
 	case "textoverlay.cancel":
 		return s.cancel()
@@ -199,6 +230,9 @@ func (o *overlayInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 			}
 			return o.owner.cancel()
 		case key.String() == "ctrl+s":
+			if o.owner.readOnly {
+				return ui.EventResult{Handled: true}
+			}
 			return o.owner.save()
 		case key.String() == "ctrl+c":
 			if o.area.HasActiveSelection() {
@@ -210,8 +244,24 @@ func (o *overlayInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 			o.owner.focusID(ActionsID)
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
+		if o.owner.readOnly && !isReadingKey(key) {
+			// Read-only preview: navigation and selection keys pass through,
+			// everything that mutates text is swallowed.
+			return ui.EventResult{Handled: true}
+		}
 	}
 	return o.area.Handle(ctx, evt)
+}
+
+// isReadingKey reports whether a key only moves the cursor or extends the
+// selection — the keys a read-only preview still honors.
+func isReadingKey(key tea.KeyPressMsg) bool {
+	switch key.Code {
+	case tea.KeyLeft, tea.KeyRight, tea.KeyUp, tea.KeyDown,
+		tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown:
+		return true
+	}
+	return false
 }
 
 func (o *overlayInput) Semantics() ui.Semantics       { return o.area.Semantics() }

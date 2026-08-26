@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"crude/provider"
 	"crude/sessiondb"
@@ -13,6 +14,97 @@ import (
 func (s *Session) SetYolo(enabled bool) {
 	s.yolo = enabled
 	s.logger.Info("SAFETY", "yolo", "enabled", enabled)
+}
+
+// HandleCompact force-compacts the conversation context on demand: older
+// history is folded into a <context_checkpoint> summary and the durable
+// store is rewritten with the compacted projection. It mirrors what
+// truncateMessages does automatically at send time, but against half the
+// model window so /compact always has headroom to reclaim below the
+// automatic threshold.
+func (s *Session) HandleCompact() ttypes.CompactResultMsg {
+	l := s.logger
+	l.Info("COMPACT", "manual_request")
+
+	// Drain in-flight async flushes first so a stale full-history write
+	// cannot land after our compacted rewrite. finalizeTurn releases
+	// msgsMu before spawning flushes, so waiting here cannot deadlock.
+	s.flushWg.Wait()
+
+	s.msgsMu.Lock()
+	if len(s.msgs) == 0 {
+		s.msgsMu.Unlock()
+		return ttypes.CompactResultMsg{Desc: "Nothing to compact yet."}
+	}
+
+	msgs := make([]provider.ChatMessage, len(s.msgs))
+	copy(msgs, s.msgs)
+
+	model := ""
+	if s.cfg != nil {
+		model = s.cfg.GetActiveDefaultCategory().Model
+	}
+	ctxWindow := provider.LookupContextWindow(model)
+	if ctxWindow <= 0 {
+		ctxWindow = 256000
+	}
+
+	before := len(msgs)
+	compacted := truncateMessages(msgs, ctxWindow/2, model)
+	after := len(compacted)
+	if after >= before {
+		s.msgsMu.Unlock()
+		l.Info("COMPACT", "already_compact", "history", before)
+		return ttypes.CompactResultMsg{Desc: "Context is already compact.", Before: before, After: after}
+	}
+
+	// compacted = [summary] + msgs[cutoff:]; keep parallel arrays aligned.
+	cutoff := before - (after - 1)
+	newTurns := make([]int, 0, after)
+	newMetas := make([]sessiondb.DisplayMeta, 0, after)
+	newCreatedAts := make([]int64, 0, after)
+	for i := cutoff; i < before; i++ {
+		turn := 0
+		if i < len(s.msgTurns) {
+			turn = s.msgTurns[i]
+		}
+		meta := sessiondb.DisplayMeta{}
+		if i < len(s.displayMetas) {
+			meta = s.displayMetas[i]
+		}
+		createdAt := time.Now().Unix()
+		if i < len(s.createdAts) {
+			createdAt = s.createdAts[i]
+		}
+		newTurns = append(newTurns, turn)
+		newMetas = append(newMetas, meta)
+		newCreatedAts = append(newCreatedAts, createdAt)
+	}
+
+	s.msgs = compacted
+	s.msgTurns = append([]int{0}, newTurns...)
+	s.displayMetas = append([]sessiondb.DisplayMeta{{DisplayRole: "user"}}, newMetas...)
+	s.createdAts = append([]int64{time.Now().Unix()}, newCreatedAts...)
+
+	// Buffered writes are superseded by the compacted projection.
+	s.writeMu.Lock()
+	s.writeBuf = nil
+	s.writeMu.Unlock()
+	hasDB := s.db != nil && len(s.msgs) > 0
+	if hasDB {
+		s.appendToWriteBuf(s.msgs, s.msgTurns, s.displayMetas)
+	}
+	s.msgsMu.Unlock()
+
+	if hasDB {
+		s.flushWriteBufSync()
+	}
+	l.Info("COMPACT", "manual_compact", "history", before, "projected", after, "window", ctxWindow)
+	return ttypes.CompactResultMsg{
+		Desc:   fmt.Sprintf("Compacted %d message(s) into a context checkpoint; %d recent message(s) retained.", cutoff, after-1),
+		Before: before,
+		After:  after,
+	}
 }
 
 func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
