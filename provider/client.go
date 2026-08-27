@@ -777,12 +777,25 @@ func newStreamEventReader(resp *http.Response, declared StreamFraming) (streamEv
 	case "application/x-ndjson", "application/json-seq":
 		return &ndjsonEventReader{reader: body}, false, nil
 	case "application/json":
+		// Some gateways label NDJSON streams "application/json". A second
+		// top-level value in the body wins over the header.
+		if peeked, _ := body.Peek(ndjsonSniffBytes); looksLikeNDJSON(peeked) {
+			return &ndjsonEventReader{reader: body}, false, nil
+		}
 		reader, err := newSingleJSONEventReader(body)
 		return reader, true, err
 	case "text/event-stream":
 		return &sseEventReader{reader: NewSSEReader(body)}, false, nil
 	}
 	if declared == FramingNDJSON {
+		// A server that ignored stream=true answers with one (possibly
+		// pretty-printed) document, which line framing would shred. Sniff:
+		// a single top-level value routes through the non-streaming schema.
+		peeked, _ := body.Peek(ndjsonSniffBytes)
+		if trimmed := bytes.TrimSpace(peeked); len(trimmed) > 0 && !looksLikeNDJSON(peeked) {
+			reader, err := newSingleJSONEventReader(body)
+			return reader, true, err
+		}
 		return &ndjsonEventReader{reader: body}, false, nil
 	}
 	peeked, _ := body.Peek(512)
@@ -792,6 +805,22 @@ func newStreamEventReader(resp *http.Response, declared StreamFraming) (streamEv
 		return reader, true, err
 	}
 	return &sseEventReader{reader: NewSSEReader(body)}, false, nil
+}
+
+// ndjsonSniffBytes bounds the body prefix inspected for framing detection.
+const ndjsonSniffBytes = 4096
+
+// looksLikeNDJSON reports whether the inspected prefix holds more than one
+// top-level JSON value. A first value that runs past the inspected prefix
+// (unexpected EOF) is assumed to be a single document; misrouted payloads
+// still recover through the decoders' own tolerance.
+func looksLikeNDJSON(peeked []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(peeked))
+	var value json.RawMessage
+	if err := dec.Decode(&value); err != nil {
+		return false
+	}
+	return len(bytes.TrimSpace(peeked[dec.InputOffset():])) > 0
 }
 
 // chatResponseDecoder adapts a protocol's non-streaming response decoder to

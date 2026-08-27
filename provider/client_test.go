@@ -255,6 +255,66 @@ func TestClientStreamSurfacesUnexpectedEOFAfterOutput(t *testing.T) {
 	}
 }
 
+func TestLooksLikeNDJSONDetectsMultipleValues(t *testing.T) {
+	cases := []struct {
+		name   string
+		peeked string
+		want   bool
+	}{
+		{"two values", `{"a":1}\n{"a":2}\n`, true},
+		{"value plus whitespace", `{"a":1}\n  \n`, true},
+		{"single value", `{"a":1}`, false},
+		{"pretty-printed single doc", `{\n\t"a": 1\n}`, false},
+		{"empty", "", false},
+	}
+	for _, tc := range cases {
+		if got := looksLikeNDJSON([]byte(tc.peeked)); got != tc.want {
+			t.Errorf("%s: looksLikeNDJSON(%q) = %v, want %v", tc.name, tc.peeked, got, tc.want)
+		}
+	}
+}
+
+func TestNewStreamEventReaderSniffsNDJSONUnderJSONHeader(t *testing.T) {
+	// A gateway that labels an NDJSON stream "application/json" must still
+	// stream per-line; trusting the header folds the turn into one decode.
+	body := io.NopCloser(strings.NewReader(`{"a":1}\n{"a":2}\n`))
+	resp := &http.Response{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body}
+	reader, _, err := newStreamEventReader(resp, FramingNDJSON)
+	if err != nil {
+		t.Fatalf("newStreamEventReader: %v", err)
+	}
+	if _, ok := reader.(*ndjsonEventReader); !ok {
+		t.Fatalf("reader = %T, want ndjsonEventReader", reader)
+	}
+}
+
+func TestNewStreamEventReaderKeepsSingleJSONUnderJSONHeader(t *testing.T) {
+	body := io.NopCloser(strings.NewReader(`{"a": 1}`))
+	resp := &http.Response{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body}
+	reader, _, err := newStreamEventReader(resp, FramingNDJSON)
+	if err != nil {
+		t.Fatalf("newStreamEventReader: %v", err)
+	}
+	if _, ok := reader.(*singleJSONEventReader); !ok {
+		t.Fatalf("reader = %T, want singleJSONEventReader", reader)
+	}
+}
+
+func TestNewStreamEventReaderPrettyDocUnderDeclaredNDJSON(t *testing.T) {
+	// A server that ignored stream=true answers with one pretty-printed
+	// document; line framing would shred it, so it routes to the single-JSON
+	// reader despite the declared NDJSON framing.
+	body := io.NopCloser(strings.NewReader("{\n\t\"model\": \"llama3\",\n\t\"done\": true\n}"))
+	resp := &http.Response{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body}
+	reader, _, err := newStreamEventReader(resp, FramingNDJSON)
+	if err != nil {
+		t.Fatalf("newStreamEventReader: %v", err)
+	}
+	if _, ok := reader.(*singleJSONEventReader); !ok {
+		t.Fatalf("reader = %T, want singleJSONEventReader", reader)
+	}
+}
+
 func TestClientStreamDecodesSingleJSONThroughResponseSchema(t *testing.T) {
 	// An Anthropic-style provider answers a streaming request with one JSON
 	// document. The payload follows the non-streaming schema, so it must be

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -106,15 +107,13 @@ func encodeOllamaMessages(messages []ChatMessage) ([]map[string]any, error) {
 			wire["tool_call_id"] = m.ToolCallID
 		}
 		if len(m.ToolCalls) > 0 {
-			calls := make([]openAIChatToolCallParam, 0, len(m.ToolCalls))
+			calls := make([]ollamaToolCallParam, 0, len(m.ToolCalls))
 			for _, call := range m.ToolCalls {
-				callType := call.Type
-				if callType == "" {
-					callType = "function"
-				}
-				calls = append(calls, openAIChatToolCallParam{
-					ID: call.ID, Type: callType, Function: call.Function,
+				calls = append(calls, ollamaToolCallParam{
+					ID: call.ID, Type: firstNonEmptyOllama(call.Type, "function"),
 				})
+				calls[len(calls)-1].Function.Name = call.Function.Name
+				calls[len(calls)-1].Function.Arguments = ollamaToolCallArgsRaw(call.Function.Arguments)
 			}
 			wire["tool_calls"] = calls
 		}
@@ -137,10 +136,10 @@ func dataURLToBase64(dataURL string) string {
 type ollamaChatChunk struct {
 	Model   string `json:"model"`
 	Message struct {
-		Role      string                    `json:"role"`
-		Content   string                    `json:"content"`
-		Thinking  string                    `json:"thinking"`
-		ToolCalls []openAIChatToolCallParam `json:"tool_calls"`
+		Role      string                `json:"role"`
+		Content   string                `json:"content"`
+		Thinking  string                `json:"thinking"`
+		ToolCalls []ollamaToolCallParam `json:"tool_calls"`
 	} `json:"message"`
 	DoneReason       string `json:"done_reason"`
 	Done             bool   `json:"done"`
@@ -151,9 +150,85 @@ type ollamaChatChunk struct {
 	Error            string `json:"error"`
 }
 
+// ollamaToolCallParam is Ollama's native tool-call wire shape. Unlike OpenAI,
+// arguments travel as a JSON object rather than a string; some gateways send
+// the OpenAI string form anyway, so both decode and the object form is
+// encoded.
+type ollamaToolCallParam struct {
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments,omitempty"`
+	} `json:"function"`
+}
+
+// ollamaToolCallArguments normalizes a tool call's arguments payload to the
+// internal string form: a quoted string decodes to its contents, any other
+// value keeps its raw JSON text.
+func ollamaToolCallArguments(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err == nil {
+			return s
+		}
+	}
+	return string(trimmed)
+}
+
+// ollamaToolCallArgsRaw converts internal string arguments to Ollama's object
+// form: valid JSON passes through, anything else degrades to a quoted string.
+func ollamaToolCallArgsRaw(args string) json.RawMessage {
+	trimmed := strings.TrimSpace(args)
+	if trimmed == "" {
+		return json.RawMessage("{}")
+	}
+	if json.Valid([]byte(trimmed)) && (trimmed[0] == '{' || trimmed[0] == '[') {
+		return json.RawMessage(trimmed)
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(encoded)
+}
+
+// ollamaToolCallsFromWire converts wire tool calls to the internal shape,
+// defaulting the type field the way OpenAI clients expect.
+func ollamaToolCallsFromWire(calls []ollamaToolCallParam) []ToolCall {
+	out := make([]ToolCall, 0, len(calls))
+	for _, tc := range calls {
+		out = append(out, ToolCall{
+			ID:   tc.ID,
+			Type: firstNonEmptyOllama(tc.Type, "function"),
+			Function: FunctionCall{
+				Name:      tc.Function.Name,
+				Arguments: ollamaToolCallArguments(tc.Function.Arguments),
+			},
+		})
+	}
+	return out
+}
+
 func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 	var chunk ollamaChatChunk
 	if err := json.Unmarshal(body, &chunk); err != nil {
+		// Gateways that label NDJSON streams "application/json" land whole
+		// chunk sequences here. When the body really is a chunk sequence,
+		// fold it — and surface the fold's own error (a chunk-level parse
+		// failure or an in-band error chunk) rather than the misleading
+		// "invalid character '{' after top-level value".
+		if looksLikeNDJSON(body) {
+			if merged, mergeErr := decodeOllamaNDJSON(body); mergeErr != nil {
+				return nil, mergeErr
+			} else {
+				return merged, nil
+			}
+		}
 		return nil, fmt.Errorf("unmarshal ollama response: %w", err)
 	}
 	if chunk.Error != "" {
@@ -170,15 +245,7 @@ func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 	if chunk.Message.Thinking != "" {
 		choice.Message.Reasoning = chunk.Message.Thinking
 	}
-	for _, tc := range chunk.Message.ToolCalls {
-		callType := tc.Type
-		if callType == "" {
-			callType = "function"
-		}
-		choice.Message.ToolCalls = append(choice.Message.ToolCalls, ToolCall{
-			ID: tc.ID, Type: callType, Function: tc.Function,
-		})
-	}
+	choice.Message.ToolCalls = ollamaToolCallsFromWire(chunk.Message.ToolCalls)
 	resp.Choices = []ChatChoice{choice}
 	prompt, completion := ollamaUsage(&chunk)
 	if prompt > 0 || completion > 0 {
@@ -193,6 +260,56 @@ func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 
 func (s *OllamaStandard) NewStreamDecoder() StreamDecoder {
 	return &ollamaStreamDecoder{}
+}
+
+// decodeOllamaNDJSON folds a newline-delimited sequence of chat chunks into
+// one non-streaming response: text and thinking concatenate, tool calls
+// accumulate, and the final done chunk supplies the finish reason and usage.
+// It backs DecodeResponse's tolerance for mislabeled NDJSON bodies.
+func decodeOllamaNDJSON(body []byte) (*ChatResponse, error) {
+	resp := &ChatResponse{}
+	choice := &ChatChoice{}
+	sawChunk := false
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var chunk ollamaChatChunk
+		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+			return nil, err
+		}
+		sawChunk = true
+		if chunk.Error != "" {
+			return nil, fmt.Errorf("ollama: %s", chunk.Error)
+		}
+		if chunk.Model != "" {
+			resp.Model = chunk.Model
+		}
+		choice.Message.Role = firstNonEmptyOllama(choice.Message.Role, chunk.Message.Role, "assistant")
+		choice.Message.Content = TextContent(choice.Message.Content.String() + chunk.Message.Content)
+		if chunk.Message.Thinking != "" {
+			choice.Message.Reasoning += chunk.Message.Thinking
+		}
+		choice.Message.ToolCalls = append(choice.Message.ToolCalls,
+			ollamaToolCallsFromWire(chunk.Message.ToolCalls)...)
+		if chunk.Done {
+			choice.FinishReason = ollamaFinishReason(chunk.DoneReason, chunk.Message.ToolCalls)
+			prompt, completion := ollamaUsage(&chunk)
+			if prompt > 0 || completion > 0 {
+				resp.Usage = &ChatUsage{
+					PromptTokens:     prompt,
+					CompletionTokens: completion,
+					TotalTokens:      prompt + completion,
+				}
+			}
+		}
+	}
+	if !sawChunk {
+		return nil, fmt.Errorf("ollama response contained no chunks")
+	}
+	resp.Choices = []ChatChoice{*choice}
+	return resp, nil
 }
 
 type ollamaStreamDecoder struct{}
@@ -213,16 +330,12 @@ func (d *ollamaStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 		ContentDelta:   chunk.Message.Content,
 		ReasoningDelta: chunk.Message.Thinking,
 	}
-	for _, tc := range chunk.Message.ToolCalls {
-		callType := tc.Type
-		if callType == "" {
-			callType = "function"
-		}
+	for _, call := range ollamaToolCallsFromWire(chunk.Message.ToolCalls) {
 		update.ToolCalls = append(update.ToolCalls, ToolCallDelta{
-			ID:        tc.ID,
-			Type:      callType,
-			Name:      tc.Function.Name,
-			Arguments: tc.Function.Arguments,
+			ID:        call.ID,
+			Type:      call.Type,
+			Name:      call.Function.Name,
+			Arguments: call.Function.Arguments,
 		})
 	}
 	if chunk.Done {
@@ -297,7 +410,7 @@ func (s *OllamaStandard) ContextWindow(modelID string) int {
 
 // ollamaFinishReason maps Ollama's done_reason to an OpenAI-style finish reason,
 // inferring from tool calls when the field is absent.
-func ollamaFinishReason(doneReason string, toolCalls []openAIChatToolCallParam) string {
+func ollamaFinishReason(doneReason string, toolCalls []ollamaToolCallParam) string {
 	if doneReason != "" {
 		return doneReason
 	}
