@@ -12,6 +12,8 @@ import (
 // from this list or extend the list, never invent an ad-hoc glyph:
 //
 //	FieldText, FieldPassword  free-form TextField; no indicator
+//	FieldTextArea             multi-line TextArea spanning Rows rows below
+//	                          the label; Enter inserts a newline, Tab exits
 //	FieldSelect               "▾" right-aligned when closed, "▴" when open
 //	FieldMultiSelect          "▾" right-aligned when closed, "▴" when open;
 //	                          option rows prefix "[x]"/"[ ]"
@@ -27,6 +29,7 @@ type FieldType int
 const (
 	FieldText FieldType = iota
 	FieldPassword
+	FieldTextArea
 	FieldSelect
 	FieldCycle
 	FieldToggle
@@ -152,6 +155,7 @@ type FieldState struct {
 	Validator     func(value FieldValue) []string
 	Target        string // for FieldNav: target page/focus ID
 	Button        bool   // for FieldNav: render as an inset boxed button in the control column instead of a full-width drill-in row
+	Rows          int    // for FieldTextArea: visible editor rows; 0 means the default
 }
 
 func (f *FieldState) HasErrors() bool { return len(f.Errors) > 0 }

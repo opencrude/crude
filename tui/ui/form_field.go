@@ -19,6 +19,7 @@ type FormField struct {
 	field   *FieldState
 	tokens  *TokenSet
 	control *TextField
+	area    *TextArea
 	labelW  int
 
 	selectOpen   bool
@@ -54,6 +55,12 @@ func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *
 			submitAction = "form.next"
 		}
 		ff.control.SetSubmitAction(submitAction)
+	}
+	if f.Type == FieldTextArea {
+		ff.area = NewTextArea(NewID(id, "input"), tokens, true)
+		ff.area.SetValue(f.Value.String())
+		ff.area.SetPlaceholder(f.Placeholder)
+		ff.area.SetReadOnly(f.ReadOnly)
 	}
 	if f.Type == FieldSelect || f.Type == FieldMultiSelect {
 		ff.selectList = NewList(NewID(id, "options"), tokens)
@@ -95,6 +102,9 @@ func (ff *FormField) SetTokens(ts *TokenSet) {
 	if ff.control != nil {
 		ff.control.SetTokens(ts)
 	}
+	if ff.area != nil {
+		ff.area.SetTokens(ts)
+	}
 	if ff.selectList != nil {
 		ff.selectList.SetTokens(ts)
 	}
@@ -115,6 +125,21 @@ func (ff *FormField) Control() *TextField {
 	return ff.control
 }
 
+// Area returns the retained multi-line editor for FieldTextArea fields, or nil.
+func (ff *FormField) Area() *TextArea { return ff.area }
+
+// MultiLine reports whether the field owns a multi-row editor, so form-level
+// Up/Down focus movement must reach the caret inside it first.
+func (ff *FormField) MultiLine() bool { return ff.field != nil && ff.field.Type == FieldTextArea }
+
+// areaRows returns the visible editor rows for the multi-line field.
+func (ff *FormField) areaRows() int {
+	if ff.field.Rows > 0 {
+		return ff.field.Rows
+	}
+	return 4
+}
+
 // Sync reflects programmatic FormModel changes without replacing the retained
 // editor or losing its selection/cursor when the value is unchanged.
 func (ff *FormField) Sync() {
@@ -125,6 +150,13 @@ func (ff *FormField) Sync() {
 		ff.control.SetPlaceholder(ff.field.Placeholder)
 		ff.control.SetReadOnly(ff.field.ReadOnly)
 		ff.control.SetDisabled(ff.field.Disabled)
+	}
+	if ff.area != nil && ff.area.Value() != ff.field.Value.String() {
+		ff.area.SetValue(ff.field.Value.String())
+	}
+	if ff.area != nil {
+		ff.area.SetPlaceholder(ff.field.Placeholder)
+		ff.area.SetReadOnly(ff.field.ReadOnly)
 	}
 	ff.syncSelectItems(ff.selectOpen)
 }
@@ -151,6 +183,9 @@ func (ff *FormField) height() int {
 		return 1
 	}
 	h := 1
+	if ff.field.Type == FieldTextArea {
+		h += ff.areaRows()
+	}
 	if ff.field.Description != "" {
 		h++
 	}
@@ -163,6 +198,11 @@ func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 	controlX, controlW := ff.controlX(r.W), ff.controlWidth(r.W)
 	if ff.control != nil {
 		ff.control.Layout(ctx, Rect{X: controlX + 1, Y: 0, W: max(1, controlW-2), H: 1})
+	}
+	if ff.area != nil {
+		// Multi-line editor sits below the label row and spans the form width.
+		indent := ff.labelIndent()
+		ff.area.Layout(ctx, Rect{X: indent + 1, Y: 1, W: max(1, r.W-indent-2), H: ff.areaRows()})
 	}
 }
 
@@ -311,6 +351,11 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	}
 	buf.WriteString(labelX, y, label, labelFG, rowBG, labelAttr)
 
+	if ff.field.Type == FieldTextArea {
+		ff.paintTextAreaBody(buf, x, y, r, ctx, valueFG, mutedFG, errorFG, focusedRow, rowBG, bg)
+		return
+	}
+
 	controlX := x + ff.controlX(r.W)
 	controlW := ff.controlWidth(r.W)
 	contentX := controlX + 1
@@ -352,6 +397,39 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 			break
 		}
 		buf.WriteString(contentX, y+line, rendering.TruncateVisual(err, contentW, "…"), errorFG, bg, 0)
+		line++
+	}
+}
+
+// paintTextAreaBody renders the multi-line editor below the label row plus
+// the description and validation errors underneath it.
+func (ff *FormField) paintTextAreaBody(buf *surface.CellBuffer, x, y int, r Rect, ctx PaintContext, valueFG, mutedFG, errorFG cell.Color, focusedRow bool, rowBG, bg cell.Color) {
+	if ff.area == nil {
+		return
+	}
+	indent := ff.labelIndent()
+	editorX := x + indent + 1
+	editorW := max(1, r.W-indent-2)
+	// Unfocused editors keep the raised field fill; focused editors keep the
+	// row highlight so the whole field reads as one surface.
+	editorBG := rowBG
+	if !focusedRow {
+		editorBG = ff.tokensColor(ColorPopupSubtleBg, bg)
+	}
+	FillRect(buf, 0, 0, Rect{X: editorX - 1, Y: y + 1, W: editorW + 2, H: ff.areaRows()}, cell.BlankCell(editorBG))
+	ff.area.SetBackgroundColor(editorBG)
+	ff.area.Paint(buf, x, y+1, ctx)
+
+	line := 1 + ff.areaRows()
+	if ff.field.Description != "" && line < r.H {
+		buf.WriteString(editorX, y+line, rendering.TruncateVisual(ff.field.Description, editorW, "…"), mutedFG, bg, 0)
+		line++
+	}
+	for _, err := range ff.field.Errors {
+		if line >= r.H {
+			break
+		}
+		buf.WriteString(editorX, y+line, rendering.TruncateVisual(err, editorW, "…"), errorFG, bg, 0)
 		line++
 	}
 }
@@ -607,6 +685,16 @@ func (ff *FormField) Handle(ctx EventContext, evt Event) EventResult {
 		result := ff.control.Handle(ff.controlContext(ctx), evt)
 		if ff.control.Value() != before {
 			ff.setValue(StringValue(ff.control.Value()))
+		}
+		return result
+	case FieldTextArea:
+		if ff.area == nil {
+			return EventResult{}
+		}
+		before := ff.area.Value()
+		result := ff.area.Handle(ff.controlContext(ctx), evt)
+		if ff.area.Value() != before {
+			ff.setValue(StringValue(ff.area.Value()))
 		}
 		return result
 	case FieldSelect, FieldMultiSelect:
@@ -1269,9 +1357,18 @@ func (ff *FormField) selectRows() int {
 }
 
 func (ff *FormField) controlContext(ctx EventContext) EventContext {
-	r := ff.control.Bounds()
-	ctx.LocalX -= r.X
-	ctx.LocalY -= r.Y
+	if ff.control != nil {
+		r := ff.control.Bounds()
+		ctx.LocalX -= r.X
+		ctx.LocalY -= r.Y
+		return ctx
+	}
+	if ff.area != nil {
+		r := ff.area.Bounds()
+		ctx.LocalX -= r.X
+		ctx.LocalY -= r.Y
+		return ctx
+	}
 	return ctx
 }
 
