@@ -1,13 +1,14 @@
 package provider
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestFetchModelsPaginatesAnthropic(t *testing.T) {
+func TestListModelsPaginatesAnthropic(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -17,6 +18,9 @@ func TestFetchModelsPaginatesAnthropic(t *testing.T) {
 		}
 		if r.URL.Query().Get("limit") != "1000" {
 			t.Errorf("limit = %q", r.URL.Query().Get("limit"))
+		}
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Query().Get("after_id") {
@@ -40,14 +44,48 @@ func TestFetchModelsPaginatesAnthropic(t *testing.T) {
 		ID: "anthropic", Name: "Anthropic", BaseURL: server.URL, APIKey: "key",
 		StandardName: "anthropic",
 	}
-	models, err := FetchModels(p)
+	client, err := p.Client()
 	if err != nil {
-		t.Fatalf("FetchModels: %v", err)
+		t.Fatalf("Client: %v", err)
+	}
+	models, err := client.ListModels(t.Context())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d", requests)
 	}
 	if len(models) != 2 || models[0].ID != "claude-a" || models[1].ID != "claude-b" {
 		t.Fatalf("models = %+v", models)
+	}
+}
+
+func TestListModelsMapsUnsupportedAndUnauthorized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("Authorization") {
+		case "Bearer unsupported":
+			http.Error(w, `{}`, http.StatusNotFound)
+		default:
+			http.Error(w, `{}`, http.StatusUnauthorized)
+		}
+	}))
+	defer server.Close()
+
+	unsupported := &Provider{ID: "x", BaseURL: server.URL, APIKey: "unsupported", StandardName: "openai"}
+	client, err := unsupported.Client()
+	if err != nil {
+		t.Fatalf("Client: %v", err)
+	}
+	if _, err := client.ListModels(t.Context()); !errors.Is(err, ErrModelsUnsupported) {
+		t.Fatalf("404 error = %v, want ErrModelsUnsupported", err)
+	}
+
+	unauthorized := &Provider{ID: "x", BaseURL: server.URL, APIKey: "bad", StandardName: "openai"}
+	client, err = unauthorized.Client()
+	if err != nil {
+		t.Fatalf("Client: %v", err)
+	}
+	if _, err := client.ListModels(t.Context()); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("401 error = %v, want ErrUnauthorized", err)
 	}
 }

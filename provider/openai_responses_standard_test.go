@@ -364,7 +364,7 @@ func TestOpenAIResponsesDecodesReasoningContent(t *testing.T) {
 }
 
 func TestOpenAIResponsesThinkingNoneIsExplicit(t *testing.T) {
-	extra := (&OpenAIResponsesStandard{}).ExtraBody("gpt-5.6", "none")
+	extra := (&OpenAIResponsesStandard{}).RequestExtras("gpt-5.6", "none")
 	reasoning := extra["reasoning"].(map[string]any)
 	if reasoning["effort"] != "none" {
 		t.Fatalf("reasoning = %#v", reasoning)

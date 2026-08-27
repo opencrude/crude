@@ -1,6 +1,8 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -210,7 +212,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		l.Warn("CONFIG", "save_blocked", "reason", "empty_api_key")
 		return fmt.Errorf("API key cannot be empty — settings not saved")
 	}
-	configuredProvider, err := providerForCategory(mainCat)
+	configuredProvider, err := s.cfg.providerForCategory(mainCat)
 	if err != nil {
 		return fmt.Errorf("invalid provider communication standard: %w", err)
 	}
@@ -436,7 +438,7 @@ func (s *Session) ResetSessionSettings() error {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 	main := s.cfg.GetActiveDefaultCategory()
-	configuredProvider, err := providerForCategory(main)
+	configuredProvider, err := s.cfg.providerForCategory(main)
 	if err != nil {
 		return err
 	}
@@ -501,6 +503,8 @@ func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) 
 				APIStandard: cfg.APIStandard, Model: cfg.Model,
 				ModelStandards: cloneProviderModelStandards(cfg.ModelStandards),
 				ThinkingEffort: cfg.ThinkingEffort,
+				OAuth:          cfg.OAuth,
+				Dialer:         cfg.Dialer,
 			}
 			continue
 		}
@@ -508,6 +512,8 @@ func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) 
 		existing.ProviderURL = cfg.ProviderURL
 		existing.APIStandard = cfg.APIStandard
 		existing.ModelStandards = cloneProviderModelStandards(cfg.ModelStandards)
+		existing.OAuth = cfg.OAuth
+		existing.Dialer = cfg.Dialer
 		s.workspaceCfg.Providers[id] = existing
 	}
 }
@@ -521,7 +527,7 @@ func (s *Session) rebuildEffectiveConfigLocked() {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 	main := s.cfg.GetActiveDefaultCategory()
-	configuredProvider, err := providerForCategory(main)
+	configuredProvider, err := s.cfg.providerForCategory(main)
 	if err != nil {
 		s.logger.Warn("PROVIDER", "invalid_standard", "standard", main.APIStandard, "error", err.Error())
 		return
@@ -532,57 +538,61 @@ func (s *Session) rebuildEffectiveConfigLocked() {
 func (s *Session) HandleFetchModels(providerID, baseURL, apiKey, standardID string) ([]ttypes.ModelEntry, error) {
 	l := s.logger
 	l.Info("MODEL", "fetch_begin", "provider", providerID)
-	p := provider.FromPreset(providerID, apiKey, baseURL)
-	if standardID != "" {
-		if err := p.SetStandardID(standardID); err != nil {
-			return nil, err
+	models, err := fetchProviderModels(providerID, baseURL, apiKey, standardID, func() (*provider.OAuthCredentials, *provider.DialSettings) {
+		if cfg := s.Config(); cfg != nil {
+			if pc, ok := cfg.Providers[providerID]; ok {
+				return pc.OAuth, pc.Dialer
+			}
 		}
-	}
-	// The ChatGPT subscription provider authenticates via OAuth, not an API
-	// key. Attach the stored credentials so the /models request carries the
-	// access token (and codex headers) instead of failing with "requires an
-	// API key".
-	if cfg := s.Config(); cfg != nil {
-		if pc, ok := cfg.Providers[providerID]; ok && pc.OAuth != nil {
-			p.SetOAuth(pc.OAuth)
-		}
-	}
-	models, err := provider.FetchModels(p)
+		return nil, nil
+	})
 	if err != nil {
 		l.Error("MODEL", "fetch_error", "provider", providerID, "error", err.Error())
 		return nil, err
 	}
-	l.Info("MODEL", "fetched", "provider", providerID, "count", len(models))
+	l.Info("MODEL", "fetch_ok", "provider", providerID, "count", len(models))
+	return ttypes.ModelEntriesFromInfos(models), nil
+}
 
-	// Model discovery must return as soon as the provider responds. The full
-	// models.dev catalog is loaded independently during session startup; doing
-	// another synchronous 6MB download here made the Settings dropdown appear
-	// stuck for up to 30 seconds after models had already arrived.
-	metas := provider.GetAllModelMetas()
-
-	entries := make([]ttypes.ModelEntry, len(models))
-	enriched := 0
-	for i, m := range models {
-		entry := ttypes.ModelEntry{
-			ID:            m.ID,
-			Name:          m.Name,
-			ContextWindow: m.ContextWindow,
+// fetchProviderModels resolves a provider from settings and lists its models
+// through the provider client. The stored lookup returns the saved OAuth
+// credentials (e.g. ChatGPT subscription) and dialer tuning so listing is
+// authenticated and transported exactly like chat traffic.
+func fetchProviderModels(providerID, baseURL, apiKey, standardID string, stored func() (*provider.OAuthCredentials, *provider.DialSettings)) ([]provider.ModelInfo, error) {
+	p := provider.FromPreset(providerID, apiKey, baseURL)
+	if standardID != "" {
+		if err := p.SetProtocolID(standardID); err != nil {
+			return nil, err
 		}
-		if meta := provider.LookupModelMeta(m.ID, metas); meta != nil {
-			if entry.ContextWindow == 0 {
-				entry.ContextWindow = meta.ContextWindow
-			}
-			entry.InputPrice = meta.InputPrice
-			entry.OutputPrice = meta.OutputPrice
-			entry.CacheReadPrice = meta.CacheReadPrice
-			entry.SupportsVision = meta.SupportsVision
-			entry.SupportsTools = meta.SupportsTools
-			entry.MaxOutput = meta.MaxOutput
-			entry.Attachment = meta.Attachment
-			enriched++
-		}
-		entries[i] = entry
 	}
-	l.Info("MODEL", "fetch_ok", "provider", providerID, "total", len(entries), "enriched", enriched)
-	return entries, nil
+	if stored != nil {
+		oauth, dialer := stored()
+		if oauth != nil {
+			p.SetOAuth(oauth)
+		}
+		if dialer != nil {
+			p.SetDialSettings(*dialer)
+		}
+	}
+	client, err := p.Client()
+	if err != nil {
+		return nil, err
+	}
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		switch {
+		case errors.Is(err, provider.ErrUnauthorized):
+			if p.OAuth() != nil {
+				return nil, fmt.Errorf("%s authentication failed — re-sign in with ChatGPT in Settings → Providers", p.Name)
+			}
+			if apiKey == "" {
+				return nil, fmt.Errorf("%s requires an API key to list models — enter one in Settings → Providers", p.Name)
+			}
+			return nil, fmt.Errorf("invalid API key for %s", p.Name)
+		case errors.Is(err, provider.ErrModelsUnsupported):
+			return nil, fmt.Errorf("models endpoint not supported by %s", p.Name)
+		}
+		return nil, err
+	}
+	return models, nil
 }

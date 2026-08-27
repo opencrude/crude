@@ -4,12 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 
 	"crude/logger"
 )
+
+// Register the built-in wire protocols.
+func init() {
+	RegisterProtocol(&OpenAIStandard{})
+	RegisterProtocol(&OpenAIResponsesStandard{})
+	RegisterProtocol(&AnthropicStandard{})
+	RegisterProtocol(&OllamaStandard{})
+	RegisterProtocol(&CodexStandard{})
+}
 
 var (
 	pkgLogger   *logger.Logger
@@ -31,115 +41,187 @@ func logIf(fn func(lg *logger.Logger)) {
 	}
 }
 
+// Provider is the configuration of one backend: identity, endpoint,
+// credentials, and transport tuning. It composes protocol (wire format) and
+// Client (transport) for the workflows; it holds no request logic itself.
 type Provider struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	BaseURL      string `json:"base_url"`
 	APIKey       string `json:"api_key"`
 	Model        string `json:"model"`
-	StandardName string `json:"standard,omitempty"`
+	StandardName string `json:"standard,omitempty"` // protocol ID; JSON key kept for stored configs
 
-	standard       APIStandard
+	dial           DialSettings
 	extraBody      map[string]any
-	extraHeaders   map[string]string
 	thinkingEffort string
 	oauth          *OAuthCredentials
+	sessionID      string
 }
 
+// StandardInfo describes a registered protocol for display purposes.
 type StandardInfo struct {
 	ID          string
 	Name        string
 	Description string
 }
 
-var standardInfos = []StandardInfo{
-	{ID: "openai-responses", Name: "OpenAI Responses", Description: "Native Responses API with reasoning-item continuity."},
-	{ID: "openai", Name: "OpenAI Chat Completions", Description: "Chat Completions and compatible gateways."},
-	{ID: "anthropic", Name: "Anthropic Messages", Description: "Native Claude Messages with signed thinking blocks."},
-	{ID: "ollama", Name: "Ollama", Description: "Native Ollama /api/chat protocol (local + cloud)."},
-	{ID: "codex", Name: "ChatGPT Codex", Description: "ChatGPT-subscription Responses backend (Sign in with ChatGPT)."},
-}
-
+// StandardList returns every registered protocol ordered by ID.
 func StandardList() []StandardInfo {
-	return append([]StandardInfo(nil), standardInfos...)
-}
-
-func (p *Provider) SetStandard(s APIStandard) {
-	p.standard = s
-	p.StandardName = ""
-	if s != nil {
-		p.StandardName = s.ID()
+	out := make([]StandardInfo, 0)
+	for _, proto := range ProtocolList() {
+		info := proto.Info()
+		out = append(out, StandardInfo{ID: info.ID, Name: info.Name, Description: info.Description})
 	}
+	return out
 }
 
-func (p *Provider) SetStandardID(id string) error {
-	canonical, ok := canonicalStandardID(id)
+// Protocol resolves the wire protocol for this provider: the configured
+// protocol ID, else the preset default, else OpenAI Chat Completions.
+func (p *Provider) Protocol() Protocol {
+	if p.StandardName != "" {
+		if proto, ok := ProtocolByID(p.StandardName); ok {
+			return proto
+		}
+	}
+	if preset := GetPreset(p.ID); preset != nil {
+		if proto, ok := ProtocolByID(preset.StandardID); ok {
+			return proto
+		}
+	}
+	proto, _ := ProtocolByID("openai")
+	return proto
+}
+
+// ProtocolID returns the resolved protocol identifier.
+func (p *Provider) ProtocolID() string {
+	if proto := p.Protocol(); proto != nil {
+		return proto.Info().ID
+	}
+	return ""
+}
+
+// SetProtocolID configures the wire protocol by registry ID (aliases
+// accepted).
+func (p *Provider) SetProtocolID(id string) error {
+	canonical, ok := canonicalProtocolID(id)
 	if !ok {
-		return fmt.Errorf("provider: unknown API standard %q", id)
+		return fmt.Errorf("provider: unknown API protocol %q", id)
 	}
-	p.standard = standardByID(canonical)
 	p.StandardName = canonical
 	return nil
 }
 
-func DefaultStandardID(providerID string) string {
+// SetStandardID is an alias of SetProtocolID kept for configuration paths
+// that speak of "API standards".
+func (p *Provider) SetStandardID(id string) error { return p.SetProtocolID(id) }
+
+// DefaultProtocolID returns the default protocol for a provider preset.
+func DefaultProtocolID(providerID string) string {
 	if preset := GetPreset(providerID); preset != nil {
-		if canonical, ok := canonicalStandardID(preset.StandardID); ok {
+		if canonical, ok := canonicalProtocolID(preset.StandardID); ok {
 			return canonical
 		}
 	}
 	return "openai"
 }
-func (p *Provider) StandardID() string {
-	return p.Standard().ID()
-}
-func (p *Provider) Standard() APIStandard {
-	if p.StandardName != "" {
-		if p.standard != nil && p.standard.ID() == p.StandardName {
-			return p.standard
-		}
-		return standardByID(p.StandardName)
-	}
-	if p.standard != nil {
-		return p.standard
-	}
-	standardID := ""
-	if preset := GetPreset(p.ID); preset != nil {
-		standardID = preset.StandardID
-	}
-	return standardByID(standardID)
-}
+
+// DefaultStandardID is an alias of DefaultProtocolID.
+func DefaultStandardID(providerID string) string { return DefaultProtocolID(providerID) }
+
+// StandardID returns the resolved protocol identifier.
+func (p *Provider) StandardID() string { return p.ProtocolID() }
 
 func (p *Provider) SetExtraBody(extra map[string]any) { p.extraBody = cloneAnyMap(extra) }
 func (p *Provider) ExtraBody() map[string]any         { return cloneAnyMap(p.extraBody) }
 func (p *Provider) SetThinkingEffort(e string)        { p.thinkingEffort = e }
 func (p *Provider) ThinkingEffort() string            { return p.thinkingEffort }
 
-func (p *Provider) ChatEndpoint() string {
-	return p.Standard().ChatEndpoint(p.BaseURL)
-}
+// SetDialSettings configures the transport tuning used by clients built
+// from this provider.
+func (p *Provider) SetDialSettings(settings DialSettings) { p.dial = settings }
 
-func (p *Provider) ModelsEndpoint() string {
-	return p.Standard().ModelsEndpoint(p.BaseURL)
-}
+// DialSettings returns the configured transport tuning.
+func (p *Provider) DialSettings() DialSettings { return p.dial }
 
-func (p *Provider) Auth() (header, value string) {
-	return p.Standard().Auth(p.effectiveAPIKey())
-}
-
-func (p *Provider) Headers() map[string]string {
-	headers := p.Standard().Headers(p.effectiveAPIKey())
-	out := make(map[string]string, len(headers)+len(p.extraHeaders))
-	for key, value := range headers {
-		out[key] = value
+// Client builds a transport client for this provider. Every call shares the
+// provider's current credentials; OAuth tokens are refreshed by the header
+// source before each attempt as needed.
+func (p *Provider) Client(opts ...ClientOption) (*Client, error) {
+	proto := p.Protocol()
+	if proto == nil {
+		return nil, fmt.Errorf("provider %s: no protocol registered", p.ID)
 	}
-	for key, value := range p.extraHeaders {
-		out[key] = value
+	all := append([]ClientOption{
+		WithRequestExtras(p.requestExtras()),
+		WithHeaderSource(p.headerSource(proto)),
+	}, opts...)
+	return NewClient(proto, p.BaseURL, p.effectiveAPIKey(), p.dial.resolve(), all...)
+}
+
+// requestExtras merges the protocol-derived extras with provider extras;
+// provider extras win.
+func (p *Provider) requestExtras() map[string]any {
+	proto := p.Protocol()
+	merged := map[string]any{}
+	if re, ok := proto.(RequestExtras); ok {
+		for key, value := range re.RequestExtras(p.Model, p.thinkingEffort) {
+			merged[key] = value
+		}
 	}
-	if len(out) == 0 {
+	for key, value := range p.extraBody {
+		merged[key] = cloneAnyValue(value)
+	}
+	if len(merged) == 0 {
 		return nil
 	}
-	return out
+	return merged
+}
+
+// headerSource resolves the complete request header set per attempt:
+// static protocol headers, credentials (refreshing OAuth when due),
+// per-session headers for protocols that require them.
+func (p *Provider) headerSource(proto Protocol) func(ctx context.Context) (http.Header, error) {
+	return func(ctx context.Context) (http.Header, error) {
+		if err := p.EnsureAuth(ctx); err != nil {
+			return nil, fmt.Errorf("refresh oauth token: %w", err)
+		}
+		headers := protocolHeaders(proto)
+		if key := p.effectiveAPIKey(); key != "" {
+			if pa, ok := proto.(ProtocolAuth); ok {
+				for key, values := range pa.AuthHeaders(key) {
+					for _, value := range values {
+						headers.Set(key, value)
+					}
+				}
+			} else {
+				headers.Set("Authorization", "Bearer "+key)
+			}
+		}
+		if ss, ok := proto.(SessionScope); ok {
+			if p.sessionID == "" {
+				p.sessionID = newSessionUUID()
+			}
+			for key, values := range ss.SessionHeaders(p.authContext(), p.sessionID) {
+				for _, value := range values {
+					headers.Set(key, value)
+				}
+			}
+		}
+		return headers, nil
+	}
+}
+
+// RequestHeaders resolves the complete header set a request from this
+// provider carries, refreshing OAuth when due. The transport calls the
+// header source directly per attempt; this exists for diagnostics and tests.
+func (p *Provider) RequestHeaders(ctx context.Context) (http.Header, error) {
+	return p.headerSource(p.Protocol())(ctx)
+}
+
+// authContext resolves the credentials passed to protocol capabilities.
+func (p *Provider) authContext() AuthContext {
+	return AuthContext{APIKey: p.effectiveAPIKey(), OAuth: p.oauth}
 }
 
 // effectiveAPIKey returns the credential used as the bearer: the OAuth access
@@ -152,37 +234,10 @@ func (p *Provider) effectiveAPIKey() string {
 	return p.APIKey
 }
 
-// SetOAuth attaches OAuth credentials (from a Sign-in with ChatGPT flow) to the
-// provider. For the codex standard it also installs the per-session headers the
-// ChatGPT-subscription backend requires: originator, openai-beta,
-// chatgpt-account-id, and stable session-id / thread-id values.
+// SetOAuth attaches OAuth credentials (from a Sign-in with ChatGPT flow) to
+// the provider.
 func (p *Provider) SetOAuth(creds *OAuthCredentials) {
-	if creds == nil {
-		p.oauth = nil
-		return
-	}
 	p.oauth = creds
-	if p.StandardID() == "codex" {
-		p.applyCodexHeaders()
-	}
-}
-
-func (p *Provider) applyCodexHeaders() {
-	if p.oauth == nil {
-		return
-	}
-	sessionID := newSessionUUID()
-	hdrs := map[string]string{
-		"originator":  openAIOAuthOrigin,
-		"openai-beta": "responses=experimental",
-		"session-id":  sessionID,
-		"thread-id":   sessionID,
-		"User-Agent":  "crude/" + codexClientVersion,
-	}
-	if p.oauth.AccountID != "" {
-		hdrs["chatgpt-account-id"] = p.oauth.AccountID
-	}
-	p.extraHeaders = hdrs
 }
 
 // OAuth returns the stored OAuth credentials, or nil if none are set.
@@ -217,53 +272,21 @@ func (p *Provider) EnsureAuth(ctx context.Context) error {
 	if creds.AccountID != "" {
 		p.oauth.AccountID = creds.AccountID
 	}
-	if p.StandardID() == "codex" {
-		p.applyCodexHeaders()
-	}
 	return nil
 }
 
-func (p *Provider) EncodeRequest(req *ChatRequest) ([]byte, error) {
-	return p.Standard().EncodeRequest(req)
-}
-
-func (p *Provider) DecodeResponse(body []byte) (*ChatResponse, error) {
-	return p.Standard().DecodeResponse(body)
-}
-
-func (p *Provider) DecodeStreamChunk(data string) (*ChatResponse, error) {
-	return p.Standard().DecodeStreamChunk(data)
-}
-
-func (p *Provider) NewStreamDecoder() StreamDecoder {
-	return p.Standard().NewStreamDecoder()
-}
-
-func (p *Provider) DecodeModels(body []byte) ([]ModelInfo, error) {
-	return p.Standard().DecodeModels(body)
-}
-
-func (p *Provider) ContextWindow() int {
-	return p.Standard().ContextWindow(p.Model)
-}
-
-func (p *Provider) BuildExtraBody() map[string]any {
-	std := p.Standard()
-	base := std.ExtraBody(p.Model, p.thinkingEffort)
-	if p.extraBody != nil {
-		if base == nil {
-			base = make(map[string]any)
-		}
-		for k, v := range p.extraBody {
-			base[k] = cloneAnyValue(v)
-		}
+// ContextWindow returns the protocol's known context window for the model,
+// or 0 when unknown.
+func (p *Provider) ContextWindow(modelID string) int {
+	if meta, ok := p.Protocol().(ProtocolMetadata); ok {
+		return meta.ContextWindow(modelID)
 	}
-	return base
+	return 0
 }
 
 func (p *Provider) Validate() error {
-	if p.StandardName != "" && !isKnownStandardID(p.StandardName) {
-		return fmt.Errorf("provider: unknown API standard %q", p.StandardName)
+	if p.StandardName != "" && !isKnownProtocolID(p.StandardName) {
+		return fmt.Errorf("provider: unknown API protocol %q", p.StandardName)
 	}
 	if strings.TrimSpace(p.BaseURL) == "" {
 		return fmt.Errorf("provider: base URL is required")
@@ -292,7 +315,7 @@ var presets = []Preset{
 		ID:         "openrouter",
 		Name:       "OpenRouter",
 		BaseURL:    "https://openrouter.ai/api/v1",
-		HelpText:   "Access 200+ models. Free tier available. openrouter.ai",
+		HelpText:   "API keys: openrouter.ai/keys",
 		StandardID: "openai",
 		ExtraBody:  map[string]any{"include_reasoning": true},
 	},
@@ -300,7 +323,7 @@ var presets = []Preset{
 		ID:         "openai",
 		Name:       "OpenAI",
 		BaseURL:    "https://api.openai.com/v1",
-		HelpText:   "Native Responses API. platform.openai.com",
+		HelpText:   "API keys: platform.openai.com/api-keys",
 		StandardID: "openai-responses",
 	},
 	{
@@ -314,98 +337,98 @@ var presets = []Preset{
 		ID:         "anthropic",
 		Name:       "Anthropic",
 		BaseURL:    "https://api.anthropic.com/v1",
-		HelpText:   "Claude models. console.anthropic.com",
+		HelpText:   "API keys: console.anthropic.com",
 		StandardID: "anthropic",
 	},
 	{
 		ID:         "google",
 		Name:       "Google AI",
 		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai",
-		HelpText:   "Gemini models. aistudio.google.com",
+		HelpText:   "API keys: aistudio.google.com/apikey",
 		StandardID: "openai",
 	},
 	{
 		ID:         "groq",
 		Name:       "Groq",
 		BaseURL:    "https://api.groq.com/openai/v1",
-		HelpText:   "Fast inference. Free tier. console.groq.com",
+		HelpText:   "API keys: console.groq.com/keys",
 		StandardID: "openai",
 	},
 	{
 		ID:         "together",
 		Name:       "Together AI",
 		BaseURL:    "https://api.together.xyz/v1",
-		HelpText:   "Open models. together.ai",
+		HelpText:   "API keys: api.together.ai/settings/api-keys",
 		StandardID: "openai",
 	},
 	{
 		ID:         "deepseek",
 		Name:       "DeepSeek",
 		BaseURL:    "https://api.deepseek.com/v1",
-		HelpText:   "DeepSeek models. platform.deepseek.com",
+		HelpText:   "API keys: platform.deepseek.com/api_keys",
 		StandardID: "openai",
 	},
 	{
 		ID:         "mistral",
 		Name:       "Mistral",
 		BaseURL:    "https://api.mistral.ai/v1",
-		HelpText:   "Mistral models. console.mistral.ai",
+		HelpText:   "API keys: console.mistral.ai/api-keys",
 		StandardID: "openai",
 	},
 	{
 		ID:         "ollama",
 		Name:       "Ollama (local)",
 		BaseURL:    "http://localhost:11434/v1",
-		HelpText:   "Local models. No API key needed. ollama.com",
+		HelpText:   "Local models. No API key needed.",
 		StandardID: "openai",
 	},
 	{
 		ID:         "alibaba",
 		Name:       "Alibaba",
 		BaseURL:    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-		HelpText:   "Qwen models. dashscope.aliyun.com",
+		HelpText:   "API keys: dashscope.console.aliyun.com/apiKey",
 		StandardID: "openai",
 	},
 	{
 		ID:         "opencode-zen",
 		Name:       "OpenCode Zen",
 		BaseURL:    "https://opencode.ai/zen/v1",
-		HelpText:   "Curated models by OpenCode team. opencode.ai/zen",
+		HelpText:   "API keys: opencode.ai/zen",
 		StandardID: "openai",
 	},
 	{
 		ID:         "opencode-go",
 		Name:       "OpenCode Go",
 		BaseURL:    "https://opencode.ai/zen/go/v1",
-		HelpText:   "Low-cost subscription for open coding models. $5/mo first month, $10/mo after. opencode.ai/go",
+		HelpText:   "Subscription models. opencode.ai/go",
 		StandardID: "openai",
 	},
 	{
 		ID:         "wafer",
 		Name:       "Wafer AI",
 		BaseURL:    "https://pass.wafer.ai/v1",
-		HelpText:   "Fast open-source models: Qwen3.5-397B-A17B, GLM-5.1. wafer.ai/pass",
+		HelpText:   "API keys: wafer.ai/pass",
 		StandardID: "openai",
 	},
 	{
 		ID:         "crof",
 		Name:       "Crof AI",
 		BaseURL:    "https://crof.ai/v1",
-		HelpText:   "Shitty and useless lobotomized models. crof.ai/",
+		HelpText:   "API keys: crof.ai",
 		StandardID: "openai",
 	},
 	{
 		ID:         "ollama-cloud",
 		Name:       "Ollama Cloud",
 		BaseURL:    "https://ollama.com/api",
-		HelpText:   "Hosted Ollama models (native /api/chat). API key at ollama.com/settings/keys",
+		HelpText:   "Hosted Ollama models. API keys: ollama.com/settings/keys",
 		StandardID: "ollama",
 	},
 	{
 		ID:         "synthetic",
 		Name:       "Synthetic",
 		BaseURL:    "https://api.synthetic.new/openai/v1",
-		HelpText:   "GLM & Kimi models via syn: aliases. dev.synthetic.new",
+		HelpText:   "API keys: synthetic.new",
 		StandardID: "openai",
 	},
 	{
@@ -442,44 +465,9 @@ func GetPreset(id string) *Preset {
 	return nil
 }
 
-func standardByID(id string) APIStandard {
-	switch id {
-	case "openai", "openai-chat":
-		return &OpenAIStandard{}
-	case "openai-responses", "responses":
-		return &OpenAIResponsesStandard{}
-	case "anthropic":
-		return &AnthropicStandard{}
-	case "ollama":
-		return &OllamaStandard{}
-	case "codex":
-		return &CodexStandard{}
-	default:
-		return &OpenAIStandard{}
-	}
-}
-
-func isKnownStandardID(id string) bool {
-	_, ok := canonicalStandardID(id)
-	return ok
-}
-
-func canonicalStandardID(id string) (string, bool) {
-	switch id {
-	case "openai", "openai-chat", "openai-responses", "responses", "anthropic", "ollama", "codex":
-		switch id {
-		case "openai-chat":
-			return "openai", true
-		case "responses":
-			return "openai-responses", true
-		default:
-			return id, true
-		}
-	default:
-		return "", false
-	}
-}
-
+// FromPreset builds a Provider from a preset, overriding the base URL when
+// a custom one is configured. The preset's protocol is applied as the
+// default wire format.
 func FromPreset(presetID, apiKey, customBaseURL string) *Provider {
 	preset := GetPreset(presetID)
 	if preset == nil {
@@ -500,7 +488,6 @@ func FromPreset(presetID, apiKey, customBaseURL string) *Provider {
 		BaseURL:      baseURL,
 		APIKey:       apiKey,
 		StandardName: preset.StandardID,
-		standard:     standardByID(preset.StandardID),
 	}
 	if len(preset.ExtraBody) > 0 {
 		p.extraBody = make(map[string]any)

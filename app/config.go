@@ -93,6 +93,7 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 				ModelStandards: cloneStringMap(p.ModelStandards),
 				ThinkingEffort: p.ThinkingEffort,
 				OAuth:          cloneOAuth(p.OAuth),
+				Dialer:         cloneDial(p.Dialer),
 			}
 		}
 	}
@@ -173,6 +174,9 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 			// OAuth tokens: replace when present, clear when absent so a sign-out
 			// (nil) is not silently swallowed by the non-empty-only merge above.
 			prev.OAuth = cloneOAuth(p.OAuth)
+			// Dialer: replace when present, clear when absent (same semantics as
+			// OAuth — an explicit reset to defaults must survive the merge).
+			prev.Dialer = cloneDial(p.Dialer)
 			fc.Providers[id] = prev
 		}
 	}
@@ -192,6 +196,16 @@ func cloneStringMap(src map[string]string) map[string]string {
 // cloneOAuth returns a deep-enough copy of OAuth credentials (all fields are
 // value types) so config layers never alias the same token struct.
 func cloneOAuth(src *provider.OAuthCredentials) *provider.OAuthCredentials {
+	if src == nil {
+		return nil
+	}
+	dup := *src
+	return &dup
+}
+
+// cloneDial copies user-tunable transport settings so config layers never
+// alias the same dialer struct.
+func cloneDial(src *provider.DialSettings) *provider.DialSettings {
 	if src == nil {
 		return nil
 	}

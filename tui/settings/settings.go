@@ -3,6 +3,7 @@ package settings
 import (
 	"fmt"
 	"image/color"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -270,7 +271,112 @@ func (m *Model) buildProvidersForm() *ui.FormModel {
 			"Wire protocol used by this provider.",
 		),
 	)
+	fields = append(fields, dialerFields(cfg.Dialer)...)
 	return formModel(fields...)
+}
+
+// Dialer field IDs and the value ladders shown in the providers form. Every
+// ladder leads with "Default", which persists nothing (0 = built-in default).
+const (
+	fieldDialTimeout  = "dial-request-timeout"
+	fieldDialConnect  = "dial-connect-timeout"
+	fieldDialAttempts = "dial-max-attempts"
+	fieldDialBackoff  = "dial-max-backoff"
+)
+
+var (
+	dialTimeoutChoices  = []string{"Default", "30s", "60s", "120s", "300s", "600s"}
+	dialConnectChoices  = []string{"Default", "5s", "10s", "30s", "60s"}
+	dialAttemptsChoices = []string{"Default", "1", "2", "3", "5", "10"}
+	dialBackoffChoices  = []string{"Default", "15s", "30s", "60s", "120s", "300s"}
+)
+
+// dialerFields builds the transport-tuning rows for one provider. A nil dialer
+// (or all-Default rows) means the built-in transport defaults apply.
+func dialerFields(dialer *provider.DialSettings) []*ui.FieldState {
+	dialer = dialerValue(dialer)
+	return []*ui.FieldState{
+		ui.SeparatorFieldState("dialer", "Connection tuning"),
+		ui.CycleFieldState(fieldDialTimeout, "Request timeout", dialTimeoutChoices,
+			dialSecondsChoice(dialer.RequestTimeoutSeconds),
+			"Overall cap per request, including streaming. Default keeps streams open until the model finishes."),
+		ui.CycleFieldState(fieldDialConnect, "Connect timeout", dialConnectChoices,
+			dialSecondsChoice(dialer.ConnectTimeoutSeconds),
+			"Budget for establishing each connection (TCP + TLS)."),
+		ui.CycleFieldState(fieldDialAttempts, "Max attempts", dialAttemptsChoices,
+			dialAttemptsChoice(dialer.MaxAttempts),
+			"Tries per request, including the first. Failed attempts back off exponentially."),
+		ui.CycleFieldState(fieldDialBackoff, "Max backoff", dialBackoffChoices,
+			dialSecondsChoice(dialer.MaxBackoffSeconds),
+			"Upper bound on the exponential retry delay between attempts."),
+	}
+}
+
+// dialerValue returns a non-nil view of the stored dialer so field rendering
+// never needs nil checks.
+func dialerValue(dialer *provider.DialSettings) *provider.DialSettings {
+	if dialer == nil {
+		return &provider.DialSettings{}
+	}
+	return dialer
+}
+
+// dialSecondsChoice renders a seconds setting as its ladder label.
+func dialSecondsChoice(seconds int) string {
+	if seconds <= 0 {
+		return "Default"
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
+
+// dialAttemptsChoice renders the attempts setting as its ladder label.
+func dialAttemptsChoice(attempts int) string {
+	if attempts <= 0 {
+		return "Default"
+	}
+	return strconv.Itoa(attempts)
+}
+
+// dialSecondsFromChoice parses a timeout ladder label into seconds; 0 means
+// the built-in default.
+func dialSecondsFromChoice(choice string) int {
+	if choice == "" || choice == "Default" {
+		return 0
+	}
+	seconds, err := strconv.Atoi(strings.TrimSuffix(choice, "s"))
+	if err != nil {
+		return 0
+	}
+	return seconds
+}
+
+// dialAttemptsFromChoice parses the attempts ladder label; 0 means the
+// built-in default.
+func dialAttemptsFromChoice(choice string) int {
+	if choice == "" || choice == "Default" {
+		return 0
+	}
+	attempts, err := strconv.Atoi(choice)
+	if err != nil {
+		return 0
+	}
+	return attempts
+}
+
+// dialerFromForm folds the four dialer rows back into persisted settings.
+// When every row is Default the dialer is stored as nil — defaults, not a
+// frozen copy of today's defaults.
+func dialerFromForm(timeout, connect, attempts, backoff string) *provider.DialSettings {
+	dialer := provider.DialSettings{
+		RequestTimeoutSeconds: dialSecondsFromChoice(timeout),
+		ConnectTimeoutSeconds: dialSecondsFromChoice(connect),
+		MaxAttempts:           dialAttemptsFromChoice(attempts),
+		MaxBackoffSeconds:     dialSecondsFromChoice(backoff),
+	}
+	if dialer == (provider.DialSettings{}) {
+		return nil
+	}
+	return &dialer
 }
 
 // chatgptAuthFields builds the OAuth status + sign-in/sign-out rows shown in
@@ -862,6 +968,12 @@ func (m *Model) storeProviderForm(providerID string) {
 	cfg.APIKey = m.value(catProviders, fieldAPIKey)
 	cfg.ProviderURL = m.value(catProviders, fieldBaseURL)
 	cfg.APIStandard = m.value(catProviders, fieldAPIStandard)
+	cfg.Dialer = dialerFromForm(
+		m.value(catProviders, fieldDialTimeout),
+		m.value(catProviders, fieldDialConnect),
+		m.value(catProviders, fieldDialAttempts),
+		m.value(catProviders, fieldDialBackoff),
+	)
 	m.providers[providerID] = cfg
 }
 

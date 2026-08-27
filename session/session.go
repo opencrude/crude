@@ -147,7 +147,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	workspaceCfg := copyConfig(cfg)
 	cfg = copyConfig(cfg)
 	mainCat := cfg.GetActiveDefaultCategory()
-	p, err := providerForCategory(mainCat)
+	p, err := cfg.providerForCategory(mainCat)
 	if err != nil {
 		return nil, fmt.Errorf("provider standard: %w", err)
 	}

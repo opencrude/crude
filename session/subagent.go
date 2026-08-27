@@ -552,6 +552,9 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	if resolvedOAuth != nil {
 		p.SetOAuth(resolvedOAuth)
 	}
+	if dialer := cfg.dialerFor(resolvedProvider); dialer != nil {
+		p.SetDialSettings(*dialer)
+	}
 	if resolvedThinkingEffort != "" {
 		p.SetThinkingEffort(resolvedThinkingEffort)
 	}

@@ -309,6 +309,33 @@ type ModelEntry struct {
 	Attachment     bool
 }
 
+// ModelEntriesFromInfos converts provider model infos into UI model entries,
+// enriching each with the cached models.dev metadata (pricing, context
+// window, capabilities). Context window from the wire wins over the catalog.
+func ModelEntriesFromInfos(models []provider.ModelInfo) []ModelEntry {
+	entries := make([]ModelEntry, 0, len(models))
+	metas := provider.GetAllModelMetas()
+	for _, model := range models {
+		entry := ModelEntry{
+			ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow,
+		}
+		if meta := provider.LookupModelMeta(model.ID, metas); meta != nil {
+			if entry.ContextWindow == 0 {
+				entry.ContextWindow = meta.ContextWindow
+			}
+			entry.InputPrice = meta.InputPrice
+			entry.OutputPrice = meta.OutputPrice
+			entry.CacheReadPrice = meta.CacheReadPrice
+			entry.SupportsVision = meta.SupportsVision
+			entry.SupportsTools = meta.SupportsTools
+			entry.MaxOutput = meta.MaxOutput
+			entry.Attachment = meta.Attachment
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
 type ProviderConfig struct {
 	APIKey         string                     `json:"api_key,omitempty"`
 	ProviderURL    string                     `json:"provider_url,omitempty"`
@@ -317,6 +344,8 @@ type ProviderConfig struct {
 	ModelStandards map[string]string          `json:"model_standards,omitempty"`
 	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
 	OAuth          *provider.OAuthCredentials `json:"oauth,omitempty"`
+	// Dialer carries user-tunable transport settings. nil means defaults.
+	Dialer *provider.DialSettings `json:"dialer,omitempty"`
 }
 
 type ProviderPreset struct {

@@ -105,24 +105,18 @@ func TestFromPreset_Valid(t *testing.T) {
 
 func TestNativePresetStandards(t *testing.T) {
 	openAI := FromPreset("openai", "sk-test", "")
-	if got := openAI.StandardID(); got != "openai-responses" {
-		t.Fatalf("OpenAI standard = %q", got)
-	}
-	if got := openAI.ChatEndpoint(); got != "https://api.openai.com/v1/responses" {
-		t.Fatalf("OpenAI endpoint = %q", got)
+	if got := openAI.ProtocolID(); got != "openai-responses" {
+		t.Fatalf("OpenAI protocol = %q", got)
 	}
 
 	anthropic := FromPreset("anthropic", "sk-test", "")
-	if got := anthropic.StandardID(); got != "anthropic" {
-		t.Fatalf("Anthropic standard = %q", got)
-	}
-	if got := anthropic.ChatEndpoint(); got != "https://api.anthropic.com/v1/messages" {
-		t.Fatalf("Anthropic endpoint = %q", got)
+	if got := anthropic.ProtocolID(); got != "anthropic" {
+		t.Fatalf("Anthropic protocol = %q", got)
 	}
 
 	legacy := FromPreset("openai-chat", "sk-test", "")
-	if got := legacy.StandardID(); got != "openai" {
-		t.Fatalf("legacy OpenAI standard = %q", got)
+	if got := legacy.ProtocolID(); got != "openai" {
+		t.Fatalf("legacy OpenAI protocol = %q", got)
 	}
 }
 
@@ -137,11 +131,8 @@ func TestProviderJSONRoundTripPreservesStandard(t *testing.T) {
 		if err := json.Unmarshal(encoded, &restored); err != nil {
 			t.Fatalf("%s unmarshal: %v", presetID, err)
 		}
-		if restored.StandardID() != original.StandardID() {
-			t.Fatalf("%s standard = %q, want %q", presetID, restored.StandardID(), original.StandardID())
-		}
-		if restored.ChatEndpoint() != original.ChatEndpoint() {
-			t.Fatalf("%s endpoint = %q, want %q", presetID, restored.ChatEndpoint(), original.ChatEndpoint())
+		if restored.ProtocolID() != original.ProtocolID() {
+			t.Fatalf("%s protocol = %q, want %q", presetID, restored.ProtocolID(), original.ProtocolID())
 		}
 	}
 }
@@ -153,27 +144,21 @@ func TestProviderInfersStandardForLegacyJSON(t *testing.T) {
 	}`), &restored); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if restored.StandardID() != "anthropic" {
-		t.Fatalf("standard = %q", restored.StandardID())
-	}
-	if restored.NewStreamDecoder() == nil {
-		t.Fatal("provider returned nil stream decoder")
+	if restored.ProtocolID() != "anthropic" {
+		t.Fatalf("protocol = %q", restored.ProtocolID())
 	}
 }
 
 func TestProviderStandardCanOverridePreset(t *testing.T) {
 	p := FromPreset("openai", "key", "")
-	if err := p.SetStandardID("anthropic"); err != nil {
-		t.Fatalf("SetStandardID: %v", err)
+	if err := p.SetProtocolID("anthropic"); err != nil {
+		t.Fatalf("SetProtocolID: %v", err)
 	}
-	if p.StandardID() != "anthropic" {
-		t.Fatalf("standard = %q", p.StandardID())
+	if p.ProtocolID() != "anthropic" {
+		t.Fatalf("protocol = %q", p.ProtocolID())
 	}
-	if got := p.ChatEndpoint(); got != "https://api.openai.com/v1/messages" {
-		t.Fatalf("endpoint = %q", got)
-	}
-	if err := p.SetStandardID("not-a-standard"); err == nil {
-		t.Fatal("invalid standard was accepted")
+	if err := p.SetProtocolID("not-a-standard"); err == nil {
+		t.Fatal("invalid protocol was accepted")
 	}
 }
 
@@ -199,7 +184,7 @@ func TestProviderExtraBodyIsDeeplyIsolated(t *testing.T) {
 	input["reasoning"].(map[string]any)["effort"] = "low"
 	input["include"].([]any)[0] = "mutated"
 
-	first := p.BuildExtraBody()
+	first := p.ExtraBody()
 	if got := first["reasoning"].(map[string]any)["effort"]; got != "high" {
 		t.Fatalf("stored nested map was mutated: %v", got)
 	}
@@ -207,8 +192,8 @@ func TestProviderExtraBodyIsDeeplyIsolated(t *testing.T) {
 		t.Fatalf("stored nested slice was mutated: %v", got)
 	}
 	first["reasoning"].(map[string]any)["effort"] = "low"
-	if got := p.BuildExtraBody()["reasoning"].(map[string]any)["effort"]; got != "high" {
-		t.Fatalf("BuildExtraBody returned shared nested state: %v", got)
+	if got := p.ExtraBody()["reasoning"].(map[string]any)["effort"]; got != "high" {
+		t.Fatalf("ExtraBody returned shared nested state: %v", got)
 	}
 }
 

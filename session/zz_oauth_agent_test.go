@@ -28,7 +28,7 @@ func TestProviderForCategoryAttachesOAuth(t *testing.T) {
 		t.Fatalf("main category OAuth not resolved: %+v", mainCat.OAuth)
 	}
 
-	p, err := providerForCategory(mainCat)
+	p, err := cfg.providerForCategory(mainCat)
 	if err != nil {
 		t.Fatalf("providerForCategory: %v", err)
 	}
@@ -36,9 +36,12 @@ func TestProviderForCategoryAttachesOAuth(t *testing.T) {
 		t.Fatalf("provider OAuth not attached: %+v", p.OAuth())
 	}
 	// The bearer must be the OAuth access token, not an API key.
-	header, value := p.Auth()
-	if header != "Authorization" || value != "Bearer AT-oauth" {
-		t.Errorf("auth = %q %q, want Bearer AT-oauth", header, value)
+	headers, err := p.RequestHeaders(t.Context())
+	if err != nil {
+		t.Fatalf("headerSource: %v", err)
+	}
+	if got := headers.Get("Authorization"); got != "Bearer AT-oauth" {
+		t.Errorf("auth = %q, want Bearer AT-oauth", got)
 	}
 }
 
@@ -63,8 +66,8 @@ func TestSubAgentOAuthResolutionMixedProviders(t *testing.T) {
 	if pChatGPT.OAuth() == nil || pChatGPT.OAuth().AccessToken != "AT-oauth" {
 		t.Errorf("chatgpt sub-agent OAuth not attached: %+v", pChatGPT.OAuth())
 	}
-	if _, v := pChatGPT.Auth(); v != "Bearer AT-oauth" {
-		t.Errorf("chatgpt sub-agent auth = %q, want Bearer AT-oauth", v)
+	if got := bearerForTest(t, pChatGPT); got != "Bearer AT-oauth" {
+		t.Errorf("chatgpt sub-agent auth = %q, want Bearer AT-oauth", got)
 	}
 
 	// Sub-agent on opencode-go (API key) while main is on opencode-go.
@@ -72,9 +75,20 @@ func TestSubAgentOAuthResolutionMixedProviders(t *testing.T) {
 	if pOpenCode.OAuth() != nil {
 		t.Errorf("opencode-go sub-agent should not have OAuth: %+v", pOpenCode.OAuth())
 	}
-	if _, v := pOpenCode.Auth(); v != "Bearer sk-opencode" {
-		t.Errorf("opencode-go sub-agent auth = %q, want Bearer sk-opencode", v)
+	if got := bearerForTest(t, pOpenCode); got != "Bearer sk-opencode" {
+		t.Errorf("opencode-go sub-agent auth = %q, want Bearer sk-opencode", got)
 	}
+}
+
+// bearerForTest resolves the provider's request headers and returns the
+// Authorization value.
+func bearerForTest(t *testing.T, p *provider.Provider) string {
+	t.Helper()
+	headers, err := p.RequestHeaders(t.Context())
+	if err != nil {
+		t.Fatalf("headerSource: %v", err)
+	}
+	return headers.Get("Authorization")
 }
 
 // resolveSubAgentProviderForTest mirrors the provider resolution in

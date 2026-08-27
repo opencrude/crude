@@ -185,6 +185,7 @@ type ProviderConfig struct {
 	ModelStandards map[string]string          `json:"model_standards,omitempty"`
 	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
 	OAuth          *provider.OAuthCredentials `json:"oauth,omitempty"`
+	Dialer         *provider.DialSettings     `json:"dialer,omitempty"`
 }
 
 func (c ProviderConfig) StandardForModel(model, providerID string) string {
@@ -197,7 +198,9 @@ func (c ProviderConfig) StandardForModel(model, providerID string) string {
 	return provider.DefaultStandardID(providerID)
 }
 
-func providerForCategory(category CategoryConfig) (*provider.Provider, error) {
+// providerForCategory builds the provider for one agent category, resolving
+// credentials and transport settings from the stored provider entry.
+func (c *Config) providerForCategory(category CategoryConfig) (*provider.Provider, error) {
 	p := provider.FromPreset(category.Provider, category.APIKey, category.ProviderURL)
 	p.Model = category.Model
 	p.SetThinkingEffort(category.ThinkingEffort)
@@ -207,7 +210,25 @@ func providerForCategory(category CategoryConfig) (*provider.Provider, error) {
 	if category.OAuth != nil {
 		p.SetOAuth(category.OAuth)
 	}
+	if dialer := c.dialerFor(category.Provider); dialer != nil {
+		p.SetDialSettings(*dialer)
+	}
 	return p, nil
+}
+
+// dialerFor returns the stored transport settings for a provider, falling back
+// to the effective provider when the category's own entry has none.
+func (c *Config) dialerFor(providerID string) *provider.DialSettings {
+	if c == nil {
+		return nil
+	}
+	if cfg, ok := c.Providers[providerID]; ok && cfg.Dialer != nil {
+		return cfg.Dialer
+	}
+	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok && cfg.Dialer != nil {
+		return cfg.Dialer
+	}
+	return nil
 }
 
 func (c *Config) GetActiveProviderConfig() ProviderConfig {

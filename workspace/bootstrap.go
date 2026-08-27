@@ -12,6 +12,7 @@ package workspace
 // session internals directly.
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -257,6 +258,7 @@ func (w *Workspace) AllProviderConfigs() map[string]ttypes.ProviderConfig {
 			ModelStandards: copyStringMap(v.ModelStandards),
 			ThinkingEffort: v.ThinkingEffort,
 			OAuth:          cloneSessionOAuth(v.OAuth),
+			Dialer:         cloneDialSettings(v.Dialer),
 		}
 	}
 	return out
@@ -277,6 +279,16 @@ func copyStringMap(src map[string]string) map[string]string {
 // value types, so a struct copy is enough to keep the session config from
 // aliasing the UI provider map.
 func cloneSessionOAuth(src *provider.OAuthCredentials) *provider.OAuthCredentials {
+	if src == nil {
+		return nil
+	}
+	dup := *src
+	return &dup
+}
+
+// cloneDialSettings copies user-tunable transport settings so neither side of
+// the session/UI boundary can mutate the other's copy.
+func cloneDialSettings(src *provider.DialSettings) *provider.DialSettings {
 	if src == nil {
 		return nil
 	}
@@ -305,6 +317,7 @@ func (w *Workspace) SaveProviderSettings(active string, providers map[string]tty
 			ModelStandards: copyStringMap(pc.ModelStandards),
 			ThinkingEffort: pc.ThinkingEffort,
 			OAuth:          cloneSessionOAuth(pc.OAuth),
+			Dialer:         cloneDialSettings(pc.Dialer),
 		}
 	}
 	for _, frontendSession := range w.Sessions {
@@ -334,42 +347,32 @@ func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey, standardID st
 	}
 	p := provider.FromPreset(providerID, apiKey, baseURL)
 	if standardID != "" {
-		if err := p.SetStandardID(standardID); err != nil {
+		if err := p.SetProtocolID(standardID); err != nil {
 			return nil, err
 		}
 	}
-	// Attach stored OAuth credentials (e.g. ChatGPT subscription) so the
-	// /models request is authenticated with the access token, not an API key.
+	// Attach stored OAuth credentials (e.g. ChatGPT subscription) and dialer
+	// tuning so the listing request is authenticated and transported exactly
+	// like chat traffic.
 	if w.sessionCfg != nil {
-		if pc, ok := w.sessionCfg.Providers[providerID]; ok && pc.OAuth != nil {
-			p.SetOAuth(pc.OAuth)
+		if pc, ok := w.sessionCfg.Providers[providerID]; ok {
+			if pc.OAuth != nil {
+				p.SetOAuth(pc.OAuth)
+			}
+			if pc.Dialer != nil {
+				p.SetDialSettings(*pc.Dialer)
+			}
 		}
 	}
-	models, err := provider.FetchModels(p)
+	client, err := p.Client()
 	if err != nil {
 		return nil, err
 	}
-	entries := make([]ttypes.ModelEntry, 0, len(models))
-	metas := provider.GetAllModelMetas()
-	for _, model := range models {
-		entry := ttypes.ModelEntry{
-			ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow,
-		}
-		if meta := provider.LookupModelMeta(model.ID, metas); meta != nil {
-			if entry.ContextWindow == 0 {
-				entry.ContextWindow = meta.ContextWindow
-			}
-			entry.InputPrice = meta.InputPrice
-			entry.OutputPrice = meta.OutputPrice
-			entry.CacheReadPrice = meta.CacheReadPrice
-			entry.SupportsVision = meta.SupportsVision
-			entry.SupportsTools = meta.SupportsTools
-			entry.MaxOutput = meta.MaxOutput
-			entry.Attachment = meta.Attachment
-		}
-		entries = append(entries, entry)
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return nil, err
 	}
-	return entries, nil
+	return ttypes.ModelEntriesFromInfos(models), nil
 }
 
 // HandleUndo undoes the last message.
@@ -830,6 +833,8 @@ func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 				APIStandard: cfg.APIStandard, Model: cfg.Model,
 				ModelStandards: copyStringMap(cfg.ModelStandards),
 				ThinkingEffort: cfg.ThinkingEffort,
+				OAuth:          cloneSessionOAuth(cfg.OAuth),
+				Dialer:         cloneDialSettings(cfg.Dialer),
 			}
 		}
 	}
@@ -843,6 +848,8 @@ func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 			APIStandard: cfg.APIStandard, Model: cfg.Model,
 			ModelStandards: copyStringMap(cfg.ModelStandards),
 			ThinkingEffort: cfg.ThinkingEffort,
+			OAuth:          cloneSessionOAuth(cfg.OAuth),
+			Dialer:         cloneDialSettings(cfg.Dialer),
 		}
 	}
 	return ttypes.ProviderConfig{}

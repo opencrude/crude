@@ -84,21 +84,24 @@ func TestAnthropicRequestEncoding(t *testing.T) {
 
 func TestAnthropicHeadersAndThinkingConfig(t *testing.T) {
 	std := &AnthropicStandard{}
-	headers := std.Headers("sk-ant")
-	if headers["x-api-key"] != "sk-ant" || headers["anthropic-version"] != anthropicAPIVersion {
-		t.Fatalf("headers = %#v", headers)
+	if got := std.Headers().Get("anthropic-version"); got != anthropicAPIVersion {
+		t.Fatalf("protocol headers anthropic-version = %q", got)
 	}
-	extra := std.ExtraBody("claude-sonnet-4-6", "high")
+	auth := std.AuthHeaders("sk-ant")
+	if got := auth.Get("x-api-key"); got != "sk-ant" {
+		t.Fatalf("auth x-api-key = %q", got)
+	}
+	extra := std.RequestExtras("claude-sonnet-4-6", "high")
 	if extra["thinking"].(map[string]any)["type"] != "adaptive" {
 		t.Fatalf("thinking config = %#v", extra)
 	}
 	if extra["output_config"].(map[string]any)["effort"] != "high" {
 		t.Fatalf("output config = %#v", extra)
 	}
-	if got := std.ExtraBody("claude-sonnet-4-5", "high"); got != nil {
+	if got := std.RequestExtras("claude-sonnet-4-5", "high"); got != nil {
 		t.Fatalf("older model received adaptive thinking: %#v", got)
 	}
-	disabled := std.ExtraBody("claude-sonnet-4-5", "none")
+	disabled := std.RequestExtras("claude-sonnet-4-5", "none")
 	if disabled["thinking"].(map[string]any)["type"] != "disabled" {
 		t.Fatalf("disabled thinking config = %#v", disabled)
 	}

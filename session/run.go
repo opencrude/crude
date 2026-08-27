@@ -198,7 +198,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		s.editor = s.editor.WithMessage(currentMsgID)
 	}
 
-	turnProvider, err := providerForCategory(activeCfg)
+	turnProvider, err := effectiveCfg.providerForCategory(activeCfg)
 	if err != nil {
 		l.Error("AGENT", "provider_config_error", "error", err.Error())
 		sender.SendAgentEventWithID("error", "Invalid provider communication standard: "+err.Error(), o.ID)
