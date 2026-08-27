@@ -555,9 +555,13 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	if dialer := cfg.dialerFor(resolvedProvider); dialer != nil {
 		p.SetDialSettings(*dialer)
 	}
+	if protocol := cfg.protocolSettingsFor(resolvedProvider); protocol != nil {
+		p.SetProtocolSettings(protocol)
+	}
 	if resolvedThinkingEffort != "" {
 		p.SetThinkingEffort(resolvedThinkingEffort)
 	}
+	p.SetSampling(spec.ModelTemperature, spec.ModelTopP)
 	if spec.ModelContextWindow > 0 {
 		provider.SetModelContext(resolvedModelName, spec.ModelContextWindow)
 	}
@@ -1294,6 +1298,12 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		}
 		if spec.ModelCachePrice == 0 {
 			spec.ModelCachePrice = categoryCfg.ModelCachePrice
+		}
+		if spec.ModelTemperature == nil {
+			spec.ModelTemperature = categoryCfg.ModelTemperature
+		}
+		if spec.ModelTopP == nil {
+			spec.ModelTopP = categoryCfg.ModelTopP
 		}
 	}
 	if spec.PolicyName == "" {

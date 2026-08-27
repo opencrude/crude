@@ -49,6 +49,59 @@ type ProtocolInfo struct {
 	// Streaming reports the wire format of the streaming response body,
 	// which determines how the client frames it.
 	Streaming StreamFraming
+	// Options declares the protocol-level switches the settings UI may
+	// expose. A false field means the protocol has no such knob.
+	Options ProtocolOptions
+}
+
+// ProtocolOptions declares which protocol-level request switches exist for a
+// protocol, so the settings UI can offer them without type-switching on the
+// concrete implementation.
+type ProtocolOptions struct {
+	// Store: the backend can persist conversation context server-side
+	// between requests (OpenAI "store").
+	Store bool
+	// StoreDefault is the wire default for Store when the user has not
+	// chosen (Responses stores by default, Chat Completions does not).
+	StoreDefault bool
+	// ZeroDataRetention: the protocol can enforce no-server-retention
+	// per request (Responses store:false + encrypted reasoning
+	// passthrough).
+	ZeroDataRetention bool
+	// ReasoningSummaries: the backend can return summarized reasoning
+	// alongside the answer (OpenAI "reasoning.summary").
+	ReasoningSummaries bool
+	// Truncation: the protocol can auto-truncate context that exceeds
+	// the model window instead of failing the request.
+	Truncation bool
+	// ServiceTiers lists the supported processing tiers, first entry is
+	// the default. Empty when the protocol has no tier knob.
+	ServiceTiers []string
+}
+
+// ProtocolSettings is the user's persisted choice for the protocol-level
+// request switches. Nil pointers mean "inherit the protocol default"; a
+// present pointer is an explicit on/off.
+type ProtocolSettings struct {
+	// Store enables server-side context caching: the backend keeps the
+	// conversation so subsequent requests don't re-upload it. When nil the
+	// protocol default applies.
+	Store *bool
+	// ZeroDataRetention requests that the backend neither stores the
+	// conversation nor retains it after the response (OpenAI Responses
+	// "store:false" plus encrypted reasoning passthrough). It overrides
+	// Store.
+	ZeroDataRetention bool
+	// ReasoningSummaries toggles summary reasoning output. When nil the
+	// protocol default applies.
+	ReasoningSummaries *bool
+	// Truncation auto-truncates context overflowing the model window
+	// instead of failing the request. When nil the protocol default
+	// applies.
+	Truncation *bool
+	// ServiceTier selects the processing tier ("flex", "priority", ...).
+	// Empty means the backend default.
+	ServiceTier string
 }
 
 // StreamFraming describes how a streaming response body is delimited.
@@ -141,12 +194,33 @@ type ProtocolMetadata interface {
 
 // RequestExtras is implemented by protocols that inject protocol-specific
 // fields into the chat request body (e.g. reasoning effort, thinking
-// toggles).
+// toggles, storage switches).
 type RequestExtras interface {
 	// RequestExtras returns fields to merge into the chat request body,
-	// derived from the model ID and thinking effort. Returns nil when
-	// nothing applies.
-	RequestExtras(modelID, thinkingEffort string) map[string]any
+	// derived from the model ID, thinking effort, and the user's protocol
+	// settings. Returns nil when nothing applies.
+	RequestExtras(modelID, thinkingEffort string, settings ProtocolSettings) map[string]any
+}
+
+// ResolveStore reports the effective store choice: ZeroDataRetention forces
+// storage off; an explicit Store setting wins; otherwise the protocol
+// default (dflt) applies.
+func (s ProtocolSettings) ResolveStore(dflt bool) bool {
+	if s.ZeroDataRetention {
+		return false
+	}
+	if s.Store != nil {
+		return *s.Store
+	}
+	return dflt
+}
+
+// ResolveReasoningSummaries reports the effective summary choice.
+func (s ProtocolSettings) ResolveReasoningSummaries(dflt bool) bool {
+	if s.ReasoningSummaries != nil {
+		return *s.ReasoningSummaries
+	}
+	return dflt
 }
 
 // ModelInfo is a minimal model descriptor returned by a model listing.

@@ -25,6 +25,14 @@ func (s *OpenAIResponsesStandard) Info() ProtocolInfo {
 		ChatPath:    "responses",
 		ModelsPath:  "models",
 		Streaming:   FramingSSE,
+		Options: ProtocolOptions{
+			Store:              true,
+			StoreDefault:       true,
+			ZeroDataRetention:  true,
+			ReasoningSummaries: true,
+			Truncation:         true,
+			ServiceTiers:       []string{"auto", "default", "flex", "priority", "fast"},
+		},
 	}
 }
 
@@ -56,6 +64,12 @@ func (s *OpenAIResponsesStandard) EncodeRequest(req *ChatRequest) ([]byte, error
 	}
 	if maxOutput > 0 {
 		wire["max_output_tokens"] = maxOutput
+	}
+	if req.Temperature != nil {
+		wire["temperature"] = *req.Temperature
+	}
+	if req.TopP != nil {
+		wire["top_p"] = *req.TopP
 	}
 	return json.Marshal(wire)
 }
@@ -257,21 +271,37 @@ func (s *OpenAIResponsesStandard) ModelsURL(base *url.URL, cursor string) *url.U
 	return joinPath(base, "models")
 }
 
-// RequestExtras implements RequestExtras.
-func (s *OpenAIResponsesStandard) RequestExtras(modelID, thinkingEffort string) map[string]any {
-	if thinkingEffort == "" {
+// RequestExtras implements RequestExtras. The Responses API stores
+// conversations server-side by default (enabling context reuse across
+// requests); a user-chosen Store=false or ZeroDataRetention turns that off,
+// and ZDR additionally requests encrypted reasoning passthrough so the
+// reasoning continuity survives without server storage.
+func (s *OpenAIResponsesStandard) RequestExtras(modelID, thinkingEffort string, settings ProtocolSettings) map[string]any {
+	extras := map[string]any{}
+	if !settings.ResolveStore(true) {
+		extras["store"] = false
+		if settings.ZeroDataRetention {
+			extras["include"] = []string{"reasoning.encrypted_content"}
+		}
+	}
+	if settings.Truncation != nil && *settings.Truncation {
+		// "disabled" is the wire default; only the override is sent.
+		extras["truncation"] = "auto"
+	}
+	if settings.ServiceTier != "" {
+		extras["service_tier"] = settings.ServiceTier
+	}
+	if thinkingEffort != "" && !(thinkingEffort == "none" && !usesOpenAICompletionTokenLimit(modelID)) {
+		reasoning := map[string]any{"effort": thinkingEffort}
+		if thinkingEffort != "none" && settings.ResolveReasoningSummaries(true) {
+			reasoning["summary"] = "auto"
+		}
+		extras["reasoning"] = reasoning
+	}
+	if len(extras) == 0 {
 		return nil
 	}
-	if thinkingEffort == "none" && !usesOpenAICompletionTokenLimit(modelID) {
-		return nil
-	}
-	reasoning := map[string]any{"effort": thinkingEffort}
-	if thinkingEffort != "none" {
-		reasoning["summary"] = "auto"
-	}
-	return map[string]any{
-		"reasoning": reasoning,
-	}
+	return extras
 }
 
 // ContextWindow implements ProtocolMetadata.

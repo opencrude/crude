@@ -24,6 +24,7 @@ func (s *AnthropicStandard) Info() ProtocolInfo {
 		ChatPath:    "messages",
 		ModelsPath:  "models",
 		Streaming:   FramingSSE,
+		Options:     ProtocolOptions{ServiceTiers: []string{"auto", "standard_only"}},
 	}
 }
 
@@ -78,6 +79,11 @@ func (s *AnthropicStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 	}
 	if req.ToolChoice != nil {
 		wire["tool_choice"] = encodeAnthropicToolChoice(req.ToolChoice)
+	}
+	// Temperature is accepted on current Claude models; only send it when
+	// the user explicitly chose a value.
+	if req.Temperature != nil {
+		wire["temperature"] = *req.Temperature
 	}
 	return json.Marshal(wire)
 }
@@ -399,8 +405,10 @@ func (s *AnthropicStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 	return ModelPage{Models: models, Next: next}, nil
 }
 
-// RequestExtras implements RequestExtras.
-func (s *AnthropicStandard) RequestExtras(modelID, thinkingEffort string) map[string]any {
+// RequestExtras implements RequestExtras. Anthropic has no store, ZDR, or
+// truncation request switches (retention is organization-level), so only
+// thinking configuration applies.
+func (s *AnthropicStandard) RequestExtras(modelID, thinkingEffort string, _ ProtocolSettings) map[string]any {
 	if thinkingEffort == "" {
 		return nil
 	}

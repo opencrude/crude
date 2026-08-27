@@ -410,7 +410,7 @@ func TestOpenAIChatDecodesRefusals(t *testing.T) {
 }
 
 func TestOpenAIThinkingNoneIsExplicit(t *testing.T) {
-	extra := (&OpenAIStandard{}).RequestExtras("gpt-5.6", "none")
+	extra := (&OpenAIStandard{}).RequestExtras("gpt-5.6", "none", ProtocolSettings{})
 	if extra["reasoning_effort"] != "none" {
 		t.Fatalf("extra = %#v", extra)
 	}

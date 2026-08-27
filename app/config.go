@@ -94,6 +94,8 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 				ThinkingEffort: p.ThinkingEffort,
 				OAuth:          cloneOAuth(p.OAuth),
 				Dialer:         cloneDial(p.Dialer),
+				Protocol:       cloneProtocol(p.Protocol),
+				ExtraBody:      cloneExtraBody(p.ExtraBody),
 			}
 		}
 	}
@@ -174,9 +176,14 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 			// OAuth tokens: replace when present, clear when absent so a sign-out
 			// (nil) is not silently swallowed by the non-empty-only merge above.
 			prev.OAuth = cloneOAuth(p.OAuth)
-			// Dialer: replace when present, clear when absent (same semantics as
-			// OAuth — an explicit reset to defaults must survive the merge).
+			// Dialer and Protocol: replace when present, clear when absent
+			// (same semantics as OAuth — an explicit reset to defaults must
+			// survive the merge).
 			prev.Dialer = cloneDial(p.Dialer)
+			prev.Protocol = cloneProtocol(p.Protocol)
+			// ExtraBody: replace when present, clear when absent — same
+			// replace-not-merge semantics as the dialer and protocol blocks.
+			prev.ExtraBody = cloneExtraBody(p.ExtraBody)
 			fc.Providers[id] = prev
 		}
 	}
@@ -210,6 +217,42 @@ func cloneDial(src *provider.DialSettings) *provider.DialSettings {
 		return nil
 	}
 	dup := *src
+	return &dup
+}
+
+// cloneExtraBody copies a raw extra-body map so config layers never alias it.
+// Values are JSON-decoded and never mutated in place, so a top-level copy
+// suffices.
+func cloneExtraBody(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+// cloneProtocol copies protocol-level request switches so config layers never
+// alias the same settings struct.
+func cloneProtocol(src *provider.ProtocolSettings) *provider.ProtocolSettings {
+	if src == nil {
+		return nil
+	}
+	dup := *src
+	if src.Store != nil {
+		store := *src.Store
+		dup.Store = &store
+	}
+	if src.ReasoningSummaries != nil {
+		summaries := *src.ReasoningSummaries
+		dup.ReasoningSummaries = &summaries
+	}
+	if src.Truncation != nil {
+		truncation := *src.Truncation
+		dup.Truncation = &truncation
+	}
 	return &dup
 }
 

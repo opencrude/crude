@@ -63,8 +63,10 @@ func LoadModelCaps(metas map[string]ModelMeta) {
 	dynamicCapsMu.Lock()
 	for id, meta := range metas {
 		caps := capVisionKnown | capToolsKnown
-		if meta.SupportsVision {
-			caps |= CapVision
+		for _, modality := range meta.Modalities {
+			if modality == ModalityImage {
+				caps |= CapVision
+			}
 		}
 		if meta.SupportsTools {
 			caps |= CapTools

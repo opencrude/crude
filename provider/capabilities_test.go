@@ -22,10 +22,10 @@ func TestSupportsVision_DynamicCaps(t *testing.T) {
 
 	// Load some capabilities
 	LoadModelCaps(map[string]ModelMeta{
-		"gpt-4o":            {SupportsVision: true, SupportsTools: true},
-		"claude-3-5-sonnet": {SupportsVision: true, SupportsTools: true},
-		"deepseek-chat":     {SupportsVision: false, SupportsTools: true},
-		"o1-mini":           {SupportsVision: false, SupportsTools: false},
+		"gpt-4o":            {Modalities: []string{ModalityImage}, SupportsTools: true},
+		"claude-3-5-sonnet": {Modalities: []string{ModalityImage}, SupportsTools: true},
+		"deepseek-chat":     {SupportsTools: true},
+		"o1-mini":           {SupportsTools: false},
 	})
 
 	// Vision models
@@ -46,7 +46,7 @@ func TestSupportsVision_DynamicCaps(t *testing.T) {
 func TestSupportsVision_ProviderPrefix(t *testing.T) {
 	resetDynamicCaps()
 	LoadModelCaps(map[string]ModelMeta{
-		"gpt-4o": {SupportsVision: true, SupportsTools: true},
+		"gpt-4o": {Modalities: []string{ModalityImage}, SupportsTools: true},
 	})
 
 	// Should strip provider prefix before lookup
@@ -70,7 +70,7 @@ func TestSupportsVision_UnknownModel(t *testing.T) {
 func TestSupportsVision_CaseInsensitive(t *testing.T) {
 	resetDynamicCaps()
 	LoadModelCaps(map[string]ModelMeta{
-		"gpt-4o": {SupportsVision: true},
+		"gpt-4o": {Modalities: []string{ModalityImage}},
 	})
 
 	if !SupportsVision("GPT-4O") {
@@ -103,10 +103,10 @@ func TestSupportsTools_DynamicCaps(t *testing.T) {
 
 	// Load capabilities
 	LoadModelCaps(map[string]ModelMeta{
-		"gpt-4o":            {SupportsVision: true, SupportsTools: true},
-		"claude-3-5-sonnet": {SupportsVision: true, SupportsTools: true},
-		"o1-mini":           {SupportsVision: false, SupportsTools: false},
-		"deepseek-reasoner": {SupportsVision: false, SupportsTools: false},
+		"gpt-4o":            {Modalities: []string{ModalityImage}, SupportsTools: true},
+		"claude-3-5-sonnet": {Modalities: []string{ModalityImage}, SupportsTools: true},
+		"o1-mini":           {SupportsTools: false},
+		"deepseek-reasoner": {SupportsTools: false},
 	})
 
 	// Tool-supporting models
@@ -181,7 +181,7 @@ func TestLoadModelCaps_Overwrite(t *testing.T) {
 
 	SetModelCap("test-model", true, true)
 	LoadModelCaps(map[string]ModelMeta{
-		"test-model": {SupportsVision: false, SupportsTools: false},
+		"test-model": {SupportsTools: false},
 	})
 
 	if SupportsVision("test-model") {

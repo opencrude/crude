@@ -52,6 +52,72 @@ func BoolFieldState(id, label string, value bool, description string) *FieldStat
 // BoolValue reads back a BoolFieldState field.
 func BoolFieldValue(f *FieldState) bool { return f != nil && f.Value.String() == "on" }
 
+// ToggleFieldState builds an explicit Yes/No cycle field for settings where
+// the bare on/off wording would be ambiguous.
+func ToggleFieldState(id, label string, value bool, description string) *FieldState {
+	current := "no"
+	if value {
+		current = "yes"
+	}
+	f := CycleFieldState(id, label, []string{"yes", "no"}, current, description)
+	f.Options = []FormOption{{ID: "yes", Label: "Yes"}, {ID: "no", Label: "No"}}
+	return f
+}
+
+// ToggleFieldValue reads back a ToggleFieldState field. A missing field reads
+// as No so absent rows never silently enable behavior.
+func ToggleFieldValue(f *FieldState) bool { return f != nil && f.Value.String() == "yes" }
+
+// TriStateFieldState builds a three-option cycle for optional booleans: the
+// concrete default (defaultLabel, e.g. "On (default)"), On, and Off. A nil
+// value means the default applies; the label always states what the default
+// actually is.
+func TriStateFieldState(id, label, defaultLabel string, value *bool, description string) *FieldState {
+	options := []FormOption{
+		{ID: "default", Label: defaultLabel},
+		{ID: "on", Label: "On"},
+		{ID: "off", Label: "Off"},
+	}
+	current := "default"
+	if value != nil {
+		current = "off"
+		if *value {
+			current = "on"
+		}
+	}
+	v := StringValue(current)
+	return &FieldState{ID: id, Label: label, Description: description, Type: FieldCycle, Value: v, Initial: v, Options: options}
+}
+
+// TriStateFieldValue reads back a TriStateFieldState; nil means default.
+func TriStateFieldValue(f *FieldState) *bool {
+	if f == nil {
+		return nil
+	}
+	switch f.Value.String() {
+	case "on":
+		on := true
+		return &on
+	case "off":
+		off := false
+		return &off
+	}
+	return nil
+}
+
+// TriBool reads back a tri-state value ("default"/"on"/"off") as *bool.
+func TriBool(value string) *bool {
+	switch value {
+	case "on":
+		on := true
+		return &on
+	case "off":
+		off := false
+		return &off
+	}
+	return nil
+}
+
 // SelectFieldState builds a dropdown select field.
 func SelectFieldState(id, label, value string, options []FormOption, description string) *FieldState {
 	v := StringValue(value)
@@ -116,14 +182,11 @@ func ModelOptions(models []types.ModelEntry) []FormOption {
 			))
 		}
 		var capabilities []string
-		if model.SupportsVision {
-			capabilities = append(capabilities, "vision")
+		for _, modality := range model.Modalities {
+			capabilities = append(capabilities, modality)
 		}
 		if model.SupportsTools {
 			capabilities = append(capabilities, "tools")
-		}
-		if model.Attachment {
-			capabilities = append(capabilities, "files")
 		}
 		if len(capabilities) > 0 {
 			details = append(details, strings.Join(capabilities, " · "))
