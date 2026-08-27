@@ -52,11 +52,13 @@ type Provider struct {
 	Model        string `json:"model"`
 	StandardName string `json:"standard,omitempty"` // protocol ID; JSON key kept for stored configs
 
-	dial           DialSettings
-	extraBody      map[string]any
-	thinkingEffort string
-	oauth          *OAuthCredentials
-	sessionID      string
+	dial             DialSettings
+	extraBody        map[string]any
+	thinkingEffort   string
+	protocolSettings *ProtocolSettings
+	sampling         Sampling
+	oauth            *OAuthCredentials
+	sessionID        string
 }
 
 // StandardInfo describes a registered protocol for display purposes.
@@ -137,12 +139,69 @@ func (p *Provider) ExtraBody() map[string]any         { return cloneAnyMap(p.ext
 func (p *Provider) SetThinkingEffort(e string)        { p.thinkingEffort = e }
 func (p *Provider) ThinkingEffort() string            { return p.thinkingEffort }
 
+// Sampling carries the optional per-model sampling overrides applied to
+// every chat request built for this provider. nil pointers mean the backend
+// default applies.
+type Sampling struct {
+	Temperature *float64
+	TopP        *float64
+}
+
+// SetSampling configures the sampling overrides. nil pointers clear them.
+func (p *Provider) SetSampling(temperature, topP *float64) {
+	p.sampling = Sampling{}
+	if temperature != nil {
+		temperature := *temperature
+		p.sampling.Temperature = &temperature
+	}
+	if topP != nil {
+		topP := *topP
+		p.sampling.TopP = &topP
+	}
+}
+
+// Sampling returns the configured sampling overrides.
+func (p *Provider) Sampling() Sampling { return p.sampling }
+
 // SetDialSettings configures the transport tuning used by clients built
 // from this provider.
 func (p *Provider) SetDialSettings(settings DialSettings) { p.dial = settings }
 
 // DialSettings returns the configured transport tuning.
 func (p *Provider) DialSettings() DialSettings { return p.dial }
+
+// SetProtocolSettings configures the protocol-level request switches
+// (storage, retention, tiers) used by clients built from this provider. A
+// nil argument clears the overrides.
+func (p *Provider) SetProtocolSettings(settings *ProtocolSettings) {
+	p.protocolSettings = cloneProtocolSettings(settings)
+}
+
+// ProtocolSettings returns the configured protocol-level request switches,
+// or nil when unset.
+func (p *Provider) ProtocolSettings() *ProtocolSettings {
+	return cloneProtocolSettings(p.protocolSettings)
+}
+
+func cloneProtocolSettings(settings *ProtocolSettings) *ProtocolSettings {
+	if settings == nil {
+		return nil
+	}
+	cloned := *settings
+	if settings.Store != nil {
+		store := *settings.Store
+		cloned.Store = &store
+	}
+	if settings.ReasoningSummaries != nil {
+		summaries := *settings.ReasoningSummaries
+		cloned.ReasoningSummaries = &summaries
+	}
+	if settings.Truncation != nil {
+		truncation := *settings.Truncation
+		cloned.Truncation = &truncation
+	}
+	return &cloned
+}
 
 // Client builds a transport client for this provider. Every call shares the
 // provider's current credentials; OAuth tokens are refreshed by the header
@@ -165,7 +224,11 @@ func (p *Provider) requestExtras() map[string]any {
 	proto := p.Protocol()
 	merged := map[string]any{}
 	if re, ok := proto.(RequestExtras); ok {
-		for key, value := range re.RequestExtras(p.Model, p.thinkingEffort) {
+		var settings ProtocolSettings
+		if p.protocolSettings != nil {
+			settings = *p.protocolSettings
+		}
+		for key, value := range re.RequestExtras(p.Model, p.thinkingEffort, settings) {
 			merged[key] = value
 		}
 	}

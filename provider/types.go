@@ -377,6 +377,10 @@ type ChatRequest struct {
 	MaxTokens           int            `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
 	MaxOutputTokens     int            `json:"-"`
+	// Temperature and TopP are optional sampling overrides; nil means the
+	// backend default applies. Each protocol maps them to its wire shape.
+	Temperature *float64 `json:"-"`
+	TopP        *float64 `json:"-"`
 }
 
 type ChatResponse struct {

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,10 +47,51 @@ type ModelMeta struct {
 	InputPrice     float64 `json:"input_price"`      // USD per token
 	OutputPrice    float64 `json:"output_price"`     // USD per token
 	CacheReadPrice float64 `json:"cache_read_price"` // USD per token
-	SupportsVision bool    `json:"supports_vision,omitempty"`
-	SupportsTools  bool    `json:"supports_tools,omitempty"`
-	MaxOutput      int     `json:"max_output,omitempty"`
-	Attachment     bool    `json:"attachment,omitempty"`
+	// Modalities lists the input types beyond text the model accepts
+	// (ModalityImage, ModalityPDF, ModalityVideo, ModalityAudio).
+	Modalities    []string `json:"modalities,omitempty"`
+	SupportsTools bool     `json:"supports_tools,omitempty"`
+	MaxOutput     int      `json:"max_output,omitempty"`
+}
+
+// Input modalities a model can accept beyond text, in canonical order.
+const (
+	ModalityImage = "image"
+	ModalityPDF   = "pdf"
+	ModalityVideo = "video"
+	ModalityAudio = "audio"
+)
+
+// knownModalities is the canonical modality order for display and storage.
+var knownModalities = []string{ModalityImage, ModalityPDF, ModalityVideo, ModalityAudio}
+
+// KnownModalities returns the modality set the app models, in canonical order.
+func KnownModalities() []string {
+	return slices.Clone(knownModalities)
+}
+
+// CanonicalModalities filters a raw modality list down to the known set,
+// preserving canonical order. Text is implicit and never listed.
+func CanonicalModalities(modalities []string) []string {
+	var out []string
+	for _, known := range knownModalities {
+		for _, m := range modalities {
+			if strings.EqualFold(m, known) {
+				out = append(out, known)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// UnionModalities merges two modality lists, preserving canonical order.
+func UnionModalities(lists ...[]string) []string {
+	var raw []string
+	for _, list := range lists {
+		raw = append(raw, list...)
+	}
+	return CanonicalModalities(raw)
 }
 
 // ToModelPrice converts ModelMeta to ModelPrice for cost calculation.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -263,7 +264,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		})
 		l.Debug("CONFIG", "price_set", "model", mainCat.Model, "input", mainCat.ModelInputPrice, "output", mainCat.ModelOutputPrice)
 	}
-	provider.MergeModelCap(mainCat.Model, mainCat.ModelSupportsVision, mainCat.ModelSupportsTools)
+	provider.MergeModelCap(mainCat.Model, slices.Contains(mainCat.ModelModalities, provider.ModalityImage), mainCat.ModelSupportsTools)
 	s.logger.SetTurnEnabled(tuiSettings.TurnLogsEnabled != "off")
 	s.cfg.TurnLogsEnabled = tuiSettings.TurnLogsEnabled != "off"
 
@@ -505,6 +506,8 @@ func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) 
 				ThinkingEffort: cfg.ThinkingEffort,
 				OAuth:          cfg.OAuth,
 				Dialer:         cfg.Dialer,
+				Protocol:       cfg.Protocol,
+				ExtraBody:      cloneExtraBody(cfg.ExtraBody),
 			}
 			continue
 		}
@@ -514,6 +517,8 @@ func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) 
 		existing.ModelStandards = cloneProviderModelStandards(cfg.ModelStandards)
 		existing.OAuth = cfg.OAuth
 		existing.Dialer = cfg.Dialer
+		existing.Protocol = cfg.Protocol
+		existing.ExtraBody = cloneExtraBody(cfg.ExtraBody)
 		s.workspaceCfg.Providers[id] = existing
 	}
 }
@@ -538,13 +543,13 @@ func (s *Session) rebuildEffectiveConfigLocked() {
 func (s *Session) HandleFetchModels(providerID, baseURL, apiKey, standardID string) ([]ttypes.ModelEntry, error) {
 	l := s.logger
 	l.Info("MODEL", "fetch_begin", "provider", providerID)
-	models, err := fetchProviderModels(providerID, baseURL, apiKey, standardID, func() (*provider.OAuthCredentials, *provider.DialSettings) {
+	models, err := fetchProviderModels(providerID, baseURL, apiKey, standardID, func() (*provider.OAuthCredentials, *provider.DialSettings, *provider.ProtocolSettings, map[string]any) {
 		if cfg := s.Config(); cfg != nil {
 			if pc, ok := cfg.Providers[providerID]; ok {
-				return pc.OAuth, pc.Dialer
+				return pc.OAuth, pc.Dialer, pc.Protocol, pc.ExtraBody
 			}
 		}
-		return nil, nil
+		return nil, nil, nil, nil
 	})
 	if err != nil {
 		l.Error("MODEL", "fetch_error", "provider", providerID, "error", err.Error())
@@ -556,9 +561,9 @@ func (s *Session) HandleFetchModels(providerID, baseURL, apiKey, standardID stri
 
 // fetchProviderModels resolves a provider from settings and lists its models
 // through the provider client. The stored lookup returns the saved OAuth
-// credentials (e.g. ChatGPT subscription) and dialer tuning so listing is
-// authenticated and transported exactly like chat traffic.
-func fetchProviderModels(providerID, baseURL, apiKey, standardID string, stored func() (*provider.OAuthCredentials, *provider.DialSettings)) ([]provider.ModelInfo, error) {
+// credentials (e.g. ChatGPT subscription) and transport/protocol tuning so
+// listing is authenticated and transported exactly like chat traffic.
+func fetchProviderModels(providerID, baseURL, apiKey, standardID string, stored func() (*provider.OAuthCredentials, *provider.DialSettings, *provider.ProtocolSettings, map[string]any)) ([]provider.ModelInfo, error) {
 	p := provider.FromPreset(providerID, apiKey, baseURL)
 	if standardID != "" {
 		if err := p.SetProtocolID(standardID); err != nil {
@@ -566,12 +571,18 @@ func fetchProviderModels(providerID, baseURL, apiKey, standardID string, stored 
 		}
 	}
 	if stored != nil {
-		oauth, dialer := stored()
+		oauth, dialer, protocol, extra := stored()
 		if oauth != nil {
 			p.SetOAuth(oauth)
 		}
 		if dialer != nil {
 			p.SetDialSettings(*dialer)
+		}
+		if protocol != nil {
+			p.SetProtocolSettings(protocol)
+		}
+		if len(extra) > 0 {
+			p.SetExtraBody(extra)
 		}
 	}
 	client, err := p.Client()

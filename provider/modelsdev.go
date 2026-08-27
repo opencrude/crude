@@ -124,10 +124,9 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 			outPerToken := entry.Cost.Output / 1e6
 			cachePerToken := entry.Cost.CacheRead / 1e6
 			ctx := entry.Limit.Context
-			vision := hasModality(entry.Modalities.Input, "image")
+			modalities := CanonicalModalities(entry.Modalities.Input)
 			tools := entry.ToolCall
 			maxOut := entry.Limit.Output
-			attach := entry.Attachment
 
 			if existing, ok := result[lower]; ok {
 				// Cheapest input price wins.
@@ -141,17 +140,12 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 					existing.ContextWindow = ctx
 				}
 				// Merge capabilities: if any entry reports it, keep it.
-				if vision {
-					existing.SupportsVision = true
-				}
+				existing.Modalities = UnionModalities(existing.Modalities, modalities)
 				if tools {
 					existing.SupportsTools = true
 				}
 				if maxOut > existing.MaxOutput {
 					existing.MaxOutput = maxOut
-				}
-				if attach {
-					existing.Attachment = true
 				}
 				result[lower] = existing
 			} else if inPerToken > 0 || ctx > 0 {
@@ -160,10 +154,9 @@ func FetchModelsDevAll() (map[string]ModelMeta, error) {
 					InputPrice:     inPerToken,
 					OutputPrice:    outPerToken,
 					CacheReadPrice: cachePerToken,
-					SupportsVision: vision,
+					Modalities:     modalities,
 					SupportsTools:  tools,
 					MaxOutput:      maxOut,
-					Attachment:     attach,
 				}
 			}
 		}

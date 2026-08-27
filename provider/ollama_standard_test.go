@@ -182,13 +182,13 @@ func TestOllamaDecodeModelsFromTags(t *testing.T) {
 
 func TestOllamaRequestExtrasThinkingToggle(t *testing.T) {
 	s := &OllamaStandard{}
-	if got := s.RequestExtras("qwen3", ""); got != nil {
+	if got := s.RequestExtras("qwen3", "", ProtocolSettings{}); got != nil {
 		t.Errorf("RequestExtras(empty) = %#v, want nil", got)
 	}
-	if got := s.RequestExtras("qwen3", "none"); got != nil {
+	if got := s.RequestExtras("qwen3", "none", ProtocolSettings{}); got != nil {
 		t.Errorf("RequestExtras(none) = %#v, want nil", got)
 	}
-	got := s.RequestExtras("qwen3", "high")
+	got := s.RequestExtras("qwen3", "high", ProtocolSettings{})
 	if got["think"] != true {
 		t.Errorf("RequestExtras(high) = %#v, want think:true", got)
 	}

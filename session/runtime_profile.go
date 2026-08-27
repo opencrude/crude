@@ -2,6 +2,8 @@ package session
 
 import (
 	"sync"
+
+	"crude/provider"
 )
 
 // RuntimeProfile provides ephemeral per-orchestrator config overrides
@@ -254,17 +256,20 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	if override.ModelCachePrice > 0 {
 		merged.ModelCachePrice = override.ModelCachePrice
 	}
-	if override.ModelSupportsVision {
-		merged.ModelSupportsVision = true
-	}
+	merged.ModelModalities = provider.UnionModalities(merged.ModelModalities, override.ModelModalities)
 	if override.ModelSupportsTools {
 		merged.ModelSupportsTools = true
 	}
 	if override.ModelMaxOutput > 0 {
 		merged.ModelMaxOutput = override.ModelMaxOutput
 	}
-	if override.ModelAttachment {
-		merged.ModelAttachment = true
+	if override.ModelTemperature != nil {
+		temperature := *override.ModelTemperature
+		merged.ModelTemperature = &temperature
+	}
+	if override.ModelTopP != nil {
+		topP := *override.ModelTopP
+		merged.ModelTopP = &topP
 	}
 	merged.APIKey = ""
 	return merged
@@ -328,6 +333,21 @@ func cloneProviderModelStandards(src map[string]string) map[string]string {
 	out := make(map[string]string, len(src))
 	for model, standard := range src {
 		out[model] = standard
+	}
+	return out
+}
+
+// cloneExtraBody copies a raw extra-body map so config layers never share it.
+// Values are assumed to be JSON-decoded scalars/nested maps from unmarshalling;
+// a shallow copy of the top level is sufficient because nothing mutates the
+// nested values in place.
+func cloneExtraBody(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
 	}
 	return out
 }

@@ -1,8 +1,10 @@
 package settings
 
 import (
+	"encoding/json"
 	"fmt"
 	"image/color"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -263,7 +265,7 @@ func (m *Model) buildProvidersForm() *ui.FormModel {
 		fields = append(fields, ui.PasswordFieldState(fieldAPIKey, "API key", cfg.APIKey, "Stored locally and masked while editing."))
 	}
 	fields = append(fields,
-		ui.TextFieldState(fieldBaseURL, "Base URL", baseURL, "Override the provider endpoint when using a proxy or local gateway."),
+		ui.TextFieldState(fieldBaseURL, "Base URL", baseURL, "Override the endpoint when using a proxy or gateway."),
 		ui.SeparatorFieldState("protocol", "Communication protocol"),
 		ui.SelectFieldState(
 			fieldAPIStandard, "Provider default", providerStandard(m.providerID, cfg),
@@ -271,12 +273,164 @@ func (m *Model) buildProvidersForm() *ui.FormModel {
 			"Wire protocol used by this provider.",
 		),
 	)
+	fields = append(fields, m.protocolOptionFields(cfg)...)
 	fields = append(fields, dialerFields(cfg.Dialer)...)
+	fields = append(fields,
+		ui.SeparatorFieldState("advanced", "Advanced"),
+		m.extraBodyField(cfg),
+	)
 	return formModel(fields...)
 }
 
-// Dialer field IDs and the value ladders shown in the providers form. Every
-// ladder leads with "Default", which persists nothing (0 = built-in default).
+// Field IDs for the protocol option, capability, and sampling rows.
+const (
+	fieldProtocolStore     = "protocol-store"
+	fieldProtocolZDR       = "protocol-zdr"
+	fieldProtocolSummaries = "protocol-summaries"
+	fieldProtocolTruncate  = "protocol-truncation"
+	fieldProtocolTier      = "protocol-tier"
+	fieldExtraBody         = "extra-body"
+	fieldCtxWindow         = "model-context-window"
+	fieldMaxOutput         = "model-max-output"
+	fieldModalityPrefix    = "modality-"
+	fieldTemperature       = "model-temperature"
+	fieldTopP              = "model-top-p"
+)
+
+// protocolOptionFields renders the protocol-level request switches the
+// resolved protocol declares via ProtocolInfo.Options. Protocols without a
+// knob render nothing, so the section is data-driven, not type-switched.
+func (m *Model) protocolOptionFields(cfg types.ProviderConfig) []*ui.FieldState {
+	proto, ok := provider.ProtocolByID(providerStandard(m.providerID, cfg))
+	if !ok {
+		return nil
+	}
+	options := proto.Info().Options
+	settings := cfg.Protocol
+	var fields []*ui.FieldState
+
+	if options.Store {
+		defaultLabel := "Off (default)"
+		if options.StoreDefault {
+			defaultLabel = "On (default)"
+		}
+		fields = append(fields, ui.TriStateFieldState(fieldProtocolStore, "Server-side caching", defaultLabel,
+			protocolStoreValue(settings),
+			"Cache context server-side instead of re-uploading it each request."))
+	}
+	if options.ZeroDataRetention {
+		zdr := false
+		if settings != nil {
+			zdr = settings.ZeroDataRetention
+		}
+		fields = append(fields, ui.ToggleFieldState(fieldProtocolZDR, "Zero data retention", zdr,
+			"Never store the conversation server-side; reasoning stays encrypted."))
+	}
+	if options.ReasoningSummaries {
+		fields = append(fields, ui.TriStateFieldState(fieldProtocolSummaries, "Reasoning summaries", "On (default)",
+			protocolSummariesValue(settings),
+			"Include summarized reasoning alongside the final answer."))
+	}
+	if options.Truncation {
+		current := "fail"
+		if settings != nil && settings.Truncation != nil && *settings.Truncation {
+			current = "truncate"
+		}
+		f := ui.CycleFieldState(fieldProtocolTruncate, "Context overflow", []string{"fail", "truncate"}, current,
+			"Truncate context beyond the model window instead of failing.")
+		f.Options = []ui.FormOption{{ID: "fail", Label: "Fail (default)"}, {ID: "truncate", Label: "Truncate"}}
+		fields = append(fields, f)
+	}
+	if len(options.ServiceTiers) > 0 {
+		current := ""
+		if settings != nil {
+			current = settings.ServiceTier
+		}
+		fields = append(fields, ui.SelectFieldState(fieldProtocolTier, "Service tier", current,
+			serviceTierOptions(options.ServiceTiers),
+			"Processing tier: flex is cheaper, priority is faster."))
+	}
+	return fields
+}
+
+// serviceTierOptions turns the protocol's declared tiers into select options.
+// The first tier is the wire default and carries the empty ID (inherit).
+func serviceTierOptions(tiers []string) []ui.FormOption {
+	options := make([]ui.FormOption, 0, len(tiers))
+	for i, tier := range tiers {
+		id := tier
+		if i == 0 {
+			id = ""
+		}
+		label := tierLabel(tier)
+		if i == 0 {
+			label += " (default)"
+		}
+		options = append(options, ui.FormOption{ID: id, Label: label})
+	}
+	return options
+}
+
+// tierLabel humanizes a tier identifier ("flex" → "Flex", "standard_only" →
+// "Standard only").
+func tierLabel(tier string) string {
+	words := strings.Split(strings.ReplaceAll(tier, "-", "_"), "_")
+	for i, word := range words {
+		if word != "" {
+			words[i] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+func protocolStoreValue(settings *provider.ProtocolSettings) *bool {
+	if settings == nil {
+		return nil
+	}
+	return settings.Store
+}
+
+func protocolSummariesValue(settings *provider.ProtocolSettings) *bool {
+	if settings == nil {
+		return nil
+	}
+	return settings.ReasoningSummaries
+}
+
+// extraBodyField builds the raw-JSON power-user field, validating that the
+// input is a JSON object as it is typed.
+func (m *Model) extraBodyField(cfg types.ProviderConfig) *ui.FieldState {
+	f := ui.TextFieldState(fieldExtraBody, "Extra JSON body", formatExtraBody(cfg.ExtraBody),
+		"Raw JSON object merged into every request body sent.")
+	f.Validator = func(value ui.FieldValue) []string {
+		trimmed := strings.TrimSpace(value.String())
+		if trimmed == "" {
+			return nil
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+			return []string{"Must be a JSON object, e.g. {\"key\": \"value\"}"}
+		}
+		return nil
+	}
+	return f
+}
+
+// formatExtraBody renders stored extras as compact JSON for editing.
+func formatExtraBody(extra map[string]any) string {
+	if len(extra) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(extra)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// Dialer field IDs. Each row offers a ladder of concrete values; the built-in
+// default leads the ladder and is labeled "(default)" so the inherited
+// behavior is always visible in the control itself.
 const (
 	fieldDialTimeout  = "dial-request-timeout"
 	fieldDialConnect  = "dial-connect-timeout"
@@ -285,31 +439,84 @@ const (
 )
 
 var (
-	dialTimeoutChoices  = []string{"Default", "30s", "60s", "120s", "300s", "600s"}
-	dialConnectChoices  = []string{"Default", "5s", "10s", "30s", "60s"}
-	dialAttemptsChoices = []string{"Default", "1", "2", "3", "5", "10"}
-	dialBackoffChoices  = []string{"Default", "15s", "30s", "60s", "120s", "300s"}
+	dialTimeoutLadder  = []int{30, 60, 120, 300, 600} // default: unlimited (0)
+	dialConnectLadder  = []int{5, 10, 60}             // default: 30s
+	dialAttemptsLadder = []int{1, 2, 3, 5}            // default: 10
+	dialBackoffLadder  = []int{15, 30, 60, 300}       // default: 120s
 )
 
 // dialerFields builds the transport-tuning rows for one provider. A nil dialer
-// (or all-Default rows) means the built-in transport defaults apply.
+// selects the built-in defaults; nothing is persisted unless a row moves off
+// its default.
 func dialerFields(dialer *provider.DialSettings) []*ui.FieldState {
-	dialer = dialerValue(dialer)
+	d := dialerValue(dialer)
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("dialer", "Connection tuning"),
-		ui.CycleFieldState(fieldDialTimeout, "Request timeout", dialTimeoutChoices,
-			dialSecondsChoice(dialer.RequestTimeoutSeconds),
-			"Overall cap per request, including streaming. Default keeps streams open until the model finishes."),
-		ui.CycleFieldState(fieldDialConnect, "Connect timeout", dialConnectChoices,
-			dialSecondsChoice(dialer.ConnectTimeoutSeconds),
+		dialSecondsField(fieldDialTimeout, "Request timeout", d.RequestTimeoutSeconds, 0, dialTimeoutLadder,
+			"Overall cap per request, including streaming."),
+		dialSecondsField(fieldDialConnect, "Connect timeout", d.ConnectTimeoutSeconds,
+			int(provider.DefaultConnectTimeout.Seconds()), dialConnectLadder,
 			"Budget for establishing each connection (TCP + TLS)."),
-		ui.CycleFieldState(fieldDialAttempts, "Max attempts", dialAttemptsChoices,
-			dialAttemptsChoice(dialer.MaxAttempts),
-			"Tries per request, including the first. Failed attempts back off exponentially."),
-		ui.CycleFieldState(fieldDialBackoff, "Max backoff", dialBackoffChoices,
-			dialSecondsChoice(dialer.MaxBackoffSeconds),
-			"Upper bound on the exponential retry delay between attempts."),
+		dialCountField(fieldDialAttempts, "Max attempts", d.MaxAttempts, provider.DefaultMaxAttempts, dialAttemptsLadder,
+			"Tries per request; failures retry with exponential backoff."),
+		dialSecondsField(fieldDialBackoff, "Max backoff", d.MaxBackoffSeconds,
+			int(provider.DefaultMaxBackoff.Seconds()), dialBackoffLadder,
+			"Upper bound on the exponential retry delay."),
 	}
+}
+
+// dialSecondsField renders one timeout row.
+func dialSecondsField(id, label string, value, builtinDefault int, ladder []int, description string) *ui.FieldState {
+	f := ui.CycleFieldState(id, label, nil, dialChoiceID(value, builtinDefault), description)
+	f.Options = dialFieldOptions(value, builtinDefault, ladder, "s")
+	return f
+}
+
+// dialCountField renders one unit-less count row.
+func dialCountField(id, label string, value, builtinDefault int, ladder []int, description string) *ui.FieldState {
+	f := ui.CycleFieldState(id, label, nil, dialChoiceID(value, builtinDefault), description)
+	f.Options = dialFieldOptions(value, builtinDefault, ladder, "")
+	return f
+}
+
+// dialChoiceID maps a stored value to its option ID; unset values select the
+// built-in default.
+func dialChoiceID(value, builtinDefault int) string {
+	if value <= 0 {
+		return strconv.Itoa(builtinDefault)
+	}
+	return strconv.Itoa(value)
+}
+
+// dialFieldOptions builds a ladder of concrete choices led by the built-in
+// default. A stored value outside the ladder is inserted so existing settings
+// stay visible and editable.
+func dialFieldOptions(current, builtinDefault int, ladder []int, unit string) []ui.FormOption {
+	values := append([]int{builtinDefault}, ladder...)
+	if current > 0 && !slices.Contains(values, current) {
+		values = append(values, current)
+		slices.Sort(values[1:])
+	}
+	options := make([]ui.FormOption, 0, len(values))
+	for _, value := range values {
+		options = append(options, ui.FormOption{
+			ID:    strconv.Itoa(value),
+			Label: dialChoiceLabel(value, builtinDefault, unit),
+		})
+	}
+	return options
+}
+
+// dialChoiceLabel renders one concrete value; the built-in default is marked.
+func dialChoiceLabel(value, builtinDefault int, unit string) string {
+	label := strconv.Itoa(value) + unit
+	if value == 0 {
+		label = "Unlimited"
+	}
+	if value == builtinDefault {
+		label += " (default)"
+	}
+	return label
 }
 
 // dialerValue returns a non-nil view of the stored dialer so field rendering
@@ -321,57 +528,32 @@ func dialerValue(dialer *provider.DialSettings) *provider.DialSettings {
 	return dialer
 }
 
-// dialSecondsChoice renders a seconds setting as its ladder label.
-func dialSecondsChoice(seconds int) string {
-	if seconds <= 0 {
-		return "Default"
-	}
-	return fmt.Sprintf("%ds", seconds)
-}
-
-// dialAttemptsChoice renders the attempts setting as its ladder label.
-func dialAttemptsChoice(attempts int) string {
-	if attempts <= 0 {
-		return "Default"
-	}
-	return strconv.Itoa(attempts)
-}
-
-// dialSecondsFromChoice parses a timeout ladder label into seconds; 0 means
-// the built-in default.
-func dialSecondsFromChoice(choice string) int {
-	if choice == "" || choice == "Default" {
-		return 0
-	}
-	seconds, err := strconv.Atoi(strings.TrimSuffix(choice, "s"))
-	if err != nil {
+// dialSecondsFromChoice parses an option ID into seconds. Values equal to the
+// built-in default persist as 0 (unset); 0 for the request timeout row means
+// unlimited, which is itself the built-in default.
+func dialSecondsFromChoice(choice string, builtinDefault int) int {
+	seconds, err := strconv.Atoi(choice)
+	if err != nil || seconds == builtinDefault {
 		return 0
 	}
 	return seconds
 }
 
-// dialAttemptsFromChoice parses the attempts ladder label; 0 means the
-// built-in default.
+// dialAttemptsFromChoice parses the attempts option ID; the built-in default
+// persists as 0 (unset).
 func dialAttemptsFromChoice(choice string) int {
-	if choice == "" || choice == "Default" {
-		return 0
-	}
-	attempts, err := strconv.Atoi(choice)
-	if err != nil {
-		return 0
-	}
-	return attempts
+	return dialSecondsFromChoice(choice, provider.DefaultMaxAttempts)
 }
 
 // dialerFromForm folds the four dialer rows back into persisted settings.
-// When every row is Default the dialer is stored as nil — defaults, not a
-// frozen copy of today's defaults.
+// Rows left on the built-in default persist as unset, and an all-default form
+// stores nil — defaults, not a frozen copy of them.
 func dialerFromForm(timeout, connect, attempts, backoff string) *provider.DialSettings {
 	dialer := provider.DialSettings{
-		RequestTimeoutSeconds: dialSecondsFromChoice(timeout),
-		ConnectTimeoutSeconds: dialSecondsFromChoice(connect),
+		RequestTimeoutSeconds: dialSecondsFromChoice(timeout, 0),
+		ConnectTimeoutSeconds: dialSecondsFromChoice(connect, int(provider.DefaultConnectTimeout.Seconds())),
 		MaxAttempts:           dialAttemptsFromChoice(attempts),
-		MaxBackoffSeconds:     dialSecondsFromChoice(backoff),
+		MaxBackoffSeconds:     dialSecondsFromChoice(backoff, int(provider.DefaultMaxBackoff.Seconds())),
 	}
 	if dialer == (provider.DialSettings{}) {
 		return nil
@@ -395,7 +577,7 @@ func (m *Model) chatgptAuthFields(cfg types.ProviderConfig) []*ui.FieldState {
 		}
 	}
 	statusField := ui.TextFieldState("chatgpt-status", "Account", status,
-		"The ChatGPT provider rides a Plus/Pro subscription via Sign in with ChatGPT — no API key.")
+		"ChatGPT subscription account; authenticates via browser, no API key.")
 	statusField.ReadOnly = true
 	if signedIn {
 		return []*ui.FieldState{
@@ -409,7 +591,7 @@ func (m *Model) chatgptAuthFields(cfg types.ProviderConfig) []*ui.FieldState {
 		statusField,
 		{ID: "chatgpt-signin", Label: "Sign in with ChatGPT", Type: ui.FieldNav, Target: "settings.chatgpt.signin",
 			Button:      true,
-			Description: "Opens a browser to authorize crude with your ChatGPT Plus/Pro subscription."},
+			Description: "Opens a browser to authorize your ChatGPT subscription."},
 	}
 }
 
@@ -448,14 +630,128 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Override the workspace default model."),
 		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the workspace reasoning budget."),
 	}
+	fields = append(fields, m.capabilityFields(cfg)...)
+	fields = append(fields, m.samplingFields(cfg)...)
 	if isMain {
 		fields = append(fields,
 			ui.SeparatorFieldState("delegation", "Delegation"),
 			ui.BoolFieldState(fieldMultiAgent, "Multi Agent",
-				m.agentsEnabled(), "Allow this workspace to spawn researcher, crafter, and aeron sub-agents."),
+				m.agentsEnabled(), "Allow spawning researcher, crafter, and aeron sub-agents."),
 		)
 	}
 	return formModel(fields...)
+}
+
+// capabilityFields builds the Model capabilities section: window limits and
+// modality toggles for the agent's model. Values left blank inherit whatever
+// the model registry reports at use time, so they never freeze stale numbers.
+func (m *Model) capabilityFields(cfg types.CategorySettings) []*ui.FieldState {
+	fields := []*ui.FieldState{
+		ui.SeparatorFieldState("capabilities", "Model capabilities"),
+		numericField(fieldCtxWindow, "Context window", cfg.ModelContextWindow,
+			"Max input tokens; blank uses the model registry value."),
+		numericField(fieldMaxOutput, "Max output", cfg.ModelMaxOutput,
+			"Max output tokens; blank uses the model registry value."),
+	}
+	for _, modality := range provider.KnownModalities() {
+		fields = append(fields, ui.ToggleFieldState(
+			fieldModalityPrefix+modality,
+			modalityLabel(modality),
+			slices.Contains(cfg.ModelModalities, modality),
+			modalityDescription(modality),
+		))
+	}
+	return fields
+}
+
+// samplingFields builds the Sampling section: temperature and top-p overrides
+// in their standard 0–2 / 0–1 ranges. Blank inherits the provider default.
+func (m *Model) samplingFields(cfg types.CategorySettings) []*ui.FieldState {
+	temperature, topP := "", ""
+	if cfg.ModelTemperature != nil {
+		temperature = strconv.FormatFloat(*cfg.ModelTemperature, 'f', -1, 64)
+	}
+	if cfg.ModelTopP != nil {
+		topP = strconv.FormatFloat(*cfg.ModelTopP, 'f', -1, 64)
+	}
+	temperatureField := ui.TextFieldState(fieldTemperature, "Temperature", temperature,
+		"Randomness from 0 to 2. Blank = default.")
+	temperatureField.Validator = floatRangeValidator(0, 2)
+	topPField := ui.TextFieldState(fieldTopP, "Top P", topP,
+		"Nucleus sampling cutoff, 0 to 1. Blank = default.")
+	topPField.Validator = floatRangeValidator(0, 1)
+	return []*ui.FieldState{
+		ui.SeparatorFieldState("sampling", "Sampling"),
+		temperatureField,
+		topPField,
+	}
+}
+
+// floatRangeValidator builds a validator accepting blank input or a float in
+// [min, max].
+func floatRangeValidator(min, max float64) func(ui.FieldValue) []string {
+	return func(value ui.FieldValue) []string {
+		trimmed := strings.TrimSpace(value.String())
+		if trimmed == "" {
+			return nil
+		}
+		parsed, err := strconv.ParseFloat(trimmed, 64)
+		if err != nil || parsed < min || parsed > max {
+			return []string{fmt.Sprintf("Must be a number between %s and %s.",
+				strconv.FormatFloat(min, 'f', -1, 64), strconv.FormatFloat(max, 'f', -1, 64))}
+		}
+		return nil
+	}
+}
+
+// numericField renders an optional integer field; 0 and blank mean inherit.
+func numericField(id, label string, value int, description string) *ui.FieldState {
+	current := ""
+	if value > 0 {
+		current = strconv.Itoa(value)
+	}
+	f := ui.TextFieldState(id, label, current, description)
+	f.Validator = func(v ui.FieldValue) []string {
+		trimmed := strings.TrimSpace(v.String())
+		if trimmed == "" {
+			return nil
+		}
+		if n, err := strconv.Atoi(trimmed); err != nil || n <= 0 {
+			return []string{"Must be a positive whole number."}
+		}
+		return nil
+	}
+	return f
+}
+
+// modalityLabel humanizes a modality constant for the toggle label.
+func modalityLabel(modality string) string {
+	switch modality {
+	case provider.ModalityImage:
+		return "Images"
+	case provider.ModalityPDF:
+		return "PDF documents"
+	case provider.ModalityVideo:
+		return "Video"
+	case provider.ModalityAudio:
+		return "Audio"
+	}
+	return strings.ToUpper(modality[:1]) + modality[1:]
+}
+
+// modalityDescription explains what each input modality toggle enables.
+func modalityDescription(modality string) string {
+	switch modality {
+	case provider.ModalityImage:
+		return "The model accepts image attachments."
+	case provider.ModalityPDF:
+		return "The model accepts PDF attachments."
+	case provider.ModalityVideo:
+		return "The model accepts video attachments."
+	case provider.ModalityAudio:
+		return "The model accepts audio attachments."
+	}
+	return "The model accepts " + modality + " attachments."
 }
 
 // agentsEnabled is a placeholder that is replaced by NewScoped wiring below;
@@ -491,16 +787,16 @@ func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
 	}
 	return formModel(
 		ui.SeparatorFieldState("memory-recall", "Recall"),
-		ui.BoolFieldState("auto-recall", "Auto recall", mem.AutoRecallEnabled(), "Inject relevant workspace memories into the agent context each turn."),
+		ui.BoolFieldState("auto-recall", "Auto recall", mem.AutoRecallEnabled(), "Inject relevant workspace memories into context each turn."),
 		ui.TextFieldState("recall-budget", "Recall budget", fmt.Sprintf("%d", mem.RecallBudgetOrDefault(types.DefaultMemoryRecallBudget)), "Token budget for the injected memory block."),
 		ui.TextFieldState("recall-limit", "Recall limit", fmt.Sprintf("%d", mem.RecallLimitOrDefault(types.DefaultMemoryRecallLimit)), "Maximum memories injected per turn."),
 		ui.SeparatorFieldState("memory-background", "Background curation"),
-		ui.BoolFieldState("auto-extract", "Auto extract", mem.AutoExtractEnabled(), "Extract durable memories and session summaries from finished turns using a background model call."),
+		ui.BoolFieldState("auto-extract", "Auto extract", mem.AutoExtractEnabled(), "Extract durable memories and summaries in a background job."),
 		ui.TextFieldState("extract-every", "Extract cadence", fmt.Sprintf("%d", mem.ExtractCadenceOrDefault(types.DefaultMemoryExtractCadence)), "Run extraction every N turns."),
-		ui.BoolFieldState("consolidation", "Consolidation", mem.ConsolidationEnabled(), "Background dedup, contradiction resolution, and decay of unused memories."),
+		ui.BoolFieldState("consolidation", "Consolidation", mem.ConsolidationEnabled(), "Background dedup, contradiction resolution, and memory decay."),
 		ui.SeparatorFieldState("memory-agent", "Memory agent"),
 		ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(m.presets), "Override the workspace provider for the memory agent."),
-		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Model for background memory jobs. Empty inherits the main agent."),
+		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Model for background memory jobs. Blank inherits the main agent."),
 		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the memory agent's reasoning budget."),
 	)
 }
@@ -614,10 +910,10 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		return
 	}
 	if category == catProviders && fieldID == fieldAPIStandard {
-		m.providers[m.providerID] = func(cfg types.ProviderConfig) types.ProviderConfig {
-			cfg.APIStandard = m.value(catProviders, fieldAPIStandard)
-			return cfg
-		}(m.providers[m.providerID])
+		// Persist the switch, then rebuild: the protocol option rows are
+		// capability-driven by the selected protocol and must change with it.
+		m.storeProviderForm(m.providerID)
+		m.rebuildProvidersForm()
 		return
 	}
 	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldProvider {
@@ -632,8 +928,49 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		return
 	}
 	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldModel {
+		m.autofillCapabilities(category)
 		return
 	}
+}
+
+// autofillCapabilities pre-fills an agent form's capability and sampling rows
+// from the selected model's registry entry. Fields the registry doesn't know
+// are left untouched so previously saved overrides survive a model switch.
+func (m *Model) autofillCapabilities(category int) {
+	form := m.categories[category].Form
+	if form == nil {
+		return
+	}
+	modelID := m.value(category, fieldModel)
+	providerID := m.value(category, fieldProvider)
+	var entry types.ModelEntry
+	var found bool
+	for _, model := range m.models[providerID] {
+		if model.ID == modelID {
+			entry, found = model, true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+	if entry.ContextWindow > 0 {
+		form.SetValue(fieldCtxWindow, ui.StringValue(strconv.Itoa(entry.ContextWindow)))
+	}
+	if entry.MaxOutput > 0 {
+		form.SetValue(fieldMaxOutput, ui.StringValue(strconv.Itoa(entry.MaxOutput)))
+	}
+	for _, modality := range provider.KnownModalities() {
+		form.SetValue(fieldModalityPrefix+modality, ui.StringValue(modalityChoice(slices.Contains(entry.Modalities, modality))))
+	}
+}
+
+// modalityChoice renders a modality toggle's cycle value.
+func modalityChoice(enabled bool) string {
+	if enabled {
+		return "yes"
+	}
+	return "no"
 }
 
 // syncAppearanceColors refreshes read-only colour rows after a preset cycle.
@@ -974,7 +1311,68 @@ func (m *Model) storeProviderForm(providerID string) {
 		m.value(catProviders, fieldDialAttempts),
 		m.value(catProviders, fieldDialBackoff),
 	)
+	cfg.Protocol = m.protocolSettingsFromForm(catProviders)
+	cfg.ExtraBody = extraBodyFromForm(m.value(catProviders, fieldExtraBody))
 	m.providers[providerID] = cfg
+}
+
+// protocolSettingsFromForm folds the protocol option rows back into persisted
+// settings. A form left entirely on defaults stores nil — protocol defaults,
+// not a frozen copy of them. Fields the protocol does not expose never render,
+// so their form lookups read empty and stay unset.
+func (m *Model) protocolSettingsFromForm(category int) *provider.ProtocolSettings {
+	settings := provider.ProtocolSettings{
+		Store:              m.triStateAt(category, fieldProtocolStore),
+		ZeroDataRetention:  m.toggleAt(category, fieldProtocolZDR),
+		ReasoningSummaries: m.triStateAt(category, fieldProtocolSummaries),
+		Truncation:         m.truncationAt(category, fieldProtocolTruncate),
+		ServiceTier:        m.value(category, fieldProtocolTier),
+	}
+	if settings == (provider.ProtocolSettings{}) {
+		return nil
+	}
+	return &settings
+}
+
+// triStateAt reads an optional-boolean row; nil means the protocol default.
+func (m *Model) triStateAt(category int, fieldID string) *bool {
+	return ui.TriStateFieldValue(m.fieldAt(category, fieldID))
+}
+
+// toggleAt reads a yes/no row as a plain bool.
+func (m *Model) toggleAt(category int, fieldID string) bool {
+	return ui.ToggleFieldValue(m.fieldAt(category, fieldID))
+}
+
+// truncationAt reads the context-overflow row; "truncate" persists true.
+func (m *Model) truncationAt(category int, fieldID string) *bool {
+	if m.value(category, fieldID) == "truncate" {
+		on := true
+		return &on
+	}
+	return nil
+}
+
+// fieldAt returns a form field, tolerating a missing form.
+func (m *Model) fieldAt(category int, fieldID string) *ui.FieldState {
+	if category < 0 || category >= len(m.categories) || m.categories[category].Form == nil {
+		return nil
+	}
+	return m.categories[category].Form.Field(fieldID)
+}
+
+// extraBodyFromForm parses the extra-body JSON field; blank is nil and
+// invalid JSON is nil (the field validator blocks saving invalid input).
+func extraBodyFromForm(value string) map[string]any {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return nil
+	}
+	return decoded
 }
 
 func (m *Model) collectAgents(agents *types.AgentsSettings) {
@@ -990,13 +1388,25 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 			Model:          m.value(entry.index, fieldModel),
 			ThinkingEffort: m.value(entry.index, fieldThinkingEffort),
 		}
+		// Registry facts (pricing, tool support) mirror onto the category when
+		// the model entry is known. User-editable capabilities come from the
+		// form, where blank means inherit from the registry at use time.
 		for _, model := range m.models[category.Provider] {
 			if model.ID == category.Model {
-				category.ModelContextWindow, category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = model.ContextWindow, model.InputPrice, model.OutputPrice, model.CacheReadPrice
-				category.ModelSupportsVision, category.ModelSupportsTools, category.ModelMaxOutput, category.ModelAttachment = model.SupportsVision, model.SupportsTools, model.MaxOutput, model.Attachment
+				category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = model.InputPrice, model.OutputPrice, model.CacheReadPrice
+				category.ModelSupportsTools = model.SupportsTools
 				break
 			}
 		}
+		category.ModelContextWindow = parsePositiveInt(m.value(entry.index, fieldCtxWindow))
+		category.ModelMaxOutput = parsePositiveInt(m.value(entry.index, fieldMaxOutput))
+		for _, modality := range provider.KnownModalities() {
+			if m.value(entry.index, fieldModalityPrefix+modality) == "yes" {
+				category.ModelModalities = append(category.ModelModalities, modality)
+			}
+		}
+		category.ModelTemperature = parseFloatPtr(m.value(entry.index, fieldTemperature))
+		category.ModelTopP = parseFloatPtr(m.value(entry.index, fieldTopP))
 		agents.Categories[entry.key] = category
 	}
 	// The main agent form owns the Multi-Agent toggle; mirror it into the
@@ -1004,6 +1414,28 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 	if field := m.categories[catMain].Form.Field(fieldMultiAgent); field != nil {
 		agents.Enabled = ui.BoolFieldValue(field)
 	}
+}
+
+// parsePositiveInt parses an optional integer field; blank or invalid is 0.
+func parsePositiveInt(value string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// parseFloatPtr parses an optional float field; blank or invalid is nil.
+func parseFloatPtr(value string) *float64 {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 func (m *Model) collectAppearance(cfg *types.ThemeSettings) {

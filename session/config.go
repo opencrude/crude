@@ -54,14 +54,18 @@ type CategoryConfig struct {
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 	DeniedTools  []string `json:"denied_tools,omitempty"`
 
-	ModelContextWindow  int     `json:"model_context_window,omitempty"`
-	ModelInputPrice     float64 `json:"model_input_price,omitempty"`
-	ModelOutputPrice    float64 `json:"model_output_price,omitempty"`
-	ModelCachePrice     float64 `json:"model_cache_price,omitempty"`
-	ModelSupportsVision bool    `json:"model_supports_vision,omitempty"`
-	ModelSupportsTools  bool    `json:"model_supports_tools,omitempty"`
-	ModelMaxOutput      int     `json:"model_max_output,omitempty"`
-	ModelAttachment     bool    `json:"model_attachment,omitempty"`
+	ModelContextWindow int     `json:"model_context_window,omitempty"`
+	ModelInputPrice    float64 `json:"model_input_price,omitempty"`
+	ModelOutputPrice   float64 `json:"model_output_price,omitempty"`
+	ModelCachePrice    float64 `json:"model_cache_price,omitempty"`
+	// Modalities lists accepted input types beyond text (image, pdf,
+	// video, audio).
+	ModelModalities    []string `json:"model_modalities,omitempty"`
+	ModelSupportsTools bool     `json:"model_supports_tools,omitempty"`
+	ModelMaxOutput     int      `json:"model_max_output,omitempty"`
+	// Sampling overrides; nil leaves the backend default in effect.
+	ModelTemperature *float64 `json:"model_temperature,omitempty"`
+	ModelTopP        *float64 `json:"model_top_p,omitempty"`
 }
 
 type ProfileConfig struct {
@@ -186,6 +190,8 @@ type ProviderConfig struct {
 	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
 	OAuth          *provider.OAuthCredentials `json:"oauth,omitempty"`
 	Dialer         *provider.DialSettings     `json:"dialer,omitempty"`
+	Protocol       *provider.ProtocolSettings `json:"protocol,omitempty"`
+	ExtraBody      map[string]any             `json:"extra_body,omitempty"`
 }
 
 func (c ProviderConfig) StandardForModel(model, providerID string) string {
@@ -204,6 +210,7 @@ func (c *Config) providerForCategory(category CategoryConfig) (*provider.Provide
 	p := provider.FromPreset(category.Provider, category.APIKey, category.ProviderURL)
 	p.Model = category.Model
 	p.SetThinkingEffort(category.ThinkingEffort)
+	p.SetSampling(category.ModelTemperature, category.ModelTopP)
 	if err := p.SetStandardID(category.APIStandard); err != nil {
 		return nil, err
 	}
@@ -213,7 +220,28 @@ func (c *Config) providerForCategory(category CategoryConfig) (*provider.Provide
 	if dialer := c.dialerFor(category.Provider); dialer != nil {
 		p.SetDialSettings(*dialer)
 	}
+	if protocol := c.protocolSettingsFor(category.Provider); protocol != nil {
+		p.SetProtocolSettings(protocol)
+	}
+	if extra := c.extraBodyFor(category.Provider); len(extra) > 0 {
+		p.SetExtraBody(extra)
+	}
 	return p, nil
+}
+
+// extraBodyFor returns the stored raw-JSON extras for a provider, falling back
+// to the effective provider when the category's own entry has none.
+func (c *Config) extraBodyFor(providerID string) map[string]any {
+	if c == nil {
+		return nil
+	}
+	if cfg, ok := c.Providers[providerID]; ok && len(cfg.ExtraBody) > 0 {
+		return cfg.ExtraBody
+	}
+	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok && len(cfg.ExtraBody) > 0 {
+		return cfg.ExtraBody
+	}
+	return nil
 }
 
 // dialerFor returns the stored transport settings for a provider, falling back
@@ -227,6 +255,22 @@ func (c *Config) dialerFor(providerID string) *provider.DialSettings {
 	}
 	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok && cfg.Dialer != nil {
 		return cfg.Dialer
+	}
+	return nil
+}
+
+// protocolSettingsFor returns the stored protocol switches for a provider,
+// falling back to the effective provider when the category's own entry has
+// none.
+func (c *Config) protocolSettingsFor(providerID string) *provider.ProtocolSettings {
+	if c == nil {
+		return nil
+	}
+	if cfg, ok := c.Providers[providerID]; ok && cfg.Protocol != nil {
+		return cfg.Protocol
+	}
+	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok && cfg.Protocol != nil {
+		return cfg.Protocol
 	}
 	return nil
 }
@@ -490,45 +534,47 @@ func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 
 func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	return ttypes.CategorySettings{
-		Provider:            v.Provider,
-		ProviderURL:         v.ProviderURL,
-		APIStandard:         v.APIStandard,
-		Model:               v.Model,
-		ThinkingEffort:      v.ThinkingEffort,
-		Inherit:             v.Inherit,
-		Policy:              v.Policy,
-		MaxSteps:            v.MaxSteps,
-		Description:         v.Description,
-		ModelContextWindow:  v.ModelContextWindow,
-		ModelInputPrice:     v.ModelInputPrice,
-		ModelOutputPrice:    v.ModelOutputPrice,
-		ModelCachePrice:     v.ModelCachePrice,
-		ModelSupportsVision: v.ModelSupportsVision,
-		ModelSupportsTools:  v.ModelSupportsTools,
-		ModelMaxOutput:      v.ModelMaxOutput,
-		ModelAttachment:     v.ModelAttachment,
+		Provider:           v.Provider,
+		ProviderURL:        v.ProviderURL,
+		APIStandard:        v.APIStandard,
+		Model:              v.Model,
+		ThinkingEffort:     v.ThinkingEffort,
+		Inherit:            v.Inherit,
+		Policy:             v.Policy,
+		MaxSteps:           v.MaxSteps,
+		Description:        v.Description,
+		ModelContextWindow: v.ModelContextWindow,
+		ModelInputPrice:    v.ModelInputPrice,
+		ModelOutputPrice:   v.ModelOutputPrice,
+		ModelCachePrice:    v.ModelCachePrice,
+		ModelModalities:    v.ModelModalities,
+		ModelSupportsTools: v.ModelSupportsTools,
+		ModelMaxOutput:     v.ModelMaxOutput,
+		ModelTemperature:   v.ModelTemperature,
+		ModelTopP:          v.ModelTopP,
 	}
 }
 
 func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	return CategoryConfig{
-		Provider:            v.Provider,
-		ProviderURL:         v.ProviderURL,
-		APIStandard:         v.APIStandard,
-		Model:               NormalizeModel(v.Model),
-		ThinkingEffort:      v.ThinkingEffort,
-		Inherit:             v.Inherit,
-		Policy:              v.Policy,
-		MaxSteps:            v.MaxSteps,
-		Description:         v.Description,
-		ModelContextWindow:  v.ModelContextWindow,
-		ModelInputPrice:     v.ModelInputPrice,
-		ModelOutputPrice:    v.ModelOutputPrice,
-		ModelCachePrice:     v.ModelCachePrice,
-		ModelSupportsVision: v.ModelSupportsVision,
-		ModelSupportsTools:  v.ModelSupportsTools,
-		ModelMaxOutput:      v.ModelMaxOutput,
-		ModelAttachment:     v.ModelAttachment,
+		Provider:           v.Provider,
+		ProviderURL:        v.ProviderURL,
+		APIStandard:        v.APIStandard,
+		Model:              NormalizeModel(v.Model),
+		ThinkingEffort:     v.ThinkingEffort,
+		Inherit:            v.Inherit,
+		Policy:             v.Policy,
+		MaxSteps:           v.MaxSteps,
+		Description:        v.Description,
+		ModelContextWindow: v.ModelContextWindow,
+		ModelInputPrice:    v.ModelInputPrice,
+		ModelOutputPrice:   v.ModelOutputPrice,
+		ModelCachePrice:    v.ModelCachePrice,
+		ModelModalities:    v.ModelModalities,
+		ModelSupportsTools: v.ModelSupportsTools,
+		ModelMaxOutput:     v.ModelMaxOutput,
+		ModelTemperature:   v.ModelTemperature,
+		ModelTopP:          v.ModelTopP,
 	}
 }
 

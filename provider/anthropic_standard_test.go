@@ -91,17 +91,17 @@ func TestAnthropicHeadersAndThinkingConfig(t *testing.T) {
 	if got := auth.Get("x-api-key"); got != "sk-ant" {
 		t.Fatalf("auth x-api-key = %q", got)
 	}
-	extra := std.RequestExtras("claude-sonnet-4-6", "high")
+	extra := std.RequestExtras("claude-sonnet-4-6", "high", ProtocolSettings{})
 	if extra["thinking"].(map[string]any)["type"] != "adaptive" {
 		t.Fatalf("thinking config = %#v", extra)
 	}
 	if extra["output_config"].(map[string]any)["effort"] != "high" {
 		t.Fatalf("output config = %#v", extra)
 	}
-	if got := std.RequestExtras("claude-sonnet-4-5", "high"); got != nil {
+	if got := std.RequestExtras("claude-sonnet-4-5", "high", ProtocolSettings{}); got != nil {
 		t.Fatalf("older model received adaptive thinking: %#v", got)
 	}
-	disabled := std.RequestExtras("claude-sonnet-4-5", "none")
+	disabled := std.RequestExtras("claude-sonnet-4-5", "none", ProtocolSettings{})
 	if disabled["thinking"].(map[string]any)["type"] != "disabled" {
 		t.Fatalf("disabled thinking config = %#v", disabled)
 	}

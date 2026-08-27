@@ -53,9 +53,20 @@ func (s *OllamaStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 		}
 		wire["tools"] = tools
 	}
-	// Ollama takes generation limits under "options", not as top-level max_tokens.
+	// Ollama takes generation limits and sampling under "options", not as
+	// top-level fields.
+	options := map[string]any{}
 	if req.MaxOutputTokens > 0 {
-		wire["options"] = map[string]any{"num_predict": req.MaxOutputTokens}
+		options["num_predict"] = req.MaxOutputTokens
+	}
+	if req.Temperature != nil {
+		options["temperature"] = *req.Temperature
+	}
+	if req.TopP != nil {
+		options["top_p"] = *req.TopP
+	}
+	if len(options) > 0 {
+		wire["options"] = options
 	}
 	return json.Marshal(wire)
 }
@@ -272,7 +283,7 @@ func (s *OllamaStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 // RequestExtras implements RequestExtras. Ollama exposes a single boolean
 // "think" toggle (qwen3, gpt-oss, ...) rather than graded effort levels; a
 // non-default effort enables thinking.
-func (s *OllamaStandard) RequestExtras(modelID, thinkingEffort string) map[string]any {
+func (s *OllamaStandard) RequestExtras(modelID, thinkingEffort string, _ ProtocolSettings) map[string]any {
 	if thinkingEffort == "" || thinkingEffort == "none" {
 		return nil
 	}

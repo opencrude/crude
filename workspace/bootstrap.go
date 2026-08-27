@@ -259,6 +259,8 @@ func (w *Workspace) AllProviderConfigs() map[string]ttypes.ProviderConfig {
 			ThinkingEffort: v.ThinkingEffort,
 			OAuth:          cloneSessionOAuth(v.OAuth),
 			Dialer:         cloneDialSettings(v.Dialer),
+			Protocol:       cloneProtocolSettings(v.Protocol),
+			ExtraBody:      copyExtraBody(v.ExtraBody),
 		}
 	}
 	return out
@@ -296,6 +298,42 @@ func cloneDialSettings(src *provider.DialSettings) *provider.DialSettings {
 	return &dup
 }
 
+// copyExtraBody copies a raw extra-body map so neither side of the session/UI
+// boundary can mutate the other's copy. Values are JSON-decoded and never
+// mutated in place, so a top-level copy suffices.
+func copyExtraBody(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+// cloneProtocolSettings copies the protocol-level request switches so neither
+// side of the session/UI boundary can mutate the other's copy.
+func cloneProtocolSettings(src *provider.ProtocolSettings) *provider.ProtocolSettings {
+	if src == nil {
+		return nil
+	}
+	dup := *src
+	if src.Store != nil {
+		store := *src.Store
+		dup.Store = &store
+	}
+	if src.ReasoningSummaries != nil {
+		summaries := *src.ReasoningSummaries
+		dup.ReasoningSummaries = &summaries
+	}
+	if src.Truncation != nil {
+		truncation := *src.Truncation
+		dup.Truncation = &truncation
+	}
+	return &dup
+}
+
 // SaveProviderSettings updates the live session config and persists via OnConfigSave.
 // Category-level keys resolve from Config.Providers via resolveCategoryDefaults.
 func (w *Workspace) SaveProviderSettings(active string, providers map[string]ttypes.ProviderConfig) error {
@@ -318,6 +356,8 @@ func (w *Workspace) SaveProviderSettings(active string, providers map[string]tty
 			ThinkingEffort: pc.ThinkingEffort,
 			OAuth:          cloneSessionOAuth(pc.OAuth),
 			Dialer:         cloneDialSettings(pc.Dialer),
+			Protocol:       cloneProtocolSettings(pc.Protocol),
+			ExtraBody:      copyExtraBody(pc.ExtraBody),
 		}
 	}
 	for _, frontendSession := range w.Sessions {
@@ -351,9 +391,9 @@ func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey, standardID st
 			return nil, err
 		}
 	}
-	// Attach stored OAuth credentials (e.g. ChatGPT subscription) and dialer
-	// tuning so the listing request is authenticated and transported exactly
-	// like chat traffic.
+	// Attach stored OAuth credentials (e.g. ChatGPT subscription) and
+	// transport/protocol tuning so the listing request is authenticated and
+	// transported exactly like chat traffic.
 	if w.sessionCfg != nil {
 		if pc, ok := w.sessionCfg.Providers[providerID]; ok {
 			if pc.OAuth != nil {
@@ -361,6 +401,12 @@ func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey, standardID st
 			}
 			if pc.Dialer != nil {
 				p.SetDialSettings(*pc.Dialer)
+			}
+			if pc.Protocol != nil {
+				p.SetProtocolSettings(pc.Protocol)
+			}
+			if len(pc.ExtraBody) > 0 {
+				p.SetExtraBody(pc.ExtraBody)
 			}
 		}
 	}
@@ -835,6 +881,8 @@ func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 				ThinkingEffort: cfg.ThinkingEffort,
 				OAuth:          cloneSessionOAuth(cfg.OAuth),
 				Dialer:         cloneDialSettings(cfg.Dialer),
+				Protocol:       cloneProtocolSettings(cfg.Protocol),
+				ExtraBody:      copyExtraBody(cfg.ExtraBody),
 			}
 		}
 	}
@@ -850,6 +898,8 @@ func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 			ThinkingEffort: cfg.ThinkingEffort,
 			OAuth:          cloneSessionOAuth(cfg.OAuth),
 			Dialer:         cloneDialSettings(cfg.Dialer),
+			Protocol:       cloneProtocolSettings(cfg.Protocol),
+			ExtraBody:      copyExtraBody(cfg.ExtraBody),
 		}
 	}
 	return ttypes.ProviderConfig{}

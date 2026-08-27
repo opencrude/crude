@@ -34,6 +34,9 @@ func (s *CodexStandard) Info() ProtocolInfo {
 	info.Root = "" // the base URL already is the backend prefix
 	info.ChatPath = "responses"
 	info.ModelsPath = "models"
+	// The codex backend forces store:false itself; only the summary knob
+	// is user-selectable.
+	info.Options = ProtocolOptions{ReasoningSummaries: true}
 	return info
 }
 

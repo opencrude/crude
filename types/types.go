@@ -51,18 +51,22 @@ type CategorySettings struct {
 	// this session's main agent, "workspace" follows the workspace's main
 	// agent. Empty means an explicit (manual) category. Never set on
 	// workspace/app agent categories.
-	Inherit             string `json:"inherit,omitempty"`
-	Policy              string
-	MaxSteps            int
-	Description         string
-	ModelContextWindow  int
-	ModelInputPrice     float64
-	ModelOutputPrice    float64
-	ModelCachePrice     float64
-	ModelSupportsVision bool
-	ModelSupportsTools  bool
-	ModelMaxOutput      int
-	ModelAttachment     bool
+	Inherit            string `json:"inherit,omitempty"`
+	Policy             string
+	MaxSteps           int
+	Description        string
+	ModelContextWindow int
+	ModelInputPrice    float64
+	ModelOutputPrice   float64
+	ModelCachePrice    float64
+	// Modalities lists the input types beyond text the model accepts
+	// (provider.ModalityImage, ModalityPDF, ModalityVideo, ModalityAudio).
+	ModelModalities    []string
+	ModelSupportsTools bool
+	ModelMaxOutput     int
+	// Sampling overrides; nil leaves the backend default in effect.
+	ModelTemperature *float64
+	ModelTopP        *float64
 }
 
 type ProfileSettings struct {
@@ -303,10 +307,10 @@ type ModelEntry struct {
 	InputPrice     float64
 	OutputPrice    float64
 	CacheReadPrice float64
-	SupportsVision bool
-	SupportsTools  bool
-	MaxOutput      int
-	Attachment     bool
+	// Modalities lists accepted input types beyond text.
+	Modalities    []string
+	SupportsTools bool
+	MaxOutput     int
 }
 
 // ModelEntriesFromInfos converts provider model infos into UI model entries,
@@ -326,10 +330,9 @@ func ModelEntriesFromInfos(models []provider.ModelInfo) []ModelEntry {
 			entry.InputPrice = meta.InputPrice
 			entry.OutputPrice = meta.OutputPrice
 			entry.CacheReadPrice = meta.CacheReadPrice
-			entry.SupportsVision = meta.SupportsVision
+			entry.Modalities = meta.Modalities
 			entry.SupportsTools = meta.SupportsTools
 			entry.MaxOutput = meta.MaxOutput
-			entry.Attachment = meta.Attachment
 		}
 		entries = append(entries, entry)
 	}
@@ -346,6 +349,14 @@ type ProviderConfig struct {
 	OAuth          *provider.OAuthCredentials `json:"oauth,omitempty"`
 	// Dialer carries user-tunable transport settings. nil means defaults.
 	Dialer *provider.DialSettings `json:"dialer,omitempty"`
+	// Protocol carries the protocol-level request switches (server-side
+	// storage, zero data retention, reasoning summaries). nil means the
+	// protocol defaults.
+	Protocol *provider.ProtocolSettings `json:"protocol,omitempty"`
+	// ExtraBody is a raw JSON object merged into every request body sent to
+	// this provider. It is the power-user escape hatch for protocol options
+	// the app does not model natively.
+	ExtraBody map[string]any `json:"extra_body,omitempty"`
 }
 
 type ProviderPreset struct {

@@ -22,6 +22,10 @@ func (s *OpenAIStandard) Info() ProtocolInfo {
 		ChatPath:    "chat/completions",
 		ModelsPath:  "models",
 		Streaming:   FramingSSE,
+		Options: ProtocolOptions{
+			Store:        true,
+			ServiceTiers: []string{"auto", "default", "flex", "priority", "fast"},
+		},
 	}
 }
 
@@ -69,6 +73,12 @@ func (s *OpenAIStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 			// Compatible providers have the broadest support for max_tokens.
 			wire["max_tokens"] = req.MaxOutputTokens
 		}
+	}
+	if req.Temperature != nil {
+		wire["temperature"] = *req.Temperature
+	}
+	if req.TopP != nil {
+		wire["top_p"] = *req.TopP
 	}
 	return json.Marshal(wire)
 }
@@ -459,17 +469,23 @@ func (s *OpenAIStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 }
 
 // RequestExtras implements RequestExtras with the standard OpenAI reasoning
-// effort format.
-func (s *OpenAIStandard) RequestExtras(modelID, thinkingEffort string) map[string]any {
-	if thinkingEffort == "" {
+// effort format. Chat Completions does not store requests by default; an
+// explicit Store setting opts the conversation into server-side storage.
+func (s *OpenAIStandard) RequestExtras(modelID, thinkingEffort string, settings ProtocolSettings) map[string]any {
+	extras := map[string]any{}
+	if settings.Store != nil && *settings.Store && !settings.ZeroDataRetention {
+		extras["store"] = true
+	}
+	if settings.ServiceTier != "" {
+		extras["service_tier"] = settings.ServiceTier
+	}
+	if thinkingEffort != "" && !(thinkingEffort == "none" && !usesOpenAICompletionTokenLimit(modelID)) {
+		extras["reasoning_effort"] = thinkingEffort
+	}
+	if len(extras) == 0 {
 		return nil
 	}
-	if thinkingEffort == "none" && !usesOpenAICompletionTokenLimit(modelID) {
-		return nil
-	}
-	return map[string]any{
-		"reasoning_effort": thinkingEffort,
-	}
+	return extras
 }
 
 // ContextWindow implements ProtocolMetadata.

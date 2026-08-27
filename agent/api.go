@@ -101,6 +101,11 @@ func (a *Agent) completeStream(
 		Stream:        true,
 		StreamOptions: &provider.StreamOptions{IncludeUsage: true},
 	}
+	if a.Provider != nil {
+		sampling := a.Provider.Sampling()
+		req.Temperature = sampling.Temperature
+		req.TopP = sampling.TopP
+	}
 
 	if ctxWindow := a.Provider.ContextWindow(a.Model); ctxWindow > 0 {
 		estimatedInput := provider.EstimateMessagesTotal(msgs, a.Model)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -136,7 +137,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	// Use per-orchestrator effective config from runtime profile.
 	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
 	activeCfg := effectiveCfg.GetActiveDefaultCategory()
-	provider.MergeModelCap(activeCfg.Model, activeCfg.ModelSupportsVision, activeCfg.ModelSupportsTools)
+	provider.MergeModelCap(activeCfg.Model, slices.Contains(activeCfg.ModelModalities, provider.ModalityImage), activeCfg.ModelSupportsTools)
 	// The ChatGPT subscription provider authenticates via OAuth, not an API
 	// key, so an empty key is fine when OAuth credentials are present.
 	if activeCfg.APIKey == "" && activeCfg.OAuth == nil {

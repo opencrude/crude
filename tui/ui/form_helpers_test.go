@@ -136,10 +136,10 @@ func TestModelOptionsFallsBackToIDAndFormatsContext(t *testing.T) {
 func TestModelOptionsShowsPriceAndCapabilities(t *testing.T) {
 	options := ModelOptions([]types.ModelEntry{{
 		ID: "model", InputPrice: 0.000002, OutputPrice: 0.000008,
-		SupportsVision: true, SupportsTools: true, Attachment: true,
+		Modalities: []string{"image", "pdf"}, SupportsTools: true,
 	}})
 	detail := options[0].Detail
-	for _, want := range []string{"$2.00/8.00 per M", "vision", "tools", "files"} {
+	for _, want := range []string{"$2.00/8.00 per M", "image", "pdf", "tools"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail %q missing %q", detail, want)
 		}
