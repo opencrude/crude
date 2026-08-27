@@ -374,26 +374,79 @@ func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey, standardID st
 
 // HandleUndo undoes the last message.
 func (w *Workspace) HandleUndo(cmd string) interface{} {
-	if b := w.BackendSession(); b != nil {
-		return b.HandleUndo(cmd)
+	agentID := ""
+	if w.AgentMgr != nil {
+		agentID = w.AgentMgr.ActiveID()
 	}
-	return nil
+	return w.HandleUndoForAgent(agentID, cmd)
+}
+
+// HandleUndoForAgent applies an undo to the session that owns agentID. The
+// explicit owner keeps an async slash command from following a later tab
+// switch into a different session.
+func (w *Workspace) HandleUndoForAgent(agentID, cmd string) ttypes.UndoResultMsg {
+	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
+		return sess.backend.HandleUndo(cmd)
+	}
+	return ttypes.UndoResultMsg{Error: "no active session"}
 }
 
 // HandleCompact force-compacts the backend session's conversation context
 // into a summary checkpoint.
 func (w *Workspace) HandleCompact() interface{} {
-	if b := w.BackendSession(); b != nil {
-		return b.HandleCompact()
+	agentID := ""
+	if w.AgentMgr != nil {
+		agentID = w.AgentMgr.ActiveID()
+	}
+	return w.HandleCompactForAgent(agentID)
+}
+
+// HandleCompactForAgent compacts only the session captured when the slash
+// command was submitted.
+func (w *Workspace) HandleCompactForAgent(agentID string) ttypes.CompactResultMsg {
+	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
+		return sess.backend.HandleCompact()
 	}
 	return ttypes.CompactResultMsg{Error: "no active session"}
 }
 
 // SetYolo toggles auto-approve mode.
 func (w *Workspace) SetYolo(enabled bool) {
-	if b := w.BackendSession(); b != nil {
-		b.SetYolo(enabled)
+	agentID := ""
+	if w.AgentMgr != nil {
+		agentID = w.AgentMgr.ActiveID()
 	}
+	w.SetYoloForAgent(agentID, enabled)
+}
+
+// SetYoloForAgent updates the owning session's live safety policy.
+func (w *Workspace) SetYoloForAgent(agentID string, enabled bool) bool {
+	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
+		sess.backend.SetYolo(enabled)
+		return true
+	}
+	return false
+}
+
+// YoloForAgent reports the owning session's current live safety policy.
+func (w *Workspace) YoloForAgent(agentID string) bool {
+	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
+		return sess.backend.YoloEnabled()
+	}
+	return false
+}
+
+// AgentTurnActive reports the backend lifecycle for the session owning agentID.
+func (w *Workspace) AgentTurnActive(agentID string) bool {
+	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
+		return sess.backend.IsTurnActive()
+	}
+	if w.AgentMgr != nil {
+		if node := w.AgentMgr.Get(agentID); node != nil && node.State != nil {
+			return node.State.IsActive()
+		}
+	}
+	return false
 }
 
 // HardCancel forcefully cancels all running agents.
@@ -924,7 +977,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 
 	toolNameByCallID := buildToolNameIndex(msgs)
 
-	for index, mm := range msgs {
+	for _, mm := range msgs {
 		role := mm.Meta.DisplayRole
 		if role == "" {
 			role = mm.Msg.Role
@@ -959,11 +1012,6 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 			var thinkingDuration time.Duration
 			if mm.Meta.DurationMs > 0 {
 				thinkingDuration = time.Duration(mm.Meta.DurationMs) * time.Millisecond
-			} else if index+1 < len(msgs) && msgs[index+1].CreatedAt > mm.CreatedAt {
-				thinkingDuration = time.Duration(msgs[index+1].CreatedAt - mm.CreatedAt)
-				if thinkingDuration > 30*time.Minute {
-					thinkingDuration = 0
-				}
 			}
 			result = append(result, ChatMessageView{
 				Role:             "thinking",
@@ -1008,6 +1056,9 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				ToolName:          toolName,
 				ToolID:            mm.Msg.ToolCallID,
 				ToolArgs:          argsCompact,
+				ToolCommand:       extractJSONStringValue(toolArgs, "command"),
+				ToolInput:         persistedToolInput(toolName, toolArgs),
+				ToolScope:         persistedToolScope(toolName, toolArgs),
 				ToolStatus:        toolStatus,
 				ToolProgressLabel: mm.Meta.ProgressLabel,
 				PermTag:           mm.Meta.PermTag,
@@ -1042,6 +1093,25 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 	}
 
 	return result
+}
+
+func persistedToolInput(toolName, args string) string {
+	switch toolName {
+	case "grep_files":
+		return extractJSONStringValue(args, "pattern")
+	case "web_search", "arxiv_search":
+		return extractJSONStringValue(args, "query")
+	case "web_fetch":
+		return extractJSONStringValue(args, "url")
+	}
+	return ""
+}
+
+func persistedToolScope(toolName, args string) string {
+	if toolName == "grep_files" {
+		return extractJSONStringValue(args, "path")
+	}
+	return ""
 }
 
 // userMessageDisplayContent keeps hydration identical to the live composer.

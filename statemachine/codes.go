@@ -11,13 +11,13 @@ const (
 
 // Action type hints for the consumer of a StepResult.
 const (
-	ActionInform          = "inform"
-	ActionCollectSlots    = "collect_slots"
-	ActionResolveBlocker  = "resolve_blocker"
-	ActionAuthenticate    = "authenticate"
-	ActionReAuthenticate  = "re_authenticate"
-	ActionRetryOrEscalate = "retry_or_escalate"
-	ActionWait            = "wait"
+	ActionInform             = "inform"
+	ActionCollectSlots       = "collect_slots"
+	ActionResolveGoalBlocker = "resolve_goal_blocker"
+	ActionAuthenticate       = "authenticate"
+	ActionReAuthenticate     = "re_authenticate"
+	ActionRetryOrEscalate    = "retry_or_escalate"
+	ActionWait               = "wait"
 )
 
 // Error codes for failed steps.

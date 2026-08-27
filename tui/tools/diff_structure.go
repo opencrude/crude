@@ -18,10 +18,12 @@ const (
 )
 
 // DiffContentLine is one content line of a unified diff: the body (without
-// the +/- prefix) plus its new-file line number (0 for deletions).
+// the +/- prefix) plus its new-file line number (0 for deletions) and old-file
+// line number (0 for additions).
 type DiffContentLine struct {
 	Kind    DiffLineKind
 	NewLine int
+	OldLine int
 	Content string
 }
 
@@ -44,6 +46,7 @@ type DiffFileStructure struct {
 // ellipsis marker inserted by compact-mode context trimming).
 type DiffRow struct {
 	LineNum  int
+	OldLine  int
 	Kind     DiffLineKind
 	Content  string
 	Ellipsis bool
@@ -71,6 +74,7 @@ func ParseUnifiedDiffStruct(raw string) []DiffFileStructure {
 				lines[li] = DiffContentLine{
 					Kind:    diffKindFromInternal(l.Type),
 					NewLine: l.NewLineNum,
+					OldLine: l.OldLineNum,
 					Content: l.Content,
 				}
 			}
@@ -95,15 +99,16 @@ func BuildDiffRows(file DiffFileStructure) []DiffRow {
 			lines[li] = diffLine{
 				Type:       internalKindFromDiff(l.Kind),
 				NewLineNum: l.NewLine,
+				OldLineNum: l.OldLine,
 				Content:    l.Content,
 			}
 		}
-		hunks[hi] = diffHunk{StartLine: h.StartLine, Lines: lines}
+		hunks[hi] = diffHunk{StartLine: h.StartLine, OldStart: h.StartLine, Lines: lines}
 	}
 	rl := buildRenderLines(hunks)
 	out := make([]DiffRow, len(rl))
 	for i, r := range rl {
-		out[i] = DiffRow{LineNum: r.lineNum, Kind: diffKindFromInternal(r.lineType), Content: r.content, Ellipsis: r.ellipsis}
+		out[i] = DiffRow{LineNum: r.lineNum, OldLine: r.oldLineNum, Kind: diffKindFromInternal(r.lineType), Content: r.content, Ellipsis: r.ellipsis}
 	}
 	return out
 }
@@ -115,12 +120,12 @@ func BuildDiffRows(file DiffFileStructure) []DiffRow {
 func TrimDiffContext(rows []DiffRow, keep int) []DiffRow {
 	rl := make([]renderLine, len(rows))
 	for i, r := range rows {
-		rl[i] = renderLine{lineNum: r.LineNum, lineType: internalKindFromDiff(r.Kind), content: r.Content, ellipsis: r.Ellipsis}
+		rl[i] = renderLine{lineNum: r.LineNum, oldLineNum: r.OldLine, lineType: internalKindFromDiff(r.Kind), content: r.Content, ellipsis: r.Ellipsis}
 	}
 	trimmed := trimContext(rl, keep)
 	out := make([]DiffRow, len(trimmed))
 	for i, r := range trimmed {
-		out[i] = DiffRow{LineNum: r.lineNum, Kind: diffKindFromInternal(r.lineType), Content: r.content, Ellipsis: r.ellipsis}
+		out[i] = DiffRow{LineNum: r.lineNum, OldLine: r.oldLineNum, Kind: diffKindFromInternal(r.lineType), Content: r.content, Ellipsis: r.ellipsis}
 	}
 	return out
 }

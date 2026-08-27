@@ -24,11 +24,13 @@ const (
 type diffLine struct {
 	Type       diffLineType
 	NewLineNum int    // 0 for deletions (no position in new file)
+	OldLineNum int    // 0 for additions (no position in old file)
 	Content    string // the line body (without +/- prefix)
 }
 
 type diffHunk struct {
 	StartLine int // new-file start line from @@ header
+	OldStart  int // old-file start line from @@ header
 	Lines     []diffLine
 }
 
@@ -41,7 +43,7 @@ type diffFile struct {
 
 // Unified diff parser
 
-var hunkRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
+var hunkRe = regexp.MustCompile(`^@@ \-(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
 // parseUnifiedDiff extracts structured data from a raw unified diff string.
 // It strips markdown fences (```diff / ```), file headers (+++ / ---),
@@ -76,9 +78,10 @@ func parseUnifiedDiff(raw string) []diffFile {
 			}
 			path := strings.TrimPrefix(line, "--- ")
 			path = strings.TrimPrefix(path, "a/")
-			if current == nil {
-				current = &diffFile{Path: path}
+			if current != nil && (current.Path != "" || len(current.Hunks) > 0) {
+				files = append(files, *current)
 			}
+			current = &diffFile{Path: path}
 			continue
 		}
 		if strings.HasPrefix(line, "+++ ") {
@@ -92,19 +95,23 @@ func parseUnifiedDiff(raw string) []diffFile {
 			continue
 		}
 
-		// Hunk header — extract new-file start line
+		// Hunk header — extract new-file and old-file start lines
 		if strings.HasPrefix(line, "@@") {
 			if current != nil && currentHunk != nil {
 				current.Hunks = append(current.Hunks, *currentHunk)
 			}
 			m := hunkRe.FindStringSubmatch(line)
 			startLine := 1
-			if len(m) >= 2 {
-				if n, err := strconv.Atoi(m[1]); err == nil {
+			oldStart := 1
+			if len(m) >= 3 {
+				if n, err := strconv.Atoi(m[2]); err == nil {
 					startLine = n
 				}
+				if n, err := strconv.Atoi(m[1]); err == nil {
+					oldStart = n
+				}
 			}
-			currentHunk = &diffHunk{StartLine: startLine}
+			currentHunk = &diffHunk{StartLine: startLine, OldStart: oldStart}
 			continue
 		}
 
@@ -165,18 +172,26 @@ func parseUnifiedDiff(raw string) []diffFile {
 		files = append(files, *current)
 	}
 
-	// Assign new-file line numbers
+	// Assign new-file line numbers (and old-file numbers for deletions/contexts)
 	for fi := range files {
 		for hi := range files[fi].Hunks {
-			lineNum := files[fi].Hunks[hi].StartLine
-			for li := range files[fi].Hunks[hi].Lines {
-				dl := &files[fi].Hunks[hi].Lines[li]
+			hunk := &files[fi].Hunks[hi]
+			newNum := hunk.StartLine
+			oldNum := hunk.OldStart
+			for li := range hunk.Lines {
+				dl := &hunk.Lines[li]
 				switch dl.Type {
-				case lineContext, lineAdd:
-					dl.NewLineNum = lineNum
-					lineNum++
+				case lineContext:
+					dl.NewLineNum = newNum
+					dl.OldLineNum = oldNum
+					newNum++
+					oldNum++
+				case lineAdd:
+					dl.NewLineNum = newNum
+					newNum++
 				case lineDelete:
-					dl.NewLineNum = 0
+					dl.OldLineNum = oldNum
+					oldNum++
 				}
 			}
 		}
@@ -372,10 +387,11 @@ func renderDiff(raw string, maxLines int, maxWidth int, th *theme.Theme, skipHea
 // ── Render line helpers ──
 
 type renderLine struct {
-	lineNum  int
-	lineType diffLineType
-	content  string
-	ellipsis bool
+	lineNum    int
+	oldLineNum int
+	lineType   diffLineType
+	content    string
+	ellipsis   bool
 }
 
 func buildRenderLines(hunks []diffHunk) []renderLine {
@@ -383,9 +399,10 @@ func buildRenderLines(hunks []diffHunk) []renderLine {
 	for _, hunk := range hunks {
 		for _, dl := range hunk.Lines {
 			lines = append(lines, renderLine{
-				lineNum:  dl.NewLineNum,
-				lineType: dl.Type,
-				content:  dl.Content,
+				lineNum:    dl.NewLineNum,
+				oldLineNum: dl.OldLineNum,
+				lineType:   dl.Type,
+				content:    dl.Content,
 			})
 		}
 	}

@@ -43,6 +43,11 @@ func Blit(dst *CellBuffer, dstX, dstY int, src *CellBuffer, clip *ClipStack) {
 				continue
 			}
 
+			span := max(1, int(srcCell.Width))
+			if dx+span > dstW || !spanInsideClip(clip, dx, dy, span) {
+				continue
+			}
+
 			// Write the primary cell
 			// If the source cell has no explicit background (NoColor), preserve
 			// the destination's background color instead of overwriting it.
@@ -54,19 +59,7 @@ func Blit(dst *CellBuffer, dstX, dstY int, src *CellBuffer, clip *ClipStack) {
 				dstCell := dst.Get(dx, dy)
 				srcCell.BG = dstCell.BG
 			}
-			dst.Set(dx, dy, srcCell)
-
-			// If this is a wide cell, also write the continuation cell
-			if srcCell.Width == 2 {
-				contCell := cell.Cell{
-					Char:  0,
-					Width: 0,
-					FG:    srcCell.FG,
-					BG:    srcCell.BG,
-					Attr:  srcCell.Attr,
-				}
-				dst.Set(dx+1, dy, contCell)
-			}
+			replaceCellSpan(dst, dx, dy, srcCell)
 		}
 	}
 }
@@ -89,7 +82,13 @@ func BlitOpaque(dst *CellBuffer, dstX, dstY int, src *CellBuffer) {
 				continue
 			}
 			srcCell := src.Get(sx, sy)
-			dst.Set(dx, dy, srcCell)
+			if srcCell.Width == 0 {
+				continue
+			}
+			if dx+max(1, int(srcCell.Width)) > dstW {
+				continue
+			}
+			replaceCellSpan(dst, dx, dy, srcCell)
 		}
 	}
 }
@@ -135,19 +134,10 @@ func BlendAlpha(dst *CellBuffer, dstX, dstY int, src *CellBuffer, alpha float32)
 			result.FG = blendedFG
 			result.BG = blendedBG
 
-			dst.Set(dx, dy, result)
-
-			// Handle wide char continuation
-			if srcCell.Width == 2 {
-				contCell := cell.Cell{
-					Char:  0,
-					Width: 0,
-					FG:    blendedFG,
-					BG:    blendedBG,
-					Attr:  srcCell.Attr,
-				}
-				dst.Set(dx+1, dy, contCell)
+			if dx+max(1, int(result.Width)) > dstW {
+				continue
 			}
+			replaceCellSpan(dst, dx, dy, result)
 		}
 	}
 }
@@ -183,22 +173,79 @@ func MergeDown(dst *CellBuffer, dstX, dstY int, src *CellBuffer) {
 				continue
 			}
 
-			// Overwrite destination with source cell
-			dst.Set(dx, dy, srcCell)
-
-			// Handle wide char continuation
-			if srcCell.Width == 2 {
-				contCell := cell.Cell{
-					Char:  0,
-					Width: 0,
-					FG:    srcCell.FG,
-					BG:    srcCell.BG,
-					Attr:  srcCell.Attr,
-				}
-				dst.Set(dx+1, dy, contCell)
+			if dx+max(1, int(srcCell.Width)) > dstW {
+				continue
 			}
+
+			// Overwrite destination with one atomic grapheme span.
+			replaceCellSpan(dst, dx, dy, srcCell)
 		}
 	}
+}
+
+func spanInsideClip(clip *ClipStack, x, y, width int) bool {
+	if clip == nil {
+		return true
+	}
+	for offset := 0; offset < width; offset++ {
+		if !clip.Contains(x+offset, y) {
+			return false
+		}
+	}
+	return true
+}
+
+// replaceCellSpan atomically occludes destination graphemes before writing a
+// new primary and its continuation cells. This prevents a floating border from
+// leaving half of an underlying emoji alive in the composited row.
+func replaceCellSpan(dst *CellBuffer, x, y int, source cell.Cell) {
+	dst.SetSpan(x, y, source)
+}
+
+func clearIntersectingSpans(dst *CellBuffer, x, y, width int) {
+	end := min(dst.Width(), x+width)
+	for column := max(0, x); column < end; column++ {
+		start, primary, ok := destinationSpanAt(dst, column, y)
+		if !ok {
+			continue
+		}
+		blank := primary
+		blank.Char = ' '
+		blank.Content = " "
+		blank.Width = 1
+		for offset := 0; offset < int(primary.Width); offset++ {
+			dst.setRaw(start+offset, y, blank)
+		}
+	}
+}
+
+func destinationSpanAt(dst *CellBuffer, x, y int) (int, cell.Cell, bool) {
+	current := dst.Get(x, y)
+	if current.Width > 1 {
+		return x, current, true
+	}
+	if current.Width != 0 {
+		return 0, cell.Cell{}, false
+	}
+	for start := x - 1; start >= 0; start-- {
+		candidate := dst.Get(start, y)
+		if candidate.Width > 1 && start+int(candidate.Width) > x {
+			return start, candidate, true
+		}
+		if candidate.Width > 0 {
+			break
+		}
+	}
+	// Orphan continuations from older buffers are normalized as one blank.
+	return x, cell.Cell{
+		Char:        ' ',
+		Content:     " ",
+		Width:       1,
+		FG:          current.FG,
+		BG:          current.BG,
+		Attr:        current.Attr,
+		Transparent: current.Transparent,
+	}, true
 }
 
 // ClearRegion fills a rectangular region with transparent blank cells.

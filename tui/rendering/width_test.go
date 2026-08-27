@@ -1,7 +1,6 @@
 package rendering
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -54,20 +53,16 @@ func TestFirstGraphemeClusterEmoji(t *testing.T) {
 	}
 }
 
-func TestTrigramWidthMatchesPlatformPolicy(t *testing.T) {
-	want := 2
-	if runtime.GOOS == "linux" {
-		want = 1
-	}
+func TestTrigramWidthStartsFromModernTerminalPolicy(t *testing.T) {
 	for _, s := range []string{"☰", "\u2630", "\u2637"} {
-		if got := PlainWidth(s); got != want {
-			t.Errorf("PlainWidth(%q) = %d, want %d", s, got, want)
+		if got := PlainWidth(s); got != 2 {
+			t.Errorf("PlainWidth(%q) = %d, want 2", s, got)
 		}
 	}
 }
 
-func TestWidthNeverExceedsTwo(t *testing.T) {
-	// Even pathological clusters must cap at 2 (WT/Ghostty/foot).
+func TestDefaultModernWidthNeverExceedsTwo(t *testing.T) {
+	// Before calibration, the modern grapheme guess caps at 2.
 	samples := []string{"👨‍👩‍👧‍👦", "🏳️‍🌈", "🇯🇵", "中文", "a☰⚡😀"}
 	for _, s := range samples {
 		// Per-cluster

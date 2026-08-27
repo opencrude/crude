@@ -713,6 +713,10 @@ func (r *Renderer) InvalidateCache() {
 			msg.CachedLines = nil
 			r.vl.InvalidateItem(msg.InternalID)
 		}
+		if msg.Role == types.RoleStatus {
+			msg.CachedLines = nil
+			r.vl.InvalidateItem(msg.InternalID)
+		}
 	}
 	if len(r.sync.Messages) > 0 {
 		last := r.sync.Messages[len(r.sync.Messages)-1]
@@ -720,6 +724,15 @@ func (r *Renderer) InvalidateCache() {
 			last.CachedLines = nil
 			r.vl.InvalidateItem(last.InternalID)
 		}
+	}
+}
+
+// InvalidateWidthProfile drops every width-derived row, wrap, and virtual-list
+// measurement. Unlike InvalidateCache, this includes completed static messages.
+func (r *Renderer) InvalidateWidthProfile() {
+	for _, msg := range r.sync.Messages {
+		msg.CachedLines = nil
+		r.vl.InvalidateItem(msg.InternalID)
 	}
 }
 
@@ -802,6 +815,7 @@ func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion uint
 		return
 	}
 	if result.StructureChanged {
+		r.pruneExpanded()
 		r.RebuildItems()
 		return
 	}
@@ -818,6 +832,7 @@ func (r *Renderer) RemoveMessage(idx int) {
 	delete(r.sync.MsgByID, msg.InternalID)
 	r.sync.Messages = append(r.sync.Messages[:idx], r.sync.Messages[idx+1:]...)
 	r.bumpVersion()
+	r.pruneExpanded()
 	r.RebuildItems()
 }
 
@@ -879,6 +894,14 @@ func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, i
 	if r.chatAreaHeight <= 0 {
 		return nil, nil, 0
 	}
+	// Nested pane scroll is presentation state outside this renderer's item
+	// cache. Re-render pane-owned items every frame so wheel/drag offsets are
+	// reflected immediately even after streaming has completed.
+	for _, msg := range r.sync.Messages {
+		if msg != nil && msg.SubPaneID != "" {
+			r.vl.InvalidateItem(msg.InternalID)
+		}
+	}
 	r.prepareRender(width)
 	// shellchat owns the visible viewport and may scroll to any exported row.
 	// Materialize every dirty item before handing it to the second VirtualList;
@@ -902,10 +925,12 @@ func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, i
 		}
 		subPaneID := ""
 		toggleLine := -1
+		toggleAny := false
 		if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
 			subPaneID = msg.SubPaneID
 			if r.hasDisclosure(msg) {
 				toggleLine = 0
+				toggleAny = r.disclosureState(msg) == DisclosureExpanded
 			}
 		}
 		lines := item.Rendered
@@ -929,6 +954,7 @@ func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, i
 			Native:     native,
 			SubPaneID:  subPaneID,
 			Toggle:     toggleLine >= 0,
+			ToggleAny:  toggleAny,
 			ToggleLine: toggleLine,
 		})
 	}
@@ -1201,7 +1227,15 @@ const messageBodyChromeWidth = 16
 // a narrow terminal may yield zero content columns but never synthetic ones.
 func (r *Renderer) availableMessageWidths() (contentWidth, innerW int) {
 	padLR := max(0, r.theme.Spacing.PadLR)
+	if r.thinkingBodyOnly {
+		padLR = 0
+	}
 	innerW = max(0, r.width-padLR*2-r.scrollbarFootprint())
+	if r.thinkingBodyOnly {
+		// The parent pane owns chrome. Reserve only the body gutter so text
+		// reaches one column before its own scrollbar footprint.
+		return max(0, innerW-toolBodyGutterWidth), innerW
+	}
 	contentWidth = max(0, innerW-messageBodyChromeWidth)
 	return contentWidth, innerW
 }
@@ -1250,16 +1284,24 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 }
 
 // planMessageSuperseded collapses historical snapshots when a newer plan
-// mutation/snapshot exists. The underlying transcript remains intact and an
-// explicit expansion still reveals the older snapshot.
+// mutation/snapshot exists for the same plan id. The underlying transcript
+// remains intact and an explicit expansion still reveals the older snapshot.
 func (r *Renderer) planMessageSuperseded(msg *types.ChatMessage) bool {
 	if msg == nil || msg.Role != types.RoleTool || !tools.IsPlanTool(msg.ToolName) || msg.ToolStatus == "error" {
+		return false
+	}
+	view, ok := parsePlanView(msg.Content)
+	if !ok || view.ID == "" {
 		return false
 	}
 	idx := r.messageIndexOf(msg)
 	for i := idx + 1; i < len(r.sync.Messages); i++ {
 		next := r.sync.Messages[i]
-		if next != nil && next.Role == types.RoleTool && tools.IsPlanTool(next.ToolName) && next.ToolStatus != "error" {
+		if next == nil || next.Role != types.RoleTool || !tools.IsPlanTool(next.ToolName) || next.ToolStatus == "error" {
+			continue
+		}
+		nextView, nextOK := parsePlanView(next.Content)
+		if nextOK && nextView.ID == view.ID {
 			return true
 		}
 	}
@@ -1272,6 +1314,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	sanitized.Content = rendering.SanitizeForTerminal(msg.Content)
 	sanitized.ToolArgs = rendering.SanitizeForTerminal(msg.ToolArgs)
 	sanitized.ToolProgressLabel = rendering.SanitizeForTerminal(msg.ToolProgressLabel)
+	sanitized.LifecycleProvider = rendering.SanitizeForTerminal(msg.LifecycleProvider)
 	msg = &sanitized
 
 	msgIdx := r.messageIndexOf(origMsg)
@@ -1308,7 +1351,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	lines = append(lines, ml.lines...)
 	native = append(native, ml.native...)
 
-	if !isStreamingCursor {
+	if !isStreamingCursor && msg.Role != types.RoleStatus {
 		msg.CachedLines = make([]string, len(ml.lines))
 		copy(msg.CachedLines, ml.lines)
 		r.nativeCache[msg.InternalID] = append([]PaintLine(nil), ml.native...)
@@ -1328,29 +1371,33 @@ func messageParty(role string) string {
 	switch role {
 	case types.RoleUser:
 		return "user"
-	case types.RoleAssistant, types.RoleThinking:
+	case types.RoleAssistant, types.RoleThinking, types.RoleStatus:
 		return "agent"
 	default:
 		return ""
 	}
 }
 
-// previousEndsWithPaneSeparator reports whether the message right before idx
-// owns a collapsed subpane that already paints a trailing separator blank. A
-// message following it must not add its own leading spacer, or the two blanks
-// stack into a double empty row between the thought block and the next block.
+// previousEndsWithPaneSeparator reports whether the rendered item immediately
+// before idx actually owns a trailing separator. Collapsed panes have leading
+// spacer + PaneRows + trailing separator; active/expanded panes do not.
 func (r *Renderer) previousEndsWithPaneSeparator(msgIdx int) bool {
 	if msgIdx <= 0 {
 		return false
 	}
-	return r.sync.Messages[msgIdx-1].SubPaneID != ""
+	previous := r.sync.Messages[msgIdx-1]
+	if previous == nil || previous.SubPaneID == "" {
+		return false
+	}
+	item := r.vl.Item(msgIdx - 1)
+	return item != nil && len(item.Rendered) > item.PaneRows+1
 }
 
 // needsLeadingSpacer decides whether a message should paint a blank row before
 // it. Exactly one blank row separates any two adjacent chat items: every
 // message gets a leading spacer (the first one's serves as top padding) except
-// when the previous message is a collapsed subpane that already paints its own
-// trailing separator blank. Header suppression only controls whether a party
+// when the previous rendered item already paints its own trailing separator.
+// Header suppression only controls whether a party
 // label is shown — it must never remove the inter-item separator, or a tool
 // followed by a same-party assistant (header suppressed) gets zero gap while a
 // tool followed by thinking gets two (the thinking's internal header↔body gap

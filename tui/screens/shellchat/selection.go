@@ -257,7 +257,7 @@ func (s *Screen) disclosureRowAt(globalLine int) string {
 			line -= h
 			continue
 		}
-		if row.Toggle && row.ToggleLine >= 0 && line == row.ToggleLine {
+		if row.Toggle && (row.ToggleAny || row.ToggleLine >= 0 && line == row.ToggleLine) {
 			return row.ID
 		}
 		return ""

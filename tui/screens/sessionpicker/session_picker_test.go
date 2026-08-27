@@ -245,14 +245,8 @@ func TestLiveRowsShowStatusAndSubAgents(t *testing.T) {
 	})
 
 	root := pickerItem(t, screen, "root")
-	isSpinner := false
-	for _, frame := range spinnerFrames {
-		if root.Icon == frame {
-			isSpinner = true
-		}
-	}
-	if !isSpinner {
-		t.Fatalf("working session icon=%q, want a spinner frame", root.Icon)
+	if root.Icon != "●" {
+		t.Fatalf("working session icon=%q, want filled activity dot", root.Icon)
 	}
 	for _, want := range []string{"2 sub-agents", "working", "gpt-5", "3 turns"} {
 		if !strings.Contains(root.Detail, want) {
@@ -305,7 +299,7 @@ func TestWorkingIconAnimatesAndSelectionSurvives(t *testing.T) {
 
 	screen.SetSpinFrame(0)
 	before := pickerItem(t, screen, "a").Icon
-	screen.SetSpinFrame(300)
+	screen.SetSpinFrame(ui.ActivityBlinkPhaseMillis)
 	after := pickerItem(t, screen, "a").Icon
 	if before == after {
 		t.Fatalf("working icon did not animate: %q", before)

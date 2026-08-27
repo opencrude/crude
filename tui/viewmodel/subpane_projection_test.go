@@ -398,6 +398,25 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 	}
 }
 
+func TestExpandedCompletedThinkingPaneRetainsScrollbar(t *testing.T) {
+	app := newTestApp(t)
+	sp := app.PaneMgr.GetOrCreate("thinking-scroll", workspace.PaneThinking, "Thinking")
+	proj := app.subPaneProjections.Get("thinking-scroll", workspace.PaneThinking)
+	proj.renderer.AppendMessage(ttypes.ChatMessage{
+		InternalID: "thinking-body", Role: ttypes.RoleThinking,
+		Content: strings.Repeat("reasoning body that wraps across rows ", 20),
+	})
+	sp.Collapse()
+	_ = app.subPaneProjections.Render("thinking-scroll", sp, 36, 4, 0, true)
+	gutter := app.subPaneProjections.PaneGutterState("thinking-scroll", sp)
+	if !gutter.Visible || gutter.Scroll == nil || gutter.Scroll.MaxOffset() <= 0 {
+		t.Fatalf("expanded completed pane gutter = %+v", gutter)
+	}
+	if got := app.subPaneProjections.ScrollbarLineCount("thinking-scroll", sp); got <= 4 {
+		t.Fatalf("expanded completed pane content height = %d", got)
+	}
+}
+
 func subPanePlainContains(lines []chatprojection.SubPaneLine, sub string) bool {
 	for _, l := range lines {
 		if strings.Contains(l.PlainText(), sub) {

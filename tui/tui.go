@@ -10,6 +10,7 @@ import (
 	"crude/history"
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/tui/rendering"
 	"crude/tui/types"
 	"crude/tui/viewmodel"
 	"crude/workspace"
@@ -155,7 +156,11 @@ func Start(ws *workspace.Workspace, presets []ProviderPreset, prompts *history.S
 	a.SetPromptHistory(prompts)
 	// Force UV to use the same grapheme-width method as Crude layout and
 	// surface packing. See TERMINAL_WIDTH.md.
-	program := tea.NewProgram(a, tea.WithWidthMethod(ansi.GraphemeWidth))
+	program := tea.NewProgram(
+		a,
+		tea.WithWidthMethod(ansi.GraphemeWidth),
+		tea.WithWidthProbe(rendering.TerminalWidthProbeCorpus()...),
+	)
 	t.app = a
 	t.Program = program
 	t.outbound = newProgramMessagePump(program.Send)

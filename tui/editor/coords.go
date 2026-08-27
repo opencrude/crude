@@ -224,6 +224,11 @@ func UTF16ColToVisualCol(line string, utf16Col, tabW int) int {
 // one display cell each (first rune + grapheme width). This is the
 // canonical geometry used by rendering and cursor motion.
 func lineDisplayGeometry(rawLine string, tabW int) (runes []rune, widths []int, totalW int) {
+	_, runes, widths, totalW = lineDisplayGeometryWithClusters(rawLine, tabW)
+	return runes, widths, totalW
+}
+
+func lineDisplayGeometryWithClusters(rawLine string, tabW int) (clusters []string, runes []rune, widths []int, totalW int) {
 	expanded := ExpandTabs(rawLine, tabW)
 	rest := expanded
 	for len(rest) > 0 {
@@ -235,10 +240,11 @@ func lineDisplayGeometry(rawLine string, tabW int) (runes []rune, widths []int, 
 		if len(rs) == 0 {
 			break
 		}
+		clusters = append(clusters, cluster)
 		runes = append(runes, rs[0])
 		widths = append(widths, w)
 		totalW += w
 		rest = rest[len(cluster):]
 	}
-	return runes, widths, totalW
+	return clusters, runes, widths, totalW
 }

@@ -3,6 +3,7 @@ package chatprojection
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"crude/tui/cell"
 	"crude/tui/theme"
@@ -78,6 +79,25 @@ func TestChatItemSpacingUniform(t *testing.T) {
 			t.Fatalf("gap between item %d (%s) and %d (%s) = %d, want exactly 1",
 				i, msgs[i].Role, i+1, msgs[i+1].Role, gap)
 		}
+	}
+}
+
+func TestExpandedThoughtToUserKeepsExactlyOneSpacer(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetSize(100, 30)
+	r.SetChatAreaBounds(0, 20)
+	r.AppendMessage(types.ChatMessage{
+		InternalID: "thought", Role: types.RoleThinking, Content: "first\nsecond",
+		ThinkingDuration: 2 * time.Second,
+	})
+	r.AppendMessage(types.ChatMessage{InternalID: "user", Role: types.RoleUser, Content: "next", Time: time.Now()})
+	r.ToggleDisclosure("thought")
+	rows, _, _ := r.ExportMessageRows(100)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if got := itemGap(rows, 0, 1); got != 1 {
+		t.Fatalf("expanded thought -> user gap = %d, rows=%#v / %#v", got, rows[0].Lines, rows[1].Lines)
 	}
 }
 

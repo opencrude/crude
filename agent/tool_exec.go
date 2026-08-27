@@ -70,7 +70,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 	var nonBlocking, blocking []indexedToolCall
 	for index, tc := range toolCalls {
 		indexed := indexedToolCall{index: index, call: tc}
-		if isPotentiallyBlocking(tc.Function.Name, a.Yolo) {
+		if isPotentiallyBlocking(tc.Function.Name) {
 			blocking = append(blocking, indexed)
 		} else {
 			nonBlocking = append(nonBlocking, indexed)
@@ -140,18 +140,17 @@ func (a *Agent) executeOneToolCallSafely(
 	return a.executeOneToolCall(ctx, tc, emit, blockResolveCh, lastReply)
 }
 
-func isPotentiallyBlocking(name string, yolo bool) bool {
+func isPotentiallyBlocking(name string) bool {
 	switch name {
 	case "question":
-		return !yolo
+		return true
 	case "execute_command":
 		return true
 	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
-		return !yolo
+		return true
 	case "reply", "write_report":
 		return true
-	case "plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
-		"report_blocker", "resolve_blocker", "list_goal_status":
+	case "update_plan", "get_plan":
 		return true
 	default:
 		return false
@@ -316,7 +315,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			}})
 			return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}, toolError: true}
 		}
-		if !a.Yolo && sr.Risk.NeedsConfirmation() {
+		if !a.yoloEnabled() && sr.Risk.NeedsConfirmation() {
 			drainStaleBlockResponses(blockResolveCh)
 			emit(AgentEvent{Type: "blocking", Data: map[string]string{
 				"operation":  sr.Risk.String(),
@@ -332,6 +331,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				emit(AgentEvent{Type: "blocking_complete"})
 				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: "Turn cancelled by user."}, toolError: true}
 			}
+			emitPermissionDecision(emit, tc, resp)
 			if resp == "deny" {
 				errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
 				a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
@@ -359,7 +359,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 					"target":    cmd,
 				}})
 			}
-		} else if a.Yolo {
+		} else if a.yoloEnabled() {
 			a.logger.Debug("SAFETY", "yolo_skip", "tool", "execute_command")
 		}
 	}
@@ -400,7 +400,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		fileTarget = src + " → " + dst
 	}
 
-	if fileCheck && !a.Yolo {
+	if fileCheck && !a.yoloEnabled() {
 		question := fmt.Sprintf("Allow this %s operation on %s?", fileOp, fileTarget)
 		drainStaleBlockResponses(blockResolveCh)
 		emit(AgentEvent{Type: "blocking", Data: map[string]string{
@@ -417,6 +417,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			emit(AgentEvent{Type: "blocking_complete"})
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled by user."}, toolError: true}
 		}
+		emitPermissionDecision(emit, tc, resp)
 		if resp == "deny" {
 			errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
 			a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
@@ -444,7 +445,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				"target":    filePath,
 			}})
 		}
-	} else if fileCheck && a.Yolo {
+	} else if fileCheck && a.yoloEnabled() {
 		a.logger.Debug("SAFETY", "yolo_skip", "tool", tc.Function.Name, "op", fileOp)
 	}
 
@@ -618,15 +619,32 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed}
 }
 
+func emitPermissionDecision(emit func(AgentEvent), tc provider.ToolCall, response string) {
+	var decision string
+	switch response {
+	case "allow":
+		decision = "allowed"
+	case "always":
+		decision = "always"
+	case "deny":
+		decision = "denied"
+	default:
+		return
+	}
+	emit(AgentEvent{Type: "permission_resolved", Data: map[string]any{
+		"internal_id": tc.InternalID,
+		"tool_id":     tc.ID,
+		"tool":        tc.Function.Name,
+		"decision":    decision,
+	}})
+}
+
 // drainStaleBlockResponses drops any value already buffered in the shared
 // block-resolve channel. The channel is size-1 and lives for the
-// orchestrator's whole lifetime, so cancel/stop/hard-cancel paths
-// (session/run.go, session/session.go) can write "deny" into it at times when
-// no block is pending. A stale value left behind is then consumed by the next
-// waitForBlockResponse, instantly resolving a brand-new question as "deny"
-// before the UI even renders it. Call this immediately BEFORE emitting a
-// blocking event: at that instant no response for the new block can exist yet,
-// so everything drained is by construction stale.
+// orchestrator's whole lifetime, so a late response from a replaced panel can
+// otherwise resolve a brand-new request before its UI renders. Call this
+// immediately before emitting a blocking event, when any buffered response is
+// necessarily stale.
 func drainStaleBlockResponses(responses <-chan string) {
 	if responses == nil {
 		return

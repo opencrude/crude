@@ -66,12 +66,6 @@ type LSPManager struct {
 	// specific request to be in flight.
 	syncing bool
 
-	// lastBusyAt is the UnixNano of the most recent non-idle event
-	// (starting, syncing, busy, new diagnostics). The status bar uses
-	// this to keep the dot animated for AnimGrace after the last
-	// activity, even if the instantaneous state is "ready".
-	lastBusyAt int64
-
 	// In-flight request tracking (drives the busy indicator on the status bar).
 	inflight int
 
@@ -272,7 +266,6 @@ func (m *LSPManager) ensureServer(rootURI, cmd string, args []string) LSPClient 
 	m.clients[key] = client
 	m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, status: LSPStarting}
 	m.activeRootURI = rootURI
-	m.lastBusyAt = time.Now().UnixNano()
 	m.recomputeActiveStatusLocked()
 	m.mu.Unlock()
 
@@ -441,7 +434,6 @@ func (m *LSPManager) startClient(key string, client LSPClient, rootURI, cmd stri
 	m.mu.Lock()
 	m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, status: LSPConnected}
 	m.recomputeActiveStatusLocked()
-	m.lastBusyAt = time.Now().UnixNano()
 	m.mu.Unlock()
 
 	// Open every source file in the project so the server reports
@@ -796,7 +788,6 @@ func (m *LSPManager) ProjectInsights() ProjectInsights {
 		ServerError:    m.activeError,
 		FilesTracked:   len(m.fileDiagnostics),
 		LastSync:       m.lastSyncLocked(),
-		LastBusyAt:     m.lastBusyAt,
 	}
 
 	for _, diags := range m.fileDiagnostics {
@@ -951,7 +942,6 @@ func (m *LSPManager) Stop() {
 	m.activeError = ""
 	m.syncing = false
 	m.inflight = 0
-	m.lastBusyAt = time.Now().UnixNano()
 	m.mu.Unlock()
 
 	for _, c := range clients {
@@ -1007,14 +997,10 @@ func (m *LSPManager) reapOnDone(key string, client LSPClient, rootURI, cmd strin
 	}()
 }
 
-// setSyncing flips the syncing flag. The status bar reads it to decide
-// whether to show the animated dot for the project-wide "LSP working"
-// indicator. Held briefly under m.mu.
+// setSyncing flips the syncing flag used by the project-wide LSP status text.
+// Held briefly under m.mu.
 func (m *LSPManager) setSyncing(v bool) {
 	m.mu.Lock()
-	if v {
-		m.lastBusyAt = time.Now().UnixNano()
-	}
 	m.syncing = v
 	m.mu.Unlock()
 }
@@ -1060,7 +1046,6 @@ func (m *LSPManager) setFileDiagnostics(filePath string, diags []LSPDiagnostic) 
 	} else {
 		m.fileDiagnostics[fp] = diags
 		m.fileLastSync[fp] = time.Now().UnixNano()
-		m.lastBusyAt = time.Now().UnixNano()
 		for _, d := range diags {
 			if msg := strings.TrimSpace(d.Message); msg != "" {
 				m.issueCount[msg]++
@@ -1100,7 +1085,6 @@ func (m *LSPManager) InflightRequests() int {
 func (m *LSPManager) trackInflight(fn func() error) error {
 	m.mu.Lock()
 	m.inflight++
-	m.lastBusyAt = time.Now().UnixNano()
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()

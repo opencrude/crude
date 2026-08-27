@@ -9,19 +9,6 @@ import (
 	"crude/tui/ui"
 )
 
-func thinkingDotRole(spinFrame int) ui.SemanticColor {
-	switch ui.ThinkingDotIndex(spinFrame) % 4 {
-	case 0:
-		return ui.ColorAccent
-	case 1:
-		return ui.ColorWarning
-	case 2:
-		return ui.ColorError
-	default:
-		return ui.ColorWarning
-	}
-}
-
 func spanWithBg(text string, role, bg ui.SemanticColor, attr cell.Attrs) RowSpan {
 	return RowSpan{Text: text, Role: role, BgRole: bg, BgSet: true, Attr: attr}
 }
@@ -258,14 +245,16 @@ func referenceRangeContains(ranges []referenceTextRange, offset int) bool {
 func buildThinkingBodyLine(line string, firstLine bool, spinFrame int, active, interrupted bool) PaintLine {
 	spans := []RowSpan{{Text: "│ ", Role: ui.ColorBorder}}
 	if firstLine {
+		dot := "● "
 		dotRole := ui.ColorMuted
 		switch {
 		case active:
-			dotRole = thinkingDotRole(spinFrame)
+			dot = ui.ActivityDot(spinFrame) + " "
+			dotRole = ui.ColorAccent
 		case interrupted:
 			dotRole = ui.ColorWarning
 		}
-		spans = append(spans, RowSpan{Text: "● ", Role: dotRole})
+		spans = append(spans, RowSpan{Text: dot, Role: dotRole})
 	} else {
 		spans = append(spans, RowSpan{Text: "  ", Role: ui.ColorBorder})
 	}

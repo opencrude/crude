@@ -12,6 +12,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
+	"crude/tui/screens/launcher"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
@@ -272,6 +273,59 @@ func (m *App) activityItemAtMouse(mouse tea.Mouse) (ui.ListItem, bool) {
 		return ui.ListItem{}, false
 	}
 	return m.activityList.ItemAtLocalY(mouse.Y - rect.Y)
+}
+
+// buildLauncherContextMenu creates the menu for a right-click on a launcher
+// workspace row. The launcher region is only reachable when no editor or
+// agents are showing; a right-click anywhere that is not a workspace row
+// (hero cards, empty pane, search row) yields no menu.
+func (m *App) buildLauncherContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
+	if m.launcherScreen == nil || m.rootHost == nil {
+		return nil
+	}
+	rect, ok := m.rootHost.ScreenRect(launcher.WorkspaceListID)
+	if !ok || rect.Empty() || !rect.Contains(mouse.X, mouse.Y) {
+		return nil
+	}
+	ws := m.launcherScreen.WorkspaceItemAt(mouse.Y - rect.Y)
+	if ws == nil {
+		return nil
+	}
+	// Capture by value: the screen rebuilds its item slice freely, so the
+	// closures below must not alias the live list.
+	entry := *ws
+	st := ui.QuickMenu("",
+		ui.ContextMenuItem{Label: "Open", Action: func() { m.launcherOpenFolder(entry.Path) }},
+		ui.ContextMenuItem{Label: "Copy path", Action: func() { m.copyToClipboard(entry.Path) }},
+	)
+	st.Sections = append(st.Sections, ui.ContextMenuSection{
+		Items: []ui.ContextMenuItem{
+			{Label: "Remove from list", Action: func() { m.removeLauncherWorkspace(entry) }},
+		},
+	})
+	return st
+}
+
+// removeLauncherWorkspace forgets a workspace from the recents list: the
+// persisted workspace record (sessions included) is deleted and the launcher
+// listing rebuilds. The project directory itself is never touched.
+func (m *App) removeLauncherWorkspace(ws launcher.WorkspaceEntry) {
+	target := ws.ID
+	if target == "" {
+		target = ws.Path
+	}
+	if target != "" {
+		if m.Logger != nil {
+			m.Logger.Info("WORKSPACE", "deleted_from_launcher", "id", ws.ID, "path", ws.Path)
+		}
+		_ = workspace.DeleteWorkspace(target)
+	}
+	if m.launcherScreen != nil {
+		m.launcherScreen.RemoveWorkspace(ws.ID, ws.Path)
+	}
+	if m.StatusBar != nil {
+		m.StatusBar.SetInfo("Removed " + ws.Name + " from recent workspaces")
+	}
 }
 
 func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {

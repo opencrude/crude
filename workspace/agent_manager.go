@@ -30,9 +30,10 @@ type AgentNode struct {
 // IsOrchestrator returns true for root nodes (Parent == nil).
 func (n *AgentNode) IsOrchestrator() bool { return n.Parent == nil }
 
-// IsActive returns true if the agent is streaming or thinking.
+// IsActive reports whether the agent owns an unfinished turn, including
+// provider waits, permission prompts, and tool execution gaps.
 func (n *AgentNode) IsActive() bool {
-	return n.State != nil && (n.State.Streaming || n.State.Thinking)
+	return n.State != nil && n.State.IsActive()
 }
 
 // IsCompleted returns true if the agent finished (success, error, or cancel).

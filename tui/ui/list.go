@@ -94,6 +94,42 @@ func (l *List) SetItems(items []ListItem) {
 	l.scroll.EnsureVisible(l.sel.Index())
 }
 
+// SetItemsStable replaces items while preserving the user's view: the
+// previously selected item stays selected (matched by ID) and the viewport
+// offset is re-anchored instead of snapping back toward the first row. Use
+// this for live resyncs of an effectively unchanged collection — spinner
+// ticks, status refreshes — where SetItems' reset-to-first-row behavior
+// clobbers the reader's scroll position several times per second. When the
+// previous selection no longer exists (filtering, removal), behavior falls
+// back to SetItems semantics.
+func (l *List) SetItemsStable(items []ListItem) {
+	prevID := ""
+	if cur, ok := l.Selected(); ok && cur.Selectable() {
+		prevID = cur.ID
+	}
+	prevOffset := l.scroll.Offset()
+
+	l.items = items
+	l.sel.SetCount(len(items))
+	l.scroll.SetContent(len(items))
+
+	if prevID != "" {
+		for i := range l.items {
+			if l.items[i].ID == prevID && l.items[i].Selectable() {
+				l.sel.SetIndex(i)
+				l.scroll.ScrollTo(prevOffset)
+				return
+			}
+		}
+	}
+	if n := l.firstSelectable(); n >= 0 {
+		l.sel.SetIndex(n)
+	} else {
+		l.sel.ClearSelection()
+	}
+	l.scroll.EnsureVisible(l.sel.Index())
+}
+
 // firstSelectable returns the first selectable index, or -1.
 func (l *List) firstSelectable() int {
 	for i, it := range l.items {

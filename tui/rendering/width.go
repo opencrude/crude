@@ -8,17 +8,28 @@ import (
 // surface packing, and ultraviolet through Bubble Tea. See
 // TERMINAL_WIDTH.md.
 //
-// Modern terminals, including Windows Terminal 1.22+, use:
-//   - Grapheme clusters (UAX #29), not per-codepoint wcwidth
-//   - Width ∈ {0, 1, 2} only (cap enforced by correctClusterWidth)
-//   - Emoji / ZWJ / VS16 → 2
-//   - VS15 text presentation → 1
-//   - Unicode 16 wide symbols, including ☰, → 2
+// The initial guess is Unicode-16 grapheme width. Patched Bubble Tea then
+// asynchronously CPR-measures the effective terminal or multiplexer and
+// publishes runtime corrections inside this same x/ansi method. Measured
+// legacy clusters may exceed two cells.
 //
 // Vendored x/ansi applies correctClusterWidth inside FirstGraphemeCluster so
 // layout and UV always share one number. Never mix bare runewidth or uniseg
 // for layout columns.
 var WidthMethod = ansi.GraphemeWidth
+
+// TerminalWidthProbeCorpus lists product chrome graphemes whose measured width
+// must be learned from the effective terminal or multiplexer. Bubble Tea adds
+// language/emoji representatives and deduplicates this list.
+func TerminalWidthProbeCorpus() []string {
+	return []string{
+		"●", "○", "·", "│", "─", "┌", "┐", "└", "┘", "╭", "╮", "╰", "╯",
+		"├", "┤", "┬", "┴", "┼", "╷", "╵", "▌", "▏", "▤", "▥", "▣",
+		"◆", "◇", "☰", "⚡", "⚠", "✓", "✕", "…", "↑", "↓", "←", "→",
+		"⇄", "⇡", "⇣", "⊕", "✂", "⌕", "⌘", "▸", "▾", "❯", "⚙", "☆", "✦", "♻",
+		"✅", "⭐", "📝", "📎", "🔒", "🔓",
+	}
+}
 
 // FirstGrapheme returns the first grapheme cluster and its cell width.
 func FirstGrapheme(s string) (cluster string, width int) {

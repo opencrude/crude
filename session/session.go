@@ -80,7 +80,7 @@ type Session struct {
 
 	sessionID    string
 	sessionStart time.Time
-	yolo         bool
+	yolo         atomic.Bool
 
 	cost   *CostAccumulator
 	tokens *TokenTracker
@@ -101,6 +101,8 @@ type Session struct {
 	flushWg       sync.WaitGroup
 	closing       int32
 	hardCancelled int32
+	activeTurns   atomic.Int32
+	turnGate      sync.RWMutex
 	wakeCh        chan WakeEvent
 	sender        EventSender
 	subAgentSup   *SubAgentRunner
@@ -444,10 +446,6 @@ func (s *Session) HardCancel() {
 		case orchestrator.CancelCh <- struct{}{}:
 		default:
 		}
-		select {
-		case orchestrator.BlockResolveCh <- "deny":
-		default:
-		}
 	}
 	if s.subAgentSup != nil {
 		s.subAgentSup.CancelAllActive()
@@ -460,6 +458,12 @@ func (s *Session) HardCancel() {
 
 func (s *Session) isHardCancelled() bool {
 	return atomic.LoadInt32(&s.hardCancelled) == 1
+}
+
+// IsTurnActive reports whether this session currently owns a provider/tool
+// turn. Context and journal mutation commands use it to reject unsafe overlap.
+func (s *Session) IsTurnActive() bool {
+	return s != nil && s.activeTurns.Load() > 0
 }
 
 func (s *Session) clearHardCancel() {

@@ -60,3 +60,13 @@ func TestSubPaneCallbackReceivesNoSyntheticNarrowWidthGPT56(t *testing.T) {
 		t.Fatalf("three-column subpane callback width=%d, want 0 after pane/main scrollbar footprint", gotWidth)
 	}
 }
+
+func TestThinkingBodyOnlyUsesPaneWidthMinusGutter(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetThinkingBodyOnly(true)
+	r.SetSize(40, 10)
+	contentW, innerW := r.availableMessageWidths()
+	if innerW != 40 || contentW != 40-toolBodyGutterWidth {
+		t.Fatalf("body-only content/inner = (%d,%d)", contentW, innerW)
+	}
+}

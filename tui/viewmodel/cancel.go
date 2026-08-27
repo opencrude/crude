@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"crude/workspace"
 )
 
 func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
@@ -12,22 +14,17 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && !n.State.Completed && n.State.IsActive() {
-		go m.CancelAgent(n.ID)
-		n.State.Streaming = false
-		n.State.Thinking = false
-		m.StatusBar.SetInfo("cancelling agent...")
+		m.cancelAgentTurn(n.ID)
 		return nil
 	}
 
 	if m.anyActive() {
 		if n := m.AgentMgr.ActiveNode(); n != nil {
-			select {
-			case n.CancelChan <- struct{}{}:
-			default:
-			}
+			m.cancelAgentTurn(n.ID)
+			return nil
 		}
 		m.HardCancel()
-		m.StatusBar.SetInfo("cancelling...")
+		m.StatusBar.SetInfo("Stopping active turns...")
 		return nil
 	}
 
@@ -38,4 +35,22 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	return nil
+}
+
+func (m *App) cancelAgentTurn(agentID string) {
+	if agentID == "" {
+		return
+	}
+	m.CancelAgent(agentID)
+	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
+		node.State.Running = true
+		node.State.Cancelling = true
+		node.State.Streaming = false
+		node.State.Thinking = true
+		node.State.Messages.UpdateTurnStatus(workspace.TurnStatus{Phase: "cancelling"})
+		m.syncAgentMessages(agentID, true)
+	}
+	if m.StatusBar != nil {
+		m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
+	}
 }

@@ -43,6 +43,9 @@ func (m *App) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, 
 	if node != nil {
 		node.Category = "default"
 		node.Model = m.ModelName
+		if m.StatusBar != nil {
+			m.StatusBar.SetActiveForAgent(orchID, false)
+		}
 	}
 	m.syncAgentWindowTabs()
 	m.activateAgentWindowTab(orchID)
@@ -208,6 +211,8 @@ func (m *App) completeSubAgent(agentID string) {
 	n.State.Completed = true
 	n.State.Streaming = false
 	n.State.Thinking = false
+	n.State.Running = false
+	n.State.Cancelling = false
 	if n.State.Status == "" || n.State.Status == "running" {
 		n.State.Status = "completed"
 	}
@@ -289,6 +294,7 @@ func (m *App) switchToAgentView(agentID string) {
 		} else {
 			m.AgentMgr.SetActive(agentID)
 			m.ActivateSessionByAgent(agentID)
+			m.OverlayState.SetYolo(m.YoloForAgent(agentID))
 		}
 	}
 

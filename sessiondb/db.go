@@ -3,7 +3,9 @@ package sessiondb
 import (
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -142,6 +144,55 @@ CREATE TABLE IF NOT EXISTS session_runtime_state (
     value      BLOB NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS plans (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL,
+    objective   TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    revision    INTEGER NOT NULL DEFAULT 0,
+    explanation TEXT,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    closed_at   INTEGER,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plans_session ON plans(session_id, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plans_one_open ON plans(session_id)
+    WHERE status IN ('active','paused');
+
+CREATE TABLE IF NOT EXISTS plan_steps (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id       TEXT NOT NULL,
+    step_id       TEXT NOT NULL,
+    position      INTEGER NOT NULL,
+    description   TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    depends_on_json TEXT,
+    result        TEXT,
+    reason        TEXT,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL,
+    started_at    INTEGER,
+    finished_at   INTEGER,
+    UNIQUE (plan_id, step_id),
+    FOREIGN KEY (plan_id) REFERENCES plans(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_steps_plan ON plan_steps(plan_id, position);
+
+CREATE TABLE IF NOT EXISTS plan_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id      TEXT NOT NULL,
+    revision     INTEGER NOT NULL,
+    event_type   TEXT NOT NULL,
+    payload_json TEXT,
+    created_at   INTEGER NOT NULL,
+    FOREIGN KEY (plan_id) REFERENCES plans(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_events_plan ON plan_events(plan_id, revision);
 `
 
 func Open(dbPath string) (*sql.DB, error) {
@@ -190,4 +241,24 @@ func OpenAndMigrate(dbPath string) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// OpenAndMigrateAt opens (or creates) a session DB at an explicit directory
+// path derived from a test root directory. It exists outside _test.go so other
+// packages' tests can build fixture stores against a real session DB.
+func OpenAndMigrateAt(dir string) *sql.DB {
+	db, err := OpenAndMigrate(filepath.Join(dir, "session.db"))
+	if err != nil {
+		panic(fmt.Sprintf("sessiondb: OpenAndMigrateAt: %v", err))
+	}
+	return db
+}
+
+// CreateSessionRow inserts a minimal session row so plan tables' foreign keys
+// resolve. It is provided outside _test.go for foreign-package test fixtures.
+func CreateSessionRow(db *sql.DB, id string) error {
+	_, err := db.Exec(
+		`INSERT INTO sessions (id, project_path, project_name, created_at)
+		 VALUES (?, '/', 'test', ?)`, id, time.Now().UnixNano())
+	return err
 }

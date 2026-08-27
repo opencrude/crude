@@ -302,18 +302,8 @@ func (m *App) resolveSessionConfirmation(target *confirmation.Screen, choice str
 	m.StatusBar.SetConfirming(false)
 	m.OverlayState.SetBlocking(false)
 	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
+		node.State.Running = true
 		node.State.Thinking = true
-		switch choice {
-		case "allow":
-			node.State.PendingPermTag = "allowed"
-		case "always":
-			node.State.PendingPermTag = "always"
-		case "deny":
-			node.State.PendingPermTag = "denied"
-			if projected := m.subPaneProjections.GetExisting(agentID); projected != nil && projected.renderer != nil {
-				projected.renderer.SetToolPermTag(details.Tool, "", "denied")
-			}
-		}
 	}
 	m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
 	if m.ResolveConfirmation(agentID, choice) && m.Logger != nil {
@@ -323,12 +313,32 @@ func (m *App) resolveSessionConfirmation(target *confirmation.Screen, choice str
 	m.closeProjectionPanel(projection, sessionConfirmationPanelID)
 }
 
-func (m *App) resolveSessionYolo(target *yolo.Screen, enabled bool) {
-	_, projection := m.sessionProjections.projectionForYolo(target)
+func (m *App) cancelSessionConfirmation(target *confirmation.Screen) {
+	_, projection := m.sessionProjections.projectionForConfirmation(target)
 	if projection == nil {
 		return
 	}
-	m.OverlayState.SetYolo(enabled)
+	agentID := projection.confirmationAgentID
+	details := target.Details()
+	m.StatusBar.SetConfirming(false)
+	m.OverlayState.SetBlocking(false)
+	target.Dismiss()
+	m.closeProjectionPanel(projection, sessionConfirmationPanelID)
+	if m.Logger != nil {
+		m.Logger.Info("BLOCK", "turn_cancelled", "operation", details.Operation, "tool", details.Tool)
+	}
+	m.cancelAgentTurn(agentID)
+}
+
+func (m *App) resolveSessionYolo(target *yolo.Screen, enabled bool) {
+	owner, projection := m.sessionProjections.projectionForYolo(target)
+	if projection == nil {
+		return
+	}
+	agentID := projection.yoloAgentID
+	if owner == m.ActiveSession {
+		m.OverlayState.SetYolo(enabled)
+	}
 	content := "YOLO mode cancelled. Safety checks remain active."
 	if enabled {
 		content = "YOLO mode ACTIVE: all safety checks disabled. Use /yolo again to restore."
@@ -340,10 +350,10 @@ func (m *App) resolveSessionYolo(target *yolo.Screen, enabled bool) {
 			m.Logger.Info("SAFETY", "yolo_disabled")
 		}
 	}
-	if node := m.AgentMgr.Get(projection.yoloAgentID); node != nil && node.State != nil && node.State.Messages != nil {
+	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil && node.State.Messages != nil {
 		node.State.Messages.AppendMessage(workspace.Message{Role: types.RoleAssistant, Content: content, Time: time.Now()})
 		m.syncAgentMessages(node.ID, false)
 	}
-	m.SetYolo(enabled)
+	m.SetYoloForAgent(agentID, enabled)
 	m.closeProjectionPanel(projection, sessionYoloPanelID)
 }

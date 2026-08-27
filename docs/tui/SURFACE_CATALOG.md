@@ -22,7 +22,7 @@ only against this catalog.
 | Terminal dock | `tui/screens/termdock/`, `tui/viewmodel/terminals.go` | Workspace-level tabbed PTY dock above the status bar; independent of session PanelDeck |
 | In-app terminal (docked) | `tui/screens/shellterm/`, `tui/term/`, `workspace/terminal.go` | libghostty-vt PTY + VT paint in the workspace dock. See [`TERMINALS.md`](./TERMINALS.md) |
 | Legacy inline panel tabs | deleted | Replaced by native per-session PanelDeck tabs; not the floating OverlayHost |
-| Status bar | `tui/screens/shellstatus/`, `tui/viewmodel/view.go` | Native Host paint; activity + `ui.Hint` segments via ActionRegistry; legacy `widgets/statusbar.go` deleted |
+| Status bar | `tui/screens/shellstatus/`, `tui/viewmodel/view.go` | Native Host paint; static compact aggregate agent counts + IDE health + `ui.Hint` segments via ActionRegistry. Attention signs are limited to user action/errors; per-agent preparation/provider/tool lifecycle and animation stay in chat; legacy `widgets/statusbar.go` deleted |
 | Contextual help | `tui/ui/hint.go`, `tui/ui/key_chord.go`, `tui/viewmodel/view.go` | Registry-derived Hint/KeyChord segments (Phase 13 item 2) |
 | Main content surface | `tui/viewmodel/view.go` | Editor/chat/launcher compositor layer |
 

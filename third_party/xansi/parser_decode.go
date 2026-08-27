@@ -1,7 +1,6 @@
 package ansi
 
 import (
-	"runtime"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi/parser"
@@ -440,9 +439,9 @@ func HasEscPrefix[T string | []byte](b T) bool {
 // FirstGraphemeCluster returns the first grapheme cluster in the given string
 // or byte slice, and its monospace display width.
 //
-// It returns the first UAX #29 grapheme cluster and runs
-// correctClusterWidth to cap at 2 and reconcile the Unicode tables with the
-// terminals Crude targets. Layout and ultraviolet both use this function.
+// It returns the first UAX #29 grapheme cluster and runs correctClusterWidth
+// to reconcile Unicode tables with the calibrated effective terminal grid.
+// Layout and ultraviolet both use this function.
 func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 	switch b := any(b).(type) {
 	case string:
@@ -453,7 +452,7 @@ func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 		} else {
 			w = dwOptions.String(cluster)
 		}
-		return T(cluster), correctClusterWidth(cluster, w)
+		return T(cluster), correctClusterWidth(cluster, w, m)
 	case []byte:
 		cluster := graphemes.FromBytes(b).First()
 		var w int
@@ -462,7 +461,7 @@ func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 		} else {
 			w = dwOptions.Bytes(cluster)
 		}
-		return T(cluster), correctClusterWidth(string(cluster), w)
+		return T(cluster), correctClusterWidth(string(cluster), w, m)
 	}
 	panic("unreachable")
 }
@@ -471,29 +470,21 @@ func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 // shares between layout and ultraviolet:
 //
 //  1. Measure extended grapheme clusters (UAX #29), not code points.
-//  2. Final cell width is only 0, 1, or 2 (never 3+).
+//  2. Modern grapheme mode defaults to 0, 1, or 2 cells; a measured legacy
+//     terminal or multiplexer may retain a larger codepoint-sum width.
 //  3. Real emoji (emoji presentation / ZWJ sequences / VS16) stay 2.
 //  4. Text presentation (VS15) forces 1.
 //
 // This runs for every FirstGraphemeCluster call, so Crude layout and
 // ultraviolet (via the same x/ansi) always agree — required on all platforms
 // including Windows Terminal.
-func correctClusterWidth(cluster string, w int) int {
-	return correctClusterWidthForPlatform(cluster, w, runtime.GOOS)
-}
-
-func correctClusterWidthForPlatform(cluster string, w int, goos string) int {
+func correctClusterWidth(cluster string, w int, method Method) int {
 	if cluster == "" {
 		return 0
 	}
-	// Cap: Ghostty / foot / WT store at most 2 columns per grapheme.
-	if w > 2 {
-		w = 2
+	if measured, ok := terminalExactWidth(cluster); ok {
+		return measured
 	}
-	if w <= 1 {
-		return w
-	}
-
 	var (
 		hasVS15 bool // U+FE0E text presentation
 		hasVS16 bool // U+FE0F emoji presentation
@@ -516,6 +507,19 @@ func correctClusterWidthForPlatform(cluster string, w int, goos string) int {
 			hasRI = true
 		}
 	}
+	if measured, ok := terminalAmbiguousWidth(base); ok {
+		return measured
+	}
+	if method == WcWidth {
+		return max(0, wcOptions.StringWidth(cluster))
+	}
+	if terminalUsesLegacyGraphemes() {
+		return legacyClusterWidth(cluster)
+	}
+	// Cap: Ghostty / foot / WT store at most 2 columns per grapheme.
+	if w > 2 {
+		w = 2
+	}
 
 	// Explicit text presentation → narrow (even if tables say 2).
 	if hasVS15 && !hasVS16 {
@@ -533,18 +537,15 @@ func correctClusterWidthForPlatform(cluster string, w int, goos string) int {
 	if isEastAsianWide(base) {
 		return 2
 	}
-	// Linux terminals commonly still use Unicode 15 width tables, where the
-	// trigrams were neutral (one cell). Windows Terminal uses Unicode 16,
-	// where they are wide. Keep the platform decision here so every consumer
-	// of x/ansi measures the same number.
-	if goos == "linux" && isUnicode15Narrow(base) {
-		return 1
-	}
 	return w
 }
 
-func isUnicode15Narrow(r rune) bool {
-	return r >= 0x2630 && r <= 0x2637
+func legacyClusterWidth(cluster string) int {
+	width := 0
+	for _, r := range cluster {
+		width += max(0, wcOptions.RuneWidth(r))
+	}
+	return width
 }
 
 // isEmojiBase reports code points that default to emoji presentation or live

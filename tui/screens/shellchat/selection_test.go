@@ -74,6 +74,25 @@ func TestShellChatDisclosureClickEmitsToggleAction(t *testing.T) {
 	}
 }
 
+func TestExpandedDisclosureClickAnywhereCollapses(t *testing.T) {
+	th := theme.DefaultDark()
+	s := New(th)
+	rows := []chatprojection.MessageRow{{
+		ID: "thought-1", Lines: []string{"│ ● Thought for 2s ▾", "│   body row"},
+		Toggle: true, ToggleLine: 0, ToggleAny: true,
+	}}
+	s.SetMessages(rows, PaintParams{Compose: ComposeParams{InnerW: 40, PadLR: th.Spacing.PadLR, Theme: th}})
+	s.SyncScrollMetrics(2, 2)
+	s.Layout(ui.LayoutContext{}, ui.Rect{W: 40 + th.Spacing.PadLR*2, H: 2})
+
+	ctx := ui.EventContext{LocalX: th.Spacing.PadLR + 5, LocalY: 1}
+	_ = s.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: 1, Button: tea.MouseLeft}))
+	res := s.Handle(ctx, ui.MouseReleaseEvent(tea.MouseReleaseMsg{X: ctx.LocalX, Y: 1, Button: tea.MouseLeft}))
+	if res.Action == nil || res.Action.ID != chatprojection.ChatToggleActionID {
+		t.Fatalf("expanded body click action = %+v", res.Action)
+	}
+}
+
 func TestShellChatScrollbarDragScrolls(t *testing.T) {
 	th := theme.DefaultDark()
 	s := New(th)

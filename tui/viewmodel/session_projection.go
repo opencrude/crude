@@ -178,6 +178,17 @@ func (r *sessionProjectionRegistry) SetTheme(th *theme.Theme) {
 	}
 }
 
+func (r *sessionProjectionRegistry) InvalidateWidthProfile() {
+	if r == nil {
+		return
+	}
+	for _, projection := range r.items {
+		if projection != nil && projection.deckHost != nil {
+			projection.deckHost.MarkLayout()
+		}
+	}
+}
+
 func (r *sessionProjectionRegistry) projectionForSettings(screen *sessionsettings.Screen) (*workspace.Session, *sessionProjection) {
 	if r == nil || screen == nil {
 		return nil, nil

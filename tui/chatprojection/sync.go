@@ -137,6 +137,9 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.Time.Equal(incoming.Time) &&
 		current.ToolName == incoming.ToolName &&
 		current.ToolArgs == incoming.ToolArgs &&
+		current.ToolCommand == incoming.ToolCommand &&
+		current.ToolInput == incoming.ToolInput &&
+		current.ToolScope == incoming.ToolScope &&
 		current.ToolID == incoming.ToolID &&
 		current.ToolStatus == incoming.ToolStatus &&
 		current.ToolIndex == incoming.ToolIndex &&
@@ -152,6 +155,11 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.ThinkingActive == incoming.ThinkingActive &&
 		current.ThinkingInterrupted == incoming.ThinkingInterrupted &&
 		current.ThinkingDuration == incoming.ThinkingDuration &&
+		current.LifecyclePhase == incoming.LifecyclePhase &&
+		current.LifecycleProgress == incoming.LifecycleProgress &&
+		current.LifecycleProvider == incoming.LifecycleProvider &&
+		current.LifecycleUploadedBytes == incoming.LifecycleUploadedBytes &&
+		current.LifecycleTotalBytes == incoming.LifecycleTotalBytes &&
 		current.Incomplete == incoming.Incomplete &&
 		current.IncompleteReason == incoming.IncompleteReason &&
 		current.SubPaneID == incoming.SubPaneID &&

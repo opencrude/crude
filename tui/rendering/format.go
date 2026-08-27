@@ -39,11 +39,45 @@ func FormatCount(n int) string {
 	}
 }
 
+// FormatBytes renders an exact byte count compactly using binary thresholds
+// and the user-facing B/KB/MB/GB labels used by transfer progress rows.
+func FormatBytes(n int64) string {
+	if n < 0 {
+		n = 0
+	}
+	const (
+		kb = int64(1024)
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+	switch {
+	case n >= gb:
+		return formatByteUnit(n, gb, "GB")
+	case n >= mb:
+		return formatByteUnit(n, mb, "MB")
+	case n >= kb:
+		return formatByteUnit(n, kb, "KB")
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+func formatByteUnit(value, unit int64, suffix string) string {
+	scaled := float64(value) / float64(unit)
+	if scaled == float64(int64(scaled)) || scaled >= 10 {
+		return fmt.Sprintf("%.0f %s", scaled, suffix)
+	}
+	return fmt.Sprintf("%.1f %s", scaled, suffix)
+}
+
 func FormatDuration(d time.Duration) string {
 	if d <= 0 {
 		return ""
 	}
 	secs := d.Seconds()
+	if secs < 0.1 {
+		return "<0.1s"
+	}
 	if secs < 1.0 {
 		return fmt.Sprintf("%.1fs", secs)
 	}

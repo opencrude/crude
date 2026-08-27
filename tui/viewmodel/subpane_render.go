@@ -35,6 +35,9 @@ type subPaneProjection struct {
 	compactCacheWidth int
 	compactMsgVersion uint64
 	compactMsgCount   int
+	// expanded mirrors the parent chat block's disclosure state so completed
+	// panes retain their scrollbar when reopened.
+	expanded bool
 }
 
 // subPaneProjectionRegistry owns the per-pane projections and the
@@ -133,6 +136,14 @@ func (reg *subPaneProjectionRegistry) SetSize(w, h int) {
 	}
 	for _, p := range reg.projections {
 		p.renderer.SetSize(w, maxH)
+	}
+}
+
+func (reg *subPaneProjectionRegistry) InvalidateWidthProfile() {
+	for _, projection := range reg.projections {
+		if projection != nil && projection.renderer != nil {
+			projection.renderer.InvalidateWidthProfile()
+		}
 	}
 }
 
@@ -243,7 +254,7 @@ func (reg *subPaneProjectionRegistry) SetPaneScrollbarWidth(paneID string, w int
 // PaneGutterState returns native gutter paint/input metadata for shellchat.
 func (reg *subPaneProjectionRegistry) PaneGutterState(paneID string, sp *workspace.SubPane) shellchat.PaneGutterState {
 	p, ok := reg.projections[paneID]
-	if !ok || sp == nil || sp.Done {
+	if !ok || sp == nil || (sp.Done && !p.expanded) {
 		return shellchat.PaneGutterState{}
 	}
 	if sp.Type == workspace.PaneAgent {
@@ -274,7 +285,10 @@ func (reg *subPaneProjectionRegistry) ScrollbarWidth(paneID string, sp *workspac
 	if !ok {
 		return 0
 	}
-	if sp.Type == workspace.PaneAgent && !sp.Done {
+	if sp.Done && !p.expanded {
+		return 0
+	}
+	if sp.Type == workspace.PaneAgent {
 		if p.scroll.MaxOffset() > 0 {
 			return ui.ScrollbarWidth
 		}
@@ -292,7 +306,7 @@ func (reg *subPaneProjectionRegistry) ScrollbarLineCount(paneID string, sp *work
 	if !ok {
 		return 0
 	}
-	if sp.Done {
+	if sp.Done && !p.expanded {
 		return 0
 	}
 	if sp.Type == workspace.PaneAgent {
@@ -329,6 +343,8 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	if width < 10 {
 		width = 10
 	}
+	p := reg.Get(paneID, sp.Type)
+	p.expanded = expanded
 	view := sp.View()
 
 	if sp.Done && !expanded {
@@ -345,7 +361,6 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	// PaneThinking: delegate to the MessageList projection, same as the
 	// prior SubPane.Render path. Keep topPad/scroll arithmetic identical to
 	// the string path; only the per-row carrier changes (NativeLine).
-	p := reg.Get(paneID, sp.Type)
 	p.renderer.SetSize(width, maxH)
 	p.renderer.SetChatAreaBounds(0, maxH)
 	p.renderer.SetSpinFrame(spinFrame)

@@ -28,6 +28,7 @@ const (
 	RoleThinking      = "thinking"
 	RoleTool          = "tool"
 	RoleError         = "error"
+	RoleStatus        = "status"
 	RoleSessionPicker = "sessionpicker"
 )
 
@@ -359,11 +360,14 @@ type ChatMessage struct {
 	ReferenceLabels []string
 	Time            time.Time
 
-	ToolName   string
-	ToolArgs   string
-	ToolID     string
-	ToolStatus string
-	ToolIndex  int
+	ToolName    string
+	ToolArgs    string
+	ToolCommand string
+	ToolInput   string
+	ToolScope   string
+	ToolID      string
+	ToolStatus  string
+	ToolIndex   int
 
 	ToolProgressPhase   string
 	ToolProgressMessage string
@@ -375,9 +379,14 @@ type ChatMessage struct {
 	ToolStartTime       time.Time
 	ToolDuration        time.Duration
 
-	ThinkingActive      bool
-	ThinkingInterrupted bool
-	ThinkingDuration    time.Duration
+	ThinkingActive         bool
+	ThinkingInterrupted    bool
+	ThinkingDuration       time.Duration
+	LifecyclePhase         string
+	LifecycleProgress      int
+	LifecycleProvider      string
+	LifecycleUploadedBytes int64
+	LifecycleTotalBytes    int64
 
 	Incomplete       bool
 	IncompleteReason string

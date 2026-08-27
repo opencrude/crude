@@ -30,6 +30,7 @@ const (
 	RoleThinking      = ttypes.RoleThinking
 	RoleTool          = ttypes.RoleTool
 	RoleError         = ttypes.RoleError
+	RoleStatus        = ttypes.RoleStatus
 	RoleSessionPicker = ttypes.RoleSessionPicker
 )
 

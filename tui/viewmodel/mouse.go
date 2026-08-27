@@ -36,7 +36,7 @@ const (
 )
 
 func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
-	if m.sessionDeckBlocking() {
+	if m.sessionDeckBlocking() && !isWheel {
 		return regionSessionDeck
 	}
 
@@ -374,10 +374,12 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 	}
-	if m.blockingDeckShieldsPointer(msg.X, msg.Y, false) {
+	region := m.classifyShellRegion(msg.X, msg.Y, true)
+	// A blocking deck still shields clicks/selection, but wheel-over-chat is a
+	// read-only navigation action and remains available behind the deck.
+	if m.blockingDeckShieldsPointer(msg.X, msg.Y, false) && region != regionChat {
 		return m, nil
 	}
-	region := m.classifyShellRegion(msg.X, msg.Y, true)
 
 	switch region {
 	case regionSidebar:
@@ -821,6 +823,8 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		st = m.buildChatContextMenu(mouse)
 	case regionStatusBar:
 		st = m.buildStatusBarContextMenu(mouse)
+	case regionLauncher:
+		st = m.buildLauncherContextMenu(mouse)
 	default:
 		return m, nil
 	}

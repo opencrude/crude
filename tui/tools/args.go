@@ -2,11 +2,15 @@ package tools
 
 import (
 	"crude/tui/rendering"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
 
 func SummarizeToolArgs(tool, argsStr string) string {
+	if tool == "update_plan" || tool == "get_plan" {
+		return ExtractArg(argsStr, "plan_id")
+	}
 	// grep_files: show what (pattern) and where (path)
 	if tool == "grep_files" {
 		pattern := ExtractArg(argsStr, "pattern")
@@ -53,34 +57,6 @@ func SummarizeToolArgs(tool, argsStr string) string {
 		}
 		return source
 	}
-	if tool == "plan" || tool == "list_goal_status" {
-		return rendering.PascalCaseTool(tool)
-	}
-	if tool == "mark_step_doing" {
-		if stepID := ExtractArg(argsStr, "step_id"); stepID != "" {
-			return stepID
-		}
-		return rendering.PascalCaseTool(tool)
-	}
-	if tool == "mark_step_complete" || tool == "mark_step_failed" {
-		if stepID := ExtractArg(argsStr, "step_id"); stepID != "" {
-			label := stepID
-			if activate := ExtractArg(argsStr, "activate_steps"); activate != "" {
-				label += " → " + activate
-			}
-			return label
-		}
-		return rendering.PascalCaseTool(tool)
-	}
-	if tool == "report_blocker" {
-		if msg := ExtractArg(argsStr, "message"); msg != "" {
-			return rendering.TruncateLine(msg, 50)
-		}
-		return rendering.PascalCaseTool(tool)
-	}
-	if tool == "resolve_blocker" {
-		return rendering.PascalCaseTool(tool)
-	}
 	if code := ExtractArg(argsStr, "code"); code != "" {
 		return rendering.TruncateLine(code, 50)
 	}
@@ -110,6 +86,17 @@ func SummarizeToolArgs(tool, argsStr string) string {
 }
 
 func ExtractArg(str, key string) string {
+	var object map[string]any
+	if json.Unmarshal([]byte(str), &object) == nil {
+		if value, ok := object[key]; ok {
+			switch typed := value.(type) {
+			case string:
+				return typed
+			case float64, bool:
+				return fmt.Sprint(typed)
+			}
+		}
+	}
 	prefixes := []string{key + ":", key + ": "}
 	for _, prefix := range prefixes {
 		idx := strings.Index(str, prefix)

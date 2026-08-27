@@ -23,6 +23,7 @@ const (
 	RoleThinking      = model.RoleThinking
 	RoleTool          = model.RoleTool
 	RoleError         = model.RoleError
+	RoleStatus        = model.RoleStatus
 	RoleSessionPicker = model.RoleSessionPicker
 )
 

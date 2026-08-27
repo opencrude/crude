@@ -136,10 +136,10 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	if got := app.AgentMgr.Count(); got != retainedAgents {
 		t.Fatalf("retained agents=%d want %d", got, retainedAgents)
 	}
-	// A minimized idle agent still reports as sleeping: the 💤 count is how
-	// the status bar advertises backgrounded work from the launcher.
-	if got := app.StatusBar.SleepingAgentCount(); got != retainedAgents {
-		t.Fatalf("sleeping agents=%d want %d after closing last tab", got, retainedAgents)
+	// A minimized idle agent remains in the aggregate agent report, which is
+	// how the status bar advertises backgrounded work from the launcher.
+	if got := app.StatusBar.IdleAgentCount(); got != retainedAgents {
+		t.Fatalf("idle agents=%d want %d after closing last tab", got, retainedAgents)
 	}
 	if got := app.StatusBar.ActiveAgentCount(); got != 0 {
 		t.Fatalf("active agents=%d want 0 after closing last tab", got)

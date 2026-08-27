@@ -286,6 +286,48 @@ Screens must implement `SetTokens` / `SetTheme` and forward to children.
 - Gallery: `TestDemoGalleryRuntimeThemeSwitchPreservesState` in `tui/ui/demo_test.go`.
 - Product screens: call `SetTheme` then re-paint; assert accent FG still present.
 
+### Activity-dot animation contract
+
+`ui.ActivityDot(spinFrame)` is the only product activity-dot animation. The
+`spinFrame` value is wall-clock Unix milliseconds (`time.Now().UnixMilli()`),
+not a rendered-frame counter. Every active dot is synchronized to one cycle:
+
+| Phase | Duration | Glyph |
+|-------|----------|-------|
+| Filled | 400 ms | `●` |
+| Hollow | 400 ms | `○` |
+| Full cycle | 800 ms | repeat |
+
+Rules:
+
+- Use `ui.ActivityDot`; never add a local `(frame/N)%2`, braille spinner,
+  brightness pulse, color cycle, or terminal `AttrBlink` for product activity.
+- Keep the semantic color unchanged between filled and hollow phases. Shape is
+  the animation; changing both shape and color reads as flicker.
+- Active chat lifecycle, thinking, tool, sub-agent, and live-session rows blink.
+  Completed, idle, cancelled, and failed rows are static.
+- The bottom status bar never blinks. Healthy aggregate agent/LSP reporting is
+  quiet text; `⚠` is reserved for required user action and `✕` for failures.
+- Editor, input, and terminal cursors are not activity dots. Their independent
+  cursor timing and visibility contracts remain in their owning components.
+
+Colors are semantic and theme-resolved. Default-dark values are references,
+not values to hard-code in feature code:
+
+| State | Semantic role | Default dark |
+|-------|---------------|--------------|
+| Preparing / cancelling | `ColorWarning` | `#d29922` |
+| Waiting for provider / thinking | `ColorAccent` | `#f0883e` |
+| Tool doing | `ColorAccent2` | `#a5d6ff` |
+| Live-session list dot | list row ink (`ColorFg` default) | `#e6edf3` |
+| Done | `ColorSuccess` | `#7ee787` |
+| Failed | `ColorError` | `#ff7b72` |
+
+Upload lifecycle progress reports bytes consumed from the encoded HTTP request
+body (headers excluded): `↑ uploaded / total · percent`. Use
+`rendering.FormatBytes` for B/KB/MB/GB labels. Provider wait rows use the
+configured provider display name (`Waiting for <provider>`).
+
 ---
 
 ## Recipe 6: resizable two-pane split

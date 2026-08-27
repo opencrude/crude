@@ -73,9 +73,12 @@ func TestConfirmationAndYoloResultsTargetOwningProjection(t *testing.T) {
 	firstProjection.yoloAgentID = "first-agent"
 	firstProjection.deck.Open(sessionYoloPanel(firstProjection.yolo))
 	app.ActiveSession = second
-	app.resolveSessionYolo(firstProjection.yolo, false)
+	app.resolveSessionYolo(firstProjection.yolo, true)
 	if firstProjection.deck.IsOpen() || secondProjection.deck.IsOpen() || app.ActiveSession != second {
 		t.Fatal("inactive YOLO resolution changed the active session")
+	}
+	if app.OverlayState.IsYolo() {
+		t.Fatal("inactive YOLO result changed the active session's header state")
 	}
 }
 

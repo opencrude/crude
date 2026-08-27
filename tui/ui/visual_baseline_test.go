@@ -134,11 +134,11 @@ func TestVisualBaseline_Gallery_200x50_Dark(t *testing.T) {
 		t.Fatal("gallery missing title at 200x50")
 	}
 
-	// All non-transparent cells must have valid width (1 or 2).
+	// Calibrated primary widths are bounded; width 0 is a continuation cell.
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x < buf.Width(); x++ {
 			c := buf.Get(x, y)
-			if !c.Transparent && c.Width != 1 && c.Width != 2 {
+			if !c.Transparent && c.Width > 16 {
 				t.Errorf("cell at (%d,%d) has invalid Width=%d", x, y, c.Width)
 			}
 		}
@@ -505,10 +505,12 @@ func TestVisualBaseline_ContinuationCellIntegrity(t *testing.T) {
 	// Check that wide chars are followed by continuation cells.
 	for x := 0; x < 19; x++ {
 		c := buf.Get(x, 0)
-		if c.Width == 2 {
-			next := buf.Get(x+1, 0)
-			if next.Width != 0 || next.Char != 0 {
-				t.Errorf("wide char at (%d,0) not followed by continuation cell", x)
+		if c.Width > 1 {
+			for offset := 1; offset < int(c.Width); offset++ {
+				next := buf.Get(x+offset, 0)
+				if next.Width != 0 || next.Char != 0 {
+					t.Errorf("multi-column char at (%d,0) missing continuation %d", x, offset)
+				}
 			}
 		}
 	}

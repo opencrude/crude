@@ -80,9 +80,6 @@ func (i LiveInfo) Merge(other LiveInfo) LiveInfo {
 	return out
 }
 
-// spinnerFrames cycles the working-session icon (unicode braille, ~100ms).
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-
 // SelectMsg is emitted when the user resumes a session.
 type SelectMsg struct {
 	Target  *Screen
@@ -92,7 +89,9 @@ type SelectMsg struct {
 // CancelMsg is emitted when the picker is dismissed.
 type CancelMsg struct{ Target *Screen }
 
-// Screen is the Host-ready session picker: sectioned List + scrollbar + empty/hints.
+// Screen is the Host-ready session picker: search + sectioned List +
+// scrollbar + empty/hints. The search row is always visible so filtering is
+// discoverable without a hidden "/" shortcut.
 type Screen struct {
 	ui.Base
 	th         *theme.Theme
@@ -101,7 +100,6 @@ type Screen struct {
 	filtered   []sessiondb.SessionMeta
 	live       map[string]LiveInfo
 	spinFrame  int
-	filterOn   bool
 	filterText string
 	active     bool
 	title      *ui.Label
@@ -127,7 +125,7 @@ func New(th *theme.Theme) *Screen {
 	search := ui.NewFilterField(SearchID, tokens)
 	search.SetPrompt(ui.SearchGlyphEnd(tokens))
 	search.SetPromptPlacement(ui.PromptEnd)
-	search.SetPlaceholder("Filter sessions")
+	search.SetPlaceholder("Type to search sessions…")
 	search.SetSubmitAction("")
 	search.OnChanged(s.applyFilterValue)
 	s.search = &filterSearch{Base: ui.NewBase(SearchID), field: search, owner: s}
@@ -140,7 +138,7 @@ func New(th *theme.Theme) *Screen {
 	s.empty = ui.NewLabel(EmptyID, "No sessions yet — chat first, then Ctrl+Alt+S to resume.", th)
 	s.empty.SetColorRole(ui.ColorMuted)
 
-	s.hints = ui.NewLabel(HintsID, "↑↓/jk navigate  / filter  Enter resume  Esc close", th)
+	s.hints = ui.NewLabel(HintsID, "type to filter · ↑↓/jk sessions · Enter resume · Esc close", th)
 	s.hints.SetColorRole(ui.ColorMuted)
 	return s
 }
@@ -150,7 +148,6 @@ func New(th *theme.Theme) *Screen {
 func (s *Screen) Open(sessions []sessiondb.SessionMeta) {
 	s.sessions = append(s.sessions[:0], sessions...)
 	s.live = nil
-	s.filterOn = false
 	s.filterText = ""
 	if s.search != nil && s.search.field != nil {
 		s.search.field.SetValue("")
@@ -216,7 +213,7 @@ func (s *Screen) NeedsAnimation() bool {
 // SetSpinFrame advances the running-spinner icon. Rows rebuild only on
 // change; stopped sessions keep static icons and never animate.
 func (s *Screen) SetSpinFrame(frame int) {
-	if frame == s.spinFrame || !s.NeedsAnimation() {
+	if ui.ActivityDot(frame) == ui.ActivityDot(s.spinFrame) || !s.NeedsAnimation() {
 		return
 	}
 	s.spinFrame = frame
@@ -229,7 +226,7 @@ func (s *Screen) rowIcon(id string) string {
 	}
 	switch s.live[id].Status {
 	case StatusWorking:
-		return spinnerFrames[(s.spinFrame/100)%len(spinnerFrames)]
+		return ui.ActivityDot(s.spinFrame)
 	case StatusIdle:
 		return "●"
 	case StatusMinimized:
@@ -242,6 +239,17 @@ func (s *Screen) rowIcon(id string) string {
 // SetFocusHandler registers Host focus routing.
 func (s *Screen) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
 
+// FocusSearch focuses the search input so typing filters immediately (the
+// always-visible row). With no sessions there is nothing to search and focus
+// lands on the screen itself.
+func (s *Screen) FocusSearch() {
+	if len(s.sessions) == 0 {
+		s.focusID(ScreenID)
+		return
+	}
+	s.focusID(SearchID)
+}
+
 // FocusList focuses the session list (or the screen when empty).
 func (s *Screen) FocusList() {
 	if len(s.sessions) == 0 {
@@ -249,6 +257,17 @@ func (s *Screen) FocusList() {
 		return
 	}
 	s.focusID(ListID)
+}
+
+// handoffToList moves focus to the session list and replays the navigation
+// key, so the same keypress that leaves the search field also advances the
+// list cursor.
+func (s *Screen) handoffToList(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	s.FocusList()
+	res := s.list.Handle(ctx, evt)
+	res.Handled = true
+	res.Invalidate |= ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout
+	return res
 }
 
 func (s *Screen) focusID(id ui.ComponentID) {
@@ -297,14 +316,10 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	s.title.Layout(ctx, ui.Rect{W: r.W, H: 1})
+	// Search row is permanent: always give it a real rect so users can see
+	// (and click) the field without knowing a keyboard shortcut.
+	s.search.Layout(ctx, ui.Rect{Y: 1, W: r.W, H: 1})
 	listY := 2
-	if s.filterOn && len(s.sessions) > 0 {
-		s.search.Layout(ctx, ui.Rect{Y: 1, W: r.W, H: 1})
-		listY = 2
-	} else {
-		// Keep search registered for focus, but give it an empty rect when idle.
-		s.search.Layout(ctx, ui.Rect{Y: 1, W: 0, H: 0})
-	}
 	listH := max(1, r.H-listY-1)
 	showEmpty := len(s.sessions) == 0 || len(s.filtered) == 0
 	if showEmpty {
@@ -323,13 +338,9 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		key := evt.Key
 		switch {
 		case key.Code == tea.KeyEsc:
-			if s.filterOn {
-				s.deactivateFilter()
-				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
-			}
 			return s.cancel()
-		case key.String() == "/" && !s.filterOn && len(s.sessions) > 0:
-			s.activateFilter()
+		case key.String() == "/":
+			s.FocusSearch()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
 		}
 	}
@@ -361,6 +372,7 @@ func (s *Screen) Semantics() ui.Semantics {
 
 func (s *Screen) sync() {
 	s.filtered = s.filterSessions(s.sessions, s.filterText)
+	query := strings.TrimSpace(s.filterText)
 	if len(s.sessions) == 0 {
 		s.list.list.SetItems(nil)
 		s.title.SetText("Past sessions")
@@ -369,12 +381,11 @@ func (s *Screen) sync() {
 	}
 	if len(s.filtered) == 0 {
 		s.list.list.SetItems(nil)
-		s.title.SetText(fmt.Sprintf("Past sessions (%d)", len(s.sessions)))
-		q := strings.TrimSpace(s.filterText)
-		if q == "" {
+		s.title.SetText(s.titleText(query))
+		if query == "" {
 			s.empty.SetText("No sessions to show.")
 		} else {
-			s.empty.SetText(fmt.Sprintf("No sessions match %q", q))
+			s.empty.SetText(fmt.Sprintf("No sessions match %q", query))
 		}
 		return
 	}
@@ -396,45 +407,19 @@ func (s *Screen) sync() {
 			})
 		}
 	}
-	// ui.List.SetItems snaps the selection to the first row; keep the user's
-	// session pinned so tick-driven resyncs (spinner frames) never steal it.
-	prevID := ""
-	if meta, ok := s.Selected(); ok {
-		prevID = meta.ID
-	}
-	s.list.list.SetItems(items)
-	if prevID != "" {
-		for i, item := range items {
-			if item.ID == prevID {
-				s.list.list.SelectIndex(i)
-				break
-			}
-		}
-	}
-	s.title.SetText(fmt.Sprintf("Past sessions (%d)", len(s.sessions)))
+	// SetItemsStable keeps the user's selection AND scroll offset anchored
+	// across resyncs (spinner ticks rebuild every row ~10x/second while any
+	// agent is working; SetItems would snap both back to the top).
+	s.list.list.SetItemsStable(items)
+	s.title.SetText(s.titleText(query))
 }
 
-func (s *Screen) activateFilter() {
-	s.filterOn = true
-	s.filterText = ""
-	if s.search != nil && s.search.field != nil {
-		s.search.field.SetValue("")
+// titleText shows matched/total while a query narrows the list.
+func (s *Screen) titleText(query string) string {
+	if strings.TrimSpace(query) == "" {
+		return fmt.Sprintf("Past sessions (%d)", len(s.sessions))
 	}
-	s.sync()
-	s.focusID(SearchID)
-}
-
-func (s *Screen) deactivateFilter() {
-	if !s.filterOn {
-		return
-	}
-	s.filterOn = false
-	s.filterText = ""
-	if s.search != nil && s.search.field != nil {
-		s.search.field.SetValue("")
-	}
-	s.sync()
-	s.FocusList()
+	return fmt.Sprintf("Past sessions (%d/%d)", len(s.filtered), len(s.sessions))
 }
 
 func (s *Screen) applyFilterValue(v string) {
@@ -442,6 +427,9 @@ func (s *Screen) applyFilterValue(v string) {
 	s.sync()
 }
 
+// filterSessions keeps sessions whose searchable text contains EVERY
+// whitespace-separated term (case-insensitive AND matching), so "beta claude"
+// narrows by title word and model together.
 func (s *Screen) filterSessions(all []sessiondb.SessionMeta, query string) []sessiondb.SessionMeta {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
@@ -449,6 +437,7 @@ func (s *Screen) filterSessions(all []sessiondb.SessionMeta, query string) []ses
 		copy(out, all)
 		return out
 	}
+	terms := strings.Fields(query)
 	var out []sessiondb.SessionMeta
 	for _, ses := range all {
 		hay := strings.ToLower(sessionLabel(ses) + " " + s.sessionDetail(ses) + " " + ses.ProjectName + " " + ses.Model + " " + ses.ID)
@@ -458,7 +447,14 @@ func (s *Screen) filterSessions(all []sessiondb.SessionMeta, query string) []ses
 		if ses.LastPrompt.Valid {
 			hay += " " + strings.ToLower(ses.LastPrompt.String)
 		}
-		if strings.Contains(hay, query) {
+		matched := true
+		for _, term := range terms {
+			if !strings.Contains(hay, term) {
+				matched = false
+				break
+			}
+		}
+		if matched {
 			out = append(out, ses)
 		}
 	}
@@ -603,15 +599,16 @@ func (p *pickerList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		key := evt.Key
 		switch {
 		case key.Code == tea.KeyEsc:
-			if p.owner.filterOn {
-				p.owner.deactivateFilter()
+			return p.owner.cancel()
+		case key.String() == "/":
+			p.owner.FocusSearch()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
+		case key.Code == tea.KeyUp || key.String() == "k":
+			if p.atTopSelectable() {
+				// First row already selected: hand focus back to search.
+				p.owner.FocusSearch()
 				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
 			}
-			return p.owner.cancel()
-		case key.String() == "/" && !p.owner.filterOn:
-			p.owner.activateFilter()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
-		case key.String() == "k":
 			return p.list.Handle(ctx, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 		case key.String() == "j":
 			return p.list.Handle(ctx, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
@@ -632,11 +629,23 @@ func (p *pickerList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	return result
 }
+
+// atTopSelectable reports whether the cursor sits on the first selectable row
+// so an upward step can cycle focus back to the search field.
+func (p *pickerList) atTopSelectable() bool {
+	items := p.list.Items()
+	for i := range items {
+		if items[i].Selectable() {
+			return p.list.SelectedIndex() == i
+		}
+	}
+	return false
+}
 func (p *pickerList) Semantics() ui.Semantics       { return p.list.Semantics() }
 func (p *pickerList) SetTokens(tokens *ui.TokenSet) { p.list.SetTokens(tokens) }
 
-// filterSearch paints/handles the filter field and re-applies it to the list
-// on every edit (FilterField.OnChanged, see New).
+// filterSearch paints/handles the always-visible search field and re-applies
+// it to the list on every edit (FilterField.OnChanged, see New).
 type filterSearch struct {
 	ui.Base
 	field *ui.FilterField
@@ -654,9 +663,28 @@ func (f *filterSearch) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCo
 	f.field.Paint(buf, ox+f.Bounds().X, oy+f.Bounds().Y, ctx)
 }
 func (f *filterSearch) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if evt.IsKey() && evt.Key.Code == tea.KeyEsc {
-		f.owner.deactivateFilter()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus | ui.InvalidateLayout}
+	if evt.IsKey() {
+		switch evt.Key.Code {
+		case tea.KeyDown, tea.KeyPgDown:
+			// Leave the field and enter the list in one keypress.
+			return f.owner.handoffToList(ctx, evt)
+		case tea.KeyUp, tea.KeyPgUp:
+			// The field is the top boundary; swallow upward navigation here
+			// so it is not eaten by the text editor as a cursor move.
+			return ui.EventResult{Handled: true}
+		case tea.KeyEnter:
+			// Palette-style: Enter activates whatever the list has selected.
+			if meta, ok := f.owner.Selected(); ok {
+				return f.owner.resume(meta)
+			}
+			return ui.EventResult{Handled: true}
+		case tea.KeyEsc:
+			res := f.field.Handle(ctx, evt) // clears a non-empty query first
+			if !res.Handled {
+				return f.owner.cancel()
+			}
+			return ui.EventResult{Handled: true, Invalidate: res.Invalidate | ui.InvalidateLayout | ui.InvalidatePaint}
+		}
 	}
 	return f.field.Handle(ctx, evt)
 }

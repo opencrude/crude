@@ -27,8 +27,7 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 				"web_search", "web_fetch", "arxiv_search", "run_javascript",
 				"execute_command",
 				"write_report", "question",
-				"plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
-				"report_blocker", "resolve_blocker", "list_goal_status",
+				"update_plan", "get_plan",
 				"wait", "reply",
 			},
 			DeniedTools: []string{

@@ -334,6 +334,16 @@ func (e *Editor) invalidateEditorCaches() {
 	e.chromaDirtyFrom = 0
 }
 
+// InvalidateWidthProfile clears all geometry derived from terminal cell widths.
+// Buffer contents, cursor position, undo state, and syntax data are preserved.
+func (e *Editor) InvalidateWidthProfile() {
+	e.lineRunesCacheValid = false
+	e.lineRunesCacheLine = -1
+	e.lineRunesCache = nil
+	e.lineRunesCacheWidth = 0
+	e.lineGeomCache = nil
+}
+
 func (e *Editor) IsOpen() bool     { return e.open }
 func (e *Editor) FilePath() string { return e.filePath }
 

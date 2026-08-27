@@ -87,6 +87,40 @@ func TestConversationRemoveActiveThinking(t *testing.T) {
 	}
 }
 
+func TestTurnStatusStaysLastAcrossBTWAndTransformsInPlace(t *testing.T) {
+	conversation := NewConversation()
+	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "start"})
+	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing", Progress: 25})
+	statusID := conversation.Messages()[1].InternalID
+	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "BTW: include tests"})
+
+	messages := conversation.Messages()
+	if len(messages) != 3 || messages[1].Content != "BTW: include tests" || messages[2].Role != MessageRoleStatus {
+		t.Fatalf("BTW did not stay before live status: %#v", messages)
+	}
+	conversation.UpdateToolStreaming("tool-1", "internal-1", "read_file", map[string]any{"target": "main.go"})
+	messages = conversation.Messages()
+	if len(messages) != 3 || messages[2].Role != MessageRoleTool || messages[2].InternalID != statusID || messages[2].ToolID != "tool-1" {
+		t.Fatalf("status did not transform in place after BTW: %#v", messages)
+	}
+}
+
+func TestCancellingTurnStatusRejectsLateProviderPhase(t *testing.T) {
+	state := NewAgentState("agent", nil, nil)
+	state.SubmitInput("work")
+	state.Cancelling = true
+	state.Messages.UpdateTurnStatus(TurnStatus{Phase: "cancelling"})
+	state.HandleEvent(
+		AgentEvent{Type: "phase", Data: map[string]any{"name": "waiting_provider"}}, nil,
+		func(string) {}, func(bool, bool, bool) {}, func() {},
+		func(string, string, string, string, string, string, string) {}, func(string) {}, func() {},
+	)
+	messages := state.Messages.Messages()
+	if len(messages) != 1 || messages[0].LifecyclePhase != "cancelling" {
+		t.Fatalf("late provider phase replaced cancellation: %#v", messages)
+	}
+}
+
 func TestMarkAllThinkingDoneRecordsDuration(t *testing.T) {
 	conversation := NewConversation()
 	conversation.AppendMessage(Message{

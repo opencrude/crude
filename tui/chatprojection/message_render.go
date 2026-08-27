@@ -1,7 +1,9 @@
 package chatprojection
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/glamour/v2"
 
@@ -210,13 +212,9 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 			return ml
 		}
 		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
-		if hasThinkingBody(wrapped) {
-			ml.lines = append(ml.lines, "")
-			ml.native = append(ml.native, buildPlainBodyLine(""))
-		}
 		bodyStart := len(ml.native)
-		for i, line := range wrapped {
-			pl := buildThinkingBodyLine(line, i == 0, ctx.spinFrame, false, msg.ThinkingInterrupted)
+		for _, line := range wrapped {
+			pl := buildThinkingBodyLine(line, false, ctx.spinFrame, false, msg.ThinkingInterrupted)
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
 		}
@@ -227,27 +225,35 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 	}
 
 	label := "Thinking"
-	role := thinkingDotRole(ctx.spinFrame)
+	dot := ui.ActivityDot(ctx.spinFrame) + " "
+	role := ui.ColorAccent
 	if msg.ThinkingInterrupted {
 		label = "Thought interrupted"
+		dot = "● "
 		role = ui.ColorWarning
+	} else if !msg.Time.IsZero() {
+		elapsed := time.Since(msg.Time)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		duration := rendering.FormatThinkingDuration(elapsed)
+		if duration == "" {
+			duration = "<1s"
+		}
+		label += " " + duration
 	}
 	header := PaintLine{Spans: []RowSpan{
 		{Text: "│ ", Role: ui.ColorMuted},
-		{Text: "● ", Role: role},
+		{Text: dot, Role: role},
 		{Text: label, Role: ui.ColorAccent, Attr: cell.AttrBold},
 	}}
 	ml.lines = append(ml.lines, header.PlainText())
 	ml.native = append(ml.native, header)
 
 	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
-	if hasThinkingBody(wrapped) {
-		ml.lines = append(ml.lines, "")
-		ml.native = append(ml.native, buildPlainBodyLine(""))
-	}
 	bodyStart := len(ml.native)
-	for i, line := range wrapped {
-		pl := buildThinkingBodyLine(line, i == 0, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
+	for _, line := range wrapped {
+		pl := buildThinkingBodyLine(line, false, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
 		ml.lines = append(ml.lines, pl.PlainText())
 		ml.native = append(ml.native, pl)
 	}
@@ -274,16 +280,45 @@ func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
 	return ml
 }
 
-// hasThinkingBody reports whether a wrapped thinking body has real content
-// (more than one line, or a single non-blank line). A body that wraps to just
-// [""] is "no body" — a completed thinking block collapsed to its label — so
-// the header↔body gap must be skipped to avoid stacking with the next block's
-// separator and producing two blank rows.
-func hasThinkingBody(wrapped []string) bool {
-	if len(wrapped) == 1 {
-		return strings.TrimSpace(wrapped[0]) != ""
+func renderLifecycleMessage(msg types.ChatMessage, spinFrame int) messageLines {
+	label := msg.Content
+	role := ui.ColorAccent2
+	switch msg.LifecyclePhase {
+	case "preparing":
+		label = "Getting next turn ready · ↑ "
+		if msg.LifecycleTotalBytes > 0 {
+			label += fmt.Sprintf("%s / %s · %d%%",
+				rendering.FormatBytes(msg.LifecycleUploadedBytes),
+				rendering.FormatBytes(msg.LifecycleTotalBytes),
+				max(0, min(100, msg.LifecycleProgress)),
+			)
+		} else {
+			label += fmt.Sprintf("%d%%", max(0, min(100, msg.LifecycleProgress)))
+		}
+		role = ui.ColorWarning
+	case "waiting_provider":
+		providerName := strings.TrimSpace(msg.LifecycleProvider)
+		if providerName == "" {
+			providerName = "provider"
+		}
+		label = "Waiting for " + providerName
+		if !msg.Time.IsZero() {
+			elapsed := time.Since(msg.Time)
+			if elapsed >= time.Second {
+				label += fmt.Sprintf(" · %ds", int(elapsed.Seconds()))
+			}
+		}
+		role = ui.ColorAccent
+	case "cancelling":
+		label = "Stopping turn"
+		role = ui.ColorWarning
 	}
-	return true
+	line := PaintLine{Spans: []RowSpan{
+		{Text: "│ ", Role: ui.ColorMuted},
+		{Text: ui.ActivityDot(spinFrame) + " ", Role: role},
+		{Text: label, Role: ui.ColorMuted},
+	}}
+	return messageLines{lines: []string{line.PlainText()}, native: []PaintLine{line}}
 }
 
 func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
@@ -301,6 +336,8 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 		return renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure)
 	case types.RoleError:
 		return renderErrorMessage(msg, ctx)
+	case types.RoleStatus:
+		return renderLifecycleMessage(msg, ctx.spinFrame)
 	default:
 		return messageLines{lines: []string{""}, native: []PaintLine{buildPlainBodyLine("")}}
 	}

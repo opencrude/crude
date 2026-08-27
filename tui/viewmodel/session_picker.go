@@ -39,7 +39,9 @@ func (m *App) openSessionPicker() {
 		h,
 	)
 	m.sessionPicker.SetFocusHandler(frame.Focus)
-	m.sessionPicker.FocusList()
+	// Open into the search field: typing filters immediately. FocusSearch
+	// falls back to the screen itself when there is nothing to search.
+	m.sessionPicker.FocusSearch()
 
 	fw := wm.NewFloatingWindow(string(ui.OverlaySessionPicker), "Sessions", frame, w, h,
 		wm.WithDecoration(true),

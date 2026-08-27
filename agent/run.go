@@ -128,6 +128,7 @@ func (a *Agent) Run(
 	}
 	btwInput := btwCh
 	continuations := 0
+	providerName := a.providerDisplayName()
 	for step := 0; step < stepsLimit; step++ {
 		if ctx.Err() != nil {
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
@@ -135,9 +136,9 @@ func (a *Agent) Run(
 			return msgs
 		}
 
-		if step == 0 {
-			emit(AgentEvent{Type: "phase", Data: "grounding"})
-		}
+		emit(AgentEvent{Type: "phase", Data: map[string]any{
+			"name": "preparing", "progress": 0, "provider": providerName,
+		}})
 
 		drainBtw := func() int {
 			consumed := 0
@@ -200,6 +201,22 @@ func (a *Agent) Run(
 					"backoff": backoffSeconds,
 				}})
 			},
+			func(uploaded, total int64) {
+				percent := 0
+				if total > 0 {
+					percent = int(uploaded * 100 / total)
+				}
+				if percent >= 100 {
+					emit(AgentEvent{Type: "phase", Data: map[string]any{
+						"name": "waiting_provider", "provider": providerName,
+					}})
+					return
+				}
+				emit(AgentEvent{Type: "phase", Data: map[string]any{
+					"name": "preparing", "progress": percent, "provider": providerName,
+					"uploaded_bytes": uploaded, "total_bytes": total,
+				}})
+			},
 		)
 		if err != nil {
 			if completion.Usage.PromptTokens > 0 || completion.Usage.CompletionTokens > 0 ||
@@ -224,11 +241,12 @@ func (a *Agent) Run(
 			}
 			if completion.Content != "" || completion.ReasoningContent != "" {
 				msgs = append(msgs, provider.ChatMessage{
-					Role:             "assistant",
-					Content:          provider.TextContent(completion.Content),
-					ReasoningContent: completion.ReasoningContent,
-					Reasoning:        completion.ReasoningContent,
-					ProviderItems:    completion.ProviderItems,
+					Role:              "assistant",
+					Content:           provider.TextContent(completion.Content),
+					ReasoningContent:  completion.ReasoningContent,
+					Reasoning:         completion.ReasoningContent,
+					ReasoningDuration: completion.ReasoningDuration,
+					ProviderItems:     completion.ProviderItems,
 				})
 			}
 			var apiErr *apiCallError
@@ -324,11 +342,12 @@ func (a *Agent) Run(
 		}
 
 		assistantMsg := provider.ChatMessage{
-			Role:             "assistant",
-			Content:          provider.TextContent(accumulatedText),
-			ReasoningContent: completion.ReasoningContent,
-			Reasoning:        completion.ReasoningContent,
-			ProviderItems:    completion.ProviderItems,
+			Role:              "assistant",
+			Content:           provider.TextContent(accumulatedText),
+			ReasoningContent:  completion.ReasoningContent,
+			Reasoning:         completion.ReasoningContent,
+			ReasoningDuration: completion.ReasoningDuration,
+			ProviderItems:     completion.ProviderItems,
 		}
 		if hasToolCalls {
 			assistantMsg.ToolCalls = toolCalls

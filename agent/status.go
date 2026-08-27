@@ -28,69 +28,12 @@ func BuildStateMachineStatus(sm *statemachine.ConversationStateMachine, sessionI
 
 	if focus != nil {
 		statusLabel := goalStatusLabel(focus.Status)
-		isPlan := strings.HasPrefix(focus.Intent, "plan:")
-
-		if isPlan {
-			objective := strings.TrimPrefix(focus.Intent, "plan: ")
-			maxObjRunes := 80
-			objRunes := []rune(objective)
-			if len(objRunes) > maxObjRunes {
-				objective = string(objRunes[:maxObjRunes]) + "…"
-			}
-			fmt.Fprintf(&sb, "Plan: %s (%s)\n", objective, statusLabel)
-
-			rawStatuses, _ := state.GetFromContext("plan_step_statuses")
-			rawLabels, _ := state.GetFromContext("plan_step_labels")
-			stepStatuses, _ := rawStatuses.(map[string]string)
-			stepLabels, _ := rawLabels.(map[string]string)
-
-			if stepStatuses != nil {
-				total := 0
-				completed := 0
-				rawSteps, _ := state.GetFromContext("plan_steps")
-				if steps, ok := rawSteps.([]map[string]any); ok {
-					total = len(steps)
-					for _, step := range steps {
-						id, _ := step["id"].(string)
-						desc := stepLabels[id]
-						status := stepStatuses[id]
-						marker := persistentStepMarker(status)
-						if status == "completed" {
-							completed++
-						}
-						line := fmt.Sprintf("  %s %s: %s", marker, id, desc)
-						sb.WriteString(line + "\n")
-					}
-				} else {
-					for id, status := range stepStatuses {
-						marker := persistentStepMarker(status)
-						desc := stepLabels[id]
-						line := fmt.Sprintf("  %s %s: %s", marker, id, desc)
-						if status == "completed" {
-							completed++
-						}
-						total++
-						sb.WriteString(line + "\n")
-					}
-				}
-
-				var summaryParts []string
-				summaryParts = append(summaryParts, fmt.Sprintf("%d/%d steps", completed, total))
-				if focus.CurrentBlocker != nil {
-					summaryParts = append(summaryParts, fmt.Sprintf("blocker: %s", focus.CurrentBlocker.Message))
-				}
-				if len(summaryParts) > 0 {
-					fmt.Fprintf(&sb, "  %s\n", strings.Join(summaryParts, "  |  "))
-				}
-			}
-		} else {
-			fmt.Fprintf(&sb, "Goal: %s (%s)\n", focus.Intent, statusLabel)
-			if focus.OriginalQuery != "" {
-				fmt.Fprintf(&sb, "  request: %s\n", focus.OriginalQuery)
-			}
-			if focus.CurrentBlocker != nil {
-				fmt.Fprintf(&sb, "  blocker [%s]: %s\n", focus.CurrentBlocker.Type.String(), focus.CurrentBlocker.Message)
-			}
+		fmt.Fprintf(&sb, "Goal: %s (%s)\n", focus.Intent, statusLabel)
+		if focus.OriginalQuery != "" {
+			fmt.Fprintf(&sb, "  request: %s\n", focus.OriginalQuery)
+		}
+		if focus.CurrentBlocker != nil {
+			fmt.Fprintf(&sb, "  blocker [%s]: %s\n", focus.CurrentBlocker.Type.String(), focus.CurrentBlocker.Message)
 		}
 	}
 
@@ -136,23 +79,6 @@ func BuildSubAgentStatus(mgr *SubAgentManager) string {
 		sb.WriteString(line + "\n")
 	}
 	return strings.TrimSpace(sb.String())
-}
-
-func persistentStepMarker(status string) string {
-	switch status {
-	case "completed":
-		return "✓"
-	case "doing":
-		return "→"
-	case "active":
-		return "→"
-	case "blocked":
-		return "!"
-	case "failed":
-		return "✗"
-	default:
-		return "☐"
-	}
 }
 
 func goalStatusLabel(s statemachine.GoalStatus) string {

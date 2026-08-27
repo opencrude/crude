@@ -18,7 +18,7 @@ preserve or intentionally improve.
 | Composer | Alt+C | |
 | Quit application | Ctrl+Q | |
 | Close active editor tab | Ctrl+W | Uses the dirty-close Save / Don't Save / Cancel prompt; terminal focus keeps the key as PTY input |
-| Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed |
+| Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` is the explicit rejection path. |
 | Previous / next tab | Ctrl+[ / Ctrl+] | Global outside terminal key ownership, including editor focus |
 | Attach file / choose current folder | Ctrl+O | Opens Attach File from non-terminal shell views; a focused Open Workspace folder picker owns the same key locally and selects its current folder |
 | Copy | Ctrl+C | Copies an active editor, chat-input, or chat-message selection |

@@ -10,6 +10,13 @@ import (
 	ttypes "crude/tui/types"
 )
 
+type slashBackendResultMsg struct {
+	agentID string
+	command string
+	undo    *ttypes.UndoResultMsg
+	compact *ttypes.CompactResultMsg
+}
+
 func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	if m.Logger != nil {
 		m.Logger.Info("INPUT", "slash_command", "cmd", cmd)
@@ -21,7 +28,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	}
 
 	var cmds []tea.Cmd
-	cmdName := parts[0]
+	cmdName := strings.ToLower(parts[0])
+	agentID := m.AgentMgr.ActiveID()
 
 	switch cmdName {
 	case "/settings":
@@ -46,17 +54,17 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.openHelp()
 	case "/compact":
 		m.Logger.Info("INPUT", "slash", "command", "compact")
-		if res, ok := m.HandleCompact().(ttypes.CompactResultMsg); ok {
-			if res.Error != "" {
-				m.Logger.Error("COMPACT", "slash_failed", "error", res.Error)
-				m.StatusBar.SetError(res.Error)
-			} else {
-				m.Logger.Info("COMPACT", "slash_ok", "before", res.Before, "after", res.After)
-				m.StatusBar.SetInfo(res.Desc)
-				if m.AgentMgr.ActiveID() != "" {
-					m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: res.Desc, Time: time.Now()})
-				}
-			}
+		if agentID == "" {
+			m.StatusBar.SetError("No active session")
+			break
+		}
+		if m.AgentTurnActive(agentID) {
+			m.StatusBar.SetError("Stop the active turn before compacting context")
+			break
+		}
+		return func() tea.Msg {
+			result := m.HandleCompactForAgent(agentID)
+			return slashBackendResultMsg{agentID: agentID, command: cmdName, compact: &result}
 		}
 	case "/debug-lsp":
 		var b strings.Builder
@@ -79,7 +87,11 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		}
 
 	case "/yolo":
-		if m.OverlayState.IsYolo() {
+		if agentID == "" {
+			m.StatusBar.SetError("No active session")
+			break
+		}
+		if m.YoloForAgent(agentID) || m.OverlayState.IsYolo() {
 			m.OverlayState.SetYolo(false)
 			if m.chatScreen != nil {
 				scroll := m.chatScreen.ScrollModel()
@@ -88,14 +100,25 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			}
 			m.StatusBar.SetInfo("YOLO mode disabled. Safety checks restored.")
 			m.Logger.Info("SAFETY", "yolo_disabled", "source", "slash")
-			m.SetYolo(false)
+			m.SetYoloForAgent(agentID, false)
 		} else {
 			m.openSessionYoloPanel()
 			m.Logger.Info("SAFETY", "yolo_prompt", "source", "slash")
 		}
 	case "/undo", "/undo-n", "/undo-all":
 		m.Logger.Info("INPUT", "slash", "command", cmd)
-		m.HandleUndo(cmd)
+		if agentID == "" {
+			m.StatusBar.SetError("No active session")
+			break
+		}
+		if m.AgentTurnActive(agentID) {
+			m.StatusBar.SetError("Stop the active turn before undoing file operations")
+			break
+		}
+		return func() tea.Msg {
+			result := m.HandleUndoForAgent(agentID, cmd)
+			return slashBackendResultMsg{agentID: agentID, command: cmdName, undo: &result}
+		}
 	default:
 		m.Logger.Warn("INPUT", "slash_unknown", "cmd", cmdName)
 		m.StatusBar.SetError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))
@@ -105,4 +128,31 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 	return nil
+}
+
+func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
+	if msg.undo != nil {
+		if msg.undo.Error != "" {
+			m.Logger.Error("JOURNAL", "slash_failed", "command", msg.command, "error", msg.undo.Error)
+			m.StatusBar.SetError(msg.undo.Error)
+			return
+		}
+		if msg.undo.Desc != "" {
+			m.StatusBar.SetInfo(msg.undo.Desc)
+			m.appendAgentMessage(msg.agentID, ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: msg.undo.Desc, Time: time.Now()})
+		}
+		return
+	}
+	if msg.compact != nil {
+		if msg.compact.Error != "" {
+			m.Logger.Error("COMPACT", "slash_failed", "error", msg.compact.Error)
+			m.StatusBar.SetError(msg.compact.Error)
+			return
+		}
+		m.Logger.Info("COMPACT", "slash_ok", "before", msg.compact.Before, "after", msg.compact.After)
+		m.StatusBar.SetInfo(msg.compact.Desc)
+		if msg.compact.Desc != "" {
+			m.appendAgentMessage(msg.agentID, ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: msg.compact.Desc, Time: time.Now()})
+		}
+	}
 }

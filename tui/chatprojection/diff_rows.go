@@ -1,6 +1,7 @@
 package chatprojection
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -85,7 +86,7 @@ func BuildDiffRows(raw string, maxLines, maxWidth int) []PaintLine {
 	return out
 }
 
-// BuildClaudeDiffRows renders a unified diff in the Claude-style body format:
+// BuildBandedDiffRows renders a unified diff in Crude's compact banded format:
 // no fences, no file/hunk headers — just right-aligned dim line numbers, a
 // tight `+`/`-` indicator column, and per-line background bands (full-width
 // green for additions, red for deletions) so changes read as colored stripes.
@@ -93,29 +94,38 @@ func BuildDiffRows(raw string, maxLines, maxWidth int) []PaintLine {
 // The band is padded to `totalWidth` so tinted rows span the full painted row.
 // When expanded is false the preview is budgeted and a "+N more changes"
 // footer reports the hidden remainder.
-func BuildClaudeDiffRows(raw string, textWidth, totalWidth int, expanded bool) []PaintLine {
+func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) []PaintLine {
 	files := tools.ParseUnifiedDiffStruct(raw)
 	if len(files) == 0 {
 		return nil
 	}
 
 	const previewDiffRows = 24
-	var out []PaintLine
-	remaining := previewDiffRows
-	if expanded {
-		remaining = -1
-	}
+	var all []PaintLine
 	for fi, file := range files {
 		if fi > 0 {
-			out = append(out, buildDiffGutterBlank())
+			all = append(all, buildDiffGutterBlank())
+		}
+		if len(files) > 1 && file.Path != "" {
+			all = append(all, buildDiffFileTransitionRow(file.Path))
 		}
 		rows := tools.BuildDiffRows(file)
 		if len(rows) > 0 && tools.CompactContextLines > 0 {
 			rows = tools.TrimDiffContext(rows, tools.CompactContextLines)
 		}
+		rows = dedentDiffRows(rows)
 
-		maxNumWidth := 4
+		maxNumWidth := 1
 		for _, r := range rows {
+			if r.Kind == tools.DiffLineDeletion {
+				if r.OldLine > 0 {
+					w := rendering.VisibleWidth(strconv.Itoa(r.OldLine))
+					if w > maxNumWidth {
+						maxNumWidth = w
+					}
+				}
+				continue
+			}
 			if r.LineNum > 0 {
 				w := rendering.VisibleWidth(strconv.Itoa(r.LineNum))
 				if w > maxNumWidth {
@@ -123,58 +133,84 @@ func BuildClaudeDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 				}
 			}
 		}
+		maxNumWidth = min(maxNumWidth, max(1, textWidth-4))
 
-		contentWidth := textWidth - maxNumWidth - 3
-		if contentWidth < 10 {
-			contentWidth = 10
-		}
+		contentWidth := max(1, textWidth-maxNumWidth-3)
 
 		for _, r := range rows {
-			if remaining == 0 {
-				continue
-			}
 			if r.Ellipsis {
-				out = append(out, buildDiffEllipsisRow(maxNumWidth))
+				all = append(all, buildDiffEllipsisRow(maxNumWidth))
 				continue
 			}
-			rowLines := buildClaudeDiffContentRows(r, maxNumWidth, contentWidth, totalWidth)
-			out = append(out, rowLines...)
-			if remaining > 0 {
-				remaining -= len(rowLines)
-				if remaining < 0 {
-					remaining = 0
-				}
-			}
+			all = append(all, buildBandedDiffContentRows(r, maxNumWidth, contentWidth, totalWidth)...)
 		}
 	}
-
-	if remaining == 0 {
-		hidden := countDiffRows(raw) - len(out)
-		if hidden > 0 {
-			out = append(out, buildDiffTruncationRow(0, hidden))
-		}
+	if !expanded && len(all) > previewDiffRows {
+		shown := previewDiffRows - 1
+		hidden := len(all) - shown
+		out := append([]PaintLine(nil), all[:shown]...)
+		return append(out, buildDiffTruncationRow(0, hidden))
 	}
-	if len(out) == 0 {
+	if len(all) == 0 {
 		return nil
+	}
+	return all
+}
+
+// dedentDiffRows removes only indentation common to every visible source row.
+// A deeply nested snippet can start at column zero while relative indentation
+// inside nested blocks remains faithful.
+func dedentDiffRows(rows []tools.DiffRow) []tools.DiffRow {
+	common := ""
+	initialized := false
+	for _, row := range rows {
+		if row.Ellipsis || strings.TrimSpace(row.Content) == "" {
+			continue
+		}
+		indent := leadingWhitespace(row.Content)
+		if !initialized {
+			common = indent
+			initialized = true
+			continue
+		}
+		for !strings.HasPrefix(indent, common) {
+			if common == "" {
+				break
+			}
+			common = common[:len(common)-1]
+		}
+	}
+	if common == "" {
+		return rows
+	}
+	out := append([]tools.DiffRow(nil), rows...)
+	for i := range out {
+		out[i].Content = strings.TrimPrefix(out[i].Content, common)
 	}
 	return out
 }
 
-func countDiffRows(raw string) int {
-	files := tools.ParseUnifiedDiffStruct(raw)
-	n := 0
-	for _, f := range files {
-		n += len(tools.BuildDiffRows(f))
+func leadingWhitespace(text string) string {
+	for i, r := range text {
+		if r != ' ' && r != '\t' {
+			return text[:i]
+		}
 	}
-	return n
+	return text
 }
 
-// buildClaudeDiffContentRows renders one diff row with the tight gutter and
+// buildBandedDiffContentRows renders one diff row with the tight gutter and
 // full-width band. Long content hard-wraps with continuation rows that keep
 // the band and blank the number/sign columns.
-func buildClaudeDiffContentRows(r tools.DiffRow, maxNumWidth, contentWidth, totalWidth int) []PaintLine {
+func buildBandedDiffContentRows(r tools.DiffRow, maxNumWidth, contentWidth, totalWidth int) []PaintLine {
 	numStr := ""
-	if r.LineNum > 0 {
+	// Deletions reference the old-file line; additions/context reference the
+	// new-file line. This gives each changed row a meaningful gutter.
+	if r.Kind == tools.DiffLineDeletion {
+		if r.OldLine > 0 {
+			numStr = strconv.Itoa(r.OldLine)
+		}
+	} else if r.LineNum > 0 {
 		numStr = strconv.Itoa(r.LineNum)
 	}
 	paddedNum := fmt.Sprintf("%*s", maxNumWidth, numStr)
@@ -255,6 +291,13 @@ func bandPaintLine(pl PaintLine, band ui.SemanticColor, totalWidth int) PaintLin
 // buildDiffGutterBlank returns the inter-file blank row.
 func buildDiffGutterBlank() PaintLine {
 	return PaintLine{Spans: []RowSpan{{Text: "│ ", Role: ui.ColorMuted}}}
+}
+
+func buildDiffFileTransitionRow(path string) PaintLine {
+	return PaintLine{Spans: []RowSpan{
+		{Text: "│   ", Role: ui.ColorMuted},
+		{Text: path, Role: ui.ColorDiffFile, Attr: cell.AttrBold},
+	}}
 }
 
 // buildDiffEllipsisRow returns an untinted "···" elision row.
@@ -338,65 +381,162 @@ func buildOneDiffRow(paddedNum, indicator, content string, contentRole, indicato
 	}}
 }
 
-// BuildPlanRows turns plan-box text into native PaintLines using the
-// colour-free structural parser in tui/tools. Each plan line is classified
-// and mapped to a semantic role. Each row is prefixed with "│ " (the tool
-// gutter) and padded with one space on each side (matching the former
-// Padding(0,1) box). maxWidth is the total width available for one
-// plan row including the "│ " prefix and the 1-col padding either side, so
-// the text content width is maxWidth-4.
-func BuildPlanRows(text string, maxWidth int) []PaintLine {
-	contentWidth := tools.PlanBoxContentWidth(maxWidth - 4)
-	lines := tools.ParsePlanBoxStruct(text, contentWidth)
-	if len(lines) == 0 {
+// PlanViewData is the neutral projection of one persisted plan, serialized in
+// canonical update_plan/get_plan tool results. The renderer coalesces cards by
+// plan id rather than parsing presentation text.
+type PlanViewData struct {
+	ID          string         `json:"id"`
+	Revision    uint64         `json:"revision"`
+	Objective   string         `json:"objective"`
+	Status      string         `json:"status"`
+	Explanation string         `json:"explanation"`
+	Steps       []PlanStepView `json:"steps"`
+}
+
+// PlanStepView is one step within a PlanViewData card.
+type PlanStepView struct {
+	ID          string   `json:"id"`
+	Description string   `json:"description"`
+	Status      string   `json:"status"`
+	DependsOn   []string `json:"depends_on,omitempty"`
+	Result      string   `json:"result,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+}
+
+// BuildPlanViewRows renders a first-class plan card from canonical plan JSON.
+// It replaces the formatted-box parser for update_plan tool messages: each step
+// becomes a single row with a semantic status marker, and the header carries
+// the objective + status. Returns nil when the payload is not a valid plan.
+func BuildPlanViewRows(raw string, contentWidth int) []PaintLine {
+	view, ok := parsePlanView(raw)
+	if !ok {
 		return nil
 	}
-	out := make([]PaintLine, 0, len(lines))
-	for _, pl := range lines {
-		out = append(out, buildPlanRow(pl))
+	contentWidth = max(1, contentWidth)
+
+	var out []PaintLine
+	// Header row: "│ ● Plan: <objective> (<status>)".
+	header := buildPlanViewHeader(view, contentWidth)
+	out = append(out, header)
+	if view.Explanation != "" {
+		for _, line := range rendering.WrapText(view.Explanation, max(1, contentWidth-4)) {
+			out = append(out, PaintLine{Spans: []RowSpan{
+				{Text: "│   ", Role: ui.ColorMuted},
+				{Text: line, Role: ui.ColorMuted, Attr: cell.AttrItalic},
+			}})
+		}
+	}
+	for _, step := range view.Steps {
+		out = append(out, buildPlanViewStep(step, contentWidth)...)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
 
-func buildPlanRow(pl tools.PlanLine) PaintLine {
-	if pl.Text == "" {
-		// Blank line still carries the gutter + padding to fill the box width.
-		return PaintLine{Spans: []RowSpan{
-			{Text: "│ ", Role: ui.ColorMuted},
-			{Text: " ", Role: ui.ColorMuted},
-			{Text: "", Role: ui.ColorMuted},
-			{Text: " ", Role: ui.ColorMuted},
-		}}
+func parsePlanView(raw string) (*PlanViewData, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
 	}
-	role := planRowRole(pl.Kind)
-	attr := cell.Attrs(0)
-	if pl.Kind == tools.PlanRowHeader {
-		attr = cell.AttrBold
+	var view PlanViewData
+	if err := json.Unmarshal([]byte(raw), &view); err == nil && view.ID != "" && len(view.Steps) > 0 {
+		return &view, true
 	}
-	return PaintLine{Spans: []RowSpan{
-		{Text: "│ ", Role: ui.ColorMuted},
-		{Text: " ", Role: ui.ColorMuted},
-		{Text: pl.Text, Role: role, Attr: attr},
-	}}
+	var envelope struct {
+		Plan        PlanViewData `json:"plan"`
+		CurrentPlan PlanViewData `json:"current_plan"`
+	}
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		return nil, false
+	}
+	for _, candidate := range []PlanViewData{envelope.Plan, envelope.CurrentPlan} {
+		if candidate.ID != "" && len(candidate.Steps) > 0 {
+			copy := candidate
+			return &copy, true
+		}
+	}
+	return nil, false
 }
 
-func planRowRole(k tools.PlanRowKind) ui.SemanticColor {
-	switch k {
-	case tools.PlanRowDone:
+func buildPlanViewHeader(view *PlanViewData, contentWidth int) PaintLine {
+	status := view.Status
+	if status == "" {
+		status = "active"
+	}
+	done := 0
+	for _, step := range view.Steps {
+		if step.Status == "completed" || step.Status == "skipped" || step.Status == "cancelled" {
+			done++
+		}
+	}
+	suffix := fmt.Sprintf(" (%s · %d/%d)", status, done, len(view.Steps))
+	labelWidth := max(1, contentWidth-rendering.VisibleWidth("│   ")-rendering.VisibleWidth(suffix))
+	objectiveWidth := max(1, labelWidth-rendering.VisibleWidth("Plan: "))
+	label := "Plan: " + rendering.TruncateLine(view.Objective, objectiveWidth)
+	spans := []RowSpan{
+		{Text: "│   ", Role: planStatusRole(status)},
+		{Text: label, Role: ui.ColorAccent, Attr: cell.AttrBold},
+		{Text: suffix, Role: ui.ColorMuted},
+	}
+	return PaintLine{Spans: spans}
+}
+
+func buildPlanViewStep(step PlanStepView, contentWidth int) []PaintLine {
+	marker, role := planStepMarker(step.Status)
+	label := step.Description
+	if label == "" {
+		label = step.ID
+	}
+	if step.Result != "" {
+		label += " — " + step.Result
+	} else if step.Reason != "" {
+		label += " (" + step.Reason + ")"
+	}
+	wrapped := rendering.WrapText(label, max(1, contentWidth-6))
+	rows := make([]PaintLine, 0, len(wrapped))
+	for i, line := range wrapped {
+		prefix := "  "
+		lineRole := ui.ColorMuted
+		if i == 0 {
+			prefix = marker + " "
+			lineRole = role
+		}
+		rows = append(rows, PaintLine{Spans: []RowSpan{
+			{Text: "│   ", Role: ui.ColorMuted},
+			{Text: prefix, Role: lineRole},
+			{Text: line, Role: ui.ColorFg},
+		}})
+	}
+	return rows
+}
+
+func planStatusRole(status string) ui.SemanticColor {
+	switch status {
+	case "completed":
 		return ui.ColorSuccess
-	case tools.PlanRowActive:
-		return ui.ColorAccent2
-	case tools.PlanRowFailed:
+	case "paused":
+		return ui.ColorWarning
+	case "cancelled":
 		return ui.ColorError
-	case tools.PlanRowWarning:
-		return ui.ColorWarning
-	case tools.PlanRowTodo:
-		return ui.ColorMuted
-	case tools.PlanRowHeader:
-		return ui.ColorAccent
-	case tools.PlanRowSuspended:
-		return ui.ColorWarning
 	default:
-		return ui.ColorMuted
+		return ui.ColorAccent2
+	}
+}
+
+func planStepMarker(status string) (string, ui.SemanticColor) {
+	switch status {
+	case "completed":
+		return "✓", ui.ColorSuccess
+	case "in_progress":
+		return "→", ui.ColorAccent2
+	case "blocked":
+		return "!", ui.ColorWarning
+	case "failed":
+		return "✗", ui.ColorError
+	case "skipped", "cancelled":
+		return "·", ui.ColorMuted
+	default:
+		return "☐", ui.ColorMuted
 	}
 }

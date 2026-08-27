@@ -75,12 +75,12 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		}
 
 		lineIdx := e.scrollY + y
-		runes, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, e.scrollX)
+		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, e.scrollX)
 		diags := e.lineDiagnostics(lineIdx)
 
 		ri := 0
 		visCol := 0
-		for ri < len(runes) && visCol+widths[ri] <= e.scrollX {
+		for ri < len(clusters) && visCol+widths[ri] <= e.scrollX {
 			visCol += widths[ri]
 			ri++
 		}
@@ -136,7 +136,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				focused := ctx.Focused
 				isCursorLine := lineIdx == e.cursor.Line
 
-				for ri < len(runes) && vCol >= visCol+widths[ri] {
+				for ri < len(clusters) && vCol >= visCol+widths[ri] {
 					visCol += widths[ri]
 					ri++
 				}
@@ -161,13 +161,13 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				// background; other matches get a softer tint.
 				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, vCol)
 
-				if ri < len(runes) && vCol < visCol+widths[ri] && vCol < lineVisW {
+				if ri < len(clusters) && vCol < visCol+widths[ri] && vCol < lineVisW {
 					if vCol == visCol {
 						switch {
 						case focused && isCursorLine && vCol == e.cursor.Col:
-							buf.Set(cx, bufY, cell.NewCell(runes[ri], e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
+							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold, blankCell)
 						case e.isSelected(lineIdx, vCol):
-							buf.Set(cx, bufY, cell.NewCell(runes[ri], e.cellColor(e.th.Colors.Fg), selBgColor, 0))
+							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], e.cellColor(e.th.Colors.Fg), selBgColor, 0, blankCell)
 						case searchMatchIdx >= 0:
 							hlBg := e.searchHighlightBg(searchIsCurrent)
 							fg := e.cellColor(e.th.Colors.Fg)
@@ -181,7 +181,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							if searchIsCurrent {
 								attr |= cell.AttrReverse
 							}
-							buf.Set(cx, bufY, cell.NewCell(runes[ri], fg, hlBg, attr))
+							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, hlBg, attr, blankCell)
 						default:
 							fg := e.cellColor(e.th.Colors.Fg)
 							if vCol < len(colorMap) && colorMap[vCol] != "" {
@@ -190,9 +190,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							if sev > 0 {
 								fg = diagFg
 							}
-							buf.Set(cx, bufY, cell.NewCell(runes[ri], fg, bgColor, diagAttr))
+							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bgColor, diagAttr, blankCell)
 						}
-					} else {
+					} else if visCol < e.scrollX {
 						switch {
 						case focused && isCursorLine && vCol == e.cursor.Col:
 							buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
@@ -342,7 +342,7 @@ func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []i
 			return cached.runes, cached.totalW, cached.widths
 		}
 	}
-	runes, widths, totalW = lineDisplayGeometry(raw, tabWidth)
+	clusters, runes, widths, totalW := lineDisplayGeometryWithClusters(raw, tabWidth)
 	if e.lineGeomCache == nil {
 		e.lineGeomCache = make(map[int]*lineGeomCache, 128)
 	}
@@ -350,15 +350,16 @@ func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []i
 		clear(e.lineGeomCache)
 	}
 	e.lineGeomCache[lineIdx] = &lineGeomCache{
-		raw:    raw,
-		runes:  runes,
-		widths: widths,
-		totalW: totalW,
+		raw:      raw,
+		clusters: clusters,
+		runes:    runes,
+		widths:   widths,
+		totalW:   totalW,
 	}
 	return runes, totalW, widths
 }
 
-func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]rune, int, []int, []string) {
+func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]string, int, []int, []string) {
 	runes, totalW, widths := e.lineGeomInfo(lineIdx)
 	if runes == nil && totalW == 0 && widths == nil && lineIdx >= 0 {
 		if _, err := e.buf.Line(lineIdx); err != nil {
@@ -367,11 +368,35 @@ func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]rune, int, []int, [
 	}
 	_ = scrollX // geometry is scroll-independent; kept for call-site compat
 	colorMap := e.lineColorMap(lineIdx)
-	return runes, totalW, widths, colorMap
+	clusters := make([]string, len(runes))
+	if cached := e.lineGeomCache[lineIdx]; cached != nil && len(cached.clusters) == len(runes) {
+		copy(clusters, cached.clusters)
+	} else {
+		for index, r := range runes {
+			clusters[index] = string(r)
+		}
+	}
+	return clusters, totalW, widths, colorMap
 }
 
 func (e *Editor) cellColor(c color.Color) cell.Color {
 	return rendering.ThemeColorToCell(c)
+}
+
+func (e *Editor) paintGrapheme(
+	buf *surface.CellBuffer,
+	x, y, textLimit int,
+	cluster string,
+	width int,
+	fg, bg cell.Color,
+	attr cell.Attrs,
+	blank cell.Cell,
+) {
+	if width < 1 || x+width > textLimit {
+		buf.Set(x, y, blank)
+		return
+	}
+	buf.Set(x, y, cell.NewClusterCell(cluster, width, fg, bg, attr))
 }
 
 // searchHighlightAt returns the match index covering (line, col) or

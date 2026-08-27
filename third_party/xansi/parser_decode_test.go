@@ -7,17 +7,27 @@ import (
 	"github.com/charmbracelet/x/ansi/parser"
 )
 
-func TestTrigramWidthPlatformPolicy(t *testing.T) {
-	for _, tc := range []struct {
-		goos string
-		want int
-	}{
-		{goos: "linux", want: 1},
-		{goos: "windows", want: 2},
-	} {
-		if got := correctClusterWidthForPlatform("☰", 2, tc.goos); got != tc.want {
-			t.Errorf("%s: trigram width = %d, want %d", tc.goos, got, tc.want)
-		}
+func TestTrigramWidthUsesModernGuessThenTerminalMeasurement(t *testing.T) {
+	SetTerminalWidthProfile(TerminalWidthProfile{})
+	t.Cleanup(func() { SetTerminalWidthProfile(TerminalWidthProfile{}) })
+	if got := GraphemeWidth.StringWidth("☰"); got != 2 {
+		t.Fatalf("modern trigram guess = %d, want 2", got)
+	}
+	SetTerminalWidthProfile(TerminalWidthProfile{Exact: map[string]int{"☰": 1}})
+	if got := GraphemeWidth.StringWidth("☰"); got != 1 {
+		t.Fatalf("measured trigram width = %d, want 1", got)
+	}
+}
+
+func TestTerminalProfileWidensAmbiguousAndSupportsLegacyClusters(t *testing.T) {
+	SetTerminalWidthProfile(TerminalWidthProfile{})
+	t.Cleanup(func() { SetTerminalWidthProfile(TerminalWidthProfile{}) })
+	SetTerminalWidthProfile(TerminalWidthProfile{AmbiguousWidth: 2, LegacyGraphemeClusters: true})
+	if got := GraphemeWidth.StringWidth("·"); got != 2 {
+		t.Fatalf("ambiguous middle-dot width = %d, want 2", got)
+	}
+	if got := GraphemeWidth.StringWidth("🧑‍🌾"); got <= 2 {
+		t.Fatalf("legacy grapheme width = %d, want >2", got)
 	}
 }
 

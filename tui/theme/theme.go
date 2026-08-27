@@ -69,7 +69,7 @@ type SpinnerColors struct {
 type DiffColors struct {
 	File, Hunk, Context, Add, Delete color.Color
 	// AddBg/DeleteBg tint the full row width behind additions/deletions so
-	// diffs read as colored bands (Claude-style) instead of colored glyphs.
+	// diffs read as full-width colored bands instead of colored glyphs.
 	AddBg, DeleteBg color.Color
 }
 

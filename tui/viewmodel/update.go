@@ -63,6 +63,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// renderShellToSurface (single full-screen surface).
 		return m, nil
 
+	case tea.TerminalWidthProfileMsg:
+		m.applyTerminalWidthProfile(msg)
+
 	case ttypes.TickMsg:
 		return m.handleTick(msg)
 
@@ -117,7 +120,6 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	now := time.Now()
 	spinFrame := int(now.UnixMilli())
 	m.SpinFrame = spinFrame
-	m.StatusBar.SetSpinFrame(spinFrame)
 	m.StatusBar.SetCurrentAgent(m.AgentMgr.ActiveID())
 	m.Input.SetSpinFrame(spinFrame)
 	m.StatusBar.ClearExpired()
@@ -409,6 +411,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case ttypes.ErrorMsg:
 		m.Logger.Debug("UI", "error", "msg", string(msg))
 		m.StatusBar.SetError(string(msg))
+	case slashBackendResultMsg:
+		m.handleSlashBackendResult(msg)
 	case ttypes.UpdateModelMsg:
 		m.ModelName = string(msg)
 		m.Logger.Debug("UI", "model_update", "model", string(msg))
@@ -682,6 +686,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.resolveSessionQuestion(msg.Target, question.Result{}, true)
 	case confirmation.ResultMsg:
 		m.resolveSessionConfirmation(msg.Target, msg.Choice)
+	case confirmation.CancelMsg:
+		m.cancelSessionConfirmation(msg.Target)
 	case yolo.ResultMsg:
 		m.resolveSessionYolo(msg.Target, msg.Enabled)
 	case filetree.FileSelectedMsg:
@@ -881,6 +887,8 @@ func (m *App) handleTabSwitch() {
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
 		m.AgentMgr.SetActive(agentID)
+		m.ActivateSessionByAgent(agentID)
+		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
 		if m.subPaneProjections.Has(agentID) {
 			m.subPaneProjections.InvalidateAllMessages(agentID)
 		}

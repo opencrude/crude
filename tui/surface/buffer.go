@@ -51,6 +51,41 @@ func (b *CellBuffer) Set(x, y int, c cell.Cell) {
 	if x < 0 || y < 0 || x >= b.width || y >= b.height {
 		return
 	}
+	if c.Width > 1 {
+		b.SetSpan(x, y, c)
+		return
+	}
+	if c.Width > 0 {
+		clearIntersectingSpans(b, x, y, max(1, int(c.Width)))
+	}
+	b.setRaw(x, y, c)
+}
+
+// SetSpan writes one primary cell and every continuation column atomically.
+// The write is ignored if the measured grapheme would cross the row edge.
+func (b *CellBuffer) SetSpan(x, y int, c cell.Cell) {
+	span := max(1, int(c.Width))
+	if x < 0 || y < 0 || y >= b.height || x+span > b.width {
+		return
+	}
+	clearIntersectingSpans(b, x, y, span)
+	b.setRaw(x, y, c)
+	continuation := cell.Cell{
+		Width:       0,
+		FG:          c.FG,
+		BG:          c.BG,
+		Attr:        c.Attr,
+		Transparent: c.Transparent,
+	}
+	for offset := 1; offset < span; offset++ {
+		b.setRaw(x+offset, y, continuation)
+	}
+}
+
+func (b *CellBuffer) setRaw(x, y int, c cell.Cell) {
+	if x < 0 || y < 0 || x >= b.width || y >= b.height {
+		return
+	}
 	b.cells[y*b.width+x] = c
 }
 
@@ -80,6 +115,7 @@ func (b *CellBuffer) FillRect(r Rect, c cell.Cell) {
 		return
 	}
 	for y := r.Y; y < r.Y+r.H; y++ {
+		clearIntersectingSpans(b, r.X, y, r.W)
 		rowStart := y * b.width
 		for x := r.X; x < r.X+r.W; x++ {
 			b.cells[rowStart+x] = c
@@ -113,9 +149,9 @@ func (b *CellBuffer) Resize(w, h int) {
 }
 
 // WriteString writes a string of text starting at position (x, y) using the
-// given style. Handles wide characters correctly:
-// - Wide chars (width=2) write the char at column N and a continuation cell at N+1
-// - If a wide char would be split across the buffer edge, it is truncated
+// given style. Handles multi-column graphemes correctly by writing one primary
+// cell followed by Width-1 continuation cells. If the grapheme would be split
+// across the buffer edge, it is truncated.
 //
 // Uses charmbracelet/x/ansi for grapheme cluster iteration and width measurement.
 // Returns the x position after the last written cell.
@@ -136,24 +172,12 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 			// Skip zero-width combining characters visually
 			continue
 		}
-		if curX >= b.width {
+		if curX >= b.width || curX+w > b.width {
 			break
 		}
 		r := []rune(cluster)[0] // First rune of the grapheme cluster
-		if w == 2 {
-			// Wide character: needs 2 columns
-			if curX+1 >= b.width {
-				// Wide char would be split at the buffer edge, truncate
-				break
-			}
-			b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: 2, FG: fg, BG: bg, Attr: attr})
-			b.Set(curX+1, y, cell.Cell{Char: 0, Width: 0, FG: fg, BG: bg, Attr: attr})
-			curX += 2
-		} else {
-			// Normal-width character (width=1)
-			b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: 1, FG: fg, BG: bg, Attr: attr})
-			curX++
-		}
+		b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: uint8(w), FG: fg, BG: bg, Attr: attr})
+		curX += w
 	}
 	return curX
 }

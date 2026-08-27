@@ -22,19 +22,10 @@ func TestAsyncCommandStatusEventsCarryOrchestratorID(t *testing.T) {
 		t.Fatalf("StartOrchestrator failed: %v", err)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		info.Session.RunOrchestrator(orch, sender)
-	}()
-	t.Cleanup(func() {
-		info.Session.CloseOrchestrator(orch.ID)
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			t.Error("RunOrchestrator did not exit after CloseOrchestrator")
-		}
-	})
+	// StartOrchestrator already owns and starts the run goroutine. Starting a
+	// second copy here races sender/sub-agent wiring and does not model any
+	// production lifecycle.
+	t.Cleanup(func() { info.Session.CloseOrchestrator(orch.ID) })
 
 	deadline := time.After(3 * time.Second)
 	for {

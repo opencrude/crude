@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"crude/tui/cell"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestCellBuffer_NewClearDimensions(t *testing.T) {
@@ -146,6 +148,37 @@ func TestCellBuffer_WriteString_PreservesGraphemeContent(t *testing.T) {
 	}
 	if b.Get(0, 0).Width != 2 || b.Get(1, 0).Width != 0 {
 		t.Fatalf("grapheme cells=%+v/%+v", b.Get(0, 0), b.Get(1, 0))
+	}
+}
+
+func TestCellBuffer_WriteString_MeasuredLegacyGrapheme(t *testing.T) {
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"🧑‍🌾": 4}})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	b := NewCellBuffer(8, 1)
+	end := b.WriteString(0, 0, "🧑‍🌾x", cell.White, cell.Black, 0)
+	if end != 5 || b.Get(0, 0).Content != "🧑‍🌾" || b.Get(0, 0).Width != 4 {
+		t.Fatalf("legacy primary/end = %+v / %d", b.Get(0, 0), end)
+	}
+	for column := 1; column < 4; column++ {
+		if continuation := b.Get(column, 0); continuation.Width != 0 {
+			t.Fatalf("column %d continuation = %+v", column, continuation)
+		}
+	}
+	if b.Get(4, 0).Content != "x" {
+		t.Fatalf("following cell = %+v", b.Get(4, 0))
+	}
+}
+
+func TestCellBufferSetAtomicallyOccludesWideContinuation(t *testing.T) {
+	b := NewCellBuffer(5, 1)
+	b.Fill(cell.NewCell(' ', cell.White, cell.Black, 0))
+	b.WriteString(1, 0, "😀", cell.White, cell.Black, 0)
+	b.Set(2, 0, cell.NewCell('│', cell.Yellow, cell.Black, 0))
+	if got := b.Get(1, 0); got.Char != ' ' || got.Width != 1 {
+		t.Fatalf("old emoji primary survived: %+v", got)
+	}
+	if got := b.Get(2, 0); got.Char != '│' || got.Width != 1 {
+		t.Fatalf("overlay cell = %+v", got)
 	}
 }
 

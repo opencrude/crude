@@ -219,6 +219,12 @@ func New(th *theme.Theme) *Screen {
 
 	virt := ui.NewVirtualList(WorkspaceListID, tokens)
 	virt.SetActivateAction("launcher.activate")
+	// Wheel scrolling must survive per-frame relayout: every frame re-runs
+	// Layout, and selection-anchored scroll would yank the viewport back to
+	// the selected row, undoing wheel/scrollbar gestures within one tick.
+	// The launcher owns reveal explicitly — keyboard-driven selection moves
+	// call EnsureSelectedVisible; hover and wheel never re-anchor.
+	virt.SetSelectionAnchorsScroll(false)
 	s.list = &workspaceList{Base: ui.NewBase(WorkspaceListID), owner: s, list: virt}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, virt.Scroll(), tokens)
 
@@ -282,6 +288,9 @@ func (s *Screen) Refresh(cwd string) {
 	s.selected = 0
 	s.search.field.SetValue("")
 	s.rebuildItems()
+	// Fresh project listing starts at the top; without selection-anchored
+	// scroll the offset would otherwise persist across project switches.
+	s.list.list.Scroll().ScrollTo(0)
 	s.syncFocus()
 }
 
@@ -541,6 +550,9 @@ func (s *Screen) moveSelection(delta int) {
 	pos = clampInt(pos+delta, 0, len(indices)-1)
 	s.selected = indices[pos]
 	s.syncList()
+	// Keyboard navigation reveals the selection; with selection-anchored
+	// scroll disabled nothing else scrolls the new row into view.
+	s.list.list.EnsureSelectedVisible()
 	s.syncFocus()
 }
 
@@ -551,6 +563,7 @@ func (s *Screen) moveToFirst() {
 	}
 	s.selected = indices[0]
 	s.syncList()
+	s.list.list.EnsureSelectedVisible()
 	s.syncFocus()
 }
 
@@ -561,6 +574,7 @@ func (s *Screen) moveToLast() {
 	}
 	s.selected = indices[len(indices)-1]
 	s.syncList()
+	s.list.list.EnsureSelectedVisible()
 	s.syncFocus()
 }
 
@@ -572,6 +586,8 @@ func (s *Screen) activateFilter() {
 		s.selected = s.filtered[0]
 	}
 	s.syncList()
+	// Reveal the first filtered row so Enter acts on a visible item.
+	s.list.list.EnsureSelectedVisible()
 	s.syncFocus()
 }
 
@@ -624,20 +640,52 @@ func (s *Screen) deleteSelected() (DeleteMsg, bool) {
 		if it.Workspace == nil {
 			return DeleteMsg{}, false
 		}
-		id := it.Workspace.ID
-		path := it.Workspace.Path
-		for i, w := range s.workspaces {
-			if w.ID == id || (id == "" && w.Path == path) {
-				s.workspaces = append(s.workspaces[:i], s.workspaces[i+1:]...)
-				break
-			}
-		}
-		msg.WorkspaceID = id
+		msg.WorkspaceID = it.Workspace.ID
+		s.RemoveWorkspace(it.Workspace.ID, it.Workspace.Path)
 	default:
 		return DeleteMsg{}, false
 	}
-	s.rebuildItems()
 	return msg, true
+}
+
+// RemoveWorkspace drops the workspace entry matching the given ID (path is
+// the fallback match for legacy entries without an ID) from the launcher's
+// in-memory list and rebuilds the rows. The caller persists the removal via
+// workspace.DeleteWorkspace.
+func (s *Screen) RemoveWorkspace(id, path string) bool {
+	for i := range s.workspaces {
+		w := s.workspaces[i]
+		if w.ID == id || (id == "" && w.Path == path) {
+			s.workspaces = append(s.workspaces[:i], s.workspaces[i+1:]...)
+			s.rebuildItems()
+			return true
+		}
+	}
+	return false
+}
+
+// WorkspaceItemAt maps a workspace-list viewport row (0 = first visible row)
+// to the entry rendered there, or nil for empty space below the last row.
+// Coordinates are list-local: callers translate screen-absolute mouse
+// positions through Host.ScreenRect(WorkspaceListID). Used by the
+// right-click context menu to target the row under the cursor.
+func (s *Screen) WorkspaceItemAt(viewportRow int) *WorkspaceEntry {
+	if s == nil || s.list == nil || s.list.list == nil {
+		return nil
+	}
+	idx := s.list.rowAt(viewportRow)
+	if idx < 0 {
+		return nil
+	}
+	real := s.list.realIndex(idx)
+	if real < 0 || real >= len(s.items) {
+		return nil
+	}
+	it := s.items[real]
+	if it.Kind != ItemWorkspace || it.Workspace == nil {
+		return nil
+	}
+	return it.Workspace
 }
 
 func (s *Screen) workspaceMatches(ws WorkspaceEntry, query string) bool {
