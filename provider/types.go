@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // UserInput represents a user's text input with optional prompt references.
@@ -239,17 +240,18 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 }
 
 type ChatMessage struct {
-	Role             string            `json:"role"`
-	Content          MessageContent    `json:"content"`
-	ReasoningContent string            `json:"reasoning_content,omitempty"`
-	Reasoning        string            `json:"reasoning,omitempty"`
-	Refusal          string            `json:"refusal,omitempty"`
-	ToolCalls        []ToolCall        `json:"tool_calls,omitempty"`
-	ToolCallID       string            `json:"tool_call_id,omitempty"`
-	CacheControl     *CacheControl     `json:"cache_control,omitempty"`
-	ReasoningDetails []json.RawMessage `json:"reasoning_details,omitempty"`
-	ProviderItems    []ProviderItem    `json:"-"`
-	ToolError        bool              `json:"-"`
+	Role              string            `json:"role"`
+	Content           MessageContent    `json:"content"`
+	ReasoningContent  string            `json:"reasoning_content,omitempty"`
+	Reasoning         string            `json:"reasoning,omitempty"`
+	Refusal           string            `json:"refusal,omitempty"`
+	ToolCalls         []ToolCall        `json:"tool_calls,omitempty"`
+	ToolCallID        string            `json:"tool_call_id,omitempty"`
+	CacheControl      *CacheControl     `json:"cache_control,omitempty"`
+	ReasoningDetails  []json.RawMessage `json:"reasoning_details,omitempty"`
+	ReasoningDuration time.Duration     `json:"-"`
+	ProviderItems     []ProviderItem    `json:"-"`
+	ToolError         bool              `json:"-"`
 }
 
 func (m ChatMessage) ContentString() string {

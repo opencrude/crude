@@ -362,7 +362,7 @@ floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
 ### Cell Types
 
 - `Cell.Char` — the rune
-- `Cell.Width` — display width (1 or 2 for wide chars, 0 for continuation)
+- `Cell.Width` — measured display width (1+ for a primary, 0 for continuation)
 - `Cell.FG` / `Cell.BG` — colors (`ColorDefault` = inherit during Blit)
 - `Cell.Transparent` — if true, Blit skips this cell
 
@@ -371,8 +371,11 @@ floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
 `surface.Blit()` composites a source buffer onto a destination:
 - Transparent source cells are **skipped** — destination shows through
 - Cells with `BG.IsDefault()` inherit the destination cell's BG color
-- Wide cells (Width=2) write their continuation cell automatically
+- Multi-column cells write all `Width-1` continuation cells automatically
 - Continuation cells (Width=0) are skipped
+- Occlusion is grapheme-atomic: writing over a primary OR continuation blanks
+  the old span before the new cell is written. Never allow half an emoji to
+  survive under a floating border.
 
 ### Unconditional Main-Content Repaint (was: contentDirty cache — REMOVED 2026-07)
 
@@ -428,9 +431,10 @@ ownership are all retained. A stray click must never destroy work in flight.
 - **`AgentMgr.Count()` vs `VisibleCount()`**: shell gates choosing between
   launcher / chat / editor must use `VisibleCount()`, otherwise a workspace
   whose agents are all minimized shows an empty chat instead of the
-  launcher. `Count()` stays the true total for the status bar and the
-  Agents rail badge — that badge is how a backgrounded agent stays
-  discoverable, alongside the status bar's 💤 count.
+  launcher. `Count()` stays the true total for the aggregate status report and
+  the Agents rail badge. The bottom status remains system-level (active/idle
+  counts plus IDE health); provider waits and tool-specific lifecycle detail
+  live in the chat timeline.
 - Restoring: the Agents panel lists minimized agents with a `minimized`
   detail; activating a row calls `restoreAgent`. `switchToAgentView` unhides
   on its own so every path back works.
@@ -482,16 +486,21 @@ Summary:
   + `tui/rendering.WidthMethod = GraphemeWidth`).
 - `third_party/bubbletea` forces UV `cellbuf.Method = GraphemeWidth` from
   frame 0 (upstream defaults to WcWidth until mode 2027).
-- Width is always 0/1/2; emoji/ZWJ → 2; ☰ (U+2630–2637) → 2 under
-  Unicode 16 and current Windows Terminal.
-- Never use `uniseg` / `runewidth` for column layout. Never probe only one
-  side of the pipeline.
+- Start from Unicode-16 grapheme widths, then patched Bubble Tea asynchronously
+  CPR-probes the effective terminal/multiplexer and publishes one immutable
+  x/ansi profile shared by layout, surfaces, UV, and the renderer. Never infer
+  widths from `runtime.GOOS`, `WT_SESSION`, or `$TERM`.
+- Modern grapheme widths are normally 0/1/2; measured legacy grids may report
+  wider clusters, and surfaces/UV preserve every continuation column.
+- Never use `uniseg` / `runewidth` directly for column layout and never add a
+  widget/platform correction. Calibration belongs in the shared width profile.
 
 ### Historical: Scrollbar Artifact Bug
 
 `VisibleWidth` once used `uniseg` (☰ → 1) while UV used `ansi` (☰ → 2).
-Matched UV; later full solution is `TERMINAL_WIDTH.md` (shared method +
-corrections + bubbletea force-GraphemeWidth).
+The first fix shared GraphemeWidth but incorrectly keyed a correction to
+`runtime.GOOS`, which failed under WSL/multiplexers. The current solution is
+the async effective-grid profile in `TERMINAL_WIDTH.md`.
 
 Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 `makeNoColorBgTransparent()`.
@@ -554,6 +563,9 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   `len([]rune(s))` or account for the 3-byte offset.
 - **`VisibleWidth`** is the only layout width API — it must stay identical
   to ultraviolet’s grapheme measure (`third_party/xansi`).
+- **Editor cells must retain full graphemes.** Geometry width plus only the
+  first rune is lossy: UV remeasures the emitted rune and shifts right-edge
+  chrome. Paint `Cell.Content` plus the calibrated width and continuations.
 - **`buildTopBorder` has 4 separate cases** (no title/icon, icon only,
   title only, both). Each case has a unique fixed-width formula. Changing
   one without updating the others creates off-by-ones.
@@ -620,6 +632,15 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   collapsed so the rail shows its toggle state. The rail keeps one blank
   column before its panel rule so file-tree / Agents / Terminals / Git
   left borders are not flush against the icons.
+
+### Activity-dot animation
+- `ui.ActivityDot(spinFrame)` is the only product activity-dot animation:
+  synchronized Unix-millisecond clock, `●` for 400ms then `○` for 400ms.
+- Active chat lifecycle/thinking/tool/sub-agent/session rows use it with one
+  stable semantic color. Never add local speed formulas, brightness/color
+  pulses, braille frames, or `AttrBlink`; see `docs/tui/COMPONENT_AUTHORING.md`.
+- The bottom status bar is static, low-profile aggregate text. Only required
+  user action (`⚠`) and failures (`✕`) receive attention signs.
 
 ### Sidebar list rows: resource vs command
 `ui.ListItem.Command` marks a button-like row (e.g. "New Terminal").

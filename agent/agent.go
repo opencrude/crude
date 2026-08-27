@@ -54,15 +54,41 @@ type Agent struct {
 	Emit          func(AgentEvent)
 	Ctx           context.Context
 	Yolo          bool
-	AsyncMgr      *fileio.AsyncCommandManager
-	SubAgentMgr   *SubAgentManager
-	client        *http.Client
-	toolCallSeq   int
+	// YoloMode supplies the owning session's live policy. Yolo remains the
+	// fallback for standalone agents and always-YOLO sub-agents.
+	YoloMode    func() bool
+	AsyncMgr    *fileio.AsyncCommandManager
+	SubAgentMgr *SubAgentManager
+	client      *http.Client
+	toolCallSeq int
 
 	fileMu            sync.Map
 	writeReportCalled bool
 	autoHandleMu      sync.Mutex
 	autoHandleCounter int
+}
+
+func (a *Agent) yoloEnabled() bool {
+	if a != nil && a.YoloMode != nil {
+		return a.YoloMode()
+	}
+	return a != nil && a.Yolo
+}
+
+func (a *Agent) providerDisplayName() string {
+	if a == nil || a.Provider == nil {
+		return "provider"
+	}
+	if name := strings.TrimSpace(a.Provider.Name); name != "" {
+		return name
+	}
+	if preset := provider.GetPreset(a.Provider.ID); preset != nil && preset.Name != "" {
+		return preset.Name
+	}
+	if id := strings.TrimSpace(a.Provider.ID); id != "" {
+		return id
+	}
+	return "provider"
 }
 
 func (a *Agent) NextAutoHandle() string {

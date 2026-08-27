@@ -49,8 +49,8 @@ design audit all passed.
   - `●` state dot
   - muted/result semantic colors
   - no popup-card chrome for ordinary transcript items
-- Do not add Claude Code's `⎿` result row or its extra indentation.
-- Adopt only the useful diff-body ideas from Claude Code:
+- Do not add a redundant result-prefix row or extra indentation.
+- Use the approved native diff-body treatment:
   - full-row addition/deletion background tints
   - compact line-number gutter
   - clear `+` / `-` indicators
@@ -80,6 +80,29 @@ Never render:
 - A promoted thinking pane has one lifecycle owner: the parent pane.
 - The retained nested renderer is allowed internally for wrapping/cache/scroll,
   but must be body-only and must not apply another Thinking/Thought lifecycle.
+
+### Turn lifecycle and control
+
+- Preparation and transport progress live in the chat timeline, never in the
+  bottom-left system status: `│ ● Getting next turn ready · ↑ 24 KB / 96 KB ·
+  25%` transitions in place to `│ ● Waiting for <provider> · Ns`.
+- The transient lifecycle row is workspace-owned live state with one stable ID.
+  A direct tool response promotes that same row into the streamed tool row;
+  thinking/text consumes it. It is never persisted into completed transcripts.
+- The bottom-left status is reserved for compact aggregate agent counts and IDE
+  health. It is static, with attention signs reserved for required user action
+  and failures; it must not show provider waits, file paths, commands, or witty
+  per-agent activity phrases.
+- Escape on a tool permission prompt cancels the turn. It must not send or
+  record `deny`; denial is only the explicit Deny button / `n` action.
+- Permission decisions are backend lifecycle events (`allowed`, `always`,
+  `denied`) attached to the canonical tool row and persisted with its display
+  metadata, keeping live and hydrated permission tags identical.
+- YOLO is session-scoped and read dynamically at every permission boundary, so
+  `/yolo` affects the already-running turn. Tab switches reactivate the owning
+  backend session before any slash command is routed.
+- `/undo` and `/compact` capture their agent/session owner, execute off the UI
+  thread, and reject overlap with an active turn.
 
 ### Commands
 
@@ -272,7 +295,7 @@ Files:
 
 Implemented behavior:
 
-- New `BuildClaudeDiffRows` parses unified diff data and omits diff chrome.
+- New `BuildBandedDiffRows` parses unified diff data and omits diff chrome.
 - Tight gutter format: line number + space + sign + space + content.
 - Additions/deletions use semantic foreground roles and full-row background
   bands after the outer Crude gutter.
@@ -471,7 +494,8 @@ Acceptance criteria:
 
 Complete the planning-domain work below first. Then:
 
-1. Subscribe to neutral `PlanChanged` events.
+1. Treat canonical `update_plan` / `get_plan` tool-result JSON as the single
+   live/hydration source; do not emit a second synthetic plan event/message.
 2. Render one plan card keyed by `plan_id`.
 3. Do not append a full snapshot for each plan mutation.
 4. Keep compact update events (preparing/doing/done) in transcript.
@@ -509,8 +533,11 @@ Advertise only:
 1. `update_plan`
 2. `get_plan`
 
-`update_plan` is declarative: the model supplies the complete desired plan
-snapshot. This is easier and safer than another operation DSL.
+`update_plan` is declarative without forcing unchanged data to be repeated.
+Creation requires objective and a complete ordered step snapshot. Existing
+updates may omit unchanged objective/status/steps; whenever steps are supplied,
+that array is the complete desired ordered step snapshot. This is easier and
+safer than either seven micro-tools or a generic operation DSL.
 
 Example:
 
@@ -563,8 +590,9 @@ Step statuses:
 - `failed`
 - `cancelled`
 
-The complete snapshot supports reorder, edit, add, skip, reopen, retry, remove
-from scope, pause, resume, and cancel in one atomic call.
+Conditional top-level fields make metadata/status-only updates reliable across
+models. A supplied complete step snapshot supports reorder, edit, add, skip,
+reopen, retry, remove from scope, pause, resume, and cancel atomically.
 
 ### Typed domain model
 
@@ -609,7 +637,7 @@ type PlanService interface {
 ```
 
 Both orchestrators and sub-agents must call the same implementation. Delete the
-duplicated planning switch logic after migration.
+duplicated planning switch logic after canonical cutover.
 
 ### Atomic validation rules
 
@@ -665,28 +693,17 @@ plan_events
 One transaction performs revision check, validation, mutation, event insertion,
 revision increment, and commit.
 
-### Migration
+### Canonical cutover (no backward compatibility)
 
 1. Add typed plan domain and validation tests.
 2. Add transactional store.
-3. Convert legacy context keys to revision-1 plans on restore.
-4. Keep legacy tool handlers as unadvertised adapters for one migration release.
-5. Route main agent and sub-agent through the same PlanService.
-6. Advertise only `update_plan` and `get_plan`.
+3. Route main agent and sub-agent through the same PlanService.
+4. Advertise only `update_plan` and `get_plan`.
+5. Remove old planning tool definitions, handlers, context-key parsing, status
+   formatting, resume migration, and migration tests.
+6. Do not import pre-service plan state on resume; old plan state is unsupported.
 7. Stop returning formatted plan boxes as protocol; return structured JSON.
-8. Publish neutral `PlanChanged` events from workspace.
-9. Render one TUI plan card keyed by plan ID.
-10. Remove adapters after persisted-state migration is proven.
-
-Legacy mapping:
-
-| Legacy key | New field |
-| --- | --- |
-| `plan_goal_id` | plan ID / legacy goal reference |
-| `plan_steps` | ordered `Plan.Steps` |
-| `plan_step_statuses` | `PlanStep.Status` |
-| `plan_step_labels` | `PlanStep.Description` |
-| active goal blocker | blocked step or paused plan |
+8. Render canonical update-plan results as one coalesced TUI plan card.
 
 ### Planning tests
 
@@ -708,7 +725,7 @@ Required tests:
 - stale revision conflict
 - rollback invalid update
 - persistence round trip
-- legacy migration
+- rejection of removed legacy tool names and absence of legacy state import
 - main/sub-agent parity
 - concurrent stale update rejection
 - live/hydrated PlanView equality
@@ -723,9 +740,10 @@ Required tests:
 4. Finish diff gutter/band correctness and captures.
 5. Finish Thinking/Thought captures and parity fixture.
 6. Introduce typed plan model and tests.
-7. Introduce PlanService/store/migration.
+7. Introduce PlanService/store and canonical-only cutover.
 8. Replace advertised tools and unify main/sub-agent paths.
-9. Replace temporary plan transcript coalescing with PlanChanged/PlanView.
+9. Replace temporary plan transcript coalescing with canonical PlanView
+   coalescing keyed by `plan_id` across both planning tools.
 10. Run all gates and visual captures.
 
 Do not combine the PlanService rewrite with unrelated editor/window changes.
@@ -757,6 +775,10 @@ Chat projection is done only when:
 - edit/write bands and gutters match the approved design
 - active Thinking and completed Thought are non-nested and clickable
 - no `0s`, duplicate lifecycle label, nested gutter, or competing scrollbar
+- preparation/upload/provider-wait uses one transient in-chat row that either
+  transforms into a tool row or disappears before normal provider output
+- the bottom status remains aggregate-only; per-agent lifecycle stays in chat
+- Escape cancellation and explicit permission denial remain distinct
 - plan transcript uses one canonical card
 - live/hydrated fixtures are row-for-row equivalent
 - text selection/copy remains correct
@@ -774,7 +796,7 @@ Planning is done only when:
 - failed steps never auto-complete the plan
 - main and sub-agent execution share one service
 - one persisted PlanView drives live and hydrated TUI
-- legacy states migrate safely
+- removed legacy plan tools/state are not imported or advertised
 
 ## Review Notes for the Returning Agent
 
@@ -785,6 +807,6 @@ The final review should focus on:
 3. scroll/selection regressions after item reflow
 4. exact terminal-width handling with nested scrollbars
 5. diff band width and color semantics across themes
-6. plan atomicity, transition invariants, and migration safety
+6. plan atomicity, transition invariants, and canonical-only cutover
 7. duplicated plan logic fully removed
 8. no presentation parsing left in workspace/domain layers

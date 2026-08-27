@@ -1,6 +1,10 @@
 package workspace
 
-import "unicode/utf8"
+import (
+	"encoding/json"
+	"fmt"
+	"unicode/utf8"
+)
 
 // AgentEvent is the workspace-owned domain event produced by the backend
 // orchestrator. The TUI converts ttypes.AgentEventMsg to this type at the
@@ -64,16 +68,40 @@ func TruncateLine(s string, max int) string {
 // ToolLabel builds a compact "tool args" status label. This is domain
 // data formatting, not terminal rendering.
 func ToolLabel(tool, argsSummary string) string {
-	if argsSummary != "" {
-		return tool + " " + argsSummary
+	label := PascalCaseTool(tool)
+	switch tool {
+	case "write_file":
+		label = "Writing"
+	case "edit_file":
+		label = "Editing"
+	case "read_file":
+		label = "Reading"
+	case "execute_command", "async_execute_command", "run_javascript":
+		label = "Running"
+	case "grep_files", "glob_files", "web_search", "arxiv_search":
+		label = "Searching"
+	case "web_fetch":
+		label = "Fetching"
+	case "list_directory":
+		label = "Listing"
+	case "update_plan":
+		label = "Updating plan"
+	case "get_plan":
+		label = "Reading plan"
 	}
-	return tool
+	if argsSummary != "" {
+		return label + " " + argsSummary
+	}
+	return label
 }
 
 // SummarizeToolArgs produces a compact summary of tool arguments for
 // display in conversation data. This is a domain helper that replaces the
 // previous tui/tools dependency.
 func SummarizeToolArgs(tool, argsStr string) string {
+	if tool == "update_plan" || tool == "get_plan" {
+		return ExtractArg(argsStr, "plan_id")
+	}
 	if tool == "grep_files" {
 		pattern := ExtractArg(argsStr, "pattern")
 		path := ExtractArg(argsStr, "path")
@@ -118,34 +146,6 @@ func SummarizeToolArgs(tool, argsStr string) string {
 		}
 		return source
 	}
-	if tool == "plan" || tool == "list_goal_status" {
-		return PascalCaseTool(tool)
-	}
-	if tool == "mark_step_doing" {
-		if stepID := ExtractArg(argsStr, "step_id"); stepID != "" {
-			return stepID
-		}
-		return PascalCaseTool(tool)
-	}
-	if tool == "mark_step_complete" || tool == "mark_step_failed" {
-		if stepID := ExtractArg(argsStr, "step_id"); stepID != "" {
-			label := stepID
-			if activate := ExtractArg(argsStr, "activate_steps"); activate != "" {
-				label += " → " + activate
-			}
-			return label
-		}
-		return PascalCaseTool(tool)
-	}
-	if tool == "report_blocker" {
-		if msg := ExtractArg(argsStr, "message"); msg != "" {
-			return TruncateLine(msg, 50)
-		}
-		return PascalCaseTool(tool)
-	}
-	if tool == "resolve_blocker" {
-		return PascalCaseTool(tool)
-	}
 	if code := ExtractArg(argsStr, "code"); code != "" {
 		return TruncateLine(code, 50)
 	}
@@ -176,6 +176,17 @@ func SummarizeToolArgs(tool, argsStr string) string {
 
 // ExtractArg extracts a key-value pair from a compact args string.
 func ExtractArg(str, key string) string {
+	var object map[string]any
+	if json.Unmarshal([]byte(str), &object) == nil {
+		if value, ok := object[key]; ok {
+			switch typed := value.(type) {
+			case string:
+				return typed
+			case float64, bool:
+				return fmt.Sprint(typed)
+			}
+		}
+	}
 	prefixes := []string{key + ":", key + ": "}
 	for _, prefix := range prefixes {
 		idx := indexOf(str, prefix)
@@ -195,13 +206,14 @@ func ExtractArg(str, key string) string {
 	return ""
 }
 
-// PascalCaseTool converts a snake_case tool name to PascalCase.
+// PascalCaseTool converts a snake_case tool name to readable title words.
 func PascalCaseTool(tool string) string {
 	upper := true
 	out := make([]byte, 0, len(tool))
 	for i := 0; i < len(tool); i++ {
 		ch := tool[i]
 		if ch == '_' {
+			out = append(out, ' ')
 			upper = true
 			continue
 		}

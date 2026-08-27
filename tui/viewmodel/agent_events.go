@@ -318,13 +318,6 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 		m.handleSubAgentQuestion(evt)
 	case "file_claim":
 		m.handleFileClaim(evt)
-	case "stream_token", "thinking", "tool_call", "tool_call_streaming", "tool_result", "tool_progress":
-		m.StatusBar.RecordActivityForAgent(agentID)
-	case "phase":
-		m.StatusBar.RecordActivityForAgent(agentID)
-		if phase, ok := evt.Data.(string); ok {
-			m.StatusBar.SetPhaseForAgent(agentID, phase)
-		}
 	}
 
 	thinkingTarget := m.getThinkingTarget(agentID, agent)
@@ -333,15 +326,14 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	hasThinking := agent.ThinkingPaneID != ""
 
 	cmd := agent.HandleEvent(evt, thinkingTarget,
-		func(statusLine string) {
-			m.StatusBar.SetStatusLineForAgent(agentID, statusLine)
-		},
+		func(string) {},
 		func(thinking, streaming, blocking bool) {
 			m.StatusBar.SetThinkingForAgent(agentID, thinking, streaming, blocking)
 		},
 		func() {
 			m.OverlayState.SetBlocking(true)
 			m.StatusBar.SetStatusLine("")
+			m.StatusBar.SetThinkingForAgent(agentID, false, false, true)
 		},
 		func(question, operation, tool, target, risk, reason, suggestion string) {
 			projection := m.activeSessionProjection()
@@ -383,6 +375,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
 		},
 	)
+	m.StatusBar.SetActiveForAgent(agentID, agent.IsActive())
 	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")
 	m.syncConversationMessages(thinkingTarget, evt.Type == "done" || evt.Type == "error")
 
@@ -566,6 +559,8 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 		case workspace.AgentDoneResultMsg:
 			if result.Reason == "completed" {
 				m.StatusBar.SetInfo("✓ done")
+			} else if result.Reason == "cancelled" {
+				m.StatusBar.SetInfo("Turn stopped")
 			} else if result.Reason != "" {
 				m.StatusBar.SetError("⚠ " + result.Reason)
 			}

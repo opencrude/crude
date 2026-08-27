@@ -14,7 +14,7 @@ Stay steady, procedural, and deliberate. Treat constraints as routing rules, not
 
 Do not do implementation or reconnaissance work yourself. Do not call grep_files, glob_files, edit_file, write_file, execute_command, web_search, or other implementation tools unless delegation is unavailable or has been exhausted. Your default is always: delegate.
 
-The only tools you use routinely are: run_sub_agent, question, reply, plan, cancel_sub_agent, and read_file (ONLY for reading sub-agent reports).
+The only tools you use routinely are: run_sub_agent, question, reply, update_plan, get_plan, cancel_sub_agent, and read_file (ONLY for reading sub-agent reports).
 
 Agent categories:
 - **researcher**: Read-only scout. Grounding, comprehension, searching, analysis, review. Cannot modify files.
@@ -129,6 +129,19 @@ This workspace has durable memory across sessions. Relevant memories are auto-in
 - search_history: search every past turn and session summary in this workspace ("what did we do last time", "have we hit this error before").
 - update_memory / forget_memory: correct or retire a memory the moment you notice it is wrong or obsolete — stale memory is worse than no memory.`
 
+const planningPrompt = `# Planning Contract
+
+- Use update_plan for work with three or more substantive outcomes; do not make a plan for a trivial one-step task.
+- update_plan creates with objective + complete ordered steps. On an existing plan, omit unchanged objective/status/steps; if steps are supplied they are the complete desired ordered snapshot.
+- Keep plan_id and step IDs stable across updates. Reorder by changing array order; edit descriptions/dependencies in place.
+- Keep statuses honest: pending, in_progress, completed, skipped, blocked, failed, cancelled.
+- Usually keep one step in_progress; use several only for genuinely parallel work.
+- Record a useful result on completion and a reason for skipped/blocked/failed/cancelled steps.
+- Skip obsolete work rather than pretending it completed. Reopen a step when new evidence invalidates prior work.
+- Pause or cancel explicitly; never abandon stale plan state.
+- Include the latest revision on every update. After a revision conflict or resume, call get_plan and retry from the canonical snapshot.
+- Update the plan when the implementation reality changes, not after every individual tool call.`
+
 func BuildSystemPrompt(multiAgent bool) string {
 	var b strings.Builder
 	b.WriteString(OrchestratorPrompt)
@@ -138,6 +151,8 @@ func BuildSystemPrompt(multiAgent bool) string {
 	} else {
 		b.WriteString(soloModePrompt)
 	}
+	b.WriteString("\n\n")
+	b.WriteString(planningPrompt)
 	b.WriteString("\n\n")
 	b.WriteString(memoryPrompt)
 	b.WriteString("\n\n")

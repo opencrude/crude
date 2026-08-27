@@ -82,7 +82,7 @@ func Blocked(blocker *BlockingCondition, response string) *StepResult {
 		Blocker:     blocker,
 		Response:    response,
 		OutcomeCode: OutcomeBlocked,
-		ActionType:  ActionResolveBlocker,
+		ActionType:  ActionResolveGoalBlocker,
 		IsRetryable: true,
 	}
 	if blocker.SubGoalIntent != "" {

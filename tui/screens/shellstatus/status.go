@@ -2,8 +2,6 @@ package shellstatus
 
 import (
 	"fmt"
-	"math/rand"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,11 +14,10 @@ import (
 )
 
 type agentStatus struct {
-	thinking   bool
-	streaming  bool
-	blocking   bool
-	phase      string
-	statusLine string
+	active    bool
+	thinking  bool
+	streaming bool
+	blocking  bool
 }
 
 type systemState struct {
@@ -28,7 +25,7 @@ type systemState struct {
 	anyThinking  bool
 	anyBlocking  bool
 	activeCount  int
-	sleepingCnt  int
+	idleCount    int
 }
 
 type Screen struct {
@@ -43,13 +40,9 @@ type Screen struct {
 
 	thinking, streaming, blocking bool
 	isConfirming                  bool
-	spinner                       ui.Spinner
 	statusLine                    string
 	statusPhase                   string
 	btwCount                      int
-
-	lastLabelChange time.Time
-	nextLabelMinGap time.Duration
 
 	tokenPrompt, tokenCompletion, tokenCached int
 	sessionCost                               float64
@@ -63,9 +56,6 @@ type Screen struct {
 	infoMsgTime time.Time
 	retryMsg    string
 	retryTime   time.Time
-
-	spinFrame    int
-	activityStep int
 
 	// Whole-project LSP insights. The bottom-left is reserved for these:
 	// diagnostic counts, files affected, symbol count, server health.
@@ -88,7 +78,6 @@ func New(t *theme.Theme) *Screen {
 		Base:        ui.NewBase("shellstatus"),
 		theme:       t,
 		tokens:      ui.NewTokenSet(t),
-		spinner:     ui.NewSpinner(t),
 		agentStates: make(map[string]*agentStatus),
 		hint:        ui.NewHint("shellstatus/hint", nil, ui.NewTokenSet(t)),
 	}
@@ -102,19 +91,14 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	}
 }
 
-// SetTheme replaces the theme used for spinner colors and spacing.
+// SetTheme replaces the theme used for status colors and spacing.
 func (s *Screen) SetTheme(th *theme.Theme) {
 	if th == nil {
 		return
 	}
-	frame := s.spinFrame
-	step := s.activityStep
 	phase := s.statusPhase
 	s.theme = th
 	s.tokens = ui.NewTokenSet(th)
-	s.spinner = ui.NewSpinner(th)
-	s.spinner.SetFrame(frame)
-	s.spinner.SetActivityStep(step)
 	s.SetPhase(phase)
 	if s.hint != nil {
 		s.hint.SetTokens(s.tokens)
@@ -217,18 +201,20 @@ func (s *Screen) computeSystemState() systemState {
 	for _, a := range s.agentStates {
 		if a.streaming {
 			state.anyStreaming = true
-			state.activeCount++
-		} else if a.thinking {
+		}
+		if a.thinking {
 			state.anyThinking = true
+		}
+		if a.active || a.streaming || a.thinking || a.blocking {
 			state.activeCount++
 		} else {
-			state.sleepingCnt++
+			state.idleCount++
 		}
 		if a.blocking {
 			state.anyBlocking = true
 		}
 	}
-	if state.activeCount == 0 && state.sleepingCnt == 0 {
+	if state.activeCount == 0 && state.idleCount == 0 {
 		if s.streaming {
 			state.anyStreaming = true
 			state.activeCount = 1
@@ -252,23 +238,12 @@ func (s *Screen) ActiveAgentCount() int {
 	return s.computeSystemState().activeCount
 }
 
-func (s *Screen) SleepingAgentCount() int {
-	return s.computeSystemState().sleepingCnt
+func (s *Screen) IdleAgentCount() int {
+	return s.computeSystemState().idleCount
 }
 
 func (s *Screen) SetCurrentAgent(agentID string) {
 	s.currentAgent = agentID
-}
-
-func (s *Screen) currentAgentPhase() string {
-	if s.currentAgent == "" {
-		return ""
-	}
-	st := s.getAgentState(s.currentAgent)
-	if st == nil {
-		return ""
-	}
-	return st.phase
 }
 
 func (s *Screen) View() string {
@@ -309,48 +284,36 @@ func (s *Screen) viewParts() (string, string) {
 
 func (s *Screen) activitySegments() []seg {
 	sys := s.computeSystemState()
-	phaseTag := s.currentAgentPhase()
 	var left []seg
 
 	if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
-		left = append(left, seg{text: rendering.TruncateLine(s.lastError, s.width/3), role: ui.ColorError})
+		left = append(left, seg{text: rendering.TruncateLine("✕ "+s.lastError, s.width/3), role: ui.ColorError})
 	} else if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
 		left = append(left, seg{text: rendering.TruncateLine(s.retryMsg, s.width/3), role: ui.ColorWarning})
-	} else if s.infoMsg != "" && time.Since(s.infoMsgTime) < 5*time.Second && !sys.anyStreaming && !sys.anyThinking {
+	} else if s.infoMsg != "" && time.Since(s.infoMsgTime) < 5*time.Second && sys.activeCount == 0 {
 		left = append(left, seg{text: rendering.TruncateLine(s.infoMsg, s.width/3), role: ui.ColorSuccess})
 	} else if s.isConfirming {
-		left = append(left, seg{text: "⚠ confirming", role: ui.ColorWarning})
+		left = append(left, seg{text: "⚠ Agent needs confirmation", role: ui.ColorWarning})
 	} else if s.blocking {
-		left = append(left, seg{text: "⚠ awaiting input", role: ui.ColorWarning})
+		left = append(left, seg{text: "⚠ Agent awaiting input", role: ui.ColorWarning})
 	} else if sys.anyBlocking {
-		left = append(left, seg{text: "⚠ sub-agent waiting", role: ui.ColorWarning})
-	} else if sys.anyStreaming {
-		moon, moonClr, label, labelClr := s.spinner.StreamPlain()
-		left = append(left,
-			seg{text: moon + " ", fg: rendering.ThemeColorToCell(moonClr), raw: true},
-			seg{text: label, fg: rendering.ThemeColorToCell(labelClr), raw: true},
-		)
-		if phaseTag != "" {
-			left = append(left, seg{text: " " + phaseTag, role: ui.ColorMuted})
+		left = append(left, seg{text: "⚠ Agent awaiting input", role: ui.ColorWarning})
+	} else if sys.activeCount > 0 || sys.idleCount > 0 {
+		parts := make([]string, 0, 2)
+		if sys.activeCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d agent%s active", sys.activeCount, pluralS(sys.activeCount)))
 		}
-	} else if sys.anyThinking {
-		moon, moonClr, label, labelClr := s.spinner.WorkPlain()
-		left = append(left,
-			seg{text: moon + " ", fg: rendering.ThemeColorToCell(moonClr), raw: true},
-			seg{text: label, fg: rendering.ThemeColorToCell(labelClr), raw: true},
-		)
-		if phaseTag != "" {
-			left = append(left, seg{text: " " + phaseTag, role: ui.ColorMuted})
+		if sys.idleCount > 0 {
+			idleLabel := fmt.Sprintf("%d idle", sys.idleCount)
+			if sys.activeCount == 0 {
+				idleLabel = fmt.Sprintf("%d agent%s idle", sys.idleCount, pluralS(sys.idleCount))
+			}
+			parts = append(parts, idleLabel)
 		}
-	} else if sys.sleepingCnt > 0 {
-		left = append(left, seg{text: fmt.Sprintf("💤%d", sys.sleepingCnt), role: ui.ColorMuted})
+		left = append(left, seg{text: strings.Join(parts, " · "), role: ui.ColorMuted})
 		if s.btwCount > 0 {
 			left = append(left, seg{text: fmt.Sprintf(" 📝%d", s.btwCount), role: ui.ColorMuted})
 		}
-	}
-
-	if sys.activeCount > 0 {
-		left = append(left, seg{text: " ⚡" + strconv.Itoa(sys.activeCount), role: ui.ColorAccent2})
 	}
 
 	lsp := s.lspSegments()
@@ -414,59 +377,31 @@ func pluralS(n int) string {
 
 // lspSegments builds whole-project LSP status segments.
 //
-// Layout:  ● gopls  ✕5 ⚠12 ℹ3  ·  8 files  ·  247 symbols
+// Layout:  gopls  ✕5 ⚠12 ℹ3  ·  8 files  ·  247 symbols
 func (s *Screen) lspSegments() []seg {
 	if s.project.ServerName == "" && !s.project.ServerFailed && !s.project.ServerStarting {
 		return nil
 	}
 
-	showAnimation := s.project.ServerStarting || s.project.ServerBusy || s.project.ServerSyncing
-	if !showAnimation && s.project.LastBusyAt > 0 {
-		elapsed := time.Since(time.Unix(0, s.project.LastBusyAt))
-		showAnimation = elapsed < editor.AnimGrace
-	}
-
-	var (
-		dotRole  = ui.ColorSuccess
-		dotState = "ready"
-	)
-	switch {
-	case s.project.ServerFailed:
-		dotRole = ui.ColorError
-		dotState = "failed"
-	case s.project.ServerStarting:
-		dotRole = ui.ColorWarning
-		dotState = "starting"
-	case s.project.ServerBusy:
-		dotRole = ui.ColorAccent
-		dotState = "busy"
-	case s.project.ServerSyncing:
-		dotRole = ui.ColorAccent2
-		dotState = "syncing"
-	case showAnimation:
-		dotRole = ui.ColorAccent2
-		dotState = "syncing"
-	default:
-		dotRole = ui.ColorSuccess
-		dotState = "ready"
-	}
-	glyph, bold, faint := ui.HeartbeatDotPlain(s.spinFrame, dotState)
-	attr := cell.Attrs(0)
-	if bold {
-		attr |= cell.AttrBold
-	}
-	if faint {
-		attr |= cell.AttrDim
-	}
-	dot := seg{text: glyph, role: dotRole, attr: attr}
-
 	if s.project.ServerFailed && s.project.ServerError != "" {
-		return []seg{dot, {text: " ", role: ui.ColorMuted}, {text: s.project.ServerError, role: ui.ColorError, attr: cell.AttrBold}}
+		return []seg{{text: "✕ " + s.project.ServerError, role: ui.ColorError, attr: cell.AttrBold}}
 	}
 
-	out := []seg{dot}
+	var out []seg
 	if s.project.ServerName != "" {
-		out = append(out, seg{text: " ", role: ui.ColorMuted}, seg{text: s.project.ServerName, role: ui.ColorFg, attr: cell.AttrBold})
+		out = append(out, seg{text: s.project.ServerName, role: ui.ColorMuted})
+	} else if s.project.ServerFailed {
+		out = append(out, seg{text: "✕ Language server failed", role: ui.ColorError})
+	} else {
+		out = append(out, seg{text: "Language server", role: ui.ColorMuted})
+	}
+	switch {
+	case s.project.ServerStarting:
+		out = append(out, seg{text: " starting", role: ui.ColorWarning})
+	case s.project.ServerBusy:
+		out = append(out, seg{text: " busy", role: ui.ColorAccent})
+	case s.project.ServerSyncing:
+		out = append(out, seg{text: " syncing", role: ui.ColorAccent2})
 	}
 	if s.project.Errors+s.project.Warnings+s.project.Info+s.project.Hints > 0 {
 		out = append(out, seg{text: " ", role: ui.ColorMuted})
@@ -569,47 +504,8 @@ func pluralSym(n int) string {
 	return "symbols"
 }
 
-func randInt(n int) int {
-	if n <= 1 {
-		return 0
-	}
-	return rand.Intn(n)
-}
-
 func (s *Screen) SetConfirming(c bool) {
 	s.isConfirming = c
-}
-
-func (s *Screen) SetSpinFrame(frame int) {
-	s.spinFrame = frame
-	s.spinner.SetFrame(frame)
-	s.spinner.SetActivityStep(s.activityStep)
-}
-
-func (s *Screen) RecordActivity() {
-	now := time.Now()
-	if s.nextLabelMinGap == 0 {
-		s.nextLabelMinGap = s.randLabelGap()
-	}
-	if now.Sub(s.lastLabelChange) >= s.nextLabelMinGap {
-		s.activityStep++
-		s.spinner.SetActivityStep(s.activityStep)
-		s.lastLabelChange = now
-		s.nextLabelMinGap = s.randLabelGap()
-	}
-}
-
-func (s *Screen) ResetActivity() {
-	s.activityStep = 0
-	s.spinner.SetActivityStep(0)
-	s.lastLabelChange = time.Time{}
-	s.nextLabelMinGap = 0
-}
-
-func (s *Screen) randLabelGap() time.Duration {
-	const lo = 3
-	const hi = 7
-	return time.Duration(lo+randInt(hi-lo+1)) * time.Second
 }
 
 func (s *Screen) SetError(err string) {
@@ -662,23 +558,20 @@ func (s *Screen) SetThinking(thinking, streaming, blocking bool) {
 
 func (s *Screen) SetThinkingForAgent(agentID string, thinking, streaming, blocking bool) {
 	st := s.getAgentState(agentID)
+	if st == nil {
+		return
+	}
+	st.active = thinking || streaming || blocking
 	st.thinking = thinking
 	st.streaming = streaming
 	st.blocking = blocking
 }
 
-func (s *Screen) SetPhaseForAgent(agentID, phase string) {
+func (s *Screen) SetActiveForAgent(agentID string, active bool) {
 	st := s.getAgentState(agentID)
-	st.phase = phase
-}
-
-func (s *Screen) SetStatusLineForAgent(agentID, line string) {
-	st := s.getAgentState(agentID)
-	st.statusLine = line
-}
-
-func (s *Screen) RecordActivityForAgent(agentID string) {
-	s.RecordActivity()
+	if st != nil {
+		st.active = active
+	}
 }
 
 func (s *Screen) getAgentState(agentID string) *agentStatus {
@@ -700,17 +593,12 @@ func (s *Screen) AgentStatusView(agentID string) string {
 	if agentID == "" {
 		return ""
 	}
-	st := s.getAgentState(agentID)
+	st := s.agentStates[agentID]
 	if st == nil {
 		return ""
 	}
-	if st.streaming {
-		moon, _, label, _ := s.spinner.StreamPlain()
-		return moon + " " + label
-	}
-	if st.thinking {
-		moon, _, label, _ := s.spinner.WorkPlain()
-		return moon + " " + label
+	if st.active || st.streaming || st.thinking || st.blocking {
+		return "active"
 	}
 	return ""
 }
@@ -721,16 +609,6 @@ func (s *Screen) ClearAgentState(agentID string) {
 
 func (s *Screen) SetPhase(phase string) {
 	s.statusPhase = phase
-	switch phase {
-	case "grounding":
-		s.spinner.SetPhase(ui.PhaseGrounding)
-	case "planning":
-		s.spinner.SetPhase(ui.PhasePlanning)
-	case "executing":
-		s.spinner.SetPhase(ui.PhaseExecuting)
-	default:
-		s.spinner.SetPhase(ui.PhaseDefault)
-	}
 }
 
 func (s *Screen) SetWidth(w int) {
@@ -778,47 +656,4 @@ func (s *Screen) SetLSPStatus(status string) {
 // method has been called at least once.
 func (s *Screen) SetProjectInsights(p editor.ProjectInsights) {
 	s.project = p
-}
-
-// HasAnimation reports whether the current state contains an element that
-// must be re-rendered every tick. The view-cache uses this to decide
-// whether to invalidate the cached output for a status-bar update.
-//
-// Returns true when the spinner is showing streaming/thinking work, when
-// the LSP heartbeat dot is in an animated state or its AnimGrace period is
-// still running, or when an info/retry/error toast is still on its display
-// timer.
-func (s *Screen) HasAnimation() bool {
-	sys := s.computeSystemState()
-	if sys.anyStreaming || sys.anyThinking {
-		return true
-	}
-	// Heartbeat dot animates for these states; everything else is static.
-	switch {
-	case s.project.ServerStarting,
-		s.project.ServerBusy,
-		s.project.ServerSyncing:
-		return true
-	}
-	// Grace period: even if the LSP is "ready", the dot animates for
-	// AnimGrace after the last busy event. Without this, fast LSP
-	// transitions between 400ms ticks would be invisible.
-	if s.project.LastBusyAt > 0 {
-		elapsed := time.Since(time.Unix(0, s.project.LastBusyAt))
-		if elapsed < editor.AnimGrace {
-			return true
-		}
-	}
-	// Time-bounded toasts must be re-checked every tick to clear at
-	// expiry; if any is still in its display window, the bar changed.
-	if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
-		return true
-	}
-	if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
-		return true
-	}
-	if s.infoMsg != "" && time.Since(s.infoMsgTime) < 5*time.Second {
-		return true
-	}
-	return false
 }

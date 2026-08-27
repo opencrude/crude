@@ -1,10 +1,6 @@
 package editor
 
-import (
-	"time"
-
-	model "crude/types"
-)
+import model "crude/types"
 
 type Position struct {
 	Line int
@@ -14,10 +10,11 @@ type Position struct {
 // lineGeomCache holds tab-expanded, grapheme-collapsed geometry for one line.
 // Deliberately excludes chroma colour data so cursor motion never tokenises.
 type lineGeomCache struct {
-	raw    string
-	runes  []rune
-	widths []int
-	totalW int
+	raw      string
+	clusters []string
+	runes    []rune
+	widths   []int
+	totalW   int
 }
 
 // chromaLineEntry holds the syntax colour map for one line.
@@ -71,11 +68,6 @@ type LSPSymbol = model.LSPSymbol
 // status bar. It is independent of any single file — it reflects the state of
 // every file known to the LSPManager.
 type ProjectInsights = model.ProjectInsights
-
-// AnimGrace is the minimum time the heartbeat dot stays animated after the
-// last LSP activity. Prevents the blink from turning solid before the user
-// can notice it.
-const AnimGrace = 2 * time.Second
 
 type lspServerConfig struct {
 	Cmd  string

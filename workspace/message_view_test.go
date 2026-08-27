@@ -47,16 +47,16 @@ func TestConvertMessagesForDisplayRetainsToolResultBody(t *testing.T) {
 	if views[0].ToolName != "execute_command" || views[0].ToolPreviewPhase != "done" {
 		t.Fatalf("tool presentation metadata = %+v", views[0])
 	}
+	if views[0].ToolCommand != "go test ./..." || views[0].ToolArgs != "go test ./..." {
+		t.Fatalf("hydrated command metadata = %+v", views[0])
+	}
 }
 
 func TestConvertMessagesForDisplayHydratesThinkingDuration(t *testing.T) {
-	start := time.Unix(100, 0)
 	thinking := provider.NewTextMessage("assistant", "answer")
 	thinking.ReasoningContent = "reasoning body"
-	next := provider.NewTextMessage("assistant", "next")
 	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{
-		{Msg: thinking, Meta: sessiondb.DisplayMeta{DisplayRole: "thinking"}, CreatedAt: start.UnixNano()},
-		{Msg: next, Meta: sessiondb.DisplayMeta{DisplayRole: "assistant"}, CreatedAt: start.Add(5 * time.Second).UnixNano()},
+		{Msg: thinking, Meta: sessiondb.DisplayMeta{DisplayRole: "thinking", DurationMs: 5000}},
 	})
 	if len(views) < 1 || views[0].Role != "thinking" {
 		t.Fatalf("hydrated views = %+v", views)

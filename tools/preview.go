@@ -207,63 +207,20 @@ var previewRegistry = map[string]PreviewSpec{
 			return name
 		},
 	},
-	"mark_step_doing": {
-		Keys: []string{"step_id"},
-		Format: func(name string, p map[string]string) string {
-			if p["step_id"] != "" {
-				return fmt.Sprintf("%s %s", name, p["step_id"])
-			}
-			return name
-		},
-	},
-	"mark_step_complete": {
-		Keys: []string{"step_id", "activate_steps"},
-		Format: func(name string, p map[string]string) string {
-			if p["step_id"] != "" {
-				label := fmt.Sprintf("%s %s", name, p["step_id"])
-				if p["activate_steps"] != "" {
-					label += fmt.Sprintf(" \u2192 %s", p["activate_steps"])
-				}
-				return label
-			}
-			return name
-		},
-	},
-	"mark_step_failed": {
-		Keys: []string{"step_id"},
-		Format: func(name string, p map[string]string) string {
-			if p["step_id"] != "" {
-				return fmt.Sprintf("%s %s", name, p["step_id"])
-			}
-			return name
-		},
-	},
-	"run_javascript": {
-		Keys: []string{"code"},
+	"update_plan": {
+		Keys: []string{"plan_id"},
 		Format: func(name string, p map[string]string) string {
 			return name
 		},
 	},
-	"plan": {
-		Keys: []string{"objective"},
-		Format: func(name string, p map[string]string) string {
-			return name
-		},
-	},
-	"list_goal_status": {
+	"get_plan": {
 		Keys: []string{},
 		Format: func(name string, p map[string]string) string {
 			return name
 		},
 	},
-	"report_blocker": {
-		Keys: []string{"blocker_type", "message"},
-		Format: func(name string, p map[string]string) string {
-			return name
-		},
-	},
-	"resolve_blocker": {
-		Keys: []string{"message"},
+	"run_javascript": {
+		Keys: []string{"code"},
 		Format: func(name string, p map[string]string) string {
 			return name
 		},

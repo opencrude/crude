@@ -143,64 +143,6 @@ func TestBuildDiffRowsTruncationIndicator(t *testing.T) {
 	}
 }
 
-func TestBuildPlanRowsRoles(t *testing.T) {
-	text := "Plan: do work\n☐ step 1\n→ step 2\n✓ step 3\n✗ step 4\n! warning\nSuspended: x"
-	rows := chatprojection.BuildPlanRows(text, 60)
-	if len(rows) != 7 {
-		t.Fatalf("expected 7 rows, got %d", len(rows))
-	}
-	for i, r := range rows {
-		if r.PreferANSI() {
-			t.Fatalf("row %d PreferANSI — plan must be fully native", i)
-		}
-	}
-	wantRoles := []ui.SemanticColor{
-		ui.ColorAccent,  // Plan:
-		ui.ColorMuted,   // ☐
-		ui.ColorAccent2, // →
-		ui.ColorSuccess, // ✓
-		ui.ColorError,   // ✗
-		ui.ColorWarning, // !
-		ui.ColorWarning, // Suspended:
-	}
-	for i, want := range wantRoles {
-		role, ok := contentRole(rows[i])
-		if !ok || role != want {
-			t.Fatalf("plan row %d role=%v want %v (text=%q)", i, role, want, rows[i].PlainText())
-		}
-	}
-	// Plan header should be bold.
-	hdr := rows[0]
-	var hdrSpan *chatprojection.RowSpan
-	for i := range hdr.Spans {
-		if hdr.Spans[i].Text != "" && hdr.Spans[i].Text != "│ " && hdr.Spans[i].Text != " " {
-			s := hdr.Spans[i]
-			hdrSpan = &s
-			break
-		}
-	}
-	if hdrSpan == nil {
-		t.Fatal("no content span in plan header")
-	}
-	if hdrSpan.Attr&cell.AttrBold == 0 {
-		t.Fatalf("plan header not bold: attr=%v", hdrSpan.Attr)
-	}
-}
-
-func TestBuildPlanRowsEmpty(t *testing.T) {
-	// Empty input yields a single blank plan row (matching the former ANSI
-	// box renderer which produced a padded blank). Assert it is native.
-	rows := chatprojection.BuildPlanRows("", 60)
-	if len(rows) == 0 {
-		t.Fatal("empty plan yielded no rows")
-	}
-	for i, r := range rows {
-		if r.PreferANSI() {
-			t.Fatalf("row %d PreferANSI", i)
-		}
-	}
-}
-
 // Painted-cell test: render a diff body into a cell buffer and assert
 // addition lines paint the addition colour and deletion lines the deletion colour.
 func TestBuildDiffRowsPaintedCells(t *testing.T) {
@@ -281,15 +223,5 @@ func TestDiffStructureParserExported(t *testing.T) {
 	}
 	if rows[0].Kind != tools.DiffLineDeletion || rows[1].Kind != tools.DiffLineAddition {
 		t.Fatalf("kinds=%v %v", rows[0].Kind, rows[1].Kind)
-	}
-}
-
-func TestPlanStructureParserExported(t *testing.T) {
-	lines := tools.ParsePlanBoxStruct("Plan: x\n☐ y\n✓ z", 40)
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 lines, got %d", len(lines))
-	}
-	if lines[0].Kind != tools.PlanRowHeader || lines[2].Kind != tools.PlanRowDone {
-		t.Fatalf("kinds=%v %v", lines[0].Kind, lines[2].Kind)
 	}
 }

@@ -13,6 +13,9 @@ type ChatMessageView struct {
 
 	ToolName            string
 	ToolArgs            string
+	ToolCommand         string
+	ToolInput           string
+	ToolScope           string
 	ToolID              string
 	ToolStatus          string
 	ToolProgressLabel   string

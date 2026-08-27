@@ -31,6 +31,45 @@ func TestBlit_TransparentSkipped(t *testing.T) {
 	}
 }
 
+func TestBlitBorderAtomicallyOccludesUnderlyingWideGrapheme(t *testing.T) {
+	for _, overlayX := range []int{1, 2} {
+		t.Run(string(rune('0'+overlayX)), func(t *testing.T) {
+			dst := NewCellBuffer(5, 1)
+			dst.Fill(cell.NewCell(' ', cell.White, cell.Black, 0))
+			dst.WriteString(1, 0, "😀", cell.White, cell.Black, 0)
+
+			border := NewCellBuffer(1, 1)
+			border.Set(0, 0, cell.NewCell('│', cell.Yellow, cell.Black, 0))
+			Blit(dst, overlayX, 0, border, nil)
+
+			if got := dst.Get(overlayX, 0); got.Char != '│' || got.Width != 1 {
+				t.Fatalf("overlay cell = %+v", got)
+			}
+			for column := 1; column <= 2; column++ {
+				if column == overlayX {
+					continue
+				}
+				got := dst.Get(column, 0)
+				if got.Char != ' ' || got.Width != 1 {
+					t.Fatalf("old emoji column %d survived as %+v", column, got)
+				}
+			}
+		})
+	}
+}
+
+func TestBlitNormalizesOrphanContinuation(t *testing.T) {
+	dst := NewCellBuffer(3, 1)
+	dst.Fill(cell.NewCell(' ', cell.White, cell.Black, 0))
+	dst.Set(1, 0, cell.Cell{Width: 0, BG: cell.Black})
+	src := NewCellBuffer(1, 1)
+	src.Set(0, 0, cell.NewCell('│', cell.Yellow, cell.Black, 0))
+	Blit(dst, 1, 0, src, nil)
+	if got := dst.Get(1, 0); got.Char != '│' || got.Width != 1 {
+		t.Fatalf("orphan continuation was not replaced: %+v", got)
+	}
+}
+
 func TestBlit_BGInheritance(t *testing.T) {
 	dst := NewCellBuffer(2, 1)
 	dst.Set(0, 0, cell.BlankCell(cell.Green))

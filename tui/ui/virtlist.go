@@ -101,6 +101,12 @@ func (v *VirtualList) SetSelectionAnchorsScroll(anchor bool) {
 // SelectionAnchorsScroll reports whether selection anchors scroll position.
 func (v *VirtualList) SelectionAnchorsScroll() bool { return v.selectionAnchorsScroll }
 
+// EnsureSelectedVisible scrolls the viewport minimally so the selected item is
+// fully visible. Non-anchoring consumers (SelectionAnchorsScroll=false) call
+// this explicitly on keyboard-driven selection moves so wheel scrolling is
+// never re-anchored by per-frame Layout passes.
+func (v *VirtualList) EnsureSelectedVisible() { v.ensureSelectedVisible() }
+
 // PointerPolicy implements PointerPolicyProvider.
 func (v *VirtualList) PointerPolicy() PointerPolicy { return v.pointerPolicy }
 

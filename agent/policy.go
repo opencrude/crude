@@ -67,8 +67,7 @@ func PolicyAllows(policy safety.Policy, toolName string) bool {
 	case "read_file", "glob_files", "grep_files", "list_directory",
 		"web_search", "web_fetch", "arxiv_search", "run_javascript",
 		"reply", "question", "write_report",
-		"plan", "mark_step_complete", "mark_step_doing", "mark_step_failed",
-		"report_blocker", "resolve_blocker", "list_goal_status",
+		"update_plan", "get_plan",
 		"list_sub_agents", "poll_sub_agent", "wait":
 		return policy.IsAllowed(safety.OpRead)
 	case "write_file", "edit_file", "move_file", "copy_file":

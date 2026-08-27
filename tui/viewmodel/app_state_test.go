@@ -475,10 +475,11 @@ func TestHandleSubPaneCompletionIgnoresRemovedAgent(t *testing.T) {
 	app.handleSubPaneCompletion("removed")
 }
 
-func TestHandleCancelConfirmResolvesDenyWithoutCallback(t *testing.T) {
+func TestHandleCancelConfirmationStopsTurnWithoutDenyingPermission(t *testing.T) {
 	app := newFullTestApp(t)
 	blockCh := make(chan string, 1)
-	app.AgentMgr.AddOrchestrator("agent", nil, nil, nil, blockCh, &workspace.AgentState{})
+	cancelCh := make(chan struct{}, 1)
+	app.AgentMgr.AddOrchestrator("agent", nil, nil, cancelCh, blockCh, &workspace.AgentState{})
 	projection := app.activeSessionProjection()
 	projection.confirmation.Reset(confirmation.Details{Question: "Continue?"})
 	projection.confirmationAgentID = "agent"
@@ -493,12 +494,14 @@ func TestHandleCancelConfirmResolvesDenyWithoutCallback(t *testing.T) {
 	app.handleAppMessages(cmd())
 
 	select {
-	case got := <-blockCh:
-		if got != "deny" {
-			t.Fatalf("confirmation response = %q, want deny", got)
-		}
+	case <-cancelCh:
 	default:
-		t.Fatal("cancel did not resolve the backend confirmation")
+		t.Fatal("Escape did not cancel the owning agent turn")
+	}
+	select {
+	case got := <-blockCh:
+		t.Fatalf("Escape resolved permission instead of cancelling: %q", got)
+	default:
 	}
 }
 

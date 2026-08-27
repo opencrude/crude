@@ -43,26 +43,6 @@ func (m *ConversationStateMachine) Restore(conversationID string, data []byte) e
 	if state.ContextData == nil {
 		state.ContextData = make(map[string]any)
 	}
-	for _, key := range []string{"plan_step_statuses", "plan_step_labels"} {
-		if raw, ok := state.ContextData[key].(map[string]any); ok {
-			converted := make(map[string]string, len(raw))
-			for name, value := range raw {
-				if text, ok := value.(string); ok {
-					converted[name] = text
-				}
-			}
-			state.ContextData[key] = converted
-		}
-	}
-	if rawSteps, ok := state.ContextData["plan_steps"].([]any); ok {
-		steps := make([]map[string]any, 0, len(rawSteps))
-		for _, raw := range rawSteps {
-			if step, ok := raw.(map[string]any); ok {
-				steps = append(steps, step)
-			}
-		}
-		state.ContextData["plan_steps"] = steps
-	}
 	if state.ConversationID == "" {
 		state.ConversationID = conversationID
 	}

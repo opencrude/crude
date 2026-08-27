@@ -27,8 +27,8 @@ func TestScreen_InitialState(t *testing.T) {
 	if n := sb.ActiveAgentCount(); n != 0 {
 		t.Fatalf("expected 0 active agents, got %d", n)
 	}
-	if n := sb.SleepingAgentCount(); n != 0 {
-		t.Fatalf("expected 0 sleeping agents, got %d", n)
+	if n := sb.IdleAgentCount(); n != 0 {
+		t.Fatalf("expected 0 idle agents, got %d", n)
 	}
 
 	v := sb.View()
@@ -52,8 +52,8 @@ func TestScreen_SingleAgentStreaming(t *testing.T) {
 	}
 
 	v := sb.View()
-	if !strings.Contains(v, "⚡1") {
-		t.Fatalf("expected '⚡1' in view, got: %q", v)
+	if !strings.Contains(v, "1 agent active") {
+		t.Fatalf("expected aggregate active-agent report, got: %q", v)
 	}
 }
 
@@ -72,8 +72,8 @@ func TestScreen_SingleAgentThinking(t *testing.T) {
 	}
 
 	v := sb.View()
-	if !strings.Contains(v, "⚡1") {
-		t.Fatalf("expected '⚡1' in view, got: %q", v)
+	if !strings.Contains(v, "1 agent active") {
+		t.Fatalf("expected aggregate active-agent report, got: %q", v)
 	}
 }
 
@@ -93,8 +93,8 @@ func TestScreen_SubAgentRunningOrchIdle(t *testing.T) {
 	}
 
 	v := sb.View()
-	if !strings.Contains(v, "⚡1") {
-		t.Fatalf("expected '⚡1' in view (sub-agent), got: %q", v)
+	if !strings.Contains(v, "1 agent active") || !strings.Contains(v, "1 idle") {
+		t.Fatalf("expected aggregate sub-agent report, got: %q", v)
 	}
 }
 
@@ -110,13 +110,13 @@ func TestScreen_OrchStreamingWithSubAgents(t *testing.T) {
 	if n := sb.ActiveAgentCount(); n != 3 {
 		t.Fatalf("expected 3 active agents, got %d", n)
 	}
-	if n := sb.SleepingAgentCount(); n != 0 {
-		t.Fatalf("expected 0 sleeping agents, got %d", n)
+	if n := sb.IdleAgentCount(); n != 0 {
+		t.Fatalf("expected 0 idle agents, got %d", n)
 	}
 
 	v := sb.View()
-	if !strings.Contains(v, "⚡3") {
-		t.Fatalf("expected '⚡3' in view, got: %q", v)
+	if !strings.Contains(v, "3 agents active") {
+		t.Fatalf("expected aggregate active-agent report, got: %q", v)
 	}
 }
 
@@ -134,27 +134,49 @@ func TestScreen_AllAgentsDone(t *testing.T) {
 	if n := sb.ActiveAgentCount(); n != 0 {
 		t.Fatalf("expected 0 active agents, got %d", n)
 	}
-	if n := sb.SleepingAgentCount(); n != 2 {
-		t.Fatalf("expected 2 sleeping agents, got %d", n)
+	if n := sb.IdleAgentCount(); n != 2 {
+		t.Fatalf("expected 2 idle agents, got %d", n)
 	}
 
 	v := sb.View()
-	if !strings.Contains(v, "\U0001f4a42") {
-		t.Fatalf("expected '💤2' in view, got: %q", v)
+	if !strings.Contains(v, "2 agents idle") || strings.Contains(v, "💤") {
+		t.Fatalf("expected compact idle-agent report, got: %q", v)
 	}
 }
 
-func TestScreen_PhaseTag(t *testing.T) {
+func TestScreen_AggregateStatusHasNoPerAgentDetail(t *testing.T) {
 	sb := newTestScreen()
 	setWidth(sb)
 
 	sb.SetThinkingForAgent("orch_1", false, true, false)
-	sb.SetPhaseForAgent("orch_1", "executing")
 	sb.SetCurrentAgent("orch_1")
 
 	v := sb.View()
-	if !strings.Contains(v, "executing") {
-		t.Fatalf("expected phase 'executing' in view, got: %q", v)
+	if !strings.Contains(v, "1 agent active") || strings.Contains(v, "Executing") || strings.Contains(v, "specific/file") {
+		t.Fatalf("per-agent detail leaked into aggregate status: %q", v)
+	}
+}
+
+func TestScreenAggregateStatusDoesNotRotateWittyOrPerAgentText(t *testing.T) {
+	sb := newTestScreen()
+	setWidth(sb)
+	sb.SetCurrentAgent("orch_1")
+	sb.SetThinkingForAgent("orch_1", true, false, false)
+
+	first := sb.View()
+	for range 10 {
+		view := sb.View()
+		if !strings.Contains(view, "1 agent active") || strings.Contains(view, "Getting next turn ready") {
+			t.Fatalf("aggregate status was cluttered by per-agent detail: %q", view)
+		}
+		for _, unwanted := range []string{"Pondering", "Crunching", "Making Moves", "Bits On The Wire"} {
+			if strings.Contains(view, unwanted) {
+				t.Fatalf("witty status %q survived in %q", unwanted, view)
+			}
+		}
+		if view != first || strings.Contains(view, "●") || strings.Contains(view, "○") {
+			t.Fatalf("status bar activity must remain static and sign-free: %q", view)
+		}
 	}
 }
 
@@ -166,7 +188,7 @@ func TestScreen_ErrorPriority(t *testing.T) {
 	sb.SetError("something went wrong")
 
 	v := sb.View()
-	if !strings.Contains(v, "something went wrong") {
+	if !strings.Contains(v, "✕ something went wrong") {
 		t.Fatalf("expected error message in view, got: %q", v)
 	}
 }
@@ -204,8 +226,8 @@ func TestScreen_Confirming(t *testing.T) {
 	sb.SetThinkingForAgent("orch_1", false, true, false)
 
 	v := sb.View()
-	if !strings.Contains(v, "confirming") {
-		t.Fatalf("expected 'confirming' in view, got: %q", v)
+	if !strings.Contains(v, "⚠ Agent needs confirmation") {
+		t.Fatalf("expected explicit confirmation request in view, got: %q", v)
 	}
 }
 
@@ -216,7 +238,7 @@ func TestScreen_Blocking(t *testing.T) {
 	sb.SetThinking(true, false, true)
 
 	v := sb.View()
-	if !strings.Contains(v, "awaiting input") {
+	if !strings.Contains(v, "⚠ Agent awaiting input") {
 		t.Fatalf("expected 'awaiting input' in view, got: %q", v)
 	}
 }
@@ -229,8 +251,8 @@ func TestScreen_SubAgentBlocking(t *testing.T) {
 	sb.SetThinkingForAgent("sub_1", false, false, true)
 
 	v := sb.View()
-	if !strings.Contains(v, "sub-agent waiting") {
-		t.Fatalf("expected 'sub-agent waiting' in view, got: %q", v)
+	if !strings.Contains(v, "⚠ Agent awaiting input") {
+		t.Fatalf("expected aggregate waiting state in view, got: %q", v)
 	}
 }
 
@@ -366,26 +388,6 @@ func TestScreen_InfoExpiry(t *testing.T) {
 	}
 }
 
-func TestScreen_CurrentAgentPhase(t *testing.T) {
-	sb := newTestScreen()
-
-	sb.SetPhaseForAgent("orch_1", "planning")
-	sb.SetCurrentAgent("orch_1")
-
-	if p := sb.currentAgentPhase(); p != "planning" {
-		t.Fatalf("expected phase 'planning', got %q", p)
-	}
-}
-
-func TestScreen_CurrentAgentEmpty(t *testing.T) {
-	sb := newTestScreen()
-
-	sb.SetCurrentAgent("")
-	if p := sb.currentAgentPhase(); p != "" {
-		t.Fatalf("expected empty phase for empty agent, got %q", p)
-	}
-}
-
 func TestScreen_GlobalFallback(t *testing.T) {
 	sb := newTestScreen()
 	setWidth(sb)
@@ -432,23 +434,7 @@ func TestScreen_AgentStatusView(t *testing.T) {
 	}
 }
 
-func TestScreen_RecordAndResetActivity(t *testing.T) {
-	sb := newTestScreen()
-
-	sb.RecordActivity()
-	sb.RecordActivityForAgent("orch_1")
-
-	if sb.activityStep == 0 {
-		t.Fatal("expected activity step to increment after RecordActivity")
-	}
-
-	sb.ResetActivity()
-	if sb.activityStep != 0 {
-		t.Fatal("expected activity step reset to 0")
-	}
-}
-
-func TestScreen_SleepingWithBTW(t *testing.T) {
+func TestScreen_IdleWithBTW(t *testing.T) {
 	sb := newTestScreen()
 	setWidth(sb)
 
@@ -457,8 +443,8 @@ func TestScreen_SleepingWithBTW(t *testing.T) {
 	sb.SetBtwCount(2)
 
 	v := sb.View()
-	if !strings.Contains(v, "💤2") {
-		t.Fatalf("expected '💤2' in view, got: %q", v)
+	if !strings.Contains(v, "2 agents idle") || strings.Contains(v, "💤") {
+		t.Fatalf("expected aggregate idle state, got: %q", v)
 	}
 	if !strings.Contains(v, "📝2") {
 		t.Fatalf("expected '📝2' in view, got: %q", v)

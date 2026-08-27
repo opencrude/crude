@@ -36,8 +36,46 @@ func completeForTest(t *testing.T, agent *Agent) (completionResult, error) {
 		context.Background(),
 		[]provider.ChatMessage{provider.NewTextMessage("user", "hello")},
 		nil,
-		nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil,
 	)
+}
+
+func TestUploadProgressReaderReportsRealMonotonicBytes(t *testing.T) {
+	var progress []int64
+	reader := newUploadProgressReader(strings.NewReader("0123456789"), 10, func(uploaded, total int64) {
+		if total != 10 {
+			t.Fatalf("total = %d, want 10", total)
+		}
+		progress = append(progress, uploaded)
+	})
+	reader.report(0)
+	buffer := make([]byte, 3)
+	for {
+		_, err := reader.Read(buffer)
+		if err != nil {
+			break
+		}
+	}
+	reader.complete()
+	if len(progress) < 3 || progress[0] != 0 || progress[len(progress)-1] != 10 {
+		t.Fatalf("progress = %v, want 0..10", progress)
+	}
+	for index := 1; index < len(progress); index++ {
+		if progress[index] < progress[index-1] {
+			t.Fatalf("progress went backwards: %v", progress)
+		}
+	}
+}
+
+func TestProviderDisplayNamePrefersConfiguredName(t *testing.T) {
+	agent := &Agent{Provider: &provider.Provider{ID: "custom-id", Name: "Custom Gateway"}}
+	if got := agent.providerDisplayName(); got != "Custom Gateway" {
+		t.Fatalf("provider display name = %q", got)
+	}
+	agent.Provider.Name = ""
+	if got := agent.providerDisplayName(); got != "custom-id" {
+		t.Fatalf("provider ID fallback = %q", got)
+	}
 }
 
 func TestCompleteStreamOpenAIChatPreservesUsageOnlyChunk(t *testing.T) {
@@ -122,7 +160,7 @@ func TestCompleteStreamAnthropicToolUse(t *testing.T) {
 		func(_ string, id string, name string) {
 			startedID, startedName = id, name
 		},
-		nil, nil,
+		nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("completeStream: %v", err)

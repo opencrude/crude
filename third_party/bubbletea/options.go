@@ -182,3 +182,12 @@ func WithWidthMethod(method ansi.Method) ProgramOption {
 		p.widthMethod = &method
 	}
 }
+
+// WithWidthProbe adds application graphemes to the asynchronous terminal-grid
+// calibration corpus. Measurements refine the shared x/ansi width profile
+// without delaying initial rendering.
+func WithWidthProbe(clusters ...string) ProgramOption {
+	return func(p *Program) {
+		p.widthProbeClusters = append(p.widthProbeClusters, clusters...)
+	}
+}

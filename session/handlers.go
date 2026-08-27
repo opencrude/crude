@@ -12,8 +12,17 @@ import (
 )
 
 func (s *Session) SetYolo(enabled bool) {
-	s.yolo = enabled
-	s.logger.Info("SAFETY", "yolo", "enabled", enabled)
+	s.yolo.Store(enabled)
+	if s.logger != nil {
+		s.logger.Info("SAFETY", "yolo", "enabled", enabled)
+	}
+}
+
+// YoloEnabled reports the live session policy. Active turns consult this
+// value at each permission boundary, so /yolo takes effect without waiting
+// for the next turn to construct a new Agent.
+func (s *Session) YoloEnabled() bool {
+	return s != nil && s.yolo.Load()
 }
 
 // HandleCompact force-compacts the conversation context on demand: older
@@ -23,6 +32,10 @@ func (s *Session) SetYolo(enabled bool) {
 // model window so /compact always has headroom to reclaim below the
 // automatic threshold.
 func (s *Session) HandleCompact() ttypes.CompactResultMsg {
+	if !s.turnGate.TryLock() {
+		return ttypes.CompactResultMsg{Error: "Stop the active turn before compacting context"}
+	}
+	defer s.turnGate.Unlock()
 	l := s.logger
 	l.Info("COMPACT", "manual_request")
 
@@ -108,6 +121,10 @@ func (s *Session) HandleCompact() ttypes.CompactResultMsg {
 }
 
 func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
+	if !s.turnGate.TryLock() {
+		return ttypes.UndoResultMsg{Error: "Stop the active turn before undoing file operations"}
+	}
+	defer s.turnGate.Unlock()
 	l := s.logger
 	l.Info("INPUT", "undo", "cmd", cmd)
 	if s.editor == nil {

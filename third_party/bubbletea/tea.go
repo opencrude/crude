@@ -548,6 +548,10 @@ type Program struct {
 	// force a different method (e.g. WcWidth for legacy terminals).
 	widthMethod *ansi.Method
 
+	widthProbeClusters   []string
+	widthProbe           *terminalWidthProbe
+	widthProbeGeneration uint64
+
 	// whether to use hard tabs to optimize cursor movements
 	useHardTabs bool
 	// whether to use backspace to optimize cursor movements
@@ -756,9 +760,16 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 
 		case msg := <-p.msgs:
 			msg = p.translateInputEvent(msg)
+			var consumed bool
+			msg, consumed = p.handleTerminalWidthProbeMessage(msg)
+			if consumed {
+				continue
+			}
 
-			// Filter messages.
-			if p.filter != nil {
+			// Width calibration is an internal renderer/layout barrier and must not
+			// be dropped by an application filter.
+			_, widthProfileMsg := msg.(TerminalWidthProfileMsg)
+			if p.filter != nil && !widthProfileMsg {
 				msg = p.filter(model, msg)
 			}
 			if msg == nil {
@@ -871,6 +882,7 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 
 			case ColorProfileMsg:
 				p.renderer.setColorProfile(msg.Profile)
+
 			}
 
 			var cmd Cmd
@@ -1140,6 +1152,15 @@ func (p *Program) Run() (returnModel Model, returnErr error) {
 
 	// Render the initial view.
 	p.render(model)
+	if !p.disableRenderer && p.input != nil {
+		go func() {
+			select {
+			case <-time.After(50 * time.Millisecond):
+				p.Send(startTerminalWidthProbeMsg{})
+			case <-p.ctx.Done():
+			}
+		}()
+	}
 
 	// Handle resize events.
 	p.handlers.add(p.handleResize())

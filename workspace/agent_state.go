@@ -58,10 +58,15 @@ func RetryResultCmd(agentID, msg string) tea.Cmd {
 }
 
 type AgentState struct {
-	ID            string
-	Messages      *Conversation
-	Streaming     bool
-	Thinking      bool
+	ID        string
+	Messages  *Conversation
+	Streaming bool
+	Thinking  bool
+	// Running remains true across provider waits, permission prompts, and tool
+	// execution. Streaming/Thinking describe output shape; Running owns the
+	// turn lifecycle and prevents tool gaps from being reported as idle.
+	Running       bool
+	Cancelling    bool
 	TokenBuf      string
 	LastTokenTime time.Time
 	SpinFrame     int
@@ -123,27 +128,32 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 
 	switch evt.Type {
 	case "phase":
-		if phase, ok := evt.Data.(string); ok {
-			var statusLine string
-			switch phase {
-			case "grounding":
-				statusLine = "Gathering context"
-			case "planning":
-				statusLine = "Planning"
-			case "executing":
-				statusLine = "Executing"
-			default:
-				statusLine = phase
+		status, ok := ParseAgentPhase(evt.Data)
+		if ok {
+			a.Running = true
+			a.Thinking = true
+			a.Streaming = false
+			if !a.Cancelling {
+				switch status.Phase {
+				case "preparing", "waiting_provider":
+					target.UpdateTurnStatus(status)
+				}
 			}
-			onStatusLine(statusLine)
+			onThinking(true, false, false)
 		}
 
 	case "thinking":
 		if s, ok := evt.Data.(string); ok && s != "" {
 			a.logIfInvalidUTF8("thinking", s)
+			target.ClearTurnStatus()
+			if thinkTarget != target {
+				thinkTarget.ClearTurnStatus()
+			}
 			thinkTarget.AppendThinking(SanitizeForTerminal(s))
+			a.Running = true
 			a.Thinking = true
 			a.LastTokenTime = time.Now()
+			onStatusLine("Thinking")
 			onThinking(true, false, false)
 		}
 
@@ -158,12 +168,16 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 				}
 			}
 			a.TokenBuf += s
+			a.Running = true
 			a.Streaming = true
+			onStatusLine("Receiving response")
 			onThinking(true, true, false)
 			target.EnsureAssistant()
 		}
 
 	case "tool_call_streaming":
+		a.Running = true
+		a.Thinking = true
 		if a.Streaming {
 			if a.TokenBuf != "" {
 				target.AppendToken(a.TokenBuf)
@@ -175,9 +189,12 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			}
 			a.Streaming = false
 		}
+		onThinking(true, false, false)
 		return a.handleToolCallStreaming(evt, target, onStatusLine)
 
 	case "tool_call":
+		a.Running = true
+		a.Thinking = true
 		if a.Streaming {
 			if a.TokenBuf != "" {
 				target.AppendToken(a.TokenBuf)
@@ -189,15 +206,29 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			}
 			a.Streaming = false
 		}
+		onThinking(true, false, false)
 		return a.handleToolCall(evt, target, onStatusLine)
 
 	case "tool_progress":
+		a.Running = true
+		a.Thinking = true
+		onThinking(true, false, false)
 		return a.handleToolProgress(evt, target, onStatusLine)
 
 	case "tool_result":
+		a.Running = true
+		a.Thinking = true
+		onThinking(true, false, false)
 		return a.handleToolResult(evt, target, onStatusLine)
 
+	case "permission_resolved":
+		a.Running = true
+		a.Thinking = true
+		onThinking(true, false, false)
+		return a.handlePermissionResolved(evt, target, onStatusLine)
+
 	case "blocking":
+		a.Running = true
 		return a.handleBlocking(evt, target, thinkTarget, onBlocking, onConfirmReset, onQuestionReset)
 
 	case "blocking_auto":
@@ -205,9 +236,9 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 
 	case "blocking_complete":
 		onConfirmDismiss()
-		onThinking(false, false, false)
-		a.PendingPermTag = ""
-		a.PendingPermTool = ""
+		a.Running = true
+		a.Thinking = true
+		onThinking(true, false, false)
 		a.BlockingMsgIdx = -1
 
 	case "done":
@@ -228,6 +259,8 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		target.MarkError(errMsg)
 		a.Thinking = false
 		a.Streaming = false
+		a.Running = false
+		a.Cancelling = false
 		a.PendingPermTag = ""
 		a.PendingPermTool = ""
 		a.BlockingMsgIdx = -1
@@ -239,16 +272,56 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 }
 
 func (a *AgentState) SubmitInput(text string) {
+	a.Running = true
+	a.Cancelling = false
 	a.Thinking = true
 	a.Streaming = false
 	a.TokenBuf = ""
 	a.PendingPermTag = ""
 	a.PendingPermTool = ""
 	a.BlockingMsgIdx = -1
+	a.Messages.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
 }
 
 func (a *AgentState) IsActive() bool {
-	return a.Streaming || a.Thinking
+	return a.Running || a.Streaming || a.Thinking
+}
+
+// ParseAgentPhase decodes both legacy string phases and structured progress
+// phases emitted by the request transport.
+func ParseAgentPhase(data any) (status TurnStatus, ok bool) {
+	switch value := data.(type) {
+	case string:
+		status.Phase = value
+		return status, value != ""
+	case map[string]any:
+		status.Phase, _ = value["name"].(string)
+		status.Provider, _ = value["provider"].(string)
+		switch number := value["progress"].(type) {
+		case int:
+			status.Progress = number
+		case float64:
+			status.Progress = int(number)
+		}
+		status.UploadedBytes = phaseInt64(value["uploaded_bytes"])
+		status.TotalBytes = phaseInt64(value["total_bytes"])
+		return status, status.Phase != ""
+	default:
+		return TurnStatus{}, false
+	}
+}
+
+func phaseInt64(value any) int64 {
+	switch number := value.(type) {
+	case int:
+		return int64(number)
+	case int64:
+		return number
+	case float64:
+		return int64(number)
+	default:
+		return 0
+	}
 }
 
 func (a *AgentState) logIfInvalidUTF8(eventType, s string) {

@@ -65,6 +65,10 @@ func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) (string,
 		sysB.WriteString("\n\n")
 		sysB.WriteString(policy)
 	}
+	if spec.Category != CatAeron {
+		sysB.WriteString("\n\n")
+		sysB.WriteString(planningPrompt)
+	}
 
 	if len(spec.FileOwnership) > 0 {
 		sysB.WriteString("\n\n# File Ownership\n")

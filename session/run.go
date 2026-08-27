@@ -157,6 +157,10 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		o.BlockResolveCh <- userInput.Text
 		return
 	}
+	s.turnGate.RLock()
+	defer s.turnGate.RUnlock()
+	s.activeTurns.Add(1)
+	defer s.activeTurns.Add(-1)
 
 	s.turnNumber++
 	s.toolCallCountMu.Lock()
@@ -228,11 +232,6 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		case <-cancelCh:
 			l.Debug("CANCEL", "ctx_cancelled", "msg_id", currentMsgID)
 			cancel()
-			select {
-			case o.BlockResolveCh <- "deny":
-				l.Debug("CANCEL", "block_unblocked", "msg_id", currentMsgID)
-			default:
-			}
 			if o.subAgentSup != nil {
 				cancelled := o.subAgentSup.CancelAllActive()
 				if len(cancelled) > 0 {
@@ -242,10 +241,6 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		case <-o.stopCh:
 			l.Debug("CANCEL", "ctx_closed", "msg_id", currentMsgID)
 			cancel()
-			select {
-			case o.BlockResolveCh <- "deny":
-			default:
-			}
 			if o.subAgentSup != nil {
 				o.subAgentSup.CancelAllActive()
 			}
@@ -504,6 +499,13 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 		if data, ok := evt.Data.(map[string]string); ok {
 			tracker.setPendingPermTag(data["tool"], "always")
 		}
+	case "permission_resolved":
+		if data, ok := evt.Data.(map[string]any); ok {
+			toolID, _ := data["tool_id"].(string)
+			tool, _ := data["tool"].(string)
+			decision, _ := data["decision"].(string)
+			tracker.setPermTag(toolID, tool, decision)
+		}
 	}
 }
 
@@ -555,13 +557,16 @@ func (s *Session) finalizeTurn(
 		switch m.Role {
 		case "tool":
 			dm = tracker.get(m.ToolCallID)
-			if m.ToolError && dm.ToolStatus == "" {
+			if m.ToolError && strings.Contains(strings.ToLower(m.ContentString()), "cancelled") {
+				dm.ToolStatus = "cancelled"
+			} else if m.ToolError && dm.ToolStatus == "" {
 				dm.ToolStatus = "cancelled"
 			}
 		case "assistant":
 			dm.DisplayRole = "assistant"
 			if m.ReasoningContent != "" || m.Reasoning != "" {
 				dm.DisplayRole = "thinking"
+				dm.DurationMs = m.ReasoningDuration.Milliseconds()
 			}
 		case "user":
 			dm.DisplayRole = "user"

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"crude/tui/theme"
 )
 
@@ -12,21 +14,11 @@ func TestBlinkOnAlternates(t *testing.T) {
 	if !BlinkOn(0) {
 		t.Fatal("frame 0 should blink on")
 	}
-	if BlinkOn(BlinkHalf) {
+	if BlinkOn(ActivityBlinkPhaseMillis) {
 		t.Fatal("frame at half period should blink off")
 	}
-	if !BlinkOn(BlinkPeriod) {
+	if !BlinkOn(ActivityBlinkCycleMillis) {
 		t.Fatal("frame at full period should blink on again")
-	}
-}
-
-func TestThinkingDotIndexCycles(t *testing.T) {
-	seen := make(map[int]bool)
-	for f := 0; f < DotCycleStep*4; f += DotCycleStep {
-		seen[ThinkingDotIndex(f)] = true
-	}
-	if len(seen) != 4 {
-		t.Fatalf("expected 4 dot indices, got %d", len(seen))
 	}
 }
 
@@ -36,28 +28,33 @@ func TestBlockCursorSolidWidth(t *testing.T) {
 	if strings.TrimSpace(stripAnsiSpinnerTest(solid)) != "█" {
 		t.Fatalf("solid cursor = %q", stripAnsiSpinnerTest(solid))
 	}
-	off := BlockCursor(BlinkHalf, th.Colors.Accent)
+	off := BlockCursor(ActivityBlinkPhaseMillis, th.Colors.Accent)
 	if off != " " {
 		t.Fatalf("off-phase cursor = %q, want space", off)
 	}
 }
 
-func TestSpinnerPhaseGlyphs(t *testing.T) {
-	on := SpinnerPhase(0)
-	off := SpinnerPhase(BlinkHalf)
+func TestActivityDotUsesCanonicalFullEmptyCycle(t *testing.T) {
+	on := ActivityDot(0)
+	off := ActivityDot(ActivityBlinkPhaseMillis)
 	if on != "●" || off != "○" {
 		t.Fatalf("phases = %q / %q, want ● / ○", on, off)
 	}
+	if again := ActivityDot(ActivityBlinkCycleMillis); again != "●" {
+		t.Fatalf("next cycle = %q, want ●", again)
+	}
 }
 
-func TestHeartbeatDotPlainStates(t *testing.T) {
-	g, b, f := HeartbeatDotPlain(0, "ready")
-	if g != "●" || b || f {
-		t.Fatalf("ready = %q bold=%v faint=%v", g, b, f)
-	}
-	g, _, _ = HeartbeatDotPlain(0, "failed")
-	if g != "✕" {
-		t.Fatalf("failed glyph = %q", g)
+func TestActivityDotKeepsStableMeasuredFootprint(t *testing.T) {
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"●": 1, "○": 2}})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	filled := ActivityDot(0)
+	hollow := ActivityDot(ActivityBlinkPhaseMillis)
+	if ansi.GraphemeWidth.StringWidth(filled) != 2 || ansi.GraphemeWidth.StringWidth(hollow) != 2 {
+		t.Fatalf("activity footprints differ: %q=%d %q=%d",
+			filled, ansi.GraphemeWidth.StringWidth(filled),
+			hollow, ansi.GraphemeWidth.StringWidth(hollow),
+		)
 	}
 }
 
@@ -66,9 +63,9 @@ func TestBlinkOnTimeMatchesFrame(t *testing.T) {
 	if BlinkOnTime(t0) != BlinkOn(0) {
 		t.Fatal("BlinkOnTime at 0ms should match BlinkOn(0)")
 	}
-	tHalf := time.UnixMilli(BlinkHalf)
-	if BlinkOnTime(tHalf) != BlinkOn(BlinkHalf) {
-		t.Fatal("BlinkOnTime at half period should match BlinkOn(BlinkHalf)")
+	tHalf := time.UnixMilli(ActivityBlinkPhaseMillis)
+	if BlinkOnTime(tHalf) != BlinkOn(ActivityBlinkPhaseMillis) {
+		t.Fatal("BlinkOnTime at half period should match the activity-dot phase")
 	}
 }
 

@@ -35,7 +35,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		t.Fatal("shell status paint produced no non-empty cells")
 	}
 	plain := bufferPlain(buf)
-	for _, label := range []string{"⚡1", "✕1", "⚠2", "gopls"} {
+	for _, label := range []string{"1 agent active", "✕1", "⚠2", "gopls"} {
 		if !strings.Contains(plain, label) {
 			t.Fatalf("missing status label %q:\n%s", label, plain)
 		}
@@ -49,9 +49,8 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 		t.Fatal("shell status paint missing theme border foreground")
 	}
 
-	// Byte-identical regression. Deterministic here: no error/retry/info
-	// messages, no LastBusyAt, fixed spinFrame=0 — the heartbeat dot is the
-	// static "ready" glyph.
+	// Byte-identical regression. The status bar is deliberately static: active
+	// agent and LSP state are low-profile text, not animation-frame output.
 	uitest.CheckGolden(t, "shellstatus_dark_80x2", buf)
 }
 

@@ -22,6 +22,9 @@ type MessageRow struct {
 	// Toggle distinguishes real disclosure rows from ToggleLine's zero value.
 	// Manually-built and legacy rows therefore remain non-interactive.
 	Toggle bool
+	// ToggleAny collapses an expanded block from a click anywhere in that
+	// block. Dragging still selects text and never toggles.
+	ToggleAny bool
 	// ToggleLine is the 0-based local line within Lines (including any leading
 	// spacer) that owns the disclosure affordance: clicking it with no
 	// drag toggles expand/collapse. -1 means the message has no disclosure.

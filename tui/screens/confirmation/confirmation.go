@@ -24,6 +24,10 @@ type ResultMsg struct {
 	Choice string
 }
 
+// CancelMsg is distinct from ResultMsg: Escape stops the active turn without
+// representing the stop as an explicit permission denial.
+type CancelMsg struct{ Target *Screen }
+
 type Screen struct {
 	ui.Base
 	tokens  *ui.TokenSet
@@ -61,7 +65,7 @@ func (s *Screen) Reset(details Details) {
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "always"), Label: "Always allow", Action: "confirmation.always", Shortcut: "a", Variant: ui.VariantSecondary, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "deny"), Label: "Deny", Action: "confirmation.deny", Shortcut: "n", Variant: ui.VariantDanger, Enabled: true},
 	)
-	s.actions.SetCancelAction("confirmation.deny")
+	s.actions.SetCancelAction("confirmation.cancel")
 }
 
 func (s *Screen) Dismiss()                 { s.Reset(Details{}) }
@@ -98,7 +102,9 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	key := evt.Key
 	switch {
-	case key.Code == tea.KeyEsc || key.String() == "n":
+	case key.Code == tea.KeyEsc:
+		return s.cancel()
+	case key.String() == "n":
 		return s.result("deny")
 	case key.String() == "y":
 		return s.result("allow")
@@ -112,6 +118,9 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	return ui.EventResult{}
 }
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	if action.ID == "confirmation.cancel" || action.ID == "form.cancel" {
+		return s.cancel()
+	}
 	choice := map[string]string{"confirmation.allow": "allow", "confirmation.always": "always", "confirmation.deny": "deny"}[action.ID]
 	if choice != "" {
 		return s.result(choice)
@@ -123,9 +132,6 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 			s.actions.FocusFirst()
 		}
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	}
-	if action.ID == "form.cancel" {
-		return s.result("deny")
 	}
 	if action.ID == "actionbar.exit.forward" || action.ID == "actionbar.exit.backward" {
 		if action.ID == "actionbar.exit.backward" {
@@ -140,6 +146,11 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 func (s *Screen) result(choice string) ui.EventResult {
 	return ui.EventResult{Handled: true, Action: &ui.Action{ID: "panel.close"}, Cmd: func() tea.Msg {
 		return ResultMsg{Target: s, Choice: choice}
+	}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+}
+func (s *Screen) cancel() ui.EventResult {
+	return ui.EventResult{Handled: true, Action: &ui.Action{ID: "panel.close"}, Cmd: func() tea.Msg {
+		return CancelMsg{Target: s}
 	}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 }
 func (s *Screen) Semantics() ui.Semantics {

@@ -65,6 +65,18 @@ func (r *Renderer) ToggleDisclosure(msgID string) {
 	r.InvalidateItem(msgID)
 }
 
+// pruneExpanded drops disclosure entries for messages that are no longer in the
+// projection, so the expanded map cannot grow without bound across syncs that
+// remove messages (e.g. undo or compaction). It is called after every message
+// set rebuild.
+func (r *Renderer) pruneExpanded() {
+	for id := range r.expanded {
+		if r.sync.MsgByID[id] == nil {
+			delete(r.expanded, id)
+		}
+	}
+}
+
 // ToggleLastDisclosure toggles the most recent message that owns a disclosure
 // affordance (the keyboard shortcut path).
 func (r *Renderer) ToggleLastDisclosure() {
@@ -84,11 +96,18 @@ func (r *Renderer) hasDisclosure(msg *types.ChatMessage) bool {
 	}
 	switch {
 	case msg.Role == types.RoleThinking:
-		return true
+		return !msg.ThinkingActive && !msg.ThinkingInterrupted && msg.Content != ""
 	case msg.SubPaneID != "":
 		return true
 	case msg.Role == types.RoleTool && msg.ToolStatus == "success" && msg.Content != "":
-		return true
+		return toolSupportsDisclosure(msg.ToolName)
 	}
 	return false
+}
+
+// DisclosureExpanded reports whether a message is currently expanded by an
+// explicit user toggle. It is presentation state, used by tests and any
+// caller that needs to observe the resolved disclosure mode.
+func (r *Renderer) DisclosureExpanded(msgID string) bool {
+	return r.expanded[msgID]
 }

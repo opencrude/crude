@@ -15,12 +15,13 @@ func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame
 	spans = append(spans, RowSpan{Text: "│ ", Role: ui.ColorBorder})
 
 	if !header.Done {
+		dot := ui.ActivityDot(spinFrame) + " "
 		switch header.Type {
 		case workspace.PaneThinking:
-			spans = append(spans, RowSpan{Text: "● ", Role: thinkingDotRole(spinFrame)})
+			spans = append(spans, RowSpan{Text: dot, Role: ui.ColorAccent})
 			spans = append(spans, RowSpan{Text: header.Title, Role: ui.ColorAccent, Attr: cell.AttrBold})
 		default:
-			spans = append(spans, RowSpan{Text: "● " + header.Title, Role: ui.ColorAccent, Attr: cell.AttrBold})
+			spans = append(spans, RowSpan{Text: dot + header.Title, Role: ui.ColorAccent, Attr: cell.AttrBold})
 		}
 	} else if header.Type == workspace.PaneThinking {
 		duration := rendering.FormatThinkingDuration(header.Elapsed)

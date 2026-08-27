@@ -54,6 +54,19 @@ func (t *displayMetaTracker) setPendingPermTag(tool, tag string) {
 	t.pendingPermTool = tool
 }
 
+func (t *displayMetaTracker) setPermTag(toolID, tool, tag string) {
+	if toolID != "" {
+		m, ok := t.metas[toolID]
+		if !ok {
+			m = &sessiondb.DisplayMeta{}
+			t.metas[toolID] = m
+		}
+		m.PermTag = tag
+		return
+	}
+	t.setPendingPermTag(tool, tag)
+}
+
 func (t *displayMetaTracker) get(toolID string) sessiondb.DisplayMeta {
 	if m, ok := t.metas[toolID]; ok {
 		return *m

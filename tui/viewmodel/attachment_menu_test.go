@@ -139,8 +139,9 @@ func TestSubmitInputCarriesReferenceLabelsIntoLiveConversation(t *testing.T) {
 		t.Fatal("attachment agent missing")
 	}
 	messages := node.State.Messages.Messages()
-	if len(messages) != 1 || len(messages[0].ReferenceLabels) != 1 ||
-		messages[0].ReferenceLabels[0] != ref.DisplayName() {
+	if len(messages) != 2 || len(messages[0].ReferenceLabels) != 1 ||
+		messages[0].ReferenceLabels[0] != ref.DisplayName() ||
+		messages[1].Role != workspace.MessageRoleStatus {
 		t.Fatalf("live message reference labels = %+v", messages)
 	}
 }

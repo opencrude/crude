@@ -95,18 +95,12 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 			continue
 		}
 
-		if dw == 2 {
-			if curX+1 >= w {
-				curX++
-				continue
-			}
-			buf.Set(curX, curY, cell.NewClusterCell(cluster, 2, curFG, curBG, curAttr))
-			buf.Set(curX+1, curY, cell.Cell{Char: 0, Width: 0, FG: curFG, BG: curBG, Attr: curAttr})
-			curX += 2
-		} else {
-			buf.Set(curX, curY, cell.NewClusterCell(cluster, 1, curFG, curBG, curAttr))
-			curX++
+		if curX+dw > w {
+			curX += dw
+			continue
 		}
+		buf.Set(curX, curY, cell.NewClusterCell(cluster, dw, curFG, curBG, curAttr))
+		curX += dw
 	}
 }
 

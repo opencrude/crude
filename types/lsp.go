@@ -71,5 +71,4 @@ type ProjectInsights struct {
 	SymbolsCount   int
 	TopIssue       string
 	LastSync       int64
-	LastBusyAt     int64
 }

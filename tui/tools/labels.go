@@ -129,27 +129,13 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 			return fmt.Sprintf("Waiting %s", target)
 		}
 		return "Waiting"
-	case "plan", "list_goal_status":
-		return fmt.Sprintf("Running %s", rendering.PascalCaseTool(tool))
-	case "mark_step_doing":
+	case "update_plan":
 		if target != "" {
-			return fmt.Sprintf("Starting %s", target)
+			return fmt.Sprintf("Updating plan %s", target)
 		}
-		return "Starting step"
-	case "mark_step_complete":
-		if target != "" {
-			return fmt.Sprintf("Completing %s", target)
-		}
-		return "Completing step"
-	case "mark_step_failed":
-		if target != "" {
-			return fmt.Sprintf("Failing %s", target)
-		}
-		return "Failing step"
-	case "report_blocker":
-		return "Reporting blocker"
-	case "resolve_blocker":
-		return "Resolving blocker"
+		return "Updating plan"
+	case "get_plan":
+		return "Reading plan"
 	case "run_sub_agent":
 		if target != "" {
 			return fmt.Sprintf("Spawning %s", rendering.TruncateLine(target, 40))
@@ -339,10 +325,8 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 			label += " " + duration
 		}
 		return label
-	case "plan", "list_goal_status":
-		return rendering.PascalCaseTool(tool)
-	case "mark_step_doing":
-		label := "Started"
+	case "update_plan":
+		label := "Updated plan"
 		if target != "" {
 			label += " " + target
 		}
@@ -350,35 +334,8 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 			label += " " + duration
 		}
 		return label
-	case "mark_step_complete":
-		label := "Completed"
-		if target != "" {
-			label += " " + target
-		}
-		if duration != "" {
-			label += " " + duration
-		}
-		return label
-	case "mark_step_failed":
-		label := "Failed"
-		if target != "" {
-			label += " " + target
-		}
-		if duration != "" {
-			label += " " + duration
-		}
-		return label
-	case "report_blocker":
-		label := "Blocked"
-		if target != "" {
-			label += ": " + target
-		}
-		if duration != "" {
-			label += " " + duration
-		}
-		return label
-	case "resolve_blocker":
-		label := "Resolved blocker"
+	case "get_plan":
+		label := "Read plan"
 		if duration != "" {
 			label += " " + duration
 		}
@@ -434,7 +391,7 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 
 func IsPlanTool(name string) bool {
 	switch name {
-	case "plan", "mark_step_doing", "mark_step_complete", "mark_step_failed", "report_blocker", "resolve_blocker", "list_goal_status":
+	case "update_plan", "get_plan":
 		return true
 	default:
 		return false

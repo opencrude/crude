@@ -15,6 +15,12 @@ require (
 	golang.org/x/sys v0.43.0
 )
 
+// Crude's async terminal calibration publishes corrections through the shared
+// vendored x/ansi package. See ../../TERMINAL_WIDTH.md.
+replace github.com/charmbracelet/x/ansi => ../xansi
+
+replace github.com/charmbracelet/ultraviolet => ../ultraviolet
+
 require (
 	github.com/aymanbagabas/go-udiff v0.2.0 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect

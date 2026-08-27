@@ -340,17 +340,16 @@ func (a Attrs) Has(mask Attrs) bool {
 
 // Cell represents a single terminal cell — the atomic unit of compositing.
 //
-// Each cell occupies one or more columns on the terminal grid.
-// A wide character (CJK, emoji) occupies 2 columns and produces:
-// - Cell{Char: '界', Width: 2} at column N
-// - Cell{Char: 0, Width: 0} at column N+1 (continuation cell)
+// Each primary cell occupies one or more columns on the effective terminal
+// grid and owns Width-1 continuation cells. Modern wide characters normally
+// use two columns; calibrated legacy graphemes may use more.
 //
 // A Transparent cell does not overwrite the cell below during compositing.
 // This is how "holes" in floating windows let background content show through.
 type Cell struct {
 	Char        rune   // The character to display (0 for continuation cells)
 	Content     string // Full grapheme cluster text (Char is just the first rune)
-	Width       uint8  // Display width: 0 (continuation), 1 (normal), 2 (wide)
+	Width       uint8  // Display width: 0 (continuation), 1+ (primary span)
 	FG          Color  // Foreground color
 	BG          Color  // Background color
 	Attr        Attrs  // Text rendering attributes
@@ -372,7 +371,7 @@ func NewWideCell(ch rune, fg, bg Color, attr Attrs) Cell {
 // cluster (e.g. ♻️ = ♻ + FE0F, 👨‍👩‍👧‍👦, 🇯🇵). Storing the cluster text in
 // Content keeps the ANSI lossy step lossless — GenerateANSI emits every
 // rune, so ultraviolet re-parses the same cluster and computes the same
-// width. width is the terminal advance for the whole cluster (0, 1 or 2).
+// width. width is the measured terminal advance for the whole cluster.
 func NewClusterCell(cluster string, width int, fg, bg Color, attr Attrs) Cell {
 	r := firstRune(cluster)
 	return Cell{Char: r, Content: cluster, Width: uint8(width), FG: fg, BG: bg, Attr: attr}

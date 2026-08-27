@@ -36,13 +36,14 @@ func (e *apiCallError) IsCancellation() bool {
 }
 
 type completionResult struct {
-	Content          string
-	ReasoningContent string
-	FinishReason     string
-	ToolCalls        []provider.ToolCall
-	ProviderItems    []provider.ProviderItem
-	Usage            provider.TokenUsage
-	LastPromptTokens int
+	Content           string
+	ReasoningContent  string
+	ReasoningDuration time.Duration
+	FinishReason      string
+	ToolCalls         []provider.ToolCall
+	ProviderItems     []provider.ProviderItem
+	Usage             provider.TokenUsage
+	LastPromptTokens  int
 }
 
 func (r completionResult) hasOutput() bool {
@@ -113,7 +114,7 @@ func CompleteText(
 	result, err := a.completeStream(ctx, []provider.ChatMessage{
 		provider.NewTextMessage("system", system),
 		provider.NewTextMessage("user", user),
-	}, nil, nil, nil, nil, nil, nil)
+	}, nil, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -129,6 +130,7 @@ func (a *Agent) completeStream(
 	onToolCallStart func(internalID, id, name string),
 	onToolCallDelta func(internalID, id, name, accumulatedArgs string),
 	onRetry func(attempt int, backoffSeconds float64),
+	onRequestProgress func(uploaded, total int64),
 ) (completionResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -214,6 +216,12 @@ func (a *Agent) completeStream(
 		if err != nil {
 			return completionResult{Usage: accumulatedUsage}, fmt.Errorf("create request: %w", err)
 		}
+		progress := newUploadProgressReader(bytes.NewReader(body), int64(len(body)), onRequestProgress)
+		httpReq.Body = io.NopCloser(progress)
+		httpReq.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(newUploadProgressReader(bytes.NewReader(body), int64(len(body)), onRequestProgress)), nil
+		}
+		progress.report(0)
 		for header, value := range a.Provider.Headers() {
 			httpReq.Header.Set(header, value)
 		}
@@ -221,6 +229,9 @@ func (a *Agent) completeStream(
 		httpReq.Header.Set("Accept", "text/event-stream, application/json")
 
 		resp, err := client.Do(httpReq)
+		if err == nil {
+			progress.complete()
+		}
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled", ctxErr)
@@ -292,6 +303,47 @@ func (a *Agent) completeStream(
 	}
 }
 
+type uploadProgressReader struct {
+	reader     io.Reader
+	total      int64
+	sent       int64
+	lastReport int
+	onProgress func(uploaded, total int64)
+}
+
+func newUploadProgressReader(reader io.Reader, total int64, onProgress func(uploaded, total int64)) *uploadProgressReader {
+	return &uploadProgressReader{reader: reader, total: total, lastReport: -1, onProgress: onProgress}
+}
+
+func (r *uploadProgressReader) Read(buffer []byte) (int, error) {
+	n, err := r.reader.Read(buffer)
+	if n > 0 {
+		r.sent += int64(n)
+		r.report(r.sent)
+	}
+	return n, err
+}
+
+func (r *uploadProgressReader) complete() {
+	r.report(r.total)
+}
+
+func (r *uploadProgressReader) report(uploaded int64) {
+	if r == nil || r.onProgress == nil {
+		return
+	}
+	uploaded = max(0, min(r.total, uploaded))
+	percent := 0
+	if r.total > 0 {
+		percent = int(uploaded * 100 / r.total)
+	}
+	if percent == r.lastReport {
+		return
+	}
+	r.lastReport = percent
+	r.onProgress(uploaded, r.total)
+}
+
 func mergeRequestExtras(body []byte, extra map[string]any) ([]byte, error) {
 	if len(extra) == 0 {
 		return body, nil
@@ -348,7 +400,11 @@ func (a *Agent) consumeResponse(
 		if err != nil {
 			return completionResult{}, err
 		}
-		return a.resultFromChatResponse(decoded, emit, emitThinking, onToolCallStart, onToolCallDelta)
+		result, resultErr := a.resultFromChatResponse(decoded, emit, emitThinking, onToolCallStart, onToolCallDelta)
+		if result.ReasoningContent != "" {
+			result.ReasoningDuration = time.Since(streamStart)
+		}
+		return result, resultErr
 	}
 
 	return a.consumeSSE(ctx, bodyReader, std.NewStreamDecoder(), emit, emitThinking,
@@ -420,17 +476,28 @@ func (a *Agent) consumeSSE(
 	reader := provider.NewSSEReader(body)
 	var content strings.Builder
 	var reasoning strings.Builder
+	var reasoningStarted time.Time
+	var reasoningEnded time.Time
 	result := completionResult{}
 	toolCalls := make(map[int]*toolCallAccumulator)
 	sawEvent := false
 	sawTerminal := false
 	firstTokenLogged := false
+	finish := func() {
+		result.Content = content.String()
+		result.ReasoningContent = reasoning.String()
+		result.ToolCalls = finalizeToolCalls(toolCalls)
+		if !reasoningStarted.IsZero() {
+			if reasoningEnded.IsZero() {
+				reasoningEnded = time.Now()
+			}
+			result.ReasoningDuration = reasoningEnded.Sub(reasoningStarted)
+		}
+	}
 
 	for {
 		if err := ctx.Err(); err != nil {
-			result.Content = content.String()
-			result.ReasoningContent = reasoning.String()
-			result.ToolCalls = finalizeToolCalls(toolCalls)
+			finish()
 			return result, err
 		}
 		event, err := reader.Next()
@@ -438,18 +505,14 @@ func (a *Agent) consumeSSE(
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			result.Content = content.String()
-			result.ReasoningContent = reasoning.String()
-			result.ToolCalls = finalizeToolCalls(toolCalls)
+			finish()
 			return result, err
 		}
 		sawEvent = true
 
 		update, err := decoder.Decode(event)
 		if err != nil {
-			result.Content = content.String()
-			result.ReasoningContent = reasoning.String()
-			result.ToolCalls = finalizeToolCalls(toolCalls)
+			finish()
 			return result, err
 		}
 		if update.Usage != nil {
@@ -463,12 +526,18 @@ func (a *Agent) consumeSSE(
 			result.ProviderItems = append(result.ProviderItems, update.ProviderItems...)
 		}
 		if update.ReasoningDelta != "" {
+			if reasoningStarted.IsZero() {
+				reasoningStarted = time.Now()
+			}
 			reasoning.WriteString(update.ReasoningDelta)
 			if emitThinking != nil {
 				emitThinking(update.ReasoningDelta)
 			}
 		}
 		if update.ContentDelta != "" {
+			if !reasoningStarted.IsZero() && reasoningEnded.IsZero() {
+				reasoningEnded = time.Now()
+			}
 			if !firstTokenLogged {
 				a.logger.Debug("STREAM", "first_token", "model", a.Model, "latency_ms", time.Since(streamStart).Milliseconds())
 				firstTokenLogged = true
@@ -479,6 +548,9 @@ func (a *Agent) consumeSSE(
 			}
 		}
 		for _, delta := range update.ToolCalls {
+			if !reasoningStarted.IsZero() && reasoningEnded.IsZero() {
+				reasoningEnded = time.Now()
+			}
 			a.accumulateToolCall(toolCalls, delta, onToolCallStart, onToolCallDelta)
 		}
 		if update.Done {
@@ -487,9 +559,7 @@ func (a *Agent) consumeSSE(
 		}
 	}
 
-	result.Content = content.String()
-	result.ReasoningContent = reasoning.String()
-	result.ToolCalls = finalizeToolCalls(toolCalls)
+	finish()
 	if !sawEvent {
 		return result, io.ErrUnexpectedEOF
 	}

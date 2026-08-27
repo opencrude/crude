@@ -29,11 +29,11 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	}
 
 	// Both idle runtime agents have status entries, so the precondition
-	// mirrors the sleeping-agent count shown after work settles.
+	// mirrors the aggregate idle-agent count shown after work settles.
 	app.StatusBar.SetThinkingForAgent("root", false, false, false)
 	app.StatusBar.SetThinkingForAgent("child", false, false, false)
-	if got := app.StatusBar.SleepingAgentCount(); got != 2 {
-		t.Fatalf("sleeping count before close=%d, want 2", got)
+	if got := app.StatusBar.IdleAgentCount(); got != 2 {
+		t.Fatalf("idle count before close=%d, want 2", got)
 	}
 
 	app.syncAgentWindowTabs()
@@ -63,8 +63,8 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 			t.Errorf("tab %q survived subtree close", id)
 		}
 	}
-	if got := app.StatusBar.SleepingAgentCount(); got != 0 {
-		t.Fatalf("sleeping count after close=%d, want 0", got)
+	if got := app.StatusBar.IdleAgentCount(); got != 0 {
+		t.Fatalf("idle count after close=%d, want 0", got)
 	}
 
 	items := app.agentSidebarItems()
@@ -103,7 +103,7 @@ func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 	if app.subPaneProjections.Has("late-child") {
 		t.Fatal("late child left an orphan projection")
 	}
-	if got := app.StatusBar.SleepingAgentCount(); got != 0 {
-		t.Fatalf("late child created a ghost sleeping count: %d", got)
+	if got := app.StatusBar.IdleAgentCount(); got != 0 {
+		t.Fatalf("late child created a ghost idle count: %d", got)
 	}
 }

@@ -12,19 +12,17 @@ import (
 	"crude/tui/ui"
 )
 
-func toolSpinnerRole(msg types.ChatMessage, phase string) ui.SemanticColor {
+func toolSpinnerRole(msg types.ChatMessage, titlePhase string) ui.SemanticColor {
 	isActive := (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") &&
 		msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
 	if isActive {
-		switch phase {
-		case "grounding":
-			return ui.ColorAccent
-		case "planning":
+		switch titlePhase {
+		case types.ToolPreviewPreparing:
+			return ui.ColorWarning
+		case types.ToolPreviewStreaming:
 			return ui.ColorAccent2
-		case "executing":
-			return ui.ColorSuccess
 		default:
-			return ui.ColorMuted
+			return ui.ColorAccent2
 		}
 	}
 	if msg.ToolPreviewPhase == types.ToolPreviewDone {
@@ -42,7 +40,7 @@ func toolSpinnerRole(msg types.ChatMessage, phase string) ui.SemanticColor {
 	return ui.ColorMuted
 }
 
-func buildToolTitleLine(msg types.ChatMessage, titlePhase, phase string, spinFrame int) PaintLine {
+func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int) PaintLine {
 	title := tools.BuildToolTitle(msg, titlePhase)
 	if msg.ToolStatus == "success" {
 		dur := rendering.FormatDuration(msg.ToolDuration)
@@ -58,8 +56,8 @@ func buildToolTitleLine(msg types.ChatMessage, titlePhase, phase string, spinFra
 		msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
 
 	dot := "● "
-	if isActive && !ui.BlinkOn(spinFrame) {
-		dot = "○ "
+	if isActive {
+		dot = ui.ActivityDot(spinFrame) + " "
 	} else if !isActive && msg.ToolPreviewPhase != types.ToolPreviewDone &&
 		msg.ToolPreviewPhase != types.ToolPreviewError &&
 		msg.ToolStatus != "success" && msg.ToolStatus != "error" {
@@ -68,7 +66,7 @@ func buildToolTitleLine(msg types.ChatMessage, titlePhase, phase string, spinFra
 
 	spans := []RowSpan{
 		{Text: "│ ", Role: ui.ColorMuted},
-		{Text: dot, Role: toolSpinnerRole(msg, phase)},
+		{Text: dot, Role: toolSpinnerRole(msg, titlePhase)},
 		{Text: title, Role: ui.ColorMuted},
 	}
 	if suffix := tools.PermTagSuffix(msg.PermTag); suffix != "" {
@@ -103,8 +101,9 @@ func buildMemoryToolRow(line tools.MemoryLine) PaintLine {
 	return PaintLine{Spans: spans}
 }
 
-func buildToolTruncationLine(remaining int) PaintLine {
+func buildToolTruncationLine(remaining, width int) PaintLine {
 	msg := fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))
+	msg = rendering.TruncateLine(msg, max(1, width-toolBodyGutterWidth))
 	return PaintLine{Spans: []RowSpan{
 		{Text: "│   ", Role: ui.ColorMuted},
 		{Text: msg, Role: ui.ColorMuted},
@@ -139,8 +138,9 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 	}
 
 	var out messageLines
-	titlePL := buildToolTitleLine(msg, titlePhase, phase, spinFrame)
-	if msg.ToolStatus == "success" && msg.Content != "" {
+	titlePL := buildToolTitleLine(msg, titlePhase, spinFrame)
+	expandable := msg.ToolStatus == "success" && msg.Content != "" && toolSupportsDisclosure(msg.ToolName)
+	if expandable {
 		glyph := "▸"
 		if disclosure == DisclosureExpanded {
 			glyph = "▾"
@@ -149,10 +149,16 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 	}
 	out.lines = append(out.lines, titlePL.PlainText())
 	out.native = append(out.native, titlePL)
+	if msg.ToolCommand != "" && (msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") {
+		out.appendCommandContext(msg.ToolCommand, innerW)
+	}
+	if msg.ToolInput != "" {
+		out.appendToolInputContext(msg, innerW)
+	}
 
 	// Completed tools render a budgeted preview by default; full output only
 	// when the user expanded the block.
-	expanded := disclosure == DisclosureExpanded
+	expanded := expandable && disclosure == DisclosureExpanded
 
 	if msg.ToolStatus == "success" && msg.Content != "" {
 		resultContent := msg.Content
@@ -197,11 +203,56 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 	return out
 }
 
+func (ml *messageLines) appendCommandContext(command string, width int) {
+	command = rendering.SanitizeForTerminal(command)
+	for _, line := range rendering.HardWrap(command, max(1, width-toolBodyGutterWidth)) {
+		pl := PaintLine{Spans: []RowSpan{
+			{Text: "│   ", Role: ui.ColorMuted},
+			{Text: line, Role: ui.ColorFg},
+		}}
+		ml.lines = append(ml.lines, pl.PlainText())
+		ml.native = append(ml.native, pl)
+	}
+}
+
+func (ml *messageLines) appendToolInputContext(msg types.ChatMessage, width int) {
+	label := "input: "
+	switch msg.ToolName {
+	case "grep_files":
+		label = "pattern: "
+	case "web_search", "arxiv_search":
+		label = "query: "
+	case "web_fetch":
+		label = "url: "
+	}
+	text := label + rendering.SanitizeForTerminal(msg.ToolInput)
+	if msg.ToolScope != "" && msg.ToolScope != "." {
+		text += " in " + rendering.SanitizeForTerminal(msg.ToolScope)
+	}
+	for _, line := range rendering.HardWrap(text, max(1, width-toolBodyGutterWidth)) {
+		pl := PaintLine{Spans: []RowSpan{
+			{Text: "│   ", Role: ui.ColorMuted},
+			{Text: line, Role: ui.ColorMuted, Attr: cell.AttrItalic},
+		}}
+		ml.lines = append(ml.lines, pl.PlainText())
+		ml.native = append(ml.native, pl)
+	}
+}
+
 // appendToolDisclosureGlyph adds the " ▸" affordance to a collapsed tool's
 // title row so it reads as clickable even when the body is a budgeted preview.
 func appendToolDisclosureGlyph(pl PaintLine, glyph string) PaintLine {
 	pl.Spans = append(pl.Spans, RowSpan{Text: " " + glyph, Role: ui.ColorMuted})
 	return pl
+}
+
+func toolSupportsDisclosure(toolName string) bool {
+	switch toolName {
+	case "execute_command", "async_execute_command", "read_async_output", "check_async_command", "run_javascript",
+		"edit_file", "write_file", "update_plan", "get_plan":
+		return true
+	}
+	return false
 }
 
 // stripRedundantResultHeader removes a leading self-describing count line from
@@ -255,14 +306,16 @@ func isCountHeader(line string) bool {
 	return false
 }
 
+// toolBodyGutterWidth is the width of the "│   " gutter every plain tool body
+// row carries before its content. The wrap width must equal the painted
+// content width so wrapped segments stay inside the shellchat LayoutRow band.
+const toolBodyGutterWidth = 4
+
 func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, width, height int, errorStyle, expanded bool) {
 	// Wrap at the real painted content width (not the full terminal width)
-	// so every wrapped segment stays inside the LayoutRow band. The 6-col
-	// margin mirrors the "│   " gutter plus hanging indent.
-	toolLineWidth := width - 6
-	if toolLineWidth < 20 {
-		toolLineWidth = 20
-	}
+	// so every wrapped segment stays inside the LayoutRow band. The 4-col
+	// margin mirrors the "│   " gutter in buildToolPlainResultLine.
+	toolLineWidth := max(1, width-toolBodyGutterWidth)
 	maxRes := toolPreviewHeight(toolName, height)
 	// Grep/find-style output repeats the same absolute path prefix on every
 	// line ("/home/u/proj/tui/file.go:12: ..."). Stripping that shared prefix
@@ -283,8 +336,8 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 	var wrapped []string
 	previousBlank := false
 	for _, rl := range rawLines {
-		trimmed := strings.TrimSpace(rl)
-		if trimmed == "" {
+		display := strings.TrimSuffix(rl, "\r")
+		if strings.TrimSpace(display) == "" {
 			if expanded || !previousBlank {
 				wrapped = append(wrapped, "")
 			}
@@ -293,9 +346,9 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 		}
 		previousBlank = false
 		if prefix != "" {
-			trimmed = strings.TrimPrefix(trimmed, prefix)
+			display = strings.TrimPrefix(strings.TrimSpace(display), prefix)
 		}
-		sanitized := rendering.SanitizeForTerminal(trimmed)
+		sanitized := rendering.SanitizeForTerminal(display)
 		for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
 			if seg != "" {
 				wrapped = append(wrapped, seg)
@@ -306,7 +359,7 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 	headCount := commandPreviewHeadCount(toolName, len(indices))
 	for position, i := range indices {
 		if hidden > 0 && isCommandEvidenceTool(toolName) && position == headCount {
-			trunc := buildToolTruncationLine(hidden)
+			trunc := buildToolTruncationLine(hidden, width)
 			ml.lines = append(ml.lines, trunc.PlainText())
 			ml.native = append(ml.native, trunc)
 		}
@@ -316,7 +369,7 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 		ml.native = append(ml.native, pl)
 	}
 	if hidden > 0 && !isCommandEvidenceTool(toolName) {
-		trunc := buildToolTruncationLine(hidden)
+		trunc := buildToolTruncationLine(hidden, width)
 		ml.lines = append(ml.lines, trunc.PlainText())
 		ml.native = append(ml.native, trunc)
 	}
@@ -326,10 +379,12 @@ func toolPreviewHeight(toolName string, height int) int {
 	switch toolName {
 	case "execute_command", "async_execute_command", "read_async_output", "check_async_command", "run_javascript":
 		return tools.TerminalResultHeight(height)
-	case "grep_files", "glob_files", "list_directory", "web_search", "web_fetch", "arxiv_search":
-		return min(10, tools.TerminalResultHeight(height))
+	case "grep_files", "web_search", "web_fetch", "arxiv_search":
+		return min(4, tools.TerminalResultHeight(height))
+	case "glob_files", "list_directory":
+		return min(5, tools.TerminalResultHeight(height))
 	case "search_history", "recall_memory":
-		return min(8, tools.TerminalResultHeight(height))
+		return min(4, tools.TerminalResultHeight(height))
 	default:
 		return min(12, tools.TerminalResultHeight(height))
 	}
@@ -426,10 +481,16 @@ func buildPlainToolResultLine(text string) PaintLine {
 func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent string, th *theme.Theme, contentWidth, innerW, height int, expanded bool) {
 	_ = th
 	if tools.IsPlanTool(msg.ToolName) {
-		planRows := BuildPlanRows(resultContent, contentWidth)
+		planRows := BuildPlanViewRows(resultContent, contentWidth)
+		if len(planRows) == 0 {
+			invalid := buildToolPlainResultLine("│   ", "Invalid canonical plan payload", true)
+			ml.lines = append(ml.lines, invalid.PlainText())
+			ml.native = append(ml.native, invalid)
+			return
+		}
 		if !expanded && len(planRows) > 10 {
 			hidden := len(planRows) - 9
-			planRows = append(planRows[:9], buildToolTruncationLine(hidden))
+			planRows = append(planRows[:9], buildToolTruncationLine(hidden, contentWidth))
 		}
 		for _, pl := range planRows {
 			ml.lines = append(ml.lines, pl.PlainText())
@@ -448,7 +509,7 @@ func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent 
 					ml.lines = append(ml.lines, pl.PlainText())
 					ml.native = append(ml.native, pl)
 				}
-				trunc := buildToolTruncationLine(hidden)
+				trunc := buildToolTruncationLine(hidden, contentWidth)
 				ml.lines = append(ml.lines, trunc.PlainText())
 				ml.native = append(ml.native, trunc)
 				return
@@ -465,7 +526,7 @@ func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent 
 		ml.appendPlainToolBody(msg.ToolName, resultContent, innerW, height, false, expanded)
 		return
 	}
-	diffRows := BuildClaudeDiffRows(resultContent, contentWidth, innerW, expanded)
+	diffRows := BuildBandedDiffRows(resultContent, contentWidth, innerW, expanded)
 	if len(diffRows) > 0 {
 		for _, pl := range diffRows {
 			ml.lines = append(ml.lines, pl.PlainText())

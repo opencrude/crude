@@ -535,13 +535,14 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.openHelp()
 
 	case "system.undo":
-		go m.HandleUndo("/undo")
+		return m.executeSlashCommand("/undo")
 
 	case "safety.yolo.toggle":
 		if m.OverlayState.IsYolo() {
+			agentID := m.AgentMgr.ActiveID()
 			m.OverlayState.SetYolo(false)
 			m.StatusBar.SetInfo("YOLO mode disabled")
-			go m.SetYolo(false)
+			m.SetYoloForAgent(agentID, false)
 		} else {
 			m.openSessionYoloPanel()
 		}
@@ -707,10 +708,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "agent.cancel":
 		if id := m.AgentMgr.ActiveID(); id != "" {
-			go m.CancelAgent(id)
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("Cancelling agent " + id + "…")
-			}
+			m.cancelAgentTurn(id)
 		}
 
 	case "agent.newSession":

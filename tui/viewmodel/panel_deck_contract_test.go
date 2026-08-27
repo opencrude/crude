@@ -107,11 +107,11 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		}
 		beforeOffset := scroll.Offset()
 		beforeFocus := app.rootHost.Focused()
-		x, y := app.chatRect.X+1, app.chatRect.Y
+		x, y := app.chatRect.X+app.Theme.Spacing.PadLR+2, app.chatRect.Y+1
 
 		_, _ = app.dispatchMouseWheel(tea.MouseWheelMsg{X: x, Y: y, Button: tea.MouseWheelUp})
-		if got := scroll.Offset(); got != beforeOffset {
-			t.Fatalf("blocking panel leaked wheel to chat: offset=%d want %d", got, beforeOffset)
+		if got := scroll.Offset(); got >= beforeOffset {
+			t.Fatalf("blocking panel must allow wheel-only chat navigation: offset=%d before=%d", got, beforeOffset)
 		}
 		_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 		if got := app.rootHost.Focused(); got != beforeFocus {

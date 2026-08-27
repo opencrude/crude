@@ -128,8 +128,8 @@ func printString[T []byte | string](
 	var state byte
 	for len(str) > 0 {
 		seq, width, n, newState := decoder(str, state, p)
-		switch width {
-		case 1, 2, 3, 4: // wide cells can go up to 4 cells wide
+		switch {
+		case width > 0:
 			cell.Width = width
 			cell.Content = string(seq)
 			cell.Style = style

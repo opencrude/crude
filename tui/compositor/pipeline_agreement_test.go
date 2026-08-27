@@ -81,3 +81,29 @@ func TestEndToEndWidthAgreement(t *testing.T) {
 		}
 	}
 }
+
+func TestFloatingBorderOccludesEmojiWithoutHalfGrapheme(t *testing.T) {
+	for _, borderX := range []int{1, 2} {
+		background := surface.NewCellBuffer(6, 1)
+		background.Fill(cell.NewCell(' ', cell.White, cell.Black, 0))
+		background.WriteString(1, 0, "😀", cell.White, cell.Black, 0)
+		border := surface.NewCellBuffer(1, 1)
+		border.Set(0, 0, cell.NewCell('│', cell.Yellow, cell.Black, 0))
+		surface.Blit(background, borderX, 0, border, nil)
+
+		emitted := GenerateANSI(background)
+		uvBuffer := uv.NewScreenBuffer(6, 1)
+		uvBuffer.Method = ansi.GraphemeWidth
+		uv.NewStyledString(emitted).Draw(uvBuffer, uv.Rect(0, 0, 6, 1))
+
+		for column := 0; column < 6; column++ {
+			cellAt := uvBuffer.CellAt(column, 0)
+			if cellAt != nil && cellAt.Content == "😀" {
+				t.Fatalf("border x=%d left underlying emoji at column %d", borderX, column)
+			}
+		}
+		if got := uvBuffer.CellAt(borderX, 0); got == nil || got.Content != "│" || got.Width != 1 {
+			t.Fatalf("border x=%d reparsed as %#v", borderX, got)
+		}
+	}
+}

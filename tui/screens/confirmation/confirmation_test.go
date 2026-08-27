@@ -10,7 +10,7 @@ import (
 	"crude/tui/ui"
 )
 
-func TestConfirmationQuickKeysAndEscapeUseTypedActions(t *testing.T) {
+func TestConfirmationQuickKeysUseTypedActions(t *testing.T) {
 	for _, test := range []struct {
 		key  tea.KeyPressMsg
 		want string
@@ -18,7 +18,6 @@ func TestConfirmationQuickKeysAndEscapeUseTypedActions(t *testing.T) {
 		{key: tea.KeyPressMsg{Code: 'y', Text: "y"}, want: "allow"},
 		{key: tea.KeyPressMsg{Code: 'a', Text: "a"}, want: "always"},
 		{key: tea.KeyPressMsg{Code: 'n', Text: "n"}, want: "deny"},
-		{key: tea.KeyPressMsg{Code: tea.KeyEsc}, want: "deny"},
 	} {
 		screen, host := testHost(t, Details{Question: "Proceed?", Operation: "write", Tool: "apply_patch"})
 		result := host.Handle(test.key)
@@ -29,6 +28,18 @@ func TestConfirmationQuickKeysAndEscapeUseTypedActions(t *testing.T) {
 		if !ok || message.Target != screen || message.Choice != test.want {
 			t.Fatalf("key %q result=%#v", test.key.String(), message)
 		}
+	}
+}
+
+func TestConfirmationEscapeCancelsTurnWithoutDenyingPermission(t *testing.T) {
+	screen, host := testHost(t, Details{Question: "Proceed?", Operation: "write", Tool: "apply_patch"})
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if result.Cmd == nil {
+		t.Fatal("Escape did not emit a cancellation")
+	}
+	message, ok := result.Cmd().(CancelMsg)
+	if !ok || message.Target != screen {
+		t.Fatalf("Escape result = %#v, want CancelMsg for owning screen", message)
 	}
 }
 

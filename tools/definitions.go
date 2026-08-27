@@ -347,137 +347,48 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name: "plan",
-			Description: "Create a multi-step plan stored in the state machine. " +
-				"Use this when the task requires multiple coordinated steps (e.g., read a file, then edit it, then verify). " +
-				"Each step is registered as a tracked sub-goal. After calling plan, execute each step individually using " +
-				"regular tools. After completing a step, call mark_step_complete to update the plan's progress. " +
-				"For simple single-step tasks, call the tool directly instead.",
+			Name:        "update_plan",
+			Description: "Declaratively create or update the current plan. Creation requires plan_id, objective, and a complete ordered steps snapshot. For an existing plan, objective/status/steps may be omitted to preserve them; when steps are supplied they are the complete desired ordered snapshot. Existing updates require the latest revision. Reorder by array order; edit descriptions/dependencies in place; use skipped/blocked/failed/cancelled with reason and paused/completed/cancelled with explanation.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"objective":{"type":"string","description":"Brief one-line title for this plan (max ~80 chars). Be concise — this is displayed as a heading, not a detailed spec. Example: 'Fix auth redirect loop' NOT 'Fix the bug where users get redirected in a loop when their session expires and they try to access /dashboard'"},
+					"plan_id":{"type":"string","description":"Stable plan identifier. Reuse the same id across updates."},
+					"revision":{"type":"integer","description":"Last known revision. Omit or 0 to create a new plan. A mismatch returns the current plan."},
+					"objective":{"type":"string","description":"Required on creation. Omit or leave empty on update to preserve the current objective."},
+					"status":{"type":"string","enum":["active","paused","completed","cancelled"],"description":"Desired plan status. Omit on update to preserve current status."},
+					"explanation":{"type":"string","description":"Optional human-readable note (e.g. why paused/cancelled)."},
 					"steps":{
 						"type":"array",
-						"description":"Ordered list of plan steps to track",
+						"description":"Required on creation. On update, omit to preserve current steps; when supplied this is the complete ordered snapshot.",
 						"items":{
 							"type":"object",
 							"properties":{
-								"id":{"type":"string","description":"Unique step identifier (e.g. step1, step2)"},
-								"description":{"type":"string","description":"Brief description of what this step does"},
-								"depends_on":{"type":"array","items":{"type":"string"},"description":"IDs of steps that must complete before this one starts (optional)"}
+								"id":{"type":"string","description":"Stable step id (e.g. 'audit')."},
+								"description":{"type":"string","description":"What this step does."},
+								"status":{"type":"string","enum":["pending","in_progress","completed","skipped","blocked","failed","cancelled"],"description":"Step status. Default pending."},
+								"depends_on":{"type":"array","items":{"type":"string"},"description":"Ids that must be completed/skipped first."},
+								"result":{"type":"string","description":"Summary of what the step accomplished (on completed)."},
+								"reason":{"type":"string","description":"Required for skipped/blocked/failed/cancelled and for retrying/reopening."}
 							},
 							"required":["id","description"]
 						}
 					}
 				},
-				"required":["objective","steps"]
+				"required":["plan_id"]
 			}`),
 		},
 	},
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name: "mark_step_complete",
-			Description: "Mark one or more plan steps as completed. Call this after successfully executing steps of your plan. " +
-				"Provide the step ID (or an array of step IDs for batch completion) and optionally a result summary. " +
-				"Optionally provide 'activate_steps' to also mark steps as doing in the same call — " +
-				"this is a convenience so you don't need a separate mark_step_doing call. " +
-				"Does NOT auto-activate the next step unless you specify activate_steps.",
+			Name:        "get_plan",
+			Description: "Fetch the current plan. Pass plan_id to fetch a specific plan, or omit it to fetch the active plan for this session. Returns the canonical plan JSON (id, revision, objective, status, steps with statuses/dependencies/results). Use this after a revision conflict or before a major update to re-read the exact current state.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"step_id":{
-						"type":"string",
-						"description":"A single step ID or an array of step IDs to mark as complete (e.g. 'step1' or 'step1,step2')"
-					},
-					"result":{"type":"string","description":"Summary of what was accomplished (optional)"},
-					"activate_steps":{
-						"type":"string",
-						"description":"A single step ID or comma-separated step IDs to mark as doing (e.g. 'step3' or 'step3,step4'). Optional convenience to activate next step(s) without a separate call."
-					}
+					"plan_id":{"type":"string","description":"Plan id to fetch. Omit to get the active plan."},
+					"include_history":{"type":"boolean","description":"With plan_id, include revision events. Without plan_id, list all plan summaries."}
 				},
-				"required":["step_id"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "mark_step_doing",
-			Description: "Mark one or more plan steps as actively being worked on (doing). " +
-				"Call this before you start executing a step to indicate which step(s) you are currently working on. " +
-				"You can mark multiple steps as doing if you are working on them in parallel.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"step_id":{
-						"type":"string",
-						"description":"A single step ID or an array of step IDs to mark as doing (e.g. 'step1' or 'step1,step2')"
-					}
-				},
-				"required":["step_id"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "mark_step_failed",
-			Description: "Mark a plan step as failed. Call this when a step cannot be completed due to an error. " +
-				"This updates the state machine to reflect the failure.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"step_id":{"type":"string","description":"The step ID that failed (e.g. 'step1')"},
-					"reason":{"type":"string","description":"Why the step failed"}
-				},
-				"required":["step_id","reason"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "report_blocker",
-			Description: "Report a blocking condition that prevents progress. " +
-				"Use when you encounter missing information, need user confirmation, hit API errors, or face ambiguous requirements. " +
-				"The blocker is recorded in the state machine and shown as the current status.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"blocker_type":{"type":"string","description":"Type of blocker: 'missing_info', 'confirmation_needed', 'api_error', 'ambiguous', 'auth_required'"},
-					"message":{"type":"string","description":"Description of what is blocking progress"}
-				},
-				"required":["blocker_type","message"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "resolve_blocker",
-			Description: "Resolve a previously reported blocker. Call this when the blocking condition has been addressed " +
-				"and normal plan execution can resume.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"message":{"type":"string","description":"How the blocker was resolved (optional)"}
-				},
-				"required":[]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name: "list_goal_status",
-			Description: "List all current goals, plan steps, their statuses, and any active blockers. " +
-				"Returns a formatted overview of the state machine: active goal, completed steps, blocked steps, and suspended goals. " +
-				"Use this to get your bearings when resuming work.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{},
 				"required":[]
 			}`),
 		},

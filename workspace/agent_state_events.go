@@ -149,6 +149,7 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 	data["old_lines_int"] = int(oldLines)
 	data["new_lines_int"] = int(newLines)
 
+	onStatusLine("Preparing " + PascalCaseTool(name))
 	target.UpdateToolStreaming(toolID, internalID, name, data)
 	return nil
 }
@@ -165,6 +166,17 @@ func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, onStat
 		argsCompact := SummarizeToolArgs(name, args)
 		onStatusLine(ToolLabel(name, argsCompact))
 		target.UpdateToolCall(toolID, internalID, name, argsCompact)
+		if name == "execute_command" || name == "async_execute_command" {
+			target.SetToolCommand(toolID, internalID, extractJSONStringValue(args, "command"))
+		}
+		switch name {
+		case "grep_files":
+			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "pattern"), extractJSONStringValue(args, "path"))
+		case "web_search", "arxiv_search":
+			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "query"), "")
+		case "web_fetch":
+			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "url"), "")
+		}
 		if a.PendingPermTag != "" && (a.PendingPermTool == "" || a.PendingPermTool == name) {
 			target.SetToolPermTag(toolID, internalID, a.PendingPermTag)
 			a.PendingPermTag = ""
@@ -191,7 +203,9 @@ func (a *AgentState) handleToolProgress(evt AgentEvent, target *Conversation, on
 
 		target.UpdateToolProgress(toolID, internalID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(estTokens))
 		if phase == "done" {
-			onStatusLine(name)
+			onStatusLine(PascalCaseTool(name) + " done")
+		} else if phase == "error" {
+			onStatusLine(PascalCaseTool(name) + " failed")
 		} else if phase != "" && message != "" {
 			onStatusLine(message)
 		}
@@ -213,8 +227,39 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, onSt
 		estTokens := toInt(data["tool_est_tokens"])
 		linesAdded := toInt(data["lines_added"])
 		linesRemoved := toInt(data["lines_removed"])
-		onStatusLine(name)
+		if isError {
+			onStatusLine(PascalCaseTool(name) + " failed")
+		} else {
+			onStatusLine(PascalCaseTool(name) + " done")
+		}
 		target.UpdateToolResult(toolID, internalID, name, result, isError, int(estTokens), int(linesAdded), int(linesRemoved))
+	}
+	return nil
+}
+
+func (a *AgentState) handlePermissionResolved(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
+	data, ok := evt.Data.(map[string]any)
+	if !ok {
+		return nil
+	}
+	toolID, _ := data["tool_id"].(string)
+	internalID, _ := data["internal_id"].(string)
+	tool, _ := data["tool"].(string)
+	decision, _ := data["decision"].(string)
+	if decision == "" {
+		return nil
+	}
+	if !target.SetToolPermTag(toolID, internalID, decision) {
+		a.PendingPermTag = decision
+		a.PendingPermTool = tool
+	}
+	switch decision {
+	case "denied":
+		onStatusLine("Permission denied for " + PascalCaseTool(tool))
+	case "always":
+		onStatusLine("Permission always allowed for " + PascalCaseTool(tool))
+	default:
+		onStatusLine("Permission allowed for " + PascalCaseTool(tool))
 	}
 	return nil
 }
@@ -335,6 +380,8 @@ func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, thinkTarge
 	}
 	a.Thinking = false
 	a.Streaming = false
+	a.Running = false
+	a.Cancelling = false
 	a.PendingPermTag = ""
 	a.PendingPermTool = ""
 	a.BlockingMsgIdx = -1
