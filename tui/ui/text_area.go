@@ -61,6 +61,7 @@ type TextArea struct {
 	prompt      string
 	submitID    string
 	multiLine   bool
+	readOnly    bool
 	bg          cell.Color
 	bgSet       bool
 	// textWidth is the wrap width for visual line calculation; set during
@@ -160,6 +161,10 @@ func (t *TextArea) SetSubmitAction(id string) { t.submitID = id }
 
 // SetMultiLine controls whether Enter inserts a newline or submits.
 func (t *TextArea) SetMultiLine(v bool) { t.multiLine = v }
+
+// SetReadOnly freezes the editor: keyboard, paste, and mouse edits are
+// ignored while read-only.
+func (t *TextArea) SetReadOnly(v bool) { t.readOnly = v }
 
 // Value returns the full text content.
 func (t *TextArea) Value() string { return t.edit.Value() }
@@ -642,6 +647,9 @@ func (t *TextArea) paintBlockCursor(buf *surface.CellBuffer, x, y int, ch rune,
 
 // Handle processes keyboard, paste, and mouse events.
 func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
+	if t.readOnly {
+		return EventResult{}
+	}
 	switch evt.Kind {
 	case EventKey:
 		return t.handleKey(evt.Key)

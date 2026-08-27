@@ -407,7 +407,7 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 			}
 			return f.moveFocus(1, true)
 		}
-		if (key.Code == tea.KeyUp || key.Code == tea.KeyDown) && !field.SelectOpen() {
+		if (key.Code == tea.KeyUp || key.Code == tea.KeyDown) && !field.SelectOpen() && !field.MultiLine() {
 			if key.Code == tea.KeyUp {
 				return f.moveFocus(-1, f.arrowExits)
 			}

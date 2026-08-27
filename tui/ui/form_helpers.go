@@ -29,6 +29,15 @@ func PasswordFieldState(id, label, value, description string) *FieldState {
 	return f
 }
 
+// TextAreaFieldState builds a multi-line text field rendered as a full-width
+// editor below the label. Enter inserts a newline; Tab leaves the field.
+func TextAreaFieldState(id, label, value, description string) *FieldState {
+	f := TextFieldState(id, label, value, description)
+	f.Type = FieldTextArea
+	f.Rows = 4
+	return f
+}
+
 // CycleFieldState builds a left/right cycle field over a fixed value list.
 func CycleFieldState(id, label string, values []string, current, description string) *FieldState {
 	options := make([]FormOption, len(values))

@@ -397,10 +397,10 @@ func protocolSummariesValue(settings *provider.ProtocolSettings) *bool {
 	return settings.ReasoningSummaries
 }
 
-// extraBodyField builds the raw-JSON power-user field, validating that the
-// input is a JSON object as it is typed.
+// extraBodyField builds the raw-JSON power-user field: a multi-line editor
+// (JSON blobs do not fit one row) validating that the input is a JSON object.
 func (m *Model) extraBodyField(cfg types.ProviderConfig) *ui.FieldState {
-	f := ui.TextFieldState(fieldExtraBody, "Extra JSON body", formatExtraBody(cfg.ExtraBody),
+	f := ui.TextAreaFieldState(fieldExtraBody, "Extra JSON body", formatExtraBody(cfg.ExtraBody),
 		"Raw JSON object merged into every request body sent.")
 	f.Validator = func(value ui.FieldValue) []string {
 		trimmed := strings.TrimSpace(value.String())
