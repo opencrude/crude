@@ -109,7 +109,7 @@ func (a *Agent) Run(
 	var totalPromptTokens, totalCompletionTokens int
 	var lastPromptTokens int
 
-	ctxWindow := a.Provider.Standard().ContextWindow(a.Model)
+	ctxWindow := a.Provider.ContextWindow(a.Model)
 	ctxLimit := int(float64(ctxWindow) * contextSafetyPct)
 	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "safety_limit", ctxLimit, "safety_pct", contextSafetyPct)
 

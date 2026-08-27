@@ -330,7 +330,7 @@ func (s *Session) memoryCompleter() (func(context.Context, string, string) (stri
 	if category.APIKey == "" && category.OAuth == nil {
 		return nil, fmt.Errorf("no API key configured")
 	}
-	p, err := providerForCategory(category)
+	p, err := cfg.providerForCategory(category)
 	if err != nil {
 		return nil, err
 	}

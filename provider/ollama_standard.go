@@ -3,10 +3,11 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
-// OllamaStandard implements APIStandard for Ollama's native /api/chat protocol.
+// OllamaStandard implements Protocol for Ollama's native /api/chat protocol.
 // This is the format used by both a local Ollama daemon (http://localhost:11434)
 // and Ollama Cloud (https://ollama.com/api). Unlike the OpenAI-compatible /v1
 // endpoint, the native protocol streams newline-delimited JSON (application/
@@ -14,30 +15,16 @@ import (
 // /api/tags.
 type OllamaStandard struct{}
 
-func (s *OllamaStandard) ID() string { return "ollama" }
-
-func (s *OllamaStandard) ChatEndpoint(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/api/chat"
-}
-
-func (s *OllamaStandard) ModelsEndpoint(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/api/tags"
-}
-
-func (s *OllamaStandard) Auth(apiKey string) (string, string) {
-	if apiKey == "" {
-		// Local Ollama requires no credentials; Ollama Cloud uses a Bearer key.
-		return "", ""
+func (s *OllamaStandard) Info() ProtocolInfo {
+	return ProtocolInfo{
+		ID:          "ollama",
+		Name:        "Ollama",
+		Description: "Native Ollama protocol (local daemon and Ollama Cloud).",
+		Root:        "/api",
+		ChatPath:    "chat",
+		ModelsPath:  "tags",
+		Streaming:   FramingNDJSON,
 	}
-	return "Authorization", "Bearer " + apiKey
-}
-
-func (s *OllamaStandard) Headers(apiKey string) map[string]string {
-	header, value := s.Auth(apiKey)
-	if header == "" {
-		return nil
-	}
-	return map[string]string{header: value}
 }
 
 func (s *OllamaStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
@@ -193,14 +180,6 @@ func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 	return resp, nil
 }
 
-func (s *OllamaStandard) DecodeStreamChunk(data string) (*ChatResponse, error) {
-	update, err := s.NewStreamDecoder().Decode(StreamEvent{Data: []byte(data)})
-	if err != nil {
-		return nil, err
-	}
-	return streamUpdateToChatResponse(update), nil
-}
-
 func (s *OllamaStandard) NewStreamDecoder() StreamDecoder {
 	return &ollamaStreamDecoder{}
 }
@@ -255,7 +234,13 @@ func (d *ollamaStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 	return update, nil
 }
 
-func (s *OllamaStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
+// ModelsURL implements ModelLister.
+func (s *OllamaStandard) ModelsURL(base *url.URL, cursor string) *url.URL {
+	return joinPath(base, "tags")
+}
+
+// DecodeModelsPage implements ModelLister for Ollama's /api/tags shape.
+func (s *OllamaStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 	var result struct {
 		Models []struct {
 			Name    string `json:"name"`
@@ -268,7 +253,7 @@ func (s *OllamaStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal ollama models: %w", err)
+		return ModelPage{}, fmt.Errorf("unmarshal ollama models: %w", err)
 	}
 	models := make([]ModelInfo, 0, len(result.Models))
 	for _, m := range result.Models {
@@ -281,24 +266,22 @@ func (s *OllamaStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
 		}
 		models = append(models, ModelInfo{ID: id, Name: id})
 	}
-	return models, nil
+	return ModelPage{Models: models}, nil
 }
 
-func (s *OllamaStandard) ExtraBody(modelID, thinkingEffort string) map[string]any {
+// RequestExtras implements RequestExtras. Ollama exposes a single boolean
+// "think" toggle (qwen3, gpt-oss, ...) rather than graded effort levels; a
+// non-default effort enables thinking.
+func (s *OllamaStandard) RequestExtras(modelID, thinkingEffort string) map[string]any {
 	if thinkingEffort == "" || thinkingEffort == "none" {
 		return nil
 	}
-	// Ollama exposes a single boolean "think" toggle (qwen3, gpt-oss, ...) rather
-	// than graded effort levels. A non-default effort enables thinking.
 	return map[string]any{"think": true}
 }
 
+// ContextWindow implements ProtocolMetadata.
 func (s *OllamaStandard) ContextWindow(modelID string) int {
 	return LookupContextWindow(modelID)
-}
-
-func (s *OllamaStandard) UsageFromResponse(resp *ChatResponse) (int, int, int) {
-	return UsageFromResponse(resp)
 }
 
 // ollamaFinishReason maps Ollama's done_reason to an OpenAI-style finish reason,

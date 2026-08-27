@@ -40,33 +40,6 @@ func completeForTest(t *testing.T, agent *Agent) (completionResult, error) {
 	)
 }
 
-func TestUploadProgressReaderReportsRealMonotonicBytes(t *testing.T) {
-	var progress []int64
-	reader := newUploadProgressReader(strings.NewReader("0123456789"), 10, func(uploaded, total int64) {
-		if total != 10 {
-			t.Fatalf("total = %d, want 10", total)
-		}
-		progress = append(progress, uploaded)
-	})
-	reader.report(0)
-	buffer := make([]byte, 3)
-	for {
-		_, err := reader.Read(buffer)
-		if err != nil {
-			break
-		}
-	}
-	reader.complete()
-	if len(progress) < 3 || progress[0] != 0 || progress[len(progress)-1] != 10 {
-		t.Fatalf("progress = %v, want 0..10", progress)
-	}
-	for index := 1; index < len(progress); index++ {
-		if progress[index] < progress[index-1] {
-			t.Fatalf("progress went backwards: %v", progress)
-		}
-	}
-}
-
 func TestProviderDisplayNamePrefersConfiguredName(t *testing.T) {
 	agent := &Agent{Provider: &provider.Provider{ID: "custom-id", Name: "Custom Gateway"}}
 	if got := agent.providerDisplayName(); got != "Custom Gateway" {
@@ -80,7 +53,7 @@ func TestProviderDisplayNamePrefersConfiguredName(t *testing.T) {
 
 func TestCompleteStreamOpenAIChatPreservesUsageOnlyChunk(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
+		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer key" {
@@ -124,7 +97,7 @@ func TestCompleteStreamOpenAIChatPreservesUsageOnlyChunk(t *testing.T) {
 
 func TestCompleteStreamAnthropicToolUse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/messages" {
+		if r.URL.Path != "/v1/messages" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		if r.Header.Get("x-api-key") != "key" {
@@ -183,7 +156,7 @@ func TestCompleteStreamAnthropicToolUse(t *testing.T) {
 
 func TestCompleteStreamOpenAIResponsesPreservesReasoningItem(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/responses" {
+		if r.URL.Path != "/v1/responses" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -239,15 +212,13 @@ func TestCompleteStreamRetriesRetryableStatus(t *testing.T) {
 	}
 }
 
-func TestCompleteStreamAccumulatesUsageAcrossStreamRetries(t *testing.T) {
+func TestCompleteStreamAccumulatesUsageWithinOneStream(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		if calls.Add(1) == 1 {
-			_, _ = fmt.Fprint(w,
-				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1}}\n\n")
-			return
+		if calls.Add(1) != 1 {
+			t.Errorf("unexpected extra request: stream retries must not happen after output")
 		}
+		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w,
 			"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"+
 				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\n"+
@@ -258,16 +229,15 @@ func TestCompleteStreamAccumulatesUsageAcrossStreamRetries(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxRetries = 2
 
 	result, err := completeForTest(t, agent)
 	if err != nil {
 		t.Fatalf("completeStream: %v", err)
 	}
-	if result.Content != "ok" || calls.Load() != 2 {
+	if result.Content != "ok" || calls.Load() != 1 {
 		t.Fatalf("result=%+v calls=%d", result, calls.Load())
 	}
-	if result.Usage.PromptTokens != 5 || result.Usage.CompletionTokens != 2 {
+	if result.Usage.PromptTokens != 3 || result.Usage.CompletionTokens != 1 {
 		t.Fatalf("aggregate usage = %+v", result.Usage)
 	}
 	if result.LastPromptTokens != 3 {

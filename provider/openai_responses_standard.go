@@ -9,32 +9,23 @@ import (
 	"strings"
 )
 
-// OpenAIResponsesStandard implements the native OpenAI Responses API.
-type OpenAIResponsesStandard struct{}
-
-func (s *OpenAIResponsesStandard) ID() string { return "openai-responses" }
-
-func (s *OpenAIResponsesStandard) ChatEndpoint(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/responses"
+// OpenAIResponsesStandard implements the native OpenAI Responses API. Model
+// listing uses the same envelope as Chat Completions, so the OpenAI protocol
+// is embedded and its ModelLister implementation is promoted.
+type OpenAIResponsesStandard struct {
+	OpenAIStandard
 }
 
-func (s *OpenAIResponsesStandard) ModelsEndpoint(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/models"
-}
-
-func (s *OpenAIResponsesStandard) Auth(apiKey string) (string, string) {
-	if apiKey == "" {
-		return "", ""
+func (s *OpenAIResponsesStandard) Info() ProtocolInfo {
+	return ProtocolInfo{
+		ID:          "openai-responses",
+		Name:        "OpenAI Responses",
+		Description: "Native Responses API with reasoning-item continuity.",
+		Root:        "/v1",
+		ChatPath:    "responses",
+		ModelsPath:  "models",
+		Streaming:   FramingSSE,
 	}
-	return "Authorization", "Bearer " + apiKey
-}
-
-func (s *OpenAIResponsesStandard) Headers(apiKey string) map[string]string {
-	header, value := s.Auth(apiKey)
-	if header == "" {
-		return nil
-	}
-	return map[string]string{header: value}
 }
 
 func (s *OpenAIResponsesStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
@@ -256,19 +247,18 @@ func (s *OpenAIResponsesStandard) DecodeResponse(body []byte) (*ChatResponse, er
 	return response.toChatResponse()
 }
 
-func (s *OpenAIResponsesStandard) DecodeStreamChunk(data string) (*ChatResponse, error) {
-	return nil, fmt.Errorf("OpenAI Responses streaming requires NewStreamDecoder")
-}
-
 func (s *OpenAIResponsesStandard) NewStreamDecoder() StreamDecoder {
 	return &openAIResponsesStreamDecoder{seenProviderItems: make(map[string]struct{})}
 }
 
-func (s *OpenAIResponsesStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
-	return (&OpenAIStandard{}).DecodeModels(body)
+// ModelsURL implements ModelLister; it inherits DecodeModelsPage from the
+// embedded OpenAI envelope decoder.
+func (s *OpenAIResponsesStandard) ModelsURL(base *url.URL, cursor string) *url.URL {
+	return joinPath(base, "models")
 }
 
-func (s *OpenAIResponsesStandard) ExtraBody(modelID, thinkingEffort string) map[string]any {
+// RequestExtras implements RequestExtras.
+func (s *OpenAIResponsesStandard) RequestExtras(modelID, thinkingEffort string) map[string]any {
 	if thinkingEffort == "" {
 		return nil
 	}
@@ -284,12 +274,9 @@ func (s *OpenAIResponsesStandard) ExtraBody(modelID, thinkingEffort string) map[
 	}
 }
 
+// ContextWindow implements ProtocolMetadata.
 func (s *OpenAIResponsesStandard) ContextWindow(modelID string) int {
 	return LookupContextWindow(modelID)
-}
-
-func (s *OpenAIResponsesStandard) UsageFromResponse(resp *ChatResponse) (int, int, int) {
-	return UsageFromResponse(resp)
 }
 
 type openAIResponse struct {

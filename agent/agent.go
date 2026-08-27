@@ -3,11 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"crude/fileio"
 	"crude/logger"
@@ -59,8 +57,10 @@ type Agent struct {
 	YoloMode    func() bool
 	AsyncMgr    *fileio.AsyncCommandManager
 	SubAgentMgr *SubAgentManager
-	client      *http.Client
-	toolCallSeq int
+	// testHTTPClient, when set, is injected into the provider transport for
+	// tests. Production agents use the provider's own tuned transport.
+	testHTTPClient *http.Client
+	toolCallSeq    int
 
 	fileMu            sync.Map
 	writeReportCalled bool
@@ -107,7 +107,7 @@ func (a *Agent) SetToolCallSeqStart(n int) { a.toolCallSeq = n }
 func (a *Agent) ToolCallSeq() int          { return a.toolCallSeq }
 func (a *Agent) SetHTTPClient(client *http.Client) {
 	if client != nil {
-		a.client = client
+		a.testHTTPClient = client
 	}
 }
 
@@ -124,19 +124,6 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 		},
 		logger: lg,
 		turn:   turn,
-		client: &http.Client{
-			Timeout: 300 * time.Second,
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				MaxIdleConns:        10,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-				TLSHandshakeTimeout: 10 * time.Second,
-			},
-		},
 	}
 }
 

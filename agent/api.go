@@ -1,18 +1,13 @@
 package agent
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
-	"mime"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -60,48 +55,9 @@ func addTokenUsage(left, right provider.TokenUsage) provider.TokenUsage {
 }
 
 const (
-	maxRetries            = 10
 	maxErrorResponseBytes = 1 << 20
 	maxJSONResponseBytes  = 64 << 20
-	maxRetryDelay         = 2 * time.Minute
 )
-
-func isRetryable(code int) bool {
-	switch code {
-	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
-		return true
-	default:
-		return code >= 500
-	}
-}
-
-func retryBackoff(attempt int) time.Duration {
-	if attempt <= 1 {
-		return time.Duration(500+rand.Intn(1500)) * time.Millisecond
-	}
-	base := time.Duration(1<<min(attempt-1, 6)) * time.Second
-	jitter := time.Duration(rand.Intn(max(1, int(base/4))))
-	return min(base+jitter, maxRetryDelay)
-}
-
-func retryDelay(resp *http.Response, attempt int) time.Duration {
-	if resp != nil {
-		if value := strings.TrimSpace(resp.Header.Get("retry-after-ms")); value != "" {
-			if milliseconds, err := strconv.ParseFloat(value, 64); err == nil && milliseconds >= 0 {
-				return min(time.Duration(milliseconds*float64(time.Millisecond)), maxRetryDelay)
-			}
-		}
-		if value := strings.TrimSpace(resp.Header.Get("Retry-After")); value != "" {
-			if seconds, err := strconv.ParseFloat(value, 64); err == nil && seconds >= 0 {
-				return min(time.Duration(seconds*float64(time.Second)), maxRetryDelay)
-			}
-			if when, err := http.ParseTime(value); err == nil {
-				return min(max(0, time.Until(when)), maxRetryDelay)
-			}
-		}
-	}
-	return retryBackoff(attempt)
-}
 
 // CompleteText performs a single completion outside the agent loop: no
 // tools, no streaming callbacks, no session state. Background jobs (memory
@@ -146,9 +102,7 @@ func (a *Agent) completeStream(
 		StreamOptions: &provider.StreamOptions{IncludeUsage: true},
 	}
 
-	std := a.Provider.Standard()
-	ctxWindow := std.ContextWindow(a.Model)
-	if ctxWindow > 0 {
+	if ctxWindow := a.Provider.ContextWindow(a.Model); ctxWindow > 0 {
 		estimatedInput := provider.EstimateMessagesTotal(msgs, a.Model)
 		if len(tools) > 0 {
 			if encodedTools, marshalErr := json.Marshal(tools); marshalErr == nil {
@@ -175,287 +129,76 @@ func (a *Agent) completeStream(
 		req.MaxOutputTokens = maxOut
 	}
 
-	body, err := std.EncodeRequest(&req)
-	if err != nil {
-		return completionResult{}, fmt.Errorf("encode request: %w", err)
-	}
-	body, err = mergeRequestExtras(body, a.Provider.BuildExtraBody())
-	if err != nil {
-		return completionResult{}, err
-	}
 	if err := a.Provider.Validate(); err != nil {
 		return completionResult{}, err
 	}
 
-	// Refresh OAuth access tokens (e.g. ChatGPT subscription) before building
-	// the request so the bearer is current for every attempt.
-	if err := a.Provider.EnsureAuth(ctx); err != nil {
-		return completionResult{}, fmt.Errorf("refresh oauth token: %w", err)
-	}
-
-	endpoint := a.Provider.ChatEndpoint()
-	attemptLimit := maxRetries
-	if a.MaxRetries > 0 {
-		attemptLimit = a.MaxRetries
-	}
-	client := a.client
-	if client == nil {
-		client = http.DefaultClient
+	var requestBody []byte
+	client, err := a.newClient(onRetry, onRequestProgress, func(body []byte) { requestBody = body })
+	if err != nil {
+		return completionResult{}, err
 	}
 
 	streamStart := time.Now()
-	a.logger.Info("LLM", "prompt", "model", a.Model, "standard", std.ID(), "msgs", len(msgs), "tools", len(tools))
+	a.logger.Info("LLM", "prompt", "model", a.Model, "protocol", a.Provider.ProtocolID(), "msgs", len(msgs), "tools", len(tools))
 
-	var accumulatedUsage provider.TokenUsage
-	for attempt := 1; attempt <= attemptLimit; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled", err)
+	result, consumeErr := a.consumeStream(
+		ctx, client, &req, streamStart,
+		emit, emitThinking, onToolCallStart, onToolCallDelta,
+	)
+	result.LastPromptTokens = result.Usage.PromptTokens
+	if consumeErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return result, cancellationError("Stream request cancelled", ctxErr)
 		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-		if err != nil {
-			return completionResult{Usage: accumulatedUsage}, fmt.Errorf("create request: %w", err)
+		if result.hasOutput() {
+			return result, &apiCallError{
+				Message: fmt.Sprintf("stream interrupted after partial response: %v", consumeErr),
+				Partial: true,
+				Cause:   consumeErr,
+			}
 		}
-		progress := newUploadProgressReader(bytes.NewReader(body), int64(len(body)), onRequestProgress)
-		httpReq.Body = io.NopCloser(progress)
-		httpReq.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(newUploadProgressReader(bytes.NewReader(body), int64(len(body)), onRequestProgress)), nil
+		var exhausted *provider.ExhaustedError
+		if errors.As(consumeErr, &exhausted) {
+			return completionResult{Usage: result.Usage}, &apiCallError{
+				Message:          consumeErr.Error(),
+				RetriesExhausted: true,
+				Cause:            exhausted.Cause,
+			}
 		}
-		progress.report(0)
-		for header, value := range a.Provider.Headers() {
-			httpReq.Header.Set(header, value)
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Accept", "text/event-stream, application/json")
-
-		resp, err := client.Do(httpReq)
-		if err == nil {
-			progress.complete()
-		}
-		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled", ctxErr)
-			}
-			if attempt == attemptLimit {
-				return completionResult{Usage: accumulatedUsage}, &apiCallError{
-					Message:          fmt.Sprintf("stream request failed after %d attempts: %v", attempt, err),
-					RetriesExhausted: true,
-					Cause:            err,
-				}
-			}
-			delay := retryBackoff(attempt)
-			a.logRetry(attempt, delay, err, onRetry)
-			if err := waitForRetry(ctx, delay); err != nil {
-				return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled during retry", err)
-			}
-			continue
-		}
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			statusErr := readHTTPStatusError(resp)
-			if !isRetryable(resp.StatusCode) || attempt == attemptLimit {
-				statusErr.RetriesExhausted = isRetryable(resp.StatusCode) && attempt == attemptLimit
-				return completionResult{Usage: accumulatedUsage}, statusErr
-			}
-			delay := retryDelay(resp, attempt)
-			a.logRetry(attempt, delay, statusErr, onRetry)
-			if err := waitForRetry(ctx, delay); err != nil {
-				return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled during retry", err)
-			}
-			continue
-		}
-
-		result, consumeErr := a.consumeResponse(
-			ctx, resp, std, emit, emitThinking, onToolCallStart, onToolCallDelta, streamStart,
-		)
-		result.LastPromptTokens = result.Usage.PromptTokens
-		result.Usage = addTokenUsage(accumulatedUsage, result.Usage)
-		if consumeErr != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return result, cancellationError("Stream request cancelled", ctxErr)
-			}
-			if result.hasOutput() {
-				return result, &apiCallError{
-					Message: fmt.Sprintf("stream interrupted after partial response: %v", consumeErr),
-					Partial: true,
-					Cause:   consumeErr,
-				}
-			}
-			if attempt < attemptLimit && retryableStreamError(consumeErr) {
-				accumulatedUsage = result.Usage
-				delay := retryBackoff(attempt)
-				a.logRetry(attempt, delay, consumeErr, onRetry)
-				if err := waitForRetry(ctx, delay); err != nil {
-					return completionResult{Usage: accumulatedUsage}, cancellationError("Stream request cancelled during retry", err)
-				}
-				continue
-			}
-			return result, consumeErr
-		}
-
-		a.logCompletedTurn(body, result, streamStart)
-		return result, nil
+		return result, consumeErr
 	}
 
-	return completionResult{Usage: accumulatedUsage}, &apiCallError{
-		Message:          "stream request failed: retry limit reached",
-		RetriesExhausted: true,
-	}
-}
-
-type uploadProgressReader struct {
-	reader     io.Reader
-	total      int64
-	sent       int64
-	lastReport int
-	onProgress func(uploaded, total int64)
-}
-
-func newUploadProgressReader(reader io.Reader, total int64, onProgress func(uploaded, total int64)) *uploadProgressReader {
-	return &uploadProgressReader{reader: reader, total: total, lastReport: -1, onProgress: onProgress}
-}
-
-func (r *uploadProgressReader) Read(buffer []byte) (int, error) {
-	n, err := r.reader.Read(buffer)
-	if n > 0 {
-		r.sent += int64(n)
-		r.report(r.sent)
-	}
-	return n, err
-}
-
-func (r *uploadProgressReader) complete() {
-	r.report(r.total)
-}
-
-func (r *uploadProgressReader) report(uploaded int64) {
-	if r == nil || r.onProgress == nil {
-		return
-	}
-	uploaded = max(0, min(r.total, uploaded))
-	percent := 0
-	if r.total > 0 {
-		percent = int(uploaded * 100 / r.total)
-	}
-	if percent == r.lastReport {
-		return
-	}
-	r.lastReport = percent
-	r.onProgress(uploaded, r.total)
-}
-
-func mergeRequestExtras(body []byte, extra map[string]any) ([]byte, error) {
-	if len(extra) == 0 {
-		return body, nil
-	}
-	var merged map[string]any
-	if err := json.Unmarshal(body, &merged); err != nil {
-		return nil, fmt.Errorf("merge request extras: %w", err)
-	}
-	for key, value := range extra {
-		merged[key] = value
-	}
-	result, err := json.Marshal(merged)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request extras: %w", err)
-	}
+	a.logCompletedTurn(requestBody, result, streamStart)
 	return result, nil
 }
 
-func (a *Agent) consumeResponse(
-	ctx context.Context,
-	resp *http.Response,
-	std provider.APIStandard,
-	emit func(string),
-	emitThinking func(string),
-	onToolCallStart func(string, string, string),
-	onToolCallDelta func(string, string, string, string),
-	streamStart time.Time,
-) (completionResult, error) {
-	defer resp.Body.Close()
-
-	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	bodyReader := bufio.NewReader(resp.Body)
-
-	// Ollama's native protocol streams newline-delimited JSON (application/
-	// x-ndjson) rather than Server-Sent Events. It must be routed before the
-	// JSON sniff below: NDJSON starts with '{' and would otherwise be mistaken
-	// for a single non-streaming JSON response. Re-emit each line as an SSE
-	// "data:" event so the existing SSE consumer and stream decoders handle it.
-	if mediaType == "application/x-ndjson" || mediaType == "application/json-seq" {
-		return a.consumeSSE(ctx, newNDJSONToSSEReader(bodyReader), std.NewStreamDecoder(), emit, emitThinking,
-			onToolCallStart, onToolCallDelta, streamStart)
-	}
-
-	isJSON := mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
-	if !isJSON && mediaType != "text/event-stream" {
-		isJSON = readerLooksLikeJSON(bodyReader)
-	}
-	if isJSON {
-		body, err := readBounded(bodyReader, maxJSONResponseBytes)
-		if err != nil {
-			return completionResult{}, err
-		}
-		decoded, err := std.DecodeResponse(body)
-		if err != nil {
-			return completionResult{}, err
-		}
-		result, resultErr := a.resultFromChatResponse(decoded, emit, emitThinking, onToolCallStart, onToolCallDelta)
-		if result.ReasoningContent != "" {
-			result.ReasoningDuration = time.Since(streamStart)
-		}
-		return result, resultErr
-	}
-
-	return a.consumeSSE(ctx, bodyReader, std.NewStreamDecoder(), emit, emitThinking,
-		onToolCallStart, onToolCallDelta, streamStart)
-}
-
-func readerLooksLikeJSON(reader *bufio.Reader) bool {
-	peeked, _ := reader.Peek(512)
-	trimmed := bytes.TrimSpace(peeked)
-	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
-}
-
-// ndjsonToSSEReader wraps a newline-delimited JSON stream (Ollama's native
-// streaming format) and re-emits each non-empty line as an SSE "data:" event
-// terminated by a blank line, so the existing SSE consumer and stream decoders
-// process it unchanged.
-type ndjsonToSSEReader struct {
-	r   *bufio.Reader
-	buf []byte
-	eof bool
-}
-
-func newNDJSONToSSEReader(r *bufio.Reader) *ndjsonToSSEReader {
-	return &ndjsonToSSEReader{r: r}
-}
-
-func (n *ndjsonToSSEReader) Read(p []byte) (int, error) {
-	for {
-		if len(n.buf) > 0 {
-			copied := copy(p, n.buf)
-			n.buf = n.buf[copied:]
-			return copied, nil
-		}
-		if n.eof {
-			return 0, io.EOF
-		}
-		line, err := n.r.ReadBytes('\n')
-		line = bytes.TrimSpace(line)
-		if len(line) > 0 {
-			n.buf = append(n.buf, "data: "...)
-			n.buf = append(n.buf, line...)
-			n.buf = append(n.buf, '\n', '\n')
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				n.eof = true
-				continue // flush any buffered event before reporting EOF
+// newClient builds the provider transport client wired to this agent's
+// callbacks and test injection.
+func (a *Agent) newClient(
+	onRetry func(attempt int, backoffSeconds float64),
+	onRequestProgress func(uploaded, total int64),
+	onRequestEncoded func(body []byte),
+) (*provider.Client, error) {
+	opts := []provider.ClientOption{
+		provider.OnRetry(func(attempt int, delay time.Duration, err error) {
+			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt,
+				"backoff_ms", delay.Milliseconds(), "error", err.Error())
+			if onRetry != nil {
+				onRetry(attempt, delay.Seconds())
 			}
-			return 0, err
-		}
+		}),
 	}
+	if onRequestEncoded != nil {
+		opts = append(opts, provider.OnRequestEncoded(onRequestEncoded))
+	}
+	if onRequestProgress != nil {
+		opts = append(opts, provider.OnUploadProgress(onRequestProgress))
+	}
+	if a.testHTTPClient != nil {
+		opts = append(opts, provider.WithHTTPClient(a.testHTTPClient))
+	}
+	return a.Provider.Client(opts...)
 }
 
 type toolCallAccumulator struct {
@@ -463,25 +206,31 @@ type toolCallAccumulator struct {
 	started bool
 }
 
-func (a *Agent) consumeSSE(
+// consumeStream drives a client stream to completion, accumulating the
+// normalized updates into a completion result and fanning deltas out to the
+// UI callbacks.
+func (a *Agent) consumeStream(
 	ctx context.Context,
-	body io.Reader,
-	decoder provider.StreamDecoder,
+	client *provider.Client,
+	req *provider.ChatRequest,
+	streamStart time.Time,
 	emit func(string),
 	emitThinking func(string),
 	onToolCallStart func(string, string, string),
 	onToolCallDelta func(string, string, string, string),
-	streamStart time.Time,
 ) (completionResult, error) {
-	reader := provider.NewSSEReader(body)
+	stream, err := client.Stream(ctx, req)
+	if err != nil {
+		return completionResult{}, err
+	}
+	defer stream.Close()
+
 	var content strings.Builder
 	var reasoning strings.Builder
 	var reasoningStarted time.Time
 	var reasoningEnded time.Time
 	result := completionResult{}
 	toolCalls := make(map[int]*toolCallAccumulator)
-	sawEvent := false
-	sawTerminal := false
 	firstTokenLogged := false
 	finish := func() {
 		result.Content = content.String()
@@ -500,18 +249,11 @@ func (a *Agent) consumeSSE(
 			finish()
 			return result, err
 		}
-		event, err := reader.Next()
+		update, err := stream.Next()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			finish()
-			return result, err
-		}
-		sawEvent = true
-
-		update, err := decoder.Decode(event)
-		if err != nil {
 			finish()
 			return result, err
 		}
@@ -520,7 +262,6 @@ func (a *Agent) consumeSSE(
 		}
 		if update.FinishReason != "" {
 			result.FinishReason = update.FinishReason
-			sawTerminal = true
 		}
 		if len(update.ProviderItems) > 0 {
 			result.ProviderItems = append(result.ProviderItems, update.ProviderItems...)
@@ -553,19 +294,9 @@ func (a *Agent) consumeSSE(
 			}
 			a.accumulateToolCall(toolCalls, delta, onToolCallStart, onToolCallDelta)
 		}
-		if update.Done {
-			sawTerminal = true
-			break
-		}
 	}
 
 	finish()
-	if !sawEvent {
-		return result, io.ErrUnexpectedEOF
-	}
-	if !sawTerminal {
-		return result, fmt.Errorf("%w: provider stream ended without terminal event", io.ErrUnexpectedEOF)
-	}
 	if result.FinishReason == "" {
 		if len(result.ToolCalls) > 0 {
 			result.FinishReason = "tool_calls"
@@ -799,42 +530,8 @@ func readBounded(reader io.Reader, limit int64) ([]byte, error) {
 	return body, nil
 }
 
-func retryableStreamError(err error) bool {
-	if errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	var apiErr *provider.APIError
-	if errors.As(err, &apiErr) {
-		typ := strings.ToLower(apiErr.Type + " " + apiErr.Code)
-		return strings.Contains(typ, "overload") || strings.Contains(typ, "rate_limit") ||
-			strings.Contains(typ, "temporar") || strings.Contains(typ, "api_error") ||
-			strings.Contains(typ, "server_error") || strings.Contains(typ, "internal_error") ||
-			strings.Contains(typ, "timeout") || strings.Contains(typ, "unavailable")
-	}
-	return false
-}
-
-func waitForRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 func cancellationError(prefix string, cause error) *apiCallError {
 	return &apiCallError{Message: fmt.Sprintf("%s: %v", prefix, cause), Cause: cause}
-}
-
-func (a *Agent) logRetry(attempt int, delay time.Duration, err error, onRetry func(int, float64)) {
-	a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt,
-		"backoff_ms", delay.Milliseconds(), "error", err.Error())
-	if onRetry != nil {
-		onRetry(attempt, delay.Seconds())
-	}
 }
 
 func (a *Agent) logCompletedTurn(body []byte, result completionResult, streamStart time.Time) {

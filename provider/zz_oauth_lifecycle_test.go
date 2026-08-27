@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -146,9 +145,13 @@ func TestOAuthLifecycleEndToEnd(t *testing.T) {
 	// 2. Build a codex provider with OAuth and fetch models.
 	p := FromPreset("chatgpt", "", srv.URL+"/codex")
 	p.SetOAuth(creds)
-	models, err := FetchModels(p)
+	client, err := p.Client()
 	if err != nil {
-		t.Fatalf("FetchModels: %v", err)
+		t.Fatalf("Client: %v", err)
+	}
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
 	}
 	if len(models) != 2 {
 		t.Fatalf("models = %+v", models)
@@ -180,33 +183,14 @@ func TestOAuthLifecycleEndToEnd(t *testing.T) {
 	}
 
 	// 3. Make a chat request with the same provider.
-	req := &ChatRequest{
+	chatResp, err := client.Complete(context.Background(), &ChatRequest{
 		Model: "gpt-5.6",
 		Messages: []ChatMessage{
 			{Role: "user", Content: TextContent("hi")},
 		},
-		Stream: false,
-	}
-	body, err := p.EncodeRequest(req)
+	})
 	if err != nil {
-		t.Fatalf("EncodeRequest: %v", err)
-	}
-	httpReq, err := http.NewRequest(http.MethodPost, p.ChatEndpoint(), bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	for k, v := range p.Headers() {
-		httpReq.Header.Set(k, v)
-	}
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		t.Fatalf("chat request: %v", err)
-	}
-	defer resp.Body.Close()
-	chatBody, _ := io.ReadAll(resp.Body)
-	chatResp, err := p.DecodeResponse(chatBody)
-	if err != nil {
-		t.Fatalf("DecodeResponse: %v", err)
+		t.Fatalf("Complete: %v", err)
 	}
 	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.ContentString() != "hello" {
 		t.Fatalf("chat response = %+v", chatResp)

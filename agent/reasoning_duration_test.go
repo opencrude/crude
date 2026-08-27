@@ -2,38 +2,56 @@ package agent
 
 import (
 	"context"
-	"strings"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 
 	"crude/provider"
 )
 
-type durationStreamDecoder struct{}
+// TestCompleteStreamRecordsReasoningDuration verifies that reasoning time is
+// measured across the reasoning deltas of a real stream.
+func TestCompleteStreamRecordsReasoningDuration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w,
+			"event: content_block_start\n"+
+				"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n"+
+				"event: content_block_delta\n"+
+				"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"reason\"}}\n\n"+
+				"event: content_block_stop\n"+
+				"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+				"event: content_block_start\n"+
+				"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+				"event: content_block_delta\n"+
+				"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n"+
+				"event: message_delta\n"+
+				"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n"+
+				"event: message_stop\n"+
+				"data: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
 
-func (durationStreamDecoder) Decode(event provider.StreamEvent) (provider.StreamUpdate, error) {
-	switch string(event.Data) {
-	case "reasoning":
-		return provider.StreamUpdate{ReasoningDelta: "thinking"}, nil
-	case "done":
-		time.Sleep(2 * time.Millisecond)
-		return provider.StreamUpdate{Done: true, FinishReason: "stop"}, nil
-	default:
-		return provider.StreamUpdate{}, nil
-	}
-}
+	p := provider.FromPreset("anthropic", "key", server.URL)
+	p.Model = "claude-test"
+	agent := newTestAgent(t, p, p.Model)
 
-func TestConsumeSSERecordsReasoningDuration(t *testing.T) {
-	a := &Agent{}
-	result, err := a.consumeSSE(
+	result, err := agent.completeStream(
 		context.Background(),
-		strings.NewReader("data: reasoning\n\ndata: done\n\n"),
-		durationStreamDecoder{}, nil, nil, nil, nil, time.Now(),
+		[]provider.ChatMessage{provider.NewTextMessage("user", "hello")},
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("completeStream: %v", err)
 	}
-	if result.ReasoningContent != "thinking" || result.ReasoningDuration <= 0 {
-		t.Fatalf("completion result = %+v", result)
+	if result.ReasoningContent != "reason" {
+		t.Fatalf("reasoning = %q", result.ReasoningContent)
+	}
+	if result.ReasoningDuration <= 0 {
+		t.Fatalf("reasoning duration = %v, want > 0", result.ReasoningDuration)
+	}
+	if result.Content != "answer" {
+		t.Fatalf("content = %q", result.Content)
 	}
 }

@@ -129,7 +129,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		applySessionMultiAgent(cfg, *flags.MultiAgent)
 	}
 	activeCfg := cfg.GetActiveDefaultCategory()
-	p, err := providerForCategory(activeCfg)
+	p, err := cfg.providerForCategory(activeCfg)
 	if err != nil {
 		_ = lg.Close()
 		db.Close()

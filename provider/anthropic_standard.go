@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -14,28 +15,32 @@ const anthropicAPIVersion = "2023-06-01"
 // AnthropicStandard implements the native Anthropic Messages API.
 type AnthropicStandard struct{}
 
-func (s *AnthropicStandard) ID() string { return "anthropic" }
-
-func (s *AnthropicStandard) ChatEndpoint(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/messages"
+func (s *AnthropicStandard) Info() ProtocolInfo {
+	return ProtocolInfo{
+		ID:          "anthropic",
+		Name:        "Anthropic Messages",
+		Description: "Native Claude Messages with signed thinking blocks.",
+		Root:        "/v1",
+		ChatPath:    "messages",
+		ModelsPath:  "models",
+		Streaming:   FramingSSE,
+	}
 }
 
-func (s *AnthropicStandard) ModelsEndpoint(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/models"
+// Headers implements ProtocolHeaders: every request carries the API version.
+func (s *AnthropicStandard) Headers() http.Header {
+	headers := http.Header{}
+	headers.Set("anthropic-version", anthropicAPIVersion)
+	return headers
 }
 
-func (s *AnthropicStandard) Auth(apiKey string) (string, string) {
+// AuthHeaders implements ProtocolAuth: Anthropic authenticates via x-api-key.
+func (s *AnthropicStandard) AuthHeaders(apiKey string) http.Header {
 	if apiKey == "" {
-		return "", ""
+		return nil
 	}
-	return "x-api-key", apiKey
-}
-
-func (s *AnthropicStandard) Headers(apiKey string) map[string]string {
-	headers := map[string]string{"anthropic-version": anthropicAPIVersion}
-	if apiKey != "" {
-		headers["x-api-key"] = apiKey
-	}
+	headers := http.Header{}
+	headers.Set("x-api-key", apiKey)
 	return headers
 }
 
@@ -344,23 +349,40 @@ func (s *AnthropicStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 	return response.toChatResponse()
 }
 
-func (s *AnthropicStandard) DecodeStreamChunk(data string) (*ChatResponse, error) {
-	return nil, fmt.Errorf("anthropic streaming requires NewStreamDecoder")
-}
-
 func (s *AnthropicStandard) NewStreamDecoder() StreamDecoder {
 	return &anthropicStreamDecoder{blocks: make(map[int]*anthropicStreamBlock)}
 }
 
-func (s *AnthropicStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
+// ModelsURL implements ModelLister. Anthropic pages models with an opaque
+// after_id cursor; a large page size keeps well-known catalogs to one
+// round-trip.
+func (s *AnthropicStandard) ModelsURL(base *url.URL, cursor string) *url.URL {
+	endpoint := joinPath(base, "models")
+	query := endpoint.Query()
+	query.Set("limit", "1000")
+	if cursor != "" {
+		query.Set("after_id", cursor)
+	}
+	endpoint.RawQuery = query.Encode()
+	return endpoint
+}
+
+// DecodeModelsPage implements ModelLister for the Anthropic {"data":[...]}
+// envelope with has_more/last_id pagination.
+func (s *AnthropicStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 	var response struct {
 		Data []struct {
 			ID          string `json:"id"`
 			DisplayName string `json:"display_name"`
 		} `json:"data"`
+		HasMore bool   `json:"has_more"`
+		LastID  string `json:"last_id"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("unmarshal Anthropic models: %w", err)
+		return ModelPage{}, fmt.Errorf("unmarshal Anthropic models: %w", err)
+	}
+	if response.HasMore && response.LastID == "" {
+		return ModelPage{}, fmt.Errorf("anthropic models response has_more without last_id")
 	}
 	models := make([]ModelInfo, 0, len(response.Data))
 	for _, model := range response.Data {
@@ -370,10 +392,15 @@ func (s *AnthropicStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
 		}
 		models = append(models, ModelInfo{ID: model.ID, Name: name})
 	}
-	return models, nil
+	next := ""
+	if response.HasMore {
+		next = response.LastID
+	}
+	return ModelPage{Models: models, Next: next}, nil
 }
 
-func (s *AnthropicStandard) ExtraBody(modelID, thinkingEffort string) map[string]any {
+// RequestExtras implements RequestExtras.
+func (s *AnthropicStandard) RequestExtras(modelID, thinkingEffort string) map[string]any {
 	if thinkingEffort == "" {
 		return nil
 	}
@@ -408,12 +435,9 @@ func supportsAnthropicThinking(modelID string) bool {
 		strings.Contains(modelID, "4.")
 }
 
+// ContextWindow implements ProtocolMetadata.
 func (s *AnthropicStandard) ContextWindow(modelID string) int {
 	return LookupContextWindow(modelID)
-}
-
-func (s *AnthropicStandard) UsageFromResponse(resp *ChatResponse) (int, int, int) {
-	return UsageFromResponse(resp)
 }
 
 type anthropicResponse struct {

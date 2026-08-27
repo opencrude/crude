@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -72,8 +73,12 @@ func TestHandleFetchModelsAttachesOAuth(t *testing.T) {
 // cause of the reported HTTP 400 on model fetch.
 func TestCodexModelsEndpointHasClientVersion(t *testing.T) {
 	std := &provider.CodexStandard{}
-	endpoint := std.ModelsEndpoint("https://chatgpt.com/backend-api/codex")
-	if !strings.Contains(endpoint, "/models?client_version=") {
+	base, err := url.Parse("https://chatgpt.com/backend-api/codex")
+	if err != nil {
+		t.Fatalf("parse base: %v", err)
+	}
+	endpoint := std.ModelsURL(base, "")
+	if !strings.Contains(endpoint.String(), "/models?client_version=") {
 		t.Errorf("endpoint = %q, want /models?client_version=...", endpoint)
 	}
 }

@@ -14,7 +14,8 @@ func TestCodexDecodeModelsContextWindows(t *testing.T) {
 		},
 	})
 	std := &CodexStandard{}
-	models, err := std.DecodeModels(body)
+	page, err := std.DecodeModelsPage(body)
+	models := page.Models
 	if err != nil {
 		t.Fatalf("DecodeModels: %v", err)
 	}

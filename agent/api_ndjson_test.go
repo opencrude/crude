@@ -1,11 +1,9 @@
 package agent
 
 import (
-	"bufio"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"crude/provider"
@@ -45,30 +43,5 @@ func TestCompleteStreamOllamaNDJSON(t *testing.T) {
 	}
 	if result.Usage.PromptTokens != 5 || result.Usage.CompletionTokens != 2 {
 		t.Errorf("usage = %+v", result.Usage)
-	}
-}
-
-func TestNDJSONToSSEReaderReemitsLinesAsDataEvents(t *testing.T) {
-	r := newNDJSONToSSEReader(bufio.NewReader(strings.NewReader(
-		`{"a":1}` + "\n" +
-			`   ` + "\n" + // blank line must be skipped
-			`{"b":2}` + "\n")))
-	var out strings.Builder
-	buf := make([]byte, 64)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			out.Write(buf[:n])
-		}
-		if err != nil {
-			break
-		}
-	}
-	got := out.String()
-	if !strings.Contains(got, "data: {\"a\":1}\n\n") || !strings.Contains(got, "data: {\"b\":2}\n\n") {
-		t.Errorf("output missing SSE data events: %q", got)
-	}
-	if strings.Contains(got, "data:    \n") {
-		t.Errorf("blank line should not be emitted as an event: %q", got)
 	}
 }

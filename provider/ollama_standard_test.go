@@ -163,14 +163,15 @@ func TestOllamaStreamDecoderAccumulatesAndTerminates(t *testing.T) {
 
 func TestOllamaDecodeModelsFromTags(t *testing.T) {
 	s := &OllamaStandard{}
-	models, err := s.DecodeModels([]byte(`{"models":[
+	page, err := s.DecodeModelsPage([]byte(`{"models":[
 		{"name":"llama3:8b","model":"llama3:8b","details":{"parameter_size":"8B"}},
 		{"name":"","model":""},
 		{"model":"mistral:7b"}
 	]}`))
 	if err != nil {
-		t.Fatalf("DecodeModels: %v", err)
+		t.Fatalf("DecodeModelsPage: %v", err)
 	}
+	models := page.Models
 	if len(models) != 2 {
 		t.Fatalf("models = %+v", models)
 	}
@@ -179,16 +180,16 @@ func TestOllamaDecodeModelsFromTags(t *testing.T) {
 	}
 }
 
-func TestOllamaExtraBodyThinkingToggle(t *testing.T) {
+func TestOllamaRequestExtrasThinkingToggle(t *testing.T) {
 	s := &OllamaStandard{}
-	if got := s.ExtraBody("qwen3", ""); got != nil {
-		t.Errorf("ExtraBody(empty) = %#v, want nil", got)
+	if got := s.RequestExtras("qwen3", ""); got != nil {
+		t.Errorf("RequestExtras(empty) = %#v, want nil", got)
 	}
-	if got := s.ExtraBody("qwen3", "none"); got != nil {
-		t.Errorf("ExtraBody(none) = %#v, want nil", got)
+	if got := s.RequestExtras("qwen3", "none"); got != nil {
+		t.Errorf("RequestExtras(none) = %#v, want nil", got)
 	}
-	got := s.ExtraBody("qwen3", "high")
+	got := s.RequestExtras("qwen3", "high")
 	if got["think"] != true {
-		t.Errorf("ExtraBody(high) = %#v, want think:true", got)
+		t.Errorf("RequestExtras(high) = %#v, want think:true", got)
 	}
 }

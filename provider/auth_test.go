@@ -4,25 +4,40 @@ import (
 	"testing"
 )
 
-func TestOpenAIStandardAuthOmitsEmptyKey(t *testing.T) {
-	std := &OpenAIStandard{}
-	if hdr, val := std.Auth(""); hdr != "" || val != "" {
-		t.Fatalf("empty key must yield no auth header, got %q=%q", hdr, val)
+func TestAuthHeadersOmitEmptyKey(t *testing.T) {
+	std := &AnthropicStandard{}
+	if hdr := std.AuthHeaders(""); hdr.Get("x-api-key") != "" {
+		t.Fatalf("empty key must yield no auth header, got %q", hdr.Get("x-api-key"))
 	}
-	hdr, val := std.Auth("sk-test")
-	if hdr != "Authorization" || val != "Bearer sk-test" {
-		t.Fatalf("auth header=%q %q, want Authorization: Bearer sk-test", hdr, val)
+	if got := std.AuthHeaders("sk-ant").Get("x-api-key"); got != "sk-ant" {
+		t.Fatalf("auth header = %q, want sk-ant", got)
 	}
 }
 
-func TestFetchModelsSkipsEmptyAuthHeader(t *testing.T) {
+func TestHeaderSourceSkipsEmptyAuthHeader(t *testing.T) {
 	p := FromPreset("ollama", "", "")
-	// The Provider.Auth path used by FetchModels must not emit a header
-	// when the key is empty — keyless local endpoints (Ollama, LM Studio)
-	// reject "Bearer " with 401/403.
-	hdr, val := p.Auth()
-	if hdr != "" || val != "" {
-		t.Fatalf("keyless provider auth=%q %q, want empty header", hdr, val)
+	// The header source used by every request must not emit an Authorization
+	// header when the key is empty — keyless local endpoints (Ollama, LM
+	// Studio) reject "Bearer " with 401/403.
+	headers, err := p.RequestHeaders(t.Context())
+	if err != nil {
+		t.Fatalf("headerSource: %v", err)
+	}
+	if got := headers.Get("Authorization"); got != "" {
+		t.Fatalf("keyless provider auth = %q, want empty header", got)
+	}
+}
+
+func TestHeaderSourceFallsBackToBearer(t *testing.T) {
+	// The OpenAI protocol has no ProtocolAuth capability, so the header
+	// source must apply the default Bearer scheme itself.
+	p := FromPreset("openai", "sk-test", "")
+	headers, err := p.RequestHeaders(t.Context())
+	if err != nil {
+		t.Fatalf("headerSource: %v", err)
+	}
+	if got := headers.Get("Authorization"); got != "Bearer sk-test" {
+		t.Fatalf("auth header = %q, want Bearer sk-test", got)
 	}
 }
 

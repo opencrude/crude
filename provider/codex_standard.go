@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -25,7 +26,16 @@ type CodexStandard struct {
 	OpenAIResponsesStandard
 }
 
-func (s *CodexStandard) ID() string { return "codex" }
+func (s *CodexStandard) Info() ProtocolInfo {
+	info := s.OpenAIResponsesStandard.Info()
+	info.ID = "codex"
+	info.Name = "ChatGPT Codex"
+	info.Description = "ChatGPT-subscription Responses backend (Sign in with ChatGPT)."
+	info.Root = "" // the base URL already is the backend prefix
+	info.ChatPath = "responses"
+	info.ModelsPath = "models"
+	return info
+}
 
 // EncodeRequest is the Responses envelope adapted to the stricter ChatGPT codex
 // backend contract, verified against the live endpoint:
@@ -95,22 +105,20 @@ func codexExtractInstructions(input any) (string, any) {
 	return instructions.String(), out
 }
 
-// ModelsEndpoint returns the codex URL with the required
-// client_version query parameter. The ChatGPT backend rejects the request with
-// HTTP 400 when it is missing.
-func (s *CodexStandard) ModelsEndpoint(baseURL string) string {
-	endpoint := strings.TrimRight(baseURL, "/") + "/models"
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return endpoint
-	}
-	q := u.Query()
-	q.Set("client_version", codexClientVersion)
-	u.RawQuery = q.Encode()
-	return u.String()
+// ModelsURL implements ModelLister, adding the client_version query
+// parameter the ChatGPT backend requires (HTTP 400 without it).
+func (s *CodexStandard) ModelsURL(base *url.URL, cursor string) *url.URL {
+	endpoint := joinPath(base, "models")
+	query := endpoint.Query()
+	query.Set("client_version", codexClientVersion)
+	endpoint.RawQuery = query.Encode()
+	return endpoint
 }
 
-func (s *CodexStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
+// DecodeModelsPage implements ModelLister for the codex
+// {"models":[{"slug","display_name","context_window",...}]} shape, falling
+// back to the standard OpenAI envelope in case the endpoint replies with it.
+func (s *CodexStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 	var result struct {
 		Models []struct {
 			Slug          string `json:"slug"`
@@ -120,12 +128,9 @@ func (s *CodexStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
 			Name          string `json:"name"`
 		} `json:"models"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil || len(result.Models) == 0 {
 		// Fall back to the OpenAI shape in case the endpoint replies with it.
-		return (&OpenAIResponsesStandard{}).DecodeModels(body)
-	}
-	if len(result.Models) == 0 {
-		return (&OpenAIResponsesStandard{}).DecodeModels(body)
+		return s.OpenAIResponsesStandard.DecodeModelsPage(body)
 	}
 	models := make([]ModelInfo, 0, len(result.Models))
 	for _, m := range result.Models {
@@ -145,5 +150,21 @@ func (s *CodexStandard) DecodeModels(body []byte) ([]ModelInfo, error) {
 		}
 		models = append(models, ModelInfo{ID: id, Name: name, ContextWindow: m.ContextWindow})
 	}
-	return models, nil
+	return ModelPage{Models: models}, nil
+}
+
+// SessionHeaders implements SessionScope: the ChatGPT subscription backend
+// requires originator, beta, account, and stable session/thread identifiers
+// on every request.
+func (s *CodexStandard) SessionHeaders(auth AuthContext, sessionID string) http.Header {
+	headers := http.Header{}
+	headers.Set("originator", openAIOAuthOrigin)
+	headers.Set("openai-beta", "responses=experimental")
+	headers.Set("session-id", sessionID)
+	headers.Set("thread-id", sessionID)
+	headers.Set("User-Agent", "crude/"+codexClientVersion)
+	if auth.OAuth != nil && auth.OAuth.AccountID != "" {
+		headers.Set("chatgpt-account-id", auth.OAuth.AccountID)
+	}
+	return headers
 }
