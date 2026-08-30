@@ -137,6 +137,7 @@ const planningPrompt = `# Planning Contract
 - Use update_plan for work with three or more substantive outcomes; do not make a plan for a trivial one-step task.
 - update_plan creates with objective + complete ordered steps. On an existing plan, omit unchanged objective/status/steps; if steps are supplied they are the complete desired ordered snapshot.
 - Keep plan_id and step IDs stable across updates. Reorder by changing array order; edit descriptions/dependencies in place.
+- Write step descriptions as short one-line actions (a few words each). The plan is a status readout, not a notepad: never narrate progress, file paths, or findings inside descriptions — put details in result/reason or your normal messages.
 - Keep statuses honest: pending, in_progress, completed, skipped, blocked, failed, cancelled.
 - Usually keep one step in_progress; use several only for genuinely parallel work.
 - Record a useful result on completion and a reason for skipped/blocked/failed/cancelled steps.

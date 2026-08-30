@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ func TestChatMessagesFromViewsProjectsDataWithoutPresentationState(t *testing.T)
 	if msg.ToolName != "read_file" || msg.ToolLivedAdded != 3 || msg.ToolLivedRemoved != 1 || msg.PermTag != "allowed" {
 		t.Fatalf("tool projection mismatch: %#v", msg)
 	}
-	if msg.CachedLines != nil || msg.StreamCompletedLines != nil || msg.SessionPickerSessions != nil {
+	if msg.CachedLines != nil || msg.StreamCompletedLines != nil {
 		t.Fatal("workspace hydration populated frontend presentation state")
 	}
 }
@@ -66,5 +67,25 @@ func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
 	proj := app.subPaneProjections.GetExisting("agent")
 	if proj == nil || len(proj.renderer.Messages()) != 1 || proj.renderer.Messages()[0].Content != "hello" {
 		t.Fatalf("projection did not synchronize: %#v", proj)
+	}
+}
+
+func TestCanonicalMessageFrontendRoundTrip(t *testing.T) {
+	want := workspace.ChatMessageView{
+		InternalID: "canonical", Role: "tool", Content: "result", ReferenceLabels: []string{"@x"}, Time: time.Now().Round(0),
+		ToolName: "execute_command", ToolArgs: "command: go test", ToolCommand: "go test ./...",
+		ToolInput: "needle", ToolScope: "src", ToolID: "call", ToolStatus: "success", ToolIndex: 2,
+		ToolProgressPhase: "done", ToolProgressMessage: "ok", ToolProgressLabel: "tests",
+		ToolPreviewPhase: "done", ToolEstTokens: 5, ToolLinesAdded: 2, ToolLinesRemoved: 1,
+		ToolStartTime: time.Now().Add(-time.Second).Round(0), ToolDuration: time.Second,
+		ThinkingInterrupted: true, ThinkingDuration: time.Second,
+		LifecyclePhase: "done", LifecycleProgress: 100, LifecycleProvider: "ollama",
+		LifecycleUploadedBytes: 3, LifecycleTotalBytes: 4,
+		Incomplete: true, IncompleteReason: "partial", SubPaneID: "child", PermTag: "always",
+	}
+	front := ChatMessagesFromViews([]workspace.ChatMessageView{want})[0]
+	got := workspace.ChatMessageView(workspaceMessageFromChat(front))
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("frontend canonical round-trip\n got: %#v\nwant: %#v", got, want)
 	}
 }

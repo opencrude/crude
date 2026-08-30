@@ -537,14 +537,26 @@ func sessionLabel(s sessiondb.SessionMeta) string {
 	return rendering.TruncateLine(title, 36)
 }
 
-// sessionDetail composes the right-aligned row metadata: turns, sub-agent
+// sessionDetail composes the right-aligned row metadata: user prompts, model
+// rounds, sub-agent
 // count, lifecycle status, model, and start time.
 func (s *Screen) sessionDetail(ses sessiondb.SessionMeta) string {
 	when := ""
 	if ses.CreatedAt > 0 {
 		when = time.Unix(0, ses.CreatedAt).Format("15:04")
 	}
-	parts := []string{fmt.Sprintf("%d turns", ses.TurnCount)}
+	promptLabel := "prompts"
+	if ses.TurnCount == 1 {
+		promptLabel = "prompt"
+	}
+	parts := []string{fmt.Sprintf("%d %s", ses.TurnCount, promptLabel)}
+	if ses.RoundCount > 0 {
+		roundLabel := "rounds"
+		if ses.RoundCount == 1 {
+			roundLabel = "round"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", ses.RoundCount, roundLabel))
+	}
 	if info := s.live[ses.ID]; info.SubAgents > 0 {
 		label := "sub-agents"
 		if info.SubAgents == 1 {

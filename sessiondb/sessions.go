@@ -20,6 +20,7 @@ type SessionMeta struct {
 	ClosedAt        sql.NullInt64
 	MessageCount    int
 	TurnCount       int
+	RoundCount      int // derived assistant/model rounds; not stored in sessions
 	FirstPrompt     sql.NullString
 	LastPrompt      sql.NullString
 	Summary         sql.NullString
@@ -27,6 +28,12 @@ type SessionMeta struct {
 	AgentCategory   sql.NullString
 	AgentName       sql.NullString
 	Depth           int
+}
+
+func CountAssistantRounds(db *sql.DB) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM messages WHERE role = 'assistant'`).Scan(&count)
+	return count, err
 }
 
 func Create(db *sql.DB, meta SessionMeta) error {

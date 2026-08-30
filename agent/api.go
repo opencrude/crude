@@ -109,15 +109,12 @@ func (a *Agent) completeStream(
 				estimatedInput, ctxWindow,
 			)
 		}
-		maxOut := ctxWindow / 4
-		if maxOut < 8192 {
-			maxOut = 8192
-		}
-		if maxOut > 65536 {
-			maxOut = 65536
-		}
+		maxOut := maxOutputTokensForContext(ctxWindow)
 		if maxOut > available {
-			maxOut = available
+			return completionResult{}, fmt.Errorf(
+				"active wire epoch leaves insufficient output headroom (%d input + %d output > %d context); rotate/compact the epoch",
+				estimatedInput, maxOut, ctxWindow,
+			)
 		}
 		req.MaxOutputTokens = maxOut
 	}
@@ -164,6 +161,20 @@ func (a *Agent) completeStream(
 
 	a.logCompletedTurn(requestBody, result, streamStart)
 	return result, nil
+}
+
+func maxOutputTokensForContext(ctxWindow int) int {
+	if ctxWindow <= 0 {
+		return 0
+	}
+	maxOut := ctxWindow / 4
+	if maxOut < 8192 {
+		maxOut = 8192
+	}
+	if maxOut > 65536 {
+		maxOut = 65536
+	}
+	return maxOut
 }
 
 // newClient builds the provider transport client wired to this agent's

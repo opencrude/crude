@@ -632,11 +632,37 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 }
 
 func (m *App) handleUsageData(data any, agentID string) {
+	if pane := m.PaneMgr.Get(agentID); pane != nil {
+		pane.TokenCount += usageEventTokens(data)
+	}
 	usage, ok := m.RecordAgentUsage(agentID, data)
 	if !ok || m.AgentMgr.ActiveID() != agentID {
 		return
 	}
 	m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated, usage.CostUpperBound)
+}
+
+func usageEventTokens(data any) int {
+	read := func(values map[string]any, key string) int {
+		switch value := values[key].(type) {
+		case int:
+			return value
+		case int64:
+			return int(value)
+		case float64:
+			return int(value)
+		default:
+			return 0
+		}
+	}
+	switch values := data.(type) {
+	case map[string]any:
+		return read(values, "prompt") + read(values, "completion")
+	case map[string]int:
+		return values["prompt"] + values["completion"]
+	default:
+		return 0
+	}
 }
 
 func (m *App) handleSubAgentQuestion(evt workspace.AgentEvent) {

@@ -1,9 +1,13 @@
 package session
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"crude/agent"
+	"crude/logger"
 	"crude/provider"
 	"crude/sessiondb"
 )
@@ -145,6 +149,95 @@ func TestPersistedToolStatusDoesNotMislabelValidationErrorAsCancelled(t *testing
 	}
 	if got := persistedToolStatus(cancelled, ""); got != "cancelled" {
 		t.Fatalf("cancellation status = %q, want cancelled", got)
+	}
+}
+
+func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
+	tracker := &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}
+	tracker.updateToolCall("call-1", "run_sub_agent", "description: inspect wait: true")
+	result := "## Sub-Agent Result\n**Session:** child-1\n**Status:** OK"
+	tracker.updateToolResult("call-1", "run_sub_agent", result, "success", 1500, 42, 3, 1)
+	message := provider.NewTextMessage("tool", result)
+	message.ToolCallID = "call-1"
+	meta := canonicalizeDisplayMeta(message, tracker.get("call-1"), `{"description":"inspect","wait":true}`, 3, time.Now())
+	if meta.SnapshotVersion != sessiondb.ConversationSnapshotVersion || len(meta.Snapshots) != 1 {
+		t.Fatalf("canonical metadata = %#v", meta)
+	}
+	snapshot := meta.Snapshots[0]
+	if snapshot.ToolName != "run_sub_agent" || snapshot.ToolStatus != "success" ||
+		snapshot.ToolPreviewPhase != "done" || snapshot.SubPaneID != "child-1" ||
+		snapshot.ToolDuration != 1500*time.Millisecond || snapshot.ToolEstTokens != 42 ||
+		snapshot.ToolLinesAdded != 3 || snapshot.ToolLinesRemoved != 1 {
+		t.Fatalf("canonical tool snapshot = %#v", snapshot)
+	}
+}
+
+func TestCanonicalUserSnapshotPreservesDurableMessageIDForHistory(t *testing.T) {
+	message := provider.NewTextMessage("user", "change the files")
+	message.InternalID = "msg-42"
+	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: "change the files"}, "", 0, time.Now())
+	if len(meta.Snapshots) != 1 || meta.Snapshots[0].InternalID != "msg-42" {
+		t.Fatalf("durable user message identity = %#v", meta.Snapshots)
+	}
+}
+
+func TestFinalizeTurnPersistsActiveWireEpochSeparatelyFromFullArchive(t *testing.T) {
+	db, err := sessiondb.OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := sessiondb.Create(db, sessiondb.SessionMeta{ID: "session", ProjectPath: "/project", ProjectName: "project", CreatedAt: time.Now().UnixNano()}); err != nil {
+		t.Fatal(err)
+	}
+	lg, err := logger.New(logger.Options{HomeDir: t.TempDir(), SessionID: "session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lg.Close() })
+	s := &Session{
+		db: db, sessionID: "session", logger: lg, turnNumber: 1,
+		msgs:     []provider.ChatMessage{provider.NewTextMessage("user", "archived old request")},
+		msgTurns: []int{1}, displayMetas: []sessiondb.DisplayMeta{{DisplayRole: "user"}},
+		wireGuard: agent.NewWireGuardAt(3, "active_context_compaction"),
+	}
+	active := []provider.ChatMessage{
+		provider.NewWireHiddenMessage("checkpoint"),
+		provider.NewTextMessage("user", "current request"),
+		provider.NewTextMessage("assistant", "answer"),
+	}
+	agentMessages := append([]provider.ChatMessage{provider.NewTextMessage("system", "base")}, active...)
+	s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", active)
+	s.flushWg.Wait()
+	state, ok, err := sessiondb.LoadWireState(db, "session")
+	if err != nil || !ok || state.Epoch != 3 || len(state.Messages) != 3 || state.Messages[0].Content.String() != "checkpoint" {
+		t.Fatalf("wire state=%#v ok=%v err=%v", state, ok, err)
+	}
+	if len(s.msgs) != 2 || s.msgs[0].Content.String() != "archived old request" || s.msgs[1].Content.String() != "answer" {
+		t.Fatalf("full archive was replaced by active epoch: %#v", s.msgs)
+	}
+}
+
+func TestManualCompactRotatesWireEpochWithoutDeletingArchive(t *testing.T) {
+	var history []provider.ChatMessage
+	for i := 0; i < 80; i++ {
+		history = append(history,
+			provider.NewTextMessage("assistant", strings.Repeat("analysis ", 1000)),
+			provider.NewTextMessage("tool", strings.Repeat("output ", 1000)),
+		)
+	}
+	lg, err := logger.New(logger.Options{HomeDir: t.TempDir(), SessionID: "compact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lg.Close() })
+	s := &Session{
+		logger: lg, msgs: append([]provider.ChatMessage(nil), history...),
+		wireMessages: append([]provider.ChatMessage(nil), history...), wireGuard: agent.NewWireGuard(),
+	}
+	result := s.HandleCompact()
+	if result.Error != "" || len(s.msgs) != len(history) || len(s.wireMessages) >= len(history) || s.rootWireGuard().Epoch() <= 1 {
+		t.Fatalf("compact result=%+v archive=%d wire=%d epoch=%d", result, len(s.msgs), len(s.wireMessages), s.rootWireGuard().Epoch())
 	}
 }
 

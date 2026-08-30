@@ -14,6 +14,7 @@ package workspace
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1092,6 +1093,7 @@ func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.Session
 		return r
 	}
 	totalCost, _ := sessiondb.GetCumulativeCost(db)
+	m.RoundCount, _ = sessiondb.CountAssistantRounds(db)
 	// Preserve the model/provider from the registry if the DB is empty.
 	if m.Model == "" {
 		m.Model = r.Model
@@ -1155,6 +1157,13 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 	toolNameByCallID := buildToolNameIndex(msgs)
 
 	for _, mm := range msgs {
+		if mm.Meta.SnapshotVersion > 0 {
+			for _, snapshot := range mm.Meta.Snapshots {
+				snapshot.ReferenceLabels = append([]string(nil), snapshot.ReferenceLabels...)
+				result = append(result, snapshot)
+			}
+			continue
+		}
 		role := mm.Meta.DisplayRole
 		if role == "" {
 			role = mm.Msg.Role
@@ -1254,6 +1263,8 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 			}
 			if mm.Meta.SubPaneID != "" {
 				chatMsg.SubPaneID = mm.Meta.SubPaneID
+			} else if toolName == "run_sub_agent" {
+				chatMsg.SubPaneID = persistedSubAgentID(content)
 			}
 
 			result = append(result, chatMsg)
@@ -1270,6 +1281,27 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 	}
 
 	return result
+}
+
+func persistedSubAgentID(content string) string {
+	var payload map[string]any
+	if json.Unmarshal([]byte(content), &payload) == nil {
+		for _, key := range []string{"session_id", "handle_id", "agent_id"} {
+			if value, _ := payload[key].(string); value != "" {
+				return value
+			}
+		}
+	}
+	marker := "**Session:**"
+	index := strings.Index(content, marker)
+	if index < 0 {
+		return ""
+	}
+	fields := strings.Fields(strings.TrimSpace(content[index+len(marker):]))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], "`*()")
 }
 
 func persistedToolInput(toolName, args string) string {

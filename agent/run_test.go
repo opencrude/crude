@@ -256,7 +256,7 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 		if message.Role == "assistant" && message.ContentString() == "part one" {
 			sawPartial = true
 		}
-		if message.Role == "system" && strings.Contains(message.ContentString(), "Continue the previous response") {
+		if message.Role == "user" && strings.Contains(message.ContentString(), "Continue the previous response") {
 			sawContinuation = true
 		}
 	}
@@ -543,7 +543,7 @@ func TestRunRecoversToolPanicsAndContinues(t *testing.T) {
 	}
 }
 
-func TestRunKeepsMutableRuntimeStatusAtRequestTail(t *testing.T) {
+func TestRunPersistsRuntimeStatusInAppendOnlyWirePrefix(t *testing.T) {
 	var requestCount atomic.Int32
 	requests := make(chan []provider.ChatMessage, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,19 +583,22 @@ func TestRunKeepsMutableRuntimeStatusAtRequestTail(t *testing.T) {
 	if len(captured) != 2 {
 		t.Fatalf("request count = %d, want 2", len(captured))
 	}
-	for requestIndex, messages := range captured {
-		if len(messages) == 0 || !strings.HasPrefix(messages[len(messages)-1].ContentString(), "## Runtime Status") {
-			t.Fatalf("request %d runtime status was not the tail: %#v", requestIndex, messages)
-		}
-		for i := 0; i < len(messages)-1; i++ {
-			if strings.HasPrefix(messages[i].ContentString(), "## Runtime Status") {
-				t.Fatalf("request %d retained mutable status inside reusable prefix at %d", requestIndex, i)
-			}
-		}
+	if first := captured[0]; len(first) == 0 || !strings.HasPrefix(first[len(first)-1].ContentString(), "## Runtime Status") {
+		t.Fatalf("first request runtime status was not committed: %#v", first)
 	}
 	second := captured[1]
-	if len(second) < 5 || second[2].Role != "assistant" || second[3].Role != "tool" {
-		t.Fatalf("tool exchange did not precede the new status suffix: %#v", second)
+	if len(second) <= len(captured[0]) {
+		t.Fatalf("second request did not append to first: %#v", second)
+	}
+	for i := range captured[0] {
+		firstJSON, _ := json.Marshal(captured[0][i])
+		secondJSON, _ := json.Marshal(second[i])
+		if string(firstJSON) != string(secondJSON) {
+			t.Fatalf("wire prefix mutated at message %d\nfirst=%s\nsecond=%s", i, firstJSON, secondJSON)
+		}
+	}
+	if second[len(captured[0])].Role != "assistant" {
+		t.Fatalf("tool exchange did not extend the accepted prefix: %#v", second)
 	}
 }
 

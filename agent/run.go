@@ -77,14 +77,48 @@ func (a *Agent) Run(
 	l.Debug("AGENT", "run_enter", "msgs", len(sessionMessages), "tools", len(allTools), "session_id", sessionID)
 
 	lastReply := ""
+	guard := a.WireGuard
+	if guard == nil {
+		guard = NewWireGuard()
+		a.WireGuard = guard
+	}
+	sampling := a.Provider.Sampling()
+	envelopeOptions := struct {
+		Protocol        string   `json:"protocol"`
+		Temperature     *float64 `json:"temperature,omitempty"`
+		TopP            *float64 `json:"top_p,omitempty"`
+		Think           bool     `json:"think"`
+		MaxOutputTokens int      `json:"max_output_tokens"`
+	}{
+		Protocol: a.Provider.ProtocolID(), Temperature: sampling.Temperature, TopP: sampling.TopP,
+		Think: true, MaxOutputTokens: maxOutputTokensForContext(a.Provider.ContextWindow(a.Model)),
+	}
+	if rotated, err := guard.EnsureEnvelope(a.Model, systemPrompt, allTools, envelopeOptions); err != nil {
+		a.emitError(emit, fmt.Errorf("prepare wire envelope: %w", err))
+		return append([]provider.ChatMessage(nil), sessionMessages...)
+	} else if rotated {
+		l.Warn("CACHE", "epoch_rotated", "reason", "envelope_changed", "epoch", guard.Epoch())
+	}
 	msgs := []provider.ChatMessage{
 		{Role: "system", Content: provider.TextContent(systemPrompt), CacheControl: &provider.CacheControl{Type: "ephemeral"}},
 	}
 	systemHash := sha256.Sum256([]byte(systemPrompt))
 	l.Debug("CACHE", "prefix", "position", 0, "len", len(systemPrompt), "sha256", fmt.Sprintf("%x", systemHash[:8]), "protocol", a.Provider.ProtocolID())
-	for _, m := range sessionMessages {
-		if m.Role != "system" {
-			msgs = append(msgs, m)
+	msgs = append(msgs, sessionMessages...)
+	ledger := append([]provider.ChatMessage(nil), msgs...)
+	appendWire := func(messages ...provider.ChatMessage) {
+		msgs = append(msgs, messages...)
+		ledger = append(ledger, messages...)
+	}
+	returnMessages := func() []provider.ChatMessage {
+		a.lastWireMessages = append([]provider.ChatMessage(nil), msgs[1:]...)
+		return append([]provider.ChatMessage(nil), ledger...)
+	}
+	lastRuntimeStatus := ""
+	for i := len(sessionMessages) - 1; i >= 0; i-- {
+		if sessionMessages[i].WireHidden && strings.HasPrefix(sessionMessages[i].Content.String(), "## Runtime Status") {
+			lastRuntimeStatus = sessionMessages[i].Content.String()
+			break
 		}
 	}
 
@@ -110,7 +144,8 @@ func (a *Agent) Run(
 			return nil
 		}
 		content := "## Runtime Status\n\n" + strings.Join(parts, "\n\n")
-		return &provider.ChatMessage{Role: "system", Content: provider.TextContent(content)}
+		message := provider.NewWireHiddenMessage(content)
+		return &message
 	}
 
 	var steps []StepRecord
@@ -118,15 +153,13 @@ func (a *Agent) Run(
 	var lastPromptTokens int
 
 	ctxWindow := a.Provider.ContextWindow(a.Model)
-	ctxLimit := int(float64(ctxWindow) * contextSafetyPct)
-	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "safety_limit", ctxLimit, "safety_pct", contextSafetyPct)
+	activeWindow := activeWireContextWindow(a.Provider.ProtocolID(), ctxWindow)
+	ctxLimit := int(float64(activeWindow) * activeWireSafetyPct)
+	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "active_window", activeWindow, "safety_limit", ctxLimit, "safety_pct", activeWireSafetyPct)
 
 	stopConditions := []stopCondition{
 		func(steps []StepRecord) bool {
 			return hasRepeatedToolCalls(steps, loopDetectWindow, loopDetectRepeats)
-		},
-		func(steps []StepRecord) bool {
-			return ctxLimit > 0 && lastPromptTokens > ctxLimit
 		},
 	}
 
@@ -140,6 +173,7 @@ func (a *Agent) Run(
 			return
 		}
 		msgs = removeMessagesByInternalID(msgs, admittedBtwIDs)
+		ledger = removeMessagesByInternalID(ledger, admittedBtwIDs)
 		emit(AgentEvent{Type: "btw_cleared", Data: map[string]any{
 			"internal_ids": append([]string(nil), admittedBtwIDs...),
 		}})
@@ -150,7 +184,7 @@ func (a *Agent) Run(
 			clearUnsentBtw()
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-			return msgs
+			return returnMessages()
 		}
 
 		emit(AgentEvent{Type: "phase", Data: map[string]any{
@@ -171,7 +205,7 @@ func (a *Agent) Run(
 					}
 					btwMsg := btw.Message
 					l.Info("BTW", "user_interruption", "step", step)
-					msgs = append(msgs, btwMsg)
+					appendWire(btwMsg)
 					admittedBtwIDs = append(admittedBtwIDs, btwMsg.InternalID)
 					consumed++
 				default:
@@ -181,10 +215,19 @@ func (a *Agent) Run(
 		}
 		_ = drainBtw()
 
-		requestMsgs := msgs
 		if smStatus := buildSMStatusMsg(); smStatus != nil {
-			requestMsgs = append(append([]provider.ChatMessage(nil), msgs...), *smStatus)
+			if content := smStatus.Content.String(); content != lastRuntimeStatus {
+				appendWire(*smStatus)
+				lastRuntimeStatus = content
+			}
 		}
+		requestMsgs := msgs
+		wireCandidate, wireErr := guard.Check(requestMsgs)
+		if wireErr != nil {
+			a.emitError(emit, fmt.Errorf("refusing non-append-only provider request: %w", wireErr))
+			return returnMessages()
+		}
+		l.Debug("CACHE", "wire_request", "epoch", wireCandidate.Epoch(), "digest", wireCandidate.Digest(), "messages", len(requestMsgs))
 
 		prevPreviewKeys := make(map[string]string)
 
@@ -214,6 +257,9 @@ func (a *Agent) Run(
 				}})
 			},
 			func() {
+				if acceptErr := guard.Accept(wireCandidate); acceptErr != nil {
+					l.Error("CACHE", "wire_accept_failed", "error", acceptErr.Error())
+				}
 				for _, internalID := range admittedBtwIDs {
 					emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
 				}
@@ -260,7 +306,7 @@ func (a *Agent) Run(
 				}})
 			}
 			if completion.Content != "" || completion.ReasoningContent != "" {
-				msgs = append(msgs, provider.ChatMessage{
+				appendWire(provider.ChatMessage{
 					Role:              "assistant",
 					Content:           provider.TextContent(completion.Content),
 					ReasoningContent:  completion.ReasoningContent,
@@ -272,7 +318,7 @@ func (a *Agent) Run(
 			var apiErr *apiCallError
 			if errors.As(err, &apiErr) && apiErr.IsCancellation() {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-				return msgs
+				return returnMessages()
 			}
 			if apiErr != nil && apiErr.Partial && errors.Is(err, io.ErrUnexpectedEOF) &&
 				len(completion.ToolCalls) == 0 &&
@@ -284,15 +330,11 @@ func (a *Agent) Run(
 					"attempt": continuations + 1,
 					"backoff": float64(0),
 				}})
-				msgs = append(msgs, provider.ChatMessage{
-					Role:         "system",
-					Content:      provider.TextContent(continuePreviousResponse),
-					CacheControl: &provider.CacheControl{Type: "ephemeral"},
-				})
+				appendWire(provider.NewWireHiddenMessage(continuePreviousResponse))
 				continue
 			}
 			a.emitError(emit, err)
-			return msgs
+			return returnMessages()
 		}
 
 		promptTokens := completion.Usage.PromptTokens
@@ -359,7 +401,7 @@ func (a *Agent) Run(
 				"provider truncated a tool call response (%s); tools were not executed",
 				finishReason,
 			))
-			return msgs
+			return returnMessages()
 		}
 
 		assistantMsg := provider.ChatMessage{
@@ -373,17 +415,13 @@ func (a *Agent) Run(
 		if hasToolCalls {
 			assistantMsg.ToolCalls = toolCalls
 		}
-		msgs = append(msgs, assistantMsg)
+		appendWire(assistantMsg)
 
 		if !hasToolCalls {
 			if isAutoContinuableFinishReason(finishReason) && continuations < maxAutoContinuations {
 				continuations++
 				l.Warn("AGENT", "auto_continue", "finish_reason", finishReason, "continuation", continuations)
-				msgs = append(msgs, provider.ChatMessage{
-					Role:         "system",
-					Content:      provider.TextContent(continuePreviousResponse),
-					CacheControl: &provider.CacheControl{Type: "ephemeral"},
-				})
+				appendWire(provider.NewWireHiddenMessage(continuePreviousResponse))
 				continue
 			}
 			// A BTW message can arrive while the terminal completion is in
@@ -395,7 +433,7 @@ func (a *Agent) Run(
 			}
 			if a.Depth > 0 && !a.writeReportCalled {
 				a.logger.Warn("SUBAGENT", "write_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
-				msgs = append(msgs, provider.ChatMessage{
+				appendWire(provider.ChatMessage{
 					Role:    "user",
 					Content: provider.TextContent("[SYSTEM] You are about to end your loop without calling write_report. Your work will be LOST — the main agent cannot see your chat messages. You MUST call write_report with a detailed report before ending. Do it now."),
 				})
@@ -411,7 +449,7 @@ func (a *Agent) Run(
 			} else {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Done.", "reason": doneReason}})
 			}
-			return msgs
+			return returnMessages()
 		}
 		continuations = 0
 
@@ -452,12 +490,16 @@ func (a *Agent) Run(
 		var lastToolResultIdx int
 		for _, r := range results {
 			toolError := r.toolError || IsToolError(r.result.Content)
-			msgs = append(msgs, provider.ChatMessage{
+			toolMessage := provider.ChatMessage{
 				Role:       "tool",
 				ToolCallID: r.id,
 				Content:    provider.TextContent(r.result.Content),
 				ToolError:  toolError,
-			})
+			}
+			if r.index == len(results)-1 {
+				toolMessage.CacheControl = &provider.CacheControl{Type: "ephemeral"}
+			}
+			appendWire(toolMessage)
 			lastToolResultIdx = len(msgs) - 1
 			steps = append(steps, StepRecord{
 				Content:      accumulatedText,
@@ -472,22 +514,31 @@ func (a *Agent) Run(
 		}
 
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
-			msgs[lastToolResultIdx].CacheControl = &provider.CacheControl{Type: "ephemeral"}
 			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
 		}
 
 		if ctx.Err() != nil {
 			l.Warn("CANCEL", "turn_cancelled_after_tools", "step", step)
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-			return msgs
+			return returnMessages()
+		}
+		if ctxLimit > 0 && lastPromptTokens > ctxLimit {
+			compacted := compactWireEpoch(msgs[1:], activeWindow, a.Model)
+			beforeTokens := provider.EstimateMessagesTotal(msgs[1:], a.Model)
+			afterTokens := provider.EstimateMessagesTotal(compacted, a.Model)
+			if afterTokens < beforeTokens {
+				ledger = append(ledger, compacted[0])
+				msgs = append([]provider.ChatMessage{msgs[0]}, compacted...)
+				guard.Rotate("active_context_compaction")
+				_, _ = guard.EnsureEnvelope(a.Model, systemPrompt, allTools, envelopeOptions)
+				lastRuntimeStatus = ""
+				l.Warn("CACHE", "epoch_rotated", "reason", "active_context_compaction", "epoch", guard.Epoch(), "messages", len(msgs), "prompt_tokens", lastPromptTokens)
+				continue
+			}
 		}
 
 		if isStopConditionMet(stopConditions, steps) {
 			reason := "stop_condition_met"
-			if ctxLimit > 0 && lastPromptTokens > ctxLimit {
-				reason = fmt.Sprintf("context_limit_reached (%d/%d tokens)", lastPromptTokens, ctxWindow)
-				l.Warn("CTX", "overflow", "prompt_tokens", lastPromptTokens, "limit", ctxLimit, "window", ctxWindow)
-			}
 			loopSigs := 0
 			if len(steps) >= loopDetectWindow {
 				window := steps[len(steps)-loopDetectWindow:]
@@ -506,7 +557,7 @@ func (a *Agent) Run(
 			} else {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": accumulatedText, "reason": reason}})
 			}
-			return msgs
+			return returnMessages()
 		}
 	}
 }

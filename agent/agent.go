@@ -23,7 +23,6 @@ type AgentEvent struct {
 const (
 	loopDetectWindow     = 8
 	loopDetectRepeats    = 4
-	contextSafetyPct     = 0.85
 	maxAutoContinuations = 4
 )
 
@@ -36,20 +35,22 @@ type StepRecord struct {
 }
 
 type Agent struct {
-	Provider      *provider.Provider
-	Model         string
-	AgentID       AgentID
-	Policy        safety.Policy
-	Depth         int
-	ParentID      AgentID
-	MaxRetries    int
-	FilteredTools []tools.ToolDef
-	ToolFn        func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
-	logger        *logger.Logger
-	turn          *logger.TurnLogger
-	Emit          func(AgentEvent)
-	Ctx           context.Context
-	Yolo          bool
+	Provider         *provider.Provider
+	WireGuard        *WireGuard
+	lastWireMessages []provider.ChatMessage
+	Model            string
+	AgentID          AgentID
+	Policy           safety.Policy
+	Depth            int
+	ParentID         AgentID
+	MaxRetries       int
+	FilteredTools    []tools.ToolDef
+	ToolFn           func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	logger           *logger.Logger
+	turn             *logger.TurnLogger
+	Emit             func(AgentEvent)
+	Ctx              context.Context
+	Yolo             bool
 	// YoloMode supplies the owning session's live policy. Yolo remains the
 	// fallback for standalone agents and always-YOLO sub-agents.
 	YoloMode    func() bool
@@ -64,6 +65,13 @@ type Agent struct {
 	writeReportCalled bool
 	autoHandleMu      sync.Mutex
 	autoHandleCounter int
+}
+
+func (a *Agent) ActiveWireMessages() []provider.ChatMessage {
+	if a == nil {
+		return nil
+	}
+	return append([]provider.ChatMessage(nil), a.lastWireMessages...)
 }
 
 func (a *Agent) yoloEnabled() bool {

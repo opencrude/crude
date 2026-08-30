@@ -4,8 +4,51 @@ import (
 	"time"
 
 	"crude/provider"
-	"crude/sessiondb"
 )
+
+// ConversationMessage is the presentation-neutral canonical message shared by
+// live workspace state, durable session snapshots, and every frontend. Adding
+// a lifecycle field here automatically includes it in JSON persistence; TUI
+// rendering caches and selection state deliberately live elsewhere.
+type ConversationMessage struct {
+	InternalID      string    `json:"internal_id,omitempty"`
+	Role            string    `json:"role"`
+	Content         string    `json:"content,omitempty"`
+	ReferenceLabels []string  `json:"reference_labels,omitempty"`
+	Time            time.Time `json:"time,omitempty"`
+
+	ToolName            string        `json:"tool_name,omitempty"`
+	ToolArgs            string        `json:"tool_args,omitempty"`
+	ToolCommand         string        `json:"tool_command,omitempty"`
+	ToolInput           string        `json:"tool_input,omitempty"`
+	ToolScope           string        `json:"tool_scope,omitempty"`
+	ToolID              string        `json:"tool_id,omitempty"`
+	ToolStatus          string        `json:"tool_status,omitempty"`
+	ToolIndex           int           `json:"tool_index,omitempty"`
+	ToolProgressPhase   string        `json:"tool_progress_phase,omitempty"`
+	ToolProgressMessage string        `json:"tool_progress_message,omitempty"`
+	ToolProgressLabel   string        `json:"tool_progress_label,omitempty"`
+	ToolPreviewPhase    string        `json:"tool_preview_phase,omitempty"`
+	ToolEstTokens       int           `json:"tool_est_tokens,omitempty"`
+	ToolLinesAdded      int           `json:"tool_lines_added,omitempty"`
+	ToolLinesRemoved    int           `json:"tool_lines_removed,omitempty"`
+	ToolStartTime       time.Time     `json:"tool_start_time,omitempty"`
+	ToolDuration        time.Duration `json:"tool_duration,omitempty"`
+
+	ThinkingActive         bool          `json:"thinking_active,omitempty"`
+	ThinkingInterrupted    bool          `json:"thinking_interrupted,omitempty"`
+	ThinkingDuration       time.Duration `json:"thinking_duration,omitempty"`
+	LifecyclePhase         string        `json:"lifecycle_phase,omitempty"`
+	LifecycleProgress      int           `json:"lifecycle_progress,omitempty"`
+	LifecycleProvider      string        `json:"lifecycle_provider,omitempty"`
+	LifecycleUploadedBytes int64         `json:"lifecycle_uploaded_bytes,omitempty"`
+	LifecycleTotalBytes    int64         `json:"lifecycle_total_bytes,omitempty"`
+	Incomplete             bool          `json:"incomplete,omitempty"`
+	IncompleteReason       string        `json:"incomplete_reason,omitempty"`
+	SubPaneID              string        `json:"sub_pane_id,omitempty"`
+	PermTag                string        `json:"perm_tag,omitempty"`
+	PendingBtw             bool          `json:"-"`
+}
 
 const (
 	ToolPreviewPreparing = "preparing"
@@ -500,10 +543,6 @@ type ChatMessage struct {
 	CursorLine           int
 	StreamCompletedLines []string
 	StreamCompletedLen   int
-
-	SessionPickerSessions []sessiondb.SessionMeta
-	SessionPickerSelected int
-	SessionPickerFocused  bool
 }
 
 type AgentEventMsg struct {

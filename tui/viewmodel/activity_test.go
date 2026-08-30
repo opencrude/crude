@@ -133,7 +133,7 @@ func TestAgentSidebarProjectsAgentForest(t *testing.T) {
 	}
 }
 
-func TestAgentsPanelGetsReadableWidthWithoutChangingFileTreeWidth(t *testing.T) {
+func TestActivityPanelsShareConfiguredSidebarWidth(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 120
 	app.Tree = NewTreeState(filetree.NewFileTreeModel(t.TempDir()), 30)
@@ -143,7 +143,7 @@ func TestAgentsPanelGetsReadableWidthWithoutChangingFileTreeWidth(t *testing.T) 
 	fileWidth := app.sidebarPanelWidth()
 	app.activityView = activityAgents
 	agentWidth := app.sidebarPanelWidth()
-	if fileWidth != 30 || agentWidth < agentsPanelMinWidth || app.Tree.Width != 30 {
+	if fileWidth != 30 || agentWidth != fileWidth || app.Tree.Width != 30 {
 		t.Fatalf("file=%d agents=%d stored=%d", fileWidth, agentWidth, app.Tree.Width)
 	}
 }

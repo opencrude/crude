@@ -85,6 +85,23 @@ func (w *Window) OpenTab(title, icon string, closable bool) *Tab {
 	return w.OpenTabWithLayout(title, icon, closable, TabHorizontal)
 }
 
+func (w *Window) OpenTabInactive(title, icon string, closable bool) *Tab {
+	for i := range w.tabs {
+		if w.tabs[i].Title == title {
+			return &w.tabs[i]
+		}
+	}
+	active := w.active
+	t := newTab(title, icon, closable, TabHorizontal)
+	w.tabs = append(w.tabs, t)
+	if len(w.tabs) == 1 || active < 0 {
+		w.active = 0
+	} else {
+		w.active = active
+	}
+	return &w.tabs[len(w.tabs)-1]
+}
+
 func (w *Window) OpenTabWithLayout(title, icon string, closable bool, layout TabLayout) *Tab {
 	for i := range w.tabs {
 		if w.tabs[i].Title == title {

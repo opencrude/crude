@@ -58,9 +58,16 @@ func TestSubAgentTranscriptIsReplayable(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	handle := &agent.SubAgentHandle{DB: db, SessionID: "child"}
+	assistantTool := provider.ChatMessage{Role: "assistant", ToolCalls: []provider.ToolCall{{
+		ID: "call-1", Function: provider.FunctionCall{Name: "execute_command", Arguments: `{"command":"go test ./..."}`},
+	}}}
+	toolResult := provider.NewTextMessage("tool", "tests passed")
+	toolResult.ToolCallID = "call-1"
 	if err := persistSubAgentTranscript(handle, []provider.ChatMessage{
 		provider.NewTextMessage("system", "system"),
 		provider.NewTextMessage("user", "inspect lifecycle"),
+		assistantTool,
+		toolResult,
 		provider.NewTextMessage("assistant", "found the bug"),
 	}); err != nil {
 		t.Fatalf("persistSubAgentTranscript: %v", err)
@@ -69,9 +76,18 @@ func TestSubAgentTranscriptIsReplayable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadMessages: %v", err)
 	}
-	if len(messages) != 2 || messages[0].ContentString() != "inspect lifecycle" ||
-		messages[1].ContentString() != "found the bug" {
+	if len(messages) != 4 || messages[0].ContentString() != "inspect lifecycle" ||
+		messages[3].ContentString() != "found the bug" {
 		t.Fatalf("messages = %+v", messages)
+	}
+	withMeta, err := sessiondb.LoadMessagesWithMeta(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withMeta[0].Meta.Snapshots[0].Role != "assignment" || len(withMeta[2].Meta.Snapshots) != 1 ||
+		withMeta[2].Meta.Snapshots[0].ToolName != "execute_command" ||
+		withMeta[2].Meta.Snapshots[0].ToolCommand != "go test ./..." {
+		t.Fatalf("canonical child transcript metadata = %+v", withMeta)
 	}
 }
 

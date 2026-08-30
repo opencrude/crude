@@ -105,6 +105,24 @@ func TestZZLiveOllamaStructuredQuestionLifecycle(t *testing.T) {
 	}
 }
 
+func TestZZLiveOllamaWireGuardAcrossTurns(t *testing.T) {
+	a := liveOllamaAgent(t, "reply")
+	a.WireGuard = NewWireGuard()
+	var errors []AgentEvent
+	emit := func(event AgentEvent) {
+		if event.Type == "error" {
+			errors = append(errors, event)
+		}
+	}
+	first := a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Reply exactly FIRST.")},
+		"Follow the user exactly. Do not call tools.", emit, nil, nil, "", nil)
+	secondInput := append(append([]provider.ChatMessage(nil), first[1:]...), provider.NewTextMessage("user", "Reply exactly SECOND."))
+	second := a.Run(t.Context(), secondInput, "Follow the user exactly. Do not call tools.", emit, nil, nil, "", nil)
+	if len(errors) != 0 || len(second) <= len(first) {
+		t.Fatalf("live cross-turn wire continuity errors=%+v first=%d second=%d", errors, len(first), len(second))
+	}
+}
+
 func requireLiveEventOrder(events []AgentEvent, want []string) error {
 	next := 0
 	for _, event := range events {

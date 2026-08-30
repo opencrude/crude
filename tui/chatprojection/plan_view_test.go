@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
 	"crude/tui/types"
@@ -94,5 +95,93 @@ func TestPlanViewUsesSingleHierarchyMarker(t *testing.T) {
 	header := rows[0].PlainText()
 	if strings.Count(header, "●") != 0 || !strings.Contains(header, "Plan: Search sessions") {
 		t.Fatalf("plan header hierarchy = %q", header)
+	}
+}
+
+func TestPlanViewStrikesThroughCompletedSteps(t *testing.T) {
+	raw := `{"id":"plan-123","revision":1,"objective":"Ship it","status":"active","steps":[
+		{"id":"a","description":"Audit flow","status":"completed","result":"found bug"},
+		{"id":"b","description":"Fix bug","status":"in_progress"}
+	]}`
+	rows := chatprojection.BuildPlanViewRows(raw, 80)
+	striked := false
+	for _, row := range rows {
+		text := row.PlainText()
+		for _, span := range row.Spans {
+			if span.Text == "Audit flow — found bug" {
+				if span.Attr&cell.AttrStrikethrough == 0 {
+					t.Fatalf("completed step not struck through: %+v", span)
+				}
+				striked = true
+			}
+		}
+		if strings.Contains(text, "Fix bug") {
+			for _, span := range row.Spans {
+				if span.Text == "Fix bug" && span.Attr&cell.AttrStrikethrough != 0 {
+					t.Fatalf("in-progress step struck through: %+v", span)
+				}
+			}
+		}
+	}
+	if !striked {
+		t.Fatal("no span carried the completed step text")
+	}
+}
+
+func TestBuildPlanViewRowsCollapsedWindowsAroundLiveStep(t *testing.T) {
+	raw := `{"id":"plan-123","revision":1,"objective":"Ship it","status":"active","steps":[
+		{"id":"one","description":"Done hours ago","status":"completed"},
+		{"id":"two","description":"Also old","status":"completed"},
+		{"id":"three","description":"Previous step","status":"completed"},
+		{"id":"four","description":"Live step now","status":"in_progress"},
+		{"id":"five","description":"Coming up next","status":"pending"},
+		{"id":"six","description":"Far future work","status":"pending"}
+	]}`
+	collapsed := chatprojection.BuildPlanViewRowsCollapsed(raw, 80)
+	plain := make([]string, len(collapsed))
+	for i, row := range collapsed {
+		plain[i] = row.PlainText()
+	}
+	joined := strings.Join(plain, "\n")
+	for _, want := range []string{"Plan: Ship it", "Live step now", "Previous step", "Coming up next", "2 earlier steps", "1 remaining steps"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("collapsed card missing %q:\n%s", want, joined)
+		}
+	}
+	for _, hidden := range []string{"Done hours ago", "Also old", "Far future work"} {
+		if strings.Contains(joined, hidden) {
+			t.Fatalf("collapsed card leaked %q:\n%s", hidden, joined)
+		}
+	}
+
+	full := chatprojection.BuildPlanViewRows(raw, 80)
+	var fullJoined strings.Builder
+	for _, row := range full {
+		fullJoined.WriteString(row.PlainText())
+		fullJoined.WriteString("\n")
+	}
+	for _, want := range []string{"Done hours ago", "Far future work"} {
+		if !strings.Contains(fullJoined.String(), want) {
+			t.Fatalf("expanded card lost %q:\n%s", want, fullJoined.String())
+		}
+	}
+}
+
+func TestBuildPlanViewRowsCollapsedShowsAllWhenPlanFinished(t *testing.T) {
+	raw := `{"id":"plan-123","revision":1,"objective":"Ship it","status":"completed","steps":[
+		{"id":"one","description":"First done","status":"completed"},
+		{"id":"two","description":"Second done","status":"completed"},
+		{"id":"three","description":"Third done","status":"completed"}
+	]}`
+	rows := chatprojection.BuildPlanViewRowsCollapsed(raw, 80)
+	var joined strings.Builder
+	for _, row := range rows {
+		joined.WriteString(row.PlainText())
+		joined.WriteString("\n")
+	}
+	for _, want := range []string{"First done", "Second done", "Third done"} {
+		if !strings.Contains(joined.String(), want) {
+			t.Fatalf("finished plan should render whole list, missing %q:\n%s", want, joined.String())
+		}
 	}
 }

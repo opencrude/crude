@@ -1,11 +1,13 @@
 package workspace
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	"crude/provider"
 	"crude/sessiondb"
+	types "crude/types"
 )
 
 func TestTakeHydratedDataIsOneShot(t *testing.T) {
@@ -25,6 +27,44 @@ func TestTakeHydratedDataIsOneShot(t *testing.T) {
 	}
 	if got := sess.TakeHydratedRefs(); len(got) != 0 {
 		t.Fatalf("hydrated references were returned twice: %#v", got)
+	}
+}
+
+func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *testing.T) {
+	want := types.ConversationMessage{
+		InternalID: "canonical", Role: "tool", Content: "result", Time: time.Now().Round(0),
+		ToolName: "run_sub_agent", ToolArgs: "description: inspect", ToolID: "call",
+		ToolStatus: "success", ToolProgressPhase: "done", ToolProgressLabel: "child",
+		ToolPreviewPhase: "done", ToolEstTokens: 20, ToolLinesAdded: 2,
+		ToolDuration: time.Second, SubPaneID: "child-1", PermTag: "always",
+	}
+	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
+		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{want}},
+	}})
+	if len(views) != 1 || !reflect.DeepEqual(types.ConversationMessage(views[0]), want) {
+		t.Fatalf("canonical conversion\n got: %#v\nwant: %#v", views, want)
+	}
+}
+
+func TestConvertMessagesForDisplayRepairsLegacySubAgentLink(t *testing.T) {
+	message := provider.NewTextMessage("tool", "## Sub-Agent Result\n**Session:** child-legacy\n**Status:** OK")
+	message.ToolCallID = "call"
+	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
+		Msg:  message,
+		Meta: sessiondb.DisplayMeta{DisplayRole: "tool", ToolName: "run_sub_agent", ToolStatus: "success"},
+	}})
+	if len(views) != 1 || views[0].SubPaneID != "child-legacy" {
+		t.Fatalf("legacy sub-agent link = %#v", views)
+	}
+}
+
+func TestCanonicalEmptySnapshotSuppressesProviderOnlyAssistantEnvelope(t *testing.T) {
+	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
+		Msg:  provider.ChatMessage{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "call"}}},
+		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion},
+	}})
+	if len(views) != 0 {
+		t.Fatalf("provider-only assistant envelope became a visible hydration row: %#v", views)
 	}
 }
 

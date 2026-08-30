@@ -392,8 +392,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			break
 		}
 		m.overlayHost.Close(ui.OverlayComposer)
-		if msg.Text != "" && m.AgentMgr.ActiveID() != "" {
-			cmds = append(cmds, m.submitInput(m.AgentMgr.ActiveID(), msg.Text, nil))
+		if agentID := m.activeAgentTabID(); msg.Text != "" && agentID != "" {
+			cmds = append(cmds, m.submitInput(agentID, msg.Text, nil))
 		}
 	case composer.CancelMsg:
 		if composerScreen := m.sessionComposer(); composerScreen != nil && msg.Target == composerScreen {

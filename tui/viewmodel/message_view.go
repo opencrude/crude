@@ -10,31 +10,49 @@ import (
 func ChatMessagesFromViews(views []workspace.ChatMessageView) []ttypes.ChatMessage {
 	messages := make([]ttypes.ChatMessage, 0, len(views))
 	for _, view := range views {
-		messages = append(messages, ttypes.ChatMessage{
-			Role:                view.Role,
-			Content:             view.Content,
-			ReferenceLabels:     append([]string(nil), view.ReferenceLabels...),
-			Time:                view.Time,
-			ToolName:            view.ToolName,
-			ToolArgs:            view.ToolArgs,
-			ToolCommand:         view.ToolCommand,
-			ToolInput:           view.ToolInput,
-			ToolScope:           view.ToolScope,
-			ToolID:              view.ToolID,
-			ToolStatus:          view.ToolStatus,
-			ToolProgressLabel:   view.ToolProgressLabel,
-			ToolPreviewPhase:    view.ToolPreviewPhase,
-			ToolEstTokens:       view.ToolEstTokens,
-			ToolLivedAdded:      view.ToolLinesAdded,
-			ToolLivedRemoved:    view.ToolLinesRemoved,
-			ToolDuration:        view.ToolDuration,
-			ThinkingDuration:    view.ThinkingDuration,
-			ThinkingInterrupted: view.ThinkingInterrupted,
-			SubPaneID:           view.SubPaneID,
-			PermTag:             view.PermTag,
-		})
+		messages = append(messages, chatMessageFromCanonical(view))
 	}
 	return messages
+}
+
+func chatMessageFromCanonical(view workspace.ChatMessageView) ttypes.ChatMessage {
+	return ttypes.ChatMessage{
+		InternalID:             view.InternalID,
+		Role:                   view.Role,
+		Content:                view.Content,
+		ReferenceLabels:        append([]string(nil), view.ReferenceLabels...),
+		Time:                   view.Time,
+		ToolName:               view.ToolName,
+		ToolArgs:               view.ToolArgs,
+		ToolCommand:            view.ToolCommand,
+		ToolInput:              view.ToolInput,
+		ToolScope:              view.ToolScope,
+		ToolID:                 view.ToolID,
+		ToolStatus:             view.ToolStatus,
+		ToolIndex:              view.ToolIndex,
+		ToolProgressPhase:      view.ToolProgressPhase,
+		ToolProgressMessage:    view.ToolProgressMessage,
+		ToolProgressLabel:      view.ToolProgressLabel,
+		ToolPreviewPhase:       view.ToolPreviewPhase,
+		ToolEstTokens:          view.ToolEstTokens,
+		ToolLivedAdded:         view.ToolLinesAdded,
+		ToolLivedRemoved:       view.ToolLinesRemoved,
+		ToolStartTime:          view.ToolStartTime,
+		ToolDuration:           view.ToolDuration,
+		ThinkingActive:         view.ThinkingActive,
+		ThinkingInterrupted:    view.ThinkingInterrupted,
+		ThinkingDuration:       view.ThinkingDuration,
+		LifecyclePhase:         view.LifecyclePhase,
+		LifecycleProgress:      view.LifecycleProgress,
+		LifecycleProvider:      view.LifecycleProvider,
+		LifecycleUploadedBytes: view.LifecycleUploadedBytes,
+		LifecycleTotalBytes:    view.LifecycleTotalBytes,
+		Incomplete:             view.Incomplete,
+		IncompleteReason:       view.IncompleteReason,
+		SubPaneID:              view.SubPaneID,
+		PermTag:                view.PermTag,
+		PendingBtw:             view.PendingBtw,
+	}
 }
 
 func chatMessagesFromConversation(conversation *workspace.Conversation) ([]ttypes.ChatMessage, uint64) {
@@ -44,43 +62,7 @@ func chatMessagesFromConversation(conversation *workspace.Conversation) ([]ttype
 	views := conversation.Messages()
 	messages := make([]ttypes.ChatMessage, 0, len(views))
 	for _, view := range views {
-		messages = append(messages, ttypes.ChatMessage{
-			InternalID:             view.InternalID,
-			Role:                   view.Role,
-			Content:                view.Content,
-			ReferenceLabels:        append([]string(nil), view.ReferenceLabels...),
-			Time:                   view.Time,
-			ToolName:               view.ToolName,
-			ToolArgs:               view.ToolArgs,
-			ToolCommand:            view.ToolCommand,
-			ToolInput:              view.ToolInput,
-			ToolScope:              view.ToolScope,
-			ToolID:                 view.ToolID,
-			ToolStatus:             view.ToolStatus,
-			ToolIndex:              view.ToolIndex,
-			ToolProgressPhase:      view.ToolProgressPhase,
-			ToolProgressMessage:    view.ToolProgressMessage,
-			ToolProgressLabel:      view.ToolProgressLabel,
-			ToolPreviewPhase:       view.ToolPreviewPhase,
-			ToolEstTokens:          view.ToolEstTokens,
-			ToolLivedAdded:         view.ToolLinesAdded,
-			ToolLivedRemoved:       view.ToolLinesRemoved,
-			ToolStartTime:          view.ToolStartTime,
-			ToolDuration:           view.ToolDuration,
-			ThinkingActive:         view.ThinkingActive,
-			ThinkingInterrupted:    view.ThinkingInterrupted,
-			ThinkingDuration:       view.ThinkingDuration,
-			LifecyclePhase:         view.LifecyclePhase,
-			LifecycleProgress:      view.LifecycleProgress,
-			LifecycleProvider:      view.LifecycleProvider,
-			LifecycleUploadedBytes: view.LifecycleUploadedBytes,
-			LifecycleTotalBytes:    view.LifecycleTotalBytes,
-			Incomplete:             view.Incomplete,
-			IncompleteReason:       view.IncompleteReason,
-			SubPaneID:              view.SubPaneID,
-			PermTag:                view.PermTag,
-			PendingBtw:             view.PendingBtw,
-		})
+		messages = append(messages, chatMessageFromCanonical(view))
 	}
 	return messages, conversation.Version()
 }

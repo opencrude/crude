@@ -214,6 +214,37 @@ func TestTabSyncWhileEditingCreatesMissingAgentTab(t *testing.T) {
 	assertEditorStillPainted(t, app, paths[0])
 }
 
+func TestBackgroundSubAgentTabCreationDoesNotStealRootSelection(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
+	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "researcher",
+		workspace.NewAgentState("child", pane.Messages, app.Logger))
+	app.syncAgentWindowTabs()
+
+	active := app.Win.ActiveTab()
+	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentMgr.ActiveID() != "root" {
+		t.Fatalf("background child stole selection: tab=%#v activeAgent=%q", active, app.AgentMgr.ActiveID())
+	}
+}
+
+func TestTabSyncRepairsStaleManagerSelectionFromVisibleWindow(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
+	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "researcher",
+		workspace.NewAgentState("child", pane.Messages, app.Logger))
+	app.syncAgentWindowTabs()
+	app.AgentMgr.SetActive("child") // simulate stale background/domain selection
+
+	app.syncAgentWindowTabs()
+	active := app.Win.ActiveTab()
+	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentMgr.ActiveID() != "root" || app.activeAgentTabID() != "root" {
+		t.Fatalf("window authority did not repair split state: tab=%#v manager=%q prompt=%q",
+			active, app.AgentMgr.ActiveID(), app.activeAgentTabID())
+	}
+}
+
 func TestRestoreAgentWhileEditingActivatesTab(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defer ws.Close()

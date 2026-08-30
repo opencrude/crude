@@ -1,58 +1,13 @@
 package workspace
 
-import "time"
+import ttypes "crude/types"
 
-// ChatMessageView is the presentation-neutral snapshot used to hydrate a
-// persisted conversation. Runtime rendering caches and selection state belong
-// to the frontend and are created when this view crosses into the TUI.
-type ChatMessageView struct {
-	Role            string
-	Content         string
-	ReferenceLabels []string
-	Time            time.Time
-
-	ToolName            string
-	ToolArgs            string
-	ToolCommand         string
-	ToolInput           string
-	ToolScope           string
-	ToolID              string
-	ToolStatus          string
-	ToolProgressLabel   string
-	ToolPreviewPhase    string
-	ToolEstTokens       int
-	ToolLinesAdded      int
-	ToolLinesRemoved    int
-	ToolDuration        time.Duration
-	ThinkingDuration    time.Duration
-	ThinkingInterrupted bool
-
-	SubPaneID string
-	PermTag   string
-}
+// ChatMessageView is the canonical presentation-neutral conversation message.
+// Live state and hydrated state therefore cross into every frontend through
+// the exact same contract.
+type ChatMessageView = ttypes.ConversationMessage
 
 func messageFromView(view ChatMessageView) Message {
-	return Message{
-		Role:                view.Role,
-		Content:             view.Content,
-		ReferenceLabels:     append([]string(nil), view.ReferenceLabels...),
-		Time:                view.Time,
-		ToolName:            view.ToolName,
-		ToolArgs:            view.ToolArgs,
-		ToolCommand:         view.ToolCommand,
-		ToolInput:           view.ToolInput,
-		ToolScope:           view.ToolScope,
-		ToolID:              view.ToolID,
-		ToolStatus:          view.ToolStatus,
-		ToolProgressLabel:   view.ToolProgressLabel,
-		ToolPreviewPhase:    view.ToolPreviewPhase,
-		ToolEstTokens:       view.ToolEstTokens,
-		ToolLinesAdded:      view.ToolLinesAdded,
-		ToolLinesRemoved:    view.ToolLinesRemoved,
-		ToolDuration:        view.ToolDuration,
-		ThinkingDuration:    view.ThinkingDuration,
-		ThinkingInterrupted: view.ThinkingInterrupted,
-		SubPaneID:           view.SubPaneID,
-		PermTag:             view.PermTag,
-	}
+	view.ReferenceLabels = append([]string(nil), view.ReferenceLabels...)
+	return Message(view)
 }
