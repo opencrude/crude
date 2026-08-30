@@ -1,6 +1,6 @@
 # TUI Component System and Design Language Plan
 
-Status: Component-system migration COMPLETE as of 2026-08-03 — all phases (0-15) exit criteria met; every "Remaining"/"PARTIAL" gap closed; both legacy packages `tui/widget/` and `tui/widgets/` DELETED (all consumers migrated to `tui/ui/` + `tui/ui/popup/`). Final verification: `go build ./...` ✅, `go test ./...` ✅, `go test -race ./...` ✅, `golangci-lint run ./...` 9 (documented non-QF style nits in fileio/session, none in component-system files).
+> Status: DONE — component-system migration COMPLETE as of 2026-08-03; all phases (0-15) exit criteria met;
 
 Date: 2026-07-29 (progress reconciled after native composer + text overlay cutovers)
 
@@ -9,12 +9,13 @@ or receives actions from, the TUI.
 
 This is the canonical plan for replacing Crude's parallel widget, form, popup,
 input, scrolling, styling, and mouse implementations with one coherent component
-system. It complements `PLAN.md`, `COMPOSITING_ENGINE_ARCHITECTURE.md`, and
-`TERMINAL_WIDTH.md`.
+system. It complements `docs/plans/workspace-refactor-plan.md`,
+`docs/architecture/compositing-engine.md`, and
+`docs/reference/terminal-width.md`.
 
 **Reconciliation rule:** Code changes that advance migration must update
 (1) this file's phase status, (2) Section 20 ledger, (3) Section 26 next steps,
-and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
+and (4) `docs/reference/bypass-manifest.json` in the same change. Status labels mean:
 
 | Label | Meaning |
 |-------|---------|
@@ -41,7 +42,7 @@ and (4) `docs/tui/bypass_manifest.json` in the same change. Status labels mean:
 | 12 Structured migrations | DONE | Workspace settings, all session blocking forms, passive background-job details, file/workspace picker, Find in Files, composer, text overlay, and launcher bodies are fully native; PanelDeck/Tabs preserve per-session panels below messages; legacy overlay tabs, global async rows, and migrated legacy widgets deleted |
 | 13 Shell migrations | ✅ DONE | Header/status/hints/tabs/tree/chat input/session picker/editor chrome native; message list Host+VirtualList native — markdown/thinking bodies bridge glamour ANSI to native PaintLines at render time (`BridgeAnsiLine`), no paint-time ANSI fallback; `contentDirty` cache REMOVED (2026-07-31, benchmark-verified); **root Host wiring DONE (2026-08-01)** — one `App.rootHost` + `shellRoot` tree (header/status/tabs/sidebar/chat/input/editor/launcher/deckMount) painted into one `App.mainSurf`; per-screen Hosts and layer surfaces deleted; mouse translation helpers deleted; focus/key dispatch via rootHost (see §13.9) |
 | 14 Deletion | ✅ DONE | `tui/scrollbar` + ANSI nested gutter strings deleted; dual chat/subpane scrollbar packages closed (only `ScrollbarControl` remains); `tui/diffview` deleted (2026-08-01); `tui/components` + `tui/form` deleted; TextArea ANSI View() path + input view.go bridge deleted (2026-08-01); ~108 dead symbols deleted via unused/errcheck/gosimple (2026-08-01); bypass allowlist shrunk (hex = `tui/theme/` only); audit script now ENFORCES `raw-ansi-sgr`; **`tui/widget/` DELETED (2026-08-03)** — old Widget interface + RenderContext gone; `Hover` → `ui.Hover`; WM content type → `wm.WindowContent`; all consumers render via `ui.Component`/`ui.PaintContext`; **`tui/widgets/` DELETED (2026-08-03)** — frame builders + state types moved to `tui/ui/` (package `ui`) + `tui/ui/popup/`; all 10 viewmodel importers updated |
-| 15 Stabilization | ✅ DONE | Bootstrap: PHASE15_CHECKLIST.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests; **suite fully green (2026-08-03)** — jsonrepair flake FIXED (deterministic settle poll); **lint gate fully enabled + full-repo** (govet/ineffassign/misspell/staticcheck/unused/errcheck on across `./...`); 78 pre-existing QF nits rewritten; 9 non-QF style nits left with reasons; three-layer boundary enforced in audit script; layout constraint solver fuzz landed; allowlists at architectural floor (manifest v45) |
+| 15 Stabilization | ✅ DONE | Bootstrap: docs/plans/phase15-checklist.md, test-race-tui, CI workflow, scroll fuzz + virtlist contracts, EventBus race tests; **suite fully green (2026-08-03)** — jsonrepair flake FIXED (deterministic settle poll); **lint gate fully enabled + full-repo** (govet/ineffassign/misspell/staticcheck/unused/errcheck on across `./...`); 78 pre-existing QF nits rewritten; 9 non-QF style nits left with reasons; three-layer boundary enforced in audit script; layout constraint solver fuzz landed; allowlists at architectural floor (manifest v45) |
 
 ### Intentional bridges (not drift — temporary)
 
@@ -51,7 +52,7 @@ These are allowed only as shrinking adapters listed in `bypass_manifest.json`:
 - ~~`ui.LegacyWidget` / `ANSIViewFunc`~~ — **DELETED** (Phase 14); temporary widget→Component adapters removed; tests use native fixtures.
 - `tui/ui/` package layout: core components in `tui/ui/` (flat); popup frame state types in `tui/ui/popup/` sub-package (moved from deleted `tui/widgets/` 2026-08-03).
 
-**Not done yet (do not claim as complete):** ~~full TextField surface paint everywhere~~ ✅ DONE (2026-08-03 — all 13 editable surfaces paint via native TextField/FilterField/TextArea/SearchField; 3 deleted bridges confirmed gone); ~~product controls still gradually consuming Glyph/Metrics tokens~~ ✅ DONE (2026-08-03 — 8 token types consumed across 12 controls in 16 files, behavioral tests prove token override changes painted output); bypass allowlist enforcement (hex now only in `theme/` after `diffview` deleted 2026-08-01, confirmed at architectural floor 2026-08-03, manifest v45). **WindowFrame reveal animation DONE (2026-08-01)**: `WindowFrame.SetReveal(progress)` collapses/grows the content area (Layout scales content height; Host hit-testing matches revealed geometry), OverlayHost `SetOnOpen` hook starts reveals, the viewmodel drives them from the per-frame tick (fast 16ms tick while animating, 120ms duration), and modals are excluded (appear instantly). Guarded by `TestWindowFrameReveal*` (ui) and `TestReveal_*` (viewmodel). The `contentDirty` main-content cache was **removed** (2026-07-31): the editor's internal `chromaLineCache`/`chromaDirtyFrom` makes per-frame repaint ~180-250µs at 120x40, verified by `BenchmarkEditorPaint_*` and recorded in `docs/tui/PERFORMANCE_BASELINES.md`. **Root Host wiring DONE (2026-08-01)** — the viewmodel is no longer hybrid: one `App.rootHost` + `shellRoot` tree + one `App.mainSurf` (§13.9).
+**Not done yet (do not claim as complete):** ~~full TextField surface paint everywhere~~ ✅ DONE (2026-08-03 — all 13 editable surfaces paint via native TextField/FilterField/TextArea/SearchField; 3 deleted bridges confirmed gone); ~~product controls still gradually consuming Glyph/Metrics tokens~~ ✅ DONE (2026-08-03 — 8 token types consumed across 12 controls in 16 files, behavioral tests prove token override changes painted output); bypass allowlist enforcement (hex now only in `theme/` after `diffview` deleted 2026-08-01, confirmed at architectural floor 2026-08-03, manifest v45). **WindowFrame reveal animation DONE (2026-08-01)**: `WindowFrame.SetReveal(progress)` collapses/grows the content area (Layout scales content height; Host hit-testing matches revealed geometry), OverlayHost `SetOnOpen` hook starts reveals, the viewmodel drives them from the per-frame tick (fast 16ms tick while animating, 120ms duration), and modals are excluded (appear instantly). Guarded by `TestWindowFrameReveal*` (ui) and `TestReveal_*` (viewmodel). The `contentDirty` main-content cache was **removed** (2026-07-31): the editor's internal `chromaLineCache`/`chromaDirtyFrom` makes per-frame repaint ~180-250µs at 120x40, verified by `BenchmarkEditorPaint_*` and recorded in `docs/reference/performance-baselines.md`. **Root Host wiring DONE (2026-08-01)** — the viewmodel is no longer hybrid: one `App.rootHost` + `shellRoot` tree + one `App.mainSurf` (§13.9).
 
 ## 1. Objective
 
@@ -358,7 +359,7 @@ No component owns:
 ### 6.5 Terminal correctness
 
 All measurement, truncation, cursor placement, selection, and hit testing use the
-canonical grapheme-width path from `TERMINAL_WIDTH.md`.
+canonical grapheme-width path from `docs/reference/terminal-width.md`.
 
 Editing boundaries must not split a grapheme cluster. Data APIs may expose rune or
 byte offsets where required by LSP or files, but visual editing converts through one
@@ -912,11 +913,11 @@ allowlist but rejects additions unless the plan itself is explicitly revised.
 ### Phase 0: Evidence freeze and no-new-debt gate ✅ DONE
 
 Landed:
-- `docs/tui/SURFACE_CATALOG.md`, `CONTROL_USAGE.md`, `INTERACTION_MATRIX.md`, `DESIGN_TOKEN_BYPASSES.md`
-- `docs/tui/bypass_manifest.json` (v2; control_bypasses shrink only)
+- `docs/reference/surface-catalog.md`, `docs/reference/control-usage.md`, `docs/reference/interaction-matrix.md`, `docs/reference/design-token-bypasses.md`
+- `docs/reference/bypass-manifest.json` (v2; control_bypasses shrink only)
 - `scripts/tui_design_audit.sh` (no-new-debt gate; currently passes)
 - **Canonical visual baselines** (`tui/ui/visual_baseline_test.go`): 80x24, 80x30, 120x40, 200x50 under dark and light themes; runtime theme switch verification; WindowFrame close glyph, border cells, content fill; TextField cursor/placeholder; List selected row; Button disabled; Label color roles; ellipsis truncation; continuation cell integrity; render/key benchmarks
-- **Checked-in numeric performance baseline** (`docs/tui/PERFORMANCE_BASELINES.md`): reproducible environment/command, five-sample observed ranges, allocation counts, expected review ceilings, and interpretation rules
+- **Checked-in numeric performance baseline** (`docs/reference/performance-baselines.md`): reproducible environment/command, five-sample observed ranges, allocation counts, expected review ceilings, and interpretation rules
 - Real Go benchmarks in `tui/ui/benchmark_test.go` cover gallery paint at 80x24 and 120x40 plus the TextEdit key cycle; existing Surface/compositor hot paths are recorded alongside them
 
 Objectives:
@@ -927,10 +928,10 @@ Objectives:
 
 Deliverables:
 
-- `docs/tui/SURFACE_CATALOG.md`.
-- `docs/tui/CONTROL_USAGE.md`.
-- `docs/tui/INTERACTION_MATRIX.md`.
-- `docs/tui/DESIGN_TOKEN_BYPASSES.md`.
+- `docs/reference/surface-catalog.md`.
+- `docs/reference/control-usage.md`.
+- `docs/reference/interaction-matrix.md`.
+- `docs/reference/design-token-bypasses.md`.
 - A machine-readable component and bypass manifest.
 - Canonical screenshots at minimum, `80x24`, `120x40`, and wide dimensions.
 - A static audit command and CI no-new-bypass check.
@@ -1189,7 +1190,7 @@ Landed 2026-08-03 (Phase 5 #4):
   KeyEnter AND by MouseLeft through the full Host path emits the SAME
   `Action.ID`. `TestToggleButtonKeyAndMouseActivationSameActionID`
   extends to ToggleButton (Space vs click → both `safety.yolo`).
-- `docs/tui/COMPONENT_AUTHORING.md` updated to the new signature.
+- `docs/guides/component-authoring.md` updated to the new signature.
 
 Landed 2026-08-03 (Phase 5 #5):
 - **Focus scopes + modal trap/restore** (`tui/ui/focus_scope.go`):
@@ -1830,12 +1831,12 @@ Deliverables:
 - Feature screens under `tui/screens`.
 - Deletion of old component, form, scrollbar, popup-chrome, and tab-render paths.
 - Removal of legacy adapters whose consumers reached zero.
-- Updated `AGENTS.md`, `PLAN.md`, and architecture documentation.
+- Updated root `AGENTS.md`, `docs/plans/workspace-refactor-plan.md`, and architecture documentation.
 
 Exit criteria:
 
 - There is no parallel widget system.
-- The bypass allowlist shrinks toward empty (`docs/tui/bypass_manifest.json` still lists foundation + PreferANSI chat paths).
+- The bypass allowlist shrinks toward empty (`docs/reference/bypass-manifest.json` still lists foundation + PreferANSI chat paths).
 - Dependency checks enforce the three-layer architecture.
 
 ### Phase 15: Stabilization and permanent enforcement
@@ -1855,7 +1856,7 @@ Exit criteria:
 - `go build ./...` passes.
 - `go test ./...` passes apart from explicitly documented external/pre-existing cases.
 - TUI race suites pass.
-- Static design-system and dependency checks pass; remaining allowlist entries are intentional shrinking adapters in `docs/tui/bypass_manifest.json` (not an empty allowlist yet).
+- Static design-system and dependency checks pass; remaining allowlist entries are intentional shrinking adapters in `docs/reference/bypass-manifest.json` (not an empty allowlist yet).
 - Runtime theme switching passes all gallery and product-screen tests.
 
 ## 20. Surface Migration Ledger
@@ -2153,7 +2154,7 @@ This program is complete only when all statements are true:
 
 25. Phase 0 numeric performance closeout:
     - `tui/ui/benchmark_test.go` contains real gallery paint and TextEdit event benchmarks
-    - `docs/tui/PERFORMANCE_BASELINES.md` records five-sample timings, allocations,
+    - `docs/reference/performance-baselines.md` records five-sample timings, allocations,
       review ceilings, environment, reproduction command, and comparison rules
 
 26. Agent lifecycle and reachability correction:
@@ -2364,7 +2365,7 @@ This program is complete only when all statements are true:
    5. **Phase 14:** package-boundary completion and deletion. Progress (2026-08-01): `tui/diffview` deleted (zero importers — last non-theme hex allowlist entry); `tui/components` + `tui/form` already deleted; **TextArea ANSI View() path deleted** (`View`/`renderSegmentANSI`/`renderAtomicChipANSI`/`applySelectionANSI`/`blinkContrastFG`/`ansiColor` + `input/view.go` bridge + `ui.BlockCursorTime`; tests migrated to native `Paint` cell-buffer assertions where `Layout(W:8)` ≡ legacy `View(12)`); **~108 dead symbols deleted** via `unused`/`errcheck`/`gosimple` (50 unused incl. app.go legacy msg aliases + widgets test helpers; 46 unchecked errors; 12 simplifications); `workspace/` has zero `tui/` imports; audit script now enforces `raw-ansi-sgr`; lint gate fully enabled with zero issues. Remaining: ~~shrink `raw-ansi-sgr` allowlist~~ ✅ DONE (2026-08-03, shrunk to 3-path floor `tui/cell/`+`tui/compositor/`+`tui/rendering/`, manifest v45); delete any remaining legacy adapters whose consumers reached zero. **+ 78 pre-existing staticcheck QF1001/QF1003/QF1008/QF1012 nits rewritten 2026-08-03** (behavior-identical, full suite + race green; 9 non-QF ST1005/ST1023/QF1006 left with reasons).
 
    6. **Phase 15:** stabilization and permanent enforcement (✅ DONE —
-      see `docs/tui/PHASE15_CHECKLIST.md`; authoring doc, shell input/tabs
+      see `docs/plans/phase15-checklist.md`; authoring doc, shell input/tabs
       contracts, Host/WindowFrame fuzz added; **lint gate fully enabled
       2026-08-01 — errcheck/unused/gosimple all on, zero issues repo-wide,
       CI scope expanded to `./...`; three-layer boundary enforced**;

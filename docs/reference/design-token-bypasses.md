@@ -1,5 +1,7 @@
 # Design Token Bypasses
 
+> Status: Current. Mirrors the enforced allowlist in [bypass-manifest.json](bypass-manifest.json).
+
 Allowlisted locations that currently bypass the theme system. Phase 0 freezes
 this list: CI rejects new matches outside this allowlist. Each migration removes
 entries until the list is empty.

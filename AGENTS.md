@@ -9,9 +9,9 @@ generic README, tool probing, or assumptions from another project.
 ### First actions
 
 1. Check `git status --short`; preserve unrelated user or agent changes.
-2. Read the relevant sections of this file, then consult `PLAN.md`,
-   `TUI_COMPONENT_SYSTEM_PLAN.md`, `TERMINAL_WIDTH.md`, and the relevant
-   `docs/tui/*.md` file before changing architecture or terminal UI code.
+2. Read the relevant sections of this file, then consult `docs/plans/workspace-refactor-plan.md`,
+   `docs/plans/tui-component-system-plan.md`, `docs/reference/terminal-width.md`, and the
+   relevant `docs/tui/*.md` file before changing architecture or terminal UI code.
 3. Use `Glob` and `Grep` for repository discovery. Do not probe for generic
    screenshot tools when a repository workflow exists.
 
@@ -100,10 +100,10 @@ workspace publishes events that the TUI subscribes to.
 ### Current State (what is in the code today)
 
 The three-layer split (`app/` → `workspace/` → `tui/`) is **DONE** — see
-`PLAN.md` for that history. The root-host component-system cutover is also
+`docs/plans/workspace-refactor-plan.md` for that history. The root-host component-system cutover is also
 landed: the viewmodel mounts the shell through one root `ui.Host` and paints
 the persistent shell into one main surface. Later phase entries in
-`TUI_COMPONENT_SYSTEM_PLAN.md` are historical status and design context; do
+`docs/plans/tui-component-system-plan.md` are historical status and design context; do
 not assume an older phase description matches the current implementation.
 
 | Area | Current state |
@@ -112,11 +112,11 @@ not assume an older phase description matches the current implementation.
 | `workspace/` | Per-project state machine (repo root, NOT `tui/workspace/`). Owns sessions, orchestrators, LSP manager, file ops, project search, workspace DB. Zero `tui/` imports (production + tests). |
 | `tui/` | Dumb renderer + input router. Holds `*workspace.Workspace`, calls methods, subscribes to the event bus. `tui/tui.go` has no callbacks. |
 | `tui/viewmodel/App` | Presentation state holder. Uses one root `ui.Host` (`rootHost`) + one shell surface (`mainSurf`), with retained per-session `deckHost`s mounted through the shell. |
-| `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). Workspace overrides are FIELD-level, sessions snapshot — see `docs/tui/SETTINGS.md`. |
+| `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). Workspace overrides are FIELD-level, sessions snapshot — see `docs/reference/settings.md`. |
 | `session/` | Session domain library (sessions are workspace-scoped under `~/.crude/workspaces/<hash>/sessions/`); consumed by `workspace/`. |
 
-See `PLAN.md` (architecture + workspace progress) and
-`TUI_COMPONENT_SYSTEM_PLAN.md` (component-system phases + §26 execution
+See `docs/plans/workspace-refactor-plan.md` (architecture + workspace progress) and
+`docs/plans/tui-component-system-plan.md` (component-system phases + §26 execution
 order) for the phase plans. `ARCHITECTURE_TRANSITION.md` was deleted once
 the transition it planned completed.
 
@@ -389,7 +389,7 @@ so an editor repaint is a cell fill plus a cached-color walk:
 **RULES:**
 - Never reintroduce a frame-level dirty flag for the main content. If a
   future perf problem appears, add a benchmark first (compare against
-  `docs/tui/PERFORMANCE_BASELINES.md`) and cache at the editor level.
+  `docs/reference/performance-baselines.md`) and cache at the editor level.
 - `computeContentLayout()` may be called every frame; it only computes
   shell geometry (slot rects, chat/editor/input/deck rects) — no ANSI.
 - The only remaining output cache is `m.cachedOutput`, used exclusively for
@@ -477,7 +477,7 @@ next tick finally synced.
 
 ## Terminal Display Width (emoji / ZWJ / ☰ / UV)
 
-**Canonical doc:** [`TERMINAL_WIDTH.md`](./TERMINAL_WIDTH.md)
+**Canonical doc:** [`TERMINAL_WIDTH.md`](./docs/reference/terminal-width.md)
 
 Read that before changing padding, truncation, hit-testing, or icon layout.
 Summary:
@@ -500,7 +500,7 @@ Summary:
 `VisibleWidth` once used `uniseg` (☰ → 1) while UV used `ansi` (☰ → 2).
 The first fix shared GraphemeWidth but incorrectly keyed a correction to
 `runtime.GOOS`, which failed under WSL/multiplexers. The current solution is
-the async effective-grid profile in `TERMINAL_WIDTH.md`.
+the async effective-grid profile in `docs/reference/terminal-width.md`.
 
 Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 `makeNoColorBgTransparent()`.
@@ -554,7 +554,7 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   When a "dead loop" warning appears, check for a swallowed `continue` first.
 
 ### ANSI & Width
-- **Full process:** see [`TERMINAL_WIDTH.md`](./TERMINAL_WIDTH.md).
+- **Full process:** see [`TERMINAL_WIDTH.md`](./docs/reference/terminal-width.md).
 - **ANSI search false-matches**: NEVER use `strings.Index(rawLine, label)`
   on an ANSI-styled string — the label text can match inside escape codes.
   Always `stripAnsi` first, then search plain text.
@@ -569,7 +569,7 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 - **`buildTopBorder` has 4 separate cases** (no title/icon, icon only,
   title only, both). Each case has a unique fixed-width formula. Changing
   one without updating the others creates off-by-ones.
-- **go.mod replaces** (do not drop without understanding TERMINAL_WIDTH.md):
+- **go.mod replaces** (do not drop without understanding `docs/reference/terminal-width.md`):
   - `charm.land/bubbletea/v2` → `./third_party/bubbletea`
   - `github.com/charmbracelet/x/ansi` → `./third_party/xansi`
   - `github.com/charmbracelet/x/powernap` → `./third_party/powernap`
@@ -638,7 +638,7 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   synchronized Unix-millisecond clock, `●` for 400ms then `○` for 400ms.
 - Active chat lifecycle/thinking/tool/sub-agent/session rows use it with one
   stable semantic color. Never add local speed formulas, brightness/color
-  pulses, braille frames, or `AttrBlink`; see `docs/tui/COMPONENT_AUTHORING.md`.
+  pulses, braille frames, or `AttrBlink`; see `docs/guides/component-authoring.md`.
 - The bottom status bar is static, low-profile aggregate text. Only required
   user action (`⚠`) and failures (`✕`) receive attention signs.
 
@@ -672,7 +672,17 @@ safety system-path detection on Windows, app config `HOME` vs
 go build ./...
 go test ./tui/editor/... ./tui/viewmodel/... ./tui/workspace/...
 go test ./... 2>&1 | grep -v "^ok\|cached\|^?"
+make docs-check   # documentation acceptance gate
 ```
+
+## Documentation Gate
+
+Documentation layout, naming, status headers, and cross-references are
+enforced by `scripts/docs_check.sh` (`make docs-check`, also a CI step) —
+rules and index live in `docs/README.md`. Doc filenames are kebab-case under
+`docs/{architecture,reference,guides,plans}/`; every document carries a
+`> Status:` header; a completed plan moves to `docs/plans/` and gets
+DONE/LANDED/RESOLVED/SUPERSEDED in its header instead of being deleted.
 
 ## Lint Gate (fully enabled + full-repo zero 2026-08-01)
 

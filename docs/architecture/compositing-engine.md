@@ -1,5 +1,7 @@
 # Compositing Engine Architecture
 
+> Status: Current architecture. The component-system plan supersedes its historical phase sections where they conflict.
+
 ## 1. Vision
 
 Build a production-grade multi-window compositing engine for the Crude TUI that:
@@ -1174,7 +1176,7 @@ Floating windows are rendered on top of this background.
 
 ### 9.4 Replacement of Overlay System
 
-This historical section is superseded by `TUI_COMPONENT_SYSTEM_PLAN.md`.
+This historical section is superseded by `docs/plans/tui-component-system-plan.md`.
 Floating surfaces use `OverlayHost` and `WindowFrame`; session-bound structured
 surfaces use the per-session docked `PanelDeck` between messages and chat input.
 

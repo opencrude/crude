@@ -1,6 +1,6 @@
 # Terminal Diagnostics Handoff
 
-Status: RESOLVED (2026-08-13). Every defect identified below has landed with
+> Status: RESOLVED (2026-08-13). Every defect identified below has landed with
 regression tests; this file is a historical record. Resolution map:
 
 - Terminfo deployment contract → FIXED: pinned entry generated/compiled by
@@ -25,7 +25,7 @@ regression tests; this file is a historical record. Resolution map:
 
 Date: 2026-08-13
 
-Read this after `AGENTS.md` and `docs/tui/TERMINAL_INTEGRATION_PLAN.md`. It
+Read this after root `AGENTS.md` and `docs/plans/terminal-integration-plan.md`. It
 records the runtime investigation performed after another implementation pass
 added the libghostty adapter and workspace terminal dock. Do not repeat this
 investigation or patch the renderer from the screenshot alone.

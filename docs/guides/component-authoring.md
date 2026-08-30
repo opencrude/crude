@@ -1,9 +1,11 @@
 # Component Authoring Guide
 
+> Status: Current. Practical recipes for building TUI screens with the native `tui/ui` component system.
+
 Practical recipes for building TUI screens with the native `tui/ui` component
-system. See also [`CONTROL_USAGE.md`](./CONTROL_USAGE.md),
-[`SURFACE_CATALOG.md`](./SURFACE_CATALOG.md), and
-[`SETTINGS.md`](./SETTINGS.md).
+system. See also [`control-usage.md`](../reference/control-usage.md),
+[`surface-catalog.md`](../reference/surface-catalog.md), and
+[`settings.md`](../reference/settings.md).
 
 ## Screen types
 

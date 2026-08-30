@@ -1,5 +1,7 @@
 # Control Usage Map
 
+> Status: Current reference. Maps control categories to their `tui/ui` implementations.
+
 Maps current interactive control categories to their implementations and the
 target replacement under `tui/ui/`.
 

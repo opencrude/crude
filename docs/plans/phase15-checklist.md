@@ -1,8 +1,8 @@
 # Phase 15 Stabilization Checklist
 
-Status: **IN PROGRESS** (continued 2026-08-01 — Phase 13 root Host wiring landed: `App.rootHost` + `shellRoot` tree + one `App.mainSurf`; per-screen Hosts/layer surfaces deleted; see `TUI_COMPONENT_SYSTEM_PLAN.md` §13.9)
+> Status: DONE (2026-08-03) — all exit criteria met; continued 2026-08-01 after Phase 13 root Host wiring landed (`App.rootHost` + `shellRoot` tree + one `App.mainSurf`; per-screen Hosts/layer surfaces deleted; see `docs/plans/tui-component-system-plan.md` §13.9)
 
-Canonical plan: [`TUI_COMPONENT_SYSTEM_PLAN.md`](../../TUI_COMPONENT_SYSTEM_PLAN.md) § Phase 15
+Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-component-system-plan.md) § Phase 15
 
 Phase 15 runs in parallel with Phase 13.7 shell work. This checklist tracks every
 deliverable and exit criterion without watering down enforcement targets.
@@ -37,7 +37,7 @@ deliverable and exit criterion without watering down enforcement targets.
 
 | Asset | Status | Paths |
 |-------|--------|-------|
-| Interaction matrix (baseline doc) | ✅ done | `docs/tui/INTERACTION_MATRIX.md` |
+| Interaction matrix (baseline doc) | ✅ done | `docs/reference/interaction-matrix.md` |
 | TextEdit / TextArea contract suite | ✅ done | `tui/ui/text_edit_suite_test.go` |
 | VirtualList End → stick-to-bottom | ✅ done | `tui/ui/virtlist_contract_test.go` |
 | VirtualList selection-anchors-scroll | ✅ **new** | `tui/ui/virtlist_contract_test.go` (`TestVirtualListSelectionAnchorsScrollContract`) |
@@ -85,11 +85,11 @@ deliverable and exit criterion without watering down enforcement targets.
 
 | Asset | Status | Paths |
 |-------|--------|-------|
-| Recorded baselines doc | ✅ done | `docs/tui/PERFORMANCE_BASELINES.md` |
+| Recorded baselines doc | ✅ done | `docs/reference/performance-baselines.md` |
 | Gallery paint/handle benches | ✅ done | `tui/ui/benchmark_test.go` |
 | Surface/compositor benches | ✅ done | `tui/surface/`, `tui/compositor/` bench files |
-| CI bench regression gate | ✅ **done** | `scripts/tui_bench_gate.sh` — allocation ceilings from PERFORMANCE_BASELINES.md enforced in CI (allocations are hardware-independent; timing intentionally ungated); tightened ceilings after StripAnsi fast path + FullRender benchmark fix; `make bench-gate` |
-| Product-screen benches (chat stream, editor paint) | ✅ **new** | `tui/screens/shelleditor/paint_bench_test.go` (`BenchmarkEditorPaint_80x24/120x40/LargeFile`, `BenchmarkEditorScrollRepaint_120x40`), `tui/screens/shellchat/stream_bench_test.go` (`BenchmarkChatStreamPaint_80x24/120x40`); recorded in `PERFORMANCE_BASELINES.md`; supported the `contentDirty` cache removal (editor repaint ~180-250µs at 120x40) |
+| CI bench regression gate | ✅ **done** | `scripts/tui_bench_gate.sh` — allocation ceilings from docs/reference/performance-baselines.md enforced in CI (allocations are hardware-independent; timing intentionally ungated); tightened ceilings after StripAnsi fast path + FullRender benchmark fix; `make bench-gate` |
+| Product-screen benches (chat stream, editor paint) | ✅ **new** | `tui/screens/shelleditor/paint_bench_test.go` (`BenchmarkEditorPaint_80x24/120x40/LargeFile`, `BenchmarkEditorScrollRepaint_120x40`), `tui/screens/shellchat/stream_bench_test.go` (`BenchmarkChatStreamPaint_80x24/120x40`); recorded in `docs/reference/performance-baselines.md`; supported the `contentDirty` cache removal (editor repaint ~180-250µs at 120x40) |
 
 ### 6. Root lint + CI workflow
 
@@ -108,11 +108,11 @@ deliverable and exit criterion without watering down enforcement targets.
 
 | Asset | Status | Paths |
 |-------|--------|-------|
-| Control usage map | ✅ done | `docs/tui/CONTROL_USAGE.md` |
-| Surface catalog | ✅ done | `docs/tui/SURFACE_CATALOG.md` |
-| Design token bypasses | ✅ done | `docs/tui/DESIGN_TOKEN_BYPASSES.md` |
-| Interaction matrix | ✅ done | `docs/tui/INTERACTION_MATRIX.md` |
-| Component authoring guide (how to build a screen) | ✅ **new** | `docs/tui/COMPONENT_AUTHORING.md` |
+| Control usage map | ✅ done | `docs/reference/control-usage.md` |
+| Surface catalog | ✅ done | `docs/reference/surface-catalog.md` |
+| Design token bypasses | ✅ done | `docs/reference/design-token-bypasses.md` |
+| Interaction matrix | ✅ done | `docs/reference/interaction-matrix.md` |
+| Component authoring guide (how to build a screen) | ✅ **new** | `docs/guides/component-authoring.md` |
 | Host/OverlayHost/PanelDeck recipes | ✅ **new** | Covered in COMPONENT_AUTHORING.md § Recipes 1–2 |
 
 ---
@@ -141,14 +141,14 @@ None — all entries migrated or deleted.
 | `uniseg-import` | `[]` | Keep forbidden |
 | `runewidth-import` | `[]` | Keep forbidden |
 
-Manifest: `docs/tui/bypass_manifest.json`
+Manifest: `docs/reference/bypass-manifest.json`
 
 ---
 
 ## This pass additions
 
 - **WindowFrame reveal animation** (2026-08-01): `WindowFrame.SetReveal(progress)` (0=collapsed body, 1=full; Layout scales content height so paint + Host hit-testing agree), OverlayHost `SetOnOpen` hook, viewmodel tick driver (`beginReveal`/`advanceReveals`/`stopReveal`, fast 16ms tick while animating, 120ms duration). Non-modal popovers (context menu, palettes, LSP popups) slide in; modals appear instantly. Tests: `TestWindowFrameReveal*` (6, ui) + `TestReveal_*` (6, viewmodel).
-- **CI bench allocation gate** (2026-08-01): `scripts/tui_bench_gate.sh` + `make bench-gate` + CI step; ceilings from PERFORMANCE_BASELINES.md (tightened ~25% over measured).
+- **CI bench allocation gate** (2026-08-01): `scripts/tui_bench_gate.sh` + `make bench-gate` + CI step; ceilings from docs/reference/performance-baselines.md (tightened ~25% over measured).
 - **StripAnsi zero-alloc fast path** (2026-08-01): plain text (no `\x1b`) returns unchanged — label/list/button paint allocations cut ~75% (DemoGallery 3888B/151 allocs → 1040B/44).
 - **FullRender benchmark corrected** (2026-08-01): reused the layer surface instead of allocating per op (90425B/7 allocs → 8249B/4); the old number measured its own setup allocation.
 - **Byte-identical golden cell dumps** (2026-08-01): new `tui/uitest` test-support package (`GoldenHash` + `CheckGolden` + `-update`); checked-in golden hashes for shellheader, shellinput, shelltabs, shellstatus, shelltree, shelleditor, launcher, findinfiles, command_palette. Header clock frozen via `nowFunc` test seam. Determinism + drift-sensitivity proven (see §1). sessionpicker excluded (time-dependent date grouping).
@@ -157,12 +157,12 @@ Manifest: `docs/tui/bypass_manifest.json`
 - **Three-layer boundary enforced**: `tui_design_audit.sh` now fails if `workspace/` imports `crude/tui` (probe-verified).
 - **Full lint gate enabled** (2026-08-01): `errcheck`, `unused`, `gosimple` all enabled in `.golangci.yml`; workspace errcheck exclusion removed. Zero issues across CI scope (`./app/... ./tui/cell/... ./tui/surface/... ./tui/compositor/... ./tui/ui/... ./tui/screens/... ./workspace/...`). ~108 items resolved: 50 unused (incl. `TextArea.View` ANSI path, `input/view.go`, `ui.BlockCursorTime`, app.go legacy msg aliases, shellchat `vpRow`, scrollbar_control dead inits, `tui/widgets/test_helpers_test.go`), 46 errcheck, 12 gosimple.
 - **TextArea ANSI View() path deleted** (2026-08-01): `TextArea.View` + `renderSegmentANSI`/`renderAtomicChipANSI`/`applySelectionANSI`/`blinkContrastFG`/`ansiColor` + `tui/input/view.go` ANSI bridge + `ui.BlockCursorTime` deleted; raw `\x1b[7m` removed from `tui/ui`. Tests migrated to native `Paint` cell-buffer assertions (`Layout(W:8)` ≡ legacy `View(12)`; cursor inverse-video/accent-block asserted on cells). `raw-ansi-sgr` rule now **enforced** in `tui_design_audit.sh` (probe-verified to fail outside allowlist).
-- **Dead `tui/diffview` package deleted** (2026-08-01): zero Go importers, no tests; was the last non-theme hex allowlist entry. `hardcoded-lipgloss-hex` shrunk to `tui/theme/` only; `raw-truecolor-constructors` shrunk to `tui/theme/` + `tui/cell/` + `tui/rendering/`. Audit script + bypass manifest v40 + DESIGN_TOKEN_BYPASSES.md updated.
+- **Dead `tui/diffview` package deleted** (2026-08-01): zero Go importers, no tests; was the last non-theme hex allowlist entry. `hardcoded-lipgloss-hex` shrunk to `tui/theme/` only; `raw-truecolor-constructors` shrunk to `tui/theme/` + `tui/cell/` + `tui/rendering/`. Audit script + bypass manifest v40 + docs/reference/design-token-bypasses.md updated.
 - Product paint goldens: `shelleditor/editor_test.go`, `shellheader/header_test.go`, `shellstatus/paint_golden_test.go`, `shellinput/input_test.go`, `shelltree/tree_test.go`, `findinfiles/find_in_files_test.go`, `viewmodel/command_palette_test.go`
 - Race tests: `app/config_watch_race_test.go`, `workspace/project_search_race_test.go`, `tui/viewmodel/eventbus_race_test.go`
 - Root lint: `.golangci.yml` + CI lint step; trivial fixes in `tui/ui/tabs.go`, `tui/ui/scrollbar_control.go`
 - `Makefile` `test-race-tui` expanded with `./app/` and `./tui/viewmodel/`
-- Authoring doc: `docs/tui/COMPONENT_AUTHORING.md`
+- Authoring doc: `docs/guides/component-authoring.md`
 - Shell keyboard contracts: `shellinput/input_contract_test.go`, `shelltabs/tabs_contract_test.go`, `shelltree/tree_contract_test.go`, `shellheader/header_contract_test.go`, `shellstatus/status_contract_test.go`
 - Viewmodel interaction contracts: `viewmodel/tree_focus_contract_test.go`, `viewmodel/tree_filter_contract_test.go`, `viewmodel/overlay_click_outside_contract_test.go`, `viewmodel/status_keyboard_contract_test.go`, `viewmodel/launcher_keyboard_contract_test.go`, `viewmodel/panel_deck_contract_test.go`, `viewmodel/chat_keyboard_contract_test.go`
 - Launcher / panel-deck / chat contracts: `screens/launcher/launcher_contract_test.go` (incl. workspace `d` delete), `screens/shellchat/scroll_contract_test.go` (disarmed offset)

@@ -3,7 +3,7 @@
 #
 # Runs the canonical performance benchmarks with -benchmem and fails when a
 # benchmark EXCEEDS its documented allocation ceiling from
-# docs/tui/PERFORMANCE_BASELINES.md. Allocations are hardware-independent, so
+# docs/reference/performance-baselines.md. Allocations are hardware-independent, so
 # ceilings are enforceable in CI; timing is intentionally NOT gated (CPU
 # frequency variation across runners makes wall-clock thresholds noise).
 #
@@ -12,7 +12,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# name -> "bytes allocs" ceilings (from PERFORMANCE_BASELINES.md)
+# name -> "bytes allocs" ceilings (from docs/reference/performance-baselines.md)
 # Lines: "BenchmarkName  B/op  allocs/op"
 ceiling() {
   case "$1" in
@@ -52,7 +52,7 @@ run_bench() {
     base="${name%-*}"
     ceils="$(ceiling "$base")"
     if [[ -z "$ceils" ]]; then
-      echo "WARN: no ceiling recorded for $base — update PERFORMANCE_BASELINES.md or the gate"
+      echo "WARN: no ceiling recorded for $base — update docs/reference/performance-baselines.md or the gate"
       continue
     fi
     read -r maxB maxAlloc <<< "$ceils"

@@ -1,10 +1,12 @@
 # TUI Performance Baselines
 
+> Status: Current. Allocation ceilings are enforced in CI by `scripts/tui_bench_gate.sh` (`make bench-gate`). Timing is recorded but not gated.
+
 Status: Phase 0 reference baseline + product-screen benches (2026-07-31)
 
 Recorded: 2026-07-17 (foundation), 2026-07-31 (product-screen additions)
 
-Canonical plan: [`TUI_COMPONENT_SYSTEM_PLAN.md`](../../TUI_COMPONENT_SYSTEM_PLAN.md)
+Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-component-system-plan.md)
 
 ## Purpose
 
@@ -128,7 +130,7 @@ ceilings are tighter because they are less hardware-dependent.
    state or correctness requires it.
 3. Treat a repeated timing increase above 15 percent as requiring investigation even
    if it remains under the broad reference ceiling.
-4. Do not optimize by bypassing `TERMINAL_WIDTH.md`, Surface compositing, theme tokens,
+4. Do not optimize by bypassing `docs/reference/terminal-width.md`, Surface compositing, theme tokens,
    component semantics, or proper invalidation.
 5. Add a benchmark when introducing a materially new hot path such as variable-height
    virtualization, root Host paint, or product-screen component composition.

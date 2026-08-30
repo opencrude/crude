@@ -1,11 +1,11 @@
 # Terminal Integration Repair Plan
 
-Status: IMPLEMENTATION LANDED (2026-08-13). The libghostty-vt engine, the
+> Status: LANDED (2026-08-13). The libghostty-vt engine, the
 workspace terminal dock, reversible float/dock, the pinned terminfo runtime
 contract, the idle 60 Hz fix, the OSC-title deadlock fix, selection/copy,
 scrollback, mouse reporting, focus reporting, OSC 52, bell, OSC 7, and the
 PTY process-group shutdown are all implemented and tested. See
-`docs/tui/TERMINALS.md` for the current contract; this file is retained as
+`docs/reference/in-app-terminals.md` for the current contract; this file is retained as
 design context and research record.
 
 Date: 2026-08-13
@@ -51,7 +51,7 @@ fixed and visually verified with `scripts/tuishot.sh`.
 - All terminal colors and dock chrome use semantic theme tokens. Terminal
   cells retain application-provided RGB/palette styles while default
   foreground/background resolve against Crude's active theme.
-- All cell widths must remain compatible with `TERMINAL_WIDTH.md` and Crude's
+- All cell widths must remain compatible with `docs/reference/terminal-width.md` and Crude's
   shared grapheme-width path.
 
 ## What Exists Today
@@ -93,7 +93,7 @@ fixed and visually verified with `scripts/tuishot.sh`.
 
 ### 1. The implementation is not libghostty
 
-The current docs say this directly: `docs/tui/TERMINALS.md` states that
+The current docs say this directly: `docs/reference/in-app-terminals.md` states that
 `libghostty-vt` is not linked. The implementation only uses Ghostty's terminfo
 name and a partial parser. Advertising `TERM=xterm-ghostty` therefore promises
 capabilities the embedded terminal does not implement.
@@ -369,8 +369,8 @@ scrollback, and z-order behavior.
 ### Phase 5: Documentation and deletion
 
 - Delete obsolete hand-written parser/key files after replacement is proven.
-- Update `docs/tui/TERMINALS.md`, `SURFACE_CATALOG.md`,
-  `INTERACTION_MATRIX.md`, `COMPONENT_AUTHORING.md`, and Help topics.
+- Update `docs/reference/in-app-terminals.md`, `docs/reference/surface-catalog.md`,
+  `docs/reference/interaction-matrix.md`, `docs/guides/component-authoring.md`, and Help topics.
 - Update architecture comments that currently say terminal panels share the
   session deck.
 - Update the design bypass manifest only if required by the established audit
@@ -422,7 +422,7 @@ Use PTY-driven fixtures with deterministic commands where possible:
 
 ## Visual Verification
 
-Use only the repository workflow in `AGENTS.md`:
+Use only the repository workflow in root `AGENTS.md`:
 
 ```bash
 COLS=160 ROWS=40 FONT_SIZE=11 scripts/tuishot.sh /tmp/crude-terminal-dock \
@@ -490,9 +490,9 @@ supported by inspected tuishot captures.
 
 ## Resume Checklist
 
-1. Read root `AGENTS.md`, this file, `docs/tui/TERMINALS.md`,
-   `TUI_COMPONENT_SYSTEM_PLAN.md` sections 15.4 and root Host, and
-   `TERMINAL_WIDTH.md`.
+1. Read root root `AGENTS.md`, this file, `docs/reference/in-app-terminals.md`,
+   `docs/plans/tui-component-system-plan.md` sections 15.4 and root Host, and
+   `docs/reference/terminal-width.md`.
 2. Check `git status --short` and preserve unrelated changes.
 3. Do not repeat broad repository or web research unless an API/build detail is
    missing.

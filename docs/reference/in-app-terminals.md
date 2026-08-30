@@ -1,5 +1,7 @@
 # In-app terminals
 
+> Status: Current reference for the in-app terminal (libghostty-vt PTY engine).
+
 Crude embeds a terminal multiplexer in the TUI. Each session is a PTY whose
 environment is pinned to **Ghostty 1.3.0** (`types.PinnedGhosttyVersion`,
 `TERM=xterm-ghostty`). Emulation is **libghostty-vt** at the commit in
