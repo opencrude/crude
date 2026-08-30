@@ -38,6 +38,9 @@ func (m *SubAgentManager) Validate(spec SubAgentSpec) error {
 	if spec.Category != CatResearcher && spec.Category != CatCrafter && spec.Category != CatAeron {
 		return fmt.Errorf("invalid category %q: must be researcher, crafter, or aeron", spec.Category)
 	}
+	if spec.Timeout < 0 || spec.Timeout > 24*time.Hour {
+		return fmt.Errorf("sub-agent timeout must be between 0 and 24 hours")
+	}
 	return nil
 }
 
@@ -59,7 +62,16 @@ func (m *SubAgentManager) MarkFinished(id AgentID, result SubAgentResult) {
 		m.finished[id] = handle
 		delete(m.active, id)
 	}
-	m.completed = append(m.completed, result)
+	if _, exists := m.completedMap[id]; !exists {
+		m.completed = append(m.completed, result)
+	} else {
+		for i := range m.completed {
+			if m.completed[i].AgentID == id {
+				m.completed[i] = result
+				break
+			}
+		}
+	}
 	m.completedMap[id] = result
 }
 
@@ -172,7 +184,6 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 			Status:         string(SubAgentRunning),
 			ElapsedSeconds: int(time.Since(h.StartedAt).Seconds()),
 			StepsUsed:      int(h.StepCount.Load()),
-			MaxSteps:       h.Spec.MaxSteps,
 			Model:          h.Spec.Model,
 			FilesClaimed:   h.Spec.FileOwnership,
 		})
@@ -194,7 +205,6 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 				Status:         status,
 				ElapsedSeconds: int(time.Since(h.StartedAt).Seconds()),
 				StepsUsed:      int(h.StepCount.Load()),
-				MaxSteps:       h.Spec.MaxSteps,
 				Model:          h.Spec.Model,
 				FilesClaimed:   h.Spec.FileOwnership,
 				ResultPath:     resultPath,
@@ -212,7 +222,6 @@ type SubAgentStatusEntry struct {
 	Status         string   `json:"status"`
 	ElapsedSeconds int      `json:"elapsed_seconds"`
 	StepsUsed      int      `json:"steps_used"`
-	MaxSteps       int      `json:"max_steps"`
 	Model          string   `json:"model"`
 	FilesClaimed   []string `json:"files_claimed"`
 	ResultPath     string   `json:"result_path,omitempty"`

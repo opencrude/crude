@@ -36,7 +36,7 @@ func completeForTest(t *testing.T, agent *Agent) (completionResult, error) {
 		context.Background(),
 		[]provider.ChatMessage{provider.NewTextMessage("user", "hello")},
 		nil,
-		nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 }
 
@@ -133,7 +133,7 @@ func TestCompleteStreamAnthropicToolUse(t *testing.T) {
 		func(_ string, id string, name string) {
 			startedID, startedName = id, name
 		},
-		nil, nil, nil,
+		nil, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("completeStream: %v", err)

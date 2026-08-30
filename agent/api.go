@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"crude/logger"
@@ -45,20 +46,6 @@ func (r completionResult) hasOutput() bool {
 	return r.Content != "" || r.ReasoningContent != "" || len(r.ToolCalls) > 0 || len(r.ProviderItems) > 0
 }
 
-func addTokenUsage(left, right provider.TokenUsage) provider.TokenUsage {
-	return provider.TokenUsage{
-		PromptTokens:        left.PromptTokens + right.PromptTokens,
-		CompletionTokens:    left.CompletionTokens + right.CompletionTokens,
-		PromptTokensCached:  left.PromptTokensCached + right.PromptTokensCached,
-		PromptTokensWritten: left.PromptTokensWritten + right.PromptTokensWritten,
-	}
-}
-
-const (
-	maxErrorResponseBytes = 1 << 20
-	maxJSONResponseBytes  = 64 << 20
-)
-
 // CompleteText performs a single completion outside the agent loop: no
 // tools, no streaming callbacks, no session state. Background jobs (memory
 // extraction, session summaries, consolidation) use it so they never touch
@@ -70,7 +57,7 @@ func CompleteText(
 	result, err := a.completeStream(ctx, []provider.ChatMessage{
 		provider.NewTextMessage("system", system),
 		provider.NewTextMessage("user", user),
-	}, nil, nil, nil, nil, nil, nil, nil)
+	}, nil, nil, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -86,6 +73,7 @@ func (a *Agent) completeStream(
 	onToolCallStart func(internalID, id, name string),
 	onToolCallDelta func(internalID, id, name, accumulatedArgs string),
 	onRetry func(attempt int, backoffSeconds float64),
+	onRequestAccepted func(),
 	onRequestProgress func(uploaded, total int64),
 ) (completionResult, error) {
 	if ctx == nil {
@@ -139,7 +127,7 @@ func (a *Agent) completeStream(
 	}
 
 	var requestBody []byte
-	client, err := a.newClient(onRetry, onRequestProgress, func(body []byte) { requestBody = body })
+	client, err := a.newClient(onRetry, onRequestAccepted, onRequestProgress, func(body []byte) { requestBody = body })
 	if err != nil {
 		return completionResult{}, err
 	}
@@ -182,6 +170,7 @@ func (a *Agent) completeStream(
 // callbacks and test injection.
 func (a *Agent) newClient(
 	onRetry func(attempt int, backoffSeconds float64),
+	onRequestAccepted func(),
 	onRequestProgress func(uploaded, total int64),
 	onRequestEncoded func(body []byte),
 ) (*provider.Client, error) {
@@ -196,6 +185,10 @@ func (a *Agent) newClient(
 	}
 	if onRequestEncoded != nil {
 		opts = append(opts, provider.OnRequestEncoded(onRequestEncoded))
+	}
+	if onRequestAccepted != nil {
+		var once sync.Once
+		opts = append(opts, provider.OnRequestAccepted(func() { once.Do(onRequestAccepted) }))
 	}
 	if onRequestProgress != nil {
 		opts = append(opts, provider.OnUploadProgress(onRequestProgress))
@@ -387,154 +380,6 @@ func finalizeToolCalls(accumulators map[int]*toolCallAccumulator) []provider.Too
 	return result
 }
 
-func (a *Agent) resultFromChatResponse(
-	response *provider.ChatResponse,
-	emit func(string),
-	emitThinking func(string),
-	onToolCallStart func(string, string, string),
-	onToolCallDelta func(string, string, string, string),
-) (completionResult, error) {
-	if response == nil {
-		return completionResult{}, fmt.Errorf("provider returned an empty response")
-	}
-	if response.Error != nil {
-		return completionResult{}, &provider.APIError{
-			Type: response.Error.Type, Code: fmt.Sprint(response.Error.Code), Message: response.Error.Message,
-		}
-	}
-	if len(response.Choices) == 0 {
-		return completionResult{}, fmt.Errorf("provider response contains no choices")
-	}
-
-	choice := response.Choices[0]
-	message := choice.Message
-	content := message.ContentString()
-	if content == "" {
-		content = message.Refusal
-	}
-	reasoning := message.ReasoningContent
-	if reasoning == "" {
-		reasoning = message.Reasoning
-	}
-	if content == "" {
-		content = choice.Delta.Content
-	}
-	if content == "" {
-		content = choice.Delta.Refusal
-	}
-	if reasoning == "" {
-		reasoning = choice.Delta.ReasoningContent
-	}
-	if reasoning == "" {
-		reasoning = choice.Delta.Reasoning
-	}
-	toolCalls := message.ToolCalls
-	if len(toolCalls) == 0 {
-		toolCalls = choice.Delta.ToolCalls
-	}
-	for i := range toolCalls {
-		a.toolCallSeq++
-		toolCalls[i].Index = i
-		toolCalls[i].InternalID = fmt.Sprintf("_tc%d", a.toolCallSeq)
-		if toolCalls[i].ID == "" {
-			toolCalls[i].ID = "call" + toolCalls[i].InternalID
-		}
-		if toolCalls[i].Type == "" {
-			toolCalls[i].Type = "function"
-		}
-		if onToolCallStart != nil {
-			onToolCallStart(toolCalls[i].InternalID, toolCalls[i].ID, toolCalls[i].Function.Name)
-		}
-		if onToolCallDelta != nil {
-			onToolCallDelta(toolCalls[i].InternalID, toolCalls[i].ID,
-				toolCalls[i].Function.Name, toolCalls[i].Function.Arguments)
-		}
-	}
-	if reasoning != "" && emitThinking != nil {
-		emitThinking(reasoning)
-	}
-	if content != "" && emit != nil {
-		emit(content)
-	}
-
-	result := completionResult{
-		Content:          content,
-		ReasoningContent: reasoning,
-		FinishReason:     choice.FinishReason,
-		ToolCalls:        toolCalls,
-		ProviderItems:    message.ProviderItems,
-	}
-	if response.Usage != nil {
-		result.Usage.PromptTokens = response.Usage.PromptTokens
-		result.Usage.CompletionTokens = response.Usage.CompletionTokens
-		if response.Usage.PromptTokensDetails != nil {
-			result.Usage.PromptTokensCached = response.Usage.PromptTokensDetails.CachedTokens
-			result.Usage.PromptTokensWritten = response.Usage.PromptTokensDetails.CacheWriteTokens
-		}
-	}
-	if result.FinishReason == "" {
-		if len(result.ToolCalls) > 0 {
-			result.FinishReason = "tool_calls"
-		} else {
-			result.FinishReason = "stop"
-		}
-	}
-	return result, nil
-}
-
-func readHTTPStatusError(resp *http.Response) *apiCallError {
-	defer resp.Body.Close()
-	body, readErr := readBounded(resp.Body, maxErrorResponseBytes)
-	message := strings.TrimSpace(string(body))
-	if readErr != nil {
-		message = readErr.Error()
-	}
-
-	var envelope struct {
-		Error *struct {
-			Type    string `json:"type"`
-			Code    any    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(body, &envelope) == nil {
-		if envelope.Error != nil && envelope.Error.Message != "" {
-			message = envelope.Error.Message
-			if envelope.Error.Type != "" {
-				message = envelope.Error.Type + ": " + message
-			}
-			if envelope.Error.Code != nil && fmt.Sprint(envelope.Error.Code) != "" {
-				message = fmt.Sprintf("%v: %s", envelope.Error.Code, message)
-			}
-		} else if envelope.Message != "" {
-			message = envelope.Message
-		}
-	}
-	if message == "" {
-		message = http.StatusText(resp.StatusCode)
-	}
-	if requestID := firstNonEmpty(resp.Header.Get("request-id"), resp.Header.Get("x-request-id")); requestID != "" {
-		message += " (request " + requestID + ")"
-	}
-	return &apiCallError{
-		Message:    fmt.Sprintf("API %d: %s", resp.StatusCode, message),
-		StatusCode: resp.StatusCode,
-		Cause:      fmt.Errorf("HTTP %d", resp.StatusCode),
-	}
-}
-
-func readBounded(reader io.Reader, limit int64) ([]byte, error) {
-	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("response exceeds %d bytes", limit)
-	}
-	return body, nil
-}
-
 func cancellationError(prefix string, cause error) *apiCallError {
 	return &apiCallError{Message: fmt.Sprintf("%s: %v", prefix, cause), Cause: cause}
 }
@@ -571,15 +416,6 @@ func (a *Agent) logCompletedTurn(body []byte, result completionResult, streamSta
 	}); turnFile != "" {
 		a.logger.Debug("LLM", "turn_dump", "file", turnFile)
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func (a *Agent) emitError(emit func(AgentEvent), err error) {

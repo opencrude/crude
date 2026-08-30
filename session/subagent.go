@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"crude/sessiondb"
 	"crude/statemachine"
 	"crude/tools"
+	ttypes "crude/types"
 )
 
 type SubAgentRunner struct {
@@ -39,6 +41,7 @@ type SubAgentRunner struct {
 	wakeCh         chan<- WakeEvent
 	sessionCtx     context.Context
 	sessionCancel  context.CancelFunc
+	parentTurn     atomic.Uint64
 }
 
 func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
@@ -71,15 +74,55 @@ func (r *SubAgentRunner) SessionCancel() {
 }
 
 func (r *SubAgentRunner) CancelAllActive() []agent.AgentID {
+	return r.cancelActive(func(*agent.SubAgentHandle) bool { return true })
+}
+
+func (r *SubAgentRunner) CancelActiveForTurn(generation uint64) []agent.AgentID {
+	if generation == 0 {
+		return nil
+	}
+	return r.cancelActive(func(handle *agent.SubAgentHandle) bool {
+		return handle.Spec.ParentTurn == generation
+	})
+}
+
+func (r *SubAgentRunner) cancelActive(matches func(*agent.SubAgentHandle) bool) []agent.AgentID {
 	var ids []agent.AgentID
 	for _, h := range r.mgr.ActiveHandles() {
-		ids = append(ids, h.Spec.ID)
+		if matches(h) {
+			ids = append(ids, h.Spec.ID)
+		}
 	}
 	for _, id := range ids {
 		r.mgr.Cancel(id)
 		r.fileOwnership.Release(id)
 	}
 	return ids
+}
+
+func (r *SubAgentRunner) SetParentTurnGeneration(generation uint64) {
+	if r != nil {
+		r.parentTurn.Store(generation)
+	}
+}
+
+// ResolveBlock routes a request-correlated answer to one live child. A child
+// has its own Agent.Run loop and therefore must never consume the parent
+// orchestrator's blocking-response channel.
+func (r *SubAgentRunner) ResolveBlock(id agent.AgentID, response ttypes.BlockResponse) bool {
+	if r == nil || response.RequestID == "" {
+		return false
+	}
+	handle, ok := r.mgr.GetActive(id)
+	if !ok || handle == nil || handle.BlockCh == nil {
+		return false
+	}
+	select {
+	case handle.BlockCh <- response:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *SubAgentRunner) SetSender(sender EventSender) {
@@ -103,15 +146,18 @@ func (r *SubAgentRunner) SetParentToolFn(fn func(ctx context.Context, tool strin
 }
 
 func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
-	name := getStrParam(params, "name")
 	description := getStrParam(params, "description")
-	if name == "" || description == "" {
-		return tools.ToolResult{}, fmt.Errorf("run_sub_agent: 'name' and 'description' are required")
+	if description == "" {
+		return tools.ToolResult{}, fmt.Errorf("run_sub_agent: 'description' is required")
 	}
 
 	category := getStrParam(params, "category")
 	if category == "" {
 		category = agent.CatCrafter
+	}
+	name := getStrParam(params, "name")
+	if name == "" {
+		name = deriveSubAgentName(category, description)
 	}
 
 	spec := agent.SubAgentSpec{
@@ -121,9 +167,10 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		Description:  description,
 		Instructions: getStrParam(params, "instructions"),
 		PolicyName:   getStrParam(params, "policy"),
-		MaxSteps:     getIntParam(params, "max_steps"),
+		Timeout:      time.Duration(getIntParam(params, "timeout_seconds")) * time.Second,
 		Depth:        1,
 		ParentID:     agent.AgentID(r.orchestratorID),
+		ParentTurn:   r.parentTurn.Load(),
 	}
 
 	if raw, ok := params["allowed_tools"]; ok {
@@ -191,13 +238,38 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	select {
 	case result := <-handle.ResultCh:
 		// The agent now has the final result via synchronous wait; mark consumed
-		// so the pending WakeSubAgentDone event is suppressed. Currently, wait=true
-		// is forced to false in multi-agent mode, but this guards against future changes.
+		// so the pending WakeSubAgentDone event is suppressed.
 		r.session.MarkReportConsumed(string(spec.ID))
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	case <-ctx.Done():
 		return tools.ToolResult{Content: fmt.Sprintf("Sub-agent %q still running (turn ended). Use poll_sub_agent with handle_id=%q to check later.", spec.Name, spec.ID)}, nil
 	}
+}
+
+func deriveSubAgentName(category, description string) string {
+	var normalized strings.Builder
+	separator := false
+	for _, r := range strings.ToLower(description) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			normalized.WriteRune(r)
+			separator = false
+		} else if !separator {
+			normalized.WriteByte(' ')
+			separator = true
+		}
+	}
+	words := strings.Fields(normalized.String())
+	if len(words) > 3 {
+		words = words[:3]
+	}
+	name := strings.Trim(strings.Join(words, "-"), "-")
+	if len(name) > 32 {
+		name = strings.TrimRight(name[:32], "-")
+	}
+	if name == "" {
+		name = category + "-agent"
+	}
+	return name
 }
 
 func formatSubAgentResult(result agent.SubAgentResult) string {
@@ -243,6 +315,8 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 		}
 	case "QUOTA":
 		sb.WriteString(" — **rate limited or quota exceeded. Wait before retrying.**")
+	case "CANCELLED":
+		sb.WriteString(" — **the agent did not complete. Treat any output as partial and do not report this as a successful result.**")
 	}
 	if result.DurationMs > 0 {
 		dur := time.Duration(result.DurationMs) * time.Millisecond
@@ -331,13 +405,8 @@ func (r *SubAgentRunner) PollSubAgent(params map[string]any) (tools.ToolResult, 
 	if ok {
 		elapsed := time.Since(handle.StartedAt).Round(time.Second)
 		stepsUsed := handle.StepCount.Load()
-		maxSteps := handle.Spec.MaxSteps
-		if maxSteps == 0 {
-			maxSteps = 1000
-		}
-
-		status := fmt.Sprintf("Sub-agent %q [%s] is still running.\nElapsed: %s | Steps: %d/%d | Model: %s",
-			handle.Spec.Name, handle.Spec.Category, elapsed, stepsUsed, maxSteps, handle.Spec.Model)
+		status := fmt.Sprintf("Sub-agent %q [%s] is still running.\nElapsed: %s | Steps: %d | Model: %s",
+			handle.Spec.Name, handle.Spec.Category, elapsed, stepsUsed, handle.Spec.Model)
 
 		return tools.ToolResult{Content: status}, nil
 	}
@@ -394,6 +463,7 @@ func (r *SubAgentRunner) CancelSubAgent(params map[string]any) (tools.ToolResult
 	}
 
 	r.fileOwnership.Release(agent.AgentID(handleID))
+	r.session.MarkReportConsumed(handleID)
 	return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 }
 
@@ -462,11 +532,11 @@ func (r *SubAgentRunner) WriteReport(agentID agent.AgentID, params map[string]an
 }
 
 func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgentSpec, profileInstructions string) (*agent.SubAgentHandle, error) {
-	sessionsRoot, _ := SessionsRoot()
 	subSessionID := string(spec.ID)
 	var subDB *sql.DB
-	if sessionsRoot != "" {
-		dbPath := filepath.Join(sessionsRoot, subSessionID+".db")
+	if dbPath, pathErr := r.subAgentDBPath(subSessionID); pathErr != nil {
+		r.session.logger.Warn("SUBAGENT", "db_path_error", "error", pathErr.Error())
+	} else if dbPath != "" {
 		var err error
 		subDB, err = sessiondb.OpenAndMigrate(dbPath)
 		if err != nil {
@@ -576,27 +646,27 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	allToolDefs := tools.AgentTools
 	filteredTools := agent.FilterTools(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true)
 
-	maxSteps := spec.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = 1000
-	}
-
 	a := agent.NewAgent(p, p.Model, r.session.logger)
 	a.AgentID = spec.ID
 	a.Depth = spec.Depth
 	a.ParentID = spec.ParentID
-	a.MaxSteps = maxSteps
 	a.Policy = spec.Policy
 	a.Yolo = true
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
 	a.FilteredTools = filteredTools
 
-	subCtx, subCancel := context.WithCancel(r.sessionCtx)
+	var subCtx context.Context
+	var subCancel context.CancelFunc
+	if spec.Timeout > 0 {
+		subCtx, subCancel = context.WithTimeout(r.sessionCtx, spec.Timeout)
+	} else {
+		subCtx, subCancel = context.WithCancel(r.sessionCtx)
+	}
 	a.Ctx = subCtx
 	r.session.logger.Info("SUBAGENT", "ctx_independence", "agent_id", spec.ID, "session_ctx_valid", r.sessionCtx.Err() == nil)
 
 	subSM := statemachine.NewConversationStateMachine(r.session.logger)
-	blockCh := make(chan string, 8)
+	blockCh := make(chan ttypes.BlockResponse, 8)
 
 	handle := &agent.SubAgentHandle{
 		Spec:      spec,
@@ -632,6 +702,21 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	return handle, nil
 }
 
+func (r *SubAgentRunner) subAgentDBPath(sessionID string) (string, error) {
+	if r == nil || r.session == nil || r.session.logger == nil {
+		return "", nil
+	}
+	parentDir := r.session.logger.SessionDir()
+	if parentDir == "" {
+		return "", nil
+	}
+	dir := filepath.Join(parentDir, "subagents")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create sub-agent session directory: %w", err)
+	}
+	return filepath.Join(dir, filepath.Base(sessionID)+".db"), nil
+}
+
 func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, systemPrompt, userPrompt string) {
 	done := false
 	crashed := false
@@ -645,6 +730,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"model":      handle.Spec.Model,
 			"provider":   handle.Spec.Provider,
 			"task":       handle.Spec.Description,
+			"prompt":     userPrompt,
 			"parent_id":  r.orchestratorID,
 		}, string(handle.Spec.ID))
 	}
@@ -664,13 +750,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 				Status:    agent.SubAgentCrashed,
 				Errors:    []string{fmt.Sprintf("CRASH: %v\n\nStack trace:\n%s", rec, stack)},
 			}
-			handle.ResultCh <- result
-			r.mgr.MarkFinished(handle.Spec.ID, result)
-			r.persistResult(result)
-			if handle.DB != nil {
-				_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
-				handle.DB.Close()
-			}
+			r.finalizeSubAgent(handle, result)
 			return
 		}
 
@@ -684,13 +764,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 				Status:    agent.SubAgentCrashed,
 				Errors:    []string{"Agent exited unexpectedly without completing or panicking — this is an internal system bug"},
 			}
-			handle.ResultCh <- result
-			r.mgr.MarkFinished(handle.Spec.ID, result)
-			r.persistResult(result)
-			if handle.DB != nil {
-				_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
-				handle.DB.Close()
-			}
+			r.finalizeSubAgent(handle, result)
 			return
 		}
 	}()
@@ -757,6 +831,19 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		r.autoGenerateReport(handle, agentMsgs, &result)
 	}
 
+	done = true
+	r.finalizeSubAgent(handle, result)
+}
+
+// finalizeSubAgent is the sole terminal delivery path for successful, failed,
+// cancelled, panicked, and unexpected child exits. Persistence alone is not a
+// completion signal: both the UI event and parent wake are mandatory.
+func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result agent.SubAgentResult) {
+	if handle == nil {
+		return
+	}
+	r.mgr.MarkFinished(handle.Spec.ID, result)
+	r.persistResult(handle, result)
 	if r.sender != nil {
 		r.sender.SendAgentEventWithID("sub_agent_completed", map[string]string{
 			"agent_id":    string(handle.Spec.ID),
@@ -766,21 +853,15 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"result_path": result.ResultPath,
 		}, string(handle.Spec.ID))
 	}
-
 	handle.ResultCh <- result
-	r.mgr.MarkFinished(handle.Spec.ID, result)
-
-	done = true
-	r.persistResult(result)
 
 	// Completion wakes are part of the delivery contract. Backpressure is
 	// preferable to silently losing a result; session cancellation unblocks
 	// shutdown if no orchestrator remains to drain the queue.
 	r.deliverCompletionWake(result)
-
 	if handle.DB != nil {
 		_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
-		handle.DB.Close()
+		_ = handle.DB.Close()
 	}
 }
 
@@ -794,13 +875,19 @@ func persistSubAgentTranscript(
 	var persisted []provider.ChatMessage
 	var turns []int
 	var metas []sessiondb.DisplayMeta
+	assignmentSeen := false
 	for _, message := range messages {
 		if message.Role == "system" {
 			continue
 		}
 		persisted = append(persisted, message)
 		turns = append(turns, 1)
-		meta := sessiondb.DisplayMeta{DisplayRole: message.Role}
+		displayRole := message.Role
+		if message.Role == "user" && !assignmentSeen {
+			displayRole = "assignment"
+			assignmentSeen = true
+		}
+		meta := sessiondb.DisplayMeta{DisplayRole: displayRole}
 		if message.Role == "tool" {
 			if message.ToolError {
 				meta.ToolStatus = "error"
@@ -846,8 +933,6 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 	switch handle.TermReason() {
 	case "stop_condition_met", "context_limit_reached":
 		status = agent.SubAgentFailedError
-	case "max_steps_reached":
-		status = agent.SubAgentFailedTimeout
 	}
 
 	// Check for tool-level errors (quota, auth, etc.)
@@ -947,6 +1032,7 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# Sub-Agent Report: %s [%s]\n\n", handle.Spec.Name, handle.Spec.Category)
 	fmt.Fprintf(&sb, "Task: %s\n\n", handle.Spec.Description)
+	fmt.Fprintf(&sb, "Status: %s\n\n", result.Status)
 
 	// Determine if the agent actually ran or failed immediately
 	hadAssistantMsg := false
@@ -957,7 +1043,13 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 		}
 	}
 
-	if len(result.Errors) > 0 && !hadAssistantMsg {
+	if result.Status == agent.SubAgentCancelled && !hadAssistantMsg {
+		sb.WriteString("## Cancellation Summary\n\n")
+		sb.WriteString("The sub-agent was cancelled before it produced a complete result. No success should be inferred from this report.\n")
+	} else if result.Status == agent.SubAgentFailedTimeout && !hadAssistantMsg {
+		sb.WriteString("## Timeout Summary\n\n")
+		sb.WriteString("The sub-agent reached its runtime or step limit before it produced a complete result.\n")
+	} else if len(result.Errors) > 0 && !hadAssistantMsg {
 		// Agent never ran — API error on first call.
 		sb.WriteString("## Failure Summary\n\n")
 		sb.WriteString("The sub-agent encountered an error before it could start working. The LLM API call failed, so no assistant messages were generated and no work was performed.\n\n")
@@ -1015,7 +1107,7 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 	result.ResultPath = reportPath
 }
 
-func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan string, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan ttypes.BlockResponse, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 	parentFn := r.parentToolFn
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if !agent.PolicyAllows(spec.Policy, tool) {
@@ -1034,7 +1126,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 		}
 
 		if tool == "question" {
-			questionText := getStrParam(params, "question")
+			questionText := summarizeSubAgentQuestions(params)
 			if r.sender != nil && questionText != "" {
 				r.sender.SendAgentEventWithID("sub_agent_question", map[string]string{
 					"agent_id":   string(spec.ID),
@@ -1118,29 +1210,37 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 	}
 }
 
-func (r *SubAgentRunner) persistResult(result agent.SubAgentResult) {
+func summarizeSubAgentQuestions(params map[string]any) string {
+	raw, ok := params["questions"].([]any)
+	if !ok {
+		return ""
+	}
+	lines := make([]string, 0, len(raw))
+	for _, value := range raw {
+		question, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		text := strings.TrimSpace(getStrParam(question, "question"))
+		if text == "" {
+			continue
+		}
+		header := strings.TrimSpace(getStrParam(question, "header"))
+		if header != "" {
+			text = header + ": " + text
+		}
+		lines = append(lines, text)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (r *SubAgentRunner) persistResult(_ *agent.SubAgentHandle, result agent.SubAgentResult) {
 	if r.session.db == nil {
 		return
 	}
-	_ = sessiondb.InsertSubAgentResult(r.session.db, sessiondb.SubAgentResultRow{
-		ParentSessionID:  r.session.sessionID,
-		ChildSessionID:   result.SessionID,
-		AgentID:          string(result.AgentID),
-		AgentName:        result.Name,
-		AgentCategory:    result.Category,
-		Status:           string(result.Status),
-		SummaryGist:      result.SummaryGist,
-		ResultPath:       result.ResultPath,
-		SessionLogPath:   result.LogPath,
-		FilesRead:        result.FilesRead,
-		FilesWritten:     result.FilesWritten,
-		Errors:           result.Errors,
-		PromptTokens:     result.PromptTokens,
-		CompletionTokens: result.CompTokens,
-		CostUSD:          result.CostUSD,
-		DurationMs:       result.DurationMs,
-		CreatedAt:        time.Now().UnixNano(),
-	})
+	if err := sessiondb.InsertSubAgentResult(r.session.db, subAgentResultRow(r.session.sessionID, result)); err != nil {
+		r.session.logger.Error("SUBAGENT", "persist_result_failed", "agent_id", result.AgentID, "error", err.Error())
+	}
 }
 
 func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agent.SubAgentSpec) string {
@@ -1180,9 +1280,6 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.PolicyName == "" && catCfg.Policy != "" {
 			spec.PolicyName = catCfg.Policy
 		}
-		if spec.MaxSteps == 0 && catCfg.MaxSteps > 0 {
-			spec.MaxSteps = catCfg.MaxSteps
-		}
 		if len(spec.AllowedTools) == 0 && len(catCfg.AllowedTools) > 0 {
 			spec.AllowedTools = catCfg.AllowedTools
 		}
@@ -1221,9 +1318,6 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 			if spec.Instructions == "" && ap.Instructions != "" {
 				spec.Instructions = ap.Instructions
 			}
-			if spec.MaxSteps == 0 && ap.MaxSteps > 0 {
-				spec.MaxSteps = ap.MaxSteps
-			}
 			if len(spec.AllowedTools) == 0 && len(ap.AllowedTools) > 0 {
 				spec.AllowedTools = ap.AllowedTools
 			}
@@ -1251,12 +1345,6 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		cfg = r.effectiveCfg
 	}
 	categoryCfg := cfg.GetCategoryConfig(spec.Category)
-	if spec.MaxSteps == 0 {
-		spec.MaxSteps = categoryCfg.MaxSteps
-		if spec.MaxSteps == 0 {
-			spec.MaxSteps = 1000
-		}
-	}
 	if spec.Model == "" {
 		spec.Model = categoryCfg.Model
 	}

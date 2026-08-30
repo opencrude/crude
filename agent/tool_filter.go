@@ -165,8 +165,8 @@ func orchestratorToolDescriptions() map[string]string {
 			"Sub-agents run asynchronously; the system auto-wakes you on completion. " +
 			"Launch, then either continue independent work or end your turn. " +
 			"Do not actively wait or poll for routine results. " +
-			"Required: category, description. " +
-			"Optional: instructions, policy, allowed_tools, denied_tools, file_ownership, max_steps, timeout_seconds, wait. " +
+			"Required: description. " +
+			"Optional: name (derived when omitted), category, instructions, policy, allowed_tools, denied_tools, file_ownership, timeout_seconds, wait. " +
 			"Model and provider are resolved automatically from your configuration; do not specify them.",
 
 		"poll_sub_agent": "Recovery-only status check; do not use during normal operation. " +

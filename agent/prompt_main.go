@@ -54,27 +54,30 @@ Launch a researcher to review changes, or a crafter to run tests. Always read th
 ### 5. SYNTHESIZE — Own the result
 Lead with what changed and verification results. Synthesize — do not paste raw agent reports. Own the outcome and describe follow-up clearly when a sub-agent result needs correction.
 
-## Event-Driven Protocol & Turn Yielding
+## Sub-Agent Waiting & Turn Yielding
 
-Sub-agents run asynchronously. To wait for a sub-agent to finish, yield your turn.
+Choose one explicit ownership mode per run_sub_agent call:
 
-HOW TO YIELD:
-1. Call run_sub_agent.
-2. Output a brief text response acknowledging the agent was launched.
-3. Make no more tool calls while waiting.
-4. By submitting a text-only response, you pause your own execution. The system will then automatically fast-forward time and wake you up with the completed report.
+- **wait=true (default):** the tool call genuinely blocks until that child reaches a terminal state, then returns its structured result in this turn. Use it when your next action depends on the result.
+- **wait=false:** the tool returns immediately with a handle while the child continues independently. Use it only for genuinely parallel work or when you intentionally want to yield this turn.
+
+HOW TO YIELD FOR ASYNC WORK:
+1. Call run_sub_agent with wait=false.
+2. Output one brief text response acknowledging the child is still running.
+3. Make no more tool calls in that turn.
+4. The child remains alive after your turn ends. The system wakes you with its terminal result; cancelled and failed results are never reported as completed.
 
 Flow rules:
-- Do not use poll_sub_agent for routine status checks. It bypasses the asynchronous flow and can cause system errors.
-- Do not spin-wait.
-- Yield your turn by omitting tool calls when waiting for an agent.
-- Use list_sub_agents only if you suspect an agent is permanently deadlocked.
-- Cancel clearly misrouted, stale, or unresponsive agents with cancel_sub_agent.`
+- Do not claim an async child completed until its terminal result says OK.
+- Do not use poll_sub_agent for routine status checks; completion notifications are automatic and lossless.
+- Do not spin-wait or call sleep to wait for a child.
+- Use list_sub_agents only to diagnose a child that appears permanently stalled.
+- Cancel clearly misrouted, stale, or unresponsive children with cancel_sub_agent.`
 
 const orchestratorSubAgentPrompt = `# Sub-Agent Orchestration
 
 ## Tools
-- **run_sub_agent**: Launch a leaf agent. System auto-wakes you on completion. Required: category, description. Optional: instructions, policy, allowed_tools, denied_tools, file_ownership, max_steps, timeout_seconds, wait.
+- **run_sub_agent**: Launch a leaf agent. System auto-wakes you on completion. Required: description. Optional: name (derived when omitted), category, instructions, policy, allowed_tools, denied_tools, file_ownership, timeout_seconds, wait.
 - **cancel_sub_agent**: Cancel a misrouted, stale, or unresponsive sub-agent.
 - **list_sub_agents**: Troubleshooting-only status view. Diagnose stalled or conflicting agents.
 - **poll_sub_agent**: Recovery-only status check. Do not use during normal operation. Only use if a sub-agent appears frozen and the automatic wake-up failed.
@@ -101,7 +104,7 @@ Explicitly listing tools in allowed_tools automatically upgrades the agent's pol
 When the system wakes you, evaluate the status:
 - **OK**: Completed successfully. Read the report.
 - **ERROR**: Recoverable error (API/tool failure). Adjust instructions and retry.
-- **TIMEOUT**: Exceeded time/steps. Increase max_steps or simplify the task.
+- **TIMEOUT**: Exceeded an explicit runtime deadline. Increase timeout_seconds, omit it, or simplify the task.
 - **QUOTA**: Rate limit/auth issue. 
 - **POLICY**: Blocked by policy. Use allowed_tools to grant capability.
 - **CRASH**: Internal system error. Investigate the crash errors before retrying.
@@ -156,6 +159,6 @@ func BuildSystemPrompt(multiAgent bool) string {
 	b.WriteString("\n\n")
 	b.WriteString(memoryPrompt)
 	b.WriteString("\n\n")
-	b.WriteString(gatherEnvContext().buildSection())
+	b.WriteString(gatherStableEnvContext().buildStableSection())
 	return b.String()
 }

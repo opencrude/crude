@@ -70,11 +70,7 @@ func BuildSubAgentStatus(mgr *SubAgentManager) string {
 		}
 		line := fmt.Sprintf("  %s [%s:%s]: %s", marker, e.Category, e.Name, e.Status)
 		if e.ElapsedSeconds > 0 {
-			line += fmt.Sprintf(" (%ds", e.ElapsedSeconds)
-			if e.MaxSteps > 0 {
-				line += fmt.Sprintf(", %d/%d steps", e.StepsUsed, e.MaxSteps)
-			}
-			line += ")"
+			line += fmt.Sprintf(" (%ds, %d steps)", e.ElapsedSeconds, e.StepsUsed)
 		}
 		sb.WriteString(line + "\n")
 	}

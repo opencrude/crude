@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -12,19 +13,25 @@ import (
 	"crude/provider"
 	"crude/statemachine"
 	"crude/tools"
+	ttypes "crude/types"
 )
 
 const continuePreviousResponse = "Continue the previous response exactly where it stopped. Do not repeat completed content. Continue using tools if the task still requires them."
+
+type BtwMessage struct {
+	Message provider.ChatMessage
+	Accept  func() bool
+}
 
 func (a *Agent) Run(
 	ctx context.Context,
 	sessionMessages []provider.ChatMessage,
 	systemPrompt string,
 	emit func(AgentEvent),
-	blockResolveCh <-chan string,
+	blockResolveCh <-chan ttypes.BlockResponse,
 	sm *statemachine.ConversationStateMachine,
 	sessionID string,
-	btwCh <-chan provider.ChatMessage,
+	btwCh <-chan BtwMessage,
 ) []provider.ChatMessage {
 	if ctx == nil {
 		ctx = context.Background()
@@ -73,7 +80,8 @@ func (a *Agent) Run(
 	msgs := []provider.ChatMessage{
 		{Role: "system", Content: provider.TextContent(systemPrompt), CacheControl: &provider.CacheControl{Type: "ephemeral"}},
 	}
-	l.Debug("CACHE", "system_ephemeral", "position", 0, "len", len(systemPrompt))
+	systemHash := sha256.Sum256([]byte(systemPrompt))
+	l.Debug("CACHE", "prefix", "position", 0, "len", len(systemPrompt), "sha256", fmt.Sprintf("%x", systemHash[:8]), "protocol", a.Provider.ProtocolID())
 	for _, m := range sessionMessages {
 		if m.Role != "system" {
 			msgs = append(msgs, m)
@@ -102,7 +110,7 @@ func (a *Agent) Run(
 			return nil
 		}
 		content := "## Runtime Status\n\n" + strings.Join(parts, "\n\n")
-		return &provider.ChatMessage{Role: "system", Content: provider.TextContent(content), CacheControl: &provider.CacheControl{Type: "ephemeral"}}
+		return &provider.ChatMessage{Role: "system", Content: provider.TextContent(content)}
 	}
 
 	var steps []StepRecord
@@ -122,15 +130,24 @@ func (a *Agent) Run(
 		},
 	}
 
-	stepsLimit := maxSteps
-	if a.MaxSteps > 0 {
-		stepsLimit = a.MaxSteps
-	}
 	btwInput := btwCh
 	continuations := 0
 	providerName := a.providerDisplayName()
-	for step := 0; step < stepsLimit; step++ {
+	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
+	var admittedBtwIDs []string
+	clearUnsentBtw := func() {
+		if len(admittedBtwIDs) == 0 {
+			return
+		}
+		msgs = removeMessagesByInternalID(msgs, admittedBtwIDs)
+		emit(AgentEvent{Type: "btw_cleared", Data: map[string]any{
+			"internal_ids": append([]string(nil), admittedBtwIDs...),
+		}})
+		admittedBtwIDs = nil
+	}
+	for step := 0; ; step++ {
 		if ctx.Err() != nil {
+			clearUnsentBtw()
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 			return msgs
@@ -144,15 +161,19 @@ func (a *Agent) Run(
 			consumed := 0
 			for {
 				select {
-				case btwMsg, ok := <-btwInput:
+				case btw, ok := <-btwInput:
 					if !ok {
 						btwInput = nil
 						return consumed
 					}
+					if btw.Accept != nil && !btw.Accept() {
+						continue
+					}
+					btwMsg := btw.Message
 					l.Info("BTW", "user_interruption", "step", step)
 					msgs = append(msgs, btwMsg)
+					admittedBtwIDs = append(admittedBtwIDs, btwMsg.InternalID)
 					consumed++
-					emit(AgentEvent{Type: "btw_consumed"})
 				default:
 					return consumed
 				}
@@ -160,23 +181,14 @@ func (a *Agent) Run(
 		}
 		_ = drainBtw()
 
+		requestMsgs := msgs
 		if smStatus := buildSMStatusMsg(); smStatus != nil {
-			replaced := false
-			for i := len(msgs) - 1; i >= 0; i-- {
-				if msgs[i].Role == "system" && containsPrefix(msgs[i].ContentString(), "## Runtime Status") {
-					msgs[i] = *smStatus
-					replaced = true
-					break
-				}
-			}
-			if !replaced {
-				msgs = append(msgs, *smStatus)
-			}
+			requestMsgs = append(append([]provider.ChatMessage(nil), msgs...), *smStatus)
 		}
 
 		prevPreviewKeys := make(map[string]string)
 
-		completion, err := a.completeStream(ctx, msgs, allTools,
+		completion, err := a.completeStream(ctx, requestMsgs, allTools,
 			func(token string) {
 				emit(AgentEvent{Type: "stream_token", Data: token})
 			},
@@ -201,6 +213,12 @@ func (a *Agent) Run(
 					"backoff": backoffSeconds,
 				}})
 			},
+			func() {
+				for _, internalID := range admittedBtwIDs {
+					emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
+				}
+				admittedBtwIDs = nil
+			},
 			func(uploaded, total int64) {
 				percent := 0
 				if total > 0 {
@@ -219,6 +237,7 @@ func (a *Agent) Run(
 			},
 		)
 		if err != nil {
+			clearUnsentBtw()
 			if completion.Usage.PromptTokens > 0 || completion.Usage.CompletionTokens > 0 ||
 				completion.Usage.PromptTokensCached > 0 || completion.Usage.PromptTokensWritten > 0 {
 				price := provider.LookupPrice(a.Model)
@@ -236,6 +255,7 @@ func (a *Agent) Run(
 					"cost":             turnCost,
 					"model":            a.Model,
 					"estimated":        false,
+					"cost_upper_bound": cacheUsageUnknown,
 					"partial_or_retry": true,
 				}})
 			}
@@ -283,11 +303,11 @@ func (a *Agent) Run(
 
 		estimated := false
 		if promptTokens == 0 {
-			promptTokens = provider.EstimateMessagesTotal(msgs, a.Model)
+			promptTokens = provider.EstimateMessagesTotal(requestMsgs, a.Model)
 			estimated = true
 		}
 		if contextPromptTokens == 0 {
-			contextPromptTokens = provider.EstimateMessagesTotal(msgs, a.Model)
+			contextPromptTokens = provider.EstimateMessagesTotal(requestMsgs, a.Model)
 		}
 		if completionTokens == 0 {
 			completionTokens = provider.EstimateTokens(
@@ -307,15 +327,16 @@ func (a *Agent) Run(
 		price := provider.LookupPrice(a.Model)
 		turnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)
 		emit(AgentEvent{Type: "usage", Data: map[string]any{
-			"prompt":         promptTokens,
-			"completion":     completionTokens,
-			"prompt_cached":  promptTokensCached,
-			"prompt_written": promptTokensWritten,
-			"context_prompt": contextPromptTokens,
-			"context_window": ctxWindow,
-			"cost":           turnCost,
-			"model":          a.Model,
-			"estimated":      estimated,
+			"prompt":           promptTokens,
+			"completion":       completionTokens,
+			"prompt_cached":    promptTokensCached,
+			"prompt_written":   promptTokensWritten,
+			"context_prompt":   contextPromptTokens,
+			"context_window":   ctxWindow,
+			"cost":             turnCost,
+			"model":            a.Model,
+			"estimated":        estimated,
+			"cost_upper_bound": cacheUsageUnknown,
 		}})
 
 		accumulatedText := completion.Content
@@ -379,9 +400,6 @@ func (a *Agent) Run(
 					Content: provider.TextContent("[SYSTEM] You are about to end your loop without calling write_report. Your work will be LOST — the main agent cannot see your chat messages. You MUST call write_report with a detailed report before ending. Do it now."),
 				})
 				_ = drainBtw()
-				if smStatus := buildSMStatusMsg(); smStatus != nil {
-					msgs = append(msgs, *smStatus)
-				}
 				continue
 			}
 			doneReason := "completed"
@@ -491,10 +509,6 @@ func (a *Agent) Run(
 			return msgs
 		}
 	}
-
-	l.Warn("AGENT", "max_steps", "steps", stepsLimit, "total_prompt_tokens", totalPromptTokens)
-	emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Reached maximum " + fmt.Sprint(stepsLimit) + " steps. Task may be incomplete.", "reason": "max_steps_reached"}})
-	return msgs
 }
 
 func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKeys map[string]string) func(internalID, id, name, args string) {

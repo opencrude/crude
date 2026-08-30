@@ -56,13 +56,6 @@ func allToolDefs() []provider.ToolDef {
 	return result
 }
 
-func containsPrefix(s, prefix string) bool {
-	if len(s) < len(prefix) {
-		return false
-	}
-	return s[:len(prefix)] == prefix
-}
-
 func formatToolArgs(params map[string]any) string {
 	if len(params) == 0 {
 		return ""
@@ -96,6 +89,26 @@ func formatToolArgs(params map[string]any) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+func removeMessagesByInternalID(messages []provider.ChatMessage, ids []string) []provider.ChatMessage {
+	if len(messages) == 0 || len(ids) == 0 {
+		return messages
+	}
+	remove := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			remove[id] = struct{}{}
+		}
+	}
+	kept := messages[:0]
+	for _, message := range messages {
+		if _, shouldRemove := remove[message.InternalID]; shouldRemove {
+			continue
+		}
+		kept = append(kept, message)
+	}
+	return kept
 }
 
 func CountLines(s string) int {

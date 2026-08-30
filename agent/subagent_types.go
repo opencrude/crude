@@ -9,6 +9,7 @@ import (
 
 	"crude/safety"
 	"crude/statemachine"
+	ttypes "crude/types"
 )
 
 type AgentID string
@@ -48,10 +49,11 @@ type SubAgentSpec struct {
 	Policy         safety.Policy `json:"-"`
 	AllowedTools   []string      `json:"allowed_tools"`
 	DeniedTools    []string      `json:"denied_tools"`
-	MaxSteps       int           `json:"max_steps"`
+	Timeout        time.Duration `json:"timeout"`
 	Depth          int           `json:"depth"`
 	FileOwnership  []string      `json:"file_ownership"`
 	ParentID       AgentID       `json:"parent_id"`
+	ParentTurn     uint64        `json:"parent_turn"`
 
 	ModelContextWindow int     `json:"model_context_window,omitempty"`
 	ModelInputPrice    float64 `json:"model_input_price,omitempty"`
@@ -85,7 +87,7 @@ type SubAgentHandle struct {
 	Agent             *Agent
 	Cancel            context.CancelFunc
 	ResultCh          chan SubAgentResult
-	BlockCh           chan string
+	BlockCh           chan ttypes.BlockResponse
 	StartedAt         time.Time
 	SessionID         string
 	DB                *sql.DB

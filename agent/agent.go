@@ -21,7 +21,6 @@ type AgentEvent struct {
 }
 
 const (
-	maxSteps             = 10000
 	loopDetectWindow     = 8
 	loopDetectRepeats    = 4
 	contextSafetyPct     = 0.85
@@ -43,7 +42,6 @@ type Agent struct {
 	Policy        safety.Policy
 	Depth         int
 	ParentID      AgentID
-	MaxSteps      int
 	MaxRetries    int
 	FilteredTools []tools.ToolDef
 	ToolFn        func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
