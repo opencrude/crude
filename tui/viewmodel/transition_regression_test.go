@@ -9,7 +9,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/session"
 	ttypes "crude/tui/types"
 	"crude/workspace"
@@ -34,12 +33,8 @@ func newTransitionApp(t *testing.T) *App {
 	ws.LSPMgr.SetRuntime(noopLSPRuntime{})
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	app.AddOrchestrator(
-		"agent-1",
-		make(chan provider.UserInput, 8),
-		make(chan provider.UserInput, 8),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent-1")
+
 	app.appendActiveMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleAssistant,
 		Content: "hello from the agent view",

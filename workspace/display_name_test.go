@@ -92,3 +92,45 @@ func TestListWorkspaceInfos_EmptyNameUsesPath(t *testing.T) {
 		t.Fatalf("ProjectName=%q want readable-name (path-derived)", found.ProjectName)
 	}
 }
+
+func TestListWorkspaceInfosIncludesCurrentAndHidesMissingProjects(t *testing.T) {
+	setTestHome(t)
+	current := filepath.Join(t.TempDir(), "crude")
+	if err := os.MkdirAll(current, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	currentDB, err := OpenWorkspaceDB(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := currentDB.RegisterSession("root-session", current, "crude", "model", "provider"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = currentDB.Close() })
+
+	stale := filepath.Join(t.TempDir(), "deleted-test-workspace")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleDB, err := OpenWorkspaceDB(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := staleDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(stale); err != nil {
+		t.Fatal(err)
+	}
+
+	infos, err := ListWorkspaceInfos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("workspace infos = %+v, want only existing current project", infos)
+	}
+	if infos[0].ProjectDir != canonicalizePath(current) || infos[0].ProjectName != "crude" || infos[0].SessionCount != 1 {
+		t.Fatalf("current workspace identity/metrics = %+v", infos[0])
+	}
+}

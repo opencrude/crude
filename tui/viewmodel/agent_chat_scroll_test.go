@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -23,12 +22,8 @@ func setupAgentChatScrollTest(t *testing.T) *App {
 
 func addOrchestrator(app *App, id string) {
 	app.AddOrchestrator(
-		id,
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		id)
+
 }
 
 func fillAgentChat(app *App, agentID string, count int, prefix string) {

@@ -3,12 +3,13 @@ package workspace
 import "time"
 
 const (
-	MessageRoleUser      = "user"
-	MessageRoleAssistant = "assistant"
-	MessageRoleThinking  = "thinking"
-	MessageRoleTool      = "tool"
-	MessageRoleError     = "error"
-	MessageRoleStatus    = "status"
+	MessageRoleUser       = "user"
+	MessageRoleAssistant  = "assistant"
+	MessageRoleThinking   = "thinking"
+	MessageRoleTool       = "tool"
+	MessageRoleError      = "error"
+	MessageRoleStatus     = "status"
+	MessageRoleAssignment = "assignment"
 )
 
 // Message is live conversation data owned by the workspace. Rendering caches,
@@ -53,6 +54,10 @@ type Message struct {
 	IncompleteReason       string
 	SubPaneID              string
 	PermTag                string
+	// PendingBtw marks an optimistic live note until the active backend turn
+	// consumes it. It is presentation-neutral transient state and is never
+	// persisted; cancelled/rejected notes are removed from the conversation.
+	PendingBtw bool
 }
 
 type TurnStatus struct {
@@ -66,14 +71,30 @@ type TurnStatus struct {
 // Conversation is the canonical live message state for one agent or thinking
 // pane. It deliberately contains no rendering or interaction state.
 type Conversation struct {
-	messages []*Message
-	byID     map[string]*Message
-	nextID   uint64
-	version  uint64
+	messages      []*Message
+	byID          map[string]*Message
+	toolTimelines map[*Message]*toolTimeline
+	nextID        uint64
+	version       uint64
+}
+
+const toolPhaseMinDwell = 120 * time.Millisecond
+
+type toolTransition struct {
+	preview string
+	status  string
+}
+
+type toolTimeline struct {
+	since time.Time
+	queue []toolTransition
 }
 
 func NewConversation() *Conversation {
-	return &Conversation{byID: make(map[string]*Message)}
+	return &Conversation{
+		byID:          make(map[string]*Message),
+		toolTimelines: make(map[*Message]*toolTimeline),
+	}
 }
 
 func (c *Conversation) Version() uint64 {
@@ -94,33 +115,121 @@ func (c *Conversation) Messages() []Message {
 	return out
 }
 
-func (c *Conversation) AppendMessage(message Message) {
+func (c *Conversation) AppendMessage(message Message) string {
 	if c == nil {
-		return
+		return ""
 	}
 	copy := message
 	if copy.InternalID == "" || c.byID[copy.InternalID] != nil {
 		copy.InternalID = c.nextMessageID()
 	}
-	// BTW/slash notices arriving during a provider wait belong before the live
-	// lifecycle row. Keeping that row last lets it continue updating and then
-	// transform into the provider's first tool call without reordering history.
-	if len(c.messages) > 0 && c.messages[len(c.messages)-1].Role == MessageRoleStatus && copy.Role != MessageRoleStatus {
-		status := c.messages[len(c.messages)-1]
-		c.messages[len(c.messages)-1] = &copy
-		c.messages = append(c.messages, status)
-	} else {
-		c.messages = append(c.messages, &copy)
-	}
+	c.insertMessage(&copy)
 	c.index(&copy)
 	c.version++
+	return copy.InternalID
+}
+
+// insertMessage keeps unresolved BTW notes at the visual tail. Provider output
+// and lifecycle rows arriving after admission are inserted before those notes;
+// once a note is acknowledged, normal chronological appends resume after it.
+func (c *Conversation) insertMessage(message *Message) {
+	if message.PendingBtw {
+		c.messages = append(c.messages, message)
+		return
+	}
+	insertAt := len(c.messages)
+	for insertAt > 0 && c.messages[insertAt-1].PendingBtw {
+		insertAt--
+	}
+	if message.Role != MessageRoleStatus && insertAt > 0 && c.messages[insertAt-1].Role == MessageRoleStatus {
+		insertAt--
+	}
+	c.messages = append(c.messages, nil)
+	copy(c.messages[insertAt+1:], c.messages[insertAt:])
+	c.messages[insertAt] = message
+}
+
+func (c *Conversation) lastNonPending() *Message {
+	for i := len(c.messages) - 1; i >= 0; i-- {
+		if !c.messages[i].PendingBtw {
+			return c.messages[i]
+		}
+	}
+	return nil
+}
+
+func (c *Conversation) AppendPendingBtw(message Message) string {
+	message.PendingBtw = true
+	return c.AppendMessage(message)
+}
+
+// ConsumePendingBtw resolves one backend-confirmed note while retaining its
+// user message.
+func (c *Conversation) ConsumePendingBtw(id string) bool {
+	if c == nil || id == "" {
+		return false
+	}
+	message := c.byID[id]
+	if message == nil || !message.PendingBtw {
+		return false
+	}
+	message.PendingBtw = false
+	c.version++
+	return true
+}
+
+func (c *Conversation) RemovePendingBtwIDs(ids []string) int {
+	if c == nil || len(ids) == 0 {
+		return 0
+	}
+	wanted := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			wanted[id] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return 0
+	}
+	kept := c.messages[:0]
+	removed := 0
+	for _, message := range c.messages {
+		_, selected := wanted[message.InternalID]
+		if selected && message.PendingBtw {
+			delete(c.byID, message.InternalID)
+			removed++
+			continue
+		}
+		kept = append(kept, message)
+	}
+	if removed > 0 {
+		c.messages = kept
+		c.version++
+	}
+	return removed
+}
+
+func (c *Conversation) PendingBtwCount() int {
+	if c == nil {
+		return 0
+	}
+	count := 0
+	for _, message := range c.messages {
+		if message.PendingBtw {
+			count++
+		}
+	}
+	return count
 }
 
 func (c *Conversation) AppendToken(token string) {
 	if c == nil || token == "" || len(c.messages) == 0 {
 		return
 	}
-	last := c.messages[len(c.messages)-1]
+	last := c.lastNonPending()
+	if last == nil {
+		return
+	}
 	if last.Role != MessageRoleAssistant {
 		return
 	}
@@ -134,7 +243,10 @@ func (c *Conversation) AppendThinking(content string) {
 	}
 	c.ClearTurnStatus()
 	if len(c.messages) > 0 {
-		last := c.messages[len(c.messages)-1]
+		last := c.lastNonPending()
+		if last == nil {
+			return
+		}
 		if last.Role == MessageRoleThinking {
 			last.Content += content
 			c.version++
@@ -157,7 +269,7 @@ func (c *Conversation) EnsureAssistant() {
 		return
 	}
 	c.ClearTurnStatus()
-	if len(c.messages) > 0 && c.messages[len(c.messages)-1].Role == MessageRoleAssistant {
+	if last := c.lastNonPending(); last != nil && last.Role == MessageRoleAssistant {
 		return
 	}
 	c.AppendMessage(Message{Role: MessageRoleAssistant, Time: time.Now()})
@@ -185,7 +297,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 			LifecycleUploadedBytes: status.UploadedBytes,
 			LifecycleTotalBytes:    status.TotalBytes,
 		}
-		c.messages = append(c.messages, message)
+		c.insertMessage(message)
 		c.index(message)
 		c.version++
 		return
@@ -205,7 +317,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 	message.LifecycleProvider = status.Provider
 	message.LifecycleUploadedBytes = status.UploadedBytes
 	message.LifecycleTotalBytes = status.TotalBytes
-	c.moveToEnd(message)
+	c.moveBeforePending(message)
 	c.version++
 }
 
@@ -240,18 +352,30 @@ func (c *Conversation) activeTurnStatus() *Message {
 	return nil
 }
 
-func (c *Conversation) moveToEnd(message *Message) {
-	if len(c.messages) == 0 || c.messages[len(c.messages)-1] == message {
+func (c *Conversation) moveBeforePending(message *Message) {
+	if len(c.messages) == 0 {
 		return
 	}
+	current := -1
 	for index, candidate := range c.messages {
 		if candidate != message {
 			continue
 		}
-		copy(c.messages[index:], c.messages[index+1:])
-		c.messages[len(c.messages)-1] = message
+		current = index
+		break
+	}
+	if current < 0 {
 		return
 	}
+	copy(c.messages[current:], c.messages[current+1:])
+	c.messages = c.messages[:len(c.messages)-1]
+	insertAt := len(c.messages)
+	for insertAt > 0 && c.messages[insertAt-1].PendingBtw {
+		insertAt--
+	}
+	c.messages = append(c.messages, nil)
+	copy(c.messages[insertAt+1:], c.messages[insertAt:])
+	c.messages[insertAt] = message
 }
 
 func (c *Conversation) MarkAllThinkingDone() {
@@ -304,6 +428,7 @@ func (c *Conversation) MarkStreamingToolsCancelled() {
 			message.ToolPreviewPhase = "done"
 			message.ToolProgressPhase = ""
 			message.ToolProgressMessage = ""
+			delete(c.toolTimelines, message)
 			changed = true
 		}
 	}
@@ -340,16 +465,14 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 	contentLines := conversationInt(data["content_lines_int"])
 	oldLines := conversationInt(data["old_lines_int"])
 	newLines := conversationInt(data["new_lines_int"])
-	previewPhase := "preparing"
-	if target != "" || contentLines > 0 || oldLines > 0 || newLines > 0 || estTokens > 0 {
-		previewPhase = "streaming"
-	}
+	hasStreamingDetail := target != "" || contentLines > 0 || oldLines > 0 || newLines > 0 || estTokens > 0
 
 	message := c.findTool(internalID, toolID)
 	if message == nil {
 		message = c.promoteTurnStatusToTool(toolID, internalID, name)
 	}
 	if message != nil && message.ToolStatus != "success" && message.ToolStatus != "error" && message.ToolStatus != "cancelled" {
+		c.startToolTimeline(message)
 		message.Role = MessageRoleTool
 		message.ToolName = name
 		message.ToolStatus = "streaming"
@@ -381,7 +504,9 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 		if newLines > 0 {
 			message.ToolLinesAdded = newLines
 		}
-		message.ToolPreviewPhase = previewPhase
+		if hasStreamingDetail {
+			c.scheduleToolTransition(message, "streaming", "streaming")
+		}
 		message.ToolProgressPhase = "streaming"
 		message.ToolProgressMessage = ""
 		c.bindToolID(message, toolID)
@@ -400,7 +525,7 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 		ToolStatus:        "streaming",
 		ToolIndex:         len(c.messages),
 		ToolProgressPhase: "streaming",
-		ToolPreviewPhase:  previewPhase,
+		ToolPreviewPhase:  "preparing",
 		ToolProgressLabel: target,
 		ToolEstTokens:     estTokens,
 		ToolLinesAdded:    contentLines,
@@ -411,8 +536,12 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 	if newLines > 0 {
 		message.ToolLinesAdded = newLines
 	}
-	c.messages = append(c.messages, message)
+	c.insertMessage(message)
 	c.index(message)
+	c.startToolTimeline(message)
+	if hasStreamingDetail {
+		c.scheduleToolTransition(message, "streaming", "streaming")
+	}
 	c.version++
 }
 
@@ -425,12 +554,13 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 		message = c.promoteTurnStatusToTool(toolID, internalID, name)
 	}
 	if message != nil && message.ToolStatus != "success" && message.ToolStatus != "error" && message.ToolStatus != "cancelled" {
+		c.startToolTimeline(message)
 		message.Role = MessageRoleTool
 		message.ToolName = name
 		message.ToolStatus = "calling"
 		message.ToolArgs = argsCompact
 		message.Content = name + " " + argsCompact
-		message.ToolPreviewPhase = "streaming"
+		c.scheduleToolTransition(message, "streaming", "calling")
 		message.ToolProgressPhase = ""
 		message.ToolProgressMessage = ""
 		if message.ToolProgressLabel == "" {
@@ -452,13 +582,38 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 		ToolArgs:          argsCompact,
 		ToolStatus:        "calling",
 		ToolIndex:         len(c.messages),
-		ToolPreviewPhase:  "streaming",
+		ToolPreviewPhase:  "preparing",
 		ToolProgressLabel: argsCompact,
 		ToolStartTime:     time.Now(),
 	}
-	c.messages = append(c.messages, message)
+	c.insertMessage(message)
 	c.index(message)
+	c.startToolTimeline(message)
+	c.scheduleToolTransition(message, "streaming", "calling")
 	c.version++
+}
+
+// AttachSubPaneToLatestTool promotes the live run_sub_agent tool row into its
+// retained child pane. One message identity then owns spawning, synchronous
+// waiting, completion, and later review instead of rendering two projections
+// for one child.
+func (c *Conversation) AttachSubPaneToLatestTool(toolName, paneID string) bool {
+	if c == nil || paneID == "" {
+		return false
+	}
+	for i := len(c.messages) - 1; i >= 0; i-- {
+		message := c.messages[i]
+		if message == nil || message.Role != MessageRoleTool || message.ToolName != toolName || message.SubPaneID != "" {
+			continue
+		}
+		if message.ToolStatus == "success" || message.ToolStatus == "error" || message.ToolStatus == "cancelled" {
+			continue
+		}
+		message.SubPaneID = paneID
+		c.version++
+		return true
+	}
+	return false
 }
 
 // SetToolCommand snapshots the exact command separately from the compact title
@@ -516,13 +671,13 @@ func (c *Conversation) UpdateToolProgress(toolID, internalID, name, phase, detai
 	case "done":
 		message.ToolLinesAdded = linesAdded
 		message.ToolLinesRemoved = linesRemoved
-		message.ToolPreviewPhase = "done"
+		c.scheduleToolTransition(message, "done", "success")
 		message.ToolDuration = elapsed(message.ToolStartTime)
 		if estTokens > 0 {
 			message.ToolEstTokens = estTokens
 		}
 	case "error":
-		message.ToolPreviewPhase = "error"
+		c.scheduleToolTransition(message, "error", "error")
 		if linesAdded > 0 {
 			message.ToolLinesAdded = linesAdded
 		}
@@ -532,6 +687,8 @@ func (c *Conversation) UpdateToolProgress(toolID, internalID, name, phase, detai
 		if estTokens > 0 {
 			message.ToolEstTokens = estTokens
 		}
+	default:
+		c.scheduleToolTransition(message, "streaming", message.ToolStatus)
 	}
 	c.version++
 }
@@ -542,13 +699,10 @@ func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string,
 		return
 	}
 	if isError {
-		message.ToolStatus = "error"
+		c.scheduleToolTransition(message, "error", "error")
 	} else {
-		message.ToolStatus = "success"
+		c.scheduleToolTransition(message, "done", "success")
 	}
-	message.ToolPreviewPhase = "done"
-	message.ToolProgressPhase = ""
-	message.ToolProgressMessage = ""
 	message.ToolDuration = elapsed(message.ToolStartTime)
 	if estTokens > 0 {
 		message.ToolEstTokens = estTokens
@@ -563,6 +717,114 @@ func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string,
 		message.Content = message.ToolName + " " + message.ToolArgs
 	}
 	c.version++
+}
+
+func (c *Conversation) startToolTimeline(message *Message) *toolTimeline {
+	if c == nil || message == nil {
+		return nil
+	}
+	if c.toolTimelines == nil {
+		c.toolTimelines = make(map[*Message]*toolTimeline)
+	}
+	if timeline := c.toolTimelines[message]; timeline != nil {
+		return timeline
+	}
+	if message.ToolStartTime.IsZero() {
+		message.ToolStartTime = time.Now()
+	}
+	message.ToolPreviewPhase = "preparing"
+	if message.ToolStatus == "" {
+		message.ToolStatus = "streaming"
+	}
+	timeline := &toolTimeline{since: time.Now()}
+	c.toolTimelines[message] = timeline
+	return timeline
+}
+
+func (c *Conversation) scheduleToolTransition(message *Message, preview, status string) {
+	if preview == "" || message == nil {
+		return
+	}
+	timeline := c.startToolTimeline(message)
+	if timeline == nil {
+		return
+	}
+	transition := toolTransition{preview: preview, status: status}
+	if len(timeline.queue) > 0 {
+		last := timeline.queue[len(timeline.queue)-1]
+		if last == transition {
+			return
+		}
+		if last.preview == preview && preview != "done" && preview != "error" {
+			timeline.queue[len(timeline.queue)-1] = transition
+			return
+		}
+		if preview == "done" || preview == "error" {
+			for len(timeline.queue) > 0 {
+				last = timeline.queue[len(timeline.queue)-1]
+				if last.preview != "done" && last.preview != "error" {
+					break
+				}
+				timeline.queue = timeline.queue[:len(timeline.queue)-1]
+			}
+		}
+	}
+	if len(timeline.queue) == 0 && message.ToolPreviewPhase == preview && message.ToolStatus == status {
+		return
+	}
+	timeline.queue = append(timeline.queue, transition)
+}
+
+// AdvanceToolLifecycles paints at most one queued stage per tick. Provider
+// chunking and fast local file operations can no longer collapse preparing,
+// doing, and terminal states into one unobservable update burst.
+func (c *Conversation) AdvanceToolLifecycles(now time.Time) bool {
+	if c == nil || len(c.toolTimelines) == 0 {
+		return false
+	}
+	changed := false
+	for message, timeline := range c.toolTimelines {
+		if len(timeline.queue) == 0 {
+			if message.ToolPreviewPhase == "done" || message.ToolPreviewPhase == "error" || message.ToolStatus == "cancelled" {
+				delete(c.toolTimelines, message)
+			}
+			continue
+		}
+		if now.Sub(timeline.since) < toolPhaseMinDwell {
+			continue
+		}
+		transition := timeline.queue[0]
+		timeline.queue = timeline.queue[1:]
+		timeline.since = now
+		message.ToolPreviewPhase = transition.preview
+		if transition.status != "" {
+			message.ToolStatus = transition.status
+		}
+		if transition.preview == "done" || transition.preview == "error" {
+			message.ToolProgressPhase = ""
+			message.ToolProgressMessage = ""
+			if len(timeline.queue) == 0 {
+				delete(c.toolTimelines, message)
+			}
+		}
+		changed = true
+	}
+	if changed {
+		c.version++
+	}
+	return changed
+}
+
+func (c *Conversation) HasPendingToolLifecycles() bool {
+	if c == nil {
+		return false
+	}
+	for _, timeline := range c.toolTimelines {
+		if len(timeline.queue) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Conversation) SetToolPermTag(toolID, internalID, tag string) bool {

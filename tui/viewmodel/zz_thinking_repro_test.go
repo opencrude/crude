@@ -8,7 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -52,12 +51,8 @@ func trackColumns(app *App, y0, y1 int) map[int]rune {
 func setupReproAgent(t *testing.T, app *App, id string) {
 	t.Helper()
 	app.AddOrchestrator(
-		id,
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		id)
+
 }
 
 func TestZZThinkingScrollbarGeometry(t *testing.T) {

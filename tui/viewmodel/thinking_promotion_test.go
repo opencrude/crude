@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -32,12 +31,8 @@ func TestThinkingPaneShowsScrollbarOnFirstFrame(t *testing.T) {
 	app.height = 24
 	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.AddOrchestrator(
-		"probe-agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"probe-agent")
+
 	node := app.AgentMgr.Get("probe-agent")
 	agent := node.State
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "probe-agent", Data: thinkingLines(40)})
@@ -73,12 +68,8 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 	app.height = 24
 	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.AddOrchestrator(
-		"repeat-agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"repeat-agent")
+
 	agent := app.AgentMgr.Get("repeat-agent").State
 	fillAgentChat(app, "repeat-agent", 6, "history")
 	seen := make(map[string]bool)
@@ -139,12 +130,8 @@ func TestThinkingScrollbarPaintsOnFirstFrameAfterReturningToActivePane(t *testin
 	app.height = 24
 	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.AddOrchestrator(
-		"scrolled-agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"scrolled-agent")
+
 	fillAgentChat(app, "scrolled-agent", 12, "history")
 	app.paintShellFrame()
 	mainScroll := app.chatScreen.ScrollModel()
@@ -188,12 +175,8 @@ func TestThinkingScrollbarPaintsOnFirstFrameAfterReturningToActivePane(t *testin
 func TestThinkingPromotionContinuesIntoPane(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"promote-agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"promote-agent")
+
 	app.ChatAreaHeight = 6 // threshold = max(6/3, 5) = 5 wrapped lines
 
 	node := app.AgentMgr.Get("promote-agent")
@@ -241,12 +224,8 @@ func TestThinkingPromotionContinuesIntoPane(t *testing.T) {
 func TestThinkingPromotionStartTimeCoversWholeBlock(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"promote-time",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"promote-time")
+
 	app.ChatAreaHeight = 6
 
 	node := app.AgentMgr.Get("promote-time")
@@ -292,19 +271,11 @@ func TestThinkingPromotionStartTimeCoversWholeBlock(t *testing.T) {
 func TestThinkingPaneIDsAreUniquePerAgent(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"promote-a",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"promote-a")
+
 	app.AddOrchestrator(
-		"promote-b",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"promote-b")
+
 	app.ChatAreaHeight = 6
 
 	for _, id := range []string{"promote-a", "promote-b"} {
@@ -327,12 +298,8 @@ func TestThinkingPaneIDsAreUniquePerAgent(t *testing.T) {
 func TestThinkingPaneDemotesToSummary(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"promote-done",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"promote-done")
+
 	app.ChatAreaHeight = 6
 
 	node := app.AgentMgr.Get("promote-done")
@@ -369,12 +336,8 @@ func TestThinkingPaneDemotesToSummary(t *testing.T) {
 func TestThinkingPaneDemotesWhenTurnEndsDirectly(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"direct-done",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"direct-done")
+
 	app.ChatAreaHeight = 6
 
 	agent := app.AgentMgr.Get("direct-done").State

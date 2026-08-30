@@ -102,11 +102,6 @@ func (sm *SessionManager) Remove(id string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if info, ok := sm.sessions[id]; ok {
-		for _, o := range info.Session.orchestrators {
-			o.closing.Store(true)
-			close(o.InputCh)
-			close(o.BtwCh)
-		}
 		info.Session.Close()
 		delete(sm.sessions, id)
 	}
@@ -116,11 +111,6 @@ func (sm *SessionManager) CloseAll() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	for id, info := range sm.sessions {
-		for _, o := range info.Session.orchestrators {
-			o.closing.Store(true)
-			close(o.InputCh)
-			close(o.BtwCh)
-		}
 		info.Session.Close()
 		delete(sm.sessions, id)
 	}

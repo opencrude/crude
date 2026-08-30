@@ -10,7 +10,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/session"
 	ttypes "crude/tui/types"
 	"crude/workspace"
@@ -46,13 +45,6 @@ func newRealShellApp(t *testing.T) (*App, *workspace.Workspace) {
 	_ = app.View()
 	return app, ws
 }
-
-// noopEventSender satisfies session.EventSender so the real
-// NewSessionFromLauncher flow can create its orchestrator.
-type noopEventSender struct{}
-
-func (noopEventSender) SendAgentEvent(typ string, data any)                  {}
-func (noopEventSender) SendAgentEventWithID(typ string, data any, id string) {}
 
 // noopLSPRuntime never spawns a server; it keeps session flows deterministic
 // in tests that do not exercise LSP.
@@ -115,7 +107,7 @@ func clickLastTabClose(t *testing.T, app *App) {
 	if idx != 0 || !closeHit {
 		t.Fatalf("tabBarHitTest(%d)=(%d,%v) want (0,true)", screenX, idx, closeHit)
 	}
-	_, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: screenX, Y: 3, Button: tea.MouseLeft})
+	_, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: screenX, Y: app.shellTopRow(), Button: tea.MouseLeft})
 	if cmd != nil {
 		_ = cmd
 	}
@@ -221,12 +213,8 @@ func TestAgentLastTabCloseSwitchesToLauncher(t *testing.T) {
 		t.Fatal("precondition: launcher active at startup")
 	}
 	app.AddOrchestrator(
-		"agent-1",
-		make(chan provider.UserInput, 8),
-		make(chan provider.UserInput, 8),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent-1")
+
 	if app.Win.TabCount() != 1 {
 		t.Fatalf("agent tab count=%d want 1", app.Win.TabCount())
 	}

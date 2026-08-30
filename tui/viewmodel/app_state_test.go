@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/tui/chatprojection"
 	"crude/tui/input"
 	"crude/tui/screens/confirmation"
@@ -42,7 +41,7 @@ func TestFocusTarget_Launcher(t *testing.T) {
 
 func TestFocusTarget_InputWithAgent(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{})
 
 	target := app.focusTarget()
 	if target != FocusInput {
@@ -65,7 +64,7 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: sp.Messages})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
 
 	result := app.activeMsgList()
 	if result != ml {
@@ -80,7 +79,7 @@ func TestActiveMessageList_Fallback(t *testing.T) {
 	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: sp.Messages})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
 	// AddOrchestrator sets active automatically; clear it so activeMessageList falls back
 	app.AgentMgr.ClearActive()
 
@@ -109,7 +108,7 @@ func TestAgentForView_NoAgents(t *testing.T) {
 func TestAgentForView_WithActiveAgentView(t *testing.T) {
 	app := newTestApp(t)
 	agent := &workspace.AgentState{Streaming: true}
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, agent)
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", agent)
 
 	a := app.agentForView()
 	if a != agent {
@@ -129,7 +128,7 @@ func TestComputeContentLayout_NilActiveML(t *testing.T) {
 
 	// Add an agent with nil MsgList. AddOrchestrator sets it active,
 	// so activeMsgList() returns nil (the node exists but MsgList is nil).
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: nil})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: nil})
 
 	// This should not panic — the nil activeML guard in computeContentLayout
 	// should produce a chat layout instead of dereferencing nil.
@@ -189,7 +188,7 @@ func TestHandleQuit_ClosesLastAgentTab(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
+	app.AddOrchestrator("ses_1_orch_1")
 
 	if app.AgentMgr.Count() != 1 {
 		t.Fatalf("expected 1 agent, got %d", app.AgentMgr.Count())
@@ -223,7 +222,7 @@ func TestHandleQuit_LastTabRefreshesLauncher(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
+	app.AddOrchestrator("ses_1_orch_1")
 	app.launcherScreen = nil // simulate launcher being cleared
 
 	// Close last tab
@@ -341,7 +340,7 @@ func TestHandleAgentTabClose_AgentTab(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
+	app.AddOrchestrator("ses_1_orch_1")
 
 	if app.AgentMgr.Count() != 1 {
 		t.Fatalf("expected 1 agent, got %d", app.AgentMgr.Count())
@@ -369,30 +368,33 @@ func TestSubmitInput_NonexistentAgent(t *testing.T) {
 	}
 }
 
-func TestSubmitInput_NoChannel(t *testing.T) {
+func TestSubmitInputRejectsAgentWithoutBackendOwner(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
-	// cmd is non-nil even without a channel — the returned closure
-	// uses select-with-default so it won't block.
-	if cmd == nil {
-		t.Fatal("expected non-nil cmd (returns a closure)")
+	if cmd != nil {
+		t.Fatal("direct rejected admission should not return a command")
+	}
+	if got := app.AgentMgr.Get("ses_1_orch_1").State.Messages.Messages(); len(got) != 0 {
+		t.Fatalf("rejected input leaked into live conversation: %+v", got)
 	}
 }
 
-func TestSubmitInput_WithChannel(t *testing.T) {
+func TestSubmitInputUsesWorkspaceTurnAdmission(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	inputCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
+	agentID := addBackendTestOrchestrator(t, app)
 
-	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
-	if cmd == nil {
-		t.Fatal("expected non-nil cmd when channel is wired")
+	if cmd := app.submitInput(agentID, "hello", nil); cmd != nil {
+		t.Fatal("direct turn admission should not return a channel command")
+	}
+	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
+	if len(messages) != 2 || messages[0].Content != "hello" || messages[1].Role != workspace.MessageRoleStatus {
+		t.Fatalf("admitted conversation=%+v", messages)
 	}
 }
 
@@ -406,15 +408,18 @@ func TestSubmitBtw_NonexistentAgent(t *testing.T) {
 
 func TestBtwConsumedClearsPendingStatus(t *testing.T) {
 	app := newFullTestApp(t)
-	app.StatusBar.SetBtwCount(2)
-	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent"})
+	conversation := workspace.NewConversation()
+	first := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "first"})
+	second := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "second"})
+	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	app.syncPendingBtwCount()
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent", Data: map[string]any{"internal_id": first}})
 	if got := app.StatusBar.BtwCount(); got != 1 {
 		t.Fatalf("pending BTW count=%d want 1", got)
 	}
-	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent"})
-	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent"})
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{second}}})
 	if got := app.StatusBar.BtwCount(); got != 0 {
-		t.Fatalf("pending BTW count underflowed to %d", got)
+		t.Fatalf("pending BTW count=%d want 0", got)
 	}
 }
 
@@ -422,8 +427,7 @@ func TestBtwConsumedClearsPendingStatus(t *testing.T) {
 
 func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	app := newTestApp(t)
-	cancelCh := make(chan struct{}, 1)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, nil, cancelCh, nil, &workspace.AgentState{})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{})
 	app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.agentChatScroll["ses_1_orch_1"] = agentMainChatScrollSnapshot{Offset: 4, AutoScroll: false}
@@ -442,17 +446,12 @@ func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	if _, ok := app.agentChatScrollSnapshotForTest("ses_1_orch_1"); ok {
 		t.Fatal("per-agent scroll snapshot should be removed when orchestrator closes")
 	}
-	select {
-	case <-cancelCh:
-	default:
-		t.Fatal("orchestrator should be cancelled before UI cleanup")
-	}
 }
 
 func TestAddOrchestratorKeepsExistingSessionReachable(t *testing.T) {
 	app := newFullTestApp(t)
-	app.AddOrchestrator("first", make(chan provider.UserInput, 1), nil, nil, nil)
-	app.AddOrchestrator("second", make(chan provider.UserInput, 1), nil, nil, nil)
+	app.AddOrchestrator("first")
+	app.AddOrchestrator("second")
 
 	if app.AgentMgr.Get("first") == nil || app.AgentMgr.Get("second") == nil {
 		t.Fatal("adding a second session hid the first orchestrator")
@@ -477,9 +476,8 @@ func TestHandleSubPaneCompletionIgnoresRemovedAgent(t *testing.T) {
 
 func TestHandleCancelConfirmationStopsTurnWithoutDenyingPermission(t *testing.T) {
 	app := newFullTestApp(t)
-	blockCh := make(chan string, 1)
-	cancelCh := make(chan struct{}, 1)
-	app.AgentMgr.AddOrchestrator("agent", nil, nil, cancelCh, blockCh, &workspace.AgentState{})
+	state := &workspace.AgentState{}
+	app.AgentMgr.AddOrchestrator("agent", state)
 	projection := app.activeSessionProjection()
 	projection.confirmation.Reset(confirmation.Details{Question: "Continue?"})
 	projection.confirmationAgentID = "agent"
@@ -493,15 +491,8 @@ func TestHandleCancelConfirmationStopsTurnWithoutDenyingPermission(t *testing.T)
 	}
 	app.handleAppMessages(cmd())
 
-	select {
-	case <-cancelCh:
-	default:
-		t.Fatal("Escape did not cancel the owning agent turn")
-	}
-	select {
-	case got := <-blockCh:
-		t.Fatalf("Escape resolved permission instead of cancelling: %q", got)
-	default:
+	if !state.Cancelling {
+		t.Fatal("Escape did not transition the owning agent to cancelling")
 	}
 }
 
@@ -581,7 +572,7 @@ func TestClassifyMouse_WithAgent(t *testing.T) {
 	app.height = 24
 	app.ChatAreaHeight = 17 // set as computeContentLayout would
 
-	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
+	app.AddOrchestrator("ses_1_orch_1")
 
 	region := app.classifyShellRegion(10, 10, false)
 	if region != regionChat {
@@ -595,7 +586,7 @@ func TestClassifyMouse_InputArea(t *testing.T) {
 	app.height = 24
 	app.ChatAreaHeight = 17
 
-	app.AddOrchestrator("ses_1_orch_1", make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1))
+	app.AddOrchestrator("ses_1_orch_1")
 
 	// y=24 is in the input area (chatH=17 + 4 + tabBarExtra=2 = 23)
 	region := app.classifyShellRegion(10, 24, false)
@@ -611,8 +602,7 @@ func TestHandleInputEvent_SubmitWithActiveAgentView(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	inputCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", inputCh, nil, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
 	if len(cmds) != 2 {
@@ -638,8 +628,7 @@ func TestHandleInputEvent_BtwSubmit(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	btwCh := make(chan provider.UserInput, 8)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", nil, btwCh, nil, nil, &workspace.AgentState{Messages: workspace.NewConversation()})
+	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: workspace.NewConversation()})
 
 	cmds := app.handleInputEvent(input.BtwSubmitEvent{Text: "btw text"})
 	if len(cmds) != 2 {

@@ -22,8 +22,10 @@ type sessionProjection struct {
 	backgroundJobs      *backgroundjobs.Screen
 	confirmation        *confirmation.Screen
 	confirmationAgentID string
+	confirmationBlockID string
 	question            *question.Screen
 	questionAgentID     string
+	questionBlockID     string
 	yolo                *yolo.Screen
 	yoloAgentID         string
 	textOverlay         *textoverlay.Screen

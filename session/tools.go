@@ -122,9 +122,6 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool) *agent.Agent {
 					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
 				}
 			}
-			if multiAgent {
-				params["wait"] = false
-			}
 			return s.subAgentSup.RunSubAgent(ctx, params)
 
 		case "poll_sub_agent":

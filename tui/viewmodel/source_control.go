@@ -134,16 +134,16 @@ func (m *App) handleSourceControlAction(action ui.Action) (tea.Cmd, bool) {
 	return nil, false
 }
 
-func (m *App) applySourceControlResult(msg sourceControlResultMsg) {
+func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 	if msg.gen == 0 || msg.gen != m.gitRefreshGen.Load() || m.sourceControl == nil {
-		return
+		return nil
 	}
 	if msg.err != nil {
 		m.sourceControl.SetError(msg.err)
 		if m.StatusBar != nil {
 			m.StatusBar.SetError("Source control: " + msg.err.Error())
 		}
-		return
+		return nil
 	}
 	m.sourceControl.SetSnapshot(msg.snapshot)
 	if msg.clearCommit {
@@ -152,12 +152,13 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) {
 	if m.activityBar != nil {
 		m.activityBar.SetBadge(activityGit, len(msg.snapshot.Changes))
 	}
-	if m.Tree != nil && m.Tree.Model != nil && m.Tree.Model.GitResolver() != nil {
-		_ = m.Tree.Model.GitResolver().Refresh()
-	}
 	if msg.notice != "" && m.StatusBar != nil {
 		m.StatusBar.SetInfo(msg.notice)
 	}
+	if m.Tree != nil && m.Tree.Model != nil {
+		return m.Tree.Model.RefreshGitStatus()
+	}
+	return nil
 }
 
 func (m *App) stageGitChange(change workspace.GitChange) tea.Cmd {
@@ -203,7 +204,7 @@ func (m *App) startDiscardGitChange(change workspace.GitChange) {
 	w, h := frame.Measure(80, 40)
 	fw := wm.NewFloatingWindow(string(ui.OverlayTreeDelete), "", frame, w, h,
 		wm.WithDecoration(false),
-		wm.WithMovable(false),
+		wm.WithMovable(true), // drag by frame title row
 		wm.WithResizable(false),
 		wm.WithClosable(false),
 		wm.WithModal(true),

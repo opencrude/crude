@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"crude/provider"
 	"crude/tui/rendering"
 )
 
@@ -13,12 +12,8 @@ func TestSlashMutationsRejectActiveTurnWithoutStartingAsyncWork(t *testing.T) {
 	app.Logger = stubLogger{}
 	app.StatusBar.SetWidth(120)
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
+
 	node := app.AgentMgr.Get("agent")
 	node.State.Running = true
 	node.State.Thinking = true
@@ -38,12 +33,8 @@ func TestYoloSlashRemainsAvailableDuringActiveTurn(t *testing.T) {
 	app := newFullTestApp(t)
 	app.Logger = stubLogger{}
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
+
 	node := app.AgentMgr.Get("agent")
 	node.State.Running = true
 	node.State.Thinking = true

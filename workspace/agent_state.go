@@ -89,6 +89,7 @@ type AgentState struct {
 	// PendingPermTool stores the tool name that the pending tag applies to,
 	// so it's only applied to the correct tool message.
 	PendingPermTool string
+	PendingBlockID  string
 }
 
 func NewAgentState(id string, messages *Conversation, lg Logger) *AgentState {
@@ -103,13 +104,16 @@ func NewAgentState(id string, messages *Conversation, lg Logger) *AgentState {
 }
 
 func (a *AgentState) Tick(spinFrame int) tea.Cmd {
+	if a.Messages != nil {
+		a.Messages.AdvanceToolLifecycles(time.Now())
+	}
 	if a.TokenBuf != "" {
 		a.Messages.AppendToken(a.TokenBuf)
 		a.TokenBuf = ""
 		a.LastTokenTime = time.Now()
 	}
 	a.SpinFrame = spinFrame
-	if a.Streaming || a.Thinking {
+	if a.Streaming || a.Thinking || (a.Messages != nil && a.Messages.HasPendingToolLifecycles()) {
 		return StreamingTickCmd()
 	}
 	return TickCmd()
@@ -124,6 +128,11 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	thinkTarget := thinkingTarget
 	if thinkTarget == nil {
 		thinkTarget = target
+	}
+	// Events already queued before a cancel request must not reactivate the
+	// turn while its terminal done/error event catches up through the UI pump.
+	if a.Cancelling && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" {
+		return nil
 	}
 
 	switch evt.Type {
@@ -178,14 +187,11 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	case "tool_call_streaming":
 		a.Running = true
 		a.Thinking = true
+		finishThinkingBlocks(target, thinkTarget)
 		if a.Streaming {
 			if a.TokenBuf != "" {
 				target.AppendToken(a.TokenBuf)
 				a.TokenBuf = ""
-			}
-			target.MarkAllThinkingDone()
-			if thinkTarget != target {
-				thinkTarget.MarkAllThinkingDone()
 			}
 			a.Streaming = false
 		}
@@ -195,14 +201,11 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	case "tool_call":
 		a.Running = true
 		a.Thinking = true
+		finishThinkingBlocks(target, thinkTarget)
 		if a.Streaming {
 			if a.TokenBuf != "" {
 				target.AppendToken(a.TokenBuf)
 				a.TokenBuf = ""
-			}
-			target.MarkAllThinkingDone()
-			if thinkTarget != target {
-				thinkTarget.MarkAllThinkingDone()
 			}
 			a.Streaming = false
 		}
@@ -212,23 +215,27 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	case "tool_progress":
 		a.Running = true
 		a.Thinking = true
+		finishThinkingBlocks(target, thinkTarget)
 		onThinking(true, false, false)
 		return a.handleToolProgress(evt, target, onStatusLine)
 
 	case "tool_result":
 		a.Running = true
 		a.Thinking = true
+		finishThinkingBlocks(target, thinkTarget)
 		onThinking(true, false, false)
 		return a.handleToolResult(evt, target, onStatusLine)
 
 	case "permission_resolved":
 		a.Running = true
 		a.Thinking = true
+		finishThinkingBlocks(target, thinkTarget)
 		onThinking(true, false, false)
 		return a.handlePermissionResolved(evt, target, onStatusLine)
 
 	case "blocking":
 		a.Running = true
+		finishThinkingBlocks(target, thinkTarget)
 		return a.handleBlocking(evt, target, thinkTarget, onBlocking, onConfirmReset, onQuestionReset)
 
 	case "blocking_auto":
@@ -236,6 +243,7 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 
 	case "blocking_complete":
 		onConfirmDismiss()
+		a.PendingBlockID = ""
 		a.Running = true
 		a.Thinking = true
 		onThinking(true, false, false)
@@ -263,6 +271,7 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.Cancelling = false
 		a.PendingPermTag = ""
 		a.PendingPermTool = ""
+		a.PendingBlockID = ""
 		a.BlockingMsgIdx = -1
 		onThinking(false, false, false)
 		return ErrorResultCmd(a.ID, errMsg)
@@ -279,12 +288,48 @@ func (a *AgentState) SubmitInput(text string) {
 	a.TokenBuf = ""
 	a.PendingPermTag = ""
 	a.PendingPermTool = ""
+	a.PendingBlockID = ""
 	a.BlockingMsgIdx = -1
 	a.Messages.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
 }
 
+// BeginCancellation transitions live presentation immediately while the
+// backend context shuts down. Terminal acknowledgement still owns final turn
+// completion, but queued pre-cancel events can no longer resume animation.
+func (a *AgentState) BeginCancellation() {
+	if a == nil {
+		return
+	}
+	if a.TokenBuf != "" && a.Messages != nil {
+		a.Messages.AppendToken(a.TokenBuf)
+		a.TokenBuf = ""
+	}
+	if a.Messages != nil {
+		a.Messages.MarkAllThinkingInterrupted()
+		a.Messages.MarkStreamingToolsCancelled()
+		a.Messages.UpdateTurnStatus(TurnStatus{Phase: "cancelling"})
+	}
+	a.Running = false
+	a.Thinking = false
+	a.Streaming = false
+	a.Cancelling = true
+	a.PendingPermTag = ""
+	a.PendingPermTool = ""
+	a.PendingBlockID = ""
+	a.BlockingMsgIdx = -1
+}
+
 func (a *AgentState) IsActive() bool {
 	return a.Running || a.Streaming || a.Thinking
+}
+
+func finishThinkingBlocks(target, thinkTarget *Conversation) {
+	if target != nil {
+		target.MarkAllThinkingDone()
+	}
+	if thinkTarget != nil && thinkTarget != target {
+		thinkTarget.MarkAllThinkingDone()
+	}
 }
 
 // ParseAgentPhase decodes both legacy string phases and structured progress

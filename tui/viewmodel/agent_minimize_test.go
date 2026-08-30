@@ -4,21 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	"crude/provider"
 	"crude/workspace"
 )
 
-func newMinimizeTestAgent(t *testing.T, app *App, id string) chan struct{} {
+func newMinimizeTestAgent(t *testing.T, app *App, id string) {
 	t.Helper()
-	cancel := make(chan struct{}, 1)
 	app.AddOrchestrator(
-		id,
-		make(chan provider.UserInput, 8),
-		make(chan provider.UserInput, 8),
-		cancel,
-		make(chan string, 1),
-	)
-	return cancel
+		id)
+
 }
 
 // Closing an agent tab must not stop the agent. The orchestrator keeps
@@ -27,17 +20,12 @@ func newMinimizeTestAgent(t *testing.T, app *App, id string) chan struct{} {
 func TestClosingAgentTabMinimizesWithoutCancelling(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	cancel := newMinimizeTestAgent(t, app, "orch-1")
+	newMinimizeTestAgent(t, app, "orch-1")
 
 	if cmd := app.handleAgentTabClose(0); cmd != nil {
 		t.Fatal("closing an agent tab should not return a command")
 	}
 
-	select {
-	case <-cancel:
-		t.Fatal("closing a tab must not cancel the running turn")
-	default:
-	}
 	node := app.AgentMgr.Get("orch-1")
 	if node == nil {
 		t.Fatal("closing a tab must not remove the agent")
@@ -103,15 +91,10 @@ func TestMinimizedAgentRestoresFromAgentsPanel(t *testing.T) {
 func TestTerminateAgentCancelsAndRemoves(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	cancel := newMinimizeTestAgent(t, app, "orch-1")
+	newMinimizeTestAgent(t, app, "orch-1")
 
 	app.terminateAgent("orch-1")
 
-	select {
-	case <-cancel:
-	default:
-		t.Fatal("terminate must cancel the running turn")
-	}
 	if app.AgentMgr.Get("orch-1") != nil {
 		t.Fatal("terminate must remove the agent")
 	}

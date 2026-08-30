@@ -16,12 +16,18 @@ func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame
 
 	if !header.Done {
 		dot := ui.ActivityDot(spinFrame) + " "
+		meta := rendering.FormatThinkingDuration(header.Elapsed)
+		if meta == "" {
+			meta = "<1s"
+		}
+		titleWidth := max(1, width-rendering.VisibleWidth("│ ")-rendering.VisibleWidth(dot)-rendering.VisibleWidth(" "+meta))
+		title := rendering.TruncateMiddleVisual(header.Title, titleWidth, "…")
 		switch header.Type {
 		case workspace.PaneThinking:
 			spans = append(spans, RowSpan{Text: dot, Role: ui.ColorAccent})
-			spans = append(spans, RowSpan{Text: header.Title, Role: ui.ColorAccent, Attr: cell.AttrBold})
+			spans = append(spans, RowSpan{Text: title, Role: ui.ColorAccent, Attr: cell.AttrBold})
 		default:
-			spans = append(spans, RowSpan{Text: dot + header.Title, Role: ui.ColorAccent, Attr: cell.AttrBold})
+			spans = append(spans, RowSpan{Text: dot + title, Role: ui.ColorAccent, Attr: cell.AttrBold})
 		}
 	} else if header.Type == workspace.PaneThinking {
 		duration := rendering.FormatThinkingDuration(header.Elapsed)
@@ -31,7 +37,9 @@ func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame
 		spans = append(spans, RowSpan{Text: "● Thought for " + duration, Role: ui.ColorMuted})
 		spans = append(spans, RowSpan{Text: " ▾", Role: ui.ColorMuted})
 	} else {
-		spans = append(spans, RowSpan{Text: "● " + header.Title, Role: ui.ColorMuted})
+		titleWidth := max(1, width-rendering.VisibleWidth("│ ● ")-rendering.VisibleWidth(" ▾"))
+		title := rendering.TruncateMiddleVisual(header.Title, titleWidth, "…")
+		spans = append(spans, RowSpan{Text: "● " + title, Role: ui.ColorMuted})
 		spans = append(spans, RowSpan{Text: " ▾", Role: ui.ColorMuted})
 	}
 
@@ -53,6 +61,8 @@ func BuildSubPaneSummaryLine(view workspace.SubPaneView, width int) SubPaneLine 
 	if view.Summary != nil {
 		summary = view.Summary.Text
 	}
+	summaryWidth := max(1, width-rendering.VisibleWidth("│ ● ")-rendering.VisibleWidth(" ▸"))
+	summary = rendering.TruncateMiddleVisual(summary, summaryWidth, "…")
 	spans := []RowSpan{
 		{Text: "│ ", Role: ui.ColorBorder},
 		{Text: "● " + summary + " ▸", Role: ui.ColorMuted},
@@ -79,7 +89,8 @@ func BuildSubPaneToolLines(view workspace.SubPaneView, width int) []SubPaneLine 
 		default:
 			spans = append(spans, RowSpan{Text: "○ ", Role: ui.ColorFg})
 		}
-		spans = append(spans, RowSpan{Text: tl.Label, Role: ui.ColorFg})
+		labelWidth := max(1, width-rendering.VisibleWidth("│ ✓ "))
+		spans = append(spans, RowSpan{Text: rendering.TruncateMiddleVisual(tl.Label, labelWidth, "…"), Role: ui.ColorFg})
 		pl := padPaintLine(PaintLine{Spans: spans}, width)
 		lines = append(lines, NativeLine(pl))
 	}

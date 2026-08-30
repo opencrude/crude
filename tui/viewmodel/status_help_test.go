@@ -35,8 +35,10 @@ func TestEditorHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 		}
 	}
 	_ = app.computeContentLayout()
-	if app.ChatAreaHeight != 25 {
-		t.Fatalf("editor should reclaim help separator and row: height=%d, want 25", app.ChatAreaHeight)
+	// Editor reclaims the tab-bar rows; with no tab bar the chat area spans
+	// from chromeTopRow down to the bottom chrome (30 - 2 - 3).
+	if want := 30 - app.chromeBottomRows() - app.chromeTopRow(); app.ChatAreaHeight != want {
+		t.Fatalf("editor should reclaim help separator and row: height=%d, want %d", app.ChatAreaHeight, want)
 	}
 }
 
@@ -58,7 +60,7 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	}
 
 	inputLines := app.Input.ShellHeight(app.width)
-	wantHeight := app.height - 2 - 3 - app.sessionDeckRect.H - inputLines
+	wantHeight := app.height - app.chromeBottomRows() - app.chromeTopRow() - app.sessionDeckRect.H - inputLines
 	if wantHeight < 1 {
 		wantHeight = 1
 	}

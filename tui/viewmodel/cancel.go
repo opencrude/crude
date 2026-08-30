@@ -4,8 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-
-	"crude/workspace"
 )
 
 func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
@@ -19,11 +17,11 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if m.anyActive() {
-		if n := m.AgentMgr.ActiveNode(); n != nil {
-			m.cancelAgentTurn(n.ID)
-			return nil
+		for _, node := range m.AgentMgr.AllNodes() {
+			if node != nil && node.IsActive() {
+				m.cancelAgentTurn(node.ID)
+			}
 		}
-		m.HardCancel()
 		m.StatusBar.SetInfo("Stopping active turns...")
 		return nil
 	}
@@ -41,13 +39,22 @@ func (m *App) cancelAgentTurn(agentID string) {
 	if agentID == "" {
 		return
 	}
-	m.CancelAgent(agentID)
 	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
-		node.State.Running = true
-		node.State.Cancelling = true
-		node.State.Streaming = false
-		node.State.Thinking = true
-		node.State.Messages.UpdateTurnStatus(workspace.TurnStatus{Phase: "cancelling"})
+		state := node.State
+		state.BeginCancellation()
+		if state.ThinkingPaneID != "" {
+			if pane := m.PaneMgr.Get(state.ThinkingPaneID); pane != nil && pane.Messages != nil {
+				pane.Messages.MarkAllThinkingInterrupted()
+				m.syncPaneMessages(state.ThinkingPaneID, true)
+			}
+			m.handleSubPaneCompletion(agentID)
+		}
+		m.syncAgentMessages(agentID, true)
+	}
+	clearedBtw := m.CancelAgent(agentID)
+	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil && node.State.Messages != nil {
+		node.State.Messages.RemovePendingBtwIDs(clearedBtw)
+		m.syncPendingBtwCount()
 		m.syncAgentMessages(agentID, true)
 	}
 	if m.StatusBar != nil {

@@ -290,6 +290,7 @@ func (a *AgentState) handleBlocking(evt AgentEvent, target *Conversation, thinkT
 	risk := data["risk"]
 	reason := data["reason"]
 	suggestion := data["suggestion"]
+	a.PendingBlockID = data["block_id"]
 	a.Thinking = false
 	onBlocking()
 	target.MarkAllThinkingDone()
@@ -384,6 +385,7 @@ func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, thinkTarge
 	a.Cancelling = false
 	a.PendingPermTag = ""
 	a.PendingPermTool = ""
+	a.PendingBlockID = ""
 	a.BlockingMsgIdx = -1
 	onThinking(false, false, false)
 	onStatusLine("")

@@ -192,6 +192,72 @@ func (w *Workspace) Hydrate() {
 	}
 }
 
+// HydrateCompletedSubAgents rebuilds durable child review surfaces under an
+// already-created root orchestrator. Completed children remain hidden until
+// the user opens them from Agents; hydration never revives execution.
+func (w *Workspace) HydrateCompletedSubAgents(parentID string) []string {
+	if w == nil || w.AgentMgr == nil || w.PaneMgr == nil || w.AgentMgr.Get(parentID) == nil {
+		return nil
+	}
+	frontendSession := w.sessionForAgent(parentID)
+	if frontendSession == nil || frontendSession.backend == nil {
+		return nil
+	}
+	var hydrated []string
+	for _, snapshot := range frontendSession.backend.CompletedSubAgentSnapshots() {
+		result := snapshot.Result
+		id := string(result.AgentID)
+		if id == "" || w.AgentMgr.Get(id) != nil {
+			continue
+		}
+		label := result.Name
+		if label == "" {
+			label = CategoryDisplayName(result.Category)
+		}
+		if label == "" {
+			label = id
+		}
+		pane := w.PaneMgr.GetOrCreate(id, PaneAgent, label)
+		for _, view := range ConvertMessagesForDisplay(snapshot.Messages) {
+			pane.Messages.AppendMessage(messageFromView(view))
+		}
+		if len(pane.Messages.Messages()) == 0 && (result.SummaryGist != "" || result.ResultPath != "") {
+			content := result.SummaryGist
+			if result.ResultPath != "" {
+				if content != "" {
+					content += "\n\n"
+				}
+				content += "Report: " + result.ResultPath
+			}
+			pane.Messages.AppendMessage(Message{Role: MessageRoleAssistant, Content: content, Time: time.Now()})
+		}
+		if result.DurationMs > 0 {
+			pane.StartTime = time.Now().Add(-time.Duration(result.DurationMs) * time.Millisecond)
+		}
+		pane.TokenCount = result.PromptTokens + result.CompTokens
+		pane.Collapse()
+
+		state := NewAgentState(id, pane.Messages, w.Logger)
+		state.Completed = true
+		state.Status = string(result.Status)
+		if state.Status == "" {
+			state.Status = "completed"
+		}
+		model := snapshot.Model
+		if model == "" {
+			model = frontendSession.backend.ModelName()
+		}
+		node := w.AgentMgr.AddSubAgent(id, parentID, label, model, result.Category, state)
+		if node == nil {
+			w.PaneMgr.Remove(id)
+			continue
+		}
+		node.Hidden = true
+		hydrated = append(hydrated, id)
+	}
+	return hydrated
+}
+
 // ── Backend Session Accessors
 
 // BackendSession returns the underlying backend session for the active
@@ -519,21 +585,53 @@ func (w *Workspace) CancelSubAgent(agentID string) {
 
 // CancelAgent routes cancellation to the orchestrator or sub-agent that owns
 // agentID, independent of which session is currently visible.
-func (w *Workspace) CancelAgent(agentID string) {
+func (w *Workspace) CancelAgent(agentID string) []string {
 	node := w.AgentMgr.Get(agentID)
 	if node == nil {
-		return
+		return nil
 	}
 	if node.Parent != nil {
 		w.CancelSubAgent(agentID)
-		return
+		return nil
 	}
-	if node.CancelChan != nil {
-		select {
-		case node.CancelChan <- struct{}{}:
-		default:
-		}
+	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
+		_, cleared := sess.backend.CancelOrchestrator(agentID)
+		return cleared
 	}
+	return nil
+}
+
+// SubmitAgentInput registers a cancellable turn with the owning backend before
+// the TUI projects the optimistic user message.
+func (w *Workspace) SubmitAgentInput(agentID string, input provider.UserInput) bool {
+	if w == nil || w.AgentMgr == nil {
+		return false
+	}
+	root := w.AgentMgr.OrchestratorFor(agentID)
+	if root == nil || root.ID != agentID {
+		return false
+	}
+	if sess := w.sessionForAgent(root.ID); sess != nil && sess.backend != nil {
+		return sess.backend.SubmitInput(root.ID, input)
+	}
+	return false
+}
+
+// SubmitAgentBtw admits a note to the exact active turn that owns agentID.
+// Admission and cancellation share the backend orchestrator's turn lock, so a
+// note can neither be silently dropped nor leak across a turn boundary.
+func (w *Workspace) SubmitAgentBtw(agentID string, input provider.UserInput) bool {
+	if w == nil || w.AgentMgr == nil {
+		return false
+	}
+	root := w.AgentMgr.OrchestratorFor(agentID)
+	if root == nil || root.ID != agentID {
+		return false
+	}
+	if sess := w.sessionForAgent(root.ID); sess != nil && sess.backend != nil {
+		return sess.backend.SubmitBtw(root.ID, input)
+	}
+	return false
 }
 
 // MinimizeAgent dismisses an agent from the tab bar without stopping any
@@ -587,23 +685,35 @@ func (w *Workspace) CloseAgent(agentID string) {
 	}
 }
 
-// ResolveConfirmation sends a permission response to the owning orchestrator.
-func (w *Workspace) ResolveConfirmation(agentID, choice string) bool {
+// ResolveConfirmation sends a request-correlated permission response to the
+// owning orchestrator.
+func (w *Workspace) ResolveConfirmation(agentID, blockID, choice string) bool {
 	switch choice {
 	case "allow", "always", "deny":
 	default:
 		choice = "deny"
 	}
-	return w.resolveAgentBlock(agentID, choice)
+	return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+		RequestID: blockID,
+		Outcome:   ttypes.BlockAnswered,
+		Value:     choice,
+	})
 }
 
 // ResolveQuestion sends formatted question answers to the owning orchestrator.
-func (w *Workspace) ResolveQuestion(agentID string, answers, questions map[string]string, cancelled bool) bool {
+func (w *Workspace) ResolveQuestion(agentID, blockID string, answers, questions map[string]string, cancelled bool) bool {
 	if cancelled {
-		return w.resolveAgentBlock(agentID, "cancelled")
+		return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+			RequestID: blockID,
+			Outcome:   ttypes.BlockUserCancelled,
+		})
 	}
 	if len(answers) == 0 {
-		return w.resolveAgentBlock(agentID, "No answers provided")
+		return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+			RequestID: blockID,
+			Outcome:   ttypes.BlockValidationError,
+			Detail:    "no answers were provided",
+		})
 	}
 
 	var response strings.Builder
@@ -618,31 +728,36 @@ func (w *Workspace) ResolveQuestion(agentID string, answers, questions map[strin
 			response.WriteString("\n\n")
 		}
 	}
-	return w.resolveAgentBlock(agentID, response.String())
+	return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+		RequestID: blockID,
+		Outcome:   ttypes.BlockAnswered,
+		Value:     response.String(),
+	})
 }
 
-func (w *Workspace) resolveAgentBlock(agentID, response string) bool {
-	root := w.AgentMgr.OrchestratorFor(agentID)
-	if root == nil || root.BlockResolveCh == nil {
+// RejectQuestion reports a frontend validation failure without attributing it
+// to the user. The model receives actionable feedback and can retry the tool.
+func (w *Workspace) RejectQuestion(agentID, blockID, detail string) bool {
+	return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+		RequestID: blockID,
+		Outcome:   ttypes.BlockValidationError,
+		Detail:    detail,
+	})
+}
+
+func (w *Workspace) resolveAgentBlock(agentID string, response ttypes.BlockResponse) bool {
+	if w == nil || w.AgentMgr == nil || response.RequestID == "" {
 		return false
 	}
-	select {
-	case root.BlockResolveCh <- response:
-		return true
-	default:
-		// A buffered response can be stale after cancellation or panel
-		// replacement. Prefer the user's latest explicit answer.
-		select {
-		case <-root.BlockResolveCh:
-		default:
-		}
-		select {
-		case root.BlockResolveCh <- response:
-			return true
-		default:
-			return false
-		}
+	root := w.AgentMgr.OrchestratorFor(agentID)
+	if root == nil {
+		return false
 	}
+	sess := w.sessionForAgent(root.ID)
+	if sess == nil || sess.backend == nil {
+		return false
+	}
+	return sess.backend.ResolveBlock(agentID, response)
 }
 
 func (w *Workspace) sessionForAgent(agentID string) *Session {
@@ -664,13 +779,14 @@ func (w *Workspace) sessionForAgent(agentID string) *Session {
 
 // UsageSnapshot is the workspace-owned token/cost state for one session.
 type UsageSnapshot struct {
-	Prompt        int
-	Completion    int
-	Cached        int
-	Cost          float64
-	ContextWindow int
-	ContextUsed   int
-	Estimated     bool
+	Prompt         int
+	Completion     int
+	Cached         int
+	Cost           float64
+	ContextWindow  int
+	ContextUsed    int
+	Estimated      bool
+	CostUpperBound bool
 }
 
 // RecordAgentUsage applies a provider usage event to its owning session rather
@@ -695,6 +811,9 @@ func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, b
 		cost, _ := usage["cost"].(float64)
 		sess.SessionCost += cost
 		sess.TokenEstimated, _ = usage["estimated"].(bool)
+		if upperBound, ok := usage["cost_upper_bound"].(bool); ok {
+			sess.CostUpperBound = sess.CostUpperBound || upperBound
+		}
 		if contextWindow := toInt(usage["context_window"]); contextWindow > 0 {
 			sess.ContextWindow = contextWindow
 			contextUsed := toInt(usage["context_prompt"])
@@ -746,13 +865,14 @@ func (w *Workspace) AgentUsage(agentID string) (UsageSnapshot, bool) {
 
 func usageSnapshot(sess *Session) UsageSnapshot {
 	return UsageSnapshot{
-		Prompt:        sess.TokenPrompt,
-		Completion:    sess.TokenCompletion,
-		Cached:        sess.TokenCached,
-		Cost:          sess.SessionCost,
-		ContextWindow: sess.ContextWindow,
-		ContextUsed:   sess.ContextUsed,
-		Estimated:     sess.TokenEstimated,
+		Prompt:         sess.TokenPrompt,
+		Completion:     sess.TokenCompletion,
+		Cached:         sess.TokenCached,
+		Cost:           sess.SessionCost,
+		ContextWindow:  sess.ContextWindow,
+		ContextUsed:    sess.ContextUsed,
+		Estimated:      sess.TokenEstimated,
+		CostUpperBound: sess.CostUpperBound,
 	}
 }
 

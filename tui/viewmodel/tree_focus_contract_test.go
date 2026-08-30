@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/window"
@@ -46,12 +45,7 @@ func setupTreeRoutingApp(t *testing.T) (*App, *filetree.FileTreeModel, string) {
 	app.paintShellFrame()
 
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
 
 	ed := editor.New(app.Theme)
 	if err := ed.Open(mainPath); err != nil {

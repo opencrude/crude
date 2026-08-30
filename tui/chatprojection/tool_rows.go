@@ -40,7 +40,7 @@ func toolSpinnerRole(msg types.ChatMessage, titlePhase string) ui.SemanticColor 
 	return ui.ColorMuted
 }
 
-func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int) PaintLine {
+func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int, maxWidths ...int) PaintLine {
 	title := tools.BuildToolTitle(msg, titlePhase)
 	if msg.ToolStatus == "success" {
 		dur := rendering.FormatDuration(msg.ToolDuration)
@@ -64,13 +64,18 @@ func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int)
 		dot = "○ "
 	}
 
+	permSuffix := tools.PermTagSuffix(msg.PermTag)
+	if len(maxWidths) > 0 && maxWidths[0] > 0 {
+		fixedWidth := rendering.VisibleWidth("│ ") + rendering.VisibleWidth(dot) + rendering.VisibleWidth(permSuffix)
+		title = rendering.TruncateMiddleVisual(title, max(1, maxWidths[0]-fixedWidth), "…")
+	}
 	spans := []RowSpan{
 		{Text: "│ ", Role: ui.ColorMuted},
 		{Text: dot, Role: toolSpinnerRole(msg, titlePhase)},
 		{Text: title, Role: ui.ColorMuted},
 	}
-	if suffix := tools.PermTagSuffix(msg.PermTag); suffix != "" {
-		spans = append(spans, RowSpan{Text: suffix, Role: ui.ColorMuted})
+	if permSuffix != "" {
+		spans = append(spans, RowSpan{Text: permSuffix, Role: ui.ColorMuted})
 	}
 	return PaintLine{Spans: spans}
 }
@@ -137,9 +142,21 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		titlePhase = phase
 	}
 
-	var out messageLines
-	titlePL := buildToolTitleLine(msg, titlePhase, spinFrame)
 	expandable := msg.ToolStatus == "success" && msg.Content != "" && toolSupportsDisclosure(msg.ToolName)
+	titleWidth := contentWidth
+	if titleWidth <= 0 {
+		titleWidth = innerW
+	}
+	if expandable && titleWidth > 0 {
+		titleWidth -= rendering.VisibleWidth(" ▸")
+	}
+	var out messageLines
+	var titlePL PaintLine
+	if titleWidth > 0 {
+		titlePL = buildToolTitleLine(msg, titlePhase, spinFrame, max(1, titleWidth))
+	} else {
+		titlePL = buildToolTitleLine(msg, titlePhase, spinFrame)
+	}
 	if expandable {
 		glyph := "▸"
 		if disclosure == DisclosureExpanded {

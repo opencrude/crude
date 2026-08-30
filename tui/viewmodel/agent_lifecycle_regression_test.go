@@ -1,9 +1,9 @@
 package viewmodel
 
 import (
+	"strings"
 	"testing"
 
-	"crude/provider"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -11,12 +11,7 @@ import (
 func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"root",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"root")
 
 	childPane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
 	app.subPaneProjections.Get("child", workspace.PaneAgent)
@@ -76,12 +71,8 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"root",
-		make(chan provider.UserInput, 1),
-		nil,
-		make(chan struct{}, 1),
-		nil,
-	)
+		"root")
+
 	app.cleanupAgent("root")
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{
@@ -105,5 +96,103 @@ func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 	}
 	if got := app.StatusBar.IdleAgentCount(); got != 0 {
 		t.Fatalf("late child created a ghost idle count: %d", got)
+	}
+}
+
+func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	baselineIdle := app.StatusBar.IdleAgentCount()
+	app.handleAgentEvent(ttypes.AgentEventMsg{
+		Type:    "sub_agent_started",
+		AgentID: "child",
+		Data: map[string]string{
+			"agent_id": "child", "agent_name": "Child", "parent_id": "root",
+		},
+	})
+	app.StatusBar.SetThinkingForAgent("child", false, false, false)
+	if got := app.StatusBar.IdleAgentCount(); got != baselineIdle+1 {
+		t.Fatalf("idle count before completion=%d, want %d", got, baselineIdle+1)
+	}
+
+	app.handleAgentEvent(ttypes.AgentEventMsg{
+		Type:    "sub_agent_completed",
+		AgentID: "child",
+		Data: map[string]string{
+			"agent_id": "child", "agent_name": "Child", "status": "cancelled",
+		},
+	})
+
+	child := app.AgentMgr.Get("child")
+	if child == nil || child.State == nil || !child.State.Completed || child.State.Status != "cancelled" {
+		t.Fatalf("terminal child state = %#v", child)
+	}
+	if got := app.StatusBar.IdleAgentCount(); got != baselineIdle {
+		t.Fatalf("terminal child recreated ghost idle status: got %d want %d", got, baselineIdle)
+	}
+}
+
+func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	const assignment = "# Assignment\n- Description: inspect lifecycle"
+	app.handleAgentEvent(ttypes.AgentEventMsg{
+		Type:    "sub_agent_started",
+		AgentID: "child",
+		Data: map[string]string{
+			"agent_id": "child", "agent_name": "Child", "parent_id": "root", "prompt": assignment,
+		},
+	})
+	if app.Win.TabByTitle(app.agentTabTitle("child")) == nil {
+		t.Fatal("live child tab was not created")
+	}
+	pane := app.PaneMgr.Get("child")
+	projection := app.subPaneProjections.GetExisting("child")
+
+	app.handleAgentEvent(ttypes.AgentEventMsg{
+		Type:    "sub_agent_completed",
+		AgentID: "child",
+		Data: map[string]string{
+			"agent_id": "child", "agent_name": "Child", "status": "completed",
+		},
+	})
+	child := app.AgentMgr.Get("child")
+	if child == nil || !child.IsCompleted() || !child.Hidden {
+		t.Fatalf("completed child was not archived: %#v", child)
+	}
+	if app.Win.TabByTitle(app.agentTabTitle("child")) != nil {
+		t.Fatal("completed child tab remained surfaced instead of archiving")
+	}
+	if app.PaneMgr.Get("child") != pane || app.subPaneProjections.GetExisting("child") != projection {
+		t.Fatal("completion discarded the retained review surface")
+	}
+	foundClosedReview := false
+	for _, item := range app.agentSidebarItems() {
+		if item.ID == "agent:child" && item.Icon == "✓" {
+			foundClosedReview = true
+		}
+	}
+	if !foundClosedReview {
+		t.Fatal("completed child was not discoverable as a closed review in Agents")
+	}
+
+	app.restoreAgent("child")
+	if child.Hidden || app.AgentMgr.ActiveID() != "child" {
+		t.Fatalf("completed child did not become active review: hidden=%v active=%q", child.Hidden, app.AgentMgr.ActiveID())
+	}
+	if app.Win.TabByTitle(app.agentTabTitle("child")) == nil {
+		t.Fatal("completed child review tab was not reopened")
+	}
+	app.paintShellFrame()
+	if !app.inputRect.Empty() {
+		t.Fatalf("completed review mounted a live composer: %+v", app.inputRect)
+	}
+	help := app.contextualHelpView()
+	if strings.Contains(help, "Enter send") || !strings.Contains(help, "read-only agent review") {
+		t.Fatalf("completed review advertised live input: %q", help)
+	}
+	messages := child.State.Messages.Messages()
+	if len(messages) == 0 || messages[0].Role != workspace.MessageRoleAssignment || messages[0].Content != assignment {
+		t.Fatalf("reopened review lost assignment: %+v", messages)
 	}
 }

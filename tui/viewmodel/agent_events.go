@@ -41,6 +41,14 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 	if n == nil || n.State == nil {
 		return nil
 	}
+	input := provider.InputWithRefs(text, refIDs)
+	input.ActivePaths = m.memoryContextPaths()
+	if m.Workspace == nil || !m.SubmitAgentInput(sessionID, input) {
+		if m.StatusBar != nil {
+			m.StatusBar.SetError("Message was not sent: this agent already has an active turn")
+		}
+		return nil
+	}
 	agent := n.State
 	referenceLabels := m.referenceLabels(refIDs)
 	agent.Messages.AppendMessage(workspace.Message{
@@ -63,17 +71,7 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 	if m.StatusBar != nil {
 		m.StatusBar.SetThinkingForAgent(sessionID, true, false, false)
 	}
-	ch := n.InputChan
-	input := provider.InputWithRefs(text, refIDs)
-	input.ActivePaths = m.memoryContextPaths()
-	return func() tea.Msg {
-		select {
-		case ch <- input:
-			return nil
-		default:
-			return ttypes.ErrorMsg("input channel blocked - please try again")
-		}
-	}
+	return nil
 }
 
 func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
@@ -83,12 +81,21 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 	}
 	agent := n.State
 	referenceLabels := m.referenceLabels(refIDs)
-	agent.Messages.AppendMessage(workspace.Message{
+	messageID := agent.Messages.AppendPendingBtw(workspace.Message{
 		Role:            ttypes.RoleUser,
 		Content:         text,
 		ReferenceLabels: referenceLabels,
 		Time:            time.Now(),
 	})
+	input := provider.InputWithRefs(text, refIDs)
+	input.InternalID = messageID
+	if m.Workspace == nil || !m.SubmitAgentBtw(sessionID, input) {
+		agent.Messages.RemovePendingBtwIDs([]string{messageID})
+		if m.StatusBar != nil {
+			m.StatusBar.SetError("BTW was not queued: this turn is no longer accepting notes")
+		}
+		return nil
+	}
 	if len(m.History) == 0 || m.History[len(m.History)-1] != text {
 		m.History = append(m.History, text)
 	}
@@ -98,19 +105,9 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 	if OnHistorySave != nil {
 		OnHistorySave(m.History)
 	}
-	if m.StatusBar != nil {
-		m.StatusBar.SetBtwCount(m.StatusBar.BtwCount() + 1)
-	}
+	m.syncPendingBtwCount()
 	m.syncAgentMessages(sessionID, true)
-	ch := n.BtwChan
-	return func() tea.Msg {
-		select {
-		case ch <- provider.InputWithRefs(text, refIDs):
-			return nil
-		default:
-		}
-		return nil
-	}
+	return nil
 }
 
 func (m *App) referenceLabels(refIDs []string) []string {
@@ -144,10 +141,22 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	if evt.Type == "btw_consumed" {
-		if m.StatusBar != nil {
-			m.StatusBar.SetBtwCount(max(0, m.StatusBar.BtwCount()-1))
+		if node := m.AgentMgr.Get(evt.AgentID); node != nil && node.State != nil && node.State.Messages != nil {
+			data, _ := evt.Data.(map[string]any)
+			internalID, _ := data["internal_id"].(string)
+			node.State.Messages.ConsumePendingBtw(internalID)
+			m.syncAgentMessages(evt.AgentID, false)
 		}
+		m.syncPendingBtwCount()
 		m.syncAgentWindowTabs()
+		return nil
+	}
+	if evt.Type == "btw_cleared" {
+		if node := m.AgentMgr.Get(evt.AgentID); node != nil && node.State != nil && node.State.Messages != nil {
+			node.State.Messages.RemovePendingBtwIDs(agentEventStringSlice(evt.Data, "internal_ids"))
+			m.syncAgentMessages(evt.AgentID, true)
+		}
+		m.syncPendingBtwCount()
 		return nil
 	}
 	if evt.Type == "memory_saved" {
@@ -254,7 +263,12 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				return nil
 			}
 			// Sub-agent: create sub-pane
-			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
+			label := evtData["agent_name"]
+			if label == "" {
+				label = agentID
+			}
+			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, label)
+			sp.Title = label
 			subModel := m.ModelName
 			if model, ok := evtData["model"]; ok && model != "" {
 				subModel = model
@@ -266,11 +280,13 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			// sub-agent's own chat) render through the same registry.
 			proj.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 			agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
-			// Get label/model/category from event data
-			label := ""
-			if l, ok := evtData["agent_name"]; ok {
-				label = workspace.TruncateLine(l, 16)
+			if assignment := evtData["prompt"]; assignment != "" {
+				agent.Messages.AppendMessage(workspace.Message{
+					Role: workspace.MessageRoleAssignment, Content: assignment, Time: time.Now(),
+				})
 			}
+			// Keep the canonical label intact. Tabs and sidebar rows own their
+			// width-specific elision; truncating here permanently loses identity.
 			modelStr := m.ModelName
 			if md, ok := evtData["model"]; ok && md != "" {
 				modelStr = md
@@ -286,12 +302,14 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				return nil
 			}
 			if parent := m.AgentMgr.Get(parentID); parent != nil && parent.State != nil && parent.State.Messages != nil {
-				parent.State.Messages.AppendMessage(workspace.Message{
-					Role:      ttypes.RoleTool,
-					Content:   agentID,
-					SubPaneID: agentID,
-					Time:      time.Now(),
-				})
+				if !parent.State.Messages.AttachSubPaneToLatestTool("run_sub_agent", agentID) {
+					parent.State.Messages.AppendMessage(workspace.Message{
+						Role:      ttypes.RoleTool,
+						Content:   agentID,
+						SubPaneID: agentID,
+						Time:      time.Now(),
+					})
+				}
 				m.syncAgentMessages(parentID, false)
 			}
 		}
@@ -314,6 +332,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 		m.handleSubAgentStarted(evt)
 	case "sub_agent_completed":
 		m.handleSubAgentCompleted(evt)
+		return nil
 	case "sub_agent_question":
 		m.handleSubAgentQuestion(evt)
 	case "file_claim":
@@ -336,26 +355,32 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.StatusBar.SetThinkingForAgent(agentID, false, false, true)
 		},
 		func(question, operation, tool, target, risk, reason, suggestion string) {
-			projection := m.activeSessionProjection()
+			_, projection := m.sessionProjectionForAgent(agentID)
 			if projection == nil || projection.confirmation == nil {
 				return
 			}
 			projection.confirmation.Reset(confirmation.Details{Question: question, Operation: operation, Tool: tool, Target: target, Risk: risk, Reason: reason, Suggestion: suggestion})
 			projection.confirmationAgentID = agentID
+			projection.confirmationBlockID = agent.PendingBlockID
 			m.openSessionConfirmationPanel(projection)
 		},
 		func(questionsJSON string) {
-			projection := m.activeSessionProjection()
+			_, projection := m.sessionProjectionForAgent(agentID)
 			if projection == nil || projection.question == nil {
 				return
 			}
-			n := projection.question.Reset(questionsJSON)
-			if n == 0 {
+			n, err := projection.question.ResetWithError(questionsJSON)
+			if err != nil || n == 0 {
 				m.StatusBar.SetError("Agent sent an invalid question request")
-				m.ResolveQuestion(agentID, nil, nil, true)
+				detail := "question payload could not be rendered"
+				if err != nil {
+					detail = err.Error()
+				}
+				m.RejectQuestion(agentID, agent.PendingBlockID, detail)
 				return
 			}
 			projection.questionAgentID = agentID
+			projection.questionBlockID = agent.PendingBlockID
 			m.openSessionQuestionPanel(projection)
 		},
 		func() {
@@ -409,6 +434,37 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	m.syncAgentWindowTabs()
 
 	return m.processAgentResults(cmd)
+}
+
+func agentEventStringSlice(data any, key string) []string {
+	values, _ := data.(map[string]any)
+	switch raw := values[key].(type) {
+	case []string:
+		return raw
+	case []any:
+		result := make([]string, 0, len(raw))
+		for _, value := range raw {
+			if text, ok := value.(string); ok && text != "" {
+				result = append(result, text)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func (m *App) syncPendingBtwCount() {
+	if m.StatusBar == nil || m.AgentMgr == nil {
+		return
+	}
+	count := 0
+	for _, node := range m.AgentMgr.AllNodes() {
+		if node != nil && node.State != nil && node.State.Messages != nil {
+			count += node.State.Messages.PendingBtwCount()
+		}
+	}
+	m.StatusBar.SetBtwCount(count)
 }
 
 func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *workspace.Conversation {
@@ -580,7 +636,7 @@ func (m *App) handleUsageData(data any, agentID string) {
 	if !ok || m.AgentMgr.ActiveID() != agentID {
 		return
 	}
-	m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated)
+	m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated, usage.CostUpperBound)
 }
 
 func (m *App) handleSubAgentQuestion(evt workspace.AgentEvent) {
@@ -625,9 +681,6 @@ func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
 		return
 	}
 	label := agentName
-	if label != "" {
-		label = workspace.TruncateLine(label, 16)
-	}
 	if n := m.AgentMgr.Get(agentID); n != nil {
 		n.Label = label
 		if n.State != nil {

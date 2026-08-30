@@ -282,13 +282,19 @@ func (m *App) resolveSessionQuestion(target *question.Screen, result question.Re
 		return
 	}
 	agentID := projection.questionAgentID
+	blockID := projection.questionBlockID
 	m.StatusBar.SetConfirming(false)
 	m.OverlayState.SetBlocking(false)
-	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
-		node.State.Thinking = true
+	resolved := m.ResolveQuestion(agentID, blockID, result.Answers, result.Questions, cancelled)
+	if resolved {
+		if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
+			node.State.Thinking = true
+		}
+		m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
+	} else {
+		m.StatusBar.SetError("Question response was not sent: the request is no longer active")
 	}
-	m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
-	m.ResolveQuestion(agentID, result.Answers, result.Questions, cancelled)
+	projection.questionBlockID = ""
 	target.Dismiss()
 	m.closeProjectionPanel(projection, sessionQuestionPanelID)
 }
@@ -298,17 +304,23 @@ func (m *App) resolveSessionConfirmation(target *confirmation.Screen, choice str
 		return
 	}
 	agentID := projection.confirmationAgentID
+	blockID := projection.confirmationBlockID
 	details := target.Details()
 	m.StatusBar.SetConfirming(false)
 	m.OverlayState.SetBlocking(false)
-	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
-		node.State.Running = true
-		node.State.Thinking = true
+	if m.ResolveConfirmation(agentID, blockID, choice) {
+		if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
+			node.State.Running = true
+			node.State.Thinking = true
+		}
+		m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
+		if m.Logger != nil {
+			m.Logger.Info("BLOCK", "resolved", "response", choice, "operation", details.Operation, "tool", details.Tool)
+		}
+	} else {
+		m.StatusBar.SetError("Permission response was not sent: the request is no longer active")
 	}
-	m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
-	if m.ResolveConfirmation(agentID, choice) && m.Logger != nil {
-		m.Logger.Info("BLOCK", "resolved", "response", choice, "operation", details.Operation, "tool", details.Tool)
-	}
+	projection.confirmationBlockID = ""
 	target.Dismiss()
 	m.closeProjectionPanel(projection, sessionConfirmationPanelID)
 }
@@ -320,6 +332,7 @@ func (m *App) cancelSessionConfirmation(target *confirmation.Screen) {
 	}
 	agentID := projection.confirmationAgentID
 	details := target.Details()
+	projection.confirmationBlockID = ""
 	m.StatusBar.SetConfirming(false)
 	m.OverlayState.SetBlocking(false)
 	target.Dismiss()

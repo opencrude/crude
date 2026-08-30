@@ -178,7 +178,7 @@ func (a *App) Run() {
 		if g := tui.GetGlobal(); g != nil {
 			orch, orchErr := ws.StartOrchestrator(g)
 			if orchErr == nil && orch != nil {
-				t.AddOrchestrator(orch.ID, orch.InputCh, orch.BtwCh, orch.CancelCh, orch.BlockResolveCh)
+				t.AddOrchestrator(orch.ID)
 			}
 		}
 		ws.Hydrate()

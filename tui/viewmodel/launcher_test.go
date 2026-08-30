@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/screens/launcher"
 	"crude/tui/theme"
@@ -15,10 +14,6 @@ import (
 	"crude/tui/ui"
 	"crude/workspace"
 )
-
-func newTestChannels() (chan<- provider.UserInput, chan<- provider.UserInput, chan<- struct{}, chan string) {
-	return make(chan provider.UserInput, 8), make(chan provider.UserInput, 8), make(chan struct{}, 1), make(chan string, 1)
-}
 
 type testLogger struct{}
 
@@ -61,12 +56,12 @@ func TestLauncher_NewSession_NoBackendConfig(t *testing.T) {
 }
 
 // TestLauncher_AddOrchestrator_CreatesAgent verifies AddOrchestrator clears
-// the launcher, creates the agent, and wires channels.
+// the launcher and creates the agent. Blocking responses route through the
+// workspace rather than a frontend-owned channel.
 func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	inputCh, btwCh, cancelCh, blockResolveCh := newTestChannels()
 
-	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, blockResolveCh)
+	app.AddOrchestrator("ses_1_orch_1")
 
 	if app.launcherScreen != nil {
 		t.Fatal("launcher should be cleared by AddOrchestrator")
@@ -81,27 +76,14 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 	if app.AgentMgr.ActiveID() != "ses_1_orch_1" {
 		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.AgentMgr.ActiveID())
 	}
-	if n.InputChan == nil {
-		t.Fatal("input channel should be wired")
-	}
-	if n.BtwChan == nil {
-		t.Fatal("btw channel should be wired")
-	}
-	if n.CancelChan == nil {
-		t.Fatal("cancel channel should be wired")
-	}
-	if n.BlockResolveCh == nil {
-		t.Fatal("block resolve channel should be wired")
-	}
 }
 
 // TestLauncher_AddOrchestrator_ClearsLauncher verifies that AddOrchestrator
 // clears the launcher and creates the agent.
 func TestLauncher_AddOrchestrator_ClearsLauncher(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	inputCh, btwCh, cancelCh, blockResolveCh := newTestChannels()
 
-	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, blockResolveCh)
+	app.AddOrchestrator("ses_1_orch_1")
 
 	if app.launcherScreen != nil {
 		t.Fatal("launcher should be cleared by AddOrchestrator")
@@ -150,10 +132,12 @@ func TestLauncher_ResumeSession(t *testing.T) {
 // with a parent_id creates a sub-pane.
 func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 	app := newTestAppWithLauncher(t)
+	const fullName = "smoke-async-researcher-with-full-identity"
 
 	// Create the parent orchestrator via AddOrchestrator
-	inputCh, btwCh, cancelCh, blockResolveCh := newTestChannels()
-	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, blockResolveCh)
+	app.AddOrchestrator("ses_1_orch_1")
+	parent := app.AgentMgr.Get("ses_1_orch_1")
+	parent.State.Messages.UpdateToolCall("tool-1", "internal-1", "run_sub_agent", "category: researcher description: inspect lifecycle")
 
 	// Create a sub-agent with parent_id
 	subEvt := types.AgentEventMsg{
@@ -161,8 +145,9 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 		AgentID: "ses_1_orch_1_sub_abc",
 		Data: map[string]string{
 			"agent_id":   "ses_1_orch_1_sub_abc",
-			"agent_name": "helper",
+			"agent_name": fullName,
 			"parent_id":  "ses_1_orch_1",
+			"prompt":     "# Assignment\n- Description: inspect lifecycle",
 		},
 	}
 	app.handleAgentEvent(subEvt)
@@ -184,14 +169,25 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 	if subAgent.Parent.ID != "ses_1_orch_1" {
 		t.Fatalf("expected parent ses_1_orch_1, got %q", subAgent.Parent.ID)
 	}
+	if subAgent.Label != fullName || sp.Title != fullName {
+		t.Fatalf("canonical child identity was truncated: label=%q pane=%q", subAgent.Label, sp.Title)
+	}
+	messages := subAgent.State.Messages.Messages()
+	if len(messages) == 0 || messages[0].Role != workspace.MessageRoleAssignment ||
+		messages[0].Content != "# Assignment\n- Description: inspect lifecycle" {
+		t.Fatalf("sub-agent assignment = %+v", messages)
+	}
+	parentMessages := parent.State.Messages.Messages()
+	if len(parentMessages) != 1 || parentMessages[0].SubPaneID != "ses_1_orch_1_sub_abc" {
+		t.Fatalf("sub-agent start created duplicate parent projections: %+v", parentMessages)
+	}
 }
 
 // TestMultipleOrchestrators verifies two orchestrators via AddOrchestrator.
 func TestMultipleOrchestrators(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 
-	inputCh, btwCh, cancelCh, brCh := newTestChannels()
-	app.AddOrchestrator("ses_1_orch_1", inputCh, btwCh, cancelCh, brCh)
+	app.AddOrchestrator("ses_1_orch_1")
 
 	// Add a sub-agent via the manager (simulating handleAgentEvent flow)
 	app.AgentMgr.AddSubAgent("ses_1_sub_abc", "ses_1_orch_1", "helper", "", "", &workspace.AgentState{})
@@ -310,8 +306,10 @@ func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 	app.launcherScreen.SetData(".", nil)
 
 	_ = app.computeContentLayout()
-	if app.ChatAreaHeight != 25 {
-		t.Fatalf("launcher should receive reclaimed separator/help rows: height=%d, want 25", app.ChatAreaHeight)
+	// Launcher reclaims the tab-bar rows; with the tab bar hidden the chat
+	// area spans from chromeTopRow down to the bottom chrome (30 - 2 - 3).
+	if want := 30 - app.chromeBottomRows() - app.chromeTopRow(); app.ChatAreaHeight != want {
+		t.Fatalf("launcher should receive reclaimed separator/help rows: height=%d, want %d", app.ChatAreaHeight, want)
 	}
 }
 

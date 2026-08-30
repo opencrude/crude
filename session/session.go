@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"crude/agent"
 	"crude/clipboard"
 	"crude/diff"
 	"crude/fileio"
@@ -22,6 +23,7 @@ import (
 	"crude/search"
 	"crude/sessiondb"
 	"crude/statemachine"
+	ttypes "crude/types"
 )
 
 // WakeChBufSize is the buffer size for the session wake channel.
@@ -32,11 +34,6 @@ const WakeChBufSize = 32
 type EventSender interface {
 	SendAgentEvent(typ string, data any)
 	SendAgentEventWithID(typ string, data any, agentID string)
-}
-
-type EventInput interface {
-	GetInputCh() <-chan provider.UserInput
-	GetCancelCh() <-chan struct{}
 }
 
 type Session struct {
@@ -66,17 +63,18 @@ type Session struct {
 	// consolidation) for this session.
 	memoryJobs memoryJobState
 
-	msgs          []provider.ChatMessage
-	msgTurns      []int
-	displayMetas  []sessiondb.DisplayMeta
-	createdAts    []int64
-	msgsMu        sync.Mutex
-	pendingBlock  bool
-	blockMu       sync.Mutex
-	lastBlockResp string
-	blockRespMu   sync.Mutex
-	msgCounter    int
-	msgCounterMu  sync.Mutex
+	msgs         []provider.ChatMessage
+	msgTurns     []int
+	displayMetas []sessiondb.DisplayMeta
+	createdAts   []int64
+	msgsMu       sync.Mutex
+	msgCounter   int
+	msgCounterMu sync.Mutex
+
+	systemPromptMu sync.Mutex
+	systemPrompts  map[bool]string
+
+	recoveredSubAgentMessages map[string][]sessiondb.MessageWithMeta
 
 	sessionID    string
 	sessionStart time.Time
@@ -368,6 +366,23 @@ func (s *Session) ModelName() string {
 	return s.cfg.GetActiveDefaultCategory().Model
 }
 
+func (s *Session) systemPrompt(multiAgent bool) string {
+	if s == nil {
+		return agent.BuildSystemPrompt(multiAgent)
+	}
+	s.systemPromptMu.Lock()
+	defer s.systemPromptMu.Unlock()
+	if s.systemPrompts == nil {
+		s.systemPrompts = make(map[bool]string, 2)
+	}
+	if prompt, ok := s.systemPrompts[multiAgent]; ok {
+		return prompt
+	}
+	prompt := agent.BuildSystemPrompt(multiAgent)
+	s.systemPrompts[multiAgent] = prompt
+	return prompt
+}
+
 func (s *Session) SessionID() string {
 	return s.sessionID
 }
@@ -405,6 +420,79 @@ func (s *Session) SubAgentRunner() *SubAgentRunner {
 	return s.subAgentSup
 }
 
+// SubAgentSnapshot is the durable review state for a completed child. The
+// child remains part of its parent session; it is never a root resumable
+// session even though it owns a separate transcript database.
+type SubAgentSnapshot struct {
+	Result   agent.SubAgentResult
+	Model    string
+	Messages []sessiondb.MessageWithMeta
+}
+
+func (s *Session) CompletedSubAgentSnapshots() []SubAgentSnapshot {
+	if s == nil || s.subAgentSup == nil {
+		return nil
+	}
+	results := s.subAgentSup.Manager().CompletedResults()
+	snapshots := make([]SubAgentSnapshot, 0, len(results))
+	for _, result := range results {
+		snapshot := SubAgentSnapshot{Result: result}
+		if dbPath := s.completedSubAgentDBPath(result.SessionID); dbPath != "" {
+			if meta, messages, err := loadSubAgentSnapshotDB(dbPath); err == nil {
+				snapshot.Model = meta.Model
+				for i := range messages {
+					if messages[i].Msg.Role == "user" {
+						messages[i].Meta.DisplayRole = "assignment"
+						break
+					}
+				}
+				snapshot.Messages = messages
+			}
+		}
+		if len(snapshot.Messages) == 0 && s.recoveredSubAgentMessages != nil {
+			snapshot.Messages = append([]sessiondb.MessageWithMeta(nil), s.recoveredSubAgentMessages[result.SessionID]...)
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots
+}
+
+func (s *Session) completedSubAgentDBPath(childSessionID string) string {
+	childSessionID = filepath.Base(childSessionID)
+	if childSessionID == "" || childSessionID == "." {
+		return ""
+	}
+	if dir := s.SessionDir(); dir != "" {
+		path := filepath.Join(dir, "subagents", childSessionID+".db")
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	if legacyRoot, err := SessionsRoot(); err == nil {
+		path := filepath.Join(legacyRoot, childSessionID+".db")
+		if _, statErr := os.Stat(path); statErr == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func loadSubAgentSnapshotDB(dbPath string) (sessiondb.SessionMeta, []sessiondb.MessageWithMeta, error) {
+	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&_busy_timeout=1000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return sessiondb.SessionMeta{}, nil, err
+	}
+	db.SetMaxOpenConns(1)
+	defer func() { _ = db.Close() }()
+	meta, err := sessiondb.GetMeta(db)
+	if err != nil {
+		return sessiondb.SessionMeta{}, nil, err
+	}
+	messages, err := sessiondb.LoadMessagesWithMeta(db)
+	return meta, messages, err
+}
+
 // MarkReportConsumed records that the main agent has already consumed a sub-agent's
 // result during an active turn (e.g. via poll_sub_agent). The corresponding
 // WakeSubAgentDone event will be suppressed to prevent a redundant wake-up turn
@@ -416,6 +504,9 @@ func (s *Session) SubAgentRunner() *SubAgentRunner {
 // event when the turn ends — resulting in a wasteful duplicate turn.
 func (s *Session) MarkReportConsumed(agentID string) {
 	s.consumedReportsMu.Lock()
+	if s.consumedReports == nil {
+		s.consumedReports = make(map[string]bool)
+	}
 	s.consumedReports[agentID] = true
 	s.consumedReportsMu.Unlock()
 }
@@ -442,10 +533,7 @@ func (s *Session) HardCancel() {
 	}
 	s.orchMu.Unlock()
 	for _, orchestrator := range orchestrators {
-		select {
-		case orchestrator.CancelCh <- struct{}{}:
-		default:
-		}
+		orchestrator.CancelTurn()
 	}
 	if s.subAgentSup != nil {
 		s.subAgentSup.CancelAllActive()
@@ -456,6 +544,60 @@ func (s *Session) HardCancel() {
 	)
 }
 
+// CancelOrchestrator cancels only the active turn owned by id. The
+// orchestrator's generation-bound context prevents the request from leaking
+// into a later turn.
+func (s *Session) CancelOrchestrator(id string) (bool, []string) {
+	if s == nil || id == "" {
+		return false, nil
+	}
+	s.orchMu.Lock()
+	orchestrator := s.orchestrators[id]
+	s.orchMu.Unlock()
+	if orchestrator == nil {
+		return false, nil
+	}
+	return orchestrator.CancelTurn()
+}
+
+// SubmitBtw atomically admits a note to id's current turn.
+func (s *Session) SubmitBtw(id string, input provider.UserInput) bool {
+	if s == nil || id == "" {
+		return false
+	}
+	s.orchMu.Lock()
+	orchestrator := s.orchestrators[id]
+	s.orchMu.Unlock()
+	return orchestrator != nil && orchestrator.SubmitBtw(input)
+}
+
+// SubmitInput registers a cancellable turn before handing it to the session
+// loop, eliminating the enqueue-to-context race.
+func (s *Session) SubmitInput(id string, input provider.UserInput) bool {
+	if s == nil || id == "" {
+		return false
+	}
+	s.orchMu.Lock()
+	orchestrator := s.orchestrators[id]
+	s.orchMu.Unlock()
+	return orchestrator != nil && orchestrator.SubmitInput(input)
+}
+
+// ResolveBlock routes a request-correlated blocking outcome to its owning
+// orchestrator. Stale panels cannot resolve a later tool request.
+func (s *Session) ResolveBlock(id string, response ttypes.BlockResponse) bool {
+	if s == nil || id == "" || response.RequestID == "" {
+		return false
+	}
+	s.orchMu.Lock()
+	orchestrator := s.orchestrators[id]
+	s.orchMu.Unlock()
+	if orchestrator != nil {
+		return orchestrator.ResolveBlock(response)
+	}
+	return s.subAgentSup != nil && s.subAgentSup.ResolveBlock(agent.AgentID(id), response)
+}
+
 func (s *Session) isHardCancelled() bool {
 	return atomic.LoadInt32(&s.hardCancelled) == 1
 }
@@ -463,7 +605,24 @@ func (s *Session) isHardCancelled() bool {
 // IsTurnActive reports whether this session currently owns a provider/tool
 // turn. Context and journal mutation commands use it to reject unsafe overlap.
 func (s *Session) IsTurnActive() bool {
-	return s != nil && s.activeTurns.Load() > 0
+	if s == nil {
+		return false
+	}
+	if s.activeTurns.Load() > 0 {
+		return true
+	}
+	s.orchMu.Lock()
+	orchestrators := make([]*Orchestrator, 0, len(s.orchestrators))
+	for _, orchestrator := range s.orchestrators {
+		orchestrators = append(orchestrators, orchestrator)
+	}
+	s.orchMu.Unlock()
+	for _, orchestrator := range orchestrators {
+		if orchestrator.TurnActive() {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Session) clearHardCancel() {
@@ -534,7 +693,17 @@ func (s *Session) CloseOrchestrator(id string) {
 	delete(s.orchestrators, id)
 	s.orchMu.Unlock()
 	if ok && o.closing.CompareAndSwap(false, true) {
+		o.CancelTurn()
+		if o.subAgentSup != nil {
+			for _, childID := range o.subAgentSup.CancelAllActive() {
+				s.MarkReportConsumed(string(childID))
+			}
+		}
 		close(o.stopCh)
+		o.turnMu.Lock()
+		generation := o.turnGeneration
+		o.turnMu.Unlock()
+		o.endTurn(generation)
 	}
 	// Clean up the runtime profile override for this orchestrator.
 	s.runtimeProfile.RemoveOverride(id)

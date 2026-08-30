@@ -4,7 +4,7 @@ import "testing"
 
 func TestAgentTabViewsExposeDomainStateWithoutTUIObjects(t *testing.T) {
 	manager := NewAgentManager()
-	root := manager.AddOrchestrator("root", nil, nil, nil, nil, NewAgentState("root", nil, nil))
+	root := manager.AddOrchestrator("root", NewAgentState("root", nil, nil))
 	root.Category = "default"
 	manager.AddSubAgent("child", "root", "Research", "model", "researcher", NewAgentState("child", nil, nil))
 	manager.SetActive("child")
@@ -29,7 +29,7 @@ func TestStatusViewUsesWorkspaceUsageSnapshot(t *testing.T) {
 	state := NewAgentState("root", nil, nil)
 	state.Status = "running"
 	state.Thinking = true
-	manager.AddOrchestrator("root", nil, nil, nil, nil, state)
+	manager.AddOrchestrator("root", state)
 	ws := &Workspace{
 		AgentMgr:  manager,
 		ModelName: "model",
@@ -45,5 +45,19 @@ func TestStatusViewUsesWorkspaceUsageSnapshot(t *testing.T) {
 	}
 	if view.ModelName != "model" || view.Username != "user" {
 		t.Fatalf("status metadata missing: %#v", view)
+	}
+}
+
+func TestStatusViewExcludesTerminalSubAgentsFromIdlePopulation(t *testing.T) {
+	manager := NewAgentManager()
+	manager.AddOrchestrator("root", NewAgentState("root", nil, nil))
+	child := NewAgentState("child", nil, nil)
+	child.Completed = true
+	child.Status = "cancelled"
+	manager.AddSubAgent("child", "root", "child", "model", "researcher", child)
+
+	view := (&Workspace{AgentMgr: manager}).StatusView()
+	if view.AgentCount != 1 || view.ActiveAgents != 0 {
+		t.Fatalf("terminal child leaked into status population: %#v", view)
 	}
 }

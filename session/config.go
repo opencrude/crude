@@ -49,7 +49,6 @@ type CategoryConfig struct {
 	// resolution follows the marker at read time. Empty means explicit.
 	Inherit      string   `json:"inherit,omitempty"`
 	Policy       string   `json:"policy,omitempty"`
-	MaxSteps     int      `json:"max_steps,omitempty"`
 	Description  string   `json:"description,omitempty"`
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 	DeniedTools  []string `json:"denied_tools,omitempty"`
@@ -91,7 +90,6 @@ type AgentProfileConfig struct {
 	AllowedTools  []string `json:"allowed_tools,omitempty"`
 	DeniedTools   []string `json:"denied_tools,omitempty"`
 	FileOwnership []string `json:"file_ownership,omitempty"`
-	MaxSteps      int      `json:"max_steps,omitempty"`
 }
 
 // DefaultAgentsConfig returns the built-in agent scaffolding. No category
@@ -111,20 +109,17 @@ func DefaultAgentsConfig() AgentsConfig {
 				Categories: map[string]CategoryConfig{
 					CategoryResearcher: {
 						Policy:       "read-only",
-						MaxSteps:     1000,
 						Description:  "Gatherer — explores codebase, searches web, runs experiments",
 						AllowedTools: []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "run_javascript", "write_report", "question"},
 						DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
 					},
 					CategoryCrafter: {
 						Policy:      "no-delete",
-						MaxSteps:    1000,
 						Description: "Implementer — writes code, edits files, runs tests",
 						DeniedTools: []string{"delete_file"},
 					},
 					CategoryAeron: {
 						Policy:      "read-only",
-						MaxSteps:    1000,
 						Description: "Grunt — formatting, linting, boilerplate, monitoring",
 						DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
 					},
@@ -135,32 +130,26 @@ func DefaultAgentsConfig() AgentsConfig {
 			"explorer": {
 				Category:    CategoryResearcher,
 				Description: "Read-only codebase explorer for research and investigation",
-				MaxSteps:    1000,
 			},
 			"reviewer": {
 				Category:    CategoryResearcher,
 				Description: "Code reviewer with expensive model for thorough analysis",
-				MaxSteps:    1000,
 			},
 			"fixer": {
 				Category:    CategoryCrafter,
 				Description: "Implementation-focused agent for fixing bugs and writing code",
-				MaxSteps:    1000,
 			},
 			"tester": {
 				Category:    CategoryCrafter,
 				Description: "Test writer agent focused on writing and running tests",
-				MaxSteps:    1000,
 			},
 			"formatter": {
 				Category:    CategoryAeron,
 				Description: "Quick formatting and linting agent",
-				MaxSteps:    1000,
 			},
 			"monitor": {
 				Category:    CategoryAeron,
 				Description: "Watches running sub-agents and reports status",
-				MaxSteps:    1000,
 			},
 		},
 	}
@@ -541,7 +530,6 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		ThinkingEffort:     v.ThinkingEffort,
 		Inherit:            v.Inherit,
 		Policy:             v.Policy,
-		MaxSteps:           v.MaxSteps,
 		Description:        v.Description,
 		ModelContextWindow: v.ModelContextWindow,
 		ModelInputPrice:    v.ModelInputPrice,
@@ -564,7 +552,6 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		ThinkingEffort:     v.ThinkingEffort,
 		Inherit:            v.Inherit,
 		Policy:             v.Policy,
-		MaxSteps:           v.MaxSteps,
 		Description:        v.Description,
 		ModelContextWindow: v.ModelContextWindow,
 		ModelInputPrice:    v.ModelInputPrice,

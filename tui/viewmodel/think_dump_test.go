@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"testing"
 
-	"crude/provider"
 	ttypes "crude/tui/types"
 )
 
@@ -14,12 +13,8 @@ func TestDumpThinkingPaneFullScreen(t *testing.T) {
 	app.height = 24
 	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.AddOrchestrator(
-		"dump-agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"dump-agent")
+
 	node := app.AgentMgr.Get("dump-agent")
 	agent := node.State
 	// Busy chat: pre-fill messages so the main chat itself scrolls.

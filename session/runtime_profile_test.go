@@ -163,7 +163,6 @@ func TestMergeCategoryConfig(t *testing.T) {
 	base := CategoryConfig{
 		Model:    "base-model",
 		Provider: "base-provider",
-		MaxSteps: 100,
 	}
 	override := CategoryConfig{
 		Model: "override-model",
@@ -175,9 +174,6 @@ func TestMergeCategoryConfig(t *testing.T) {
 	}
 	if merged.Provider != "base-provider" {
 		t.Errorf("expected provider 'base-provider', got %q", merged.Provider)
-	}
-	if merged.MaxSteps != 100 {
-		t.Errorf("expected MaxSteps 100, got %d", merged.MaxSteps)
 	}
 }
 

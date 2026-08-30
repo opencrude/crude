@@ -73,6 +73,7 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	}
 	if state.tree != nil {
 		state.tree.SetOnFileChanged(nil)
+		state.tree.SetOnGitChanged(nil)
 		state.tree.StopWatcher()
 	}
 	return state
@@ -172,6 +173,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 		m.activityBar.SetBadge(activityTerminals, 0)
 		m.activityBar.SetBadge(activityGit, 0)
 	}
+	m.syncPendingBtwCount()
 	m.refreshActivityList()
 
 	if m.launcherScreen != nil {
@@ -180,6 +182,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 		m.refreshLauncherAsync(m.RootPath)
 	}
 	m.cachedOutput = ""
+	m.treeGitRefreshAt = time.Time{}
 }
 
 func (m *App) beginWorkspaceTreeLoad(rootPath string) {
@@ -207,6 +210,7 @@ func (m *App) applyWorkspaceTreeReady(msg workspaceTreeReadyMsg) {
 	}
 	if m.Tree != nil && m.Tree.Model != nil && m.Tree.Model != msg.model {
 		m.Tree.Model.SetOnFileChanged(nil)
+		m.Tree.Model.SetOnGitChanged(nil)
 		m.Tree.Model.StopWatcher()
 	}
 	m.Tree = NewTreeState(msg.model, m.Theme.Tree.Config.DefaultWidth)
@@ -231,10 +235,17 @@ func (m *App) wireAndStartWorkspaceTreeWatcherAsync(model *filetree.FileTreeMode
 		}
 		bus.Send(workspace.FileWatcherMsg{FilePath: filePath, ChangeType: changeType})
 	})
+	model.SetOnGitChanged(func() {
+		if m.workspaceSwitchGen.Load() != generation || bus == nil {
+			return
+		}
+		bus.Send(filetree.TreeGitChangedMsg{Model: model})
+	})
 	go func() {
 		err := model.StartWatcher()
 		if m.workspaceSwitchGen.Load() != generation {
 			model.SetOnFileChanged(nil)
+			model.SetOnGitChanged(nil)
 			model.StopWatcher()
 			return
 		}
@@ -258,6 +269,12 @@ func (m *App) wireAndStartWorkspaceTreeWatcher(model *filetree.FileTreeModel) {
 			return
 		}
 		bus.Send(workspace.FileWatcherMsg{FilePath: filePath, ChangeType: changeType})
+	})
+	model.SetOnGitChanged(func() {
+		if m.workspaceSwitchGen.Load() != generation || bus == nil {
+			return
+		}
+		bus.Send(filetree.TreeGitChangedMsg{Model: model})
 	})
 	if err := model.StartWatcher(); err != nil && m.Logger != nil {
 		m.Logger.Warn("FILETREE", "watcher_start_failed", "error", err.Error())

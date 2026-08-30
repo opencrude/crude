@@ -30,3 +30,29 @@ type ChatMessageView struct {
 	SubPaneID string
 	PermTag   string
 }
+
+func messageFromView(view ChatMessageView) Message {
+	return Message{
+		Role:                view.Role,
+		Content:             view.Content,
+		ReferenceLabels:     append([]string(nil), view.ReferenceLabels...),
+		Time:                view.Time,
+		ToolName:            view.ToolName,
+		ToolArgs:            view.ToolArgs,
+		ToolCommand:         view.ToolCommand,
+		ToolInput:           view.ToolInput,
+		ToolScope:           view.ToolScope,
+		ToolID:              view.ToolID,
+		ToolStatus:          view.ToolStatus,
+		ToolProgressLabel:   view.ToolProgressLabel,
+		ToolPreviewPhase:    view.ToolPreviewPhase,
+		ToolEstTokens:       view.ToolEstTokens,
+		ToolLinesAdded:      view.ToolLinesAdded,
+		ToolLinesRemoved:    view.ToolLinesRemoved,
+		ToolDuration:        view.ToolDuration,
+		ThinkingDuration:    view.ThinkingDuration,
+		ThinkingInterrupted: view.ThinkingInterrupted,
+		SubPaneID:           view.SubPaneID,
+		PermTag:             view.PermTag,
+	}
+}

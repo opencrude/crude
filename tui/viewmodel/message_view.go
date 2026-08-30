@@ -79,6 +79,7 @@ func chatMessagesFromConversation(conversation *workspace.Conversation) ([]ttype
 			IncompleteReason:       view.IncompleteReason,
 			SubPaneID:              view.SubPaneID,
 			PermTag:                view.PermTag,
+			PendingBtw:             view.PendingBtw,
 		})
 	}
 	return messages, conversation.Version()
@@ -120,6 +121,7 @@ func workspaceMessageFromChat(message ttypes.ChatMessage) workspace.Message {
 		IncompleteReason:       message.IncompleteReason,
 		SubPaneID:              message.SubPaneID,
 		PermTag:                message.PermTag,
+		PendingBtw:             message.PendingBtw,
 	}
 }
 

@@ -20,10 +20,10 @@ import (
 //  2. ~/.crude/sessions/<id>.db                     (legacy root), only when
 //     session meta.project_path matches this workspace's RootPath
 //
-// Idempotent: existing registry rows are never overwritten with derived data.
-// Rows marked db_missing whose DB reappears are unmarked only. Corrupt or
-// unreadable session DBs are skipped with a warning; the backfill never fails
-// the caller's open path.
+// Child session databases are deliberately scanned so legacy child rows can be
+// removed from the root-session registry. Existing root rows are never
+// overwritten with derived data. Rows marked db_missing whose DB reappears are
+// unmarked only. Corrupt or unreadable session DBs are skipped with a warning.
 //
 // Called from NewWorkspace (workspace-open), not from the launcher's
 // read-only ListWorkspaceInfos path, so listing other projects stays
@@ -45,11 +45,55 @@ func (w *Workspace) BackfillSessionRegistry() int {
 		}
 		inserted += n
 	}
+	if err := w.reconcileSessionRegistry(paths); err != nil && w.Logger != nil {
+		w.Logger.Warn("WORKSPACE", "registry_reconcile_failed", "error", err.Error())
+	}
 	if inserted > 0 && w.Logger != nil {
 		w.Logger.Info("WORKSPACE", "registry_backfill_done",
 			"inserted", inserted, "scanned", len(paths))
 	}
 	return inserted
+}
+
+func (w *Workspace) reconcileSessionRegistry(paths []string) error {
+	available := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		id := strings.TrimSuffix(filepath.Base(path), ".db")
+		if id != "" {
+			available[id] = true
+		}
+	}
+	rows, err := w.WorkspaceDB.DB.Query(`SELECT session_id FROM workspace_sessions`)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	tx, err := w.WorkspaceDB.DB.Begin()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		missing := 1
+		if available[id] {
+			missing = 0
+		}
+		if _, err := tx.Exec(`UPDATE workspace_sessions SET db_missing = ? WHERE session_id = ?`, missing, id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // discoverSessionDBPaths returns candidate session DB paths for this workspace.
@@ -126,6 +170,13 @@ func (w *Workspace) backfillOneSessionDB(dbPath string) (int, error) {
 	}
 	if sid == "" {
 		return 0, fmt.Errorf("empty session id")
+	}
+	if meta.ParentSessionID.Valid && meta.ParentSessionID.String != "" {
+		// Older releases wrote child DBs into ~/.crude/sessions and backfilled
+		// them as standalone sessions. Keep the child DB for parent hydration,
+		// but remove the invalid root registry row.
+		_, err := w.WorkspaceDB.DB.Exec(`DELETE FROM workspace_sessions WHERE session_id = ?`, sid)
+		return 0, err
 	}
 
 	// Existing row: never overwrite richer data. Only clear db_missing if set.

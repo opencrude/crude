@@ -30,7 +30,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"crude/buildinfo"
@@ -179,21 +181,73 @@ func ListWorkspaceInfos() ([]WorkspaceInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
 	root, err := WorkspaceRoot()
 	if err != nil {
 		return nil, err
 	}
-	infos := make([]WorkspaceInfo, 0, len(ids))
-	for _, id := range ids {
-		info := WorkspaceInfo{ID: id}
-		dbPath := filepath.Join(root, id, "workspace.db")
-		if meta := readWorkspaceMetaBounded(dbPath, 150*time.Millisecond); meta != nil {
-			info = *meta
-			info.ID = id
+	type workspaceResult struct {
+		id   string
+		info *WorkspaceInfo
+	}
+	jobs := make(chan string)
+	results := make(chan workspaceResult, len(ids))
+	workerCount := min(24, len(ids))
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for id := range jobs {
+				dbPath := filepath.Join(root, id, "workspace.db")
+				results <- workspaceResult{id: id, info: readWorkspaceMetaBounded(dbPath, 150*time.Millisecond)}
+			}
+		}()
+	}
+	go func() {
+		for _, id := range ids {
+			jobs <- id
 		}
+		close(jobs)
+		workers.Wait()
+		close(results)
+	}()
+
+	byPath := make(map[string]WorkspaceInfo, len(ids))
+	for result := range results {
+		info := WorkspaceInfo{ID: result.id}
+		if result.info != nil {
+			info = *result.info
+			info.ID = result.id
+		}
+		projectDir := canonicalizePath(info.ProjectDir)
+		if projectDir == "" {
+			continue
+		}
+		stat, statErr := os.Stat(projectDir)
+		if statErr != nil || !stat.IsDir() {
+			// Recent workspaces are actionable resources, not tombstones. Keep
+			// their DBs on disk for recovery but omit paths that no longer exist.
+			continue
+		}
+		info.ProjectDir = projectDir
 		info.ProjectName = WorkspaceDisplayName(info)
+		if existing, ok := byPath[projectDir]; !ok || info.LastActive > existing.LastActive {
+			byPath[projectDir] = info
+		}
+	}
+	infos := make([]WorkspaceInfo, 0, len(byPath))
+	for _, info := range byPath {
 		infos = append(infos, info)
 	}
+	sort.SliceStable(infos, func(i, j int) bool {
+		if infos[i].LastActive != infos[j].LastActive {
+			return infos[i].LastActive > infos[j].LastActive
+		}
+		return infos[i].ProjectName < infos[j].ProjectName
+	})
 	return infos, nil
 }
 

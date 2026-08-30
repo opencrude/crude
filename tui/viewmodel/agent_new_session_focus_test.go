@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -156,12 +155,8 @@ func TestNewAgentWhileEditing_AddOrchestrator(t *testing.T) {
 
 	paths := openEditorTabs(t, app, "main.go")
 	app.AddOrchestrator(
-		"orch-from-editor",
-		make(chan provider.UserInput, 8),
-		make(chan provider.UserInput, 8),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"orch-from-editor")
+
 	if !editorTabPresent(app, paths[0]) {
 		t.Fatal("editor tab must remain")
 	}
@@ -176,12 +171,8 @@ func TestTabSyncWhileEditingDoesNotStealEditor(t *testing.T) {
 	defer ws.Close()
 
 	app.AddOrchestrator(
-		"orch-1",
-		make(chan provider.UserInput, 8),
-		make(chan provider.UserInput, 8),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"orch-1")
+
 	paths := openEditorTabs(t, app, "main.go")
 	if !agentTabPresent(app, "orch-1") {
 		t.Fatal("precondition: agent tab should already exist")
@@ -210,12 +201,9 @@ func TestTabSyncWhileEditingCreatesMissingAgentTab(t *testing.T) {
 	paths := openEditorTabs(t, app, "main.go")
 	app.AgentMgr.AddOrchestrator(
 		"background-orch",
-		make(chan provider.UserInput, 8),
-		make(chan provider.UserInput, 8),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-		workspace.NewAgentState("background-orch", nil, nil),
-	)
+
+		workspace.NewAgentState("background-orch", nil, nil))
+
 	app.syncAgentWindowTabs()
 	if !agentTabPresent(app, "background-orch") {
 		t.Fatal("syncAgentWindowTabs must OpenTab while an editor is showing")
@@ -231,12 +219,8 @@ func TestRestoreAgentWhileEditingActivatesTab(t *testing.T) {
 	defer ws.Close()
 
 	app.AddOrchestrator(
-		"orch-1",
-		make(chan provider.UserInput, 8),
-		make(chan provider.UserInput, 8),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"orch-1")
+
 	app.minimizeAgent("orch-1")
 	paths := openEditorTabs(t, app, "main.go")
 	if agentTabPresent(app, "orch-1") {
@@ -255,12 +239,8 @@ func TestSubAgentTabCreatedWhileEditingDoesNotStealEditor(t *testing.T) {
 	defer ws.Close()
 
 	app.AddOrchestrator(
-		"root",
-		make(chan provider.UserInput, 8),
-		make(chan provider.UserInput, 8),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"root")
+
 	paths := openEditorTabs(t, app, "main.go")
 
 	childPane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
