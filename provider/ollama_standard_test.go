@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOllamaEncodeRequestTextAndOptions(t *testing.T) {
@@ -338,7 +339,8 @@ func TestOllamaStreamDecoderObjectArguments(t *testing.T) {
 	update, err := dec.Decode(StreamEvent{Data: []byte(
 		`{"model":"glm-5.3-flash","message":{"role":"assistant","content":"","tool_calls":[` +
 			`{"function":{"name":"read_file","arguments":{"path":"a.go","offset":3}}}]},` +
-			`"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":6}`)})
+			`"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":6,` +
+			`"total_duration":900,"load_duration":100,"prompt_eval_duration":200,"eval_duration":300}`)})
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -358,6 +360,10 @@ func TestOllamaStreamDecoderObjectArguments(t *testing.T) {
 	}
 	if args["path"] != "a.go" || args["offset"] != float64(3) {
 		t.Errorf("arguments = %v", args)
+	}
+	if update.Usage == nil || update.Usage.TotalDuration != 900*time.Nanosecond ||
+		update.Usage.PromptEvalDuration != 200*time.Nanosecond {
+		t.Fatalf("timing usage = %+v", update.Usage)
 	}
 }
 

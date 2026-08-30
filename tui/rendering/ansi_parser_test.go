@@ -1,6 +1,7 @@
 package rendering
 
 import (
+	"strings"
 	"testing"
 
 	"crude/tui/cell"
@@ -23,5 +24,16 @@ func TestRenderToSurfaceClearsReusedFrame(t *testing.T) {
 	}
 	if got := surf.Buffer().Get(0, 1); !got.Transparent {
 		t.Fatalf("old second row survived frame replacement: %#v", got)
+	}
+}
+
+func TestTruncateMiddleVisualPreservesIdentityAndSuffix(t *testing.T) {
+	input := "Wrote /home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-aeron-report.md +21 <0.1s"
+	got := TruncateMiddleVisual(input, 48, "…")
+	if VisibleWidth(got) > 48 {
+		t.Fatalf("width=%d text=%q", VisibleWidth(got), got)
+	}
+	if !strings.HasPrefix(got, "Wrote ") || !strings.Contains(got, "…") || !strings.HasSuffix(got, "+21 <0.1s") {
+		t.Fatalf("middle elision lost useful context: %q", got)
 	}
 }

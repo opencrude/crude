@@ -62,16 +62,6 @@ type mdLimit struct {
 	Output  int `json:"output,omitempty"`
 }
 
-// hasModality returns true if the list of modalities contains the given modality string.
-func hasModality(modalities []string, modality string) bool {
-	for _, m := range modalities {
-		if strings.EqualFold(m, modality) {
-			return true
-		}
-	}
-	return false
-}
-
 // FetchModelsDevAll downloads the full models.dev dataset and returns a flat
 // map of lowercased model ID → ModelMeta (context window + per-token pricing
 // + capabilities).

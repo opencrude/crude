@@ -53,9 +53,10 @@ type Client struct {
 	// per-conversation headers (see SessionScope).
 	sessionID string
 
-	onRetry          func(attempt int, delay time.Duration, err error)
-	onUploadProgress func(uploaded, total int64)
-	onRequestEncoded func(body []byte)
+	onRetry           func(attempt int, delay time.Duration, err error)
+	onUploadProgress  func(uploaded, total int64)
+	onRequestEncoded  func(body []byte)
+	onRequestAccepted func()
 }
 
 // ClientOption configures a Client at construction.
@@ -82,6 +83,13 @@ func WithRequestExtras(extra map[string]any) ClientOption {
 // body (after extras merge) for each chat request — used for turn logging.
 func OnRequestEncoded(fn func(body []byte)) ClientOption {
 	return func(c *Client) { c.onRequestEncoded = fn }
+}
+
+// OnRequestAccepted registers a callback fired after the chat endpoint has
+// accepted a request with a successful HTTP response. It is later than body
+// encoding/upload and earlier than the first decoded model update.
+func OnRequestAccepted(fn func()) ClientOption {
+	return func(c *Client) { c.onRequestAccepted = fn }
 }
 
 // OnRetry registers a callback fired before each retry wait.
@@ -291,17 +299,16 @@ func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, err
 
 // ChatStream is a decoded, ordered view of one streaming response.
 type ChatStream struct {
-	client   *Client
-	ctx      context.Context
-	body     []byte
-	resp     *http.Response
-	reader   streamEventReader
-	decoder  StreamDecoder
-	attempt  int
-	yielded  bool
-	sawDone  bool
-	closed   bool
-	accepted bool
+	client  *Client
+	ctx     context.Context
+	body    []byte
+	resp    *http.Response
+	reader  streamEventReader
+	decoder StreamDecoder
+	attempt int
+	yielded bool
+	sawDone bool
+	closed  bool
 }
 
 // Next returns the next decoded stream update. It returns io.EOF after the
@@ -435,6 +442,9 @@ func (s *ChatStream) establish() error {
 			s.decoder = chatResponseDecoder{proto: c.proto}
 		} else {
 			s.decoder = c.proto.NewStreamDecoder()
+		}
+		if c.onRequestAccepted != nil {
+			c.onRequestAccepted()
 		}
 		return nil
 	}

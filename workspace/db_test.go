@@ -203,7 +203,7 @@ func TestRecordAgentUsagePushesCostToRegistry(t *testing.T) {
 	}
 
 	mgr := NewAgentManager()
-	mgr.AddOrchestrator("orch", nil, nil, nil, nil, &AgentState{})
+	mgr.AddOrchestrator("orch", &AgentState{})
 	sess := &Session{SessionID: sid, AgentID: "orch"}
 	ws := &Workspace{
 		AgentMgr:        mgr,
@@ -245,7 +245,7 @@ func TestRecordAgentUsagePushesCostToRegistry(t *testing.T) {
 // failed to open). Must not panic and must still return the usage snapshot.
 func TestRecordAgentUsageWithoutWorkspaceDBDoesNotPanic(t *testing.T) {
 	mgr := NewAgentManager()
-	mgr.AddOrchestrator("orch", nil, nil, nil, nil, &AgentState{})
+	mgr.AddOrchestrator("orch", &AgentState{})
 	sess := &Session{SessionID: "sess-x", AgentID: "orch"}
 	ws := &Workspace{
 		AgentMgr:        mgr,

@@ -101,9 +101,6 @@ func TestStartOrchestrator(t *testing.T) {
 	if info.Orchestrator.ID != orch.ID {
 		t.Fatalf("expected orchid %q, got %q", orch.ID, info.Orchestrator.ID)
 	}
-	if orch.InputCh == nil {
-		t.Fatal("expected non-nil InputCh")
-	}
 	if orch.BlockResolveCh == nil {
 		t.Fatal("expected non-nil BlockResolveCh")
 	}
@@ -257,31 +254,34 @@ func TestCount(t *testing.T) {
 	}
 }
 
-func TestOrchestratorChannels(t *testing.T) {
-	sm := NewSessionManager()
-	cfg := testConfig()
-	home := t.TempDir()
-
-	info, _ := sm.NewSession(cfg, home)
-	sender := newMockEventSender()
-	orch, _ := sm.StartOrchestrator(info.ID, sender)
-
-	// Verify orchestrator channels are functional
-	inputCh := orch.InputCh
-	btwCh := orch.BtwCh
-	cancelCh := orch.CancelCh
-	blockResolveCh := orch.BlockResolveCh
-
-	if inputCh == nil || btwCh == nil || cancelCh == nil || blockResolveCh == nil {
-		t.Fatal("orchestrator channels should not be nil")
+func TestOrchestratorTurnAdmissionAndCancellation(t *testing.T) {
+	orch := NewOrchestrator("orch", nil)
+	if !orch.SubmitInput(provider.PlainInput("test")) {
+		t.Fatal("initial turn was rejected")
 	}
-
-	// Send on orch's channel
-	inputCh <- provider.UserInput{Text: "test"}
-	btwCh <- provider.UserInput{Text: "btw"}
-
-	// Don't read from cancelCh or blockResolveCh (they block)
-	// Just verify they were created properly
+	btw := provider.PlainInput("btw")
+	btw.InternalID = "btw-1"
+	if !orch.SubmitBtw(btw) {
+		t.Fatal("BTW was rejected during active turn")
+	}
+	cancelled, cleared := orch.CancelTurn()
+	if !cancelled {
+		t.Fatal("active turn was not cancelled")
+	}
+	if len(cleared) != 1 || cleared[0] != "btw-1" {
+		t.Fatalf("cleared BTW IDs=%v, want [btw-1]", cleared)
+	}
+	request := <-orch.inputCh
+	select {
+	case <-request.ctx.Done():
+	default:
+		t.Fatal("cancel did not synchronously close the admitted turn context")
+	}
+	late := provider.PlainInput("late")
+	late.InternalID = "btw-late"
+	if orch.SubmitBtw(late) {
+		t.Fatal("BTW was admitted after cancellation")
+	}
 }
 
 // TestResumedSessionOrchestrators verifies that a resumed session's
@@ -325,7 +325,7 @@ func TestResumedSessionOrchestrators(t *testing.T) {
 	sess.CloseOrchestrator(orch.ID)
 }
 
-func TestCloseOrchestratorSignalsStopWithoutClosingInputChannels(t *testing.T) {
+func TestCloseOrchestratorStopsAndRejectsNewWork(t *testing.T) {
 	sess := &Session{
 		orchestrators:  make(map[string]*Orchestrator),
 		runtimeProfile: NewRuntimeProfile(testConfig()),
@@ -343,8 +343,10 @@ func TestCloseOrchestratorSignalsStopWithoutClosingInputChannels(t *testing.T) {
 		t.Fatal("CloseOrchestrator() did not close the private stop channel")
 	}
 
-	// These channels are owned by senders outside session. They must remain
-	// open so an already-scheduled Bubble Tea command cannot panic on send.
-	orch.InputCh <- provider.PlainInput("late input")
-	orch.BtwCh <- provider.PlainInput("late btw")
+	if orch.SubmitInput(provider.PlainInput("late input")) {
+		t.Fatal("closed orchestrator admitted input")
+	}
+	if orch.SubmitBtw(provider.PlainInput("late btw")) {
+		t.Fatal("closed orchestrator admitted BTW")
+	}
 }

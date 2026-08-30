@@ -291,7 +291,7 @@ func (s *OpenAIResponsesStandard) RequestExtras(modelID, thinkingEffort string, 
 	if settings.ServiceTier != "" {
 		extras["service_tier"] = settings.ServiceTier
 	}
-	if thinkingEffort != "" && !(thinkingEffort == "none" && !usesOpenAICompletionTokenLimit(modelID)) {
+	if thinkingEffort != "" && (thinkingEffort != "none" || usesOpenAICompletionTokenLimit(modelID)) {
 		reasoning := map[string]any{"effort": thinkingEffort}
 		if thinkingEffort != "none" && settings.ResolveReasoningSummaries(true) {
 			reasoning["summary"] = "auto"

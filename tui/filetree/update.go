@@ -35,6 +35,7 @@ type EnterFilterModeMsg struct{}
 // from disk.
 type TreeRefreshDoneMsg struct {
 	RootPath string
+	Model    *FileTreeModel
 	Err      error
 }
 
@@ -69,10 +70,23 @@ type TreeWatcherMsg struct {
 
 func (TreeWatcherMsg) treeMsg() {}
 
-// TreeGitRefreshMsg signals that git status should be refreshed.
-type TreeGitRefreshMsg struct{}
+// TreeGitRefreshMsg carries one exact asynchronous status scan back to the
+// model that requested it. Model identity and generation reject retired or
+// superseded results after a workspace switch or coalesced refresh.
+type TreeGitRefreshMsg struct {
+	Model      *FileTreeModel
+	Generation uint64
+	Statuses   map[string]GitStatus
+	Err        error
+}
 
 func (TreeGitRefreshMsg) treeMsg() {}
+
+// TreeGitChangedMsg is emitted by the repository-metadata watcher. The app
+// verifies Model ownership before scheduling filesystem I/O as a tea.Cmd.
+type TreeGitChangedMsg struct {
+	Model *FileTreeModel
+}
 
 // TreeWidthMsg signals a sidebar width change.
 type TreeWidthMsg struct {
@@ -116,13 +130,7 @@ func (m *FileTreeModel) Update(msg TreeMsg) tea.Cmd {
 		return nil
 
 	case TreeGitRefreshMsg:
-		if m.gitResolver != nil {
-			_ = m.gitResolver.Refresh()
-			m.mu.Lock()
-			m.recomputeAggregateStatuses()
-			m.mu.Unlock()
-		}
-		return nil
+		return m.applyGitRefresh(msg)
 
 	case TreeWidthMsg:
 		m.width = msg.Width
@@ -166,7 +174,7 @@ func (m *FileTreeModel) handleKey(key tea.KeyPressMsg) tea.Cmd {
 
 	// Check for Ctrl+Shift+G (git refresh).
 	if key.Mod.Contains(tea.ModCtrl) && key.Mod.Contains(tea.ModShift) && key.Code == 'g' {
-		return m.refreshGitStatus()
+		return m.RefreshGitStatus()
 	}
 
 	// Dispatch by key code for special keys, then by string for
@@ -273,7 +281,7 @@ func (m *FileTreeModel) handleKeyString(key tea.KeyPressMsg) tea.Cmd {
 		m.SetShowHidden(!m.ShowHidden())
 		return nil
 	case "ctrl+shift+g":
-		return m.refreshGitStatus()
+		return m.RefreshGitStatus()
 	}
 	if key.Mod.Contains(tea.ModCtrl) || key.Mod.Contains(tea.ModAlt) || key.Mod.Contains(tea.ModSuper) {
 		return nil
@@ -475,29 +483,7 @@ func (m *FileTreeModel) updateScrollOffset() {
 // updateScrollOffsetLocked is updateScrollOffset for callers that already
 // hold m.mu.
 func (m *FileTreeModel) updateScrollOffsetLocked() {
-	idx := m.cursorIndex
-	vh := m.visibleHeight
-	if vh <= 0 {
-		vh = 10
-	}
-
-	// If cursor is strictly above the viewport, scroll up.
-	if idx < m.scrollOffset {
-		m.scrollOffset = idx
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
-		}
-		return
-	}
-
-	// If cursor is strictly below the viewport, scroll down by 1.
-	if idx >= m.scrollOffset+vh {
-		m.scrollOffset = idx - vh + 1
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
-		}
-		return
-	}
+	m.clampViewportLocked()
 }
 
 // ---------------------------------------------------------------------------
@@ -664,6 +650,7 @@ func (m *FileTreeModel) RefreshFromDisk() tea.Cmd {
 
 		return TreeRefreshDoneMsg{
 			RootPath: rootPath,
+			Model:    m,
 			Err:      err,
 		}
 	}
@@ -686,20 +673,11 @@ func (m *FileTreeModel) refreshTreeFromDisk() error {
 	// Walk all loaded directories and reload their children.
 	m.reloadAllLoadedDirectories(m.Root)
 
-	// Rebuild visible nodes and clamp the cursor.
-	m.rebuildVisibleNodes()
+	m.reapplyFilterAfterMutationLocked()
 
-	if m.cursorIndex >= len(m.visibleNodes) {
-		if len(m.visibleNodes) > 0 {
-			m.cursorIndex = len(m.visibleNodes) - 1
-			m.selectedPath = m.visibleNodes[m.cursorIndex].Path
-		} else {
-			m.cursorIndex = 0
-			m.selectedPath = m.rootPath
-		}
-	} else if len(m.visibleNodes) > 0 {
-		m.selectedPath = m.visibleNodes[m.cursorIndex].Path
-	}
+	// Rebuild visible nodes. The projection boundary restores selection,
+	// cursor, hover-independent scroll, and row-count invariants centrally.
+	m.rebuildVisibleNodes()
 
 	return nil
 }
@@ -723,17 +701,66 @@ func (m *FileTreeModel) reloadAllLoadedDirectories(node *TreeNode) {
 	}
 }
 
-// refreshGitStatus refreshes the git status resolver and returns a command
-// that emits a TreeGitRefreshMsg when done.
-func (m *FileTreeModel) refreshGitStatus() tea.Cmd {
-	if m.gitResolver == nil {
+// RefreshGitStatus starts one asynchronous status scan. Requests received
+// while a scan is active are coalesced into exactly one trailing scan so a
+// burst of file/index/ref events cannot lose the final repository state.
+func (m *FileTreeModel) RefreshGitStatus() tea.Cmd {
+	m.mu.Lock()
+	resolver := m.gitResolver
+	if resolver == nil || !resolver.Available() {
+		m.mu.Unlock()
 		return nil
 	}
+	if m.gitRefreshPending {
+		m.gitRefreshQueued = true
+		m.mu.Unlock()
+		return nil
+	}
+	m.gitRefreshPending = true
+	m.gitRefreshGen++
+	gen := m.gitRefreshGen
+	m.mu.Unlock()
 
 	return func() tea.Msg {
-		_ = m.gitResolver.Refresh()
-		return TreeGitRefreshMsg{}
+		statuses, err := resolver.scan()
+		return TreeGitRefreshMsg{Model: m, Generation: gen, Statuses: statuses, Err: err}
 	}
+}
+
+func (m *FileTreeModel) applyGitRefresh(msg TreeGitRefreshMsg) tea.Cmd {
+	m.mu.Lock()
+	if msg.Model != m || msg.Generation == 0 || msg.Generation != m.gitRefreshGen {
+		m.mu.Unlock()
+		return nil
+	}
+	m.gitRefreshPending = false
+	if msg.Err == nil && m.gitResolver != nil {
+		m.gitResolver.replaceStatuses(msg.Statuses)
+		m.syncNodeGitStatusesLocked()
+	}
+	runAgain := m.gitRefreshQueued
+	m.gitRefreshQueued = false
+	m.mu.Unlock()
+
+	if runAgain {
+		return m.RefreshGitStatus()
+	}
+	return nil
+}
+
+// syncNodeGitStatusesLocked applies the resolver snapshot to every loaded row,
+// including GitNone. Updating only aggregates leaves old M/D/U letters stuck
+// on file nodes after commits. The caller must hold m.mu.
+func (m *FileTreeModel) syncNodeGitStatusesLocked() {
+	if m.gitResolver == nil {
+		return
+	}
+	for path, node := range m.nodes {
+		if node != nil {
+			node.GitStatus = m.gitResolver.Resolve(path)
+		}
+	}
+	m.recomputeAggregateStatuses()
 }
 
 // ---------------------------------------------------------------------------
@@ -758,19 +785,8 @@ func (m *FileTreeModel) VisibleHeight() int {
 func (m *FileTreeModel) SetScrollOffset(offset int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	nodes := m.visibleNodes
-	maxOffset := len(nodes) - m.visibleHeight
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > maxOffset {
-		offset = maxOffset
-	}
 	m.scrollOffset = offset
+	m.clampScrollRangeLocked(m.visibleHeight)
 }
 
 // HScrollOffset returns the horizontal scroll offset.

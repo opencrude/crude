@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,5 +72,91 @@ func TestSubAgentTranscriptIsReplayable(t *testing.T) {
 	if len(messages) != 2 || messages[0].ContentString() != "inspect lifecycle" ||
 		messages[1].ContentString() != "found the bug" {
 		t.Fatalf("messages = %+v", messages)
+	}
+}
+
+func TestEverySubAgentTerminalPathPublishesEventResultAndWake(t *testing.T) {
+	s := &Session{
+		wakeCh:          make(chan WakeEvent, 1),
+		consumedReports: make(map[string]bool),
+	}
+	runner := NewSubAgentRunner(s, 1)
+	t.Cleanup(runner.SessionCancel)
+	sender := newMockEventSender()
+	runner.SetSender(sender)
+	handle := &agent.SubAgentHandle{
+		Spec: agent.SubAgentSpec{
+			ID: "crashed-child", Name: "crashed child", Category: agent.CatResearcher,
+		},
+		ResultCh: make(chan agent.SubAgentResult, 1),
+		Cancel:   func() {},
+	}
+	if err := runner.Manager().Register(handle); err != nil {
+		t.Fatal(err)
+	}
+	result := agent.SubAgentResult{
+		AgentID: handle.Spec.ID, Name: handle.Spec.Name, Category: handle.Spec.Category,
+		Status: agent.SubAgentCrashed, Errors: []string{"panic"},
+	}
+
+	runner.finalizeSubAgent(handle, result)
+
+	if got := <-handle.ResultCh; got.Status != agent.SubAgentCrashed {
+		t.Fatalf("result channel status = %q", got.Status)
+	}
+	event := <-sender.ch
+	if event.typ != "sub_agent_completed" || event.agentID != string(handle.Spec.ID) {
+		t.Fatalf("terminal event = %#v", event)
+	}
+	wake := <-s.wakeCh
+	got, ok := wake.Data.(agent.SubAgentResult)
+	if wake.Type != WakeSubAgentDone || !ok || got.Status != agent.SubAgentCrashed {
+		t.Fatalf("terminal wake = %#v", wake)
+	}
+	if _, ok := runner.Manager().GetActive(handle.Spec.ID); ok {
+		t.Fatal("terminal child remained active")
+	}
+}
+
+func TestCancelledSubAgentResultCannotReadAsSuccess(t *testing.T) {
+	formatted := formatSubAgentResult(agent.SubAgentResult{
+		Name: "child", Category: agent.CatResearcher, Status: agent.SubAgentCancelled,
+	})
+	if !strings.Contains(formatted, "CANCELLED") || !strings.Contains(formatted, "did not complete") || strings.Contains(formatted, "Status:** OK") {
+		t.Fatalf("cancelled result = %q", formatted)
+	}
+}
+
+func TestSubAgentDatabaseIsScopedUnderParentSession(t *testing.T) {
+	home := t.TempDir()
+	sessionsRoot := filepath.Join(home, "workspace-sessions")
+	s, err := NewWithSessionDir("parent", testConfig(), home, sessionsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	runner := NewSubAgentRunner(s, 1)
+	t.Cleanup(runner.SessionCancel)
+
+	path, err := runner.subAgentDBPath("child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(s.SessionDir(), "subagents", "child.db")
+	if path != want {
+		t.Fatalf("child DB path=%q want %q", path, want)
+	}
+	legacyRoot, _ := SessionsRoot()
+	if strings.HasPrefix(path, legacyRoot+string(filepath.Separator)) {
+		t.Fatalf("child DB leaked into root-session directory: %q", path)
+	}
+}
+
+func TestDeriveSubAgentNameWhenModelOmitsName(t *testing.T) {
+	if got := deriveSubAgentName(agent.CatResearcher, "Survey git state and identify logical commit groups"); got != "survey-git-state" {
+		t.Fatalf("derived name = %q", got)
+	}
+	if got := deriveSubAgentName(agent.CatCrafter, "***"); got != "crafter-agent" {
+		t.Fatalf("fallback name = %q", got)
 	}
 }

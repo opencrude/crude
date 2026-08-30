@@ -16,7 +16,7 @@ require (
 )
 
 // Crude's async terminal calibration publishes corrections through the shared
-// vendored x/ansi package. See ../../TERMINAL_WIDTH.md.
+// vendored x/ansi package. See ../../docs/reference/terminal-width.md.
 replace github.com/charmbracelet/x/ansi => ../xansi
 
 replace github.com/charmbracelet/ultraviolet => ../ultraviolet
