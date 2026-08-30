@@ -40,7 +40,7 @@ func TestCompleteStreamRecordsReasoningDuration(t *testing.T) {
 	result, err := agent.completeStream(
 		context.Background(),
 		[]provider.ChatMessage{provider.NewTextMessage("user", "hello")},
-		nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("completeStream: %v", err)

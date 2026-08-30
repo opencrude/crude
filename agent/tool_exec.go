@@ -10,6 +10,7 @@ import (
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
+	ttypes "crude/types"
 )
 
 type execResult struct {
@@ -60,7 +61,7 @@ func validateRequiredParams(toolName string, params map[string]any, defs []tools
 	return fmt.Sprintf("Error: tool %q has empty required parameter(s): %s. You MUST provide a non-empty value for each required parameter. Call %s again with %s filled in.", toolName, strings.Join(empty, ", "), toolName, strings.Join(empty, ", "))
 }
 
-func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan string, lastReply *string, step int) <-chan execResult {
+func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan ttypes.BlockResponse, lastReply *string, step int) <-chan execResult {
 	ch := make(chan execResult, len(toolCalls))
 
 	type indexedToolCall struct {
@@ -111,7 +112,7 @@ func (a *Agent) executeOneToolCallSafely(
 	ctx context.Context,
 	tc provider.ToolCall,
 	emit func(AgentEvent),
-	blockResolveCh <-chan string,
+	blockResolveCh <-chan ttypes.BlockResponse,
 	lastReply *string,
 ) (result execResult) {
 	defer func() {
@@ -157,8 +158,12 @@ func isPotentiallyBlocking(name string) bool {
 	}
 }
 
-func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan string, lastReply *string) execResult {
+func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan ttypes.BlockResponse, lastReply *string) execResult {
 	internalID := tc.InternalID
+	blockID := internalID
+	if blockID == "" {
+		blockID = tc.ID
+	}
 	goroutineStart := time.Now()
 
 	var params map[string]any
@@ -223,42 +228,20 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	}
 
 	if tc.Function.Name == "question" && blockResolveCh != nil {
-		questionText := getStr(params, "question")
-		rawQuestions, hasQuestions := params["questions"]
-
-		var questions []map[string]any
-		if hasQuestions && rawQuestions != nil {
-			if arr, ok := rawQuestions.([]any); ok {
-				for _, q := range arr {
-					if m, ok := q.(map[string]any); ok {
-						questions = append(questions, m)
-					}
-				}
-			}
-		} else if questionText != "" {
-			rawOpts := params["options"]
-			var optStrs []string
-			if rawOpts != nil {
-				if arr, ok := rawOpts.([]any); ok {
-					for _, v := range arr {
-						if s, ok := v.(string); ok {
-							optStrs = append(optStrs, s)
-						}
-					}
-				}
-			}
-			q := map[string]any{"question": questionText}
-			if len(optStrs) > 0 {
-				q["options"] = optStrs
-			}
-			questions = []map[string]any{q}
+		questionsJSON, questionErr := normalizeQuestionRequest(params)
+		if questionErr != nil {
+			errResult := "Error: invalid question request: " + questionErr.Error() + ". Call question again with a valid questions array."
+			emit(AgentEvent{Type: "tool_call", Data: map[string]any{
+				"internal_id": internalID, "tool_id": tc.ID, "name": "question", "args": formatToolArgs(params),
+			}})
+			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
+				"internal_id": internalID, "tool_id": tc.ID, "name": "question", "phase": "error",
+			}})
+			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+				"internal_id": internalID, "tool_id": tc.ID, "name": "question", "result": errResult, "error": "true",
+			}})
+			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: errResult}, toolError: true}
 		}
-
-		if len(questions) == 0 {
-			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Error: question tool requires a 'questions' array or 'question' parameter"}, toolError: true}
-		}
-
-		questionsJSON, _ := json.Marshal(questions)
 
 		emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 			"internal_id": internalID,
@@ -268,30 +251,37 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}})
 		drainStaleBlockResponses(blockResolveCh)
 		emit(AgentEvent{Type: "blocking", Data: map[string]any{
+			"block_id":       blockID,
 			"operation":      "questions",
 			"tool":           "question",
-			"target":         getStr(params, "question"),
 			"questions_json": string(questionsJSON),
 		}})
-		resp, ok := waitForBlockResponse(ctx, blockResolveCh)
+		resp, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 		if !ok {
 			emit(AgentEvent{Type: "blocking_complete"})
+			result := "Question interrupted because the active turn was cancelled."
 			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 				"internal_id": internalID,
 				"tool_id":     tc.ID,
 				"name":        "question",
-				"result":      "Turn cancelled by user.",
+				"result":      result,
+				"error":       "true",
 			}})
-			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: "Turn cancelled by user."}, toolError: true}
+			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: result}, toolError: true}
 		}
 		emit(AgentEvent{Type: "blocking_complete"})
-		emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+		result, resultError := questionBlockResult(resp)
+		resultData := map[string]any{
 			"internal_id": internalID,
 			"tool_id":     tc.ID,
 			"name":        "question",
-			"result":      resp,
-		}})
-		return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: resp}}
+			"result":      result,
+		}
+		if resultError {
+			resultData["error"] = "true"
+		}
+		emit(AgentEvent{Type: "tool_result", Data: resultData})
+		return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: result}, toolError: resultError}
 	}
 
 	if tc.Function.Name == "execute_command" {
@@ -318,6 +308,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		if !a.yoloEnabled() && sr.Risk.NeedsConfirmation() {
 			drainStaleBlockResponses(blockResolveCh)
 			emit(AgentEvent{Type: "blocking", Data: map[string]string{
+				"block_id":   blockID,
 				"operation":  sr.Risk.String(),
 				"tool":       "execute_command",
 				"target":     cmd,
@@ -326,11 +317,12 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				"reason":     sr.Reason,
 				"suggestion": sr.Suggestion,
 			}})
-			resp, ok := waitForBlockResponse(ctx, blockResolveCh)
+			response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 			if !ok {
 				emit(AgentEvent{Type: "blocking_complete"})
-				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: "Turn cancelled by user."}, toolError: true}
+				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled."}, toolError: true}
 			}
+			resp := response.Value
 			emitPermissionDecision(emit, tc, resp)
 			if resp == "deny" {
 				errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
@@ -404,6 +396,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		question := fmt.Sprintf("Allow this %s operation on %s?", fileOp, fileTarget)
 		drainStaleBlockResponses(blockResolveCh)
 		emit(AgentEvent{Type: "blocking", Data: map[string]string{
+			"block_id":   blockID,
 			"operation":  fileOp,
 			"tool":       tc.Function.Name,
 			"target":     fileTarget,
@@ -412,11 +405,12 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"reason":     fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name),
 			"suggestion": "",
 		}})
-		resp, ok := waitForBlockResponse(ctx, blockResolveCh)
+		response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 		if !ok {
 			emit(AgentEvent{Type: "blocking_complete"})
-			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled by user."}, toolError: true}
+			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled."}, toolError: true}
 		}
+		resp := response.Value
 		emitPermissionDecision(emit, tc, resp)
 		if resp == "deny" {
 			errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
@@ -645,7 +639,7 @@ func emitPermissionDecision(emit func(AgentEvent), tc provider.ToolCall, respons
 // otherwise resolve a brand-new request before its UI renders. Call this
 // immediately before emitting a blocking event, when any buffered response is
 // necessarily stale.
-func drainStaleBlockResponses(responses <-chan string) {
+func drainStaleBlockResponses(responses <-chan ttypes.BlockResponse) {
 	if responses == nil {
 		return
 	}
@@ -658,17 +652,123 @@ func drainStaleBlockResponses(responses <-chan string) {
 	}
 }
 
-func waitForBlockResponse(ctx context.Context, responses <-chan string) (string, bool) {
+func waitForBlockResponse(ctx context.Context, responses <-chan ttypes.BlockResponse, requestID string) (ttypes.BlockResponse, bool) {
 	if responses == nil {
-		return "", false
+		return ttypes.BlockResponse{}, false
 	}
-	select {
-	case response, ok := <-responses:
-		if !ok {
-			return "", false
+	for {
+		select {
+		case response, ok := <-responses:
+			if !ok {
+				return ttypes.BlockResponse{}, false
+			}
+			if response.RequestID != requestID {
+				continue
+			}
+			return response, true
+		case <-ctx.Done():
+			return ttypes.BlockResponse{}, false
 		}
-		return response, true
-	case <-ctx.Done():
-		return "", false
+	}
+}
+
+type normalizedQuestion struct {
+	Question string   `json:"question"`
+	Header   string   `json:"header"`
+	Options  []string `json:"options,omitempty"`
+	Multiple bool     `json:"multiple,omitempty"`
+}
+
+func normalizeQuestionRequest(params map[string]any) ([]byte, error) {
+	raw, exists := params["questions"]
+	if !exists || raw == nil {
+		return nil, fmt.Errorf("missing required parameter %q", "questions")
+	}
+	var encoded []byte
+	var err error
+	if text, ok := raw.(string); ok {
+		encoded = []byte(text)
+	} else {
+		encoded, err = json.Marshal(raw)
+		if err != nil {
+			return nil, fmt.Errorf("questions cannot be encoded: %w", err)
+		}
+	}
+	var source []struct {
+		Question string            `json:"question"`
+		Header   string            `json:"header"`
+		Options  []json.RawMessage `json:"options"`
+		Multiple bool              `json:"multiple"`
+	}
+	if err := json.Unmarshal(encoded, &source); err != nil {
+		return nil, fmt.Errorf("questions must be a JSON array: %w", err)
+	}
+	if len(source) == 0 || len(source) > 4 {
+		return nil, fmt.Errorf("questions must contain between 1 and 4 items")
+	}
+	questions := make([]normalizedQuestion, 0, len(source))
+	for i, item := range source {
+		item.Question = strings.TrimSpace(item.Question)
+		item.Header = strings.TrimSpace(item.Header)
+		if item.Question == "" {
+			return nil, fmt.Errorf("questions[%d].question must be non-empty", i)
+		}
+		if item.Header == "" {
+			return nil, fmt.Errorf("questions[%d].header must be non-empty", i)
+		}
+		if len([]rune(item.Header)) > 30 {
+			return nil, fmt.Errorf("questions[%d].header must be at most 30 characters", i)
+		}
+		if len(item.Options) > 5 {
+			return nil, fmt.Errorf("questions[%d].options must contain at most 5 choices", i)
+		}
+		options := make([]string, 0, len(item.Options))
+		seen := make(map[string]struct{}, len(item.Options))
+		for optionIndex, optionJSON := range item.Options {
+			var label string
+			if err := json.Unmarshal(optionJSON, &label); err != nil {
+				var option struct {
+					Label string `json:"label"`
+				}
+				if objectErr := json.Unmarshal(optionJSON, &option); objectErr != nil {
+					return nil, fmt.Errorf("questions[%d].options[%d] must be a string or label object", i, optionIndex)
+				}
+				label = option.Label
+			}
+			label = strings.TrimSpace(label)
+			if label == "" {
+				return nil, fmt.Errorf("questions[%d].options[%d] must be non-empty", i, optionIndex)
+			}
+			if _, duplicate := seen[label]; duplicate {
+				return nil, fmt.Errorf("questions[%d].options contains duplicate choice %q", i, label)
+			}
+			seen[label] = struct{}{}
+			options = append(options, label)
+		}
+		questions = append(questions, normalizedQuestion{
+			Question: item.Question, Header: item.Header, Options: options,
+			Multiple: item.Multiple,
+		})
+	}
+	return json.Marshal(questions)
+}
+
+func questionBlockResult(response ttypes.BlockResponse) (string, bool) {
+	switch response.Outcome {
+	case ttypes.BlockAnswered:
+		if strings.TrimSpace(response.Value) == "" {
+			return "Question was answered without any selected or written response. Ask again with clearer options if the answer is required.", true
+		}
+		return response.Value, false
+	case ttypes.BlockUserCancelled:
+		return "The user cancelled this question without answering. Continue only if the missing answer is not required; otherwise explain what information is still needed.", true
+	case ttypes.BlockValidationError:
+		detail := strings.TrimSpace(response.Detail)
+		if detail == "" {
+			detail = "the question payload could not be rendered"
+		}
+		return "Question request validation failed: " + detail + ". Fix the payload and call question again.", true
+	default:
+		return "Question request failed because its completion outcome was invalid. Call question again.", true
 	}
 }

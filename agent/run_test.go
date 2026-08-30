@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"crude/provider"
+	"crude/statemachine"
 	"crude/tools"
 )
 
@@ -34,9 +35,8 @@ func TestRunDoesNotSpinOnClosedBTWChannel(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxSteps = 2
 
-	btw := make(chan provider.ChatMessage)
+	btw := make(chan BtwMessage)
 	close(btw)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -60,6 +60,8 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	var requests atomic.Int32
 	firstStarted := make(chan struct{}, 1)
 	releaseFirst := make(chan struct{})
+	secondStarted := make(chan struct{}, 1)
+	releaseSecond := make(chan struct{})
 	secondMessages := make(chan []provider.ChatMessage, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request provider.ChatRequest
@@ -74,6 +76,8 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 			return
 		}
 		secondMessages <- request.Messages
+		secondStarted <- struct{}{}
+		<-releaseSecond
 		writeChatSSE(w, "second response", "stop")
 	}))
 	defer server.Close()
@@ -81,8 +85,7 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxSteps = 2
-	btw := make(chan provider.ChatMessage, 1)
+	btw := make(chan BtwMessage, 1)
 	events := make(chan AgentEvent, 32)
 	done := make(chan []provider.ChatMessage, 1)
 	go func() {
@@ -92,8 +95,28 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	}()
 
 	<-firstStarted
-	btw <- provider.NewTextMessage("user", "use this in the next turn")
+	btwMessage := provider.NewTextMessage("user", "use this in the next turn")
+	btwMessage.InternalID = "btw-1"
+	btw <- BtwMessage{Message: btwMessage, Accept: func() bool { return true }}
 	close(releaseFirst)
+	<-secondStarted
+
+	var observed []AgentEvent
+	drainEvents := func() {
+		for {
+			select {
+			case event := <-events:
+				observed = append(observed, event)
+			default:
+				return
+			}
+		}
+	}
+	drainEvents()
+	if hasEvent(observed, "btw_consumed") {
+		t.Fatal("BTW was acknowledged before the provider accepted its request")
+	}
+	close(releaseSecond)
 
 	select {
 	case <-done:
@@ -114,15 +137,37 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	if !foundBTW {
 		t.Fatalf("second request lacks BTW message: %+v", requestMessages)
 	}
-	close(events)
-	foundConsumed := false
-	for event := range events {
-		if event.Type == "btw_consumed" {
-			foundConsumed = true
-		}
-	}
-	if !foundConsumed {
+	drainEvents()
+	if !hasEvent(observed, "btw_consumed") {
 		t.Fatal("BTW consumption was not acknowledged to the UI")
+	}
+}
+
+func TestRunClearsBtwWhenProviderRejectsRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "test-model"
+	agent := newTestAgent(t, p, p.Model)
+	btwMessage := provider.NewTextMessage("user", "never accepted")
+	btwMessage.InternalID = "btw-rejected"
+	btw := make(chan BtwMessage, 1)
+	btw <- BtwMessage{Message: btwMessage, Accept: func() bool { return true }}
+
+	var events []AgentEvent
+	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
+		events = append(events, event)
+	}, nil, nil, "", btw)
+	if hasEvent(events, "btw_consumed") || !hasEvent(events, "btw_cleared") {
+		t.Fatalf("rejected BTW lifecycle events = %+v", events)
+	}
+	for _, message := range messages {
+		if message.InternalID == "btw-rejected" {
+			t.Fatal("provider-rejected BTW leaked into canonical history")
+		}
 	}
 }
 
@@ -140,7 +185,6 @@ func TestRunAutomaticallyContinuesTruncatedResponse(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxSteps = 3
 
 	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, nil, "", nil)
 	if requests.Load() != 2 {
@@ -179,7 +223,6 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxSteps = 3
 
 	var events []AgentEvent
 	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
@@ -245,7 +288,6 @@ func TestRunDoesNotContinueInterruptedToolCall(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxSteps = 3
 
 	var events []AgentEvent
 	agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
@@ -273,7 +315,6 @@ func TestRunDoesNotContinueAfterContextWindowExhaustion(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxSteps = 3
 
 	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, nil, "", nil)
 	if requests.Load() != 1 {
@@ -304,7 +345,6 @@ func TestRunAppendsParallelToolResultsInCallOrder(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxSteps = 3
 	agent.ToolFn = func(ctx context.Context, name string, params map[string]any) (tools.ToolResult, error) {
 		if name == "slow" {
 			time.Sleep(30 * time.Millisecond)
@@ -483,7 +523,6 @@ func TestRunRecoversToolPanicsAndContinues(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	agent.MaxSteps = 3
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		panic("boom")
 	}
@@ -501,6 +540,100 @@ func TestRunRecoversToolPanicsAndContinues(t *testing.T) {
 	if panicResult == nil || !panicResult.ToolError ||
 		!strings.Contains(panicResult.ContentString(), "panicked") {
 		t.Fatalf("panic tool result = %+v", panicResult)
+	}
+}
+
+func TestRunKeepsMutableRuntimeStatusAtRequestTail(t *testing.T) {
+	var requestCount atomic.Int32
+	requests := make(chan []provider.ChatMessage, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		requests <- request.Messages
+		if requestCount.Add(1) == 1 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w,
+				"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"main.go\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"+
+					"data: [DONE]\n\n")
+			return
+		}
+		writeChatSSE(w, "finished", "stop")
+	}))
+	defer server.Close()
+
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "test-model"
+	agent := newTestAgent(t, p, p.Model)
+	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: "contents"}, nil
+	}
+	sm := statemachine.NewConversationStateMachine(agent.logger)
+	sm.CreateGoal("session", "finish the task", "request", statemachine.PriorityNormal, false)
+
+	agent.Run(context.Background(), []provider.ChatMessage{{Role: "user", Content: provider.TextContent("start")}}, "stable system", func(AgentEvent) {}, nil, sm, "session", nil)
+	close(requests)
+
+	var captured [][]provider.ChatMessage
+	for request := range requests {
+		captured = append(captured, request)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("request count = %d, want 2", len(captured))
+	}
+	for requestIndex, messages := range captured {
+		if len(messages) == 0 || !strings.HasPrefix(messages[len(messages)-1].ContentString(), "## Runtime Status") {
+			t.Fatalf("request %d runtime status was not the tail: %#v", requestIndex, messages)
+		}
+		for i := 0; i < len(messages)-1; i++ {
+			if strings.HasPrefix(messages[i].ContentString(), "## Runtime Status") {
+				t.Fatalf("request %d retained mutable status inside reusable prefix at %d", requestIndex, i)
+			}
+		}
+	}
+	second := captured[1]
+	if len(second) < 5 || second[2].Role != "assistant" || second[3].Role != "tool" {
+		t.Fatalf("tool exchange did not precede the new status suffix: %#v", second)
+	}
+}
+
+func TestRunHasNoStepBudget(t *testing.T) {
+	const toolCycles = 25
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		request := int(requests.Add(1))
+		if request <= toolCycles {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprintf(w,
+				"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_%d\",\"type\":\"function\",\"function\":{\"name\":\"progress_probe\",\"arguments\":\"{\\\"cycle\\\":%d}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"+
+					"data: [DONE]\n\n", request, request)
+			return
+		}
+		writeChatSSE(w, "all cycles complete", "stop")
+	}))
+	defer server.Close()
+
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "test-model"
+	a := newTestAgent(t, p, p.Model)
+	a.ToolFn = func(_ context.Context, _ string, params map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: fmt.Sprintf("cycle %v complete", params["cycle"])}, nil
+	}
+	var events []AgentEvent
+	messages := a.Run(context.Background(), nil, "system", func(event AgentEvent) {
+		events = append(events, event)
+	}, nil, nil, "", nil)
+
+	if got := requests.Load(); got != toolCycles+1 {
+		t.Fatalf("requests=%d want %d; agent stopped before work completed", got, toolCycles+1)
+	}
+	if !hasEvent(events, "done") || hasEvent(events, "error") {
+		t.Fatalf("terminal events = %+v", events)
+	}
+	if got := messages[len(messages)-1].ContentString(); got != "all cycles complete" {
+		t.Fatalf("last message = %q", got)
 	}
 }
 

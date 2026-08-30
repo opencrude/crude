@@ -9,6 +9,7 @@ import (
 	"crude/logger"
 	"crude/provider"
 	"crude/tools"
+	ttypes "crude/types"
 )
 
 func newPermissionLifecycleAgent(t *testing.T) *Agent {
@@ -35,7 +36,7 @@ func TestPermissionEscapeCancellationIsNotDenial(t *testing.T) {
 	agent := newPermissionLifecycleAgent(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	blockResponses := make(chan string, 1)
+	blockResponses := make(chan ttypes.BlockResponse, 1)
 	toolCalled := false
 	deniedEvent := false
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
@@ -58,7 +59,7 @@ func TestPermissionEscapeCancellationIsNotDenial(t *testing.T) {
 	if deniedEvent {
 		t.Fatal("turn cancellation emitted an explicit permission decision")
 	}
-	if !strings.Contains(result.result.Content, "Turn cancelled") || strings.Contains(result.result.Content, "user denied") {
+	if !strings.Contains(result.result.Content, "active turn was cancelled") || strings.Contains(result.result.Content, "user denied") {
 		t.Fatalf("cancellation result = %q", result.result.Content)
 	}
 	select {
@@ -70,7 +71,7 @@ func TestPermissionEscapeCancellationIsNotDenial(t *testing.T) {
 
 func TestExplicitPermissionDenialHasDistinctLifecycleEvent(t *testing.T) {
 	agent := newPermissionLifecycleAgent(t)
-	blockResponses := make(chan string, 1)
+	blockResponses := make(chan ttypes.BlockResponse, 1)
 	decision := ""
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		t.Fatal("denied permission executed the tool")
@@ -79,7 +80,7 @@ func TestExplicitPermissionDenialHasDistinctLifecycleEvent(t *testing.T) {
 
 	result := agent.executeOneToolCall(context.Background(), editPermissionCall(), func(evt AgentEvent) {
 		if evt.Type == "blocking" {
-			blockResponses <- "deny"
+			blockResponses <- ttypes.BlockResponse{RequestID: "internal-1", Outcome: ttypes.BlockAnswered, Value: "deny"}
 		}
 		if evt.Type == "permission_resolved" {
 			data, _ := evt.Data.(map[string]any)
@@ -110,12 +111,60 @@ func TestLiveYoloPolicyAppliesToAlreadyConstructedAgent(t *testing.T) {
 	yolo.Store(true)
 	result := agent.executeOneToolCall(context.Background(), editPermissionCall(), func(evt AgentEvent) {
 		blocking = blocking || evt.Type == "blocking"
-	}, make(chan string, 1), new(string))
+	}, make(chan ttypes.BlockResponse, 1), new(string))
 
 	if !toolCalled || result.toolError {
 		t.Fatalf("live YOLO did not execute tool: called=%v result=%+v", toolCalled, result)
 	}
 	if blocking {
 		t.Fatal("live YOLO still opened a permission prompt")
+	}
+}
+
+func TestQuestionRequestNormalizationAndValidation(t *testing.T) {
+	encoded, err := normalizeQuestionRequest(map[string]any{
+		"questions": []any{map[string]any{
+			"question": "Choose a runtime",
+			"header":   "Runtime",
+			"options": []any{
+				map[string]any{"label": "Go", "description": "Compiled"},
+				"Rust",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("normalizeQuestionRequest: %v", err)
+	}
+	text := string(encoded)
+	if !strings.Contains(text, `"options":["Go","Rust"]`) {
+		t.Fatalf("normalized questions = %s", text)
+	}
+
+	_, err = normalizeQuestionRequest(map[string]any{
+		"questions": []any{map[string]any{"question": "Missing a header"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "header must be non-empty") {
+		t.Fatalf("missing header error = %v", err)
+	}
+}
+
+func TestBlockResponseIgnoresStaleRequestIDs(t *testing.T) {
+	responses := make(chan ttypes.BlockResponse, 2)
+	responses <- ttypes.BlockResponse{RequestID: "old", Outcome: ttypes.BlockAnswered, Value: "stale"}
+	responses <- ttypes.BlockResponse{RequestID: "current", Outcome: ttypes.BlockAnswered, Value: "fresh"}
+
+	response, ok := waitForBlockResponse(context.Background(), responses, "current")
+	if !ok || response.Value != "fresh" {
+		t.Fatalf("response = %#v, ok=%v", response, ok)
+	}
+}
+
+func TestQuestionValidationFailureIsNotUserCancellation(t *testing.T) {
+	result, isError := questionBlockResult(ttypes.BlockResponse{
+		Outcome: ttypes.BlockValidationError,
+		Detail:  "header is missing",
+	})
+	if !isError || !strings.Contains(result, "validation failed") || strings.Contains(result, "user cancelled") {
+		t.Fatalf("validation result = %q, error=%v", result, isError)
 	}
 }

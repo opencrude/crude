@@ -304,43 +304,39 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name: "question",
-			Description: "Ask the user one or more questions with suggested options. " +
-				"Use when you need clarification, a decision, or user input to proceed. " +
-				"Batch multiple questions into a single call using the 'questions' array — " +
-				"this presents all questions together in one form for efficient interaction. " +
-				"For yes/no questions, provide options like ['yes', 'no']. " +
-				"For multiple choice, list the choices. " +
-				"For free-text input, omit the options array. " +
-				"Returns a JSON object mapping question indices (1-based) to answers.",
+			Description: "Ask the user 1-4 focused questions only when an answer is genuinely required to continue. " +
+				"Supply questions as a real JSON array, not a JSON-encoded string. Each item needs a short header and a clear question. " +
+				"Options are optional because the user can write a custom response. Batch related questions in one call. " +
+				"The result maps each question to the user's answer, or explicitly reports cancellation or validation failure.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"questions":{
 						"type":"array",
+						"minItems":1,
+						"maxItems":4,
 						"items":{
 							"type":"object",
+							"additionalProperties":false,
 							"properties":{
-								"question":{"type":"string","description":"The question text"},
-								"header":{"type":"string","description":"Short label for this question (max 30 chars, e.g. 'Language', 'Rating')"},
+								"question":{"type":"string","minLength":1,"description":"The complete question shown to the user."},
+								"header":{"type":"string","minLength":1,"maxLength":30,"description":"Short topic label, at most 30 characters."},
 								"options":{
 									"type":"array",
-									"items":{"type":"string"},
+									"maxItems":5,
+									"uniqueItems":true,
+									"items":{"type":"string","minLength":1},
 									"description":"Suggested options for the user to choose from. Omit for free-text input."
 								},
-								"multiple":{"type":"boolean","description":"Allow selecting multiple choices (default: false)"}
+								"multiple":{"type":"boolean","default":false,"description":"Allow selecting multiple choices."}
 							},
-							"required":["question"]
+							"required":["question","header"]
 						},
 						"description":"Array of questions to ask. Batch related questions together."
-					},
-					"question":{"type":"string","description":"Single question (legacy, prefer 'questions' array)"},
-					"options":{
-						"type":"array",
-						"items":{"type":"string"},
-						"description":"Options for single question (legacy, prefer 'questions' array)"
 					}
 				},
-				"required":[]
+				"required":["questions"],
+				"additionalProperties":false
 			}`),
 		},
 	},
@@ -493,7 +489,7 @@ var AgentTools = []ToolDef{
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"name":{"type":"string","description":"Short name for this sub-agent (e.g. 'explorer', 'fixer', 'reviewer'). Used for display and tracking."},
+					"name":{"type":"string","description":"Optional short name for display and tracking. When omitted, Crude derives a stable descriptive name from the task."},
 					"category":{"type":"string","description":"Capability tier: 'researcher' (read-only, cheap, fast), 'crafter' (implementation, write-capable, mid-cost), or 'aeron' (grunt work, ultra-cheap, restricted). Default: 'crafter'.","enum":["researcher","crafter","aeron"]},
 					"description":{"type":"string","description":"The task this sub-agent should accomplish. Be specific."},
 					"instructions":{"type":"string","description":"Custom instructions appended to the sub-agent's system prompt. Use to specialize behavior."},
@@ -501,11 +497,10 @@ var AgentTools = []ToolDef{
 					"allowed_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool whitelist. If provided, only these tools are available (intersected with category defaults)."},
 					"denied_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool blacklist. These tools are removed (unioned with category defaults)."},
 					"file_ownership":{"type":"array","items":{"type":"string"},"description":"Optional pre-declared paths this sub-agent claims exclusive write access to."},
-					"max_steps":{"type":"integer","description":"Maximum tool-use steps. Default from category. Max 200."},
-					"timeout_seconds":{"type":"integer","description":"Maximum runtime in seconds. Default from category."},
+					"timeout_seconds":{"type":"integer","minimum":1,"maximum":86400,"description":"Optional maximum runtime in seconds (up to 24 hours). Omit for no runtime deadline; session/root termination still cancels the child."},
 					"wait":{"type":"boolean","description":"If true (default), block until the sub-agent completes. If false, return immediately with a handle ID for later polling."}
 				},
-				"required":["name","description"]
+				"required":["description"]
 			}`),
 		},
 	},

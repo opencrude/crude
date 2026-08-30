@@ -28,22 +28,8 @@ type envContext struct {
 }
 
 func gatherEnvContext() envContext {
-	e := envContext{
-		Shell:   detectShell(),
-		OSInfo:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
-		CWD:     getCWD(),
-		Now:     time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
-		HomeDir: detectHomeDir(),
-	}
-
-	e.Username = "unknown"
-	if u, err := user.Current(); err == nil {
-		e.Username = u.Username
-	}
-	e.Hostname = "unknown"
-	if h, err := os.Hostname(); err == nil {
-		e.Hostname = h
-	}
+	e := gatherStableEnvContext()
+	e.Now = time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
 
 	if branch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
 		e.GitBranch = strings.TrimSpace(string(branch))
@@ -66,6 +52,26 @@ func gatherEnvContext() envContext {
 	e.ToolsStr = detectTools()
 	e.PlatformGuidance = platformGuidance()
 	e.DirListing = buildDirListing(e.CWD)
+	return e
+}
+
+func gatherStableEnvContext() envContext {
+	e := envContext{
+		Shell:   detectShell(),
+		OSInfo:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		CWD:     getCWD(),
+		HomeDir: detectHomeDir(),
+	}
+
+	e.Username = "unknown"
+	if u, err := user.Current(); err == nil {
+		e.Username = u.Username
+	}
+	e.Hostname = "unknown"
+	if h, err := os.Hostname(); err == nil {
+		e.Hostname = h
+	}
+
 	return e
 }
 
@@ -146,6 +152,25 @@ func (e envContext) buildSection() string {
 	}
 
 	return strings.Join(envLines, "\n") + e.PlatformGuidance
+}
+
+// buildStableSection contains only values expected to remain constant for a
+// workspace. Volatile timestamps, Git dirtiness, and directory listings do not
+// belong in the cacheable system prefix; agents can inspect current state with
+// tools when it matters.
+func (e envContext) buildStableSection() string {
+	envLines := []string{
+		"# Environment",
+		fmt.Sprintf("- OS: %s", e.OSInfo),
+		fmt.Sprintf("- Shell: %s", e.Shell),
+		fmt.Sprintf("- User: %s@%s", e.Username, e.Hostname),
+		fmt.Sprintf("- Home: %s", e.HomeDir),
+		fmt.Sprintf("- Working Directory: %s", e.CWD),
+	}
+	if guidance := platformGuidance(); guidance != "" {
+		envLines = append(envLines, "", guidance)
+	}
+	return strings.Join(envLines, "\n")
 }
 
 func getCWD() string {
