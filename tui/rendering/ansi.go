@@ -223,6 +223,60 @@ func TruncateVisual(s string, maxW int, tail string) string {
 	return result.String()
 }
 
+// TruncateMiddleVisual elides the center of plain display text while
+// preserving both its identifying prefix and useful suffix (basename,
+// duration, counts). It uses the same calibrated grapheme widths as layout.
+func TruncateMiddleVisual(s string, maxW int, marker string) string {
+	plain := StripAnsi(s)
+	if maxW <= 0 {
+		return ""
+	}
+	if VisibleWidth(plain) <= maxW {
+		return plain
+	}
+	markerW := VisibleWidth(marker)
+	if markerW >= maxW {
+		return TruncateVisual(marker, maxW, "")
+	}
+	type segment struct {
+		text  string
+		width int
+	}
+	var segments []segment
+	rest := plain
+	var state byte
+	for len(rest) > 0 {
+		cluster, width, _, nextState := ansi.DecodeSequence(rest, state, nil)
+		if cluster == "" {
+			break
+		}
+		segments = append(segments, segment{text: cluster, width: width})
+		rest = rest[len(cluster):]
+		state = nextState
+	}
+	available := maxW - markerW
+	leftBudget := (available + 1) / 2
+	rightBudget := available - leftBudget
+	var left, right strings.Builder
+	leftWidth := 0
+	leftEnd := 0
+	for leftEnd < len(segments) && leftWidth+segments[leftEnd].width <= leftBudget {
+		left.WriteString(segments[leftEnd].text)
+		leftWidth += segments[leftEnd].width
+		leftEnd++
+	}
+	rightStart := len(segments)
+	rightWidth := 0
+	for rightStart > leftEnd && rightWidth+segments[rightStart-1].width <= rightBudget {
+		rightStart--
+		rightWidth += segments[rightStart].width
+	}
+	for i := rightStart; i < len(segments); i++ {
+		right.WriteString(segments[i].text)
+	}
+	return left.String() + marker + right.String()
+}
+
 func ApplySelection(line string, startCol, endCol int) string {
 	if startCol >= endCol || startCol < 0 {
 		return line

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // OllamaStandard implements Protocol for Ollama's native /api/chat protocol.
@@ -141,13 +142,17 @@ type ollamaChatChunk struct {
 		Thinking  string                `json:"thinking"`
 		ToolCalls []ollamaToolCallParam `json:"tool_calls"`
 	} `json:"message"`
-	DoneReason       string `json:"done_reason"`
-	Done             bool   `json:"done"`
-	PromptEvalCount  int    `json:"prompt_eval_count"`
-	EvalCount        int    `json:"eval_count"`
-	PromptEvalTokens int    `json:"prompt_eval_tokens"` // newer field alias
-	EvalTokens       int    `json:"eval_tokens"`        // newer field alias
-	Error            string `json:"error"`
+	DoneReason         string `json:"done_reason"`
+	Done               bool   `json:"done"`
+	PromptEvalCount    int    `json:"prompt_eval_count"`
+	EvalCount          int    `json:"eval_count"`
+	PromptEvalTokens   int    `json:"prompt_eval_tokens"` // newer field alias
+	EvalTokens         int    `json:"eval_tokens"`        // newer field alias
+	TotalDuration      int64  `json:"total_duration"`
+	LoadDuration       int64  `json:"load_duration"`
+	PromptEvalDuration int64  `json:"prompt_eval_duration"`
+	EvalDuration       int64  `json:"eval_duration"`
+	Error              string `json:"error"`
 }
 
 // ollamaToolCallParam is Ollama's native tool-call wire shape. Unlike OpenAI,
@@ -350,8 +355,12 @@ func (d *ollamaStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 		prompt, completion := ollamaUsage(&chunk)
 		if prompt > 0 || completion > 0 {
 			update.Usage = &TokenUsage{
-				PromptTokens:     prompt,
-				CompletionTokens: completion,
+				PromptTokens:       prompt,
+				CompletionTokens:   completion,
+				TotalDuration:      time.Duration(chunk.TotalDuration),
+				LoadDuration:       time.Duration(chunk.LoadDuration),
+				PromptEvalDuration: time.Duration(chunk.PromptEvalDuration),
+				EvalDuration:       time.Duration(chunk.EvalDuration),
 			}
 		}
 	}

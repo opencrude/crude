@@ -479,7 +479,7 @@ func (s *OpenAIStandard) RequestExtras(modelID, thinkingEffort string, settings 
 	if settings.ServiceTier != "" {
 		extras["service_tier"] = settings.ServiceTier
 	}
-	if thinkingEffort != "" && !(thinkingEffort == "none" && !usesOpenAICompletionTokenLimit(modelID)) {
+	if thinkingEffort != "" && (thinkingEffort != "none" || usesOpenAICompletionTokenLimit(modelID)) {
 		extras["reasoning_effort"] = thinkingEffort
 	}
 	if len(extras) == 0 {

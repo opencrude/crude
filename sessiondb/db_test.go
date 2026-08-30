@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"crude/provider"
 )
@@ -15,6 +16,79 @@ import (
 type DB struct {
 	db   *sql.DB
 	path string
+}
+
+func TestSubAgentResultChildIDIsExternalTranscriptLocator(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	t.Cleanup(func() { _ = db.Close() })
+	if err := CreateSessionRow(db, "parent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := InsertSubAgentResult(db, SubAgentResultRow{
+		ParentSessionID: "parent", ChildSessionID: "child-with-separate-db",
+		AgentID: "child", AgentName: "Child", AgentCategory: "researcher",
+		Status: "completed", CreatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("separate child transcript still required a parent-DB session row: %v", err)
+	}
+	rows, err := db.Query(`PRAGMA foreign_key_list(sub_agent_results)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, seq int
+		var table, from, to, onUpdate, onDelete, match string
+		if err := rows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+			t.Fatal(err)
+		}
+		if from == "child_session_id" {
+			t.Fatal("child_session_id still has an invalid same-database foreign key")
+		}
+	}
+}
+
+func TestMigrateRemovesEmbeddedChildStubButKeepsStandaloneChildIdentity(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	if err := CreateSessionRow(db, "parent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Create(db, SessionMeta{
+		ID: "embedded-child", ProjectPath: "/", ProjectName: "test", CreatedAt: time.Now().UnixNano(),
+		ParentSessionID: sql.NullString{String: "parent", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	var embedded int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = 'embedded-child'`).Scan(&embedded); err != nil {
+		t.Fatal(err)
+	}
+	if embedded != 0 {
+		t.Fatal("legacy child stub survived in parent DB")
+	}
+	_ = db.Close()
+
+	childDB := OpenAndMigrateAt(t.TempDir())
+	if err := Create(childDB, SessionMeta{
+		ID: "standalone-child", ProjectPath: "/", ProjectName: "test", CreatedAt: time.Now().UnixNano(),
+		ParentSessionID: sql.NullString{String: "parent", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(childDB); err != nil {
+		t.Fatal(err)
+	}
+	var standalone int
+	if err := childDB.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = 'standalone-child'`).Scan(&standalone); err != nil {
+		t.Fatal(err)
+	}
+	if standalone != 1 {
+		t.Fatal("standalone child transcript lost its canonical identity")
+	}
+	_ = childDB.Close()
 }
 
 func (d *DB) Close() error {

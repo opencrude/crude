@@ -2,6 +2,7 @@ package ansi
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi/parser"
@@ -62,6 +63,14 @@ func TestDecodeSequence(t *testing.T) {
 			input: []byte("a"),
 			expected: []expectedSequence{
 				{seq: []byte{'a'}, n: 1, width: 1},
+			},
+		},
+		{
+			name:  "ASCII base with combining mark",
+			input: []byte("a\u0301b"),
+			expected: []expectedSequence{
+				{seq: []byte("a\u0301"), n: 3, width: 1},
+				{seq: []byte("b"), n: 1, width: 1},
 			},
 		},
 		{
@@ -424,6 +433,23 @@ func BenchmarkDecodeSequence(b *testing.B) {
 		for len(in) > 0 {
 			_, _, n, state = DecodeSequence(in, state, p)
 			in = in[n:]
+		}
+	}
+}
+
+func BenchmarkDecodeSequenceASCIIFrame(b *testing.B) {
+	frame := strings.Repeat("\x1b[38;2;205;214;244mThe quick brown fox renders a busy thinking frame.\x1b[0m", 96)
+	b.SetBytes(int64(len(frame)))
+	b.ReportAllocs()
+	for b.Loop() {
+		state := byte(NormalState)
+		for remaining := frame; len(remaining) > 0; {
+			_, _, n, nextState := DecodeSequence(remaining, state, nil)
+			if n <= 0 {
+				b.Fatalf("decoder made no progress in state %d", state)
+			}
+			remaining = remaining[n:]
+			state = nextState
 		}
 	}
 }

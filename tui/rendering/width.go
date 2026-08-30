@@ -6,7 +6,7 @@ import (
 
 // WidthMethod is the one display-width algorithm used by Crude layout,
 // surface packing, and ultraviolet through Bubble Tea. See
-// TERMINAL_WIDTH.md.
+// ../../docs/reference/terminal-width.md.
 //
 // The initial guess is Unicode-16 grapheme width. Patched Bubble Tea then
 // asynchronously CPR-measures the effective terminal or multiplexer and

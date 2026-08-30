@@ -10,6 +10,7 @@ import (
 
 // UserInput represents a user's text input with optional prompt references.
 type UserInput struct {
+	InternalID   string
 	Text         string
 	ReferenceIDs []string
 	// ActivePaths carries IDE context (active editor file, open tabs) so
@@ -240,6 +241,9 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 }
 
 type ChatMessage struct {
+	InternalID        string            `json:"-"`
+	DisplayContent    string            `json:"-"`
+	ReferenceLabels   []string          `json:"-"`
 	Role              string            `json:"role"`
 	Content           MessageContent    `json:"content"`
 	ReasoningContent  string            `json:"reasoning_content,omitempty"`
@@ -298,6 +302,13 @@ type TokenUsage struct {
 	CompletionTokens    int `json:"completion_tokens"`
 	PromptTokensCached  int `json:"prompt_tokens_cached,omitempty"`
 	PromptTokensWritten int `json:"prompt_tokens_written,omitempty"`
+	// Native runtimes such as Ollama report timing but not cache-read token
+	// counts. These diagnostics let live probes distinguish fast prefix reuse
+	// from a full prompt evaluation without pretending they are billing data.
+	TotalDuration      time.Duration `json:"-"`
+	LoadDuration       time.Duration `json:"-"`
+	PromptEvalDuration time.Duration `json:"-"`
+	EvalDuration       time.Duration `json:"-"`
 }
 
 // ToolCallDelta is a protocol-neutral fragment of a streamed tool call.

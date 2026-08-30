@@ -111,7 +111,7 @@ type TreeNode struct {
 // This is O(git_statuses * depth) and scales to very large repos because it
 // never walks unloaded subtrees — it uses the git resolver's complete map.
 func (m *FileTreeModel) recomputeAggregateStatuses() {
-	if m.gitResolver == nil {
+	if m.gitResolver == nil || m.Root == nil {
 		return
 	}
 
@@ -140,12 +140,12 @@ func (m *FileTreeModel) recomputeAggregateStatuses() {
 		dir := filepath.Dir(absPath)
 		for {
 			if node, ok := m.nodes[dir]; ok {
-				if status > node.AggregateStatus {
+				if gitStatusPriority(status) > gitStatusPriority(node.AggregateStatus) {
 					node.AggregateStatus = status
 				}
 				// Propagate up to root.
 				for p := node.Parent; p != nil; p = p.Parent {
-					if node.AggregateStatus > p.AggregateStatus {
+					if gitStatusPriority(node.AggregateStatus) > gitStatusPriority(p.AggregateStatus) {
 						p.AggregateStatus = node.AggregateStatus
 					}
 				}
@@ -332,6 +332,11 @@ type FileTreeModel struct {
 
 	// gitResolver resolves git status (may be nil).
 	gitResolver *GitStatusResolver
+	// gitRefreshPending/gitRefreshQueued coalesce status scans while preserving
+	// one trailing refresh when repository changes arrive during an active scan.
+	gitRefreshPending bool
+	gitRefreshQueued  bool
+	gitRefreshGen     uint64
 
 	// diagnosticResolver stores per-file diagnostic counts (may be nil).
 	// The map key is the absolute file path.
@@ -339,6 +344,8 @@ type FileTreeModel struct {
 
 	// watcher watches for file system changes (may be nil).
 	watcher *Watcher
+	// gitWatcherStop stops the repository-metadata watcher paired with watcher.
+	gitWatcherStop func()
 
 	// width is the available display width for the tree sidebar.
 	width int
@@ -358,6 +365,9 @@ type FileTreeModel struct {
 	// onFileChanged is called when a file changes on disk via the watcher.
 	// The viewmodel sets this to forward events to the LSP server.
 	onFileChanged func(filePath string, changeType int)
+	// onGitChanged asks the viewmodel to schedule an asynchronous status scan.
+	// The metadata watcher never performs repository I/O or mutates tree rows.
+	onGitChanged func()
 
 	// mu protects all mutable state for thread-safe access.
 	mu sync.RWMutex
@@ -411,14 +421,6 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 
 	// Rebuild visible nodes.
 	m.rebuildVisibleNodes()
-
-	// Set initial selection to the first visible node.
-	if len(m.visibleNodes) > 0 {
-		m.selectedPath = m.visibleNodes[0].Path
-		m.cursorIndex = 0
-	} else {
-		m.selectedPath = absPath
-	}
 
 	return m
 }
@@ -481,14 +483,23 @@ func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
 
 		// Re-use existing node if available (updates git status).
 		if existingNode, ok := existing[name]; ok {
+			wasDir := existingNode.IsDir
 			existingNode.IsDir = isDir
 			existingNode.IsSymlink = isSymlink
 			existingNode.Hidden = isHidden
 			existingNode.ModTime = modTime
+			if wasDir && !isDir {
+				for _, child := range existingNode.Children {
+					m.removeNodeIndex(child)
+				}
+				existingNode.Children = nil
+				existingNode.IsExpanded = false
+			}
 			if m.gitResolver != nil {
 				existingNode.GitStatus = m.gitResolver.Resolve(childPath)
 			}
 			children = append(children, existingNode)
+			m.nodes[childPath] = existingNode
 			delete(existing, name)
 			continue
 		}
@@ -517,15 +528,31 @@ func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
 	// Sort children according to current sort mode.
 	m.sortChildren(children)
 
-	// Remove orphaned children (entries that existed before but no longer).
+	// Remove orphaned children (entries that existed before but no longer),
+	// including every loaded descendant. Leaving descendants in the flat index
+	// lets a deleted subtree remain selectable by path after its rows disappear.
 	for _, orphan := range existing {
-		delete(m.nodes, orphan.Path)
+		m.removeNodeIndex(orphan)
 	}
 
 	node.Children = children
 	node.Loading = false
 
 	return nil
+}
+
+// removeNodeIndex removes node and all loaded descendants from the path index.
+// The caller must hold m.mu.
+func (m *FileTreeModel) removeNodeIndex(node *TreeNode) {
+	if node == nil {
+		return
+	}
+	for _, child := range node.Children {
+		m.removeNodeIndex(child)
+	}
+	if current, ok := m.nodes[node.Path]; ok && current == node {
+		delete(m.nodes, node.Path)
+	}
 }
 
 // sortChildren sorts a slice of TreeNode pointers according to the model's
@@ -674,43 +701,44 @@ func (m *FileTreeModel) Select(path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.selectedPath = path
-
 	// Find the index in visible nodes.
 	for i, node := range m.visibleNodes {
 		if node.Path == path {
-			m.cursorIndex = i
+			m.setCursorIndexLocked(i)
 			return
 		}
 	}
 
 	// Path not visible — move cursor to first node.
 	if len(m.visibleNodes) > 0 {
-		m.cursorIndex = 0
-		m.selectedPath = m.visibleNodes[0].Path
+		m.setCursorIndexLocked(0)
+		return
 	}
+	m.cursorIndex = 0
+	m.selectedPath = m.rootPath
+	m.scrollOffset = 0
 }
 
 // MoveUp moves the cursor up by one visible item.
 func (m *FileTreeModel) MoveUp() {
 	m.mu.Lock()
+	m.clampCursorLocked()
 	if m.cursorIndex > 0 {
-		m.cursorIndex--
-		m.selectedPath = m.visibleNodes[m.cursorIndex].Path
+		m.setCursorIndexLocked(m.cursorIndex - 1)
 	}
+	m.clampViewportLocked()
 	m.mu.Unlock()
-	m.updateScrollOffset()
 }
 
 // MoveDown moves the cursor down by one visible item.
 func (m *FileTreeModel) MoveDown() {
 	m.mu.Lock()
+	m.clampCursorLocked()
 	if m.cursorIndex < len(m.visibleNodes)-1 {
-		m.cursorIndex++
-		m.selectedPath = m.visibleNodes[m.cursorIndex].Path
+		m.setCursorIndexLocked(m.cursorIndex + 1)
 	}
+	m.clampViewportLocked()
 	m.mu.Unlock()
-	m.updateScrollOffset()
 }
 
 // SelectedNode returns the currently selected TreeNode, or nil if the tree
@@ -750,6 +778,124 @@ func (m *FileTreeModel) rebuildVisibleNodes() {
 
 	m.recomputeAggregateStatuses()
 	m.recomputeAggregateDiagnostics()
+	m.reconcileSelectionLocked()
+}
+
+// reconcileSelectionLocked restores the model invariant after any operation
+// that replaces, filters, sorts, expands, or shrinks visibleNodes:
+//
+//   - a non-empty tree has a valid cursor whose row matches selectedPath;
+//   - a hidden/deleted selection falls back to its nearest visible ancestor,
+//     then to the nearest row at the old cursor position;
+//   - scrollOffset is valid and keeps the cursor inside the viewport.
+//
+// Centralising this at the projection boundary prevents future mutation paths
+// from having to remember a separate cursor clamp. The caller must hold m.mu.
+func (m *FileTreeModel) reconcileSelectionLocked() {
+	if len(m.visibleNodes) == 0 {
+		m.cursorIndex = 0
+		m.selectedPath = m.rootPath
+		m.scrollOffset = 0
+		return
+	}
+
+	if idx := m.visibleIndexLocked(m.selectedPath); idx >= 0 {
+		m.cursorIndex = idx
+		m.clampViewportLocked()
+		return
+	}
+
+	// Collapsing a subtree or deleting its selected row should land on the
+	// closest surviving parent instead of an unrelated row farther down.
+	for path := filepath.Dir(m.selectedPath); path != "" && path != "."; path = filepath.Dir(path) {
+		if idx := m.visibleIndexLocked(path); idx >= 0 {
+			m.cursorIndex = idx
+			m.selectedPath = m.visibleNodes[idx].Path
+			m.clampViewportLocked()
+			return
+		}
+		if path == m.rootPath {
+			break
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			break
+		}
+	}
+
+	m.clampCursorLocked()
+	m.clampViewportLocked()
+}
+
+func (m *FileTreeModel) visibleIndexLocked(path string) int {
+	if path == "" {
+		return -1
+	}
+	for i, node := range m.visibleNodes {
+		if node != nil && node.Path == path {
+			return i
+		}
+	}
+	return -1
+}
+
+// clampCursorLocked is the defensive navigation boundary. Rebuilds already
+// reconcile path-aware selection, but movement must remain safe even if a new
+// mutation path is added without doing so.
+func (m *FileTreeModel) clampCursorLocked() {
+	if len(m.visibleNodes) == 0 {
+		m.cursorIndex = 0
+		m.selectedPath = m.rootPath
+		m.scrollOffset = 0
+		return
+	}
+	if m.cursorIndex < 0 {
+		m.cursorIndex = 0
+	}
+	if m.cursorIndex >= len(m.visibleNodes) {
+		m.cursorIndex = len(m.visibleNodes) - 1
+	}
+	m.selectedPath = m.visibleNodes[m.cursorIndex].Path
+}
+
+func (m *FileTreeModel) setCursorIndexLocked(i int) {
+	m.cursorIndex = i
+	m.clampCursorLocked()
+}
+
+func (m *FileTreeModel) clampViewportLocked() {
+	if len(m.visibleNodes) == 0 {
+		m.scrollOffset = 0
+		return
+	}
+	vh := m.visibleHeight
+	if vh <= 0 {
+		vh = 10
+	}
+	m.clampScrollRangeLocked(vh)
+	if m.cursorIndex < m.scrollOffset {
+		m.scrollOffset = m.cursorIndex
+	}
+	if m.cursorIndex >= m.scrollOffset+vh {
+		m.scrollOffset = m.cursorIndex - vh + 1
+	}
+	m.clampScrollRangeLocked(vh)
+}
+
+func (m *FileTreeModel) clampScrollRangeLocked(vh int) {
+	if vh <= 0 {
+		vh = 10
+	}
+	maxOffset := len(m.visibleNodes) - vh
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
 }
 
 // unfilteredWalk appends visible nodes depth-first with no active filter.
@@ -910,38 +1056,17 @@ func (m *FileTreeModel) SetFilter(pattern string) {
 		if m.filterMatchPos[m.selectedPath] != nil {
 			for i, node := range m.visibleNodes {
 				if node.Path == m.selectedPath {
-					m.cursorIndex = i
+					m.setCursorIndexLocked(i)
 					return
 				}
 			}
 		}
 		for i, node := range m.visibleNodes {
 			if m.filterMatchPos[node.Path] != nil {
-				m.cursorIndex = i
-				m.selectedPath = node.Path
+				m.setCursorIndexLocked(i)
 				return
 			}
 		}
-	}
-
-	// Keep the selected node when it survived the filter change; otherwise
-	// clamp the cursor to the new visible list.
-	for i, node := range m.visibleNodes {
-		if node.Path == m.selectedPath {
-			m.cursorIndex = i
-			return
-		}
-	}
-	if m.cursorIndex >= len(m.visibleNodes) {
-		if len(m.visibleNodes) > 0 {
-			m.cursorIndex = len(m.visibleNodes) - 1
-			m.selectedPath = m.visibleNodes[m.cursorIndex].Path
-		} else {
-			m.cursorIndex = 0
-			m.selectedPath = m.rootPath
-		}
-	} else if len(m.visibleNodes) > 0 {
-		m.selectedPath = m.visibleNodes[m.cursorIndex].Path
 	}
 }
 
@@ -974,6 +1099,9 @@ func (m *FileTreeModel) SetShowHidden(show bool) {
 		return
 	}
 	m.showHidden = show
+	if m.filterPattern() != "" {
+		m.applyFilterState()
+	}
 	m.rebuildVisibleNodes()
 }
 
@@ -1095,6 +1223,14 @@ func (m *FileTreeModel) SetOnFileChanged(fn func(filePath string, changeType int
 	m.onFileChanged = fn
 }
 
+// SetOnGitChanged sets the callback used only to schedule a Git refresh on the
+// Bubble Tea event loop. Repository watcher goroutines never mutate tree rows.
+func (m *FileTreeModel) SetOnGitChanged(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onGitChanged = fn
+}
+
 func (m *FileTreeModel) handleFileCreated(path string) {
 	parentPath := filepath.Dir(path)
 	parentNode, ok := m.nodes[parentPath]
@@ -1104,6 +1240,7 @@ func (m *FileTreeModel) handleFileCreated(path string) {
 
 	// Load children of the parent (will pick up the new entry).
 	_ = m.loadDirectory(parentNode)
+	m.reapplyFilterAfterMutationLocked()
 	m.rebuildVisibleNodes()
 }
 
@@ -1121,8 +1258,9 @@ func (m *FileTreeModel) handleFileDeleted(path string) {
 	// Re-load the parent directory to pick up changes.
 	_ = m.loadDirectory(parentNode)
 
-	// Remove from nodes map.
-	delete(m.nodes, path)
+	// loadDirectory is authoritative: if the path was recreated before this
+	// debounced delete arrived, the replacement remains indexed and visible.
+	m.reapplyFilterAfterMutationLocked()
 	m.rebuildVisibleNodes()
 }
 
@@ -1169,6 +1307,15 @@ func (m *FileTreeModel) handleFileRenamed(oldPath, newPath string) {
 	m.handleFileCreated(newPath)
 }
 
+// reapplyFilterAfterMutationLocked lets created/deleted rows join or leave an
+// active fuzzy result set. Rebuilding from stale match maps can otherwise
+// produce a valid cursor over an out-of-date projection.
+func (m *FileTreeModel) reapplyFilterAfterMutationLocked() {
+	if m.filterPattern() != "" {
+		m.applyFilterState()
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Accessors
 // ---------------------------------------------------------------------------
@@ -1178,7 +1325,7 @@ func (m *FileTreeModel) handleFileRenamed(oldPath, newPath string) {
 func (m *FileTreeModel) VisibleNodes() []*TreeNode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.visibleNodes
+	return append([]*TreeNode(nil), m.visibleNodes...)
 }
 
 // VisibleRows returns the paths of currently visible nodes in
@@ -1304,21 +1451,7 @@ func (m *FileTreeModel) CursorIndex() int {
 func (m *FileTreeModel) SetCursorIndex(i int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if len(m.visibleNodes) == 0 {
-		m.cursorIndex = 0
-		m.selectedPath = ""
-		return
-	}
-
-	if i < 0 {
-		i = 0
-	}
-	if i >= len(m.visibleNodes) {
-		i = len(m.visibleNodes) - 1
-	}
-	m.cursorIndex = i
-	m.selectedPath = m.visibleNodes[i].Path
+	m.setCursorIndexLocked(i)
 }
 
 // RootPath returns the absolute path of the workspace root.
@@ -1386,7 +1519,31 @@ func (m *FileTreeModel) StartWatcher() error {
 		return nil
 	}
 	m.watcher = w
+	resolver := m.gitResolver
 	m.mu.Unlock()
+
+	var stopGit func()
+	if resolver != nil {
+		stopGit = resolver.WatchForChanges(func() {
+			m.mu.RLock()
+			active := m.watcher == w
+			callback := m.onGitChanged
+			m.mu.RUnlock()
+			if active && callback != nil {
+				callback()
+			}
+		})
+	}
+	m.mu.Lock()
+	if m.watcher == w {
+		m.gitWatcherStop = stopGit
+		stopGit = nil
+	}
+	m.mu.Unlock()
+	if stopGit != nil {
+		stopGit()
+	}
+
 	go func() {
 		for {
 			select {
@@ -1404,8 +1561,13 @@ func (m *FileTreeModel) StartWatcher() error {
 func (m *FileTreeModel) StopWatcher() {
 	m.mu.Lock()
 	w := m.watcher
+	stopGit := m.gitWatcherStop
 	m.watcher = nil
+	m.gitWatcherStop = nil
 	m.mu.Unlock()
+	if stopGit != nil {
+		stopGit()
+	}
 	if w != nil {
 		w.Stop()
 	}

@@ -165,14 +165,15 @@ func decodeSequence[T string | []byte](m Method, b T, state State, p *Parser) (s
 				p.cmd = 0
 			}
 			if c > US && c < DEL {
-				if m == GraphemeWidth {
-					// An ASCII base may be followed by combining marks. Keep the
-					// complete grapheme together so UV advances exactly as xansi
-					// StringWidth and Crude layout do.
-					seq, width = FirstGraphemeCluster(b, m)
-					return seq, width, len(seq), NormalState
+				// The next ASCII byte is an exact grapheme boundary. Keep ordinary
+				// terminal text on this constant-time path; a non-ASCII successor
+				// still falls back to UAX segmentation because it may extend the
+				// ASCII base with a combining mark or variation selector.
+				if m != GraphemeWidth || i+1 == len(b) || b[i+1] < utf8.RuneSelf {
+					return b[i : i+1], 1, i + 1, NormalState
 				}
-				return b[i : i+1], 1, 1, NormalState
+				seq, width = FirstGraphemeCluster(b, m)
+				return seq, width, len(seq), NormalState
 			}
 
 			if c <= US || c == DEL || c < 0xC0 {
@@ -446,6 +447,9 @@ func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 	switch b := any(b).(type) {
 	case string:
 		cluster := graphemes.FromString(b).First()
+		if len(cluster) == 1 && cluster[0] > US && cluster[0] < DEL {
+			return T(cluster), 1
+		}
 		var w int
 		if m == WcWidth {
 			w = wcOptions.StringWidth(cluster)
@@ -455,6 +459,9 @@ func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
 		return T(cluster), correctClusterWidth(cluster, w, m)
 	case []byte:
 		cluster := graphemes.FromBytes(b).First()
+		if len(cluster) == 1 && cluster[0] > US && cluster[0] < DEL {
+			return T(cluster), 1
+		}
 		var w int
 		if m == WcWidth {
 			w = wcOptions.StringWidth(string(cluster))

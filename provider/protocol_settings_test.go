@@ -123,7 +123,9 @@ func TestProtocolOptionsMatchImplementations(t *testing.T) {
 func TestCodexForcesStoreOff(t *testing.T) {
 	storeOn := true
 	p := &Provider{ID: "codex", BaseURL: "https://chatgpt.com/backend-api/codex"}
-	p.SetProtocolID("codex")
+	if err := p.SetProtocolID("codex"); err != nil {
+		t.Fatalf("SetProtocolID: %v", err)
+	}
 	p.SetProtocolSettings(&ProtocolSettings{Store: &storeOn})
 	body, err := p.Protocol().EncodeRequest(&ChatRequest{
 		Model:    "gpt-5.6",

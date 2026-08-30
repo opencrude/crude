@@ -24,5 +24,5 @@ require (
 )
 
 // Crude patches x/ansi with terminal-specific width corrections shared by
-// this package and Bubble Tea. See ../../TERMINAL_WIDTH.md.
+// this package and Bubble Tea. See ../../docs/reference/terminal-width.md.
 replace github.com/charmbracelet/x/ansi => ../xansi
