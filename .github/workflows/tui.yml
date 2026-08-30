@@ -38,6 +38,9 @@ jobs:
       - name: Design audit
         run: ./scripts/tui_design_audit.sh
 
+      - name: Docs gate
+        run: make docs-check
+
       - name: Bench allocation gate
         run: ./scripts/tui_bench_gate.sh
 

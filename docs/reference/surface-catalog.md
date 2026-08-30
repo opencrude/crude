@@ -1,7 +1,9 @@
 # TUI Surface Catalog
 
+> Status: Current. Every user-visible surface must be listed here; migration phases claim completeness only against this catalog.
+
 Status: Phase 0 evidence freeze  
-Canonical plan: [`TUI_COMPONENT_SYSTEM_PLAN.md`](../../TUI_COMPONENT_SYSTEM_PLAN.md)
+Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-component-system-plan.md)
 
 Every user-visible surface must appear here. Migration phases claim completeness
 only against this catalog.
@@ -16,11 +18,11 @@ only against this catalog.
 | Activity lists | `tui/screens/activitylist/` | Shared titled/filterable sidebar body for hierarchical Agents and Terminals (`ui.List` + scrollbar + divider) |
 | Source Control | `tui/screens/sourcecontrol/`, `workspace/git_service.go`, `tui/viewmodel/source_control.go` | Branch/ahead-behind title, commit field, grouped conflicts/staged/working/untracked changes, recent commits, local branches, stage/unstage/commit/checkout/refresh operations, and safe discard confirmation |
 | Sidebar divider | `tui/ui/split_divider.go`, `tui/screens/shelltree/`, `tui/screens/activitylist/` | Shared `ui.SplitModel` + `SplitDivider`; viewmodel applies `split.resize` to `Tree.Width` |
-| Main tab bar | `tui/screens/shelltabs/`, `tui/ui/tabs.go`, `tui/viewmodel/tab_bar.go`, `tui/window/window.go` | Native Host paint into `mainTabBarSurf`; `Window` retains tab state only (no ANSI render); legacy `RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted. Agent tabs are created even while an editor is the painted view; background sync must not steal that editor. See [`INTERACTION_MATRIX.md`](./INTERACTION_MATRIX.md) New Agent. |
+| Main tab bar | `tui/screens/shelltabs/`, `tui/ui/tabs.go`, `tui/viewmodel/tab_bar.go`, `tui/window/window.go` | Native Host paint into `mainTabBarSurf`; `Window` retains tab state only (no ANSI render); legacy `RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted. Agent tabs are created even while an editor is the painted view; background sync must not steal that editor. See [`docs/reference/interaction-matrix.md`](./interaction-matrix.md) New Agent. |
 | Chat input | `tui/screens/shellinput/`, `tui/input/`, `tui/ui/text_area.go` | Native Host paint into `mainInputSurf`; `ui.TextArea` + reference chips + `ui.List` slash popup; composer **and slash list** fill is shell `ColorBg` (not popup); no leading `❯`; no `components.TextInput` on chat path |
 | Session Panel Deck tabs | `tui/ui/tabs.go`, `tui/ui/panel_deck.go`, `tui/viewmodel/session_deck.go` | Per-session native component panel region below messages (settings, questions, confirmation, YOLO, jobs) — not terminals. Deck chrome, tabs (`TabsShell`), and docked forms share chat `ColorBg` and the compact single-line form density (`NewDockedForm`); floating windows keep `ColorPopupBg` and the spacious settings form. |
 | Terminal dock | `tui/screens/termdock/`, `tui/viewmodel/terminals.go` | Workspace-level tabbed PTY dock above the status bar; independent of session PanelDeck |
-| In-app terminal (docked) | `tui/screens/shellterm/`, `tui/term/`, `workspace/terminal.go` | libghostty-vt PTY + VT paint in the workspace dock. See [`TERMINALS.md`](./TERMINALS.md) |
+| In-app terminal (docked) | `tui/screens/shellterm/`, `tui/term/`, `workspace/terminal.go` | libghostty-vt PTY + VT paint in the workspace dock. See [`docs/reference/in-app-terminals.md`](./in-app-terminals.md) |
 | Legacy inline panel tabs | deleted | Replaced by native per-session PanelDeck tabs; not the floating OverlayHost |
 | Status bar | `tui/screens/shellstatus/`, `tui/viewmodel/view.go` | Native Host paint; static compact aggregate agent counts + IDE health + `ui.Hint` segments via ActionRegistry. Attention signs are limited to user action/errors; per-agent preparation/provider/tool lifecycle and animation stay in chat; legacy `widgets/statusbar.go` deleted |
 | Contextual help | `tui/ui/hint.go`, `tui/ui/key_chord.go`, `tui/viewmodel/view.go` | Registry-derived Hint/KeyChord segments (Phase 13 item 2) |

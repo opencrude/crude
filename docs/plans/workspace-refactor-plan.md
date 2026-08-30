@@ -1,7 +1,9 @@
 # Crude IDE — Architecture Plan & Progress
 
+> Status: DONE (2026-07) — the three-layer split is complete; retained as the workspace-refactor history. The component-system successor plan is [tui-component-system-plan.md](tui-component-system-plan.md).
+
 The canonical TUI component-system and design-language migration plan is
-[`TUI_COMPONENT_SYSTEM_PLAN.md`](./TUI_COMPONENT_SYSTEM_PLAN.md).
+[`docs/plans/tui-component-system-plan.md`](./tui-component-system-plan.md).
 
 **Workspace refactor status:** Phases 1–6 (below) are **DONE** (completed
 2026-07). The three-layer split is complete: `workspace/` owns all business
@@ -9,7 +11,7 @@ state with zero `tui/` imports, `tui/` is a dumb renderer + input router
 holding `*workspace.Workspace`, and `app/` is a thin CLI entry.
 
 **TUI component-system status:** In progress — see
-`TUI_COMPONENT_SYSTEM_PLAN.md` § Snapshot. The root Host wiring (Phase 13.9)
+`docs/plans/tui-component-system-plan.md` § Snapshot. The root Host wiring (Phase 13.9)
 is DONE (2026-08-01): one `App.rootHost` + `shellRoot` tree painted into one
 `App.mainSurf`; per-screen Hosts and layer surfaces deleted.
 
@@ -93,7 +95,7 @@ overlay the ones above.
 
 Effective IDE prefs = `MergeAppWorkspace(app, workspace)`. Session settings inherit that baseline, then apply per-agent overrides. `LoadAppSettings()` returns the effective (merged) snapshot. Application save writes `config.json` only; workspace save writes `workspace_settings` only. Legacy `app_settings` rows in `workspace.db` are read as overrides.
 
-See [`docs/tui/SETTINGS.md`](./docs/tui/SETTINGS.md).
+See [`settings.md`](../reference/settings.md).
 
 ## Data Directory Layout
 

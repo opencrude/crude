@@ -1,5 +1,7 @@
 # Provider / Agent Configuration Fix — Implementation Plan
 
+> Status: SUPERSEDED (2026-08-21) — the capability-based provider protocol landed (commit c84e4ec); this plan remains as design history. The defects it lists were fixed in that rework.
+
 ## Confirmed defects (from exploration)
 
 ### 1. Provider name shows in front of "crude"
@@ -84,11 +86,11 @@ Key: **"inherit" is represented by the absence of a stored override / the source
 copied value.** Deleting a role's override returns it to dynamic inheritance.
 
 ### Note on the "sessions snapshot" doc contradiction
-`docs/tui/SETTINGS.md` states sessions snapshot their agent baseline and stay stable. The new
+`docs/reference/settings.md` states sessions snapshot their agent baseline and stay stable. The new
 dynamic inheritance intentionally reverses that for **agent** settings (provider/model/thinking).
 This is a deliberate behavior change: a running conversation won't retroactively switch an
 in-flight turn's model, but *new* sub-agent spawns and the displayed model follow the live source.
-I'll update SETTINGS.md to reflect this.
+I'll update docs/reference/settings.md to reflect this.
 
 ---
 
@@ -100,7 +102,7 @@ I'll update SETTINGS.md to reflect this.
 
 ### `session/config.go`
 - `DefaultAgentsConfig()`: remove the model strings on researcher/crafter/aeron (leave policy,
-  description, allowed/denied tools, max steps). No model anywhere.
+  description, allowed/denied tools). No model anywhere.
 - `resolveCategoryDefaults()`: delete the `if cat.Model == "" { cat.Model = prov.Model }` fallback
   so a provider default never injects into an agent.
 - Add the chain resolver `EffectiveCategory(category string) CategoryConfig` that follows the
@@ -174,8 +176,8 @@ I'll update SETTINGS.md to reflect this.
    main-agent multi-agent toggle.
 5. Main/app settings: remove provider default model + agent protocol, add multi-agent toggle.
 6. Display: strip provider prefix; fix the initial model-name seed in `app/app.go`.
-7. Update `docs/tui/SETTINGS.md` (reverse the snapshot note for agent settings, document source
-   markers). Update `docs/tui/SETTINGS.md` visuals section (providers page no longer has model
+7. Update `docs/reference/settings.md` (reverse the snapshot note for agent settings, document source
+   markers). Update `docs/reference/settings.md` visuals section (providers page no longer has model
    defaults).
 8. Update/extend tests: `session_settings_test.go` (inherit main now a live reference, not a
    copy), provider-switch tests (no model injection), agent defaults (no model), display tests

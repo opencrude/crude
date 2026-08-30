@@ -1,5 +1,7 @@
 # Settings layers
 
+> Status: Current reference for the three-level settings model (app → workspace → session).
+
 Crude settings follow the JetBrains three-level model. Each layer stores only
 what it owns. Lower layers overlay the ones above; an absent field means
 inherit.

@@ -1,5 +1,7 @@
 # Chat Projection and Planning Overhaul Handoff
 
+> Status: ACTIVE HANDOFF — the chat-projection and plan-service work this document hands off is still partially in flight (see tui/filetree, tui/viewmodel WIP). Do not archive until complete.
+
 ## Purpose
 
 This document is the implementation handoff for two related workstreams:

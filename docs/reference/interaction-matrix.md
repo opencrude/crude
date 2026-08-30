@@ -1,5 +1,7 @@
 # Interaction Matrix
 
+> Status: Current. Phase 0 baseline of keyboard/mouse contracts the component system must preserve.
+
 Phase 0 baseline of keyboard/mouse contracts that the component system must
 preserve or intentionally improve.
 

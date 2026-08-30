@@ -1,5 +1,7 @@
 # Terminal Display Width
 
+> Status: Current canonical reference.
+
 This is the canonical reference for Unicode column measurement in Crude.
 Crude supports modern grapheme-aware terminals, legacy width behavior, WSL,
 SSH, and terminal multiplexers without deriving width from the process OS.

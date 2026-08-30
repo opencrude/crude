@@ -1,4 +1,4 @@
-.PHONY: libghostty ensure-libghostty build test-tui test-race-tui design-audit bench-gate
+.PHONY: libghostty ensure-libghostty build test-tui test-race-tui design-audit bench-gate docs-check
 
 libghostty:
 	./scripts/bootstrap_libghostty.sh
@@ -20,9 +20,13 @@ test-race-tui: ensure-libghostty
 design-audit:
 	./scripts/tui_design_audit.sh
 
-# Allocation regression gate against PERFORMANCE_BASELINES.md ceilings.
+# Allocation regression gate against docs/reference/performance-baselines.md ceilings.
 bench-gate:
 	./scripts/tui_bench_gate.sh
+
+# Documentation acceptance gate (docs/README.md rules).
+docs-check:
+	bash scripts/docs_check.sh
 
 # --- Windows targets (use PowerShell + zig cc) ---
 libghostty-windows:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Phase 0 no-new-debt audit for the TUI design system.
 # Fails if new hard-coded colors / forbidden width imports appear outside
-# the frozen allowlist in docs/tui/bypass_manifest.json.
+# the frozen allowlist in docs/reference/bypass-manifest.json.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -209,8 +209,8 @@ else
 fi
 
 # 10) Manifest present
-if [[ ! -f docs/tui/bypass_manifest.json ]]; then
-  echo "FAIL: missing docs/tui/bypass_manifest.json"
+if [[ ! -f docs/reference/bypass-manifest.json ]]; then
+  echo "FAIL: missing docs/reference/bypass-manifest.json"
   fail=1
 else
   echo "OK: bypass manifest present"
