@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
@@ -109,5 +110,35 @@ func TestInvalidateWidthProfileDropsCompletedMessageCache(t *testing.T) {
 	renderer.InvalidateWidthProfile()
 	if renderer.sync.Messages[0].CachedLines != nil {
 		t.Fatal("completed message width cache survived calibration")
+	}
+}
+
+func TestLongToolTitleFitsWidthWithVisibleElision(t *testing.T) {
+	line := buildToolTitleLine(types.ChatMessage{
+		ToolName: "write_report", ToolStatus: types.ToolStatusSuccess,
+		ToolPreviewPhase: types.ToolPreviewDone,
+		ToolArgs:         "/home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-aeron-report.md",
+		ToolLivedAdded:   21, ToolDuration: 50 * time.Millisecond,
+	}, types.ToolPreviewDone, 0, 52)
+	plain := line.PlainText()
+	if line.VisibleWidth() > 52 || !strings.Contains(plain, "…") || !strings.Contains(plain, "<0.1s") {
+		t.Fatalf("width-planned tool title = %q (%d cells)", plain, rendering.VisibleWidth(plain))
+	}
+}
+
+func TestSubAgentToolLabelsDistinguishWaitingAndFailure(t *testing.T) {
+	waiting := buildToolTitleLine(types.ChatMessage{
+		ToolName: "run_sub_agent", ToolStatus: types.ToolStatusStreaming,
+		ToolPreviewPhase: types.ToolPreviewStreaming,
+	}, types.ToolPreviewStreaming, 0).PlainText()
+	if !strings.Contains(waiting, "Waiting for sub-agent") || strings.Contains(waiting, "Spawning") {
+		t.Fatalf("synchronous label = %q", waiting)
+	}
+	failed := buildToolTitleLine(types.ChatMessage{
+		ToolName: "run_sub_agent", ToolStatus: types.ToolStatusError,
+		ToolPreviewPhase: types.ToolPreviewError,
+	}, types.ToolPreviewError, 0).PlainText()
+	if !strings.Contains(failed, "Failed to spawn sub-agent") || strings.Contains(failed, "Spawned") {
+		t.Fatalf("failed label = %q", failed)
 	}
 }

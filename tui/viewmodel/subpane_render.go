@@ -355,7 +355,7 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	}
 
 	if sp.Type == workspace.PaneAgent {
-		return reg.renderAgentCompact(paneID, sp, view, width, maxH, spinFrame)
+		return reg.renderAgentCompact(paneID, sp, view, width, maxH, spinFrame, expanded)
 	}
 
 	// PaneThinking: delegate to the MessageList projection, same as the
@@ -412,7 +412,7 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	return lines
 }
 
-func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *workspace.SubPane, view workspace.SubPaneView, width, maxH, spinFrame int) []chatprojection.SubPaneLine {
+func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *workspace.SubPane, view workspace.SubPaneView, width, maxH, spinFrame int, expanded bool) []chatprojection.SubPaneLine {
 	p := reg.Get(paneID, sp.Type)
 
 	msgs := p.renderer.Messages()
@@ -464,6 +464,9 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 	lines := make([]chatprojection.SubPaneLine, 0, 1+len(toolLines))
 	lines = append(lines, headerLine)
 	lines = append(lines, toolLines...)
+	if sp.Done && expanded {
+		lines = append(lines, chatprojection.SeparatorLine())
+	}
 	return lines
 }
 

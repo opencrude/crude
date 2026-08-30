@@ -133,6 +133,21 @@ func TestSanitizeMessages_OrphanedToolCalls(t *testing.T) {
 	}
 }
 
+func TestPersistedToolStatusDoesNotMislabelValidationErrorAsCancelled(t *testing.T) {
+	validation := provider.ChatMessage{
+		Role: "tool", Content: provider.TextContent("Error: question validation failed: header missing"), ToolError: true,
+	}
+	if got := persistedToolStatus(validation, ""); got != "error" {
+		t.Fatalf("validation status = %q, want error", got)
+	}
+	cancelled := provider.ChatMessage{
+		Role: "tool", Content: provider.TextContent("[cancelled] operation cancelled"), ToolError: true,
+	}
+	if got := persistedToolStatus(cancelled, ""); got != "cancelled" {
+		t.Fatalf("cancellation status = %q, want cancelled", got)
+	}
+}
+
 func TestSanitizeMessages_RemovesMiddleOrphanToolResult(t *testing.T) {
 	msgs := []provider.ChatMessage{
 		{Role: "user", Content: provider.TextContent("hi")},
@@ -265,13 +280,34 @@ func TestHardCancelSignalsEveryOrchestrator(t *testing.T) {
 	second := NewOrchestrator("second", s)
 	s.orchestrators[first.ID] = first
 	s.orchestrators[second.ID] = second
+	if !first.SubmitInput(provider.PlainInput("first")) || !second.SubmitInput(provider.PlainInput("second")) {
+		t.Fatal("failed to admit test turns")
+	}
 
 	s.HardCancel()
 	for _, orchestrator := range []*Orchestrator{first, second} {
+		request := <-orchestrator.inputCh
 		select {
-		case <-orchestrator.CancelCh:
+		case <-request.ctx.Done():
 		default:
-			t.Fatalf("orchestrator %q was not cancelled", orchestrator.ID)
+			t.Fatalf("orchestrator %q context was not cancelled", orchestrator.ID)
 		}
+	}
+}
+
+func TestFinalizeTurnPersistsBtwDisplayProjection(t *testing.T) {
+	s := &Session{}
+	btw := provider.ChatMessage{
+		InternalID:      "btw-1",
+		DisplayContent:  "please include tests",
+		ReferenceLabels: []string{"@notes"},
+		Role:            "user",
+		Content:         provider.TextContent(btwUrgentPrefix + "please include tests"),
+	}
+	s.finalizeTurn([]provider.ChatMessage{btw}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg")
+	messages := s.MessagesWithMeta()
+	if len(messages) != 1 || messages[0].Meta.DisplayContent != "please include tests" ||
+		len(messages[0].Meta.ReferenceLabels) != 1 || messages[0].Meta.ReferenceLabels[0] != "@notes" {
+		t.Fatalf("persisted BTW display projection=%#v", messages)
 	}
 }

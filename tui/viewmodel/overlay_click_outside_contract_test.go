@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/tui/surface"
@@ -282,12 +281,8 @@ func setupOverlayDispatchApp(t *testing.T) (*App, int, int) {
 	// fixture wants the editor painted with an agent already in the tab
 	// bar, which is "open a file after a session exists".
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
+
 	app.EditorState = NewEditorState()
 	app.EditorState.Editor = ed
 	app.EditorState.Tabs[path] = NewEditorTab(path, ed)

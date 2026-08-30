@@ -2,13 +2,14 @@ package tui
 
 import (
 	"container/list"
+	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/history"
-	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/rendering"
 	"crude/tui/types"
@@ -44,12 +45,21 @@ type TUI struct {
 // enqueues. closeAfter additionally places one final message (normally
 // tea.QuitMsg) after all accepted work, then closes the queue atomically.
 type programMessagePump struct {
-	mu      sync.Mutex
-	ready   *sync.Cond
-	pending list.List
-	deliver func(tea.Msg)
-	closed  bool
-	done    chan struct{}
+	mu                 sync.Mutex
+	ready              *sync.Cond
+	pending            list.List
+	deliver            func(tea.Msg)
+	closed             bool
+	done               chan struct{}
+	lastVisualDelivery time.Time
+}
+
+const agentVisualDeliveryInterval = time.Second / 60
+
+type pendingAgentDelta struct {
+	event  types.AgentMsg
+	chunks []string
+	size   int
 }
 
 func newProgramMessagePump(deliver func(tea.Msg)) *programMessagePump {
@@ -72,9 +82,66 @@ func (p *programMessagePump) enqueue(msg tea.Msg) bool {
 	if p.closed {
 		return false
 	}
+	if coalescePendingAgentDelta(p.pending.Back(), msg) {
+		return true
+	}
 	p.pending.PushBack(msg)
 	p.ready.Signal()
 	return true
+}
+
+// coalescePendingAgentDelta losslessly combines only adjacent text deltas for
+// the same agent while delivery is already backpressured. Normal live typing
+// is untouched when the queue is empty; under load this bounds terminal-event
+// latency without dropping content or crossing lifecycle/order boundaries.
+func coalescePendingAgentDelta(tail *list.Element, msg tea.Msg) bool {
+	if tail == nil {
+		return false
+	}
+	next, ok := msg.(types.AgentMsg)
+	if !ok {
+		return false
+	}
+	switch previous := tail.Value.(type) {
+	case types.AgentMsg:
+		if previous.AgentID != next.AgentID || previous.Type != next.Type {
+			return false
+		}
+		switch next.Type {
+		case "thinking", "stream_token":
+			left, leftOK := previous.Data.(string)
+			right, rightOK := next.Data.(string)
+			if !leftOK || !rightOK {
+				return false
+			}
+			tail.Value = &pendingAgentDelta{
+				event:  previous,
+				chunks: []string{left, right},
+				size:   len(left) + len(right),
+			}
+			return true
+		case "phase":
+			// Structured upload/provider progress is a latest-value state, not a
+			// textual delta. Consecutive updates can replace one another exactly.
+			tail.Value = next
+			return true
+		default:
+			return false
+		}
+	case *pendingAgentDelta:
+		if previous == nil || previous.event.AgentID != next.AgentID || previous.event.Type != next.Type {
+			return false
+		}
+		right, ok := next.Data.(string)
+		if !ok {
+			return false
+		}
+		previous.chunks = append(previous.chunks, right)
+		previous.size += len(right)
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *programMessagePump) close() {
@@ -124,14 +191,42 @@ func (p *programMessagePump) run() {
 		p.pending.Remove(next)
 		p.mu.Unlock()
 
+		if pending, ok := msg.(*pendingAgentDelta); ok {
+			var text strings.Builder
+			text.Grow(pending.size)
+			for _, chunk := range pending.chunks {
+				text.WriteString(chunk)
+			}
+			pending.event.Data = text.String()
+			msg = pending.event
+		}
+		if isAgentVisualUpdate(msg) {
+			if wait := time.Until(p.lastVisualDelivery.Add(agentVisualDeliveryInterval)); wait > 0 {
+				time.Sleep(wait)
+			}
+			p.lastVisualDelivery = time.Now()
+		}
 		p.deliver(msg)
 	}
 }
 
-// AddOrchestrator wires a backend orchestrator's channels into the TUI.
+func isAgentVisualUpdate(msg tea.Msg) bool {
+	event, ok := msg.(types.AgentMsg)
+	if !ok {
+		return false
+	}
+	switch event.Type {
+	case "thinking", "stream_token", "phase":
+		return true
+	default:
+		return false
+	}
+}
+
+// AddOrchestrator registers an orchestrator's presentation state in the TUI.
 // Called by the app layer after the workspace creates a new orchestrator.
-func (t *TUI) AddOrchestrator(orchID string, inputCh chan<- provider.UserInput, btwCh chan<- provider.UserInput, cancelCh chan<- struct{}, blockResolveCh chan string) {
-	t.app.AddOrchestrator(orchID, inputCh, btwCh, cancelCh, blockResolveCh)
+func (t *TUI) AddOrchestrator(orchID string) {
+	t.app.AddOrchestrator(orchID)
 }
 
 var global *TUI
@@ -155,7 +250,7 @@ func Start(ws *workspace.Workspace, presets []ProviderPreset, prompts *history.S
 	a := viewmodel.NewApp(ws, presets)
 	a.SetPromptHistory(prompts)
 	// Force UV to use the same grapheme-width method as Crude layout and
-	// surface packing. See TERMINAL_WIDTH.md.
+	// surface packing. See ../../docs/reference/terminal-width.md.
 	program := tea.NewProgram(
 		a,
 		tea.WithWidthMethod(ansi.GraphemeWidth),

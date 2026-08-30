@@ -33,6 +33,34 @@ func TestRenderUserMessageInfersLegacyReferenceLabel(t *testing.T) {
 	assertReferenceChipSpans(t, rendered.native[0], label)
 }
 
+func TestRenderPendingBtwUsesCanonicalActivityDot(t *testing.T) {
+	message := types.ChatMessage{Role: types.RoleUser, Content: "include tests", PendingBtw: true}
+	for _, spinFrame := range []int{0, 400} {
+		rendered := renderUserMessage(message, renderContext{contentWidth: 80, spinFrame: spinFrame}, true)
+		if len(rendered.native) != 2 {
+			t.Fatalf("pending BTW rows = %+v", rendered.native)
+		}
+		status := rendered.native[1]
+		if !strings.Contains(status.PlainText(), ui.ActivityDot(spinFrame)) || !strings.Contains(status.PlainText(), "Waiting to send") {
+			t.Fatalf("pending BTW status = %q", status.PlainText())
+		}
+	}
+}
+
+func TestRenderAssignmentIdentifiesMainAgentAndKeepsPrompt(t *testing.T) {
+	message := types.ChatMessage{
+		Role: types.RoleAssignment, Content: "# Assignment\n- Description: inspect lifecycle",
+	}
+	rendered := renderAssignmentMessage(message, renderContext{contentWidth: 80, innerW: 80}, false)
+	plain := strings.Join(rendered.lines, "\n")
+	if !strings.Contains(plain, "Main Agent Assignment") || !strings.Contains(plain, "inspect lifecycle") {
+		t.Fatalf("assignment render = %q", plain)
+	}
+	if messageParty(types.RoleAssignment) == messageParty(types.RoleAssistant) {
+		t.Fatal("assignment incorrectly suppresses the sub-agent's own response header")
+	}
+}
+
 func TestStyleReferenceLabelAcrossExistingSpans(t *testing.T) {
 	const label = "[Pasted IMG1]"
 	line := PaintLine{Spans: []RowSpan{

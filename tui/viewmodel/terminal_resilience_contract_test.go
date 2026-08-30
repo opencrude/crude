@@ -22,13 +22,17 @@ func TestTerminalDockShortWindowMatrix(t *testing.T) {
 	app.termDock.Mount("compact-matrix", screen)
 	t.Cleanup(func() { app.dropTermScreen("compact-matrix") })
 
-	for height := 8; height <= 14; height++ {
+	// The dock hides when the usable band (between the header and the status
+	// bar) cannot render a terminal. Derive the boundary from the current
+	// frame geometry instead of hardcoding the legacy row offsets.
+	minSafeHeight := app.chromeBottomRows() + app.termDockTopRow() + termdock.MinRenderableHeight
+	for height := minSafeHeight - 1; height <= minSafeHeight+6; height++ {
 		t.Run(strconv.Itoa(height), func(t *testing.T) {
 			app.height = height
 			app.termDockHeight = defaultTermDockHeight
 			lay := app.computeContentLayout()
 
-			if height == 8 {
+			if height < minSafeHeight {
 				if !lay.TermDockRect.Empty() || app.termDockVisible() {
 					t.Fatalf("height=%d: unsafe dock remained visible: %v", height, lay.TermDockRect)
 				}
@@ -38,10 +42,10 @@ func TestTerminalDockShortWindowMatrix(t *testing.T) {
 			if dock.Empty() {
 				t.Fatalf("height=%d: usable dock was hidden", height)
 			}
-			if dock.Y < terminalDockTopRow {
+			if dock.Y < app.termDockTopRow() {
 				t.Fatalf("height=%d: dock overlaps header: %v", height, dock)
 			}
-			if dock.Y+dock.H != height-2 {
+			if dock.Y+dock.H != height-app.chromeBottomRows() {
 				t.Fatalf("height=%d: dock=%v does not end above status", height, dock)
 			}
 			if dock.H < termdock.MinRenderableHeight {

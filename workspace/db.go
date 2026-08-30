@@ -49,6 +49,7 @@ func OpenWorkspaceDB(projectDir string) (*WorkspaceDB, error) {
 	if err != nil {
 		return nil, err
 	}
+	projectDir = canonicalizePath(projectDir)
 	wdb.ProjectDir = projectDir
 	// Persist project_dir so the workspace selector can display a name.
 	_ = wdb.SetSetting("project_dir", projectDir)
@@ -235,9 +236,19 @@ func (wdb *WorkspaceDB) RegisterSession(sessionID, projectPath, projectName, mod
 	if wdb == nil || wdb.DB == nil {
 		return fmt.Errorf("workspace db not open")
 	}
+	projectPath = canonicalizePath(projectPath)
+	if projectName == "" && projectPath != "" {
+		projectName = filepath.Base(projectPath)
+	}
 	_, err := wdb.DB.Exec(`
-		INSERT OR IGNORE INTO workspace_sessions (session_id, project_dir, project_name, model, provider, created_at)
+		INSERT INTO workspace_sessions (session_id, project_dir, project_name, model, provider, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			project_dir = excluded.project_dir,
+			project_name = CASE WHEN excluded.project_name != '' THEN excluded.project_name ELSE workspace_sessions.project_name END,
+			model = CASE WHEN excluded.model != '' THEN excluded.model ELSE workspace_sessions.model END,
+			provider = CASE WHEN excluded.provider != '' THEN excluded.provider ELSE workspace_sessions.provider END,
+			db_missing = 0
 	`, sessionID, projectPath, projectName, model, provider, time.Now().UnixNano())
 	if err != nil {
 		return fmt.Errorf("register session %s: %w", sessionID, err)

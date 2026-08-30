@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
 	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
@@ -51,12 +50,8 @@ func TestSubPaneProjectionRemove(t *testing.T) {
 func TestSubPaneProjectionSyncPreservesByVersion(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"sync-agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"sync-agent")
+
 	// Append a message to the canonical Conversation and sync.
 	node := app.AgentMgr.Get("sync-agent")
 	if node == nil {
@@ -130,6 +125,11 @@ func TestSubPaneProjectionRenderAgentPaneCompact(t *testing.T) {
 	}
 	if !subPanePlainContains(lines, "read_file") {
 		t.Fatal("no tool line references 'read_file'")
+	}
+	sp.Collapse()
+	expanded := app.subPaneProjections.Render("agent-1", sp, 40, 5, 0, true)
+	if len(expanded) == 0 || !expanded[len(expanded)-1].Separator {
+		t.Fatalf("expanded completed pane has no trailing block separator: %+v", expanded)
 	}
 }
 
@@ -244,12 +244,8 @@ func TestSubPaneProjectionToolLineCacheInvalidation(t *testing.T) {
 func TestThinkingPanePromotionRoundTrip(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"promote-agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"promote-agent")
+
 	node := app.AgentMgr.Get("promote-agent")
 	if node == nil || node.State == nil {
 		t.Fatal("agent not created")

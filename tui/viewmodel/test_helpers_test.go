@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/session"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/editor"
@@ -30,11 +31,16 @@ import (
 	"crude/workspace"
 )
 
+type noopEventSender struct{}
+
+func (noopEventSender) SendAgentEvent(typ string, data any)                  {}
+func (noopEventSender) SendAgentEventWithID(typ string, data any, id string) {}
+
 // newTestApp builds an App with the full shell tree mounted (all shell
 // screens under one rootHost painted into mainSurf) plus the workspace
 // stubs. No compositor/renderCtx are created — tests that call View()
 // should use newFullTestApp instead.
-func newTestApp(t *testing.T) *App {
+func newTestApp(t testing.TB) *App {
 	t.Helper()
 	th := theme.DefaultDark()
 	wmgr := wm.NewWindowManager()
@@ -124,12 +130,41 @@ func newTestApp(t *testing.T) *App {
 }
 
 // newFullTestApp is newTestApp plus a compositor/renderCtx so View() works.
-func newFullTestApp(t *testing.T) *App {
+func newFullTestApp(t testing.TB) *App {
 	t.Helper()
 	app := newTestApp(t)
 	app.compositor = compositor.NewCompositor(app.width, app.height)
 	app.renderCtx = wm.NewRenderContext(app.Theme)
 	return app
+}
+
+// addBackendTestOrchestrator exercises the real Workspace -> Session turn
+// admission path while keeping provider events inert.
+func addBackendTestOrchestrator(t *testing.T, app *App) string {
+	t.Helper()
+	previousActive := app.ActiveSession
+	app.RootPath = t.TempDir()
+	app.WorkspaceDir = t.TempDir()
+	if app.SessionsByID == nil {
+		app.SessionsByID = make(map[string]*workspace.Session)
+	}
+	if app.SessionsByAgent == nil {
+		app.SessionsByAgent = make(map[string]*workspace.Session)
+	}
+	_, err := app.CreateSession(&session.Config{}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	orchestrator, err := app.StartOrchestrator(noopEventSender{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.AddOrchestrator(orchestrator.ID)
+	if previousActive != nil {
+		app.ActiveSession = previousActive
+	}
+	t.Cleanup(func() { app.CloseAgent(orchestrator.ID) })
+	return orchestrator.ID
 }
 
 // newEditorPaintApp builds a compositor-backed App with a real file tree so

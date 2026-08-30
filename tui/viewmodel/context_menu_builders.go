@@ -203,7 +203,7 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 				{Label: "Manage sessions…", Action: m.openSessionPicker},
 				{Label: "Cancel active agent", Disabled: activeNode == nil || !activeNode.IsActive(), Action: func() {
 					if node := m.AgentMgr.ActiveNode(); node != nil {
-						go m.CancelAgent(node.ID)
+						m.cancelAgentTurn(node.ID)
 					}
 				}},
 			},
@@ -348,14 +348,14 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Agent",
 			Items: []ui.ContextMenuItem{
-				{Label: "Open agent", Disabled: node.IsCompleted(), Action: func() {
+				{Label: "Open agent", Action: func() {
 					m.restoreAgent(node.ID)
 				}},
 				{Label: "Minimize agent", Disabled: node.Hidden, Detail: "keeps running", Action: func() {
 					m.minimizeAgent(node.ID)
 				}},
 				{Label: "Cancel agent", Disabled: !node.IsActive(), Action: func() {
-					go m.CancelAgent(node.ID)
+					m.cancelAgentTurn(node.ID)
 				}},
 				{Label: "Terminate agent", Detail: "stops work", Action: func() {
 					m.terminateAgent(node.ID)
@@ -717,7 +717,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					_ = m.handleAgentTabClose(hit.TabIndex)
 				}},
 				{Label: "Cancel agent", Action: func() {
-					go m.CancelAgent(agentID)
+					m.cancelAgentTurn(agentID)
 				}},
 				{Label: "Terminate agent", Detail: "stops work", Action: func() {
 					m.terminateAgent(agentID)

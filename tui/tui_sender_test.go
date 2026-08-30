@@ -123,3 +123,46 @@ func TestProgramMessagePumpShutdownDrainsAcceptedMessagesAndRejectsNewOnes(t *te
 		t.Fatalf("shutdown delivery order = %v, want %v", got, want)
 	}
 }
+
+func TestProgramMessagePumpCoalescesOnlyBackpressuredAdjacentDeltas(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	delivered := make(chan tea.Msg, 4)
+	pump := newProgramMessagePump(func(msg tea.Msg) {
+		if msg == "block" {
+			close(started)
+			<-release
+		}
+		delivered <- msg
+	})
+	t.Cleanup(func() {
+		pump.close()
+		pump.wait()
+	})
+
+	if !pump.enqueue("block") {
+		t.Fatal("failed to enqueue blocking message")
+	}
+	<-started
+	for _, text := range []string{"one", " two", " three"} {
+		if !pump.enqueue(ttypes.AgentMsg{Type: "thinking", AgentID: "agent", Data: text}) {
+			t.Fatal("failed to enqueue thinking delta")
+		}
+	}
+	if !pump.enqueue(ttypes.AgentMsg{Type: "done", AgentID: "agent", Data: map[string]any{"reason": "cancelled"}}) {
+		t.Fatal("failed to enqueue terminal event")
+	}
+	close(release)
+
+	if got := <-delivered; got != "block" {
+		t.Fatalf("first delivery=%v, want block", got)
+	}
+	merged, ok := (<-delivered).(ttypes.AgentMsg)
+	if !ok || merged.Type != "thinking" || merged.Data != "one two three" {
+		t.Fatalf("merged delivery=%#v", merged)
+	}
+	done, ok := (<-delivered).(ttypes.AgentMsg)
+	if !ok || done.Type != "done" {
+		t.Fatalf("terminal delivery=%#v", done)
+	}
+}

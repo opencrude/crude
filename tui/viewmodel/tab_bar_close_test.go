@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/theme"
@@ -42,12 +41,8 @@ func TestTabBarCloseClickAtProductionGeometry(t *testing.T) {
 	app.sidebarScreen.SetModel(model)
 
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
+
 	if _, err := app.openEditorTab(pathA); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +71,7 @@ func TestTabBarCloseClickAtProductionGeometry(t *testing.T) {
 	}
 
 	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{
-		X: screenX, Y: 3, Button: tea.MouseLeft,
+		X: screenX, Y: app.shellTopRow(), Button: tea.MouseLeft,
 	})
 	if app.Win.TabCount() != before-1 {
 		t.Fatalf("after close click tab count=%d want %d", app.Win.TabCount(), before-1)

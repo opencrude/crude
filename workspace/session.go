@@ -88,6 +88,9 @@ type Session struct {
 
 	// TokenEstimated is true when the token count is an estimate.
 	TokenEstimated bool
+	// CostUpperBound is true when the provider reports total prompt tokens but
+	// not cache-read tokens, so the accumulated cost assumes no cache discount.
+	CostUpperBound bool
 
 	// ── Backend session (owned by this frontend session)
 	//

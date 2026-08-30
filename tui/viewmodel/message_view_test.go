@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -48,12 +47,7 @@ func TestChatMessagesFromViewsProjectsDataWithoutPresentationState(t *testing.T)
 func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
 
 	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "hello", Time: time.Unix(1, 0)})
 

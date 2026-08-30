@@ -93,6 +93,59 @@ func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
 	}
 }
 
+func TestInjectRequestContextPreservesCacheablePrefixAndCanonicalHistory(t *testing.T) {
+	messages := []provider.ChatMessage{
+		{Role: "user", Content: provider.TextContent("old request")},
+		{Role: "assistant", Content: provider.TextContent("old response")},
+		{Role: "user", Content: provider.TextContent("current request"), DisplayContent: "current request"},
+	}
+	projected := injectRequestContext(messages, "remembered fact")
+
+	if projected[0].ContentString() != messages[0].ContentString() || projected[1].ContentString() != messages[1].ContentString() {
+		t.Fatalf("volatile context changed the reusable history prefix: %#v", projected)
+	}
+	if messages[2].ContentString() != "current request" {
+		t.Fatalf("request projection mutated canonical history: %q", messages[2].ContentString())
+	}
+	if !strings.HasPrefix(projected[2].ContentString(), "current request") || !strings.Contains(projected[2].ContentString(), "<retrieved_context>") || !strings.Contains(projected[2].ContentString(), "remembered fact") {
+		t.Fatalf("runtime context was not attached to the current request: %q", projected[2].ContentString())
+	}
+	if projected[2].DisplayContent != "current request" {
+		t.Fatalf("runtime context leaked into display content: %q", projected[2].DisplayContent)
+	}
+}
+
+func TestInjectRequestContextPreservesMultipartUserContent(t *testing.T) {
+	messages := []provider.ChatMessage{{
+		Role: "user",
+		Content: provider.PartsContent([]provider.ContentPart{
+			{Type: "text", Text: "inspect"},
+			{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64,YWJj"}},
+		}),
+	}}
+	projected := injectRequestContext(messages, "visual context")
+	if !projected[0].Content.HasImage() || !strings.Contains(projected[0].Content.ContentDescription(), "visual context") {
+		t.Fatalf("multipart request context projection = %q", projected[0].Content.ContentDescription())
+	}
+	if !messages[0].Content.HasImage() || strings.Contains(messages[0].Content.ContentDescription(), "visual context") {
+		t.Fatalf("canonical multipart content was mutated: %q", messages[0].Content.ContentDescription())
+	}
+}
+
+func TestSessionSystemPromptIsByteStableAcrossEnvironmentChanges(t *testing.T) {
+	s := &Session{}
+	t.Setenv("SHELL", "/bin/first")
+	first := s.systemPrompt(true)
+	t.Setenv("SHELL", "/bin/second")
+	second := s.systemPrompt(true)
+	if first != second {
+		t.Fatal("one session rebuilt a different cache prefix")
+	}
+	if solo := s.systemPrompt(false); solo == first {
+		t.Fatal("multi-agent mode did not receive its own prompt snapshot")
+	}
+}
+
 func TestBuildUserMessageDeliversUnknownModelImageBytes(t *testing.T) {
 	dir := t.TempDir()
 	database, err := openTestRefDB(dir)

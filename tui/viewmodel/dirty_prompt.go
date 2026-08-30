@@ -9,6 +9,8 @@ import (
 	"crude/tui/wm"
 )
 
+// showDirtyClosePrompt opens the unsaved-changes modal. Default focus is
+// "Cancel" (index 2) so an accidental Enter keeps the user's work safe.
 func (m *App) showDirtyClosePrompt(path string) {
 	if m.windowManager == nil {
 		// No floating-window support? Just close and lose the data.
@@ -19,16 +21,16 @@ func (m *App) showDirtyClosePrompt(path string) {
 	if !ok {
 		return
 	}
-	filename := tab.Editor.Title()
-	// Default focus is "Cancel" (index 2) so an accidental Enter keeps
-	// the user's work safe.
+	// BaseTitle: the tab's ● dirty marker must not leak into dialog text —
+	// the dialog itself communicates state.
+	filename := tab.Editor.BaseTitle()
 	m.DirtyPromptChoice = 2
 	frame := ui.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
 	w, h := frame.Measure(80, 40)
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", frame, w, h,
 		wm.WithDecoration(false),
-		wm.WithMovable(false),
+		wm.WithMovable(true), // drag by frame title row
 		wm.WithResizable(false),
 		wm.WithClosable(false),
 		wm.WithModal(true),
@@ -78,46 +80,48 @@ func (m *App) dirtyPromptDiscard() {
 	}
 }
 
-// dirtyPromptCancel is called when the user picks "Cancel" in the
-// dirty-close prompt. Dismisses the popup and keeps the tab open.
+// dirtyPromptCancel is called when the user picks "Cancel" in
+// the dirty-close prompt. Dismisses the popup and keeps the tab open.
 func (m *App) dirtyPromptCancel() {
 	m.overlayHost.Close(ui.OverlayDirtyClose)
 }
 
+// dirtyPromptCount is the number of buttons in the dirty-close dialog.
+const dirtyPromptCount = 3
+
 // handleDirtyPromptKey routes keypresses when the dirty-close dialog
-// is open. Cycles focus between Save / Don't Save / Cancel and
-// dispatches the chosen action.
+// is open. Arrows/Tab move button focus in place (no tree rebuild);
+// Enter activates the focused button; S/D/C are direct shortcuts;
+// Esc cancels.
 func (m *App) handleDirtyPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.DirtyPromptPath == "" {
 		return nil
 	}
+	fw := m.windowManager.Window("dirty-close-prompt")
+	if fw == nil {
+		return nil
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok {
+		return nil
+	}
 	switch msg.Code {
 	case tea.KeyLeft, tea.KeyUp:
-		m.DirtyPromptChoice = (m.DirtyPromptChoice + 2) % 3 // -1 mod 3
-		m.refreshDirtyPrompt()
-		return nil
-	case tea.KeyRight, tea.KeyDown:
-		m.DirtyPromptChoice = (m.DirtyPromptChoice + 1) % 3
-		m.refreshDirtyPrompt()
-		return nil
-	case tea.KeyTab:
-		// Shift+Tab moves focus left, plain Tab moves focus right.
-		if msg.Mod.Contains(tea.ModShift) {
-			m.DirtyPromptChoice = (m.DirtyPromptChoice + 2) % 3
-		} else {
-			m.DirtyPromptChoice = (m.DirtyPromptChoice + 1) % 3
+		if n := ui.MoveConfirmFocus(cw, -1, dirtyPromptCount); n >= 0 {
+			m.DirtyPromptChoice = n
 		}
-		m.refreshDirtyPrompt()
+		return nil
+	case tea.KeyRight, tea.KeyDown, tea.KeyTab:
+		delta := 1
+		if msg.Code == tea.KeyTab && msg.Mod.Contains(tea.ModShift) {
+			delta = -1
+		}
+		if n := ui.MoveConfirmFocus(cw, delta, dirtyPromptCount); n >= 0 {
+			m.DirtyPromptChoice = n
+		}
 		return nil
 	case tea.KeyEnter:
-		switch m.DirtyPromptChoice {
-		case 0:
-			m.dirtyPromptSave()
-		case 1:
-			m.dirtyPromptDiscard()
-		default:
-			m.dirtyPromptCancel()
-		}
+		m.activateDirtyPromptButton(m.DirtyPromptChoice)
 		return nil
 	case tea.KeyEsc:
 		m.dirtyPromptCancel()
@@ -138,26 +142,6 @@ func (m *App) handleDirtyPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	return nil
-}
-
-func (m *App) refreshDirtyPrompt() {
-	if m.windowManager == nil {
-		return
-	}
-	fw := m.windowManager.Window("dirty-close-prompt")
-	if fw == nil {
-		return
-	}
-	tab, ok := m.EditorState.Tabs[m.DirtyPromptPath]
-	if !ok {
-		return
-	}
-	filename := tab.Editor.Title()
-	frame := ui.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
-	w, h := frame.Measure(80, 40)
-	fw.SetSize(w, h)
-	fw.SetContent(frame)
-	fw.MarkContentDirty()
 }
 
 // confirmFrameButtonAt maps content-local mouse coords to a confirm button index

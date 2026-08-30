@@ -10,7 +10,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/tui/chatprojection"
 	"crude/tui/filetree"
 	"crude/tui/screens/shellchat"
@@ -46,12 +45,8 @@ func setupCapturedChatSelection(t *testing.T, app *App, viewportH int, rows []ch
 	app.Tree.Visible = true
 	if app.AgentMgr.Count() == 0 {
 		app.AddOrchestrator(
-			"agent",
-			make(chan provider.UserInput, 1),
-			make(chan provider.UserInput, 1),
-			make(chan struct{}, 1),
-			make(chan string, 1),
-		)
+			"agent")
+
 	}
 	for _, row := range rows {
 		app.appendActiveMessage(ttypes.ChatMessage{
@@ -292,12 +287,7 @@ func setupScrollableSidebarCapture(t *testing.T, app *App) (*ui.Host, *filetree.
 	app.launcherScreen = nil
 	app.sidebarScreen.SetModel(treeModel)
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
 
 	treeModel.Update(filetree.TreeHeightMsg{Height: 10})
 	app.paintShellFrame()
@@ -321,12 +311,8 @@ func setupCapturedChatScrollbar(t *testing.T, app *App, viewportH int, rows []ch
 	app.Tree.Visible = true
 	if app.AgentMgr.Count() == 0 {
 		app.AddOrchestrator(
-			"agent",
-			make(chan provider.UserInput, 1),
-			make(chan provider.UserInput, 1),
-			make(chan struct{}, 1),
-			make(chan string, 1),
-		)
+			"agent")
+
 	}
 	for _, row := range rows {
 		app.appendActiveMessage(ttypes.ChatMessage{

@@ -94,6 +94,38 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 			ml.native = append(ml.native, pl)
 		}
 	}
+	if msg.PendingBtw {
+		line := PaintLine{Spans: []RowSpan{
+			{Text: "│ ", Role: ui.ColorMuted},
+			{Text: ui.ActivityDot(ctx.spinFrame) + " ", Role: ui.ColorAccent},
+			{Text: "Waiting to send", Role: ui.ColorMuted},
+		}}
+		ml.lines = append(ml.lines, line.PlainText())
+		ml.native = append(ml.native, line)
+	}
+	return ml
+}
+
+func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
+	var ml messageLines
+	header := buildAssistantHeader("Main Agent Assignment", false, rendering.FormatTimeLabel(msg.Time), ctx.innerW, suppressHeader)
+	if !header.IsZero() {
+		ml.lines = append(ml.lines, header.PlainText())
+		ml.native = append(ml.native, header)
+	}
+	rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
+	if isMarkdown {
+		for _, line := range strings.Split(rendered, "\n") {
+			pl := BridgeAnsiLine(line, ctx.tokens)
+			ml.lines = append(ml.lines, pl.PlainText())
+			ml.native = append(ml.native, pl)
+		}
+		return ml
+	}
+	for _, pl := range buildPlainBodyLines(rendering.WrapText(msg.Content, ctx.contentWidth)) {
+		ml.lines = append(ml.lines, pl.PlainText())
+		ml.native = append(ml.native, pl)
+	}
 	return ml
 }
 
@@ -338,6 +370,8 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 		return renderErrorMessage(msg, ctx)
 	case types.RoleStatus:
 		return renderLifecycleMessage(msg, ctx.spinFrame)
+	case types.RoleAssignment:
+		return renderAssignmentMessage(msg, ctx, suppressHeader)
 	default:
 		return messageLines{lines: []string{""}, native: []PaintLine{buildPlainBodyLine("")}}
 	}

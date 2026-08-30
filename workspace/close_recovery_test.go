@@ -51,8 +51,7 @@ func TestCloseAgentLeavesListableResumableRegistryRecord(t *testing.T) {
 	}
 
 	mgr := NewAgentManager()
-	cancelCh := make(chan struct{}, 1)
-	mgr.AddOrchestrator("agent", nil, nil, cancelCh, nil, &AgentState{})
+	mgr.AddOrchestrator("agent", &AgentState{})
 	sess := &Session{SessionID: sid, AgentID: "agent", DB: sdb}
 	ws := &Workspace{
 		RootPath:        project,

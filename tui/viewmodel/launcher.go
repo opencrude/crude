@@ -134,7 +134,7 @@ func (m *App) launcherNewSession() tea.Cmd {
 	}
 	result := m.NewSessionFromLauncher()
 	if result != nil {
-		m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
+		m.AddOrchestrator(result.OrchID)
 	}
 	if err := m.LastRegistryError(); err != nil && m.StatusBar != nil {
 		m.StatusBar.SetError("Session created but registry update failed: " + err.Error())
@@ -190,7 +190,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 		return nil
 	}
 	m.startLSPForWorkspace()
-	m.AddOrchestrator(result.OrchID, result.InputCh, result.BtwCh, result.CancelCh, result.BlockResolveCh)
+	m.AddOrchestrator(result.OrchID)
 	if err := m.LastRegistryError(); err != nil && m.StatusBar != nil {
 		m.StatusBar.SetError("Session resumed but registry update failed: " + err.Error())
 	}

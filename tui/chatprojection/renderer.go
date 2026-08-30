@@ -144,6 +144,16 @@ func (r *Renderer) setAutoScroll(v bool) {
 	}
 }
 
+// ScrollToTop initializes a newly hydrated review at its assignment. Live
+// projections retain their existing scroll state across minimize/restore.
+func (r *Renderer) ScrollToTop() {
+	r.setAutoScroll(false)
+	if scroll := r.authoritativeScroll(); scroll != nil {
+		scroll.ScrollTo(0)
+	}
+	r.vl.ScrollTo(0)
+}
+
 func (r *Renderer) syncScrollToVL() {
 	off := r.vl.ScrollY()
 	auto := true
@@ -740,12 +750,16 @@ func (r *Renderer) SetStreaming(s bool) {
 	if r.streaming == s {
 		return
 	}
-	if len(r.sync.Messages) > 0 {
-		last := r.sync.Messages[len(r.sync.Messages)-1]
-		if last.Role == types.RoleAssistant {
-			last.CachedLines = nil
-			r.vl.InvalidateItem(last.InternalID)
+	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
+		message := r.sync.Messages[i]
+		if message.PendingBtw {
+			continue
 		}
+		if message.Role == types.RoleAssistant {
+			message.CachedLines = nil
+			r.vl.InvalidateItem(message.InternalID)
+		}
+		break
 	}
 	r.streaming = s
 }
@@ -755,6 +769,14 @@ func (r *Renderer) EndStreamingCursor() {
 }
 
 func (r *Renderer) SetSpinFrame(f int) {
+	if ui.ActivityDot(r.spinFrame) != ui.ActivityDot(f) {
+		for _, message := range r.sync.Messages {
+			if message.PendingBtw {
+				message.CachedLines = nil
+				r.vl.InvalidateItem(message.InternalID)
+			}
+		}
+	}
 	r.spinFrame = f
 }
 
@@ -1000,12 +1022,15 @@ func (r *Renderer) prepareRender(width int) {
 }
 
 func (r *Renderer) streamingCursorOwnerID() string {
-	if len(r.sync.Messages) == 0 {
-		return ""
-	}
-	last := r.sync.Messages[len(r.sync.Messages)-1]
-	if r.isStreamingCursor(last) {
-		return last.InternalID
+	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
+		message := r.sync.Messages[i]
+		if message.PendingBtw {
+			continue
+		}
+		if r.isStreamingCursor(message) {
+			return message.InternalID
+		}
+		break
 	}
 	return ""
 }
@@ -1167,7 +1192,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 	suppressHeader := r.shouldSuppressHeader(msgIdx)
 	needsSpacer := r.needsLeadingSpacer(msgIdx)
 
-	if msg.CachedLines != nil && !isStreamingCursor {
+	if msg.CachedLines != nil && !isStreamingCursor && !msg.PendingBtw {
 		result := make([]string, 0, len(msg.CachedLines)+1)
 		native := make([]PaintLine, 0, len(msg.CachedLines)+1)
 		if needsSpacer {
@@ -1351,7 +1376,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	lines = append(lines, ml.lines...)
 	native = append(native, ml.native...)
 
-	if !isStreamingCursor && msg.Role != types.RoleStatus {
+	if !isStreamingCursor && msg.Role != types.RoleStatus && !msg.PendingBtw {
 		msg.CachedLines = make([]string, len(ml.lines))
 		copy(msg.CachedLines, ml.lines)
 		r.nativeCache[msg.InternalID] = append([]PaintLine(nil), ml.native...)
@@ -1364,7 +1389,20 @@ func (r *Renderer) isLastMessage(msg *types.ChatMessage) bool {
 	if len(r.sync.Messages) == 0 {
 		return false
 	}
-	return r.sync.Messages[len(r.sync.Messages)-1] == msg
+	if r.sync.Messages[len(r.sync.Messages)-1] == msg {
+		return true
+	}
+	if !r.streaming || msg.Role != types.RoleAssistant {
+		return false
+	}
+	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
+		candidate := r.sync.Messages[i]
+		if candidate.PendingBtw {
+			continue
+		}
+		return candidate == msg
+	}
+	return false
 }
 
 func messageParty(role string) string {
@@ -1373,6 +1411,8 @@ func messageParty(role string) string {
 		return "user"
 	case types.RoleAssistant, types.RoleThinking, types.RoleStatus:
 		return "agent"
+	case types.RoleAssignment:
+		return "assignment"
 	default:
 		return ""
 	}

@@ -18,5 +18,6 @@ func (m *App) syncWorkspaceStatusView() {
 		view.Usage.ContextWindow,
 		view.Usage.ContextUsed,
 		view.Usage.Estimated,
+		view.Usage.CostUpperBound,
 	)
 }

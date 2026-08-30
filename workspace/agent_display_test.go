@@ -25,7 +25,7 @@ func TestAgentDisplayLabelFallbackOrder(t *testing.T) {
 
 func TestAgentTabViewsNeverExposeRawIDAsDisplayTitle(t *testing.T) {
 	manager := NewAgentManager()
-	node := manager.AddOrchestrator("2026_orch_1", nil, nil, nil, nil, NewAgentState("2026_orch_1", nil, nil))
+	node := manager.AddOrchestrator("2026_orch_1", NewAgentState("2026_orch_1", nil, nil))
 	node.Category = "default"
 
 	views := (&Workspace{AgentMgr: manager}).AgentTabViews()

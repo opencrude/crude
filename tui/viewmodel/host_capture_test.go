@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/tui/chatprojection"
 	"crude/tui/editor"
 	"crude/tui/screens/shellchat"
@@ -110,12 +109,7 @@ func TestRootHostCapture_LauncherHiddenByAgent(t *testing.T) {
 	}
 
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
 
 	if app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher capture should cancel when agent replaces launcher")
@@ -143,8 +137,10 @@ func TestRootHostCapture_LauncherHiddenByMinSize(t *testing.T) {
 
 	// Shrink the terminal so the launcher chat area drops below the
 	// 3-row minimum (computeContentLayout derives ChatAreaHeight from
-	// real geometry every frame — manual overrides do not stick).
-	app.height = 7
+	// real geometry every frame — manual overrides do not stick). The
+	// launcher needs ChatAreaHeight >= 3, i.e. height >= top chrome +
+	// bottom chrome + 3.
+	app.height = app.chromeTopRow() + app.chromeBottomRows() + 2
 	app.paintShellFrame()
 	if app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher capture should cancel when min-size gate hides launcher")

@@ -9,20 +9,15 @@ import (
 	"path/filepath"
 	"time"
 
-	"crude/provider"
 	"crude/session"
 	ttypes "crude/types"
 )
 
-// NewSessionResult carries the orchestrator's channels after a new session
-// is created via the OnNewSession callback. Will be absorbed into workspace
-// methods in Phase 4.
+// NewSessionResult identifies the orchestrator created by a launcher action.
+// Turn input, blocking responses, BTW, and cancellation are routed through
+// generation-bound Workspace methods rather than cross-layer channels.
 type NewSessionResult struct {
-	OrchID         string
-	InputCh        chan<- provider.UserInput
-	BtwCh          chan<- provider.UserInput
-	CancelCh       chan<- struct{}
-	BlockResolveCh chan string
+	OrchID string
 }
 
 // Workspace is the project-scoped composition root — the IDE instance.
@@ -611,11 +606,7 @@ func (w *Workspace) NewSessionFromLauncher() *NewSessionResult {
 		return nil
 	}
 	return &NewSessionResult{
-		OrchID:         orch.ID,
-		InputCh:        orch.InputCh,
-		BtwCh:          orch.BtwCh,
-		CancelCh:       orch.CancelCh,
-		BlockResolveCh: orch.BlockResolveCh,
+		OrchID: orch.ID,
 	}
 }
 
@@ -634,11 +625,7 @@ func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResul
 		w.ActiveSession = existing
 		if node := w.AgentMgr.Get(existing.AgentID); node != nil {
 			return &NewSessionResult{
-				OrchID:         node.ID,
-				InputCh:        node.InputChan,
-				BtwCh:          node.BtwChan,
-				CancelCh:       node.CancelChan,
-				BlockResolveCh: node.BlockResolveCh,
+				OrchID: node.ID,
 			}
 		}
 	} else {
@@ -663,11 +650,7 @@ func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResul
 	w.Hydrate()
 
 	return &NewSessionResult{
-		OrchID:         orch.ID,
-		InputCh:        orch.InputCh,
-		BtwCh:          orch.BtwCh,
-		CancelCh:       orch.CancelCh,
-		BlockResolveCh: orch.BlockResolveCh,
+		OrchID: orch.ID,
 	}
 }
 

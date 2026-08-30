@@ -50,7 +50,22 @@ func TestConversationToolLifecycle(t *testing.T) {
 		t.Fatalf("message count = %d, want 1", len(messages))
 	}
 	message := messages[0]
-	if message.ToolStatus != "success" || message.Content != "contents" || message.PermTag != "allowed" {
+	if message.ToolPreviewPhase != "preparing" || message.ToolStatus == "success" {
+		t.Fatalf("atomic tool skipped preparing: %#v", message)
+	}
+	firstTick := time.Now().Add(time.Second)
+	if !conversation.AdvanceToolLifecycles(firstTick) {
+		t.Fatal("tool did not advance to doing")
+	}
+	message = conversation.Messages()[0]
+	if message.ToolPreviewPhase != "streaming" || message.ToolStatus == "success" {
+		t.Fatalf("atomic tool skipped doing: %#v", message)
+	}
+	if !conversation.AdvanceToolLifecycles(firstTick.Add(time.Second)) {
+		t.Fatal("tool did not advance to done")
+	}
+	message = conversation.Messages()[0]
+	if message.ToolStatus != "success" || message.ToolPreviewPhase != "done" || message.Content != "contents" || message.PermTag != "allowed" {
 		t.Fatalf("unexpected tool message: %#v", message)
 	}
 }
@@ -102,6 +117,60 @@ func TestTurnStatusStaysLastAcrossBTWAndTransformsInPlace(t *testing.T) {
 	messages = conversation.Messages()
 	if len(messages) != 3 || messages[2].Role != MessageRoleTool || messages[2].InternalID != statusID || messages[2].ToolID != "tool-1" {
 		t.Fatalf("status did not transform in place after BTW: %#v", messages)
+	}
+}
+
+func TestPendingBtwResolutionPreservesOnlyConsumedCanonicalMessages(t *testing.T) {
+	conversation := NewConversation()
+	consumed := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "keep me"})
+	cancelled := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "remove me"})
+	if !conversation.ConsumePendingBtw(consumed) {
+		t.Fatal("consumed BTW was not resolved")
+	}
+	if removed := conversation.RemovePendingBtwIDs([]string{cancelled}); removed != 1 {
+		t.Fatalf("removed=%d, want 1", removed)
+	}
+	messages := conversation.Messages()
+	if len(messages) != 1 || messages[0].Content != "keep me" || messages[0].PendingBtw {
+		t.Fatalf("canonical messages=%#v", messages)
+	}
+}
+
+func TestPendingBtwStaysAfterProviderOutputUntilAcknowledged(t *testing.T) {
+	conversation := NewConversation()
+	conversation.UpdateTurnStatus(TurnStatus{Phase: "waiting_provider"})
+	pendingID := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "include tests"})
+	conversation.UpdateToolStreaming("tool-1", "internal-1", "write_file", map[string]any{
+		"target": "main.go", "content_lines_int": 3,
+	})
+
+	messages := conversation.Messages()
+	if len(messages) != 2 || messages[0].Role != MessageRoleTool || !messages[1].PendingBtw || messages[1].InternalID != pendingID {
+		t.Fatalf("pending BTW was not pinned after live output: %#v", messages)
+	}
+	if !conversation.ConsumePendingBtw(pendingID) {
+		t.Fatal("pending BTW acknowledgement was rejected")
+	}
+	conversation.AppendMessage(Message{Role: MessageRoleAssistant, Content: "now I saw it"})
+	messages = conversation.Messages()
+	if len(messages) != 3 || messages[1].InternalID != pendingID || messages[1].PendingBtw || messages[2].Role != MessageRoleAssistant {
+		t.Fatalf("acknowledged BTW did not rejoin chronology: %#v", messages)
+	}
+}
+
+func TestAttachSubPanePromotesExistingSubAgentToolWithoutDuplicate(t *testing.T) {
+	conversation := NewConversation()
+	conversation.UpdateToolCall("tool-1", "internal-1", "run_sub_agent", "category: researcher description: survey")
+	if !conversation.AttachSubPaneToLatestTool("run_sub_agent", "child-1") {
+		t.Fatal("active sub-agent tool row was not promoted")
+	}
+	conversation.UpdateToolResult("tool-1", "internal-1", "run_sub_agent", "completed", false, 0, 0, 0)
+	now := time.Now().Add(time.Second)
+	conversation.AdvanceToolLifecycles(now)
+	conversation.AdvanceToolLifecycles(now.Add(time.Second))
+	messages := conversation.Messages()
+	if len(messages) != 1 || messages[0].SubPaneID != "child-1" || messages[0].ToolStatus == "calling" {
+		t.Fatalf("promoted sub-agent lifecycle = %+v", messages)
 	}
 }
 

@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
+	ttypes "crude/types"
 )
 
 func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
@@ -67,16 +67,43 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 		}
 	}()
 
+	var pendingWakes []WakeEvent
+	queueWake := func(wake WakeEvent) bool {
+		if wake.Type == WakeShutdown {
+			l.Info("SLEEP", "wake_shutdown")
+			return false
+		}
+		if wake.Type != WakeSubAgentDone {
+			return true
+		}
+		if s.isHardCancelled() {
+			l.Info("SLEEP", "wake_suppressed_hard_cancel", "source", wake.SourceID)
+			return true
+		}
+		if s.IsAndClearReportConsumed(wake.SourceID) {
+			l.Info("SLEEP", "wake_suppressed_already_consumed", "source", wake.SourceID)
+			return true
+		}
+		l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
+		pendingWakes = append(pendingWakes, wake)
+		return true
+	}
+
 	for {
+		if len(pendingWakes) > 0 && !o.TurnActive() {
+			wakeInput := provider.PlainInput(formatSubAgentWakeBatch(pendingWakes))
+			if o.SubmitInput(wakeInput) {
+				pendingWakes = pendingWakes[:0]
+				request := <-o.inputCh
+				s.processTurnOrchestrator(request, o, sender, l)
+				continue
+			}
+		}
 		select {
 		case <-o.stopCh:
 			l.Info("SESSION", "run_exit_closed", "orchestrator_id", o.ID)
 			return
-		case userInput, ok := <-o.InputCh:
-			if !ok {
-				l.Info("SESSION", "run_exit_input_closed", "orchestrator_id", o.ID)
-				return
-			}
+		case request := <-o.inputCh:
 			if o.closing.Load() {
 				l.Info("SESSION", "run_exit_closing", "orchestrator_id", o.ID)
 				return
@@ -85,54 +112,60 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 				s.clearHardCancel()
 				s.drainWakeCh()
 			}
-			s.processTurnOrchestrator(userInput, o, sender, l)
+			s.processTurnOrchestrator(request, o, sender, l)
 
 		case wake := <-s.wakeCh:
 			if o.closing.Load() {
 				return
 			}
-			if s.isHardCancelled() {
-				l.Info("SLEEP", "wake_suppressed_hard_cancel", "source", wake.SourceID)
-				continue
-			}
-			switch wake.Type {
-			case WakeSubAgentDone:
-				l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
-
-				if s.IsAndClearReportConsumed(wake.SourceID) {
-					l.Info("SLEEP", "wake_suppressed_already_consumed", "source", wake.SourceID)
-					continue
-				}
-
-				summary := ""
-				reportPath := ""
-				if result, ok := wake.Data.(agent.SubAgentResult); ok {
-					summary = result.SummaryGist
-					reportPath = result.ResultPath
-				}
-				wakeText := fmt.Sprintf("[System notification: Sub-agent '%s' completed. %s]", wake.SourceID, summary)
-				if reportPath != "" {
-					wakeText += fmt.Sprintf("\nReport available at: %s", reportPath)
-				}
-				s.processTurnOrchestrator(provider.PlainInput(wakeText), o, sender, l)
-
-			case WakeShutdown:
-				l.Info("SLEEP", "wake_shutdown")
+			if !queueWake(wake) {
 				return
 			}
+			for {
+				select {
+				case wake = <-s.wakeCh:
+					if !queueWake(wake) {
+						return
+					}
+				default:
+					goto wakesDrained
+				}
+			}
+		wakesDrained:
 		}
 	}
 }
 
-func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orchestrator, sender EventSender, l *logger.Logger) {
-	cancelCh := o.CancelCh
-
-	// Drain any pending cancel signal
-	select {
-	case <-cancelCh:
-		l.Debug("CANCEL", "cancel_drained", "iteration", "start_of_loop")
-	default:
+func formatSubAgentWakeBatch(wakes []WakeEvent) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[System notification: %d sub-agent result(s) are ready.]", len(wakes))
+	for _, wake := range wakes {
+		b.WriteString("\n\n")
+		if result, ok := wake.Data.(agent.SubAgentResult); ok {
+			b.WriteString(formatSubAgentResult(result))
+			continue
+		}
+		fmt.Fprintf(&b, "Sub-agent %q reached a terminal state, but its structured result was unavailable.", wake.SourceID)
 	}
+	b.WriteString("\n\nReview every status above. A cancelled or failed sub-agent is not a completed result; retry or continue explicitly as appropriate.")
+	return b.String()
+}
+
+func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, sender EventSender, l *logger.Logger) {
+	userInput := request.input
+	ctx := request.ctx
+	turnGeneration := request.generation
+	turnFinished := false
+	finishTurn := func() {
+		if turnFinished {
+			return
+		}
+		turnFinished = true
+		if cleared := o.endTurn(turnGeneration); len(cleared) > 0 {
+			sender.SendAgentEventWithID("btw_cleared", map[string]any{"internal_ids": cleared}, o.ID)
+		}
+	}
+	defer finishTurn()
 
 	// Use per-orchestrator effective config from runtime profile.
 	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
@@ -146,18 +179,6 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 		return
 	}
 
-	s.blockMu.Lock()
-	isBlocked := s.pendingBlock
-	s.pendingBlock = false
-	s.blockMu.Unlock()
-	if isBlocked {
-		l.Debug("BLOCK", "block_resolve", "text_len", len(userInput.Text))
-		s.blockRespMu.Lock()
-		s.lastBlockResp = userInput.Text
-		s.blockRespMu.Unlock()
-		o.BlockResolveCh <- userInput.Text
-		return
-	}
 	s.turnGate.RLock()
 	defer s.turnGate.RUnlock()
 	s.activeTurns.Add(1)
@@ -171,7 +192,7 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	s.msgCounter++
 	currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
 	s.msgCounterMu.Unlock()
-	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "is_blocked", isBlocked, "turn", s.turnNumber)
+	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "turn", s.turnNumber)
 
 	userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
 
@@ -207,19 +228,20 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	}
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled())
 	if o.subAgentSup != nil {
+		o.subAgentSup.SetParentTurnGeneration(turnGeneration)
 		o.subAgentSup.SetParentToolFn(ag.ToolFn)
 		ag.SubAgentMgr = o.subAgentSup.Manager()
 	}
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
-	ctx, cancel := context.WithCancel(context.Background())
-	prompt := agent.BuildSystemPrompt(effectiveCfg.IsMultiAgentEnabled())
+	prompt := s.systemPrompt(effectiveCfg.IsMultiAgentEnabled())
+	var requestContextParts []string
 	if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
-		prompt += "\n\n" + memoryContext
+		requestContextParts = append(requestContextParts, memoryContext)
 	}
 	if s.prevContextInjected.CompareAndSwap(false, true) {
 		if prevContext := s.previousSessionContext(ctx); prevContext != "" {
-			prompt += "\n\n" + prevContext
+			requestContextParts = append(requestContextParts, prevContext)
 		}
 	}
 
@@ -228,49 +250,31 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	}
 
 	ag.Ctx = ctx
-	go func() {
-		select {
-		case <-cancelCh:
-			l.Debug("CANCEL", "ctx_cancelled", "msg_id", currentMsgID)
-			cancel()
-			if o.subAgentSup != nil {
-				cancelled := o.subAgentSup.CancelAllActive()
-				if len(cancelled) > 0 {
-					l.Info("CANCEL", "sub_agents_cancelled", "count", len(cancelled))
-				}
-			}
-		case <-o.stopCh:
-			l.Debug("CANCEL", "ctx_closed", "msg_id", currentMsgID)
-			cancel()
-			if o.subAgentSup != nil {
-				o.subAgentSup.CancelAllActive()
-			}
-		case <-ctx.Done():
-		}
-	}()
 	activeCfg = effectiveCfg.GetActiveDefaultCategory()
 
-	btwMsgCh := make(chan provider.ChatMessage, 8)
+	btwMsgCh := make(chan agent.BtwMessage, 8)
+	btwForwardDone := make(chan struct{})
 	go func() {
+		defer close(btwForwardDone)
+		defer close(btwMsgCh)
 		for {
 			select {
 			case <-o.stopCh:
-				close(btwMsgCh)
 				return
-			case btwInput, ok := <-o.BtwCh:
-				if !ok {
-					close(btwMsgCh)
-					return
-				}
+			case btwInput := <-o.btwCh:
 				btwMsg := s.buildBtwMessage(btwInput, activeCfg.Model)
+				internalID := btwMsg.InternalID
 				select {
-				case btwMsgCh <- btwMsg:
+				case btwMsgCh <- agent.BtwMessage{
+					Message: btwMsg,
+					Accept: func() bool {
+						return o.consumeBtw(internalID)
+					},
+				}:
 				case <-ctx.Done():
-					close(btwMsgCh)
 					return
 				}
 			case <-ctx.Done():
-				close(btwMsgCh)
 				return
 			}
 		}
@@ -320,11 +324,12 @@ func (s *Session) processTurnOrchestrator(userInput provider.UserInput, o *Orche
 	if len(contextMsgs) < len(msgsCopy) {
 		l.Info("COMPACT", "context_projection", "history", len(msgsCopy), "projected", len(contextMsgs), "window", ctxWindow)
 	}
+	contextMsgs = injectRequestContext(contextMsgs, strings.Join(requestContextParts, "\n\n"))
 	agentMsgs := ag.Run(ctx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sm, s.sessionID, btwMsgCh)
+	finishTurn()
+	<-btwForwardDone
 	emitActive.Store(false)
 	s.toolCallSeq = ag.ToolCallSeq()
-
-	cancel()
 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
 	s.finalizeTurn(agentMsgs, len(contextMsgs), displayTracker, finalContent, currentMsgID)
@@ -338,7 +343,7 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 		target := data["target"]
 		if s.permStore.IsAlwaysAllowed(op, tool, target) {
 			s.logger.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
-			o.BlockResolveCh <- "allow"
+			o.ResolveBlock(ttypes.BlockResponse{RequestID: data["block_id"], Outcome: ttypes.BlockAnswered, Value: "allow"})
 			agentID := evt.AgentID
 			if agentID == "" {
 				agentID = o.ID
@@ -357,7 +362,7 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 				sr := &safety.CommandSafetyResult{Risk: r, BaseCommand: data["tool"]}
 				if s.permStore.IsCommandAllowed(sr) {
 					s.logger.Debug("PERM", "command_auto_allowed", "risk", riskStr, "tool", data["tool"])
-					o.BlockResolveCh <- "always"
+					o.ResolveBlock(ttypes.BlockResponse{RequestID: data["block_id"], Outcome: ttypes.BlockAnswered, Value: "always"})
 					agentID := evt.AgentID
 					if agentID == "" {
 						agentID = o.ID
@@ -370,9 +375,6 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 		}
 	}
 	s.logger.Info("BLOCK", "prompt", "operation", data["operation"], "tool", data["tool"], "target", data["target"], "question", data["question"])
-	s.blockMu.Lock()
-	s.pendingBlock = true
-	s.blockMu.Unlock()
 	agentID := evt.AgentID
 	if agentID == "" {
 		agentID = o.ID
@@ -517,22 +519,6 @@ func (s *Session) finalizeTurn(
 	finalContent string,
 	msgID string,
 ) {
-	s.blockMu.Lock()
-	wasPending := s.pendingBlock
-	s.pendingBlock = false
-	s.blockMu.Unlock()
-	if wasPending {
-		s.logger.Debug("BLOCK", "pending_cleared", "msg_id", msgID)
-	}
-
-	s.blockRespMu.Lock()
-	if s.lastBlockResp != "" && finalContent == "" {
-		finalContent = s.lastBlockResp
-		s.logger.Debug("BLOCK", "block_resp_used", "len", len(s.lastBlockResp))
-	}
-	s.lastBlockResp = ""
-	s.blockRespMu.Unlock()
-
 	s.msgsMu.Lock()
 	var returned []provider.ChatMessage
 	for _, m := range agentMsgs {
@@ -558,11 +544,7 @@ func (s *Session) finalizeTurn(
 		switch m.Role {
 		case "tool":
 			dm = tracker.get(m.ToolCallID)
-			if m.ToolError && strings.Contains(strings.ToLower(m.ContentString()), "cancelled") {
-				dm.ToolStatus = "cancelled"
-			} else if m.ToolError && dm.ToolStatus == "" {
-				dm.ToolStatus = "cancelled"
-			}
+			dm.ToolStatus = persistedToolStatus(m, dm.ToolStatus)
 		case "assistant":
 			dm.DisplayRole = "assistant"
 			if m.ReasoningContent != "" || m.Reasoning != "" {
@@ -571,6 +553,8 @@ func (s *Session) finalizeTurn(
 			}
 		case "user":
 			dm.DisplayRole = "user"
+			dm.DisplayContent = m.DisplayContent
+			dm.ReferenceLabels = append([]string(nil), m.ReferenceLabels...)
 		}
 		additionMetas = append(additionMetas, dm)
 	}
@@ -604,6 +588,19 @@ func (s *Session) finalizeTurn(
 	if finalContent != "" {
 		s.logger.Info("CONV", "assistant_msg", "msg_id", msgID, "len", len(finalContent))
 	}
+}
+
+func persistedToolStatus(message provider.ChatMessage, current string) string {
+	if !message.ToolError {
+		return current
+	}
+	if strings.Contains(strings.ToLower(message.ContentString()), "cancelled") {
+		return "cancelled"
+	}
+	if current == "" {
+		return "error"
+	}
+	return current
 }
 
 // messagesForTurnLocked snapshots this turn's messages. Caller holds msgsMu.
@@ -782,16 +779,23 @@ const btwUrgentPrefix = "[USER INTERRUPTION — READ THIS NOW]\nThe user interru
 // It resolves any reference IDs via buildUserMessage and prepends the urgent
 // interruption prefix so the LLM prioritises the message.
 func (s *Session) buildBtwMessage(input provider.UserInput, model string) provider.ChatMessage {
-	msg := s.buildUserMessage(input, model)
+	msg, referenceLabels := s.buildUserMessageWithDisplay(input, model)
 	if msg.Content.IsText() {
 		return provider.ChatMessage{
-			Role:    "user",
-			Content: provider.TextContent(btwUrgentPrefix + msg.Content.String()),
+			InternalID:      input.InternalID,
+			DisplayContent:  input.Text,
+			ReferenceLabels: referenceLabels,
+			Role:            "user",
+			Content:         provider.TextContent(btwUrgentPrefix + msg.Content.String()),
 		}
 	}
 	// Multipart: insert the urgent prefix as a text part at the beginning
 	prefixPart := provider.ContentPart{Type: "text", Text: btwUrgentPrefix}
 	parts := []provider.ContentPart{prefixPart}
 	parts = append(parts, msg.Content.Parts()...)
-	return provider.NewMultiPartMessage("user", parts)
+	result := provider.NewMultiPartMessage("user", parts)
+	result.InternalID = input.InternalID
+	result.DisplayContent = input.Text
+	result.ReferenceLabels = referenceLabels
+	return result
 }

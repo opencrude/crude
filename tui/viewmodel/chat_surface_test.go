@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
 	"crude/tui/screens/shellchat"
 	ttypes "crude/tui/types"
 )
@@ -15,12 +14,8 @@ func TestComputeContentLayout_AgentChatReservesPlaceholders(t *testing.T) {
 	app.width = 80
 	app.height = 24
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
+
 	app.appendActiveMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleAssistant,
 		Content: "UNIQUE_CHAT_MARKER_xyz",
@@ -45,12 +40,8 @@ func TestRenderShell_PaintsNonEmptyMessages(t *testing.T) {
 	app.height = 24
 
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
+
 	app.appendActiveMessage(ttypes.ChatMessage{
 		Role:    ttypes.RoleAssistant,
 		Content: "surface paint hello",

@@ -11,7 +11,7 @@ func TestOpenSessionPickerAllowedWhileAgentActive(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
 	streaming := &workspace.AgentState{Streaming: true}
-	app.AgentMgr.AddOrchestrator("busy", nil, nil, nil, nil, streaming)
+	app.AgentMgr.AddOrchestrator("busy", streaming)
 	if !app.anyActive() {
 		t.Fatal("precondition: anyActive should be true while streaming")
 	}

@@ -3,6 +3,7 @@ package workspace
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSummarizeToolArgsUsesCanonicalJSONOperands(t *testing.T) {
@@ -11,6 +12,45 @@ func TestSummarizeToolArgsUsesCanonicalJSONOperands(t *testing.T) {
 	}
 	if got := SummarizeToolArgs("grep_files", `{"pattern":"func (f *FilterField) type FilterField","path":"tui/ui"}`); !strings.Contains(got, `"func (f *FilterField)`) || !strings.Contains(got, "in tui/ui") {
 		t.Fatalf("grep summary = %q", got)
+	}
+}
+
+func TestThinkingBlockFinalizesWhenToolActionStarts(t *testing.T) {
+	state := NewAgentState("agent", nil, nil)
+	handle := func(event AgentEvent) {
+		state.HandleEvent(event, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	}
+	handle(AgentEvent{Type: "thinking", Data: "brief thought"})
+	time.Sleep(time.Millisecond)
+	handle(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
+		"internal_id": "internal-1", "tool_id": "tool-1", "name": "read_file", "path": "main.go",
+	}})
+
+	messages := state.Messages.Messages()
+	if len(messages) != 2 || messages[0].Role != MessageRoleThinking || messages[0].ThinkingActive {
+		t.Fatalf("thinking-to-tool transition=%#v", messages)
+	}
+	if messages[0].ThinkingDuration <= 0 {
+		t.Fatalf("finalized thinking duration=%s, want positive", messages[0].ThinkingDuration)
+	}
+	if messages[1].Role != MessageRoleTool {
+		t.Fatalf("next action=%#v, want tool", messages[1])
+	}
+}
+
+func TestCancellingAgentIgnoresQueuedNonTerminalEvents(t *testing.T) {
+	state := NewAgentState("agent", nil, nil)
+	state.SubmitInput("start")
+	state.HandleEvent(AgentEvent{Type: "thinking", Data: "before cancel"}, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	state.BeginCancellation()
+	if state.IsActive() {
+		t.Fatal("cancellation left the visual turn active")
+	}
+	before := state.Messages.Messages()
+	state.HandleEvent(AgentEvent{Type: "thinking", Data: " stale"}, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	after := state.Messages.Messages()
+	if len(after) != len(before) || after[0].Content != before[0].Content {
+		t.Fatalf("queued event mutated cancelling state: before=%#v after=%#v", before, after)
 	}
 }
 

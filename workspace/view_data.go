@@ -109,11 +109,11 @@ func (w *Workspace) StatusView() StatusView {
 	view.CurrentAgentID = w.AgentMgr.ActiveID()
 	view.ModelName = w.ModelName
 	view.Username = w.Username
-	view.AgentCount = w.AgentMgr.Count()
 	for _, node := range w.AgentMgr.AllNodes() {
-		if node == nil || node.State == nil {
+		if node == nil || node.State == nil || node.State.Completed {
 			continue
 		}
+		view.AgentCount++
 		if node.State.IsActive() {
 			view.ActiveAgents++
 		}

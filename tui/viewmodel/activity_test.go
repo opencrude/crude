@@ -73,7 +73,7 @@ func TestActivityBarClickSelectsView(t *testing.T) {
 	app.paintShellFrame()
 
 	res := app.rootHost.Handle(tea.MouseClickMsg{
-		X: 1, Y: sidebarTopRow + activitybar.RowStride, Button: tea.MouseLeft,
+		X: 1, Y: app.shellTopRow() + activitybar.RowStride, Button: tea.MouseLeft,
 	})
 	if res.Action == nil || res.Action.ID != activitybar.ActionSelect {
 		t.Fatalf("action=%v want %s", res.Action, activitybar.ActionSelect)
@@ -110,7 +110,7 @@ func TestTerminalOverlayIDsAreDynamicKeepRoute(t *testing.T) {
 
 func TestAgentSidebarProjectsAgentForest(t *testing.T) {
 	app := newFullTestApp(t)
-	root := app.AgentMgr.AddOrchestrator("root", nil, nil, nil, nil, workspace.NewAgentState("root", nil, nil))
+	root := app.AgentMgr.AddOrchestrator("root", workspace.NewAgentState("root", nil, nil))
 	root.Category = "default"
 	app.AgentMgr.AddSubAgent("child-a", "root", "Research", "model-a", "researcher", workspace.NewAgentState("child-a", nil, nil))
 	app.AgentMgr.AddSubAgent("child-b", "root", "Build", "model-b", "crafter", workspace.NewAgentState("child-b", nil, nil))
@@ -133,6 +133,21 @@ func TestAgentSidebarProjectsAgentForest(t *testing.T) {
 	}
 }
 
+func TestAgentsPanelGetsReadableWidthWithoutChangingFileTreeWidth(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width = 120
+	app.Tree = NewTreeState(filetree.NewFileTreeModel(t.TempDir()), 30)
+	app.Tree.Visible = true
+	app.sidebarScreen.SetModel(app.Tree.Model)
+	app.activityView = activityFiles
+	fileWidth := app.sidebarPanelWidth()
+	app.activityView = activityAgents
+	agentWidth := app.sidebarPanelWidth()
+	if fileWidth != 30 || agentWidth < agentsPanelMinWidth || app.Tree.Width != 30 {
+		t.Fatalf("file=%d agents=%d stored=%d", fileWidth, agentWidth, app.Tree.Width)
+	}
+}
+
 // Clicking the icon of the view already on screen collapses the sidebar, and
 // clicking again brings it back — for every destination, through the real
 // mouse path rather than by calling toggleActivity directly.
@@ -152,7 +167,7 @@ func TestRailClickTogglesSidebarForEveryView(t *testing.T) {
 			railY := func(v activitybar.View) int {
 				for i, candidate := range activitybar.Views() {
 					if candidate == v {
-						return sidebarTopRow + i*activitybar.RowStride
+						return app.shellTopRow() + i*activitybar.RowStride
 					}
 				}
 				t.Fatalf("unknown view %v", v)

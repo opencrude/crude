@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -125,16 +124,11 @@ func TestReferenceLabelsSnapshotActiveAttachments(t *testing.T) {
 
 func TestSubmitInputCarriesReferenceLabelsIntoLiveConversation(t *testing.T) {
 	app, ref := newAttachmentTestApp(t)
-	app.AddOrchestrator(
-		"attachment-agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
-	_ = app.submitInput("attachment-agent", ref.DisplayName()+" review this", []string{ref.ID})
+	agentID := addBackendTestOrchestrator(t, app)
 
-	node := app.AgentMgr.Get("attachment-agent")
+	_ = app.submitInput(agentID, ref.DisplayName()+" review this", []string{ref.ID})
+
+	node := app.AgentMgr.Get(agentID)
 	if node == nil || node.State == nil {
 		t.Fatal("attachment agent missing")
 	}

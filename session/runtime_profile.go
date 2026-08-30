@@ -232,9 +232,6 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	if override.Policy != "" {
 		merged.Policy = override.Policy
 	}
-	if override.MaxSteps > 0 {
-		merged.MaxSteps = override.MaxSteps
-	}
 	if override.Description != "" {
 		merged.Description = override.Description
 	}

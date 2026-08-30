@@ -1,11 +1,13 @@
 package workspace
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"crude/session"
 	"crude/sessiondb"
 	ttypes "crude/types"
 )
@@ -422,5 +424,52 @@ func TestNewWorkspaceRunsBackfill(t *testing.T) {
 	listed := ws.ListSessions()
 	if len(listed) != 1 || listed[0].ID != sid {
 		t.Fatalf("ListSessions after NewWorkspace: %+v", listed)
+	}
+}
+
+func TestBackfillRemovesLegacyChildFromRootSessionRegistry(t *testing.T) {
+	setTestHome(t)
+	project := t.TempDir()
+	wdb, err := OpenWorkspaceDB(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = wdb.Close() })
+	legacyRoot, err := session.SessionsRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childPath := filepath.Join(legacyRoot, "legacy-child.db")
+	childDB, err := sessiondb.OpenAndMigrate(childPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.Create(childDB, sessiondb.SessionMeta{
+		ID: "legacy-child", ProjectPath: project, ProjectName: filepath.Base(project),
+		CreatedAt: time.Now().UnixNano(), ParentSessionID: sql.NullString{String: "parent", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := childDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := wdb.RegisterSession("legacy-child", project, filepath.Base(project), "model", "provider"); err != nil {
+		t.Fatal(err)
+	}
+	ws := &Workspace{RootPath: project, WorkspaceDir: filepath.Dir(wdb.Path), WorkspaceDB: wdb, Logger: nopLogger{}}
+	ws.BackfillSessionRegistry()
+
+	var count int
+	if err := wdb.DB.QueryRow(`SELECT COUNT(*) FROM workspace_sessions WHERE session_id = 'legacy-child'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("legacy child remained listable as a root session")
+	}
+	if _, err := os.Stat(childPath); err != nil {
+		t.Fatalf("child transcript was deleted instead of retained for parent hydration: %v", err)
 	}
 }

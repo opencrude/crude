@@ -1,9 +1,5 @@
 package workspace
 
-import (
-	"crude/provider"
-)
-
 // AgentNode is one node in the agent tree. An orchestrator is a root node
 // with children (sub-agents). A sub-agent has a non-nil Parent pointing to
 // its orchestrator. All per-agent state lives here — no parallel maps.
@@ -20,11 +16,6 @@ type AgentNode struct {
 	// surfaced tab is gone. Restore it from the Agents panel or the
 	// sessions picker.
 	Hidden bool
-
-	InputChan      chan<- provider.UserInput
-	BtwChan        chan<- provider.UserInput
-	CancelChan     chan<- struct{}
-	BlockResolveCh chan string
 }
 
 // IsOrchestrator returns true for root nodes (Parent == nil).
@@ -61,18 +52,11 @@ func NewAgentManager() *AgentManager {
 // AddOrchestrator creates a root node and registers it.
 func (m *AgentManager) AddOrchestrator(
 	id string,
-	inputCh, btwCh chan<- provider.UserInput,
-	cancelCh chan<- struct{},
-	blockResolveCh chan string,
 	state *AgentState,
 ) *AgentNode {
 	node := &AgentNode{
-		ID:             id,
-		State:          state,
-		InputChan:      inputCh,
-		BtwChan:        btwCh,
-		CancelChan:     cancelCh,
-		BlockResolveCh: blockResolveCh,
+		ID:    id,
+		State: state,
 	}
 	if existing := m.byID[id]; existing != nil {
 		m.Remove(id)
@@ -298,7 +282,7 @@ func (m *AgentManager) HiddenOrchestrators() []*AgentNode {
 func (m *AgentManager) TabOrder() []string {
 	var out []string
 	for _, child := range m.SubAgents() {
-		if !child.IsCompleted() && !child.Hidden {
+		if !child.Hidden {
 			out = append(out, child.ID)
 		}
 	}

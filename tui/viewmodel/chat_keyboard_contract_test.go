@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/tui/chatprojection"
 	"crude/tui/editor"
 	"crude/tui/screens/shellchat"
@@ -49,12 +48,8 @@ func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.Mess
 	app.shell.SetScreen(shellChatSlot, screen)
 
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
+
 	node := app.AgentMgr.Get("agent")
 	node.State.Completed = false
 	node.State.Streaming = false

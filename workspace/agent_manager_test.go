@@ -4,9 +4,9 @@ import "testing"
 
 func TestAgentManagerPreservesMultipleOrchestrators(t *testing.T) {
 	mgr := NewAgentManager()
-	first := mgr.AddOrchestrator("first", nil, nil, nil, nil, &AgentState{})
+	first := mgr.AddOrchestrator("first", &AgentState{})
 	mgr.AddSubAgent("first-child", first.ID, "child", "model", "category", &AgentState{})
-	second := mgr.AddOrchestrator("second", nil, nil, nil, nil, &AgentState{})
+	second := mgr.AddOrchestrator("second", &AgentState{})
 
 	if got := mgr.Count(); got != 3 {
 		t.Fatalf("Count() = %d, want 3", got)
@@ -24,9 +24,9 @@ func TestAgentManagerPreservesMultipleOrchestrators(t *testing.T) {
 
 func TestAgentManagerRemoveTreePreservesOtherOrchestrators(t *testing.T) {
 	mgr := NewAgentManager()
-	mgr.AddOrchestrator("first", nil, nil, nil, nil, &AgentState{})
+	mgr.AddOrchestrator("first", &AgentState{})
 	mgr.AddSubAgent("first-child", "first", "child", "model", "category", &AgentState{})
-	mgr.AddOrchestrator("second", nil, nil, nil, nil, &AgentState{})
+	mgr.AddOrchestrator("second", &AgentState{})
 	mgr.SetActive("first-child")
 
 	mgr.Remove("first")

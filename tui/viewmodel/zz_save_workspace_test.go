@@ -13,6 +13,9 @@ import (
 // action writes the current agent settings into the workspace overrides so
 // future agents inherit them.
 func TestSaveAsWorkspacePromotesAgentSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	app := newTestApp(t)
 	app.Logger = noopLogger{}
 	wdb, err := workspace.OpenWorkspaceDB(t.TempDir())

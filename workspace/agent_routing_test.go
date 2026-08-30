@@ -2,57 +2,30 @@ package workspace
 
 import "testing"
 
-func TestResolveAgentBlockRoutesThroughOwningOrchestrator(t *testing.T) {
+func TestResolveAgentBlockRejectsMissingBackendOwner(t *testing.T) {
 	mgr := NewAgentManager()
-	firstBlock := make(chan string, 2)
-	secondBlock := make(chan string, 1)
-	mgr.AddOrchestrator("first", nil, nil, nil, firstBlock, &AgentState{})
+	mgr.AddOrchestrator("first", &AgentState{})
 	mgr.AddSubAgent("child", "first", "child", "model", "category", &AgentState{})
-	mgr.AddOrchestrator("second", nil, nil, nil, secondBlock, &AgentState{})
 	ws := &Workspace{AgentMgr: mgr}
 
-	if !ws.ResolveConfirmation("child", "always") {
-		t.Fatal("ResolveConfirmation() did not route the sub-agent response")
-	}
-	if got := <-firstBlock; got != "always" {
-		t.Fatalf("first orchestrator response = %q, want always", got)
-	}
-
-	answers := map[string]string{"1": "Go", "2": "SQLite"}
-	questions := map[string]string{"1": "Language?", "2": "Database?"}
-	if !ws.ResolveQuestion("child", answers, questions, false) {
-		t.Fatal("ResolveQuestion() did not route the sub-agent response")
-	}
-	const want = "Q1: Language?\nA1: Go\n\nQ2: Database?\nA2: SQLite"
-	if got := <-firstBlock; got != want {
-		t.Fatalf("question response = %q, want %q", got, want)
-	}
-	select {
-	case got := <-secondBlock:
-		t.Fatalf("response was sent to unrelated orchestrator: %q", got)
-	default:
+	if ws.ResolveConfirmation("child", "block-1", "always") {
+		t.Fatal("response was accepted without an owning backend session")
 	}
 }
 
-func TestResolveAgentBlockReplacesStaleBufferedResponse(t *testing.T) {
+func TestResolveAgentBlockRejectsMissingRequestID(t *testing.T) {
 	mgr := NewAgentManager()
-	block := make(chan string, 1)
-	block <- "stale"
-	mgr.AddOrchestrator("root", nil, nil, nil, block, &AgentState{})
+	mgr.AddOrchestrator("root", &AgentState{})
 	ws := &Workspace{AgentMgr: mgr}
 
-	if !ws.ResolveConfirmation("root", "allow") {
-		t.Fatal("latest response was rejected")
-	}
-	if got := <-block; got != "allow" {
-		t.Fatalf("buffered response = %q, want latest answer", got)
+	if ws.ResolveConfirmation("root", "", "allow") {
+		t.Fatal("response without request ID was accepted")
 	}
 }
 
-func TestCloseAgentCancelsBeforeRemovingSessionOwnership(t *testing.T) {
+func TestCloseAgentRemovesSessionOwnership(t *testing.T) {
 	mgr := NewAgentManager()
-	cancelCh := make(chan struct{}, 1)
-	mgr.AddOrchestrator("agent", nil, nil, cancelCh, nil, &AgentState{})
+	mgr.AddOrchestrator("agent", &AgentState{})
 	sess := &Session{AgentID: "agent"}
 	ws := &Workspace{
 		AgentMgr:        mgr,
@@ -62,11 +35,6 @@ func TestCloseAgentCancelsBeforeRemovingSessionOwnership(t *testing.T) {
 
 	ws.CloseAgent("agent")
 
-	select {
-	case <-cancelCh:
-	default:
-		t.Fatal("CloseAgent() did not cancel the orchestrator")
-	}
 	if _, ok := ws.SessionsByAgent["agent"]; ok {
 		t.Fatal("CloseAgent() retained stale session ownership")
 	}
@@ -79,8 +47,7 @@ func TestCloseAgentPersistsRecoverableRegistryRow(t *testing.T) {
 	wdb := openTestWorkspaceDB(t)
 	sdb := openTestSessionDB(t, "sess-close-1")
 	mgr := NewAgentManager()
-	cancelCh := make(chan struct{}, 1)
-	mgr.AddOrchestrator("agent", nil, nil, cancelCh, nil, &AgentState{})
+	mgr.AddOrchestrator("agent", &AgentState{})
 	sess := &Session{
 		SessionID: "sess-close-1",
 		AgentID:   "agent",
@@ -119,8 +86,8 @@ func TestCloseAgentPersistsRecoverableRegistryRow(t *testing.T) {
 
 func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 	mgr := NewAgentManager()
-	mgr.AddOrchestrator("first", nil, nil, nil, nil, &AgentState{})
-	mgr.AddOrchestrator("second", nil, nil, nil, nil, &AgentState{})
+	mgr.AddOrchestrator("first", &AgentState{})
+	mgr.AddOrchestrator("second", &AgentState{})
 	first := &Session{AgentID: "first"}
 	second := &Session{AgentID: "second", TokenPrompt: 99}
 	ws := &Workspace{

@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/screens/shelleditor"
@@ -59,12 +58,8 @@ func setupChatInputApp(t *testing.T, w, h int, sidebar bool) *App {
 		app.Tree.Visible = false
 	}
 	app.AddOrchestrator(
-		"agent",
-		make(chan provider.UserInput, 1),
-		make(chan provider.UserInput, 1),
-		make(chan struct{}, 1),
-		make(chan string, 1),
-	)
+		"agent")
+
 	app.paintShellFrame()
 	return app
 }

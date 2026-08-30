@@ -2,10 +2,14 @@ package session
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"crude/agent"
+	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/tui/types"
 )
@@ -286,14 +290,6 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := sessiondb.Create(db, sessiondb.SessionMeta{
-		ID: "child", ProjectPath: root, ProjectName: "project",
-		CreatedAt: time.Now().UnixNano(), ParentSessionID: sql.NullString{
-			String: "parent", Valid: true,
-		},
-	}); err != nil {
-		t.Fatalf("Create child: %v", err)
-	}
 	if err := sessiondb.InsertSubAgentResult(db, sessiondb.SubAgentResultRow{
 		ParentSessionID: "parent", ChildSessionID: "child",
 		AgentID: "research-1", AgentName: "Research",
@@ -304,6 +300,32 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("close seed DB: %v", err)
+	}
+	childDir := filepath.Join(root, "parent", "subagents")
+	if err := os.MkdirAll(childDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childDB, err := sessiondb.OpenAndMigrate(filepath.Join(childDir, "child.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.Create(childDB, sessiondb.SessionMeta{
+		ID: "child", ProjectPath: root, ProjectName: "project", Model: "child-model",
+		CreatedAt: time.Now().UnixNano(), ParentSessionID: sql.NullString{
+			String: "parent", Valid: true,
+		},
+	}); err != nil {
+		t.Fatalf("Create child: %v", err)
+	}
+	childMessages := []provider.ChatMessage{
+		provider.NewTextMessage("user", "# Assignment\n- Description: inspect lifecycle"),
+		provider.NewTextMessage("assistant", "Report complete."),
+	}
+	if _, err := sessiondb.ReplaceMessagesWithMeta(childDB, "child", childMessages, []int{1, 1}, []sessiondb.DisplayMeta{{DisplayRole: "assignment"}, {DisplayRole: "assistant"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := childDB.Close(); err != nil {
+		t.Fatal(err)
 	}
 
 	resumed, err := ResumeSessionWithDir(dbPath, testConfig(), root, root)
@@ -318,5 +340,78 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 	if !ok || result.SummaryGist != "Found the lifecycle bug." ||
 		result.SessionID != "child" {
 		t.Fatalf("hydrated result = %+v, ok=%v", result, ok)
+	}
+	snapshots := resumed.CompletedSubAgentSnapshots()
+	if len(snapshots) != 1 || snapshots[0].Model != "child-model" || len(snapshots[0].Messages) != 2 ||
+		snapshots[0].Messages[0].Meta.DisplayRole != "assignment" {
+		t.Fatalf("completed child snapshot = %+v", snapshots)
+	}
+}
+
+func TestResumeRecoversLegacyChildWhenParentResultWasNeverPersisted(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	root := t.TempDir()
+	parentPath := filepath.Join(root, "parent.db")
+	parentDB, err := sessiondb.OpenAndMigrate(parentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.Create(parentDB, sessiondb.SessionMeta{
+		ID: "legacy-parent", ProjectPath: root, ProjectName: "project", CreatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := parentDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	legacyRoot, err := SessionsRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childPath := filepath.Join(legacyRoot, "legacy-child.db")
+	childDB, err := sessiondb.OpenAndMigrate(childPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.Create(childDB, sessiondb.SessionMeta{
+		ID: "legacy-child", ProjectPath: root, ProjectName: "project", Model: "child-model",
+		CreatedAt:       time.Now().Add(-time.Second).UnixNano(),
+		ParentSessionID: sql.NullString{String: "legacy-parent", Valid: true},
+		AgentCategory:   sql.NullString{String: "aeron", Valid: true},
+		AgentName:       sql.NullString{String: "legacy full child name", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessiondb.ReplaceMessages(childDB, "legacy-child", []provider.ChatMessage{
+		provider.NewTextMessage("user", "# Assignment\nlegacy"),
+		provider.NewTextMessage("assistant", "Legacy child completed successfully."),
+	}, []int{1, 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.CloseSession(childDB, "legacy-child"); err != nil {
+		t.Fatal(err)
+	}
+	if err := childDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, err := ResumeSessionWithDir(parentPath, testConfig(), root, filepath.Join(root, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(resumed.Close)
+	result, ok := resumed.SubAgentRunner().Manager().GetCompleted("legacy-child")
+	if !ok || result.Name != "legacy full child name" || result.Status != agent.SubAgentCompleted ||
+		!strings.Contains(result.SummaryGist, "completed successfully") {
+		t.Fatalf("recovered legacy result = %+v ok=%v", result, ok)
+	}
+	rows, err := sessiondb.ListSubAgentResults(resumed.DB(), "legacy-parent")
+	if err != nil || len(rows) != 1 || rows[0].ChildSessionID != "legacy-child" {
+		t.Fatalf("recovered parent result rows = %+v err=%v", rows, err)
 	}
 }

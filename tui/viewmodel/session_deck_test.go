@@ -44,26 +44,18 @@ func TestConfirmationAndYoloResultsTargetOwningProjection(t *testing.T) {
 	app := newFullTestApp(t)
 	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	blockCh := make(chan string, 1)
-	app.AgentMgr.AddOrchestrator("first-agent", nil, nil, nil, blockCh, &workspace.AgentState{})
+	app.AgentMgr.AddOrchestrator("first-agent", &workspace.AgentState{})
 
 	app.ActiveSession = first
 	firstProjection := app.activeSessionProjection()
 	firstProjection.confirmation.Reset(confirmation.Details{Question: "Proceed?", Tool: "bash"})
 	firstProjection.confirmationAgentID = "first-agent"
+	firstProjection.confirmationBlockID = "block-1"
 	app.openSessionConfirmationPanel(firstProjection)
 
 	app.ActiveSession = second
 	secondProjection := app.activeSessionProjection()
 	app.resolveSessionConfirmation(firstProjection.confirmation, "always")
-	select {
-	case got := <-blockCh:
-		if got != "always" {
-			t.Fatalf("confirmation response=%q, want always", got)
-		}
-	default:
-		t.Fatal("inactive confirmation result did not reach its owning agent")
-	}
 	if firstProjection.deck.IsOpen() || secondProjection.deck.IsOpen() || app.ActiveSession != second {
 		t.Fatal("inactive confirmation resolution changed the active session")
 	}
@@ -121,7 +113,7 @@ func TestSessionDeckReservesNativeRegionBelowMessages(t *testing.T) {
 	if app.sessionDeckRect.Empty() {
 		t.Fatal("layout did not reserve a native session deck region")
 	}
-	if got, want := app.sessionDeckRect.Y, app.ChatAreaHeight+3; got != want {
+	if got, want := app.sessionDeckRect.Y, app.ChatAreaHeight+app.chromeTopRow(); got != want {
 		t.Fatalf("deck Y=%d, want directly below messages at %d", got, want)
 	}
 	if region := app.classifyShellRegion(app.sessionDeckRect.X, app.sessionDeckRect.Y, false); region != regionSessionDeck {
@@ -147,7 +139,7 @@ func TestBackgroundJobsUpdateOwningInactiveSessionWithoutStealingFocus(t *testin
 	app := newFullTestApp(t)
 	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.AgentMgr.AddOrchestrator("first-agent", nil, nil, nil, nil, &workspace.AgentState{})
+	app.AgentMgr.AddOrchestrator("first-agent", &workspace.AgentState{})
 	app.SessionsByAgent = make(map[string]*workspace.Session)
 	app.SessionsByAgent["first-agent"] = first
 
@@ -175,7 +167,7 @@ func TestBackgroundJobsUpdateOwningInactiveSessionWithoutStealingFocus(t *testin
 func TestBackgroundJobsPanelClosesAfterCompletedRowsExpire(t *testing.T) {
 	app := newFullTestApp(t)
 	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.AgentMgr.AddOrchestrator("agent", nil, nil, nil, nil, &workspace.AgentState{})
+	app.AgentMgr.AddOrchestrator("agent", &workspace.AgentState{})
 	app.SessionsByAgent = make(map[string]*workspace.Session)
 	app.SessionsByAgent["agent"] = session
 	app.ActiveSession = session
@@ -197,7 +189,7 @@ func TestBackgroundJobsPanelClosesAfterCompletedRowsExpire(t *testing.T) {
 func TestBackgroundJobsDoesNotRetainFocusAfterBlockingPanelCloses(t *testing.T) {
 	app := newFullTestApp(t)
 	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.AgentMgr.AddOrchestrator("agent", nil, nil, nil, nil, &workspace.AgentState{})
+	app.AgentMgr.AddOrchestrator("agent", &workspace.AgentState{})
 	app.SessionsByAgent = map[string]*workspace.Session{"agent": session}
 	app.ActiveSession = session
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)

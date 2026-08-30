@@ -28,10 +28,7 @@ const (
 
 	sidebarItemNewTerminal = "terminal.new"
 	sidebarItemNewAgent    = "agent.new"
-	// Row 0 is the outer top pad; rows 1-2 belong to the global
-	// application header. Sidebar chrome begins below that header so it
-	// cannot paint over the Crude brand, model, usage, or elapsed clock.
-	sidebarTopRow = 3
+	agentsPanelMinWidth    = 36
 )
 
 func (m *App) activityChromeWidth() int {
@@ -42,11 +39,25 @@ func (m *App) activityChromeWidth() int {
 }
 
 func (m *App) sidebarHitWidth() int {
-	w := m.activityChromeWidth()
+	w := m.frameLeftCol() + m.activityChromeWidth()
 	if m.sidebarHostVisible() && m.Tree != nil {
-		w += m.Tree.Width + 1
+		w += m.sidebarPanelWidth() + 1
 	}
 	return w
+}
+
+func (m *App) sidebarPanelWidth() int {
+	if m == nil || m.Tree == nil {
+		return 0
+	}
+	width := m.Tree.Width
+	if m.activityView == activityAgents {
+		width = max(width, agentsPanelMinWidth)
+	}
+	if m.width > 0 {
+		width = min(width, m.width/2)
+	}
+	return max(0, width)
 }
 
 func (m *App) setActivity(view activitybar.View, showContent bool) {
@@ -161,7 +172,7 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 				label = "Subagent"
 			}
 		}
-		detail := n.Model
+		detail := ""
 		icon := "◇"
 		if n.IsOrchestrator() {
 			icon = "◆"
@@ -171,20 +182,19 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 			detail = "running"
 			icon = "●"
 		case n.IsCompleted():
-			detail = "done"
 			icon = "✓"
-		case detail == "":
-			detail = "idle"
 		}
 		// Minimized agents stay listed here: this panel is how they come
 		// back, so the row has to say the tab is gone, not that the agent is.
 		if n.Hidden {
-			if detail == "running" {
+			if n.IsCompleted() {
+				icon = "✓"
+			} else if detail == "running" {
 				detail = "running · minimized"
 			} else {
 				detail = "minimized"
+				icon = "▪"
 			}
-			icon = "▪"
 		}
 		items = append(items, ui.ListItem{
 			ID:       "agent:" + n.ID,
@@ -367,7 +377,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 			m.setSidebarWidth(payload.First)
 		}
 		if payload.ID == termdock.DividerID {
-			m.setTermDockHeight((m.height - 2) - payload.First)
+			m.setTermDockHeight((m.height - m.chromeBottomRows()) - payload.First)
 		}
 	}
 	return nil
