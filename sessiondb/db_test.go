@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	"crude/provider"
+	ttypes "crude/types"
 )
 
 // DB wraps an open session DB for test fixtures (shared across test files).
@@ -727,5 +729,58 @@ func TestGetCumulativeCostReturnsLatestSnapshot(t *testing.T) {
 	const want = 0.042
 	if got != want {
 		t.Errorf("GetCumulativeCost: expected %v, got %v", want, got)
+	}
+}
+
+func TestCanonicalConversationSnapshotRoundTripsEveryField(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	t.Cleanup(func() { _ = db.Close() })
+	if err := CreateSessionRow(db, "session"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Round(0)
+	want := ttypes.ConversationMessage{
+		InternalID: "message-1", Role: "tool", Content: "result", ReferenceLabels: []string{"@one"}, Time: now,
+		ToolName: "run_sub_agent", ToolArgs: "description: inspect", ToolCommand: "go test ./...",
+		ToolInput: "needle", ToolScope: "workspace", ToolID: "call-1", ToolStatus: "success", ToolIndex: 4,
+		ToolProgressPhase: "done", ToolProgressMessage: "complete", ToolProgressLabel: "child",
+		ToolPreviewPhase: "done", ToolEstTokens: 42, ToolLinesAdded: 3, ToolLinesRemoved: 2,
+		ToolStartTime: now.Add(-time.Second), ToolDuration: time.Second,
+		ThinkingInterrupted: true, ThinkingDuration: 2 * time.Second,
+		LifecyclePhase: "done", LifecycleProgress: 100, LifecycleProvider: "ollama",
+		LifecycleUploadedBytes: 7, LifecycleTotalBytes: 9,
+		Incomplete: true, IncompleteReason: "partial", SubPaneID: "child-1", PermTag: "always",
+	}
+	message := provider.NewTextMessage("tool", "result")
+	message.ToolCallID = "call-1"
+	meta := DisplayMeta{SnapshotVersion: ConversationSnapshotVersion, Snapshots: []ttypes.ConversationMessage{want}}
+	if _, err := ReplaceMessagesWithMeta(db, "session", []provider.ChatMessage{message}, []int{1}, []DisplayMeta{meta}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadMessagesWithMeta(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || len(loaded[0].Meta.Snapshots) != 1 || !reflect.DeepEqual(loaded[0].Meta.Snapshots[0], want) {
+		t.Fatalf("canonical snapshot round-trip\n got: %#v\nwant: %#v", loaded, want)
+	}
+}
+
+func TestWireStateRoundTripsActiveEpochIndependentlyFromDisplayHistory(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	t.Cleanup(func() { _ = db.Close() })
+	if err := CreateSessionRow(db, "session"); err != nil {
+		t.Fatal(err)
+	}
+	want := WireState{Epoch: 4, Reason: "active_context_compaction", Messages: []provider.ChatMessage{
+		provider.NewWireHiddenMessage("checkpoint"),
+		provider.NewTextMessage("user", "latest request"),
+	}}
+	if err := SaveWireState(db, "session", want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := LoadWireState(db, "session")
+	if err != nil || !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("wire state round-trip got=%#v ok=%v err=%v want=%#v", got, ok, err, want)
 	}
 }

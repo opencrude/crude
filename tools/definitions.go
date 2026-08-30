@@ -360,7 +360,7 @@ var AgentTools = []ToolDef{
 							"type":"object",
 							"properties":{
 								"id":{"type":"string","description":"Stable step id (e.g. 'audit')."},
-								"description":{"type":"string","description":"What this step does."},
+								"description":{"type":"string","description":"What this step does, as a short one-line action (a few words) shown verbatim on the plan card. Keep working notes and narration out — use result/reason instead."},
 								"status":{"type":"string","enum":["pending","in_progress","completed","skipped","blocked","failed","cancelled"],"description":"Step status. Default pending."},
 								"depends_on":{"type":"array","items":{"type":"string"},"description":"Ids that must be completed/skipped first."},
 								"result":{"type":"string","description":"Summary of what the step accomplished (on completed)."},

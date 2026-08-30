@@ -241,6 +241,7 @@ func (m *App) completeSubAgent(agentID string) {
 	if !m.Win.IsOpen() {
 		m.setMode(ModeChat)
 	}
+	m.handleTabSwitch()
 }
 
 func (m *App) anyActive() bool {
@@ -407,14 +408,14 @@ func (m *App) keepWindowTab(title string) {
 // Every visible agent gets its own tab, including while an editor is the
 // painted view — skipping creation there was the New Agent-while-editing bug.
 //
-// Tick and other background callers must not steal the editor: OpenTab
-// activates the new tab, so when an editor is showing we restore that
-// editor as the window's active tab afterwards. User actions that should
-// leave the editor call activateAgentWindowTab after this.
+// This function is structural only: it never chooses a tab. The Window's
+// selected tab is preserved, then handleTabSwitch derives every active view
+// and prompt target from that one authority. Explicit user actions call
+// activateAgentWindowTab separately.
 func (m *App) syncAgentWindowTabs() {
-	keepEditor := ""
-	if m.EditorState != nil && m.EditorState.ActiveView != "" {
-		keepEditor = m.editorTabTitle(m.EditorState.ActiveView)
+	preserveTitle := ""
+	if active := m.Win.ActiveTab(); active != nil {
+		preserveTitle = active.Title
 	}
 
 	// If no surfaced agents exist, purge agent tabs and return. Minimized
@@ -422,20 +423,22 @@ func (m *App) syncAgentWindowTabs() {
 	if m.AgentMgr.VisibleCount() == 0 {
 		m.purgeAgentTabs()
 		m.EditorState.TabSnapshotCache = ""
-		m.keepWindowTab(keepEditor)
+		m.keepWindowTab(preserveTitle)
+		m.handleTabSwitch()
 		return
 	}
 
-	// Determine active agent ID
-	activeID := m.AgentMgr.ActiveID()
 	tabViews := m.AgentTabViews()
 	viewByID := make(map[string]workspace.TabView, len(tabViews))
 	for _, view := range tabViews {
 		viewByID[view.ID] = view
 	}
 
-	// Create tabs for sub-agents that have panes
-	for _, id := range m.PaneMgr.PaneOrder() {
+	// Every visible agent in the canonical manager order owns one tab. Pane
+	// creation and tab creation must not be separate authorities: that split
+	// previously left selectable agents without tabs and stale tabs without a
+	// prompt target.
+	for _, id := range m.AgentMgr.TabOrder() {
 		n := m.AgentMgr.Get(id)
 		if n == nil || n.Hidden {
 			continue
@@ -446,7 +449,7 @@ func (m *App) syncAgentWindowTabs() {
 		}
 		title := m.agentTabTitle(id)
 		if m.Win.TabByTitle(title) == nil {
-			m.Win.OpenTab(title, "", true)
+			m.Win.OpenTabInactive(title, "", true)
 		}
 		if tab := m.Win.TabByTitle(title); tab != nil {
 			newIcon := m.agentTabIcon(id)
@@ -456,56 +459,28 @@ func (m *App) syncAgentWindowTabs() {
 			displayLabel := view.DisplayTitle
 			if tab.DisplayTitle != displayLabel {
 				m.Win.SetTabDisplayTitleByIndex(m.Win.IndexOf(tab.ID), displayLabel)
-			}
-		}
-	}
-
-	// Create tabs for orchestrator agents (top-level agents without parent IDs)
-	for _, n := range m.AgentMgr.AllNodes() {
-		if n.Hidden {
-			continue
-		}
-		if n.Parent != nil {
-			continue
-		}
-		id := n.ID
-		view, ok := viewByID[id]
-		if !ok {
-			continue
-		}
-		title := m.agentTabTitle(id)
-		if m.Win.TabByTitle(title) == nil {
-			m.Win.OpenTab(title, "", true)
-		}
-		if tab := m.Win.TabByTitle(title); tab != nil {
-			newIcon := m.agentTabIcon(id)
-			if tab.Icon != newIcon {
-				m.Win.SetTabIconByIndex(m.Win.IndexOf(tab.ID), newIcon)
-			}
-			displayLabel := view.DisplayTitle
-			if tab.DisplayTitle != displayLabel {
-				m.Win.SetTabDisplayTitleByIndex(m.Win.IndexOf(tab.ID), displayLabel)
-			}
-		}
-	}
-
-	// Activate the active agent tab only when the editor is not the
-	// painted view. OpenTab already selected any newly created tab, so
-	// restore the editor afterwards when we must not steal it.
-	if keepEditor != "" {
-		m.keepWindowTab(keepEditor)
-	} else if activeID != "" {
-		activeTitle := m.agentTabTitle(activeID)
-		if tab := m.Win.TabByTitle(activeTitle); tab != nil {
-			targetIdx := m.Win.IndexOf(tab.ID)
-			if m.Win.ActiveIndex() != targetIdx {
-				m.Win.SwitchTo(targetIdx)
 			}
 		}
 	}
 
 	m.purgeStaleAgentTabs()
-	m.keepWindowTab(keepEditor)
+	m.keepWindowTab(preserveTitle)
+	m.handleTabSwitch()
+}
+
+func (m *App) activeAgentTabID() string {
+	if m == nil || m.Win == nil {
+		return ""
+	}
+	tab := m.Win.ActiveTab()
+	if tab == nil || !m.isAgentTabTitle(tab.Title) {
+		return ""
+	}
+	id := m.agentIDFromTabTitle(tab.Title)
+	if node := m.AgentMgr.Get(id); node != nil && !node.Hidden {
+		return id
+	}
+	return ""
 }
 
 // agentTabIcon returns the status icon for an agent's window tab.

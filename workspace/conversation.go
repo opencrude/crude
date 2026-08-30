@@ -1,6 +1,10 @@
 package workspace
 
-import "time"
+import (
+	"time"
+
+	ttypes "crude/types"
+)
 
 const (
 	MessageRoleUser       = "user"
@@ -12,53 +16,9 @@ const (
 	MessageRoleAssignment = "assignment"
 )
 
-// Message is live conversation data owned by the workspace. Rendering caches,
-// selection, scrolling, and terminal layout remain in the TUI projection.
-type Message struct {
-	InternalID      string
-	Role            string
-	Content         string
-	ReferenceLabels []string
-	Time            time.Time
-
-	ToolName            string
-	ToolArgs            string
-	ToolCommand         string
-	ToolInput           string
-	ToolScope           string
-	ToolID              string
-	ToolStatus          string
-	ToolIndex           int
-	ToolProgressPhase   string
-	ToolProgressMessage string
-	ToolProgressLabel   string
-	ToolPreviewPhase    string
-	ToolEstTokens       int
-	ToolLinesAdded      int
-	ToolLinesRemoved    int
-	ToolStartTime       time.Time
-	ToolDuration        time.Duration
-
-	ThinkingActive      bool
-	ThinkingInterrupted bool
-	// ThinkingDuration records how long this thinking block ran. It is set
-	// when the block transitions out of the active state (done or
-	// interrupted) so the TUI can render a "thought for Xs" label.
-	ThinkingDuration       time.Duration
-	LifecyclePhase         string
-	LifecycleProgress      int
-	LifecycleProvider      string
-	LifecycleUploadedBytes int64
-	LifecycleTotalBytes    int64
-	Incomplete             bool
-	IncompleteReason       string
-	SubPaneID              string
-	PermTag                string
-	// PendingBtw marks an optimistic live note until the active backend turn
-	// consumes it. It is presentation-neutral transient state and is never
-	// persisted; cancelled/rejected notes are removed from the conversation.
-	PendingBtw bool
-}
+// Message is the shared canonical conversation state. Workspace owns live
+// mutation; sessiondb owns JSON persistence; the TUI only projects it.
+type Message = ttypes.ConversationMessage
 
 type TurnStatus struct {
 	Phase         string

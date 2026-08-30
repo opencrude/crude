@@ -10,6 +10,15 @@ func newTestWindow() *Window {
 	return New(theme.DefaultDark())
 }
 
+func TestOpenTabInactiveNeverStealsExistingActiveTab(t *testing.T) {
+	w := newTestWindow()
+	first := w.OpenTab("first", "", true)
+	w.OpenTabInactive("background", "", true)
+	if active := w.ActiveTab(); active == nil || active.ID != first.ID {
+		t.Fatalf("background tab stole active selection: %#v", active)
+	}
+}
+
 func TestOpenTab(t *testing.T) {
 	w := newTestWindow()
 	w.SetWidth(80)

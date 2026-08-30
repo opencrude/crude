@@ -78,6 +78,9 @@ func turnRecordFromMessages(
 	seenFiles := make(map[string]struct{})
 	var lastAssistant string
 	for _, m := range msgs {
+		if m.WireHidden {
+			continue
+		}
 		switch m.Role {
 		case "user":
 			if record.UserText == "" {

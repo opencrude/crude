@@ -412,8 +412,23 @@ func BuildPlanViewRows(raw string, contentWidth int) []PaintLine {
 	if !ok {
 		return nil
 	}
-	contentWidth = max(1, contentWidth)
+	return buildPlanViewBody(view, max(1, contentWidth), false)
+}
 
+// BuildPlanViewRowsCollapsed renders the collapsed ("unopened") plan card: a
+// windowed slice centered on the live step — the current in_progress step (or
+// the next pending one) plus its immediate neighbours — because what is
+// happening now matters more to a reader than steps finished hours ago. Rows
+// hidden on either side are summarized by count.
+func BuildPlanViewRowsCollapsed(raw string, contentWidth int) []PaintLine {
+	view, ok := parsePlanView(raw)
+	if !ok {
+		return nil
+	}
+	return buildPlanViewBody(view, max(1, contentWidth), true)
+}
+
+func buildPlanViewBody(view *PlanViewData, contentWidth int, collapsed bool) []PaintLine {
 	var out []PaintLine
 	// Header row: "│ ● Plan: <objective> (<status>)".
 	header := buildPlanViewHeader(view, contentWidth)
@@ -426,13 +441,65 @@ func BuildPlanViewRows(raw string, contentWidth int) []PaintLine {
 			}})
 		}
 	}
-	for _, step := range view.Steps {
-		out = append(out, buildPlanViewStep(step, contentWidth)...)
+	steps := view.Steps
+	if collapsed {
+		lo, hi, windowed := planWindowBounds(steps)
+		if windowed && lo > 0 {
+			out = append(out, planWindowSummaryLine(lo, "earlier"))
+		}
+		if windowed {
+			steps = steps[lo:hi]
+		}
+		for _, step := range steps {
+			out = append(out, buildPlanViewStep(step, contentWidth)...)
+		}
+		if windowed && hi < len(view.Steps) {
+			out = append(out, planWindowSummaryLine(len(view.Steps)-hi, "remaining"))
+		}
+	} else {
+		for _, step := range view.Steps {
+			out = append(out, buildPlanViewStep(step, contentWidth)...)
+		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// planWindowBounds picks the collapsed-presentation step window: the currently
+// in_progress step (falling back to the first pending one) with one neighbour
+// on each side. Short plans and plans with no live step show everything.
+func planWindowBounds(steps []PlanStepView) (int, int, bool) {
+	if len(steps) <= 4 {
+		return 0, 0, false
+	}
+	cur := -1
+	for i, step := range steps {
+		if step.Status == "in_progress" {
+			cur = i
+			break
+		}
+	}
+	if cur < 0 {
+		for i, step := range steps {
+			if step.Status == "pending" {
+				cur = i
+				break
+			}
+		}
+	}
+	if cur < 0 {
+		return 0, 0, false
+	}
+	return max(0, cur-1), min(len(steps), cur+2), true
+}
+
+func planWindowSummaryLine(n int, position string) PaintLine {
+	return PaintLine{Spans: []RowSpan{
+		{Text: "│   ", Role: ui.ColorMuted},
+		{Text: fmt.Sprintf("⋯ %d %s steps", n, position), Role: ui.ColorMuted, Attr: cell.AttrItalic},
+	}}
 }
 
 func parsePlanView(raw string) (*PlanViewData, bool) {
@@ -484,6 +551,7 @@ func buildPlanViewHeader(view *PlanViewData, contentWidth int) PaintLine {
 
 func buildPlanViewStep(step PlanStepView, contentWidth int) []PaintLine {
 	marker, role := planStepMarker(step.Status)
+	finished := step.Status == "completed"
 	label := step.Description
 	if label == "" {
 		label = step.ID
@@ -502,10 +570,16 @@ func buildPlanViewStep(step PlanStepView, contentWidth int) []PaintLine {
 			prefix = marker + " "
 			lineRole = role
 		}
+		textRole, textAttr := ui.ColorFg, cell.Attrs(0)
+		if finished {
+			// A finished step reads as closed: strike it through beyond the
+			// check mark alone.
+			textRole, textAttr = ui.ColorMuted, cell.AttrStrikethrough
+		}
 		rows = append(rows, PaintLine{Spans: []RowSpan{
 			{Text: "│   ", Role: ui.ColorMuted},
 			{Text: prefix, Role: lineRole},
-			{Text: line, Role: ui.ColorFg},
+			{Text: line, Role: textRole, Attr: textAttr},
 		}})
 	}
 	return rows

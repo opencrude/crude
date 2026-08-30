@@ -146,18 +146,23 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		for i, mm := range msgsWithMeta {
 			displayMetas[i] = mm.Meta
 			createdAts[i] = mm.CreatedAt
+			if mm.Meta.DisplayRole == "hidden_wire_context" {
+				msgs[i].WireHidden = true
+			}
 		}
 	}
 
 	interrupted, action := detectInterruption(msgs)
 	if interrupted {
-		msgs = append(msgs, provider.ChatMessage{
+		recoveryMessage := provider.ChatMessage{
 			Role:    "user",
 			Content: provider.TextContent(resumeRecoveryPrefix + action),
-		})
+		}
+		msgs = append(msgs, recoveryMessage)
 		msgTurns = append(msgTurns, maxTurn+1)
 		maxTurn++
-		displayMetas = append(displayMetas, sessiondb.DisplayMeta{DisplayRole: "user"})
+		displayMetas = append(displayMetas, canonicalizeDisplayMeta(recoveryMessage,
+			sessiondb.DisplayMeta{DisplayRole: "user"}, "", len(msgs)-1, time.Now()))
 		if _, err := sessiondb.ReplaceMessagesWithMeta(db, meta.ID, msgs, msgTurns, displayMetas); err != nil {
 			_ = lg.Close()
 			_ = db.Close()
@@ -168,6 +173,17 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	resumeTurnNumber := maxTurn
 	if meta.TurnCount > maxTurn {
 		resumeTurnNumber = meta.TurnCount
+	}
+	wireMessages := append([]provider.ChatMessage(nil), msgs...)
+	wireEpoch := uint64(1)
+	wireReason := "resume_without_wire_state"
+	if state, ok, wireErr := sessiondb.LoadWireState(db, meta.ID); wireErr == nil && ok && !interrupted {
+		wireMessages = state.Messages
+		wireEpoch = state.Epoch
+		wireReason = state.Reason
+	} else if ok {
+		wireEpoch = state.Epoch + 1
+		wireReason = "resume_recovery"
 	}
 
 	sess := &Session{
@@ -201,6 +217,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		workspaceCfg:       workspaceCfg,
 		sessionOverrides:   overrides,
 		multiAgentOverride: cloneBoolPtr(flags.MultiAgent),
+		wireMessages:       wireMessages,
+		wireEpoch:          wireEpoch,
+		wireReason:         wireReason,
 	}
 	rows, loadErr := sessiondb.ListSubAgentResults(db, meta.ID)
 	if loadErr != nil {

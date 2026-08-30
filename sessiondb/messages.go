@@ -7,9 +7,17 @@ import (
 	"time"
 
 	"crude/provider"
+	ttypes "crude/types"
 )
 
+const ConversationSnapshotVersion = 1
+
 type DisplayMeta struct {
+	SnapshotVersion int                          `json:"snapshot_version,omitempty"`
+	Snapshots       []ttypes.ConversationMessage `json:"snapshots,omitempty"`
+
+	// Legacy fields remain readable for sessions written before canonical
+	// conversation snapshots landed. New writes always populate Snapshots.
 	DisplayRole     string   `json:"display_role,omitempty"`
 	DisplayContent  string   `json:"display_content,omitempty"`
 	ReferenceLabels []string `json:"reference_labels,omitempty"`

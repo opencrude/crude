@@ -626,7 +626,9 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// If there are window tabs, close the active one
+	// If there are window tabs, close the active one. Closing a tab
+	// consumes the quit: the key must never tear down the app while other
+	// tabs (orchestrators, editors) remain open.
 	if m.Win.IsOpen() && m.Win.TabCount() > 0 {
 		activeIdx := m.Win.ActiveIndex()
 		if activeIdx >= 0 {
@@ -644,8 +646,11 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 			// If no tabs left, show welcome launcher
 			if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && !m.Win.IsOpen() {
 				m.openLauncher()
-				return m, nil
 			}
+			// A tab was closed (or the launcher fallback shown): the quit
+			// is consumed. Quitting is only reachable via the fall-through
+			// below when there were no tabs to close at all.
+			return m, nil
 		}
 	}
 

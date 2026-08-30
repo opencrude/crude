@@ -10,7 +10,7 @@ import (
 
 func TestSystemPromptUsesCanonicalPlanningContract(t *testing.T) {
 	prompt := BuildSystemPrompt(true)
-	for _, required := range []string{"update_plan", "get_plan", "omit unchanged objective/status/steps", "revision conflict"} {
+	for _, required := range []string{"update_plan", "get_plan", "omit unchanged objective/status/steps", "revision conflict", "not a notepad"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("system prompt missing %q", required)
 		}

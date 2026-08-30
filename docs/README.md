@@ -77,6 +77,9 @@ Read that first; this index only organizes the reference material.
   HANDOFF** for in-flight work; the only plan describing current work.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open
   hardening findings for the configurable shell frame padding feature.
+- [Message-scoped undo and local history plan](plans/undo-local-history-plan.md)
+  — **IN PROGRESS** architecture and delivery plan for JetBrains-quality,
+  cache-safe workspace history and per-user-message restore.
 
 ## Documentation rules
 

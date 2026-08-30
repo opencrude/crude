@@ -755,8 +755,11 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 
 	case "app.quit":
-		m.Quit = true
-		return tea.Quit
+		// Route through the hierarchical quit ladder so it closes the
+		// active tab / shows the launcher instead of hard-exiting while
+		// tabs or agents are open. Same behavior as the Ctrl+Q binding.
+		_, quitCmd := m.handleQuit()
+		return quitCmd
 	}
 
 	if len(cmds) > 0 {

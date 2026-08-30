@@ -91,6 +91,11 @@ func formatToolArgs(params map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
+// FormatToolArgs exposes the canonical presentation-neutral argument summary
+// for durable conversation snapshots. Live events and child transcript
+// persistence must use the same formatter.
+func FormatToolArgs(params map[string]any) string { return formatToolArgs(params) }
+
 func removeMessagesByInternalID(messages []provider.ChatMessage, ids []string) []provider.ChatMessage {
 	if len(messages) == 0 || len(ids) == 0 {
 		return messages

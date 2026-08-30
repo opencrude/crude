@@ -28,7 +28,6 @@ const (
 
 	sidebarItemNewTerminal = "terminal.new"
 	sidebarItemNewAgent    = "agent.new"
-	agentsPanelMinWidth    = 36
 )
 
 func (m *App) activityChromeWidth() int {
@@ -51,9 +50,6 @@ func (m *App) sidebarPanelWidth() int {
 		return 0
 	}
 	width := m.Tree.Width
-	if m.activityView == activityAgents {
-		width = max(width, agentsPanelMinWidth)
-	}
 	if m.width > 0 {
 		width = min(width, m.width/2)
 	}

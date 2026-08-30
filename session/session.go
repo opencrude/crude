@@ -73,6 +73,11 @@ type Session struct {
 
 	systemPromptMu sync.Mutex
 	systemPrompts  map[bool]string
+	wireGuardMu    sync.Mutex
+	wireGuard      *agent.WireGuard
+	wireMessages   []provider.ChatMessage
+	wireEpoch      uint64
+	wireReason     string
 
 	recoveredSubAgentMessages map[string][]sessiondb.MessageWithMeta
 
@@ -381,6 +386,30 @@ func (s *Session) systemPrompt(multiAgent bool) string {
 	prompt := agent.BuildSystemPrompt(multiAgent)
 	s.systemPrompts[multiAgent] = prompt
 	return prompt
+}
+
+func (s *Session) rootWireGuard() *agent.WireGuard {
+	if s == nil {
+		return agent.NewWireGuard()
+	}
+	s.wireGuardMu.Lock()
+	defer s.wireGuardMu.Unlock()
+	if s.wireGuard == nil {
+		s.wireGuard = agent.NewWireGuardAt(s.wireEpoch, s.wireReason)
+	}
+	return s.wireGuard
+}
+
+func (s *Session) rotateWireEpoch(reason string) {
+	guard := s.rootWireGuard()
+	guard.Rotate(reason)
+	s.wireGuardMu.Lock()
+	s.wireEpoch = guard.Epoch()
+	s.wireReason = reason
+	s.wireGuardMu.Unlock()
+	if s.logger != nil {
+		s.logger.Warn("CACHE", "epoch_rotated", "reason", reason, "epoch", guard.Epoch())
+	}
 }
 
 func (s *Session) SessionID() string {

@@ -196,3 +196,31 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 		t.Fatalf("reopened review lost assignment: %+v", messages)
 	}
 }
+
+func TestCompletingActiveChildSelectsVisibleRootAndPromptTarget(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
+	childState := workspace.NewAgentState("child", pane.Messages, app.Logger)
+	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "researcher", childState)
+	app.switchToAgentView("child")
+	if app.activeAgentTabID() != "child" {
+		t.Fatal("child was not the visible prompt target")
+	}
+
+	app.completeSubAgent("child")
+	active := app.Win.ActiveTab()
+	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentMgr.ActiveID() != "root" || app.activeAgentTabID() != "root" {
+		t.Fatalf("completion left split active state: tab=%#v manager=%q prompt=%q",
+			active, app.AgentMgr.ActiveID(), app.activeAgentTabID())
+	}
+}
+
+func TestUsageEventTokensAccumulatesProviderNumericForms(t *testing.T) {
+	if got := usageEventTokens(map[string]any{"prompt": int64(90), "completion": float64(10)}); got != 100 {
+		t.Fatalf("usage tokens=%d want 100", got)
+	}
+	if got := usageEventTokens(map[string]int{"prompt": 7, "completion": 3}); got != 10 {
+		t.Fatalf("integer usage tokens=%d want 10", got)
+	}
+}

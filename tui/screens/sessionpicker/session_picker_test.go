@@ -27,7 +27,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	if nonEmpty := countNonEmptyCells(buf); nonEmpty == 0 {
 		t.Fatal("session picker paint produced no non-empty cells")
 	}
-	for _, label := range []string{"Past sessions", "fix the picker", "3 turns"} {
+	for _, label := range []string{"Past sessions", "fix the picker", "3 prompts"} {
 		if !strings.Contains(text, label) {
 			t.Fatalf("missing label %q:\n%s", label, text)
 		}
@@ -143,7 +143,7 @@ func TestSessionPickerGroupedSessionsAndHighlight(t *testing.T) {
 		"fix the picker",
 		"yesterday work",
 		"old session",
-		"3 turns",
+		"3 prompts",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("grouped paint missing %q:\n%s", want, text)
@@ -248,7 +248,7 @@ func TestLiveRowsShowStatusAndSubAgents(t *testing.T) {
 	if root.Icon != "●" {
 		t.Fatalf("working session icon=%q, want filled activity dot", root.Icon)
 	}
-	for _, want := range []string{"2 sub-agents", "working", "gpt-5", "3 turns"} {
+	for _, want := range []string{"2 sub-agents", "working", "gpt-5", "3 prompts"} {
 		if !strings.Contains(root.Detail, want) {
 			t.Fatalf("working detail %q missing %q", root.Detail, want)
 		}
@@ -272,6 +272,16 @@ func TestLiveRowsShowStatusAndSubAgents(t *testing.T) {
 	}
 	if got := pickerItem(t, screen, "old").Icon; got != "●" {
 		t.Fatalf("idle icon=%q, want ●", got)
+	}
+}
+
+func TestSessionDetailSeparatesUserPromptsFromModelRounds(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	detail := screen.sessionDetail(sessiondb.SessionMeta{
+		ID: "long-run", TurnCount: 1, RoundCount: 9, Model: "glm", CreatedAt: time.Now().UnixNano(),
+	})
+	if !strings.Contains(detail, "1 prompt") || !strings.Contains(detail, "9 rounds") || strings.Contains(detail, "1 turn") {
+		t.Fatalf("ambiguous session metrics = %q", detail)
 	}
 }
 

@@ -647,6 +647,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	filteredTools := agent.FilterTools(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true)
 
 	a := agent.NewAgent(p, p.Model, r.session.logger)
+	a.WireGuard = agent.NewWireGuard()
 	a.AgentID = spec.ID
 	a.Depth = spec.Depth
 	a.ParentID = spec.ParentID
@@ -875,9 +876,23 @@ func persistSubAgentTranscript(
 	var persisted []provider.ChatMessage
 	var turns []int
 	var metas []sessiondb.DisplayMeta
-	assignmentSeen := false
+	rawToolArgs := toolCallArgsIndex(messages)
+	toolNames := make(map[string]string)
+	toolArgs := make(map[string]string)
 	for _, message := range messages {
-		if message.Role == "system" {
+		for _, call := range message.ToolCalls {
+			toolNames[call.ID] = call.Function.Name
+			var params map[string]any
+			if json.Unmarshal([]byte(call.Function.Arguments), &params) == nil {
+				toolArgs[call.ID] = agent.FormatToolArgs(params)
+			}
+		}
+	}
+	assignmentSeen := false
+	baseSystemSkipped := false
+	for _, message := range messages {
+		if message.Role == "system" && !baseSystemSkipped {
+			baseSystemSkipped = true
 			continue
 		}
 		persisted = append(persisted, message)
@@ -888,12 +903,23 @@ func persistSubAgentTranscript(
 			assignmentSeen = true
 		}
 		meta := sessiondb.DisplayMeta{DisplayRole: displayRole}
+		if message.WireHidden || message.Role == "system" {
+			meta = sessiondb.DisplayMeta{
+				SnapshotVersion: sessiondb.ConversationSnapshotVersion,
+				DisplayRole:     "hidden_wire_context",
+			}
+		}
 		if message.Role == "tool" {
+			meta.ToolName = toolNames[message.ToolCallID]
+			meta.ToolArgs = toolArgs[message.ToolCallID]
 			if message.ToolError {
 				meta.ToolStatus = "error"
 			} else {
 				meta.ToolStatus = "success"
 			}
+		}
+		if !message.WireHidden && message.Role != "system" {
+			meta = canonicalizeDisplayMeta(message, meta, rawToolArgs[message.ToolCallID], len(persisted)-1, time.Now())
 		}
 		metas = append(metas, meta)
 	}

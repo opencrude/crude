@@ -1,12 +1,17 @@
 package agent
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"crude/provider"
+	"crude/tools"
 )
 
 func TestCompleteStreamOllamaNDJSON(t *testing.T) {
@@ -43,5 +48,44 @@ func TestCompleteStreamOllamaNDJSON(t *testing.T) {
 	}
 	if result.Usage.PromptTokens != 5 || result.Usage.CompletionTokens != 2 {
 		t.Errorf("usage = %+v", result.Usage)
+	}
+}
+
+func TestOllamaUncachedContextRotatesToBoundedWireEpoch(t *testing.T) {
+	var requestCount atomic.Int32
+	var bodies [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		if requestCount.Add(1) == 1 {
+			_, _ = fmt.Fprint(w, `{"model":"llama3","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"go.mod"}}}]},"done":true,"done_reason":"tool_calls","prompt_eval_count":100000,"eval_count":10}`+"\n")
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"model":"llama3","message":{"role":"assistant","content":"done"},"done":true,"done_reason":"stop","prompt_eval_count":12000,"eval_count":1}`+"\n")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("ollama-cloud", "ollama-key", server.URL)
+	p.Model = "llama3"
+	a := newTestAgent(t, p, p.Model)
+	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		return tools.ToolResult{Content: "module crude"}, nil
+	}
+	archive := a.Run(context.Background(), []provider.ChatMessage{
+		provider.NewTextMessage("user", strings.Repeat("large immutable context ", 12000)),
+	}, "system", func(AgentEvent) {}, nil, nil, "", nil)
+	if len(bodies) != 2 || len(bodies[1]) >= len(bodies[0]) || !strings.Contains(string(bodies[1]), "wire_checkpoint") {
+		t.Fatalf("wire epoch was not bounded: requests=%d sizes=%v", len(bodies), []int{len(bodies[0]), len(bodies[1])})
+	}
+	if len(archive) < 4 || !strings.Contains(archive[1].Content.String(), "large immutable context") {
+		t.Fatal("full archive was lost during active epoch rotation")
+	}
+	active := a.ActiveWireMessages()
+	if len(active) == 0 || !active[0].WireHidden || !strings.Contains(active[0].Content.String(), "wire_checkpoint") {
+		t.Fatalf("active wire epoch = %#v", active)
 	}
 }

@@ -93,42 +93,30 @@ func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
 	}
 }
 
-func TestInjectRequestContextPreservesCacheablePrefixAndCanonicalHistory(t *testing.T) {
-	messages := []provider.ChatMessage{
-		{Role: "user", Content: provider.TextContent("old request")},
-		{Role: "assistant", Content: provider.TextContent("old response")},
-		{Role: "user", Content: provider.TextContent("current request"), DisplayContent: "current request"},
+func TestRequestContextIsSeparateImmutableWireEntry(t *testing.T) {
+	contextMessage, ok := requestContextMessage("remembered fact")
+	if !ok || contextMessage.Role != "user" || !contextMessage.WireHidden || !strings.Contains(contextMessage.Content.String(), "remembered fact") {
+		t.Fatalf("wire context message = %#v", contextMessage)
 	}
-	projected := injectRequestContext(messages, "remembered fact")
-
-	if projected[0].ContentString() != messages[0].ContentString() || projected[1].ContentString() != messages[1].ContentString() {
-		t.Fatalf("volatile context changed the reusable history prefix: %#v", projected)
-	}
-	if messages[2].ContentString() != "current request" {
-		t.Fatalf("request projection mutated canonical history: %q", messages[2].ContentString())
-	}
-	if !strings.HasPrefix(projected[2].ContentString(), "current request") || !strings.Contains(projected[2].ContentString(), "<retrieved_context>") || !strings.Contains(projected[2].ContentString(), "remembered fact") {
-		t.Fatalf("runtime context was not attached to the current request: %q", projected[2].ContentString())
-	}
-	if projected[2].DisplayContent != "current request" {
-		t.Fatalf("runtime context leaked into display content: %q", projected[2].DisplayContent)
+	user := provider.ChatMessage{Role: "user", Content: provider.TextContent("current request"), DisplayContent: "current request"}
+	ledger := []provider.ChatMessage{contextMessage, user}
+	if ledger[1].Content.String() != "current request" || strings.Contains(ledger[1].Content.String(), "remembered fact") {
+		t.Fatalf("wire context mutated visible user message: %#v", ledger)
 	}
 }
 
-func TestInjectRequestContextPreservesMultipartUserContent(t *testing.T) {
-	messages := []provider.ChatMessage{{
+func TestRequestContextDoesNotMutateMultipartUserContent(t *testing.T) {
+	user := provider.ChatMessage{
 		Role: "user",
 		Content: provider.PartsContent([]provider.ContentPart{
 			{Type: "text", Text: "inspect"},
 			{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64,YWJj"}},
 		}),
-	}}
-	projected := injectRequestContext(messages, "visual context")
-	if !projected[0].Content.HasImage() || !strings.Contains(projected[0].Content.ContentDescription(), "visual context") {
-		t.Fatalf("multipart request context projection = %q", projected[0].Content.ContentDescription())
 	}
-	if !messages[0].Content.HasImage() || strings.Contains(messages[0].Content.ContentDescription(), "visual context") {
-		t.Fatalf("canonical multipart content was mutated: %q", messages[0].Content.ContentDescription())
+	contextMessage, _ := requestContextMessage("visual context")
+	ledger := []provider.ChatMessage{contextMessage, user}
+	if !ledger[1].Content.HasImage() || strings.Contains(ledger[1].Content.ContentDescription(), "visual context") {
+		t.Fatalf("multipart wire user was mutated: %q", ledger[1].Content.ContentDescription())
 	}
 }
 

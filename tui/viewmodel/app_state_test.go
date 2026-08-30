@@ -217,6 +217,86 @@ func TestHandleQuit_ClosesLastAgentTab(t *testing.T) {
 	}
 }
 
+// TestHandleQuit_TwoAgentTabs_ClosesActiveOnly is the regression test for
+// Ctrl+Q hard-exiting the app while an agent tab was active with another
+// agent tab open. The window-tabs branch of handleQuit must consume the
+// quit after closing the active tab (minimizing its agent) — the tea.Quit
+// fall-through is only reachable when there are genuinely no window tabs
+// to close, mirroring handleAgentTabClose's never-quit ladder.
+func TestHandleQuit_TwoAgentTabs_ClosesActiveOnly(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width = 80
+	app.height = 24
+
+	app.AddOrchestrator("ses_1_orch_1")
+	app.AddOrchestrator("ses_2_orch_1")
+
+	if app.AgentMgr.Count() != 2 {
+		t.Fatalf("expected 2 agents, got %d", app.AgentMgr.Count())
+	}
+	if !app.Win.IsOpen() || app.Win.TabCount() != 2 {
+		t.Fatalf("expected 2 window tabs, got %d (open=%v)", app.Win.TabCount(), app.Win.IsOpen())
+	}
+	activeIdx := app.Win.ActiveIndex()
+	if activeIdx < 0 {
+		t.Fatal("expected an active window tab")
+	}
+	activeTitle := app.Win.Tabs()[activeIdx].Title
+	if !app.isAgentTabTitle(activeTitle) {
+		t.Fatalf("expected active tab to be an agent tab, got %q", activeTitle)
+	}
+	activeID := app.agentIDFromTabTitle(activeTitle)
+
+	// First Ctrl+Q: close only the active agent tab — no quit.
+	_, cmd := app.handleQuit()
+	if cmd != nil {
+		t.Fatal("expected nil cmd (no tea.Quit) while another agent tab remains")
+	}
+	if app.Quit {
+		t.Fatal("expected app.Quit to stay false after closing the active tab")
+	}
+	if !app.AgentMgr.IsHidden(activeID) {
+		t.Fatalf("active agent %q must be minimized, not terminated", activeID)
+	}
+	if app.AgentMgr.Get(activeID) == nil {
+		t.Fatal("closing a tab must keep the agent alive for restore")
+	}
+	if !app.Win.IsOpen() || app.Win.TabCount() != 1 {
+		t.Fatalf("expected remaining tab to stay open, got %d tabs (open=%v)", app.Win.TabCount(), app.Win.IsOpen())
+	}
+	if app.AgentMgr.VisibleCount() != 1 {
+		t.Fatalf("expected 1 surfaced agent, got %d", app.AgentMgr.VisibleCount())
+	}
+
+	// Second Ctrl+Q: the last agent tab closes and the launcher shows,
+	// still without quitting.
+	_, cmd = app.handleQuit()
+	if cmd != nil {
+		t.Fatal("expected nil cmd (launcher shown) after closing the last tab")
+	}
+	if app.Quit {
+		t.Fatal("expected app.Quit to stay false while the launcher is shown")
+	}
+	if app.Win.IsOpen() || app.Win.TabCount() != 0 {
+		t.Fatalf("expected all window tabs closed, got %d", app.Win.TabCount())
+	}
+	if app.AgentMgr.VisibleCount() != 0 {
+		t.Fatalf("expected no surfaced agents, got %d", app.AgentMgr.VisibleCount())
+	}
+	if app.launcherScreen == nil {
+		t.Fatal("expected launcher to be shown after the last tab closed")
+	}
+
+	// Third Ctrl+Q with nothing surfaced and no sessions: quit.
+	_, cmd = app.handleQuit()
+	if cmd == nil {
+		t.Fatal("expected Quit cmd when no tabs and no sessions remain")
+	}
+	if !app.Quit {
+		t.Fatal("expected Quit flag")
+	}
+}
+
 func TestHandleQuit_LastTabRefreshesLauncher(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
@@ -372,7 +452,7 @@ func TestSubmitInputRejectsAgentWithoutBackendOwner(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: workspace.NewConversation()})
+	app.AddOrchestrator("ses_1_orch_1")
 
 	cmd := app.submitInput("ses_1_orch_1", "hello", nil)
 	if cmd != nil {
@@ -602,11 +682,11 @@ func TestHandleInputEvent_SubmitWithActiveAgentView(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: workspace.NewConversation()})
+	app.AddOrchestrator("ses_1_orch_1")
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
 	if len(cmds) != 2 {
-		t.Fatalf("expected 2 cmds (history record + submit), got %d", len(cmds))
+		t.Fatalf("expected history recording plus active-tab submit, got %d cmds", len(cmds))
 	}
 }
 
@@ -616,11 +696,10 @@ func TestHandleInputEvent_SubmitEmptyAgentView(t *testing.T) {
 	app.height = 24
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
-	if len(cmds) != 2 {
-		t.Fatalf("expected 2 cmds (history record + submit), got %d", len(cmds))
+	if len(cmds) != 1 {
+		t.Fatalf("expected only history recording with no active agent tab, got %d cmds", len(cmds))
 	}
-	// submitInput with empty activeAgentView should return nil cmd
-	// (agent lookup fails), but handleInputEvent still appends it.
+	// No guessed fallback target is appended.
 }
 
 func TestHandleInputEvent_BtwSubmit(t *testing.T) {
@@ -628,7 +707,7 @@ func TestHandleInputEvent_BtwSubmit(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: workspace.NewConversation()})
+	app.AddOrchestrator("ses_1_orch_1")
 
 	cmds := app.handleInputEvent(input.BtwSubmitEvent{Text: "btw text"})
 	if len(cmds) != 2 {

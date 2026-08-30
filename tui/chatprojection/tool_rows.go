@@ -366,7 +366,11 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 			display = strings.TrimPrefix(strings.TrimSpace(display), prefix)
 		}
 		sanitized := rendering.SanitizeForTerminal(display)
-		for _, seg := range rendering.HardWrap(sanitized, toolLineWidth) {
+		// Word-wrap rather than character-wrap: breaking mid-token used to
+		// strand 1–2 characters at the right edge of the preview band (e.g.
+		// inside column-aligned Go identifiers). WordWrap falls back to a
+		// hard break for tokenless runs, so width safety is preserved.
+		for _, seg := range rendering.WordWrap(sanitized, toolLineWidth) {
 			if seg != "" {
 				wrapped = append(wrapped, seg)
 			}
@@ -498,16 +502,17 @@ func buildPlainToolResultLine(text string) PaintLine {
 func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent string, th *theme.Theme, contentWidth, innerW, height int, expanded bool) {
 	_ = th
 	if tools.IsPlanTool(msg.ToolName) {
+		// Collapsed renders the windowed card around the live step; expanding
+		// is what reveals the full list, so the old first-N cut is gone.
 		planRows := BuildPlanViewRows(resultContent, contentWidth)
+		if !expanded {
+			planRows = BuildPlanViewRowsCollapsed(resultContent, contentWidth)
+		}
 		if len(planRows) == 0 {
 			invalid := buildToolPlainResultLine("│   ", "Invalid canonical plan payload", true)
 			ml.lines = append(ml.lines, invalid.PlainText())
 			ml.native = append(ml.native, invalid)
 			return
-		}
-		if !expanded && len(planRows) > 10 {
-			hidden := len(planRows) - 9
-			planRows = append(planRows[:9], buildToolTruncationLine(hidden, contentWidth))
 		}
 		for _, pl := range planRows {
 			ml.lines = append(ml.lines, pl.PlainText())

@@ -20,6 +20,8 @@ import (
 	ttypes "crude/types"
 )
 
+const ollamaUncachedWireWindow = 32768
+
 func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "orchestrator_id", o.ID)
@@ -195,6 +197,17 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "turn", s.turnNumber)
 
 	userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
+	userMsg.InternalID = currentMsgID
+	var requestContextParts []string
+	if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
+		requestContextParts = append(requestContextParts, memoryContext)
+	}
+	if s.prevContextInjected.CompareAndSwap(false, true) {
+		if prevContext := s.previousSessionContext(ctx); prevContext != "" {
+			requestContextParts = append(requestContextParts, prevContext)
+		}
+	}
+	wireContext, hasWireContext := requestContextMessage(strings.Join(requestContextParts, "\n\n"))
 
 	if s.db != nil {
 		_ = sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
@@ -202,15 +215,29 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 
 	s.msgsMu.Lock()
+	if s.wireMessages == nil {
+		s.wireMessages = append([]provider.ChatMessage(nil), s.msgs...)
+	}
+	if hasWireContext {
+		s.msgs = append(s.msgs, wireContext)
+		s.wireMessages = append(s.wireMessages, wireContext)
+		s.msgTurns = append(s.msgTurns, s.turnNumber)
+		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{
+			SnapshotVersion: sessiondb.ConversationSnapshotVersion,
+			DisplayRole:     "hidden_wire_context",
+		})
+	}
 	s.msgs = append(s.msgs, userMsg)
+	s.wireMessages = append(s.wireMessages, userMsg)
 	s.msgTurns = append(s.msgTurns, s.turnNumber)
-	s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{
+	userMeta := sessiondb.DisplayMeta{
 		DisplayRole:     "user",
 		DisplayContent:  userInput.Text,
 		ReferenceLabels: referenceLabels,
-	})
-	msgsCopy := make([]provider.ChatMessage, len(s.msgs))
-	copy(msgsCopy, s.msgs)
+	}
+	userMeta = canonicalizeDisplayMeta(userMsg, userMeta, "", len(s.msgs)-1, time.Now())
+	s.displayMetas = append(s.displayMetas, userMeta)
+	msgsCopy := append([]provider.ChatMessage(nil), s.wireMessages...)
 	s.msgsMu.Unlock()
 	l.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userInput.Text))
 
@@ -227,6 +254,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		return
 	}
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled())
+	ag.WireGuard = s.rootWireGuard()
 	if o.subAgentSup != nil {
 		o.subAgentSup.SetParentTurnGeneration(turnGeneration)
 		o.subAgentSup.SetParentToolFn(ag.ToolFn)
@@ -235,15 +263,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
 	prompt := s.systemPrompt(effectiveCfg.IsMultiAgentEnabled())
-	var requestContextParts []string
-	if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
-		requestContextParts = append(requestContextParts, memoryContext)
-	}
-	if s.prevContextInjected.CompareAndSwap(false, true) {
-		if prevContext := s.previousSessionContext(ctx); prevContext != "" {
-			requestContextParts = append(requestContextParts, prevContext)
-		}
-	}
 
 	displayTracker := &displayMetaTracker{
 		metas: make(map[string]*sessiondb.DisplayMeta),
@@ -320,11 +339,18 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	ag.Emit = emit
 	ctxWindow := provider.LookupContextWindow(activeCfg.Model)
-	contextMsgs := truncateMessages(msgsCopy, ctxWindow, activeCfg.Model)
-	if len(contextMsgs) < len(msgsCopy) {
-		l.Info("COMPACT", "context_projection", "history", len(msgsCopy), "projected", len(contextMsgs), "window", ctxWindow)
+	wireWindow := ctxWindow
+	if turnProvider.ProtocolID() == "ollama" && (wireWindow == 0 || wireWindow > ollamaUncachedWireWindow) {
+		wireWindow = ollamaUncachedWireWindow
 	}
-	contextMsgs = injectRequestContext(contextMsgs, strings.Join(requestContextParts, "\n\n"))
+	contextMsgs := truncateMessages(msgsCopy, wireWindow, activeCfg.Model)
+	if provider.EstimateMessagesTotal(contextMsgs, activeCfg.Model) < provider.EstimateMessagesTotal(msgsCopy, activeCfg.Model) {
+		l.Info("COMPACT", "context_projection", "history", len(msgsCopy), "projected", len(contextMsgs), "window", wireWindow, "provider_window", ctxWindow)
+		s.rotateWireEpoch("context_projection")
+		s.msgsMu.Lock()
+		s.wireMessages = append([]provider.ChatMessage(nil), contextMsgs...)
+		s.msgsMu.Unlock()
+	}
 	agentMsgs := ag.Run(ctx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sm, s.sessionID, btwMsgCh)
 	finishTurn()
 	<-btwForwardDone
@@ -332,7 +358,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	s.toolCallSeq = ag.ToolCallSeq()
 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
-	s.finalizeTurn(agentMsgs, len(contextMsgs), displayTracker, finalContent, currentMsgID)
+	s.finalizeTurn(agentMsgs, len(contextMsgs), displayTracker, finalContent, currentMsgID, ag.ActiveWireMessages())
 }
 
 func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender) bool {
@@ -459,32 +485,43 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 			if name != "" && name != "reply" && toolID != "" {
 				args, _ := data["args"].(string)
 				tracker.updateToolCall(toolID, name, args)
+				label, _ := data["target"].(string)
+				if label == "" {
+					label, _ = data["path"].(string)
+				}
+				if label != "" {
+					tracker.updateToolProgress(toolID, name, "streaming", "", label,
+						eventInt(data["content_lines_int"]), 0, eventInt(data["est_tokens_int"]))
+				}
 			}
 		}
 	case "tool_result":
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
 			if toolID != "" {
+				name, _ := data["name"].(string)
+				result, _ := data["result"].(string)
 				errFlag, _ := data["error"].(string)
 				status := "success"
 				if errFlag == "true" {
 					status = "error"
 				}
-				durMs, _ := data["tool_dur_ms"].(float64)
-				estTok := 0
-				if v, ok := data["tool_est_tokens"].(float64); ok {
-					estTok = int(v)
-				}
-				la := 0
-				if v, ok := data["lines_added"].(float64); ok {
-					la = int(v)
-				}
-				lr := 0
-				if v, ok := data["lines_removed"].(float64); ok {
-					lr = int(v)
-				}
-				tracker.updateToolResult(toolID, status, int64(durMs), estTok, la, lr)
+				tracker.updateToolResult(toolID, name, result, status, int64(eventInt(data["tool_dur_ms"])),
+					eventInt(data["tool_est_tokens"]), eventInt(data["lines_added"]), eventInt(data["lines_removed"]))
 			}
+		}
+	case "tool_progress":
+		if data, ok := evt.Data.(map[string]any); ok {
+			toolID, _ := data["tool_id"].(string)
+			if toolID == "" {
+				return
+			}
+			name, _ := data["name"].(string)
+			phase, _ := data["phase"].(string)
+			detail, _ := data["detail"].(string)
+			label, _ := data["path"].(string)
+			tracker.updateToolProgress(toolID, name, phase, detail, label,
+				eventInt(data["lines_added"]), eventInt(data["lines_removed"]), eventInt(data["tool_est_tokens"]))
 		}
 	case "blocking_auto":
 		if data, ok := evt.Data.(map[string]any); ok {
@@ -512,19 +549,31 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 	}
 }
 
+func eventInt(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	default:
+		return 0
+	}
+}
+
 func (s *Session) finalizeTurn(
 	agentMsgs []provider.ChatMessage,
 	contextPrefixLen int,
 	tracker *displayMetaTracker,
 	finalContent string,
 	msgID string,
+	activeWire ...[]provider.ChatMessage,
 ) {
 	s.msgsMu.Lock()
-	var returned []provider.ChatMessage
-	for _, m := range agentMsgs {
-		if m.Role != "system" {
-			returned = append(returned, m)
-		}
+	returned := append([]provider.ChatMessage(nil), agentMsgs...)
+	if len(returned) > 0 && returned[0].Role == "system" {
+		returned = returned[1:]
 	}
 	if contextPrefixLen > len(returned) {
 		s.logger.Warn(
@@ -535,12 +584,21 @@ func (s *Session) finalizeTurn(
 	}
 	additions := append([]provider.ChatMessage(nil), returned[contextPrefixLen:]...)
 	additions = sanitizeMessages(additions)
+	rawToolArgs := toolCallArgsIndex(returned)
 
 	additionTurns := make([]int, 0, len(additions))
 	additionMetas := make([]sessiondb.DisplayMeta, 0, len(additions))
-	for _, m := range additions {
+	for i, m := range additions {
 		additionTurns = append(additionTurns, s.turnNumber)
 		var dm sessiondb.DisplayMeta
+		if m.WireHidden {
+			dm = sessiondb.DisplayMeta{
+				SnapshotVersion: sessiondb.ConversationSnapshotVersion,
+				DisplayRole:     "hidden_wire_context",
+			}
+			additionMetas = append(additionMetas, dm)
+			continue
+		}
 		switch m.Role {
 		case "tool":
 			dm = tracker.get(m.ToolCallID)
@@ -555,6 +613,14 @@ func (s *Session) finalizeTurn(
 			dm.DisplayRole = "user"
 			dm.DisplayContent = m.DisplayContent
 			dm.ReferenceLabels = append([]string(nil), m.ReferenceLabels...)
+		case "system":
+			dm = sessiondb.DisplayMeta{
+				SnapshotVersion: sessiondb.ConversationSnapshotVersion,
+				DisplayRole:     "hidden_wire_context",
+			}
+		}
+		if m.Role != "system" {
+			dm = canonicalizeDisplayMeta(m, dm, rawToolArgs[m.ToolCallID], len(s.msgs)+i, time.Now())
 		}
 		additionMetas = append(additionMetas, dm)
 	}
@@ -564,9 +630,22 @@ func (s *Session) finalizeTurn(
 		s.msgTurns = append(s.msgTurns, additionTurns...)
 		s.displayMetas = append(s.displayMetas, additionMetas...)
 	} else if finalContent != "" {
-		s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", Content: provider.TextContent(finalContent)})
+		message := provider.ChatMessage{Role: "assistant", Content: provider.TextContent(finalContent)}
+		s.msgs = append(s.msgs, message)
+		returned = append(returned, message)
 		s.msgTurns = append(s.msgTurns, s.turnNumber)
-		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{DisplayRole: "assistant"})
+		s.displayMetas = append(s.displayMetas, canonicalizeDisplayMeta(message,
+			sessiondb.DisplayMeta{DisplayRole: "assistant"}, "", len(s.msgs)-1, time.Now()))
+	}
+	nextWire := returned
+	if len(activeWire) > 0 && activeWire[0] != nil {
+		nextWire = activeWire[0]
+	}
+	s.wireMessages = append([]provider.ChatMessage(nil), nextWire...)
+	guard := s.rootWireGuard()
+	wireState := sessiondb.WireState{
+		Epoch: guard.Epoch(), Reason: guard.Reason(),
+		Messages: append([]provider.ChatMessage(nil), s.wireMessages...),
 	}
 
 	if s.db != nil && len(s.msgs) > 0 {
@@ -579,6 +658,9 @@ func (s *Session) finalizeTurn(
 	s.msgsMu.Unlock()
 
 	if s.db != nil {
+		if err := sessiondb.SaveWireState(s.db, s.sessionID, wireState); err != nil {
+			s.logger.Error("CACHE", "wire_state_persist_failed", "error", err.Error())
+		}
 		s.flushWg.Add(1)
 		go s.flushWriteBuf()
 	}

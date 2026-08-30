@@ -415,3 +415,48 @@ func TestResumeRecoversLegacyChildWhenParentResultWasNeverPersisted(t *testing.T
 		t.Fatalf("recovered parent result rows = %+v err=%v", rows, err)
 	}
 }
+
+func TestResumeRestoresActiveWireEpochIndependentlyFromFullArchive(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "wire-parent.db")
+	db, err := sessiondb.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.Create(db, sessiondb.SessionMeta{
+		ID: "wire-parent", ProjectPath: root, ProjectName: "project", CreatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	archive := []provider.ChatMessage{
+		provider.NewTextMessage("user", "old request"),
+		provider.NewTextMessage("assistant", "old answer"),
+		provider.NewTextMessage("user", "current request"),
+		provider.NewTextMessage("assistant", "current answer"),
+	}
+	if _, err := sessiondb.ReplaceMessages(db, "wire-parent", archive, []int{1, 1, 2, 2}); err != nil {
+		t.Fatal(err)
+	}
+	active := []provider.ChatMessage{
+		provider.NewWireHiddenMessage("<wire_checkpoint>old archive</wire_checkpoint>"),
+		provider.NewTextMessage("user", "current request"),
+		provider.NewTextMessage("assistant", "current answer"),
+	}
+	if err := sessiondb.SaveWireState(db, "wire-parent", sessiondb.WireState{
+		Epoch: 7, Reason: "manual_compaction", Messages: active,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := ResumeSessionWithDir(dbPath, testConfig(), root, filepath.Join(root, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(resumed.Close)
+	if len(resumed.msgs) != 4 || len(resumed.wireMessages) != 3 || !resumed.wireMessages[0].WireHidden ||
+		resumed.rootWireGuard().Epoch() != 7 {
+		t.Fatalf("archive=%d wire=%#v epoch=%d", len(resumed.msgs), resumed.wireMessages, resumed.rootWireGuard().Epoch())
+	}
+}
