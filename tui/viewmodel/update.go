@@ -130,6 +130,18 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		m.editorGitStale.Store(false)
 		gitCmd = m.refreshEditorGitCmd()
 	}
+	var treeGitCmd tea.Cmd
+	const treeGitFallbackInterval = 15 * time.Second
+	if m.treeGitRefreshAt.IsZero() {
+		m.treeGitRefreshAt = now
+	} else if now.Sub(m.treeGitRefreshAt) >= treeGitFallbackInterval &&
+		m.Tree != nil && m.Tree.Model != nil {
+		// File and repository-metadata watchers are the fast path. This sparse
+		// asynchronous reconciliation covers fsnotify overflow/dropped events
+		// without polling Git on the update goroutine.
+		treeGitCmd = m.Tree.Model.RefreshGitStatus()
+		m.treeGitRefreshAt = now
+	}
 	// Advance popup reveal animations (slide-in on open). Returns true while
 	// any reveal is mid-flight so the frame keeps repainting until done.
 	if m.advanceReveals(time.Now()) {
@@ -212,9 +224,9 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	// Status bar animations and popup reveals need their own content
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
-		return m, tea.Batch(diskSyncCmd, gitCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, treeGitCmd, streamingTickCmd())
 	}
-	return m, tea.Batch(diskSyncCmd, gitCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, treeGitCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
@@ -240,7 +252,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 
 	switch msg := msg.(type) {
 	case sourceControlResultMsg:
-		m.applySourceControlResult(msg)
+		if cmd := m.applySourceControlResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case editorGitAnnotationMsg:
 		m.applyEditorGitAnnotation(msg)
 	case clipboardAsyncRequestMsg:
@@ -295,6 +309,11 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case workspace.FileWatcherMsg:
 		if cmd := m.handleFileWatcherEvent(msg); cmd != nil {
 			cmds = append(cmds, cmd)
+		}
+		if m.Tree != nil && m.Tree.Model != nil {
+			if cmd := m.Tree.Model.RefreshGitStatus(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	case findinfiles.SearchRequestMsg:
 		if m.findInFiles != nil && m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
@@ -494,6 +513,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case settingsui.SaveMsg:
 		m.Logger.Info("CONFIG", "settings_save", "scope", string(msg.Scope))
+		m.clearFramePreview()
 		appSets := msg.AppSettings
 		if msg.Scope == ttypes.SettingsScopeWorkspace {
 			if err := m.SaveWorkspaceSettings(msg.Overrides); err != nil {
@@ -534,11 +554,16 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		// Live preset cycling previews via ThemePreviewMsg without persisting.
 		// Cancel must restore the last saved palette across the whole UI.
 		m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+		m.clearFramePreview()
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	case settingsui.ThemePreviewMsg:
 		if msg.Preset != "" {
 			m.applyThemePreset(msg.Preset)
 		}
+	case settingsui.FramePreviewMsg:
+		// Live shell-frame preview: re-inset immediately, no persistence.
+		// The overlay survives until save (dropped) or cancel (restored).
+		m.applyFramePreview(msg)
 	case settingsui.FetchModelsMsg:
 		request := msg
 		cmds = append(cmds, func() tea.Msg {
@@ -709,6 +734,28 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if msg.Err != nil {
 			m.Logger.Error("TREE", "refresh_error", "error", msg.Err.Error())
 			m.StatusBar.SetError("tree refresh error: " + msg.Err.Error())
+		}
+		if msg.Err == nil && m.Tree != nil && m.Tree.Model == msg.Model {
+			if cmd := msg.Model.RefreshGitStatus(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case filetree.TreeGitChangedMsg:
+		if msg.Model != nil && m.Tree != nil && m.Tree.Model == msg.Model {
+			if cmd := msg.Model.RefreshGitStatus(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case filetree.TreeGitRefreshMsg:
+		if msg.Model == nil || m.Tree == nil || m.Tree.Model != msg.Model {
+			break
+		}
+		m.treeGitRefreshAt = time.Now()
+		if msg.Err != nil {
+			m.Logger.Warn("GIT", "tree_status_refresh_failed", "error", msg.Err.Error())
+		}
+		if cmd := msg.Model.Update(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
 

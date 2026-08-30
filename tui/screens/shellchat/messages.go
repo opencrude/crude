@@ -158,7 +158,7 @@ func paintNativeSpaces(buf *surface.CellBuffer, x, y, count int, tokens *ui.Toke
 			cf = tokens.Color(ui.ColorFg)
 			cb = tokens.Color(ui.ColorSelection)
 		}
-		buf.WriteString(x+i, y, " ", cf, cb, 0)
+		buf.Set(x+i, y, cell.Cell{Char: ' ', Content: " ", Width: 1, FG: cf, BG: cb})
 		col++
 	}
 }

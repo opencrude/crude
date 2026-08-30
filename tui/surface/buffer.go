@@ -1,6 +1,8 @@
 package surface
 
 import (
+	"unicode/utf8"
+
 	"crude/tui/cell"
 
 	"github.com/charmbracelet/x/ansi"
@@ -53,6 +55,10 @@ func (b *CellBuffer) Set(x, y int, c cell.Cell) {
 	}
 	if c.Width > 1 {
 		b.SetSpan(x, y, c)
+		return
+	}
+	if c.Width == 1 && b.cells[y*b.width+x].Width == 1 {
+		b.cells[y*b.width+x] = c
 		return
 	}
 	if c.Width > 0 {
@@ -162,8 +168,14 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 	curX := x
 	rest := text
 	for len(rest) > 0 {
-		// Must match UV cellbuf. See tui/rendering/width.go.
-		cluster, w := ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
+		var cluster string
+		var w int
+		if rest[0] > 0x1f && rest[0] < 0x7f && (len(rest) == 1 || rest[1] < utf8.RuneSelf) {
+			cluster, w = rest[:1], 1
+		} else {
+			// Must match UV cellbuf. See tui/rendering/width.go.
+			cluster, w = ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
+		}
 		if len(cluster) == 0 {
 			break
 		}
@@ -175,7 +187,7 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 		if curX >= b.width || curX+w > b.width {
 			break
 		}
-		r := []rune(cluster)[0] // First rune of the grapheme cluster
+		r, _ := utf8.DecodeRuneInString(cluster)
 		b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: uint8(w), FG: fg, BG: bg, Attr: attr})
 		curX += w
 	}

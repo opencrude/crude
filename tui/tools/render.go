@@ -566,7 +566,6 @@ func subAgentPollSummary(content, target, duration string) string {
 	cat := m["category"]
 	elapsed := m["elapsed_seconds"]
 	steps := m["steps_used"]
-	maxSteps := m["max_steps"]
 	resultPath := m["result_path"]
 
 	switch status {
@@ -584,9 +583,6 @@ func subAgentPollSummary(content, target, duration string) string {
 		}
 		if steps != "" {
 			label += " " + steps
-			if maxSteps != "" {
-				label += "/" + maxSteps
-			}
 			label += " steps"
 		}
 		return label

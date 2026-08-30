@@ -46,6 +46,7 @@ type Screen struct {
 
 	tokenPrompt, tokenCompletion, tokenCached int
 	sessionCost                               float64
+	costUpperBound                            bool
 	contextWindow                             int
 	contextUsed                               int
 	tokenEstimated                            bool
@@ -341,6 +342,8 @@ func (s *Screen) usageSegments() []seg {
 		parts = append(parts, fmt.Sprintf("%s↑%s", prefix, rendering.FormatTokens(s.tokenPrompt)))
 		if s.tokenCached > 0 {
 			parts = append(parts, rendering.FormatTokens(s.tokenCached))
+		} else if s.costUpperBound {
+			parts = append(parts, "cache ?")
 		}
 		parts = append(parts, fmt.Sprintf("↓%s", rendering.FormatTokens(s.tokenCompletion)))
 		if s.contextWindow > 0 {
@@ -348,7 +351,11 @@ func (s *Screen) usageSegments() []seg {
 			parts = append(parts, fmt.Sprintf("%d%%", percent))
 		}
 		if s.sessionCost > 0 {
-			parts = append(parts, rendering.FormatCost(s.sessionCost))
+			cost := rendering.FormatCost(s.sessionCost)
+			if s.costUpperBound {
+				cost = "≤" + cost
+			}
+			parts = append(parts, cost)
 		}
 		rightParts = append(rightParts, strings.Join(parts, " "))
 	}
@@ -540,7 +547,7 @@ func (s *Screen) ClearExpired() {
 	}
 }
 
-func (s *Screen) UpdateUsage(prompt, completion, cached int, cost float64, ctxWindow, ctxUsed int, estimated bool) {
+func (s *Screen) UpdateUsage(prompt, completion, cached int, cost float64, ctxWindow, ctxUsed int, estimated, costUpperBound bool) {
 	s.tokenPrompt = prompt
 	s.tokenCompletion = completion
 	s.tokenCached = cached
@@ -548,6 +555,7 @@ func (s *Screen) UpdateUsage(prompt, completion, cached int, cost float64, ctxWi
 	s.contextWindow = ctxWindow
 	s.contextUsed = ctxUsed
 	s.tokenEstimated = estimated
+	s.costUpperBound = costUpperBound
 }
 
 func (s *Screen) SetThinking(thinking, streaming, blocking bool) {

@@ -32,6 +32,13 @@ type ThemePreviewMsg struct {
 	Preset string
 }
 
+// FramePreviewMsg applies edited shell frame paddings immediately while
+// Settings stays open, so the inset preview follows each keystroke. Nil
+// fields are left unchanged.
+type FramePreviewMsg struct {
+	Top, Right, Bottom, Left *int
+}
+
 // FetchModelsMsg asks the workspace layer to load models for a provider.
 type FetchModelsMsg struct {
 	ProviderID string
@@ -162,6 +169,17 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		ui.CycleFieldState("preset", "Preset", append([]string(nil), theme.AllPresetNames...), appearance.Preset, "Choose a complete visual palette for the workspace."),
 		ui.SeparatorFieldState("palette", "Palette preview"),
 	}, appearanceColorFields(appearance.Preset, appearance)...)
+	appearanceFields = append(appearanceFields,
+		// The form shows the effective value on each row; when the stored
+		// value is unset (nil) the accessor resolves to the default. Blank
+		// input means "inherit the default". Fields are Live so the frame
+		// previews around the live shell while Settings stays open.
+		ui.SeparatorFieldState("frame", "Shell frame"),
+		liveFramePadField("frame-top", "Top padding", appearance.PadTopOrDefault(), "Blank rows reserved above the header."),
+		liveFramePadField("frame-bottom", "Bottom padding", appearance.PadBottomOrDefault(), "Blank rows reserved below the status bar."),
+		liveFramePadField("frame-left", "Left padding", appearance.PadLeftOrDefault(), "Blank columns reserved left of the activity rail."),
+		liveFramePadField("frame-right", "Right padding", appearance.PadRightOrDefault(), "Blank columns reserved right of the content."),
+	)
 	m.categories = []Category{
 		{Name: "Providers", Group: "AI", Description: "Connections, credentials, and communication protocol.", Form: m.buildProvidersForm()},
 		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"], true)},
@@ -1438,9 +1456,78 @@ func parseFloatPtr(value string) *float64 {
 	return &parsed
 }
 
+// framePadFieldState renders one shell-frame padding input. Values are whole
+// numbers of cells including zero; blank means "inherit the default" (the
+// initial value shows the effective pad so the row reads as a plain number).
+func framePadFieldState(id, label string, value int, description string) *ui.FieldState {
+	f := ui.TextFieldState(id, label, strconv.Itoa(value), description)
+	f.Validator = func(v ui.FieldValue) []string {
+		trimmed := strings.TrimSpace(v.String())
+		if trimmed == "" {
+			return nil
+		}
+		if n, err := strconv.Atoi(trimmed); err != nil || n < 0 {
+			return []string{"Must be a whole number of cells (0 or more)."}
+		}
+		return nil
+	}
+	return f
+}
+
+// liveFramePadField is a shell-frame padding row wired for live preview:
+// every keystroke emits form.changed so the shell re-insets immediately.
+func liveFramePadField(id, label string, value int, description string) *ui.FieldState {
+	f := framePadFieldState(id, label, value, description)
+	f.Live = true
+	return f
+}
+
+// framePadField parses one shell-frame padding row. A blank or invalid field
+// returns nil so the leaf stays unset and inherits the theme default.
+func framePadField(value string) *int {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(trimmed)
+	if err != nil || n < 0 {
+		return nil
+	}
+	return &n
+}
+
+// framePreview reports whether a changed field is one of the live shell-frame
+// padding rows and returns the complete frame for the preview message. The
+// message is SAVE-FAITHFUL: it mirrors exactly what collectAppearance would
+// persist, so what the user previews is what a save produces. The settings
+// model resolves a blank field the same way collectAppearance does (a zero
+// pointer), which applyFramePreview maps to the configured default.
+func (m *Model) framePreview(fieldID string) (FramePreviewMsg, bool) {
+	if m == nil || m.SelectedCategory() != catAppearance {
+		return FramePreviewMsg{}, false
+	}
+	switch fieldID {
+	case "frame-top", "frame-bottom", "frame-left", "frame-right":
+		return FramePreviewMsg{
+			Top:    framePadField(m.value(catAppearance, "frame-top")),
+			Bottom: framePadField(m.value(catAppearance, "frame-bottom")),
+			Left:   framePadField(m.value(catAppearance, "frame-left")),
+			Right:  framePadField(m.value(catAppearance, "frame-right")),
+		}, true
+	}
+	return FramePreviewMsg{}, false
+}
+
 func (m *Model) collectAppearance(cfg *types.ThemeSettings) {
-	// Colour rows are read-only preset reflections; only the preset name persists.
-	*cfg = types.ThemeSettings{Preset: m.value(catAppearance, "preset")}
+	// Colour rows are read-only preset reflections; the preset name and the
+	// shell frame paddings persist.
+	*cfg = types.ThemeSettings{
+		Preset:    m.value(catAppearance, "preset"),
+		PadTop:    framePadField(m.value(catAppearance, "frame-top")),
+		PadBottom: framePadField(m.value(catAppearance, "frame-bottom")),
+		PadLeft:   framePadField(m.value(catAppearance, "frame-left")),
+		PadRight:  framePadField(m.value(catAppearance, "frame-right")),
+	}
 }
 
 func (m *Model) collectEditor(cfg *types.EditorSettings) {

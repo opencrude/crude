@@ -129,10 +129,25 @@ func New(th *theme.Theme) *Screen {
 
 // Reset replaces the retained request data and returns the parsed question count.
 func (s *Screen) Reset(questionsJSON string) int {
+	count, _ := s.ResetWithError(questionsJSON)
+	return count
+}
+
+// ResetWithError retains the parser failure so the caller can report an
+// actionable validation outcome to the model instead of claiming user cancel.
+func (s *Screen) ResetWithError(questionsJSON string) (int, error) {
 	var items []Item
-	if questionsJSON == "" || json.Unmarshal([]byte(questionsJSON), &items) != nil || len(items) == 0 {
+	if strings.TrimSpace(questionsJSON) == "" {
 		s.Dismiss()
-		return 0
+		return 0, fmt.Errorf("questions payload is empty")
+	}
+	if err := json.Unmarshal([]byte(questionsJSON), &items); err != nil {
+		s.Dismiss()
+		return 0, fmt.Errorf("questions payload is not valid JSON: %w", err)
+	}
+	if len(items) == 0 {
+		s.Dismiss()
+		return 0, fmt.Errorf("questions payload contains no questions")
 	}
 	s.items = items
 	s.answers = make([]string, len(items))
@@ -141,7 +156,7 @@ func (s *Screen) Reset(questionsJSON string) int {
 	s.index = 0
 	s.syncRail()
 	s.openCurrent()
-	return len(items)
+	return len(items), nil
 }
 
 func (s *Screen) Dismiss() {

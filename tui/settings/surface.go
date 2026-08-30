@@ -394,6 +394,12 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 				Cmd:     func() tea.Msg { return ThemePreviewMsg{Preset: preset} },
 			}
 		}
+		if frame, ok := s.model.framePreview(fieldID); ok {
+			return ui.EventResult{
+				Handled: true,
+				Cmd:     func() tea.Msg { return FramePreviewMsg(frame) },
+			}
+		}
 		// Switching the provider rebuilds the provider form (the field set is
 		// provider-specific — ChatGPT swaps the API-key row for OAuth rows).
 		// The model has already rebuilt the FormModel; rebind the form widget

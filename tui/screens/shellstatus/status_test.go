@@ -295,7 +295,7 @@ func TestScreen_TokenUsage(t *testing.T) {
 	sb := newTestScreen()
 	setWidth(sb)
 
-	sb.UpdateUsage(100, 50, 10, 0.005, 4096, 2048, false)
+	sb.UpdateUsage(100, 50, 10, 0.005, 4096, 2048, false, false)
 
 	v := sb.View()
 	if !strings.Contains(v, "↑100") {
@@ -306,6 +306,15 @@ func TestScreen_TokenUsage(t *testing.T) {
 	}
 	if !strings.Contains(v, "50%") {
 		t.Fatalf("expected context usage percentage in view, got: %q", v)
+	}
+}
+
+func TestScreen_OllamaCacheBlindCostIsShownAsUpperBound(t *testing.T) {
+	sb := newTestScreen()
+	setWidth(sb)
+	sb.UpdateUsage(338000, 2100, 0, 2.02, 1000000, 338000, false, true)
+	if usage := sb.UsageView(); !strings.Contains(usage, "≤$2.02") || !strings.Contains(usage, "cache ?") {
+		t.Fatalf("cache-blind cost did not render as an upper bound: %q", usage)
 	}
 }
 
@@ -320,7 +329,7 @@ func TestScreenSplitsActivityFromHeaderUsage(t *testing.T) {
 		t.Fatalf("header usage view should contain readiness: %q", got)
 	}
 
-	sb.UpdateUsage(1200, 300, 0, 0.02, 4000, 1500, false)
+	sb.UpdateUsage(1200, 300, 0, 0.02, 4000, 1500, false, false)
 	usage := sb.UsageView()
 	if !strings.Contains(usage, "↑1.2K") || !strings.Contains(usage, "$0.0200") {
 		t.Fatalf("header usage should carry token and cost state: %q", usage)

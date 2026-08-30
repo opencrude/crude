@@ -361,6 +361,11 @@ func (e *Editor) Title() string {
 	}
 	return e.title
 }
+
+// BaseTitle returns the title without the modified-file marker. Use for
+// contexts where the dirty state is already communicated (confirm dialogs)
+// or where the marker glyph would leak as stray punctuation.
+func (e *Editor) BaseTitle() string { return e.title }
 func (e *Editor) Modified() bool {
 	if e.buffer != nil {
 		return e.buffer.IsDirty()

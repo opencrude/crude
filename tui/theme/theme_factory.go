@@ -2,6 +2,14 @@ package theme
 
 import "charm.land/lipgloss/v2"
 
+// DefaultFrameInsets is the shell frame every theme starts with: zero on all
+// four sides — the shell renders edge to edge. Frame padding is a user
+// preference configured in Settings → Appearance; nothing in the layout may
+// assume a blank row or column exists.
+func DefaultFrameInsets() Insets {
+	return Insets{}
+}
+
 // newTheme builds all derived styles and metrics from semantic colors. Keeping
 // this shared is essential: light and dark themes differ only in tokens, never
 // in component structure or state behavior.
@@ -14,6 +22,7 @@ func newTheme(c Colors) *Theme {
 		FormIndent:   1,
 		LabelColGap:  3,
 		FormTitlePad: 1,
+		Frame:        DefaultFrameInsets(),
 	}
 
 	treeConfig := TreeConfig{

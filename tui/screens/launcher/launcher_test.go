@@ -485,6 +485,17 @@ func TestWorkspaceSearchUsesFilledField(t *testing.T) {
 	}
 }
 
+func TestSetDataKeepsCurrentWorkspaceInRecent(t *testing.T) {
+	s := New(theme.DefaultDark())
+	current := filepath.FromSlash("/projects/crude")
+	s.SetData(current, []workspace.WorkspaceInfo{{
+		ID: workspace.WorkspaceID(current), ProjectName: "crude", ProjectDir: current, SessionCount: 7,
+	}})
+	if len(s.workspaces) != 1 || s.workspaces[0].Name != "crude" || s.workspaces[0].SessionCount != 7 {
+		t.Fatalf("current workspace was excluded from Recent: %+v", s.workspaces)
+	}
+}
+
 func TestHeroBorderDoesNotPulseWhileIdle(t *testing.T) {
 	s, h, buf := testScreen(t, 110, 16, nil)
 	s.SetAnimation(1500, 10)
