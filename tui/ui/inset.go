@@ -2,12 +2,13 @@ package ui
 
 import (
 	"crude/tui/surface"
+	"crude/tui/theme"
 )
 
-// Insets is a four-sided padding in cells.
-type Insets struct {
-	Top, Right, Bottom, Left int
-}
+// Insets is the four-sided padding type. It lives in theme (Spacing.Frame is
+// a theme.Insets) and is aliased here so component code keeps the ui.Insets
+// spelling.
+type Insets = theme.Insets
 
 // InsetsFromSides builds insets from explicit sides.
 func InsetsFromSides(t, r, b, l int) Insets {

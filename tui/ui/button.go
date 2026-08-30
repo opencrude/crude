@@ -74,6 +74,9 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 	}
 	st := ResolveControlState(b.disabled, ctx.Focused, false, false, ctx.Hovered)
 	tokens := b.tokenSet()
+	// Idle surface is the surrounding surface (dialog/form bg), with the
+	// variant-colored label carrying identity — the accent/variant FILL is
+	// reserved for keyboard focus.
 	bg := tokens.Color(ColorPopupBg)
 	if b.surfaceSet {
 		bg = b.surface
@@ -83,12 +86,14 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 	switch st {
 	case StateDisabled:
 		fg = tokens.Color(ColorMuted)
-	case StateHovered, StateFocused, StatePressed:
+	case StateHovered:
+		// Hover language: subtle tinted fill, never the accent/variant fill
+		// (that is reserved for keyboard focus — matches ButtonColors()).
+		bg = tokens.Color(ColorHover)
+	case StateFocused, StatePressed:
 		bg = b.variantFill(tokens)
 		fg = cell.ContrastColor(bg)
-		if st == StateFocused || st == StatePressed {
-			attr = cell.AttrBold
-		}
+		attr = cell.AttrBold
 	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	text := "[ " + b.label + " ]"

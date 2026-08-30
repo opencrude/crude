@@ -49,6 +49,8 @@ Read that first; this index only organizes the reference material.
   [bypass-manifest.json](reference/bypass-manifest.json).
 - [bypass-manifest.json](reference/bypass-manifest.json) — machine-readable
   allowlist enforced by `scripts/tui_design_audit.sh`.
+- [Dialog & prompt design language](reference/dialog-design-language.md) —
+  the authoritative visual/interaction language for confirms and prompts.
 
 ### Guides
 

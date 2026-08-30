@@ -1,6 +1,6 @@
 // Package ui is the Crude TUI component host and design-system foundation.
 //
-// Phase 2 of TUI_COMPONENT_SYSTEM_PLAN.md. Product screens migrate onto this
+// Phase 2 of ../../docs/plans/tui-component-system-plan.md. Product screens migrate onto this
 // package in later phases. Until then, legacy widgets remain the runtime path
 // and may only be bridged through explicit adapters.
 //

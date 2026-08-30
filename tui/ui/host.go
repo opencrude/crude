@@ -148,6 +148,17 @@ func (h *Host) Focused() ComponentID { return h.focused }
 // Hovered returns the hovered component ID.
 func (h *Host) Hovered() ComponentID { return h.hovered }
 
+// SetHovered sets the hovered component (popup hover routing path where the
+// WM delivers motion to overlay handlers instead of Host.Handle). Marks a
+// repaint when the hover target changed.
+func (h *Host) SetHovered(id ComponentID) {
+	if h == nil || h.hovered == id {
+		return
+	}
+	h.hovered = id
+	h.MarkPaint()
+}
+
 // HasPointerCapture reports whether a pointer capture is active.
 func (h *Host) HasPointerCapture() bool { return h.captured != RootID }
 
