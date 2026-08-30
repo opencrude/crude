@@ -55,3 +55,7 @@ tmp/
 
 # Pinned libghostty-vt install prefix (see deps/README.md)
 deps/libghostty-vt/
+
+# Agent-tool local state
+.commandcode/
+.claude/
