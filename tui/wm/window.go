@@ -117,6 +117,14 @@ func NewFloatingWindow(id, title string, content WindowContent, w, h int, opts .
 		opt(fw)
 	}
 
+	// Wire the compositor dirty bridge: in-place visual changes (dialog
+	// focus moves, hover) must mark the window's cached surface dirty or
+	// the WM keeps compositing the stale content. Anonymous interface keeps
+	// wm decoupled from the ui package (same pattern as SetHoverEdge).
+	if cw, ok := content.(interface{ SetMarkContentDirty(func()) }); ok && cw != nil {
+		cw.SetMarkContentDirty(fw.MarkContentDirty)
+	}
+
 	// Clamp size to respect min/max bounds.
 	ClampSize(fw)
 
@@ -437,10 +445,9 @@ func (fw *FloatingWindow) ResizeStartSize() (int, int) {
 
 // IsOnTitleBar reports whether a screen coordinate is on WindowFrame's title
 // border. Corner cells remain resize targets; the close region is checked first.
+// Undecorated windows on the WindowFrame path paint their own chrome (the
+// frame's row 0 IS the title bar), so they remain title-draggable.
 func (fw *FloatingWindow) IsOnTitleBar(screenX, screenY int) bool {
-	if !fw.decorated {
-		return false
-	}
 	lx := screenX - fw.x
 	ly := screenY - fw.y
 	if ly != 0 {

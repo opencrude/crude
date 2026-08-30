@@ -21,8 +21,11 @@ const (
 	defaultTermDockHeight = 12
 	minTermDockHeight     = 6
 	minMainAboveDock      = 8
-	terminalDockTopRow    = 3
 )
+
+// termDockTopRow is the highest row the terminal dock may occupy: the top of
+// the main chrome (legacy: the sidebar's row 3).
+func (m *App) termDockTopRow() int { return m.shellTopRow() }
 
 func (m *App) termMgr() *workspace.TerminalManager {
 	if m == nil || m.Workspace == nil {
@@ -56,7 +59,7 @@ func (m *App) termDockHeightClamped() int {
 	if !m.termDockHasSessions() {
 		return 0
 	}
-	availableH := m.height - 2 - terminalDockTopRow
+	availableH := m.height - m.chromeBottomRows() - m.termDockTopRow()
 	if availableH < termdock.MinRenderableHeight {
 		return 0
 	}
@@ -64,7 +67,7 @@ func (m *App) termDockHeightClamped() int {
 	if h <= 0 {
 		h = defaultTermDockHeight
 	}
-	maxH := m.height - 2 - minMainAboveDock
+	maxH := m.height - m.chromeBottomRows() - minMainAboveDock
 	if maxH < termdock.MinRenderableHeight {
 		maxH = termdock.MinRenderableHeight
 	}

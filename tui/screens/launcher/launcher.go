@@ -301,20 +301,7 @@ func (s *Screen) SetData(cwd string, workspaces []workspace.WorkspaceInfo) {
 	if cwdAbs == "" {
 		cwdAbs = cwd
 	}
-	cwdID := ""
-	if cwdAbs != "" {
-		cwdID = workspace.WorkspaceID(cwdAbs)
-	}
 	for _, w := range workspaces {
-		if cwdID != "" && w.ID == cwdID {
-			continue
-		}
-		if w.ProjectDir != "" {
-			abs, _ := filepath.Abs(w.ProjectDir)
-			if abs != "" && abs == cwdAbs {
-				continue
-			}
-		}
 		name := workspace.WorkspaceDisplayName(w)
 		s.workspaces = append(s.workspaces, WorkspaceEntry{
 			ID:           w.ID,

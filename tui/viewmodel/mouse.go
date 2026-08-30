@@ -44,7 +44,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	// own region so right-click can offer LSP/session controls.
 	// Placed after the floating-window check so a popup covering
 	// the status bar (e.g. command palette) wins.
-	if m.height > 0 && y == m.height-1 {
+	if m.height > 0 && y >= m.height-m.frameBottomRow()-2 && y < m.height {
 		return regionStatusBar
 	}
 
@@ -56,8 +56,11 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 		return regionSidebar
 	}
 
-	if !isWheel && m.tabBarVisible() && y == 3 {
-		return regionTabBar
+	if !isWheel && m.tabBarVisible() {
+		top := m.chromeTopRow()
+		if y >= top-2 && y < top {
+			return regionTabBar
+		}
 	}
 
 	layout := m.computeLayout()
@@ -94,11 +97,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 		if !m.inputRect.Empty() && y >= m.inputRect.Y {
 			return regionInput
 		}
-		tabBarExtra := 0
-		if m.tabBarVisible() {
-			tabBarExtra = 2
-		}
-		inputStartLine := m.ChatAreaHeight + 4 + tabBarExtra + m.sessionDeckRect.H
+		inputStartLine := m.ChatAreaHeight + m.chromeTopRow() + m.sessionDeckRect.H
 		if y >= inputStartLine {
 			return regionInput
 		}
@@ -847,7 +846,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	if ch := ui.ContextMenuPopupHeight(st); ch > 0 {
 		h = ch
 	}
-	x, y := clampPopupPosition(mouse.X, mouse.Y, w, h, m.width, m.height)
+	x, y := m.clampShellPopupPosition(mouse.X, mouse.Y, w, h)
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayContextMenu), "", frame, w, h,
 		wm.WithDecoration(false),
@@ -887,6 +886,20 @@ func clampPopupPosition(mx, my, w, h, screenW, screenH int) (int, int) {
 	}
 	if y < 0 {
 		y = 0
+	}
+	return x, y
+}
+
+// clampShellPopupPosition is clampPopupPosition with the shell frame applied:
+// context menus and other anchored popups never sit on the frame cells.
+func (m *App) clampShellPopupPosition(mx, my, w, h int) (int, int) {
+	frame := m.frameInsets()
+	x, y := clampPopupPosition(mx, my, w, h, m.width-frame.Right, m.height-frame.Bottom)
+	if x < frame.Left {
+		x = frame.Left
+	}
+	if y < frame.Top {
+		y = frame.Top
 	}
 	return x, y
 }

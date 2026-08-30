@@ -19,6 +19,8 @@ func BuildToolTitle(msg types.ChatMessage, phase string) string {
 		return "Preparing " + rendering.PascalCaseTool(msg.ToolName)
 	case types.ToolPreviewStreaming:
 		return BuildStreamingLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens)
+	case types.ToolPreviewError:
+		return BuildErrorLabel(msg.ToolName, target, rendering.FormatDuration(msg.ToolDuration))
 	case types.ToolPreviewDone:
 		dur := rendering.FormatDuration(msg.ToolDuration)
 		if msg.ToolStatus == "error" {
@@ -42,7 +44,10 @@ func BuildToolTitle(msg types.ChatMessage, phase string) string {
 		}
 		return BuildDoneLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens, dur)
 	default:
-		if msg.ToolStatus == "success" || msg.ToolStatus == "error" {
+		if msg.ToolStatus == "error" {
+			return BuildErrorLabel(msg.ToolName, target, rendering.FormatDuration(msg.ToolDuration))
+		}
+		if msg.ToolStatus == "success" {
 			dur := rendering.FormatDuration(msg.ToolDuration)
 			return BuildDoneLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens, dur)
 		}
@@ -137,10 +142,10 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 	case "get_plan":
 		return "Reading plan"
 	case "run_sub_agent":
-		if target != "" {
-			return fmt.Sprintf("Spawning %s", rendering.TruncateLine(target, 40))
+		if strings.Contains(target, "wait: false") {
+			return "Starting sub-agent"
 		}
-		return "Spawning sub-agent"
+		return "Waiting for sub-agent"
 	case "poll_sub_agent":
 		if target != "" {
 			shortID := target
@@ -347,10 +352,7 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		}
 		return label
 	case "run_sub_agent":
-		label := "Spawned"
-		if target != "" {
-			label += " " + target
-		}
+		label := "Sub-agent finished"
 		if duration != "" {
 			label += " " + duration
 		}
@@ -387,6 +389,25 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		}
 		return label
 	}
+}
+
+func BuildErrorLabel(tool, target, duration string) string {
+	label := rendering.PascalCaseTool(tool) + " failed"
+	switch tool {
+	case "run_sub_agent":
+		label = "Failed to spawn sub-agent"
+	case "execute_command", "async_execute_command":
+		label = "Command failed"
+	case "question":
+		label = "Question failed"
+	}
+	if target != "" && tool != "run_sub_agent" {
+		label += " " + target
+	}
+	if duration != "" {
+		label += " " + duration
+	}
+	return label
 }
 
 func IsPlanTool(name string) bool {

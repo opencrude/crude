@@ -24,6 +24,7 @@ const (
 	RoleTool          = model.RoleTool
 	RoleError         = model.RoleError
 	RoleStatus        = model.RoleStatus
+	RoleAssignment    = model.RoleAssignment
 	RoleSessionPicker = model.RoleSessionPicker
 )
 

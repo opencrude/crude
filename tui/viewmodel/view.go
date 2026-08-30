@@ -114,19 +114,20 @@ func boundedContentGeometry(contentW, requestedPad int) (padLR, innerW int) {
 // list bounds) but produces no ANSI: the root tree paints the shell.
 func (m *App) computeContentLayout() contentLayout {
 	lay := contentLayout{}
+	frame := m.frameInsets()
 
 	activityW := m.activityChromeWidth()
 	sidebarVisible := m.sidebarHostVisible()
 	if sidebarVisible {
-		lay.SidebarW = activityW + m.Tree.Width + 1 // activity + content + divider
+		lay.SidebarW = frame.Left + activityW + m.sidebarPanelWidth() + 1 // frame + activity + content + divider
 	} else {
-		lay.SidebarW = activityW
+		lay.SidebarW = frame.Left + activityW
 	}
 
 	// Rect geometry must describe columns that actually exist. Minimum-width
 	// product policies (for example, whether the launcher is usable) remain
 	// visibility decisions; they must not widen shell slots past the terminal.
-	lay.ContentW = max(0, m.width-lay.SidebarW)
+	lay.ContentW = max(0, m.width-frame.Right-lay.SidebarW)
 	lay.PadLR, lay.InnerW = boundedContentGeometry(lay.ContentW, m.Theme.Spacing.PadLR)
 	m.Win.SetWidth(lay.InnerW)
 
@@ -136,7 +137,11 @@ func (m *App) computeContentLayout() contentLayout {
 	// mode: hiding the composer while it is open made Ctrl+O look like the
 	// prompt area vanished. Every other overlay mode still owns the full frame.
 	overlayHidesInput := m.OverlayState.IsOverlay() && !m.OverlayState.Is(workspace.ModeFilePicker)
-	lay.ShowMainInput = !isLauncherActive && !isEditorActive && !overlayHidesInput
+	reviewingCompletedAgent := false
+	if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil {
+		reviewingCompletedAgent = node.State.Completed
+	}
+	lay.ShowMainInput = !isLauncherActive && !isEditorActive && !overlayHidesInput && !reviewingCompletedAgent
 
 	m.syncFormHint()
 
@@ -149,9 +154,9 @@ func (m *App) computeContentLayout() contentLayout {
 
 	agentTabBarVisible := m.tabBarVisible()
 	dockH := m.termDockHeightClamped()
-	bottomChrome := 2 + dockH
+	bottomChrome := m.chromeBottomRows() + dockH
 
-	baseNonChat := 3 + lay.InputLineCount
+	baseNonChat := m.shellTopRow() + lay.InputLineCount
 	if agentTabBarVisible {
 		baseNonChat += 2
 	}
@@ -167,7 +172,7 @@ func (m *App) computeContentLayout() contentLayout {
 	// status content (long/multiline inputs "push the status out of screen").
 	// Keep one chat row minimum.
 	if lay.ShowMainInput {
-		budget := m.height - bottomChrome - 3 - deckLineCount
+		budget := m.height - bottomChrome - m.shellTopRow() - deckLineCount
 		if agentTabBarVisible {
 			budget -= 2
 		}
@@ -178,7 +183,7 @@ func (m *App) computeContentLayout() contentLayout {
 		if lay.InputLineCount < 1 {
 			lay.InputLineCount = 1
 		}
-		nonChat = 3 + lay.InputLineCount + deckLineCount
+		nonChat = m.shellTopRow() + lay.InputLineCount + deckLineCount
 		if agentTabBarVisible {
 			nonChat += 2
 		}
@@ -189,10 +194,7 @@ func (m *App) computeContentLayout() contentLayout {
 		lay.ChatH = 1
 	}
 	m.ChatAreaHeight = lay.ChatH
-	deckY := 3 + lay.ChatH
-	if agentTabBarVisible {
-		deckY += 2
-	}
+	deckY := m.chromeTopRow() + lay.ChatH
 	if deckLineCount > 0 {
 		// The deck slot spans the full content column so separator rules can
 		// run edge to edge (like the terminal dock); the PanelDeck applies
@@ -211,10 +213,7 @@ func (m *App) computeContentLayout() contentLayout {
 		}
 		m.EditorState.Editor.SetPadding(editorPadL)
 		m.EditorState.Editor.SetStatusChrome(false)
-		chatAreaTop := 3
-		if agentTabBarVisible {
-			chatAreaTop += 2
-		}
+		chatAreaTop := m.chromeTopRow()
 		lay.ChatAreaTop = chatAreaTop
 		lay.EditorRect = ui.Rect{
 			X: lay.SidebarW,
@@ -225,19 +224,12 @@ func (m *App) computeContentLayout() contentLayout {
 		m.editorRect = lay.EditorRect
 		m.chatRect = ui.Rect{}
 	} else if isLauncherActive {
-		chatAreaTop := 3
-		if agentTabBarVisible {
-			chatAreaTop += 2
-		}
-		lay.ChatAreaTop = chatAreaTop
+		lay.ChatAreaTop = m.chromeTopRow()
 		m.chatRect = ui.Rect{}
 		m.editorRect = ui.Rect{}
 	} else {
 		// Agent chat.
-		chatAreaTop := 3
-		if agentTabBarVisible {
-			chatAreaTop += 2
-		}
+		chatAreaTop := m.chromeTopRow()
 		lay.ChatAreaTop = chatAreaTop
 		lay.ChatRect = ui.Rect{
 			X: lay.SidebarW,
@@ -255,11 +247,7 @@ func (m *App) computeContentLayout() contentLayout {
 	}
 
 	if lay.ShowMainInput {
-		inputY := 3 + lay.ChatH
-		if agentTabBarVisible {
-			inputY += 2
-		}
-		inputY += deckLineCount
+		inputY := m.chromeTopRow() + lay.ChatH + deckLineCount
 		lay.InputRect = ui.Rect{
 			X: lay.SidebarW,
 			Y: inputY,
@@ -276,9 +264,9 @@ func (m *App) computeContentLayout() contentLayout {
 	// full remaining height beside the terminal panel (VS Code layout: the
 	// bottom panel occupies only the content column, never the sidebar).
 	if m.Tree != nil && m.Tree.Visible && m.Tree.Model != nil {
-		treeStart := sidebarTopRow
+		treeStart := m.shellTopRow()
 		m.Tree.YOffset = treeStart
-		contentH := m.height - 2
+		contentH := m.height - m.chromeBottomRows()
 		sidebarH := contentH - treeStart
 		if sidebarH < 0 {
 			sidebarH = 0
@@ -289,8 +277,8 @@ func (m *App) computeContentLayout() contentLayout {
 	if dockH > 0 {
 		lay.TermDockRect = ui.Rect{
 			X: lay.SidebarW,
-			Y: m.height - 2 - dockH,
-			W: max(0, m.width-lay.SidebarW),
+			Y: m.height - m.chromeBottomRows() - dockH,
+			W: max(0, m.width-frame.Right-lay.SidebarW),
 			H: dockH,
 		}
 		m.termDockRect = lay.TermDockRect
@@ -306,33 +294,43 @@ func (m *App) computeContentLayout() contentLayout {
 // frame. It must run after computeContentLayout so the rects are fresh.
 func (m *App) configureShell() {
 	lay := m.computeContentLayout()
+	frame := m.frameInsets()
 
-	// Persistent chrome: header and status are always mounted.
-	m.shell.setSlot(shellHeaderSlot, true, ui.Rect{X: 0, Y: 1, W: m.width, H: 2})
-	m.shell.setSlot(shellStatusSlot, true, ui.Rect{X: 0, Y: m.height - 2, W: m.width, H: 2})
+	// Persistent chrome: header and status are always mounted. Both inset
+	// by the shell frame; the frame rows/columns stay background-painted.
+	m.shell.setSlot(shellHeaderSlot, true, ui.Rect{
+		X: frame.Left, Y: frame.Top, W: m.width - frame.Left - frame.Right, H: 2,
+	})
+	m.shell.setSlot(shellStatusSlot, true, ui.Rect{
+		X: frame.Left, Y: m.height - frame.Bottom - 2, W: m.width - frame.Left - frame.Right, H: 2,
+	})
 
 	// Tab bar: full content column below the header separator so its bottom
 	// rule runs edge to edge; the shelltabs screen applies the theme's
 	// horizontal padding to the tabs control itself.
 	m.shell.setSlot(shellTabsSlot, m.tabBarVisible(), ui.Rect{
-		X: lay.SidebarW, Y: 3, W: lay.ContentW, H: 2,
+		X: lay.SidebarW, Y: m.shellTopRow(), W: lay.ContentW, H: 2,
 	})
 
 	// Activity bar: always-on left rail below the global application header.
 	activityW := m.activityChromeWidth()
-	sidebarH := (m.height - 2) - sidebarTopRow
+	sidebarH := (m.height - m.chromeBottomRows()) - m.shellTopRow()
 	if sidebarH < 1 {
 		sidebarH = 1
 	}
-	m.shell.setSlot(shellActivitySlot, activityW > 0, ui.Rect{X: 0, Y: sidebarTopRow, W: activityW, H: sidebarH})
+	m.shell.setSlot(shellActivitySlot, activityW > 0, ui.Rect{
+		X: frame.Left, Y: m.shellTopRow(), W: activityW, H: sidebarH,
+	})
 
 	// Sidebar content: files / agents / terminals / git, right of the rail.
 	sidebarActive := m.sidebarHostVisible()
 	sidebarW := 0
 	if sidebarActive {
-		sidebarW = m.Tree.Width + 1
+		sidebarW = m.sidebarPanelWidth() + 1
 	}
-	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{X: activityW, Y: sidebarTopRow, W: sidebarW, H: sidebarH})
+	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{
+		X: frame.Left + activityW, Y: m.shellTopRow(), W: sidebarW, H: sidebarH,
+	})
 	if m.activityView == activityGit && m.sourceControl != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.sourceControl)
 	} else if m.activityView != activityFiles && m.activityList != nil {
@@ -518,6 +516,9 @@ func (m *App) syncFormHint() {
 	// Tab-bar / overlay hints are built in contextualHelpSegments.
 }
 
+// configureHeaderScreen pushes the header's presentation data. Width mirrors
+// the header slot (terminal width minus the horizontal shell frame) so the
+// right-aligned clock/usage runs stay inside the padded slot.
 func (m *App) configureHeaderScreen() {
 	if m.headerScreen == nil {
 		return
@@ -526,6 +527,7 @@ func (m *App) configureHeaderScreen() {
 	if m.StatusBar != nil {
 		usage = m.StatusBar.UsageView()
 	}
+	frame := m.frameInsets()
 	m.headerScreen.SetProjection(shellheader.Projection{
 		ModelName: m.ModelName,
 		YOLO:      m.OverlayState.IsYolo(),
@@ -533,7 +535,7 @@ func (m *App) configureHeaderScreen() {
 		Usage:     usage,
 		// No ViewLabel: the active agent already has its own window tab, so
 		// the header stays on app + model only.
-		Width: m.width,
+		Width: m.width - frame.Left - frame.Right,
 	})
 }
 
@@ -756,6 +758,17 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	}
 	switch m.focusTarget() {
 	case FocusTree:
+		if m.activityView == activityAgents {
+			prefix := "agents"
+			if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil && node.State.Completed {
+				prefix = "read-only agent review"
+			}
+			return prefix, []ui.HintSegment{
+				ui.ActionSeg("list.navigate"),
+				ui.ActionSeg("list.open"),
+				ui.ActionSeg("view.focus.sidebar"),
+			}
+		}
 		if m.Tree != nil && m.Tree.Model != nil && m.Tree.Model.FilterActive() {
 			return "", []ui.HintSegment{
 				ui.TextSeg("filter files"),
@@ -830,6 +843,12 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 			}
 		}
 		return prefix, segs
+	}
+	if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil && node.State.Completed {
+		return "read-only agent review", []ui.HintSegment{
+			ui.TextSeg("scroll ↑↓"),
+			ui.ActionSeg("view.focus.sidebar"),
+		}
 	}
 	return "", m.Input.ContextHelpSegments()
 }

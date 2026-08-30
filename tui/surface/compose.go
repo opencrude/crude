@@ -55,9 +55,13 @@ func Blit(dst *CellBuffer, dstX, dstY int, src *CellBuffer, clip *ClipStack) {
 			// inherits the background of whatever container it's composited into
 			// (e.g., a floating window's SubPaneBg), rather than reverting to the
 			// terminal's default background.
+			dstCell := dst.Get(dx, dy)
 			if srcCell.BG.IsDefault() {
-				dstCell := dst.Get(dx, dy)
 				srcCell.BG = dstCell.BG
+			}
+			if srcCell.Width == 1 && dstCell.Width == 1 {
+				dst.setRaw(dx, dy, srcCell)
+				continue
 			}
 			replaceCellSpan(dst, dx, dy, srcCell)
 		}

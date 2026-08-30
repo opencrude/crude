@@ -22,6 +22,27 @@ const (
 	ToolStatusCancelled = "cancelled"
 )
 
+// BlockOutcome identifies why a blocking tool request resumed. Keeping this
+// cause separate from the response text prevents parser and lifecycle failures
+// from being misreported to the model as a user cancellation.
+type BlockOutcome string
+
+const (
+	BlockAnswered        BlockOutcome = "answered"
+	BlockUserCancelled   BlockOutcome = "user_cancelled"
+	BlockValidationError BlockOutcome = "validation_error"
+)
+
+// BlockResponse is correlated to one blocking tool call. RequestID is the
+// agent-assigned internal tool ID, which prevents a late response from an old
+// panel from resolving a newer request.
+type BlockResponse struct {
+	RequestID string
+	Outcome   BlockOutcome
+	Value     string
+	Detail    string
+}
+
 const (
 	RoleUser          = "user"
 	RoleAssistant     = "assistant"
@@ -29,6 +50,7 @@ const (
 	RoleTool          = "tool"
 	RoleError         = "error"
 	RoleStatus        = "status"
+	RoleAssignment    = "assignment"
 	RoleSessionPicker = "sessionpicker"
 )
 
@@ -53,7 +75,6 @@ type CategorySettings struct {
 	// workspace/app agent categories.
 	Inherit            string `json:"inherit,omitempty"`
 	Policy             string
-	MaxSteps           int
 	Description        string
 	ModelContextWindow int
 	ModelInputPrice    float64
@@ -236,6 +257,45 @@ type ThemeSettings struct {
 	SubPaneBg string `json:"subpane_bg,omitempty"`
 	Border    string `json:"border,omitempty"`
 	Selection string `json:"selection,omitempty"`
+	// Frame paddings (in terminal cells) around the whole shell: top and
+	// bottom reserve blank rows, left and right reserve blank columns.
+	// Pointers so an unset field means "inherit the theme default" under the
+	// sparse workspace-overlay merge; nil marshals as an absent key.
+	PadTop    *int `json:"pad_top,omitempty"`
+	PadBottom *int `json:"pad_bottom,omitempty"`
+	PadLeft   *int `json:"pad_left,omitempty"`
+	PadRight  *int `json:"pad_right,omitempty"`
+}
+
+// DefaultThemeFramePad is the shell frame padding for a fresh configuration:
+// zero on every side. Padding is purely a user preference configured in
+// Settings → Appearance; the shell renders edge to edge unless the user
+// reserves blank cells.
+const DefaultThemeFramePad = 0
+
+// padWithDefault dereferences an optional frame padding. Unset or negative
+// means "inherit", which resolves to the side's theme default.
+func padWithDefault(p *int, dflt int) int {
+	if p == nil || *p < 0 {
+		return dflt
+	}
+	return *p
+}
+
+// PadTopOrDefault returns the effective top frame padding.
+func (t ThemeSettings) PadTopOrDefault() int { return padWithDefault(t.PadTop, DefaultThemeFramePad) }
+
+// PadBottomOrDefault returns the effective bottom frame padding.
+func (t ThemeSettings) PadBottomOrDefault() int {
+	return padWithDefault(t.PadBottom, DefaultThemeFramePad)
+}
+
+// PadLeftOrDefault returns the effective left frame padding.
+func (t ThemeSettings) PadLeftOrDefault() int { return padWithDefault(t.PadLeft, DefaultThemeFramePad) }
+
+// PadRightOrDefault returns the effective right frame padding.
+func (t ThemeSettings) PadRightOrDefault() int {
+	return padWithDefault(t.PadRight, DefaultThemeFramePad)
 }
 
 type EditorSettings struct {
@@ -433,7 +493,8 @@ type ChatMessage struct {
 
 	SubPaneID string
 
-	PermTag string
+	PermTag    string
+	PendingBtw bool
 
 	CachedLines          []string
 	CursorLine           int

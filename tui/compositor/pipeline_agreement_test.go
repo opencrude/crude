@@ -23,7 +23,7 @@ import (
 //
 // This is the definitive test for "bubble tea/ultra violet cant track
 // that place" — it uses REAL UTF-8 emoji/markdown content from
-// TERMINAL_WIDTH.md, not synthetic strings.
+// ../../docs/reference/terminal-width.md, not synthetic strings.
 func TestEndToEndWidthAgreement(t *testing.T) {
 	lines := []string{
 		"| Layout and UV both measure ☰ as 2 | Settings stay aligned |",

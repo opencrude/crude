@@ -107,6 +107,13 @@ type TreeConfig struct {
 	UseNerdFont     *bool // nil = auto-detect
 }
 
+// Insets is a four-sided padding in cells. Declared in theme (not ui) because
+// theme cannot import ui (ui imports theme); ui aliases this type as ui.Insets
+// so component code keeps its existing spelling.
+type Insets struct {
+	Top, Right, Bottom, Left int
+}
+
 type Spacing struct {
 	PadLR        int
 	FieldGap     int
@@ -115,6 +122,12 @@ type Spacing struct {
 	FormIndent   int
 	LabelColGap  int
 	FormTitlePad int
+	// Frame is the blank inset around the WHOLE shell, outside every piece
+	// of chrome (header, status bar, activity rail, tab bar, content). It is
+	// the runtime form of the user-configurable shell frame paddings in
+	// Settings → Appearance; the viewmodel folds it into the shell geometry
+	// instead of hardcoding the legacy one-row top inset.
+	Frame Insets
 }
 
 type WindowStyles struct {

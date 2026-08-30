@@ -126,6 +126,12 @@ type App struct {
 	editorRect      ui.Rect
 	termDockRect    ui.Rect
 
+	// frameOverlay holds unsaved shell-frame paddings from the live settings
+	// preview (FramePreviewMsg). It sits on top of the persisted theme frame
+	// so the inset tracks each keystroke; CancelMsg clears it back to the
+	// saved values. Nil = no live override for that side.
+	frameOverlay *ui.Insets
+
 	actionRegistry     *ui.ActionRegistry
 	overlayHost        *ui.OverlayHost
 	subPaneProjections *subPaneProjectionRegistry
@@ -167,6 +173,7 @@ type App struct {
 	editorGitAt            time.Time
 	editorGitStale         atomic.Bool
 	sourceControlTimeout   time.Duration
+	treeGitRefreshAt       time.Time
 	workspaceSwitchGen     atomic.Uint64   // invalidates project-bound async callbacks
 	lspRequestCtx          context.Context // canceled whenever the workspace generation changes
 	lspRequestCancel       context.CancelFunc
@@ -181,6 +188,7 @@ type App struct {
 
 func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	th := theme.FromPreset(themePresetFromSettings(ws.LoadAppSettings()))
+	applyWorkspaceFrame(&th, ws)
 	im := input.NewModel(th)
 	sb := shellstatus.New(th)
 	headerScreen := shellheader.New(th)
@@ -766,7 +774,7 @@ func (m *App) registerOverlayHandlers() {
 		return m.clickTreeDeleteConfirm(localX, localY)
 	})
 	oh.RegisterHoverHandler(ui.OverlayTreeDelete, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		m.hoverDirtyPrompt(localX, localY)
+		m.hoverTreeDeleteConfirm(localX, localY)
 	})
 
 	oh.RegisterContentHandler(ui.OverlayFilePicker, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {

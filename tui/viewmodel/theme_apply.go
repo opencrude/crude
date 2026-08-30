@@ -5,6 +5,7 @@ import (
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/workspace"
 )
 
 // themeConsumerID names a theme sink that ApplyThemePreset must update.
@@ -59,6 +60,51 @@ type themeConsumer struct {
 	read  func() *theme.Theme
 }
 
+// applyThemeFrame overlays the persisted shell frame paddings onto a freshly
+// built preset theme. Called wherever a preset is applied to the live shell so
+// the user's frame survives every theme rebuild (startup, settings save,
+// cancel-to-saved, and config.json hot reload).
+func (m *App) applyThemeFrame(th *theme.Theme) {
+	if m == nil || th == nil || m.Workspace == nil {
+		return
+	}
+	cfg := m.Workspace.LoadAppSettings().Theme
+	th.Spacing.Frame = ui.Insets{
+		Top:    clampFramePad(cfg.PadTopOrDefault()),
+		Right:  clampFramePad(cfg.PadRightOrDefault()),
+		Bottom: clampFramePad(cfg.PadBottomOrDefault()),
+		Left:   clampFramePad(cfg.PadLeftOrDefault()),
+	}
+}
+
+// clampFramePad bounds a frame padding to a sane range: paddings are blank
+// cells, so anything beyond the terminal size is meaningless and negative
+// values are configuration noise.
+func clampFramePad(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > 20 {
+		return 20
+	}
+	return n
+}
+
+// applyWorkspaceFrame is the workspace-first form of applyThemeFrame for
+// startup, where the initial theme is built before the App exists.
+func applyWorkspaceFrame(th **theme.Theme, ws *workspace.Workspace) {
+	if th == nil || *th == nil || ws == nil {
+		return
+	}
+	cfg := ws.LoadAppSettings().Theme
+	(*th).Spacing.Frame = ui.Insets{
+		Top:    clampFramePad(cfg.PadTopOrDefault()),
+		Right:  clampFramePad(cfg.PadRightOrDefault()),
+		Bottom: clampFramePad(cfg.PadBottomOrDefault()),
+		Left:   clampFramePad(cfg.PadLeftOrDefault()),
+	}
+}
+
 // applyThemePreset replaces the live theme from a named preset and refreshes
 // TUI projections that retain theme-derived tokens.
 func (m *App) applyThemePreset(preset string) {
@@ -73,6 +119,7 @@ func (m *App) ApplyThemePreset(preset string) {
 		return
 	}
 	th := ui.ThemeFromPreset(preset)
+	m.applyThemeFrame(th)
 	for _, c := range m.themeConsumers() {
 		if c.apply != nil {
 			c.apply(th)
