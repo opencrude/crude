@@ -153,9 +153,13 @@ type FieldState struct {
 	Options       []FormOption
 	Columns       []string // compact FieldNav table cells after the label; for FieldCycle, empty spacer slots before the cycle control (column alignment)
 	Validator     func(value FieldValue) []string
-	Target        string // for FieldNav: target page/focus ID
-	Button        bool   // for FieldNav: render as an inset boxed button in the control column instead of a full-width drill-in row
-	Rows          int    // for FieldTextArea: visible editor rows; 0 means the default
+	// Live marks fields whose edits fire the form.changed action on every
+	// value change (not just on commit). Used by numeric fields with a live
+	// visual effect (shell frame paddings) so the preview updates per keystroke.
+	Live   bool
+	Target string // for FieldNav: target page/focus ID
+	Button bool   // for FieldNav: render as an inset boxed button in the control column instead of a full-width drill-in row
+	Rows   int    // for FieldTextArea: visible editor rows; 0 means the default
 }
 
 func (f *FieldState) HasErrors() bool { return len(f.Errors) > 0 }

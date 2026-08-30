@@ -417,7 +417,29 @@ func (m *App) hoverDirtyPrompt(localX, localY int) {
 	}
 	if m.DirtyPromptChoice != choice {
 		m.DirtyPromptChoice = choice
-		m.refreshDirtyPrompt()
+		if cw, ok := fw.Content.(*ui.ComponentWidget); ok {
+			ui.SetConfirmHover(cw, choice)
+		}
+	}
+}
+
+// hoverTreeDeleteConfirm mirrors hoverDirtyPrompt for the delete/git-discard
+// dialog (its overlay previously routed to hoverDirtyPrompt, which looked up
+// a different window and never painted hover).
+func (m *App) hoverTreeDeleteConfirm(localX, localY int) {
+	fw := m.windowManager.Window("tree-delete-confirm")
+	if fw == nil {
+		return
+	}
+	choice := confirmFrameButtonAt(fw, localX, localY)
+	if choice < 0 {
+		return
+	}
+	if m.TreeDeleteChoice != choice {
+		m.TreeDeleteChoice = choice
+		if cw, ok := fw.Content.(*ui.ComponentWidget); ok {
+			ui.SetConfirmHover(cw, choice)
+		}
 	}
 }
 

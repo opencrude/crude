@@ -18,6 +18,9 @@ type Stack struct {
 	dir      Direction
 	gap      int
 	children []Component
+	// expandLast stretches the last child to fill remaining main-axis space.
+	// Default off: buttons must size to their label, not the dialog width.
+	expandLast bool
 }
 
 // NewStack creates a stack container.
@@ -29,6 +32,10 @@ func NewStack(id ComponentID, dir Direction, gap int, children ...Component) *St
 		children: children,
 	}
 }
+
+// SetExpandLast enables stretching the last child to fill remaining
+// main-axis space (opt-in; default off so control rows stay label-sized).
+func (s *Stack) SetExpandLast(v bool) { s.expandLast = v }
 
 // Children implements Parent.
 func (s *Stack) Children() []Component { return s.children }
@@ -89,8 +96,8 @@ func (s *Stack) Layout(ctx LayoutContext, r Rect) {
 				remain = 0
 			}
 			sz := ch.Measure(ctx, Constraints{MinW: 0, MaxW: remain, MinH: 0, MaxH: r.H})
-			if i == len(s.children)-1 && remain > sz.W {
-				sz.W = remain // last child takes remaining
+			if s.expandLast && i == len(s.children)-1 && remain > sz.W {
+				sz.W = remain // opt-in: last child takes remaining
 			}
 			ch.Layout(ctx, Rect{X: x, Y: 0, W: sz.W, H: r.H})
 			x += sz.W
@@ -107,7 +114,7 @@ func (s *Stack) Layout(ctx LayoutContext, r Rect) {
 			remain = 0
 		}
 		sz := ch.Measure(ctx, Constraints{MinW: 0, MaxW: r.W, MinH: 0, MaxH: remain})
-		if i == len(s.children)-1 && remain > sz.H {
+		if s.expandLast && i == len(s.children)-1 && remain > sz.H {
 			sz.H = remain
 		}
 		ch.Layout(ctx, Rect{X: 0, Y: y, W: r.W, H: sz.H})

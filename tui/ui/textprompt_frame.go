@@ -2,7 +2,6 @@ package ui
 
 import (
 	"crude/tui/cell"
-	"crude/tui/rendering"
 	"crude/tui/theme"
 )
 
@@ -21,15 +20,10 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 	w := TextPromptPopupWidth(st)
 	h := TextPromptPopupHeight(st)
 
-	// Body: prompt label, input field, spacer, hint
+	// Body: prompt label, input field, spacer, hint — colors via semantic
+	// tokens (same pipeline as every other dialog).
 	promptLabel := NewLabel(NewID(RootID, "tree-prompt/prompt"), st.Prompt, th)
-	if th != nil {
-		promptLabel.SetStyle(
-			rendering.ThemeColorToCell(th.Colors.Muted),
-			rendering.ThemeColorToCell(th.Colors.PopupBg),
-			0,
-		)
-	}
+	promptLabel.SetStyle(tokens.Color(ColorMuted), tokens.Color(ColorPopupBg), 0)
 
 	placeholder := "name"
 	switch st.Kind {
@@ -59,13 +53,7 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 		hintText = "enter rename · esc cancel"
 	}
 	hint := NewLabel(NewID(RootID, "tree-prompt/hint"), hintText, th)
-	if th != nil {
-		hint.SetStyle(
-			rendering.ThemeColorToCell(th.Colors.Muted),
-			rendering.ThemeColorToCell(th.Colors.PopupBg),
-			cell.AttrItalic,
-		)
-	}
+	hint.SetStyle(tokens.Color(ColorMuted), tokens.Color(ColorPopupBg), cell.AttrItalic)
 
 	// Blank row between the field and hint becomes Inset bottom padding on the
 	// field, preserving the exact 4-row body layout.

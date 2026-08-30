@@ -152,7 +152,7 @@ func (m *App) startDeleteInTree(path string) {
 	fw := wm.NewFloatingWindow(string(ui.OverlayTreeDelete), "", frame,
 		w, h,
 		wm.WithDecoration(false),
-		wm.WithMovable(false),
+		wm.WithMovable(true), // drag by frame title row
 		wm.WithResizable(false),
 		wm.WithClosable(false),
 		wm.WithModal(true),
@@ -184,7 +184,7 @@ func (m *App) openTreeTextPrompt(kind ui.TextPromptKind, title, prompt, dir, ini
 		ui.TextPromptPopupWidth(st),
 		ui.TextPromptPopupHeight(st),
 		wm.WithDecoration(false),
-		wm.WithMovable(false),
+		wm.WithMovable(true), // drag by frame title row
 		wm.WithResizable(false),
 		wm.WithClosable(false),
 		wm.WithModal(true),
@@ -267,14 +267,20 @@ func (m *App) refreshTreePrompt() {
 }
 
 // handleTreeDeleteConfirmKey is the keyboard handler for the
-// destructive confirm popup (delete file/folder). ←/→ cycle Yes/No,
-// Enter activates focused, Esc cancels. Default focus is No.
+// destructive confirm popup (delete file/folder). Arrows/Tab move focus
+// in place via the shared confirm helpers (no tree rebuild); Enter
+// activates the focused button; y/n are direct shortcuts; Esc cancels.
+// Default focus is No.
 func (m *App) handleTreeDeleteConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 	if m.windowManager == nil {
 		return nil
 	}
 	fw := m.windowManager.Window("tree-delete-confirm")
 	if fw == nil {
+		return nil
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok {
 		return nil
 	}
 	switch msg.Code {
@@ -289,12 +295,18 @@ func (m *App) handleTreeDeleteConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	case tea.KeyLeft, tea.KeyUp:
-		m.TreeDeleteChoice = 0
-		m.refreshTreeDeleteConfirm()
+		if n := ui.MoveConfirmFocus(cw, -1, 2); n >= 0 {
+			m.TreeDeleteChoice = n
+		}
 		return nil
 	case tea.KeyRight, tea.KeyDown, tea.KeyTab:
-		m.TreeDeleteChoice = 1
-		m.refreshTreeDeleteConfirm()
+		delta := 1
+		if msg.Code == tea.KeyTab && msg.Mod.Contains(tea.ModShift) {
+			delta = -1
+		}
+		if n := ui.MoveConfirmFocus(cw, delta, 2); n >= 0 {
+			m.TreeDeleteChoice = n
+		}
 		return nil
 	}
 	switch msg.String() {
@@ -307,40 +319,6 @@ func (m *App) handleTreeDeleteConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	return nil
-}
-
-func (m *App) refreshTreeDeleteConfirm() {
-	if m.windowManager == nil || (m.TreeDeletePending == "" && m.GitDiscardPending == nil) {
-		return
-	}
-	fw := m.windowManager.Window("tree-delete-confirm")
-	if fw == nil {
-		return
-	}
-	if m.GitDiscardPending != nil {
-		frame := m.buildGitDiscardFrame(*m.GitDiscardPending)
-		w, h := frame.Measure(80, 40)
-		fw.SetSize(w, h)
-		fw.SetContent(frame)
-		fw.MarkContentDirty()
-		return
-	}
-	path := m.TreeDeletePending
-	isDir := m.Tree.Model != nil && m.Tree.Model.IsDir(path)
-	base := filepath.Base(path)
-	var question, detail string
-	if isDir {
-		question = fmt.Sprintf("Delete folder %q and all its contents?", base)
-		detail = path
-	} else {
-		question = fmt.Sprintf("Delete %q?", base)
-		detail = path
-	}
-	frame := ui.BuildTreeDeleteFrame(m.Theme, question, detail, m.TreeDeleteChoice)
-	w, h := frame.Measure(80, 40)
-	fw.SetSize(w, h)
-	fw.SetContent(frame)
-	fw.MarkContentDirty()
 }
 
 func (m *App) confirmTreeDelete() {

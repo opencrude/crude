@@ -685,6 +685,12 @@ func (ff *FormField) Handle(ctx EventContext, evt Event) EventResult {
 		result := ff.control.Handle(ff.controlContext(ctx), evt)
 		if ff.control.Value() != before {
 			ff.setValue(StringValue(ff.control.Value()))
+			if ff.field.Live {
+				// Live fields preview per keystroke: every value change
+				// emits form.changed so hosts can apply it immediately.
+				result.Action = &Action{ID: "form.changed", Payload: ff.field.ID}
+				result.Invalidate |= InvalidateLayout | InvalidatePaint
+			}
 		}
 		return result
 	case FieldTextArea:

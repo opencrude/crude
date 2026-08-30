@@ -18,6 +18,10 @@ type ComponentWidget struct {
 	host    *Host
 	preferW int
 	preferH int
+	// markContentDirty is invoked by MarkContentDirty; wired by the WM when
+	// the widget becomes window content so in-place visual changes (focus,
+	// hover) reach the compositor's cached-surface check.
+	markContentDirty func()
 }
 
 // NewComponentWidget wraps root for use as FloatingWindow content.
@@ -57,6 +61,22 @@ func (c *ComponentWidget) SetRoot(root Component) {
 func (c *ComponentWidget) Focus(id ComponentID) {
 	if c.host != nil {
 		c.host.Focus(id)
+	}
+}
+
+// MarkContentDirty forwards a visual change to the owning FloatingWindow.
+// Without this, the WM composites the stale cached surface — Host paint
+// flags never cross the window boundary. No-op before WM wiring.
+func (c *ComponentWidget) MarkContentDirty() {
+	if c != nil && c.markContentDirty != nil {
+		c.markContentDirty()
+	}
+}
+
+// SetMarkContentDirty installs the compositor dirty bridge (WM-side wiring).
+func (c *ComponentWidget) SetMarkContentDirty(fn func()) {
+	if c != nil {
+		c.markContentDirty = fn
 	}
 }
 

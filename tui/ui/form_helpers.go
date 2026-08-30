@@ -191,9 +191,7 @@ func ModelOptions(models []types.ModelEntry) []FormOption {
 			))
 		}
 		var capabilities []string
-		for _, modality := range model.Modalities {
-			capabilities = append(capabilities, modality)
-		}
+		capabilities = append(capabilities, model.Modalities...)
 		if model.SupportsTools {
 			capabilities = append(capabilities, "tools")
 		}
