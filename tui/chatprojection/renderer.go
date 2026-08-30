@@ -728,9 +728,14 @@ func (r *Renderer) InvalidateCache() {
 			r.vl.InvalidateItem(msg.InternalID)
 		}
 	}
-	if len(r.sync.Messages) > 0 {
+	// The trailing assistant message only needs per-tick invalidation while
+	// its stream is live: mid-stream it is the streaming cursor (never cached
+	// anyway), but once idle the unconditional drop here forced a full
+	// re-render of the session's largest message on every tick, forever.
+	// Active thinking rows are already covered by the loop above.
+	if r.streaming && len(r.sync.Messages) > 0 {
 		last := r.sync.Messages[len(r.sync.Messages)-1]
-		if last.Role == types.RoleAssistant || (last.Role == types.RoleThinking && last.ThinkingActive) {
+		if last.Role == types.RoleAssistant {
 			last.CachedLines = nil
 			r.vl.InvalidateItem(last.InternalID)
 		}
@@ -1376,10 +1381,15 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	lines = append(lines, ml.lines...)
 	native = append(native, ml.native...)
 
-	if !isStreamingCursor && msg.Role != types.RoleStatus && !msg.PendingBtw {
-		msg.CachedLines = make([]string, len(ml.lines))
-		copy(msg.CachedLines, ml.lines)
-		r.nativeCache[msg.InternalID] = append([]PaintLine(nil), ml.native...)
+	// Persist the render cache on the retained message (r.sync.Messages), not
+	// the sanitized copy: the copy is discarded on return, and writing to it
+	// left every message permanently cache-less, so itemList.EnsureHeights
+	// re-rendered the whole session every frame. Role/PendingBtw are identical
+	// on both, so only the write target changes.
+	if !isStreamingCursor && origMsg.Role != types.RoleStatus && !origMsg.PendingBtw {
+		origMsg.CachedLines = make([]string, len(ml.lines))
+		copy(origMsg.CachedLines, ml.lines)
+		r.nativeCache[origMsg.InternalID] = append([]PaintLine(nil), ml.native...)
 	}
 
 	return lines, native
