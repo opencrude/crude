@@ -98,6 +98,13 @@ type App struct {
 	OverlayState *OverlayState
 	LSPPopup     *LSPPopupState
 
+	// lastTabSwitchAgent is the agent whose projection handleTabSwitch last
+	// invalidated. handleTabSwitch re-derives state on every tick; without
+	// this guard it dropped the active agent's whole render cache 25x/sec.
+	// Cleared whenever the active view leaves agent tabs so returning to an
+	// agent re-invalidates (the original refresh-on-return semantics).
+	lastTabSwitchAgent string
+
 	eventBus *workspace.EventBus
 	width    int
 	height   int

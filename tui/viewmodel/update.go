@@ -479,6 +479,15 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			for _, hm := range msg {
 				m.appendActiveMessage(hm)
 			}
+			// A hydrated session is a dead stream. Rows persisted mid-flight
+			// (tool calls in streaming/calling state, active thinking) would
+			// otherwise keep that state forever, and the per-tick
+			// InvalidateCache would re-render them on every frame. Apply the
+			// same transition a live interrupt uses.
+			if node := m.AgentMgr.Get(m.AgentMgr.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
+				node.State.Messages.MarkStreamingToolsCancelled()
+				node.State.Messages.MarkAllThinkingInterrupted()
+			}
 		}
 	case filepickerscreen.NavigateMsg:
 		if !msg.ValidFor(m.FilePicker) {
@@ -928,6 +937,7 @@ func (m *App) handleTabSwitch() {
 	activeTab := m.Win.ActiveTab()
 	if activeTab == nil {
 		// Closing the last tab returns to launcher.
+		m.lastTabSwitchAgent = ""
 		return
 	}
 
@@ -936,11 +946,18 @@ func (m *App) handleTabSwitch() {
 		m.AgentMgr.SetActive(agentID)
 		m.ActivateSessionByAgent(agentID)
 		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
-		if m.subPaneProjections.Has(agentID) {
+		// Only invalidate the projection when this agent was not already the
+		// active one — handleTabSwitch runs on every tick via
+		// syncAgentWindowTabs, and re-invalidating the same agent dropped its
+		// entire retained render cache each frame. SyncFromWorkspace and the
+		// per-tick InvalidateSubPane keep the active projection fresh.
+		if m.subPaneProjections.Has(agentID) && m.lastTabSwitchAgent != agentID {
 			m.subPaneProjections.InvalidateAllMessages(agentID)
 		}
+		m.lastTabSwitchAgent = agentID
 		return
 	}
+	m.lastTabSwitchAgent = ""
 
 	if m.isEditorTabTitle(activeTab.Title) {
 		path := m.editorPathFromTabTitle(activeTab.Title)
